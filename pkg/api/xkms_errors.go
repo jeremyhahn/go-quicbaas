@@ -103,6 +103,32 @@ func NewXKMSInitializationError(cause error) *dberrors.QBError {
 	}
 }
 
+// XKMSBackendRegistrationError indicates a backend could not be registered
+// with the already-initialized global xkms service.
+type XKMSBackendRegistrationError struct {
+	Backend string
+	Cause   error
+}
+
+// Error implements the error interface.
+func (e *XKMSBackendRegistrationError) Error() string {
+	if e.Cause != nil {
+		return "failed to register xkms backend " + e.Backend + ": " + e.Cause.Error()
+	}
+	return "failed to register xkms backend " + e.Backend
+}
+
+// Unwrap returns the underlying cause for errors.Is and errors.As support.
+func (e *XKMSBackendRegistrationError) Unwrap() error {
+	return e.Cause
+}
+
+// Is supports errors.Is matching by type.
+func (e *XKMSBackendRegistrationError) Is(target error) bool {
+	_, ok := target.(*XKMSBackendRegistrationError)
+	return ok
+}
+
 // SealingError indicates a sealing operation failed.
 type SealingError struct {
 	Cause error

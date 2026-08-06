@@ -717,7 +717,13 @@ func WaitForAllShardLeaders(t *testing.T, tc *TestCluster, expectedShards []uint
 			}
 		}
 
-		// Query first available node (all should agree on leaders)
+		// Aggregate leader data across ALL responding nodes. Per-member
+		// leader knowledge in raft is eventually consistent: a follower's
+		// view may lag (LeaderID == 0) while a leader is in fact elected
+		// and serving writes. Querying only the first responding node
+		// produced false "shard has no leader" timeouts even though writes
+		// to those shards succeeded. A shard counts as having a leader when
+		// ANY node reports one.
 		for _, client := range tc.Clients {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			status, err := client.Cluster().Status(ctx)
@@ -729,8 +735,6 @@ func WaitForAllShardLeaders(t *testing.T, tc *TestCluster, expectedShards []uint
 
 			// Use per-shard leader data from the cluster status response.
 			populateShardLeaders(shardMap, status)
-
-			break // Got status from one node
 		}
 
 		lastShardMap = shardMap

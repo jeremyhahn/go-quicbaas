@@ -577,8 +577,13 @@ func parseServiceConsistency(s string) (service.ConsistencyLevel, error) {
 	}
 }
 
-// formatError formats an error for CLI output.
+// formatError formats an error for CLI output. A nil error passes through
+// untouched — success paths commonly `return formatError(client.X(...))`,
+// and printing a red "Error: <nil>" banner on success is wrong.
 func formatError(err error) error {
+	if err == nil {
+		return nil
+	}
 	formatter := cli.NewFormatter(true)
 	formatter.FormatError(err, os.Stderr)
 	return err

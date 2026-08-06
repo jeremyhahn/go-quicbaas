@@ -101,7 +101,8 @@ func TestCeremonyRootMount_AllVerbsRegistered(t *testing.T) {
 		{http.MethodPost, "/v1/ceremony/initialize"},
 		{http.MethodPost, "/v1/ceremony/claim-cert/begin"},
 		{http.MethodPost, "/v1/ceremony/claim-cert/complete"},
-		{http.MethodPost, "/v1/ceremony/claim-share"},
+		{http.MethodPost, "/v1/ceremony/officer-share/begin"},
+		{http.MethodPost, "/v1/ceremony/officer-share/complete"},
 		{http.MethodPost, "/v1/ceremony/sign-csr"},
 		{http.MethodPost, "/v1/init/enroll-external-officer"},
 	}

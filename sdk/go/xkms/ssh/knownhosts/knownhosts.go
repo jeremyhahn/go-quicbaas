@@ -6,3 +6,13 @@ import xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 type Store = xkmssdk.SSHKnownHostsStore
 
 var NewBackendStore = xkmssdk.NewSSHKnownHostsBackendStore
+
+// Pin is a single pinned host-key envelope.
+type Pin = xkmssdk.SSHKnownHostsPin
+
+// PinFromPublicKey builds a Pin from a host public key. Persist it via
+// Store.Add.
+var PinFromPublicKey = xkmssdk.SSHPinFromPublicKey
+
+// ImportKnownHostsFile imports an OpenSSH known_hosts file into a Store.
+var ImportKnownHostsFile = xkmssdk.SSHImportKnownHostsFile

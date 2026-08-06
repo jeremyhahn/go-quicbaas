@@ -29,9 +29,27 @@
 //
 // # Execution model
 //
-// The matrix runs against the SHARED integration cluster started by
-// make integration-test / docker-compose.integration.yml. All REST calls are
-// made directly via net/http (no CLI binary needed).
+// Per-tenant barriers REQUIRE the embedded qrdb node's seal subsystem: a node
+// booted without a seal: section has SealBarrier == nil and qrdb's fail-closed
+// kv tenant service rejects EVERY per-tenant barrier verb with
+// tenant.ErrBarrierNotEnabled ("tenant: barrier not enabled (seal subsystem
+// disabled)"). The shared integration cluster (test/integration/quicbaas.yaml)
+// deliberately runs with the seal subsystem disabled, so this suite does NOT
+// run in the default make integration-test lane (the runner excludes this
+// package alongside the other special-lane packages).
+//
+// The matrix instead runs against the seal-ENABLED single-node harness in
+// docker-compose.seal.yml (services tenantbarrier-node + tenantbarrier-test,
+// config test/integration/quicbaas-tenantbarrier.yaml: seal.enabled=true,
+// strategy=passphrase, auto-unsealed at boot via QUICBAAS_SEAL_PASSPHRASE).
+// Start it with:
+//
+//	make integration-test-tenantbarrier
+//
+// The node keeps the shared cluster's test-node1 hostname + cert material so
+// the helpers package defaults (endpoints, PIV admin cert, CA key) apply
+// unchanged. All REST calls are made directly via net/http (no CLI binary
+// needed).
 //
 // Identity model (owner decision): the system-admin bearer (helpers.AuthPIV)
 // is a CONTROL-PLANE identity — it provisions tenants and may READ any
@@ -353,9 +371,21 @@ func volumePoolAvailable(t *testing.T, bearer string) bool {
 		t.Logf("volumePoolAvailable: probe init succeeded (status=%d) → pool is configured", status)
 		return true
 	}
-	// Surface the error body for diagnostics, then check for the canonical sentinel.
+	// Surface the error body for diagnostics, then check for the canonical sentinels.
 	bodyStr := strings.ToLower(string(body))
 	t.Logf("volumePoolAvailable: probe init returned status=%d body=%s", status, body)
+	// qrdb's fail-closed tenant service rejects every per-tenant barrier verb
+	// with tenant.ErrBarrierNotEnabled when the node's seal subsystem is
+	// disabled. That is strictly stronger than "no volume pool": no
+	// cryptographic strategy can work at all, so the probe must report
+	// not-available instead of mis-classifying the failure as pool presence.
+	if strings.Contains(bodyStr, "barrier not enabled") ||
+		strings.Contains(bodyStr, "seal subsystem disabled") {
+		t.Logf("volumePoolAvailable: the cluster's seal subsystem is DISABLED — " +
+			"per-tenant barriers are unavailable on this cluster; run this suite " +
+			"against the seal-enabled harness (make integration-test-tenantbarrier)")
+		return false
+	}
 	return !strings.Contains(bodyStr, "volume pool not configured") &&
 		!strings.Contains(bodyStr, "pool not configured")
 }

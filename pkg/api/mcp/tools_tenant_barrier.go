@@ -18,7 +18,9 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
+	stderrors "errors"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -231,7 +233,30 @@ func (r *ToolRegistry) executeTenantBarrierTool(ctx context.Context, name string
 		// Should not happen — isTenantBarrierTool gates entry. Defensive return.
 		return nil, tenantBarrierServiceUnavailableQBError
 	}
-	return executor(ctx, svc, args)
+	result, err := executor(ctx, svc, args)
+	if err != nil {
+		return nil, mapTenantBarrierToolError(err)
+	}
+	return result, nil
+}
+
+// mapTenantBarrierToolError classifies qrdb sentinel errors into typed QBErrors
+// so mapErrorToJSONRPCError emits the canonical JSON-RPC code. The qrdb error
+// canon maps tenant.ErrBarrierNotEnabled (per-tenant barrier verb on a node
+// whose seal subsystem is disabled) to the failed-precondition class — 422 on
+// REST, codes.FailedPrecondition on gRPC — so the MCP transport surfaces the
+// PreconditionFailed JSON-RPC code for the same condition. The original error
+// is preserved as the QBError cause so the canonical message survives on the
+// wire. Every other error passes through unchanged.
+func mapTenantBarrierToolError(err error) error {
+	if stderrors.Is(err, qrdbsdk.ErrTenantBarrierNotEnabled) {
+		return &qberrors.QBError{
+			Code: qberrors.ErrPreconditionFailed,
+			Op:   "mcp.tenant_barrier",
+			Err:  err,
+		}
+	}
+	return err
 }
 
 // ---------------------------------------------------------------------------

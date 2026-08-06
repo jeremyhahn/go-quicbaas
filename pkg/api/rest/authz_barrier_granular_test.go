@@ -284,12 +284,12 @@ func TestBarrierAuthz_NegativeAndRegression(t *testing.T) {
 //   - /recovery/status → seal:status (NOT tenant_barrier:status via /status)
 func TestBarrierAuthz_SuffixAmbiguity(t *testing.T) {
 	cases := []struct {
-		name             string
-		path             string
-		method           string
-		wantResource     string
-		wantAction       string
-		wantScopeSuffix  string // last segment of expected scope, for readability
+		name            string
+		path            string
+		method          string
+		wantResource    string
+		wantAction      string
+		wantScopeSuffix string // last segment of expected scope, for readability
 	}{
 		{
 			name:   "barrier/unseal must be tenant_barrier:unseal not seal",
@@ -301,17 +301,17 @@ func TestBarrierAuthz_SuffixAmbiguity(t *testing.T) {
 			wantScopeSuffix: "tenant_barrier:unseal",
 		},
 		{
-			name:   "barrier/seal must be tenant_barrier:seal",
-			path:   "/api/v1/barrier/seal",
-			method: http.MethodPost,
+			name:            "barrier/seal must be tenant_barrier:seal",
+			path:            "/api/v1/barrier/seal",
+			method:          http.MethodPost,
 			wantResource:    "tenant_barrier",
 			wantAction:      "seal",
 			wantScopeSuffix: "tenant_barrier:seal",
 		},
 		{
-			name:   "shamir/unseal-shares must be barrier:unseal-share",
-			path:   "/api/v1/barrier/shamir/unseal-shares",
-			method: http.MethodPost,
+			name:            "shamir/unseal-shares must be barrier:unseal-share",
+			path:            "/api/v1/barrier/shamir/unseal-shares",
+			method:          http.MethodPost,
 			wantResource:    "barrier",
 			wantAction:      "unseal-share",
 			wantScopeSuffix: "barrier:unseal-share",

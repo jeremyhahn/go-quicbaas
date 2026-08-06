@@ -98,7 +98,7 @@ func TestSDK_M10_Surface_Reachable(t *testing.T) {
 
 		_ quicbaas.ACMEDirectory                    = quicbaas.ACMEDirectory{}
 		_ quicbaas.ACMECertificateAuthority         = nil
-		_ quicbaas.ACMEEnroll01CertificateAuthority = nil
+		_ quicbaas.ACMEEnroll01TCGCSRVerifier       = nil
 		_ quicbaas.ACMEChallengeVerifierFunc        = nil
 		_ quicbaas.ACMEClientConfig                 = quicbaas.ACMEClientConfig{}
 		_ quicbaas.ACMECertificateRequest           = quicbaas.ACMECertificateRequest{}

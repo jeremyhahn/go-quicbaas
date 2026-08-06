@@ -208,8 +208,11 @@ func (s *CeremonyServer) CeremonyClaimCertComplete(ctx context.Context, req *pb.
 	}, nil
 }
 
-// CeremonyClaimShare retrieves the Shamir share for the supplied officer.
-func (s *CeremonyServer) CeremonyClaimShare(ctx context.Context, req *pb.CeremonyClaimShareRequest) (*pb.CeremonyClaimShareResponse, error) {
+// CeremonyBeginClaimShare starts the Shamir share claim handshake for the
+// supplied officer, returning the challenge nonce to sign. The caller's
+// certificate thumbprint is derived by the qrdb node from the transport
+// connection, never from the request.
+func (s *CeremonyServer) CeremonyBeginClaimShare(ctx context.Context, req *pb.CeremonyBeginClaimShareRequest) (*pb.CeremonyBeginClaimShareResponse, error) {
 	if err := s.requireCeremonyService(); err != nil {
 		return nil, err
 	}
@@ -219,11 +222,42 @@ func (s *CeremonyServer) CeremonyClaimShare(ctx context.Context, req *pb.Ceremon
 	if req.GetUsername() == "" {
 		return nil, status.Error(codes.InvalidArgument, "username is required")
 	}
-	share, err := s.ceremonySvc.CeremonyClaimShare(ctx, req.GetUsername())
+	challenge, err := s.ceremonySvc.CeremonyBeginClaimShare(ctx, req.GetUsername())
 	if err != nil {
 		return nil, mapCeremonyError(err)
 	}
-	return &pb.CeremonyClaimShareResponse{Share: share}, nil
+	return &pb.CeremonyBeginClaimShareResponse{
+		NonceHex:  challenge.NonceHex,
+		ExpiresAt: formatTime(challenge.ExpiresAt),
+	}, nil
+}
+
+// CeremonyCompleteClaimShare completes the Shamir share claim handshake by
+// submitting the signed challenge nonce. The share is released exactly once.
+func (s *CeremonyServer) CeremonyCompleteClaimShare(ctx context.Context, req *pb.CeremonyCompleteClaimShareRequest) (*pb.CeremonyCompleteClaimShareResponse, error) {
+	if err := s.requireCeremonyService(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	if req.GetUsername() == "" {
+		return nil, status.Error(codes.InvalidArgument, "username is required")
+	}
+	if req.GetNonceHex() == "" {
+		return nil, status.Error(codes.InvalidArgument, "nonce_hex is required")
+	}
+	if len(req.GetSignature()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "signature is required")
+	}
+	result, err := s.ceremonySvc.CeremonyCompleteClaimShare(ctx, req.GetUsername(), req.GetNonceHex(), req.GetSignature())
+	if err != nil {
+		return nil, mapCeremonyError(err)
+	}
+	return &pb.CeremonyCompleteClaimShareResponse{
+		ShareIndex: int32(result.ShareIndex), //nolint:gosec // small index
+		Share:      result.ShareJSON,
+	}, nil
 }
 
 // CeremonySignCSR signs a CSR during the ceremony for an officer or

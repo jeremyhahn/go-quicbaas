@@ -22,6 +22,7 @@ import (
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	quicapi "github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
+	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
@@ -133,6 +134,18 @@ func (s *Server) startQUICServer() error {
 	quicServer.SetTenantBarrierService(s.buildTenantBarrierService())
 	s.logger.Info("Tenant barrier service wired into QUIC server (qrdb-quic ALPN)")
 
+	// Wire the qrdb user + user auth-factor lazy proxies into the QUIC
+	// server so the qrdb-quic ALPN dispatcher can serve the user.* lookup
+	// and userauthfactor.* methods. The proxies resolve the embedded
+	// node's servicers PER CALL (GetQRDBUserServicer /
+	// GetQRDBUserAuthFactorServicer) — the services are nil until Unseal
+	// completes the boot on seal-enabled paths, so eager capture is
+	// forbidden. While sealed, calls fail closed with the typed
+	// QRDBUserServiceUnavailableError.
+	quicServer.SetQRDBUserService(newQRDBUserServicerProxy(s))
+	quicServer.SetQRDBUserAuthFactorService(newQRDBUserAuthFactorServicerProxy(s))
+	s.logger.Info("User and UserAuthFactor services wired into QUIC server (qrdb-quic ALPN)")
+
 	// Wire the best-effort tenant-derivation hook. It derives the caller's
 	// tenant from the verified mTLS peer certificate (pinned SPIFFE trust
 	// domain, then home-realm discovery) and stamps it onto the request context
@@ -148,8 +161,35 @@ func (s *Server) startQUICServer() error {
 	// when RequireAuthz=true. It is a no-op otherwise, so
 	// QUIC keeps its legacy allow-all / token-only behaviour unless the operator
 	// opts into enforcement. Every transport routes authorization to the same
-	// qrdb PDP.
-	s.configureQUICAuthz(quicServer)
+	// qrdb PDP. Under RequireAuthz gate construction is fail-closed: a
+	// returned *AuthzGateConstructionError aborts startup.
+	if err := s.configureQUICAuthz(quicServer); err != nil {
+		return err
+	}
+
+	// Surface the qrdb-quic bridge posture: with RequireAuthz=true the bridge
+	// fail-closes on connections without a VERIFIED mTLS client certificate
+	// (the qrdb wire format carries no bearer token, so the verified peer
+	// certificate is the only per-caller credential the bridge can enforce
+	// post-unseal; the sealed-window unseal flow is unaffected). When
+	// TLSClientAuth=false the TLS handshake merely solicits a certificate
+	// (VerifyClientCertIfGiven), so cert-less callers can still connect but
+	// every post-unseal bridge method is rejected with the wire's
+	// auth-required status. Operators who want handshake-time rejection
+	// should set security.tls_client_auth=true.
+	if s.config.Security.RequireAuthz && !s.config.Security.TLSClientAuth {
+		s.logger.Warn("qrdb-quic bridge is certificate-gated: RequireAuthz=true with tls_client_auth=false — " +
+			"post-unseal qrdb-quic methods require a verified mTLS client certificate; " +
+			"cert-less callers are rejected per-method with the wire auth-required status")
+	}
+
+	// Install the probe-driven sealed-window gate on both dispatch paths
+	// (native opcodes + qrdb-quic ALPN bridge). A pass-through while the
+	// barrier is unsealed; the instant the barrier is sealed (post-boot
+	// `barrier seal`), only the canonical sealed-window surface remains
+	// reachable.
+	quicServer.SetSealedWindowGate(s.SealedWindowProbe(),
+		qbsealedwindow.QUICAllowlist(), qbsealedwindow.QRDBQUICAllowlist())
 
 	// Start QUIC server
 	if err := quicServer.Start(); err != nil {

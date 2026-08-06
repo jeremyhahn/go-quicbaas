@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -457,16 +458,50 @@ func TestFormatError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// formatError returns the same error, just formats it to stderr
-			result := formatError(tt.err)
-
+			// formatError returns the same error, just formats it to stderr.
+			// The nil case must be a pure pass-through: no "Error: <nil>"
+			// banner may be written (success paths return
+			// formatError(client.X(...)) directly).
+			stderr := captureStderr(t, func() {
+				result := formatError(tt.err)
+				if tt.err == nil {
+					assert.Nil(t, result)
+				} else {
+					assert.Equal(t, tt.err, result)
+				}
+			})
 			if tt.err == nil {
-				assert.Nil(t, result)
+				assert.Empty(t, stderr, "nil error must not print an error banner")
 			} else {
-				assert.Equal(t, tt.err, result)
+				assert.Contains(t, stderr, "Error", "non-nil error must be formatted to stderr")
 			}
 		})
 	}
+}
+
+// captureStderr redirects os.Stderr for the duration of fn and returns
+// everything written to it.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+
+	done := make(chan string, 1)
+	go func() {
+		data, _ := io.ReadAll(r)
+		done <- string(data)
+	}()
+
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stderr pipe: %v", err)
+	}
+	return <-done
 }
 
 func TestPutCommandInvalidArgs(t *testing.T) {

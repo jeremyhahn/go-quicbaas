@@ -28,6 +28,14 @@ import (
 // Services whose methods are intentionally unmapped (embedding, RAG, agent
 // runtime) are NOT listed here; they are denied by default-deny and their
 // absence from this slice documents that posture explicitly.
+//
+// The qrdb.v1 composition services (qrdb.v1.QRDBService and
+// qrdb.v1.UserAuthFactorService) that quicbaasd registers through
+// qrdbsdk.RegisterGRPCService (pkg/server/grpc_qrdb_service.go) do NOT appear
+// here: their grpc.ServiceDesc values live in qrdb's generated pb package,
+// which quicbaas must not import directly (SDK boundary). Their exhaustive
+// guard is TestQRDBGRPCPermissions_EveryRegisteredMethodMapped, which
+// enumerates the qrdb.v1 proto service descriptors from the protoregistry.
 var brokerServiceDescs = []grpc.ServiceDesc{
 	pb.QuicBaaS_ServiceDesc,
 	pb.Barrier_ServiceDesc,
@@ -88,12 +96,54 @@ var publicGRPCMethods = map[string]bool{
 	"/quicbaas.v1.QuicBaaS/Login":          true, // legacy unauthenticated login entry point
 	"/quicbaas.login.v1.Login/BeginLogin":  true,
 	"/quicbaas.login.v1.Login/FinishLogin": true,
+
+	// qrdb.v1 composition surface: Health is a liveness probe that carries no
+	// data, matching the public posture of /quicbaas.v1.QuicBaaS/Health. The
+	// qrdb SDK's gRPC and Unix transports probe it when building a client
+	// (sdk/go/qrdb.go buildQRDBClient), before any token exists.
+	"/qrdb.v1.QRDBService/Health": true,
 }
 
 // methodPermission is a qrdb-canonical (resource, action) tuple.
 type methodPermission struct {
 	resource string
 	action   string
+}
+
+// qrdbIdentityGatedMethods marks the qrdb.v1 barrier share-claim methods that
+// qrdb's own transport permission maps gate with the permission.IdentityGated
+// sentinel: any AUTHENTICATED identity may call, and the HANDLER enforces the
+// real credential (registered-officer lookup, mTLS SPKI thumbprint match, and
+// nonce signature verification). IdentityGated is deliberately NOT a
+// registered qrdb permission, so no platform token can ever carry it in scp.
+//
+// The quicbaas gRPC PEP enforces exact qrdb parity for these verbs through
+// the GRPCValidatorAuthenticator seam (platformtoken.Validator.Validate, the
+// scope-free authenticated path): the token is fully validated offline
+// (signature / iss / aud / exp + DPoP sender-constraint + per-tenant
+// liveness) but NO scp permission is demanded — see authorizeGRPCRequest.
+// An anonymous caller is denied Unauthenticated; an authorizer without the
+// authenticated seam denies outright (fail closed); every deny is mapped by
+// validatorGRPCStatus like any other decision. These methods therefore stay
+// OUT of grpcMethodPermissions (mapping them would invent policy qrdb does
+// not define) and OUT of publicGRPCMethods (public would drop qrdb's
+// authenticated-identity requirement). While the daemon is sealed the
+// sealed-window allowlist governs them separately (share claims are
+// operationally a sealed-window activity).
+//
+// The ceremony share-claim verbs (the officer CeremonyBeginClaimShare /
+// CeremonyCompleteClaimShare handshake and the custodian
+// CeremonyClaimShareBegin / CeremonyClaimShareComplete pair) are NOT in this set
+// even though qrdb's transport maps also gate them with IdentityGated: qrdb
+// registers dedicated ceremony:claim_share_begin / ceremony:claim_share_complete
+// permissions, and quicbaas already maps the identical verbs on its own
+// quicbaas.ceremony.v1.Ceremony surface to those permissions, so the qrdb.v1
+// mirror carries the same (strictly narrower than qrdb) scope requirement.
+var qrdbIdentityGatedMethods = map[string]bool{
+	"/qrdb.v1.QRDBService/BarrierShareClaimBegin":            true,
+	"/qrdb.v1.QRDBService/BarrierShareClaimComplete":         true,
+	"/qrdb.v1.QRDBService/BarrierRecoveryShareClaimBegin":    true,
+	"/qrdb.v1.QRDBService/BarrierRecoveryShareClaimComplete": true,
 }
 
 // grpcMethodPermissions maps each protected gRPC FullMethod to the qrdb-canonical
@@ -298,7 +348,8 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.ceremony.v1.Ceremony/CeremonyListOfficers":          {"ceremony", "status"},
 	"/quicbaas.ceremony.v1.Ceremony/CeremonyClaimCertBegin":        {"ceremony", "claim_cert"},
 	"/quicbaas.ceremony.v1.Ceremony/CeremonyClaimCertComplete":     {"ceremony", "claim_cert"},
-	"/quicbaas.ceremony.v1.Ceremony/CeremonyClaimShare":            {"ceremony", "claim_share_begin"},
+	"/quicbaas.ceremony.v1.Ceremony/CeremonyBeginClaimShare":       {"ceremony", "claim_share_begin"},
+	"/quicbaas.ceremony.v1.Ceremony/CeremonyCompleteClaimShare":    {"ceremony", "claim_share_complete"},
 	"/quicbaas.ceremony.v1.Ceremony/CeremonySignCSR":               {"ceremony", "sign_csr"},
 
 	// ---- quicbaas.vector.v1.VectorDB ----
@@ -488,6 +539,121 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.ollama.v1.OllamaService/Embed":          {"ollama", "embed"},
 	"/quicbaas.ollama.v1.OllamaService/EmbedBatch":     {"ollama", "embed"},
 	"/quicbaas.ollama.v1.OllamaService/EmbedWithModel": {"ollama", "embed"},
+
+	// ==== qrdb.v1 composition surface ====
+	//
+	// quicbaasd registers qrdb's QRDBServiceServer (and the standalone
+	// qrdb.v1.UserAuthFactorService) on the SAME grpc.Server as the quicbaas
+	// services (pkg/server/grpc_qrdb_service.go), so the qrdb SDK's gRPC and
+	// Unix transports (go-qrdb sdk/go buildQRDBTransport) can dial the
+	// barrier / ceremony / credential / user / user-auth-factor surfaces
+	// through the broker listener. The entries below mirror go-qrdb's OWN
+	// gRPC permission map (go-qrdb/pkg/auth/middleware/mapping.go
+	// grpcPermissions) verbatim, so a permission grant authorizes the same
+	// verb identically on a direct qrdb node and through the broker.
+	//
+	// Scope: ONLY the families whose servicers buildQRDBRegisterOptions
+	// actually wires — barrier, ceremony, credential, user, user-auth-factor
+	// — plus Health (public, above) and Status. Every other qrdb.v1 method
+	// (KV, lease, lock, index, timeseries, vector, ...) dispatches to
+	// codes.Unimplemented server-side and stays default-denied here; the
+	// quicbaas-namespaced services are the canonical broker surface for
+	// those capabilities.
+	//
+	// These mappings apply POST-unseal. While the daemon is sealed the authz
+	// gate is not in force and the sealed-window allowlist governs instead.
+
+	// ---- qrdb.v1.QRDBService: admin status ----
+	// Health is public (see publicGRPCMethods). Status mirrors both qrdb's
+	// AdminStatus entry and the broker's own ClusterStatus mapping.
+	"/qrdb.v1.QRDBService/Status": {"admin", "status"},
+
+	// ---- qrdb.v1.QRDBService: system barrier lifecycle ----
+	"/qrdb.v1.QRDBService/BarrierInitialize":        {"seal", "bootstrap"},
+	"/qrdb.v1.QRDBService/BarrierUnseal":            {"seal", "unseal"},
+	"/qrdb.v1.QRDBService/BarrierSeal":              {"seal", "seal"},
+	"/qrdb.v1.QRDBService/BarrierStatus":            {"seal", "status"},
+	"/qrdb.v1.QRDBService/BarrierShamirInitialize":  {"seal", "initialize_shamir"},
+	"/qrdb.v1.QRDBService/BarrierShamirUnsealShare": {"barrier", "unseal-share"},
+	// UnsealShares (plural) submits a batch of shares toward the same quorum.
+	"/qrdb.v1.QRDBService/BarrierShamirUnsealShares": {"barrier", "unseal-share"},
+	"/qrdb.v1.QRDBService/BarrierRekey":              {"seal", "rekey"},
+	"/qrdb.v1.QRDBService/BarrierEnableEncryption":   {"seal", "enable_encryption"},
+	"/qrdb.v1.QRDBService/BarrierRootToken":          {"seal", "bootstrap"},
+	// Security Officer registration / listing. The four share-claim methods
+	// (BarrierShareClaimBegin/Complete, BarrierRecoveryShareClaimBegin/
+	// Complete) are IdentityGated in qrdb and deliberately NOT mapped here —
+	// see qrdbIdentityGatedMethods.
+	"/qrdb.v1.QRDBService/BarrierOfficerRegister":         {"seal", "officer_register"},
+	"/qrdb.v1.QRDBService/BarrierOfficerList":             {"seal", "officer_list"},
+	"/qrdb.v1.QRDBService/BarrierOfficerClaimStatus":      {"seal", "officer_list"},
+	"/qrdb.v1.QRDBService/BarrierShamirSealVote":          {"seal", "submit_seal_vote"},
+	"/qrdb.v1.QRDBService/BarrierRecoveryOfficerRegister": {"seal", "officer_register"},
+	// Recovery key lifecycle.
+	"/qrdb.v1.QRDBService/BarrierRecoveryGenerate": {"seal", "generate_recovery"},
+	"/qrdb.v1.QRDBService/BarrierRecoveryRecover":  {"seal", "recover_with_keys"},
+	"/qrdb.v1.QRDBService/BarrierRecoveryDelete":   {"seal", "generate_recovery"},
+	"/qrdb.v1.QRDBService/BarrierRecoveryStatus":   {"seal", "status"},
+
+	// ---- qrdb.v1.QRDBService: Shamir initialization ceremony ----
+	// The custodian claim-share verbs are IdentityGated in qrdb's own maps,
+	// but qrdb registers dedicated ceremony:claim_share_begin/_complete
+	// permissions and quicbaas already maps the identical verb on
+	// quicbaas.ceremony.v1.Ceremony to them, so the qrdb.v1 mirror carries
+	// the same (strictly narrower than qrdb) scope requirement: the token
+	// must carry the claim_share scope AND the handler still verifies the
+	// enrolled custodian's factor challenge.
+	"/qrdb.v1.QRDBService/CeremonyInitialize":            {"ceremony", "initialize"},
+	"/qrdb.v1.QRDBService/CeremonyStatus":                {"ceremony", "status"},
+	"/qrdb.v1.QRDBService/CeremonyClaimCertBegin":        {"ceremony", "claim_cert"},
+	"/qrdb.v1.QRDBService/CeremonyClaimCertComplete":     {"ceremony", "claim_cert"},
+	"/qrdb.v1.QRDBService/CeremonyBeginClaimShare":       {"ceremony", "claim_share_begin"},
+	"/qrdb.v1.QRDBService/CeremonyCompleteClaimShare":    {"ceremony", "claim_share_complete"},
+	"/qrdb.v1.QRDBService/CeremonyClaimShareBegin":       {"ceremony", "claim_share_begin"},
+	"/qrdb.v1.QRDBService/CeremonyClaimShareComplete":    {"ceremony", "claim_share_complete"},
+	"/qrdb.v1.QRDBService/CeremonySignCSR":               {"ceremony", "sign_csr"},
+	"/qrdb.v1.QRDBService/CeremonyEnrollExternalOfficer": {"ceremony", "enroll_custodian"},
+	"/qrdb.v1.QRDBService/CeremonySubmitUnsealShare":     {"barrier", "unseal-share"},
+
+	// ---- qrdb.v1.QRDBService: versioned named-credential rotation ----
+	"/qrdb.v1.QRDBService/CredentialSubmit":          {"credentials", "submit"},
+	"/qrdb.v1.QRDBService/CredentialStrategy":        {"credentials", "strategy"},
+	"/qrdb.v1.QRDBService/CredentialList":            {"credentials", "list"},
+	"/qrdb.v1.QRDBService/CredentialDelete":          {"credentials", "delete"},
+	"/qrdb.v1.QRDBService/CredentialRotate":          {"credentials", "rotate"},
+	"/qrdb.v1.QRDBService/CredentialGCExpired":       {"credentials", "gc_expired"},
+	"/qrdb.v1.QRDBService/CredentialRetrieveVersion": {"credentials", "retrieve_version"},
+	"/qrdb.v1.QRDBService/CredentialListVersions":    {"credentials", "list_versions"},
+	"/qrdb.v1.QRDBService/CredentialStore":           {"credentials", "store"},
+	"/qrdb.v1.QRDBService/CredentialRetrieve":        {"credentials", "retrieve"},
+
+	// ---- qrdb.v1.QRDBService: user management ----
+	// Backs the qrdb SDK's Security().Auth().Factors() subject resolution
+	// (resolveSubjectUserID) and user CRUD. Same vocabulary as the REST
+	// scope rules (pkg/api/rest/authz_default_deny.go) and the MCP
+	// qrdb_user_* tool mappings (pkg/api/mcp/authz_qrdb.go).
+	"/qrdb.v1.QRDBService/CreateUser":              {"users", "create"},
+	"/qrdb.v1.QRDBService/GetUser":                 {"users", "read"},
+	"/qrdb.v1.QRDBService/GetUserByUsername":       {"users", "read"},
+	"/qrdb.v1.QRDBService/GetUserByCertThumbprint": {"users", "get_by_cert_thumbprint"},
+	"/qrdb.v1.QRDBService/AddCertBinding":          {"users", "add_cert_binding"},
+	"/qrdb.v1.QRDBService/UpdateUser":              {"users", "update"},
+	"/qrdb.v1.QRDBService/DeleteUser":              {"users", "delete"},
+	"/qrdb.v1.QRDBService/ListUsers":               {"users", "list"},
+	"/qrdb.v1.QRDBService/EnableUser":              {"users", "enable"},
+	"/qrdb.v1.QRDBService/DisableUser":             {"users", "disable"},
+
+	// ---- qrdb.v1.UserAuthFactorService (user-login factor surface) ----
+	// Registered as a separate proto service by qrdbsdk.RegisterGRPCService
+	// alongside QRDBService. 1:1 with qrdb's UserAuthFactorService entries
+	// and the MCP qrdb_user_authfactor_* tool mappings.
+	"/qrdb.v1.UserAuthFactorService/Add":     {"user_authfactors", "add"},
+	"/qrdb.v1.UserAuthFactorService/List":    {"user_authfactors", "list"},
+	"/qrdb.v1.UserAuthFactorService/Get":     {"user_authfactors", "get"},
+	"/qrdb.v1.UserAuthFactorService/Remove":  {"user_authfactors", "remove"},
+	"/qrdb.v1.UserAuthFactorService/Rotate":  {"user_authfactors", "rotate"},
+	"/qrdb.v1.UserAuthFactorService/Relabel": {"user_authfactors", "relabel"},
+	"/qrdb.v1.UserAuthFactorService/Login":   {"user_authfactors", "login"},
 }
 
 // grpcResourceAndAction returns the qrdb-canonical (resource, action) for the

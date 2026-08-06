@@ -999,3 +999,63 @@ func TestIAMHandler_CreateUser_UnknownRole_NotFoundNoUser(t *testing.T) {
 	_, err := memStorage.GetUserByEmail(ctx, "phantom@example.com")
 	require.Error(t, err, "no user must be created after failed role validation")
 }
+
+// TestIAMHandler_CreateUser_WithGroups proves the REST body schema accepts a
+// "groups" list and forwards it through the shared IdentityStore seam: the
+// created user carries the group, the persisted record matches, and the
+// group's member list references the user back (bidirectional membership).
+func TestIAMHandler_CreateUser_WithGroups(t *testing.T) {
+	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+	require.NoError(t, memStorage.CreateGroup(ctx, &iam.Group{ID: "group-ops", TenantID: "tenant1", Name: "ops"}))
+
+	body := `{"email": "withgroups@example.com", "username": "withgroups", "name": "With Groups", "groups": ["group-ops"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+	w := httptest.NewRecorder()
+
+	handler.CreateUser(w, req)
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, []interface{}{"group-ops"}, resp["groups"], "response must carry the group memberships")
+
+	// Persisted record carries the groups too.
+	stored, err := memStorage.GetUserByEmail(ctx, "withgroups@example.com")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"group-ops"}, stored.Groups)
+
+	// Bidirectional membership: the group's member list references the user.
+	group, err := memStorage.GetGroup(ctx, "tenant1", "group-ops")
+	require.NoError(t, err)
+	assert.Equal(t, []string{stored.ID}, group.Members)
+}
+
+// TestIAMHandler_CreateUser_UnknownGroup_NotFoundNoUser proves the REST
+// transport inherits the validate-before-create contract for groups: an
+// unknown group reference returns 404 and NO user record is written.
+func TestIAMHandler_CreateUser_UnknownGroup_NotFoundNoUser(t *testing.T) {
+	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+
+	body := `{"email": "phantomgroup@example.com", "username": "phantomgroup", "name": "Phantom Group", "groups": ["no-such-group"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+	w := httptest.NewRecorder()
+
+	handler.CreateUser(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code, "body: %s", w.Body.String())
+
+	// Zero side effects: the user must NOT exist.
+	_, err := memStorage.GetUserByEmail(ctx, "phantomgroup@example.com")
+	require.Error(t, err, "no user must be created after failed group validation")
+}

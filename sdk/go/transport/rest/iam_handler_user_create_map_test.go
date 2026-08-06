@@ -58,3 +58,45 @@ func TestMapUserCreateRequest_NoRolesOmitted(t *testing.T) {
 		})
 	}
 }
+
+// TestMapUserCreateRequest_GroupsForwarded proves the SDK REST mapper no
+// longer drops the "groups" field: groups must reach the REST body so the
+// server can validate-before-create (transport parity with gRPC/Unix/QUIC).
+func TestMapUserCreateRequest_GroupsForwarded(t *testing.T) {
+	body := mapUserCreateRequest(map[string]interface{}{
+		"email":        "groups@example.com",
+		"username":     "groupuser",
+		"display_name": "Group User",
+		"groups":       []interface{}{"group-a", "group-b"},
+	})
+
+	groups, ok := body["groups"].([]interface{})
+	if !ok {
+		t.Fatalf("Expected groups in mapped body, got %v", body)
+	}
+	if len(groups) != 2 || groups[0] != "group-a" || groups[1] != "group-b" {
+		t.Fatalf("Expected groups [group-a group-b], got %v", groups)
+	}
+}
+
+// TestMapUserCreateRequest_NoGroupsOmitted proves an absent, empty, or
+// mistyped groups list does not inject a groups key into the REST body.
+func TestMapUserCreateRequest_NoGroupsOmitted(t *testing.T) {
+	tests := []struct {
+		name string
+		req  map[string]interface{}
+	}{
+		{"absent", map[string]interface{}{"email": "a@b.co", "username": "abc"}},
+		{"empty", map[string]interface{}{"email": "a@b.co", "username": "abc", "groups": []interface{}{}}},
+		{"wrong type", map[string]interface{}{"email": "a@b.co", "username": "abc", "groups": "not-a-list"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := mapUserCreateRequest(tt.req)
+			if _, exists := body["groups"]; exists {
+				t.Fatalf("Expected no groups key for %s input, got %v", tt.name, body["groups"])
+			}
+		})
+	}
+}

@@ -196,6 +196,27 @@ var pepMapping = map[string]pepResource{
 	"/users":            {resource: "users", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
 	"/v1/users/factors": {resource: "user_authfactors", verbs: crudVerbs{get: "get", list: "list", create: "add", del: "remove"}},
 
+	// qrdb-wire versioned named-credential rotation mount at the router root
+	// (server.go /v1/credentials) — same root-wire precedent as /v1/barrier.
+	// The registered per-endpoint actions resolve via credentialWireOps
+	// (pepSpecialRules) so REST authorizes the same credentials:* verb as the
+	// gRPC qrdb.v1.QRDBService Credential* canon; this coarse entry covers
+	// the collection list (GET /v1/credentials -> credentials:list), the
+	// bare DELETE /{name} (credentials:delete), and any future sub-paths.
+	"/v1/credentials": {resource: "credentials", verbs: crudVerbs{get: "retrieve", list: "list", create: "store", del: "delete"}},
+
+	// Initialization-ceremony surfaces: the qrdb-wire root mounts
+	// (/v1/ceremony + /v1/init, server.go) and the canonical /api/v1/init
+	// mirror. The registered per-endpoint actions resolve via
+	// ceremonyGranularOps (pepSpecialRules) so REST authorizes the same
+	// ceremony:* verb as the gRPC quicbaas.ceremony.v1 / qrdb.v1 canon;
+	// these coarse entries keep any future sub-paths mapped (degrading to
+	// the same ceremony family the defaultDenyScopeTable uses) rather than
+	// unmapped/denied.
+	"/v1/ceremony": {resource: "ceremony", verbs: crudVerbs{get: "status", list: "status", create: "initialize", del: "initialize"}},
+	"/v1/init":     {resource: "ceremony", verbs: crudVerbs{get: "status", list: "status", create: "initialize", del: "initialize"}},
+	"/api/v1/init": {resource: "ceremony", verbs: crudVerbs{get: "status", list: "status", create: "initialize", del: "initialize"}},
+
 	// IAM management surfaces.
 	"/api/v1/users":   {resource: "users", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
 	"/api/v1/roles":   {resource: "roles", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
@@ -360,6 +381,79 @@ func buildSSHSpecialRules() []pepSpecialRule {
 				prefix:   prefix,
 				suffix:   op.suffix,
 				resource: op.resource,
+				action:   op.action,
+			})
+		}
+	}
+	return rules
+}
+
+// credentialWireOps maps the non-CRUD endpoints of the qrdb-wire
+// /v1/credentials mount (server.go) to their registered qrdb credentials:*
+// actions, mirroring the gRPC canon byte-for-byte
+// (pkg/api/grpc/authz_mapping.go qrdb.v1.QRDBService Credential* entries) so
+// a permission grant authorizes the same credential verb identically on REST
+// and gRPC. Suffixes are ordered so the tier-based matching resolves the
+// /versions vs /versions/{version} overlap: "/versions" wins at tier 2
+// (path ends with it) for the version listing, while "/versions/" wins at
+// tier 1 (longer contained segment) for a single-version retrieve.
+var credentialWireOps = []pepSpecialRule{
+	{http.MethodGet, "/v1/credentials", "/strategy", "credentials", "strategy"},
+	{http.MethodPost, "/v1/credentials", "/submit", "credentials", "submit"},
+	{http.MethodPost, "/v1/credentials", "/rotate", "credentials", "rotate"},
+	{http.MethodPost, "/v1/credentials", "/gc", "credentials", "gc_expired"},
+	{http.MethodGet, "/v1/credentials", "/versions", "credentials", "list_versions"},
+	{http.MethodGet, "/v1/credentials", "/versions/", "credentials", "retrieve_version"},
+}
+
+// ceremonyGranularOp encodes one initialization-ceremony operation: the path
+// suffix that uniquely identifies the endpoint, the HTTP method, and the
+// registered qrdb ceremony action. Shared across every ceremony mount via
+// ceremonyPrefixes (barrierGranularOps precedent).
+type ceremonyGranularOp struct {
+	suffix string
+	method string
+	action string
+}
+
+// ceremonyGranularOps is the single source of truth for the ceremony
+// operations registered on the /v1/ceremony + /v1/init wire mounts and the
+// /api/v1/init mirror. The actions mirror the gRPC canon
+// (pkg/api/grpc/authz_mapping.go quicbaas.ceremony.v1.Ceremony /
+// qrdb.v1.QRDBService Ceremony* entries) byte-for-byte. A suffix that is not
+// mounted under a given prefix is inert (the router 404s first).
+var ceremonyGranularOps = []ceremonyGranularOp{
+	{"/enroll-external-officer", http.MethodPost, "enroll_custodian"},
+	{"/officer-share/complete", http.MethodPost, "claim_share_complete"},
+	{"/officer-share/begin", http.MethodPost, "claim_share_begin"},
+	{"/claim-cert/complete", http.MethodPost, "claim_cert"},
+	{"/claim-cert/begin", http.MethodPost, "claim_cert"},
+	{"/initialize", http.MethodPost, "initialize"},
+	{"/officers", http.MethodGet, "status"},
+	{"/sign-csr", http.MethodPost, "sign_csr"},
+	{"/status", http.MethodGet, "status"},
+}
+
+// ceremonyPrefixes lists every path prefix the ceremony surface is mounted
+// under: the two qrdb-wire root mounts and the canonical /api/v1 mirror.
+var ceremonyPrefixes = []string{
+	"/v1/ceremony",
+	"/v1/init",
+	"/api/v1/init",
+}
+
+// buildCeremonySpecialRules generates the pepSpecialRule entries for the
+// ceremony surface from ceremonyGranularOps × ceremonyPrefixes, keeping the
+// per-endpoint source of truth in a single slice (barrier/SSH precedent).
+func buildCeremonySpecialRules() []pepSpecialRule {
+	rules := make([]pepSpecialRule, 0, len(ceremonyPrefixes)*len(ceremonyGranularOps))
+	for _, prefix := range ceremonyPrefixes {
+		for _, op := range ceremonyGranularOps {
+			rules = append(rules, pepSpecialRule{
+				method:   op.method,
+				prefix:   prefix,
+				suffix:   op.suffix,
+				resource: "ceremony",
 				action:   op.action,
 			})
 		}
@@ -566,6 +660,15 @@ var pepSpecialRulesBase = []pepSpecialRule{
 	{http.MethodGet, "/api/v1/iam", "/sessions", "users", "read"},
 	{http.MethodDelete, "/api/v1/iam", "/sessions", "users", "update"},
 
+	// ---- Tenant-scoped user session administration ----
+	// DELETE /api/v1/tenants/{t}/users/{u}/sessions (admin revoke-all — the
+	// REST projection of the parameterized SDK Session/RevokeAll verb, gRPC
+	// SessionService/RevokeAllSessions) mutates the target user's session
+	// state, so it authorizes as users:update — the same vocabulary as the
+	// self-scoped /api/v1/iam/sessions revocations — rather than the
+	// surface-wide tenants:delete the prefix mapping would otherwise apply.
+	{http.MethodDelete, "/api/v1/tenants", "/sessions", "users", "update"},
+
 	// ---- Per-tenant barrier lifecycle ----
 	// These leaf actions (tier 2) win over the surface-wide "/api/v1/tenants"
 	// prefix mapping (resource "tenants"), so per-tenant barrier ops authorize
@@ -586,15 +689,21 @@ var pepSpecialRulesBase = []pepSpecialRule{
 
 // pepSpecialRules is the active special-rule list consulted by
 // matchSpecialRule. It is the union of pepSpecialRulesBase (all non-barrier
-// broker surfaces) and the barrier-granular rules for both /api/v1/barrier and
-// /v1/barrier generated from barrierGranularOps. Combining them here keeps
-// a single source of truth for the 13 barrier operations.
+// broker surfaces), the barrier-granular rules for both /api/v1/barrier and
+// /v1/barrier generated from barrierGranularOps, the ceremony rules for the
+// /v1/ceremony + /v1/init + /api/v1/init mounts generated from
+// ceremonyGranularOps, the /v1/credentials qrdb-wire rules, and the SSH
+// rules. Combining them here keeps a single source of truth per surface.
 var pepSpecialRules = func() []pepSpecialRule {
 	barrier := buildBarrierSpecialRules()
+	ceremony := buildCeremonySpecialRules()
 	ssh := buildSSHSpecialRules()
-	combined := make([]pepSpecialRule, 0, len(pepSpecialRulesBase)+len(barrier)+len(ssh))
+	combined := make([]pepSpecialRule, 0,
+		len(pepSpecialRulesBase)+len(barrier)+len(ceremony)+len(credentialWireOps)+len(ssh))
 	combined = append(combined, pepSpecialRulesBase...)
 	combined = append(combined, barrier...)
+	combined = append(combined, ceremony...)
+	combined = append(combined, credentialWireOps...)
 	combined = append(combined, ssh...)
 	return combined
 }()

@@ -198,7 +198,10 @@ func (s *stubCeremonyService) CeremonyBeginClaimCert(context.Context, string) (*
 func (s *stubCeremonyService) CeremonyCompleteClaimCert(context.Context, string, string, []byte) (*qrdbsdk.CeremonyClaimCertResult, error) {
 	return nil, stubErr
 }
-func (s *stubCeremonyService) CeremonyClaimShare(context.Context, string) ([]byte, error) {
+func (s *stubCeremonyService) CeremonyBeginClaimShare(context.Context, string, string) (*qrdbsdk.CeremonyChallenge, error) {
+	return nil, stubErr
+}
+func (s *stubCeremonyService) CeremonyCompleteClaimShare(context.Context, string, string, []byte, string) (*qrdbservice.CeremonyShareClaimResult, error) {
 	return nil, stubErr
 }
 func (s *stubCeremonyService) CeremonySignCSR(context.Context, string, string, string, string) (*qrdbsdk.CeremonySignCSRResult, error) {

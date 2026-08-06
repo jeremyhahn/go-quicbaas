@@ -39,7 +39,8 @@ type mockCeremonyService struct {
 	statusFn         func(ctx context.Context) (*service.CeremonyStatusInfo, error)
 	beginFn          func(ctx context.Context, username string) (*service.CeremonyChallenge, error)
 	completeFn       func(ctx context.Context, username, nonceHex, sigB64 string) (*service.CeremonyClaimCertResult, error)
-	claimShareFn     func(ctx context.Context, username string) (string, error)
+	beginShareFn     func(ctx context.Context, username string) (*service.CeremonyChallenge, error)
+	completeShareFn  func(ctx context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error)
 	signCSRFn        func(ctx context.Context, username, soPin, csrPEM, role string) (*service.CeremonySignCSRResult, error)
 	enrollExternalFn func(ctx context.Context, req *service.CeremonyEnrollExternalOfficerRequest) (*service.CeremonyEnrollExternalOfficerResponse, error)
 }
@@ -74,11 +75,18 @@ func (m *mockCeremonyService) CeremonyCompleteClaimCert(ctx context.Context, use
 	return &service.CeremonyClaimCertResult{}, nil
 }
 
-func (m *mockCeremonyService) CeremonyClaimShare(ctx context.Context, username string) (string, error) {
-	if m.claimShareFn != nil {
-		return m.claimShareFn(ctx, username)
+func (m *mockCeremonyService) CeremonyBeginClaimShare(ctx context.Context, username string) (*service.CeremonyChallenge, error) {
+	if m.beginShareFn != nil {
+		return m.beginShareFn(ctx, username)
 	}
-	return "", nil
+	return &service.CeremonyChallenge{}, nil
+}
+
+func (m *mockCeremonyService) CeremonyCompleteClaimShare(ctx context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error) {
+	if m.completeShareFn != nil {
+		return m.completeShareFn(ctx, username, nonceHex, signature)
+	}
+	return &service.CeremonyClaimShareResult{}, nil
 }
 
 func (m *mockCeremonyService) CeremonySignCSR(ctx context.Context, username, soPin, csrPEM, role string) (*service.CeremonySignCSRResult, error) {
@@ -343,34 +351,83 @@ func TestCeremonyClaimCertComplete_Validation(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CeremonyClaimShare
+// CeremonyBeginClaimShare / CeremonyCompleteClaimShare
 // ---------------------------------------------------------------------------
 
-func TestCeremonyClaimShare_Success(t *testing.T) {
+func TestCeremonyBeginClaimShare_Success(t *testing.T) {
+	expires := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	mock := &mockCeremonyService{
-		claimShareFn: func(_ context.Context, username string) (string, error) {
+		beginShareFn: func(_ context.Context, username string) (*service.CeremonyChallenge, error) {
 			if username != "officer" {
 				t.Fatalf("expected officer, got %q", username)
 			}
-			return "share-b64", nil
+			return &service.CeremonyChallenge{NonceHex: "deadbeef", ExpiresAt: expires}, nil
 		},
 	}
 	srv := newTestCeremonyServer(mock)
-	resp, err := srv.CeremonyClaimShare(context.Background(), &pb.CeremonyClaimShareRequest{Username: "officer"})
+	resp, err := srv.CeremonyBeginClaimShare(context.Background(), &pb.CeremonyBeginClaimShareRequest{Username: "officer"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.GetShare() != "share-b64" {
-		t.Fatalf("expected share-b64, got %q", resp.GetShare())
+	if resp.GetNonceHex() != "deadbeef" {
+		t.Fatalf("expected deadbeef, got %q", resp.GetNonceHex())
+	}
+	if resp.GetExpiresAt() == "" {
+		t.Fatal("expected expires_at to be set")
 	}
 }
 
-func TestCeremonyClaimShare_Validation(t *testing.T) {
+func TestCeremonyBeginClaimShare_Validation(t *testing.T) {
 	srv := newTestCeremonyServer(&mockCeremonyService{})
-	_, err := srv.CeremonyClaimShare(context.Background(), nil)
+	_, err := srv.CeremonyBeginClaimShare(context.Background(), nil)
 	assertGRPCCode(t, err, codes.InvalidArgument)
-	_, err = srv.CeremonyClaimShare(context.Background(), &pb.CeremonyClaimShareRequest{Username: ""})
+	_, err = srv.CeremonyBeginClaimShare(context.Background(), &pb.CeremonyBeginClaimShareRequest{Username: ""})
 	assertGRPCCode(t, err, codes.InvalidArgument)
+}
+
+func TestCeremonyCompleteClaimShare_Success(t *testing.T) {
+	mock := &mockCeremonyService{
+		completeShareFn: func(_ context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error) {
+			if username != "officer" || nonceHex != "deadbeef" || string(signature) != "sig" {
+				t.Fatalf("unexpected params: %s %s %q", username, nonceHex, signature)
+			}
+			return &service.CeremonyClaimShareResult{ShareIndex: 2, ShareJSON: `{"share":"v"}`}, nil
+		},
+	}
+	srv := newTestCeremonyServer(mock)
+	resp, err := srv.CeremonyCompleteClaimShare(context.Background(), &pb.CeremonyCompleteClaimShareRequest{
+		Username:  "officer",
+		NonceHex:  "deadbeef",
+		Signature: []byte("sig"),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.GetShareIndex() != 2 {
+		t.Fatalf("expected share_index 2, got %d", resp.GetShareIndex())
+	}
+	if resp.GetShare() != `{"share":"v"}` {
+		t.Fatalf("unexpected share: %q", resp.GetShare())
+	}
+}
+
+func TestCeremonyCompleteClaimShare_Validation(t *testing.T) {
+	srv := newTestCeremonyServer(&mockCeremonyService{})
+	cases := []struct {
+		name string
+		req  *pb.CeremonyCompleteClaimShareRequest
+	}{
+		{"nil request", nil},
+		{"missing username", &pb.CeremonyCompleteClaimShareRequest{NonceHex: "x", Signature: []byte("s")}},
+		{"missing nonce_hex", &pb.CeremonyCompleteClaimShareRequest{Username: "u", Signature: []byte("s")}},
+		{"missing signature", &pb.CeremonyCompleteClaimShareRequest{Username: "u", NonceHex: "x"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := srv.CeremonyCompleteClaimShare(context.Background(), c.req)
+			assertGRPCCode(t, err, codes.InvalidArgument)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -538,8 +595,12 @@ func TestCeremony_AllHandlersReturnUnavailableWhenUnwired(t *testing.T) {
 			_, err := srv.CeremonyClaimCertComplete(ctx, &pb.CeremonyClaimCertCompleteRequest{Username: "u", NonceHex: "x", Signature: "s"})
 			return err
 		}},
-		{"CeremonyClaimShare", func() error {
-			_, err := srv.CeremonyClaimShare(ctx, &pb.CeremonyClaimShareRequest{Username: "u"})
+		{"CeremonyBeginClaimShare", func() error {
+			_, err := srv.CeremonyBeginClaimShare(ctx, &pb.CeremonyBeginClaimShareRequest{Username: "u"})
+			return err
+		}},
+		{"CeremonyCompleteClaimShare", func() error {
+			_, err := srv.CeremonyCompleteClaimShare(ctx, &pb.CeremonyCompleteClaimShareRequest{Username: "u", NonceHex: "x", Signature: []byte("s")})
 			return err
 		}},
 		{"CeremonySignCSR", func() error {

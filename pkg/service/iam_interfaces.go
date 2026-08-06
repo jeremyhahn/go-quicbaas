@@ -192,6 +192,9 @@ type IAMComponents interface {
 	// persistent store first-boot writes the activation invite into, so an
 	// operator can redeem the banner token (possibly across restarts).
 	GetInviteStore() iam.InviteStore
+	// GetPIVActivator returns the PIV invite-activation service, or nil when
+	// PIV activation is not configured (iam.piv_login disabled or no CA file).
+	GetPIVActivator() *iam.PIVActivator
 	// GetAdminManager returns the admin manager for delegated administration.
 	GetAdminManager() *iam.AdminManager
 	// GetGDPRManager returns the GDPR compliance manager.
@@ -235,6 +238,8 @@ type IAMServiceProvider interface {
 	GetSessionManager(ctx context.Context) (SessionManager, error)
 	// GetInviteStore returns the one-time invite token store.
 	GetInviteStore(ctx context.Context) (iam.InviteStore, error)
+	// GetPIVActivator returns the PIV invite-activation service.
+	GetPIVActivator(ctx context.Context) (*iam.PIVActivator, error)
 	// GetAdminManager returns the admin manager.
 	GetAdminManager(ctx context.Context) (*iam.AdminManager, error)
 	// GetGDPRManager returns the GDPR manager.

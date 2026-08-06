@@ -161,6 +161,21 @@ var toolResourceMapping = map[string]resourceAction{
 	"qrdb_user_delete": {interfaces.ResourceUsers, interfaces.ActionDelete},
 	"qrdb_user_list":   {interfaces.ResourceUsers, interfaces.ActionRead},
 
+	// qrdb user lookup + user-login factor surface (qrdb mirror; see
+	// tools_qrdb_users.go). Read-only lookups and factor reads map to
+	// ActionRead; enroll/rotate/relabel to ActionWrite; remove to
+	// ActionDelete — the same treatment the qrdb_credential_* entries get.
+	"qrdb_user_get":                    {interfaces.ResourceUsers, interfaces.ActionRead},
+	"qrdb_user_get_by_username":        {interfaces.ResourceUsers, interfaces.ActionRead},
+	"qrdb_user_get_by_cert_thumbprint": {interfaces.ResourceUsers, interfaces.ActionRead},
+	"qrdb_user_authfactor_list":        {interfaces.ResourceUsers, interfaces.ActionRead},
+	"qrdb_user_authfactor_get":         {interfaces.ResourceUsers, interfaces.ActionRead},
+	"qrdb_user_authfactor_login":       {interfaces.ResourceUsers, interfaces.ActionRead},
+	"qrdb_user_authfactor_add":         {interfaces.ResourceUsers, interfaces.ActionWrite},
+	"qrdb_user_authfactor_rotate":      {interfaces.ResourceUsers, interfaces.ActionWrite},
+	"qrdb_user_authfactor_relabel":     {interfaces.ResourceUsers, interfaces.ActionWrite},
+	"qrdb_user_authfactor_remove":      {interfaces.ResourceUsers, interfaces.ActionDelete},
+
 	"qrdb_role_create": {interfaces.ResourceRoles, interfaces.ActionWrite},
 	"qrdb_role_delete": {interfaces.ResourceRoles, interfaces.ActionDelete},
 	"qrdb_role_list":   {interfaces.ResourceRoles, interfaces.ActionRead},

@@ -27,6 +27,7 @@ import (
 	quicgo "github.com/quic-go/quic-go"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -42,6 +43,14 @@ type Server struct {
 	listener *quicgo.Listener
 	logger   *logger.Logger
 	config   *Config
+
+	// udpConn is the UDP socket the QUIC listener is composed over. The
+	// server owns it: quicgo.Listen wraps a caller-supplied net.PacketConn
+	// in a Transport with createdConn=false, so closing the quic-go
+	// listener does NOT release the socket. Stop must close udpConn
+	// explicitly or the port stays bound (EADDRINUSE on the sealed-window
+	// -> full-boot rebind of the same port).
+	udpConn *net.UDPConn
 
 	// validatorAuthorizer is the unified platform-token authorization seam,
 	// installed via SetValidatorEnforcement when RequireAuthz=true. The
@@ -71,6 +80,19 @@ type Server struct {
 	// the qrdb SDK TenantClient is online; nil before wiring completes.
 	tenantBarrierSvc service.TenantBarrierServicer
 
+	// qrdbUserSvc is the qrdb user lookup facade used to serve user.*
+	// lookup methods over the qrdb-quic ALPN. Wired by lifecycle via
+	// SetQRDBUserService with a lazy per-call proxy over the embedded
+	// node's user service; nil before wiring completes.
+	qrdbUserSvc qrdbsdk.UserServicer
+
+	// qrdbUserAuthFactorSvc is the qrdb user auth-factor facade used to
+	// serve userauthfactor.* methods over the qrdb-quic ALPN. Wired by
+	// lifecycle via SetQRDBUserAuthFactorService with a lazy per-call proxy
+	// over the SAME UserAuthFactor store the unified-login ceremony resolves
+	// against; nil before wiring completes.
+	qrdbUserAuthFactorSvc qrdbsdk.UserAuthFactorServicer
+
 	// tenantGovernance applies engine-side quota and entitlement limits to
 	// tenants via the iam.DefaultTenantManager delegate. Wired by lifecycle
 	// via SetTenantGovernance once the IAM manager is online; nil before
@@ -86,8 +108,36 @@ type Server struct {
 	// permissive: it never rejects a request for lack of a tenant.
 	tenantResolver TenantContextFunc
 
+	// sealedProbe reports whether the storage barrier is currently sealed.
+	// Installed by lifecycle via SetSealedWindowGate together with the two
+	// allowlists below; nil leaves the sealed-window gate uninstalled.
+	// While the probe reports sealed, every native opcode not present in
+	// sealedOpAllow and every qrdb-quic bridge method not present in
+	// sealedQRDBAllow is rejected with StatusUnavailable. When the probe
+	// reports unsealed the gate is a pass-through, so it is safe (and
+	// intended) to leave installed for the daemon's whole lifetime — a
+	// post-boot barrier seal immediately re-narrows the surface.
+	sealedProbe SealedWindowProbe
+
+	// sealedOpAllow is the native quicbaas-quic sealed-window allowlist
+	// (opcode + sub-op), derived from pkg/api/sealedwindow.QUICAllowlist.
+	sealedOpAllow map[sealedwindow.QUICOp]struct{}
+
+	// sealedQRDBAllow is the qrdb-quic ALPN bridge sealed-window allowlist
+	// (method names), derived from pkg/api/sealedwindow.QRDBQUICAllowlist.
+	sealedQRDBAllow map[string]struct{}
+
+	// sealedBypass is the shared sealed-window authentication-bypass
+	// predicate (probe + canonical-table lookup), derived by
+	// SetSealedWindowGate from the same probe as the gate above. It is
+	// handed to every per-request Handler so allowlisted native opcodes are
+	// admitted without a token while the barrier is sealed (audited);
+	// unsealed it is inert. Guarded by svcMu with the gate state.
+	sealedBypass *sealedwindow.AuthBypass
+
 	// svcMu guards barrierService, ceremonyService, qrdbCredentialSvc,
-	// tenantBarrierSvc, and tenantGovernance against the racey lifecycle
+	// tenantBarrierSvc, qrdbUserSvc, qrdbUserAuthFactorSvc, and
+	// tenantGovernance against the racey lifecycle
 	// pattern where the server starts before the facades are installed
 	// concurrently.
 	svcMu sync.RWMutex
@@ -305,6 +355,7 @@ func (s *Server) Start() error {
 	}
 
 	s.listener = listener
+	s.udpConn = udpConn
 	s.running.Store(true)
 
 	s.logger.WithFields(map[string]interface{}{
@@ -344,6 +395,16 @@ func (s *Server) Stop() error {
 		if err := s.listener.Close(); err != nil {
 			s.logger.WithError(err).Warn("Error closing QUIC listener")
 		}
+	}
+
+	// Release the UDP socket. quic-go does not close a caller-supplied
+	// PacketConn, and the port must be free for a subsequent bind on the
+	// same address (sealed-window -> full-boot transition).
+	if s.udpConn != nil {
+		if err := s.udpConn.Close(); err != nil {
+			s.logger.WithError(err).Warn("Error closing QUIC UDP socket")
+		}
+		s.udpConn = nil
 	}
 
 	// Wait for all connections to complete with timeout
@@ -447,7 +508,7 @@ func (s *Server) handleConnection(conn *quicgo.Conn) {
 		s.activeStreams.Add(1)
 		s.wg.Add(1)
 		if useQRDBWire {
-			go s.handleQRDBStream(stream)
+			go s.handleQRDBStream(stream, peerCert)
 		} else {
 			go s.handleStream(stream, connLogger, peerCert)
 		}
@@ -485,6 +546,23 @@ func (s *Server) handleStream(stream *quicgo.Stream, connLogger *logger.Logger, 
 
 	streamLogger.Debug("Processing request")
 
+	// Sealed-window gate: while the barrier is sealed, every operation not
+	// on the canonical allowlist (barrier/ceremony unseal flow + health) is
+	// rejected with StatusUnavailable, mirroring qrdb's native QUIC
+	// sealed-window gate. Runs BEFORE handler construction so no facade is
+	// touched for a denied request.
+	if s.sealedWindowDeniesOp(req.Opcode, req.Payload) {
+		resp := &Response{
+			Status:  StatusUnavailable,
+			Payload: []byte(sealedWindowMessage),
+		}
+		if err := WriteResponse(stream, resp); err != nil {
+			s.totalErrors.Add(1)
+			streamLogger.WithError(err).Error("Failed to write sealed-window response")
+		}
+		return
+	}
+
 	// Get sub-services from the main QuicBaaS service
 	kmsService := s.service.KMS()
 	secretsService := s.service.Secrets()
@@ -498,6 +576,7 @@ func (s *Server) handleStream(stream *quicgo.Stream, connLogger *logger.Logger, 
 	ceremonyService := s.ceremonyService
 	tenantGovernance := s.tenantGovernance
 	tenantResolver := s.tenantResolver
+	sealedBypass := s.sealedBypass
 	s.svcMu.RUnlock()
 
 	// Create a request-specific context with a deadline for raft operations
@@ -523,6 +602,7 @@ func (s *Server) handleStream(stream *quicgo.Stream, connLogger *logger.Logger, 
 	// cancellation and deadline propagate; do not use context.Background().
 	handler := NewHandler(s.service, kmsService, secretsService, cryptoService, streamLogger,
 		WithHandlerValidatorAuthorizer(s.validatorAuthorizer),
+		WithHandlerSealedWindowBypass(sealedBypass),
 		WithBarrierService(barrierService),
 		WithCeremonyService(ceremonyService),
 		WithGovernance(tenantGovernance),

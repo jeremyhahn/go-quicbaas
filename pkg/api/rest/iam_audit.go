@@ -218,11 +218,13 @@ func (h *IAMHandler) DeleteOldAuditEvents(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Authorization check - only admins with audit:delete permission can delete audit events
-	userInfo, ok := ctx.Value(ContextKeyUser).(*iam.UserInfoResponse)
-	if !ok || userInfo == nil {
-		RespondIAMError(w, r, http.StatusUnauthorized,
-			NewIAMAPIError(ErrUnauthorized, "user not authenticated"))
+	// Authorization check - only admins with audit:delete permission can
+	// delete audit events. The principal is the canonical Subject injected
+	// by the authz middleware chain (injectPrincipal); the former
+	// ContextKeyUser read had no producer on the production middleware
+	// chain and failed closed even for properly-granted callers.
+	subject, ok := requireSubject(w, r)
+	if !ok {
 		return
 	}
 
@@ -249,7 +251,7 @@ func (h *IAMHandler) DeleteOldAuditEvents(w http.ResponseWriter, r *http.Request
 
 	// Check if user has audit:delete permission
 	checkResp, err := manager.CheckPermission(ctx, &iam.AdminCheckRequest{
-		UserID:       userInfo.Sub,
+		UserID:       subject.ID,
 		Permission:   iam.PermAuditDelete,
 		TenantID:     tenantID,
 		ResourceType: "audit",

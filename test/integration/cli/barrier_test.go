@@ -26,10 +26,22 @@
 //  2. RUNTIME MUTATION verbs (unseal, unseal-shares, seal, rekey,
 //     recovery) against a per-test fresh daemon. The CONFIRMED model is
 //     server-init-first: the SERVER is initialised with the barrier
-//     strategy + secret via `quicbaasd init` (spawnFreshBarrierDaemon),
-//     so the daemon comes up SEALED reporting that strategy. The client
-//     NEVER runs `barrier init` over a network transport — init is fixed
-//     at the server and is meaningful only for the embedded transport.
+//     strategy + secret via `quicbaasd init` (spawnFreshBarrierDaemon).
+//     For the passphrase strategy init leaves an encfs-ENCRYPTED data
+//     plane, so `quicbaasd start` must boot with the matching seal
+//     posture. Two boot modes exist:
+//       - AUTO-UNSEAL (QUICBAAS_SEAL_ENABLED/STRATEGY/PASSPHRASE): the
+//         daemon decrypts and boots UNSEALED; the fixture then restores
+//         the suite's SEALED precondition with a runtime `barrier seal
+//         -y` (requires the harness's insecure authz posture).
+//       - SEALED BOOT (seal enabled, NO passphrase injected): the daemon
+//         enters the sealed-window phase — all five transports serve
+//         ONLY the sealed allowlist until an operator unseals. Used by
+//         the AUTH-ON posture test, where no token can be minted and
+//         the sealed-window bypass is the very contract under test.
+//     The client NEVER runs `barrier init` over a network transport —
+//     init is fixed at the server and is meaningful only for the
+//     embedded transport.
 //     The runtime client only unseals (with the already-known secret),
 //     seals, rekeys, and recovers. Barrier state is daemon-global —
 //     sealing blocks every sibling subtest — so each cell spins up a
@@ -393,6 +405,32 @@ type barrierDaemonOptions struct {
 	Secret    string
 	Shares    int
 	Threshold int
+
+	// EnforceAuthz keeps the daemon at the production default-deny
+	// posture (config.Default: security.require_authz=true). The mutation
+	// matrix runs with EnforceAuthz=false — the harness's ACKNOWLEDGED
+	// insecure posture (security.require_authz=false +
+	// security.insecure_dev_mode=true, the exact posture
+	// test/integration/quicbaas.yaml documents for the shared cluster) —
+	// because a spawned per-test daemon has no IAM bootstrap and thus no
+	// way to mint a bearer token; under the owner's AUTH-ON contract every
+	// post-unseal verb is otherwise rejected Unauthenticated.
+	// TestBarrierAuthPosture_DefaultDeny sets this true to pin the AUTH-ON
+	// contract explicitly instead of leaving it an accidental side effect.
+	EnforceAuthz bool
+
+	// SealedBoot starts the daemon WITHOUT injecting the seal passphrase:
+	// with seal enabled and no auto-unseal material, quicbaasd enters the
+	// sealed-window phase and reaches readiness SEALED, serving only the
+	// canonical sealed-window allowlist. This is the only way to hand a
+	// test a SEALED daemon under EnforceAuthz=true — a post-unseal
+	// `barrier seal -y` requires a bearer token that a fresh per-test
+	// daemon cannot mint (the very contract the AUTH-ON test pins).
+	// Requires Strategy=="passphrase". Readiness is probed via the
+	// allowlisted /v1/barrier/status (mirroring how qrdb's harness probes
+	// a sealed node) because a sealed boot never reaches the full-boot
+	// readiness gate.
+	SealedBoot bool
 }
 
 // spawnFreshBarrierDaemon starts a hermetic quicbaasd subprocess against a
@@ -405,14 +443,29 @@ type barrierDaemonOptions struct {
 // the barrier strategy + secret). `quicbaasd init --barrier-strategy
 // software --secret <X> --so-pin <SO> --user-pin <USR>` fully initialises
 // the data-plane barrier (persists the root key under <dataDir>/seal), so
-// the daemon comes up with a usable, SEALED barrier reporting the chosen
-// strategy. The runtime CLI client then exercises unseal/seal/rekey/
-// recovery against that daemon with the already-known secret — it never
-// runs `barrier init` over the network. For "shamir", init writes a
-// pending_ceremony.json and the LOCKED M-of-N ceremony owns first-boot;
-// we do not bypass it.
+// the daemon comes up with a usable barrier reporting the chosen strategy.
+// The runtime CLI client then exercises unseal/seal/rekey/recovery against
+// that daemon with the already-known secret — it never runs `barrier init`
+// over the network. For "shamir", init writes a pending_ceremony.json and
+// the LOCKED M-of-N ceremony owns first-boot; we do not bypass it.
+//
+// SEAL POSTURE: passphrase init also encrypts the qrdb data plane (encfs
+// over the barrier KEK), so `quicbaasd start` MUST boot with the matching
+// posture — QUICBAAS_SEAL_ENABLED/STRATEGY/PASSPHRASE, mirroring the
+// canonical test/integration/init/helpers.go startDaemon contract. Booting
+// without it reads the encrypted files as garbage ("malformed manifest").
+// quicbaasd has no sealed-start mode (a sealed node exposes no SDK client,
+// so IAM bootstrap cannot run), which means the daemon reaches readiness
+// UNSEALED. Because unsealing an unsealed barrier is a typed error
+// (qrdb ErrAlreadyUnsealed), the fixture restores the suite's SEALED
+// precondition with the product's own runtime `barrier seal -y` verb over
+// REST before returning, so every test body still starts from SEALED.
 func spawnFreshBarrierDaemon(t *testing.T, opts barrierDaemonOptions) (*barrierDaemon, string) {
 	t.Helper()
+
+	if opts.SealedBoot && opts.Strategy != "passphrase" {
+		t.Fatalf("spawnFreshBarrierDaemon: SealedBoot requires the passphrase strategy, got %q", opts.Strategy)
+	}
 
 	binary := resolveBarrierDaemonBinary(t)
 	dataDir := t.TempDir()
@@ -463,7 +516,7 @@ func spawnFreshBarrierDaemon(t *testing.T, opts barrierDaemonOptions) (*barrierD
 
 	// Phase 2: allocate the per-daemon port + socket bundle and start.
 	ports := allocBarrierPorts(t, dataDir)
-	daemon := startBarrierDaemonProcess(t, binary, dataDir, ports)
+	daemon := startBarrierDaemonProcess(t, binary, dataDir, ports, opts)
 	t.Cleanup(func() {
 		if stopErr := daemon.Stop(); stopErr != nil {
 			t.Logf("barrierDaemon Stop: %v", stopErr)
@@ -473,10 +526,16 @@ func spawnFreshBarrierDaemon(t *testing.T, opts barrierDaemonOptions) (*barrierD
 		}
 	})
 
-	// Phase 3: block until every transport listener is reachable.
+	// Phase 3: block until every transport listener is reachable. A sealed
+	// boot never passes the full-boot readiness gate, so it is probed via
+	// the allowlisted barrier-status surface instead.
 	startCtx, cancelStart := context.WithTimeout(context.Background(), daemonStartTimeout)
 	defer cancelStart()
-	if err := waitForBarrierDaemonReady(startCtx, daemon); err != nil {
+	if opts.SealedBoot {
+		if err := waitForSealedBarrierDaemonReady(startCtx, daemon); err != nil {
+			t.Fatalf("sealed barrier daemon never became ready: %v", err)
+		}
+	} else if err := waitForBarrierDaemonReady(startCtx, daemon); err != nil {
 		t.Fatalf("barrier daemon never became ready: %v", err)
 	}
 
@@ -486,12 +545,75 @@ func spawnFreshBarrierDaemon(t *testing.T, opts barrierDaemonOptions) (*barrierD
 	}
 	daemon.caPath = caPath
 
+	// Phase 4: restore the suite's SEALED precondition. A passphrase daemon
+	// boots auto-unsealed (see the SEAL POSTURE note above); the mutation
+	// tests exercise unseal-from-sealed, so seal the barrier with the same
+	// runtime verb the suite itself covers. The runtime `barrier seal -y`
+	// requires the harness's insecure authz posture — under EnforceAuthz
+	// the daemon rejects the token-less seal (that AUTH-ON contract is
+	// pinned by TestBarrierAuthPosture_DefaultDeny, which boots SEALED via
+	// SealedBoot instead). A SealedBoot daemon is already sealed.
+	if opts.Strategy == "passphrase" && !opts.SealedBoot {
+		sealBarrierDaemon(t, daemon)
+	}
+
 	return daemon, caPath
 }
 
+// sealBarrierDaemon seals the freshly-started daemon's barrier via the CLI
+// over REST (`barrier seal -y` with the daemon's own CA chain). Used by
+// spawnFreshBarrierDaemon to hand test bodies a SEALED passphrase daemon,
+// matching the suite's documented starting state.
+func sealBarrierDaemon(t *testing.T, d *barrierDaemon) {
+	t.Helper()
+	binary := getQuicBaaSBinary()
+	require.NotEmptyf(t, binary, "quicbaas CLI binary required to seal the per-test daemon")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	args := []string{
+		"--address", fmt.Sprintf("https://127.0.0.1:%d", d.ports.REST),
+		"--transport", "rest",
+		"--tls-ca", d.caPath,
+		"barrier", "seal", "-y",
+	}
+	cmd := exec.CommandContext(ctx, binary, args...) // #nosec G204 - args produced by the test
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("seal per-test daemon (barrier seal -y over REST) failed: %v\noutput:\n%s", err, out)
+	}
+}
+
+// writeBarrierInsecurePostureConfig writes the harness's acknowledged
+// insecure-security posture (security.require_authz=false +
+// security.insecure_dev_mode=true — mirroring the documented posture in
+// test/integration/quicbaas.yaml) to a per-daemon config file consumed via
+// `quicbaasd start --config`. The refuse-to-start gate rejects
+// require_authz=false with network transports enabled unless the dev-only
+// escape hatch is set, so both keys are required. NEVER use this posture in
+// production.
+func writeBarrierInsecurePostureConfig(t *testing.T, dataDir string) string {
+	t.Helper()
+	const insecurePosture = `# Test-only security posture for the hermetic per-test barrier daemon.
+# Mirrors test/integration/quicbaas.yaml: the daemon has no IAM bootstrap,
+# so post-unseal barrier verbs must be reachable without a bearer token.
+security:
+  require_authz: false
+  insecure_dev_mode: true
+`
+	path := filepath.Join(dataDir, "insecure-posture.yaml")
+	if err := os.WriteFile(path, []byte(insecurePosture), 0o600); err != nil {
+		t.Fatalf("write insecure posture config %s: %v", path, err)
+	}
+	return path
+}
+
 // startBarrierDaemonProcess launches quicbaasd start with every transport
-// enabled against the supplied port bundle.
-func startBarrierDaemonProcess(t *testing.T, binary, dataDir string, ports barrierDaemonPorts) *barrierDaemon {
+// enabled against the supplied port bundle. For the passphrase strategy the
+// daemon is started with the seal posture matching `quicbaasd init`
+// (QUICBAAS_SEAL_ENABLED/STRATEGY/PASSPHRASE) so it can decrypt the
+// encfs-encrypted data plane and auto-unseal — the same contract as
+// test/integration/init/helpers.go startDaemon.
+func startBarrierDaemonProcess(t *testing.T, binary, dataDir string, ports barrierDaemonPorts, opts barrierDaemonOptions) *barrierDaemon {
 	t.Helper()
 
 	args := []string{
@@ -501,6 +623,13 @@ func startBarrierDaemonProcess(t *testing.T, binary, dataDir string, ports barri
 		"--http-port", fmt.Sprintf("%d", ports.REST),
 		"--grpc-port", fmt.Sprintf("%d", ports.GRPC),
 		"--unix-socket", ports.Unix,
+	}
+	if !opts.EnforceAuthz {
+		// The security.* keys have no QUICBAAS_* env binding in quicbaasd
+		// (bindEnvVars covers seal/server/raft/... but not security.require_
+		// authz), so the acknowledged insecure posture must travel via a
+		// --config file. See barrierDaemonOptions.EnforceAuthz.
+		args = append(args, "--config", writeBarrierInsecurePostureConfig(t, dataDir))
 	}
 
 	env := []string{
@@ -516,6 +645,25 @@ func startBarrierDaemonProcess(t *testing.T, binary, dataDir string, ports barri
 		fmt.Sprintf("QUICBAAS_SERVER_QUIC_PORT=%d", ports.QUIC),
 		"QUICBAAS_SERVER_MCP_ENABLED=true",
 		fmt.Sprintf("QUICBAAS_SERVER_MCP_PORT=%d", ports.MCP),
+	}
+	if opts.Strategy == "passphrase" {
+		// Init ran with seal enabled and an initialized passphrase barrier,
+		// so the data plane on disk is encrypted (encfs over the barrier
+		// KEK). Start must boot with the SAME seal posture — there is no
+		// deployment-derived default (security hardening).
+		env = append(env,
+			"QUICBAAS_SEAL_ENABLED=true",
+			"QUICBAAS_SEAL_STRATEGY=passphrase",
+		)
+		// SealedBoot deliberately withholds the passphrase: with seal
+		// enabled and no auto-unseal material the daemon enters the
+		// sealed-window phase and comes up SEALED, serving only the
+		// allowlist until an operator drives the unseal via a transport.
+		if !opts.SealedBoot {
+			// Auto-unseal with the admin passphrase so the daemon boots
+			// fully and reaches the full-boot readiness gate.
+			env = append(env, "QUICBAAS_SEAL_PASSPHRASE="+opts.Secret)
+		}
 	}
 
 	logPath := filepath.Join(dataDir, "quicbaasd.log")
@@ -593,6 +741,85 @@ func waitForBarrierDaemonReady(ctx context.Context, d *barrierDaemon) error {
 			return nil
 		}
 	}
+}
+
+// waitForSealedBarrierDaemonReady blocks until a SEALED-BOOT daemon's
+// sealed-window listeners are all reachable. The full-boot readiness gate
+// (/api/v1/health/ready driven by the complete service graph) is never
+// reached by a sealed boot, so readiness is the allowlisted
+// GET /v1/barrier/status reporting sealed=true — mirroring how qrdb's
+// harness documents probing /v1/barrier/status while a node is sealed —
+// plus liveness probes for the remaining sealed-phase listeners.
+func waitForSealedBarrierDaemonReady(ctx context.Context, d *barrierDaemon) error {
+	ticker := time.NewTicker(daemonReadyPollInterval)
+	defer ticker.Stop()
+	caPath := filepath.Join(d.dataDir, "certs", "ca-chain.crt")
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("sealed barrier daemon not ready within %s: %w", daemonStartTimeout, ctx.Err())
+		case <-d.Done():
+			return fmt.Errorf("sealed barrier daemon exited before ready: wait_err=%v", d.WaitErr())
+		case <-ticker.C:
+			tlsCfg, err := barrierProbeTLSConfig(caPath)
+			if err != nil {
+				continue
+			}
+			if err := probeBarrierSealedStatus(ctx, d.ports.REST, tlsCfg); err != nil {
+				continue
+			}
+			if err := probeBarrierTCP(ctx, d.ports.GRPC); err != nil {
+				continue
+			}
+			if err := probeBarrierUDP(ctx, d.ports.QUIC); err != nil {
+				continue
+			}
+			if err := probeBarrierTLS(ctx, d.ports.MCP, tlsCfg); err != nil {
+				continue
+			}
+			if err := probeBarrierUnix(ctx, d.ports.Unix); err != nil {
+				continue
+			}
+			return nil
+		}
+	}
+}
+
+// probeBarrierSealedStatus GETs the allowlisted /v1/barrier/status and
+// requires a 200 reporting sealed=true — the sealed-window boot's
+// readiness signal.
+func probeBarrierSealedStatus(ctx context.Context, port int, tlsCfg *tls.Config) error {
+	if port == 0 {
+		return errors.New("probeBarrierSealedStatus: port=0")
+	}
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig:   tlsCfg,
+			DisableKeepAlives: true,
+		},
+	}
+	url := fmt.Sprintf("https://127.0.0.1:%d/v1/barrier/status", port)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("probeBarrierSealedStatus: %s -> %d", url, resp.StatusCode)
+	}
+	var snap barrierStatusSnapshot
+	if derr := json.NewDecoder(resp.Body).Decode(&snap); derr != nil {
+		return fmt.Errorf("probeBarrierSealedStatus: decode: %w", derr)
+	}
+	if !snap.Sealed {
+		return fmt.Errorf("probeBarrierSealedStatus: daemon reports sealed=false during sealed boot")
+	}
+	return nil
 }
 
 // barrierProbeTLSConfig builds a TLS config that trusts the ephemeral barrier
@@ -900,22 +1127,6 @@ func assertBarrierStatus(t *testing.T, runner *TestRunner, expectedSealed *bool,
 			"barrier status strategy=%q (got %q): %+v", expectedStrategy, snap.Strategy, snap)
 	}
 	return snap
-}
-
-// decodeRecoveryKeys pulls the keys list out of a recovery-generate JSON
-// response.
-func decodeRecoveryKeys(t *testing.T, stdout string) []string {
-	t.Helper()
-	var payload struct {
-		Keys      []string `json:"keys"`
-		Threshold int      `json:"threshold"`
-		Total     int      `json:"total"`
-	}
-	if err := json.Unmarshal(bytes.TrimSpace([]byte(stdout)), &payload); err != nil {
-		t.Fatalf("decode recovery generate JSON: %v\nstdout=%s", err, stdout)
-	}
-	require.NotEmptyf(t, payload.Keys, "recovery generate returned no keys: %s", stdout)
-	return payload.Keys
 }
 
 // writeBarrierSharesFile writes shares to a tempfile (one per line) for
@@ -1353,10 +1564,7 @@ func TestBarrierSeal_SORequired(t *testing.T) {
 // malformed-envelope decode failure), so a regression in any transport's
 // BarrierRekey marshalling/decoding still fails in exactly one matrix cell.
 func TestBarrierRekey_Dispatch(t *testing.T) {
-	const (
-		oldSecret = "rekey-old-secret"
-		newSecret = "rekey-new-secret"
-	)
+	const oldSecret = "rekey-old-secret"
 	const shamirNotConfigured = "shamir not configured"
 	opts := barrierDaemonOptions{Strategy: "passphrase", Secret: oldSecret}
 	runForBarrierTransports(t, "Dispatch", opts, func(t *testing.T, _ *barrierDaemon, runner *TestRunner) {
@@ -1364,35 +1572,33 @@ func TestBarrierRekey_Dispatch(t *testing.T) {
 		// on an unsealed barrier and reaches the backend's rekey path.
 		runner.RunAndAssert(BarrierUnsealCommand(oldSecret))
 
-		// Rekey dispatches to the daemon and is rejected because the
-		// software barrier has no Shamir config. Most transports surface the
-		// canonical message; MCP wraps it in a tool-name envelope. Either
-		// proves the verb reached BarrierRekey.
-		stdout, stderr, err := runner.Run(BarrierRekeyCommand(newSecret))
+		// The canonical rekey surface is SHARE-FREE: no secret travels on
+		// the request (`barrier rekey [--so-pin] [--threshold N --total M]`).
+		// Send a well-formed 2-of-3 pair so every transport-side validator
+		// (REST/gRPC handlers require threshold/total > 0) passes and the
+		// request reaches the qrdb backend, which rejects a passphrase
+		// barrier with the canonical "shamir not configured". Most
+		// transports surface the message; MCP wraps it in a tool-name
+		// envelope. Either proves the verb reached BarrierRekey.
+		stdout, stderr, err := runner.Run(BarrierRekeyCommand(2, 3))
 		combined := stdout + stderr
 		require.Errorf(t, err,
 			"rekey of a software barrier must be rejected (shamir not configured): stdout=%s stderr=%s",
 			stdout, stderr)
 		rejected := strings.Contains(combined, shamirNotConfigured) ||
-			strings.Contains(combined, "qrdb_barrier_rekey") ||
-			strings.Contains(combined, "BarrierRekey")
+			strings.Contains(combined, "qrdb_barrier_rekey")
 		assert.Truef(t, rejected,
 			"rekey must surface a daemon-side rejection that proves the verb dispatched: stdout=%s stderr=%s",
 			stdout, stderr)
 	})
 }
 
-// TestBarrierRekey_ValidationErrors covers the missing-secret +
-// unpaired-shamir validation rules.
+// TestBarrierRekey_ValidationErrors covers the CLI-side validation rules of
+// the share-free rekey surface: the Shamir --threshold/--total pair must be
+// supplied together, the threshold must be >= 2, and the total must be >=
+// the threshold (cmd/quicbaas/barrier.go runBarrierRekeyCommand). All rules
+// reject BEFORE any request reaches the daemon.
 func TestBarrierRekey_ValidationErrors(t *testing.T) {
-	t.Run("missing_secret", func(t *testing.T) {
-		runForBarrierTransports(t, "missing_secret", barrierValidationDaemonOpts, func(t *testing.T, _ *barrierDaemon, runner *TestRunner) {
-			stdout, stderr, err := runner.Run(BarrierRekeyMissingSecretCommand())
-			require.Errorf(t, err, "rekey without --secret must fail")
-			assert.Containsf(t, stdout+stderr, "--passphrase is required",
-				"canonical error missing: %s", stdout+stderr)
-		})
-	})
 	for _, flag := range []string{"--threshold", "--total"} {
 		flag := flag
 		t.Run("unpaired_"+strings.TrimPrefix(flag, "--"), func(t *testing.T) {
@@ -1404,48 +1610,88 @@ func TestBarrierRekey_ValidationErrors(t *testing.T) {
 			})
 		})
 	}
+	t.Run("threshold_below_minimum", func(t *testing.T) {
+		runForBarrierTransports(t, "threshold_below_minimum", barrierValidationDaemonOpts, func(t *testing.T, _ *barrierDaemon, runner *TestRunner) {
+			stdout, stderr, err := runner.Run(BarrierRekeyBadThresholdCommand())
+			require.Errorf(t, err, "rekey with --threshold 1 must fail")
+			assert.Containsf(t, stdout+stderr, "--threshold must be >= 2",
+				"canonical threshold-bound error missing: %s", stdout+stderr)
+		})
+	})
+	t.Run("total_below_threshold", func(t *testing.T) {
+		runForBarrierTransports(t, "total_below_threshold", barrierValidationDaemonOpts, func(t *testing.T, _ *barrierDaemon, runner *TestRunner) {
+			stdout, stderr, err := runner.Run(BarrierRekeyTotalBelowThresholdCommand())
+			require.Errorf(t, err, "rekey with --total < --threshold must fail")
+			assert.Containsf(t, stdout+stderr, "--total must be >= --threshold",
+				"canonical total-bound error missing: %s", stdout+stderr)
+		})
+	})
 }
 
 // =============================================================================
 // Tests: recovery generate + recover (per-test daemon)
 // =============================================================================
 
-// TestBarrierRecovery_GenerateAndRecover proves the recovery surface
-// end-to-end: init -> generate recovery keys -> seal -> recover with
-// generated keys -> status unsealed.
+// TestBarrierRecovery_Dispatch verifies the recovery generate/recover
+// request wiring across every transport against a SERVER-INITIALISED
+// software daemon.
 //
-// The recovery slot is independent of the unseal share material; this
-// test specifically exercises that "I have lost the master secret but
-// kept the recovery keys" survival path.
-func TestBarrierRecovery_GenerateAndRecover(t *testing.T) {
+// BLOCKED happy-path note: the qrdb recovery surface is SHARE-FREE —
+// GenerateRecoveryKeys seals the generated shares to ENROLLED recovery
+// officers via the recovery distributor and returns metadata only; no key
+// material ever travels back to the caller (qrdb pkg/seal/recovery.go).
+// The per-test daemon has no enrolled officers (enrollment requires the
+// locked officer-ceremony flow), so generation is rejected with the
+// canonical "insufficient officers enrolled" error and there are no keys
+// with which to drive RecoverWithKeys' happy path. Forcing this green would
+// require bypassing the officer-enrollment ceremony — forbidden. The
+// end-to-end recovery lifecycle belongs to the ceremony suite.
+//
+// What this test DOES guarantee is that both verbs dispatch over every
+// transport and the daemon's canonical rejection is surfaced (not a CLI
+// crash or a malformed-envelope decode failure), so a regression in any
+// transport's recovery marshalling/decoding still fails in exactly one
+// matrix cell.
+func TestBarrierRecovery_Dispatch(t *testing.T) {
 	const secret = "recovery-secret"
 	opts := barrierDaemonOptions{Strategy: "passphrase", Secret: secret}
-	runForBarrierTransports(t, "GenerateAndRecover", opts, func(t *testing.T, _ *barrierDaemon, runner *TestRunner) {
-		// 1. Daemon came up SEALED after server-init; unseal with the
-		//    known secret so the recovery slot can be provisioned.
+	runForBarrierTransports(t, "Dispatch", opts, func(t *testing.T, _ *barrierDaemon, runner *TestRunner) {
+		// 1. Daemon came up SEALED after server-init; unseal so generation
+		//    reaches the distributor (the root key must be in memory).
 		runner.RunAndAssert(BarrierUnsealCommand(secret))
 
-		// 2. Generate 2-of-3 recovery keys.
-		stdout, stderr, err := runner.Run(BarrierRecoveryGenerateJSONCommand(2, 3))
-		require.NoErrorf(t, err, "recovery generate: stderr=%s", stderr)
-		keys := decodeRecoveryKeys(t, stdout)
-		require.Lenf(t, keys, 3, "expected 3 recovery keys, got %d", len(keys))
+		// 2. recovery generate → rejected: no recovery officers enrolled.
+		stdout, stderr, err := runner.Run(BarrierRecoveryGenerateCommand(2, 3))
+		combined := stdout + stderr
+		require.Errorf(t, err,
+			"recovery generate without enrolled officers must be rejected: stdout=%s stderr=%s",
+			stdout, stderr)
+		generateRejected := strings.Contains(combined, "insufficient officers enrolled") ||
+			strings.Contains(combined, "qrdb_barrier_recovery_generate")
+		assert.Truef(t, generateRejected,
+			"recovery generate must surface the canonical officers rejection: stdout=%s stderr=%s",
+			stdout, stderr)
 
-		// 3. Seal the barrier (simulates "lost master secret").
+		// 3. Seal, then recovery recover with placeholder keys → rejected.
+		//    GenerateRecoveryKeys persists the recovery METADATA before the
+		//    distributor runs, so after the officers rejection above the
+		//    daemon carries a 2-of-3 recovery meta with NO distributed
+		//    shares: bogus share values fail the Shamir combine ("failed to
+		//    combine shares"). A daemon whose generate never persisted meta
+		//    would reject with "recovery keys not found" instead — both are
+		//    canonical daemon-side rejections proving the verb dispatched.
 		runner.RunAndAssert(BarrierSealAssumeYesCommand())
-		sealed := true
-		assertBarrierStatus(t, runner, &sealed, "passphrase")
-
-		// 4. Recover with 2 of 3 keys.
-		runner.RunAndAssert(BarrierRecoveryRecoverCommand(keys[:2]))
-
-		// 5. Status must report unsealed. Recovering via the recovery-key
-		//    set switches the ACTIVE seal strategy to "recovery" (the
-		//    barrier is now held by the recovery slot, not the original
-		//    software passphrase), so that is the strategy the daemon
-		//    reports — proving the recovery path actually took effect.
-		unsealed := false
-		assertBarrierStatus(t, runner, &unsealed, "recovery")
+		stdout, stderr, err = runner.Run(BarrierRecoveryRecoverCommand([]string{"key-a", "key-b"}))
+		combined = stdout + stderr
+		require.Errorf(t, err,
+			"recovery recover without distributed recovery keys must be rejected: stdout=%s stderr=%s",
+			stdout, stderr)
+		recoverRejected := strings.Contains(combined, "failed to combine shares") ||
+			strings.Contains(combined, "recovery keys not found") ||
+			strings.Contains(combined, "qrdb_barrier_recovery_recover")
+		assert.Truef(t, recoverRejected,
+			"recovery recover must surface a canonical daemon-side rejection: stdout=%s stderr=%s",
+			stdout, stderr)
 	})
 }
 
@@ -1468,6 +1714,144 @@ func TestBarrierRecovery_RecoverValidation(t *testing.T) {
 		assert.Containsf(t, stdout+stderr, "--share is required",
 			"canonical missing-share error missing: %s", stdout+stderr)
 	})
+}
+
+// =============================================================================
+// Tests: AUTH-ON posture contract (per-test daemon at production defaults)
+// =============================================================================
+
+// TestBarrierAuthPosture_DefaultDeny pins the owner's AUTH-ON contract for
+// the barrier surface — this posture must NOT be weakened and must stay an
+// EXPLICIT regression test rather than an accidental side effect of fixture
+// defaults:
+//
+//   - While SEALED, the sealed-window allowlist admits UNAUTHENTICATED
+//     submission of unseal material: possession of the unseal secret IS the
+//     authorization, because a sealed IAM plane can neither mint nor
+//     validate tokens.
+//   - Once UNSEALED, the sealed-window bypass is gone and the default-deny
+//     gate is in force: BarrierStatus WITHOUT a bearer token is rejected
+//     Unauthenticated over gRPC (pkg/api/grpc/authz_interceptor.go), and
+//     BarrierSeal WITHOUT a bearer token is rejected 401 over REST — seal
+//     is deliberately NOT on the sealed-window allowlist, which is exactly
+//     why an EnforceAuthz daemon cannot be re-sealed by a token-less
+//     fixture and must instead boot SEALED (SealedBoot).
+//
+// The daemon boots at the production default posture (EnforceAuthz=true —
+// no insecure --config override) in SEALED-BOOT mode: `quicbaasd init`
+// provisions the passphrase barrier, `quicbaasd start` runs WITHOUT the
+// auto-unseal passphrase, so the daemon serves the sealed window and the
+// test itself performs the unseal through the product's own allowlisted
+// verb.
+func TestBarrierAuthPosture_DefaultDeny(t *testing.T) {
+	const secret = "auth-posture-secret"
+	daemon, caPath := spawnFreshBarrierDaemon(t, barrierDaemonOptions{
+		Strategy:     "passphrase",
+		Secret:       secret,
+		EnforceAuthz: true,
+		SealedBoot:   true,
+	})
+	runner := newBarrierDaemonRunner(t, TransportGRPC, daemon)
+
+	// 1. Sealed-window allowlist: the unauthenticated unseal MUST succeed
+	//    while the barrier is sealed.
+	runner.RunAndAssert(BarrierUnsealCommand(secret))
+
+	// The unseal closes the sealed window: the daemon tears the
+	// sealed-phase listeners down and completes the full boot, restarting
+	// every transport behind the default-deny gate. Synchronize on the
+	// full-boot REST authz middleware before asserting the post-unseal
+	// contract (during the transition connections are refused).
+	waitForBarrierAuthGate(t, daemon, caPath)
+
+	// 2. Post-unseal, the same unauthenticated caller is rejected: the
+	//    barrier surface has left the sealed window, so BarrierStatus
+	//    demands an authenticated principal.
+	stdout, stderr, err := runner.Run(BarrierStatusJSONCommand())
+	require.Errorf(t, err,
+		"post-unseal BarrierStatus without a token must be rejected: stdout=%s stderr=%s",
+		stdout, stderr)
+	assert.Containsf(t, stdout+stderr, "authentication required",
+		"post-unseal status must fail Unauthenticated: stdout=%s stderr=%s",
+		stdout, stderr)
+
+	// 3. Post-unseal, a token-less re-seal is rejected 401 over REST. This
+	//    pins the exact behavior that forbids an EnforceAuthz fixture from
+	//    restoring the SEALED precondition at runtime — the contract
+	//    working as designed, asserted through the CLI like every other
+	//    matrix cell.
+	restRunner := newBarrierDaemonRunner(t, TransportREST, daemon)
+	stdout, stderr, err = restRunner.Run(CommandDef{
+		Name:    "barrier seal -y (no token)",
+		Args:    []string{"barrier", "seal", "-y"},
+		Timeout: 30 * time.Second,
+	})
+	require.Errorf(t, err,
+		"post-unseal BarrierSeal without a token must be rejected: stdout=%s stderr=%s",
+		stdout, stderr)
+	assert.Containsf(t, stdout+stderr, "401",
+		"post-unseal seal must fail 401 Unauthorized: stdout=%s stderr=%s", stdout, stderr)
+	assert.Containsf(t, stdout+stderr, "Missing or invalid authorization header",
+		"post-unseal seal must surface the REST authz rejection: stdout=%s stderr=%s",
+		stdout, stderr)
+}
+
+// waitForBarrierAuthGate blocks until the post-unseal FULL boot has
+// restarted the REST transport behind the default-deny gate: a token-less
+// POST /v1/barrier/seal answered 401 proves the full-boot authz middleware
+// (not the sealed-window allowlist, which rejects the off-allowlist verb
+// with a non-401 status) is serving. Also confirms the gRPC TCP listener
+// is back so the subsequent CLI assertions cannot race the transport
+// restart.
+func waitForBarrierAuthGate(t *testing.T, d *barrierDaemon, caPath string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
+	defer cancel()
+	ticker := time.NewTicker(daemonReadyPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("full boot never reached the default-deny authz gate within %s", daemonStartTimeout)
+		case <-d.Done():
+			t.Fatalf("barrier daemon exited during the sealed-window -> full-boot transition: wait_err=%v", d.WaitErr())
+		case <-ticker.C:
+			tlsCfg, err := barrierProbeTLSConfig(caPath)
+			if err != nil {
+				continue
+			}
+			if !probeBarrierSealRejected401(ctx, d.ports.REST, tlsCfg) {
+				continue
+			}
+			if err := probeBarrierTCP(ctx, d.ports.GRPC); err != nil {
+				continue
+			}
+			return
+		}
+	}
+}
+
+// probeBarrierSealRejected401 reports whether a token-less POST to the
+// full-boot /v1/barrier/seal is rejected with 401.
+func probeBarrierSealRejected401(ctx context.Context, port int, tlsCfg *tls.Config) bool {
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig:   tlsCfg,
+			DisableKeepAlives: true,
+		},
+	}
+	url := fmt.Sprintf("https://127.0.0.1:%d/v1/barrier/seal", port)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusUnauthorized
 }
 
 // =============================================================================

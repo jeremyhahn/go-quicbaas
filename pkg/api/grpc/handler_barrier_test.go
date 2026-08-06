@@ -49,8 +49,8 @@ type mockBarrierService struct {
 	recoverWithKeysFn   func(ctx context.Context, keys []string) error
 	deleteRecoveryFn    func(ctx context.Context) error
 	hasRecoveryFn       func(ctx context.Context) (bool, error)
-	generateRootTokenFn  func(ctx context.Context, shares []string) (*service.RootTokenInfo, error)
-	enableEncryptionFn   func(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error
+	generateRootTokenFn func(ctx context.Context, shares []string) (*service.RootTokenInfo, error)
+	enableEncryptionFn  func(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error
 }
 
 var _ service.BarrierServicer = (*mockBarrierService)(nil)

@@ -178,13 +178,13 @@ func (r *TestRunner) Authenticate() error {
 		return &MCPAuthEnvError{Reason: "no REST endpoints configured"}
 	}
 
-	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
+	bearer, expiresAt, err := helpers.AuthPIVSession(ctx, restEndpoints[0], "", "", "")
 	if err != nil {
 		r.t.Logf("[%s] PIV login for MCP bearer failed: %v", r.transport, err)
 		return err
 	}
 
-	if err := writeMCPSessionToken(bearer); err != nil {
+	if err := writeMCPSessionToken(bearer, expiresAt); err != nil {
 		r.t.Logf("[%s] failed to persist MCP session token: %v", r.transport, err)
 		return err
 	}
@@ -209,7 +209,15 @@ func (e *MCPAuthEnvError) Error() string {
 // loadMCPAuthToken() helper expects, at the default path (~/.quicbaas/token
 // when QUICBAAS_TEST_TOKEN_PATH is unset). The CLI's MCP transport client
 // automatically picks the token up via loadMCPAuthToken().
-func writeMCPSessionToken(bearer string) error {
+//
+// expiresAt MUST be the server-derived expiry returned by
+// helpers.AuthPIVSession. The token file is shared global state: every
+// later `quicbaas` invocation in ANY test package reads it via
+// loadStoredAuthToken(), and the CLI trusts the recorded expiry. Writing a
+// fabricated expiry longer than the server's 15-minute access-token TTL
+// makes later REST CLI tests present an expired bearer and fail with
+// 401 invalid_token.
+func writeMCPSessionToken(bearer string, expiresAt time.Time) error {
 	path := os.Getenv("QUICBAAS_TEST_TOKEN_PATH")
 	if path == "" {
 		home, err := os.UserHomeDir()
@@ -228,7 +236,7 @@ func writeMCPSessionToken(bearer string) error {
 		TokenType    string    `json:"token_type"`
 	}{
 		AccessToken: bearer,
-		ExpiresAt:   time.Now().Add(45 * time.Minute),
+		ExpiresAt:   expiresAt,
 		TokenType:   "Bearer",
 	}
 	data, err := json.Marshal(&payload)

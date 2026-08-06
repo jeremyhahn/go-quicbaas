@@ -947,8 +947,11 @@ func (s *e2eCeremonyService) CeremonyBeginClaimCert(ctx context.Context, usernam
 func (s *e2eCeremonyService) CeremonyCompleteClaimCert(ctx context.Context, username, nonceHex, signatureBase64 string) (*service.CeremonyClaimCertResult, error) {
 	return &service.CeremonyClaimCertResult{CertPEM: []byte("CERT"), CACertPEM: []byte("CA")}, nil
 }
-func (s *e2eCeremonyService) CeremonyClaimShare(ctx context.Context, username string) (string, error) {
-	return "share-" + username, nil
+func (s *e2eCeremonyService) CeremonyBeginClaimShare(ctx context.Context, username string) (*service.CeremonyChallenge, error) {
+	return &service.CeremonyChallenge{NonceHex: "deadbeef"}, nil
+}
+func (s *e2eCeremonyService) CeremonyCompleteClaimShare(ctx context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error) {
+	return &service.CeremonyClaimShareResult{ShareIndex: 1, ShareJSON: "share-" + username}, nil
 }
 func (s *e2eCeremonyService) CeremonySignCSR(ctx context.Context, username, soPin, csrPEM, role string) (*service.CeremonySignCSRResult, error) {
 	return &service.CeremonySignCSRResult{CertPEM: []byte("SIGNED")}, nil
@@ -1718,12 +1721,24 @@ func TestClient91_CeremonyOperations_E2E(t *testing.T) {
 		}
 	})
 
-	t.Run("CeremonyClaimShare", func(t *testing.T) {
-		resp, err := env.client.CeremonyClaimShare(ctx, &CeremonyClaimShareRequest{Username: "alice"})
+	t.Run("CeremonyBeginClaimShare", func(t *testing.T) {
+		resp, err := env.client.CeremonyBeginClaimShare(ctx, &CeremonyBeginClaimShareRequest{Username: "alice"})
 		if err != nil {
-			t.Fatalf("CeremonyClaimShare failed: %v", err)
+			t.Fatalf("CeremonyBeginClaimShare failed: %v", err)
 		}
-		if resp == nil || resp.Share == "" {
+		if resp == nil || resp.NonceHex == "" {
+			t.Fatal("expected non-empty nonce in challenge response")
+		}
+	})
+
+	t.Run("CeremonyCompleteClaimShare", func(t *testing.T) {
+		resp, err := env.client.CeremonyCompleteClaimShare(ctx, &CeremonyCompleteClaimShareRequest{
+			Username: "alice", NonceHex: "deadbeef", Signature: "c2ln",
+		})
+		if err != nil {
+			t.Fatalf("CeremonyCompleteClaimShare failed: %v", err)
+		}
+		if resp == nil || resp.ShareJSON == "" {
 			t.Fatal("expected non-empty share")
 		}
 	})

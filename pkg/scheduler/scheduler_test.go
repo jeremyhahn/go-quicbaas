@@ -4706,3 +4706,296 @@ func TestNilResultInJobSuccess(t *testing.T) {
 		}
 	})
 }
+
+// newRaceTestConfig returns a small, fast config for the status
+// transition race tests below.
+func newRaceTestConfig() *SchedulerConfig {
+	return &SchedulerConfig{
+		TickInterval:      50 * time.Millisecond,
+		MaxConcurrentJobs: 10,
+		DefaultTimeout:    time.Second,
+		DefaultRetries:    0,
+		RetryBackoff:      time.Millisecond,
+	}
+}
+
+// TestCancelJobConcurrentWithCompletionWrite verifies the per-job
+// stripe lock invariant: once CancelJob succeeds, an in-flight
+// execution-completion write can never overwrite the canceled status.
+// This is a regression test for the integration failure where a
+// triggered execution's failure write clobbered a concurrent cancel,
+// leaving the job "failed" after the cancel API returned "canceled".
+func TestCancelJobConcurrentWithCompletionWrite(t *testing.T) {
+	storage := newMockJobStorage()
+	engine := New(newRaceTestConfig(), storage)
+	ctx := context.Background()
+
+	require.NoError(t, engine.Start(ctx))
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		_ = engine.Stop(stopCtx)
+	}()
+
+	for i := 0; i < 50; i++ {
+		jobID := uint64(1000 + i)
+		storage.mu.Lock()
+		storage.jobs[jobID] = &Job{
+			ID:        jobID,
+			Name:      "race-job",
+			Type:      JobTypeOneShot,
+			Handler:   "missing-handler",
+			Status:    JobStatusPending,
+			OwnerType: OwnerTypeSystem,
+			NextRun:   time.Now().Add(time.Hour),
+		}
+		storage.mu.Unlock()
+
+		// Stale copy simulating an in-flight execution that fails
+		// (e.g. unregistered handler) concurrently with the cancel.
+		stale := &Job{
+			ID:        jobID,
+			Name:      "race-job",
+			Type:      JobTypeOneShot,
+			Handler:   "missing-handler",
+			Status:    JobStatusPending,
+			OwnerType: OwnerTypeSystem,
+		}
+
+		var wg sync.WaitGroup
+		var cancelErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			engine.handleJobFailure(ctx, stale, HandlerNotFoundError{Handler: "missing-handler"})
+		}()
+		go func() {
+			defer wg.Done()
+			_, cancelErr = engine.CancelJobWithTenant(ctx, jobID, "", "test cancellation")
+		}()
+		wg.Wait()
+
+		// Cancel always succeeds here: the job is either pending or
+		// failed at cancel time, and both states are cancelable.
+		require.NoError(t, cancelErr, "iteration %d: cancel failed", i)
+
+		storage.mu.RLock()
+		finalStatus := storage.jobs[jobID].Status
+		storage.mu.RUnlock()
+		assert.Equal(t, JobStatusCanceled, finalStatus,
+			"iteration %d: cancel was clobbered by a concurrent completion write", i)
+	}
+}
+
+// TestExecuteJobSkipsTerminalOrPausedJob verifies that executeJob
+// re-checks the persisted job status under the stripe lock and skips
+// execution when the job was concurrently canceled, completed, or
+// paused between dispatch and execution.
+func TestExecuteJobSkipsTerminalOrPausedJob(t *testing.T) {
+	statuses := []JobStatus{JobStatusCanceled, JobStatusCompleted, JobStatusPaused}
+	for _, status := range statuses {
+		t.Run(string(status), func(t *testing.T) {
+			storage := newMockJobStorage()
+			engine := New(newRaceTestConfig(), storage)
+			ctx := context.Background()
+
+			handlerCalled := make(chan struct{}, 1)
+			require.NoError(t, engine.RegisterHandler("skip-handler", func(ctx context.Context, job *Job) (*JobResult, error) {
+				handlerCalled <- struct{}{}
+				return &JobResult{Success: true}, nil
+			}))
+
+			storage.mu.Lock()
+			storage.jobs[7] = &Job{
+				ID:        7,
+				Name:      "skip-job",
+				Type:      JobTypeOneShot,
+				Handler:   "skip-handler",
+				Status:    status,
+				OwnerType: OwnerTypeSystem,
+			}
+			storage.mu.Unlock()
+
+			// Stale dispatch copy still shows pending.
+			stale := &Job{
+				ID:        7,
+				Name:      "skip-job",
+				Type:      JobTypeOneShot,
+				Handler:   "skip-handler",
+				Status:    JobStatusPending,
+				OwnerType: OwnerTypeSystem,
+			}
+			engine.executeJob(ctx, stale)
+
+			select {
+			case <-handlerCalled:
+				t.Fatalf("handler executed for %s job", status)
+			default:
+			}
+
+			storage.mu.RLock()
+			finalStatus := storage.jobs[7].Status
+			storage.mu.RUnlock()
+			assert.Equal(t, status, finalStatus, "status must be preserved")
+		})
+	}
+}
+
+// TestExecuteJobSkipsDeletedJob verifies that executeJob does not run
+// (or resurrect) a job whose record was deleted between dispatch and
+// execution.
+func TestExecuteJobSkipsDeletedJob(t *testing.T) {
+	storage := newMockJobStorage()
+	engine := New(newRaceTestConfig(), storage)
+	ctx := context.Background()
+
+	handlerCalled := make(chan struct{}, 1)
+	require.NoError(t, engine.RegisterHandler("deleted-handler", func(ctx context.Context, job *Job) (*JobResult, error) {
+		handlerCalled <- struct{}{}
+		return &JobResult{Success: true}, nil
+	}))
+
+	// Job is NOT in storage: simulates a concurrent delete.
+	stale := &Job{
+		ID:        42,
+		Name:      "deleted-job",
+		Type:      JobTypeOneShot,
+		Handler:   "deleted-handler",
+		Status:    JobStatusPending,
+		OwnerType: OwnerTypeSystem,
+	}
+	engine.executeJob(ctx, stale)
+
+	select {
+	case <-handlerCalled:
+		t.Fatal("handler executed for deleted job")
+	default:
+	}
+
+	storage.mu.RLock()
+	_, exists := storage.jobs[42]
+	storage.mu.RUnlock()
+	assert.False(t, exists, "deleted job must not be resurrected")
+}
+
+// TestHandleJobSuccessPreservesConcurrentCancel verifies that a
+// success-completion write preserves a concurrently persisted
+// canceled status instead of overwriting it.
+func TestHandleJobSuccessPreservesConcurrentCancel(t *testing.T) {
+	storage := newMockJobStorage()
+	engine := New(newRaceTestConfig(), storage)
+	ctx := context.Background()
+
+	storage.mu.Lock()
+	storage.jobs[9] = &Job{
+		ID:        9,
+		Name:      "canceled-job",
+		Type:      JobTypeOneShot,
+		Handler:   "any",
+		Status:    JobStatusCanceled,
+		OwnerType: OwnerTypeSystem,
+	}
+	storage.mu.Unlock()
+
+	stale := &Job{
+		ID:        9,
+		Name:      "canceled-job",
+		Type:      JobTypeOneShot,
+		Handler:   "any",
+		Status:    JobStatusRunning,
+		OwnerType: OwnerTypeSystem,
+	}
+	exec := &JobExecution{JobID: 9, Status: JobStatusRunning, StartedAt: time.Now()}
+	engine.handleJobSuccess(ctx, stale, exec, &JobResult{Success: true})
+
+	storage.mu.RLock()
+	finalStatus := storage.jobs[9].Status
+	storage.mu.RUnlock()
+	assert.Equal(t, JobStatusCanceled, finalStatus)
+}
+
+// TestCompletionWritesDoNotResurrectDeletedJob verifies that all
+// three completion paths skip the job write when the record was
+// deleted concurrently, instead of re-creating (resurrecting) it.
+func TestCompletionWritesDoNotResurrectDeletedJob(t *testing.T) {
+	newDeletedJob := func() *Job {
+		return &Job{
+			ID:        77,
+			Name:      "ghost-job",
+			Type:      JobTypeOneShot,
+			Handler:   "any",
+			Status:    JobStatusRunning,
+			OwnerType: OwnerTypeSystem,
+		}
+	}
+
+	t.Run("handleJobSuccess", func(t *testing.T) {
+		storage := newMockJobStorage()
+		engine := New(newRaceTestConfig(), storage)
+		exec := &JobExecution{JobID: 77, Status: JobStatusRunning, StartedAt: time.Now()}
+
+		engine.handleJobSuccess(context.Background(), newDeletedJob(), exec, &JobResult{Success: true})
+
+		storage.mu.RLock()
+		_, exists := storage.jobs[77]
+		storage.mu.RUnlock()
+		assert.False(t, exists, "success write must not resurrect a deleted job")
+		assert.Equal(t, int32(1), storage.saveExecutionCount.Load(), "execution record must still be saved")
+	})
+
+	t.Run("handleJobError", func(t *testing.T) {
+		storage := newMockJobStorage()
+		engine := New(newRaceTestConfig(), storage)
+		exec := &JobExecution{JobID: 77, Status: JobStatusRunning, StartedAt: time.Now()}
+
+		engine.handleJobError(context.Background(), newDeletedJob(), exec, errors.New("handler failed"))
+
+		storage.mu.RLock()
+		_, exists := storage.jobs[77]
+		storage.mu.RUnlock()
+		assert.False(t, exists, "error write must not resurrect a deleted job")
+		assert.Equal(t, int32(1), storage.saveExecutionCount.Load(), "execution record must still be saved")
+	})
+
+	t.Run("handleJobFailure", func(t *testing.T) {
+		storage := newMockJobStorage()
+		engine := New(newRaceTestConfig(), storage)
+
+		engine.handleJobFailure(context.Background(), newDeletedJob(), errors.New("dispatch failed"))
+
+		storage.mu.RLock()
+		_, exists := storage.jobs[77]
+		storage.mu.RUnlock()
+		assert.False(t, exists, "failure write must not resurrect a deleted job")
+	})
+}
+
+// TestJobTenantID verifies the tenant scoping used for storage
+// lookups of a job by ownership type.
+func TestJobTenantID(t *testing.T) {
+	tests := []struct {
+		name string
+		job  *Job
+		want string
+	}{
+		{"tenant job uses owner id", &Job{OwnerType: OwnerTypeTenant, OwnerID: "acme"}, "acme"},
+		{"system job uses system namespace", &Job{OwnerType: OwnerTypeSystem, OwnerID: "system"}, ""},
+		{"delegated job uses system namespace", &Job{OwnerType: OwnerTypeDelegated, OwnerID: "acme"}, ""},
+		{"unset owner type uses system namespace", &Job{OwnerID: "acme"}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, jobTenantID(tc.job))
+		})
+	}
+}
+
+// TestIsJobNotFound verifies matching of value and pointer forms of
+// JobNotFoundError plus rejection of other errors.
+func TestIsJobNotFound(t *testing.T) {
+	assert.True(t, isJobNotFound(JobNotFoundError{JobID: 1}))
+	assert.True(t, isJobNotFound(&JobNotFoundError{JobID: 1}))
+	assert.True(t, isJobNotFound(ErrStorageError{Op: "GetJob", Cause: JobNotFoundError{JobID: 1}}))
+	assert.False(t, isJobNotFound(nil))
+	assert.False(t, isJobNotFound(errors.New("boom")))
+}

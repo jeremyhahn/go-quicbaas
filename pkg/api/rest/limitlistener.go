@@ -15,7 +15,10 @@
 
 package rest
 
-import "net"
+import (
+	"net"
+	"sync"
+)
 
 // limitListener wraps a net.Listener to enforce a maximum number of
 // concurrent connections using a channel-based semaphore. When the
@@ -50,11 +53,20 @@ func (l *limitListener) Accept() (net.Conn, error) {
 type limitConn struct {
 	net.Conn
 	sem chan struct{}
+
+	// releaseOnce makes the semaphore release idempotent. net/http closes
+	// a connection from more than one path (the connection's own serve
+	// loop AND Server.Shutdown's closeIdleConns), and net.Conn.Close is
+	// documented as safe to call multiple times — but a second receive on
+	// an already-released semaphore slot blocks forever, wedging
+	// http.Server.Shutdown while it holds the REST server's state under
+	// closeIdleConns. One release per connection, exactly once.
+	releaseOnce sync.Once
 }
 
-// Close closes the connection and releases the semaphore slot.
+// Close closes the connection and releases the semaphore slot (once).
 func (c *limitConn) Close() error {
 	err := c.Conn.Close()
-	<-c.sem
+	c.releaseOnce.Do(func() { <-c.sem })
 	return err
 }

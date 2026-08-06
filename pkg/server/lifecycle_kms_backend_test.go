@@ -40,6 +40,8 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // nonexistentTPMDevice is a device path guaranteed not to exist so DetectHardware
@@ -193,4 +195,114 @@ func TestStartKMS_UncompiledBackendIsTypedError(t *testing.T) {
 	assert.Equal(t, config.BackendTypePKCS11, notCompiled.Backend)
 	assert.False(t, constructed, "startKMS must NOT construct any backend for an uncompiled type")
 	assert.Nil(t, srv.kmsManager, "no KMS manager may be left set after a resolve failure")
+}
+
+// preInitializeGlobalXKMS resets the process-global xkms singleton and
+// re-initializes it with a software instance registered under the given name,
+// simulating initializeCA having run first. The singleton is reset again on
+// cleanup so later tests see a clean slate.
+func preInitializeGlobalXKMS(t *testing.T, name string) {
+	t.Helper()
+
+	dbxkms.Reset()
+	t.Cleanup(dbxkms.Reset)
+
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	require.NoError(t, err)
+
+	provider, err := xkmssdk.NewSoftwareBackend(&xkmssdk.SoftwareBackendConfig{
+		KeyStorage: xkmssdk.NewStorageMemory(),
+	})
+	require.NoError(t, err)
+	sb, err := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{
+		Backend:     provider,
+		CertStorage: xkmssdk.NewStorageMemory(),
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, dbxkms.Initialize(&dbxkms.Config{
+		DefaultBackend: name,
+		Backends:       map[string]xkmssdk.ServiceBackend{name: sb},
+		Logger:         logger.NewAdapter(log),
+	}))
+}
+
+// TestStartKMS_AddsResolvedBackendToRunningXKMS proves the initializeCA-first
+// boot order: when the global xkms singleton is already initialized WITHOUT
+// the KMS-resolved backend name, startKMS must register the resolved backend
+// with the running service instead of silently discarding it (which would
+// leave the KMS registry riding whatever the earlier registration was).
+func TestStartKMS_AddsResolvedBackendToRunningXKMS(t *testing.T) {
+	saveAndRestoreSeams(t)
+	// Simulate an earlier registration under a DIFFERENT name so the resolved
+	// "software" backend is missing from the running service.
+	preInitializeGlobalXKMS(t, "tpm2")
+
+	srv := withTempServer(t)
+	srv.config.KMS.Enabled = true
+	srv.config.KMS.Backend = config.BackendTypeSoftware
+	srv.config.Seal.TPM2.Device = nonexistentTPMDevice
+
+	captureKMSBackendBuild(t)
+
+	require.NoError(t, srv.startKMS())
+	require.NotNil(t, srv.kmsManager)
+
+	assert.Contains(t, dbxkms.Backends(), string(config.BackendTypeSoftware),
+		"startKMS must add the resolved backend to the already-initialized xkms service")
+}
+
+// TestStartKMS_ReusesEquivalentRegisteredBackend proves the software fast
+// path: when the singleton already carries the resolved backend name (the
+// unified software registration initializeCA creates), startKMS must NOT
+// replace it — the registration seam stays untouched and startKMS succeeds by
+// riding the existing single key universe.
+func TestStartKMS_ReusesEquivalentRegisteredBackend(t *testing.T) {
+	saveAndRestoreSeams(t)
+	preInitializeGlobalXKMS(t, string(config.BackendTypeSoftware))
+
+	registered := false
+	registerXKMSBackendFn = func(name string, backend xkmssdk.ServiceBackend) error {
+		registered = true
+		return nil
+	}
+
+	srv := withTempServer(t)
+	srv.config.KMS.Enabled = true
+	srv.config.KMS.Backend = config.BackendTypeSoftware
+	srv.config.Seal.TPM2.Device = nonexistentTPMDevice
+
+	captureKMSBackendBuild(t)
+
+	require.NoError(t, srv.startKMS())
+	require.NotNil(t, srv.kmsManager)
+	assert.False(t, registered,
+		"startKMS must reuse the already-registered software backend, not replace it")
+}
+
+// TestStartKMS_XKMSRegistrationFailureIsTypedError proves a failed
+// registration on the already-initialized service aborts startKMS with a
+// typed error — never a silent degrade onto whichever backends happen to be
+// registered.
+func TestStartKMS_XKMSRegistrationFailureIsTypedError(t *testing.T) {
+	saveAndRestoreSeams(t)
+	preInitializeGlobalXKMS(t, "tpm2")
+
+	sentinel := errors.New("boom: registration rejected")
+	registerXKMSBackendFn = func(name string, backend xkmssdk.ServiceBackend) error {
+		return sentinel
+	}
+
+	srv := withTempServer(t)
+	srv.config.KMS.Enabled = true
+	srv.config.KMS.Backend = config.BackendTypeSoftware
+	srv.config.Seal.TPM2.Device = nonexistentTPMDevice
+
+	captureKMSBackendBuild(t)
+
+	err := srv.startKMS()
+	require.Error(t, err, "registration failure must abort startKMS")
+	assert.True(t, errors.Is(err, sentinel), "the typed error chain must carry the cause, got %v", err)
+	assert.Contains(t, err.Error(), "register KMS backend with XKMS")
+	assert.Nil(t, srv.kmsManager, "no KMS manager may be left set after a registration failure")
 }

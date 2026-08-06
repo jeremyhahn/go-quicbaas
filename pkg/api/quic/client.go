@@ -1289,17 +1289,35 @@ func (c *Client) CeremonyClaimCertComplete(ctx context.Context, req *CeremonyCla
 	return &out, nil
 }
 
-// CeremonyClaimShare retrieves the Shamir share for an officer (mirrors POST
-// /api/v1/init/claim-share).
-func (c *Client) CeremonyClaimShare(ctx context.Context, req *CeremonyClaimShareRequest) (*CeremonyClaimShareResponse, error) {
+// CeremonyBeginClaimShare starts the Shamir share claim handshake for an
+// officer (mirrors POST /api/v1/init/officer-share/begin).
+func (c *Client) CeremonyBeginClaimShare(ctx context.Context, req *CeremonyBeginClaimShareRequest) (*CeremonyChallengeResponse, error) {
 	if req == nil {
-		return nil, api.NewNilInputError("Client.CeremonyClaimShare", "request")
+		return nil, api.NewNilInputError("Client.CeremonyBeginClaimShare", "request")
 	}
-	resp, err := c.callCeremony(ctx, SubOpCeremonyClaimShare, req)
+	resp, err := c.callCeremony(ctx, SubOpCeremonyBeginClaimShare, req)
 	if err != nil {
 		return nil, err
 	}
-	var out CeremonyClaimShareResponse
+	var out CeremonyChallengeResponse
+	if err := DecodePayload(resp.Payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CeremonyCompleteClaimShare completes the Shamir share claim handshake by
+// submitting the signed challenge nonce (mirrors POST
+// /api/v1/init/officer-share/complete). The share is released exactly once.
+func (c *Client) CeremonyCompleteClaimShare(ctx context.Context, req *CeremonyCompleteClaimShareRequest) (*CeremonyCompleteClaimShareResponse, error) {
+	if req == nil {
+		return nil, api.NewNilInputError("Client.CeremonyCompleteClaimShare", "request")
+	}
+	resp, err := c.callCeremony(ctx, SubOpCeremonyCompleteClaimShare, req)
+	if err != nil {
+		return nil, err
+	}
+	var out CeremonyCompleteClaimShareResponse
 	if err := DecodePayload(resp.Payload, &out); err != nil {
 		return nil, err
 	}

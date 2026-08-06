@@ -20,6 +20,7 @@ import (
 	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,8 +37,7 @@ func TestRevokeSession_GetError(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	ctx := context.WithValue(context.Background(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
 	req := withChiParams(
 		httptest.NewRequest(http.MethodDelete, "/x", nil).WithContext(ctx),
 		map[string]string{"id": "sess-1"},
@@ -59,8 +59,7 @@ func TestRevokeSession_RevokeError(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	ctx := context.WithValue(context.Background(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
 	req := withChiParams(
 		httptest.NewRequest(http.MethodDelete, "/x", nil).WithContext(ctx),
 		map[string]string{"id": "sess-1"},
@@ -79,8 +78,7 @@ func TestRevokeAllSessions_RevokeAllForUserError(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	ctx := context.WithValue(context.Background(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 
@@ -99,8 +97,7 @@ func TestRevokeAllSessions_RevokeAllExceptError(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	ctx := context.WithValue(context.Background(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions?except=keep", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 
@@ -116,10 +113,9 @@ func TestRevokeOtherSessions_GetError(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	ctx := context.WithValue(context.Background(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
-	ctx = context.WithValue(ctx, "session_id", "current")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil).WithContext(ctx)
+	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others",
+		strings.NewReader(`{"keep_session_id":"current"}`)).WithContext(ctx)
 	w := httptest.NewRecorder()
 
 	handler.RevokeOtherSessions(w, req)

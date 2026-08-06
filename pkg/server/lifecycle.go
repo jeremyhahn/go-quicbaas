@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 	"time"
 
@@ -38,6 +39,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
+	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	_ "github.com/jeremyhahn/go-quicbaas/pkg/barrier" // side-effect import: registers barrier package init
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
@@ -93,9 +95,13 @@ var (
 	buildKMSServiceBackendFn = func(r *BackendResolver, spec BackendSpec, store xkmssdk.StorageBackend) (xkmssdk.ServiceBackend, error) {
 		return r.ServiceBackendWithStore(spec, store)
 	}
-	initXKMS             = dbxkms.Initialize
-	newKMSBackendFactory = kms.NewBackendFactory
-	newKMSServiceFn      = kms.NewKMSService
+	initXKMS = dbxkms.Initialize
+	// registerXKMSBackendFn adds a resolved KMS backend to an already-
+	// initialized global xkms service (the initializeCA-first boot order).
+	// Seam so tests can force a registration failure.
+	registerXKMSBackendFn = dbxkms.RegisterBackend
+	newKMSBackendFactory  = kms.NewBackendFactory
+	newKMSServiceFn       = kms.NewKMSService
 	// Seam for cache.NewManager in startService.
 	newCacheManagerFn = cache.NewManager
 	// Seam for grpcapi.InitializeDefaultSealManager in startGRPCServer.
@@ -304,13 +310,62 @@ func (s *Server) initializeCA() error {
 		return api.NewOperationFailedError("create PKCS#8 backend", err)
 	}
 
-	// Create unified xkms backend
+	// Create the CA's xkms backend: PKCS#8 asymmetric operations with the
+	// RootKeyPassword plaintext-rejection semantics configured above. This
+	// instance is handed to the TrustedCA as its private KeyStore below.
 	xkmsBackend, err := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{
 		Backend:     pkcs8Backend,
 		CertStorage: certFileStorage,
 	})
 	if err != nil {
 		return api.NewOperationFailedError("create xkms backend", err)
+	}
+
+	// Build the process-global xkms registration from the SAME key universe.
+	// The singleton serves two consumers with ONE composition:
+	//   - IAM's OIDC signing key (NewSigningKeyManagerFromXKMS) and every
+	//     other global-xkms asymmetric consumer — required even when the
+	//     optional KMS service is disabled (startKMS is a no-op when
+	//     kms.enabled=false); without it the OIDC provider never comes up and
+	//     the RequireAuthz fail-closed gates correctly refuse to start;
+	//   - the KMS service's SYMMETRIC operations (AES-GCM keys / data keys)
+	//     when kms.enabled=true — startKMS reuses this registration via
+	//     ErrAlreadyInitialized instead of forking a second key chain.
+	// The pkcs8-only CA backend above cannot serve the second consumer (it
+	// implements no SymmetricKeyProvider), so the singleton gets the UNIFIED
+	// go-xkms software backend (PKCS#8 asymmetric + AES symmetric) over the
+	// SAME storage root and the SAME persistent cert storage: one storage
+	// root = one KEK universe = no wrap/unwrap mismatch.
+	softwareProvider, err := xkmssdk.NewSoftwareBackend(&xkmssdk.SoftwareBackendConfig{
+		KeyStorage: keyStorage,
+	})
+	if err != nil {
+		return api.NewOperationFailedError("create unified software backend", err)
+	}
+	globalXKMSBackend, err := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{
+		Backend:     softwareProvider,
+		CertStorage: certFileStorage,
+	})
+	if err != nil {
+		return api.NewOperationFailedError("create global xkms backend", err)
+	}
+
+	// Register the unified backend as the process-global xkms service. This
+	// runs whenever the CA key universe exists — independent of the optional
+	// KMS service.
+	if err := initXKMS(&dbxkms.Config{
+		DefaultBackend: string(xkmssdk.StoreSoftware),
+		Backends: map[string]xkmssdk.ServiceBackend{
+			string(xkmssdk.StoreSoftware): globalXKMSBackend,
+		},
+		Logger: logger.NewAdapter(s.logger),
+	}); err != nil {
+		if !errors.Is(err, dbxkms.ErrAlreadyInitialized) {
+			return api.NewOperationFailedError("initialize XKMS from CA backend", err)
+		}
+		s.logger.Info("XKMS already initialized — CA backend not re-registered")
+	} else {
+		s.logger.Info("XKMS global service initialized from CA key universe")
 	}
 
 	// Create certificate store
@@ -1073,11 +1128,26 @@ func (s *Server) startKMS() error {
 	}
 
 	if err := initXKMS(xkmsConfig); err != nil {
-		// Check if already initialized (not an error)
-		if errors.Is(err, dbxkms.ErrAlreadyInitialized) {
-			s.logger.Info("XKMS already initialized")
-		} else {
+		if !errors.Is(err, dbxkms.ErrAlreadyInitialized) {
 			return api.NewOperationFailedError("initialize XKMS", err)
+		}
+		// initializeCA already initialized the global singleton from the CA
+		// storage root. Its "software" registration is the UNIFIED software
+		// backend (PKCS#8 asymmetric + AES symmetric) over the SAME store
+		// resolved above, so when the KMS backend resolves to software there
+		// is nothing to add. A resolved NON-software backend (tpm2 / pkcs11 /
+		// cloud KMS) is not part of the CA registration and MUST be added to
+		// the running service — anything else would silently degrade KMS to
+		// software-only crypto.
+		if slices.Contains(dbxkms.Backends(), backendName) {
+			s.logger.WithField("backend", backendName).Info(
+				"XKMS already initialized — KMS reusing registered backend")
+		} else {
+			if regErr := registerXKMSBackendFn(backendName, primaryBackend); regErr != nil {
+				return api.NewOperationFailedError("register KMS backend with XKMS", regErr)
+			}
+			s.logger.WithField("backend", backendName).Info(
+				"XKMS already initialized — KMS backend added to running service")
 		}
 	}
 
@@ -1984,13 +2054,34 @@ func (s *Server) startGRPCServer() error {
 		grpcapi.StreamTenantInterceptor(tenantResolve),
 	}
 
-	// Install the platform-token authorization interceptors after the tenant
-	// interceptor (so the cert-derived tenant is already on the context) when
-	// RequireAuthz=true. When authz is off the builder returns nil and the chain
-	// is unchanged — gRPC adds no authorization gate, exactly as before. The same
-	// chain backs the Unix-domain-socket gRPC listener, so this one installation
-	// covers both the gRPC and Unix transports.
-	if unaryAuthz, streamAuthz := s.grpcAuthorizationInterceptors(); unaryAuthz != nil {
+	// Install the sealed-window interceptors (qrdb's own, consumed via the
+	// SDK re-export) ahead of the tenant and authz interceptors. They are
+	// probe-driven: a pass-through while the barrier is unsealed, and a
+	// deny-everything-off-allowlist gate the instant the barrier is sealed
+	// (e.g. a post-boot barrier seal). The allowlist is derived from the
+	// single canonical table in pkg/api/sealedwindow. The same chain backs
+	// the Unix-domain-socket listener, so one installation covers both the
+	// gRPC and Unix transports.
+	sealedProbe := s.SealedWindowProbe()
+	sealedAllow := qbsealedwindow.GRPCAllowlist()
+	unaryInterceptors = append(unaryInterceptors,
+		qrdbsdk.SealedWindowUnaryInterceptor(sealedProbe, sealedAllow))
+	streamInterceptors = append(streamInterceptors,
+		qrdbsdk.SealedWindowStreamInterceptor(sealedProbe, sealedAllow))
+
+	// Install the platform-token authorization interceptors after the sealed
+	// gate (so sealed-window denials never require a token) when
+	// RequireAuthz=true. Post-unseal gate construction is FAIL-CLOSED: under
+	// RequireAuthz a validator that cannot be built is a typed construction
+	// error that aborts startup (refuse-to-start posture) — never a silent
+	// nil gate. When authz is off the builder returns (nil, nil, nil) and
+	// the chain is unchanged. The same chain backs the Unix-domain-socket
+	// gRPC listener, so this one installation covers both transports.
+	unaryAuthz, streamAuthz, authzErr := s.grpcAuthorizationInterceptors()
+	if authzErr != nil {
+		return authzErr
+	}
+	if unaryAuthz != nil {
 		unaryInterceptors = append(unaryInterceptors, unaryAuthz)
 		streamInterceptors = append(streamInterceptors, streamAuthz)
 		s.logger.Info("gRPC platform-token validator authorization installed (RequireAuthz=true)")

@@ -174,18 +174,40 @@ func tokenScopes(claims *iam.Claims) []string {
 // WebAuthn token carries the "admin" role — is authorized, while a bare
 // client_credentials service-account token (which carries no roles) is denied.
 //
-// When the OIDC provider is unavailable (IAM not initialized) the function is a
-// no-op and the REST server starts without the authz middleware, exactly as
-// before. This keeps storage-less / embedded boots working.
-func (s *Server) configureRESTAuthz(restServer *restapi.Server) {
+// Gate construction is FAIL-CLOSED under RequireAuthz: when the OIDC
+// provider or the platform-token Validator cannot be built, a typed
+// *AuthzGateConstructionError is returned and daemon startup ABORTS
+// (refuse-to-start posture) — REST is never served with a silently-missing
+// enforcement gate. With RequireAuthz=false (the legacy postures below) an
+// unavailable OIDC provider remains a no-op so storage-less / embedded
+// boots keep working exactly as before.
+func (s *Server) configureRESTAuthz(restServer *restapi.Server) error {
+	requireAuthz := s.config != nil && s.config.Security.RequireAuthz
+
 	getter, ok := s.quicBaaSService.(oidcProviderGetter)
 	if !ok {
+		if requireAuthz {
+			return &AuthzGateConstructionError{
+				Transport: "rest",
+				Op:        "service does not expose an OIDC provider",
+			}
+		}
 		s.logger.Debug("REST authz disabled: service does not expose an OIDC provider")
-		return
+		return nil
 	}
 	if provider, err := getter.GetOIDCProvider(context.Background()); err != nil || provider == nil {
+		if requireAuthz {
+			if err == nil {
+				err = ErrOIDCProviderUnavailable
+			}
+			return &AuthzGateConstructionError{
+				Transport: "rest",
+				Op:        "resolve OIDC provider",
+				Cause:     err,
+			}
+		}
 		s.logger.Debug("REST authz disabled: OIDC provider not available")
-		return
+		return nil
 	}
 
 	// The token validator wraps the IAM OIDC provider and is DPoP-aware: it
@@ -216,23 +238,28 @@ func (s *Server) configureRESTAuthz(restServer *restapi.Server) {
 	// and token-less requests are denied. This is the locked-down posture and is
 	// off by default so current behavior (anonymous data-plane access) is
 	// unchanged until the fleet has migrated to authenticated clients.
-	if s.config.Security.RequireAuthz {
+	if requireAuthz {
 		// Build the single central platform-token Validator and install the
 		// reference (REST) enforcement gate. One Validator call per request does
 		// offline signature / iss / aud / exp verification, DPoP sender-constraint
 		// (RFC 9449) for cnf.jkt-bound tokens, the offline scp -> permission
 		// decision, and the per-tenant liveness/revocation check. This REPLACES the
-		// prior online qrdb role-PDP path on REST.
+		// prior online qrdb role-PDP path on REST. A build failure ABORTS
+		// startup (fail-closed) instead of serving REST ungated.
 		platformValidator, err := s.buildPlatformValidator(context.Background())
 		if err != nil {
-			s.logger.WithError(err).Error("REST authz disabled: failed to build platform-token validator")
-			return
+			return &AuthzGateConstructionError{
+				Transport: "rest",
+				Op:        "build platform-token validator",
+				Cause:     err,
+			}
 		}
 		restServer.SetValidatorAuthzEnforcement(platformValidator)
 		s.logger.Info("REST platform-token validator authorization installed (RequireAuthz=true)")
-		return
+		return nil
 	}
 
 	restServer.SetTokenBindingEnforcement(validator)
 	s.logger.Info("REST token-binding (DPoP/mTLS) enforcement installed; RBAC decision deferred (role propagation pending cluster validation)")
+	return nil
 }

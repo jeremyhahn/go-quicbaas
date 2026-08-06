@@ -252,4 +252,3 @@ func TestBindPIVLoginVerifier_IncludesOperatorRoots(t *testing.T) {
 		t.Fatalf("verifier should be bound with merged roots, got unbound: %v", err)
 	}
 }
-

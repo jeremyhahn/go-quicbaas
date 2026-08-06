@@ -17,6 +17,7 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -99,10 +100,48 @@ type SchedulerEngine struct {
 
 	// Storage error counter for monitoring
 	storageErrors atomic.Uint64
+
+	// jobLocks stripes serialize read-modify-write status transitions
+	// per job (cancel/pause/resume/update/delete vs. asynchronous
+	// execution-completion writes). A fixed stripe array bounds memory;
+	// stripe collisions only cause harmless extra serialization.
+	jobLocks [jobLockStripes]sync.Mutex
 }
+
+// jobLockStripes is the number of striped per-job mutexes. Power of
+// two so the stripe index reduces to a bit mask.
+const jobLockStripes = 64
 
 // Verify SchedulerEngine implements Scheduler interface.
 var _ Scheduler = (*SchedulerEngine)(nil)
+
+// jobLock returns the stripe mutex that serializes status
+// transitions for the given job ID.
+func (s *SchedulerEngine) jobLock(jobID uint64) *sync.Mutex {
+	return &s.jobLocks[jobID&(jobLockStripes-1)]
+}
+
+// jobTenantID returns the tenant scope used for storage lookups of
+// job. System and delegated jobs live in the system namespace (empty
+// tenant ID); only tenant-owned jobs are tenant-scoped.
+func jobTenantID(job *Job) string {
+	if job.OwnerType == OwnerTypeTenant {
+		return job.OwnerID
+	}
+	return ""
+}
+
+// isJobNotFound reports whether err indicates a missing job record.
+// Storage implementations return JobNotFoundError by value or by
+// pointer, so both forms are matched.
+func isJobNotFound(err error) bool {
+	var v JobNotFoundError
+	if errors.As(err, &v) {
+		return true
+	}
+	var p *JobNotFoundError
+	return errors.As(err, &p)
+}
 
 // New creates a new scheduler engine with the given configuration.
 // Single-node behavior (nil LeaderChecker, empty NodeID) is preserved
@@ -325,6 +364,12 @@ func (s *SchedulerEngine) CancelJob(ctx context.Context, jobID uint64) error {
 		return SchedulerStoppedError{}
 	}
 
+	// Serialize with concurrent execution-completion writes so a
+	// successful cancel cannot be clobbered (see jobLocks).
+	lock := s.jobLock(jobID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	job, err := s.storage.GetJob(ctx, jobID, "")
 	if err != nil {
 		return ErrStorageError{Op: "GetJob", Cause: err}
@@ -363,6 +408,12 @@ func (s *SchedulerEngine) CancelJobWithTenant(ctx context.Context, jobID uint64,
 	if !s.running.Load() {
 		return "", SchedulerStoppedError{}
 	}
+
+	// Serialize with concurrent execution-completion writes so a
+	// successful cancel cannot be clobbered (see jobLocks).
+	lock := s.jobLock(jobID)
+	lock.Lock()
+	defer lock.Unlock()
 
 	job, err := s.storage.GetJob(ctx, jobID, tenantID)
 	if err != nil {
@@ -442,6 +493,10 @@ func (s *SchedulerEngine) PauseJob(ctx context.Context, jobID uint64, tenantID s
 		return SchedulerStoppedError{}
 	}
 
+	lock := s.jobLock(jobID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	job, err := s.storage.GetJob(ctx, jobID, tenantID)
 	if err != nil {
 		return ErrStorageError{Op: "GetJob", Cause: err}
@@ -472,6 +527,10 @@ func (s *SchedulerEngine) PauseJobWithStatus(ctx context.Context, jobID uint64, 
 	if !s.running.Load() {
 		return "", SchedulerStoppedError{}
 	}
+
+	lock := s.jobLock(jobID)
+	lock.Lock()
+	defer lock.Unlock()
 
 	job, err := s.storage.GetJob(ctx, jobID, tenantID)
 	if err != nil {
@@ -505,6 +564,10 @@ func (s *SchedulerEngine) ResumeJob(ctx context.Context, jobID uint64, tenantID 
 	if !s.running.Load() {
 		return SchedulerStoppedError{}
 	}
+
+	lock := s.jobLock(jobID)
+	lock.Lock()
+	defer lock.Unlock()
 
 	job, err := s.storage.GetJob(ctx, jobID, tenantID)
 	if err != nil {
@@ -543,6 +606,10 @@ func (s *SchedulerEngine) ResumeJobWithStatus(ctx context.Context, jobID uint64,
 	if !s.running.Load() {
 		return "", SchedulerStoppedError{}
 	}
+
+	lock := s.jobLock(jobID)
+	lock.Lock()
+	defer lock.Unlock()
 
 	job, err := s.storage.GetJob(ctx, jobID, tenantID)
 	if err != nil {
@@ -607,6 +674,10 @@ func (s *SchedulerEngine) UpdateJob(ctx context.Context, jobID uint64, tenantID 
 	if !s.running.Load() {
 		return nil, SchedulerStoppedError{}
 	}
+
+	lock := s.jobLock(jobID)
+	lock.Lock()
+	defer lock.Unlock()
 
 	job, err := s.storage.GetJob(ctx, jobID, tenantID)
 	if err != nil {
@@ -676,6 +747,10 @@ func (s *SchedulerEngine) DeleteJob(ctx context.Context, jobID uint64, tenantID 
 	if !s.running.Load() {
 		return SchedulerStoppedError{}
 	}
+
+	lock := s.jobLock(jobID)
+	lock.Lock()
+	defer lock.Unlock()
 
 	job, err := s.storage.GetJob(ctx, jobID, tenantID)
 	if err != nil {
@@ -933,13 +1008,36 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job) {
 		return
 	}
 
+	// Re-check the job under its stripe lock before executing: a
+	// concurrent cancel, pause, or delete between dispatch and
+	// execution must win. The running-status write happens under the
+	// same lock so it cannot clobber a concurrent transition.
+	lock := s.jobLock(job.ID)
+	lock.Lock()
+	current, err := s.storage.GetJob(storageCtx, job.ID, jobTenantID(job))
+	if err != nil || current == nil {
+		lock.Unlock()
+		if err != nil && !isJobNotFound(err) {
+			s.storageErrors.Add(1)
+		}
+		return
+	}
+	if current.Status == JobStatusCanceled || current.Status == JobStatusCompleted || current.Status == JobStatusPaused {
+		lock.Unlock()
+		s.logDebug("Skipping job %d (%s): status is %s", current.ID, current.Name, current.Status)
+		return
+	}
+	job = current
+
 	// Update job status to running
 	job.Status = JobStatusRunning
 	job.UpdatedAt = time.Now()
 	if err := s.storage.UpdateJob(storageCtx, job); err != nil {
+		lock.Unlock()
 		s.storageErrors.Add(1)
 		return
 	}
+	lock.Unlock()
 
 	// Create execution record
 	exec := &JobExecution{
@@ -1020,22 +1118,45 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
 	defer cancel()
 
-	// Check if the job was canceled concurrently; if so, preserve the terminal status
-	if current, getErr := s.storage.GetJob(storageCtx, job.ID, job.OwnerID); getErr == nil && current != nil {
-		if current.Status == JobStatusCanceled || current.Status == JobStatusCompleted {
-			job.Status = current.Status
-		}
-	}
-
-	// Best-effort storage updates for background processing.
-	// Errors are tracked via storageErrors counter for monitoring.
-	if err := s.storage.UpdateJob(storageCtx, job); err != nil {
-		s.storageErrors.Add(1)
-	}
+	// Persist the outcome under the job's stripe lock so a concurrent
+	// cancel or delete cannot be clobbered by this write.
+	s.persistJobOutcome(storageCtx, job)
 	if err := s.storage.SaveExecution(storageCtx, exec); err != nil {
 		s.storageErrors.Add(1)
 	}
 	s.successCount.Add(1)
+}
+
+// persistJobOutcome writes an execution outcome for job while
+// honoring concurrent lifecycle transitions. It runs under the job's
+// stripe lock and, atomically with respect to the other status
+// writers:
+//
+//   - preserves a concurrently set terminal status (canceled or
+//     completed) instead of overwriting it, and
+//   - skips the write entirely when the job record no longer exists,
+//     so completed executions never resurrect a deleted job.
+//
+// Writes remain best effort (errors are tracked via storageErrors),
+// matching the background-processing semantics of the callers.
+func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) {
+	lock := s.jobLock(job.ID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	current, getErr := s.storage.GetJob(ctx, job.ID, jobTenantID(job))
+	switch {
+	case isJobNotFound(getErr), getErr == nil && current == nil:
+		// Job was deleted concurrently; do not resurrect it.
+		return
+	case getErr == nil && (current.Status == JobStatusCanceled || current.Status == JobStatusCompleted):
+		// Preserve the terminal status set by a concurrent transition.
+		job.Status = current.Status
+	}
+
+	if err := s.storage.UpdateJob(ctx, job); err != nil {
+		s.storageErrors.Add(1)
+	}
 }
 
 // handleJobError processes a job execution error with retry logic.
@@ -1088,18 +1209,9 @@ func (s *SchedulerEngine) handleJobError(ctx context.Context, job *Job, exec *Jo
 	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
 	defer cancel()
 
-	// Check if the job was canceled concurrently; if so, preserve the terminal status
-	if current, getErr := s.storage.GetJob(storageCtx, job.ID, job.OwnerID); getErr == nil && current != nil {
-		if current.Status == JobStatusCanceled || current.Status == JobStatusCompleted {
-			job.Status = current.Status
-		}
-	}
-
-	// Best-effort storage updates for background processing.
-	// Errors are tracked via storageErrors counter for monitoring.
-	if storageErr := s.storage.UpdateJob(storageCtx, job); storageErr != nil {
-		s.storageErrors.Add(1)
-	}
+	// Persist the outcome under the job's stripe lock so a concurrent
+	// cancel or delete cannot be clobbered by this write.
+	s.persistJobOutcome(storageCtx, job)
 	if storageErr := s.storage.SaveExecution(storageCtx, exec); storageErr != nil {
 		s.storageErrors.Add(1)
 	}
@@ -1124,18 +1236,9 @@ func (s *SchedulerEngine) handleJobFailure(ctx context.Context, job *Job, err er
 	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
 	defer cancel()
 
-	// Check if the job was canceled concurrently; if so, preserve the terminal status
-	if current, getErr := s.storage.GetJob(storageCtx, job.ID, job.OwnerID); getErr == nil && current != nil {
-		if current.Status == JobStatusCanceled || current.Status == JobStatusCompleted {
-			job.Status = current.Status
-		}
-	}
-
-	// Best-effort storage update for background processing.
-	// Errors are tracked via storageErrors counter for monitoring.
-	if storageErr := s.storage.UpdateJob(storageCtx, job); storageErr != nil {
-		s.storageErrors.Add(1)
-	}
+	// Persist the outcome under the job's stripe lock so a concurrent
+	// cancel or delete cannot be clobbered by this write.
+	s.persistJobOutcome(storageCtx, job)
 	s.failureCount.Add(1)
 }
 

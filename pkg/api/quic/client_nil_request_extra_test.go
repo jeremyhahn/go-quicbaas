@@ -60,12 +60,15 @@ func TestClient_CeremonyClaimCertComplete_NilRequest(t *testing.T) {
 	verifyNilRequestError(t, err, "CeremonyClaimCertComplete")
 }
 
-func TestClient_CeremonyClaimShare_NilRequest(t *testing.T) {
+func TestClient_CeremonyBeginClaimShare_NilRequest(t *testing.T) {
 	client := createTestClient(t)
 	defer client.Close()
 
-	_, err := client.CeremonyClaimShare(context.Background(), nil)
-	verifyNilRequestError(t, err, "CeremonyClaimShare")
+	_, err := client.CeremonyBeginClaimShare(context.Background(), nil)
+	verifyNilRequestError(t, err, "CeremonyBeginClaimShare")
+
+	_, err = client.CeremonyCompleteClaimShare(context.Background(), nil)
+	verifyNilRequestError(t, err, "CeremonyCompleteClaimShare")
 }
 
 func TestClient_CeremonyEnrollExternalOfficer_NilRequest(t *testing.T) {

@@ -70,6 +70,18 @@ type ToolRegistry struct {
 	// during early boot and unit tests, in which case those tools return
 	// GovernanceServiceUnavailableError.
 	tenantGovernance mcpTenantGovernancer
+
+	// userSvc backs the qrdb_user_get* lookup tools. Wired post-construction
+	// via SetUserService with the lazy per-call embedded-node proxy; nil
+	// during early boot and unit tests, in which case those tools return
+	// UserServiceUnavailableError.
+	userSvc qrdbsdk.UserServicer
+
+	// userAuthFactorSvc backs every qrdb_user_authfactor_* tool. Wired
+	// post-construction via SetUserAuthFactorService with the lazy per-call
+	// embedded-node proxy; nil during early boot and unit tests, in which
+	// case those tools return UserAuthFactorServiceUnavailableError.
+	userAuthFactorSvc qrdbsdk.UserAuthFactorServicer
 }
 
 // ToolDefinition describes an MCP tool.
@@ -245,6 +257,10 @@ func (r *ToolRegistry) registerTools() {
 
 	// Register per-tenant barrier tools (qrdb_tenant_barrier_*).
 	r.registerTenantBarrierTools()
+
+	// Register qrdb user lookup + user-login factor tools
+	// (qrdb_user_get* / qrdb_user_authfactor_*).
+	r.registerQRDBUserTools()
 
 	// Register XKMS-compatible tools
 
@@ -1396,6 +1412,11 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		// Check if it is a per-tenant barrier tool.
 		if isTenantBarrierTool(name) {
 			return r.executeTenantBarrierTool(ctx, name, args)
+		}
+
+		// Check if it is a qrdb user lookup / user auth-factor tool.
+		if isQRDBUserTool(name) {
+			return r.executeQRDBUserTool(ctx, name, args)
 		}
 
 		return nil, api.NewUnknownToolError(name)

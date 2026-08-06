@@ -69,7 +69,8 @@ func TestGRPCAuthorizationInterceptors_AuthzDisabled(t *testing.T) {
 		logger: newGRPCAuthzTestLogger(t),
 		config: &config.Config{Security: config.SecurityConfig{RequireAuthz: false}},
 	}
-	unary, stream := s.grpcAuthorizationInterceptors()
+	unary, stream, err := s.grpcAuthorizationInterceptors()
+	require.NoError(t, err, "RequireAuthz=false never errors")
 	assert.Nil(t, unary, "no unary interceptor when RequireAuthz=false")
 	assert.Nil(t, stream, "no stream interceptor when RequireAuthz=false")
 }
@@ -78,39 +79,65 @@ func TestGRPCAuthorizationInterceptors_AuthzDisabled(t *testing.T) {
 // enforcement (fail-safe: no gate installed against an unconfigured server).
 func TestGRPCAuthorizationInterceptors_NilConfig(t *testing.T) {
 	s := &Server{logger: newGRPCAuthzTestLogger(t)}
-	unary, stream := s.grpcAuthorizationInterceptors()
+	unary, stream, err := s.grpcAuthorizationInterceptors()
+	require.NoError(t, err)
 	assert.Nil(t, unary)
 	assert.Nil(t, stream)
 }
 
-// TestGRPCAuthorizationInterceptors_NoGetter asserts that when RequireAuthz=true
-// but the service does not expose an OIDC provider, the builder declines to
-// install a gate (it cannot validate tokens) rather than installing one that
-// would deny every request opaquely.
+// TestGRPCAuthorizationInterceptors_NoGetter asserts the FAIL-CLOSED posture:
+// when RequireAuthz=true but the service does not expose an OIDC provider,
+// the builder returns a typed *AuthzGateConstructionError so daemon startup
+// ABORTS. It never returns (nil, nil, nil) under RequireAuthz — a transport
+// is never served with a silently-missing authorization gate.
 func TestGRPCAuthorizationInterceptors_NoGetter(t *testing.T) {
 	s := &Server{
 		logger:          newGRPCAuthzTestLogger(t),
 		config:          &config.Config{Security: config.SecurityConfig{RequireAuthz: true}},
 		quicBaaSService: nil,
 	}
-	unary, stream := s.grpcAuthorizationInterceptors()
+	unary, stream, err := s.grpcAuthorizationInterceptors()
 	assert.Nil(t, unary)
 	assert.Nil(t, stream)
+	var cerr *AuthzGateConstructionError
+	require.True(t, errors.As(err, &cerr), "typed construction error, got %v", err)
+	assert.Equal(t, "grpc", cerr.Transport)
 }
 
-// TestGRPCAuthorizationInterceptors_NilProviderSkips covers the
+// TestGRPCAuthorizationInterceptors_NilProviderFailsClosed covers the
 // provider-unavailable branch: a getter returning (nil, nil) (IAM not yet
-// initialised) must make the builder return nil interceptors without panicking
-// on the subsequent validator construction.
-func TestGRPCAuthorizationInterceptors_NilProviderSkips(t *testing.T) {
+// initialised) under RequireAuthz=true is a typed construction error that
+// aborts startup — never silent nil interceptors.
+func TestGRPCAuthorizationInterceptors_NilProviderFailsClosed(t *testing.T) {
 	s := &Server{
 		logger:          newGRPCAuthzTestLogger(t),
 		config:          &config.Config{Security: config.SecurityConfig{RequireAuthz: true}},
 		quicBaaSService: &grpcOIDCGetterService{provider: nil, err: nil},
 	}
-	unary, stream := s.grpcAuthorizationInterceptors()
+	unary, stream, err := s.grpcAuthorizationInterceptors()
 	assert.Nil(t, unary)
 	assert.Nil(t, stream)
+	var cerr *AuthzGateConstructionError
+	require.True(t, errors.As(err, &cerr), "typed construction error, got %v", err)
+	assert.Equal(t, "grpc", cerr.Transport)
+	assert.True(t, errors.Is(err, errGRPCOIDCProviderUnavailable))
+}
+
+// TestGRPCAuthorizationInterceptors_GetterErrorFailsClosed asserts a getter
+// error under RequireAuthz=true surfaces as a typed construction error
+// wrapping the cause.
+func TestGRPCAuthorizationInterceptors_GetterErrorFailsClosed(t *testing.T) {
+	s := &Server{
+		logger:          newGRPCAuthzTestLogger(t),
+		config:          &config.Config{Security: config.SecurityConfig{RequireAuthz: true}},
+		quicBaaSService: &grpcOIDCGetterService{err: errGRPCAuthzProviderBoom},
+	}
+	unary, stream, err := s.grpcAuthorizationInterceptors()
+	assert.Nil(t, unary)
+	assert.Nil(t, stream)
+	var cerr *AuthzGateConstructionError
+	require.True(t, errors.As(err, &cerr))
+	assert.True(t, errors.Is(err, errGRPCAuthzProviderBoom))
 }
 
 // TestGRPCAuthorizationInterceptors_Installed asserts that with RequireAuthz=true
@@ -124,7 +151,8 @@ func TestGRPCAuthorizationInterceptors_Installed(t *testing.T) {
 		config:          &config.Config{Security: config.SecurityConfig{RequireAuthz: true}},
 		quicBaaSService: &grpcOIDCGetterService{provider: provider},
 	}
-	unary, stream := s.grpcAuthorizationInterceptors()
+	unary, stream, err := s.grpcAuthorizationInterceptors()
+	require.NoError(t, err, "gate construction succeeds with a live provider")
 	assert.NotNil(t, unary, "unary interceptor installed with a live provider")
 	assert.NotNil(t, stream, "stream interceptor installed with a live provider")
 }

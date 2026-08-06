@@ -16,6 +16,7 @@
 package rest
 
 import (
+	stderrors "errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -78,6 +79,23 @@ type tenantBarrierEnableEncryptionBody struct {
 	ShamirTotal     int `json:"shamir_total,omitempty"`
 }
 
+// handleTenantBarrierError maps per-tenant barrier service errors to their
+// canonical REST status. The qrdb error canon maps
+// tenant.ErrBarrierNotEnabled (per-tenant barrier verb on a node whose seal
+// subsystem is disabled) to 422 Unprocessable Entity; without this check the
+// raw sentinel would fall through handleServiceError to a generic 500. The
+// error is passed to RespondError verbatim so the canonical message is
+// preserved on the wire and the response is marked non-retryable (generic
+// errors serialize with retryable=false). Every other error keeps the shared
+// handleServiceError classification.
+func (s *Server) handleTenantBarrierError(w http.ResponseWriter, r *http.Request, err error) {
+	if stderrors.Is(err, qrdbsdk.ErrTenantBarrierNotEnabled) {
+		RespondError(w, r, http.StatusUnprocessableEntity, err)
+		return
+	}
+	s.handleServiceError(w, r, err)
+}
+
 // requireTenantBarrierService returns the wired per-tenant barrier facade, or
 // reports 503 and returns false when it is not yet available.
 func (s *Server) requireTenantBarrierService(w http.ResponseWriter, r *http.Request) (service.TenantBarrierServicer, bool) {
@@ -111,7 +129,7 @@ func (s *Server) HandleTenantBarrierInit(w http.ResponseWriter, r *http.Request)
 
 	result, err := svc.TenantBarrierInit(r.Context(), tenantID, body.Passphrase, body.Threshold, body.Shares, body.Strategy)
 	if err != nil {
-		s.handleServiceError(w, r, err)
+		s.handleTenantBarrierError(w, r, err)
 		return
 	}
 
@@ -145,7 +163,7 @@ func (s *Server) HandleTenantBarrierUnseal(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := svc.TenantBarrierUnseal(r.Context(), tenantID, body.Key); err != nil {
-		s.handleServiceError(w, r, err)
+		s.handleTenantBarrierError(w, r, err)
 		return
 	}
 	RespondNoContent(w, r)
@@ -176,7 +194,7 @@ func (s *Server) HandleTenantBarrierUnsealShare(w http.ResponseWriter, r *http.R
 
 	progress, err := svc.TenantBarrierUnsealShare(r.Context(), tenantID, body.Share)
 	if err != nil {
-		s.handleServiceError(w, r, err)
+		s.handleTenantBarrierError(w, r, err)
 		return
 	}
 	RespondJSON(w, r, http.StatusOK, progress)
@@ -195,7 +213,7 @@ func (s *Server) HandleTenantBarrierSeal(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := svc.TenantBarrierSeal(r.Context(), tenantID); err != nil {
-		s.handleServiceError(w, r, err)
+		s.handleTenantBarrierError(w, r, err)
 		return
 	}
 	RespondNoContent(w, r)
@@ -215,7 +233,7 @@ func (s *Server) HandleTenantBarrierStatus(w http.ResponseWriter, r *http.Reques
 
 	status, err := svc.TenantBarrierStatus(r.Context(), tenantID)
 	if err != nil {
-		s.handleServiceError(w, r, err)
+		s.handleTenantBarrierError(w, r, err)
 		return
 	}
 	RespondJSON(w, r, http.StatusOK, status)
@@ -270,7 +288,7 @@ func (s *Server) HandleTenantBarrierEnableEncryption(w http.ResponseWriter, r *h
 	}
 
 	if err := barrierSvc.EnableEncryption(r.Context(), tenantID, opts); err != nil {
-		s.handleServiceError(w, r, err)
+		s.handleTenantBarrierError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

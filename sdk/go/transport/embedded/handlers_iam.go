@@ -259,13 +259,33 @@ func handleIAMUserCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 		Username:    sdkReq.Username,
 		Name:        sdkReq.DisplayName,
 		AuthMethods: sdkReq.AuthMethods,
-		Roles:       sdkReq.Roles,
-		Enabled:     true,
+		Attributes:  metadataToAttributes(sdkReq.Metadata),
+		// Roles and Groups are validated against the tenant's role and
+		// group stores by IdentityStore.CreateUser BEFORE the user record
+		// is written (validate-before-create), matching the gRPC/Unix
+		// adapter contract.
+		Roles:   sdkReq.Roles,
+		Groups:  sdkReq.Groups,
+		Enabled: true,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return userToSDK(user), nil
+}
+
+// metadataToAttributes boxes the SDK's string metadata map into the identity
+// store's attribute map. A nil or empty input yields nil so a user created
+// without metadata matches one created without attributes.
+func metadataToAttributes(metadata map[string]string) map[string]interface{} {
+	if len(metadata) == 0 {
+		return nil
+	}
+	attributes := make(map[string]interface{}, len(metadata))
+	for k, v := range metadata {
+		attributes[k] = v
+	}
+	return attributes
 }
 
 func handleIAMUserGet(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {

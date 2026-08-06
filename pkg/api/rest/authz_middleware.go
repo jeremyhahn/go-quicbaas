@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -54,6 +55,16 @@ type AuthzMiddleware struct {
 	tokenValidator      TokenValidator
 	authzService        interfaces.AuthorizationService
 	validatorAuthorizer ValidatorAuthorizer
+
+	// sealedBypass is the shared sealed-window authentication-bypass
+	// predicate. Injected by Server.setupRouter from the sealed-window gate
+	// (SetSealedWindowGate) so every enforcement gate on this middleware
+	// admits sealed+allowlisted requests without authentication (audited,
+	// reason "sealed-window allowlist"): while the barrier is sealed the
+	// sealed-window allowlist IS the entire control surface, because a
+	// sealed IAM plane cannot mint or validate tokens. Nil (no sealed gate
+	// installed) or an unsealed barrier never bypasses.
+	sealedBypass *sealedwindow.AuthBypass
 }
 
 // NewAuthzMiddleware creates a new authorization middleware with the given configuration.
@@ -146,6 +157,14 @@ func (m *AuthzMiddleware) Authorize(next http.Handler) http.Handler {
 			return
 		}
 
+		// Sealed-window authentication bypass: while the barrier is sealed
+		// the allowlisted unseal-flow paths that passed the sealed gate are
+		// admitted without a token (audited). Unsealed, this is always false.
+		if m.sealedBypass.BypassesRESTPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Extract token from Authorization header
 		token, err := extractBearerToken(r)
 		if err != nil {
@@ -226,6 +245,15 @@ func (m *AuthzMiddleware) Authorize(next http.Handler) http.Handler {
 func (m *AuthzMiddleware) EnforceTokenBinding(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isAuthzPublicEndpoint(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Sealed-window authentication bypass: while the barrier is sealed
+		// the allowlisted unseal-flow paths that passed the sealed gate are
+		// admitted without validating any (possibly stale) presented token
+		// (audited). Unsealed, this is always false.
+		if m.sealedBypass.BypassesRESTPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}

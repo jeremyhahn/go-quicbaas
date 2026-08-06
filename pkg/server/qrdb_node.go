@@ -466,8 +466,12 @@ func (s *Server) initStandaloneQRDBNode() error {
 
 	// When the operator supplied a passphrase (via server.WithSealPassphrase),
 	// inject it into the node builder so the barrier is auto-unsealed on
-	// startup. Without this, a passphrase-strategy node boots sealed and
-	// node.Client() returns nil, which causes GetKVStore to panic.
+	// startup. Without this, a passphrase-strategy node boots SEALED
+	// (node.Client() returns nil): a daemon boot then enters the
+	// sealed-window phase (initialize() serves only the canonical
+	// barrier/ceremony surface until an operator unseals — see
+	// sealed_window.go), while an embedded boot is refused with the typed
+	// EmbeddedSealedBootError.
 	if len(s.opts.sealPassphrase) > 0 && qcfg.Seal.Enabled {
 		nodeOpts = append(nodeOpts, qrdbnode.WithSealPassphrase(s.opts.sealPassphrase))
 	}
@@ -596,8 +600,10 @@ func (s *Server) initClusteredQRDBNode() error {
 
 	// When the operator supplied a passphrase (via server.WithSealPassphrase),
 	// inject it into the node builder so the barrier is auto-unsealed on
-	// startup. Without this, a passphrase-strategy node boots sealed and
-	// node.Client() returns nil, which causes GetKVStore to panic.
+	// startup. Without this, a passphrase-strategy node boots SEALED and the
+	// daemon serves the sealed-window phase until an operator unseals (see
+	// sealed_window.go); embedded boots are refused with the typed
+	// EmbeddedSealedBootError.
 	if len(s.opts.sealPassphrase) > 0 && qcfg.Seal.Enabled {
 		nodeOpts = append(nodeOpts, qrdbnode.WithSealPassphrase(s.opts.sealPassphrase))
 	}

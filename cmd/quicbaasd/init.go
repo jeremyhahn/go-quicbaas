@@ -615,8 +615,12 @@ func runInitEmbeddedServer(dataDir string, f *inlineInitFlags, barrierEnabled bo
 
 	// When the passphrase barrier is enabled, inject the passphrase via
 	// WithSealPassphrase so that NewStandaloneNode auto-unseals the qrdb
-	// node during Start. Without this the node boots sealed (node.Client()
-	// returns nil) and GetKVStore panics before the IAM bootstrap can run.
+	// node during Start. Without this the node boots sealed: in embedded
+	// mode (which init uses) the server refuses the boot with a typed
+	// EmbeddedSealedBootError, because the sealed-window listeners that a
+	// daemon boot would serve (see pkg/server/sealed_window.go) have no
+	// place in a blocking library Start. The init flow has the passphrase
+	// in hand, so auto-unseal is always the right call here.
 	var srvOpts []server.ServerOption
 	if barrierEnabled && isPassphraseStrategy(f.barrierStrategy) && f.secret != "" {
 		srvOpts = append(srvOpts, server.WithSealPassphrase([]byte(f.secret)))

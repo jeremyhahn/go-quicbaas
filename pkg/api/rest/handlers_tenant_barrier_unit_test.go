@@ -26,6 +26,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"fmt"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -367,4 +370,127 @@ func TestTenantBarrierStatus_ServiceError(t *testing.T) {
 	if w.Code < 500 {
 		t.Fatalf("expected 5xx, got %d", w.Code)
 	}
+}
+
+// =============================================================================
+// qrdb error canon: tenant.ErrBarrierNotEnabled (per-tenant barrier verb on a
+// node whose seal subsystem is disabled) maps to 422 Unprocessable Entity,
+// non-retryable, with the canonical message preserved
+// (handleTenantBarrierError). Both the bare sentinel and a %w-wrapped chain
+// must classify identically.
+// =============================================================================
+
+// barrierNotEnabledCases enumerates every tenant-barrier verb that delegates
+// errors through handleTenantBarrierError, paired with a fake that fails the
+// verb with the supplied error.
+func barrierNotEnabledCases(s *Server, failErr error) []struct {
+	name    string
+	method  string
+	body    string
+	handler func(http.ResponseWriter, *http.Request)
+	svc     *fakeTenantBarrierService
+} {
+	return []struct {
+		name    string
+		method  string
+		body    string
+		handler func(http.ResponseWriter, *http.Request)
+		svc     *fakeTenantBarrierService
+	}{
+		{"init", http.MethodPost, `{"strategy":"passphrase","passphrase":"p"}`, s.HandleTenantBarrierInit,
+			&fakeTenantBarrierService{initFn: func(context.Context, string, string, int, int, string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+				return nil, failErr
+			}}},
+		{"unseal", http.MethodPost, `{"key":"YWJj"}`, s.HandleTenantBarrierUnseal,
+			&fakeTenantBarrierService{unsealFn: func(context.Context, string, []byte) error { return failErr }}},
+		{"unseal-share", http.MethodPost, `{"share":"x"}`, s.HandleTenantBarrierUnsealShare,
+			&fakeTenantBarrierService{unsealShareFn: func(context.Context, string, string) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
+				return nil, failErr
+			}}},
+		{"seal", http.MethodPost, "", s.HandleTenantBarrierSeal,
+			&fakeTenantBarrierService{sealFn: func(context.Context, string) error { return failErr }}},
+		{"status", http.MethodGet, "", s.HandleTenantBarrierStatus,
+			&fakeTenantBarrierService{statusFn: func(context.Context, string) (*qrdbtransport.TenantBarrierStatusResponse, error) {
+				return nil, failErr
+			}}},
+	}
+}
+
+// requireBarrierNotEnabled422 asserts the canonical 422 response contract:
+// non-retryable, message preserved.
+func requireBarrierNotEnabled422(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Error     string `json:"error"`
+		Retryable bool   `json:"retryable"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode 422 body: %v; raw=%s", err, w.Body.String())
+	}
+	if !strings.Contains(resp.Error, "barrier not enabled (seal subsystem disabled)") {
+		t.Fatalf("422 body must preserve the canonical message; got %q", resp.Error)
+	}
+	if resp.Retryable {
+		t.Fatalf("422 barrier-not-enabled response must be non-retryable; body=%s", w.Body.String())
+	}
+}
+
+func TestTenantBarrier_BarrierNotEnabled_Maps422(t *testing.T) {
+	s := tenantBarrierServer(t, nil)
+	for _, c := range barrierNotEnabledCases(s, qrdbsdk.ErrTenantBarrierNotEnabled) {
+		t.Run(c.name, func(t *testing.T) {
+			s.SetTenantBarrierService(c.svc)
+			w := httptest.NewRecorder()
+			c.handler(w, tenantBarrierReq(c.method, "tenant-a", c.body))
+			requireBarrierNotEnabled422(t, w)
+		})
+	}
+}
+
+func TestTenantBarrier_BarrierNotEnabledWrapped_Maps422(t *testing.T) {
+	// A %w-wrapped chain (as produced by intermediate layers) must classify
+	// identically to the bare sentinel via errors.Is traversal.
+	wrapped := fmt.Errorf("tenant barrier init: %w", qrdbsdk.ErrTenantBarrierNotEnabled)
+	s := tenantBarrierServer(t, nil)
+	for _, c := range barrierNotEnabledCases(s, wrapped) {
+		t.Run(c.name, func(t *testing.T) {
+			s.SetTenantBarrierService(c.svc)
+			w := httptest.NewRecorder()
+			c.handler(w, tenantBarrierReq(c.method, "tenant-a", c.body))
+			requireBarrierNotEnabled422(t, w)
+		})
+	}
+}
+
+// TestTenantBarrier_GenericErrorStill500 pins that the 422 classification is
+// scoped to the barrier-not-enabled sentinel: an unrelated error keeps the
+// generic handleServiceError classification (500 for a plain error).
+func TestTenantBarrier_GenericErrorStill500(t *testing.T) {
+	s := tenantBarrierServer(t, &fakeTenantBarrierService{
+		sealFn: func(context.Context, string) error { return errTenantBarrierBoom },
+	})
+	w := httptest.NewRecorder()
+	s.HandleTenantBarrierSeal(w, tenantBarrierReq(http.MethodPost, "tenant-a", ""))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for a generic error, got %d", w.Code)
+	}
+}
+
+// TestTenantBarrierEnableEncryption_BarrierNotEnabled_Maps422 covers the
+// enable-encryption verb, which delegates through the system BarrierServicer
+// rather than the per-tenant facade but shares handleTenantBarrierError.
+func TestTenantBarrierEnableEncryption_BarrierNotEnabled_Maps422(t *testing.T) {
+	svc := &fakeBarrierService{
+		enableEncryptionFn: func(context.Context, string, qrdbsdk.MigrationOptions) error {
+			return qrdbsdk.ErrTenantBarrierNotEnabled
+		},
+	}
+	s := barrierServer(t, svc)
+	w := httptest.NewRecorder()
+	s.HandleTenantBarrierEnableEncryption(w,
+		tenantBarrierReq(http.MethodPost, "tenant-a", `{"target_strategy":"passphrase","passphrase":"p"}`))
+	requireBarrierNotEnabled422(t, w)
 }

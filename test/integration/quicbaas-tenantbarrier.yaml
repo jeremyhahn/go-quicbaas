@@ -1,0 +1,131 @@
+# QuicBaaS Per-Tenant Barrier Integration Test Configuration
+#
+# Seal-ENABLED single-node daemon for the test/integration/tenantbarrier
+# suite (wired into docker-compose.seal.yml as tenantbarrier-node; run via
+# `make integration-test-tenantbarrier`).
+#
+# Why a dedicated config: per-tenant barriers REQUIRE the embedded qrdb
+# node's seal subsystem. The shared integration cluster
+# (test/integration/quicbaas.yaml) has no seal: section, so its node boots
+# with SealBarrier == nil and qrdb's fail-closed kv tenant service rejects
+# every per-tenant barrier verb with tenant.ErrBarrierNotEnabled. This config
+# enables the system seal barrier (passphrase strategy, auto-unsealed at boot
+# via the QUICBAAS_SEAL_PASSPHRASE env var injected by the compose service)
+# so the per-tenant barrier surface is live. The node data dir (/data) also
+# gives the embedded qrdb node its auto-provisioned default volume pool, so
+# the FULL cryptographic strategy matrix (passphrase + shamir) runs — not
+# just the "none" strategy.
+#
+# The daemon runs `quicbaasd start` (standalone, no Raft) with the shared
+# cluster's test-node1 hostname + generated cert material
+# (test/integration/gen-certs) so the helpers package defaults (endpoints,
+# PIV admin cert, integration CA key) apply unchanged.
+
+logging:
+  level: debug
+  format: json
+
+security:
+  # Same posture as the shared integration cluster (quicbaas.yaml): this
+  # suite authenticates through the PIV/mTLS login ceremonies, not the global
+  # default-deny scope gate. The refuse-to-start gate requires the explicit
+  # dev-mode acknowledgment when require_authz=false with network transports
+  # enabled. NEVER set insecure_dev_mode in production.
+  require_authz: false
+  insecure_dev_mode: true
+  tls_enabled: true
+  tls_cert_file: /etc/quicbaas/certs/node1.crt
+  tls_key_file: /etc/quicbaas/certs/node1.key
+  tls_ca_file: /etc/quicbaas/certs/ca.crt
+
+server:
+  # The suite drives REST (lifecycle matrix) + gRPC (system-admin write
+  # posture); QUIC/MCP/Unix are left disabled for a lean boot.
+  grpc:
+    enabled: true
+    port: 50051
+  rest:
+    enabled: true
+    port: 8080
+  quic:
+    enabled: false
+  mcp:
+    enabled: false
+  unix:
+    enabled: false
+
+# Authentication: PIV/mTLS bootstrap admin, identical to the shared cluster.
+auth:
+  enabled: true
+  jwt_secret: "integration-test-secret-key-at-least-32-characters-long"
+  token_ttl: 1h
+  refresh_token_ttl: 24h
+  bootstrap_admin: true
+  bootstrap_admin_piv_cert_path: /etc/quicbaas/certs/admin.crt
+  max_login_attempts: 0
+
+# Storage: durable pebble backend under /data. The non-empty data dir is what
+# lets buildQRDBConfig auto-provision the default tenant volume pool
+# (/data/tenant-pools/default) required by cryptographic tenant barriers.
+storage:
+  backend: pebble
+
+# Seal/barrier: THE reason this config exists. The system barrier uses the
+# passphrase strategy and is auto-initialised + auto-unsealed at startup via
+# QUICBAAS_SEAL_PASSPHRASE (injected by docker-compose.seal.yml). With the
+# seal subsystem live, the embedded qrdb node accepts per-tenant barrier
+# init/unseal/unseal-share/seal/status.
+seal:
+  enabled: true
+  strategy: passphrase
+
+# IAM: tenant provisioning + PIV login, identical to the shared cluster so
+# helpers.AuthPIV / helpers.AuthTenantAdmin work unchanged. The default
+# tenant ID "test-tenant" is asserted by TestTenantBarrier_SystemTenantPosture.
+iam:
+  enabled: true
+  mode: primary
+  piv_login:
+    enabled: true
+    ca_file: /etc/quicbaas/certs/ca.crt
+  tenants:
+    default: "test-tenant"
+    isolation: strict
+    auto_create: true
+  oidc:
+    issuer: "https://test-node1:8080"
+    access_token_ttl: 1h
+    refresh_token_ttl: 24h
+    id_token_ttl: 1h
+  policy:
+    default_effect: deny
+    cache_ttl: 5m
+
+# Everything below is irrelevant to the per-tenant barrier surface and is
+# disabled to keep the single-node boot fast and dependency-free.
+kms:
+  enabled: false
+
+secrets:
+  enabled: false
+
+timeseries:
+  enabled: false
+
+vector:
+  enabled: false
+
+scheduler:
+  enabled: false
+
+orchestration:
+  enabled: false
+
+messaging:
+  enabled: false
+
+rag:
+  enabled: false
+
+backup:
+  enabled: false

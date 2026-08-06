@@ -22,16 +22,19 @@
 // qrdb wire format on a per-connection basis when the connection negotiated
 // the "qrdb-quic" ALPN.
 //
-// Three method families ride this ALPN: the connect-time health probe
-// (admin.Health), the barrier and ceremony lifecycle surface, and the
-// versioned credential surface. Each delegates to the SAME service facades
-// the gRPC and REST transports use, so behaviour is identical across every
+// The method families riding this ALPN are the connect-time health probe
+// (admin.Health), the barrier / ceremony lifecycle surface, the versioned
+// credential surface, and the user-lookup + user-login-factor surface
+// (handler_qrdb_users.go). Each delegates to the SAME service facades the
+// gRPC and REST transports use, so behaviour is identical across every
 // transport.
 
 package quic
 
 import (
 	"context"
+	"crypto/x509"
+	"io"
 	"runtime/debug"
 	"time"
 
@@ -50,6 +53,13 @@ import (
 // QUIC transport can reach the credential management surface without
 // changing its hard-coded ALPN.
 const QRDBALPN = "qrdb-quic"
+
+// qrdbMethodAdminHealth is the qrdb-quic connect-time transport liveness
+// probe. It is public on every transport (REST /health, gRPC Health, native
+// QUIC OpHealth) and is therefore exempt from the verified-peer-certificate
+// requirement below: the qrdb SDK client runs it at connect time and tears
+// the connection down if it fails, and it exposes no data.
+const qrdbMethodAdminHealth = "admin.Health"
 
 // qrdbHealthStatusServing is the health status the connect-time probe
 // reports back to the qrdb QUIC client. The client only requires a
@@ -103,6 +113,23 @@ func (e *QRDBUnknownMethodError) Error() string {
 	return "qrdb-quic: unknown method: " + e.Method
 }
 
+// QRDBAuthRequiredError indicates a qrdb-quic bridge method was rejected
+// because authorization enforcement is enabled (RequireAuthz=true) and the
+// connection carries no VERIFIED mTLS client certificate. The qrdb wire
+// format carries no bearer token (qrdb-owned contract), so a verified
+// client certificate on the QUIC connection is the only per-caller
+// credential the bridge can enforce post-unseal. Written to the wire as
+// StatusUnauthenticated.
+type QRDBAuthRequiredError struct {
+	Method string
+}
+
+// Error implements the error interface.
+func (e *QRDBAuthRequiredError) Error() string {
+	return "qrdb-quic: authentication required: method " + e.Method +
+		" requires a verified mTLS client certificate on the connection (RequireAuthz is enabled)"
+}
+
 // QRDBUnmarshalError wraps a protobuf decode failure on a qrdb wire-format
 // request payload.
 type QRDBUnmarshalError struct {
@@ -139,9 +166,10 @@ func (e *QRDBMarshalError) Unwrap() error { return e.Err }
 
 // buildQRDBHandlers returns the dispatch table for qrdb-quic methods.
 //
-// The qrdb SDK QUIC client emits three families of methods against this
+// The qrdb SDK QUIC client emits several families of methods against this
 // ALPN: a connect-time health probe (admin.Health), the barrier and
-// ceremony lifecycle surface, and the versioned credential surface. Each
+// ceremony lifecycle surface, the versioned credential surface, and the
+// user-lookup + user-login-factor surface. Each
 // handler marshals/unmarshals the canonical qrdbv1 protobuf shapes the
 // qrdb SDK client expects and delegates to the matching QuicBaaS service
 // facade — the SAME facades the gRPC and REST transports use, so behaviour
@@ -153,10 +181,36 @@ func (e *QRDBMarshalError) Unwrap() error { return e.Err }
 // This is essential — the qrdb client runs admin.Health at connect time
 // and tears the connection down if it fails, so the probe must never be
 // blocked by an unrelated facade being nil.
+//
+// AUTHORIZATION POSTURE (owner-approved, fail-closed): the qrdb wire frame
+// (go-qrdb/pkg/api/quic/wire.ReadRequest: method, database, requestID,
+// payload) carries NO bearer token — a qrdb-owned contract this bridge does
+// not change — so it cannot run the per-method platform-token PEP the
+// native opcode path runs in authorizeAndInject. Enforcement on this ALPN
+// is therefore:
+//
+//   - RequireAuthz=true (SetValidatorEnforcement installed): every method
+//     dispatch except the public admin.Health liveness probe REQUIRES a
+//     VERIFIED mTLS client certificate on the connection
+//     (qrdbBridgeAuthRequired); cert-less callers are rejected with the
+//     wire's StatusUnauthenticated / QRDBAuthRequiredError. This holds
+//     even when the operator runs Security.TLSClientAuth=false, where the
+//     TLS handshake merely solicits a certificate
+//     (VerifyClientCertIfGiven) — lifecycle logs the cert-gated posture at
+//     startup for that combination. The sealed-window unseal flow is
+//     unaffected: while sealed, the allowlisted methods are admitted
+//     without a certificate via the shared sealed-window bypass (audited),
+//     because a sealed IAM plane cannot mint or validate any credential.
+//   - RequireAuthz=false: legacy behaviour unchanged — connection-level
+//     TLS client-certificate policy only, matching qrdb's own QUIC posture
+//     where possession of a verified mTLS identity is the authorization.
+//   - In both postures the sealed-window gate
+//     (sealedWindowDeniesQRDBMethod) narrows the surface to the
+//     unseal-flow allowlist while sealed.
 func (s *Server) buildQRDBHandlers() map[string]qrdbMethodHandler {
 	return map[string]qrdbMethodHandler{
 		// Transport liveness probe (qrdb client connect-time health check).
-		"admin.Health": s.qrdbAdminHealth,
+		qrdbMethodAdminHealth: s.qrdbAdminHealth,
 
 		// Credential management surface.
 		"credential.Submit":          s.qrdbCredentialSubmit,
@@ -179,54 +233,121 @@ func (s *Server) buildQRDBHandlers() map[string]qrdbMethodHandler {
 		"barrier.Rekey":              s.qrdbBarrierRekey,
 		"barrier.RecoveryGenerate":   s.qrdbBarrierRecoveryGenerate,
 		"barrier.RecoveryRecover":    s.qrdbBarrierRecoveryRecover,
-		"barrier.RecoveryDelete":      s.qrdbBarrierRecoveryDelete,
-		"barrier.RecoveryStatus":      s.qrdbBarrierRecoveryStatus,
-		"barrier.RootToken":           s.qrdbBarrierRootToken,
-		"barrier.EnableEncryption":    s.qrdbBarrierEnableEncryption,
+		"barrier.RecoveryDelete":     s.qrdbBarrierRecoveryDelete,
+		"barrier.RecoveryStatus":     s.qrdbBarrierRecoveryStatus,
+		"barrier.RootToken":          s.qrdbBarrierRootToken,
+		"barrier.EnableEncryption":   s.qrdbBarrierEnableEncryption,
 
 		// Per-tenant barrier lifecycle surface.
-		"tenant.BarrierInit":               s.qrdbTenantBarrierInit,
-		"tenant.BarrierUnseal":             s.qrdbTenantBarrierUnseal,
-		"tenant.BarrierUnsealShare":        s.qrdbTenantBarrierUnsealShare,
-		"tenant.BarrierSeal":               s.qrdbTenantBarrierSeal,
-		"tenant.BarrierStatus":             s.qrdbTenantBarrierStatus,
-		"tenant.BarrierEnableEncryption":   s.qrdbTenantBarrierEnableEncryption,
-		"tenant.UpdateQuotas":              s.qrdbTenantUpdateQuotas,
-		"tenant.UpdateEntitlements":        s.qrdbTenantUpdateEntitlements,
+		"tenant.BarrierInit":             s.qrdbTenantBarrierInit,
+		"tenant.BarrierUnseal":           s.qrdbTenantBarrierUnseal,
+		"tenant.BarrierUnsealShare":      s.qrdbTenantBarrierUnsealShare,
+		"tenant.BarrierSeal":             s.qrdbTenantBarrierSeal,
+		"tenant.BarrierStatus":           s.qrdbTenantBarrierStatus,
+		"tenant.BarrierEnableEncryption": s.qrdbTenantBarrierEnableEncryption,
+		"tenant.UpdateQuotas":            s.qrdbTenantUpdateQuotas,
+		"tenant.UpdateEntitlements":      s.qrdbTenantUpdateEntitlements,
+
+		// User lookup surface (read-only resolution; JSON payloads).
+		"user.Get":                 s.qrdbUserGet,
+		"user.GetByUsername":       s.qrdbUserGetByUsername,
+		"user.GetByCertThumbprint": s.qrdbUserGetByCertThumbprint,
+
+		// User-login factor surface (JSON payloads).
+		"userauthfactor.Add":     s.qrdbUserFactorAdd,
+		"userauthfactor.List":    s.qrdbUserFactorList,
+		"userauthfactor.Get":     s.qrdbUserFactorGet,
+		"userauthfactor.Remove":  s.qrdbUserFactorRemove,
+		"userauthfactor.Rotate":  s.qrdbUserFactorRotate,
+		"userauthfactor.Relabel": s.qrdbUserFactorRelabel,
+		"userauthfactor.Login":   s.qrdbUserFactorLogin,
 
 		// Initialization ceremony surface.
 		"ceremony.Initialize":            s.qrdbCeremonyInitialize,
 		"ceremony.Status":                s.qrdbCeremonyStatus,
 		"ceremony.ClaimCertBegin":        s.qrdbCeremonyClaimCertBegin,
 		"ceremony.ClaimCertComplete":     s.qrdbCeremonyClaimCertComplete,
-		"ceremony.ClaimShare":            s.qrdbCeremonyClaimShare,
+		"ceremony.BeginClaimShare":       s.qrdbCeremonyBeginClaimShare,
+		"ceremony.CompleteClaimShare":    s.qrdbCeremonyCompleteClaimShare,
 		"ceremony.SignCSR":               s.qrdbCeremonySignCSR,
 		"ceremony.EnrollExternalOfficer": s.qrdbCeremonyEnrollExternalOfficer,
 	}
 }
 
 // handleQRDBStream serves a single QUIC stream for the qrdb-quic ALPN.
-// It reads a qrdb wire-format request, dispatches to the appropriate
-// handler, and writes the response. Panics are recovered and reported as
-// wire-level errors so a misbehaving handler does not crash the listener.
-//
-// Gating is performed per-method inside each handler against the relevant
-// facade, not table-wide. admin.Health in particular must always be
-// servable: the qrdb SDK client runs it at connect time and closes the
-// connection if it fails, which would in turn fail every subsequent
-// barrier/ceremony/credential RPC on that connection.
-func (s *Server) handleQRDBStream(stream *quicgo.Stream) {
+// peerCert is the VERIFIED mTLS client certificate captured once per
+// connection from the TLS handshake's VerifiedChains (nil when the caller
+// presented none), threaded here so qrdbBridgeAuthRequired can enforce the
+// fail-closed peer-certificate requirement under RequireAuthz. Stream
+// lifecycle (waitgroup / gauge / close) lives here; the wire-format request
+// cycle is delegated to serveQRDBRequest.
+func (s *Server) handleQRDBStream(stream *quicgo.Stream, peerCert *x509.Certificate) {
 	defer s.wg.Done()
 	defer s.activeStreams.Add(-1)
 	defer func() { _ = stream.Close() }()
 
+	s.serveQRDBRequest(stream, peerCert)
+}
+
+// qrdbBridgeAuthRequired reports whether the qrdb-quic bridge must reject
+// method with the wire's auth-required status because authorization
+// enforcement is enabled and the connection carries no VERIFIED mTLS client
+// certificate.
+//
+// The posture signal is the installed validator (SetValidatorEnforcement is
+// called by lifecycle ONLY when RequireAuthz=true); with RequireAuthz=false
+// no validator is installed and the legacy connection-level behaviour is
+// unchanged. The qrdb wire contract carries no bearer token, so a verified
+// mTLS identity on the connection is the only per-caller credential
+// available post-unseal — enforcement fail-closes on its absence.
+//
+// Exemptions, mirroring every other transport gate:
+//
+//   - admin.Health: public transport liveness probe (public on REST, gRPC
+//     and the native opcode path alike);
+//   - the sealed-window allowlist WHILE SEALED: the shared bypass predicate
+//     admits the unseal-flow methods without a certificate (audited, reason
+//     "sealed-window allowlist") — a sealed IAM plane cannot mint or
+//     validate any credential. Unsealed, the bypass is inert. The
+//     sealed-window deny gate runs BEFORE this check, so while sealed every
+//     non-allowlisted method has already been rejected.
+func (s *Server) qrdbBridgeAuthRequired(method string, peerCert *x509.Certificate) bool {
+	if s.validatorAuthorizer == nil {
+		// RequireAuthz=false: legacy connection-level posture unchanged.
+		return false
+	}
+	if peerCert != nil {
+		return false
+	}
+	if method == qrdbMethodAdminHealth {
+		return false
+	}
+	s.svcMu.RLock()
+	bypass := s.sealedBypass
+	s.svcMu.RUnlock()
+	return !bypass.BypassesQRDBQUIC(method)
+}
+
+// serveQRDBRequest reads one qrdb wire-format request from rw, dispatches to
+// the appropriate handler, and writes the response. Panics are recovered and
+// reported as wire-level errors so a misbehaving handler does not crash the
+// listener. It is factored out of handleQRDBStream against io.ReadWriter so
+// the full dispatch order (sealed gate -> peer-cert requirement -> handler)
+// is unit-testable without a live QUIC stream.
+//
+// Facade gating is performed per-method inside each handler, not table-wide.
+// admin.Health in particular must always be servable: the qrdb SDK client
+// runs it at connect time and closes the connection if it fails, which would
+// in turn fail every subsequent barrier/ceremony/credential RPC on that
+// connection.
+func (s *Server) serveQRDBRequest(rw io.ReadWriter, peerCert *x509.Certificate) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"panic": r,
 				"stack": string(debug.Stack()),
 			}).Error("qrdb-quic: panic recovered")
-			_ = wire.WriteResponse(stream, 0, wire.StatusError, []byte("internal server error"))
+			_ = wire.WriteResponse(rw, 0, wire.StatusError, []byte("internal server error"))
 		}
 	}()
 
@@ -234,7 +355,7 @@ func (s *Server) handleQRDBStream(stream *quicgo.Stream) {
 	// control-plane bridge methods (credentials / tenant-barrier) are tenant-scoped
 	// via the peer cert + request context, not database-scoped, so the wire
 	// database name is intentionally not consulted here.
-	method, _, requestID, payload, err := wire.ReadRequest(stream)
+	method, _, requestID, payload, err := wire.ReadRequest(rw)
 	if err != nil {
 		s.totalErrors.Add(1)
 		s.logger.WithError(err).Debug("qrdb-quic: failed to read request")
@@ -244,11 +365,34 @@ func (s *Server) handleQRDBStream(stream *quicgo.Stream) {
 	start := time.Now()
 	s.totalRequests.Add(1)
 
+	// Sealed-window gate: while the barrier is sealed, every bridge method
+	// not on the canonical allowlist is rejected with StatusUnavailable so
+	// operators can still drive the unseal flow (barrier.* / ceremony.*)
+	// and the connect-time liveness probe (admin.Health). Mirrors qrdb's
+	// own native QUIC sealed-window gate.
+	if s.sealedWindowDeniesQRDBMethod(method) {
+		_ = wire.WriteResponse(rw, requestID, wire.StatusUnavailable, []byte(sealedWindowMessage))
+		s.logQRDBRequest(method, requestID, wire.StatusUnavailable, start)
+		return
+	}
+
+	// Fail-closed peer-certificate requirement (RequireAuthz=true): the qrdb
+	// wire carries no token, so post-unseal method dispatch demands a
+	// VERIFIED mTLS client certificate on the connection. Sealed-window
+	// allowlisted methods stay admitted without one via the shared bypass
+	// (audited), and admin.Health stays public. See qrdbBridgeAuthRequired.
+	if s.qrdbBridgeAuthRequired(method, peerCert) {
+		errPayload := (&QRDBAuthRequiredError{Method: method}).Error()
+		_ = wire.WriteResponse(rw, requestID, wire.StatusUnauthenticated, []byte(errPayload))
+		s.logQRDBRequest(method, requestID, wire.StatusUnauthenticated, start)
+		return
+	}
+
 	handlers := s.buildQRDBHandlers()
 	handler, ok := handlers[method]
 	if !ok {
 		errPayload := (&QRDBUnknownMethodError{Method: method}).Error()
-		_ = wire.WriteResponse(stream, requestID, wire.StatusUnimplemented, []byte(errPayload))
+		_ = wire.WriteResponse(rw, requestID, wire.StatusUnimplemented, []byte(errPayload))
 		s.logQRDBRequest(method, requestID, wire.StatusUnimplemented, start)
 		return
 	}
@@ -258,12 +402,12 @@ func (s *Server) handleQRDBStream(stream *quicgo.Stream) {
 
 	resp, handlerErr := handler(ctx, payload)
 	if handlerErr != nil {
-		_ = wire.WriteResponse(stream, requestID, wire.StatusError, []byte(handlerErr.Error()))
+		_ = wire.WriteResponse(rw, requestID, wire.StatusError, []byte(handlerErr.Error()))
 		s.logQRDBRequest(method, requestID, wire.StatusError, start)
 		return
 	}
 
-	if writeErr := wire.WriteResponse(stream, requestID, wire.StatusOK, resp); writeErr != nil {
+	if writeErr := wire.WriteResponse(rw, requestID, wire.StatusOK, resp); writeErr != nil {
 		s.totalErrors.Add(1)
 		s.logger.WithError(writeErr).Error("qrdb-quic: failed to write response")
 	}
@@ -921,20 +1065,47 @@ func (s *Server) qrdbCeremonyClaimCertComplete(ctx context.Context, payload []by
 	return resp, nil
 }
 
-func (s *Server) qrdbCeremonyClaimShare(ctx context.Context, payload []byte) ([]byte, error) {
+func (s *Server) qrdbCeremonyBeginClaimShare(ctx context.Context, payload []byte) ([]byte, error) {
 	svc := s.qrdbCeremonyService()
 	if svc == nil {
 		return nil, &QRDBCeremonyNotConfiguredError{}
 	}
-	var req pb.CeremonyClaimShareRequest
+	var req pb.CeremonyBeginClaimShareRequest
 	if err := proto.Unmarshal(payload, &req); err != nil {
 		return nil, &QRDBUnmarshalError{Err: err}
 	}
-	share, err := svc.CeremonyClaimShare(ctx, req.GetUsername())
+	challenge, err := svc.CeremonyBeginClaimShare(ctx, req.GetUsername())
 	if err != nil {
 		return nil, err
 	}
-	resp, marshalErr := proto.Marshal(&pb.CeremonyClaimShareResponse{Share: share})
+	out := &pb.CeremonyBeginClaimShareResponse{NonceHex: challenge.NonceHex}
+	if !challenge.ExpiresAt.IsZero() {
+		out.ExpiresAt = challenge.ExpiresAt.Format(time.RFC3339)
+	}
+	resp, marshalErr := proto.Marshal(out)
+	if marshalErr != nil {
+		return nil, &QRDBMarshalError{Err: marshalErr}
+	}
+	return resp, nil
+}
+
+func (s *Server) qrdbCeremonyCompleteClaimShare(ctx context.Context, payload []byte) ([]byte, error) {
+	svc := s.qrdbCeremonyService()
+	if svc == nil {
+		return nil, &QRDBCeremonyNotConfiguredError{}
+	}
+	var req pb.CeremonyCompleteClaimShareRequest
+	if err := proto.Unmarshal(payload, &req); err != nil {
+		return nil, &QRDBUnmarshalError{Err: err}
+	}
+	result, err := svc.CeremonyCompleteClaimShare(ctx, req.GetUsername(), req.GetNonceHex(), req.GetSignature())
+	if err != nil {
+		return nil, err
+	}
+	resp, marshalErr := proto.Marshal(&pb.CeremonyCompleteClaimShareResponse{
+		ShareIndex: int32(result.ShareIndex), //nolint:gosec // small index
+		Share:      result.ShareJSON,
+	})
 	if marshalErr != nil {
 		return nil, &QRDBMarshalError{Err: marshalErr}
 	}

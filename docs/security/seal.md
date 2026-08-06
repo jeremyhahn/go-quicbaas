@@ -116,6 +116,42 @@ Entitlement violations and migration errors are mapped to HTTP status codes
 
 When QuicBaaS starts, it's in a sealed state where encrypted data is inaccessible. The master key must be reconstructed from multiple key shares before the database can operate.
 
+## Sealed-Window Boot
+
+A seal-enabled `quicbaasd` with no auto-unseal material (no injected
+passphrase, no hardware/cloud auto-unseal strategy) boots into the
+**sealed window** instead of exiting: all five transports (REST, gRPC,
+Unix, QUIC, MCP) come up serving ONLY the canonical sealed-window
+surface — barrier status/initialize/unseal, the Shamir/recovery unseal
+flow, the init ceremony, and health. Everything else is rejected
+(`503 {"error":"barrier sealed","code":"SEALED"}` on REST,
+`Unavailable` on gRPC/QUIC, a sealed JSON-RPC error on MCP) until an
+operator drives the barrier unsealed through any transport, at which
+point the daemon completes the full boot automatically.
+
+The allowlist mirrors go-qrdb's canonical sealed-window verb table
+verbatim and is derived ONCE for all transports in
+`pkg/api/sealedwindow` (single table → REST paths, gRPC method tails,
+QUIC opcodes + qrdb-quic bridge methods, MCP tool names), so the
+transports cannot drift. Deliberate exclusions match qrdb: `seal`,
+`enable-encryption`, share management, custodian enroll/revoke, the
+per-tenant barrier surface, and credential rotation are never
+reachable while sealed.
+
+The same probe-driven gates stay installed after boot: a post-boot
+`barrier seal` immediately re-narrows every transport to the sealed
+surface without a restart. While sealed there is no authorization gate
+(no OIDC provider exists yet) — the allowlist is the control, and the
+allowlisted handlers enforce their own credentials (officer cert +
+nonce checks), exactly as on a qrdb node. Post-unseal, authorization
+gate construction is fail-closed: under `security.require_authz` a
+transport whose platform-token validator cannot be built aborts daemon
+startup with a typed error rather than serving ungated.
+
+Embedded (library) servers cannot serve a sealed window — a sealed
+boot is refused with a typed `EmbeddedSealedBootError`; supply
+`server.WithSealPassphrase` or an auto-unseal strategy instead.
+
 ## How It Works
 
 ```

@@ -21,6 +21,7 @@ import (
 	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,8 +60,7 @@ func TestGetSession_SuccessWithDeviceInfo(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	ctx := context.WithValue(context.Background(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
 	req := withChiParams(
 		httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/sess-1", nil).WithContext(ctx),
 		map[string]string{"id": "sess-1"},
@@ -87,8 +87,7 @@ func TestGetSession_ManagerError(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	ctx := context.WithValue(context.Background(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
 	req := withChiParams(
 		httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/sess-x", nil).WithContext(ctx),
 		map[string]string{"id": "sess-x"},
@@ -98,4 +97,107 @@ func TestGetSession_ManagerError(t *testing.T) {
 	handler.GetSession(w, req)
 
 	assert.NotEqual(t, http.StatusOK, w.Code)
+}
+
+// TestGetSession_CrossUserDenied verifies a non-admin caller cannot read
+// another user's session: ownership is checked against the authenticated
+// Subject, not request-supplied identity.
+func TestGetSession_CrossUserDenied(t *testing.T) {
+	mgr := &mockSessionManager{sessions: []*iam.SessionExt{
+		{ID: "sess-1", UserID: "victim", TenantID: "t1"},
+	}}
+	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+	handler, cleanup := setupHandlerWithService(t, svc)
+	defer cleanup()
+
+	ctx := ctxWithTestSubject(context.Background(), "attacker", "t1")
+	req := withChiParams(
+		httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/sess-1", nil).WithContext(ctx),
+		map[string]string{"id": "sess-1"},
+	)
+	w := httptest.NewRecorder()
+
+	handler.GetSession(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "access denied")
+}
+
+// TestGetSession_CrossTenantDenied verifies tenant isolation: same user ID in
+// a different tenant is still denied.
+func TestGetSession_CrossTenantDenied(t *testing.T) {
+	mgr := &mockSessionManager{sessions: []*iam.SessionExt{
+		{ID: "sess-1", UserID: "u1", TenantID: "other-tenant"},
+	}}
+	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+	handler, cleanup := setupHandlerWithService(t, svc)
+	defer cleanup()
+
+	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
+	req := withChiParams(
+		httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/sess-1", nil).WithContext(ctx),
+		map[string]string{"id": "sess-1"},
+	)
+	w := httptest.NewRecorder()
+
+	handler.GetSession(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestListSessions_QueryParamCrossUserDenied verifies the user_id query
+// parameter cannot be used to list another user's sessions.
+func TestListSessions_QueryParamCrossUserDenied(t *testing.T) {
+	mgr := &mockSessionManager{sessions: []*iam.SessionExt{
+		{ID: "sess-1", UserID: "victim", TenantID: "t1"},
+	}}
+	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+	handler, cleanup := setupHandlerWithService(t, svc)
+	defer cleanup()
+
+	ctx := ctxWithTestSubject(context.Background(), "attacker", "t1")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions?user_id=victim", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	handler.ListSessions(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "does not match authenticated user")
+}
+
+// TestListSessions_QueryParamsMatchingSubject verifies self-referential query
+// params (as emitted by the Go SDK REST transport) still succeed.
+func TestListSessions_QueryParamsMatchingSubject(t *testing.T) {
+	now := time.Now().UTC()
+	mgr := &mockSessionManager{sessions: []*iam.SessionExt{
+		{ID: "sess-1", UserID: "u1", TenantID: "t1", Created: now, LastActive: now, ExpiresAt: now.Add(time.Hour)},
+	}}
+	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+	handler, cleanup := setupHandlerWithService(t, svc)
+	defer cleanup()
+
+	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions?user_id=u1&tenant_id=t1", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	handler.ListSessions(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "sess-1")
+}
+
+// TestRevokeOtherSessions_ForeignKeepDenied verifies the keep_session_id must
+// belong to the authenticated caller.
+func TestRevokeOtherSessions_ForeignKeepDenied(t *testing.T) {
+	mgr := &mockSessionManager{sessions: []*iam.SessionExt{
+		{ID: "foreign", UserID: "victim", TenantID: "t1"},
+	}}
+	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+	handler, cleanup := setupHandlerWithService(t, svc)
+	defer cleanup()
+
+	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others",
+		strings.NewReader(`{"keep_session_id":"foreign"}`)).WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	handler.RevokeOtherSessions(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "access denied")
 }

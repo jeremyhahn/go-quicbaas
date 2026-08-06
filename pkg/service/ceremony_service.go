@@ -114,6 +114,17 @@ type CeremonyClaimCertResult struct {
 	CACertPEM []byte
 }
 
+// CeremonyClaimShareResult contains the output of a completed Shamir share
+// claim handshake.
+type CeremonyClaimShareResult struct {
+	// ShareIndex is the 1-based Shamir share index assigned to the officer.
+	ShareIndex int
+
+	// ShareJSON is the marshalled shamir.Share envelope released to the
+	// officer. It is released exactly once per ceremony.
+	ShareJSON string
+}
+
 // CeremonySignCSRResult contains the output of CSR signing.
 type CeremonySignCSRResult struct {
 	// CertPEM is the PEM-encoded certificate issued from the CSR.
@@ -188,8 +199,16 @@ type CeremonyServicer interface {
 	// signed nonce.
 	CeremonyCompleteClaimCert(ctx context.Context, username, nonceHex, signatureBase64 string) (*CeremonyClaimCertResult, error)
 
-	// CeremonyClaimShare retrieves the Shamir share for an officer.
-	CeremonyClaimShare(ctx context.Context, username string) (string, error)
+	// CeremonyBeginClaimShare starts the Shamir share claim handshake for
+	// an officer who has already claimed their certificate. The caller's
+	// certificate thumbprint is derived by the qrdb node from the transport
+	// connection; it never travels through this facade.
+	CeremonyBeginClaimShare(ctx context.Context, username string) (*CeremonyChallenge, error)
+
+	// CeremonyCompleteClaimShare completes the Shamir share claim handshake
+	// by submitting the signed challenge nonce. The share is released
+	// exactly once.
+	CeremonyCompleteClaimShare(ctx context.Context, username, nonceHex string, signature []byte) (*CeremonyClaimShareResult, error)
 
 	// CeremonySignCSR signs a CSR during the ceremony.
 	CeremonySignCSR(ctx context.Context, username, soPin, csrPEM, role string) (*CeremonySignCSRResult, error)
@@ -309,18 +328,46 @@ func (s *CeremonyService) CeremonyCompleteClaimCert(ctx context.Context, usernam
 	}, nil
 }
 
-// CeremonyClaimShare retrieves the Shamir share for an officer. The qrdb
-// transport returns the share JSON directly; the service layer surfaces it
-// as a single base64-encoded string for symmetry with the REST contract.
-func (s *CeremonyService) CeremonyClaimShare(ctx context.Context, username string) (string, error) {
+// CeremonyBeginClaimShare starts the Shamir share claim handshake for an
+// officer. The qrdb node derives the caller's certificate thumbprint from
+// the transport connection and issues a challenge nonce the officer must
+// sign with the private key matching their enrolled certificate.
+func (s *CeremonyService) CeremonyBeginClaimShare(ctx context.Context, username string) (*CeremonyChallenge, error) {
 	if s.client == nil {
-		return "", &CeremonyServiceMissingError{}
+		return nil, &CeremonyServiceMissingError{}
 	}
-	resp, err := s.client.CeremonyClaimShare(ctx, &transport.ClaimShareRequest{Username: username})
+	resp, err := s.client.CeremonyBeginClaimShare(ctx, &transport.BeginClaimShareRequest{Username: username})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return resp.ShareJSON, nil
+	ch := &CeremonyChallenge{NonceHex: resp.NonceHex}
+	if resp.ExpiresAt != "" {
+		if t, parseErr := time.Parse(time.RFC3339, resp.ExpiresAt); parseErr == nil {
+			ch.ExpiresAt = t
+		}
+	}
+	return ch, nil
+}
+
+// CeremonyCompleteClaimShare completes the Shamir share claim handshake by
+// submitting the signed challenge nonce. The qrdb node re-verifies the
+// caller's certificate thumbprint and releases the share exactly once.
+func (s *CeremonyService) CeremonyCompleteClaimShare(ctx context.Context, username, nonceHex string, signature []byte) (*CeremonyClaimShareResult, error) {
+	if s.client == nil {
+		return nil, &CeremonyServiceMissingError{}
+	}
+	resp, err := s.client.CeremonyCompleteClaimShare(ctx, &transport.CompleteClaimShareRequest{
+		Username:  username,
+		NonceHex:  nonceHex,
+		Signature: signature,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &CeremonyClaimShareResult{
+		ShareIndex: resp.ShareIndex,
+		ShareJSON:  resp.ShareJSON,
+	}, nil
 }
 
 // CeremonySignCSR signs a CSR during the ceremony.

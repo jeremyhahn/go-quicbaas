@@ -81,9 +81,9 @@ type (
 	// challenge verifier.
 	ACMEChallengeVerifierFunc = trustedca.ACMEChallengeVerifierFunc
 
-	// ACMEEnroll01CertificateAuthority is the CA interface required by
-	// enroll-01 challenges (TCG TPM enrollment).
-	ACMEEnroll01CertificateAuthority = trustedca.ACMEEnroll01CertificateAuthority
+	// ACMEEnroll01TCGCSRVerifier is the TCG-CSR-IDEVID verification
+	// interface required by enroll-01 challenges (TCG TPM enrollment).
+	ACMEEnroll01TCGCSRVerifier = trustedca.ACMEEnroll01TCGCSRVerifier
 
 	// ACMEClient is the protocol client for issuing/renewing certificates.
 	ACMEClient = trustedca.ACMEClient

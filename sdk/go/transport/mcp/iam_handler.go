@@ -609,6 +609,24 @@ func transformIAMToolArguments(toolName string, args map[string]interface{}) map
 		// Convert settings values from strings to typed values.
 		args = convertMCPSettingsValues(args)
 
+	// User create: the SDK CreateUserRequest serializes display_name and
+	// metadata, but the canonical create-user contract (REST body, QUIC
+	// wire, gRPC proto, and the MCP tool schema) uses name and attributes.
+	// Rename both so the MCP server tool receives the canonical keys.
+	case "quicbaas_iam_user_create":
+		if dn, ok := args["display_name"]; ok {
+			if _, hasName := args["name"]; !hasName {
+				args["name"] = dn
+			}
+			delete(args, "display_name")
+		}
+		if md, ok := args["metadata"]; ok {
+			if _, hasAttrs := args["attributes"]; !hasAttrs {
+				args["attributes"] = md
+			}
+			delete(args, "metadata")
+		}
+
 	// Tenant create also needs display_name->name and settings conversion.
 	case "quicbaas_iam_tenant_create":
 		if dn, ok := args["display_name"]; ok {

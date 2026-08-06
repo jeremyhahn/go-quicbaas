@@ -46,7 +46,7 @@ quicbaas data delete user john --yes
 |---------|-------------|---------------|
 | [auth](auth.md) | Authentication + N-factor management | Passwordless login, factor list/add/remove/rotate/relabel |
 | [barrier](barrier.md) | Cryptographic barrier management (canonical) | status / init / init-shamir / unseal / unseal-shares / seal / rekey |
-| [ceremony](ceremony.md) | Initialisation ceremony state machine | status / claim-cert / claim-share / sign-csr / enroll-external-officer |
+| [ceremony](ceremony.md) | Initialisation ceremony state machine | status / claim-cert / claim-share (begin+complete handshake) / sign-csr / enroll-external-officer |
 | [bootstrap](bootstrap.md) | Trust-bootstrap the CA bundle | auto / dane / noise / spki / direct |
 | [ca](ca.md) | Certificate Authority operations | info / bundle / list / issue / revoke / export-bundle |
 | [credential](credential.md) | Named credential service (versioned rotation) | submit / list / rotate / retrieve / versions / delete / gc |

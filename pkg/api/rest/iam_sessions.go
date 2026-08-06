@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -213,6 +214,20 @@ func (h *IAMHandler) ListUserSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Optional limit query parameter — parity with the parameterized gRPC
+	// ListSessions verb, whose request carries a limit. Zero or absent means
+	// unlimited; a non-numeric or negative value is a client error.
+	limit := 0
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		parsed, parseErr := strconv.Atoi(rawLimit)
+		if parseErr != nil || parsed < 0 {
+			RespondIAMError(w, r, http.StatusBadRequest,
+				NewIAMAPIError(ErrBadRequest, "invalid limit parameter"))
+			return
+		}
+		limit = parsed
+	}
+
 	// Get session manager from service
 	sessionMgr, ok := h.server.service.(interface {
 		GetSessionManager(ctx context.Context) (SessionManager, error)
@@ -234,11 +249,14 @@ func (h *IAMHandler) ListUserSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// List sessions
+	// List sessions for the target user named by the URL path.
 	sessions, err := mgr.List(ctx, userID, tenantID)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
+	}
+	if limit > 0 && len(sessions) > limit {
+		sessions = sessions[:limit]
 	}
 
 	// Sanitize sessions (remove sensitive data)
@@ -271,29 +289,30 @@ func (h *IAMHandler) ListUserSessions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ListSessions handles GET /api/v1/iam/sessions - List user's active sessions.
-func (h *IAMHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
+// RevokeAllUserSessions handles
+// DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/sessions - Revoke all
+// sessions of the user named by the URL path.
+//
+// This is the path-scoped admin counterpart of RevokeAllSessions and the REST
+// projection of the parameterized SDK Session RevokeAll verb (gRPC:
+// SessionService/RevokeAllSessions). The TARGET identity comes from the URL
+// path — never from query parameters — while the CALLER identity and
+// authorization are enforced by the authz middleware chain on the
+// /api/v1/tenants surface (PEP-mapped to users:update).
+func (h *IAMHandler) RevokeAllUserSessions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Extract user and tenant from context (set by authentication middleware)
-	// Fall back to query parameters for CLI/SDK clients that pass them explicitly.
-	userID, _ := ctx.Value("user_id").(string)
-	if userID == "" {
-		userID = r.URL.Query().Get("user_id")
-	}
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusUnauthorized,
-			NewIAMAPIError(ErrUnauthorized, "user not authenticated"))
-		return
-	}
-
-	tenantID, _ := ctx.Value("tenant_id").(string)
-	if tenantID == "" {
-		tenantID = r.URL.Query().Get("tenant_id")
-	}
+	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+
+	userID := chi.URLParam(r, "user_id")
+	if userID == "" {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "user ID is required"))
 		return
 	}
 
@@ -318,8 +337,58 @@ func (h *IAMHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// List sessions
-	sessions, err := mgr.List(ctx, userID, tenantID)
+	if err := mgr.RevokeAllForUser(ctx, userID, tenantID); err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondNoContent(w, r)
+}
+
+// ListSessions handles GET /api/v1/iam/sessions - List the authenticated
+// caller's active sessions.
+func (h *IAMHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Identity comes exclusively from the authenticated Subject injected by
+	// the authz middleware chain (injectPrincipal). The legacy
+	// query-parameter identity fallback was an authentication bypass and has
+	// been removed; explicit user_id / tenant_id parameters from direct HTTP
+	// callers are validated against the principal instead. Cross-user
+	// listing is the admin surface: ListUserSessions. The Go SDK REST
+	// transport routes its parameterized Session/List verb there and emits
+	// no identity parameters here.
+	subject, ok := requireTenantSubject(w, r)
+	if !ok {
+		return
+	}
+	if !queryIdentityMatches(w, r, subject) {
+		return
+	}
+
+	// Get session manager from service
+	sessionMgr, ok := h.server.service.(interface {
+		GetSessionManager(ctx context.Context) (SessionManager, error)
+	})
+	if !ok {
+		RespondIAMError(w, r, http.StatusInternalServerError,
+			NewIAMAPIError(ErrInternalError, "session manager not available"))
+		return
+	}
+
+	mgr, err := sessionMgr.GetSessionManager(ctx)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+	if mgr == nil {
+		RespondIAMError(w, r, http.StatusInternalServerError,
+			NewIAMAPIError(ErrInternalError, "session manager not initialized"))
+		return
+	}
+
+	// List sessions scoped to the authenticated caller.
+	sessions, err := mgr.List(ctx, subject.ID, subject.TenantID)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
@@ -366,18 +435,10 @@ func (h *IAMHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract user and tenant from context
-	userID, ok := ctx.Value("user_id").(string)
-	if !ok || userID == "" {
-		RespondIAMError(w, r, http.StatusUnauthorized,
-			NewIAMAPIError(ErrUnauthorized, "user not authenticated"))
-		return
-	}
-
-	tenantID, ok := ctx.Value("tenant_id").(string)
-	if !ok || tenantID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+	// Identity comes exclusively from the authenticated Subject injected by
+	// the authz middleware chain.
+	subject, ok := requireTenantSubject(w, r)
+	if !ok {
 		return
 	}
 
@@ -409,8 +470,8 @@ func (h *IAMHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify session belongs to authenticated user
-	if session.UserID != userID || session.TenantID != tenantID {
+	// Verify the session belongs to the authenticated caller.
+	if session.UserID != subject.ID || session.TenantID != subject.TenantID {
 		RespondIAMError(w, r, http.StatusForbidden,
 			NewIAMAPIError(ErrForbidden, "access denied"))
 		return
@@ -454,18 +515,10 @@ func (h *IAMHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract user and tenant from context
-	userID, ok := ctx.Value("user_id").(string)
-	if !ok || userID == "" {
-		RespondIAMError(w, r, http.StatusUnauthorized,
-			NewIAMAPIError(ErrUnauthorized, "user not authenticated"))
-		return
-	}
-
-	tenantID, ok := ctx.Value("tenant_id").(string)
-	if !ok || tenantID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+	// Identity comes exclusively from the authenticated Subject injected by
+	// the authz middleware chain.
+	subject, ok := requireTenantSubject(w, r)
+	if !ok {
 		return
 	}
 
@@ -490,14 +543,14 @@ func (h *IAMHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify session belongs to authenticated user
+	// Verify the session belongs to the authenticated caller.
 	session, err := mgr.Get(ctx, sessionID)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
 	}
 
-	if session.UserID != userID || session.TenantID != tenantID {
+	if session.UserID != subject.ID || session.TenantID != subject.TenantID {
 		RespondIAMError(w, r, http.StatusForbidden,
 			NewIAMAPIError(ErrForbidden, "access denied"))
 		return
@@ -512,29 +565,24 @@ func (h *IAMHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 	RespondNoContent(w, r)
 }
 
-// RevokeAllSessions handles DELETE /api/v1/iam/sessions - Revoke all sessions (logout everywhere).
+// RevokeAllSessions handles DELETE /api/v1/iam/sessions - Revoke all of the
+// authenticated caller's sessions (logout everywhere).
 func (h *IAMHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Extract user and tenant from context
-	// Fall back to query parameters for CLI/SDK clients that pass them explicitly.
-	userID, _ := ctx.Value("user_id").(string)
-	if userID == "" {
-		userID = r.URL.Query().Get("user_id")
-	}
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusUnauthorized,
-			NewIAMAPIError(ErrUnauthorized, "user not authenticated"))
+	// Identity comes exclusively from the authenticated Subject injected by
+	// the authz middleware chain (injectPrincipal). The legacy
+	// query-parameter identity fallback was an authentication bypass and has
+	// been removed; explicit user_id / tenant_id parameters from direct HTTP
+	// callers are validated against the principal instead. Cross-user
+	// revocation is the admin surface: RevokeAllUserSessions. The Go SDK
+	// REST transport routes its parameterized Session/RevokeAll verb there
+	// and emits no identity parameters here.
+	subject, ok := requireTenantSubject(w, r)
+	if !ok {
 		return
 	}
-
-	tenantID, _ := ctx.Value("tenant_id").(string)
-	if tenantID == "" {
-		tenantID = r.URL.Query().Get("tenant_id")
-	}
-	if tenantID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+	if !queryIdentityMatches(w, r, subject) {
 		return
 	}
 
@@ -564,25 +612,25 @@ func (h *IAMHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 
 	// Revoke sessions
 	if exceptSessionID != "" {
-		// Verify the exception session belongs to the user
+		// Verify the exception session belongs to the authenticated caller.
 		session, err := mgr.Get(ctx, exceptSessionID)
 		if err != nil {
 			h.server.handleServiceError(w, r, err)
 			return
 		}
-		if session.UserID != userID || session.TenantID != tenantID {
+		if session.UserID != subject.ID || session.TenantID != subject.TenantID {
 			RespondIAMError(w, r, http.StatusForbidden,
 				NewIAMAPIError(ErrForbidden, "access denied"))
 			return
 		}
 
-		err = mgr.RevokeAllExcept(ctx, userID, tenantID, exceptSessionID)
+		err = mgr.RevokeAllExcept(ctx, subject.ID, subject.TenantID, exceptSessionID)
 		if err != nil {
 			h.server.handleServiceError(w, r, err)
 			return
 		}
 	} else {
-		err = mgr.RevokeAllForUser(ctx, userID, tenantID)
+		err = mgr.RevokeAllForUser(ctx, subject.ID, subject.TenantID)
 		if err != nil {
 			h.server.handleServiceError(w, r, err)
 			return
@@ -592,34 +640,22 @@ func (h *IAMHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	RespondNoContent(w, r)
 }
 
-// RevokeOtherSessions handles POST /api/v1/iam/sessions/revoke-others - Revoke all sessions except current.
+// RevokeOtherSessions handles POST /api/v1/iam/sessions/revoke-others -
+// Revoke all of the authenticated caller's sessions except the one named in
+// the request body.
 func (h *IAMHandler) RevokeOtherSessions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Extract user and tenant from context
-	userID, ok := ctx.Value("user_id").(string)
-	if !ok || userID == "" {
-		RespondIAMError(w, r, http.StatusUnauthorized,
-			NewIAMAPIError(ErrUnauthorized, "user not authenticated"))
+	// Identity comes exclusively from the authenticated Subject injected by
+	// the authz middleware chain.
+	subject, ok := requireTenantSubject(w, r)
+	if !ok {
 		return
 	}
 
-	tenantID, ok := ctx.Value("tenant_id").(string)
-	if !ok || tenantID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
-		return
-	}
-
-	// Extract current session ID from context
-	currentSessionID, ok := ctx.Value("session_id").(string)
-	if !ok || currentSessionID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "current session ID is required"))
-		return
-	}
-
-	// Read request body (optional - for flexibility)
+	// The session to keep comes from the request body. The former untyped
+	// "session_id" context read had no producer anywhere in the transport
+	// stack and was removed.
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -628,15 +664,20 @@ func (h *IAMHandler) RevokeOtherSessions(w http.ResponseWriter, r *http.Request)
 	}
 	defer r.Body.Close()
 
-	// Parse request if body is provided
+	var currentSessionID string
 	if len(body) > 0 {
 		var req struct {
 			KeepSessionID string `json:"keep_session_id,omitempty"`
 		}
 
-		if err := json.Unmarshal(body, &req); err == nil && req.KeepSessionID != "" {
+		if err := json.Unmarshal(body, &req); err == nil {
 			currentSessionID = req.KeepSessionID
 		}
+	}
+	if currentSessionID == "" {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "current session ID is required"))
+		return
 	}
 
 	// Get session manager
@@ -660,20 +701,20 @@ func (h *IAMHandler) RevokeOtherSessions(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Verify the session to keep belongs to the user
+	// Verify the session to keep belongs to the authenticated caller.
 	session, err := mgr.Get(ctx, currentSessionID)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
 	}
-	if session.UserID != userID || session.TenantID != tenantID {
+	if session.UserID != subject.ID || session.TenantID != subject.TenantID {
 		RespondIAMError(w, r, http.StatusForbidden,
 			NewIAMAPIError(ErrForbidden, "access denied"))
 		return
 	}
 
 	// Revoke all other sessions
-	err = mgr.RevokeAllExcept(ctx, userID, tenantID, currentSessionID)
+	err = mgr.RevokeAllExcept(ctx, subject.ID, subject.TenantID, currentSessionID)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return

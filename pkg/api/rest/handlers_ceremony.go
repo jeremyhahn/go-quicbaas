@@ -16,6 +16,7 @@
 package rest
 
 import (
+	"encoding/base64"
 	"net/http"
 	"time"
 
@@ -65,9 +66,18 @@ type claimCertCompleteRequest struct {
 	Signature string `json:"signature"` // base64-encoded
 }
 
-// claimShareRequest is the JSON payload for POST /api/v1/init/claim-share.
-type claimShareRequest struct {
+// beginClaimShareRequest is the JSON payload for
+// POST /api/v1/init/officer-share/begin.
+type beginClaimShareRequest struct {
 	Username string `json:"username"`
+}
+
+// completeClaimShareRequest is the JSON payload for
+// POST /api/v1/init/officer-share/complete.
+type completeClaimShareRequest struct {
+	Username  string `json:"username"`
+	NonceHex  string `json:"nonce_hex"`
+	Signature string `json:"signature"` // base64-encoded
 }
 
 // signCSRRequest is the JSON payload for POST /api/v1/init/sign-csr.
@@ -275,13 +285,17 @@ func (s *Server) HandleCeremonyClaimCertComplete(w http.ResponseWriter, r *http.
 	RespondJSON(w, r, http.StatusOK, ceremonyClaimCertToResponse(result))
 }
 
-// HandleCeremonyClaimShare handles POST /api/v1/init/claim-share.
-func (s *Server) HandleCeremonyClaimShare(w http.ResponseWriter, r *http.Request) {
+// HandleCeremonyBeginClaimShare handles
+// POST /api/v1/init/officer-share/begin (and the qrdb wire mirror
+// POST /v1/ceremony/officer-share/begin). The caller's certificate
+// thumbprint is derived by the qrdb node from the transport connection;
+// it never travels in the request body.
+func (s *Server) HandleCeremonyBeginClaimShare(w http.ResponseWriter, r *http.Request) {
 	if !s.requireCeremonyService(w, r) {
 		return
 	}
 
-	var req claimShareRequest
+	var req beginClaimShareRequest
 	if !readBarrierJSON(w, r, &req) {
 		return
 	}
@@ -290,14 +304,55 @@ func (s *Server) HandleCeremonyClaimShare(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	share, err := s.ceremonySvc.CeremonyClaimShare(r.Context(), req.Username)
+	challenge, err := s.ceremonySvc.CeremonyBeginClaimShare(r.Context(), req.Username)
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, ceremonyChallengeToResponse(challenge))
+}
+
+// HandleCeremonyCompleteClaimShare handles
+// POST /api/v1/init/officer-share/complete (and the qrdb wire mirror
+// POST /v1/ceremony/officer-share/complete). The signed challenge nonce is
+// verified by the qrdb node and the share is released exactly once.
+func (s *Server) HandleCeremonyCompleteClaimShare(w http.ResponseWriter, r *http.Request) {
+	if !s.requireCeremonyService(w, r) {
+		return
+	}
+
+	var req completeClaimShareRequest
+	if !readBarrierJSON(w, r, &req) {
+		return
+	}
+	if req.Username == "" {
+		RespondBadRequest(w, r, "username is required")
+		return
+	}
+	if req.NonceHex == "" {
+		RespondBadRequest(w, r, "nonce_hex is required")
+		return
+	}
+	if req.Signature == "" {
+		RespondBadRequest(w, r, "signature is required")
+		return
+	}
+	sig, decErr := base64.StdEncoding.DecodeString(req.Signature)
+	if decErr != nil {
+		RespondBadRequest(w, r, "signature must be base64-encoded")
+		return
+	}
+
+	result, err := s.ceremonySvc.CeremonyCompleteClaimShare(r.Context(), req.Username, req.NonceHex, sig)
 	if err != nil {
 		s.handleServiceError(w, r, err)
 		return
 	}
 
 	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
-		"share": share,
+		"share_index": result.ShareIndex,
+		"share_json":  result.ShareJSON,
 	})
 }
 

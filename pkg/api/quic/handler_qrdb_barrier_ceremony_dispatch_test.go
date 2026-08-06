@@ -213,7 +213,8 @@ func ceremonyPayloadHandlers(s *Server) map[string]func(context.Context, []byte)
 		"Initialize":            s.qrdbCeremonyInitialize,
 		"ClaimCertBegin":        s.qrdbCeremonyClaimCertBegin,
 		"ClaimCertComplete":     s.qrdbCeremonyClaimCertComplete,
-		"ClaimShare":            s.qrdbCeremonyClaimShare,
+		"BeginClaimShare":       s.qrdbCeremonyBeginClaimShare,
+		"CompleteClaimShare":    s.qrdbCeremonyCompleteClaimShare,
 		"SignCSR":               s.qrdbCeremonySignCSR,
 		"EnrollExternalOfficer": s.qrdbCeremonyEnrollExternalOfficer,
 	}
@@ -294,11 +295,21 @@ func TestQRDBCeremonyDispatch_HappyPaths(t *testing.T) {
 	require.NoError(t, proto.Unmarshal(completeOut, &completeResp))
 	assert.Equal(t, "cert", completeResp.GetCertPem())
 
-	shareOut, err := server.qrdbCeremonyClaimShare(ctx, mustMarshal(t, &pb.CeremonyClaimShareRequest{Username: "officer-a"}))
+	beginShareOut, err := server.qrdbCeremonyBeginClaimShare(ctx, mustMarshal(t, &pb.CeremonyBeginClaimShareRequest{Username: "officer-a"}))
 	require.NoError(t, err)
-	var shareResp pb.CeremonyClaimShareResponse
-	require.NoError(t, proto.Unmarshal(shareOut, &shareResp))
-	assert.Equal(t, "share-value", shareResp.GetShare())
+	var beginShareResp pb.CeremonyBeginClaimShareResponse
+	require.NoError(t, proto.Unmarshal(beginShareOut, &beginShareResp))
+	assert.Equal(t, "abcd", beginShareResp.GetNonceHex())
+	assert.NotEmpty(t, beginShareResp.GetExpiresAt())
+
+	completeShareOut, err := server.qrdbCeremonyCompleteClaimShare(ctx, mustMarshal(t, &pb.CeremonyCompleteClaimShareRequest{
+		Username: "officer-a", NonceHex: "abcd", Signature: []byte("sig"),
+	}))
+	require.NoError(t, err)
+	var completeShareResp pb.CeremonyCompleteClaimShareResponse
+	require.NoError(t, proto.Unmarshal(completeShareOut, &completeShareResp))
+	assert.Equal(t, int32(1), completeShareResp.GetShareIndex())
+	assert.Equal(t, "share-value", completeShareResp.GetShare())
 
 	signOut, err := server.qrdbCeremonySignCSR(ctx, mustMarshal(t, &pb.CeremonySignCSRRequest{
 		Username: "officer-a", SoPin: "1234", CsrPem: "csr", Role: "admin",
@@ -339,8 +350,11 @@ func TestQRDBCeremonyDispatch_FacadeErrors(t *testing.T) {
 		{name: "ClaimCertComplete", invoke: func() ([]byte, error) {
 			return server.qrdbCeremonyClaimCertComplete(ctx, mustMarshal(t, &pb.CeremonyClaimCertCompleteRequest{Username: "a"}))
 		}},
-		{name: "ClaimShare", invoke: func() ([]byte, error) {
-			return server.qrdbCeremonyClaimShare(ctx, mustMarshal(t, &pb.CeremonyClaimShareRequest{Username: "a"}))
+		{name: "BeginClaimShare", invoke: func() ([]byte, error) {
+			return server.qrdbCeremonyBeginClaimShare(ctx, mustMarshal(t, &pb.CeremonyBeginClaimShareRequest{Username: "a"}))
+		}},
+		{name: "CompleteClaimShare", invoke: func() ([]byte, error) {
+			return server.qrdbCeremonyCompleteClaimShare(ctx, mustMarshal(t, &pb.CeremonyCompleteClaimShareRequest{Username: "a", NonceHex: "x", Signature: []byte("s")}))
 		}},
 		{name: "SignCSR", invoke: func() ([]byte, error) {
 			return server.qrdbCeremonySignCSR(ctx, mustMarshal(t, &pb.CeremonySignCSRRequest{Username: "a"}))

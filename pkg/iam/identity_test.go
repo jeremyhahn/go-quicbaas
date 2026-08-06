@@ -3719,3 +3719,221 @@ func TestCreateUser_WithRoles_ValidatedBeforeQuota(t *testing.T) {
 		t.Errorf("Expected role not-found before quota error, got %v", err)
 	}
 }
+
+// =============================================================================
+// CreateUser group validation (validate-before-create shared seam)
+// =============================================================================
+
+// TestCreateUser_WithGroups_ValidReferences verifies that group IDs supplied
+// in CreateUserOptions are validated against the tenant group store, persisted
+// on the created user, AND registered back on each group's member list
+// (group membership is bidirectional).
+func TestCreateUser_WithGroups_ValidReferences(t *testing.T) {
+	store := newTestIdentityStore()
+	ctx := context.Background()
+
+	group, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{Name: "ops-team"})
+	if err != nil {
+		t.Fatalf("CreateGroup failed: %v", err)
+	}
+
+	user, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
+		Email:    "groups@example.com",
+		Username: "groupuser",
+		Groups:   []string{group.ID},
+	})
+	if err != nil {
+		t.Fatalf("CreateUser with valid groups failed: %v", err)
+	}
+
+	if len(user.Groups) != 1 || user.Groups[0] != group.ID {
+		t.Errorf("Expected user.Groups [%s], got %v", group.ID, user.Groups)
+	}
+
+	// The persisted record must carry the groups too.
+	stored, err := store.GetUser(ctx, "tenant1", user.ID)
+	if err != nil {
+		t.Fatalf("GetUser failed: %v", err)
+	}
+	if len(stored.Groups) != 1 || stored.Groups[0] != group.ID {
+		t.Errorf("Expected persisted groups [%s], got %v", group.ID, stored.Groups)
+	}
+
+	// The group's member list must reference the user back.
+	storedGroup, err := store.GetGroup(ctx, "tenant1", group.ID)
+	if err != nil {
+		t.Fatalf("GetGroup failed: %v", err)
+	}
+	if len(storedGroup.Members) != 1 || storedGroup.Members[0] != user.ID {
+		t.Errorf("Expected group members [%s], got %v", user.ID, storedGroup.Members)
+	}
+}
+
+// TestCreateUser_WithGroups_UnknownGroupFailsWithoutCreate verifies the
+// validate-before-create contract shared by ALL transports: an unknown group
+// reference fails fast with a typed not-found error and NO user record is
+// written (a retry must not fail with already-exists).
+func TestCreateUser_WithGroups_UnknownGroupFailsWithoutCreate(t *testing.T) {
+	store := newTestIdentityStore()
+	ctx := context.Background()
+
+	_, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
+		Email:    "phantomgroup@example.com",
+		Username: "phantomgroupuser",
+		Groups:   []string{"no-such-group"},
+	})
+	if err == nil {
+		t.Fatal("Expected error for unknown group reference")
+	}
+	if !dberrors.IsNotFound(err) {
+		t.Errorf("Expected typed not-found error, got %T: %v", err, err)
+	}
+
+	// Zero side effects: the user must NOT exist.
+	if _, err := store.GetUserByEmail(ctx, "phantomgroup@example.com"); err == nil {
+		t.Error("Expected no user to be created after failed group validation")
+	}
+}
+
+// TestCreateUser_WithNoGroups ensures a user created without Groups in opts
+// receives an empty (non-nil) Groups slice rather than nil, keeping JSON
+// serialisation consistent across callers.
+func TestCreateUser_WithNoGroups(t *testing.T) {
+	store := newTestIdentityStore()
+	ctx := context.Background()
+
+	user, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
+		Email:    "nogroups@example.com",
+		Username: "nogroups",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+	if user.Groups == nil {
+		t.Error("expected non-nil empty Groups slice, got nil")
+	}
+	if len(user.Groups) != 0 {
+		t.Errorf("expected empty Groups, got %v", user.Groups)
+	}
+}
+
+// TestCreateUser_WithGroups_DuplicateIDsDeduplicated verifies a repeated group
+// ID in the request cannot double-register the user in the group's member
+// list or duplicate the ID on the user record.
+func TestCreateUser_WithGroups_DuplicateIDsDeduplicated(t *testing.T) {
+	store := newTestIdentityStore()
+	ctx := context.Background()
+
+	group, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{Name: "dup-team"})
+	if err != nil {
+		t.Fatalf("CreateGroup failed: %v", err)
+	}
+
+	user, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
+		Email:    "dupgroups@example.com",
+		Username: "dupgroups",
+		Groups:   []string{group.ID, group.ID},
+	})
+	if err != nil {
+		t.Fatalf("CreateUser with duplicate groups failed: %v", err)
+	}
+
+	if len(user.Groups) != 1 || user.Groups[0] != group.ID {
+		t.Errorf("Expected deduplicated user.Groups [%s], got %v", group.ID, user.Groups)
+	}
+	storedGroup, err := store.GetGroup(ctx, "tenant1", group.ID)
+	if err != nil {
+		t.Fatalf("GetGroup failed: %v", err)
+	}
+	if len(storedGroup.Members) != 1 || storedGroup.Members[0] != user.ID {
+		t.Errorf("Expected single group membership [%s], got %v", user.ID, storedGroup.Members)
+	}
+}
+
+// TestCreateUser_WithGroups_ValidatedBeforeQuota verifies group references are
+// checked before the tenant quota, mirroring the role ordering so all
+// transports fail identically.
+func TestCreateUser_WithGroups_ValidatedBeforeQuota(t *testing.T) {
+	store := NewIdentityStore(IdentityStoreOptions{
+		UserStorage:  newMockUserStorage(),
+		GroupStorage: newMockGroupStorage(),
+		RoleStorage:  newMockRoleStorage(),
+		Tenants:      &mockIdentityTenantManager{quotaExceeded: true},
+	})
+	ctx := context.Background()
+
+	_, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
+		Email:    "grouporder@example.com",
+		Username: "grouporderuser",
+		Groups:   []string{"no-such-group"},
+	})
+	if !dberrors.IsNotFound(err) {
+		t.Errorf("Expected group not-found before quota error, got %v", err)
+	}
+}
+
+// failOnUpdateGroupStorage wraps a GroupStorage and fails UpdateGroup for one
+// specific group ID, simulating a storage fault after the user record was
+// already written.
+type failOnUpdateGroupStorage struct {
+	GroupStorage
+	failGroupID string
+}
+
+type simulatedGroupUpdateError struct{}
+
+func (simulatedGroupUpdateError) Error() string { return "iam: simulated group update failure" }
+
+func (s *failOnUpdateGroupStorage) UpdateGroup(ctx context.Context, group *Group) error {
+	if group.ID == s.failGroupID {
+		return simulatedGroupUpdateError{}
+	}
+	return s.GroupStorage.UpdateGroup(ctx, group)
+}
+
+// TestCreateUser_WithGroups_MemberUpdateFailureRollsBack verifies the create
+// stays atomic when registering group membership fails after the user record
+// was written: the user is deleted and already-updated groups are reverted.
+func TestCreateUser_WithGroups_MemberUpdateFailureRollsBack(t *testing.T) {
+	mem := NewMemoryStorage()
+	groupStorage := &failOnUpdateGroupStorage{GroupStorage: mem}
+	store := NewIdentityStore(IdentityStoreOptions{
+		UserStorage:  mem,
+		GroupStorage: groupStorage,
+		RoleStorage:  mem,
+	})
+	ctx := context.Background()
+
+	okGroup, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{Name: "ok-team"})
+	if err != nil {
+		t.Fatalf("CreateGroup ok-team failed: %v", err)
+	}
+	badGroup, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{Name: "bad-team"})
+	if err != nil {
+		t.Fatalf("CreateGroup bad-team failed: %v", err)
+	}
+	groupStorage.failGroupID = badGroup.ID
+
+	_, err = store.CreateUser(ctx, "tenant1", CreateUserOptions{
+		Email:    "rollback@example.com",
+		Username: "rollbackuser",
+		Groups:   []string{okGroup.ID, badGroup.ID},
+	})
+	if err == nil {
+		t.Fatal("Expected error when group member update fails")
+	}
+
+	// The user must have been rolled back.
+	if _, err := store.GetUserByEmail(ctx, "rollback@example.com"); err == nil {
+		t.Error("Expected user to be deleted after failed group registration")
+	}
+
+	// The successfully-updated group must have been reverted.
+	reverted, err := store.GetGroup(ctx, "tenant1", okGroup.ID)
+	if err != nil {
+		t.Fatalf("GetGroup failed: %v", err)
+	}
+	if len(reverted.Members) != 0 {
+		t.Errorf("Expected ok-team members reverted to empty, got %v", reverted.Members)
+	}
+}

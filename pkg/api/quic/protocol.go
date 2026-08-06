@@ -560,10 +560,11 @@ const (
 	SubOpCeremonyStatus                byte = 0x02
 	SubOpCeremonyClaimCertBegin        byte = 0x03
 	SubOpCeremonyClaimCertComplete     byte = 0x04
-	SubOpCeremonyClaimShare            byte = 0x05
+	SubOpCeremonyBeginClaimShare       byte = 0x05
 	SubOpCeremonySignCSR               byte = 0x06
 	SubOpCeremonyListOfficers          byte = 0x07
 	SubOpCeremonyEnrollExternalOfficer byte = 0x08
+	SubOpCeremonyCompleteClaimShare    byte = 0x09
 )
 
 // BarrierSubOpcodeToString returns a human-readable name for a barrier
@@ -619,8 +620,10 @@ func CeremonySubOpcodeToString(subOpcode byte) string {
 		return "CeremonyClaimCertBegin"
 	case SubOpCeremonyClaimCertComplete:
 		return "CeremonyClaimCertComplete"
-	case SubOpCeremonyClaimShare:
-		return "CeremonyClaimShare"
+	case SubOpCeremonyBeginClaimShare:
+		return "CeremonyBeginClaimShare"
+	case SubOpCeremonyCompleteClaimShare:
+		return "CeremonyCompleteClaimShare"
 	case SubOpCeremonySignCSR:
 		return "CeremonySignCSR"
 	case SubOpCeremonyListOfficers:

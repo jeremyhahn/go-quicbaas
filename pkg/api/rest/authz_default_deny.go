@@ -68,6 +68,18 @@ func (m *AuthzMiddleware) EnforceDefaultDeny(pinnedTrustDomain string) func(http
 				return
 			}
 
+			// Sealed-window authentication bypass: while the barrier is
+			// sealed the sealed-window allowlist IS the entire control
+			// surface (a sealed IAM plane cannot mint or validate tokens),
+			// so the allowlisted unseal-flow paths that passed the sealed
+			// gate above are admitted without a token (audited, reason
+			// "sealed-window allowlist"). Unsealed, this is always false
+			// and the barrier verbs keep their granular scopes below.
+			if m.sealedBypass.BypassesRESTPath(path) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// (b) Verified cluster mTLS service principal -> allow. This is the
 			// control/data plane: a "svc" SPIFFE identity on a verified client
 			// certificate chaining to the pinned trust domain.

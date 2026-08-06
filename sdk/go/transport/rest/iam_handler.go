@@ -525,38 +525,36 @@ func (h *iamRESTHandler) handleAppRequest(ctx context.Context, method string, re
 }
 
 // handleSessionRequest handles Session service requests.
+//
+// List and RevokeAll are parameterized (tenant_id + user_id) operations: the
+// SDK session client requires both identifiers and the gRPC transport serves
+// them as PEP-authorized verbs against the named user. The REST mapping
+// therefore targets the path-scoped admin surface
+// /api/v1/tenants/{tenant_id}/users/{user_id}/sessions — NOT the self-scoped
+// /api/v1/iam/sessions surface, which derives identity exclusively from the
+// authenticated Subject and rejects user_id / tenant_id parameters that name
+// anyone else. Get / Revoke / RevokeOther remain self-scoped.
 func (h *iamRESTHandler) handleSessionRequest(ctx context.Context, method string, req interface{}) (interface{}, error) {
 	reqMap, _ := toMap(req)
 
 	switch method {
 	case "List":
-		// GET /api/v1/iam/sessions?tenant_id=...&user_id=...
+		// GET /api/v1/tenants/{tenant_id}/users/{user_id}/sessions?limit=N
 		innerReq := getMap(reqMap, "request")
 		if innerReq == nil {
 			innerReq = reqMap
 		}
-		sessionPath := "/api/v1/iam/sessions"
-		queryParts := []string{}
-		if tenantID := getString(innerReq, "tenant_id"); tenantID != "" {
-			queryParts = append(queryParts, "tenant_id="+tenantID)
+		tenantID := getString(innerReq, "tenant_id")
+		if tenantID == "" {
+			return nil, errors.NewInvalidInput("iamRESTHandler.handleSessionRequest", "tenant_id is required")
 		}
-		if userID := getString(innerReq, "user_id"); userID != "" {
-			queryParts = append(queryParts, "user_id="+userID)
+		userID := getString(innerReq, "user_id")
+		if userID == "" {
+			return nil, errors.NewInvalidInput("iamRESTHandler.handleSessionRequest", "user_id is required")
 		}
-		if limitVal, ok := innerReq["limit"]; ok {
-			switch lv := limitVal.(type) {
-			case float64:
-				if int(lv) > 0 {
-					queryParts = append(queryParts, "limit="+strconv.Itoa(int(lv)))
-				}
-			case string:
-				if lv != "" && lv != "0" {
-					queryParts = append(queryParts, "limit="+lv)
-				}
-			}
-		}
-		if len(queryParts) > 0 {
-			sessionPath += "?" + strings.Join(queryParts, "&")
+		sessionPath := "/api/v1/tenants/" + tenantID + "/users/" + userID + "/sessions"
+		if limit := sessionLimitParam(innerReq); limit != "" {
+			sessionPath += "?limit=" + limit
 		}
 		return h.doRequest(ctx, http.MethodGet, sessionPath, nil)
 
@@ -577,19 +575,16 @@ func (h *iamRESTHandler) handleSessionRequest(ctx context.Context, method string
 		return h.doRequest(ctx, http.MethodDelete, "/api/v1/iam/sessions/"+sessionID, nil)
 
 	case "RevokeAll":
-		// DELETE /api/v1/iam/sessions?tenant_id=...&user_id=...
-		revokeAllPath := "/api/v1/iam/sessions"
-		revokeQueryParts := []string{}
-		if tenantID := getString(reqMap, "tenant_id"); tenantID != "" {
-			revokeQueryParts = append(revokeQueryParts, "tenant_id="+tenantID)
+		// DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/sessions
+		tenantID := getString(reqMap, "tenant_id")
+		if tenantID == "" {
+			return nil, errors.NewInvalidInput("iamRESTHandler.handleSessionRequest", "tenant_id is required")
 		}
-		if userID := getString(reqMap, "user_id"); userID != "" {
-			revokeQueryParts = append(revokeQueryParts, "user_id="+userID)
+		userID := getString(reqMap, "user_id")
+		if userID == "" {
+			return nil, errors.NewInvalidInput("iamRESTHandler.handleSessionRequest", "user_id is required")
 		}
-		if len(revokeQueryParts) > 0 {
-			revokeAllPath += "?" + strings.Join(revokeQueryParts, "&")
-		}
-		return h.doRequest(ctx, http.MethodDelete, revokeAllPath, nil)
+		return h.doRequest(ctx, http.MethodDelete, "/api/v1/tenants/"+tenantID+"/users/"+userID+"/sessions", nil)
 
 	case "RevokeOther":
 		// POST /api/v1/iam/sessions/revoke-others
@@ -598,6 +593,28 @@ func (h *iamRESTHandler) handleSessionRequest(ctx context.Context, method string
 	default:
 		return nil, errors.NewUnimplemented("iamRESTHandler.handleSessionRequest", "unsupported method: "+method)
 	}
+}
+
+// sessionLimitParam extracts a positive limit value from a session request
+// map as its query-parameter string form. It accepts the float64 shape JSON
+// decoding produces and the string shape map-driven callers may supply; a
+// missing, zero, or non-positive limit yields "".
+func sessionLimitParam(reqMap map[string]interface{}) string {
+	limitVal, ok := reqMap["limit"]
+	if !ok {
+		return ""
+	}
+	switch lv := limitVal.(type) {
+	case float64:
+		if int(lv) > 0 {
+			return strconv.Itoa(int(lv))
+		}
+	case string:
+		if lv != "" && lv != "0" {
+			return lv
+		}
+	}
+	return ""
 }
 
 // handleAuditRequest handles Audit service requests.
@@ -1266,7 +1283,7 @@ func (h *iamRESTHandler) doRequest(ctx context.Context, httpMethod, path string,
 
 // mapUserCreateRequest maps SDK CreateUserRequest fields to REST API fields.
 // SDK sends: username, email, display_name, auth_methods, roles, groups, metadata
-// REST expects: id, email, username, name, auth_methods, roles, attributes, enabled
+// REST expects: id, email, username, name, auth_methods, roles, groups, attributes, enabled
 func mapUserCreateRequest(req map[string]interface{}) map[string]interface{} {
 	if req == nil {
 		return nil
@@ -1307,6 +1324,13 @@ func mapUserCreateRequest(req map[string]interface{}) map[string]interface{} {
 	// before creating the user, so they must not be dropped here.
 	if roles, ok := req["roles"].([]interface{}); ok && len(roles) > 0 {
 		body["roles"] = roles
+	}
+
+	// Map groups (initial group memberships). Like roles, the server
+	// validates the references before creating the user, so they must not
+	// be dropped here.
+	if groups, ok := req["groups"].([]interface{}); ok && len(groups) > 0 {
+		body["groups"] = groups
 	}
 
 	// Map enabled (default to true if not specified)

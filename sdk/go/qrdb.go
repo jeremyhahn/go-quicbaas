@@ -365,11 +365,21 @@ type QRDBClaimCertCompleteRequest = qrdbtransport.ClaimCertCompleteRequest
 // QRDBClaimCertCompleteResponse is a re-export of the qrdb ClaimCertCompleteResponse type.
 type QRDBClaimCertCompleteResponse = qrdbtransport.ClaimCertCompleteResponse
 
-// QRDBClaimShareRequest is a re-export of the qrdb ClaimShareRequest type.
-type QRDBClaimShareRequest = qrdbtransport.ClaimShareRequest
+// QRDBBeginClaimShareRequest is a re-export of the qrdb
+// BeginClaimShareRequest type.
+type QRDBBeginClaimShareRequest = qrdbtransport.BeginClaimShareRequest
 
-// QRDBClaimShareResponse is a re-export of the qrdb ClaimShareResponse type.
-type QRDBClaimShareResponse = qrdbtransport.ClaimShareResponse
+// QRDBBeginClaimShareResponse is a re-export of the qrdb
+// BeginClaimShareResponse type.
+type QRDBBeginClaimShareResponse = qrdbtransport.BeginClaimShareResponse
+
+// QRDBCompleteClaimShareRequest is a re-export of the qrdb
+// CompleteClaimShareRequest type.
+type QRDBCompleteClaimShareRequest = qrdbtransport.CompleteClaimShareRequest
+
+// QRDBCompleteClaimShareResponse is a re-export of the qrdb
+// CompleteClaimShareResponse type.
+type QRDBCompleteClaimShareResponse = qrdbtransport.CompleteClaimShareResponse
 
 // QRDBSignCSRInitRequest is a re-export of the qrdb SignCSRInitRequest type.
 type QRDBSignCSRInitRequest = qrdbtransport.SignCSRInitRequest

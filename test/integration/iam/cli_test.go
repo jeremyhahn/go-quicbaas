@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	clitoken "github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
@@ -93,7 +94,16 @@ type iamCLITestContext struct {
 }
 
 // newIAMCLITestContext creates a new IAM CLI test context.
+//
+// For the REST transport it first provisions a fresh admin bearer at the CLI
+// default token path: REST is the only CLI transport that authenticates by
+// bearer alone (gRPC/QUIC/Unix authenticate via mTLS), and the server's
+// access-token TTL is 15 minutes, so a token file left behind by an earlier
+// test package may already be expired (401 invalid_token).
 func newIAMCLITestContext(t *testing.T, protocol, address, tenantID string) *iamCLITestContext {
+	if protocol == "rest" {
+		provisionRESTBearer(t)
+	}
 	return &iamCLITestContext{
 		t:         t,
 		binary:    requireCLIBinary(t),
@@ -276,6 +286,35 @@ func getAllProtocolConfigs() []struct {
 		getQUICProtocolConfig(),
 		getUnixSocketProtocolConfig(),
 	}
+}
+
+// provisionRESTBearer mints a fresh admin bearer via PIV login and writes it
+// to the CLI token file (QUICBAAS_TEST_TOKEN_PATH, or ~/.quicbaas/token) so
+// `quicbaas --transport rest ...` picks it up via loadStoredAuthToken() in
+// cmd/quicbaas/client.go. The recorded expiry is the server-derived one from
+// helpers.AuthPIVSession, never a fabricated value. The PIV login is
+// memoized inside helpers, so calling this per test context is cheap.
+func provisionRESTBearer(t *testing.T) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	bearer, expiresAt, err := helpers.AuthPIVSession(ctx, getRESTEndpointForCLI(), "", "", "")
+	require.NoError(t, err, "PIV login for REST CLI bearer failed")
+
+	path := os.Getenv("QUICBAAS_TEST_TOKEN_PATH")
+	if path == "" {
+		defaultPath, pathErr := clitoken.GetDefaultTokenPath()
+		require.NoError(t, pathErr, "resolve CLI default token path")
+		path = defaultPath
+	}
+
+	require.NoError(t, clitoken.SaveToken(path, &clitoken.TokenData{
+		AccessToken: bearer,
+		ExpiresAt:   expiresAt,
+		TokenType:   "Bearer",
+	}), "persist REST CLI bearer")
 }
 
 // generateUniqueTenantIDForCLI generates a unique tenant ID for CLI testing.

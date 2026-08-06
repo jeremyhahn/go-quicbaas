@@ -60,8 +60,7 @@ func auditDeleteReq(userSub string) *http.Request {
 	r := httptest.NewRequest(http.MethodDelete,
 		"/api/v1/iam/audit?tenant_id=tenant1&before=2024-01-01T00:00:00Z", nil)
 	if userSub != "" {
-		ctx := context.WithValue(r.Context(), ContextKeyUser, &iam.UserInfoResponse{Sub: userSub})
-		r = r.WithContext(ctx)
+		r = r.WithContext(ctxWithTestSubject(r.Context(), userSub, "tenant1"))
 	}
 	return r
 }

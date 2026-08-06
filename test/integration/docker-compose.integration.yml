@@ -250,6 +250,7 @@ services:
         echo '' &&
         ALL_PKG_ROOT='github.com/jeremyhahn/go-quicbaas/test/integration/...' &&
         OLLAMA_PKGS_RE='/(agent|orchestration|orchestration_gpu|rag|embedding)$$' &&
+        SEAL_LANE_PKGS_RE='/(tenantbarrier)$$' &&
         BASE_TAGS=$$(echo \"integration $$TEST_BUILD_TAGS\" | tr ' ' '\\n' | grep -vx -e rag -e gpu | tr '\\n' ' ' | sed 's/  */ /g; s/ $$//') &&
         if [ \"$$QUICBAAS_TEST_GPU\" = 'true' ]; then RAG_TAGS='integration rag gpu'; else RAG_TAGS='integration rag'; fi &&
         echo \"Non-ollama test tags: $$BASE_TAGS\" &&
@@ -269,7 +270,7 @@ services:
         else
           echo 'Phase 1: non-ollama integration packages...' &&
           echo '' &&
-          BASE_PKGS=$$(go list -tags \"$$BASE_TAGS\" $$ALL_PKG_ROOT | grep -vE \"$$OLLAMA_PKGS_RE\") &&
+          BASE_PKGS=$$(go list -tags \"$$BASE_TAGS\" $$ALL_PKG_ROOT | grep -vE \"$$OLLAMA_PKGS_RE\" | grep -vE \"$$SEAL_LANE_PKGS_RE\") &&
           go test -v -p 1 -tags \"$$BASE_TAGS\" -timeout 60m $$BASE_PKGS 2>&1 | tee /test-results/integration-test.log;
           OVERALL_EXIT=$${PIPESTATUS[0]};
           if [ \"$$QUICBAAS_TEST_OLLAMA\" = '1' ] || [ \"$$QUICBAAS_TEST_OLLAMA\" = 'true' ]; then
@@ -918,11 +919,14 @@ networks:
     driver_opts:
       com.docker.network.bridge.enable_ip_masquerade: "true"
       com.docker.network.bridge.enable_icc: "true"
-    # Use a predictable subnet to ensure multicast routing works
+    # Use a predictable subnet to ensure multicast routing works.
+    # 172.29.0.0/16 (not .28) — the trusted-platform devcontainer network
+    # occupies 172.28.0.0/16 on shared dev hosts and Docker refuses
+    # overlapping pools.
     ipam:
       driver: default
       config:
-        - subnet: 172.28.0.0/16
+        - subnet: 172.29.0.0/16
 
 volumes:
   # Data volumes for cluster nodes

@@ -30,6 +30,7 @@ import (
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest/ui"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -204,6 +205,23 @@ type Server struct {
 	// Authorization middleware (optional)
 	authzMiddleware *AuthzMiddleware
 
+	// sealedProbe + sealedAllowlist implement the sealed-window gate (see
+	// SetSealedWindowGate in sealed_window.go). While the probe reports
+	// sealed, setupRouter installs qrdb's canonical REST sealed-window
+	// middleware ahead of every authz gate so only allowlisted paths are
+	// reachable.
+	sealedProbe     qrdbsdk.SealedWindowProbe
+	sealedAllowlist []string
+
+	// sealedBypass is the shared sealed-window authentication-bypass
+	// predicate (probe + canonical-table lookup), derived by
+	// SetSealedWindowGate from the same probe that drives the sealed gate.
+	// setupRouter propagates it into the installed authz middleware so that
+	// while the barrier is sealed the allowlisted unseal-flow paths are
+	// admitted without authentication (audited); unsealed it is inert. Nil
+	// until SetSealedWindowGate installs a probe — nil never bypasses.
+	sealedBypass *sealedwindow.AuthBypass
+
 	// bindingEnforcementOnly selects the proof-of-possession-only middleware
 	// (EnforceTokenBinding) over the full RBAC Authorize gate. When true the
 	// router installs DPoP/mTLS token-binding enforcement + AuthorizedContext
@@ -374,6 +392,27 @@ func (s *Server) setupRouter() {
 	r.Use(RecoveryMiddleware(s.logger))
 	r.Use(LoggingMiddleware(s.logger))
 	r.Use(MetricsMiddleware())
+
+	// Sealed-window gate: while the storage barrier is sealed, every request
+	// not on the canonical allowlist is rejected with 503 + qrdb's sealed
+	// envelope. Installed BEFORE the authz gates: while sealed there is no
+	// OIDC provider to validate tokens against, and the allowlisted verbs
+	// mirror qrdb's pre-auth sealed surface (handlers enforce their own
+	// credentials, e.g. officer cert + nonce checks). Pass-through when the
+	// probe reports unsealed.
+	if s.sealedProbe != nil {
+		r.Use(qrdbsdk.SealedWindowMiddleware(s.sealedProbe, s.sealedAllowlist))
+	}
+
+	// Propagate the shared sealed-window auth-bypass predicate into the
+	// authz middleware below the sealed gate. Done here (not in the Set*
+	// enforcement methods) because every enforcement selector recreates the
+	// middleware and then rebuilds the router, and SetSealedWindowGate also
+	// rebuilds the router — this single injection point covers every
+	// ordering of those calls.
+	if s.authzMiddleware != nil {
+		s.authzMiddleware.sealedBypass = s.sealedBypass
+	}
 
 	// Default-deny authorization gate (opt-in via SecurityConfig.RequireAuthz).
 	// Installed on the TOP router as a path-predicate so it also covers
@@ -627,7 +666,8 @@ func (s *Server) setupRouter() {
 				r.Post("/initialize", s.HandleCeremonyInitialize)
 				r.Post("/claim-cert/begin", s.HandleCeremonyClaimCertBegin)
 				r.Post("/claim-cert/complete", s.HandleCeremonyClaimCertComplete)
-				r.Post("/claim-share", s.HandleCeremonyClaimShare)
+				r.Post("/officer-share/begin", s.HandleCeremonyBeginClaimShare)
+				r.Post("/officer-share/complete", s.HandleCeremonyCompleteClaimShare)
 				r.Post("/sign-csr", s.HandleCeremonySignCSR)
 				r.Post("/enroll-external-officer", s.HandleCeremonyEnrollExternalOfficer)
 			})
@@ -818,7 +858,18 @@ func (s *Server) setupRouter() {
 	// contract so a qrdb SDK REST client works unchanged against quicbaasd.
 	// Registered at the root (NOT under /api/v1) because the qrdb SDK
 	// transport hardcodes the /v1/credentials prefix.
+	//
+	// Like /v1/barrier below, this mount lives OUTSIDE the /api/v1 chi group,
+	// so it must install the shared protected-API authorization chain itself
+	// (useAPIAuthzMiddleware). Without it the credential verbs are reachable
+	// UNAUTHENTICATED under validator (RequireAuthz=true) enforcement; under
+	// default-deny the selector is a no-op because the TOP-router gate
+	// already covers root mounts. The credential surface is deliberately OFF
+	// the sealed-window allowlist (qrdb keeps versioned-credential rotation
+	// out of the sealed window), so there is no sealed bypass here: every
+	// verb requires a valid platform token in every barrier state.
 	r.Route("/v1/credentials", func(r chi.Router) {
+		s.useAPIAuthzMiddleware(r)
 		r.Get("/", s.HandleCredentialList)
 		r.Get("/strategy", s.HandleCredentialStrategy)
 		r.Post("/submit", s.HandleCredentialSubmit)
@@ -834,7 +885,18 @@ func (s *Server) setupRouter() {
 	// root (NOT under /api/v1) because the qrdb SDK transport hardcodes the
 	// /v1/barrier prefix. These bind the same Handle* methods as the
 	// /api/v1/barrier surface; both mounts remain available.
+	//
+	// The mount lives OUTSIDE the /api/v1 chi group, so it must install the
+	// shared protected-API authorization chain itself (useAPIAuthzMiddleware,
+	// the SAME selector the /api/v1 group and the root-mounted IAM group use).
+	// Without it the barrier verbs are reachable UNAUTHENTICATED post-unseal
+	// under validator (RequireAuthz=true) enforcement. Under the default-deny
+	// posture the selector is a no-op because EnforceDefaultDeny on the TOP
+	// router already covers root mounts, so the surface stays gated exactly
+	// once. The sealed-window bypass inside each gate keeps the sealed-window
+	// unseal flow admitting allowlisted verbs without a token WHILE SEALED.
 	r.Route("/v1/barrier", func(r chi.Router) {
+		s.useAPIAuthzMiddleware(r)
 		r.Get("/status", s.HandleBarrierStatus)
 		r.Post("/initialize", s.HandleBarrierInitialize)
 		r.Post("/unseal", s.HandleBarrierUnseal)
@@ -863,16 +925,31 @@ func (s *Server) setupRouter() {
 	// transport_ceremony.go). Registered at the root (NOT under /api/v1)
 	// because the qrdb SDK transport hardcodes those prefixes. These bind the
 	// same Handle* methods as the /api/v1/init surface.
+	//
+	// Like /v1/barrier above, both mounts live OUTSIDE the /api/v1 chi group,
+	// so they must install the shared protected-API authorization chain
+	// themselves (useAPIAuthzMiddleware). The ceremony verbs carry
+	// sealed-window / first-boot semantics: WHILE SEALED every mounted
+	// /v1/ceremony route and the /v1/init/ prefix are on the canonical
+	// sealed-window allowlist (pkg/api/sealedwindow Table + RESTExtra), so
+	// the gate's built-in sealed bypass admits them without a token
+	// (audited) — possession of ceremony material IS the authorization
+	// during first boot. Once unsealed the bypass is inert and every verb
+	// requires its granular ceremony:* scope, matching the gRPC/QUIC/MCP
+	// canon and the default-deny scope table.
 	r.Route("/v1/ceremony", func(r chi.Router) {
+		s.useAPIAuthzMiddleware(r)
 		r.Get("/status", s.HandleCeremonyStatus)
 		r.Get("/officers", s.HandleCeremonyListOfficers)
 		r.Post("/initialize", s.HandleCeremonyInitialize)
 		r.Post("/claim-cert/begin", s.HandleCeremonyClaimCertBegin)
 		r.Post("/claim-cert/complete", s.HandleCeremonyClaimCertComplete)
-		r.Post("/claim-share", s.HandleCeremonyClaimShare)
+		r.Post("/officer-share/begin", s.HandleCeremonyBeginClaimShare)
+		r.Post("/officer-share/complete", s.HandleCeremonyCompleteClaimShare)
 		r.Post("/sign-csr", s.HandleCeremonySignCSR)
 	})
 	r.Route("/v1/init", func(r chi.Router) {
+		s.useAPIAuthzMiddleware(r)
 		r.Post("/enroll-external-officer", s.HandleCeremonyEnrollExternalOfficer)
 	})
 
@@ -884,7 +961,14 @@ func (s *Server) setupRouter() {
 	// remains the single canonical user-administration entry point.
 	// Registered at the root (NOT under /api/v1) because the qrdb SDK REST
 	// transport hardcodes the /users prefix.
+	//
+	// Like /v1/barrier above, the mount lives OUTSIDE the /api/v1 chi group,
+	// so it installs the shared protected-API authorization chain itself
+	// (useAPIAuthzMiddleware). The lookup is NOT on the sealed-window
+	// allowlist and is not public: it requires a users:read scope in every
+	// barrier state (the PEP mapping for /users already exists).
 	r.Route("/users", func(r chi.Router) {
+		s.useAPIAuthzMiddleware(r)
 		r.Get("/by-username/{username}", s.HandleQRDBUserByUsername)
 	})
 
@@ -894,7 +978,16 @@ func (s *Server) setupRouter() {
 	// writes land in the SAME UserAuthFactor store the unified-login ceremony
 	// reads. Registered at the root (NOT under /api/v1) because the qrdb SDK
 	// transport hardcodes the /v1/users/factors prefix.
+	//
+	// Like /v1/barrier above, the mount lives OUTSIDE the /api/v1 chi group,
+	// so it installs the shared protected-API authorization chain itself
+	// (useAPIAuthzMiddleware). The factor surface is NOT on the
+	// sealed-window allowlist and is not public: every verb requires its
+	// user_authfactors:* scope in every barrier state, matching the
+	// default-deny scope table and the gRPC qrdb.v1.UserAuthFactorService
+	// canon (the PEP mapping for /v1/users/factors already exists).
 	r.Route("/v1/users/factors", func(r chi.Router) {
+		s.useAPIAuthzMiddleware(r)
 		r.Post("/", s.HandleUserAuthFactorAdd)
 		r.Get("/list", s.HandleUserAuthFactorList)
 		r.Post("/rotate", s.HandleUserAuthFactorRotate)

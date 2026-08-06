@@ -17,6 +17,7 @@ package rest
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	stderrors "errors"
 	"net/http"
@@ -36,7 +37,8 @@ type fakeCeremonyService struct {
 	statusFn         func(ctx context.Context) (*service.CeremonyStatusInfo, error)
 	beginClaimFn     func(ctx context.Context, username string) (*service.CeremonyChallenge, error)
 	completeClaimFn  func(ctx context.Context, username, nonceHex, signatureBase64 string) (*service.CeremonyClaimCertResult, error)
-	claimShareFn     func(ctx context.Context, username string) (string, error)
+	beginShareFn     func(ctx context.Context, username string) (*service.CeremonyChallenge, error)
+	completeShareFn  func(ctx context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error)
 	signCSRFn        func(ctx context.Context, username, soPin, csrPEM, role string) (*service.CeremonySignCSRResult, error)
 	enrollExternalFn func(ctx context.Context, req *service.CeremonyEnrollExternalOfficerRequest) (*service.CeremonyEnrollExternalOfficerResponse, error)
 }
@@ -69,11 +71,18 @@ func (f *fakeCeremonyService) CeremonyCompleteClaimCert(ctx context.Context, use
 	return &service.CeremonyClaimCertResult{}, nil
 }
 
-func (f *fakeCeremonyService) CeremonyClaimShare(ctx context.Context, username string) (string, error) {
-	if f.claimShareFn != nil {
-		return f.claimShareFn(ctx, username)
+func (f *fakeCeremonyService) CeremonyBeginClaimShare(ctx context.Context, username string) (*service.CeremonyChallenge, error) {
+	if f.beginShareFn != nil {
+		return f.beginShareFn(ctx, username)
 	}
-	return "", nil
+	return &service.CeremonyChallenge{}, nil
+}
+
+func (f *fakeCeremonyService) CeremonyCompleteClaimShare(ctx context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error) {
+	if f.completeShareFn != nil {
+		return f.completeShareFn(ctx, username, nonceHex, signature)
+	}
+	return &service.CeremonyClaimShareResult{}, nil
 }
 
 func (f *fakeCeremonyService) CeremonySignCSR(ctx context.Context, username, soPin, csrPEM, role string) (*service.CeremonySignCSRResult, error) {
@@ -316,14 +325,20 @@ func TestHandleCeremonyClaimCertComplete_Validation(t *testing.T) {
 }
 
 // =============================================================================
-// Claim-share
+// Officer share claim handshake (begin / complete)
 // =============================================================================
 
-func TestHandleCeremonyClaimShare_OK(t *testing.T) {
+func TestHandleCeremonyBeginClaimShare_OK(t *testing.T) {
+	expires := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	svc := &fakeCeremonyService{
-		claimShareFn: func(ctx context.Context, username string) (string, error) { return "share-data", nil },
+		beginShareFn: func(ctx context.Context, username string) (*service.CeremonyChallenge, error) {
+			if username != "alice" {
+				t.Fatalf("expected alice, got %q", username)
+			}
+			return &service.CeremonyChallenge{NonceHex: "deadbeef", ExpiresAt: expires}, nil
+		},
 	}
-	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/claim-share", `{"username":"alice"}`)
+	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/officer-share/begin", `{"username":"alice"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -331,23 +346,78 @@ func TestHandleCeremonyClaimShare_OK(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp["share"] != "share-data" {
-		t.Fatalf("unexpected share body: %v", resp)
+	if resp["nonce_hex"] != "deadbeef" {
+		t.Fatalf("unexpected begin body: %v", resp)
+	}
+	if resp["expires_at"] == "" {
+		t.Fatalf("expected expires_at, got %v", resp)
 	}
 }
 
-func TestHandleCeremonyClaimShare_MissingUsername(t *testing.T) {
-	w := doCeremonyReq(t, ceremonyServer(t, &fakeCeremonyService{}), http.MethodPost, "/api/v1/init/claim-share", `{}`)
+func TestHandleCeremonyBeginClaimShare_MissingUsername(t *testing.T) {
+	w := doCeremonyReq(t, ceremonyServer(t, &fakeCeremonyService{}), http.MethodPost, "/api/v1/init/officer-share/begin", `{}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 
-func TestHandleCeremonyClaimShare_ServiceError(t *testing.T) {
+func TestHandleCeremonyBeginClaimShare_ServiceError(t *testing.T) {
 	svc := &fakeCeremonyService{
-		claimShareFn: func(ctx context.Context, username string) (string, error) { return "", errCeremonyBoom },
+		beginShareFn: func(ctx context.Context, username string) (*service.CeremonyChallenge, error) {
+			return nil, errCeremonyBoom
+		},
 	}
-	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/claim-share", `{"username":"alice"}`)
+	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/officer-share/begin", `{"username":"alice"}`)
+	if w.Code < 500 {
+		t.Fatalf("expected 5xx, got %d", w.Code)
+	}
+}
+
+func TestHandleCeremonyCompleteClaimShare_OK(t *testing.T) {
+	svc := &fakeCeremonyService{
+		completeShareFn: func(ctx context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error) {
+			if username != "alice" || nonceHex != "deadbeef" || string(signature) != "sig" {
+				t.Fatalf("unexpected params: %s %s %q", username, nonceHex, signature)
+			}
+			return &service.CeremonyClaimShareResult{ShareIndex: 2, ShareJSON: `{"share":"v"}`}, nil
+		},
+	}
+	body := `{"username":"alice","nonce_hex":"deadbeef","signature":"` + base64.StdEncoding.EncodeToString([]byte("sig")) + `"}`
+	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/officer-share/complete", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["share_index"] != float64(2) || resp["share_json"] != `{"share":"v"}` {
+		t.Fatalf("unexpected complete body: %v", resp)
+	}
+}
+
+func TestHandleCeremonyCompleteClaimShare_Validation(t *testing.T) {
+	svc := &fakeCeremonyService{}
+	for _, body := range []string{
+		`{"username":"","nonce_hex":"ab","signature":"c2ln"}`,
+		`{"username":"alice","nonce_hex":"","signature":"c2ln"}`,
+		`{"username":"alice","nonce_hex":"ab","signature":""}`,
+		`{"username":"alice","nonce_hex":"ab","signature":"%%%not-base64%%%"}`,
+	} {
+		w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/officer-share/complete", body)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("body %s: expected 400, got %d", body, w.Code)
+		}
+	}
+}
+
+func TestHandleCeremonyCompleteClaimShare_ServiceError(t *testing.T) {
+	svc := &fakeCeremonyService{
+		completeShareFn: func(ctx context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error) {
+			return nil, errCeremonyBoom
+		},
+	}
+	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/officer-share/complete", `{"username":"alice","nonce_hex":"ab","signature":"c2ln"}`)
 	if w.Code < 500 {
 		t.Fatalf("expected 5xx, got %d", w.Code)
 	}

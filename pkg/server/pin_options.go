@@ -254,7 +254,16 @@ func (p sealSharedTPMPINProvider) enroll(operatorPIN []byte, logger *slog.Logger
 	if pks == nil {
 		return nil // no shared TPM; caller handles the fail-closed policy
 	}
-	if err := pks.EnrollPlatformSRK(string(operatorPIN)); err != nil {
+	// The first argument is the TPM owner hierarchy auth, not a PKCS#11-style
+	// security-officer PIN: the Platform SRK is a persistent object in the owner
+	// hierarchy, so creating it needs that auth whenever the hierarchy carries
+	// one. quicbaasd has none to supply -- provisionTPM2Backend provisions with
+	// tpm.Provision(nil), which leaves every hierarchy unauthenticated, and no
+	// config field carries an owner auth for the seal TPM. An empty value leaves
+	// the hierarchy auth configured for the SRK in force. A TPM provisioned
+	// out-of-band with an owner auth therefore still fails closed here, reporting
+	// xkmssdk.ErrPlatformSRKHierarchyAuth through TPMPINEnrollmentError.
+	if err := pks.EnrollPlatformSRK("", string(operatorPIN)); err != nil {
 		if errors.Is(err, xkmssdk.ErrPlatformSRKAlreadyEnrolled) {
 			return nil
 		}

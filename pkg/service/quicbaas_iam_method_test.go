@@ -44,6 +44,8 @@ func (m *mockIAMComponents) GetSessionManager() iam.SessionManager { return m.se
 
 func (m *mockIAMComponents) GetInviteStore() iam.InviteStore { return m.inviteStore }
 
+func (m *mockIAMComponents) GetPIVActivator() *iam.PIVActivator { return m.pivActivator }
+
 func (m *mockIAMComponents) GetAdminManager() *iam.AdminManager { return m.adminManager }
 
 func (m *mockIAMComponents) GetGDPRManager() *iam.GDPRManager { return m.gdprManager }
@@ -842,4 +844,98 @@ func TestIAMServiceWrapper_CreateUser_UnknownRole_NoUserCreated(t *testing.T) {
 	// Zero side effects: the user must NOT exist.
 	_, err = store.GetUserByEmail(ctx, "phantom@example.com")
 	require.Error(t, err, "no user must be created after failed role validation")
+}
+
+// =============================================================================
+// CreateUser group + attribute forwarding (QUIC + MCP transports converge on
+// this wrapper)
+// =============================================================================
+
+// TestIAMServiceWrapper_CreateUser_ForwardsGroups proves the wrapper no longer
+// drops IAMCreateUserRequest.Groups: the groups reach the identity store, are
+// persisted on the created user, and the group's member list references the
+// user back.
+func TestIAMServiceWrapper_CreateUser_ForwardsGroups(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	ctx := context.Background()
+
+	group, err := store.CreateGroup(ctx, "t-1", iam.CreateGroupOptions{Name: "ops-team"})
+	require.NoError(t, err)
+
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+
+	resp, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
+		TenantID: "t-1",
+		Email:    "groups@example.com",
+		Name:     "Group User",
+		Groups:   []string{group.ID},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.User)
+	assert.Equal(t, []string{group.ID}, resp.User.Groups)
+
+	// Persisted record carries the groups too.
+	stored, err := store.GetUser(ctx, "t-1", resp.User.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{group.ID}, stored.Groups)
+
+	// Bidirectional membership: the group's member list references the user.
+	storedGroup, err := store.GetGroup(ctx, "t-1", group.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{resp.User.ID}, storedGroup.Members)
+}
+
+// TestIAMServiceWrapper_CreateUser_UnknownGroup_NoUserCreated proves the
+// validate-before-create contract on the wrapper path (QUIC/MCP): an unknown
+// group reference fails with a typed not-found error and no user is written.
+func TestIAMServiceWrapper_CreateUser_UnknownGroup_NoUserCreated(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	ctx := context.Background()
+
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+
+	resp, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
+		TenantID: "t-1",
+		Email:    "phantomgroup@example.com",
+		Name:     "Phantom Group User",
+		Groups:   []string{"no-such-group"},
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.True(t, dberrors.IsNotFound(err), "expected typed not-found, got %T: %v", err, err)
+
+	// Zero side effects: the user must NOT exist.
+	_, err = store.GetUserByEmail(ctx, "phantomgroup@example.com")
+	require.Error(t, err, "no user must be created after failed group validation")
+}
+
+// TestIAMServiceWrapper_CreateUser_ForwardsAttributes proves the wrapper no
+// longer drops IAMCreateUserRequest.Attributes: custom attributes reach the
+// identity store and are persisted on the created user (gRPC/REST parity).
+func TestIAMServiceWrapper_CreateUser_ForwardsAttributes(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	ctx := context.Background()
+
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+
+	attrs := map[string]interface{}{"department": "engineering", "cost_center": "cc-42"}
+	resp, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
+		TenantID:   "t-1",
+		Email:      "attrs@example.com",
+		Name:       "Attr User",
+		Attributes: attrs,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.User)
+	assert.Equal(t, attrs, resp.User.Attributes)
+
+	// Persisted record carries the attributes too.
+	stored, err := store.GetUser(ctx, "t-1", resp.User.ID)
+	require.NoError(t, err)
+	assert.Equal(t, attrs, stored.Attributes)
 }

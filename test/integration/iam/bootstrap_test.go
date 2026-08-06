@@ -30,7 +30,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -156,10 +155,16 @@ func TestBootstrap_SecondBoot_Silent(t *testing.T) {
 // ---------------------------------------------------------------------------
 // TestBootstrap_ActivationEndpoint_ReturnsHTTP200
 //
-// On first boot, extract the invite token from stderr, then call
-// POST /api/v1/iam/invite/validate over the REST transport. Asserts the
-// endpoint returns 200 (valid token) or 404 (endpoint not wired yet) — i.e.
-// the server is reachable and the token round-trips, not an auth error.
+// On first boot, extract the invite token from stderr, then fetch the PUBLIC
+// invite metadata endpoint GET /api/v1/iam/invites/{token} over the REST
+// transport. First boot stores a real invite record for the WebAuthn
+// activation path (pkg/server/iam_init.go firstBootBootstrap), and the
+// /api/v1/iam/invites mount is on the default-deny public allowlist
+// (pkg/api/rest/authz_default_deny.go) — the invitee has no credentials yet,
+// so activation MUST be reachable without a bearer. Asserts 200 (token
+// round-trips), and in particular NOT an auth error: under the default-deny
+// gate, any unmatched or non-public path fails 401 BEFORE routing, so
+// hitting a non-allowlisted path here would mask an allowlist regression.
 //
 // Unlike the stderr-only tests above, this case needs a real network
 // listener, so it runs with Embedded=false (REST enabled) and discovers the
@@ -218,19 +223,17 @@ func TestBootstrap_ActivationEndpoint_ReturnsHTTP200(t *testing.T) {
 		scheme = "http"
 	}
 	baseURL := fmt.Sprintf("%s://%s", scheme, restAddr.String())
-	validateURL := baseURL + "/api/v1/iam/invite/validate"
+	inviteURL := baseURL + "/api/v1/iam/invites/" + token
 
-	payload, _ := json.Marshal(map[string]string{"token": token})
-	resp, httpErr := daemonCAHTTPClient(t, srv).Post(validateURL, "application/json", bytes.NewReader(payload))
+	resp, httpErr := daemonCAHTTPClient(t, srv).Get(inviteURL)
 	require.NoError(t, httpErr)
 	defer resp.Body.Close()
 
-	// We expect 200 (valid token) or 404 (endpoint not wired yet).
-	// The key assertion is that the server is reachable and the token was
-	// generated — a 404 means the endpoint doesn't exist yet (acceptable for
-	// the integration gate), not that the token is invalid.
-	assert.True(t, resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound,
-		"activation endpoint should return 200 or 404 (not an auth error), got %d", resp.StatusCode)
+	// The banner token was stored by firstBootBootstrap, so the public
+	// metadata endpoint must return 200 — anything else (especially
+	// 401/403) is a public-allowlist or invite-store regression.
+	assert.Equalf(t, http.StatusOK, resp.StatusCode,
+		"public invite metadata endpoint must return 200 for the first-boot banner token (not an auth error)")
 }
 
 // ---------------------------------------------------------------------------

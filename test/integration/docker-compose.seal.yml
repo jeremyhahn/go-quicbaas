@@ -115,6 +115,108 @@ services:
         go test -v -p 1 -tags 'integration awskms vault' -timeout 20m ./test/integration/seal/...
       "
 
+
+  # =========================================================================
+  # Per-tenant barrier lane (make integration-test-tenantbarrier)
+  # =========================================================================
+  #
+  # Per-tenant barriers REQUIRE the embedded qrdb node's seal subsystem: the
+  # SHARED integration cluster (quicbaas.yaml) has no seal: section, so its
+  # nodes reject every per-tenant barrier verb with qrdb's fail-closed
+  # tenant.ErrBarrierNotEnabled. The tenantbarrier suite therefore runs in
+  # this compose file against a dedicated seal-ENABLED single-node daemon
+  # (passphrase strategy, auto-unsealed at boot) instead of the default lane.
+  #
+  # The node reuses the shared cluster's test-node1 hostname + generated cert
+  # material (test/integration/gen-certs -> ./certs) so the helpers package
+  # defaults (endpoints, PIV admin cert, integration CA key) apply unchanged.
+  # Neither service depends on the localstack/vault emulators — `docker
+  # compose run tenantbarrier-test` starts only this pair.
+
+  # Seal-enabled single-node quicbaasd under test.
+  tenantbarrier-node:
+    build:
+      context: ../..
+      additional_contexts:
+        workspace: ../../..
+      dockerfile: test/integration/Dockerfile.node
+      args:
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+    hostname: test-node1
+    environment:
+      - CGO_ENABLED=0
+      - QUICBAAS_LOGGING_LEVEL=debug
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      # System barrier: passphrase strategy, auto-initialised + auto-unsealed
+      # at startup (cmd/quicbaasd runDaemon injects WithSealPassphrase when
+      # this env var is set and seal.enabled=true in the config).
+      - QUICBAAS_SEAL_PASSPHRASE=tenantbarrier-integration-test-passphrase
+    volumes:
+      - tenantbarrier-data:/data
+      - ./quicbaas-tenantbarrier.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      - ./certs:/etc/quicbaas/certs:ro
+    # Standalone mode (no Raft): the per-tenant barrier surface is delegated
+    # to the embedded qrdb node either way, and a single node keeps the lane
+    # fast and deterministic.
+    command: ["/usr/local/bin/quicbaasd", "start", "--config", "/etc/quicbaas/quicbaas.yaml", "--data-dir", "/data"]
+    networks:
+      - seal-test-network
+    healthcheck:
+      # Readiness (not liveness): waits for the full bootstrap including the
+      # seal auto-unseal so the test runner never races the barrier.
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: on-failure
+    stop_grace_period: 30s
+
+  # Per-tenant barrier test runner (test/integration/tenantbarrier).
+  tenantbarrier-test:
+    build:
+      context: ../..
+      additional_contexts:
+        workspace: ../../..
+      dockerfile: test/integration/Dockerfile
+      args:
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio}"
+    hostname: tenantbarrier-test
+    user: "0:0"
+    mem_limit: 4g
+    memswap_limit: 4g
+    environment:
+      - QUICBAAS_TEST_MODE=integration
+      - INTEGRATION_TEST=1
+      - CGO_ENABLED=0
+      # Point the helpers endpoint resolution at the single seal-enabled node
+      # (NODE2/NODE3 unset -> helpers treat this as a 1-node deployment).
+      - QUICBAAS_NODE1_URL=https://test-node1:8080
+      - QUICBAAS_NODE1_GRPC=test-node1:50051
+    volumes:
+      # PIV/mTLS cert bundle: admin client cert for helpers.AuthPIV and the
+      # integration CA key for helpers.AuthTenantAdmin's tenant-scoped certs.
+      - ./certs:/etc/quicbaas/certs:ro
+    working_dir: /workspace/go-quicbaas
+    networks:
+      - seal-test-network
+    depends_on:
+      tenantbarrier-node:
+        condition: service_healthy
+    command: >
+      bash -c "
+        set -o pipefail;
+        rm -f go.sum sdk/go/go.sum;
+        TAGS=$$(echo \"integration $$TEST_BUILD_TAGS\" | tr ' ' '\\n' | grep -vx -e rag -e gpu | tr '\\n' ' ' | sed 's/  */ /g; s/ $$//');
+        echo \"Per-tenant barrier integration tests — tags: $$TAGS\";
+        go test -v -p 1 -tags \"$$TAGS\" -timeout 30m ./test/integration/tenantbarrier/...
+      "
+
 networks:
   seal-test-network:
     driver: bridge
+
+volumes:
+  tenantbarrier-data:

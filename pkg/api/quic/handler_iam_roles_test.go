@@ -66,6 +66,52 @@ func TestIAMCreateUser_RolesForwarded(t *testing.T) {
 	}
 }
 
+// TestIAMCreateUser_GroupsAndAttributesForwarded proves the QUIC transport
+// decodes the snake_case "groups" and "attributes" wire fields and forwards
+// them to the IAM service untouched (sibling gap of the roles parity fix).
+func TestIAMCreateUser_GroupsAndAttributesForwarded(t *testing.T) {
+	h := createTestHandler()
+	svc := &capturingIAMService{}
+	WithIAMService(svc)(h)
+	defer h.clearIAMService()
+
+	payload := []byte(`{"tenant_id":"t-1","email":"groups@example.com","name":"Group User",` +
+		`"groups":["group-a","group-b"],"attributes":{"department":"engineering"}}`)
+	resp := h.handleIAMCreateUser(context.Background(), &Request{Payload: payload})
+
+	if resp.Status != StatusOK {
+		t.Fatalf("Expected StatusOK, got %d (payload: %s)", resp.Status, resp.Payload)
+	}
+	if svc.createUserReq == nil {
+		t.Fatal("Expected CreateUser to be invoked")
+	}
+	if len(svc.createUserReq.Groups) != 2 ||
+		svc.createUserReq.Groups[0] != "group-a" || svc.createUserReq.Groups[1] != "group-b" {
+		t.Fatalf("Expected groups [group-a group-b] forwarded, got %v", svc.createUserReq.Groups)
+	}
+	if svc.createUserReq.Attributes == nil || svc.createUserReq.Attributes["department"] != "engineering" {
+		t.Fatalf("Expected attributes forwarded, got %v", svc.createUserReq.Attributes)
+	}
+}
+
+// TestIAMCreateUser_UnknownGroup_NotFoundStatus proves a typed not-found error
+// from group validation surfaces as the QUIC StatusNotFound wire status.
+func TestIAMCreateUser_UnknownGroup_NotFoundStatus(t *testing.T) {
+	h := createTestHandler()
+	svc := &capturingIAMService{
+		createUserErr: &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.group.get"},
+	}
+	WithIAMService(svc)(h)
+	defer h.clearIAMService()
+
+	payload := []byte(`{"tenant_id":"t-1","email":"phantom@example.com","name":"Phantom","groups":["no-such-group"]}`)
+	resp := h.handleIAMCreateUser(context.Background(), &Request{Payload: payload})
+
+	if resp.Status != StatusNotFound {
+		t.Fatalf("Expected StatusNotFound, got %d (payload: %s)", resp.Status, resp.Payload)
+	}
+}
+
 // TestIAMCreateUser_UnknownRole_NotFoundStatus proves a typed not-found error
 // from role validation surfaces as the QUIC StatusNotFound wire status.
 func TestIAMCreateUser_UnknownRole_NotFoundStatus(t *testing.T) {
@@ -90,12 +136,13 @@ func TestIAMCreateUser_UnknownRole_NotFoundStatus(t *testing.T) {
 // Encode/Decode round trip intact.
 func TestIAMCreateUserRequest_WireRoundTrip_SnakeCase(t *testing.T) {
 	in := service.IAMCreateUserRequest{
-		TenantID: "t-1",
-		Email:    "wire@example.com",
-		Username: "wireuser",
-		Name:     "Wire User",
-		Roles:    []string{"role-a"},
-		Groups:   []string{"group-a"},
+		TenantID:   "t-1",
+		Email:      "wire@example.com",
+		Username:   "wireuser",
+		Name:       "Wire User",
+		Roles:      []string{"role-a"},
+		Groups:     []string{"group-a"},
+		Attributes: map[string]interface{}{"department": "engineering"},
 	}
 
 	raw, err := EncodePayload(&in)
@@ -104,7 +151,7 @@ func TestIAMCreateUserRequest_WireRoundTrip_SnakeCase(t *testing.T) {
 	}
 
 	// snake_case wire keys.
-	for _, key := range []string{`"tenant_id"`, `"roles"`, `"groups"`} {
+	for _, key := range []string{`"tenant_id"`, `"roles"`, `"groups"`, `"attributes"`} {
 		if !strings.Contains(string(raw), key) {
 			t.Errorf("Expected wire payload to contain %s, got %s", key, raw)
 		}
@@ -122,5 +169,8 @@ func TestIAMCreateUserRequest_WireRoundTrip_SnakeCase(t *testing.T) {
 	}
 	if len(out.Groups) != 1 || out.Groups[0] != "group-a" {
 		t.Errorf("Expected groups [group-a] after round trip, got %v", out.Groups)
+	}
+	if out.Attributes == nil || out.Attributes["department"] != "engineering" {
+		t.Errorf("Expected attributes to survive round trip, got %v", out.Attributes)
 	}
 }

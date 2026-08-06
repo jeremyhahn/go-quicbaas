@@ -418,6 +418,7 @@ func saveAndRestoreSeams(t *testing.T) {
 	origNewKMSKeyStorage := newKMSKeyStorage
 	origBuildKMSServiceBackendFn := buildKMSServiceBackendFn
 	origInitXKMS := initXKMS
+	origRegisterXKMSBackendFn := registerXKMSBackendFn
 	origNewKMSBackendFactory := newKMSBackendFactory
 	origNewKMSServiceFn := newKMSServiceFn
 	origNewCacheManagerFn := newCacheManagerFn
@@ -473,6 +474,7 @@ func saveAndRestoreSeams(t *testing.T) {
 		newKMSKeyStorage = origNewKMSKeyStorage
 		buildKMSServiceBackendFn = origBuildKMSServiceBackendFn
 		initXKMS = origInitXKMS
+		registerXKMSBackendFn = origRegisterXKMSBackendFn
 		newKMSBackendFactory = origNewKMSBackendFactory
 		newKMSServiceFn = origNewKMSServiceFn
 		newCacheManagerFn = origNewCacheManagerFn

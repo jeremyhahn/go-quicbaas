@@ -609,10 +609,11 @@ const (
 	SubOpCeremonyStatus                byte = 0x02
 	SubOpCeremonyClaimCertBegin        byte = 0x03
 	SubOpCeremonyClaimCertComplete     byte = 0x04
-	SubOpCeremonyClaimShare            byte = 0x05
+	SubOpCeremonyBeginClaimShare       byte = 0x05
 	SubOpCeremonySignCSR               byte = 0x06
 	SubOpCeremonyListOfficers          byte = 0x07
 	SubOpCeremonyEnrollExternalOfficer byte = 0x08
+	SubOpCeremonyCompleteClaimShare    byte = 0x09
 )
 
 // barrierMethodToSubOp maps Barrier service methods to their sub-operation
@@ -647,7 +648,8 @@ var ceremonyMethodToSubOp = map[string]byte{
 	"CeremonyStatus":                SubOpCeremonyStatus,
 	"CeremonyClaimCertBegin":        SubOpCeremonyClaimCertBegin,
 	"CeremonyClaimCertComplete":     SubOpCeremonyClaimCertComplete,
-	"CeremonyClaimShare":            SubOpCeremonyClaimShare,
+	"CeremonyBeginClaimShare":       SubOpCeremonyBeginClaimShare,
+	"CeremonyCompleteClaimShare":    SubOpCeremonyCompleteClaimShare,
 	"CeremonySignCSR":               SubOpCeremonySignCSR,
 	"CeremonyListOfficers":          SubOpCeremonyListOfficers,
 	"CeremonyEnrollExternalOfficer": SubOpCeremonyEnrollExternalOfficer,
@@ -1517,7 +1519,8 @@ var methodToOpcode = map[string]byte{
 	"quicbaas.Ceremony/CeremonyStatus":                OpCeremony,
 	"quicbaas.Ceremony/CeremonyClaimCertBegin":        OpCeremony,
 	"quicbaas.Ceremony/CeremonyClaimCertComplete":     OpCeremony,
-	"quicbaas.Ceremony/CeremonyClaimShare":            OpCeremony,
+	"quicbaas.Ceremony/CeremonyBeginClaimShare":       OpCeremony,
+	"quicbaas.Ceremony/CeremonyCompleteClaimShare":    OpCeremony,
 	"quicbaas.Ceremony/CeremonySignCSR":               OpCeremony,
 	"quicbaas.Ceremony/CeremonyListOfficers":          OpCeremony,
 	"quicbaas.Ceremony/CeremonyEnrollExternalOfficer": OpCeremony,

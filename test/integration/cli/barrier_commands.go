@@ -429,42 +429,20 @@ func BarrierSealWithSOPinCommand(soPin string) CommandDef {
 // Rekey verb
 // =============================================================================
 
-// BarrierRekeyCommand builds `barrier rekey --passphrase <new-pp>`.
-func BarrierRekeyCommand(newSecret string) CommandDef {
+// BarrierRekeyCommand builds the canonical share-free rekey verb:
+// `barrier rekey --threshold <M> --total <N>`. No secret travels on the
+// request — the server generates a fresh unseal key and seals new shares to
+// the enrolled Security Officers (qrdb pkg/seal/rekey.go).
+func BarrierRekeyCommand(threshold, total int) CommandDef {
 	return CommandDef{
-		Name:           "barrier rekey",
-		Args:           []string{"barrier", "rekey", "--passphrase", newSecret},
-		ExpectSuccess:  true,
-		Timeout:        30 * time.Second,
-		SkipTransports: barrierTransportsToSkip,
-	}
-}
-
-// BarrierRekeyShamirCommand builds `barrier rekey` with Shamir share
-// regeneration parameters.
-func BarrierRekeyShamirCommand(newSecret string, threshold, total int) CommandDef {
-	return CommandDef{
-		Name: fmt.Sprintf("barrier rekey shamir %d-of-%d", threshold, total),
+		Name: fmt.Sprintf("barrier rekey %d-of-%d", threshold, total),
 		Args: []string{
 			"barrier", "rekey",
-			"--passphrase", newSecret,
 			"--threshold", fmt.Sprintf("%d", threshold),
 			"--total", fmt.Sprintf("%d", total),
 		},
 		ExpectSuccess:  true,
-		Timeout:        45 * time.Second,
-		SkipTransports: barrierTransportsToSkip,
-	}
-}
-
-// BarrierRekeyMissingSecretCommand asserts the "secret required" error.
-func BarrierRekeyMissingSecretCommand() CommandDef {
-	return CommandDef{
-		Name:           "barrier rekey missing secret",
-		Args:           []string{"barrier", "rekey"},
-		ExpectSuccess:  false,
-		ExpectError:    []string{"--passphrase is required"},
-		Timeout:        10 * time.Second,
+		Timeout:        30 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
 	}
 }
@@ -472,7 +450,7 @@ func BarrierRekeyMissingSecretCommand() CommandDef {
 // BarrierRekeyUnpairedShamirCommand asserts that --threshold without
 // --total (or vice versa) is rejected.
 func BarrierRekeyUnpairedShamirCommand(includeFlag string) CommandDef {
-	args := []string{"barrier", "rekey", "--passphrase", "newpp"}
+	args := []string{"barrier", "rekey"}
 	if includeFlag == "--threshold" {
 		args = append(args, "--threshold", "3")
 	} else {
@@ -483,6 +461,40 @@ func BarrierRekeyUnpairedShamirCommand(includeFlag string) CommandDef {
 		Args:           args,
 		ExpectSuccess:  false,
 		ExpectError:    []string{"must be supplied together"},
+		Timeout:        10 * time.Second,
+		SkipTransports: barrierTransportsToSkip,
+	}
+}
+
+// BarrierRekeyBadThresholdCommand asserts the "threshold >= 2" rule on the
+// rekey verb.
+func BarrierRekeyBadThresholdCommand() CommandDef {
+	return CommandDef{
+		Name: "barrier rekey threshold=1",
+		Args: []string{
+			"barrier", "rekey",
+			"--threshold", "1",
+			"--total", "3",
+		},
+		ExpectSuccess:  false,
+		ExpectError:    []string{"--threshold must be >= 2"},
+		Timeout:        10 * time.Second,
+		SkipTransports: barrierTransportsToSkip,
+	}
+}
+
+// BarrierRekeyTotalBelowThresholdCommand asserts the "total >= threshold"
+// rule on the rekey verb.
+func BarrierRekeyTotalBelowThresholdCommand() CommandDef {
+	return CommandDef{
+		Name: "barrier rekey total < threshold",
+		Args: []string{
+			"barrier", "rekey",
+			"--threshold", "3",
+			"--total", "2",
+		},
+		ExpectSuccess:  false,
+		ExpectError:    []string{"--total must be >= --threshold"},
 		Timeout:        10 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
 	}
@@ -505,16 +517,6 @@ func BarrierRecoveryGenerateCommand(threshold, total int) CommandDef {
 		Timeout:        30 * time.Second,
 		SkipTransports: barrierTransportsToSkip,
 	}
-}
-
-// BarrierRecoveryGenerateJSONCommand mirrors
-// BarrierRecoveryGenerateCommand but requests JSON output so the test
-// can decode the recovery-key list directly.
-func BarrierRecoveryGenerateJSONCommand(threshold, total int) CommandDef {
-	cmd := BarrierRecoveryGenerateCommand(threshold, total)
-	cmd.Args = append(cmd.Args, "--output", "json")
-	cmd.Name = cmd.Name + " (json)"
-	return cmd
 }
 
 // BarrierRecoveryGenerateBadThresholdCommand asserts the "threshold >= 2"

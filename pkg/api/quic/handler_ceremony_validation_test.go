@@ -32,7 +32,11 @@ func TestCeremonyValidation_RequiredFields(t *testing.T) {
 		body  []byte
 	}{
 		{"claim-cert-begin/no-username", SubOpCeremonyClaimCertBegin, encMust(t, &ceremonyClaimCertBeginWireRequest{})},
-		{"claim-share/no-username", SubOpCeremonyClaimShare, encMust(t, &ceremonyClaimShareWireRequest{})},
+		{"begin-claim-share/no-username", SubOpCeremonyBeginClaimShare, encMust(t, &ceremonyBeginClaimShareWireRequest{})},
+		{"complete-claim-share/no-username", SubOpCeremonyCompleteClaimShare, encMust(t, &ceremonyCompleteClaimShareWireRequest{NonceHex: "ab", Signature: "c2ln"})},
+		{"complete-claim-share/no-nonce", SubOpCeremonyCompleteClaimShare, encMust(t, &ceremonyCompleteClaimShareWireRequest{Username: "u", Signature: "c2ln"})},
+		{"complete-claim-share/no-signature", SubOpCeremonyCompleteClaimShare, encMust(t, &ceremonyCompleteClaimShareWireRequest{Username: "u", NonceHex: "ab"})},
+		{"complete-claim-share/bad-signature-encoding", SubOpCeremonyCompleteClaimShare, encMust(t, &ceremonyCompleteClaimShareWireRequest{Username: "u", NonceHex: "ab", Signature: "%%%"})},
 		{"claim-cert-complete/no-username", SubOpCeremonyClaimCertComplete, encMust(t, &ceremonyClaimCertCompleteWireRequest{NonceHex: "ab", Signature: "s"})},
 		{"claim-cert-complete/no-nonce", SubOpCeremonyClaimCertComplete, encMust(t, &ceremonyClaimCertCompleteWireRequest{Username: "u", Signature: "s"})},
 		{"claim-cert-complete/no-signature", SubOpCeremonyClaimCertComplete, encMust(t, &ceremonyClaimCertCompleteWireRequest{Username: "u", NonceHex: "ab"})},

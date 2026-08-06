@@ -19,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // =============================================================================
@@ -366,6 +368,32 @@ func TestQuicBaaS_GetGDPRManager_WithProvider(t *testing.T) {
 	gm, err := impl.GetGDPRManager(ctx)
 	require.NoError(t, err)
 	assert.Nil(t, gm)
+}
+
+func TestQuicBaaS_GetPIVActivator_NilProvider(t *testing.T) {
+	svc := createTestService(t)
+	defer svc.Close()
+
+	impl := svc.(*quicBaaS)
+	ctx := context.Background()
+
+	pa, err := impl.GetPIVActivator(ctx)
+	require.NoError(t, err)
+	assert.Nil(t, pa)
+}
+
+func TestQuicBaaS_GetPIVActivator_WithProvider(t *testing.T) {
+	svc := createTestService(t)
+	defer svc.Close()
+
+	impl := svc.(*quicBaaS)
+	activator := &iam.PIVActivator{}
+	impl.SetIAMProvider(&mockIAMComponents{pivActivator: activator})
+	ctx := context.Background()
+
+	pa, err := impl.GetPIVActivator(ctx)
+	require.NoError(t, err)
+	assert.Same(t, activator, pa)
 }
 
 // =============================================================================

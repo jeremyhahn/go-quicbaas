@@ -30,7 +30,7 @@ the authentication context into key attributes for both paths.
 | Capability | Native (Phase 8e canonical) | Compat bridge (xkms backend forward) |
 |------------|------------------------------|--------------------------------------|
 | Barrier (status / init / unseal / seal / rekey) | Yes — `Security().Barrier()` over REST/gRPC/QUIC/MCP/Unix/embedded | n/a |
-| Ceremony (status / claim-cert / claim-share / sign-csr / enroll-external-officer) | Yes — `Security().Ceremony()` on all six transports | n/a |
+| Ceremony (status / claim-cert / claim-share begin+complete / sign-csr / enroll-external-officer) | Yes — `Security().Ceremony()` on all six transports | n/a |
 | Credentials (submit/list/rotate/retrieve/versions/delete/gc) | Yes — `Security().Credentials()` on all six transports | n/a |
 | CA admin (info / bundle / list / issue / revoke / export-bundle) | Yes — `Security().Certificate()` (Phase 8e added `CAInfo` + `ListCertificates`) | Legacy `/api/v1/xkms/ca/*` routes retained for backward compatibility |
 | Auth factors (factor list/add/remove/rotate/relabel + Login) | Yes — `Security().Auth().Factors()` | n/a |
@@ -71,7 +71,7 @@ import go-xkms directly and have not migrated to the QuicBaaS SDK.
 | **Certificate Store** | SaveCert, GetCert, DeleteCert, ListCerts, CertExists, SaveCertChain, GetCertChain | `POST /certs`, `GET /certs/{id}`, `DELETE /certs/{id}`, `GET /certs`, `HEAD /certs/{id}` | `xkms.saveCert`, `xkms.getCert`, `xkms.deleteCert`, `xkms.listCerts`, `xkms.certExists`, `xkms.saveCertChain`, `xkms.getCertChain` | `SaveCert`, `GetCert`, `DeleteCert`, `ListCerts` | `Security().Certificate()` |
 | **Seal (xkms legacy)** | Seal, Unseal, CanSeal | `POST /seal`, `POST /unseal`, `GET /seal/capability` | `xkms.seal`, `xkms.unseal`, `xkms.canSeal` | `Seal`, `Unseal`, `CanSeal` | `Security().Seal()` |
 | **Barrier (canonical)** | Status, Initialize, InitializeShamir, Unseal, UnsealWithShare, UnsealWithShares, Seal, Rekey | `POST /api/v1/barrier/*` | `quicbaas.barrier.*` | `quicbaas.v1.BarrierService` | `Security().Barrier()` |
-| **Ceremony (canonical)** | Status, ClaimCert, ClaimShare, SignCSR, EnrollExternalOfficer, Initialize | `POST /api/v1/ceremony/*` | `quicbaas.ceremony.*` | `quicbaas.v1.CeremonyService` | `Security().Ceremony()` |
+| **Ceremony (canonical)** | Status, ClaimCert, BeginClaimShare/CompleteClaimShare, SignCSR, EnrollExternalOfficer, Initialize | `POST /api/v1/ceremony/*` | `quicbaas.ceremony.*` | `quicbaas.v1.CeremonyService` | `Security().Ceremony()` |
 | **Credentials (canonical)** | Submit, List, Rotate, RetrieveVersion, ListVersions, Delete, GCExpired | `POST /api/v1/credentials/*` | `quicbaas.credentials.*` | `quicbaas.v1.CredentialService` | `Security().Credentials()` |
 | **CA admin (Phase 8e canonical)** | CAInfo, GetCABundle, ListCertificates, IssueCertificate, RevokeCertificate, SignCSR | `GET /api/v1/ca/info`, `GET /api/v1/ca/bundle`, `GET /api/v1/ca/certificates`, `POST /api/v1/ca/issue`, `POST /api/v1/ca/revoke`, `POST /api/v1/ca/sign` | `quicbaas.ca.*` | `quicbaas.v1.CertificateService` | `Security().Certificate()` |
 | **PIV (compat)** | ListSlots, GetCert, StoreCert, DeleteCert, GenerateKey, GenerateCSR | `GET /piv/slots`, `GET /piv/slots/{slot}/cert`, `PUT /piv/slots/{slot}/cert`, `DELETE /piv/slots/{slot}/cert`, `POST /piv/slots/{slot}/key`, `POST /piv/slots/{slot}/csr` | `xkms.piv.listSlots`, `xkms.piv.getCert`, `xkms.piv.storeCert`, `xkms.piv.deleteCert`, `xkms.piv.generateKey`, `xkms.piv.generateCSR` | -- | `Security().Auth().PIV()` |
@@ -170,7 +170,8 @@ POST   /api/v1/ceremony/status
 POST   /api/v1/ceremony/initialize
 POST   /api/v1/ceremony/claim-cert/begin
 POST   /api/v1/ceremony/claim-cert/complete
-POST   /api/v1/ceremony/claim-share
+POST   /api/v1/ceremony/officer-share/begin
+POST   /api/v1/ceremony/officer-share/complete
 POST   /api/v1/ceremony/sign-csr
 POST   /api/v1/ceremony/enroll-external-officer
 
@@ -244,7 +245,7 @@ The compatibility layer registers two distinct gRPC service trees:
 |---------|--------|-------------------|------|
 | `xkms.v1.KeystoreService` | [`pkg/api/grpc/server_xkms.go`](../../pkg/api/grpc/server_xkms.go) | Compat | `Health`, `ListBackends`, `GetBackendInfo`, `GenerateKey`, `GetKey`, `DeleteKey`, `ListKeys`, `RotateKey`, `Sign`, `Verify`, `Encrypt`, `Decrypt`, `SaveCert`, `GetCert`, `DeleteCert`, `ListCerts`, `Seal`, `Unseal`, `CanSeal` |
 | `quicbaas.v1.BarrierService` | [`pkg/server/grpc_barrier_ceremony.go`](../../pkg/server/grpc_barrier_ceremony.go) | Native (Phase 8b/c/d) | `Status`, `Initialize`, `InitializeShamir`, `Unseal`, `UnsealWithShare`, `UnsealWithShares`, `Seal`, `Rekey` |
-| `quicbaas.v1.CeremonyService` | `pkg/server/grpc_barrier_ceremony.go` | Native | `Status`, `Initialize`, `ClaimCertBegin`, `ClaimCertComplete`, `ClaimShare`, `SignCSR`, `EnrollExternalOfficer` |
+| `quicbaas.v1.CeremonyService` | `pkg/server/grpc_barrier_ceremony.go` | Native | `Status`, `Initialize`, `ClaimCertBegin`, `ClaimCertComplete`, `BeginClaimShare`, `CompleteClaimShare`, `SignCSR`, `EnrollExternalOfficer` |
 | `quicbaas.v1.CredentialService` | qrdb proto, registered by the credential handler | Native | `Submit`, `List`, `Rotate`, `RetrieveVersion`, `ListVersions`, `Delete`, `GCExpired` |
 | `quicbaas.v1.CertificateService` | Native (Phase 8e added `CAInfo` + `ListCertificates`) | Native | `CAInfo`, `GetCABundle`, `ListCertificates`, `IssueCertificate`, `RevokeCertificate`, `SignCSR`, plus cert-store ops |
 

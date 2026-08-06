@@ -2489,3 +2489,59 @@ func TestExecuteIAMUserCreate_UnknownRoleError(t *testing.T) {
 	assert.Nil(t, result)
 	assert.True(t, dberrors.IsNotFound(err), "expected typed not-found, got %T: %v", err, err)
 }
+
+// TestExecuteIAMUserCreate_GroupsAndAttributesForwarded proves the MCP tool
+// arguments "groups" and "attributes" reach the IAM service request untouched
+// (sibling gap of the roles parity fix — the wrapper used to drop them).
+func TestExecuteIAMUserCreate_GroupsAndAttributesForwarded(t *testing.T) {
+	var captured *service.IAMCreateUserRequest
+	mock := &mockIAMService{
+		createUserFunc: func(_ context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
+			captured = req
+			return &service.IAMCreateUserResponse{
+				User:      &iam.User{ID: "u1", TenantID: req.TenantID, Email: req.Email, Name: req.Name, Groups: req.Groups},
+				Timestamp: time.Now(),
+			}, nil
+		},
+	}
+	reg := newIAMTestRegistry(mock)
+
+	args := map[string]interface{}{
+		"tenant_id":  "t1",
+		"email":      "groups@example.com",
+		"name":       "Group User",
+		"groups":     []interface{}{"group-a", "group-b"},
+		"attributes": map[string]interface{}{"department": "engineering"},
+	}
+
+	result, err := reg.executeIAMUserCreate(context.Background(), args)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, captured)
+	assert.Equal(t, []string{"group-a", "group-b"}, captured.Groups)
+	require.NotNil(t, captured.Attributes)
+	assert.Equal(t, "engineering", captured.Attributes["department"])
+}
+
+// TestExecuteIAMUserCreate_UnknownGroupError proves a typed not-found error
+// from validate-before-create propagates to the MCP caller with no result.
+func TestExecuteIAMUserCreate_UnknownGroupError(t *testing.T) {
+	mock := &mockIAMService{
+		createUserFunc: func(_ context.Context, _ *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
+			return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.group.get"}
+		},
+	}
+	reg := newIAMTestRegistry(mock)
+
+	args := map[string]interface{}{
+		"tenant_id": "t1",
+		"email":     "phantom@example.com",
+		"name":      "Phantom",
+		"groups":    []interface{}{"no-such-group"},
+	}
+
+	result, err := reg.executeIAMUserCreate(context.Background(), args)
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.True(t, dberrors.IsNotFound(err), "expected typed not-found, got %T: %v", err, err)
+}

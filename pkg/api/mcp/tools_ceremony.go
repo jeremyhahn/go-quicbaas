@@ -17,6 +17,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"time"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -33,7 +34,8 @@ import (
 //   qrdb_ceremony_status
 //   qrdb_ceremony_claim_cert_begin
 //   qrdb_ceremony_claim_cert_complete
-//   qrdb_ceremony_claim_share
+//   qrdb_ceremony_begin_claim_share
+//   qrdb_ceremony_complete_claim_share
 //   qrdb_ceremony_sign_csr
 //   quicbaas_ceremony_list_officers
 //   qrdb_ceremony_enroll_external_officer
@@ -180,8 +182,8 @@ func (r *ToolRegistry) registerCeremonyTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "qrdb_ceremony_claim_share",
-		Description: "Retrieve the Shamir share assigned to the given officer.",
+		Name:        "qrdb_ceremony_begin_claim_share",
+		Description: "Start the Shamir share claim handshake for an officer, returning the challenge nonce to sign. Caller identity is derived from the connection, never from the arguments.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -191,6 +193,20 @@ func (r *ToolRegistry) registerCeremonyTools() {
 				},
 			},
 			"required": []string{"username"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "qrdb_ceremony_complete_claim_share",
+		Description: "Complete the Shamir share claim handshake by submitting the officer's nonce signature. The share is released exactly once.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"username":  map[string]interface{}{"type": "string", "description": "Officer username completing the share claim."},
+				"nonce_hex": map[string]interface{}{"type": "string", "description": "Hex-encoded challenge nonce from the begin step."},
+				"signature": map[string]interface{}{"type": "string", "description": "Base64-encoded signature over the nonce."},
+			},
+			"required": []string{"username", "nonce_hex", "signature"},
 		},
 	})
 
@@ -242,7 +258,8 @@ var ceremonyToolNames = map[string]struct{}{
 	"qrdb_ceremony_status":                  {},
 	"qrdb_ceremony_claim_cert_begin":        {},
 	"qrdb_ceremony_claim_cert_complete":     {},
-	"qrdb_ceremony_claim_share":             {},
+	"qrdb_ceremony_begin_claim_share":       {},
+	"qrdb_ceremony_complete_claim_share":    {},
 	"qrdb_ceremony_sign_csr":                {},
 	"quicbaas_ceremony_list_officers":       {},
 	"qrdb_ceremony_enroll_external_officer": {},
@@ -264,7 +281,8 @@ var ceremonyExecutors = map[string]ceremonyExecutor{
 	"qrdb_ceremony_status":                  executeCeremonyStatus,
 	"qrdb_ceremony_claim_cert_begin":        executeCeremonyClaimCertBegin,
 	"qrdb_ceremony_claim_cert_complete":     executeCeremonyClaimCertComplete,
-	"qrdb_ceremony_claim_share":             executeCeremonyClaimShare,
+	"qrdb_ceremony_begin_claim_share":       executeCeremonyBeginClaimShare,
+	"qrdb_ceremony_complete_claim_share":    executeCeremonyCompleteClaimShare,
 	"qrdb_ceremony_sign_csr":                executeCeremonySignCSR,
 	"quicbaas_ceremony_list_officers":       executeCeremonyListOfficers,
 	"qrdb_ceremony_enroll_external_officer": executeCeremonyEnrollExternalOfficer,
@@ -351,17 +369,48 @@ func executeCeremonyClaimCertComplete(ctx context.Context, svc service.CeremonyS
 	return ceremonyClaimCertToMap(result), nil
 }
 
-// executeCeremonyClaimShare implements qrdb_ceremony_claim_share.
-func executeCeremonyClaimShare(ctx context.Context, svc service.CeremonyServicer, args map[string]interface{}) (interface{}, error) {
+// executeCeremonyBeginClaimShare implements qrdb_ceremony_begin_claim_share.
+func executeCeremonyBeginClaimShare(ctx context.Context, svc service.CeremonyServicer, args map[string]interface{}) (interface{}, error) {
 	username := getString(args, "username")
 	if username == "" {
 		return nil, &CeremonyFieldRequiredError{Field: "username"}
 	}
-	share, err := svc.CeremonyClaimShare(ctx, username)
+	challenge, err := svc.CeremonyBeginClaimShare(ctx, username)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"share": share}, nil
+	return ceremonyChallengeToMap(challenge), nil
+}
+
+// executeCeremonyCompleteClaimShare implements
+// qrdb_ceremony_complete_claim_share. The signature arrives base64-encoded
+// and the released share is returned base64-encoded under the "share" key,
+// mirroring qrdb's own MCP tool contract exactly.
+func executeCeremonyCompleteClaimShare(ctx context.Context, svc service.CeremonyServicer, args map[string]interface{}) (interface{}, error) {
+	username := getString(args, "username")
+	if username == "" {
+		return nil, &CeremonyFieldRequiredError{Field: "username"}
+	}
+	nonceHex := getString(args, "nonce_hex")
+	if nonceHex == "" {
+		return nil, &CeremonyFieldRequiredError{Field: "nonce_hex"}
+	}
+	sigB64 := getString(args, "signature")
+	if sigB64 == "" {
+		return nil, &CeremonyFieldRequiredError{Field: "signature"}
+	}
+	sig, decErr := base64.StdEncoding.DecodeString(sigB64)
+	if decErr != nil {
+		return nil, &CeremonyFieldConflictError{Reason: "signature must be base64-encoded"}
+	}
+	result, err := svc.CeremonyCompleteClaimShare(ctx, username, nonceHex, sig)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"share_index": result.ShareIndex,
+		"share":       base64.StdEncoding.EncodeToString([]byte(result.ShareJSON)),
+	}, nil
 }
 
 // executeCeremonySignCSR implements qrdb_ceremony_sign_csr.

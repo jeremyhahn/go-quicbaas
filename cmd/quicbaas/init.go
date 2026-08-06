@@ -22,7 +22,7 @@
 //
 //	status                   Show the current ceremony state
 //	claim-cert               Two-step certificate claim (begin then complete)
-//	claim-share              Retrieve the officer's Shamir share
+//	claim-share              Claim the officer's Shamir share (challenge-response)
 //	sign-csr                 SO-authorised CSR signing
 //	enroll-external-officer  Enrol an officer whose key material is held externally
 //
@@ -93,7 +93,8 @@ type CeremonyClient interface {
 	CeremonyStatus(ctx context.Context) (*qrdbtransport.CeremonyStatusResponse, error)
 	CeremonyClaimCertBegin(ctx context.Context, req *qrdbtransport.ClaimCertBeginRequest) (*qrdbtransport.ClaimCertBeginResponse, error)
 	CeremonyClaimCertComplete(ctx context.Context, req *qrdbtransport.ClaimCertCompleteRequest) (*qrdbtransport.ClaimCertCompleteResponse, error)
-	CeremonyClaimShare(ctx context.Context, req *qrdbtransport.ClaimShareRequest) (*qrdbtransport.ClaimShareResponse, error)
+	CeremonyBeginClaimShare(ctx context.Context, req *qrdbtransport.BeginClaimShareRequest) (*qrdbtransport.BeginClaimShareResponse, error)
+	CeremonyCompleteClaimShare(ctx context.Context, req *qrdbtransport.CompleteClaimShareRequest) (*qrdbtransport.CompleteClaimShareResponse, error)
 	CeremonySignCSR(ctx context.Context, req *qrdbtransport.SignCSRInitRequest) (*qrdbtransport.SignCSRInitResponse, error)
 	CeremonyEnrollExternalOfficer(ctx context.Context, req *qrdbtransport.EnrollExternalOfficerRequest) (*qrdbtransport.EnrollExternalOfficerResponse, error)
 }
@@ -202,7 +203,7 @@ enrols external officers. The verb set mirrors xkmsctl init.
 Verbs:
   status                   Show the current ceremony state
   claim-cert               Two-step certificate claim (begin then complete)
-  claim-share              Retrieve the officer's Shamir share
+  claim-share              Claim the officer's Shamir share (challenge-response)
   sign-csr                 SO-authorised CSR signing
   enroll-external-officer  Enrol an officer whose key material is external`,
 	}
@@ -333,7 +334,7 @@ func runInitClaimCertCommand(_ *cobra.Command, _ []string) error {
 	complete, err := client.CeremonyClaimCertComplete(ctx, &qrdbtransport.ClaimCertCompleteRequest{
 		Username:  initUsername,
 		NonceHex:  begin.NonceHex,
-		Signature: signature,
+		Signature: hex.EncodeToString(signature),
 	})
 	if err != nil {
 		return formatError(err)
@@ -346,26 +347,28 @@ func runInitClaimCertCommand(_ *cobra.Command, _ []string) error {
 }
 
 // signNonceWithKeyFile loads a PEM-encoded private key from path and
-// signs the hex-encoded nonce. Returns the signature as a hex string.
-func signNonceWithKeyFile(path, nonceHex string) (string, error) {
+// signs the hex-encoded nonce with the scheme the qrdb ceremony verifier
+// expects: Ed25519 signs the raw nonce, every other key signs the SHA-256
+// digest. Returns the raw signature bytes.
+func signNonceWithKeyFile(path, nonceHex string) ([]byte, error) {
 	keyPEM, err := os.ReadFile(path)
 	if err != nil {
-		return "", &InitCSRKeySignError{Path: path, Err: err}
+		return nil, &InitCSRKeySignError{Path: path, Err: err}
 	}
 
 	key, err := parsePrivateKeyPEM(keyPEM)
 	if err != nil {
-		return "", &InitCSRKeySignError{Path: path, Err: err}
+		return nil, &InitCSRKeySignError{Path: path, Err: err}
 	}
 
 	nonce, err := hex.DecodeString(nonceHex)
 	if err != nil {
-		return "", &InitCSRKeySignError{Path: path, Err: err}
+		return nil, &InitCSRKeySignError{Path: path, Err: err}
 	}
 
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return "", &InitCSRKeySignError{
+		return nil, &InitCSRKeySignError{
 			Path: path,
 			Err:  errors.Newf(errors.ErrInvalidInput, "init.claim-cert", "key does not implement crypto.Signer"),
 		}
@@ -381,9 +384,9 @@ func signNonceWithKeyFile(path, nonceHex string) (string, error) {
 		sig, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
 	}
 	if err != nil {
-		return "", &InitCSRKeySignError{Path: path, Err: err}
+		return nil, &InitCSRKeySignError{Path: path, Err: err}
 	}
-	return hex.EncodeToString(sig), nil
+	return sig, nil
 }
 
 // parsePrivateKeyPEM decodes a PEM-encoded private key block into a
@@ -418,11 +421,16 @@ func parsePrivateKeyPEM(data []byte) (interface{}, error) {
 func newInitClaimShareCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "claim-share",
-		Short: "Retrieve the officer's Shamir share",
-		Long: `Retrieve the Shamir share assigned to an officer.
+		Short: "Claim the officer's Shamir share (challenge-response)",
+		Long: `Two-step Shamir share claim:
 
-The officer must already have completed claim-cert (mTLS auth uses the
-issued cert + key). The share JSON is written to --output.
+1. Begin: server returns a challenge nonce (identity proven via mTLS with
+   the officer's issued cert + key).
+2. Officer signs the nonce with their certificate private key (--tls-key).
+3. Complete: server verifies the signature and releases the share exactly
+   once.
+
+The share JSON is written to --output.
 
 Example:
   quicbaas init claim-share \
@@ -469,14 +477,28 @@ func runInitClaimShareCommand(_ *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	resp, err := client.CeremonyClaimShare(ctx, &qrdbtransport.ClaimShareRequest{
+	begin, err := client.CeremonyBeginClaimShare(ctx, &qrdbtransport.BeginClaimShareRequest{
 		Username: initUsername,
 	})
 	if err != nil {
 		return formatError(err)
 	}
 
-	if err := writeFileSecure(initOutputPath, []byte(resp.ShareJSON)); err != nil {
+	signature, err := signNonceWithKeyFile(initTLSKeyPath, begin.NonceHex)
+	if err != nil {
+		return formatError(err)
+	}
+
+	complete, err := client.CeremonyCompleteClaimShare(ctx, &qrdbtransport.CompleteClaimShareRequest{
+		Username:  initUsername,
+		NonceHex:  begin.NonceHex,
+		Signature: signature,
+	})
+	if err != nil {
+		return formatError(err)
+	}
+
+	if err := writeFileSecure(initOutputPath, []byte(complete.ShareJSON)); err != nil {
 		return formatError(err)
 	}
 	return nil

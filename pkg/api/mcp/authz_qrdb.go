@@ -110,6 +110,22 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"qrdb_role_list":       {"roles", "list"},
 	"qrdb_role_assign":     {"roles", "assign"},
 
+	// qrdb user lookup + user-login factor surface (qrdb mirror; see
+	// tools_qrdb_users.go). Lookups map to the users:* read family; factor
+	// verbs map 1:1 onto the qrdb-registered user_authfactors:* family —
+	// the same vocabulary the REST scope rules use for /users and
+	// /v1/users/factors.
+	"qrdb_user_get":                    {"users", "read"},
+	"qrdb_user_get_by_username":        {"users", "read"},
+	"qrdb_user_get_by_cert_thumbprint": {"users", "get_by_cert_thumbprint"},
+	"qrdb_user_authfactor_add":         {"user_authfactors", "add"},
+	"qrdb_user_authfactor_list":        {"user_authfactors", "list"},
+	"qrdb_user_authfactor_get":         {"user_authfactors", "get"},
+	"qrdb_user_authfactor_remove":      {"user_authfactors", "remove"},
+	"qrdb_user_authfactor_rotate":      {"user_authfactors", "rotate"},
+	"qrdb_user_authfactor_relabel":     {"user_authfactors", "relabel"},
+	"qrdb_user_authfactor_login":       {"user_authfactors", "login"},
+
 	// Barrier (qrdb mirror) — exact per-operation mapping, mirroring gRPC
 	// authz_mapping.go lines 259-276. Each tool gets its own minimum-privilege
 	// permission; the former "qrdb_barrier" prefix catch-all is gone so an

@@ -48,6 +48,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -100,6 +101,21 @@ type ServerNotRunningError struct{}
 
 func (e *ServerNotRunningError) Error() string { return "server not running" }
 
+// HTTPListenError indicates the MCP HTTP transport failed to bind its
+// listener. Surfaced synchronously from Start() so the daemon can treat a
+// transport bind failure as fatal instead of running without an MCP surface.
+type HTTPListenError struct {
+	Addr  string
+	Cause error
+}
+
+func (e *HTTPListenError) Error() string {
+	return "mcp: failed to listen on " + e.Addr + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause for errors.Is/As traversal.
+func (e *HTTPListenError) Unwrap() error { return e.Cause }
+
 // UnsupportedTransportError indicates an unsupported transport type.
 type UnsupportedTransportError struct {
 	Transport string
@@ -122,6 +138,21 @@ type Server struct {
 	running  atomic.Bool
 	shutdown chan struct{}
 	wg       sync.WaitGroup
+
+	// sealedProbe + sealedToolAllow implement the sealed-window gate on the
+	// tools/call dispatcher (see SetSealedWindowGate in sealed_window.go).
+	// While the probe reports sealed, only allowlisted tools are callable.
+	sealedMu        sync.RWMutex
+	sealedProbe     SealedWindowProbe
+	sealedToolAllow map[string]struct{}
+
+	// sealedBypass is the shared sealed-window authentication-bypass
+	// predicate (probe + canonical-table lookup), derived by
+	// SetSealedWindowGate from the same probe as the gate above. While the
+	// barrier is sealed, tools/call admits allowlisted tools without a
+	// bearer token (audited, reason "sealed-window allowlist"); unsealed it
+	// is inert. Guarded by sealedMu with the gate state.
+	sealedBypass *sealedwindow.AuthBypass
 
 	// HTTP server for HTTP transport (atomic for thread-safe access)
 	httpServer atomic.Pointer[http.Server]
@@ -475,16 +506,20 @@ func (s *Server) startHTTPTransport() error {
 	// Store HTTP server atomically for thread-safe access from Stop()
 	s.httpServer.Store(httpSrv)
 
-	// Start HTTP server in goroutine
+	// Bind the listener SYNCHRONOUSLY so a port conflict or bad address
+	// surfaces as a Start() error and aborts daemon boot (process-fatal
+	// transport construction), instead of being logged from a goroutine
+	// while the daemon continues without an MCP surface.
+	listener, err := net.Listen("tcp", s.config.HTTPAddr)
+	if err != nil {
+		s.running.Store(false)
+		return &HTTPListenError{Addr: s.config.HTTPAddr, Cause: err}
+	}
+
+	// Serve on the bound listener in a goroutine.
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-
-		listener, err := net.Listen("tcp", s.config.HTTPAddr)
-		if err != nil {
-			s.logger.WithError(err).Error("Failed to listen on HTTP address")
-			return
-		}
 
 		if s.config.TLSConfig != nil {
 			httpSrv.TLSConfig = s.config.TLSConfig.Clone()
@@ -696,16 +731,38 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 
 	arguments, _ := params["arguments"].(map[string]interface{})
 
+	// Sealed-window gate: while the storage barrier is sealed, only the
+	// canonical sealed-window tools (barrier / ceremony unseal flow) are
+	// callable. Runs BEFORE authorization: while sealed there is no OIDC
+	// provider to validate tokens against, and the allowlisted tools mirror
+	// qrdb's pre-auth sealed surface (the handlers enforce their own
+	// credentials, e.g. officer cert + nonce checks).
+	if s.sealedWindowDeniesTool(name) {
+		sealedErr := &SealedWindowError{Tool: name}
+		return s.makeErrorResponse(req.ID, InternalError, "Service unavailable", sealedErr.Error())
+	}
+
 	// Token comes from Authorization header only (set in context by HTTP handler)
 	// BREAKING CHANGE (v1.1.0): _token and accessToken in params are no longer supported
 	token := tokenFromContext(ctx)
 
-	// Check authorization before executing tool; inject Subject into context so
-	// service-layer per-key authorization can access the principal uniformly.
-	var authErr *AuthorizationError
-	ctx, authErr = s.authChecker.CheckToolAuthorizationWithContext(ctx, name, token)
-	if authErr != nil {
-		return s.handleAuthError(req.ID, authErr)
+	// Sealed-window authentication bypass. WHILE the barrier is SEALED the
+	// sealed-window allowlist IS the entire control surface: possession of
+	// unseal material is the authorization, because a sealed IAM plane
+	// cannot mint or validate tokens. The sealed gate above already
+	// rejected every non-allowlisted tool, so the predicate only ever
+	// admits the allowlisted unseal-flow tools — audited (reason
+	// "sealed-window allowlist") on every admit. Unsealed, the predicate is
+	// always false and the authorization check below runs unchanged.
+	if !s.sealedWindowBypassesTool(name) {
+		// Check authorization before executing tool; inject Subject into
+		// context so service-layer per-key authorization can access the
+		// principal uniformly.
+		var authErr *AuthorizationError
+		ctx, authErr = s.authChecker.CheckToolAuthorizationWithContext(ctx, name, token)
+		if authErr != nil {
+			return s.handleAuthError(req.ID, authErr)
+		}
 	}
 
 	// Execute tool

@@ -574,3 +574,70 @@ func TestTransformIAMToolArguments(t *testing.T) {
 		}
 	})
 }
+
+// TestTransformIAMToolArguments_UserCreate verifies the SDK->server field
+// renames for the create-user tool: the SDK CreateUserRequest serializes
+// display_name and metadata, but the canonical create-user contract (REST
+// body, QUIC wire, gRPC proto, MCP tool schema) uses name and attributes.
+func TestTransformIAMToolArguments_UserCreate(t *testing.T) {
+	t.Run("display_name renamed to name", func(t *testing.T) {
+		out := transformIAMToolArguments("quicbaas_iam_user_create",
+			map[string]interface{}{
+				"tenant_id":    "t1",
+				"email":        "u@example.com",
+				"display_name": "Canonical User",
+			})
+		if out["name"] != "Canonical User" {
+			t.Errorf("name = %v", out["name"])
+		}
+		if _, ok := out["display_name"]; ok {
+			t.Error("display_name should be removed")
+		}
+	})
+
+	t.Run("metadata renamed to attributes", func(t *testing.T) {
+		out := transformIAMToolArguments("quicbaas_iam_user_create",
+			map[string]interface{}{
+				"tenant_id": "t1",
+				"metadata":  map[string]interface{}{"department": "engineering"},
+			})
+		attrs, ok := out["attributes"].(map[string]interface{})
+		if !ok || attrs["department"] != "engineering" {
+			t.Errorf("attributes = %v", out["attributes"])
+		}
+		if _, ok := out["metadata"]; ok {
+			t.Error("metadata should be removed")
+		}
+	})
+
+	t.Run("existing name and attributes take precedence", func(t *testing.T) {
+		out := transformIAMToolArguments("quicbaas_iam_user_create",
+			map[string]interface{}{
+				"name":         "Explicit",
+				"display_name": "Ignored",
+				"attributes":   map[string]interface{}{"a": "1"},
+				"metadata":     map[string]interface{}{"b": "2"},
+			})
+		if out["name"] != "Explicit" {
+			t.Errorf("name = %v", out["name"])
+		}
+		attrs := out["attributes"].(map[string]interface{})
+		if attrs["a"] != "1" {
+			t.Errorf("attributes = %v", attrs)
+		}
+	})
+
+	t.Run("roles and groups pass through untouched", func(t *testing.T) {
+		out := transformIAMToolArguments("quicbaas_iam_user_create",
+			map[string]interface{}{
+				"roles":  []interface{}{"role-a"},
+				"groups": []interface{}{"group-a"},
+			})
+		if roles := out["roles"].([]interface{}); len(roles) != 1 || roles[0] != "role-a" {
+			t.Errorf("roles = %v", out["roles"])
+		}
+		if groups := out["groups"].([]interface{}); len(groups) != 1 || groups[0] != "group-a" {
+			t.Errorf("groups = %v", out["groups"])
+		}
+	})
+}

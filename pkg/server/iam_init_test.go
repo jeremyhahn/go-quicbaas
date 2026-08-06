@@ -25,6 +25,8 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -334,4 +336,74 @@ func TestBindAdminToSOCert_RejectsNilIdentityStore(t *testing.T) {
 	if !errors.Is(typedErr.Cause, ErrBootstrapAdminMissing) {
 		t.Errorf("typedErr.Cause = %v, want errors.Is(ErrBootstrapAdminMissing)", typedErr.Cause)
 	}
+}
+
+// writeTestCAPEM generates a self-signed ECDSA CA certificate and writes it as
+// PEM to a file under the test's temp directory, returning the path.
+func writeTestCAPEM(t *testing.T) string {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "PIV Activation Test CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	require.NoError(t, os.WriteFile(path, pemBytes, 0o600))
+	return path
+}
+
+func TestLoadPIVActivationRoots_ValidBundle(t *testing.T) {
+	path := writeTestCAPEM(t)
+
+	pool, err := loadPIVActivationRoots(path)
+	require.NoError(t, err)
+	assert.NotNil(t, pool)
+}
+
+func TestLoadPIVActivationRoots_MissingFile(t *testing.T) {
+	pool, err := loadPIVActivationRoots(filepath.Join(t.TempDir(), "absent.pem"))
+	require.Error(t, err)
+	assert.Nil(t, pool)
+
+	var rootsErr *PIVActivationRootsError
+	require.ErrorAs(t, err, &rootsErr)
+	assert.Equal(t, "read failed", rootsErr.Reason)
+	assert.Error(t, rootsErr.Unwrap())
+}
+
+func TestLoadPIVActivationRoots_NoCertificates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "garbage.pem")
+	require.NoError(t, os.WriteFile(path, []byte("not a pem bundle"), 0o600))
+
+	pool, err := loadPIVActivationRoots(path)
+	require.Error(t, err)
+	assert.Nil(t, pool)
+
+	var rootsErr *PIVActivationRootsError
+	require.ErrorAs(t, err, &rootsErr)
+	assert.Equal(t, "no certificates parsed", rootsErr.Reason)
+	assert.NoError(t, rootsErr.Unwrap())
+}
+
+func TestIAMComponents_GetPIVActivator_NilWhenUnset(t *testing.T) {
+	c := &iamComponents{}
+	assert.Nil(t, c.GetPIVActivator())
+}
+
+func TestIAMComponents_GetPIVActivator_ReturnsConfigured(t *testing.T) {
+	activator := &iam.PIVActivator{}
+	c := &iamComponents{pivActivator: activator}
+	assert.Same(t, activator, c.GetPIVActivator())
 }

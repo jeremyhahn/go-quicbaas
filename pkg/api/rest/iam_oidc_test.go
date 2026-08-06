@@ -25,6 +25,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 // TestGetOIDCConfig tests the GetOIDCConfig handler.
@@ -680,7 +683,7 @@ func TestIAMMiddlewareContextValues(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", "")
+		ctx := ctxWithTestSubject(context.Background(), "", "")
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -690,11 +693,13 @@ func TestIAMMiddlewareContextValues(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 
-	t.Run("ListSessions with wrong type for user_id", func(t *testing.T) {
+	t.Run("ListSessions with unauthenticated subject", func(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", 12345) // int instead of string
+		// A Subject that was injected but never authenticated fails closed.
+		ctx := auth.SubjectIntoContext(context.Background(),
+			interfaces.Subject{ID: "user-123", TenantID: "tenant-123", Authenticated: false})
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -708,8 +713,7 @@ func TestIAMMiddlewareContextValues(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", "")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -719,15 +723,14 @@ func TestIAMMiddlewareContextValues(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
-	t.Run("GetSession with wrong type for tenant_id", func(t *testing.T) {
+	t.Run("GetSession with subject missing tenant", func(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "session-123")
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", 999) // int instead of string
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/session-123", nil)
@@ -741,30 +744,27 @@ func TestIAMMiddlewareContextValues(t *testing.T) {
 }
 
 func TestRevokeOtherSessionsBodyParsing(t *testing.T) {
-	t.Run("with empty body", func(t *testing.T) {
+	t.Run("with empty body requires keep_session_id", func(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", "tenant-123")
-		ctx = context.WithValue(ctx, "session_id", "session-456")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
 
 		handler.RevokeOtherSessions(w, req)
 
-		// Will fail because session manager is not available
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		// The session to keep must be named in the request body.
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "current session ID is required")
 	})
 
-	t.Run("with invalid JSON body ignored", func(t *testing.T) {
+	t.Run("with invalid JSON body rejected", func(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", "tenant-123")
-		ctx = context.WithValue(ctx, "session_id", "session-456")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
 		body := `{invalid json}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(body))
 		req = req.WithContext(ctx)
@@ -773,18 +773,17 @@ func TestRevokeOtherSessionsBodyParsing(t *testing.T) {
 
 		handler.RevokeOtherSessions(w, req)
 
-		// Should still proceed with session_id from context
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		// Unparseable body yields no keep_session_id -> 400.
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "current session ID is required")
 	})
 
-	t.Run("with empty keep_session_id uses context session_id", func(t *testing.T) {
+	t.Run("with valid keep_session_id proceeds to manager", func(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", "tenant-123")
-		ctx = context.WithValue(ctx, "session_id", "session-456")
-		body := `{"keep_session_id": ""}`
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+		body := `{"keep_session_id": "session-456"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(body))
 		req = req.WithContext(ctx)
 		req.Header.Set("Content-Type", "application/json")
@@ -792,6 +791,7 @@ func TestRevokeOtherSessionsBodyParsing(t *testing.T) {
 
 		handler.RevokeOtherSessions(w, req)
 
+		// Fails because the session manager is not available on the mock.
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
 }

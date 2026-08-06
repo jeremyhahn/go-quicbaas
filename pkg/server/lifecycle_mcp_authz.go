@@ -47,36 +47,53 @@ type mcpOIDCProviderGetter interface {
 // SetAuthorizationService(nil, authManager) wiring intact), so MCP keeps its
 // legacy token-only behaviour: a non-public tool requires a valid token but the
 // authorization decision is not enforced. It returns true when enforcement was
-// installed so the caller can skip the legacy wiring. On a validator-build
-// failure it logs and returns false, mirroring configureRESTAuthz: enforcement is
-// not installed and the legacy token-only path is left in place.
-func (s *Server) configureMCPQRDBAuthz(mcpServer *mcpapi.Server) bool {
+// installed so the caller can skip the legacy wiring.
+//
+// Gate construction is FAIL-CLOSED under RequireAuthz: when the OIDC
+// provider or the platform-token Validator cannot be built, a typed
+// *AuthzGateConstructionError is returned and daemon startup ABORTS
+// (refuse-to-start posture) — MCP is never served with a silently-missing
+// enforcement gate.
+func (s *Server) configureMCPQRDBAuthz(mcpServer *mcpapi.Server) (bool, error) {
 	if s.config == nil || !s.config.Security.RequireAuthz {
-		return false
+		return false, nil
 	}
 
 	getter, ok := s.quicBaaSService.(mcpOIDCProviderGetter)
 	if !ok {
-		s.logger.Debug("MCP authz disabled: service does not expose an OIDC provider")
-		return false
+		return false, &AuthzGateConstructionError{
+			Transport: "mcp",
+			Op:        "service does not expose an OIDC provider",
+		}
 	}
 	provider, err := getter.GetOIDCProvider(context.Background())
 	if err != nil || provider == nil {
-		s.logger.Debug("MCP authz disabled: OIDC provider not available")
-		return false
+		if err == nil {
+			err = errGRPCOIDCProviderUnavailable
+		}
+		return false, &AuthzGateConstructionError{
+			Transport: "mcp",
+			Op:        "resolve OIDC provider",
+			Cause:     err,
+		}
 	}
 
 	// Build the single central platform-token Validator and install the unified
 	// enforcement seam. One Validator call per tool decides: offline token
 	// validation, DPoP sender-constraint for cnf.jkt-bound tokens, the offline scp
-	// -> permission decision, and the per-tenant liveness/revocation check.
+	// -> permission decision, and the per-tenant liveness/revocation check. A
+	// build failure ABORTS startup (fail-closed) instead of serving MCP
+	// ungated.
 	platformValidator, err := s.buildPlatformValidator(context.Background())
 	if err != nil {
-		s.logger.WithError(err).Error("MCP authz disabled: failed to build platform-token validator")
-		return false
+		return false, &AuthzGateConstructionError{
+			Transport: "mcp",
+			Op:        "build platform-token validator",
+			Cause:     err,
+		}
 	}
 
 	mcpServer.SetValidatorAuthorizer(platformValidator)
 	s.logger.Info("MCP platform-token validator authorization installed (RequireAuthz=true)")
-	return true
+	return true, nil
 }

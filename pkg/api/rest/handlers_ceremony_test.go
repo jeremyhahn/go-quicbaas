@@ -46,7 +46,8 @@ func TestCeremonyRoutesAreRegistered(t *testing.T) {
 		{"initialize", http.MethodPost, "/api/v1/init/initialize"},
 		{"claim-cert/begin", http.MethodPost, "/api/v1/init/claim-cert/begin"},
 		{"claim-cert/complete", http.MethodPost, "/api/v1/init/claim-cert/complete"},
-		{"claim-share", http.MethodPost, "/api/v1/init/claim-share"},
+		{"officer-share-begin", http.MethodPost, "/api/v1/init/officer-share/begin"},
+		{"officer-share-complete", http.MethodPost, "/api/v1/init/officer-share/complete"},
 		{"sign-csr", http.MethodPost, "/api/v1/init/sign-csr"},
 		{"enroll-external-officer", http.MethodPost, "/api/v1/init/enroll-external-officer"},
 	}

@@ -67,11 +67,18 @@ func (m *mockCeremonyServicer) CeremonyCompleteClaimCert(context.Context, string
 	return &service.CeremonyClaimCertResult{CertPEM: []byte("cert"), CACertPEM: []byte("ca")}, nil
 }
 
-func (m *mockCeremonyServicer) CeremonyClaimShare(context.Context, string) (string, error) {
+func (m *mockCeremonyServicer) CeremonyBeginClaimShare(context.Context, string) (*service.CeremonyChallenge, error) {
 	if m.err != nil {
-		return "", m.err
+		return nil, m.err
 	}
-	return "share-value", nil
+	return &service.CeremonyChallenge{NonceHex: "abcd", ExpiresAt: time.Now().Add(time.Minute)}, nil
+}
+
+func (m *mockCeremonyServicer) CeremonyCompleteClaimShare(context.Context, string, string, []byte) (*service.CeremonyClaimShareResult, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &service.CeremonyClaimShareResult{ShareIndex: 1, ShareJSON: "share-value"}, nil
 }
 
 func (m *mockCeremonyServicer) CeremonySignCSR(context.Context, string, string, string, string) (*service.CeremonySignCSRResult, error) {
@@ -121,7 +128,8 @@ func TestCeremonyDispatch_HappyPaths(t *testing.T) {
 		{"status", SubOpCeremonyStatus, nil},
 		{"claim-cert-begin", SubOpCeremonyClaimCertBegin, encMust(t, &ceremonyClaimCertBeginWireRequest{Username: "alice"})},
 		{"claim-cert-complete", SubOpCeremonyClaimCertComplete, encMust(t, &ceremonyClaimCertCompleteWireRequest{Username: "alice", NonceHex: "ab", Signature: "sig"})},
-		{"claim-share", SubOpCeremonyClaimShare, encMust(t, &ceremonyClaimShareWireRequest{Username: "alice"})},
+		{"begin-claim-share", SubOpCeremonyBeginClaimShare, encMust(t, &ceremonyBeginClaimShareWireRequest{Username: "alice"})},
+		{"complete-claim-share", SubOpCeremonyCompleteClaimShare, encMust(t, &ceremonyCompleteClaimShareWireRequest{Username: "alice", NonceHex: "ab", Signature: "c2ln"})},
 		{"sign-csr", SubOpCeremonySignCSR, encMust(t, &ceremonySignCSRWireRequest{Username: "alice", CSRPEM: "csr", Role: "officer"})},
 		{"list-officers", SubOpCeremonyListOfficers, nil},
 		{"enroll-external", SubOpCeremonyEnrollExternalOfficer, encMust(t, &ceremonyEnrollExternalOfficerWireRequest{Username: "bob", CertPEM: "cert", AuthFactor: "piv"})},
@@ -151,7 +159,8 @@ func TestCeremonyDispatch_ServiceErrors(t *testing.T) {
 		{"status", SubOpCeremonyStatus, nil},
 		{"claim-cert-begin", SubOpCeremonyClaimCertBegin, encMust(t, &ceremonyClaimCertBeginWireRequest{Username: "alice"})},
 		{"claim-cert-complete", SubOpCeremonyClaimCertComplete, encMust(t, &ceremonyClaimCertCompleteWireRequest{Username: "alice", NonceHex: "ab", Signature: "sig"})},
-		{"claim-share", SubOpCeremonyClaimShare, encMust(t, &ceremonyClaimShareWireRequest{Username: "alice"})},
+		{"begin-claim-share", SubOpCeremonyBeginClaimShare, encMust(t, &ceremonyBeginClaimShareWireRequest{Username: "alice"})},
+		{"complete-claim-share", SubOpCeremonyCompleteClaimShare, encMust(t, &ceremonyCompleteClaimShareWireRequest{Username: "alice", NonceHex: "ab", Signature: "c2ln"})},
 		{"sign-csr", SubOpCeremonySignCSR, encMust(t, &ceremonySignCSRWireRequest{Username: "alice", CSRPEM: "csr"})},
 		{"enroll-external", SubOpCeremonyEnrollExternalOfficer, encMust(t, &ceremonyEnrollExternalOfficerWireRequest{Username: "bob", CertPEM: "cert", AuthFactor: "piv"})},
 	}
@@ -176,7 +185,8 @@ func TestCeremonyDispatch_DecodeErrors(t *testing.T) {
 		SubOpCeremonyInitialize,
 		SubOpCeremonyClaimCertBegin,
 		SubOpCeremonyClaimCertComplete,
-		SubOpCeremonyClaimShare,
+		SubOpCeremonyBeginClaimShare,
+		SubOpCeremonyCompleteClaimShare,
 		SubOpCeremonySignCSR,
 		SubOpCeremonyEnrollExternalOfficer,
 	}
@@ -209,9 +219,14 @@ func TestCeremonyDispatch_ValidationErrors(t *testing.T) {
 		encMust(t, &ceremonyClaimCertCompleteWireRequest{Username: "alice", NonceHex: "ab"})))
 	assert.NotEqual(t, StatusOK, resp.Status)
 
-	// claim-share: missing username
-	resp = handler.HandleRequest(ctx, ceremonyRequest(SubOpCeremonyClaimShare,
-		encMust(t, &ceremonyClaimShareWireRequest{})))
+	// begin-claim-share: missing username
+	resp = handler.HandleRequest(ctx, ceremonyRequest(SubOpCeremonyBeginClaimShare,
+		encMust(t, &ceremonyBeginClaimShareWireRequest{})))
+	assert.NotEqual(t, StatusOK, resp.Status)
+
+	// complete-claim-share: missing nonce
+	resp = handler.HandleRequest(ctx, ceremonyRequest(SubOpCeremonyCompleteClaimShare,
+		encMust(t, &ceremonyCompleteClaimShareWireRequest{Username: "alice", Signature: "c2ln"})))
 	assert.NotEqual(t, StatusOK, resp.Status)
 
 	// sign-csr: missing csr_pem

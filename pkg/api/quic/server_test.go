@@ -223,6 +223,61 @@ func TestServer_Start_AlreadyRunning(t *testing.T) {
 	}
 }
 
+// TestServer_Stop_ReleasesUDPPort pins the UDP-socket ownership contract:
+// quicgo.Listen wraps the server's caller-supplied net.UDPConn without
+// taking ownership (createdConn=false), so Stop MUST close the socket
+// itself. A leaked socket keeps the port bound and the sealed-window ->
+// full-boot transition, which rebinds the SAME QUIC port, fails with
+// EADDRINUSE and aborts the daemon boot.
+func TestServer_Stop_ReleasesUDPPort(t *testing.T) {
+	svc := &mockService{}
+	config := DefaultConfig()
+	config.TLSConfig = generateTestTLSConfig(t)
+	log := createServerTestLogger()
+
+	// Reserve a concrete loopback UDP port so the post-Stop rebind targets
+	// the exact address the server was bound to.
+	probe, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("reserve UDP port: %v", err)
+	}
+	addr := probe.LocalAddr().String()
+	if err := probe.Close(); err != nil {
+		t.Fatalf("close port reservation: %v", err)
+	}
+	config.ListenAddr = addr
+
+	server, err := NewServer(svc, config, log)
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	if err := server.Start(); err != nil {
+		t.Fatalf("failed to start server: %v", err)
+	}
+	if err := server.Stop(); err != nil {
+		t.Fatalf("failed to stop server: %v", err)
+	}
+
+	// The same address must be immediately bindable after Stop.
+	rebind, err := net.ListenUDP("udp", mustResolveUDPAddr(t, addr))
+	if err != nil {
+		t.Fatalf("UDP port %s still bound after Stop (leaked socket): %v", addr, err)
+	}
+	if err := rebind.Close(); err != nil {
+		t.Fatalf("close rebind socket: %v", err)
+	}
+}
+
+// mustResolveUDPAddr resolves addr or fails the test.
+func mustResolveUDPAddr(t *testing.T, addr string) *net.UDPAddr {
+	t.Helper()
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", addr, err)
+	}
+	return udpAddr
+}
+
 func TestServer_Stop_NotRunning(t *testing.T) {
 	svc := &mockService{}
 	config := DefaultConfig()

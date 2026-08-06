@@ -290,8 +290,10 @@ func TestCeremonyMethodsEndToEnd(t *testing.T) {
 			return map[string]interface{}{"nonce_hex": "deadbeef"}
 		case "qrdb_ceremony_claim_cert_complete":
 			return map[string]interface{}{"success": true}
-		case "qrdb_ceremony_claim_share":
-			return map[string]interface{}{"share": "share-json"}
+		case "qrdb_ceremony_begin_claim_share":
+			return map[string]interface{}{"nonce_hex": "deadbeef", "expires_at": "2026-08-06T12:00:00Z"}
+		case "qrdb_ceremony_complete_claim_share":
+			return map[string]interface{}{"share_index": 2, "share": "c2hhcmUtanNvbg=="}
 		case "qrdb_ceremony_sign_csr":
 			return map[string]interface{}{"certificate_pem": "CERT"}
 		case "qrdb_ceremony_enroll_external_officer":
@@ -329,9 +331,21 @@ func TestCeremonyMethodsEndToEnd(t *testing.T) {
 		t.Fatalf("CeremonyClaimCertComplete: %v", err)
 	}
 
-	share, err := tr.CeremonyClaimShare(ctx, &qrdbtransport.ClaimShareRequest{Username: "alice"})
+	begin, err := tr.CeremonyBeginClaimShare(ctx, &qrdbtransport.BeginClaimShareRequest{Username: "alice"})
 	if err != nil {
-		t.Fatalf("CeremonyClaimShare: %v", err)
+		t.Fatalf("CeremonyBeginClaimShare: %v", err)
+	}
+	if begin.NonceHex != "deadbeef" {
+		t.Errorf("nonce = %q", begin.NonceHex)
+	}
+
+	share, err := tr.CeremonyCompleteClaimShare(ctx, &qrdbtransport.CompleteClaimShareRequest{
+		Username: "alice", NonceHex: "deadbeef", Signature: []byte("sig")})
+	if err != nil {
+		t.Fatalf("CeremonyCompleteClaimShare: %v", err)
+	}
+	if share.ShareIndex != 2 {
+		t.Errorf("share index = %d", share.ShareIndex)
 	}
 	if share.ShareJSON != "share-json" {
 		t.Errorf("share json = %q", share.ShareJSON)
@@ -371,8 +385,11 @@ func TestCeremonyNilRequestErrors(t *testing.T) {
 	if _, err := tr.CeremonyClaimCertComplete(ctx, nil); err == nil {
 		t.Error("CeremonyClaimCertComplete(nil) must error")
 	}
-	if _, err := tr.CeremonyClaimShare(ctx, nil); err == nil {
-		t.Error("CeremonyClaimShare(nil) must error")
+	if _, err := tr.CeremonyBeginClaimShare(ctx, nil); err == nil {
+		t.Error("CeremonyBeginClaimShare(nil) must error")
+	}
+	if _, err := tr.CeremonyCompleteClaimShare(ctx, nil); err == nil {
+		t.Error("CeremonyCompleteClaimShare(nil) must error")
 	}
 	if _, err := tr.CeremonySignCSR(ctx, nil); err == nil {
 		t.Error("CeremonySignCSR(nil) must error")

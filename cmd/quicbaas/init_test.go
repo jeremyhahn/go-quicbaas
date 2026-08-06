@@ -39,18 +39,20 @@ import (
 // =============================================================================
 
 type fakeCeremonyClient struct {
-	statusFunc            func(ctx context.Context) (*qrdbtransport.CeremonyStatusResponse, error)
-	claimCertBeginFunc    func(ctx context.Context, req *qrdbtransport.ClaimCertBeginRequest) (*qrdbtransport.ClaimCertBeginResponse, error)
-	claimCertCompleteFunc func(ctx context.Context, req *qrdbtransport.ClaimCertCompleteRequest) (*qrdbtransport.ClaimCertCompleteResponse, error)
-	claimShareFunc        func(ctx context.Context, req *qrdbtransport.ClaimShareRequest) (*qrdbtransport.ClaimShareResponse, error)
-	signCSRFunc           func(ctx context.Context, req *qrdbtransport.SignCSRInitRequest) (*qrdbtransport.SignCSRInitResponse, error)
-	enrollFunc            func(ctx context.Context, req *qrdbtransport.EnrollExternalOfficerRequest) (*qrdbtransport.EnrollExternalOfficerResponse, error)
+	statusFunc             func(ctx context.Context) (*qrdbtransport.CeremonyStatusResponse, error)
+	claimCertBeginFunc     func(ctx context.Context, req *qrdbtransport.ClaimCertBeginRequest) (*qrdbtransport.ClaimCertBeginResponse, error)
+	claimCertCompleteFunc  func(ctx context.Context, req *qrdbtransport.ClaimCertCompleteRequest) (*qrdbtransport.ClaimCertCompleteResponse, error)
+	beginClaimShareFunc    func(ctx context.Context, req *qrdbtransport.BeginClaimShareRequest) (*qrdbtransport.BeginClaimShareResponse, error)
+	completeClaimShareFunc func(ctx context.Context, req *qrdbtransport.CompleteClaimShareRequest) (*qrdbtransport.CompleteClaimShareResponse, error)
+	signCSRFunc            func(ctx context.Context, req *qrdbtransport.SignCSRInitRequest) (*qrdbtransport.SignCSRInitResponse, error)
+	enrollFunc             func(ctx context.Context, req *qrdbtransport.EnrollExternalOfficerRequest) (*qrdbtransport.EnrollExternalOfficerResponse, error)
 
-	lastBeginReq    *qrdbtransport.ClaimCertBeginRequest
-	lastCompleteReq *qrdbtransport.ClaimCertCompleteRequest
-	lastShareReq    *qrdbtransport.ClaimShareRequest
-	lastSignReq     *qrdbtransport.SignCSRInitRequest
-	lastEnrollReq   *qrdbtransport.EnrollExternalOfficerRequest
+	lastBeginReq         *qrdbtransport.ClaimCertBeginRequest
+	lastCompleteReq      *qrdbtransport.ClaimCertCompleteRequest
+	lastBeginShareReq    *qrdbtransport.BeginClaimShareRequest
+	lastCompleteShareReq *qrdbtransport.CompleteClaimShareRequest
+	lastSignReq          *qrdbtransport.SignCSRInitRequest
+	lastEnrollReq        *qrdbtransport.EnrollExternalOfficerRequest
 }
 
 func (f *fakeCeremonyClient) CeremonyStatus(ctx context.Context) (*qrdbtransport.CeremonyStatusResponse, error) {
@@ -79,12 +81,20 @@ func (f *fakeCeremonyClient) CeremonyClaimCertComplete(ctx context.Context, req 
 	}, nil
 }
 
-func (f *fakeCeremonyClient) CeremonyClaimShare(ctx context.Context, req *qrdbtransport.ClaimShareRequest) (*qrdbtransport.ClaimShareResponse, error) {
-	f.lastShareReq = req
-	if f.claimShareFunc != nil {
-		return f.claimShareFunc(ctx, req)
+func (f *fakeCeremonyClient) CeremonyBeginClaimShare(ctx context.Context, req *qrdbtransport.BeginClaimShareRequest) (*qrdbtransport.BeginClaimShareResponse, error) {
+	f.lastBeginShareReq = req
+	if f.beginClaimShareFunc != nil {
+		return f.beginClaimShareFunc(ctx, req)
 	}
-	return &qrdbtransport.ClaimShareResponse{ShareJSON: `{"share":"x"}`}, nil
+	return &qrdbtransport.BeginClaimShareResponse{NonceHex: "deadbeef"}, nil
+}
+
+func (f *fakeCeremonyClient) CeremonyCompleteClaimShare(ctx context.Context, req *qrdbtransport.CompleteClaimShareRequest) (*qrdbtransport.CompleteClaimShareResponse, error) {
+	f.lastCompleteShareReq = req
+	if f.completeClaimShareFunc != nil {
+		return f.completeClaimShareFunc(ctx, req)
+	}
+	return &qrdbtransport.CompleteClaimShareResponse{ShareIndex: 1, ShareJSON: `{"share":"x"}`}, nil
 }
 
 func (f *fakeCeremonyClient) CeremonySignCSR(ctx context.Context, req *qrdbtransport.SignCSRInitRequest) (*qrdbtransport.SignCSRInitResponse, error) {
@@ -323,8 +333,45 @@ func TestInitClaimShare_FlagValidation(t *testing.T) {
 	}
 }
 
-// TestInitClaimShare_Success writes the share JSON to --output.
+// TestInitClaimShare_Success drives the begin/sign/complete handshake and
+// writes the share JSON to --output.
 func TestInitClaimShare_Success(t *testing.T) {
+	defer resetInitFlags()
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "alice.key")
+	outPath := filepath.Join(dir, "alice.share.json")
+	writeECPEM(t, keyPath)
+
+	fc := &fakeCeremonyClient{}
+	defer withFakeCeremony(fc)()
+
+	cmd := newInitClaimShareCommand()
+	cmd.SetArgs([]string{
+		"--username", "alice",
+		"--tls-cert", "/dev/null",
+		"--tls-key", keyPath,
+		"--output", outPath,
+	})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	require.NoError(t, cmd.Execute())
+	require.NotNil(t, fc.lastBeginShareReq)
+	assert.Equal(t, "alice", fc.lastBeginShareReq.Username)
+	require.NotNil(t, fc.lastCompleteShareReq)
+	assert.Equal(t, "alice", fc.lastCompleteShareReq.Username)
+	assert.Equal(t, "deadbeef", fc.lastCompleteShareReq.NonceHex)
+	assert.NotEmpty(t, fc.lastCompleteShareReq.Signature, "signature must be sent as raw bytes")
+
+	got, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(got), `"share"`)
+}
+
+// TestInitClaimShare_UnreadableKey rejects a signing key that cannot be
+// parsed instead of sending an unsigned complete request.
+func TestInitClaimShare_UnreadableKey(t *testing.T) {
 	defer resetInitFlags()
 	dir := t.TempDir()
 	outPath := filepath.Join(dir, "alice.share.json")
@@ -343,13 +390,8 @@ func TestInitClaimShare_Success(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 
-	require.NoError(t, cmd.Execute())
-	require.NotNil(t, fc.lastShareReq)
-	assert.Equal(t, "alice", fc.lastShareReq.Username)
-
-	got, err := os.ReadFile(outPath)
-	require.NoError(t, err)
-	assert.Contains(t, string(got), `"share"`)
+	require.Error(t, cmd.Execute())
+	assert.Nil(t, fc.lastCompleteShareReq, "complete must not be attempted without a valid signing key")
 }
 
 // =============================================================================

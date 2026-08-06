@@ -13,11 +13,14 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// lifecycle_mcp_authz_test.go covers the fail-closed branches of
-// configureMCPQRDBAuthz: every path returns false (enforcement not installed,
-// legacy token-only path left intact) rather than installing a half-wired
-// validator. The mcp server argument is only touched on the success path (which
-// needs a live OIDC provider), so each fail-closed branch passes a nil server.
+// lifecycle_mcp_authz_test.go covers the branches of configureMCPQRDBAuthz.
+// With RequireAuthz=false (or nil config) the function is a no-op returning
+// (false, nil) so the legacy token-only path stays intact. With
+// RequireAuthz=true, gate construction is FAIL-CLOSED: a missing OIDC
+// provider or validator-build failure returns a typed
+// *AuthzGateConstructionError that aborts daemon startup. The mcp server
+// argument is only touched on the success path (which needs a live OIDC
+// provider), so each error branch passes a nil server.
 
 package server
 
@@ -51,7 +54,9 @@ func (s *mcpOIDCGetterService) GetOIDCProvider(context.Context) (*iam.OIDCProvid
 // A nil config disables MCP authz and returns false without touching the server.
 func TestConfigureMCPQRDBAuthz_NilConfig(t *testing.T) {
 	s := &Server{logger: buildTestLogger(t)}
-	assert.False(t, s.configureMCPQRDBAuthz(nil))
+	installed, err := s.configureMCPQRDBAuthz(nil)
+	require.NoError(t, err)
+	assert.False(t, installed)
 }
 
 // RequireAuthz=false leaves the legacy token-only path intact (returns false).
@@ -60,37 +65,54 @@ func TestConfigureMCPQRDBAuthz_AuthzDisabled(t *testing.T) {
 		logger: buildTestLogger(t),
 		config: &config.Config{Security: config.SecurityConfig{RequireAuthz: false}},
 	}
-	assert.False(t, s.configureMCPQRDBAuthz(nil))
+	installed, err := s.configureMCPQRDBAuthz(nil)
+	require.NoError(t, err)
+	assert.False(t, installed)
 }
 
-// RequireAuthz=true but no OIDC provider getter: enforcement is not installed.
-func TestConfigureMCPQRDBAuthz_NoGetter(t *testing.T) {
+// RequireAuthz=true but no OIDC provider getter: FAIL-CLOSED typed
+// construction error (daemon refuses to start), never a silent false.
+func TestConfigureMCPQRDBAuthz_NoGetterFailsClosed(t *testing.T) {
 	s := &Server{
 		logger:          buildTestLogger(t),
 		config:          &config.Config{Security: config.SecurityConfig{RequireAuthz: true}},
 		quicBaaSService: nil,
 	}
-	assert.False(t, s.configureMCPQRDBAuthz(nil))
+	installed, err := s.configureMCPQRDBAuthz(nil)
+	assert.False(t, installed)
+	var cerr *AuthzGateConstructionError
+	require.True(t, errors.As(err, &cerr), "typed construction error, got %v", err)
+	assert.Equal(t, "mcp", cerr.Transport)
 }
 
-// A getter returning (nil, nil) (IAM not yet initialised) yields false.
-func TestConfigureMCPQRDBAuthz_NilProviderSkips(t *testing.T) {
+// A getter returning (nil, nil) (IAM not yet initialised) is a typed
+// construction error under RequireAuthz.
+func TestConfigureMCPQRDBAuthz_NilProviderFailsClosed(t *testing.T) {
 	s := &Server{
 		logger:          buildTestLogger(t),
 		config:          &config.Config{Security: config.SecurityConfig{RequireAuthz: true}},
 		quicBaaSService: &mcpOIDCGetterService{provider: nil, err: nil},
 	}
-	assert.False(t, s.configureMCPQRDBAuthz(nil))
+	installed, err := s.configureMCPQRDBAuthz(nil)
+	assert.False(t, installed)
+	var cerr *AuthzGateConstructionError
+	require.True(t, errors.As(err, &cerr))
+	assert.True(t, errors.Is(err, errGRPCOIDCProviderUnavailable))
 }
 
-// A getter error likewise yields false.
-func TestConfigureMCPQRDBAuthz_GetterError(t *testing.T) {
+// A getter error likewise fails closed with the cause wrapped.
+func TestConfigureMCPQRDBAuthz_GetterErrorFailsClosed(t *testing.T) {
+	boom := errors.New("provider boom")
 	s := &Server{
 		logger:          buildTestLogger(t),
 		config:          &config.Config{Security: config.SecurityConfig{RequireAuthz: true}},
-		quicBaaSService: &mcpOIDCGetterService{err: errors.New("provider boom")},
+		quicBaaSService: &mcpOIDCGetterService{err: boom},
 	}
-	assert.False(t, s.configureMCPQRDBAuthz(nil))
+	installed, err := s.configureMCPQRDBAuthz(nil)
+	assert.False(t, installed)
+	var cerr *AuthzGateConstructionError
+	require.True(t, errors.As(err, &cerr))
+	assert.True(t, errors.Is(err, boom))
 }
 
 // With RequireAuthz=true and a live OIDC provider, configureMCPQRDBAuthz builds
@@ -108,6 +130,7 @@ func TestConfigureMCPQRDBAuthz_InstallsValidator(t *testing.T) {
 	mcpServer := mcpapi.NewServer(s.quicBaaSService, &mcpapi.Config{}, s.logger)
 	require.NotNil(t, mcpServer)
 
-	assert.True(t, s.configureMCPQRDBAuthz(mcpServer),
-		"expected enforcement installed with a live provider")
+	installed, err := s.configureMCPQRDBAuthz(mcpServer)
+	require.NoError(t, err)
+	assert.True(t, installed, "expected enforcement installed with a live provider")
 }

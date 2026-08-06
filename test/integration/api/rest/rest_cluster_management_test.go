@@ -17,6 +17,7 @@ package rest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -217,8 +218,60 @@ func TestRESTClusterAddNode(t *testing.T) {
 		assert.Equal(t, req.NodeID, addResp.NodeID)
 
 		t.Logf("Node %d added to shard %d: %s", addResp.NodeID, addResp.ShardID, addResp.Message)
+
+		// The add succeeded against the SHARED integration cluster, so the
+		// phantom member MUST be removed again. Leaving a permanently
+		// unreachable member in the raft group raises the election quorum
+		// (4 members / 3 alive) and destabilizes leader elections for every
+		// suite that runs afterwards — observed as "not leader for shard 1,
+		// leader unknown" failures in the scheduler suite and stuck
+		// leaderless shards in the cluster suite.
+		removeTestClusterNode(t, client, baseURL, req.ShardID, req.NodeID)
 	} else {
 		t.Logf("Add node returned status %d (expected for integration test)", resp.StatusCode)
+	}
+}
+
+// removeTestClusterNode removes a node previously added by an add-node test
+// from a shard's raft group, retrying until the membership change is
+// accepted. Removal requires a settled shard leader, so transient 503s are
+// retried until the deadline. Failure to clean up is fatal: a poisoned
+// membership breaks unrelated suites later in the run.
+func removeTestClusterNode(t *testing.T, client *http.Client, baseURL string, shardID, nodeID uint64) {
+	t.Helper()
+
+	url := baseURL + "/api/v1/cluster/nodes/" + strconv.FormatUint(nodeID, 10) +
+		"?shard_id=" + strconv.FormatUint(shardID, 10)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+		require.NoError(t, err)
+
+		resp, err := client.Do(req)
+		if err == nil {
+			status := resp.StatusCode
+			resp.Body.Close()
+			if status == http.StatusOK || status == http.StatusNotFound {
+				t.Logf("Cleaned up test node %d from shard %d (status %d)", nodeID, shardID, status)
+				return
+			}
+			t.Logf("Remove test node %d from shard %d returned status %d; retrying", nodeID, shardID, status)
+		} else {
+			t.Logf("Remove test node %d from shard %d failed: %v; retrying", nodeID, shardID, err)
+		}
+
+		select {
+		case <-ctx.Done():
+			t.Fatalf("failed to remove test node %d from shard %d within 60s — "+
+				"leaving it in the raft group would destabilize later suites", nodeID, shardID)
+		case <-ticker.C:
+		}
 	}
 }
 

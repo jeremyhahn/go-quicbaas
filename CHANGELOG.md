@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — BREAKING: ceremony claim-share is now a Begin/Complete handshake
+
+- **Single-shot `CeremonyClaimShare` deleted** (tracks go-qrdb's regenerated
+  qrdbv1 protos + SDK). The officer Shamir-share claim is now a two-step
+  challenge-response handshake, mirroring qrdb's officer-share wire contract
+  verbatim on every transport:
+  - **SDK** (`Security().Ceremony()`, the re-exported qrdb `CeremonyClient`):
+    `CeremonyClaimShare(*ClaimShareRequest)` →
+    `CeremonyBeginClaimShare(*BeginClaimShareRequest)` (returns
+    `nonce_hex` + `expires_at`) then
+    `CeremonyCompleteClaimShare(*CompleteClaimShareRequest{Username,
+    NonceHex, Signature})` (returns `share_index` + `share_json`, released
+    exactly once). The caller signs the nonce with the private key of their
+    enrolled officer certificate; the server derives the caller thumbprint
+    from the mTLS peer chain — it never travels on the wire.
+  - **REST**: `POST /api/v1/init/claim-share` and the qrdb wire mirror
+    `POST /v1/ceremony/claim-share` are replaced by
+    `/api/v1/init/officer-share/{begin,complete}` and
+    `/v1/ceremony/officer-share/{begin,complete}`.
+  - **gRPC** (`quicbaas.ceremony.v1.Ceremony`): `CeremonyClaimShare` RPC
+    replaced by `CeremonyBeginClaimShare` / `CeremonyCompleteClaimShare`.
+  - **Native QUIC**: `SubOpCeremonyClaimShare` (0x05) is now
+    `SubOpCeremonyBeginClaimShare` (0x05) plus
+    `SubOpCeremonyCompleteClaimShare` (0x09).
+  - **qrdb-QUIC bridge**: `ceremony.ClaimShare` replaced by
+    `ceremony.BeginClaimShare` / `ceremony.CompleteClaimShare`.
+  - **MCP**: tool `qrdb_ceremony_claim_share` replaced by
+    `qrdb_ceremony_begin_claim_share` / `qrdb_ceremony_complete_claim_share`
+    (signature and released share travel base64-encoded).
+  - **CLI**: `quicbaas init claim-share` keeps its flags but now drives the
+    full handshake internally, signing the challenge nonce with `--tls-key`.
+  - Service facade (`service.CeremonyServicer`), sealed-window allowlists
+    (new `ceremony-officer-share-begin/complete` verbs mirroring qrdb's
+    canonical 34-verb table), and gRPC PEP mappings
+    (`ceremony:claim_share_begin` / `ceremony:claim_share_complete`)
+    migrated accordingly. There is no compatibility shim — the stack is
+    pre-v1 with exactly one wire format.
+
 ### Added
 
 - **Barrier enable-encryption (live on all transports).** System (`POST /api/v1/barrier/enable-encryption`) and per-tenant (`POST /api/v1/tenants/{tenant_id}/barrier/enable-encryption`) routes enable migration from cleartext (`none`) to encrypted barriers across REST, gRPC, QUIC, MCP, Unix, and embedded transports. Driven by the embedded qrdb node (wired as `EncryptionMigrator`), not the qrdb `BarrierClient` transport, providing direct cluster coordination and fail-safe recovery. Supports passphrase, Shamir, TPM2, PKCS#11, AWS KMS, GCP KMS, Azure Key Vault, and Vault strategies. Request fields: `strategy`, `passphrase`, `shamir_threshold`, `shamir_total`, `mechanism`, `availability`.

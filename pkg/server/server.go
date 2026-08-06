@@ -117,7 +117,11 @@ func WithTLSCertificate(cert *tls.Certificate) ServerOption {
 // This is the preferred injection point for the quicbaasd init path (where
 // the admin passphrase is available at boot time) and for test helpers that
 // need a fully unsealed node. For production deployments that require operator
-// intervention at every start, omit this option and use the barrier API.
+// intervention at every start, omit this option: a daemon boot then enters
+// the sealed-window phase (all five transports serve only the canonical
+// barrier/ceremony/health surface until an operator drives the unseal — see
+// sealed_window.go), and an embedded boot is refused with the typed
+// EmbeddedSealedBootError.
 //
 // The caller is responsible for zeroing the slice after the server is
 // constructed. The server does not retain a reference beyond node creation.
@@ -292,6 +296,27 @@ type Server struct {
 	// the exact servicer instances stored in ceremonyServices, keeping all
 	// transports on one barrier with no split-brain state.
 	bootstrapCeremonyClient *qrdbsdk.Client
+
+	// tenantSDKClient is the in-process qrdb SDK client whose embedded
+	// transport carries the node's TenantServicer. It backs the per-tenant
+	// barrier facade shared by every transport (see tenant_barrier_wiring.go).
+	// The node's own SDK client does not register a tenant servicer on its
+	// embedded transport, so quicbaas composes this dedicated client, built
+	// lazily on first use during the single-threaded boot and closed during
+	// Shutdown.
+	tenantSDKClient *qrdbsdk.Client
+
+	// sealedWindowClient is the in-process qrdb SDK client composed over the
+	// sealed node's OWN Barrier/Ceremony/Credential servicers during the
+	// sealed-window boot phase (see sealed_window.go). Non-nil ONLY while
+	// the sealed window is being served; closed and cleared by
+	// stopSealedTransports before the full boot resumes.
+	sealedWindowClient *qrdbsdk.Client
+
+	// sealedWindowFacade is the minimal service.QuicBaaS facade the
+	// sealed-phase transport servers are composed over. Non-nil only while
+	// the sealed window is being served.
+	sealedWindowFacade service.QuicBaaS
 
 	// bootstrapAdminUserID and bootstrapAdminTenantID identify the pending
 	// admin user created by firstBootBootstrap. BindAdminToSOCert reads these
@@ -613,8 +638,26 @@ func (s *Server) initialize() error {
 	// Generate TLS certificates if needed (auto-generate on first startup).
 	// CA initialization runs AFTER the qrdb node is online so that the
 	// credential store is available for RootKeyPassword secret resolution.
+	// It also runs BEFORE the sealed-window phase: the CA is file-backed
+	// under the data dir, and the sealed-window listeners need the TLS
+	// material to serve the unseal flow.
 	if err := initializeCAFn(s); err != nil {
 		return err
+	}
+
+	// Sealed boot mode: when the embedded qrdb node booted with seal
+	// enabled and no auto-unseal material, it is SEALED — no data plane, no
+	// SDK client. Instead of dying (or panicking at the first GetKVStore),
+	// serve the sealed window: all five transports come up with ONLY the
+	// canonical barrier/ceremony/health surface reachable, and initialize()
+	// blocks here until an operator drives the barrier unsealed through any
+	// transport. runSealedWindow completes the node boot (node.Unseal) and
+	// tears the sealed listeners down before returning, so the full boot
+	// below proceeds against a fully-booted node. See sealed_window.go.
+	if s.qrdbNode != nil && s.qrdbNode.IsSealed() {
+		if err := s.runSealedWindow(); err != nil {
+			return err
+		}
 	}
 
 	if err := s.startIndexes(); err != nil {
@@ -747,7 +790,14 @@ func (s *Server) initialize() error {
 }
 
 // Shutdown gracefully shuts down all server components in reverse order:
-// Workers -> Backend -> Catalog -> Backup -> Embedding -> RAG -> WatchBridge -> Messaging -> QUIC -> REST -> gRPC -> Indexes -> DevCluster -> Bootstrap -> TimeSeriesStorage -> Storage.
+// Workers -> Backend -> Catalog -> Backup -> Embedding -> RAG -> WatchBridge -> Messaging -> QUIC -> MCP -> REST -> gRPC -> Indexes -> Service (pollers) -> RaftNode -> BootstrapClient -> ShardedClient -> QRDBNode -> DevCluster -> TimeSeriesStorage.
+//
+// The QuicBaaS service facade MUST close before the sharded qrdb client
+// and the embedded qrdb node: the facade owns background pollers (the
+// scheduler engine's GetJobsDueForExecution loop and the KMS rotation
+// scanner) whose storage transport is the sharded client. Closing the
+// facade first stops and drains those goroutines while their transport
+// is still open, preventing a poll-after-close error storm.
 func (s *Server) Shutdown(ctx context.Context) error {
 	var shutdownErr error
 
@@ -931,6 +981,24 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			s.logger.WithError(err).Error("Failed to shutdown index manager")
 		}
 
+		// Close the QuicBaaS service facade BEFORE the qrdb client and
+		// node teardown. quicBaaS.Close stops and drains the scheduler
+		// engine poll loop and the KMS rotation scanner (both poll qrdb
+		// storage through the sharded client), then closes service-owned
+		// resources (cache manager, SSH client, its idempotent reference
+		// to the sharded client). Without this, the pollers outlive the
+		// storage transport and spam transport-closed errors until the
+		// process exits.
+		if s.quicBaaSService != nil {
+			s.logger.Info("Shutting down QuicBaaS service facade...")
+			if err := s.quicBaaSService.Close(); err != nil {
+				errs = append(errs, err)
+				s.logger.WithError(err).Error("Failed to shutdown QuicBaaS service facade")
+			} else {
+				s.logger.Info("QuicBaaS service facade shutdown complete")
+			}
+		}
+
 		// Shutdown raft node when present (legacy / test paths only;
 		// the qrdb-node path leaves s.raftNode nil).
 		if s.raftNode != nil {
@@ -941,6 +1009,26 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			} else {
 				s.logger.Info("Raft node shutdown complete")
 			}
+		}
+
+		// Release sealed-window resources when the daemon is shut down while
+		// the sealed window is still being served (the transport listeners
+		// themselves were already stopped by the regular sequence above,
+		// which operates on the same server fields). No-op after a completed
+		// sealed window or a normal full boot.
+		if s.sealedWindowFacade != nil {
+			if err := s.sealedWindowFacade.Close(); err != nil {
+				errs = append(errs, err)
+				s.logger.WithError(err).Error("Failed to close sealed-window facade")
+			}
+			s.sealedWindowFacade = nil
+		}
+		if s.sealedWindowClient != nil {
+			if err := s.sealedWindowClient.Close(); err != nil {
+				errs = append(errs, err)
+				s.logger.WithError(err).Error("Failed to close sealed-window client")
+			}
+			s.sealedWindowClient = nil
 		}
 
 		// Close the bootstrap ceremony client (in-process qrdb SDK client
@@ -955,6 +1043,20 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			} else {
 				s.logger.Info("Bootstrap ceremony client closed")
 			}
+		}
+
+		// Close the tenant-barrier SDK client (in-process qrdb SDK client
+		// over the node's TenantServicer). Closed before the node because
+		// its embedded transport references the node's KV/Admin servicers.
+		if s.tenantSDKClient != nil {
+			s.logger.Info("Closing tenant barrier client...")
+			if err := s.tenantSDKClient.Close(); err != nil {
+				errs = append(errs, err)
+				s.logger.WithError(err).Error("Failed to close tenant barrier client")
+			} else {
+				s.logger.Info("Tenant barrier client closed")
+			}
+			s.tenantSDKClient = nil
 		}
 
 		// Shutdown sharded qrdb client
@@ -1269,6 +1371,24 @@ func (s *Server) GetQRDBUserAuthFactorServicer() qrdbsdk.UserAuthFactorServicer 
 		return nil
 	}
 	return s.qrdbNode.UserAuthFactorService()
+}
+
+// GetQRDBTenantServicer returns the qrdb tenant.TenantServicer exposed by
+// the embedded engine node's service graph — the same instance the IAM
+// tenant lifecycle provisions through. Composers wire this into the SDK's
+// embedded qrdb transport (WithEmbeddedQRDB) so TenantMgmt() and the
+// per-tenant barrier surface dispatch against the node's canonical tenant
+// service. Returns nil when the node is absent or its service graph is not
+// yet built (e.g. while sealed).
+func (s *Server) GetQRDBTenantServicer() qrdbsdk.ServiceTenantServicer {
+	if s.qrdbNode == nil {
+		return nil
+	}
+	svcs := s.qrdbNode.Services()
+	if svcs == nil {
+		return nil
+	}
+	return svcs.Tenant
 }
 
 // Service returns the QuicBaaS facade for direct database operations.

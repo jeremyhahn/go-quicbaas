@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	stderrors "errors"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -134,9 +135,17 @@ func (s *TenantBarrierGRPCServer) requireTenantBarrierService() error {
 }
 
 // mapTenantBarrierError translates service-layer errors into gRPC status errors.
+// The qrdb error canon maps tenant.ErrBarrierNotEnabled (per-tenant barrier
+// verb on a node whose seal subsystem is disabled) to codes.FailedPrecondition
+// with the canonical message preserved; every other error keeps the shared
+// ToGRPCError classification. This mirrors the REST transport, which maps the
+// same sentinel to 422 Unprocessable Entity.
 func mapTenantBarrierError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if stderrors.Is(err, qrdbsdk.ErrTenantBarrierNotEnabled) {
+		return status.Error(codes.FailedPrecondition, err.Error())
 	}
 	return ToGRPCError(err)
 }

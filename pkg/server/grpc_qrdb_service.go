@@ -132,6 +132,15 @@ func (s *Server) qrdbCeremonyServicer() qrdbsdk.ServiceCeremonyServicer {
 // case the qrdb barrier RPCs respond with codes.Unimplemented — preserving the
 // clean fallback for misconfigured deployments.
 func (s *Server) qrdbBarrierServicer() qrdbsdk.BarrierServicer {
+	// Sealed-window boot phase: the node is sealed and its own SDK client
+	// does not exist yet. s.ceremonyServices carries the node's OWN
+	// seal-layer servicer instances (BaasBarrierService = qrdbsdk.
+	// BarrierServicer), so the qrdb.v1 barrier surface serves the same
+	// barrier every other transport does during the window — directly,
+	// with no client round-trip.
+	if s.sealedWindowClient != nil && s.ceremonyServices != nil && s.ceremonyServices.Barrier != nil {
+		return s.ceremonyServices.Barrier
+	}
 	// Seal-disabled state: the node's SDK client carries no barrier
 	// servicer, so the qrdb.v1 barrier surface operates on the bootstrap
 	// ceremony client — the same instances every other transport serves.

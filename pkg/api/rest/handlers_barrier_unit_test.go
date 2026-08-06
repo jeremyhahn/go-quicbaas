@@ -48,8 +48,8 @@ type fakeBarrierService struct {
 	recoverWithKeysFn  func(ctx context.Context, keys []string) error
 	deleteRecoveryFn   func(ctx context.Context) error
 	hasRecoveryFn      func(ctx context.Context) (bool, error)
-	genRootTokenFn      func(ctx context.Context, shares []string) (*service.RootTokenInfo, error)
-	enableEncryptionFn  func(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error
+	genRootTokenFn     func(ctx context.Context, shares []string) (*service.RootTokenInfo, error)
+	enableEncryptionFn func(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error
 }
 
 func (f *fakeBarrierService) BarrierStatus(ctx context.Context) (*service.BarrierStatusInfo, error) {

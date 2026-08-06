@@ -350,11 +350,11 @@ func buildCanonicalChallengeVerifiers() map[string]xkmsacme.ACMEChallengeVerifie
 	m := map[string]xkmsacme.ACMEChallengeVerifierFunc{
 		xkmsacme.ACMEChallengeTypeHTTP01: func(resolver *net.Resolver, _ xkmsacme.ACMECertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-			return xkmsacme.ACMEVerifyHTTP01(resolver, nil, authzValue, challengePort, challengeToken, expectedKeyAuth)
+			return xkmsacme.ACMEVerifyHTTP01(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		},
 		xkmsacme.ACMEChallengeTypeDNS01: func(resolver *net.Resolver, _ xkmsacme.ACMECertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-			return xkmsacme.ACMEVerifyDNS01(resolver, nil, authzValue, challengePort, challengeToken, expectedKeyAuth)
+			return xkmsacme.ACMEVerifyDNS01(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		},
 	}
 	for name, verifier := range xkmsacme.ACMEAttestationVerifiers(true, true) {

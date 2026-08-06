@@ -136,26 +136,64 @@ func (t *Transport) CeremonyClaimCertComplete(ctx context.Context, req *qrdbtran
 	return &resp, nil
 }
 
-// CeremonyClaimShare retrieves the Shamir share assigned to the given officer
-// by calling the qrdb_ceremony_claim_share MCP tool. The server returns a
-// "share" field which is mapped onto the canonical ShareJSON response field.
-func (t *Transport) CeremonyClaimShare(ctx context.Context, req *qrdbtransport.ClaimShareRequest) (*qrdbtransport.ClaimShareResponse, error) {
+// CeremonyBeginClaimShare starts the Shamir share claim handshake for an
+// officer by calling the qrdb_ceremony_begin_claim_share MCP tool. The
+// caller's certificate thumbprint is derived server-side from the session's
+// mTLS peer chain; it never travels in the tool arguments.
+func (t *Transport) CeremonyBeginClaimShare(ctx context.Context, req *qrdbtransport.BeginClaimShareRequest) (*qrdbtransport.BeginClaimShareResponse, error) {
 	if req == nil {
-		return nil, errors.NewInvalidInput("mcp.CeremonyClaimShare", "request is required")
+		return nil, errors.NewInvalidInput("mcp.CeremonyBeginClaimShare", "request is required")
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_ceremony_claim_share", map[string]interface{}{
+	raw, err := t.callBarrier(ctx, "qrdb_ceremony_begin_claim_share", map[string]interface{}{
 		"username": req.Username,
 	})
 	if err != nil {
 		return nil, err
 	}
 	var wire struct {
-		Share string `json:"share"`
+		NonceHex  string `json:"nonce_hex"`
+		ExpiresAt string `json:"expires_at"`
 	}
 	if err := remarshalBarrier(raw, &wire); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.CeremonyClaimShare", "failed to decode response")
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.CeremonyBeginClaimShare", "failed to decode response")
 	}
-	return &qrdbtransport.ClaimShareResponse{ShareJSON: wire.Share}, nil
+	return &qrdbtransport.BeginClaimShareResponse{
+		NonceHex:  wire.NonceHex,
+		ExpiresAt: wire.ExpiresAt,
+	}, nil
+}
+
+// CeremonyCompleteClaimShare completes the Shamir share claim handshake by
+// calling the qrdb_ceremony_complete_claim_share MCP tool. The signature is
+// base64-encoded for the JSON tool boundary; the server returns the share
+// base64-encoded, which is decoded back into the canonical ShareJSON field.
+func (t *Transport) CeremonyCompleteClaimShare(ctx context.Context, req *qrdbtransport.CompleteClaimShareRequest) (*qrdbtransport.CompleteClaimShareResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("mcp.CeremonyCompleteClaimShare", "request is required")
+	}
+	raw, err := t.callBarrier(ctx, "qrdb_ceremony_complete_claim_share", map[string]interface{}{
+		"username":  req.Username,
+		"nonce_hex": req.NonceHex,
+		"signature": base64.StdEncoding.EncodeToString(req.Signature),
+	})
+	if err != nil {
+		return nil, err
+	}
+	var wire struct {
+		ShareIndex int    `json:"share_index"`
+		Share      string `json:"share"`
+	}
+	if err := remarshalBarrier(raw, &wire); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.CeremonyCompleteClaimShare", "failed to decode response")
+	}
+	shareBytes, decErr := base64.StdEncoding.DecodeString(wire.Share)
+	if decErr != nil {
+		return nil, errors.Wrap(decErr, errors.CodeInternal, "mcp.CeremonyCompleteClaimShare", "failed to decode share")
+	}
+	return &qrdbtransport.CompleteClaimShareResponse{
+		ShareIndex: wire.ShareIndex,
+		ShareJSON:  string(shareBytes),
+	}, nil
 }
 
 // CeremonySignCSR signs a CSR during the ceremony by calling the

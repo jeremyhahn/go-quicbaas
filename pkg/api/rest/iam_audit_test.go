@@ -23,8 +23,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // TestListAuditEvents tests the ListAuditEvents handler.
@@ -208,17 +206,9 @@ func TestDeleteOldAuditEvents(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		// Add user info to context
-		userInfo := &iam.UserInfoResponse{
-			Sub:      "user-123",
-			Name:     "Test User",
-			Email:    "test@example.com",
-			TenantID: "tenant-123",
-		}
-
+		// Inject the authenticated principal the way the authz middleware does.
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=tenant-123&before=2024-01-01T00:00:00Z", nil)
-		ctx := context.WithValue(req.Context(), ContextKeyUser, userInfo)
-		req = req.WithContext(ctx)
+		req = req.WithContext(ctxWithTestSubject(req.Context(), "user-123", "tenant-123"))
 		w := httptest.NewRecorder()
 
 		handler.DeleteOldAuditEvents(w, req)

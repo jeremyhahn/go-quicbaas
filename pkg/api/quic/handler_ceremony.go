@@ -17,6 +17,7 @@ package quic
 
 import (
 	"context"
+	"encoding/base64"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -84,10 +85,18 @@ type ceremonyClaimCertCompleteWireRequest struct {
 	Signature string `json:"signature"` // base64-encoded
 }
 
-// ceremonyClaimShareWireRequest is the JSON payload for
-// SubOpCeremonyClaimShare.
-type ceremonyClaimShareWireRequest struct {
+// ceremonyBeginClaimShareWireRequest is the JSON payload for
+// SubOpCeremonyBeginClaimShare.
+type ceremonyBeginClaimShareWireRequest struct {
 	Username string `json:"username"`
+}
+
+// ceremonyCompleteClaimShareWireRequest is the JSON payload for
+// SubOpCeremonyCompleteClaimShare.
+type ceremonyCompleteClaimShareWireRequest struct {
+	Username  string `json:"username"`
+	NonceHex  string `json:"nonce_hex"`
+	Signature string `json:"signature"` // base64-encoded
 }
 
 // ceremonySignCSRWireRequest is the JSON payload for SubOpCeremonySignCSR.
@@ -144,10 +153,12 @@ type ceremonyClaimCertWireResponse struct {
 	CACertPEM string `json:"ca_cert_pem"`
 }
 
-// ceremonyClaimShareWireResponse mirrors the REST JSON shape returned by
-// HandleCeremonyClaimShare.
-type ceremonyClaimShareWireResponse struct {
-	Share string `json:"share"`
+// ceremonyCompleteClaimShareWireResponse mirrors the REST JSON shape
+// returned by HandleCeremonyCompleteClaimShare (and the qrdb officer-share
+// wire contract: share_index + share_json).
+type ceremonyCompleteClaimShareWireResponse struct {
+	ShareIndex int    `json:"share_index"`
+	ShareJSON  string `json:"share_json"`
 }
 
 // ceremonySignCSRWireResponse mirrors ceremonySignCSRToResponse.
@@ -212,7 +223,8 @@ var ceremonySubOpHandlers = map[byte]ceremonySubOpHandler{
 	SubOpCeremonyStatus:                (*Handler).handleCeremonyStatus,
 	SubOpCeremonyClaimCertBegin:        (*Handler).handleCeremonyClaimCertBegin,
 	SubOpCeremonyClaimCertComplete:     (*Handler).handleCeremonyClaimCertComplete,
-	SubOpCeremonyClaimShare:            (*Handler).handleCeremonyClaimShare,
+	SubOpCeremonyBeginClaimShare:       (*Handler).handleCeremonyBeginClaimShare,
+	SubOpCeremonyCompleteClaimShare:    (*Handler).handleCeremonyCompleteClaimShare,
 	SubOpCeremonySignCSR:               (*Handler).handleCeremonySignCSR,
 	SubOpCeremonyListOfficers:          (*Handler).handleCeremonyListOfficers,
 	SubOpCeremonyEnrollExternalOfficer: (*Handler).handleCeremonyEnrollExternalOfficer,
@@ -382,15 +394,16 @@ func (h *Handler) handleCeremonyClaimCertComplete(ctx context.Context, req *Requ
 	return &Response{Status: StatusOK, Payload: payload}
 }
 
-// handleCeremonyClaimShare retrieves the Shamir share for an officer.
-// REST equivalent: POST /api/v1/init/claim-share.
-func (h *Handler) handleCeremonyClaimShare(ctx context.Context, req *Request) *Response {
+// handleCeremonyBeginClaimShare starts the Shamir share claim handshake
+// for an officer, returning the challenge nonce to sign.
+// REST equivalent: POST /api/v1/init/officer-share/begin.
+func (h *Handler) handleCeremonyBeginClaimShare(ctx context.Context, req *Request) *Response {
 	svc, errResp := h.requireCeremonyService()
 	if errResp != nil {
 		return errResp
 	}
 
-	var body ceremonyClaimShareWireRequest
+	var body ceremonyBeginClaimShareWireRequest
 	if err := DecodePayload(req.Payload, &body); err != nil {
 		return h.errorResponse(err)
 	}
@@ -398,12 +411,59 @@ func (h *Handler) handleCeremonyClaimShare(ctx context.Context, req *Request) *R
 		return h.errorResponse(api.NewRequiredFieldError("username"))
 	}
 
-	share, err := svc.CeremonyClaimShare(ctx, body.Username)
+	challenge, err := svc.CeremonyBeginClaimShare(ctx, body.Username)
 	if err != nil {
 		return h.errorResponse(err)
 	}
 
-	payload, err := EncodePayload(&ceremonyClaimShareWireResponse{Share: share})
+	payload, err := EncodePayload(&ceremonyChallengeWireResponse{
+		NonceHex:  challenge.NonceHex,
+		ExpiresAt: formatRFC3339(challenge.ExpiresAt),
+	})
+	if err != nil {
+		return h.errorResponse(err)
+	}
+	return &Response{Status: StatusOK, Payload: payload}
+}
+
+// handleCeremonyCompleteClaimShare completes the Shamir share claim
+// handshake with the signed challenge nonce; the share is released exactly
+// once.
+// REST equivalent: POST /api/v1/init/officer-share/complete.
+func (h *Handler) handleCeremonyCompleteClaimShare(ctx context.Context, req *Request) *Response {
+	svc, errResp := h.requireCeremonyService()
+	if errResp != nil {
+		return errResp
+	}
+
+	var body ceremonyCompleteClaimShareWireRequest
+	if err := DecodePayload(req.Payload, &body); err != nil {
+		return h.errorResponse(err)
+	}
+	if body.Username == "" {
+		return h.errorResponse(api.NewRequiredFieldError("username"))
+	}
+	if body.NonceHex == "" {
+		return h.errorResponse(api.NewRequiredFieldError("nonce_hex"))
+	}
+	if body.Signature == "" {
+		return h.errorResponse(api.NewRequiredFieldError("signature"))
+	}
+	sig, decErr := base64.StdEncoding.DecodeString(body.Signature)
+	if decErr != nil {
+		return h.errorResponse(api.NewInvalidFormatMessageError(
+			"signature", "signature must be base64-encoded"))
+	}
+
+	result, err := svc.CeremonyCompleteClaimShare(ctx, body.Username, body.NonceHex, sig)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	payload, err := EncodePayload(&ceremonyCompleteClaimShareWireResponse{
+		ShareIndex: result.ShareIndex,
+		ShareJSON:  result.ShareJSON,
+	})
 	if err != nil {
 		return h.errorResponse(err)
 	}

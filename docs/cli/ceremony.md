@@ -29,7 +29,7 @@ share Cobra builders so the verb trees stay byte-for-byte identical).
 |------|---------|
 | `status` | Show the current ceremony state |
 | `claim-cert` | Two-step certificate claim (`begin`, then `complete`) |
-| `claim-share` | Retrieve the officer's Shamir share |
+| `claim-share` | Two-step Shamir share claim (`begin`, sign nonce, `complete`) |
 | `sign-csr` | SO-authorised CSR signing |
 | `enroll-external-officer` | Enrol an officer whose key material is external |
 
@@ -86,17 +86,20 @@ and emits the issued certificate PEM on stdout.
 
 ## claim-share
 
-Retrieve the Shamir share assigned to a specific officer. Requires
-the officer to authenticate (via the certificate issued by
-`claim-cert complete`).
+Claim the Shamir share assigned to a specific officer via the
+challenge-response handshake. The daemon issues a challenge nonce,
+the CLI signs it with the officer's certificate private key
+(`--tls-key`), and the daemon verifies the signature (and the mTLS
+certificate thumbprint against the enrolment record) before
+releasing the share exactly once.
 
 ```bash
-quicbaas ceremony claim-share --officer alice --out alice.share
+quicbaas init claim-share     --username alice     --tls-cert alice.crt     --tls-key alice.key     --output alice.share.json
 ```
 
-The share is returned in base64 form. Storage is the officer's
-responsibility — the daemon does not retain a copy after the share
-has been claimed.
+The share JSON is written to `--output`. Storage is the officer's
+responsibility — the daemon does not retain a claimable copy after
+the share has been released.
 
 ## sign-csr
 

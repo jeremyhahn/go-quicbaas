@@ -159,10 +159,14 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 			r.Post("/{user_id}/roles", h.AssignRole)
 			r.Delete("/{user_id}/roles/{role}", h.RevokeRole)
 
-			// User sessions (tenant-scoped)
+			// User sessions (tenant-scoped). GET/DELETE on the collection are
+			// the parameterized admin surface the SDK Session List/RevokeAll
+			// verbs target on REST (gRPC parity: SessionService
+			// ListSessions/RevokeAllSessions).
 			r.Route("/{user_id}/sessions", func(r chi.Router) {
 				r.Get("/", h.ListUserSessions)
 				r.Post("/", h.CreateSession)
+				r.Delete("/", h.RevokeAllUserSessions)
 			})
 
 			// GDPR routes (nested under user)

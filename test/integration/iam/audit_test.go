@@ -82,6 +82,28 @@ func cleanupAuditTests(cluster *testCluster, tenantID string) {
 	cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
 }
 
+// waitForAuditEvents polls the audit query endpoint until at least min events
+// are visible for the tenant (or the deadline expires) and returns the last
+// response. Audit events are written through DefaultAuditLogger.LogAsync — a
+// buffered channel drained by a background worker — so an event emitted by
+// the request that just returned is only EVENTUALLY queryable. Asserting on
+// the first read races the async writer; polling matches the API contract.
+func waitForAuditEvents(t *testing.T, cluster *testCluster, path string, min int) AuditQueryResponse {
+	t.Helper()
+	var resp AuditQueryResponse
+	require.Eventually(t, func() bool {
+		var attempt AuditQueryResponse
+		if err := cluster.getJSON(path, &attempt); err != nil {
+			t.Logf("audit query not ready: %v", err)
+			return false
+		}
+		resp = attempt
+		return attempt.Total >= min && len(attempt.Events) >= min
+	}, 15*time.Second, 200*time.Millisecond,
+		"at least %d audit event(s) should become visible at %s", min, path)
+	return resp
+}
+
 // TestAuditEventQuery tests querying audit events for a tenant.
 func TestAuditEventQuery(t *testing.T) {
 	cluster := setupTestCluster(t)
@@ -90,14 +112,11 @@ func TestAuditEventQuery(t *testing.T) {
 	tenantID := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
-	// Query audit events for the tenant
-	var resp AuditQueryResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenantID), &resp)
-	require.NoError(t, err, "Should query audit events")
-
-	// The tenant creation should have generated at least one audit event
-	assert.GreaterOrEqual(t, resp.Total, 1, "At least one audit event should exist for tenant creation")
-	assert.GreaterOrEqual(t, len(resp.Events), 1, "Should return at least one event")
+	// Query audit events for the tenant. The tenant creation just performed
+	// must generate at least one audit event; the write is async (LogAsync),
+	// so poll until it becomes visible.
+	resp := waitForAuditEvents(t, cluster,
+		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenantID), 1)
 	assert.Equal(t, 100, resp.Limit, "Default limit should be 100")
 	assert.Equal(t, 0, resp.Offset, "Default offset should be 0")
 
@@ -283,17 +302,19 @@ func TestAuditEventGet(t *testing.T) {
 	tenantID := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
-	// Query events to get an event ID
-	var listResp AuditQueryResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&limit=1", tenantID), &listResp)
-	require.NoError(t, err, "Should query audit events")
-	require.Greater(t, len(listResp.Events), 0, "Should have at least one event")
+	// Query events to get an event ID. Audit writes flow through
+	// DefaultAuditLogger.LogAsync (buffered channel + background worker),
+	// so the tenant-creation event is only EVENTUALLY queryable — poll
+	// instead of racing the async writer (same contract as
+	// TestAuditEventQuery / waitForAuditEvents).
+	listResp := waitForAuditEvents(t, cluster,
+		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&limit=1", tenantID), 1)
 
 	eventID := listResp.Events[0].ID
 
 	// Get the specific event
 	var event AuditEventResponse
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit/%s?tenant_id=%s", eventID, tenantID), &event)
+	err := cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit/%s?tenant_id=%s", eventID, tenantID), &event)
 	require.NoError(t, err, "Should get specific audit event")
 
 	// Verify the event details
@@ -543,12 +564,11 @@ func TestAuditEventInvalidTimeFormat(t *testing.T) {
 	tenantID := setupTenantForAuditTests(t, cluster)
 	defer cleanupAuditTests(cluster, tenantID)
 
-	// The handler should gracefully handle invalid time formats by ignoring them
-	var resp AuditQueryResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&start_time=invalid-time", tenantID), &resp)
-
-	// The query should still succeed, just ignoring the invalid time parameter
-	require.NoError(t, err, "Should handle invalid time format gracefully")
+	// The handler should gracefully handle invalid time formats by ignoring
+	// them: the query must still succeed and return the tenant-creation
+	// event. The audit write is async (LogAsync), so poll until visible.
+	resp := waitForAuditEvents(t, cluster,
+		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&start_time=invalid-time", tenantID), 1)
 	assert.Greater(t, resp.Total, 0, "Should still return events")
 }
 

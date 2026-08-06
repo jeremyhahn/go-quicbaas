@@ -59,6 +59,7 @@ type iamComponents struct {
 	sessionStorage    iam.SessionStorage
 	sessionManager    iam.SessionManager
 	inviteStore       iam.InviteStore
+	pivActivator      *iam.PIVActivator
 }
 
 // Compile-time check that iamComponents implements service.IAMComponents
@@ -174,6 +175,13 @@ func (c *iamComponents) GetAuthManager() service.AuthManagerInterface {
 // GetInviteStore returns the invite token store.
 func (c *iamComponents) GetInviteStore() iam.InviteStore {
 	return c.inviteStore
+}
+
+// GetPIVActivator returns the PIV invite-activation service, or nil when PIV
+// activation is not configured on this server (iam.piv_login disabled or no
+// CA file).
+func (c *iamComponents) GetPIVActivator() *iam.PIVActivator {
+	return c.pivActivator
 }
 
 // GetInternalAuthManager returns the interfaces.AuthManager for internal service
@@ -554,6 +562,31 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// process restarts.
 	inviteStore := iam.NewBackendInviteStore(iamKV)
 
+	// PIV invite activation (POST /api/v1/iam/invites/{token}/activate/piv):
+	// bind a chain-verified client certificate to a pending user and transition
+	// them to active. Gated by the SAME iam.piv_login trust anchor as the PIV
+	// login endpoint, so a certificate that activates is guaranteed to verify
+	// at login time. A misconfigured CA bundle fails startup (fail closed),
+	// mirroring the PIV login TLS pool behavior in lifecycle_rest.go.
+	var pivActivator *iam.PIVActivator
+	if s.config.IAM.PIVLogin.Enabled && s.config.IAM.PIVLogin.CAFile != "" {
+		roots, rootsErr := loadPIVActivationRoots(s.config.IAM.PIVLogin.CAFile)
+		if rootsErr != nil {
+			return nil, &IAMComponentInitError{Component: "PIV activator", Cause: rootsErr}
+		}
+		pivActivator, err = iam.NewPIVActivator(iam.PIVActivatorDependencies{
+			Roots:          roots,
+			UserStorage:    userStorage,
+			InviteStore:    inviteStore,
+			AuditLogger:    auditLogger,
+			TrustedIssuers: s.config.IAM.PIVLogin.TrustedIssuers,
+		})
+		if err != nil {
+			return nil, &IAMComponentInitError{Component: "PIV activator", Cause: err}
+		}
+		s.logger.Infof("PIV invite activation enabled (roots: %s)", s.config.IAM.PIVLogin.CAFile)
+	}
+
 	components := &iamComponents{
 		tenantManager:     tenantManager,
 		identityStore:     identityStore,
@@ -570,6 +603,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		sessionStorage:    sessionStorage,
 		sessionManager:    sessionManager,
 		inviteStore:       inviteStore,
+		pivActivator:      pivActivator,
 	}
 
 	// (Default tenant was created earlier, before the orchestrator
@@ -1310,4 +1344,42 @@ func writeOrchestratorDaemonClient(path string, c *OrchestratorDaemonClient) err
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// PIVActivationRootsError indicates the iam.piv_login CA bundle configured for
+// PIV invite activation could not be loaded or parsed.
+type PIVActivationRootsError struct {
+	Path   string
+	Reason string
+	Cause  error
+}
+
+// Error implements the error interface.
+func (e *PIVActivationRootsError) Error() string {
+	msg := "piv activation roots: " + e.Reason + " (" + e.Path + ")"
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns the underlying cause.
+func (e *PIVActivationRootsError) Unwrap() error {
+	return e.Cause
+}
+
+// loadPIVActivationRoots reads the PEM CA bundle at path into a certificate
+// pool for PIV invite-activation chain verification. The path is the
+// operator's iam.piv_login.ca_file -- the same trust anchor the PIV login
+// endpoint verifies against.
+func loadPIVActivationRoots(path string) (*x509.CertPool, error) {
+	pemData, err := os.ReadFile(path) //nolint:gosec // operator-configured CA path
+	if err != nil {
+		return nil, &PIVActivationRootsError{Path: path, Reason: "read failed", Cause: err}
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemData) {
+		return nil, &PIVActivationRootsError{Path: path, Reason: "no certificates parsed"}
+	}
+	return pool, nil
 }

@@ -19,6 +19,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,8 +29,7 @@ import (
 )
 
 func revokeAllCtx() context.Context {
-	ctx := context.WithValue(context.Background(), "user_id", "u1")
-	return context.WithValue(ctx, "tenant_id", "t1")
+	return ctxWithTestSubject(context.Background(), "u1", "t1")
 }
 
 // RevokeAllSessions with no except param revokes all sessions for the user.
@@ -75,8 +75,9 @@ func TestRevokeAllSessions_ExceptForeign(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
-// User and tenant supplied via query params (CLI path) also work.
-func TestRevokeAllSessions_QueryParams(t *testing.T) {
+// Query parameters are never an identity source: without an authenticated
+// Subject the request is rejected even when user_id / tenant_id are supplied.
+func TestRevokeAllSessions_QueryParamsNotIdentity(t *testing.T) {
 	mgr := &mockSessionManager{}
 	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
 	handler, cleanup := setupHandlerWithService(t, svc)
@@ -85,13 +86,40 @@ func TestRevokeAllSessions_QueryParams(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions?user_id=u1&tenant_id=t1", nil)
 	w := httptest.NewRecorder()
 	handler.RevokeAllSessions(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// Explicit query params that match the authenticated Subject (the Go SDK REST
+// transport emits them) still succeed.
+func TestRevokeAllSessions_QueryParamsMatchingSubject(t *testing.T) {
+	mgr := &mockSessionManager{}
+	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+	handler, cleanup := setupHandlerWithService(t, svc)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions?user_id=u1&tenant_id=t1", nil).
+		WithContext(revokeAllCtx())
+	w := httptest.NewRecorder()
+	handler.RevokeAllSessions(w, req)
 	assert.Equal(t, http.StatusNoContent, w.Code)
 }
 
+// A user_id query param naming another user is a cross-user attempt -> 403.
+func TestRevokeAllSessions_QueryParamCrossUserDenied(t *testing.T) {
+	mgr := &mockSessionManager{}
+	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+	handler, cleanup := setupHandlerWithService(t, svc)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions?user_id=victim", nil).
+		WithContext(revokeAllCtx())
+	w := httptest.NewRecorder()
+	handler.RevokeAllSessions(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
 func revokeOtherCtx() context.Context {
-	ctx := context.WithValue(context.Background(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
-	return context.WithValue(ctx, "session_id", "current")
+	return ctxWithTestSubject(context.Background(), "u1", "t1")
 }
 
 func TestRevokeSession_OwnAndForeign(t *testing.T) {
@@ -126,7 +154,8 @@ func TestRevokeOtherSessions_Success(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil).WithContext(revokeOtherCtx())
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others",
+		strings.NewReader(`{"keep_session_id":"current"}`)).WithContext(revokeOtherCtx())
 	w := httptest.NewRecorder()
 	handler.RevokeOtherSessions(w, req)
 	assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())

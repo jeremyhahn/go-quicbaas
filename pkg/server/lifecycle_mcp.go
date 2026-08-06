@@ -20,6 +20,7 @@ import (
 	"time"
 
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
+	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -32,6 +33,14 @@ var (
 
 // startMCPServer starts the MCP (Model Context Protocol) server if enabled.
 func (s *Server) startMCPServer() error {
+	// Skip in embedded mode: embedded servers expose no network listeners
+	// (gRPC/REST/QUIC apply the same guard), so no MCP HTTP listener — and
+	// therefore no MCP authorization gate — is constructed either.
+	if s.config.Server.Embedded {
+		s.logger.Info("Running in embedded mode - skipping MCP server setup")
+		return nil
+	}
+
 	if !s.config.Server.MCP.Enabled {
 		s.logger.Debug("MCP server disabled in configuration")
 		return nil
@@ -59,8 +68,18 @@ func (s *Server) startMCPServer() error {
 
 	// Configure auth services if available from IAM components.
 	// This allows the MCP server to validate tokens for authenticated operations
-	// while still allowing public tools (like quicbaas_login) to work without auth.
-	s.configureMCPAuth(mcpServer)
+	// while still allowing public tools (like quicbaas_login) to work without
+	// auth. Under RequireAuthz gate construction is fail-closed: a returned
+	// *AuthzGateConstructionError aborts startup.
+	if err := s.configureMCPAuth(mcpServer); err != nil {
+		return err
+	}
+
+	// Install the probe-driven sealed-window gate on the tool dispatcher. A
+	// pass-through while the barrier is unsealed; the instant the barrier is
+	// sealed (post-boot `barrier seal`), only the canonical sealed-window
+	// tool surface remains callable.
+	mcpServer.SetSealedWindowGate(s.SealedWindowProbe(), qbsealedwindow.MCPAllowlist())
 
 	// Wire the qrdb credential management service into the MCP server so
 	// the qrdb_credential_* tools serve real responses against the same
@@ -89,12 +108,27 @@ func (s *Server) startMCPServer() error {
 	mcpServer.SetTenantBarrierService(s.buildTenantBarrierService())
 	s.logger.Info("Tenant barrier service wired into MCP server")
 
-	// Start MCP server in a goroutine (non-blocking for HTTP transport)
-	go func() {
-		if err := mcpServer.Start(); err != nil {
-			s.logger.WithError(err).Error("MCP server stopped with error")
+	// Wire the qrdb user + user auth-factor lazy proxies into the MCP
+	// server so the qrdb_user_get* / qrdb_user_authfactor_* tools serve
+	// real responses. The proxies resolve the embedded node's servicers
+	// PER CALL (the services are nil until Unseal completes the boot on
+	// seal-enabled paths, so eager capture is forbidden); while sealed,
+	// calls fail closed with the typed QRDBUserServiceUnavailableError.
+	mcpServer.SetUserService(newQRDBUserServicerProxy(s))
+	mcpServer.SetUserAuthFactorService(newQRDBUserAuthFactorServicerProxy(s))
+	s.logger.Info("User and UserAuthFactor services wired into MCP server")
+
+	// Start the MCP server. Start is non-blocking for both transports and
+	// binds the HTTP listener SYNCHRONOUSLY, so a port conflict or bad
+	// address is a startup error that aborts the daemon (process-fatal
+	// transport construction) instead of a log line from a goroutine.
+	if err := mcpServer.Start(); err != nil {
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
+			Op:   "server.startMCPServer",
+			Err:  &ServerCauseError{Message: "failed to start MCP server", Cause: err},
 		}
-	}()
+	}
 
 	s.mcpServer = mcpServer
 	s.logger.Infof("MCP server started on %s:%d", s.config.Server.ResolveBindHost(s.config.Server.MCP.BindAddress), s.config.Server.MCP.Port)
@@ -121,7 +155,9 @@ func (s *Server) stopMCPServer() error {
 // configureMCPAuth configures authentication services on the MCP server.
 // This wires up the auth manager from IAM components to enable token validation
 // for authenticated MCP operations while still allowing public tools to work.
-func (s *Server) configureMCPAuth(mcpServer *mcpapi.Server) {
+// Under RequireAuthz gate construction is fail-closed: a returned
+// *AuthzGateConstructionError aborts startup.
+func (s *Server) configureMCPAuth(mcpServer *mcpapi.Server) error {
 	// Interface to get the internal auth manager for MCP token validation.
 	// The auth manager provides token validation for authenticated operations.
 	type internalAuthManagerGetter interface {
@@ -132,8 +168,12 @@ func (s *Server) configureMCPAuth(mcpServer *mcpapi.Server) {
 	// point (OIDC token validation + qrdb PDP + canonical tool mapper). When it
 	// installs enforcement we skip the legacy token-only wiring below so the two
 	// do not fight over the auth checker.
-	if s.configureMCPQRDBAuthz(mcpServer) {
-		return
+	installed, err := s.configureMCPQRDBAuthz(mcpServer)
+	if err != nil {
+		return err
+	}
+	if installed {
+		return nil
 	}
 
 	// Try to get auth manager from the service via type assertion.
@@ -144,4 +184,5 @@ func (s *Server) configureMCPAuth(mcpServer *mcpapi.Server) {
 			mcpServer.SetAuthorizationService(nil, authManager)
 		}
 	}
+	return nil
 }

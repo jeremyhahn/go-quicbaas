@@ -86,6 +86,14 @@ func buildEmbeddedQRDBServicers(es *embeddedServer) (quicbaas.QRDBEmbeddedServic
 		servicers.UserAuthFactor = uafSvc
 	}
 
+	// Wire the node's TenantServicer so the SDK's TenantMgmt() and the
+	// per-tenant barrier verbs dispatch against the node's canonical tenant
+	// service. The node's own SDK client does not register a tenant servicer
+	// on its embedded transport, so it must be wired here explicitly.
+	if tenantSvc := es.server.GetQRDBTenantServicer(); tenantSvc != nil {
+		servicers.Tenant = tenantSvc
+	}
+
 	// Wire ceremony and credential services from the node's bootstrap
 	// ceremony stack. These are the real services backed by the qrdb node.
 	if ceremonyStack := es.server.GetCeremonyServices(); ceremonyStack != nil {

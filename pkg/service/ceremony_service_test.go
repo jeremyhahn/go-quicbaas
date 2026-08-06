@@ -48,8 +48,12 @@ type mockCeremonyClient struct {
 	claimBeginErr  error
 	claimDoneResp  *transport.ClaimCertCompleteResponse
 	claimDoneErr   error
-	claimShareResp *transport.ClaimShareResponse
-	claimShareErr  error
+	beginShareReq  *transport.BeginClaimShareRequest
+	beginShareResp *transport.BeginClaimShareResponse
+	beginShareErr  error
+	completeReq    *transport.CompleteClaimShareRequest
+	completeResp   *transport.CompleteClaimShareResponse
+	completeErr    error
 	signCSRResp    *transport.SignCSRInitResponse
 	signCSRErr     error
 	enrollReq      *transport.EnrollExternalOfficerRequest
@@ -74,8 +78,14 @@ func (m *mockCeremonyClient) CeremonyClaimCertComplete(_ context.Context, _ *tra
 	return m.claimDoneResp, m.claimDoneErr
 }
 
-func (m *mockCeremonyClient) CeremonyClaimShare(_ context.Context, _ *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
-	return m.claimShareResp, m.claimShareErr
+func (m *mockCeremonyClient) CeremonyBeginClaimShare(_ context.Context, req *transport.BeginClaimShareRequest) (*transport.BeginClaimShareResponse, error) {
+	m.beginShareReq = req
+	return m.beginShareResp, m.beginShareErr
+}
+
+func (m *mockCeremonyClient) CeremonyCompleteClaimShare(_ context.Context, req *transport.CompleteClaimShareRequest) (*transport.CompleteClaimShareResponse, error) {
+	m.completeReq = req
+	return m.completeResp, m.completeErr
 }
 
 func (m *mockCeremonyClient) CeremonySignCSR(_ context.Context, _ *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
@@ -129,7 +139,10 @@ func TestCeremonyService_NilClient_ReturnsMissingError(t *testing.T) {
 	_, err = svc.CeremonyCompleteClaimCert(ctx, "officer", "nonce", "sig")
 	assertMissing(err)
 
-	_, err = svc.CeremonyClaimShare(ctx, "officer")
+	_, err = svc.CeremonyBeginClaimShare(ctx, "officer")
+	assertMissing(err)
+
+	_, err = svc.CeremonyCompleteClaimShare(ctx, "officer", "nonce", []byte("sig"))
 	assertMissing(err)
 
 	_, err = svc.CeremonySignCSR(ctx, "officer", "pin", "csr", "role")
@@ -324,27 +337,90 @@ func TestCeremonyService_CeremonyCompleteClaimCert_Error(t *testing.T) {
 }
 
 // =============================================================================
-// CeremonyClaimShare
+// CeremonyBeginClaimShare
 // =============================================================================
 
-func TestCeremonyService_CeremonyClaimShare_Success(t *testing.T) {
+func TestCeremonyService_CeremonyBeginClaimShare_Success(t *testing.T) {
+	expires := "2026-08-06T12:00:00Z"
 	mc := &mockCeremonyClient{
-		claimShareResp: &transport.ClaimShareResponse{ShareJSON: `{"share":"value"}`},
+		beginShareResp: &transport.BeginClaimShareResponse{
+			NonceHex:  "deadbeef",
+			ExpiresAt: expires,
+		},
 	}
 	svc := service.NewCeremonyService(mc)
 
-	share, err := svc.CeremonyClaimShare(context.Background(), "officer")
+	ch, err := svc.CeremonyBeginClaimShare(context.Background(), "officer")
 	require.NoError(t, err)
-	assert.Equal(t, `{"share":"value"}`, share)
+	require.NotNil(t, ch)
+	assert.Equal(t, "deadbeef", ch.NonceHex)
+
+	want, parseErr := time.Parse(time.RFC3339, expires)
+	require.NoError(t, parseErr)
+	assert.True(t, ch.ExpiresAt.Equal(want))
+
+	require.NotNil(t, mc.beginShareReq)
+	assert.Equal(t, "officer", mc.beginShareReq.Username)
 }
 
-func TestCeremonyService_CeremonyClaimShare_Error(t *testing.T) {
-	mc := &mockCeremonyClient{claimShareErr: errCeremonyBackend}
+func TestCeremonyService_CeremonyBeginClaimShare_InvalidExpiryIgnored(t *testing.T) {
+	mc := &mockCeremonyClient{
+		beginShareResp: &transport.BeginClaimShareResponse{
+			NonceHex:  "deadbeef",
+			ExpiresAt: "not-a-time",
+		},
+	}
 	svc := service.NewCeremonyService(mc)
 
-	share, err := svc.CeremonyClaimShare(context.Background(), "officer")
+	ch, err := svc.CeremonyBeginClaimShare(context.Background(), "officer")
+	require.NoError(t, err)
+	require.NotNil(t, ch)
+	assert.True(t, ch.ExpiresAt.IsZero())
+}
+
+func TestCeremonyService_CeremonyBeginClaimShare_Error(t *testing.T) {
+	mc := &mockCeremonyClient{beginShareErr: errCeremonyBackend}
+	svc := service.NewCeremonyService(mc)
+
+	ch, err := svc.CeremonyBeginClaimShare(context.Background(), "officer")
 	require.Error(t, err)
-	assert.Empty(t, share)
+	assert.Nil(t, ch)
+	assert.ErrorIs(t, err, errCeremonyBackend)
+}
+
+// =============================================================================
+// CeremonyCompleteClaimShare
+// =============================================================================
+
+func TestCeremonyService_CeremonyCompleteClaimShare_Success(t *testing.T) {
+	mc := &mockCeremonyClient{
+		completeResp: &transport.CompleteClaimShareResponse{
+			ShareIndex: 3,
+			ShareJSON:  `{"share":"value"}`,
+		},
+	}
+	svc := service.NewCeremonyService(mc)
+
+	result, err := svc.CeremonyCompleteClaimShare(context.Background(), "officer", "deadbeef", []byte("sig"))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 3, result.ShareIndex)
+	assert.Equal(t, `{"share":"value"}`, result.ShareJSON)
+
+	// Verify all handshake fields were mapped onto the transport request.
+	require.NotNil(t, mc.completeReq)
+	assert.Equal(t, "officer", mc.completeReq.Username)
+	assert.Equal(t, "deadbeef", mc.completeReq.NonceHex)
+	assert.Equal(t, []byte("sig"), mc.completeReq.Signature)
+}
+
+func TestCeremonyService_CeremonyCompleteClaimShare_Error(t *testing.T) {
+	mc := &mockCeremonyClient{completeErr: errCeremonyBackend}
+	svc := service.NewCeremonyService(mc)
+
+	result, err := svc.CeremonyCompleteClaimShare(context.Background(), "officer", "deadbeef", []byte("sig"))
+	require.Error(t, err)
+	assert.Nil(t, result)
 	assert.ErrorIs(t, err, errCeremonyBackend)
 }
 

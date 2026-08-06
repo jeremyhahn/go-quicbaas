@@ -38,31 +38,49 @@ type quicOIDCProviderGetter interface {
 // sender-constraint (RFC 9449) for cnf.jkt-bound tokens, the offline scp ->
 // permission decision against the opcode's qrdb-canonical permission, and the
 // per-tenant liveness / revocation check.
-func (s *Server) configureQUICAuthz(quicServer *quicapi.Server) {
+// Gate construction is FAIL-CLOSED under RequireAuthz: when the OIDC
+// provider or the platform-token Validator cannot be built, a typed
+// *AuthzGateConstructionError is returned and daemon startup ABORTS
+// (refuse-to-start posture) — QUIC is never served with a silently-missing
+// enforcement gate.
+func (s *Server) configureQUICAuthz(quicServer *quicapi.Server) error {
 	if s.config == nil || !s.config.Security.RequireAuthz {
-		return
+		return nil
 	}
 
 	getter, ok := s.quicBaaSService.(quicOIDCProviderGetter)
 	if !ok {
-		s.logger.Debug("QUIC authz disabled: service does not expose an OIDC provider")
-		return
+		return &AuthzGateConstructionError{
+			Transport: "quic",
+			Op:        "service does not expose an OIDC provider",
+		}
 	}
 	if provider, err := getter.GetOIDCProvider(context.Background()); err != nil || provider == nil {
-		s.logger.Debug("QUIC authz disabled: OIDC provider not available")
-		return
+		if err == nil {
+			err = errGRPCOIDCProviderUnavailable
+		}
+		return &AuthzGateConstructionError{
+			Transport: "quic",
+			Op:        "resolve OIDC provider",
+			Cause:     err,
+		}
 	}
 
 	// Build the single central platform-token Validator and install the unified
 	// QUIC enforcement seam. QUIC carries no DPoP, so cnf.jkt-bound tokens are
 	// rejected by the validator's sender-constraint check (they cannot prove
-	// possession over this transport); bearer / service tokens pass.
+	// possession over this transport); bearer / service tokens pass. A build
+	// failure ABORTS startup (fail-closed) instead of serving QUIC ungated.
 	platformValidator, err := s.buildPlatformValidator(context.Background())
 	if err != nil {
-		s.logger.WithError(err).Error("QUIC authz disabled: failed to build platform-token validator")
-		return
+		return &AuthzGateConstructionError{
+			Transport: "quic",
+			Op:        "build platform-token validator",
+			Cause:     err,
+		}
 	}
 
 	quicServer.SetValidatorEnforcement(platformValidator)
 	s.logger.Info("QUIC platform-token validator authorization installed (RequireAuthz=true)")
+	return nil
 }

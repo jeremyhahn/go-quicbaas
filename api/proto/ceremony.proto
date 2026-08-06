@@ -44,8 +44,17 @@ service Ceremony {
   // chain. The signature is base64-encoded to match the REST contract.
   rpc CeremonyClaimCertComplete(CeremonyClaimCertCompleteRequest) returns (CeremonyClaimCertCompleteResponse);
 
-  // CeremonyClaimShare retrieves the Shamir share for the named officer.
-  rpc CeremonyClaimShare(CeremonyClaimShareRequest) returns (CeremonyClaimShareResponse);
+  // CeremonyBeginClaimShare starts the Shamir share claim handshake for an
+  // officer who has already claimed their certificate. No thumbprint travels
+  // on the wire: the server derives the caller's certificate thumbprint from
+  // the mTLS peer chain, so a client cannot assert an identity.
+  rpc CeremonyBeginClaimShare(CeremonyBeginClaimShareRequest) returns (CeremonyBeginClaimShareResponse);
+
+  // CeremonyCompleteClaimShare completes the Shamir share claim handshake by
+  // submitting the signed challenge nonce. The share is released exactly
+  // once, only to the officer whose certificate thumbprint matches the
+  // enrolment record.
+  rpc CeremonyCompleteClaimShare(CeremonyCompleteClaimShareRequest) returns (CeremonyCompleteClaimShareResponse);
 
   // CeremonySignCSR submits a CSR for signing during the ceremony.
   rpc CeremonySignCSR(CeremonySignCSRRequest) returns (CeremonySignCSRResponse);
@@ -127,14 +136,33 @@ message CeremonyClaimCertCompleteResponse {
   string ca_cert_pem = 2;
 }
 
-// CeremonyClaimShareRequest requests the Shamir share for an officer.
-message CeremonyClaimShareRequest {
+// CeremonyBeginClaimShareRequest starts the Shamir share claim handshake
+// for the named officer. Mirrors qrdb.v1.CeremonyBeginClaimShareRequest.
+message CeremonyBeginClaimShareRequest {
   string username = 1;
 }
 
-// CeremonyClaimShareResponse returns the officer's Shamir share.
-message CeremonyClaimShareResponse {
-  string share = 1;
+// CeremonyBeginClaimShareResponse carries the challenge nonce the officer
+// must sign with the private key matching their enrolled certificate.
+message CeremonyBeginClaimShareResponse {
+  string nonce_hex = 1;
+  // expires_at is RFC3339 (UTC) or empty when not supplied.
+  string expires_at = 2;
+}
+
+// CeremonyCompleteClaimShareRequest carries the signed challenge nonce
+// completing the Shamir share claim handshake.
+message CeremonyCompleteClaimShareRequest {
+  string username = 1;
+  string nonce_hex = 2;
+  bytes signature = 3;
+}
+
+// CeremonyCompleteClaimShareResponse returns the officer's Shamir share.
+// The share JSON is released exactly once per ceremony.
+message CeremonyCompleteClaimShareResponse {
+  int32 share_index = 1;
+  string share = 2;
 }
 
 // CeremonySignCSRRequest submits a CSR for signing during the ceremony.

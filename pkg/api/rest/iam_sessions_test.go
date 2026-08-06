@@ -18,6 +18,7 @@ package rest
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -193,6 +194,185 @@ func TestListUserSessions(t *testing.T) {
 	})
 }
 
+// TestRevokeAllUserSessions tests the path-scoped admin revoke-all handler —
+// the REST projection of the parameterized SDK Session/RevokeAll verb.
+func TestRevokeAllUserSessions(t *testing.T) {
+	t.Run("missing tenant ID", func(t *testing.T) {
+		handler, _, cleanup := setupIAMHandler(t)
+		defer cleanup()
+
+		req := withChiParams(httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//users/user-123/sessions", nil),
+			map[string]string{"tenant_id": "", "user_id": "user-123"})
+		w := httptest.NewRecorder()
+
+		handler.RevokeAllUserSessions(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "tenant ID is required")
+	})
+
+	t.Run("missing user ID", func(t *testing.T) {
+		handler, _, cleanup := setupIAMHandler(t)
+		defer cleanup()
+
+		req := withChiParams(httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users//sessions", nil),
+			map[string]string{"tenant_id": "tenant-123", "user_id": ""})
+		w := httptest.NewRecorder()
+
+		handler.RevokeAllUserSessions(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "user ID is required")
+	})
+
+	t.Run("session manager not available", func(t *testing.T) {
+		handler, _, cleanup := setupIAMHandler(t)
+		defer cleanup()
+
+		req := withChiParams(httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil),
+			map[string]string{"tenant_id": "tenant-123", "user_id": "user-123"})
+		w := httptest.NewRecorder()
+
+		handler.RevokeAllUserSessions(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Contains(t, w.Body.String(), "session manager not available")
+	})
+
+	t.Run("session manager not initialized", func(t *testing.T) {
+		svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: nil}
+		handler, cleanup := setupHandlerWithService(t, svc)
+		defer cleanup()
+
+		req := withChiParams(httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil),
+			map[string]string{"tenant_id": "tenant-123", "user_id": "user-123"})
+		w := httptest.NewRecorder()
+
+		handler.RevokeAllUserSessions(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Contains(t, w.Body.String(), "session manager not initialized")
+	})
+
+	t.Run("revokes the path-scoped target user", func(t *testing.T) {
+		mgr := &mockSessionManager{}
+		svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+		handler, cleanup := setupHandlerWithService(t, svc)
+		defer cleanup()
+
+		req := withChiParams(httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil),
+			map[string]string{"tenant_id": "tenant-123", "user_id": "user-123"})
+		w := httptest.NewRecorder()
+
+		handler.RevokeAllUserSessions(w, req)
+
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Equal(t, "user-123", mgr.revokedUserID)
+		assert.Equal(t, "tenant-123", mgr.revokedTenantID)
+	})
+
+	t.Run("revocation error is surfaced", func(t *testing.T) {
+		mgr := &mockSessionManager{revokeErr: errors.New("backend down")}
+		svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
+		handler, cleanup := setupHandlerWithService(t, svc)
+		defer cleanup()
+
+		req := withChiParams(httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil),
+			map[string]string{"tenant_id": "tenant-123", "user_id": "user-123"})
+		w := httptest.NewRecorder()
+
+		handler.RevokeAllUserSessions(w, req)
+
+		assert.GreaterOrEqual(t, w.Code, http.StatusBadRequest)
+	})
+}
+
+// TestListUserSessionsLimit tests the optional limit query parameter on the
+// path-scoped admin listing (gRPC ListSessions limit parity).
+func TestListUserSessionsLimit(t *testing.T) {
+	threeSessions := func() []*iam.SessionExt {
+		return []*iam.SessionExt{
+			{ID: "s1", UserID: "user-123", TenantID: "tenant-123"},
+			{ID: "s2", UserID: "user-123", TenantID: "tenant-123"},
+			{ID: "s3", UserID: "user-123", TenantID: "tenant-123"},
+		}
+	}
+
+	listReq := func(target string) *http.Request {
+		return withChiParams(httptest.NewRequest(http.MethodGet, target, nil),
+			map[string]string{"tenant_id": "tenant-123", "user_id": "user-123"})
+	}
+
+	countSessions := func(t *testing.T, body []byte) int {
+		t.Helper()
+		var resp struct {
+			Sessions []map[string]interface{} `json:"sessions"`
+		}
+		require.NoError(t, json.Unmarshal(body, &resp))
+		return len(resp.Sessions)
+	}
+
+	t.Run("limit truncates", func(t *testing.T) {
+		svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: &mockSessionManager{sessions: threeSessions()}}
+		handler, cleanup := setupHandlerWithService(t, svc)
+		defer cleanup()
+
+		w := httptest.NewRecorder()
+		handler.ListUserSessions(w, listReq("/api/v1/tenants/tenant-123/users/user-123/sessions?limit=2"))
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, 2, countSessions(t, w.Body.Bytes()))
+	})
+
+	t.Run("zero limit returns all", func(t *testing.T) {
+		svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: &mockSessionManager{sessions: threeSessions()}}
+		handler, cleanup := setupHandlerWithService(t, svc)
+		defer cleanup()
+
+		w := httptest.NewRecorder()
+		handler.ListUserSessions(w, listReq("/api/v1/tenants/tenant-123/users/user-123/sessions?limit=0"))
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, 3, countSessions(t, w.Body.Bytes()))
+	})
+
+	t.Run("absent limit returns all", func(t *testing.T) {
+		svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: &mockSessionManager{sessions: threeSessions()}}
+		handler, cleanup := setupHandlerWithService(t, svc)
+		defer cleanup()
+
+		w := httptest.NewRecorder()
+		handler.ListUserSessions(w, listReq("/api/v1/tenants/tenant-123/users/user-123/sessions"))
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, 3, countSessions(t, w.Body.Bytes()))
+	})
+
+	t.Run("non-numeric limit is a client error", func(t *testing.T) {
+		svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: &mockSessionManager{sessions: threeSessions()}}
+		handler, cleanup := setupHandlerWithService(t, svc)
+		defer cleanup()
+
+		w := httptest.NewRecorder()
+		handler.ListUserSessions(w, listReq("/api/v1/tenants/tenant-123/users/user-123/sessions?limit=abc"))
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "invalid limit parameter")
+	})
+
+	t.Run("negative limit is a client error", func(t *testing.T) {
+		svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: &mockSessionManager{sessions: threeSessions()}}
+		handler, cleanup := setupHandlerWithService(t, svc)
+		defer cleanup()
+
+		w := httptest.NewRecorder()
+		handler.ListUserSessions(w, listReq("/api/v1/tenants/tenant-123/users/user-123/sessions?limit=-1"))
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "invalid limit parameter")
+	})
+}
+
 // TestListSessions tests the ListSessions handler.
 func TestListSessions(t *testing.T) {
 	t.Run("user not authenticated", func(t *testing.T) {
@@ -212,7 +392,7 @@ func TestListSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -227,8 +407,7 @@ func TestListSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -249,8 +428,7 @@ func TestGetSession(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "")
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/", nil)
@@ -287,7 +465,7 @@ func TestGetSession(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "session-123")
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/session-123", nil)
@@ -307,8 +485,7 @@ func TestGetSession(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "session-123")
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/session-123", nil)
@@ -331,8 +508,7 @@ func TestRevokeSession(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "")
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions/", nil)
@@ -369,7 +545,7 @@ func TestRevokeSession(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "session-123")
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions/session-123", nil)
@@ -389,8 +565,7 @@ func TestRevokeSession(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "session-123")
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions/session-123", nil)
@@ -423,7 +598,7 @@ func TestRevokeAllSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -438,8 +613,7 @@ func TestRevokeAllSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -454,8 +628,7 @@ func TestRevokeAllSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions?except=session-456", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -487,7 +660,7 @@ func TestRevokeOtherSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(`{}`))
 		req = req.WithContext(ctx)
 		req.Header.Set("Content-Type", "application/json")
@@ -503,8 +676,7 @@ func TestRevokeOtherSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(`{}`))
 		req = req.WithContext(ctx)
 		req.Header.Set("Content-Type", "application/json")
@@ -520,10 +692,9 @@ func TestRevokeOtherSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", "tenant-123")
-		ctx = context.WithValue(ctx, "session_id", "session-456")
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(`{}`))
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others",
+			strings.NewReader(`{"keep_session_id":"session-456"}`))
 		req = req.WithContext(ctx)
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -538,9 +709,7 @@ func TestRevokeOtherSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := context.WithValue(context.Background(), "user_id", "user-123")
-		ctx = context.WithValue(ctx, "tenant_id", "tenant-123")
-		ctx = context.WithValue(ctx, "session_id", "session-456")
+		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
 		body := `{"keep_session_id":"session-789"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(body))
 		req = req.WithContext(ctx)
@@ -607,9 +776,7 @@ func TestRevokeOtherSessionsReadBodyErrorPath(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	ctx := context.WithValue(context.Background(), "user_id", "user-123")
-	ctx = context.WithValue(ctx, "tenant_id", "tenant-123")
-	ctx = context.WithValue(ctx, "session_id", "session-456")
+	ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
 	req = req.WithContext(ctx)
@@ -880,7 +1047,7 @@ func TestListSessionsEmptyUserID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	ctx := context.WithValue(context.Background(), "user_id", "")
+	ctx := ctxWithTestSubject(context.Background(), "", "")
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
@@ -895,8 +1062,7 @@ func TestListSessionsEmptyTenantID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	ctx := context.WithValue(context.Background(), "user_id", "user-123")
-	ctx = context.WithValue(ctx, "tenant_id", "")
+	ctx := ctxWithTestSubject(context.Background(), "user-123", "")
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
@@ -1017,7 +1183,7 @@ func TestIAM91_ListSessions_MissingTenantContext(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
+	ctx := ctxWithTestSubject(req.Context(), "u1", "")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.ListSessions(w, req)
@@ -1029,8 +1195,7 @@ func TestIAM91_ListSessions_ServiceNotAvailable(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.ListSessions(w, req)
@@ -1065,7 +1230,7 @@ func TestIAM91_GetSession_MissingTenantContext(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/s1", nil)
 	req = withChiParams(req, map[string]string{"id": "s1"})
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
+	ctx := ctxWithTestSubject(req.Context(), "u1", "")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.GetSession(w, req)
@@ -1078,8 +1243,7 @@ func TestIAM91_GetSession_ServiceNotAvailable(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/s1", nil)
 	req = withChiParams(req, map[string]string{"id": "s1"})
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.GetSession(w, req)
@@ -1114,8 +1278,7 @@ func TestIAM91_RevokeSession_ServiceNotAvailable(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions/s1", nil)
 	req = withChiParams(req, map[string]string{"id": "s1"})
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.RevokeSession(w, req)
@@ -1137,7 +1300,7 @@ func TestIAM91_RevokeAllSessions_MissingTenantContext(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
+	ctx := ctxWithTestSubject(req.Context(), "u1", "")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.RevokeAllSessions(w, req)
@@ -1149,8 +1312,7 @@ func TestIAM91_RevokeAllSessions_ServiceNotAvailable(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.RevokeAllSessions(w, req)
@@ -1172,7 +1334,7 @@ func TestIAM91_RevokeOtherSessions_MissingTenantContext(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
+	ctx := ctxWithTestSubject(req.Context(), "u1", "")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.RevokeOtherSessions(w, req)
@@ -1184,8 +1346,7 @@ func TestIAM91_RevokeOtherSessions_MissingSessionContext(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.RevokeOtherSessions(w, req)
@@ -1197,10 +1358,9 @@ func TestIAM91_RevokeOtherSessions_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader("{}"))
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
-	ctx = context.WithValue(ctx, "session_id", "s1")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others",
+		strings.NewReader(`{"keep_session_id":"s1"}`))
+	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.RevokeOtherSessions(w, req)
@@ -3172,6 +3332,11 @@ type mockSessionManager struct {
 	listErr   error
 	getErr    error
 	revokeErr error
+
+	// revokedUserID / revokedTenantID capture the identity RevokeAllForUser
+	// was invoked with so tests can pin the path-scoped target contract.
+	revokedUserID   string
+	revokedTenantID string
 }
 
 func (m *mockSessionManager) Create(ctx context.Context, session *iam.SessionExt) error {
@@ -3199,6 +3364,8 @@ func (m *mockSessionManager) Revoke(ctx context.Context, sessionID string) error
 }
 
 func (m *mockSessionManager) RevokeAllForUser(ctx context.Context, userID, tenantID string) error {
+	m.revokedUserID = userID
+	m.revokedTenantID = tenantID
 	return m.revokeErr
 }
 
@@ -3452,8 +3619,7 @@ func TestIAM91_ListSessions_Success(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.ListSessions(w, req)
@@ -3471,8 +3637,7 @@ func TestIAM91_GetSession_Success(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/sessions/s1", nil)
 	req = withChiParams(req, map[string]string{"id": "s1"})
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.GetSession(w, req)
@@ -3490,8 +3655,7 @@ func TestIAM91_RevokeSession_Success(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/sessions/s1", nil)
 	req = withChiParams(req, map[string]string{"id": "s1"})
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.RevokeSession(w, req)
@@ -3505,8 +3669,7 @@ func TestIAM91_RevokeAllSessions_Success(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodDelete, "/sessions", nil)
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
+	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.RevokeAllSessions(w, req)
@@ -3522,10 +3685,9 @@ func TestIAM91_RevokeOtherSessions_Success(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/sessions/revoke-others", nil)
-	ctx := context.WithValue(req.Context(), "user_id", "u1")
-	ctx = context.WithValue(ctx, "tenant_id", "t1")
-	ctx = context.WithValue(ctx, "session_id", "s1")
+	req := httptest.NewRequest(http.MethodPost, "/sessions/revoke-others",
+		strings.NewReader(`{"keep_session_id":"s1"}`))
+	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	handler.RevokeOtherSessions(w, req)

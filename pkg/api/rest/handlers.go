@@ -26,6 +26,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -1267,12 +1269,13 @@ func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err 
 
 		switch qbErr.Code {
 		case errors.ErrNotFound:
+			// Carry the full typed error string through so clients can tell
+			// WHICH resource was missing (e.g. "iam.role: not_found: role
+			// not found") instead of an information-free generic "entity".
+			// This matches the gRPC transport, which surfaces the complete
+			// QRDBError text (op + code + message) for the same failure.
 			RespondError(w, r, httpStatus, &NotFoundError{
-				Resource: "entity",
-			})
-		case errors.ErrLeaderNotAvailable:
-			RespondError(w, r, httpStatus, &ServiceUnavailableError{
-				Message: "leader not available",
+				Resource: qbErr.Error(),
 			})
 		case errors.ErrTimeout, errors.ErrDeadlineExceeded:
 			RespondError(w, r, httpStatus, &RequestTimeoutError{
@@ -1294,10 +1297,13 @@ func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err 
 			RespondError(w, r, httpStatus, &ConflictError{
 				Message: errMsg,
 			})
-		case errors.ErrUnavailable, errors.ErrStorage, errors.ErrRaft:
-			RespondError(w, r, httpStatus, &ServiceUnavailableError{
-				Message: errMsg,
-			})
+		case errors.ErrLeaderNotAvailable, errors.ErrClusterNotReady, errors.ErrQuorumLost,
+			errors.ErrUnavailable, errors.ErrStorage, errors.ErrRaft:
+			// Pass the coded error through so RespondError serializes the
+			// error code and per-code retryability. Leadership transitions
+			// (leader not available, cluster not ready) are transient and
+			// retryable; clients should back off and retry.
+			RespondError(w, r, httpStatus, qbErr)
 		case errors.ErrInternal, errors.ErrUnknown:
 			RespondError(w, r, httpStatus, &InternalServerError{
 				Message: errMsg,
@@ -1309,6 +1315,18 @@ func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err 
 				Message: errMsg,
 			})
 		}
+		return
+	}
+
+	// Transient Raft leadership transitions surface from the qrdb SDK as
+	// *transport.NotLeaderError, typically wrapped inside storage-layer
+	// errors such as scheduler.ErrStorageError. Classify them before the
+	// generic storage mapping so a leader election maps to 503 + retryable
+	// instead of a terminal 500.
+	var notLeaderErr *qrdbtransport.NotLeaderError
+	if stderrors.As(err, &notLeaderErr) {
+		RespondError(w, r, http.StatusServiceUnavailable,
+			errors.Wrap(err, errors.ErrLeaderNotAvailable, "rest.handleServiceError"))
 		return
 	}
 

@@ -39,9 +39,9 @@ func TestClusterShardOperations(t *testing.T) {
 }
 
 // testVerifyShardDistribution verifies shard distribution across nodes.
-// Test 3.1: Query each node to get shard information, verify all 3 shards (1,2,3)
-// are distributed across nodes, verify each shard has proper replication,
-// and verify shard leaders are elected.
+// Test 3.1: Query cluster status for the physical KV Raft group (shard 1),
+// verify it is replicated across all nodes with an elected leader, then
+// exercise logical shard routing with writes and cross-node reads.
 func testVerifyShardDistribution(t *testing.T) {
 	ctx := context.Background()
 
@@ -60,10 +60,15 @@ func testVerifyShardDistribution(t *testing.T) {
 	_, _, err = helpers.WaitForLeaderElection(t, cluster, 60*time.Second)
 	require.NoError(t, err, "No leader elected")
 
-	// Verify shard distribution - wait for all shards to have leaders first
-	// Note: Integration tests have vector enabled with shard 200
+	// Verify shard distribution - wait for all shards to have leaders first.
+	//
+	// The embedded qrdb node hosts a single physical KV Raft group
+	// (shard 1); the shard IDs 2/3/200/300 listed in quicbaas.yaml are
+	// logical routing IDs, not Raft groups, so only shard 1 ever elects
+	// a leader. See pkg/server/qrdb_node.go (qcfg.Raft.ShardID = 1) and
+	// the shard note in test/integration/quicbaas-cluster.yaml.
 	t.Log("Verifying shard distribution across cluster nodes...")
-	expectedShards := []uint64{1, 2, 3} // KV shards only for leader election check
+	expectedShards := []uint64{1}
 
 	// Wait for all shards to have leaders (this can take time with multi-raft)
 	shardMap, err := helpers.WaitForAllShardLeaders(t, cluster, expectedShards, 90*time.Second)
@@ -79,15 +84,15 @@ func testVerifyShardDistribution(t *testing.T) {
 	shardMap = helpers.VerifyShardDistribution(t, cluster, expectedShards)
 
 	// Verify all expected user shards exist (filter out system shards 1000, 1001)
-	// Note: Integration tests have vector shard 200 enabled, so expect 4 shards total
 	userShardCount := 0
 	for shardID := range shardMap {
 		if shardID < 1000 { // User shards are < 1000, system shards are >= 1000
 			userShardCount++
 		}
 	}
-	// 3 KV shards (1, 2, 3) + 1 vector shard (200) = 4 total user shards
-	assert.GreaterOrEqual(t, userShardCount, 3, "Expected at least 3 user shards in cluster")
+	// Single physical KV Raft group (shard 1); see expectedShards above.
+	assert.Equal(t, len(expectedShards), userShardCount,
+		"Expected exactly %d user shard(s) in cluster", len(expectedShards))
 
 	// Verify each user shard has replicas
 	for shardID, info := range shardMap {
@@ -151,9 +156,10 @@ func testShardRebalancingWhenNodeAdded(t *testing.T) {
 	_, leaderClient, err := cluster.FindLeader(ctx)
 	require.NoError(t, err, "Failed to find leader")
 
-	// Record initial shard distribution
+	// Record initial shard distribution. Only shard 1 is a physical
+	// Raft group; see the note in testVerifyShardDistribution.
 	t.Log("Recording initial shard distribution...")
-	expectedShards := []uint64{1, 2, 3}
+	expectedShards := []uint64{1}
 	initialShardMap := helpers.VerifyShardDistribution(t, cluster, expectedShards)
 
 	// Write 100 test entities

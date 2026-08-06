@@ -133,6 +133,15 @@ func (p *iamServiceAdapter) GetInviteStore(_ context.Context) (iam.InviteStore, 
 	return p.components.GetInviteStore(), nil
 }
 
+// GetPIVActivator returns the PIV invite-activation service from IAM
+// components. Returns nil when PIV activation is not configured.
+func (p *iamServiceAdapter) GetPIVActivator(_ context.Context) (*iam.PIVActivator, error) {
+	if p.components == nil {
+		return nil, nil
+	}
+	return p.components.GetPIVActivator(), nil
+}
+
 // GetAdminManager returns the admin manager from IAM components.
 func (p *iamServiceAdapter) GetAdminManager(_ context.Context) (*iam.AdminManager, error) {
 	if p.components == nil {

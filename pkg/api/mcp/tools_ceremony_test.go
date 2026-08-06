@@ -17,6 +17,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	stderrors "errors"
 	"testing"
 	"time"
@@ -35,20 +36,22 @@ import (
 // fakeCeremonyService implements service.CeremonyServicer with scripted
 // responses. Production-grade enough for unit tests.
 type fakeCeremonyService struct {
-	initInfo     *service.CeremonyInitInfo
-	initErr      error
-	statusInfo   *service.CeremonyStatusInfo
-	statusErr    error
-	challenge    *service.CeremonyChallenge
-	challengeErr error
-	claimResult  *service.CeremonyClaimCertResult
-	claimErr     error
-	share        string
-	shareErr     error
-	signResult   *service.CeremonySignCSRResult
-	signErr      error
-	enrollResp   *service.CeremonyEnrollExternalOfficerResponse
-	enrollErr    error
+	initInfo          *service.CeremonyInitInfo
+	initErr           error
+	statusInfo        *service.CeremonyStatusInfo
+	statusErr         error
+	challenge         *service.CeremonyChallenge
+	challengeErr      error
+	claimResult       *service.CeremonyClaimCertResult
+	claimErr          error
+	shareChallenge    *service.CeremonyChallenge
+	shareChallengeErr error
+	shareResult       *service.CeremonyClaimShareResult
+	shareResultErr    error
+	signResult        *service.CeremonySignCSRResult
+	signErr           error
+	enrollResp        *service.CeremonyEnrollExternalOfficerResponse
+	enrollErr         error
 
 	// observed args
 	gotInitReq       *service.CeremonyInitRequest
@@ -57,6 +60,8 @@ type fakeCeremonyService struct {
 	gotClaimNonce    string
 	gotClaimSig      string
 	gotShareUser     string
+	gotShareNonce    string
+	gotShareSig      []byte
 	gotSignUser      string
 	gotSignPin       string
 	gotSignCSR       string
@@ -85,9 +90,16 @@ func (f *fakeCeremonyService) CeremonyCompleteClaimCert(_ context.Context, usern
 	return f.claimResult, f.claimErr
 }
 
-func (f *fakeCeremonyService) CeremonyClaimShare(_ context.Context, username string) (string, error) {
+func (f *fakeCeremonyService) CeremonyBeginClaimShare(_ context.Context, username string) (*service.CeremonyChallenge, error) {
 	f.gotShareUser = username
-	return f.share, f.shareErr
+	return f.shareChallenge, f.shareChallengeErr
+}
+
+func (f *fakeCeremonyService) CeremonyCompleteClaimShare(_ context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error) {
+	f.gotShareUser = username
+	f.gotShareNonce = nonceHex
+	f.gotShareSig = signature
+	return f.shareResult, f.shareResultErr
 }
 
 func (f *fakeCeremonyService) CeremonySignCSR(_ context.Context, username, soPin, csrPEM, role string) (*service.CeremonySignCSRResult, error) {
@@ -146,12 +158,13 @@ func TestCeremonyToolsExecuteSuccess(t *testing.T) {
 			State:      "READY",
 			ShareCount: 3,
 		},
-		statusInfo:  &service.CeremonyStatusInfo{State: "READY", SPKIPin: "pin1"},
-		challenge:   &service.CeremonyChallenge{NonceHex: "deadbeef", ExpiresAt: now},
-		claimResult: &service.CeremonyClaimCertResult{CertPEM: []byte("cert"), CACertPEM: []byte("ca")},
-		share:       "base64-share",
-		signResult:  &service.CeremonySignCSRResult{CertPEM: []byte("signed-cert")},
-		enrollResp:  &service.CeremonyEnrollExternalOfficerResponse{SealedShare: "sealed-share-b64"},
+		statusInfo:     &service.CeremonyStatusInfo{State: "READY", SPKIPin: "pin1"},
+		challenge:      &service.CeremonyChallenge{NonceHex: "deadbeef", ExpiresAt: now},
+		claimResult:    &service.CeremonyClaimCertResult{CertPEM: []byte("cert"), CACertPEM: []byte("ca")},
+		shareChallenge: &service.CeremonyChallenge{NonceHex: "deadbeef", ExpiresAt: now},
+		shareResult:    &service.CeremonyClaimShareResult{ShareIndex: 2, ShareJSON: "share-json"},
+		signResult:     &service.CeremonySignCSRResult{CertPEM: []byte("signed-cert")},
+		enrollResp:     &service.CeremonyEnrollExternalOfficerResponse{SealedShare: "sealed-share-b64"},
 	}
 	r := newCeremonyTestRegistry(t, fake)
 	ctx := context.Background()
@@ -223,11 +236,28 @@ func TestCeremonyToolsExecuteSuccess(t *testing.T) {
 		assert.Equal(t, "sig-b64", fake.gotClaimSig)
 	})
 
-	t.Run("claim_share", func(t *testing.T) {
-		out, err := r.ExecuteTool(ctx, "qrdb_ceremony_claim_share", map[string]interface{}{"username": "alice"})
+	t.Run("begin_claim_share", func(t *testing.T) {
+		out, err := r.ExecuteTool(ctx, "qrdb_ceremony_begin_claim_share", map[string]interface{}{"username": "alice"})
 		require.NoError(t, err)
-		assert.Equal(t, "base64-share", out.(map[string]interface{})["share"])
+		m := out.(map[string]interface{})
+		assert.Equal(t, "deadbeef", m["nonce_hex"])
+		assert.Equal(t, "2026-01-02T00:00:00Z", m["expires_at"])
 		assert.Equal(t, "alice", fake.gotShareUser)
+	})
+
+	t.Run("complete_claim_share", func(t *testing.T) {
+		out, err := r.ExecuteTool(ctx, "qrdb_ceremony_complete_claim_share", map[string]interface{}{
+			"username":  "alice",
+			"nonce_hex": "deadbeef",
+			"signature": base64.StdEncoding.EncodeToString([]byte("sig")),
+		})
+		require.NoError(t, err)
+		m := out.(map[string]interface{})
+		assert.Equal(t, 2, m["share_index"])
+		assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("share-json")), m["share"])
+		assert.Equal(t, "alice", fake.gotShareUser)
+		assert.Equal(t, "deadbeef", fake.gotShareNonce)
+		assert.Equal(t, []byte("sig"), fake.gotShareSig)
 	})
 
 	t.Run("sign_csr", func(t *testing.T) {
@@ -326,10 +356,34 @@ func TestCeremonyToolsValidation(t *testing.T) {
 			expectedErr: &CeremonyFieldRequiredError{},
 		},
 		{
-			name:        "claim_share missing username",
-			tool:        "qrdb_ceremony_claim_share",
+			name:        "begin_claim_share missing username",
+			tool:        "qrdb_ceremony_begin_claim_share",
 			args:        map[string]interface{}{},
 			expectedErr: &CeremonyFieldRequiredError{},
+		},
+		{
+			name:        "complete_claim_share missing username",
+			tool:        "qrdb_ceremony_complete_claim_share",
+			args:        map[string]interface{}{"nonce_hex": "x", "signature": "c2ln"},
+			expectedErr: &CeremonyFieldRequiredError{},
+		},
+		{
+			name:        "complete_claim_share missing nonce",
+			tool:        "qrdb_ceremony_complete_claim_share",
+			args:        map[string]interface{}{"username": "a", "signature": "c2ln"},
+			expectedErr: &CeremonyFieldRequiredError{},
+		},
+		{
+			name:        "complete_claim_share missing signature",
+			tool:        "qrdb_ceremony_complete_claim_share",
+			args:        map[string]interface{}{"username": "a", "nonce_hex": "x"},
+			expectedErr: &CeremonyFieldRequiredError{},
+		},
+		{
+			name:        "complete_claim_share bad signature encoding",
+			tool:        "qrdb_ceremony_complete_claim_share",
+			args:        map[string]interface{}{"username": "a", "nonce_hex": "x", "signature": "%%%"},
+			expectedErr: &CeremonyFieldConflictError{},
 		},
 		{
 			name:        "sign_csr missing username",
@@ -421,19 +475,20 @@ func TestCeremonyToolsUnavailable(t *testing.T) {
 func TestCeremonyToolsPropagatesServiceError(t *testing.T) {
 	sentinel := stderrors.New("scripted-failure")
 	fake := &fakeCeremonyService{
-		initInfo:     &service.CeremonyInitInfo{},
-		initErr:      sentinel,
-		statusInfo:   &service.CeremonyStatusInfo{},
-		statusErr:    sentinel,
-		challenge:    &service.CeremonyChallenge{},
-		challengeErr: sentinel,
-		claimResult:  &service.CeremonyClaimCertResult{},
-		claimErr:     sentinel,
-		shareErr:     sentinel,
-		signResult:   &service.CeremonySignCSRResult{},
-		signErr:      sentinel,
-		enrollResp:   &service.CeremonyEnrollExternalOfficerResponse{},
-		enrollErr:    sentinel,
+		initInfo:          &service.CeremonyInitInfo{},
+		initErr:           sentinel,
+		statusInfo:        &service.CeremonyStatusInfo{},
+		statusErr:         sentinel,
+		challenge:         &service.CeremonyChallenge{},
+		challengeErr:      sentinel,
+		claimResult:       &service.CeremonyClaimCertResult{},
+		claimErr:          sentinel,
+		shareChallengeErr: sentinel,
+		shareResultErr:    sentinel,
+		signResult:        &service.CeremonySignCSRResult{},
+		signErr:           sentinel,
+		enrollResp:        &service.CeremonyEnrollExternalOfficerResponse{},
+		enrollErr:         sentinel,
 	}
 	r := newCeremonyTestRegistry(t, fake)
 
@@ -449,7 +504,10 @@ func TestCeremonyToolsPropagatesServiceError(t *testing.T) {
 		{"qrdb_ceremony_claim_cert_complete", map[string]interface{}{
 			"username": "u", "nonce_hex": "n", "signature": "s",
 		}},
-		{"qrdb_ceremony_claim_share", map[string]interface{}{"username": "u"}},
+		{"qrdb_ceremony_begin_claim_share", map[string]interface{}{"username": "u"}},
+		{"qrdb_ceremony_complete_claim_share", map[string]interface{}{
+			"username": "u", "nonce_hex": "n", "signature": "c2ln",
+		}},
 		{"qrdb_ceremony_sign_csr", map[string]interface{}{
 			"username": "u", "csr_pem": "c", "so_pin": "p", "role": "node",
 		}},

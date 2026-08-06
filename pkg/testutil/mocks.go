@@ -674,9 +674,18 @@ func (m *MockQuicBaaS) SetLoginService(svc service.LoginServicer) {
 	m.loginService = svc
 }
 
+// Close releases service resources. Server.Shutdown closes the service
+// facade on every shutdown path, so Close returns nil when the test has
+// not registered an expectation; tests that assert close behavior can
+// still register On("Close") as usual.
 func (m *MockQuicBaaS) Close() error {
-	args := m.Called()
-	return args.Error(0)
+	for _, call := range m.ExpectedCalls {
+		if call.Method == "Close" {
+			args := m.Called()
+			return args.Error(0)
+		}
+	}
+	return nil
 }
 
 // =============================================================================

@@ -87,6 +87,14 @@ func (s *Server) buildBarrierCeremonyServices() (service.BarrierServicer, servic
 	)
 
 	switch {
+	case s.sealedWindowClient != nil:
+		// Sealed-window boot phase: the node is sealed and its own SDK
+		// client does not exist yet. The sealed-window client wraps the
+		// node's OWN seal-layer servicer instances (the ones the node
+		// reuses when Unseal completes the boot), so every transport
+		// serves ONE barrier with no split-brain state during the window.
+		barrierSvc = service.NewBarrierService(s.sealedWindowClient.Barrier())
+		ceremonySvc = service.NewCeremonyService(s.sealedWindowClient.Ceremony())
 	case s.bootstrapCeremonyClient != nil:
 		barrierSvc = service.NewBarrierService(s.bootstrapCeremonyClient.Barrier())
 		ceremonySvc = service.NewCeremonyService(s.bootstrapCeremonyClient.Ceremony())

@@ -180,10 +180,18 @@ type CeremonyClaimCertCompleteRequest struct {
 	Signature string `json:"signature"`
 }
 
-// CeremonyClaimShareRequest is the request body for
-// Client.CeremonyClaimShare.
-type CeremonyClaimShareRequest struct {
+// CeremonyBeginClaimShareRequest is the request body for
+// Client.CeremonyBeginClaimShare.
+type CeremonyBeginClaimShareRequest struct {
 	Username string `json:"username"`
+}
+
+// CeremonyCompleteClaimShareRequest is the request body for
+// Client.CeremonyCompleteClaimShare. Signature is base64-encoded.
+type CeremonyCompleteClaimShareRequest struct {
+	Username  string `json:"username"`
+	NonceHex  string `json:"nonce_hex"`
+	Signature string `json:"signature"`
 }
 
 // CeremonySignCSRRequest is the request body for Client.CeremonySignCSR.
@@ -241,9 +249,11 @@ type CeremonyClaimCertResponse struct {
 	CACertPEM string `json:"ca_cert_pem"`
 }
 
-// CeremonyClaimShareResponse is the response from Client.CeremonyClaimShare.
-type CeremonyClaimShareResponse struct {
-	Share string `json:"share"`
+// CeremonyCompleteClaimShareResponse is the response from
+// Client.CeremonyCompleteClaimShare.
+type CeremonyCompleteClaimShareResponse struct {
+	ShareIndex int    `json:"share_index"`
+	ShareJSON  string `json:"share_json"`
 }
 
 // CeremonySignCSRResponse is the response from Client.CeremonySignCSR.

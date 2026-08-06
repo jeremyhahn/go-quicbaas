@@ -876,6 +876,23 @@ func DefaultBackendName() (string, error) {
 	return "", &api.ConfigurationError{Action: "resolve default xkms backend name"}
 }
 
+// RegisterBackend registers a named backend with the already-initialized
+// global service. It is used at boot when initializeCA has already
+// initialized the singleton from the CA key universe and startKMS resolves an
+// additional backend (e.g. tpm2, pkcs11, a cloud KMS) that must participate
+// in key operations. Registering a name that already exists REPLACES the
+// previous instance, so callers that do not intend replacement must check
+// Backends() first.
+func RegisterBackend(name string, backend xkmssdk.ServiceBackend) error {
+	if err := checkInitialized(); err != nil {
+		return err
+	}
+	if err := xkmssdk.RegisterServiceBackend(name, backend); err != nil {
+		return &api.XKMSBackendRegistrationError{Backend: name, Cause: err}
+	}
+	return nil
+}
+
 // BackendFor returns the appropriate backend for the given key attributes.
 func BackendFor(attrs *xkmssdk.KeyAttributes) (xkmssdk.ServiceBackend, error) {
 	if err := checkInitialized(); err != nil {

@@ -95,7 +95,7 @@ type pivCachedToken struct {
 // outside the Docker test environment.
 func AuthPIV(t *testing.T, baseURL string) string {
 	t.Helper()
-	bearer, err := authPIV(context.Background(), baseURL, pivCertPath(), pivKeyPath(), pivCAFile())
+	bearer, _, err := authPIV(context.Background(), baseURL, pivCertPath(), pivKeyPath(), pivCAFile())
 	if err != nil {
 		t.Fatalf("PIV authentication failed: %v", err)
 	}
@@ -108,6 +108,20 @@ func AuthPIV(t *testing.T, baseURL string) string {
 // to the standard integration-test locations under /etc/quicbaas/certs (and
 // honor the QUICBAAS_TEST_PIV_CERT / _KEY / _CA env vars).
 func AuthPIVContext(ctx context.Context, baseURL, certPath, keyPath, caPath string) (string, error) {
+	bearer, _, err := AuthPIVSession(ctx, baseURL, certPath, keyPath, caPath)
+	return bearer, err
+}
+
+// AuthPIVSession is like AuthPIVContext but additionally returns the
+// bearer's effective expiry (the server-reported expires_in minus a
+// 60-second safety skew). Callers that persist the bearer — e.g. to the
+// CLI default token file consumed by loadStoredAuthToken() in
+// cmd/quicbaas/client.go — MUST store this expiry rather than inventing
+// one: the server's default access-token TTL is 15 minutes
+// (pkg/config DefaultOIDCAccessTokenTTL), and a fabricated longer
+// client-side expiry makes the CLI present already-expired bearers,
+// which the REST transport rejects with 401 invalid_token.
+func AuthPIVSession(ctx context.Context, baseURL, certPath, keyPath, caPath string) (string, time.Time, error) {
 	if certPath == "" {
 		certPath = pivCertPath()
 	}
@@ -120,25 +134,25 @@ func AuthPIVContext(ctx context.Context, baseURL, certPath, keyPath, caPath stri
 	return authPIV(ctx, baseURL, certPath, keyPath, caPath)
 }
 
-func authPIV(ctx context.Context, baseURL, certPath, keyPath, caPath string) (string, error) {
+func authPIV(ctx context.Context, baseURL, certPath, keyPath, caPath string) (string, time.Time, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 	cacheKey := baseURL + "|" + certPath + "|" + keyPath + "|" + caPath
 
 	pivAuthCache.Lock()
 	if cached, ok := pivAuthCache.tokens[cacheKey]; ok && time.Now().Before(cached.ExpiresAt) {
 		pivAuthCache.Unlock()
-		return cached.Bearer, nil
+		return cached.Bearer, cached.ExpiresAt, nil
 	}
 	pivAuthCache.Unlock()
 
 	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
-		return "", &AuthError{Op: "load client cert", URL: certPath, Cause: err}
+		return "", time.Time{}, &AuthError{Op: "load client cert", URL: certPath, Cause: err}
 	}
 
 	roots, err := loadCAPool(caPath)
 	if err != nil {
-		return "", &AuthError{Op: "load CA pool", URL: caPath, Cause: err}
+		return "", time.Time{}, &AuthError{Op: "load CA pool", URL: caPath, Cause: err}
 	}
 
 	tlsCfg := &tls.Config{
@@ -158,22 +172,22 @@ func authPIV(ctx context.Context, baseURL, certPath, keyPath, caPath string) (st
 	endpoint := baseURL + "/api/v1/auth/login/piv"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {
-		return "", &AuthError{Op: "build request", URL: endpoint, Cause: err}
+		return "", time.Time{}, &AuthError{Op: "build request", URL: endpoint, Cause: err}
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", &AuthError{Op: "POST", URL: endpoint, Cause: err}
+		return "", time.Time{}, &AuthError{Op: "POST", URL: endpoint, Cause: err}
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", &AuthError{Op: "read response", URL: endpoint, Cause: err}
+		return "", time.Time{}, &AuthError{Op: "read response", URL: endpoint, Cause: err}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", &AuthBadStatusError{URL: endpoint, Status: resp.StatusCode, Body: string(body)}
+		return "", time.Time{}, &AuthBadStatusError{URL: endpoint, Status: resp.StatusCode, Body: string(body)}
 	}
 
 	var out struct {
@@ -182,10 +196,10 @@ func authPIV(ctx context.Context, baseURL, certPath, keyPath, caPath string) (st
 		ExpiresIn   int    `json:"expires_in"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
-		return "", &AuthError{Op: "decode response", URL: endpoint, Cause: err}
+		return "", time.Time{}, &AuthError{Op: "decode response", URL: endpoint, Cause: err}
 	}
 	if out.AccessToken == "" {
-		return "", &AuthError{Op: "missing access_token", URL: endpoint}
+		return "", time.Time{}, &AuthError{Op: "missing access_token", URL: endpoint}
 	}
 
 	expiry := time.Now().Add(15 * time.Minute)
@@ -196,7 +210,7 @@ func authPIV(ctx context.Context, baseURL, certPath, keyPath, caPath string) (st
 	pivAuthCache.tokens[cacheKey] = pivCachedToken{Bearer: out.AccessToken, ExpiresAt: expiry}
 	pivAuthCache.Unlock()
 
-	return out.AccessToken, nil
+	return out.AccessToken, expiry, nil
 }
 
 // pivCertPath resolves the admin client certificate path.

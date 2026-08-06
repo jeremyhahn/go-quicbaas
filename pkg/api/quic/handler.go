@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -59,6 +60,16 @@ type Handler struct {
 	// liveness mode. nil leaves QUIC on its no-enforcement path (RequireAuthz=false).
 	validatorAuthorizer ValidatorAuthorizer
 
+	// sealedBypass is the shared sealed-window authentication-bypass
+	// predicate. Installed by the QUIC server (from SetSealedWindowGate)
+	// via WithHandlerSealedWindowBypass; while the barrier is sealed the
+	// allowlisted native opcodes that pass the server's sealed gate are
+	// admitted WITHOUT a bearer token (audited, reason "sealed-window
+	// allowlist") — a sealed IAM plane cannot mint or validate tokens.
+	// Unsealed, the predicate is inert and validator enforcement is
+	// unchanged. Nil never bypasses.
+	sealedBypass *sealedwindow.AuthBypass
+
 	// governance applies engine-side quota and entitlement limits to tenants via
 	// the iam.DefaultTenantManager delegate. Wired by the QUIC server via
 	// SetTenantGovernance once the IAM manager is online; nil before lifecycle
@@ -79,6 +90,15 @@ type HandlerOption func(*Handler)
 func WithHandlerValidatorAuthorizer(v ValidatorAuthorizer) HandlerOption {
 	return func(h *Handler) {
 		h.validatorAuthorizer = v
+	}
+}
+
+// WithHandlerSealedWindowBypass installs the shared sealed-window
+// authentication-bypass predicate (see the sealedBypass field). nil leaves
+// the handler fully fail-closed under validator enforcement.
+func WithHandlerSealedWindowBypass(b *sealedwindow.AuthBypass) HandlerOption {
+	return func(h *Handler) {
+		h.sealedBypass = b
 	}
 }
 
@@ -459,6 +479,18 @@ func getResourceAndAction(opcode byte) (resource, action string) {
 func (h *Handler) authorizeAndInject(ctx context.Context, req *Request) (context.Context, *Response) {
 	// Skip authorization for public operations.
 	if isPublicOperation(req.Opcode) {
+		return ctx, nil
+	}
+
+	// Sealed-window authentication bypass. WHILE the barrier is SEALED the
+	// sealed-window allowlist IS the entire control surface: possession of
+	// unseal material is the authorization, because a sealed IAM plane
+	// cannot mint or validate tokens. The server's sealed gate ahead of
+	// this handler already rejected every non-allowlisted opcode, so the
+	// predicate only ever admits the allowlisted unseal-flow operations —
+	// audited (reason "sealed-window allowlist") on every admit. Unsealed,
+	// the predicate is always false and enforcement below is unchanged.
+	if h.sealedBypass.BypassesNativeQUIC(req.Opcode, req.Payload) {
 		return ctx, nil
 	}
 

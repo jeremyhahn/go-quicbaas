@@ -14,39 +14,125 @@
 package server
 
 import (
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
-	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
 
 // =============================================================================
 // Per-tenant barrier facade wiring
 //
 // QuicBaaS does not own per-tenant barriers — go-qrdb does. This builder
-// constructs the broker-side TenantBarrierServicer facade from the qrdb SDK
-// TenantClient bound to the platform shard, exactly as buildBarrierCeremonyServices
-// builds the system-barrier facade from platformClient.Barrier(). The facade is
+// constructs the broker-side TenantBarrierServicer facade from a qrdb SDK
+// TenantClient over the canonical qrdb embedded transport, exactly as
+// buildBarrierCeremonyServices builds the system-barrier facade. The facade is
 // shared by every transport (REST, gRPC, the qrdb-quic ALPN bridge, MCP) so all
 // of them operate the single embedded-node per-tenant barrier surface.
 //
-// When the qrdb client is not yet available the facade is built with a nil
-// TenantClient; callers gate on a non-nil facade before registering the
-// per-tenant barrier endpoints.
+// The node's OWN SDK client (node.Client()) does not carry a TenantServicer on
+// its embedded transport — qrdb wires the tenant service into its
+// multi-protocol server only. quicbaas therefore composes a dedicated
+// in-process SDK client here whose embedded transport registers the node's
+// TenantServicer (the same instance the IAM tenant lifecycle provisions
+// through), mirroring the newBootstrapCeremonyClient pattern one capability
+// over. quicbaas adds NO barrier or tenant logic — the transport is a pure
+// in-process bridge to the node's servicer.
+//
+// When the qrdb node (or its tenant service) is not yet available the facade
+// is nil; callers gate on a non-nil facade before registering the per-tenant
+// barrier endpoints, and the transport handlers respond with a typed
+// service-unavailable error.
 // =============================================================================
 
-// buildTenantBarrierService constructs the TenantBarrierServicer facade from
-// the qrdb SDK client bound to the platform shard. Returns nil when the qrdb
-// client is unavailable (typical pre-wire state), so callers can skip
-// registering the per-tenant barrier surface until the embedded node is live.
+// TenantBarrierWiringError describes a failure composing the in-process qrdb
+// SDK client that backs the per-tenant barrier facade.
+type TenantBarrierWiringError struct {
+	Stage string
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *TenantBarrierWiringError) Error() string {
+	if e.Cause == nil {
+		return "tenant barrier wiring: " + e.Stage + " failed"
+	}
+	return "tenant barrier wiring: " + e.Stage + " failed: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause for errors.Is/As traversal.
+func (e *TenantBarrierWiringError) Unwrap() error { return e.Cause }
+
+// buildTenantBarrierService constructs the TenantBarrierServicer facade over
+// the tenant-capable in-process qrdb SDK client. Returns nil when the node's
+// tenant service is unavailable (typical pre-wire / sealed-window state), so
+// callers can skip registering the per-tenant barrier surface until the
+// embedded node is live.
 func (s *Server) buildTenantBarrierService() service.TenantBarrierServicer {
-	if s.qrdbClient == nil {
+	client := s.qrdbTenantClient()
+	if client == nil {
 		return nil
 	}
-	platformClient, err := s.qrdbClient.ForShard(qbshards.PlatformShardID)
-	if err != nil || platformClient == nil {
-		if err != nil {
-			s.logger.Warnf("Tenant barrier facade bound to nil transport: %v", err)
-		}
+	return service.NewTenantBarrierService(client.Tenants())
+}
+
+// qrdbTenantClient returns the in-process qrdb SDK client whose embedded
+// transport carries the node's TenantServicer, building and caching it on
+// first use. Boot is single-threaded (all transport bring-ups run
+// sequentially inside initialize()), so no locking is required; the cached
+// client is closed during Shutdown.
+//
+// Returns nil when the node, its service graph, or the tenant service is not
+// available — e.g. before the node boots or during the sealed window, where
+// the per-tenant barrier surface is intentionally unreachable.
+func (s *Server) qrdbTenantClient() *qrdbsdk.Client {
+	if s.tenantSDKClient != nil {
+		return s.tenantSDKClient
+	}
+	if s.qrdbNode == nil {
 		return nil
 	}
-	return service.NewTenantBarrierService(platformClient.Tenants())
+	svcs := s.qrdbNode.Services()
+	if svcs == nil || svcs.Tenant == nil {
+		return nil
+	}
+	kv := s.GetQRDBKVServicer()
+	admin := s.GetQRDBAdminServicer()
+	if kv == nil || admin == nil {
+		return nil
+	}
+
+	client, err := newTenantBarrierClient(kv, admin, svcs.Tenant)
+	if err != nil {
+		s.logger.Warnf("Tenant barrier facade bound to nil transport: %v", err)
+		return nil
+	}
+	s.tenantSDKClient = client
+	return client
+}
+
+// newTenantBarrierClient composes the qrdb embedded transport + SDK client
+// over the supplied node servicers. The tenant servicer MUST be non-nil; KV
+// and Admin are required by the qrdb embedded transport contract.
+func newTenantBarrierClient(
+	kv qrdbsdk.KVServicer,
+	admin qrdbsdk.AdminServicer,
+	tenantSvc qrdbsdk.ServiceTenantServicer,
+) (*qrdbsdk.Client, error) {
+	if tenantSvc == nil {
+		return nil, &TenantBarrierWiringError{Stage: "tenant servicer"}
+	}
+	tp, err := qrdbembedded.New(kv, admin,
+		qrdbembedded.WithTenantService(tenantSvc),
+	)
+	if err != nil {
+		return nil, &TenantBarrierWiringError{Stage: "embedded transport", Cause: err}
+	}
+	// Connect is a no-op for the qrdb embedded transport (it never dials
+	// anything), so the client is usable immediately.
+	client, err := qrdbsdk.NewClient(tp)
+	if err != nil {
+		return nil, &TenantBarrierWiringError{Stage: "sdk client", Cause: err}
+	}
+	return client, nil
 }

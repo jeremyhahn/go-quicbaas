@@ -174,6 +174,17 @@ func (s *quicBaaS) GetInviteStore(ctx context.Context) (iam.InviteStore, error) 
 	return provider.GetInviteStore(ctx)
 }
 
+// GetPIVActivator returns the PIV invite-activation service from IAM
+// components. The REST invite handler resolves this per request; a nil
+// activator (PIV activation not configured) surfaces as 501 piv_not_configured.
+func (s *quicBaaS) GetPIVActivator(ctx context.Context) (*iam.PIVActivator, error) {
+	provider := s.getIAMProvider()
+	if provider == nil {
+		return nil, nil
+	}
+	return provider.GetPIVActivator(ctx)
+}
+
 // GetAdminManager returns the admin manager from IAM components.
 // This method satisfies the interface expected by REST handlers for delegated administration.
 func (s *quicBaaS) GetAdminManager(ctx context.Context) (*iam.AdminManager, error) {

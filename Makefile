@@ -1170,9 +1170,37 @@ integration-test-seal: ## Run cloud-backed barrier seal integration tests (awskm
 	exit $$RESULT
 
 .PHONY: integration-test-tenantbarrier
-integration-test-tenantbarrier: ## Run per-tenant barrier REST integration tests against the shared integration cluster
-	@echo "$(BLUE)Running per-tenant barrier integration tests...$(NC)"
-	QUICBAAS_TEST_FILTER="./test/integration/tenantbarrier/..." $(MAKE) integration-test
+integration-test-tenantbarrier: ## Run per-tenant barrier integration tests against the seal-ENABLED single-node harness in Docker
+	@echo "$(BLUE)Running per-tenant barrier integration tests (seal-enabled harness)...$(NC)"
+	@if ! docker compose version > /dev/null 2>&1 && ! command -v docker-compose > /dev/null 2>&1; then \
+		echo "$(RED)Error: Docker Compose is not installed$(NC)"; \
+		exit 1; \
+	fi
+	@COMPOSE_FILE="test/integration/docker-compose.seal.yml"; \
+	if [ ! -f test/integration/certs/ca.key ]; then \
+		echo "$(YELLOW)Generating integration mTLS/PIV certificates...$(NC)"; \
+		rm -rf test/integration/certs; \
+		go run test/integration/gen-certs/main.go test/integration/certs; \
+	else \
+		echo "$(YELLOW)Reusing existing test/integration/certs (delete to regenerate)$(NC)"; \
+	fi; \
+	echo "$(YELLOW)Cleaning up any previous tenantbarrier containers...$(NC)"; \
+	docker compose -p tenantbarrier -f $$COMPOSE_FILE down --volumes --remove-orphans 2>/dev/null || true; \
+	echo "$(YELLOW)Building tenantbarrier images (seal-enabled quicbaasd node + test runner)...$(NC)"; \
+	docker compose -p tenantbarrier -f $$COMPOSE_FILE build tenantbarrier-node tenantbarrier-test 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	echo "$(YELLOW)Starting seal-enabled node (passphrase auto-unseal)...$(NC)"; \
+	docker compose -p tenantbarrier -f $$COMPOSE_FILE up -d tenantbarrier-node; \
+	echo "$(YELLOW)Running per-tenant barrier integration tests...$(NC)"; \
+	docker compose -p tenantbarrier -f $$COMPOSE_FILE run --rm -T tenantbarrier-test; \
+	RESULT=$$?; \
+	echo "$(BLUE)Stopping tenantbarrier stack...$(NC)"; \
+	docker compose -p tenantbarrier -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+	if [ $$RESULT -eq 0 ]; then \
+		echo "$(GREEN)✓ Per-tenant barrier integration tests PASSED$(NC)"; \
+	else \
+		echo "$(RED)✗ Per-tenant barrier integration tests FAILED (exit $$RESULT)$(NC)"; \
+	fi; \
+	exit $$RESULT
 
 .PHONY: integration-test-seal-hardware
 integration-test-seal-hardware: ## Run hardware-backed barrier seal integration tests (swtpm + SoftHSM2) in Docker

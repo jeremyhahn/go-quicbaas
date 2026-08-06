@@ -9,6 +9,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -178,10 +179,13 @@ func TestIAMHandlerHappyPaths(t *testing.T) {
 			map[string]interface{}{"tenant_id": "t1", "client_id": "c1"},
 			http.MethodPost, "/api/v1/tenants/t1/apps/c1/rotate-secret"},
 
-		// Session
+		// Session. List and RevokeAll are parameterized admin verbs and map to
+		// the path-scoped /api/v1/tenants/{t}/users/{u}/sessions surface (gRPC
+		// parity); the remaining verbs stay on the self-scoped
+		// /api/v1/iam/sessions surface.
 		{"SessionList", iamSessionServicePrefix, "List",
 			map[string]interface{}{"request": map[string]interface{}{"tenant_id": "t1", "user_id": "u1", "limit": float64(5)}},
-			http.MethodGet, "/api/v1/iam/sessions"},
+			http.MethodGet, "/api/v1/tenants/t1/users/u1/sessions"},
 		{"SessionGet", iamSessionServicePrefix, "Get",
 			map[string]interface{}{"session_id": "s1"},
 			http.MethodGet, "/api/v1/iam/sessions/s1"},
@@ -190,7 +194,7 @@ func TestIAMHandlerHappyPaths(t *testing.T) {
 			http.MethodDelete, "/api/v1/iam/sessions/s1"},
 		{"SessionRevokeAll", iamSessionServicePrefix, "RevokeAll",
 			map[string]interface{}{"tenant_id": "t1", "user_id": "u1"},
-			http.MethodDelete, "/api/v1/iam/sessions"},
+			http.MethodDelete, "/api/v1/tenants/t1/users/u1/sessions"},
 		{"SessionRevokeOther", iamSessionServicePrefix, "RevokeOther",
 			map[string]interface{}{},
 			http.MethodPost, "/api/v1/iam/sessions/revoke-others"},
@@ -525,4 +529,119 @@ func TestIAMHandlerClosedTransport(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on closed transport")
 	}
+}
+
+// TestIAMSessionParameterizedContract pins the transport contract for the
+// parameterized Session verbs: List and RevokeAll always target the
+// path-scoped admin surface /api/v1/tenants/{t}/users/{u}/sessions (matching
+// the gRPC SessionService semantics) and require both identifiers — the
+// self-scoped /api/v1/iam/sessions surface never receives identity query
+// parameters from the SDK.
+func TestIAMSessionParameterizedContract(t *testing.T) {
+	rec := newIAMRecorder(t)
+	tr := newTestTransport(t, rec.server)
+	ctx := context.Background()
+
+	t.Run("ListEmitsLimitQueryOnly", func(t *testing.T) {
+		_, err := tr.Request(ctx, iamSessionServicePrefix, "List", map[string]interface{}{
+			"request": map[string]interface{}{"tenant_id": "t1", "user_id": "u1", "limit": float64(5)},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := "/api/v1/tenants/t1/users/u1/sessions?limit=5"
+		if rec.gotRawPath != want {
+			t.Errorf("raw path: want %s, got %s", want, rec.gotRawPath)
+		}
+		if strings.Contains(rec.gotRawPath, "user_id=") || strings.Contains(rec.gotRawPath, "tenant_id=") {
+			t.Errorf("identity must be path-scoped, not query parameters: %s", rec.gotRawPath)
+		}
+	})
+
+	t.Run("ListStringLimit", func(t *testing.T) {
+		_, err := tr.Request(ctx, iamSessionServicePrefix, "List", map[string]interface{}{
+			"request": map[string]interface{}{"tenant_id": "t1", "user_id": "u1", "limit": "7"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := "/api/v1/tenants/t1/users/u1/sessions?limit=7"
+		if rec.gotRawPath != want {
+			t.Errorf("raw path: want %s, got %s", want, rec.gotRawPath)
+		}
+	})
+
+	t.Run("ListZeroLimitOmitted", func(t *testing.T) {
+		_, err := tr.Request(ctx, iamSessionServicePrefix, "List", map[string]interface{}{
+			"request": map[string]interface{}{"tenant_id": "t1", "user_id": "u1", "limit": float64(0)},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := "/api/v1/tenants/t1/users/u1/sessions"
+		if rec.gotRawPath != want {
+			t.Errorf("raw path: want %s, got %s", want, rec.gotRawPath)
+		}
+	})
+
+	t.Run("ListMissingTenantID", func(t *testing.T) {
+		_, err := tr.Request(ctx, iamSessionServicePrefix, "List", map[string]interface{}{
+			"request": map[string]interface{}{"user_id": "u1"},
+		})
+		if err == nil {
+			t.Fatal("expected error for missing tenant_id")
+		}
+		if !strings.Contains(err.Error(), "tenant_id is required") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("ListMissingUserID", func(t *testing.T) {
+		_, err := tr.Request(ctx, iamSessionServicePrefix, "List", map[string]interface{}{
+			"request": map[string]interface{}{"tenant_id": "t1"},
+		})
+		if err == nil {
+			t.Fatal("expected error for missing user_id")
+		}
+		if !strings.Contains(err.Error(), "user_id is required") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("RevokeAllNoQueryParameters", func(t *testing.T) {
+		_, err := tr.Request(ctx, iamSessionServicePrefix, "RevokeAll", map[string]interface{}{
+			"tenant_id": "t1", "user_id": "u1",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := "/api/v1/tenants/t1/users/u1/sessions"
+		if rec.gotRawPath != want {
+			t.Errorf("raw path: want %s, got %s", want, rec.gotRawPath)
+		}
+	})
+
+	t.Run("RevokeAllMissingTenantID", func(t *testing.T) {
+		_, err := tr.Request(ctx, iamSessionServicePrefix, "RevokeAll", map[string]interface{}{
+			"user_id": "u1",
+		})
+		if err == nil {
+			t.Fatal("expected error for missing tenant_id")
+		}
+		if !strings.Contains(err.Error(), "tenant_id is required") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("RevokeAllMissingUserID", func(t *testing.T) {
+		_, err := tr.Request(ctx, iamSessionServicePrefix, "RevokeAll", map[string]interface{}{
+			"tenant_id": "t1",
+		})
+		if err == nil {
+			t.Fatal("expected error for missing user_id")
+		}
+		if !strings.Contains(err.Error(), "user_id is required") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
 }

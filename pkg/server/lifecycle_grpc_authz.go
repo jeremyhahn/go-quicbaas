@@ -20,6 +20,7 @@ import (
 	ggrpc "google.golang.org/grpc"
 
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
+	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -55,31 +56,73 @@ func (e *GRPCAuthzError) Error() string {
 
 func (e *GRPCAuthzError) Unwrap() error { return e.Cause }
 
+// AuthzGateConstructionError is returned when RequireAuthz=true and the
+// authorization gate for a transport cannot be constructed (no OIDC
+// provider, or the platform-token Validator failed to build). Under the
+// refuse-to-start posture this error ABORTS daemon startup: a transport is
+// never served with a silently-missing authorization gate. Gate
+// construction happens in the post-unseal boot phase, where the OIDC /
+// validator dependencies are guaranteed by ordering; while sealed, the
+// sealed-window allowlist gates are the control and no authz gate exists.
+type AuthzGateConstructionError struct {
+	Transport string
+	Op        string
+	Cause     error
+}
+
+func (e *AuthzGateConstructionError) Error() string {
+	msg := e.Transport + " authz gate construction: " + e.Op +
+		" (RequireAuthz=true refuses to start without an enforcement gate)"
+	if e.Cause != nil {
+		return msg + ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+func (e *AuthzGateConstructionError) Unwrap() error { return e.Cause }
+
 // grpcAuthorizationInterceptors builds the gRPC unary + stream authorization
-// interceptors when RequireAuthz=true and an OIDC provider is available to back
-// the platform-token Validator. It returns (nil, nil) otherwise, in which case
-// the gRPC chain adds no authorization gate — preserving the pre-authz behavior
-// exactly. The same chain backs the Unix-domain-socket gRPC listener, so this
-// builder covers both the gRPC and Unix transports in one place.
+// interceptors when RequireAuthz=true. Gate construction is FAIL-CLOSED:
+// when RequireAuthz=true and the OIDC provider or the platform-token
+// Validator cannot be built, a typed *AuthzGateConstructionError is
+// returned and daemon startup ABORTS (refuse-to-start posture). It never
+// returns (nil, nil, nil) under RequireAuthz. With RequireAuthz=false it
+// returns (nil, nil, nil) and the gRPC chain adds no authorization gate —
+// preserving the pre-authz behavior exactly. The same chain backs the
+// Unix-domain-socket gRPC listener, so this builder covers both the gRPC
+// and Unix transports in one place.
+//
+// Construction runs in the post-unseal boot phase (startGRPCServer runs
+// after startService completes IAM init), so the OIDC / validator
+// dependencies are guaranteed by ordering; while sealed, the sealed-window
+// allowlist interceptors are the control and no authz gate exists.
 //
 // The interceptors enforce authorization through the SAME central platform-token
 // Validator the REST gate uses (buildPlatformValidator): one Authorize call per
 // request does offline signature / iss / aud / exp verification, the offline
 // scp -> permission decision, and the per-tenant liveness/revocation check. This
 // REPLACES the prior online qrdb role-PDP two-step on the gRPC transport.
-func (s *Server) grpcAuthorizationInterceptors() (ggrpc.UnaryServerInterceptor, ggrpc.StreamServerInterceptor) {
+func (s *Server) grpcAuthorizationInterceptors() (ggrpc.UnaryServerInterceptor, ggrpc.StreamServerInterceptor, error) {
 	if s.config == nil || !s.config.Security.RequireAuthz {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	getter, ok := s.quicBaaSService.(grpcOIDCProviderGetter)
 	if !ok {
-		s.logger.Debug("gRPC authz disabled: service does not expose an OIDC provider")
-		return nil, nil
+		return nil, nil, &AuthzGateConstructionError{
+			Transport: "grpc",
+			Op:        "service does not expose an OIDC provider",
+		}
 	}
 	if provider, err := getter.GetOIDCProvider(context.Background()); err != nil || provider == nil {
-		s.logger.Debug("gRPC authz disabled: OIDC provider not available")
-		return nil, nil
+		if err == nil {
+			err = errGRPCOIDCProviderUnavailable
+		}
+		return nil, nil, &AuthzGateConstructionError{
+			Transport: "grpc",
+			Op:        "resolve OIDC provider",
+			Cause:     err,
+		}
 	}
 
 	// Build the single central platform-token Validator and install the
@@ -88,10 +131,25 @@ func (s *Server) grpcAuthorizationInterceptors() (ggrpc.UnaryServerInterceptor, 
 	// permission decision, and the per-tenant liveness/revocation check.
 	validator, err := s.buildPlatformValidator(context.Background())
 	if err != nil {
-		s.logger.WithError(err).Error("gRPC authz disabled: failed to build platform-token validator")
-		return nil, nil
+		return nil, nil, &AuthzGateConstructionError{
+			Transport: "grpc",
+			Op:        "build platform-token validator",
+			Cause:     err,
+		}
 	}
 
-	return grpcapi.UnaryAuthorizationInterceptor(validator),
-		grpcapi.StreamAuthorizationInterceptor(validator)
+	// Sealed-window authentication bypass (owner-approved contract): while
+	// the barrier is sealed — a post-boot RE-SEAL, since this builder runs in
+	// the post-unseal boot phase — the sealed-window allowlist IS the entire
+	// control surface. The sealed-window interceptors ahead of this gate
+	// already deny every off-allowlist method, and the gate itself admits the
+	// allowlisted unseal-flow verbs WITHOUT authentication (a sealed IAM
+	// plane cannot mint tokens), audited with reason "sealed-window
+	// allowlist". Unsealed, the predicate is inert and enforcement is
+	// unchanged. Same single probe instance as every other transport gate.
+	sealedBypass := qbsealedwindow.NewAuthBypass(
+		s.SealedWindowProbe(), qbsealedwindow.NewLoggerAuditSink(s.logger))
+
+	return grpcapi.UnaryAuthorizationInterceptor(validator, grpcapi.WithSealedWindowAuthBypass(sealedBypass)),
+		grpcapi.StreamAuthorizationInterceptor(validator, grpcapi.WithSealedWindowAuthBypass(sealedBypass)), nil
 }

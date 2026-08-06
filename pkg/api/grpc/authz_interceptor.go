@@ -22,9 +22,11 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
 // UnmappedMethodError is returned by the gRPC PEP when a protected method has no
@@ -84,14 +86,23 @@ func bearerFromContext(ctx context.Context) string {
 // scope all reject the call. The gRPC metadata path carries no DPoP proof, so
 // the empty dpopProof / htm / htu args are passed deliberately (see
 // GRPCValidatorAuthorizer).
-func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRPCValidatorAuthorizer) (context.Context, error) {
+func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRPCValidatorAuthorizer, sealedBypass *sealedwindow.AuthBypass) (context.Context, error) {
 	if isPublicGRPCMethod(fullMethod) {
 		return ctx, nil
 	}
 
-	resource, action, ok := grpcResourceAndAction(fullMethod)
-	if !ok {
-		return ctx, status.Error(codes.PermissionDenied, (&UnmappedMethodError{Method: fullMethod}).Error())
+	// Sealed-window authentication bypass. WHILE the barrier is SEALED the
+	// sealed-window allowlist IS the entire control surface: possession of
+	// unseal material is the authorization, because a sealed IAM plane
+	// cannot mint or validate tokens. The sealed-window interceptor ahead
+	// of this gate already rejected every non-allowlisted method, so the
+	// predicate only ever admits the allowlisted unseal-flow verbs — and it
+	// emits an audit event (reason "sealed-window allowlist") on every
+	// admit. Unsealed, the predicate is always false and enforcement below
+	// is unchanged; the handlers keep their own credential checks (officer
+	// cert + nonce verification) on the share-claim verbs.
+	if sealedBypass.BypassesGRPC(fullMethod) {
+		return ctx, nil
 	}
 
 	token := bearerFromContext(ctx)
@@ -99,16 +110,53 @@ func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRP
 		return ctx, status.Error(codes.Unauthenticated, (&MissingTokenError{Method: fullMethod}).Error())
 	}
 
+	// IdentityGated verbs (the qrdb barrier share-claim methods): any
+	// AUTHENTICATED principal is admitted — the validator's scope-free
+	// Validate path performs the full offline token validation and liveness
+	// check without demanding a registered scp permission, and the HANDLER
+	// enforces the real credential (registered-officer lookup, mTLS SPKI
+	// thumbprint match, nonce signature verification). Exact parity with
+	// qrdb's permission.IdentityGated sentinel. Fail closed: an authorizer
+	// without the authenticated seam denies these verbs outright, and every
+	// validation failure denies via validatorGRPCStatus like any other
+	// decision.
+	if qrdbIdentityGatedMethods[fullMethod] {
+		authenticator, ok := authorizer.(GRPCValidatorAuthenticator)
+		if !ok {
+			return ctx, status.Error(codes.PermissionDenied, "permission denied")
+		}
+		authzCtx, err := authenticator.Validate(ctx, token, "", "", "")
+		if err != nil {
+			return ctx, validatorGRPCStatus(err)
+		}
+		return contextWithAuthorizedSubject(ctx, authzCtx), nil
+	}
+
+	resource, action, ok := grpcResourceAndAction(fullMethod)
+	if !ok {
+		return ctx, status.Error(codes.PermissionDenied, (&UnmappedMethodError{Method: fullMethod}).Error())
+	}
+
 	authzCtx, err := authorizer.Authorize(ctx, token, resource+":"+action, "", "", "")
 	if err != nil {
 		return ctx, validatorGRPCStatus(err)
 	}
 
-	// Reconstruct the principal from the verified AuthorizedContext so the
-	// service-layer per-key authorization (auth.SubjectFromContext) sees an
-	// authenticated subject. The AuthorizedContext is the canonical
-	// post-validation identity; Username carries the token name claim so
-	// principal matching by username (in addition to ID) is preserved.
+	return contextWithAuthorizedSubject(ctx, authzCtx), nil
+}
+
+// contextWithAuthorizedSubject reconstructs the principal from the verified
+// AuthorizedContext so the service-layer per-key authorization
+// (auth.SubjectFromContext) sees an authenticated subject, and injects the
+// tenant context key so the service / storage layer resolves row-level
+// isolation from iam.TenantFromContext (the canonical RLS source), matching
+// the REST and MCP validator-allow paths. Shared by the scoped Authorize
+// path and the IdentityGated Validate path so both admit decisions produce
+// identical downstream identity context.
+func contextWithAuthorizedSubject(ctx context.Context, authzCtx *platformtoken.AuthorizedContext) context.Context {
+	// The AuthorizedContext is the canonical post-validation identity;
+	// Username carries the token name claim so principal matching by
+	// username (in addition to ID) is preserved.
 	ctx = auth.SubjectIntoContext(ctx, interfaces.Subject{
 		ID:            authzCtx.Subject,
 		Username:      authzCtx.Username,
@@ -118,15 +166,12 @@ func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRP
 		Attributes:    make(map[string]interface{}),
 	})
 
-	// Inject the tenant context key so the service / storage layer resolves
-	// row-level isolation from iam.TenantFromContext (the canonical RLS source),
-	// matching the REST and MCP validator-allow paths. Only set it when the
-	// token carries a tenant; an empty TenantID leaves single-tenant behavior
-	// unchanged.
+	// Only set the tenant key when the token carries a tenant; an empty
+	// TenantID leaves single-tenant behavior unchanged.
 	if authzCtx.TenantID != "" {
 		ctx = iam.ContextWithTenant(ctx, authzCtx.TenantID)
 	}
-	return ctx, nil
+	return ctx
 }
 
 // UnaryAuthorizationInterceptor enforces platform-token authorization on every
@@ -134,9 +179,10 @@ func authorizeGRPCRequest(ctx context.Context, fullMethod string, authorizer GRP
 // interceptor is never added to the chain, so behavior is unchanged. Both the
 // TCP gRPC listener and the Unix-domain-socket gRPC listener share this chain,
 // so a single installation covers both the gRPC and Unix transports.
-func UnaryAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer) grpc.UnaryServerInterceptor {
+func UnaryAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer, opts ...AuthzInterceptorOption) grpc.UnaryServerInterceptor {
+	cfg := resolveAuthzInterceptorOptions(opts)
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		authedCtx, err := authorizeGRPCRequest(ctx, info.FullMethod, authorizer)
+		authedCtx, err := authorizeGRPCRequest(ctx, info.FullMethod, authorizer, cfg.sealedBypass)
 		if err != nil {
 			return nil, err
 		}
@@ -147,9 +193,10 @@ func UnaryAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer) grpc.Unar
 // StreamAuthorizationInterceptor is the streaming counterpart of
 // UnaryAuthorizationInterceptor. It authorizes the stream open and wraps the
 // stream so downstream handlers observe the authenticated context.
-func StreamAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer) grpc.StreamServerInterceptor {
+func StreamAuthorizationInterceptor(authorizer GRPCValidatorAuthorizer, opts ...AuthzInterceptorOption) grpc.StreamServerInterceptor {
+	cfg := resolveAuthzInterceptorOptions(opts)
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		authedCtx, err := authorizeGRPCRequest(ss.Context(), info.FullMethod, authorizer)
+		authedCtx, err := authorizeGRPCRequest(ss.Context(), info.FullMethod, authorizer, cfg.sealedBypass)
 		if err != nil {
 			return err
 		}

@@ -314,8 +314,10 @@ type (
 	ClaimCertBeginResponse             = xkmssdk.ClaimCertBeginResponse
 	ClaimCertCompleteRequest           = xkmssdk.ClaimCertCompleteRequest
 	ClaimCertCompleteResponse          = xkmssdk.ClaimCertCompleteResponse
-	ClaimShareRequest                  = xkmssdk.ClaimShareRequest
-	ClaimShareResponse                 = xkmssdk.ClaimShareResponse
+	ClaimShareBeginRequest             = xkmssdk.ClaimShareBeginRequest
+	ClaimShareBeginResponse            = xkmssdk.ClaimShareBeginResponse
+	ClaimShareCompleteRequest          = xkmssdk.ClaimShareCompleteRequest
+	ClaimShareCompleteResponse         = xkmssdk.ClaimShareCompleteResponse
 	Client                             = xkmssdk.Client
 	CopyKeyRequest                     = xkmssdk.CopyKeyRequest
 	CopyKeyResponse                    = xkmssdk.CopyKeyResponse

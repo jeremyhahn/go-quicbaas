@@ -22,6 +22,7 @@ import (
 	"time"
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
+	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
@@ -289,8 +290,18 @@ func (s *Server) startRESTServer() error {
 	// activation) stay open. SetAuthorizationService rebuilds the router with
 	// the middleware installed, so it MUST run before Start. The call is a
 	// no-op when IAM/OIDC is unavailable (see the rest && !iam stub),
-	// preserving the prior no-authz behaviour for storage-less / embedded boots.
-	s.configureRESTAuthz(restServer)
+	// preserving the prior no-authz behaviour for storage-less / embedded
+	// boots. Under RequireAuthz gate construction is fail-closed: a
+	// returned *AuthzGateConstructionError aborts startup.
+	if err := s.configureRESTAuthz(restServer); err != nil {
+		return err
+	}
+
+	// Install the probe-driven sealed-window gate. A pass-through while the
+	// barrier is unsealed; the instant the barrier is sealed (post-boot
+	// `barrier seal`), only the canonical sealed-window surface remains
+	// reachable. Must run after every other Set* (it rebuilds the router).
+	restServer.SetSealedWindowGate(s.SealedWindowProbe(), qbsealedwindow.RESTAllowlist())
 
 	// Start REST server
 	address := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.REST.Port)

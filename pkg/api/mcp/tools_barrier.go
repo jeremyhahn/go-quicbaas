@@ -565,23 +565,23 @@ func (r *ToolRegistry) registerBarrierTools() {
 // default branch into executeBarrierTool, avoiding a giant per-name switch in
 // the parent dispatcher.
 var barrierToolNames = map[string]struct{}{
-	"qrdb_barrier_status":                    {},
-	"qrdb_barrier_initialize":                {},
-	"qrdb_barrier_unseal":                    {},
-	"qrdb_barrier_seal":                      {},
-	"qrdb_barrier_shamir_initialize":         {},
-	"qrdb_barrier_shamir_unseal_share":       {},
-	"qrdb_barrier_shamir_unseal_shares":      {},
-	"qrdb_barrier_rekey":                     {},
-	"qrdb_barrier_recovery_generate":         {},
-	"qrdb_barrier_recovery_recover":          {},
-	"qrdb_barrier_recovery_delete":           {},
-	"qrdb_barrier_recovery_status":           {},
-	"qrdb_barrier_root_token":                {},
-	"qrdb_barrier_enable_encryption":         {},
-	"qrdb_tenant_barrier_enable_encryption":  {},
-	"qrdb_tenant_update_quotas":              {},
-	"qrdb_tenant_update_entitlements":        {},
+	"qrdb_barrier_status":                   {},
+	"qrdb_barrier_initialize":               {},
+	"qrdb_barrier_unseal":                   {},
+	"qrdb_barrier_seal":                     {},
+	"qrdb_barrier_shamir_initialize":        {},
+	"qrdb_barrier_shamir_unseal_share":      {},
+	"qrdb_barrier_shamir_unseal_shares":     {},
+	"qrdb_barrier_rekey":                    {},
+	"qrdb_barrier_recovery_generate":        {},
+	"qrdb_barrier_recovery_recover":         {},
+	"qrdb_barrier_recovery_delete":          {},
+	"qrdb_barrier_recovery_status":          {},
+	"qrdb_barrier_root_token":               {},
+	"qrdb_barrier_enable_encryption":        {},
+	"qrdb_tenant_barrier_enable_encryption": {},
+	"qrdb_tenant_update_quotas":             {},
+	"qrdb_tenant_update_entitlements":       {},
 }
 
 // isBarrierTool reports whether the given tool name belongs to the barrier
@@ -910,12 +910,12 @@ func executeUpdateTenantEntitlements(ctx context.Context, gov mcpTenantGovernanc
 		return nil, &BarrierTenantIDRequiredError{}
 	}
 	entitlements := qrdbsdk.Entitlements{
-		AllowedIsolationModes:    getStringSlice(args, "allowed_isolation_modes"),
-		AllowDedicatedRaft:       getBool(args, "allow_dedicated_raft"),
-		AllowVolumeStorage:       getBool(args, "allow_volume_storage"),
+		AllowedIsolationModes:     getStringSlice(args, "allowed_isolation_modes"),
+		AllowDedicatedRaft:        getBool(args, "allow_dedicated_raft"),
+		AllowVolumeStorage:        getBool(args, "allow_volume_storage"),
 		AllowSystemManagedBarrier: getBool(args, "allow_system_managed_barrier"),
-		AllowDedicatedWAL:        getBool(args, "allow_dedicated_wal"),
-		AllowedBarrierModes:      getStringSlice(args, "allowed_barrier_modes"),
+		AllowDedicatedWAL:         getBool(args, "allow_dedicated_wal"),
+		AllowedBarrierModes:       getStringSlice(args, "allowed_barrier_modes"),
 	}
 	if err := gov.UpdateEngineEntitlements(ctx, tenantID, entitlements); err != nil {
 		return nil, err

@@ -78,6 +78,15 @@ func TestMapRequestToPermission(t *testing.T) {
 		{"tenant barrier seal", "/api/v1/tenants/acme/barrier/seal", http.MethodPost, "tenant_barrier", "seal", true},
 		{"tenant barrier status", "/api/v1/tenants/acme/barrier/status", http.MethodGet, "tenant_barrier", "status", true},
 
+		// Tenant-scoped user session administration: the DELETE leaf rule
+		// wins over the /api/v1/tenants prefix so the admin revoke-all
+		// (SDK Session/RevokeAll -> REST) authorizes as users:update — the
+		// same vocabulary as the self-scoped /api/v1/iam session
+		// revocations. The GET collection stays on the surface-wide
+		// tenants:read prefix mapping.
+		{"tenant user sessions revoke-all", "/api/v1/tenants/acme/users/u1/sessions", http.MethodDelete, "users", "update", true},
+		{"tenant user sessions list", "/api/v1/tenants/acme/users/u1/sessions", http.MethodGet, "tenants", "read", true},
+
 		// Data services.
 		{"timeseries query", "/api/v1/timeseries", http.MethodGet, "timeseries", "query", true},
 		{"timeseries write", "/api/v1/timeseries", http.MethodPost, "timeseries", "write", true},

@@ -31,6 +31,7 @@ type mockIAMComponents struct {
 	sessionStorage      iam.SessionStorage
 	sessionManager      iam.SessionManager
 	inviteStore         iam.InviteStore
+	pivActivator        *iam.PIVActivator
 	adminManager        *iam.AdminManager
 	gdprManager         *iam.GDPRManager
 	authManager         AuthManagerInterface
@@ -277,6 +278,24 @@ func TestIAMServiceAdapter_GetAuthManager_NilComponents(t *testing.T) {
 	assert.Nil(t, am)
 }
 
+func TestIAMServiceAdapter_GetPIVActivator_WithComponents(t *testing.T) {
+	activator := &iam.PIVActivator{}
+	components := &mockIAMComponents{pivActivator: activator}
+	adapter := &iamServiceAdapter{components: components}
+
+	pa, err := adapter.GetPIVActivator(context.Background())
+	require.NoError(t, err)
+	assert.Same(t, activator, pa)
+}
+
+func TestIAMServiceAdapter_GetPIVActivator_NilComponents(t *testing.T) {
+	adapter := &iamServiceAdapter{components: nil}
+
+	pa, err := adapter.GetPIVActivator(context.Background())
+	require.NoError(t, err)
+	assert.Nil(t, pa)
+}
+
 type mockIAMServiceProvider struct {
 	tenantMgr      iam.TenantManager
 	identityStore  *iam.IdentityStore
@@ -291,6 +310,7 @@ type mockIAMServiceProvider struct {
 	sessionStorage iam.SessionStorage
 	sessionMgr     SessionManager
 	inviteStore    iam.InviteStore
+	pivActivator   *iam.PIVActivator
 	adminMgr       *iam.AdminManager
 	gdprMgr        *iam.GDPRManager
 	authMgr        AuthManagerInterface
@@ -308,6 +328,7 @@ type mockIAMServiceProvider struct {
 	sessionStorageErr error
 	sessionMgrErr     error
 	inviteStoreErr    error
+	pivActivatorErr   error
 	adminMgrErr       error
 	gdprMgrErr        error
 	authMgrErr        error
