@@ -45,9 +45,9 @@ type canonicalAuthLoginOptions struct {
 	method         string
 	factorID       string
 	username       string
+	tenantID       string
 	clientCertPath string
 	device         string
-	rpid           string
 	origin         string
 	reader         string
 	slot           string
@@ -107,6 +107,17 @@ const (
 // ---------------------------------------------------------------------------
 // Typed errors
 // ---------------------------------------------------------------------------
+
+// MissingLoginTenantError is returned when the login ceremony is started
+// without a tenant scope. The tenant comes from the global --tenant flag,
+// which defaults to the qrdb system tenant, so an empty value means the
+// operator explicitly cleared it.
+type MissingLoginTenantError struct{}
+
+// Error returns a human-readable description.
+func (e *MissingLoginTenantError) Error() string {
+	return "auth login: tenant is required (set --tenant; the login relying party is per-tenant)"
+}
 
 // MissingClientCertError is returned when --method mtls cannot resolve
 // a client certificate from --client-cert or any well-known fallback.
@@ -282,6 +293,10 @@ vendor-agnostic: YubiKey, SoloKey, Nitrokey, TouchID, Windows Hello,
 or any CTAP2 / NIST SP 800-73-4 device works.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// The login ceremony is tenant-scoped (see canonicalLoginTenant);
+			// the scope comes from the global --tenant flag, so no per-command
+			// tenant flag is defined.
+			opts.tenantID = globalTenantID
 			return runCanonicalAuthLoginV2(cmd.Context(), opts)
 		},
 	}
@@ -290,8 +305,11 @@ or any CTAP2 / NIST SP 800-73-4 device works.`,
 	cmd.Flags().StringVar(&opts.username, "username", "", "Username (subject) for login")
 	cmd.Flags().StringVar(&opts.clientCertPath, "client-cert", "", "Client certificate PEM path (--method mtls)")
 	cmd.Flags().StringVar(&opts.device, "device", "", "FIDO2 local HID device path (--method fido2; default: first connected authenticator)")
-	cmd.Flags().StringVar(&opts.rpid, "rp-id", "", "WebAuthn relying-party id (--method fido2; default: quicbaas)")
-	cmd.Flags().StringVar(&opts.origin, "origin", "", "WebAuthn origin (--method fido2; default: https://<rp-id>)")
+	// No --rp-id flag: the relying-party id is NOT a client choice. It is
+	// carried by the server-issued PublicKeyCredentialRequestOptions the
+	// begin step returns, and the authenticator binds the assertion to it.
+	cmd.Flags().StringVar(&opts.origin, "origin", "",
+		"WebAuthn origin (--method fido2; default: https://<server-issued rpId>)")
 	cmd.Flags().StringVar(&opts.reader, "reader", "", "PC/SC reader name (--method piv)")
 	cmd.Flags().StringVar(&opts.slot, "slot", "9a", "PIV slot id (--method piv; default 9a)")
 	cmd.Flags().StringVar(&opts.pin, "pin", "", "PIV User PIN (--method piv; falls back to QUICBAAS_USER_PIN)")
@@ -330,10 +348,16 @@ func runCanonicalAuthLoginV2(ctx context.Context, opts *canonicalAuthLoginOption
 
 	// 1. Begin the unified login ceremony. qrdb's LoginClient issues the
 	//    method-specific challenge via the registered factor authenticator
-	//    (PIV/mtls server nonce, WebAuthn RP options).
+	//    (PIV/mtls server nonce, WebAuthn RP options). The tenant scope is
+	//    mandatory for WebAuthn — the relying party is per-tenant.
+	tenantID, tErr := canonicalLoginTenant(opts.tenantID)
+	if tErr != nil {
+		return tErr
+	}
 	begin, err := auth.BeginLogin(ctx, qrdbtransport.BeginLoginRequest{
-		Type: factorType,
-		Hint: opts.username,
+		Type:     factorType,
+		Hint:     opts.username,
+		TenantID: tenantID,
 	})
 	if err != nil {
 		return err
@@ -412,6 +436,21 @@ func canonicalFactorType(method string) (qrdbtransport.FactorType, error) {
 	default:
 		return "", &InvalidAuthMethodError{Method: method}
 	}
+}
+
+// canonicalLoginTenant returns the tenant that scopes the login ceremony.
+//
+// The scope is NOT optional: WebAuthn is relying-party scoped, so the server's
+// tenant-aware WebAuthn verifier fails closed when the login carries no tenant
+// (pkg/server.EmptyLoginTenantError) and BeginLogin is rejected before any
+// authenticator is touched. PIV and mTLS carry the tenant through the login
+// session too, so the FinishLogin verifier resolves the same tenant the
+// challenge was issued for.
+func canonicalLoginTenant(tenantID string) (string, error) {
+	if tenantID == "" {
+		return "", &MissingLoginTenantError{}
+	}
+	return tenantID, nil
 }
 
 // resolveCanonicalAuthLoginEnv fills in viper-bound env-var values for

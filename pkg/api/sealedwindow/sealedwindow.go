@@ -42,6 +42,14 @@
 //     window; the ceremony flows deliver boot credentials instead.
 package sealedwindow
 
+import (
+	ggrpc "google.golang.org/grpc"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+)
+
 // Verb is a transport-neutral identifier for one sealed-window operation.
 // The identifiers use the same string values as qrdb's canonical table so
 // the two tables can be diffed mechanically.
@@ -110,12 +118,13 @@ type Names struct {
 	// installs directly). Both the qrdb-wire root mounts (/v1/...) and the
 	// quicbaas /api/v1 mirrors are listed.
 	REST []string
-	// GRPC method tails — the suffix after the last "/" in FullMethod —
-	// matching qrdb's gRPC allowlist convention so the SDK-re-exported
-	// SealedWindowUnaryInterceptor / StreamInterceptor consume them
-	// directly. One tail covers BOTH the qrdb.v1.* registration and the
-	// quicbaas.* mirror service when the method names align (they do by
-	// design: quicbaas mirrors qrdb's verb names verbatim).
+	// GRPC method tails — the bare method name, i.e. the suffix after the
+	// last "/" in FullMethod — matching qrdb's canonical table convention so
+	// the two tables diff mechanically. A tail is NOT a matchable identity:
+	// quicbaas co-registers many services and several of them declare a
+	// same-named method (e.g. quicbaas.tenant.v1.TenantBarrier/Status), so
+	// live gating MUST use the service-qualified derivation from
+	// GRPCFullMethodAllowlist, never a bare tail.
 	GRPC []string
 	// QUIC lists the native quicbaas-quic ALPN operations (opcode +
 	// sub-op) for this verb.
@@ -500,12 +509,42 @@ func RESTAllowlist() []string {
 	return out
 }
 
-// GRPCAllowlist derives the gRPC sealed-window allowlist (method tails) from
-// Table in derivation order, deduplicated. The tails are consumed by the
-// qrdb-SDK-re-exported SealedWindowUnaryInterceptor / StreamInterceptor,
-// which match the suffix after the last "/" in FullMethod — one tail
-// therefore covers both the qrdb.v1.* registration and the quicbaas.*
-// mirror service for the same verb.
+// grpcMirrorServices are the quicbaas-native gRPC services that mirror
+// sealed-window verbs onto the quicbaas namespace. Every fully-qualified
+// allowlist entry for a quicbaas service is derived by intersecting the
+// canonical method tails with the methods these ServiceDescs actually
+// declare, so a tail can never be qualified onto a service that does not
+// serve it and a proto rename shows up as a missing entry rather than as a
+// silently inert string.
+//
+// The list is deliberately CLOSED. Services omitted here are excluded on
+// purpose:
+//
+//   - quicbaas.tenant.v1.TenantBarrier — the per-tenant barrier surface is a
+//     documented sealed-window exclusion, and it declares a method named
+//     "Status" whose tail collides with the canonical admin status verb;
+//   - quicbaas.agent.runtime.v1.AgentRuntime ("Status"),
+//     quicbaas.orchestrator.v1.OrchestratorService, quicbaas.ollama.v1 and
+//     quicbaas.vector.v1 ("Health") — post-unseal data-plane services whose
+//     liveness verbs collide by tail only.
+//
+// quicbaas.v1.QuicBaaS contributes exactly its Health liveness RPC; its data
+// plane (Get/Put/...) shares no tail with the canonical table.
+var grpcMirrorServices = []ggrpc.ServiceDesc{
+	pb.Barrier_ServiceDesc,
+	pb.Ceremony_ServiceDesc,
+	pb.QuicBaaS_ServiceDesc,
+}
+
+// GRPCAllowlist derives the gRPC sealed-window allowlist as bare method tails
+// from Table in derivation order, deduplicated. It mirrors qrdb's
+// sealedwindow.GRPCAllowlist so the two canonical tables diff mechanically.
+//
+// The entries are NOT suitable for gating live requests: a bare tail such as
+// "Status" would match the same-named method on ANY co-registered quicbaas
+// service (e.g. "/quicbaas.tenant.v1.TenantBarrier/Status", a deliberate
+// sealed-window exclusion). Callers that gate live traffic MUST use
+// GRPCFullMethodAllowlist, which pins the service.
 func GRPCAllowlist() []string {
 	seen := make(map[string]struct{})
 	var out []string
@@ -517,6 +556,61 @@ func GRPCAllowlist() []string {
 			seen[m] = struct{}{}
 			out = append(out, m)
 		}
+	}
+	return out
+}
+
+// GRPCFullMethodAllowlist derives the gRPC sealed-window allowlist as
+// fully-qualified "/{service}/{method}" paths — the exact form of
+// grpc.UnaryServerInfo.FullMethod — for every gRPC service quicbaas registers
+// that serves sealed-window verbs. This is the list the sealed-window
+// interceptors and the authentication bypass consume; matching is exact, so a
+// same-named method on any other co-registered service stays sealed.
+//
+// Two sources compose it, in derivation order:
+//
+//  1. The qrdb.v1.QRDBService composition surface, taken verbatim from qrdb's
+//     own canonical derivation (qrdbsdk.GRPCSealedWindowAllowlist). quicbaas
+//     registers that service through qrdbsdk.RegisterGRPCService, so consuming
+//     qrdb's list directly makes drift on the qrdb.v1 surface impossible.
+//  2. The quicbaas mirror services in grpcMirrorServices, qualified with the
+//     canonical tails from Table that each service actually declares.
+func GRPCFullMethodAllowlist() []string {
+	tails := GRPCAllowlist()
+	size := len(qrdbsdk.GRPCSealedWindowAllowlist) + len(tails)*len(grpcMirrorServices)
+	seen := make(map[string]struct{}, size)
+	out := make([]string, 0, size)
+	appendMethod := func(m string) {
+		if _, dup := seen[m]; dup {
+			return
+		}
+		seen[m] = struct{}{}
+		out = append(out, m)
+	}
+	for _, m := range qrdbsdk.GRPCSealedWindowAllowlist {
+		appendMethod(m)
+	}
+	for _, desc := range grpcMirrorServices {
+		declared := declaredMethods(desc)
+		for _, tail := range tails {
+			if _, ok := declared[tail]; !ok {
+				continue
+			}
+			appendMethod("/" + desc.ServiceName + "/" + tail)
+		}
+	}
+	return out
+}
+
+// declaredMethods returns the set of method names a gRPC service declares,
+// covering both unary methods and streams.
+func declaredMethods(desc ggrpc.ServiceDesc) map[string]struct{} {
+	out := make(map[string]struct{}, len(desc.Methods)+len(desc.Streams))
+	for _, m := range desc.Methods {
+		out[m.MethodName] = struct{}{}
+	}
+	for _, s := range desc.Streams {
+		out[s.StreamName] = struct{}{}
 	}
 	return out
 }

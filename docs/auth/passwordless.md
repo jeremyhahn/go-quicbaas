@@ -62,6 +62,38 @@ User visits login page and selects their identity provider:
 
 No username or password field exists. The server returns a list of allowed credentials for the user after they verify their identity.
 
+### 5. Headless Login (CLI)
+
+The same passkey works without a browser. `quicbaas auth login` drives the
+unified login ceremony (`POST /api/v1/auth/login/begin` → CTAP2 assertion →
+`POST /api/v1/auth/login/finish`) against a locally connected authenticator:
+
+```bash
+quicbaas auth login --method fido2 \
+  --username admin@system.qrdb.local \
+  --tenant system \
+  --origin https://localhost:8443
+```
+
+The relying-party id is **not** a client flag: it is carried by the
+server-issued `PublicKeyCredentialRequestOptions` the begin step returns, and
+the authenticator binds the assertion to it. `--origin` is the only override,
+for relying parties whose origin host differs from the RP id.
+
+The ceremony is **tenant scoped**: the WebAuthn relying party (RP id + origins)
+belongs to a tenant, so the server resolves the per-tenant relying party and
+fails closed when the request carries no tenant — it never falls back to a
+default tenant, which would break tenant isolation. The CLI takes that scope
+from the global `--tenant` flag, which defaults to the `system` tenant.
+
+Login resolves the factor enrolled in the qrdb auth-factor store, and **every**
+WebAuthn registration path writes that factor: the server enrolls the fido2
+factor as it persists the credential, so a passkey registered in the browser
+(self-registration, invite activation, the IAM console) is immediately usable
+for headless CLI/SDK login. `quicbaas auth factor add --type fido2` runs the
+same registration ceremony from a locally connected authenticator and prints
+the credential id — the factor lookup key `auth login` submits on finish.
+
 ## Service Account Flow
 
 Service accounts (non-human identities) authenticate via **mTLS with a bound access token**.
@@ -292,6 +324,8 @@ iam:
 | "Certificate verification failed" | mTLS client cert not enrolled | Re-register the service account with `quicbaas oauth2 client register` |
 | "Token bound to wrong credential" | `cnf.x5t#S256` mismatch | Ensure client always presents the enrolled certificate; check cert renewal |
 | "Challenge expired" | WebAuthn ceremony took >60s | Increase `iam.auth.webauthn.timeout` or prompt user to retry |
+| `auth login` returns bare `UNAUTHORIZED` at begin | Login sent no tenant scope; the per-tenant WebAuthn relying party fails closed | Pass `--tenant <id>` (defaults to `system`) |
+| `auth login` returns `UNAUTHORIZED` at finish | No fido2 factor is enrolled for the credential in the qrdb auth-factor store | Enroll with `quicbaas auth factor add --type fido2` |
 
 ## References
 

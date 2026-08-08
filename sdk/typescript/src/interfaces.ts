@@ -27,7 +27,6 @@ import type {
   InferenceChunk,
   CredentialAssertionJSON,
   PublicKeyCredentialJSON,
-  PublicTenant,
   SSHKey,
   SSHScope,
   CreateSSHKeyRequest,
@@ -404,10 +403,6 @@ export interface AuthClient {
   // Maps to POST /api/v1/auth/login/piv.
   // Only implemented on the REST transport; non-browser transports return notImpl.
   loginPIV(): Promise<AuthTokenResponse>;
-
-  // listPublicTenants returns the tenants that allow self-service login.
-  // Maps to GET /api/v1/iam/tenants/public. No auth required.
-  listPublicTenants(): Promise<PublicTenant[]>;
 
   // registerBegin initiates the self-service tenant registration ceremony.
   // Returns the WebAuthn creation options challenge and a session_id that

@@ -270,28 +270,31 @@
   });
 
   // ---------------------------------------------------------------------------
-  // Active-tenant switcher options. Fetched from the public tenants endpoint
-  // (the same one LoginView uses) so the dropdown reflects every tenant the
-  // server knows about, not just the bootstrap "system". Falls back to a
-  // single "system" entry if the fetch fails so the control still works.
-  // 'system' is qrdb's canonical control-plane tenant; the legacy "default"
-  // tenant was permanently retired by qrdb's tenant-isolation refactor.
+  // Active-tenant switcher options. This is a POST-auth control, so it reads the
+  // AUTHORIZED tenant listing (client.iam.listTenants -> GET /api/v1/tenants),
+  // which the server gates on tenants:list. The old source — the anonymous
+  // /api/v1/iam/tenants/public endpoint — was deleted: it disclosed every
+  // tenant's namespace to unauthenticated callers.
+  //
+  // A caller without tenants:list simply keeps the single active-tenant entry.
+  // The server, not this component, decides which tenants a principal may see.
   // ---------------------------------------------------------------------------
-  let tenantOptions = $state<Array<{ id: string; name: string }>>([{ id: 'system', name: 'system' }]);
+  let tenantOptions = $state<Array<{ id: string; name: string }>>([
+    { id: orchestratorStore.activeTenantID, name: orchestratorStore.activeTenantID },
+  ]);
 
   $effect(() => {
     void (async () => {
       try {
         const client = await getSDKClient();
-        const list = await client.auth.listPublicTenants();
-        if (Array.isArray(list) && list.length > 0) {
-          tenantOptions = list.map((t) => ({
-            id: t.id,
-            name: t.display_name || t.name || t.id,
-          }));
+        const resp = await client.iam.listTenants();
+        const list = resp?.tenants ?? [];
+        if (list.length > 0) {
+          tenantOptions = list.map((t) => ({ id: t.id, name: t.name || t.id }));
         }
       } catch {
-        // Keep the default fallback already in tenantOptions.
+        // Not authorized to enumerate tenants (or the call failed): keep the
+        // active-tenant entry already in tenantOptions so the control works.
       }
     })();
   });
@@ -324,6 +327,23 @@
     'register',
     'invite-activate',
   ]);
+
+  // ---------------------------------------------------------------------------
+  // App-shell gate — SECURITY BOUNDARY, not just a layout choice.
+  //
+  // The full shell (header nav controls, tenant selector, and the sidebar with
+  // every feature label) discloses the application's structure and fires
+  // authenticated API calls on click. It must render ONLY when a server has
+  // actually confirmed an authenticated session, on a route that isn't itself
+  // a public auth surface. Every other case — 'pending' (still validating),
+  // 'unauthenticated', or a PUBLIC_ROUTES entry — renders the minimal shell
+  // below instead. This is intentionally the single gate for both the sidebar
+  // and the header controls: do not add a second boolean elsewhere that could
+  // drift out of sync with this one.
+  // ---------------------------------------------------------------------------
+  const showAppShell = $derived(
+    authStatus === 'authenticated' && !PUBLIC_ROUTES.has(routerStore.name)
+  );
 
   $effect(() => {
     if (isWailsRuntime()) {
@@ -436,13 +456,35 @@
 <!-- Invite activation is a standalone public page — render it without the app shell. -->
 {#if routerStore.name === 'invite-activate'}
   <InviteActivateView token={routerStore.params['token'] ?? ''} />
-{:else if authStatus === 'pending' && !PUBLIC_ROUTES.has(routerStore.name)}
-  <!-- Initial validate is in flight; never flash protected content during it. -->
-  <div class="flex h-screen items-center justify-center bg-base-100 text-base-content">
-    <div class="flex flex-col items-center gap-3">
-      <span class="loading loading-spinner loading-md"></span>
-      <span class="text-sm text-base-content/60">Checking session…</span>
-    </div>
+{:else if !showAppShell}
+  <!--
+    MINIMAL SHELL — no sidebar, no nav items, no tenant/user menu, no feature
+    links. Covers every case that is not a confirmed authenticated session on
+    a non-public route: the login/register pages themselves, the initial
+    'pending' validate round-trip, and the brief 'unauthenticated' window on a
+    protected route before the route-guard effect below redirects to /login.
+    The protected view component is never mounted in this branch, so it can
+    never fire an authenticated API call that 401s.
+  -->
+  <div class="flex h-screen flex-col overflow-hidden bg-base-100" data-testid="auth-shell">
+    <header class="bg-base-200/80 border-base-300/50 flex h-12 shrink-0 items-center justify-center border-b backdrop-blur-sm">
+      <span class="gradient-text text-lg font-bold tracking-tight select-none">QuicBaaS</span>
+    </header>
+    <main class="flex flex-1 items-center justify-center overflow-y-auto">
+      {#if routerStore.name === 'register'}
+        <RegisterView />
+      {:else if routerStore.name === 'login'}
+        <LoginView />
+      {:else}
+        <!-- Protected route with no confirmed session yet — the route guard
+             effect redirects to /login on the next tick. Show a neutral splash
+             instead of the protected view (which must never mount here). -->
+        <div class="flex flex-col items-center gap-3">
+          <span class="loading loading-spinner loading-md"></span>
+          <span class="text-sm text-base-content/60">Checking session…</span>
+        </div>
+      {/if}
+    </main>
   </div>
 {:else}
 
@@ -710,18 +752,11 @@
          ----------------------------------------------------------------------- -->
     <main class="content-bg flex-1 overflow-hidden flex flex-col">
 
-      <!-- Hash router drives all view rendering. URL is the single source of truth. -->
-      {#if routerStore.name === 'login'}
-        <div class="flex-1 overflow-y-auto">
-          <LoginView />
-        </div>
-
-      {:else if routerStore.name === 'register'}
-        <div class="flex-1 overflow-y-auto">
-          <RegisterView />
-        </div>
-
-      {:else if routerStore.name === 'dashboard'}
+      <!-- Hash router drives all view rendering. URL is the single source of truth.
+           'login' / 'register' / 'invite-activate' never reach this router: they
+           render in the minimal auth shell above (showAppShell is false for
+           every PUBLIC_ROUTES entry), so there are no branches for them here. -->
+      {#if routerStore.name === 'dashboard'}
         <div class="flex-1 overflow-y-auto">
           <SystemDashboard />
         </div>

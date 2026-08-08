@@ -117,7 +117,6 @@ func TestEnforceDefaultDeny_PublicBypass(t *testing.T) {
 		"/api/v1/auth/register/begin",
 		"/api/v1/auth/providers/tenant-a/google/login",
 		"/api/v1/auth/providers/tenant-a/google/callback",
-		"/api/v1/iam/tenants/public",
 		"/api/v1/iam/invites/abc/activate/piv",
 		"/acme/directory",
 		"/ui/index.html",
@@ -407,8 +406,7 @@ func TestRequiredScopeForRequest(t *testing.T) {
 	}
 }
 
-// Longest-prefix wins: /api/v1/iam/tenants/public is public, but a generic
-// /api/v1/iam path resolves to iam scopes.
+// Longest-prefix wins: the more specific prefix decides the required scope.
 func TestRequiredScopeForRequest_LongestPrefix(t *testing.T) {
 	// /api/v1/barrier and /v1/barrier both exist; ensure each resolves to barrier.
 	if got := requiredScopeForRequest("/api/v1/barrier/status", http.MethodGet); got != "tenant_barrier:status" {

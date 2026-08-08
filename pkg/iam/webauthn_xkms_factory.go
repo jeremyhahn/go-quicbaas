@@ -287,6 +287,14 @@ func (f *WebAuthnServiceFactory) resolveConfig(ctx context.Context, tenantID str
 // store is the lightweight in-memory store that ships with xkms —
 // ceremony sessions are short-lived (~60s) and process-local, so the
 // in-memory implementation is a deliberate fit.
+//
+// The credential store is decorated with webAuthnFactorWriteThrough so a
+// completed registration ALSO enrolls the authenticator in qrdb's
+// UserAuthFactor store — the store the unified login ceremony resolves
+// against. This is the single choke point every registration entry point
+// converges on (xkms Service.FinishRegistration -> CredentialStore.Save);
+// see webauthn_factor_writethrough.go for the ordering and compensation
+// rationale.
 func (f *WebAuthnServiceFactory) buildService(ctx context.Context, tenantID string) (*xkmssdk.WebAuthnService, error) {
 	resolved, err := f.resolveConfig(ctx, tenantID)
 	if err != nil {
@@ -311,13 +319,19 @@ func (f *WebAuthnServiceFactory) buildService(ctx context.Context, tenantID stri
 	if err != nil {
 		return nil, err
 	}
+	logger := f.logger.With("component", "iam.webauthn", "tenant_id", tenantID)
+	writeThrough, err := newWebAuthnFactorWriteThrough(
+		creds, users, f.params.QRDB.UserAuthFactors(), tenantID, logger)
+	if err != nil {
+		return nil, err
+	}
 	sessions := xkmssdk.NewWebAuthnMemorySessionStore()
 	return xkmssdk.NewWebAuthnService(xkmssdk.WebAuthnServiceParams{
 		Config:          cfg,
 		UserStore:       users,
 		SessionStore:    sessions,
-		CredentialStore: creds,
-		Logger:          f.logger.With("component", "iam.webauthn", "tenant_id", tenantID),
+		CredentialStore: writeThrough,
+		Logger:          logger,
 	})
 }
 

@@ -24,12 +24,22 @@ import (
 )
 
 // registerDebug conditionally registers debug routes when enabled via env.
+//
+// The group is registered on the ROOT router, so — like every other root mount
+// — it installs the shared protected-API authorization chain itself
+// (useAPIAuthzMiddleware). Shard-routing introspection is cluster status, so it
+// authorizes as admin:status (see the "/api/v1/debug" entries in
+// authz_pep_mapping.go and authz_default_deny.go). The env gate keeps the
+// surface absent entirely in normal deployments; the authz chain keeps it
+// gated when an operator does enable it.
 func registerDebug(s *Server, r chi.Router) {
 	if os.Getenv("QUICBAAS_ENABLE_DEBUG_ROUTES") != "1" {
 		return
 	}
 	s.logger.Info("Registering debug routes (enabled by env)")
 	r.Route("/api/v1/debug", func(r chi.Router) {
+		s.useAPIAuthzMiddleware(r)
+
 		r.Get("/route/{type}/{id}", func(w http.ResponseWriter, req *http.Request) {
 			et := chi.URLParam(req, "type")
 			idStr := chi.URLParam(req, "id")

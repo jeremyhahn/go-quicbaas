@@ -944,27 +944,6 @@ class RestAuthClient {
         }
         return resp.json();
     }
-    // listPublicTenants returns tenants that allow self-service login.
-    // Maps to GET /api/v1/iam/tenants/public. No auth required.
-    async listPublicTenants() {
-        const resp = await fetch(`${this.baseUrl}/api/v1/iam/tenants/public`, {
-            method: 'GET',
-            headers: { Accept: 'application/json' },
-        });
-        if (!resp.ok) {
-            let message = resp.statusText;
-            try {
-                const body = (await resp.json());
-                message = body.error ?? body.message ?? message;
-            }
-            catch {
-                // Use statusText when body is not parseable.
-            }
-            throw new APIError(resp.status, message);
-        }
-        const data = (await resp.json());
-        return Array.isArray(data) ? data : (data.tenants ?? []);
-    }
     // logout POSTs to /api/v1/auth/logout to revoke the active session token on
     // the server. Caller must clear localStorage tokens after this resolves;
     // the SDK doesn't own that storage. Idempotent — server-side errors and

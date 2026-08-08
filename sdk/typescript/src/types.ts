@@ -2223,10 +2223,3 @@ export interface AuthTokenResponse {
   user?: IAMUser;
 }
 
-// PublicTenant is the subset of tenant info exposed by the unauthenticated
-// GET /api/v1/iam/tenants/public endpoint.
-export interface PublicTenant {
-  id: string;
-  name: string;
-  display_name: string;
-}

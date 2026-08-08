@@ -166,9 +166,10 @@ func clusterServicePrincipal(r *http.Request, pinnedTrustDomain string) bool {
 // ceremonies that mint tokens, federated login redirects + callbacks, invite
 // activation, the RFC 8555 ACME directory, and the human-facing UI/docs.
 var defaultDenyPublicPrefixes = []string{
-	// Health probes. NOTE: the real routes are /health/live and /health/ready
-	// (server.go), not the /health/liveness + /health/readiness names the legacy
-	// publicEndpoints list used — those never matched the mounted probes.
+	// Health probes. The real routes are /api/v1/health, /api/v1/health/live and
+	// /api/v1/health/ready (server.go). publicEndpoints (authz_middleware.go)
+	// now names the same three: its dead /health/liveness + /health/readiness
+	// entries, which never matched any mounted probe, were corrected.
 	"/api/v1/health",
 	"/api/v1/health/live",
 	"/api/v1/health/ready",
@@ -207,9 +208,6 @@ var defaultDenyPublicPrefixes = []string{
 	// Federated login redirect + IdP callback (no bearer available yet).
 	"/api/v1/auth/providers",
 
-	// Public tenant listing for the login UI tenant selector.
-	"/api/v1/iam/tenants/public",
-
 	// Invite activation (FIDO2 / PIV) — the activation IS the bootstrap.
 	"/api/v1/iam/invites",
 
@@ -226,7 +224,15 @@ var defaultDenyPublicPrefixes = []string{
 }
 
 // isDefaultDenyPublic reports whether path is on the default-deny allowlist.
+// It consults the literal defaultDenyPublicPrefixes above plus the tenant-scoped
+// pre-auth route templates (authz_public_routes.go), whose variable tenant
+// segment a literal prefix cannot express. isAuthzPublicEndpoint consults the
+// same templates, so the default-deny gate and the per-group gates agree on what
+// is reachable pre-auth.
 func isDefaultDenyPublic(path string) bool {
+	if isPreAuthRoute(path) {
+		return true
+	}
 	for _, prefix := range defaultDenyPublicPrefixes {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return true
@@ -292,8 +298,22 @@ var defaultDenyScopeTable = map[string]defaultDenyScopeRule{
 	"/api/v1/timeseries":   {read: "timeseries:query", write: "timeseries:write"},
 
 	// IAM management surface (tenant/user/role/policy admin; qrdb resource "tenants").
+	// The canonical WebAuthn enrollment routes under /api/v1/iam/{tenant}/webauthn
+	// fall under the coarse "/api/v1/iam" rule here (a literal prefix cannot
+	// express the tenant segment), so this posture demands the stronger
+	// tenants:create for them; the validator posture resolves them granularly to
+	// user_authfactors:add via the PEP (authz_pep_mapping.go). Both are
+	// fail-closed — the coarse rule is never weaker than the granular one.
 	"/api/v1/tenants": {read: "tenants:read", write: "tenants:create"},
 	"/api/v1/iam":     {read: "tenants:read", write: "tenants:create"},
+
+	// Shard-routing introspection (env-gated debug mount) — cluster status.
+	"/api/v1/debug": {read: "admin:status", write: "admin:status"},
+
+	// Delegated-admin surface (root-mounted /api/v1/admin): admin-assignment
+	// CRUD, permission checks and impersonation. Mirrors the qrdb roles:* family
+	// the PEP mapping uses for the same prefix.
+	"/api/v1/admin": {read: "roles:read", write: "roles:assign"},
 
 	// qrdb-wire mounts at the router root.
 	"/v1/credentials": {read: "credentials:retrieve", write: "credentials:store"},

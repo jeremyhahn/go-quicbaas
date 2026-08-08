@@ -68,7 +68,7 @@ type sealedAuthzChain struct {
 func newSealedAuthzChain(probe *grpcTogglableProbe, authorizer GRPCValidatorAuthorizer, sink *grpcRecordingSink) *sealedAuthzChain {
 	bypass := sealedwindow.NewAuthBypass(probe, sink)
 	return &sealedAuthzChain{
-		sealed: qrdbsdk.SealedWindowUnaryInterceptor(probe, sealedwindow.GRPCAllowlist()),
+		sealed: qrdbsdk.SealedWindowUnaryInterceptor(probe, sealedwindow.GRPCFullMethodAllowlist()),
 		authz:  UnaryAuthorizationInterceptor(authorizer, WithSealedWindowAuthBypass(bypass)),
 	}
 }
@@ -147,6 +147,32 @@ func TestGRPCSealedWindowAuthBypass_Composition(t *testing.T) {
 			wantHandler: false,
 			wantCode:    codes.Unavailable,
 			wantAudit:   0,
+			wantAuthz:   0,
+		},
+		{
+			// Service pinning: the per-tenant barrier surface is a deliberate
+			// sealed-window exclusion, yet its "Status" method shares a tail
+			// with the allowlisted admin status verb. Matching the FULL method
+			// path keeps it sealed on both the deny gate and the auth bypass.
+			name:        "sealed tenant barrier Status sealed error (tail collision)",
+			sealed:      true,
+			method:      "/quicbaas.tenant.v1.TenantBarrier/Status",
+			ctx:         context.Background(),
+			wantHandler: false,
+			wantCode:    codes.Unavailable,
+			wantAudit:   0,
+			wantAuthz:   0,
+		},
+		{
+			// The quicbaas Barrier mirror serves the same verbs on its own
+			// service name; both registrations must pass the sealed window.
+			name:        "sealed quicbaas barrier mirror unseal admitted",
+			sealed:      true,
+			method:      "/quicbaas.barrier.v1.Barrier/BarrierUnseal",
+			ctx:         context.Background(),
+			wantHandler: true,
+			wantCode:    codes.OK,
+			wantAudit:   1,
 			wantAuthz:   0,
 		},
 		{

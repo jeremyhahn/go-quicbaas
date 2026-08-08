@@ -69,12 +69,6 @@ type TenantSettings struct {
 	// When empty the tenant's Name field is used as a fallback.
 	DisplayName string `json:"display_name,omitempty" yaml:"display_name,omitempty"`
 
-	// PublicLoginHidden controls whether this tenant is hidden from the public
-	// tenant selector at /api/v1/iam/tenants/public. Default (false) means the
-	// tenant IS visible. Operators set this to true to hide a tenant from
-	// self-service login (e.g., internal service-account-only tenants).
-	PublicLoginHidden bool `json:"public_login_hidden,omitempty" yaml:"public_login_hidden,omitempty"`
-
 	// MFARequired indicates whether multi-factor authentication is mandatory
 	// Deprecated: Use MFAPolicy.Required instead
 	MFARequired bool `json:"mfa_required" yaml:"mfa_required"`

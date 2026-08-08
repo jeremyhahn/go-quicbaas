@@ -142,7 +142,6 @@ class UnixAuthClient implements AuthClient {
   async webAuthnBeginLogin(_tenantID: string, _email: string): Promise<import('./types.js').CredentialAssertionJSON> { return notImpl('webAuthnBeginLogin'); }
   async webAuthnFinishLogin(_tenantID: string, _email: string, _credential: import('./types.js').PublicKeyCredentialJSON): Promise<import('./types.js').AuthTokenResponse> { return notImpl('webAuthnFinishLogin'); }
   async loginPIV(): Promise<import('./types.js').AuthTokenResponse> { return notImpl('loginPIV'); }
-  async listPublicTenants(): Promise<import('./types.js').PublicTenant[]> { return notImpl('listPublicTenants'); }
   async logout(_token?: string): Promise<void> { return notImpl('logout'); }
   async registerBegin(_req: import('./interfaces.js').SelfRegisterBeginRequest): Promise<import('./interfaces.js').SelfRegisterBeginResponse> { return notImpl('registerBegin'); }
   async registerFinish(_req: import('./interfaces.js').SelfRegisterFinishRequest): Promise<import('./interfaces.js').SelfRegisterFinishResponse> { return notImpl('registerFinish'); }

@@ -237,11 +237,15 @@ func (h *IAMHandler) BeginLogin(w http.ResponseWriter, r *http.Request) {
 	// Emit begin-login audit event.
 	h.logWebAuthnBeginLoginAudit(ctx, tenantID, req.Email, requestID, r)
 
-	// Begin login
+	// Begin login. Every failure here is identity-dependent (unknown tenant,
+	// unknown user, user with no registered authenticator), so all of them
+	// collapse onto the single uniform rejection — the concrete reason would
+	// otherwise let an anonymous caller enumerate tenants and users. The audit
+	// log keeps the real reason server-side.
 	options, err := mgr.BeginLogin(ctx, tenantID, req.Email)
 	if err != nil {
-		h.logWebAuthnLoginFailureAudit(ctx, tenantID, req.Email, ErrInternalError, err.Error(), requestID, r)
-		h.server.handleServiceError(w, r, err)
+		h.logWebAuthnLoginFailureAudit(ctx, tenantID, req.Email, ErrUnauthorized, err.Error(), requestID, r)
+		RespondLoginRejected(w, r)
 		return
 	}
 
@@ -312,7 +316,7 @@ func (h *IAMHandler) FinishLogin(w http.ResponseWriter, r *http.Request) {
 	user, err := mgr.FinishLogin(ctx, tenantID, req.Credential)
 	if err != nil {
 		h.logWebAuthnLoginFailureAudit(ctx, tenantID, "", ErrUnauthorized, err.Error(), finishRequestID, r)
-		h.server.handleServiceError(w, r, err)
+		RespondLoginRejected(w, r)
 		return
 	}
 

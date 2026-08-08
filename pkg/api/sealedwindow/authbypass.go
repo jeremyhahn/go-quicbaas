@@ -61,9 +61,10 @@ type AuthBypass struct {
 	probe Probe
 	sink  AuditSink
 
-	// grpcTails holds the gRPC method tails (suffix after the final "/" of
-	// FullMethod), matching the qrdb sealed-window interceptor convention.
-	grpcTails map[string]struct{}
+	// grpcMethods holds the fully-qualified gRPC method paths
+	// ("/qrdb.v1.QRDBService/BarrierUnseal"), matched in full against
+	// FullMethod exactly as the qrdb sealed-window interceptor does.
+	grpcMethods map[string]struct{}
 
 	// restExact / restPrefixes mirror qrdb's REST sealed-window path
 	// matching: entries ending in "/" are prefix matches, everything else
@@ -91,14 +92,14 @@ func NewAuthBypass(probe Probe, sink AuditSink) *AuthBypass {
 	b := &AuthBypass{
 		probe:           probe,
 		sink:            sink,
-		grpcTails:       make(map[string]struct{}),
+		grpcMethods:     make(map[string]struct{}),
 		restExact:       make(map[string]struct{}),
 		nativeOps:       QUICAllowlist(),
 		qrdbQUICMethods: QRDBQUICAllowlist(),
 		mcpTools:        MCPAllowlist(),
 	}
-	for _, tail := range GRPCAllowlist() {
-		b.grpcTails[tail] = struct{}{}
+	for _, method := range GRPCFullMethodAllowlist() {
+		b.grpcMethods[method] = struct{}{}
 	}
 	for _, path := range RESTAllowlist() {
 		if strings.HasSuffix(path, "/") {
@@ -126,18 +127,18 @@ func (b *AuthBypass) audit(transport, operation string) {
 // BypassesGRPC reports whether the gRPC (or Unix-over-gRPC, which shares the
 // interceptor chain) request identified by fullMethod bypasses
 // authentication because the barrier is sealed and the method is on the
-// sealed-window allowlist. Matching is by method tail (the suffix after the
-// last "/"), so one entry covers both the qrdb.v1.* registration and the
-// quicbaas.* mirror service. Emits the audit event on every bypass.
+// sealed-window allowlist.
+//
+// Matching is on the FULL service-qualified path, byte-for-byte identical to
+// the sealed-window interceptor's own matching, so the bypass surface can
+// never be wider than the sealed surface: a same-named method on another
+// co-registered service (e.g. "/quicbaas.tenant.v1.TenantBarrier/Status") is
+// not admitted. Emits the audit event on every bypass.
 func (b *AuthBypass) BypassesGRPC(fullMethod string) bool {
 	if !b.sealed() {
 		return false
 	}
-	tail := fullMethod
-	if idx := strings.LastIndexByte(fullMethod, '/'); idx >= 0 {
-		tail = fullMethod[idx+1:]
-	}
-	if _, ok := b.grpcTails[tail]; !ok {
+	if _, ok := b.grpcMethods[fullMethod]; !ok {
 		return false
 	}
 	b.audit("grpc", fullMethod)

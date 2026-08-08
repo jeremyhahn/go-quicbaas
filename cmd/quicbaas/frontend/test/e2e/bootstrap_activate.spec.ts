@@ -97,6 +97,14 @@ test.describe('Security > Invite Activation — bootstrap activate flow', () => 
     await expect(
       page.getByRole('heading', { name: /Activate Your Account/i }),
     ).toBeVisible({ timeout: 10_000 });
+
+    // Security regression guard: the invite-activation page is public and
+    // unauthenticated — it must render WITHOUT the app shell's sidebar/nav.
+    // Disclosing the feature sidebar to an anonymous visitor on this page
+    // (and firing the authenticated calls a click would trigger) is the bug
+    // this suite pins.
+    await expect(page.locator('aside')).toHaveCount(0);
+    await expect(page.getByRole('navigation')).toHaveCount(0);
   });
 
   test('2. Activation view shows invited user email/name from invite metadata', async ({ page }) => {
@@ -244,6 +252,12 @@ test.describe('Security > Invite Activation — bootstrap activate flow', () => 
         window.location.hash = '#/login';
       });
       await page.getByRole('button', { name: /sign in with passkey/i }).click();
+
+      // Security regression guard: the login chooser is public/unauthenticated
+      // — the app shell's sidebar/nav must be absent while it's on screen.
+      await expect(page.locator('aside')).toHaveCount(0);
+      await expect(page.getByRole('navigation')).toHaveCount(0);
+
       // createTestInvite uniquifies the email (e2e-login-vauth+<ts>@…), so the
       // passkey is registered against fresh.email — log in with that exact value,
       // not the base address, or login/begin can't find the user.
@@ -264,6 +278,11 @@ test.describe('Security > Invite Activation — bootstrap activate flow', () => 
       await expect(
         page.getByRole('button', { name: /sign out/i }),
       ).toBeVisible({ timeout: 10_000 });
+
+      // Now that the session is authenticated, the full app shell — sidebar
+      // and nav landmark — must be present.
+      await expect(page.locator('aside')).toHaveCount(1);
+      await expect(page.getByRole('navigation')).toBeVisible();
 
       await client.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId });
     } finally {

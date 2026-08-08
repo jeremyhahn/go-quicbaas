@@ -166,9 +166,62 @@ These endpoints bypass authorization:
 
 - `/api/v1/auth/login` - Authentication
 - `/api/v1/health` - Health checks
-- `/api/v1/health/liveness` - Kubernetes liveness probe
-- `/api/v1/health/readiness` - Kubernetes readiness probe
+- `/api/v1/health/live` - Kubernetes liveness probe
+- `/api/v1/health/ready` - Kubernetes readiness probe
 - `/metrics` - Prometheus metrics
+
+The probe paths are `live` / `ready` (see `setupRouter` in
+`pkg/api/rest/server.go`). The allowlists previously named `liveness` /
+`readiness`, which matched no mounted route; both `publicEndpoints`
+(`authz_middleware.go`) and `defaultDenyPublicPrefixes`
+(`authz_default_deny.go`) now name the real paths.
+
+### Pre-auth (tenant-scoped) routes
+
+The WebAuthn **login** ceremony is the authentication mechanism itself, so it
+must be reachable before the caller holds any token. Because the path carries a
+variable tenant segment it cannot be expressed as a literal prefix; the
+templates live in `pkg/api/rest/authz_public_routes.go` and are honoured by
+every enforcement posture (`isAuthzPublicEndpoint` and `isDefaultDenyPublic`):
+
+| Route | Mount |
+| --- | --- |
+| `POST /api/v1/tenants/{tenant_id}/webauthn/login/begin` | legacy IAM handler (SPA + TypeScript SDK) |
+| `POST /api/v1/tenants/{tenant_id}/webauthn/login/finish` | legacy IAM handler (SPA + TypeScript SDK) |
+| `POST /api/v1/iam/{tenant_id}/webauthn/login/begin` | canonical xkms mount (Go SDK REST transport) |
+| `POST /api/v1/iam/{tenant_id}/webauthn/login/finish` | canonical xkms mount (Go SDK REST transport) |
+
+Matching is whole-path and segment-exact: the tenant segment is the only
+wildcard, so no sibling route is exempted. The **enrollment** ceremonies
+(`.../webauthn/register/{begin,finish}` and
+`.../webauthn/registration/{begin,finish,status}`) are deliberately NOT public —
+they bind a new authenticator to a caller-supplied user id. The pre-auth
+enrollment path is invite activation
+(`/api/v1/iam/invites/{token}/activate/fido2/{begin,finish}`), authorized by the
+one-time invite token in the URL.
+
+### Root-mounted route groups
+
+The IAM surface registers on the **root** chi router (the OIDC discovery
+endpoints must live at `/.well-known/*`), so those groups do NOT inherit the
+`/api/v1` group's authorization chain. Every protected root mount installs the
+same shared selector itself — `Server.useAPIAuthzMiddleware` — inside its
+`chi.Route` closure. Under the default-deny posture the selector is a no-op
+because `EnforceDefaultDeny` on the top router already covers root mounts, so
+each surface is gated exactly once.
+
+| Root mount | Gate |
+| --- | --- |
+| `/api/v1/tenants`, `/api/v1/iam` | `useAPIAuthzMiddleware` (iam.go) |
+| `/api/v1/iam/{tenant_id}/webauthn` | `useAPIAuthzMiddleware` (iam_xkms_webauthn_mount.go); login routes stay pre-auth |
+| `/api/v1/admin` | `useAPIAuthzMiddleware` (iam_admin.go) |
+| `/v1/barrier`, `/v1/credentials`, `/v1/ceremony`, `/v1/init`, `/users`, `/v1/users/factors` | `useAPIAuthzMiddleware` (server.go) |
+| `/api/v1/auth`, `/api/v1/auth/providers/{tenant_id}/{provider_name}`, `/api/v1/iam/invites`, `/acme`, `/.well-known/*`, `/oauth2/*` | intentionally pre-auth (the request carries its own credential) |
+
+A new root mount that omits the selector is reachable unauthenticated under
+validator (`RequireAuthz=true`) enforcement — the routing-hole class that has
+recurred on `/v1/barrier`, `/v1/credentials`, the canonical WebAuthn mount and
+`/api/v1/admin`. Guard every new one with a real-router test.
 
 ## Detailed Documentation
 

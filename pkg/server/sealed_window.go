@@ -303,7 +303,7 @@ func (s *Server) awaitUnseal() error {
 func (s *Server) startSealedGRPCServer() error {
 	creds := grpcapi.ServerTLSCredentialsFromConfig(s.tlsConfig)
 
-	allow := sealedwindow.GRPCAllowlist()
+	allow := sealedwindow.GRPCFullMethodAllowlist()
 	probe := constantSealedProbe{}
 
 	grpcOpts := []ggrpc.ServerOption{

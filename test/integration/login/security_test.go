@@ -90,15 +90,18 @@ func isLegacyLoginVerbAbsent(err error) bool {
 // documented explicitly so there is NO silent gap.
 //
 // WHAT IS COVERED for WebAuthn/FIDO2:
+//
 //   - Server-side verification path: pkg/service/login_service_test.go proves
 //     the LoginService facade forwards fido2 proofs UNCHANGED (no peer-cert
 //     substitution) so the node's FactorVerifiers own verification; and
 //     go-xkms pkg/auth_factors/webauthn.go (+ its unit tests) covers the
 //     WebAuthn assertion verifier itself with a software authenticator.
+//
 //   - Client-side assertion plumbing: cmd/quicbaas/canonical_auth_login_fido2_test.go
 //     drives the vendor-agnostic options-extraction, credential-id derivation,
 //     and metadata assembly through a seam (canonicalFIDO2AssertFunc) without a
 //     physical device.
+//
 //   - Concurrent distinct-session semantics: the session issuer mints a
 //     per-login bearer keyed on the resolved identity + a fresh session id
 //     (pkg/server/login_session_issuer.go); concurrent logins therefore yield
@@ -106,9 +109,14 @@ func isLegacyLoginVerbAbsent(err error) bool {
 //     TestUnifiedLogin_ConcurrentLoginsMintDistinctBearers below, which
 //     exercises the SAME session-issuance code path WebAuthn uses.
 //
+//   - Ceremony scope + challenge issuance: fido2_tenant_scope_test.go drives the
+//     REAL in-container relying party — an unscoped BeginLogin(fido2) fails
+//     closed with 401 on every transport, and a tenant-scoped one returns the
+//     WebAuthn request options a CTAP2 client can drive.
+//
 // WHAT IS DEFERRED (and why):
-//   - A full BeginLogin(fido2) -> navigator.credentials.get() -> FinishLogin
-//     round-trip in-container requires a VIRTUAL CTAP2 authenticator. The
+//   - The remaining half of the round-trip — navigator.credentials.get() ->
+//     FinishLogin — requires a VIRTUAL CTAP2 authenticator. The
 //     integration image ships no virtual authenticator and go-xkms's
 //     test/integration/fido2 harness (if present) is not wired into this
 //     cluster image. Driving a real assertion here would require either USB
@@ -118,9 +126,12 @@ func isLegacyLoginVerbAbsent(err error) bool {
 // This test fails NEVER; it exists to make the coverage boundary auditable in
 // the test log rather than leaving it implicit.
 func TestUnifiedLogin_WebAuthnInContainerDeferred(t *testing.T) {
-	t.Log("WebAuthn/FIDO2 end-to-end (virtual authenticator) is DEFERRED in-container.")
+	t.Log("WebAuthn/FIDO2 assertion round-trip (virtual authenticator) is DEFERRED in-container.")
+	t.Log("Covered in-container: ceremony tenant scope + challenge issuance " +
+		"(fido2_tenant_scope_test.go).")
 	t.Log("Covered elsewhere: server verifier (pkg/service/login_service_test.go, " +
 		"go-xkms pkg/auth_factors/webauthn.go), client assertion plumbing " +
-		"(cmd/quicbaas/canonical_auth_login_fido2_test.go), and distinct-session " +
+		"(cmd/quicbaas/canonical_auth_login_fido2_test.go), CLI tenant scoping " +
+		"(cmd/quicbaas/canonical_auth_login_tenant_test.go), and distinct-session " +
 		"semantics (TestUnifiedLogin_ConcurrentLoginsMintDistinctBearers).")
 }

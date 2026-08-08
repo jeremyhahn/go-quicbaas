@@ -131,12 +131,26 @@ point the daemon completes the full boot automatically.
 
 The allowlist mirrors go-qrdb's canonical sealed-window verb table
 verbatim and is derived ONCE for all transports in
-`pkg/api/sealedwindow` (single table → REST paths, gRPC method tails,
+`pkg/api/sealedwindow` (single table → REST paths, gRPC methods,
 QUIC opcodes + qrdb-quic bridge methods, MCP tool names), so the
 transports cannot drift. Deliberate exclusions match qrdb: `seal`,
 `enable-encryption`, share management, custodian enroll/revoke, the
 per-tenant barrier surface, and credential rotation are never
 reachable while sealed.
+
+The gRPC allowlist is **service-qualified**. `GRPCAllowlist()` yields
+the bare method tails that diff mechanically against qrdb's table, but
+the list the interceptors and the authentication bypass actually gate on
+is `GRPCFullMethodAllowlist()` — fully-qualified `/{service}/{method}`
+paths matched against `FullMethod` in full. quicbaasd co-registers many
+services and several declare a same-named method, so tail matching would
+admit them: `/quicbaas.tenant.v1.TenantBarrier/Status` (a deliberate
+exclusion) and the data-plane `Health` RPCs on the orchestrator, Ollama
+and vector services all collide by tail. The full-method derivation
+composes qrdb's own `qrdb.v1.QRDBService` list verbatim with the
+quicbaas mirror verbs qualified onto the services that really declare
+them (`quicbaas.barrier.v1.Barrier`, `quicbaas.ceremony.v1.Ceremony`,
+and `quicbaas.v1.QuicBaaS/Health`).
 
 The same probe-driven gates stay installed after boot: a post-boot
 `barrier seal` immediately re-narrows every transport to the sealed

@@ -62,11 +62,15 @@ var canonicalIAMUtilityExpectations = map[string]string{
 }
 
 // iamUtilityPublicRoutes are routes inside the /api/v1/iam group that are
-// intentionally public: they bypass the authz gate via isAuthzPublicEndpoint
-// so the login UI works before a token exists.
-var iamUtilityPublicRoutes = map[string]bool{
-	"GET /api/v1/iam/tenants/public": true,
-}
+// intentionally public — i.e. that bypass the authz gate via
+// isAuthzPublicEndpoint before a token exists.
+//
+// It is INTENTIONALLY EMPTY. The former GET /api/v1/iam/tenants/public login
+// selector endpoint was deleted: it handed every tenant id + name to anonymous
+// callers, which is a cross-tenant namespace disclosure. The login UI now takes
+// the organization id as free text. Adding an entry here re-opens a pre-auth
+// hole in the IAM utility group and needs an explicit security review.
+var iamUtilityPublicRoutes = map[string]bool{}
 
 // TestIAMUtilityPEPMapping locks the qrdb-canonical permission for every
 // endpoint in the /api/v1/iam utility group (table-driven against
@@ -105,13 +109,12 @@ func TestIAMUtilityPEPMapping_CoarseFallback(t *testing.T) {
 	}
 }
 
-// TestIAMUtilityPublicTenantListing_Bypass verifies the login UI tenant
-// selector endpoint is on the authz public allowlist: the middleware bypasses
-// it BEFORE the PEP mapping is consulted, so wrapping the whole /api/v1/iam
-// group does not break token-less login flows.
-func TestIAMUtilityPublicTenantListing_Bypass(t *testing.T) {
-	if !isAuthzPublicEndpoint("/api/v1/iam/tenants/public") {
-		t.Fatal("/api/v1/iam/tenants/public must be an authz public endpoint")
+// TestIAMUtilityNoAnonymousTenantListing verifies the deleted login-UI tenant
+// selector endpoint is NOT on the authz public allowlist. Re-adding it would
+// re-expose every tenant id + name to anonymous callers.
+func TestIAMUtilityNoAnonymousTenantListing(t *testing.T) {
+	if isAuthzPublicEndpoint("/api/v1/iam/tenants/public") {
+		t.Fatal("/api/v1/iam/tenants/public must NOT be an authz public endpoint: anonymous tenant enumeration")
 	}
 	// The invite-activation surface is a separate unwrapped mount, but guard
 	// against a future registration moving it under the gated group without
@@ -242,7 +245,7 @@ func TestServer_ValidatorEnforcement_IAMUtilityGroup(t *testing.T) {
 		}
 	})
 
-	t.Run("public tenant listing bypasses the gate", func(t *testing.T) {
+	t.Run("deleted public tenant listing never serves a tenant list", func(t *testing.T) {
 		s, _ := newTestServer(t)
 		authorizer := &recordingValidatorAuthorizer{retErr: &platformtoken.ScopeDeniedError{Required: "tenants:read"}}
 		s.SetValidatorAuthzEnforcement(authorizer)
@@ -251,11 +254,11 @@ func TestServer_ValidatorEnforcement_IAMUtilityGroup(t *testing.T) {
 		w := httptest.NewRecorder()
 		s.router.ServeHTTP(w, req)
 
-		if w.Code == http.StatusUnauthorized || w.Code == http.StatusForbidden {
-			t.Fatalf("public tenant listing must not require a token: %d", w.Code)
+		if w.Code == http.StatusOK {
+			t.Fatalf("anonymous GET of the deleted tenant listing returned 200: %s", w.Body.String())
 		}
-		if authorizer.called {
-			t.Fatal("validator authorizer must NOT be consulted for the public tenant listing")
+		if strings.Contains(w.Body.String(), "\"tenants\"") {
+			t.Fatalf("response leaked a tenant list: %s", w.Body.String())
 		}
 	})
 }

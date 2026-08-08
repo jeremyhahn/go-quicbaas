@@ -106,6 +106,13 @@ func (h *IAMHandler) loginCeremony() service.LoginServicer {
 }
 
 // respondLoginCeremonyError maps facade errors onto HTTP status codes.
+//
+// Only the three structural errors below carry their own message: they describe
+// the shape of the request (ceremony not wired, no client certificate offered,
+// nil request) and are identity-independent. Everything else — unknown tenant,
+// unknown user, unusable factor, rejected proof — falls through to the uniform
+// RespondLoginRejected so the error text cannot be used to enumerate tenant
+// namespaces or user directories.
 func respondLoginCeremonyError(w http.ResponseWriter, r *http.Request, err error) {
 	var unavailable *service.LoginCeremonyUnavailableError
 	if errors.As(err, &unavailable) {
@@ -125,8 +132,7 @@ func respondLoginCeremonyError(w http.ResponseWriter, r *http.Request, err error
 			NewIAMAPIError(ErrBadRequest, err.Error()))
 		return
 	}
-	RespondIAMError(w, r, http.StatusUnauthorized,
-		NewIAMAPIError(ErrUnauthorized, err.Error()))
+	RespondLoginRejected(w, r)
 }
 
 // CeremonyBeginLogin handles POST /api/v1/auth/login/begin.

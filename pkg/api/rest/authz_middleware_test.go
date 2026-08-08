@@ -102,8 +102,8 @@ func TestAuthzMiddleware_PublicEndpoints(t *testing.T) {
 		path string
 	}{
 		{"health endpoint", "/api/v1/health"},
-		{"liveness probe", "/api/v1/health/liveness"},
-		{"readiness probe", "/api/v1/health/readiness"},
+		{"liveness probe", "/api/v1/health/live"},
+		{"readiness probe", "/api/v1/health/ready"},
 		{"metrics endpoint", "/metrics"},
 		{"health with trailing slash", "/api/v1/health/"},
 	}
@@ -615,8 +615,10 @@ func TestAuthzMiddleware_PublicEndpointChecking(t *testing.T) {
 	}{
 		{"/api/v1/health", true},
 		{"/api/v1/health/", true},
-		{"/api/v1/health/liveness", true},
-		{"/api/v1/health/readiness", true},
+		{"/api/v1/health/live", true},
+		{"/api/v1/health/ready", true},
+		// Any sub-path of the health prefix is public (prefix matching).
+		{"/api/v1/health/anything", true},
 		{"/metrics", true},
 		{"/metrics/", true},
 		{"/api/v1/keys", false},

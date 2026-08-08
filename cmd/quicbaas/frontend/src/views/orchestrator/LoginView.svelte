@@ -5,12 +5,22 @@
     1. Passkey (FIDO2 / WebAuthn) — tenant-select then email-then-assertion flow.
     2. Smartcard (PIV) — TLS client-cert POST to /api/v1/auth/login/piv.
 
-  Tenant selection:
-    Before the passkey email field appears, a tenant <select> is populated from
-    GET /api/v1/iam/tenants/public via client.auth.listPublicTenants(). The
-    selection is persisted in localStorage so repeat visitors skip re-picking.
+  Organization (tenant) entry:
+    The organization id is typed into a free-text field. It is deliberately NOT
+    a dropdown: populating one required an unauthenticated tenant-listing
+    endpoint, which handed every tenant's id and name to anyone who loaded this
+    page — a cross-tenant namespace disclosure. That endpoint has been deleted;
+    the client asks the operator for the id instead of enumerating them.
+
+    To keep repeat sign-ins one click away, the last SUCCESSFULLY used
+    organization id is remembered in localStorage and prefilled on the next
+    visit. Only a value that actually completed a login is stored, so a typo
+    never becomes a sticky default. A first-time visitor gets 'system', qrdb's
+    canonical control-plane tenant, which is the right answer for single-tenant
+    and first-boot deployments.
+
     PIV login is tenant-agnostic (the server resolves the tenant from the cert
-    thumbprint), so the tenant selector is hidden in PIV mode.
+    thumbprint), so the field does not participate in the smartcard flow.
 
   SDK usage:
     All network calls go through the SDK client (client.auth.*). The view does
@@ -32,7 +42,7 @@
   import { setAuthenticated } from '../../stores/auth.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { parseRequestOptions, encodeAssertionResponse } from '../../lib/webauthn.ts';
-  import type { PublicTenant, AuthTokenResponse } from '@quicbaas/sdk';
+  import type { AuthTokenResponse } from '@quicbaas/sdk';
 
   // ---------------------------------------------------------------------------
   // State
@@ -40,53 +50,33 @@
 
   type Mode = 'chooser' | 'passkey' | 'error';
 
+  // GENERIC_AUTH_FAILURE is the single message shown for every rejected
+  // passkey sign-in. It names neither the organization nor the email, so the
+  // UI cannot be used to probe which of the two exists.
+  const GENERIC_AUTH_FAILURE =
+    "Sign-in failed. Check your organization and email address, then try again.";
+
   let mode: Mode = $state('chooser');
   let email = $state('');
   let busy = $state(false);
   let errorMessage = $state('');
 
-  // Tenant selector state — used for the passkey (FIDO2) path only.
-  let tenants: PublicTenant[] = $state([]);
-  let selectedTenantID = $state(
-    window.localStorage.getItem('quicbaas_login_tenant') ?? 'default',
+  // Organization (tenant) id — used for the passkey (FIDO2) path only.
+  // 'system' is qrdb's canonical control-plane tenant and the correct default
+  // for a single-tenant / first-boot deployment. It is a CLIENT-side default:
+  // the server never tells this page which tenants exist.
+  const DEFAULT_TENANT_ID = 'system';
+  const LAST_TENANT_KEY = 'quicbaas_login_tenant';
+
+  let tenantID = $state(
+    window.localStorage.getItem(LAST_TENANT_KEY) ?? DEFAULT_TENANT_ID,
   );
-  let tenantsLoading = $state(true);
 
   // Passkey button ref for auto-focus on mount.
   let passkeyBtnEl: HTMLButtonElement | null = $state(null);
 
   // Idle timeout handle.
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
-
-  // ---------------------------------------------------------------------------
-  // Load public tenants on mount
-  // ---------------------------------------------------------------------------
-
-  $effect(() => {
-    void (async () => {
-      try {
-        const client = await getSDKClient();
-        const list = await client.auth.listPublicTenants();
-        tenants = list;
-
-        // If the stored selection is no longer valid, fall back to the first tenant.
-        const first = list[0];
-        if (first !== undefined && !list.some((t) => t.id === selectedTenantID)) {
-          selectedTenantID = first.id;
-        }
-      } catch {
-        // Non-fatal: fall back to 'default' tenant if the public list fails.
-        tenants = [{ id: 'default', name: 'default', display_name: 'Default' }];
-      } finally {
-        tenantsLoading = false;
-      }
-    })();
-  });
-
-  // Persist tenant selection to localStorage whenever it changes.
-  $effect(() => {
-    window.localStorage.setItem('quicbaas_login_tenant', selectedTenantID);
-  });
 
   // ---------------------------------------------------------------------------
   // Idle timeout — blur email field after 60 s of inactivity on this screen.
@@ -123,6 +113,13 @@
   // ---------------------------------------------------------------------------
   // Token persistence helpers
   // ---------------------------------------------------------------------------
+
+  // rememberTenant stores an organization id that has just completed a login.
+  // Persisting only on success is what makes the prefill trustworthy: a typo
+  // or a probe of someone else's namespace never becomes a sticky default.
+  function rememberTenant(id: string): void {
+    window.localStorage.setItem(LAST_TENANT_KEY, id);
+  }
 
   function handleAuthSuccess(tokens: AuthTokenResponse): void {
     if (!tokens || !tokens.access_token) {
@@ -166,24 +163,32 @@
       return;
     }
 
+    const trimmedTenant = tenantID.trim();
+    if (!trimmedTenant) {
+      errorMessage = 'Please enter your organization.';
+      return;
+    }
+
     busy = true;
     errorMessage = '';
 
     try {
       const client = await getSDKClient();
-      const tenantID = selectedTenantID || 'default';
 
       // Step 1: Begin login — fetch WebAuthn challenge from server via SDK.
+      //
+      // The server answers every identity-resolution failure here with the SAME
+      // 401, so this branch cannot tell an unknown organization from an unknown
+      // email — and neither can the message shown to the user. Reporting them
+      // separately would rebuild the tenant/user enumeration oracle the
+      // deleted tenant-listing endpoint used to be.
       let challengeOptions;
       try {
-        challengeOptions = await client.auth.webAuthnBeginLogin(tenantID, trimmedEmail);
+        challengeOptions = await client.auth.webAuthnBeginLogin(trimmedTenant, trimmedEmail);
       } catch (e: unknown) {
-        const status = (e as { status?: number }).status;
-        if (status === 404) {
-          errorMessage = "We couldn't find that email. Check with your admin or try a different identity.";
-        } else {
-          errorMessage = e instanceof Error ? e.message : "Can't reach the server right now.";
-        }
+        errorMessage = e instanceof TypeError
+          ? "Can't reach the server right now."
+          : GENERIC_AUTH_FAILURE;
         busy = false;
         return;
       }
@@ -205,7 +210,9 @@
       const credential = encodeAssertionResponse(assertion as PublicKeyCredential);
 
       // Step 4: Finish login via SDK — server verifies and returns tokens.
-      const tokens = await client.auth.webAuthnFinishLogin(tenantID, trimmedEmail, credential);
+      const tokens = await client.auth.webAuthnFinishLogin(trimmedTenant, trimmedEmail, credential);
+      // Only a completed sign-in earns the prefill slot.
+      rememberTenant(trimmedTenant);
       handleAuthSuccess(tokens);
     } catch (e) {
       if (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError')) {
@@ -213,7 +220,7 @@
       } else if (e instanceof TypeError) {
         errorMessage = "Can't reach the server right now.";
       } else {
-        errorMessage = e instanceof Error ? e.message : 'Authentication failed.';
+        errorMessage = GENERIC_AUTH_FAILURE;
       }
     } finally {
       busy = false;
@@ -294,28 +301,29 @@
              Chooser: tenant selector + two hardware login options
              ---------------------------------------------------------------- -->
 
-        <!-- Tenant selector (passkey path only; hidden when in PIV) -->
+        <!-- Organization id (passkey path only; PIV resolves it from the cert).
+             Free text by design — see the component header. -->
         <div class="form-control">
           <label class="label pb-1" for="login-tenant">
             <span class="label-text text-sm">Organization</span>
           </label>
-          {#if tenantsLoading}
-            <div class="skeleton h-8 w-full rounded"></div>
-          {:else}
-            <select
-              id="login-tenant"
-              class="select select-bordered select-sm w-full"
-              aria-label="Select tenant"
-              bind:value={selectedTenantID}
-            >
-              {#each tenants as t (t.id)}
-                <option value={t.id}>{t.display_name}</option>
-              {/each}
-              {#if tenants.length === 0}
-                <option value="default">Default</option>
-              {/if}
-            </select>
-          {/if}
+          <input
+            id="login-tenant"
+            type="text"
+            class="input input-bordered input-sm w-full"
+            bind:value={tenantID}
+            autocomplete="organization"
+            autocapitalize="none"
+            autocorrect="off"
+            spellcheck="false"
+            aria-label="Organization"
+            aria-describedby="login-tenant-help"
+            placeholder={DEFAULT_TENANT_ID}
+            oninput={resetIdleTimer}
+          />
+          <p id="login-tenant-help" class="text-xs text-base-content/40 pt-1">
+            Your organization id, provided by your administrator.
+          </p>
         </div>
 
         <!-- Passkey option -->

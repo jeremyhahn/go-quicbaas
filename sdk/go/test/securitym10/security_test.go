@@ -96,15 +96,15 @@ func TestSDK_M10_Surface_Reachable(t *testing.T) {
 		_ quicbaas.AuthFactorsClient     = nil
 		_ quicbaas.AuthService           = nil
 
-		_ quicbaas.ACMEDirectory                    = quicbaas.ACMEDirectory{}
-		_ quicbaas.ACMECertificateAuthority         = nil
-		_ quicbaas.ACMEEnroll01TCGCSRVerifier       = nil
-		_ quicbaas.ACMEChallengeVerifierFunc        = nil
-		_ quicbaas.ACMEClientConfig                 = quicbaas.ACMEClientConfig{}
-		_ quicbaas.ACMECertificateRequest           = quicbaas.ACMECertificateRequest{}
-		_ quicbaas.ACMERenewalConfig                = quicbaas.ACMERenewalConfig{}
-		_ quicbaas.ACMECrossSignConfig              = quicbaas.ACMECrossSignConfig{}
-		_ quicbaas.ACMEEnrollmentConfig             = quicbaas.ACMEEnrollmentConfig{}
+		_ quicbaas.ACMEDirectory              = quicbaas.ACMEDirectory{}
+		_ quicbaas.ACMECertificateAuthority   = nil
+		_ quicbaas.ACMEEnroll01TCGCSRVerifier = nil
+		_ quicbaas.ACMEChallengeVerifierFunc  = nil
+		_ quicbaas.ACMEClientConfig           = quicbaas.ACMEClientConfig{}
+		_ quicbaas.ACMECertificateRequest     = quicbaas.ACMECertificateRequest{}
+		_ quicbaas.ACMERenewalConfig          = quicbaas.ACMERenewalConfig{}
+		_ quicbaas.ACMECrossSignConfig        = quicbaas.ACMECrossSignConfig{}
+		_ quicbaas.ACMEEnrollmentConfig       = quicbaas.ACMEEnrollmentConfig{}
 
 		_ quicbaas.FIDO2BeginRegistrationRequest     = quicbaas.FIDO2BeginRegistrationRequest{}
 		_ quicbaas.FIDO2BeginRegistrationResponse    = quicbaas.FIDO2BeginRegistrationResponse{}

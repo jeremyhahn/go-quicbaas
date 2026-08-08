@@ -3,6 +3,12 @@
  *
  * Verifies that LoginView:
  *   - Renders FIDO2 + PIV options with no password input.
+ *   - Renders the organization as a TEXT FIELD, never a dropdown. The dropdown
+ *     was fed by an anonymous tenant-listing endpoint that disclosed every
+ *     tenant's namespace to unauthenticated callers; both are gone.
+ *   - Prefills the organization from the last SUCCESSFUL login (localStorage)
+ *     and defaults to 'system' for a first-time visitor.
+ *   - Submits the typed organization id verbatim to the SDK.
  *   - Passkey click shows email field; submitting calls the SDK begin/finish
  *     methods and then navigator.credentials.get with the decoded challenge.
  *   - Smartcard click calls the SDK PIV login method.
@@ -32,7 +38,6 @@ const {
   mockWebAuthnBeginLogin,
   mockWebAuthnFinishLogin,
   mockLoginPIV,
-  mockListPublicTenants,
 } = vi.hoisted(() => ({
   mockRouteDashboard: vi.fn(),
   mockSetConnected: vi.fn(),
@@ -40,7 +45,6 @@ const {
   mockWebAuthnBeginLogin: vi.fn(),
   mockWebAuthnFinishLogin: vi.fn(),
   mockLoginPIV: vi.fn(),
-  mockListPublicTenants: vi.fn(),
 }));
 
 vi.mock('../src/stores/router.svelte.ts', () => ({
@@ -62,15 +66,14 @@ vi.mock('../src/stores/auth.svelte.ts', () => ({
   setAuthenticated: mockSetAuthenticated,
 }));
 
-// The SDK client is the sole transport. Begin/finish/PIV/listPublicTenants are
-// the methods LoginView calls through client.auth.*.
+// The SDK client is the sole transport. Begin/finish/PIV are the only methods
+// LoginView calls through client.auth.* — there is no tenant-listing call.
 vi.mock('../src/stores/sdkClient.ts', () => ({
   getSDKClient: vi.fn(async () => ({
     auth: {
       webAuthnBeginLogin: mockWebAuthnBeginLogin,
       webAuthnFinishLogin: mockWebAuthnFinishLogin,
       loginPIV: mockLoginPIV,
-      listPublicTenants: mockListPublicTenants,
     },
   })),
 }));
@@ -175,10 +178,6 @@ describe('LoginView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStore = {};
-    // Default: public tenants list resolves so the chooser settles.
-    mockListPublicTenants.mockResolvedValue([
-      { id: 'system', name: 'system', display_name: 'System' },
-    ]);
   });
 
   afterEach(() => {
@@ -186,7 +185,10 @@ describe('LoginView', () => {
   });
 
   /** Drive the passkey flow up to (and including) clicking Authenticate. */
-  async function submitPasskey(email = 'alice@example.com'): Promise<void> {
+  async function submitPasskey(email = 'alice@example.com', org?: string): Promise<void> {
+    if (org !== undefined) {
+      await fireEvent.input(screen.getByLabelText(/organization/i), { target: { value: org } });
+    }
     await fireEvent.click(screen.getByRole('button', { name: /sign in with passkey/i }));
     await waitFor(() => screen.getByLabelText(/email address/i));
     await fireEvent.input(screen.getByLabelText(/email address/i), {
@@ -323,7 +325,7 @@ describe('LoginView', () => {
   // user staring at the chooser with no feedback.)
   // --------------------------------------------------------------------------
 
-  it('on finish failure: shows an error alert and does not authenticate or redirect', async () => {
+  it('on finish failure: shows a generic error alert and does not authenticate or redirect', async () => {
     mockWebAuthnBeginLogin.mockResolvedValueOnce(makeChallengeEnvelope());
     mockCredentialsGet.mockResolvedValueOnce(makeCredentialStub());
     mockWebAuthnFinishLogin.mockRejectedValueOnce(
@@ -334,8 +336,10 @@ describe('LoginView', () => {
     await submitPasskey('carol@example.com');
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent(/assertion verification failed/i);
+      expect(screen.getByRole('alert')).toHaveTextContent(/sign-in failed/i);
     });
+    // The server's internal reason must not be echoed to an anonymous caller.
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/assertion verification failed/i);
     expect(mockSetAuthenticated).not.toHaveBeenCalled();
     expect(mockRouteDashboard).not.toHaveBeenCalled();
   });
@@ -360,18 +364,42 @@ describe('LoginView', () => {
   });
 
   // --------------------------------------------------------------------------
-  // 8. Email not found → specific error message (begin returns 404)
+  // 8. A rejected begin must NOT reveal whether the org or the email exists.
+  //
+  // The server answers every identity-resolution failure with one uniform 401,
+  // and the UI must not undo that by branching per status or echoing the
+  // server's text. Otherwise the login screen becomes the tenant/user
+  // enumeration oracle the deleted tenant-listing endpoint used to be.
   // --------------------------------------------------------------------------
 
-  it('shows "email not found" error when begin returns 404', async () => {
-    mockWebAuthnBeginLogin.mockRejectedValueOnce(makeStatusError(404, 'not found'));
+  it('shows one generic message for every rejected begin, naming neither org nor email', async () => {
+    const rejections = [
+      makeStatusError(401, 'authentication failed'),
+      makeStatusError(404, 'tenant "acme-corp" not found'),
+      makeStatusError(404, 'user "ghost@example.com" not found'),
+    ];
 
-    render(LoginView);
-    await submitPasskey('ghost@example.com');
+    const seen: string[] = [];
+    for (const rejection of rejections) {
+      mockWebAuthnBeginLogin.mockRejectedValueOnce(rejection);
 
-    await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent(/couldn't find that email/i);
-    });
+      render(LoginView);
+      await submitPasskey('ghost@example.com', 'acme-corp');
+
+      const alert = await screen.findByRole('alert');
+      const text = alert.textContent ?? '';
+      seen.push(text);
+
+      expect(text).not.toMatch(/acme-corp/i);
+      expect(text).not.toMatch(/ghost@example\.com/i);
+      expect(text).not.toMatch(/not found/i);
+      expect(text).toMatch(/sign-in failed/i);
+
+      cleanup();
+    }
+
+    // All three rejections produced the SAME message.
+    expect(new Set(seen).size).toBe(1);
   });
 
   // --------------------------------------------------------------------------
@@ -411,15 +439,123 @@ describe('LoginView', () => {
   // 11. Begin rejection surfaces an error alert (no silent reset).
   // --------------------------------------------------------------------------
 
-  it('shows an error alert when begin login rejects', async () => {
+  it('shows a generic error alert when begin login rejects', async () => {
     mockWebAuthnBeginLogin.mockRejectedValueOnce(new Error('server boom'));
 
     render(LoginView);
     await submitPasskey('alice@example.com');
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent(/server boom/i);
+      expect(screen.getByRole('alert')).toHaveTextContent(/sign-in failed/i);
     });
+    // The raw server text must not reach the user — it is an oracle surface.
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/server boom/i);
     expect(mockSetAuthenticated).not.toHaveBeenCalled();
+  });
+
+  // --------------------------------------------------------------------------
+  // 12. THE SECURITY FIX — organization is a TEXT FIELD, not a dropdown.
+  //
+  // The dropdown could only be populated by an unauthenticated tenant-listing
+  // endpoint, which handed every tenant id + name to anyone who loaded this
+  // page. Both the dropdown and the endpoint are gone.
+  // --------------------------------------------------------------------------
+
+  it('renders the organization as a text input and no tenant dropdown', () => {
+    render(LoginView);
+
+    const org = screen.getByLabelText(/organization/i);
+    expect(org).toBeInTheDocument();
+    expect(org.tagName).toBe('INPUT');
+    expect(org).toHaveAttribute('type', 'text');
+    // Accessible + autofill-friendly.
+    expect(org).toHaveAttribute('autocomplete', 'organization');
+
+    // No <select> anywhere on the login screen.
+    expect(document.querySelectorAll('select').length).toBe(0);
+  });
+
+  // --------------------------------------------------------------------------
+  // 13. UX — first-time visitor gets the client-side 'system' default.
+  // --------------------------------------------------------------------------
+
+  it('defaults the organization to system when nothing is remembered', () => {
+    render(LoginView);
+
+    expect(screen.getByLabelText(/organization/i)).toHaveValue('system');
+  });
+
+  // --------------------------------------------------------------------------
+  // 14. UX — the last SUCCESSFUL organization is prefilled on the next visit.
+  // --------------------------------------------------------------------------
+
+  it('prefills the organization from localStorage on a return visit', () => {
+    localStore['quicbaas_login_tenant'] = 'acme-corp';
+
+    render(LoginView);
+
+    expect(screen.getByLabelText(/organization/i)).toHaveValue('acme-corp');
+  });
+
+  // --------------------------------------------------------------------------
+  // 15. The TYPED organization is what gets submitted — not a stale prefill.
+  // --------------------------------------------------------------------------
+
+  it('submits the typed organization id to begin and finish', async () => {
+    localStore['quicbaas_login_tenant'] = 'acme-corp';
+    mockWebAuthnBeginLogin.mockResolvedValueOnce(makeChallengeEnvelope());
+    mockCredentialsGet.mockResolvedValueOnce(makeCredentialStub());
+    mockWebAuthnFinishLogin.mockResolvedValueOnce(makeFinishTokens());
+
+    render(LoginView);
+    await submitPasskey('alice@example.com', 'globex');
+
+    await waitFor(() => {
+      expect(mockWebAuthnBeginLogin).toHaveBeenCalledWith('globex', 'alice@example.com');
+      expect(mockWebAuthnFinishLogin.mock.calls[0][0]).toBe('globex');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // 16. Only a SUCCESSFUL login is remembered — a typo never sticks.
+  // --------------------------------------------------------------------------
+
+  it('remembers the organization after a successful login', async () => {
+    mockWebAuthnBeginLogin.mockResolvedValueOnce(makeChallengeEnvelope());
+    mockCredentialsGet.mockResolvedValueOnce(makeCredentialStub());
+    mockWebAuthnFinishLogin.mockResolvedValueOnce(makeFinishTokens());
+
+    render(LoginView);
+    await submitPasskey('alice@example.com', 'globex');
+
+    await waitFor(() => {
+      expect(localStore['quicbaas_login_tenant']).toBe('globex');
+    });
+  });
+
+  it('does NOT remember the organization when the login fails', async () => {
+    mockWebAuthnBeginLogin.mockRejectedValueOnce(makeStatusError(401, 'authentication failed'));
+
+    render(LoginView);
+    await submitPasskey('alice@example.com', 'typo-org');
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+    });
+    expect(localStore['quicbaas_login_tenant']).toBeUndefined();
+  });
+
+  // --------------------------------------------------------------------------
+  // 17. An empty organization is rejected client-side before any network call.
+  // --------------------------------------------------------------------------
+
+  it('refuses to submit with an empty organization', async () => {
+    render(LoginView);
+    await submitPasskey('alice@example.com', '   ');
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/enter your organization/i);
+    });
+    expect(mockWebAuthnBeginLogin).not.toHaveBeenCalled();
   });
 });

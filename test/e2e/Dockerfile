@@ -77,7 +77,7 @@ COPY --from=ui-builder /src/cmd/quicbaas/frontend/dist ./go-quicbaas/cmd/quicbaa
 
 # Pruned go.work — identical model to test/integration/Dockerfile.
 RUN { \
-        echo 'go 1.26.4'; \
+        echo 'go 1.26.5'; \
         echo ''; \
         echo 'use ('; \
         echo '	./go-libsignal'; \

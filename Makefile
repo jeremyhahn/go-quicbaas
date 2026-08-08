@@ -1481,9 +1481,13 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	echo ""; \
 	echo "$(YELLOW)Building Docker images (forcing clean rebuild to ensure latest code)...$(NC)"; \
 	echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"; \
-	docker compose -f $$COMPOSE_FILE build --no-cache --pull --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" 2>&1 | while IFS= read -r line; do \
+	set -o pipefail; \
+	if ! docker compose -f $$COMPOSE_FILE build --no-cache --pull --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" 2>&1 | while IFS= read -r line; do \
 		echo "  $$line"; \
-	done; \
+	done; then \
+		echo "$(RED)Image build FAILED — refusing to run integration tests against stale images.$(NC)"; \
+		exit 1; \
+	fi; \
 	echo ""; \
 	echo "$(YELLOW)Starting integration test cluster...$(NC)"; \
 	docker compose -f $$COMPOSE_FILE up -d test-node1 test-node2 test-node3 localstack minio azurite fake-gcs-server $$OLLAMA_UP_SERVICES; \
@@ -2028,7 +2032,11 @@ test-e2e-acp: build-ui build-daemon ## Run Playwright session lifecycle tests �
 test-e2e-docker: ## Run the Playwright e2e suite fully in Docker (host needs only Docker)
 	@echo "$(BLUE)Running dockerized Playwright e2e (chromium-no-backend)...$(NC)"
 	@COMPOSE_FILE="test/e2e/docker-compose.e2e.yml"; \
-	docker compose -f $$COMPOSE_FILE build e2e 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	set -o pipefail; \
+	if ! docker compose -f $$COMPOSE_FILE build e2e 2>&1 | while IFS= read -r line; do echo "  $$line"; done; then \
+		echo "$(RED)Image build FAILED — refusing to run e2e against a stale cached image.$(NC)"; \
+		exit 1; \
+	fi; \
 	docker compose -f $$COMPOSE_FILE run --rm e2e; \
 	RESULT=$$?; \
 	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans >/dev/null 2>&1 || true; \

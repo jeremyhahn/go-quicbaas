@@ -123,6 +123,14 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 		// the tenant_barrier:* special rules) and still receives the verified
 		// principal under RequireAuthz=false (EnforceTokenBinding), which the
 		// service-layer tenant-binding gates require to reason about identity.
+		//
+		// The ONE carve-out is the WebAuthn login ceremony registered below
+		// (.../{tenant_id}/webauthn/login/{begin,finish}): WebAuthn IS the
+		// authentication mechanism, so it must stay reachable pre-auth. It
+		// bypasses every gate via the tenant-scoped pre-auth templates in
+		// authz_public_routes.go (isAuthzPublicEndpoint / isDefaultDenyPublic).
+		// The sibling register/{begin,finish} enrollment routes are NOT
+		// exempted — they bind an authenticator to a caller-supplied user_id.
 		h.server.useAPIAuthzMiddleware(r)
 
 		r.Get("/", h.ListTenants)
@@ -235,7 +243,10 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 			r.Post("/effective-permissions", h.GetEffectivePermissions)
 		})
 
-		// WebAuthn endpoints
+		// WebAuthn endpoints. login/begin + login/finish are PRE-AUTH (the
+		// ceremony authenticates the caller; see authz_public_routes.go);
+		// register/begin + register/finish enroll a NEW authenticator for a
+		// caller-supplied user_id and stay behind the group's authz chain.
 		r.Route("/{tenant_id}/webauthn", func(r chi.Router) {
 			r.Post("/register/begin", h.BeginRegistration)
 			r.Post("/register/finish", h.FinishRegistration)
@@ -273,13 +284,11 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 		// under RequireAuthz=true (AuthorizeViaValidator; every path here is
 		// PEP-mapped — see the "/api/v1/iam" entries in authz_pep_mapping.go)
 		// and still receives the verified principal under RequireAuthz=false
-		// (EnforceTokenBinding). The public tenant listing below bypasses the
-		// gate via isAuthzPublicEndpoint, so the login UI tenant selector
-		// keeps working without a token.
+		// (EnforceTokenBinding). EVERY route in this group is gated — there is
+		// no anonymous surface here. The login UI does not enumerate tenants;
+		// the operator types the organization id, so no pre-auth tenant listing
+		// exists to leak one tenant's namespace to another.
 		h.server.useAPIAuthzMiddleware(r)
-
-		// Public tenant listing for the login UI tenant selector — no auth required.
-		r.Get("/tenants/public", h.ListPublicTenants)
 
 		// Admin approval/rejection for pending self-registered users.
 		// Requires Admin@system scope; tenant_id passed as query parameter.

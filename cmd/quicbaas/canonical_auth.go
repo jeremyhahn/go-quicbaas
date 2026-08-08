@@ -29,6 +29,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -40,12 +41,17 @@ import (
 	xkmsfido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 )
 
+// canonicalFactorTypeFIDO2 is the factor type whose enrollment is performed by
+// the server-side WebAuthn registration ceremony rather than by an explicit
+// client-issued enroll request.
+const canonicalFactorTypeFIDO2 = "fido2"
+
 // canonicalValidFactorTypes is the canonical "--type" set per
 // docs/08-bootstrap-auth-architecture.md §5e.
 var canonicalValidFactorTypes = map[string]struct{}{
-	"mtls":  {},
-	"fido2": {},
-	"piv":   {},
+	"mtls":                   {},
+	canonicalFactorTypeFIDO2: {},
+	"piv":                    {},
 }
 
 // canonicalValidAuthMethods is the canonical "auth login --method" set. It
@@ -390,7 +396,25 @@ func runCanonicalAuthFactorList(ctx context.Context, user string) error {
 }
 
 // runCanonicalAuthFactorAdd enrolls a new factor.
+//
+// FIDO2 is enrolled BY the WebAuthn registration ceremony: the server writes
+// the qrdb auth factor through as it persists the credential
+// (pkg/iam.webAuthnFactorWriteThrough), so the client must NOT call Add again —
+// a second enrollment of the same credential id is rejected as a duplicate.
+// mTLS and PIV carry no server-side ceremony and are enrolled explicitly.
 func runCanonicalAuthFactorAdd(ctx context.Context, f *canonicalAuthFactorAddFlags) error {
+	if err := validateCanonicalEnrollFlags(f); err != nil {
+		return err
+	}
+	if f.factorType == canonicalFactorTypeFIDO2 {
+		credentialID, err := canonicalFIDO2EnrollFunc(ctx, f)
+		if err != nil {
+			return err
+		}
+		printCanonicalFIDO2Enrollment(os.Stdout, credentialID)
+		return nil
+	}
+
 	factors, err := canonicalAuthFactors("auth factor add")
 	if err != nil {
 		return err
@@ -407,6 +431,14 @@ func runCanonicalAuthFactorAdd(ctx context.Context, f *canonicalAuthFactorAddFla
 	fmt.Fprintf(out, "Enrollment ID: %s\n", resp.EnrollmentID)
 	fmt.Fprintf(out, "Type:          %s\n", resp.FactorName)
 	return nil
+}
+
+// printCanonicalFIDO2Enrollment reports the outcome of a WebAuthn enrollment.
+// The ceremony does not surface a qrdb enrollment id to the client, so the
+// credential id — the login lookup key — is the operator-visible handle.
+func printCanonicalFIDO2Enrollment(out io.Writer, credentialID string) {
+	fmt.Fprintf(out, "Credential ID: %s\n", credentialID)
+	fmt.Fprintf(out, "Type:          %s\n", canonicalFactorTypeFIDO2)
 }
 
 // runCanonicalAuthFactorRemove removes an enrolled factor.
@@ -427,14 +459,41 @@ func runCanonicalAuthFactorRemove(ctx context.Context, factorID string, force bo
 
 // runCanonicalAuthFactorRotate revokes an old factor and enrolls a
 // replacement in a single operation.
+//
+// FIDO2 rotation is a two-step sequence rather than the atomic Rotate RPC: the
+// WebAuthn registration ceremony already enrolled the replacement server-side,
+// so rotation completes by revoking the superseded factor. Ordering is
+// enroll-then-revoke on purpose — the user is never left without a factor, and
+// a failed revoke leaves both factors active so the operator can simply re-run
+// "auth factor remove".
 func runCanonicalAuthFactorRotate(ctx context.Context, oldID string, f *canonicalAuthFactorAddFlags) error {
 	if oldID == "" {
 		return &MissingFactorIDError{Op: "auth factor rotate"}
+	}
+	if err := validateCanonicalEnrollFlags(f); err != nil {
+		return err
 	}
 	factors, err := canonicalAuthFactors("auth factor rotate")
 	if err != nil {
 		return err
 	}
+	out := os.Stdout
+
+	if f.factorType == canonicalFactorTypeFIDO2 {
+		credentialID, cerr := canonicalFIDO2EnrollFunc(ctx, f)
+		if cerr != nil {
+			return cerr
+		}
+		// force=false is safe: the replacement the ceremony just enrolled
+		// means the revoked factor is never the user's last active one.
+		if rerr := factors.Remove(ctx, oldID, false); rerr != nil {
+			return rerr
+		}
+		fmt.Fprintf(out, "Old factor revoked: %s\n", oldID)
+		printCanonicalFIDO2Enrollment(out, credentialID)
+		return nil
+	}
+
 	req, err := buildCanonicalEnrollRequest(ctx, f)
 	if err != nil {
 		return err
@@ -443,7 +502,6 @@ func runCanonicalAuthFactorRotate(ctx context.Context, oldID string, f *canonica
 	if err != nil {
 		return err
 	}
-	out := os.Stdout
 	fmt.Fprintf(out, "Old factor revoked: %s\n", oldID)
 	fmt.Fprintf(out, "New enrollment ID:  %s\n", resp.EnrollmentID)
 	fmt.Fprintf(out, "Type:               %s\n", resp.FactorName)
@@ -467,19 +525,37 @@ func runCanonicalAuthFactorRelabel(ctx context.Context, factorID, label string) 
 // Helpers
 // ---------------------------------------------------------------------------
 
-// buildCanonicalEnrollRequest validates the canonical add/rotate flag
-// set and builds an AuthFactorEnrollRequest with type-specific
-// MethodParams. For FIDO2 / PIV the helper invokes the SDK hardware
-// sub-clients to produce vendor-agnostic credential payloads.
-func buildCanonicalEnrollRequest(ctx context.Context, f *canonicalAuthFactorAddFlags) (*quicbaas.AuthFactorEnrollRequest, error) {
-	if f.factorType == "" {
-		return nil, &InvalidFactorTypeError{Type: ""}
+// validateCanonicalEnrollFlags checks the flag set shared by "auth factor add"
+// and "auth factor rotate", independently of whether the factor type is
+// enrolled explicitly (mtls, piv) or by a server-side ceremony (fido2).
+func validateCanonicalEnrollFlags(f *canonicalAuthFactorAddFlags) error {
+	if f == nil || f.factorType == "" {
+		return &InvalidFactorTypeError{Type: ""}
 	}
 	if _, ok := canonicalValidFactorTypes[f.factorType]; !ok {
-		return nil, &InvalidFactorTypeError{Type: f.factorType}
+		return &InvalidFactorTypeError{Type: f.factorType}
 	}
 	if f.label == "" {
-		return nil, &MissingLabelError{Op: "auth factor add"}
+		return &MissingLabelError{Op: "auth factor add"}
+	}
+	return nil
+}
+
+// buildCanonicalEnrollRequest validates the canonical add/rotate flag
+// set and builds an AuthFactorEnrollRequest with type-specific
+// MethodParams. For PIV the helper invokes the SDK hardware sub-client to
+// produce a vendor-agnostic credential payload.
+//
+// FIDO2 is deliberately absent: its factor is enrolled server-side by the
+// WebAuthn registration ceremony's write-through, so there is no client-issued
+// enroll request for that type. Passing "fido2" yields an
+// InvalidFactorTypeError so a future caller cannot silently double-enroll.
+func buildCanonicalEnrollRequest(ctx context.Context, f *canonicalAuthFactorAddFlags) (*quicbaas.AuthFactorEnrollRequest, error) {
+	if err := validateCanonicalEnrollFlags(f); err != nil {
+		return nil, err
+	}
+	if f.factorType == canonicalFactorTypeFIDO2 {
+		return nil, &InvalidFactorTypeError{Type: f.factorType}
 	}
 
 	params := map[string]any{"label": f.label}
@@ -496,19 +572,6 @@ func buildCanonicalEnrollRequest(ctx context.Context, f *canonicalAuthFactorAddF
 		params["credential_sha256"] = fingerprint
 		for k, v := range certMeta {
 			params[k] = v
-		}
-	case "fido2":
-		credentialID, err := canonicalFIDO2EnrollFunc(ctx, f)
-		if err != nil {
-			return nil, err
-		}
-		// credential_id is the base64url credential id the login path uses
-		// as the qrdb FIDO2 factor lookup key; the SDK stores it as the
-		// factor Credential so a later "auth login --method fido2" resolves
-		// it via LookupByCredentialKey.
-		params["credential_id"] = credentialID
-		if f.fido2Device != "" {
-			params["device_id"] = f.fido2Device
 		}
 	case "piv":
 		piv, err := canonicalAuthPIV("auth factor add --type piv")

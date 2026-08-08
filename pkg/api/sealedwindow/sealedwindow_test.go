@@ -71,21 +71,36 @@ func TestRESTAllowlist_Deduplicated(t *testing.T) {
 	}
 }
 
+// methodTail returns the bare method name of a fully-qualified gRPC method
+// path, i.e. the suffix after the last "/".
+func methodTail(fullMethod string) string {
+	if idx := strings.LastIndexByte(fullMethod, '/'); idx >= 0 {
+		return fullMethod[idx+1:]
+	}
+	return fullMethod
+}
+
 // TestGRPCAllowlist_NoDriftFromQRDB asserts every method tail in qrdb's
 // canonical gRPC sealed-window allowlist is present in the quicbaas
 // derivation, and the quicbaas extras are exactly the two documented
 // quicbaas-only mirror surfaces (BarrierShamirVerify on quicbaas.barrier.v1
 // and CeremonyListOfficers on quicbaas.ceremony.v1).
+//
+// qrdb's re-exported allowlist is service-qualified
+// ("/qrdb.v1.QRDBService/BarrierUnseal"); the tail is the unit both canonical
+// tables share, so the comparison strips the service prefix.
 func TestGRPCAllowlist_NoDriftFromQRDB(t *testing.T) {
 	ours := make(map[string]struct{})
 	for _, m := range GRPCAllowlist() {
+		require.Equal(t, m, methodTail(m), "GRPCAllowlist must yield bare method tails")
 		ours[m] = struct{}{}
 	}
 	canonical := make(map[string]struct{})
 	for _, m := range qrdbsdk.GRPCSealedWindowAllowlist {
-		canonical[m] = struct{}{}
-		_, ok := ours[m]
-		assert.True(t, ok, "qrdb canonical gRPC allowlist tail %q missing from quicbaas derivation", m)
+		tail := methodTail(m)
+		canonical[tail] = struct{}{}
+		_, ok := ours[tail]
+		assert.True(t, ok, "qrdb canonical gRPC allowlist tail %q (from %q) missing from quicbaas derivation", tail, m)
 	}
 
 	extras := map[string]struct{}{
@@ -98,6 +113,77 @@ func TestGRPCAllowlist_NoDriftFromQRDB(t *testing.T) {
 		}
 		_, allowed := extras[m]
 		assert.True(t, allowed, "unexpected quicbaas-only gRPC allowlist tail %q (extend the documented extras deliberately)", m)
+	}
+}
+
+// TestGRPCFullMethodAllowlist_ServicePinned asserts the derivation quicbaas
+// actually gates on is fully service-qualified: it carries qrdb's canonical
+// qrdb.v1.QRDBService surface verbatim, qualifies the quicbaas mirror verbs
+// onto the services that really declare them, and admits no bare tail.
+func TestGRPCFullMethodAllowlist_ServicePinned(t *testing.T) {
+	full := GRPCFullMethodAllowlist()
+	require.NotEmpty(t, full)
+
+	set := make(map[string]struct{}, len(full))
+	for _, m := range full {
+		require.True(t, strings.HasPrefix(m, "/"), "entry %q must be a fully-qualified method path", m)
+		require.Equal(t, 2, strings.Count(m, "/"), "entry %q must be /{service}/{method}", m)
+		_, dup := set[m]
+		require.False(t, dup, "duplicate full-method entry %q", m)
+		set[m] = struct{}{}
+	}
+
+	// 1. qrdb's canonical qrdb.v1 surface is carried verbatim.
+	for _, m := range qrdbsdk.GRPCSealedWindowAllowlist {
+		_, ok := set[m]
+		assert.True(t, ok, "qrdb canonical full method %q missing from quicbaas derivation", m)
+	}
+
+	// 2. The quicbaas mirror surfaces are qualified onto their own services,
+	// including the two documented quicbaas-only extras.
+	for _, m := range []string{
+		"/quicbaas.barrier.v1.Barrier/BarrierUnseal",
+		"/quicbaas.barrier.v1.Barrier/BarrierStatus",
+		"/quicbaas.barrier.v1.Barrier/BarrierShamirVerify",
+		"/quicbaas.ceremony.v1.Ceremony/CeremonyInitialize",
+		"/quicbaas.ceremony.v1.Ceremony/CeremonyListOfficers",
+		"/quicbaas.ceremony.v1.Ceremony/CeremonyEnrollExternalOfficer",
+		"/quicbaas.v1.QuicBaaS/Health",
+	} {
+		_, ok := set[m]
+		assert.True(t, ok, "quicbaas mirror full method %q missing from derivation", m)
+	}
+
+	// 3. Bare tails are never admitted — the whole point of service pinning.
+	for _, tail := range GRPCAllowlist() {
+		_, ok := set[tail]
+		assert.False(t, ok, "bare tail %q must not appear in the full-method allowlist", tail)
+	}
+}
+
+// TestGRPCFullMethodAllowlist_NoTailCollisionAdmitted pins the service-pinning
+// guarantee against the real collisions in the quicbaas proto surface: several
+// co-registered services declare a method whose TAIL is on the canonical
+// allowlist ("Status" on the per-tenant barrier — itself a deliberate
+// sealed-window exclusion — and "Health" on the post-unseal data-plane
+// services). None of them may be admitted through the sealed window.
+func TestGRPCFullMethodAllowlist_NoTailCollisionAdmitted(t *testing.T) {
+	set := make(map[string]struct{})
+	for _, m := range GRPCFullMethodAllowlist() {
+		set[m] = struct{}{}
+	}
+	for _, m := range []string{
+		"/quicbaas.tenant.v1.TenantBarrier/Status",
+		"/quicbaas.tenant.v1.TenantBarrier/Unseal",
+		"/quicbaas.agent.runtime.v1.AgentRuntime/Status",
+		"/quicbaas.orchestrator.v1.OrchestratorService/Health",
+		"/quicbaas.ollama.v1.OllamaService/Health",
+		"/quicbaas.vector.v1.VectorDB/Health",
+		"/quicbaas.barrier.v1.Barrier/BarrierSeal",
+		"/quicbaas.v1.QuicBaaS/Get",
+	} {
+		_, ok := set[m]
+		assert.False(t, ok, "tail-colliding method %q must stay sealed", m)
 	}
 }
 

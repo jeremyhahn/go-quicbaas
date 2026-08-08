@@ -1388,9 +1388,4 @@ export interface AuthTokenResponse {
     expires_in: number;
     user?: IAMUser;
 }
-export interface PublicTenant {
-    id: string;
-    name: string;
-    display_name: string;
-}
 //# sourceMappingURL=types.d.ts.map

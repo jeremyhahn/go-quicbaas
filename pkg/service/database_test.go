@@ -51,6 +51,7 @@ type mockDBServicer struct {
 	updateRaftForTenantFn       func(ctx context.Context, name string, r *qrdbsdk.DatabaseRaftConfig) (*qrdbsdk.DatabaseInfo, error)
 	updateBarrierForTenantFn    func(ctx context.Context, name string, b *qrdbsdk.DatabaseBarrierConfig) (*qrdbsdk.DatabaseInfo, error)
 	updateConnectionForTenantFn func(ctx context.Context, name string, c *qrdbsdk.DatabaseConnectionConfig) (*qrdbsdk.DatabaseInfo, error)
+	scaleForTenantFn            func(ctx context.Context, name string, targetReplicas int) (*qrdbsdk.DatabaseInfo, error)
 }
 
 // Non-tenant interface methods (stubs).
@@ -190,6 +191,13 @@ func (m *mockDBServicer) UpdateBarrierForTenant(ctx context.Context, name string
 func (m *mockDBServicer) UpdateConnectionForTenant(ctx context.Context, name string, c *qrdbsdk.DatabaseConnectionConfig) (*qrdbsdk.DatabaseInfo, error) {
 	if m.updateConnectionForTenantFn != nil {
 		return m.updateConnectionForTenantFn(ctx, name, c)
+	}
+	return &qrdbsdk.DatabaseInfo{Name: name, Status: qrdbsdk.StatusOpen}, nil
+}
+
+func (m *mockDBServicer) ScaleForTenant(ctx context.Context, name string, targetReplicas int) (*qrdbsdk.DatabaseInfo, error) {
+	if m.scaleForTenantFn != nil {
+		return m.scaleForTenantFn(ctx, name, targetReplicas)
 	}
 	return &qrdbsdk.DatabaseInfo{Name: name, Status: qrdbsdk.StatusOpen}, nil
 }

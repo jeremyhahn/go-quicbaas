@@ -140,8 +140,8 @@ func TestRESTPublicEndpointsNoAuth(t *testing.T) {
 	publicEndpoints := []string{
 		"/api/v1/auth/login/piv",
 		"/api/v1/health",
-		"/api/v1/health/liveness",
-		"/api/v1/health/readiness",
+		"/api/v1/health/live",
+		"/api/v1/health/ready",
 		"/metrics",
 	}
 

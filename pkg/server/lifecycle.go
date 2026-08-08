@@ -2059,11 +2059,13 @@ func (s *Server) startGRPCServer() error {
 	// probe-driven: a pass-through while the barrier is unsealed, and a
 	// deny-everything-off-allowlist gate the instant the barrier is sealed
 	// (e.g. a post-boot barrier seal). The allowlist is derived from the
-	// single canonical table in pkg/api/sealedwindow. The same chain backs
-	// the Unix-domain-socket listener, so one installation covers both the
-	// gRPC and Unix transports.
+	// single canonical table in pkg/api/sealedwindow, service-qualified so a
+	// same-named method on another co-registered service (e.g.
+	// "/quicbaas.tenant.v1.TenantBarrier/Status") stays sealed. The same chain
+	// backs the Unix-domain-socket listener, so one installation covers both
+	// the gRPC and Unix transports.
 	sealedProbe := s.SealedWindowProbe()
-	sealedAllow := qbsealedwindow.GRPCAllowlist()
+	sealedAllow := qbsealedwindow.GRPCFullMethodAllowlist()
 	unaryInterceptors = append(unaryInterceptors,
 		qrdbsdk.SealedWindowUnaryInterceptor(sealedProbe, sealedAllow))
 	streamInterceptors = append(streamInterceptors,

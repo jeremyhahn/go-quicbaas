@@ -157,6 +157,27 @@ iam:
     isolation: strict
     auto_create: true
 
+  # WebAuthn relying party (iam.webauthn is the canonical block the server
+  # reads; iam.auth.local.webauthn below is the legacy local-auth toggle).
+  #
+  # Without this block the RP is derived from the issuer URL
+  # (https://localhost:8080) and rp_origins would contain ONLY that origin.
+  # The headless software authenticator used by the FIDO2 login tests
+  # (go-xkms/pkg/webauthn/client.SoftwareAdapter) stamps the WebAuthn-standard
+  # same-origin default "https://<rpId>" into its collected client data, so
+  # "https://localhost" must be an accepted origin or every ceremony fails
+  # origin validation. Both forms are listed so the derived issuer origin keeps
+  # working unchanged.
+  webauthn:
+    rp_id: "localhost"
+    rp_display_name: "QuicBaaS Integration Tests"
+    rp_origins:
+      - "https://localhost:8080"
+      - "https://localhost"
+      - "http://localhost:8080"
+    attestation_preference: none
+    user_verification: discouraged
+
   auth:
     local:
       enabled: true

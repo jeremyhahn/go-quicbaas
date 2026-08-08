@@ -341,7 +341,19 @@ func GetUsername(ctx context.Context) string {
 	return ""
 }
 
-// publicEndpoints defines endpoints that bypass authorization.
+// publicEndpoints are the literal path prefixes that bypass the per-group
+// authorization gates (Authorize / EnforceTokenBinding / AuthorizeViaValidator).
+// A request matches when it equals a prefix or is a sub-path of it.
+//
+// This list and defaultDenyPublicPrefixes (authz_default_deny.go) describe the
+// same intent for two different postures, so entries that appear in both MUST
+// name the same real routes. The default-deny list is the broader of the two: it
+// runs on the TOP router and therefore also has to admit the root-mounted
+// pre-token surfaces (OIDC discovery, /oauth2, ACME directory, invites, UI,
+// docs) that never reach a per-group gate. The one deliberate divergence is
+// metrics: the root scrape mount /metrics is public in both, while the
+// /api/v1/metrics group is public only under default-deny — under the per-group
+// postures it stays gated.
 var publicEndpoints = []string{
 	// Token management endpoints
 	"/api/v1/auth/refresh",
@@ -352,19 +364,30 @@ var publicEndpoints = []string{
 	// authenticates; no bearer is available yet.
 	"/api/v1/auth/login/begin",
 	"/api/v1/auth/login/finish",
-	// Public tenant listing for the login UI tenant selector — no token available yet.
-	"/api/v1/iam/tenants/public",
-	// Health and metrics endpoints
+	// Health probes. The mounted routes are /api/v1/health, /api/v1/health/live
+	// and /api/v1/health/ready (server.go). The parent prefix already covers both
+	// probes, but they are named explicitly so this list matches the health
+	// entries in defaultDenyPublicPrefixes exactly. The former
+	// /api/v1/health/liveness + /api/v1/health/readiness entries were dead — no
+	// such routes were ever mounted.
 	"/api/v1/health",
-	"/api/v1/health/liveness",
-	"/api/v1/health/readiness",
+	"/api/v1/health/live",
+	"/api/v1/health/ready",
 	// Version (read-only build info; consumed by the GUI dashboard).
 	"/api/v1/version",
+	// Prometheus scrape mount at the router root.
 	"/metrics",
 }
 
 // isAuthzPublicEndpoint checks if the endpoint doesn't require authorization.
+// It consults the literal publicEndpoints prefixes above plus the tenant-scoped
+// pre-auth route templates (authz_public_routes.go), whose variable tenant
+// segment a literal prefix cannot express. isDefaultDenyPublic consults the same
+// templates, so every enforcement posture agrees on what is reachable pre-auth.
 func isAuthzPublicEndpoint(path string) bool {
+	if isPreAuthRoute(path) {
+		return true
+	}
 	for _, endpoint := range publicEndpoints {
 		if path == endpoint || strings.HasPrefix(path, endpoint+"/") {
 			return true

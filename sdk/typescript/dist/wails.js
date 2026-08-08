@@ -463,10 +463,6 @@ class WailsAuthClient {
     async loginPIV() {
         throw new Error('loginPIV: PIV requires a browser TLS handshake; not supported in desktop mode');
     }
-    async listPublicTenants() {
-        // Desktop mode: return the implicit default tenant.
-        return [{ id: 'default', name: 'default', display_name: 'Default' }];
-    }
     async logout(_token) {
         // Wails desktop mode runs embedded — there is no remote bearer token to
         // revoke. The host application owns the OS-level session; this is a no-op

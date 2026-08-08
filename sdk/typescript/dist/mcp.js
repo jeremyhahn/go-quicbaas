@@ -79,7 +79,6 @@ class McpAuthClient {
     async webAuthnBeginLogin(_tenantID, _email) { return notImpl('webAuthnBeginLogin'); }
     async webAuthnFinishLogin(_tenantID, _email, _credential) { return notImpl('webAuthnFinishLogin'); }
     async loginPIV() { return notImpl('loginPIV'); }
-    async listPublicTenants() { return notImpl('listPublicTenants'); }
     async logout(_token) { return notImpl('logout'); }
     async registerBegin(_req) { return notImpl('registerBegin'); }
     async registerFinish(_req) { return notImpl('registerFinish'); }

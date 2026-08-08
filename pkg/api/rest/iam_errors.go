@@ -29,7 +29,45 @@ var (
 
 	// ErrPolicyParse indicates a policy document could not be parsed.
 	ErrPolicyParse = errors.New("policy parse failed")
+
+	// ErrLoginRejected is the single sentinel every identity-resolution
+	// failure in a login ceremony collapses onto.
+	ErrLoginRejected = errors.New("authentication failed")
 )
+
+// LoginRejectedError is the ONLY failure an unauthenticated caller ever sees
+// from a login ceremony once the request body has validated.
+//
+// Every identity-dependent outcome — unknown tenant, unknown user, user with no
+// registered authenticator, rejected assertion — collapses onto this one value
+// so the response cannot be used as an oracle. Distinguishable statuses or
+// messages would let an anonymous caller enumerate tenant namespaces and user
+// directories one request at a time, which is exactly the disclosure that the
+// deletion of the public tenant-listing endpoint closed off. The real reason is
+// recorded server-side in the audit log, never in the HTTP response.
+type LoginRejectedError struct{}
+
+// Error implements the error interface.
+func (e *LoginRejectedError) Error() string {
+	return "iam.login: authentication failed"
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *LoginRejectedError) Unwrap() error {
+	return ErrLoginRejected
+}
+
+// loginRejectedDescription is the fixed, identity-independent description sent
+// to the caller. It is a constant so no code path can widen it.
+const loginRejectedDescription = "authentication failed"
+
+// RespondLoginRejected writes the uniform login failure. Callers MUST use this
+// instead of handleServiceError for any error raised after a login ceremony
+// starts resolving the caller's identity.
+func RespondLoginRejected(w http.ResponseWriter, r *http.Request) {
+	RespondIAMError(w, r, http.StatusUnauthorized,
+		NewIAMAPIError(ErrUnauthorized, loginRejectedDescription))
+}
 
 // OAuthError represents an OAuth2/OIDC error response following RFC 6749.
 type OAuthError struct {

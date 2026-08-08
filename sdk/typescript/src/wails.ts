@@ -625,10 +625,6 @@ class WailsAuthClient implements AuthClient {
   async loginPIV(): Promise<import('./types.js').AuthTokenResponse> {
     throw new Error('loginPIV: PIV requires a browser TLS handshake; not supported in desktop mode');
   }
-  async listPublicTenants(): Promise<import('./types.js').PublicTenant[]> {
-    // Desktop mode: return the implicit default tenant.
-    return [{ id: 'default', name: 'default', display_name: 'Default' }];
-  }
   async logout(_token?: string): Promise<void> {
     // Wails desktop mode runs embedded — there is no remote bearer token to
     // revoke. The host application owns the OS-level session; this is a no-op

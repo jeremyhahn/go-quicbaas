@@ -58,11 +58,21 @@ func TestAuthBypass_GRPC(t *testing.T) {
 		{"sealed status", true, "/qrdb.v1.QRDBService/BarrierStatus", true},
 		{"sealed ceremony", true, "/qrdb.v1.QRDBService/CeremonyInitialize", true},
 		{"sealed share-claim (IdentityGated)", true, "/qrdb.v1.QRDBService/BarrierShareClaimBegin", true},
-		{"sealed bare tail", true, "BarrierUnseal", true},
+		{"sealed ceremony mirror list-officers", true, "/quicbaas.ceremony.v1.Ceremony/CeremonyListOfficers", true},
+		{"sealed quicbaas health", true, "/quicbaas.v1.QuicBaaS/Health", true},
 
 		{"sealed KV get denied", true, "/quicbaas.v1.QuicBaaS/Get", false},
 		{"sealed barrier SEAL excluded", true, "/qrdb.v1.QRDBService/BarrierSeal", false},
 		{"sealed credential excluded", true, "/qrdb.v1.QRDBService/CredentialSubmit", false},
+
+		// Service pinning: matching is on the FULL method path, so a bare tail
+		// and a same-named method on another co-registered service both stay
+		// sealed. "/quicbaas.tenant.v1.TenantBarrier/Status" is the live
+		// collision — the per-tenant barrier surface is a documented
+		// sealed-window exclusion yet shares the "Status" tail.
+		{"sealed bare tail rejected", true, "BarrierUnseal", false},
+		{"sealed tenant barrier status rejected", true, "/quicbaas.tenant.v1.TenantBarrier/Status", false},
+		{"sealed data-plane health rejected", true, "/quicbaas.ollama.v1.OllamaService/Health", false},
 
 		{"unsealed unseal never bypasses", false, "/qrdb.v1.QRDBService/BarrierUnseal", false},
 		{"unsealed status never bypasses", false, "/qrdb.v1.QRDBService/BarrierStatus", false},

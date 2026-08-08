@@ -222,14 +222,22 @@ var pepMapping = map[string]pepResource{
 	"/api/v1/roles":   {resource: "roles", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
 	"/api/v1/tenants": {resource: "tenants", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
 
+	// Delegated-admin surface (root-mounted /api/v1/admin in iam_admin.go):
+	// admin-assignment CRUD, permission checks and impersonation. An admin
+	// assignment binds an administrative role to a user within a scope, so the
+	// surface maps onto the qrdb roles:* family (create/update -> roles:assign,
+	// delete -> roles:unassign). The non-CRUD endpoints (check-permission,
+	// impersonation) resolve via the "/api/v1/admin" pepSpecialRulesBase block
+	// before this coarse fallback is consulted.
+	"/api/v1/admin": {resource: "roles", verbs: crudVerbs{get: "read", list: "list", create: "assign", del: "unassign"}},
+
 	// IAM utility group (root-mounted /api/v1/iam in iam.go): sessions, audit,
 	// PEP access-check and self-registration approval surfaces. Every registered
 	// endpoint resolves via the "/api/v1/iam" pepSpecialRulesBase block; this
 	// coarse fallback keeps any future sub-path mapped (degrading to the same
 	// tenants family the defaultDenyScopeTable uses for /api/v1/iam) rather than
-	// unmapped/denied. The public tenant listing (/api/v1/iam/tenants/public)
-	// and the invite-activation mount (/api/v1/iam/invites) bypass the authz
-	// middleware entirely (isAuthzPublicEndpoint / separate unwrapped mount).
+	// unmapped/denied. The invite-activation mount (/api/v1/iam/invites) is the
+	// only pre-auth surface under this prefix; it is a separate unwrapped mount.
 	"/api/v1/iam": {resource: "tenants", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
 
 	// Data-service surfaces.
@@ -268,6 +276,11 @@ var pepMapping = map[string]pepResource{
 
 	// Ollama embedding inference.
 	"/api/v1/ollama": {resource: "ollama", verbs: crudVerbs{get: "health", list: "model_list", create: "embed", del: "embed"}},
+
+	// Shard-routing introspection (env-gated debug mount, debug.go). Reads the
+	// cluster's shard placement, so it authorizes as the same admin:status the
+	// cluster control plane uses.
+	"/api/v1/debug": {resource: "admin", verbs: crudVerbs{get: "status", list: "status", create: "status", del: "status"}},
 
 	// Cluster + cache control plane (Raft administration). Mirrors the gRPC
 	// canon in pkg/api/grpc/authz_mapping.go: reads authorize as admin:status,
@@ -659,6 +672,37 @@ var pepSpecialRulesBase = []pepSpecialRule{
 	{http.MethodDelete, "/api/v1/iam", "/sessions/", "users", "update"},
 	{http.MethodGet, "/api/v1/iam", "/sessions", "users", "read"},
 	{http.MethodDelete, "/api/v1/iam", "/sessions", "users", "update"},
+
+	// ---- Canonical xkms WebAuthn enrollment (/api/v1/iam/{tenant}/webauthn) ----
+	// The mount registered by MountXKMSWebAuthnRoutes is root-level and carries
+	// the same useAPIAuthzMiddleware chain as the rest of the IAM surface.
+	// Registration IS authenticator (factor) enrollment, so it authorizes with
+	// the same qrdb user_authfactors:* vocabulary the /v1/users/factors wire
+	// mount uses (POST -> add, read -> get) rather than the coarse tenants:*
+	// the "/api/v1/iam" prefix would otherwise apply. The sibling LOGIN routes
+	// never reach this table: they are pre-auth (authz_public_routes.go).
+	{http.MethodPost, "/api/v1/iam", "/webauthn/registration/begin", "user_authfactors", "add"},
+	{http.MethodPost, "/api/v1/iam", "/webauthn/registration/finish", "user_authfactors", "add"},
+	{http.MethodGet, "/api/v1/iam", "/webauthn/registration/status", "user_authfactors", "get"},
+
+	// ---- Delegated admin (/api/v1/admin) ----
+	// Assignment reads split collection vs item the same way the scheduler
+	// /jobs rules do: "/assignments/" (mid-path, longer) wins for a single
+	// assignment while "/assignments" (leaf) stays the collection listing.
+	{http.MethodGet, "/api/v1/admin", "/assignments/", "roles", "read"},
+	{http.MethodGet, "/api/v1/admin", "/assignments", "roles", "list"},
+	// A delegated-admin permission check resolves a subject's effective
+	// permissions, exactly like the /api/v1/iam PEP endpoints.
+	{http.MethodPost, "/api/v1/admin", "/check-permission", "permissions", "resolve"},
+	// Impersonation mutates who a session acts as. No session:* or
+	// impersonation:* family exists in the qrdb registry, so it uses the same
+	// users:read / users:update vocabulary the /api/v1/iam session rules use;
+	// the handler additionally enforces the AdminManager's own checks. A future
+	// qrdb impersonation:* registration should replace this mapping.
+	{http.MethodPost, "/api/v1/admin", "/impersonation/start", "users", "update"},
+	{http.MethodPost, "/api/v1/admin", "/end", "users", "update"},
+	{http.MethodGet, "/api/v1/admin", "/impersonations", "users", "read"},
+	{http.MethodGet, "/api/v1/admin", "/impersonation", "users", "read"},
 
 	// ---- Tenant-scoped user session administration ----
 	// DELETE /api/v1/tenants/{t}/users/{u}/sessions (admin revoke-all — the

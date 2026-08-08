@@ -126,15 +126,16 @@ func TestEnrollCanonicalFIDO2_Success(t *testing.T) {
 	assert.Equal(t, fido2AttestationDoc, webauthn.finishReq.AttestationJSON)
 }
 
-// TestBuildCanonicalEnrollRequest_FIDO2PropagatesCredentialID proves the enroll
-// request carries MethodParams["credential_id"] set to the base64url credential
-// id, matching what the login path uses as the lookup key. It drives the full
-// build path with the SDK sub-clients and the create seam swapped out.
-func TestBuildCanonicalEnrollRequest_FIDO2PropagatesCredentialID(t *testing.T) {
-	var gotFlags *canonicalAuthFactorAddFlags
-	withCanonicalFIDO2EnrollFunc(t, func(_ context.Context, f *canonicalAuthFactorAddFlags) (string, error) {
-		gotFlags = f
-		return "AQIDBAUGBwgJCgsMDQ4PEA", nil
+// TestBuildCanonicalEnrollRequest_RejectsFIDO2 pins the post-write-through
+// contract: FIDO2 has NO client-issued enroll request. Its qrdb factor is
+// written server-side by the WebAuthn registration ceremony
+// (pkg/iam.webAuthnFactorWriteThrough), so a client-built enroll request would
+// double-enroll the same credential id and be rejected as a duplicate. The
+// builder fails closed instead.
+func TestBuildCanonicalEnrollRequest_RejectsFIDO2(t *testing.T) {
+	withCanonicalFIDO2EnrollFunc(t, func(context.Context, *canonicalAuthFactorAddFlags) (string, error) {
+		t.Fatal("the enroll-request builder must not run the FIDO2 ceremony")
+		return "", nil
 	})
 
 	req, err := buildCanonicalEnrollRequest(context.Background(), &canonicalAuthFactorAddFlags{
@@ -143,19 +144,141 @@ func TestBuildCanonicalEnrollRequest_FIDO2PropagatesCredentialID(t *testing.T) {
 		user:        "alice",
 		fido2Device: "dev-1",
 	})
-	require.NoError(t, err)
-	require.NotNil(t, req)
-	assert.Equal(t, "fido2", req.FactorName)
-	assert.Equal(t, "alice", req.Subject)
+	require.Error(t, err)
+	assert.Nil(t, req)
+	var typed *InvalidFactorTypeError
+	require.ErrorAs(t, err, &typed)
+}
 
-	// The ceremony received the flag set.
+// TestRunCanonicalAuthFactorAdd_FIDO2DoesNotDoubleEnroll is the regression
+// guard for the split-store fix: "auth factor add --type fido2" must run the
+// registration ceremony and STOP. The server enrolls the qrdb factor as it
+// persists the credential, so a client-side Factors().Add would fail with a
+// duplicate-credential error.
+func TestRunCanonicalAuthFactorAdd_FIDO2DoesNotDoubleEnroll(t *testing.T) {
+	factors := &fakeAuthFactorsClient{
+		addFunc: func(context.Context, *quicbaas.AuthFactorEnrollRequest) (*quicbaas.AuthFactorEnrollResponse, error) {
+			t.Fatal("fido2 enrollment must not call Factors().Add — the ceremony already enrolled the factor")
+			return nil, nil
+		},
+	}
+	withFakeSDKClientForCanonicalAuth(t, newFakeFactorsClient(factors), nil)
+
+	var gotFlags *canonicalAuthFactorAddFlags
+	withCanonicalFIDO2EnrollFunc(t, func(_ context.Context, f *canonicalAuthFactorAddFlags) (string, error) {
+		gotFlags = f
+		return "AQIDBAUGBwgJCgsMDQ4PEA", nil
+	})
+
+	require.NoError(t, runCanonicalAuthFactorAdd(context.Background(), &canonicalAuthFactorAddFlags{
+		factorType:  "fido2",
+		label:       "yubikey-5",
+		user:        "alice",
+		fido2Device: "dev-1",
+	}))
+
+	// The ceremony received the operator's flag set — --label travels as the
+	// WebAuthn display name and becomes the enrolled factor's label.
 	require.NotNil(t, gotFlags)
 	assert.Equal(t, "yubikey-5", gotFlags.label)
+	assert.Equal(t, "alice", gotFlags.user)
+	assert.Equal(t, "dev-1", gotFlags.fido2Device)
+}
 
-	// The lookup key login expects: credential_id == base64url rawId.
-	assert.Equal(t, "AQIDBAUGBwgJCgsMDQ4PEA", req.MethodParams["credential_id"])
-	// device_id is preserved when --device is set.
-	assert.Equal(t, "dev-1", req.MethodParams["device_id"])
+// TestRunCanonicalAuthFactorAdd_FIDO2CeremonyFailure proves a failed
+// registration ceremony surfaces to the operator and never falls through to a
+// factor write.
+func TestRunCanonicalAuthFactorAdd_FIDO2CeremonyFailure(t *testing.T) {
+	factors := &fakeAuthFactorsClient{
+		addFunc: func(context.Context, *quicbaas.AuthFactorEnrollRequest) (*quicbaas.AuthFactorEnrollResponse, error) {
+			t.Fatal("a failed ceremony must not enroll anything")
+			return nil, nil
+		},
+	}
+	withFakeSDKClientForCanonicalAuth(t, newFakeFactorsClient(factors), nil)
+
+	sentinel := stderrors.New("authenticator refused the ceremony")
+	withCanonicalFIDO2EnrollFunc(t, func(context.Context, *canonicalAuthFactorAddFlags) (string, error) {
+		return "", sentinel
+	})
+
+	err := runCanonicalAuthFactorAdd(context.Background(), &canonicalAuthFactorAddFlags{
+		factorType: "fido2", label: "yubikey-5", user: "alice",
+	})
+	require.ErrorIs(t, err, sentinel)
+}
+
+// TestRunCanonicalAuthFactorAdd_FIDO2MissingLabel proves the shared flag
+// validation still runs for the ceremony path — the ceremony must not start
+// before the flag set is known good.
+func TestRunCanonicalAuthFactorAdd_FIDO2MissingLabel(t *testing.T) {
+	withFakeSDKClientForCanonicalAuth(t, newFakeFactorsClient(&fakeAuthFactorsClient{}), nil)
+	withCanonicalFIDO2EnrollFunc(t, func(context.Context, *canonicalAuthFactorAddFlags) (string, error) {
+		t.Fatal("the ceremony must not start with an invalid flag set")
+		return "", nil
+	})
+
+	err := runCanonicalAuthFactorAdd(context.Background(), &canonicalAuthFactorAddFlags{
+		factorType: "fido2", user: "alice",
+	})
+	require.Error(t, err)
+	var typed *MissingLabelError
+	require.ErrorAs(t, err, &typed)
+}
+
+// TestRunCanonicalAuthFactorRotate_FIDO2RevokesOldFactor proves fido2 rotation
+// is enroll-then-revoke: the ceremony enrolls the replacement server-side and
+// the CLI revokes the superseded factor. The atomic Rotate RPC is NOT used —
+// it would re-enroll the credential the ceremony already wrote.
+func TestRunCanonicalAuthFactorRotate_FIDO2RevokesOldFactor(t *testing.T) {
+	var (
+		removedID    string
+		removedForce bool
+	)
+	factors := &fakeAuthFactorsClient{
+		rotateFunc: func(context.Context, string, *quicbaas.AuthFactorEnrollRequest) (*quicbaas.AuthFactorEnrollResponse, error) {
+			t.Fatal("fido2 rotation must not call Factors().Rotate")
+			return nil, nil
+		},
+		removeFunc: func(_ context.Context, factorID string, force bool) error {
+			removedID = factorID
+			removedForce = force
+			return nil
+		},
+	}
+	withFakeSDKClientForCanonicalAuth(t, newFakeFactorsClient(factors), nil)
+	withCanonicalFIDO2EnrollFunc(t, func(context.Context, *canonicalAuthFactorAddFlags) (string, error) {
+		return "AQIDBAUGBwgJCgsMDQ4PEA", nil
+	})
+
+	require.NoError(t, runCanonicalAuthFactorRotate(context.Background(), "old-id",
+		&canonicalAuthFactorAddFlags{factorType: "fido2", label: "yubikey-5", user: "alice"}))
+
+	assert.Equal(t, "old-id", removedID)
+	assert.False(t, removedForce,
+		"the replacement is already enrolled, so the revoke never needs --force")
+}
+
+// TestRunCanonicalAuthFactorRotate_FIDO2CeremonyFailureKeepsOldFactor proves
+// the old factor survives a failed replacement ceremony: enroll-then-revoke
+// ordering must never leave the user without a usable factor.
+func TestRunCanonicalAuthFactorRotate_FIDO2CeremonyFailureKeepsOldFactor(t *testing.T) {
+	factors := &fakeAuthFactorsClient{
+		removeFunc: func(context.Context, string, bool) error {
+			t.Fatal("the old factor must not be revoked when the replacement ceremony fails")
+			return nil
+		},
+	}
+	withFakeSDKClientForCanonicalAuth(t, newFakeFactorsClient(factors), nil)
+
+	sentinel := stderrors.New("authenticator refused the ceremony")
+	withCanonicalFIDO2EnrollFunc(t, func(context.Context, *canonicalAuthFactorAddFlags) (string, error) {
+		return "", sentinel
+	})
+
+	err := runCanonicalAuthFactorRotate(context.Background(), "old-id",
+		&canonicalAuthFactorAddFlags{factorType: "fido2", label: "yubikey-5", user: "alice"})
+	require.ErrorIs(t, err, sentinel)
 }
 
 // TestEnrollCanonicalFIDO2_MissingOptions fails closed with the typed error
