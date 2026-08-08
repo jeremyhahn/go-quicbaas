@@ -21,7 +21,113 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 )
+
+// =============================================================================
+// Test doubles
+// =============================================================================
+
+// agentAuditRecorder captures the store audit trail for assertions.
+type agentAuditRecorder struct {
+	mu     sync.Mutex
+	events []StoreAuditEvent
+}
+
+// RecordStoreEvent implements StoreAuditor.
+func (a *agentAuditRecorder) RecordStoreEvent(_ context.Context, event StoreAuditEvent) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.events = append(a.events, event)
+}
+
+// snapshot returns a copy of the recorded events.
+func (a *agentAuditRecorder) snapshot() []StoreAuditEvent {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]StoreAuditEvent, len(a.events))
+	copy(out, a.events)
+	return out
+}
+
+// agentKVFault names the KVStore verb that failingAgentKV injects an error on.
+type agentKVFault string
+
+const (
+	agentFaultGet    agentKVFault = "get"
+	agentFaultPut    agentKVFault = "put"
+	agentFaultDelete agentKVFault = "delete"
+	agentFaultExists agentKVFault = "exists"
+	agentFaultScan   agentKVFault = "scan"
+)
+
+// errAgentKVDown is the injected backend failure.
+var errAgentKVDown = errors.New("kv backend unavailable")
+
+// failingAgentKV wraps a real store and fails exactly one verb, so a test can
+// prove that the registry propagates backend failures rather than masking them.
+type failingAgentKV struct {
+	interfaces.KVStore
+	fault agentKVFault
+}
+
+// newFailingAgentKV returns a memory-backed store whose fault verb always errors.
+func newFailingAgentKV(fault agentKVFault) *failingAgentKV {
+	return &failingAgentKV{KVStore: kvstore.NewMemory(), fault: fault}
+}
+
+func (f *failingAgentKV) Get(ctx context.Context, key string) ([]byte, error) {
+	if f.fault == agentFaultGet {
+		return nil, errAgentKVDown
+	}
+	return f.KVStore.Get(ctx, key)
+}
+
+func (f *failingAgentKV) Put(ctx context.Context, key string, value []byte) error {
+	if f.fault == agentFaultPut {
+		return errAgentKVDown
+	}
+	return f.KVStore.Put(ctx, key, value)
+}
+
+func (f *failingAgentKV) Delete(ctx context.Context, key string) error {
+	if f.fault == agentFaultDelete {
+		return errAgentKVDown
+	}
+	return f.KVStore.Delete(ctx, key)
+}
+
+func (f *failingAgentKV) Exists(ctx context.Context, key string) (bool, error) {
+	if f.fault == agentFaultExists {
+		return false, errAgentKVDown
+	}
+	return f.KVStore.Exists(ctx, key)
+}
+
+func (f *failingAgentKV) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	if f.fault == agentFaultScan {
+		return errAgentKVDown
+	}
+	return f.KVStore.Scan(ctx, prefix, fn)
+}
+
+// seedAgent registers one agent and fails the test if registration fails.
+func seedAgent(t *testing.T, registry AgentRegistry, tenantID, agentID string) *AgentRegistration {
+	t.Helper()
+
+	agent := &AgentRegistration{
+		ID:        agentID,
+		TenantID:  tenantID,
+		Name:      agentID,
+		Host:      "host-1",
+		AgentType: "claude-code",
+		Backend:   "acp",
+	}
+	require.NoError(t, registry.RegisterAgent(context.Background(), agent))
+	return agent
+}
 
 // =============================================================================
 // Constructor Tests
@@ -32,6 +138,110 @@ func TestNewInMemoryAgentRegistry(t *testing.T) {
 
 	registry := NewInMemoryAgentRegistry()
 	require.NotNil(t, registry, "expected non-nil registry")
+}
+
+func TestNewAgentRegistry_InjectedStore(t *testing.T) {
+	t.Parallel()
+
+	kv := kvstore.NewMemory()
+	registry := NewAgentRegistry(kv)
+	require.NotNil(t, registry)
+
+	ctx := context.Background()
+	seedAgent(t, registry, "tenant-a", "agent-1")
+
+	// The record must be addressable at the documented key layout, proving the
+	// registry writes through to the injected store rather than to private state.
+	raw, err := kv.Get(ctx, "orch/agent/tenant-a/agent-1")
+	require.NoError(t, err)
+	assert.NotEmpty(t, raw)
+}
+
+func TestNewAgentRegistry_NilStore(t *testing.T) {
+	t.Parallel()
+
+	registry := NewAgentRegistry(nil)
+	ctx := context.Background()
+
+	tests := map[string]func() error{
+		"register": func() error {
+			return registry.RegisterAgent(ctx, &AgentRegistration{ID: "a", TenantID: "t"})
+		},
+		"get": func() error {
+			_, err := registry.GetAgent(ctx, "t", "a")
+			return err
+		},
+		"list": func() error {
+			_, err := registry.ListAgents(ctx, "t", nil)
+			return err
+		},
+		"update": func() error {
+			return registry.UpdateAgent(ctx, &AgentRegistration{ID: "a", TenantID: "t"})
+		},
+		"remove":       func() error { return registry.RemoveAgent(ctx, "t", "a") },
+		"heartbeat":    func() error { return registry.Heartbeat(ctx, "t", "a") },
+		"deleteTenant": func() error { return registry.DeleteTenantAgents(ctx, "t") },
+	}
+
+	for name, call := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := call()
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, ErrAgentRegistryRequired),
+				"expected ErrAgentRegistryRequired, got: %v", err)
+		})
+	}
+}
+
+// =============================================================================
+// Durability Tests
+// =============================================================================
+
+// TestAgentRegistry_RestartDurability proves the registry keeps zero private
+// state: a brand-new registry over the same store observes every record with
+// identical field values.
+func TestAgentRegistry_RestartDurability(t *testing.T) {
+	t.Parallel()
+
+	kv := kvstore.NewMemory()
+	first := NewAgentRegistry(kv)
+	ctx := context.Background()
+
+	original := &AgentRegistration{
+		ID:           "agent-durable",
+		TenantID:     "tenant-a",
+		Name:         "durable",
+		Host:         "host-9",
+		Backend:      "acp",
+		Model:        "sonnet",
+		AgentType:    "claude-code",
+		Kind:         AgentKindDaemon,
+		Capabilities: []string{"code", "test"},
+		WorkDir:      "/workspace",
+		Metadata:     map[string]string{"env": "prod"},
+	}
+	require.NoError(t, first.RegisterAgent(ctx, original))
+	seedAgent(t, first, "tenant-a", "agent-durable-2")
+
+	// A second registry constructed over the same store is a stand-in for a
+	// process restart.
+	second := NewAgentRegistry(kv)
+
+	got, err := second.GetAgent(ctx, "tenant-a", "agent-durable")
+	require.NoError(t, err)
+	assert.Equal(t, original, got, "restarted registry must observe identical field values")
+
+	listed, err := second.ListAgents(ctx, "tenant-a", nil)
+	require.NoError(t, err)
+	assert.Len(t, listed, 2, "restarted registry must observe every record")
+
+	// Mutations from the second registry are visible to the first.
+	require.NoError(t, second.RemoveAgent(ctx, "tenant-a", "agent-durable-2"))
+	remaining, err := first.ListAgents(ctx, "tenant-a", nil)
+	require.NoError(t, err)
+	assert.Len(t, remaining, 1)
 }
 
 // =============================================================================
@@ -72,6 +282,27 @@ func TestRegisterAgent_Success(t *testing.T) {
 	assert.Equal(t, "acp", got.Backend)
 }
 
+func TestRegisterAgent_PreservesExplicitStatus(t *testing.T) {
+	t.Parallel()
+
+	registry := NewInMemoryAgentRegistry()
+	ctx := context.Background()
+
+	agent := &AgentRegistration{
+		ID:        "agent-idle",
+		TenantID:  "tenant-a",
+		Name:      "idler",
+		Host:      "host-1",
+		AgentType: "claude-code",
+		Status:    AgentStatusIdle,
+	}
+	require.NoError(t, registry.RegisterAgent(ctx, agent))
+
+	got, err := registry.GetAgent(ctx, "tenant-a", "agent-idle")
+	require.NoError(t, err)
+	assert.Equal(t, AgentStatusIdle, got.Status, "explicit status must not be overwritten")
+}
+
 func TestRegisterAgent_AlreadyExists(t *testing.T) {
 	t.Parallel()
 
@@ -102,6 +333,11 @@ func TestRegisterAgent_AlreadyExists(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrAgentRegistryAlreadyExists),
 		"expected ErrAgentRegistryAlreadyExists, got: %v", err)
+
+	// The original record must survive the rejected registration.
+	got, err := registry.GetAgent(ctx, "tenant-a", "agent-dup")
+	require.NoError(t, err)
+	assert.Equal(t, "first", got.Name)
 }
 
 func TestRegisterAgent_MissingTenantID(t *testing.T) {
@@ -154,6 +390,34 @@ func TestRegisterAgent_NilAgent(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrAgentRegistryInvalidInput),
 		"expected ErrAgentRegistryInvalidInput for nil agent, got: %v", err)
+}
+
+func TestRegisterAgent_StoreFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	tests := map[string]agentKVFault{
+		"exists": agentFaultExists,
+		"put":    agentFaultPut,
+	}
+
+	for name, fault := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			registry := NewAgentRegistry(newFailingAgentKV(fault))
+			err := registry.RegisterAgent(ctx, &AgentRegistration{
+				ID:        "agent-fail",
+				TenantID:  "tenant-a",
+				Name:      "failer",
+				Host:      "host-1",
+				AgentType: "claude-code",
+			})
+			require.Error(t, err)
+			assert.ErrorIs(t, err, errAgentKVDown)
+		})
+	}
 }
 
 // =============================================================================
@@ -238,6 +502,33 @@ func TestGetAgent_EmptyAgentID(t *testing.T) {
 		"expected ErrAgentRegistryInvalidInput for empty agent ID, got: %v", err)
 }
 
+func TestGetAgent_CorruptRecord(t *testing.T) {
+	t.Parallel()
+
+	kv := kvstore.NewMemory()
+	registry := NewAgentRegistry(kv)
+	ctx := context.Background()
+
+	require.NoError(t, kv.Put(ctx, "orch/agent/tenant-a/broken", []byte("{not json")))
+
+	got, err := registry.GetAgent(ctx, "tenant-a", "broken")
+	require.Error(t, err)
+	assert.Nil(t, got)
+	assert.True(t, errors.Is(err, ErrAgentRegistryMarshal),
+		"expected ErrAgentRegistryMarshal, got: %v", err)
+}
+
+func TestGetAgent_StoreFailure(t *testing.T) {
+	t.Parallel()
+
+	registry := NewAgentRegistry(newFailingAgentKV(agentFaultGet))
+
+	got, err := registry.GetAgent(context.Background(), "tenant-a", "agent-1")
+	require.Error(t, err)
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, errAgentKVDown)
+}
+
 // =============================================================================
 // ListAgents Tests
 // =============================================================================
@@ -295,103 +586,53 @@ func TestListAgents_TenantIsolation(t *testing.T) {
 	}
 }
 
-func TestListAgents_FilterByHost(t *testing.T) {
+func TestListAgents_Filters(t *testing.T) {
 	t.Parallel()
 
 	registry := NewInMemoryAgentRegistry()
 	ctx := context.Background()
 
-	hosts := []string{"host-1", "host-1", "host-2", "host-3"}
-	for i, host := range hosts {
-		err := registry.RegisterAgent(ctx, &AgentRegistration{
-			ID:        "agent-" + uitoa(uint64(i)),
-			TenantID:  "tenant-a",
-			Name:      "agent",
-			Host:      host,
-			AgentType: "claude-code",
+	fleet := []*AgentRegistration{
+		{ID: "f1", TenantID: "tenant-f", Host: "host-1", AgentType: "claude-code", Backend: "acp", Model: "sonnet", Status: AgentStatusIdle},
+		{ID: "f2", TenantID: "tenant-f", Host: "host-1", AgentType: "codex", Backend: "ollama", Model: "sonnet", Status: AgentStatusRunning},
+		{ID: "f3", TenantID: "tenant-f", Host: "host-2", AgentType: "claude-code", Backend: "acp", Model: "opus", Status: AgentStatusOffline},
+	}
+	for _, agent := range fleet {
+		require.NoError(t, registry.RegisterAgent(ctx, agent))
+	}
+
+	tests := map[string]struct {
+		filter  *AgentFilter
+		wantIDs []string
+	}{
+		"nil filter":       {nil, []string{"f1", "f2", "f3"}},
+		"empty filter":     {&AgentFilter{}, []string{"f1", "f2", "f3"}},
+		"host":             {&AgentFilter{Host: "host-1"}, []string{"f1", "f2"}},
+		"status":           {&AgentFilter{Status: AgentStatusRunning}, []string{"f2"}},
+		"agent type":       {&AgentFilter{AgentType: "claude-code"}, []string{"f1", "f3"}},
+		"backend":          {&AgentFilter{Backend: "acp"}, []string{"f1", "f3"}},
+		"model":            {&AgentFilter{Model: "opus"}, []string{"f3"}},
+		"combined":         {&AgentFilter{Host: "host-1", Backend: "acp"}, []string{"f1"}},
+		"limit":            {&AgentFilter{Limit: 2}, []string{"f1", "f2"}},
+		"limit over size":  {&AgentFilter{Limit: 10}, []string{"f1", "f2", "f3"}},
+		"limit with match": {&AgentFilter{AgentType: "claude-code", Limit: 1}, []string{"f1"}},
+		"no match":         {&AgentFilter{Host: "host-404"}, []string{}},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := registry.ListAgents(ctx, "tenant-f", tc.filter)
+			require.NoError(t, err)
+
+			ids := make([]string, 0, len(got))
+			for _, agent := range got {
+				ids = append(ids, agent.ID)
+			}
+			assert.Equal(t, tc.wantIDs, ids)
 		})
-		require.NoError(t, err)
 	}
-
-	agents, err := registry.ListAgents(ctx, "tenant-a", &AgentFilter{Host: "host-1"})
-	require.NoError(t, err)
-	assert.Len(t, agents, 2, "should return 2 agents on host-1")
-
-	for _, a := range agents {
-		assert.Equal(t, "host-1", a.Host)
-	}
-}
-
-func TestListAgents_FilterByStatus(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryAgentRegistry()
-	ctx := context.Background()
-
-	// Register 3 agents (all start as registered)
-	for i := range 3 {
-		err := registry.RegisterAgent(ctx, &AgentRegistration{
-			ID:        "agent-" + uitoa(uint64(i)),
-			TenantID:  "tenant-a",
-			Name:      "agent",
-			Host:      "host-1",
-			AgentType: "claude-code",
-		})
-		require.NoError(t, err)
-	}
-
-	// Heartbeat agent-0 and agent-1 to transition them to running
-	err := registry.Heartbeat(ctx, "tenant-a", "agent-0")
-	require.NoError(t, err)
-	err = registry.Heartbeat(ctx, "tenant-a", "agent-1")
-	require.NoError(t, err)
-
-	// Filter by running status
-	running, err := registry.ListAgents(ctx, "tenant-a", &AgentFilter{Status: AgentStatusRunning})
-	require.NoError(t, err)
-	assert.Len(t, running, 2, "should have 2 running agents")
-
-	for _, a := range running {
-		assert.Equal(t, AgentStatusRunning, a.Status)
-	}
-
-	// Filter by registered status
-	registered, err := registry.ListAgents(ctx, "tenant-a", &AgentFilter{Status: AgentStatusRegistered})
-	require.NoError(t, err)
-	assert.Len(t, registered, 1, "should have 1 registered agent")
-	assert.Equal(t, AgentStatusRegistered, registered[0].Status)
-}
-
-func TestListAgents_FilterByAgentType(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryAgentRegistry()
-	ctx := context.Background()
-
-	types := []string{"claude-code", "claude-code", "codex"}
-	for i, agentType := range types {
-		err := registry.RegisterAgent(ctx, &AgentRegistration{
-			ID:        "agent-" + uitoa(uint64(i)),
-			TenantID:  "tenant-a",
-			Name:      "agent",
-			Host:      "host-1",
-			AgentType: agentType,
-		})
-		require.NoError(t, err)
-	}
-
-	claudeAgents, err := registry.ListAgents(ctx, "tenant-a", &AgentFilter{AgentType: "claude-code"})
-	require.NoError(t, err)
-	assert.Len(t, claudeAgents, 2, "should return 2 claude-code agents")
-
-	for _, a := range claudeAgents {
-		assert.Equal(t, "claude-code", a.AgentType)
-	}
-
-	codexAgents, err := registry.ListAgents(ctx, "tenant-a", &AgentFilter{AgentType: "codex"})
-	require.NoError(t, err)
-	assert.Len(t, codexAgents, 1, "should return 1 codex agent")
-	assert.Equal(t, "codex", codexAgents[0].AgentType)
 }
 
 func TestListAgents_Empty(t *testing.T) {
@@ -417,6 +658,37 @@ func TestListAgents_EmptyTenantID(t *testing.T) {
 	assert.Nil(t, agents)
 	assert.True(t, errors.Is(err, ErrAgentRegistryInvalidInput),
 		"expected ErrAgentRegistryInvalidInput, got: %v", err)
+}
+
+// TestListAgents_SkipsCorruptRecords proves one unreadable record cannot hide
+// the rest of the fleet from an operator.
+func TestListAgents_SkipsCorruptRecords(t *testing.T) {
+	t.Parallel()
+
+	kv := kvstore.NewMemory()
+	registry := NewAgentRegistry(kv)
+	ctx := context.Background()
+
+	seedAgent(t, registry, "tenant-a", "good-1")
+	seedAgent(t, registry, "tenant-a", "good-2")
+	require.NoError(t, kv.Put(ctx, "orch/agent/tenant-a/corrupt", []byte("}{")))
+
+	agents, err := registry.ListAgents(ctx, "tenant-a", nil)
+	require.NoError(t, err)
+	require.Len(t, agents, 2)
+	assert.Equal(t, "good-1", agents[0].ID)
+	assert.Equal(t, "good-2", agents[1].ID)
+}
+
+func TestListAgents_StoreFailure(t *testing.T) {
+	t.Parallel()
+
+	registry := NewAgentRegistry(newFailingAgentKV(agentFaultScan))
+
+	agents, err := registry.ListAgents(context.Background(), "tenant-a", nil)
+	require.Error(t, err)
+	assert.Nil(t, agents)
+	assert.ErrorIs(t, err, errAgentKVDown)
 }
 
 // =============================================================================
@@ -488,6 +760,12 @@ func TestUpdateAgent_VersionConflict(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrAgentRegistryInvalidInput),
 		"expected ErrAgentRegistryInvalidInput for version conflict, got: %v", err)
+
+	// The stored record must be untouched by the rejected update.
+	got, err := registry.GetAgent(ctx, "tenant-a", "agent-conflict")
+	require.NoError(t, err)
+	assert.Equal(t, "original", got.Name)
+	assert.Equal(t, uint64(1), got.Version)
 }
 
 func TestUpdateAgent_NotFound(t *testing.T) {
@@ -521,6 +799,22 @@ func TestUpdateAgent_NilAgent(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrAgentRegistryInvalidInput),
 		"expected ErrAgentRegistryInvalidInput for nil agent, got: %v", err)
+}
+
+func TestUpdateAgent_StoreFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	kv := newFailingAgentKV(agentFaultPut)
+
+	// Seed through a healthy registry over the same backing store.
+	healthy := NewAgentRegistry(kv.KVStore)
+	agent := seedAgent(t, healthy, "tenant-a", "agent-put")
+
+	registry := NewAgentRegistry(kv)
+	err := registry.UpdateAgent(ctx, agent)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errAgentKVDown)
 }
 
 // =============================================================================
@@ -572,6 +866,21 @@ func TestRemoveAgent_NotFound(t *testing.T) {
 		"expected ErrAgentRegistryNotFound, got: %v", err)
 }
 
+func TestRemoveAgent_StoreFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	kv := newFailingAgentKV(agentFaultDelete)
+
+	healthy := NewAgentRegistry(kv.KVStore)
+	seedAgent(t, healthy, "tenant-a", "agent-del")
+
+	registry := NewAgentRegistry(kv)
+	err := registry.RemoveAgent(ctx, "tenant-a", "agent-del")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errAgentKVDown)
+}
+
 // =============================================================================
 // Heartbeat Tests
 // =============================================================================
@@ -614,6 +923,46 @@ func TestHeartbeat_Success(t *testing.T) {
 		"version should be incremented after heartbeat")
 }
 
+func TestHeartbeat_StatusTransitions(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	tests := map[string]struct {
+		start AgentStatus
+		want  AgentStatus
+	}{
+		"registered becomes running": {AgentStatusRegistered, AgentStatusRunning},
+		"idle becomes running":       {AgentStatusIdle, AgentStatusRunning},
+		"running stays running":      {AgentStatusRunning, AgentStatusRunning},
+		"offline stays offline":      {AgentStatusOffline, AgentStatusOffline},
+		"error stays error":          {AgentStatusError, AgentStatusError},
+		"disabled stays disabled":    {AgentStatusDisabled, AgentStatusDisabled},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			registry := NewInMemoryAgentRegistry()
+			require.NoError(t, registry.RegisterAgent(ctx, &AgentRegistration{
+				ID:        "hb",
+				TenantID:  "tenant-a",
+				Name:      "hb",
+				Host:      "host-1",
+				AgentType: "claude-code",
+				Status:    tc.start,
+			}))
+
+			require.NoError(t, registry.Heartbeat(ctx, "tenant-a", "hb"))
+
+			got, err := registry.GetAgent(ctx, "tenant-a", "hb")
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got.Status)
+		})
+	}
+}
+
 func TestHeartbeat_NotFound(t *testing.T) {
 	t.Parallel()
 
@@ -648,6 +997,21 @@ func TestHeartbeat_EmptyAgentID(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrAgentRegistryInvalidInput),
 		"expected ErrAgentRegistryInvalidInput, got: %v", err)
+}
+
+func TestHeartbeat_StoreFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	kv := newFailingAgentKV(agentFaultPut)
+
+	healthy := NewAgentRegistry(kv.KVStore)
+	seedAgent(t, healthy, "tenant-a", "agent-hb")
+
+	registry := NewAgentRegistry(kv)
+	err := registry.Heartbeat(ctx, "tenant-a", "agent-hb")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errAgentKVDown)
 }
 
 // =============================================================================
@@ -720,6 +1084,369 @@ func TestDeleteTenantAgents_NoAgents(t *testing.T) {
 	// Deleting agents for a tenant with no agents should succeed without error
 	err := registry.DeleteTenantAgents(ctx, "tenant-empty")
 	require.NoError(t, err)
+}
+
+func TestDeleteTenantAgents_StoreFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	t.Run("scan", func(t *testing.T) {
+		t.Parallel()
+
+		registry := NewAgentRegistry(newFailingAgentKV(agentFaultScan))
+		err := registry.DeleteTenantAgents(ctx, "tenant-a")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, errAgentKVDown)
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		t.Parallel()
+
+		kv := newFailingAgentKV(agentFaultDelete)
+		healthy := NewAgentRegistry(kv.KVStore)
+		seedAgent(t, healthy, "tenant-a", "agent-1")
+
+		registry := NewAgentRegistry(kv)
+		err := registry.DeleteTenantAgents(ctx, "tenant-a")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, errAgentKVDown)
+	})
+}
+
+// =============================================================================
+// Tenant Isolation Tests (store layer)
+// =============================================================================
+
+// TestAgentRegistry_TenantIsolation asserts isolation at the store layer: with
+// two tenants' records in one KV store, every verb scoped to tenant A must be
+// unable to observe or mutate a record owned by tenant B. The lexically
+// overlapping tenant pair (t1 / t10) additionally proves prefix scans do not
+// bleed across a tenant boundary.
+func TestAgentRegistry_TenantIsolation(t *testing.T) {
+	t.Parallel()
+
+	tenantPairs := map[string]struct {
+		tenantA string
+		tenantB string
+	}{
+		"distinct tenants":       {"tenant-a", "tenant-b"},
+		"lexical prefix tenants": {"t1", "t10"},
+	}
+
+	for name, pair := range tenantPairs {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			kv := kvstore.NewMemory()
+			registry := NewAgentRegistry(kv)
+			ctx := context.Background()
+
+			seedAgent(t, registry, pair.tenantA, "agent-a")
+			agentB := seedAgent(t, registry, pair.tenantB, "agent-b")
+
+			t.Run("get across tenants", func(t *testing.T) {
+				got, err := registry.GetAgent(ctx, pair.tenantA, "agent-b")
+				require.Error(t, err)
+				assert.Nil(t, got)
+				assert.ErrorIs(t, err, ErrAgentRegistryNotFound)
+			})
+
+			t.Run("update across tenants", func(t *testing.T) {
+				hijack := &AgentRegistration{
+					ID:       "agent-b",
+					TenantID: pair.tenantA,
+					Name:     "hijacked",
+					Version:  agentB.Version,
+				}
+				err := registry.UpdateAgent(ctx, hijack)
+				require.Error(t, err)
+				assert.ErrorIs(t, err, ErrAgentRegistryNotFound)
+			})
+
+			t.Run("remove across tenants", func(t *testing.T) {
+				err := registry.RemoveAgent(ctx, pair.tenantA, "agent-b")
+				require.Error(t, err)
+				assert.ErrorIs(t, err, ErrAgentRegistryNotFound)
+			})
+
+			t.Run("heartbeat across tenants", func(t *testing.T) {
+				err := registry.Heartbeat(ctx, pair.tenantA, "agent-b")
+				require.Error(t, err)
+				assert.ErrorIs(t, err, ErrAgentRegistryNotFound)
+			})
+
+			t.Run("list is tenant scoped", func(t *testing.T) {
+				listed, err := registry.ListAgents(ctx, pair.tenantA, nil)
+				require.NoError(t, err)
+				require.Len(t, listed, 1)
+				assert.Equal(t, "agent-a", listed[0].ID)
+			})
+
+			// Tenant B's record must be byte-for-byte intact after every
+			// cross-tenant attempt above.
+			survivor, err := registry.GetAgent(ctx, pair.tenantB, "agent-b")
+			require.NoError(t, err)
+			assert.Equal(t, agentB, survivor)
+
+			t.Run("cascade delete is tenant scoped", func(t *testing.T) {
+				require.NoError(t, registry.DeleteTenantAgents(ctx, pair.tenantA))
+
+				remaining, err := registry.ListAgents(ctx, pair.tenantB, nil)
+				require.NoError(t, err)
+				require.Len(t, remaining, 1, "tenant B records must survive tenant A cascade delete")
+				assert.Equal(t, agentB, remaining[0])
+			})
+		})
+	}
+}
+
+// TestAgentRegistry_ForeignRecordAtTenantKey covers the defence-in-depth check:
+// a record whose TenantID disagrees with the key it sits under is never handed
+// back to the caller.
+func TestAgentRegistry_ForeignRecordAtTenantKey(t *testing.T) {
+	t.Parallel()
+
+	kv := kvstore.NewMemory()
+	registry := NewAgentRegistry(kv)
+	ctx := context.Background()
+
+	// Write a tenant-b record under tenant-a's subtree, simulating key
+	// corruption or an out-of-band writer.
+	require.NoError(t, kv.Put(ctx, "orch/agent/tenant-a/foreign",
+		[]byte(`{"id":"foreign","tenant_id":"tenant-b","status":"running","last_seen":1,"registered_at":1,"version":1}`)))
+
+	got, err := registry.GetAgent(ctx, "tenant-a", "foreign")
+	require.Error(t, err)
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, ErrAgentRegistryNotFound)
+
+	listed, err := registry.ListAgents(ctx, "tenant-a", nil)
+	require.NoError(t, err)
+	assert.Empty(t, listed, "a foreign record must never appear in a tenant listing")
+
+	assert.ErrorIs(t, registry.Heartbeat(ctx, "tenant-a", "foreign"), ErrAgentRegistryNotFound)
+	assert.ErrorIs(t, registry.RemoveAgent(ctx, "tenant-a", "foreign"), ErrAgentRegistryNotFound)
+}
+
+// =============================================================================
+// Key Segment Validation Tests
+// =============================================================================
+
+// TestAgentRegistry_RejectsInvalidKeySegments proves an identifier that is
+// empty or carries the key separator cannot escape its tenant subtree.
+func TestAgentRegistry_RejectsInvalidKeySegments(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	tests := map[string]struct {
+		tenantID string
+		agentID  string
+	}{
+		"empty tenant":          {"", "agent-1"},
+		"empty agent":           {"tenant-a", ""},
+		"separator in tenant":   {"tenant-a/evil", "agent-1"},
+		"separator in agent":    {"tenant-a", "../tenant-b/agent-1"},
+		"separator in both":     {"a/b", "c/d"},
+		"agent id escapes only": {"tenant-a", "nested/id"},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			registry := NewInMemoryAgentRegistry()
+
+			calls := map[string]func() error{
+				"register": func() error {
+					return registry.RegisterAgent(ctx, &AgentRegistration{ID: tc.agentID, TenantID: tc.tenantID})
+				},
+				"get": func() error {
+					_, err := registry.GetAgent(ctx, tc.tenantID, tc.agentID)
+					return err
+				},
+				"update": func() error {
+					return registry.UpdateAgent(ctx, &AgentRegistration{ID: tc.agentID, TenantID: tc.tenantID})
+				},
+				"remove":    func() error { return registry.RemoveAgent(ctx, tc.tenantID, tc.agentID) },
+				"heartbeat": func() error { return registry.Heartbeat(ctx, tc.tenantID, tc.agentID) },
+			}
+
+			for verb, call := range calls {
+				err := call()
+				require.Error(t, err, "%s must reject the identifier", verb)
+				assert.ErrorIs(t, err, ErrInvalidKeySegment, "%s: %v", verb, err)
+				assert.ErrorIs(t, err, ErrAgentRegistryInvalidInput, "%s: %v", verb, err)
+			}
+		})
+	}
+}
+
+func TestAgentRegistry_ListRejectsInvalidTenant(t *testing.T) {
+	t.Parallel()
+
+	registry := NewInMemoryAgentRegistry()
+	ctx := context.Background()
+
+	for _, tenantID := range []string{"", "tenant-a/nested"} {
+		agents, err := registry.ListAgents(ctx, tenantID, nil)
+		require.Error(t, err)
+		assert.Nil(t, agents)
+		assert.ErrorIs(t, err, ErrInvalidKeySegment)
+		assert.ErrorIs(t, err, ErrAgentRegistryInvalidInput)
+
+		err = registry.DeleteTenantAgents(ctx, tenantID)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidKeySegment)
+		assert.ErrorIs(t, err, ErrAgentRegistryInvalidInput)
+	}
+}
+
+// =============================================================================
+// Audit Tests
+// =============================================================================
+
+func TestAgentRegistry_AuditsMutations(t *testing.T) {
+	t.Parallel()
+
+	auditor := &agentAuditRecorder{}
+	registry := NewAgentRegistry(kvstore.NewMemory(), WithStoreAuditor(auditor))
+	ctx := context.Background()
+
+	agent := &AgentRegistration{
+		ID:        "agent-audit",
+		TenantID:  "tenant-a",
+		Name:      "audited",
+		Host:      "host-1",
+		AgentType: "claude-code",
+	}
+	require.NoError(t, registry.RegisterAgent(ctx, agent))
+	require.NoError(t, registry.UpdateAgent(ctx, agent))
+	require.NoError(t, registry.RemoveAgent(ctx, "tenant-a", "agent-audit"))
+
+	events := auditor.snapshot()
+	require.Len(t, events, 3, "expected exactly one event per mutation")
+
+	wantActions := []string{AuditActionCreate, AuditActionUpdate, AuditActionDelete}
+	for i, event := range events {
+		assert.Equal(t, wantActions[i], event.Action)
+		assert.Equal(t, AuditResourceAgent, event.Resource)
+		assert.Equal(t, "agent-audit", event.ResourceID)
+		assert.Equal(t, "tenant-a", event.TenantID)
+		assert.True(t, event.Success)
+	}
+}
+
+func TestAgentRegistry_DoesNotAuditReadsOrHeartbeats(t *testing.T) {
+	t.Parallel()
+
+	auditor := &agentAuditRecorder{}
+	registry := NewAgentRegistry(kvstore.NewMemory(), WithStoreAuditor(auditor))
+	ctx := context.Background()
+
+	seedAgent(t, registry, "tenant-a", "agent-quiet")
+	require.Len(t, auditor.snapshot(), 1, "registration is the only audited call so far")
+
+	_, err := registry.GetAgent(ctx, "tenant-a", "agent-quiet")
+	require.NoError(t, err)
+	_, err = registry.ListAgents(ctx, "tenant-a", nil)
+	require.NoError(t, err)
+	require.NoError(t, registry.Heartbeat(ctx, "tenant-a", "agent-quiet"))
+
+	assert.Len(t, auditor.snapshot(), 1,
+		"reads and heartbeats must not append to the audit trail")
+}
+
+func TestAgentRegistry_AuditsCascadeDeletePerAgent(t *testing.T) {
+	t.Parallel()
+
+	auditor := &agentAuditRecorder{}
+	registry := NewAgentRegistry(kvstore.NewMemory(), WithStoreAuditor(auditor))
+	ctx := context.Background()
+
+	seedAgent(t, registry, "tenant-a", "cascade-1")
+	seedAgent(t, registry, "tenant-a", "cascade-2")
+	seedAgent(t, registry, "tenant-b", "other-1")
+
+	require.NoError(t, registry.DeleteTenantAgents(ctx, "tenant-a"))
+
+	deletes := make([]StoreAuditEvent, 0, 2)
+	for _, event := range auditor.snapshot() {
+		if event.Action == AuditActionDelete {
+			deletes = append(deletes, event)
+		}
+	}
+
+	require.Len(t, deletes, 2, "cascade delete emits one event per removed agent")
+	assert.Equal(t, "cascade-1", deletes[0].ResourceID)
+	assert.Equal(t, "cascade-2", deletes[1].ResourceID)
+	for _, event := range deletes {
+		assert.Equal(t, "tenant-a", event.TenantID)
+		assert.Equal(t, AuditResourceAgent, event.Resource)
+		assert.True(t, event.Success)
+	}
+}
+
+func TestAgentRegistry_AuditsFailedMutations(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	tests := map[string]struct {
+		mutate     func(AgentRegistry) error
+		wantAction string
+		wantID     string
+	}{
+		"duplicate registration": {
+			mutate: func(r AgentRegistry) error {
+				return r.RegisterAgent(ctx, &AgentRegistration{
+					ID: "dup", TenantID: "tenant-a", Name: "second", Host: "h", AgentType: "t",
+				})
+			},
+			wantAction: AuditActionCreate,
+			wantID:     "dup",
+		},
+		"version conflict": {
+			mutate: func(r AgentRegistry) error {
+				return r.UpdateAgent(ctx, &AgentRegistration{ID: "dup", TenantID: "tenant-a", Version: 42})
+			},
+			wantAction: AuditActionUpdate,
+			wantID:     "dup",
+		},
+		"remove missing": {
+			mutate:     func(r AgentRegistry) error { return r.RemoveAgent(ctx, "tenant-a", "ghost") },
+			wantAction: AuditActionDelete,
+			wantID:     "ghost",
+		},
+		"invalid key segment": {
+			mutate:     func(r AgentRegistry) error { return r.RemoveAgent(ctx, "tenant-a", "bad/id") },
+			wantAction: AuditActionDelete,
+			wantID:     "bad/id",
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			auditor := &agentAuditRecorder{}
+			registry := NewAgentRegistry(kvstore.NewMemory(), WithStoreAuditor(auditor))
+			seedAgent(t, registry, "tenant-a", "dup")
+
+			require.Error(t, tc.mutate(registry))
+
+			events := auditor.snapshot()
+			require.Len(t, events, 2, "the seed create plus one failure event")
+
+			failure := events[1]
+			assert.Equal(t, tc.wantAction, failure.Action)
+			assert.Equal(t, AuditResourceAgent, failure.Resource)
+			assert.Equal(t, tc.wantID, failure.ResourceID)
+			assert.Equal(t, "tenant-a", failure.TenantID)
+			assert.False(t, failure.Success)
+		})
+	}
 }
 
 // =============================================================================
@@ -816,6 +1543,41 @@ func TestConcurrentRegistration_DuplicateID(t *testing.T) {
 		"all other registrations should fail with already-exists")
 }
 
+// TestConcurrentHeartbeat proves per-key serialization: every heartbeat is
+// applied, so the version counter advances exactly once per call.
+func TestConcurrentHeartbeat(t *testing.T) {
+	t.Parallel()
+
+	registry := NewInMemoryAgentRegistry()
+	ctx := context.Background()
+	seedAgent(t, registry, "tenant-a", "agent-hot")
+
+	const beats = 50
+	var wg sync.WaitGroup
+	errs := make(chan error, beats)
+
+	wg.Add(beats)
+	for range beats {
+		go func() {
+			defer wg.Done()
+			if err := registry.Heartbeat(ctx, "tenant-a", "agent-hot"); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Errorf("unexpected heartbeat error: %v", err)
+	}
+
+	got, err := registry.GetAgent(ctx, "tenant-a", "agent-hot")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1+beats), got.Version,
+		"no heartbeat may be lost to an interleaved read-modify-write")
+}
+
 // =============================================================================
 // Context Cancellation Tests
 // =============================================================================
@@ -853,4 +1615,35 @@ func TestGetAgent_CancelledContext(t *testing.T) {
 	assert.Nil(t, got)
 	assert.True(t, errors.Is(err, context.Canceled),
 		"expected context.Canceled, got: %v", err)
+}
+
+func TestAgentRegistry_CancelledContext(t *testing.T) {
+	t.Parallel()
+
+	registry := NewInMemoryAgentRegistry()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	calls := map[string]func() error{
+		"list": func() error {
+			_, err := registry.ListAgents(ctx, "tenant-a", nil)
+			return err
+		},
+		"update": func() error {
+			return registry.UpdateAgent(ctx, &AgentRegistration{ID: "a", TenantID: "tenant-a"})
+		},
+		"remove":       func() error { return registry.RemoveAgent(ctx, "tenant-a", "a") },
+		"heartbeat":    func() error { return registry.Heartbeat(ctx, "tenant-a", "a") },
+		"deleteTenant": func() error { return registry.DeleteTenantAgents(ctx, "tenant-a") },
+	}
+
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := call()
+			require.Error(t, err)
+			assert.ErrorIs(t, err, context.Canceled)
+		})
+	}
 }

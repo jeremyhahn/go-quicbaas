@@ -764,7 +764,9 @@ func TestMemoryStorage_GetTokenByValue(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 
-	// Test with refresh token (should be stored in tokenValues map)
+	// Test with refresh token (indexed in tokenValues by the hash of the
+	// opaque secret the client presents, not by JTI).
+	const secret = "opaque-refresh-secret"
 	refreshToken := &Token{
 		JTI:       "refresh-jti-123",
 		Subject:   "user1",
@@ -773,11 +775,12 @@ func TestMemoryStorage_GetTokenByValue(t *testing.T) {
 		Expires:   time.Now().Add(24 * time.Hour),
 		Issued:    time.Now(),
 		TokenType: TokenTypeRefresh,
+		ValueHash: HashTokenValue(secret),
 	}
 	storage.StoreToken(ctx, refreshToken)
 
 	// Test happy path - token exists
-	retrieved, err := storage.GetTokenByValue(ctx, refreshToken.JTI)
+	retrieved, err := storage.GetTokenByValue(ctx, secret)
 	if err != nil {
 		t.Fatalf("GetTokenByValue failed: %v", err)
 	}

@@ -425,6 +425,58 @@ type Token struct {
 
 	// ClientID is the OAuth client that requested this token
 	ClientID string `json:"client_id,omitempty" yaml:"client_id,omitempty"`
+
+	// ValueHash is the SHA-256 (hex) of an OPAQUE token's value. Opaque tokens
+	// (refresh tokens) are presented by value, not by JTI, so the storage layer
+	// indexes them under this hash: GetTokenByValue hashes the presented secret
+	// and resolves the record. Hashing keeps the bearer secret itself out of the
+	// key space, and is empty for JWT-shaped tokens (which are found by JTI).
+	ValueHash string `json:"value_hash,omitempty" yaml:"value_hash,omitempty"`
+
+	// Session records the authentication context of the login that minted this
+	// refresh token. It is the AUTHORITATIVE source for the claims of every
+	// access token minted from it, so a renewal can never silently downgrade
+	// assurance (acr/amr/mfa) or drop the sender-constraint (cnf.jkt).
+	Session *TokenSessionContext `json:"session,omitempty" yaml:"session,omitempty"`
+}
+
+// TokenSessionContext is the frozen authentication context of a login session.
+//
+// A refresh renews a session; it does not re-authenticate and it does not
+// re-authorize. The claims recorded here are therefore replayed verbatim onto
+// each renewed access token. Authority changes take effect through the two
+// mechanisms that already bound the session: the 15-minute access-token
+// lifetime (after which the request-time RBAC gate re-evaluates the subject)
+// and refresh-token revocation (which ends the session immediately).
+type TokenSessionContext struct {
+	// Roles are the roles resolved at login.
+	Roles []string `json:"roles,omitempty" yaml:"roles,omitempty"`
+
+	// Groups are the domain groups resolved at login.
+	Groups []string `json:"groups,omitempty" yaml:"groups,omitempty"`
+
+	// Audience is the audience the session's access tokens are minted for.
+	Audience []string `json:"audience,omitempty" yaml:"audience,omitempty"`
+
+	// Email and Name are profile claims carried by the session.
+	Email string `json:"email,omitempty" yaml:"email,omitempty"`
+	Name  string `json:"name,omitempty" yaml:"name,omitempty"`
+
+	// AuthMethod records the factor used (mtls, fido2, piv).
+	AuthMethod string `json:"auth_method,omitempty" yaml:"auth_method,omitempty"`
+
+	// MFAVerified reports whether the login satisfied multi-factor assurance.
+	MFAVerified bool `json:"mfa_verified,omitempty" yaml:"mfa_verified,omitempty"`
+
+	// AMR / ACR are the RFC 8176 authentication method references and the
+	// authentication context class of the originating login.
+	AMR []string `json:"amr,omitempty" yaml:"amr,omitempty"`
+	ACR string   `json:"acr,omitempty" yaml:"acr,omitempty"`
+
+	// Jkt is the RFC 9449 DPoP key thumbprint the session bearer was bound to
+	// (cnf.jkt). When set, a refresh MUST present a DPoP proof over the same
+	// key, and the renewed access token stays bound to it.
+	Jkt string `json:"jkt,omitempty" yaml:"jkt,omitempty"`
 }
 
 // Policy represents an ABAC policy document.

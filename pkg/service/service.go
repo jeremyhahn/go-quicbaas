@@ -1220,10 +1220,24 @@ type (
 		Success bool
 		Message string
 	}
-	RefreshTokenRequest  struct{ RefreshToken string }
+	// RefreshTokenRequest renews a session from its opaque refresh credential.
+	// The DPoP fields carry an RFC 9449 proof presented with the request; they
+	// are REQUIRED when the session being renewed is sender-constrained.
+	RefreshTokenRequest struct {
+		RefreshToken string
+		DPoPProof    string
+		DPoPMethod   string
+		DPoPURI      string
+	}
+	// RefreshTokenResponse carries the renewed access token and the ROTATED
+	// refresh credential. Clients MUST persist RefreshToken: the credential
+	// they presented is revoked by the renewal. Timestamps are Unix seconds.
 	RefreshTokenResponse struct {
-		AccessToken string
-		ExpiresAt   int64
+		AccessToken      string
+		ExpiresAt        int64
+		RefreshToken     string
+		RefreshExpiresAt int64
+		TokenType        string
 	}
 	ValidateTokenRequest  struct{ AccessToken string }
 	ValidateTokenResponse struct {
@@ -1616,6 +1630,18 @@ type ServiceBuilder interface {
 	// WithKVStoreProvider sets the KVStore provider for DAO factory
 	WithKVStoreProvider(provider func(shardID uint64) interface{}) ServiceBuilder
 
+	// WithOrchestrationKVStore sets the store that backs durable orchestration
+	// state — projects, agent registrations and tasks. The server passes its
+	// tenant-routed store so a barrier-isolated tenant's orchestration records
+	// live in that tenant's own barrier. When unset, orchestration state is
+	// held in a process-local memory store and does not survive a restart.
+	WithOrchestrationKVStore(store interfaces.KVStore) ServiceBuilder
+
+	// WithOrchestrationAuditor routes create/update/delete of orchestration
+	// records to the platform audit trail. When unset, those mutations are not
+	// audited.
+	WithOrchestrationAuditor(auditor orchestration.StoreAuditor) ServiceBuilder
+
 	// WithCAService sets the CA service for PKI operations
 	WithCAService(caService interface{}) ServiceBuilder
 
@@ -1690,6 +1716,8 @@ type serviceBuilder struct {
 	cryptoService             interface{}
 	cryptoManager             interfaces.CryptoManager
 	kvStoreProvider           func(shardID uint64) interface{}
+	orchestrationKVStore      interfaces.KVStore
+	orchestrationAuditor      orchestration.StoreAuditor
 	caService                 interface{}
 	danePublisher             DANEPublisher
 	acmeService               ACMEServicer
@@ -1766,6 +1794,16 @@ func (b *serviceBuilder) WithCryptoManager(cryptoManager interfaces.CryptoManage
 
 func (b *serviceBuilder) WithKVStoreProvider(provider func(shardID uint64) interface{}) ServiceBuilder {
 	b.kvStoreProvider = provider
+	return b
+}
+
+func (b *serviceBuilder) WithOrchestrationKVStore(store interfaces.KVStore) ServiceBuilder {
+	b.orchestrationKVStore = store
+	return b
+}
+
+func (b *serviceBuilder) WithOrchestrationAuditor(auditor orchestration.StoreAuditor) ServiceBuilder {
+	b.orchestrationAuditor = auditor
 	return b
 }
 

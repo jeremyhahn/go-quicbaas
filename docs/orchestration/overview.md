@@ -86,18 +86,18 @@ pkg/api/mcp/
 
 | Tool                             | Description                                     |
 |----------------------------------|-------------------------------------------------|
-| `quicbaas_agent_discover`        | Scan directory tree for agent-enabled projects   |
-| `quicbaas_agent_register`        | Register a project for orchestration             |
-| `quicbaas_agent_list`            | List registered projects (paginated)             |
-| `quicbaas_agent_spawn`           | Create a persistent session on a backend         |
-| `quicbaas_agent_prompt`          | Send a prompt to a session or backend            |
-| `quicbaas_agent_status`          | Query session state, uptime, last activity       |
-| `quicbaas_agent_close`           | Terminate an active session                      |
-| `quicbaas_agent_list_sessions`   | List active sessions (filterable by backend)     |
-| `quicbaas_agent_list_backends`   | List registered backends and capabilities        |
-| `quicbaas_agent_decompose`       | Decompose a task into prioritized work items     |
-| `quicbaas_agent_health`          | Check health of all active sessions              |
-| `quicbaas_agent_broadcast`       | Publish a message to a coordination channel      |
+| `quicbaas_orchestrator_discover`        | Scan directory tree for agent-enabled projects   |
+| `quicbaas_orchestrator_register`        | Register a project for orchestration             |
+| `quicbaas_orchestrator_list`            | List registered projects (paginated)             |
+| `quicbaas_orchestrator_spawn`           | Create a persistent session on a backend         |
+| `quicbaas_orchestrator_prompt`          | Send a prompt to a session or backend            |
+| `quicbaas_orchestrator_status`          | Query session state, uptime, last activity       |
+| `quicbaas_orchestrator_close`           | Terminate an active session                      |
+| `quicbaas_orchestrator_list_sessions`   | List active sessions (filterable by backend)     |
+| `quicbaas_orchestrator_list_backends`   | List registered backends and capabilities        |
+| `quicbaas_orchestrator_decompose`       | Decompose a task into prioritized work items     |
+| `quicbaas_orchestrator_health`          | Check health of all active sessions              |
+| `quicbaas_orchestrator_broadcast`       | Publish a message to a coordination channel      |
 
 ### RAG Indexing (3 tools)
 
@@ -111,8 +111,8 @@ pkg/api/mcp/
 
 | Tool                             | Description                                     |
 |----------------------------------|-------------------------------------------------|
-| `quicbaas_agent_cache_put`       | Store analysis result in KV (project-scoped)     |
-| `quicbaas_agent_cache_get`       | Retrieve cached result by project and key        |
+| `quicbaas_orchestrator_cache_put`       | Store analysis result in KV (project-scoped)     |
+| `quicbaas_orchestrator_cache_get`       | Retrieve cached result by project and key        |
 
 ## Session Persistence (AgentStore)
 
@@ -122,7 +122,7 @@ Operations: `PutSession`, `GetSession`, `DeleteSession`, `ListSessions`, `Update
 
 ## Agent Health Monitoring
 
-`AgentHealthMonitor` periodically checks all active sessions by querying their status through the `AgentService`. It uses `atomic.Bool` for lock-free running state management and reports per-session health via `HealthCheckReport`. Sessions in `active` or `idle` state are considered healthy; sessions in `error` or `closed` state are flagged. The `quicbaas_agent_health` MCP tool exposes on-demand health checks.
+`AgentHealthMonitor` periodically checks all active sessions by querying their status through the `AgentService`. It uses `atomic.Bool` for lock-free running state management and reports per-session health via `HealthCheckReport`. Sessions in `active` or `idle` state are considered healthy; sessions in `error` or `closed` state are flagged. The `quicbaas_orchestrator_health` MCP tool exposes on-demand health checks.
 
 ## Backend Types
 

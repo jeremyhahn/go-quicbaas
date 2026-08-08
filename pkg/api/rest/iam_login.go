@@ -72,9 +72,14 @@ func (h *IAMHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use service layer for refresh (like gRPC does)
+	// Use service layer for refresh (like gRPC does). An RFC 9449 DPoP proof on
+	// the request is threaded through: a sender-constrained session can only be
+	// renewed by the holder of the bound key.
 	serviceReq := &service.RefreshTokenRequest{
 		RefreshToken: req.RefreshToken,
+		DPoPProof:    r.Header.Get("DPoP"),
+		DPoPMethod:   r.Method,
+		DPoPURI:      requestAbsoluteURI(r),
 	}
 
 	resp, err := h.server.service.RefreshToken(ctx, serviceReq)
@@ -90,16 +95,22 @@ func (h *IAMHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build response
+	// Build response. The refresh credential is ROTATED by the renewal, so the
+	// new one is always returned; a client that keeps presenting the old value
+	// is refused (that is the stolen-token detection, not a bug).
 	expiresIn := resp.ExpiresAt - time.Now().Unix()
 	if expiresIn < 0 {
 		expiresIn = 0
 	}
+	tokenType := resp.TokenType
+	if tokenType == "" {
+		tokenType = "Bearer"
+	}
 
 	response := &LoginResponse{
 		AccessToken:  resp.AccessToken,
-		RefreshToken: "", // RefreshTokenResponse doesn't include a new refresh token
-		TokenType:    "Bearer",
+		RefreshToken: resp.RefreshToken,
+		TokenType:    tokenType,
 		ExpiresIn:    expiresIn,
 		ExpiresAt:    time.Unix(resp.ExpiresAt, 0).Format(time.RFC3339),
 	}

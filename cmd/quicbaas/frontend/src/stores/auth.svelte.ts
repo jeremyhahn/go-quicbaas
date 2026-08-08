@@ -48,6 +48,18 @@ export const REFRESH_TOKEN_KEY = 'quicbaas_refresh_token';
 
 let status = $state<AuthStatus>('pending');
 
+/**
+ * Monotonic session generation. Every deliberate session transition (login,
+ * logout) bumps it, so an ASYNC session check can tell whether the session it
+ * was validating is still the current one.
+ *
+ * Without this a validateSession() that was in flight when the user signed out
+ * resolves afterwards and writes 'authenticated' back — resurrecting a session
+ * the user just ended. The window is small but real, and it is a security
+ * regression, not a cosmetic one.
+ */
+let generation = 0;
+
 export const authStore = {
   get status(): AuthStatus {
     return status;
@@ -79,6 +91,7 @@ export function setAuthenticated(tokens: AuthTokens): void {
       window.localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh_token);
     }
   }
+  generation++;
   status = 'authenticated';
 }
 
@@ -88,6 +101,7 @@ export function setUnauthenticated(): void {
     window.localStorage.removeItem(TOKEN_KEY);
     window.localStorage.removeItem(REFRESH_TOKEN_KEY);
   }
+  generation++;
   status = 'unauthenticated';
 }
 
@@ -97,7 +111,7 @@ export function setAuthStatus(next: AuthStatus): void {
 }
 
 /** Read the persisted refresh token, or '' when none is stored. */
-function readRefreshToken(): string {
+export function readRefreshToken(): string {
   if (typeof window === 'undefined') return '';
   return window.localStorage.getItem(REFRESH_TOKEN_KEY) ?? '';
 }
@@ -111,9 +125,10 @@ function readRefreshToken(): string {
  */
 function secondsUntilExpiry(jwt: string): number | null {
   const parts = jwt.split('.');
-  if (parts.length !== 3) return null;
+  const claimsSegment = parts.length === 3 ? parts[1] : undefined;
+  if (claimsSegment === undefined) return null;
   try {
-    const json = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
+    const json = atob(claimsSegment.replace(/-/g, '+').replace(/_/g, '/'));
     const claims = JSON.parse(json) as { exp?: number };
     if (typeof claims.exp !== 'number') return null;
     return claims.exp - Math.floor(Date.now() / 1000);
@@ -158,15 +173,23 @@ export async function refreshAccessToken(): Promise<string> {
         setUnauthenticated();
         return '';
       }
-      const body = (await resp.json()) as { access_token?: string };
+      const body = (await resp.json()) as {
+        access_token?: string;
+        refresh_token?: string;
+      };
       const next = body.access_token ?? '';
       if (!next) {
         setUnauthenticated();
         return '';
       }
-      // The server reuses the refresh token (it returns an empty one), so keep
-      // the stored refresh token and only update the access token.
+      // The server ROTATES the refresh credential: the one we just presented is
+      // revoked. Persisting the replacement is what makes the SECOND renewal
+      // work — storing only the access token would strand the session at the
+      // next expiry with a dead refresh token.
       window.localStorage.setItem(TOKEN_KEY, next);
+      if (body.refresh_token) {
+        window.localStorage.setItem(REFRESH_TOKEN_KEY, body.refresh_token);
+      }
       status = 'authenticated';
       return next;
     } catch {
@@ -210,16 +233,27 @@ export async function getValidAccessToken(): Promise<string> {
  * never shown without a confirmed session.
  */
 export async function validateSession(): Promise<void> {
-  const token = readAuthToken();
+  // Snapshot the session this check belongs to; a login or logout that happens
+  // while we await invalidates our verdict.
+  const checking = generation;
+  const commit = (next: AuthStatus): void => {
+    if (generation === checking) status = next;
+  };
+
+  // Resolve through the refresh-aware accessor: on a page load more than 15
+  // minutes after login the stored access token is expired, and validating it
+  // verbatim would report 'unauthenticated' for a session that is in fact
+  // still renewable.
+  const token = await getValidAccessToken();
   if (!token) {
-    status = 'unauthenticated';
+    commit('unauthenticated');
     return;
   }
   try {
     const client = await getSDKClient();
     const ok = await client.auth.authValidate(token);
-    status = ok ? 'authenticated' : 'unauthenticated';
+    commit(ok ? 'authenticated' : 'unauthenticated');
   } catch {
-    status = 'unauthenticated';
+    commit('unauthenticated');
   }
 }

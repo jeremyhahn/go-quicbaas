@@ -555,3 +555,102 @@ func TestQRDBUserStorage_NilResolverFailsClosed(t *testing.T) {
 		t.Fatal("expected nil resolver to fail closed")
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Write-through durability
+//
+// Regression: API-created users disappeared across a daemon restart while the
+// first-boot bootstrap admin survived. These tests pin the storage-seam half of
+// the invariant — CreateUser must land every part of the record (qrdb core,
+// broker profile, IDMap correlation and the email index) in the backing stores,
+// never in a process-local cache. The "restart" is modelled by discarding the
+// QRDBUserStorage instance and rebuilding a fresh one over the SAME servicer and
+// SAME KV, so any state that lived only in the old instance is provably gone.
+// -----------------------------------------------------------------------------
+
+// TestQRDBUserStorage_CreateUserWritesThroughToDurableStores asserts a created
+// user is fully readable through a brand-new storage instance built over the
+// same backing stores — the storage-layer equivalent of restarting the daemon.
+func TestQRDBUserStorage_CreateUserWritesThroughToDurableStores(t *testing.T) {
+	svc := newFakeUserServicer()
+	store, kv := newTestUserStorage(t, svc, "acme")
+	ctx := context.Background()
+
+	u := &iam.User{
+		ID:       "uuid-durable",
+		TenantID: "acme",
+		Name:     "durable",
+		Email:    "durable@acme.test",
+		Roles:    []string{"role-a", "role-b"},
+		State:    iam.UserStateActive,
+	}
+	if err := store.CreateUser(ctx, u); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	// Rebuild the storage over the SAME servicer and SAME KV. Nothing carries
+	// over from the old instance, so every field below must have been written
+	// through rather than cached in memory.
+	reopened := NewQRDBUserStorage(
+		&fakeResolver{svc: svc},
+		iam.NewBackendBrokerProfileStore(kv),
+		NewBackendIDMap(kv),
+		kv,
+	)
+
+	got, err := reopened.GetUser(ctx, "acme", "uuid-durable")
+	if err != nil {
+		t.Fatalf("GetUser after reopen: %v", err)
+	}
+	if got.ID != "uuid-durable" {
+		t.Fatalf("IDMap correlation not durable: got id %q", got.ID)
+	}
+	if got.Email != "durable@acme.test" || got.State != iam.UserStateActive {
+		t.Fatalf("broker profile not durable: %+v", got)
+	}
+	if len(got.Roles) != 2 || got.Roles[0] != "role-a" || got.Roles[1] != "role-b" {
+		t.Fatalf("roles not durable: %+v", got.Roles)
+	}
+	if got.TenantID != "acme" {
+		t.Fatalf("tenant binding not durable: %q", got.TenantID)
+	}
+
+	// The email index is a broker-owned durable record too; without it the
+	// login path cannot resolve the user after a restart. It is tenant-scoped,
+	// so the lookup binds the owning tenant exactly as the login path does.
+	byEmail, err := reopened.GetUserByEmail(iam.ContextWithTenant(ctx, "acme"), "durable@acme.test")
+	if err != nil {
+		t.Fatalf("GetUserByEmail after reopen: %v", err)
+	}
+	if byEmail.ID != "uuid-durable" {
+		t.Fatalf("email index not durable: got %q", byEmail.ID)
+	}
+}
+
+// TestQRDBUserStorage_CreateUserFailsWhenDurableStoreUnavailable is the
+// error-path counterpart: when the durable KV cannot be written (a sealed
+// tenant barrier), CreateUser must surface the failure instead of reporting
+// success for a record that only ever existed in memory.
+func TestQRDBUserStorage_CreateUserFailsWhenDurableStoreUnavailable(t *testing.T) {
+	svc := newFakeUserServicer()
+	store, kv := newTestUserStorage(t, svc, "acme")
+	kv.sealTenant("acme")
+	ctx := context.Background()
+
+	err := store.CreateUser(ctx, &iam.User{
+		ID:       "uuid-sealed",
+		TenantID: "acme",
+		Name:     "sealed",
+		Email:    "sealed@acme.test",
+	})
+	if err == nil {
+		t.Fatal("CreateUser must fail when the durable store is unavailable")
+	}
+
+	// And nothing must be readable afterwards: a create that could not be made
+	// durable must not leave a half-visible user behind.
+	kv.sealed["acme"] = false
+	if _, getErr := store.GetUser(ctx, "acme", "uuid-sealed"); getErr == nil {
+		t.Fatal("a user whose durable write failed must not be readable")
+	}
+}

@@ -78,13 +78,20 @@ message FinishLoginRequest {
   repeated bytes alt_lookup_keys = 6;
 }
 
-// FinishLoginResponse delivers the issued bearer and the resolved identity.
+// FinishLoginResponse delivers the issued bearer, the resolved identity, and
+// the credential that renews the session after the short-lived bearer expires.
 message FinishLoginResponse {
   string bearer = 1;
   LoginIdentity identity = 2;
   // expires_at is RFC3339 (UTC).
   string expires_at = 3;
   string factor_id = 4;
+  // refresh_token renews the session without re-running the factor ceremony.
+  // It is opaque, single-use (rotated on redemption), and revocable.
+  string refresh_token = 5;
+  // refresh_expires_at is the session's absolute deadline, RFC3339 (UTC).
+  // Renewal cannot move it.
+  string refresh_expires_at = 6;
 }
 
 // LoginIdentity is the resolved authenticated entity.

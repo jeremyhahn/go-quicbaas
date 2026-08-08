@@ -220,6 +220,18 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_orchestrator_cache_put":      {"orchestrator", "cache_write"},
 	"quicbaas_orchestrator_broadcast":      {"orchestrator", "broadcast"},
 
+	// Fleet + task-artifact tools keep their historical quicbaas_agent_fleet_* /
+	// quicbaas_task_* names but belong to the same orchestrator surface, so they
+	// map onto the qrdb-registered orchestrator agent_* / artifact_read family.
+	// Without an entry they were default-denied and never appeared in tools/list.
+	"quicbaas_agent_fleet_register":  {"orchestrator", "agent_register"},
+	"quicbaas_agent_fleet_list":      {"orchestrator", "agent_list"},
+	"quicbaas_agent_fleet_status":    {"orchestrator", "agent_read"},
+	"quicbaas_agent_fleet_remove":    {"orchestrator", "agent_remove"},
+	"quicbaas_agent_fleet_heartbeat": {"orchestrator", "agent_heartbeat"},
+	"quicbaas_task_get_artifact":     {"orchestrator", "artifact_read"},
+	"quicbaas_task_list_artifacts":   {"orchestrator", "artifact_read"},
+
 	// Scheduler -> scheduler
 	"quicbaas_scheduler_create_job":  {"scheduler", "create"},
 	"quicbaas_scheduler_get_job":     {"scheduler", "read"},

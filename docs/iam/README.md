@@ -99,6 +99,7 @@ spec:
 | [Developer Guide](developer-guide.md) | Integrating apps with QuicBaaS IAM |
 | [API Reference](api-reference.md) | REST and gRPC API documentation |
 | [WebAuthn Guide](webauthn.md) | Passwordless authentication with passkeys and security keys |
+| [Session Renewal](session-renewal.md) | Short access tokens, rotating refresh credentials, SPA/CLI renewal |
 | [GDPR Compliance](gdpr.md) | Consent, data export, and deletion |
 | [Admin & Impersonation](admin-impersonation.md) | Delegated administration and user impersonation |
 | [Audit Logging](audit-logging.md) | Security event tracking and permissions |

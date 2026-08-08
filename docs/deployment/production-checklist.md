@@ -647,7 +647,34 @@ storage:
 - [ ] File descriptor limits support max_open_files
 - [ ] Timeout values appropriate for network latency
 
-### 6.3 Raft Timeouts
+### 6.3 Graceful Shutdown (durability-critical)
+
+`quicbaasd` must terminate through its own SIGINT/SIGTERM handler. That handler
+runs `Server.Shutdown`, which closes the embedded qrdb node and therefore its
+PebbleDB. Closing the store is what flushes writes still held in the memtable
+and the unsynced WAL block (`SyncWrites: false` — the store is not fsynced per
+write). A process that exits without it silently loses every write made since
+the last flush.
+
+- [ ] Supervisor sends `SIGTERM` (not `SIGKILL`) and waits for the process to
+      exit before restarting. `server.shutdown_timeout` bounds the drain; give
+      the supervisor a stop timeout that exceeds it
+      (systemd `TimeoutStopSec`, Kubernetes `terminationGracePeriodSeconds`,
+      `docker stop -t`).
+- [ ] A graceful stop exits **0**. A non-zero exit on `SIGTERM` means something
+      terminated the process from inside a signal handler and the store was not
+      closed — treat it as a data-loss defect, not a cosmetic exit code.
+- [ ] The shutdown log contains `Performing graceful shutdown...` followed by
+      `Embedded qrdb node shutdown complete`.
+
+`main()` arms the secure-memory subsystem with `secure.EnablePurge()`, which
+wipes mlocked key material via the deferred `Purge` without installing a signal
+handler. Do **not** switch it to `secure.CatchInterrupt()`: that handler calls
+`os.Exit(1)` from inside the signal handler, always beats the graceful path, and
+reintroduces the data loss. The invariant is pinned by
+`test/integration/durability`.
+
+### 6.4 Raft Timeouts
 
 **Same Datacenter (low latency <5ms):**
 
@@ -683,7 +710,7 @@ raft:
 - [ ] Election timeout prevents unnecessary elections
 - [ ] Heartbeat interval keeps followers synced
 
-### 6.4 Storage Engine Tuning
+### 6.5 Storage Engine Tuning
 
 **Write-Heavy Workloads:**
 

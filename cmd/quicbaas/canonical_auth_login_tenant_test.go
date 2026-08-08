@@ -67,13 +67,16 @@ func (f *fakeLoginAuthService) BeginLogin(_ context.Context, req qrdbtransport.B
 }
 
 // FinishLogin records the request and returns the canned response.
-func (f *fakeLoginAuthService) FinishLogin(_ context.Context, req qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error) {
+func (f *fakeLoginAuthService) FinishLogin(_ context.Context, req qrdbtransport.FinishLoginRequest) (*quicbaas.FinishLoginResponse, error) {
 	f.finishCalls++
 	f.finish = req
 	if f.finishErr != nil {
 		return nil, f.finishErr
 	}
-	return f.finishResp, nil
+	if f.finishResp == nil {
+		return nil, nil
+	}
+	return &quicbaas.FinishLoginResponse{FinishLoginResponse: f.finishResp}, nil
 }
 
 // newFakeLoginClient wires the login fake through the SDK accessor chain the

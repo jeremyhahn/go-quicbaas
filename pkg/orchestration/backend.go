@@ -200,6 +200,12 @@ type ContentBlock struct {
 	Text string `json:"text,omitempty"`
 }
 
+// StopReasonEndTurn is the stop reason reported for a turn the agent finished
+// on its own. Every backend reports it so callers can distinguish a completed
+// turn from one cut short (for example by a token limit) without knowing which
+// agent dialect produced it.
+const StopReasonEndTurn = "end_turn"
+
 // MCPServerConfig configures an MCP server made available to an agent session.
 //
 // Two server shapes are expressed by this one struct:

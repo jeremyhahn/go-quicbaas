@@ -71,13 +71,19 @@ The `QuicBaaS` service facade (`pkg/service/quicbaas.go`) keeps a reference to t
 
 #### MCP tool renaming
 
-| Current | New | Backward Compat |
-|---------|-----|-----------------|
-| `quicbaas_agent_discover` | `quicbaas_orchestrator_discover` | Alias old name |
-| `quicbaas_agent_spawn` | `quicbaas_orchestrator_spawn` | Alias old name |
-| `quicbaas_agent_prompt` | `quicbaas_orchestrator_prompt` | Alias old name |
-| `quicbaas_agent_*` (all 12) | `quicbaas_orchestrator_*` | Alias old names |
-| `quicbaas_agent_cache_*` (2) | `quicbaas_orchestrator_cache_*` | Alias old names |
+| Old name | Registered name | Status |
+|----------|-----------------|--------|
+| `quicbaas_agent_discover` | `quicbaas_orchestrator_discover` | Renamed |
+| `quicbaas_agent_spawn` | `quicbaas_orchestrator_spawn` | Renamed |
+| `quicbaas_agent_prompt` | `quicbaas_orchestrator_prompt` | Renamed |
+| `quicbaas_agent_*` (all 12) | `quicbaas_orchestrator_*` | Renamed |
+| `quicbaas_agent_cache_*` (2) | `quicbaas_orchestrator_cache_*` | Renamed |
+
+The rename is complete: the old `quicbaas_agent_*` names are NOT registered and
+carry no alias. The stack is pre-v1 with a no-cruft policy, and the old names
+were never reachable under `RequireAuthz` (they had no qrdb permission mapping,
+so the default-deny gate filtered them out of `tools/list`). The fleet surface
+keeps its `quicbaas_agent_fleet_*` names.
 
 #### CLI subcommand
 
@@ -429,7 +435,7 @@ HOST A (vm-host-1)                           HOST B (vm-host-3)
 │ │ (.mcp.json config)       │ │               │ │ (.mcp.json config)       │ │
 │ │                          │ │               │ │                          │ │
 │ │ Tools available:         │ │               │ │ Tools available:         │ │
-│ │  quicbaas_agent_*        │ │               │ │  quicbaas_agent_*        │ │
+│ │  quicbaas_orchestrator_* │ │               │ │  quicbaas_orchestrator_* │ │
 │ │  quicbaas_rag_*          │ │               │ │  quicbaas_rag_*          │ │
 │ │  quicbaas data ops       │ │               │ │  quicbaas data ops       │ │
 │ │  quicbaas secrets        │ │               │ │  quicbaas secrets        │ │
@@ -526,7 +532,7 @@ Step 2: Agent on Host B queries the RAG pipeline
 
 ```
 Step 1: Agent A broadcasts via MCP tool
-        └─► quicbaas_agent_broadcast(channel="agent:review-request", message="Review PR #42")
+        └─► quicbaas_orchestrator_broadcast(channel="agent:review-request", message="Review PR #42")
         └─► QuicBaaS publishes to messaging channel
         └─► Replicated to all nodes
 

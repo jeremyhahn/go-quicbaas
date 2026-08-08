@@ -1023,6 +1023,27 @@ func TestFormatOrchPromptResponse(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, buf.String(), "Hello, world!")
 	})
+
+	t.Run("TableOmitsOrdinaryStopReason", func(t *testing.T) {
+		var buf bytes.Buffer
+		ordinary := &orchestratorSDK.PromptSessionResponse{
+			SessionID: "sess_abc", Response: "Hello, world!", Done: true,
+			StopReason: orchestration.StopReasonEndTurn,
+		}
+		require.NoError(t, formatOrchPromptResponse(ordinary, "table", &buf))
+		assert.NotContains(t, buf.String(), "Stop Reason")
+	})
+
+	t.Run("TableShowsTruncatedStopReason", func(t *testing.T) {
+		var buf bytes.Buffer
+		truncated := &orchestratorSDK.PromptSessionResponse{
+			SessionID: "sess_abc", Response: "Hello, wor", Done: true,
+			StopReason: "max_tokens",
+		}
+		require.NoError(t, formatOrchPromptResponse(truncated, "table", &buf))
+		assert.Contains(t, buf.String(), "Stop Reason")
+		assert.Contains(t, buf.String(), "max_tokens")
+	})
 }
 
 func TestFormatOrchStatusResponse(t *testing.T) {

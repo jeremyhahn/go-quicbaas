@@ -1002,11 +1002,16 @@ func (s *BackendStorage) StoreToken(ctx context.Context, token *Token) error {
 	// Dual-write the legacy global token record during the migration window.
 	_ = s.put(ctx, legacyTokenKey(token.JTI), data)
 
-	// Create token value index for refresh tokens. The value carries the
-	// token's tenant so GetTokenByValue can resolve the tenant-scoped token
-	// key without an ambient tenant in context: value = "<tenantID>:<jti>".
-	if token.TokenType == TokenTypeRefresh {
-		_ = s.put(ctx, tokenValueKey(token.JTI), []byte(token.TenantID+":"+token.JTI))
+	// Create the token value index for opaque (refresh) tokens. The index is
+	// keyed by the SHA-256 of the token's VALUE — the secret the client
+	// presents — because that is the only handle a refresh request carries.
+	// (Keying it by JTI, as an earlier revision did, made GetTokenByValue
+	// unresolvable and silently broke every refresh grant.) The stored value
+	// carries the token's tenant so GetTokenByValue can resolve the
+	// tenant-scoped token key without an ambient tenant in context:
+	// value = "<tenantID>:<jti>".
+	if token.TokenType == TokenTypeRefresh && token.ValueHash != "" {
+		_ = s.put(ctx, tokenValueKey(token.ValueHash), []byte(token.TenantID+":"+token.JTI))
 	}
 
 	return nil
@@ -1036,9 +1041,10 @@ func (s *BackendStorage) GetToken(ctx context.Context, jti string) (*Token, erro
 	return &token, nil
 }
 
-// GetTokenByValue retrieves a token by its string value.
+// GetTokenByValue retrieves a token by its opaque string value. The presented
+// secret is hashed to derive the index key (see StoreToken).
 func (s *BackendStorage) GetTokenByValue(ctx context.Context, tokenValue string) (*Token, error) {
-	jtiData, err := s.get(ctx, tokenValueKey(tokenValue))
+	jtiData, err := s.get(ctx, tokenValueKey(HashTokenValue(tokenValue)))
 	if err != nil {
 		return nil, err
 	}

@@ -363,3 +363,136 @@ func TestKVSessionEventLog_NoKVStoreErrors(t *testing.T) {
 		t.Fatal("expected error without KV store")
 	}
 }
+
+// TestKVSessionEventLog_SurvivesRestart proves the durability contract the
+// server wiring depends on: a session's events and metadata, once written to
+// the backing KVStore, are fully recoverable by a BRAND NEW KVSessionEventLog
+// instance constructed over the SAME underlying store — modeling a daemon
+// restart where the process-local log object is gone but the KVStore (Pebble
+// on disk, or Raft-replicated in cluster mode) is not. A log that only worked
+// against its own in-memory cache would fail this test even though every
+// other KV-backed test passes, because those tests never tear down and
+// rebuild the log object.
+func TestKVSessionEventLog_SurvivesRestart(t *testing.T) {
+	t.Parallel()
+	kv := newMemKVStore()
+	ctx := context.Background()
+
+	// "Before restart": one log instance appends a short transcript and
+	// registers session metadata.
+	before, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
+	if err != nil {
+		t.Fatalf("NewKVSessionEventLog (before): %v", err)
+	}
+	if err := before.PutMeta(ctx, &SessionMeta{
+		SessionID: "s", TenantID: "t", Backend: "claude", Status: SessionStateActive,
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("put meta: %v", err)
+	}
+	for i := 1; i <= 3; i++ {
+		if err := before.Append(ctx, newPromptEvent("t", "s", uint64(i), "turn")); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+
+	// "Restart": a fresh log instance is constructed over the identical
+	// KVStore. No shared in-memory state, no shared fanout hub, no shared
+	// appendMus map — the only thing carried across is kv itself.
+	after, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
+	if err != nil {
+		t.Fatalf("NewKVSessionEventLog (after): %v", err)
+	}
+
+	latest, err := after.LatestSequence(ctx, "t", "s")
+	if err != nil || latest != 3 {
+		t.Fatalf("latest sequence after restart: got (%d, %v), want (3, nil)", latest, err)
+	}
+
+	page, next, err := after.Range(ctx, "t", "s", 1, 0)
+	if err != nil {
+		t.Fatalf("range after restart: %v", err)
+	}
+	if len(page) != 3 || next != 0 {
+		t.Fatalf("range after restart: len=%d next=%d, want len=3 next=0", len(page), next)
+	}
+	for i, ev := range page {
+		if ev.Sequence != uint64(i+1) || ev.Prompt == nil || ev.Prompt.Prompt != "turn" {
+			t.Errorf("page[%d] after restart: %+v", i, ev)
+		}
+	}
+
+	meta, err := after.GetMeta(ctx, "t", "s")
+	if err != nil {
+		t.Fatalf("get meta after restart: %v", err)
+	}
+	if meta.Backend != "claude" || meta.LatestSequence != 3 {
+		t.Errorf("meta after restart: %+v", meta)
+	}
+
+	// A new append from the post-restart instance must continue the
+	// sequence exactly where the pre-restart instance left off.
+	if err := after.Append(ctx, newPromptEvent("t", "s", 4, "post-restart turn")); err != nil {
+		t.Fatalf("append after restart: %v", err)
+	}
+}
+
+// TestKVSessionEventLog_TenantIsolation proves two tenants using the
+// identical session ID never observe each other's events or metadata when
+// sharing one KVStore — the property the tenant-routed durable store wiring
+// (pkg/server durableKVStore) relies on for barrier-isolated tenants that
+// nonetheless share the log's key layout convention.
+func TestKVSessionEventLog_TenantIsolation(t *testing.T) {
+	t.Parallel()
+	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: newMemKVStore()})
+	if err != nil {
+		t.Fatalf("NewKVSessionEventLog: %v", err)
+	}
+	ctx := context.Background()
+
+	if err := log.Append(ctx, newPromptEvent("tenant-a", "s", 1, "a-secret")); err != nil {
+		t.Fatalf("append tenant-a: %v", err)
+	}
+	if err := log.Append(ctx, newPromptEvent("tenant-b", "s", 1, "b-secret")); err != nil {
+		t.Fatalf("append tenant-b: %v", err)
+	}
+
+	pageA, _, err := log.Range(ctx, "tenant-a", "s", 1, 0)
+	if err != nil {
+		t.Fatalf("range tenant-a: %v", err)
+	}
+	if len(pageA) != 1 || pageA[0].Prompt.Prompt != "a-secret" {
+		t.Fatalf("tenant-a range leaked or missing: %+v", pageA)
+	}
+
+	pageB, _, err := log.Range(ctx, "tenant-b", "s", 1, 0)
+	if err != nil {
+		t.Fatalf("range tenant-b: %v", err)
+	}
+	if len(pageB) != 1 || pageB[0].Prompt.Prompt != "b-secret" {
+		t.Fatalf("tenant-b range leaked or missing: %+v", pageB)
+	}
+
+	if err := log.PutMeta(ctx, &SessionMeta{SessionID: "s", TenantID: "tenant-a", Backend: "claude", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("put meta tenant-a: %v", err)
+	}
+	if err := log.PutMeta(ctx, &SessionMeta{SessionID: "s", TenantID: "tenant-b", Backend: "codex", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("put meta tenant-b: %v", err)
+	}
+
+	listA, err := log.ListSessions(ctx, "tenant-a", nil, 0)
+	if err != nil {
+		t.Fatalf("list tenant-a: %v", err)
+	}
+	if len(listA) != 1 || listA[0].Backend != "claude" {
+		t.Fatalf("tenant-a list leaked tenant-b session: %+v", listA)
+	}
+
+	listB, err := log.ListSessions(ctx, "tenant-b", nil, 0)
+	if err != nil {
+		t.Fatalf("list tenant-b: %v", err)
+	}
+	if len(listB) != 1 || listB[0].Backend != "codex" {
+		t.Fatalf("tenant-b list leaked tenant-a session: %+v", listB)
+	}
+}

@@ -25,6 +25,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
+	sdktransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 // Auth service prefix for routing.
@@ -130,11 +131,14 @@ func (h *authHandler) handleRefreshToken(ctx context.Context, client pb.QuicBaaS
 		return nil, convertGRPCError(err, "authHandler.handleRefreshToken")
 	}
 
-	// Convert protobuf response to SDK response.
+	// Convert protobuf response to SDK response. Timestamps are Unix seconds
+	// (matching service.RefreshTokenResponse), and the rotated refresh
+	// credential is carried back so the caller can persist it.
 	return &service.ExtendedRefreshTokenResponse{
-		AccessToken: pbResp.AccessToken,
-		ExpiresAt:   time.Unix(0, pbResp.ExpiresAt),
-		TokenType:   pbResp.TokenType,
+		AccessToken:  pbResp.GetAccessToken(),
+		ExpiresAt:    time.Unix(pbResp.GetExpiresAt(), 0),
+		TokenType:    pbResp.GetTokenType(),
+		RefreshToken: pbResp.GetRefreshToken(),
 	}, nil
 }
 
@@ -223,20 +227,29 @@ func (h *authHandler) handleFinishLogin(ctx context.Context, req interface{}) (i
 	if err != nil {
 		return nil, convertGRPCError(err, "authHandler.handleFinishLogin")
 	}
-	out := &qrdbtransport.FinishLoginResponse{
+	inner := &qrdbtransport.FinishLoginResponse{
 		Bearer:   pbResp.GetBearer(),
 		FactorID: pbResp.GetFactorId(),
 	}
 	if ts := pbResp.GetExpiresAt(); ts != "" {
 		if parsed, perr := time.Parse(time.RFC3339Nano, ts); perr == nil {
-			out.ExpiresAt = parsed
+			inner.ExpiresAt = parsed
 		}
 	}
 	if id := pbResp.GetIdentity(); id != nil {
-		out.Identity = &qrdbtransport.Identity{
+		inner.Identity = &qrdbtransport.Identity{
 			Subject:  id.GetSubject(),
 			TenantID: id.GetTenantId(),
 			Roles:    id.GetRoles(),
+		}
+	}
+	out := &sdktransport.FinishLoginResponse{
+		FinishLoginResponse: inner,
+		RefreshToken:        pbResp.GetRefreshToken(),
+	}
+	if ts := pbResp.GetRefreshExpiresAt(); ts != "" {
+		if parsed, perr := time.Parse(time.RFC3339Nano, ts); perr == nil {
+			out.RefreshExpiresAt = parsed
 		}
 	}
 	return out, nil

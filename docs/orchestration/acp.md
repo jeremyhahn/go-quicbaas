@@ -158,6 +158,56 @@ Terminates a session. Sent as a notification (no response expected).
 
 After the notification, the transport is closed (stdin EOF, SIGTERM, then SIGKILL after 5s timeout).
 
+## Turn Contract
+
+`PromptSession` is **synchronous**: the call returns only after the agent has
+finished its turn. There is no deferred delivery — a successful response always
+carries a completed turn, and a failure is an error, never an empty response.
+
+### Service wire shape
+
+The orchestrator service answers with a structured turn on every transport:
+
+```json
+{
+  "session_id": "ce4b6a40-...",
+  "content": [{"type": "text", "text": "SELF-HOSTING ONLINE"}],
+  "model": "claude-fable-5",
+  "stop_reason": "end_turn",
+  "timestamp": 1786207030175886792
+}
+```
+
+### SDK view
+
+The SDK exposes the flattened `orchestrator.PromptSessionResponse`
+(`response`, `done`, `model`, `stop_reason`). The two shapes share only
+`session_id`, so **every transport must convert** through
+`orchestrator.NewPromptSessionResponse` / the `*Wire` types in
+`sdk/go/client/orchestrator/session_wire.go` — decoding the service payload
+straight into the SDK type silently produces an empty `done: false`.
+
+- `done` reports that the agent's turn completed. Because the call is
+  synchronous it is true on every successful response.
+- A response with neither content nor a stop reason is not a turn and yields
+  `*orchestrator.EmptyTurnError`.
+- The same rule applies to the sibling session responses: the service names the
+  lifecycle field `state` (the SDK exposes it as `status`) and sends no `count`
+  for `ListSessions`, both of which the `*Wire` converters map.
+
+### Stop reasons across dialects
+
+| Backend dialect | Turn terminator | Stop reason on the wire |
+|-----------------|-----------------|-------------------------|
+| ACP JSON-RPC (opencode, codex) | `session/prompt` result | Reported by the agent |
+| stream-json CLI (claude) | `{"type":"result","subtype":"success"}` | `stop_reason` is `null` on the assistant message |
+| One-shot CLI (`--print`) | Process exit | Not reported |
+
+The stream-json and one-shot paths normalise a completed turn to
+`orchestration.StopReasonEndTurn` so every backend describes completion
+identically. An agent-reported stop reason (for example `max_tokens`) is always
+preserved; the CLI prints it whenever it is not an ordinary end of turn.
+
 ## Protocol Types
 
 ### Core Message Types

@@ -156,11 +156,11 @@ func (h *orchestratorHandler) handlePromptSession(ctx context.Context, req inter
 		return nil, errors.NewInvalidInput("orchestrator.PromptSession", "invalid request type")
 	}
 	url := "/api/v1/orchestrator/sessions/" + sdkReq.SessionID + "/prompt"
-	var resp orchestrator.PromptSessionResponse
-	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, sdkReq, &resp); err != nil {
+	var wire orchestrator.PromptSessionWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, sdkReq, &wire); err != nil {
 		return nil, err
 	}
-	return &resp, nil
+	return wire.Response()
 }
 
 // handleSessionStatus handles the SessionStatus orchestrator request.
@@ -170,11 +170,11 @@ func (h *orchestratorHandler) handleSessionStatus(ctx context.Context, req inter
 		return nil, errors.NewInvalidInput("orchestrator.SessionStatus", "invalid request type")
 	}
 	url := "/api/v1/orchestrator/sessions/" + sdkReq.SessionID
-	var resp orchestrator.SessionStatusResponse
-	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
+	var wire orchestrator.SessionStatusWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &wire); err != nil {
 		return nil, err
 	}
-	return &resp, nil
+	return wire.Response(), nil
 }
 
 // handleCloseSession handles the CloseSession orchestrator request.
@@ -184,11 +184,11 @@ func (h *orchestratorHandler) handleCloseSession(ctx context.Context, req interf
 		return nil, errors.NewInvalidInput("orchestrator.CloseSession", "invalid request type")
 	}
 	url := "/api/v1/orchestrator/sessions/" + sdkReq.SessionID
-	var resp orchestrator.CloseSessionResponse
-	if err := h.transport.doJSONRequest(ctx, http.MethodDelete, url, nil, &resp); err != nil {
+	var wire orchestrator.CloseSessionWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodDelete, url, nil, &wire); err != nil {
 		return nil, err
 	}
-	return &resp, nil
+	return wire.Response(), nil
 }
 
 // handleListSessions handles the ListSessions orchestrator request.
@@ -206,11 +206,11 @@ func (h *orchestratorHandler) handleListSessions(ctx context.Context, req interf
 	if sdkReq.Status != "" {
 		url += sep + "status=" + sdkReq.Status
 	}
-	var resp orchestrator.ListSessionsResponse
-	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
+	var wire orchestrator.ListSessionsWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &wire); err != nil {
 		return nil, err
 	}
-	return &resp, nil
+	return wire.Response(), nil
 }
 
 // handleCreateTask handles the CreateTask orchestrator request.

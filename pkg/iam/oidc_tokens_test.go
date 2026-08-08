@@ -289,7 +289,7 @@ func TestTokenService_GenerateRefreshToken(t *testing.T) {
 	service, _ := createTestTokenService(t)
 	ctx := context.Background()
 
-	tokenString, err := service.GenerateRefreshToken(ctx, "user-123", "client-123")
+	tokenString, err := service.GenerateRefreshToken(ctx, SessionRefreshOptions{Subject: "user-123", ClientID: "client-123"})
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
@@ -478,7 +478,7 @@ func TestTokenService_RevokeToken_RefreshToken(t *testing.T) {
 	ctx := context.Background()
 
 	// Generate a refresh token
-	refreshToken, err := service.GenerateRefreshToken(ctx, "user-123", "client-123")
+	refreshToken, err := service.GenerateRefreshToken(ctx, SessionRefreshOptions{Subject: "user-123", ClientID: "client-123"})
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}

@@ -31,14 +31,14 @@ import (
 // fakeLoginServicer is a test double for service.LoginServicer.
 type fakeLoginServicer struct {
 	beginFunc  func(ctx context.Context, req *qrdbtransport.BeginLoginRequest) (*qrdbtransport.BeginLoginResponse, error)
-	finishFunc func(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error)
+	finishFunc func(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*service.FinishLoginResult, error)
 }
 
 func (f *fakeLoginServicer) BeginLogin(ctx context.Context, req *qrdbtransport.BeginLoginRequest) (*qrdbtransport.BeginLoginResponse, error) {
 	return f.beginFunc(ctx, req)
 }
 
-func (f *fakeLoginServicer) FinishLogin(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error) {
+func (f *fakeLoginServicer) FinishLogin(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*service.FinishLoginResult, error) {
 	return f.finishFunc(ctx, req)
 }
 
@@ -118,16 +118,17 @@ func TestExecuteLoginTool_DispatchBegin(t *testing.T) {
 
 func TestExecuteLoginTool_DispatchFinish(t *testing.T) {
 	login := &fakeLoginServicer{
-		finishFunc: func(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error) {
-			return &qrdbtransport.FinishLoginResponse{Bearer: "tok"}, nil
+		finishFunc: func(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*service.FinishLoginResult, error) {
+			return &service.FinishLoginResult{FinishLoginResponse: &qrdbtransport.FinishLoginResponse{Bearer: "tok"}, RefreshToken: "r-tok"}, nil
 		},
 	}
 	r := newLoginRegistry(t, login)
 	resp, err := r.executeLoginTool(context.Background(), "quicbaas_login_finish",
 		map[string]interface{}{"session_id": "s1", "type": "mtls"})
 	require.NoError(t, err)
-	finish := resp.(*qrdbtransport.FinishLoginResponse)
+	finish := resp.(*service.FinishLoginResult)
 	assert.Equal(t, "tok", finish.Bearer)
+	assert.Equal(t, "r-tok", finish.RefreshToken)
 }
 
 // =============================================================================
@@ -172,14 +173,14 @@ func TestExecuteLoginFinish_DecodesFieldsAndError(t *testing.T) {
 		lk := base64.StdEncoding.EncodeToString([]byte("key"))
 		alt := base64.StdEncoding.EncodeToString([]byte("alt-key"))
 		login := &fakeLoginServicer{
-			finishFunc: func(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error) {
+			finishFunc: func(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*service.FinishLoginResult, error) {
 				assert.Equal(t, "sess", req.SessionID)
 				assert.Equal(t, qrdbtransport.FactorType("piv"), req.Type)
 				assert.Equal(t, []byte("proof"), req.Signature)
 				assert.Equal(t, []byte("key"), req.LookupKey)
 				assert.Equal(t, [][]byte{[]byte("alt-key")}, req.AltLookupKeys)
 				assert.Equal(t, "9a", req.MethodMetadata["slot"])
-				return &qrdbtransport.FinishLoginResponse{Bearer: "b1"}, nil
+				return &service.FinishLoginResult{FinishLoginResponse: &qrdbtransport.FinishLoginResponse{Bearer: "b1"}}, nil
 			},
 		}
 		resp, err := executeLoginFinish(context.Background(), login, map[string]interface{}{
@@ -191,12 +192,12 @@ func TestExecuteLoginFinish_DecodesFieldsAndError(t *testing.T) {
 			"method_metadata": map[string]interface{}{"slot": "9a", "ignored": 7},
 		})
 		require.NoError(t, err)
-		assert.Equal(t, "b1", resp.(*qrdbtransport.FinishLoginResponse).Bearer)
+		assert.Equal(t, "b1", resp.(*service.FinishLoginResult).Bearer)
 	})
 
 	t.Run("error_propagated", func(t *testing.T) {
 		login := &fakeLoginServicer{
-			finishFunc: func(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error) {
+			finishFunc: func(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*service.FinishLoginResult, error) {
 				return nil, &LoginServiceUnavailableError{}
 			},
 		}

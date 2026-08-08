@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -279,6 +280,15 @@ func TestFirstBootBootstrap_InviteTokenStoredWithExpiry(t *testing.T) {
 // the bootstrap logic, without starting a real server.
 func buildTestIAMComponents(t *testing.T) *iamComponents {
 	t.Helper()
+	c, _ := buildTestIAMComponentsWithFactors(t)
+	return c
+}
+
+// buildTestIAMComponentsWithFactors builds the components AND returns the
+// in-memory qrdb factor store wired into them, so a certificate-binding test can
+// assert the mtls factor the unified login ceremony will resolve.
+func buildTestIAMComponentsWithFactors(t *testing.T) (*iamComponents, *testutil.MemoryUserAuthFactors) {
+	t.Helper()
 
 	memStorage := iam.NewMemoryStorage()
 	tenantManager := iam.NewDefaultTenantManager(memStorage)
@@ -317,10 +327,22 @@ func buildTestIAMComponents(t *testing.T) *iamComponents {
 	})
 	require.NoError(t, err)
 
+	// Certificate bindings must ALSO enroll an mtls login factor, so every
+	// component built for a bind test carries the same two collaborators the
+	// production wiring supplies: the qrdb factor store and the broker-id ->
+	// qrdb-id correlation. The auto-assigning resolver models production
+	// faithfully — every user created through the qrdb-backed storage has an
+	// IDMap entry, a property the in-memory IAM storage cannot provide.
+	certFactors := testutil.NewMemoryUserAuthFactors()
+	certLoginFactors, err := iam.NewCertLoginFactorEnroller(certFactors)
+	require.NoError(t, err)
+
 	return &iamComponents{
-		tenantManager: tenantManager,
-		identityStore: identityStore,
-		adminManager:  adminManager,
-		inviteStore:   iam.NewMemoryInviteStore(),
-	}
+		tenantManager:    tenantManager,
+		identityStore:    identityStore,
+		adminManager:     adminManager,
+		inviteStore:      iam.NewMemoryInviteStore(),
+		qrdbUserIDs:      testutil.NewAutoQRDBUserIDs(),
+		certLoginFactors: certLoginFactors,
+	}, certFactors
 }

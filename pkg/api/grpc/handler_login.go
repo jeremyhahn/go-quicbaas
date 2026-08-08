@@ -156,9 +156,13 @@ func (s *LoginServer) FinishLogin(ctx context.Context, in *pb.FinishLoginRequest
 	}
 
 	out := &pb.FinishLoginResponse{
-		Bearer:    resp.Bearer,
-		ExpiresAt: resp.ExpiresAt.UTC().Format(time.RFC3339Nano),
-		FactorId:  resp.FactorID,
+		Bearer:       resp.Bearer,
+		ExpiresAt:    resp.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		FactorId:     resp.FactorID,
+		RefreshToken: resp.RefreshToken,
+	}
+	if !resp.RefreshExpiresAt.IsZero() {
+		out.RefreshExpiresAt = resp.RefreshExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
 	if resp.Identity != nil {
 		out.Identity = &pb.LoginIdentity{

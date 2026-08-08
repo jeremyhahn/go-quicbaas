@@ -4,7 +4,7 @@ The orchestrator decomposes high-level tasks into discrete work items using an A
 
 ## Task Decomposition
 
-`quicbaas_agent_decompose` sends a structured prompt to any registered agent backend, asking it to break a task into work items.
+`quicbaas_orchestrator_decompose` sends a structured prompt to any registered agent backend, asking it to break a task into work items.
 
 ### Request
 
@@ -84,8 +84,8 @@ The agent cache tools allow sessions to store and retrieve expensive analysis re
 
 | Tool | Description |
 |------|-------------|
-| `quicbaas_agent_cache_put` | Store a value scoped by project ID and key |
-| `quicbaas_agent_cache_get` | Retrieve a cached value by project ID and key |
+| `quicbaas_orchestrator_cache_put` | Store a value scoped by project ID and key |
+| `quicbaas_orchestrator_cache_get` | Retrieve a cached value by project ID and key |
 
 ### Storage
 
@@ -95,14 +95,14 @@ Cache entries are stored as KV entities with entity type `agent_cache`. The comp
 
 ```
 # Store a dependency analysis result
-quicbaas_agent_cache_put(
+quicbaas_orchestrator_cache_put(
   project_id: "proj-abc",
   key: "dependency-analysis",
   value: "{\"direct\": 12, \"transitive\": 47, ...}"
 )
 
 # Retrieve it in another session
-quicbaas_agent_cache_get(
+quicbaas_orchestrator_cache_get(
   project_id: "proj-abc",
   key: "dependency-analysis"
 )

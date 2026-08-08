@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/ollama"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -118,7 +119,20 @@ func (s *Server) startOrchestration() error {
 		SetProjectAuthz(authz *orchestration.ProjectAuthz)
 	})
 	if ok {
-		wirer.SetTaskStore(orchestration.NewInMemoryTaskStore())
+		// Durable orchestration state binds to the tenant-routed KVStore, the
+		// same seam the IAM stores use. Tasks therefore survive a restart, and
+		// a barrier-isolated tenant's tasks are written inside that tenant's
+		// own barrier (own DEK + namespace) rather than a shared table.
+		orchKV := s.durableKVStore()
+		if orchKV == nil {
+			orchKV = kvstore.NewMemory()
+			s.logger.Warn("No qrdb storage attached; orchestration tasks are in-memory and will not survive a restart")
+		}
+		orchStoreOpts := []orchestration.StoreOption{
+			orchestration.WithStoreAuditor(newOrchestrationStoreAuditor(s.auditLoggerForStores)),
+		}
+
+		wirer.SetTaskStore(orchestration.NewTaskStore(orchKV, orchStoreOpts...))
 		wirer.SetTenantGuard(orchestration.NewTenantGuard(logAdapter))
 
 		// Wire project-level authorization so ClaimTask enforces the
@@ -134,15 +148,15 @@ func (s *Server) startOrchestration() error {
 			}
 		}
 		if projectStore == nil {
-			projectStore = orchestration.NewInMemoryProjectStore()
+			projectStore = orchestration.NewProjectStore(orchKV, orchStoreOpts...)
 		}
 		wirer.SetProjectAuthz(orchestration.NewProjectAuthz(projectStore))
 		s.logger.Info("Project authorization attached to orchestration service")
 		// Reuse the registry created during IAM init so enrollment-time
-		// registrations are immediately visible to dispatch. Falls back to
-		// a fresh in-memory registry only if IAM init never ran.
+		// registrations are immediately visible to dispatch. Builds one over
+		// the same durable store only if IAM init never ran.
 		if s.agentRegistry == nil {
-			s.agentRegistry = orchestration.NewInMemoryAgentRegistry()
+			s.agentRegistry = orchestration.NewAgentRegistry(orchKV, orchStoreOpts...)
 		}
 		wirer.SetAgentRegistry(s.agentRegistry)
 		s.logger.Info("Agent fleet registry attached to orchestration service")
@@ -188,10 +202,17 @@ func (s *Server) startOrchestration() error {
 		wirer.SetWorkflowLoader(wl)
 		s.logger.Info("Workflow loader attached to orchestration service")
 
-		// Wire KV store for durable job persistence.
-		// Uses an in-memory KV store by default; will be replaced with
-		// Raft-backed KV store when cluster infrastructure is wired.
-		jobKVStore := NewMemoryKVStore()
+		// Wire KV store for durable job persistence. Binds to the same
+		// tenant-routed durable store as tasks/projects/agents (see orchKV
+		// below) so job records and, in particular, the session event log
+		// (conversation transcripts) survive a daemon restart instead of
+		// evaporating with the process. Falls back to an in-memory store only
+		// when no qrdb storage is attached (storage-less dev boot).
+		jobKVStore := s.durableKVStore()
+		if jobKVStore == nil {
+			jobKVStore = kvstore.NewMemory()
+			s.logger.Warn("No qrdb storage attached; orchestration jobs and session transcripts are in-memory and will not survive a restart")
+		}
 		wirer.SetKVStore(jobKVStore)
 		s.logger.Info("KV store attached to orchestration service for job persistence")
 
@@ -223,9 +244,14 @@ func (s *Server) startOrchestration() error {
 			}
 		}
 
-		// Wire the session event log so attachers can replay + tail
-		// session events. Backed by the same KV store used for job
-		// persistence; at-rest confidentiality is provided by qrdb's
+		// Wire the session event log so attachers can replay + tail session
+		// events. Backed by the SAME tenant-routed, durable KV store as job
+		// persistence (jobKVStore, above) — conversation transcripts
+		// (prompts, assistant chunks, tool calls, presence) therefore survive
+		// a daemon restart exactly like tasks/projects/agents do, and a
+		// barrier-isolated tenant's transcripts land in that tenant's own
+		// barrier (own DEK + namespace) rather than a shared table. At-rest
+		// confidentiality beyond the tenant boundary is provided by qrdb's
 		// StorageBarrier.
 		sessionLog, logErr := orchestration.NewKVSessionEventLog(orchestration.KVSessionEventLogConfig{
 			KVStore: jobKVStore,
@@ -234,7 +260,7 @@ func (s *Server) startOrchestration() error {
 			s.logger.Warnf("Session event log disabled: %v", logErr)
 		} else {
 			wirer.SetSessionEventLog(sessionLog)
-			s.logger.Info("Session event log attached (KV-backed, qrdb barrier-encrypted at rest)")
+			s.logger.Info("Session event log attached (durable KV-backed, tenant-routed, qrdb barrier-encrypted at rest)")
 		}
 
 		// Wire the remote-backend resolver so daemon-kind registrations are

@@ -75,12 +75,18 @@ type ceremonyLoginIdentity struct {
 	Roles    []string `json:"roles,omitempty"`
 }
 
-// ceremonyFinishLoginResponse mirrors transport.FinishLoginResponse.
+// ceremonyFinishLoginResponse mirrors service.FinishLoginResult: qrdb's
+// ceremony response plus the QuicBaaS renewal credential.
 type ceremonyFinishLoginResponse struct {
 	Bearer    string                 `json:"bearer"`
 	Identity  *ceremonyLoginIdentity `json:"identity,omitempty"`
 	ExpiresAt string                 `json:"expires_at"`
 	FactorID  string                 `json:"factor_id,omitempty"`
+
+	// RefreshToken renews the session after the short-lived bearer expires.
+	// RefreshExpiresAt is the session's absolute deadline (RFC3339).
+	RefreshToken     string `json:"refresh_token,omitempty"`
+	RefreshExpiresAt string `json:"refresh_expires_at,omitempty"`
 }
 
 // verifiedPeerCertFromRequest extracts the leaf certificate from the request's
@@ -234,9 +240,13 @@ func (h *IAMHandler) CeremonyFinishLogin(w http.ResponseWriter, r *http.Request)
 	}
 
 	out := ceremonyFinishLoginResponse{
-		Bearer:    resp.Bearer,
-		ExpiresAt: resp.ExpiresAt.UTC().Format(time.RFC3339Nano),
-		FactorID:  resp.FactorID,
+		Bearer:       resp.Bearer,
+		ExpiresAt:    resp.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		FactorID:     resp.FactorID,
+		RefreshToken: resp.RefreshToken,
+	}
+	if !resp.RefreshExpiresAt.IsZero() {
+		out.RefreshExpiresAt = resp.RefreshExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
 	if resp.Identity != nil {
 		out.Identity = &ceremonyLoginIdentity{

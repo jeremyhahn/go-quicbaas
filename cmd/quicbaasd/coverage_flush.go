@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"os"
 	"runtime/coverage"
-	"syscall"
-
-	"github.com/awnumar/memguard"
 )
 
 // flushCoverageProfile writes the accumulated coverage profile to the directory
@@ -33,24 +30,16 @@ func flushCoverageProfile() {
 // coverage_flush_noop.go.
 func flushCoverage() { flushCoverageProfile() }
 
-// setupCoverageSignalHook re-registers the process signal handler so the
-// coverage profile is flushed to GOCOVERDIR before the process exits on
-// SIGINT/SIGTERM.
+// setupCoverageSignalHook is a no-op: coverage is flushed from runDaemon's
+// graceful shutdown path.
 //
-// Rationale: secure.CatchInterrupt installs a memguard signal handler that
-// wipes mlocked memory and then calls os.Exit(1). That abrupt exit races
-// ahead of the daemon's graceful-shutdown goroutine, so neither the graceful
-// flushCoverage call nor the runtime's implicit exit-hook reliably write the
-// counter file. memguard's CatchSignal documents that only the most recent
-// registration takes effect, so we register last: our handler flushes
-// coverage first, after which memguard still performs its secure-wipe exit.
-// This makes the daemon-boot coverage capture deterministic under the
-// signal-driven termination used by `docker compose down`.
-//
-// Compiled only under the 'coverage' build tag; the production no-op variant
-// lives in coverage_flush_noop.go.
-func setupCoverageSignalHook() {
-	memguard.CatchSignal(func(_ os.Signal) {
-		flushCoverageProfile()
-	}, syscall.SIGINT, syscall.SIGTERM)
-}
+// It previously installed a memguard.CatchSignal handler so the profile was
+// written before memguard's secure-wipe os.Exit(1). That is no longer needed
+// — and must not be reinstated — because main() now arms the secure subsystem
+// with secure.EnablePurge() instead of secure.CatchInterrupt(): no memguard
+// signal handler is installed at all, so SIGINT/SIGTERM reach runDaemon's own
+// handler, which runs Server.Shutdown (closing the embedded qrdb node and its
+// PebbleDB) and then calls flushCoverage. Registering memguard.CatchSignal
+// here would reintroduce the hard os.Exit(1) that skipped the graceful
+// shutdown and dropped every unflushed PebbleDB write.
+func setupCoverageSignalHook() {}

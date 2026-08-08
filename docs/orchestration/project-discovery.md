@@ -4,7 +4,7 @@ The orchestrator discovers agent-enabled projects by scanning a directory tree f
 
 ## How It Works
 
-The `quicbaas_agent_discover` MCP tool calls `AgentService.DiscoverProjects`, which:
+The `quicbaas_orchestrator_discover` MCP tool calls `AgentService.DiscoverProjects`, which:
 
 1. Validates and resolves the `root_path` to an absolute path
 2. Reads the immediate children of the root directory
@@ -59,13 +59,13 @@ Scanning `/mnt/vm-host-1/automatethethings/` discovers `software` (has both mark
 ## MCP Tool
 
 ```
-Tool:     quicbaas_agent_discover
+Tool:     quicbaas_orchestrator_discover
 Required: root_path (string) - absolute path to scan
 ```
 
 ## Registration
 
-After discovery, projects are registered via `quicbaas_agent_register` which stores them in a `sync.Map` keyed by a generated project ID. Registration adds configuration that discovery does not capture:
+After discovery, projects are registered via `quicbaas_orchestrator_register` which stores them in a `sync.Map` keyed by a generated project ID. Registration adds configuration that discovery does not capture:
 
 - `dependencies` - IDs of projects this project depends on
 - `default_backend` - preferred agent backend (e.g., "claude", "ollama")

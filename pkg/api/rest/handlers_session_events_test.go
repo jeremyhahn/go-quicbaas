@@ -92,11 +92,12 @@ func newSSETestServer(t *testing.T) *sseTestServer {
 		}
 		follow := r.URL.Query().Get("follow") == "1" || r.URL.Query().Get("follow") == "true"
 
+		ctx := r.Context()
 		if r.Header.Get("Accept") == "application/json" && !follow {
-			respondSessionHistoryJSON(w, r, log, tenantID, sessionID, fromSeq)
+			respondSessionHistoryJSON(ctx, w, r, log, tenantID, sessionID, fromSeq)
 			return
 		}
-		serveSessionEventsSSE(w, r, log, tenantID, sessionID, fromSeq, follow)
+		serveSessionEventsSSE(ctx, w, r, log, tenantID, sessionID, fromSeq, follow, sessionOperatorID(ctx, tenantID))
 	})
 
 	return &sseTestServer{
@@ -195,6 +196,39 @@ func collectFrames(ctx context.Context, ch <-chan sseFrame, n int) []sseFrame {
 	return out
 }
 
+// collectFramesFiltered reads frames from ch until n frames satisfying keep
+// have been collected (or ctx is done), returning both the matched frames and
+// every other frame seen along the way. Presence (operator_joined /
+// operator_left) now shares the same per-session sequence space as
+// transcript content, so a live (follow=1) attach interleaves exactly one
+// operator_joined frame with the content the attacher actually asked to
+// observe. Tests that care about content ordering/count filter it out with
+// this helper rather than asserting brittle absolute frame positions.
+func collectFramesFiltered(ctx context.Context, ch <-chan sseFrame, keep func(sseFrame) bool, n int) (matched, other []sseFrame) {
+	for len(matched) < n {
+		select {
+		case f, ok := <-ch:
+			if !ok {
+				return matched, other
+			}
+			if keep(f) {
+				matched = append(matched, f)
+			} else {
+				other = append(other, f)
+			}
+		case <-ctx.Done():
+			return matched, other
+		}
+	}
+	return matched, other
+}
+
+// isPromptFrame reports whether f carries a prompt_submitted event — used to
+// separate transcript content from interleaved presence frames in tests.
+func isPromptFrame(f sseFrame) bool {
+	return f.Event == string(orchestration.KindPromptSubmitted)
+}
+
 // TestSessionEvents_SSE_ReplayPlusTail appends history, subscribes with
 // follow=1, drains the replay, then appends live events and verifies they
 // arrive in sequence order.
@@ -224,23 +258,41 @@ func TestSessionEvents_SSE_ReplayPlusTail(t *testing.T) {
 
 	frames := readSSE(ctx, resp.Body)
 
-	// Drain the 5 replayed frames.
-	replayed := collectFrames(ctx, frames, 5)
-	require.Len(t, replayed, 5, "expected 5 replayed frames")
+	// Drain the 5 replayed prompt frames PLUS the one operator_joined
+	// presence frame a follow=1 attach records right after Subscribe (before
+	// the replay dump runs); both land in the SAME replay batch since the
+	// join is durably appended before the history Range scan executes. Read
+	// the deterministic total (6) and partition by kind rather than
+	// asserting a stale frame count that presence would otherwise break.
+	replayBatch := collectFrames(ctx, frames, 6)
+	require.Len(t, replayBatch, 6, "expected 5 replayed prompt frames + 1 presence frame")
+
+	var replayed, presence []sseFrame
+	for _, f := range replayBatch {
+		if isPromptFrame(f) {
+			replayed = append(replayed, f)
+		} else {
+			presence = append(presence, f)
+		}
+	}
+	require.Len(t, replayed, 5, "expected 5 replayed prompt frames")
 	for i, f := range replayed {
 		require.Equal(t, strconv.Itoa(i+1), f.ID, "frame %d id", i)
-		require.Equal(t, string(orchestration.KindPromptSubmitted), f.Event)
 	}
+	require.Len(t, presence, 1, "expected exactly one interleaved presence frame")
+	require.Equal(t, string(orchestration.KindOperatorJoined), presence[0].Event)
+	require.Equal(t, "6", presence[0].ID, "presence consumes the next sequence after history")
 
-	// Append 3 more events after subscription is live.
+	// Append 3 more events after subscription is live. Sequences continue
+	// from 7 since the join event above claimed sequence 6.
 	for i := 0; i < 3; i++ {
 		s.appendPrompt(t, tenant, session, fmt.Sprintf("live %d", i))
 	}
 
-	live := collectFrames(ctx, frames, 3)
+	live, _ := collectFramesFiltered(ctx, frames, isPromptFrame, 3)
 	require.Len(t, live, 3, "expected 3 live frames")
 	for i, f := range live {
-		require.Equal(t, strconv.Itoa(i+6), f.ID, "live frame %d id", i)
+		require.Equal(t, strconv.Itoa(i+7), f.ID, "live frame %d id", i)
 	}
 }
 
@@ -354,9 +406,17 @@ func TestSessionEvents_SSE_MultiSubscriber(t *testing.T) {
 			}
 			defer resp.Body.Close()
 			frames := readSSE(ctx, resp.Body)
-			collected := collectFrames(ctx, frames, 2)
+			// Filter to prompt content: each concurrent subscriber's own
+			// follow=1 attach also appends an operator_joined presence event
+			// into the SAME per-session sequence space, and the three
+			// subscribers race each other for those sequence numbers, so the
+			// exact sequence a given subscriber's join lands on (and thus
+			// where it interleaves with content) is not deterministic across
+			// subscribers. Content ordering and count are still guaranteed.
+			collected, _ := collectFramesFiltered(ctx, frames, isPromptFrame, 2)
 			ready <- struct{}{}
-			collected = append(collected, collectFrames(ctx, frames, liveEvents)...)
+			more, _ := collectFramesFiltered(ctx, frames, isPromptFrame, liveEvents)
+			collected = append(collected, more...)
 			results[idx] = clientResult{frames: collected}
 		}(i)
 	}
@@ -378,8 +438,16 @@ func TestSessionEvents_SSE_MultiSubscriber(t *testing.T) {
 
 	for i, r := range results {
 		require.Lenf(t, r.frames, 2+liveEvents, "subscriber %d frame count", i)
+		// Sequence numbers are strictly increasing per subscriber (fan-out
+		// preserves order) even though the absolute values now vary between
+		// subscribers because of the interleaved, per-subscriber presence
+		// append race.
+		prevSeq := 0
 		for j, f := range r.frames {
-			require.Equalf(t, strconv.Itoa(j+1), f.ID, "subscriber %d frame %d id", i, j)
+			seq, err := strconv.Atoi(f.ID)
+			require.NoErrorf(t, err, "subscriber %d frame %d id %q", i, j, f.ID)
+			require.Greaterf(t, seq, prevSeq, "subscriber %d frame %d out of order", i, j)
+			prevSeq = seq
 		}
 	}
 }

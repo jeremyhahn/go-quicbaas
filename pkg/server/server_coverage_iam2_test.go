@@ -44,6 +44,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -318,11 +319,11 @@ func TestDefaultNewSealManager_FallbackToMemoryOnPersistentError(t *testing.T) {
 }
 
 // =============================================================================
-// kv_store_stub.go — MemoryKVStore basic round trip
+// kvstore.Store (qrdb memory engine) basic round trip
 // =============================================================================
 
 func TestMemoryKVStore_RoundTrip(t *testing.T) {
-	store := NewMemoryKVStore()
+	store := kvstore.NewMemory()
 	ctx := context.Background()
 
 	require.NoError(t, store.Put(ctx, "a/1", []byte("v1")))
@@ -361,7 +362,7 @@ func TestMemoryKVStore_RoundTrip(t *testing.T) {
 }
 
 func TestMemoryKVStore_ScanCallbackErrorAborts(t *testing.T) {
-	store := NewMemoryKVStore()
+	store := kvstore.NewMemory()
 	ctx := context.Background()
 	require.NoError(t, store.Put(ctx, "a", []byte("v")))
 	require.NoError(t, store.Put(ctx, "b", []byte("v")))

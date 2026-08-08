@@ -8,29 +8,38 @@ QuicBaaS exposes two MCP tool namespaces:
 
 | Prefix | Scope | Description |
 |--------|-------|-------------|
-| `quicbaas_agent_*` | Session/Fleet management | Existing tools for agent lifecycle, project discovery, session management |
-| `quicbaas_orch_*` | Orchestration coordination | New tools for inter-agent coordination, file locking, cost tracking |
+| `quicbaas_orchestrator_*` | Session / project / job management | Agent lifecycle, project discovery, ACP session management |
+| `quicbaas_agent_fleet_*` | Fleet registry | Register / list / heartbeat the QuicBaaS agent daemons themselves |
+| `quicbaas_orch_*` | Orchestration coordination | Inter-agent coordination, file locking, cost tracking |
 
-The `quicbaas_agent_*` prefix refers to operations on the QuicBaaS agent infrastructure (the binary running on remote systems). The `quicbaas_orch_*` prefix refers to operations that orchestrated AI agents (Claude Code, Codex, OpenCode) use to coordinate with each other.
+The `quicbaas_orchestrator_*` prefix refers to operations on the orchestrator
+surface (projects, ACP sessions, jobs). The `quicbaas_agent_fleet_*` prefix
+refers to the QuicBaaS agent infrastructure (the binary running on remote
+systems). The `quicbaas_orch_*` prefix refers to operations that orchestrated AI
+agents (Claude Code, Codex, OpenCode) use to coordinate with each other.
 
-## Existing quicbaas_agent_* Tools
+Every one of these tools resolves to a qrdb-canonical `orchestrator:<action>`
+permission. A tool with no mapping is default-denied and never appears in
+`tools/list` — see `pkg/api/mcp/authz_qrdb.go`.
+
+## quicbaas_orchestrator_* Tools
 
 | Tool | Description |
 |------|-------------|
-| `quicbaas_agent_discover` | Scan directory tree for agent-enabled projects |
-| `quicbaas_agent_register` | Register a project for orchestration |
-| `quicbaas_agent_list` | List registered projects (paginated) |
-| `quicbaas_agent_spawn` | Create a persistent session on a backend |
-| `quicbaas_agent_prompt` | Send a prompt to a session or backend |
-| `quicbaas_agent_status` | Query session state, uptime, last activity |
-| `quicbaas_agent_close` | Terminate an active session |
-| `quicbaas_agent_list_sessions` | List active sessions (filterable by backend) |
-| `quicbaas_agent_list_backends` | List registered backends and capabilities |
-| `quicbaas_agent_decompose` | Decompose a task into prioritized work items |
-| `quicbaas_agent_health` | Check health of all active sessions |
-| `quicbaas_agent_broadcast` | Publish a message to a coordination channel |
-| `quicbaas_agent_cache_put` | Store analysis result in KV (project-scoped) |
-| `quicbaas_agent_cache_get` | Retrieve cached result by project and key |
+| `quicbaas_orchestrator_discover` | Scan directory tree for agent-enabled projects |
+| `quicbaas_orchestrator_register` | Register a project for orchestration |
+| `quicbaas_orchestrator_list` | List registered projects (paginated) |
+| `quicbaas_orchestrator_spawn` | Create a persistent session on a backend |
+| `quicbaas_orchestrator_prompt` | Send a prompt to a session or backend |
+| `quicbaas_orchestrator_status` | Query session state, uptime, last activity |
+| `quicbaas_orchestrator_close` | Terminate an active session |
+| `quicbaas_orchestrator_list_sessions` | List active sessions (filterable by backend) |
+| `quicbaas_orchestrator_list_backends` | List registered backends and capabilities |
+| `quicbaas_orchestrator_decompose` | Decompose a task into prioritized work items |
+| `quicbaas_orchestrator_health` | Check health of all active sessions |
+| `quicbaas_orchestrator_broadcast` | Publish a message to a coordination channel |
+| `quicbaas_orchestrator_cache_put` | Store analysis result in KV (project-scoped) |
+| `quicbaas_orchestrator_cache_get` | Retrieve cached result by project and key |
 
 ## New quicbaas_orch_* Tools
 

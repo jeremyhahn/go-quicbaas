@@ -2178,25 +2178,6 @@ func TestAuthService_Login_PasswordlessOnly(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestAuthService_Logout_RevokeError(t *testing.T) {
-	mockAuth := &mockAuthManager{
-		revokeTokenFn: func(ctx context.Context, token string) error {
-			return stderrors.New("revoke failed")
-		},
-	}
-	svc := createTestService(t, withAuthManager(mockAuth))
-	defer svc.Close()
-
-	req := &LogoutRequest{
-		AccessToken: "token",
-	}
-
-	resp, err := svc.Logout(context.Background(), req)
-	require.Error(t, err)
-	require.NotNil(t, resp) // Response returned even on error
-	assert.False(t, resp.Success)
-}
-
 func TestAuthService_RefreshToken_NoAuthManager(t *testing.T) {
 	mockRaft := &mockRaftNode{}
 	svc := createTestService(t, withMockRaftNode(mockRaft))

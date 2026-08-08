@@ -299,9 +299,6 @@ type (
 	// FinishLoginRequest submits the factor proof to complete login.
 	FinishLoginRequest = qrdbtransport.FinishLoginRequest
 
-	// FinishLoginResponse carries the issued OIDC bearer + resolved identity.
-	FinishLoginResponse = qrdbtransport.FinishLoginResponse
-
 	// Identity is the resolved authenticated entity carried on a
 	// FinishLoginResponse (subject + tenant + roles + metadata).
 	Identity = qrdbtransport.Identity
@@ -309,6 +306,12 @@ type (
 	// FactorType enumerates the unified-login factor types.
 	FactorType = qrdbtransport.FactorType
 )
+
+// FinishLoginResponse carries the issued OIDC bearer, the resolved identity,
+// and the credential that renews the session. It is defined in the shared
+// transport package so every concrete transport can construct it; see
+// transport.FinishLoginResponse for the rationale.
+type FinishLoginResponse = transport.FinishLoginResponse
 
 // Unified-login factor type constants, re-exported from go-qrdb so consumers
 // select a login method without importing go-qrdb.
@@ -742,7 +745,7 @@ type AuthService interface {
 	// challenge and, on success, returns the issued bearer and resolved
 	// identity. The proof is verified server-side by the registered factor
 	// authenticator before any token is issued.
-	FinishLogin(ctx context.Context, req qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error)
+	FinishLogin(ctx context.Context, req qrdbtransport.FinishLoginRequest) (*FinishLoginResponse, error)
 }
 
 // =============================================================================
@@ -1949,12 +1952,12 @@ func (s *authServiceImpl) BeginLogin(ctx context.Context, req qrdbtransport.Begi
 // server login handler, which forwards to qrdb's LoginClient. The server
 // derives the mTLS lookup key from the verified peer certificate; the
 // embedded transport trusts the caller-supplied key in-process.
-func (s *authServiceImpl) FinishLogin(ctx context.Context, req qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error) {
+func (s *authServiceImpl) FinishLogin(ctx context.Context, req qrdbtransport.FinishLoginRequest) (*FinishLoginResponse, error) {
 	resp, err := s.t.Request(ctx, authServiceName, "FinishLogin", &req)
 	if err != nil {
 		return nil, err
 	}
-	out, ok := resp.(*qrdbtransport.FinishLoginResponse)
+	out, ok := resp.(*FinishLoginResponse)
 	if !ok {
 		return nil, sdkerrors.NewInternal("auth.FinishLogin", "invalid response type from transport")
 	}

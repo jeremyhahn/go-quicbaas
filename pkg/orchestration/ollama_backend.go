@@ -98,7 +98,7 @@ func (b *OllamaBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prompt
 			},
 		},
 		Model:      resp.Model,
-		StopReason: "end_turn",
+		StopReason: StopReasonEndTurn,
 	}, nil
 }
 

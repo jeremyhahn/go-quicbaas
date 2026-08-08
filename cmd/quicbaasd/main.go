@@ -910,15 +910,25 @@ func getSocketDir(socketPath string) string {
 }
 
 func main() {
-	// Wire the process-wide signal handler so SIGINT/SIGTERM purge all
-	// mlocked memory before exit, and arrange for a graceful Purge on
-	// any orderly shutdown path. Mirrors the xkmsd / qrdbd pattern so
-	// every Automate The Things daemon leaves no plaintext key
-	// material resident across exit.
-	secure.CatchInterrupt()
-	// In coverage builds, re-register the signal handler so the Go coverage
-	// profile is flushed to GOCOVERDIR before the secure-wipe exit runs on
-	// SIGINT/SIGTERM. No-op in production builds.
+	// Arm the secure subsystem so the deferred Purge below wipes all mlocked
+	// memory on every orderly exit path, WITHOUT installing memguard's
+	// process signal handler. quicbaasd owns its own signal handling:
+	// runDaemon registers SIGINT/SIGTERM and drives Server.Shutdown, which
+	// closes the embedded qrdb node and therefore its PebbleDB.
+	//
+	// memguard's CatchSignal handler (installed by secure.CatchInterrupt)
+	// wipes memory and then hard os.Exit(1)s from inside the signal handler.
+	// That races ahead of — and always beats — the graceful-shutdown path, so
+	// the embedded qrdb node was never closed and every PebbleDB write still
+	// buffered in the memtable / unsynced WAL block was discarded on SIGTERM.
+	// Concretely: IAM entities created through the API (users, roles, groups,
+	// apps, invites) vanished across a daemon restart while the already-flushed
+	// first-boot bootstrap admin survived. Mirrors the qrdbd pattern
+	// (go-qrdb/cmd/qrdbd/main.go), and lets a graceful SIGTERM exit 0 as
+	// systemd / docker / k8s expect.
+	secure.EnablePurge()
+	// In coverage builds, flush the Go coverage profile on SIGINT/SIGTERM.
+	// No-op in production builds.
 	setupCoverageSignalHook()
 	defer func() {
 		if err := secure.Purge(); err != nil {

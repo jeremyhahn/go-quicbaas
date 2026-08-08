@@ -232,7 +232,7 @@ func (b *CodexExecBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 	return &PromptResponse{
 		SessionID:  req.SessionID,
 		Model:      model,
-		StopReason: "end_turn",
+		StopReason: StopReasonEndTurn,
 		Content: []ContentBlock{
 			{Type: "text", Text: extractCodexAssistantText(stdout)},
 		},

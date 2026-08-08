@@ -267,19 +267,22 @@ func handleOrchestratorPromptSession(ctx context.Context, conn *grpc.ClientConn,
 		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.PromptSession")
 	}
 
-	// Concatenate content blocks into a single response string.
-	var response string
+	// Flatten through the shared converter so gRPC applies the same content
+	// and turn-completion rules as the JSON transports.
+	blocks := make([]orchestrator.PromptContentBlock, 0, len(protoResp.GetContent()))
 	for _, block := range protoResp.GetContent() {
-		if block.GetType() == "text" {
-			response += block.GetText()
-		}
+		blocks = append(blocks, orchestrator.PromptContentBlock{
+			Type: block.GetType(),
+			Text: block.GetText(),
+		})
 	}
 
-	return &orchestrator.PromptSessionResponse{
-		SessionID: protoResp.GetSessionId(),
-		Response:  response,
-		Done:      protoResp.GetStopReason() != "",
-	}, nil
+	return orchestrator.NewPromptSessionResponse(
+		protoResp.GetSessionId(),
+		blocks,
+		protoResp.GetModel(),
+		protoResp.GetStopReason(),
+	)
 }
 
 func handleOrchestratorSessionStatus(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {

@@ -1882,6 +1882,15 @@ func (s *Server) startService() error {
 	})
 	s.logger.Info("KVStore provider attached to service builder")
 
+	// Back the project store and agent registry with the tenant-routed store
+	// so they persist across restarts and a barrier-isolated tenant's records
+	// land in that tenant's own barrier. Mutations are recorded on the same
+	// audit trail as IAM changes.
+	builder = builder.
+		WithOrchestrationKVStore(s.durableKVStore()).
+		WithOrchestrationAuditor(newOrchestrationStoreAuditor(s.auditLoggerForStores))
+	s.logger.Info("Durable orchestration store attached to service builder")
+
 	builder = builder.WithQRDBClient(s.qrdbClient)
 	s.logger.Info("qrdb SDK client attached to service builder")
 

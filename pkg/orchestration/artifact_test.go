@@ -232,23 +232,65 @@ func TestSubmitTaskArtifacts_LargeInlinePromotedToKV(t *testing.T) {
 	}
 }
 
-func TestSubmitTaskArtifacts_LargeInlineNoKV_ReturnsError(t *testing.T) {
+// A task store with no KV has nowhere to keep either task records or artifact
+// payloads, so it must fail closed on every verb rather than panic or silently
+// accept writes it cannot durably hold.
+//
+// This replaces the former "oversized inline artifact with no KV backend is
+// rejected" case: task records now live in the KV alongside artifacts, so a
+// store without one cannot reach the artifact path at all. Promotion of an
+// artifact above the inline limit is covered in task_store_test.go.
+func TestTaskStore_NilKV_FailsClosed(t *testing.T) {
 	t.Parallel()
 
-	// Store with 10-byte limit but no KV backend.
 	store := NewInMemoryTaskStoreWithKV(nil, 10)
-	newTaskWithID(t, store, "ten", "task-no-kv")
+	ctx := context.Background()
 
-	bigContent := make([]byte, 20)
-	err := store.SubmitTaskArtifacts(context.Background(), "ten", "task-no-kv", []Artifact{
-		{Kind: ArtifactKindInline, Name: "large.bin", Content: bigContent},
-	})
-	if err == nil {
-		t.Fatal("expected ArtifactTooLargeError")
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "create task",
+			call: func() error {
+				return store.CreateTask(ctx, &Task{ID: "task-no-kv", TenantID: "ten", Subject: "s"})
+			},
+		},
+		{
+			name: "get task",
+			call: func() error {
+				_, err := store.GetTask(ctx, "ten", "task-no-kv")
+				return err
+			},
+		},
+		{
+			name: "submit artifacts",
+			call: func() error {
+				return store.SubmitTaskArtifacts(ctx, "ten", "task-no-kv", []Artifact{
+					{Kind: ArtifactKindInline, Name: "large.bin", Content: make([]byte, 20)},
+				})
+			},
+		},
+		{
+			name: "list tasks",
+			call: func() error {
+				_, err := store.ListTasks(ctx, "ten", nil)
+				return err
+			},
+		},
 	}
-	var tooLarge *ArtifactTooLargeError
-	if !errors.As(err, &tooLarge) {
-		t.Fatalf("expected *ArtifactTooLargeError, got %T: %v", err, err)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call()
+			if err == nil {
+				t.Fatal("a store with no KV must not report success")
+			}
+			var storeErr *TaskStoreError
+			if !errors.As(err, &storeErr) {
+				t.Fatalf("want *TaskStoreError, got %T: %v", err, err)
+			}
+		})
 	}
 }
 

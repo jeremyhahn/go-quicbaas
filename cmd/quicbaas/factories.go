@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/auth"
 	operationsSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/operations"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
+	projectSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/project"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
@@ -118,6 +119,14 @@ type OperationsClientFactory func() (OperationsClient, error)
 // operationsClientFactory creates cluster operations clients. Defaults to
 // createSDKOperationsClient.
 var operationsClientFactory OperationsClientFactory = createSDKOperationsClient
+
+// ProjectClientFactory is a function type for creating project clients. The
+// returned client routes through the active SDK transport so the project verbs
+// behave identically to the REST API and the desktop GUI.
+type ProjectClientFactory func() (projectSDK.Client, error)
+
+// projectClientFactory creates project clients. Defaults to createSDKProjectClient.
+var projectClientFactory ProjectClientFactory = createSDKProjectClient
 
 // =============================================================================
 // Interface Definitions
@@ -362,6 +371,15 @@ func createSDKAuthClient() (auth.Client, error) {
 	return sdk.Security().Auth(), nil
 }
 
+// createSDKProjectClient creates an SDK client for project operations.
+func createSDKProjectClient() (projectSDK.Client, error) {
+	sdk, err := sdkClientFactory()
+	if err != nil {
+		return nil, err
+	}
+	return sdk.Project(), nil
+}
+
 // createCryptoClient creates a client for cryptographic operations based on transport.
 func createCryptoClient() (CryptoClient, error) {
 	switch transport {
@@ -584,4 +602,6 @@ func resetFactories() {
 	safetyClientFactory = createSafetyClient
 	backupClientFactory = createBackupClient
 	orchestratorClientFactory = createOrchestratorSDKClient
+	projectClientFactory = createSDKProjectClient
+	mcpCallerFactory = createSDKMCPCaller
 }

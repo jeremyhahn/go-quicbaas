@@ -620,12 +620,13 @@ func convertProtoAppToSDK(a *iampb.Application) *iam.Application {
 	}
 
 	resp := &iam.Application{
-		ClientID:      a.ClientId,
-		ClientSecret:  a.ClientSecret,
-		TenantID:      a.TenantId,
-		Name:          a.Name,
-		RedirectURIs:  a.RedirectUris,
-		ResponseTypes: a.ResponseTypes,
+		ClientID:       a.ClientId,
+		ClientSecret:   a.ClientSecret,
+		TenantID:       a.TenantId,
+		Name:           a.Name,
+		RedirectURIs:   a.RedirectUris,
+		ResourcePrefix: a.ResourcePrefix,
+		ResponseTypes:  a.ResponseTypes,
 	}
 
 	// Convert grant type strings to GrantType values.

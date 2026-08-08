@@ -969,9 +969,10 @@ func (m *MemoryStorage) StoreToken(ctx context.Context, token *Token) error {
 	t := *token
 	m.tokens[token.JTI] = &t
 
-	// For refresh tokens, also store by value
-	if token.TokenType == TokenTypeRefresh {
-		m.tokenValues[token.JTI] = &t // Using JTI as value key for simplicity
+	// Opaque (refresh) tokens are presented by value, so index them under the
+	// SHA-256 of that value — the only handle a refresh request carries.
+	if token.TokenType == TokenTypeRefresh && token.ValueHash != "" {
+		m.tokenValues[token.ValueHash] = &t
 	}
 
 	return nil
@@ -995,7 +996,7 @@ func (m *MemoryStorage) GetTokenByValue(ctx context.Context, tokenValue string) 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	token, exists := m.tokenValues[tokenValue]
+	token, exists := m.tokenValues[HashTokenValue(tokenValue)]
 	if !exists {
 		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.token.get"}
 	}
@@ -1010,6 +1011,12 @@ func (m *MemoryStorage) RevokeToken(ctx context.Context, jti string) error {
 	defer m.mu.Unlock()
 
 	m.revokedTokens[jti] = true
+	// Mark the record itself too, so a caller that re-reads the token (rather
+	// than querying IsTokenRevoked) observes the same state the persistent
+	// backend reports.
+	if token, ok := m.tokens[jti]; ok {
+		token.Revoked = true
+	}
 	return nil
 }
 
@@ -1028,8 +1035,8 @@ func (m *MemoryStorage) DeleteExpiredTokens(ctx context.Context) error {
 	for jti, token := range m.tokens {
 		if now.After(token.Expires) {
 			delete(m.tokens, jti)
-			if token.TokenType == TokenTypeRefresh {
-				delete(m.tokenValues, jti)
+			if token.TokenType == TokenTypeRefresh && token.ValueHash != "" {
+				delete(m.tokenValues, token.ValueHash)
 			}
 			delete(m.revokedTokens, jti)
 		}

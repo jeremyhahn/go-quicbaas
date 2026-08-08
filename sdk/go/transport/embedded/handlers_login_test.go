@@ -23,6 +23,7 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	sdktransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 // loginFakeClient backs a real service.LoginService so the embedded handler ->
@@ -93,7 +94,9 @@ func TestHandleFinishLogin_MTLS_EmbeddedTrustsClientKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	resp, ok := out.(*qrdbtransport.FinishLoginResponse)
+	// The embedded path returns the SDK transport shape, exactly as REST /
+	// gRPC / QUIC / MCP do, so a caller sees one type on every transport.
+	resp, ok := out.(*sdktransport.FinishLoginResponse)
 	if !ok {
 		t.Fatalf("unexpected response type %T", out)
 	}

@@ -1426,11 +1426,21 @@ message RefreshTokenResponse {
   // access_token is the new JWT access token.
   string access_token = 1;
 
-  // expires_at is when the new access token expires (Unix nanoseconds).
+  // expires_at is when the new access token expires (Unix seconds).
   int64 expires_at = 2;
 
-  // token_type is the type of token (typically "Bearer").
+  // token_type is the type of token ("Bearer", or "DPoP" when the session is
+  // sender-constrained).
   string token_type = 3;
+
+  // refresh_token is the ROTATED refresh credential. The credential presented
+  // on this request is revoked by the renewal, so the client MUST persist this
+  // value or it will be locked out at the next refresh.
+  string refresh_token = 4;
+
+  // refresh_expires_at is the session's absolute deadline (Unix seconds).
+  // Renewal does not move it.
+  int64 refresh_expires_at = 5;
 }
 
 // ValidateTokenRequest validates a token.

@@ -14,9 +14,13 @@
 package quic
 
 import (
+	"time"
+
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	sdktransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 // isLoginCeremonyMethod reports whether the (service, method) pair is one of
@@ -39,7 +43,10 @@ func decodeLoginResponse(method string, payload []byte) (interface{}, error) {
 		}
 		return &out, nil
 	case "FinishLogin":
-		var out qrdbtransport.FinishLoginResponse
+		// The server encodes service.FinishLoginResult, whose embedded qrdb
+		// response fields are promoted into the same flat JSON object, so one
+		// decode fills both halves.
+		out := sdktransport.FinishLoginResponse{FinishLoginResponse: &qrdbtransport.FinishLoginResponse{}}
 		if err := DecodePayload(payload, &out); err != nil {
 			return nil, err
 		}
@@ -47,5 +54,34 @@ func decodeLoginResponse(method string, payload []byte) (interface{}, error) {
 	default:
 		return nil, errors.NewInvalidInput("quic.decodeLoginResponse",
 			"unknown login method: "+method)
+	}
+}
+
+// isSessionTokenMethod reports whether the (service, method) pair is one of the
+// session-token lifecycle verbs. Their responses are service.*Response structs
+// encoded with Go field names, so they need a typed decode rather than the
+// generic map passthrough (a raw map fails the caller's type assertion).
+func isSessionTokenMethod(svc, method string) bool {
+	return (svc == "quicbaas.Auth" || svc == "Auth") && method == "RefreshToken"
+}
+
+// decodeSessionTokenResponse decodes a session-token lifecycle response into
+// the SDK type every other transport returns.
+func decodeSessionTokenResponse(method string, payload []byte) (interface{}, error) {
+	switch method {
+	case "RefreshToken":
+		var out service.RefreshTokenResponse
+		if err := DecodePayload(payload, &out); err != nil {
+			return nil, err
+		}
+		return &service.ExtendedRefreshTokenResponse{
+			AccessToken:  out.AccessToken,
+			ExpiresAt:    time.Unix(out.ExpiresAt, 0),
+			TokenType:    out.TokenType,
+			RefreshToken: out.RefreshToken,
+		}, nil
+	default:
+		return nil, errors.NewInvalidInput("quic.decodeSessionTokenResponse",
+			"unknown session token method: "+method)
 	}
 }

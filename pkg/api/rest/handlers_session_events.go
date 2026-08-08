@@ -16,15 +16,15 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -60,10 +60,15 @@ func (s *Server) HandleOrchestratorSessionEvents(w http.ResponseWriter, r *http.
 		RespondBadRequest(w, r, "session ID is required")
 		return
 	}
-	tenantID := r.URL.Query().Get("tenant_id")
-	if tenantID == "" {
-		tenantID = qrdbsdk.SystemTenantID
-	}
+	// Resolve tenant the SAME way every other orchestrator REST handler does
+	// (query override -> authenticated principal's tenant -> system default).
+	// This handler previously derived tenant from the query parameter ONLY,
+	// silently discarding the authenticated caller's tenant binding — a
+	// tenant-isolation gap now that the session log's KV store is
+	// tenant-routed (see pkg/server durableKVStore): the context handed to
+	// the log MUST carry the resolved tenant, or a barrier-isolated tenant's
+	// transcript reads would resolve against the wrong (or no) tenant store.
+	ctx, tenantID := resolveOrchestratorTenant(r)
 	fromSeq := uint64(0)
 	if raw := r.URL.Query().Get("from"); raw != "" {
 		n, parseErr := strconv.ParseUint(raw, 10, 64)
@@ -104,10 +109,25 @@ func (s *Server) HandleOrchestratorSessionEvents(w http.ResponseWriter, r *http.
 	// Content negotiation: JSON mode for paginated history, SSE for live tail.
 	wantJSON := r.Header.Get("Accept") == "application/json"
 	if wantJSON && !follow {
-		respondSessionHistoryJSON(w, r, log, tenantID, sessionID, fromSeq)
+		respondSessionHistoryJSON(ctx, w, r, log, tenantID, sessionID, fromSeq)
 		return
 	}
-	serveSessionEventsSSE(w, r, log, tenantID, sessionID, fromSeq, follow)
+	serveSessionEventsSSE(ctx, w, r, log, tenantID, sessionID, fromSeq, follow, sessionOperatorID(ctx, tenantID))
+}
+
+// sessionOperatorID derives the display identity used to attribute presence
+// (operator_joined/operator_left) events for a live attach. It reads the same
+// verified principal resolveOrchestratorTenant consulted for the tenant,
+// never a client-supplied value. Falling back to the tenant ID mirrors
+// orchestration.sessionCreator's fallback for SessionMeta.CreatedBy so an
+// unauthenticated dev boot (no DPoP-aware validator configured) still
+// produces a stable, non-empty identity instead of silently dropping
+// presence tracking.
+func sessionOperatorID(ctx context.Context, tenantID string) string {
+	if ac := AuthorizedContextFromRequest(ctx); ac != nil && ac.Subject != "" {
+		return ac.Subject
+	}
+	return tenantID
 }
 
 // sessionEventEnvelope is the transport-neutral wire shape every session-events
@@ -142,14 +162,14 @@ func newSessionEventEnvelope(ev *orchestration.SessionEvent, fromReplay bool) se
 // respondSessionHistoryJSON returns one page of events as a JSON array of
 // SessionEventEnvelope. Pagination cursor is carried both in the response body
 // (next_seq) and the `X-Next-Sequence` response header.
-func respondSessionHistoryJSON(w http.ResponseWriter, r *http.Request, log orchestration.SessionEventLog, tenantID, sessionID string, fromSeq uint64) {
+func respondSessionHistoryJSON(ctx context.Context, w http.ResponseWriter, r *http.Request, log orchestration.SessionEventLog, tenantID, sessionID string, fromSeq uint64) {
 	limit := 256
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
 			limit = n
 		}
 	}
-	events, next, err := log.Range(r.Context(), tenantID, sessionID, fromSeq, limit)
+	events, next, err := log.Range(ctx, tenantID, sessionID, fromSeq, limit)
 	if err != nil {
 		RespondJSON(w, r, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -180,7 +200,7 @@ func respondSessionHistoryJSON(w http.ResponseWriter, r *http.Request, log orche
 // best-effort: a writer that cannot flush still streams (net/http auto-flushes
 // on Write), so we never refuse the connection with a 500 the way the old
 // `w.(http.Flusher)` hard assertion did.
-func serveSessionEventsSSE(w http.ResponseWriter, r *http.Request, log orchestration.SessionEventLog, tenantID, sessionID string, fromSeq uint64, follow bool) {
+func serveSessionEventsSSE(ctx context.Context, w http.ResponseWriter, r *http.Request, log orchestration.SessionEventLog, tenantID, sessionID string, fromSeq uint64, follow bool, operatorID string) {
 	rc := http.NewResponseController(w)
 	flush := func() {
 		// ErrNotSupported is the only documented error and is non-fatal here:
@@ -199,7 +219,7 @@ func serveSessionEventsSSE(w http.ResponseWriter, r *http.Request, log orchestra
 	var liveCh <-chan *orchestration.SessionEvent
 	var unsubscribe func()
 	if follow {
-		ch, unsub, err := log.Subscribe(r.Context(), tenantID, sessionID)
+		ch, unsub, err := log.Subscribe(ctx, tenantID, sessionID)
 		if err != nil {
 			writeSSEError(w, flush, "subscribe failed: "+err.Error())
 			return
@@ -207,6 +227,15 @@ func serveSessionEventsSSE(w http.ResponseWriter, r *http.Request, log orchestra
 		liveCh = ch
 		unsubscribe = unsub
 		defer unsubscribe()
+
+		// Multi-participant presence: record this attach as an
+		// operator_joined event so every other live attacher (human or
+		// agent) sees who is watching, and symmetrically record
+		// operator_left when the connection ends (client navigates away,
+		// tab closes, network drop). Best-effort: a presence-append failure
+		// must never abort the actual transcript stream.
+		appendPresenceEvent(ctx, log, tenantID, sessionID, orchestration.KindOperatorJoined, operatorID, "web")
+		defer appendPresenceEvent(context.WithoutCancel(ctx), log, tenantID, sessionID, orchestration.KindOperatorLeft, operatorID, "web")
 	}
 
 	// History replay. Paginate in 256-event chunks so an enormous session
@@ -217,7 +246,7 @@ func serveSessionEventsSSE(w http.ResponseWriter, r *http.Request, log orchestra
 	}
 	historyEnd := uint64(0)
 	for {
-		page, next, err := log.Range(r.Context(), tenantID, sessionID, cursor, 256)
+		page, next, err := log.Range(ctx, tenantID, sessionID, cursor, 256)
 		if err != nil {
 			writeSSEError(w, flush, "range failed: "+err.Error())
 			return
@@ -248,7 +277,7 @@ func serveSessionEventsSSE(w http.ResponseWriter, r *http.Request, log orchestra
 
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case ev, ok := <-liveCh:
 			if !ok {
@@ -299,4 +328,61 @@ func writeSSEEvent(w http.ResponseWriter, flush func(), ev *orchestration.Sessio
 func writeSSEError(w http.ResponseWriter, flush func(), msg string) {
 	_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", msg)
 	flush()
+}
+
+// maxPresenceAppendAttempts bounds the optimistic-concurrency retry below. A
+// live attach/detach races the orchestrator control loop (which appends
+// prompt/assistant/tool events on the same session) for the next sequence
+// number; a handful of immediate retries absorbs that race without ever
+// blocking on a timer.
+const maxPresenceAppendAttempts = 8
+
+// appendPresenceEvent records an operator_joined or operator_left event so
+// every attacher — human or agent — can see who else is watching a session in
+// real time (PresenceIndicator on the frontend renders exactly these events).
+// It is best-effort: a failure here must never interrupt the transcript
+// stream, so all errors are swallowed after the retry budget is exhausted.
+//
+// SessionEventLog.Append requires the caller to supply the exact next
+// sequence number and rejects a stale one with ErrSessionLogGap. Because a
+// live SSE attach is a genuine concurrent writer against the same session
+// (racing the orchestrator control loop's own appends), the read-then-write
+// of LatestSequence+Append is retried immediately on a detected gap rather
+// than assumed atomic, unlike the control loop's own single-writer call
+// sites (pkg/orchestration/orchestrator.go nextSessionSequence).
+func appendPresenceEvent(ctx context.Context, log orchestration.SessionEventLog, tenantID, sessionID string, kind orchestration.SessionEventKind, operatorID, iface string) {
+	if log == nil || operatorID == "" {
+		return
+	}
+	event := &orchestration.SessionEvent{
+		TenantID:  tenantID,
+		SessionID: sessionID,
+		Timestamp: time.Now().UTC(),
+		Source:    "operator:" + operatorID,
+		Kind:      kind,
+	}
+	switch kind {
+	case orchestration.KindOperatorJoined:
+		event.OperatorJoined = &orchestration.OperatorJoinedPayload{OperatorID: operatorID, Interface: iface}
+	case orchestration.KindOperatorLeft:
+		event.OperatorLeft = &orchestration.OperatorLeftPayload{OperatorID: operatorID, Interface: iface}
+	default:
+		return
+	}
+
+	for attempt := 0; attempt < maxPresenceAppendAttempts; attempt++ {
+		latest, err := log.LatestSequence(ctx, tenantID, sessionID)
+		if err != nil {
+			return
+		}
+		event.Sequence = latest + 1
+		err = log.Append(ctx, event)
+		if err == nil {
+			return
+		}
+		if errors.Is(err, orchestration.ErrSessionLogGap) {
+			continue // another writer won the race for this sequence; retry immediately
+		}
+		return // non-retryable persistence failure; presence is best-effort
+	}
 }

@@ -14,7 +14,18 @@
 import { mount } from 'svelte';
 import App from './App.svelte';
 import { showToast } from './stores/toast.svelte.ts';
+import { installAuthFetch } from './stores/authFetch.ts';
 import './app.css';
+
+// ---------------------------------------------------------------------------
+// Session recovery.
+//
+// Installed before the app mounts so the very first request already benefits:
+// a 401 caused by a lapsed 15-minute access token renews the session and
+// replays the request instead of leaving the operator on a dead page.
+// ---------------------------------------------------------------------------
+
+installAuthFetch();
 
 // ---------------------------------------------------------------------------
 // Global error boundary.

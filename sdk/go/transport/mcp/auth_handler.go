@@ -22,6 +22,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	sdktransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 // authHandler handles Auth-specific request/response transformations for MCP transport.
@@ -241,13 +242,14 @@ func (h *authHandler) transformBeginLoginResponse(resp interface{}) (*qrdbtransp
 }
 
 // transformFinishLoginResponse converts the MCP tool result map into the
-// canonical go-qrdb transport.FinishLoginResponse.
-func (h *authHandler) transformFinishLoginResponse(resp interface{}) (*qrdbtransport.FinishLoginResponse, error) {
+// canonical QuicBaaS login-finish response (qrdb ceremony fields plus the
+// session's renewal credential, which arrive flattened in one JSON object).
+func (h *authHandler) transformFinishLoginResponse(resp interface{}) (*sdktransport.FinishLoginResponse, error) {
 	data, err := json.Marshal(resp)
 	if err != nil {
 		return nil, errors.NewInternal("mcp.authHandler", "failed to re-marshal FinishLogin response")
 	}
-	var out qrdbtransport.FinishLoginResponse
+	out := sdktransport.FinishLoginResponse{FinishLoginResponse: &qrdbtransport.FinishLoginResponse{}}
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, errors.NewInternal("mcp.authHandler", "failed to decode FinishLogin response")
 	}

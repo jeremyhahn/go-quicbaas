@@ -46,6 +46,7 @@ vi.mock('../src/stores/sessionStore.svelte.ts', () => ({
   openSession: vi.fn().mockResolvedValue(undefined),
   closeActiveSession: vi.fn(),
   loadMoreHistory: vi.fn().mockResolvedValue(undefined),
+  requestCloseSession: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../src/stores/sdkClient.ts', () => ({

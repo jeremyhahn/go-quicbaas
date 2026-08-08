@@ -34,6 +34,71 @@ import (
 // resolved login identity is deterministic and the same across transports.
 const adminSubject = "admin"
 
+// TestUnifiedLogin_MTLS_BootstrapBoundCertIsLoginResolvable is the regression
+// guard for the certificate half of the split-store bug.
+//
+// The integration cluster boots with auth.bootstrap_admin_piv_cert_path set to
+// the SAME admin certificate this suite presents on the TLS handshake. Before
+// the fix that binding wrote ONLY the user-side PIV thumbprint index, so the
+// unified login ceremony — which resolves qrdb's UserAuthFactor store — had
+// nothing to find: BeginLogin returned 200 and FinishLogin returned 401
+// "factor not found" for a byte-perfect client certificate.
+//
+// This test asserts BOTH halves of the fix without performing any client-side
+// enrollment:
+//
+//  1. The mtls factor exists and carries the BOOTSTRAP provenance
+//     (binding_source = "bootstrap_admin_cert"), proving the server-side
+//     binding — not a test enrollment — created it.
+//  2. A full BeginLogin -> FinishLogin over a real network transport mints a
+//     bearer the live /oauth2/userinfo endpoint accepts.
+//
+// It is declared first in this file so it runs before the explicit-enrollment
+// test below; the provenance assertion keeps it correct regardless of order,
+// because the daemon performs the bootstrap binding before any test runs.
+func TestUnifiedLogin_MTLS_BootstrapBoundCertIsLoginResolvable(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	c, err := newLoginClient(t, transportREST, mtlsTLSConfig(t))
+	require.NoError(t, err, "build mTLS login client")
+	defer c.Close()
+
+	// (1) The bootstrap binding must have enrolled the login factor.
+	list, err := c.Security().Auth().Factors().List(ctx, adminSubject)
+	require.NoError(t, err, "list the bootstrap admin's enrolled factors")
+	require.NotNil(t, list)
+
+	var bootstrapFactor bool
+	for _, entry := range list.Enrollments {
+		if entry.FactorName != "mtls" || entry.RevokedAt != nil {
+			continue
+		}
+		if source, _ := entry.Metadata["binding_source"].(string); source == "bootstrap_admin_cert" {
+			bootstrapFactor = true
+			break
+		}
+	}
+	require.True(t, bootstrapFactor,
+		"the bootstrap admin certificate binding must enroll an mtls login factor "+
+			"(no factor with binding_source=bootstrap_admin_cert means the cert binding "+
+			"regressed to writing only the user-side thumbprint, and mtls login would 401)")
+
+	// (2) The bound certificate must complete the unified ceremony end to end.
+	res, err := runSDKLogin(ctx, c,
+		qrdbtransport.FactorTypeMTLS,
+		adminSubject,
+		certSHA256(loadAdminLeaf(t)), // ignored server-side; the peer cert wins
+		nil,
+		nil)
+	require.NoError(t, err,
+		"the bootstrap-bound certificate must complete mTLS login without any client-side enrollment")
+	require.NotEmpty(t, res.bearer, "login must mint a bearer")
+	require.Equal(t, systemTenantID, res.tenant, "resolved tenant must be the system tenant")
+	require.NoError(t, validateBearerOverREST(ctx, res.bearer),
+		"the issued bearer must validate against /oauth2/userinfo")
+}
+
 // TestUnifiedLogin_MTLS_AcrossTransports is the headline mTLS test. It:
 //
 //  1. Enrolls an mtls factor (Credential = SHA-256(admin certDER)) against the

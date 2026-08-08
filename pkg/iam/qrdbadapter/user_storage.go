@@ -74,6 +74,10 @@ type QRDBUserStorage struct {
 // Compile-time interface check: QRDBUserStorage is a UserStorage.
 var _ iam.UserStorage = (*QRDBUserStorage)(nil)
 
+// Compile-time interface check: the qrdb-backed storage owns the broker-UUID
+// <-> qrdb-uint64 correlation, so it is the canonical QRDBUserIDResolver.
+var _ iam.QRDBUserIDResolver = (*QRDBUserStorage)(nil)
+
 // NewQRDBUserStorage builds a qrdb-backed UserStorage. The resolver, profile
 // store and id map must be non-nil; a nil resolver yields a storage that fails
 // every core call with a typed configuration error rather than panicking. The
@@ -389,6 +393,31 @@ func (s *QRDBUserStorage) ListUsers(ctx context.Context, tenantID string, opts i
 		out = append(out, ToIAMUser(*core, profile, uuid))
 	}
 	return out, nil
+}
+
+// QRDBUserID resolves the qrdb numeric user id correlated with the broker's
+// external string user id within tenantID. It is the authoritative correlation
+// (the IDMap written by CreateUser), so callers that must address a user in
+// qrdb's own id space — auth-factor enrollment, whose factors bind to the
+// numeric id the login resolver resolves principals from — never have to
+// round-trip through a username. A user with no correlation yields
+// iam.ErrUserNotFound.
+func (s *QRDBUserStorage) QRDBUserID(ctx context.Context, tenantID, userID string) (uint64, error) {
+	if s == nil || s.idmap == nil {
+		return 0, &dberrors.QBError{
+			Code: dberrors.ErrConfiguration,
+			Op:   "iam.user.qrdb",
+			Err:  &iam.IAMMessageError{Message: "qrdb user id map not configured"},
+		}
+	}
+	qid, err := s.idmap.ToQRDB(ctx, tenantID, userID)
+	if err != nil {
+		if errors.Is(err, ErrIDMapNotFound) {
+			return 0, iam.ErrUserNotFound
+		}
+		return 0, err
+	}
+	return qid, nil
 }
 
 // profile reads the broker side-record, returning a nil profile (not an error)

@@ -73,16 +73,16 @@ func handleOrchestratorPromptSession(ctx context.Context, svc service.QuicBaaS, 
 	if err != nil {
 		return nil, err
 	}
-	// Flatten content blocks into a single response string.
-	var content string
+	// Flatten through the shared converter so the embedded transport applies
+	// the same content and turn-completion rules as the remote transports.
+	blocks := make([]orchestratorSDK.PromptContentBlock, 0, len(resp.Content))
 	for _, block := range resp.Content {
-		content += block.Text
+		blocks = append(blocks, orchestratorSDK.PromptContentBlock{
+			Type: block.Type,
+			Text: block.Text,
+		})
 	}
-	return &orchestratorSDK.PromptSessionResponse{
-		SessionID: resp.SessionID,
-		Response:  content,
-		Done:      resp.StopReason != "",
-	}, nil
+	return orchestratorSDK.NewPromptSessionResponse(resp.SessionID, blocks, resp.Model, resp.StopReason)
 }
 
 func handleOrchestratorSessionStatus(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {

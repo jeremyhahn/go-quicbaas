@@ -145,8 +145,29 @@ func (s *Server) bindLoginCeremonyProvider(components service.IAMComponents) {
 		issuer.SetProvider(c.oidcProvider)
 	}
 
+	// Bind the OIDC provider to the login facade as the session-refresh issuer.
+	// The ceremony mints a 15-minute bearer; without this the session cannot be
+	// renewed and every ceremony client (CLI, MCP, SPA) dies at that boundary.
+	// The provider is the same authority that minted the bearer, so it can
+	// freeze the exact session context into the refresh credential.
+	s.bindLoginSessionRefreshIssuer(c)
+
 	// Bind the runtime dependencies (per-tenant WebAuthn factory + CA trust
 	// roots) to the late-bound login factor verifiers so the node's login
 	// ceremony can verify PIV and WebAuthn proofs.
 	s.bindLoginFactorVerifiers(c)
+}
+
+// bindLoginSessionRefreshIssuer attaches the OIDC provider to the login
+// ceremony facade so a completed login also yields a renewal credential. No-op
+// when the facade or the provider is absent.
+func (s *Server) bindLoginSessionRefreshIssuer(c *iamComponents) {
+	if c == nil || c.oidcProvider == nil || s.quicBaaSService == nil {
+		return
+	}
+	login, ok := s.quicBaaSService.LoginCeremony().(*service.LoginService)
+	if !ok || login == nil {
+		return
+	}
+	login.SetSessionRefreshIssuer(c.oidcProvider)
 }

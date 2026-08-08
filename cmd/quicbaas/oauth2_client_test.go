@@ -101,7 +101,7 @@ func TestOAuth2ClientRegister_SecretBasic(t *testing.T) {
 	// Reset flag values.
 	oauth2ClientName = "my-service"
 	oauth2ClientAuthMethod = "client_secret_basic"
-	oauth2ClientGrantType = "client_credentials"
+	oauth2ClientGrantTypes = []string{"client_credentials"}
 	oauth2ClientCertPEM = ""
 	oauth2ClientThumbprint = ""
 	oauth2ClientScopes = nil
@@ -144,7 +144,7 @@ func TestOAuth2ClientRegister_SelfSignedMTLS(t *testing.T) {
 	cmd := newOAuth2ClientRegisterCommand()
 	oauth2ClientName = "gpu-agent"
 	oauth2ClientAuthMethod = "self_signed_tls_client_auth"
-	oauth2ClientGrantType = "client_credentials"
+	oauth2ClientGrantTypes = []string{"client_credentials"}
 	oauth2ClientCertPEM = certPath
 	oauth2ClientThumbprint = ""
 	oauth2ClientScopes = nil
@@ -173,7 +173,7 @@ func TestOAuth2ClientRegister_MissingCertForMTLS(t *testing.T) {
 	cmd := newOAuth2ClientRegisterCommand()
 	oauth2ClientName = "no-cert-agent"
 	oauth2ClientAuthMethod = "self_signed_tls_client_auth"
-	oauth2ClientGrantType = "client_credentials"
+	oauth2ClientGrantTypes = []string{"client_credentials"}
 	oauth2ClientCertPEM = ""
 	oauth2ClientThumbprint = ""
 	oauth2ClientScopes = nil

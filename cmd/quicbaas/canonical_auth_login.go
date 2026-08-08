@@ -28,13 +28,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	xkmsfido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 )
@@ -415,7 +416,11 @@ func runCanonicalAuthLoginV2(ctx context.Context, opts *canonicalAuthLoginOption
 	fmt.Fprintf(out, "Expires At: %s\n", resp.ExpiresAt.Format("2006-01-02T15:04:05Z"))
 
 	if opts.saveToken {
-		path, werr := writeCanonicalSessionToken(opts.tokenPath, resp.Bearer)
+		// The refresh credential is persisted alongside the bearer: without it
+		// every command run more than 15 minutes after login (notably
+		// `quicbaas mcp serve --stdio`) would fail with "authentication
+		// required" instead of transparently renewing the session.
+		path, werr := writeCanonicalSessionToken(opts.tokenPath, resp.Bearer, resp.RefreshToken, resp.ExpiresAt)
 		if werr != nil {
 			return werr
 		}
@@ -886,22 +891,27 @@ func pivAlgoFromCanonicalCert(cert *x509.Certificate) string {
 	}
 }
 
-// writeCanonicalSessionToken persists the issued JWT to disk. Defaults
-// to ~/.quicbaas/session.token when explicit is empty.
-func writeCanonicalSessionToken(explicit, token string) (string, error) {
+// writeCanonicalSessionToken persists the issued JWT to disk in the canonical
+// cli.TokenData envelope, so every other command's loadStoredAuthToken can
+// consume it. Defaults to cli.GetDefaultTokenPath() when explicit is empty —
+// writing a bare JWT to a non-default path produced a token the CLI could not
+// read back, so the format and the default path are deliberately shared.
+func writeCanonicalSessionToken(explicit, token, refreshToken string, expiresAt time.Time) (string, error) {
 	path := explicit
 	if path == "" {
-		home, err := os.UserHomeDir()
+		def, err := cli.GetDefaultTokenPath()
 		if err != nil {
 			return "", &TokenWriteError{Path: "", Cause: err}
 		}
-		path = filepath.Join(home, ".quicbaas", "session.token")
+		path = def
 	}
-	if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr != nil {
-		return "", &TokenWriteError{Path: path, Cause: mkErr}
-	}
-	if wErr := os.WriteFile(path, []byte(token+"\n"), 0o600); wErr != nil {
-		return "", &TokenWriteError{Path: path, Cause: wErr}
+	if err := cli.SaveToken(path, &cli.TokenData{
+		AccessToken:  token,
+		RefreshToken: refreshToken,
+		ExpiresAt:    expiresAt,
+		TokenType:    "Bearer",
+	}); err != nil {
+		return "", &TokenWriteError{Path: path, Cause: err}
 	}
 	return path, nil
 }

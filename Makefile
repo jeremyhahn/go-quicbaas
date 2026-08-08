@@ -2809,6 +2809,11 @@ integration-test-iam: ## Run IAM integration tests
 	@echo "$(BLUE)Running IAM integration tests...$(NC)"
 	@QUICBAAS_TEST_FILTER="./test/integration/iam/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 $(MAKE) integration-test
 
+.PHONY: integration-test-durability
+integration-test-durability: ## Run restart-durability integration tests (entities must survive a daemon restart)
+	@echo "$(BLUE)Running restart-durability integration tests...$(NC)"
+	@QUICBAAS_TEST_FILTER="./test/integration/durability/..." WITH_RAFT=1 $(MAKE) integration-test
+
 .PHONY: integration-test-login
 integration-test-login: ## Run unified login ceremony integration tests (mTLS + PIV across REST/gRPC/QUIC/Unix)
 	@echo "$(BLUE)Running unified login ceremony integration tests...$(NC)"
@@ -2949,6 +2954,27 @@ coverage-orchestration: ## Generate coverage report for orchestration package
 bench-orchestration: ## Run orchestration package benchmarks
 	@echo "$(BLUE)Running orchestration benchmarks...$(NC)"
 	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags 'rag mcp $(BUILD_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/orchestration/...
+
+# =============================================================================
+# KV Store Adapter Tests
+# =============================================================================
+
+.PHONY: test-kvstore
+test-kvstore: ## Run kvstore package unit tests
+	@echo "$(BLUE)Running kvstore tests...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/kvstore/...
+
+.PHONY: coverage-kvstore
+coverage-kvstore: ## Generate coverage report for kvstore package
+	@mkdir -p $(COVERAGE_DIR)
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags '$(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-kvstore.out -covermode=atomic ./pkg/kvstore/...
+	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-kvstore.out -o $(COVERAGE_DIR)/coverage-kvstore.html
+	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-kvstore.out | grep total
+
+.PHONY: bench-kvstore
+bench-kvstore: ## Run kvstore package benchmarks
+	@echo "$(BLUE)Running kvstore benchmarks...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags '$(BUILD_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/kvstore/...
 
 # =============================================================================
 # Go SDK Tests

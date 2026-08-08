@@ -63,11 +63,19 @@ func (s *Server) RefreshToken(ctx context.Context, req *pb.RefreshTokenRequest) 
 		return nil, toProtoError(err)
 	}
 
-	// Convert service response to proto response
+	tokenType := serviceResp.TokenType
+	if tokenType == "" {
+		tokenType = "Bearer"
+	}
+
+	// Convert service response to proto response. The rotated refresh
+	// credential is carried back; the presented one is now revoked.
 	return &pb.RefreshTokenResponse{
-		AccessToken: serviceResp.AccessToken,
-		ExpiresAt:   serviceResp.ExpiresAt,
-		TokenType:   "Bearer",
+		AccessToken:      serviceResp.AccessToken,
+		ExpiresAt:        serviceResp.ExpiresAt,
+		TokenType:        tokenType,
+		RefreshToken:     serviceResp.RefreshToken,
+		RefreshExpiresAt: serviceResp.RefreshExpiresAt,
 	}, nil
 }
 

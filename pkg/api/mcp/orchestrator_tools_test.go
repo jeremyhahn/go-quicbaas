@@ -37,17 +37,17 @@ func TestRegisterAgentTools(t *testing.T) {
 	registry := NewToolRegistry(mockSvc, log)
 
 	expectedTools := []string{
-		"quicbaas_agent_discover",
-		"quicbaas_agent_register",
-		"quicbaas_agent_list",
-		"quicbaas_agent_spawn",
-		"quicbaas_agent_prompt",
-		"quicbaas_agent_status",
-		"quicbaas_agent_close",
-		"quicbaas_agent_list_sessions",
-		"quicbaas_agent_list_backends",
-		"quicbaas_agent_decompose",
-		"quicbaas_agent_broadcast",
+		"quicbaas_orchestrator_discover",
+		"quicbaas_orchestrator_register",
+		"quicbaas_orchestrator_list",
+		"quicbaas_orchestrator_spawn",
+		"quicbaas_orchestrator_prompt",
+		"quicbaas_orchestrator_status",
+		"quicbaas_orchestrator_close",
+		"quicbaas_orchestrator_list_sessions",
+		"quicbaas_orchestrator_list_backends",
+		"quicbaas_orchestrator_decompose",
+		"quicbaas_orchestrator_broadcast",
 	}
 
 	registeredNames := make(map[string]bool)
@@ -70,17 +70,17 @@ func TestIsAgentTool(t *testing.T) {
 	t.Parallel()
 
 	agentTools := []string{
-		"quicbaas_agent_discover",
-		"quicbaas_agent_register",
-		"quicbaas_agent_list",
-		"quicbaas_agent_spawn",
-		"quicbaas_agent_prompt",
-		"quicbaas_agent_status",
-		"quicbaas_agent_close",
-		"quicbaas_agent_list_sessions",
-		"quicbaas_agent_list_backends",
-		"quicbaas_agent_decompose",
-		"quicbaas_agent_broadcast",
+		"quicbaas_orchestrator_discover",
+		"quicbaas_orchestrator_register",
+		"quicbaas_orchestrator_list",
+		"quicbaas_orchestrator_spawn",
+		"quicbaas_orchestrator_prompt",
+		"quicbaas_orchestrator_status",
+		"quicbaas_orchestrator_close",
+		"quicbaas_orchestrator_list_sessions",
+		"quicbaas_orchestrator_list_backends",
+		"quicbaas_orchestrator_decompose",
+		"quicbaas_orchestrator_broadcast",
 	}
 
 	for _, name := range agentTools {
@@ -134,16 +134,16 @@ func TestExecuteAgentTool_ServiceUnavailable(t *testing.T) {
 		name string
 		args map[string]interface{}
 	}{
-		{"quicbaas_agent_discover", map[string]interface{}{"root_path": "/tmp"}},
-		{"quicbaas_agent_register", map[string]interface{}{"name": "test", "path": "/tmp"}},
-		{"quicbaas_agent_list", map[string]interface{}{}},
-		{"quicbaas_agent_spawn", map[string]interface{}{"backend": "mock", "project_id": "p1"}},
-		{"quicbaas_agent_prompt", map[string]interface{}{"prompt": "hello"}},
-		{"quicbaas_agent_status", map[string]interface{}{"session_id": "s1"}},
-		{"quicbaas_agent_close", map[string]interface{}{"session_id": "s1"}},
-		{"quicbaas_agent_list_sessions", map[string]interface{}{}},
-		{"quicbaas_agent_list_backends", map[string]interface{}{}},
-		{"quicbaas_agent_decompose", map[string]interface{}{"backend": "mock", "task": "test"}},
+		{"quicbaas_orchestrator_discover", map[string]interface{}{"root_path": "/tmp"}},
+		{"quicbaas_orchestrator_register", map[string]interface{}{"name": "test", "path": "/tmp"}},
+		{"quicbaas_orchestrator_list", map[string]interface{}{}},
+		{"quicbaas_orchestrator_spawn", map[string]interface{}{"backend": "mock", "project_id": "p1"}},
+		{"quicbaas_orchestrator_prompt", map[string]interface{}{"prompt": "hello"}},
+		{"quicbaas_orchestrator_status", map[string]interface{}{"session_id": "s1"}},
+		{"quicbaas_orchestrator_close", map[string]interface{}{"session_id": "s1"}},
+		{"quicbaas_orchestrator_list_sessions", map[string]interface{}{}},
+		{"quicbaas_orchestrator_list_backends", map[string]interface{}{}},
+		{"quicbaas_orchestrator_decompose", map[string]interface{}{"backend": "mock", "task": "test"}},
 	}
 
 	for _, tc := range toolsRequiringService {
@@ -168,7 +168,7 @@ func TestExecuteAgentTool_MissingRequiredFields(t *testing.T) {
 
 	// Test broadcast which doesn't call getAgentService
 	t.Run("broadcast_missing_channel", func(t *testing.T) {
-		_, err := registry.executeAgentTool(context.Background(), "quicbaas_agent_broadcast", map[string]interface{}{
+		_, err := registry.executeAgentTool(context.Background(), "quicbaas_orchestrator_broadcast", map[string]interface{}{
 			"message": "hello",
 		})
 		if err == nil {
@@ -177,7 +177,7 @@ func TestExecuteAgentTool_MissingRequiredFields(t *testing.T) {
 	})
 
 	t.Run("broadcast_missing_message", func(t *testing.T) {
-		_, err := registry.executeAgentTool(context.Background(), "quicbaas_agent_broadcast", map[string]interface{}{
+		_, err := registry.executeAgentTool(context.Background(), "quicbaas_orchestrator_broadcast", map[string]interface{}{
 			"channel": "test-channel",
 		})
 		if err == nil {

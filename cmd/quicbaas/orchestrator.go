@@ -806,6 +806,12 @@ func formatOrchPromptResponse(resp *orchestratorSDK.PromptSessionResponse, forma
 			fmt.Fprintf(tw, "Session ID:\t%s\n", resp.SessionID)
 		}
 		fmt.Fprintf(tw, "Done:\t%v\n", resp.Done)
+		// Surface why the agent stopped whenever it is not the ordinary
+		// end of a turn, so a truncated answer is not mistaken for a
+		// complete one.
+		if resp.StopReason != "" && resp.StopReason != orchestration.StopReasonEndTurn {
+			fmt.Fprintf(tw, "Stop Reason:\t%s\n", resp.StopReason)
+		}
 		fmt.Fprintf(tw, "\n")
 		if err := tw.Flush(); err != nil {
 			return err

@@ -175,6 +175,29 @@ iam:
         - "73e4b956-e4cb-49b8-930b-88ef4cb4ec8a"  # Google Titan
 ```
 
+### Administrator Certificate Bindings
+
+Binding a client certificate to an administrator — either the non-interactive
+`auth.bootstrap_admin_piv_cert_path` path or the init-ceremony SO certificate —
+enrolls an **mtls auth factor** alongside the user-side thumbprint. Both writes
+are required and serve different lookups:
+
+| Write | Store | Consumer |
+|---|---|---|
+| mtls auth factor | qrdb `UserAuthFactor` store | the unified login ceremony (`auth login --method mtls`) |
+| PIV cert thumbprint | user-side thumbprint index | the REST PIV login handler's user resolution |
+
+The factor's credential is the certificate digest the login path derives from the
+verified TLS peer certificate: `SHA-256(cert DER)` plus the renewal-stable
+`SHA-256(SubjectPublicKeyInfo)` secondary key, so a certificate renewed with the
+same keypair keeps working without re-binding.
+
+The enrollment happens **before** the binding is persisted. A failure to enroll
+therefore leaves nothing written and the operator sees a clean no-op, rather than
+a bound certificate that authenticates the TLS handshake but cannot complete a
+login. Re-binding the same certificate is idempotent; binding a certificate that
+is already enrolled to a *different* user fails closed.
+
 ### TPM Attestation
 
 For service accounts on premises, the server validates TPM attestation:
@@ -326,6 +349,7 @@ iam:
 | "Challenge expired" | WebAuthn ceremony took >60s | Increase `iam.auth.webauthn.timeout` or prompt user to retry |
 | `auth login` returns bare `UNAUTHORIZED` at begin | Login sent no tenant scope; the per-tenant WebAuthn relying party fails closed | Pass `--tenant <id>` (defaults to `system`) |
 | `auth login` returns `UNAUTHORIZED` at finish | No fido2 factor is enrolled for the credential in the qrdb auth-factor store | Enroll with `quicbaas auth factor add --type fido2` |
+| `auth login --method mtls` returns `UNAUTHORIZED` at finish | The certificate is not enrolled as an mtls factor — it was never bound, or the binding predates the write-through | Re-run the binding (`auth.bootstrap_admin_piv_cert_path` on first boot, or the SO-cert init ceremony), or enroll explicitly with `quicbaas auth factor add --type mtls --cert <path>` |
 
 ## References
 

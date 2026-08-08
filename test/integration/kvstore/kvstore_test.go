@@ -29,7 +29,7 @@ import (
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
-	"github.com/jeremyhahn/go-quicbaas/pkg/server"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 )
 
 // TestKVStorePutGet tests basic Put and Get operations
@@ -676,15 +676,15 @@ func getAllKVStores(t *testing.T) []kvStoreTestCase {
 	var stores []kvStoreTestCase
 
 	// Always include memory store for testing
-	memStore := server.NewMemoryKVStore()
+	memStore := kvstore.NewMemory()
 	stores = append(stores, kvStoreTestCase{
-		name:  "MemoryKVStore",
+		name:  "kvstore.Memory",
 		store: memStore,
 	})
 
 	// Note: Server-based KVStore tests would require a running cluster
 	// and are better suited for end-to-end tests rather than unit integration tests.
-	// The MemoryKVStore provides comprehensive coverage of the KVStore interface.
+	// The memory-backed kvstore.Store provides comprehensive coverage of the KVStore interface.
 
 	return stores
 }

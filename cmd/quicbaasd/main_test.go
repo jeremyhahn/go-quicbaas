@@ -15,8 +15,13 @@ package main
 
 import (
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2973,4 +2978,65 @@ func TestRunDaemon_ServerStartError(t *testing.T) {
 
 	err := runDaemon("test-start-fail")
 	require.Error(t, err)
+}
+
+// =============================================================================
+// Secure subsystem arming — graceful-shutdown invariant
+//
+// Regression: main() previously called secure.CatchInterrupt(), which installs
+// memguard's signal handler. That handler wipes mlocked memory and then hard
+// os.Exit(1)s from INSIDE the signal handler, so it always beat the daemon's
+// own SIGTERM handler and Server.Shutdown never ran. The embedded qrdb node
+// was therefore never closed, and every PebbleDB write still sitting in the
+// memtable / unsynced WAL block was discarded — API-created IAM users vanished
+// across a restart while the already-flushed first-boot admin survived.
+//
+// main() now calls secure.EnablePurge(), which arms the subsystem (so the
+// deferred Purge still wipes key material) WITHOUT installing any process
+// signal handler. These tests pin both halves of that contract.
+// =============================================================================
+
+// TestEnablePurge_DoesNotInstallProcessKillingSignalHandler is the regression
+// test for the data-loss bug: arming the secure subsystem must leave
+// SIGINT/SIGTERM deliverable to the daemon's own handler. If a handler that
+// exits the process is ever reinstated, this test kills the test binary
+// instead of passing, which is exactly the signal a reviewer needs.
+func TestEnablePurge_DoesNotInstallProcessKillingSignalHandler(t *testing.T) {
+	secure.EnablePurge()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+
+	require.NoError(t, syscall.Kill(syscall.Getpid(), syscall.SIGTERM),
+		"deliver SIGTERM to this process")
+
+	select {
+	case got := <-sigChan:
+		assert.Equal(t, syscall.SIGTERM, got,
+			"the daemon's own handler must receive SIGTERM so graceful shutdown can run")
+	case <-time.After(5 * time.Second):
+		t.Fatal("SIGTERM was never delivered to the process handler; " +
+			"a signal handler is swallowing it and the graceful shutdown that " +
+			"closes the embedded qrdb node will never run")
+	}
+
+	// Delivery alone is not enough: memguard's handler also delivers the
+	// signal to registered channels and THEN calls os.Exit(1), so the daemon
+	// can observe SIGTERM and still be killed mid-shutdown. Hold the goroutine
+	// past that window; surviving it is the assertion. Under the old
+	// secure.CatchInterrupt() wiring the test binary is terminated here and
+	// the package reports FAIL.
+	<-time.After(250 * time.Millisecond)
+	assert.True(t, true, "process must still be alive after SIGTERM so Server.Shutdown can complete")
+}
+
+// TestEnablePurge_ArmsPurge is the companion assertion: suppressing the signal
+// handler must not disarm secure memory wiping. Purge must succeed (rather
+// than return NotInitializedError) so the deferred Purge in main() still
+// zeroes mlocked key material on every orderly exit path.
+func TestEnablePurge_ArmsPurge(t *testing.T) {
+	secure.EnablePurge()
+	assert.NoError(t, secure.Purge(),
+		"EnablePurge must arm the secure subsystem so deferred Purge wipes key material")
 }

@@ -41,7 +41,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -136,7 +139,7 @@ func TestPIVBootstrapError_Format(t *testing.T) {
 func TestBindAdminPIVCert_PathNotExistReturnsTypedError(t *testing.T) {
 	c := buildTestIAMComponents(t)
 
-	err := bindAdminPIVCert(context.Background(), c.identityStore, "default", "admin", "/nonexistent/path/missing.pem")
+	err := bindAdminPIVCert(context.Background(), c, "default", "admin", "/nonexistent/path/missing.pem")
 	require.Error(t, err)
 	var piv *PIVBootstrapError
 	require.True(t, errors.As(err, &piv), "expected PIVBootstrapError, got %T %v", err, err)
@@ -149,7 +152,7 @@ func TestBindAdminPIVCert_MalformedPEMReturnsTypedError(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "bad.pem")
 	require.NoError(t, os.WriteFile(tmp, []byte("not a pem block"), 0o600))
 
-	err := bindAdminPIVCert(context.Background(), c.identityStore, "default", "admin", tmp)
+	err := bindAdminPIVCert(context.Background(), c, "default", "admin", tmp)
 	require.Error(t, err)
 	var piv *PIVBootstrapError
 	require.True(t, errors.As(err, &piv))
@@ -167,7 +170,7 @@ AAAA
 `)
 	require.NoError(t, os.WriteFile(tmp, pemBytes, 0o600))
 
-	err := bindAdminPIVCert(context.Background(), c.identityStore, "default", "admin", tmp)
+	err := bindAdminPIVCert(context.Background(), c, "default", "admin", tmp)
 	require.Error(t, err)
 	var piv *PIVBootstrapError
 	require.True(t, errors.As(err, &piv))
@@ -175,7 +178,7 @@ AAAA
 }
 
 func TestBindAdminPIVCert_HappyPathUpdatesUser(t *testing.T) {
-	c := buildTestIAMComponents(t)
+	c, certFactors := buildTestIAMComponentsWithFactors(t)
 	createBootstrapAdmin(t, c)
 
 	// Write a valid self-signed cert into a temp file.
@@ -194,13 +197,38 @@ func TestBindAdminPIVCert_HappyPathUpdatesUser(t *testing.T) {
 	pemFile := filepath.Join(t.TempDir(), "cert.pem")
 	require.NoError(t, os.WriteFile(pemFile, pemFromDER(der), 0o600))
 
-	err = bindAdminPIVCert(context.Background(), c.identityStore, "default", "admin-bs", pemFile)
+	err = bindAdminPIVCert(context.Background(), c, "default", "admin-bs", pemFile)
 	require.NoError(t, err)
 
 	user, err := c.identityStore.GetUser(context.Background(), "default", "admin-bs")
 	require.NoError(t, err)
 	assert.NotEmpty(t, user.PIVThumbprint(), "PIV-attested binding must be set")
 	assert.Equal(t, iam.UserStateActive, user.State)
+
+	// Regression guard for the split-store bug: the bound certificate must ALSO
+	// be resolvable as an mtls auth factor, under BOTH keys
+	// pkg/service.LoginService.FinishLogin sends. Without this the daemon
+	// answered `auth login --method mtls` with 401 "factor not found".
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	assertCertLoginFactorEnrolled(t, certFactors, cert)
+}
+
+// assertCertLoginFactorEnrolled asserts the certificate resolves to an mtls
+// factor under the renewal-stable SPKI key AND the legacy cert-DER key — the two
+// lookup keys the login facade sends in one FinishLogin call.
+func assertCertLoginFactorEnrolled(t *testing.T, factors *testutil.MemoryUserAuthFactors, cert *x509.Certificate) {
+	t.Helper()
+	ctx := context.Background()
+
+	bySPKI, err := factors.LookupByCredentialKey(ctx, qrdbsdk.AuthFactorMTLS, iam.MTLSSPKICredentialKey(cert))
+	require.NoError(t, err, "the bound certificate must resolve by its SPKI lookup key")
+	require.NotNil(t, bySPKI)
+
+	byCert, err := factors.LookupByCredentialKey(ctx, qrdbsdk.AuthFactorMTLS, iam.MTLSCredentialKey(cert))
+	require.NoError(t, err, "the bound certificate must resolve by its cert-DER lookup key")
+	require.Equal(t, bySPKI.ID, byCert.ID, "both lookup keys must resolve the same factor")
+	require.Equal(t, qrdbsdk.AuthFactorMTLS, bySPKI.Type)
 }
 
 // createBootstrapAdmin seeds a minimal admin user under tenant "default" so
@@ -496,9 +524,93 @@ func TestBindAdminPIVCert_UpdateUserError(t *testing.T) {
 	pemFile := filepath.Join(t.TempDir(), "cert.pem")
 	require.NoError(t, os.WriteFile(pemFile, pemFromDER(der), 0o600))
 
-	err = bindAdminPIVCert(context.Background(), c.identityStore, "default", "does-not-exist", pemFile)
+	err = bindAdminPIVCert(context.Background(), c, "default", "does-not-exist", pemFile)
 	require.Error(t, err, "updating a nonexistent user must fail")
 	var pivErr *PIVBootstrapError
 	require.ErrorAs(t, err, &pivErr)
 	require.Equal(t, "update bootstrap admin with PIV thumbprint", pivErr.Op)
+}
+
+// TestBindAdminPIVCert_EnrollFailureLeavesNoBinding pins the transactional
+// contract: the mtls login factor is enrolled BEFORE the user-side binding, so a
+// failed enrollment leaves the user completely untouched. The inverse order
+// would persist a binding whose certificate can never complete a login — exactly
+// the defect the enrollment closes.
+func TestBindAdminPIVCert_EnrollFailureLeavesNoBinding(t *testing.T) {
+	c, certFactors := buildTestIAMComponentsWithFactors(t)
+	createBootstrapAdmin(t, c)
+	certFactors.AddErr = errors.New("factor store unavailable")
+
+	pemFile := writeTestCertPEM(t)
+
+	err := bindAdminPIVCert(context.Background(), c, "default", "admin-bs", pemFile)
+	require.Error(t, err, "a factor-enrollment failure must fail the binding closed")
+	var pivErr *PIVBootstrapError
+	require.ErrorAs(t, err, &pivErr)
+	require.Equal(t, "enroll bootstrap admin mtls login factor", pivErr.Op)
+
+	user, err := c.identityStore.GetUser(context.Background(), "default", "admin-bs")
+	require.NoError(t, err)
+	require.Empty(t, user.PIVThumbprint(), "no binding may be persisted when the login factor could not be enrolled")
+	require.NotEqual(t, iam.UserStateActive, user.State,
+		"the user must not be activated by a binding that failed")
+}
+
+// TestBindAdminPIVCert_RebindingSameCertIsIdempotent covers the repeat path: the
+// bootstrap binding re-runs across ceremonies and restarts, so binding the same
+// certificate twice must succeed and leave exactly one login factor.
+func TestBindAdminPIVCert_RebindingSameCertIsIdempotent(t *testing.T) {
+	c, certFactors := buildTestIAMComponentsWithFactors(t)
+	createBootstrapAdmin(t, c)
+
+	pemFile := writeTestCertPEM(t)
+
+	require.NoError(t, bindAdminPIVCert(context.Background(), c, "default", "admin-bs", pemFile))
+	require.NoError(t, bindAdminPIVCert(context.Background(), c, "default", "admin-bs", pemFile),
+		"re-binding the same certificate must be idempotent")
+
+	qrdbUserID, err := c.qrdbUserIDs.QRDBUserID(context.Background(), "default", "admin-bs")
+	require.NoError(t, err)
+	list, err := certFactors.List(context.Background(), qrdbUserID)
+	require.NoError(t, err)
+	require.Len(t, list, 1, "re-binding must not enroll a duplicate factor")
+}
+
+// TestBindAdminPIVCert_MissingEnrollerFailsClosed ensures a server wired without
+// the factor enroller refuses to bind rather than silently writing a binding
+// that cannot log in.
+func TestBindAdminPIVCert_MissingEnrollerFailsClosed(t *testing.T) {
+	c := buildTestIAMComponents(t)
+	createBootstrapAdmin(t, c)
+	c.certLoginFactors = nil
+
+	err := bindAdminPIVCert(context.Background(), c, "default", "admin-bs", writeTestCertPEM(t))
+	require.Error(t, err)
+	var unavailable *AdminCertFactorUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+
+	user, err := c.identityStore.GetUser(context.Background(), "default", "admin-bs")
+	require.NoError(t, err)
+	require.Empty(t, user.PIVThumbprint(), "an unwired enroller must not produce a binding")
+}
+
+// writeTestCertPEM issues a self-signed certificate and returns the path of its
+// PEM file.
+func writeTestCertPEM(t *testing.T) string {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(2),
+		Subject:               pkix.Name{CommonName: "admin"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "cert.pem")
+	require.NoError(t, os.WriteFile(path, pemFromDER(der), 0o600))
+	return path
 }

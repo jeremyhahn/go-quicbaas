@@ -9366,15 +9366,18 @@ func TestOrchestrator_ListBackendModels_ACPClaude(t *testing.T) {
 		t.Fatal("expected non-empty model list for claude backend")
 	}
 
+	// Assert the catalogue advertises a Sonnet build rather than one exact
+	// version string: the model list in acp_backend.go turns over with each
+	// Claude release, and pinning a version here only produces a stale test.
 	found := false
 	for _, m := range models {
-		if m == "claude-sonnet-4-7" {
+		if strings.HasPrefix(m, "claude-sonnet-") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected claude-sonnet-4-7 in model list, got %v", models)
+		t.Errorf("expected a claude-sonnet-* build in model list, got %v", models)
 	}
 }
 

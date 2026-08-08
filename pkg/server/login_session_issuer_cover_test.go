@@ -14,6 +14,7 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
@@ -67,7 +68,7 @@ func newTestOIDCProvider(t *testing.T) *iam.OIDCProvider {
 		t.Fatalf("NewSigningKeyManagerFromXKMS: %v", err)
 	}
 
-	kv := NewMemoryKVStore()
+	kv := kvstore.NewMemory()
 	backend := iam.NewBackendStorage(kv)
 	// User persistence moved to qrdb (C1-F); BackendStorage no longer satisfies
 	// UserStorage. This test's subject is OIDC token issue/resolve, not user

@@ -14,12 +14,14 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 
@@ -90,8 +92,20 @@ func createSDKClient() (quicbaas.Client, error) {
 	return client, nil
 }
 
-// buildSDKClientOptions builds the SDK client options based on global configuration.
+// buildSDKClientOptions builds the SDK client options based on global
+// configuration, attaching the stored (renewed if necessary) session token.
 func buildSDKClientOptions() ([]quicbaas.Option, error) {
+	// Load the stored platform token once. It authenticates every network
+	// transport against the server's default-deny scope -> RBAC gate. The
+	// embedded transport dispatches in-process and needs no token.
+	return buildSDKClientOptionsWithToken(loadStoredAuthToken())
+}
+
+// buildSDKClientOptionsWithToken builds the SDK client options with an
+// explicitly supplied bearer. An empty token yields an unauthenticated client,
+// which is what the session-renewal path needs (the refresh endpoint is public,
+// and resolving a token there would recurse).
+func buildSDKClientOptionsWithToken(authToken string) ([]quicbaas.Option, error) {
 	var opts []quicbaas.Option
 
 	// Auto-detect Unix transport when address is a socket path.
@@ -100,11 +114,6 @@ func buildSDKClientOptions() ([]quicbaas.Option, error) {
 			transport = "unix"
 		}
 	}
-
-	// Load the stored platform token once. It authenticates every network
-	// transport against the server's default-deny scope -> RBAC gate. The
-	// embedded transport dispatches in-process and needs no token.
-	authToken := loadStoredAuthToken()
 
 	// Configure transport type
 	switch transport {
@@ -264,37 +273,76 @@ func resetSDKClient() {
 	sdkClientHolder.Store(nil)
 }
 
+// storedTokenPath resolves the session envelope path: --token-file when set,
+// otherwise the default ~/.quicbaas/token.
+func storedTokenPath() (string, error) {
+	if authTokenFile != "" {
+		return authTokenFile, nil
+	}
+	return cli.GetDefaultTokenPath()
+}
+
 // loadStoredAuthToken loads the stored platform authentication token used to
 // authenticate data-plane requests across every transport (REST / gRPC / QUIC /
-// Unix / MCP) against the server's default-deny scope -> RBAC gate. It reads the
-// token from --token-file or the default token path, and returns an empty string
-// when no token is available, loading fails, or the token is expired.
+// Unix / MCP) against the server's default-deny scope -> RBAC gate.
+//
+// Access tokens live 15 minutes by design, so an expired token is RENEWED from
+// its refresh credential (and the rotated pair written back) rather than
+// discarded. That is what lets `quicbaas mcp serve --stdio` — which Claude Code
+// keeps alive for hours — survive past the first expiry instead of failing with
+// "authentication required".
+//
+// It returns an empty string when there is no session at all or renewal fails;
+// the caller then proceeds unauthenticated and the server's default-deny gate
+// produces the actionable error.
 func loadStoredAuthToken() string {
-	// Determine token file path
-	tokenPath := authTokenFile
-	if tokenPath == "" {
-		var err error
-		tokenPath, err = cli.GetDefaultTokenPath()
-		if err != nil {
-			return ""
-		}
+	tokenPath, err := storedTokenPath()
+	if err != nil {
+		return ""
 	}
-
-	// Check if token file exists
 	if _, err := os.Stat(tokenPath); os.IsNotExist(err) {
 		return ""
 	}
 
-	// Load token
-	token, err := cli.LoadToken(tokenPath)
+	ctx, cancel := context.WithTimeout(context.Background(), sessionRefreshTimeout)
+	defer cancel()
+
+	token, err := cli.NewTokenManager(tokenPath, cli.SessionRefresherFunc(refreshStoredSession)).AccessToken(ctx)
 	if err != nil {
 		return ""
 	}
+	return token
+}
 
-	// Validate token is not expired
-	if !cli.IsTokenValid(token) {
-		return ""
+// sessionRefreshTimeout bounds the renewal round-trip so a hung server cannot
+// stall every CLI invocation.
+const sessionRefreshTimeout = 15 * time.Second
+
+// refreshStoredSession redeems a refresh credential against the server.
+//
+// It dials with a DELIBERATELY token-less client: /api/v1/auth/refresh is a
+// public endpoint (the refresh credential is itself the authentication), and
+// building an authenticated client here would recurse straight back into
+// loadStoredAuthToken.
+func refreshStoredSession(ctx context.Context, refreshToken string) (*cli.TokenData, error) {
+	opts, err := buildSDKClientOptionsWithToken("")
+	if err != nil {
+		return nil, err
 	}
+	client, err := quicbaas.NewClient(address, opts...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = client.Close() }()
 
-	return token.AccessToken
+	resp, err := client.Security().Auth().RefreshToken(ctx, refreshToken)
+	if err != nil {
+		return nil, err
+	}
+	return &cli.TokenData{
+		AccessToken:  resp.AccessToken,
+		RefreshToken: resp.RefreshToken,
+		ExpiresAt:    resp.ExpiresAt,
+		TokenType:    resp.TokenType,
+	}, nil
 }

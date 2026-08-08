@@ -134,6 +134,90 @@ func AuthPIVSession(ctx context.Context, baseURL, certPath, keyPath, caPath stri
 	return authPIV(ctx, baseURL, certPath, keyPath, caPath)
 }
 
+// PIVSession is the full token bundle a PIV mTLS login returns. Tests that
+// exercise session RENEWAL need the refresh credential, not just the bearer,
+// and must not share a cached session with other tests: the credential is
+// rotated on redemption, so a second holder of the same value is locked out.
+type PIVSession struct {
+	AccessToken  string `json:"access_token"`
+	IDToken      string `json:"id_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int64  `json:"expires_in"`
+}
+
+// PIVMTLSClient builds an HTTP client that presents the integration admin PIV
+// certificate. Empty paths fall back to the standard integration locations.
+func PIVMTLSClient(certPath, keyPath, caPath string) (*http.Client, error) {
+	if certPath == "" {
+		certPath = pivCertPath()
+	}
+	if keyPath == "" {
+		keyPath = pivKeyPath()
+	}
+	if caPath == "" {
+		caPath = pivCAFile()
+	}
+
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return nil, &AuthError{Op: "load client cert", URL: certPath, Cause: err}
+	}
+	roots, err := loadCAPool(caPath)
+	if err != nil {
+		return nil, &AuthError{Op: "load CA pool", URL: caPath, Cause: err}
+	}
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				Certificates: []tls.Certificate{cert},
+				RootCAs:      roots,
+				MinVersion:   tls.VersionTLS13,
+			},
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
+	}, nil
+}
+
+// AuthPIVFullSession performs an UNCACHED PIV mTLS login and returns the whole
+// token bundle, including the refresh credential.
+func AuthPIVFullSession(ctx context.Context, baseURL, certPath, keyPath, caPath string) (*PIVSession, error) {
+	client, err := PIVMTLSClient(certPath, keyPath, caPath)
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint := strings.TrimRight(baseURL, "/") + "/api/v1/auth/login/piv"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return nil, &AuthError{Op: "build request", URL: endpoint, Cause: err}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, &AuthError{Op: "POST", URL: endpoint, Cause: err}
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, &AuthError{Op: "read response", URL: endpoint, Cause: err}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, &AuthBadStatusError{URL: endpoint, Status: resp.StatusCode, Body: string(body)}
+	}
+
+	var out PIVSession
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, &AuthError{Op: "decode response", URL: endpoint, Cause: err}
+	}
+	if out.AccessToken == "" {
+		return nil, &AuthError{Op: "missing access_token", URL: endpoint}
+	}
+	return &out, nil
+}
+
 func authPIV(ctx context.Context, baseURL, certPath, keyPath, caPath string) (string, time.Time, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 	cacheKey := baseURL + "|" + certPath + "|" + keyPath + "|" + caPath

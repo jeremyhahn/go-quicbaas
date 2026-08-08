@@ -4,9 +4,16 @@
   Shows a subtle typing indicator when the assistant is streaming.
 -->
 <script lang="ts">
-  import { sessionStore, appendLocalPrompt, removeLocalPrompt } from '../../stores/sessionStore.svelte.ts';
+  import {
+    sessionStore,
+    appendLocalPrompt,
+    removeLocalPrompt,
+    clearLocalTranscript,
+    requestCloseSession,
+  } from '../../stores/sessionStore.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import type { ParsedSessionEvent } from '../../stores/sessionStore.svelte.ts';
+  import { dispatchSlashCommand, isSlashCommand } from '../../lib/slashCommands.ts';
 
   // ---------------------------------------------------------------------------
   // Props
@@ -21,6 +28,10 @@
   let promptText = $state('');
   let inFlight = $state(false);
   let errorMessage = $state('');
+  // Local-only feedback for a dispatched slash command (/help, /status, …).
+  // Never appended to the transcript: it exists only on this client.
+  let commandOutput = $state('');
+  let commandIsError = $state(false);
 
   // Detect streaming: any recent assistant_chunk without a stop_reason.
   const isStreaming = $derived((): boolean => {
@@ -46,6 +57,31 @@
   async function submit(): Promise<void> {
     const text = promptText.trim();
     if (text === '' || disabled) return;
+
+    // Slash commands never reach the agent: they are handled entirely on the
+    // client (or via a targeted SDK call like closeSession) and their output
+    // is rendered as a transient local message, not a transcript event.
+    if (isSlashCommand(text)) {
+      promptText = '';
+      commandOutput = '';
+      commandIsError = false;
+      const active = sessionStore.activeSession;
+      const result = await dispatchSlashCommand(text, {
+        sessionId,
+        session: {
+          status: active?.status ?? '',
+          backend: active?.backend ?? '',
+          model: active?.model,
+          tenantId: active?.tenant_id,
+        },
+        eventCount: sessionStore.events.length,
+        closeSession: () => requestCloseSession(sessionId),
+        clearTranscript: clearLocalTranscript,
+      });
+      commandOutput = result.output ?? '';
+      commandIsError = result.isError === true;
+      return;
+    }
 
     inFlight = true;
     errorMessage = '';
@@ -87,6 +123,14 @@
     <div class="text-xs text-error" role="alert">{errorMessage}</div>
   {/if}
 
+  {#if commandOutput}
+    <div
+      class="text-xs whitespace-pre-line rounded-md px-2 py-1.5 {commandIsError ? 'text-error bg-error/10' : 'text-base-content/60 bg-base-200/60'}"
+      role={commandIsError ? 'alert' : 'status'}
+      aria-live="polite"
+    >{commandOutput}</div>
+  {/if}
+
   {#if isStreaming()}
     <div class="flex items-center gap-1.5 text-xs text-base-content/40" aria-live="polite">
       <span class="loading loading-dots loading-xs"></span>
@@ -97,7 +141,7 @@
   <div class="flex gap-2 items-end">
     <textarea
       class="textarea textarea-bordered flex-1 resize-none text-sm min-h-[60px] max-h-36"
-      placeholder="Send a prompt… (Ctrl+Enter to submit)"
+      placeholder="Send a prompt or /command… (Ctrl+Enter to submit, /help for commands)"
       bind:value={promptText}
       disabled={disabled}
       onkeydown={handleKeydown}

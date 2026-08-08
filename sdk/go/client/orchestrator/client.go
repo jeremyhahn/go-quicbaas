@@ -270,10 +270,27 @@ type PromptSessionRequest struct {
 }
 
 // PromptSessionResponse is the response from prompting a session.
+//
+// PromptSession is a synchronous turn: the call blocks until the agent has
+// finished responding, so a returned response always describes a completed
+// turn and Done is true. Failures are reported as errors, never as a
+// zero-valued response. Build it with NewPromptSessionResponse so the
+// flattening and completion rules stay in one place.
 type PromptSessionResponse struct {
+	// SessionID identifies the session that produced the turn.
 	SessionID string `json:"session_id"`
-	Response  string `json:"response"`
-	Done      bool   `json:"done"`
+
+	// Response is the concatenated text of the turn's content blocks.
+	Response string `json:"response"`
+
+	// Done reports that the agent's turn completed.
+	Done bool `json:"done"`
+
+	// Model is the model that produced the turn, when the backend reports it.
+	Model string `json:"model,omitempty"`
+
+	// StopReason is why the agent stopped ("end_turn", "max_tokens", ...).
+	StopReason string `json:"stop_reason,omitempty"`
 }
 
 // SessionStatusRequest is a request to check session status.

@@ -9,6 +9,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
@@ -23,6 +24,12 @@ func TestOrchestratorHandlerHappyPaths(t *testing.T) {
 		gotMethod = r.Method
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
+		// A prompt must answer with a real turn: an empty body is a failed
+		// turn and is rejected with a typed error, not an empty success.
+		if strings.HasSuffix(r.URL.Path, "/prompt") {
+			_, _ = w.Write([]byte(`{"session_id":"s1","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn"}`))
+			return
+		}
 		_, _ = w.Write([]byte("{}"))
 	}))
 	defer server.Close()

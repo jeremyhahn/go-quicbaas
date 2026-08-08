@@ -1117,6 +1117,15 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 				if model == "" {
 					model = sess.model
 				}
+				// The stream-json dialect reports stop_reason as null on the
+				// assistant message and signals completion with this result
+				// message instead, so a finished turn would otherwise carry an
+				// empty stop reason. Normalise it to the same value the
+				// JSON-RPC and one-shot paths report, so every backend
+				// describes a completed turn identically.
+				if stopReason == "" {
+					stopReason = StopReasonEndTurn
+				}
 				return &PromptResponse{
 					SessionID:  sess.id,
 					Content:    contentBlocks,
@@ -1202,7 +1211,7 @@ func (b *ACPBackend) promptOneShotCLI(ctx context.Context, sess *acpSession, req
 			SessionID:  sess.id,
 			Content:    []ContentBlock{{Type: "text", Text: stdout.String()}},
 			Model:      model,
-			StopReason: "end_turn",
+			StopReason: StopReasonEndTurn,
 		}, nil
 	}
 
@@ -1217,7 +1226,7 @@ func (b *ACPBackend) promptOneShotCLI(ctx context.Context, sess *acpSession, req
 		SessionID:  sess.id,
 		Content:    []ContentBlock{{Type: "text", Text: result.Result}},
 		Model:      model,
-		StopReason: "end_turn",
+		StopReason: StopReasonEndTurn,
 	}, nil
 }
 
@@ -1289,7 +1298,7 @@ func (b *ACPBackend) promptJSONRPC(ctx context.Context, sess *acpSession, req *P
 			SessionID:  sess.id,
 			Content:    []ContentBlock{{Type: "text", Text: fullContent}},
 			Model:      sess.model,
-			StopReason: "end_turn",
+			StopReason: StopReasonEndTurn,
 		}, nil
 	}
 
@@ -1482,19 +1491,22 @@ func (b *ACPBackend) ToolGuidance() string {
 // remote daemon registrations may extend it via their own Capabilities reply.
 var acpModelCatalog = map[string][]string{
 	"claude": {
+		"claude-fable-5",
+		"claude-opus-5",
+		"claude-sonnet-5",
+		"claude-haiku-4-5-20251001",
 		"claude-opus-4-5",
 		"claude-sonnet-4-5",
 		"claude-haiku-4-5",
-		"claude-opus-4-7",
-		"claude-sonnet-4-7",
-		"claude-haiku-4-7",
 	},
 	"claude-code": {
+		"claude-fable-5",
+		"claude-opus-5",
+		"claude-sonnet-5",
+		"claude-haiku-4-5-20251001",
 		"claude-opus-4-5",
 		"claude-sonnet-4-5",
 		"claude-haiku-4-5",
-		"claude-opus-4-7",
-		"claude-sonnet-4-7",
 	},
 	"codex": {
 		"codex-mini-latest",

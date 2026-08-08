@@ -310,6 +310,11 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 	// decoded into the canonical qrdb transport types.
 	isLogin := isLoginCeremonyMethod(svc, method)
 
+	// Detect the session-token lifecycle verbs (Auth/RefreshToken). Their
+	// responses need a typed decode so the caller gets the same SDK type every
+	// other transport returns instead of a raw map.
+	isSessionToken := isSessionTokenMethod(svc, method)
+
 	// Detect the TimeSeries service. The high-level client sends "Write"/"Query"
 	// with its own request structs (int aggregate enums, duration intervals); the
 	// server decodes service.WritePointRequest / service.TSQueryRequest. We
@@ -578,6 +583,9 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 	}
 	if isLogin {
 		return decodeLoginResponse(method, resp.Payload)
+	}
+	if isSessionToken {
+		return decodeSessionTokenResponse(method, resp.Payload)
 	}
 
 	var decoded map[string]interface{}

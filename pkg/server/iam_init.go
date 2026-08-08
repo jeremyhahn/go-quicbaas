@@ -60,6 +60,17 @@ type iamComponents struct {
 	sessionManager    iam.SessionManager
 	inviteStore       iam.InviteStore
 	pivActivator      *iam.PIVActivator
+
+	// qrdbUserIDs correlates the broker's external string user id with qrdb's
+	// numeric user id. Certificate factor enrollment binds to the numeric id
+	// because that is the id go-qrdb's LoginResolver resolves principals from.
+	qrdbUserIDs iam.QRDBUserIDResolver
+
+	// certLoginFactors enrolls the mtls auth factor that makes an admin
+	// certificate binding resolvable by the unified login ceremony. Without it
+	// a bound certificate authenticates the TLS handshake but fails
+	// FinishLogin with "factor not found".
+	certLoginFactors *iam.CertLoginFactorEnroller
 }
 
 // Compile-time check that iamComponents implements service.IAMComponents
@@ -241,7 +252,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// Admin / Impersonation / Invite Backend stores) need no interface change:
 	// they each see one interfaces.KVStore. The platform shard is the
 	// canonical IAM shard per the architecture docs (qbshards.PlatformShardID).
-	iamKV := s.iamTenantKVStore()
+	iamKV := s.tenantRoutedKVStore()
 
 	// Create the persistent IAM storage. The store satisfies TenantStorage,
 	// UserStorage, GroupStorage, RoleStorage, PolicyStorage, AppStorage, and
@@ -294,12 +305,13 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	if s.qrdbNode == nil {
 		return nil, &QRDBUserStorageRequiredError{}
 	}
-	var userStorage iam.UserStorage = qrdbadapter.NewQRDBUserStorage(
+	qrdbUserStorage := qrdbadapter.NewQRDBUserStorage(
 		newPlatformUserServicerResolver(s),
 		iam.NewBackendBrokerProfileStore(iamKV),
 		qrdbadapter.NewBackendIDMap(iamKV),
 		iamKV,
 	)
+	var userStorage iam.UserStorage = qrdbUserStorage
 
 	// Wire the routed user store into the tenant manager (built above, before
 	// userStorage existed) so DeleteTenant deprovisions the tenant's users
@@ -533,8 +545,16 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// from day one. Registration now flows through the mTLS /api/v1/agents/
 	// register endpoint (pkg/api/rest/handlers_agent_register.go) which
 	// publishes into this same registry.
+	//
+	// It binds to the same per-tenant KVStore as the IAM stores above, so an
+	// agent registration is durable across restarts and a barrier-isolated
+	// tenant's fleet lives inside that tenant's own barrier (own DEK +
+	// namespace) rather than a shared table.
 	if s.agentRegistry == nil {
-		s.agentRegistry = orchestration.NewInMemoryAgentRegistry()
+		s.agentRegistry = orchestration.NewAgentRegistry(
+			iamKV,
+			orchestration.WithStoreAuditor(newOrchestrationStoreAuditor(func() iam.AuditLogger { return auditLogger })),
+		)
 	}
 
 	// The system tenant (qrdbsdk.SystemTenantID) is provisioned by qrdb's
@@ -587,6 +607,16 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		s.logger.Infof("PIV invite activation enabled (roots: %s)", s.config.IAM.PIVLogin.CAFile)
 	}
 
+	// Certificate bindings (bootstrap admin PIV cert, SO cert) must ALSO enroll
+	// an mtls auth factor in qrdb's UserAuthFactor store — the store the unified
+	// login ceremony resolves against. The servicer is resolved lazily per call
+	// (the embedded node exposes it only after unseal), so the enroller can be
+	// constructed here regardless of the node's current seal state.
+	certLoginFactors, err := iam.NewCertLoginFactorEnroller(newQRDBUserAuthFactorServicerProxy(s))
+	if err != nil {
+		return nil, &IAMComponentInitError{Component: "certificate login factor enroller", Cause: err}
+	}
+
 	components := &iamComponents{
 		tenantManager:     tenantManager,
 		identityStore:     identityStore,
@@ -604,6 +634,8 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		sessionManager:    sessionManager,
 		inviteStore:       inviteStore,
 		pivActivator:      pivActivator,
+		qrdbUserIDs:       qrdbUserStorage,
+		certLoginFactors:  certLoginFactors,
 	}
 
 	// (Default tenant was created earlier, before the orchestrator
@@ -771,7 +803,7 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	// for test clusters or pre-provisioned deployments where the cert is
 	// generated alongside the cluster.
 	if path := s.config.Auth.BootstrapAdminPIVCertPath; path != "" {
-		if err := bindAdminPIVCert(ctx, c.identityStore, adminTenantID, user.ID, path); err != nil {
+		if err := bindAdminPIVCert(ctx, c, adminTenantID, user.ID, path); err != nil {
 			return &FirstBootBootstrapError{Op: "bind bootstrap admin PIV cert", Cause: err}
 		}
 		s.logger.Infof("Bootstrap admin %s bound to PIV cert at %s", user.ID, path)
@@ -849,18 +881,30 @@ func (e *SOCertLoginThumbprintError) Error() string {
 // login lookup. Keeping one digest function here keeps bindAdminPIVCert and
 // BindAdminToSOCert from drifting apart.
 func soCertLoginThumbprint(certPEM []byte) (string, error) {
+	cert, err := parseCertLoginPEM(certPEM)
+	if err != nil {
+		return "", err
+	}
+	return certRawSHA256Hex(cert), nil
+}
+
+// parseCertLoginPEM decodes the single PEM-encoded certificate an admin binding
+// path was handed. The binding needs the parsed certificate itself — not just a
+// digest — because the mtls login factor is enrolled from both the certificate
+// DER and its SubjectPublicKeyInfo.
+func parseCertLoginPEM(certPEM []byte) (*x509.Certificate, error) {
 	if len(certPEM) == 0 {
-		return "", ErrSOCertLoginEmpty
+		return nil, ErrSOCertLoginEmpty
 	}
 	block, _ := pem.Decode(certPEM)
 	if block == nil {
-		return "", ErrSOCertLoginNoPEMBlock
+		return nil, ErrSOCertLoginNoPEMBlock
 	}
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return "", &SOCertLoginThumbprintError{Reason: err.Error()}
+		return nil, &SOCertLoginThumbprintError{Reason: err.Error()}
 	}
-	return certRawSHA256Hex(cert), nil
+	return cert, nil
 }
 
 // certRawSHA256Hex returns hex(SHA-256(cert.Raw)) — the canonical mTLS/PIV
@@ -872,35 +916,137 @@ func certRawSHA256Hex(cert *x509.Certificate) string {
 	return hex.EncodeToString(digest[:])
 }
 
-// bindAdminPIVCert reads a PEM-encoded client certificate from path, computes
-// its SHA-256 thumbprint, stores it on the bootstrap admin user, and transitions
-// the user to active. Used by the non-interactive integration-test bootstrap.
-func bindAdminPIVCert(ctx context.Context, identityStore *iam.IdentityStore, tenantID, userID, path string) error {
+// bindAdminPIVCert reads a PEM-encoded client certificate from path, enrolls it
+// as an mtls login factor, stores its SHA-256 thumbprint on the bootstrap admin
+// user, and transitions the user to active. Used by the non-interactive
+// pre-provisioned bootstrap (auth.bootstrap_admin_piv_cert_path).
+//
+// The factor enrollment comes FIRST — see enrollAdminCertLoginFactor for the
+// ordering rationale. Without it the certificate authenticates the TLS handshake
+// but `quicbaas auth login --method mtls` fails FinishLogin with
+// "factor not found", because the login ceremony resolves qrdb's UserAuthFactor
+// store rather than the user-side thumbprint index written below.
+func bindAdminPIVCert(ctx context.Context, c *iamComponents, tenantID, userID, path string) error {
 	certPEM, err := os.ReadFile(path) //nolint:gosec // path comes from operator config
 	if err != nil {
 		return &PIVBootstrapError{Op: "read PIV cert", Path: path, Cause: err}
 	}
-	block, _ := pem.Decode(certPEM)
-	if block == nil {
-		return &PIVBootstrapError{Op: "decode PIV cert PEM", Path: path}
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
+	cert, err := parseCertLoginPEM(certPEM)
 	if err != nil {
+		// Distinguish "this file is not PEM at all" from "the PEM body is not a
+		// certificate" so the operator knows which half of the input is wrong.
+		if errors.Is(err, ErrSOCertLoginEmpty) || errors.Is(err, ErrSOCertLoginNoPEMBlock) {
+			return &PIVBootstrapError{Op: "decode PIV cert PEM", Path: path, Cause: err}
+		}
 		return &PIVBootstrapError{Op: "parse PIV cert", Path: path, Cause: err}
 	}
-	thumbprint := certRawSHA256Hex(cert)
 
+	if err := enrollAdminCertLoginFactor(ctx, c, tenantID, userID, cert, adminCertBindingSourceBootstrap); err != nil {
+		return &PIVBootstrapError{Op: "enroll bootstrap admin mtls login factor", Path: path, Cause: err}
+	}
+
+	thumbprint := certRawSHA256Hex(cert)
 	active := iam.UserStateActive
 	emptyInvite := ""
-	_, err = identityStore.UpdateUser(ctx, tenantID, userID, iam.UpdateUserOptions{
+	if _, err := c.identityStore.UpdateUser(ctx, tenantID, userID, iam.UpdateUserOptions{
 		State:             &active,
 		PIVCertThumbprint: &thumbprint,
 		InviteToken:       &emptyInvite,
-	})
-	if err != nil {
+	}); err != nil {
 		return &PIVBootstrapError{Op: "update bootstrap admin with PIV thumbprint", Path: path, Cause: err}
 	}
 	return nil
+}
+
+// Admin certificate binding provenance recorded on the enrolled login factor.
+const (
+	// adminCertBindingSourceBootstrap marks the non-interactive
+	// auth.bootstrap_admin_piv_cert_path binding.
+	adminCertBindingSourceBootstrap = "bootstrap_admin_cert"
+
+	// adminCertBindingSourceSOCert marks the init-ceremony SO certificate
+	// binding (first-boot path (a)).
+	adminCertBindingSourceSOCert = "so_cert"
+)
+
+// AdminCertFactorUnavailableError reports that an admin certificate binding was
+// attempted before the components that make the certificate usable for login
+// were wired. It fails the binding closed: silently skipping the enrollment is
+// exactly the split-store defect that made a bound certificate unable to log in.
+type AdminCertFactorUnavailableError struct {
+	// Component names the missing dependency.
+	Component string
+}
+
+// Error implements the error interface.
+func (e *AdminCertFactorUnavailableError) Error() string {
+	if e == nil || e.Component == "" {
+		return "admin cert binding: login factor enrollment is unavailable"
+	}
+	return "admin cert binding: login factor enrollment is unavailable: " + e.Component + " is not wired"
+}
+
+// enrollAdminCertLoginFactor enrolls the admin certificate as an mtls auth
+// factor in qrdb's UserAuthFactor store — the store go-qrdb's LoginResolver
+// reads through LookupByCredentialKey. This is what makes a bound certificate
+// resolvable by `quicbaas auth login --method mtls`; the user-side PIV
+// thumbprint index the callers write afterwards serves a DIFFERENT lookup (the
+// REST PIV login handler's user resolution).
+//
+// ORDERING (deliberate): callers enroll the factor BEFORE persisting the
+// binding, so a failure leaves nothing written and the operator sees a clean
+// no-op. Binding first and compensating on failure was rejected because undoing
+// a factor requires a FORCE removal, which qrdb escalates into disabling the
+// user when it is their last active factor — a destructive action to take on a
+// bootstrap error path. See pkg/iam/cert_login_factor.go.
+func enrollAdminCertLoginFactor(
+	ctx context.Context,
+	c *iamComponents,
+	tenantID, userID string,
+	cert *x509.Certificate,
+	source string,
+) error {
+	if c == nil || c.certLoginFactors == nil {
+		return &AdminCertFactorUnavailableError{Component: "certificate login factor enroller"}
+	}
+	if c.qrdbUserIDs == nil {
+		return &AdminCertFactorUnavailableError{Component: "qrdb user id resolver"}
+	}
+	qrdbUserID, err := c.qrdbUserIDs.QRDBUserID(ctx, tenantID, userID)
+	if err != nil {
+		return err
+	}
+	return c.certLoginFactors.Enroll(ctx, iam.CertLoginFactorEnrollment{
+		UserID:      qrdbUserID,
+		Certificate: cert,
+		Label:       adminCertFactorLabel(cert),
+		Metadata:    adminCertFactorMetadata(tenantID, userID, source, cert),
+	})
+}
+
+// adminCertFactorLabel derives the operator-visible factor label from the bound
+// certificate's subject, falling back to a generic label for a certificate with
+// no common name.
+func adminCertFactorLabel(cert *x509.Certificate) string {
+	if cn := cert.Subject.CommonName; cn != "" {
+		return "admin certificate (" + cn + ")"
+	}
+	return "admin certificate"
+}
+
+// adminCertFactorMetadata projects the non-secret binding provenance onto the
+// factor record: which binding path created it, the owning tenant and broker
+// user, and the certificate's subject / serial / expiry. It never carries key
+// material.
+func adminCertFactorMetadata(tenantID, userID, source string, cert *x509.Certificate) map[string]string {
+	return map[string]string{
+		"binding_source": source,
+		"tenant_id":      tenantID,
+		"broker_user_id": userID,
+		"cert_subject":   cert.Subject.String(),
+		"cert_serial":    cert.SerialNumber.String(),
+		"cert_not_after": cert.NotAfter.UTC().Format(time.RFC3339),
+	}
 }
 
 // PIVBootstrapError reports failures binding a PIV certificate to the
@@ -952,10 +1098,11 @@ func (s *Server) BindAdminToSOCert(ctx context.Context, certPEM []byte) error {
 		return &FirstBootBootstrapError{Op: "bind admin to so cert", Cause: ErrBootstrapAdminMissing}
 	}
 
-	thumbprint, err := soCertLoginThumbprint(certPEM)
+	cert, err := parseCertLoginPEM(certPEM)
 	if err != nil {
 		return &FirstBootBootstrapError{Op: "compute so cert login thumbprint", Cause: err}
 	}
+	thumbprint := certRawSHA256Hex(cert)
 
 	userID := s.bootstrapAdminUserID
 	tenantID := s.bootstrapAdminTenantID
@@ -989,6 +1136,13 @@ func (s *Server) BindAdminToSOCert(ctx context.Context, certPEM []byte) error {
 		}
 		userID = found.ID
 		tenantID = qrdbsdk.SystemTenantID
+	}
+
+	// Enroll the mtls login factor BEFORE persisting the binding so a bound SO
+	// certificate is always resolvable by the unified login ceremony. See
+	// enrollAdminCertLoginFactor for the ordering rationale.
+	if err := enrollAdminCertLoginFactor(ctx, c, tenantID, userID, cert, adminCertBindingSourceSOCert); err != nil {
+		return &FirstBootBootstrapError{Op: "enroll so cert mtls login factor", Cause: err}
 	}
 
 	// Persist the cert.Raw SHA-256 thumbprint to the PIVCertThumbprint index

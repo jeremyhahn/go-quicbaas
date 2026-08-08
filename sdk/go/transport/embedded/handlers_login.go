@@ -20,6 +20,7 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	sdktransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 // =============================================================================
@@ -62,5 +63,15 @@ func handleFinishLogin(ctx context.Context, svc service.QuicBaaS, req interface{
 	if login == nil {
 		return nil, &service.LoginCeremonyUnavailableError{}
 	}
-	return login.FinishLogin(service.WithEmbeddedTrustedContext(ctx), r)
+	result, err := login.FinishLogin(service.WithEmbeddedTrustedContext(ctx), r)
+	if err != nil {
+		return nil, err
+	}
+	// Return the SDK transport shape so the in-process path yields exactly the
+	// same type as REST / gRPC / QUIC / MCP.
+	return &sdktransport.FinishLoginResponse{
+		FinishLoginResponse: result.FinishLoginResponse,
+		RefreshToken:        result.RefreshToken,
+		RefreshExpiresAt:    result.RefreshExpiresAt,
+	}, nil
 }

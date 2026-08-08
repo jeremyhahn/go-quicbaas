@@ -186,6 +186,31 @@ export function closeActiveSession(): void {
   _historyFromSeq = 0;
 }
 
+/**
+ * Clear the locally-rendered transcript without touching the durable,
+ * server-side session log. Used by the composer's `/clear` slash command —
+ * the terminal-style "clear screen" a user expects does not imply deleting
+ * anyone else's history, only this client's current view of it. Further
+ * automatic history backfill is suppressed (historyExhausted=true) so the
+ * cleared view doesn't immediately repopulate from a stale pagination
+ * cursor; switching sessions (openSession) resets this normally.
+ */
+export function clearLocalTranscript(): void {
+  events = [];
+  historyExhausted = true;
+}
+
+/**
+ * Request the active (or a specified) session be closed via the SDK. Shared
+ * by the SessionDetail close button and the composer's `/close` slash
+ * command so there is exactly one code path that talks to the server for
+ * this action.
+ */
+export async function requestCloseSession(sessionId: string): Promise<void> {
+  const client = await getSDKClient();
+  await client.orchestrator.closeSession({ session_id: sessionId });
+}
+
 /** Fetch the next page of history and prepend to the events array. */
 export async function loadMoreHistory(): Promise<void> {
   if (historyExhausted || activeSession === null) return;

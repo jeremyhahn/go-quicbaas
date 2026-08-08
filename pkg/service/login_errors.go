@@ -43,3 +43,16 @@ type LoginRequestNilError struct {
 func (e *LoginRequestNilError) Error() string {
 	return "login: nil request for " + e.Op
 }
+
+// LoginRefreshIssuanceError reports that a login completed its factor ceremony
+// but the session's renewal credential could not be minted. The login is
+// rejected rather than handing back a bearer that dies at its first expiry.
+type LoginRefreshIssuanceError struct {
+	Cause error
+}
+
+func (e *LoginRefreshIssuanceError) Error() string {
+	return "login ceremony: failed to issue session refresh credential: " + e.Cause.Error()
+}
+
+func (e *LoginRefreshIssuanceError) Unwrap() error { return e.Cause }

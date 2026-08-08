@@ -111,44 +111,47 @@ func convertSpawnSessionResponse(data []byte) (interface{}, error) {
 	return &resp, nil
 }
 
-// convertPromptSessionResponse converts JSON data to a PromptSessionResponse.
+// convertPromptSessionResponse converts the service's turn payload into the
+// flat SDK response. The wire carries content blocks and a stop reason, which
+// share no field names with PromptSessionResponse, so the decode goes through
+// the shared converter rather than straight into the SDK type.
 func convertPromptSessionResponse(data []byte) (interface{}, error) {
-	var resp orchestrator.PromptSessionResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
+	var wire orchestrator.PromptSessionWire
+	if err := json.Unmarshal(data, &wire); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal,
 			"quic.convertPromptSessionResponse", "failed to unmarshal response")
 	}
-	return &resp, nil
+	return wire.Response()
 }
 
 // convertSessionStatusResponse converts JSON data to a SessionStatusResponse.
 func convertSessionStatusResponse(data []byte) (interface{}, error) {
-	var resp orchestrator.SessionStatusResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
+	var wire orchestrator.SessionStatusWire
+	if err := json.Unmarshal(data, &wire); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal,
 			"quic.convertSessionStatusResponse", "failed to unmarshal response")
 	}
-	return &resp, nil
+	return wire.Response(), nil
 }
 
 // convertCloseSessionResponse converts JSON data to a CloseSessionResponse.
 func convertCloseSessionResponse(data []byte) (interface{}, error) {
-	var resp orchestrator.CloseSessionResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
+	var wire orchestrator.CloseSessionWire
+	if err := json.Unmarshal(data, &wire); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal,
 			"quic.convertCloseSessionResponse", "failed to unmarshal response")
 	}
-	return &resp, nil
+	return wire.Response(), nil
 }
 
 // convertListSessionsResponse converts JSON data to a ListSessionsResponse.
 func convertListSessionsResponse(data []byte) (interface{}, error) {
-	var resp orchestrator.ListSessionsResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
+	var wire orchestrator.ListSessionsWire
+	if err := json.Unmarshal(data, &wire); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal,
 			"quic.convertListSessionsResponse", "failed to unmarshal response")
 	}
-	return &resp, nil
+	return wire.Response(), nil
 }
 
 // convertCreateTaskResponse converts JSON data to a Task.

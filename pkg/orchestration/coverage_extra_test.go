@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 )
 
 // -----------------------------------------------------------------------------
@@ -302,20 +303,83 @@ func TestWorkflowLoader_Register_PersistorErrorRollsBack(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 // TestNewInMemoryTaskStoreWithKV_DefaultLimit covers the limit<=0 branch where
-// the package-level InlineLimit default is applied.
+// the package-level InlineLimit default is applied. The default is observable
+// through the artifact path alone: an artifact at the limit stays embedded in
+// the task record, and one byte more is offloaded to its own KV key.
 func TestNewInMemoryTaskStoreWithKV_DefaultLimit(t *testing.T) {
-	ts := NewInMemoryTaskStoreWithKV(newMemKVStore(), 0)
-	store, ok := ts.(*inMemoryTaskStore)
-	if !ok {
-		t.Fatalf("unexpected store type %T", ts)
+	const (
+		tenantID = "tenant-1"
+		taskID   = "task-inline-limit"
+	)
+
+	kv := kvstore.NewMemory()
+	store := NewInMemoryTaskStoreWithKV(kv, 0)
+	ctx := context.Background()
+	newTaskWithID(t, store, tenantID, taskID)
+
+	err := store.SubmitTaskArtifacts(ctx, tenantID, taskID, []Artifact{
+		{Kind: ArtifactKindInline, Name: "at-limit", Content: make([]byte, InlineLimit)},
+		{Kind: ArtifactKindInline, Name: "over-limit", Content: make([]byte, InlineLimit+1)},
+	})
+	if err != nil {
+		t.Fatalf("SubmitTaskArtifacts: %v", err)
 	}
-	if store.inlineLimit != InlineLimit {
-		t.Fatalf("want default inlineLimit=%d, got %d", InlineLimit, store.inlineLimit)
+
+	stored, err := store.ListTaskArtifacts(ctx, tenantID, taskID)
+	if err != nil {
+		t.Fatalf("ListTaskArtifacts: %v", err)
+	}
+	byName := make(map[string]Artifact, len(stored))
+	for _, artifact := range stored {
+		byName[artifact.Name] = artifact
+	}
+	if len(byName) != 2 {
+		t.Fatalf("want 2 stored artifacts, got %d: %+v", len(byName), stored)
+	}
+
+	// At the limit: still inline, content intact inside the task record.
+	atLimit := byName["at-limit"]
+	if atLimit.Kind != ArtifactKindInline {
+		t.Fatalf("artifact at the default limit must stay inline, got kind %q", atLimit.Kind)
+	}
+	if int64(len(atLimit.Content)) != InlineLimit {
+		t.Fatalf("inline content = %d bytes, want %d", len(atLimit.Content), InlineLimit)
+	}
+	atLimitKey, err := taskArtifactKey(tenantID, taskID, "at-limit")
+	if err != nil {
+		t.Fatalf("taskArtifactKey(at-limit): %v", err)
+	}
+	offloaded, err := kv.Exists(ctx, atLimitKey)
+	if err != nil {
+		t.Fatalf("kv.Exists(at-limit): %v", err)
+	}
+	if offloaded {
+		t.Fatal("artifact at the default limit must not be written to its own key")
+	}
+
+	// One byte over: offloaded to its own key, referenced from the record.
+	overLimit := byName["over-limit"]
+	if overLimit.Kind != ArtifactKindKVKey {
+		t.Fatalf("artifact over the default limit must be offloaded, got kind %q", overLimit.Kind)
+	}
+	overLimitKey, err := taskArtifactKey(tenantID, taskID, "over-limit")
+	if err != nil {
+		t.Fatalf("taskArtifactKey(over-limit): %v", err)
+	}
+	if overLimit.Ref.Path != overLimitKey {
+		t.Fatalf("ref path = %q, want %q", overLimit.Ref.Path, overLimitKey)
+	}
+	payload, err := kv.Get(ctx, overLimitKey)
+	if err != nil {
+		t.Fatalf("kv.Get(over-limit): %v", err)
+	}
+	if int64(len(payload)) != InlineLimit+1 {
+		t.Fatalf("offloaded payload = %d bytes, want %d", len(payload), InlineLimit+1)
 	}
 }
 
 // -----------------------------------------------------------------------------
-// project_store: Get validation + unmarshalEntry error branches
+// project_store: Get validation branches
 // -----------------------------------------------------------------------------
 
 // TestProjectStore_Get_EmptyProjectID covers Get's empty-projectID guard.
@@ -335,33 +399,6 @@ func TestProjectStore_Get_CancelledContext(t *testing.T) {
 	cancel()
 	if _, err := store.Get(ctx, "tenant-1", "p1"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("want context.Canceled, got %v", err)
-	}
-}
-
-// TestProjectStore_UnmarshalEntry_WrongType covers unmarshalEntry's branch where
-// the stored sync.Map value is not a *projectEntry. We inject a bogus value
-// directly into the concrete store then read it back through Get.
-func TestProjectStore_UnmarshalEntry_WrongType(t *testing.T) {
-	store := NewInMemoryProjectStore().(*inMemoryProjectStore)
-	store.projects.Store(projectKey("tenant-1", "p1"), "not-a-project-entry")
-
-	_, err := store.Get(context.Background(), "tenant-1", "p1")
-	var se *ProjectStoreError
-	if !errors.As(err, &se) {
-		t.Fatalf("want *ProjectStoreError for wrong-typed entry, got %T: %v", err, err)
-	}
-}
-
-// TestProjectStore_UnmarshalEntry_BadJSON covers unmarshalEntry's branch where
-// the stored entry holds non-JSON bytes.
-func TestProjectStore_UnmarshalEntry_BadJSON(t *testing.T) {
-	store := NewInMemoryProjectStore().(*inMemoryProjectStore)
-	store.projects.Store(projectKey("tenant-1", "p1"), &projectEntry{data: []byte("{not json")})
-
-	_, err := store.Get(context.Background(), "tenant-1", "p1")
-	var se *ProjectStoreError
-	if !errors.As(err, &se) {
-		t.Fatalf("want *ProjectStoreError for corrupt entry, got %T: %v", err, err)
 	}
 }
 
@@ -752,44 +789,69 @@ func TestKVSessionEventLog_Range_ScanError(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// agent_registry: GetAgent / ListAgents corrupt-entry branches
+// agent_registry: corrupt-record branches on the mutating read paths
 // -----------------------------------------------------------------------------
 
-// TestAgentRegistry_GetAgent_WrongType covers GetAgent's branch where the
-// stored value is not an *agentEntry.
-func TestAgentRegistry_GetAgent_WrongType(t *testing.T) {
-	reg := NewInMemoryAgentRegistry().(*inMemoryAgentRegistry)
-	reg.agents.Store(agentKey("t", "a"), "not-an-entry")
-
-	_, err := reg.GetAgent(context.Background(), "t", "a")
-	var re *AgentRegistryError
-	if !errors.As(err, &re) || !errors.Is(re, ErrAgentRegistryMarshal) {
-		t.Fatalf("want AgentRegistryError(marshal), got %v", err)
+// seedCorruptAgent writes bytes that are not a valid agent record at the key
+// the registry itself derives for (tenantID, agentID), so the corruption is
+// observed exactly where the registry looks for the record.
+func seedCorruptAgent(t *testing.T, kv interfaces.KVStore, tenantID, agentID string) {
+	t.Helper()
+	key, err := agentKey(tenantID, agentID)
+	if err != nil {
+		t.Fatalf("agentKey(%s, %s): %v", tenantID, agentID, err)
+	}
+	if err := kv.Put(context.Background(), key, []byte("{not json")); err != nil {
+		t.Fatalf("seed corrupt agent record: %v", err)
 	}
 }
 
-// TestAgentRegistry_GetAgent_CorruptJSON covers GetAgent's unmarshal-error branch.
-func TestAgentRegistry_GetAgent_CorruptJSON(t *testing.T) {
-	reg := NewInMemoryAgentRegistry().(*inMemoryAgentRegistry)
-	reg.agents.Store(agentKey("t", "a"), &agentEntry{data: []byte("{not json")})
+// TestAgentRegistry_CorruptRecord covers the decode-failure branch on the
+// registry's mutating paths. Each one loads the current record before writing
+// its successor, so a record the registry cannot decode must abort the mutation
+// under the marshal sentinel rather than be silently overwritten. (GetAgent's
+// read path and the ListAgents skip branch are covered by agent_registry_test.go.)
+func TestAgentRegistry_CorruptRecord(t *testing.T) {
+	const (
+		tenantID = "t"
+		agentID  = "a"
+	)
 
-	_, err := reg.GetAgent(context.Background(), "t", "a")
-	var re *AgentRegistryError
-	if !errors.As(err, &re) || !errors.Is(re, ErrAgentRegistryMarshal) {
-		t.Fatalf("want AgentRegistryError(marshal), got %v", err)
+	cases := []struct {
+		name   string
+		invoke func(context.Context, AgentRegistry) error
+	}{
+		{
+			name: "UpdateAgent",
+			invoke: func(ctx context.Context, reg AgentRegistry) error {
+				return reg.UpdateAgent(ctx, &AgentRegistration{ID: agentID, TenantID: tenantID})
+			},
+		},
+		{
+			name: "RemoveAgent",
+			invoke: func(ctx context.Context, reg AgentRegistry) error {
+				return reg.RemoveAgent(ctx, tenantID, agentID)
+			},
+		},
+		{
+			name: "Heartbeat",
+			invoke: func(ctx context.Context, reg AgentRegistry) error {
+				return reg.Heartbeat(ctx, tenantID, agentID)
+			},
+		},
 	}
-}
 
-// TestAgentRegistry_ListAgents_CorruptJSON covers ListAgents' unmarshal-error
-// branch (a corrupt entry aborts the range with a typed error).
-func TestAgentRegistry_ListAgents_CorruptJSON(t *testing.T) {
-	reg := NewInMemoryAgentRegistry().(*inMemoryAgentRegistry)
-	reg.agents.Store(agentKey("t", "a"), &agentEntry{data: []byte("{not json")})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := kvstore.NewMemory()
+			seedCorruptAgent(t, kv, tenantID, agentID)
 
-	_, err := reg.ListAgents(context.Background(), "t", nil)
-	var re *AgentRegistryError
-	if !errors.As(err, &re) || !errors.Is(re, ErrAgentRegistryMarshal) {
-		t.Fatalf("want AgentRegistryError(marshal), got %v", err)
+			err := tc.invoke(context.Background(), NewAgentRegistry(kv))
+			var re *AgentRegistryError
+			if !errors.As(err, &re) || !errors.Is(re, ErrAgentRegistryMarshal) {
+				t.Fatalf("want AgentRegistryError(marshal), got %T: %v", err, err)
+			}
+		})
 	}
 }
 
@@ -823,18 +885,94 @@ func TestAgentStore_GetSession_CorruptJSON(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// task_store: ListTasks corrupt-entry branch
+// task_store: corrupt-record branches
 // -----------------------------------------------------------------------------
 
-// TestTaskStore_ListTasks_CorruptJSON covers ListTasks' unmarshal-error branch.
-func TestTaskStore_ListTasks_CorruptJSON(t *testing.T) {
-	ts := NewInMemoryTaskStoreWithKV(newMemKVStore(), 0).(*inMemoryTaskStore)
-	ts.tasks.Store(taskKey("t", "task-1"), &taskEntry{data: []byte("{not json")})
+// seedCorruptTask writes bytes that are not a valid task record at the key the
+// store itself derives for (tenantID, taskID).
+func seedCorruptTask(t *testing.T, kv interfaces.KVStore, tenantID, taskID string) {
+	t.Helper()
+	key, err := taskRecordKey(tenantID, taskID)
+	if err != nil {
+		t.Fatalf("taskRecordKey(%s, %s): %v", tenantID, taskID, err)
+	}
+	if err := kv.Put(context.Background(), key, []byte("{not json")); err != nil {
+		t.Fatalf("seed corrupt task record: %v", err)
+	}
+}
 
-	_, err := ts.ListTasks(context.Background(), "t", nil)
-	var tse *TaskStoreError
-	if !errors.As(err, &tse) || !errors.Is(tse, ErrTaskStoreMarshal) {
-		t.Fatalf("want TaskStoreError(marshal), got %v", err)
+// TestTaskStore_CorruptRecord covers the decode-failure branch of every task
+// store method that reads a single task record, including the locked
+// read-modify-write transitions. A record the store cannot decode must be
+// reported under the marshal sentinel rather than acted upon.
+func TestTaskStore_CorruptRecord(t *testing.T) {
+	const (
+		tenantID = "t"
+		taskID   = "task-1"
+	)
+
+	cases := []struct {
+		name   string
+		invoke func(context.Context, TaskStore) error
+	}{
+		{
+			name: "GetTask",
+			invoke: func(ctx context.Context, store TaskStore) error {
+				_, err := store.GetTask(ctx, tenantID, taskID)
+				return err
+			},
+		},
+		{
+			name: "UpdateTask",
+			invoke: func(ctx context.Context, store TaskStore) error {
+				return store.UpdateTask(ctx, &Task{ID: taskID, TenantID: tenantID})
+			},
+		},
+		{
+			name: "ClaimTask",
+			invoke: func(ctx context.Context, store TaskStore) error {
+				return store.ClaimTask(ctx, tenantID, taskID, "agent-a")
+			},
+		},
+		{
+			name: "DeleteTask",
+			invoke: func(ctx context.Context, store TaskStore) error {
+				return store.DeleteTask(ctx, tenantID, taskID)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := kvstore.NewMemory()
+			seedCorruptTask(t, kv, tenantID, taskID)
+
+			err := tc.invoke(context.Background(), NewInMemoryTaskStoreWithKV(kv, 0))
+			var tse *TaskStoreError
+			if !errors.As(err, &tse) || !errors.Is(tse, ErrTaskStoreMarshal) {
+				t.Fatalf("want TaskStoreError(marshal), got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+// TestTaskStore_ListTasks_SkipsCorruptRecord covers ListTasks' in-scan
+// decode-failure branch: one unreadable record must not hide the rest of the
+// tenant's work queue.
+func TestTaskStore_ListTasks_SkipsCorruptRecord(t *testing.T) {
+	kv := kvstore.NewMemory()
+	store := NewInMemoryTaskStoreWithKV(kv, 0)
+	ctx := context.Background()
+
+	newTaskWithID(t, store, "t", "task-healthy")
+	seedCorruptTask(t, kv, "t", "task-corrupt")
+
+	tasks, err := store.ListTasks(ctx, "t", nil)
+	if err != nil {
+		t.Fatalf("ListTasks must survive one corrupt record, got %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].ID != "task-healthy" {
+		t.Fatalf("want only the healthy task, got %+v", tasks)
 	}
 }
 

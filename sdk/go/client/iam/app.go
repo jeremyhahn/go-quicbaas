@@ -301,6 +301,10 @@ type RegisterAppRequest struct {
 	// RedirectURIs are the allowed redirect URIs for authorization flows.
 	RedirectURIs []string `json:"redirect_uris,omitempty"`
 
+	// ResourcePrefix is the resource namespace this application owns. It scopes
+	// the ABAC policies evaluated for tokens issued to the client.
+	ResourcePrefix string `json:"resource_prefix,omitempty"`
+
 	// PostLogoutRedirectURIs are the allowed URIs for post-logout redirects.
 	PostLogoutRedirectURIs []string `json:"post_logout_redirect_uris,omitempty"`
 
@@ -372,6 +376,9 @@ type UpdateAppRequest struct {
 
 	// RedirectURIs are the new allowed redirect URIs.
 	RedirectURIs []string `json:"redirect_uris,omitempty"`
+
+	// ResourcePrefix is the new resource namespace for the application.
+	ResourcePrefix string `json:"resource_prefix,omitempty"`
 
 	// PostLogoutRedirectURIs are the new allowed post-logout redirect URIs.
 	PostLogoutRedirectURIs []string `json:"post_logout_redirect_uris,omitempty"`
@@ -452,6 +459,9 @@ type Application struct {
 
 	// RedirectURIs are the allowed redirect URIs.
 	RedirectURIs []string `json:"redirect_uris,omitempty"`
+
+	// ResourcePrefix is the resource namespace the application owns.
+	ResourcePrefix string `json:"resource_prefix,omitempty"`
 
 	// PostLogoutRedirectURIs are the allowed post-logout redirect URIs.
 	PostLogoutRedirectURIs []string `json:"post_logout_redirect_uris,omitempty"`

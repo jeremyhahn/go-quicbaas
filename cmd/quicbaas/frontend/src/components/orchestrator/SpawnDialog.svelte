@@ -199,7 +199,7 @@
           type="text"
           class="input input-bordered input-sm"
           bind:value={model}
-          placeholder="e.g. claude-opus-4-5"
+          placeholder="e.g. claude-fable-5"
           aria-label="Model name"
         />
       </label>

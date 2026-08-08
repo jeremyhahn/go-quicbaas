@@ -12,7 +12,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { SessionStatusResponse } from '@quicbaas/sdk';
-  import { sessionStore, openSession, closeActiveSession } from '../../stores/sessionStore.svelte.ts';
+  import { sessionStore, openSession, closeActiveSession, requestCloseSession } from '../../stores/sessionStore.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import EventStream from './EventStream.svelte';
   import PromptComposer from './PromptComposer.svelte';
@@ -83,8 +83,7 @@
     // closed.
     closedLocally = true;
     try {
-      const client = await getSDKClient();
-      await client.orchestrator.closeSession({ session_id: session.session_id });
+      await requestCloseSession(session.session_id);
     } catch (err: unknown) {
       closedLocally = false;
       closeError = err instanceof Error ? err.message : String(err);

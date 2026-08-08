@@ -33,6 +33,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -129,6 +131,65 @@ func TestBindAdminToSOCert_PinsThumbprintAndActivatesAdmin(t *testing.T) {
 	if _, err := c.identityStore.GetUserByPIVThumbprint(ctx, spkiDigest); err == nil {
 		t.Fatal("SPKI digest must NOT resolve a user — only the cert.Raw login digest indexes the admin")
 	}
+}
+
+// TestBindAdminToSOCert_EnrollsMTLSLoginFactor is the regression guard for the
+// SO-cert half of the split-store bug: pinning the thumbprint alone left the
+// bound certificate unable to complete `quicbaas auth login --method mtls`. The
+// binding must ALSO enroll the mtls factor the unified login ceremony resolves.
+func TestBindAdminToSOCert_EnrollsMTLSLoginFactor(t *testing.T) {
+	srv := withTempServer(t)
+	c, certFactors := buildTestIAMComponentsWithFactors(t)
+	srv.iamComponents = c
+
+	origPrint := printFirstBootBannerFn
+	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ string) {}
+	defer func() { printFirstBootBannerFn = origPrint }()
+	require.NoError(t, srv.firstBootBootstrap(context.Background(), c))
+
+	soCertPEM, _ := newTestSOCertWithSPKI(t, "alice")
+	require.NoError(t, srv.BindAdminToSOCert(context.Background(), soCertPEM))
+
+	cert, err := parseCertLoginPEM(soCertPEM)
+	require.NoError(t, err)
+	assertCertLoginFactorEnrolled(t, certFactors, cert)
+
+	// The factor must bind to the SAME qrdb user the binding targeted.
+	qrdbUserID, err := c.qrdbUserIDs.QRDBUserID(context.Background(), srv.bootstrapAdminTenantID, srv.bootstrapAdminUserID)
+	require.NoError(t, err)
+	factor, err := certFactors.LookupByCredentialKey(context.Background(),
+		qrdbsdk.AuthFactorMTLS, iam.MTLSSPKICredentialKey(cert))
+	require.NoError(t, err)
+	assert.Equal(t, qrdbUserID, factor.UserID, "the login factor must bind to the bootstrap admin")
+	assert.Equal(t, "so_cert", factor.Metadata["binding_source"])
+}
+
+// TestBindAdminToSOCert_EnrollFailureLeavesNoBinding pins the ordering: the
+// login factor is enrolled BEFORE the thumbprint is persisted, so a failed
+// enrollment leaves no half-bound admin behind.
+func TestBindAdminToSOCert_EnrollFailureLeavesNoBinding(t *testing.T) {
+	srv := withTempServer(t)
+	c, certFactors := buildTestIAMComponentsWithFactors(t)
+	srv.iamComponents = c
+
+	origPrint := printFirstBootBannerFn
+	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ string) {}
+	defer func() { printFirstBootBannerFn = origPrint }()
+	require.NoError(t, srv.firstBootBootstrap(context.Background(), c))
+
+	certFactors.AddErr = errors.New("factor store unavailable")
+	soCertPEM, _ := newTestSOCertWithSPKI(t, "alice")
+
+	err := srv.BindAdminToSOCert(context.Background(), soCertPEM)
+	require.Error(t, err, "a factor-enrollment failure must fail the SO-cert binding closed")
+	var bootErr *FirstBootBootstrapError
+	require.ErrorAs(t, err, &bootErr)
+	assert.Equal(t, "enroll so cert mtls login factor", bootErr.Op)
+
+	user, err := c.identityStore.GetUser(context.Background(), srv.bootstrapAdminTenantID, srv.bootstrapAdminUserID)
+	require.NoError(t, err)
+	assert.Empty(t, user.PIVThumbprint(),
+		"no thumbprint may be pinned when the login factor could not be enrolled")
 }
 
 // TestBindAdminToSOCert_RebindingSameCertIsIdempotent ensures binding the SAME

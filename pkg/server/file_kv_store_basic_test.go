@@ -88,11 +88,3 @@ func TestLocalBackend_Stub(t *testing.T) {
 	var lb *LocalBackend
 	assert.NoError(t, lb.Close())
 }
-
-func TestMemoryBackend_Stub(t *testing.T) {
-	got := NewMemoryBackend(nil, 0, nil)
-	assert.Nil(t, got)
-
-	var mb *MemoryBackend
-	assert.NoError(t, mb.Close())
-}

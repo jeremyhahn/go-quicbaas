@@ -38,8 +38,8 @@ func TestRegisterAgentCacheTools(t *testing.T) {
 
 	found := 0
 	expected := map[string]bool{
-		"quicbaas_agent_cache_put": false,
-		"quicbaas_agent_cache_get": false,
+		"quicbaas_orchestrator_cache_put": false,
+		"quicbaas_orchestrator_cache_get": false,
 	}
 
 	for _, tool := range tools {
@@ -63,12 +63,12 @@ func TestIsAgentCacheTool(t *testing.T) {
 	}{
 		{
 			name:     "cache put tool",
-			toolName: "quicbaas_agent_cache_put",
+			toolName: "quicbaas_orchestrator_cache_put",
 			expected: true,
 		},
 		{
 			name:     "cache get tool",
-			toolName: "quicbaas_agent_cache_get",
+			toolName: "quicbaas_orchestrator_cache_get",
 			expected: true,
 		},
 		{
@@ -110,7 +110,7 @@ func TestExecuteAgentCachePut_MissingProjectID(t *testing.T) {
 	registry := newAgentCacheRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_agent_cache_put", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "quicbaas_orchestrator_cache_put", map[string]interface{}{
 		"key":   "analysis-key",
 		"value": "some result",
 	})
@@ -123,7 +123,7 @@ func TestExecuteAgentCachePut_MissingKey(t *testing.T) {
 	registry := newAgentCacheRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_agent_cache_put", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "quicbaas_orchestrator_cache_put", map[string]interface{}{
 		"project_id": "proj-123",
 		"value":      "some result",
 	})
@@ -136,7 +136,7 @@ func TestExecuteAgentCachePut_MissingValue(t *testing.T) {
 	registry := newAgentCacheRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_agent_cache_put", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "quicbaas_orchestrator_cache_put", map[string]interface{}{
 		"project_id": "proj-123",
 		"key":        "analysis-key",
 	})
@@ -149,7 +149,7 @@ func TestExecuteAgentCacheGet_MissingProjectID(t *testing.T) {
 	registry := newAgentCacheRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_agent_cache_get", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "quicbaas_orchestrator_cache_get", map[string]interface{}{
 		"key": "analysis-key",
 	})
 	assert.Nil(t, result)
@@ -161,7 +161,7 @@ func TestExecuteAgentCacheGet_MissingKey(t *testing.T) {
 	registry := newAgentCacheRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_agent_cache_get", map[string]interface{}{
+	result, err := registry.ExecuteTool(ctx, "quicbaas_orchestrator_cache_get", map[string]interface{}{
 		"project_id": "proj-123",
 	})
 	assert.Nil(t, result)

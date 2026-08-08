@@ -121,6 +121,19 @@ test.describe('Session lifecycle — requires ACP backend', () => {
     await expect(page.locator('text=ping').first()).toBeVisible({ timeout: 15_000 });
   });
 
+  test('5b. Reloading the page still shows the earlier prompt (durable transcript)', async ({
+    page,
+  }) => {
+    // Regression guard for the session event log's durability: history must
+    // be re-fetched from the server-side KVSessionEventLog on a fresh page
+    // load, not merely held in the in-memory sessionStore from test 5's
+    // subscription. A full reload tears down the Svelte app (and its live
+    // SSE subscription) entirely, so this can only pass if GET
+    // .../sessions/{id}/events replays the prompt back from durable storage.
+    await page.goto(`${BASE}#/sessions/${sessionID}`, { waitUntil: 'networkidle' });
+    await expect(page.locator('text=ping').first()).toBeVisible({ timeout: 15_000 });
+  });
+
   test('6. Session detail shows Prompt input and Send button', async ({ page }) => {
     await page.goto(`${BASE}#/sessions/${sessionID}`, { waitUntil: 'networkidle' });
 

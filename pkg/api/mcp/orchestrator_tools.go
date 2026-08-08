@@ -29,7 +29,7 @@ import (
 // registerAgentTools registers all agent orchestration tools with the registry.
 func (r *ToolRegistry) registerAgentTools() {
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_discover",
+		Name:        "quicbaas_orchestrator_discover",
 		Description: "Discover agent-enabled projects by scanning a directory tree for CLAUDE.md and .claude/agents/ files",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -44,7 +44,7 @@ func (r *ToolRegistry) registerAgentTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_register",
+		Name:        "quicbaas_orchestrator_register",
 		Description: "Register a project for agent orchestration with optional backend and model defaults",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -80,7 +80,7 @@ func (r *ToolRegistry) registerAgentTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_list",
+		Name:        "quicbaas_orchestrator_list",
 		Description: "List all registered agent projects with optional pagination",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -98,18 +98,23 @@ func (r *ToolRegistry) registerAgentTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_spawn",
-		Description: "Spawn a persistent agent session on a backend with project context and optional MCP servers",
+		Name: "quicbaas_orchestrator_spawn",
+		Description: "Spawn a persistent, multi-turn ACP agent session on a backend with project context. " +
+			"Returns the session_id used by quicbaas_orchestrator_prompt / _status / _close.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant the session belongs to. Required.",
+				},
 				"backend": map[string]interface{}{
 					"type":        "string",
-					"description": "Backend name to spawn the session on (e.g., 'claude', 'ollama')",
+					"description": "Backend name to spawn the session on (e.g., 'claude', 'ollama'). Required.",
 				},
 				"project_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Registered project ID to associate with the session",
+					"description": "Registered project ID to associate with the session. Required.",
 				},
 				"model": map[string]interface{}{
 					"type":        "string",
@@ -118,6 +123,31 @@ func (r *ToolRegistry) registerAgentTools() {
 				"system_prompt": map[string]interface{}{
 					"type":        "string",
 					"description": "System prompt to configure the agent (optional)",
+				},
+				"work_dir": map[string]interface{}{
+					"type":        "string",
+					"description": "Working directory for the agent process (optional, defaults to the project path)",
+				},
+				"sandbox_mode": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"default", "required", "none"},
+					"description": "Sandbox policy selector. Empty defers to the server-side SandboxPolicy. Optional.",
+				},
+				"host_affinity": map[string]interface{}{
+					"type":        "string",
+					"description": "Pin the session to a specific agent daemon by Name or Host. Optional.",
+				},
+				"host_affinity_strict": map[string]interface{}{
+					"type":        "boolean",
+					"description": "When true an offline host_affinity fails instead of falling back to any available daemon. Optional.",
+				},
+				"gpu_required": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Restrict dispatch to daemons advertising GPU capability. Optional.",
+				},
+				"persistent": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Multi-turn session that keeps context across prompts. Defaults to true; set false for one-shot.",
 				},
 				"mcp_servers": map[string]interface{}{
 					"type": "array",
@@ -130,21 +160,27 @@ func (r *ToolRegistry) registerAgentTools() {
 								"type":  "array",
 								"items": map[string]interface{}{"type": "string"},
 							},
+							"url": map[string]interface{}{"type": "string"},
+							"env": map[string]interface{}{"type": "object"},
 						},
 					},
 					"description": "MCP servers to attach to the session (optional)",
 				},
 			},
-			"required": []string{"backend", "project_id"},
+			"required": []string{"tenant_id", "backend", "project_id"},
 		},
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_prompt",
+		Name:        "quicbaas_orchestrator_prompt",
 		Description: "Send a prompt to an agent session or backend. Provide session_id for existing sessions, or backend for stateless prompts",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant the session belongs to. Required.",
+				},
 				"prompt": map[string]interface{}{
 					"type":        "string",
 					"description": "The prompt text to send to the agent",
@@ -174,56 +210,70 @@ func (r *ToolRegistry) registerAgentTools() {
 					"description": "Whether to use RAG for context enrichment (optional, default: false)",
 				},
 			},
-			"required": []string{"prompt"},
+			"required": []string{"tenant_id", "prompt"},
 		},
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_status",
-		Description: "Get the status of an active agent session including state, last activity, and uptime",
+		Name: "quicbaas_orchestrator_status",
+		Description: "Get the status of an active agent session including state, last activity, and uptime. " +
+			"MCP has no streaming channel, so poll this tool to observe session progress (see quicbaas_orchestrator_prompt for the turn result).",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant the session belongs to. Required.",
+				},
 				"session_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Session ID to query",
 				},
 			},
-			"required": []string{"session_id"},
+			"required": []string{"tenant_id", "session_id"},
 		},
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_close",
+		Name:        "quicbaas_orchestrator_close",
 		Description: "Close and terminate an active agent session",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant the session belongs to. Required.",
+				},
 				"session_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Session ID to close",
 				},
 			},
-			"required": []string{"session_id"},
+			"required": []string{"tenant_id", "session_id"},
 		},
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_list_sessions",
-		Description: "List all active agent sessions, optionally filtered by backend",
+		Name:        "quicbaas_orchestrator_list_sessions",
+		Description: "List all active agent sessions for a tenant, optionally filtered by backend",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant whose sessions are listed. Required.",
+				},
 				"backend": map[string]interface{}{
 					"type":        "string",
 					"description": "Filter sessions by backend name (optional)",
 				},
 			},
+			"required": []string{"tenant_id"},
 		},
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_list_backends",
+		Name:        "quicbaas_orchestrator_list_backends",
 		Description: "List all registered agent backends with their capabilities",
 		InputSchema: map[string]interface{}{
 			"type":       "object",
@@ -232,7 +282,7 @@ func (r *ToolRegistry) registerAgentTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_decompose",
+		Name:        "quicbaas_orchestrator_decompose",
 		Description: "Use an AI agent to decompose a complex task into discrete work items with dependencies and priorities",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -264,7 +314,7 @@ func (r *ToolRegistry) registerAgentTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_health",
+		Name:        "quicbaas_orchestrator_health",
 		Description: "Check health of all active agent sessions, returning per-session status and summary counts",
 		InputSchema: map[string]interface{}{
 			"type":       "object",
@@ -273,7 +323,7 @@ func (r *ToolRegistry) registerAgentTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_broadcast",
+		Name:        "quicbaas_orchestrator_broadcast",
 		Description: "Broadcast a message to a messaging channel for agent coordination",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -712,6 +762,11 @@ func (r *ToolRegistry) executeAgentSpawn(ctx context.Context, args map[string]in
 		return nil, err
 	}
 
+	ctx, tenantID, err := sessionTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
 	backend := getString(args, "backend")
 	if backend == "" {
 		return nil, api.NewRequiredFieldError("backend")
@@ -722,11 +777,23 @@ func (r *ToolRegistry) executeAgentSpawn(ctx context.Context, args map[string]in
 		return nil, api.NewRequiredFieldError("project_id")
 	}
 
+	hostAffinity := getString(args, "host_affinity")
+	gpuRequired := getBool(args, "gpu_required")
+
 	req := &orchestration.SpawnSessionRequest{
-		Backend:      backend,
-		ProjectID:    projectID,
-		Model:        getString(args, "model"),
-		SystemPrompt: getString(args, "system_prompt"),
+		Backend:            backend,
+		ProjectID:          projectID,
+		Model:              getString(args, "model"),
+		SystemPrompt:       getString(args, "system_prompt"),
+		WorkDir:            getString(args, "work_dir"),
+		HostAffinity:       hostAffinity,
+		HostAffinityStrict: getBool(args, "host_affinity_strict"),
+		GpuRequired:        gpuRequired,
+		// MCP spawn creates conversational, multi-turn sessions — the same
+		// contract POST /api/v1/orchestrator/sessions applies. A one-shot spawn
+		// registers no durable session, so a follow-up prompt would fail with
+		// "session not found". Callers opt out explicitly with persistent:false.
+		Persistent: optionalBool(args, "persistent", true),
 	}
 
 	// sandbox_mode: "default" | "required" | "none". Empty/missing defers
@@ -737,6 +804,18 @@ func (r *ToolRegistry) executeAgentSpawn(ctx context.Context, args map[string]in
 			return nil, parseErr
 		}
 		req.SandboxMode = mode
+	}
+
+	// Dispatch hints travel on the context for the remote backend resolver,
+	// mirroring the REST spawn handler and the inference tool.
+	if hostAffinity != "" {
+		ctx = orchestration.WithHostAffinity(ctx, hostAffinity)
+	}
+	if gpuRequired {
+		ctx = orchestration.WithGpuRequired(ctx)
+	}
+	if req.HostAffinityStrict {
+		ctx = orchestration.WithHostAffinityStrict(ctx)
 	}
 
 	// Parse MCP servers
@@ -766,12 +845,19 @@ func (r *ToolRegistry) executeAgentSpawn(ctx context.Context, args map[string]in
 		"session_id": resp.SessionID,
 		"backend":    resp.Backend,
 		"model":      resp.Model,
+		"tenant_id":  tenantID,
+		"persistent": req.Persistent,
 		"timestamp":  time.Unix(0, resp.Timestamp).Format(time.RFC3339Nano),
 	})
 }
 
 func (r *ToolRegistry) executeAgentPrompt(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, _, err = sessionTenantContext(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -811,6 +897,11 @@ func (r *ToolRegistry) executeAgentStatus(ctx context.Context, args map[string]i
 		return nil, err
 	}
 
+	ctx, _, err = sessionTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
 	sessionID := getString(args, "session_id")
 	if sessionID == "" {
 		return nil, api.NewRequiredFieldError("session_id")
@@ -840,6 +931,11 @@ func (r *ToolRegistry) executeAgentClose(ctx context.Context, args map[string]in
 		return nil, err
 	}
 
+	ctx, _, err = sessionTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
 	sessionID := getString(args, "session_id")
 	if sessionID == "" {
 		return nil, api.NewRequiredFieldError("session_id")
@@ -862,6 +958,11 @@ func (r *ToolRegistry) executeAgentClose(ctx context.Context, args map[string]in
 
 func (r *ToolRegistry) executeAgentListSessions(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, _, err = sessionTenantContext(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1441,6 +1542,34 @@ func (r *ToolRegistry) executeTaskListArtifacts(ctx context.Context, args map[st
 // Helper Functions
 // =============================================================================
 
+// sessionTenantContext enforces the explicit-tenant contract shared by every
+// agent-session tool and stamps the tenant onto the orchestration context.
+//
+// MCP authenticates with a bearer token (or an mTLS agent certificate), and the
+// authorization gate injects the caller's tenant under the iam context key —
+// which the orchestrator's tenant guard does not read. Every session tool
+// therefore takes an explicit tenant_id argument, exactly as the fleet and
+// project tools do, and re-stamps it with orchestration.ContextWithTenant so
+// the guard (and the embedded-agent gRPC backend behind it) observes a
+// non-empty tenant on every code path.
+func sessionTenantContext(ctx context.Context, args map[string]interface{}) (context.Context, string, error) {
+	tenantID := getString(args, "tenant_id")
+	if tenantID == "" {
+		return ctx, "", api.NewRequiredFieldError("tenant_id")
+	}
+	return orchestration.ContextWithTenant(ctx, tenantID), tenantID, nil
+}
+
+// optionalBool returns the bool argument when the caller supplied the key and
+// def when the key is absent. A plain bool decode cannot distinguish an absent
+// field from an explicit false, which matters for defaults that are true.
+func optionalBool(args map[string]interface{}, key string, def bool) bool {
+	if _, present := args[key]; !present {
+		return def
+	}
+	return getBool(args, key)
+}
+
 // getAgentService retrieves the AgentService from the QuicBaaS service.
 func (r *ToolRegistry) getAgentService() (orchestration.AgentService, error) {
 	agentSvc := r.service.Agent()
@@ -1453,18 +1582,18 @@ func (r *ToolRegistry) getAgentService() (orchestration.AgentService, error) {
 // isAgentTool checks if a tool name is an agent tool.
 func isAgentTool(name string) bool {
 	switch name {
-	case "quicbaas_agent_discover",
-		"quicbaas_agent_register",
-		"quicbaas_agent_list",
-		"quicbaas_agent_spawn",
-		"quicbaas_agent_prompt",
-		"quicbaas_agent_status",
-		"quicbaas_agent_close",
-		"quicbaas_agent_list_sessions",
-		"quicbaas_agent_list_backends",
-		"quicbaas_agent_decompose",
-		"quicbaas_agent_health",
-		"quicbaas_agent_broadcast",
+	case "quicbaas_orchestrator_discover",
+		"quicbaas_orchestrator_register",
+		"quicbaas_orchestrator_list",
+		"quicbaas_orchestrator_spawn",
+		"quicbaas_orchestrator_prompt",
+		"quicbaas_orchestrator_status",
+		"quicbaas_orchestrator_close",
+		"quicbaas_orchestrator_list_sessions",
+		"quicbaas_orchestrator_list_backends",
+		"quicbaas_orchestrator_decompose",
+		"quicbaas_orchestrator_health",
+		"quicbaas_orchestrator_broadcast",
 		"quicbaas_agent_fleet_register",
 		"quicbaas_agent_fleet_list",
 		"quicbaas_agent_fleet_status",
@@ -1487,29 +1616,29 @@ func isAgentTool(name string) bool {
 // executeAgentTool dispatches agent tool execution to the appropriate handler.
 func (r *ToolRegistry) executeAgentTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
 	switch name {
-	case "quicbaas_agent_discover":
+	case "quicbaas_orchestrator_discover":
 		return r.executeAgentDiscover(ctx, args)
-	case "quicbaas_agent_register":
+	case "quicbaas_orchestrator_register":
 		return r.executeAgentRegister(ctx, args)
-	case "quicbaas_agent_list":
+	case "quicbaas_orchestrator_list":
 		return r.executeAgentList(ctx, args)
-	case "quicbaas_agent_spawn":
+	case "quicbaas_orchestrator_spawn":
 		return r.executeAgentSpawn(ctx, args)
-	case "quicbaas_agent_prompt":
+	case "quicbaas_orchestrator_prompt":
 		return r.executeAgentPrompt(ctx, args)
-	case "quicbaas_agent_status":
+	case "quicbaas_orchestrator_status":
 		return r.executeAgentStatus(ctx, args)
-	case "quicbaas_agent_close":
+	case "quicbaas_orchestrator_close":
 		return r.executeAgentClose(ctx, args)
-	case "quicbaas_agent_list_sessions":
+	case "quicbaas_orchestrator_list_sessions":
 		return r.executeAgentListSessions(ctx, args)
-	case "quicbaas_agent_list_backends":
+	case "quicbaas_orchestrator_list_backends":
 		return r.executeAgentListBackends(ctx, args)
-	case "quicbaas_agent_decompose":
+	case "quicbaas_orchestrator_decompose":
 		return r.executeAgentDecompose(ctx, args)
-	case "quicbaas_agent_health":
+	case "quicbaas_orchestrator_health":
 		return r.executeAgentHealth(ctx, args)
-	case "quicbaas_agent_broadcast":
+	case "quicbaas_orchestrator_broadcast":
 		return r.executeAgentBroadcast(ctx, args)
 	case "quicbaas_agent_fleet_register":
 		return r.executeAgentFleetRegister(ctx, args)

@@ -4,7 +4,7 @@ All orchestration tools exposed via the Model Context Protocol. Agent tools are 
 
 ## Agent Tools
 
-### quicbaas_agent_discover
+### quicbaas_orchestrator_discover
 
 Discover agent-enabled projects by scanning a directory tree for `CLAUDE.md` and `.claude/agents/` files.
 
@@ -36,7 +36,7 @@ Discover agent-enabled projects by scanning a directory tree for `CLAUDE.md` and
 
 ---
 
-### quicbaas_agent_register
+### quicbaas_orchestrator_register
 
 Register a project for agent orchestration with optional backend and model defaults.
 
@@ -70,7 +70,7 @@ Register a project for agent orchestration with optional backend and model defau
 
 ---
 
-### quicbaas_agent_list
+### quicbaas_orchestrator_list
 
 List all registered agent projects with optional pagination.
 
@@ -103,16 +103,25 @@ List all registered agent projects with optional pagination.
 
 ---
 
-### quicbaas_agent_spawn
+### quicbaas_orchestrator_spawn
 
-Spawn a persistent agent session on a backend with project context and optional MCP servers.
+Spawn a persistent, multi-turn ACP agent session on a backend with project
+context. Mirrors `POST /api/v1/orchestrator/sessions`. Permission:
+`orchestrator:spawn`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
+| `tenant_id` | string | Yes | Tenant the session belongs to |
 | `backend` | string | Yes | Backend name to spawn the session on (e.g., `"claude"`, `"codex"`) |
 | `project_id` | string | Yes | Registered project ID to associate with the session |
 | `model` | string | No | Model to use (falls back to project/backend default) |
 | `system_prompt` | string | No | System prompt to configure the agent |
+| `work_dir` | string | No | Working directory for the agent process (defaults to the project path) |
+| `sandbox_mode` | string | No | `default` \| `required` \| `none`; empty defers to the server SandboxPolicy |
+| `host_affinity` | string | No | Pin the session to a daemon by Name or Host |
+| `host_affinity_strict` | boolean | No | Fail instead of falling back when the pinned host is offline |
+| `gpu_required` | boolean | No | Restrict dispatch to daemons advertising GPU capability |
+| `persistent` | boolean | No | Multi-turn session keeping context across prompts (**default `true`**) |
 | `mcp_servers` | object[] | No | MCP servers to attach to the session |
 
 Each MCP server object:
@@ -122,10 +131,13 @@ Each MCP server object:
 | `name` | string | Server name |
 | `command` | string | Executable command |
 | `args` | string[] | Command arguments |
+| `url` | string | Remote server URL (alternative to `command`) |
+| `env` | object | Environment variables for the server process |
 
 **Example request:**
 ```json
 {
+  "tenant_id": "acme",
   "backend": "claude",
   "project_id": "proj_abc123",
   "model": "claude-sonnet-4-20250514",
@@ -142,18 +154,27 @@ Each MCP server object:
   "session_id": "sess_xyz789",
   "backend": "acp",
   "model": "claude-sonnet-4-20250514",
+  "tenant_id": "acme",
+  "persistent": true,
   "timestamp": "2026-03-16T12:00:00.000000000Z"
 }
 ```
 
+> `persistent` defaults to `true` because a one-shot spawn registers no durable
+> session and a follow-up prompt would fail with "session not found". Use
+> `quicbaas_orchestrator_inference` for stateless calls.
+
 ---
 
-### quicbaas_agent_prompt
+### quicbaas_orchestrator_prompt
 
 Send a prompt to an agent session or backend. Provide `session_id` for existing sessions, or `backend` for stateless prompts.
 
+Permission: `orchestrator:prompt`.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
+| `tenant_id` | string | Yes | Tenant the session belongs to |
 | `prompt` | string | Yes | The prompt text to send to the agent |
 | `backend` | string | No | Backend name (optional if `session_id` provided) |
 | `session_id` | string | No | Existing session ID to route the prompt to |
@@ -165,6 +186,7 @@ Send a prompt to an agent session or backend. Provide `session_id` for existing 
 **Example request (session):**
 ```json
 {
+  "tenant_id": "acme",
   "session_id": "sess_xyz789",
   "prompt": "Add error handling to the HTTP handler."
 }
@@ -173,6 +195,7 @@ Send a prompt to an agent session or backend. Provide `session_id` for existing 
 **Example request (stateless):**
 ```json
 {
+  "tenant_id": "acme",
   "backend": "ollama",
   "prompt": "Explain the builder pattern in Go.",
   "model": "llama3"
@@ -194,17 +217,25 @@ Send a prompt to an agent session or backend. Provide `session_id` for existing 
 
 ---
 
-### quicbaas_agent_status
+### quicbaas_orchestrator_status
 
-Get the status of an active agent session.
+Get the status of an active agent session. Permission: `orchestrator:status`.
+
+MCP is a request/response protocol with no server-initiated streaming channel,
+so there is no `attach` tool. Poll this tool to observe session progress; the
+turn result itself is returned synchronously by
+`quicbaas_orchestrator_prompt`. Live event streaming stays on the REST SSE and
+gRPC server-streaming `Attach` endpoints.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
+| `tenant_id` | string | Yes | Tenant the session belongs to |
 | `session_id` | string | Yes | Session ID to query |
 
 **Example request:**
 ```json
 {
+  "tenant_id": "acme",
   "session_id": "sess_xyz789"
 }
 ```
@@ -222,17 +253,19 @@ Get the status of an active agent session.
 
 ---
 
-### quicbaas_agent_close
+### quicbaas_orchestrator_close
 
-Close and terminate an active agent session.
+Close and terminate an active agent session. Permission: `orchestrator:close`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
+| `tenant_id` | string | Yes | Tenant the session belongs to |
 | `session_id` | string | Yes | Session ID to close |
 
 **Example request:**
 ```json
 {
+  "tenant_id": "acme",
   "session_id": "sess_xyz789"
 }
 ```
@@ -247,17 +280,20 @@ Close and terminate an active agent session.
 
 ---
 
-### quicbaas_agent_list_sessions
+### quicbaas_orchestrator_list_sessions
 
-List all active agent sessions, optionally filtered by backend.
+List all active agent sessions for a tenant, optionally filtered by backend.
+Permission: `orchestrator:list`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
+| `tenant_id` | string | Yes | Tenant whose sessions are listed |
 | `backend` | string | No | Filter sessions by backend name |
 
 **Example request:**
 ```json
 {
+  "tenant_id": "acme",
   "backend": "claude"
 }
 ```
@@ -280,7 +316,7 @@ List all active agent sessions, optionally filtered by backend.
 
 ---
 
-### quicbaas_agent_list_backends
+### quicbaas_orchestrator_list_backends
 
 List all registered agent backends with their capabilities. Takes no parameters.
 
@@ -322,7 +358,7 @@ List all registered agent backends with their capabilities. Takes no parameters.
 
 ---
 
-### quicbaas_agent_decompose
+### quicbaas_orchestrator_decompose
 
 Use an AI agent to decompose a complex task into discrete work items with dependencies and priorities.
 
@@ -367,7 +403,7 @@ Use an AI agent to decompose a complex task into discrete work items with depend
 
 ---
 
-### quicbaas_agent_broadcast
+### quicbaas_orchestrator_broadcast
 
 Broadcast a message to a messaging channel for agent coordination.
 
@@ -398,7 +434,7 @@ Broadcast a message to a messaging channel for agent coordination.
 
 ---
 
-### quicbaas_agent_health
+### quicbaas_orchestrator_health
 
 Check health of all active agent sessions. Returns per-session status and summary counts. Takes no parameters.
 
@@ -546,7 +582,7 @@ Build tag: `mcp`
 
 These tools store and retrieve expensive analysis results in the KV store for sharing between agent sessions. Keys are scoped by project ID using a composite key (`project_id:key`) hashed via FNV-1a.
 
-### quicbaas_agent_cache_put
+### quicbaas_orchestrator_cache_put
 
 Store an analysis result in the agent cache with optional TTL.
 
@@ -580,7 +616,7 @@ Store an analysis result in the agent cache with optional TTL.
 
 ---
 
-### quicbaas_agent_cache_get
+### quicbaas_orchestrator_cache_get
 
 Retrieve a cached analysis result by project and key.
 

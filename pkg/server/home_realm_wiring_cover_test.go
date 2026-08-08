@@ -13,12 +13,13 @@ import (
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 )
 
 // homeRealmAdapter.Resolve maps the rest RealmHints onto the iam directory and
 // returns the bound tenant for a registered domain.
 func TestHomeRealmAdapter_Resolve(t *testing.T) {
-	shared := NewMemoryKVStore()
+	shared := kvstore.NewMemory()
 	dir, err := iam.NewHomeRealmDirectory(shared)
 	if err != nil {
 		t.Fatalf("NewHomeRealmDirectory: %v", err)

@@ -1055,6 +1055,13 @@ func (p *OIDCProvider) handleRefreshTokenGrant(ctx context.Context, req *TokenRe
 		return nil, err
 	}
 
+	// Rotate: the presented credential is consumed. generateTokenResponse mints
+	// its replacement, so leaving the old one live would let a captured refresh
+	// token be replayed for the rest of its TTL (OAuth 2.1 §4.13.2).
+	if err := p.tokenService.storage.RevokeToken(withTokenTenant(ctx, token.TenantID), token.JTI); err != nil {
+		return nil, NewOAuthError(ErrOAuthServerError, "failed to rotate refresh token")
+	}
+
 	// Refresh tokens inherit audience from original token (no resource param)
 	return p.generateTokenResponse(ctx, user, token.ClientID, scopes, "", "", cnf)
 }
@@ -1123,8 +1130,26 @@ func (p *OIDCProvider) generateTokenResponse(ctx context.Context, user *User, cl
 		return nil, NewOAuthError(ErrOAuthServerError, "failed to generate access token")
 	}
 
-	// Generate refresh token
-	refreshToken, err := p.tokenService.GenerateRefreshToken(ctx, user.ID, clientID)
+	// Generate refresh token. The session context is frozen here so a renewal
+	// mints an access token with the same audience, roles, and (when the grant
+	// was sender-constrained) the same cnf.jkt binding.
+	refreshSession := TokenSessionContext{
+		Roles:    user.Roles,
+		Groups:   user.Groups,
+		Audience: audience,
+		Email:    user.Email,
+		Name:     user.Name,
+	}
+	if cnf != nil {
+		refreshSession.Jkt = cnf.Jkt
+	}
+	refreshToken, err := p.tokenService.GenerateRefreshToken(ctx, SessionRefreshOptions{
+		Subject:  user.ID,
+		TenantID: user.TenantID,
+		ClientID: clientID,
+		Scopes:   scopes,
+		Session:  refreshSession,
+	})
 	if err != nil {
 		return nil, NewOAuthError(ErrOAuthServerError, "failed to generate refresh token")
 	}

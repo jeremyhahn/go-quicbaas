@@ -40,7 +40,9 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
@@ -675,11 +677,22 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		svc.ollamaService = b.ollamaService
 	}
 
-	// Initialize Project service (always available — backed by in-memory store by default).
-	svc.projectService = NewProjectService(orchestration.NewInMemoryProjectStore())
+	// Initialize the orchestration stores. Both bind to the same injected KV,
+	// so whether project and agent state survives a restart is decided purely
+	// by which store the caller supplied — the store code is identical either
+	// way. The server injects its tenant-routed store, which puts a
+	// barrier-isolated tenant's records inside that tenant's own barrier.
+	orchKV := b.orchestrationKVStore
+	if orchKV == nil {
+		orchKV = kvstore.NewMemory()
+		if logger != nil {
+			logger.Warn("No orchestration KV store configured; projects and agent registrations are in-memory and will not survive a restart")
+		}
+	}
+	orchOpts := []orchestration.StoreOption{orchestration.WithStoreAuditor(b.orchestrationAuditor)}
 
-	// Initialize Agent Admin service (always available — backed by in-memory registry by default).
-	svc.agentAdminService = NewAgentAdminService(orchestration.NewInMemoryAgentRegistry())
+	svc.projectService = NewProjectService(orchestration.NewProjectStore(orchKV, orchOpts...))
+	svc.agentAdminService = NewAgentAdminService(orchestration.NewAgentRegistry(orchKV, orchOpts...))
 
 	if svc.logger != nil {
 		svc.logger.WithFields(map[string]interface{}{
@@ -2802,25 +2815,53 @@ func (a *authService) Login(_ context.Context, _ *LoginRequest) (*LoginResponse,
 	return nil, api.NewNotImplementedError("password-based login; use WebAuthn or PIV authentication")
 }
 
-func (a *authService) Logout(ctx context.Context, req *LogoutRequest) (*LogoutResponse, error) {
-	// Check if auth manager is available
-	if a.svc.authManager == nil {
+// =============================================================================
+// Session token lifecycle (logout / refresh / validate).
+//
+// These three verbs are backed by the OIDC provider — the single authority that
+// minted the session bearer in the first place (login ceremony, WebAuthn/PIV
+// hardware login, or OAuth2 grant). They previously routed through an
+// interfaces.AuthManager that is never wired in a running daemon, so every call
+// failed with "authentication service not configured": the /api/v1/auth/refresh
+// endpoint the SPA and CLI depend on could not renew anything and a 15-minute
+// access token was effectively the whole session.
+// =============================================================================
+
+// sessionAuthority resolves the OIDC provider that owns session tokens.
+func (a *authService) sessionAuthority(ctx context.Context) (*iam.OIDCProvider, error) {
+	provider, err := a.svc.GetOIDCProvider(ctx)
+	if err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrConfiguration,
-			Op:   "service.Logout",
+			Op:   "service.sessionAuthority",
+			Err:  err,
+		}
+	}
+	if provider == nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrConfiguration,
+			Op:   "service.sessionAuthority",
 			Err:  &api.ServiceNotConfiguredError{Service: "authentication"},
 		}
 	}
+	return provider, nil
+}
 
-	// Revoke token
-	err := a.svc.authManager.RevokeToken(ctx, req.AccessToken)
+func (a *authService) Logout(ctx context.Context, req *LogoutRequest) (*LogoutResponse, error) {
+	provider, err := a.sessionAuthority(ctx)
 	if err != nil {
-		return &LogoutResponse{
-			Success: false,
-			Message: fmt.Sprintf("Failed to revoke token: %v", err),
-		}, err
+		return nil, err
 	}
-
+	if err := provider.RevokeSessionToken(ctx, req.AccessToken); err != nil {
+		return &LogoutResponse{
+				Success: false,
+				Message: "failed to revoke token",
+			}, &errors.QBError{
+				Code: errors.ErrUnauthorized,
+				Op:   "service.Logout",
+				Err:  err,
+			}
+	}
 	return &LogoutResponse{
 		Success: true,
 		Message: "Successfully logged out",
@@ -2828,17 +2869,24 @@ func (a *authService) Logout(ctx context.Context, req *LogoutRequest) (*LogoutRe
 }
 
 func (a *authService) RefreshToken(ctx context.Context, req *RefreshTokenRequest) (*RefreshTokenResponse, error) {
-	// Check if auth manager is available
-	if a.svc.authManager == nil {
+	if req == nil || req.RefreshToken == "" {
 		return nil, &errors.QBError{
-			Code: errors.ErrConfiguration,
+			Code: errors.ErrInvalidInput,
 			Op:   "service.RefreshToken",
-			Err:  &api.ServiceNotConfiguredError{Service: "authentication"},
+			Err:  &iam.SessionRefreshTokenRequiredError{},
 		}
 	}
+	provider, err := a.sessionAuthority(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-	// Refresh token
-	tokenRaw, err := a.svc.authManager.RefreshToken(ctx, req.RefreshToken)
+	tokens, err := provider.RefreshSession(ctx, iam.SessionRefreshRequest{
+		RefreshToken: req.RefreshToken,
+		DPoPProof:    req.DPoPProof,
+		DPoPMethod:   req.DPoPMethod,
+		DPoPURI:      req.DPoPURI,
+	})
 	if err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrUnauthorized,
@@ -2846,34 +2894,23 @@ func (a *authService) RefreshToken(ctx context.Context, req *RefreshTokenRequest
 			Err:  err,
 		}
 	}
-	token, ok := tokenRaw.(*auth.Token)
-	if !ok {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.RefreshToken",
-			Err:  &api.InvalidTypeError{Field: "token", Expected: "*auth.Token"},
-		}
-	}
 
-	// Map auth.Token to RefreshTokenResponse
 	return &RefreshTokenResponse{
-		AccessToken: token.AccessToken,
-		ExpiresAt:   token.ExpiresAt.UnixNano(),
+		AccessToken:      tokens.AccessToken,
+		ExpiresAt:        tokens.ExpiresAt.Unix(),
+		RefreshToken:     tokens.RefreshToken,
+		RefreshExpiresAt: tokens.RefreshExpiresAt.Unix(),
+		TokenType:        tokens.TokenType,
 	}, nil
 }
 
 func (a *authService) ValidateToken(ctx context.Context, req *ValidateTokenRequest) (*ValidateTokenResponse, error) {
-	// Check if auth manager is available
-	if a.svc.authManager == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrConfiguration,
-			Op:   "service.ValidateToken",
-			Err:  &api.ServiceNotConfiguredError{Service: "authentication"},
-		}
+	provider, err := a.sessionAuthority(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	// Validate token
-	resultRaw, err := a.svc.authManager.ValidateToken(ctx, req.AccessToken)
+	claims, err := provider.ValidateAccessToken(ctx, req.AccessToken)
 	if err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrUnauthorized,
@@ -2881,22 +2918,13 @@ func (a *authService) ValidateToken(ctx context.Context, req *ValidateTokenReque
 			Err:  err,
 		}
 	}
-	result, ok := resultRaw.(*auth.TokenValidationResult)
-	if !ok {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.ValidateToken",
-			Err:  &api.InvalidTypeError{Field: "validation result", Expected: "*auth.TokenValidationResult"},
-		}
-	}
 
-	// Map auth.TokenValidationResult to ValidateTokenResponse
 	return &ValidateTokenResponse{
-		Valid:     result.Valid,
-		UserID:    result.UserID,
-		Username:  result.Username,
-		Roles:     result.Roles,
-		ExpiresAt: result.ExpiresAt.UnixNano(),
+		Valid:     true,
+		UserID:    claims.Subject,
+		Username:  claims.Email,
+		Roles:     claims.Roles,
+		ExpiresAt: claims.ExpiresAt.Unix(),
 	}, nil
 }
 

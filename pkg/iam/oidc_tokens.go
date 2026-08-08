@@ -303,34 +303,18 @@ func (s *TokenService) GenerateIDToken(ctx context.Context, claims *IDTokenClaim
 	return tokenString, nil
 }
 
-// GenerateRefreshToken generates a new refresh token.
-func (s *TokenService) GenerateRefreshToken(ctx context.Context, userID, clientID string) (string, error) {
-	// Generate secure random token
-	tokenBytes, err := xkms.Rand(32)
+// GenerateRefreshToken mints an opaque refresh credential for a session.
+//
+// It delegates to issueRefreshCredential, the single implementation shared with
+// the login-ceremony path, so every refresh token in the system is stored
+// hashed-by-value (and is therefore actually resolvable by GetTokenByValue) and
+// carries the session context a renewal replays.
+func (s *TokenService) GenerateRefreshToken(ctx context.Context, opts SessionRefreshOptions) (string, error) {
+	value, _, err := s.issueRefreshCredential(ctx, opts, time.Time{})
 	if err != nil {
-		return "", dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.GenerateRefreshToken", "failed to generate random token")
+		return "", err
 	}
-	tokenString := base64.RawURLEncoding.EncodeToString(tokenBytes)
-
-	now := time.Now()
-	jti := generateJTI()
-
-	// Store token
-	token := &Token{
-		JTI:       jti,
-		Subject:   userID,
-		ClientID:  clientID,
-		Expires:   now.Add(s.config.RefreshTokenTTL),
-		Issued:    now,
-		TokenType: TokenTypeRefresh,
-	}
-
-	if err := s.storage.StoreToken(ctx, token); err != nil {
-		return "", dberrors.Wrapf(err, dberrors.ErrStorage, "iam.TokenService.GenerateRefreshToken", "failed to store refresh token")
-	}
-
-	// Return the token value (JTI is used for internal tracking, tokenString is returned to client)
-	return tokenString, nil
+	return value, nil
 }
 
 // GenerateAuthCode generates a new authorization code.
@@ -552,7 +536,25 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 		return nil, err
 	}
 
-	refreshToken, err := s.GenerateRefreshToken(ctx, opts.User.ID, opts.ClientID)
+	// The refresh credential freezes the hardware login's authentication
+	// context so a renewed access token keeps its amr/acr assurance instead of
+	// silently degrading to an unattested session.
+	refreshToken, err := s.GenerateRefreshToken(ctx, SessionRefreshOptions{
+		Subject:  opts.User.ID,
+		TenantID: opts.User.TenantID,
+		ClientID: opts.ClientID,
+		Scopes:   parseScopes(scope),
+		Session: TokenSessionContext{
+			Roles:       opts.User.Roles,
+			Groups:      opts.User.Groups,
+			Audience:    []string{issuer},
+			Email:       opts.User.Email,
+			Name:        opts.User.Name,
+			MFAVerified: true,
+			AMR:         opts.AMR,
+			ACR:         opts.ACR,
+		},
+	})
 	if err != nil {
 		return nil, err
 	}

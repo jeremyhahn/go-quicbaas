@@ -37,7 +37,7 @@ Using precise terms prevents miscommunication in docs, code reviews, incident re
 - `pkg/orchestration/agent_registry.go` -- Fleet registry for QuicBaaS agent instances
 - `pkg/orchestration/agent_identity.go` -- Agent identity and attestation
 - REST API: `/api/v1/orchestrator/agents` -- Register/deregister QuicBaaS agents
-- MCP tools: `quicbaas_agent_*` prefix -- Operations on the infrastructure layer
+- MCP tools: `quicbaas_agent_fleet_*` prefix -- Operations on the infrastructure layer
 - Entrypoint scripts: Fleet registration and heartbeat loops
 - Docker healthchecks: Verify the infrastructure agent is responsive
 
@@ -53,7 +53,7 @@ Using precise terms prevents miscommunication in docs, code reviews, incident re
 
 ### Overlap
 
-The entrypoint scripts bridge both worlds: they register the container as a QuicBaaS agent (infrastructure) and then exec the AI agent CLI (orchestrated agent). The QuicBaaS agent ID maps to the container hostname; the AI agent session is created separately via `quicbaas_agent_spawn`.
+The entrypoint scripts bridge both worlds: they register the container as a QuicBaaS agent (infrastructure) and then exec the AI agent CLI (orchestrated agent). The QuicBaaS agent ID maps to the container hostname; the AI agent session is created separately via `quicbaas_orchestrator_spawn`.
 
 ## Style Guide
 

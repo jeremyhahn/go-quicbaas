@@ -97,6 +97,7 @@ quicbaas data delete user john --yes
 | Command | Description | Documentation |
 |---------|-------------|---------------|
 | [iam](iam.md) | Identity and Access Management | Multi-tenant IAM, RBAC, ABAC, OAuth |
+| [oauth2](oauth2.md) | OAuth2 client lifecycle | create / list / show / update / rotate-secret / delete / pin-cert |
 | [ssh](ssh.md) | xkms-backed SSH key store + known-hosts pinning | Generate, import, export-public, list, scopes |
 
 ### Orchestration & Fleet
@@ -105,6 +106,8 @@ quicbaas data delete user john --yes
 |---------|-------------|---------------|
 | [orchestrator](orchestrator.md) | Sessions, prompts, jobs, workflows, **stateless inference** | All transports, streaming, host affinity |
 | [agent](agent.md) | Fleet agent management (deploy, list, inspect, update) | mTLS bootstrap, gRPC event ingest |
+| [project](project.md) | Agentic project CRUD + per-agent roles and quotas | Workspace, git, quotas, `grant-role` / `revoke-role` |
+| [mcp](mcp.md) | Model Context Protocol client | `serve --stdio` bridge for MCP hosts, `tools`, `call` |
 
 ## Global Flags
 

@@ -2129,18 +2129,20 @@ func TestBackendStorage_GetTokenByValueFinal(t *testing.T) {
 
 	// Create a refresh token
 	jti := uuid.New().String()
+	secret := uuid.New().String()
 	token := &Token{
 		JTI:       jti,
 		TokenType: TokenTypeRefresh,
 		Subject:   "user-token-value-123",
 		TenantID:  "tenant-<account>",
 		Expires:   time.Now().Add(24 * time.Hour),
+		ValueHash: HashTokenValue(secret),
 	}
 	err := storage.StoreToken(ctx, token)
 	require.NoError(t, err)
 
-	// Retrieve by value (JTI for refresh tokens)
-	retrieved, err := storage.GetTokenByValue(ctx, jti)
+	// Retrieve by the opaque value the client presents.
+	retrieved, err := storage.GetTokenByValue(ctx, secret)
 	require.NoError(t, err)
 	assert.Equal(t, token.JTI, retrieved.JTI)
 }

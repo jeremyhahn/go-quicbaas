@@ -155,12 +155,20 @@ func TestConvertOrchestratorResponse_SpawnSession(t *testing.T) {
 	})
 }
 
+// TestConvertOrchestratorResponse_PromptSession pins the converter against the
+// payload the orchestrator service actually puts on the wire: content blocks
+// plus a stop reason. The service never sends "response"/"done" — decoding
+// straight into the SDK type is what produced a contentless "Done: false".
 func TestConvertOrchestratorResponse_PromptSession(t *testing.T) {
-	t.Run("converts PromptSession response", func(t *testing.T) {
+	t.Run("converts the service turn payload into a done response", func(t *testing.T) {
 		data := map[string]interface{}{
 			"session_id": "sess-001",
-			"response":   "hello world",
-			"done":       true,
+			"content": []interface{}{
+				map[string]interface{}{"type": "text", "text": "hello world"},
+			},
+			"model":       "claude-fable-5",
+			"stop_reason": "end_turn",
+			"timestamp":   float64(1786207030175886792),
 		}
 		result, err := convertOrchestratorResponse("PromptSession", data)
 		require.NoError(t, err)
@@ -168,33 +176,46 @@ func TestConvertOrchestratorResponse_PromptSession(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, "sess-001", resp.SessionID)
 		assert.Equal(t, "hello world", resp.Response)
+		assert.Equal(t, "claude-fable-5", resp.Model)
+		assert.Equal(t, "end_turn", resp.StopReason)
 		assert.True(t, resp.Done)
 	})
 
 	t.Run("returns error on invalid JSON", func(t *testing.T) {
 		data := map[string]interface{}{
-			"done": "not-a-bool",
+			"stop_reason": 42,
 		}
 		_, err := convertOrchestratorResponse("PromptSession", data)
 		require.Error(t, err)
+	})
+
+	t.Run("returns a typed error for a turn with no content and no stop reason", func(t *testing.T) {
+		data := map[string]interface{}{"session_id": "sess-001"}
+		_, err := convertOrchestratorResponse("PromptSession", data)
+		require.Error(t, err)
+		var empty *orchestrator.EmptyTurnError
+		require.ErrorAs(t, err, &empty)
 	})
 }
 
 func TestConvertOrchestratorResponse_SessionStatus(t *testing.T) {
 	t.Run("converts SessionStatus response", func(t *testing.T) {
+		// The service names the lifecycle field "state", not "status".
 		data := map[string]interface{}{
-			"session_id":  "sess-001",
-			"backend":     "ollama",
-			"status":      "running",
-			"created_at":  float64(1700000000),
-			"last_active": float64(1700000100),
+			"session_id":    "sess-001",
+			"backend":       "ollama",
+			"state":         "active",
+			"created_at":    float64(1700000000),
+			"last_activity": float64(1700000100),
 		}
 		result, err := convertOrchestratorResponse("SessionStatus", data)
 		require.NoError(t, err)
 		resp, ok := result.(*orchestrator.SessionStatusResponse)
 		require.True(t, ok)
 		assert.Equal(t, "sess-001", resp.SessionID)
-		assert.Equal(t, "running", resp.Status)
+		assert.Equal(t, "ollama", resp.Backend)
+		assert.Equal(t, "active", resp.Status)
+		assert.Equal(t, int64(1700000100), resp.LastActive)
 	})
 
 	t.Run("returns error on invalid JSON", func(t *testing.T) {
@@ -208,9 +229,11 @@ func TestConvertOrchestratorResponse_SessionStatus(t *testing.T) {
 
 func TestConvertOrchestratorResponse_CloseSession(t *testing.T) {
 	t.Run("converts CloseSession response", func(t *testing.T) {
+		// The service acknowledges with the id and a timestamp only; the
+		// acknowledgement itself is what means "closed".
 		data := map[string]interface{}{
 			"session_id": "sess-001",
-			"closed":     true,
+			"timestamp":  float64(1786207020331543767),
 		}
 		result, err := convertOrchestratorResponse("CloseSession", data)
 		require.NoError(t, err)
@@ -222,7 +245,7 @@ func TestConvertOrchestratorResponse_CloseSession(t *testing.T) {
 
 	t.Run("returns error on invalid JSON", func(t *testing.T) {
 		data := map[string]interface{}{
-			"closed": "not-a-bool",
+			"session_id": 42,
 		}
 		_, err := convertOrchestratorResponse("CloseSession", data)
 		require.Error(t, err)

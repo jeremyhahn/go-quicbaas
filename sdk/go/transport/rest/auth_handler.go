@@ -23,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
+	sdktransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 // Auth service prefix for routing.
@@ -144,14 +145,18 @@ func (h *authRESTHandler) handleRefreshToken(ctx context.Context, req interface{
 
 	switch r := req.(type) {
 	case map[string]interface{}:
-		refreshToken = getString(r, "refresh_token")
+		refreshToken = refreshTokenFromMap(r)
 	default:
 		reqMap, err := toMap(req)
 		if err != nil {
 			return nil, errors.NewInvalidInput("authRESTHandler.handleRefreshToken",
 				"invalid request type")
 		}
-		refreshToken = getString(reqMap, "refresh_token")
+		refreshToken = refreshTokenFromMap(reqMap)
+	}
+	if refreshToken == "" {
+		return nil, errors.NewInvalidInput("authRESTHandler.handleRefreshToken",
+			"refresh token is required")
 	}
 
 	refreshReq := authRefreshTokenRequest{
@@ -172,12 +177,25 @@ func (h *authRESTHandler) handleRefreshToken(ctx context.Context, req interface{
 		expiresAt = time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)
 	}
 
-	// Convert to SDK response type
+	// Convert to SDK response type. The rotated refresh token MUST be carried
+	// back: the server revokes the presented one, so a client that keeps the
+	// old value is locked out at the next renewal.
 	return &service.ExtendedRefreshTokenResponse{
-		AccessToken: resp.AccessToken,
-		TokenType:   resp.TokenType,
-		ExpiresAt:   expiresAt,
+		AccessToken:  resp.AccessToken,
+		TokenType:    resp.TokenType,
+		ExpiresAt:    expiresAt,
+		RefreshToken: resp.RefreshToken,
 	}, nil
+}
+
+// refreshTokenFromMap reads the refresh token from a decoded request map. The
+// SDK marshals service.RefreshTokenRequest (Go field names, no json tags) while
+// callers that hand-build a map use the wire name, so both spellings resolve.
+func refreshTokenFromMap(m map[string]interface{}) string {
+	if v := getString(m, "refresh_token"); v != "" {
+		return v
+	}
+	return getString(m, "RefreshToken")
 }
 
 // handleValidateToken handles ValidateToken requests.
@@ -259,12 +277,15 @@ type restLoginIdentity struct {
 	Roles    []string `json:"roles,omitempty"`
 }
 
-// restFinishLoginResponse mirrors transport.FinishLoginResponse over JSON.
+// restFinishLoginResponse mirrors the REST login-finish JSON body.
 type restFinishLoginResponse struct {
 	Bearer    string             `json:"bearer"`
 	Identity  *restLoginIdentity `json:"identity,omitempty"`
 	ExpiresAt string             `json:"expires_at"`
 	FactorID  string             `json:"factor_id,omitempty"`
+	// RefreshToken / RefreshExpiresAt carry the session's renewal credential.
+	RefreshToken     string `json:"refresh_token,omitempty"`
+	RefreshExpiresAt string `json:"refresh_expires_at,omitempty"`
 }
 
 // handleBeginLogin posts a BeginLogin request to the REST login-begin endpoint.
@@ -317,20 +338,29 @@ func (h *authRESTHandler) handleFinishLogin(ctx context.Context, req interface{}
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/auth/login/finish", body, &resp); err != nil {
 		return nil, err
 	}
-	out := &qrdbtransport.FinishLoginResponse{
+	inner := &qrdbtransport.FinishLoginResponse{
 		Bearer:   resp.Bearer,
 		FactorID: resp.FactorID,
 	}
 	if resp.ExpiresAt != "" {
 		if parsed, perr := time.Parse(time.RFC3339Nano, resp.ExpiresAt); perr == nil {
-			out.ExpiresAt = parsed
+			inner.ExpiresAt = parsed
 		}
 	}
 	if resp.Identity != nil {
-		out.Identity = &qrdbtransport.Identity{
+		inner.Identity = &qrdbtransport.Identity{
 			Subject:  resp.Identity.Subject,
 			TenantID: resp.Identity.TenantID,
 			Roles:    resp.Identity.Roles,
+		}
+	}
+	out := &sdktransport.FinishLoginResponse{
+		FinishLoginResponse: inner,
+		RefreshToken:        resp.RefreshToken,
+	}
+	if resp.RefreshExpiresAt != "" {
+		if parsed, perr := time.Parse(time.RFC3339Nano, resp.RefreshExpiresAt); perr == nil {
+			out.RefreshExpiresAt = parsed
 		}
 	}
 	return out, nil

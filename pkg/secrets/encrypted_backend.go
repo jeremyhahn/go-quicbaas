@@ -67,7 +67,7 @@ type EncryptedBackend struct {
 // EncryptedBackendOptions configures the encrypted backend.
 type EncryptedBackendOptions struct {
 	// Store is the underlying KV storage (required).
-	// Can be MemoryKVStore, LocalKVStore (PebbleDB), or RaftKVStore.
+	// Can be a memory, PebbleDB, or Raft-backed store.
 	Store interfaces.KVStore
 
 	// Encryptor handles encryption/decryption operations (required).

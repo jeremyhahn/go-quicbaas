@@ -28,6 +28,8 @@ import (
 	"time"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 )
 
 // TestExpandCanonicalHome covers the home-directory expansion helper.
@@ -210,19 +212,22 @@ func TestCanonicalLoginLoadCertFingerprint_NotPEM(t *testing.T) {
 func TestWriteCanonicalSessionToken(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "session.token")
-	gotPath, err := writeCanonicalSessionToken(path, "JWT.HEAD.SIG")
+	gotPath, err := writeCanonicalSessionToken(path, "JWT.HEAD.SIG", "refresh-abc", time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotPath != path {
 		t.Errorf("expected %q, got %q", path, gotPath)
 	}
-	data, rerr := os.ReadFile(path)
+	stored, rerr := cli.LoadToken(path)
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
-	if string(data) != "JWT.HEAD.SIG\n" {
-		t.Errorf("unexpected token contents: %q", data)
+	if stored.AccessToken != "JWT.HEAD.SIG" {
+		t.Errorf("access token = %q, want JWT.HEAD.SIG", stored.AccessToken)
+	}
+	if stored.RefreshToken != "refresh-abc" {
+		t.Errorf("refresh token = %q, want refresh-abc", stored.RefreshToken)
 	}
 }
 

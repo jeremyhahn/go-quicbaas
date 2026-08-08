@@ -2423,7 +2423,9 @@ func TestBackendStorage_GetTokenByValue(t *testing.T) {
 	kv := newMockKVStore91()
 	storage := NewBackendStorage(kv)
 
-	// Store a refresh token (which uses value index)
+	// Store a refresh token. StoreToken writes the value index itself, keyed by
+	// the hash of the opaque secret the client will present.
+	const secret = "opaque-refresh-secret"
 	token := &Token{
 		JTI:       "token-value-jti-boost",
 		Subject:   "user-1",
@@ -2431,20 +2433,15 @@ func TestBackendStorage_GetTokenByValue(t *testing.T) {
 		TokenType: TokenTypeRefresh,
 		Issued:    time.Now(),
 		Expires:   time.Now().Add(24 * time.Hour),
+		ValueHash: HashTokenValue(secret),
 	}
 
 	if err := storage.StoreToken(ctx, token); err != nil {
 		t.Fatalf("StoreToken failed: %v", err)
 	}
 
-	// Manually store the value index (normally done during token generation)
-	valueKey := KeyPrefixIAM + "token:val:" + token.JTI
-	if err := kv.Put(ctx, valueKey, []byte(token.JTI)); err != nil {
-		t.Fatalf("Put token value index failed: %v", err)
-	}
-
-	// Get token by value
-	retrieved, err := storage.GetTokenByValue(ctx, token.JTI)
+	// Get token by the value the client holds.
+	retrieved, err := storage.GetTokenByValue(ctx, secret)
 	if err != nil {
 		t.Fatalf("GetTokenByValue failed: %v", err)
 	}
@@ -2452,6 +2449,12 @@ func TestBackendStorage_GetTokenByValue(t *testing.T) {
 	if retrieved.JTI != token.JTI {
 		t.Errorf("expected JTI %s, got %s", token.JTI, retrieved.JTI)
 	}
+
+	// The JTI is NOT a lookup handle: only the presented secret resolves.
+	if _, err := storage.GetTokenByValue(ctx, token.JTI); err == nil {
+		t.Error("GetTokenByValue resolved a token by JTI; the index must be value-keyed")
+	}
+	_ = kv
 }
 
 // =============================================================================

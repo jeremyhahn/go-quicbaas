@@ -15,10 +15,12 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/x509"
+	"time"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // =============================================================================
@@ -126,22 +128,54 @@ func isEmbeddedTrusted(ctx context.Context) bool {
 }
 
 // mtlsLookupKey returns the legacy login lookup key for an mtls factor:
-// SHA-256 over the certificate's DER encoding. This MUST match the key the
-// factor was enrolled with — go-qrdb pkg/auth.CredentialKey(cert.Raw) — so the
-// resolver's LookupByCredentialKey finds the enrolled mtls factor.
+// SHA-256 over the certificate's DER encoding. It delegates to
+// iam.MTLSCredentialKey — the SINGLE definition shared with the enrollment side
+// (iam.CertLoginFactorEnroller writes exactly this blob as the factor's
+// Credential) — so the resolver's LookupByCredentialKey cannot miss an enrolled
+// mtls factor because the two sides drifted.
 func mtlsLookupKey(cert *x509.Certificate) []byte {
-	sum := sha256.Sum256(cert.Raw)
-	return sum[:]
+	return iam.MTLSCredentialKey(cert)
 }
 
 // mtlsSPKILookupKey returns the renewal-stable login lookup key for an mtls
-// factor: SHA-256 over the certificate's SubjectPublicKeyInfo. This MUST
-// match go-qrdb pkg/auth.SPKICredentialKey(cert) — the key the factor's
-// SPKICredential index was enrolled with — so a certificate renewed with the
-// same keypair keeps resolving to its factor after the cert.Raw key changed.
+// factor: SHA-256 over the certificate's SubjectPublicKeyInfo. It delegates to
+// iam.MTLSSPKICredentialKey, the same derivation the enrollment side writes as
+// the factor's SPKICredential, so a certificate renewed with the same keypair
+// keeps resolving to its factor after the cert.Raw key changed.
 func mtlsSPKILookupKey(cert *x509.Certificate) []byte {
-	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
-	return sum[:]
+	return iam.MTLSSPKICredentialKey(cert)
+}
+
+// SessionRefreshIssuer mints the renewal credential for a session whose bearer
+// the login ceremony has just issued. It is implemented by iam.OIDCProvider —
+// the same authority that minted the bearer.
+//
+// WHY THE CEREMONY NEEDS THIS SEAM: qrdb owns BeginLogin/FinishLogin and its
+// FinishLoginResponse carries only (bearer, identity, expiry, factor). Refresh
+// is an OAuth2 concept that belongs to QuicBaaS, not to qrdb's factor ceremony,
+// so the renewal credential is layered on HERE — once, in the facade every
+// transport already funnels through — rather than in each transport handler or,
+// worse, in each client.
+type SessionRefreshIssuer interface {
+	// IssueRefreshForSessionBearer returns the opaque refresh credential and
+	// its absolute expiry for the session identified by the given bearer.
+	IssueRefreshForSessionBearer(ctx context.Context, bearer string) (string, time.Time, error)
+}
+
+// FinishLoginResult is the QuicBaaS-owned outcome of a login ceremony: qrdb's
+// response plus the refresh credential QuicBaaS layers on top. The embedded
+// response is promoted, so Bearer / Identity / ExpiresAt / FactorID read
+// exactly as before.
+type FinishLoginResult struct {
+	*qrdbtransport.FinishLoginResponse
+
+	// RefreshToken renews the session after the short-lived bearer expires.
+	// Empty when no refresh issuer is wired (refresh disabled).
+	RefreshToken string `json:"refreshToken,omitempty"`
+
+	// RefreshExpiresAt is the session's absolute deadline. Renewal cannot move
+	// it: after this instant the factor ceremony must run again.
+	RefreshExpiresAt time.Time `json:"refreshExpiresAt,omitempty"`
 }
 
 // LoginServicer is the transport-agnostic login-ceremony surface. Every
@@ -152,17 +186,19 @@ type LoginServicer interface {
 	// challenge (nonce + method-specific metadata).
 	BeginLogin(ctx context.Context, req *qrdbtransport.BeginLoginRequest) (*qrdbtransport.BeginLoginResponse, error)
 
-	// FinishLogin consumes the proof and mints a bearer. For an mtls factor
-	// the lookup key is derived from the verified peer certificate in ctx,
-	// not from the request body (see the package security model).
-	FinishLogin(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error)
+	// FinishLogin consumes the proof and mints a bearer plus its renewal
+	// credential. For an mtls factor the lookup key is derived from the
+	// verified peer certificate in ctx, not from the request body (see the
+	// package security model).
+	FinishLogin(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*FinishLoginResult, error)
 }
 
 // LoginService is the concrete LoginServicer. It forwards to the in-process
 // qrdb node LoginClient supplied via SetLoginClient. When no client is wired
 // (login disabled / IAM absent) every method returns LoginCeremonyUnavailableError.
 type LoginService struct {
-	client qrdbtransport.LoginClient
+	client        qrdbtransport.LoginClient
+	refreshIssuer SessionRefreshIssuer
 }
 
 var _ LoginServicer = (*LoginService)(nil)
@@ -180,6 +216,13 @@ func (s *LoginService) SetLoginClient(client qrdbtransport.LoginClient) {
 	s.client = client
 }
 
+// SetSessionRefreshIssuer installs (or replaces) the refresh-credential issuer.
+// Called by the server once the OIDC provider is initialized. Until it is set
+// the ceremony still issues bearers; they simply cannot be renewed.
+func (s *LoginService) SetSessionRefreshIssuer(issuer SessionRefreshIssuer) {
+	s.refreshIssuer = issuer
+}
+
 // BeginLogin forwards the begin step to the node LoginClient. BeginLogin needs
 // no peer-cert handling: it only issues a challenge. For an mtls factor there
 // is no separate hardware step, but BeginLogin still scopes the attempt and
@@ -195,8 +238,9 @@ func (s *LoginService) BeginLogin(ctx context.Context, req *qrdbtransport.BeginL
 }
 
 // FinishLogin forwards the finish step to the node LoginClient after enforcing
-// the mTLS security model. See the package-level SECURITY MODEL comment.
-func (s *LoginService) FinishLogin(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error) {
+// the mTLS security model, then layers on the session's renewal credential.
+// See the package-level SECURITY MODEL comment.
+func (s *LoginService) FinishLogin(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*FinishLoginResult, error) {
 	if req == nil {
 		return nil, &LoginRequestNilError{Op: "FinishLogin"}
 	}
@@ -204,6 +248,16 @@ func (s *LoginService) FinishLogin(ctx context.Context, req *qrdbtransport.Finis
 		return nil, &LoginCeremonyUnavailableError{}
 	}
 
+	resp, err := s.finishCeremony(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return s.withSessionRefresh(ctx, resp)
+}
+
+// finishCeremony runs the qrdb half of the finish step, enforcing the mTLS
+// anti-spoofing model.
+func (s *LoginService) finishCeremony(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error) {
 	// mTLS: derive the lookup key from the verified peer certificate. Never
 	// trust the client-supplied LookupKey on a network transport.
 	if req.Type == qrdbtransport.FactorTypeMTLS {
@@ -232,4 +286,27 @@ func (s *LoginService) FinishLogin(ctx context.Context, req *qrdbtransport.Finis
 	// PIV / WebAuthn (fido2): the signature/assertion is the proof; the node's
 	// FactorVerifiers validate it. Forward the request unchanged.
 	return s.client.FinishLogin(ctx, *req)
+}
+
+// withSessionRefresh attaches the renewal credential to a completed login.
+//
+// A failure to mint the refresh credential FAILS THE LOGIN. Returning a bearer
+// with no way to renew it is precisely the defect this path exists to remove:
+// the client would appear signed in and then die silently at the 15-minute
+// boundary. Better to reject the login and let the caller retry.
+func (s *LoginService) withSessionRefresh(ctx context.Context, resp *qrdbtransport.FinishLoginResponse) (*FinishLoginResult, error) {
+	if resp == nil {
+		return nil, &LoginCeremonyUnavailableError{}
+	}
+	result := &FinishLoginResult{FinishLoginResponse: resp}
+	if s.refreshIssuer == nil || resp.Bearer == "" {
+		return result, nil
+	}
+	refresh, expiresAt, err := s.refreshIssuer.IssueRefreshForSessionBearer(ctx, resp.Bearer)
+	if err != nil {
+		return nil, &LoginRefreshIssuanceError{Cause: err}
+	}
+	result.RefreshToken = refresh
+	result.RefreshExpiresAt = expiresAt
+	return result, nil
 }

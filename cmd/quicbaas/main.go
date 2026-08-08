@@ -226,6 +226,12 @@ func init() {
 	// Add Agent command for fleet management
 	rootCmd.AddCommand(newAgentCommand())
 
+	// Add Project command for agentic project management
+	rootCmd.AddCommand(newProjectCommand())
+
+	// Add MCP command group (stdio bridge, tool discovery, tool invocation)
+	rootCmd.AddCommand(newMCPCommand())
+
 	// Signal bridge is gated on the quicbaas_signal build tag; the
 	// registerSignalBridgeCommand stub is a no-op when the tag is off.
 	registerSignalBridgeCommand(rootCmd)

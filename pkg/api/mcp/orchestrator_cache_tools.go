@@ -32,7 +32,7 @@ const agentCacheEntityType = "agent_cache"
 // registerAgentCacheTools registers all agent cache tools with the registry.
 func (r *ToolRegistry) registerAgentCacheTools() {
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_cache_put",
+		Name:        "quicbaas_orchestrator_cache_put",
 		Description: "Store an analysis result in the agent cache (KV store) with optional TTL for sharing between agent sessions",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -59,7 +59,7 @@ func (r *ToolRegistry) registerAgentCacheTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_cache_get",
+		Name:        "quicbaas_orchestrator_cache_get",
 		Description: "Retrieve a cached analysis result by project and key from the agent cache",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -85,8 +85,8 @@ func (r *ToolRegistry) registerAgentCacheTools() {
 // isAgentCacheTool checks if a tool name is an agent cache tool.
 func isAgentCacheTool(name string) bool {
 	switch name {
-	case "quicbaas_agent_cache_put",
-		"quicbaas_agent_cache_get":
+	case "quicbaas_orchestrator_cache_put",
+		"quicbaas_orchestrator_cache_get":
 		return true
 	default:
 		return false
@@ -96,9 +96,9 @@ func isAgentCacheTool(name string) bool {
 // executeAgentCacheTool dispatches agent cache tool execution to the appropriate handler.
 func (r *ToolRegistry) executeAgentCacheTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
 	switch name {
-	case "quicbaas_agent_cache_put":
+	case "quicbaas_orchestrator_cache_put":
 		return r.executeAgentCachePut(ctx, args)
-	case "quicbaas_agent_cache_get":
+	case "quicbaas_orchestrator_cache_get":
 		return r.executeAgentCacheGet(ctx, args)
 	default:
 		return nil, api.NewUnknownToolError(name)

@@ -31,6 +31,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 )
 
 // =============================================================================
@@ -201,22 +203,36 @@ func TestCanonicalLoginLoadCertFingerprint_NotPEMV2(t *testing.T) {
 func TestWriteCanonicalSessionToken_ExplicitPath(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "tok")
-	got, err := writeCanonicalSessionToken(p, "jwt.payload.sig")
+	expiry := time.Now().Add(time.Hour).Truncate(time.Second)
+	got, err := writeCanonicalSessionToken(p, "jwt.payload.sig", "refresh-abc", expiry)
 	require.NoError(t, err)
 	assert.Equal(t, p, got)
-	body, rerr := os.ReadFile(p)
-	require.NoError(t, rerr)
-	assert.True(t, strings.HasPrefix(string(body), "jwt.payload.sig"))
+
+	// The file is the canonical cli.TokenData envelope every other command
+	// reads back via loadStoredAuthToken — not a bare JWT.
+	stored, lerr := cli.LoadToken(p)
+	require.NoError(t, lerr)
+	assert.Equal(t, "jwt.payload.sig", stored.AccessToken)
+	assert.Equal(t, "Bearer", stored.TokenType)
+	assert.WithinDuration(t, expiry, stored.ExpiresAt, time.Second)
+	// The refresh credential MUST be persisted: without it the CLI (and
+	// `quicbaas mcp serve --stdio`) cannot renew past the 15-minute expiry.
+	assert.Equal(t, "refresh-abc", stored.RefreshToken)
 }
 
 func TestWriteCanonicalSessionToken_DefaultPath(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
-	got, err := writeCanonicalSessionToken("", "tok")
+	got, err := writeCanonicalSessionToken("", "tok", "refresh-abc", time.Now().Add(time.Hour))
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(got, dir), "want token under HOME (%s); got %s", dir, got)
 	assert.Contains(t, got, ".quicbaas")
-	assert.Contains(t, got, "session.token")
+
+	// The default path is cli.GetDefaultTokenPath() so every other command
+	// resolves the same envelope.
+	want, derr := cli.GetDefaultTokenPath()
+	require.NoError(t, derr)
+	assert.Equal(t, want, got)
 }
 
 func TestWriteCanonicalSessionToken_MkdirFails(t *testing.T) {
@@ -225,7 +241,7 @@ func TestWriteCanonicalSessionToken_MkdirFails(t *testing.T) {
 	blocker := filepath.Join(dir, "block")
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
 	bad := filepath.Join(blocker, "session.token")
-	_, err := writeCanonicalSessionToken(bad, "tok")
+	_, err := writeCanonicalSessionToken(bad, "tok", "refresh-abc", time.Now().Add(time.Hour))
 	require.Error(t, err)
 	var typed *TokenWriteError
 	require.ErrorAs(t, err, &typed)

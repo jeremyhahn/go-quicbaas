@@ -22,20 +22,20 @@ func resetOAuth2RegisterFlags(t *testing.T) {
 	t.Helper()
 	origName := oauth2ClientName
 	origMethod := oauth2ClientAuthMethod
-	origGrant := oauth2ClientGrantType
+	origGrant := oauth2ClientGrantTypes
 	origScopes := oauth2ClientScopes
 	origCert := oauth2ClientCertPEM
 	origThumb := oauth2ClientThumbprint
 	t.Cleanup(func() {
 		oauth2ClientName = origName
 		oauth2ClientAuthMethod = origMethod
-		oauth2ClientGrantType = origGrant
+		oauth2ClientGrantTypes = origGrant
 		oauth2ClientScopes = origScopes
 		oauth2ClientCertPEM = origCert
 		oauth2ClientThumbprint = origThumb
 	})
 	oauth2ClientName = "svc"
-	oauth2ClientGrantType = "client_credentials"
+	oauth2ClientGrantTypes = []string{"client_credentials"}
 	oauth2ClientScopes = nil
 	oauth2ClientCertPEM = ""
 	oauth2ClientThumbprint = ""

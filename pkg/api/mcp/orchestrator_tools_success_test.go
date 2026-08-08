@@ -79,7 +79,7 @@ func TestExecuteAgentDiscover_Success(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_discover", map[string]interface{}{
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_discover", map[string]interface{}{
 		"root_path": "/home/user/projects",
 	})
 	require.NoError(t, err)
@@ -90,7 +90,7 @@ func TestExecuteAgentDiscover_MissingRootPath(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_discover", map[string]interface{}{})
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_discover", map[string]interface{}{})
 	require.Error(t, err)
 	assert.True(t, isRequiredFieldError(err, "root_path"))
 }
@@ -103,7 +103,7 @@ func TestExecuteAgentDiscover_ServiceError(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_discover", map[string]interface{}{
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_discover", map[string]interface{}{
 		"root_path": "/tmp",
 	})
 	require.Error(t, err)
@@ -117,7 +117,7 @@ func TestExecuteAgentRegister_Success(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_register", map[string]interface{}{
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_register", map[string]interface{}{
 		"name":            "my-project",
 		"path":            "/home/user/my-project",
 		"dependencies":    []interface{}{"dep-1"},
@@ -133,7 +133,7 @@ func TestExecuteAgentRegister_MissingName(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_register", map[string]interface{}{
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_register", map[string]interface{}{
 		"path": "/tmp",
 	})
 	require.Error(t, err)
@@ -144,7 +144,7 @@ func TestExecuteAgentRegister_MissingPath(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_register", map[string]interface{}{
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_register", map[string]interface{}{
 		"name": "proj",
 	})
 	require.Error(t, err)
@@ -159,7 +159,7 @@ func TestExecuteAgentRegister_ServiceError(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_register", map[string]interface{}{
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_register", map[string]interface{}{
 		"name": "proj", "path": "/tmp",
 	})
 	require.Error(t, err)
@@ -173,7 +173,7 @@ func TestExecuteAgentList_Success(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_list", map[string]interface{}{
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list", map[string]interface{}{
 		"page_size":  float64(10),
 		"page_token": "<account>",
 	})
@@ -189,7 +189,7 @@ func TestExecuteAgentList_ServiceError(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_list", map[string]interface{}{})
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list", map[string]interface{}{})
 	require.Error(t, err)
 }
 
@@ -210,7 +210,8 @@ func TestExecuteAgentSpawn_Success(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_spawn", map[string]interface{}{
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
+		"tenant_id":     "t1",
 		"backend":       "claude",
 		"project_id":    "proj-1",
 		"model":         "opus",
@@ -231,7 +232,8 @@ func TestExecuteAgentSpawn_MissingBackend(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_spawn", map[string]interface{}{
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
+		"tenant_id":  "t1",
 		"project_id": "proj-1",
 	})
 	require.Error(t, err)
@@ -242,8 +244,9 @@ func TestExecuteAgentSpawn_MissingProjectID(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_spawn", map[string]interface{}{
-		"backend": "claude",
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
+		"tenant_id": "t1",
+		"backend":   "claude",
 	})
 	require.Error(t, err)
 	assert.True(t, isRequiredFieldError(err, "project_id"))
@@ -257,8 +260,8 @@ func TestExecuteAgentSpawn_ServiceError(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_spawn", map[string]interface{}{
-		"backend": "claude", "project_id": "proj-1",
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
+		"tenant_id": "t1", "backend": "claude", "project_id": "proj-1",
 	})
 	require.Error(t, err)
 }
@@ -281,7 +284,8 @@ func TestExecuteAgentPrompt_Success(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_prompt", map[string]interface{}{
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_prompt", map[string]interface{}{
+		"tenant_id":  "t1",
 		"prompt":     "Hello agent",
 		"backend":    "claude",
 		"session_id": "sess-1",
@@ -296,7 +300,7 @@ func TestExecuteAgentPrompt_MissingPrompt(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_prompt", map[string]interface{}{})
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_prompt", map[string]interface{}{"tenant_id": "t1"})
 	require.Error(t, err)
 	assert.True(t, isRequiredFieldError(err, "prompt"))
 }
@@ -309,8 +313,8 @@ func TestExecuteAgentPrompt_ServiceError(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_prompt", map[string]interface{}{
-		"prompt": "test",
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_prompt", map[string]interface{}{
+		"tenant_id": "t1", "prompt": "test",
 	})
 	require.Error(t, err)
 }
@@ -323,8 +327,8 @@ func TestExecuteAgentStatus_Success(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_status", map[string]interface{}{
-		"session_id": "sess-1",
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_status", map[string]interface{}{
+		"tenant_id": "t1", "session_id": "sess-1",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -334,7 +338,7 @@ func TestExecuteAgentStatus_MissingSessionID(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_status", map[string]interface{}{})
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_status", map[string]interface{}{"tenant_id": "t1"})
 	require.Error(t, err)
 	assert.True(t, isRequiredFieldError(err, "session_id"))
 }
@@ -347,8 +351,8 @@ func TestExecuteAgentStatus_ServiceError(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_status", map[string]interface{}{
-		"session_id": "sess-1",
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_status", map[string]interface{}{
+		"tenant_id": "t1", "session_id": "sess-1",
 	})
 	require.Error(t, err)
 }
@@ -361,8 +365,8 @@ func TestExecuteAgentClose_Success(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_close", map[string]interface{}{
-		"session_id": "sess-1",
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_close", map[string]interface{}{
+		"tenant_id": "t1", "session_id": "sess-1",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -372,7 +376,7 @@ func TestExecuteAgentClose_MissingSessionID(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_close", map[string]interface{}{})
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_close", map[string]interface{}{"tenant_id": "t1"})
 	require.Error(t, err)
 	assert.True(t, isRequiredFieldError(err, "session_id"))
 }
@@ -385,8 +389,8 @@ func TestExecuteAgentClose_ServiceError(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_close", map[string]interface{}{
-		"session_id": "sess-1",
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_close", map[string]interface{}{
+		"tenant_id": "t1", "session_id": "sess-1",
 	})
 	require.Error(t, err)
 }
@@ -399,8 +403,8 @@ func TestExecuteAgentListSessions_Success(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_list_sessions", map[string]interface{}{
-		"backend": "claude",
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_sessions", map[string]interface{}{
+		"tenant_id": "t1", "backend": "claude",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -414,7 +418,7 @@ func TestExecuteAgentListSessions_ServiceError(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_list_sessions", map[string]interface{}{})
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_sessions", map[string]interface{}{"tenant_id": "t1"})
 	require.Error(t, err)
 }
 
@@ -432,7 +436,7 @@ func TestExecuteAgentListBackends_Success(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_list_backends", map[string]interface{}{})
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_backends", map[string]interface{}{})
 	require.NoError(t, err)
 	require.NotNil(t, result)
 }
@@ -445,7 +449,7 @@ func TestExecuteAgentListBackends_Error(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_list_backends", map[string]interface{}{})
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_backends", map[string]interface{}{})
 	require.Error(t, err)
 }
 
@@ -464,7 +468,7 @@ func TestExecuteAgentDecompose_Success(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_decompose", map[string]interface{}{
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_decompose", map[string]interface{}{
 		"backend":     "claude",
 		"task":        "Refactor the auth module",
 		"model":       "opus",
@@ -479,7 +483,7 @@ func TestExecuteAgentDecompose_MissingBackend(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_decompose", map[string]interface{}{
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_decompose", map[string]interface{}{
 		"task": "test",
 	})
 	require.Error(t, err)
@@ -490,7 +494,7 @@ func TestExecuteAgentDecompose_MissingTask(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_decompose", map[string]interface{}{
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_decompose", map[string]interface{}{
 		"backend": "claude",
 	})
 	require.Error(t, err)
@@ -505,7 +509,7 @@ func TestExecuteAgentDecompose_ServiceError(t *testing.T) {
 	}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_decompose", map[string]interface{}{
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_decompose", map[string]interface{}{
 		"backend": "claude", "task": "test",
 	})
 	require.Error(t, err)
@@ -519,7 +523,7 @@ func TestExecuteAgentHealth_Success(t *testing.T) {
 	agentSvc := &mockAgentService{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_health", map[string]interface{}{})
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_health", map[string]interface{}{})
 	require.NoError(t, err)
 	require.NotNil(t, result)
 }
@@ -532,7 +536,7 @@ func TestExecuteAgentBroadcast_Success(t *testing.T) {
 	msgSvc := &mockMessagingService{}
 	reg := newAgentRegistryWithMessaging(t, nil, msgSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_broadcast", map[string]interface{}{
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_broadcast", map[string]interface{}{
 		"channel":  "events",
 		"message":  "Hello agents",
 		"metadata": map[string]interface{}{"source": "orchestrator"},
@@ -549,7 +553,7 @@ func TestExecuteAgentBroadcast_Success(t *testing.T) {
 func TestExecuteAgentBroadcast_NilMessagingService(t *testing.T) {
 	reg := newAgentRegistryWithMessaging(t, nil, nil)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_broadcast", map[string]interface{}{
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_broadcast", map[string]interface{}{
 		"channel": "events",
 		"message": "test",
 	})
@@ -564,7 +568,7 @@ func TestExecuteAgentBroadcast_PublishError(t *testing.T) {
 	}
 	reg := newAgentRegistryWithMessaging(t, nil, msgSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_broadcast", map[string]interface{}{
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_broadcast", map[string]interface{}{
 		"channel": "events",
 		"message": "test",
 	})
@@ -580,7 +584,7 @@ func TestExecuteAgentCachePut_Success(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
 	registry := NewToolRegistry(svc, log)
 
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_agent_cache_put", map[string]interface{}{
+	result, err := registry.ExecuteTool(context.Background(), "quicbaas_orchestrator_cache_put", map[string]interface{}{
 		"project_id": "proj-123",
 		"key":        "arch-analysis",
 		"value":      `{"result": "module is well structured"}`,
@@ -604,7 +608,7 @@ func TestExecuteAgentCachePut_ServiceError(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
 	registry := NewToolRegistry(svc, log)
 
-	_, err := registry.ExecuteTool(context.Background(), "quicbaas_agent_cache_put", map[string]interface{}{
+	_, err := registry.ExecuteTool(context.Background(), "quicbaas_orchestrator_cache_put", map[string]interface{}{
 		"project_id": "proj-123",
 		"key":        "analysis",
 		"value":      "data",
@@ -617,7 +621,7 @@ func TestExecuteAgentCacheGet_Success(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
 	registry := NewToolRegistry(svc, log)
 
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_agent_cache_get", map[string]interface{}{
+	result, err := registry.ExecuteTool(context.Background(), "quicbaas_orchestrator_cache_get", map[string]interface{}{
 		"project_id": "proj-123",
 		"key":        "arch-analysis",
 	})
@@ -639,7 +643,7 @@ func TestExecuteAgentCacheGet_NotFound(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
 	registry := NewToolRegistry(svc, log)
 
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_agent_cache_get", map[string]interface{}{
+	result, err := registry.ExecuteTool(context.Background(), "quicbaas_orchestrator_cache_get", map[string]interface{}{
 		"project_id": "proj-123",
 		"key":        "nonexistent",
 	})
@@ -660,7 +664,7 @@ func TestExecuteAgentCacheGet_ServiceError(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
 	registry := NewToolRegistry(svc, log)
 
-	_, err := registry.ExecuteTool(context.Background(), "quicbaas_agent_cache_get", map[string]interface{}{
+	_, err := registry.ExecuteTool(context.Background(), "quicbaas_orchestrator_cache_get", map[string]interface{}{
 		"project_id": "proj-123",
 		"key":        "analysis",
 	})
@@ -684,7 +688,7 @@ func TestExecuteAgentHealth_Error(t *testing.T) {
 	agentSvc := &healthCheckErrorAgent{}
 	reg := newAgentRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_health", map[string]interface{}{})
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_health", map[string]interface{}{})
 	require.Error(t, err)
 }
 
@@ -692,7 +696,7 @@ func TestExecuteAgentBroadcast_WithoutMetadata(t *testing.T) {
 	msgSvc := &mockMessagingService{}
 	reg := newAgentRegistryWithMessaging(t, nil, msgSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_broadcast", map[string]interface{}{
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_broadcast", map[string]interface{}{
 		"channel": "events",
 		"message": "Hello agents",
 	})

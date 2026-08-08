@@ -185,19 +185,15 @@ func TestArtifact_FileRefMissingPath(t *testing.T) {
 	assert.Equal(t, "path", refErr.Missing)
 }
 
-// TestArtifact_LargeOverflowRejected verifies that submitting an inline
-// artifact larger than the configured InlineLimit (1 MiB) fails with
-// *ArtifactTooLargeError when the task store has no KV-backed promotion
-// store wired (the embedded server uses NewInMemoryTaskStore by default
-// without a KV store, so > 1 MiB inline content cannot be promoted and is
-// rejected). This documents the current default and guards against silent
-// regressions where an oversized artifact is accepted but truncated.
+// TestArtifact_LargeOverflowPromoted verifies that an inline artifact larger
+// than the configured InlineLimit (1 MiB) is promoted to its own KV key and
+// round-trips intact, rather than being rejected or silently truncated.
 //
-// NOTE: When the task store is replaced by NewInMemoryTaskStoreWithKV
-// (large-artifact promotion enabled), the ≥ 1 MiB path will instead succeed
-// and round-trip via the KV store; that behaviour is exercised by package
-// pkg/orchestration unit tests for the task store directly.
-func TestArtifact_LargeOverflowRejected(t *testing.T) {
+// The task store is now always KV-backed — task records and artifact payloads
+// share the same store — so the "no promotion target available" case this test
+// previously asserted (*ArtifactTooLargeError) can no longer occur. The
+// guarantee that matters is byte-exact round-tripping of a promoted payload.
+func TestArtifact_LargeOverflowPromoted(t *testing.T) {
 	tenantID := "tenant-art-large-" + uniqueSuffix()
 	ctx := tenantCtx(tenantID)
 
@@ -221,9 +217,9 @@ func TestArtifact_LargeOverflowRejected(t *testing.T) {
 			Size:    int64(len(payload)),
 		},
 	})
-	require.Error(t, err, "oversized inline artifact must be rejected without KV-backed promotion")
+	require.NoError(t, err, "oversized inline artifact must be promoted to the KV store")
 
-	var tooLarge *orchestration.ArtifactTooLargeError
-	assert.True(t, errors.As(err, &tooLarge),
-		"expected *ArtifactTooLargeError, got %T: %v", err, err)
+	got, err := testService.Agent().GetTaskArtifact(ctx, tenantID, task.ID, "huge.bin")
+	require.NoError(t, err, "a promoted artifact must be retrievable")
+	assert.Equal(t, payload, got.Content, "promoted artifact must round-trip byte-exactly")
 }
