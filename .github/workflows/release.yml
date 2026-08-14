@@ -6,7 +6,7 @@ on:
       - 'v*'
 
 env:
-  GO_VERSION: '1.26.0'
+  GO_VERSION: '1.26.5'
   REGISTRY: ghcr.io
   IMAGE_NAME_DAEMON: jeremyhahn/quicbaasd
   IMAGE_NAME_CLI: jeremyhahn/quicbaas

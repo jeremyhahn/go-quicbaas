@@ -7,7 +7,7 @@ on:
     branches: [ master, develop ]
 
 env:
-  GO_VERSION: '1.26.1'
+  GO_VERSION: '1.26.5'
   COVERAGE_THRESHOLD: 90
   REGISTRY: ghcr.io
   IMAGE_NAME: jeremyhahn/quicbaas

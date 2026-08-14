@@ -15,7 +15,7 @@ ARG BUILD_TAGS="iam raft rest rag"
 # ============================================================================
 # Stage 1: Build binaries inside a Go workspace mirroring the host layout.
 # ============================================================================
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26.5-alpine AS builder
 
 ARG BUILD_TAGS
 
