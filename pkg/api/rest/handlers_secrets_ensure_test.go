@@ -25,11 +25,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
-	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // TestHandleEnsureSecret_HappyPath exercises the REST-layer wiring for

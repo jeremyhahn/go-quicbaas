@@ -17,9 +17,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // =============================================================================

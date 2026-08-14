@@ -22,9 +22,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	certclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
-	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 // errCert is a sentinel error returned by the fake certificate service to

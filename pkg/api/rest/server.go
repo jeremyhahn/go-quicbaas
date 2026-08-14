@@ -813,7 +813,6 @@ func (s *Server) setupRouter() {
 			// Agent admin routes (disable/enable) are registered inside the
 			// orchestrator subrouter for consistency with register/list/get/remove.
 			registerOrchestratorRoutes(s, r)
-
 		})
 
 		// Upload-heavy routes with larger body size limit (100 MB).

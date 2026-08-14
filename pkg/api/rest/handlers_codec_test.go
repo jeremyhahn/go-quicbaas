@@ -9,10 +9,11 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jeremyhahn/go-quicbaas/pkg/service"
-	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
 func TestHandleGetOptimized(t *testing.T) {

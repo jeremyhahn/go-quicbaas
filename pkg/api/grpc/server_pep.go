@@ -462,7 +462,6 @@ func (a *PEPServiceAdapter) sendSnapshot(
 	resourcePatterns []string,
 	updates chan<- *PolicyUpdate,
 ) (map[string]policySnapshot, error) {
-
 	policies, err := a.policyEngine.ListPolicies(ctx, tenantID, iam.ListOptions{})
 	if err != nil {
 		return nil, &PolicyListError{TenantID: tenantID, Cause: err}
@@ -509,7 +508,6 @@ func (a *PEPServiceAdapter) pollChanges(
 	known map[string]policySnapshot,
 	updates chan<- *PolicyUpdate,
 ) (map[string]policySnapshot, error) {
-
 	policies, err := a.policyEngine.ListPolicies(ctx, tenantID, iam.ListOptions{})
 	if err != nil {
 		return known, &PolicyListError{TenantID: tenantID, Cause: err}

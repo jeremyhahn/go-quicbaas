@@ -9,6 +9,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 

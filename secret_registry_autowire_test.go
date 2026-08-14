@@ -3,8 +3,8 @@ package quicbaas_test
 import (
 	"testing"
 
-	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
 
 // TestEmbeddedSecretRegistryAutoWire starts an embedded QuicBaaS server the way

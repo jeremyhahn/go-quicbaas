@@ -4,12 +4,13 @@ package processor
 
 import (
 	"context"
-	"github.com/jeremyhahn/go-quicbaas/pkg/rag/chunking"
-	"github.com/jeremyhahn/go-quicbaas/pkg/rag/language"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/rag/chunking"
+	"github.com/jeremyhahn/go-quicbaas/pkg/rag/language"
 )
 
 func TestNew_ConfigValidationError(t *testing.T) {

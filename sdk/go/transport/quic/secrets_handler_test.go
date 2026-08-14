@@ -16,9 +16,10 @@ package quic
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
 func TestIsSecretsService(t *testing.T) {

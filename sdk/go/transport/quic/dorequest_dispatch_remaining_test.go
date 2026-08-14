@@ -18,13 +18,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/messaging"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/objectstorage"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestDoRequest_RemainingServiceDispatch drives doRequest end-to-end through the

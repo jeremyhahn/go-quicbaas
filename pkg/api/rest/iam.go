@@ -273,7 +273,6 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 			r.Put("/{provider_id}", h.UpdateProvider)
 			r.Delete("/{provider_id}", h.DeleteProvider)
 		})
-
 	})
 
 	// Invite activation endpoints (public — no auth required).

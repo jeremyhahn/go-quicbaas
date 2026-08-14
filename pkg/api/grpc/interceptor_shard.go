@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )

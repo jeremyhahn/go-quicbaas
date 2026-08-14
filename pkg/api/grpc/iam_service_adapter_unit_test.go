@@ -24,6 +24,7 @@ import (
 	"errors"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 

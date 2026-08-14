@@ -28,7 +28,6 @@ func TestVectorLifecycle(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, srv.vectorService)
 	})
-
 }
 
 // TestRAGLifecycle tests RAG system initialization paths.
@@ -84,7 +83,6 @@ func TestTimeSeriesLifecycle(t *testing.T) {
 		err = srv.stopTimeSeries()
 		require.NoError(t, err)
 	})
-
 }
 
 // TestInitVectorStorage tests vector storage initialization.

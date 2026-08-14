@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"errors"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )

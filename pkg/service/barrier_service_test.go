@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 

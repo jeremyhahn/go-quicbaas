@@ -37,11 +37,12 @@ import (
 	"github.com/stretchr/testify/require"
 	ggrpc "google.golang.org/grpc"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 // =============================================================================

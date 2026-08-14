@@ -17,9 +17,10 @@ import (
 	"math"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // TestMethodToOpcode_KnownAndUnknown exercises both branches of the core

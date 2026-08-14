@@ -187,7 +187,6 @@ func TestCreatePolicy(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
-
 }
 
 // TestGetPolicy tests the GetPolicy handler.

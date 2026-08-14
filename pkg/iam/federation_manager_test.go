@@ -1744,7 +1744,6 @@ func TestExtractClaim(t *testing.T) {
 
 // TestDecodeJWTPayload tests the post-verification payload decoder.
 func TestDecodeJWTPayload(t *testing.T) {
-
 	t.Run("success", func(t *testing.T) {
 		// Create a valid JWT structure (header.payload.signature)
 		claims := map[string]interface{}{

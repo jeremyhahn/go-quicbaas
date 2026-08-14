@@ -30,13 +30,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watchbridge"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // TestServer_Initialize_TT_CAFailurePropagates verifies initialize returns the

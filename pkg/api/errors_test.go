@@ -6,11 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
-	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"time"
+
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 func TestRequiredFieldError(t *testing.T) {

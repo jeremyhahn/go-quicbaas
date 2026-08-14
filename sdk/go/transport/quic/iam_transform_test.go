@@ -16,9 +16,10 @@ package quic
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 )
 
 func newTestIAMHandler() *iamHandler {

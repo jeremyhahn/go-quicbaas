@@ -26,9 +26,10 @@ import (
 	"testing"
 	"time"
 
-	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // pkixBackend embeds MockBackend but returns real PKIX-DER public keys from

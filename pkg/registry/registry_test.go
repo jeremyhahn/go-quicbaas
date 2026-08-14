@@ -22,6 +22,7 @@ import (
 	"time"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 

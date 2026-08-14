@@ -14,8 +14,9 @@
 package grpc
 
 import (
-	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"google.golang.org/grpc"
+
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 )
 
 // brokerServiceDescs is the canonical list of gRPC service descriptors that the

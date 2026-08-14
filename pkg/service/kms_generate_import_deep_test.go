@@ -18,10 +18,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 )
 
 // =============================================================================

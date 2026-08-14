@@ -218,7 +218,6 @@ func (s *OrchestratorAuthService) CreateServiceAccount(
 	ctx context.Context,
 	req *CreateServiceAccountRequest,
 ) (*ServiceAccount, *ClientCredentials, error) {
-
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}

@@ -22,6 +22,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 

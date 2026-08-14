@@ -359,7 +359,6 @@ func issueEKIdentity(
 	req *service.DeviceIdentityIssuance,
 	certReq *xkmssdk.TrustedCACertificateRequest,
 ) (*x509.Certificate, error) {
-
 	pub, err := parsePublicKey(req.EKPub)
 	if err != nil {
 		return nil, err
@@ -375,7 +374,6 @@ func issueAKIdentity(
 	req *service.DeviceIdentityIssuance,
 	certReq *xkmssdk.TrustedCACertificateRequest,
 ) (*x509.Certificate, error) {
-
 	pub, err := parsePublicKey(req.AKPub)
 	if err != nil {
 		return nil, err
@@ -394,7 +392,6 @@ func issueIDevIDIdentity(
 	req *service.DeviceIdentityIssuance,
 	certReq *xkmssdk.TrustedCACertificateRequest,
 ) (*x509.Certificate, error) {
-
 	tcgCSR, err := xkmssdk.UnmarshalIDevIDCSR(unwrapPEM(req.CSR))
 	if err != nil {
 		return nil, ErrCAInvalidTCGCSR

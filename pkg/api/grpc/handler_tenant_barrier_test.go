@@ -24,6 +24,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 )
 

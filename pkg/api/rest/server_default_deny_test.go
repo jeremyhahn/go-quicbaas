@@ -20,8 +20,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // SetDefaultDenyEnforcement installs the path-predicate gate on the TOP router so

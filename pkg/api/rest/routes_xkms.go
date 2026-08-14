@@ -22,7 +22,6 @@ import "github.com/go-chi/chi/v5"
 // so that the go-xkms SDK REST transport client can connect to quicbaasd.
 func registerXKMSRoutes(s *Server, r chi.Router) {
 	r.Route("/xkms", func(r chi.Router) {
-
 		// Health
 		r.Get("/health", s.HandleXKMSHealth)
 

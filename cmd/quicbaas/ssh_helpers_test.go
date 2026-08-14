@@ -21,10 +21,11 @@ import (
 	stderrors "errors"
 	"testing"
 
-	sshSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	sshSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 )
 
 // =============================================================================

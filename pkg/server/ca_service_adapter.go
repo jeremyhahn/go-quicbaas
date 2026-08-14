@@ -173,7 +173,6 @@ func (a *caServiceAdapter) IssueCertificate(
 	ctx context.Context,
 	req *xkmstransport.IssueCertificateRequest,
 ) (*xkmstransport.IssueCertificateResponse, error) {
-
 	if req == nil {
 		return nil, ErrCAServiceAdapterNilRequest
 	}
@@ -305,7 +304,6 @@ func (a *caServiceAdapter) SignCSR(
 	ctx context.Context,
 	req *xkmstransport.SignCSRRequest,
 ) (*xkmstransport.SignCSRResponse, error) {
-
 	if req == nil {
 		return nil, ErrCAServiceAdapterNilRequest
 	}
@@ -363,7 +361,6 @@ func (a *caServiceAdapter) RevokeCertificate(
 	ctx context.Context,
 	req *xkmstransport.RevokeCertificateRequest,
 ) (*xkmstransport.RevokeCertificateResponse, error) {
-
 	if req == nil {
 		return nil, ErrCAServiceAdapterNilRequest
 	}
@@ -390,7 +387,6 @@ func (a *caServiceAdapter) GetCABundle(
 	ctx context.Context,
 	req *xkmstransport.GetCABundleRequest,
 ) (*xkmstransport.GetCABundleResponse, error) {
-
 	bundle, err := a.getCA().CABundle()
 	if err != nil {
 		return nil, err
@@ -408,7 +404,6 @@ func (a *caServiceAdapter) GetCACertificate(
 	ctx context.Context,
 	req *xkmstransport.GetCACertificateRequest,
 ) (*xkmstransport.GetCACertificateResponse, error) {
-
 	cert, err := a.getCA().CACertificate()
 	if err != nil {
 		return nil, err
@@ -433,7 +428,6 @@ func (a *caServiceAdapter) GenerateCRL(
 	ctx context.Context,
 	req *xkmstransport.GenerateCRLRequest,
 ) (*xkmstransport.GenerateCRLResponse, error) {
-
 	crlDER, err := a.getCA().GenerateCRL(ctx)
 	if err != nil {
 		return nil, err
@@ -451,7 +445,6 @@ func (a *caServiceAdapter) IsRevoked(
 	ctx context.Context,
 	req *xkmstransport.IsRevokedRequest,
 ) (*xkmstransport.IsRevokedResponse, error) {
-
 	if req == nil {
 		return nil, ErrCAServiceAdapterNilRequest
 	}

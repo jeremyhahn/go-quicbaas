@@ -238,7 +238,6 @@ type queryErrorMock struct {
 }
 
 func (m *queryErrorMock) Query(_ context.Context, _ *service.QueryRequest, _ chan<- *service.QueryResponse) error {
-
 	return errors.New("query failed")
 }
 
@@ -264,7 +263,6 @@ type scanIndexErrorMock struct {
 }
 
 func (m *scanIndexErrorMock) ScanIndex(_ context.Context, _ *service.ScanRequest, _ chan<- *service.ScanResponse) error {
-
 	return errors.New("scan index failed")
 }
 

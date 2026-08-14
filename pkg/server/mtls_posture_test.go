@@ -21,8 +21,9 @@ import (
 	"crypto/tls"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
 
 // TestOptionalMTLSClientAuthDefault verifies the default posture is the

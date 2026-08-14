@@ -329,7 +329,6 @@ func (r *ToolRegistry) registerSecretsTools() {
 		},
 	})
 	r.registerSecretsEnsureTool()
-
 }
 
 func (r *ToolRegistry) executeSecretsStore(ctx context.Context, args map[string]interface{}) (interface{}, error) {

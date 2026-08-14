@@ -1203,7 +1203,6 @@ func TestFT2_StartService_WithEmbedding(t *testing.T) {
 
 	err = srv.startService()
 	assert.NoError(t, err)
-
 }
 
 func TestFT2_StartService_WithMessaging(t *testing.T) {
@@ -1230,7 +1229,6 @@ func TestFT2_StartService_WithMessaging(t *testing.T) {
 
 	err = srv.startService()
 	assert.NoError(t, err)
-
 }
 
 // =============================================================================

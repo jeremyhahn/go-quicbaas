@@ -14,6 +14,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/messages"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )

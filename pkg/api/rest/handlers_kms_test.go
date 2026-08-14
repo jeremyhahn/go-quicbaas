@@ -29,15 +29,16 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
 )
 
 // MockKMSManager is a mock implementation of interfaces.KMSManager for testing.

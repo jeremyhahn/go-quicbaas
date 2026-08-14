@@ -29,6 +29,7 @@ import (
 	"golang.org/x/oauth2"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 

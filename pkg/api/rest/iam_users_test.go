@@ -157,7 +157,6 @@ func TestIAMCreateUser(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		assert.Contains(t, w.Body.String(), "identity store not available")
 	})
-
 }
 
 // TestIAMGetUser tests the GetUser handler.

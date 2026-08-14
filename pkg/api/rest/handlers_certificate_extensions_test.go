@@ -35,7 +35,6 @@ import (
 // recorder.
 func postCertExt(t *testing.T, path string, body interface{}, setup func(*testutil.MockQuicBaaS),
 	handler func(*Server, http.ResponseWriter, *http.Request)) *httptest.ResponseRecorder {
-
 	t.Helper()
 
 	server, mockService, cleanup := setupMockServer(t)

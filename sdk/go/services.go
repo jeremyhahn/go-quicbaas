@@ -17,8 +17,9 @@ import (
 	"sync"
 
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
-	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 )
 
 // =============================================================================

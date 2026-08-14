@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"

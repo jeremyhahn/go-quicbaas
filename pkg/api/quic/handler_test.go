@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
@@ -28,9 +29,10 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 
+	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+
 	schedulerpkg "github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
-	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // =============================================================================

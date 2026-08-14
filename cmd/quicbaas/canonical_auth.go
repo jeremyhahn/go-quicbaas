@@ -37,8 +37,9 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/spf13/cobra"
 
-	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	xkmsfido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
+
+	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
 
 // canonicalFactorTypeFIDO2 is the factor type whose enrollment is performed by

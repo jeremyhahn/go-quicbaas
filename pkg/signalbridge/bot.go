@@ -197,7 +197,6 @@ func (b *OrchestratorBot) inboundLoop(ctx context.Context) {
 
 // handleInbound processes a single inbound Signal message end-to-end.
 func (b *OrchestratorBot) handleInbound(ctx context.Context, msg InboundMessage) error {
-
 	operator, err := b.auth.ResolveOperator(ctx, msg.SenderACI, msg.ConversationID, msg.Kind)
 	if err != nil {
 		// Unauthorized senders get a one-line explanation.

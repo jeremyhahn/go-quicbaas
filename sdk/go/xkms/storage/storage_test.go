@@ -18,8 +18,9 @@ import (
 	"errors"
 	"testing"
 
-	xkmsstorage "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/storage"
 	xkmsoriginal "github.com/jeremyhahn/go-xkms/pkg/storage"
+
+	xkmsstorage "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/storage"
 )
 
 // compile-time interface assertion: the re-exported Backend alias is

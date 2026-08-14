@@ -33,9 +33,10 @@ import (
 	"testing"
 	"time"
 
-	pkgservice "github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	pkgservice "github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // =============================================================================

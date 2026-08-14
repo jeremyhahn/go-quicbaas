@@ -14,10 +14,11 @@
 package quicbaas
 
 import (
+	dane "github.com/jeremyhahn/go-xkms/sdk/go/dane"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
-	dane "github.com/jeremyhahn/go-xkms/sdk/go/dane"
 )
 
 // =============================================================================

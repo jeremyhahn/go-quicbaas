@@ -16,9 +16,10 @@ package quic
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/objectstorage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/objectstorage"
 )
 
 // Note on wire-shape fidelity: the QUIC server encodes pkg/service.*Response

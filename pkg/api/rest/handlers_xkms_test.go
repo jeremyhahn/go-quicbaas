@@ -3683,7 +3683,6 @@ func TestXKMS91_HandlersEmptyKeyID(t *testing.T) {
 		server.HandleXKMSGetBackend(w, req)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
-
 }
 
 // =============================================================================

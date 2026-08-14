@@ -16,9 +16,10 @@ package quic
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rag"
 )
 
 func TestIsRAGService(t *testing.T) {

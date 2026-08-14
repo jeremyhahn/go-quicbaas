@@ -22,10 +22,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
-	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // ragIndexMockService exposes both an embedding service and a vector service so

@@ -19,12 +19,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rag"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/vector"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // newDispatchTestTransport spins up a mock server and a connected transport.

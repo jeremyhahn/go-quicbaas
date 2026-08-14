@@ -20,9 +20,10 @@ import (
 	stderrors "errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 )
 
 // TestEmbeddedQRDBWiringError_Wrap exercises the Unwrap chain explicitly.

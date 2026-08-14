@@ -24,9 +24,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestSecurityHeadersMiddleware(t *testing.T) {

@@ -23,9 +23,10 @@ import (
 	"testing"
 	"time"
 
-	certclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	certclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
 )
 
 // =============================================================================

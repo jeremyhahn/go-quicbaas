@@ -18,9 +18,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // TestConfig_Validate_AllowedMountRoots covers both halves of the new key:

@@ -468,7 +468,6 @@ func TestBootstrapIntegration(t *testing.T) {
 		adminUser := authManager2.userStore.GetByUsername("admin")
 		require.NotNil(t, adminUser)
 		assert.Equal(t, adminUserID, adminUser.ID)
-
 	})
 }
 

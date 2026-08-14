@@ -20,6 +20,7 @@ import (
 	"time"
 
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
+
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 

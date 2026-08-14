@@ -23,10 +23,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/ollama"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/ollama"
 )
 
 func TestNewOllamaService_NilConfig(t *testing.T) {

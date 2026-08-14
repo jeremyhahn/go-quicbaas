@@ -28,8 +28,9 @@ import (
 	qrdbquic "github.com/jeremyhahn/go-qrdb/sdk/go/transport/quic"
 	qrdbrest "github.com/jeremyhahn/go-qrdb/sdk/go/transport/rest"
 	qrdbunix "github.com/jeremyhahn/go-qrdb/sdk/go/transport/unix"
-	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // QRDBClient is a re-export of the go-qrdb SDK Client so consumers do not

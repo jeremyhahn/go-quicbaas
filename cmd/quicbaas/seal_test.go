@@ -1199,7 +1199,6 @@ func TestCreateKMSClient_Transport(t *testing.T) {
 func TestCreateDEKClient_Transport(t *testing.T) {
 	cleanup := setupCoverageTestLogger(t)
 	defer cleanup()
-
 }
 
 func TestCreateBackendClient_Transport(t *testing.T) {

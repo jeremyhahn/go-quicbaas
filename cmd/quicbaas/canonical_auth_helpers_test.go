@@ -29,9 +29,10 @@ import (
 	"testing"
 	"time"
 
-	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
 
 // =============================================================================

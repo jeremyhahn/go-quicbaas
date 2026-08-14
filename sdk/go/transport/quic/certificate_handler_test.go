@@ -17,10 +17,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
 func TestIsCertificateService(t *testing.T) {
