@@ -832,7 +832,26 @@ func TestPushService_GetStats(t *testing.T) {
 		ps.Subscribe(ctx, "stats-channel-1")
 		ps.Subscribe(ctx, "stats-channel-2")
 
-		stats := ps.GetStats()
+		// The hub processes registrations on its own goroutine (Run consumes
+		// h.register), so these counts are eventually consistent -- reading
+		// them straight after Subscribe assumes the hub has already been
+		// scheduled, which holds on an idle machine and not on a loaded
+		// runner. Poll to the expected state instead, and report whatever it
+		// last saw if it never gets there (testing-guidelines.md: never treat
+		// elapsed time as a synchronization primitive).
+		var stats *Stats
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			stats = ps.GetStats()
+			if stats != nil && stats.TotalChannels == 2 && stats.TotalSubscriptions == 3 {
+				break
+			}
+			if time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+
 		if stats == nil {
 			t.Fatal("expected non-nil stats")
 		}
