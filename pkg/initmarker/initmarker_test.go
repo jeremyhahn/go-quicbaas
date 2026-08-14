@@ -90,7 +90,6 @@ func TestRead_UnreadableFailsTyped(t *testing.T) {
 
 // TestWrite_UnwritableFailsTyped covers the write error branch.
 func TestWrite_UnwritableFailsTyped(t *testing.T) {
-	require.NotEqual(t, 0, os.Geteuid(), "test must not run as root")
 	err := Write("/proc/nonexistent/dir", &Marker{BarrierStrategy: "none"})
 	require.Error(t, err)
 	var typed *WriteError

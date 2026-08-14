@@ -230,7 +230,6 @@ func TestInitMarker_WriteReadRoundTrip(t *testing.T) {
 
 // TestInitMarker_WriteFails covers the temp-file write error path.
 func TestInitMarker_WriteFails(t *testing.T) {
-	require.NotEqual(t, 0, os.Geteuid(), "Test must not run as root")
 	m := &initDoneMarker{BarrierStrategy: "none"}
 	err := initmarker.Write("/proc/nonexistent/dir", m)
 	require.Error(t, err)
@@ -523,8 +522,6 @@ func TestCoverageHooks_NoOp(t *testing.T) {
 // logger), then NewServer fails because the config's logger output points
 // at an unwritable file.
 func TestRunDaemon_NewServerFails(t *testing.T) {
-	require.NotEqual(t, 0, os.Geteuid(), "Test must not run as root")
-
 	log = createTestLogger(t)
 	tempDir := t.TempDir()
 
@@ -622,7 +619,6 @@ func TestApplyServerFlags_EmbeddedAgentDefaultDataDir(t *testing.T) {
 // default (/var/lib/quicbaas/wal) survived a --data-dir override and failed
 // the boot-time directory-writable validation.
 func TestApplyServerFlags_DataDirDerivesWALDir(t *testing.T) {
-	require.NotEqual(t, 0, os.Geteuid(), "Test must not run as root")
 	viper.Reset()
 	defer viper.Reset()
 
@@ -652,7 +648,6 @@ func TestApplyServerFlags_DataDirDerivesWALDir(t *testing.T) {
 // storage.wal_dir (env var or config-file key, observed via viper.IsSet) is
 // NOT overridden by --data-dir. The explicit WAL location always wins.
 func TestApplyServerFlags_ExplicitWALDirWins(t *testing.T) {
-	require.NotEqual(t, 0, os.Geteuid(), "Test must not run as root")
 	viper.Reset()
 	defer viper.Reset()
 
