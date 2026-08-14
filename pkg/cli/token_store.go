@@ -57,8 +57,44 @@ func SaveToken(path string, token *TokenData) error {
 		return errors.Wrapf(err, errors.ErrInternal, "cli.SaveToken", "failed to serialize token")
 	}
 
-	// Write token file with restricted permissions (owner read/write only)
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	// Stage in the same directory and rename over the target. os.WriteFile
+	// truncates first, so a reader that loads the token while a renewal is
+	// writing sees an empty or partial file ("unexpected end of JSON input") --
+	// TokenManager refreshes under a single-flight lock but readers do not take
+	// it, so that window is reachable whenever one process refreshes while
+	// another reads. Rename is atomic, so a reader gets either the old token or
+	// the new one. It also means a crash mid-write cannot destroy the session.
+	tmp, err := os.CreateTemp(dir, ".token-*")
+	if err != nil {
+		return errors.Wrapf(err, errors.ErrInternal, "cli.SaveToken", "failed to create temporary token file")
+	}
+	tmpPath := tmp.Name()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return errors.Wrapf(err, errors.ErrInternal, "cli.SaveToken", "failed to set token file permissions")
+	}
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return errors.Wrapf(err, errors.ErrInternal, "cli.SaveToken", "failed to write token file")
+	}
+
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return errors.Wrapf(err, errors.ErrInternal, "cli.SaveToken", "failed to sync token file")
+	}
+
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return errors.Wrapf(err, errors.ErrInternal, "cli.SaveToken", "failed to close token file")
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
 		return errors.Wrapf(err, errors.ErrInternal, "cli.SaveToken", "failed to write token file")
 	}
 
