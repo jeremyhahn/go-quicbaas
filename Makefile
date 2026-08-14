@@ -3602,6 +3602,9 @@ coverage-server-full: ## Merge unit + integration coverage for pkg/server (real 
 	@echo "$(BLUE)Combined (unit + daemon-boot):$(NC)"; $(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-server-merged.out | tail -1
 
 SUBMODULE_TAGS := sdk/go
+# Builds never resolve through a workspace: modules come from Gitea tags
+# (dependency-resolution.md §2). Immunizes against stray go.work files.
+export GOWORK=off
 
 # ---- dependency-resolution.md targets (2026-08-13 cutover) ----
 # SUBMODULE_TAGS lists nested modules tagged in lockstep with the root
