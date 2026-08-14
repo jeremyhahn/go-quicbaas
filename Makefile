@@ -2283,7 +2283,13 @@ benchmark-fips: ## Run benchmarks in FIPS mode
 lint: ## Run linters
 	@echo "$(BLUE)Running linters...$(NC)"
 	@test -x $(GOLINT) || (echo "$(RED)golangci-lint not installed. Run: make install-tools$(NC)" && exit 1)
-	$(GOLINT) run --timeout=5m --build-tags '$(LINT_BUILD_TAGS)' ./...
+	# 20m, not the template's 5m. This module is ~526k lines across ~1300 files
+	# and every linter runs over the full tag set; on a contended runner the
+	# pass took 16 minutes on 2026-08-14 and was killed by the deadline after
+	# it had already printed "0 issues" -- a green analysis reported as a red
+	# job. The budget exists to catch a hang, so it needs to sit above the
+	# honest worst case rather than near the median.
+	$(GOLINT) run --timeout=20m --build-tags '$(LINT_BUILD_TAGS)' ./...
 
 .PHONY: coverage
 coverage: ## Generate coverage report (unit only; excludes generated code)
