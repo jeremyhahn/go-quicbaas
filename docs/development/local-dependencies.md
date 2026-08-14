@@ -1,92 +1,79 @@
 # Local Dependencies
 
-QuicBaaS develops co-evolving sibling repos (go-qrdb, go-xkms, go-signal, etc.)
-in a shared Go workspace. There is no `replace` directive boilerplate in any
-individual `go.mod` — Go's workspace mechanism (`go.work`) does the resolution.
+QuicBaaS resolves its sibling repos (go-qrdb, go-quicraft, go-xkms, go-signal,
+go-libsignal, go-objstore, go-codec) as **tagged Go modules published to the
+company Gitea server**. There is no Go workspace, no `replace` directive, and
+no dependence on where a sibling repo happens to be checked out. A clone of
+this repo alone builds and tests.
 
-## Layout
+See `software/conventions/dependency-resolution.md` in the automatethethings
+repo for the portfolio-wide rules; the short version is below.
 
-Sibling repos are checked out alongside `go-quicbaas` under a common parent
-directory. The parent contains `go.work`:
+## How resolution works
 
-```
-/<workspace-root>/
-  go.work          # Go workspace file
-  go-quicbaas/     # this project
-  go-qrdb/         # QRDB distributed database engine
-  go-xkms/         # Key management system
-  go-quicraft/     # Raft consensus library
-  go-signal/       # Signal CLI bridge
-  go-libsignal/    # Libsignal protocol primitives (used by pkg/signalbridge)
-  go-objstore/     # Object storage abstractions
-  ...              # other workspace modules (see go.work)
-```
+Every sibling module keeps the module path `github.com/jeremyhahn/<repo>`, and
+`GOPRIVATE=github.com/jeremyhahn/*` plus a git url-rewrite points fetches at
+Gitea. `GOPRIVATE` is the only mechanism in play — it exempts those paths from
+both the module proxy and the checksum database, which is what lets the
+rewrite fire. Do not set `GOPROXY`, `GOSUMDB`, `GONOSUMDB`, `GOINSECURE` or
+`GOFLAGS` to work around a fetch problem: doing so also routes every
+*third-party* module around proxy.golang.org and disables sumdb verification
+for all of them. That is not hypothetical — it broke this repo on 2026-08-14
+when upstream re-pointed a `go-tpm-tools` tag and a direct fetch produced a
+zip whose hash no longer matched the correct go.sum entry.
 
-Run `cat ../go.work` from inside the project to see the full workspace shape.
+`GOWORK=off` is the default posture. If a stray `go.work` exists anywhere above
+this checkout, it is a mistake; delete it rather than accommodate it.
 
 ## Local development
 
-`go build`, `go test`, `gopls`, etc. all work directly because they discover
-`../go.work` automatically. No setup required beyond having the sibling repos
-checked out alongside this one.
+`go build`, `go test` and `gopls` work from a plain clone. The one requirement
+is credentials for the Gitea host — the same url-rewrite the runners use. No
+sibling checkout needs to exist on disk.
 
-## Docker integration tests
+To take a new version of a sibling, tag it in its own repo and bump the
+`require` here (`go get github.com/jeremyhahn/go-qrdb@v0.3.0-alpha`). Compile
+against the latest tagged version of each sibling rather than pinning to an
+old one.
 
-`make integration-test` builds containers that need the same workspace shape
-inside Docker. This is handled by **Docker BuildKit's `additional_contexts`** —
-the compose file declares a named context `workspace` pointing at the
-workspace-root parent directory:
+## Coupled changes across repos
 
-```yaml
-build:
-  context: ../..              # project root (default context)
-  additional_contexts:
-    workspace: ../../..       # workspace root (parent of project)
-  dockerfile: test/integration/Dockerfile.node
-```
+When a change spans this repo and a sibling, land it bottom-up: change the
+sibling, tag it, then bump the requirement here. A scratch workspace is
+permitted while iterating, but it never gets committed and never leaves your
+machine — nothing on the CI path may depend on it.
 
-Inside `Dockerfile.node`, sibling repos are pulled selectively from the
-`workspace` named context:
+## Docker and CI
 
-```dockerfile
-COPY --from=workspace go-libsignal  ./go-libsignal
-COPY --from=workspace go-objstore   ./go-objstore
-COPY --from=workspace go-qrdb       ./go-qrdb
-COPY --from=workspace go-quicraft   ./go-quicraft
-COPY --from=workspace go-signal     ./go-signal
-COPY --from=workspace go-xkms       ./go-xkms
-COPY . ./go-quicbaas                # this project (default context)
-```
-
-A pruned `go.work` is then written inside the image (the host `go.work`
-references unrelated 21GB Layer 0 modules like `go-trusted-platform` that we
-do not ship to Docker). The pruned file lists only the modules actually
-copied:
+The integration and e2e images build from the pinned versions in `go.mod`, the
+same as every other build. They receive credentials through a **BuildKit
+secret mount**, never a build argument and never a baked layer:
 
 ```dockerfile
-RUN { \
-        echo 'go 1.26.4'; \
-        echo 'use ('; \
-        echo '    ./go-libsignal'; \
-        echo '    ./go-objstore'; \
-        ... \
-        echo ')'; \
-    } > go.work
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    go mod download
 ```
 
-`go build` and `go test` inside the container then resolve everything via this
-go.work — no Docker-specific `replace` rewrites in any individual `go.mod`,
-no `.deps/` staging directory.
+`make stage-gomodauth` writes that secret file with `umask 077` from the
+`GIT_CONFIG_*` variables the runners inject, and `make integration-test`
+invokes it. The secret is sourced, never echoed; verify a token by its shape,
+never by printing it.
 
-### Why no `.deps/` directory anymore
+Two rules the harness depends on, both learned the hard way:
 
-Earlier versions of this project staged sibling repos via `rsync` into
-`.deps/` and ran a chain of `sed` commands inside the Dockerfile to rewrite
-`go.mod` `replace` directives to `=> /deps/<sibling>`. The migration to
-parent-`go.work`-based local development made those `replace` directives
-unnecessary, which broke the Dockerfile chain. Switching Docker to
-`additional_contexts` brings the build environment in line with how local
-dev already works.
+- **Tracked files are baked into the image; per-run generated material is
+  produced by a service inside the stack into a named volume.** Nothing is
+  bind-mounted in from the caller. A job container drives the *host's* Docker
+  daemon through a mounted socket, so a `./relative` bind source resolves
+  against the host filesystem, and Docker helpfully creates an empty directory
+  where the file should have been. The certificates are generated by the
+  `certs-init` service into the `quicbaas-certs` volume, and every consumer
+  declares `depends_on: certs-init: condition: service_completed_successfully`.
+- **A compose `command:` replaces the image's `CMD` entirely.** Fixing
+  something in a Dockerfile's `CMD` does nothing if the compose service also
+  sets `command:`.
 
 ## Pinned Dependencies
 
@@ -94,9 +81,10 @@ dev already works.
 |--------|---------------|--------|
 | `github.com/armon/go-metrics` | `v0.4.1` | Prevents upgrade to versions with breaking API changes that affect `hashicorp/memberlist` |
 
-## Disabling local resolution
+## Build tags
 
-To build against published module versions instead of local workspace copies,
-remove or rename the parent `go.work` (e.g. `go.work.off`) and run
-`go mod tidy`. This requires that all sibling dependencies are published at
-compatible versions on the module proxy.
+`gms_pure_go` is required for every `CGO_ENABLED=0` build. `dolthub/go-mysql-server`'s
+`internal/regex` package ships only `cgo && !gms_pure_go` and `gms_pure_go`
+files, so without the tag a static build has no implementation to link and
+fails at link time. The Makefile adds it to `BUILD_TAGS` by default; the
+workflows and Dockerfiles pass it explicitly where they build directly.
