@@ -25,8 +25,8 @@ require (
 	github.com/jeremyhahn/go-qrdb v0.1.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.1.0-alpha
 	github.com/jeremyhahn/go-quicbaas/sdk/go v0.1.2-alpha
-	github.com/jeremyhahn/go-xkms v0.3.1-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.3.1-alpha
+	github.com/jeremyhahn/go-xkms v0.3.2-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.3.2-alpha
 	github.com/klauspost/compress v1.18.4
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
 	github.com/mochi-mqtt/server/v2 v2.7.9
