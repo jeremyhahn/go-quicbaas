@@ -51,6 +51,14 @@ RUN rm -f pkg/api/rest/debug_integration.go pkg/api/rest/debug_noop.go || true
 RUN CGO_ENABLED=0 GOOS=linux \
     go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd
 
+# The CLI the tests dispatch through. It used to be built on the host by
+# `make integration-test` and bind-mounted in; it is built from tracked source,
+# so it belongs in the image -- and a bind mount cannot work here anyway, since
+# the source path would be resolved by the host daemon, which cannot see the
+# job container's workspace.
+RUN CGO_ENABLED=0 GOOS=linux \
+    go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas
+
 # ============================================================================
 # Stage 2: Test runtime — full Go toolchain plus the built server binary
 # ============================================================================
@@ -96,15 +104,15 @@ RUN --mount=type=secret,id=gomodauth \
 
 COPY . .
 
-# Server binary built in stage 1
+# Binaries built in stage 1. The CLI lands on the PATH the tests already expect
+# (/workspace/go-quicbaas/bin, first entry below) instead of arriving as a bind
+# mount.
 COPY --from=builder /workspace/go-quicbaas/bin/quicbaasd /usr/local/bin/quicbaasd
+COPY --from=builder /workspace/go-quicbaas/bin/quicbaas /workspace/go-quicbaas/bin/quicbaas
 
 # Health check script comes from the project context
 COPY test/integration/health_check.sh /usr/local/bin/health_check.sh
-RUN chmod +x /usr/local/bin/health_check.sh /usr/local/bin/quicbaasd
-
-# CLI binary directory is mounted at runtime (built by Makefile)
-RUN mkdir -p /workspace/go-quicbaas/bin
+RUN chmod +x /usr/local/bin/health_check.sh /usr/local/bin/quicbaasd /workspace/go-quicbaas/bin/quicbaas
 
 # GOSUMDB=off and GOINSECURE are deliberately absent: the module cache is
 # warmed above, and go.sum is the integrity record rather than something to

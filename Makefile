@@ -1647,31 +1647,10 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	echo "$(BLUE)  Ollama mode: enabled=$$OLLAMA_ENABLED gpu=$$TEST_GPU local-container=$$START_LOCAL_OLLAMA url=$$OLLAMA_URL$(NC)"; \
 	cp go.mod /tmp/quicbaas-gomod-backup; \
 	cp sdk/go/go.mod /tmp/quicbaas-sdk-gomod-backup; \
-	echo "$(YELLOW)Building CLI binary for integration tests...$(NC)"; \
-	mkdir -p bin; \
-	if ! CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags "$(strip $(INTEGRATION_BUILD_TAGS))" -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas; then \
-		echo "$(RED)  ✗ CLI binary build FAILED — aborting integration test (would dispatch with a stale binary)$(NC)"; \
-		exit 1; \
-	fi; \
-	echo "$(GREEN)  ✓ CLI binary built: bin/quicbaas$(NC)"; \
-	echo ""; \
-	echo "$(YELLOW)Generating Raft mTLS certificates for integration test cluster...$(NC)"; \
-	if [ -d test/integration/certs ] && [ ! -w test/integration/certs ]; then \
-		echo "  Removing root-owned certs directory from previous Docker run..."; \
-		sudo rm -rf test/integration/certs; \
-	fi; \
-	rm -rf test/integration/certs; \
-	go run test/integration/gen-certs/main.go test/integration/certs; \
-	for f in ca.crt node1.crt node1.key node2.crt node2.key node3.crt node3.key admin.crt; do \
-		if [ ! -s test/integration/certs/$$f ]; then \
-			echo "$(RED)  ✗ certificate fixture missing or empty: test/integration/certs/$$f$(NC)"; \
-			echo "$(RED)    An aborted run can leave a root-owned empty certs/ dir that Docker recreated$(NC)"; \
-			echo "$(RED)    for the bind mount. Remove it (sudo rm -rf test/integration/certs) and retry.$(NC)"; \
-			echo "$(RED)    Starting the cluster now would fail as 'TLS cert file does not exist'.$(NC)"; \
-			exit 1; \
-		fi; \
-	done; \
-	echo "$(GREEN)  ✓ Raft mTLS certificates generated$(NC)"; \
+	echo "$(YELLOW)CLI binary and mTLS certificates are produced inside the stack$(NC)"; \
+	echo "$(YELLOW)  CLI: baked into the test-runner image from tracked source$(NC)"; \
+	echo "$(YELLOW)  certs: generated per run by the certs-init service into the$(NC)"; \
+	echo "$(YELLOW)         quicbaas-certs named volume, which the nodes mount$(NC)"; \
 	echo ""; \
 	echo "$(YELLOW)Cleaning up any previous test containers and volumes...$(NC)"; \
 	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans 2>/dev/null || true; \

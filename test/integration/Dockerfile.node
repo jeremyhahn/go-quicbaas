@@ -96,6 +96,16 @@ COPY --from=builder /workspace/go-quicbaas/bin/quicbaas  /usr/local/bin/quicbaas
 
 RUN chmod +x /usr/local/bin/quicbaasd /usr/local/bin/quicbaas
 
+# The node config is tracked, so it is baked in rather than bind-mounted. A
+# bind source is a path in the *host* daemon's filesystem, and this compose is
+# driven from a job container whose workspace the host cannot see -- Docker then
+# creates an empty directory at the source and the daemon starts with
+# "read /etc/quicbaas/quicbaas.yaml: is a directory". Per-run *generated*
+# material (the mTLS/PIV certs) comes from the certs-init service through a
+# named volume instead; named volumes are daemon-side objects and work the same
+# on a runner and a laptop.
+COPY test/integration/quicbaas.yaml /etc/quicbaas/quicbaas.yaml
+
 ENV QUICBAAS_LOG_LEVEL=info \
     QUICBAAS_LOG_FORMAT=json \
     QUICBAAS_DATA_DIR=/data \
