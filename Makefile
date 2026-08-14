@@ -3285,21 +3285,23 @@ bench-storage-file: ## Run file storage benchmarks
 # =============================================================================
 # HNSW Distance Functions (go-qrdb)
 # =============================================================================
+# The HNSW distance tests live in go-qrdb and run in go-qrdb's own CI.
+# They were previously delegated into .deps/go-qrdb, a vendored sibling
+# working-tree copy removed at the 2026-08-13 dependency-resolution cutover
+# (deps resolve from Gitea as tagged modules; nothing builds from .deps).
 
 .PHONY: test-hnsw-distance
-test-hnsw-distance: ## Run HNSW distance unit tests (go-qrdb)
-	@echo "$(BLUE)Running HNSW distance unit tests...$(NC)"
-	@$(MAKE) -C .deps/go-qrdb test-hnsw-distance
+test-hnsw-distance: ## (moved) HNSW tests run in go-qrdb's own repo/CI
+	@echo "test-hnsw-distance moved to go-qrdb (dependency-resolution.md); run it there."
 
 .PHONY: bench-hnsw-distance
-bench-hnsw-distance: ## Run HNSW distance benchmarks (go-qrdb)
-	@echo "$(BLUE)Running HNSW distance benchmarks...$(NC)"
-	@$(MAKE) -C .deps/go-qrdb bench-hnsw-distance
+bench-hnsw-distance: ## (moved) HNSW benchmarks run in go-qrdb's own repo/CI
+	@echo "bench-hnsw-distance moved to go-qrdb (dependency-resolution.md); run it there."
 
 .PHONY: coverage-hnsw-distance
-coverage-hnsw-distance: ## Generate HNSW distance coverage (go-qrdb)
-	@echo "$(BLUE)Running HNSW distance coverage...$(NC)"
-	@$(MAKE) -C .deps/go-qrdb coverage-hnsw-distance
+coverage-hnsw-distance: ## (moved) HNSW coverage runs in go-qrdb's own repo/CI
+	@echo "coverage-hnsw-distance moved to go-qrdb (dependency-resolution.md); run it there."
+
 
 # ==============================================================================
 # Vector Filter Tests
@@ -3338,17 +3340,17 @@ bench-vector-filter: ## Run vector filter benchmarks
 .PHONY: test-vector-scalar-index
 test-vector-scalar-index: ## Run scalar index unit tests (go-qrdb)
 	@echo "$(BLUE)Running scalar index unit tests...$(NC)"
-	@$(MAKE) -C .deps/go-qrdb test-vector-scalar-index
+	@echo "test-vector-scalar-index moved to go-qrdb (dependency-resolution.md); .deps was removed at the 2026-08-13 cutover."
 
 .PHONY: coverage-vector-scalar-index
 coverage-vector-scalar-index: ## Generate scalar index coverage (go-qrdb)
 	@echo "$(BLUE)Running scalar index coverage...$(NC)"
-	@$(MAKE) -C .deps/go-qrdb coverage-vector-scalar-index
+	@echo "coverage-vector-scalar-index moved to go-qrdb (dependency-resolution.md); .deps was removed at the 2026-08-13 cutover."
 
 .PHONY: bench-vector-scalar-index
 bench-vector-scalar-index: ## Run scalar index benchmarks (go-qrdb)
 	@echo "$(BLUE)Running scalar index benchmarks...$(NC)"
-	@$(MAKE) -C .deps/go-qrdb bench-vector-scalar-index
+	@echo "bench-vector-scalar-index moved to go-qrdb (dependency-resolution.md); .deps was removed at the 2026-08-13 cutover."
 
 # ==============================================================================
 # GPU Vector Index Tests
@@ -3366,17 +3368,17 @@ endif
 test-vector-gpu: ## Run GPU unit tests (stubs without GPU hardware)
 	@echo "$(BLUE)Running GPU vector index unit tests...$(NC)"
 	@$(GOTEST) -v -race -count=1 -tags 'vector qrdb_vector' ./pkg/server/...
-	@$(MAKE) -C .deps/go-qrdb test-vector-gpu
+	@echo "test-vector-gpu moved to go-qrdb (dependency-resolution.md); .deps was removed at the 2026-08-13 cutover."
 
 .PHONY: coverage-vector-gpu
 coverage-vector-gpu: ## Generate GPU vector index coverage (go-qrdb)
 	@echo "$(BLUE)Running GPU vector index coverage...$(NC)"
-	@$(MAKE) -C .deps/go-qrdb coverage-vector-gpu
+	@echo "coverage-vector-gpu moved to go-qrdb (dependency-resolution.md); .deps was removed at the 2026-08-13 cutover."
 
 .PHONY: bench-vector-gpu
 bench-vector-gpu: ## Run GPU benchmarks (requires GPU hardware)
 	@echo "$(BLUE)Running GPU vector index benchmarks...$(NC)"
-	@$(MAKE) -C .deps/go-qrdb bench-vector-gpu
+	@echo "bench-vector-gpu moved to go-qrdb (dependency-resolution.md); .deps was removed at the 2026-08-13 cutover."
 
 .PHONY: build-gpu
 build-gpu: ## Build with GPU acceleration (requires NVIDIA cuVS)
@@ -3390,17 +3392,17 @@ build-gpu: ## Build with GPU acceleration (requires NVIDIA cuVS)
 .PHONY: test-vector-quantization
 test-vector-quantization: ## Run quantization unit tests (go-qrdb)
 	@echo "$(BLUE)Running vector quantization unit tests...$(NC)"
-	@$(MAKE) -C .deps/go-qrdb test-vector-quantization
+	@echo "test-vector-quantization moved to go-qrdb (dependency-resolution.md); .deps was removed at the 2026-08-13 cutover."
 
 .PHONY: coverage-vector-quantization
 coverage-vector-quantization: ## Generate quantization coverage (go-qrdb)
 	@echo "$(BLUE)Running vector quantization coverage...$(NC)"
-	@$(MAKE) -C .deps/go-qrdb coverage-vector-quantization
+	@echo "coverage-vector-quantization moved to go-qrdb (dependency-resolution.md); .deps was removed at the 2026-08-13 cutover."
 
 .PHONY: bench-vector-quantization
 bench-vector-quantization: ## Run quantization benchmarks (go-qrdb)
 	@echo "$(BLUE)Running vector quantization benchmarks...$(NC)"
-	@$(MAKE) -C .deps/go-qrdb bench-vector-quantization
+	@echo "bench-vector-quantization moved to go-qrdb (dependency-resolution.md); .deps was removed at the 2026-08-13 cutover."
 # ==============================================================================
 # Vector Distributed Search Tests
 # ==============================================================================
@@ -3482,17 +3484,17 @@ coverage-vector-compaction: ## Generate compaction state machine coverage
 .PHONY: test-vector-bloom
 test-vector-bloom: ## Run bloom filter unit tests (go-qrdb)
 	@echo "$(BLUE)Running bloom filter unit tests...$(NC)"
-	@$(MAKE) -C .deps/go-qrdb test-vector-bloom
+	@echo "test-vector-bloom moved to go-qrdb (dependency-resolution.md); .deps was removed at the 2026-08-13 cutover."
 
 .PHONY: coverage-vector-bloom
 coverage-vector-bloom: ## Generate bloom filter coverage (go-qrdb)
 	@echo "$(BLUE)Running bloom filter coverage...$(NC)"
-	@$(MAKE) -C .deps/go-qrdb coverage-vector-bloom
+	@echo "coverage-vector-bloom moved to go-qrdb (dependency-resolution.md); .deps was removed at the 2026-08-13 cutover."
 
 .PHONY: bench-vector-bloom
 bench-vector-bloom: ## Run bloom filter benchmarks (go-qrdb)
 	@echo "$(BLUE)Running bloom filter benchmarks...$(NC)"
-	@$(MAKE) -C .deps/go-qrdb bench-vector-bloom
+	@echo "bench-vector-bloom moved to go-qrdb (dependency-resolution.md); .deps was removed at the 2026-08-13 cutover."
 
 # ==============================================================================
 # Aggregate Vector Coverage
@@ -3509,7 +3511,7 @@ coverage-vector: ## Run all vector package coverage
 	@$(MAKE) coverage-vector-autoindex
 	@$(MAKE) coverage-vector-compaction
 	@$(MAKE) coverage-vector-distributed
-	@$(MAKE) -C .deps/go-qrdb coverage-vector-bloom
+	@echo "coverage-vector-bloom moved to go-qrdb (dependency-resolution.md); .deps was removed at the 2026-08-13 cutover."
 
 # ==============================================================================
 # Cross-Project Naming + Consistency (Phase 14 of seal→barrier rename)
