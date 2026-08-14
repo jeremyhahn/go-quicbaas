@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-quicbaas
 
-go 1.26.5
+go 1.26.6
 
 // Exclude old genproto monorepo to avoid conflicts with split packages
 exclude google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1

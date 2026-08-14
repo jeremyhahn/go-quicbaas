@@ -51,7 +51,7 @@ RUN npm install --no-audit --no-fund \
 # ============================================================================
 # Stage 2: Build quicbaasd with the fresh UI embedded.
 # ============================================================================
-FROM golang:1.26.5-alpine AS daemon-builder
+FROM golang:1.26.6-alpine AS daemon-builder
 
 ARG BUILD_TAGS
 RUN apk add --no-cache git make bash ca-certificates

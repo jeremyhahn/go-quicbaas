@@ -19,7 +19,7 @@
 # containers on the host. Restrict this to trusted daemon instances only.
 
 # Builder stage: compile the quicbaas binary
-FROM golang:1.26.5-alpine AS builder
+FROM golang:1.26.6-alpine AS builder
 
 RUN apk add --no-cache git make
 
