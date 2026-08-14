@@ -436,7 +436,7 @@ func runCAExportBundle(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if werr := os.WriteFile(path, []byte(resp.BundlePEM), 0o644); werr != nil {
+	if werr := os.WriteFile(path, []byte(resp.BundlePEM), 0o644); werr != nil { // #nosec G306 -- an exported CA bundle is public material written to an operator-chosen path.
 		return formatError(&CAExportWriteError{Path: path, Err: werr})
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "CA bundle written to %s (%d bytes)\n", path, len(resp.BundlePEM))

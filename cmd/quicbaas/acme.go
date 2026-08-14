@@ -399,7 +399,7 @@ func runACMEIssue(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 	if acmeCertOut != "" && resp != nil {
-		if werr := os.WriteFile(acmeCertOut, resp.CertificatePEM, 0o644); werr != nil {
+		if werr := os.WriteFile(acmeCertOut, resp.CertificatePEM, 0o644); werr != nil { // #nosec G306 -- the ACME-issued certificate is public material written to an operator-chosen path.
 			return formatError(&ACMEWriteError{Path: acmeCertOut, Err: werr})
 		}
 	}
@@ -522,7 +522,7 @@ func runACMEFinalizeOrder(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 	if acmeCertOut != "" {
-		if werr := os.WriteFile(acmeCertOut, certPEM, 0o644); werr != nil {
+		if werr := os.WriteFile(acmeCertOut, certPEM, 0o644); werr != nil { // #nosec G306 -- the ACME-issued certificate is public material written to an operator-chosen path.
 			return formatError(&ACMEWriteError{Path: acmeCertOut, Err: werr})
 		}
 	}
@@ -575,7 +575,7 @@ func runACMERenew(cmd *cobra.Command, args []string) error {
 		return formatError(err)
 	}
 	if acmeCertOut != "" {
-		if werr := os.WriteFile(acmeCertOut, certPEM, 0o644); werr != nil {
+		if werr := os.WriteFile(acmeCertOut, certPEM, 0o644); werr != nil { // #nosec G306 -- the ACME-issued certificate is public material written to an operator-chosen path.
 			return formatError(&ACMEWriteError{Path: acmeCertOut, Err: werr})
 		}
 	}

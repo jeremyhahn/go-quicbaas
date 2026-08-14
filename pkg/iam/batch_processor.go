@@ -73,7 +73,7 @@ func (bp *IAMBatchProcessor) ImportUsers(ctx context.Context, tenantID string, i
 
 	// Start async processing. The import must outlive the request that
 	// started it, so it detaches from the caller context deliberately.
-	go bp.processUsers(context.Background(), op, items, opts) //nolint:gosec // G118: the work must outlive the caller; a request-scoped context would cancel it.
+	go bp.processUsers(context.Background(), op, items, opts) // #nosec G118 -- the work must outlive the caller; a request-scoped context would cancel it.
 
 	return op, nil
 }
@@ -88,7 +88,7 @@ func (bp *IAMBatchProcessor) ImportRoles(ctx context.Context, tenantID string, i
 
 	// Start async processing. The import must outlive the request that
 	// started it, so it detaches from the caller context deliberately.
-	go bp.processRoles(context.Background(), op, items, opts) //nolint:gosec // G118: the work must outlive the caller; a request-scoped context would cancel it.
+	go bp.processRoles(context.Background(), op, items, opts) // #nosec G118 -- the work must outlive the caller; a request-scoped context would cancel it.
 
 	return op, nil
 }
@@ -103,7 +103,7 @@ func (bp *IAMBatchProcessor) ImportGroups(ctx context.Context, tenantID string, 
 
 	// Start async processing. The import must outlive the request that
 	// started it, so it detaches from the caller context deliberately.
-	go bp.processGroups(context.Background(), op, items, opts) //nolint:gosec // G118: the work must outlive the caller; a request-scoped context would cancel it.
+	go bp.processGroups(context.Background(), op, items, opts) // #nosec G118 -- the work must outlive the caller; a request-scoped context would cancel it.
 
 	return op, nil
 }
@@ -118,7 +118,7 @@ func (bp *IAMBatchProcessor) ImportPolicies(ctx context.Context, tenantID string
 
 	// Start async processing. The import must outlive the request that
 	// started it, so it detaches from the caller context deliberately.
-	go bp.processPolicies(context.Background(), op, items, opts) //nolint:gosec // G118: the work must outlive the caller; a request-scoped context would cancel it.
+	go bp.processPolicies(context.Background(), op, items, opts) // #nosec G118 -- the work must outlive the caller; a request-scoped context would cancel it.
 
 	return op, nil
 }

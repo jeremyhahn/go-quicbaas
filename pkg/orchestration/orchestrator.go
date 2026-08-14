@@ -2550,7 +2550,7 @@ func (s *agentServiceImpl) autoSpawnTask(ctx context.Context, req *CreateTaskReq
 
 	// Subscribe to job events in a background goroutine and mirror job terminal
 	// status back to the parent task when the job completes or fails.
-	go s.mirrorJobStatusToTask(req.TenantID, task.ID, jobResp.JobID) //nolint:gosec // G118: the work must outlive the caller; a request-scoped context would cancel it.
+	go s.mirrorJobStatusToTask(req.TenantID, task.ID, jobResp.JobID) // #nosec G118 -- the work must outlive the caller; a request-scoped context would cancel it.
 
 	s.publishEvent(ctx, req.TenantID, "task_auto_spawned", map[string]string{
 		"task_id": task.ID,

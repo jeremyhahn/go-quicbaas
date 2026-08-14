@@ -274,7 +274,7 @@ func buildAuthMethods(spec *Spec) ([]ssh.AuthMethod, error) {
 func buildHostKeyCallback(spec *Spec) (ssh.HostKeyCallback, error) {
 	if spec.InsecureHostKey {
 		// Deliberately trust-on-first-use. Documented on the Spec.
-		return ssh.InsecureIgnoreHostKey(), nil //nolint:gosec // operator opt-in
+		return ssh.InsecureIgnoreHostKey(), nil // #nosec G106 -- host-key checking is opt-out per Spec.InsecureHostKey; the default path refuses to dial without a pinned callback.
 	}
 	return nil, &InvalidSpecError{
 		Field:  "ssh_host_key",

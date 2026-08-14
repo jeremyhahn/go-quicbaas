@@ -136,7 +136,7 @@ func (r *AgentMCPPresetResolver) Resolve(ctx context.Context, sessionID, tenantI
 	}
 	// The MkdirTemp dir is already 0700; tighten defensively in case of umask
 	// surprises so only the spawning user can traverse it.
-	if chmodErr := os.Chmod(dir, 0700); chmodErr != nil { //nolint:gosec // G302: a directory needs the execute bit to be traversable; 0700 is owner-only.
+	if chmodErr := os.Chmod(dir, 0700); chmodErr != nil { // #nosec G302 -- a directory needs the execute bit to be traversable; 0700 is owner-only.
 		issued.PrivateKey.Destroy()
 		_ = os.RemoveAll(dir)
 		return "", nil, nil, &MCPPresetResolveError{Op: "secure ephemeral cert dir", Cause: chmodErr}
@@ -146,7 +146,7 @@ func (r *AgentMCPPresetResolver) Resolve(ctx context.Context, sessionID, tenantI
 	keyPath := filepath.Join(dir, "key.pem")
 	caPath := filepath.Join(dir, "ca.pem")
 
-	if writeErr := os.WriteFile(certPath, issued.CertPEM, 0644); writeErr != nil { //nolint:gosec // G306: public certificate material inside the 0700 directory created above.
+	if writeErr := os.WriteFile(certPath, issued.CertPEM, 0644); writeErr != nil { // #nosec G306 -- public certificate material inside the 0700 directory created above.
 		issued.PrivateKey.Destroy()
 		_ = os.RemoveAll(dir)
 		return "", nil, nil, &MCPPresetResolveError{Op: "write agent certificate", Cause: writeErr}
@@ -161,7 +161,7 @@ func (r *AgentMCPPresetResolver) Resolve(ctx context.Context, sessionID, tenantI
 		return "", nil, nil, &MCPPresetResolveError{Op: "write agent private key", Cause: keyErr}
 	}
 
-	if writeErr := os.WriteFile(caPath, issued.CAPEM, 0644); writeErr != nil { //nolint:gosec // G306: public CA bundle inside the 0700 directory created above.
+	if writeErr := os.WriteFile(caPath, issued.CAPEM, 0644); writeErr != nil { // #nosec G306 -- public CA bundle inside the 0700 directory created above.
 		_ = os.RemoveAll(dir)
 		return "", nil, nil, &MCPPresetResolveError{Op: "write ca bundle", Cause: writeErr}
 	}

@@ -374,7 +374,7 @@ func serviceCredentialToProto(cred *credentials.Credential) *pb.Credential {
 	}
 	if portStr, ok := cred.Data["port"]; ok {
 		if port, err := strconv.Atoi(portStr); err == nil && port > 0 && port <= 65535 {
-			protoCred.Port = int32(port) //nolint:gosec // port is bounded by check above (0-65535)
+			protoCred.Port = int32(port) // #nosec G109 -- port is bounded to 0-65535 by the check on the same value above.
 		}
 	}
 	if database, ok := cred.Data["database"]; ok {

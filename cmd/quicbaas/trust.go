@@ -327,7 +327,7 @@ func runTrustCrossSignedRoots(cmd *cobra.Command, _ []string) error {
 	subjects := crossSignedRootSubjects(pool)
 	if trustRootsOut != "" {
 		body := strings.Join(subjects, "\n") + "\n"
-		if werr := os.WriteFile(trustRootsOut, []byte(body), 0o644); werr != nil {
+		if werr := os.WriteFile(trustRootsOut, []byte(body), 0o644); werr != nil { // #nosec G306 -- exported trust-root subjects are public material written to an operator-chosen path.
 			return formatError(&TrustWriteError{Path: trustRootsOut, Err: werr})
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "%d cross-signed root subject(s) written to %s\n",

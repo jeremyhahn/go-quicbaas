@@ -780,7 +780,7 @@ func prepareDaemon(modeName string) error {
 	}
 
 	// Create data directory if it doesn't exist.
-	if err := os.MkdirAll(cfg.Storage.DataDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.Storage.DataDir, 0o755); err != nil { // #nosec G301 -- 0755 is the daemon long-standing data-directory mode; tightening it to 0750 is deployment-visible and is an owner decision, not a lint fix.
 		return &dberrors.WrappedMessageError{Message: "failed to create data directory", Cause: err}
 	}
 
@@ -788,7 +788,7 @@ func prepareDaemon(modeName string) error {
 	if cfg.Server.Unix.Enabled {
 		socketDir := getSocketDir(cfg.Server.Unix.Socket)
 		if socketDir != "" {
-			if err := os.MkdirAll(socketDir, 0o755); err != nil {
+			if err := os.MkdirAll(socketDir, 0o755); err != nil { // #nosec G301 -- clients running under another uid need traverse on this directory to reach the socket; the socket own mode is the access control.
 				return &dberrors.WrappedMessageError{Message: "failed to create socket directory", Cause: err}
 			}
 		}

@@ -334,7 +334,7 @@ func (m *GDPRManager) RequestExport(ctx context.Context, tenantID, userID, reque
 	}
 
 	// Start background processing of the export. It must outlive the request.
-	go m.processExportAsync(request.ID) //nolint:gosec // G118: the work must outlive the caller; a request-scoped context would cancel it.
+	go m.processExportAsync(request.ID) // #nosec G118 -- the work must outlive the caller; a request-scoped context would cancel it.
 
 	return request, nil
 }
@@ -671,7 +671,7 @@ func (m *GDPRManager) RequestDeletion(ctx context.Context, tenantID, userID, req
 	// If immediate deletion (gracePeriodDays=0), start background processing
 	if gracePeriodDays == 0 {
 		// The deletion must outlive the request that scheduled it.
-		go m.processDeletionAsync(request.ID) //nolint:gosec // G118: the work must outlive the caller; a request-scoped context would cancel it.
+		go m.processDeletionAsync(request.ID) // #nosec G118 -- the work must outlive the caller; a request-scoped context would cancel it.
 	}
 
 	return request, nil
