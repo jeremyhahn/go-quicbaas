@@ -366,12 +366,16 @@ jobs:
       - name: Build binaries
         run: make build
 
+      # gms_pure_go for the same reason the Makefile sets it: these are
+      # CGO_ENABLED=0 builds and dolthub/go-mysql-server's internal/regex has
+      # no file that satisfies `cgo && !gms_pure_go` without cgo, so the build
+      # fails on "build constraints exclude all Go files".
       - name: Build FIPS binaries
         env:
           GOFIPS140: v1.0.0
         run: |
-          CGO_ENABLED=0 go build -buildvcs=false -o bin/quicbaasd-fips ./cmd/quicbaasd
-          CGO_ENABLED=0 go build -buildvcs=false -o bin/quicbaas-fips ./cmd/quicbaas
+          CGO_ENABLED=0 go build -tags gms_pure_go -buildvcs=false -o bin/quicbaasd-fips ./cmd/quicbaasd
+          CGO_ENABLED=0 go build -tags gms_pure_go -buildvcs=false -o bin/quicbaas-fips ./cmd/quicbaas
 
       - name: Upload build artifacts
         if: github.server_url == 'https://github.com'

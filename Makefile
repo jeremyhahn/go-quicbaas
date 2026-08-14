@@ -283,6 +283,19 @@ ifeq ($(WITH_GUI),1)
   BUILD_TAGS += desktop webkit2_41
 endif
 
+# dolthub/go-mysql-server's internal/regex ships exactly two files, gated
+# `cgo && !gms_pure_go` and `gms_pure_go`. The daemon links 42 packages from
+# that module and is always built CGO_ENABLED=0 (static binary), which selects
+# neither file and fails the whole build:
+#
+#   internal/regex: build constraints exclude all Go files in .../internal/regex
+#
+# So gms_pure_go is not a preference here, it is the only configuration in
+# which the daemon compiles at all. It is applied to every target rather than
+# just the CGO-free ones so the daemon and the client agree on RLIKE/REGEXP
+# semantics instead of quietly using different engines.
+BUILD_TAGS += gms_pure_go
+
 # Strip leading/trailing spaces for go build
 BUILD_TAGS_ARG := $(if $(strip $(BUILD_TAGS)),-tags '$(strip $(BUILD_TAGS))',)
 # FIPS builds need to combine fips tag with optional features
