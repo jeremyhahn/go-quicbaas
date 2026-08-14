@@ -1,3 +1,8 @@
+# ci-template: v1 (customized)
+# Reconciled against software/templates/github-actions/ci.yml in the
+# automatethethings repo (devops.md §1/§8/§9). Divergence outside the
+# repo-specific blocks below is a defect.
+
 name: CI
 
 on:
@@ -40,11 +45,16 @@ jobs:
       - name: Run go vet
         run: go vet ./...
 
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.8.0
-          args: --timeout=10m
+      # `make lint` is the contract (devops.md §4). It passes the Makefile's
+      # LINT_BUILD_TAGS, without which golangci-lint typechecks the tag-gated
+      # packages in their disabled configuration and reports phantom errors --
+      # e.g. undefined accountToREST in pkg/api/rest under !rest. Installing
+      # @latest with no pin is §9.
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+
+      - name: Run golangci-lint (make lint)
+        run: make lint
 
   test:
     name: Unit Tests
@@ -88,7 +98,12 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
+      # upload-artifact v4+ refuses to run against any server that is not
+      # github.com -- it detects one and reports "not currently supported on
+      # GHES", and Gitea presents as such (devops.md §1). Every such step in
+      # this file is guarded; the work it captures has already run.
       - name: Upload coverage reports
+        if: github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v6
         with:
           name: coverage-reports
@@ -160,7 +175,7 @@ jobs:
         run: make integration-test
 
       - name: Upload integration test results
-        if: always()
+        if: always() && github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v6
         with:
           name: integration-test-results
@@ -204,6 +219,9 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      - name: Verify module integrity
+        run: go mod verify
+
       - name: Run gosec Security Scanner
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest
@@ -220,6 +238,72 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
+
+  # trivy fs -- dependency CVEs and leaked secrets in the tree (devops.md §8).
+  # Scoping mirrors the `trivy` target in the Makefile; keep the two identical.
+  # test/ and examples/ do not ship; bin/, build/ and data/ are local build
+  # output. The skip-files entry keeps the secret scanner off the committed
+  # test TLS material in pkg/server/certs.
+  trivy:
+    name: Trivy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      # Two paths for one gate. trivy-action's setup step cannot authenticate
+      # to github.com from a Gitea runner and upload-sarif has no
+      # GHES-compatible endpoint there, so the action path is guarded on the
+      # server URL and Gitea gates with the trivy CLI below. Both run the same
+      # fs scan at the same severity; only the SARIF upload is GitHub-only.
+      - name: Trivy scan (SARIF for code scanning)
+        if: github.server_url == 'https://github.com'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: 0
+          skip-dirs: test,examples,bin,build,data
+          skip-files: pkg/server/certs/*.key
+          trivyignores: .trivyignore
+
+      - name: Upload Trivy SARIF
+        if: always() && github.server_url == 'https://github.com'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-fs
+
+      - name: Trivy gate (fail on CRITICAL/HIGH)
+        if: github.server_url == 'https://github.com'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: CRITICAL,HIGH
+          exit-code: 1
+          format: table
+          skip-dirs: test,examples,bin,build,data
+          skip-files: pkg/server/certs/*.key
+          trivyignores: .trivyignore
+
+      - name: Install Trivy CLI (Gitea)
+        if: github.server_url != 'https://github.com'
+        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Trivy gate (Gitea)
+        if: github.server_url != 'https://github.com'
+        run: |
+          trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table \
+            --skip-dirs test --skip-dirs examples --skip-dirs bin --skip-dirs build --skip-dirs data \
+            --skip-files 'pkg/server/certs/*.key' --ignorefile .trivyignore .
 
   build:
     name: Build
@@ -251,6 +335,7 @@ jobs:
           CGO_ENABLED=0 go build -buildvcs=false -o bin/quicbaas-fips ./cmd/quicbaas
 
       - name: Upload build artifacts
+        if: github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v6
         with:
           name: binaries
@@ -364,3 +449,39 @@ jobs:
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}
           category: grype
+
+  # The single required check (devops.md §1). Every job above appears in BOTH
+  # the needs list and the results check -- a gate that can pass vacuously is
+  # worse than no gate. join(needs.*.result) is deliberately not used: it
+  # evaluates empty on Gitea and reports success while jobs fail.
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [lint, test, integration-test, race, security, trivy, build, docker]
+    steps:
+      - name: Fail closed on any non-success
+        run: |
+          check() { case "$2" in success) echo "OK   $1";; *) echo "FAIL $1 ($2)"; BAD=1;; esac; }
+          BAD=0
+          check lint             "${{ needs.lint.result }}"
+          check test             "${{ needs.test.result }}"
+          check integration-test "${{ needs.integration-test.result }}"
+          check race             "${{ needs.race.result }}"
+          check security         "${{ needs.security.result }}"
+          check trivy            "${{ needs.trivy.result }}"
+          check build            "${{ needs.build.result }}"
+          # docker carries `if: github.event_name == 'push'`, so 'skipped' is
+          # legitimate on a pull_request and only there. On a push a skip means
+          # the job never ran -- fail closed rather than pass vacuously.
+          case "${{ needs.docker.result }}" in
+            success) echo "OK   docker" ;;
+            skipped)
+              if [ "${{ github.event_name }}" = 'push' ]; then
+                echo "FAIL docker (skipped on a push)"; BAD=1
+              else
+                echo "OK   docker (push-only job, event=${{ github.event_name }})"
+              fi ;;
+            *) echo "FAIL docker (${{ needs.docker.result }})"; BAD=1 ;;
+          esac
+          exit $BAD
