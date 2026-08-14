@@ -214,8 +214,14 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      # `make race` is the contract (devops.md §4), and here the bare command
+      # was not merely narrower but wrong: with no build tags the MCP surface
+      # is compiled out, so the embedded-boot tests in pkg/server failed with
+      # "mcp support not compiled - build with -tags mcp". Untagged, the race
+      # detector also never saw the raft, vector, quic, rag or codec packages
+      # at all -- a gate over a fraction of the code it appeared to cover.
       - name: Run tests with race detector
-        run: go test -race -timeout=10m ./pkg/... ./cmd/...
+        run: make race
 
   security:
     name: Security Scan
