@@ -438,5 +438,5 @@ func (m *MemorySessionExtStorage) removeFromUserIndex(userKey, sessionID string)
 	}
 }
 
-// Ensure MemorySessionExtStorage implements SessionExtStorage
+// Ensure MemorySessionExtStorage implements SessionExtStorage.
 var _ SessionExtStorage = (*MemorySessionExtStorage)(nil)

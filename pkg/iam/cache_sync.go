@@ -125,7 +125,10 @@ func (d *DeltaLog) appendToTenantLog(tenantID string, entry DeltaLogEntry) {
 		maxVersion: entry.Version,
 	})
 
-	tlog := value.(*tenantDeltaLog)
+	tlog, ok := value.(*tenantDeltaLog)
+	if !ok {
+		return
+	}
 	tlog.mu.Lock()
 	defer tlog.mu.Unlock()
 
@@ -165,7 +168,10 @@ func (d *DeltaLog) GetSince(tenantID string, sinceVersion int64) ([]*EnhancedPol
 		return nil, nil // No changes for this tenant
 	}
 
-	tlog := value.(*tenantDeltaLog)
+	tlog, ok := value.(*tenantDeltaLog)
+	if !ok {
+		return nil, nil
+	}
 	tlog.mu.RLock()
 	defer tlog.mu.RUnlock()
 
@@ -417,7 +423,7 @@ func (bp *BatchProcessor) compress(data []byte) ([]byte, error) {
 	}
 
 	if _, err := w.Write(data); err != nil {
-		w.Close()
+		_ = w.Close()
 		return nil, err
 	}
 
@@ -482,7 +488,7 @@ func (bp *BatchProcessor) Close() error {
 
 	// Close compressor if present
 	if bp.compressor != nil {
-		bp.compressor.Close()
+		_ = bp.compressor.Close()
 	}
 
 	return nil

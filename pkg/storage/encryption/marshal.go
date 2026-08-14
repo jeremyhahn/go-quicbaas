@@ -50,7 +50,7 @@ func MarshalWithEncryption(entity interface{}, encryptionKey []byte) ([]byte, er
 	t := v.Type()
 
 	// Handle pointer types
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return nil, api.NewNilInputError("encryption.MarshalWithEncryption", "entity pointer")
 		}
@@ -154,7 +154,7 @@ func UnmarshalWithDecryption(data []byte, entity interface{}, encryptionKey []by
 
 	// Get the value and type
 	v := reflect.ValueOf(entity)
-	if v.Kind() != reflect.Ptr {
+	if v.Kind() != reflect.Pointer {
 		return api.NewPointerRequiredError("encryption.UnmarshalWithDecryption")
 	}
 
@@ -238,7 +238,7 @@ func UnmarshalWithDecryption(data []byte, entity interface{}, encryptionKey []by
 func MarshalWithEncryptionAndLogging(entity interface{}, encryptionKey []byte, log *logger.Logger) ([]byte, error) {
 	if log != nil {
 		t := reflect.TypeOf(entity)
-		if t.Kind() == reflect.Ptr {
+		if t.Kind() == reflect.Pointer {
 			t = t.Elem()
 		}
 		log.Debugf("marshaling entity of type %s with encryption", t.Name())
@@ -264,7 +264,7 @@ func MarshalWithEncryptionAndLogging(entity interface{}, encryptionKey []byte, l
 func UnmarshalWithDecryptionAndLogging(data []byte, entity interface{}, encryptionKey []byte, log *logger.Logger) error {
 	if log != nil {
 		t := reflect.TypeOf(entity)
-		if t.Kind() == reflect.Ptr {
+		if t.Kind() == reflect.Pointer {
 			t = t.Elem()
 		}
 		log.Debugf("unmarshaling entity of type %s with decryption", t.Name())

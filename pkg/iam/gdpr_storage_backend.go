@@ -137,9 +137,10 @@ func (s *BackendConsentStorage) CreateConsent(ctx context.Context, opts CreateCo
 			consent.Metadata[k] = v
 		}
 	}
-	if opts.Status == ConsentStatusGranted {
+	switch opts.Status {
+	case ConsentStatusGranted:
 		consent.GrantedAt = &now
-	} else if opts.Status == ConsentStatusWithdrawn {
+	case ConsentStatusWithdrawn:
 		consent.WithdrawnAt = &now
 	}
 
@@ -199,10 +200,11 @@ func (s *BackendConsentStorage) UpdateConsent(ctx context.Context, id string, op
 	now := time.Now()
 	consent.Status = opts.Status
 	consent.Updated = now
-	if opts.Status == ConsentStatusGranted {
+	switch opts.Status {
+	case ConsentStatusGranted:
 		consent.GrantedAt = &now
 		consent.WithdrawnAt = nil
-	} else if opts.Status == ConsentStatusWithdrawn {
+	case ConsentStatusWithdrawn:
 		consent.WithdrawnAt = &now
 	}
 	if opts.Version != "" {

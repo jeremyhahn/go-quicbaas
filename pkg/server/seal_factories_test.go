@@ -35,17 +35,17 @@ func TestBuildHardwareSealStrategies_SoftwarePassthrough(t *testing.T) {
 		string(qrdbsdk.StrategyNone),
 		string(qrdbsdk.StrategyShamir),
 	}
-	for _, strat := range cases {
-		t.Run("strategy="+strat, func(t *testing.T) {
+	for _, start := range cases {
+		t.Run("strategy="+start, func(t *testing.T) {
 			cfg := config.TestConfig()
-			cfg.Seal.Strategy = strat
+			cfg.Seal.Strategy = start
 
 			strategies, err := buildHardwareSealStrategies(cfg)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if strategies != nil {
-				t.Fatalf("expected nil strategies for non-hardware id %q, got %d", strat, len(strategies))
+				t.Fatalf("expected nil strategies for non-hardware id %q, got %d", start, len(strategies))
 			}
 		})
 	}

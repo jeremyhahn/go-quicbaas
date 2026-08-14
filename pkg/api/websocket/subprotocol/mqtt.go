@@ -92,7 +92,9 @@ func (h *MQTTHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 		h.clientsMu.Unlock()
 
 		if clientState.clientID != "" {
-			h.hub.UnregisterClient(clientState.clientID)
+			// Best effort: the connection is already going away and there
+			// is nobody left to report a hub failure to.
+			_ = h.hub.UnregisterClient(clientState.clientID)
 		}
 	}()
 
@@ -275,7 +277,7 @@ func (h *MQTTHandler) handleConnect(ctx context.Context, payload []byte, pk *pac
 	state.cleanSession = pk.Connect.Clean
 
 	// Register with hub
-	h.hub.RegisterClient(state.clientID, func(topic string, payload []byte, qos byte, retain bool) {
+	if err := h.hub.RegisterClient(state.clientID, func(topic string, payload []byte, qos byte, retain bool) {
 		select {
 		case deliveryChan <- mqttDelivery{
 			topic:   topic,
@@ -286,7 +288,9 @@ func (h *MQTTHandler) handleConnect(ctx context.Context, payload []byte, pk *pac
 		default:
 			// Channel full, drop message
 		}
-	})
+	}); err != nil {
+		return nil, err
+	}
 
 	// Store client state
 	h.clientsMu.Lock()
@@ -308,7 +312,8 @@ func (h *MQTTHandler) buildConnack(protocolVersion byte, sessionPresent bool, re
 	}
 
 	buf := &bytes.Buffer{}
-	pk.ConnackEncode(buf)
+	// Encoding into a bytes.Buffer cannot fail.
+	_ = pk.ConnackEncode(buf)
 	return buf.Bytes()
 }
 
@@ -321,7 +326,9 @@ func (h *MQTTHandler) handlePublish(ctx context.Context, payload []byte, pk *pac
 	}
 
 	// Publish to hub
-	h.hub.Publish(pk.TopicName, pk.Payload, pk.FixedHeader.Qos, pk.FixedHeader.Retain)
+	if err := h.hub.Publish(pk.TopicName, pk.Payload, pk.FixedHeader.Qos, pk.FixedHeader.Retain); err != nil {
+		return nil, err
+	}
 
 	// Send acknowledgment based on QoS
 	switch pk.FixedHeader.Qos {
@@ -345,7 +352,8 @@ func (h *MQTTHandler) buildPuback(protocolVersion byte, packetID uint16) []byte 
 	}
 
 	buf := &bytes.Buffer{}
-	pk.PubackEncode(buf)
+	// Encoding into a bytes.Buffer cannot fail.
+	_ = pk.PubackEncode(buf)
 	return buf.Bytes()
 }
 
@@ -360,7 +368,8 @@ func (h *MQTTHandler) buildPubrec(protocolVersion byte, packetID uint16) []byte 
 	}
 
 	buf := &bytes.Buffer{}
-	pk.PubrecEncode(buf)
+	// Encoding into a bytes.Buffer cannot fail.
+	_ = pk.PubrecEncode(buf)
 	return buf.Bytes()
 }
 
@@ -405,7 +414,8 @@ func (h *MQTTHandler) buildSuback(protocolVersion byte, packetID uint16, reasonC
 	}
 
 	buf := &bytes.Buffer{}
-	pk.SubackEncode(buf)
+	// Encoding into a bytes.Buffer cannot fail.
+	_ = pk.SubackEncode(buf)
 	return buf.Bytes()
 }
 
@@ -453,7 +463,8 @@ func (h *MQTTHandler) buildUnsuback(protocolVersion byte, packetID uint16, reaso
 	}
 
 	buf := &bytes.Buffer{}
-	pk.UnsubackEncode(buf)
+	// Encoding into a bytes.Buffer cannot fail.
+	_ = pk.UnsubackEncode(buf)
 	return buf.Bytes()
 }
 
@@ -471,7 +482,8 @@ func (h *MQTTHandler) buildPingresp() []byte {
 	}
 
 	buf := &bytes.Buffer{}
-	pk.PingrespEncode(buf)
+	// Encoding into a bytes.Buffer cannot fail.
+	_ = pk.PingrespEncode(buf)
 	return buf.Bytes()
 }
 
@@ -512,7 +524,8 @@ func (h *MQTTHandler) buildPubrel(protocolVersion byte, packetID uint16) []byte 
 	}
 
 	buf := &bytes.Buffer{}
-	pk.PubrelEncode(buf)
+	// Encoding into a bytes.Buffer cannot fail.
+	_ = pk.PubrelEncode(buf)
 	return buf.Bytes()
 }
 
@@ -537,7 +550,8 @@ func (h *MQTTHandler) buildPubcomp(protocolVersion byte, packetID uint16) []byte
 	}
 
 	buf := &bytes.Buffer{}
-	pk.PubcompEncode(buf)
+	// Encoding into a bytes.Buffer cannot fail.
+	_ = pk.PubcompEncode(buf)
 	return buf.Bytes()
 }
 

@@ -50,12 +50,12 @@ const bootstrapAdminEmail = "admin@" + qrdbsdk.SystemTenantID + ".qrdb.local"
 const testTrustDomain = "quicbaas.example.test"
 
 // ---------------------------------------------------------------------------
-// printFirstBootBanner
+// writeFirstBootBanner
 // ---------------------------------------------------------------------------
 
 func TestPrintFirstBootBanner_GenerateAndDistribute(t *testing.T) {
 	var buf bytes.Buffer
-	printFirstBootBanner(&buf, adminEnrollmentBanner{
+	writeFirstBootBanner(&buf, adminEnrollmentBanner{
 		CertPath:   "/var/lib/quicbaas/admin/admin.crt",
 		KeyPath:    "/var/lib/quicbaas/admin/admin.key",
 		Thumbprint: "Zm9vYmFy",
@@ -73,7 +73,7 @@ func TestPrintFirstBootBanner_GenerateAndDistribute(t *testing.T) {
 
 func TestPrintFirstBootBanner_CSRSignPathOmitsKey(t *testing.T) {
 	var buf bytes.Buffer
-	printFirstBootBanner(&buf, adminEnrollmentBanner{
+	writeFirstBootBanner(&buf, adminEnrollmentBanner{
 		CertPath:   "/var/lib/quicbaas/admin/admin.crt",
 		Thumbprint: "Zm9vYmFy",
 	})
@@ -89,7 +89,7 @@ func TestPrintFirstBootBanner_NoCertificateIssued(t *testing.T) {
 	// A CA-less deployment still prints a banner; it must say plainly that no
 	// certificate was issued rather than pointing at a file that is not there.
 	var buf bytes.Buffer
-	printFirstBootBanner(&buf, adminEnrollmentBanner{})
+	writeFirstBootBanner(&buf, adminEnrollmentBanner{})
 
 	output := buf.String()
 	require.NotEmpty(t, output)
@@ -444,11 +444,11 @@ func TestFirstBootBootstrap_FreshStorage_CreatesAdminAssignment(t *testing.T) {
 	c := buildTestIAMComponents(t)
 
 	var stderrCapture bytes.Buffer
-	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
-		printFirstBootBanner(&stderrCapture, b)
+	origPrint := writeFirstBootBannerFn
+	writeFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
+		writeFirstBootBanner(&stderrCapture, b)
 	}
-	defer func() { printFirstBootBannerFn = origPrint }()
+	defer func() { writeFirstBootBannerFn = origPrint }()
 
 	require.NoError(t, srv.firstBootBootstrap(context.Background(), c))
 
@@ -486,11 +486,11 @@ func TestFirstBootBootstrap_ExistingAdmin_Skipped(t *testing.T) {
 	require.NoError(t, err)
 
 	var bannerCalled bool
-	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ adminEnrollmentBanner) {
+	origPrint := writeFirstBootBannerFn
+	writeFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ adminEnrollmentBanner) {
 		bannerCalled = true
 	}
-	defer func() { printFirstBootBannerFn = origPrint }()
+	defer func() { writeFirstBootBannerFn = origPrint }()
 
 	bootstrapErr := srv.firstBootBootstrap(context.Background(), c)
 	require.NoError(t, bootstrapErr)
@@ -519,11 +519,11 @@ func TestFirstBootBootstrap_SkippedWhenPasswordAuthEnabled(t *testing.T) {
 	c := buildTestIAMComponents(t)
 
 	var bannerCalled bool
-	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ adminEnrollmentBanner) {
+	origPrint := writeFirstBootBannerFn
+	writeFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ adminEnrollmentBanner) {
 		bannerCalled = true
 	}
-	defer func() { printFirstBootBannerFn = origPrint }()
+	defer func() { writeFirstBootBannerFn = origPrint }()
 
 	// Simulate the gate that wraps firstBootBootstrap in initializeIAMComponents.
 	if !srv.config.Auth.AllowPasswordAuth && !srv.config.Auth.InsecureDevMode {
@@ -634,11 +634,11 @@ func buildTestIAMComponentsWithFactors(t *testing.T) (*iamComponents, *testutil.
 // restore func.
 func captureFirstBootBanner(t *testing.T, dst *adminEnrollmentBanner) func() {
 	t.Helper()
-	orig := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
+	orig := writeFirstBootBannerFn
+	writeFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
 		*dst = b
 	}
-	return func() { printFirstBootBannerFn = orig }
+	return func() { writeFirstBootBannerFn = orig }
 }
 
 // recordingInviteStore counts Create calls so a test can assert that the

@@ -159,7 +159,7 @@ func (c *TextChunker) chunkByParagraphs(text string, metadata Metadata) ([]Chunk
 				currentStartLine = currentStartLine + len(currentLines) - overlapLines
 				currentLines = strings.Split(overlap, "\n")
 			} else {
-				currentStartLine = currentStartLine + len(currentLines)
+				currentStartLine += len(currentLines)
 			}
 		}
 
@@ -242,7 +242,7 @@ func (c *TextChunker) chunkBySentences(text string, metadata Metadata) ([]Chunk,
 				currentStartLine = currentStartLine + currentLineCount - overlapLines
 				currentLineCount = overlapLines
 			} else {
-				currentStartLine = currentStartLine + currentLineCount
+				currentStartLine += currentLineCount
 				currentLineCount = 0
 			}
 		}

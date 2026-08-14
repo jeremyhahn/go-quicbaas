@@ -208,7 +208,6 @@ func TestRegistry_ConcurrentRegisterAndCreate(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(workers)
 	for i := 0; i < workers; i++ {
-		i := i
 		go func() {
 			defer wg.Done()
 			name := provName(i)

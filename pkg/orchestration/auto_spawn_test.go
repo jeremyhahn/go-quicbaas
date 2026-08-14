@@ -153,8 +153,8 @@ func TestCreateTask_AutoSpawnTrue_BackendFilterNoMatch(t *testing.T) {
 	if task == nil {
 		t.Fatal("expected non-nil task even when spawn fails")
 	}
-	var nmae *NoMatchingAgentError
-	if !errors.As(spawnErr, &nmae) {
+	var name *NoMatchingAgentError
+	if !errors.As(spawnErr, &name) {
 		t.Fatalf("expected *NoMatchingAgentError, got %T: %v", spawnErr, spawnErr)
 	}
 	if task.SpawnedJobID != "" {
@@ -205,8 +205,8 @@ func TestCreateTask_AutoSpawnTrue_BackendFilterMatch(t *testing.T) {
 		t.Fatal("expected non-nil task")
 	}
 	// spawnErr may be a job-runner error, but must NOT be a NoMatchingAgentError.
-	var nmae *NoMatchingAgentError
-	if errors.As(spawnErr, &nmae) {
+	var name *NoMatchingAgentError
+	if errors.As(spawnErr, &name) {
 		t.Fatalf("should have matched the ollama agent, got NoMatchingAgentError: %v", spawnErr)
 	}
 }

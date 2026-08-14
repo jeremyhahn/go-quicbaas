@@ -276,9 +276,7 @@ func splitHostPortSafe(addr string) (string, string, error) {
 
 // netSplitHostPort is a function variable so tests can stub it. The
 // production binding is net.SplitHostPort.
-var netSplitHostPort = func(addr string) (string, string, error) {
-	return net.SplitHostPort(addr)
-}
+var netSplitHostPort = net.SplitHostPort
 
 // backendsFromHeartbeat returns the backend list the daemon advertised
 // in the heartbeat body. Reused from the heartbeat payload so the

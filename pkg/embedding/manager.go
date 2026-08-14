@@ -157,16 +157,16 @@ func mapQRDBError(err error) error {
 	if errors.As(err, &pnf) {
 		return ErrProviderNotFound
 	}
-	switch err {
-	case qrdbsdk.ErrEmbeddingProviderRequired:
+	switch {
+	case errors.Is(err, qrdbsdk.ErrEmbeddingProviderRequired):
 		return ErrProviderRequired
-	case qrdbsdk.ErrEmbeddingProviderInvalid:
+	case errors.Is(err, qrdbsdk.ErrEmbeddingProviderInvalid):
 		return ErrProviderInvalid
-	case qrdbsdk.ErrEmbeddingAPIURLRequired:
+	case errors.Is(err, qrdbsdk.ErrEmbeddingAPIURLRequired):
 		return ErrAPIURLRequired
-	case qrdbsdk.ErrEmbeddingAPIKeyRequired:
+	case errors.Is(err, qrdbsdk.ErrEmbeddingAPIKeyRequired):
 		return ErrAPIKeyRequired
-	case qrdbsdk.ErrEmbeddingModelRequired:
+	case errors.Is(err, qrdbsdk.ErrEmbeddingModelRequired):
 		return ErrModelRequired
 	}
 	return err

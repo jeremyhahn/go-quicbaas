@@ -42,22 +42,22 @@ import (
 var (
 	dynSecretsOutputFmt string
 
-	// role create
+	// role create.
 	dynSecretsGeneratorType string
 	dynSecretsConfig        []string
 	dynSecretsDefaultTTL    time.Duration
 	dynSecretsMaxTTL        time.Duration
 
-	// role list / lease list
+	// role list / lease list.
 	dynSecretsPrefix string
 
-	// generate
+	// generate.
 	dynSecretsTTL time.Duration
 
-	// lease renew
+	// lease renew.
 	dynSecretsIncrement time.Duration
 
-	// generate output control
+	// generate output control.
 	dynSecretsRevealSecret bool
 )
 

@@ -915,6 +915,13 @@ func getSocketDir(socketPath string) string {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+// run executes the root command and returns the process exit code. main must
+// not call os.Exit itself: os.Exit skips deferred calls, and the deferred
+// secure.Purge below is what wipes mlocked memory on every orderly exit.
+func run() int {
 	// Arm the secure subsystem so the deferred Purge below wipes all mlocked
 	// memory on every orderly exit path, WITHOUT installing memguard's
 	// process signal handler. quicbaasd owns its own signal handling:
@@ -942,6 +949,7 @@ func main() {
 	}()
 
 	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }

@@ -84,20 +84,20 @@ func TestIsLoginTool(t *testing.T) {
 func TestExecuteLoginTool_ServiceNil(t *testing.T) {
 	r := &ToolRegistry{service: nil, logger: newTestLogger(t)}
 	_, err := r.executeLoginTool(context.Background(), "quicbaas_login_begin", nil)
-	require.ErrorIs(t, err, loginServiceUnavailableQBError)
+	require.ErrorIs(t, err, errLoginServiceUnavailableQB)
 }
 
 func TestExecuteLoginTool_LoginCeremonyNil(t *testing.T) {
 	// mockService.LoginCeremony() returns nil.
 	r := &ToolRegistry{service: &mockService{}, logger: newTestLogger(t)}
 	_, err := r.executeLoginTool(context.Background(), "quicbaas_login_begin", nil)
-	require.ErrorIs(t, err, loginServiceUnavailableQBError)
+	require.ErrorIs(t, err, errLoginServiceUnavailableQB)
 }
 
 func TestExecuteLoginTool_UnknownTool(t *testing.T) {
 	r := newLoginRegistry(t, &fakeLoginServicer{})
 	_, err := r.executeLoginTool(context.Background(), "quicbaas_login_unknown", nil)
-	require.ErrorIs(t, err, loginServiceUnavailableQBError)
+	require.ErrorIs(t, err, errLoginServiceUnavailableQB)
 }
 
 func TestExecuteLoginTool_DispatchBegin(t *testing.T) {

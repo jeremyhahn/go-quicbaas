@@ -219,6 +219,7 @@ func (eb *EncryptedBackend) Store(ctx context.Context, path string, data map[str
 }
 
 // StoreWithKey saves a secret encrypted with the specified key identifier.
+//
 // Deprecated: Use StoreWithOptions for more flexibility.
 func (eb *EncryptedBackend) StoreWithKey(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, keyIdentifier string) error {
 	return eb.StoreWithOptions(ctx, path, data, metadata, &StoreOptions{
@@ -227,6 +228,7 @@ func (eb *EncryptedBackend) StoreWithKey(ctx context.Context, path string, data 
 }
 
 // StoreWithAlgorithm saves a secret encrypted with the specified key identifier and algorithm.
+//
 // Deprecated: Use StoreWithOptions for more flexibility.
 func (eb *EncryptedBackend) StoreWithAlgorithm(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, keyIdentifier, algorithm string) error {
 	return eb.StoreWithOptions(ctx, path, data, metadata, &StoreOptions{
@@ -719,6 +721,7 @@ func (eb *EncryptedBackend) GetKeyIdentifier(ctx context.Context, path string) (
 }
 
 // GetKeyID returns the key ID used for a secret.
+//
 // Deprecated: Use GetKeyIdentifier instead.
 func (eb *EncryptedBackend) GetKeyID(ctx context.Context, path string) (string, error) {
 	return eb.GetKeyIdentifier(ctx, path)

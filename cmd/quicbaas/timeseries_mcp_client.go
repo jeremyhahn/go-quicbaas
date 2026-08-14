@@ -282,5 +282,5 @@ func createTimeSeriesMCPClient() (TimeSeriesClient, error) {
 	return &MCPTimeSeriesClient{client: sdkClient}, nil
 }
 
-// Compile-time interface check
+// Compile-time interface check.
 var _ TimeSeriesClient = (*MCPTimeSeriesClient)(nil)

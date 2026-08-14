@@ -27,27 +27,6 @@ import (
 // IAM Service Interfaces
 // =============================================================================
 
-// mfaServiceInterface defines MFA operations for type assertion.
-type mfaServiceInterface interface {
-	// Enrollment
-	BeginEnrollment(ctx context.Context, userID, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error)
-	CompleteEnrollment(ctx context.Context, enrollmentID, code string) error
-	CancelEnrollment(ctx context.Context, enrollmentID string) error
-
-	// Verification
-	BeginChallenge(ctx context.Context, userID, tenantID, sessionToken string) (*iam.MFAChallenge, error)
-	VerifyChallenge(ctx context.Context, challengeID, code string) (*iam.MFAVerifyResponse, error)
-
-	// Management
-	DisableMFA(ctx context.Context, userID, tenantID string) error
-	GetMFAStatus(ctx context.Context, userID, tenantID string) (*iam.MFAStatus, error)
-
-	// Backup Codes
-	GenerateBackupCodes(ctx context.Context, userID, tenantID string) ([]string, error)
-	VerifyBackupCode(ctx context.Context, userID, tenantID, code string) error
-	GetBackupCodeStatus(ctx context.Context, userID, tenantID string) (*iam.BackupCodeStatus, error)
-}
-
 // pepServiceInterface defines PEP operations for type assertion.
 type pepServiceInterface interface {
 	Check(ctx context.Context, req *service.CheckRequest) (*service.CheckResponse, error)

@@ -292,7 +292,7 @@ type Server struct {
 
 	// Seal management - uses the interfaces.SealManager abstraction backed
 	// by qrdb's StorageBarrier via the BarrierSealManager adapter.
-	sealManager interfaces.SealManager
+	sealManager interfaces.SealManager //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 
 	// dataPlaneBarrier is the concrete StorageBarrier used to encrypt the
 	// data-plane stores (KV, time-series, vector). Set during startService()
@@ -1347,14 +1347,14 @@ func (s *Server) UpdateCA(ca xkmssdk.TrustedCA) error {
 }
 
 // GetSealManager returns the seal manager (nil if seal is not enabled).
-func (s *Server) GetSealManager() interfaces.SealManager {
+func (s *Server) GetSealManager() interfaces.SealManager { //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 	return s.sealManager
 }
 
 // SetSealManager sets the seal manager on the server. This is used by
 // integration points that construct seal managers externally (e.g., gRPC
 // seal service initialization).
-func (s *Server) SetSealManager(mgr interfaces.SealManager) {
+func (s *Server) SetSealManager(mgr interfaces.SealManager) { //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 	s.sealManager = mgr
 }
 

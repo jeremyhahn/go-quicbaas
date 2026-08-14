@@ -224,7 +224,7 @@ func (r *CodecResolver) DetectCodec(entity interface{}) (string, error) {
 	}
 
 	// Dereference pointer
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -440,7 +440,7 @@ func (c *jsonPushCodec) Decode(data []byte, entity interface{}) error {
 	}
 
 	// Verify entity is a pointer
-	if reflect.TypeOf(entity).Kind() != reflect.Ptr {
+	if reflect.TypeOf(entity).Kind() != reflect.Pointer {
 		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "jsonPushCodec.Decode",
@@ -510,7 +510,7 @@ func (c *msgpackPushCodec) Decode(data []byte, entity interface{}) error {
 	}
 
 	// Verify entity is a pointer
-	if reflect.TypeOf(entity).Kind() != reflect.Ptr {
+	if reflect.TypeOf(entity).Kind() != reflect.Pointer {
 		return &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   "msgpackPushCodec.Decode",

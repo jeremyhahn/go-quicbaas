@@ -50,14 +50,6 @@ var allowedAlgs = map[string]struct{}{
 	"EdDSA": {},
 }
 
-// joseSigAlgs restricts the algorithms the embedded jwk header is parsed for.
-var joseSigAlgs = []jose.SignatureAlgorithm{
-	jose.ES256, jose.ES384, jose.ES512,
-	jose.RS256, jose.RS384, jose.RS512,
-	jose.PS256, jose.PS384, jose.PS512,
-	jose.EdDSA,
-}
-
 // VerifyOptions configures a single proof verification.
 type VerifyOptions struct {
 	// HTM is the expected HTTP method (e.g. "POST"). Compared case-insensitively.

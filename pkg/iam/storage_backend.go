@@ -36,10 +36,10 @@ var ErrAlreadyExists = &dberrors.QBError{
 // Key prefixes for IAM data following the architecture spec.
 // All IAM data uses the reserved prefix `__iam:`.
 const (
-	// Root prefix for all IAM data
+	// Root prefix for all IAM data.
 	KeyPrefixIAM = "__iam:"
 
-	// Tenant keys
+	// Tenant keys.
 	KeyPrefixTenant         = "__iam:tenant:"
 	KeyPrefixTenantSettings = ":settings"
 	KeyPrefixTenantQuota    = ":quota"
@@ -50,12 +50,12 @@ const (
 	KeyPrefixRole   = ":role:"
 	KeyPrefixPolicy = ":policy:"
 
-	// OAuth2/OIDC keys (scoped by tenant)
+	// OAuth2/OIDC keys (scoped by tenant).
 	KeyPrefixApp      = ":app:"
 	KeyPrefixToken    = ":token:"
 	KeyPrefixAuthCode = ":authcode:"
 
-	// Session keys (scoped by tenant)
+	// Session keys (scoped by tenant).
 	KeyPrefixSession = ":session:"
 
 	// Global indexes. The username, email, and PIV-thumbprint lookup indexes

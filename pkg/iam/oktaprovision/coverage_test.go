@@ -1039,8 +1039,9 @@ func TestProvisionApp_SeedAdminGroupNotInSet(t *testing.T) {
 
 func TestDoRequest_BadURL(t *testing.T) {
 	p := New(Config{}, nil)
-	_, err := p.doRequest(context.Background(), http.MethodGet, "://bad", "tok", nil)
+	resp, err := p.doRequest(context.Background(), http.MethodGet, "://bad", "tok", nil)
 	if err == nil {
+		resp.Body.Close()
 		t.Fatal("expected request-creation error for bad URL")
 	}
 }

@@ -16,7 +16,6 @@ package iam
 import (
 	"context"
 	"encoding/json"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,9 +43,6 @@ type EnhancedRaftCacheSyncer struct {
 
 	// conflictResolutionStrategy determines how to handle version conflicts.
 	conflictResolutionStrategy ConflictResolutionStrategy
-
-	// mu protects concurrent access to syncer state.
-	enhancedMu sync.RWMutex
 }
 
 // ConflictResolutionStrategy defines how to handle version conflicts.

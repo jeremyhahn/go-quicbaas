@@ -1331,10 +1331,10 @@ func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err 
 	}
 
 	// Check scheduler-specific error types
-	var notFoundErr *scheduler.JobNotFoundError
-	if stderrors.As(err, &notFoundErr) {
+	var notFoundError *scheduler.JobNotFoundError
+	if stderrors.As(err, &notFoundError) {
 		RespondError(w, r, http.StatusNotFound, &NotFoundError{
-			Resource: notFoundErr.Error(),
+			Resource: notFoundError.Error(),
 		})
 		return
 	}

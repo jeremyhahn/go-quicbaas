@@ -100,16 +100,14 @@ func (s *fileLockStore) Acquire(ctx context.Context, tenantID, projectID, filePa
 					"holder":   existing.AgentID,
 					"agent_id": agentID,
 				}).Warn("Worktree mode: acquiring advisory lock over existing holder")
-			} else {
-				// Shared mode: reject if another agent holds the lock.
-				if existing.AgentID != agentID {
-					return nil, &FileLockedError{
-						AgentID:    existing.AgentID,
-						FilePath:   existing.FilePath,
-						AcquiredAt: existing.AcquiredAt,
-					}
+			} else if existing.AgentID != agentID {
+				// Shared mode: reject if another agent holds the lock. The
+				// same agent re-acquiring is allowed (idempotent).
+				return nil, &FileLockedError{
+					AgentID:    existing.AgentID,
+					FilePath:   existing.FilePath,
+					AcquiredAt: existing.AcquiredAt,
 				}
-				// Same agent re-acquiring: allow (idempotent).
 			}
 		}
 		// Expired lease: proceed to overwrite the stale lock.

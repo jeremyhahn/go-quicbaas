@@ -318,7 +318,7 @@ func (m *CodecManager) detectEntityCodec(entity interface{}) string {
 	}
 
 	// Dereference pointer
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -357,7 +357,7 @@ func (m *CodecManager) autoDetectCodec(entity interface{}) string {
 	}
 
 	// Dereference pointer
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 

@@ -102,7 +102,6 @@ type BatchManager struct {
 	tenantMgr     TenantManager
 	batchSize     int
 	parallelism   int
-	mu            sync.RWMutex
 }
 
 // BatchManagerOptions configures the BatchManager.
@@ -420,7 +419,6 @@ type progressTracker struct {
 	failureCount   int64
 	currentType    atomic.Value
 	progressFunc   ProgressFunc
-	mu             sync.RWMutex
 }
 
 // newProgressTracker creates a new progress tracker.
@@ -462,7 +460,9 @@ func (pt *progressTracker) notifyProgress() {
 	processed := atomic.LoadInt64(&pt.processedItems)
 	success := atomic.LoadInt64(&pt.successCount)
 	failure := atomic.LoadInt64(&pt.failureCount)
-	currentType := pt.currentType.Load().(string)
+	// The tracker stores a string on every update; before the first store
+	// Load returns nil and the zero value is the right answer.
+	currentType, _ := pt.currentType.Load().(string)
 
 	var percentComplete float64
 	if total > 0 {
@@ -485,7 +485,9 @@ func (pt *progressTracker) getProgress() BatchImportProgress {
 	processed := atomic.LoadInt64(&pt.processedItems)
 	success := atomic.LoadInt64(&pt.successCount)
 	failure := atomic.LoadInt64(&pt.failureCount)
-	currentType := pt.currentType.Load().(string)
+	// The tracker stores a string on every update; before the first store
+	// Load returns nil and the zero value is the right answer.
+	currentType, _ := pt.currentType.Load().(string)
 
 	var percentComplete float64
 	if total > 0 {

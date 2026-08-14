@@ -217,13 +217,14 @@ func (s *Server) StreamBatchPut(stream pb.QuicBaaS_StreamBatchPutServer) error {
 			}
 
 			duration := time.Since(start).Seconds()
-			if result.Succeeded {
+			switch {
+			case result.Succeeded:
 				streamMetrics.streamsTotal.With("success").Inc()
 				streamMetrics.streamDuration.With("success").Observe(duration)
-			} else if !payload.Complete.Commit {
+			case !payload.Complete.Commit:
 				streamMetrics.streamsTotal.With("aborted").Inc()
 				streamMetrics.streamDuration.With("aborted").Observe(duration)
-			} else {
+			default:
 				streamMetrics.streamsTotal.With("failed").Inc()
 				streamMetrics.streamDuration.With("failed").Observe(duration)
 			}

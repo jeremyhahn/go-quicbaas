@@ -46,12 +46,12 @@ import (
 // "service unavailable" condition rather than a nil-pointer panic.
 // =============================================================================
 
-// ceremonyServiceUnavailableQBError is the canonical QBError returned when the
+// errCeremonyServiceUnavailableQB is the canonical QBError returned when the
 // ceremony surface is not wired. Returning a QBError with the ErrUnavailable
 // code lets pkg/api/mcp/server.go's mapErrorToJSONRPCError classify the
 // condition through its explicit-code branch (ServiceUnavailable) instead of
 // the generic "Tool execution failed" default.
-var ceremonyServiceUnavailableQBError = &qberrors.QBError{
+var errCeremonyServiceUnavailableQB = &qberrors.QBError{
 	Code: qberrors.ErrUnavailable,
 	Op:   "mcp.ceremony",
 	Err:  &CeremonyServiceUnavailableError{},
@@ -60,7 +60,7 @@ var ceremonyServiceUnavailableQBError = &qberrors.QBError{
 // CeremonyServiceUnavailableError is returned by every ceremony tool when the
 // CeremonyServicer has not been wired into the ToolRegistry. Mirrors the REST
 // 503-on-nil-facade behaviour. It is always wrapped in
-// ceremonyServiceUnavailableQBError before being returned so the MCP error
+// errCeremonyServiceUnavailableQB before being returned so the MCP error
 // mapper classifies it as ServiceUnavailable.
 type CeremonyServiceUnavailableError struct{}
 
@@ -294,11 +294,11 @@ var ceremonyExecutors = map[string]ceremonyExecutor{
 func (r *ToolRegistry) executeCeremonyTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
 	svc := r.ceremonySvc
 	if svc == nil {
-		return nil, ceremonyServiceUnavailableQBError
+		return nil, errCeremonyServiceUnavailableQB
 	}
 	executor, ok := ceremonyExecutors[name]
 	if !ok {
-		return nil, ceremonyServiceUnavailableQBError
+		return nil, errCeremonyServiceUnavailableQB
 	}
 	return executor(ctx, svc, args)
 }

@@ -125,7 +125,7 @@ func (m *JobMemory) Serialize() string {
 		b.WriteString("\n### What failed (do NOT repeat these):\n")
 		for _, f := range m.FailedApproaches {
 			b.WriteString(fmt.Sprintf(
-				"- \"%s\": %s - FAILED because: %s (iteration %d)\n",
+				"- %q: %s - FAILED because: %s (iteration %d)\n",
 				f.WorkItemTitle, f.Approach, f.Reason, f.Iteration,
 			))
 		}

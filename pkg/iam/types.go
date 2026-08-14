@@ -69,8 +69,9 @@ type TenantSettings struct {
 	// When empty the tenant's Name field is used as a fallback.
 	DisplayName string `json:"display_name,omitempty" yaml:"display_name,omitempty"`
 
-	// MFARequired indicates whether multi-factor authentication is mandatory
-	// Deprecated: Use MFAPolicy.Required instead
+	// MFARequired indicates whether multi-factor authentication is mandatory.
+	//
+	// Deprecated: Use MFAPolicy.Required instead.
 	MFARequired bool `json:"mfa_required" yaml:"mfa_required"`
 
 	// MFAPolicy defines MFA requirements and configuration for this tenant
@@ -217,8 +218,9 @@ type User struct {
 	// MFAEnrolledAt is when MFA was enrolled
 	MFAEnrolledAt *time.Time `json:"mfa_enrolled_at,omitempty" yaml:"mfa_enrolled_at,omitempty"`
 
-	// MFAVerified indicates whether MFA was verified in the current session
-	// Deprecated: Use session-level MFA verification instead
+	// MFAVerified indicates whether MFA was verified in the current session.
+	//
+	// Deprecated: Use session-level MFA verification instead.
 	MFAVerified bool `json:"mfa_verified" yaml:"mfa_verified"`
 
 	// MFATimestamp is the last MFA verification time

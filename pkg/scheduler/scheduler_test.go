@@ -1036,8 +1036,8 @@ func TestCancelJob(t *testing.T) {
 		err = scheduler.CancelJob(ctx, 999)
 
 		require.Error(t, err)
-		var notFoundErr JobNotFoundError
-		assert.True(t, errors.As(err, &notFoundErr))
+		var notFoundError JobNotFoundError
+		assert.True(t, errors.As(err, &notFoundError))
 	})
 
 	t.Run("returns error when canceling running job", func(t *testing.T) {
@@ -1250,8 +1250,8 @@ func TestTriggerJob(t *testing.T) {
 		err = scheduler.TriggerJob(ctx, 999, "")
 
 		require.Error(t, err)
-		var notFoundErr JobNotFoundError
-		assert.True(t, errors.As(err, &notFoundErr))
+		var notFoundError JobNotFoundError
+		assert.True(t, errors.As(err, &notFoundError))
 	})
 
 	t.Run("returns error for running job", func(t *testing.T) {
@@ -1369,8 +1369,8 @@ func TestPauseJob(t *testing.T) {
 		err = scheduler.PauseJob(ctx, 999, "")
 
 		require.Error(t, err)
-		var notFoundErr JobNotFoundError
-		assert.True(t, errors.As(err, &notFoundErr))
+		var notFoundError JobNotFoundError
+		assert.True(t, errors.As(err, &notFoundError))
 	})
 
 	t.Run("returns error for non-pending job", func(t *testing.T) {
@@ -1532,8 +1532,8 @@ func TestResumeJob(t *testing.T) {
 		err = scheduler.ResumeJob(ctx, 999, "")
 
 		require.Error(t, err)
-		var notFoundErr JobNotFoundError
-		assert.True(t, errors.As(err, &notFoundErr))
+		var notFoundError JobNotFoundError
+		assert.True(t, errors.As(err, &notFoundError))
 	})
 
 	t.Run("returns error for non-paused job", func(t *testing.T) {
@@ -1620,8 +1620,8 @@ func TestGetJob(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Nil(t, job)
-		var notFoundErr JobNotFoundError
-		assert.True(t, errors.As(err, &notFoundErr))
+		var notFoundError JobNotFoundError
+		assert.True(t, errors.As(err, &notFoundError))
 	})
 
 	t.Run("returns error on storage failure", func(t *testing.T) {
@@ -2687,8 +2687,8 @@ func TestCancelJobWithTenant(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Empty(t, status)
-		var notFoundErr JobNotFoundError
-		assert.True(t, errors.As(err, &notFoundErr))
+		var notFoundError JobNotFoundError
+		assert.True(t, errors.As(err, &notFoundError))
 	})
 
 	t.Run("returns error when canceling running job", func(t *testing.T) {
@@ -2863,8 +2863,8 @@ func TestPauseJobWithStatus(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Empty(t, status)
-		var notFoundErr JobNotFoundError
-		assert.True(t, errors.As(err, &notFoundErr))
+		var notFoundError JobNotFoundError
+		assert.True(t, errors.As(err, &notFoundError))
 	})
 
 	t.Run("returns error for non-pending job", func(t *testing.T) {
@@ -3049,8 +3049,8 @@ func TestResumeJobWithStatus(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Empty(t, status)
-		var notFoundErr JobNotFoundError
-		assert.True(t, errors.As(err, &notFoundErr))
+		var notFoundError JobNotFoundError
+		assert.True(t, errors.As(err, &notFoundError))
 	})
 
 	t.Run("returns error for non-paused job", func(t *testing.T) {
@@ -3206,8 +3206,8 @@ func TestGetJobWithTenant(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Nil(t, job)
-		var notFoundErr JobNotFoundError
-		assert.True(t, errors.As(err, &notFoundErr))
+		var notFoundError JobNotFoundError
+		assert.True(t, errors.As(err, &notFoundError))
 	})
 
 	t.Run("returns error on storage failure", func(t *testing.T) {
@@ -3529,8 +3529,8 @@ func TestUpdateJob(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Nil(t, job)
-		var notFoundErr JobNotFoundError
-		assert.True(t, errors.As(err, &notFoundErr))
+		var notFoundError JobNotFoundError
+		assert.True(t, errors.As(err, &notFoundError))
 	})
 
 	t.Run("returns error for invalid schedule", func(t *testing.T) {
@@ -3765,8 +3765,8 @@ func TestDeleteJob(t *testing.T) {
 		err = scheduler.DeleteJob(ctx, 999, "", false)
 
 		require.Error(t, err)
-		var notFoundErr JobNotFoundError
-		assert.True(t, errors.As(err, &notFoundErr))
+		var notFoundError JobNotFoundError
+		assert.True(t, errors.As(err, &notFoundError))
 	})
 
 	t.Run("returns error on storage get failure", func(t *testing.T) {
@@ -3910,8 +3910,8 @@ func TestGetJobHistory(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Nil(t, executions)
-		var notFoundErr JobNotFoundError
-		assert.True(t, errors.As(err, &notFoundErr))
+		var notFoundError JobNotFoundError
+		assert.True(t, errors.As(err, &notFoundError))
 	})
 
 	t.Run("returns error on storage get job failure", func(t *testing.T) {

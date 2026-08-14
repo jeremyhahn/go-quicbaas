@@ -423,11 +423,11 @@ func TestFirstBootBootstrap_PIVBootstrapPath_SkipsBanner(t *testing.T) {
 	srv.config.Auth.BootstrapAdminPIVCertPath = pemFile
 
 	var bannerCalled bool
-	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ adminEnrollmentBanner) {
+	origPrint := writeFirstBootBannerFn
+	writeFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ adminEnrollmentBanner) {
 		bannerCalled = true
 	}
-	defer func() { printFirstBootBannerFn = origPrint }()
+	defer func() { writeFirstBootBannerFn = origPrint }()
 
 	require.NoError(t, srv.firstBootBootstrap(context.Background(), c))
 	assert.False(t, bannerCalled, "PIV bootstrap path must NOT print the banner")
@@ -445,9 +445,9 @@ func TestFirstBootBootstrap_PIVBootstrapPath_InvalidCertReturnsTypedError(t *tes
 	c := buildTestIAMComponents(t)
 	srv.config.Auth.BootstrapAdminPIVCertPath = "/no/such/file.pem"
 
-	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ adminEnrollmentBanner) {}
-	defer func() { printFirstBootBannerFn = origPrint }()
+	origPrint := writeFirstBootBannerFn
+	writeFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ adminEnrollmentBanner) {}
+	defer func() { writeFirstBootBannerFn = origPrint }()
 
 	err := srv.firstBootBootstrap(context.Background(), c)
 	require.Error(t, err)

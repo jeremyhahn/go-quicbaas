@@ -439,7 +439,7 @@ var resourcePathMapping = map[string]string{
 	"/api/v1/secrets":      interfaces.ResourceSecrets,
 	"/api/v1/kms":          interfaces.ResourceKMS,
 	"/api/v1/crypto":       interfaces.ResourceCrypto,
-	"/api/v1/seal":         interfaces.ResourceSeal,
+	"/api/v1/seal":         interfaces.ResourceSeal, //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 	"/api/v1/cluster":      interfaces.ResourceCluster,
 	"/api/v1/users":        interfaces.ResourceUsers,
 	"/api/v1/roles":        interfaces.ResourceRoles,

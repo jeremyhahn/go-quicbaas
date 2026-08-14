@@ -156,7 +156,7 @@ const (
 	// spawn with AccountRefreshFailedError naming the account. It never falls
 	// back to the host's shared identity and never reroutes to another
 	// account.
-	AccountCredentialModeOAuthRefresh AccountCredentialMode = "oauth_refresh"
+	AccountCredentialModeOAuthRefresh AccountCredentialMode = "oauth_refresh" //nolint:gosec // G101: a mode discriminator, not a credential
 
 	// AccountCredentialModeStaticToken marks a long-lived credential that
 	// QuicBaaS never renews: an officially-issued long-lived token

@@ -540,9 +540,9 @@ func convertSchedulerError(err error) error {
 	}
 
 	// Check scheduler-specific error types first
-	var notFoundErr *scheduler.JobNotFoundError
-	if stderrors.As(err, &notFoundErr) {
-		return status.Error(codes.NotFound, notFoundErr.Error())
+	var notFoundError *scheduler.JobNotFoundError
+	if stderrors.As(err, &notFoundError) {
+		return status.Error(codes.NotFound, notFoundError.Error())
 	}
 
 	var alreadyExistsErr *scheduler.JobAlreadyExistsError

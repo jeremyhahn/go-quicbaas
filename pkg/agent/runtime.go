@@ -315,10 +315,6 @@ func (r *Runtime) Prompt(ctx context.Context, backendName string, req *orchestra
 		r.sessionTenantsMu.Lock()
 		tenantID := r.sessionTenants[req.SessionID]
 		r.sessionTenantsMu.Unlock()
-		backendForEvent := backendName
-		if backendForEvent == "" {
-			backendForEvent = r.backendForSession(req.SessionID)
-		}
 		r.eventForwarder.ObserveEvent(&orchestration.SessionEvent{
 			SessionID: req.SessionID,
 			TenantID:  tenantID,

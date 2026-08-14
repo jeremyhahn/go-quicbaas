@@ -450,7 +450,7 @@ const (
 
 	// Messaging Operations - uses OpMsg (0x00) as dispatch opcode
 	// with sub-operation code in the first byte of payload.
-	// Sub-opcode range: 0x20-0x2F (non-overlapping with scheduler 0x01-0x1F)
+	// Sub-opcode range: 0x20-0x2F (non-overlapping with scheduler 0x01-0x1F).
 	OpMsg byte = 0x00 // Msg dispatch opcode (sub-op in payload[0])
 
 	// Orchestrator Operations - uses OpOrchestrator (0x8F) as dispatch opcode
@@ -477,7 +477,7 @@ const (
 
 // Vector Extended sub-operation codes (used in payload[0] when OpScheduler is the main opcode).
 // These are NOT wire opcodes - they are decoded from the request payload.
-// Sub-opcode range: 0x40-0x4F (non-overlapping with scheduler 0x01-0x1F and messaging 0x20-0x2F)
+// Sub-opcode range: 0x40-0x4F (non-overlapping with scheduler 0x01-0x1F and messaging 0x20-0x2F).
 const (
 	SubOpVectorBatchDelete    byte = 0x40
 	SubOpVectorListVectors    byte = 0x41
@@ -1215,7 +1215,7 @@ func StatusToError(status byte, message string) error {
 // by subsystem to track the wire opcode definitions above. The opcode space is
 // dense and well under 256 entries, so a map keyed by the byte opcode is the
 // idiomatic constant-time replacement for the linear switch.
-var opcodeNames = map[byte]string{
+var opcodeNames = map[byte]string{ //nolint:gosec // G101: opcode display names, not credentials
 	// Scheduler Operations (prefix-dispatched)
 	OpScheduler: "Scheduler",
 

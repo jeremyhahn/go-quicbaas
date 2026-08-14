@@ -71,9 +71,6 @@ type EnhancedCacheVersionTracker struct {
 
 	// policyVersions tracks per-policy versions using sync.Map for lock-free access.
 	policyVersions sync.Map // map[string]int64 (key: "tenantID:policyName")
-
-	// mu protects concurrent version updates.
-	mu sync.RWMutex
 }
 
 // NewEnhancedCacheVersionTracker creates a new enhanced cache version tracker.
@@ -87,7 +84,9 @@ func NewEnhancedCacheVersionTracker() *EnhancedCacheVersionTracker {
 func (t *EnhancedCacheVersionTracker) GetPolicyVersion(tenantID, policyName string) int64 {
 	key := t.makePolicyKey(tenantID, policyName)
 	if v, ok := t.policyVersions.Load(key); ok {
-		return v.(int64)
+		if version, ok := v.(int64); ok {
+			return version
+		}
 	}
 	return 0
 }

@@ -123,16 +123,17 @@ func (s *Server) HandleStoreSecret(w http.ResponseWriter, r *http.Request) {
 
 	// Handle data as either raw bytes (base64) or JSON object
 	var secretData []byte
-	if len(reqBody.Data) > 0 && reqBody.Data[0] == '"' {
+	switch {
+	case len(reqBody.Data) > 0 && reqBody.Data[0] == '"':
 		// Data is a base64-encoded string
 		if err := json.Unmarshal(reqBody.Data, &secretData); err != nil {
 			RespondBadRequest(w, r, "invalid base64 data")
 			return
 		}
-	} else if len(reqBody.Data) > 0 && reqBody.Data[0] == '{' {
+	case len(reqBody.Data) > 0 && reqBody.Data[0] == '{':
 		// Data is a JSON object - store as-is
 		secretData = reqBody.Data
-	} else {
+	default:
 		// Try to unmarshal as raw bytes
 		if err := json.Unmarshal(reqBody.Data, &secretData); err != nil {
 			// If that fails, use the raw JSON
@@ -462,16 +463,17 @@ func (s *Server) HandleRotateSecret(w http.ResponseWriter, r *http.Request) {
 
 	// Handle data as either raw bytes (base64) or JSON object
 	var secretData []byte
-	if len(reqBody.Data) > 0 && reqBody.Data[0] == '"' {
+	switch {
+	case len(reqBody.Data) > 0 && reqBody.Data[0] == '"':
 		// Data is a base64-encoded string
 		if err := json.Unmarshal(reqBody.Data, &secretData); err != nil {
 			RespondBadRequest(w, r, "invalid base64 data")
 			return
 		}
-	} else if len(reqBody.Data) > 0 && reqBody.Data[0] == '{' {
+	case len(reqBody.Data) > 0 && reqBody.Data[0] == '{':
 		// Data is a JSON object - store as-is
 		secretData = reqBody.Data
-	} else {
+	default:
 		// Try to unmarshal as raw bytes
 		if err := json.Unmarshal(reqBody.Data, &secretData); err != nil {
 			// If that fails, use the raw JSON

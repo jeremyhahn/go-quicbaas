@@ -154,7 +154,6 @@ func (h *HTTPTransport) CompleteRegistration(ctx context.Context, req Registrati
 
 // UploadPreKeys implements ServerTransport.
 func (h *HTTPTransport) UploadPreKeys(ctx context.Context, account SignalAccount, bundle PreKeyBundleUpload) error {
-	const op = "signalbridge.HTTPTransport.UploadPreKeys"
 	body := map[string]any{
 		"identityKey": base64.StdEncoding.EncodeToString(bundle.IdentityKey),
 		"signedPreKey": map[string]any{
@@ -286,7 +285,9 @@ func (h *HTTPTransport) OpenInbound(ctx context.Context, account SignalAccount) 
 			Transport: &http.Transport{TLSClientConfig: h.cfg.TLSClientConfig},
 		}
 	}
-	conn, _, err := websocket.Dial(ctx, wsURL.String(), opts)
+	// websocket.Dial closes the handshake response body itself; the caller
+	// only owns the returned connection.
+	conn, _, err := websocket.Dial(ctx, wsURL.String(), opts) //nolint:bodyclose // the handshake response body is owned and closed by websocket.Dial
 	if err != nil {
 		return nil, nil, wrapError(op, ErrKindTransport, err, "dial websocket")
 	}

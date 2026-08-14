@@ -91,13 +91,6 @@ type HTTPHeartbeatSender struct {
 	logger         interfaces.Logger
 	reregisterer   Reregisterer
 	reregisterFail atomic.Int32
-
-	// sequence is local to the sender and is overridden by HeartbeatStatus.SequenceNumber
-	// when the Daemon supplies its own counter. Kept here as a defensive fallback.
-	seq struct {
-		mu sync.Mutex
-		n  uint64
-	}
 }
 
 // HTTPHeartbeatConfig bundles the sender's dependencies.
@@ -302,7 +295,7 @@ func (s *HTTPHeartbeatSender) post(ctx context.Context, endpoint string, status 
 	if err != nil {
 		return &HeartbeatSendError{Op: "transport", Cause: err}
 	}
-	defer func() { _, _ = io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:

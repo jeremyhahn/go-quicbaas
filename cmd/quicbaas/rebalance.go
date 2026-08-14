@@ -342,11 +342,12 @@ func displayRebalanceReport(report *RebalanceReport, outputFormat string) error 
 
 		fmt.Fprintln(w)
 
-		if report.MovesFailed > 0 {
+		switch {
+		case report.MovesFailed > 0:
 			fmt.Fprintf(w, "\nWarning: Rebalance completed with %d failed moves\n", report.MovesFailed)
-		} else if report.MovesCompleted > 0 {
+		case report.MovesCompleted > 0:
 			fmt.Fprintln(w, "Rebalance completed successfully!")
-		} else {
+		default:
 			fmt.Fprintln(w, "Cluster is already balanced - no moves required")
 		}
 

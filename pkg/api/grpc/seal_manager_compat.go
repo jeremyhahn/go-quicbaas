@@ -70,7 +70,7 @@ func (n *noopSealManager) GenerateRootToken(_ context.Context, _ string, _ [][]b
 func (n *noopSealManager) RotateRootKey(_ context.Context) error { return nil }
 func (n *noopSealManager) Close() error                          { return nil }
 
-var _ interfaces.SealManager = (*noopSealManager)(nil)
+var _ interfaces.SealManager = (*noopSealManager)(nil) //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 
 // InitializeDefaultSealManager is a no-op compatibility shim. Returns
 // nil so the lifecycle seam's failure path stays quiet for callers
@@ -83,7 +83,7 @@ func InitializeDefaultSealManager(_ *logger.Logger) error {
 // barrier as sealed and rejects all unseal/seal calls with success
 // (no-op). Production callers replace the value via
 // Server.SetSealManager before any RPC is served.
-func NewDefaultSealManager(_ *quicbaasseal.Config) interfaces.SealManager {
+func NewDefaultSealManager(_ *quicbaasseal.Config) interfaces.SealManager { //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 	return &noopSealManager{}
 }
 
@@ -92,6 +92,6 @@ func NewDefaultSealManager(_ *quicbaasseal.Config) interfaces.SealManager {
 // API design that has since been folded into pkg/seal.BarrierSealManager.
 // Returns the no-op manager and a nil error so the lifecycle.go seam's
 // fallback branch never trips on a missing function.
-func NewPersistentDefaultSealManager(_ *quicbaasseal.Config, _ string) (interfaces.SealManager, error) {
+func NewPersistentDefaultSealManager(_ *quicbaasseal.Config, _ string) (interfaces.SealManager, error) { //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 	return &noopSealManager{}, nil
 }

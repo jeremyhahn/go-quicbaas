@@ -109,7 +109,7 @@ func getObjectStore(shardID uint64) (ObjectStoreReader, bool) {
 // =============================================================================
 
 // HandleFetchObject fetches a single object from the local object store.
-// POST /api/v1/object-transfer/fetch
+// POST /api/v1/object-transfer/fetch.
 func (s *Server) HandleFetchObject(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	_ = ctx // Available for future use with context deadline/cancellation
@@ -196,7 +196,7 @@ func (s *Server) HandleFetchObject(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleStreamFetchObjects fetches multiple objects and streams them as NDJSON.
-// POST /api/v1/object-transfer/stream-fetch
+// POST /api/v1/object-transfer/stream-fetch.
 func (s *Server) HandleStreamFetchObjects(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

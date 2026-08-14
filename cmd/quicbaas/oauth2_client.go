@@ -313,31 +313,33 @@ func buildRegisterRequest(cmd *cobra.Command) (string, *sdkiam.RegisterAppReques
 
 	case "tls_client_auth":
 		req.TokenEndpointAuthMethod = sdkiam.TokenEndpointAuthTLSClientAuth
-		if oauth2ClientCertPEM != "" {
+		switch {
+		case oauth2ClientCertPEM != "":
 			thumbprint, subjectDN, err := certMetadataFromPEM(oauth2ClientCertPEM)
 			if err != nil {
 				return "", nil, err
 			}
 			req.MTLSCertThumbprint = thumbprint
 			req.MTLSSubjectDN = subjectDN
-		} else if oauth2ClientThumbprint != "" {
+		case oauth2ClientThumbprint != "":
 			req.MTLSCertThumbprint = oauth2ClientThumbprint
-		} else {
+		default:
 			return "", nil, pkgerrors.Newf(pkgerrors.ErrInvalidInput, "oauth2.client.register",
 				"--cert-pem or --cert-thumbprint is required for tls_client_auth")
 		}
 
 	case "self_signed_tls_client_auth":
 		req.TokenEndpointAuthMethod = sdkiam.TokenEndpointAuthSelfSignedTLSClientAuth
-		if oauth2ClientCertPEM != "" {
+		switch {
+		case oauth2ClientCertPEM != "":
 			thumbprint, _, err := certMetadataFromPEM(oauth2ClientCertPEM)
 			if err != nil {
 				return "", nil, err
 			}
 			req.MTLSCertThumbprint = thumbprint
-		} else if oauth2ClientThumbprint != "" {
+		case oauth2ClientThumbprint != "":
 			req.MTLSCertThumbprint = oauth2ClientThumbprint
-		} else {
+		default:
 			return "", nil, pkgerrors.Newf(pkgerrors.ErrInvalidInput, "oauth2.client.register",
 				"--cert-pem or --cert-thumbprint is required for self_signed_tls_client_auth")
 		}

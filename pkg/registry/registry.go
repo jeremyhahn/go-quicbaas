@@ -26,6 +26,7 @@ import (
 	"time"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -78,7 +79,7 @@ func tenantFromContext(ctx context.Context) (string, error) {
 		return "", &InvalidInstanceError{Reason: "tenant ID exceeds maximum length"}
 	}
 	for _, ch := range tenant {
-		if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_') {
+		if (ch < 'a' || ch > 'z') && (ch < 'A' || ch > 'Z') && (ch < '0' || ch > '9') && ch != '-' && ch != '_' {
 			return "", &InvalidInstanceError{Reason: "tenant ID contains invalid character; only alphanumeric, hyphens, and underscores are allowed"}
 		}
 	}

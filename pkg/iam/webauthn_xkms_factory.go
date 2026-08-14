@@ -221,19 +221,23 @@ func (f *WebAuthnServiceFactory) ServiceFor(ctx context.Context, tenantID string
 		return nil, &WebAuthnFactoryConfigError{Field: "tenantID"}
 	}
 	if v, ok := f.services.Load(tenantID); ok {
-		return v.(*xkmssdk.WebAuthnService), nil
+		if svc, ok := v.(*xkmssdk.WebAuthnService); ok {
+			return svc, nil
+		}
 	}
 
 	// Per-tenant construction lock to prevent duplicate construction.
 	lockI, _ := f.constructLocks.LoadOrStore(tenantID, &sync.Mutex{})
-	lock := lockI.(*sync.Mutex)
+	lock, _ := lockI.(*sync.Mutex)
 	lock.Lock()
 	defer lock.Unlock()
 
 	// Re-check after acquiring the lock — another goroutine may have
 	// constructed the service while we waited.
 	if v, ok := f.services.Load(tenantID); ok {
-		return v.(*xkmssdk.WebAuthnService), nil
+		if svc, ok := v.(*xkmssdk.WebAuthnService); ok {
+			return svc, nil
+		}
 	}
 
 	svc, err := f.buildService(ctx, tenantID)

@@ -73,7 +73,7 @@ func registerCacheRoutes(s *Server, r interface {
 }
 
 // HandleGetCacheStats returns cache statistics.
-// GET /api/v1/cache/stats
+// GET /api/v1/cache/stats.
 func (s *Server) HandleGetCacheStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -106,7 +106,7 @@ func (s *Server) HandleGetCacheStats(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleClearCache clears the cache.
-// POST /api/v1/cache/clear
+// POST /api/v1/cache/clear.
 func (s *Server) HandleClearCache(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -134,7 +134,7 @@ func (s *Server) HandleClearCache(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleGetCacheConfig returns cache configuration.
-// GET /api/v1/cache/config
+// GET /api/v1/cache/config.
 func (s *Server) HandleGetCacheConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -164,7 +164,7 @@ func (s *Server) HandleGetCacheConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleUpdateCacheConfig updates cache configuration.
-// PUT /api/v1/cache/config
+// PUT /api/v1/cache/config.
 func (s *Server) HandleUpdateCacheConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

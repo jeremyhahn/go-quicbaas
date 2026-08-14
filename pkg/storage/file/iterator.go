@@ -223,7 +223,7 @@ func (it *fileIterator) Key() []byte {
 
 	key := it.keys[it.current]
 	result := make([]byte, len(key))
-	copy(result, []byte(key))
+	copy(result, key)
 	return result
 }
 

@@ -446,8 +446,11 @@ func (m *AdminManager) CheckPermission(ctx context.Context, req *AdminCheckReque
 		// Get permissions for this role
 		rolePerms := GetDefaultPermissions(assignment.AdminRole)
 
-		// Add explicit permissions
-		allPerms := append(rolePerms, assignment.Permissions...)
+		// Add explicit permissions. Copy first: appending straight onto
+		// rolePerms would write into the shared default-permission slice.
+		allPerms := make([]AdminPermission, 0, len(rolePerms)+len(assignment.Permissions))
+		allPerms = append(allPerms, rolePerms...)
+		allPerms = append(allPerms, assignment.Permissions...)
 
 		// Check if permission is granted
 		for _, perm := range allPerms {

@@ -19,33 +19,33 @@ package quic
 // Note: Byte values are limited to 0-255, so we use the remaining opcodes 0xF0-0xFF
 // for IAM operations. This provides 16 primary slots which we'll use creatively.
 const (
-	// IAM Operations Base (0xF0)
+	// IAM Operations Base (0xF0).
 	OpIAMBase byte = 0xF0
 
 	// Extended IAM Operations (using lower range)
-	// Admin operations: 0xF0 + subop in payload
+	// Admin operations: 0xF0 + subop in payload.
 	OpIAMAdmin byte = 0xF0
-	// GDPR operations: 0xF1 + subop in payload
+	// GDPR operations: 0xF1 + subop in payload.
 	OpIAMGDPR byte = 0xF1
-	// Federation operations: 0xF2 + subop in payload
+	// Federation operations: 0xF2 + subop in payload.
 	OpIAMFederation byte = 0xF2
 
 	// Core IAM Operations (original range)
-	// Tenant Operations: 0xF8 + subop in payload
+	// Tenant Operations: 0xF8 + subop in payload.
 	OpIAMTenant byte = 0xF8
-	// User Operations: 0xF9 + subop in payload
+	// User Operations: 0xF9 + subop in payload.
 	OpIAMUser byte = 0xF9
-	// Group Operations: 0xFA + subop in payload
+	// Group Operations: 0xFA + subop in payload.
 	OpIAMGroup byte = 0xFA
-	// Role Operations: 0xFB + subop in payload
+	// Role Operations: 0xFB + subop in payload.
 	OpIAMRole byte = 0xFB
-	// Policy Operations: 0xFC + subop in payload
+	// Policy Operations: 0xFC + subop in payload.
 	OpIAMPolicy byte = 0xFC
-	// App Operations: 0xFD + subop in payload
+	// App Operations: 0xFD + subop in payload.
 	OpIAMApp byte = 0xFD
-	// MFA Operations: 0xFE + subop in payload
+	// MFA Operations: 0xFE + subop in payload.
 	OpMFA byte = 0xFE
-	// PEP Operations: 0xFF + subop in payload
+	// PEP Operations: 0xFF + subop in payload.
 	OpPEP byte = 0xFF
 )
 
@@ -64,18 +64,18 @@ const (
 
 // IAM Sub-operations for OpIAMGDPR (0xF1).
 const (
-	// Consent sub-operations (0x00-0x0F)
+	// Consent sub-operations (0x00-0x0F).
 	SubOpGrantConsent     byte = 0x00
 	SubOpWithdrawConsent  byte = 0x01
 	SubOpGetConsent       byte = 0x02
 	SubOpListUserConsents byte = 0x03
 
-	// Export sub-operations (0x10-0x1F)
+	// Export sub-operations (0x10-0x1F).
 	SubOpRequestExport   byte = 0x10
 	SubOpGetExportStatus byte = 0x11
 	SubOpGenerateExport  byte = 0x12
 
-	// Deletion sub-operations (0x20-0x2F)
+	// Deletion sub-operations (0x20-0x2F).
 	SubOpRequestDeletion   byte = 0x20
 	SubOpCancelDeletion    byte = 0x21
 	SubOpProcessDeletion   byte = 0x22

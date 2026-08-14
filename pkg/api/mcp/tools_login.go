@@ -34,9 +34,9 @@ import (
 // lookup key from it (never from a client-supplied value).
 // =============================================================================
 
-// loginServiceUnavailableQBError is the canonical QBError returned when the
+// errLoginServiceUnavailableQB is the canonical QBError returned when the
 // login ceremony facade is not wired.
-var loginServiceUnavailableQBError = &qberrors.QBError{
+var errLoginServiceUnavailableQB = &qberrors.QBError{
 	Code: qberrors.ErrUnavailable,
 	Op:   "mcp.login",
 	Err:  &LoginServiceUnavailableError{},
@@ -100,11 +100,11 @@ func isLoginTool(name string) bool {
 // executeLoginTool dispatches a login-surface call.
 func (r *ToolRegistry) executeLoginTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
 	if r.service == nil {
-		return nil, loginServiceUnavailableQBError
+		return nil, errLoginServiceUnavailableQB
 	}
 	login := r.service.LoginCeremony()
 	if login == nil {
-		return nil, loginServiceUnavailableQBError
+		return nil, errLoginServiceUnavailableQB
 	}
 	switch name {
 	case "quicbaas_login_begin":
@@ -112,7 +112,7 @@ func (r *ToolRegistry) executeLoginTool(ctx context.Context, name string, args m
 	case "quicbaas_login_finish":
 		return executeLoginFinish(ctx, login, args)
 	default:
-		return nil, loginServiceUnavailableQBError
+		return nil, errLoginServiceUnavailableQB
 	}
 }
 

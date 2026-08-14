@@ -57,8 +57,8 @@ func TestAgentAdminTypedErrors_Messages(t *testing.T) {
 			want: "agent is disabled: tenant=t1 agent=a1",
 		},
 		{
-			name: "ErrAgentStreamCloseNotImplemented",
-			err:  &service.ErrAgentStreamCloseNotImplemented{AgentID: "a1"},
+			name: "AgentStreamCloseNotImplementedError",
+			err:  &service.AgentStreamCloseNotImplementedError{AgentID: "a1"},
 			want: "agent stream close not implemented: no stream registry wired for agent=a1",
 		},
 	}

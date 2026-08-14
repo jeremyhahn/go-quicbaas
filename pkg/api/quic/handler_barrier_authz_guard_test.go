@@ -19,9 +19,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
 // =============================================================================
@@ -260,7 +261,7 @@ func TestBarrierAuthz_GateLevel_StatusPermission(t *testing.T) {
 // consulted (the request is not short-circuited before reaching it).
 func TestBarrierAuthz_GateLevel_AllSubOpsReachValidator(t *testing.T) {
 	for subOp := range barrierSubOpPermissions {
-		subOp := subOp // capture
+		// capture
 		t.Run(BarrierSubOpcodeToString(subOp), func(t *testing.T) {
 			v := newAllowBarrierValidator()
 			h := newBarrierHandler(t, &mockBarrierServicer{})

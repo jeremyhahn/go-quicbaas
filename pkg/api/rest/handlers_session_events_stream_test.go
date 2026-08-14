@@ -139,7 +139,7 @@ func openSSE(t *testing.T, srv *streamTestServer, query string) *sseClient {
 	require.NoError(t, err)
 	req.Header.Set("Accept", "text/event-stream")
 
-	resp, err := srv.srv.Client().Do(req)
+	resp, err := srv.srv.Client().Do(req) //nolint:bodyclose // closed by sseClient.close, registered with t.Cleanup below
 	if err != nil {
 		cancel()
 		t.Fatalf("open SSE stream: %v", err)

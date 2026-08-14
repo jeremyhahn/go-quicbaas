@@ -293,12 +293,12 @@ func TestGetJob_NotFound(t *testing.T) {
 		t.Fatal("expected error for non-existent job")
 	}
 
-	var notFoundErr *scheduler.JobNotFoundError
-	if !errors.As(err, &notFoundErr) {
+	var notFoundError *scheduler.JobNotFoundError
+	if !errors.As(err, &notFoundError) {
 		t.Fatalf("expected JobNotFoundError, got %T", err)
 	}
-	if notFoundErr.JobID != 999 {
-		t.Errorf("expected job ID 999, got %d", notFoundErr.JobID)
+	if notFoundError.JobID != 999 {
+		t.Errorf("expected job ID 999, got %d", notFoundError.JobID)
 	}
 }
 

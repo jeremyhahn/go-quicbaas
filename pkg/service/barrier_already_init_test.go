@@ -68,7 +68,6 @@ func TestContainsAlreadyInitializedMsg(t *testing.T) {
 		{"no marker", "barrier not initialized yet", false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, containsAlreadyInitializedMsg(tc.msg))
 		})

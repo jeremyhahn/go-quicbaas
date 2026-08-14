@@ -175,7 +175,7 @@ func (v *IDTokenValidator) Validate(ctx context.Context, idToken string) (*Valid
 	if claims.IssuedAt == nil {
 		return nil, &IDTokenInvalidError{Reason: "missing iat claim"}
 	}
-	if claims.IssuedAt.Time.After(v.now().Add(v.leeway)) {
+	if claims.IssuedAt.After(v.now().Add(v.leeway)) {
 		return nil, &IDTokenInvalidError{Reason: "token issued in the future"}
 	}
 

@@ -502,7 +502,7 @@ func (mdm *MultiDCManager) ReplicateToRemoteDC(ctx context.Context, targetDC str
 
 	case ReplicationAsync:
 		// Asynchronous replication - fire and forget
-		go func() {
+		go func() { //nolint:gosec // G118: fire-and-forget replication must outlive the caller; a request-scoped context would cancel it.
 			if err := mdm.asyncReplicate(context.Background(), targetDC, key, value); err != nil {
 				mdm.logger.WithError(err).WithFields(map[string]interface{}{
 					"target_dc": targetDC,

@@ -465,11 +465,12 @@ func (opts *clientOptions) buildDialOptions() ([]grpc.DialOption, error) {
 	dialOptions := make([]grpc.DialOption, 0, len(opts.dialOptions)+5)
 
 	// Add transport credentials - TLS is required
-	if opts.tlsConfig != nil {
+	switch {
+	case opts.tlsConfig != nil:
 		// Use provided TLS config
 		creds := credentials.NewTLS(opts.tlsConfig)
 		dialOptions = append(dialOptions, grpc.WithTransportCredentials(creds))
-	} else if opts.certFile != "" && opts.keyFile != "" {
+	case opts.certFile != "" && opts.keyFile != "":
 		// Load TLS credentials from files
 		tlsCfg := &TLSConfig{
 			Enabled:  true,
@@ -487,7 +488,7 @@ func (opts *clientOptions) buildDialOptions() ([]grpc.DialOption, error) {
 			)
 		}
 		dialOptions = append(dialOptions, grpc.WithTransportCredentials(creds))
-	} else {
+	default:
 		return nil, errors.Newf(
 			errors.ErrConfiguration,
 			"grpc.buildDialOptions",
@@ -501,29 +502,21 @@ func (opts *clientOptions) buildDialOptions() ([]grpc.DialOption, error) {
 		Timeout:             opts.keepaliveTimeout,
 		PermitWithoutStream: true,
 	}
-	dialOptions = append(dialOptions, grpc.WithKeepaliveParams(kaParams))
-
-	// PERFORMANCE OPTIMIZATION: Increase HTTP/2 flow control windows
-	// Default gRPC windows are 64KB which is FAR too small for high-throughput workloads
-	// Use 16MB windows for maximum throughput
-	// This prevents HTTP/2 flow control from becoming a bottleneck
-	dialOptions = append(dialOptions, grpc.WithInitialWindowSize(16*1024*1024))     // 16 MB per stream
-	dialOptions = append(dialOptions, grpc.WithInitialConnWindowSize(16*1024*1024)) // 16 MB per connection
-
-	// PERFORMANCE OPTIMIZATION: Increase max message sizes
-	// Use 10MB max receive message size
-	dialOptions = append(dialOptions, grpc.WithDefaultCallOptions(
-		grpc.MaxCallRecvMsgSize(10*1024*1024), // 10 MB receive
-		grpc.MaxCallSendMsgSize(10*1024*1024), // 10 MB send
-	))
-
-	// PERFORMANCE OPTIMIZATION: Enable HTTP/2 write buffer size tuning
-	// Larger write buffers reduce syscalls and improve throughput
-	dialOptions = append(dialOptions, grpc.WithWriteBufferSize(512*1024)) // 512 KB write buffer
-
-	// PERFORMANCE OPTIMIZATION: Enable HTTP/2 read buffer size tuning
-	// Larger read buffers reduce syscalls and improve throughput
-	dialOptions = append(dialOptions, grpc.WithReadBufferSize(512*1024)) // 512 KB read buffer
+	// PERFORMANCE OPTIMIZATION: the default gRPC HTTP/2 flow control windows
+	// are 64KB, far too small for high-throughput workloads; 16MB windows keep
+	// flow control from becoming the bottleneck. Larger read/write buffers cut
+	// syscalls, and the larger message sizes admit 10MB payloads.
+	dialOptions = append(dialOptions,
+		grpc.WithKeepaliveParams(kaParams),
+		grpc.WithInitialWindowSize(16*1024*1024),     // 16 MB per stream
+		grpc.WithInitialConnWindowSize(16*1024*1024), // 16 MB per connection
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(10*1024*1024), // 10 MB receive
+			grpc.MaxCallSendMsgSize(10*1024*1024), // 10 MB send
+		),
+		grpc.WithWriteBufferSize(512*1024), // 512 KB write buffer
+		grpc.WithReadBufferSize(512*1024),  // 512 KB read buffer
+	)
 
 	// Add default service config for retry and load balancing
 	// Convert durations to seconds with decimal precision (required by gRPC service config)

@@ -68,12 +68,12 @@ const defaultRegisterPath = "/api/v1/agents/register"
 
 // defaultTokenPath mirrors pkg/iam/oidc.go's TokenEndpoint so a daemon can
 // reach the same OIDC provider that signed its registration.
-const defaultTokenPath = "/oauth2/token"
+const defaultTokenPath = "/oauth2/token" //nolint:gosec // G101: a URL path, not a credential
 
 // defaultTokenMTLSPath is the mTLS token endpoint (RFC 8705). The agent posts
 // here when it has an mtls_client_id and presents its agent.crt on the TLS
 // handshake instead of sending a client_secret.
-const defaultTokenMTLSPath = "/oauth2/token-mtls"
+const defaultTokenMTLSPath = "/oauth2/token-mtls" //nolint:gosec // G101: a URL path, not a credential
 
 // credentialsFileName is the on-disk filename for persisted OAuth2 client
 // credentials inside cfg.WorkDir. 0600 permissions are enforced.

@@ -51,7 +51,7 @@ type AEADSafetyConfig struct {
 // DefaultAEADSafetyConfig returns NIST-compliant safety defaults.
 func DefaultAEADSafetyConfig() AEADSafetyConfig {
 	return AEADSafetyConfig{
-		MaxOperations:     1 << 32,      // 2^32 = 4,294,967,296
+		MaxOperations:     1 << 32,      // 2^32 operations (4,294,967,296)
 		MaxBytes:          375809638400, // ~350 GB (conservative)
 		WarningPercent:    80,
 		AutoRotatePercent: 95,

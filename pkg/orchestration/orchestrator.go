@@ -2550,7 +2550,7 @@ func (s *agentServiceImpl) autoSpawnTask(ctx context.Context, req *CreateTaskReq
 
 	// Subscribe to job events in a background goroutine and mirror job terminal
 	// status back to the parent task when the job completes or fails.
-	go s.mirrorJobStatusToTask(req.TenantID, task.ID, jobResp.JobID)
+	go s.mirrorJobStatusToTask(req.TenantID, task.ID, jobResp.JobID) //nolint:gosec // G118: the work must outlive the caller; a request-scoped context would cancel it.
 
 	s.publishEvent(ctx, req.TenantID, "task_auto_spawned", map[string]string{
 		"task_id": task.ID,
@@ -3598,7 +3598,8 @@ func (s *agentServiceImpl) StartJob(ctx context.Context, req *StartJobRequest) (
 	}
 
 	// Load workflow definition if a workflow name is specified.
-	if req.WorkflowName != "" && s.workflowLoader != nil {
+	switch {
+	case req.WorkflowName != "" && s.workflowLoader != nil:
 		wf, wfErr := s.workflowLoader.Get(req.WorkflowName)
 		if wfErr != nil {
 			return nil, &AgentServiceError{
@@ -3625,9 +3626,9 @@ func (s *agentServiceImpl) StartJob(ctx context.Context, req *StartJobRequest) (
 				break
 			}
 		}
-	} else if req.WorkflowName != "" {
+	case req.WorkflowName != "":
 		s.logger.Warnf("orchestration: workflow %q requested but no workflow loader available", req.WorkflowName)
-	} else if s.workflowLoader != nil && config.LeadBackend != "" {
+	case s.workflowLoader != nil && config.LeadBackend != "":
 		// Fallback: when no workflow name is provided (e.g., gRPC field not
 		// propagated), search loaded workflows for one matching the lead backend/model.
 		// Prefer workflows with more agent roles (more specific match) over

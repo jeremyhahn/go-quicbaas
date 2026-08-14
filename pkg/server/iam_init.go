@@ -77,7 +77,7 @@ type iamComponents struct {
 	certLoginFactors *iam.CertLoginFactorEnroller
 }
 
-// Compile-time check that iamComponents implements service.IAMComponents
+// Compile-time check that iamComponents implements service.IAMComponents.
 var _ service.IAMComponents = (*iamComponents)(nil)
 
 // GetTenantManager returns the tenant manager.
@@ -696,11 +696,11 @@ const (
 	adminKeyFileName  = "admin.key"
 )
 
-// printFirstBootBannerFn is the function used to emit the enrollment banner.
+// writeFirstBootBannerFn is the function used to emit the enrollment banner.
 // It is a package-level variable so unit tests can capture the output without
 // touching os.Stderr.
-var printFirstBootBannerFn = func(w interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
-	printFirstBootBanner(w, b)
+var writeFirstBootBannerFn = func(w interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
+	writeFirstBootBanner(w, b)
 }
 
 // firstBootBootstrap detects a fresh installation (zero admin assignments) and
@@ -840,7 +840,7 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 
 	// Print the enrollment banner to stderr. Use os.Stderr directly — NOT the
 	// structured logger — so operators see it regardless of log level.
-	printFirstBootBannerFn(os.Stderr, banner)
+	writeFirstBootBannerFn(os.Stderr, banner)
 
 	return nil
 }
@@ -1311,14 +1311,14 @@ func (e *PIVBootstrapError) Error() string {
 
 func (e *PIVBootstrapError) Unwrap() error { return e.Cause }
 
-// printFirstBootBanner writes the admin enrollment banner to w. Extracted for
+// writeFirstBootBanner writes the admin enrollment banner to w. Extracted for
 // testability.
 //
 // Admin enrollment is cert-based: first-boot already issued (or CSR-signed) the
 // platform admin certificate and bound its SPKI thumbprint to the admin user.
 // The banner tells the operator where that material is and how to use it. There
 // is no invite token and no activation URL — §08 deleted that mechanism.
-func printFirstBootBanner(w interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
+func writeFirstBootBanner(w interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
 	const sep = "============================================================"
 	lines := []string{"", sep, "  FIRST-BOOT COMPLETE: platform admin created."}
 

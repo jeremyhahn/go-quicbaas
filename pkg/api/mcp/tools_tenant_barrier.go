@@ -21,6 +21,7 @@ import (
 	stderrors "errors"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -44,9 +45,9 @@ import (
 // material is proxied straight through and never logged.
 // =============================================================================
 
-// tenantBarrierServiceUnavailableQBError is the canonical QBError returned when
+// errTenantBarrierServiceUnavailableQB is the canonical QBError returned when
 // the per-tenant barrier surface is not wired.
-var tenantBarrierServiceUnavailableQBError = &qberrors.QBError{
+var errTenantBarrierServiceUnavailableQB = &qberrors.QBError{
 	Code: qberrors.ErrUnavailable,
 	Op:   "mcp.tenant_barrier",
 	Err:  &TenantBarrierServiceUnavailableError{},
@@ -220,18 +221,18 @@ var tenantBarrierExecutors = map[string]tenantBarrierExecutor{
 }
 
 // executeTenantBarrierTool dispatches a per-tenant barrier call to the
-// appropriate executor. Returns tenantBarrierServiceUnavailableQBError when the
+// appropriate executor. Returns errTenantBarrierServiceUnavailableQB when the
 // registry has no TenantBarrierServicer wired, mirroring the REST 503-on-nil
 // semantics.
 func (r *ToolRegistry) executeTenantBarrierTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
 	svc := r.tenantBarrierSvc
 	if svc == nil {
-		return nil, tenantBarrierServiceUnavailableQBError
+		return nil, errTenantBarrierServiceUnavailableQB
 	}
 	executor, ok := tenantBarrierExecutors[name]
 	if !ok {
 		// Should not happen — isTenantBarrierTool gates entry. Defensive return.
-		return nil, tenantBarrierServiceUnavailableQBError
+		return nil, errTenantBarrierServiceUnavailableQB
 	}
 	result, err := executor(ctx, svc, args)
 	if err != nil {

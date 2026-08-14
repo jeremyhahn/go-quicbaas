@@ -1841,11 +1841,12 @@ func (s *Server) GetCompactionProgress(ctx context.Context, req *pb.GetCompactio
 
 	// Determine status string.
 	var statusStr string
-	if resp.InProgress {
+	switch {
+	case resp.InProgress:
 		statusStr = "in_progress"
-	} else if resp.Error != "" {
+	case resp.Error != "":
 		statusStr = "failed"
-	} else {
+	default:
 		statusStr = "completed"
 	}
 

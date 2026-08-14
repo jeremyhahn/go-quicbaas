@@ -51,7 +51,7 @@ func (h *IAMHandler) JWTMiddleware(next http.Handler) http.Handler {
 		}
 
 		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
 			RespondIAMError(w, r, http.StatusUnauthorized,
 				NewIAMAPIError(ErrUnauthorized, "invalid authorization header format"))
 			return
@@ -237,7 +237,7 @@ func (h *IAMHandler) ImpersonationMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// timeNow is a variable that can be overridden in tests
+// timeNow is a variable that can be overridden in tests.
 var timeNow = func() time.Time { return time.Now().UTC() }
 
 // ImpersonationAuditMiddleware records operations performed during impersonation sessions.

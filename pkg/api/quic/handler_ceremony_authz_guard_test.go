@@ -19,9 +19,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
 // =============================================================================
@@ -286,7 +287,6 @@ func TestCeremonyAuthz_GateLevel_UnknownSubOpDeniedBeforeValidator(t *testing.T)
 // short-circuited or collapsed onto a sibling's permission.
 func TestCeremonyAuthz_GateLevel_AllSubOpsReachValidator(t *testing.T) {
 	for subOp, perm := range ceremonySubOpPermissions {
-		subOp, perm := subOp, perm
 		t.Run(CeremonySubOpcodeToString(subOp), func(t *testing.T) {
 			v := newAllowCeremonyValidator()
 			h := newCeremonyHandler(t, &mockCeremonyServicer{})

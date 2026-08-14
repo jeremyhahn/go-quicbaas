@@ -539,6 +539,7 @@ func (p *storagePool) performMaintenance() {
 
 	// Drain and re-add connections, filtering out expired ones
 	n := len(p.conns)
+drain:
 	for i := 0; i < n; i++ {
 		select {
 		case conn := <-p.conns:
@@ -560,7 +561,7 @@ func (p *storagePool) performMaintenance() {
 			}
 		default:
 			// No more connections to check
-			break
+			break drain
 		}
 	}
 
@@ -578,6 +579,7 @@ func (p *storagePool) performMaintenance() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
+	refill:
 		for i := currentConns; i < p.config.MinConns; i++ {
 			conn, err := p.createConnection(ctx)
 			if err != nil {
@@ -587,7 +589,7 @@ func (p *storagePool) performMaintenance() {
 			case p.conns <- conn:
 			default:
 				p.closeConnection(conn, "pool full")
-				break
+				break refill
 			}
 		}
 	}
@@ -667,12 +669,10 @@ func (c *storageConnection) Close() error {
 	if c.pool != nil {
 		// Let the pool handle closing and stats
 		c.pool.closeConnection(c, "explicit close")
-	} else {
+	} else if c.closed.CompareAndSwap(false, true) {
 		// No pool, close directly
-		if c.closed.CompareAndSwap(false, true) {
-			if closer, ok := c.store.(interface{ Close() error }); ok {
-				return closer.Close()
-			}
+		if closer, ok := c.store.(interface{ Close() error }); ok {
+			return closer.Close()
 		}
 	}
 	return nil

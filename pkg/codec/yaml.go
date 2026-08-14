@@ -56,7 +56,7 @@ func (c *YAMLCodec) CanEncode(entity interface{}) bool {
 	}
 
 	// Dereference pointer
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -105,7 +105,7 @@ func (c *YAMLCodec) Decode(data []byte, entity interface{}) error {
 	}
 
 	// Verify entity is a pointer
-	if reflect.TypeOf(entity).Kind() != reflect.Ptr {
+	if reflect.TypeOf(entity).Kind() != reflect.Pointer {
 		return api.NewNonPointerError("yaml.Decode", fmt.Sprintf("%T", entity))
 	}
 

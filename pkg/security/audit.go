@@ -33,6 +33,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -430,6 +431,14 @@ func (s *SyslogExporter) formatRFC5424(event *AuditEvent, severity SyslogSeverit
 	)
 }
 
+// sdParam renders one RFC 5424 SD-PARAM. The value is escaped per RFC 5424
+// (backslash, double quote and closing bracket) and then wrapped in the
+// literal quotes the grammar requires — deliberately not %q, which would
+// re-escape the backslashes escapeSDParam just added.
+func sdParam(name, value string) string {
+	return name + `="` + escapeSDParam(value) + `"`
+}
+
 // buildStructuredData creates RFC 5424 structured data from the audit event.
 func (s *SyslogExporter) buildStructuredData(event *AuditEvent) string {
 	var parts []string
@@ -437,33 +446,33 @@ func (s *SyslogExporter) buildStructuredData(event *AuditEvent) string {
 	// QuicBaaS audit structured data element
 	// SD-ID: audit@quicbaas (using enterprise number placeholder)
 	sdParams := []string{
-		fmt.Sprintf("action=\"%s\"", escapeSDParam(event.Action)),
-		fmt.Sprintf("resource=\"%s\"", escapeSDParam(event.Resource)),
-		fmt.Sprintf("result=\"%s\"", escapeSDParam(event.Result)),
+		sdParam("action", event.Action),
+		sdParam("resource", event.Resource),
+		sdParam("result", event.Result),
 	}
 
 	if event.UserID != "" {
-		sdParams = append(sdParams, fmt.Sprintf("userID=\"%s\"", escapeSDParam(event.UserID)))
+		sdParams = append(sdParams, sdParam("userID", event.UserID))
 	}
 	if event.Username != "" {
-		sdParams = append(sdParams, fmt.Sprintf("username=\"%s\"", escapeSDParam(event.Username)))
+		sdParams = append(sdParams, sdParam("username", event.Username))
 	}
 	if event.IPAddress != "" {
-		sdParams = append(sdParams, fmt.Sprintf("ipAddress=\"%s\"", escapeSDParam(event.IPAddress)))
+		sdParams = append(sdParams, sdParam("ipAddress", event.IPAddress))
 	}
 	if event.NodeID != "" {
-		sdParams = append(sdParams, fmt.Sprintf("nodeID=\"%s\"", escapeSDParam(event.NodeID)))
+		sdParams = append(sdParams, sdParam("nodeID", event.NodeID))
 	}
 	if event.ShardID != 0 {
-		sdParams = append(sdParams, fmt.Sprintf("shardID=\"%d\"", event.ShardID))
+		sdParams = append(sdParams, sdParam("shardID", strconv.FormatUint(event.ShardID, 10)))
 	}
 	if event.ErrorMsg != "" {
-		sdParams = append(sdParams, fmt.Sprintf("errorMsg=\"%s\"", escapeSDParam(event.ErrorMsg)))
+		sdParams = append(sdParams, sdParam("errorMsg", event.ErrorMsg))
 	}
 
 	// Add details as structured data
 	for key, value := range event.Details {
-		sdParams = append(sdParams, fmt.Sprintf("%s=\"%s\"", escapeSDParam(key), escapeSDParam(value)))
+		sdParams = append(sdParams, sdParam(escapeSDParam(key), value))
 	}
 
 	parts = append(parts, fmt.Sprintf("[audit@quicbaas %s]", strings.Join(sdParams, " ")))
@@ -474,8 +483,7 @@ func (s *SyslogExporter) buildStructuredData(event *AuditEvent) string {
 	return strings.Join(parts, "")
 }
 
-// escapeSDParam escapes characters in structured data parameters according to RFC 5424.
-// Characters that must be escaped: ", \\, ].
+// escapeSDParam escapes RFC 5424 SD-PARAM values.
 func escapeSDParam(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "\"", "\\\"")
@@ -992,9 +1000,11 @@ func (s *SIEMExporter) buildCEFExtension(event *AuditEvent) string {
 		parts = append(parts, fmt.Sprintf("suid=%s", s.escapeCEFValue(event.UserID)))
 	}
 
-	parts = append(parts, fmt.Sprintf("act=%s", s.escapeCEFValue(event.Action)))
-	parts = append(parts, fmt.Sprintf("cs1=%s cs1Label=resource", s.escapeCEFValue(event.Resource)))
-	parts = append(parts, fmt.Sprintf("outcome=%s", event.Result))
+	parts = append(parts,
+		fmt.Sprintf("act=%s", s.escapeCEFValue(event.Action)),
+		fmt.Sprintf("cs1=%s cs1Label=resource", s.escapeCEFValue(event.Resource)),
+		fmt.Sprintf("outcome=%s", event.Result),
+	)
 
 	if event.NodeID != "" {
 		parts = append(parts, fmt.Sprintf("cs2=%s cs2Label=nodeId", s.escapeCEFValue(event.NodeID)))
@@ -1205,10 +1215,12 @@ func (s *SIEMExporter) buildLEEFExtension(event *AuditEvent) string {
 		parts = append(parts, fmt.Sprintf("identSrc=%s", s.escapeLEEFValue(event.UserID)))
 	}
 
-	parts = append(parts, fmt.Sprintf("action=%s", s.escapeLEEFValue(event.Action)))
-	parts = append(parts, fmt.Sprintf("resource=%s", s.escapeLEEFValue(event.Resource)))
-	parts = append(parts, fmt.Sprintf("result=%s", event.Result))
-	parts = append(parts, fmt.Sprintf("sev=%d", s.mapLEEFSeverity(event)))
+	parts = append(parts,
+		fmt.Sprintf("action=%s", s.escapeLEEFValue(event.Action)),
+		fmt.Sprintf("resource=%s", s.escapeLEEFValue(event.Resource)),
+		fmt.Sprintf("result=%s", event.Result),
+		fmt.Sprintf("sev=%d", s.mapLEEFSeverity(event)),
+	)
 
 	if event.NodeID != "" {
 		parts = append(parts, fmt.Sprintf("nodeId=%s", s.escapeLEEFValue(event.NodeID)))

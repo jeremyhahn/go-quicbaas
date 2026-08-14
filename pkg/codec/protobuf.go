@@ -70,7 +70,7 @@ func (c *ProtobufCodec) CanEncode(entity interface{}) bool {
 
 	// Check for protobuf struct tags
 	t := reflect.TypeOf(entity)
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 

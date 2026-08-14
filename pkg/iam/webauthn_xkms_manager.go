@@ -208,7 +208,10 @@ func (m *XKMSWebAuthnManager) FinishRegistration(ctx context.Context, tenantID, 
 	if !ok {
 		return &WebAuthnFactoryConfigError{Field: "registration session not found"}
 	}
-	sessionID := v.(string)
+	sessionID, ok := v.(string)
+	if !ok {
+		return &WebAuthnFactoryConfigError{Field: "registration session not found"}
+	}
 	parsed, err := parseCredentialCreationMap(credential)
 	if err != nil {
 		return err
@@ -358,7 +361,11 @@ func (m *XKMSWebAuthnManager) resolveLoginSession(tenantID string, parsed *proto
 	if !ok {
 		return loginHandoff{}, "", &WebAuthnLoginSessionError{Reason: "no login session matches the assertion challenge"}
 	}
-	return v.(loginHandoff), key, nil
+	handoff, ok := v.(loginHandoff)
+	if !ok {
+		return loginHandoff{}, "", &WebAuthnLoginSessionError{Reason: "no login session matches the assertion challenge"}
+	}
+	return handoff, key, nil
 }
 
 // marshalToMap converts a typed protocol structure to a JSON-decoded

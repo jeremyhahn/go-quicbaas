@@ -25,13 +25,13 @@ import (
 )
 
 const (
-	// DefaultGracePeriodDays is the default grace period for deletion requests
+	// DefaultGracePeriodDays is the default grace period for deletion requests.
 	DefaultGracePeriodDays = 30
 
-	// DefaultExportDownloadTTL is the default time a download link is valid
+	// DefaultExportDownloadTTL is the default time a download link is valid.
 	DefaultExportDownloadTTL = 7 * 24 * time.Hour
 
-	// ExportSchemaVersion is the current export schema version
+	// ExportSchemaVersion is the current export schema version.
 	ExportSchemaVersion = "1.0"
 )
 
@@ -333,8 +333,8 @@ func (m *GDPRManager) RequestExport(ctx context.Context, tenantID, userID, reque
 		})
 	}
 
-	// Start background processing of the export
-	go m.processExportAsync(request.ID)
+	// Start background processing of the export. It must outlive the request.
+	go m.processExportAsync(request.ID) //nolint:gosec // G118: the work must outlive the caller; a request-scoped context would cancel it.
 
 	return request, nil
 }
@@ -365,7 +365,7 @@ func (m *GDPRManager) processExportAsync(exportID string) {
 	}
 
 	// GenerateExport handles all processing, status updates, and error marking internally
-	m.GenerateExport(ctx, exportID) //nolint:errcheck // Error handling is internal to GenerateExport
+	m.GenerateExport(ctx, exportID) //nolint:errcheck,gosec // Error handling is internal to GenerateExport
 }
 
 // markExportFailed marks an export as failed with an error message.
@@ -670,7 +670,8 @@ func (m *GDPRManager) RequestDeletion(ctx context.Context, tenantID, userID, req
 
 	// If immediate deletion (gracePeriodDays=0), start background processing
 	if gracePeriodDays == 0 {
-		go m.processDeletionAsync(request.ID)
+		// The deletion must outlive the request that scheduled it.
+		go m.processDeletionAsync(request.ID) //nolint:gosec // G118: the work must outlive the caller; a request-scoped context would cancel it.
 	}
 
 	return request, nil
@@ -702,7 +703,7 @@ func (m *GDPRManager) processDeletionAsync(deletionID string) {
 	}
 
 	// ProcessDeletion handles all processing, status updates, and error marking internally
-	m.ProcessDeletion(ctx, deletionID) //nolint:errcheck // Error handling is internal to ProcessDeletion
+	m.ProcessDeletion(ctx, deletionID) //nolint:errcheck,gosec // Error handling is internal to ProcessDeletion
 }
 
 // markDeletionFailed marks a deletion as failed with an error message.

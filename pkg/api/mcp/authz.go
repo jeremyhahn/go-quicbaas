@@ -334,8 +334,8 @@ var toolPrefixMapping = map[string]resourceAction{
 	"quicbaas_crypto_rewrap":  {interfaces.ResourceCrypto, interfaces.ActionWrite},
 
 	// Seal Operations
-	"quicbaas_seal":   {interfaces.ResourceSeal, interfaces.ActionAdmin},
-	"quicbaas_unseal": {interfaces.ResourceSeal, interfaces.ActionAdmin},
+	"quicbaas_seal":   {interfaces.ResourceSeal, interfaces.ActionAdmin}, //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
+	"quicbaas_unseal": {interfaces.ResourceSeal, interfaces.ActionAdmin}, //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 
 	// Timeseries Operations
 	"quicbaas_timeseries_query":  {interfaces.ResourceTimeseries, interfaces.ActionRead},
@@ -536,8 +536,7 @@ func (ac *AuthorizationChecker) CheckToolAuthorization(ctx context.Context, tool
 		}
 
 		// Try to extract validation info using reflection-free approach
-		switch v := validationResult.(type) {
-		case interface{ Valid() bool }:
+		if v, ok := validationResult.(interface{ Valid() bool }); ok {
 			valid = v.Valid()
 		}
 

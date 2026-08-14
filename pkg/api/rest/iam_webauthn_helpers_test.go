@@ -134,8 +134,8 @@ func (errWebAuthnManager) FinishLogin(context.Context, string, map[string]interf
 	return nil, errFakeWebAuthn
 }
 
-var errFakeWebAuthn = errFakeWebAuthnT{}
+var errFakeWebAuthn = fakeWebAuthnError{}
 
-type errFakeWebAuthnT struct{}
+type fakeWebAuthnError struct{}
 
-func (errFakeWebAuthnT) Error() string { return "webauthn ceremony failed" }
+func (fakeWebAuthnError) Error() string { return "webauthn ceremony failed" }

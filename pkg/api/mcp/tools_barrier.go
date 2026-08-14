@@ -21,6 +21,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -59,13 +60,13 @@ type mcpTenantGovernancer interface {
 	UpdateEngineEntitlements(ctx context.Context, id string, entitlements qrdbsdk.Entitlements) error
 }
 
-// barrierServiceUnavailableQBError is the canonical QBError returned when the
+// errBarrierServiceUnavailableQB is the canonical QBError returned when the
 // barrier surface is not wired. Returning a QBError with the ErrUnavailable
 // code lets pkg/api/mcp/server.go's mapErrorToJSONRPCError classify the
 // condition through its explicit-code branch (ServiceUnavailable) instead of
 // the generic "Tool execution failed" default, which previously surfaced to
 // CLI callers as a misleading internal error.
-var barrierServiceUnavailableQBError = &qberrors.QBError{
+var errBarrierServiceUnavailableQB = &qberrors.QBError{
 	Code: qberrors.ErrUnavailable,
 	Op:   "mcp.barrier",
 	Err:  &BarrierServiceUnavailableError{},
@@ -75,7 +76,7 @@ var barrierServiceUnavailableQBError = &qberrors.QBError{
 // BarrierServicer has not been wired into the ToolRegistry. This mirrors the
 // REST 503-on-nil-facade behaviour so clients of either transport can rely on
 // the same typed unavailability signal during early boot or test setups. It is
-// always wrapped in barrierServiceUnavailableQBError before being returned so
+// always wrapped in errBarrierServiceUnavailableQB before being returned so
 // the MCP error mapper classifies it as ServiceUnavailable.
 type BarrierServiceUnavailableError struct{}
 
@@ -154,9 +155,9 @@ func (e *GovernanceServiceUnavailableError) Error() string {
 	return "governance service unavailable: not configured"
 }
 
-// governanceServiceUnavailableQBError is the canonical QBError returned when
+// errGovernanceServiceUnavailableQB is the canonical QBError returned when
 // the governance surface is not wired.
-var governanceServiceUnavailableQBError = &qberrors.QBError{
+var errGovernanceServiceUnavailableQB = &qberrors.QBError{
 	Code: qberrors.ErrUnavailable,
 	Op:   "mcp.governance",
 	Err:  &GovernanceServiceUnavailableError{},
@@ -634,19 +635,19 @@ func (r *ToolRegistry) executeBarrierTool(ctx context.Context, name string, args
 	if govExec, ok := governanceExecutors[name]; ok {
 		gov := r.tenantGovernance
 		if gov == nil {
-			return nil, governanceServiceUnavailableQBError
+			return nil, errGovernanceServiceUnavailableQB
 		}
 		return govExec(ctx, gov, args)
 	}
 
 	svc := r.barrierSvc
 	if svc == nil {
-		return nil, barrierServiceUnavailableQBError
+		return nil, errBarrierServiceUnavailableQB
 	}
 	executor, ok := barrierExecutors[name]
 	if !ok {
 		// Should not happen — isBarrierTool gates entry. Defensive return.
-		return nil, barrierServiceUnavailableQBError
+		return nil, errBarrierServiceUnavailableQB
 	}
 	return executor(ctx, svc, args)
 }

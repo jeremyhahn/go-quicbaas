@@ -24,8 +24,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // TestJWTMiddleware tests the JWTMiddleware handler.
@@ -1029,7 +1030,7 @@ func TestJWTMiddlewareBearerCaseVariationsFinal(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc // capture range variable
+		// capture range variable
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			handler, _, cleanup := setupIAMHandler(t)

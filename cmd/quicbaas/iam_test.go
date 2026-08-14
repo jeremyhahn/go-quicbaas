@@ -1445,7 +1445,6 @@ func init() {
 		panic(err)
 	}
 	log = testLog
-
 }
 
 // =============================================================================
@@ -2078,7 +2077,6 @@ func TestIAMPolicyApplyCommand_FactoryError(t *testing.T) {
 	}
 
 	cmd := newIAMPolicyApplyCommand()
-	iamPolicyName = "test-policy"
 	globalTenantID = "tenant_test"
 
 	err := runIAMPolicyApplyCommand(cmd, []string{})

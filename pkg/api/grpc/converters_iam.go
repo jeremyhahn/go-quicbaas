@@ -76,7 +76,7 @@ func convertTenantToProto(t *iam.Tenant) *iampb.Tenant {
 	// Convert settings
 	settings := &iampb.TenantSettings{
 		MaxUsers:      int32(t.Settings.MaxUsers), //nolint:gosec // G115: MaxUsers is a reasonable config value
-		MfaRequired:   t.Settings.MFARequired,
+		MfaRequired:   t.Settings.MFARequired,     //nolint:staticcheck // SA1019: the legacy field is mirrored on the wire for older clients.
 		NamedNetworks: make(map[string]string),
 	}
 
@@ -156,7 +156,7 @@ func convertUserToProto(u *iam.User) *iampb.User {
 		Name:        u.Name,
 		Roles:       u.Roles,
 		Groups:      u.Groups,
-		MfaVerified: u.MFAVerified,
+		MfaVerified: u.MFAVerified, //nolint:staticcheck // SA1019: the legacy field is still mirrored across the wire and the storage adapter for older clients.
 	}
 
 	// Convert attributes

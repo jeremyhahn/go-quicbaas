@@ -56,7 +56,6 @@ func TestSecretSpecEqual(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, tc.a.Equal(tc.b))
@@ -115,7 +114,6 @@ func TestSecretSpecGenerateEncodings(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			out, err := tc.spec.Generate()
@@ -199,7 +197,6 @@ func TestSpecFromMetadata(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			spec, err := specFromMetadata(tc.meta)

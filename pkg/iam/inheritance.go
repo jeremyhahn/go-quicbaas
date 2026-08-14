@@ -305,7 +305,7 @@ func (m *InheritanceManager) GetEffectiveUserGroups(ctx context.Context, tenantI
 // - Directly assigned roles
 // - Roles inherited through role hierarchy
 // - Roles assigned to user's groups
-// - Roles inherited through group hierarchy
+// - Roles inherited through group hierarchy.
 func (m *InheritanceManager) GetEffectiveUserPermissions(ctx context.Context, tenantID, userID string) (*EffectivePermissions, error) {
 	// Check cache first
 	cached, err := m.hierarchyStorage.GetCachedEffectivePermissions(ctx, tenantID, userID)

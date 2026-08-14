@@ -52,13 +52,13 @@ func (e *RaftEnrollmentError) Unwrap() error {
 	return e.Cause
 }
 
-// ErrRaftLeafDecode is returned when the issued Raft node leaf PEM cannot be
+// RaftLeafDecodeError is returned when the issued Raft node leaf PEM cannot be
 // decoded — an internal invariant violation that must fail node startup rather
 // than allow the Raft transport to start with a malformed certificate.
-type ErrRaftLeafDecode struct{}
+type RaftLeafDecodeError struct{}
 
 // Error returns a descriptive message.
-func (e *ErrRaftLeafDecode) Error() string {
+func (e *RaftLeafDecodeError) Error() string {
 	return "server: cluster raft enrollment: issued node leaf PEM did not decode"
 }
 
@@ -155,7 +155,7 @@ func (s *Server) raftNodeSigner(ctx context.Context, kp xkmssdk.KeyProvider) (cr
 func signerCertificate(leafPEM []byte, signer crypto.Signer) (*tls.Certificate, error) {
 	block, _ := pem.Decode(leafPEM)
 	if block == nil {
-		return nil, &ErrRaftLeafDecode{}
+		return nil, &RaftLeafDecodeError{}
 	}
 	leaf, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {

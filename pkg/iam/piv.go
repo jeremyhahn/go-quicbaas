@@ -195,7 +195,7 @@ func (a *PIVActivator) checkTrustedIssuer(cert *x509.Certificate) error {
 	issuerDN := cert.Issuer.String()
 	issuerLower := strings.ToLower(issuerDN)
 	for _, allowed := range a.trustedIssuers {
-		if strings.ToLower(allowed) == issuerLower {
+		if strings.EqualFold(allowed, issuerLower) {
 			return nil
 		}
 	}

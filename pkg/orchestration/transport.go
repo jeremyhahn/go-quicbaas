@@ -86,7 +86,8 @@ func NewStdioTransport(command string, args []string, workDir string, env []stri
 			}
 			merged = append(merged, e)
 		}
-		cmd.Env = append(merged, env...)
+		merged = append(merged, env...)
+		cmd.Env = merged
 	}
 	// Note: Setpgid was removed because it interfered with pipe inheritance
 	// on some systems. Process isolation is handled via HOME env isolation.

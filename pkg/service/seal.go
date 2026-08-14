@@ -27,7 +27,7 @@ import (
 // sealService implements the SealService interface.
 // It provides secure database seal/unseal operations following HashiCorp Vault patterns.
 type sealService struct {
-	sealManager interfaces.SealManager
+	sealManager interfaces.SealManager //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 	logger      interfaces.Logger
 	metrics     *sealMetrics
 }
@@ -46,12 +46,12 @@ type sealMetrics struct {
 // NewSealService creates a new SealService from the given seal manager and logger.
 // This is the public constructor used by server lifecycle code to wire the seal
 // subsystem into the QuicBaaS service facade.
-func NewSealService(sealManager interfaces.SealManager, logger interfaces.Logger) SealService {
+func NewSealService(sealManager interfaces.SealManager, logger interfaces.Logger) SealService { //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 	return newSealServiceImpl(sealManager, logger)
 }
 
 // newSealServiceImpl creates a new seal service implementation.
-func newSealServiceImpl(sealManager interfaces.SealManager, logger interfaces.Logger) *sealService {
+func newSealServiceImpl(sealManager interfaces.SealManager, logger interfaces.Logger) *sealService { //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 	svc := &sealService{
 		sealManager: sealManager,
 		logger:      logger,

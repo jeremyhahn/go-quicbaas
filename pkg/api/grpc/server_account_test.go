@@ -345,7 +345,7 @@ func TestAccountProtoResponsesCarryNoCredential(t *testing.T) {
 
 // protoReachesType reports whether rt is, or transitively contains, target.
 func protoReachesType(rt, target reflect.Type, seen map[reflect.Type]bool) bool {
-	for rt.Kind() == reflect.Ptr || rt.Kind() == reflect.Slice || rt.Kind() == reflect.Array || rt.Kind() == reflect.Map {
+	for rt.Kind() == reflect.Pointer || rt.Kind() == reflect.Slice || rt.Kind() == reflect.Array || rt.Kind() == reflect.Map {
 		rt = rt.Elem()
 	}
 	if rt == target {

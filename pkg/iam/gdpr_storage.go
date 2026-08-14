@@ -115,9 +115,10 @@ func (m *MemoryConsentStorage) CreateConsent(ctx context.Context, opts CreateCon
 	}
 
 	// Set granted/withdrawn timestamps based on status
-	if opts.Status == ConsentStatusGranted {
+	switch opts.Status {
+	case ConsentStatusGranted:
 		consent.GrantedAt = &now
-	} else if opts.Status == ConsentStatusWithdrawn {
+	case ConsentStatusWithdrawn:
 		consent.WithdrawnAt = &now
 	}
 
@@ -168,10 +169,11 @@ func (m *MemoryConsentStorage) UpdateConsent(ctx context.Context, id string, opt
 	consent.Updated = now
 
 	// Update timestamps based on status change
-	if opts.Status == ConsentStatusGranted {
+	switch opts.Status {
+	case ConsentStatusGranted:
 		consent.GrantedAt = &now
 		consent.WithdrawnAt = nil
-	} else if opts.Status == ConsentStatusWithdrawn {
+	case ConsentStatusWithdrawn:
 		consent.WithdrawnAt = &now
 	}
 

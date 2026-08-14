@@ -341,10 +341,8 @@ func resolveAndValidateCanonicalInit(cmd *cobra.Command, f *canonicalInitFlags, 
 		if f.userPin == "" {
 			return &MessageError{Message: fmt.Sprintf("init: --user-pin is required (or set %s_USER_PIN)", envPrefix)}
 		}
-	} else {
-		if f.soPin != "" || f.userPin != "" {
-			return &PINsNotAllowedError{Strategy: f.barrierStrategy}
-		}
+	} else if f.soPin != "" || f.userPin != "" {
+		return &PINsNotAllowedError{Strategy: f.barrierStrategy}
 	}
 
 	if f.barrierStrategy == "shamir" {

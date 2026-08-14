@@ -326,7 +326,6 @@ func TestCAServiceAdapter_IssueCertificate(t *testing.T) {
 
 	t.Run("issues certificate for each supported key algorithm", func(t *testing.T) {
 		for _, algo := range []string{"ecdsa", "ecdsa-p256", "ecdsa-p384", "rsa", "rsa2048", "ed25519"} {
-			algo := algo
 			t.Run(algo, func(t *testing.T) {
 				resp, err := adapter.IssueCertificate(context.Background(), &xkmstransport.IssueCertificateRequest{
 					CommonName: algo + ".example.com",

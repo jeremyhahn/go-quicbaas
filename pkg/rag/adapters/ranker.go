@@ -146,12 +146,13 @@ func (a *RankerAdapter) Rank(ctx context.Context, query string, vectorResults, k
 	var err error
 
 	// Use hybrid ranking if enabled and both result sets are available
-	if a.config.EnableHybrid && len(rankingVectorResults) > 0 && len(rankingKeywordResults) > 0 {
+	switch {
+	case a.config.EnableHybrid && len(rankingVectorResults) > 0 && len(rankingKeywordResults) > 0:
 		scoredResults, err = a.hybridRanker.RankHybrid(rankingVectorResults, rankingKeywordResults, query)
-	} else if len(rankingVectorResults) > 0 {
+	case len(rankingVectorResults) > 0:
 		// Fall back to simple ranking with vector results
 		scoredResults, err = a.hybridRanker.Rank(rankingVectorResults, query)
-	} else {
+	default:
 		// Fall back to simple ranking with keyword results
 		scoredResults, err = a.hybridRanker.Rank(rankingKeywordResults, query)
 	}

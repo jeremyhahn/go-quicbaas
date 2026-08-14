@@ -133,7 +133,7 @@ func (r *OAuth2TokenRefresher) Refresh(ctx context.Context, cred *AccountCredent
 	}
 
 	if resp.StatusCode != http.StatusOK || tokenResp.AccessToken == "" {
-		return nil, &AccountRefreshFailedError{Cause: &OAuth2ErrorResponseError{
+		return nil, &AccountRefreshFailedError{Cause: &OAuth2TokenEndpointError{
 			Status:      resp.StatusCode,
 			Code:        tokenResp.Error,
 			Description: tokenResp.ErrorDescription,
@@ -169,16 +169,16 @@ func (e *OAuth2ResponseDecodeError) Error() string {
 // Unwrap returns the underlying decode error for errors.Is / errors.As.
 func (e *OAuth2ResponseDecodeError) Unwrap() error { return e.Cause }
 
-// OAuth2ErrorResponseError indicates the token endpoint rejected the refresh
+// OAuth2TokenEndpointError indicates the token endpoint rejected the refresh
 // request per RFC 6749 section 5.2.
-type OAuth2ErrorResponseError struct {
+type OAuth2TokenEndpointError struct {
 	Status      int
 	Code        string
 	Description string
 }
 
 // Error implements the error interface.
-func (e *OAuth2ErrorResponseError) Error() string {
+func (e *OAuth2TokenEndpointError) Error() string {
 	msg := "oauth2 refresh: token endpoint returned status " + strconv.Itoa(e.Status)
 	if e.Code != "" {
 		msg += ": " + e.Code

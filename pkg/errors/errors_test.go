@@ -278,7 +278,7 @@ func TestWrap(t *testing.T) {
 }
 
 func TestIs(t *testing.T) {
-	notFoundErr := New(ErrNotFound, "test", "not found")
+	notFoundError := New(ErrNotFound, "test", "not found")
 	timeoutErr := New(ErrTimeout, "test", "timeout")
 
 	tests := []struct {
@@ -289,19 +289,19 @@ func TestIs(t *testing.T) {
 	}{
 		{
 			name: "matches code",
-			err:  notFoundErr,
+			err:  notFoundError,
 			code: ErrNotFound,
 			want: true,
 		},
 		{
 			name: "does not match code",
-			err:  notFoundErr,
+			err:  notFoundError,
 			code: ErrTimeout,
 			want: false,
 		},
 		{
 			name: "wrapped error preserves original code",
-			err:  Wrap(notFoundErr, ErrStorage, "outer"),
+			err:  Wrap(notFoundError, ErrStorage, "outer"),
 			code: ErrNotFound, // Wrapping preserves original error code
 			want: true,
 		},

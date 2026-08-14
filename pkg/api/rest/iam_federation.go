@@ -611,8 +611,10 @@ func (h *IAMHandler) BeginFederatedLogin(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Redirect to identity provider
-	http.Redirect(w, r, redirect.AuthURL, http.StatusFound)
+	// Redirect to identity provider. AuthURL is built by the federation
+	// manager from the tenant's stored provider configuration, never from the
+	// caller-supplied redirect_uri, so it cannot be steered by the request.
+	http.Redirect(w, r, redirect.AuthURL, http.StatusFound) //nolint:gosec // G710: target comes from server-side provider config, not user input
 }
 
 // HandleFederatedCallback handles GET /api/v1/auth/providers/{tenant_id}/{provider_name}/callback - Handle IdP callback.

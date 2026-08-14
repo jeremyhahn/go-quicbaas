@@ -299,9 +299,9 @@ func TestRunOrchInference_FactoryError(t *testing.T) {
 // stderrors_NewForInference avoids name clashes with the existing test
 // file's local errors helper by using a unique name.
 func stderrors_NewForInference(msg string) error {
-	return localErrInference(msg)
+	return localInferenceError(msg)
 }
 
-type localErrInference string
+type localInferenceError string
 
-func (e localErrInference) Error() string { return string(e) }
+func (e localInferenceError) Error() string { return string(e) }

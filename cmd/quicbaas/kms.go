@@ -46,7 +46,6 @@ var (
 	kmsWrappingAlgorithm string
 	kmsFormat            string
 	kmsVersion           uint64
-	kmsPrefix            string
 	kmsLimit             int
 	kmsForce             bool
 	kmsPurge             bool

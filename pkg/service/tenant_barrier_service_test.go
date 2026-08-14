@@ -20,6 +20,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	pkgerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -352,7 +353,6 @@ func systemCtx(tenantID string) context.Context {
 // their own barriers per the locked architecture.
 func TestTenantBarrierService_SystemTenantWritesDenied(t *testing.T) {
 	for _, tenantID := range []string{"", qrdbsdk.SystemTenantID} {
-		tenantID := tenantID
 		t.Run("subject_tenant="+tenantID, func(t *testing.T) {
 			mock := &mockTenantClient{}
 			svc := NewTenantBarrierService(mock)
@@ -385,7 +385,6 @@ func TestTenantBarrierService_SystemTenantWritesDenied(t *testing.T) {
 // canonical system-tenant representations are admitted.
 func TestTenantBarrierService_SystemTenantStatusAllowed(t *testing.T) {
 	for _, tenantID := range []string{"", qrdbsdk.SystemTenantID} {
-		tenantID := tenantID
 		t.Run("subject_tenant="+tenantID, func(t *testing.T) {
 			mock := &mockTenantClient{
 				statusResp: &qrdbtransport.TenantBarrierStatusResponse{
@@ -503,7 +502,6 @@ func TestTenantBarrierService_Init_ShamirValidation_EqualThresholdAndShares(t *t
 // where threshold/shares carry zero values.
 func TestTenantBarrierService_Init_ShamirValidation_NotAppliedToOtherStrategies(t *testing.T) {
 	for _, strategy := range []string{"none", "passphrase"} {
-		strategy := strategy
 		t.Run(strategy, func(t *testing.T) {
 			mock := &mockTenantClient{initResp: &qrdbtransport.TenantBarrierInitResponse{TenantID: "acme", Strategy: strategy}}
 			svc := NewTenantBarrierService(mock)

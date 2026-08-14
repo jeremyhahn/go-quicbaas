@@ -228,13 +228,14 @@ func intersectSorted(a, b []uint64) []uint64 {
 	var result []uint64
 	i, j := 0, 0
 	for i < len(a) && j < len(b) {
-		if a[i] == b[j] {
+		switch {
+		case a[i] == b[j]:
 			result = append(result, a[i])
 			i++
 			j++
-		} else if a[i] < b[j] {
+		case a[i] < b[j]:
 			i++
-		} else {
+		default:
 			j++
 		}
 	}
@@ -249,14 +250,15 @@ func unionSorted(a, b []uint64) []uint64 {
 	var result []uint64
 	i, j := 0, 0
 	for i < len(a) && j < len(b) {
-		if a[i] == b[j] {
+		switch {
+		case a[i] == b[j]:
 			result = append(result, a[i])
 			i++
 			j++
-		} else if a[i] < b[j] {
+		case a[i] < b[j]:
 			result = append(result, a[i])
 			i++
-		} else {
+		default:
 			result = append(result, b[j])
 			j++
 		}

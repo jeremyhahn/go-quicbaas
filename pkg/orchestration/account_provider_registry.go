@@ -98,7 +98,7 @@ type ProviderDescriptor struct {
 // AccountProviderEndpointUnresolvedError rather than failing later at spawn.
 func BuiltinAccountProviders() []ProviderDescriptor {
 	return []ProviderDescriptor{
-		{
+		{ //nolint:gosec // G101: env var names, not credentials
 			Provider:    AccountProviderClaude,
 			DisplayName: "Anthropic Claude Code",
 			// CLAUDE_CODE_OAUTH_TOKEN is the environment variable Claude Code

@@ -321,11 +321,12 @@ func (s *DEKServer) GetReencryptionProgress(ctx context.Context, req *pb.GetReen
 	if resp.Progress != nil {
 		status = resp.Progress.Status
 		if status == "" {
-			if resp.Progress.InProgress {
+			switch {
+			case resp.Progress.InProgress:
 				status = "running"
-			} else if resp.Progress.ProcessedKeys >= resp.Progress.TotalKeys && resp.Progress.TotalKeys > 0 {
+			case resp.Progress.ProcessedKeys >= resp.Progress.TotalKeys && resp.Progress.TotalKeys > 0:
 				status = "completed"
-			} else if resp.Progress.FailedKeys > 0 {
+			case resp.Progress.FailedKeys > 0:
 				status = "failed"
 			}
 		}

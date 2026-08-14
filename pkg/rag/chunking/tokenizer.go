@@ -48,11 +48,9 @@ func (t *SimpleTokenizer) Count(text string) int {
 	for _, r := range text {
 		if unicode.IsSpace(r) {
 			inWord = false
-		} else {
-			if !inWord {
-				words++
-				inWord = true
-			}
+		} else if !inWord {
+			words++
+			inWord = true
 		}
 	}
 

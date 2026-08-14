@@ -181,6 +181,7 @@ const (
 	ResourceCrypto = "crypto"
 
 	// ResourceSeal represents seal/unseal operations.
+	//
 	// Deprecated: Seal is replaced by the Barrier subsystem. New authorization
 	// policies should use ResourceBarrier; ResourceSeal is retained for legacy
 	// RBAC/ABAC policy compatibility only and is no longer mapped to any wire

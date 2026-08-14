@@ -317,9 +317,9 @@ func TestSTOMPHandler_ParseFrame_UndefinedEscapeSequence(t *testing.T) {
 		t.Error("Expected error for undefined escape sequence")
 	}
 
-	var escapeErr *ErrSTOMPInvalidEscape
+	var escapeErr *STOMPInvalidEscapeError
 	if !errors.As(err, &escapeErr) {
-		t.Errorf("Expected ErrSTOMPInvalidEscape, got %T: %v", err, err)
+		t.Errorf("Expected STOMPInvalidEscapeError, got %T: %v", err, err)
 	}
 }
 
@@ -334,9 +334,9 @@ func TestSTOMPHandler_ParseFrame_TrailingBackslashError(t *testing.T) {
 		t.Error("Expected error for trailing backslash")
 	}
 
-	var escapeErr *ErrSTOMPInvalidEscape
+	var escapeErr *STOMPInvalidEscapeError
 	if !errors.As(err, &escapeErr) {
-		t.Errorf("Expected ErrSTOMPInvalidEscape, got %T: %v", err, err)
+		t.Errorf("Expected STOMPInvalidEscapeError, got %T: %v", err, err)
 	}
 }
 
@@ -575,7 +575,7 @@ func TestErrSTOMPProtocolError(t *testing.T) {
 }
 
 func TestErrSTOMPMissingHeader(t *testing.T) {
-	err := &ErrSTOMPMissingHeader{Header: "destination"}
+	err := &STOMPMissingHeaderError{Header: "destination"}
 
 	expected := "stomp protocol error: missing required header: destination"
 	if err.Error() != expected {
@@ -584,7 +584,7 @@ func TestErrSTOMPMissingHeader(t *testing.T) {
 }
 
 func TestErrSTOMPInvalidEscape(t *testing.T) {
-	err := &ErrSTOMPInvalidEscape{Sequence: "\\t"}
+	err := &STOMPInvalidEscapeError{Sequence: "\\t"}
 
 	expected := "stomp protocol error: undefined escape sequence: \\t"
 	if err.Error() != expected {
@@ -593,7 +593,7 @@ func TestErrSTOMPInvalidEscape(t *testing.T) {
 }
 
 func TestErrSTOMPInvalidTransaction(t *testing.T) {
-	err := &ErrSTOMPInvalidTransaction{TransactionID: "tx-1", Reason: "not found"}
+	err := &STOMPInvalidTransactionError{TransactionID: "tx-1", Reason: "not found"}
 
 	expected := "stomp protocol error: transaction tx-1: not found"
 	if err.Error() != expected {

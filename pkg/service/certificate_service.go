@@ -866,7 +866,7 @@ func describePublicKey(cert *x509.Certificate) (string, int) {
 	case *rsa.PublicKey:
 		return "RSA", pub.N.BitLen()
 	case *ecdsa.PublicKey:
-		if pub.Curve == nil || pub.Curve.Params() == nil {
+		if pub.Curve == nil || pub.Params() == nil {
 			return "ECDSA", 0
 		}
 		return "ECDSA", pub.Curve.Params().BitSize

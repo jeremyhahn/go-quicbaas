@@ -539,8 +539,9 @@ func newGRPCConnPool(cfg grpcConnPoolConfig) *grpcConnPool {
 // Get returns a live *grpc.ClientConn for the target, dialing if needed.
 func (p *grpcConnPool) Get(ctx context.Context, target string) (*grpc.ClientConn, error) {
 	if existing, ok := p.conns.Load(target); ok {
-		conn := existing.(*grpc.ClientConn)
-		return conn, nil
+		if conn, ok := existing.(*grpc.ClientConn); ok {
+			return conn, nil
+		}
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -548,7 +549,9 @@ func (p *grpcConnPool) Get(ctx context.Context, target string) (*grpc.ClientConn
 		return nil, &RemoteBackendDialError{Host: target, Err: errors.New("pool closed")}
 	}
 	if existing, ok := p.conns.Load(target); ok {
-		return existing.(*grpc.ClientConn), nil
+		if conn, ok := existing.(*grpc.ClientConn); ok {
+			return conn, nil
+		}
 	}
 	conn, err := p.dial(ctx, target)
 	if err != nil {

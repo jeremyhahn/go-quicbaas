@@ -31,7 +31,7 @@ import (
 // The token travels ONLY in the child environment: the credential helper text
 // on the command line references the variable by name, so the secret never
 // appears in process arguments and is never written to disk.
-const gitTokenEnvVar = "QUICBAAS_GIT_TOKEN"
+const gitTokenEnvVar = "QUICBAAS_GIT_TOKEN" //nolint:gosec // G101: an environment variable name, not a credential
 
 // gitUsernameEnvVar carries the username paired with the HTTPS token.
 const gitUsernameEnvVar = "QUICBAAS_GIT_USERNAME"

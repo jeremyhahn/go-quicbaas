@@ -378,7 +378,9 @@ func escapeEnvValue(value string) string {
 		escaped := strings.ReplaceAll(value, "\\", "\\\\")
 		escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
 		escaped = strings.ReplaceAll(escaped, "\n", "\\n")
-		return fmt.Sprintf("\"%s\"", escaped)
+		// The value is already escaped for shell double quotes; %q would
+		// re-escape the backslashes, so wrap it literally.
+		return `"` + escaped + `"`
 	}
 
 	return value

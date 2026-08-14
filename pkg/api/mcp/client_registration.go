@@ -406,11 +406,12 @@ func (s *Server) handleClientRegistration(w http.ResponseWriter, r *http.Request
 	var response *ClientRegistrationResponse
 	var err error
 
-	if s.appRegistrar != nil {
+	switch {
+	case s.appRegistrar != nil:
 		response, err = s.appRegistrar.RegisterClient(r.Context(), &req)
-	} else if s.inMemoryClientStore != nil {
+	case s.inMemoryClientStore != nil:
 		response, err = s.inMemoryClientStore.RegisterClient(r.Context(), &req)
-	} else {
+	default:
 		s.writeRegistrationError(w, http.StatusInternalServerError, ErrorCodeInvalidClientMetadata, "client registration not configured")
 		return
 	}

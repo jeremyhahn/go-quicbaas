@@ -36,9 +36,10 @@ import (
 	"github.com/spf13/viper"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	xkmsfido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
-	xkmsfido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 )
 
 // canonicalAuthLoginOptions consolidates the canonical "auth login"
@@ -94,7 +95,7 @@ var defaultCanonicalClientCertPaths = []string{
 //     field.
 //
 // Do NOT rename these without changing the server verifier in lockstep.
-// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------.
 const (
 	// canonicalFIDO2OptionsKey is the ChallengeMetadata key carrying the
 	// JSON-marshaled WebAuthn PublicKeyCredentialRequestOptions.
@@ -196,10 +197,11 @@ func (e *PIVLocalSessionError) Unwrap() error { return e.Cause }
 
 // Sentinel causes for PIVLocalSessionError.
 var (
-	errHomeDirUnavailable   = errors.New("cannot resolve home directory")
-	errXKMSServiceInUse     = errors.New("the in-process xkms service is already initialized by another component; local PIV cannot share it")
+	errHomeDirUnavailable = errors.New("cannot resolve home directory")
+	errXKMSServiceInUse   = errors.New("the in-process xkms service is already initialized by another component; local PIV cannot share it")
+	errEmptyPIVSignature  = errors.New("empty signature")
+	//nolint:unused // referenced only by the pkcs11-tagged build (piv_local_pkcs11.go)
 	errPKCS11ModuleRequired = errors.New("--pkcs11-module is required for the pkcs11 backend")
-	errEmptyPIVSignature    = errors.New("empty signature")
 )
 
 // PIVPINRequiredError is returned when --method piv on the pkcs11 backend

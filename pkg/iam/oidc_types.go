@@ -83,6 +83,7 @@ const (
 // Note: OAuth 2.1 mandates S256 only. Plain is deprecated and rejected.
 const (
 	// CodeChallengeMethodPlain is prohibited per OAuth 2.1.
+	//
 	// Deprecated: This method is rejected. Use CodeChallengeMethodS256 instead.
 	CodeChallengeMethodPlain = "plain"
 

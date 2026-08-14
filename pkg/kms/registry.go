@@ -564,13 +564,14 @@ func (r *BackendRegistry) performHealthCheck(ctx context.Context, name string, b
 		health.ConsecutiveFailures = 0
 
 		// Check if we're recovering from unhealthy state
-		if previousHealth.Status == HealthStatusUnhealthy {
+		switch {
+		case previousHealth.Status == HealthStatusUnhealthy:
 			health.Status = HealthStatusDegraded
 			health.Message = "recovering from unhealthy state"
-		} else if previousHealth.ConsecutiveFailures > 0 {
+		case previousHealth.ConsecutiveFailures > 0:
 			health.Status = HealthStatusDegraded
 			health.Message = "recovering from failures"
-		} else {
+		default:
 			health.Status = HealthStatusHealthy
 			health.Message = "backend is operational"
 		}

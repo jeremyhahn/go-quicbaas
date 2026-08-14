@@ -121,7 +121,6 @@ func TestIAMServiceWrapper_BackendResolutionErrors(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name+"_ManagerUnavailable", func(t *testing.T) {
 			// Provider returns a nil manager and no error: the wrapper must
 			// surface the typed "not available" guard.

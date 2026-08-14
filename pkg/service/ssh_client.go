@@ -26,11 +26,6 @@ import (
 // and falls back to "./xkms-ssh" relative to the process cwd otherwise.
 const defaultSSHStoreSubdir = "xkms-ssh"
 
-// defaultSSHStoreRelative is the last-chance fallback for the file
-// store when neither SSHStoreDir nor DataDir are configured. Kept as a
-// named constant so the choice is obvious in review.
-const defaultSSHStoreRelative = "xkms-ssh"
-
 // SSHStoreRootMissingError is returned when the service cannot derive
 // a filesystem root for the embedded SSH store because neither
 // SSHStoreDir nor DataDir is configured. The typed error surfaces the

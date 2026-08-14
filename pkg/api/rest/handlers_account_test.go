@@ -562,7 +562,7 @@ func TestAccountRESTResponseTypesHaveNoCredentialField(t *testing.T) {
 // containsCredentialType reports whether rt is, or transitively contains,
 // target. seen breaks recursive type graphs.
 func containsCredentialType(rt, target reflect.Type, seen map[reflect.Type]bool) bool {
-	for rt.Kind() == reflect.Ptr || rt.Kind() == reflect.Slice || rt.Kind() == reflect.Array {
+	for rt.Kind() == reflect.Pointer || rt.Kind() == reflect.Slice || rt.Kind() == reflect.Array {
 		rt = rt.Elem()
 	}
 	if rt == target {

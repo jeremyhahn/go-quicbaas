@@ -193,7 +193,7 @@ func (r *Registry) detectExplicitCodec(entity interface{}) string {
 	}
 
 	// Dereference pointer
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -234,7 +234,7 @@ func (r *Registry) detectCodecFromTags(entity interface{}) string {
 	}
 
 	// Dereference pointer
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 

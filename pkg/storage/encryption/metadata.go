@@ -57,7 +57,7 @@ type FieldEncryption struct {
 // Returns a map like: {"Email": "aes256", "Password": "aes256", "Bio": "aes128"}.
 func ParseEncryptionTags(structType reflect.Type) (map[string]string, error) {
 	// Handle pointer types
-	if structType.Kind() == reflect.Ptr {
+	if structType.Kind() == reflect.Pointer {
 		structType = structType.Elem()
 	}
 
@@ -107,7 +107,7 @@ func ParseEncryptionTags(structType reflect.Type) (map[string]string, error) {
 // in a struct type. This includes field names, algorithms, and reflection indices.
 func GetFieldEncryption(structType reflect.Type) ([]FieldEncryption, error) {
 	// Handle pointer types
-	if structType.Kind() == reflect.Ptr {
+	if structType.Kind() == reflect.Pointer {
 		structType = structType.Elem()
 	}
 
@@ -173,7 +173,7 @@ func isEncryptableType(t reflect.Type) bool {
 // HasEncryptedFields checks if a struct type has any fields with encryption tags.
 func HasEncryptedFields(structType reflect.Type) bool {
 	// Handle pointer types
-	if structType.Kind() == reflect.Ptr {
+	if structType.Kind() == reflect.Pointer {
 		structType = structType.Elem()
 	}
 

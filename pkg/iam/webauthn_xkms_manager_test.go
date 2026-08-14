@@ -207,7 +207,6 @@ func TestXKMSWebAuthnManager_LoginSession_ConcurrentResolution(t *testing.T) {
 	errCh := make(chan error, workers*len(ceremonies))
 	for i := 0; i < workers; i++ {
 		for _, c := range ceremonies {
-			c := c
 			wg.Add(1)
 			go func() {
 				defer wg.Done()

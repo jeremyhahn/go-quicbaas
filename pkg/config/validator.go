@@ -287,12 +287,13 @@ func (v *Validator) validateRaft(cfg *RaftConfig, serverCfg *ServerConfig) {
 // validateStorage validates storage configuration.
 func (v *Validator) validateStorage(cfg *StorageConfig) {
 	// Validate storage backend
-	if cfg.Backend == "" {
+	switch {
+	case cfg.Backend == "":
 		v.addError("storage.backend", "storage backend cannot be empty")
-	} else if cfg.Backend == "raft" {
+	case cfg.Backend == "raft":
 		// Special error message for legacy "raft" backend usage
 		v.addError("storage.backend", "storage backend 'raft' is no longer valid; use server.mode='cluster' or 'devcluster' for Raft consensus with any storage backend (memory, file, pebble)")
-	} else if !validStorageBackends[cfg.Backend] {
+	case !validStorageBackends[cfg.Backend]:
 		v.addError("storage.backend", fmt.Sprintf("invalid storage backend: %s (valid: memory, file, pebble)", cfg.Backend))
 	}
 

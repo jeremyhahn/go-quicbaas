@@ -81,7 +81,7 @@ func slugify(name string) string {
 		return ""
 	}
 	if len(s) < 3 {
-		s = s + "org"
+		s += "org"
 	}
 	if len(s) > 50 {
 		s = s[:50]
@@ -692,7 +692,9 @@ func (h *IAMHandler) grantRoleIfMissing(
 			return
 		}
 	}
-	roles := append(user.Roles, roleName)
+	roles := make([]string, 0, len(user.Roles)+1)
+	roles = append(roles, user.Roles...)
+	roles = append(roles, roleName)
 	_, _ = store.UpdateUser(ctx, tenantID, userID, iam.UpdateUserOptions{Roles: &roles})
 }
 

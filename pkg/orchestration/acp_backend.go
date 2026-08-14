@@ -1771,16 +1771,17 @@ func (b *ACPBackend) Status(ctx context.Context, sessionID string) (*SessionStat
 
 	// Determine session state based on mode.
 	state := SessionStateIdle
-	if sess.closed.Load() {
+	switch {
+	case sess.closed.Load():
 		state = SessionStateClosed
-	} else if sess.cmd != nil {
+	case sess.cmd != nil:
 		// CLI stream-json mode: check if the subprocess is still running.
 		if sess.cmd.ProcessState != nil && sess.cmd.ProcessState.Exited() {
 			state = SessionStateClosed
 		} else {
 			state = SessionStateActive
 		}
-	} else if sess.transport != nil && sess.transport.closed.Load() {
+	case sess.transport != nil && sess.transport.closed.Load():
 		state = SessionStateClosed
 	}
 

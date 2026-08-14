@@ -44,10 +44,9 @@ import (
 // =============================================================================
 
 var (
-	caOutputFmt        string
-	caExportBundlePath string
+	caOutputFmt string
 
-	// ca issue flags
+	// ca issue flags.
 	caIssueCommonName   string
 	caIssueOrganization string
 	caIssueDNSNames     []string
@@ -57,7 +56,7 @@ var (
 	caIssueKeyAlgorithm string
 	caIssueKeySize      int
 
-	// ca list flags
+	// ca list flags.
 	caListCommonNameFilter string
 	caListIncludeRevoked   bool
 	caListIncludeExpired   bool
@@ -417,8 +416,6 @@ func runCAExportBundle(cmd *cobra.Command, args []string) error {
 	if path == "" {
 		return formatError(&CAArgRequiredError{Verb: "export-bundle", Arg: "path"})
 	}
-	caExportBundlePath = path
-
 	client, err := caClientFactory()
 	if err != nil {
 		return formatError(err)

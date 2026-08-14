@@ -18,10 +18,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 )
 
 // =============================================================================
@@ -66,7 +67,6 @@ func TestSchedulerAdapter_InvalidTenant_AllMethods(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			require.Error(t, tc.invoke())
 		})

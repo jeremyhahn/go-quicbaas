@@ -1634,9 +1634,10 @@ func buildKeyAttributes(req *transportTypes.GenerateKeyRequest) *xkmssdk.KeyAttr
 		attrs.KeyAlgorithm = x509.ECDSA
 		attrs.KeyType = xkmssdk.KeyTypeSigning
 		curve := elliptic.P256()
-		if req.Curve == "P-384" {
+		switch req.Curve {
+		case "P-384":
 			curve = elliptic.P384()
-		} else if req.Curve == "P-521" {
+		case "P-521":
 			curve = elliptic.P521()
 		}
 		attrs.ECCAttributes = &xkmssdk.ECCAttributes{

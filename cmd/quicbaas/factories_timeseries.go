@@ -60,5 +60,5 @@ func createTimeSeriesRESTClient() (TimeSeriesClient, error) {
 	)
 }
 
-// Compile-time interface check: grpc.Client implements TimeSeriesClient
+// Compile-time interface check: grpc.Client implements TimeSeriesClient.
 var _ TimeSeriesClient = (*grpc.Client)(nil)

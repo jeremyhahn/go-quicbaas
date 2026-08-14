@@ -196,13 +196,14 @@ func tokenize(input string) ([]Token, error) {
 				}
 			}
 
-			if upper == "NULL" {
+			switch {
+			case upper == "NULL":
 				tokens = append(tokens, Token{Type: TokenNull, Value: upper, Pos: start})
-			} else if logicalKeywords[upper] {
+			case logicalKeywords[upper]:
 				tokens = append(tokens, Token{Type: TokenLogical, Value: upper, Pos: start})
-			} else if operatorKeywords[upper] {
+			case operatorKeywords[upper]:
 				tokens = append(tokens, Token{Type: TokenOperator, Value: upper, Pos: start})
-			} else {
+			default:
 				tokens = append(tokens, Token{Type: TokenField, Value: word, Pos: start})
 			}
 			continue

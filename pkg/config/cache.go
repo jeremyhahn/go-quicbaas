@@ -71,9 +71,11 @@ type EnhancedCacheConfig struct {
 	L2RedisAddr string `mapstructure:"l2_redis_addr"`
 
 	// L2RedisPassword is the Redis password (plain text).
-	// DEPRECATED: Use L2RedisUseSecrets=true instead for secure credential management.
-	// This field is maintained for backward compatibility but should not be used
-	// in production deployments. Consider migrating to the internal secrets store.
+	//
+	// Deprecated: Use L2RedisUseSecrets=true instead for secure credential
+	// management. This field is maintained for backward compatibility but
+	// should not be used in production deployments. Consider migrating to the
+	// internal secrets store.
 	L2RedisPassword string `mapstructure:"l2_redis_password"`
 
 	// L2RedisDB is the Redis database number

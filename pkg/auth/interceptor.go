@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
@@ -485,7 +486,7 @@ func mapMethodToResourceAction(service, method string) (resource, action string)
 		return mapCryptoMethod(method)
 
 	case strings.HasSuffix(service, ".Seal"):
-		return interfaces.ResourceSeal, interfaces.ActionAdmin
+		return interfaces.ResourceSeal, interfaces.ActionAdmin //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 
 	case strings.HasSuffix(service, ".TimeSeries"):
 		return mapTimeSeriesMethod(method)

@@ -53,13 +53,13 @@ import (
 var (
 	acmeOutputFmt string
 
-	// issue / finalize-order
+	// issue / finalize-order.
 	acmeCSRFile        string
 	acmeChallengeType  string
 	acmeChallengeValue string
 	acmeOrderURL       string
 
-	// new-order
+	// new-order.
 	acmeIdentifiers []string
 	acmeCertOut     string
 )

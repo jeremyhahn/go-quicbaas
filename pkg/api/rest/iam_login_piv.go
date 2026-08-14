@@ -79,7 +79,7 @@ func (h *IAMHandler) PIVLogin(w http.ResponseWriter, r *http.Request) {
 		issuerLower := strings.ToLower(issuerDN)
 		allowed := false
 		for _, dn := range trustedIssuers {
-			if strings.ToLower(dn) == issuerLower {
+			if strings.EqualFold(dn, issuerLower) {
 				allowed = true
 				break
 			}

@@ -54,7 +54,7 @@ type Server struct {
 	// shardRouter selects shard for (entityType, id)
 	shardRouter interface{ Route(string, uint64) uint64 }
 	// sealManager is the injected seal manager for seal/unseal operations
-	sealManager interfaces.SealManager
+	sealManager interfaces.SealManager //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 	// vectorShardID is the shard ID for vector operations, set at construction time.
 	vectorShardID uint64
 }
@@ -120,7 +120,7 @@ func (s *Server) SetVectorShardID(id uint64) {
 
 // SetSealManager sets the seal manager for seal/unseal operations.
 // This should be called during server initialization.
-func (s *Server) SetSealManager(mgr interfaces.SealManager) {
+func (s *Server) SetSealManager(mgr interfaces.SealManager) { //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 	s.sealManager = mgr
 }
 

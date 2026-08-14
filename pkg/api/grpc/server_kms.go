@@ -252,13 +252,10 @@ func (s *KMSServer) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetK
 	if requestedVersion == 0 {
 		// No version specified, use current version
 		requestedVersion = currentVersion
-	} else {
-		// Validate that the requested version exists
-		// Version must be > 0 and <= current version
-		if requestedVersion > currentVersion {
-			return nil, status.Error(codes.NotFound,
-				fmt.Sprintf("key version %d not found (current version is %d)", requestedVersion, currentVersion))
-		}
+	} else if requestedVersion > currentVersion {
+		// The requested version must be > 0 and <= the current version.
+		return nil, status.Error(codes.NotFound,
+			fmt.Sprintf("key version %d not found (current version is %d)", requestedVersion, currentVersion))
 	}
 
 	// Determine the status for the requested version

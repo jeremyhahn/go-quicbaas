@@ -56,7 +56,7 @@ func (c *MsgPackCodec) CanEncode(entity interface{}) bool {
 	}
 
 	// Dereference pointer
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -107,7 +107,7 @@ func (c *MsgPackCodec) Decode(data []byte, entity interface{}) error {
 	}
 
 	// Verify entity is a pointer
-	if reflect.TypeOf(entity).Kind() != reflect.Ptr {
+	if reflect.TypeOf(entity).Kind() != reflect.Pointer {
 		return api.NewNonPointerError("msgpack.Decode", fmt.Sprintf("%T", entity))
 	}
 

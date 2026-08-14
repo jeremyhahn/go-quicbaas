@@ -178,8 +178,6 @@ func resolveOrchestratorTenant(r *http.Request) (context.Context, string) {
 
 // HandleOrchestratorSpawn handles POST /api/v1/orchestrator/sessions - Spawn a new agent session.
 func (s *Server) HandleOrchestratorSpawn(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
 		return
@@ -223,7 +221,7 @@ func (s *Server) HandleOrchestratorSpawn(w http.ResponseWriter, r *http.Request)
 	// rejects the request otherwise. Derivation precedence (query param ->
 	// authenticated token tenant -> SystemTenantID) is centralized in
 	// resolveOrchestratorTenant so the whole orchestrator surface is consistent.
-	ctx, _ = resolveOrchestratorTenant(r)
+	ctx, _ := resolveOrchestratorTenant(r)
 
 	// Per-request strict bit overrides the operator-level
 	// orchestration.host_affinity.mode default: when set to true, an offline
@@ -869,7 +867,7 @@ func (s *Server) HandleOrchestratorSubscribeJobEvents(w http.ResponseWriter, r *
 				return
 			}
 			fmt.Fprintf(w, "event: job_event\ndata: ")
-			enc.Encode(evt)
+			_ = enc.Encode(evt)
 			fmt.Fprintf(w, "\n")
 			flusher.Flush()
 		}

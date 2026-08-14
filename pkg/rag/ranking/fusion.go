@@ -144,7 +144,7 @@ func (wf *WeightedFusion) Fuse(vectorResults, keywordResults []Result) []ScoredR
 		// Normalize keyword score
 		normalizedScore := result.KeywordScore
 		if normalizedScore > 1.0 {
-			normalizedScore = normalizedScore / 10.0 // Simple normalization for BM25 scores
+			normalizedScore /= 10.0 // Simple normalization for BM25 scores
 			if normalizedScore > 1.0 {
 				normalizedScore = 1.0
 			}

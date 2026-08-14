@@ -463,7 +463,11 @@ func buildAgentHTTPClient(cfg *agent.Config) (*http.Client, error) {
 		}
 	}
 
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, &MessageError{Message: "agent serve: http.DefaultTransport is not an *http.Transport"}
+	}
+	transport := base.Clone()
 	transport.TLSClientConfig = &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      pool,

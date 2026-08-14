@@ -170,21 +170,32 @@ func (r *TenantSigningKeyResolver) ManagerFor(ctx context.Context, tenantID stri
 	return r.managerForDedicated(tenantID)
 }
 
+// loadTypedManager returns the cached *SigningKeyManager for a tenant. A value
+// of any other type is reported as absent so the caller rebuilds it.
+func loadTypedManager(m *sync.Map, tenantID string) (*SigningKeyManager, bool) {
+	v, ok := m.Load(tenantID)
+	if !ok {
+		return nil, false
+	}
+	mgr, ok := v.(*SigningKeyManager)
+	return mgr, ok
+}
+
 // managerForDedicated returns the cached per-tenant manager, building it once
 // under a per-tenant lock. A build failure is returned to the caller so the
 // dedicated tenant fails closed.
 func (r *TenantSigningKeyResolver) managerForDedicated(tenantID string) (*SigningKeyManager, error) {
-	if v, ok := r.managers.Load(tenantID); ok {
-		return v.(*SigningKeyManager), nil
+	if mgr, ok := loadTypedManager(&r.managers, tenantID); ok {
+		return mgr, nil
 	}
 
 	lockI, _ := r.buildLocks.LoadOrStore(tenantID, &sync.Mutex{})
-	lock := lockI.(*sync.Mutex)
+	lock, _ := lockI.(*sync.Mutex)
 	lock.Lock()
 	defer lock.Unlock()
 
-	if v, ok := r.managers.Load(tenantID); ok {
-		return v.(*SigningKeyManager), nil
+	if mgr, ok := loadTypedManager(&r.managers, tenantID); ok {
+		return mgr, nil
 	}
 
 	mgr, err := r.build(tenantID)
@@ -249,7 +260,9 @@ func (r *TenantSigningKeyResolver) JWKS(ctx context.Context) *jose.JSONWebKeySet
 	// Include any already-cached dedicated managers (covers a tenant built via
 	// issuance whose listing momentarily failed above).
 	r.managers.Range(func(_, v any) bool {
-		appendUnique(v.(*SigningKeyManager).JWKS())
+		if mgr, ok := v.(*SigningKeyManager); ok {
+			appendUnique(mgr.JWKS())
+		}
 		return true
 	})
 

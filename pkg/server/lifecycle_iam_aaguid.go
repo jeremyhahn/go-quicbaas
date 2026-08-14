@@ -48,7 +48,7 @@ func buildAAGUIDAllowlist(cfg config.IAMAAGUIDConfig) (*iam.AAGUIDAllowlist, err
 	}
 
 	policy := iam.AAGUIDPolicyPermissive
-	if strings.ToLower(cfg.Mode) == "enforce" {
+	if strings.EqualFold(cfg.Mode, "enforce") {
 		policy = iam.AAGUIDPolicyStrict
 	}
 

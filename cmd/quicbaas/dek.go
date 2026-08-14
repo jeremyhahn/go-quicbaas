@@ -44,28 +44,28 @@ import (
 var (
 	dekOutputFmt string
 
-	// create
+	// create.
 	dekAlgorithm   string
 	dekDescription string
 
-	// create / set-safety
+	// create / set-safety.
 	dekMaxOperations  uint64
 	dekMaxBytes       uint64
 	dekWarningPercent int
 
-	// list
+	// list.
 	dekListPrefix    string
 	dekListRecursive bool
 	dekListLimit     int
 
-	// rotate
+	// rotate.
 	dekRotateBackground bool
 
-	// delete
+	// delete.
 	dekDeleteForce     bool
 	dekDeleteMigrateTo string
 
-	// reencrypt
+	// reencrypt.
 	dekFromVersion    int
 	dekToVersion      int
 	dekBatchSize      int

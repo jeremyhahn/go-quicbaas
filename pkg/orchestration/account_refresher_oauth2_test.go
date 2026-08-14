@@ -67,7 +67,7 @@ func TestOAuth2TokenRefresher_Refresh_ServerRejects(t *testing.T) {
 		TokenEndpoint: srv.URL,
 	})
 	if err == nil {
-		t.Fatalf("Refresh() error = nil, want an OAuth2ErrorResponseError")
+		t.Fatalf("Refresh() error = nil, want an OAuth2TokenEndpointError")
 	}
 }
 

@@ -230,23 +230,23 @@ func BuildStrategyChain(cfg *StrategyChainConfig) ([]qrdbsdk.SealingStrategy, er
 }
 
 // errBackendRequired indicates a strategy needs a non-nil storage backend.
-var errBackendRequired = &constErr{"barrier: storage backend is required"}
+var errBackendRequired = &constError{"barrier: storage backend is required"}
 
 // errShamirParams indicates threshold/total parameters violate the
 // Shamir constraints.
-var errShamirParams = &constErr{"barrier: shamir threshold must be >= 2 and total >= threshold"}
+var errShamirParams = &constError{"barrier: shamir threshold must be >= 2 and total >= threshold"}
 
 // errTPM2Required indicates the lifecycle layer did not inject a TPM2
 // strategy when configuring kind=tpm2.
-var errTPM2Required = &constErr{"barrier: TPM2 strategy must be injected by the lifecycle layer when kind=tpm2"}
+var errTPM2Required = &constError{"barrier: TPM2 strategy must be injected by the lifecycle layer when kind=tpm2"}
 
 // errPKCS11ConfigRequired indicates the operator selected pkcs11 without
 // supplying configuration.
-var errPKCS11ConfigRequired = &constErr{"barrier: PKCS#11 configuration is required when kind=pkcs11"}
+var errPKCS11ConfigRequired = &constError{"barrier: PKCS#11 configuration is required when kind=pkcs11"}
 
-// constErr is a tiny typed error so we never fall back to fmt.Errorf for
+// constError is a tiny typed error so we never fall back to fmt.Errorf for
 // barrier-level invariants.
-type constErr struct{ msg string }
+type constError struct{ msg string }
 
 // Error implements the error interface.
-func (e *constErr) Error() string { return e.msg }
+func (e *constError) Error() string { return e.msg }

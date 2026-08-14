@@ -557,8 +557,9 @@ func (h *IAMHandler) DownloadExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
 	w.WriteHeader(http.StatusOK)
 
-	// Write export data
-	json.NewEncoder(w).Encode(exportData)
+	// Write export data. The header is already written, so a stream failure
+	// here has no channel left to report it on.
+	_ = json.NewEncoder(w).Encode(exportData)
 }
 
 // ==================== Data Deletion ====================

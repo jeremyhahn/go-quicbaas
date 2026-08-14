@@ -53,7 +53,7 @@ func WaitForCondition(timeout, interval time.Duration, condition func() bool) er
 		case <-deadline:
 			return ErrConditionTimeout
 		case <-ticker.C:
-			// continue polling
+			// keep polling
 		}
 	}
 }

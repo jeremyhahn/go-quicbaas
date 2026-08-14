@@ -302,10 +302,10 @@ func TestDatabaseService_GetDatabase(t *testing.T) {
 }
 
 func TestDatabaseService_GetDatabase_NotFound(t *testing.T) {
-	notFoundErr := &qrdbsdk.DBNotFoundError{Name: "missing"}
+	notFoundError := &qrdbsdk.DBNotFoundError{Name: "missing"}
 	mock := &mockDBServicer{
 		getForTenantFn: func(_ context.Context, _ string) (*qrdbsdk.DatabaseInfo, error) {
-			return nil, notFoundErr
+			return nil, notFoundError
 		},
 	}
 	svc := NewDatabaseService(mock)
@@ -314,7 +314,7 @@ func TestDatabaseService_GetDatabase_NotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, info)
-	assert.True(t, errors.Is(err, notFoundErr))
+	assert.True(t, errors.Is(err, notFoundError))
 }
 
 // ---------------------------------------------------------------------------
@@ -392,10 +392,10 @@ func TestDatabaseService_DropDatabase(t *testing.T) {
 }
 
 func TestDatabaseService_DropDatabase_QRDBError(t *testing.T) {
-	notFoundErr := &qrdbsdk.DBNotFoundError{Name: "missing"}
+	notFoundError := &qrdbsdk.DBNotFoundError{Name: "missing"}
 	mock := &mockDBServicer{
 		dropForTenantFn: func(_ context.Context, _ string) error {
-			return notFoundErr
+			return notFoundError
 		},
 	}
 	svc := NewDatabaseService(mock)
@@ -406,7 +406,7 @@ func TestDatabaseService_DropDatabase_QRDBError(t *testing.T) {
 	var dropErr *DatabaseDropError
 	require.True(t, errors.As(err, &dropErr))
 	assert.Equal(t, "missing", dropErr.Name)
-	assert.True(t, errors.Is(err, notFoundErr))
+	assert.True(t, errors.Is(err, notFoundError))
 }
 
 // ---------------------------------------------------------------------------

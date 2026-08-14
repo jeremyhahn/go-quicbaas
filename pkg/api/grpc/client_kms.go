@@ -760,7 +760,8 @@ func convertKeyAttributesToProto(attrs *kctypes.KeyAttributes) (pb.KeyAlgorithm,
 	var keySize int32
 
 	// Handle symmetric algorithms
-	if attrs.SymmetricAlgorithm != "" {
+	switch {
+	case attrs.SymmetricAlgorithm != "":
 		switch attrs.SymmetricAlgorithm {
 		case kctypes.SymmetricAES128GCM:
 			alg = pb.KeyAlgorithm_KEY_ALG_AES_128_GCM
@@ -784,7 +785,7 @@ func convertKeyAttributesToProto(attrs *kctypes.KeyAttributes) (pb.KeyAlgorithm,
 				Err:  &api.InvalidInputError{Message: "unsupported symmetric algorithm: " + string(attrs.SymmetricAlgorithm)},
 			}
 		}
-	} else if attrs.KeyAlgorithm != 0 {
+	case attrs.KeyAlgorithm != 0:
 		// Handle asymmetric algorithms using KeyAlgorithm (x509.PublicKeyAlgorithm)
 		switch attrs.KeyAlgorithm {
 		case 1: // x509.RSA
@@ -832,7 +833,7 @@ func convertKeyAttributesToProto(attrs *kctypes.KeyAttributes) (pb.KeyAlgorithm,
 		default:
 			return pb.KeyAlgorithm_KEY_ALG_UNSPECIFIED, 0, nil, false, api.NewInvalidFormatError("key algorithm", &unsupportedKeyAlgorithmError{Algorithm: attrs.KeyAlgorithm})
 		}
-	} else {
+	default:
 		return pb.KeyAlgorithm_KEY_ALG_UNSPECIFIED, 0, nil, false, api.NewInvalidInputError("either SymmetricAlgorithm or KeyAlgorithm must be set")
 	}
 

@@ -67,34 +67,34 @@ type AuditEvent struct {
 type AuditEventType string
 
 const (
-	// AuditEventAuthentication represents authentication attempts
+	// AuditEventAuthentication represents authentication attempts.
 	AuditEventAuthentication AuditEventType = "authentication"
 
-	// AuditEventAuthorization represents authorization checks
+	// AuditEventAuthorization represents authorization checks.
 	AuditEventAuthorization AuditEventType = "authorization"
 
-	// AuditEventUserManagement represents user CRUD operations
+	// AuditEventUserManagement represents user CRUD operations.
 	AuditEventUserManagement AuditEventType = "user_management"
 
-	// AuditEventGroupManagement represents group CRUD operations
+	// AuditEventGroupManagement represents group CRUD operations.
 	AuditEventGroupManagement AuditEventType = "group_management"
 
-	// AuditEventRoleManagement represents role CRUD operations
+	// AuditEventRoleManagement represents role CRUD operations.
 	AuditEventRoleManagement AuditEventType = "role_management"
 
-	// AuditEventPolicyChange represents policy modifications
+	// AuditEventPolicyChange represents policy modifications.
 	AuditEventPolicyChange AuditEventType = "policy_change"
 
-	// AuditEventMFAEvent represents MFA-related events
+	// AuditEventMFAEvent represents MFA-related events.
 	AuditEventMFAEvent AuditEventType = "mfa"
 
-	// AuditEventSessionEvent represents session lifecycle events
+	// AuditEventSessionEvent represents session lifecycle events.
 	AuditEventSessionEvent AuditEventType = "session"
 
-	// AuditEventTenantEvent represents tenant operations
+	// AuditEventTenantEvent represents tenant operations.
 	AuditEventTenantEvent AuditEventType = "tenant"
 
-	// AuditEventAppEvent represents application/OAuth operations
+	// AuditEventAppEvent represents application/OAuth operations.
 	AuditEventAppEvent AuditEventType = "application"
 )
 
@@ -102,16 +102,16 @@ const (
 type AuditCategory string
 
 const (
-	// AuditCategoryAuthentication for authentication events
+	// AuditCategoryAuthentication for authentication events.
 	AuditCategoryAuthentication AuditCategory = "authentication"
 
-	// AuditCategoryAuthorization for authorization events
+	// AuditCategoryAuthorization for authorization events.
 	AuditCategoryAuthorization AuditCategory = "authorization"
 
-	// AuditCategoryAdministration for administrative changes
+	// AuditCategoryAdministration for administrative changes.
 	AuditCategoryAdministration AuditCategory = "administration"
 
-	// AuditCategorySecurity for security-related events
+	// AuditCategorySecurity for security-related events.
 	AuditCategorySecurity AuditCategory = "security"
 )
 
@@ -119,13 +119,13 @@ const (
 type AuditOutcome string
 
 const (
-	// AuditOutcomeSuccess indicates the action succeeded
+	// AuditOutcomeSuccess indicates the action succeeded.
 	AuditOutcomeSuccess AuditOutcome = "success"
 
-	// AuditOutcomeFailure indicates the action failed
+	// AuditOutcomeFailure indicates the action failed.
 	AuditOutcomeFailure AuditOutcome = "failure"
 
-	// AuditOutcomeDenied indicates the action was denied by policy
+	// AuditOutcomeDenied indicates the action was denied by policy.
 	AuditOutcomeDenied AuditOutcome = "denied"
 )
 

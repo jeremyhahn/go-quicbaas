@@ -602,13 +602,6 @@ func defaultResolveRemoteHome(ctx context.Context, sess sshSession) (string, err
 	return home, nil
 }
 
-// resolveRemoteHome retains the old method-based API for any in-tree
-// caller that already binds to it. It delegates to the package-level
-// helper so behaviour is identical.
-func (s *agentDeployService) resolveRemoteHome(ctx context.Context, sess sshSession) (string, error) {
-	return defaultResolveRemoteHome(ctx, sess)
-}
-
 // hostnameForCert extracts the hostname portion of an SSH target. The
 // target may be "host", "host:port", "user@host", or "user@host:port";
 // we keep only the host segment since the cert's SANs should match the

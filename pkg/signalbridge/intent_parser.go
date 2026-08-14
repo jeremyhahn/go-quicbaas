@@ -133,7 +133,7 @@ func (p *IntentParser) Parse(input string, attached bool) Intent {
 	return Intent{Kind: IntentUnknown, Raw: input}
 }
 
-// parseSpawn handles: spawn <backend> [on <host>] [with <model>] [for <goal>]
+// parseSpawn handles: spawn <backend> [on <host>] [with <model>] [for <goal>].
 func parseSpawn(rest, raw string) Intent {
 	intent := Intent{Kind: IntentSpawn, Raw: raw}
 	backend, rest := splitFirstToken(strings.TrimSpace(rest))
@@ -168,7 +168,7 @@ func parseSpawn(rest, raw string) Intent {
 	return intent
 }
 
-// parseAttach handles: attach <session-id>
+// parseAttach handles: attach <session-id>.
 func parseAttach(rest, raw string) Intent {
 	sessionID := strings.TrimSpace(rest)
 	if sessionID == "" {
@@ -177,7 +177,7 @@ func parseAttach(rest, raw string) Intent {
 	return Intent{Kind: IntentAttach, Raw: raw, SessionID: sessionID}
 }
 
-// parseWorkflow handles: workflow <name> [with k=v k=v...]
+// parseWorkflow handles: workflow <name> [with k=v k=v...].
 func parseWorkflow(rest, raw string) Intent {
 	name, after := splitFirstToken(strings.TrimSpace(rest))
 	if name == "" {
@@ -192,7 +192,7 @@ func parseWorkflow(rest, raw string) Intent {
 	return intent
 }
 
-// parseSettings handles: /settings [k=v ...]
+// parseSettings handles: /settings [k=v ...].
 func parseSettings(trimmed, raw string) Intent {
 	rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/settings"))
 	intent := Intent{Kind: IntentSettings, Raw: raw}

@@ -326,7 +326,7 @@ func parentDir(p string) string {
 // modeOctal formats a os.FileMode as the three-digit octal string
 // accepted by the remote `chmod` command.
 func modeOctal(m os.FileMode) string {
-	m = m & os.ModePerm
+	m &= os.ModePerm
 	// Build three digits explicitly to avoid pulling in fmt here.
 	digits := []byte{'0', '0', '0'}
 	digits[0] = '0' + byte((m>>6)&7)

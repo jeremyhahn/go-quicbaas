@@ -307,7 +307,8 @@ func (pd *PartitionDetector) checkForPartition() error {
 	isPartitioned := partition != nil
 	pd.partitionMu.Unlock()
 
-	if isPartitioned && !wasPartitioned {
+	switch {
+	case isPartitioned && !wasPartitioned:
 		// New partition detected
 		pd.metrics.partitionDetections.Inc()
 		pd.metrics.partitionStatus.Set(1)
@@ -323,7 +324,7 @@ func (pd *PartitionDetector) checkForPartition() error {
 		if err := pd.handlePartition(ctx, partition); err != nil {
 			pd.logger.WithError(err).Error("Failed to handle partition")
 		}
-	} else if !isPartitioned && wasPartitioned {
+	case !isPartitioned && wasPartitioned:
 		// Partition healed
 		pd.metrics.partitionHeals.Inc()
 		pd.metrics.partitionStatus.Set(0)
@@ -337,7 +338,7 @@ func (pd *PartitionDetector) checkForPartition() error {
 				pd.logger.WithError(err).Error("Failed to recover from partition")
 			}
 		}
-	} else if !isPartitioned {
+	case !isPartitioned:
 		pd.metrics.partitionChecksTotal.With("normal").Inc()
 	}
 

@@ -378,7 +378,7 @@ func TestEnrollExternalOfficer_FactoryError(t *testing.T) {
 
 	orig := ceremonyClientFactory
 	defer func() { ceremonyClientFactory = orig }()
-	wantErr := assertEnrollErr("factory boom")
+	wantErr := assertEnrollError("factory boom")
 	ceremonyClientFactory = func() (CeremonyClient, error) { return nil, wantErr }
 
 	cmd := newInitEnrollExternalOfficerCommand()
@@ -397,8 +397,8 @@ func TestEnrollExternalOfficer_FactoryError(t *testing.T) {
 	assert.ErrorIs(t, err, wantErr)
 }
 
-// assertEnrollErr is a tiny sentinel-error helper so the typed-error
+// assertEnrollError is a tiny sentinel-error helper so the typed-error
 // check in TestEnrollExternalOfficer_FactoryError stays direct.
-type assertEnrollErr string
+type assertEnrollError string
 
-func (e assertEnrollErr) Error() string { return string(e) }
+func (e assertEnrollError) Error() string { return string(e) }

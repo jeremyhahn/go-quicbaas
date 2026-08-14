@@ -52,9 +52,7 @@ type BatchResourceManager interface {
 type IAMBatchProcessor struct {
 	storage     BatchStorage
 	tenantMgr   BatchResourceManager
-	operations  sync.Map
 	cancelFuncs sync.Map
-	mu          sync.RWMutex
 }
 
 // NewIAMBatchProcessor creates a new IAM batch processor.
@@ -73,8 +71,9 @@ func (bp *IAMBatchProcessor) ImportUsers(ctx context.Context, tenantID string, i
 		return nil, err
 	}
 
-	// Start async processing
-	go bp.processUsers(context.Background(), op, items, opts)
+	// Start async processing. The import must outlive the request that
+	// started it, so it detaches from the caller context deliberately.
+	go bp.processUsers(context.Background(), op, items, opts) //nolint:gosec // G118: the work must outlive the caller; a request-scoped context would cancel it.
 
 	return op, nil
 }
@@ -87,8 +86,9 @@ func (bp *IAMBatchProcessor) ImportRoles(ctx context.Context, tenantID string, i
 		return nil, err
 	}
 
-	// Start async processing
-	go bp.processRoles(context.Background(), op, items, opts)
+	// Start async processing. The import must outlive the request that
+	// started it, so it detaches from the caller context deliberately.
+	go bp.processRoles(context.Background(), op, items, opts) //nolint:gosec // G118: the work must outlive the caller; a request-scoped context would cancel it.
 
 	return op, nil
 }
@@ -101,8 +101,9 @@ func (bp *IAMBatchProcessor) ImportGroups(ctx context.Context, tenantID string, 
 		return nil, err
 	}
 
-	// Start async processing
-	go bp.processGroups(context.Background(), op, items, opts)
+	// Start async processing. The import must outlive the request that
+	// started it, so it detaches from the caller context deliberately.
+	go bp.processGroups(context.Background(), op, items, opts) //nolint:gosec // G118: the work must outlive the caller; a request-scoped context would cancel it.
 
 	return op, nil
 }
@@ -115,8 +116,9 @@ func (bp *IAMBatchProcessor) ImportPolicies(ctx context.Context, tenantID string
 		return nil, err
 	}
 
-	// Start async processing
-	go bp.processPolicies(context.Background(), op, items, opts)
+	// Start async processing. The import must outlive the request that
+	// started it, so it detaches from the caller context deliberately.
+	go bp.processPolicies(context.Background(), op, items, opts) //nolint:gosec // G118: the work must outlive the caller; a request-scoped context would cancel it.
 
 	return op, nil
 }
@@ -257,8 +259,10 @@ func (bp *IAMBatchProcessor) CancelOperation(ctx context.Context, operationID st
 	}
 
 	// Signal cancellation
-	if cancelFunc, ok := bp.cancelFuncs.Load(operationID); ok {
-		cancelFunc.(context.CancelFunc)()
+	if entry, ok := bp.cancelFuncs.Load(operationID); ok {
+		if cancelFunc, ok := entry.(context.CancelFunc); ok {
+			cancelFunc()
+		}
 	}
 
 	now := time.Now()
@@ -691,11 +695,12 @@ func (bp *IAMBatchProcessor) finalizeOperation(ctx context.Context, op *BatchOpe
 	op.CompletedAt = &now
 	op.UpdatedAt = now
 
-	if op.FailureCount > 0 && op.SuccessCount > 0 {
+	switch {
+	case op.FailureCount > 0 && op.SuccessCount > 0:
 		op.Status = BatchStatusPartialSuccess
-	} else if op.FailureCount > 0 {
+	case op.FailureCount > 0:
 		op.Status = BatchStatusFailed
-	} else {
+	default:
 		op.Status = BatchStatusCompleted
 	}
 

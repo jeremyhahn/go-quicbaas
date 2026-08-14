@@ -245,7 +245,7 @@ func (s *webAuthnFactorWriteThrough) Save(ctx context.Context, cred *xkmswebauth
 
 	// Snapshot before writing: only a credential WE created may be rolled
 	// back if the factor enrollment fails.
-	_, getErr := s.CredentialStore.GetByCredentialID(ctx, cred.ID)
+	_, getErr := s.GetByCredentialID(ctx, cred.ID)
 	credentialExisted := getErr == nil
 
 	if saveErr := s.CredentialStore.Save(ctx, cred); saveErr != nil {
@@ -264,7 +264,7 @@ func (s *webAuthnFactorWriteThrough) Save(ctx context.Context, cred *xkmswebauth
 
 	compensated := false
 	if !credentialExisted {
-		if delErr := s.CredentialStore.Delete(ctx, cred.ID); delErr != nil {
+		if delErr := s.Delete(ctx, cred.ID); delErr != nil {
 			s.logger.Error("webauthn registration: failed to roll back the credential after a factor-enrollment failure",
 				"tenant_id", s.tenantID,
 				"credential_id", lookupKey,

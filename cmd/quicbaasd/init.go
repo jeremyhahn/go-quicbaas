@@ -92,7 +92,7 @@ func validateCredentialStrategy(value string) error {
 // canonicalInitFlags). The two structs are kept distinct so the locked
 // canonical surface in canonical.go does not accidentally regress when
 // new optional flags land here.
-// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------.
 type inlineInitFlags struct {
 	soPin              string
 	userPin            string

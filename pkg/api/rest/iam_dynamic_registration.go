@@ -477,13 +477,18 @@ func isValidRedirectURI(uri string) bool {
 			break
 		}
 		// Scheme must be alphanumeric with dots/hyphens
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-			(c >= '0' && c <= '9') || c == '.' || c == '-' || c == '+') {
+		if !isURISchemeChar(c) {
 			break
 		}
 	}
 
 	return false
+}
+
+// isURISchemeChar reports whether r may appear in a URI scheme (RFC 3986 3.1).
+func isURISchemeChar(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+		(r >= '0' && r <= '9') || r == '.' || r == '-' || r == '+'
 }
 
 // isValidDCRGrantType checks if a grant type is valid for DCR.

@@ -254,25 +254,21 @@ type amqpQueueState struct {
 
 // amqpExchangeState holds the state for an AMQP exchange.
 type amqpExchangeState struct {
-	name       string
-	typ        string
-	durable    bool
-	autoDelete bool
-	internal   bool
+	name    string
+	typ     string
+	durable bool
 }
 
 // amqpBinding represents a queue-to-exchange binding.
 type amqpBinding struct {
 	exchange   string
 	routingKey string
-	arguments  map[string]interface{}
 }
 
 // amqpUnackedMessage represents an unacknowledged message.
 type amqpUnackedMessage struct {
 	deliveryTag uint64
 	queue       string
-	redelivered bool
 }
 
 // amqpConsumer represents a message consumer.
@@ -355,7 +351,9 @@ func (h *AMQPHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 		delete(h.clients, session.ID)
 		h.clientsMu.Unlock()
 
-		h.hub.UnregisterClient(session.ID)
+		// Best effort: the connection is already going away and there is
+		// nobody left to report a hub failure to.
+		_ = h.hub.UnregisterClient(session.ID)
 	}()
 
 	// Store client state
@@ -364,7 +362,7 @@ func (h *AMQPHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 	h.clientsMu.Unlock()
 
 	// Register with hub for message delivery
-	h.hub.RegisterClient(session.ID, func(topic string, payload []byte, qos byte, retain bool) {
+	if err := h.hub.RegisterClient(session.ID, func(topic string, payload []byte, qos byte, retain bool) {
 		select {
 		case deliveryChan <- amqpDelivery{
 			queue:   topic,
@@ -373,7 +371,9 @@ func (h *AMQPHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 		default:
 			// Channel full, drop message
 		}
-	})
+	}); err != nil {
+		return err
+	}
 
 	// Start message delivery goroutine
 	deliveryCtx, cancelDelivery := context.WithCancel(ctx)
@@ -500,7 +500,7 @@ func (h *AMQPHandler) deliverMessages(ctx context.Context, conn *websocket.Conn,
 
 // validateProtocolHeader checks if the data is a valid AMQP 0-9-1 protocol header.
 // AMQP 0-9-1 header format: 'A' 'M' 'Q' 'P' 0x00 major minor revision
-// For AMQP 0-9-1: 'A' 'M' 'Q' 'P' 0x00 0x00 0x09 0x01
+// For AMQP 0-9-1: 'A' 'M' 'Q' 'P' 0x00 0x00 0x09 0x01.
 func (h *AMQPHandler) validateProtocolHeader(data []byte) bool {
 	expected := []byte{'A', 'M', 'Q', 'P', 0x00, 0x00, 0x09, 0x01}
 	if len(data) < 8 {
@@ -510,7 +510,7 @@ func (h *AMQPHandler) validateProtocolHeader(data []byte) bool {
 }
 
 // buildProtocolHeader builds an AMQP 0-9-1 protocol header.
-// Format: 'A' 'M' 'Q' 'P' 0x00 major minor revision
+// Format: 'A' 'M' 'Q' 'P' 0x00 major minor revision.
 func (h *AMQPHandler) buildProtocolHeader() []byte {
 	return []byte{'A', 'M', 'Q', 'P', 0x00, 0x00, 0x09, 0x01}
 }
@@ -543,21 +543,22 @@ func (h *AMQPHandler) buildConnectionStart() []byte {
 // buildMethodFrame builds an AMQP method frame.
 func (h *AMQPHandler) buildMethodFrame(channel uint16, classID, methodID uint16, args []byte) []byte {
 	// Method frame payload: class-id (2) + method-id (2) + args
+	// Writes to a bytes.Buffer never fail.
 	payload := &bytes.Buffer{}
-	binary.Write(payload, binary.BigEndian, classID)
-	binary.Write(payload, binary.BigEndian, methodID)
+	_ = binary.Write(payload, binary.BigEndian, classID)
+	_ = binary.Write(payload, binary.BigEndian, methodID)
 	payload.Write(args)
 
 	return h.buildFrame(FrameMethod, channel, payload.Bytes())
 }
 
 // buildFrame builds an AMQP frame.
-// Frame format: type (1) + channel (2) + size (4) + payload + frame-end (1)
+// Frame format: type (1) + channel (2) + size (4) + payload + frame-end (1).
 func (h *AMQPHandler) buildFrame(frameType byte, channel uint16, payload []byte) []byte {
 	buf := &bytes.Buffer{}
 	buf.WriteByte(frameType)
-	binary.Write(buf, binary.BigEndian, channel)
-	binary.Write(buf, binary.BigEndian, uint32(len(payload)))
+	_ = binary.Write(buf, binary.BigEndian, channel)
+	_ = binary.Write(buf, binary.BigEndian, uint32(len(payload)))
 	buf.Write(payload)
 	buf.WriteByte(FrameEnd)
 	return buf.Bytes()
@@ -686,9 +687,9 @@ func (h *AMQPHandler) handleConnectionStartOk(ctx context.Context, frame *AMQPFr
 	// Parse client properties and authentication (simplified)
 	// Send Connection.Tune
 	tuneArgs := &bytes.Buffer{}
-	binary.Write(tuneArgs, binary.BigEndian, uint16(2047))   // channel-max
-	binary.Write(tuneArgs, binary.BigEndian, uint32(131072)) // frame-max
-	binary.Write(tuneArgs, binary.BigEndian, uint16(60))     // heartbeat
+	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(2047))   // channel-max
+	_ = binary.Write(tuneArgs, binary.BigEndian, uint32(131072)) // frame-max
+	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(60))     // heartbeat
 
 	return h.buildMethodFrame(0, ClassConnection, MethodConnectionTune, tuneArgs.Bytes()), nil
 }
@@ -698,9 +699,9 @@ func (h *AMQPHandler) handleConnectionSecureOk(ctx context.Context, frame *AMQPF
 	// SASL authentication challenge/response
 	// For PLAIN mechanism, just proceed to Tune
 	tuneArgs := &bytes.Buffer{}
-	binary.Write(tuneArgs, binary.BigEndian, uint16(2047))   // channel-max
-	binary.Write(tuneArgs, binary.BigEndian, uint32(131072)) // frame-max
-	binary.Write(tuneArgs, binary.BigEndian, uint16(60))     // heartbeat
+	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(2047))   // channel-max
+	_ = binary.Write(tuneArgs, binary.BigEndian, uint32(131072)) // frame-max
+	_ = binary.Write(tuneArgs, binary.BigEndian, uint16(60))     // heartbeat
 
 	return h.buildMethodFrame(0, ClassConnection, MethodConnectionTune, tuneArgs.Bytes()), nil
 }
@@ -771,10 +772,7 @@ func (h *AMQPHandler) handleChannelOpen(ctx context.Context, frame *AMQPFrame, a
 // handleChannelFlow handles Channel.Flow.
 func (h *AMQPHandler) handleChannelFlow(ctx context.Context, frame *AMQPFrame, args []byte, session *ws.Session, state *amqpClientState) ([]byte, error) {
 	// Parse: active (bit)
-	active := false
-	if len(args) > 0 && (args[0]&0x01) != 0 {
-		active = true
-	}
+	active := len(args) > 0 && (args[0]&0x01) != 0
 
 	state.mu.Lock()
 	ch := state.channels[frame.Channel]
@@ -976,7 +974,9 @@ func (h *AMQPHandler) handleQueueDeclare(ctx context.Context, frame *AMQPFrame, 
 	state.mu.Unlock()
 
 	// Register queue as topic in hub
-	h.hub.Subscribe(session.ID, queueName, 0)
+	if err := h.hub.Subscribe(session.ID, queueName, 0); err != nil {
+		return nil, err
+	}
 
 	// Send Queue.Declare-Ok if not no-wait
 	if noWait {
@@ -986,8 +986,8 @@ func (h *AMQPHandler) handleQueueDeclare(ctx context.Context, frame *AMQPFrame, 
 	// Queue.Declare-Ok: queue (shortstring), message-count (long), consumer-count (long)
 	declareOkArgs := &bytes.Buffer{}
 	writeShortString(declareOkArgs, queueName)
-	binary.Write(declareOkArgs, binary.BigEndian, uint32(0)) // message-count
-	binary.Write(declareOkArgs, binary.BigEndian, uint32(0)) // consumer-count
+	_ = binary.Write(declareOkArgs, binary.BigEndian, uint32(0)) // message-count
+	_ = binary.Write(declareOkArgs, binary.BigEndian, uint32(0)) // consumer-count
 
 	return h.buildMethodFrame(frame.Channel, ClassQueue, MethodQueueDeclareOk, declareOkArgs.Bytes()), nil
 }
@@ -1169,7 +1169,7 @@ func (h *AMQPHandler) handleQueuePurge(ctx context.Context, frame *AMQPFrame, ar
 
 	// Queue.Purge-Ok: message-count (long)
 	purgeOkArgs := &bytes.Buffer{}
-	binary.Write(purgeOkArgs, binary.BigEndian, messageCount)
+	_ = binary.Write(purgeOkArgs, binary.BigEndian, messageCount)
 
 	return h.buildMethodFrame(frame.Channel, ClassQueue, MethodQueuePurgeOk, purgeOkArgs.Bytes()), nil
 }
@@ -1213,7 +1213,9 @@ func (h *AMQPHandler) handleQueueDelete(ctx context.Context, frame *AMQPFrame, a
 	state.mu.Unlock()
 
 	// Unsubscribe from hub
-	h.hub.Unsubscribe(session.ID, queueName)
+	if err := h.hub.Unsubscribe(session.ID, queueName); err != nil {
+		return nil, err
+	}
 
 	// Send Queue.Delete-Ok if not no-wait
 	if noWait {
@@ -1222,7 +1224,7 @@ func (h *AMQPHandler) handleQueueDelete(ctx context.Context, frame *AMQPFrame, a
 
 	// Queue.Delete-Ok: message-count (long)
 	deleteOkArgs := &bytes.Buffer{}
-	binary.Write(deleteOkArgs, binary.BigEndian, messageCount)
+	_ = binary.Write(deleteOkArgs, binary.BigEndian, messageCount)
 
 	return h.buildMethodFrame(frame.Channel, ClassQueue, MethodQueueDeleteOk, deleteOkArgs.Bytes()), nil
 }
@@ -1312,7 +1314,9 @@ func (h *AMQPHandler) handleBasicConsume(ctx context.Context, frame *AMQPFrame, 
 	state.mu.Unlock()
 
 	// Subscribe to queue via hub
-	h.hub.Subscribe(session.ID, queueName, 0)
+	if err := h.hub.Subscribe(session.ID, queueName, 0); err != nil {
+		return nil, err
+	}
 
 	// Send Basic.Consume-Ok if not no-wait
 	if noWait {
@@ -1349,6 +1353,7 @@ func (h *AMQPHandler) handleBasicCancel(ctx context.Context, frame *AMQPFrame, a
 	noWait := (flags & 0x01) != 0
 
 	// Remove consumer
+	var unsubErr error
 	state.mu.Lock()
 	consumer, exists := state.consumers[consumerTag]
 	if exists {
@@ -1362,10 +1367,14 @@ func (h *AMQPHandler) handleBasicCancel(ctx context.Context, frame *AMQPFrame, a
 			}
 		}
 		if !hasOtherConsumer {
-			h.hub.Unsubscribe(session.ID, consumer.queueName)
+			unsubErr = h.hub.Unsubscribe(session.ID, consumer.queueName)
 		}
 	}
 	state.mu.Unlock()
+
+	if unsubErr != nil {
+		return nil, unsubErr
+	}
 
 	// Send Basic.Cancel-Ok if not no-wait
 	if noWait {
@@ -1413,7 +1422,9 @@ func (h *AMQPHandler) handleBasicPublish(ctx context.Context, frame *AMQPFrame, 
 	// Note: The actual content comes in Header and Body frames
 	// For now, we'll publish an empty message; a full implementation
 	// would accumulate Header+Body frames for the complete message
-	h.hub.Publish(routingKey, nil, 0, false)
+	if err := h.hub.Publish(routingKey, nil, 0, false); err != nil {
+		return nil, err
+	}
 
 	// Basic.Publish doesn't have a response
 	return nil, nil
@@ -1479,21 +1490,21 @@ func (h *AMQPHandler) handleBasicGet(ctx context.Context, frame *AMQPFrame, args
 
 	// Send Basic.Get-Ok: delivery-tag (longlong), redelivered (bit), exchange (shortstring), routing-key (shortstring), message-count (long)
 	getOkArgs := &bytes.Buffer{}
-	binary.Write(getOkArgs, binary.BigEndian, deliveryTag)
-	getOkArgs.WriteByte(0)                 // redelivered = false
+	_ = binary.Write(getOkArgs, binary.BigEndian, deliveryTag)
+	getOkArgs.WriteByte(0)                 // redelivered flag, always false here
 	writeShortString(getOkArgs, "")        // exchange
 	writeShortString(getOkArgs, queueName) // routing-key
-	binary.Write(getOkArgs, binary.BigEndian, messageCount)
+	_ = binary.Write(getOkArgs, binary.BigEndian, messageCount)
 
 	methodFrame := h.buildMethodFrame(frame.Channel, ClassBasic, MethodBasicGetOk, getOkArgs.Bytes())
 
 	// Build content header and body frames
 	if len(message) > 0 {
 		headerPayload := &bytes.Buffer{}
-		binary.Write(headerPayload, binary.BigEndian, ClassBasic)           // class-id
-		binary.Write(headerPayload, binary.BigEndian, uint16(0))            // weight (reserved)
-		binary.Write(headerPayload, binary.BigEndian, uint64(len(message))) // body-size
-		binary.Write(headerPayload, binary.BigEndian, uint16(0))            // property-flags (no properties)
+		_ = binary.Write(headerPayload, binary.BigEndian, ClassBasic)           // class-id
+		_ = binary.Write(headerPayload, binary.BigEndian, uint16(0))            // weight (reserved)
+		_ = binary.Write(headerPayload, binary.BigEndian, uint64(len(message))) // body-size
+		_ = binary.Write(headerPayload, binary.BigEndian, uint16(0))            // property-flags (no properties)
 		headerFrame := h.buildFrame(FrameHeader, frame.Channel, headerPayload.Bytes())
 
 		bodyFrame := h.buildFrame(FrameBody, frame.Channel, message)
@@ -1544,25 +1555,16 @@ func (h *AMQPHandler) handleBasicReject(ctx context.Context, frame *AMQPFrame, a
 		return nil, &ErrAMQPProtocolError{Message: "reject args too short"}
 	}
 
-	// Parse: delivery-tag (longlong), requeue (bit)
+	// Parse: delivery-tag (longlong). The requeue bit is parsed by the
+	// caller's frame but not honoured: this implementation does not retain
+	// message content, so a rejected message is dropped from the unacked set
+	// either way.
 	deliveryTag := binary.BigEndian.Uint64(args[0:8])
-	requeue := (args[8] & 0x01) != 0
 
 	state.mu.Lock()
 	ch := state.channels[frame.Channel]
 	if ch != nil {
-		msg, exists := ch.unackedMessages[deliveryTag]
-		if exists {
-			if requeue {
-				// Requeue the message
-				queue := ch.queues[msg.queue]
-				if queue != nil {
-					// In a full implementation, we'd have the message content stored
-					// For now, just remove from unacked
-				}
-			}
-			delete(ch.unackedMessages, deliveryTag)
-		}
+		delete(ch.unackedMessages, deliveryTag)
 	}
 	state.mu.Unlock()
 
@@ -1645,10 +1647,10 @@ func (h *AMQPHandler) handleHeartbeat(frame *AMQPFrame) ([]byte, error) {
 // buildChannelClose builds a Channel.Close method frame.
 func (h *AMQPHandler) buildChannelClose(channel uint16, replyCode uint16, replyText string, classID, methodID uint16) []byte {
 	args := &bytes.Buffer{}
-	binary.Write(args, binary.BigEndian, replyCode)
+	_ = binary.Write(args, binary.BigEndian, replyCode)
 	writeShortString(args, replyText)
-	binary.Write(args, binary.BigEndian, classID)
-	binary.Write(args, binary.BigEndian, methodID)
+	_ = binary.Write(args, binary.BigEndian, classID)
+	_ = binary.Write(args, binary.BigEndian, methodID)
 	return h.buildMethodFrame(channel, ClassChannel, MethodChannelClose, args.Bytes())
 }
 
@@ -1658,8 +1660,8 @@ func (h *AMQPHandler) buildBasicDeliver(channel uint16, consumerTag string, deli
 	// Basic.Deliver: consumer-tag (shortstring), delivery-tag (longlong), redelivered (bit), exchange (shortstring), routing-key (shortstring)
 	methodArgs := &bytes.Buffer{}
 	writeShortString(methodArgs, consumerTag)
-	binary.Write(methodArgs, binary.BigEndian, deliveryTag)
-	methodArgs.WriteByte(0)          // redelivered = false
+	_ = binary.Write(methodArgs, binary.BigEndian, deliveryTag)
+	methodArgs.WriteByte(0)          // redelivered flag, always false here
 	writeShortString(methodArgs, "") // exchange
 	writeShortString(methodArgs, routingKey)
 
@@ -1671,10 +1673,10 @@ func (h *AMQPHandler) buildBasicDeliver(channel uint16, consumerTag string, deli
 
 	// Build content header frame
 	headerPayload := &bytes.Buffer{}
-	binary.Write(headerPayload, binary.BigEndian, ClassBasic)           // class-id
-	binary.Write(headerPayload, binary.BigEndian, uint16(0))            // weight (reserved)
-	binary.Write(headerPayload, binary.BigEndian, uint64(len(payload))) // body-size
-	binary.Write(headerPayload, binary.BigEndian, uint16(0))            // property-flags (no properties)
+	_ = binary.Write(headerPayload, binary.BigEndian, ClassBasic)           // class-id
+	_ = binary.Write(headerPayload, binary.BigEndian, uint16(0))            // weight (reserved)
+	_ = binary.Write(headerPayload, binary.BigEndian, uint64(len(payload))) // body-size
+	_ = binary.Write(headerPayload, binary.BigEndian, uint16(0))            // property-flags (no properties)
 	headerFrame := h.buildFrame(FrameHeader, channel, headerPayload.Bytes())
 
 	// Build content body frame
@@ -1730,7 +1732,7 @@ func writeShortString(buf *bytes.Buffer, s string) {
 
 // writeLongString writes a long string (4-byte length + string bytes).
 func writeLongString(buf *bytes.Buffer, s string) {
-	binary.Write(buf, binary.BigEndian, uint32(len(s)))
+	_ = binary.Write(buf, binary.BigEndian, uint32(len(s)))
 	buf.WriteString(s)
 }
 
@@ -1745,13 +1747,13 @@ func writeTable(buf *bytes.Buffer, table map[string]interface{}) {
 			writeLongString(tableBuf, v)
 		case int:
 			tableBuf.WriteByte('I') // Signed 32-bit integer
-			binary.Write(tableBuf, binary.BigEndian, int32(v))
+			_ = binary.Write(tableBuf, binary.BigEndian, int32(v))
 		case int32:
 			tableBuf.WriteByte('I') // Signed 32-bit integer
-			binary.Write(tableBuf, binary.BigEndian, v)
+			_ = binary.Write(tableBuf, binary.BigEndian, v)
 		case int64:
 			tableBuf.WriteByte('l') // Signed 64-bit integer
-			binary.Write(tableBuf, binary.BigEndian, v)
+			_ = binary.Write(tableBuf, binary.BigEndian, v)
 		case bool:
 			tableBuf.WriteByte('t') // Boolean
 			if v {
@@ -1766,6 +1768,6 @@ func writeTable(buf *bytes.Buffer, table map[string]interface{}) {
 			// Skip unknown types
 		}
 	}
-	binary.Write(buf, binary.BigEndian, uint32(tableBuf.Len()))
+	_ = binary.Write(buf, binary.BigEndian, uint32(tableBuf.Len()))
 	buf.Write(tableBuf.Bytes())
 }

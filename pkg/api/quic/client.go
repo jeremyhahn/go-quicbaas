@@ -116,11 +116,9 @@ func NewClient(addr string, opts ...ClientOption) (*Client, error) {
 			NextProtos: []string{"quicbaas-quic"},
 			MinVersion: tls.VersionTLS13,
 		}
-	} else {
+	} else if len(tlsConf.NextProtos) == 0 {
 		// Ensure NextProtos is set
-		if len(tlsConf.NextProtos) == 0 {
-			tlsConf.NextProtos = []string{"quicbaas-quic"}
-		}
+		tlsConf.NextProtos = []string{"quicbaas-quic"}
 	}
 
 	// Create context for connection lifecycle

@@ -42,7 +42,8 @@ func (h *Handler) getIAMService() service.IAMService {
 	if !ok {
 		return nil
 	}
-	return v.(service.IAMService)
+	svc, _ := v.(service.IAMService)
+	return svc
 }
 
 // clearIAMService removes the IAM service association (for cleanup).
@@ -70,7 +71,8 @@ func (h *Handler) getMFAService() service.MFAManager {
 	if !ok {
 		return nil
 	}
-	return v.(service.MFAManager)
+	svc, _ := v.(service.MFAManager)
+	return svc
 }
 
 // clearMFAService removes the MFA service association (for cleanup).

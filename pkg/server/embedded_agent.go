@@ -568,9 +568,7 @@ func buildEmbeddedAgentImageMap(cfg config.EmbeddedAgentConfig) map[string]strin
 // configured backend kinds and the GPU availability flag.
 func buildEmbeddedAgentCapabilities(kinds []string, gpuAvailable bool) []string {
 	caps := make([]string, 0, len(kinds)+1)
-	for _, k := range kinds {
-		caps = append(caps, k)
-	}
+	caps = append(caps, kinds...)
 	if gpuAvailable {
 		caps = append(caps, "gpu")
 	}

@@ -127,19 +127,20 @@ func (ds *DedupStore) CheckAndStore(ctx context.Context, channel string, msg *Me
 	var payloadHash string
 	var computeErr error
 
-	if clientDedupKey != "" {
+	switch {
+	case clientDedupKey != "":
 		dedupKey = clientDedupKey
 		payloadHash, computeErr = ds.ComputeHash(msg.Payload, nil)
 		if computeErr != nil {
 			return nil, computeErr
 		}
-	} else if msg.ID != "" {
+	case msg.ID != "":
 		dedupKey = msg.ID
 		payloadHash, computeErr = ds.ComputeHash(msg.Payload, nil)
 		if computeErr != nil {
 			return nil, computeErr
 		}
-	} else {
+	default:
 		payloadHash, computeErr = ds.ComputeHash(msg.Payload, nil)
 		if computeErr != nil {
 			return nil, computeErr

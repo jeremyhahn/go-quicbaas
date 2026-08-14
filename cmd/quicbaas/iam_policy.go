@@ -32,7 +32,6 @@ import (
 var (
 	// Policy command flags.
 	iamPolicyFile     string
-	iamPolicyName     string
 	iamPolicySubject  string
 	iamPolicyAction   string
 	iamPolicyResource string

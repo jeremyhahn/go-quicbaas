@@ -58,9 +58,10 @@ func (r *SimilarityReranker) Rerank(query string, results []ScoredResult, topK i
 	for i := range results {
 		// If result already has an embedding, use it
 		var resultEmb []float32
-		if len(results[i].Vector) > 0 {
+		switch {
+		case len(results[i].Vector) > 0:
 			resultEmb = results[i].Vector
-		} else if results[i].Content != "" {
+		case results[i].Content != "":
 			// Generate embedding for content
 			resultEmb, err = r.embedder.Embed(ctx, results[i].Content)
 			if err != nil {
@@ -68,7 +69,7 @@ func (r *SimilarityReranker) Rerank(query string, results []ScoredResult, topK i
 				results[i].RerankScore = results[i].FinalScore
 				continue
 			}
-		} else {
+		default:
 			// No content to embed, keep existing score
 			results[i].RerankScore = results[i].FinalScore
 			continue

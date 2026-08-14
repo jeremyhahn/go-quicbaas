@@ -163,11 +163,12 @@ func (b *KVBackend) List(ctx context.Context, prefix string) ([]string, error) {
 			return nil
 		}
 		var secretPath string
-		if parts[len(parts)-1] == "current" {
+		switch {
+		case parts[len(parts)-1] == "current":
 			secretPath = strings.Join(parts[:len(parts)-1], "/")
-		} else if len(parts) >= 3 && parts[len(parts)-2] == "v" {
+		case len(parts) >= 3 && parts[len(parts)-2] == "v":
 			secretPath = strings.Join(parts[:len(parts)-2], "/")
-		} else {
+		default:
 			return nil
 		}
 		if _, ok := seen[secretPath]; !ok {

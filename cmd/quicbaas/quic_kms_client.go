@@ -390,15 +390,6 @@ func createQUICClientInternal() (*quic.Client, error) {
 	return client, nil
 }
 
-// createQUICKMSClient creates a QUIC client for KMS operations.
-func createQUICKMSClient() (KMSClient, error) {
-	client, err := createQUICClientInternal()
-	if err != nil {
-		return nil, err
-	}
-	return &QUICKMSClient{client: client}, nil
-}
-
 // createQUICSecretsClient creates a QUIC client for secrets operations.
 func createQUICSecretsClient() (SecretsClient, error) {
 	client, err := createQUICClientInternal()
@@ -406,42 +397,6 @@ func createQUICSecretsClient() (SecretsClient, error) {
 		return nil, err
 	}
 	return &QUICSecretsClient{client: client}, nil
-}
-
-// createQUICSealClient creates a QUIC client for seal operations.
-func createQUICSealClient() (SealClient, error) {
-	client, err := createQUICClientInternal()
-	if err != nil {
-		return nil, err
-	}
-	return &QUICSealClient{client: client}, nil
-}
-
-// createQUICBackendClient creates a QUIC client for backend operations.
-func createQUICBackendClient() (BackendClient, error) {
-	client, err := createQUICClientInternal()
-	if err != nil {
-		return nil, err
-	}
-	return &QUICBackendClient{client: client}, nil
-}
-
-// createQUICSafetyClient creates a QUIC client for safety operations.
-func createQUICSafetyClient() (SafetyClient, error) {
-	client, err := createQUICClientInternal()
-	if err != nil {
-		return nil, err
-	}
-	return &QUICSafetyClient{client: client}, nil
-}
-
-// createQUICCryptoClient creates a QUIC client for crypto operations.
-func createQUICCryptoClient() (CryptoClient, error) {
-	client, err := createQUICClientInternal()
-	if err != nil {
-		return nil, err
-	}
-	return &QUICCryptoClient{client: client}, nil
 }
 
 // Compile-time interface checks.

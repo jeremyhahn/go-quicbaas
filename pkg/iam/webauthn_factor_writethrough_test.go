@@ -319,7 +319,6 @@ func TestIsFactorAlreadyEnrolled(t *testing.T) {
 		{"not-found", &qrdbtransport.FactorNotFoundError{FactorID: "f1"}, false},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			if got := isFactorAlreadyEnrolled(tt.err); got != tt.want {
 				t.Errorf("isFactorAlreadyEnrolled(%v) = %v, want %v", tt.err, got, tt.want)
@@ -556,7 +555,6 @@ func TestNewWebAuthnFactorWriteThrough_RequiresEveryDependency(t *testing.T) {
 		{"empty tenant", creds, users, factors, "", "tenantID"},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := newWebAuthnFactorWriteThrough(tt.inner, tt.users, tt.factors, tt.tenantID, nil)
 			var typed *WebAuthnFactorStoreConfigError

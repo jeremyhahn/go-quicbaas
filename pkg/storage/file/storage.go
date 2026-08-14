@@ -500,7 +500,7 @@ func (f *FileStorage) Scan(start, end []byte) ([][2][]byte, error) {
 
 		// Copy key
 		keyCopy := make([]byte, len(key))
-		copy(keyCopy, []byte(key))
+		copy(keyCopy, key)
 
 		// Copy value
 		valueCopy := make([]byte, len(value))

@@ -157,9 +157,7 @@ func (s *Server) qrdbBarrierServicer() qrdbsdk.BarrierServicer {
 		}
 		return nil
 	}
-	barrierClient := platformClient.Barrier()
-	if barrierClient == nil {
-		return nil
-	}
-	return newQRDBBarrierClientServicer(barrierClient)
+	// Barrier() type-asserts the transport, so it either panics or returns a
+	// non-nil interface; there is no nil case left to guard here.
+	return newQRDBBarrierClientServicer(platformClient.Barrier())
 }

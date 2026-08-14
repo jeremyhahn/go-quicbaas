@@ -120,7 +120,7 @@ type StreamFetchObjectsResponse struct {
 // =============================================================================
 
 // EncodeFetchObjectRequest encodes a FetchObjectRequest to binary format.
-// Wire format: [shardID:8][refLen:2][ref:N][checksumLen:2][checksum:M][reqIDLen:2][reqID:P]
+// Wire format: [shardID:8][refLen:2][ref:N][checksumLen:2][checksum:M][reqIDLen:2][reqID:P].
 func EncodeFetchObjectRequest(req *FetchObjectRequest) ([]byte, error) {
 	if req == nil {
 		return nil, api.NewNilInputError("quic.EncodeFetchObjectRequest", "request")
@@ -219,7 +219,7 @@ func DecodeFetchObjectRequest(data []byte) (*FetchObjectRequest, error) {
 
 // EncodeStreamFetchObjectsRequest encodes a StreamFetchObjectsRequest to binary format.
 // Wire format: [shardID:8][itemCount:4][items...]
-// Each item: [refLen:2][ref:N][checksumLen:2][checksum:M]
+// Each item: [refLen:2][ref:N][checksumLen:2][checksum:M].
 func EncodeStreamFetchObjectsRequest(req *StreamFetchObjectsRequest) ([]byte, error) {
 	if req == nil {
 		return nil, api.NewNilInputError("quic.EncodeStreamFetchObjectsRequest", "request")

@@ -56,13 +56,13 @@ const (
 type AdminPermission string
 
 const (
-	// Tenant permissions
+	// Tenant permissions.
 	PermTenantCreate AdminPermission = "tenant:create"
 	PermTenantRead   AdminPermission = "tenant:read"
 	PermTenantUpdate AdminPermission = "tenant:update"
 	PermTenantDelete AdminPermission = "tenant:delete"
 
-	// User permissions
+	// User permissions.
 	PermUserCreate      AdminPermission = "user:create"
 	PermUserRead        AdminPermission = "user:read"
 	PermUserUpdate      AdminPermission = "user:update"
@@ -72,41 +72,41 @@ const (
 	PermUserSuspend     AdminPermission = "user:suspend"
 	PermUserUnlock      AdminPermission = "user:unlock"
 
-	// Group permissions
+	// Group permissions.
 	PermGroupCreate AdminPermission = "group:create"
 	PermGroupRead   AdminPermission = "group:read"
 	PermGroupUpdate AdminPermission = "group:update"
 	PermGroupDelete AdminPermission = "group:delete"
 
-	// Role permissions
+	// Role permissions.
 	PermRoleCreate AdminPermission = "role:create"
 	PermRoleRead   AdminPermission = "role:read"
 	PermRoleUpdate AdminPermission = "role:update"
 	PermRoleDelete AdminPermission = "role:delete"
 	PermRoleAssign AdminPermission = "role:assign"
 
-	// Policy permissions
+	// Policy permissions.
 	PermPolicyCreate   AdminPermission = "policy:create"
 	PermPolicyRead     AdminPermission = "policy:read"
 	PermPolicyUpdate   AdminPermission = "policy:update"
 	PermPolicyDelete   AdminPermission = "policy:delete"
 	PermPolicySimulate AdminPermission = "policy:simulate"
 
-	// Audit permissions
+	// Audit permissions.
 	PermAuditRead   AdminPermission = "audit:read"
 	PermAuditExport AdminPermission = "audit:export"
 	PermAuditDelete AdminPermission = "audit:delete"
 
-	// Session permissions
+	// Session permissions.
 	PermSessionRead   AdminPermission = "session:read"
 	PermSessionRevoke AdminPermission = "session:revoke"
 
-	// GDPR permissions
+	// GDPR permissions.
 	PermGDPRExport    AdminPermission = "gdpr:export"
 	PermGDPRDelete    AdminPermission = "gdpr:delete"
 	PermConsentManage AdminPermission = "consent:manage"
 
-	// Agent Orchestration permissions
+	// Agent Orchestration permissions.
 	PermAgentDiscover   AdminPermission = "agent:discover"
 	PermAgentRegister   AdminPermission = "agent:register"
 	PermAgentSpawn      AdminPermission = "agent:spawn"

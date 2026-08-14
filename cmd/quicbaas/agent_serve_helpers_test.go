@@ -19,9 +19,10 @@ package main
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 // =============================================================================
@@ -72,12 +73,12 @@ func TestAgentServeLogger_AllMethods(t *testing.T) {
 	// Chainable variants return a logger.
 	assert.NotNil(t, l.WithField("k", "v"))
 	assert.NotNil(t, l.WithFields(map[string]interface{}{"k": "v"}))
-	assert.NotNil(t, l.WithError(assertCannedErr))
+	assert.NotNil(t, l.WithError(errAssertCanned))
 }
 
-// assertCannedErr is a cheap typed error used by the chainable test above.
-type assertCannedErrType string
+// errAssertCanned is a cheap typed error used by the chainable test above.
+type cannedAssertError string
 
-func (e assertCannedErrType) Error() string { return string(e) }
+func (e cannedAssertError) Error() string { return string(e) }
 
-var assertCannedErr = assertCannedErrType("test")
+var errAssertCanned = cannedAssertError("test")

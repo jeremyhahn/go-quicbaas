@@ -646,8 +646,9 @@ func (s *TokenService) IssueServiceAccountTokens(ctx context.Context, opts Servi
 		return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.IssueServiceAccountTokens", "failed to sign service account token")
 	}
 
+	jti, _ := jwtClaims["jti"].(string)
 	tokenMeta := &Token{
-		JTI:       jwtClaims["jti"].(string),
+		JTI:       jti,
 		Subject:   opts.ClientID,
 		TenantID:  opts.TenantID,
 		Scopes:    parseScopes(scope),

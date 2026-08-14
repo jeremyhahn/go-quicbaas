@@ -224,11 +224,11 @@ func (errMFAManager) GetBackupCodeStatus(context.Context, string, string) (*iam.
 	return nil, errFakeMFA
 }
 
-var errFakeMFA = errFakeMFAT{}
+var errFakeMFA = fakeMFAError{}
 
-type errFakeMFAT struct{}
+type fakeMFAError struct{}
 
-func (errFakeMFAT) Error() string { return "mfa backend error" }
+func (fakeMFAError) Error() string { return "mfa backend error" }
 
 func TestMFA_StatusError(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})

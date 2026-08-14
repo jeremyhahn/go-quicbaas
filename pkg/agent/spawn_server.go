@@ -607,7 +607,7 @@ func (s *GRPCSpawnServer) Heartbeat(stream grpc.BidiStreamingServer[proto.Heartb
 		beat, err := stream.Recv()
 		if err != nil {
 			observeRPC("heartbeat", err, begin)
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				s.auditRPC(ctx, "heartbeat", identity.TenantID, identity.AgentID, "", nil)
 			} else {
 				s.auditRPC(ctx, "heartbeat", identity.TenantID, identity.AgentID, "", err)

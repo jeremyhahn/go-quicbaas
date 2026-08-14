@@ -106,7 +106,7 @@ func registerBackupRoutes(s *Server, r interface {
 }
 
 // HandleCreateBackup creates a new backup.
-// POST /api/v1/backups
+// POST /api/v1/backups.
 func (s *Server) HandleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -147,7 +147,7 @@ func (s *Server) HandleCreateBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleListBackups lists all available backups.
-// GET /api/v1/backups
+// GET /api/v1/backups.
 func (s *Server) HandleListBackups(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -206,7 +206,7 @@ func (s *Server) HandleListBackups(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleRestoreBackup restores from a backup.
-// POST /api/v1/backups/{id}/restore
+// POST /api/v1/backups/{id}/restore.
 func (s *Server) HandleRestoreBackup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -249,7 +249,7 @@ func (s *Server) HandleRestoreBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleDeleteBackup deletes a backup.
-// DELETE /api/v1/backups/{id}
+// DELETE /api/v1/backups/{id}.
 func (s *Server) HandleDeleteBackup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -282,7 +282,7 @@ func (s *Server) HandleDeleteBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleVerifyBackup verifies the integrity of a backup.
-// POST /api/v1/backups/{id}/verify
+// POST /api/v1/backups/{id}/verify.
 func (s *Server) HandleVerifyBackup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -317,7 +317,7 @@ func (s *Server) HandleVerifyBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleBackupStatus retrieves the status of a backup.
-// GET /api/v1/backups/{id}/status
+// GET /api/v1/backups/{id}/status.
 func (s *Server) HandleBackupStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

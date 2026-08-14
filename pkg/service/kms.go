@@ -758,15 +758,13 @@ func (k *kmsServiceImpl) GetKey(ctx context.Context, req *GetKeyRequest) (*GetKe
 	if requestedVersion == 0 {
 		// No version specified, use current version
 		requestedVersion = currentVersion
-	} else {
+	} else if requestedVersion > currentVersion {
 		// Validate that the requested version exists
-		if requestedVersion > currentVersion {
-			if k.metrics != nil {
-				k.metrics.errorsByType.With("not_found", "get_key").Inc()
-			}
-			return nil, NewError(errors.ErrNotFound, "kms.GetKey",
-				fmt.Sprintf("key version %d not found (current version is %d)", requestedVersion, currentVersion))
+		if k.metrics != nil {
+			k.metrics.errorsByType.With("not_found", "get_key").Inc()
 		}
+		return nil, NewError(errors.ErrNotFound, "kms.GetKey",
+			fmt.Sprintf("key version %d not found (current version is %d)", requestedVersion, currentVersion))
 	}
 
 	// Determine the status for the requested version
@@ -941,7 +939,7 @@ func (k *kmsServiceImpl) ListKeys(ctx context.Context, req *ListKeysRequest) (*L
 
 			// Use reflection to extract KeyID if available
 			val := reflect.ValueOf(key)
-			if val.Kind() == reflect.Ptr && !val.IsNil() {
+			if val.Kind() == reflect.Pointer && !val.IsNil() {
 				val = val.Elem()
 			}
 			if val.Kind() == reflect.Struct {
@@ -2506,15 +2504,16 @@ func (k *kmsServiceImpl) ListKeyVersions(ctx context.Context, req *ListKeyVersio
 		// Check if this version has been explicitly disabled via grace period or other mechanism
 		// By default, all versions remain enabled (available for decryption) until explicitly disabled
 		explicitStatus, disabledTime := k.getVersionStatus(ctx, req.KeyID, v)
-		if explicitStatus != "" {
+		switch {
+		case explicitStatus != "":
 			versionInfo.Status = explicitStatus
 			if disabledTime != nil {
 				versionInfo.DisabledAt = disabledTime
 			}
-		} else if v == currentVersion {
+		case v == currentVersion:
 			// Current version uses the status from KMS backend
 			versionInfo.Status = status
-		} else {
+		default:
 			// Older versions default to enabled during grace period
 			versionInfo.Status = KeyStatusEnabled
 		}

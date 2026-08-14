@@ -36,6 +36,7 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
@@ -905,7 +906,7 @@ func saveServerCert(issued *xkmssdk.TrustedCAIssuedCertificate, certPath string)
 // <dataDir>/barrier/seal_state.json so that initialized=true survives daemon
 // restarts. Production deployments can replace this via newSealManagerFn to
 // inject a real BarrierClient-backed manager.
-func defaultNewSealManager(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.SealManager, error) {
+func defaultNewSealManager(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.SealManager, error) { //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 	barrierDir := filepath.Join(dataDir, "barrier")
 	mgr, err := grpcapi.NewPersistentDefaultSealManager(cfg, barrierDir)
 	if err != nil {

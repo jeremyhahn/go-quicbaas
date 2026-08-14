@@ -897,15 +897,15 @@ func TestIsTimeSeriesShardUnavailable(t *testing.T) {
 }
 
 func TestTimeSeriesErrorUnwrap(t *testing.T) {
-	notFoundErr := NewTimeSeriesNotFoundError("cpu.usage")
+	notFoundError := NewTimeSeriesNotFoundError("cpu.usage")
 
 	var tsNotFound *TimeSeriesNotFoundError
-	if !errors.As(notFoundErr, &tsNotFound) {
+	if !errors.As(notFoundError, &tsNotFound) {
 		t.Error("errors.As should find TimeSeriesNotFoundError")
 	}
 
 	var de *QBError
-	if !errors.As(notFoundErr, &de) {
+	if !errors.As(notFoundError, &de) {
 		t.Error("errors.As should find QBError")
 	}
 }

@@ -287,11 +287,7 @@ func IsTimeSeriesError(err error) bool {
 	}
 
 	var tsShardUnavailable *TimeSeriesShardUnavailableError
-	if stderrors.As(err, &tsShardUnavailable) {
-		return true
-	}
-
-	return false
+	return stderrors.As(err, &tsShardUnavailable)
 }
 
 // IsTimeSeriesNotFound returns true if the error is a TimeSeriesNotFoundError.

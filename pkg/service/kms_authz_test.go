@@ -81,7 +81,7 @@ func (m *mockKVStore) Put(_ context.Context, key string, value []byte) error {
 func (m *mockKVStore) Get(_ context.Context, key string) ([]byte, error) {
 	v, ok := m.data[key]
 	if !ok {
-		return nil, &errors.QBError{Code: errors.ErrNotFound, Op: "mockKVStore.Get", Err: &notFoundErr{key: key}}
+		return nil, &errors.QBError{Code: errors.ErrNotFound, Op: "mockKVStore.Get", Err: &notFoundError{key: key}}
 	}
 	return v, nil
 }
@@ -117,10 +117,10 @@ func (m *mockKVStore) Exists(_ context.Context, key string) (bool, error) {
 	return ok, nil
 }
 
-// notFoundErr satisfies errors.IsNotFound.
-type notFoundErr struct{ key string }
+// notFoundError satisfies errors.IsNotFound.
+type notFoundError struct{ key string }
 
-func (e *notFoundErr) Error() string { return "key not found: " + e.key }
+func (e *notFoundError) Error() string { return "key not found: " + e.key }
 
 // =============================================================================
 // Mock audit logger for key-use capture

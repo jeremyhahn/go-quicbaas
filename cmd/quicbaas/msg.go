@@ -710,14 +710,15 @@ func runMsgPublishCommand(cmd *cobra.Command, args []string) error {
 	var payload []byte
 	var err error
 
-	if msgFile != "" {
+	switch {
+	case msgFile != "":
 		payload, err = os.ReadFile(msgFile)
 		if err != nil {
 			return errors.Wrapf(err, errors.ErrInvalidInput, "msg.publish", "failed to read payload file")
 		}
-	} else if msgPayload != "" {
+	case msgPayload != "":
 		payload = []byte(msgPayload)
-	} else {
+	default:
 		return errors.Newf(errors.ErrInvalidInput, "msg.publish", "either --payload or --file must be specified")
 	}
 
@@ -802,28 +803,30 @@ func runMsgPublishDeltaCommand(cmd *cobra.Command, args []string) error {
 	var oldValue []byte
 	var err error
 
-	if msgOldFile != "" {
+	switch {
+	case msgOldFile != "":
 		oldValue, err = os.ReadFile(msgOldFile)
 		if err != nil {
 			return errors.Wrapf(err, errors.ErrInvalidInput, "msg.publish-delta", "failed to read old state file")
 		}
-	} else if msgOld != "" {
+	case msgOld != "":
 		oldValue = []byte(msgOld)
-	} else {
+	default:
 		return errors.Newf(errors.ErrInvalidInput, "msg.publish-delta", "either --old or --old-file must be specified")
 	}
 
 	// Get new value from flag or file
 	var newValue []byte
 
-	if msgNewFile != "" {
+	switch {
+	case msgNewFile != "":
 		newValue, err = os.ReadFile(msgNewFile)
 		if err != nil {
 			return errors.Wrapf(err, errors.ErrInvalidInput, "msg.publish-delta", "failed to read new state file")
 		}
-	} else if msgNew != "" {
+	case msgNew != "":
 		newValue = []byte(msgNew)
-	} else {
+	default:
 		return errors.Newf(errors.ErrInvalidInput, "msg.publish-delta", "either --new or --new-file must be specified")
 	}
 

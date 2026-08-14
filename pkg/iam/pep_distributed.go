@@ -139,7 +139,7 @@ func (d *DistributedPEP) LoadPolicy(ctx context.Context, policy *Policy) error {
 
 	// Sync with cluster if enabled
 	if d.config.SyncOnLoad && d.config.AutoSync {
-		go func() {
+		go func() { //nolint:gosec // G118: cluster sync runs on its own 30s budget and must outlive the caller.
 			syncCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			_ = d.SyncWithCluster(syncCtx)
@@ -352,7 +352,7 @@ func (d *DistributedPEP) handlePolicyChange(ctx context.Context, event PolicyCha
 
 	case PolicyChangeSnapshot:
 		// Trigger a full sync
-		go func() {
+		go func() { //nolint:gosec // G118: cluster sync runs on its own 30s budget and must outlive the caller.
 			syncCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			_ = d.SyncWithCluster(syncCtx)

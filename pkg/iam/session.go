@@ -390,5 +390,5 @@ func (m *DefaultSessionManager) EnforcePolicy(ctx context.Context, userID, tenan
 	return nil
 }
 
-// Ensure DefaultSessionManager implements SessionManager
+// Ensure DefaultSessionManager implements SessionManager.
 var _ SessionManager = (*DefaultSessionManager)(nil)

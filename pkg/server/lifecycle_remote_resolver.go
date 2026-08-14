@@ -313,9 +313,7 @@ func (p *remoteBackendPool) backendFor(ctx context.Context, reg *orchestration.A
 	}
 	// Drop stale cache entry for the same host (different reg id = daemon
 	// replaced) before constructing the replacement.
-	if _, ok := p.entries[key]; ok {
-		delete(p.entries, key)
-	}
+	delete(p.entries, key)
 	p.mu.Unlock()
 
 	// For embedded agents, use the bufconn dialer so RPCs stay in-process.
@@ -441,7 +439,7 @@ func (t *centralOAuth2TokenSource) refresh() (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _, _ = io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, &ServerMessageError{Message: fmt.Sprintf("central token exchange: status=%d", resp.StatusCode)}

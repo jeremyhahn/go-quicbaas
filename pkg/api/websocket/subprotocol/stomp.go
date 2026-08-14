@@ -171,31 +171,31 @@ func (e *ErrSTOMPProtocolError) Error() string {
 	return "stomp protocol error: " + e.Message
 }
 
-// ErrSTOMPMissingHeader indicates a required header is missing.
-type ErrSTOMPMissingHeader struct {
+// STOMPMissingHeaderError indicates a required header is missing.
+type STOMPMissingHeaderError struct {
 	Header string
 }
 
-func (e *ErrSTOMPMissingHeader) Error() string {
+func (e *STOMPMissingHeaderError) Error() string {
 	return "stomp protocol error: missing required header: " + e.Header
 }
 
-// ErrSTOMPInvalidEscape indicates an invalid escape sequence was encountered.
-type ErrSTOMPInvalidEscape struct {
+// STOMPInvalidEscapeError indicates an invalid escape sequence was encountered.
+type STOMPInvalidEscapeError struct {
 	Sequence string
 }
 
-func (e *ErrSTOMPInvalidEscape) Error() string {
+func (e *STOMPInvalidEscapeError) Error() string {
 	return "stomp protocol error: undefined escape sequence: " + e.Sequence
 }
 
-// ErrSTOMPInvalidTransaction indicates a transaction error.
-type ErrSTOMPInvalidTransaction struct {
+// STOMPInvalidTransactionError indicates a transaction error.
+type STOMPInvalidTransactionError struct {
 	TransactionID string
 	Reason        string
 }
 
-func (e *ErrSTOMPInvalidTransaction) Error() string {
+func (e *STOMPInvalidTransactionError) Error() string {
 	return "stomp protocol error: transaction " + e.TransactionID + ": " + e.Reason
 }
 
@@ -239,7 +239,9 @@ func (h *STOMPHandler) HandleConnection(ctx context.Context, conn *websocket.Con
 		clientState.transactions = make(map[string]*stompTransaction)
 		clientState.mu.Unlock()
 
-		h.hub.UnregisterClient(session.ID)
+		// Best effort: the connection is already going away and there is
+		// nobody left to report a hub failure to.
+		_ = h.hub.UnregisterClient(session.ID)
 	}()
 
 	// Store client state
@@ -248,7 +250,7 @@ func (h *STOMPHandler) HandleConnection(ctx context.Context, conn *websocket.Con
 	h.clientsMu.Unlock()
 
 	// Register with hub for message delivery
-	h.hub.RegisterClient(session.ID, func(topic string, payload []byte, qos byte, retain bool) {
+	if err := h.hub.RegisterClient(session.ID, func(topic string, payload []byte, qos byte, retain bool) {
 		clientState.mu.RLock()
 		// Find subscription ID and ack mode for this destination
 		var subID, ackMode string
@@ -275,7 +277,9 @@ func (h *STOMPHandler) HandleConnection(ctx context.Context, conn *websocket.Con
 		default:
 			// Channel full, drop message
 		}
-	})
+	}); err != nil {
+		return err
+	}
 
 	// Start message delivery goroutine
 	deliveryCtx, cancelDelivery := context.WithCancel(ctx)
@@ -320,9 +324,9 @@ func (h *STOMPHandler) HandleConnection(ctx context.Context, conn *websocket.Con
 			}
 			// Send ERROR frame for protocol errors
 			var protoErr *ErrSTOMPProtocolError
-			var missingErr *ErrSTOMPMissingHeader
-			var escapeErr *ErrSTOMPInvalidEscape
-			var txErr *ErrSTOMPInvalidTransaction
+			var missingErr *STOMPMissingHeaderError
+			var escapeErr *STOMPInvalidEscapeError
+			var txErr *STOMPInvalidTransactionError
 
 			var errMsg string
 			switch {
@@ -492,7 +496,7 @@ func (h *STOMPHandler) parseFrame(data []byte) (*STOMPFrame, error) {
 	lines := bytes.Split(headerData, []byte{'\n'})
 
 	// Check for content-length header first to properly parse body
-	var contentLength int = -1
+	var contentLength = -1
 
 	for _, line := range lines {
 		// Remove optional CR
@@ -572,7 +576,8 @@ func (h *STOMPHandler) decodeHeaderValue(value string) (string, error) {
 
 	result := make([]byte, 0, len(value))
 	for i := 0; i < len(value); i++ {
-		if value[i] == '\\' && i+1 < len(value) {
+		switch {
+		case value[i] == '\\' && i+1 < len(value):
 			switch value[i+1] {
 			case 'r':
 				result = append(result, '\r')
@@ -588,12 +593,12 @@ func (h *STOMPHandler) decodeHeaderValue(value string) (string, error) {
 				i++
 			default:
 				// Undefined escape sequence is a fatal protocol error
-				return "", &ErrSTOMPInvalidEscape{Sequence: "\\" + string(value[i+1])}
+				return "", &STOMPInvalidEscapeError{Sequence: "\\" + string(value[i+1])}
 			}
-		} else if value[i] == '\\' && i+1 >= len(value) {
+		case value[i] == '\\' && i+1 >= len(value):
 			// Trailing backslash - undefined escape
-			return "", &ErrSTOMPInvalidEscape{Sequence: "\\"}
-		} else {
+			return "", &STOMPInvalidEscapeError{Sequence: "\\"}
+		default:
 			result = append(result, value[i])
 		}
 	}
@@ -672,17 +677,18 @@ func (h *STOMPHandler) handleConnect(ctx context.Context, frame *STOMPFrame, ses
 
 	// Negotiate version (prefer 1.2)
 	var version string
-	if bytes.Contains([]byte(acceptVersion), []byte("1.2")) {
+	switch {
+	case bytes.Contains([]byte(acceptVersion), []byte("1.2")):
 		version = "1.2"
 		// For 1.2, host is required
 		if host == "" {
 			return h.buildErrorFrame("Supported protocol versions are 1.0, 1.1, 1.2", frame.Headers[HeaderReceipt], nil), nil
 		}
-	} else if bytes.Contains([]byte(acceptVersion), []byte("1.1")) {
+	case bytes.Contains([]byte(acceptVersion), []byte("1.1")):
 		version = "1.1"
-	} else if bytes.Contains([]byte(acceptVersion), []byte("1.0")) {
+	case bytes.Contains([]byte(acceptVersion), []byte("1.0")):
 		version = "1.0"
-	} else {
+	default:
 		return h.buildErrorFrame("Supported protocol versions are 1.0, 1.1, 1.2", frame.Headers[HeaderReceipt], nil), nil
 	}
 
@@ -708,12 +714,12 @@ func (h *STOMPHandler) handleSubscribe(ctx context.Context, frame *STOMPFrame, s
 	// REQUIRED headers: destination, id
 	destination := frame.Headers[HeaderDestination]
 	if destination == "" {
-		return nil, &ErrSTOMPMissingHeader{Header: HeaderDestination}
+		return nil, &STOMPMissingHeaderError{Header: HeaderDestination}
 	}
 
 	id := frame.Headers[HeaderID]
 	if id == "" {
-		return nil, &ErrSTOMPMissingHeader{Header: HeaderID}
+		return nil, &STOMPMissingHeaderError{Header: HeaderID}
 	}
 
 	// OPTIONAL: ack (auto, client, client-individual)
@@ -765,7 +771,7 @@ func (h *STOMPHandler) handleUnsubscribe(ctx context.Context, frame *STOMPFrame,
 	// REQUIRED: id
 	id := frame.Headers[HeaderID]
 	if id == "" {
-		return nil, &ErrSTOMPMissingHeader{Header: HeaderID}
+		return nil, &STOMPMissingHeaderError{Header: HeaderID}
 	}
 
 	// Find and remove subscription
@@ -777,7 +783,9 @@ func (h *STOMPHandler) handleUnsubscribe(ctx context.Context, frame *STOMPFrame,
 	state.mu.Unlock()
 
 	if exists {
-		h.hub.Unsubscribe(session.ID, sub.destination)
+		if err := h.hub.Unsubscribe(session.ID, sub.destination); err != nil {
+			return nil, err
+		}
 		session.Unsubscribe(sub.destination)
 	}
 
@@ -802,7 +810,7 @@ func (h *STOMPHandler) handleSend(ctx context.Context, frame *STOMPFrame, sessio
 	// REQUIRED: destination
 	destination := frame.Headers[HeaderDestination]
 	if destination == "" {
-		return nil, &ErrSTOMPMissingHeader{Header: HeaderDestination}
+		return nil, &STOMPMissingHeaderError{Header: HeaderDestination}
 	}
 
 	// OPTIONAL: transaction
@@ -812,7 +820,7 @@ func (h *STOMPHandler) handleSend(ctx context.Context, frame *STOMPFrame, sessio
 		tx, exists := state.transactions[txID]
 		if !exists {
 			state.mu.Unlock()
-			return nil, &ErrSTOMPInvalidTransaction{TransactionID: txID, Reason: "transaction not found"}
+			return nil, &STOMPInvalidTransactionError{TransactionID: txID, Reason: "transaction not found"}
 		}
 		// Queue message in transaction
 		tx.messages = append(tx.messages, transactionMessage{
@@ -850,7 +858,7 @@ func (h *STOMPHandler) handleAck(ctx context.Context, frame *STOMPFrame, session
 	// REQUIRED: id
 	ackID := frame.Headers[HeaderID]
 	if ackID == "" {
-		return nil, &ErrSTOMPMissingHeader{Header: HeaderID}
+		return nil, &STOMPMissingHeaderError{Header: HeaderID}
 	}
 
 	// OPTIONAL: transaction
@@ -860,7 +868,7 @@ func (h *STOMPHandler) handleAck(ctx context.Context, frame *STOMPFrame, session
 		tx, exists := state.transactions[txID]
 		if !exists {
 			state.mu.Unlock()
-			return nil, &ErrSTOMPInvalidTransaction{TransactionID: txID, Reason: "transaction not found"}
+			return nil, &STOMPInvalidTransactionError{TransactionID: txID, Reason: "transaction not found"}
 		}
 		tx.acks = append(tx.acks, ackID)
 		state.mu.Unlock()
@@ -907,7 +915,7 @@ func (h *STOMPHandler) handleNack(ctx context.Context, frame *STOMPFrame, sessio
 	// REQUIRED: id
 	ackID := frame.Headers[HeaderID]
 	if ackID == "" {
-		return nil, &ErrSTOMPMissingHeader{Header: HeaderID}
+		return nil, &STOMPMissingHeaderError{Header: HeaderID}
 	}
 
 	// OPTIONAL: transaction
@@ -917,7 +925,7 @@ func (h *STOMPHandler) handleNack(ctx context.Context, frame *STOMPFrame, sessio
 		tx, exists := state.transactions[txID]
 		if !exists {
 			state.mu.Unlock()
-			return nil, &ErrSTOMPInvalidTransaction{TransactionID: txID, Reason: "transaction not found"}
+			return nil, &STOMPInvalidTransactionError{TransactionID: txID, Reason: "transaction not found"}
 		}
 		tx.nacks = append(tx.nacks, ackID)
 		state.mu.Unlock()
@@ -973,13 +981,13 @@ func (h *STOMPHandler) handleBegin(ctx context.Context, frame *STOMPFrame, sessi
 	// REQUIRED: transaction
 	txID := frame.Headers[HeaderTransaction]
 	if txID == "" {
-		return nil, &ErrSTOMPMissingHeader{Header: HeaderTransaction}
+		return nil, &STOMPMissingHeaderError{Header: HeaderTransaction}
 	}
 
 	state.mu.Lock()
 	if _, exists := state.transactions[txID]; exists {
 		state.mu.Unlock()
-		return nil, &ErrSTOMPInvalidTransaction{TransactionID: txID, Reason: "transaction already exists"}
+		return nil, &STOMPInvalidTransactionError{TransactionID: txID, Reason: "transaction already exists"}
 	}
 	state.transactions[txID] = &stompTransaction{
 		id:       txID,
@@ -1010,14 +1018,14 @@ func (h *STOMPHandler) handleCommit(ctx context.Context, frame *STOMPFrame, sess
 	// REQUIRED: transaction
 	txID := frame.Headers[HeaderTransaction]
 	if txID == "" {
-		return nil, &ErrSTOMPMissingHeader{Header: HeaderTransaction}
+		return nil, &STOMPMissingHeaderError{Header: HeaderTransaction}
 	}
 
 	state.mu.Lock()
 	tx, exists := state.transactions[txID]
 	if !exists {
 		state.mu.Unlock()
-		return nil, &ErrSTOMPInvalidTransaction{TransactionID: txID, Reason: "transaction not found"}
+		return nil, &STOMPInvalidTransactionError{TransactionID: txID, Reason: "transaction not found"}
 	}
 
 	// Process all queued messages atomically
@@ -1062,13 +1070,13 @@ func (h *STOMPHandler) handleAbort(ctx context.Context, frame *STOMPFrame, sessi
 	// REQUIRED: transaction
 	txID := frame.Headers[HeaderTransaction]
 	if txID == "" {
-		return nil, &ErrSTOMPMissingHeader{Header: HeaderTransaction}
+		return nil, &STOMPMissingHeaderError{Header: HeaderTransaction}
 	}
 
 	state.mu.Lock()
 	if _, exists := state.transactions[txID]; !exists {
 		state.mu.Unlock()
-		return nil, &ErrSTOMPInvalidTransaction{TransactionID: txID, Reason: "transaction not found"}
+		return nil, &STOMPInvalidTransactionError{TransactionID: txID, Reason: "transaction not found"}
 	}
 	// Simply discard the transaction
 	delete(state.transactions, txID)

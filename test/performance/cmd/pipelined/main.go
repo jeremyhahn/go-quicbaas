@@ -81,6 +81,13 @@ func (s *Stats) snapshot() (total, success, failed uint64, avgDuration time.Dura
 }
 
 func main() {
+	os.Exit(run())
+}
+
+// run drives the load test and returns the process exit code. main must not
+// call os.Exit itself: os.Exit skips deferred calls, and the client below is
+// closed by defer.
+func run() int {
 	// Command-line flags
 	var (
 		address        = flag.String("address", "localhost:50051", "QuicBaaS gRPC server address")
@@ -105,7 +112,7 @@ func main() {
 	client, err := quicbaas.NewClient(*address, quicbaas.WithTLSConfig(newTLSConfig()))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create client: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	defer client.Close()
 
@@ -114,7 +121,7 @@ func main() {
 	healthResp, err := client.Health().Readiness(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Server not reachable: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	fmt.Printf("Connected to server (status: %s)\n", healthResp.Status)
 
@@ -212,6 +219,8 @@ func main() {
 	fmt.Printf("Avg Latency:       %.2f ms\n", float64(avgDuration.Microseconds())/1000.0)
 	fmt.Printf("Throughput:        %.2f req/s\n", float64(total)/actualDuration.Seconds())
 	fmt.Printf("===============================================================\n")
+
+	return 0
 }
 
 func runPipelinedWorker(ctx context.Context, client quicbaas.Client, workerID, pipelineSize, valueSize int, stats *Stats) {

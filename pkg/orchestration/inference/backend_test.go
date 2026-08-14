@@ -249,7 +249,6 @@ func TestSecretRef_IsZero(t *testing.T) {
 		{"populated", SecretRef{Engine: "secrets", Path: "x", Key: "k"}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.ref.IsZero(); got != tc.want {

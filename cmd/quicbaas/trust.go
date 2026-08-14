@@ -48,15 +48,15 @@ import (
 var (
 	trustOutputFmt string
 
-	// publish-dane
+	// publish-dane.
 	trustDANEName     string
 	trustDANEPort     int
 	trustDANECertFile string
 
-	// auto-import-aia
+	// auto-import-aia.
 	trustAIAChainFile string
 
-	// cross-signed-roots
+	// cross-signed-roots.
 	trustRootsOut string
 )
 

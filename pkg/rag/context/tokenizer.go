@@ -75,14 +75,15 @@ func countWords(text string) int {
 	inWord := false
 
 	for _, r := range text {
-		if unicode.IsSpace(r) {
+		switch {
+		case unicode.IsSpace(r):
 			if inWord {
 				words++
 				inWord = false
 			}
-		} else if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
+		case unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_':
 			inWord = true
-		} else {
+		default:
 			// Punctuation counts as a separator
 			if inWord {
 				words++

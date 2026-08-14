@@ -550,7 +550,8 @@ func (c *MarkdownChunker) splitIntoBlocks(lines []string) []block {
 		}
 
 		// Regular paragraph
-		if inList {
+		switch {
+		case inList:
 			// End list, start paragraph
 			if currentBlock != nil {
 				blocks = append(blocks, *currentBlock)
@@ -561,7 +562,7 @@ func (c *MarkdownChunker) splitIntoBlocks(lines []string) []block {
 				startLine: lineNum,
 				blockType: "paragraph",
 			}
-		} else if currentBlock == nil || currentBlock.blockType != "paragraph" {
+		case currentBlock == nil || currentBlock.blockType != "paragraph":
 			// Start new paragraph
 			if currentBlock != nil {
 				blocks = append(blocks, *currentBlock)
@@ -571,7 +572,7 @@ func (c *MarkdownChunker) splitIntoBlocks(lines []string) []block {
 				startLine: lineNum,
 				blockType: "paragraph",
 			}
-		} else {
+		default:
 			// Continue paragraph
 			currentBlock.content += "\n" + line
 		}

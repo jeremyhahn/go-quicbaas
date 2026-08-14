@@ -919,7 +919,9 @@ func (c *RESTClient) WatchSecretsByPrefix(ctx context.Context, req *service.Watc
 	httpReq.Header.Set("Connection", "keep-alive")
 
 	// Execute request
-	resp, err := c.httpClient.Do(httpReq)
+	// The body is closed on the error path below and by the streaming
+	// goroutine that owns it once the stream is established.
+	resp, err := c.httpClient.Do(httpReq) //nolint:bodyclose // closed by the SSE reader goroutine started below
 	if err != nil {
 		return nil, api.NewOperationFailedError("HTTP request", err)
 	}

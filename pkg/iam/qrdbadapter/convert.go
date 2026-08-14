@@ -81,7 +81,7 @@ func ToIAMUser(core qrdbsdk.User, profile *iam.BrokerProfile, uuid string) *iam.
 		u.MFAEnabled = profile.MFAEnabled
 		u.MFAMethod = profile.MFAMethod
 		u.MFAEnrolledAt = profile.MFAEnrolledAt
-		u.MFAVerified = profile.MFAVerified
+		u.MFAVerified = profile.MFAVerified //nolint:staticcheck // SA1019: the legacy field is still mirrored across the wire and the storage adapter for older clients.
 		u.MFATimestamp = profile.MFATimestamp
 		u.LastAuth = profile.LastAuth
 		u.CertBindings = cloneCertBindings(profile.CertBindings)
@@ -122,7 +122,7 @@ func FromIAMUser(u *iam.User, qrdbID uint64) (qrdbsdk.User, *iam.BrokerProfile, 
 		MFAEnabled:      u.MFAEnabled,
 		MFAMethod:       u.MFAMethod,
 		MFAEnrolledAt:   u.MFAEnrolledAt,
-		MFAVerified:     u.MFAVerified,
+		MFAVerified:     u.MFAVerified, //nolint:staticcheck // SA1019: the legacy field is still mirrored across the wire and the storage adapter for older clients.
 		MFATimestamp:    u.MFATimestamp,
 		LastAuth:        u.LastAuth,
 		CertBindings:    cloneCertBindings(u.CertBindings),

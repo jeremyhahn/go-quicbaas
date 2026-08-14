@@ -96,11 +96,9 @@ func NewPageIterator(iter Iterator, pageSize int, cursor []byte) *PageIterator {
 		if !iter.Seek(key) {
 			pi.hasMore = false
 		}
-	} else {
-		// Start from the beginning
-		if !iter.SeekToFirst() {
-			pi.hasMore = false
-		}
+	} else if !iter.SeekToFirst() {
+		// No cursor: start from the beginning, which is empty.
+		pi.hasMore = false
 	}
 
 	return pi
@@ -240,10 +238,8 @@ func StreamPage(iter Iterator, pageSize int, cursor []byte, fn func(key, value [
 		if !iter.Seek(key) {
 			return nil, nil
 		}
-	} else {
-		if !iter.SeekToFirst() {
-			return nil, nil
-		}
+	} else if !iter.SeekToFirst() {
+		return nil, nil
 	}
 
 	count := 0
