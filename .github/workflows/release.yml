@@ -383,6 +383,40 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # devops.md §8: no image reaches a registry unscanned. Built amd64-only
+      # and loaded into the local daemon so Trivy can read it; the multi-arch
+      # push below shares the same buildx cache, so this costs a load rather
+      # than a rebuild.
+      - name: Build daemon image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_DAEMON }}:release-scan
+          build-args: |
+            VERSION=${{ needs.create-release.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.event.repository.updated_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy image gate (fail on CRITICAL/HIGH)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+              --format table \
+              --severity CRITICAL,HIGH \
+              --exit-code 1 \
+              --no-progress \
+              "${REGISTRY}/${IMAGE}:release-scan"
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE: ${{ env.IMAGE_NAME_DAEMON }}
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
@@ -431,6 +465,38 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # devops.md §8: no image reaches a registry unscanned. See the daemon job
+      # for why this builds amd64-only and loads rather than pushing.
+      - name: Build CLI image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.cli
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_CLI }}:release-scan
+          build-args: |
+            VERSION=${{ needs.create-release.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.event.repository.updated_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy image gate (fail on CRITICAL/HIGH)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+              --format table \
+              --severity CRITICAL,HIGH \
+              --exit-code 1 \
+              --no-progress \
+              "${REGISTRY}/${IMAGE}:release-scan"
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE: ${{ env.IMAGE_NAME_CLI }}
+
       - name: Build and push CLI Docker image
         uses: docker/build-push-action@v6
         with:
@@ -476,6 +542,38 @@ jobs:
           tags: |
             type=semver,pattern={{version}}-fips
             type=raw,value=latest-fips,enable={{is_default_branch}}
+
+      # devops.md §8: no image reaches a registry unscanned. See the daemon job
+      # for why this builds amd64-only and loads rather than pushing.
+      - name: Build FIPS image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.fips
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_DAEMON }}:release-scan-fips
+          build-args: |
+            VERSION=${{ needs.create-release.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.event.repository.updated_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy image gate (fail on CRITICAL/HIGH)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+              --format table \
+              --severity CRITICAL,HIGH \
+              --exit-code 1 \
+              --no-progress \
+              "${REGISTRY}/${IMAGE}:release-scan-fips"
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE: ${{ env.IMAGE_NAME_DAEMON }}
 
       - name: Build and push FIPS Docker image
         uses: docker/build-push-action@v6

@@ -2376,7 +2376,10 @@ vuln: ## Run govulncheck to scan for known vulnerabilities
 	@echo "$(BLUE)Running vulnerability scan with govulncheck...$(NC)"
 	@GOVULNCHECK_BIN=$$(command -v govulncheck 2>/dev/null || echo "$$HOME/go/bin/govulncheck"); \
 	if [ -x "$$GOVULNCHECK_BIN" ]; then \
-		$$GOVULNCHECK_BIN ./...; \
+		$$GOVULNCHECK_BIN ./... || { \
+			echo "$(RED)govulncheck found reachable vulnerabilities$(NC)"; \
+			exit 1; \
+		}; \
 		echo "$(GREEN)Vulnerability scan complete$(NC)"; \
 	else \
 		echo "$(YELLOW)govulncheck not found$(NC)"; \
@@ -2385,28 +2388,55 @@ vuln: ## Run govulncheck to scan for known vulnerabilities
 	fi
 
 .PHONY: trivy
+# test/ and examples/ are excluded: neither ships, and their fixtures and
+# throwaway dependencies would otherwise dominate the report. bin/, build/ and
+# data/ are gitignored local artifacts that are not in a CI checkout at all --
+# data/ in particular holds a locally generated server key that the secret
+# scanner would flag on every run. The certs skip-file keeps the secret scanner
+# off the committed test TLS material.
 trivy: ## Run Trivy vulnerability scanner on filesystem
 	@echo "$(BLUE)Running Trivy vulnerability scan...$(NC)"
-	@TRIVY_BIN=$$(command -v trivy 2>/dev/null); \
-	if [ -n "$$TRIVY_BIN" ]; then \
-		$$TRIVY_BIN fs --severity CRITICAL,HIGH --exit-code 1 --skip-files 'pkg/server/certs/*.key' . && \
+	@if command -v trivy >/dev/null 2>&1; then \
+		trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 \
+			--skip-dirs test --skip-dirs examples --skip-dirs bin --skip-dirs build \
+			--skip-dirs data \
+			--skip-files 'pkg/server/certs/*.key' . && \
 		echo "$(GREEN)Trivy scan complete - no critical/high vulnerabilities found$(NC)"; \
 	else \
 		echo "$(YELLOW)trivy not found - skipping (install with: make install-trivy)$(NC)"; \
 	fi
 
+# The images this Makefile builds that also ship: the daemon and its FIPS
+# variant. The CLI image (Dockerfile.cli) has no Makefile build target; it and
+# these two are gated in .github/workflows/release.yml before push.
+TRIVY_IMAGES := $(DOCKER_IMAGE):$(DOCKER_TAG) $(DOCKER_IMAGE):fips
+
 .PHONY: trivy-image
-trivy-image: docker-build ## Run Trivy on Docker image
-	@echo "$(BLUE)Running Trivy vulnerability scan on Docker image...$(NC)"
-	@TRIVY_BIN=$$(command -v trivy 2>/dev/null); \
-	if [ -n "$$TRIVY_BIN" ]; then \
-		$$TRIVY_BIN image --severity CRITICAL,HIGH $(DOCKER_IMAGE):$(DOCKER_TAG) && \
+# Mirrors the gate in the ci.yml docker job so the same failure reproduces
+# locally (devops.md §4). Not a prerequisite of `security`: it builds images,
+# which needs a Docker daemon and many minutes.
+trivy-image: docker-build docker-build-fips ## Build the shipped images and scan each with Trivy
+	@echo "$(BLUE)Running Trivy vulnerability scan on Docker images...$(NC)"
+	@if command -v trivy >/dev/null 2>&1; then \
+		rc=0; \
+		for img in $(TRIVY_IMAGES); do \
+			echo "$(BLUE)  Scanning $$img...$(NC)"; \
+			trivy image --severity CRITICAL,HIGH --exit-code 1 --no-progress "$$img" || rc=1; \
+		done; \
+		if [ $$rc -ne 0 ]; then \
+			echo "$(RED)Trivy found CRITICAL/HIGH findings$(NC)"; \
+			exit 1; \
+		fi; \
 		echo "$(GREEN)Trivy image scan complete$(NC)"; \
 	else \
-		echo "$(YELLOW)trivy not found$(NC)"; \
+		echo "$(YELLOW)trivy not found - skipping image scan$(NC)"; \
 		echo "$(YELLOW)Install with: make install-trivy$(NC)"; \
-		exit 1; \
 	fi
+
+.PHONY: modverify
+modverify: ## Verify module integrity against go.sum
+	@echo "$(BLUE)Verifying module integrity...$(NC)"
+	@$(GOCMD) mod verify
 
 .PHONY: race
 race: ## Run tests with race detector
@@ -2418,9 +2448,15 @@ endif
 		(echo "$(RED)Race detector found issues$(NC)" && exit 1)
 	@echo "$(GREEN)Race detector tests passed$(NC)"
 
+.PHONY: security
+# The full devops.md §8 suite. Container images are scanned separately by
+# `make trivy-image`, which builds them.
+security: gosec vuln modverify trivy ## Full §8 suite (gosec, govulncheck, go mod verify, trivy fs)
+	@echo "$(GREEN)All security scans passed$(NC)"
+	@echo "$(YELLOW)Note: container images are scanned separately - run 'make trivy-image'$(NC)"
+
 .PHONY: security-scan
-security-scan: gosec vuln ## Run all security scans (gosec + govulncheck)
-	@echo "$(GREEN)Security scan completed$(NC)"
+security-scan: security ## Alias for `security` (kept for existing muscle memory)
 
 ##@ Docker
 
@@ -2777,11 +2813,11 @@ watch: ## Watch for changes and rebuild
 ##@ CI/CD
 
 .PHONY: ci
-ci: deps fmt-check vet lint gosec vuln trivy build test test-minimal race check-coverage ## Run CI pipeline locally (matches GitHub CI)
+ci: deps fmt-check vet lint security build test test-minimal race check-coverage ## Run CI pipeline locally (matches GitHub CI)
 	@echo "$(GREEN)CI pipeline completed successfully$(NC)"
 
 .PHONY: ci-full
-ci-full: deps fmt-check vet lint gosec vuln trivy build test test-minimal test-desktop race coverage integration-test ## Run full CI pipeline with integration tests
+ci-full: deps fmt-check vet lint security build test test-minimal test-desktop race coverage integration-test ## Run full CI pipeline with integration tests
 	@echo "$(GREEN)Full CI pipeline completed successfully$(NC)"
 
 .PHONY: pre-commit

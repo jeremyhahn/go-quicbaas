@@ -15,6 +15,8 @@ formatters:
         - github.com/jeremyhahn/go-quicbaas
 
 linters:
+  # devops.md §8 makes six linters mandatory: errcheck, staticcheck, unused,
+  # ineffassign, misspell and gocritic. None of them may be moved to `disable`.
   enable:
     - errcheck
     - govet
@@ -26,6 +28,7 @@ linters:
     - errorlint
     - forbidigo
     - godot
+    - gocritic
     - gosec
     - staticcheck
     - unused
@@ -34,7 +37,6 @@ linters:
     - unconvert   # Style preference
     - unparam     # Too noisy for production code
     - goconst     # Too aggressive, better handled in code review
-    - gocritic    # Style preferences, not bugs
     - gocyclo     # Complexity handled in code review
     - goprintffuncname # Style preference
     - revive      # Too aggressive, covered by other linters
@@ -74,12 +76,18 @@ linters:
       min-len: 3
       min-occurrences: 5
     gocritic:
+      # Diagnostics and performance only. The style, opinionated and
+      # experimental tags flag rewrites rather than defects; at this codebase's
+      # size they bury the diagnostics this gate exists for. These tags were
+      # listed while gocritic was disabled, so they had never actually run.
       enabled-tags:
         - diagnostic
-        - experimental
-        - opinionated
         - performance
-        - style
+      disabled-checks:
+        # Both demand changing exported signatures across the whole API
+        # surface; that is an API decision, not a lint fix.
+        - hugeParam
+        - rangeValCopy
     gocyclo:
       min-complexity: 30
     revive:
