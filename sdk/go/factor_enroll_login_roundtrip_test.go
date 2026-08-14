@@ -67,6 +67,19 @@ func (k *memKV) Put(_ context.Context, key string, val []byte) error {
 	return nil
 }
 
+// PutIfAbsent stores only when the key is absent, which is the contract
+// KVServicer defines: stored=false with a nil error means the key was already
+// there and the store is unchanged.
+func (k *memKV) PutIfAbsent(_ context.Context, key string, val []byte) (bool, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if _, ok := k.m[key]; ok {
+		return false, nil
+	}
+	k.m[key] = append([]byte(nil), val...)
+	return true, nil
+}
+
 func (k *memKV) Get(_ context.Context, key string) ([]byte, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()

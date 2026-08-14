@@ -49,6 +49,9 @@ type stubKVService struct{}
 func (stubKVService) Put(context.Context, string, []byte) error   { return stubErr }
 func (stubKVService) Get(context.Context, string) ([]byte, error) { return nil, stubErr }
 func (stubKVService) Delete(context.Context, string) error        { return stubErr }
+func (stubKVService) PutIfAbsent(context.Context, string, []byte) (bool, error) {
+	return false, stubErr
+}
 func (stubKVService) List(context.Context, string) ([]string, error) {
 	return nil, stubErr
 }
