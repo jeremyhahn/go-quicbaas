@@ -21,42 +21,25 @@ WORKDIR /build
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 
-# Copy local dependencies (staged by Makefile into .deps/)
-COPY .deps/ /deps/
-
-# Rewrite local replace directives to point to staged deps
-RUN sed -i 's|=> \.\./go-quicraft|=> /deps/go-quicraft|g' go.mod && \
-    sed -i 's|=> \.\./go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod && \
-    sed -i 's|=> \.\./go-qrdb$|=> /deps/go-qrdb|g' go.mod && \
-    sed -i 's|=> \.\./go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod && \
-    sed -i 's|=> \.\./go-xkms$|=> /deps/go-xkms|g' go.mod && \
-    sed -i 's|=> \.\./go-signal$|=> /deps/go-signal|g' go.mod && \
-    sed -i 's|=> \.\./go-libsignal$|=> /deps/go-libsignal|g' go.mod && \
-    sed -i 's|=> \.\./\.\./\.\./go-quicraft|=> /deps/go-quicraft|g' sdk/go/go.mod && \
-    sed -i 's|=> \.\./\.\./\.\./go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' sdk/go/go.mod && \
-    sed -i 's|=> \.\./\.\./\.\./go-qrdb$|=> /deps/go-qrdb|g' sdk/go/go.mod && \
-    sed -i 's|=> \.\./\.\./\.\./go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' sdk/go/go.mod && \
-    sed -i 's|=> \.\./\.\./\.\./go-xkms$|=> /deps/go-xkms|g' sdk/go/go.mod
-
-# Download remaining dependencies
-RUN GONOSUMCHECK='*' go mod download
+# Until 2026-08-14 this stage copied working-tree clones out of a .deps/
+# directory and rewrote a set of relative `replace` directives to point at
+# them. Both are gone: .deps/ was deleted with the decoupling, and the only
+# replaces left in go.mod are the intra-repo sdk/go one and an
+# armon/go-metrics version pin, neither of which needs rewriting. The COPY of
+# a directory that no longer exists failed the build outright.
+#
+# OPEN: the download below fetches github.com/jeremyhahn/* from Gitea, which
+# needs GOPRIVATE and the url.insteadOf rewrite carrying a read-only token.
+# dependency-resolution.md §6 injects those four variables into Gitea Actions
+# *jobs* via runner.envs, but a `docker build` does not inherit the job
+# environment, and version-control.md §4 forbids putting the token in a build
+# arg or a layer -- so this needs a BuildKit secret mount, a vendor directory,
+# or building the binaries outside the image. That is a portfolio-wide choice
+# (the same gap tracked for go-frostdkg), not one to settle here.
+RUN go mod download
 
 # Copy source code
 COPY . .
-
-# Rewrite replace directives again (COPY . . overwrites go.mod)
-RUN sed -i 's|=> \.\./go-quicraft|=> /deps/go-quicraft|g' go.mod && \
-    sed -i 's|=> \.\./go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod && \
-    sed -i 's|=> \.\./go-qrdb$|=> /deps/go-qrdb|g' go.mod && \
-    sed -i 's|=> \.\./go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod && \
-    sed -i 's|=> \.\./go-xkms$|=> /deps/go-xkms|g' go.mod && \
-    sed -i 's|=> \.\./go-signal$|=> /deps/go-signal|g' go.mod && \
-    sed -i 's|=> \.\./go-libsignal$|=> /deps/go-libsignal|g' go.mod && \
-    sed -i 's|=> \.\./\.\./\.\./go-quicraft|=> /deps/go-quicraft|g' sdk/go/go.mod && \
-    sed -i 's|=> \.\./\.\./\.\./go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' sdk/go/go.mod && \
-    sed -i 's|=> \.\./\.\./\.\./go-qrdb$|=> /deps/go-qrdb|g' sdk/go/go.mod && \
-    sed -i 's|=> \.\./\.\./\.\./go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' sdk/go/go.mod && \
-    sed -i 's|=> \.\./\.\./\.\./go-xkms$|=> /deps/go-xkms|g' sdk/go/go.mod
 
 # Build arguments
 ARG VERSION
