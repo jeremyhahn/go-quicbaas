@@ -381,7 +381,7 @@ github.com/jeremyhahn/go-qrdb/sdk/go v0.1.0-alpha h1:M9Fge6yBwollj7pSepME1lL3aDS
 github.com/jeremyhahn/go-qrdb/sdk/go v0.1.0-alpha/go.mod h1:+XJzu3XoXqAPoyzJPLK0LeG7N3OKivOwgrGqn8MkjU8=
 github.com/jeremyhahn/go-quicraft v0.3.0-alpha h1:+fhmRMSn35LZmaO25fxpdrL9WR3RTfuZcjnLYsYd4Lw=
 github.com/jeremyhahn/go-quicraft v0.3.0-alpha/go.mod h1:aUBfpx8zrNsaydnfRIUmVMaEwsOwAsrvxxQfz3XRdsk=
-github.com/jeremyhahn/go-signal v0.1.1-alpha h1:e4uEBeFYbkfLIrVddufGcnLa5D/5060l09tyjdquesU=
+github.com/jeremyhahn/go-signal v0.1.1-alpha h1:W3qYQDYFVsUFv++n1eTaFyOMMRJyj1XE5VyA1SWsWEc=
 github.com/jeremyhahn/go-signal v0.1.1-alpha/go.mod h1:USviUd3KFn1uSjbVW6nJDQ58zii4u6yENPjP/PHxIdA=
 github.com/jeremyhahn/go-truststrap v0.1.2-alpha h1:rkb3PngbOLrmaZyLQM4ifXqkY9k5vc+yyU569Vp2gYo=
 github.com/jeremyhahn/go-truststrap v0.1.2-alpha/go.mod h1:adfwW38ejKrQ7kGGGP2d9/csTTDbfVuklO0kbgCzuBM=
