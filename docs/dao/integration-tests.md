@@ -459,7 +459,6 @@ make integration-test-dao
 
 3. **Advanced Codecs:**
    - CBOR support (`-tags codec_cbor`)
-   - Avro support (`-tags codec_avro`)
    - Protocol Buffers (`-tags codec_protobuf`)
 
 ### Future Enhancements

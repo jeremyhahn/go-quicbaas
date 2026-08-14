@@ -13,7 +13,7 @@ QuicBaaS is a high-performance, multi-faceted, distributed key-value database bu
 - **Protocols**: gRPC, REST (chi router), QUIC, MCP (Model Context Protocol), WebSocket (MQTT, AMQP), Unix socket
 - **Auth**: JWT, WebAuthn, OIDC, RBAC/ABAC (IAM)
 - **Crypto**: AES-256-GCM barrier with epoch key rotation, Shamir secret sharing, FIPS 140-3
-- **Serialization**: Protobuf, JSON, YAML, TOML, MsgPack, BSON, CBOR, Avro
+- **Serialization**: Protobuf, JSON, YAML, TOML, MsgPack, BSON, CBOR
 - **SDKs**: Go, JavaScript
 - **Build**: Makefile-driven, Docker, devcontainer
 

@@ -666,7 +666,7 @@ Example:
 
 1. **Secondary Indexes**: Full support via `pkg/storage/index/` with normal and unique index types
 2. **Batch Operations**: Storage-level atomic batches via `storage.Batch` interface
-3. **Multiple Codecs**: JSON, YAML, TOML, MsgPack, BSON (always available), plus CBOR, Avro, Protobuf (with build tags)
+3. **Multiple Codecs**: JSON, YAML, TOML, MsgPack, BSON (always available), plus CBOR, Protobuf (with build tags)
 
 ### Caching Architecture
 

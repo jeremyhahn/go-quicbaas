@@ -7,7 +7,7 @@
 # source of truth for cross-module resolution — same model as local dev.
 # No `.deps/` staging or replace-directive rewriting required.
 
-ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_avro codec_protobuf awss3 gcpstorage azureblob minio"
+ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf awss3 gcpstorage azureblob minio"
 
 # ============================================================================
 # Stage 1: Build binaries inside a Go workspace mirroring the host layout.

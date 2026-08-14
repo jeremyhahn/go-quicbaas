@@ -80,7 +80,6 @@ dao.WithCodec(codecType dao.CodecType) Option
 
 **Build-Tag Codecs** (require build flags):
 - `dao.CodecCBOR` - CBOR binary encoding (`-tags codec_cbor`)
-- `dao.CodecAvro` - Avro binary encoding (`-tags codec_avro`)
 - `dao.CodecProtoBuf` - Protocol Buffers (`-tags codec_protobuf`)
 
 Use `dao.SupportedCodecs()` and `dao.IsCodecSupported(codecType)` to discover available codecs at runtime.

@@ -39,7 +39,6 @@ QuicBaaS uses Go build tags for modular compilation. This allows you to customiz
 | `codec_msgpack` | ON | MessagePack codec support |
 | `codec_bson` | ON | BSON codec support |
 | `codec_cbor` | ON | CBOR codec support |
-| `codec_avro` | ON | Avro codec support |
 | `codec_protobuf` | ON | Protobuf codec support |
 
 ### Object Storage Tags
@@ -166,7 +165,6 @@ Control features via environment or make arguments:
 | `WITH_CODEC_MSGPACK` | 1 | MessagePack codec |
 | `WITH_CODEC_BSON` | 1 | BSON codec |
 | `WITH_CODEC_CBOR` | 1 | CBOR codec |
-| `WITH_CODEC_AVRO` | 1 | Avro codec |
 | `WITH_CODEC_PROTOBUF` | 1 | Protobuf codec |
 
 ## File Organization

@@ -253,7 +253,6 @@ WITH_CODEC_TOML     ?= 1
 WITH_CODEC_MSGPACK  ?= 1
 WITH_CODEC_BSON     ?= 1
 WITH_CODEC_CBOR     ?= 1
-WITH_CODEC_AVRO     ?= 1
 WITH_CODEC_PROTOBUF ?= 1
 
 # Accumulate codec build tags
@@ -274,9 +273,6 @@ ifeq ($(WITH_CODEC_BSON),1)
 endif
 ifeq ($(WITH_CODEC_CBOR),1)
   BUILD_TAGS += codec_cbor
-endif
-ifeq ($(WITH_CODEC_AVRO),1)
-  BUILD_TAGS += codec_avro
 endif
 ifeq ($(WITH_CODEC_PROTOBUF),1)
   BUILD_TAGS += codec_protobuf

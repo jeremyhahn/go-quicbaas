@@ -76,7 +76,7 @@ go test -tags "local quic raft rest rag timeseries vector iam mcp" -run TestName
 # Build tags reference:
 #   local quic raft rest rag timeseries vector iam mcp
 #   hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack
-#   codec_bson codec_cbor codec_avro codec_protobuf
+#   codec_bson codec_cbor codec_protobuf
 #   awss3 gcpstorage azureblob minio
 ```
 
