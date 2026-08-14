@@ -83,6 +83,15 @@ func (a sftpAdapter) Create(p string) (sftpFile, error) {
 // the caller has already opened an SFTP session and is responsible
 // for closing it.
 func uploadBinaryWith(ctx context.Context, client sftpClient, localPath, remotePath string) error {
+	// Refuse up front if the caller has already cancelled. Without this the
+	// select below is the only cancellation check, and once the copy goroutine
+	// has finished both its case and ctx.Done() are ready -- select then picks
+	// between them at random, so a cancelled upload of a small file completes
+	// and reports success roughly half the time.
+	if err := ctx.Err(); err != nil {
+		return &SFTPUploadError{LocalPath: localPath, RemotePath: remotePath, Cause: err}
+	}
+
 	local, err := os.Open(localPath)
 	if err != nil {
 		return &SFTPUploadError{LocalPath: localPath, RemotePath: remotePath, Cause: err}

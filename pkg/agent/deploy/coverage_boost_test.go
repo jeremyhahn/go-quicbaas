@@ -18,6 +18,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -70,21 +71,33 @@ func TestUploadBinary_EmptyUnderlyingClient(t *testing.T) {
 type blockingSFTPClient struct {
 	*fakeSFTPClient
 	release chan struct{}
+	writing chan struct{}
 }
 
 type blockingSFTPFile struct {
 	release chan struct{}
+	writing chan struct{}
+	once    sync.Once
 }
 
+// Write announces that the copy is in flight, then parks. Announcing first is
+// what lets the test cancel at a point where the done channel provably cannot
+// be ready, so the select in uploadBinaryWith has only the ctx.Done() case to
+// take.
 func (f *blockingSFTPFile) Write(p []byte) (int, error) {
-	<-f.release // block until released; ctx cancel fires first
+	f.once.Do(func() {
+		if f.writing != nil {
+			close(f.writing)
+		}
+	})
+	<-f.release
 	return len(p), nil
 }
 
 func (f *blockingSFTPFile) Close() error { return nil }
 
 func (c *blockingSFTPClient) Create(p string) (sftpFile, error) {
-	file := &blockingSFTPFile{release: c.release}
+	file := &blockingSFTPFile{release: c.release, writing: c.writing}
 	c.mu.Lock()
 	// store under a separate map entry purely for Close tracking
 	c.mu.Unlock()
@@ -99,10 +112,18 @@ func TestUploadBinaryWith_ContextCancelDuringCopy(t *testing.T) {
 	local := writeLocal(t, []byte("payload-that-must-not-finish"))
 
 	release := make(chan struct{})
-	fake := &blockingSFTPClient{fakeSFTPClient: newFakeSFTP(), release: release}
+	writing := make(chan struct{})
+	fake := &blockingSFTPClient{fakeSFTPClient: newFakeSFTP(), release: release, writing: writing}
 
-	// Cancel after Create so the goroutine is blocked on Write.
-	cancel()
+	// Cancel only once the copy goroutine is parked inside Write. Cancelling
+	// before the call instead -- as this test used to -- means uploadBinaryWith
+	// now refuses up front and never creates the remote file, so there is no
+	// partial upload to remove and nothing exercises the cleanup this test
+	// exists for.
+	go func() {
+		<-writing
+		cancel()
+	}()
 
 	err := uploadBinaryWith(ctx, fake, local, "/remote/q")
 	close(release) // unblock the worker goroutine so it can exit
