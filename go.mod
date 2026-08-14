@@ -19,11 +19,11 @@ require (
 	github.com/hashicorp/go-msgpack/v2 v2.1.5
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/jeremyhahn/go-auth v0.1.0-alpha
-	github.com/jeremyhahn/go-codec v1.3.1
+	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-libsignal v0.1.1-alpha
 	github.com/jeremyhahn/go-objstore v0.2.1-alpha
-	github.com/jeremyhahn/go-qrdb v0.1.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.1.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.3.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.3.0-alpha
 	github.com/jeremyhahn/go-quicbaas/sdk/go v0.1.2-alpha
 	github.com/jeremyhahn/go-xkms v0.3.2-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.3.2-alpha
@@ -85,7 +85,6 @@ require (
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/gtank/ristretto255 v0.2.0 // indirect
-	github.com/hamba/avro/v2 v2.31.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.2 // indirect
@@ -94,10 +93,10 @@ require (
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/hashicorp/hcl v1.0.1-vault-7 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
-	github.com/jackc/pgx/v5 v5.9.0 // indirect
+	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/jeremyhahn/go-frost v0.1.7-alpha // indirect
-	github.com/jeremyhahn/go-quicraft v0.3.0-alpha // indirect
+	github.com/jeremyhahn/go-quicraft v0.3.1-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.1.2-alpha // indirect
 	github.com/jeremyhahn/go-xkms/xkey v0.3.1-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
