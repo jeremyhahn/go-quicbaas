@@ -1,4 +1,4 @@
-# ci-template: v1 (customized)
+# ci-template: v1.1 (customized)
 # Reconciled against software/templates/github-actions/ci.yml in the
 # automatethethings repo (devops.md §1/§8/§9). Divergence outside the
 # repo-specific blocks below is a defect.
@@ -11,13 +11,21 @@ on:
   pull_request:
     branches: [ master, develop ]
 
+# GOPROXY / GOSUMDB are deliberately absent (ci-template v1.1). GOPRIVATE is
+# injected by the runners (dependency-resolution.md §6) and already exempts
+# github.com/jeremyhahn/* from both the proxy and the checksum database, which
+# is what makes the Gitea url-rewrite fire. Setting `GOPROXY: direct` and
+# `GOSUMDB: off` here additionally routed every *third-party* module around
+# proxy.golang.org and switched off sumdb verification for all of them --
+# resolving them from mutable VCS refs instead. That broke this repo on
+# 2026-08-14: upstream re-pointed the go-tpm-tools v0.4.8 tag 48 minutes after
+# publishing it, so a direct fetch produced a zip whose hash no longer matched
+# the (correct, sum.golang.org-backed) entry in go.sum.
 env:
   GO_VERSION: '1.26.6'
   COVERAGE_THRESHOLD: 90
   REGISTRY: ghcr.io
   IMAGE_NAME: jeremyhahn/quicbaas
-  GOPROXY: direct
-  GOSUMDB: off
 
 jobs:
   lint:
@@ -42,8 +50,14 @@ jobs:
             exit 1
           fi
 
+      # `make vet` is the contract (devops.md §4), for the same reason `make
+      # lint` is below: a bare `go vet ./...` typechecks the tag-gated packages
+      # in their disabled configuration and reports phantom errors (undefined
+      # accountToREST in pkg/api/rest under !rest). The Makefile target sweeps
+      # the maximal, minimal, desktop and integration tag sets instead, so a
+      # package is vetted in every configuration it actually ships in.
       - name: Run go vet
-        run: go vet ./...
+        run: make vet
 
       # `make lint` is the contract (devops.md §4). It passes the Makefile's
       # LINT_BUILD_TAGS, without which golangci-lint typechecks the tag-gated
@@ -220,24 +234,36 @@ jobs:
           cache: true
 
       - name: Verify module integrity
-        run: go mod verify
+        run: make modverify
 
+      # `make gosec` is the contract (devops.md §4/§8): CI runs the target a
+      # developer runs, so the exclude list, the excluded directories and the
+      # build tags cannot drift between the two. The tags matter here for the
+      # same reason they do in the Lint job -- without the Makefile's
+      # LINT_BUILD_TAGS gosec typechecks the tag-gated packages in their
+      # disabled configuration. GOSEC_EXCLUDE and the written justification for
+      # every rule in it live beside the target in the Makefile.
+      #
+      # The target passes -stdout -verbose=text, so findings are readable in
+      # the job log; the SARIF upload below only exists on github.com, and
+      # without that flag a Gitea failure exited 1 with the findings buried in
+      # a file nobody could see (ci-template v1.1).
       - name: Run gosec Security Scanner
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec -exclude=G104,G115 -fmt=sarif -out=gosec-results.sarif ./...
+          make gosec
 
       - name: Upload gosec results to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
         if: always() && github.server_url == 'https://github.com'
         with:
-          sarif_file: gosec-results.sarif
+          sarif_file: build/gosec.sarif
           category: gosec
 
       - name: Run govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          make vuln
 
   # trivy fs -- dependency CVEs and leaked secrets in the tree (devops.md §8).
   # Scoping mirrors the `trivy` target in the Makefile; keep the two identical.

@@ -2340,32 +2340,57 @@ coverage-report: coverage ## Show coverage in browser
 	which open > /dev/null 2>&1 && open $(COVERAGE_DIR)/coverage.html || \
 	echo "$(YELLOW)Coverage report generated at $(COVERAGE_DIR)/coverage.html$(NC)"
 
+# Rules gosec may skip repo-wide. devops.md §8: every entry carries a written
+# reason, checked against the code. .github/workflows/ci.yml runs this same
+# target, so there is no second copy of this list to keep in sync.
+#
+# Anything NOT listed here is resolved at the site instead, with a `#nosec Gxxx
+# -- reason` annotation naming why that specific line is safe. Per-site beats
+# repo-wide: a blanket exclude also hides the next occurrence, which nobody
+# reviewed. G402 (TLS config) and G407 (hardcoded IV/nonce) were on this list
+# and matched zero sites; they were removed rather than left as standing
+# permission for a finding that has never been examined.
+#
+#   G115 integer overflow on conversion. 472 sites, and the rule cannot see
+#        the bounds check: the conversions it flags are guarded on the same
+#        value (frame/entry sizes against their Max constants, ports against
+#        65535) immediately above the cast.
+#   G117 exported struct field matching a secret-ish name. Fires on the
+#        credential and token types the IAM and OAuth2 surfaces exist to
+#        model -- naming a field `Token` is the point, not a leak.
+#   G204 subprocess launched with a variable. Every site is an operator-
+#        supplied command in the agent deploy and orchestrator paths, quoted
+#        through shellQuote and never interpolated into `sh -c`.
+#   G304 file inclusion via variable. Config, certificate and data-directory
+#        paths come from the server's own config, not from request input.
+#   G404 math/rand. Retry/backoff jitter only (pkg/rag/pipeline/retry.go,
+#        examples/timeseries). Jitter must be cheap and merely unpredictable
+#        enough to desynchronize retries; it is not a security primitive.
+#   G703 path traversal. Same paths as G304 -- constructed from validated
+#        config, never joined with caller-supplied segments.
+#   G704 SSRF via taint analysis. The flagged requests are the federation and
+#        ACME clients calling endpoints from stored provider configuration.
+GOSEC_EXCLUDE := G115,G117,G204,G304,G404,G703,G704
+
 .PHONY: gosec
 gosec: ## Run gosec security scanner
 	@echo "$(BLUE)Running security analysis with gosec...$(NC)"
 	@mkdir -p $(BUILD_DIR)
 	@GOSEC_BIN=$$(command -v gosec 2>/dev/null || echo "$$HOME/go/bin/gosec"); \
-	if [ -x "$$GOSEC_BIN" ]; then \
-		$$GOSEC_BIN -exclude=G104,G109,G115,G117,G204,G301,G304,G402,G404,G407,G602,G703,G704 -severity medium -confidence medium \
-			-exclude-dir=test -exclude-dir=testdata -exclude-dir=vendor -exclude-dir=sdk -exclude-dir=.tmp -exclude-dir=.deps \
-			-exclude-generated \
-			-tags "$$(echo '$(LINT_BUILD_TAGS)' | tr ' ' ',')" \
-			-fmt=text -out=$(BUILD_DIR)/gosec-report.txt ./...; \
-		GOSEC_EXIT=$$?; \
-		ISSUE_COUNT=$$(grep -oP 'Issues\s*:\s*\K[0-9]+' $(BUILD_DIR)/gosec-report.txt 2>/dev/null || echo "0"); \
-		if [ "$$ISSUE_COUNT" = "0" ]; then \
-			echo "$(GREEN)Security scan complete - no issues found$(NC)"; \
-			echo "$(BLUE)Report saved to: $(BUILD_DIR)/gosec-report.txt$(NC)"; \
-		else \
-			echo "$(RED)Security issues found! See $(BUILD_DIR)/gosec-report.txt$(NC)"; \
-			cat $(BUILD_DIR)/gosec-report.txt; \
-			exit 1; \
-		fi; \
-	else \
-		echo "$(YELLOW)gosec not found$(NC)"; \
+	if [ ! -x "$$GOSEC_BIN" ]; then \
+		echo "$(RED)gosec not found$(NC)"; \
 		echo "$(YELLOW)Install with: make install-gosec$(NC)"; \
 		exit 1; \
-	fi
+	fi; \
+	$$GOSEC_BIN -exclude=$(GOSEC_EXCLUDE) -severity medium -confidence medium \
+		-exclude-dir=test -exclude-dir=testdata -exclude-dir=vendor -exclude-dir=sdk -exclude-dir=.tmp -exclude-dir=.deps \
+		-exclude-generated \
+		-tags "$$(echo '$(LINT_BUILD_TAGS)' | tr ' ' ',')" \
+		-fmt=sarif -out=$(BUILD_DIR)/gosec.sarif -stdout -verbose=text ./... || { \
+		echo "$(RED)Security issues found (SARIF: $(BUILD_DIR)/gosec.sarif)$(NC)"; \
+		exit 1; \
+	}; \
+	echo "$(GREEN)Security scan complete - no issues found$(NC)"
 
 .PHONY: vuln
 vuln: ## Run govulncheck to scan for known vulnerabilities
@@ -2392,15 +2417,16 @@ vuln: ## Run govulncheck to scan for known vulnerabilities
 # off the committed test TLS material.
 trivy: ## Run Trivy vulnerability scanner on filesystem
 	@echo "$(BLUE)Running Trivy vulnerability scan...$(NC)"
-	@if command -v trivy >/dev/null 2>&1; then \
-		trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 \
-			--skip-dirs test --skip-dirs examples --skip-dirs bin --skip-dirs build \
-			--skip-dirs data \
-			--skip-files 'pkg/server/certs/*.key' . && \
-		echo "$(GREEN)Trivy scan complete - no critical/high vulnerabilities found$(NC)"; \
-	else \
-		echo "$(YELLOW)trivy not found - skipping (install with: make install-trivy)$(NC)"; \
-	fi
+	@if ! command -v trivy >/dev/null 2>&1; then \
+		echo "$(RED)trivy not found$(NC)"; \
+		echo "$(YELLOW)Install with: make install-trivy$(NC)"; \
+		exit 1; \
+	fi; \
+	trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 \
+		--skip-dirs test --skip-dirs examples --skip-dirs bin --skip-dirs build \
+		--skip-dirs data \
+		--skip-files 'pkg/server/certs/*.key' . && \
+	echo "$(GREEN)Trivy scan complete - no critical/high vulnerabilities found$(NC)"
 
 # The images this Makefile builds that also ship: the daemon and its FIPS
 # variant. The CLI image (Dockerfile.cli) has no Makefile build target; it and
