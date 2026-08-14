@@ -1560,6 +1560,30 @@ test-integration-tagged: ## Run integration tests with build tag (in-process)
 	fi; \
 	exit $$TEST_RESULT
 
+# Path the compose files' `gomodauth` secret reads. Outside the repo on
+# purpose: the images end with COPY . ., so a credentials file inside the build
+# context would be baked into a layer (.dockerignore lists gomodauth* as a
+# second line of defence).
+GOMODAUTH_ENV ?= /tmp/quicbaas-gomodauth.env
+export GOMODAUTH_ENV
+
+.PHONY: stage-gomodauth
+stage-gomodauth: ## Stage Gitea module-fetch credentials for the image builds
+	@umask 077; : > "$(GOMODAUTH_ENV)"
+	@if [ -n "$${GIT_CONFIG_KEY_0:-}" ]; then \
+		umask 077; \
+		{ \
+			printf 'export GOPRIVATE=%s\n' "$${GOPRIVATE:-}"; \
+			printf 'export GIT_CONFIG_COUNT=%s\n' "$${GIT_CONFIG_COUNT:-}"; \
+			printf 'export GIT_CONFIG_KEY_0=%s\n' "$${GIT_CONFIG_KEY_0}"; \
+			printf 'export GIT_CONFIG_VALUE_0=%s\n' "$${GIT_CONFIG_VALUE_0:-}"; \
+		} > "$(GOMODAUTH_ENV)"; \
+		echo "$(GREEN)Staged Gitea module credentials for the image build$(NC)"; \
+	else \
+		echo "$(YELLOW)No GIT_CONFIG_KEY_0 in the environment; image builds resolve modules from the public proxy$(NC)"; \
+		echo "$(YELLOW)  (dependency-resolution.md section 6 -- the Gitea runners inject it)$(NC)"; \
+	fi
+
 .PHONY: integration-test
 integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by default; OLLAMA_CPU=1 or GPU_HOST=<host> to include)
 	@echo "$(BLUE)Running Docker integration tests...$(NC)"
@@ -1575,6 +1599,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 		echo "$(YELLOW)  - Or run: sudo apt-get install docker-compose-plugin$(NC)"; \
 		exit 1; \
 	fi
+	@$(MAKE) --no-print-directory stage-gomodauth
 	@START_TIME=$$(date +%s); \
 	COMPOSE_FILE="test/integration/docker-compose.integration.yml"; \
 	GPU_HOST="$(strip $(GPU_HOST))"; \

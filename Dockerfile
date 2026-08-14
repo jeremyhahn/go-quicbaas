@@ -32,15 +32,24 @@ COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 # armon/go-metrics version pin, neither of which needs rewriting. The COPY of
 # a directory that no longer exists failed the build outright.
 #
-# OPEN: the download below fetches github.com/jeremyhahn/* from Gitea, which
-# needs GOPRIVATE and the url.insteadOf rewrite carrying a read-only token.
-# dependency-resolution.md §6 injects those four variables into Gitea Actions
-# *jobs* via runner.envs, but a `docker build` does not inherit the job
-# environment, and version-control.md §4 forbids putting the token in a build
-# arg or a layer -- so this needs a BuildKit secret mount, a vendor directory,
-# or building the binaries outside the image. That is a portfolio-wide choice
-# (the same gap tracked for go-frostdkg), not one to settle here.
-RUN go mod download
+# go.mod pins first-party modules published to the internal Gitea, which this
+# download cannot reach on its own: the runner injects GOPRIVATE and the
+# tokenised insteadOf rewrite into the *job* environment
+# (dependency-resolution.md §6), and a docker build does not inherit it.
+#
+# They arrive as a BuildKit secret, never a build arg -- an arg is recorded in
+# image metadata and readable with `docker history`, while a secret is mounted
+# on tmpfs for this RUN alone and never becomes a layer. It is sourced rather
+# than exported so the value never reaches a command line either (`ps` on the
+# build host would show it).
+#
+# The mount is optional by design. On GitHub Actions no secret is supplied and
+# these modules resolve from the public proxy once tags are mirrored (§7), so
+# the same Dockerfile builds on both hosts.
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    go mod download
 
 # Copy source code
 COPY . .

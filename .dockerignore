@@ -54,3 +54,8 @@ cmd/quicbaas/frontend/dist/
 # Loose binaries left at project root from prior dev sessions
 quicbaas
 quicbaasd
+
+# BuildKit module-fetch credentials are staged under RUNNER_TEMP, outside the
+# build context. This is the second line of defence: if one is ever written
+# into the workspace by mistake, COPY . . must not bake it into a layer.
+gomodauth*

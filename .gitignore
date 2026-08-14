@@ -123,3 +123,8 @@ node_modules/
 
 # example app runtime data (generated key stores; invalid zip paths)
 examples/orchestration/*/data/
+
+# Staged Gitea module-fetch credentials for container builds. Written outside
+# the repo by default (see GOMODAUTH_ENV in the Makefile); this is the guard
+# for anyone who points it at the working tree.
+gomodauth*

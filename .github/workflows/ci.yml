@@ -433,6 +433,43 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha
 
+      # go.mod pins first-party modules published to the internal Gitea, which
+      # `go mod download` inside the image cannot reach on its own. The runner
+      # injects GOPRIVATE and the tokenised insteadOf rewrite into this job's
+      # environment (dependency-resolution.md §6), but a job environment does
+      # not cross into a docker build -- hence handing it over explicitly.
+      #
+      # Written under RUNNER_TEMP, deliberately OUTSIDE the build context: the
+      # Dockerfile does `COPY . .`, so a credentials file inside the workspace
+      # would be baked into a layer. .dockerignore lists gomodauth* as a second
+      # line of defence. It is a BuildKit secret, never a build arg -- an arg is
+      # recoverable with `docker history`.
+      #
+      # On GitHub none of these variables exist, the file is written empty, and
+      # the Dockerfile's mount is optional, so the same build works there
+      # against the public proxy.
+      #
+      # The variables are read straight from the shell environment, NOT through
+      # ${{ env.X }} -- that expression reads this workflow's `env:` block,
+      # which does not define them, and would quietly write blanks (the failure
+      # then surfaces as an unrelated-looking "unknown revision").
+      - name: Stage module-fetch credentials
+        run: |
+          set -eu
+          umask 077
+          : > "${RUNNER_TEMP}/gomodauth.env"
+          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
+            {
+              printf 'export GOPRIVATE=%s\n' "${GOPRIVATE:-}"
+              printf 'export GIT_CONFIG_COUNT=%s\n' "${GIT_CONFIG_COUNT:-}"
+              printf 'export GIT_CONFIG_KEY_0=%s\n' "${GIT_CONFIG_KEY_0}"
+              printf 'export GIT_CONFIG_VALUE_0=%s\n' "${GIT_CONFIG_VALUE_0:-}"
+            } > "${RUNNER_TEMP}/gomodauth.env"
+            echo "staged Gitea module credentials"
+          else
+            echo "no Gitea credentials in this environment; resolving from the public proxy"
+          fi
+
       - name: Build Docker image for scanning
         uses: docker/build-push-action@v6
         with:
@@ -453,6 +490,12 @@ jobs:
           # only on the server that has one.
           cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
           cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
+          secret-files: |
+            gomodauth=${{ runner.temp }}/gomodauth.env
+
+      - name: Remove staged credentials
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/gomodauth.env"
 
       # SARIF pass, for the Security tab only. trivy-action's setup cannot
       # authenticate to github.com from a Gitea runner and the code scanning
