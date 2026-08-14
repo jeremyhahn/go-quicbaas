@@ -350,6 +350,19 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      # `make build` produces the daemon and the client, and the client is
+      # always linked with the embedded desktop GUI (CGO + Wails/GTK/WebKit)
+      # after rsync-ing and npm-building the frontend. The runner image ships
+      # node and npm but neither rsync nor the GTK/WebKit development headers,
+      # so build-frontend died on a missing rsync and build-cli on its
+      # pkg-config guard. Provision them rather than narrowing what the Build
+      # gate covers.
+      - name: Install desktop and frontend build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            rsync libgtk-3-dev libwebkit2gtk-4.1-dev
+
       - name: Build binaries
         run: make build
 
