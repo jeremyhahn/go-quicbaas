@@ -35,7 +35,7 @@ func TestHealthPing(t *testing.T) {
 			t.Fatalf("failed to create request: %v", err)
 		}
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -57,7 +57,7 @@ func TestHealthPing(t *testing.T) {
 			t.Fatalf("failed to create request: %v", err)
 		}
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -85,7 +85,7 @@ func TestHealthLiveness(t *testing.T) {
 			t.Fatalf("failed to create request: %v", err)
 		}
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -117,7 +117,7 @@ func TestHealthLiveness(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 
 		// Make multiple requests
 		for i := 0; i < 5; i++ {
@@ -153,7 +153,7 @@ func TestHealthReadiness(t *testing.T) {
 			t.Fatalf("failed to create request: %v", err)
 		}
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -193,7 +193,7 @@ func TestHealthReadiness(t *testing.T) {
 			t.Fatalf("failed to create request: %v", err)
 		}
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -232,7 +232,7 @@ func TestHealthEndpointDiscovery(t *testing.T) {
 				t.Fatalf("failed to create request: %v", err)
 			}
 
-			client := &http.Client{Timeout: 10 * time.Second}
+			client := newHTTPClient(10 * time.Second)
 			resp, err := client.Do(req)
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
@@ -261,7 +261,7 @@ func TestHealthResponseFormat(t *testing.T) {
 			t.Fatalf("failed to create request: %v", err)
 		}
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -283,7 +283,7 @@ func TestHealthResponseFormat(t *testing.T) {
 			t.Fatalf("failed to create request: %v", err)
 		}
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -317,7 +317,7 @@ func TestHealthConcurrentRequests(t *testing.T) {
 					return
 				}
 
-				client := &http.Client{Timeout: 10 * time.Second}
+				client := newHTTPClient(10 * time.Second)
 				resp, err := client.Do(req)
 				if err != nil {
 					results <- err

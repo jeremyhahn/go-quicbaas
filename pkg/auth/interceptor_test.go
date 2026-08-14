@@ -31,10 +31,7 @@ import (
 
 func TestUnaryAuthInterceptor(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -146,10 +143,7 @@ func TestUnaryAuthInterceptor(t *testing.T) {
 
 func TestUnaryAuthInterceptorWithReadOnlyUser(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -219,10 +213,7 @@ func TestUnaryAuthInterceptorWithReadOnlyUser(t *testing.T) {
 
 func TestStreamAuthInterceptor(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -543,10 +534,7 @@ func TestAuthInterceptorDisabled(t *testing.T) {
 // TestUnaryAuthInterceptorWithAuthorizationService tests the new AuthorizationService integration.
 func TestUnaryAuthInterceptorWithAuthorizationService(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -644,10 +632,7 @@ func TestUnaryAuthInterceptorWithAuthorizationService(t *testing.T) {
 // TestStreamAuthInterceptorWithAuthorizationService tests stream interceptor with AuthorizationService.
 func TestStreamAuthInterceptorWithAuthorizationService(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -726,10 +711,7 @@ func TestStreamAuthInterceptorWithAuthorizationService(t *testing.T) {
 // TestPublicMethodsBypass tests that public methods skip authentication.
 func TestPublicMethodsBypass(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -767,10 +749,7 @@ func TestPublicMethodsBypass(t *testing.T) {
 // TestCustomPublicMethods tests adding custom public methods.
 func TestCustomPublicMethods(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -812,10 +791,7 @@ func TestCustomPublicMethods(t *testing.T) {
 // TestPermissionDeniedWithAuthzService tests that permission denied errors use correct code.
 func TestPermissionDeniedWithAuthzService(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -860,10 +836,7 @@ func TestPermissionDeniedWithAuthzService(t *testing.T) {
 // to PermissionDenied. The fork allow decision no longer exists.
 func TestLegacyInterceptorFailsClosed(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -899,10 +872,7 @@ func TestLegacyInterceptorFailsClosed(t *testing.T) {
 // TestBuildSubjectFromToken tests subject creation from token.
 func TestBuildSubjectFromToken(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)

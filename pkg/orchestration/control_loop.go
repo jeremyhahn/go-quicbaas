@@ -629,11 +629,15 @@ func (cl *ControlLoop) handleExecute(ctx context.Context) (JobState, error) {
 					}
 					toolGuidance := cl.agentService.BackendToolGuidance(iw.item.Backend)
 					workerPrompt := buildWorkerPrompt(iw.item, workspacePath, toolGuidance)
-					resp, promptErr := cl.agentService.PromptSession(ctx, &PromptSessionRequest{
+					turnCtx := WithTurnAttribution(ctx, cl.turnAttribution(promptRole))
+					resp, promptErr := cl.agentService.PromptSession(turnCtx, &PromptSessionRequest{
 						SessionID: sessionID,
 						Prompt:    workerPrompt,
-						EventCallback: func(sid, evtType, details string) {
-							cl.audit(evtType, "session="+sid+" "+details)
+						EventCallback: func(ev *SessionEvent) {
+							if ev == nil {
+								return
+							}
+							cl.audit(string(ev.Kind), "session="+ev.SessionID+" "+sessionEventSummary(ev))
 						},
 					})
 					if promptErr != nil {
@@ -829,7 +833,7 @@ func (cl *ControlLoop) handleReview(ctx context.Context) (JobState, error) {
 	switch {
 	case reviewerSessionID != "":
 		cl.audit("reviewer:review_prompt", "session="+reviewerSessionID)
-		resp, promptErr := cl.agentService.PromptSession(ctx, &PromptSessionRequest{
+		resp, promptErr := cl.agentService.PromptSession(WithTurnAttribution(ctx, cl.turnAttribution("reviewer")), &PromptSessionRequest{
 			SessionID:    reviewerSessionID,
 			Prompt:       reviewPrompt,
 			SystemPrompt: systemPrompt,
@@ -839,7 +843,7 @@ func (cl *ControlLoop) handleReview(ctx context.Context) (JobState, error) {
 		}
 		responseText = extractPromptSessionText(resp)
 	case cl.leadSessionID != "":
-		resp, promptErr := cl.agentService.PromptSession(ctx, &PromptSessionRequest{
+		resp, promptErr := cl.agentService.PromptSession(WithTurnAttribution(ctx, cl.turnAttribution("lead")), &PromptSessionRequest{
 			SessionID:    cl.leadSessionID,
 			Prompt:       reviewPrompt,
 			SystemPrompt: systemPrompt,
@@ -1142,6 +1146,21 @@ func (cl *ControlLoop) roleHasCapability(role, capability string) bool {
 		}
 	}
 	return false
+}
+
+// turnAttribution names the job and agent a turn run for the given role is
+// charged to, so the orchestrator can record the turn's token usage against
+// this job's budget instead of leaving it unattributed. The identity is the
+// one minted in handleAssign; a role that never got one still charges the job,
+// under a role-derived agent ID, so a job total is never silently incomplete.
+func (cl *ControlLoop) turnAttribution(role string) TurnAttribution {
+	if role == "" {
+		role = "worker"
+	}
+	if identity, ok := cl.agentIdentities[role]; ok && identity != nil && identity.AgentID != "" {
+		return TurnAttribution{JobID: cl.jobID, AgentID: identity.AgentID}
+	}
+	return TurnAttribution{JobID: cl.jobID, AgentID: "agent-" + role + "-" + cl.jobID}
 }
 
 // resolveWorkerSession returns the persistent session ID for a work item,
@@ -1758,6 +1777,50 @@ func (cl *ControlLoop) audit(eventType, details string) {
 	if cl.auditFn != nil {
 		cl.auditFn(eventType, details)
 	}
+}
+
+// sessionEventSummaryMax caps the audit-trail rendering of a session event's
+// payload so a long assistant answer or tool dump stays one scannable line.
+const sessionEventSummaryMax = 200
+
+// sessionEventSummary renders a one-line, truncated description of a session
+// event's payload for the job audit trail — the prompt text, the chunk text,
+// the tool name — never a raw struct or JSON dump.
+func sessionEventSummary(ev *SessionEvent) string {
+	var detail string
+	switch ev.Kind {
+	case KindPromptSubmitted:
+		if ev.Prompt != nil {
+			detail = ev.Prompt.Prompt
+		}
+	case KindAssistantChunk:
+		if ev.AssistantChunk != nil {
+			detail = ev.AssistantChunk.Text
+		}
+	case KindAgentThought:
+		if ev.Thought != nil {
+			detail = ev.Thought.Text
+		}
+	case KindToolInvocation:
+		if ev.ToolInvocation != nil {
+			detail = "tool=" + ev.ToolInvocation.Name
+		}
+	case KindToolResult:
+		if ev.ToolResult != nil {
+			detail = "invocation=" + ev.ToolResult.InvocationID
+			if ev.ToolResult.IsError {
+				detail += " error=true"
+			}
+		}
+	case KindSystemMessage:
+		if ev.System != nil {
+			detail = ev.System.Code + " " + ev.System.Message
+		}
+	}
+	if len(detail) > sessionEventSummaryMax {
+		detail = detail[:sessionEventSummaryMax] + "..."
+	}
+	return detail
 }
 
 // auditEventsCopy returns a snapshot of the audit trail under the audit mutex.

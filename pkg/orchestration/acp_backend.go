@@ -91,6 +91,32 @@ type ACPBackendConfig struct {
 	// the agent maintains full conversation context across turns.
 	CLIMode bool `json:"cli_mode"`
 
+	// NativeSessionResume selects the agent CLI's own session store as the
+	// resume mechanism for persistent CLI-mode sessions.
+	//
+	// When false (the default) the CLI is started with
+	// --no-session-persistence: it keeps no transcript on the host, and a
+	// session interrupted by a daemon restart is reconstituted by replaying
+	// the durable, barrier-encrypted transcript from the SessionEventLog into
+	// a fresh process (ResumeModeReplay).
+	//
+	// When true the flag is withheld, so the CLI writes its own transcript to
+	// the daemon's home directory and a resume is performed with
+	// "--resume <session-id>" (ResumeModeNative). Fidelity is complete — every
+	// tool call and result is restored, and nothing is re-sent by us — at the
+	// cost of a plaintext copy of the conversation living on the host
+	// filesystem, outside the storage barrier. Enable it deliberately, for
+	// hosts whose filesystem is already in the trust boundary.
+	NativeSessionResume bool `json:"native_session_resume"`
+
+	// SandboxNetwork is the container network sandboxed sessions run in. The
+	// empty value resolves to SandboxNetworkDefault (an isolated bridge
+	// namespace with egress); SandboxNetworkHost — which removes network
+	// isolation and exposes every loopback service on the host — is reachable
+	// only by setting it here, never by a spawn request. See
+	// sandbox_network.go.
+	SandboxNetwork SandboxNetwork `json:"sandbox_network,omitempty"`
+
 	// MCPPresetResolver, when non-nil, resolves the empty-URL QuicBaaS MCP
 	// preset (MCPServerConfig with Name=="quicbaas" and URL=="") at spawn
 	// time into a concrete endpoint URL plus a fresh per-spawn mTLS agent
@@ -124,11 +150,26 @@ type ACPBackend struct {
 	processFactory   ProcessFactory
 	containerRuntime ContainerRuntime  // optional: for sandboxed agent execution
 	logger           interfaces.Logger // optional: session-registry diagnostics
+	accountResolver  AccountResolver   // optional: pooled provider account selection (see account_resolver.go)
+
+	// sandboxNetworkWarning makes the host-network / invalid-network advisory
+	// fire once per backend instead of once per spawn. See sandboxNetwork.
+	sandboxNetworkWarning sync.Once
 }
 
 // SetContainerRuntime configures the container runtime for sandboxed sessions.
 func (b *ACPBackend) SetContainerRuntime(rt ContainerRuntime) {
 	b.containerRuntime = rt
+}
+
+// SetAccountResolver wires the pooled provider account resolver used when a
+// SpawnRequest sets AccountID or AccountAuto. Leaving this unset (the
+// default) preserves the pre-account-pool behavior exactly: any spawn that
+// does not name AccountID/AccountAuto never consults it, and one that does
+// fails closed with AccountResolverNotConfiguredError rather than silently
+// falling back to the host's shared identity.
+func (b *ACPBackend) SetAccountResolver(r AccountResolver) {
+	b.accountResolver = r
 }
 
 // SetLogger installs an optional logger used to emit session-registry
@@ -185,7 +226,17 @@ func (b *ACPBackend) logLookupMiss(op, lookupKey string) {
 
 // acpSession tracks an active ACP session and its configuration.
 type acpSession struct {
-	id           string
+	id string
+
+	// agentID is the identifier the AGENT knows this session by, which is not
+	// always the identifier QuicBaaS registers it under. A resumed JSON-RPC
+	// session keeps the operator's original ID in the registry while the fresh
+	// container hands back a brand new ACP session id; sending the registry's
+	// ID on session/prompt would then address a session the agent has never
+	// heard of. Empty means the two are the same, which is every non-resumed
+	// session. Read through promptSessionID.
+	agentID string
+
 	transport    *StdioTransport    // non-nil for JSON-RPC mode sessions
 	cmd          *exec.Cmd          // non-nil for CLI stream-json mode sessions
 	procCancel   context.CancelFunc // cancels the persistent subprocess on Close
@@ -204,10 +255,49 @@ type acpSession struct {
 	closed       atomic.Bool
 
 	// cleanup, when non-nil, releases per-session resources provisioned at
-	// spawn (currently the ephemeral QuicBaaS MCP agent-cert directory). It
-	// runs exactly once on Close. Guarded by mu so the Spawn-time attach and
-	// the Close-time read/clear do not race.
+	// spawn (currently the ephemeral QuicBaaS MCP agent-cert directory; the
+	// pooled-account credential directory and the container env file have
+	// their own slots below). It runs exactly
+	// once on Close. Guarded by mu so the Spawn-time attach and the Close-time
+	// read/clear do not race.
 	cleanup func()
+
+	// accountID and accountEnvKeys record the pooled provider account this
+	// session's credential material came from, and precisely which environment
+	// variables that material was projected into. Both are guarded by mu.
+	//
+	// The key list is what makes an in-place rotation safe on the one-shot CLI
+	// path: RotateAccount retracts exactly these variables before merging the
+	// replacement account's, so the next process cannot inherit a stale
+	// credential the new account happens not to overwrite.
+	accountID      string
+	accountEnvKeys []string
+
+	// accountCleanup releases the materialized credential directory of the
+	// account currently in force. It is a SEPARATE slot from cleanup because a
+	// rotation replaces the account's material while the session's ephemeral
+	// MCP certificate material stays exactly where it is; fusing the two would
+	// force a rotation to either leak the cert directory or delete a
+	// certificate the running agent is still presenting.
+	accountCleanup func()
+
+	// envFileCleanup removes the private 0600 --env-file the container runtime
+	// reads this session's environment from (InteractiveProcess.Cleanup). It is
+	// a THIRD, independent slot for the same reason accountCleanup is separate
+	// from cleanup: the file belongs to the running `docker run` process, so it
+	// must survive an account rotation (which rewrites credential material) and
+	// must not be released by a cert-directory teardown. Guarded by mu.
+	envFileCleanup func()
+}
+
+// promptSessionID returns the identifier to address the agent with on the ACP
+// wire: the agent's own session id when a resume made it differ from the one
+// QuicBaaS registered, otherwise the registered id.
+func (s *acpSession) promptSessionID() string {
+	if s.agentID != "" {
+		return s.agentID
+	}
+	return s.id
 }
 
 // streamJSONMessage represents a message in Claude Code's stream-json protocol.
@@ -223,6 +313,13 @@ type streamJSONMessage struct {
 	IsError   bool                 `json:"is_error,omitempty"`
 	Result    string               `json:"result,omitempty"`
 	Message   *streamJSONAssistant `json:"message,omitempty"`
+
+	// Usage is the turn-level token accounting carried on the terminal
+	// "result" message. It is the authoritative figure for the turn: the CLI
+	// aggregates every assistant message it emitted into it, so when it is
+	// present the per-assistant-message counts must NOT also be added or the
+	// turn would be billed twice. See collectStreamJSONUsage.
+	Usage *TokenUsage `json:"usage,omitempty"`
 }
 
 // streamJSONAssistant represents the assistant message body in stream-json output.
@@ -231,12 +328,36 @@ type streamJSONAssistant struct {
 	Content    []streamJSONContent `json:"content,omitempty"`
 	StopReason string              `json:"stop_reason,omitempty"`
 	Model      string              `json:"model,omitempty"`
+
+	// Usage is the per-message token accounting the CLI publishes alongside
+	// each assistant message. It is only used when the terminal result message
+	// omits its aggregate (see streamJSONMessage.Usage).
+	Usage *TokenUsage `json:"usage,omitempty"`
 }
 
-// streamJSONContent represents a content block within an assistant message.
+// streamJSONContent represents one content block within a stream-json
+// assistant or user message. Type discriminates which of the optional field
+// groups is populated: "text" (Text), "thinking" (Thinking), "tool_use"
+// (ID/Name/Input), or "tool_result" (ToolUseID/Content/IsError — carried on
+// user messages echoing a tool's output back to the model).
 type streamJSONContent struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
+
+	// Thinking carries the chain-of-thought text of a "thinking" block.
+	Thinking string `json:"thinking,omitempty"`
+
+	// ID, Name, and Input describe a "tool_use" block.
+	ID    string          `json:"id,omitempty"`
+	Name  string          `json:"name,omitempty"`
+	Input json.RawMessage `json:"input,omitempty"`
+
+	// ToolUseID, Content, and IsError describe a "tool_result" block. Content
+	// is raw because the dialect emits either a JSON string or an array of
+	// {type,text} blocks; see flattenToolResultContent.
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   json.RawMessage `json:"content,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
 }
 
 // streamJSONUserMessage is the input format for sending prompts to Claude Code
@@ -335,7 +456,36 @@ func (b *ACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Session, er
 	// returned cleanup deletes the ephemeral cert directory; it is attached to
 	// the session below so it fires on Close, scoping the certificate's
 	// lifetime to the agent it was minted for.
+	return b.provisionAndSpawn(ctx, req, func() (*Session, error) {
+		return b.dispatchSpawn(ctx, req)
+	})
+}
+
+// provisionAndSpawn runs the per-spawn provisioning both Spawn and Resume
+// need, then invokes start. Provisioning mints ephemeral MCP material whose
+// lifetime is scoped to the session it was minted for, so the resulting
+// cleanup is attached to the started session — or run immediately when the
+// start fails and there is no session to attach it to.
+func (b *ACPBackend) provisionAndSpawn(
+	ctx context.Context,
+	req *SpawnRequest,
+	start func() (*Session, error),
+) (*Session, error) {
 	mcpCleanup := b.resolveMCPPresets(ctx, req)
+
+	// Resolve the pooled provider account (if the caller asked for one) BEFORE
+	// dispatch, exactly like the MCP preset resolution above: it mutates
+	// req.Env / req.AccountHomeDir in place so every dispatch path (host or
+	// container) picks up the credential the same way it already picks up
+	// everything else in req.Env. See resolveAccount for the isolation
+	// guarantees this provides.
+	account, err := b.resolveAccount(ctx, req)
+	if err != nil {
+		if mcpCleanup != nil {
+			mcpCleanup()
+		}
+		return nil, err
+	}
 
 	// Materialize any preconfigured MCP servers into the agent's environment
 	// BEFORE dispatch, so the resulting env reaches the subprocess on the
@@ -345,19 +495,58 @@ func (b *ACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Session, er
 	// injectMCPServersEnv for the contract.
 	injectMCPServersEnv(req)
 
-	sess, err := b.dispatchSpawn(ctx, req)
+	sess, err := start()
 	if err != nil {
 		// Resolution succeeded but the spawn failed: there is no session to
-		// attach the cleanup to, so release the ephemeral cert material now.
+		// attach the cleanup to, so release the ephemeral cert / account
+		// material now.
 		if mcpCleanup != nil {
 			mcpCleanup()
 		}
+		if account != nil && account.cleanup != nil {
+			account.cleanup()
+		}
 		return nil, err
 	}
-	if mcpCleanup != nil {
-		b.attachCleanup(sess.ID, mcpCleanup)
+	b.attachCleanup(sess.ID, mcpCleanup)
+	if account != nil {
+		sess.AccountID = account.AccountID
+		sess.AccountStrategy = account.Strategy
+		b.attachAccount(sess.ID, account)
 	}
 	return sess, nil
+}
+
+// attachAccount records the resolved account on the live session so a later
+// rotation knows exactly which environment variables to retract. Best effort:
+// a session that has already been closed simply has nothing to record against,
+// and the credential material it held is released by its own cleanup.
+func (b *ACPBackend) attachAccount(sessionID string, account *resolvedSpawnAccount) {
+	if account == nil {
+		return
+	}
+	val, ok := b.sessions.Load(sessionID)
+	if !ok {
+		return
+	}
+	sess, ok := val.(*acpSession)
+	if !ok {
+		return
+	}
+	sess.mu.Lock()
+	sess.accountID = account.AccountID
+	sess.accountEnvKeys = account.EnvKeys
+	previous := sess.accountCleanup
+	sess.accountCleanup = account.cleanup
+	sess.mu.Unlock()
+
+	// A rotation replaces the credential directory of the account it is moving
+	// off. Releasing the previous one here — after the replacement is in place
+	// — is what keeps a rotating session from accumulating one materialized
+	// credential tree per rotation.
+	if previous != nil {
+		previous()
+	}
 }
 
 // dispatchSpawn routes a validated, MCP-resolved spawn request to the correct
@@ -366,7 +555,7 @@ func (b *ACPBackend) dispatchSpawn(ctx context.Context, req *SpawnRequest) (*Ses
 	// CLI mode (stream-json) is used when the backend supports it AND the
 	// request explicitly asks for a persistent session.
 	if b.config.CLIMode && req.Persistent {
-		return b.spawnCLI(ctx, req)
+		return b.spawnCLI(ctx, req, spawnPlan{})
 	}
 
 	// One-shot CLI mode: store session config without starting a subprocess.
@@ -388,7 +577,7 @@ func (b *ACPBackend) dispatchSpawn(ctx context.Context, req *SpawnRequest) (*Ses
 				Reason:    "backend has no container runtime configured",
 			}
 		}
-		return b.spawnContainerJSONRPC(ctx, req)
+		return b.spawnContainerJSONRPC(ctx, req, spawnPlan{})
 	case SandboxModeNone, SandboxModeDefault:
 		return b.spawnJSONRPC(ctx, req)
 	default:
@@ -401,7 +590,7 @@ func (b *ACPBackend) dispatchSpawn(ctx context.Context, req *SpawnRequest) (*Ses
 
 // spawnContainerJSONRPC starts an agent in a container using RunInteractive
 // and establishes an ACP JSON-RPC session over the container's stdio pipes.
-func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnRequest) (*Session, error) {
+func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnRequest, plan spawnPlan) (*Session, error) {
 	image := req.ContainerImage
 	if image == "" {
 		return nil, &InputValidationError{Field: "container_image", Message: "required for sandboxed sessions"}
@@ -431,25 +620,55 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 		Env:        req.Env,
 		WorkDir:    "/workspace",
 		AutoRemove: true,
-		Network:    "host",
+		Network:    b.sandboxNetwork().String(),
 		User:       currentUser,
 		Labels: map[string]string{
 			"quicbaas.agent":   b.Type(),
 			"quicbaas.session": "pending",
 		},
+
+		// Trust dimension (container_trust.go / trust_policy.go). Every
+		// field is inert at its zero value, so a spawn that does not ask
+		// for trusted computing builds the same spec it always did.
+		ImageDigest:  req.ImageDigest,
+		TrustLevel:   req.TrustLevel,
+		TrustLabel:   req.TrustLabel,
+		ExpectedPCRs: req.ExpectedPCRs,
 	}
 
 	// Mount workspace if specified
-	if req.WorkDir != "" && req.WorkDir != "." {
+	if req.WorkDir != "" && req.WorkDir != WorkDirCurrent {
 		spec.Mounts = []ContainerMount{{
 			Source: req.WorkDir,
 			Target: "/workspace",
 		}}
 	}
 
-	// Mount the host's OpenCode config directory so the container has provider
+	// Extra mounts were authorized against the orchestrator's mount policy
+	// before the backend ever saw this request; append them verbatim.
+	spec.Mounts = append(spec.Mounts, req.ExtraMounts...)
+
+	// Mount the OpenCode config directory so the container has provider
 	// configuration and npm packages for custom providers like Ollama.
-	if home, _ := os.UserHomeDir(); home != "" {
+	//
+	// When the spawn resolved a pooled account with file-based credentials
+	// (see resolveAccount / account_materialize.go), req.AccountHomeDir names
+	// a FRESH, per-session directory holding only that account's files —
+	// mount THAT instead of the host's shared config, so two concurrent
+	// sandboxed sessions using different accounts can never observe each
+	// other's credentials (or the operator's own, unrelated, real config).
+	// Absent an account selection, fall back to the pre-existing behavior
+	// unchanged.
+	if req.AccountHomeDir != "" {
+		configDir := req.AccountHomeDir + "/.config/opencode"
+		if _, statErr := os.Stat(configDir); statErr == nil {
+			spec.Mounts = append(spec.Mounts, ContainerMount{
+				Source:   configDir,
+				Target:   "/home/agent/.config/opencode",
+				ReadOnly: true,
+			})
+		}
+	} else if home, _ := os.UserHomeDir(); home != "" {
 		configDir := home + "/.config/opencode"
 		if _, statErr := os.Stat(configDir); statErr == nil {
 			spec.Mounts = append(spec.Mounts, ContainerMount{
@@ -482,12 +701,16 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 	transport := newStdioTransportFromPipes(proc.Stdin, proc.Stdout)
 
 	// teardown aborts a partially-spawned container: it closes the stdio
-	// transport and cancels the container process context (killing `docker run`
-	// and triggering --rm cleanup). Centralising it keeps every handshake
-	// failure path leak-free.
+	// transport, cancels the container process context (killing `docker run`
+	// and triggering --rm cleanup), and removes the private env file that
+	// process was reading its environment from. Centralising it keeps every
+	// handshake failure path leak-free.
 	teardown := func() {
 		_ = transport.Close()
 		procCancel()
+		if proc.Cleanup != nil {
+			proc.Cleanup()
+		}
 	}
 
 	// ACP handshake: initialize
@@ -544,19 +767,29 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 		return nil, &ProtocolError{Message: "failed to parse session result", Cause: jsonErr}
 	}
 
-	sessionID := sessionResult.SessionID
-	if sessionID == "" {
+	agentSessionID := sessionResult.SessionID
+	if agentSessionID == "" {
 		var genErr error
-		sessionID, genErr = generateSessionID()
+		agentSessionID, genErr = generateSessionID()
 		if genErr != nil {
 			teardown()
 			return nil, &SpawnError{Command: image, Cause: genErr}
 		}
 	}
 
+	// A resume keeps the identifier the operator already holds. The container
+	// is brand new and reported its own ACP session id, so the two diverge
+	// here and stay divergent for the life of the session — see
+	// acpSession.agentID.
+	sessionID := agentSessionID
+	if plan.registerID != "" {
+		sessionID = plan.registerID
+	}
+
 	now := time.Now().UnixNano()
 	sess := &acpSession{
 		id:           sessionID,
+		agentID:      agentSessionID,
 		transport:    transport,
 		procCancel:   procCancel,
 		model:        model,
@@ -565,9 +798,30 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 		env:          req.Env,
 		systemPrompt: req.SystemPrompt,
 		createdAt:    now,
+
+		// The container process outlives this call, so the env file it reads
+		// from is released by Close — not here.
+		envFileCleanup: proc.Cleanup,
 	}
 	sess.lastActivity.Store(now)
 	b.storeSession(sess)
+
+	// Replay priming. Unlike the CLI path — where the transcript replaces a
+	// handshake message the spawn was going to pay for anyway — the ACP
+	// handshake carries no user turn, so restoring a sandboxed conversation
+	// costs one real prompt. That is stated plainly rather than hidden: a
+	// container resume is more expensive than a CLI resume, and the alternative
+	// (a fresh agent wearing the old session's ID) is not an option.
+	if plan.priming != "" {
+		if _, primeErr := b.promptJSONRPC(ctx, sess, &PromptRequest{
+			SessionID: sessionID,
+			Prompt:    plan.priming,
+		}); primeErr != nil {
+			b.sessions.Delete(sessionID)
+			teardown()
+			return nil, &SpawnError{Command: image, Cause: primeErr}
+		}
+	}
 
 	return &Session{
 		ID:        sessionID,
@@ -613,15 +867,101 @@ func (b *ACPBackend) spawnOneShotCLI(req *SpawnRequest) (*Session, error) {
 	}, nil
 }
 
+// spawnPlan describes a variation on the standard persistent spawn. Its zero
+// value is a plain spawn; a resume populates it to reconstitute an existing
+// session instead of creating a new one.
+type spawnPlan struct {
+	// registerID overrides the identifier the session is registered under.
+	// A resume sets it to the original session ID so the reconstituted
+	// process answers to the identifier the operator already holds, whatever
+	// the agent reports in its init message.
+	registerID string
+
+	// resumeID asks the agent CLI to reconstitute this session from its own
+	// on-disk session store ("--resume <id>"). Only set when the backend is
+	// configured for native resume.
+	resumeID string
+
+	// priming replaces the spawn handshake message. A replay resume puts the
+	// rendered transcript here, so restoring the conversation costs the one
+	// round trip the handshake already spends rather than an extra turn.
+	priming string
+}
+
+// defaultHandshakeContent is the throwaway first message that makes the agent
+// CLI emit its stream-json init record. The protocol only produces it after
+// receiving input, so a spawn always pays for one round trip.
+const defaultHandshakeContent = "Initialize session. Respond with OK."
+
+// handshakeContent returns the message that opens the subprocess: the replay
+// priming text for a replay resume, otherwise the throwaway handshake. A
+// replay therefore restores the conversation inside the round trip the spawn
+// already spends, instead of burning an extra turn.
+func (p spawnPlan) handshakeContent() string {
+	if p.priming != "" {
+		return p.priming
+	}
+	return defaultHandshakeContent
+}
+
+// encodeStreamJSONUserMessage renders one newline-terminated stream-json user
+// message, the input format the persistent CLI reads on stdin.
+func encodeStreamJSONUserMessage(content string) ([]byte, error) {
+	payload, err := json.Marshal(streamJSONUserMessage{
+		Type: "user",
+		Message: streamJSONUserContent{
+			Role:    "user",
+			Content: content,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return append(payload, '\n'), nil
+}
+
+// sessionPersistenceFlag is the agent CLI switch that disables its on-disk
+// session store. The backend owns it: it is a resume-policy decision
+// (NativeSessionResume), not part of the caller's command line, so any
+// caller-supplied copy is dropped and the flag is re-applied from policy.
+const sessionPersistenceFlag = "--no-session-persistence"
+
+// applySessionPersistenceFlag returns args with the session-persistence policy
+// applied: the flag is stripped wherever a caller placed it, then appended
+// again unless the backend is configured to resume natively.
+func applySessionPersistenceFlag(args []string, nativeResume bool) []string {
+	out := args[:0:0]
+	for _, arg := range args {
+		if arg == sessionPersistenceFlag {
+			continue
+		}
+		out = append(out, arg)
+	}
+	if !nativeResume {
+		out = append(out, sessionPersistenceFlag)
+	}
+	return out
+}
+
 // spawnCLI starts a persistent Claude Code subprocess using the stream-json
 // protocol. It reads the init message from stdout to obtain the session ID,
 // then stores the process and its pipes in the session for subsequent prompts.
-func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest) (*Session, error) {
+//
+// The plan selects between a plain spawn and a resume; see spawnPlan.
+func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest, plan spawnPlan) (*Session, error) {
 	args := make([]string, len(b.config.Args))
 	copy(args, b.config.Args)
 
 	// Append extra args from the spawn request (e.g., --dangerously-skip-permissions).
 	args = append(args, req.ExtraArgs...)
+
+	args = applySessionPersistenceFlag(args, b.config.NativeSessionResume)
+
+	// A native resume hands the conversation back to the agent's own session
+	// store; nothing is re-sent by us.
+	if plan.resumeID != "" {
+		args = append(args, "--resume", plan.resumeID)
+	}
 
 	if b.config.TeamMode {
 		args = append(args, "--team")
@@ -708,8 +1048,12 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest) (*Session,
 		reap()
 	}
 
-	handshake := `{"type":"user","message":{"role":"user","content":"Initialize session. Respond with OK."}}` + "\n"
-	if _, writeErr := stdinPipe.Write([]byte(handshake)); writeErr != nil {
+	handshake, handshakeErr := encodeStreamJSONUserMessage(plan.handshakeContent())
+	if handshakeErr != nil {
+		teardown()
+		return nil, &SpawnError{Command: b.config.Command, Cause: handshakeErr}
+	}
+	if _, writeErr := stdinPipe.Write(handshake); writeErr != nil {
 		teardown()
 		return nil, &SpawnError{Command: b.config.Command, Cause: writeErr}
 	}
@@ -773,6 +1117,11 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest) (*Session,
 			teardown()
 			return nil, &SpawnError{Command: b.config.Command, Cause: genErr}
 		}
+	}
+	// A resumed session keeps the identifier the operator already holds, so
+	// the agent's own reported session ID never leaks into the registry.
+	if plan.registerID != "" {
+		sessionID = plan.registerID
 	}
 
 	if initMsg.Model != "" {
@@ -852,8 +1201,24 @@ func (b *ACPBackend) spawnJSONRPC(ctx context.Context, req *SpawnRequest) (*Sess
 	// Isolate each ACP session with its own HOME to prevent lock file and
 	// database conflicts between concurrent instances (e.g., OpenCode uses
 	// ~/.local/state/opencode/locks and ~/.local/share/opencode/opencode.db).
-	sessionHome, tmpErr := os.MkdirTemp("", "acp-session-*")
-	if tmpErr == nil {
+	//
+	// When the spawn resolved a pooled account with file-based credentials
+	// (see resolveAccount / account_materialize.go), req.AccountHomeDir
+	// already names a fresh, per-session directory seeded with that
+	// account's files (e.g. ".config/opencode/auth.json") — use it directly
+	// instead of a bare isolation directory, so the subprocess reads that
+	// account's credential rather than the operator's shared config. Its
+	// lifetime is owned by resolveAccount's cleanup, attached in
+	// provisionAndSpawn.
+	sessionHome := req.AccountHomeDir
+	if sessionHome == "" {
+		var tmpErr error
+		sessionHome, tmpErr = os.MkdirTemp("", "acp-session-*")
+		if tmpErr != nil {
+			sessionHome = ""
+		}
+	}
+	if sessionHome != "" {
 		env = append(env, "HOME="+sessionHome)
 	}
 
@@ -1040,6 +1405,11 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 	var model string
 	var stopReason string
 
+	// assistantUsage accumulates the per-message token counts the CLI publishes
+	// on each assistant message. It is the fallback for turns whose terminal
+	// result message carries no aggregate; see collectStreamJSONUsage.
+	assistantUsage := &TokenUsage{}
+
 	// Use a channel to allow context cancellation during reads.
 	type scanResult struct {
 		msg *streamJSONMessage
@@ -1081,11 +1451,10 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 				continue
 			}
 
-			// Forward every event through the callback for the complete audit trail.
-			if req.EventCallback != nil {
-				raw, _ := json.Marshal(sr.msg)
-				req.EventCallback(sess.id, "agent:"+sr.msg.Type, string(raw))
-			}
+			// Translate the message into structured transcript events —
+			// assistant chunks, chain-of-thought, tool calls/results — so
+			// attachers see what the agent is doing as it happens.
+			emitStreamJSONEvents(req.EventCallback, sess.id, sr.msg)
 
 			switch sr.msg.Type {
 			case "assistant":
@@ -1101,6 +1470,7 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 					if sr.msg.Message.StopReason != "" {
 						stopReason = sr.msg.Message.StopReason
 					}
+					assistantUsage.Add(sr.msg.Message.Usage)
 				}
 
 			case "result":
@@ -1131,6 +1501,7 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 					Content:    contentBlocks,
 					Model:      model,
 					StopReason: stopReason,
+					Usage:      collectStreamJSONUsage(sr.msg.Usage, assistantUsage),
 				}, nil
 			}
 			// Other message types (e.g., tool_use) are skipped.
@@ -1195,24 +1566,23 @@ func (b *ACPBackend) promptOneShotCLI(ctx context.Context, sess *acpSession, req
 		}}
 	}
 
-	if req.EventCallback != nil {
-		req.EventCallback(sess.id, "agent:oneshot_response", stdout.String())
-	}
-
 	// Parse Claude --output-format json response
 	var result struct {
-		Type    string `json:"type"`
-		Result  string `json:"result"`
-		IsError bool   `json:"is_error"`
+		Type    string      `json:"type"`
+		Result  string      `json:"result"`
+		IsError bool        `json:"is_error"`
+		Usage   *TokenUsage `json:"usage"`
 	}
 	if jsonErr := json.Unmarshal(stdout.Bytes(), &result); jsonErr != nil {
 		// Not JSON — treat raw stdout as text response
-		return &PromptResponse{
+		resp := &PromptResponse{
 			SessionID:  sess.id,
 			Content:    []ContentBlock{{Type: "text", Text: stdout.String()}},
 			Model:      model,
 			StopReason: StopReasonEndTurn,
-		}, nil
+		}
+		emitPromptResponseChunks(req.EventCallback, resp)
+		return resp, nil
 	}
 
 	if result.IsError {
@@ -1222,12 +1592,37 @@ func (b *ACPBackend) promptOneShotCLI(ctx context.Context, sess *acpSession, req
 		}}
 	}
 
-	return &PromptResponse{
+	resp := &PromptResponse{
 		SessionID:  sess.id,
 		Content:    []ContentBlock{{Type: "text", Text: result.Result}},
 		Model:      model,
 		StopReason: StopReasonEndTurn,
-	}, nil
+		Usage:      collectStreamJSONUsage(result.Usage, nil),
+	}
+	emitPromptResponseChunks(req.EventCallback, resp)
+	return resp, nil
+}
+
+// collectStreamJSONUsage reduces a turn's stream-json token accounting to the
+// single figure the cost ledger records.
+//
+// The terminal "result" message carries the CLI's own aggregate for the turn
+// and is authoritative when present; the per-assistant-message counts are its
+// components, so adding both would bill the turn twice. The accumulated
+// per-message total is used only when the result message omits the aggregate,
+// which is how the dialect behaves for turns cut short.
+//
+// A turn that reported no counts at all yields nil, never a zero-valued
+// TokenUsage: "not measured" and "measured as zero" must stay distinguishable
+// so recordTurnUsage does not write a meaningless ledger entry.
+func collectStreamJSONUsage(result, accumulated *TokenUsage) *TokenUsage {
+	if !result.Empty() {
+		return result
+	}
+	if !accumulated.Empty() {
+		return accumulated
+	}
+	return nil
 }
 
 // promptJSONRPC sends a prompt via the persistent JSON-RPC transport.
@@ -1240,37 +1635,46 @@ func (b *ACPBackend) promptJSONRPC(ctx context.Context, sess *acpSession, req *P
 	var contentParts []string
 
 	sess.transport.SetNotificationHandler(func(msg *JSONRPCMessage) {
-		// Forward every notification through the event callback.
-		if req.EventCallback != nil {
-			raw, _ := json.Marshal(msg)
-			req.EventCallback(sess.id, "agent:notification:"+msg.Method, string(raw))
+		if msg.Method != "session/update" || msg.Params == nil {
+			// Non-update notifications are rare; surface them as system
+			// messages rather than silently dropping them.
+			if req.EventCallback != nil && msg.Params != nil {
+				req.EventCallback(&SessionEvent{
+					SessionID: sess.id,
+					Kind:      KindSystemMessage,
+					System: &SystemMessagePayload{
+						Level:   "info",
+						Code:    msg.Method,
+						Message: compactJSON(msg.Params),
+					},
+				})
+			}
+			return
 		}
 
-		// Accumulate text content from session/update notifications.
-		if msg.Method == "session/update" && msg.Params != nil {
-			paramsBytes, _ := json.Marshal(msg.Params)
-			var update struct {
-				Update struct {
-					SessionUpdate string `json:"sessionUpdate"`
-					Content       struct {
-						Type string `json:"type"`
-						Text string `json:"text"`
-					} `json:"content"`
-				} `json:"update"`
-			}
-			if json.Unmarshal(paramsBytes, &update) == nil {
-				if update.Update.Content.Text != "" {
-					contentMu.Lock()
-					contentParts = append(contentParts, update.Update.Content.Text)
-					contentMu.Unlock()
-				}
-			}
+		paramsBytes, marshalErr := json.Marshal(msg.Params)
+		if marshalErr != nil {
+			return
 		}
+		var params acpSessionUpdateParams
+		if unmarshalErr := json.Unmarshal(paramsBytes, &params); unmarshalErr != nil {
+			return
+		}
+
+		// Accumulate streamed text for the final PromptResponse.
+		if text := params.Update.contentText(); text != "" {
+			contentMu.Lock()
+			contentParts = append(contentParts, text)
+			contentMu.Unlock()
+		}
+
+		// Translate the update into its structured transcript event.
+		emitACPSessionUpdate(req.EventCallback, sess.id, &params.Update)
 	})
 	defer sess.transport.SetNotificationHandler(nil)
 
 	promptParams := &SessionPromptParams{
-		SessionID: sess.id,
+		SessionID: sess.promptSessionID(),
 		Prompt:    []PromptContent{{Type: "text", Text: req.Prompt}},
 	}
 
@@ -1281,11 +1685,6 @@ func (b *ACPBackend) promptJSONRPC(ctx context.Context, sess *acpSession, req *P
 
 	if resp.Error != nil {
 		return nil, &PromptError{SessionID: req.SessionID, Cause: &ProtocolError{Message: resp.Error.Message}}
-	}
-
-	if req.EventCallback != nil {
-		raw, _ := json.Marshal(resp.Result)
-		req.EventCallback(sess.id, "agent:jsonrpc_result", string(raw))
 	}
 
 	// Build response from accumulated notification content.
@@ -1302,8 +1701,15 @@ func (b *ACPBackend) promptJSONRPC(ctx context.Context, sess *acpSession, req *P
 		}, nil
 	}
 
-	// Fallback to parsing the result directly (for agents that include content in the result).
-	return b.parsePromptResult(resp, req.SessionID)
+	// Fallback to parsing the result directly (for agents that include content
+	// in the result). Nothing was streamed for such a turn, so emit the parsed
+	// content as assistant chunks to keep the transcript complete.
+	parsed, parseErr := b.parsePromptResult(resp, req.SessionID)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	emitPromptResponseChunks(req.EventCallback, parsed)
+	return parsed, nil
 }
 
 // promptEphemeral creates a temporary session, sends the prompt, and closes it.
@@ -1410,10 +1816,20 @@ func (b *ACPBackend) Close(ctx context.Context, sessionID string) error {
 	// regardless of which branch returns.
 	sess.mu.Lock()
 	cleanup := sess.cleanup
+	accountCleanup := sess.accountCleanup
+	envFileCleanup := sess.envFileCleanup
 	sess.cleanup = nil
+	sess.accountCleanup = nil
+	sess.envFileCleanup = nil
 	sess.mu.Unlock()
 	if cleanup != nil {
 		defer cleanup()
+	}
+	if accountCleanup != nil {
+		defer accountCleanup()
+	}
+	if envFileCleanup != nil {
+		defer envFileCleanup()
 	}
 
 	// CLI stream-json mode: close stdin and terminate subprocess. Cancelling the

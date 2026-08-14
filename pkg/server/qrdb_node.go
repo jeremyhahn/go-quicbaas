@@ -79,7 +79,7 @@ func (e *QRDBNodeError) Unwrap() error { return e.Cause }
 // quicraft host. When clusterMode is true, Raft address, shard/replica IDs,
 // deployment ID, static peer list, and the discovery method are populated
 // from the quicbaas Raft and Discovery config sections.
-func buildQRDBConfig(cfg *config.Config, clusterMode bool) *qrdbsdk.DaemonConfig {
+func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfig, error) {
 	qcfg := &qrdbsdk.DaemonConfig{}
 
 	// ------------------------------------------------------------------ //
@@ -118,7 +118,13 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) *qrdbsdk.DaemonConfig
 	}
 
 	// ------------------------------------------------------------------ //
-	// Seal barrier: map quicbaas SealConfig → qrdb SealConfig.
+	// Seal barrier: map quicbaas SealConfig → qrdb SealConfig, honoring the
+	// init-marker precedence (explicit operator override > persisted
+	// init-done marker > config default). This is what makes a
+	// `quicbaasd init --barrier-strategy shamir --shares N --threshold M`
+	// data dir boot the NODE's barrier with the SAME shamir scheme the
+	// ceremony initialized, instead of the "passphrase" config default that
+	// could never unseal it.
 	// ------------------------------------------------------------------ //
 	qcfg.Seal.Enabled = cfg.Seal.Enabled
 	qcfg.Seal.Strategy = cfg.Seal.Strategy
@@ -127,6 +133,33 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) *qrdbsdk.DaemonConfig
 	}
 	qcfg.Seal.ShamirThreshold = cfg.Seal.Threshold
 	qcfg.Seal.ShamirTotal = cfg.Seal.TotalShares
+	resolved, threshold, total, fromMarker, resolveErr := resolveBarrierStrategy(cfg, cfg.Seal.StrategyExplicit)
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
+	if resolved != "" {
+		qcfg.Seal.Strategy = string(resolved)
+		qcfg.Seal.ShamirThreshold = threshold
+		qcfg.Seal.ShamirTotal = total
+
+		// A strategy taken from the init marker also ENABLES the seal layer.
+		// Resolving only the strategy is not enough: `quicbaasd init
+		// --barrier-strategy shamir` deliberately initializes no barrier (that
+		// is the ceremony's job — go-qrdb pkg/bootstrap), so if seal stayed off
+		// here the node would boot UNSEALED, skip the sealed window, and run
+		// first-boot against an unprotected data plane. The M-of-N barrier
+		// would then never be created and the operator's chosen strategy would
+		// be silently ignored.
+		//
+		// Only the marker path does this — hence fromMarker rather than a test
+		// on `resolved`. The config default is itself "passphrase", so a
+		// non-empty strategy proves nothing about operator intent; enabling on
+		// that would seal every node whose config never mentioned a barrier.
+		// Under an explicit override the operator's own seal.enabled wins.
+		if fromMarker && resolved != qrdbsdk.StrategyNone {
+			qcfg.Seal.Enabled = true
+		}
+	}
 
 	// Provision a default volume pool so the barrier registry can satisfy
 	// RegisterTenant calls that do not supply an explicit storage backend.
@@ -143,7 +176,7 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) *qrdbsdk.DaemonConfig
 	if !clusterMode {
 		// Standalone: no Raft host, no discovery. The node builder applies
 		// safe defaults when the ports are zero.
-		return qcfg
+		return qcfg, nil
 	}
 
 	// ------------------------------------------------------------------ //
@@ -256,7 +289,7 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) *qrdbsdk.DaemonConfig
 		qcfg.Discovery.TokenEndpoint = cfg.Discovery.ConsulAddress
 	}
 
-	return qcfg
+	return qcfg, nil
 }
 
 // buildXKMSCryptoOptions collects hardware strategy factories registered via
@@ -271,7 +304,7 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) *qrdbsdk.DaemonConfig
 // backend so a tpm2 PIN verifies over the SAME single TPM open as the seal
 // strategy — never a second open. Nil means no TPM2 seal is active; a tpm2 PIN
 // then fails closed (PINRequiresTPMSealError).
-func buildXKMSCryptoOptions(cfg *config.Config, logger *slog.Logger, sharedTPM *xkmssdk.TPM2Backend) ([]qrdbsdk.ServerOption, error) {
+func buildXKMSCryptoOptions(cfg *config.Config, logger *slog.Logger, sharedTPM *xkmssdk.TPM2Backend, ceremonyCA qrdbsdk.CeremonyCA) ([]qrdbsdk.ServerOption, qrdbsdk.PINBackend, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -303,7 +336,7 @@ func buildXKMSCryptoOptions(cfg *config.Config, logger *slog.Logger, sharedTPM *
 	// verifies in-hardware over the seal strategy's shared TPM open (sharedTPM).
 	pinBackend, err := buildPINBackend(cfg, logger, newSealSharedTPMPINProvider(sharedTPM, cfg, logger))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	cryptoCfg := &XKMSCryptoConfig{
@@ -311,9 +344,14 @@ func buildXKMSCryptoOptions(cfg *config.Config, logger *slog.Logger, sharedTPM *
 		StrategyFactories: strategyFactories,
 		Factors:           buildXKMSFactors(cfg),
 		PINBackend:        pinBackend,
+		CeremonyCA:        ceremonyCA,
 	}
 
-	return XKMSCryptoOptions(cryptoCfg)
+	opts, err := XKMSCryptoOptions(cryptoCfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return opts, pinBackend, nil
 }
 
 // buildSealStrategyOnce builds the configured hardware/cloud seal strategy a
@@ -410,7 +448,10 @@ func (s *Server) initStandaloneQRDBNode() error {
 	ctx := context.Background()
 	s.logger.Info("Standalone mode: constructing real qrdb engine via NewStandaloneNode")
 
-	qcfg := buildQRDBConfig(s.config, false)
+	qcfg, qcfgErr := buildQRDBConfig(s.config, false)
+	if qcfgErr != nil {
+		return &QRDBNodeError{Stage: "build qrdb config", Cause: qcfgErr}
+	}
 
 	// Build the hardware seal strategy ONCE up front (single TPM open) so its
 	// open TPM2 backend can be shared with both the embedded node's barrier
@@ -427,10 +468,13 @@ func (s *Server) initStandaloneQRDBNode() error {
 		return &QRDBNodeError{Stage: "enroll tpm platform SRK", Cause: err}
 	}
 
-	serverOpts, err := buildXKMSCryptoOptions(s.config, slog.Default(), s.sealTPM2Backend)
+	serverOpts, pinBackend, err := buildXKMSCryptoOptions(s.config, slog.Default(), s.sealTPM2Backend, s.ceremonyCA)
 	if err != nil {
 		return &QRDBNodeError{Stage: "build xkms crypto options", Cause: err}
 	}
+	// Keep the PIN backend reachable so the init ceremony can enroll the
+	// operator's SO / user PINs into the SAME backend the node verifies against.
+	s.pinBackend = pinBackend
 
 	// Node options: we pass slog.Default() as the logger; in a well-configured
 	// quicbaasd process the default slog handler is set to the same output as
@@ -474,6 +518,13 @@ func (s *Server) initStandaloneQRDBNode() error {
 	// EmbeddedSealedBootError.
 	if len(s.opts.sealPassphrase) > 0 && qcfg.Seal.Enabled {
 		nodeOpts = append(nodeOpts, qrdbnode.WithSealPassphrase(s.opts.sealPassphrase))
+		// Retain a copy for the first-boot bootstrap orchestrator
+		// (qrdbsdk.BootstrapSystem): the node builder consumes and zeroizes
+		// opts.sealPassphrase below, but first-boot — which runs later in
+		// Start — must still be able to initialize a sealed
+		// passphrase-strategy system barrier. Zeroized by firstBootBootstrap
+		// as soon as first-boot completes.
+		s.bootstrapSealPassphrase = append([]byte(nil), s.opts.sealPassphrase...)
 	}
 
 	// When a hardware/cloud seal strategy is configured (awskms, vault, gcpkms,
@@ -543,7 +594,10 @@ func (s *Server) initClusteredQRDBNode() error {
 	ctx := context.Background()
 	s.logger.Info("Cluster mode: constructing real qrdb clustered node via NewClusteredNode")
 
-	qcfg := buildQRDBConfig(s.config, true)
+	qcfg, qcfgErr := buildQRDBConfig(s.config, true)
+	if qcfgErr != nil {
+		return &QRDBNodeError{Stage: "build qrdb config", Cause: qcfgErr}
+	}
 
 	members, err := buildClusterMembers(s.config)
 	if err != nil {
@@ -565,10 +619,13 @@ func (s *Server) initClusteredQRDBNode() error {
 		return &QRDBNodeError{Stage: "enroll tpm platform SRK", Cause: err}
 	}
 
-	serverOpts, err := buildXKMSCryptoOptions(s.config, slog.Default(), s.sealTPM2Backend)
+	serverOpts, pinBackend, err := buildXKMSCryptoOptions(s.config, slog.Default(), s.sealTPM2Backend, s.ceremonyCA)
 	if err != nil {
 		return &QRDBNodeError{Stage: "build xkms crypto options", Cause: err}
 	}
+	// Keep the PIN backend reachable so the init ceremony can enroll the
+	// operator's SO / user PINs into the SAME backend the node verifies against.
+	s.pinBackend = pinBackend
 
 	nodeOpts := []qrdbnode.NodeOption{
 		qrdbnode.WithLogger(slog.Default()),
@@ -606,6 +663,13 @@ func (s *Server) initClusteredQRDBNode() error {
 	// EmbeddedSealedBootError.
 	if len(s.opts.sealPassphrase) > 0 && qcfg.Seal.Enabled {
 		nodeOpts = append(nodeOpts, qrdbnode.WithSealPassphrase(s.opts.sealPassphrase))
+		// Retain a copy for the first-boot bootstrap orchestrator
+		// (qrdbsdk.BootstrapSystem): the node builder consumes and zeroizes
+		// opts.sealPassphrase below, but first-boot — which runs later in
+		// Start — must still be able to initialize a sealed
+		// passphrase-strategy system barrier. Zeroized by firstBootBootstrap
+		// as soon as first-boot completes.
+		s.bootstrapSealPassphrase = append([]byte(nil), s.opts.sealPassphrase...)
 	}
 
 	// When a hardware/cloud seal strategy is configured, build it and inject

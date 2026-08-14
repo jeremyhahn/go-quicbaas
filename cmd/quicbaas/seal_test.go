@@ -1200,14 +1200,6 @@ func TestCreateDEKClient_Transport(t *testing.T) {
 	cleanup := setupCoverageTestLogger(t)
 	defer cleanup()
 
-	t.Run("GRPCTransport", func(t *testing.T) {
-		origTransport := transport
-		transport = "grpc"
-		defer func() { transport = origTransport }()
-
-		_, err := createDEKClient()
-		_ = err
-	})
 }
 
 func TestCreateBackendClient_Transport(t *testing.T) {

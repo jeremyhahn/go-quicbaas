@@ -332,8 +332,44 @@ func RecoveryMiddleware(log *logger.Logger) func(http.Handler) http.Handler {
 func TimeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
 	timeoutMessage := `{"error":"request timeout after ` + timeout.String() + `","retryable":true}`
 	return func(next http.Handler) http.Handler {
-		return http.TimeoutHandler(next, timeout, timeoutMessage)
+		timed := http.TimeoutHandler(next, timeout, timeoutMessage)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Streaming responses are long-lived by construction: an SSE
+			// follow lasts as long as the agent turn it is reporting on,
+			// which is unbounded. http.TimeoutHandler also buffers the
+			// response, which would defeat incremental delivery even below
+			// the deadline. Such requests bypass the deadline entirely;
+			// their lifetime is governed by the client disconnecting or the
+			// handler completing.
+			if isStreamingRequest(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			timed.ServeHTTP(w, r)
+		})
 	}
+}
+
+// isStreamingRequest reports whether the request asks for an event stream.
+//
+// Detection is by request shape, not by a route table that would have to be
+// kept in sync as streaming endpoints are added:
+//
+//   - Accept: text/event-stream is the canonical SSE signal, sent by browser
+//     EventSource and by the SDK's SSE reader.
+//   - follow=1 marks a tail on the session-events endpoint, which streams SSE
+//     regardless of the Accept header. Without this a caller that asks for
+//     `Accept: application/json&follow=1` would have its unbounded stream
+//     buffered and cut by the request deadline.
+func isStreamingRequest(r *http.Request) bool {
+	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		return true
+	}
+	switch r.URL.Query().Get("follow") {
+	case "1", "true":
+		return true
+	}
+	return false
 }
 
 // RequestIDMiddleware generates and adds a request ID to the context.

@@ -40,6 +40,10 @@ type mockCertificateService struct {
 	getCACertificateFn  func(ctx context.Context, req *service.GetCACertificateRequest) (*service.GetCACertificateResponse, error)
 	getTLSConfigFn      func(ctx context.Context, req *service.GetTLSConfigRequest) (*service.GetTLSConfigResponse, error)
 	isInitialized       bool
+
+	CrossSignFunc           func(ctx context.Context, req *service.CrossSignRequest) (*service.CrossSignResponse, error)
+	ChainFunc               func(ctx context.Context, req *service.CertificateChainRequest) (*service.CertificateChainResponse, error)
+	IssueDeviceIdentityFunc func(ctx context.Context, req *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error)
 }
 
 func (m *mockCertificateService) IssueCertificate(ctx context.Context, req *service.IssueCertificateRequest) (*service.IssueCertificateResponse, error) {
@@ -1096,4 +1100,30 @@ func BenchmarkHandler_HandleCertGetTLSConfig(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = handler.HandleRequest(ctx, req)
 	}
+}
+
+// CrossSign satisfies service.CertificateService. The certificate-extension
+// verbs are exercised by the dedicated extension tests; this double records
+// the call and returns the configured response.
+func (m *mockCertificateService) CrossSign(ctx context.Context, req *service.CrossSignRequest) (*service.CrossSignResponse, error) {
+	if m.CrossSignFunc != nil {
+		return m.CrossSignFunc(ctx, req)
+	}
+	return &service.CrossSignResponse{}, nil
+}
+
+// Chain satisfies service.CertificateService.
+func (m *mockCertificateService) Chain(ctx context.Context, req *service.CertificateChainRequest) (*service.CertificateChainResponse, error) {
+	if m.ChainFunc != nil {
+		return m.ChainFunc(ctx, req)
+	}
+	return &service.CertificateChainResponse{}, nil
+}
+
+// IssueDeviceIdentity satisfies service.CertificateService.
+func (m *mockCertificateService) IssueDeviceIdentity(ctx context.Context, req *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error) {
+	if m.IssueDeviceIdentityFunc != nil {
+		return m.IssueDeviceIdentityFunc(ctx, req)
+	}
+	return &service.IssueDeviceIdentityResponse{}, nil
 }

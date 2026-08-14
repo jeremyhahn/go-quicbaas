@@ -21,6 +21,14 @@ service ProjectService {
     rpc UpdateProject(UpdateProjectRequest) returns (UpdateProjectResponse);
     rpc DeleteProject(DeleteProjectRequest) returns (DeleteProjectResponse);
     rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
+
+    // GrantAgentRole sets or updates the role of a single agent. Unlike
+    // UpdateProject.agent_roles — which REPLACES the whole role map — this
+    // mutates exactly one entry and leaves every other agent untouched.
+    rpc GrantAgentRole(GrantAgentRoleRequest) returns (GrantAgentRoleResponse);
+    // RevokeAgentRole sets a single agent's role to "denied", blocking its
+    // project access without disturbing the other entries.
+    rpc RevokeAgentRole(RevokeAgentRoleRequest) returns (RevokeAgentRoleResponse);
 }
 
 // =============================================================================
@@ -131,4 +139,31 @@ message ListProjectsResponse {
     repeated Project projects = 1;
     int32 total               = 2;
     int64 timestamp           = 3;
+}
+
+message GrantAgentRoleRequest {
+    string tenant_id  = 1;
+    string project_id = 2;
+    string agent_id   = 3;
+    // role is one of "lead"|"worker"|"observer"|"denied".
+    string role       = 4;
+}
+
+message GrantAgentRoleResponse {
+    string project_id = 1;
+    string agent_id   = 2;
+    string role       = 3;
+    int64  timestamp  = 4;
+}
+
+message RevokeAgentRoleRequest {
+    string tenant_id  = 1;
+    string project_id = 2;
+    string agent_id   = 3;
+}
+
+message RevokeAgentRoleResponse {
+    string project_id = 1;
+    string agent_id   = 2;
+    int64  timestamp  = 3;
 }

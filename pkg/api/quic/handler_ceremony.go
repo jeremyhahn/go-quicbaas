@@ -130,8 +130,6 @@ type ceremonyInitWireResponse struct {
 	TLSCertPEM string `json:"tls_cert_pem"`
 	State      string `json:"state"`
 	ShareCount int    `json:"share_count"`
-	SOCertPEM  string `json:"so_cert_pem,omitempty"`
-	SOKeyPEM   string `json:"so_key_pem,omitempty"`
 }
 
 // ceremonyStatusWireResponse mirrors ceremonyStatusToResponse.
@@ -287,12 +285,6 @@ func (h *Handler) handleCeremonyInitialize(ctx context.Context, req *Request) *R
 		TLSCertPEM: string(info.TLSCertPEM),
 		State:      info.State,
 		ShareCount: info.ShareCount,
-	}
-	if len(info.SOCertPEM) > 0 {
-		resp.SOCertPEM = string(info.SOCertPEM)
-	}
-	if len(info.SOKeyPEM) > 0 {
-		resp.SOKeyPEM = string(info.SOKeyPEM)
 	}
 
 	payload, err := EncodePayload(resp)

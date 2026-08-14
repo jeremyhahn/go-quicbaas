@@ -22,6 +22,7 @@ import (
 	"context"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
@@ -35,7 +36,7 @@ const certTenantSeparator = "/"
 // For single-tenant mode (empty tenantID), the serial is returned as-is.
 // Format: "tenant/{tenantID}/{serial}".
 func certTenantScopedSerial(tenantID, serial string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return serial
 	}
 	return certTenantPrefix + tenantID + certTenantSeparator + serial
@@ -44,7 +45,7 @@ func certTenantScopedSerial(tenantID, serial string) string {
 // certTenantStripSerial removes the tenant prefix from a serial number.
 // If the serial doesn't have a tenant prefix, it is returned as-is.
 func certTenantStripSerial(tenantID, serial string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return serial
 	}
 	prefix := certTenantPrefix + tenantID + certTenantSeparator
@@ -55,7 +56,7 @@ func certTenantStripSerial(tenantID, serial string) string {
 // For single-tenant mode (empty tenantID), all serials belong.
 // For multi-tenant mode, the serial must have the matching tenant prefix.
 func certTenantSerialBelongsTo(tenantID, serial string) bool {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return true
 	}
 	prefix := certTenantPrefix + tenantID + certTenantSeparator
@@ -66,7 +67,7 @@ func certTenantSerialBelongsTo(tenantID, serial string) bool {
 // For single-tenant mode, returns empty string (list all).
 // For multi-tenant mode, returns "tenant/{tenantID}/".
 func certTenantListPrefix(tenantID string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return ""
 	}
 	return certTenantPrefix + tenantID + certTenantSeparator
@@ -75,8 +76,8 @@ func certTenantListPrefix(tenantID string) string {
 // certEnforceTenantAccess validates that the requesting tenant has access to the certificate.
 // Returns nil if access is allowed, or an error if the tenant doesn't own the certificate.
 func certEnforceTenantAccess(tenantID, serial, operation string) error {
-	if tenantID == "" {
-		return nil // Single-tenant mode, no access control
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return nil // Single-tenant mode / system tenant, no access control
 	}
 	if !certTenantSerialBelongsTo(tenantID, serial) {
 		return NewError(errors.ErrCrossTenantAccess, "certificate."+operation,

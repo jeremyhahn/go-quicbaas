@@ -137,7 +137,7 @@ func runCredentialSubmit(cmd *cobra.Command, args []string) error {
 	defer cancel()
 	if err := client.CredentialSubmit(ctx, &qrdbtransport.CredentialSubmitRequest{
 		Name:  name,
-		Value: credentialValue,
+		Value: []byte(credentialValue),
 	}); err != nil {
 		return formatError(err)
 	}
@@ -220,7 +220,7 @@ func runCredentialRotate(cmd *cobra.Command, args []string) error {
 	defer cancel()
 	resp, err := client.CredentialRotate(ctx, &qrdbtransport.CredentialRotateRequest{
 		Name:               name,
-		NewValue:           credentialValue,
+		NewValue:           []byte(credentialValue),
 		GracePeriodSeconds: int64(credentialGracePeriod / time.Second),
 	})
 	if err != nil {
@@ -272,7 +272,11 @@ func runCredentialRetrieve(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), resp.Value)
+	// %s, not the default []byte verb: qrdb models a credential value as raw
+	// bytes so binary material round-trips, and Fprintln would render that as
+	// a decimal byte list ("[99 117 ...]") instead of the value. The trailing
+	// newline is the documented pipeline contract (docs/cli/credential.md).
+	fmt.Fprintf(cmd.OutOrStdout(), "%s\n", resp.Value)
 	return nil
 }
 

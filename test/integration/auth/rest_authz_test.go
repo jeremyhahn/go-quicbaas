@@ -59,11 +59,12 @@ func newTestRESTContext(t *testing.T, allowed ...string) *testRESTContext {
 
 	authCfg := &auth.AuthConfig{
 		Enabled:         true,
-		JWTSecret:       "test-rest-secret-key-for-integration-testing",
+		JWTSigningKeyID: "test-rest-jwt-signing-key",
 		TokenTTL:        1 * time.Hour,
 		RefreshTokenTTL: 24 * time.Hour,
 		MaxTokens:       100,
 	}
+	configureTestJWTSigning(t, authCfg)
 
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
@@ -244,11 +245,12 @@ func TestREST401ForExpiredToken(t *testing.T) {
 
 	authCfg := &auth.AuthConfig{
 		Enabled:         true,
-		JWTSecret:       "test-expired-token-secret",
+		JWTSigningKeyID: "test-expired-token-signing-key",
 		TokenTTL:        1 * time.Millisecond, // Very short TTL
 		RefreshTokenTTL: 1 * time.Minute,
 		MaxTokens:       100,
 	}
+	configureTestJWTSigning(t, authCfg)
 
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)

@@ -22,6 +22,7 @@ import (
 	"context"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -36,7 +37,7 @@ const schedulerTenantJobSuffix = "/"
 // For single-tenant mode (empty tenantID), the job name is returned as-is.
 // Format: "tenant/{tenantID}/{jobName}".
 func schedulerTenantScopedJobName(tenantID, jobName string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return jobName
 	}
 	return schedulerTenantJobPrefix + tenantID + schedulerTenantJobSuffix + jobName
@@ -45,7 +46,7 @@ func schedulerTenantScopedJobName(tenantID, jobName string) string {
 // schedulerTenantStripJobName removes the tenant prefix from a job name.
 // If the job name doesn't have a tenant prefix, it is returned as-is.
 func schedulerTenantStripJobName(tenantID, jobName string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return jobName
 	}
 	prefix := schedulerTenantJobPrefix + tenantID + schedulerTenantJobSuffix
@@ -56,7 +57,7 @@ func schedulerTenantStripJobName(tenantID, jobName string) string {
 // For single-tenant mode (empty tenantID), all jobs belong.
 // For multi-tenant mode, the job must have a matching TargetTenantID.
 func schedulerTenantJobBelongsTo(tenantID, jobTargetTenantID string) bool {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return true
 	}
 	return jobTargetTenantID == tenantID
@@ -90,8 +91,8 @@ func schedulerTenantValidateID(tenantID string) error {
 // schedulerTenantEnforceAccess validates that the requesting tenant has access to the job.
 // Returns nil if access is allowed, or an error if the tenant doesn't own the job.
 func schedulerTenantEnforceAccess(tenantID, jobTargetTenantID, operation string) error {
-	if tenantID == "" {
-		return nil // Single-tenant mode, no access control
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return nil // Single-tenant mode / system tenant, no access control
 	}
 	if !schedulerTenantJobBelongsTo(tenantID, jobTargetTenantID) {
 		return NewError(errors.ErrCrossTenantAccess, "scheduler."+operation,

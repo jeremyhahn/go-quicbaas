@@ -716,3 +716,14 @@ func TestAgentHealthMonitor_Restart(t *testing.T) {
 		t.Fatalf("second stop failed: %v", err)
 	}
 }
+
+// PromptSessionAsync mirrors the production contract: the turn is acknowledged
+// immediately and its output would flow to the session event log.
+func (m *healthMockAgentService) PromptSessionAsync(ctx context.Context, req *PromptSessionRequest) (*PromptTurnAck, error) {
+	return &PromptTurnAck{
+		SessionID: req.SessionID,
+		TurnID:    "turn-test",
+		Status:    TurnStatusAccepted,
+		Sequence:  1,
+	}, nil
+}

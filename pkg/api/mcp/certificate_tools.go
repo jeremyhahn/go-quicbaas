@@ -196,9 +196,11 @@ var (
 	}
 )
 
-// getAllCertificateTools returns all Certificate tools (6 tools).
+// getAllCertificateTools returns all Certificate tools: the six base verbs
+// plus the three certificate-extension verbs declared in
+// certificate_extensions_mcp.go.
 func getAllCertificateTools() []Tool {
-	return []Tool{
+	tools := []Tool{
 		CertificateIssueTool,
 		CertificateSignCSRTool,
 		CertificateRevokeTool,
@@ -206,4 +208,5 @@ func getAllCertificateTools() []Tool {
 		CertificateGetCATool,
 		CertificateGetTLSConfigTool,
 	}
+	return append(tools, getAllCertificateExtensionTools()...)
 }

@@ -42,7 +42,7 @@ xkey / xkms clients                    QuicBaaS CLI / QuicBaaS clients
 4. **QuicBaaS keeps its own SDK** for QuicBaaS-specific features (KV, Vector, TimeSeries, Batch, etc.).
 5. **No SDK merging** -- two SDKs, one server, compatible protocols.
 6. **Tenant context injected at service layer** from auth context.
-7. **Empty TenantID = single-tenant mode** (xkmsd), **TenantID set = tenant-isolated mode** (quicbaasd).
+7. **Empty TenantID or the literal system tenant (`qrdbsdk.SystemTenantID`) = platform/single-tenant scope** (xkmsd, and quicbaasd control-plane callers); **any other TenantID = tenant-isolated mode** (quicbaasd). The empty string and `"system"` are the same scope per `qrdbsdk.IsSystemTenant` — see `docs/security/multi-tenancy.md`.
 
 ## SDK Sub-Interface Design
 

@@ -44,10 +44,7 @@ func TestValidateToken(t *testing.T) {
 	})
 
 	t.Run("empty token", func(t *testing.T) {
-		config := &AuthConfig{
-			Enabled:   true,
-			JWTSecret: "test-secret-key",
-		}
+		config := newTestAuthConfig(t)
 		am, err := NewInMemoryAuthManager(config, log)
 		require.NoError(t, err)
 
@@ -61,11 +58,7 @@ func TestValidateToken(t *testing.T) {
 	})
 
 	t.Run("valid token", func(t *testing.T) {
-		config := &AuthConfig{
-			Enabled:   true,
-			JWTSecret: "test-secret-key",
-			TokenTTL:  1 * time.Hour,
-		}
+		config := newTestAuthConfig(t)
 		am, err := NewInMemoryAuthManager(config, log)
 		require.NoError(t, err)
 
@@ -89,10 +82,7 @@ func TestValidateToken(t *testing.T) {
 	})
 
 	t.Run("invalid token", func(t *testing.T) {
-		config := &AuthConfig{
-			Enabled:   true,
-			JWTSecret: "test-secret-key",
-		}
+		config := newTestAuthConfig(t)
 		am, err := NewInMemoryAuthManager(config, log)
 		require.NoError(t, err)
 
@@ -105,11 +95,7 @@ func TestValidateToken(t *testing.T) {
 	})
 
 	t.Run("revoked token", func(t *testing.T) {
-		config := &AuthConfig{
-			Enabled:   true,
-			JWTSecret: "test-secret-key",
-			TokenTTL:  1 * time.Hour,
-		}
+		config := newTestAuthConfig(t)
 		am, err := NewInMemoryAuthManager(config, log)
 		require.NoError(t, err)
 
@@ -137,10 +123,7 @@ func TestValidateToken(t *testing.T) {
 // TestGetUserStore tests the GetUserStore method.
 func TestGetUserStore(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -179,10 +162,7 @@ func TestRefreshTokenErrorPaths(t *testing.T) {
 	})
 
 	t.Run("invalid refresh token", func(t *testing.T) {
-		config := &AuthConfig{
-			Enabled:   true,
-			JWTSecret: "test-secret-key",
-		}
+		config := newTestAuthConfig(t)
 		am, err := NewInMemoryAuthManager(config, log)
 		require.NoError(t, err)
 
@@ -191,12 +171,7 @@ func TestRefreshTokenErrorPaths(t *testing.T) {
 	})
 
 	t.Run("refresh token not in store", func(t *testing.T) {
-		config := &AuthConfig{
-			Enabled:         true,
-			JWTSecret:       "test-secret-key",
-			TokenTTL:        1 * time.Hour,
-			RefreshTokenTTL: 24 * time.Hour,
-		}
+		config := newTestAuthConfig(t)
 		am, err := NewInMemoryAuthManager(config, log)
 		require.NoError(t, err)
 
@@ -217,12 +192,7 @@ func TestRefreshTokenErrorPaths(t *testing.T) {
 	})
 
 	t.Run("user not found", func(t *testing.T) {
-		config := &AuthConfig{
-			Enabled:         true,
-			JWTSecret:       "test-secret-key",
-			TokenTTL:        1 * time.Hour,
-			RefreshTokenTTL: 24 * time.Hour,
-		}
+		config := newTestAuthConfig(t)
 		am, err := NewInMemoryAuthManager(config, log)
 		require.NoError(t, err)
 
@@ -262,11 +232,7 @@ func TestRevokeTokenErrorPaths(t *testing.T) {
 // TestValidateTokenInternalErrorPaths tests internal validateToken error paths.
 func TestValidateTokenInternalErrorPaths(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-		TokenTTL:  1 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -278,8 +244,8 @@ func TestValidateTokenInternalErrorPaths(t *testing.T) {
 	token, err := am.generateTokens(user)
 	require.NoError(t, err)
 
-	// Now change the JWT secret to make the token invalid
-	am.config.JWTSecret = "different-secret"
+	// Now swap the verification key to make the token invalid
+	SetPublicKey(am.config, newTestSigner(t).Public())
 
 	_, err = am.validateToken(token.AccessToken)
 	assert.Error(t, err)
@@ -290,12 +256,7 @@ func TestGenerateTokensErrorPaths(t *testing.T) {
 	log := createTestLogger(t)
 
 	t.Run("valid token generation", func(t *testing.T) {
-		config := &AuthConfig{
-			Enabled:         true,
-			JWTSecret:       "test-secret-key",
-			TokenTTL:        1 * time.Hour,
-			RefreshTokenTTL: 24 * time.Hour,
-		}
+		config := newTestAuthConfig(t)
 
 		am, err := NewInMemoryAuthManager(config, log)
 		require.NoError(t, err)

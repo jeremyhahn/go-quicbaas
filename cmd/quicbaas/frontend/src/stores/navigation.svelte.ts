@@ -42,6 +42,11 @@ export type ViewID =
   | 'iam'
   | 'kms'
   | 'secrets'
+  | 'certificates'
+  | 'trust'
+  | 'crypto'
+  | 'dek'
+  | 'dynamic-secrets'
   | 'barrier'
   | 'tenant-barrier'
   | 'ceremony'
@@ -53,7 +58,8 @@ export type ViewID =
   | 'connection'
   | 'theme'
   | 'inference'
-  | 'projects';
+  | 'projects'
+  | 'accounts';
 
 /** Map each sidebar ViewID to its canonical hash path. */
 const viewHashPaths: Partial<Record<ViewID, string>> = {
@@ -80,6 +86,11 @@ const viewHashPaths: Partial<Record<ViewID, string>> = {
   iam:           '/iam',
   kms:           '/kms',
   secrets:       '/secrets',
+  certificates:  '/certificates',
+  trust:         '/trust',
+  crypto:        '/crypto',
+  dek:           '/dek',
+  'dynamic-secrets': '/dynamic-secrets',
   barrier:       '/barrier',
   'tenant-barrier': '/tenant-barrier',
   ceremony:      '/ceremony',
@@ -89,6 +100,8 @@ const viewHashPaths: Partial<Record<ViewID, string>> = {
   inference:     '/inference',
   // ORCHESTRATION — projects
   projects:      '/projects',
+  // ORCHESTRATION — pooled provider accounts
+  accounts:      '/accounts',
   // CLUSTER
   cluster:       '/cluster',
 };
@@ -122,6 +135,11 @@ const routeToViewID: Partial<Record<RouteName, ViewID>> = {
   iam:              'iam',
   kms:              'kms',
   secrets:          'secrets',
+  certificates:     'certificates',
+  trust:            'trust',
+  crypto:           'crypto',
+  dek:              'dek',
+  'dynamic-secrets': 'dynamic-secrets',
   barrier:          'barrier',
   'tenant-barrier': 'tenant-barrier',
   ceremony:         'ceremony',
@@ -131,6 +149,8 @@ const routeToViewID: Partial<Record<RouteName, ViewID>> = {
   inference:        'inference',
   // ORCHESTRATION — projects
   projects:         'projects',
+  // ORCHESTRATION — pooled provider accounts
+  accounts:         'accounts',
   // CLUSTER
   cluster:          'cluster',
 };

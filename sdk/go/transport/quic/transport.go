@@ -260,6 +260,22 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 		isOrchestrator = true
 	}
 
+	// Pooled provider accounts share the OpOrchestrator dispatch byte with a
+	// disjoint sub-op range (0x30-0x38), the same "shared opcode, disjoint
+	// sub-op range" pattern scheduler/messaging/extended-vector use on
+	// OpScheduler. Keying on the service name keeps dispatch unambiguous.
+	isAccount := isAccountService(svc)
+
+	// Projects likewise share the OpOrchestrator dispatch byte, in their own
+	// disjoint sub-op range (0x40-0x47).
+	isProject := isProjectService(svc)
+
+	// SSH likewise shares the OpOrchestrator dispatch byte, in its own
+	// disjoint sub-op range (0x50-0x5D). The single-byte top-level opcode
+	// space is fully allocated, so every new service rides an existing
+	// dispatch byte this way.
+	isSSH := isSSHService(svc)
+
 	// Detect Barrier and Ceremony services — both use a single dispatch
 	// opcode (OpBarrier / OpCeremony) with the sub-operation byte prepended
 	// to the JSON payload. Identical wire pattern to Orchestrator.
@@ -292,6 +308,12 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 	isCrypto := isCryptoService(svc)
 	isSecrets := isSecretsService(svc)
 
+	// Detect the DynamicSecrets service. Its eight verbs use the server's
+	// dedicated top-level opcodes 0x64-0x6B and need no request transform —
+	// the leaf SDK request structs share the server's snake_case JSON tags.
+	// Only the response needs a typed decode.
+	isDynamicSecrets := isDynamicSecretsService(svc)
+
 	// Detect the Certificate and ObjectStorage services. Both use distinct
 	// per-method opcodes and require no request transform — their SDK request
 	// structs encode to the same wire shape the server unmarshals (Certificate
@@ -301,7 +323,17 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 	// transport returns.
 	isCertificate := isCertificateService(svc)
 	isTrust := isTrustService(svc)
+	isAttestation := isAttestationService(svc)
 	isObjectStorage := isObjectStorageService(svc)
+
+	// Detect the PIV and FIDO2 services. Both ride the OpOrchestrator
+	// dispatch byte in their own disjoint sub-op ranges (0x80-0x87 /
+	// 0x90-0x93) and need no request transform: the SDK sends the go-xkms
+	// transport structs, which ARE the wire shape the server decodes. FIDO2
+	// additionally carries the caller's tenant scope as an injected
+	// tenant_id field, mirroring the orchestrator verbs.
+	isPIV := isPIVService(svc)
+	isFIDO2 := isFIDO2Service(svc)
 
 	// Detect the unified login ceremony (quicbaas.Auth/BeginLogin |
 	// FinishLogin). Both use distinct per-method opcodes (OpAuthBeginLogin /
@@ -386,6 +418,51 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 		payload = withSubOp
 	}
 
+	// Account operations prepend their sub-op byte to the JSON body, exactly
+	// like Orchestrator above. No tenant injection: every account request
+	// carries an explicit tenant_id field, which the service layer requires.
+	if isAccount {
+		subOp, ok := AccountMethodToSubOp(method)
+		if !ok {
+			return nil, errors.NewInvalidInput("quic.doRequest",
+				"unknown account method: "+method)
+		}
+		withSubOp := make([]byte, 1+len(payload))
+		withSubOp[0] = subOp
+		copy(withSubOp[1:], payload)
+		payload = withSubOp
+	}
+
+	// Project operations prepend their sub-op byte the same way. No tenant
+	// injection: every project request carries an explicit tenant_id field,
+	// which the service layer requires.
+	if isProject {
+		subOp, ok := ProjectMethodToSubOp(method)
+		if !ok {
+			return nil, errors.NewInvalidInput("quic.doRequest",
+				"unknown project method: "+method)
+		}
+		withSubOp := make([]byte, 1+len(payload))
+		withSubOp[0] = subOp
+		copy(withSubOp[1:], payload)
+		payload = withSubOp
+	}
+
+	// SSH operations prepend their sub-op byte the same way. No tenant
+	// injection: SSH assets are addressed by the (scope, owner) pair carried
+	// in every request body.
+	if isSSH {
+		subOp, ok := SSHMethodToSubOp(method)
+		if !ok {
+			return nil, errors.NewInvalidInput("quic.doRequest",
+				"unknown ssh method: "+method)
+		}
+		withSubOp := make([]byte, 1+len(payload))
+		withSubOp[0] = subOp
+		copy(withSubOp[1:], payload)
+		payload = withSubOp
+	}
+
 	// For Barrier operations the server uses OpBarrier (0xC0) as the
 	// top-level opcode with the sub-operation code in payload[0]. Same
 	// wire pattern as Orchestrator above.
@@ -394,6 +471,72 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 		if !ok {
 			return nil, errors.NewInvalidInput("quic.doRequest",
 				"unknown barrier method: "+method)
+		}
+		withSubOp := make([]byte, 1+len(payload))
+		withSubOp[0] = subOp
+		copy(withSubOp[1:], payload)
+		payload = withSubOp
+	}
+
+	// The three certificate extension verbs (CrossSign / Chain /
+	// IssueDeviceIdentity) ride the OpOrchestrator dispatch byte in the
+	// disjoint 0x60-0x62 sub-op range, so the sub-op byte is prepended here
+	// exactly as it is for accounts, projects and SSH. The six base
+	// certificate verbs keep their own top-level opcodes and are untouched.
+	if isCertificate {
+		if subOp, ok := CertExtMethodToSubOp(method); ok {
+			withSubOp := make([]byte, 1+len(payload))
+			withSubOp[0] = subOp
+			copy(withSubOp[1:], payload)
+			payload = withSubOp
+		}
+	}
+
+	// The three attestation verbs ride the OpOrchestrator dispatch byte in
+	// the disjoint 0x70-0x72 sub-op range, so the sub-op byte is prepended
+	// here exactly as it is for accounts, projects, SSH and certificate
+	// extensions.
+	if isAttestation {
+		subOp, ok := AttestationMethodToSubOp(method)
+		if !ok {
+			return nil, errors.NewInvalidInput("quic.doRequest",
+				"unknown attestation method: "+method)
+		}
+		withSubOp := make([]byte, 1+len(payload))
+		withSubOp[0] = subOp
+		copy(withSubOp[1:], payload)
+		payload = withSubOp
+	}
+
+	// The eight PIV verbs ride the OpOrchestrator dispatch byte in the
+	// disjoint 0x80-0x87 sub-op range. No tenant injection: PIV slots are
+	// backend-scoped (the xkms model), addressed by the backend field every
+	// request body carries.
+	if isPIV {
+		subOp, ok := PIVMethodToSubOp(method)
+		if !ok {
+			return nil, errors.NewInvalidInput("quic.doRequest",
+				"unknown piv method: "+method)
+		}
+		withSubOp := make([]byte, 1+len(payload))
+		withSubOp[0] = subOp
+		copy(withSubOp[1:], payload)
+		payload = withSubOp
+	}
+
+	// The four FIDO2 ceremony verbs ride the OpOrchestrator dispatch byte in
+	// the disjoint 0x90-0x93 sub-op range. The tenant scope is injected into
+	// the JSON body from the request context before the sub-op prepend,
+	// exactly like the orchestrator verbs: the xkms wire structs carry no
+	// tenant field because xkms runs a single relying party, while QuicBaaS
+	// runs one per tenant.
+	if isFIDO2 {
+		payload = injectTenantID(ctx, payload)
+
+		subOp, ok := FIDO2MethodToSubOp(method)
+		if !ok {
+			return nil, errors.NewInvalidInput("quic.doRequest",
+				"unknown fido2 method: "+method)
 		}
 		withSubOp := make([]byte, 1+len(payload))
 		withSubOp[0] = subOp
@@ -534,6 +677,15 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 	// Orchestrator responses may be JSON arrays (e.g., ListBackends returns
 	// []*AgentBackendInfo directly). We decode the raw bytes instead of going
 	// through the generic map[string]interface{} path to handle both shapes.
+	if isAccount {
+		return decodeAccountResponse(method, resp.Payload)
+	}
+	if isProject {
+		return decodeProjectResponse(method, resp.Payload)
+	}
+	if isSSH {
+		return decodeSSHResponse(method, resp.Payload)
+	}
 	if isOrchestrator {
 		return decodeOrchestratorResponse(method, resp.Payload)
 	}
@@ -563,6 +715,9 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 	if isSecrets {
 		return decodeSecretsResponse(method, resp.Payload)
 	}
+	if isDynamicSecrets {
+		return decodeDynamicSecretsResponse(method, resp.Payload)
+	}
 	if isScheduler {
 		return decodeSchedulerResponse(method, resp.Payload)
 	}
@@ -577,6 +732,15 @@ func (t *Transport) doRequest(ctx context.Context, svc, method string, req inter
 	}
 	if isTrust {
 		return decodeTrustResponse(method, resp.Payload)
+	}
+	if isAttestation {
+		return decodeAttestationResponse(method, resp.Payload)
+	}
+	if isPIV {
+		return decodePIVResponse(method, resp.Payload)
+	}
+	if isFIDO2 {
+		return decodeFIDO2Response(method, resp.Payload)
 	}
 	if isObjectStorage {
 		return decodeObjectStorageResponse(method, resp.Payload)

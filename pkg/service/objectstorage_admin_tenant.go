@@ -22,6 +22,7 @@ import (
 	"context"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
@@ -32,7 +33,7 @@ const osAdminTenantSeparator = "/"
 // For single-tenant mode (empty tenantID), the name is returned as-is.
 // Format: "tenant/{tenantID}/{backend}".
 func osAdminTenantScopedBackend(tenantID, backend string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return backend
 	}
 	return osAdminTenantPrefix + tenantID + osAdminTenantSeparator + backend
@@ -40,7 +41,7 @@ func osAdminTenantScopedBackend(tenantID, backend string) string {
 
 // osAdminTenantStripBackend removes the tenant prefix from a backend name.
 func osAdminTenantStripBackend(tenantID, backend string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return backend
 	}
 	prefix := osAdminTenantPrefix + tenantID + osAdminTenantSeparator
@@ -49,7 +50,7 @@ func osAdminTenantStripBackend(tenantID, backend string) string {
 
 // osAdminBackendBelongsToTenant checks if a backend name belongs to the given tenant.
 func osAdminBackendBelongsToTenant(tenantID, backend string) bool {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return true
 	}
 	prefix := osAdminTenantPrefix + tenantID + osAdminTenantSeparator
@@ -58,7 +59,7 @@ func osAdminBackendBelongsToTenant(tenantID, backend string) bool {
 
 // osAdminTenantListPrefix returns the prefix for listing backends for a tenant.
 func osAdminTenantListPrefix(tenantID string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return ""
 	}
 	return osAdminTenantPrefix + tenantID + osAdminTenantSeparator
@@ -66,7 +67,7 @@ func osAdminTenantListPrefix(tenantID string) string {
 
 // osAdminEnforceTenantAccess validates tenant access to a backend.
 func osAdminEnforceTenantAccess(tenantID, backend, operation string) error {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return nil
 	}
 	if !osAdminBackendBelongsToTenant(tenantID, backend) {

@@ -77,6 +77,27 @@ type AgentService interface {
 	//   - error: ErrPromptRequired, ErrBackendRequired, ErrUnauthorized
 	PromptSession(ctx context.Context, req *PromptSessionRequest) (*PromptSessionResponse, error)
 
+	// PromptSessionAsync accepts a prompt for an existing agent session,
+	// records it in the durable session event log, dispatches the turn on a
+	// background context, and returns immediately with an acknowledgement.
+	//
+	// This is the operator-facing turn contract. Real agent turns run for
+	// minutes, which no request/response transport can hold open (REST caps a
+	// request at 25s), so the acknowledgement is the whole synchronous answer:
+	// the turn's output — assistant chunks, tool calls, and the terminal
+	// turn_completed / turn_failed event — is delivered exclusively through
+	// the SessionEventLog.
+	//
+	// Validation (tenant, prompt text, session, backend resolution) happens
+	// before the dispatch, so a bad request still fails synchronously with a
+	// typed error instead of an acknowledgement. A session ID is required:
+	// without one there is no durable stream to publish the turn on.
+	//
+	// The dispatch runs on a context detached from the caller's, so a client
+	// that disconnects — or a transport whose request deadline expires — never
+	// cancels the agent.
+	PromptSessionAsync(ctx context.Context, req *PromptSessionRequest) (*PromptTurnAck, error)
+
 	// SessionStatus returns the status of an active session.
 	// Requires permission: agent:prompt (read access)
 	// Parameters:
@@ -367,6 +388,15 @@ var (
 	// ErrPromptRequired indicates a prompt text is required.
 	ErrPromptRequired = errors.New("agent: prompt is required")
 
+	// ErrSessionLogRequired indicates an asynchronous turn was requested on an
+	// orchestrator with no session event log installed. The turn's output has
+	// nowhere to go, so the request is refused rather than run unobservably.
+	ErrSessionLogRequired = errors.New("agent: session event log is required for asynchronous turns")
+
+	// ErrTurnNotAccepted indicates the orchestrator could not record the
+	// turn_started marker, so the turn was never dispatched.
+	ErrTurnNotAccepted = errors.New("agent: turn was not accepted")
+
 	// ErrTaskRequired indicates a task description is required.
 	ErrTaskRequired = errors.New("agent: task description is required")
 
@@ -399,6 +429,10 @@ var (
 
 	// ErrAgentStoreMarshal indicates a serialization or deserialization failure.
 	ErrAgentStoreMarshal = errors.New("agent store: marshal error")
+
+	// ErrAgentStoreUnavailable indicates the backing key-value store rejected
+	// or could not serve a session-record operation.
+	ErrAgentStoreUnavailable = errors.New("agent store: unavailable")
 
 	// ErrHealthMonitorAlreadyRunning indicates the health monitor is already running.
 	ErrHealthMonitorAlreadyRunning = errors.New("agent: health monitor already running")
@@ -471,6 +505,11 @@ func (e *ProjectNotFoundError) Unwrap() error {
 type AgentStoreError struct {
 	Sentinel error
 	Message  string
+
+	// Cause is the underlying failure, when one exists. It is exposed through
+	// Unwrap so errors.Is / errors.As reach both the store's sentinel and the
+	// backing store's own error.
+	Cause error
 }
 
 // Error implements the error interface.
@@ -481,9 +520,12 @@ func (e *AgentStoreError) Error() string {
 	return e.Sentinel.Error()
 }
 
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *AgentStoreError) Unwrap() error {
-	return e.Sentinel
+// Unwrap exposes the sentinel and, when set, the underlying cause.
+func (e *AgentStoreError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{e.Sentinel}
+	}
+	return []error{e.Sentinel, e.Cause}
 }
 
 // =============================================================================
@@ -591,6 +633,14 @@ type SpawnSessionRequest struct {
 	Persistent      bool              `json:"persistent,omitempty"`       // persistent session with context across prompts
 	ExtraArgs       []string          `json:"extra_args,omitempty"`       // Additional CLI args for the agent command
 
+	// TrustLevel is the integrity tier the caller requires of this session
+	// (see trust_policy.go). It is the trust-axis counterpart of SandboxMode:
+	// TrustLevelDefault — the zero value every legacy caller sends — resolves
+	// against the server's orchestration.trust_policy and any tenant override,
+	// and a level BELOW that floor is refused rather than honored. A caller can
+	// therefore only ever raise its own tier, never opt out of the operator's.
+	TrustLevel TrustLevel `json:"trust_level,omitempty"`
+
 	// HostAffinity pins the session to a specific daemon host (Name or Host
 	// field on the AgentRegistration). Empty means "any available daemon"
 	// — the dispatcher picks the first online daemon serving the requested
@@ -609,6 +659,49 @@ type SpawnSessionRequest struct {
 	// agent. When false the operator-level orchestration.host_affinity.mode
 	// default applies (soft = warn-and-fallback by default).
 	HostAffinityStrict bool `json:"host_affinity_strict,omitempty"`
+
+	// --- Pooled provider account selection (see account_resolver.go) --------
+	//
+	// These mirror SpawnRequest's account fields and are the only way an
+	// operator-facing caller can reach the account pool: SpawnSession builds
+	// the backend SpawnRequest itself, so a field absent here is unreachable
+	// no matter what the backend supports.
+	//
+	// The account a session resolves to is persisted on its SessionRecord and
+	// replayed verbatim on resume. Without that, a resumed session would
+	// re-run selection and could land on a different provider account than the
+	// one it has been billing to — see spawnRequestFromRecord.
+
+	// AccountID pins the session to a specific pooled provider account.
+	// Leaving both AccountID and AccountAuto unset preserves the pre-account
+	// behavior exactly: the backend authenticates however its CLI already
+	// does.
+	AccountID string `json:"account_id,omitempty"`
+
+	// AccountAuto requests strategy-based account selection when AccountID is
+	// empty.
+	AccountAuto bool `json:"account_auto,omitempty"`
+
+	// AccountStrategy names the registered AccountSelectionStrategy to select
+	// with ("static", "least_usage", ...). Empty selects the registry default.
+	// Ignored unless AccountAuto is true.
+	AccountStrategy string `json:"account_strategy,omitempty"`
+
+	// AccountAllow optionally names the accounts this session may use and
+	// rotate through — the credential lifecycle policy for one agent. Empty
+	// leaves the whole tenant/project/provider pool eligible.
+	//
+	// Together with AccountAuto it is what authorizes rotation: a session with
+	// neither is treated as deliberately pinned and is never moved off its
+	// account. See SessionRecord.CanRotateAccount.
+	AccountAllow []string `json:"account_allow,omitempty"`
+
+	// ExtraMounts are additional host directories to bind-mount into the
+	// session's sandbox container. Every source is validated against the
+	// server's mount policy (managed projects root + operator allowlist)
+	// before any side effects; a source outside every permitted root fails
+	// the spawn with MountNotAllowedError. Ignored for non-sandboxed spawns.
+	ExtraMounts []ContainerMount `json:"extra_mounts,omitempty"`
 }
 
 // EffectiveSandboxMode returns the sandbox mode to be resolved against the
@@ -635,14 +728,14 @@ type SpawnSessionResponse struct {
 
 // PromptSessionRequest contains parameters for prompting an agent session.
 type PromptSessionRequest struct {
-	Backend       string             `json:"backend,omitempty"`
-	SessionID     string             `json:"session_id,omitempty"`
-	ProjectID     string             `json:"project_id,omitempty"`
-	Prompt        string             `json:"prompt"`
-	Model         string             `json:"model,omitempty"`
-	SystemPrompt  string             `json:"system_prompt,omitempty"`
-	UseRAG        bool               `json:"use_rag,omitempty"`
-	EventCallback AgentEventCallback `json:"-"` // Real-time event streaming (not serialized)
+	Backend       string               `json:"backend,omitempty"`
+	SessionID     string               `json:"session_id,omitempty"`
+	ProjectID     string               `json:"project_id,omitempty"`
+	Prompt        string               `json:"prompt"`
+	Model         string               `json:"model,omitempty"`
+	SystemPrompt  string               `json:"system_prompt,omitempty"`
+	UseRAG        bool                 `json:"use_rag,omitempty"`
+	EventCallback SessionEventCallback `json:"-"` // Real-time event streaming (not serialized)
 }
 
 // PromptSessionResponse contains the agent's response.
@@ -652,6 +745,44 @@ type PromptSessionResponse struct {
 	Model      string         `json:"model,omitempty"`
 	StopReason string         `json:"stop_reason,omitempty"`
 	Timestamp  int64          `json:"timestamp"`
+
+	// Usage is the token accounting the agent published for this turn, or nil
+	// when its CLI publishes none. The orchestrator has already attributed it
+	// to the tenant / account / project / job by the time the caller sees it;
+	// it is surfaced here so a caller can show what the turn cost without a
+	// second round trip to the usage API.
+	Usage *TokenUsage `json:"usage,omitempty"`
+}
+
+// PromptTurnAck acknowledges that the orchestrator accepted an agent turn for
+// background execution. It is the synchronous answer to PromptSessionAsync on
+// every transport; the turn's actual output arrives on the session event log.
+type PromptTurnAck struct {
+	// SessionID is the session the turn was accepted for.
+	SessionID string `json:"session_id"`
+
+	// TurnID correlates the acknowledgement with the turn_started event and
+	// with the terminal turn_completed / turn_failed event.
+	TurnID string `json:"turn_id"`
+
+	// Status is the turn's state at acknowledgement time, always
+	// TurnStatusAccepted. Present so clients can branch on one field rather
+	// than inferring intent from an empty content list.
+	Status string `json:"status"`
+
+	// Sequence is the session-log sequence of the turn_started event. Attach
+	// with this as the starting sequence to receive the whole turn with no
+	// gap and no duplicates.
+	Sequence uint64 `json:"sequence"`
+
+	// Backend is the agent backend the turn was dispatched to.
+	Backend string `json:"backend,omitempty"`
+
+	// Model is the model resolved for the turn, when known up front.
+	Model string `json:"model,omitempty"`
+
+	// Timestamp is when the turn was accepted, in Unix nanoseconds.
+	Timestamp int64 `json:"timestamp"`
 }
 
 // SessionStatusRequest contains parameters for querying session status.

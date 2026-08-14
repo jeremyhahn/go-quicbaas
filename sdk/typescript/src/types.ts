@@ -688,6 +688,24 @@ export interface SpawnSessionRequest {
   // MCP endpoint preset gives the agent native, cert-authenticated access to
   // platform tools; arbitrary stdio/HTTP servers may also be declared.
   mcp_servers?: MCPServerConfig[];
+  // account_id pins the session to one pooled provider account. Leaving both
+  // account_id and account_auto unset preserves the pre-account behavior
+  // exactly: the backend authenticates however its CLI already does.
+  account_id?: string;
+  // account_auto requests strategy-based account selection when account_id
+  // is empty.
+  account_auto?: boolean;
+  // account_strategy names the registered selection strategy to use
+  // ("static" | "least_usage"). Empty selects the registry default. Ignored
+  // unless account_auto is true.
+  account_strategy?: string;
+  // account_allow optionally names the accounts this session may use and
+  // rotate through — "these seats, nothing else". It is an additive filter,
+  // never a source: an ID the tenant does not own is simply not a candidate.
+  //
+  // Together with account_auto it is what authorizes rotation. A session with
+  // neither is treated as a deliberate pin and is never moved off its account.
+  account_allow?: string[];
 }
 
 // SpawnSessionResponse is the response from creating a new session.
@@ -724,6 +742,46 @@ export interface CloseSessionRequest {
 export interface CloseSessionResponse {
   session_id: string;
   closed: boolean;
+}
+
+// AccountRotationMode reports which mechanism moved a session onto its
+// replacement account. Mirrors orchestration.AccountRotationMode.
+export type AccountRotationMode = 'in_place' | 'resume';
+
+// RotateSessionAccountRequest asks the orchestrator to move a session onto a
+// different pooled provider account.
+// Mirrors orchestration.RotateSessionAccountRequest. session_id is carried on
+// the struct for the non-REST transports; REST treats the path segment as
+// authoritative and ignores a mismatched body value.
+export interface RotateSessionAccountRequest {
+  session_id: string;
+  // reason is recorded on the closed account segment and in the session
+  // transcript. Optional — an empty rotation carries no explanation.
+  reason?: string;
+  // hold_outgoing marks the account being left as limited until available_at,
+  // keeping the next selection from walking straight back into whatever
+  // prompted the rotation. Leave false for a plain rebalance.
+  hold_outgoing?: boolean;
+  // available_at is when a held outgoing account rejoins the pool (RFC 3339).
+  // Ignored unless hold_outgoing is set; omitted applies the service's
+  // default backoff.
+  available_at?: string;
+}
+
+// RotateSessionAccountResponse reports the outcome of a rotation.
+// Mirrors orchestration.RotateSessionAccountResult.
+export interface RotateSessionAccountResponse {
+  session_id: string;
+  // previous_account_id is the account the session was moved off.
+  previous_account_id?: string;
+  // account_id is the replacement now in force.
+  account_id: string;
+  // strategy names the policy that selected the replacement.
+  strategy?: string;
+  // mode reports which mechanism was used. "resume" means the agent process
+  // was closed and reconstituted — the transcript is replayed, not lost, but
+  // the process itself restarts.
+  mode: AccountRotationMode;
 }
 
 // ListSessionsRequest filters the session list.
@@ -1850,10 +1908,6 @@ export interface CeremonyInitializeResponse {
   ca_cert_pem: string;
   /** PEM-encoded TLS certificate issued for the server. */
   tls_cert_pem: string;
-  /** PEM-encoded Security Officer certificate. */
-  so_cert_pem?: string;
-  /** PEM-encoded Security Officer private key. */
-  so_key_pem?: string;
   /** Ceremony state after initialization. */
   state: string;
   /** Number of Shamir shares generated. */
@@ -2213,13 +2267,38 @@ export type UserVerificationRequirement = 'required' | 'preferred' | 'discourage
 export type AuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
 
 // AuthTokenResponse is the token bundle returned on successful login
-// (WebAuthn finish or PIV). Matches the JSON the server writes.
+// (WebAuthn finish or PIV). Matches the JSON the server writes. The WebAuthn
+// path rides the unified login ceremony (/api/v1/auth/login/finish), whose
+// bearer + rotating refresh credential map onto access_token/refresh_token;
+// id_token is present only on flows that mint one (e.g. PIV OIDC issuance).
 export interface AuthTokenResponse {
   access_token: string;
-  id_token: string;
+  id_token?: string;
   refresh_token: string;
   token_type: string;
   expires_in: number;
   user?: IAMUser;
+}
+
+// WebAuthnLoginChallenge carries the state of an in-flight unified-ceremony
+// WebAuthn login between webAuthnBeginLogin and webAuthnFinishLogin:
+// the ceremony session (session_id), the relying-party session
+// (rp_session_id), and the go-webauthn challenge envelope the caller feeds
+// to navigator.credentials.get().
+export interface WebAuthnLoginChallenge {
+  // session_id is the unified login-ceremony session identifier
+  // (POST /api/v1/auth/login/begin response session_id). It MUST be echoed
+  // back on finish.
+  session_id: string;
+
+  // rp_session_id is the relying-party (WebAuthn) ceremony session id the
+  // server issued alongside the challenge options. It MUST be echoed back
+  // on finish as method metadata.
+  rp_session_id: string;
+
+  // options is the go-webauthn `{ publicKey: { ... } }` challenge envelope.
+  // Callers unwrap + base64url-decode it (see the frontend webauthn helper)
+  // before navigator.credentials.get().
+  options: CredentialAssertionJSON;
 }
 

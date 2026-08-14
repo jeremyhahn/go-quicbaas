@@ -48,6 +48,8 @@ var (
 	serveBindAddr       string
 	serveBackendsCSV    string
 	serveSandboxPolicy  string
+	serveSandboxNetwork string
+	serveAllowedMounts  []string
 	serveContainerRT    string
 	serveImageMapCSV    string
 	serveImageRegistry  string
@@ -95,6 +97,7 @@ Examples:
 	cmd.Flags().StringVar(&serveBindAddr, "bind", "127.0.0.1:9091", "Local bind address for the AgentRuntime gRPC service")
 	cmd.Flags().StringVar(&serveBackendsCSV, "backends", "acp,ollama", "Comma-separated backends to enable")
 	cmd.Flags().StringVar(&serveSandboxPolicy, "sandbox-policy", "required", "Sandbox policy: required | preferred | opt-in")
+	cmd.Flags().StringVar(&serveSandboxNetwork, "sandbox-network", "", "Container network for sandboxed sessions: bridge (default) | none | host | <network name>. \"host\" removes network isolation and exposes this host's loopback services to the agent.")
 	cmd.Flags().StringVar(&serveContainerRT, "container-runtime", "auto", "OCI runtime: docker | podman | auto | none")
 	cmd.Flags().StringVar(&serveImageMapCSV, "image-map", "", "Comma-separated backend=image mappings (e.g., claude-code=quicbaas/claude-code:v1)")
 	cmd.Flags().StringVar(&serveImageRegistry, "image-registry", "", "Registry prefix applied to unqualified image references")
@@ -105,6 +108,7 @@ Examples:
 	cmd.Flags().StringVar(&serveServerCAFile, "server-ca", "", "Path to the PEM-encoded CA bundle the daemon trusts when dialing --server (required)")
 	cmd.Flags().DurationVar(&serveHeartbeatEvery, "heartbeat-interval", 30*time.Second, "How often to heartbeat into the fleet registry")
 	cmd.Flags().DurationVar(&serveShutdownGrace, "shutdown-grace", 30*time.Second, "How long to wait for in-flight sessions to drain on shutdown")
+	cmd.Flags().StringSliceVar(&serveAllowedMounts, "allowed-mount-root", nil, "Absolute host directory a sandboxed spawn may bind-mount from; repeatable. Every requested work_dir and extra mount must resolve under one of these. Omitting the flag denies all host mounts.")
 	cmd.Flags().StringVar(&serveMCPEndpoint, "mcp-endpoint", "", "Fully-qualified https://host:port/mcp address spawned agents dial for the \"quicbaas\" MCP preset. Empty leaves the preset unresolved.")
 
 	for _, flag := range []string{"server", "tenant", "agent-cert", "agent-key", "server-ca"} {
@@ -150,6 +154,10 @@ func runAgentServe(cmd *cobra.Command, args []string) error {
 		ImageRegistry: cfg.ImageRegistry,
 		Logger:        logger,
 		WorkDir:       cfg.WorkDir,
+		// Bind-mount allowlist. Empty denies every host mount a sandboxed
+		// spawn asks for, so a daemon started without --allowed-mount-root
+		// cannot be talked into mounting an operator's filesystem.
+		MountPolicy: cfg.MountPolicy(),
 	})
 	if rtErr != nil {
 		return formatError(rtErr)
@@ -265,23 +273,27 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 	for _, kind := range cfg.EffectiveBackends() {
 		switch kind {
 		case agent.BackendACP:
+			sandboxNetwork := cfg.EffectiveSandboxNetwork()
 			backends["claude"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
 				Command:           "claude",
-				Args:              []string{"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--disable-slash-commands"},
+				Args:              []string{"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--disable-slash-commands"},
 				DefaultModel:      "",
 				CLIMode:           true,
+				SandboxNetwork:    sandboxNetwork,
 				MCPPresetResolver: mcpResolver,
 			})
 			backends["codex"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
 				Command:           "codex",
 				Args:              []string{},
 				DefaultModel:      "o4-mini",
+				SandboxNetwork:    sandboxNetwork,
 				MCPPresetResolver: mcpResolver,
 			})
 			backends["opencode"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
 				Command:           "opencode",
 				Args:              []string{"acp"},
 				DefaultModel:      "",
+				SandboxNetwork:    sandboxNetwork,
 				MCPPresetResolver: mcpResolver,
 			})
 		case agent.BackendOllama:
@@ -490,6 +502,8 @@ func buildServeConfig() (*agent.Config, error) {
 		BindAddr:          serveBindAddr,
 		Backends:          backends,
 		SandboxPolicy:     policy,
+		SandboxNetwork:    serveSandboxNetwork,
+		AllowedMountRoots: serveAllowedMounts,
 		ContainerRuntime:  agent.ContainerRuntimeSelector(serveContainerRT),
 		ImageMap:          imageMap,
 		ImageRegistry:     serveImageRegistry,

@@ -585,7 +585,7 @@ func (s *Server) qrdbCredentialRetrieveVersion(ctx context.Context, payload []by
 	if err != nil {
 		return nil, err
 	}
-	resp, marshalErr := proto.Marshal(&pb.CredentialRetrieveVersionResponse{Value: string(value)})
+	resp, marshalErr := proto.Marshal(&pb.CredentialRetrieveVersionResponse{Value: []byte(value)})
 	if marshalErr != nil {
 		return nil, &QRDBMarshalError{Err: marshalErr}
 	}
@@ -988,8 +988,6 @@ func (s *Server) qrdbCeremonyInitialize(ctx context.Context, payload []byte) ([]
 		SpkiPin:    result.SPKIPin,
 		CaCertPem:  string(result.CACertPEM),
 		TlsCertPem: string(result.TLSCertPEM),
-		SoCertPem:  string(result.SOCertPEM),
-		SoKeyPem:   string(result.SOKeyPEM),
 		State:      result.State,
 		ShareCount: int32(result.ShareCount), //nolint:gosec // small count
 	})

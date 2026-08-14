@@ -33,9 +33,18 @@ import "strings"
 // object storage (objstore), orchestrator, scheduler, parameters,
 // dynamic_secrets, project, ollama.
 //
+// The surfaces below are mapped onto the SAME qrdb permission their REST and
+// gRPC siblings require, so one grant authorizes the same operation identically
+// on every transport (KMS / crypto / DEK -> keys:* + backends:read, secrets ->
+// credentials:*, messaging -> messaging:*, embedding -> embedding:*, RAG ->
+// rag:*, the go-xkms compatibility tools -> the xkmsOps families, and the IAM
+// sub-surfaces that have a REST rule).
+//
 // Surfaces the qrdb permission registry still does NOT define a resource family
-// for — KMS, crypto, agent, embedding, RAG — remain intentionally absent and
-// denied under RequireAuthz.
+// for, and which therefore have no sibling rule to copy, remain intentionally
+// absent and denied under RequireAuthz. They are enumerated with their reason in
+// unmappedTools (authz_qrdb_unmapped.go) and pinned by
+// TestMCPPermissions_EveryToolMappedOrPublic.
 //
 // Barrier tools (qrdb_barrier_*) are mapped EXACTLY, one entry per tool,
 // mirroring the per-operation granularity of the gRPC mapping in
@@ -199,10 +208,16 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_object_admin_compact_backend":    {"objstore", "admin"},
 
 	// Orchestrator -> orchestrator
-	"quicbaas_orchestrator_spawn":          {"orchestrator", "spawn"},
-	"quicbaas_orchestrator_prompt":         {"orchestrator", "prompt"},
-	"quicbaas_orchestrator_status":         {"orchestrator", "status"},
-	"quicbaas_orchestrator_close":          {"orchestrator", "close"},
+	"quicbaas_orchestrator_spawn":           {"orchestrator", "spawn"},
+	"quicbaas_orchestrator_prompt":          {"orchestrator", "prompt"},
+	"quicbaas_orchestrator_status":          {"orchestrator", "status"},
+	"quicbaas_orchestrator_session_history": {"orchestrator", "status"},
+	"quicbaas_orchestrator_close":           {"orchestrator", "close"},
+	// Rotation closes the session's agent process and reconstitutes it against
+	// a newly selected pooled credential — a spawn's authority, not a close's.
+	// Mirrors the gRPC canon (RotateSessionAccount), the REST PEP rule
+	// ("/rotate-account") and the QUIC sub-op table (rotateSubOpPermissions).
+	"quicbaas_orchestrator_rotate_account": {"orchestrator", "spawn"},
 	"quicbaas_orchestrator_list":           {"orchestrator", "list"},
 	"quicbaas_orchestrator_list_sessions":  {"orchestrator", "list"},
 	"quicbaas_orchestrator_task_create":    {"orchestrator", "task_create"},
@@ -231,6 +246,27 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_agent_fleet_heartbeat": {"orchestrator", "agent_heartbeat"},
 	"quicbaas_task_get_artifact":     {"orchestrator", "artifact_read"},
 	"quicbaas_task_list_artifacts":   {"orchestrator", "artifact_read"},
+
+	// SSH -> keys. SSH assets are cryptographic keys, so they authorize with
+	// the qrdb keys:* family — byte-for-byte the same (resource, action)
+	// pairs the REST PEP (pkg/api/rest/authz_pep_mapping.go sshOps), the gRPC
+	// map (pkg/api/grpc/authz_mapping.go), and the QUIC sub-op map
+	// (pkg/api/quic/handler_authz_qrdb.go sshSubOpPermissions) assign. One
+	// grant authorizes the same SSH verb identically on every transport.
+	"quicbaas_ssh_key_generate":      {"keys", "create"},
+	"quicbaas_ssh_key_import":        {"keys", "import"},
+	"quicbaas_ssh_key_get":           {"keys", "get"},
+	"quicbaas_ssh_key_list":          {"keys", "list"},
+	"quicbaas_ssh_key_delete":        {"keys", "delete"},
+	"quicbaas_ssh_key_export":        {"keys", "get"},
+	"quicbaas_ssh_key_sign":          {"keys", "sign"},
+	"quicbaas_ssh_known_host_add":    {"keys", "create"},
+	"quicbaas_ssh_known_host_list":   {"keys", "list"},
+	"quicbaas_ssh_known_host_remove": {"keys", "delete"},
+	"quicbaas_ssh_authorized_add":    {"keys", "create"},
+	"quicbaas_ssh_authorized_list":   {"keys", "list"},
+	"quicbaas_ssh_authorized_remove": {"keys", "delete"},
+	"quicbaas_ssh_authorized_emit":   {"keys", "get"},
 
 	// Scheduler -> scheduler
 	"quicbaas_scheduler_create_job":  {"scheduler", "create"},
@@ -274,18 +310,406 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"project_grant_agent":  {"project", "grant"},
 	"project_revoke_agent": {"project", "revoke"},
 
+	// Pooled provider accounts -> credentials. An account custodies credential
+	// material (an Anthropic / Codex / OpenCode login), so it authorizes with
+	// the qrdb credentials:* family — matching the REST PEP mapping
+	// (pkg/api/rest/authz_pep_mapping.go) and the gRPC mapping
+	// (pkg/api/grpc/authz_mapping.go) exactly. qrdb registers no account:*
+	// family; when one is added these entries should move to it.
+	"quicbaas_agent_account_create":      {"credentials", "store"},
+	"quicbaas_agent_account_get":         {"credentials", "retrieve"},
+	"quicbaas_agent_account_list":        {"credentials", "list"},
+	"quicbaas_agent_account_update":      {"credentials", "store"},
+	"quicbaas_agent_account_delete":      {"credentials", "delete"},
+	"quicbaas_agent_account_rotate":      {"credentials", "rotate"},
+	"quicbaas_agent_account_revoke":      {"credentials", "delete"},
+	"quicbaas_agent_account_set_default": {"credentials", "store"},
+	"quicbaas_agent_account_usage":       {"credentials", "retrieve"},
+
+	// Certificate extensions -> ca / certs. The mapping MUST match the gRPC
+	// mapping (pkg/api/grpc/authz_mapping.go), the REST PEP mapping
+	// (pkg/api/rest/authz_pep_mapping.go) and the QUIC sub-op mapping
+	// (pkg/api/quic/handler_authz_qrdb.go) exactly.
+	//
+	// Cross-signing mints a CA certificate (basicConstraints CA:TRUE over a
+	// foreign ROOT's key), which qrdb documents as strictly more privileged
+	// than leaf issuance, so it authorizes with ca:create. The AIA chain walk
+	// fetches and imports issuer certificates, the same mutation
+	// quicbaas_trust_auto_import_aia performs, so it carries the same
+	// write-strength verb. Device identity issuance mints END-ENTITY TCG
+	// EK / AK / IDevID certificates and stays on certs:generate.
+	"quicbaas_certificate_cross_sign":            {"ca", "create"},
+	"quicbaas_certificate_chain":                 {"certs", "generate"},
+	"quicbaas_certificate_issue_device_identity": {"certs", "generate"},
+
 	// Ollama -> ollama
 	"quicbaas_ollama_health":      {"ollama", "health"},
 	"quicbaas_ollama_model_list":  {"ollama", "model_list"},
 	"quicbaas_ollama_model_info":  {"ollama", "model_info"},
 	"quicbaas_ollama_embed":       {"ollama", "embed"},
 	"quicbaas_ollama_embed_batch": {"ollama", "embed"},
+
+	// Versioned named-credential rotation -> credentials:*. One exact entry per
+	// tool in credentialToolNames (tools_credentials.go), copied byte-for-byte
+	// from the gRPC canon (pkg/api/grpc/authz_mapping.go
+	// qrdb.v1.QRDBService/Credential* entries) and matching the /v1/credentials
+	// REST rules.
+	//
+	// There is deliberately NO "qrdb_credential" prefix catch-all: it collapsed
+	// submit / rotate / gc_expired onto credentials:store, and the shorter
+	// sibling prefixes swallowed list_versions and retrieve_version, so five
+	// distinct verbs authorized under a permission that was not theirs. All five
+	// are registered qrdb permissions, so there is nothing to approximate.
+	"qrdb_credential_submit":           {"credentials", "submit"},
+	"qrdb_credential_strategy":         {"credentials", "strategy"},
+	"qrdb_credential_delete":           {"credentials", "delete"},
+	"qrdb_credential_list":             {"credentials", "list"},
+	"qrdb_credential_rotate":           {"credentials", "rotate"},
+	"qrdb_credential_retrieve_version": {"credentials", "retrieve_version"},
+	"qrdb_credential_list_versions":    {"credentials", "list_versions"},
+	"qrdb_credential_gc_expired":       {"credentials", "gc_expired"},
+
+	// Certificate (base surface) -> certs. These six tools front exactly the
+	// six quicbaas.certificate.v1.CertificateService RPCs, so they carry the
+	// gRPC mapping's (resource, action) pairs verbatim
+	// (pkg/api/grpc/authz_mapping.go): issuance and CSR signing MINT a leaf
+	// certificate (certs:generate), revocation drives the CRL (certs:revoke),
+	// and verification / CA-certificate / TLS-config retrieval are reads
+	// (certs:read). Without these entries the default-deny gate hid the whole
+	// base certificate surface from tools/list while the three certificate
+	// EXTENSION tools below were visible.
+	"quicbaas_certificate_issue":          {"certs", "generate"},
+	"quicbaas_certificate_sign_csr":       {"certs", "generate"},
+	"quicbaas_certificate_revoke":         {"certs", "revoke"},
+	"quicbaas_certificate_verify":         {"certs", "read"},
+	"quicbaas_certificate_get_ca":         {"certs", "read"},
+	"quicbaas_certificate_get_tls_config": {"certs", "read"},
+
+	// Initialization ceremony -> ceremony:*. One exact entry per tool, copied
+	// byte-for-byte from the gRPC canon (pkg/api/grpc/authz_mapping.go
+	// quicbaas.ceremony.v1.Ceremony and qrdb.v1.QRDBService Ceremony* entries)
+	// and matching ceremonyGranularOps on REST
+	// (pkg/api/rest/authz_pep_mapping.go).
+	//
+	// There is deliberately NO "qrdb_ceremony" prefix catch-all: it resolved the
+	// entire WRITE surface to the read-strength ceremony:status, which qrdb
+	// grants to the read-only Auditor role, while CeremonyInitialize /
+	// CeremonySignCSR / CeremonyEnrollExternalOfficer are Security-Officer
+	// exclusive. A reader could therefore mint the CA, sign arbitrary certs and
+	// subvert the Shamir quorum. A future ceremony tool must fail closed here,
+	// not inherit a read.
+	"qrdb_ceremony_initialize":              {"ceremony", "initialize"},
+	"qrdb_ceremony_status":                  {"ceremony", "status"},
+	"qrdb_ceremony_claim_cert_begin":        {"ceremony", "claim_cert"},
+	"qrdb_ceremony_claim_cert_complete":     {"ceremony", "claim_cert"},
+	"qrdb_ceremony_begin_claim_share":       {"ceremony", "claim_share_begin"},
+	"qrdb_ceremony_complete_claim_share":    {"ceremony", "claim_share_complete"},
+	"qrdb_ceremony_sign_csr":                {"ceremony", "sign_csr"},
+	"qrdb_ceremony_enroll_external_officer": {"ceremony", "enroll_custodian"},
+	// Officer listing is a read (quicbaas.ceremony.v1.Ceremony/
+	// CeremonyListOfficers, and the GET /officers REST rule). It keeps the
+	// quicbaas_ prefix because it has no qrdb mirror.
+	"quicbaas_ceremony_list_officers": {"ceremony", "status"},
+
+	// Cache configuration -> admin, matching
+	// /quicbaas.v1.QuicBaaS/GetCacheConfig and UpdateCacheConfig.
+	"quicbaas_cache_config_get":    {"admin", "status"},
+	"quicbaas_cache_config_update": {"admin", "capabilities"},
+
+	// Agent lifecycle admin (registered without a quicbaas_ prefix). Mirrors
+	// the REST rules for POST /api/v1/orchestrator/disable and /enable
+	// (pkg/api/rest/authz_pep_mapping.go): qrdb registers no
+	// orchestrator:agent_disable / agent_enable, so both transports use the
+	// nearest registered pair.
+	"agent_disable": {"orchestrator", "agent_remove"},
+	"agent_enable":  {"orchestrator", "agent_register"},
+
+	// PEP access checks -> permissions:resolve, matching the REST rules for
+	// POST /api/v1/iam/check and /check/batch.
+	"quicbaas_pep_check":       {"permissions", "resolve"},
+	"quicbaas_pep_check_batch": {"permissions", "resolve"},
+
+	// KMS key lifecycle -> keys / backends. One entry per tool, taken from the
+	// quicbaas.kms.v1.KeyManagement gRPC block verbatim, so a KMS grant
+	// authorizes the same verb on gRPC and MCP. Reads stay on keys:get /
+	// keys:list; state mutations that are not create/delete use keys:rotate,
+	// exactly as gRPC does.
+	"quicbaas_kms_generate_key":             {"keys", "create"},
+	"quicbaas_kms_import_key":               {"keys", "import"},
+	"quicbaas_kms_export_key":               {"keys", "export"},
+	"quicbaas_kms_unwrap_key":               {"keys", "unwrap"},
+	"quicbaas_kms_get_key":                  {"keys", "get"},
+	"quicbaas_kms_get_public_key":           {"keys", "get"},
+	"quicbaas_kms_get_metadata":             {"keys", "get"},
+	"quicbaas_kms_get_policy":               {"keys", "get"},
+	"quicbaas_kms_get_rotation_policy":      {"keys", "get"},
+	"quicbaas_kms_safety_check":             {"keys", "get"},
+	"quicbaas_kms_safety_report":            {"keys", "get"},
+	"quicbaas_kms_list_keys":                {"keys", "list"},
+	"quicbaas_kms_key_versions":             {"keys", "list"},
+	"quicbaas_kms_get_supported_algorithms": {"keys", "list"},
+	"quicbaas_kms_rotate_key":               {"keys", "rotate"},
+	"quicbaas_kms_set_policy":               {"keys", "rotate"},
+	"quicbaas_kms_set_rotation_policy":      {"keys", "rotate"},
+	"quicbaas_kms_set_key_safety":           {"keys", "rotate"},
+	"quicbaas_kms_clear_key_safety":         {"keys", "rotate"},
+	"quicbaas_kms_update_metadata":          {"keys", "rotate"},
+	"quicbaas_kms_key_status_update":        {"keys", "rotate"},
+	"quicbaas_kms_delete_key":               {"keys", "delete"},
+	"quicbaas_kms_revoke_key":               {"keys", "delete"},
+	"quicbaas_kms_delete_rotation_policy":   {"keys", "delete"},
+	"quicbaas_kms_encrypt":                  {"keys", "encrypt"},
+	"quicbaas_kms_decrypt":                  {"keys", "decrypt"},
+	"quicbaas_kms_backend_status":           {"backends", "read"},
+	"quicbaas_kms_backend_test":             {"backends", "read"},
+
+	// Crypto -> keys, taken from the quicbaas.kms.v1.Crypto gRPC block
+	// verbatim. Data-key generation derives new key material (keys:derive),
+	// the wrapped variant additionally wraps it (keys:wrap), rewrap unwraps
+	// under a new KEK (keys:unwrap), and the HMAC / hash verbs reuse the
+	// keys:sign / keys:verify pair gRPC assigns them.
+	"quicbaas_crypto_encrypt":         {"keys", "encrypt"},
+	"quicbaas_crypto_encrypt_batch":   {"keys", "encrypt"},
+	"quicbaas_crypto_decrypt":         {"keys", "decrypt"},
+	"quicbaas_crypto_decrypt_batch":   {"keys", "decrypt"},
+	"quicbaas_crypto_sign":            {"keys", "sign"},
+	"quicbaas_crypto_hmac":            {"keys", "sign"},
+	"quicbaas_crypto_hash":            {"keys", "sign"},
+	"quicbaas_crypto_verify":          {"keys", "verify"},
+	"quicbaas_crypto_verify_hmac":     {"keys", "verify"},
+	"quicbaas_crypto_rewrap":          {"keys", "unwrap"},
+	"quicbaas_crypto_datakey":         {"keys", "derive"},
+	"quicbaas_crypto_datakey_wrapped": {"keys", "wrap"},
+	"quicbaas_crypto_random":          {"keys", "derive"},
+
+	// Per-path DEK management -> keys, taken from the
+	// quicbaas.kms.v1.DEKManagement gRPC block verbatim.
+	"quicbaas_dek_create":                    {"keys", "create"},
+	"quicbaas_dek_get":                       {"keys", "get"},
+	"quicbaas_dek_status":                    {"keys", "get"},
+	"quicbaas_dek_get_reencryption_progress": {"keys", "get"},
+	"quicbaas_dek_list":                      {"keys", "list"},
+	"quicbaas_dek_rotate":                    {"keys", "rotate"},
+	"quicbaas_dek_set_default":               {"keys", "rotate"},
+	"quicbaas_dek_set_safety":                {"keys", "rotate"},
+	"quicbaas_dek_clear_safety":              {"keys", "rotate"},
+	"quicbaas_dek_start_reencryption":        {"keys", "rotate"},
+	"quicbaas_dek_delete":                    {"keys", "delete"},
+
+	// Named secrets -> credentials, taken from the
+	// quicbaas.kms.v1.SecretsManagement gRPC block verbatim and agreeing with
+	// the REST "/api/v1/secrets" family. qrdb also registers a coarse
+	// secrets:* family, but both sibling transports authorize this surface
+	// with credentials:*, so MCP does too rather than inventing a third
+	// vocabulary for the same verbs.
+	"quicbaas_secrets_store":               {"credentials", "store"},
+	"quicbaas_secrets_ensure":              {"credentials", "store"},
+	"quicbaas_secrets_get":                 {"credentials", "retrieve"},
+	"quicbaas_secrets_list":                {"credentials", "list"},
+	"quicbaas_secrets_get_prefix":          {"credentials", "list"},
+	"quicbaas_secrets_watch":               {"credentials", "list"},
+	"quicbaas_secrets_get_rotation_policy": {"credentials", "list"},
+	"quicbaas_secrets_versions":            {"credentials", "list_versions"},
+	"quicbaas_secrets_rotate":              {"credentials", "rotate"},
+	"quicbaas_secrets_set_rotation_policy": {"credentials", "strategy"},
+	"quicbaas_secrets_rollback":            {"credentials", "submit"},
+	"quicbaas_secrets_update_status":       {"credentials", "submit"},
+	"quicbaas_secrets_delete":              {"credentials", "delete"},
+
+	// Messaging -> messaging, taken from the
+	// quicbaas.messaging.v1.MessagingService gRPC block verbatim.
+	"quicbaas_msg_create_channel": {"messaging", "channel_create"},
+	"quicbaas_msg_get_channel":    {"messaging", "channel_read"},
+	"quicbaas_msg_list_channels":  {"messaging", "channel_list"},
+	"quicbaas_msg_delete_channel": {"messaging", "channel_delete"},
+	"quicbaas_msg_publish":        {"messaging", "publish"},
+	"quicbaas_msg_publish_delta":  {"messaging", "publish"},
+	"quicbaas_msg_subscribe":      {"messaging", "subscribe"},
+	"quicbaas_msg_unsubscribe":    {"messaging", "unsubscribe"},
+	"quicbaas_msg_stats":          {"messaging", "stats"},
+	"quicbaas_msg_dedup_stats":    {"messaging", "stats"},
+
+	// Vector index administration and the namespace / stats verbs that the
+	// prefix table would otherwise resolve too coarsely. Values come from the
+	// quicbaas.vector.v1.VectorAdmin and VectorDB gRPC blocks verbatim, so a
+	// principal holding only vector:get cannot read cluster statistics on MCP
+	// while gRPC requires vector:get_index_stats.
+	"quicbaas_vector_admin_get_cluster_stats":       {"vector", "get_index_stats"},
+	"quicbaas_vector_admin_compact_namespace":       {"vector", "compact"},
+	"quicbaas_vector_admin_get_compaction_progress": {"vector", "get_compaction_progress"},
+	"quicbaas_vector_admin_export_vectors":          {"vector", "list"},
+	"quicbaas_vector_admin_import_vectors":          {"vector", "batch_upsert"},
+	"quicbaas_vector_update_namespace":              {"vector", "namespace_create"},
+	"quicbaas_vector_get_stats":                     {"vector", "get_index_stats"},
+	"quicbaas_vector_get_index_progress":            {"vector", "get_rebuild_progress"},
+	"quicbaas_vector_health":                        {"vector", "namespace_list"},
+
+	// Embedding -> embedding. qrdb registers embedding:embed (write) and
+	// embedding:list_models (read); the REST surface
+	// (pkg/api/rest/authz_pep_mapping.go "/api/v1/embedding") assigns exactly
+	// those two verbs, and provider inspection / default selection are reads of
+	// the provider inventory.
+	"quicbaas_embedding_generate":       {"embedding", "embed"},
+	"quicbaas_embedding_batch":          {"embedding", "embed"},
+	"quicbaas_embedding_cache_clear":    {"embedding", "embed"},
+	"quicbaas_embedding_list_providers": {"embedding", "list_models"},
+	"quicbaas_embedding_get_provider":   {"embedding", "list_models"},
+	"quicbaas_embedding_set_default":    {"embedding", "list_models"},
+	"quicbaas_embedding_cache_stats":    {"embedding", "list_models"},
+
+	// RAG -> rag, matching the REST rules for /api/v1/rag
+	// (pkg/api/rest/authz_pep_mapping.go): retrieval and context assembly are
+	// rag:query, indexing is rag:ingest, and the index-status probe is a read
+	// of the same surface (rag:query, the REST GET verb for /api/v1/rag).
+	"quicbaas_rag_query":         {"rag", "query"},
+	"quicbaas_rag_build_context": {"rag", "query"},
+	"quicbaas_rag_index_status":  {"rag", "query"},
+	"quicbaas_rag_index_file":    {"rag", "ingest"},
+	"quicbaas_rag_index_project": {"rag", "ingest"},
+
+	// IAM sub-surfaces that have a REST rule. Values mirror
+	// pkg/api/rest/authz_pep_mapping.go exactly:
+	//
+	//   users / roles / tenants CRUD  -> the same qrdb family REST assigns to
+	//                                    /api/v1/users, /roles and /tenants;
+	//   OAuth2 apps                   -> tenants:* (REST administers apps under
+	//                                    /api/v1/tenants/{id}/apps);
+	//   login sessions                -> users:read / users:update (no
+	//                                    session:* family is registered);
+	//   impersonation                 -> users:read / users:update (no
+	//                                    impersonation:* family is registered);
+	//   audit                         -> audit:query (filtered list, and the
+	//                                    retention prune, which has no
+	//                                    audit:delete to require) / audit:read;
+	//   delegated-admin assignments   -> roles:read / list / assign / unassign;
+	//   permission checks             -> permissions:resolve.
+	"quicbaas_iam_user_create":      {"users", "create"},
+	"quicbaas_iam_user_get":         {"users", "read"},
+	"quicbaas_iam_user_list":        {"users", "list"},
+	"quicbaas_iam_user_update":      {"users", "update"},
+	"quicbaas_iam_user_delete":      {"users", "delete"},
+	"quicbaas_iam_user_assign_role": {"roles", "assign"},
+	"quicbaas_iam_user_revoke_role": {"roles", "unassign"},
+
+	"quicbaas_iam_role_create": {"roles", "create"},
+	"quicbaas_iam_role_get":    {"roles", "read"},
+	"quicbaas_iam_role_list":   {"roles", "list"},
+	"quicbaas_iam_role_update": {"roles", "update"},
+	"quicbaas_iam_role_delete": {"roles", "delete"},
+
+	"quicbaas_iam_tenant_create": {"tenants", "create"},
+	"quicbaas_iam_tenant_get":    {"tenants", "read"},
+	"quicbaas_iam_tenant_list":   {"tenants", "list"},
+	"quicbaas_iam_tenant_update": {"tenants", "update"},
+	"quicbaas_iam_tenant_delete": {"tenants", "delete"},
+
+	"quicbaas_iam_app_register":      {"tenants", "create"},
+	"quicbaas_iam_app_get":           {"tenants", "read"},
+	"quicbaas_iam_app_list":          {"tenants", "list"},
+	"quicbaas_iam_app_update":        {"tenants", "update"},
+	"quicbaas_iam_app_rotate_secret": {"tenants", "update"},
+	"quicbaas_iam_app_delete":        {"tenants", "delete"},
+
+	"quicbaas_iam_session_get":             {"users", "read"},
+	"quicbaas_iam_session_list":            {"users", "read"},
+	"quicbaas_iam_session_touch":           {"users", "update"},
+	"quicbaas_iam_session_revoke":          {"users", "update"},
+	"quicbaas_iam_session_revoke_all":      {"users", "update"},
+	"quicbaas_iam_session_revoke_others":   {"users", "update"},
+	"quicbaas_iam_impersonation_start":     {"users", "update"},
+	"quicbaas_iam_impersonation_end":       {"users", "update"},
+	"quicbaas_iam_impersonation_list":      {"users", "read"},
+	"quicbaas_iam_audit_query":             {"audit", "query"},
+	"quicbaas_iam_audit_get":               {"audit", "read"},
+	"quicbaas_iam_audit_delete":            {"audit", "query"},
+	"quicbaas_iam_admin_assignment_create": {"roles", "assign"},
+	"quicbaas_iam_admin_assignment_update": {"roles", "assign"},
+	"quicbaas_iam_admin_assignment_delete": {"roles", "unassign"},
+	"quicbaas_iam_admin_assignment_get":    {"roles", "read"},
+	"quicbaas_iam_admin_assignment_list":   {"roles", "list"},
+	"quicbaas_iam_admin_check_permission":  {"permissions", "resolve"},
+
+	// go-xkms compatibility tools -> the same families the REST go-xkms
+	// surface uses (pkg/api/rest/authz_pep_mapping.go xkmsOps), endpoint for
+	// endpoint. Envelope seal/unseal on this surface is DATA sealing (the
+	// request carries the plaintext), so it authorizes as keys:encrypt /
+	// keys:decrypt and never as the seal:* barrier family — the same boundary
+	// REST draws.
+	"xkms.generateKey":  {"keys", "create"},
+	"xkms.getKey":       {"keys", "get"},
+	"xkms.listKeys":     {"keys", "list"},
+	"xkms.deleteKey":    {"keys", "delete"},
+	"xkms.rotateKey":    {"keys", "rotate"},
+	"xkms.sign":         {"keys", "sign"},
+	"xkms.verify":       {"keys", "verify"},
+	"xkms.encrypt":      {"keys", "encrypt"},
+	"xkms.decrypt":      {"keys", "decrypt"},
+	"xkms.seal":         {"keys", "encrypt"},
+	"xkms.unseal":       {"keys", "decrypt"},
+	"xkms.canSeal":      {"keys", "list"},
+	"xkms.listBackends": {"backends", "list"},
+
+	"xkms.getCert":       {"certs", "read"},
+	"xkms.certExists":    {"certs", "read"},
+	"xkms.getCertChain":  {"certs", "read"},
+	"xkms.listCerts":     {"certs", "list"},
+	"xkms.saveCert":      {"certs", "generate"},
+	"xkms.saveCertChain": {"certs", "generate"},
+	"xkms.deleteCert":    {"certs", "revoke"},
+
+	"xkms.ca.getBundle":   {"ca", "read"},
+	"xkms.ca.getCert":     {"ca", "read"},
+	"xkms.ca.isRevoked":   {"certs", "read"},
+	"xkms.ca.signCSR":     {"certs", "generate"},
+	"xkms.ca.issueCert":   {"certs", "generate"},
+	"xkms.ca.revokeCert":  {"certs", "revoke"},
+	"xkms.ca.generateCRL": {"certs", "revoke"},
+
+	"xkms.piv.listSlots":   {"piv", "read"},
+	"xkms.piv.getCert":     {"piv", "read"},
+	"xkms.piv.exportCert":  {"piv", "read"},
+	"xkms.piv.storeCert":   {"piv", "write"},
+	"xkms.piv.importCert":  {"piv", "write"},
+	"xkms.piv.generateKey": {"piv", "write"},
+	"xkms.piv.deleteCert":  {"piv", "delete"},
+	"xkms.piv.generateCSR": {"piv", "use"},
+
+	// FIDO2 / WebAuthn ceremony. Registration IS authenticator (factor)
+	// enrollment, so it carries the same user_authfactors:add the REST
+	// canonical mount resolves (pkg/api/rest/authz_pep_mapping.go). The
+	// authentication verbs stay behind authorization on MCP — REST and QUIC
+	// treat them as pre-auth, but widening the UNAUTHENTICATED MCP tool
+	// surface is an owner decision (see the quicbaas_login_begin precedent
+	// in authz_qrdb_unmapped.go); authenticated callers use them for
+	// step-up verification of an enrolled factor, a factor read.
+	"xkms.fido2.beginRegistration":    {"user_authfactors", "add"},
+	"xkms.fido2.finishRegistration":   {"user_authfactors", "add"},
+	"xkms.fido2.beginAuthentication":  {"user_authfactors", "get"},
+	"xkms.fido2.finishAuthentication": {"user_authfactors", "get"},
+
+	"xkms.pin.verifySO":      {"pin", "read"},
+	"xkms.pin.verifyUser":    {"pin", "read"},
+	"xkms.pin.lockoutStatus": {"pin", "read"},
+	"xkms.pin.setSO":         {"pin", "write"},
+	"xkms.pin.setUser":       {"pin", "write"},
+	"xkms.pin.changeSO":      {"pin", "write"},
+	"xkms.pin.changeUser":    {"pin", "write"},
+	"xkms.pin.resetLockout":  {"pin", "write"},
 }
 
 // qrdbToolPrefixMapping maps prefix-based tool groups to qrdb permissions. It is
 // consulted after the exact map; the most specific surfaces are listed.
 var qrdbToolPrefixMapping = map[string]qrdbToolResource{
 	// Trust -> certs
+	// Attestation gets its own resource vocabulary rather than borrowing
+	// certs:*. The verbs answer "is this host and this workload in the
+	// state we approved?", and driving a TPM quote is not a certificate
+	// operation. Values MUST match pkg/api/grpc/authz_mapping.go and
+	// pkg/api/quic/handler_authz_qrdb.go.
+	"quicbaas_attestation_verify":           {"attestation", "verify"},
+	"quicbaas_attestation_verify_chain":     {"attestation", "verify"},
+	"quicbaas_attestation_attest_container": {"attestation", "attest"},
+
 	"quicbaas_trust_cross_signed_root_pool": {"certs", "read"},
 	"quicbaas_trust_auto_import_aia":        {"certs", "generate"},
 	"quicbaas_trust_publish_dane":           {"certs", "generate"},
@@ -322,33 +746,26 @@ var qrdbToolPrefixMapping = map[string]qrdbToolResource{
 	"qrdb_vector_delete":       {"vector", "delete"},
 	"qrdb_vector_batch_delete": {"vector", "batch_delete"},
 
-	// Credentials (qrdb mirror) -> credentials
-	"qrdb_credential_list":     {"credentials", "list"},
-	"qrdb_credential_retrieve": {"credentials", "retrieve"},
-	"qrdb_credential_strategy": {"credentials", "strategy"},
-	"qrdb_credential_delete":   {"credentials", "delete"},
-	"qrdb_credential":          {"credentials", "store"},
-
 	// Per-tenant barrier -> tenant_barrier
 	"qrdb_tenant_barrier_init":         {"tenant_barrier", "init"},
 	"qrdb_tenant_barrier_unseal":       {"tenant_barrier", "unseal"},
 	"qrdb_tenant_barrier_unseal_share": {"tenant_barrier", "unseal"},
 	"qrdb_tenant_barrier_seal":         {"tenant_barrier", "seal"},
 	"qrdb_tenant_barrier_status":       {"tenant_barrier", "status"},
-
-	// Ceremony (qrdb mirror) -> ceremony
-	"qrdb_ceremony_status": {"ceremony", "status"},
-	"qrdb_ceremony":        {"ceremony", "status"},
 }
 
 // getToolQRDBPermission returns the qrdb-canonical (resource, action) for the
 // tool and whether a mapping exists. Exact match is preferred over prefix match.
 // Among prefix matches the LONGEST matching prefix wins, so a specific tool
-// (e.g. "qrdb_credential_list") resolves to its own entry rather than a shorter
-// surface prefix (e.g. "qrdb_credential"). Map iteration order is otherwise
-// non-deterministic, so longest-prefix selection is required for a stable
-// decision. An unmapped tool has ok=false: the default-deny authz gate denies
-// it under RequireAuthz.
+// (e.g. "qrdb_tenant_barrier_unseal_share") resolves to its own entry rather
+// than a shorter surface prefix (e.g. "qrdb_tenant_barrier_unseal"). Map
+// iteration order is otherwise non-deterministic, so longest-prefix selection is
+// required for a stable decision. An unmapped tool has ok=false: the
+// default-deny authz gate denies it under RequireAuthz.
+//
+// The privileged barrier, ceremony and credential surfaces have no prefix
+// catch-all at all: every tool carries its own exact entry, so a future tool on
+// those surfaces fails closed instead of inheriting a read permission.
 func getToolQRDBPermission(toolName string) (resource, action string, ok bool) {
 	if m, found := qrdbToolExactMapping[toolName]; found {
 		return m.resource, m.action, true

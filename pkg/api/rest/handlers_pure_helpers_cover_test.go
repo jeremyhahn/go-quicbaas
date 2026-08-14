@@ -32,7 +32,7 @@ import (
 func TestWriteSSEError(t *testing.T) {
 	rec := httptest.NewRecorder()
 
-	writeSSEError(rec, func() {}, "stream aborted")
+	writeSSEError(rec, func() error { return nil }, "stream aborted")
 
 	body := rec.Body.String()
 	assert.True(t, strings.Contains(body, "event: error"), "missing error event header: %q", body)

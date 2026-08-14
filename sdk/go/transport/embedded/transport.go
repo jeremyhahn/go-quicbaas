@@ -208,10 +208,71 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Certificate/CAInfo":            handleCertCAInfo,
 	"quicbaas.Certificate/ListCertificates":  handleCertListCertificates,
 
+	// Certificate extensions — Security().CertificateExt(). Cross-signing,
+	// AIA chain resolution and TCG device identity issuance, all composed
+	// over the xkms TrustedCA / TCGCA (see
+	// pkg/server/ca_service_adapter_extensions.go).
+	"quicbaas.Certificate/CrossSign":           handleCertCrossSign,
+	"quicbaas.Certificate/Chain":               handleCertChain,
+	"quicbaas.Certificate/IssueDeviceIdentity": handleCertIssueDeviceIdentity,
+
 	// Trust operations (cross-sign / AIA composition over xkms TrustedCA).
+	// SSH operations — composed from the go-xkms SSH SDK via the
+	// service-layer SSHService.
+	"quicbaas.SSH/GenerateKey":         handleSSHGenerateKey,
+	"quicbaas.SSH/ImportKey":           handleSSHImportKey,
+	"quicbaas.SSH/GetKey":              handleSSHGetKey,
+	"quicbaas.SSH/ListKeys":            handleSSHListKeys,
+	"quicbaas.SSH/DeleteKey":           handleSSHDeleteKey,
+	"quicbaas.SSH/ExportPublicKey":     handleSSHExportPublicKey,
+	"quicbaas.SSH/SignDigest":          handleSSHSignDigest,
+	"quicbaas.SSH/AddKnownHost":        handleSSHAddKnownHost,
+	"quicbaas.SSH/ListKnownHosts":      handleSSHListKnownHosts,
+	"quicbaas.SSH/RemoveKnownHost":     handleSSHRemoveKnownHost,
+	"quicbaas.SSH/AddAuthorizedKey":    handleSSHAddAuthorizedKey,
+	"quicbaas.SSH/ListAuthorizedKeys":  handleSSHListAuthorizedKeys,
+	"quicbaas.SSH/RemoveAuthorizedKey": handleSSHRemoveAuthorizedKey,
+	"quicbaas.SSH/EmitAuthorizedKey":   handleSSHEmitAuthorizedKey,
+
+	// Attestation: the go-xkms verifier plus the container attestation
+	// orchestration seam (Security().Attestation()).
+	"quicbaas.Attestation/Verify":          handleAttestationVerify,
+	"quicbaas.Attestation/VerifyChain":     handleAttestationVerifyChain,
+	"quicbaas.Attestation/AttestContainer": handleAttestationAttestContainer,
+
+	// Dynamic secrets: lease-backed credential generation
+	// (Security().DynamicSecrets()).
+	"quicbaas.DynamicSecrets/CreateRole":         handleDynamicSecretsCreateRole,
+	"quicbaas.DynamicSecrets/GetRole":            handleDynamicSecretsGetRole,
+	"quicbaas.DynamicSecrets/ListRoles":          handleDynamicSecretsListRoles,
+	"quicbaas.DynamicSecrets/DeleteRole":         handleDynamicSecretsDeleteRole,
+	"quicbaas.DynamicSecrets/GenerateCredential": handleDynamicSecretsGenerateCredential,
+	"quicbaas.DynamicSecrets/RenewLease":         handleDynamicSecretsRenewLease,
+	"quicbaas.DynamicSecrets/RevokeLease":        handleDynamicSecretsRevokeLease,
+	"quicbaas.DynamicSecrets/ListLeases":         handleDynamicSecretsListLeases,
+
 	"quicbaas.Trust/CrossSignedRootPool": handleTrustCrossSignedRootPool,
 	"quicbaas.Trust/AutoImportAIA":       handleTrustAutoImportAIA,
 	"quicbaas.Trust/PublishDANE":         handleTrustPublishDANE,
+
+	// PIV: the backend-scoped go-xkms PIV surface
+	// (Security().Auth().PIV()), xkms wire types verbatim.
+	"quicbaas.PIV/ListPIVSlots":         handlePIVListSlots,
+	"quicbaas.PIV/GetPIVCertificate":    handlePIVGetCertificate,
+	"quicbaas.PIV/StorePIVCertificate":  handlePIVStoreCertificate,
+	"quicbaas.PIV/DeletePIVCertificate": handlePIVDeleteCertificate,
+	"quicbaas.PIV/GeneratePIVKey":       handlePIVGenerateKey,
+	"quicbaas.PIV/ImportPIVCertificate": handlePIVImportCertificate,
+	"quicbaas.PIV/ExportPIVCertificate": handlePIVExportCertificate,
+	"quicbaas.PIV/GeneratePIVCSR":       handlePIVGenerateCSR,
+
+	// FIDO2: the tenant-scoped WebAuthn ceremony surface
+	// (Security().Auth().FIDO2()), xkms wire types verbatim; the tenant
+	// rides the context (transport.ContextWithTenant).
+	"quicbaas.FIDO2/BeginRegistration":    handleFIDO2BeginRegistration,
+	"quicbaas.FIDO2/FinishRegistration":   handleFIDO2FinishRegistration,
+	"quicbaas.FIDO2/BeginAuthentication":  handleFIDO2BeginAuthentication,
+	"quicbaas.FIDO2/FinishAuthentication": handleFIDO2FinishAuthentication,
 
 	// ACME server-side control operations (RFC 8555 composition over the
 	// go-xkms ACME server). Only the control verbs round-trip in-process;
@@ -223,13 +284,25 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.ACME/FinalizeOrder":     handleACMEFinalizeOrder,
 	"quicbaas.ACME/Renew":             handleACMERenew,
 
+	// Pooled provider accounts (agent credential pool)
+	"quicbaas.Account/Create":           handleAccountCreate,
+	"quicbaas.Account/Get":              handleAccountGet,
+	"quicbaas.Account/List":             handleAccountList,
+	"quicbaas.Account/Update":           handleAccountUpdate,
+	"quicbaas.Account/Delete":           handleAccountDelete,
+	"quicbaas.Account/RotateCredential": handleAccountRotateCredential,
+	"quicbaas.Account/Revoke":           handleAccountRevoke,
+	"quicbaas.Account/SetDefault":       handleAccountSetDefault,
+	"quicbaas.Account/Usage":            handleAccountUsage,
+
 	// Orchestrator — session operations
-	"quicbaas.Orchestrator/Inference":     handleOrchestratorInference,
-	"quicbaas.Orchestrator/SpawnSession":  handleOrchestratorSpawnSession,
-	"quicbaas.Orchestrator/PromptSession": handleOrchestratorPromptSession,
-	"quicbaas.Orchestrator/SessionStatus": handleOrchestratorSessionStatus,
-	"quicbaas.Orchestrator/CloseSession":  handleOrchestratorCloseSession,
-	"quicbaas.Orchestrator/ListSessions":  handleOrchestratorListSessions,
+	"quicbaas.Orchestrator/Inference":            handleOrchestratorInference,
+	"quicbaas.Orchestrator/SpawnSession":         handleOrchestratorSpawnSession,
+	"quicbaas.Orchestrator/PromptSession":        handleOrchestratorPromptSession,
+	"quicbaas.Orchestrator/SessionStatus":        handleOrchestratorSessionStatus,
+	"quicbaas.Orchestrator/CloseSession":         handleOrchestratorCloseSession,
+	"quicbaas.Orchestrator/RotateSessionAccount": handleOrchestratorRotateSessionAccount,
+	"quicbaas.Orchestrator/ListSessions":         handleOrchestratorListSessions,
 
 	// Orchestrator — task operations
 	"quicbaas.Orchestrator/CreateTask":   handleOrchestratorCreateTask,

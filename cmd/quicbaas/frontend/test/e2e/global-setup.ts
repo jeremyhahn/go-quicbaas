@@ -8,7 +8,7 @@
  *   1. Read the one-time admin invite token (printed to the daemon log / env).
  *   2. Activate a passkey for the admin user via a CDP virtual authenticator
  *      (POST .../activate/fido2/begin+finish behind the InviteActivateView UI).
- *   3. Sign in with that passkey (POST /webauthn/login/{begin,finish}) so the
+ *   3. Sign in with that passkey (POST /api/v1/auth/login/{begin,finish} (unified ceremony, type=fido2)) so the
  *      SPA persists access + refresh tokens to localStorage.
  *   4. Save the browser storageState (so every spec starts signed in) and the
  *      raw tokens (so REST seeding helpers in fixtures/api.ts can authenticate).
@@ -88,7 +88,7 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
 
     // --- Step 2: sign in with the freshly-registered passkey. ---
     const loginFinish = page.waitForResponse(
-      (r) => r.url().includes('/webauthn/login/finish') && r.request().method() === 'POST',
+      (r) => r.url().includes('/auth/login/finish') && r.request().method() === 'POST',
     );
     await page.evaluate(() => {
       window.location.hash = '#/login';

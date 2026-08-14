@@ -29,12 +29,9 @@ import (
 // TestPersistentRefreshToken tests the RefreshToken method with time.Sleep
 func TestPersistentRefreshToken(t *testing.T) {
 	log := createPersistentTestLogger(t)
-	config := &AuthConfig{
-		Enabled:         true,
-		JWTSecret:       "test-secret-key",
-		TokenTTL:        1 * time.Second,
-		RefreshTokenTTL: 1 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
+	config.TokenTTL = 1 * time.Second
+	config.RefreshTokenTTL = 1 * time.Hour
 
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)

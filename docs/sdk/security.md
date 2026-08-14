@@ -8,7 +8,7 @@ shortcuts — capabilities live in exactly one place per the
 
 This page enumerates every accessor on the `SecurityService`
 interface, including the M10 sub-services (ACME, Trust, FIDO2,
-WebAuthn, PIV, AuthFactors), the qrdb-backed barrier / ceremony /
+PIV, Devices, AuthFactors), the qrdb-backed barrier / ceremony /
 credential surfaces, and the xkms-backed certificate, key, secret,
 and DEK surfaces.
 
@@ -35,6 +35,7 @@ graph TD
     SecuritySvc --> CertificateExt[CertificateExt: CertificateExtensions]
     SecuritySvc --> ACME[ACME: ACMEService]
     SecuritySvc --> Trust[Trust: TrustService]
+    SecuritySvc --> SSH[SSH: SSHService]
     SecuritySvc --> ClusterDEK[ClusterDEK: ClusterDEKClient]
     SecuritySvc --> DEK[DEK: DEKClient]
     SecuritySvc --> DynamicSecrets[DynamicSecrets: DynamicSecretsClient]
@@ -42,9 +43,10 @@ graph TD
 
     Auth --> AC[AuthClient embed: Login/Logout/RefreshToken/sessions]
     Auth --> FIDO2[FIDO2: FIDO2Client]
-    Auth --> WebAuthn[WebAuthn: WebAuthnClient]
-    Auth --> PIV[PIV: PIVClient]
+    Auth --> PIV[PIV: XKMSPIVService]
+    Auth --> Devices[Devices: LocalDevices]
     Auth --> Factors[Factors: AuthFactorsClient]
+    Auth --> UnifiedLogin[BeginLogin / FinishLogin]
 
     ACME --> ACMEServer[Server: ACMEServerClient]
     ACME --> ACMEClient[Client: ACMEClientAPI]
@@ -53,6 +55,10 @@ graph TD
     Trust --> CrossSigned[CrossSignedRootPool]
     Trust --> AIA[AutoImportAIA]
     Trust --> Bootstrap[Bootstrap: TrustBootstrapClient]
+
+    SSH --> SSHKeys[Keys: KeysClient]
+    SSH --> SSHHosts[KnownHosts: KnownHostsClient]
+    SSH --> SSHAuthorized[AuthorizedKeys: AuthorizedKeysClient]
 
     Certificate --> CAInfo[CAInfo / GetCABundle]
     Certificate --> ListCerts[ListCertificates / IssueCertificate / RevokeCertificate]
@@ -78,6 +84,7 @@ type SecurityService interface {
 
     ACME() ACMEService
     Trust() TrustService
+    SSH() SSHService
 
     Barrier() (QRDBBarrierClient, error)
     Ceremony() (QRDBCeremonyClient, error)
@@ -97,78 +104,94 @@ so repeated `Security().Auth().FIDO2()` calls do not allocate.
 `Security().Auth()` returns an `AuthService` that **embeds**
 `AuthClient`, so every existing call site that hit
 `Security().Auth().Login(...)` keeps working unchanged. The embedding
-adds four factor-typed sub-services per §5e of the architecture spec.
+adds the factor-typed sub-services plus the unified login ceremony.
 
 ```go
-// sdk/go/services_security.go:735
+// sdk/go/services_security.go
 type AuthService interface {
-    AuthClient                    // Login/Logout/RefreshToken/sessions/Whoami...
+    AuthClient                   // Login/Logout/RefreshToken/sessions/Whoami...
 
-    FIDO2()    FIDO2Client        // vendor-agnostic CTAP2 device ops
-    WebAuthn() WebAuthnClient     // WebAuthn relying-party ceremony
-    PIV()      PIVClient          // vendor-agnostic PIV smartcard ops
-    Factors()  AuthFactorsClient  // multi-factor enrol/login (qrdb User N-AuthFactor)
+    FIDO2()   FIDO2Client        // WebAuthn/FIDO2 relying-party ceremony (xkms verb shape)
+    PIV()     XKMSPIVService     // backend-scoped PIV slots (xkms PIVService shape)
+    Devices() LocalDevices       // client-LOCAL CTAP2 authenticator discovery
+    Factors() AuthFactorsClient  // multi-factor enrollment (qrdb User N-AuthFactor)
+
+    BeginLogin(ctx context.Context, req qrdbtransport.BeginLoginRequest) (*qrdbtransport.BeginLoginResponse, error)
+    FinishLogin(ctx context.Context, req qrdbtransport.FinishLoginRequest) (*FinishLoginResponse, error)
 }
 ```
 
 ### FIDO2
 
-`Security().Auth().FIDO2()` exposes CTAP2 device operations
-discovered via USB-HID, PC/SC, and BLE. No vendor hard-coding:
-attestation features stay capability-gated (e.g. YubiKey attestation
-is available only on supporting readers).
+`Security().Auth().FIDO2()` is the **single canonical WebAuthn/FIDO2
+ceremony accessor** for the stack. It carries go-xkms's FIDO2 verb
+shape verbatim — the request/response payloads are re-exports of the
+xkms transport types — and rides all six transports as the
+`quicbaas.FIDO2` service. The ceremony targets the tenant carried on
+the request context (`transport.ContextWithTenant`) or the
+transport's configured default tenant.
 
 ```go
 type FIDO2Client interface {
-    ListDevices(ctx context.Context) (*FIDO2ListDevicesResponse, error)
-    DeviceInfo(ctx context.Context, deviceID string) (*FIDO2DeviceInfo, error)
-    Register(ctx context.Context, opts *FIDO2BeginRegistrationRequest) (*FIDO2BeginRegistrationResponse, error)
-    Assert(ctx context.Context, opts *FIDO2BeginAuthenticationRequest) (*FIDO2BeginAuthenticationResponse, error)
+    BeginRegistration(ctx context.Context, req *FIDO2BeginRegistrationRequest) (*FIDO2BeginRegistrationResponse, error)
+    FinishRegistration(ctx context.Context, req *FIDO2FinishRegistrationRequest) (*FIDO2FinishRegistrationResponse, error)
+    BeginAuthentication(ctx context.Context, req *FIDO2BeginAuthenticationRequest) (*FIDO2BeginAuthenticationResponse, error)
+    FinishAuthentication(ctx context.Context, req *FIDO2FinishAuthenticationRequest) (*FIDO2FinishAuthenticationResponse, error)
 }
 ```
 
-The implementation is in
-[`fido2Impl`](../../sdk/go/services_security.go) (`fido2.*` service
-name on the wire).
+Begin verbs return the JSON-marshaled WebAuthn options
+(`OptionsJSON`) plus an opaque ceremony `SessionID`; finish verbs
+carry the authenticator's attestation/assertion JSON back under that
+session id. There is no separate `WebAuthn()` accessor — one
+canonical entry point per capability.
 
-### WebAuthn
+### Devices
 
-`Security().Auth().WebAuthn()` drives the relying-party side of
-WebAuthn registration + login. MDS validation is server-config
-driven; the SDK is transport-agnostic.
+`Security().Auth().Devices()` is the client-LOCAL CTAP2 helper. It
+enumerates the USB-HID FIDO2 authenticators attached to **this**
+process's host and performs no transport request — a server cannot
+enumerate a remote client's hardware, so this is deliberately not a
+wire verb.
 
 ```go
-type WebAuthnClient interface {
-    BeginRegistration(ctx context.Context, user *WebAuthnUser) (*FIDO2BeginRegistrationResponse, error)
-    FinishRegistration(ctx context.Context, user *WebAuthnUser, response *FIDO2FinishRegistrationRequest) (*WebAuthnCredential, error)
-    BeginLogin(ctx context.Context, user *WebAuthnUser) (*FIDO2BeginAuthenticationResponse, error)
-    FinishLogin(ctx context.Context, user *WebAuthnUser, response *FIDO2FinishAuthenticationRequest) (*WebAuthnSession, error)
+type LocalDevices interface {
+    List() ([]LocalDevice, error)
+    Info(devicePath string) (*LocalDevice, error)
+    Present() (bool, error)
 }
 ```
-
-WebAuthn types (`WebAuthnUser`, `WebAuthnCredential`, `WebAuthnSession`)
-are SDK-native; ceremony payloads (`FIDO2BeginRegistrationResponse`,
-etc.) are re-exports of the xkms transport types so consumers stay
-on a single import path.
 
 ### PIV
 
-`Security().Auth().PIV()` is the vendor-agnostic PIV smartcard
-surface. Devices are discovered via PC/SC.
+`Security().Auth().PIV()` returns the go-xkms backend-scoped
+`PIVService` contract (`XKMSPIVService`, a type alias of
+`xkmstransport.PIVService`). Slots are addressed by xkms backend
+(`file` / `pkcs11` / `tpm2`) + slot id; the verbs manage PIV slots on
+the composed server-side backends and ride all six transports as the
+`quicbaas.PIV` service.
 
 ```go
-type PIVClient interface {
-    ListReaders(ctx context.Context) (*PIVListReadersResponse, error)
-    ListSlots(ctx context.Context, reader string) (*PIVListSlotsResponse, error)
-    GetCertificate(ctx context.Context, reader, slot string) (*x509.Certificate, error)
-    Sign(ctx context.Context, req *PIVSignRequest) (*PIVSignResponse, error)
-    Attest(ctx context.Context, reader, slot string) (*PIVAttestResponse, error)
-}
+// XKMSPIVService = go-xkms sdk/go/transport.PIVService
+ListPIVSlots(ctx, *PIVListSlotsRequest) (*PIVListSlotsResponse, error)
+GetPIVCertificate(ctx, *PIVGetCertificateRequest) (*PIVGetCertificateResponse, error)
+StorePIVCertificate(ctx, *PIVStoreCertificateRequest) error
+DeletePIVCertificate(ctx, *PIVDeleteCertificateRequest) error
+GeneratePIVKey(ctx, *PIVGenerateKeyRequest) (*PIVGenerateKeyResponse, error)
+ImportPIVCertificate(ctx, *PIVStoreCertificateRequest) error
+ExportPIVCertificate(ctx, *PIVGetCertificateRequest) (*PIVGetCertificateResponse, error)
+GeneratePIVCSR(ctx, *PIVGenerateCSRRequest) (*PIVGenerateCSRResponse, error)
 ```
 
-`Attest` returns `ErrPIVAttestationUnsupported` on cards without
-attestation rather than a generic transport error so callers can
-branch cleanly.
+Card/hardware interaction is **client-local** per xkms convention:
+the CLI's PIV enrollment (`auth factor add --type piv`) and login
+(`auth login --method piv`) run an in-process xkms PIV backend
+(`--piv-backend file|pkcs11|tpm2`, `--piv-dir`, `--pkcs11-module`,
+`--pkcs11-token`, `--pin`) to read the slot certificate and sign the
+server-issued nonce; the server verifies the proof with go-xkms's
+`PIVHardwareFactorVerifier`. Physical smart cards are reachable
+through the `pkcs11` backend (`-tags pkcs11` build); go-xkms has no
+PC/SC reader model.
 
 ### Factors — AuthFactorsClient
 
@@ -183,13 +206,13 @@ type AuthFactorsClient interface {
     Remove(ctx context.Context, factorID string, force bool) error
     Rotate(ctx context.Context, oldID string, newFactor *AuthFactorEnrollRequest) (*AuthFactorEnrollResponse, error)
     Relabel(ctx context.Context, factorID, label string) error
-    Login(ctx context.Context, req *AuthFactorLoginRequest) (*AuthFactorLoginResponse, error)
 }
 ```
 
-`Login` is type-dispatched: `req.FactorName` selects the flow (`mtls`
-/ `fido2` / `piv`), or leave it empty so the server auto-discovers
-based on the proof material.
+Factors() is enrollment-only. Login is the unified ceremony on
+`AuthService` itself — `BeginLogin` issues the factor-typed challenge
+(`mtls` / `fido2` / `piv`) and `FinishLogin` verifies the proof
+server-side and mints the bearer.
 
 ## Barrier — QRDBBarrierClient
 
@@ -355,6 +378,102 @@ proxy.
 `DeriveNoiseAddr` returns the canonical `host:port` the Noise
 bootstrap channel listens on, derived from a server URL. CLI / GUI
 callers use it to default the `NoiseConfig.ServerAddr` field.
+
+## SSH — SSHService
+
+```go
+// sdk/go/services_security.go
+type SSHService = sshclient.Client // = go-xkms sdk/go/client/ssh.Client
+```
+
+`Security().SSH()` is the single canonical entry point for SSH key,
+known-hosts, and authorized-keys management. It is a **type alias** for the
+go-xkms SSH client contract: QuicBaaS composes that contract over its own
+transports instead of declaring a parallel one, so downstream consumers never
+import go-xkms.
+
+```go
+ssh := client.Security().SSH()
+
+key, err := ssh.Keys().Generate(ctx, sshclient.GenerateRequest{
+    Scope: "user", Owner: "alice", Name: "laptop", Algorithm: "ed25519",
+})
+
+// The private half never leaves the server: Signer fetches the public key
+// once, then ships only digests.
+signer, err := ssh.Keys().Signer(ctx, sshclient.GetKeyRequest{
+    Scope: "user", Owner: "alice", Name: "laptop",
+})
+
+err = ssh.KnownHosts().Add(ctx, sshclient.AddKnownHostRequest{
+    Scope: "user", Owner: "alice",
+    Host: "git.example.com", Fingerprint: "SHA256:...",
+})
+
+err = ssh.AuthorizedKeys().Add(ctx, sshclient.AddAuthorizedKeyRequest{
+    Scope: "user", Owner: "alice", Name: "deploy", Line: key.PublicKey,
+})
+```
+
+### Verbs
+
+| Sub-client | Verbs |
+|------------|-------|
+| `Keys()` | `Generate`, `Import`, `Get`, `List`, `Delete`, `ExportPublic`, `Signer` |
+| `KnownHosts()` | `Add`, `List`, `Remove`, `Verify`, `Callback` |
+| `AuthorizedKeys()` | `Add`, `Get`, `List`, `Remove`, `Emit`, `Verify` |
+
+`KnownHosts().Verify` / `Callback`, and `AuthorizedKeys().Get` / `Verify` are
+resolved **client-side** from a scoped `List`. Host-key and authorized-key
+trust is decided where the connection is made, which is also how every remote
+go-xkms transport behaves.
+
+### Transport matrix
+
+Every verb is served on all six transports. The wire envelopes are defined
+once in `sdk/go/client/ssh/types.go` and every transport encodes exactly
+those shapes.
+
+| Transport | Route |
+|-----------|-------|
+| embedded | `quicbaas.SSH/*` handlers in `sdk/go/transport/embedded/handlers_ssh.go` |
+| REST | `/api/v1/ssh/*` (aliased at `/api/v1/xkms/v1/ssh/*` for the go-xkms REST client) |
+| gRPC | `quicbaas.ssh.v1.SSHService` |
+| Unix | gRPC over the domain socket — the same `SSHService` registration |
+| QUIC | `OpOrchestrator` (0x8F) dispatch byte, SSH sub-op range `0x50-0x5D` |
+| MCP | `quicbaas_ssh_*` tools |
+
+### Session and Console are deliberately unimplemented
+
+`Session().Dial` and `Console` report `CodeUnimplemented` on every QuicBaaS
+transport. An outbound SSH session must run in the caller's own process;
+terminating one on the server would turn a key vault into an SSH jump host
+that dials arbitrary hosts on a caller's behalf. Remote keys still drive a
+local session — resolve `Keys().Signer` and pass it to your own dialer. This
+matches go-xkms, whose remote transports refuse both verbs for the same
+reason.
+
+`Close()` is a no-op: the transport belongs to the parent SDK client.
+
+### Authorization
+
+SSH assets are cryptographic keys, so every transport authorizes them with
+the qrdb `keys:*` family — byte-for-byte the same `(resource, action)` pairs
+on REST, gRPC, Unix, QUIC, and MCP:
+
+| Operation | Permission |
+|-----------|------------|
+| generate / add pin / add authorized | `keys:create` |
+| import | `keys:import` |
+| get / export / emit | `keys:get` |
+| list | `keys:list` |
+| delete / remove | `keys:delete` |
+| sign | `keys:sign` |
+
+qrdb also registers an `ssh:read` / `ssh:write` / `ssh:delete` family.
+Migrating to it is a cross-surface change that must move the REST PEP
+(`pkg/api/rest/authz_pep_mapping.go`), the gRPC map, the QUIC sub-op map, and
+the MCP map together — not one of them.
 
 ## Seal — SealClient (legacy)
 

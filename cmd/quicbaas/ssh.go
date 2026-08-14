@@ -23,18 +23,18 @@ import (
 
 	"github.com/spf13/cobra"
 
-	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	sshSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 )
 
 // =============================================================================
 // `quicbaas ssh` — SSH key, known-hosts, authorized-keys management
 // =============================================================================
 //
-// Transport is selected by the environment: XKMSD_URL → REST, empty →
-// file-backed embedded store under $HOME/.quicbaas/ssh-store. Both
-// paths go through buildCLISSHClient so the CLI and the agent deploy
-// path pick the same store.
+// Every verb goes through quicbaas.SDK().Security().SSH() via
+// buildCLISSHClient, so the CLI, the agent deploy path, and the desktop
+// bindings share one client and one authorization path. Transport is
+// selected by the global --server / --transport flags like every other
+// subcommand.
 
 // =============================================================================
 // Typed errors
@@ -82,16 +82,13 @@ func newSSHCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ssh",
 		Short: "SSH key, known-hosts, and authorized-keys management",
-		Long: `SSH key, host-key, and authorized-key management via the xkms SDK.
+		Long: `SSH key, host-key, and authorized-key management.
 
-Transport selection:
-  * When XKMSD_URL is set the CLI uses the REST transport to talk to
-    xkmsd. Optional bearer token: XKMSD_TOKEN.
-  * Otherwise the CLI uses the embedded transport with a file-backed
-    store at $HOME/.quicbaas/ssh-store.
-
-Both transports expose the same operations, so scripts written
-against one work unchanged against the other.`,
+Every operation routes through the QuicBaaS SDK to quicbaasd, which
+composes the go-xkms SSH key store. Transport is selected by the global
+--server / --transport flags (rest, grpc, quic, mcp, unix, embedded) and
+every transport exposes the same operations, so scripts written against
+one work unchanged against the others.`,
 	}
 
 	cmd.AddCommand(newSSHKeysCommand())
@@ -348,7 +345,7 @@ func runSSHKeysGenerate(cmd *cobra.Command, _ []string) error {
 	}
 	defer closer()
 
-	out, err := client.Keys().Generate(context.Background(), xkmsssh.GenerateRequest{
+	out, err := client.Keys().Generate(context.Background(), sshSDK.GenerateRequest{
 		Scope: scope, Owner: owner, Name: name,
 		Algorithm: algo, RSABits: bits, Comment: comment,
 	})
@@ -385,7 +382,7 @@ func runSSHKeysImport(cmd *cobra.Command, _ []string) error {
 	defer closer()
 
 	provider := sshPassphraseProvider()
-	out, err := client.Keys().Import(context.Background(), xkmsssh.ImportRequest{
+	out, err := client.Keys().Import(context.Background(), sshSDK.ImportRequest{
 		Scope: scope, Owner: owner, Name: name, Comment: comment, PEM: pemBytes,
 	}, provider)
 	if err != nil {
@@ -406,7 +403,7 @@ func runSSHKeysList(cmd *cobra.Command, _ []string) error {
 	}
 	defer closer()
 
-	list, err := client.Keys().List(context.Background(), xkmsssh.ListKeysRequest{
+	list, err := client.Keys().List(context.Background(), sshSDK.ListKeysRequest{
 		Scope: scope, Owner: owner,
 	})
 	if err != nil {
@@ -433,7 +430,7 @@ func runSSHKeysGet(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer closer()
-	out, err := client.Keys().Get(context.Background(), xkmsssh.GetKeyRequest{
+	out, err := client.Keys().Get(context.Background(), sshSDK.GetKeyRequest{
 		Scope: scope, Owner: owner, Name: name,
 	})
 	if err != nil {
@@ -453,7 +450,7 @@ func runSSHKeysDelete(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer closer()
-	if err := client.Keys().Delete(context.Background(), xkmsssh.DeleteKeyRequest{
+	if err := client.Keys().Delete(context.Background(), sshSDK.DeleteKeyRequest{
 		Scope: scope, Owner: owner, Name: name,
 	}); err != nil {
 		return err
@@ -472,7 +469,7 @@ func runSSHKeysExport(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer closer()
-	out, err := client.Keys().ExportPublic(context.Background(), xkmsssh.ExportRequest{
+	out, err := client.Keys().ExportPublic(context.Background(), sshSDK.ExportRequest{
 		Scope: scope, Owner: owner, Name: name,
 	})
 	if err != nil {
@@ -503,7 +500,7 @@ func runSSHKnownHostsAdd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer closer()
-	if err := client.KnownHosts().Add(context.Background(), xkmsssh.AddKnownHostRequest{
+	if err := client.KnownHosts().Add(context.Background(), sshSDK.AddKnownHostRequest{
 		Scope: scope, Owner: owner, Host: host,
 		Fingerprint: fp, Algorithm: algo, Source: src,
 	}); err != nil {
@@ -520,7 +517,7 @@ func runSSHKnownHostsList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer closer()
-	list, err := client.KnownHosts().List(context.Background(), xkmsssh.ListKnownHostsRequest{
+	list, err := client.KnownHosts().List(context.Background(), sshSDK.ListKnownHostsRequest{
 		Scope: scope, Owner: owner,
 	})
 	if err != nil {
@@ -548,7 +545,7 @@ func runSSHKnownHostsRemove(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer closer()
-	if err := client.KnownHosts().Remove(context.Background(), xkmsssh.RemoveKnownHostRequest{
+	if err := client.KnownHosts().Remove(context.Background(), sshSDK.RemoveKnownHostRequest{
 		Scope: scope, Owner: owner, Host: host,
 	}); err != nil {
 		return err
@@ -572,7 +569,7 @@ func runSSHAuthorizedAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer closer()
-	if err := client.AuthorizedKeys().Add(context.Background(), xkmsssh.AddAuthorizedKeyRequest{
+	if err := client.AuthorizedKeys().Add(context.Background(), sshSDK.AddAuthorizedKeyRequest{
 		Scope: scope, Owner: owner, Name: name, Line: args[0],
 	}); err != nil {
 		return err
@@ -588,7 +585,7 @@ func runSSHAuthorizedList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer closer()
-	list, err := client.AuthorizedKeys().List(context.Background(), xkmsssh.ListAuthorizedKeysRequest{
+	list, err := client.AuthorizedKeys().List(context.Background(), sshSDK.ListAuthorizedKeysRequest{
 		Scope: scope, Owner: owner,
 	})
 	if err != nil {
@@ -626,10 +623,10 @@ func runSSHAuthorizedRemove(cmd *cobra.Command, _ []string) error {
 // Helpers
 // =============================================================================
 
-// sshClientWithCloser builds an xkms SSH SDK client and returns a
-// closer function suitable for use with defer. The closer is always
-// safe to call — a no-op on the REST transport.
-func sshClientWithCloser() (xkmsssh.Client, func(), error) {
+// sshClientWithCloser resolves the SDK SSH client and returns a closer
+// suitable for use with defer. The closer is always safe to call — the
+// transport is owned by the SDK client, so Close is a no-op.
+func sshClientWithCloser() (sshSDK.Client, func(), error) {
 	client, err := buildCLISSHClient()
 	if err != nil {
 		return nil, nil, err
@@ -685,13 +682,12 @@ func defaultScopeAndOwner(cmd *cobra.Command) (string, string) {
 }
 
 // sshPassphraseProvider picks a passphrase provider appropriate to the
-// CLI's attachment: TTY → TerminalProvider (no echo), piped stdin →
-// StdinProvider.
-func sshPassphraseProvider() secure.PassphraseProvider {
+// CLI's attachment: TTY → terminal (no echo), piped stdin → stdin.
+func sshPassphraseProvider() sshSDK.PassphraseProvider {
 	if isStdinTTY() {
-		return secure.NewTerminalProvider()
+		return sshSDK.NewTerminalPassphraseProvider()
 	}
-	return secure.NewStdinProvider()
+	return sshSDK.NewStdinPassphraseProvider()
 }
 
 // isStdinTTY reports whether stdin is attached to a terminal.
@@ -703,8 +699,8 @@ func isStdinTTY() bool {
 	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
-// printSSHKey emits the standard metadata block for a *xkmsssh.Key.
-func printSSHKey(cmd *cobra.Command, k *xkmsssh.Key) {
+// printSSHKey emits the standard metadata block for a *sshSDK.Key.
+func printSSHKey(cmd *cobra.Command, k *sshSDK.Key) {
 	if k == nil {
 		return
 	}

@@ -36,13 +36,30 @@ const (
 	budgetWarningThreshold = 0.80
 )
 
-// UsageReport contains token usage details for a job or agent.
+// UsageReport contains token usage details for a job, agent, account, or
+// project.
 type UsageReport struct {
 	TotalTokens int64            `json:"total_tokens"`
 	BudgetLimit int64            `json:"budget_limit"`
 	PercentUsed float64          `json:"percent_used"`
 	ByAgent     map[string]int64 `json:"by_agent"`
 	LastUpdated int64            `json:"last_updated"`
+}
+
+// TurnUsage attributes one agent turn's token consumption across every
+// dimension the caller has available for it. JobID/AgentID are the
+// pre-existing job-scoped attribution (RecordTokenUsage); AccountID and
+// ProjectID are additive dimensions recorded only when non-empty, so a
+// caller that does not yet know one of them (e.g. a spawn that used no
+// pooled account) simply omits it rather than recording a zero/placeholder
+// value.
+type TurnUsage struct {
+	TenantID  string
+	JobID     string
+	AgentID   string
+	AccountID string
+	ProjectID string
+	Tokens    int64
 }
 
 // CostTracker manages token budget tracking for orchestration jobs.
@@ -58,6 +75,30 @@ type CostTracker interface {
 
 	// CheckBudget checks if the job is within budget.
 	CheckBudget(ctx context.Context, tenantID, jobID string) (BudgetStatus, error)
+
+	// RecordTurnUsage attributes one agent turn's token usage to every
+	// dimension the caller populated on usage, in a single call: the job
+	// (usage.JobID, when set — unchanged, existing behavior via
+	// RecordTokenUsage), the pooled account that served the turn
+	// (usage.AccountID, when set — see account.go), and the project the turn
+	// ran under (usage.ProjectID, when set). A single entry point exists so a
+	// caller reporting one turn's tokens cannot record job usage but skip
+	// account/project attribution (or vice versa) through a partial call
+	// sequence; unset dimensions are simply not recorded, not zero-filled.
+	RecordTurnUsage(ctx context.Context, usage TurnUsage) error
+
+	// GetAccountUsage returns the cumulative usage report for a pooled
+	// provider account across every job/turn it has ever served.
+	GetAccountUsage(ctx context.Context, tenantID, accountID string) (*UsageReport, error)
+
+	// GetProjectUsage returns the cumulative usage report for a project
+	// across every job/turn run under it.
+	GetProjectUsage(ctx context.Context, tenantID, projectID string) (*UsageReport, error)
+
+	// AccountTokens returns the cumulative tokens recorded against
+	// tenantID/accountID. It satisfies AccountUsageLookup so a CostTracker
+	// can be handed directly to LeastUsageAccountStrategy.
+	AccountTokens(ctx context.Context, tenantID, accountID string) (int64, error)
 }
 
 // Sentinel errors for cost tracking operations.

@@ -85,50 +85,83 @@ const ALL_KINDS_ENVELOPES: SessionEventEnvelope[] = [
   {
     session_id: 'sess-1',
     sequence: 3,
+    timestamp: '2025-01-01T00:00:01.5Z',
+    payload_json: { kind: 'agent_thought', source: 'agent:claude', thought: { text: 'considering the approach' } },
+  },
+  {
+    session_id: 'sess-1',
+    sequence: 4,
     timestamp: '2025-01-01T00:00:02Z',
     payload_json: { kind: 'tool_invocation', tool_invocation: { name: 'Read', args: { path: 'main.go' }, invocation_id: 'inv-1' } },
   },
   {
     session_id: 'sess-1',
-    sequence: 4,
+    sequence: 5,
     timestamp: '2025-01-01T00:00:03Z',
     payload_json: { kind: 'tool_result', tool_result: { content: 'package main', invocation_id: 'inv-1' } },
   },
   {
     session_id: 'sess-1',
-    sequence: 5,
+    sequence: 6,
     timestamp: '2025-01-01T00:00:04Z',
     payload_json: { kind: 'file_op', file_op: { op: 'edit', path: 'main.go', diff: '+added' } },
   },
   {
     session_id: 'sess-1',
-    sequence: 6,
+    sequence: 7,
     timestamp: '2025-01-01T00:00:05Z',
     payload_json: { kind: 'system_message', system: { message: 'Build done', level: 'info' } },
   },
   {
     session_id: 'sess-1',
-    sequence: 7,
+    sequence: 8,
     timestamp: '2025-01-01T00:00:06Z',
     payload_json: { kind: 'operator_joined', operator_joined: { operator_id: 'alice' } },
   },
   {
     session_id: 'sess-1',
-    sequence: 8,
+    sequence: 9,
     timestamp: '2025-01-01T00:00:07Z',
     payload_json: { kind: 'operator_left', operator_left: { operator_id: 'alice' } },
   },
   {
     session_id: 'sess-1',
-    sequence: 9,
+    sequence: 10,
     timestamp: '2025-01-01T00:00:08Z',
     payload_json: { kind: 'session_closed', closed: { reason: 'user request' } },
   },
   {
     session_id: 'sess-1',
-    sequence: 10,
+    sequence: 11,
     timestamp: '2025-01-01T00:00:09Z',
     payload_json: { kind: 'session_resumed', resumed: {} },
+  },
+  {
+    session_id: 'sess-1',
+    sequence: 12,
+    timestamp: '2025-01-01T00:00:10Z',
+    payload_json: {
+      kind: 'turn_started',
+      turn_started: { turn_id: 'turn-1', backend: 'ollama', model: 'llama3' },
+    },
+  },
+  {
+    session_id: 'sess-1',
+    sequence: 13,
+    timestamp: '2025-01-01T00:00:11Z',
+    payload_json: {
+      kind: 'turn_completed',
+      turn_completed: { turn_id: 'turn-1', stop_reason: 'end_turn', model: 'llama3', duration_ms: 4200 },
+    },
+  },
+  {
+    session_id: 'sess-1',
+    sequence: 14,
+    timestamp: '2025-01-01T00:00:12Z',
+    payload_json: {
+      kind: 'turn_failed',
+      turn_failed: { turn_id: 'turn-2', error: 'backend crashed', duration_ms: 900 },
+    },
   },
 ];
 
@@ -184,6 +217,14 @@ describe('sessionStore', () => {
     expect(ev).toBeDefined();
     expect(ev!.assistantChunk).toBe('Hi there');
     expect(ev!.stopReason).toBe('end_turn');
+  });
+
+  it('parses agent_thought as kind "thought" with thoughtText and source', async () => {
+    await openSession(fakeSession);
+    const ev = sessionStore.events.find((e) => e.kind === 'thought');
+    expect(ev).toBeDefined();
+    expect(ev!.thoughtText).toBe('considering the approach');
+    expect(ev!.source).toBe('agent:claude');
   });
 
   it('parses tool_invocation with name, args, and invocation_id', async () => {
@@ -246,6 +287,40 @@ describe('sessionStore', () => {
     const ev = sessionStore.events.find((e) => e.kind === 'resumed');
     expect(ev).toBeDefined();
     expect(ev!.kind).toBe('resumed');
+  });
+
+  // -------------------------------------------------------------------------
+  // turn_started / turn_completed / turn_failed — these used to fall through
+  // SERVER_KIND_TO_EVENT_KIND's ?? 'system' default and render as blank rows
+  // (no systemMessage was ever populated for them).
+  // -------------------------------------------------------------------------
+
+  it('parses turn_started with turn_id, backend, and model — not the "system" catch-all', async () => {
+    await openSession(fakeSession);
+    const ev = sessionStore.events.find((e) => e.kind === 'turn_started');
+    expect(ev).toBeDefined();
+    expect(ev!.turnId).toBe('turn-1');
+    expect(ev!.turnBackend).toBe('ollama');
+    expect(ev!.turnModel).toBe('llama3');
+  });
+
+  it('parses turn_completed with turn_id, stop_reason, model, and duration', async () => {
+    await openSession(fakeSession);
+    const ev = sessionStore.events.find((e) => e.kind === 'turn_completed');
+    expect(ev).toBeDefined();
+    expect(ev!.turnId).toBe('turn-1');
+    expect(ev!.turnStopReason).toBe('end_turn');
+    expect(ev!.turnModel).toBe('llama3');
+    expect(ev!.turnDurationMs).toBe(4200);
+  });
+
+  it('parses turn_failed with turn_id and the agent error text', async () => {
+    await openSession(fakeSession);
+    const ev = sessionStore.events.find((e) => e.kind === 'turn_failed');
+    expect(ev).toBeDefined();
+    expect(ev!.turnId).toBe('turn-2');
+    expect(ev!.turnError).toBe('backend crashed');
+    expect(ev!.turnDurationMs).toBe(900);
   });
 
   it('closeActiveSession clears events and activeSession', async () => {

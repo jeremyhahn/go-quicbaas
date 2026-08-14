@@ -56,6 +56,13 @@ func (h *Handler) getAgentService() orchestration.AgentService {
 //   - 0x06-0x0A: Task operations
 //   - 0x0B: Backend listing
 //   - 0x0C: Health check
+//   - 0x0D: Stateless inference
+//   - 0x20: Session pooled-account rotation (authorizes as orchestrator:spawn)
+//   - 0x30-0x38: Pooled provider accounts (handler_account.go)
+//   - 0x40-0x47: Projects (handler_project.go)
+//   - 0x50-0x5D: SSH (handler_ssh.go)
+//   - 0x60-0x62: Certificate extensions (handler_certificate_extensions.go)
+//   - 0x70-0x72: Attestation (handler_attestation.go)
 func (h *Handler) handleOrchestratorDispatch(ctx context.Context, req *Request) *Response {
 	if len(req.Payload) < 1 {
 		return h.errorResponse(api.NewMissingSubOpcodeError(
@@ -79,7 +86,73 @@ func (h *Handler) handleOrchestratorDispatch(ctx context.Context, req *Request) 
 		ctx = orchestration.ContextWithTenant(ctx, tenantID)
 	}
 
+	// Pooled provider account sub-ops share this dispatch opcode in a
+	// disjoint 0x30-0x38 range (see protocol.go). They are routed to their
+	// own O(1) table before the orchestrator switch so the two vocabularies
+	// stay separate — including for authorization, which resolves the
+	// account range against credentials:* rather than orchestrator:*.
+	if isAccountSubOp(subOpcode) {
+		return h.handleAccountDispatch(ctx, subOpcode, subReq)
+	}
+
+	// Project sub-ops share this dispatch opcode in a disjoint 0x40-0x47
+	// range (see protocol.go), routed to their own O(1) table for the same
+	// reason as accounts: they authorize against project:* rather than
+	// orchestrator:*.
+	if isProjectSubOp(subOpcode) {
+		return h.handleProjectDispatch(ctx, subOpcode, subReq)
+	}
+
+	// Certificate extension sub-ops share this dispatch opcode in a disjoint
+	// 0x60-0x62 range (see protocol.go). They authorize against ca:create /
+	// certs:generate rather than orchestrator:*, so they get their own table
+	// for the same reason accounts and projects do.
+	if isCertExtSubOp(subOpcode) {
+		return h.handleCertExtDispatch(ctx, subOpcode, subReq)
+	}
+
+	// Attestation sub-ops share this dispatch opcode in a disjoint
+	// 0x70-0x72 range (see protocol.go). They authorize against
+	// attestation:verify / attestation:attest rather than orchestrator:*,
+	// so they get their own table for the same reason accounts, projects
+	// and certificate extensions do.
+	if isAttestationSubOp(subOpcode) {
+		return h.handleAttestationDispatch(ctx, subOpcode, subReq)
+	}
+
+	// PIV sub-ops share this dispatch opcode in a disjoint 0x80-0x87 range
+	// (see protocol.go). They authorize against the piv:* family rather
+	// than orchestrator:*, so they get their own table for the same reason
+	// as the other security surfaces.
+	if isPIVSubOp(subOpcode) {
+		return h.handlePIVDispatch(ctx, subOpcode, subReq)
+	}
+
+	// FIDO2 sub-ops share this dispatch opcode in a disjoint 0x90-0x93
+	// range (see protocol.go). Registration authorizes against
+	// user_authfactors:add; the authentication ceremony is pre-auth (see
+	// isPublicSubOperation in handler_fido2.go).
+	if isFIDO2SubOp(subOpcode) {
+		return h.handleFIDO2Dispatch(ctx, subOpcode, subReq)
+	}
+
+	// SSH sub-ops share this dispatch opcode in a disjoint 0x50-0x5D range
+	// (see protocol.go), routed to their own O(1) table for the same reason
+	// as accounts and projects: they authorize against keys:* rather than
+	// orchestrator:*.
+	if isSSHSubOp(subOpcode) {
+		return h.handleSSHDispatch(ctx, subOpcode, subReq)
+	}
+
+	// Session account rotation shares this dispatch opcode at 0x20, outside the
+	// contiguous orchestrator range, because it is a write that must resolve
+	// orchestrator:spawn rather than the surface-level orchestrator:status the
+	// rest of the range authorizes with. It is still an orchestrator verb, so
+	// it dispatches here rather than into a separate table.
 	switch subOpcode {
+	case SubOpOrchestratorRotateAccount:
+		return h.handleOrchestratorRotateAccount(ctx, subReq)
+
 	// Session operations
 	case SubOpOrchestratorSpawn:
 		return h.handleOrchestratorSpawn(ctx, subReq)
@@ -150,6 +223,16 @@ func (h *Handler) handleOrchestratorSpawn(ctx context.Context, req *Request) *Re
 	return &Response{Status: StatusOK, Payload: payload}
 }
 
+// handleOrchestratorPrompt dispatches a prompt to an agent session.
+//
+// A prompt naming a session is asynchronous: the orchestrator records the
+// prompt and a turn_started marker on the session event log, runs the turn on
+// a context detached from this stream, and answers with the turn ID. The
+// agent's output is read back over the session event stream, and the turn ends
+// with a turn_completed or turn_failed event carrying that ID.
+//
+// A prompt with no session is a stateless one-shot: it has no event log to
+// publish to, so it stays synchronous and returns the completed turn inline.
 func (h *Handler) handleOrchestratorPrompt(ctx context.Context, req *Request) *Response {
 	agentSvc := h.getAgentService()
 	if agentSvc == nil {
@@ -159,6 +242,18 @@ func (h *Handler) handleOrchestratorPrompt(ctx context.Context, req *Request) *R
 	var promptReq orchestration.PromptSessionRequest
 	if err := DecodePayload(req.Payload, &promptReq); err != nil {
 		return h.errorResponse(err)
+	}
+
+	if promptReq.SessionID != "" {
+		ack, ackErr := agentSvc.PromptSessionAsync(ctx, &promptReq)
+		if ackErr != nil {
+			return h.errorResponse(ackErr)
+		}
+		payload, encErr := EncodePayload(ack)
+		if encErr != nil {
+			return h.errorResponse(encErr)
+		}
+		return &Response{Status: StatusOK, Payload: payload}
 	}
 
 	resp, err := agentSvc.PromptSession(ctx, &promptReq)
@@ -215,6 +310,38 @@ func (h *Handler) handleOrchestratorCloseSession(ctx context.Context, req *Reque
 	}
 
 	payload, err := EncodePayload(resp)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	return &Response{Status: StatusOK, Payload: payload}
+}
+
+// handleOrchestratorRotateAccount moves a session onto a different pooled
+// provider account. The same verb runs automatically when a turn fails on a
+// classified provider limit; this is the operator's door to it.
+func (h *Handler) handleOrchestratorRotateAccount(ctx context.Context, req *Request) *Response {
+	agentSvc := h.getAgentService()
+	if agentSvc == nil {
+		return h.errorResponse(api.NewServiceUnavailableError("Orchestrator"))
+	}
+
+	rotator, err := orchestration.RotationServiceFrom(agentSvc, "quic")
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	var rotateReq orchestration.RotateSessionAccountRequest
+	if err := DecodePayload(req.Payload, &rotateReq); err != nil {
+		return h.errorResponse(err)
+	}
+
+	result, err := rotator.RotateSessionAccount(ctx, &rotateReq)
+	if err != nil {
+		return h.errorResponse(err)
+	}
+
+	payload, err := EncodePayload(result)
 	if err != nil {
 		return h.errorResponse(err)
 	}

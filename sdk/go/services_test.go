@@ -427,6 +427,15 @@ func TestBackwardCompatibility_DirectAccessors(t *testing.T) {
 	if c.Project() == nil {
 		t.Error("Project() should return non-nil client")
 	}
+	// Account() is the single canonical entry point for the pooled provider
+	// account surface; a nil here means the accessor never wired a client and
+	// every account verb would nil-panic at the call site.
+	if c.Account() == nil {
+		t.Error("Account() should return non-nil client")
+	}
+	if c.Account() != c.Account() {
+		t.Error("Account() should memoize its client rather than rebuilding it per call")
+	}
 }
 
 // =============================================================================

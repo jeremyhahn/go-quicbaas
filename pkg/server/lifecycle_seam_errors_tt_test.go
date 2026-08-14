@@ -311,11 +311,10 @@ type ttNoopCloser struct{ closed bool }
 
 func (c *ttNoopCloser) Close() error { c.closed = true; return nil }
 
-// TestServer_Shutdown_TT_OptionalBackendBranches covers the optional-backend
-// teardown branches of Server.Shutdown that are skipped on the standard
-// node-backed path: the data-plane barrier closer, the LocalBackend, and the
-// FileBackend. Each is injected with a no-op closer so the corresponding
-// non-nil branch executes its Close path during shutdown.
+// TestServer_Shutdown_TT_OptionalBackendBranches covers the optional
+// teardown branch of Server.Shutdown that is skipped on the standard
+// node-backed path: the data-plane barrier closer. It is injected with a
+// no-op closer so the non-nil branch executes its Close path during shutdown.
 func TestServer_Shutdown_TT_OptionalBackendBranches(t *testing.T) {
 	saveAndRestoreSeams(t)
 	srv := withTempServer(t)
@@ -325,8 +324,6 @@ func TestServer_Shutdown_TT_OptionalBackendBranches(t *testing.T) {
 
 	closer := &ttNoopCloser{}
 	srv.dataPlaneBarrierCloser = closer
-	srv.localBackend = &LocalBackend{}
-	srv.fileBackend = &FileBackend{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

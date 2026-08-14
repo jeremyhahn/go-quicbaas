@@ -28,6 +28,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
@@ -298,7 +299,7 @@ func (m *DefaultFederationManager) RegisterProvider(ctx context.Context, provide
 	// can bypass it. Non-system tenants are unaffected. When no gate is wired we
 	// cannot verify the admin, so we fail closed for the system tenant rather
 	// than risk locking out the control plane behind a misconfigured IdP.
-	if IsSystemTenant(provider.TenantID) {
+	if qrdbsdk.IsSystemTenant(provider.TenantID) {
 		if err := m.ensureBootstrapReady(ctx); err != nil {
 			m.logProviderEvent(ctx, provider, "register", false,
 				map[string]interface{}{"error": err.Error()})

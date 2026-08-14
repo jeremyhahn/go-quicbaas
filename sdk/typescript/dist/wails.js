@@ -247,6 +247,12 @@ class WailsOrchestratorClient {
     async closeSession(req) {
         return sessionBinding().Close(req);
     }
+    // rotateSessionAccount is not yet exposed by the Wails SessionBinding.
+    // Use the REST transport for account rotation in desktop mode until the
+    // Go-side binding grows a RotateAccount method.
+    async rotateSessionAccount(_req) {
+        throw new Error('rotateSessionAccount: use REST transport for account rotation in desktop mode');
+    }
     // deployAgent forwards the spec to the Wails AgentDeployBinding.Deploy
     // method. The Go-side binding orchestrates the SSH+SFTP+systemd workflow
     // and returns a structured result.
@@ -457,7 +463,7 @@ class WailsAuthClient {
         // Use the REST transport client when WebAuthn is needed in desktop mode.
         throw new Error('webAuthnBeginLogin: use REST transport for WebAuthn in desktop mode');
     }
-    async webAuthnFinishLogin(_tenantID, _email, _credential) {
+    async webAuthnFinishLogin(_challenge, _credential) {
         throw new Error('webAuthnFinishLogin: use REST transport for WebAuthn in desktop mode');
     }
     async loginPIV() {
@@ -504,11 +510,23 @@ export class WailsClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     projects = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    accounts = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     iam = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     kms = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     secrets = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ca = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    trust = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    crypto = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    dek = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    dynamicSecrets = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     barrier = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

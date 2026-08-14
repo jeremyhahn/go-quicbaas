@@ -12,7 +12,6 @@
     requestCloseSession,
   } from '../../stores/sessionStore.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
-  import type { ParsedSessionEvent } from '../../stores/sessionStore.svelte.ts';
   import { dispatchSlashCommand, isSlashCommand } from '../../lib/slashCommands.ts';
 
   // ---------------------------------------------------------------------------
@@ -33,22 +32,12 @@
   let commandOutput = $state('');
   let commandIsError = $state(false);
 
-  // Detect streaming: any recent assistant_chunk without a stop_reason.
-  const isStreaming = $derived((): boolean => {
-    const evs = sessionStore.events;
-    if (evs.length === 0) return false;
-    for (let i = evs.length - 1; i >= Math.max(0, evs.length - 10); i--) {
-      const ev: ParsedSessionEvent | undefined = evs[i];
-      if (ev === undefined) continue;
-      if (ev.kind === 'assistant_chunk') {
-        return ev.stopReason === undefined || ev.stopReason === '';
-      }
-      if (ev.kind === 'prompt') break; // Stop looking at the previous turn.
-    }
-    return false;
-  });
-
-  const disabled = $derived(inFlight || isStreaming());
+  // Activity state is derived centrally in sessionStore (see TurnStatus doc
+  // comment there) from real transcript signals — the prompt-in-flight and
+  // assistant-streaming states are not tracked separately here anymore, so
+  // this composer and the header's SessionActivityIndicator never disagree.
+  const turnStatus = $derived(sessionStore.turnStatus);
+  const disabled = $derived(inFlight || turnStatus === 'working' || turnStatus === 'pending');
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -131,10 +120,19 @@
     >{commandOutput}</div>
   {/if}
 
-  {#if isStreaming()}
+  {#if turnStatus === 'working'}
     <div class="flex items-center gap-1.5 text-xs text-base-content/40" aria-live="polite">
       <span class="loading loading-dots loading-xs"></span>
       <span>Assistant is typing…</span>
+    </div>
+  {:else if turnStatus === 'pending'}
+    <div class="flex items-center gap-1.5 text-xs text-base-content/40" aria-live="polite">
+      <span class="loading loading-spinner loading-xs"></span>
+      <span>Waiting for the agent to respond…</span>
+    </div>
+  {:else if turnStatus === 'disconnected'}
+    <div class="flex items-center gap-1.5 text-xs text-warning" aria-live="polite">
+      <span>Live updates unavailable — the transcript may be out of date.</span>
     </div>
   {/if}
 

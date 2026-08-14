@@ -36,6 +36,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
 			Host:              "127.0.0.1",
+			SealedBindHost:    DefaultSealedBindHost,
 			ExposeShardHeader: true,
 			Embedded:          false,
 			ReadTimeout:       30 * time.Second,
@@ -254,6 +255,7 @@ func DefaultQRDBConfig() QRDBConfig {
 func DefaultServerConfig() ServerConfig {
 	return ServerConfig{
 		Host:              "127.0.0.1",
+		SealedBindHost:    DefaultSealedBindHost,
 		ExposeShardHeader: true,
 		Embedded:          false,
 		ReadTimeout:       30 * time.Second,
@@ -512,7 +514,10 @@ func DevelopmentConfig() *Config {
 	cfg.Storage.L0StopWritesThreshold = 8
 	cfg.Storage.TargetFileSize = 32 * 1024 * 1024
 
-	cfg.Security.TLSEnabled = false
+	// TLS stays ON even for local development: disabling it produces a
+	// certless bootstrap (no CA -> no admin mTLS credential) and plaintext
+	// listeners, both forbidden.
+	cfg.Security.TLSEnabled = true
 	cfg.Security.Authorization.RBAC.AllowAnonymous = true
 	cfg.Security.Authorization.ABAC.Enabled = false
 	// Development runs anonymous (AllowAnonymous=true); the default-deny gate is
@@ -536,6 +541,7 @@ func TestConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
 			Host:              "127.0.0.1",
+			SealedBindHost:    DefaultSealedBindHost,
 			ExposeShardHeader: true,
 			ReadTimeout:       5 * time.Second,
 			WriteTimeout:      5 * time.Second,
@@ -742,8 +748,10 @@ func EmbeddedConfig() *Config {
 	// to document the intent and prevent accidental re-enabling of a transport
 	// with the wrong posture.  Anonymous access is explicitly prohibited;
 	// embedded callers must carry auth.NewSystemContext or an injected Subject.
-	// TLS is unnecessary for in-process calls.
-	cfg.Security.TLSEnabled = false
+	// TLS stays ON even though embedded servers bind no network listener:
+	// the CA bootstrap it gates is what issues the platform admin's mTLS
+	// credential during first-boot, and a certless admin is forbidden.
+	cfg.Security.TLSEnabled = true
 	cfg.Security.RequireAuthz = true
 	cfg.Security.Authorization.RBAC.AllowAnonymous = false
 	// Bind the in-process system identity so service-layer guards that inspect

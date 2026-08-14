@@ -16,10 +16,12 @@ package integration
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -123,17 +125,24 @@ var (
 )
 
 // acquirePlatformToken obtains a platform access token for the integration
-// suite using ONLY public, unauthenticated OAuth2 endpoints, so it works on the
-// TLS-disabled single-node integration server which has no mTLS/PIV bootstrap:
+// suite. TLS is mandatory and POST /oauth2/register requires an RFC 7591
+// initial access token, so the bootstrap chains off the server's cert-based
+// admin identity (there are no invite tokens or password bootstrap):
 //
-//  1. POST /oauth2/register (RFC 7591 Dynamic Client Registration, public) to
-//     mint a confidential client allowed the client_credentials grant.
-//  2. POST /oauth2/token (public) with grant_type=client_credentials and the
-//     required data-plane scopes to mint a Bearer access token.
+//  1. POST /api/v1/auth/login/piv over mTLS presenting the fixture admin
+//     client certificate (auth.bootstrap_admin_piv_cert_path binds the
+//     bootstrap admin user to its SPKI thumbprint at startup) to obtain an
+//     admin bearer — the initial access token.
+//  2. POST /oauth2/register (RFC 7591 Dynamic Client Registration) with that
+//     bearer to mint a confidential client allowed the client_credentials
+//     grant.
+//  3. POST /oauth2/token (public) with grant_type=client_credentials and the
+//     required data-plane scopes to mint the suite's Bearer access token.
 //
-// The token is cached for the whole suite. Returns an error when the bootstrap
-// is not reachable so the suite fails loudly rather than falling back to
-// anonymous requests (which the default-deny gate rejects).
+// Every HTTPS client pins the integration CA fixture (see newHTTPClient).
+// The token is cached for the whole suite. Returns an error when the
+// bootstrap is not reachable so the suite fails loudly rather than falling
+// back to anonymous requests (which the default-deny gate rejects).
 func acquirePlatformToken(ctx context.Context) (string, error) {
 	bootstrapTokenOnce.Do(func() {
 		bootstrapToken, bootstrapTokenErr = doAcquirePlatformToken(ctx)
@@ -142,16 +151,85 @@ func acquirePlatformToken(ctx context.Context) (string, error) {
 }
 
 func doAcquirePlatformToken(ctx context.Context) (string, error) {
-	clientID, clientSecret, err := registerBootstrapClient(ctx)
+	initialAccessToken, err := adminPIVToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	clientID, clientSecret, err := registerBootstrapClient(ctx, initialAccessToken)
 	if err != nil {
 		return "", err
 	}
 	return clientCredentialsToken(ctx, clientID, clientSecret)
 }
 
-// registerBootstrapClient performs RFC 7591 Dynamic Client Registration against
-// the public /oauth2/register endpoint and returns the issued credentials.
-func registerBootstrapClient(ctx context.Context) (clientID, clientSecret string, err error) {
+// adminPIVToken performs the cert-bound bootstrap-admin login: POST
+// /api/v1/auth/login/piv over mTLS presenting the fixture admin client
+// certificate. The server bound the bootstrap admin user to this
+// certificate's SPKI thumbprint at startup, so the handshake itself is the
+// credential — no pre-existing token is needed. The returned bearer is the
+// RFC 7591 initial access token the DCR step presents.
+//
+// Cert bundle paths default to the shared integration fixtures and honor the
+// same override env vars the test/integration helpers use
+// (QUICBAAS_TEST_PIV_CERT / _KEY).
+func adminPIVToken(ctx context.Context) (string, error) {
+	certPath := getEnvOrDefault("QUICBAAS_TEST_PIV_CERT", filepath.Join(certsFixtureDir, "admin.crt"))
+	keyPath := getEnvOrDefault("QUICBAAS_TEST_PIV_KEY", filepath.Join(certsFixtureDir, "admin.key"))
+
+	clientCert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return "", &qberrors.WrappedMessageError{Message: "load admin client certificate", Cause: err}
+	}
+	pinned, err := suiteTLS()
+	if err != nil {
+		return "", err
+	}
+	tlsCfg := pinned.Clone()
+	tlsCfg.Certificates = []tls.Certificate{clientCert}
+
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig:   tlsCfg,
+			DisableKeepAlives: true,
+		},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		GetRESTAddress()+"/api/v1/auth/login/piv", nil)
+	if err != nil {
+		return "", &qberrors.WrappedMessageError{Message: "build PIV login request", Cause: err}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", &qberrors.WrappedMessageError{Message: "PIV login request failed", Cause: err}
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", &qberrors.MessageError{
+			Message: "PIV login failed with status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody),
+		}
+	}
+
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(respBody, &tok); err != nil {
+		return "", &qberrors.WrappedMessageError{Message: "decode PIV login response", Cause: err}
+	}
+	if tok.AccessToken == "" {
+		return "", &qberrors.MessageError{Message: "PIV login response missing access_token: " + string(respBody)}
+	}
+	return tok.AccessToken, nil
+}
+
+// registerBootstrapClient performs RFC 7591 Dynamic Client Registration
+// against /oauth2/register, presenting the admin bearer as the initial
+// access token, and returns the issued credentials.
+func registerBootstrapClient(ctx context.Context, initialAccessToken string) (clientID, clientSecret string, err error) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"client_name":                "sdk-integration-bootstrap",
 		"grant_types":                []string{"client_credentials"},
@@ -165,8 +243,9 @@ func registerBootstrapClient(ctx context.Context) (clientID, clientSecret string
 		return "", "", &qberrors.WrappedMessageError{Message: "build DCR request", Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+initialAccessToken)
 
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	resp, err := newHTTPClient(15 * time.Second).Do(req)
 	if err != nil {
 		return "", "", &qberrors.WrappedMessageError{Message: "DCR request failed", Cause: err}
 	}
@@ -209,7 +288,7 @@ func clientCredentialsToken(ctx context.Context, clientID, clientSecret string) 
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	resp, err := newHTTPClient(15 * time.Second).Do(req)
 	if err != nil {
 		return "", &qberrors.WrappedMessageError{Message: "token request failed", Cause: err}
 	}

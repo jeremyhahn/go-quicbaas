@@ -43,6 +43,11 @@ type Runtime struct {
 	containerRuntime orchestration.ContainerRuntime
 	logger           interfaces.Logger
 
+	// mountPolicy authorizes every host path a spawn would bind-mount into a
+	// sandbox container on THIS host. Nil denies every mount, which is what an
+	// unconfigured daemon must do — see Runtime.authorizeMounts.
+	mountPolicy *orchestration.MountPolicy
+
 	// workDir is the parent for <workDir>/sessions. Session records are
 	// persisted as plaintext JSON; at-rest confidentiality is provided by
 	// qrdb's StorageBarrier. Tenants needing cryptographic isolation may
@@ -84,10 +89,22 @@ type RuntimeConfig struct {
 	WorkDir string
 
 	// EventForwarder is the optional component that ships session events to
-	// the control plane. Runtime.Prompt installs an AgentEventCallback pointing at
-	// this forwarder before delegating to the backend so every emitted event
-	// reaches attachers on the control plane side.
+	// the control plane. Runtime.Prompt installs a SessionEventCallback
+	// pointing at this forwarder before delegating to the backend so every
+	// emitted event reaches attachers on the control plane side.
 	EventForwarder *EventForwarder
+
+	// MountPolicy authorizes the host bind mounts a spawn request asks for.
+	// It is the SAME type the control plane enforces
+	// (orchestration.MountPolicy), so both enforcement points resolve
+	// symlinks, refuse a nonexistent source, and compare roots on segment
+	// boundaries identically.
+	//
+	// A standalone daemon has no managed projects root of its own, so its
+	// policy is the operator's allowlist (Config.AllowedMountRoots). Leaving
+	// this nil is deny-by-default, not permissive: a sandboxed spawn naming
+	// any work directory is refused.
+	MountPolicy *orchestration.MountPolicy
 }
 
 // NewRuntime constructs a Runtime. Returns ErrRuntimeNoBackends if the
@@ -123,6 +140,7 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 		imageRegistry:    cfg.ImageRegistry,
 		containerRuntime: cfg.ContainerRuntime,
 		logger:           cfg.Logger,
+		mountPolicy:      cfg.MountPolicy,
 		workDir:          cfg.WorkDir,
 		sessionTenants:   map[string]string{},
 		eventForwarder:   cfg.EventForwarder,
@@ -185,6 +203,12 @@ func (r *Runtime) Spawn(ctx context.Context, tenantID string, tenantOverride *or
 	req.SandboxMode = effective
 	req.Sandboxed = effective == orchestration.SandboxModeRequired
 
+	// Authorize every host path this spawn would bind-mount, against the mode
+	// THIS daemon resolved, before any side effect. See authorizeMounts.
+	if mountErr := r.authorizeMounts(tenantID, req, effective); mountErr != nil {
+		return nil, mountErr
+	}
+
 	// Resolve container image from the daemon's image map when the caller
 	// didn't set one explicitly. This keeps the wire protocol simple:
 	// control plane supplies the backend name; the daemon decides which image
@@ -224,15 +248,60 @@ func (r *Runtime) Spawn(ctx context.Context, tenantID string, tenantOverride *or
 	return sess, nil
 }
 
+// authorizeMounts authorizes every host path this spawn would bind-mount into
+// a sandbox container on this host, scoped to the requesting tenant. It runs
+// after the daemon has resolved the effective sandbox mode and before any side
+// effect, so a rejected spawn has started no container and called no backend.
+//
+// This is the last line, not a duplicate of the control plane's check. Two
+// things make it necessary:
+//
+//   - The daemon's Spawn RPC takes work_dir straight off the wire. A principal
+//     holding only AgentScopeRuntimeSpawn would otherwise get any host path
+//     bind-mounted read-write into the container, which runs as the daemon's
+//     own uid — work_dir "/" is host root.
+//   - A remote spawn whose CONTROL-PLANE-resolved mode is not Required skips
+//     the control plane's work_dir authorization entirely, yet this daemon's
+//     own SandboxPolicy may still containerize it. Only a check against the
+//     mode resolved HERE covers that case.
+//
+// The split between the two fields mirrors the control plane's
+// authorizeSandboxMounts exactly: the work directory becomes a host bind mount
+// only when the spawn is containerized, while extra mounts exist for no other
+// purpose and are authorized on every path.
+func (r *Runtime) authorizeMounts(
+	tenantID string,
+	req *orchestration.SpawnRequest,
+	mode orchestration.SandboxMode,
+) error {
+	if len(req.ExtraMounts) > 0 {
+		if err := r.mountPolicy.Authorize(
+			tenantID, orchestration.MountFieldExtraMounts, req.ExtraMounts); err != nil {
+			return err
+		}
+	}
+	if mode != orchestration.SandboxModeRequired {
+		return nil
+	}
+	if req.WorkDir != "" && req.WorkDir != orchestration.WorkDirCurrent {
+		if err := r.mountPolicy.AuthorizeSource(
+			tenantID, orchestration.MountFieldWorkDir, req.WorkDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Prompt sends a prompt to the given backend. The session must already
 // have been established by a prior Spawn (or by the backend accepting
 // stateless prompts — Ollama).
 //
-// When an EventForwarder is configured, Prompt installs an
-// AgentEventCallback that translates each backend event into a structured
-// SessionEvent and enqueues it for forwarding to the control plane's session
-// log. The callback wraps any caller-supplied EventCallback (rather than
-// replacing it) so interactive SDK callers keep seeing events locally.
+// When an EventForwarder is configured, Prompt installs a
+// SessionEventCallback that stamps each backend-emitted structured event with
+// the session's tenant and source and enqueues it for forwarding to the
+// control plane's session log. The callback wraps any caller-supplied
+// EventCallback (rather than replacing it) so interactive SDK callers keep
+// seeing events locally.
 func (r *Runtime) Prompt(ctx context.Context, backendName string, req *orchestration.PromptRequest) (*orchestration.PromptResponse, error) {
 	backend, ok := r.lookupBackend(backendName)
 	if !ok {
@@ -271,10 +340,10 @@ func (r *Runtime) Prompt(ctx context.Context, backendName string, req *orchestra
 		r.sessionTenantsMu.Unlock()
 		forwardCB := r.eventForwarder.CallbackFor(tenantID, backendName)
 		existing := req.EventCallback
-		req.EventCallback = func(sessionID, eventType, details string) {
-			forwardCB(sessionID, eventType, details)
+		req.EventCallback = func(ev *orchestration.SessionEvent) {
+			forwardCB(ev)
 			if existing != nil {
-				existing(sessionID, eventType, details)
+				existing(ev)
 			}
 		}
 	}

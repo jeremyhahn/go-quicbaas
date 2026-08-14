@@ -15,6 +15,9 @@ package benchmark
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"fmt"
 	"testing"
 	"time"
@@ -25,6 +28,25 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/metrics"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tracing"
 )
+
+// newBenchAuthConfig returns an enabled AuthConfig backed by an ephemeral
+// ECDSA P-256 signing key so benchmarks mint and validate real ES256 tokens.
+// The same config validates the tokens it minted.
+func newBenchAuthConfig(b *testing.B) *auth.AuthConfig {
+	b.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		b.Fatalf("generate signing key: %v", err)
+	}
+	cfg := &auth.AuthConfig{
+		Enabled:         true,
+		JWTSigningKeyID: "benchmark-jwt-signing-key",
+		TokenTTL:        1 * time.Hour,
+		MaxTokens:       1000,
+	}
+	auth.SetAsymmetricSigning(cfg, key)
+	return cfg
+}
 
 // BenchmarkMetricsCollection benchmarks the overhead of metrics collection.
 func BenchmarkMetricsCollection(b *testing.B) {
@@ -393,12 +415,7 @@ func BenchmarkAuthTokenValidation(b *testing.B) {
 		Format: "json",
 	})
 
-	authManager, _ := auth.NewInMemoryAuthManager(&auth.AuthConfig{
-		Enabled:   true,
-		JWTSecret: "benchmark-secret-key-12345",
-		TokenTTL:  1 * time.Hour,
-		MaxTokens: 1000,
-	}, log)
+	authManager, _ := auth.NewInMemoryAuthManager(newBenchAuthConfig(b), log)
 
 	// Create test user and token
 	benchUser, _ := authManager.CreateUser("benchuser", []string{"admin"})
@@ -427,12 +444,7 @@ func BenchmarkAuthConcurrent(b *testing.B) {
 		Format: "json",
 	})
 
-	authManager, _ := auth.NewInMemoryAuthManager(&auth.AuthConfig{
-		Enabled:   true,
-		JWTSecret: "benchmark-secret-key-12345",
-		TokenTTL:  1 * time.Hour,
-		MaxTokens: 1000,
-	}, log)
+	authManager, _ := auth.NewInMemoryAuthManager(newBenchAuthConfig(b), log)
 
 	// Create multiple users
 	tokens := make([]*auth.Token, 100)
@@ -479,12 +491,7 @@ func BenchmarkExtendedFullStack(b *testing.B) {
 	})
 	defer tracer.Shutdown(ctx)
 
-	authManager, _ := auth.NewInMemoryAuthManager(&auth.AuthConfig{
-		Enabled:   true,
-		JWTSecret: "benchmark-secret-key-12345",
-		TokenTTL:  1 * time.Hour,
-		MaxTokens: 1000,
-	}, log)
+	authManager, _ := auth.NewInMemoryAuthManager(newBenchAuthConfig(b), log)
 
 	cacheManager, _ := cache.NewManager(cache.Config{
 		L1Size:          1000,
@@ -562,12 +569,7 @@ func BenchmarkExtendedConcurrent(b *testing.B) {
 	})
 	defer tracer.Shutdown(ctx)
 
-	authManager, _ := auth.NewInMemoryAuthManager(&auth.AuthConfig{
-		Enabled:   true,
-		JWTSecret: "benchmark-secret-key-12345",
-		TokenTTL:  1 * time.Hour,
-		MaxTokens: 1000,
-	}, log)
+	authManager, _ := auth.NewInMemoryAuthManager(newBenchAuthConfig(b), log)
 
 	cacheManager, _ := cache.NewManager(cache.Config{
 		L1Size:          10000,
@@ -667,12 +669,7 @@ func BenchmarkComparison(b *testing.B) {
 			}
 
 			if tt.enableAuth {
-				authManager, _ = auth.NewInMemoryAuthManager(&auth.AuthConfig{
-					Enabled:   true,
-					JWTSecret: "benchmark-secret-key-12345",
-					TokenTTL:  1 * time.Hour,
-					MaxTokens: 1000,
-				}, log)
+				authManager, _ = auth.NewInMemoryAuthManager(newBenchAuthConfig(b), log)
 				compUser, _ := authManager.CreateUser("benchuser", []string{"admin"})
 				token, _ = authManager.IssueTokenForUser(ctx, compUser)
 			}

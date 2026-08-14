@@ -19,50 +19,54 @@ import (
 	"encoding/pem"
 	"errors"
 	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
-// soCertLoginThumbprint distinguishes empty input, a missing PEM block, and an
-// unparseable certificate body, returning the matching typed error for each and
-// the canonical hex(SHA-256(cert.Raw)) digest on the happy path.
-func TestSOCertLoginThumbprint_ErrorBranches(t *testing.T) {
+// parseCertLoginPEM (the certificate decoder behind bindAdminPIVCert)
+// distinguishes empty input, a missing PEM block, and an unparseable
+// certificate body, returning the matching typed error for each; on the happy
+// path qrdbsdk.ComputeSPKIThumbprint yields the canonical SPKI thumbprint.
+func TestParseCertLoginPEM_ErrorBranches(t *testing.T) {
 	t.Run("empty input", func(t *testing.T) {
-		if _, err := soCertLoginThumbprint(nil); !errors.Is(err, ErrSOCertLoginEmpty) {
-			t.Fatalf("want ErrSOCertLoginEmpty, got %v", err)
+		if _, err := parseCertLoginPEM(nil); !errors.Is(err, ErrCertPEMEmpty) {
+			t.Fatalf("want ErrCertPEMEmpty, got %v", err)
 		}
 	})
 
 	t.Run("no PEM block", func(t *testing.T) {
-		if _, err := soCertLoginThumbprint([]byte("not a pem block")); !errors.Is(err, ErrSOCertLoginNoPEMBlock) {
-			t.Fatalf("want ErrSOCertLoginNoPEMBlock, got %v", err)
+		if _, err := parseCertLoginPEM([]byte("not a pem block")); !errors.Is(err, ErrCertPEMNoBlock) {
+			t.Fatalf("want ErrCertPEMNoBlock, got %v", err)
 		}
 	})
 
 	t.Run("valid PEM block with unparseable body", func(t *testing.T) {
 		// A well-formed CERTIFICATE PEM whose DER body is junk so
-		// x509.ParseCertificate fails, exercising SOCertLoginThumbprintError.
+		// x509.ParseCertificate fails, exercising CertPEMParseError.
 		bad := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not der")})
-		_, err := soCertLoginThumbprint(bad)
-		var typed *SOCertLoginThumbprintError
+		_, err := parseCertLoginPEM(bad)
+		var typed *CertPEMParseError
 		if !errors.As(err, &typed) {
-			t.Fatalf("want *SOCertLoginThumbprintError, got %T (%v)", err, err)
+			t.Fatalf("want *CertPEMParseError, got %T (%v)", err, err)
 		}
 		if typed.Error() == "" {
-			t.Fatal("SOCertLoginThumbprintError.Error() must be non-empty")
+			t.Fatal("CertPEMParseError.Error() must be non-empty")
 		}
 	})
 
 	t.Run("valid certificate yields stable digest", func(t *testing.T) {
 		certPEM, _ := newTestSOCertWithSPKI(t, "alice")
-		got, err := soCertLoginThumbprint(certPEM)
+		cert, err := parseCertLoginPEM(certPEM)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		again, err := soCertLoginThumbprint(certPEM)
+		got := qrdbsdk.ComputeSPKIThumbprint(cert)
+		again, err := parseCertLoginPEM(certPEM)
 		if err != nil {
 			t.Fatalf("unexpected error on second call: %v", err)
 		}
-		if got == "" || got != again {
-			t.Fatalf("digest unstable: %q vs %q", got, again)
+		if got == "" || got != qrdbsdk.ComputeSPKIThumbprint(again) {
+			t.Fatalf("thumbprint unstable: %q vs %q", got, qrdbsdk.ComputeSPKIThumbprint(again))
 		}
 	})
 }

@@ -17,6 +17,9 @@ package transactions
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"fmt"
 	"sync"
 	"testing"
@@ -62,12 +65,18 @@ func TestConcurrentOperations(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	authManager, err := auth.NewInMemoryAuthManager(&auth.AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key-12345",
-		TokenTTL:  1 * time.Hour,
-		MaxTokens: 100,
-	}, log)
+	signingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	authCfg := &auth.AuthConfig{
+		Enabled:         true,
+		JWTSigningKeyID: "test-transactions-signing-key",
+		TokenTTL:        1 * time.Hour,
+		MaxTokens:       100,
+	}
+	auth.SetAsymmetricSigning(authCfg, signingKey)
+
+	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
 
 	cacheManager, err := cache.NewManager(cache.Config{

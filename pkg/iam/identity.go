@@ -387,8 +387,14 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID, userID string,
 		user.AuthMethods = *opts.AuthMethods
 	}
 
-	if opts.PIVCertThumbprint != nil {
+	if opts.PIVCertThumbprints != nil {
+		user.SetPIVThumbprints(*opts.PIVCertThumbprints...)
+	} else if opts.PIVCertThumbprint != nil {
 		user.SetPIVThumbprint(*opts.PIVCertThumbprint)
+	}
+
+	if opts.SPKICertThumbprint != nil {
+		user.SetSPKIThumbprint(*opts.SPKICertThumbprint)
 	}
 
 	if opts.InviteToken != nil {

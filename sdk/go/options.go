@@ -112,8 +112,8 @@ type clientOptions struct {
 	// WithSecretRegistry. When set, Security().SecretResolver() returns it
 	// so go-trusted-platform (and other SDK consumers) have a single
 	// canonical resolution entry point that covers credential://, kms://,
-	// remote-kms://, and autogen references without importing the server
-	// package directly.
+	// and remote-kms:// references without importing the server package
+	// directly.
 	secretRegistry *qrdbsecret.ResolverRegistry
 }
 
@@ -396,8 +396,8 @@ func WithAuthToken(token string) Option {
 // WithSecretRegistry injects the unified secret resolver registry into the
 // client. Once set, Security().SecretResolver() returns the registry so
 // go-trusted-platform (and other SDK consumers) can resolve credential://,
-// kms://, remote-kms://, and autogen references without importing the server
-// package directly. The registry is typically obtained from
+// kms://, and remote-kms:// references without importing the server package
+// directly. The registry is typically obtained from
 // server.GetSecretRegistry() after Server.Start has returned.
 // A nil registry is silently accepted (SecretResolver will return nil).
 func WithSecretRegistry(reg *qrdbsecret.ResolverRegistry) Option {

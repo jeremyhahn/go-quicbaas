@@ -138,7 +138,7 @@ func TestQUICBarrierPostUnseal_Enforcement(t *testing.T) {
 					err:      tc.scopeErr,
 				},
 			}
-			fixture := newQUICSealedFixture(probe, authorizer, sink)
+			fixture := newQUICSealedFixture(probe, &quicCeremonyStateProbe{}, authorizer, sink)
 
 			out := fixture.dispatch(&Request{
 				Opcode:  OpBarrier,

@@ -32,11 +32,10 @@ import (
 // /login/begin|finish — which uses the X-Session-Id header for
 // ceremony correlation and accepts email/display-name bodies.
 //
-// This complements the legacy /api/v1/tenants/{tenant_id}/webauthn
-// endpoints (handled by IAMHandler) which were wired in pre-Phase-5
-// quicbaas. Both paths route through the same per-tenant xkms service;
-// the new path is the recommended canonical surface for tenant-scoped
-// FIDO2 ceremonies.
+// This is the single tenant-scoped ceremony surface: the legacy
+// /api/v1/tenants/{tenant_id}/webauthn endpoints were deleted, and
+// browser sign-in rides the unified login ceremony at
+// /api/v1/auth/login/{begin,finish}.
 //
 // The mount is a ROOT chi.Route (the OIDC discovery endpoints force the whole
 // IAM surface to register at the router root), so it does NOT inherit the

@@ -53,6 +53,43 @@ func TestResolveBindHostPerProtocol(t *testing.T) {
 	assert.Equal(t, "0.0.0.0", sc.ResolveBindHost(sc.Unix.BindAddress))
 }
 
+// TestResolveSealedBindHostDefaultsToLoopback verifies that an unset
+// SealedBindHost resolves to loopback even when Server.Host binds all
+// interfaces — the sealed-window surface must never inherit Host.
+func TestResolveSealedBindHostDefaultsToLoopback(t *testing.T) {
+	sc := &ServerConfig{Host: "0.0.0.0"}
+	assert.Equal(t, "127.0.0.1", sc.ResolveSealedBindHost())
+}
+
+// TestResolveSealedBindHostExplicitValueWins verifies that an explicit
+// SealedBindHost (remote-officer opt-in) is returned verbatim.
+func TestResolveSealedBindHostExplicitValueWins(t *testing.T) {
+	sc := &ServerConfig{Host: "127.0.0.1", SealedBindHost: "0.0.0.0"}
+	assert.Equal(t, "0.0.0.0", sc.ResolveSealedBindHost())
+}
+
+// TestResolveSealedBindHostEmptyFallsBack verifies the empty-string fallback
+// on a zero-value config resolves to the loopback default.
+func TestResolveSealedBindHostEmptyFallsBack(t *testing.T) {
+	sc := &ServerConfig{}
+	assert.Equal(t, DefaultSealedBindHost, sc.ResolveSealedBindHost())
+}
+
+// TestSealedBindHostDefaultConfigs verifies every config constructor seeds
+// SealedBindHost with the loopback default, including the production preset
+// that binds Server.Host to 0.0.0.0.
+func TestSealedBindHostDefaultConfigs(t *testing.T) {
+	assert.Equal(t, DefaultSealedBindHost, Default().Server.SealedBindHost)
+	assert.Equal(t, DefaultSealedBindHost, DefaultConfig().Server.SealedBindHost)
+	assert.Equal(t, DefaultSealedBindHost, DefaultServerConfig().SealedBindHost)
+	assert.Equal(t, DefaultSealedBindHost, TestConfig().Server.SealedBindHost)
+
+	prod := ProductionConfig()
+	assert.Equal(t, "0.0.0.0", prod.Server.Host)
+	assert.Equal(t, DefaultSealedBindHost, prod.Server.ResolveSealedBindHost(),
+		"production preset must keep the sealed window on loopback")
+}
+
 // TestRequireMTLSDefaultFalse verifies the strict-mTLS posture flag defaults to
 // false (opportunistic mTLS, current behavior).
 func TestRequireMTLSDefaultFalse(t *testing.T) {

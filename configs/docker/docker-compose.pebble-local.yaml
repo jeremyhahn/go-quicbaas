@@ -24,6 +24,9 @@ services:
       - quicbaas-data:/data/quicbaas
     environment:
       - QUICBAAS_SERVER_HOST=0.0.0.0
+      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
+      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_STORAGE_BACKEND=pebble
       - QUICBAAS_SERVER_GRPC_ENABLED=true
       - QUICBAAS_SERVER_GRPC_PORT=9443

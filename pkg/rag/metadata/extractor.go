@@ -155,6 +155,16 @@ func (e *extractor) ExtractGitInfo(path string) (*GitInfo, error) {
 		return nil, ErrNotGitRepository
 	}
 
+	// A directory named .git is not proof of a repository — an empty or
+	// half-written .git satisfies findGitDir but makes every command below
+	// fail. Each of those commands is individually optional, so without this
+	// probe the caller would receive a fully-empty GitInfo and a nil error
+	// instead of ErrNotGitRepository. Ask git itself before trusting the
+	// directory.
+	if _, err := e.runGitCommand(gitDir, "rev-parse", "--git-dir"); err != nil {
+		return nil, ErrNotGitRepository
+	}
+
 	info := &GitInfo{}
 
 	// Get remote URL
@@ -202,12 +212,13 @@ func (e *extractor) runGitCommand(gitDir string, args ...string) (string, error)
 	return string(output), nil
 }
 
-// findGitDir finds the .git directory by walking up the directory tree.
+// findGitDir returns the nearest ancestor of startDir (inclusive) that holds a
+// git repository, or "" if the walk reaches the filesystem root without
+// finding one.
 func findGitDir(startDir string) string {
 	dir := startDir
 	for {
-		gitPath := filepath.Join(dir, ".git")
-		if stat, err := os.Stat(gitPath); err == nil && stat.IsDir() {
+		if isGitDir(filepath.Join(dir, ".git")) {
 			return dir
 		}
 
@@ -218,6 +229,29 @@ func findGitDir(startDir string) string {
 		}
 		dir = parent
 	}
+}
+
+// isGitDir reports whether path is a git repository directory, applying git's
+// own structural rule (see is_git_directory in upstream git): HEAD plus the
+// objects and refs directories must all be present.
+//
+// The bare "is there a directory named .git" test this replaces was not
+// equivalent. An empty or half-written .git — a stray mkdir, an interrupted
+// clone — satisfied it, which both reported a non-repository as a repository
+// and, worse, shadowed a real repository further up the tree.
+func isGitDir(path string) bool {
+	if stat, err := os.Stat(path); err != nil || !stat.IsDir() {
+		return false
+	}
+	if stat, err := os.Stat(filepath.Join(path, "HEAD")); err != nil || stat.IsDir() {
+		return false
+	}
+	for _, sub := range [...]string{"objects", "refs"} {
+		if stat, err := os.Stat(filepath.Join(path, sub)); err != nil || !stat.IsDir() {
+			return false
+		}
+	}
+	return true
 }
 
 // determineScope determines the scope of a chunk.

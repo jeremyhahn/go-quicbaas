@@ -21,6 +21,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -1141,6 +1142,10 @@ type MockCertificateService struct {
 	IsRevokedFunc         func(ctx context.Context, req *service.IsRevokedRequest) (*service.IsRevokedResponse, error)
 	CAInfoFunc            func(ctx context.Context, req *service.CAInfoRequest) (*service.CAInfoResponse, error)
 	ListCertificatesFunc  func(ctx context.Context, req *service.ListCertificatesRequest) (*service.ListCertificatesResponse, error)
+
+	CrossSignFunc           func(ctx context.Context, req *service.CrossSignRequest) (*service.CrossSignResponse, error)
+	ChainFunc               func(ctx context.Context, req *service.CertificateChainRequest) (*service.CertificateChainResponse, error)
+	IssueDeviceIdentityFunc func(ctx context.Context, req *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error)
 }
 
 var _ service.CertificateService = (*MockCertificateService)(nil)
@@ -1234,6 +1239,33 @@ func (m *MockCertificateService) ListCertificates(ctx context.Context, req *serv
 		return m.ListCertificatesFunc(ctx, req)
 	}
 	return &service.ListCertificatesResponse{}, nil
+}
+
+// CrossSign returns the configured cross-signed certificate, or an empty
+// response when no func is set.
+func (m *MockCertificateService) CrossSign(ctx context.Context, req *service.CrossSignRequest) (*service.CrossSignResponse, error) {
+	if m.CrossSignFunc != nil {
+		return m.CrossSignFunc(ctx, req)
+	}
+	return &service.CrossSignResponse{}, nil
+}
+
+// Chain returns the configured issuer chain, or an empty response when no
+// func is set.
+func (m *MockCertificateService) Chain(ctx context.Context, req *service.CertificateChainRequest) (*service.CertificateChainResponse, error) {
+	if m.ChainFunc != nil {
+		return m.ChainFunc(ctx, req)
+	}
+	return &service.CertificateChainResponse{}, nil
+}
+
+// IssueDeviceIdentity returns the configured device identity certificate, or
+// an empty response when no func is set.
+func (m *MockCertificateService) IssueDeviceIdentity(ctx context.Context, req *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error) {
+	if m.IssueDeviceIdentityFunc != nil {
+		return m.IssueDeviceIdentityFunc(ctx, req)
+	}
+	return &service.IssueDeviceIdentityResponse{}, nil
 }
 
 // =============================================================================
@@ -1773,6 +1805,99 @@ func (m *MockProjectService) RevokeAgentRole(ctx context.Context, req *service.R
 		ProjectID: req.ProjectID,
 		AgentID:   req.AgentID,
 	}, nil
+}
+
+// =============================================================================
+// MockAccountService
+// =============================================================================
+
+// MockAccountService is a test double for service.AccountService. Every
+// method returns a zero-valued success response unless the caller installs
+// the corresponding Func field.
+type MockAccountService struct {
+	CreateAccountFunc           func(ctx context.Context, req *service.CreateAccountRequest) (*service.CreateAccountResponse, error)
+	GetAccountFunc              func(ctx context.Context, req *service.GetAccountRequest) (*service.GetAccountResponse, error)
+	ListAccountsFunc            func(ctx context.Context, req *service.ListAccountsRequest) (*service.ListAccountsResponse, error)
+	UpdateAccountFunc           func(ctx context.Context, req *service.UpdateAccountRequest) (*service.UpdateAccountResponse, error)
+	RotateAccountCredentialFunc func(ctx context.Context, req *service.RotateAccountCredentialRequest) (*service.RotateAccountCredentialResponse, error)
+	RevokeAccountFunc           func(ctx context.Context, req *service.RevokeAccountRequest) (*service.RevokeAccountResponse, error)
+	DeleteAccountFunc           func(ctx context.Context, req *service.DeleteAccountRequest) (*service.DeleteAccountResponse, error)
+	SetDefaultAccountFunc       func(ctx context.Context, req *service.SetDefaultAccountRequest) (*service.SetDefaultAccountResponse, error)
+	GetAccountUsageFunc         func(ctx context.Context, req *service.GetAccountUsageRequest) (*service.GetAccountUsageResponse, error)
+}
+
+var _ service.AccountService = (*MockAccountService)(nil)
+
+// CreateAccount delegates to CreateAccountFunc when set.
+func (m *MockAccountService) CreateAccount(ctx context.Context, req *service.CreateAccountRequest) (*service.CreateAccountResponse, error) {
+	if m.CreateAccountFunc != nil {
+		return m.CreateAccountFunc(ctx, req)
+	}
+	return &service.CreateAccountResponse{Account: &orchestration.Account{}}, nil
+}
+
+// GetAccount delegates to GetAccountFunc when set.
+func (m *MockAccountService) GetAccount(ctx context.Context, req *service.GetAccountRequest) (*service.GetAccountResponse, error) {
+	if m.GetAccountFunc != nil {
+		return m.GetAccountFunc(ctx, req)
+	}
+	return &service.GetAccountResponse{Account: &orchestration.Account{}}, nil
+}
+
+// ListAccounts delegates to ListAccountsFunc when set.
+func (m *MockAccountService) ListAccounts(ctx context.Context, req *service.ListAccountsRequest) (*service.ListAccountsResponse, error) {
+	if m.ListAccountsFunc != nil {
+		return m.ListAccountsFunc(ctx, req)
+	}
+	return &service.ListAccountsResponse{}, nil
+}
+
+// UpdateAccount delegates to UpdateAccountFunc when set.
+func (m *MockAccountService) UpdateAccount(ctx context.Context, req *service.UpdateAccountRequest) (*service.UpdateAccountResponse, error) {
+	if m.UpdateAccountFunc != nil {
+		return m.UpdateAccountFunc(ctx, req)
+	}
+	return &service.UpdateAccountResponse{Account: &orchestration.Account{}}, nil
+}
+
+// RotateAccountCredential delegates to RotateAccountCredentialFunc when set.
+func (m *MockAccountService) RotateAccountCredential(ctx context.Context, req *service.RotateAccountCredentialRequest) (*service.RotateAccountCredentialResponse, error) {
+	if m.RotateAccountCredentialFunc != nil {
+		return m.RotateAccountCredentialFunc(ctx, req)
+	}
+	return &service.RotateAccountCredentialResponse{AccountID: req.AccountID}, nil
+}
+
+// RevokeAccount delegates to RevokeAccountFunc when set.
+func (m *MockAccountService) RevokeAccount(ctx context.Context, req *service.RevokeAccountRequest) (*service.RevokeAccountResponse, error) {
+	if m.RevokeAccountFunc != nil {
+		return m.RevokeAccountFunc(ctx, req)
+	}
+	return &service.RevokeAccountResponse{Account: &orchestration.Account{}}, nil
+}
+
+// DeleteAccount delegates to DeleteAccountFunc when set.
+func (m *MockAccountService) DeleteAccount(ctx context.Context, req *service.DeleteAccountRequest) (*service.DeleteAccountResponse, error) {
+	if m.DeleteAccountFunc != nil {
+		return m.DeleteAccountFunc(ctx, req)
+	}
+	return &service.DeleteAccountResponse{AccountID: req.AccountID, Deleted: true}, nil
+}
+
+// SetDefaultAccount delegates to SetDefaultAccountFunc when set.
+func (m *MockAccountService) SetDefaultAccount(ctx context.Context, req *service.SetDefaultAccountRequest) (*service.SetDefaultAccountResponse, error) {
+	if m.SetDefaultAccountFunc != nil {
+		return m.SetDefaultAccountFunc(ctx, req)
+	}
+	return &service.SetDefaultAccountResponse{AccountID: req.AccountID}, nil
+}
+
+// GetAccountUsage delegates to GetAccountUsageFunc when set.
+func (m *MockAccountService) GetAccountUsage(ctx context.Context, req *service.GetAccountUsageRequest) (*service.GetAccountUsageResponse, error) {
+	if m.GetAccountUsageFunc != nil {
+		return m.GetAccountUsageFunc(ctx, req)
+	}
+	return &service.GetAccountUsageResponse{Usage: &orchestration.UsageReport{}}, nil
 }
 
 // =============================================================================

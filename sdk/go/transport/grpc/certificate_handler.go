@@ -64,6 +64,12 @@ var certificateHandlerMap = map[string]func(h *certificateHandler, ctx context.C
 	"VerifyCertificate": (*certificateHandler).handleVerifyCertificate,
 	"GetCACertificate":  (*certificateHandler).handleGetCACertificate,
 	"GetTLSConfig":      (*certificateHandler).handleGetTLSConfig,
+
+	// Certificate extensions — Security().CertificateExt(). See
+	// certificate_extensions_handler.go.
+	"CrossSign":           (*certificateHandler).handleCrossSign,
+	"Chain":               (*certificateHandler).handleChain,
+	"IssueDeviceIdentity": (*certificateHandler).handleIssueDeviceIdentity,
 }
 
 // handleRequest routes Certificate requests to the appropriate handler

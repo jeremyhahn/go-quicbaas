@@ -36,6 +36,14 @@ type grpcTogglableProbe struct{ sealedState bool }
 
 func (p *grpcTogglableProbe) IsSealed() bool { return p.sealedState }
 
+// grpcCeremonyStateProbe reports the ceremony state that decides whether the
+// pre-operational sealed-window exemptions still apply. operational=false is a
+// daemon whose init ceremony is unfinished; operational=true is the
+// already-initialized daemon (restart / post-boot re-seal).
+type grpcCeremonyStateProbe struct{ operational bool }
+
+func (p *grpcCeremonyStateProbe) IsOperational() bool { return p.operational }
+
 // grpcRecordingSink captures the sealed-window bypass audit events.
 type grpcRecordingSink struct{ events [][2]string }
 
@@ -65,8 +73,13 @@ type sealedAuthzChain struct {
 	authz  grpc.UnaryServerInterceptor
 }
 
-func newSealedAuthzChain(probe *grpcTogglableProbe, authorizer GRPCValidatorAuthorizer, sink *grpcRecordingSink) *sealedAuthzChain {
-	bypass := sealedwindow.NewAuthBypass(probe, sink)
+func newSealedAuthzChain(
+	probe *grpcTogglableProbe,
+	operational sealedwindow.OperationalProbe,
+	authorizer GRPCValidatorAuthorizer,
+	sink *grpcRecordingSink,
+) *sealedAuthzChain {
+	bypass := sealedwindow.NewAuthBypass(probe, operational, sink)
 	return &sealedAuthzChain{
 		sealed: qrdbsdk.SealedWindowUnaryInterceptor(probe, sealedwindow.GRPCFullMethodAllowlist()),
 		authz:  UnaryAuthorizationInterceptor(authorizer, WithSealedWindowAuthBypass(bypass)),
@@ -102,6 +115,7 @@ func TestGRPCSealedWindowAuthBypass_Composition(t *testing.T) {
 	cases := []struct {
 		name        string
 		sealed      bool
+		operational bool
 		method      string
 		ctx         context.Context
 		wantHandler bool
@@ -123,6 +137,54 @@ func TestGRPCSealedWindowAuthBypass_Composition(t *testing.T) {
 			name:        "sealed allowlisted status admitted",
 			sealed:      true,
 			method:      "/qrdb.v1.QRDBService/BarrierStatus",
+			ctx:         context.Background(),
+			wantHandler: true,
+			wantCode:    codes.OK,
+			wantAudit:   1,
+			wantAuthz:   0,
+		},
+		{
+			name:        "sealed pre-operational ceremony status admitted",
+			sealed:      true,
+			method:      "/qrdb.v1.QRDBService/CeremonyStatus",
+			ctx:         context.Background(),
+			wantHandler: true,
+			wantCode:    codes.OK,
+			wantAudit:   1,
+			wantAuthz:   0,
+		},
+		// Scope axis, end to end: the ceremony status / claim RPCs are
+		// ScopePreOperational. On an already-initialized (operational) sealed
+		// daemon the sealed-window interceptor still SERVES them — they stay on
+		// its allowlist — but the exemption has expired, so the authorization
+		// interceptor demands a token and the unauthenticated call is refused.
+		{
+			name:        "sealed operational ceremony status Unauthenticated",
+			sealed:      true,
+			operational: true,
+			method:      "/qrdb.v1.QRDBService/CeremonyStatus",
+			ctx:         context.Background(),
+			wantHandler: false,
+			wantCode:    codes.Unauthenticated,
+			wantAudit:   0,
+			wantAuthz:   0,
+		},
+		{
+			name:        "sealed operational claim-cert begin Unauthenticated",
+			sealed:      true,
+			operational: true,
+			method:      "/qrdb.v1.QRDBService/CeremonyClaimCertBegin",
+			ctx:         context.Background(),
+			wantHandler: false,
+			wantCode:    codes.Unauthenticated,
+			wantAudit:   0,
+			wantAuthz:   0,
+		},
+		{
+			name:        "sealed operational unseal still admitted",
+			sealed:      true,
+			operational: true,
+			method:      unsealMethod,
 			ctx:         context.Background(),
 			wantHandler: true,
 			wantCode:    codes.OK,
@@ -218,7 +280,8 @@ func TestGRPCSealedWindowAuthBypass_Composition(t *testing.T) {
 					authzCtx:    &platformtoken.AuthorizedContext{Subject: "u1", TenantID: "system"},
 				},
 			}
-			chain := newSealedAuthzChain(probe, authorizer, sink)
+			chain := newSealedAuthzChain(
+				probe, &grpcCeremonyStateProbe{operational: tc.operational}, authorizer, sink)
 
 			handlerReached, err := chain.invoke(tc.ctx, tc.method)
 			assert.Equal(t, tc.wantHandler, handlerReached, "handler reached")
@@ -253,7 +316,7 @@ func TestGRPCSealedWindowAuthBypass_ResealCycle(t *testing.T) {
 			authzCtx:    &platformtoken.AuthorizedContext{Subject: "u1"},
 		},
 	}
-	chain := newSealedAuthzChain(probe, authorizer, sink)
+	chain := newSealedAuthzChain(probe, &grpcCeremonyStateProbe{}, authorizer, sink)
 
 	// Unsealed: no token -> Unauthenticated; valid token -> admitted.
 	handlerReached, err := chain.invoke(context.Background(), unsealMethod)
@@ -291,7 +354,7 @@ func TestStreamAuthorizationInterceptor_SealedWindowBypass(t *testing.T) {
 
 	probe := &grpcTogglableProbe{sealedState: true}
 	sink := &grpcRecordingSink{}
-	bypass := sealedwindow.NewAuthBypass(probe, sink)
+	bypass := sealedwindow.NewAuthBypass(probe, &grpcCeremonyStateProbe{}, sink)
 	authorizer := &countingAuthorizer{}
 	interceptor := StreamAuthorizationInterceptor(authorizer, WithSealedWindowAuthBypass(bypass))
 

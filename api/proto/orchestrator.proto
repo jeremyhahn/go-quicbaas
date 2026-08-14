@@ -24,6 +24,12 @@ service OrchestratorService {
     rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
     rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
 
+    // RotateSessionAccount moves one session onto a different pooled provider
+    // account. Rotation also happens automatically when a turn fails on a
+    // classified provider limit; this is the operator-initiated door to the
+    // same verb ("this seat is bad, move my session now").
+    rpc RotateSessionAccount(RotateSessionAccountRequest) returns (RotateSessionAccountResponse);
+
     // Task Operations
     rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
     rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
@@ -124,6 +130,11 @@ enum SessionState {
     SESSION_STATE_IDLE = 2;
     SESSION_STATE_CLOSED = 3;
     SESSION_STATE_ERROR = 4;
+    // SESSION_STATE_RESUMABLE marks a session whose durable record survived a
+    // daemon restart but whose agent process did not. The session is
+    // addressable and its transcript is intact; the next prompt reconstitutes
+    // the process and restores the conversation before the turn runs.
+    SESSION_STATE_RESUMABLE = 5;
 }
 
 // SandboxMode selects the execution sandboxing strategy for an agent
@@ -314,6 +325,22 @@ message SpawnSessionRequest {
     string host_affinity = 13;         // pin to a specific agent daemon (Name or Host)
     bool host_affinity_strict = 14;    // when true, fail with NoMatchingAgentError if host_affinity is offline (overrides operator soft default)
     bool persistent = 15;              // when true, spawn a durable multi-turn session (CLI-mode backends register it in the session registry for Prompt/Status/Close); when false the backend uses one-shot-per-prompt execution
+
+    // Pooled provider account selection. account_id pins the session to one
+    // account; account_auto asks the named strategy to choose. The account a
+    // session resolves to is persisted on its durable record and replayed as a
+    // pin on resume, so a reconstituted session never lands on a different
+    // provider account than the one it has been billing to.
+    string account_id = 16;
+    bool account_auto = 17;
+    string account_strategy = 18;      // "static" | "least_usage"; empty selects the registry default
+
+    // account_allow optionally names the accounts this session may use and
+    // rotate through. It is an additive filter, never a source: an id the
+    // tenant does not own is simply not a candidate. Together with
+    // account_auto it is what authorizes rotation — a session with neither is
+    // a deliberate pin and is never moved off its account.
+    repeated string account_allow = 19;
 }
 
 message SpawnSessionResponse {
@@ -336,12 +363,26 @@ message PromptSessionRequest {
     string tenant_id = 8;
 }
 
+// PromptSessionResponse carries one of two shapes, told apart by `status`.
+//
+// For a prompt on an existing session the turn is asynchronous: `status` is
+// "accepted", `turn_id` identifies the dispatched turn, `sequence` is the
+// session-log sequence of its turn_started event, and `content` is empty. The
+// turn's output arrives on SubscribeSessionEvents and ends with a
+// turn_completed or turn_failed event carrying the same turn_id.
+//
+// For a stateless prompt against a named backend with no session there is no
+// event log to publish to, so the completed turn is returned inline: `status`
+// is empty and `content` holds the agent's output.
 message PromptSessionResponse {
     string session_id = 1;
     repeated ContentBlock content = 2;
     string model = 3;
     string stop_reason = 4;
     google.protobuf.Timestamp timestamp = 5;
+    string turn_id = 6;
+    string status = 7;
+    uint64 sequence = 8;
 }
 
 // SessionStatus
@@ -367,6 +408,35 @@ message CloseSessionRequest {
 message CloseSessionResponse {
     string session_id = 1;
     google.protobuf.Timestamp timestamp = 2;
+}
+
+// RotateSessionAccount
+message RotateSessionAccountRequest {
+    string session_id = 1;
+    string tenant_id = 2;
+
+    // reason is recorded on the closed account segment and in the session
+    // transcript.
+    string reason = 3;
+
+    // hold_outgoing marks the account being left as "limited" until
+    // available_at_unix, keeping the next selection from walking straight back
+    // into the seat the operator just condemned.
+    bool hold_outgoing = 4;
+
+    // available_at_unix is when a held outgoing account rejoins the pool, in
+    // Unix seconds. Ignored unless hold_outgoing is set; zero applies the
+    // server's default backoff.
+    int64 available_at_unix = 5;
+}
+
+message RotateSessionAccountResponse {
+    string session_id = 1;
+    string previous_account_id = 2;
+    string account_id = 3;
+    string strategy = 4;
+    string mode = 5;                   // "in_place" | "resume"
+    google.protobuf.Timestamp timestamp = 6;
 }
 
 // ListSessions

@@ -47,37 +47,38 @@ type orchestratorMethodHandler func(ctx context.Context, req interface{}) (inter
 // handleRequest routes orchestrator requests to appropriate handlers using map-based dispatch.
 func (h *orchestratorHandler) handleRequest(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
 	handlers := map[string]orchestratorMethodHandler{
-		"Health":              h.handleHealth,
-		"ListBackends":        h.handleListBackends,
-		"ListBackendModels":   h.handleListBackendModels,
-		"SpawnSession":        h.handleSpawnSession,
-		"PromptSession":       h.handlePromptSession,
-		"SessionStatus":       h.handleSessionStatus,
-		"CloseSession":        h.handleCloseSession,
-		"ListSessions":        h.handleListSessions,
-		"CreateTask":          h.handleCreateTask,
-		"GetTask":             h.handleGetTask,
-		"ListTasks":           h.handleListTasks,
-		"ClaimTask":           h.handleClaimTask,
-		"CompleteTask":        h.handleCompleteTask,
-		"RegisterAgent":       h.handleRegisterAgent,
-		"GetAgent":            h.handleGetAgent,
-		"ListAgents":          h.handleListAgents,
-		"RemoveAgent":         h.handleRemoveAgent,
-		"AgentHeartbeat":      h.handleAgentHeartbeat,
-		"DecomposeTask":       h.handleDecomposeTask,
-		"SpawnChildJob":       h.handleSpawnChildJob,
-		"StartJob":            h.handleStartJob,
-		"GetJobStatus":        h.handleGetJobStatus,
-		"ListJobs":            h.handleListJobs,
-		"CancelJob":           h.handleCancelJob,
-		"SubscribeJobEvents":  h.handleSubscribeJobEvents,
-		"Inference":           h.handleInference,
-		"DisableAgent":        h.handleDisableAgent,
-		"EnableAgent":         h.handleEnableAgent,
-		"SubmitTaskArtifacts": h.handleSubmitTaskArtifacts,
-		"GetTaskArtifact":     h.handleGetTaskArtifact,
-		"ListTaskArtifacts":   h.handleListTaskArtifacts,
+		"Health":               h.handleHealth,
+		"ListBackends":         h.handleListBackends,
+		"ListBackendModels":    h.handleListBackendModels,
+		"SpawnSession":         h.handleSpawnSession,
+		"PromptSession":        h.handlePromptSession,
+		"SessionStatus":        h.handleSessionStatus,
+		"CloseSession":         h.handleCloseSession,
+		"RotateSessionAccount": h.handleRotateSessionAccount,
+		"ListSessions":         h.handleListSessions,
+		"CreateTask":           h.handleCreateTask,
+		"GetTask":              h.handleGetTask,
+		"ListTasks":            h.handleListTasks,
+		"ClaimTask":            h.handleClaimTask,
+		"CompleteTask":         h.handleCompleteTask,
+		"RegisterAgent":        h.handleRegisterAgent,
+		"GetAgent":             h.handleGetAgent,
+		"ListAgents":           h.handleListAgents,
+		"RemoveAgent":          h.handleRemoveAgent,
+		"AgentHeartbeat":       h.handleAgentHeartbeat,
+		"DecomposeTask":        h.handleDecomposeTask,
+		"SpawnChildJob":        h.handleSpawnChildJob,
+		"StartJob":             h.handleStartJob,
+		"GetJobStatus":         h.handleGetJobStatus,
+		"ListJobs":             h.handleListJobs,
+		"CancelJob":            h.handleCancelJob,
+		"SubscribeJobEvents":   h.handleSubscribeJobEvents,
+		"Inference":            h.handleInference,
+		"DisableAgent":         h.handleDisableAgent,
+		"EnableAgent":          h.handleEnableAgent,
+		"SubmitTaskArtifacts":  h.handleSubmitTaskArtifacts,
+		"GetTaskArtifact":      h.handleGetTaskArtifact,
+		"ListTaskArtifacts":    h.handleListTaskArtifacts,
 	}
 
 	handler, ok := handlers[method]
@@ -189,6 +190,26 @@ func (h *orchestratorHandler) handleCloseSession(ctx context.Context, req interf
 		return nil, err
 	}
 	return wire.Response(), nil
+}
+
+// handleRotateSessionAccount handles the RotateSessionAccount orchestrator
+// request. The session is addressed by path segment and the rotation options
+// travel in the body, matching the server route registered in
+// pkg/api/rest/handlers_orchestrator.go.
+func (h *orchestratorHandler) handleRotateSessionAccount(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.RotateSessionAccountRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.RotateSessionAccount", "invalid request type")
+	}
+	if sdkReq.SessionID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.RotateSessionAccount", "session ID is required")
+	}
+	url := "/api/v1/orchestrator/sessions/" + sdkReq.SessionID + "/rotate-account"
+	var resp orchestrator.RotateSessionAccountResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, sdkReq, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // handleListSessions handles the ListSessions orchestrator request.

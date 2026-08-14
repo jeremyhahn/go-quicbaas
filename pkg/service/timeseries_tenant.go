@@ -23,6 +23,7 @@ import (
 	"context"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -64,7 +65,7 @@ func (e *TimeSeriesCrossTenantAccessError) Error() string {
 // For single-tenant mode (empty tenantID), the metric is returned as-is.
 // For multi-tenant mode, the metric is prefixed: "ts-tenant/{tenantID}/{metric}".
 func tsTenantScopedMetric(tenantID, metric string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return metric
 	}
 	return tsTenantMetricPrefix + tenantID + tsTenantMetricSeparator + metric
@@ -73,7 +74,7 @@ func tsTenantScopedMetric(tenantID, metric string) string {
 // tsTenantStripMetric removes the tenant prefix from a metric name.
 // If the metric doesn't have a tenant prefix, it is returned as-is.
 func tsTenantStripMetric(tenantID, metric string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return metric
 	}
 	prefix := tsTenantMetricPrefix + tenantID + tsTenantMetricSeparator
@@ -84,7 +85,7 @@ func tsTenantStripMetric(tenantID, metric string) string {
 // For single-tenant mode (empty tenantID), all metrics belong.
 // For multi-tenant mode, the metric must have the matching tenant prefix.
 func tsMetricBelongsToTenant(tenantID, metric string) bool {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return true
 	}
 	prefix := tsTenantMetricPrefix + tenantID + tsTenantMetricSeparator
@@ -95,7 +96,7 @@ func tsMetricBelongsToTenant(tenantID, metric string) bool {
 // For single-tenant mode, returns empty string (list all).
 // For multi-tenant mode, returns "ts-tenant/{tenantID}/".
 func tsTenantListPrefix(tenantID string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return ""
 	}
 	return tsTenantMetricPrefix + tenantID + tsTenantMetricSeparator
@@ -148,8 +149,8 @@ func validateTimeSeriesTenantID(tenantID string) error {
 // to the metric. Returns nil if access is allowed, or an error if the tenant
 // doesn't own the metric.
 func enforceTimeSeriesTenantAccess(tenantID, metric, operation string) error {
-	if tenantID == "" {
-		return nil // Single-tenant mode, no access control
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return nil // Single-tenant mode / system tenant, no access control
 	}
 	if !tsMetricBelongsToTenant(tenantID, metric) {
 		return &errors.QBError{
@@ -171,7 +172,7 @@ func enforceTimeSeriesTenantAccess(tenantID, metric, operation string) error {
 // returned. For multi-tenant mode, only metrics with the matching tenant prefix
 // are returned, with the prefix stripped from the names.
 func tsFilterMetricsByTenant(tenantID string, metrics []string) []string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return metrics
 	}
 	prefix := tsTenantMetricPrefix + tenantID + tsTenantMetricSeparator

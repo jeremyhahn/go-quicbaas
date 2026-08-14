@@ -4,8 +4,74 @@ import type { EmbeddingsClient } from './embedding_sdk.js';
 import type { MessagingClient } from './messaging_sdk.js';
 import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
+import type { CAClient, IssueCertificateRequest, IssueCertificateResponse, SignCSRRequest, SignCSRResponse, RevokeCertificateResponse, VerifyCertificateResponse, GetCACertificateResponse, CAInfoResponse, CABundleResponse, ListCertificatesRequest, ListCertificatesResponse, GenerateCRLResponse, IsRevokedResponse } from './ca.js';
+import type { TrustClient, CrossSignedRootPoolResponse, AutoImportAIARequest, AutoImportAIAResponse, PublishDANERequest, PublishDANEResponse } from './trust.js';
+import type { CryptoClient, CryptoEncryptRequest, CryptoEncryptResponse, CryptoDecryptRequest, CryptoDecryptResponse, CryptoRewrapRequest, CryptoRewrapResponse, CryptoSignRequest, CryptoSignResponse, CryptoVerifyRequest, CryptoVerifyResponse, CryptoHashRequest, CryptoHashResponse, CryptoRandomResponse, CryptoDataKeyRequest, CryptoDataKeyResponse } from './crypto.js';
+import type { DEKClient, CreateDEKRequest, CreateDEKResponse, GetDEKResponse, ListDEKsRequest, ListDEKsResponse, RotateDEKRequest, RotateDEKResponse, DeleteDEKRequest, DeleteDEKResponse, GetDEKStatusResponse, SetDefaultDEKResponse, SetDEKSafetyRequest, SetDEKSafetyResponse, ClearDEKSafetyResponse, StartReencryptionRequest, StartReencryptionResponse, GetReencryptionProgressResponse } from './dek.js';
+import type { DynamicSecretsClient, DynamicSecretRole, CreateRoleRequest as DynamicSecretCreateRoleRequest, ListRolesResponse as ListDynamicSecretRolesResponse, DeleteRoleResponse as DeleteDynamicSecretRoleResponse, GenerateCredentialRequest, GenerateCredentialResponse, RenewLeaseRequest, RenewLeaseResponse, RevokeLeaseResponse as RevokeDynamicSecretLeaseResponse, ListLeasesResponse } from './dynamicsecrets.js';
+import type { AccountsClient } from './accounts.js';
 import type { ClientConfig, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierShamirSharesResponse, BarrierShamirDeleteShareRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareRequest, CeremonyClaimShareResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, SessionInfo, SSHScope, SSHKey, SSHPublicKey, SignRequest, SignResponse, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse } from './types.js';
 import { APIError, ConnectionError, NotConnectedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError } from './errors.js';
+export declare class RestCAClient implements CAClient {
+    private readonly http;
+    constructor(baseUrl: string, config?: ClientConfig);
+    issueCertificate(req: IssueCertificateRequest): Promise<IssueCertificateResponse>;
+    signCSR(req: SignCSRRequest): Promise<SignCSRResponse>;
+    revokeCertificate(serialNumber: string): Promise<RevokeCertificateResponse>;
+    verifyCertificate(certificatePEM: string): Promise<VerifyCertificateResponse>;
+    getCACertificate(): Promise<GetCACertificateResponse>;
+    caInfo(): Promise<CAInfoResponse>;
+    getCABundle(): Promise<CABundleResponse>;
+    listCertificates(req?: ListCertificatesRequest): Promise<ListCertificatesResponse>;
+    generateCRL(): Promise<GenerateCRLResponse>;
+    isRevoked(serialNumber: string): Promise<IsRevokedResponse>;
+}
+export declare class RestTrustClient implements TrustClient {
+    private readonly http;
+    constructor(baseUrl: string, config?: ClientConfig);
+    crossSignedRootPool(): Promise<CrossSignedRootPoolResponse>;
+    autoImportAIA(req: AutoImportAIARequest): Promise<AutoImportAIAResponse>;
+    publishDANE(req: PublishDANERequest): Promise<PublishDANEResponse>;
+}
+export declare class RestCryptoClient implements CryptoClient {
+    private readonly http;
+    constructor(baseUrl: string, config?: ClientConfig);
+    encrypt(req: CryptoEncryptRequest): Promise<CryptoEncryptResponse>;
+    decrypt(req: CryptoDecryptRequest): Promise<CryptoDecryptResponse>;
+    rewrap(req: CryptoRewrapRequest): Promise<CryptoRewrapResponse>;
+    sign(req: CryptoSignRequest): Promise<CryptoSignResponse>;
+    verify(req: CryptoVerifyRequest): Promise<CryptoVerifyResponse>;
+    hash(req: CryptoHashRequest): Promise<CryptoHashResponse>;
+    random(numBytes?: number): Promise<CryptoRandomResponse>;
+    dataKey(req: CryptoDataKeyRequest): Promise<CryptoDataKeyResponse>;
+}
+export declare class RestDEKClient implements DEKClient {
+    private readonly http;
+    constructor(baseUrl: string, config?: ClientConfig);
+    createDEK(req: CreateDEKRequest): Promise<CreateDEKResponse>;
+    getDEK(path: string, version?: number): Promise<GetDEKResponse>;
+    listDEKs(req?: ListDEKsRequest): Promise<ListDEKsResponse>;
+    rotateDEK(path: string, req?: RotateDEKRequest): Promise<RotateDEKResponse>;
+    deleteDEK(path: string, req?: DeleteDEKRequest): Promise<DeleteDEKResponse>;
+    getDEKStatus(path: string): Promise<GetDEKStatusResponse>;
+    setDefaultDEK(path: string): Promise<SetDefaultDEKResponse>;
+    setDEKSafety(path: string, req: SetDEKSafetyRequest): Promise<SetDEKSafetyResponse>;
+    clearDEKSafety(path: string): Promise<ClearDEKSafetyResponse>;
+    startReencryption(path: string, req?: StartReencryptionRequest): Promise<StartReencryptionResponse>;
+    getReencryptionProgress(path: string, operationId?: string, verbose?: boolean): Promise<GetReencryptionProgressResponse>;
+}
+export declare class RestDynamicSecretsClient implements DynamicSecretsClient {
+    private readonly http;
+    constructor(baseUrl: string, config?: ClientConfig);
+    createRole(req: DynamicSecretCreateRoleRequest): Promise<DynamicSecretRole>;
+    getRole(name: string): Promise<DynamicSecretRole>;
+    listRoles(prefix?: string): Promise<ListDynamicSecretRolesResponse>;
+    deleteRole(name: string): Promise<DeleteDynamicSecretRoleResponse>;
+    generateCredential(roleName: string, req?: GenerateCredentialRequest): Promise<GenerateCredentialResponse>;
+    renewLease(leaseId: string, req?: RenewLeaseRequest): Promise<RenewLeaseResponse>;
+    revokeLease(leaseId: string): Promise<RevokeDynamicSecretLeaseResponse>;
+    listLeases(prefix?: string): Promise<ListLeasesResponse>;
+}
 export declare class RestBarrierClient implements BarrierClient {
     private readonly http;
     constructor(baseUrl: string, config?: ClientConfig);
@@ -112,9 +178,15 @@ export declare class RestClient implements Client {
     readonly messaging: MessagingClient;
     readonly scheduler: SchedulerClient;
     readonly projects: ProjectsClient;
+    readonly accounts: AccountsClient;
     readonly iam: IAMClient;
     readonly kms: KMSClient;
     readonly secrets: SecretsClient;
+    readonly ca: CAClient;
+    readonly trust: TrustClient;
+    readonly crypto: CryptoClient;
+    readonly dek: DEKClient;
+    readonly dynamicSecrets: DynamicSecretsClient;
     readonly barrier: BarrierClient;
     readonly tenantBarrier: TenantBarrierClient;
     readonly ceremony: CeremonyClient;

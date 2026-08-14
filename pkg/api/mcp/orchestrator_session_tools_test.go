@@ -341,16 +341,20 @@ func TestPromptToolDispatch(t *testing.T) {
 		gotReq    *orchestration.PromptSessionRequest
 		gotTenant string
 	)
+	// A session-scoped prompt is asynchronous on every transport, MCP
+	// included: the tool returns the acceptance acknowledgement and the
+	// turn's output is read back from the session transcript.
 	agentSvc := &mockAgentService{
-		promptFn: func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error) {
+		promptAsyncFn: func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error) {
 			gotReq = req
 			gotTenant = orchestration.TenantFromContext(ctx)
-			return &orchestration.PromptSessionResponse{
-				SessionID:  req.SessionID,
-				Content:    []orchestration.ContentBlock{{Type: "text", Text: "ack"}},
-				Model:      "opus",
-				StopReason: "end_turn",
-				Timestamp:  time.Now().UnixNano(),
+			return &orchestration.PromptTurnAck{
+				SessionID: req.SessionID,
+				TurnID:    "turn-1",
+				Status:    orchestration.TurnStatusAccepted,
+				Sequence:  3,
+				Model:     "opus",
+				Timestamp: time.Now().UnixNano(),
 			}, nil
 		},
 	}

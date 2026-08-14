@@ -23,6 +23,7 @@ import (
 	"context"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -63,7 +64,7 @@ func (e *EmbeddingCrossTenantAccessError) Error() string {
 // For single-tenant mode (empty tenantID), the text is returned as-is.
 // For multi-tenant mode, the key is prefixed: "emb-tenant/{tenantID}/{text}".
 func embeddingTenantScopedCacheKey(tenantID, text string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return text
 	}
 	return embeddingTenantKeyPrefix + tenantID + embeddingTenantKeySeparator + text
@@ -72,7 +73,7 @@ func embeddingTenantScopedCacheKey(tenantID, text string) string {
 // embeddingTenantStripCacheKey removes the tenant prefix from a cache key.
 // If the key doesn't have a tenant prefix, it is returned as-is.
 func embeddingTenantStripCacheKey(tenantID, key string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return key
 	}
 	prefix := embeddingTenantKeyPrefix + tenantID + embeddingTenantKeySeparator
@@ -83,7 +84,7 @@ func embeddingTenantStripCacheKey(tenantID, key string) string {
 // For single-tenant mode (empty tenantID), all keys belong.
 // For multi-tenant mode, the key must have the matching tenant prefix.
 func embeddingCacheKeyBelongsToTenant(tenantID, key string) bool {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return true
 	}
 	prefix := embeddingTenantKeyPrefix + tenantID + embeddingTenantKeySeparator
@@ -137,8 +138,8 @@ func validateEmbeddingTenantID(tenantID string) error {
 // to the embedding cache key. Returns nil if access is allowed, or an error
 // if the tenant doesn't own the cache entry.
 func enforceEmbeddingTenantAccess(tenantID, cacheKey, operation string) error {
-	if tenantID == "" {
-		return nil // Single-tenant mode, no access control
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return nil // Single-tenant mode / system tenant, no access control
 	}
 	if !embeddingCacheKeyBelongsToTenant(tenantID, cacheKey) {
 		return &errors.QBError{

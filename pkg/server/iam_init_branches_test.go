@@ -44,6 +44,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
@@ -98,7 +99,7 @@ func TestIAMComponents_GetFederationManager_NonNilOrNilByField(t *testing.T) {
 }
 
 func TestIAMComponents_GetInviteStore_ReturnsBackend(t *testing.T) {
-	inv := iam.NewMemoryInviteStore()
+	inv := iamtest.NewMemoryInviteStore()
 	c := &iamComponents{inviteStore: inv}
 	assert.Same(t, inv, c.GetInviteStore())
 }
@@ -131,9 +132,7 @@ func TestPIVBootstrapError_Format(t *testing.T) {
 // bindAdminPIVCert direct branch tests
 //
 // Direct tests of bindAdminPIVCert (the unexported helper inside iam_init.go)
-// catch the three error paths that the BindAdminToSOCert path cannot reach
-// because BindAdminToSOCert does its own PEM/x509 work upfront via
-// SOCertSPKIThumbprint.
+// cover its three typed error paths.
 // ---------------------------------------------------------------------------
 
 func TestBindAdminPIVCert_PathNotExistReturnsTypedError(t *testing.T) {
@@ -425,7 +424,7 @@ func TestFirstBootBootstrap_PIVBootstrapPath_SkipsBanner(t *testing.T) {
 
 	var bannerCalled bool
 	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ string) {
+	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ adminEnrollmentBanner) {
 		bannerCalled = true
 	}
 	defer func() { printFirstBootBannerFn = origPrint }()
@@ -447,7 +446,7 @@ func TestFirstBootBootstrap_PIVBootstrapPath_InvalidCertReturnsTypedError(t *tes
 	srv.config.Auth.BootstrapAdminPIVCertPath = "/no/such/file.pem"
 
 	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ string) {}
+	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ adminEnrollmentBanner) {}
 	defer func() { printFirstBootBannerFn = origPrint }()
 
 	err := srv.firstBootBootstrap(context.Background(), c)

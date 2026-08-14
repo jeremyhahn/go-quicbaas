@@ -28,307 +28,21 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
 
 // =============================================================================
 // Officer flag parsing
 // =============================================================================
 
-// TestParseOfficerSpec_AllKinds covers parseOfficerSpec across the full
-// officerKind dispatch table (csr, cert, pubkey).
-func TestParseOfficerSpec_AllKinds(t *testing.T) {
-	cases := []struct {
-		name     string
-		raw      string
-		wantUser string
-		wantKind officerKind
-		wantPath string
-	}{
-		{"csr lowercase", "alice:csr:/tmp/a.csr", "alice", officerKindCSR, "/tmp/a.csr"},
-		{"cert lowercase", "bob:cert:/tmp/b.crt", "bob", officerKindCert, "/tmp/b.crt"},
-		{"pubkey lowercase", "carol:pubkey:/tmp/c.pub", "carol", officerKindPubKey, "/tmp/c.pub"},
-		{"csr uppercase normalised", "alice:CSR:/tmp/a.csr", "alice", officerKindCSR, "/tmp/a.csr"},
-		{"path with colon", "dave:cert:/tmp/d:weird.crt", "dave", officerKindCert, "/tmp/d:weird.crt"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			spec, err := parseOfficerSpec(c.raw)
-			if err != nil {
-				t.Fatalf("parseOfficerSpec(%q) error: %v", c.raw, err)
-			}
-			if spec.Username != c.wantUser {
-				t.Errorf("username: got %q, want %q", spec.Username, c.wantUser)
-			}
-			if spec.Kind != c.wantKind {
-				t.Errorf("kind: got %q, want %q", spec.Kind, c.wantKind)
-			}
-			if spec.Path != c.wantPath {
-				t.Errorf("path: got %q, want %q", spec.Path, c.wantPath)
-			}
-		})
-	}
-}
-
-// TestParseOfficerSpec_RejectsBadFormat exercises every typed-error path
-// in parseOfficerSpec.
-func TestParseOfficerSpec_RejectsBadFormat(t *testing.T) {
-	cases := []struct {
-		name    string
-		raw     string
-		wantErr error
-	}{
-		{"missing kind separator", "alice/path/to/file", ErrInvalidOfficerFormat},
-		{"missing path", "alice:csr", ErrInvalidOfficerFormat},
-		{"empty username", ":csr:/tmp/a.csr", ErrEmptyOfficerUsername},
-		{"empty path", "alice:csr:", ErrEmptyOfficerPath},
-		{"unknown kind", "alice:badkind:/tmp/a.csr", ErrUnknownOfficerKind},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if _, err := parseOfficerSpec(c.raw); err == nil {
-				t.Fatalf("parseOfficerSpec(%q) expected error %v, got nil", c.raw, c.wantErr)
-			} else if !errors.Is(err, c.wantErr) {
-				t.Errorf("parseOfficerSpec(%q): got %v, want errors.Is(%v)", c.raw, err, c.wantErr)
-			}
-		})
-	}
-}
-
-// TestOfficerLoaders_DispatchTable verifies every kind in the
-// officerLoaders map is invoked exactly once and returns the expected
-// material shape. This guards against silent regressions in the
-// map-based dispatch table.
-func TestOfficerLoaders_DispatchTable(t *testing.T) {
-	tmp := t.TempDir()
-	csrPath := filepath.Join(tmp, "alice.csr.pem")
-	certPath := filepath.Join(tmp, "bob.cert.pem")
-	pubPath := filepath.Join(tmp, "carol.pub.pem")
-
-	writeTestCSRFile(t, csrPath, "alice")
-	writeTestCertFile(t, certPath, "bob")
-	writeTestPubKeyFile(t, pubPath, "carol")
-
-	cases := []struct {
-		name      string
-		spec      officerSpec
-		checkBody func(t *testing.T, m *officerMaterial)
-	}{
-		{
-			name: "csr loader populates CSRPEM",
-			spec: officerSpec{Username: "alice", Kind: officerKindCSR, Path: csrPath},
-			checkBody: func(t *testing.T, m *officerMaterial) {
-				if len(m.CSRPEM) == 0 {
-					t.Errorf("csr loader: CSRPEM is empty")
-				}
-				if len(m.CertPEM) != 0 || len(m.PubKeyPEM) != 0 {
-					t.Errorf("csr loader: only CSRPEM should be populated")
-				}
-			},
-		},
-		{
-			name: "cert loader populates CertPEM",
-			spec: officerSpec{Username: "bob", Kind: officerKindCert, Path: certPath},
-			checkBody: func(t *testing.T, m *officerMaterial) {
-				if len(m.CertPEM) == 0 {
-					t.Errorf("cert loader: CertPEM is empty")
-				}
-				if len(m.CSRPEM) != 0 || len(m.PubKeyPEM) != 0 {
-					t.Errorf("cert loader: only CertPEM should be populated")
-				}
-			},
-		},
-		{
-			name: "pubkey loader populates PubKeyPEM",
-			spec: officerSpec{Username: "carol", Kind: officerKindPubKey, Path: pubPath},
-			checkBody: func(t *testing.T, m *officerMaterial) {
-				if len(m.PubKeyPEM) == 0 {
-					t.Errorf("pubkey loader: PubKeyPEM is empty")
-				}
-				if len(m.CSRPEM) != 0 || len(m.CertPEM) != 0 {
-					t.Errorf("pubkey loader: only PubKeyPEM should be populated")
-				}
-			},
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			loader, ok := officerLoaders[c.spec.Kind]
-			if !ok {
-				t.Fatalf("officerLoaders has no entry for %q", c.spec.Kind)
-			}
-			m, err := loader(c.spec)
-			if err != nil {
-				t.Fatalf("loader returned error: %v", err)
-			}
-			if m == nil {
-				t.Fatalf("loader returned nil material")
-			}
-			if m.Username != c.spec.Username {
-				t.Errorf("username: got %q, want %q", m.Username, c.spec.Username)
-			}
-			if m.Kind != c.spec.Kind {
-				t.Errorf("kind: got %q, want %q", m.Kind, c.spec.Kind)
-			}
-			c.checkBody(t, m)
-		})
-	}
-}
-
-// TestLoadOfficer_RoutesViaDispatch verifies loadOfficer delegates to the
-// correct table entry rather than an inlined switch.
-func TestLoadOfficer_RoutesViaDispatch(t *testing.T) {
-	tmp := t.TempDir()
-	csrPath := filepath.Join(tmp, "alice.csr.pem")
-	writeTestCSRFile(t, csrPath, "alice")
-
-	m, err := loadOfficer(officerSpec{Username: "alice", Kind: officerKindCSR, Path: csrPath})
-	if err != nil {
-		t.Fatalf("loadOfficer error: %v", err)
-	}
-	if len(m.CSRPEM) == 0 {
-		t.Error("loadOfficer should have populated CSRPEM via the csr loader")
-	}
-}
-
-// TestLoadOfficer_UnknownKindReturnsTypedError ensures an officerSpec with
-// an unregistered kind cannot reach a loader and instead surfaces
-// ErrUnknownOfficerKind. parseOfficerSpec already rejects unknown kinds,
-// but a programmatic caller could synthesise a bogus spec; this test
-// guards that defence-in-depth path.
-func TestLoadOfficer_UnknownKindReturnsTypedError(t *testing.T) {
-	if _, err := loadOfficer(officerSpec{Username: "x", Kind: "phantom", Path: "/tmp/x"}); err == nil {
-		t.Fatal("loadOfficer should reject unknown kind")
-	} else if !errors.Is(err, ErrUnknownOfficerKind) {
-		t.Errorf("got %v, want errors.Is(ErrUnknownOfficerKind)", err)
-	}
-}
-
 // =============================================================================
 // File-handling error paths
 // =============================================================================
 
-// TestReadOfficerFile_ErrorPaths exercises the typed errors emitted by
-// readOfficerFile.
-func TestReadOfficerFile_ErrorPaths(t *testing.T) {
-	tmp := t.TempDir()
-
-	t.Run("not found", func(t *testing.T) {
-		_, err := readOfficerFile(filepath.Join(tmp, "missing.pem"))
-		if err == nil {
-			t.Fatal("expected ErrOfficerFileNotFound")
-		}
-		if !errors.Is(err, ErrOfficerFileNotFound) {
-			t.Errorf("got %v, want errors.Is(ErrOfficerFileNotFound)", err)
-		}
-	})
-
-	t.Run("directory rejected", func(t *testing.T) {
-		_, err := readOfficerFile(tmp)
-		if err == nil {
-			t.Fatal("expected ErrOfficerFileRead for directory")
-		}
-		if !errors.Is(err, ErrOfficerFileRead) {
-			t.Errorf("got %v, want errors.Is(ErrOfficerFileRead)", err)
-		}
-	})
-}
-
-// TestLoadOfficerCSR_RejectsTamperedSignature verifies the CSR loader
-// rejects a CSR whose self-signature was corrupted.
-func TestLoadOfficerCSR_RejectsTamperedSignature(t *testing.T) {
-	tmp := t.TempDir()
-	csrPath := filepath.Join(tmp, "tampered.csr.pem")
-	writeTamperedCSRFile(t, csrPath, "mallory")
-
-	_, err := loadOfficerCSR(officerSpec{Username: "mallory", Kind: officerKindCSR, Path: csrPath})
-	if err == nil {
-		t.Fatal("expected ErrCSRSignatureInvalid for tampered CSR")
-	}
-	if !errors.Is(err, ErrCSRSignatureInvalid) {
-		t.Errorf("got %v, want errors.Is(ErrCSRSignatureInvalid)", err)
-	}
-}
-
-// TestLoadOfficer_NotPEM rejects garbage input across all three kinds.
-func TestLoadOfficer_NotPEM(t *testing.T) {
-	tmp := t.TempDir()
-	bogus := filepath.Join(tmp, "garbage.pem")
-	if err := os.WriteFile(bogus, []byte("not a pem file at all\n"), 0o600); err != nil {
-		t.Fatalf("write garbage: %v", err)
-	}
-	for _, kind := range []officerKind{officerKindCSR, officerKindCert, officerKindPubKey} {
-		t.Run(string(kind), func(t *testing.T) {
-			loader := officerLoaders[kind]
-			_, err := loader(officerSpec{Username: "x", Kind: kind, Path: bogus})
-			if err == nil {
-				t.Fatal("expected PEM decode error")
-			}
-			if !errors.Is(err, ErrOfficerPEMDecode) {
-				t.Errorf("got %v, want errors.Is(ErrOfficerPEMDecode)", err)
-			}
-		})
-	}
-}
-
 // =============================================================================
 // Trusted-CA loader
 // =============================================================================
-
-// TestLoadTrustedCAs_NilOnEmpty verifies the loader returns (nil, nil)
-// when no paths are supplied so callers can short-circuit external-CA
-// validation.
-func TestLoadTrustedCAs_NilOnEmpty(t *testing.T) {
-	pool, err := loadTrustedCAs(nil)
-	if err != nil {
-		t.Fatalf("loadTrustedCAs(nil) error: %v", err)
-	}
-	if pool != nil {
-		t.Errorf("expected nil pool for empty input")
-	}
-}
-
-// TestLoadTrustedCAs_RejectsMissingPath ensures missing paths surface
-// the canonical typed error.
-func TestLoadTrustedCAs_RejectsMissingPath(t *testing.T) {
-	tmp := t.TempDir()
-	_, err := loadTrustedCAs([]string{filepath.Join(tmp, "absent.pem")})
-	if err == nil {
-		t.Fatal("expected ErrTrustedCANotFound")
-	}
-	if !errors.Is(err, ErrTrustedCANotFound) {
-		t.Errorf("got %v, want errors.Is(ErrTrustedCANotFound)", err)
-	}
-}
-
-// TestLoadTrustedCAs_LoadsValidCert validates the happy path: a single
-// PEM cert is appended to the pool.
-func TestLoadTrustedCAs_LoadsValidCert(t *testing.T) {
-	tmp := t.TempDir()
-	caPath := filepath.Join(tmp, "ca.pem")
-	writeTestCertFile(t, caPath, "root-ca")
-	pool, err := loadTrustedCAs([]string{caPath})
-	if err != nil {
-		t.Fatalf("loadTrustedCAs error: %v", err)
-	}
-	if pool == nil {
-		t.Fatal("expected non-nil pool")
-	}
-}
-
-// TestLoadTrustedCAs_RejectsNonCertContent ensures a file that decodes
-// as something other than a certificate surfaces ErrTrustedCANoCerts.
-func TestLoadTrustedCAs_RejectsNonCertContent(t *testing.T) {
-	tmp := t.TempDir()
-	bogus := filepath.Join(tmp, "garbage.pem")
-	if err := os.WriteFile(bogus, []byte("not a cert\n"), 0o600); err != nil {
-		t.Fatalf("write garbage: %v", err)
-	}
-	if _, err := loadTrustedCAs([]string{bogus}); err == nil {
-		t.Fatal("expected ErrTrustedCANoCerts")
-	} else if !errors.Is(err, ErrTrustedCANoCerts) {
-		t.Errorf("got %v, want errors.Is(ErrTrustedCANoCerts)", err)
-	}
-}
 
 // =============================================================================
 // Credential strategy validator
@@ -353,9 +67,14 @@ func TestValidateCredentialStrategy(t *testing.T) {
 // Flag wiring on the canonical init command
 // =============================================================================
 
-// TestInit_FlagSetIncludesPhase11Flags ensures the canonical init command
-// exposes every Phase 11 flag in addition to the locked canonical surface.
-func TestInit_FlagSetIncludesPhase11Flags(t *testing.T) {
+// TestInit_FlagSet pins the init command's flag surface: the locked canonical
+// set plus the deployment-local additions.
+//
+// It also pins the ABSENCE of officer flags. Under go-qrdb's Security Officer
+// distribution model officers are registered against the RUNNING daemon
+// through the sealed window, so accepting officer material here would either
+// do nothing or resurrect the one-shot ceremony that wrote shares to disk.
+func TestInit_FlagSet(t *testing.T) {
 	cmd, _, err := rootCmd.Find([]string{"init"})
 	if err != nil {
 		t.Fatalf("init command not registered: %v", err)
@@ -363,31 +82,27 @@ func TestInit_FlagSetIncludesPhase11Flags(t *testing.T) {
 	required := []string{
 		// Locked canonical (also enforced by canonical_surface_test.go).
 		"so-pin", "user-pin", "barrier-strategy",
-		"shares", "threshold", "hostname", "sans", "admin-bundle",
-		// Phase 11 additions.
-		"so", "trusted-ca", "credential-strategy", "init-data-dir",
+		"shares", "threshold", "hostname", "sans",
+		// Deployment-local additions.
+		"credential-strategy", "init-data-dir",
 	}
 	for _, name := range required {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("init flag --%s missing", name)
 		}
 	}
+	for _, name := range []string{"so", "trusted-ca"} {
+		if cmd.Flags().Lookup(name) != nil {
+			t.Errorf("init flag --%s must not exist: officers enrol against the running daemon", name)
+		}
+	}
 }
 
-// TestInit_RunInlineHappyPath drives a full run through a fresh cobra
-// command using a temporary CSR / cert / pubkey trio. It exercises the
-// dispatch table end-to-end and the trusted-CA loader.
+// TestInit_RunInlineHappyPath drives a full passphrase-strategy run through a
+// fresh cobra command: embedded server up, first-boot run, marker written.
 func TestInit_RunInlineHappyPath(t *testing.T) {
+	requireTestTrustDomain(t)
 	tmp := t.TempDir()
-	csrPath := filepath.Join(tmp, "alice.csr.pem")
-	certPath := filepath.Join(tmp, "bob.cert.pem")
-	pubPath := filepath.Join(tmp, "carol.pub.pem")
-	caPath := filepath.Join(tmp, "ca.pem")
-	writeTestCSRFile(t, csrPath, "alice")
-	writeTestCertFile(t, certPath, "bob")
-	writeTestPubKeyFile(t, pubPath, "carol")
-	writeTestCertFile(t, caPath, "external-ca")
-
 	initDir := filepath.Join(tmp, "datadir")
 	f := &inlineInitFlags{
 		soPin:              "so-pin-1234",
@@ -396,9 +111,6 @@ func TestInit_RunInlineHappyPath(t *testing.T) {
 		secret:             "test-barrier-secret-12345",
 		hostname:           "test.example",
 		credentialStrategy: "barrier",
-		adminBundle:        "-",
-		officers:           []string{"alice:csr:" + csrPath, "bob:cert:" + certPath, "carol:pubkey:" + pubPath},
-		trustedCAs:         []string{caPath},
 		dataDir:            initDir,
 	}
 	cmd := &cobra.Command{Use: "init"}
@@ -412,6 +124,7 @@ func TestInit_RunInlineHappyPath(t *testing.T) {
 // --secret is rejected with ErrSecretRequiredForSoftware (no deployment-derived
 // default), while software WITH a secret — and "none", which needs none — pass.
 func TestValidateInlineInitFlags_SoftwareRequiresSecret(t *testing.T) {
+	requireTestTrustDomain(t)
 	t.Run("software without secret is rejected", func(t *testing.T) {
 		f := &inlineInitFlags{barrierStrategy: "passphrase", credentialStrategy: "barrier"}
 		err := validateInlineInitFlags(f)
@@ -434,7 +147,7 @@ func TestValidateInlineInitFlags_SoftwareRequiresSecret(t *testing.T) {
 }
 
 // TestInit_RunInlineRejectsBadCredentialStrategy ensures the credential
-// strategy validator runs before any officer file is touched.
+// strategy validator runs before any state is persisted.
 func TestInit_RunInlineRejectsBadCredentialStrategy(t *testing.T) {
 	f := &inlineInitFlags{
 		soPin:              "so",
@@ -551,5 +264,125 @@ func writeTestPubKeyFile(t *testing.T, path, _ string) {
 	out := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
 	if err := os.WriteFile(path, out, 0o600); err != nil {
 		t.Fatalf("write pubkey: %v", err)
+	}
+}
+
+// TestInit_AdminFactorFlags pins the login-factor surface. The flag names and
+// vocabulary match xkmsd so every daemon in the stack accepts identical
+// arguments — an operator should not have to learn three dialects.
+func TestInit_AdminFactorFlags(t *testing.T) {
+	cmd, _, err := rootCmd.Find([]string{"init"})
+	if err != nil {
+		t.Fatalf("init command not registered: %v", err)
+	}
+	for _, name := range []string{"admin-factor", "passkey-device"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("init flag --%s missing", name)
+		}
+	}
+
+	// The PIN must never be a flag: it would be visible in /proc to every
+	// process on the host. xkmsd reads it from stdin or the environment.
+	if cmd.Flags().Lookup("passkey-pin") != nil {
+		t.Error("--passkey-pin must not exist; read the CTAP2 PIN from stdin or the environment")
+	}
+}
+
+// TestValidateInlineInitFlags_AdminFactor verifies the selection is validated
+// through go-qrdb's canonical parser, in the validation seam, so a typo fails
+// before any state exists rather than midway through first boot.
+func TestValidateInlineInitFlags_AdminFactor(t *testing.T) {
+	requireTestTrustDomain(t)
+
+	t.Run("valid factors pass", func(t *testing.T) {
+		f := &inlineInitFlags{
+			barrierStrategy:    "none",
+			credentialStrategy: "barrier",
+			adminFactors:       []string{"mtls", "fido2"},
+		}
+		if err := validateInlineInitFlags(f); err != nil {
+			t.Fatalf("valid --admin-factor rejected: %v", err)
+		}
+	})
+
+	t.Run("unknown factor is rejected", func(t *testing.T) {
+		f := &inlineInitFlags{
+			barrierStrategy:    "none",
+			credentialStrategy: "barrier",
+			adminFactors:       []string{"smartwatch"},
+		}
+		err := validateInlineInitFlags(f)
+		if err == nil {
+			t.Fatal("expected InvalidAdminFactorError")
+		}
+		var typed *InvalidAdminFactorError
+		if !errors.As(err, &typed) {
+			t.Fatalf("got %v, want InvalidAdminFactorError", err)
+		}
+	})
+}
+
+// TestBuildInitConfig_PropagatesAdminFactors is the regression guard for the
+// wiring: without this the operator's selection is collected and discarded, and
+// an admin who asked for a passkey silently gets the mTLS baseline instead —
+// discovered only at their first login attempt.
+func TestBuildInitConfig_PropagatesAdminFactors(t *testing.T) {
+	f := &inlineInitFlags{
+		barrierStrategy: "none",
+		adminFactors:    []string{"mtls", "fido2"},
+		passkeyDevice:   "Yubico",
+	}
+	cfg := buildInitConfig(t.TempDir(), f, false)
+
+	if len(cfg.Auth.AdminFactors) != 2 {
+		t.Fatalf("cfg.Auth.AdminFactors = %v, want 2 entries", cfg.Auth.AdminFactors)
+	}
+	if cfg.Auth.PasskeyDevice != "Yubico" {
+		t.Errorf("cfg.Auth.PasskeyDevice = %q, want Yubico", cfg.Auth.PasskeyDevice)
+	}
+}
+
+// TestBuildInitConfig_HonoursTheOperatorStorageBackend is the regression guard
+// for a silent split-brain: buildInitConfig starts from config.Default(), so a
+// hard-coded backend here overrides storage.backend / QUICBAAS_STORAGE_BACKEND.
+// Init would then write first-boot IAM state to one engine while the daemon
+// later read from another — init appears to succeed and `quicbaasd start`
+// comes up with no admin.
+func TestBuildInitConfig_HonoursTheOperatorStorageBackend(t *testing.T) {
+	origCfg := cfg
+	t.Cleanup(func() { cfg = origCfg })
+
+	for _, backend := range []string{
+		config.StorageBackendMemory,
+		config.StorageBackendFile,
+		config.StorageBackendPebble,
+	} {
+		t.Run(backend, func(t *testing.T) {
+			operator := config.Default()
+			operator.Storage.Backend = backend
+			cfg = operator
+
+			got := buildInitConfig(t.TempDir(), &inlineInitFlags{barrierStrategy: "none"}, false)
+			if got.Storage.Backend != backend {
+				t.Errorf("cfg.Storage.Backend = %q, want %q (init must not override the operator's engine)",
+					got.Storage.Backend, backend)
+			}
+		})
+	}
+}
+
+// TestBuildInitConfig_DefaultsToPebble verifies a config that names no backend
+// still gets the durable default rather than an empty string.
+func TestBuildInitConfig_DefaultsToPebble(t *testing.T) {
+	origCfg := cfg
+	t.Cleanup(func() { cfg = origCfg })
+
+	operator := config.Default()
+	operator.Storage.Backend = ""
+	cfg = operator
+
+	got := buildInitConfig(t.TempDir(), &inlineInitFlags{barrierStrategy: "none"}, false)
+	if got.Storage.Backend != config.StorageBackendPebble {
+		t.Errorf("cfg.Storage.Backend = %q, want pebble", got.Storage.Backend)
 	}
 }

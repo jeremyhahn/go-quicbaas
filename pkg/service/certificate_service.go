@@ -56,6 +56,18 @@ type CertificateService interface {
 	// CertStore, with optional filters for Common Name, revocation
 	// status, and expiry.
 	ListCertificates(ctx context.Context, req *ListCertificatesRequest) (*ListCertificatesResponse, error)
+
+	// CrossSign cross-signs an external root certificate with the local
+	// CA. See certificate_extensions.go.
+	CrossSign(ctx context.Context, req *CrossSignRequest) (*CrossSignResponse, error)
+
+	// Chain resolves the issuer chain for a certificate by walking its
+	// Authority Information Access extension. See certificate_extensions.go.
+	Chain(ctx context.Context, req *CertificateChainRequest) (*CertificateChainResponse, error)
+
+	// IssueDeviceIdentity issues a TCG device identity certificate
+	// (EK / AK / IDevID). See certificate_extensions.go.
+	IssueDeviceIdentity(ctx context.Context, req *IssueDeviceIdentityRequest) (*IssueDeviceIdentityResponse, error)
 }
 
 // CertificateService Request/Response types

@@ -34,6 +34,10 @@ var (
 
 	// ErrContainerInteractiveStart indicates a failure to start an interactive container.
 	ErrContainerInteractiveStart = errors.New("container: interactive start failed")
+
+	// ErrContainerEnvFile indicates the private env file that carries a
+	// container's environment could not be written.
+	ErrContainerEnvFile = errors.New("container: env file failed")
 )
 
 // ContainerRuntimeNotAvailableError indicates no docker or podman binary was found.
@@ -160,4 +164,35 @@ func (e *ContainerInteractiveStartError) Unwrap() []error {
 		return []error{ErrContainerInteractiveStart, e.Cause}
 	}
 	return []error{ErrContainerInteractiveStart}
+}
+
+// ContainerEnvFileError indicates the private --env-file carrying a
+// container's environment could not be materialized. The launch fails: there
+// is deliberately no fallback to inline "-e KEY=VALUE" arguments, which would
+// publish every credential in the environment to /proc/<pid>/cmdline.
+type ContainerEnvFileError struct {
+	// Operation names the failed step ("mkdir" or "write").
+	Operation string
+	Cause     error
+}
+
+// Error implements the error interface. Neither the environment keys nor their
+// values are included: only the failed operation and the OS cause.
+func (e *ContainerEnvFileError) Error() string {
+	msg := ErrContainerEnvFile.Error()
+	if e.Operation != "" {
+		msg += ": " + e.Operation
+	}
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns both the sentinel and cause for errors.Is/As support.
+func (e *ContainerEnvFileError) Unwrap() []error {
+	if e.Cause != nil {
+		return []error{ErrContainerEnvFile, e.Cause}
+	}
+	return []error{ErrContainerEnvFile}
 }

@@ -246,18 +246,42 @@ func (s *Server) resolveCAStoreType() (xkmssdk.StoreType, error) {
 }
 
 func (s *Server) initializeCA() error {
-	// Skip CA initialization when TLS is disabled
-	if !s.config.Security.TLSEnabled {
-		return nil
+	// Build the unified secret resolver registry FIRST, before any of the
+	// CA-specific early returns below. The secrets manager is a core,
+	// always-on service: kms:// / credential:// URIs must resolve in EVERY
+	// mode, including embedded/in-process servers that disable TLS and callers
+	// that supply an external CA. Building it as a side effect of a successful
+	// internal-CA bootstrap silently left s.secretRegistry nil on those paths,
+	// so embedded SDK clients fell back to a fail-closed kms:// resolver and
+	// every kms:// config reference failed to resolve.
+	//
+	// Built lazily: a registry already injected by a caller (or test) is left
+	// intact. In production this is always a first build.
+	if s.secretRegistry == nil {
+		s.secretRegistry = s.buildSecretRegistry()
 	}
 
-	// When the caller provides an external CA, skip internal CA bootstrap.
-	// The external CA is responsible for having completed Load() or Init()
-	// before being passed here.
+	// When the caller provides an external CA, adopt it. This MUST happen
+	// before the TLSEnabled early-return below: an operator-supplied CA backs
+	// Security().Certificate()/CertificateExt()/Trust() on the service facade,
+	// which are core capabilities independent of whether this server terminates
+	// TLS on a network listener. Checking TLSEnabled first silently dropped the
+	// CA for embedded/in-process servers (TLS off, no listeners) even though
+	// they had explicitly passed WithCA(...), leaving those SDK accessors nil.
 	if s.opts.externalCA != nil {
 		s.xkmsCA = s.opts.externalCA
 		s.logger.Info("Using external certificate authority — skipping internal CA bootstrap")
+		// Only issue a TLS serving cert when this server actually serves TLS.
+		if !s.config.Security.TLSEnabled {
+			return nil
+		}
 		return s.issueTLSCertFromExternalCA()
+	}
+
+	// Skip internal CA bootstrap when TLS is disabled and no external CA was
+	// supplied — there is nothing to issue a serving certificate for.
+	if !s.config.Security.TLSEnabled {
+		return nil
 	}
 
 	// Apply CA config defaults
@@ -394,14 +418,8 @@ func (s *Server) initializeCA() error {
 		return api.NewOperationFailedError("resolve CA keystore type", err)
 	}
 
-	// Build and store the unified secret registry now that the qrdb node is
-	// online (initializeCA runs after the node init switch). The registry is
-	// built lazily: if a caller (or test) has already injected a registry via
-	// s.secretRegistry, it is left intact. In production this path is always
-	// a first-build because secretRegistry is nil at construction time.
-	if s.secretRegistry == nil {
-		s.secretRegistry = s.buildSecretRegistry()
-	}
+	// (The unified secret registry is built unconditionally at the top of
+	// initializeCA so it exists in every mode — see the comment there.)
 
 	// Build key config from QuicBaaS config
 	keyAlgo := xkmssdk.AlgorithmECDSA
@@ -950,7 +968,7 @@ func (s *Server) initBarrier() error {
 // cannot be constructed (no DataDir, construction error) the encryptor is a
 // no-op and all stores open in plaintext, preserving backward compatibility.
 func (s *Server) initDataPlaneEncryptor() error {
-	dataPlaneBarrierSvc, rawBarrier, dataPlaneBarrierCloser, dpErr := buildDataPlaneBarrierService(s.config, slog.Default())
+	dataPlaneBarrierSvc, rawBarrier, _, dataPlaneBarrierCloser, dpErr := buildDataPlaneBarrierService(s.config, slog.Default())
 	if dpErr != nil {
 		s.logger.Warnf("Data-plane barrier construction failed (%v) — stores will open in plaintext", dpErr)
 	}
@@ -1842,6 +1860,24 @@ func (s *Server) startService() error {
 				return wireErr
 			}
 
+			// Issue from the platform xkms CA. Unlike the node-owned ceremony
+			// service (which receives the CA through qrdbsdk.WithCeremonyCA at
+			// node construction), this stack is built here, after initializeCA,
+			// so the CA is attached directly to its core. Without it every
+			// CA-dependent ceremony verb fails closed.
+			if ca := s.ceremonyCAAdapter(); ca != nil {
+				// Ceremony CSR signing resolves named role profiles
+				// (security-officer, custodian, ...); register them before
+				// any ceremony verb can reach the CA.
+				if profErr := s.registerCeremonyProfiles(); profErr != nil {
+					return profErr
+				}
+				bootstrapServices.Core.SetCA(ca)
+				s.logger.Info("Bootstrap ceremony service bound to the platform xkms CA")
+			} else {
+				s.logger.Warn("Bootstrap ceremony service has no certificate authority: ceremony issuance will fail closed")
+			}
+
 			// The `barrier` CLI verbs must operate on the PERSISTENT
 			// data-plane barrier over <dataDir>/seal — independent of
 			// cfg.Seal.Enabled — so init/unseal state survives restarts and
@@ -1851,7 +1887,7 @@ func (s *Server) startService() error {
 			// there is no double-open. Only when no persistent DataDir
 			// exists (all-nil return) does the bootstrap stack's in-memory
 			// barrier remain the barrier servicer.
-			dpSvc, rawBarrier, dpCloser, dpErr := buildDataPlaneBarrierService(
+			dpSvc, rawBarrier, dpCeremonyCore, dpCloser, dpErr := buildDataPlaneBarrierService(
 				s.config, slog.Default())
 			if dpErr != nil {
 				return dpErr
@@ -1860,10 +1896,19 @@ func (s *Server) startService() error {
 				bootstrapServices.Barrier = dpSvc
 				s.dataPlaneBarrier = rawBarrier
 				s.dataPlaneBarrierCloser = dpCloser
+				// Bind the platform xkms CA to the persistent-barrier ceremony
+				// core too, so officer CSR signing through the data-plane
+				// barrier's officer verbs issues from the same CA as the
+				// bootstrap ceremony stack.
+				if dpCeremonyCore != nil {
+					if ca := s.ceremonyCAAdapter(); ca != nil {
+						dpCeremonyCore.SetCA(ca)
+					}
+				}
 			}
 
 			bootstrapClient, clientErr := newBootstrapCeremonyClient(
-				s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bootstrapServices)
+				s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bootstrapServices, s.pinBackend)
 			if clientErr != nil {
 				return clientErr
 			}
@@ -1893,6 +1938,18 @@ func (s *Server) startService() error {
 
 	builder = builder.WithQRDBClient(s.qrdbClient)
 	s.logger.Info("qrdb SDK client attached to service builder")
+
+	// Thread the trusted-computing seam. The verifier half of
+	// Security().Attestation() composes go-xkms pkg/attestation and is wired
+	// unconditionally; the orchestration half stays nil until an embedding
+	// application registers a ContainerAttestor via WithContainerAttestor,
+	// at which point AttestContainer stops returning the typed
+	// not-configured error. This mirrors the DANE publisher seam above.
+	builder = builder.WithAttestationTrustAnchors(s.opts.attestationTrustAnchors)
+	if s.opts.containerAttestor != nil {
+		builder = builder.WithContainerAttestor(s.opts.containerAttestor)
+		s.logger.Info("Container attestor attached to service builder")
+	}
 
 	// Wire the Certificate Authority into the service builder so the
 	// CertificateService inside QuicBaaS can issue and revoke certificates
@@ -1943,6 +2000,15 @@ func (s *Server) startService() error {
 
 	s.quicBaaSService = svc
 	s.logger.Info("QuicBaaS facade initialized")
+
+	// Wire the unified secret resolver registry (built unconditionally by
+	// startSecrets/buildSecretRegistry before startService) into the service so
+	// embedded SDK clients auto-populate Security().SecretResolver() — the
+	// secrets manager is a core, always-on service reachable in every mode.
+	if s.secretRegistry != nil {
+		svc.SetSecretRegistry(s.secretRegistry)
+		s.logger.Info("secret resolver registry wired into QuicBaaS facade")
+	}
 
 	// Update the ShardedClient's transport factory with the service reference
 	// for embedded transport mode (needed when creating embedded SDK clients).
@@ -2186,6 +2252,18 @@ func (s *Server) startGRPCServer() error {
 		s.logger.Info("Registered ParameterStore gRPC service")
 	}
 
+	// Register DynamicSecrets service (if enabled). The handlers live on the
+	// same *grpcapi.Server that backs the QuicBaaS facade and delegate to
+	// service.DynamicSecrets(); registering them keeps the gRPC dynamic
+	// secrets surface symmetric with the REST /api/v1/secrets/dynamic routes
+	// and the QUIC/MCP/Unix/embedded transports. Without this call the
+	// fully-implemented handlers were unreachable and every gRPC caller got
+	// codes.Unimplemented.
+	if dynSecretsSvc := s.quicBaaSService.DynamicSecrets(); dynSecretsSvc != nil {
+		grpcapi.RegisterDynamicSecretsServiceServer(grpcServer, quicbaasService)
+		s.logger.Info("Registered DynamicSecrets gRPC service")
+	}
+
 	// Register ObjectStorage service (if enabled)
 	if objSvc := s.quicBaaSService.ObjectStorageService(); objSvc != nil {
 		grpcapi.RegisterObjectStorageServer(grpcServer, objSvc)
@@ -2211,6 +2289,34 @@ func (s *Server) startGRPCServer() error {
 		pb.RegisterOrchestratorServiceServer(grpcServer, orchestratorServer)
 		s.logger.Info("Registered Orchestrator gRPC service")
 	}
+
+	// Register Project service (if enabled). Projects sit between Tenant and
+	// Workflow in the orchestration hierarchy; wiring the handlers here keeps
+	// the gRPC surface symmetric with the REST /api/v1/projects routes and
+	// with the Unix transport, which delegates to gRPC verbatim.
+	if projectSvc := s.quicBaaSService.Project(); projectSvc != nil {
+		projectServer := grpcapi.NewProjectServer(projectSvc, s.logger)
+		pb.RegisterProjectServiceServer(grpcServer, projectServer)
+		s.logger.Info("Registered Project gRPC service")
+	}
+
+	// Register Account service (pooled provider accounts). Always present:
+	// the service container constructs it unconditionally, and its
+	// credential-bearing verbs fail closed when no SecretsManager is wired.
+	if accountSvc := s.quicBaaSService.Account(); accountSvc != nil {
+		accountServer := grpcapi.NewAccountServer(accountSvc, s.logger)
+		pb.RegisterAccountServiceServer(grpcServer, accountServer)
+		s.logger.Info("Registered Account gRPC service")
+	}
+
+	// Register SSH service. Registered unconditionally: when the deployment
+	// has no SSH store the service-layer verbs report
+	// *service.SSHNotConfiguredError, which maps to codes.Unavailable — a
+	// clearer contract than an unregistered service's codes.Unimplemented.
+	sshServer := grpcapi.NewSSHServer(
+		service.NewSSHService(s.quicBaaSService.SSHClient()), s.logger)
+	pb.RegisterSSHServiceServer(grpcServer, sshServer)
+	s.logger.Info("Registered SSH gRPC service")
 
 	// Register Messaging service (if enabled)
 	if messagingSvc := s.quicBaaSService.Messaging(); messagingSvc != nil {
@@ -2248,6 +2354,15 @@ func (s *Server) startGRPCServer() error {
 	// gRPC trust surface symmetric with REST /api/v1/trust and the QUIC/MCP/
 	// Unix transports.
 	s.registerTrustService(grpcServer, quicbaasService)
+	s.registerAttestationService(grpcServer, quicbaasService)
+
+	// Register the FIDO2 (WebAuthn ceremony) and PIV gRPC services. The
+	// handlers delegate to the tenant-scoped FIDO2() and backend-scoped
+	// PIV() composition services, keeping the gRPC surface symmetric with
+	// REST /api/v1/iam/{tenant}/webauthn + /api/v1/xkms/piv and the
+	// QUIC/MCP/Unix/embedded transports.
+	s.registerFIDO2Service(grpcServer, quicbaasService)
+	s.registerPIVService(grpcServer, quicbaasService)
 
 	// Register Barrier and Ceremony gRPC services. The handlers delegate to
 	// the embedded go-qrdb instance via the QuicBaaS service facade, keeping

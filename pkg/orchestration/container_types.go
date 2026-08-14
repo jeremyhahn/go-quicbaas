@@ -16,12 +16,28 @@ package orchestration
 import (
 	"context"
 	"io"
+	"strings"
 )
 
 // ContainerRuntime abstracts OCI container operations.
-// The default implementation shells out to docker or podman via exec.Command.
-// go-trusted-platform can provide an advanced implementation with
-// TPM attestation, OPA policies, and podman rootless support.
+//
+// The default implementation (ExecContainerRuntime) shells out to docker or
+// podman via exec.Command. It implements Tier 0 of the standalone
+// trusted-agent model — launching and verifying an image by immutable content
+// digest — and nothing above it: Tier 0 needs no hardware, so every host can
+// satisfy it.
+//
+// Tiers 1 and 2 (host TPM quote against expected PCRs, and measured launch)
+// are NOT on this interface. They live on AttestingContainerRuntime, which
+// embeds this one and adds Attest; see container_attestation.go. A caller
+// that needs attestation type-asserts for AttestingContainerRuntime rather
+// than requiring every runtime to carry a TPM dependency it cannot use.
+//
+// Tier 3 — fleet-scale device registry, scheduled re-attestation, quarantine,
+// golden-PCR policy management, network isolation — is deliberately absent.
+// That is go-trusted-platform's domain; it fills the AttestingContainerRuntime
+// seam and the Security().Attestation() orchestration seam rather than
+// extending this interface.
 type ContainerRuntime interface {
 	// Run creates and starts a detached container. Returns the container ID.
 	Run(ctx context.Context, spec *ContainerSpec) (string, error)
@@ -70,9 +86,21 @@ type InteractiveProcess struct {
 
 	// Stdout is a reader connected to the container's stdout.
 	Stdout io.ReadCloser
+
+	// Cleanup releases the private files the launch needed — currently the
+	// 0600 --env-file that carries the container's environment (see
+	// container_env_file.go). The runtime process reads that file at its own
+	// pace, so the runtime cannot delete it itself; the OWNER of the returned
+	// process is responsible for calling Cleanup exactly once when the
+	// container is torn down. Nil when the spec carried no environment.
+	Cleanup func()
 }
 
 // ContainerSpec defines a container to run. No external library dependencies.
+//
+// The trust fields at the bottom are additive: every one of them is inert at
+// its zero value, so a spec built before the trust dimension existed launches
+// byte-for-byte the same command line it always did.
 type ContainerSpec struct {
 	Name       string            `json:"name"`
 	Image      string            `json:"image"`
@@ -88,19 +116,128 @@ type ContainerSpec struct {
 	Network    string            `json:"network,omitempty"`     // host, bridge, or custom
 	GPUEnabled bool              `json:"gpu_enabled,omitempty"` // --gpus all
 	User       string            `json:"user,omitempty"`        // --user uid:gid
+
+	// --- Privilege dimension (measured; see ContainerConfigDigest) ---
+	//
+	// These three fields decide how much of the host a container can reach.
+	// They are part of the launch configuration, not of the trust policy, so
+	// they are folded into ContainerConfigDigest: a container flipped to
+	// privileged, or granted CAP_SYS_ADMIN, MUST NOT measure the same as the
+	// safe one an operator approved. Each is inert at its zero value, so a
+	// spec that never sets them produces the command line it always did.
+
+	// Privileged runs the container with the runtime's isolation removed
+	// (--privileged): the full capability set, unmasked /proc and /sys, and
+	// no seccomp or AppArmor confinement. It is close to host-equivalent
+	// access and is therefore the single most important bit of the launch
+	// configuration to measure.
+	Privileged bool `json:"privileged,omitempty"`
+
+	// CapAdd lists Linux capabilities granted on top of the runtime's
+	// default set (--cap-add), in either the "CAP_SYS_ADMIN" or the bare
+	// "SYS_ADMIN" spelling the runtime accepts. Ordering is not significant:
+	// the digest and the emitted command line both sort the list, so two
+	// specs naming the same capabilities measure and launch identically.
+	CapAdd []string `json:"cap_add,omitempty"`
+
+	// CapDrop lists Linux capabilities removed from the default set
+	// (--cap-drop); "ALL" drops every one. Ordering is normalized exactly as
+	// for CapAdd.
+	CapDrop []string `json:"cap_drop,omitempty"`
+
+	// --- Trust dimension (see container_trust.go and trust_policy.go) ---
+
+	// ImageDigest pins the container to an immutable OCI content digest in
+	// canonical "sha256:<hex>" form. When set, the runtime launches
+	// "repository@sha256:<hex>" instead of the mutable tag in Image, and
+	// verifies after launch that the container resolves to that digest.
+	// It may also be supplied inline as "repository@sha256:<hex>" in Image;
+	// when both are present they must agree.
+	ImageDigest string `json:"image_digest,omitempty"`
+
+	// ImageSignature carries optional detached endorsement material for
+	// ImageDigest: a signature over the canonical digest string plus the
+	// signer certificate chain. Verification is performed by the
+	// Security().Attestation() surface, which composes the go-xkms
+	// attestation verifier.
+	ImageSignature *ImageSignature `json:"image_signature,omitempty"`
+
+	// ExpectedPCRs is the golden PCR set a Tier 1 host quote is checked
+	// against, keyed by PCR index. An empty map means no PCR is checked,
+	// which is only valid below TrustLevelAttested.
+	ExpectedPCRs map[uint32][]byte `json:"expected_pcrs,omitempty"`
+
+	// TrustLevel is the integrity tier required of this container. The zero
+	// value (TrustLevelDefault) defers to the server's TrustPolicy, which
+	// itself defaults to opt-in — so an unset TrustLevel changes nothing.
+	TrustLevel TrustLevel `json:"trust_level,omitempty"`
+
+	// TrustLabel is an operator-assigned name for the approved workload
+	// identity. It is folded into the configuration digest, so one image
+	// and configuration can carry two distinct measured identities.
+	TrustLabel string `json:"trust_label,omitempty"`
+
+	// MeasurementPCR is the PCR index extended with the image and
+	// configuration digest at measured launch (Tier 2). PCR 16 — the TCG
+	// debug/application register — is the conventional choice for
+	// application-supplied measurements and is what MeasurementPCRDefault
+	// resolves to.
+	MeasurementPCR int `json:"measurement_pcr,omitempty"`
+
+	// MeasurementBank names the PCR bank hash algorithm used for measured
+	// launch: sha1, sha256, sha384 or sha512. Empty resolves to sha256.
+	MeasurementBank string `json:"measurement_bank,omitempty"`
 }
 
-// ContainerMount defines a bind mount between host and container.
+// ContainerMount defines a mount between host and container.
 type ContainerMount struct {
 	Source   string `json:"source"`   // host path
 	Target   string `json:"target"`   // container path
 	ReadOnly bool   `json:"readonly"` // :ro or :rw
+
+	// Type names the OCI mount kind: MountTypeBind, MountTypeVolume or
+	// MountTypeTmpfs. The zero value keeps the historical short form
+	// (-v source:target[:ro]), whose kind the runtime infers from the
+	// source, so existing specs are unaffected. Naming the kind explicitly
+	// makes it part of the measured configuration: a bind mount of the host
+	// filesystem cannot then be substituted for a tmpfs — or the reverse —
+	// without changing ContainerConfigDigest.
+	Type string `json:"type,omitempty"`
+}
+
+// Mount kinds accepted by ContainerMount.Type. They are the docker/podman
+// --mount types; the empty string keeps the untyped short form.
+const (
+	// MountTypeBind mounts a host path into the container.
+	MountTypeBind = "bind"
+
+	// MountTypeVolume mounts a runtime-managed named volume.
+	MountTypeVolume = "volume"
+
+	// MountTypeTmpfs mounts a kernel tmpfs, which has no host source.
+	MountTypeTmpfs = "tmpfs"
+)
+
+// supportedMountTypes is the set of kinds ContainerMount.Type accepts. An
+// unrecognized kind is rejected at validation rather than passed through to
+// the runtime, where it would fail with a runtime-specific message long after
+// the configuration was measured.
+var supportedMountTypes = map[string]struct{}{
+	MountTypeBind:   {},
+	MountTypeVolume: {},
+	MountTypeTmpfs:  {},
 }
 
 // Validate checks that the ContainerSpec has all required fields.
 func (s *ContainerSpec) Validate() error {
 	if s.Image == "" {
 		return &InputValidationError{Field: "image", Message: "cannot be empty"}
+	}
+	// The environment reaches the runtime through a line-oriented --env-file,
+	// so an entry that cannot be represented there is rejected here — before
+	// any file is written and before the launch is measured.
+	if err := validateContainerEnv(s.Env); err != nil {
+		return err
 	}
 	for i, m := range s.Mounts {
 		if err := m.Validate(); err != nil {
@@ -110,12 +247,30 @@ func (s *ContainerSpec) Validate() error {
 			}
 		}
 	}
-	return nil
+	return s.validateTrust()
 }
 
 // Validate checks that the ContainerMount has all required fields.
 func (m *ContainerMount) Validate() error {
-	if m.Source == "" {
+	if m.Type != "" {
+		if _, ok := supportedMountTypes[m.Type]; !ok {
+			return &InputValidationError{
+				Field:   "type",
+				Message: "must be one of: " + MountTypeBind + ", " + MountTypeVolume + ", " + MountTypeTmpfs,
+			}
+		}
+	}
+	// A tmpfs is materialized by the kernel and has no host source. Requiring
+	// one would be unsatisfiable; accepting one and dropping it would let a
+	// measured field vanish from the launched container.
+	if m.Type == MountTypeTmpfs {
+		if m.Source != "" {
+			return &InputValidationError{
+				Field:   "source",
+				Message: "must be empty for a " + MountTypeTmpfs + " mount",
+			}
+		}
+	} else if m.Source == "" {
 		return &InputValidationError{Field: "source", Message: "cannot be empty"}
 	}
 	if m.Target == "" {
@@ -124,14 +279,42 @@ func (m *ContainerMount) Validate() error {
 	return nil
 }
 
-// Format returns the mount as a docker-compatible volume string.
-// Format: source:target[:ro].
+// Format returns the mount as a docker-compatible short-form volume string.
+// Format: source:target[:ro]. It carries no mount kind; a mount that names
+// one is rendered by MountSpec instead. Use RunArgs to obtain the flags for
+// either shape.
 func (m *ContainerMount) Format() string {
 	s := m.Source + ":" + m.Target
 	if m.ReadOnly {
 		s += ":ro"
 	}
 	return s
+}
+
+// MountSpec renders the mount in docker/podman --mount CSV form, which is the
+// only form that can express the mount kind.
+func (m *ContainerMount) MountSpec() string {
+	fields := make([]string, 0, 4)
+	fields = append(fields, "type="+m.Type)
+	if m.Source != "" {
+		fields = append(fields, "source="+m.Source)
+	}
+	fields = append(fields, "destination="+m.Target)
+	if m.ReadOnly {
+		fields = append(fields, "readonly")
+	}
+	return strings.Join(fields, ",")
+}
+
+// RunArgs returns the command-line flags that materialize the mount. An
+// untyped mount keeps the short -v form, so a spec written before Type existed
+// produces a byte-identical command line; a typed mount uses --mount, because
+// -v cannot express the kind that was measured.
+func (m *ContainerMount) RunArgs() []string {
+	if m.Type == "" {
+		return []string{"-v", m.Format()}
+	}
+	return []string{"--mount", m.MountSpec()}
 }
 
 // intToStr converts an integer to a string without importing strconv.

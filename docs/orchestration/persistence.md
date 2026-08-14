@@ -29,9 +29,11 @@ implement a storage engine of its own.
 | `NewProjectStore(kv, opts...)` | caller's KV |
 | `NewAgentRegistry(kv, opts...)` | caller's KV |
 | `NewTaskStore(kv, opts...)` | caller's KV |
+| `NewAgentStore(kv, opts...)` | caller's KV |
 | `NewInMemoryProjectStore()` | `kvstore.NewMemory()` |
 | `NewInMemoryAgentRegistry()` | `kvstore.NewMemory()` |
 | `NewInMemoryTaskStore()` | `kvstore.NewMemory()` |
+| `NewInMemoryAgentStore()` | `kvstore.NewMemory()` |
 | `NewInMemoryTaskStoreWithKV(kv, limit)` | caller's KV, custom inline limit |
 
 A store constructed with a nil KV fails closed on every verb. A nil KV is a
@@ -47,6 +49,7 @@ orch/projectname/{tenant}/{name}             -> projectID (name index)
 orch/agent/{tenant}/{agentID}                -> AgentRegistration (JSON)
 orch/task/{tenant}/{taskID}                  -> Task (JSON)
 orch/taskartifact/{tenant}/{taskID}/{name}   -> artifact payload (bytes)
+orch/session/{tenant}/{sessionID}            -> SessionRecord (JSON)
 ```
 
 Keys carry identifiers only — no secret, token or payload value is ever encoded
@@ -138,3 +141,20 @@ Two orchestration components remain process-local and reset on restart:
 
 Both are separate from the project, agent-registry and task state described
 here.
+
+The session event log is the full live transcript of a turn: backends stream
+`assistant_chunk`, `agent_thought` (chain-of-thought), `tool_invocation`, and
+`tool_result` events into it as they happen, rather than recording only the
+prompt and the final response.
+
+
+## Session records
+
+`AgentStore` (`NewAgentStore`) persists the durable description of an agent
+session: enough to address it after a restart and, for a persistent session, to
+reconstitute the agent process that served it. See
+[session-resume.md](session-resume.md).
+
+`ListAllSessions` is the one cross-tenant scan in the orchestration stores. It
+exists for boot-time restoration, which runs before any tenant context is
+available; every request-scoped caller uses the tenant-scoped `ListSessions`.

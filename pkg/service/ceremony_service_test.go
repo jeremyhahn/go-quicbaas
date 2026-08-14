@@ -162,8 +162,6 @@ func TestCeremonyService_CeremonyInitialize_Success(t *testing.T) {
 			SPKIPin:    "pin-base64",
 			CACertPEM:  "CA",
 			TLSCertPEM: "TLS",
-			SOCertPEM:  "SOC",
-			SOKeyPEM:   "SOK",
 			State:      "complete",
 			ShareCount: 3,
 		},
@@ -188,8 +186,6 @@ func TestCeremonyService_CeremonyInitialize_Success(t *testing.T) {
 	assert.Equal(t, "pin-base64", info.SPKIPin)
 	assert.Equal(t, []byte("CA"), info.CACertPEM)
 	assert.Equal(t, []byte("TLS"), info.TLSCertPEM)
-	assert.Equal(t, []byte("SOC"), info.SOCertPEM)
-	assert.Equal(t, []byte("SOK"), info.SOKeyPEM)
 	assert.Equal(t, "complete", info.State)
 	assert.Equal(t, 3, info.ShareCount)
 

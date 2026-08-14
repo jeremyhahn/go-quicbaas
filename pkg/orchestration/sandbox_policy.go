@@ -13,6 +13,14 @@
 
 package orchestration
 
+// This file holds the SANDBOX axis: is the agent isolated from the host?
+//
+// The orthogonal TRUST axis — is the agent the code we approved, and can the
+// host prove it? — lives in trust_policy.go as TrustLevel / TrustPolicy /
+// ResolveTrustLevel, which mirror the SandboxMode / SandboxPolicy /
+// ResolveSandboxMode shapes below. Neither axis subsumes the other and both
+// deny by default when a required level cannot be satisfied.
+
 // SandboxMode selects the execution sandboxing strategy for an agent session
 // on a per-request basis.
 type SandboxMode int32
@@ -143,9 +151,12 @@ func (e *SandboxModeViolationError) Error() string {
 // the server's policy, an optional tenant-level policy override, and whether
 // a container runtime is available on the target host.
 //
-// The tenant override, when non-nil, takes precedence over the server policy.
-// This supports per-tenant compliance requirements (e.g., FedRAMP/HIPAA
-// tenants forcing SandboxPolicyRequired regardless of server default).
+// A tenant override may only TIGHTEN the server policy, never loosen it. It
+// exists so a tenant with a stricter compliance obligation (FedRAMP/HIPAA
+// forcing SandboxPolicyRequired) can raise the floor above the deployment
+// default; it must never become the way one tenant's record buys its way out of
+// the operator's baseline. The constants are ordered by strictness
+// (opt-in < preferred < required), so the stricter of the two wins.
 //
 // Returns SandboxModeViolationError if the request cannot be honored.
 func ResolveSandboxMode(
@@ -155,7 +166,7 @@ func ResolveSandboxMode(
 	hasContainerRuntime bool,
 ) (SandboxMode, error) {
 	effective := serverPolicy
-	if tenantOverride != nil {
+	if tenantOverride != nil && *tenantOverride > effective {
 		effective = *tenantOverride
 	}
 

@@ -50,6 +50,14 @@ func registerCertificateRoutes(s *Server, r chi.Router) {
 		r.Get("/ca/info", s.HandleCAInfo)
 		r.Get("/ca/bundle", s.HandleCABundle)
 		r.Get("/ca/list", s.HandleListCertificates)
+
+		// Certificate extensions backing Security().CertificateExt():
+		// cross-signing an external root, AIA chain resolution, and TCG
+		// device identity (EK / AK / IDevID) issuance. See
+		// handlers_certificate_extensions.go.
+		r.Post("/cross-sign", s.HandleCertificateCrossSign)
+		r.Post("/chain", s.HandleCertificateChain)
+		r.Post("/device-identity", s.HandleCertificateDeviceIdentity)
 	})
 }
 

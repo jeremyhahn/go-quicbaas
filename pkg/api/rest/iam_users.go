@@ -216,33 +216,24 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate a one-time invite token.
-	inviteToken, err := iam.GenerateInviteToken()
-	if err != nil {
-		h.server.handleServiceError(w, r, err)
-		return
-	}
-
-	expiresAt := time.Now().UTC().Add(inviteExpiry)
-
-	// Store the invite record so that the activation handlers can look it up.
-	// This MUST be the same canonical persistent store the activation endpoints
-	// (and first-boot) use; resolve it lazily from the service.
+	// Issue the one-time invite through the canonical store — the SAME store
+	// the activation endpoints and first-boot use.
+	//
+	// The token is MINTED BY go-qrdb, not here: generation, digesting and
+	// single-use enforcement all belong to the layer that owns the invitation
+	// record. It is returned exactly once, on this call, and is not
+	// recoverable afterwards; only its digest is stored.
 	inviteStore, err := h.getInviteStore(ctx)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
 	}
-	inviteRecord := &iam.InviteRecord{
-		TokenHash: iam.TokenHashExported(inviteToken),
-		UserID:    user.ID,
-		TenantID:  tenantID,
-		ExpiresAt: expiresAt,
-	}
-	if err := inviteStore.Create(ctx, inviteRecord); err != nil {
+	inviteToken, inviteRecord, err := inviteStore.Create(ctx, tenantID, user.ID, inviteExpiry)
+	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
 	}
+	expiresAt := inviteRecord.ExpiresAt
 
 	// Attach invite state to the user record (cleared on activation).
 	pendingState := iam.UserStatePending

@@ -103,9 +103,11 @@ func (b *SessionBinding) Spawn(req *orchestratorSDK.SpawnSessionRequest) (*orche
 	return resp, nil
 }
 
-// Prompt sends a prompt to an existing session and returns the agent's
-// synchronous response. For streamed replies the frontend uses
-// Subscribe / the session event bus instead of Prompt.
+// Prompt sends a prompt to an existing session and returns the acceptance
+// acknowledgement — turn ID, status, and the session-log sequence to attach
+// from. The turn runs in the background and its output arrives on the session
+// event stream, which the frontend already consumes via Subscribe; Prompt
+// never carries the agent's reply.
 func (b *SessionBinding) Prompt(req *orchestratorSDK.PromptSessionRequest) (*orchestratorSDK.PromptSessionResponse, error) {
 	if req == nil {
 		return nil, NewGUIRequestRequiredError("SessionBinding.Prompt")

@@ -390,6 +390,21 @@ type UpdateUserOptions struct {
 	// bindings are preserved.
 	PIVCertThumbprint *string
 
+	// PIVCertThumbprints, when non-nil, replaces the user's PIV-attested cert
+	// bindings with one binding per supplied thumbprint. Activation paths bind
+	// both the canonical SPKI thumbprint (qrdb-native lookup) and the legacy
+	// hex digest (broker-side fallback index) so both resolve the user; see
+	// User.SetPIVThumbprints. Takes precedence over PIVCertThumbprint.
+	PIVCertThumbprints *[]string
+
+	// SPKICertThumbprint, when non-nil, replaces the user's canonical
+	// SPKI-thumbprint cert bindings with a single binding for this value (the
+	// base64url SHA-256 over SubjectPublicKeyInfo produced by
+	// qrdbsdk.ComputeSPKIThumbprint). A blank value clears them. Bindings of
+	// other kinds are preserved. This is the identifier the admin-mTLS
+	// first-boot enrollment binds and that qrdb resolves natively.
+	SPKICertThumbprint *string
+
 	// InviteToken, when non-nil, sets or clears the pending invite token.
 	InviteToken *string
 

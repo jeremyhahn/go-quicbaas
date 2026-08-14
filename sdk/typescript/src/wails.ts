@@ -32,6 +32,8 @@ import type {
   CancelJobRequest,
   CloseSessionRequest,
   CloseSessionResponse,
+  RotateSessionAccountRequest,
+  RotateSessionAccountResponse,
   CreateTaskRequest,
   CreateTaskResponse,
   ClaimTaskRequest,
@@ -377,6 +379,13 @@ class WailsOrchestratorClient implements OrchestratorClient {
     return sessionBinding().Close(req) as Promise<CloseSessionResponse>;
   }
 
+  // rotateSessionAccount is not yet exposed by the Wails SessionBinding.
+  // Use the REST transport for account rotation in desktop mode until the
+  // Go-side binding grows a RotateAccount method.
+  async rotateSessionAccount(_req: RotateSessionAccountRequest): Promise<RotateSessionAccountResponse> {
+    throw new Error('rotateSessionAccount: use REST transport for account rotation in desktop mode');
+  }
+
   // deployAgent forwards the spec to the Wails AgentDeployBinding.Deploy
   // method. The Go-side binding orchestrates the SSH+SFTP+systemd workflow
   // and returns a structured result.
@@ -610,14 +619,13 @@ class WailsAuthClient implements AuthClient {
   async authLogin(_credentials: { username: string; password: string }): Promise<void> {
     // Wails desktop mode runs embedded — no login required.
   }
-  async webAuthnBeginLogin(_tenantID: string, _email: string): Promise<import('./types.js').CredentialAssertionJSON> {
+  async webAuthnBeginLogin(_tenantID: string, _email: string): Promise<import('./types.js').WebAuthnLoginChallenge> {
     // Wails desktop mode delegates to the embedded REST transport for WebAuthn.
     // Use the REST transport client when WebAuthn is needed in desktop mode.
     throw new Error('webAuthnBeginLogin: use REST transport for WebAuthn in desktop mode');
   }
   async webAuthnFinishLogin(
-    _tenantID: string,
-    _email: string,
+    _challenge: import('./types.js').WebAuthnLoginChallenge,
     _credential: import('./types.js').PublicKeyCredentialJSON,
   ): Promise<import('./types.js').AuthTokenResponse> {
     throw new Error('webAuthnFinishLogin: use REST transport for WebAuthn in desktop mode');
@@ -667,11 +675,23 @@ export class WailsClient implements Client {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly projects: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly accounts: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly iam: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly kms: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly secrets: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly ca: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly trust: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly crypto: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly dek: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly dynamicSecrets: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly barrier: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

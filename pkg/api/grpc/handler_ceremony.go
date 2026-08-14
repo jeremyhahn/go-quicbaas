@@ -135,8 +135,6 @@ func (s *CeremonyServer) CeremonyInitialize(ctx context.Context, req *pb.Ceremon
 		SpkiPin:    info.SPKIPin,
 		CaCertPem:  string(info.CACertPEM),
 		TlsCertPem: string(info.TLSCertPEM),
-		SoCertPem:  string(info.SOCertPEM),
-		SoKeyPem:   string(info.SOKeyPEM),
 		State:      info.State,
 		ShareCount: int32(info.ShareCount),
 	}, nil

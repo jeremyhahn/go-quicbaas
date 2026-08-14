@@ -38,10 +38,25 @@ Every service follows the same pattern:
 |------|-------|
 | Max length | 128 characters |
 | Allowed chars | `[a-zA-Z0-9_-]` |
-| Empty value | Valid (single-tenant mode) |
+| Empty value | Valid — resolves to the system tenant (see below) |
 | Path separators | Rejected |
 
 Validation is shared across all services via `validateTenantID()` and `isValidTenantChar()` in `pkg/service/kms_tenant.go`.
+
+## The System Tenant
+
+The empty tenant ID and the literal `"system"` (`iam.SystemTenantID` /
+`qrdbsdk.SystemTenantID`, an alias of qrdb's `tenant.SystemTenantID`) denote
+the **same** structurally privileged scope: the platform / control plane, not
+a tenant namespace named "system". `qrdbsdk.IsSystemTenant(tenantID)`
+(`go-qrdb/sdk/go`, aliasing `tenant.IsSystemTenant`) is the single canonical
+predicate for this question — every tenant-scoping call site in quicbaas uses
+it directly instead of re-deriving `tenantID == ""` (single-tenant mode) or
+`tenantID == "system"` locally; quicbaas keeps no local copy of the
+comparison. A caller whose identity carries either value is exempt from
+per-tenant key scoping and cross-tenant access checks; an ordinary tenant ID
+(including one that merely resembles "system", e.g. `"System"` or
+`"system-2"`) is still fully isolated.
 
 ## Service Coverage
 

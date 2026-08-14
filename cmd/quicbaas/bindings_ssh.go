@@ -18,9 +18,8 @@ package main
 import (
 	"context"
 
-	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	sshSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 )
 
 // =============================================================================
@@ -29,8 +28,9 @@ import (
 //
 // Exposes four methods that mirror the existing TypeScript
 // SSHKeysClient surface (sdk/typescript/src/wails.ts): List, Create,
-// Get, Delete. Under the hood every call delegates to an xkms SSH
-// SDK client so the binding and the CLI share a single code path.
+// Get, Delete. Under the hood every call delegates to
+// quicbaas.SDK().Security().SSH() so the binding, the CLI, and the agent
+// deploy path share a single code path and a single authorization path.
 //
 // The binding intentionally defaults scope/owner to user/$USER so the
 // existing Svelte views, which treat SSH keys as flat (name, algorithm,
@@ -42,11 +42,11 @@ type SSHKeysBinding struct {
 	logger *logger.Logger
 	ctx    context.Context
 
-	// newClient is the factory for the xkms SSH SDK client. Stored so
-	// tests can substitute a fake. Defaults to buildCLISSHClient so the
-	// binding picks the same transport (REST or embedded file store)
-	// as the `quicbaas ssh` CLI and the agent deploy path.
-	newClient func() (xkmsssh.Client, error)
+	// newClient is the factory for the SDK SSH client. Stored so tests can
+	// substitute a fake. Defaults to buildCLISSHClient so the binding picks
+	// the same SDK transport as the `quicbaas ssh` CLI and the agent deploy
+	// path.
+	newClient func() (sshSDK.Client, error)
 
 	// defaultScope / defaultOwner are applied to every SDK request.
 	// The binding is constructed with the operator's identity baked in
@@ -117,7 +117,7 @@ func (b *SSHKeysBinding) List() (*ListSSHKeysResponse, error) {
 	}
 	defer client.Close()
 
-	items, err := client.Keys().List(b.context(), xkmsssh.ListKeysRequest{
+	items, err := client.Keys().List(b.context(), sshSDK.ListKeysRequest{
 		Scope: b.defaultScope,
 		Owner: b.defaultOwner,
 	})
@@ -147,7 +147,7 @@ func (b *SSHKeysBinding) Create(req *CreateSSHKeyRequest) (*SSHKeyDTO, error) {
 	}
 	defer client.Close()
 
-	out, err := client.Keys().Generate(b.context(), xkmsssh.GenerateRequest{
+	out, err := client.Keys().Generate(b.context(), sshSDK.GenerateRequest{
 		Scope: b.defaultScope, Owner: b.defaultOwner,
 		Name: req.Name, Algorithm: algo,
 	})
@@ -169,7 +169,7 @@ func (b *SSHKeysBinding) Get(name string) (*SSHKeyDTO, error) {
 	}
 	defer client.Close()
 
-	out, err := client.Keys().Get(b.context(), xkmsssh.GetKeyRequest{
+	out, err := client.Keys().Get(b.context(), sshSDK.GetKeyRequest{
 		Scope: b.defaultScope, Owner: b.defaultOwner, Name: name,
 	})
 	if err != nil {
@@ -190,7 +190,7 @@ func (b *SSHKeysBinding) Delete(name string) error {
 	}
 	defer client.Close()
 
-	if err := client.Keys().Delete(b.context(), xkmsssh.DeleteKeyRequest{
+	if err := client.Keys().Delete(b.context(), sshSDK.DeleteKeyRequest{
 		Scope: b.defaultScope, Owner: b.defaultOwner, Name: name,
 	}); err != nil {
 		return NewGUITransportError("SSHKeysBinding.Delete", err)
@@ -211,9 +211,9 @@ func (b *SSHKeysBinding) context() context.Context {
 	return context.Background()
 }
 
-// sshKeyToDTO mirrors xkmsssh.Key onto the flat-by-name DTO the Svelte
+// sshKeyToDTO mirrors sshSDK.Key onto the flat-by-name DTO the Svelte
 // frontend expects.
-func sshKeyToDTO(k *xkmsssh.Key) SSHKeyDTO {
+func sshKeyToDTO(k *sshSDK.Key) SSHKeyDTO {
 	if k == nil {
 		return SSHKeyDTO{}
 	}

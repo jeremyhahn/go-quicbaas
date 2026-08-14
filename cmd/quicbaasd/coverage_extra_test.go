@@ -20,9 +20,7 @@ package main
 
 import (
 	"encoding/pem"
-	"errors"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -158,54 +156,9 @@ func TestApplySealOverride_UnsetLeavesImplicit(t *testing.T) {
 // officer loaders: valid PEM block but undecodable DER body
 // =============================================================================
 
-// TestLoadOfficerCert_RejectsBadDER covers the x509.ParseCertificate error
-// branch: a well-formed PEM envelope wrapping non-certificate bytes.
-func TestLoadOfficerCert_RejectsBadDER(t *testing.T) {
-	tmp := t.TempDir()
-	path := filepath.Join(tmp, "bad-cert.pem")
-	writeBadDERPEM(t, path, "CERTIFICATE")
-
-	_, err := loadOfficerCert(officerSpec{Username: "x", Kind: officerKindCert, Path: path})
-	if err == nil {
-		t.Fatal("expected ErrCertParseFailed for bad DER")
-	}
-	if !errors.Is(err, ErrCertParseFailed) {
-		t.Errorf("got %v, want ErrCertParseFailed", err)
-	}
-}
-
-// TestLoadOfficerPubKey_RejectsBadDER covers the ParsePKIXPublicKey error
-// branch with a valid PEM envelope wrapping non-key bytes.
-func TestLoadOfficerPubKey_RejectsBadDER(t *testing.T) {
-	tmp := t.TempDir()
-	path := filepath.Join(tmp, "bad-key.pem")
-	writeBadDERPEM(t, path, "PUBLIC KEY")
-
-	_, err := loadOfficerPubKey(officerSpec{Username: "x", Kind: officerKindPubKey, Path: path})
-	if err == nil {
-		t.Fatal("expected ErrPubKeyParseFailed for bad DER")
-	}
-	if !errors.Is(err, ErrPubKeyParseFailed) {
-		t.Errorf("got %v, want ErrPubKeyParseFailed", err)
-	}
-}
-
 // =============================================================================
 // loadTrustedCAs: directory path rejected
 // =============================================================================
-
-// TestLoadTrustedCAs_RejectsDirectory covers the info.IsDir() branch of the
-// trusted-CA loader.
-func TestLoadTrustedCAs_RejectsDirectory(t *testing.T) {
-	tmp := t.TempDir()
-	_, err := loadTrustedCAs([]string{tmp})
-	if err == nil {
-		t.Fatal("expected ErrTrustedCARead for a directory path")
-	}
-	if !errors.Is(err, ErrTrustedCARead) {
-		t.Errorf("got %v, want ErrTrustedCARead", err)
-	}
-}
 
 // writeBadDERPEM writes a PEM block of the given type whose body is not valid
 // DER for that type, so the parser inside the loader fails after PEM decode.

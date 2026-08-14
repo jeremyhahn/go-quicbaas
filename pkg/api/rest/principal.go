@@ -18,6 +18,7 @@ package rest
 import (
 	"net/http"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -48,7 +49,13 @@ func requireTenantSubject(w http.ResponseWriter, r *http.Request) (interfaces.Su
 	if !ok {
 		return interfaces.Subject{}, false
 	}
-	if subject.TenantID == "" {
+	// A system-tenant principal (empty TenantID or the literal
+	// qrdbsdk.SystemTenantID) carries no per-tenant binding at all — it is
+	// the structurally privileged platform scope, not an isolated tenant
+	// named "system" — so it fails the same "tenant ID is required" gate as
+	// an empty TenantID rather than being silently scoped into a
+	// tenant/system/ namespace.
+	if qrdbsdk.IsSystemTenant(subject.TenantID) {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return interfaces.Subject{}, false

@@ -15,9 +15,11 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
-	"encoding/hex"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -32,9 +34,11 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/fips"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/qrdbadapter"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -580,7 +584,16 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// InviteStore must be persistent: an operator may redeem the first-boot
 	// activation URL minutes or hours after the daemon starts, possibly across
 	// process restarts.
-	inviteStore := iam.NewBackendInviteStore(iamKV)
+	//
+	// It is go-qrdb's per-tenant invitation store, not a quicbaas-local one.
+	// Invitations live in each tenant's own store, so a token issued for one
+	// tenant is simply ABSENT from another rather than found-then-rejected —
+	// isolation is structural. Token generation, digesting and single-use
+	// enforcement all belong to qrdb; this layer only routes and translates.
+	inviteStore, inviteErr := s.buildTenantInviteStore()
+	if inviteErr != nil {
+		return nil, inviteErr
+	}
 
 	// PIV invite activation (POST /api/v1/iam/invites/{token}/activate/piv):
 	// bind a chain-verified client certificate to a pending user and transition
@@ -607,7 +620,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		s.logger.Infof("PIV invite activation enabled (roots: %s)", s.config.IAM.PIVLogin.CAFile)
 	}
 
-	// Certificate bindings (bootstrap admin PIV cert, SO cert) must ALSO enroll
+	// Certificate bindings (bootstrap admin PIV cert) must ALSO enroll
 	// an mtls auth factor in qrdb's UserAuthFactor store — the store the unified
 	// login ceremony resolves against. The servicer is resolved lazily per call
 	// (the embedded node exposes it only after unseal), so the enroller can be
@@ -670,42 +683,48 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	return components, nil
 }
 
-// firstBootBootstrapTTL is the lifetime of the one-time activation invite
-// that is printed to stderr on first boot.
-const firstBootBootstrapTTL = 24 * time.Hour
+// adminBundleDirName is the sub-directory of the data dir that receives the
+// admin certificate (and, for the generate-and-distribute path, its private
+// key) issued by first-boot. The operator copies it to their workstation and
+// authenticates over mTLS with it.
+const adminBundleDirName = "admin"
 
-// printFirstBootBannerFn is the function used to emit the activation banner.
+// adminCertFileName / adminKeyFileName name the files written into
+// <data-dir>/admin by the generate-and-distribute enrollment path.
+const (
+	adminCertFileName = "admin.crt"
+	adminKeyFileName  = "admin.key"
+)
+
+// printFirstBootBannerFn is the function used to emit the enrollment banner.
 // It is a package-level variable so unit tests can capture the output without
 // touching os.Stderr.
-var printFirstBootBannerFn = func(w interface{ WriteString(string) (int, error) }, url string) {
-	printFirstBootBanner(w, url)
+var printFirstBootBannerFn = func(w interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
+	printFirstBootBanner(w, b)
 }
 
-// firstBootBootstrap detects a fresh installation (zero admin assignments)
-// and prints the three-option ceremony banner used by Phase 11 of the
-// unification plan. No invite is stored: the operator chooses one of the
-// three documented bootstrap paths and the resulting admin record is created
-// when the chosen path completes (CLI ceremony, remote ceremony, or WebAuthn
-// invite redemption).
+// firstBootBootstrap detects a fresh installation (zero admin assignments) and
+// runs qrdb's canonical first-boot: system tenant, built-in roles, platform
+// admin user, and — the point of this function — the admin's mTLS enrollment.
 //
-// The three paths printed by the banner:
+// Admin enrollment is CERT-BASED. There is no invite token and no activation
+// URL; §08 of the bootstrap/auth architecture deleted that mechanism. Two
+// enrollment paths, both implemented inside qrdb's firstboot and both ending
+// with the certificate's canonical SPKI thumbprint bound to the admin user:
 //
-//	(a) Local: `quicbaasd init --barrier-strategy ... --so alice:csr:/path`
-//	    runs the init ceremony in-process. On completion the SO certificate's
-//	    SPKI thumbprint is bound to the bootstrap admin via
-//	    BindAdminToSOCert; an mTLS handshake presenting the SO cert is then
-//	    recognized as the admin user.
+//	Path B (preferred, CSR-sign): the operator points
+//	  auth.bootstrap_admin_csr_path at an admin-supplied CSR. The xkms CA signs
+//	  it and the admin's private key never reaches this process.
+//	Path A (generate-and-distribute): with no CSR configured, the xkms CA
+//	  generates the keypair and certificate. Both are written to
+//	  <data-dir>/admin/ for the operator to collect and remove.
 //
-//	(b) Remote: `quicbaas init claim-cert/claim-share` walks the operator
-//	    through claiming a server-issued certificate from a separate
-//	    machine. The CLI is owned by the Phase 12 split-CLI agent.
+// Path (d) — auth.bootstrap_admin_piv_cert_path — remains for deployments that
+// pre-provision the admin certificate out of band; it binds that certificate
+// instead of issuing one.
 //
-//	(c) WebAuthn invite URL: kept as a tertiary path for browser-only
-//	    operators. The activation URL is generated and printed here; the
-//	    invite remains valid for firstBootBootstrapTTL.
-//
-// On every subsequent boot the admin assignment exists so the function is
-// a no-op.
+// On every subsequent boot the admin assignment exists so the function is a
+// no-op.
 func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error {
 	// Detect first boot: any active admin assignment means a prior bootstrap ran.
 	//
@@ -725,35 +744,64 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 		return nil
 	}
 
-	// Delegate tenant + role + admin-user creation to qrdb's canonical
-	// first-boot. This is the SOLE entry point that creates the system
-	// tenant ("system"), registers the six built-in roles, and creates
-	// the platform admin user with Admin@system grant (qrdb's RBAC
-	// system-tenant rule promotes that to cross-tenant authority).
-	// quicbaas IAM-specific concerns (admin assignments, PIV/SO cert
-	// binding) layer on top after first-boot returns. Consumed via the qrdb
-	// SDK (never pkg/firstboot directly).
-	if _, err := qrdbsdk.FirstBootInitialize(ctx, qrdbsdk.FirstBootDependencies{
-		Tenants: qrdbadapter.WrapTenant(c.tenantManager),
-		Roles:   qrdbadapter.WrapRole(c.identityStore),
-		Users:   qrdbadapter.WrapUser(c.identityStore),
-		Logger:  slog.Default(),
-	}); err != nil {
-		return &FirstBootBootstrapError{Op: "firstboot.Initialize", Cause: err}
-	}
-
-	// Look up the bootstrap admin user first-boot just created (or
-	// confirmed already exists). The adapter synthesizes the email
-	// deterministically; the lookup is reliable.
-	adminTenantID := qrdbsdk.SystemTenantID
-	adminEmail := "admin@" + adminTenantID + ".qrdb.local"
-	user, err := c.identityStore.GetUserByEmail(ctx, adminEmail)
+	deps, users, adminKeyPEM, err := s.firstBootDependencies(c)
 	if err != nil {
-		return &FirstBootBootstrapError{Op: "lookup bootstrap admin user", Cause: err}
+		return err
 	}
 
-	// Grant the user a super_admin assignment so they can issue further invites
-	// and manage the system after completing activation.
+	// Delegate tenant + role + admin-user creation AND admin-mTLS enrollment to
+	// qrdb's canonical bootstrap orchestrator. qrdbsdk.BootstrapSystem is the
+	// SDK's declared daemon-init entry point ("Higher-level projects drive
+	// bootstrap via these"): it brings up the SYSTEM barrier per the resolved
+	// strategy (none / passphrase / shamir — idempotent when the barrier is
+	// already initialized/unsealed) and then runs first-boot, which creates the
+	// system tenant ("system"), registers the built-in roles, creates the
+	// platform admin user with the Admin@system grant, issues the admin
+	// certificate, and binds its SPKI thumbprint through deps.Binder. quicbaas
+	// IAM-specific concerns (admin assignments, login-factor enrollment) layer
+	// on top AFTER the orchestrator returns. Consumed via the qrdb SDK (never
+	// pkg/bootstrap or pkg/firstboot directly).
+	//
+	// Mirroring qrdbd's runFirstBoot: the orchestrator is engaged only when
+	// seal is enabled and a barrier registry is reachable; with seal disabled
+	// the direct first-boot path is kept — BootstrapSystem requires a non-nil
+	// barrier registry, and forcing a synthetic barrier would initialize seal
+	// state the operator never asked for.
+	result, err := s.runBootstrapSystem(ctx, deps)
+	if err != nil {
+		return err
+	}
+
+	// Look up the bootstrap admin user first-boot just created (or confirmed
+	// already exists). The adapter synthesizes the email deterministically, and
+	// on the create path it also remembers the record it wrote, so both lookups
+	// resolve the same user.
+	adminTenantID := qrdbsdk.SystemTenantID
+	user := users.CreatedUser()
+	if user == nil {
+		adminEmail := "admin@" + adminTenantID + ".qrdb.local"
+		user, err = c.identityStore.GetUserByEmail(ctx, adminEmail)
+		if err != nil {
+			return &FirstBootBootstrapError{Op: "lookup bootstrap admin user", Cause: err}
+		}
+	}
+
+	// Stash the bootstrap admin's UserID on the server so later admin binding
+	// paths can find them without re-querying the identity store.
+	s.bootstrapAdminUserID = user.ID
+	s.bootstrapAdminTenantID = adminTenantID
+
+	// Make the issued certificate usable for `quicbaas auth login --method
+	// mtls`: enroll it as an mtls auth factor in qrdb's UserAuthFactor store.
+	// This runs BEFORE the admin assignment so a failure leaves first-boot
+	// incomplete and the next boot retries the whole (idempotent) sequence
+	// rather than leaving a privileged admin who cannot log in.
+	if err := s.enrollFirstBootAdminCert(ctx, c, adminTenantID, user.ID, result); err != nil {
+		return err
+	}
+
+	// Grant the user a super_admin assignment so they can manage the system
+	// after collecting their certificate.
 	_, err = c.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
 		UserID:    user.ID,
 		AdminRole: iam.AdminRoleSuperAdmin,
@@ -764,44 +812,10 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 		return &FirstBootBootstrapError{Op: "create admin assignment", Cause: err}
 	}
 
-	// Generate and store the one-time invite token used by path (c).
-	// Paths (a) and (b) do not need the invite — they bind via the SO
-	// cert SPKI thumbprint instead.
-	token, err := iam.GenerateInviteToken()
-	if err != nil {
-		return &FirstBootBootstrapError{Op: "generate invite token", Cause: err}
-	}
-
-	now := time.Now()
-	expiresAt := now.Add(firstBootBootstrapTTL)
-	if err := c.inviteStore.Create(ctx, &iam.InviteRecord{
-		TokenHash: iam.TokenHashExported(token),
-		UserID:    user.ID,
-		TenantID:  adminTenantID,
-		ExpiresAt: expiresAt,
-	}); err != nil {
-		return &FirstBootBootstrapError{Op: "store invite token", Cause: err}
-	}
-
-	// Build the activation URL from the server's issuer URL for path (c).
-	// The SPA router (cmd/quicbaas/frontend MainApp.svelte, route
-	// 'invite-activate') maps the activation view at the path-parameter route
-	// #/invite/:token — there is exactly ONE canonical entry point (pre-v1
-	// stack, no compat aliases).
-	activationURL := s.getIssuerURL() + "/ui/#/invite/" + token
-
-	// Stash the bootstrap admin's UserID on the server so a later
-	// BindAdminToSOCert call (path a) can find them without re-querying
-	// the identity store.
-	s.bootstrapAdminUserID = user.ID
-	s.bootstrapAdminTenantID = adminTenantID
-
-	// Non-interactive PIV binding (path d, integration test convenience).
-	// When BootstrapAdminPIVCertPath is configured, read the cert, compute
-	// its SHA-256 thumbprint, store it on the user, and transition to active.
-	// This skips the invite-token activation flow entirely — only suitable
-	// for test clusters or pre-provisioned deployments where the cert is
-	// generated alongside the cluster.
+	// Non-interactive PIV binding (path d, pre-provisioned deployments and
+	// integration clusters). When BootstrapAdminPIVCertPath is configured, read
+	// the cert, bind both its canonical SPKI thumbprint and the legacy hex
+	// digest, and transition the user to active.
 	if path := s.config.Auth.BootstrapAdminPIVCertPath; path != "" {
 		if err := bindAdminPIVCert(ctx, c, adminTenantID, user.ID, path); err != nil {
 			return &FirstBootBootstrapError{Op: "bind bootstrap admin PIV cert", Cause: err}
@@ -810,11 +824,262 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 		return nil
 	}
 
-	// Print the three-option banner to stderr. Use os.Stderr directly —
-	// NOT the structured logger — so operators see it regardless of log level.
-	printFirstBootBannerFn(os.Stderr, activationURL)
+	// Enroll the operator's chosen HARDWARE login factors (--admin-factor).
+	// This runs after the certificate exists because the mtls factor binds to
+	// it, and before the bundle is written so a failed passkey ceremony does
+	// not leave an operator believing enrollment completed.
+	if err := s.enrollAdminLoginFactors(ctx, c, adminTenantID, user.ID, result); err != nil {
+		return err
+	}
+
+	// Persist the issued bundle for the operator and tell them where it is.
+	banner, err := s.writeAdminBundle(result, adminKeyPEM)
+	if err != nil {
+		return err
+	}
+
+	// Print the enrollment banner to stderr. Use os.Stderr directly — NOT the
+	// structured logger — so operators see it regardless of log level.
+	printFirstBootBannerFn(os.Stderr, banner)
 
 	return nil
+}
+
+// firstBootDependencies assembles the seam set handed to qrdb's first-boot,
+// including the admin-mTLS seams the enrollment depends on. It returns the
+// dependency set, the user adapter (which doubles as the CertBinder and
+// remembers the admin record it creates), and — for the
+// generate-and-distribute path — the admin private key that must be
+// distributed alongside the issued certificate.
+//
+// Both enrollment paths run through the CSR-sign seam, and deliberately so:
+//
+//	Path B (auth.bootstrap_admin_csr_path set): the admin's own CSR is signed,
+//	  so their private key never reaches this host and no key is returned.
+//	Path A (no CSR configured): this function generates the admin keypair and
+//	  its CSR here, signs it through the same seam, and returns the key so the
+//	  caller can write it out for the operator to collect. Routing Path A
+//	  through the CA's generate-and-issue call instead would strand the admin:
+//	  the xkms CA keeps the generated key in its own keystore and returns only
+//	  the certificate, leaving the operator with a credential they cannot use.
+//
+// deps.CA is still populated so the seam is complete for any future caller
+// that supplies no CSR at all.
+//
+// The CA seams are populated from the server's xkms CA, which initializeCA
+// brings up before IAM init. When no CA is available (TLS disabled and no
+// external CA supplied) the cert seams stay nil and qrdb's first-boot creates
+// the tenant/roles/admin without issuing a certificate — the admin then
+// enrolls through the PIV path or a later ceremony.
+func (s *Server) firstBootDependencies(c *iamComponents) (*qrdbsdk.FirstBootDependencies, *qrdbadapter.UserAdapter, []byte, error) {
+	users := qrdbadapter.WrapUser(c.identityStore)
+	deps := &qrdbsdk.FirstBootDependencies{
+		Tenants: qrdbadapter.WrapTenant(c.tenantManager),
+		Roles:   qrdbadapter.WrapRole(c.identityStore),
+		Users:   users,
+		Binder:  users,
+		Logger:  slog.Default(),
+		// Strict (least-privilege) RBAC under FIPS 140-3: the bootstrap admin
+		// keeps only the canonical Admin@system grant and the all-permission
+		// Owner role is never seeded.
+		SeparationOfDuties: fips.Enabled(),
+	}
+
+	ca := s.ceremonyCAAdapter()
+	if ca == nil {
+		s.logger.Warn("First-boot: no certificate authority available — the platform admin will be created WITHOUT an mTLS certificate")
+		return deps, users, nil, nil
+	}
+	deps.CA = ca
+	deps.Signer = ca
+
+	// FAIL CLOSED without a SPIFFE trust domain.
+	//
+	// The xkms CAAdapter stamps the tenant-scoped SPIFFE URI SAN
+	// (spiffe://<trust-domain>/tenant/system/user/admin) onto the admin
+	// certificate ONLY when a trust domain is configured, and REST's
+	// deriveLoginTenant resolves and PINS the login tenant from exactly that
+	// SAN. With no trust domain the certificate carries no SPIFFE SAN, login
+	// falls back to home-realm discovery, and a freshly initialized node has no
+	// HRD routing entries — so the credential would be unusable.
+	//
+	// Issuing it anyway (with a warning) is the appears-to-work-but-doesn't
+	// failure mode: the operator receives a real certificate and only discovers
+	// at first login that it cannot authenticate. Refuse instead.
+	//
+	// The two rejected alternatives, recorded so they are not re-litigated:
+	//   - Synthesizing a trust domain (e.g. from --hostname) would bake a
+	//     PINNED security identifier into every issued certificate; configuring
+	//     a real trust domain later would silently invalidate all of them.
+	//   - Seeding a system-tenant home-realm entry would make "system"
+	//     resolvable for ANY unrouted login attempt, permanently widening the
+	//     authentication surface to buy first-boot convenience.
+	// Requiring the value invents no identifier and widens nothing; the
+	// operator must declare a trust domain eventually regardless.
+	//
+	// This is the authoritative enforcement point because it is where the
+	// certificate is issued: it covers `quicbaasd start` against a data dir
+	// with no init marker (a supported path — see resolveBarrierStrategy case
+	// 3) and embedded/library consumers that never invoke the CLI. The CLI adds
+	// an earlier fail-fast so the operator learns before any side effect.
+	if s.config.IAM.SPIFFETrustDomain == "" {
+		return nil, nil, nil, &FirstBootBootstrapError{
+			Op:    "issue admin certificate",
+			Cause: ErrNoSPIFFETrustDomain,
+		}
+	}
+
+	if path := s.config.Auth.BootstrapAdminCSRPath; path != "" {
+		csrPEM, err := os.ReadFile(path) //nolint:gosec // path comes from operator config
+		if err != nil {
+			return nil, nil, nil, &FirstBootBootstrapError{Op: "read admin CSR " + path, Cause: err}
+		}
+		if len(csrPEM) == 0 {
+			return nil, nil, nil, &FirstBootBootstrapError{Op: "read admin CSR " + path, Cause: ErrEmptyAdminCSR}
+		}
+		deps.AdminCSRPEM = csrPEM
+		return deps, users, nil, nil
+	}
+
+	csrPEM, keyPEM, err := generateAdminCSR()
+	if err != nil {
+		return nil, nil, nil, &FirstBootBootstrapError{Op: "generate admin keypair and CSR", Cause: err}
+	}
+	deps.AdminCSRPEM = csrPEM
+	return deps, users, keyPEM, nil
+}
+
+// adminCertSubjectCN is the common name first-boot puts on the platform admin
+// certificate. It matches the username qrdb's first-boot creates.
+const adminCertSubjectCN = "admin"
+
+// generateAdminCSR creates the platform admin's P-256 keypair and a CSR for it,
+// returning both PEM-encoded. Used by the generate-and-distribute enrollment
+// path; the key is handed to the operator and never retained by the server.
+func generateAdminCSR() (csrPEM, keyPEM []byte, err error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: adminCertSubjectCN},
+	}, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
+		nil
+}
+
+// ErrNoSPIFFETrustDomain reports that first-boot was asked to issue the admin
+// certificate with no iam.spiffe_trust_domain configured. Without a trust
+// domain the certificate carries no tenant SPIFFE SAN and login cannot resolve
+// a tenant from it, so the credential would be unusable.
+var ErrNoSPIFFETrustDomain = errors.New(
+	"first-boot: iam.spiffe_trust_domain is required to issue the admin certificate " +
+		"(example: iam.spiffe_trust_domain: quicbaas.example.test)")
+
+// ErrNoDataDirForAdminBundle reports that first-boot issued an admin credential
+// but storage.data_dir is unset, so there is no safe place to write it.
+var ErrNoDataDirForAdminBundle = errors.New("first-boot: storage.data_dir is required to write the admin bundle")
+
+// ErrEmptyAdminCSR reports that auth.bootstrap_admin_csr_path pointed at an
+// empty file. Falling through to the generate-and-distribute path would
+// silently produce a private key the operator did not ask this process to
+// hold, so the bootstrap fails closed instead.
+var ErrEmptyAdminCSR = errors.New("first-boot: configured admin CSR file is empty")
+
+// enrollFirstBootAdminCert enrolls the certificate first-boot issued as an mtls
+// login factor. It is a no-op when no certificate was issued (no CA wired, or
+// an idempotent re-run where the admin already existed).
+func (s *Server) enrollFirstBootAdminCert(
+	ctx context.Context,
+	c *iamComponents,
+	tenantID, userID string,
+	result *qrdbsdk.FirstBootResult,
+) error {
+	if result == nil || len(result.AdminCertPEM) == 0 {
+		return nil
+	}
+	cert, err := parseCertLoginPEM(result.AdminCertPEM)
+	if err != nil {
+		return &FirstBootBootstrapError{Op: "parse issued admin certificate", Cause: err}
+	}
+	if err := enrollAdminCertLoginFactor(ctx, c, tenantID, userID, cert, adminCertBindingSourceFirstBoot); err != nil {
+		return &FirstBootBootstrapError{Op: "enroll admin mtls login factor", Cause: err}
+	}
+	s.logger.Infof("Bootstrap admin %s enrolled with mTLS certificate (SPKI thumbprint %s)",
+		userID, result.AdminCertThumbprint)
+	return nil
+}
+
+// adminEnrollmentBanner carries the operator-facing result of first-boot admin
+// enrollment: where the issued material landed and how the admin authenticates.
+type adminEnrollmentBanner struct {
+	// CertPath is the file the issued admin certificate was written to. Empty
+	// when no certificate was issued.
+	CertPath string
+
+	// KeyPath is the file the admin private key was written to. Empty for the
+	// CSR-sign path (the admin already holds the key) and when no certificate
+	// was issued.
+	KeyPath string
+
+	// Thumbprint is the canonical SPKI thumbprint bound to the admin user.
+	Thumbprint string
+}
+
+// writeAdminBundle persists the certificate (and, for the
+// generate-and-distribute path, the private key) first-boot issued into
+// <data-dir>/admin so the operator can collect it. It returns the banner
+// describing what was written; when no certificate was issued the banner is
+// empty and nothing is written.
+func (s *Server) writeAdminBundle(result *qrdbsdk.FirstBootResult, adminKeyPEM []byte) (adminEnrollmentBanner, error) {
+	var banner adminEnrollmentBanner
+	if result == nil || len(result.AdminCertPEM) == 0 {
+		return banner, nil
+	}
+	banner.Thumbprint = result.AdminCertThumbprint
+
+	// Refuse to write anywhere but the configured data dir. With an empty
+	// DataDir, filepath.Join would yield the RELATIVE path "admin", dropping the
+	// admin private key into whatever the process CWD happens to be — the source
+	// tree in development. Fail closed instead; the certificate is already bound
+	// to the admin, so the operator can re-issue rather than hunt for a key in an
+	// unexpected directory.
+	if s.config.Storage.DataDir == "" {
+		return banner, &FirstBootBootstrapError{
+			Op:    "write admin bundle",
+			Cause: ErrNoDataDirForAdminBundle,
+		}
+	}
+
+	dir := filepath.Join(s.config.Storage.DataDir, adminBundleDirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return banner, &FirstBootBootstrapError{Op: "create admin bundle dir " + dir, Cause: err}
+	}
+
+	certPath := filepath.Join(dir, adminCertFileName)
+	if err := os.WriteFile(certPath, result.AdminCertPEM, 0o600); err != nil {
+		return banner, &FirstBootBootstrapError{Op: "write " + certPath, Cause: err}
+	}
+	banner.CertPath = certPath
+
+	// adminKeyPEM is nil for the CSR-sign path — the admin kept their key and
+	// there is nothing here to distribute.
+	if len(adminKeyPEM) > 0 {
+		keyPath := filepath.Join(dir, adminKeyFileName)
+		if err := os.WriteFile(keyPath, adminKeyPEM, 0o600); err != nil {
+			return banner, &FirstBootBootstrapError{Op: "write " + keyPath, Cause: err}
+		}
+		banner.KeyPath = keyPath
+	}
+	return banner, nil
 }
 
 // firstBootLeaderWait bounds how long firstBootBootstrap waits for the raft
@@ -854,38 +1119,21 @@ func (s *Server) waitForAdminAssignmentsCheck(ctx context.Context, c *iamCompone
 	}
 }
 
-// ErrSOCertLoginEmpty indicates the certificate PEM input is empty.
-var ErrSOCertLoginEmpty = errors.New("so cert login thumbprint: empty PEM input")
+// ErrCertPEMEmpty indicates the certificate PEM input is empty.
+var ErrCertPEMEmpty = errors.New("cert pem: empty input")
 
-// ErrSOCertLoginNoPEMBlock indicates the certificate PEM input has no PEM block.
-var ErrSOCertLoginNoPEMBlock = errors.New("so cert login thumbprint: no PEM block")
+// ErrCertPEMNoBlock indicates the certificate PEM input has no PEM block.
+var ErrCertPEMNoBlock = errors.New("cert pem: no PEM block")
 
-// SOCertLoginThumbprintError indicates the certificate PEM body could not be
+// CertPEMParseError indicates the certificate PEM body could not be
 // parsed into an X.509 certificate.
-type SOCertLoginThumbprintError struct {
+type CertPEMParseError struct {
 	Reason string
 }
 
 // Error implements the error interface.
-func (e *SOCertLoginThumbprintError) Error() string {
-	return "so cert login thumbprint: " + e.Reason
-}
-
-// soCertLoginThumbprint computes the canonical login lookup thumbprint for a
-// PEM-encoded certificate: hex(SHA-256(cert.Raw)). This is the SINGLE digest
-// every login path computes (pkg/service/login_service.go mtlsLookupKey,
-// pkg/api/rest/iam_login_piv.go PIVLogin, pkg/iam/oauth2_mtls.go) and the value
-// stored as a PIV-attested cert binding (indexed for GetUserByPIVThumbprint). It is
-// deliberately NOT the SPKI thumbprint (SOCertSPKIThumbprint): there is no
-// SPKI-keyed user index, so an SPKI digest in that column is unreachable by any
-// login lookup. Keeping one digest function here keeps bindAdminPIVCert and
-// BindAdminToSOCert from drifting apart.
-func soCertLoginThumbprint(certPEM []byte) (string, error) {
-	cert, err := parseCertLoginPEM(certPEM)
-	if err != nil {
-		return "", err
-	}
-	return certRawSHA256Hex(cert), nil
+func (e *CertPEMParseError) Error() string {
+	return "cert pem: parse failed: " + e.Reason
 }
 
 // parseCertLoginPEM decodes the single PEM-encoded certificate an admin binding
@@ -894,31 +1142,22 @@ func soCertLoginThumbprint(certPEM []byte) (string, error) {
 // DER and its SubjectPublicKeyInfo.
 func parseCertLoginPEM(certPEM []byte) (*x509.Certificate, error) {
 	if len(certPEM) == 0 {
-		return nil, ErrSOCertLoginEmpty
+		return nil, ErrCertPEMEmpty
 	}
 	block, _ := pem.Decode(certPEM)
 	if block == nil {
-		return nil, ErrSOCertLoginNoPEMBlock
+		return nil, ErrCertPEMNoBlock
 	}
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, &SOCertLoginThumbprintError{Reason: err.Error()}
+		return nil, &CertPEMParseError{Reason: err.Error()}
 	}
 	return cert, nil
 }
 
-// certRawSHA256Hex returns hex(SHA-256(cert.Raw)) — the canonical mTLS/PIV
-// login lookup key every login path computes and the lookup thumbprint of the
-// PIV-attested cert binding. It is the single digest shared by bindAdminPIVCert
-// and soCertLoginThumbprint so the two binding paths cannot drift apart.
-func certRawSHA256Hex(cert *x509.Certificate) string {
-	digest := sha256.Sum256(cert.Raw)
-	return hex.EncodeToString(digest[:])
-}
-
 // bindAdminPIVCert reads a PEM-encoded client certificate from path, enrolls it
-// as an mtls login factor, stores its SHA-256 thumbprint on the bootstrap admin
-// user, and transitions the user to active. Used by the non-interactive
+// as an mtls login factor, binds its thumbprints to the bootstrap admin user,
+// and transitions the user to active. Used by the non-interactive
 // pre-provisioned bootstrap (auth.bootstrap_admin_piv_cert_path).
 //
 // The factor enrollment comes FIRST — see enrollAdminCertLoginFactor for the
@@ -935,7 +1174,7 @@ func bindAdminPIVCert(ctx context.Context, c *iamComponents, tenantID, userID, p
 	if err != nil {
 		// Distinguish "this file is not PEM at all" from "the PEM body is not a
 		// certificate" so the operator knows which half of the input is wrong.
-		if errors.Is(err, ErrSOCertLoginEmpty) || errors.Is(err, ErrSOCertLoginNoPEMBlock) {
+		if errors.Is(err, ErrCertPEMEmpty) || errors.Is(err, ErrCertPEMNoBlock) {
 			return &PIVBootstrapError{Op: "decode PIV cert PEM", Path: path, Cause: err}
 		}
 		return &PIVBootstrapError{Op: "parse PIV cert", Path: path, Cause: err}
@@ -945,13 +1184,19 @@ func bindAdminPIVCert(ctx context.Context, c *iamComponents, tenantID, userID, p
 		return &PIVBootstrapError{Op: "enroll bootstrap admin mtls login factor", Path: path, Cause: err}
 	}
 
-	thumbprint := certRawSHA256Hex(cert)
+	// Bind BOTH thumbprints, exactly as the interactive PIV activation path
+	// does (see pkg/iam/piv.go): the canonical SPKI thumbprint that qrdb's
+	// UserByCertThumbprint index resolves natively and survives renewal with
+	// the same key, plus the legacy hex digest of the certificate DER that the
+	// broker-side fallback index resolves.
+	thumbprints := []string{
+		qrdbsdk.ComputeSPKIThumbprint(cert),
+		xkmssdk.PIVThumbprintSHA256(cert),
+	}
 	active := iam.UserStateActive
-	emptyInvite := ""
 	if _, err := c.identityStore.UpdateUser(ctx, tenantID, userID, iam.UpdateUserOptions{
-		State:             &active,
-		PIVCertThumbprint: &thumbprint,
-		InviteToken:       &emptyInvite,
+		State:              &active,
+		PIVCertThumbprints: &thumbprints,
 	}); err != nil {
 		return &PIVBootstrapError{Op: "update bootstrap admin with PIV thumbprint", Path: path, Cause: err}
 	}
@@ -964,9 +1209,9 @@ const (
 	// auth.bootstrap_admin_piv_cert_path binding.
 	adminCertBindingSourceBootstrap = "bootstrap_admin_cert"
 
-	// adminCertBindingSourceSOCert marks the init-ceremony SO certificate
-	// binding (first-boot path (a)).
-	adminCertBindingSourceSOCert = "so_cert"
+	// adminCertBindingSourceFirstBoot marks the certificate qrdb's first-boot
+	// issued (generate-and-distribute) or CSR-signed for the platform admin.
+	adminCertBindingSourceFirstBoot = "first_boot_admin_cert"
 )
 
 // AdminCertFactorUnavailableError reports that an admin certificate binding was
@@ -1066,152 +1311,62 @@ func (e *PIVBootstrapError) Error() string {
 
 func (e *PIVBootstrapError) Unwrap() error { return e.Cause }
 
-// BindAdminToSOCert pins the bootstrap admin user to the SHA-256 thumbprint
-// of an SO certificate so that an mTLS / PIV handshake presenting that exact
-// certificate is recognized as the admin user.
+// printFirstBootBanner writes the admin enrollment banner to w. Extracted for
+// testability.
 //
-// The thumbprint is hex(SHA-256(cert.Raw)) — the SAME canonical login lookup
-// key every login path computes: pkg/service/login_service.go (mtlsLookupKey),
-// pkg/api/rest/iam_login_piv.go (PIVLogin), pkg/iam/oauth2_mtls.go, and the
-// bindAdminPIVCert bootstrap convenience path above. It is written to the PIV
-// thumbprint index, which is the SINGLE thumbprint-to-user index read by
-// GetUserByPIVThumbprint and the unified login ceremony's mtls resolver.
-//
-// This DELIBERATELY does NOT use SOCertSPKIThumbprint (SHA-256 over the
-// SubjectPublicKeyInfo only). The iam.User model exposes exactly one
-// thumbprint index (PIVCertThumbprint); writing an SPKI digest there produced
-// a digest that NO login path could ever match — a user bound via the SO-cert
-// path was unfindable, and the PIV (cert.Raw) and SPKI digests collided on one
-// column. The SPKI-survives-renewal property is not reachable here because no
-// SPKI-keyed user index exists; the login lookup is over the full cert DER.
-// See soCertLoginThumbprint.
-//
-// Returns FirstBootBootstrapError on any storage failure. Returns
-// ErrBootstrapAdminMissing when no bootstrap admin exists yet (typical when
-// the operator runs path (a) on a server that has already been initialized).
-func (s *Server) BindAdminToSOCert(ctx context.Context, certPEM []byte) error {
-	if s.iamComponents == nil {
-		return &FirstBootBootstrapError{Op: "bind admin to so cert", Cause: ErrBootstrapAdminMissing}
-	}
-	c, ok := s.iamComponents.(*iamComponents)
-	if !ok || c == nil || c.identityStore == nil {
-		return &FirstBootBootstrapError{Op: "bind admin to so cert", Cause: ErrBootstrapAdminMissing}
-	}
-
-	cert, err := parseCertLoginPEM(certPEM)
-	if err != nil {
-		return &FirstBootBootstrapError{Op: "compute so cert login thumbprint", Cause: err}
-	}
-	thumbprint := certRawSHA256Hex(cert)
-
-	userID := s.bootstrapAdminUserID
-	tenantID := s.bootstrapAdminTenantID
-	if userID == "" || tenantID == "" {
-		// Fall back to the system-tenant "admin" user when the bootstrap
-		// path stored no UserID (e.g., test fixtures or restart paths
-		// where firstBootBootstrap has not run in this process). The
-		// bootstrap admin is created in qrdbsdk.SystemTenantID by
-		// firstBootBootstrap (see adminTenantID above), NOT the "default"
-		// tenant — scanning "default" here would miss it. ListUsers is
-		// bounded to the system tenant, which holds only control-plane
-		// identities, so the scan is O(1) in practice.
-		users, lookupErr := c.identityStore.ListUsers(ctx, qrdbsdk.SystemTenantID, iam.ListOptions{Limit: 100})
-		if lookupErr != nil {
-			return &FirstBootBootstrapError{Op: "find bootstrap admin", Cause: lookupErr}
-		}
-		var found *iam.User
-		for _, u := range users {
-			// The IAM User type was refactored from Username → Name +
-			// Email. The bootstrap admin is identified by display name
-			// "admin" (matches the seed in EnsureBootstrapAdmin); fall
-			// through on the empty-Name case so legacy fixtures that
-			// only set ID still match by ID.
-			if u != nil && (u.Name == "admin" || u.ID == "admin") {
-				found = u
-				break
-			}
-		}
-		if found == nil {
-			return &FirstBootBootstrapError{Op: "find bootstrap admin", Cause: ErrBootstrapAdminMissing}
-		}
-		userID = found.ID
-		tenantID = qrdbsdk.SystemTenantID
-	}
-
-	// Enroll the mtls login factor BEFORE persisting the binding so a bound SO
-	// certificate is always resolvable by the unified login ceremony. See
-	// enrollAdminCertLoginFactor for the ordering rationale.
-	if err := enrollAdminCertLoginFactor(ctx, c, tenantID, userID, cert, adminCertBindingSourceSOCert); err != nil {
-		return &FirstBootBootstrapError{Op: "enroll so cert mtls login factor", Cause: err}
-	}
-
-	// Persist the cert.Raw SHA-256 thumbprint to the PIVCertThumbprint index
-	// — the single thumbprint-to-user index every login path reads. Also
-	// transition the user from pending to active so subsequent mTLS / PIV
-	// handshakes can bind to the admin record.
-	thumbprintCopy := thumbprint
-	activeState := iam.UserStateActive
-	if _, err := c.identityStore.UpdateUser(ctx, tenantID, userID, iam.UpdateUserOptions{
-		PIVCertThumbprint: &thumbprintCopy,
-		State:             &activeState,
-	}); err != nil {
-		return &FirstBootBootstrapError{Op: "persist so cert thumbprint", Cause: err}
-	}
-	return nil
-}
-
-// printFirstBootBanner writes the three-option ceremony banner to w.
-// Extracted for testability. Lists the canonical bootstrap paths in the
-// order documented by Phase 11 of the unification plan.
-//
-// The commands shown are platformctl invocations — the user-facing
-// CLI for go-trusted-platform deployments. platformctl drives the same
-// ceremony APIs internally via the quicbaas SDK, so embedded and remote
-// transports are both supported by a single binary. Direct quicbaasd /
-// quicbaas invocations are no longer surfaced to operators; they are
-// SDK-internal and documented separately for library consumers.
-func printFirstBootBanner(w interface{ WriteString(string) (int, error) }, activationURL string) {
+// Admin enrollment is cert-based: first-boot already issued (or CSR-signed) the
+// platform admin certificate and bound its SPKI thumbprint to the admin user.
+// The banner tells the operator where that material is and how to use it. There
+// is no invite token and no activation URL — §08 deleted that mechanism.
+func printFirstBootBanner(w interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
 	const sep = "============================================================"
-	lines := []string{
-		"",
-		sep,
-		"  FIRST-BOOT BOOTSTRAP: this server has no admin user yet.",
-		"  This banner only appears when seal.enabled=true. To bring up",
-		"  the daemon without an encrypted barrier, set seal.enabled=false",
-		"  (the default) and restart — no ceremony is required.",
-		"",
-		"  When the barrier IS enabled, choose ONE of the three ceremony",
-		"  paths below to bind a Security Officer credential:",
-		"",
-		"  (a) LOCAL CEREMONY (recommended for single-host installs):",
-		"        platformctl init \\",
-		"          --barrier-strategy software \\",
-		"          --so-pin <SO_PIN> --user-pin <USER_PIN> \\",
-		"          --so admin:csr:/path/to/admin.csr",
-		"",
-		"      The SO certificate's SubjectPublicKeyInfo SHA-256 will be",
-		"      pinned to the admin user; future mTLS handshakes presenting",
-		"      that cert authenticate as admin.",
-		"",
-		"  (b) REMOTE CEREMONY (split admin / server hosts):",
-		"        platformctl ceremony claim-cert --username admin --so-pin <SO_PIN>",
-		"        platformctl ceremony claim-share --username admin",
-		"",
-		"      Same SO-cert thumbprint binding as (a); useful when the",
-		"      admin keypair lives on a hardware token on a separate host.",
-		"",
-		"  (c) WEBAUTHN INVITE (browser-only operators):",
-		"",
-		"        " + activationURL,
-		"",
-		"      One-time URL — opens the activation page in a browser to",
-		"      register a FIDO2 / PIV credential. Shown ONCE.",
-		"",
-		"  After ANY of these paths completes, this banner will not",
-		"  appear on subsequent boots.",
-		sep,
-		"",
+	lines := []string{"", sep, "  FIRST-BOOT COMPLETE: platform admin created."}
+
+	if b.CertPath == "" {
+		lines = append(lines,
+			"",
+			"  No certificate authority was available, so NO admin certificate",
+			"  was issued. Enable TLS (or supply an external CA) and restart, or",
+			"  pre-provision one via auth.bootstrap_admin_piv_cert_path.",
+		)
+	} else {
+		lines = append(lines,
+			"",
+			"  Admin mTLS certificate:",
+			"        "+b.CertPath,
+		)
+		if b.KeyPath != "" {
+			lines = append(lines,
+				"  Admin private key (generate-and-distribute path):",
+				"        "+b.KeyPath,
+				"",
+				"  Copy BOTH files to the administrator's workstation over a secure",
+				"  channel and DELETE them from this host. To keep the private key",
+				"  off this host entirely, use the CSR-sign path instead: set",
+				"  auth.bootstrap_admin_csr_path to an admin-supplied CSR.",
+			)
+		} else {
+			lines = append(lines,
+				"",
+				"  The private key never reached this host (CSR-sign path). Give the",
+				"  certificate above to the administrator who holds the key.",
+			)
+		}
+		lines = append(lines,
+			"",
+			"  Bound SPKI thumbprint: "+b.Thumbprint,
+			"",
+			"  Authenticate with:",
+			"        quicbaas auth login --method mtls",
+		)
 	}
+
+	lines = append(lines,
+		"",
+		"  This banner appears only on first boot.",
+		sep,
+		"",
+	)
 	for _, line := range lines {
 		_, _ = w.WriteString(line + "\n")
 	}

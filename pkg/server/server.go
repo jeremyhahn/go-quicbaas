@@ -18,6 +18,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"io"
 	"net"
 	"sync"
@@ -50,6 +51,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	quicbaaspermission "github.com/jeremyhahn/go-quicbaas/pkg/permission"
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server/devcluster"
@@ -86,6 +88,20 @@ type serverOptions struct {
 	// interface but ships NO DNS implementation; an application registers
 	// one here. When nil, PublishDANE returns a typed not-configured error.
 	danePublisher dane.DANEPublisher
+
+	// containerAttestor is the application-supplied orchestration hook used
+	// by Security().Attestation().AttestContainer. QuicBaaS ships the
+	// standalone trust tiers itself (image digest pinning, host TPM quote,
+	// measured launch — see pkg/orchestration); this seam exists so a fleet
+	// manager such as go-trusted-platform can substitute registry-backed
+	// attestation with continuous re-attestation and quarantine. When nil,
+	// AttestContainer returns a typed not-configured error.
+	containerAttestor service.ContainerAttestor
+
+	// attestationTrustAnchors are the root certificates every attestation
+	// verification is anchored against. When empty, only the per-request
+	// anchors supplied in the verify options apply.
+	attestationTrustAnchors []*x509.Certificate
 }
 
 // ServerOption configures optional behavior on the Server during construction.
@@ -141,6 +157,35 @@ func WithDANEPublisher(publisher dane.DANEPublisher) ServerOption {
 	return func(o *serverOptions) { o.danePublisher = publisher }
 }
 
+// WithContainerAttestor returns a ServerOption that registers the
+// application-supplied container attestor behind
+// Security().Attestation().AttestContainer.
+//
+// This is the Tier 3 seam of the standalone trusted-agent model. QuicBaaS
+// implements Tiers 0-2 on its own — image digest pinning with post-launch
+// verification, host TPM quote against expected PCRs, and measured launch —
+// and can fill this seam with them via
+// service.NewRuntimeContainerAttestor(runtime). What it deliberately does NOT
+// implement is fleet automation: a device registry, scheduled
+// re-attestation, quarantine on drift, golden-PCR policy management and
+// network isolation. Those belong to go-trusted-platform, which registers its
+// own attestor here.
+//
+// Until an attestor is registered, AttestContainer returns a typed
+// not-configured error across every transport — the same contract
+// WithDANEPublisher uses.
+func WithContainerAttestor(attestor service.ContainerAttestor) ServerOption {
+	return func(o *serverOptions) { o.containerAttestor = attestor }
+}
+
+// WithAttestationTrustAnchors returns a ServerOption that sets the root
+// certificates every Security().Attestation() verification is anchored
+// against. Callers may still supply additional per-request anchors in the
+// verify options; these are the deployment-wide defaults.
+func WithAttestationTrustAnchors(anchors []*x509.Certificate) ServerOption {
+	return func(o *serverOptions) { o.attestationTrustAnchors = anchors }
+}
+
 // Server orchestrates all QuicBaaS components.
 type Server struct {
 	config *config.Config
@@ -148,10 +193,6 @@ type Server struct {
 
 	// Functional options provided at construction time
 	opts serverOptions
-
-	// Core components
-	localBackend *LocalBackend // Used in pebble mode
-	fileBackend  *FileBackend  // Used in file mode
 
 	// DevCluster management - coordinates local multi-node development clusters
 	devClusterMgr *devcluster.Manager
@@ -277,14 +318,34 @@ type Server struct {
 	// during Shutdown to release the PebbleDB file locks.
 	dataPlaneBarrierCloser io.Closer
 
+	// bootstrapSealPassphrase is a copy of the operator's seal passphrase
+	// retained for the first-boot bootstrap orchestrator
+	// (qrdbsdk.BootstrapSystem), which initializes a still-sealed
+	// passphrase-strategy system barrier during daemon init. The node builder
+	// consumes and zeroizes opts.sealPassphrase before first-boot runs, so
+	// this copy carries the credential across that gap. It is zeroized as
+	// soon as first-boot completes.
+	bootstrapSealPassphrase []byte
+
 	// ceremonyServices holds the bootstrap ceremony service stack
 	// (credential, ceremony, and the underlying core ceremony.CeremonyService).
-	// Populated during startService() via buildBootstrapCeremonyServices and
-	// consumed by the firstBootBootstrap path to bind the SO certificate
-	// SPKI thumbprint to the bootstrap admin once an officer completes the
-	// ceremony. Nil when ceremony wiring is unavailable for the current
+	// Populated during startService() via buildBootstrapCeremonyServices.
+	// The SO identity is CSR-based; the server never holds officer private
+	// keys. Nil when ceremony wiring is unavailable for the current
 	// transport (network-only modes that don't run the init flow).
 	ceremonyServices *CeremonyServices
+
+	// ceremonyCA is the late-bound qrdbsdk.CeremonyCA supplied to the embedded
+	// qrdb node (via qrdbsdk.WithCeremonyCA) at construction time and resolved
+	// to the platform xkms CA once initializeCA has run. See ceremony_ca.go for
+	// why the binding must be late.
+	ceremonyCA *lateBoundCeremonyCA
+
+	// pinBackend is the SO/user PIN backend injected into the embedded qrdb
+	// node (qrdbsdk.WithPINBackend). Held here so the init ceremony can enroll
+	// the operator-supplied PINs into the very backend the node verifies
+	// against — see EnrollInitPINs.
+	pinBackend qrdbsdk.PINBackend
 
 	// bootstrapCeremonyClient is the in-process qrdb SDK client built over
 	// the bootstrap ceremony service stack via the qrdb embedded transport.
@@ -319,10 +380,10 @@ type Server struct {
 	sealedWindowFacade service.QuicBaaS
 
 	// bootstrapAdminUserID and bootstrapAdminTenantID identify the pending
-	// admin user created by firstBootBootstrap. BindAdminToSOCert reads these
-	// to pin the SO certificate's SPKI thumbprint against the right user
-	// without re-querying the identity store. Empty before the first-boot
-	// path runs, or on subsequent boots where the admin already exists.
+	// admin user created by firstBootBootstrap, letting later admin binding
+	// paths find the right user without re-querying the identity store.
+	// Empty before the first-boot path runs, or on subsequent boots where
+	// the admin already exists.
 	bootstrapAdminUserID   string
 	bootstrapAdminTenantID string
 
@@ -364,7 +425,7 @@ type Server struct {
 
 	// secretRegistry is the unified secret resolver registry built during
 	// server initialization after the qrdb node is online. It dispatches
-	// credential://, kms://, remote-kms://, and autogen resolution. Nil
+	// credential://, kms://, and remote-kms:// resolution. Nil
 	// before initializeCA runs. Accessible via GetSecretRegistry().
 	secretRegistry *qrdbsecret.ResolverRegistry
 
@@ -443,6 +504,17 @@ func NewServer(cfg *config.Config, opts ...ServerOption) (*Server, error) {
 		}
 	}
 
+	// Contribute QuicBaaS's own permission vocabulary to qrdb's global
+	// permission registry. go-qrdb owns the single RBAC policy decision point
+	// but does not know about broker-layer domain concepts, so the broker
+	// registers them here — at the composition root, before any component
+	// starts, any built-in role is seeded, and any transport PEP resolves a
+	// permission. Without this, an authz table entry such as
+	// attestation:verify names a permission no role can hold and the endpoint
+	// is unreachable while appearing wired. See pkg/permission for the single
+	// list of contributed permissions.
+	quicbaaspermission.Register()
+
 	// Apply functional options
 	var options serverOptions
 	for _, opt := range opts {
@@ -485,6 +557,7 @@ func NewServer(cfg *config.Config, opts ...ServerOption) (*Server, error) {
 		opts:         options,
 		shutdownChan: make(chan struct{}),
 		startTime:    time.Now(),
+		ceremonyCA:   &lateBoundCeremonyCA{},
 	}
 
 	// Create health checker
@@ -644,6 +717,13 @@ func (s *Server) initialize() error {
 	if err := initializeCAFn(s); err != nil {
 		return err
 	}
+
+	// Resolve the late-bound ceremony CA now that the platform CA exists. The
+	// embedded qrdb node was constructed with this wrapper (see
+	// buildXKMSCryptoOptions), so from here on every ceremony verb — officer
+	// CSR signing, TLS serving cert issuance, CA bundle / SPKI pin — issues
+	// from the single platform CA instead of failing closed.
+	s.bindCeremonyCA()
 
 	// Sealed boot mode: when the embedded qrdb node booted with seal
 	// enabled and no auto-unseal material, it is SEALED — no data plane, no
@@ -1106,26 +1186,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 				s.logger.WithError(err).Error("Failed to close data-plane barrier seal store")
 			} else {
 				s.logger.Info("Data-plane barrier seal store closed")
-			}
-		}
-
-		// Shutdown local backends
-		if s.localBackend != nil {
-			s.logger.Info("Shutting down LocalBackend...")
-			if err := s.localBackend.Close(); err != nil {
-				errs = append(errs, err)
-				s.logger.WithError(err).Error("Failed to shutdown LocalBackend")
-			} else {
-				s.logger.Info("LocalBackend shutdown complete")
-			}
-		}
-		if s.fileBackend != nil {
-			s.logger.Info("Shutting down FileBackend...")
-			if err := s.fileBackend.Close(); err != nil {
-				errs = append(errs, err)
-				s.logger.WithError(err).Error("Failed to shutdown FileBackend")
-			} else {
-				s.logger.Info("FileBackend shutdown complete")
 			}
 		}
 

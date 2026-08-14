@@ -57,9 +57,9 @@ func TestDockerManagerGetContainerName(t *testing.T) {
 			expected:    "integration-test-node4-1",
 		},
 		{
-			name:        "localstack",
-			serviceName: "localstack",
-			expected:    "integration-localstack-1",
+			name:        "floci",
+			serviceName: "floci",
+			expected:    "integration-floci-1",
 		},
 	}
 

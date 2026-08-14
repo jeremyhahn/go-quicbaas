@@ -36,7 +36,7 @@ func (p *restSealedProbe) IsSealed() bool { return p.sealed }
 func newSealedGateRESTServer(t *testing.T, probe *restSealedProbe) *Server {
 	t.Helper()
 	s, _ := newTestServer(t)
-	s.SetSealedWindowGate(probe, sealedwindow.RESTAllowlist())
+	s.SetSealedWindowGate(probe, &restCeremonyStateProbe{}, sealedwindow.RESTAllowlist())
 	return s
 }
 
@@ -63,8 +63,7 @@ func TestRESTSealedWindowGate_SealedAdmitDenyTable(t *testing.T) {
 		{"barrier initialize (api mirror)", http.MethodPost, "/api/v1/barrier/initialize", false},
 		{"shamir unseal-share", http.MethodPost, "/v1/barrier/shamir/unseal-share", false},
 		{"ceremony status (qrdb wire)", http.MethodGet, "/v1/ceremony/status", false},
-		{"init prefix (api mirror)", http.MethodGet, "/api/v1/init/status", false},
-		{"init enroll (qrdb wire prefix)", http.MethodPost, "/v1/init/enroll-external-officer", false},
+		{"init status (api mirror)", http.MethodGet, "/api/v1/init/status", false},
 		{"bootstrap prefix", http.MethodPost, "/api/v1/bootstrap/auto", false},
 
 		// Off-allowlist surfaces: sealed envelope.
@@ -78,6 +77,20 @@ func TestRESTSealedWindowGate_SealedAdmitDenyTable(t *testing.T) {
 		{"legacy seal surface", http.MethodGet, "/api/v1/seal/status", true},
 		{"iam users", http.MethodGet, "/api/v1/iam/users", true},
 		{"user factors wire", http.MethodGet, "/v1/users/factors/list", true},
+
+		// The strict ceremony model (sealedwindow.StrictCeremonyExclusions)
+		// withholds the three ceremony verbs that MINT or DISTRIBUTE trust on
+		// EVERY transport. They keep their full entries in the canonical
+		// Table — so the quicbaas table still diffs mechanically against
+		// qrdb's, which allowlists all three — but every derivation skips
+		// them, so the sealed gate must reject them. Reaching any of these
+		// pre-authentication on a fresh daemon hands over the trust root; they
+		// are driven in-process by `quicbaasd init` instead.
+		{"ceremony initialize (strict exclusion)", http.MethodPost, "/v1/ceremony/initialize", true},
+		{"ceremony initialize api mirror (strict exclusion)", http.MethodPost, "/api/v1/init/initialize", true},
+		{"ceremony sign-csr (strict exclusion)", http.MethodPost, "/v1/ceremony/sign-csr", true},
+		{"init enroll-external-officer (strict exclusion)", http.MethodPost, "/v1/init/enroll-external-officer", true},
+		{"init enroll-external-officer api mirror (strict exclusion)", http.MethodPost, "/api/v1/init/enroll-external-officer", true},
 	}
 
 	for _, tc := range cases {

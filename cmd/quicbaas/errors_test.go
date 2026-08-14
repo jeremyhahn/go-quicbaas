@@ -449,46 +449,6 @@ func TestParseKMSDecryptResponse_UnmarshalError(t *testing.T) {
 // DEK Parse Function Error Paths
 // =============================================================================
 
-func TestParseDEKCreateResponse_UnmarshalError(t *testing.T) {
-	_, err := parseDEKCreateResponse("not-a-map")
-	assert.Error(t, err)
-}
-
-func TestParseDEKGetResponse_UnmarshalError(t *testing.T) {
-	_, err := parseDEKGetResponse("not-a-map")
-	assert.Error(t, err)
-}
-
-func TestParseDEKListResponse_UnmarshalError(t *testing.T) {
-	_, err := parseDEKListResponse("not-a-map")
-	assert.Error(t, err)
-}
-
-func TestParseDEKRotateResponse_UnmarshalError(t *testing.T) {
-	_, err := parseDEKRotateResponse("not-a-map")
-	assert.Error(t, err)
-}
-
-func TestParseDEKDeleteResponse_UnmarshalError(t *testing.T) {
-	_, err := parseDEKDeleteResponse("not-a-map")
-	assert.Error(t, err)
-}
-
-func TestParseDEKStatusResponse_UnmarshalError(t *testing.T) {
-	_, err := parseDEKStatusResponse("not-a-map")
-	assert.Error(t, err)
-}
-
-func TestParseDEKSetDefaultResponse_UnmarshalError(t *testing.T) {
-	_, err := parseDEKSetDefaultResponse("not-a-map")
-	assert.Error(t, err)
-}
-
-func TestParseDEKSetSafetyResponse_UnmarshalError(t *testing.T) {
-	_, err := parseDEKSetSafetyResponse("not-a-map")
-	assert.Error(t, err)
-}
-
 // =============================================================================
 // Backend/Safety Parse Function Error Paths
 // =============================================================================

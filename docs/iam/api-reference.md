@@ -386,47 +386,41 @@ Response:
 
 WebAuthn provides passwordless authentication using hardware security keys and platform authenticators. For detailed integration guides and frontend examples, see the [WebAuthn Guide](webauthn.md).
 
+The ceremony is served by the canonical xkms-native mount at
+`/api/v1/iam/{tenant_id}/webauthn/*`. The legacy
+`/api/v1/tenants/{tenant_id}/webauthn/*` surface (including its
+per-user credential CRUD endpoints) was deleted. The opaque ceremony
+session id travels in the `X-Session-Id` header: it is returned by
+the begin verbs and must be echoed on the finish verbs.
+
 ### Begin Registration
 
 Initiates WebAuthn credential registration for an authenticated user.
+Authorization-gated (`user_authfactors:add`).
 
 ```
-POST /api/v1/tenants/{tenant_id}/webauthn/register/begin
+POST /api/v1/iam/{tenant_id}/webauthn/registration/begin
 Authorization: Bearer <token>
-```
+Content-Type: application/json
 
-Response:
-```json
 {
-  "publicKey": {
-    "challenge": "dGhpcyBpcyBhIHJhbmRvbSBjaGFsbGVuZ2U",
-    "rp": {
-      "id": "example.com",
-      "name": "Example Application"
-    },
-    "user": {
-      "id": "dXNlcl9hYmMxMjM",
-      "name": "alice@example.com",
-      "displayName": "Alice Smith"
-    },
-    "pubKeyCredParams": [
-      {"type": "public-key", "alg": -7},
-      {"type": "public-key", "alg": -257}
-    ],
-    "timeout": 60000,
-    "attestation": "none",
-    "excludeCredentials": []
-  }
+  "email": "alice@example.com",
+  "display_name": "Alice Smith"
 }
 ```
 
+Response: `X-Session-Id` header plus the JSON-marshaled
+`PublicKeyCredentialCreationOptions` (`{"publicKey": {...}}`).
+
 ### Complete Registration
 
-Completes credential registration by submitting the authenticator's attestation response.
+Completes registration. The request body is the raw
+`navigator.credentials.create()` PublicKeyCredential JSON.
 
 ```
-POST /api/v1/tenants/{tenant_id}/webauthn/register/finish
+POST /api/v1/iam/{tenant_id}/webauthn/registration/finish
 Authorization: Bearer <token>
+X-Session-Id: <session>
 Content-Type: application/json
 
 {
@@ -436,35 +430,36 @@ Content-Type: application/json
   "response": {
     "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIi...",
     "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhh..."
-  },
-  "authenticatorAttachment": "platform"
+  }
 }
 ```
-
-**Credential Parsing**: The server parses the attestation using the `go-webauthn/webauthn` library:
-- Base64url decoding of credential ID fields
-- Parsing `clientDataJSON` for challenge, origin, and type verification
-- CBOR decoding of `attestationObject` for authenticator data
-- Public key extraction and COSE key format handling
-- Attestation verification (configurable: none, indirect, direct)
 
 Response:
 ```json
 {
-  "id": "credential-id-base64url",
-  "user_id": "user_abc123",
-  "name": "Authenticator 2025-01-07",
-  "created_at": "2025-01-07T10:30:00Z",
-  "transports": ["internal"]
+  "token": "<post-registration token>",
+  "user_id": "dXNlcl9hYmMxMjM"
 }
+```
+
+Registration write-through enrolls the credential as a qrdb
+`fido2` user auth factor, so login can resolve it and the factor
+appears under `GET /v1/users/factors/list`.
+
+### Registration Status
+
+```
+GET /api/v1/iam/{tenant_id}/webauthn/registration/status?user_id=<user-id>
+Authorization: Bearer <token>
 ```
 
 ### Begin Authentication
 
-Initiates WebAuthn authentication for a user by email.
+Initiates WebAuthn authentication for a user by email. Public — the
+ceremony IS the authentication mechanism.
 
 ```
-POST /api/v1/tenants/{tenant_id}/webauthn/login/begin
+POST /api/v1/iam/{tenant_id}/webauthn/login/begin
 Content-Type: application/json
 
 {
@@ -472,31 +467,17 @@ Content-Type: application/json
 }
 ```
 
-Response:
-```json
-{
-  "publicKey": {
-    "challenge": "YW5vdGhlciByYW5kb20gY2hhbGxlbmdl",
-    "timeout": 60000,
-    "rpId": "example.com",
-    "allowCredentials": [
-      {
-        "type": "public-key",
-        "id": "credential-id-1",
-        "transports": ["internal"]
-      }
-    ],
-    "userVerification": "preferred"
-  }
-}
-```
+Response: `X-Session-Id` header plus the JSON-marshaled
+`PublicKeyCredentialRequestOptions` (`{"publicKey": {...}}`).
 
 ### Complete Authentication
 
-Completes authentication by submitting the authenticator's assertion response.
+Completes authentication. The request body is the raw
+`navigator.credentials.get()` PublicKeyCredential JSON.
 
 ```
-POST /api/v1/tenants/{tenant_id}/webauthn/login/finish
+POST /api/v1/iam/{tenant_id}/webauthn/login/finish
+X-Session-Id: <session>
 Content-Type: application/json
 
 {
@@ -511,73 +492,27 @@ Content-Type: application/json
 }
 ```
 
-**Credential Parsing**: The server validates the assertion:
-- Challenge verification against stored session data
-- Signature verification using the stored public key
-- Sign count validation for clone detection
-- User verification flag checking (based on configuration)
-
 Response:
 ```json
 {
-  "access_token": "eyJhbGciOiJSUzI1NiIs...",
-  "token_type": "Bearer",
-  "expires_in": 3600,
-  "refresh_token": "dGhpcyBpcyBhIHJlZnJlc2g...",
-  "user": {
-    "id": "user_abc123",
-    "email": "alice@example.com",
-    "name": "Alice Smith"
-  }
+  "token": "<post-login token>",
+  "user_id": "dXNlcl9hYmMxMjM"
 }
 ```
 
-### List Credentials
+The mount's login token is not an OIDC bearer. Clients that need the
+OIDC access/refresh pair (SPA, TypeScript SDK, CLI) authenticate
+through the unified login ceremony instead:
+`POST /api/v1/auth/login/begin` (`type: fido2`) then
+`POST /api/v1/auth/login/finish`, which verifies the assertion and
+mints the bearer plus rotating refresh token.
 
-Returns all WebAuthn credentials for a user.
+### Credential Management
 
-```
-GET /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials
-Authorization: Bearer <access_token>
-```
-
-Response:
-```json
-{
-  "credentials": [
-    {
-      "id": "credential-id-1",
-      "name": "MacBook Touch ID",
-      "created_at": "2025-01-01T10:00:00Z",
-      "last_used_at": "2025-01-07T08:30:00Z",
-      "transports": ["internal"]
-    }
-  ]
-}
-```
-
-### Rename Credential
-
-Updates the user-friendly name of a credential.
-
-```
-PUT /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id}
-Authorization: Bearer <access_token>
-Content-Type: application/json
-
-{
-  "name": "Work Laptop Touch ID"
-}
-```
-
-### Delete Credential
-
-Removes a credential from a user's account.
-
-```
-DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id}
-Authorization: Bearer <access_token>
-```
+Enrolled passkeys are qrdb user auth factors. List, remove, rotate,
+and relabel them via the auth-factor surface
+(`/v1/users/factors/*` REST wire, `Security().Auth().Factors()` SDK,
+`quicbaas auth factor` CLI).
 
 ---
 

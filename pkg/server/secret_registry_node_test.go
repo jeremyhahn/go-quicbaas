@@ -107,7 +107,7 @@ func TestBuildSecretRegistry_WithNode_SealDisabled_SkipsCredentialResolver(t *te
 	reg := srv.buildSecretRegistry()
 	require.NotNil(t, reg)
 
-	// kms:// must still be registered (resolvers 2–4 are unconditional).
+	// kms:// must still be registered (resolvers 2–3 are unconditional).
 	assert.True(t, reg.IsSecretURI("kms://my-secret"),
 		"kms:// must always be recognized regardless of seal state")
 
@@ -133,7 +133,7 @@ func TestBuildSecretRegistry_WithNode_SealEnabled_RegistersTenantScopedResolver(
 	assert.True(t, reg.IsSecretURI("credential://any-cred"),
 		"credential:// must be recognized when seal is enabled and BarrierRegistry is non-nil")
 
-	// kms:// and autogen must also be present (unconditional registrations).
+	// kms:// must also be present (unconditional registration).
 	assert.True(t, reg.IsSecretURI("kms://any-secret"),
 		"kms:// must always be recognized")
 }

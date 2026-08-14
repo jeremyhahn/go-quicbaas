@@ -28,7 +28,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
-// InviteMetadataResponse is returned by GET /api/v1/iam/invites/{token}.
+// InviteMetadataResponse is returned by GET /api/v1/iam/{tenant_id}/invites/{token}.
 type InviteMetadataResponse struct {
 	UserID      string    `json:"user_id"`
 	Email       string    `json:"email,omitempty"`
@@ -43,10 +43,21 @@ type ActivationResponse struct {
 	Message string `json:"message"`
 }
 
-// GetInvite handles GET /api/v1/iam/invites/{token}.
+// GetInvite handles GET /api/v1/iam/{tenant_id}/invites/{token}.
 // Public endpoint — returns invite metadata without revealing the token itself.
 func (h *IAMHandler) GetInvite(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	// The tenant is a path segment because invitations live in that tenant's
+	// own store: a token issued for one tenant is simply absent from another,
+	// which makes isolation structural rather than a check that could be
+	// forgotten. See the route mount in iam.go.
+	tenantID := chi.URLParam(r, "tenant_id")
+	if tenantID == "" {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "tenant_id is required"))
+		return
+	}
 
 	token := chi.URLParam(r, "token")
 	if token == "" {
@@ -61,7 +72,7 @@ func (h *IAMHandler) GetInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	record, err := inviteStore.GetByToken(ctx, token)
+	record, err := inviteStore.Lookup(ctx, tenantID, token)
 	if err != nil {
 		if errors.Is(err, iam.ErrInviteNotFound) {
 			RespondIAMError(w, r, http.StatusNotFound,
@@ -104,11 +115,22 @@ func (h *IAMHandler) GetInvite(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, r, http.StatusOK, resp)
 }
 
-// ActivateFIDO2Begin handles POST /api/v1/iam/invites/{token}/activate/fido2/begin.
+// ActivateFIDO2Begin handles POST /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/begin.
 // Returns the WebAuthn CredentialCreationOptions so the browser can call
 // navigator.credentials.create().
 func (h *IAMHandler) ActivateFIDO2Begin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	// The tenant is a path segment because invitations live in that tenant's
+	// own store: a token issued for one tenant is simply absent from another,
+	// which makes isolation structural rather than a check that could be
+	// forgotten. See the route mount in iam.go.
+	tenantID := chi.URLParam(r, "tenant_id")
+	if tenantID == "" {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "tenant_id is required"))
+		return
+	}
 
 	token := chi.URLParam(r, "token")
 	if token == "" {
@@ -123,7 +145,7 @@ func (h *IAMHandler) ActivateFIDO2Begin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	record, err := inviteStore.GetByToken(ctx, token)
+	record, err := inviteStore.Lookup(ctx, tenantID, token)
 	if err != nil {
 		if errors.Is(err, iam.ErrInviteNotFound) {
 			RespondIAMError(w, r, http.StatusNotFound,
@@ -181,10 +203,21 @@ func (h *IAMHandler) ActivateFIDO2Begin(w http.ResponseWriter, r *http.Request) 
 	RespondJSON(w, r, http.StatusOK, options)
 }
 
-// ActivateFIDO2Finish handles POST /api/v1/iam/invites/{token}/activate/fido2/finish.
+// ActivateFIDO2Finish handles POST /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/finish.
 // Verifies the authenticator response, transitions the user to active, and consumes the invite.
 func (h *IAMHandler) ActivateFIDO2Finish(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	// The tenant is a path segment because invitations live in that tenant's
+	// own store: a token issued for one tenant is simply absent from another,
+	// which makes isolation structural rather than a check that could be
+	// forgotten. See the route mount in iam.go.
+	tenantID := chi.URLParam(r, "tenant_id")
+	if tenantID == "" {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "tenant_id is required"))
+		return
+	}
 
 	token := chi.URLParam(r, "token")
 	if token == "" {
@@ -199,7 +232,7 @@ func (h *IAMHandler) ActivateFIDO2Finish(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	record, err := inviteStore.GetByToken(ctx, token)
+	record, err := inviteStore.Lookup(ctx, tenantID, token)
 	if err != nil {
 		if errors.Is(err, iam.ErrInviteNotFound) {
 			RespondIAMError(w, r, http.StatusNotFound,
@@ -289,7 +322,7 @@ func (h *IAMHandler) ActivateFIDO2Finish(w http.ResponseWriter, r *http.Request)
 	// registered and the user is active, so the operator's authenticator works;
 	// we surface a 500 so the failure is visible and the unconsumed invite is
 	// not silently left live.
-	if err := inviteStore.MarkUsed(ctx, token); err != nil {
+	if _, err := inviteStore.Redeem(ctx, tenantID, token); err != nil {
 		h.logAuditEvent(ctx, record.TenantID, iam.AuditEventUserManagement,
 			iam.AuditCategorySecurity, "invite.mark_used", iam.AuditOutcomeFailure,
 			&iam.AuditResource{Type: "invite", ID: record.UserID},
@@ -304,10 +337,21 @@ func (h *IAMHandler) ActivateFIDO2Finish(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// ActivatePIV handles POST /api/v1/iam/invites/{token}/activate/piv.
+// ActivatePIV handles POST /api/v1/iam/{tenant_id}/invites/{token}/activate/piv.
 // Accepts a PEM-encoded X.509 certificate, verifies the chain, and activates the user.
 func (h *IAMHandler) ActivatePIV(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	// The tenant is a path segment because invitations live in that tenant's
+	// own store: a token issued for one tenant is simply absent from another,
+	// which makes isolation structural rather than a check that could be
+	// forgotten. See the route mount in iam.go.
+	tenantID := chi.URLParam(r, "tenant_id")
+	if tenantID == "" {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "tenant_id is required"))
+		return
+	}
 
 	token := chi.URLParam(r, "token")
 	if token == "" {
@@ -355,7 +399,7 @@ func (h *IAMHandler) ActivatePIV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := activator.Activate(ctx, token, []byte(req.CertPEM)); err != nil {
+	if err := activator.Activate(ctx, tenantID, token, []byte(req.CertPEM)); err != nil {
 		switch {
 		case errors.Is(err, iam.ErrInviteNotFound):
 			RespondIAMError(w, r, http.StatusNotFound,
@@ -385,7 +429,7 @@ func (h *IAMHandler) ActivatePIV(w http.ResponseWriter, r *http.Request) {
 	userID := ""
 	if inviteStore, storeErr := h.getInviteStore(ctx); storeErr != nil {
 		h.server.logger.WithError(storeErr).Warn("piv activation: invite store unavailable for response user id lookup")
-	} else if record, lookupErr := inviteStore.GetByToken(ctx, token); lookupErr != nil {
+	} else if record, lookupErr := inviteStore.Lookup(ctx, tenantID, token); lookupErr != nil {
 		h.server.logger.WithError(lookupErr).Warn("piv activation: failed to resolve invite for response user id")
 	} else if record != nil {
 		userID = record.UserID

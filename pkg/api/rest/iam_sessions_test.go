@@ -2192,138 +2192,6 @@ func TestIAM91_GetBackupCodeStatus_ServiceNotAvailable(t *testing.T) {
 }
 
 // =============================================================================
-// WebAuthn: Missing params + service not available
-// =============================================================================
-
-func TestIAM91_BeginRegistration_MissingTenantID(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/webauthn/register/begin", strings.NewReader(`{}`))
-	req = withChiParams(req, map[string]string{"tenant_id": ""})
-	w := httptest.NewRecorder()
-	handler.BeginRegistration(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_BeginRegistration_InvalidJSON(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/webauthn/register/begin", strings.NewReader("{bad"))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
-	w := httptest.NewRecorder()
-	handler.BeginRegistration(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_BeginRegistration_MissingUserID(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/webauthn/register/begin", strings.NewReader(`{}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
-	w := httptest.NewRecorder()
-	handler.BeginRegistration(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "user_id is required")
-}
-
-func TestIAM91_BeginRegistration_ServiceNotAvailable(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/webauthn/register/begin", strings.NewReader(`{"user_id":"u1"}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
-	w := httptest.NewRecorder()
-	handler.BeginRegistration(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "WebAuthn manager not available")
-}
-
-func TestIAM91_FinishRegistration_MissingUserID(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	body := `{"credential":{"id":"x"}}`
-	req := httptest.NewRequest(http.MethodPost, "/webauthn/register/finish", strings.NewReader(body))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
-	w := httptest.NewRecorder()
-	handler.FinishRegistration(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_FinishRegistration_MissingCredential(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/webauthn/register/finish", strings.NewReader(`{"user_id":"u1"}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
-	w := httptest.NewRecorder()
-	handler.FinishRegistration(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "credential is required")
-}
-
-func TestIAM91_FinishRegistration_ServiceNotAvailable(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	body := `{"user_id":"u1","credential":{"id":"x"}}`
-	req := httptest.NewRequest(http.MethodPost, "/webauthn/register/finish", strings.NewReader(body))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
-	w := httptest.NewRecorder()
-	handler.FinishRegistration(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestIAM91_BeginLogin_MissingEmail(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/webauthn/login/begin", strings.NewReader(`{}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
-	w := httptest.NewRecorder()
-	handler.BeginLogin(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "email is required")
-}
-
-func TestIAM91_BeginLogin_ServiceNotAvailable(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/webauthn/login/begin", strings.NewReader(`{"email":"a@b.com"}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
-	w := httptest.NewRecorder()
-	handler.BeginLogin(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestIAM91_FinishLogin_MissingCredential(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/webauthn/login/finish", strings.NewReader(`{}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
-	w := httptest.NewRecorder()
-	handler.FinishLogin(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "credential is required")
-}
-
-func TestIAM91_FinishLogin_ServiceNotAvailable(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/webauthn/login/finish", strings.NewReader(`{"credential":{"id":"x"}}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
-	w := httptest.NewRecorder()
-	handler.FinishLogin(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-// =============================================================================
 // Audit: Missing params + service not available
 // =============================================================================
 
@@ -2449,7 +2317,7 @@ func TestIAM91_RegisterAuditRoutes(t *testing.T) {
 // =============================================================================
 
 func TestIAM91_RegisterDynamicClient_InvalidJSON(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
+	handler, cleanup := setupOpenDCRHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader("{bad"))
@@ -2459,7 +2327,7 @@ func TestIAM91_RegisterDynamicClient_InvalidJSON(t *testing.T) {
 }
 
 func TestIAM91_RegisterDynamicClient_MissingRedirectURIs(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
+	handler, cleanup := setupOpenDCRHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(`{}`))
@@ -2470,7 +2338,7 @@ func TestIAM91_RegisterDynamicClient_MissingRedirectURIs(t *testing.T) {
 }
 
 func TestIAM91_RegisterDynamicClient_ServiceNotAvailable(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
+	handler, cleanup := setupOpenDCRHandler(t)
 	defer cleanup()
 
 	body := `{"redirect_uris":["https://example.com/cb"]}`
@@ -2549,54 +2417,11 @@ func TestIAM91_IsValidDCRResponseType(t *testing.T) {
 	assert.False(t, isValidDCRResponseType("bad"))
 }
 
-func TestIAM91_ExtractTenantFromRequest(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	assert.Equal(t, "", extractTenantFromRequest(req))
-
-	req.Header.Set("X-Tenant-ID", "my-tenant")
-	assert.Equal(t, "my-tenant", extractTenantFromRequest(req))
-}
-
 func TestIAM91_RespondDCRError(t *testing.T) {
 	w := httptest.NewRecorder()
 	respondDCRError(w, http.StatusBadRequest, "invalid_client_metadata", "test error")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "invalid_client_metadata")
-}
-
-func TestIAM91_ValidateRegistrationAccessToken(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	t.Run("missing header", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		valid, msg := handler.validateRegistrationAccessToken(req, "c1")
-		assert.False(t, valid)
-		assert.Contains(t, msg, "missing Authorization")
-	})
-
-	t.Run("invalid format", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.Header.Set("Authorization", "Basic abc")
-		valid, msg := handler.validateRegistrationAccessToken(req, "c1")
-		assert.False(t, valid)
-		assert.Contains(t, msg, "invalid Authorization")
-	})
-
-	t.Run("empty token", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.Header.Set("Authorization", "Bearer  ")
-		valid, msg := handler.validateRegistrationAccessToken(req, "c1")
-		assert.False(t, valid)
-		assert.Contains(t, msg, "empty registration_access_token")
-	})
-
-	t.Run("valid token", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.Header.Set("Authorization", "Bearer valid-token")
-		valid, _ := handler.validateRegistrationAccessToken(req, "c1")
-		assert.True(t, valid)
-	})
 }
 
 func TestIAM91_GetDynamicClient_MissingClientID(t *testing.T) {
@@ -2644,7 +2469,11 @@ func TestIAM91_UpdateDynamicClient_MissingClientID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestIAM91_UpdateDynamicClient_InvalidJSON(t *testing.T) {
+// A malformed body never reaches the parser without a credential: the RFC 7592
+// gate runs first, so an anonymous caller gets 401 rather than a 400 that would
+// confirm the request was processed. The authorized 400 path is covered by
+// TestUpdateDynamicClient_AuthorizedInvalidBody.
+func TestIAM91_UpdateDynamicClient_InvalidJSONUnauthorized(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
@@ -2652,7 +2481,7 @@ func TestIAM91_UpdateDynamicClient_InvalidJSON(t *testing.T) {
 	req = withChiParams(req, map[string]string{"client_id": "c1"})
 	w := httptest.NewRecorder()
 	handler.UpdateDynamicClient(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestIAM91_UpdateDynamicClient_ServiceNotAvailable(t *testing.T) {
@@ -2759,54 +2588,6 @@ func TestIAM91_JWTMiddleware_ServiceNotAvailable(t *testing.T) {
 	// basic mock does not implement GetOIDCProvider
 	handler.JWTMiddleware(next).ServeHTTP(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestIAM91_TenantMiddleware_MissingTenantID(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/tenants//users", nil)
-	req = withChiParams(req, map[string]string{"tenant_id": ""})
-	w := httptest.NewRecorder()
-	handler.TenantMiddleware(next).ServeHTTP(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_TenantMiddleware_TenantNotFound(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/tenants/nonexistent/users", nil)
-	req = withChiParams(req, map[string]string{"tenant_id": "nonexistent"})
-	w := httptest.NewRecorder()
-	handler.TenantMiddleware(next).ServeHTTP(w, req)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestIAM91_TenantMiddleware_Success(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	require.NoError(t, memStorage.CreateTenant(ctx, &iam.Tenant{ID: "t1", Name: "T1"}))
-
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/tenants/t1/users", nil)
-	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
-	w := httptest.NewRecorder()
-	handler.TenantMiddleware(next).ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestIAM91_ABACMiddleware_MissingUser(t *testing.T) {
@@ -4105,22 +3886,6 @@ func TestIAM91_RegisterApp_NilManager(t *testing.T) {
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.RegisterApp(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-// =============================================================================
-// Deep tests: WebAuthn with mock returning error/nil
-// =============================================================================
-
-func TestIAM91_BeginRegistration_NilManager(t *testing.T) {
-	svc := &mockServiceWithWebAuthn{QuicBaaS: testutil.NewMockQuicBaaS()}
-	handler, cleanup := setupHandlerWithService(t, svc)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/webauthn/register/begin", strings.NewReader(`{"user_id":"u1"}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
-	w := httptest.NewRecorder()
-	handler.BeginRegistration(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 

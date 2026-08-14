@@ -385,133 +385,6 @@ func (c *sdkKMSClient) Close() error {
 }
 
 // =============================================================================
-// SDK DEK Client
-// =============================================================================
-
-// sdkDEKClient implements the DEKClient interface using SDK transport.
-type sdkDEKClient struct {
-	sdk quicbaas.Client
-}
-
-// createSDKDEKClient creates an SDK client for DEK operations.
-func createSDKDEKClient() (DEKClient, error) {
-	sdk, err := sdkClientFactory()
-	if err != nil {
-		return nil, err
-	}
-	return &sdkDEKClient{sdk: sdk}, nil
-}
-
-// KMSCreateDEK creates a new data encryption key.
-func (c *sdkDEKClient) KMSCreateDEK(ctx context.Context, req *service.CreateDEKRequest) (*service.CreateDEKResponse, error) {
-	resp, err := c.sdk.Transport().Request(ctx, "quicbaas.DEK", "CreateDEK", req)
-	if err != nil {
-		return nil, err
-	}
-	result, ok := resp.(*service.CreateDEKResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("sdkDEKClient.KMSCreateDEK", "unexpected response type")
-	}
-	return result, nil
-}
-
-// KMSGetDEK retrieves a data encryption key.
-func (c *sdkDEKClient) KMSGetDEK(ctx context.Context, req *service.GetDEKRequest) (*service.GetDEKResponse, error) {
-	resp, err := c.sdk.Transport().Request(ctx, "quicbaas.DEK", "GetDEK", req)
-	if err != nil {
-		return nil, err
-	}
-	result, ok := resp.(*service.GetDEKResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("sdkDEKClient.KMSGetDEK", "unexpected response type")
-	}
-	return result, nil
-}
-
-// KMSListDEKs lists data encryption keys.
-func (c *sdkDEKClient) KMSListDEKs(ctx context.Context, req *service.ListDEKsRequest) (*service.ListDEKsResponse, error) {
-	resp, err := c.sdk.Transport().Request(ctx, "quicbaas.DEK", "ListDEKs", req)
-	if err != nil {
-		return nil, err
-	}
-	result, ok := resp.(*service.ListDEKsResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("sdkDEKClient.KMSListDEKs", "unexpected response type")
-	}
-	return result, nil
-}
-
-// KMSRotateDEK rotates a data encryption key.
-func (c *sdkDEKClient) KMSRotateDEK(ctx context.Context, req *service.RotateDEKRequest) (*service.RotateDEKResponse, error) {
-	resp, err := c.sdk.Transport().Request(ctx, "quicbaas.DEK", "RotateDEK", req)
-	if err != nil {
-		return nil, err
-	}
-	result, ok := resp.(*service.RotateDEKResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("sdkDEKClient.KMSRotateDEK", "unexpected response type")
-	}
-	return result, nil
-}
-
-// KMSDeleteDEK deletes a data encryption key.
-func (c *sdkDEKClient) KMSDeleteDEK(ctx context.Context, req *service.DeleteDEKRequest) (*service.DeleteDEKResponse, error) {
-	resp, err := c.sdk.Transport().Request(ctx, "quicbaas.DEK", "DeleteDEK", req)
-	if err != nil {
-		return nil, err
-	}
-	result, ok := resp.(*service.DeleteDEKResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("sdkDEKClient.KMSDeleteDEK", "unexpected response type")
-	}
-	return result, nil
-}
-
-// KMSGetDEKStatus retrieves the status of a data encryption key.
-func (c *sdkDEKClient) KMSGetDEKStatus(ctx context.Context, req *service.GetDEKStatusRequest) (*service.GetDEKStatusResponse, error) {
-	resp, err := c.sdk.Transport().Request(ctx, "quicbaas.DEK", "GetDEKStatus", req)
-	if err != nil {
-		return nil, err
-	}
-	result, ok := resp.(*service.GetDEKStatusResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("sdkDEKClient.KMSGetDEKStatus", "unexpected response type")
-	}
-	return result, nil
-}
-
-// KMSSetDefaultDEK sets the default data encryption key.
-func (c *sdkDEKClient) KMSSetDefaultDEK(ctx context.Context, req *service.SetDefaultDEKRequest) (*service.SetDefaultDEKResponse, error) {
-	resp, err := c.sdk.Transport().Request(ctx, "quicbaas.DEK", "SetDefaultDEK", req)
-	if err != nil {
-		return nil, err
-	}
-	result, ok := resp.(*service.SetDefaultDEKResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("sdkDEKClient.KMSSetDefaultDEK", "unexpected response type")
-	}
-	return result, nil
-}
-
-// KMSSetDEKSafety sets safety limits on a data encryption key.
-func (c *sdkDEKClient) KMSSetDEKSafety(ctx context.Context, req *service.SetDEKSafetyRequest) (*service.SetDEKSafetyResponse, error) {
-	resp, err := c.sdk.Transport().Request(ctx, "quicbaas.DEK", "SetDEKSafety", req)
-	if err != nil {
-		return nil, err
-	}
-	result, ok := resp.(*service.SetDEKSafetyResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("sdkDEKClient.KMSSetDEKSafety", "unexpected response type")
-	}
-	return result, nil
-}
-
-// Close closes the underlying SDK client.
-func (c *sdkDEKClient) Close() error {
-	return c.sdk.Close()
-}
-
-// =============================================================================
 // SDK Seal Client
 // =============================================================================
 
@@ -905,6 +778,11 @@ func (c *sdkOrchestratorClient) CloseSession(ctx context.Context, req *orchestra
 	return c.sdk.Orchestrator().CloseSession(ctx, req)
 }
 
+// RotateSessionAccount moves a session onto a different pooled provider account.
+func (c *sdkOrchestratorClient) RotateSessionAccount(ctx context.Context, req *orchestratorSDK.RotateSessionAccountRequest) (*orchestratorSDK.RotateSessionAccountResponse, error) {
+	return c.sdk.Orchestrator().RotateSessionAccount(ctx, req)
+}
+
 // ListSessions returns all active sessions.
 func (c *sdkOrchestratorClient) ListSessions(ctx context.Context, req *orchestratorSDK.ListSessionsRequest) (*orchestratorSDK.ListSessionsResponse, error) {
 	return c.sdk.Orchestrator().ListSessions(ctx, req)
@@ -1073,7 +951,6 @@ func (c *sdkOperationsClient) GetUpgradeStatus(ctx context.Context, req *operati
 
 var _ CryptoClient = (*sdkCryptoClient)(nil)
 var _ KMSClient = (*sdkKMSClient)(nil)
-var _ DEKClient = (*sdkDEKClient)(nil)
 var _ SealClient = (*sdkSealClient)(nil)
 var _ BackendClient = (*sdkBackendClient)(nil)
 var _ SafetyClient = (*sdkSafetyClient)(nil)

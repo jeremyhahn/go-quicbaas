@@ -129,6 +129,17 @@ flow, the init ceremony, and health. Everything else is rejected
 operator drives the barrier unsealed through any transport, at which
 point the daemon completes the full boot automatically.
 
+The sealed-phase network listeners (REST, gRPC TCP, QUIC, MCP) bind a
+dedicated host — `server.sealed_bind_host`
+(`QUICBAAS_SERVER_SEALED_BIND_HOST`), default `127.0.0.1` — never
+`server.host` or the per-protocol `bind_address` overrides, so a
+deployment that binds the full API on `0.0.0.0` does not expose the
+pre-unseal surface network-wide. Deployments whose Shamir officers
+drive the ceremony/unseal flow remotely opt in by setting the sealed
+bind host to a routable address (for example `0.0.0.0`). The
+post-unseal full-boot listeners are unaffected and keep resolving
+`server.host` / `bind_address` as before.
+
 The allowlist mirrors go-qrdb's canonical sealed-window verb table
 verbatim and is derived ONCE for all transports in
 `pkg/api/sealedwindow` (single table → REST paths, gRPC methods,
@@ -151,6 +162,60 @@ composes qrdb's own `qrdb.v1.QRDBService` list verbatim with the
 quicbaas mirror verbs qualified onto the services that really declare
 them (`quicbaas.barrier.v1.Barrier`, `quicbaas.ceremony.v1.Ceremony`,
 and `quicbaas.v1.QuicBaaS/Health`).
+
+### Strict ceremony model: two narrowing axes
+
+quicbaas deliberately diverges from qrdb's permissive "Vault model" for the
+ceremony surface. `pkg/api/sealedwindow` narrows it on two independent axes,
+both properties of the single canonical table, so every transport inherits
+them from one derivation:
+
+1. **`StrictCeremonyExclusions`** removes the ceremony verbs that MINT or
+   DISTRIBUTE trust — `ceremony-initialize`, `ceremony-sign-csr` and
+   `ceremony-enroll-external-officer` — from every transport's sealed window
+   entirely. They are neither served while sealed nor authentication-exempt;
+   they run in-process during `quicbaasd init`, before any listener exists.
+   The exclusion is applied to qrdb's own `qrdb.v1.QRDBService` allowlist too,
+   so the verbs cannot be reached on the co-registered qrdb service either.
+
+2. **Exemption scope.** The remaining self-authorizing ceremony routes are
+   still SERVED while sealed, but their AUTHENTICATION EXEMPTION is scoped:
+
+   - `ScopeAlways` — barrier status/initialize/unseal, the Shamir and recovery
+     unseal flow, root-token, officer register/list/claim, submit-unseal-share
+     and health. Exempt in EVERY ceremony state. A daemon restarted after a
+     completed ceremony is operational AND sealed, and these verbs are the
+     only way back to a usable data plane, so they must never depend on
+     ceremony state.
+   - `ScopePreOperational` — the ceremony claim handshakes
+     (`claim-cert/begin|complete`, `officer-share/begin|complete`,
+     `claim-share/begin|complete`) and the read-only `ceremony/status` probe.
+     These authenticate the caller against material submitted at enrollment (a
+     nonce signed by the key in the officer's CSR, or the mTLS thumbprint
+     recorded for that officer) rather than against an account that does not
+     exist yet — which is why they may skip ACCOUNT authentication at all, but
+     only while the ceremony they belong to is unfinished. Once the deployment
+     is operational the exemption expires and the routes require a token like
+     any other; they remain on the deny-gate allowlist, so the response is
+     `401`/`Unauthenticated` rather than the sealed envelope.
+
+The ceremony state is supplied by `Server.OperationalProbe()`, installed on
+every transport gate next to the sealed probe. It **fails closed**: an absent
+probe, a status read that errors, and an unrecognized state all report
+OPERATIONAL, so an unavailable probe narrows the unauthenticated surface to
+`ScopeAlways` and can never widen it.
+
+The probe combines two signals, because neither is sufficient:
+
+- the live in-process ceremony state — `enrolling` means Initialize ran in
+  THIS process, so the officer share enclaves that make the claim handshakes
+  meaningful are in memory and the ceremony is genuinely unfinished;
+- the barrier's persisted initialization timestamp — qrdb's ceremony state is
+  in-memory and resets to `awaiting_init` on every process start, so on its
+  own it would re-open the pre-operational window on EVERY restart of an
+  already-initialized daemon. `awaiting_init` therefore counts as
+  pre-operational only while the barrier has never been initialized (a genuine
+  first boot, with no trust root to steal).
 
 The same probe-driven gates stay installed after boot: a post-boot
 `barrier seal` immediately re-narrows every transport to the sealed
@@ -355,7 +420,7 @@ init→seal→unseal round-trips against emulators/HSM (no fakes, no skips):
 
 | Strategy | Emulator/HSM | Test | Make target |
 |---|---|---|---|
-| `awskms` | LocalStack KMS | `TestAWSKMSSealRoundTrip` | `make integration-test-seal` |
+| `awskms` | Floci KMS | `TestAWSKMSSealRoundTrip` | `make integration-test-seal` |
 | `vault` | Vault dev (Transit) | `TestVaultSealRoundTrip` | `make integration-test-seal` |
 | `tpm2` | swtpm (TCP) | `TestTPM2SealRoundTrip` | `make integration-test-seal-hardware` |
 | `pkcs11` | SoftHSM2 | `TestPKCS11SealRoundTrip` | `make integration-test-seal-hardware` |

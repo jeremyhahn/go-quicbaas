@@ -38,6 +38,10 @@ import (
 // MockCertificateService is a mock implementation of service.CertificateService.
 type MockCertificateService struct {
 	mock.Mock
+
+	CrossSignFunc           func(ctx context.Context, req *service.CrossSignRequest) (*service.CrossSignResponse, error)
+	ChainFunc               func(ctx context.Context, req *service.CertificateChainRequest) (*service.CertificateChainResponse, error)
+	IssueDeviceIdentityFunc func(ctx context.Context, req *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error)
 }
 
 func (m *MockCertificateService) IssueCertificate(ctx context.Context, req *service.IssueCertificateRequest) (*service.IssueCertificateResponse, error) {
@@ -1082,4 +1086,30 @@ func TestCertificateRouteRegistration(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, w.Code, "endpoint %s %s returned unexpected status", tt.method, tt.path)
 		})
 	}
+}
+
+// CrossSign satisfies service.CertificateService. The certificate-extension
+// verbs are exercised by the dedicated extension tests; this double records
+// the call and returns the configured response.
+func (m *MockCertificateService) CrossSign(ctx context.Context, req *service.CrossSignRequest) (*service.CrossSignResponse, error) {
+	if m.CrossSignFunc != nil {
+		return m.CrossSignFunc(ctx, req)
+	}
+	return &service.CrossSignResponse{}, nil
+}
+
+// Chain satisfies service.CertificateService.
+func (m *MockCertificateService) Chain(ctx context.Context, req *service.CertificateChainRequest) (*service.CertificateChainResponse, error) {
+	if m.ChainFunc != nil {
+		return m.ChainFunc(ctx, req)
+	}
+	return &service.CertificateChainResponse{}, nil
+}
+
+// IssueDeviceIdentity satisfies service.CertificateService.
+func (m *MockCertificateService) IssueDeviceIdentity(ctx context.Context, req *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error) {
+	if m.IssueDeviceIdentityFunc != nil {
+		return m.IssueDeviceIdentityFunc(ctx, req)
+	}
+	return &service.IssueDeviceIdentityResponse{}, nil
 }

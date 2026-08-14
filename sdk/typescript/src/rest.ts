@@ -97,6 +97,99 @@ import type {
   RevokeAgentRoleResponse,
 } from './projects.js';
 import type {
+  CAClient,
+  IssueCertificateRequest,
+  IssueCertificateResponse,
+  SignCSRRequest,
+  SignCSRResponse,
+  RevokeCertificateResponse,
+  VerifyCertificateResponse,
+  GetCACertificateResponse,
+  CAInfoResponse,
+  CABundleResponse,
+  CertificateSummary,
+  ListCertificatesRequest,
+  ListCertificatesResponse,
+  GenerateCRLResponse,
+  IsRevokedResponse,
+} from './ca.js';
+import type {
+  TrustClient,
+  CrossSignedRootPoolResponse,
+  AutoImportAIARequest,
+  AutoImportAIAResponse,
+  PublishDANERequest,
+  PublishDANEResponse,
+} from './trust.js';
+import type {
+  CryptoClient,
+  CryptoEncryptRequest,
+  CryptoEncryptResponse,
+  CryptoDecryptRequest,
+  CryptoDecryptResponse,
+  CryptoRewrapRequest,
+  CryptoRewrapResponse,
+  CryptoSignRequest,
+  CryptoSignResponse,
+  CryptoVerifyRequest,
+  CryptoVerifyResponse,
+  CryptoHashRequest,
+  CryptoHashResponse,
+  CryptoRandomResponse,
+  CryptoDataKeyRequest,
+  CryptoDataKeyResponse,
+} from './crypto.js';
+import type {
+  DEKClient,
+  CreateDEKRequest,
+  CreateDEKResponse,
+  GetDEKResponse,
+  ListDEKsRequest,
+  ListDEKsResponse,
+  RotateDEKRequest,
+  RotateDEKResponse,
+  DeleteDEKRequest,
+  DeleteDEKResponse,
+  GetDEKStatusResponse,
+  SetDefaultDEKResponse,
+  SetDEKSafetyRequest,
+  SetDEKSafetyResponse,
+  ClearDEKSafetyResponse,
+  StartReencryptionRequest,
+  StartReencryptionResponse,
+  GetReencryptionProgressResponse,
+} from './dek.js';
+import type {
+  DynamicSecretsClient,
+  DynamicSecretRole,
+  CreateRoleRequest as DynamicSecretCreateRoleRequest,
+  ListRolesResponse as ListDynamicSecretRolesResponse,
+  DeleteRoleResponse as DeleteDynamicSecretRoleResponse,
+  GenerateCredentialRequest,
+  GenerateCredentialResponse,
+  RenewLeaseRequest,
+  RenewLeaseResponse,
+  RevokeLeaseResponse as RevokeDynamicSecretLeaseResponse,
+  ListLeasesResponse,
+} from './dynamicsecrets.js';
+import type {
+  AccountsClient,
+  CreateAccountRequest,
+  CreateAccountResponse,
+  GetAccountResponse,
+  ListAccountsRequest,
+  ListAccountsResponse,
+  UpdateAccountRequest,
+  UpdateAccountResponse,
+  DeleteAccountResponse,
+  RotateAccountCredentialRequest,
+  RotateAccountCredentialResponse,
+  RevokeAccountRequest,
+  RevokeAccountResponse,
+  SetDefaultAccountResponse,
+  GetAccountUsageResponse,
+} from './accounts.js';
+import type {
   AgentBackendInfo,
   AuthTokenResponse,
   CreateKeyRequest,
@@ -114,6 +207,7 @@ import type {
   ClientConfig,
   CredentialAssertionJSON,
   PublicKeyCredentialJSON,
+  WebAuthnLoginChallenge,
   CloseSessionRequest,
   CloseSessionResponse,
   ClaimTaskRequest,
@@ -167,6 +261,8 @@ import type {
   RotateKeyResponse,
   RotateRootKeyResponse,
   RotateSecretResponse,
+  RotateSessionAccountRequest,
+  RotateSessionAccountResponse,
   ListSecretVersionsResponse,
   SetDefaultKeyResponse,
   SealInitRequest,
@@ -268,6 +364,21 @@ async function resolveToken(
   if (!token) return '';
   if (typeof token === 'function') return token();
   return token;
+}
+
+// utf8Bytes encodes a string to its UTF-8 byte sequence.
+function utf8Bytes(s: string): Uint8Array {
+  return new TextEncoder().encode(s);
+}
+
+// bytesToBase64 encodes bytes as standard base64 — the wire form Go []byte
+// fields decode from JSON strings.
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
 }
 
 // parseResponseBody reads the body of a 2xx fetch Response and returns the
@@ -550,6 +661,21 @@ class RestOrchestratorClient implements OrchestratorClient {
     return this.fetchJSON<CloseSessionResponse>(
       `/sessions/${encodeURIComponent(req.session_id)}`,
       { method: 'DELETE' },
+    );
+  }
+
+  // rotateSessionAccount maps to
+  // POST /api/v1/orchestrator/sessions/:sessionID/rotate-account. The path
+  // segment is authoritative on the server, so session_id is dropped from the
+  // body rather than sent twice.
+  async rotateSessionAccount(req: RotateSessionAccountRequest): Promise<RotateSessionAccountResponse> {
+    if (!req.session_id) {
+      throw new Error('rotateSessionAccount: session_id is required');
+    }
+    const { session_id, ...body } = req;
+    return this.fetchJSON<RotateSessionAccountResponse>(
+      `/sessions/${encodeURIComponent(session_id)}/rotate-account`,
+      { method: 'POST', body: JSON.stringify(body) },
     );
   }
 
@@ -1297,17 +1423,18 @@ class RestAuthClient implements AuthClient {
     }
   }
 
-  // webAuthnBeginLogin fetches the WebAuthn challenge from the server.
-  // Maps to POST /api/v1/tenants/{tenantID}/webauthn/login/begin.
-  async webAuthnBeginLogin(tenantID: string, email: string): Promise<CredentialAssertionJSON> {
-    const resp = await fetch(
-      `${this.baseUrl}/api/v1/tenants/${encodeURIComponent(tenantID)}/webauthn/login/begin`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      },
-    );
+  // webAuthnBeginLogin opens a unified-ceremony FIDO2 login and returns the
+  // in-flight challenge (ceremony session + relying-party session + the
+  // go-webauthn options envelope).
+  // Maps to POST /api/v1/auth/login/begin (type=fido2). The server answers
+  // every identity-resolution failure with a uniform 401 so callers cannot
+  // enumerate tenants or users.
+  async webAuthnBeginLogin(tenantID: string, email: string): Promise<WebAuthnLoginChallenge> {
+    const resp = await fetch(`${this.baseUrl}/api/v1/auth/login/begin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'fido2', hint: email, tenant_id: tenantID }),
+    });
     if (!resp.ok) {
       let message = resp.statusText;
       try {
@@ -1318,24 +1445,49 @@ class RestAuthClient implements AuthClient {
       }
       throw new APIError(resp.status, message);
     }
-    return resp.json() as Promise<CredentialAssertionJSON>;
+    const begin = (await resp.json()) as {
+      session_id: string;
+      challenge_metadata?: Record<string, string>;
+    };
+    const optionsJSON = begin.challenge_metadata?.['options'];
+    if (!optionsJSON) {
+      throw new APIError(500, 'login/begin returned no WebAuthn challenge options');
+    }
+    return {
+      session_id: begin.session_id,
+      rp_session_id: begin.challenge_metadata?.['session_id'] ?? '',
+      options: JSON.parse(optionsJSON) as CredentialAssertionJSON,
+    };
   }
 
-  // webAuthnFinishLogin submits the WebAuthn assertion and returns tokens.
-  // Maps to POST /api/v1/tenants/{tenantID}/webauthn/login/finish.
+  // webAuthnFinishLogin submits the WebAuthn assertion for an in-flight
+  // challenge and returns tokens (ceremony bearer + rotating refresh
+  // credential, renewable via /api/v1/auth/refresh).
+  // Maps to POST /api/v1/auth/login/finish (type=fido2). The proof wire
+  // mirrors the Go CLI's proveCanonicalFIDO2: the lookup key is the raw
+  // bytes of the base64url credential id, the signature carries the
+  // assertion JSON, and the method metadata echoes the relying-party
+  // session id and credential id.
   async webAuthnFinishLogin(
-    tenantID: string,
-    email: string,
+    challenge: WebAuthnLoginChallenge,
     credential: PublicKeyCredentialJSON,
   ): Promise<AuthTokenResponse> {
-    const resp = await fetch(
-      `${this.baseUrl}/api/v1/tenants/${encodeURIComponent(tenantID)}/webauthn/login/finish`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, credential }),
-      },
-    );
+    const assertionJSON = JSON.stringify(credential);
+    const resp = await fetch(`${this.baseUrl}/api/v1/auth/login/finish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: challenge.session_id,
+        type: 'fido2',
+        // Go []byte fields decode standard-base64 JSON strings.
+        lookup_key: bytesToBase64(utf8Bytes(credential.rawId)),
+        signature: bytesToBase64(utf8Bytes(assertionJSON)),
+        method_metadata: {
+          session_id: challenge.rp_session_id,
+          credential_id: credential.rawId,
+        },
+      }),
+    });
     if (!resp.ok) {
       let message = resp.statusText;
       try {
@@ -1346,7 +1498,25 @@ class RestAuthClient implements AuthClient {
       }
       throw new APIError(resp.status, message);
     }
-    return resp.json() as Promise<AuthTokenResponse>;
+    const finish = (await resp.json()) as {
+      bearer: string;
+      expires_at?: string;
+      refresh_token?: string;
+      refresh_expires_at?: string;
+    };
+    let expiresIn = 0;
+    if (finish.expires_at) {
+      const deadline = Date.parse(finish.expires_at);
+      if (!Number.isNaN(deadline)) {
+        expiresIn = Math.max(0, Math.floor((deadline - Date.now()) / 1000));
+      }
+    }
+    return {
+      access_token: finish.bearer,
+      refresh_token: finish.refresh_token ?? '',
+      token_type: 'Bearer',
+      expires_in: expiresIn,
+    };
   }
 
   // loginPIV performs mTLS PIV smartcard login. credentials:'include' and
@@ -1905,6 +2075,114 @@ class RestProjectsClient implements ProjectsClient {
     return this.fetchJSON<RevokeAgentRoleResponse>(
       `/api/v1/projects/${encodeURIComponent(req.project_id)}/permissions/${encodeURIComponent(req.agent_id)}?${query}`,
       { method: 'DELETE' },
+    );
+  }
+}
+
+// RestAccountsClient implements AccountsClient over the QuicBaaS REST pooled
+// provider account endpoints. All account routes live under
+// /api/v1/agent-accounts. See handlers_account.go for the server-side shapes
+// this mirrors — AccountRESTResponse never carries credential material, so
+// no method here can either.
+class RestAccountsClient implements AccountsClient {
+  private readonly baseUrl: string;
+  private readonly config: ClientConfig;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.config = config;
+  }
+
+  private async fetchJSON<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.config.token) {
+      headers['Authorization'] = `Bearer ${this.config.token}`;
+    }
+    const resp = await fetch(`${this.baseUrl}${path}`, {
+      ...init,
+      headers: { ...headers, ...(init.headers as Record<string, string> ?? {}) },
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => resp.statusText);
+      throw new APIError(resp.status, text);
+    }
+    return parseResponseBody<T>(resp);
+  }
+
+  // createAccount maps to POST /api/v1/agent-accounts
+  async createAccount(req: CreateAccountRequest): Promise<CreateAccountResponse> {
+    return this.fetchJSON<CreateAccountResponse>('/api/v1/agent-accounts', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // getAccount maps to GET /api/v1/agent-accounts/:accountId?tenant_id=...
+  async getAccount(tenantId: string, accountId: string): Promise<GetAccountResponse> {
+    const query = new URLSearchParams({ tenant_id: tenantId }).toString();
+    return this.fetchJSON<GetAccountResponse>(`/api/v1/agent-accounts/${encodeURIComponent(accountId)}?${query}`);
+  }
+
+  // listAccounts maps to GET /api/v1/agent-accounts?tenant_id=...&provider=...&project_id=...
+  async listAccounts(req: ListAccountsRequest): Promise<ListAccountsResponse> {
+    const params: Record<string, string> = { tenant_id: req.tenant_id };
+    if (req.provider) params.provider = req.provider;
+    if (req.project_id) params.project_id = req.project_id;
+    const query = new URLSearchParams(params).toString();
+    return this.fetchJSON<ListAccountsResponse>(`/api/v1/agent-accounts?${query}`);
+  }
+
+  // updateAccount maps to PUT /api/v1/agent-accounts/:accountId?tenant_id=...
+  async updateAccount(req: UpdateAccountRequest): Promise<UpdateAccountResponse> {
+    const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
+    const { tenant_id: _tenantId, account_id: accountId, ...body } = req;
+    return this.fetchJSON<UpdateAccountResponse>(
+      `/api/v1/agent-accounts/${encodeURIComponent(accountId)}?${query}`,
+      { method: 'PUT', body: JSON.stringify(body) },
+    );
+  }
+
+  // deleteAccount maps to DELETE /api/v1/agent-accounts/:accountId?tenant_id=...
+  async deleteAccount(tenantId: string, accountId: string): Promise<DeleteAccountResponse> {
+    const query = new URLSearchParams({ tenant_id: tenantId }).toString();
+    return this.fetchJSON<DeleteAccountResponse>(
+      `/api/v1/agent-accounts/${encodeURIComponent(accountId)}?${query}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // rotateAccountCredential maps to POST /api/v1/agent-accounts/:accountId/rotate?tenant_id=...
+  async rotateAccountCredential(req: RotateAccountCredentialRequest): Promise<RotateAccountCredentialResponse> {
+    const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
+    return this.fetchJSON<RotateAccountCredentialResponse>(
+      `/api/v1/agent-accounts/${encodeURIComponent(req.account_id)}/rotate?${query}`,
+      { method: 'POST', body: JSON.stringify({ credential: req.credential }) },
+    );
+  }
+
+  // revokeAccount maps to POST /api/v1/agent-accounts/:accountId/revoke?tenant_id=...
+  async revokeAccount(req: RevokeAccountRequest): Promise<RevokeAccountResponse> {
+    const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
+    return this.fetchJSON<RevokeAccountResponse>(
+      `/api/v1/agent-accounts/${encodeURIComponent(req.account_id)}/revoke?${query}`,
+      { method: 'POST', body: JSON.stringify({ reason: req.reason }) },
+    );
+  }
+
+  // setDefaultAccount maps to POST /api/v1/agent-accounts/:accountId/default?tenant_id=...
+  async setDefaultAccount(tenantId: string, accountId: string): Promise<SetDefaultAccountResponse> {
+    const query = new URLSearchParams({ tenant_id: tenantId }).toString();
+    return this.fetchJSON<SetDefaultAccountResponse>(
+      `/api/v1/agent-accounts/${encodeURIComponent(accountId)}/default?${query}`,
+      { method: 'POST' },
+    );
+  }
+
+  // getAccountUsage maps to GET /api/v1/agent-accounts/:accountId/usage?tenant_id=...
+  async getAccountUsage(tenantId: string, accountId: string): Promise<GetAccountUsageResponse> {
+    const query = new URLSearchParams({ tenant_id: tenantId }).toString();
+    return this.fetchJSON<GetAccountUsageResponse>(
+      `/api/v1/agent-accounts/${encodeURIComponent(accountId)}/usage?${query}`,
     );
   }
 }
@@ -2559,6 +2837,720 @@ function newFetchHelper(baseUrl: string, config: ClientConfig): FetchHelper {
       await send(path, init);
     },
   };
+}
+
+// unixToISO converts a Go unix-second int64 timestamp to an ISO-8601 string.
+// Shared by RestCAClient, RestTrustClient, and RestCryptoClient, all of
+// which receive int64 unix timestamps on the wire (Go's time.Time.Unix()).
+function unixToISO(t: number | undefined): string {
+  if (t === undefined || t === null || !Number.isFinite(t) || t <= 0) return '';
+  return new Date(t * 1000).toISOString();
+}
+
+// ---------------------------------------------------------------------------
+// RestCAClient — /api/v1/certificate/* and /api/v1/xkms/ca/* surface.
+// ---------------------------------------------------------------------------
+
+// RestCAClient implements CAClient over the QuicBaaS certificate authority
+// REST endpoints. Mirrors sdk/go/transport/rest/certificate_handler.go,
+// including its GenerateCRL/IsRevoked routing quirk: those two verbs live
+// under /api/v1/xkms/ca/* (the underlying xkms CA implementation) rather
+// than /api/v1/certificate/*, because no equivalent route exists on the
+// quicbaas-native Certificate service.
+export class RestCAClient implements CAClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  async issueCertificate(req: IssueCertificateRequest): Promise<IssueCertificateResponse> {
+    const wire = await this.http.fetchJSON<{
+      certificate_pem: string;
+      private_key_pem: string;
+      ca_certificate_pem: string;
+      chain_pem: string;
+      serial_number: string;
+      not_before: number;
+      not_after: number;
+      timestamp: number;
+    }>('/api/v1/certificate/issue', { method: 'POST', body: JSON.stringify(req) });
+    return {
+      certificate_pem: wire.certificate_pem,
+      private_key_pem: wire.private_key_pem,
+      ca_certificate_pem: wire.ca_certificate_pem,
+      chain_pem: wire.chain_pem,
+      serial_number: wire.serial_number,
+      not_before: unixToISO(wire.not_before),
+      not_after: unixToISO(wire.not_after),
+      timestamp: unixToISO(wire.timestamp),
+    };
+  }
+
+  async signCSR(req: SignCSRRequest): Promise<SignCSRResponse> {
+    const wire = await this.http.fetchJSON<{
+      certificate_pem: string;
+      ca_certificate_pem: string;
+      chain_pem: string;
+      serial_number: string;
+      not_before: number;
+      not_after: number;
+      timestamp: number;
+    }>('/api/v1/certificate/sign-csr', { method: 'POST', body: JSON.stringify(req) });
+    return {
+      certificate_pem: wire.certificate_pem,
+      ca_certificate_pem: wire.ca_certificate_pem,
+      chain_pem: wire.chain_pem,
+      serial_number: wire.serial_number,
+      not_before: unixToISO(wire.not_before),
+      not_after: unixToISO(wire.not_after),
+      timestamp: unixToISO(wire.timestamp),
+    };
+  }
+
+  async revokeCertificate(serialNumber: string): Promise<RevokeCertificateResponse> {
+    const wire = await this.http.fetchJSON<{ success: boolean; timestamp: number }>(
+      '/api/v1/certificate/revoke',
+      { method: 'POST', body: JSON.stringify({ serial_number: serialNumber }) },
+    );
+    return { success: wire.success, timestamp: unixToISO(wire.timestamp) };
+  }
+
+  async verifyCertificate(certificatePEM: string): Promise<VerifyCertificateResponse> {
+    const wire = await this.http.fetchJSON<{ valid: boolean; error_message?: string; timestamp: number }>(
+      '/api/v1/certificate/verify',
+      { method: 'POST', body: JSON.stringify({ certificate_pem: certificatePEM }) },
+    );
+    return { valid: wire.valid, error_message: wire.error_message, timestamp: unixToISO(wire.timestamp) };
+  }
+
+  async getCACertificate(): Promise<GetCACertificateResponse> {
+    const wire = await this.http.fetchJSON<{
+      ca_certificate_pem: string;
+      ca_bundle_pem: string;
+      identity: string;
+      timestamp: number;
+    }>('/api/v1/certificate/ca');
+    return {
+      ca_certificate_pem: wire.ca_certificate_pem,
+      ca_bundle_pem: wire.ca_bundle_pem,
+      identity: wire.identity,
+      timestamp: unixToISO(wire.timestamp),
+    };
+  }
+
+  async caInfo(): Promise<CAInfoResponse> {
+    const wire = await this.http.fetchJSON<{
+      common_name: string;
+      subject: string;
+      issuer: string;
+      serial_number: string;
+      not_before: number;
+      not_after: number;
+      is_ca: boolean;
+      key_type: string;
+      key_bits?: number;
+      signature_algorithm: string;
+      certificate_pem: string;
+      ca_bundle_pem: string;
+      timestamp: number;
+    }>('/api/v1/certificate/ca/info');
+    return {
+      common_name: wire.common_name,
+      subject: wire.subject,
+      issuer: wire.issuer,
+      serial_number: wire.serial_number,
+      not_before: unixToISO(wire.not_before),
+      not_after: unixToISO(wire.not_after),
+      is_ca: wire.is_ca,
+      key_type: wire.key_type,
+      key_bits: wire.key_bits,
+      signature_algorithm: wire.signature_algorithm,
+      certificate_pem: wire.certificate_pem,
+      ca_bundle_pem: wire.ca_bundle_pem,
+      timestamp: unixToISO(wire.timestamp),
+    };
+  }
+
+  async getCABundle(): Promise<CABundleResponse> {
+    const wire = await this.http.fetchJSON<{ bundle_pem: string; timestamp: number }>(
+      '/api/v1/certificate/ca/bundle',
+    );
+    return { bundle_pem: wire.bundle_pem, timestamp: unixToISO(wire.timestamp) };
+  }
+
+  async listCertificates(req: ListCertificatesRequest = {}): Promise<ListCertificatesResponse> {
+    const params: Record<string, string> = {};
+    if (req.common_name) params.common_name = req.common_name;
+    if (req.include_revoked) params.include_revoked = 'true';
+    if (req.include_expired) params.include_expired = 'true';
+    if (req.limit !== undefined) params.limit = String(req.limit);
+    const query = new URLSearchParams(params).toString();
+    const wire = await this.http.fetchJSON<{
+      certificates?: Array<{
+        common_name: string;
+        subject: string;
+        issuer: string;
+        serial_number: string;
+        not_before: number;
+        not_after: number;
+        is_ca: boolean;
+        key_usage?: string;
+        dns_names?: string[];
+      }>;
+      total_count?: number;
+      timestamp: number;
+    }>(`/api/v1/certificate/ca/list${query ? `?${query}` : ''}`);
+    const certificates: CertificateSummary[] = (wire.certificates ?? []).map((c) => ({
+      common_name: c.common_name,
+      subject: c.subject,
+      issuer: c.issuer,
+      serial_number: c.serial_number,
+      not_before: unixToISO(c.not_before),
+      not_after: unixToISO(c.not_after),
+      is_ca: c.is_ca,
+      key_usage: c.key_usage,
+      dns_names: c.dns_names,
+    }));
+    return { certificates, total_count: wire.total_count ?? certificates.length, timestamp: unixToISO(wire.timestamp) };
+  }
+
+  async generateCRL(): Promise<GenerateCRLResponse> {
+    // The CRL route lives under the xkms-native CA (see class doc comment).
+    // The wire field is base64 of the already PEM-encoded CRL text.
+    const wire = await this.http.fetchJSON<{ crl_pem: string }>(
+      '/api/v1/xkms/ca/crl',
+      { method: 'POST', body: JSON.stringify({}) },
+    );
+    let decoded = '';
+    try {
+      decoded = atob(wire.crl_pem);
+    } catch {
+      decoded = wire.crl_pem;
+    }
+    if (!decoded.includes('-----BEGIN')) {
+      // Defensive fallback: wrap raw DER bytes in PEM headers ourselves,
+      // matching the Go SDK's rest.certificate_handler.go behaviour.
+      const rewrapped = wire.crl_pem.replace(/(.{64})/g, '$1\n');
+      decoded = `-----BEGIN X509 CRL-----\n${rewrapped}\n-----END X509 CRL-----\n`;
+    }
+    return { crl_pem: decoded };
+  }
+
+  async isRevoked(serialNumber: string): Promise<IsRevokedResponse> {
+    return this.http.fetchJSON<IsRevokedResponse>(
+      `/api/v1/xkms/ca/revoked/${encodeURIComponent(serialNumber)}`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RestTrustClient — /api/v1/trust/* surface.
+// ---------------------------------------------------------------------------
+
+// pemToDERBase64 extracts the base64 payload from a single PEM block,
+// stripping the header/footer lines and all whitespace. The result is
+// exactly the base64 encoding of the DER bytes the block contains — no
+// re-encoding is required because that's what PEM already is.
+function pemToDERBase64(pem: string): string {
+  return pem
+    .replace(/-----BEGIN [^-]+-----/g, '')
+    .replace(/-----END [^-]+-----/g, '')
+    .replace(/\s+/g, '');
+}
+
+// RestTrustClient implements TrustClient over the QuicBaaS trust composition
+// REST endpoints (/api/v1/trust/*). See handlers_trust.go.
+export class RestTrustClient implements TrustClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  async crossSignedRootPool(): Promise<CrossSignedRootPoolResponse> {
+    const wire = await this.http.fetchJSON<{ root_pems?: string[] }>(
+      '/api/v1/trust/cross-signed-roots',
+    );
+    const root_pems = (wire.root_pems ?? []).map((b64) => {
+      try {
+        return atob(b64);
+      } catch {
+        return b64;
+      }
+    });
+    return { root_pems };
+  }
+
+  async autoImportAIA(req: AutoImportAIARequest): Promise<AutoImportAIAResponse> {
+    const chain_der = req.chain_pems.map(pemToDERBase64);
+    return this.http.fetchJSON<AutoImportAIAResponse>(
+      '/api/v1/trust/auto-import-aia',
+      { method: 'POST', body: JSON.stringify({ chain_der }) },
+    );
+  }
+
+  async publishDANE(req: PublishDANERequest): Promise<PublishDANEResponse> {
+    const cert_der = pemToDERBase64(req.cert_pem);
+    return this.http.fetchJSON<PublishDANEResponse>(
+      '/api/v1/trust/publish-dane',
+      { method: 'POST', body: JSON.stringify({ name: req.name, port: req.port, cert_der }) },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RestCryptoClient — /api/v1/crypto/* surface.
+// ---------------------------------------------------------------------------
+
+// RestCryptoClient implements CryptoClient over the QuicBaaS crypto
+// primitives REST endpoints (/api/v1/crypto/*). See handlers_crypto.go.
+// All binary fields are base64 strings on the wire; this client passes them
+// through unchanged (no re-encoding), except for unix timestamps which are
+// converted to ISO-8601 strings for consistency with the rest of the SDK.
+export class RestCryptoClient implements CryptoClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  async encrypt(req: CryptoEncryptRequest): Promise<CryptoEncryptResponse> {
+    const wire = await this.http.fetchJSON<{
+      key_id: string;
+      key_version: number;
+      ciphertext: string;
+      nonce?: string;
+      timestamp: number;
+    }>(`/api/v1/crypto/encrypt/${encodeURIComponent(req.key_name)}`, {
+      method: 'POST',
+      body: JSON.stringify({ plaintext: req.plaintext, context: req.context, nonce: req.nonce }),
+    });
+    return {
+      key_id: wire.key_id,
+      key_version: wire.key_version,
+      ciphertext: wire.ciphertext,
+      nonce: wire.nonce,
+      timestamp: unixToISO(wire.timestamp),
+    };
+  }
+
+  async decrypt(req: CryptoDecryptRequest): Promise<CryptoDecryptResponse> {
+    const wire = await this.http.fetchJSON<{
+      key_id: string;
+      key_version: number;
+      plaintext: string;
+      timestamp: number;
+    }>(`/api/v1/crypto/decrypt/${encodeURIComponent(req.key_name)}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        ciphertext: req.ciphertext,
+        context: req.context,
+        nonce: req.nonce,
+        key_version: req.key_version,
+      }),
+    });
+    return {
+      key_id: wire.key_id,
+      key_version: wire.key_version,
+      plaintext: wire.plaintext,
+      timestamp: unixToISO(wire.timestamp),
+    };
+  }
+
+  async rewrap(req: CryptoRewrapRequest): Promise<CryptoRewrapResponse> {
+    const wire = await this.http.fetchJSON<{
+      key_id: string;
+      old_key_version: number;
+      new_key_version: number;
+      ciphertext: string;
+      nonce?: string;
+      timestamp: number;
+    }>(`/api/v1/crypto/rewrap/${encodeURIComponent(req.key_name)}`, {
+      method: 'POST',
+      body: JSON.stringify({ ciphertext: req.ciphertext, context: req.context, nonce: req.nonce }),
+    });
+    return {
+      key_id: wire.key_id,
+      old_key_version: wire.old_key_version,
+      new_key_version: wire.new_key_version,
+      ciphertext: wire.ciphertext,
+      nonce: wire.nonce,
+      timestamp: unixToISO(wire.timestamp),
+    };
+  }
+
+  async sign(req: CryptoSignRequest): Promise<CryptoSignResponse> {
+    const wire = await this.http.fetchJSON<{
+      key_id: string;
+      key_version: number;
+      signature: string;
+      hash_algorithm: CryptoSignResponse['hash_algorithm'];
+      timestamp: number;
+    }>(`/api/v1/crypto/sign/${encodeURIComponent(req.key_name)}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        message: req.message,
+        hash_algorithm: req.hash_algorithm,
+        pre_hashed: req.pre_hashed,
+      }),
+    });
+    return {
+      key_id: wire.key_id,
+      key_version: wire.key_version,
+      signature: wire.signature,
+      hash_algorithm: wire.hash_algorithm,
+      timestamp: unixToISO(wire.timestamp),
+    };
+  }
+
+  async verify(req: CryptoVerifyRequest): Promise<CryptoVerifyResponse> {
+    const wire = await this.http.fetchJSON<{
+      key_id: string;
+      key_version: number;
+      valid: boolean;
+      timestamp: number;
+    }>(`/api/v1/crypto/verify/${encodeURIComponent(req.key_name)}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        message: req.message,
+        signature: req.signature,
+        hash_algorithm: req.hash_algorithm,
+        key_version: req.key_version,
+      }),
+    });
+    return {
+      key_id: wire.key_id,
+      key_version: wire.key_version,
+      valid: wire.valid,
+      timestamp: unixToISO(wire.timestamp),
+    };
+  }
+
+  async hash(req: CryptoHashRequest): Promise<CryptoHashResponse> {
+    const wire = await this.http.fetchJSON<{
+      algorithm: CryptoHashResponse['algorithm'];
+      hash: string;
+      timestamp: number;
+    }>('/api/v1/crypto/hash', {
+      method: 'POST',
+      body: JSON.stringify({ data: req.data, algorithm: req.algorithm }),
+    });
+    return { algorithm: wire.algorithm, hash: wire.hash, timestamp: unixToISO(wire.timestamp) };
+  }
+
+  async random(numBytes = 32): Promise<CryptoRandomResponse> {
+    const wire = await this.http.fetchJSON<{ random_bytes: string; timestamp: number }>(
+      '/api/v1/crypto/random',
+      { method: 'POST', body: JSON.stringify({ num_bytes: numBytes }) },
+    );
+    return { random_bytes: wire.random_bytes, timestamp: unixToISO(wire.timestamp) };
+  }
+
+  async dataKey(req: CryptoDataKeyRequest): Promise<CryptoDataKeyResponse> {
+    const wire = await this.http.fetchJSON<{
+      key_id: string;
+      plaintext: string;
+      ciphertext_blob: string;
+      timestamp: number;
+    }>(`/api/v1/crypto/datakey/${encodeURIComponent(req.key_name)}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        key_size_bits: req.key_size_bits,
+        algorithm: req.algorithm,
+        context: req.context,
+      }),
+    });
+    return {
+      key_id: wire.key_id,
+      plaintext: wire.plaintext,
+      ciphertext_blob: wire.ciphertext_blob,
+      timestamp: unixToISO(wire.timestamp),
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RestDEKClient — /api/v1/kms/deks/* surface.
+// ---------------------------------------------------------------------------
+
+// RestDEKClient implements DEKClient over the QuicBaaS Data Encryption Key
+// REST endpoints (/api/v1/kms/deks/*). See handlers_kms_dek.go. DEK path
+// identifiers may contain '/' (e.g. "tenant/app/key"); every method encodes
+// the path with encodeURIComponent, matching RestSecretsClient's convention
+// — chi's wildcard route decodes it back to the original path server-side.
+// Unlike RestCAClient/RestTrustClient/RestCryptoClient, DEK response
+// timestamps arrive pre-formatted as RFC3339 strings (json.Marshal of a Go
+// time.Time), so no unix-to-ISO conversion is applied here.
+export class RestDEKClient implements DEKClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  async createDEK(req: CreateDEKRequest): Promise<CreateDEKResponse> {
+    return this.http.fetchJSON<CreateDEKResponse>('/api/v1/kms/deks', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  async getDEK(path: string, version?: number): Promise<GetDEKResponse> {
+    const query = version !== undefined ? `?version=${encodeURIComponent(String(version))}` : '';
+    return this.http.fetchJSON<GetDEKResponse>(`/api/v1/kms/deks/${encodeURIComponent(path)}${query}`);
+  }
+
+  async listDEKs(req: ListDEKsRequest = {}): Promise<ListDEKsResponse> {
+    const params: Record<string, string> = {};
+    if (req.prefix) params.prefix = req.prefix;
+    if (req.recursive) params.recursive = 'true';
+    if (req.limit !== undefined) params.limit = String(req.limit);
+    if (req.cursor) params.cursor = req.cursor;
+    const query = new URLSearchParams(params).toString();
+    const wire = await this.http.fetchJSON<ListDEKsResponse>(
+      `/api/v1/kms/deks${query ? `?${query}` : ''}`,
+    );
+    return { ...wire, deks: wire.deks ?? [] };
+  }
+
+  async rotateDEK(path: string, req: RotateDEKRequest = {}): Promise<RotateDEKResponse> {
+    return this.http.fetchJSON<RotateDEKResponse>(
+      `/api/v1/kms/deks/${encodeURIComponent(path)}/rotate`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  async deleteDEK(path: string, req: DeleteDEKRequest = {}): Promise<DeleteDEKResponse> {
+    return this.http.fetchJSON<DeleteDEKResponse>(
+      `/api/v1/kms/deks/${encodeURIComponent(path)}`,
+      { method: 'DELETE', body: JSON.stringify(req) },
+    );
+  }
+
+  async getDEKStatus(path: string): Promise<GetDEKStatusResponse> {
+    return this.http.fetchJSON<GetDEKStatusResponse>(`/api/v1/kms/deks/${encodeURIComponent(path)}/status`);
+  }
+
+  async setDefaultDEK(path: string): Promise<SetDefaultDEKResponse> {
+    return this.http.fetchJSON<SetDefaultDEKResponse>(
+      `/api/v1/kms/deks/${encodeURIComponent(path)}/set-default`,
+      { method: 'POST' },
+    );
+  }
+
+  async setDEKSafety(path: string, req: SetDEKSafetyRequest): Promise<SetDEKSafetyResponse> {
+    return this.http.fetchJSON<SetDEKSafetyResponse>(
+      `/api/v1/kms/deks/${encodeURIComponent(path)}/safety`,
+      { method: 'PUT', body: JSON.stringify(req) },
+    );
+  }
+
+  async clearDEKSafety(path: string): Promise<ClearDEKSafetyResponse> {
+    return this.http.fetchJSON<ClearDEKSafetyResponse>(
+      `/api/v1/kms/deks/${encodeURIComponent(path)}/safety`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async startReencryption(path: string, req: StartReencryptionRequest = {}): Promise<StartReencryptionResponse> {
+    return this.http.fetchJSON<StartReencryptionResponse>(
+      `/api/v1/kms/deks/${encodeURIComponent(path)}/reencrypt`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  async getReencryptionProgress(
+    path: string,
+    operationId?: string,
+    verbose?: boolean,
+  ): Promise<GetReencryptionProgressResponse> {
+    const params: Record<string, string> = {};
+    if (operationId) params.operation_id = operationId;
+    if (verbose) params.verbose = 'true';
+    const query = new URLSearchParams(params).toString();
+    return this.http.fetchJSON<GetReencryptionProgressResponse>(
+      `/api/v1/kms/deks/${encodeURIComponent(path)}/reencrypt${query ? `?${query}` : ''}`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RestDynamicSecretsClient — /api/v1/secrets/dynamic/* surface.
+// ---------------------------------------------------------------------------
+
+// RestDynamicSecretsClient implements DynamicSecretsClient over the
+// QuicBaaS dynamic secrets REST endpoints (/api/v1/secrets/dynamic/*). See
+// handlers_dynamic_secrets.go. Like RestCAClient/RestTrustClient, the wire
+// responses carry Go int64 unix-second timestamps; every method converts
+// them to ISO-8601 strings before returning to the caller.
+export class RestDynamicSecretsClient implements DynamicSecretsClient {
+  private readonly http: FetchHelper;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.http = newFetchHelper(baseUrl, config);
+  }
+
+  async createRole(req: DynamicSecretCreateRoleRequest): Promise<DynamicSecretRole> {
+    const wire = await this.http.fetchJSON<{
+      name: string;
+      generator_type: string;
+      config?: Record<string, string>;
+      default_ttl: string;
+      max_ttl: string;
+      created_at?: number;
+      timestamp: number;
+    }>('/api/v1/secrets/dynamic/roles', { method: 'POST', body: JSON.stringify(req) });
+    return {
+      name: wire.name,
+      generator_type: wire.generator_type,
+      config: wire.config,
+      default_ttl: wire.default_ttl,
+      max_ttl: wire.max_ttl,
+      created_at: wire.created_at !== undefined ? unixToISO(wire.created_at) : undefined,
+      timestamp: unixToISO(wire.timestamp),
+    };
+  }
+
+  async getRole(name: string): Promise<DynamicSecretRole> {
+    const wire = await this.http.fetchJSON<{
+      name: string;
+      generator_type: string;
+      config?: Record<string, string>;
+      default_ttl: string;
+      max_ttl: string;
+      timestamp: number;
+    }>(`/api/v1/secrets/dynamic/roles/${encodeURIComponent(name)}`);
+    return {
+      name: wire.name,
+      generator_type: wire.generator_type,
+      config: wire.config,
+      default_ttl: wire.default_ttl,
+      max_ttl: wire.max_ttl,
+      timestamp: unixToISO(wire.timestamp),
+    };
+  }
+
+  async listRoles(prefix?: string): Promise<ListDynamicSecretRolesResponse> {
+    const query = prefix ? `?prefix=${encodeURIComponent(prefix)}` : '';
+    const wire = await this.http.fetchJSON<{
+      roles?: Array<{
+        name: string;
+        generator_type: string;
+        config?: Record<string, string>;
+        default_ttl: string;
+        max_ttl: string;
+        timestamp: number;
+      }>;
+      count?: number;
+      timestamp: number;
+    }>(`/api/v1/secrets/dynamic/roles${query}`);
+    const roles: DynamicSecretRole[] = (wire.roles ?? []).map((r) => ({
+      name: r.name,
+      generator_type: r.generator_type,
+      config: r.config,
+      default_ttl: r.default_ttl,
+      max_ttl: r.max_ttl,
+      timestamp: unixToISO(r.timestamp),
+    }));
+    return { roles, count: wire.count ?? roles.length, timestamp: unixToISO(wire.timestamp) };
+  }
+
+  async deleteRole(name: string): Promise<DeleteDynamicSecretRoleResponse> {
+    const wire = await this.http.fetchJSON<{ success: boolean; deleted_at: number; timestamp: number }>(
+      `/api/v1/secrets/dynamic/roles/${encodeURIComponent(name)}`,
+      { method: 'DELETE' },
+    );
+    return { success: wire.success, deleted_at: unixToISO(wire.deleted_at), timestamp: unixToISO(wire.timestamp) };
+  }
+
+  async generateCredential(
+    roleName: string,
+    req: GenerateCredentialRequest = {},
+  ): Promise<GenerateCredentialResponse> {
+    const wire = await this.http.fetchJSON<{
+      credential_id: string;
+      username?: string;
+      password?: string;
+      secret?: Record<string, string>;
+      lease_id: string;
+      lease_ttl: string;
+      lease_expiry: number;
+      renewable: boolean;
+      timestamp: number;
+    }>(`/api/v1/secrets/dynamic/credentials/${encodeURIComponent(roleName)}`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+    return {
+      credential_id: wire.credential_id,
+      username: wire.username,
+      password: wire.password,
+      secret: wire.secret,
+      lease_id: wire.lease_id,
+      lease_ttl: wire.lease_ttl,
+      lease_expiry: unixToISO(wire.lease_expiry),
+      renewable: wire.renewable,
+      timestamp: unixToISO(wire.timestamp),
+    };
+  }
+
+  async renewLease(leaseId: string, req: RenewLeaseRequest = {}): Promise<RenewLeaseResponse> {
+    const wire = await this.http.fetchJSON<{
+      lease_id: string;
+      lease_ttl: string;
+      lease_expiry: number;
+      renew_count: number;
+      renewed_at: number;
+      timestamp: number;
+    }>(`/api/v1/secrets/dynamic/leases/${encodeURIComponent(leaseId)}/renew`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+    return {
+      lease_id: wire.lease_id,
+      lease_ttl: wire.lease_ttl,
+      lease_expiry: unixToISO(wire.lease_expiry),
+      renew_count: wire.renew_count,
+      renewed_at: unixToISO(wire.renewed_at),
+      timestamp: unixToISO(wire.timestamp),
+    };
+  }
+
+  async revokeLease(leaseId: string): Promise<RevokeDynamicSecretLeaseResponse> {
+    const wire = await this.http.fetchJSON<{ success: boolean; revoked_at: number; timestamp: number }>(
+      `/api/v1/secrets/dynamic/leases/${encodeURIComponent(leaseId)}`,
+      { method: 'DELETE' },
+    );
+    return { success: wire.success, revoked_at: unixToISO(wire.revoked_at), timestamp: unixToISO(wire.timestamp) };
+  }
+
+  async listLeases(prefix?: string): Promise<ListLeasesResponse> {
+    const query = prefix ? `?prefix=${encodeURIComponent(prefix)}` : '';
+    const wire = await this.http.fetchJSON<{
+      leases?: Array<{
+        lease_id: string;
+        path: string;
+        ttl: string;
+        expiry: number;
+        renewable: boolean;
+        renew_count: number;
+        metadata?: Record<string, string>;
+      }>;
+      count?: number;
+      timestamp: number;
+    }>(`/api/v1/secrets/dynamic/leases${query}`);
+    const leases = (wire.leases ?? []).map((l) => ({
+      lease_id: l.lease_id,
+      path: l.path,
+      ttl: l.ttl,
+      expiry: unixToISO(l.expiry),
+      renewable: l.renewable,
+      renew_count: l.renew_count,
+      metadata: l.metadata,
+    }));
+    return { leases, count: wire.count ?? leases.length, timestamp: unixToISO(wire.timestamp) };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3311,9 +4303,15 @@ export class RestClient implements Client {
   readonly messaging: MessagingClient;
   readonly scheduler: SchedulerClient;
   readonly projects: ProjectsClient;
+  readonly accounts: AccountsClient;
   readonly iam: IAMClient;
   readonly kms: KMSClient;
   readonly secrets: SecretsClient;
+  readonly ca: CAClient;
+  readonly trust: TrustClient;
+  readonly crypto: CryptoClient;
+  readonly dek: DEKClient;
+  readonly dynamicSecrets: DynamicSecretsClient;
   readonly barrier: BarrierClient;
   readonly tenantBarrier: TenantBarrierClient;
   readonly ceremony: CeremonyClient;
@@ -3345,9 +4343,15 @@ export class RestClient implements Client {
     this.messaging = new RestMessagingClient(baseUrl, config);
     this.scheduler = new RestSchedulerClient(baseUrl, config);
     this.projects = new RestProjectsClient(baseUrl, config);
+    this.accounts = new RestAccountsClient(baseUrl, config);
     this.iam = new RestIAMClient(baseUrl, config);
     this.kms = new RestKMSClient(baseUrl, config);
     this.secrets = new RestSecretsClient(baseUrl, config);
+    this.ca = new RestCAClient(baseUrl, config);
+    this.trust = new RestTrustClient(baseUrl, config);
+    this.crypto = new RestCryptoClient(baseUrl, config);
+    this.dek = new RestDEKClient(baseUrl, config);
+    this.dynamicSecrets = new RestDynamicSecretsClient(baseUrl, config);
     this.barrier = new RestBarrierClient(baseUrl, config);
     this.tenantBarrier = new RestTenantBarrierClient(baseUrl, config);
     this.ceremony = new RestCeremonyClient(baseUrl, config);

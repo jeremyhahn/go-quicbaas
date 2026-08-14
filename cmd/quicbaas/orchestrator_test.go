@@ -42,6 +42,7 @@ type mockOrchestratorClient struct {
 	promptSessionFn      func(ctx context.Context, req *orchestratorSDK.PromptSessionRequest) (*orchestratorSDK.PromptSessionResponse, error)
 	sessionStatusFn      func(ctx context.Context, req *orchestratorSDK.SessionStatusRequest) (*orchestratorSDK.SessionStatusResponse, error)
 	closeSessionFn       func(ctx context.Context, req *orchestratorSDK.CloseSessionRequest) (*orchestratorSDK.CloseSessionResponse, error)
+	rotateAccountFn      func(ctx context.Context, req *orchestratorSDK.RotateSessionAccountRequest) (*orchestratorSDK.RotateSessionAccountResponse, error)
 	listSessionsFn       func(ctx context.Context, req *orchestratorSDK.ListSessionsRequest) (*orchestratorSDK.ListSessionsResponse, error)
 	createTaskFn         func(ctx context.Context, req *orchestratorSDK.CreateTaskRequest) (*orchestratorSDK.Task, error)
 	getTaskFn            func(ctx context.Context, req *orchestratorSDK.GetTaskRequest) (*orchestratorSDK.Task, error)
@@ -272,6 +273,12 @@ func saveAndRestoreOrchestratorState(t *testing.T) {
 	origWorkflowFile := orchWorkflowFile
 	origMaxIterations := orchJobMaxIterations
 	origPollInterval := orchJobPollInterval
+	origAccountID := orchAccountID
+	origAccountAuto := orchAccountAuto
+	origAccountStrategy := orchAccountStrategy
+	origAccountAllow := orchAccountAllow
+	origRotateReason := orchRotateReason
+	origRotateHold := orchRotateHoldOutgoing
 
 	t.Cleanup(func() {
 		orchestratorClientFactory = origFactory
@@ -293,6 +300,12 @@ func saveAndRestoreOrchestratorState(t *testing.T) {
 		orchWorkflowFile = origWorkflowFile
 		orchJobMaxIterations = origMaxIterations
 		orchJobPollInterval = origPollInterval
+		orchAccountID = origAccountID
+		orchAccountAuto = origAccountAuto
+		orchAccountStrategy = origAccountStrategy
+		orchAccountAllow = origAccountAllow
+		orchRotateReason = origRotateReason
+		orchRotateHoldOutgoing = origRotateHold
 	})
 
 	globalTimeout = 5 * time.Second

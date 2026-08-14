@@ -34,7 +34,11 @@ func (b *callbackBackend) Spawn(_ context.Context, req *orchestration.SpawnReque
 
 func (b *callbackBackend) Prompt(_ context.Context, req *orchestration.PromptRequest) (*orchestration.PromptResponse, error) {
 	if req.EventCallback != nil {
-		req.EventCallback(req.SessionID, "assistant", "chunk")
+		req.EventCallback(&orchestration.SessionEvent{
+			SessionID:      req.SessionID,
+			Kind:           orchestration.KindAssistantChunk,
+			AssistantChunk: &orchestration.AssistantChunkPayload{Text: "chunk"},
+		})
 	}
 	return &orchestration.PromptResponse{SessionID: req.SessionID}, nil
 }
@@ -85,7 +89,7 @@ func TestRuntime_SetEventForwarder_PromptForwardsEvents(t *testing.T) {
 	_, err = rt.Prompt(ctx, "acp", &orchestration.PromptRequest{
 		SessionID: sess.ID,
 		Prompt:    "hello there",
-		EventCallback: func(_, _, _ string) {
+		EventCallback: func(_ *orchestration.SessionEvent) {
 			select {
 			case callerSaw <- struct{}{}:
 			default:

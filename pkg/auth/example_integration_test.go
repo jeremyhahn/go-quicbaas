@@ -43,7 +43,7 @@ func Example_basicTokenGeneration() {
 	// Configure authentication
 	config := &auth.AuthConfig{
 		Enabled:         true,
-		JWTSecret:       "example-secret-key-change-in-production",
+		JWTSigningKeyID: "example-signing-key",
 		TokenTTL:        1 * time.Hour,
 		RefreshTokenTTL: 7 * 24 * time.Hour,
 	}
@@ -97,7 +97,7 @@ func Example_tokenRefresh() {
 
 	config := &auth.AuthConfig{
 		Enabled:         true,
-		JWTSecret:       "example-secret-key",
+		JWTSigningKeyID: "example-signing-key",
 		TokenTTL:        1 * time.Hour,
 		RefreshTokenTTL: 7 * 24 * time.Hour,
 	}
@@ -133,8 +133,8 @@ func Example_multipleRoles() {
 	})
 
 	config := &auth.AuthConfig{
-		Enabled:   true,
-		JWTSecret: "example-secret-key",
+		Enabled:         true,
+		JWTSigningKeyID: "example-signing-key",
 	}
 
 	authManager, _ := auth.NewInMemoryAuthManager(config, log)

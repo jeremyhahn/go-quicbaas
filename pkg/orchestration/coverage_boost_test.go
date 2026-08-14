@@ -2333,15 +2333,15 @@ func TestACPBackend_PromptJSONRPC_WithEventCallback(t *testing.T) {
 	sessID, sessCleanup := spawnMockSession(t, backend)
 	defer sessCleanup()
 
-	var callbackEvents []string
+	var callbackEvents []SessionEventKind
 	var mu sync.Mutex
 
 	resp, err := backend.Prompt(ctx, &PromptRequest{
 		SessionID: sessID,
 		Prompt:    "hello with callback",
-		EventCallback: func(sessionID, eventType, data string) {
+		EventCallback: func(ev *SessionEvent) {
 			mu.Lock()
-			callbackEvents = append(callbackEvents, eventType)
+			callbackEvents = append(callbackEvents, ev.Kind)
 			mu.Unlock()
 		},
 	})
@@ -2465,7 +2465,7 @@ func TestACPBackend_SpawnContainerJSONRPC_MissingImage(t *testing.T) {
 	_, err := backend.spawnContainerJSONRPC(ctx, &SpawnRequest{
 		ContainerImage: "",
 		WorkDir:        "/tmp",
-	})
+	}, spawnPlan{})
 	if err == nil {
 		t.Fatal("expected error for empty container image")
 	}
@@ -2494,7 +2494,7 @@ func TestACPBackend_SpawnContainerJSONRPC_RunInteractiveError(t *testing.T) {
 	_, err := backend.spawnContainerJSONRPC(ctx, &SpawnRequest{
 		ContainerImage: "quicbaas/agent:latest",
 		WorkDir:        "/tmp",
-	})
+	}, spawnPlan{})
 	if err == nil {
 		t.Fatal("expected error when RunInteractive fails")
 	}
@@ -2628,7 +2628,7 @@ func TestSessionStore_ListSessions(t *testing.T) {
 		t.Fatalf("PutSession: %v", err)
 	}
 
-	sessions, err := store.ListSessions(ctx)
+	sessions, err := store.ListSessions(ctx, "")
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
@@ -3209,11 +3209,11 @@ func TestSessionStore_UpdateSessionStatus(t *testing.T) {
 		t.Fatalf("PutSession: %v", err)
 	}
 
-	if err := store.UpdateSessionStatus(ctx, "sess-status-1", SessionStateClosed); err != nil {
+	if err := store.UpdateSessionStatus(ctx, "", "sess-status-1", SessionStateClosed); err != nil {
 		t.Fatalf("UpdateSessionStatus: %v", err)
 	}
 
-	got, err := store.GetSession(ctx, "sess-status-1")
+	got, err := store.GetSession(ctx, "", "sess-status-1")
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
@@ -3239,11 +3239,11 @@ func TestSessionStore_UpdateSessionActivity(t *testing.T) {
 		t.Fatalf("PutSession: %v", err)
 	}
 
-	if err := store.UpdateSessionActivity(ctx, "sess-act-1"); err != nil {
+	if err := store.UpdateSessionActivity(ctx, "", "sess-act-1"); err != nil {
 		t.Fatalf("UpdateSessionActivity: %v", err)
 	}
 
-	got, err := store.GetSession(ctx, "sess-act-1")
+	got, err := store.GetSession(ctx, "", "sess-act-1")
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
@@ -3256,7 +3256,7 @@ func TestSessionStore_GetSession_NotFound(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryAgentStore()
-	_, err := store.GetSession(context.Background(), "nonexistent-session")
+	_, err := store.GetSession(context.Background(), "", "nonexistent-session")
 	if err == nil {
 		t.Fatal("expected error for missing session")
 	}
@@ -3281,11 +3281,11 @@ func TestSessionStore_DeleteSession(t *testing.T) {
 		t.Fatalf("PutSession: %v", err)
 	}
 
-	if err := store.DeleteSession(ctx, "sess-del-1"); err != nil {
+	if err := store.DeleteSession(ctx, "", "sess-del-1"); err != nil {
 		t.Fatalf("DeleteSession: %v", err)
 	}
 
-	_, err := store.GetSession(ctx, "sess-del-1")
+	_, err := store.GetSession(ctx, "", "sess-del-1")
 	if err == nil {
 		t.Fatal("expected error after deletion")
 	}
@@ -5073,7 +5073,7 @@ func TestSessionStore_UpdateSessionStatus_NotFound(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryAgentStore()
-	err := store.UpdateSessionStatus(context.Background(), "nonexistent-session", SessionStateIdle)
+	err := store.UpdateSessionStatus(context.Background(), "", "nonexistent-session", SessionStateIdle)
 	if err == nil {
 		t.Fatal("expected not-found error")
 	}
@@ -5083,7 +5083,7 @@ func TestSessionStore_UpdateSessionActivity_NotFound(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryAgentStore()
-	err := store.UpdateSessionActivity(context.Background(), "nonexistent-session")
+	err := store.UpdateSessionActivity(context.Background(), "", "nonexistent-session")
 	if err == nil {
 		t.Fatal("expected not-found error")
 	}
@@ -5104,7 +5104,7 @@ func TestSessionStore_UpdateSessionActivity_Success(t *testing.T) {
 		t.Fatalf("PutSession: %v", err)
 	}
 
-	if err := store.UpdateSessionActivity(ctx, "sess-act-1"); err != nil {
+	if err := store.UpdateSessionActivity(ctx, "", "sess-act-1"); err != nil {
 		t.Fatalf("UpdateSessionActivity: %v", err)
 	}
 }
@@ -5830,11 +5830,11 @@ func TestSessionStore_UpdateSessionStatus_Success(t *testing.T) {
 		t.Fatalf("PutSession: %v", err)
 	}
 
-	if err := store.UpdateSessionStatus(ctx, "sess-status-2", SessionStateIdle); err != nil {
+	if err := store.UpdateSessionStatus(ctx, "", "sess-status-2", SessionStateIdle); err != nil {
 		t.Fatalf("UpdateSessionStatus: %v", err)
 	}
 
-	got, err := store.GetSession(ctx, "sess-status-2")
+	got, err := store.GetSession(ctx, "", "sess-status-2")
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
@@ -6533,7 +6533,7 @@ func TestSessionStore_ListSessions_CancelledContext(t *testing.T) {
 	cancel() // cancel immediately
 
 	// Cancelled context should return an error.
-	_, err := store.ListSessions(ctx)
+	_, err := store.ListSessions(ctx, "")
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -6678,6 +6678,7 @@ func TestOrchestrator_SessionStatus_FromStore(t *testing.T) {
 
 	rec := &SessionRecord{
 		SessionID:    "sss-sess-1",
+		TenantID:     "t-sss",
 		Backend:      "acp",
 		Status:       SessionStateClosed,
 		LastActivity: 12345,
@@ -8028,7 +8029,7 @@ func TestSessionStore_GetSession_Cancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := store.GetSession(ctx, "sess-1")
+	_, err := store.GetSession(ctx, "", "sess-1")
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -8045,7 +8046,7 @@ func TestSessionStore_UpdateSessionStatus_Cancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := store.UpdateSessionStatus(ctx, "sess-1", SessionStateClosed)
+	err := store.UpdateSessionStatus(ctx, "", "sess-1", SessionStateClosed)
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -8059,7 +8060,7 @@ func TestSessionStore_UpdateSessionActivity_EmptyID(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryAgentStore()
-	err := store.UpdateSessionActivity(context.Background(), "")
+	err := store.UpdateSessionActivity(context.Background(), "", "")
 	if err == nil {
 		t.Fatal("expected error for empty session ID")
 	}
@@ -8487,7 +8488,7 @@ func TestSessionStore_ListSessions_StoreError(t *testing.T) {
 	// Now use a cancelled context so ListSessions returns ctx error.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := store.ListSessions(ctx)
+	_, err := store.ListSessions(ctx, "")
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}

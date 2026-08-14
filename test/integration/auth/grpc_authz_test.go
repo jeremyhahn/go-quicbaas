@@ -63,11 +63,12 @@ func newTestGRPCContext(t *testing.T, allowed ...string) *testGRPCContext {
 
 	authCfg := &auth.AuthConfig{
 		Enabled:         true,
-		JWTSecret:       "test-grpc-secret-key-for-integration-testing",
+		JWTSigningKeyID: "test-grpc-jwt-signing-key",
 		TokenTTL:        1 * time.Hour,
 		RefreshTokenTTL: 24 * time.Hour,
 		MaxTokens:       100,
 	}
+	configureTestJWTSigning(t, authCfg)
 
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)

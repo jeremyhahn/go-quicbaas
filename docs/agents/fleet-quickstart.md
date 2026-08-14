@@ -10,6 +10,22 @@ regardless of which transport you select.
 
 ## 1. Start the server
 
+> **Prerequisite: `iam.spiffe_trust_domain` must be set.** TLS is on by default,
+> so a fresh data dir brings up the CA and runs first-boot, which issues the
+> platform admin's mTLS certificate. The CA stamps the tenant SPIFFE SAN onto
+> that certificate — and login resolves the tenant from it — only when a trust
+> domain is configured, so the daemon **fails closed** without one rather than
+> handing you a credential that cannot authenticate.
+>
+> ```yaml
+> # config.yaml
+> iam:
+>   spiffe_trust_domain: quicbaas.example.test
+> ```
+>
+> See [docs/cli/init.md](../cli/init.md#prerequisite-iamspiffe_trust_domain-required)
+> for the full rationale.
+
 ```bash
 quicbaasd start \
   --http-port 18080 --http-address 0.0.0.0 \

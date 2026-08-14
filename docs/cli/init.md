@@ -17,6 +17,55 @@ on the host that owns the data dir; `quicbaas init` (the CLI) drives
 the ceremony state machine over the network from an operator
 workstation. The two share verb names but never the same process.
 
+## Prerequisite: `iam.spiffe_trust_domain` (required)
+
+**`quicbaasd init` refuses to run unless `iam.spiffe_trust_domain` is set in the
+configuration file.** It is not a flag — it is a config key, because the daemon
+needs the same value on every subsequent boot.
+
+```yaml
+iam:
+  spiffe_trust_domain: quicbaas.example.test
+```
+
+Why it is mandatory rather than optional: the xkms CA stamps a tenant-scoped
+SPIFFE URI SAN onto the admin certificate init issues —
+`spiffe://<trust-domain>/tenant/system/user/admin` — **only when a trust domain
+is configured**, and REST login resolves (and pins) the tenant from exactly that
+SAN. With no trust domain the certificate carries no SPIFFE SAN, login falls
+back to home-realm discovery, and a freshly initialised node has no HRD routing
+entries. The result is `401 login tenant could not be resolved` from the very
+credential init just handed the operator — even with an explicit `X-Tenant`
+header.
+
+Init therefore fails closed, before any side effect (no data dir, no CA, no
+marker):
+
+```
+init: iam.spiffe_trust_domain is required and is not set.
+  It is what lets the issued admin certificate authenticate: the CA stamps
+  spiffe://<trust-domain>/tenant/system/user/admin onto it and login resolves
+  the tenant from that SAN. Without it, login fails closed with
+  "login tenant could not be resolved".
+  Set it in your config file, for example:
+      iam:
+        spiffe_trust_domain: quicbaas.example.test
+```
+
+Two alternatives were considered and rejected:
+
+- **Synthesising a trust domain** (e.g. from `--hostname`) would bake a *pinned*
+  security identifier into every issued certificate; configuring a real trust
+  domain later would silently invalidate all of them.
+- **Seeding a system-tenant home-realm entry** would make `system` resolvable
+  for *any* unrouted login attempt, permanently widening the authentication
+  surface to buy first-boot convenience.
+
+Requiring the value invents no security identifier and widens nothing. The same
+requirement is enforced at the point of issuance in the server, so it also
+applies to `quicbaasd start` against a data dir with no init marker and to
+embedded/library consumers that never invoke the CLI.
+
 ## init persists state (gap-2 change)
 
 Prior to Phase 10 gap-2, `quicbaasd init` was a validate-and-print
@@ -31,16 +80,23 @@ The Phase 10 gap-2 fix made `quicbaasd init` actually persist:
 1. The data directory is created (mode `0o750`) if missing.
 2. The barrier strategy and credential strategy are validated.
 3. SO officer files are parsed and validated.
-4. For `passphrase` / `none` strategies an embedded `*server.Server` is
-   constructed against the data dir, started so the IAM bootstrap
-   runs end-to-end (PebbleDB stores the system tenant, built-in
-   roles, admin user, admin invite), then shut down cleanly.
-5. For `shamir`, a `pending_ceremony.json` file is written under the
-   data dir so the next `quicbaasd start` resumes the ceremony state
-   machine.
+4. For **every** barrier strategy an embedded `*server.Server` is
+   constructed against the data dir and started so the CA comes up and
+   the IAM bootstrap runs end-to-end (PebbleDB stores the system tenant,
+   built-in roles, the platform admin, and the admin's mTLS certificate
+   bound by its canonical SPKI thumbprint), then shut down cleanly. The
+   operator's `--so-pin` / `--user-pin` are enrolled into the same PIN
+   backend the node verifies against. §08 invariant 5: init leaves
+   identical IAM state whichever way the barrier is sealed.
+5. For `shamir` **none of step 4 happens**. Init starts no server and
+   runs no first-boot. go-qrdb's bootstrap orchestrator reserves M-of-N
+   barrier creation for the ceremony — *"Shamir barrier initialization is
+   the ceremony's job (multiple SOs), never inline"* — so init only
+   records the chosen M-of-N parameters. The daemon then boots SEALED and
+   the ceremony runs against it. See [Shamir: the ceremony flow](#shamir-the-ceremony-flow).
 6. A `.quicbaasd_init_done` marker JSON file is dropped at the data
    dir root with the chosen strategy, credential strategy, hostname,
-   officer count, share/threshold counts, and completion timestamp.
+   share/threshold counts, and completion timestamp.
 7. A short operator summary is printed to stderr; stdout stays clean
    for scripting.
 
@@ -56,9 +112,8 @@ without surprise side effects.
 | File | Path | Purpose |
 |------|------|---------|
 | `.quicbaasd_init_done` | `<data-dir>/.quicbaasd_init_done` | Init-complete signal. Presence blocks re-init; absence permits init. Mode `0o600`. JSON. |
-| `pending_ceremony.json` | `<data-dir>/pending_ceremony.json` | Shamir resume state. Contains strategy, share count, threshold, credential strategy, officer metadata (username/kind/path), creation timestamp. Mode `0o600`. JSON. |
 
-Both files are written via atomic rename (`<file>.tmp` → final) so an
+The marker file is written via atomic rename (`<file>.tmp` → final) so an
 interrupted init cannot leave half-written state. The marker schema
 is:
 
@@ -90,7 +145,6 @@ the three operator binaries accept identical arguments.
 | `--threshold <int>` | `0` | `--barrier-strategy=shamir` | Shamir M-of-N threshold. |
 | `--hostname <fqdn>` | (none) | optional | FQDN written into the admin / server certificate CN. |
 | `--sans <csv>` | (none) | optional | Additional DNS / IP SANs (comma-separated). |
-| `--admin-bundle <path>` | `-` | optional | Path for the admin client cert+key bundle. `-` writes once to stdout. |
 
 ### Phase 11 inline additions
 
@@ -98,16 +152,18 @@ the three operator binaries accept identical arguments.
 |------|---------|-------------|
 | `--init-data-dir <path>` | (none — falls back to global `--data-dir`) | Per-init data directory override. Useful for running multiple isolated init ceremonies in CI. |
 | `--credential-strategy <name>` | `barrier` | One of `manual` / `barrier`. Selects how named credentials are sealed. |
-| `--so <username:KIND:/path>` | (none, repeatable) | SO officer identity material. `KIND ∈ {csr, cert, pubkey}`. Each entry is parsed and validated before any state is persisted. |
-| `--trusted-ca <path>` | (none, repeatable) | PEM file with CA certificates used to validate `--so KIND=cert` material. |
+
+There are deliberately **no officer flags** on `quicbaasd init`. Officers enrol
+against the running daemon with `quicbaas init officer register`; see
+[Shamir: the ceremony flow](#shamir-the-ceremony-flow).
 
 ## --barrier-strategy values
 
 | Value | Meaning | PIN required? | Listener at end of init? |
 |-------|---------|---------------|--------------------------|
-| `disabled` / `none` | No encryption barrier. Data dir is plaintext on disk. Suitable only for ephemeral test environments. | Yes (validator enforces parity with the other strategies) | No — the embedded server is started, IAM bootstrap runs, then it shuts down. |
+| `disabled` / `none` | No encryption barrier. Data dir is plaintext on disk. Suitable only for ephemeral test environments. | No — PINs are rejected (there is no SO/User concept without a barrier) | No — the embedded server is started, IAM bootstrap runs, then it shuts down. |
 | `passphrase` | qrdb's `SoftwareStrategy`. Root key is derived from the SO/User PIN via Argon2id (PBKDF2 under FIPS) and sealed locally. (Older docs called this value `software`.) | Yes | No — same as `disabled`: embedded run, persist, shut down. |
-| `shamir` | qrdb's Shamir M-of-N strategy. Root key is split into N shares; M shares are required to unseal. Init persists `pending_ceremony.json` only; the operator completes the ceremony via `quicbaas ceremony claim-cert begin ...` after the next `quicbaasd start`. | Yes (PIN material is included in the ceremony state) | No daemon and no IAM bootstrap until the ceremony completes. |
+| `shamir` | qrdb's Shamir M-of-N strategy. Init creates **nothing** — no barrier, no first-boot, no shares. It records `--shares` / `--threshold` in the marker and stops. The next `quicbaasd start` boots SEALED on those parameters and serves the ceremony from its sealed window; officers register, the ceremony splits the secret, each officer claims their share live, and a quorum unseals. There are no `--so` flags on init: officers enrol against the running daemon. | Yes | Yes — this is the one strategy that starts no server. Starting one would boot sealed and fail with `EmbeddedSealedBootError`. |
 | `pkcs11` / `tpm2` / `awskms` / `gcpkms` / `azurekv` / `vault` | Hardware-backed strategies | n/a | **Rejected by `quicbaasd init`**. These run through the xkms-orchestrated flow and `xkmsd init`. |
 
 ## init `--barrier-strategy` vs runtime `seal.strategy` and the `crypto:` block
@@ -147,32 +203,32 @@ no PIN ever crosses a network boundary on the `quicbaasd init` path.
 
 ## SO officer material
 
-`--so` repeats for each officer. The value is parsed as
-`username:KIND:/path/to/file`:
+Officer material is **not** supplied to `quicbaasd init`. Under go-qrdb's
+Security Officer distribution model each officer registers their own CSR
+against the running daemon:
 
-| KIND | What `<path>` contains | Validation | Trust source |
-|------|------------------------|------------|--------------|
-| `csr` | PEM-encoded `CERTIFICATE REQUEST` | `x509.ParseCertificateRequest` + `csr.CheckSignature()` | Daemon CA signs during init (internal CA path) |
-| `cert` | PEM-encoded `CERTIFICATE` already issued by an external CA | `x509.ParseCertificate` (chain validation runs during ceremony enrolment against `--trusted-ca`) | External CA |
-| `pubkey` | PEM-encoded `PUBLIC KEY` (PKIX) | `x509.ParsePKIXPublicKey` | Admin-asserted |
+```bash
+quicbaas init officer register --username alice --csr alice.csr --output alice.crt
+```
 
-Officer file loading is dispatched through a map at
-[`cmd/quicbaasd/init.go:91`](../../cmd/quicbaasd/init.go) so adding a
-new officer kind is a one-line addition to `officerLoaders`.
-
-Validation runs **before** any persistence. If any `--so` value is
-malformed, the init aborts without touching the data dir.
+The ceremony CA signs the CSR and binds the officer to the SHA-256 thumbprint of
+the issued certificate. Only the officer holds the matching private key, which is
+what makes their later share claim provable — and what stops the server from
+being able to impersonate them. Officers whose key material is held externally
+(a corporate CA certificate, or a public key alone) enrol with
+`quicbaas init enroll-external-officer`.
 
 ## init → start contract
 
 After a successful `quicbaasd init`:
 
 1. The data dir contains `.quicbaasd_init_done`.
-2. For `passphrase` / `disabled` / `none`: PebbleDB holds the system
-   tenant + admin user + admin invite (synthesised via the
-   `qrdbadapter.UserAdapter`).
-3. For `shamir`: PebbleDB is empty; `pending_ceremony.json` is the
-   only state.
+2. For **every** strategy: PebbleDB holds the system tenant, built-in
+   roles and the platform admin (created via the
+   `qrdbadapter.UserAdapter`, which also serves as qrdb's `CertBinder`),
+   and `<data-dir>/admin/` holds the issued admin certificate.
+3. For `shamir` additionally: the officer bundles record the
+   M-of-N resume state.
 
 The next `quicbaasd start` reads the marker and:
 
@@ -182,7 +238,22 @@ The next `quicbaasd start` reads the marker and:
 - `shamir`: brings up the listener stack in a "ceremony pending"
   state. Only the ceremony endpoints accept traffic until the
   operator completes the ceremony via `quicbaas ceremony` /
-  `quicbaas init` verbs against the daemon.
+  `quicbaas init` verbs against the daemon. `firstBootBootstrap` also
+  short-circuits here, because init already established the admin.
+
+> **Why the M-of-N ceremony does not run inside `quicbaasd init`.**
+> qrdb's `CeremonyService.Initialize` produces two artifacts that live only in
+> the process that called it: the Shamir shares (an in-memory
+> `sealedShareStore` of `secure.Secret` enclaves, never persisted) and the
+> officers' signed certificates (the in-memory `pendingCerts` map —
+> `RestoreFromRegistry` rehydrates only public metadata and rebuilds
+> `PendingCert` **without** `CertPEM`). Both are consumed by `claim-cert` /
+> `claim-share` against a **live** daemon. Running `Initialize` in the one-shot
+> init process and exiting would destroy every officer certificate and every
+> share, leaving a ceremony stuck in `Enrolling` that no officer could complete.
+> Persisting the shares to the server's disk to work around that would hand any
+> host-root the full quorum, defeating the purpose of M-of-N. So init records
+> intent plus the officers' public CSRs, and the daemon runs the ceremony.
 
 `quicbaasd start` without a marker emits a typed
 `InitMissingError` so the operator gets a precise message instead of
@@ -195,21 +266,18 @@ sequenceDiagram
     autonumber
     participant Op as Operator
     participant Daemon as quicbaasd init
-    participant Loaders as officerLoaders + loadTrustedCAs
     participant Server as embedded *server.Server
     participant Disk as <data-dir>
 
-    Op->>Daemon: quicbaasd init --so-pin … --user-pin … --barrier-strategy passphrase --so alice:csr:/...
+    Op->>Daemon: quicbaasd init --so-pin … --user-pin … --barrier-strategy passphrase
     Daemon->>Daemon: validateInlineInitFlags
     Daemon->>Disk: MkdirAll(dataDir, 0o750)
     Daemon->>Disk: Stat(.quicbaasd_init_done)
     alt marker exists
         Daemon-->>Op: InitAlreadyDoneError
     end
-    Daemon->>Loaders: loadOfficers(--so) + loadTrustedCAs(--trusted-ca)
-    Loaders-->>Daemon: []*officerMaterial, *x509.CertPool
     alt barrier_strategy == "shamir"
-        Daemon->>Disk: write pending_ceremony.json (atomic rename)
+        Note over Daemon: no server, no first-boot, no shares —<br/>the ceremony owns the barrier
     else
         Daemon->>Server: NewServer(initCfg) + Start()
         Server->>Server: XKMSCryptoOptions → IAM bootstrap → qrdbfirstboot.Initialize
@@ -221,6 +289,16 @@ sequenceDiagram
 ```
 
 ## Examples
+
+Every example below assumes `iam.spiffe_trust_domain` is set in the config file
+(see [Prerequisite](#prerequisite-iamspiffe_trust_domain-required)); init fails
+closed without it.
+
+```yaml
+# /etc/quicbaas/config.yaml
+iam:
+  spiffe_trust_domain: quicbaas.example.test
+```
 
 ### Passphrase (single-host)
 
@@ -242,37 +320,70 @@ quicbaasd init \
   --so-pin $SO_PIN \
   --user-pin $USER_PIN \
   --barrier-strategy shamir \
-  --shares 5 --threshold 3 \
-  --so alice:csr:/etc/quicbaas/officers/alice.csr \
-  --so bob:csr:/etc/quicbaas/officers/bob.csr \
-  --so carol:csr:/etc/quicbaas/officers/carol.csr \
-  --so dan:csr:/etc/quicbaas/officers/dan.csr \
-  --so eve:csr:/etc/quicbaas/officers/eve.csr
+  --shares 5 --threshold 3
 ```
 
-After this returns successfully:
+No `--so` officers are supplied. Init records the 3-of-5 parameters and stops;
+the barrier does not exist yet.
+
+## Shamir: the ceremony flow
+
+`quicbaasd init --barrier-strategy shamir` is only step 1 of five. The rest run
+against the **running** daemon, because Shamir needs multiple Security Officers
+present and the shares must never touch disk.
 
 ```bash
+# 2. Start the daemon. It boots SEALED and serves only the sealed-window
+#    surface: health, barrier lifecycle, officer enrolment, and the ceremony.
 quicbaasd start --data-dir /var/lib/quicbaas
-# ... in another shell ...
-quicbaas ceremony status
-quicbaas ceremony claim-cert begin --officer alice
+
+# 3. Register each officer's CSR. The CA signs it and binds the officer to the
+#    issued certificate's SPKI thumbprint. The response carries that
+#    certificate and the officer's share index — never share bytes.
+#    Officers generate their keypair on a security key or PIV smartcard, so the
+#    private key never exists as a file.
+for who in alice bob carol dan eve; do
+  quicbaas init officer register \
+    --username "$who" \
+    --csr "/etc/quicbaas/officers/$who.csr" \
+    --output "/etc/quicbaas/officers/$who.crt"
+done
+
+# 4. Run the ceremony. The barrier secret is split 3-of-5 and ONE SHARE IS
+#    SEALED PER OFFICER into a memguard enclave inside the daemon. Nothing is
+#    returned and nothing is written to disk.
+quicbaas init initialize \
+  --so-pin "$SO_PIN" --user-pin "$USER_PIN" \
+  --threshold 3 \
+  --so alice:/etc/quicbaas/officers/alice.csr \
+  --so bob:/etc/quicbaas/officers/bob.csr \
+  --so carol:/etc/quicbaas/officers/carol.csr \
+  --so dan:/etc/quicbaas/officers/dan.csr \
+  --so eve:/etc/quicbaas/officers/eve.csr
+
+# 5. Each officer claims their own certificate and share, from their own host,
+#    proving possession of their private key. Each share is released EXACTLY
+#    ONCE; the only way to recover it afterwards is for that officer to supply it.
+quicbaas init claim-cert  --username alice --csr-key alice.key --output alice.crt
+quicbaas init claim-share --username alice --cert alice.crt --key alice.key
+
+# Track progress at any point (never reports share bytes):
+quicbaas init officer status
+
+# 6. A quorum submits shares. The barrier unseals, the sealed window closes,
+#    and the daemon completes its boot — first-boot IAM runs behind the now
+#    unsealed barrier.
+quicbaas barrier unseal --share "$SHARE_A"
+quicbaas barrier unseal --share "$SHARE_B"
+quicbaas barrier unseal --share "$SHARE_C"
 ```
 
-### Shamir with external officer certificates
+### Officers whose key material is external
 
-```bash
-quicbaasd init \
-  --data-dir /var/lib/quicbaas \
-  --so-pin $SO_PIN --user-pin $USER_PIN \
-  --barrier-strategy shamir --shares 5 --threshold 3 \
-  --trusted-ca /etc/pki/corp-root.pem \
-  --so alice:cert:/etc/quicbaas/officers/alice.pem \
-  --so bob:cert:/etc/quicbaas/officers/bob.pem \
-  --so carol:cert:/etc/quicbaas/officers/carol.pem \
-  --so dan:cert:/etc/quicbaas/officers/dan.pem \
-  --so eve:cert:/etc/quicbaas/officers/eve.pem
-```
+An officer holding a certificate from a corporate CA — rather than submitting a
+CSR — enrols with `quicbaas init enroll-external-officer` against the running
+daemon. There is no init-time `--trusted-ca` flag; the trust decision belongs to
+the ceremony, not to a one-shot command.
 
 ### Ephemeral test (no barrier)
 
@@ -293,15 +404,9 @@ All init errors are typed (no `fmt.Errorf` returns). Common ones:
 
 | Type | Cause |
 |------|-------|
-| `ErrInvalidOfficerFormat` | `--so` value did not match `username:KIND:/path` |
-| `ErrEmptyOfficerUsername` / `ErrEmptyOfficerPath` | Trimmed components empty |
-| `ErrUnknownOfficerKind` | KIND not in `{csr, cert, pubkey}` |
-| `ErrOfficerFileNotFound` / `ErrOfficerFileRead` | `--so` file missing / unreadable / is a directory |
-| `ErrOfficerPEMDecode` | `--so` file is not valid PEM |
-| `ErrCSRParseFailed` / `ErrCSRSignatureInvalid` | CSR malformed or fails self-signature check |
-| `ErrCertParseFailed` / `ErrPubKeyParseFailed` | KIND=cert/pubkey file unparseable |
-| `ErrTrustedCANotFound` / `ErrTrustedCARead` / `ErrTrustedCANoCerts` | `--trusted-ca` problems |
+| `ErrSecretRequiredForSoftware` | `--barrier-strategy=passphrase` without `--passphrase` |
 | `ErrInvalidCredentialStrategy` | `--credential-strategy` not in `{manual, barrier}` |
+| `SPIFFETrustDomainRequiredError` | `iam.spiffe_trust_domain` unset |
 | `InitAlreadyDoneError` | `.quicbaasd_init_done` exists in the data dir |
 | `UnsupportedBarrierStrategyError` | Hardware strategy supplied — handled by xkmsd init |
 

@@ -895,7 +895,7 @@ QuicBaaS services are accessible through multiple transport protocols. All 28 se
 
 ### MCP Protocol Support
 
-QuicBaaS also supports the Model Context Protocol (MCP) for AI/LLM integration. The MCP server provides 100+ tools covering all services, enabling AI assistants and language models to interact with QuicBaaS programmatically.
+QuicBaaS also supports the Model Context Protocol (MCP) for AI/LLM integration. The MCP server registers 500 tools covering all services, enabling AI assistants and language models to interact with QuicBaaS programmatically. Fifty of them are deliberately unmapped in the authorization gate and filtered out of `tools/list`, so 450 are reachable — see the [README's category breakdown](../README.md#mcp-tools-ai-agents).
 
 **Source:** `pkg/api/mcp/`
 

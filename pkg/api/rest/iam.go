@@ -80,11 +80,35 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 	router.Post("/oauth2/revoke", h.Revoke)
 	router.Post("/oauth2/introspect", h.Introspect) // RFC 7662 token introspection
 
-	// Dynamic Client Registration (RFC 7591)
-	router.Post("/oauth2/register", h.RegisterDynamicClient)
-	router.Get("/oauth2/register/{client_id}", h.GetDynamicClient)
-	router.Put("/oauth2/register/{client_id}", h.UpdateDynamicClient)
-	router.Delete("/oauth2/register/{client_id}", h.DeleteDynamicClient)
+	// Dynamic Client Registration (RFC 7591) + its management protocol
+	// (RFC 7592). Registered as a group on the ROOT router (the OIDC discovery
+	// endpoints force root-level registration) carrying the SAME shared authz
+	// chain the other root-mounted IAM groups use, so creating an OAuth2 client
+	// — an authentication principal — is never reachable without a verified
+	// principal under RequireAuthz.
+	//
+	// POST /oauth2/register is PEP-mapped to tenants:create
+	// (authz_pep_mapping.go) and the presented platform token doubles as the
+	// RFC 7591 initial access token: the tenant it authenticated into is the
+	// tenant the new client lands in.
+	//
+	// The three RFC 7592 management verbs below are a DELIBERATE pre-auth
+	// carve-out (preAuthRouteTemplates in authz_public_routes.go): per RFC 7592
+	// §2 their credential is the per-client registration access token, which the
+	// registrant holds instead of a platform token. That token is a real,
+	// fail-closed gate — issued once at registration, stored only as a SHA-256
+	// hash on the client record, and verified by constant-time comparison for
+	// that exact client_id (IAMHandler.authorizeRegistrationAccess). The
+	// carve-out is whole-path and segment-exact, so the sibling create route
+	// above stays gated.
+	router.Route("/oauth2/register", func(r chi.Router) {
+		h.server.useAPIAuthzMiddleware(r)
+
+		r.Post("/", h.RegisterDynamicClient)
+		r.Get("/{client_id}", h.GetDynamicClient)
+		r.Put("/{client_id}", h.UpdateDynamicClient)
+		r.Delete("/{client_id}", h.DeleteDynamicClient)
+	})
 
 	// Token management endpoints (public).
 	router.Route("/api/v1/auth", func(r chi.Router) {
@@ -124,13 +148,11 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 		// principal under RequireAuthz=false (EnforceTokenBinding), which the
 		// service-layer tenant-binding gates require to reason about identity.
 		//
-		// The ONE carve-out is the WebAuthn login ceremony registered below
-		// (.../{tenant_id}/webauthn/login/{begin,finish}): WebAuthn IS the
-		// authentication mechanism, so it must stay reachable pre-auth. It
-		// bypasses every gate via the tenant-scoped pre-auth templates in
-		// authz_public_routes.go (isAuthzPublicEndpoint / isDefaultDenyPublic).
-		// The sibling register/{begin,finish} enrollment routes are NOT
-		// exempted — they bind an authenticator to a caller-supplied user_id.
+		// The WebAuthn ceremony no longer lives on this mount: the xkms-native
+		// mount under /api/v1/iam/{tenant_id}/webauthn is the single
+		// tenant-scoped ceremony surface, and browser login rides the unified
+		// ceremony at /api/v1/auth/login/{begin,finish} (pre-auth via
+		// authz_public_routes.go).
 		h.server.useAPIAuthzMiddleware(r)
 
 		r.Get("/", h.ListTenants)
@@ -243,17 +265,6 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 			r.Post("/effective-permissions", h.GetEffectivePermissions)
 		})
 
-		// WebAuthn endpoints. login/begin + login/finish are PRE-AUTH (the
-		// ceremony authenticates the caller; see authz_public_routes.go);
-		// register/begin + register/finish enroll a NEW authenticator for a
-		// caller-supplied user_id and stay behind the group's authz chain.
-		r.Route("/{tenant_id}/webauthn", func(r chi.Router) {
-			r.Post("/register/begin", h.BeginRegistration)
-			r.Post("/register/finish", h.FinishRegistration)
-			r.Post("/login/begin", h.BeginLogin)
-			r.Post("/login/finish", h.FinishLogin)
-		})
-
 		// Federation provider management (tenant-scoped)
 		r.Route("/{tenant_id}/providers", func(r chi.Router) {
 			r.Post("/", h.RegisterProvider)
@@ -268,7 +279,16 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 	// Invite activation endpoints (public — no auth required).
 	// These are intentionally outside the /api/v1/iam auth block so that
 	// new users can activate before they have a session token.
-	router.Route("/api/v1/iam/invites", func(r chi.Router) {
+	// The tenant is part of the path because invitations live in that tenant's
+	// own store: a token issued for one tenant is not present in another's, so
+	// the store cannot be resolved without knowing which tenant to ask. That is
+	// what makes isolation structural — a token replayed against the wrong
+	// tenant is not found at all, indistinguishable from one that never
+	// existed, rather than being found and then rejected by a check.
+	//
+	// It costs the invited user nothing: the link is generated server-side and
+	// carries the tenant, exactly as it already carries the token.
+	router.Route("/api/v1/iam/{tenant_id}/invites", func(r chi.Router) {
 		r.Get("/{token}", h.GetInvite)
 		r.Post("/{token}/activate/fido2/begin", h.ActivateFIDO2Begin)
 		r.Post("/{token}/activate/fido2/finish", h.ActivateFIDO2Finish)
@@ -318,11 +338,11 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 	RegisterAdminRoutes(router, h)
 
 	// Mount xkms's native WebAuthn routes under /api/v1/iam/{tenant_id}/webauthn.
-	// This is the canonical surface for tenant-scoped FIDO2 ceremonies; the
-	// legacy /api/v1/tenants/{tenant_id}/webauthn routes above remain wired
-	// for clients that have not yet migrated. Use a bounded initialization
-	// context instead of context.Background() so the manager lookup respects
-	// a startup timeout.
+	// This is the single tenant-scoped FIDO2 ceremony surface (the legacy
+	// /api/v1/tenants/{tenant_id}/webauthn mount was deleted; browser login
+	// rides the unified ceremony at /api/v1/auth/login). Use a bounded
+	// initialization context instead of context.Background() so the manager
+	// lookup respects a startup timeout.
 	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer initCancel()
 	h.MountXKMSWebAuthnRoutes(initCtx, router)

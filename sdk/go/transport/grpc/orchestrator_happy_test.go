@@ -225,6 +225,7 @@ var orchCases = []orchCase{
 	{"PromptSession", "PromptSession", &orchestrator.PromptSessionRequest{SessionID: "s1", Prompt: "hi"}},
 	{"SessionStatus", "SessionStatus", &orchestrator.SessionStatusRequest{SessionID: "s1"}},
 	{"CloseSession", "CloseSession", &orchestrator.CloseSessionRequest{SessionID: "s1"}},
+	{"RotateSessionAccount", "RotateSessionAccount", &orchestrator.RotateSessionAccountRequest{SessionID: "s1"}},
 	{"ListSessions", "ListSessions", &orchestrator.ListSessionsRequest{Backend: "claude"}},
 	{"CreateTask", "CreateTask", &orchestrator.CreateTaskRequest{TenantID: "t1", Subject: "subj"}},
 	{"GetTask", "GetTask", &orchestrator.GetTaskRequest{TenantID: "t1", TaskID: "t1"}},

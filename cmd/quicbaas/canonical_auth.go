@@ -159,15 +159,19 @@ func (e *SecuritySurfaceUnavailableError) Error() string {
 // canonicalAuthFactorAddFlags consolidates the type-agnostic +
 // type-specific "auth factor add" / "auth factor rotate" flag set.
 type canonicalAuthFactorAddFlags struct {
-	factorType  string
-	label       string
-	user        string
-	tenant      string
-	certPath    string
-	fido2Device string
-	fido2Origin string
-	pivReader   string
-	pivSlot     string
+	factorType   string
+	label        string
+	user         string
+	tenant       string
+	certPath     string
+	fido2Device  string
+	fido2Origin  string
+	pivBackend   string
+	pivDir       string
+	pivSlot      string
+	pin          string
+	pkcs11Module string
+	pkcs11Token  string
 }
 
 // ---------------------------------------------------------------------------
@@ -282,8 +286,12 @@ func bindCanonicalAuthFactorAddFlags(cmd *cobra.Command, f *canonicalAuthFactorA
 	cmd.Flags().StringVar(&f.certPath, "cert", "", "Certificate PEM path (--type mtls)")
 	cmd.Flags().StringVar(&f.fido2Device, "device", "", "FIDO2 device id (--type fido2; default first connected)")
 	cmd.Flags().StringVar(&f.fido2Origin, "origin", "", "WebAuthn origin (--type fido2; default: https://<rp-id>)")
-	cmd.Flags().StringVar(&f.pivReader, "reader", "", "PC/SC reader name (--type piv)")
+	cmd.Flags().StringVar(&f.pivBackend, "piv-backend", localPIVBackendFile, "Local PIV backend: file | pkcs11 | tpm2 (--type piv)")
+	cmd.Flags().StringVar(&f.pivDir, "piv-dir", defaultLocalPIVDir, "Local PIV key/certificate directory (--type piv, file backend)")
 	cmd.Flags().StringVar(&f.pivSlot, "slot", "9a", "PIV slot id (--type piv; default 9a)")
+	cmd.Flags().StringVar(&f.pin, "pin", "", "PKCS#11 User PIN (--type piv, pkcs11 backend)")
+	cmd.Flags().StringVar(&f.pkcs11Module, "pkcs11-module", "", "PKCS#11 library path (--type piv, pkcs11 backend)")
+	cmd.Flags().StringVar(&f.pkcs11Token, "pkcs11-token", "", "PKCS#11 token label (--type piv, pkcs11 backend)")
 }
 
 // ---------------------------------------------------------------------------
@@ -323,9 +331,10 @@ func canonicalAuthService(op string) (quicbaas.AuthService, error) {
 	return auth, nil
 }
 
-// canonicalAuthWebAuthn resolves the WebAuthn relying-party sub-client used to
-// complete the server-side registration ceremony (FinishRegistration).
-func canonicalAuthWebAuthn(op string) (quicbaas.WebAuthnClient, error) {
+// canonicalAuthFIDO2 resolves the FIDO2 ceremony sub-client (the single
+// canonical WebAuthn registration/authentication surface) used to complete
+// the server-side registration ceremony (FinishRegistration).
+func canonicalAuthFIDO2(op string) (quicbaas.FIDO2Client, error) {
 	cl, err := sdkClientFactory()
 	if err != nil {
 		return nil, err
@@ -334,28 +343,11 @@ func canonicalAuthWebAuthn(op string) (quicbaas.WebAuthnClient, error) {
 	if auth == nil {
 		return nil, &SecuritySurfaceUnavailableError{Op: op}
 	}
-	w := auth.WebAuthn()
-	if w == nil {
+	f := auth.FIDO2()
+	if f == nil {
 		return nil, &SecuritySurfaceUnavailableError{Op: op}
 	}
-	return w, nil
-}
-
-// canonicalAuthPIV resolves the PIV sub-client.
-func canonicalAuthPIV(op string) (quicbaas.PIVClient, error) {
-	cl, err := sdkClientFactory()
-	if err != nil {
-		return nil, err
-	}
-	auth := cl.Security().Auth()
-	if auth == nil {
-		return nil, &SecuritySurfaceUnavailableError{Op: op}
-	}
-	p := auth.PIV()
-	if p == nil {
-		return nil, &SecuritySurfaceUnavailableError{Op: op}
-	}
-	return p, nil
+	return f, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -574,29 +566,33 @@ func buildCanonicalEnrollRequest(ctx context.Context, f *canonicalAuthFactorAddF
 			params[k] = v
 		}
 	case "piv":
-		piv, err := canonicalAuthPIV("auth factor add --type piv")
+		session, err := newLocalPIVSessionFunc(&localPIVConfig{
+			backend:      f.pivBackend,
+			dir:          f.pivDir,
+			pin:          f.pin,
+			pkcs11Module: f.pkcs11Module,
+			pkcs11Token:  f.pkcs11Token,
+		})
 		if err != nil {
 			return nil, err
 		}
-		if f.pivReader == "" {
-			readers, err := piv.ListReaders(ctx)
-			if err != nil {
-				return nil, &OpError{Op: "piv.ListReaders", Cause: err}
-			}
-			if len(readers.Readers) == 0 {
-				return nil, errors.New("auth factor add --type piv: no PC/SC readers detected")
-			}
-			f.pivReader = readers.Readers[0].Name
-		}
-		cert, err := piv.GetCertificate(ctx, f.pivReader, f.pivSlot)
+		defer func() { _ = session.Close() }()
+		cert, err := session.Certificate(f.pivSlot)
 		if err != nil {
-			return nil, &OpError{Op: "piv.GetCertificate", Cause: err}
+			return nil, &OpError{Op: "piv.Certificate", Cause: err}
 		}
 		sum := sha256.Sum256(cert.Raw)
 		params["credential_sha256"] = hex.EncodeToString(sum[:])
 		spkiSum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
 		params["spki_sha256"] = hex.EncodeToString(spkiSum[:])
-		params["reader"] = f.pivReader
+		// cert_pem is REQUIRED by the server-side PIV login verifier
+		// (go-xkms PIVHardwareFactorVerifier decodes the enrolled
+		// certificate from factor metadata to verify chain + signature).
+		params["cert_pem"] = string(pem.EncodeToMemory(&pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: cert.Raw,
+		}))
+		params["backend"] = localPIVBackendOrDefault(f.pivBackend)
 		params["slot"] = f.pivSlot
 		params["cert_serial"] = cert.SerialNumber.String()
 		params["cert_cn"] = cert.Subject.CommonName
@@ -752,26 +748,26 @@ type canonicalFIDO2Registerer func(ctx context.Context, optionsJSON []byte, devi
 var canonicalFIDO2EnrollFunc = canonicalFIDO2Enroll
 
 // canonicalFIDO2Enroll is the production implementation behind
-// canonicalFIDO2EnrollFunc. It resolves the WebAuthn relying-party client (the
+// canonicalFIDO2EnrollFunc. It resolves the FIDO2 ceremony client (the
 // single canonical ceremony surface) and drives the registration ceremony via
 // enrollCanonicalFIDO2.
 func canonicalFIDO2Enroll(ctx context.Context, f *canonicalAuthFactorAddFlags) (string, error) {
-	webauthn, err := canonicalAuthWebAuthn("auth factor add --type fido2")
+	fido2, err := canonicalAuthFIDO2("auth factor add --type fido2")
 	if err != nil {
 		return "", err
 	}
-	return enrollCanonicalFIDO2(ctx, f, webauthn, canonicalFIDO2RegisterFunc)
+	return enrollCanonicalFIDO2(ctx, f, fido2, canonicalFIDO2RegisterFunc)
 }
 
 // enrollCanonicalFIDO2 drives the full WebAuthn registration ceremony for a
 // FIDO2 factor enrollment and returns the base64url credential id used as the
 // login lookup key:
 //
-//  1. webauthn.BeginRegistration issues the server-side creation options +
+//  1. fido2.BeginRegistration issues the server-side creation options +
 //     session id.
 //  2. register drives the connected authenticator over CTAP2 with those options
 //     to obtain the navigator.credentials.create() attestation JSON.
-//  3. webauthn.FinishRegistration completes the server-side ceremony with the
+//  3. fido2.FinishRegistration completes the server-side ceremony with the
 //     attestation under the issued session id.
 //  4. The credential id is recovered from the attestation's "rawId" — the same
 //     base64url encoding the login path's lookup key uses — and returned so the
@@ -779,15 +775,15 @@ func canonicalFIDO2Enroll(ctx context.Context, f *canonicalAuthFactorAddFlags) (
 func enrollCanonicalFIDO2(
 	ctx context.Context,
 	f *canonicalAuthFactorAddFlags,
-	webauthn quicbaas.WebAuthnClient,
+	fido2 quicbaas.FIDO2Client,
 	register canonicalFIDO2Registerer,
 ) (string, error) {
-	beginResp, err := webauthn.BeginRegistration(ctx, &quicbaas.WebAuthnUser{
+	beginResp, err := fido2.BeginRegistration(ctx, &quicbaas.FIDO2BeginRegistrationRequest{
 		Username:    f.user,
 		DisplayName: f.label,
 	})
 	if err != nil {
-		return "", &OpError{Op: "webauthn.BeginRegistration", Cause: err}
+		return "", &OpError{Op: "fido2.BeginRegistration", Cause: err}
 	}
 	if beginResp == nil || beginResp.OptionsJSON == "" {
 		return "", &MissingFIDO2RegistrationOptionsError{}
@@ -803,14 +799,11 @@ func enrollCanonicalFIDO2(
 		return "", err
 	}
 
-	if _, err := webauthn.FinishRegistration(ctx, &quicbaas.WebAuthnUser{
-		Username:    f.user,
-		DisplayName: f.label,
-	}, &quicbaas.FIDO2FinishRegistrationRequest{
+	if _, err := fido2.FinishRegistration(ctx, &quicbaas.FIDO2FinishRegistrationRequest{
 		SessionID:       beginResp.SessionID,
 		AttestationJSON: string(attestation),
 	}); err != nil {
-		return "", &OpError{Op: "webauthn.FinishRegistration", Cause: err}
+		return "", &OpError{Op: "fido2.FinishRegistration", Cause: err}
 	}
 
 	return credentialID, nil

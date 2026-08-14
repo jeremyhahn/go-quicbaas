@@ -18,6 +18,19 @@ import "strings"
 // This file is the single source of truth for translating the orchestrator
 // service's session wire shapes into the flat SDK response types.
 //
+// A prompt on an existing session is asynchronous on every transport: the
+// server persists a turn_started marker, dispatches the turn on a background
+// context, and answers with an acknowledgement carrying a turn ID. The turn's
+// output — assistant chunks, tool calls, and the terminal turn_completed /
+// turn_failed event — arrives on the durable session event stream, reachable
+// through SubscribeSessionEvents and GetSessionHistory.
+//
+// A prompt with no session ID is a different operation: a stateless one-shot
+// against a named backend, which has no event log to publish to and therefore
+// answers with the completed turn inline. Both shapes travel on the same wire
+// type and are told apart by the status field, so every transport keeps one
+// decode path.
+//
 // The service emits a structured turn — content blocks plus a stop reason —
 // while the SDK exposes a flattened {response, done} view. The two shapes share
 // no field names, so decoding the service payload directly into the SDK struct
@@ -26,11 +39,17 @@ import "strings"
 // responses through the converters below instead of unmarshalling the service
 // payload into an SDK type.
 
-// EmptyTurnError reports a PromptSession response that carried neither content
-// nor a stop reason. PromptSession is synchronous, so a successful call always
-// describes a finished turn; a response with nothing in it means the backend
-// produced no turn at all and must surface as an error rather than as an empty
-// success.
+// TurnStatusAccepted is the status the server reports when it has accepted a
+// turn for background execution. It mirrors orchestration.TurnStatusAccepted;
+// the constant is restated here so the SDK stays free of a dependency on the
+// server-side orchestration package.
+const TurnStatusAccepted = "accepted"
+
+// EmptyTurnError reports a stateless prompt response that carried neither
+// content nor a stop reason. A stateless prompt is synchronous, so a
+// successful call always describes a finished turn; a response with nothing in
+// it means the backend produced no turn at all and must surface as an error
+// rather than as an empty success.
 type EmptyTurnError struct {
 	// SessionID is the session whose turn came back empty. It may be empty
 	// when the response omitted it as well.
@@ -43,6 +62,23 @@ func (e *EmptyTurnError) Error() string {
 		return "orchestrator: agent turn returned no content and no stop reason"
 	}
 	return "orchestrator: agent turn returned no content and no stop reason: session " + e.SessionID
+}
+
+// MissingTurnIDError reports an acceptance acknowledgement with no turn ID.
+// The turn ID is what correlates the ack with the turn_started event and its
+// terminal event, so an ack without one leaves the caller unable to follow the
+// turn it just started.
+type MissingTurnIDError struct {
+	// SessionID is the session whose acknowledgement was malformed.
+	SessionID string
+}
+
+// Error implements the error interface.
+func (e *MissingTurnIDError) Error() string {
+	if e.SessionID == "" {
+		return "orchestrator: turn accepted without a turn ID"
+	}
+	return "orchestrator: turn accepted without a turn ID: session " + e.SessionID
 }
 
 // PromptContentBlock is one fragment of an agent turn's content as emitted by
@@ -67,15 +103,52 @@ func (b PromptContentBlock) isText() bool {
 // SDK does not expose it, so leaving it out keeps one wire type valid
 // everywhere.
 type PromptSessionWire struct {
-	SessionID  string               `json:"session_id"`
+	SessionID string `json:"session_id"`
+
+	// Status is TurnStatusAccepted on the asynchronous session-turn path and
+	// empty on the stateless one-shot path. It is the discriminator between
+	// the two response shapes.
+	Status string `json:"status"`
+
+	// TurnID identifies an accepted turn. Set only when Status is
+	// TurnStatusAccepted.
+	TurnID string `json:"turn_id"`
+
+	// Sequence is the session-log sequence of the accepted turn's
+	// turn_started event. Set only when Status is TurnStatusAccepted.
+	Sequence uint64 `json:"sequence"`
+
 	Content    []PromptContentBlock `json:"content"`
 	Model      string               `json:"model"`
 	StopReason string               `json:"stop_reason"`
 }
 
-// Response flattens the wire turn into the SDK response type.
+// Response converts the wire payload into the SDK response type, dispatching
+// on Status so an accepted asynchronous turn and a completed stateless turn
+// each get their own construction rules.
 func (w *PromptSessionWire) Response() (*PromptSessionResponse, error) {
+	if w.Status == TurnStatusAccepted {
+		return NewPromptSessionAccepted(w.SessionID, w.TurnID, w.Sequence, w.Model)
+	}
 	return NewPromptSessionResponse(w.SessionID, w.Content, w.Model, w.StopReason)
+}
+
+// NewPromptSessionAccepted builds the SDK response for a turn the server
+// accepted for background execution. Done is false: the turn has only started.
+// Callers follow it on the session event stream, starting at Sequence, until
+// they observe the turn_completed or turn_failed event carrying TurnID.
+func NewPromptSessionAccepted(sessionID, turnID string, sequence uint64, model string) (*PromptSessionResponse, error) {
+	if turnID == "" {
+		return nil, &MissingTurnIDError{SessionID: sessionID}
+	}
+	return &PromptSessionResponse{
+		SessionID: sessionID,
+		TurnID:    turnID,
+		Sequence:  sequence,
+		Accepted:  true,
+		Done:      false,
+		Model:     model,
+	}, nil
 }
 
 // NewPromptSessionResponse builds the flat SDK response from a completed agent
@@ -84,10 +157,10 @@ func (w *PromptSessionWire) Response() (*PromptSessionResponse, error) {
 // their native representations — so the flattening and completion rules live
 // in exactly one place.
 //
-// Reaching this function means the synchronous PromptSession call returned
-// without error, which by contract means the agent's turn finished; Done is
-// therefore true. A turn that carries neither text nor a stop reason is not a
-// turn at all and yields *EmptyTurnError.
+// Reaching this function means a stateless prompt returned without error,
+// which by contract means the agent's turn finished; Done is therefore true. A
+// turn that carries neither text nor a stop reason is not a turn at all and
+// yields *EmptyTurnError.
 func NewPromptSessionResponse(sessionID string, blocks []PromptContentBlock, model, stopReason string) (*PromptSessionResponse, error) {
 	var text strings.Builder
 	for _, block := range blocks {

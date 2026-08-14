@@ -183,6 +183,81 @@ var pepMapping = map[string]pepResource{
 	// Secret / named-credential rotation.
 	"/api/v1/secrets": {resource: "credentials", verbs: crudVerbs{get: "retrieve", list: "list", create: "store", del: "delete"}},
 
+	// Secret side-surfaces mounted as SIBLINGS of /api/v1/secrets to avoid chi
+	// wildcard conflicts (server.go). They are NOT covered by the
+	// "/api/v1/secrets" entry above: longestPEPPrefix requires prefix+"/", and
+	// "/api/v1/secrets-versions" is not a sub-path of "/api/v1/secrets". Each
+	// therefore needs its own entry or the validator gate default-denies the
+	// whole surface (the GUI "view versions" action was a hard 403).
+	//
+	// Only GET is mounted on all three. The write verbs are still declared —
+	// with the STRONGEST credentials write actions — so a future POST/DELETE
+	// mount cannot silently inherit a read-strength permission.
+	"/api/v1/secrets-versions": {resource: "credentials", verbs: crudVerbs{get: "list_versions", list: "list_versions", create: "store", del: "delete"}},
+	"/api/v1/secrets-prefix":   {resource: "credentials", verbs: crudVerbs{get: "retrieve", list: "list", create: "store", del: "delete"}},
+	"/api/v1/secrets-watch":    {resource: "credentials", verbs: crudVerbs{get: "retrieve", list: "retrieve", create: "store", del: "delete"}},
+
+	// Trust composition surface (handlers_trust.go: cross-signed root pool, AIA
+	// auto-import, DANE publication). qrdb registers a dedicated broker trust
+	// family for exactly these artifacts — trust:read / trust:write
+	// (go-qrdb/pkg/permission/broker_scope.go TrustRead / TrustWrite), granted
+	// to the built-in Admin role — so the surface authorizes with that family
+	// rather than the coarser certs:* it would otherwise borrow. Same family the
+	// sibling /api/v1/bootstrap trust-anchor surface already uses.
+	"/api/v1/trust": {resource: "trust", verbs: crudVerbs{get: "read", list: "read", create: "write", del: "write"}},
+
+	// Attestation surface (handlers_attestation.go: statement verification,
+	// chain verification, container attestation). It gets its own resource
+	// family rather than borrowing certs:* or trust:*: the verbs answer "is
+	// this host and this workload in the state we approved?", and a principal
+	// allowed to read the certificate store has no business driving a TPM
+	// quote or reading a host's PCR values, which fingerprint its boot state.
+	//
+	// Every mounted route is a POST, so this coarse entry deliberately maps
+	// create to the STRONGEST action (attest). The two read-strength verbs are
+	// downgraded individually in pepSpecialRules below; a future sub-path
+	// added without a rule therefore inherits the strong permission rather
+	// than silently becoming reachable with a read-strength one.
+	"/api/v1/attestation": {resource: "attestation", verbs: crudVerbs{get: "verify", list: "verify", create: "attest", del: "attest"}},
+
+	// ACME CONTROL PLANE (handlers_acme.go registerACMERoutes: register-challenge,
+	// issue, new-order, finalize, renew). These are the QuicBaaS broker-as-CA
+	// client verbs behind Security().ACME(); qrdb documents acme:write as
+	// covering "ACME accounts, orders, and issuance", which is precisely this
+	// surface. The RAW RFC 8555 endpoints mounted at the router ROOT (/acme/*)
+	// are a different surface entirely: they authenticate per RFC 8555 (JWS +
+	// nonce + account key / EAB), carry no platform-token gate, and are NOT
+	// mapped here.
+	"/api/v1/acme": {resource: "acme", verbs: crudVerbs{get: "read", list: "read", create: "write", del: "write"}},
+
+	// go-xkms compatibility surface (routes_xkms.go) — lets the go-xkms SDK REST
+	// transport talk to quicbaasd. Coarse fallback only: every mounted endpoint
+	// resolves granularly via xkmsOps (pepSpecialRules) to the registered
+	// keys:* / certs:* / ca:* / piv:* / pin:* / backends:* family for its verb.
+	// The longer "/api/v1/xkms/v1/ssh" prefix below still wins for the SSH alias.
+	"/api/v1/xkms": {resource: "keys", verbs: crudVerbs{get: "get", list: "list", create: "create", del: "delete"}},
+
+	// Legacy seal lifecycle (server.go /api/v1/seal) — superseded by
+	// /api/v1/barrier but still the REST projection of the Security().Seal()
+	// SDK service in all three SDKs (sdk/go/transport/rest mapSealMethod,
+	// sdk/typescript barrier legacy path, sdk/javascript clients/seal.js), so
+	// the routes stay mounted and must authorize. The nine registered
+	// operations resolve via legacySealOps (pepSpecialRules); this coarse entry
+	// mirrors the barrierScopeTable fallback for unregistered sub-paths.
+	"/api/v1/seal": {resource: "tenant_barrier", verbs: crudVerbs{get: "status", list: "status", create: "seal", del: "seal"}},
+
+	// Atomic batch data plane (/api/v1/batch/{put,get,delete}). qrdb registers a
+	// dedicated batch:execute permission and the gRPC canon uses it for every
+	// Batch* method (pkg/api/grpc/authz_mapping.go), so REST authorizes identically.
+	"/api/v1/batch": {resource: "batch", verbs: crudVerbs{get: "execute", list: "execute", create: "execute", del: "execute"}},
+
+	// Secondary-index query plane. GET /query/{type}/{index} calls
+	// service.Query, which the gRPC canon authorizes as kv:range; POST
+	// /query/range calls service.ScanIndex, authorized as index:scan via the
+	// special rule below. Mirroring the gRPC canon keeps a permission grant
+	// equivalent across transports.
+	"/api/v1/query": {resource: "kv", verbs: crudVerbs{get: "range", list: "range", create: "range", del: "range"}},
+
 	// Tenant barrier lifecycle — coarse fallback for both mounts. The 13
 	// registered operations resolve via pepSpecialRules (barrierGranularOps)
 	// before this fallback is consulted, so the fallback only fires for any
@@ -216,6 +291,16 @@ var pepMapping = map[string]pepResource{
 	"/v1/ceremony": {resource: "ceremony", verbs: crudVerbs{get: "status", list: "status", create: "initialize", del: "initialize"}},
 	"/v1/init":     {resource: "ceremony", verbs: crudVerbs{get: "status", list: "status", create: "initialize", del: "initialize"}},
 	"/api/v1/init": {resource: "ceremony", verbs: crudVerbs{get: "status", list: "status", create: "initialize", del: "initialize"}},
+
+	// RFC 7591 Dynamic Client Registration (root-mounted /oauth2/register in
+	// iam.go). An OAuth2 client is an authentication principal owned by a
+	// tenant, and apps are administered under the tenants surface elsewhere in
+	// this table, so registering one authorizes as tenants:create. Only the
+	// CREATE verb is enforced here: the RFC 7592 management verbs
+	// (GET/PUT/DELETE /oauth2/register/{client_id}) authenticate solely with the
+	// per-client registration access token and are declared pre-auth in
+	// authz_public_routes.go, so they never reach this mapper.
+	"/oauth2/register": {resource: "tenants", verbs: crudVerbs{get: "read", list: "read", create: "create", del: "delete"}},
 
 	// IAM management surfaces.
 	"/api/v1/users":   {resource: "users", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
@@ -274,8 +359,29 @@ var pepMapping = map[string]pepResource{
 	// Project + membership.
 	"/api/v1/projects": {resource: "project", verbs: crudVerbs{get: "read", list: "list", create: "create", del: "delete"}},
 
+	// Pooled provider accounts (/api/v1/agent-accounts). An account custodies
+	// credential material (an Anthropic / Codex / OpenCode login), so it
+	// authorizes with the qrdb credentials:* vocabulary — the same family the
+	// /api/v1/secrets and /v1/credentials surfaces above use — rather than the
+	// orchestrator:* family, which has no CRUD verbs. qrdb registers no
+	// account:* family; when one is added these entries should move to it.
+	//
+	// The item read takes credentials:retrieve (the strongest read verb) even
+	// though no account response carries secret material: over-restricting a
+	// read is the safe direction, and it keeps a single "who may see this
+	// account at all" grant. The non-CRUD leaf actions (rotate / revoke /
+	// default / usage) are refined in pepSpecialRulesBase below.
+	"/api/v1/agent-accounts": {resource: "credentials", verbs: crudVerbs{get: "retrieve", list: "list", create: "store", del: "delete"}},
+
 	// Ollama embedding inference.
 	"/api/v1/ollama": {resource: "ollama", verbs: crudVerbs{get: "health", list: "model_list", create: "embed", del: "embed"}},
+
+	// Claude Code hook callbacks (handlers_hooks.go: task-created,
+	// task-completed, teammate-idle). Each hook creates an orchestrator task and
+	// publishes a messaging event on the caller's behalf, which is exactly the
+	// registered orchestrator:hook capability the sibling
+	// POST /api/v1/orchestrator/.../hooks rule already uses.
+	"/api/v1/hooks": {resource: "orchestrator", verbs: crudVerbs{get: "hook", list: "hook", create: "hook", del: "hook"}},
 
 	// Shard-routing introspection (env-gated debug mount, debug.go). Reads the
 	// cluster's shard placement, so it authorizes as the same admin:status the
@@ -341,11 +447,13 @@ type pepSpecialRule struct {
 	action string
 }
 
-// sshOp encodes one SSH endpoint action: path suffix, HTTP method, and the
-// qrdb-canonical (resource, action). No ssh:* permission family exists in the
-// qrdb registry; SSH key management maps to the nearest registered keys
-// permissions. A future qrdb ssh:* registration should replace this mapping.
-type sshOp struct {
+// pepOp encodes one endpoint action of a single-prefix surface: the path suffix
+// that identifies the endpoint, the HTTP method, and the qrdb-canonical
+// (resource, action). Surfaces whose endpoints all live under one mount (SSH,
+// the go-xkms compatibility API, the legacy seal API) declare their ops as a
+// []pepOp and expand them into pepSpecialRules with a build* helper, keeping one
+// authoritative per-endpoint table per surface.
+type pepOp struct {
 	suffix   string
 	method   string
 	resource string
@@ -353,9 +461,13 @@ type sshOp struct {
 }
 
 // sshOps defines the per-endpoint mappings for the SSH key management surface
-// (go-xkms SSH SDK). Suffixes are ordered longest-first so the tier-based
-// matching resolves overlaps correctly (e.g. "/keys/import" beats "/keys/").
-var sshOps = []sshOp{
+// (go-xkms SSH SDK). No ssh:* permission family was registered in qrdb when this
+// mapping was written, so SSH key management maps to the nearest registered keys
+// permissions; a future migration to the now-registered ssh:read / ssh:write /
+// ssh:delete family should replace it. Suffixes are ordered longest-first so the
+// tier-based matching resolves overlaps correctly (e.g. "/keys/import" beats
+// "/keys/").
+var sshOps = []pepOp{
 	// Key CRUD, import, sign.
 	{"/keys/import", http.MethodPost, "keys", "import"},
 	{"/keys/", http.MethodGet, "keys", "get"},
@@ -372,6 +484,13 @@ var sshOps = []sshOp{
 	{"/verify", http.MethodPost, "keys", "verify"},
 	// Authorized-keys emit: generating the authorized_keys file is a read/export.
 	{"/authorized", http.MethodPost, "keys", "get"},
+	// Authorized-keys CRUD. The longer "/authorized/keys" suffixes win over
+	// the bare "/keys" key-CRUD suffixes within the same match tier, so an
+	// authorized-key write never authorizes as a private-key write.
+	{"/authorized/keys", http.MethodPost, "keys", "create"},
+	{"/authorized/keys", http.MethodGet, "keys", "list"},
+	{"/authorized/keys/", http.MethodGet, "keys", "get"},
+	{"/authorized/keys/", http.MethodDelete, "keys", "delete"},
 }
 
 // sshPrefixes lists both the canonical SSH mount and the xkms-SDK-client alias.
@@ -380,6 +499,161 @@ var sshOps = []sshOp{
 var sshPrefixes = []string{
 	"/api/v1/ssh",
 	"/api/v1/xkms/v1/ssh",
+}
+
+// xkmsPrefix is the mount point of the go-xkms compatibility surface
+// (routes_xkms.go). It also prefixes the "/api/v1/xkms/v1/ssh" SSH alias; the
+// SSH rules carry the longer prefix and identical (resource, action) values
+// wherever a suffix is shared, so the two rule sets never disagree.
+const xkmsPrefix = "/api/v1/xkms"
+
+// xkmsOps maps every endpoint of the go-xkms compatibility surface to its
+// registered qrdb permission. Each family is the one qrdb registers for the
+// underlying capability rather than a single coarse keys:* blanket:
+//
+//	key lifecycle + crypto  -> keys:*      (create/list/get/delete/rotate/
+//	                                        sign/verify/encrypt/decrypt)
+//	backend inventory       -> backends:*  (list/read)
+//	certificate store       -> certs:*     (generate/list/read/revoke)
+//	certificate authority   -> ca:read + certs:generate / certs:revoke
+//	PIV slots               -> piv:*       (read/write/delete/use)
+//	PIN administration      -> pin:*       (read/write)
+//	health probe            -> admin:health
+//
+// Envelope seal/unseal on this surface is DATA sealing (the request carries the
+// plaintext), not barrier lifecycle, so it authorizes as keys:encrypt /
+// keys:decrypt — never as the seal:* barrier family.
+//
+// Suffixes rely on the matchSpecialRule tiering: a longer suffix wins within a
+// tier, so "/ca/sign" beats "/sign" and "/versions/enable-all" beats "/enable".
+var xkmsOps = []pepOp{
+	// Health.
+	{"/health", http.MethodGet, "admin", "health"},
+
+	// Backend inventory.
+	{"/backends/", http.MethodGet, "backends", "read"},
+	{"/backends", http.MethodGet, "backends", "list"},
+
+	// Key lifecycle. "/keys/" (mid-path, longer) resolves the single-key verbs
+	// while "/keys" (leaf) stays the collection.
+	{"/keys/", http.MethodGet, "keys", "get"},
+	{"/keys/", http.MethodDelete, "keys", "delete"},
+	{"/keys", http.MethodGet, "keys", "list"},
+	{"/keys", http.MethodPost, "keys", "create"},
+	{"/rotate", http.MethodPost, "keys", "rotate"},
+
+	// Key crypto operations.
+	{"/sign", http.MethodPost, "keys", "sign"},
+	{"/verify", http.MethodPost, "keys", "verify"},
+	{"/encrypt", http.MethodPost, "keys", "encrypt"},
+	{"/decrypt", http.MethodPost, "keys", "decrypt"},
+
+	// Key versions. Enabling / disabling a version mutates key state, which is
+	// the keys:rotate capability (the same verb the KMS metadata update uses).
+	{"/versions", http.MethodGet, "keys", "list"},
+	{"/versions/enable-all", http.MethodPost, "keys", "rotate"},
+	{"/versions/disable-all", http.MethodPost, "keys", "rotate"},
+	{"/enable", http.MethodPost, "keys", "rotate"},
+	{"/disable", http.MethodPost, "keys", "rotate"},
+
+	// Certificate store.
+	{"/certs/", http.MethodGet, "certs", "read"},
+	{"/certs/", http.MethodHead, "certs", "read"},
+	{"/certs/", http.MethodDelete, "certs", "revoke"},
+	{"/certs", http.MethodGet, "certs", "list"},
+	{"/certs", http.MethodPost, "certs", "generate"},
+
+	// Envelope (data) sealing.
+	{"/seal/capability", http.MethodGet, "keys", "list"},
+	{"/seal", http.MethodPost, "keys", "encrypt"},
+	{"/unseal", http.MethodPost, "keys", "decrypt"},
+
+	// FIDO2 ceremony (tenant-scoped WebAuthn over the xkms wire). Enrollment
+	// is factor enrollment (the canonical /api/v1/iam webauthn mount
+	// precedent); authentication proves an enrolled factor, a read.
+	{"/fido2/register/begin", http.MethodPost, "user_authfactors", "add"},
+	{"/fido2/register/finish", http.MethodPost, "user_authfactors", "add"},
+	{"/fido2/authenticate/begin", http.MethodPost, "user_authfactors", "get"},
+	{"/fido2/authenticate/finish", http.MethodPost, "user_authfactors", "get"},
+
+	// PIV slots. "/cert" covers the slot certificate verbs; "/ca/cert" is
+	// longer and therefore wins for the CA certificate read below.
+	{"/piv/slots", http.MethodGet, "piv", "read"},
+	{"/cert", http.MethodGet, "piv", "read"},
+	{"/cert", http.MethodPut, "piv", "write"},
+	{"/cert", http.MethodDelete, "piv", "delete"},
+	{"/key", http.MethodPost, "piv", "write"},
+	{"/csr", http.MethodPost, "piv", "use"},
+
+	// Certificate authority. Reading the CA bundle/certificate is a CA read;
+	// signing / issuing mints a certificate; revoke and CRL generation are the
+	// revocation lifecycle.
+	{"/ca/bundle", http.MethodGet, "ca", "read"},
+	{"/ca/cert", http.MethodGet, "ca", "read"},
+	{"/ca/revoked/", http.MethodGet, "certs", "read"},
+	{"/ca/sign", http.MethodPost, "certs", "generate"},
+	{"/ca/issue", http.MethodPost, "certs", "generate"},
+	{"/ca/revoke", http.MethodPost, "certs", "revoke"},
+	{"/ca/crl", http.MethodPost, "certs", "revoke"},
+
+	// PIN administration. Verification reads PIN state; setting, changing and
+	// unlocking mutate it. The trailing "/pin/" rules are the surface fallback
+	// for any future sub-path.
+	{"/pin/so/verify", http.MethodPost, "pin", "read"},
+	{"/pin/user/verify", http.MethodPost, "pin", "read"},
+	{"/pin/lockout", http.MethodGet, "pin", "read"},
+	{"/pin/", http.MethodGet, "pin", "read"},
+	{"/pin/", http.MethodPost, "pin", "write"},
+}
+
+// buildXKMSSpecialRules generates the pepSpecialRule entries for the go-xkms
+// compatibility surface from xkmsOps, mirroring buildSSHSpecialRules.
+func buildXKMSSpecialRules() []pepSpecialRule {
+	return buildPrefixRules(xkmsPrefix, xkmsOps)
+}
+
+// legacySealPrefix is the mount point of the deprecated seal surface.
+const legacySealPrefix = "/api/v1/seal"
+
+// legacySealOps maps the legacy /api/v1/seal endpoints (server.go) to the same
+// granular qrdb scopes the canonical /api/v1/barrier surface uses. The surface
+// is deprecated — every handler stamps RFC 8594 Deprecation/Sunset headers —
+// but NOT dead: it is the REST projection of the Security().Seal() SDK service
+// in the Go, TypeScript and JavaScript SDKs, so it must authorize rather than
+// be default-denied. It is the single source of truth for the legacy seal
+// scopes: the default-deny gate (authz_default_deny.go) reads this same table.
+var legacySealOps = []pepOp{
+	{"/recovery/generate", http.MethodPost, "seal", "generate_recovery"},
+	{"/recovery", http.MethodDelete, "seal", "generate_recovery"},
+	{"/root/generate", http.MethodPost, "seal", "bootstrap"},
+	{"/rotate-root", http.MethodPost, "seal", "rekey"},
+	{"/rekey", http.MethodPost, "seal", "rekey"},
+	{"/status", http.MethodGet, "tenant_barrier", "status"},
+	{"/init", http.MethodPost, "tenant_barrier", "init"},
+	{"/unseal", http.MethodPost, "tenant_barrier", "unseal"},
+	{"/seal", http.MethodPost, "tenant_barrier", "seal"},
+}
+
+// buildLegacySealSpecialRules generates the pepSpecialRule entries for the
+// legacy /api/v1/seal surface from legacySealOps.
+func buildLegacySealSpecialRules() []pepSpecialRule {
+	return buildPrefixRules(legacySealPrefix, legacySealOps)
+}
+
+// buildPrefixRules expands a single-mount op table into pepSpecialRule entries
+// scoped to prefix.
+func buildPrefixRules(prefix string, ops []pepOp) []pepSpecialRule {
+	rules := make([]pepSpecialRule, 0, len(ops))
+	for _, op := range ops {
+		rules = append(rules, pepSpecialRule{
+			method:   op.method,
+			prefix:   prefix,
+			suffix:   op.suffix,
+			resource: op.resource,
+			action:   op.action,
+		})
+	}
+	return rules
 }
 
 // buildSSHSpecialRules generates the pepSpecialRule entries for the SSH surface
@@ -482,6 +756,45 @@ func buildCeremonySpecialRules() []pepSpecialRule {
 // Each (resource, action) here is a registered qrdb permission
 // (go-qrdb/pkg/permission/broker_dataplane_scope.go).
 var pepSpecialRulesBase = []pepSpecialRule{
+	// ---- Secondary-index range scan ----
+	// POST /api/v1/query/range calls service.ScanIndex, which the gRPC canon
+	// authorizes as index:scan; the coarse /api/v1/query entry keeps the
+	// index-equality GET on kv:range, matching gRPC QuicBaaS/Query.
+	{http.MethodPost, "/api/v1/query", "/range", "index", "scan"},
+
+	// ---- Certificate extension verbs (handlers_certificate_extensions.go) ----
+	// Cross-signing mints a CA certificate: it re-certifies a foreign ROOT's
+	// subject and public key with basicConstraints CA:TRUE. qrdb documents the
+	// boundary explicitly — "Holding certs:generate must not imply the
+	// authority to mint a new signing CA" (go-qrdb/pkg/permission/
+	// acme_admin_scope.go) — so cross-sign authorizes with ca:create, not the
+	// leaf-issuance certs:generate the rest of /api/v1/certificate uses.
+	//
+	// Chain performs the CA's Authority Information Access walk, which issues
+	// outbound HTTP fetches and imports the retrieved issuers into the CA
+	// certificate store. That is the same mutation POST /api/v1/trust/
+	// auto-import-aia performs, so it carries the same write-strength verb
+	// rather than a read verb a lower-privileged principal could use to drive
+	// the importer.
+	//
+	// Device identity issuance mints TCG EK / AK / IEEE 802.1AR IDevID
+	// certificates. These are END-ENTITY certificates, not CAs, so they stay
+	// in the leaf-issuance family: certs:generate.
+	// ---- Attestation read-strength verbs ----
+	// Verify and VerifyChain are pure computations over caller-supplied
+	// material: they mutate nothing and touch no hardware, so they carry
+	// attestation:verify rather than the coarse-entry attestation:attest that
+	// POST /api/v1/attestation/attest-container needs. Values MUST match the
+	// gRPC canon (pkg/api/grpc/authz_mapping.go), the QUIC sub-op table
+	// (pkg/api/quic/handler_authz_qrdb.go) and the MCP mapping
+	// (pkg/api/mcp/authz_qrdb.go).
+	{http.MethodPost, "/api/v1/attestation", "/verify", "attestation", "verify"},
+	{http.MethodPost, "/api/v1/attestation", "/verify-chain", "attestation", "verify"},
+
+	{http.MethodPost, "/api/v1/certificate", "/cross-sign", "ca", "create"},
+	{http.MethodPost, "/api/v1/certificate", "/chain", "certs", "generate"},
+	{http.MethodPost, "/api/v1/certificate", "/device-identity", "certs", "generate"},
+
 	// ---- KMS key administration sub-actions ----
 	// These mirror the gRPC canon (authz_mapping.go KeyManagement entries) so
 	// REST and gRPC authorize the same verb identically: RevokeKey -> keys:delete,
@@ -537,6 +850,15 @@ var pepSpecialRulesBase = []pepSpecialRule{
 	{http.MethodPost, "/api/v1/orchestrator", "/hooks", "orchestrator", "hook"},
 	{http.MethodPost, "/api/v1/orchestrator", "/inference", "orchestrator", "inference"},
 	{http.MethodPost, "/api/v1/orchestrator", "/sessions", "orchestrator", "spawn"},
+	// Moving a session onto a different pooled account closes its agent process
+	// and reconstitutes it against a newly selected credential — a spawn's
+	// authority, not a close's or a status read's. It deliberately shares the
+	// spawn verb: that is exactly the permission the session was created with,
+	// and no weaker orchestrator verb may authorize consuming another account's
+	// credential. Mirrors the gRPC canon (RotateSessionAccount), the QUIC
+	// sub-op table (rotateSubOpPermissions) and the MCP mapping
+	// (quicbaas_orchestrator_rotate_account).
+	{http.MethodPost, "/api/v1/orchestrator", "/rotate-account", "orchestrator", "spawn"},
 	{http.MethodPost, "/api/v1/orchestrator", "/tasks", "orchestrator", "task_create"},
 	{http.MethodPost, "/api/v1/orchestrator", "/jobs", "orchestrator", "job_start"},
 	{http.MethodPost, "/api/v1/orchestrator", "/agents", "orchestrator", "agent_register"},
@@ -574,6 +896,18 @@ var pepSpecialRulesBase = []pepSpecialRule{
 	{http.MethodPost, "/api/v1/parameters", "/batch/set", "parameters", "write"},
 	{http.MethodPost, "/api/v1/parameters", "/batch/delete", "parameters", "delete"},
 	{http.MethodPost, "/api/v1/parameters", "/search", "parameters", "search"},
+
+	// ---- Pooled provider account leaf actions ----
+	// Rotation replaces the stored credential envelope -> credentials:rotate,
+	// matching the /v1/credentials "/rotate" rule. Revocation excludes the
+	// account from every selection strategy, a destructive lifecycle
+	// transition, so it takes the delete-grade verb. Marking an account the
+	// tenant default is a metadata write -> credentials:store. Usage is an
+	// item read -> credentials:retrieve.
+	{http.MethodPost, "/api/v1/agent-accounts", "/rotate", "credentials", "rotate"},
+	{http.MethodPost, "/api/v1/agent-accounts", "/revoke", "credentials", "delete"},
+	{http.MethodPost, "/api/v1/agent-accounts", "/default", "credentials", "store"},
+	{http.MethodGet, "/api/v1/agent-accounts", "/usage", "credentials", "retrieve"},
 
 	// ---- Project membership grant / revoke ----
 	{http.MethodPut, "/api/v1/projects", "/permissions/", "project", "grant"},
@@ -736,19 +1070,26 @@ var pepSpecialRulesBase = []pepSpecialRule{
 // broker surfaces), the barrier-granular rules for both /api/v1/barrier and
 // /v1/barrier generated from barrierGranularOps, the ceremony rules for the
 // /v1/ceremony + /v1/init + /api/v1/init mounts generated from
-// ceremonyGranularOps, the /v1/credentials qrdb-wire rules, and the SSH
-// rules. Combining them here keeps a single source of truth per surface.
+// ceremonyGranularOps, the /v1/credentials qrdb-wire rules, the SSH rules, the
+// go-xkms compatibility rules (xkmsOps) and the legacy /api/v1/seal rules
+// (legacySealOps). Combining them here keeps a single source of truth per
+// surface.
 var pepSpecialRules = func() []pepSpecialRule {
 	barrier := buildBarrierSpecialRules()
 	ceremony := buildCeremonySpecialRules()
 	ssh := buildSSHSpecialRules()
+	xkms := buildXKMSSpecialRules()
+	legacySeal := buildLegacySealSpecialRules()
 	combined := make([]pepSpecialRule, 0,
-		len(pepSpecialRulesBase)+len(barrier)+len(ceremony)+len(credentialWireOps)+len(ssh))
+		len(pepSpecialRulesBase)+len(barrier)+len(ceremony)+
+			len(credentialWireOps)+len(ssh)+len(xkms)+len(legacySeal))
 	combined = append(combined, pepSpecialRulesBase...)
 	combined = append(combined, barrier...)
 	combined = append(combined, ceremony...)
 	combined = append(combined, credentialWireOps...)
 	combined = append(combined, ssh...)
+	combined = append(combined, xkms...)
+	combined = append(combined, legacySeal...)
 	return combined
 }()
 

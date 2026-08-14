@@ -22,6 +22,7 @@ import (
 	"context"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -33,10 +34,12 @@ const kmsTenantKeyPrefix = "tenant/"
 const kmsTenantKeySuffix = "/"
 
 // tenantScopedKeyID returns a tenant-scoped key ID if tenantID is non-empty.
-// For single-tenant mode (empty tenantID), the key ID is returned as-is.
+// For single-tenant mode (empty tenantID) or the system tenant, the key ID is
+// returned as-is: a system-tenant caller is platform-scoped, not isolated
+// into a namespace literally named "system".
 // Format: "tenant/{tenantID}/{keyID}".
 func tenantScopedKeyID(tenantID, keyID string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return keyID
 	}
 	return kmsTenantKeyPrefix + tenantID + kmsTenantKeySuffix + keyID
@@ -45,7 +48,7 @@ func tenantScopedKeyID(tenantID, keyID string) string {
 // tenantStripKeyID removes the tenant prefix from a key ID.
 // If the key ID doesn't have a tenant prefix, it is returned as-is.
 func tenantStripKeyID(tenantID, keyID string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return keyID
 	}
 	prefix := kmsTenantKeyPrefix + tenantID + kmsTenantKeySuffix
@@ -53,10 +56,11 @@ func tenantStripKeyID(tenantID, keyID string) string {
 }
 
 // tenantKeyBelongsTo checks if a key ID belongs to the given tenant.
-// For single-tenant mode (empty tenantID), all keys belong.
+// For single-tenant mode (empty tenantID) or the system tenant, all keys
+// belong (no isolation applies to the platform scope).
 // For multi-tenant mode, the key must have the matching tenant prefix.
 func tenantKeyBelongsTo(tenantID, keyID string) bool {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return true
 	}
 	prefix := kmsTenantKeyPrefix + tenantID + kmsTenantKeySuffix
@@ -64,10 +68,10 @@ func tenantKeyBelongsTo(tenantID, keyID string) bool {
 }
 
 // tenantListPrefix returns the prefix to use when listing keys for a tenant.
-// For single-tenant mode, returns empty string (list all).
+// For single-tenant mode or the system tenant, returns empty string (list all).
 // For multi-tenant mode, returns "tenant/{tenantID}/".
 func tenantListPrefix(tenantID string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return ""
 	}
 	return kmsTenantKeyPrefix + tenantID + kmsTenantKeySuffix
@@ -109,8 +113,8 @@ func isValidTenantChar(ch rune) bool {
 // enforceTenantAccess validates that the requesting tenant has access to the key.
 // Returns nil if access is allowed, or an error if the tenant doesn't own the key.
 func enforceTenantAccess(tenantID, keyID, operation string) error {
-	if tenantID == "" {
-		return nil // Single-tenant mode, no access control
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return nil // Single-tenant mode / system tenant, no access control
 	}
 	if !tenantKeyBelongsTo(tenantID, keyID) {
 		return NewError(errors.ErrCrossTenantAccess, "kms."+operation,

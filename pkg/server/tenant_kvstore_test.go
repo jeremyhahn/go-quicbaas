@@ -64,7 +64,7 @@ func (f *fakeStoreResolver) Resolve(_ context.Context, tenantID string) (interfa
 	if f.sealed[tenantID] {
 		return nil, qrdbtenant.ErrTenantSealed
 	}
-	if tenantID == "" || tenantID == qrdbtenant.SystemTenantID {
+	if qrdbtenant.IsSystemTenant(tenantID) {
 		return f.shared, nil
 	}
 	if st, ok := f.stores[tenantID]; ok {

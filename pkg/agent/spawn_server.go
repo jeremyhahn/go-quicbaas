@@ -667,6 +667,14 @@ func mapRuntimeError(err error) error {
 	if errors.As(err, &violation) {
 		return status.Errorf(codes.FailedPrecondition, "sandbox policy violation: %s", violation.Error())
 	}
+	// A refused bind mount is an authorization decision about the request the
+	// caller sent, not a fault on this host: PermissionDenied, carrying the
+	// message that names the offending field and root. The control plane
+	// re-surfaces that code as 403 rather than a bare 500.
+	var mountDenied *orchestration.MountNotAllowedError
+	if errors.As(err, &mountDenied) {
+		return status.Error(codes.PermissionDenied, mountDenied.Error())
+	}
 	var input *orchestration.InputValidationError
 	if errors.As(err, &input) {
 		return status.Errorf(codes.InvalidArgument, "invalid input: %s", input.Error())
@@ -691,10 +699,11 @@ func mapRuntimeError(err error) error {
 // runtimeSessionStateMap dispatches SessionState -> proto SessionState in
 // O(1) without a switch statement.
 var runtimeSessionStateMap = map[orchestration.SessionState]proto.SessionState{
-	orchestration.SessionStateActive: proto.SessionState_SESSION_STATE_ACTIVE,
-	orchestration.SessionStateIdle:   proto.SessionState_SESSION_STATE_IDLE,
-	orchestration.SessionStateClosed: proto.SessionState_SESSION_STATE_CLOSED,
-	orchestration.SessionStateError:  proto.SessionState_SESSION_STATE_ERROR,
+	orchestration.SessionStateActive:    proto.SessionState_SESSION_STATE_ACTIVE,
+	orchestration.SessionStateIdle:      proto.SessionState_SESSION_STATE_IDLE,
+	orchestration.SessionStateClosed:    proto.SessionState_SESSION_STATE_CLOSED,
+	orchestration.SessionStateError:     proto.SessionState_SESSION_STATE_ERROR,
+	orchestration.SessionStateResumable: proto.SessionState_SESSION_STATE_RESUMABLE,
 }
 
 func runtimeSessionStateToProto(s orchestration.SessionState) proto.SessionState {

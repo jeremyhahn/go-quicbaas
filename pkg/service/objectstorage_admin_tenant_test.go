@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -289,4 +290,32 @@ func TestOsAdminTenantIsolation_ListPrefixesAreMutuallyExclusive(t *testing.T) {
 	scopedA := osAdminTenantScopedBackend("tenant-a", "s3-primary")
 	assert.True(t, strings.HasPrefix(scopedA, prefixA))
 	assert.False(t, strings.HasPrefix(scopedA, prefixB))
+}
+
+// =============================================================================
+// System-tenant scoping tests
+// =============================================================================
+
+// TestObjectStorageAdminTenant_SystemTenantIsPlatformScoped proves a caller
+// carrying the literal system tenant is treated identically to single-tenant
+// mode rather than being isolated into a tenant namespace named "system".
+func TestObjectStorageAdminTenant_SystemTenantIsPlatformScoped(t *testing.T) {
+	for _, tenantID := range []string{"", qrdbsdk.SystemTenantID} {
+		t.Run("tenantID="+tenantID, func(t *testing.T) {
+			assert.Equal(t, "s3-primary", osAdminTenantScopedBackend(tenantID, "s3-primary"))
+			assert.True(t, osAdminBackendBelongsToTenant(tenantID, "any-backend"))
+			assert.NoError(t, osAdminEnforceTenantAccess(tenantID, "any-backend", "GetBackend"))
+		})
+	}
+}
+
+// TestObjectStorageAdminTenant_OrdinaryTenantStaysIsolated proves the
+// system-tenant carve-out does not widen ordinary tenants' reach: a lookalike
+// ID that merely shares the "system" prefix is still fully isolated.
+func TestObjectStorageAdminTenant_OrdinaryTenantStaysIsolated(t *testing.T) {
+	scoped := osAdminTenantScopedBackend("system-2", "s3-primary")
+	assert.Equal(t, "tenant/system-2/s3-primary", scoped)
+	assert.False(t, osAdminBackendBelongsToTenant("system-2", "s3-primary"))
+	err := osAdminEnforceTenantAccess("system-2", "s3-primary", "GetBackend")
+	require.Error(t, err)
 }

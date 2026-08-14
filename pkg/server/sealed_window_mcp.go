@@ -16,7 +16,6 @@
 package server
 
 import (
-	"fmt"
 	"time"
 
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
@@ -42,7 +41,7 @@ func (s *Server) startSealedMCPServer() error {
 		ServerName:     "QuicBaaS",
 		ServerVersion:  "1.0.0",
 		Transport:      "http",
-		HTTPAddr:       fmt.Sprintf("%s:%d", s.config.Server.ResolveBindHost(s.config.Server.MCP.BindAddress), s.config.Server.MCP.Port),
+		HTTPAddr:       sealedListenAddress(s.config, s.config.Server.MCP.Port),
 		RequestTimeout: 30 * time.Second,
 		TLSConfig:      s.tlsConfig,
 	}
@@ -59,7 +58,8 @@ func (s *Server) startSealedMCPServer() error {
 	}
 
 	// Constant-sealed gate on the tool dispatcher.
-	mcpServer.SetSealedWindowGate(constantSealedProbe{}, sealedwindow.MCPAllowlist())
+	mcpServer.SetSealedWindowGate(constantSealedProbe{}, s.OperationalProbe(),
+		sealedwindow.MCPAllowlist())
 
 	if err := mcpServer.Start(); err != nil {
 		return &SealedWindowBootError{Stage: "sealed mcp listener", Cause: err}

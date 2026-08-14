@@ -86,7 +86,7 @@ func TestBuildSealStrategies_UnknownFallsToSoftware(t *testing.T) {
 // TestBuildDataPlaneBarrierService_NilCfg returns (nil, nil, nil) for a nil
 // config so callers do not need to guard against nil before calling.
 func TestBuildDataPlaneBarrierService_NilCfg(t *testing.T) {
-	svc, barrier, closer, err := buildDataPlaneBarrierService(nil, nil)
+	svc, barrier, _, closer, err := buildDataPlaneBarrierService(nil, nil)
 	assert.Nil(t, svc)
 	assert.Nil(t, barrier)
 	assert.Nil(t, closer)
@@ -103,7 +103,7 @@ func TestBuildDataPlaneBarrierService_SealDisabledStillBuilds(t *testing.T) {
 	cfg := config.Default()
 	cfg.Seal.Enabled = false
 	cfg.Storage.DataDir = t.TempDir()
-	svc, barrier, closer, err := buildDataPlaneBarrierService(cfg, nil)
+	svc, barrier, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
 	assert.NoError(t, err)
 	assert.NotNil(t, svc, "data-plane barrier must be built regardless of seal.enabled")
 	assert.NotNil(t, barrier, "raw StorageBarrier must be returned alongside the service")
@@ -117,7 +117,7 @@ func TestBuildDataPlaneBarrierService_EmptyDataDir(t *testing.T) {
 	cfg := config.Default()
 	cfg.Seal.Enabled = true
 	cfg.Storage.DataDir = ""
-	svc, barrier, closer, err := buildDataPlaneBarrierService(cfg, nil)
+	svc, barrier, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
 	assert.Nil(t, svc)
 	assert.Nil(t, barrier)
 	assert.Nil(t, closer)
@@ -136,7 +136,7 @@ func TestBuildDataPlaneBarrierService_PassphraseStrategy(t *testing.T) {
 	cfg.Seal.Strategy = "passphrase"
 	cfg.Storage.DataDir = dir
 
-	svc, barrier, closer, err := buildDataPlaneBarrierService(cfg, nil)
+	svc, barrier, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 	require.NotNil(t, barrier, "raw StorageBarrier must be returned")
@@ -176,7 +176,7 @@ func TestBuildDataPlaneBarrierService_SealedStatusReportsConfiguredStrategy(t *t
 			cfg.Seal.Strategy = tc.strategy
 			cfg.Storage.DataDir = t.TempDir()
 
-			svc, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
+			svc, _, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
 			require.NoError(t, err)
 			require.NotNil(t, svc)
 			require.NotNil(t, closer)
@@ -202,7 +202,7 @@ func TestBuildDataPlaneBarrierService_NoneStrategy(t *testing.T) {
 	cfg.Seal.Strategy = "none"
 	cfg.Storage.DataDir = dir
 
-	svc, barrier, closer, err := buildDataPlaneBarrierService(cfg, nil)
+	svc, barrier, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 	require.NotNil(t, barrier)
@@ -232,7 +232,7 @@ func TestBuildDataPlaneBarrierService_PersistenceAcrossOpen(t *testing.T) {
 	ctx := t.Context()
 
 	// --- First open: initialize the barrier. ---
-	svc1, _, closer1, err := buildDataPlaneBarrierService(cfg, nil)
+	svc1, _, _, closer1, err := buildDataPlaneBarrierService(cfg, nil)
 	require.NoError(t, err)
 	require.NotNil(t, svc1)
 
@@ -249,7 +249,7 @@ func TestBuildDataPlaneBarrierService_PersistenceAcrossOpen(t *testing.T) {
 	require.NoError(t, closer1.Close())
 
 	// --- Second open: verify persistence. ---
-	svc2, _, closer2, err2 := buildDataPlaneBarrierService(cfg, nil)
+	svc2, _, _, closer2, err2 := buildDataPlaneBarrierService(cfg, nil)
 	require.NoError(t, err2)
 	require.NotNil(t, svc2)
 
@@ -278,7 +278,7 @@ func TestBuildDataPlaneBarrierService_InvalidDataDir(t *testing.T) {
 	// DataDir points to the regular file; seal/ cannot be created under it.
 	cfg.Storage.DataDir = f.Name()
 
-	svc, barrier, closer, err := buildDataPlaneBarrierService(cfg, nil)
+	svc, barrier, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
 	assert.Nil(t, svc)
 	assert.Nil(t, barrier)
 	assert.Nil(t, closer)

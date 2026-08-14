@@ -56,6 +56,15 @@ func (r *ToolRegistry) executeCertificateTool(ctx context.Context, name string, 
 		return r.handleCertificateGetCA(ctx, certService, args)
 	case "quicbaas_certificate_get_tls_config":
 		return r.handleCertificateGetTLSConfig(ctx, certService, args)
+
+	// Certificate extensions — Security().CertificateExt(). See
+	// certificate_extensions_mcp.go.
+	case "quicbaas_certificate_cross_sign":
+		return r.handleCertificateCrossSign(ctx, certService, args)
+	case "quicbaas_certificate_chain":
+		return r.handleCertificateChain(ctx, certService, args)
+	case "quicbaas_certificate_issue_device_identity":
+		return r.handleCertificateDeviceIdentity(ctx, certService, args)
 	default:
 		return nil, api.NewUnknownToolError(name)
 	}
@@ -285,6 +294,6 @@ func isCertificateTool(name string) bool {
 		"quicbaas_certificate_get_tls_config":
 		return true
 	default:
-		return false
+		return isCertificateExtensionTool(name)
 	}
 }

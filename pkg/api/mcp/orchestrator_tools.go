@@ -149,6 +149,24 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "boolean",
 					"description": "Multi-turn session that keeps context across prompts. Defaults to true; set false for one-shot.",
 				},
+				"account_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Pin the session to a specific pooled provider account. Optional.",
+				},
+				"account_auto": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Select a pooled provider account with the named strategy when account_id is empty. Optional.",
+				},
+				"account_strategy": map[string]interface{}{
+					"type":        "string",
+					"description": "Account selection strategy: static or least_usage. Empty selects the registry default. Ignored unless account_auto is true.",
+				},
+				"account_allow": map[string]interface{}{
+					"type":  "array",
+					"items": map[string]interface{}{"type": "string"},
+					"description": "Restrict the session to these pooled account IDs and authorize it to rotate between them. " +
+						"Additive filter, never a source: an ID the tenant does not own is simply not a candidate. Optional.",
+				},
 				"mcp_servers": map[string]interface{}{
 					"type": "array",
 					"items": map[string]interface{}{
@@ -215,6 +233,35 @@ func (r *ToolRegistry) registerAgentTools() {
 	})
 
 	r.addTool(ToolDefinition{
+		Name: "quicbaas_orchestrator_session_history",
+		Description: "Read a page of a session's durable event transcript: prompts, assistant output, tool calls, and turn lifecycle events. " +
+			"MCP has no streaming channel, so this is how an MCP caller observes an asynchronous turn: page from the sequence returned by " +
+			"quicbaas_orchestrator_prompt until a turn_completed or turn_failed event carrying the same turn_id appears.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant the session belongs to. Required.",
+				},
+				"session_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Session whose transcript to read",
+				},
+				"from_sequence": map[string]interface{}{
+					"type":        "integer",
+					"description": "Inclusive lower bound on the event sequence (optional, default: start of session)",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum events to return (optional, default: 256)",
+				},
+			},
+			"required": []string{"tenant_id", "session_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
 		Name: "quicbaas_orchestrator_status",
 		Description: "Get the status of an active agent session including state, last activity, and uptime. " +
 			"MCP has no streaming channel, so poll this tool to observe session progress (see quicbaas_orchestrator_prompt for the turn result).",
@@ -247,6 +294,39 @@ func (r *ToolRegistry) registerAgentTools() {
 				"session_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Session ID to close",
+				},
+			},
+			"required": []string{"tenant_id", "session_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name: "quicbaas_orchestrator_rotate_account",
+		Description: "Move an agent session onto a different pooled provider account. " +
+			"Use when an account is bad or exhausted and the session should keep running on another seat. " +
+			"Only a session spawned with account_auto or account_allow may rotate; a bare account_id pin is honored.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant the session belongs to. Required.",
+				},
+				"session_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Session to move. Required.",
+				},
+				"reason": map[string]interface{}{
+					"type":        "string",
+					"description": "Recorded on the closed account segment and in the session transcript. Optional.",
+				},
+				"hold_outgoing": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Hold the outgoing account out of the pool until available_at so the next selection does not walk back into it. Optional.",
+				},
+				"available_at": map[string]interface{}{
+					"type":        "string",
+					"description": "RFC 3339 time the held outgoing account rejoins the pool. Ignored unless hold_outgoing is true; empty applies the server default backoff.",
 				},
 			},
 			"required": []string{"tenant_id", "session_id"},
@@ -794,6 +874,16 @@ func (r *ToolRegistry) executeAgentSpawn(ctx context.Context, args map[string]in
 		// registers no durable session, so a follow-up prompt would fail with
 		// "session not found". Callers opt out explicitly with persistent:false.
 		Persistent: optionalBool(args, "persistent", true),
+
+		// Pooled provider account selection. account_auto is what makes the
+		// dynamic (least-usage) strategy requestable at all.
+		AccountID:       getString(args, "account_id"),
+		AccountAuto:     getBool(args, "account_auto"),
+		AccountStrategy: getString(args, "account_strategy"),
+		// account_allow is the second thing that authorizes rotation (the
+		// other being account_auto), so a spawn that omits it here would leave
+		// an explicitly enumerated pool unreachable from MCP.
+		AccountAllow: getStringSlice(args, "account_allow"),
 	}
 
 	// sandbox_mode: "default" | "required" | "none". Empty/missing defers
@@ -851,6 +941,20 @@ func (r *ToolRegistry) executeAgentSpawn(ctx context.Context, args map[string]in
 	})
 }
 
+// executeAgentPrompt backs the quicbaas_orchestrator_prompt tool.
+//
+// MCP is strictly request/response — it has no server-push channel — so a
+// prompt naming a session returns only the acceptance acknowledgement
+// {session_id, turn_id, status, sequence}. The agent's output is NOT returned
+// here. An MCP caller observes the turn by polling
+// quicbaas_orchestrator_status for the session's state, or by reading the
+// transcript with quicbaas_orchestrator_session_history from the returned
+// sequence; the turn is finished when a turn_completed or turn_failed event
+// carrying the returned turn_id appears in that transcript.
+//
+// A prompt with no session is a stateless one-shot: it has no event log to
+// publish to, so it stays synchronous and the completed turn is returned
+// inline under "content".
 func (r *ToolRegistry) executeAgentPrompt(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	agentSvc, err := r.getAgentService()
 	if err != nil {
@@ -875,6 +979,22 @@ func (r *ToolRegistry) executeAgentPrompt(ctx context.Context, args map[string]i
 		Model:        getString(args, "model"),
 		SystemPrompt: getString(args, "system_prompt"),
 		UseRAG:       getBool(args, "use_rag"),
+	}
+
+	if req.SessionID != "" {
+		ack, ackErr := agentSvc.PromptSessionAsync(ctx, req)
+		if ackErr != nil {
+			return nil, ackErr
+		}
+		return marshalResult(map[string]interface{}{
+			"session_id": ack.SessionID,
+			"turn_id":    ack.TurnID,
+			"status":     ack.Status,
+			"sequence":   ack.Sequence,
+			"backend":    ack.Backend,
+			"model":      ack.Model,
+			"timestamp":  time.Unix(0, ack.Timestamp).Format(time.RFC3339Nano),
+		})
 	}
 
 	resp, err := agentSvc.PromptSession(ctx, req)
@@ -954,6 +1074,74 @@ func (r *ToolRegistry) executeAgentClose(ctx context.Context, args map[string]in
 		"session_id": resp.SessionID,
 		"timestamp":  time.Unix(0, resp.Timestamp).Format(time.RFC3339Nano),
 	})
+}
+
+// executeAgentRotateAccount handles quicbaas_orchestrator_rotate_account: move
+// one session onto a different pooled provider account.
+//
+// It authorizes as orchestrator:spawn (see pkg/api/mcp/authz_qrdb.go) because
+// the rotation closes the session's agent process and reconstitutes it against
+// a newly selected pooled credential — a spawn's authority, not a close's.
+func (r *ToolRegistry) executeAgentRotateAccount(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	rotator, err := orchestration.RotationServiceFrom(agentSvc, "mcp")
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, _, err = sessionTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	sessionID := getString(args, "session_id")
+	if sessionID == "" {
+		return nil, api.NewRequiredFieldError("session_id")
+	}
+
+	availableAt, err := parseRotateAvailableAt(args)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := rotator.RotateSessionAccount(ctx, &orchestration.RotateSessionAccountRequest{
+		SessionID:    sessionID,
+		Reason:       getString(args, "reason"),
+		HoldOutgoing: getBool(args, "hold_outgoing"),
+		AvailableAt:  availableAt,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return marshalResult(map[string]interface{}{
+		"session_id":          result.SessionID,
+		"previous_account_id": result.PreviousAccountID,
+		"account_id":          result.AccountID,
+		"strategy":            result.Strategy,
+		"mode":                string(result.Mode),
+	})
+}
+
+// parseRotateAvailableAt reads the optional RFC 3339 available_at argument. An
+// absent or empty value is the zero time, which lets the service apply its own
+// default backoff; a malformed one is rejected rather than silently ignored,
+// because silently dropping a hold window would leave the exhausted account
+// back in the pool immediately.
+func parseRotateAvailableAt(args map[string]interface{}) (time.Time, error) {
+	raw := getString(args, "available_at")
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	parsed, parseErr := time.Parse(time.RFC3339, raw)
+	if parseErr != nil {
+		return time.Time{}, api.NewInvalidFormatError("available_at", parseErr)
+	}
+	return parsed.UTC(), nil
 }
 
 func (r *ToolRegistry) executeAgentListSessions(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -1570,6 +1758,67 @@ func optionalBool(args map[string]interface{}, key string, def bool) bool {
 	return getBool(args, key)
 }
 
+// sessionLogAccessor is the optional interface the agent service satisfies so
+// MCP can read the durable session transcript. Declared locally so this file
+// has no dependency on the concrete orchestrator implementation, mirroring the
+// REST handler's accessor.
+type sessionLogAccessor interface {
+	SessionEventLog() orchestration.SessionEventLog
+}
+
+// defaultSessionHistoryLimit caps an unbounded transcript read. It matches the
+// REST history pager so both surfaces page identically.
+const defaultSessionHistoryLimit = 256
+
+// executeAgentSessionHistory backs quicbaas_orchestrator_session_history.
+//
+// It is the MCP replacement for the streaming attach the other transports
+// offer: MCP is request/response only, so an MCP caller observes an
+// asynchronous turn by paging this transcript from the sequence the prompt
+// acknowledgement returned until the turn's terminal event appears.
+func (r *ToolRegistry) executeAgentSessionHistory(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, tenantID, err := sessionTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	sessionID := getString(args, "session_id")
+	if sessionID == "" {
+		return nil, api.NewRequiredFieldError("session_id")
+	}
+
+	accessor, ok := agentSvc.(sessionLogAccessor)
+	if !ok {
+		return nil, api.NewServiceUnavailableError("session event log")
+	}
+	log := accessor.SessionEventLog()
+	if log == nil {
+		return nil, api.NewServiceUnavailableError("session event log")
+	}
+
+	limit := getInt(args, "limit")
+	if limit <= 0 {
+		limit = defaultSessionHistoryLimit
+	}
+
+	events, nextSeq, err := log.Range(ctx, tenantID, sessionID, getUint64(args, "from_sequence"), limit)
+	if err != nil {
+		return nil, err
+	}
+
+	return marshalResult(map[string]interface{}{
+		"session_id": sessionID,
+		"tenant_id":  tenantID,
+		"events":     events,
+		"next_seq":   nextSeq,
+	})
+}
+
 // getAgentService retrieves the AgentService from the QuicBaaS service.
 func (r *ToolRegistry) getAgentService() (orchestration.AgentService, error) {
 	agentSvc := r.service.Agent()
@@ -1588,7 +1837,9 @@ func isAgentTool(name string) bool {
 		"quicbaas_orchestrator_spawn",
 		"quicbaas_orchestrator_prompt",
 		"quicbaas_orchestrator_status",
+		"quicbaas_orchestrator_session_history",
 		"quicbaas_orchestrator_close",
+		"quicbaas_orchestrator_rotate_account",
 		"quicbaas_orchestrator_list_sessions",
 		"quicbaas_orchestrator_list_backends",
 		"quicbaas_orchestrator_decompose",
@@ -1628,8 +1879,12 @@ func (r *ToolRegistry) executeAgentTool(ctx context.Context, name string, args m
 		return r.executeAgentPrompt(ctx, args)
 	case "quicbaas_orchestrator_status":
 		return r.executeAgentStatus(ctx, args)
+	case "quicbaas_orchestrator_session_history":
+		return r.executeAgentSessionHistory(ctx, args)
 	case "quicbaas_orchestrator_close":
 		return r.executeAgentClose(ctx, args)
+	case "quicbaas_orchestrator_rotate_account":
+		return r.executeAgentRotateAccount(ctx, args)
 	case "quicbaas_orchestrator_list_sessions":
 		return r.executeAgentListSessions(ctx, args)
 	case "quicbaas_orchestrator_list_backends":

@@ -15,9 +15,6 @@
 package auth
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"encoding/base64"
 	"testing"
 	"time"
@@ -65,11 +62,7 @@ func (m *MockTokenStore) RevokeUserTokens(userID string) {}
 
 // TestGenerateTokensForUser_Success tests successful token generation.
 func TestGenerateTokensForUser_Success(t *testing.T) {
-	config := &AuthConfig{
-		JWTSecret:       "test-secret-key-for-jwt",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 	tokenStore := NewMockTokenStore()
 
 	user := &User{
@@ -94,11 +87,7 @@ func TestGenerateTokensForUser_Success(t *testing.T) {
 
 // TestGenerateTokensForUser_ValidateAccessTokenClaims tests access token claims.
 func TestGenerateTokensForUser_ValidateAccessTokenClaims(t *testing.T) {
-	config := &AuthConfig{
-		JWTSecret:       "test-secret-key-for-jwt",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 	tokenStore := NewMockTokenStore()
 
 	user := &User{
@@ -112,7 +101,7 @@ func TestGenerateTokensForUser_ValidateAccessTokenClaims(t *testing.T) {
 
 	// Parse and validate access token claims
 	parsedToken, err := jwt.ParseWithClaims(token.AccessToken, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		return []byte(config.JWTSecret), nil
+		return config.jwtPublicKey, nil
 	})
 	require.NoError(t, err)
 
@@ -130,11 +119,8 @@ func TestGenerateTokensForUser_ValidateAccessTokenClaims(t *testing.T) {
 
 // TestGenerateTokensForUser_ValidateRefreshTokenClaims tests refresh token claims.
 func TestGenerateTokensForUser_ValidateRefreshTokenClaims(t *testing.T) {
-	config := &AuthConfig{
-		JWTSecret:       "test-secret-key-for-jwt",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 48 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
+	config.RefreshTokenTTL = 48 * time.Hour
 	tokenStore := NewMockTokenStore()
 
 	user := &User{
@@ -148,7 +134,7 @@ func TestGenerateTokensForUser_ValidateRefreshTokenClaims(t *testing.T) {
 
 	// Parse and validate refresh token claims
 	parsedToken, err := jwt.ParseWithClaims(token.RefreshToken, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		return []byte(config.JWTSecret), nil
+		return config.jwtPublicKey, nil
 	})
 	require.NoError(t, err)
 
@@ -190,11 +176,9 @@ func TestGenerateTokensForUser_DifferentConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := &AuthConfig{
-				JWTSecret:       "test-secret",
-				TokenTTL:        tt.tokenTTL,
-				RefreshTokenTTL: tt.refreshTokenTTL,
-			}
+			config := newTestAuthConfig(t)
+			config.TokenTTL = tt.tokenTTL
+			config.RefreshTokenTTL = tt.refreshTokenTTL
 			tokenStore := NewMockTokenStore()
 
 			user := &User{
@@ -215,34 +199,9 @@ func TestGenerateTokensForUser_DifferentConfigs(t *testing.T) {
 	}
 }
 
-// TestGenerateTokensForUser_EmptySecret tests behavior with empty secret.
-func TestGenerateTokensForUser_EmptySecret(t *testing.T) {
-	config := &AuthConfig{
-		JWTSecret:       "",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
-	tokenStore := NewMockTokenStore()
-
-	user := &User{
-		ID:       "user-123",
-		Username: "testuser",
-		Roles:    []string{"admin"},
-	}
-
-	// Empty secret should still work (though not secure)
-	token, err := generateTokensForUser(user, config, tokenStore)
-	require.NoError(t, err)
-	assert.NotNil(t, token)
-}
-
 // TestGenerateTokensForUser_MultipleRoles tests token generation with multiple roles.
 func TestGenerateTokensForUser_MultipleRoles(t *testing.T) {
-	config := &AuthConfig{
-		JWTSecret:       "test-secret-key",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 	tokenStore := NewMockTokenStore()
 
 	user := &User{
@@ -256,7 +215,7 @@ func TestGenerateTokensForUser_MultipleRoles(t *testing.T) {
 
 	// Verify roles in token
 	parsedToken, err := jwt.ParseWithClaims(token.AccessToken, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		return []byte(config.JWTSecret), nil
+		return config.jwtPublicKey, nil
 	})
 	require.NoError(t, err)
 
@@ -269,11 +228,7 @@ func TestGenerateTokensForUser_MultipleRoles(t *testing.T) {
 
 // TestGenerateTokensForUser_NoRoles tests token generation with no roles.
 func TestGenerateTokensForUser_NoRoles(t *testing.T) {
-	config := &AuthConfig{
-		JWTSecret:       "test-secret-key",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 	tokenStore := NewMockTokenStore()
 
 	user := &User{
@@ -288,7 +243,7 @@ func TestGenerateTokensForUser_NoRoles(t *testing.T) {
 
 	// Verify empty roles in token
 	parsedToken, err := jwt.ParseWithClaims(token.AccessToken, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		return []byte(config.JWTSecret), nil
+		return config.jwtPublicKey, nil
 	})
 	require.NoError(t, err)
 
@@ -299,7 +254,7 @@ func TestGenerateTokensForUser_NoRoles(t *testing.T) {
 
 // TestValidateJWTToken_ValidToken tests validation of valid tokens.
 func TestValidateJWTToken_ValidToken(t *testing.T) {
-	secret := "test-validation-secret"
+	config := newTestAuthConfig(t)
 
 	// Create a valid token
 	claims := &Claims{
@@ -315,12 +270,11 @@ func TestValidateJWTToken_ValidToken(t *testing.T) {
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(secret))
+	tokenString, err := signToken(claims, config)
 	require.NoError(t, err)
 
-	// Validate the token using legacy function
-	validatedClaims, err := validateJWTTokenLegacy(tokenString, secret)
+	// Validate the token
+	validatedClaims, err := validateJWTToken(tokenString, config)
 	require.NoError(t, err)
 	assert.NotNil(t, validatedClaims)
 	assert.Equal(t, "user-validate", validatedClaims.UserID)
@@ -330,7 +284,7 @@ func TestValidateJWTToken_ValidToken(t *testing.T) {
 
 // TestValidateJWTToken_ExpiredToken tests validation of expired tokens.
 func TestValidateJWTToken_ExpiredToken(t *testing.T) {
-	secret := "test-expiry-secret"
+	config := newTestAuthConfig(t)
 
 	// Create an expired token
 	claims := &Claims{
@@ -346,26 +300,25 @@ func TestValidateJWTToken_ExpiredToken(t *testing.T) {
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(secret))
+	tokenString, err := signToken(claims, config)
 	require.NoError(t, err)
 
 	// Validation should fail
-	validatedClaims, err := validateJWTTokenLegacy(tokenString, secret)
+	validatedClaims, err := validateJWTToken(tokenString, config)
 	assert.Error(t, err)
 	assert.Nil(t, validatedClaims)
 	assert.Contains(t, err.Error(), "invalid token")
 }
 
-// TestValidateJWTToken_InvalidSecret tests validation with wrong secret.
-func TestValidateJWTToken_InvalidSecret(t *testing.T) {
-	correctSecret := "correct-secret"
-	wrongSecret := "wrong-secret"
+// TestValidateJWTToken_WrongKey tests validation with a different signing key.
+func TestValidateJWTToken_WrongKey(t *testing.T) {
+	signingConfig := newTestAuthConfig(t)
+	wrongConfig := newTestAuthConfig(t) // fresh key pair
 
-	// Create a token with correct secret
+	// Create a token with the correct key
 	claims := &Claims{
-		UserID:   "user-secret",
-		Username: "secretuser",
+		UserID:   "user-key",
+		Username: "keyuser",
 		Roles:    []string{"readonly"},
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
@@ -374,12 +327,11 @@ func TestValidateJWTToken_InvalidSecret(t *testing.T) {
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(correctSecret))
+	tokenString, err := signToken(claims, signingConfig)
 	require.NoError(t, err)
 
-	// Validate with wrong secret
-	validatedClaims, err := validateJWTTokenLegacy(tokenString, wrongSecret)
+	// Validate with a config holding a different public key
+	validatedClaims, err := validateJWTToken(tokenString, wrongConfig)
 	assert.Error(t, err)
 	assert.Nil(t, validatedClaims)
 	assert.Contains(t, err.Error(), "invalid token")
@@ -387,8 +339,7 @@ func TestValidateJWTToken_InvalidSecret(t *testing.T) {
 
 // TestValidateJWTToken_MalformedToken tests validation of malformed tokens.
 func TestValidateJWTToken_MalformedToken(t *testing.T) {
-	secret := "test-secret"
-	config := &AuthConfig{JWTSecret: secret}
+	config := newTestAuthConfig(t)
 
 	tests := []struct {
 		name  string
@@ -425,49 +376,49 @@ func TestValidateJWTToken_MalformedToken(t *testing.T) {
 	}
 }
 
-// TestValidateJWTToken_WrongSigningMethod tests tokens with invalid signing method.
-func TestValidateJWTToken_WrongSigningMethod(t *testing.T) {
-	secret := "test-secret"
+// TestValidateJWTToken_RejectsNonAsymmetricAlgorithms is the algorithm-confusion
+// regression test: validateJWTToken accepts only ECDSA/RSA methods, so
+// HMAC-signed tokens and alg=none tokens must always be rejected, even when a
+// valid public key is configured.
+func TestValidateJWTToken_RejectsNonAsymmetricAlgorithms(t *testing.T) {
+	config := newTestAuthConfig(t)
 
-	// Create a token with RS256 instead of HS256
-	claims := &Claims{
-		UserID:   "user-wrong-method",
-		Username: "wrongmethod",
-		Roles:    []string{"admin"},
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "quicbaas",
-		},
-	}
+	t.Run("HS256 token rejected", func(t *testing.T) {
+		claims := &Claims{
+			UserID:   "user-hmac",
+			Username: "hmacuser",
+			Roles:    []string{"admin"},
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+				IssuedAt:  jwt.NewNumericDate(time.Now()),
+				Issuer:    "quicbaas",
+			},
+		}
 
-	// Note: This creates a token but we'll manually construct one with wrong method
-	// For testing purposes, we'll create a valid HS256 token and verify the validation
-	// logic checks for HMAC methods
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(secret))
-	require.NoError(t, err)
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		tokenString, err := token.SignedString([]byte("attacker-controlled-secret"))
+		require.NoError(t, err)
 
-	// This should succeed since it's HS256
-	validatedClaims, err := validateJWTTokenLegacy(tokenString, secret)
-	assert.NoError(t, err)
-	assert.NotNil(t, validatedClaims)
+		validatedClaims, err := validateJWTToken(tokenString, config)
+		assert.Error(t, err)
+		assert.Nil(t, validatedClaims)
+		assert.Contains(t, err.Error(), "unexpected signing method")
+	})
 
-	// Test with a manually crafted token with wrong algorithm (simulated)
-	// Create token with header specifying different algorithm
-	header := `{"alg":"none","typ":"JWT"}`
-	payload := `{"user_id":"test","username":"test","roles":[]}`
-	signature := ""
-	noneToken := base64Encode(header) + "." + base64Encode(payload) + "." + signature
+	t.Run("alg none token rejected", func(t *testing.T) {
+		header := `{"alg":"none","typ":"JWT"}`
+		payload := `{"user_id":"test","username":"test","roles":[]}`
+		noneToken := base64Encode(header) + "." + base64Encode(payload) + "."
 
-	validatedClaims, err = validateJWTTokenLegacy(noneToken, secret)
-	assert.Error(t, err)
-	assert.Nil(t, validatedClaims)
+		validatedClaims, err := validateJWTToken(noneToken, config)
+		assert.Error(t, err)
+		assert.Nil(t, validatedClaims)
+	})
 }
 
 // TestValidateJWTToken_NotBeforeTime tests token validation with NotBefore claim.
 func TestValidateJWTToken_NotBeforeTime(t *testing.T) {
-	secret := "test-notbefore-secret"
+	config := newTestAuthConfig(t)
 
 	// Create a token that's not valid yet (NotBefore is in the future)
 	claims := &Claims{
@@ -482,75 +433,18 @@ func TestValidateJWTToken_NotBeforeTime(t *testing.T) {
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(secret))
+	tokenString, err := signToken(claims, config)
 	require.NoError(t, err)
 
 	// Validation should fail because token is not yet valid
-	validatedClaims, err := validateJWTTokenLegacy(tokenString, secret)
+	validatedClaims, err := validateJWTToken(tokenString, config)
 	assert.Error(t, err)
 	assert.Nil(t, validatedClaims)
 }
 
-// TestValidateJWTToken_EmptySecret tests validation with empty secret.
-func TestValidateJWTToken_EmptySecret(t *testing.T) {
-	secret := ""
-
-	// Create a token with empty secret
-	claims := &Claims{
-		UserID:   "user-emptysecret",
-		Username: "emptysecret",
-		Roles:    []string{"admin"},
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "quicbaas",
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(secret))
-	require.NoError(t, err)
-
-	// Should validate successfully with same empty secret
-	validatedClaims, err := validateJWTTokenLegacy(tokenString, secret)
-	assert.NoError(t, err)
-	assert.NotNil(t, validatedClaims)
-}
-
-// TestValidateJWTToken_LongSecret tests validation with very long secret.
-func TestValidateJWTToken_LongSecret(t *testing.T) {
-	// Create a very long secret (1000 characters)
-	secret := ""
-	for i := 0; i < 100; i++ {
-		secret += "0123456789"
-	}
-
-	claims := &Claims{
-		UserID:   "user-longsecret",
-		Username: "longsecret",
-		Roles:    []string{"readonly"},
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "quicbaas",
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(secret))
-	require.NoError(t, err)
-
-	// Should validate successfully with same long secret
-	validatedClaims, err := validateJWTTokenLegacy(tokenString, secret)
-	assert.NoError(t, err)
-	assert.NotNil(t, validatedClaims)
-	assert.Equal(t, "user-longsecret", validatedClaims.UserID)
-}
-
 // TestValidateJWTToken_SpecialCharactersInClaims tests claims with special characters.
 func TestValidateJWTToken_SpecialCharactersInClaims(t *testing.T) {
-	secret := "test-special-chars"
+	config := newTestAuthConfig(t)
 
 	claims := &Claims{
 		UserID:   "user-123-abc-!@#",
@@ -563,11 +457,10 @@ func TestValidateJWTToken_SpecialCharactersInClaims(t *testing.T) {
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(secret))
+	tokenString, err := signToken(claims, config)
 	require.NoError(t, err)
 
-	validatedClaims, err := validateJWTTokenLegacy(tokenString, secret)
+	validatedClaims, err := validateJWTToken(tokenString, config)
 	assert.NoError(t, err)
 	assert.NotNil(t, validatedClaims)
 	assert.Equal(t, "user-123-abc-!@#", validatedClaims.UserID)
@@ -577,7 +470,12 @@ func TestValidateJWTToken_SpecialCharactersInClaims(t *testing.T) {
 
 // TestValidateJWTToken_InvalidClaimsStructure tests tokens with invalid claims.
 func TestValidateJWTToken_InvalidClaimsStructure(t *testing.T) {
-	secret := "test-invalid-claims"
+	key := newTestSigner(t)
+	config := &AuthConfig{
+		JWTSigningKeyID:     testSigningKeyID,
+		JWTSigningAlgorithm: "ES256",
+	}
+	SetAsymmetricSigning(config, key)
 
 	// Create a token with standard JWT claims (not our custom Claims struct)
 	standardClaims := jwt.RegisteredClaims{
@@ -586,12 +484,12 @@ func TestValidateJWTToken_InvalidClaimsStructure(t *testing.T) {
 		Issuer:    "quicbaas",
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, standardClaims)
-	tokenString, err := token.SignedString([]byte(secret))
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, standardClaims)
+	tokenString, err := token.SignedString(key)
 	require.NoError(t, err)
 
 	// Should parse but with empty custom fields
-	validatedClaims, err := validateJWTTokenLegacy(tokenString, secret)
+	validatedClaims, err := validateJWTToken(tokenString, config)
 	assert.NoError(t, err)
 	assert.NotNil(t, validatedClaims)
 	assert.Equal(t, "", validatedClaims.UserID)
@@ -603,11 +501,7 @@ func TestValidateJWTToken_InvalidClaimsStructure(t *testing.T) {
 
 // TestRoundTrip_GenerateAndValidate tests full token generation and validation cycle.
 func TestRoundTrip_GenerateAndValidate(t *testing.T) {
-	config := &AuthConfig{
-		JWTSecret:       "roundtrip-secret-key",
-		TokenTTL:        2 * time.Hour,
-		RefreshTokenTTL: 48 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 	tokenStore := NewMockTokenStore()
 
 	user := &User{
@@ -639,11 +533,7 @@ func TestRoundTrip_GenerateAndValidate(t *testing.T) {
 
 // TestEdgeCases_EmptyUserFields tests token generation with empty user fields.
 func TestEdgeCases_EmptyUserFields(t *testing.T) {
-	config := &AuthConfig{
-		JWTSecret:       "test-edge-cases",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 	tokenStore := NewMockTokenStore()
 
 	tests := []struct {
@@ -696,64 +586,9 @@ func base64Encode(s string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(s))
 }
 
-// BenchmarkGenerateTokensForUser benchmarks token generation.
-func BenchmarkGenerateTokensForUser(b *testing.B) {
-	config := &AuthConfig{
-		JWTSecret:       "benchmark-secret-key",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
-	tokenStore := NewMockTokenStore()
-
-	user := &User{
-		ID:       "bench-user",
-		Username: "benchuser",
-		Roles:    []string{"admin", "readwrite"},
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := generateTokensForUser(user, config, tokenStore)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-// BenchmarkValidateJWTToken benchmarks token validation.
-func BenchmarkValidateJWTToken(b *testing.B) {
-	secret := "benchmark-validation-secret"
-
-	// Create a token once
-	claims := &Claims{
-		UserID:   "bench-validate",
-		Username: "benchvalidate",
-		Roles:    []string{"admin"},
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "quicbaas",
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(secret))
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := validateJWTTokenLegacy(tokenString, secret)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 // TestValidateJWTToken_ModifiedToken tests tampered tokens.
 func TestValidateJWTToken_ModifiedToken(t *testing.T) {
-	secret := "test-tamper-secret"
+	config := newTestAuthConfig(t)
 
 	// Create a valid token
 	claims := &Claims{
@@ -767,8 +602,7 @@ func TestValidateJWTToken_ModifiedToken(t *testing.T) {
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(secret))
+	tokenString, err := signToken(claims, config)
 	require.NoError(t, err)
 
 	// Tamper with the token by changing a character in the middle
@@ -776,7 +610,7 @@ func TestValidateJWTToken_ModifiedToken(t *testing.T) {
 		tampered := tokenString[:len(tokenString)/2] + "X" + tokenString[len(tokenString)/2+1:]
 
 		// Validation should fail
-		validatedClaims, err := validateJWTTokenLegacy(tampered, secret)
+		validatedClaims, err := validateJWTToken(tampered, config)
 		assert.Error(t, err)
 		assert.Nil(t, validatedClaims)
 	}
@@ -784,11 +618,7 @@ func TestValidateJWTToken_ModifiedToken(t *testing.T) {
 
 // TestTokenStoreIntegration tests interaction with token store.
 func TestTokenStoreIntegration(t *testing.T) {
-	config := &AuthConfig{
-		JWTSecret:       "store-integration-secret",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 	tokenStore := NewMockTokenStore()
 
 	users := []*User{
@@ -815,7 +645,7 @@ func TestTokenStoreIntegration(t *testing.T) {
 
 // TestValidateJWTToken_WithDifferentIssuers tests validation rejects wrong issuers.
 func TestValidateJWTToken_WithDifferentIssuers(t *testing.T) {
-	secret := "test-issuer-secret"
+	config := newTestAuthConfig(t)
 
 	tests := []struct {
 		name          string
@@ -852,11 +682,10 @@ func TestValidateJWTToken_WithDifferentIssuers(t *testing.T) {
 				},
 			}
 
-			token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-			tokenString, err := token.SignedString([]byte(secret))
+			tokenString, err := signToken(claims, config)
 			require.NoError(t, err)
 
-			validatedClaims, err := validateJWTTokenLegacy(tokenString, secret)
+			validatedClaims, err := validateJWTToken(tokenString, config)
 			if tt.shouldSucceed {
 				assert.NoError(t, err)
 				assert.NotNil(t, validatedClaims)
@@ -868,13 +697,9 @@ func TestValidateJWTToken_WithDifferentIssuers(t *testing.T) {
 	}
 }
 
-// TestGenerateTokensForUser_NilTokenStore tests with nil token store (should panic or error).
+// TestGenerateTokensForUser_NilUser tests token generation with a nil user.
 func TestGenerateTokensForUser_NilUser(t *testing.T) {
-	config := &AuthConfig{
-		JWTSecret:       "test-nil-secret",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 	tokenStore := NewMockTokenStore()
 
 	// This should panic or create invalid token
@@ -896,11 +721,7 @@ func TestGenerateTokensForUser_NilUser(t *testing.T) {
 
 // TestUnicodeInClaims tests token generation with unicode characters.
 func TestUnicodeInClaims(t *testing.T) {
-	config := &AuthConfig{
-		JWTSecret:       "unicode-secret-key-for-test",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 	tokenStore := NewMockTokenStore()
 
 	user := &User{
@@ -920,13 +741,12 @@ func TestUnicodeInClaims(t *testing.T) {
 	assert.Equal(t, user.Roles, claims.Roles)
 }
 
-// TestGenerateTokensWithDifferentSecrets moved to jwt_utils_integration_test.go
+// TestGenerateTokensWithDifferentKeys moved to jwt_utils_integration_test.go
 
 // TestES256SignAndVerifyRoundtrip tests asymmetric ES256 token signing and verification.
 func TestES256SignAndVerifyRoundtrip(t *testing.T) {
 	// Generate test ECDSA key in-memory
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
+	privateKey := newTestSigner(t)
 
 	config := &AuthConfig{
 		JWTSigningKeyID:     "test-es256-key",
@@ -985,11 +805,8 @@ func TestES256SignAndVerifyRoundtrip(t *testing.T) {
 // one key are rejected when verified with a different key.
 func TestES256VerificationRejectsWrongKey(t *testing.T) {
 	// Generate two different key pairs
-	signingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	wrongKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
+	signingKey := newTestSigner(t)
+	wrongKey := newTestSigner(t)
 
 	// Sign with the first key
 	signingConfig := &AuthConfig{
@@ -1016,84 +833,6 @@ func TestES256VerificationRejectsWrongKey(t *testing.T) {
 	claims, err := validateJWTToken(token.AccessToken, wrongConfig)
 	assert.Error(t, err)
 	assert.Nil(t, claims)
-}
-
-// TestHS256FallbackDuringMigration tests that HS256 tokens are still accepted
-// when asymmetric signing is configured (migration scenario).
-func TestHS256FallbackDuringMigration(t *testing.T) {
-	secret := "migration-secret-key"
-
-	// Create an HS256 token (pre-migration)
-	claims := &Claims{
-		UserID:   "user-migrate",
-		Username: "migrateuser",
-		Roles:    []string{"admin"},
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "quicbaas",
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(secret))
-	require.NoError(t, err)
-
-	// Configure asymmetric signing but keep JWTSecret for migration
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	config := &AuthConfig{
-		JWTSecret:           secret, // Legacy HS256 secret still present
-		JWTSigningKeyID:     "new-es256-key",
-		JWTSigningAlgorithm: "ES256",
-	}
-	SetAsymmetricSigning(config, privateKey)
-
-	// HS256 token should still validate because JWTSecret is configured
-	validatedClaims, err := validateJWTToken(tokenString, config)
-	require.NoError(t, err)
-	assert.NotNil(t, validatedClaims)
-	assert.Equal(t, "user-migrate", validatedClaims.UserID)
-}
-
-// TestHS256RejectedWhenSecretRemoved tests that HS256 tokens are rejected
-// when JWTSecret is removed (migration complete).
-func TestHS256RejectedWhenSecretRemoved(t *testing.T) {
-	secret := "old-secret-key"
-
-	// Create an HS256 token
-	claims := &Claims{
-		UserID:   "user-old",
-		Username: "olduser",
-		Roles:    []string{"admin"},
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "quicbaas",
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(secret))
-	require.NoError(t, err)
-
-	// Configure asymmetric signing WITHOUT JWTSecret (migration complete)
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	config := &AuthConfig{
-		JWTSecret:           "", // Secret removed after migration
-		JWTSigningKeyID:     "es256-key",
-		JWTSigningAlgorithm: "ES256",
-	}
-	SetAsymmetricSigning(config, privateKey)
-
-	// HS256 token should be rejected because JWTSecret is empty
-	validatedClaims, err := validateJWTToken(tokenString, config)
-	assert.Error(t, err)
-	assert.Nil(t, validatedClaims)
-	assert.Contains(t, err.Error(), "invalid token")
 }
 
 // TestResolveSigningMethod tests the algorithm name to jwt.SigningMethod mapping.
@@ -1151,8 +890,7 @@ func TestSignTokenAsymmetricWithoutSigner(t *testing.T) {
 // when no public key is configured.
 func TestValidateJWTTokenWithECDSANoPublicKey(t *testing.T) {
 	// Create an ECDSA-signed token
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
+	privateKey := newTestSigner(t)
 
 	claims := &Claims{
 		UserID:   "user-nokey",
@@ -1169,7 +907,7 @@ func TestValidateJWTTokenWithECDSANoPublicKey(t *testing.T) {
 	tokenString, err := token.SignedString(privateKey)
 	require.NoError(t, err)
 
-	// Config with no public key and no secret
+	// Config with no public key configured
 	config := &AuthConfig{}
 
 	validatedClaims, err := validateJWTToken(tokenString, config)
@@ -1181,8 +919,7 @@ func TestValidateJWTTokenWithECDSANoPublicKey(t *testing.T) {
 // TestSetAsymmetricSigning verifies that SetAsymmetricSigning properly sets
 // both the signer and the public key on the config.
 func TestSetAsymmetricSigning(t *testing.T) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
+	privateKey := newTestSigner(t)
 
 	config := &AuthConfig{}
 
@@ -1195,8 +932,7 @@ func TestSetAsymmetricSigning(t *testing.T) {
 
 // TestSetPublicKey verifies that SetPublicKey sets only the public key.
 func TestSetPublicKey(t *testing.T) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
+	privateKey := newTestSigner(t)
 
 	config := &AuthConfig{}
 
@@ -1209,18 +945,7 @@ func TestSetPublicKey(t *testing.T) {
 
 // BenchmarkES256TokenGeneration benchmarks ES256 token generation.
 func BenchmarkES256TokenGeneration(b *testing.B) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	config := &AuthConfig{
-		JWTSigningKeyID:     "bench-es256-key",
-		JWTSigningAlgorithm: "ES256",
-		TokenTTL:            1 * time.Hour,
-		RefreshTokenTTL:     24 * time.Hour,
-	}
-	SetAsymmetricSigning(config, privateKey)
+	config := newTestAuthConfig(b)
 
 	tokenStore := NewMockTokenStore()
 	user := &User{
@@ -1240,18 +965,7 @@ func BenchmarkES256TokenGeneration(b *testing.B) {
 
 // BenchmarkES256TokenValidation benchmarks ES256 token validation.
 func BenchmarkES256TokenValidation(b *testing.B) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	config := &AuthConfig{
-		JWTSigningKeyID:     "bench-es256-key",
-		JWTSigningAlgorithm: "ES256",
-		TokenTTL:            1 * time.Hour,
-		RefreshTokenTTL:     24 * time.Hour,
-	}
-	SetAsymmetricSigning(config, privateKey)
+	config := newTestAuthConfig(b)
 
 	tokenStore := NewMockTokenStore()
 	user := &User{

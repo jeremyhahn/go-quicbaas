@@ -83,43 +83,6 @@ func TestMockKMSClientInterfaceCompliance(t *testing.T) {
 	})
 }
 
-func TestMockDEKClientInterfaceCompliance(t *testing.T) {
-	t.Run("implements_all_methods", func(t *testing.T) {
-		var client DEKClient = &MockDEKClient{}
-		assert.NotNil(t, client)
-
-		ctx := context.Background()
-
-		_, _ = client.KMSCreateDEK(ctx, &service.CreateDEKRequest{})
-		_, _ = client.KMSGetDEK(ctx, &service.GetDEKRequest{})
-		_, _ = client.KMSListDEKs(ctx, &service.ListDEKsRequest{})
-		_, _ = client.KMSRotateDEK(ctx, &service.RotateDEKRequest{})
-		_, _ = client.KMSDeleteDEK(ctx, &service.DeleteDEKRequest{})
-		_, _ = client.KMSGetDEKStatus(ctx, &service.GetDEKStatusRequest{})
-		_, _ = client.KMSSetDefaultDEK(ctx, &service.SetDefaultDEKRequest{})
-		_, _ = client.KMSSetDEKSafety(ctx, &service.SetDEKSafetyRequest{})
-		_ = client.Close()
-	})
-
-	t.Run("custom_func_implementations", func(t *testing.T) {
-		createCalled := false
-
-		client := &MockDEKClient{
-			KMSCreateDEKFunc: func(ctx context.Context, req *service.CreateDEKRequest) (*service.CreateDEKResponse, error) {
-				createCalled = true
-				return &service.CreateDEKResponse{
-					DEK: &service.DEKMetadata{Path: req.Path},
-				}, nil
-			},
-		}
-
-		resp, err := client.KMSCreateDEK(context.Background(), &service.CreateDEKRequest{Path: "/test"})
-		require.NoError(t, err)
-		assert.True(t, createCalled)
-		assert.Equal(t, "/test", resp.DEK.Path)
-	})
-}
-
 func TestMockSealClientInterfaceCompliance(t *testing.T) {
 	t.Run("implements_all_methods", func(t *testing.T) {
 		var client SealClient = &MockSealClient{}
@@ -380,18 +343,6 @@ func TestMockClientErrorHandling(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid key name")
 	})
 
-	t.Run("dek_client_error", func(t *testing.T) {
-		client := &MockDEKClient{
-			KMSCreateDEKFunc: func(ctx context.Context, req *service.CreateDEKRequest) (*service.CreateDEKResponse, error) {
-				return nil, errors.New(errors.ErrNotFound, "test", "parent key not found")
-			},
-		}
-
-		_, err := client.KMSCreateDEK(context.Background(), &service.CreateDEKRequest{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "parent key not found")
-	})
-
 	t.Run("seal_client_error", func(t *testing.T) {
 		client := &MockSealClient{
 			SealInitFunc: func(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
@@ -580,30 +531,6 @@ func TestFactoryFunctionReplacements(t *testing.T) {
 		resp, err := client.KMSGenerateKey(context.Background(), &service.GenerateKeyRequest{})
 		require.NoError(t, err)
 		assert.Equal(t, "factory-test-key", resp.Key.KeyID)
-	})
-
-	t.Run("replace_dek_factory", func(t *testing.T) {
-		origFactory := dekClientFactory
-		defer func() { dekClientFactory = origFactory }()
-
-		customClient := &MockDEKClient{
-			KMSCreateDEKFunc: func(ctx context.Context, req *service.CreateDEKRequest) (*service.CreateDEKResponse, error) {
-				return &service.CreateDEKResponse{
-					DEK: &service.DEKMetadata{Path: "factory-test-path"},
-				}, nil
-			},
-		}
-
-		dekClientFactory = func() (DEKClient, error) {
-			return customClient, nil
-		}
-
-		client, err := dekClientFactory()
-		require.NoError(t, err)
-
-		resp, err := client.KMSCreateDEK(context.Background(), &service.CreateDEKRequest{})
-		require.NoError(t, err)
-		assert.Equal(t, "factory-test-path", resp.DEK.Path)
 	})
 
 	t.Run("replace_seal_factory", func(t *testing.T) {

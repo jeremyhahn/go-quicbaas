@@ -80,12 +80,6 @@ type CeremonyInitInfo struct {
 	// TLSCertPEM is the PEM-encoded TLS certificate issued for the server.
 	TLSCertPEM []byte
 
-	// SOCertPEM is the PEM-encoded Security Officer certificate.
-	SOCertPEM []byte
-
-	// SOKeyPEM is the PEM-encoded Security Officer private key.
-	SOKeyPEM []byte
-
 	// State is the ceremony state after initialisation.
 	State string
 
@@ -269,8 +263,6 @@ func (s *CeremonyService) CeremonyInitialize(ctx context.Context, req *CeremonyI
 		SPKIPin:    resp.SPKIPin,
 		CACertPEM:  []byte(resp.CACertPEM),
 		TLSCertPEM: []byte(resp.TLSCertPEM),
-		SOCertPEM:  []byte(resp.SOCertPEM),
-		SOKeyPEM:   []byte(resp.SOKeyPEM),
 		State:      resp.State,
 		ShareCount: resp.ShareCount,
 	}, nil

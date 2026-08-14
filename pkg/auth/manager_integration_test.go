@@ -28,12 +28,9 @@ import (
 
 func TestRefreshToken(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:         true,
-		JWTSecret:       "test-secret-key",
-		TokenTTL:        1 * time.Second, // Short TTL for testing
-		RefreshTokenTTL: 1 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
+	config.TokenTTL = 1 * time.Second // Short TTL for testing
+	config.RefreshTokenTTL = 1 * time.Hour
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -71,11 +68,8 @@ func TestRefreshToken(t *testing.T) {
 
 func TestTokenValidation(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-		TokenTTL:  1 * time.Second, // Short TTL for expiration testing
-	}
+	config := newTestAuthConfig(t)
+	config.TokenTTL = 1 * time.Second // Short TTL for expiration testing
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -83,8 +77,6 @@ func TestTokenValidation(t *testing.T) {
 	// Create user (password is ignored - use IAM for auth)
 	user, err := am.CreateUser("testuser", []string{"readwrite"})
 	require.NoError(t, err)
-
-	ctx := context.Background()
 
 	// Generate token directly (password auth is disabled)
 	token, err := am.generateTokens(user)

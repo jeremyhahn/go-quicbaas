@@ -16,6 +16,12 @@ import type { EmbeddingsClient } from './embedding_sdk.js';
 import type { MessagingClient } from './messaging_sdk.js';
 import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
+import type { AccountsClient } from './accounts.js';
+import type { CAClient } from './ca.js';
+import type { TrustClient } from './trust.js';
+import type { CryptoClient } from './crypto.js';
+import type { DEKClient } from './dek.js';
+import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
   AgentBackendInfo,
@@ -25,8 +31,8 @@ import type {
   InferenceRequest,
   InferenceResponse,
   InferenceChunk,
-  CredentialAssertionJSON,
   PublicKeyCredentialJSON,
+  WebAuthnLoginChallenge,
   SSHKey,
   SSHScope,
   CreateSSHKeyRequest,
@@ -102,6 +108,8 @@ import type {
   RotateKeyResponse,
   RotateRootKeyResponse,
   RotateSecretResponse,
+  RotateSessionAccountRequest,
+  RotateSessionAccountResponse,
   ListSecretVersionsResponse,
   SetDefaultKeyResponse,
   SealInitRequest,
@@ -242,6 +250,11 @@ export interface OrchestratorClient {
   // closeSession terminates an agent session.
   closeSession(req: CloseSessionRequest): Promise<CloseSessionResponse>;
 
+  // rotateSessionAccount moves a session onto a different pooled provider
+  // account. Only authorized when the session was spawned with account_auto
+  // or a non-empty account_allow — a bare account_id pin is never rotatable.
+  rotateSessionAccount(req: RotateSessionAccountRequest): Promise<RotateSessionAccountResponse>;
+
   // getSessionHistory fetches a page of historical session events.
   // Used by attach commands and scrollback pagers to browse a session transcript.
   getSessionHistory(req: GetSessionHistoryRequest): Promise<GetSessionHistoryResponse>;
@@ -381,19 +394,22 @@ export interface AuthClient {
   // confirms the server accepted the credentials.
   authLogin(credentials: { username: string; password: string }): Promise<void>;
 
-  // webAuthnBeginLogin fetches a WebAuthn challenge from the server for the
-  // given tenant and email. Returns the go-webauthn `{ publicKey: { ... } }`
-  // envelope verbatim; callers unwrap + base64url-decode it (see the frontend
-  // webauthn helper) before navigator.credentials.get().
-  // Maps to POST /api/v1/tenants/{tenantID}/webauthn/login/begin.
-  webAuthnBeginLogin(tenantID: string, email: string): Promise<CredentialAssertionJSON>;
+  // webAuthnBeginLogin opens a unified-ceremony FIDO2 login for the given
+  // tenant and email and returns the in-flight challenge: the ceremony
+  // session, the relying-party session, and the go-webauthn
+  // `{ publicKey: { ... } }` envelope. Callers unwrap + base64url-decode the
+  // envelope (see the frontend webauthn helper) before
+  // navigator.credentials.get().
+  // Maps to POST /api/v1/auth/login/begin (type=fido2).
+  webAuthnBeginLogin(tenantID: string, email: string): Promise<WebAuthnLoginChallenge>;
 
-  // webAuthnFinishLogin submits the signed WebAuthn assertion to the server and
-  // returns a token bundle on success.
-  // Maps to POST /api/v1/tenants/{tenantID}/webauthn/login/finish.
+  // webAuthnFinishLogin submits the signed WebAuthn assertion for the
+  // challenge returned by webAuthnBeginLogin and returns a token bundle on
+  // success (bearer + rotating refresh credential, renewable via
+  // /api/v1/auth/refresh).
+  // Maps to POST /api/v1/auth/login/finish (type=fido2).
   webAuthnFinishLogin(
-    tenantID: string,
-    email: string,
+    challenge: WebAuthnLoginChallenge,
     credential: PublicKeyCredentialJSON,
   ): Promise<AuthTokenResponse>;
 
@@ -1141,9 +1157,43 @@ export interface Client {
   readonly messaging: MessagingClient;
   readonly scheduler: SchedulerClient;
   readonly projects: ProjectsClient;
+  /**
+   * accounts manages the pooled provider account pool (Anthropic/Claude,
+   * OpenAI/Codex, OpenCode) an agent session can be spawned against.
+   */
+  readonly accounts: AccountsClient;
   readonly iam: IAMClient;
   readonly kms: KMSClient;
   readonly secrets: SecretsClient;
+  /**
+   * ca exposes certificate authority administration (issue, sign-csr,
+   * revoke, verify, CA info/bundle/list, CRL generation). Mirrors the CLI's
+   * `quicbaas ca` command group plus sign-csr/verify/CRL.
+   */
+  readonly ca: CAClient;
+  /**
+   * trust exposes cross-sign root pool retrieval, AIA auto-import, and DANE
+   * publication — a pure composition surface over the xkms TrustedCA.
+   */
+  readonly trust: TrustClient;
+  /**
+   * crypto exposes low-level cryptographic primitives (encrypt, decrypt,
+   * rewrap, sign, verify, hash, random, data-key generation) backed by
+   * KMS-held keys.
+   */
+  readonly crypto: CryptoClient;
+  /**
+   * dek manages envelope-encryption Data Encryption Keys: creation,
+   * rotation, deletion, default selection, AEAD safety limits, and
+   * background re-encryption. Paths: /api/v1/kms/deks/*.
+   */
+  readonly dek: DEKClient;
+  /**
+   * dynamicSecrets manages credential-generation roles, on-demand
+   * short-lived credential minting, and lease renewal/revocation.
+   * Paths: /api/v1/secrets/dynamic/*.
+   */
+  readonly dynamicSecrets: DynamicSecretsClient;
   /**
    * barrier is the canonical surface for sealed-storage operations.
    * Replaces the legacy seal accessor; new code must use barrier.

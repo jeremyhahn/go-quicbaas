@@ -76,6 +76,50 @@ enrollment_token: "eyJhbGciOiJFUzI1NiIsImtpZCI6ImFnZW50LWVucm9sbC1rZXkyMDI1In0.e
 # Staging: preferred (balance security and flexibility)
 sandbox_policy: "required"
 
+# sandbox_network: Container network for sandboxed sessions
+# The second isolation dimension: sandbox_policy decides whether the agent runs
+# in a container, sandbox_network decides whether that container gets its own
+# network namespace.
+# Values:
+#   bridge         → own namespace with NAT egress (default; the agent reaches
+#                    its provider API but not this host's loopback services)
+#   none           → own namespace, loopback only, no egress
+#   <network name>  → own namespace on a user-defined docker/podman network
+#   host           → shares THIS HOST's network namespace; the container can
+#                    reach every 127.0.0.1-bound service on the machine
+# Default: bridge
+# Only set "host" deliberately, and only on hosts whose loopback services are
+# already inside the agent's trust boundary.
+sandbox_network: "bridge"
+
+# allowed_mount_roots: Absolute host directories a sandboxed spawn may
+# bind-mount from
+# The third isolation dimension: sandbox_policy decides whether the agent runs
+# in a container, sandbox_network decides whether that container gets its own
+# network namespace, and this decides which of THIS HOST's filesystem the
+# container can see.
+#
+# Every bind-mount source a spawn request names — the session's work_dir and
+# any extra mounts — must resolve under one of these roots. Sources are
+# resolved with the symlinks followed before the check, and a source that does
+# not exist is refused, so an agent cannot escape its workspace by planting a
+# link inside it.
+#
+# Default: [] (empty) — DENY. A daemon with no roots configured refuses every
+# sandboxed spawn that names a work directory. This is deliberate: the
+# container runs as the daemon's own uid, so an unchecked work_dir of "/" is
+# this host's root filesystem, read-write, for the agent. There is no setting
+# that turns the check off.
+#
+# Note this is NOT tenant-scoped: every tenant this daemon serves may mount
+# from every root listed here. Do not list a directory holding one tenant's
+# data on a daemon serving several.
+#
+# Mirrors the control plane's orchestration.sandbox.allowed_mount_roots.
+# CLI equivalent: --allowed-mount-root /srv/agent-workspaces (repeatable)
+allowed_mount_roots:
+  - "/srv/agent-workspaces"
+
 # =============================================================================
 # BACKENDS (which spawn paths this daemon exposes)
 # =============================================================================
@@ -180,6 +224,7 @@ shutdown_grace: "30s"
 # work_dir: /var/lib/quicbaas-agent
 # enrollment_token: <issue via: quicbaas iam role grant agent-runtime>
 # sandbox_policy: required
+# allowed_mount_roots: ["/srv/agent-workspaces"]
 # backends: [acp, ollama]
 # container_runtime: auto
 # auto_pull: true
@@ -200,6 +245,7 @@ shutdown_grace: "30s"
 # work_dir: /tmp/quicbaas-agent-dev
 # enrollment_token: dev-token-for-testing
 # sandbox_policy: opt-in
+# allowed_mount_roots: ["/tmp/quicbaas-agent-dev/workspaces"]
 # backends: [acp, ollama]
 # container_runtime: auto
 # auto_pull: false

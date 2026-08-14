@@ -18,6 +18,8 @@ import (
 	"errors"
 	"strings"
 	"sync"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 // =============================================================================
@@ -36,6 +38,7 @@ import (
 //	orch/agent/{tenant}/{agentID}              -> AgentRegistration (JSON)
 //	orch/task/{tenant}/{taskID}                -> Task (JSON)
 //	orch/taskartifact/{tenant}/{taskID}/{name} -> artifact payload (bytes)
+//	orch/session/{tenant}/{sessionID}          -> SessionRecord (JSON)
 //
 // Keys carry identifiers only. No secret, credential, token or payload value
 // is ever encoded into a key, so key material stays safe to log and to expose
@@ -60,6 +63,20 @@ const (
 	// taskArtifactKeyspace holds task artifact payloads offloaded from the
 	// task record because they exceed the inline limit.
 	taskArtifactKeyspace = "orch/taskartifact/"
+
+	// sessionKeyspace holds SessionRecord entries — the durable description of
+	// an agent session, from which a persistent session is reconstituted after
+	// a daemon restart.
+	sessionKeyspace = "orch/session/"
+
+	// accountKeyspace holds Account metadata records (never credential
+	// material — that lives behind interfaces.SecretsManager, addressed by
+	// Account.ID; see account_secret_store.go).
+	accountKeyspace = "orch/account/"
+
+	// accountDefaultKeyspace holds the tenant+provider(+project) -> accountID
+	// default-selection pointer.
+	accountDefaultKeyspace = "orch/accountdefault/"
 )
 
 // =============================================================================
@@ -185,6 +202,14 @@ const (
 
 	// AuditActionDelete records the removal of a record.
 	AuditActionDelete = "delete"
+
+	// AuditActionUse records that a record's credential material was handed
+	// to a spawn (Account selection/resolution). Distinct from
+	// AuditActionUpdate because a "use" mutates only bookkeeping
+	// (LastUsedAt) and is expected to happen far more often — separating the
+	// action lets an auditor distinguish routine use from an operator
+	// changing the record itself.
+	AuditActionUse = "use"
 )
 
 // Resource types reported on store audit events.
@@ -197,6 +222,12 @@ const (
 
 	// AuditResourceTask identifies a Task record.
 	AuditResourceTask = "orchestration_task"
+
+	// AuditResourceSession identifies a SessionRecord.
+	AuditResourceSession = "orchestration_session"
+
+	// AuditResourceAccount identifies an Account record.
+	AuditResourceAccount = "orchestration_account"
 )
 
 // StoreAuditEvent describes a single mutation of a durable orchestration
@@ -246,6 +277,7 @@ func emitStoreAudit(ctx context.Context, auditor StoreAuditor, event StoreAuditE
 // storeConfig holds the settings shared by the durable orchestration stores.
 type storeConfig struct {
 	auditor     StoreAuditor
+	logger      interfaces.Logger
 	inlineLimit int64
 }
 
@@ -255,6 +287,14 @@ type StoreOption func(*storeConfig)
 // WithStoreAuditor routes create/update/delete events to auditor.
 func WithStoreAuditor(auditor StoreAuditor) StoreOption {
 	return func(c *storeConfig) { c.auditor = auditor }
+}
+
+// WithStoreLogger installs the logger a store component reports a non-fatal
+// bookkeeping failure on — a write that must not fail the operation in flight
+// but must not vanish either (see accountResolver.logTouchFailure). Nil, the
+// default, discards those reports.
+func WithStoreLogger(logger interfaces.Logger) StoreOption {
+	return func(c *storeConfig) { c.logger = logger }
 }
 
 // WithInlineArtifactLimit sets the maximum artifact size, in bytes, embedded

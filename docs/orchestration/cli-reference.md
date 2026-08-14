@@ -163,6 +163,26 @@ Flags:
 - `--model <model>` - Model identifier (overrides backend default)
 - `--system-prompt <text>` - Custom system prompt
 - `--project <id>` - Project ID to associate with session
+- `--sandbox <mode>` - `default` (server policy) | `required` | `none`
+- `--host-affinity <name|host>` - Pin the session to one agent daemon
+- `--account-id <id>` - Pin the session to a pooled provider account. A bare
+  pin is deliberate: the session is never rotated off it.
+- `--account-auto` - Select a pooled account with the configured strategy and
+  authorize rotation across the whole tenant/project/provider pool
+- `--account-strategy <name>` - `static` | `least_usage`. Empty selects the
+  registry default. Ignored unless `--account-auto` is set.
+- `--account-allow <id>` - Restrict the session to these pooled account IDs and
+  authorize it to rotate between them. Repeatable (or comma-separated).
+
+Pooled accounts:
+```bash
+# Strategy-picked seat, rotatable across the whole pool.
+quicbaas orchestrator spawn --backend claude --account-auto --account-strategy least_usage
+
+# Start on a named seat, rotatable only within the declared pool.
+quicbaas orchestrator spawn --backend claude \
+  --account-id acct_a --account-allow acct_a --account-allow acct_b
+```
 
 Response (table format):
 ```
@@ -171,25 +191,80 @@ Backend:        claude
 Container ID:   container_xyz789
 ```
 
+### orchestrator rotate-account
+
+Move a running session onto a different pooled provider account.
+
+The session keeps its identifier, transcript and cost history; the replacement
+account opens a new attribution segment, so no account is billed for another's
+turns. QuicBaaS also rotates automatically when a turn fails on a classified
+provider limit — this is the operator's door to the same verb.
+
+```bash
+quicbaas orchestrator rotate-account sess_abc123
+quicbaas orchestrator rotate-account sess_abc123 --reason "seat retired" --hold-outgoing
+```
+
+Arguments:
+- `<sessionID>` - Session to move
+
+Flags:
+- `--reason <text>` - Recorded on the closed account segment and in the
+  session transcript
+- `--hold-outgoing` - Hold the outgoing account out of the pool for the
+  server's default backoff so the next selection does not pick it again
+
+Only a session spawned with `--account-auto` or `--account-allow` may rotate;
+a bare `--account-id` pin is deliberate and is honored with a conflict error.
+
+Response (table format):
+```
+Session ID:        sess_abc123
+Previous Account:  acct_a
+Account:           acct_b
+Strategy:          least_usage
+Mode:              resume
+```
+
+`Mode` is `in_place` when the credential was swapped with no process restart
+(one-shot CLI sessions) or `resume` when the agent process was reconstituted
+against the replacement and the transcript replayed.
+
 ### orchestrator prompt
 
-Send a prompt to an active agent session and receive response.
+Send a prompt to an active agent session and stream the agent's response.
+
+The turn itself is asynchronous — the server accepts it and runs it in the
+background, because a real agent turn outlasts any request timeout. The CLI then
+attaches to the session's event stream so the command still reads as a
+synchronous conversation. See [Asynchronous Agent Turns](async-turns.md).
 
 ```bash
 quicbaas orchestrator prompt sess_abc123 "Write unit tests for auth handler"
-quicbaas orchestrator prompt sess_abc123 "Refactor database layer" --output json
+quicbaas orchestrator prompt sess_abc123 "Refactor database layer" --follow=false --output json
 ```
 
 Arguments:
 - `<sessionID>` - Session ID from spawn command
 - `<text>` - Prompt text (required)
 
-Response (table format):
+Flags:
+- `--follow` - Stream the turn's events until it completes (default `true`).
+  `--follow=false` prints the acknowledgement and exits, which is what scripts
+  and CI jobs usually want.
+
+Interrupting the follow (ctrl-c) detaches the CLI only; the turn keeps running
+on the server. Reattach with `quicbaas orchestrator attach <sessionID> --from <sequence>`.
+A turn that fails exits non-zero with the agent's own reason.
+
+Response with `--follow=false` (table format):
 ```
 Session ID:     sess_abc123
-Done:           true
+Turn ID:        9f3c1e40-...
+Status:         accepted
 
-[Agent response text displayed here]
+Agent is working. Follow it with:
+  quicbaas orchestrator attach sess_abc123 --from 42
 ```
 
 ### orchestrator status

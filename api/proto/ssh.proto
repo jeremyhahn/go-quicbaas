@@ -1,0 +1,239 @@
+// QuicBaaS SSH Protocol Buffer Definitions v1
+//
+// The SSH surface composes the go-xkms SSH SDK: key storage, host-key
+// pinning, and authorized_keys management all live in go-xkms. QuicBaaS
+// republishes them over its five transports so downstream consumers reach
+// them through quicbaas.SDK().Security().SSH() and never import go-xkms.
+//
+// SECURITY INVARIANT: no message here carries private key material. Keys
+// are generated or imported server-side and only their public half and
+// metadata are ever returned. SignSSHDigest ships a digest inbound and a
+// signature outbound, so the private half never leaves the key store.
+//
+// Copyright (c) 2026 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.ssh.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// =============================================================================
+// SSHService — key, known-hosts, and authorized-keys management
+// =============================================================================
+
+service SSHService {
+    rpc GenerateSSHKey(SSHGenerateKeyRequest) returns (SSHKeyResponse);
+    rpc ImportSSHKey(SSHImportKeyRequest) returns (SSHKeyResponse);
+    rpc GetSSHKey(SSHGetKeyRequest) returns (SSHKeyResponse);
+    rpc ListSSHKeys(SSHListKeysRequest) returns (SSHListKeysResponse);
+    rpc DeleteSSHKey(SSHDeleteKeyRequest) returns (SSHAckResponse);
+    rpc ExportSSHPublicKey(SSHExportPublicKeyRequest) returns (SSHPublicKeyResponse);
+    rpc SignSSHDigest(SSHSignDigestRequest) returns (SSHSignDigestResponse);
+
+    rpc AddSSHKnownHost(SSHAddKnownHostRequest) returns (SSHAckResponse);
+    rpc ListSSHKnownHosts(SSHListKnownHostsRequest) returns (SSHListKnownHostsResponse);
+    rpc RemoveSSHKnownHost(SSHRemoveKnownHostRequest) returns (SSHAckResponse);
+
+    rpc AddSSHAuthorizedKey(SSHAddAuthorizedKeyRequest) returns (SSHAckResponse);
+    rpc ListSSHAuthorizedKeys(SSHListAuthorizedKeysRequest) returns (SSHListAuthorizedKeysResponse);
+    rpc RemoveSSHAuthorizedKey(SSHRemoveAuthorizedKeyRequest) returns (SSHAckResponse);
+    rpc EmitSSHAuthorizedKey(SSHEmitAuthorizedKeyRequest) returns (SSHEmitAuthorizedKeyResponse);
+}
+
+// =============================================================================
+// Resources
+// =============================================================================
+
+// SSHKeyInfo is the public metadata of one stored SSH key.
+message SSHKeyInfo {
+    string scope           = 1;
+    string owner           = 2;
+    string name            = 3;
+    // algorithm is one of ed25519, rsa, ecdsa-p256, ecdsa-p384, ecdsa-p521.
+    string algorithm       = 4;
+    // public_key is the authorized_keys-format public line.
+    string public_key      = 5;
+    // fingerprint is the OpenSSH SHA256 fingerprint.
+    string fingerprint     = 6;
+    int64  created_at_unix = 7;
+    string comment         = 8;
+    // backend names the crypto backend holding the private half
+    // (software / tpm2 / pkcs11 / cloud) when the key is backend-backed.
+    string backend         = 9;
+    string backend_key_id  = 10;
+}
+
+// SSHHostPin is one pinned host-key fingerprint.
+message SSHHostPin {
+    string scope         = 1;
+    string owner         = 2;
+    string host          = 3;
+    string fingerprint   = 4;
+    string algorithm     = 5;
+    int64  added_at_unix = 6;
+    string source        = 7;
+}
+
+// SSHAuthorizedEntry is one stored authorized_keys record.
+message SSHAuthorizedEntry {
+    string          scope   = 1;
+    string          owner   = 2;
+    string          name    = 3;
+    string          line    = 4;
+    repeated string options = 5;
+    string          comment = 6;
+}
+
+// =============================================================================
+// Key messages
+// =============================================================================
+
+message SSHGenerateKeyRequest {
+    string scope     = 1;
+    string owner     = 2;
+    string name      = 3;
+    string algorithm = 4;
+    int32  rsa_bits  = 5;
+    string comment   = 6;
+    // backend optionally selects the crypto backend to generate on.
+    string backend   = 7;
+}
+
+// SSHImportKeyRequest carries a PEM-encoded private key. passphrase_b64 is
+// the base64 encoding of the PEM passphrase; it is write-only and is never
+// echoed back on any response.
+message SSHImportKeyRequest {
+    string scope          = 1;
+    string owner          = 2;
+    string name           = 3;
+    string comment        = 4;
+    bytes  pem            = 5;
+    string passphrase_b64 = 6;
+}
+
+message SSHGetKeyRequest {
+    string scope = 1;
+    string owner = 2;
+    string name  = 3;
+}
+
+message SSHListKeysRequest {
+    string scope = 1;
+    string owner = 2;
+}
+
+message SSHDeleteKeyRequest {
+    string scope = 1;
+    string owner = 2;
+    string name  = 3;
+}
+
+message SSHExportPublicKeyRequest {
+    string scope = 1;
+    string owner = 2;
+    string name  = 3;
+}
+
+message SSHSignDigestRequest {
+    string scope  = 1;
+    string owner  = 2;
+    string name   = 3;
+    bytes  digest = 4;
+}
+
+message SSHKeyResponse {
+    SSHKeyInfo key = 1;
+}
+
+message SSHListKeysResponse {
+    repeated SSHKeyInfo keys = 1;
+}
+
+message SSHPublicKeyResponse {
+    string algorithm   = 1;
+    string line        = 2;
+    string fingerprint = 3;
+}
+
+message SSHSignDigestResponse {
+    string format = 1;
+    bytes  blob   = 2;
+    bytes  rest   = 3;
+}
+
+// =============================================================================
+// Known-hosts messages
+// =============================================================================
+
+message SSHAddKnownHostRequest {
+    string scope       = 1;
+    string owner       = 2;
+    string host        = 3;
+    string fingerprint = 4;
+    string algorithm   = 5;
+    string source      = 6;
+}
+
+message SSHListKnownHostsRequest {
+    string scope = 1;
+    string owner = 2;
+}
+
+message SSHRemoveKnownHostRequest {
+    string scope = 1;
+    string owner = 2;
+    string host  = 3;
+}
+
+message SSHListKnownHostsResponse {
+    repeated SSHHostPin pins = 1;
+}
+
+// =============================================================================
+// Authorized-keys messages
+// =============================================================================
+
+message SSHAddAuthorizedKeyRequest {
+    string          scope   = 1;
+    string          owner   = 2;
+    string          name    = 3;
+    string          line    = 4;
+    repeated string options = 5;
+    string          comment = 6;
+}
+
+message SSHListAuthorizedKeysRequest {
+    string scope = 1;
+    string owner = 2;
+}
+
+message SSHRemoveAuthorizedKeyRequest {
+    string scope = 1;
+    string owner = 2;
+    string name  = 3;
+}
+
+message SSHEmitAuthorizedKeyRequest {
+    string          public_key = 1;
+    repeated string options    = 2;
+    string          comment    = 3;
+}
+
+message SSHListAuthorizedKeysResponse {
+    repeated SSHAuthorizedEntry entries = 1;
+}
+
+message SSHEmitAuthorizedKeyResponse {
+    string line = 1;
+}
+
+// =============================================================================
+// Shared
+// =============================================================================
+
+// SSHAckResponse acknowledges a verb whose only result is success.
+message SSHAckResponse {
+    bool success = 1;
+}

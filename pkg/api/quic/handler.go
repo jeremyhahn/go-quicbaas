@@ -482,6 +482,14 @@ func (h *Handler) authorizeAndInject(ctx context.Context, req *Request) (context
 		return ctx, nil
 	}
 
+	// Skip authorization for public SUB-operations. The FIDO2 authentication
+	// ceremony rides the OpOrchestrator dispatch byte, so its pre-auth
+	// decision — the sub-op equivalent of OpAuthBeginLogin/OpAuthFinishLogin —
+	// needs payload[0]. Only the two FIDO2 login-ceremony verbs qualify.
+	if isPublicSubOperation(req.Opcode, req.Payload) {
+		return ctx, nil
+	}
+
 	// Sealed-window authentication bypass. WHILE the barrier is SEALED the
 	// sealed-window allowlist IS the entire control surface: possession of
 	// unseal material is the authorization, because a sealed IAM plane

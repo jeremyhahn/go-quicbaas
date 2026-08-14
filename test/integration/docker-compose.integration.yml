@@ -48,23 +48,29 @@ services:
         curl -s http://ollama:11434/api/tags | grep -q 'tinyllama' && echo 'tinyllama ready!' || echo 'tinyllama pull may still be in progress'
     restart: "no"
 
-  # LocalStack - AWS services emulator (KMS, S3)
-  localstack:
-    image: localstack/localstack:latest
-    hostname: localstack
+  # Floci - AWS services emulator (KMS, S3). MIT-licensed, no auth token.
+  # Drop-in replacement for LocalStack on the same port 4566.
+  floci:
+    image: floci/floci:latest
+    hostname: floci
     environment:
-      - SERVICES=kms,s3
-      - DEBUG=1
-      - DOCKER_HOST=unix:///var/run/docker.sock
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
     volumes:
+      # Floci runs Docker-backed services (e.g. Lambda) in real containers.
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - integration-test-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      # Assert the two services this suite actually uses report "running",
+      # not merely that the port is open. A bare TCP/200 check would go green
+      # before the service handlers are wired and cause flaky test failures.
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:4566/_floci/health -o /tmp/floci-health.json && grep -q '\"s3\":\"running\"' /tmp/floci-health.json && grep -q '\"kms\":\"running\"' /tmp/floci-health.json",
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -196,7 +202,8 @@ services:
       - QUICBAAS_URL=https://test-node1:8080
 
       # Cloud storage emulator endpoints
-      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ENDPOINT_URL=http://floci:4566
+      - S3_ENDPOINT=http://floci:4566
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
@@ -229,7 +236,7 @@ services:
         condition: service_healthy
       test-node3:
         condition: service_healthy
-      localstack:
+      floci:
         condition: service_healthy
       fake-gcs-server:
         condition: service_healthy
@@ -341,6 +348,9 @@ services:
       - QUICBAAS_STORAGE_DATA_DIR=/data
       - QUICBAAS_STORAGE_WAL_DIR=/data/wal
       - QUICBAAS_SERVER_HOST=0.0.0.0
+      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
+      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_REST_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051
       - QUICBAAS_SERVER_QUIC_PORT=4433
@@ -383,7 +393,8 @@ services:
       # Enable Object Storage service
       - QUICBAAS_OBJECTSTORAGE_ENABLED=true
       # Cloud storage emulator endpoints
-      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ENDPOINT_URL=http://floci:4566
+      - S3_ENDPOINT=http://floci:4566
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
@@ -414,7 +425,7 @@ services:
         aliases:
           - node1
     depends_on:
-      localstack:
+      floci:
         condition: service_healthy
       fake-gcs-server:
         condition: service_healthy
@@ -465,6 +476,9 @@ services:
       - QUICBAAS_STORAGE_DATA_DIR=/data
       - QUICBAAS_STORAGE_WAL_DIR=/data/wal
       - QUICBAAS_SERVER_HOST=0.0.0.0
+      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
+      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_REST_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051
       - QUICBAAS_SERVER_QUIC_PORT=4433
@@ -507,7 +521,8 @@ services:
       # Enable Object Storage service
       - QUICBAAS_OBJECTSTORAGE_ENABLED=true
       # Cloud storage emulator endpoints
-      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ENDPOINT_URL=http://floci:4566
+      - S3_ENDPOINT=http://floci:4566
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
@@ -540,7 +555,7 @@ services:
     depends_on:
       test-node1:
         condition: service_started
-      localstack:
+      floci:
         condition: service_healthy
       fake-gcs-server:
         condition: service_healthy
@@ -591,6 +606,9 @@ services:
       - QUICBAAS_STORAGE_DATA_DIR=/data
       - QUICBAAS_STORAGE_WAL_DIR=/data/wal
       - QUICBAAS_SERVER_HOST=0.0.0.0
+      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
+      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_REST_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051
       - QUICBAAS_SERVER_QUIC_PORT=4433
@@ -633,7 +651,8 @@ services:
       # Enable Object Storage service
       - QUICBAAS_OBJECTSTORAGE_ENABLED=true
       # Cloud storage emulator endpoints
-      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ENDPOINT_URL=http://floci:4566
+      - S3_ENDPOINT=http://floci:4566
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
@@ -668,7 +687,7 @@ services:
         condition: service_started
       test-node2:
         condition: service_started
-      localstack:
+      floci:
         condition: service_healthy
       fake-gcs-server:
         condition: service_healthy
@@ -721,6 +740,9 @@ services:
       - QUICBAAS_STORAGE_DATA_DIR=/data
       - QUICBAAS_STORAGE_WAL_DIR=/data/wal
       - QUICBAAS_SERVER_HOST=0.0.0.0
+      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
+      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_REST_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051
       - QUICBAAS_SERVER_QUIC_PORT=4433
@@ -763,7 +785,8 @@ services:
       # Enable Object Storage service
       - QUICBAAS_OBJECTSTORAGE_ENABLED=true
       # Cloud storage emulator endpoints
-      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ENDPOINT_URL=http://floci:4566
+      - S3_ENDPOINT=http://floci:4566
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
@@ -834,6 +857,9 @@ services:
       - QUICBAAS_STORAGE_DATA_DIR=/data
       - QUICBAAS_STORAGE_WAL_DIR=/data/wal
       - QUICBAAS_SERVER_HOST=0.0.0.0
+      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
+      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_REST_PORT=8080
       - QUICBAAS_SERVER_GRPC_PORT=50051
       - QUICBAAS_SERVER_QUIC_PORT=4433
@@ -876,7 +902,8 @@ services:
       # Enable Object Storage service
       - QUICBAAS_OBJECTSTORAGE_ENABLED=true
       # Cloud storage emulator endpoints
-      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ENDPOINT_URL=http://floci:4566
+      - S3_ENDPOINT=http://floci:4566
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1

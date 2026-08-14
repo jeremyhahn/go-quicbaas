@@ -11,9 +11,14 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package main: hermetic end-to-end coverage of the runSSH* handlers via
-// the file-backed embedded SSH store. By clearing XKMSD_URL and pointing
-// HOME at a t.TempDir(), the SDK opens a fresh store under that tempdir.
+// Package main: hermetic end-to-end coverage of the runSSH* handlers.
+//
+// The handlers call sshClientFactory, the same seam production uses to reach
+// quicbaas.SDK().Security().SSH(). Here the seam is pointed at a file-backed
+// go-xkms store under a t.TempDir() so the command bodies (flag parsing,
+// defaulting, output formatting, error mapping) run end to end without a
+// live quicbaasd. Production code never constructs a go-xkms client — that
+// is asserted separately in ssh_client_test.go.
 package main
 
 import (
@@ -22,14 +27,24 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+
+	sshSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 )
 
-// withSSHHome installs an empty XKMSD_URL and a t.TempDir-based HOME so
-// the SSH SDK uses the embedded file-backed store.
+// withSSHHome points the CLI's SSH client factory at a fresh file-backed
+// store under a t.TempDir().
 func withSSHHome(t *testing.T) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv(XKMSDURLEnv, "")
+
+	root := t.TempDir()
+	original := sshClientFactory
+	sshClientFactory = func() (sshSDK.Client, error) {
+		return xkmsssh.NewEmbeddedFile(xkmsssh.EmbeddedFileOptions{RootDir: root})
+	}
+	t.Cleanup(func() { sshClientFactory = original })
 }
 
 // =============================================================================

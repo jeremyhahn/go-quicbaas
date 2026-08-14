@@ -35,6 +35,10 @@ import (
 // MockCertificateService is a mock implementation of service.CertificateService.
 type MockCertificateService struct {
 	mock.Mock
+
+	CrossSignFunc           func(ctx context.Context, req *service.CrossSignRequest) (*service.CrossSignResponse, error)
+	ChainFunc               func(ctx context.Context, req *service.CertificateChainRequest) (*service.CertificateChainResponse, error)
+	IssueDeviceIdentityFunc func(ctx context.Context, req *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error)
 }
 
 func (m *MockCertificateService) IssueCertificate(ctx context.Context, req *service.IssueCertificateRequest) (*service.IssueCertificateResponse, error) {
@@ -171,7 +175,7 @@ func createTestLogger(t *testing.T) *logger.Logger {
 // TestGetAllCertificateTools tests that all 6 certificate tools are returned.
 func TestGetAllCertificateTools(t *testing.T) {
 	tools := getAllCertificateTools()
-	assert.Len(t, tools, 6, "expected 6 certificate tools")
+	assert.Len(t, tools, 9, "expected 6 base certificate tools plus 3 extension tools")
 
 	expectedTools := map[string]bool{
 		"quicbaas_certificate_issue":          false,
@@ -180,6 +184,11 @@ func TestGetAllCertificateTools(t *testing.T) {
 		"quicbaas_certificate_verify":         false,
 		"quicbaas_certificate_get_ca":         false,
 		"quicbaas_certificate_get_tls_config": false,
+
+		// Certificate extensions — Security().CertificateExt().
+		"quicbaas_certificate_cross_sign":            false,
+		"quicbaas_certificate_chain":                 false,
+		"quicbaas_certificate_issue_device_identity": false,
 	}
 
 	for _, tool := range tools {
@@ -963,4 +972,30 @@ func TestCertificateExecuteUnknownTool(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "unknown tool")
+}
+
+// CrossSign satisfies service.CertificateService. The certificate-extension
+// verbs are exercised by the dedicated extension tests; this double records
+// the call and returns the configured response.
+func (m *MockCertificateService) CrossSign(ctx context.Context, req *service.CrossSignRequest) (*service.CrossSignResponse, error) {
+	if m.CrossSignFunc != nil {
+		return m.CrossSignFunc(ctx, req)
+	}
+	return &service.CrossSignResponse{}, nil
+}
+
+// Chain satisfies service.CertificateService.
+func (m *MockCertificateService) Chain(ctx context.Context, req *service.CertificateChainRequest) (*service.CertificateChainResponse, error) {
+	if m.ChainFunc != nil {
+		return m.ChainFunc(ctx, req)
+	}
+	return &service.CertificateChainResponse{}, nil
+}
+
+// IssueDeviceIdentity satisfies service.CertificateService.
+func (m *MockCertificateService) IssueDeviceIdentity(ctx context.Context, req *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error) {
+	if m.IssueDeviceIdentityFunc != nil {
+		return m.IssueDeviceIdentityFunc(ctx, req)
+	}
+	return &service.IssueDeviceIdentityResponse{}, nil
 }

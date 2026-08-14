@@ -11,8 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package service re-exports ALL types from pkg/service as type aliases.
-// This allows cmd/quicbaas to change imports from:
+// Package service re-exports the pkg/service surface as type aliases so
+// consumers can change imports from:
 //
 //	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 //
@@ -20,8 +20,23 @@
 //
 //	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 //
-// Without any type conversion needed. Changes to pkg/service types
-// automatically propagate to SDK consumers.
+// without any type conversion. Because these are aliases and not wrappers,
+// changes to pkg/service types propagate to SDK consumers automatically.
+//
+// # Completeness contract
+//
+// The guarantee this package makes is closure, not literal totality: every
+// exported pkg/service identifier reachable from an alias declared here —
+// through an interface method signature, an exported struct field, or a
+// constructor signature — is itself aliased here. A consumer that can name a
+// type can therefore always name everything it needs to call it. Some
+// server-internal pkg/service identifiers (wiring adapters, shard routers,
+// DAO factories and the typed errors of subsystems reached only through
+// sdk/go.Security()) are deliberately not re-exported.
+//
+// TestAliasClosure in types_test.go enforces the contract mechanically: it
+// fails the build when a new pkg/service type becomes reachable from this
+// package without being aliased.
 package service
 
 import (
@@ -110,6 +125,12 @@ type (
 
 	// SchedulerService handles job scheduling and execution.
 	SchedulerService = pkgservice.SchedulerService
+
+	// FIDO2Service provides the tenant-scoped FIDO2/WebAuthn ceremony surface.
+	FIDO2Service = pkgservice.FIDO2Service
+
+	// PIVService provides the xkms backend-scoped PIV certificate operations.
+	PIVService = pkgservice.PIVService
 
 	// IAMComponents provides IAM components.
 	IAMComponents = pkgservice.IAMComponents
@@ -1046,4 +1067,515 @@ type (
 type (
 	StartReencryptionRequest  = pkgservice.StartReencryptionRequest
 	StartReencryptionResponse = pkgservice.StartReencryptionResponse
+)
+
+// =============================================================================
+// Attestation Service
+// =============================================================================
+
+type (
+	// AttestationService is the verify-and-compose surface exposed under
+	// Security().Attestation(). It is a pure verifier over the go-xkms
+	// attestation package plus an orchestration seam (AttestContainer)
+	// that forwards to an application-supplied ContainerAttestor.
+	AttestationService = pkgservice.AttestationService
+
+	// ContainerAttestor is the application-supplied orchestration hook the
+	// attestation service calls to obtain container attestation evidence.
+	// Embedders register an implementation with the server option
+	// quicbaas.WithContainerAttestor. Until one is registered,
+	// AttestContainer returns ErrAttestationNoAttestor.
+	ContainerAttestor = pkgservice.ContainerAttestor
+
+	// VerifyAttestationRequest carries a wire-portable attestation
+	// statement plus the options governing its verification.
+	VerifyAttestationRequest = pkgservice.VerifyAttestationRequest
+
+	// VerifyAttestationOptions is the wire-portable form of the xkms
+	// attestation VerifyOptions.
+	VerifyAttestationOptions = pkgservice.VerifyAttestationOptions
+
+	// VerifyAttestationResponse reports the outcome of a verification.
+	VerifyAttestationResponse = pkgservice.VerifyAttestationResponse
+
+	// VerifyAttestationChainRequest carries the certificate chain to validate.
+	VerifyAttestationChainRequest = pkgservice.VerifyAttestationChainRequest
+
+	// VerifyAttestationChainResponse reports whether the chain validated.
+	VerifyAttestationChainResponse = pkgservice.VerifyAttestationChainResponse
+
+	// AttestContainerRequest describes the container whose execution
+	// environment is to be attested.
+	AttestContainerRequest = pkgservice.AttestContainerRequest
+
+	// AttestContainerResponse is the attestation evidence produced for a
+	// container.
+	AttestContainerResponse = pkgservice.AttestContainerResponse
+)
+
+// NewAttestationService creates the attestation service over the supplied
+// trust anchors and container attestor. A nil attestor leaves the
+// orchestration seam empty and AttestContainer returns
+// ErrAttestationNoAttestor.
+var NewAttestationService = pkgservice.NewAttestationService
+
+// NewRuntimeContainerAttestor builds the standalone ContainerAttestor from an
+// attesting container runtime. The runtime parameter type is not yet on the
+// SDK surface, so this constructor is currently usable only by callers that
+// already hold a runtime value.
+var NewRuntimeContainerAttestor = pkgservice.NewRuntimeContainerAttestor
+
+// Typed sentinel errors returned by the attestation service.
+var (
+	// ErrAttestationNilRequest is returned when a request is nil.
+	ErrAttestationNilRequest = pkgservice.ErrAttestationNilRequest
+
+	// ErrAttestationEmptyChain is returned when no certificate chain was supplied.
+	ErrAttestationEmptyChain = pkgservice.ErrAttestationEmptyChain
+
+	// ErrAttestationEmptyFormat is returned when the attestation format is empty.
+	ErrAttestationEmptyFormat = pkgservice.ErrAttestationEmptyFormat
+
+	// ErrAttestationNoSignature is returned when the statement carries no signature.
+	ErrAttestationNoSignature = pkgservice.ErrAttestationNoSignature
+
+	// ErrAttestationNoAttestedKey is returned when no attested key was supplied.
+	ErrAttestationNoAttestedKey = pkgservice.ErrAttestationNoAttestedKey
+
+	// ErrAttestationEmptyImage is returned when AttestContainer gets no image reference.
+	ErrAttestationEmptyImage = pkgservice.ErrAttestationEmptyImage
+
+	// ErrAttestationNoAttestor is returned when no ContainerAttestor has been
+	// registered with quicbaas.WithContainerAttestor.
+	ErrAttestationNoAttestor = pkgservice.ErrAttestationNoAttestor
+)
+
+// =============================================================================
+// ACME Service
+// =============================================================================
+
+type (
+	ACMEFinalizeOrderRequest      = pkgservice.ACMEFinalizeOrderRequest
+	ACMEFinalizeOrderResponse     = pkgservice.ACMEFinalizeOrderResponse
+	ACMEIssueRequest              = pkgservice.ACMEIssueRequest
+	ACMEIssueResponse             = pkgservice.ACMEIssueResponse
+	ACMENewOrderRequest           = pkgservice.ACMENewOrderRequest
+	ACMENewOrderResponse          = pkgservice.ACMENewOrderResponse
+	ACMEOrderIdentifier           = pkgservice.ACMEOrderIdentifier
+	ACMERegisterChallengeRequest  = pkgservice.ACMERegisterChallengeRequest
+	ACMERegisterChallengeResponse = pkgservice.ACMERegisterChallengeResponse
+	ACMERenewRequest              = pkgservice.ACMERenewRequest
+	ACMERenewResponse             = pkgservice.ACMERenewResponse
+	ACMEServicer                  = pkgservice.ACMEServicer
+)
+
+// =============================================================================
+// Account Service (root/service account lifecycle)
+// =============================================================================
+
+type (
+	AccountService                  = pkgservice.AccountService
+	CreateAccountRequest            = pkgservice.CreateAccountRequest
+	CreateAccountResponse           = pkgservice.CreateAccountResponse
+	DeleteAccountRequest            = pkgservice.DeleteAccountRequest
+	DeleteAccountResponse           = pkgservice.DeleteAccountResponse
+	GetAccountRequest               = pkgservice.GetAccountRequest
+	GetAccountResponse              = pkgservice.GetAccountResponse
+	GetAccountUsageRequest          = pkgservice.GetAccountUsageRequest
+	GetAccountUsageResponse         = pkgservice.GetAccountUsageResponse
+	ListAccountsRequest             = pkgservice.ListAccountsRequest
+	ListAccountsResponse            = pkgservice.ListAccountsResponse
+	RevokeAccountRequest            = pkgservice.RevokeAccountRequest
+	RevokeAccountResponse           = pkgservice.RevokeAccountResponse
+	RotateAccountCredentialRequest  = pkgservice.RotateAccountCredentialRequest
+	RotateAccountCredentialResponse = pkgservice.RotateAccountCredentialResponse
+	SetDefaultAccountRequest        = pkgservice.SetDefaultAccountRequest
+	SetDefaultAccountResponse       = pkgservice.SetDefaultAccountResponse
+	UpdateAccountRequest            = pkgservice.UpdateAccountRequest
+	UpdateAccountResponse           = pkgservice.UpdateAccountResponse
+)
+
+// =============================================================================
+// Agent Administration Service
+// =============================================================================
+
+type (
+	AgentAdminService              = pkgservice.AgentAdminService
+	DisableAgentRequest            = pkgservice.DisableAgentRequest
+	DisableAgentResponse           = pkgservice.DisableAgentResponse
+	EnableAgentRequest             = pkgservice.EnableAgentRequest
+	EnableAgentResponse            = pkgservice.EnableAgentResponse
+	GetAgentRegistrationRequest    = pkgservice.GetAgentRegistrationRequest
+	GetAgentRegistrationResponse   = pkgservice.GetAgentRegistrationResponse
+	ListAgentRegistrationsRequest  = pkgservice.ListAgentRegistrationsRequest
+	ListAgentRegistrationsResponse = pkgservice.ListAgentRegistrationsResponse
+)
+
+// =============================================================================
+// Certificate Authority Service
+// =============================================================================
+
+type (
+	CAGenerateCRLRequest        = pkgservice.CAGenerateCRLRequest
+	CAGenerateCRLResponse       = pkgservice.CAGenerateCRLResponse
+	CAGetBundleRequest          = pkgservice.CAGetBundleRequest
+	CAGetBundleResponse         = pkgservice.CAGetBundleResponse
+	CAGetCertificateRequest     = pkgservice.CAGetCertificateRequest
+	CAGetCertificateResponse    = pkgservice.CAGetCertificateResponse
+	CAIsRevokedRequest          = pkgservice.CAIsRevokedRequest
+	CAIsRevokedResponse         = pkgservice.CAIsRevokedResponse
+	CAIssueCertificateRequest   = pkgservice.CAIssueCertificateRequest
+	CAIssueCertificateResponse  = pkgservice.CAIssueCertificateResponse
+	CARevokeCertificateRequest  = pkgservice.CARevokeCertificateRequest
+	CARevokeCertificateResponse = pkgservice.CARevokeCertificateResponse
+	CAService                   = pkgservice.CAService
+	CASignCSRRequest            = pkgservice.CASignCSRRequest
+	CASignCSRResponse           = pkgservice.CASignCSRResponse
+)
+
+// =============================================================================
+// Certificate Extensions (chain, cross-sign, device identity)
+// =============================================================================
+
+type (
+	CertificateChainRequest     = pkgservice.CertificateChainRequest
+	CertificateChainResponse    = pkgservice.CertificateChainResponse
+	CrossSignRequest            = pkgservice.CrossSignRequest
+	CrossSignResponse           = pkgservice.CrossSignResponse
+	IssueDeviceIdentityRequest  = pkgservice.IssueDeviceIdentityRequest
+	IssueDeviceIdentityResponse = pkgservice.IssueDeviceIdentityResponse
+)
+
+// =============================================================================
+// Certificate Service (CA info, CRL, revocation, listing)
+// =============================================================================
+
+type (
+	CAInfoRequest            = pkgservice.CAInfoRequest
+	CAInfoResponse           = pkgservice.CAInfoResponse
+	CertificateSummary       = pkgservice.CertificateSummary
+	GenerateCRLRequest       = pkgservice.GenerateCRLRequest
+	GenerateCRLResponse      = pkgservice.GenerateCRLResponse
+	GetCABundleRequest       = pkgservice.GetCABundleRequest
+	GetCABundleResponse      = pkgservice.GetCABundleResponse
+	IsRevokedRequest         = pkgservice.IsRevokedRequest
+	IsRevokedResponse        = pkgservice.IsRevokedResponse
+	ListCertificatesRequest  = pkgservice.ListCertificatesRequest
+	ListCertificatesResponse = pkgservice.ListCertificatesResponse
+)
+
+// =============================================================================
+// Database Service
+// =============================================================================
+
+type (
+	CreateDatabaseRequest    = pkgservice.CreateDatabaseRequest
+	DatabaseBarrierConfig    = pkgservice.DatabaseBarrierConfig
+	DatabaseConnectionConfig = pkgservice.DatabaseConnectionConfig
+	DatabaseEtcdConfig       = pkgservice.DatabaseEtcdConfig
+	DatabaseInfo             = pkgservice.DatabaseInfo
+	DatabaseProtocolConfig   = pkgservice.DatabaseProtocolConfig
+	DatabaseRaftConfig       = pkgservice.DatabaseRaftConfig
+	DatabaseService          = pkgservice.DatabaseService
+)
+
+// =============================================================================
+// Dynamic Secrets Roles, Leases and Credential Roles
+// =============================================================================
+
+type (
+	CreateRoleRequest            = pkgservice.CreateRoleRequest
+	CreateRoleResponse           = pkgservice.CreateRoleResponse
+	CredentialRoleCreateRequest  = pkgservice.CredentialRoleCreateRequest
+	CredentialRoleCreateResponse = pkgservice.CredentialRoleCreateResponse
+	CredentialRoleDeleteRequest  = pkgservice.CredentialRoleDeleteRequest
+	CredentialRoleDeleteResponse = pkgservice.CredentialRoleDeleteResponse
+	CredentialRoleGetRequest     = pkgservice.CredentialRoleGetRequest
+	CredentialRoleGetResponse    = pkgservice.CredentialRoleGetResponse
+	CredentialRolesListRequest   = pkgservice.CredentialRolesListRequest
+	CredentialRolesListResponse  = pkgservice.CredentialRolesListResponse
+	DeleteRoleRequest            = pkgservice.DeleteRoleRequest
+	DeleteRoleResponse           = pkgservice.DeleteRoleResponse
+	GenerateCredentialRequest    = pkgservice.GenerateCredentialRequest
+	GenerateCredentialResponse   = pkgservice.GenerateCredentialResponse
+	GetRoleRequest               = pkgservice.GetRoleRequest
+	GetRoleResponse              = pkgservice.GetRoleResponse
+	ListLeasesRequest            = pkgservice.ListLeasesRequest
+	ListLeasesResponse           = pkgservice.ListLeasesResponse
+	ListRolesRequest             = pkgservice.ListRolesRequest
+	ListRolesResponse            = pkgservice.ListRolesResponse
+	RenewLeaseRequest            = pkgservice.RenewLeaseRequest
+	RenewLeaseResponse           = pkgservice.RenewLeaseResponse
+	RevokeLeaseRequest           = pkgservice.RevokeLeaseRequest
+	RevokeLeaseResponse          = pkgservice.RevokeLeaseResponse
+)
+
+// =============================================================================
+// Embedding Provider Status
+// =============================================================================
+
+type (
+	SetProviderStatusRequest  = pkgservice.SetProviderStatusRequest
+	SetProviderStatusResponse = pkgservice.SetProviderStatusResponse
+)
+
+// =============================================================================
+// Facade Providers
+// =============================================================================
+
+type (
+	QRDBClientProvider = pkgservice.QRDBClientProvider
+)
+
+// =============================================================================
+// IAM Component Interfaces
+// =============================================================================
+
+type (
+	AuthManagerInterface = pkgservice.AuthManagerInterface
+	MFAManager           = pkgservice.MFAManager
+	WebAuthnManager      = pkgservice.WebAuthnManager
+)
+
+// =============================================================================
+// KMS Root Key Rotation
+// =============================================================================
+
+type (
+	RotateRootKeyRequest  = pkgservice.RotateRootKeyRequest
+	RotateRootKeyResponse = pkgservice.RotateRootKeyResponse
+)
+
+// =============================================================================
+// Login Service
+// =============================================================================
+
+type (
+	FinishLoginResult = pkgservice.FinishLoginResult
+	LoginServicer     = pkgservice.LoginServicer
+)
+
+// =============================================================================
+// Object Storage
+// =============================================================================
+
+type (
+	ArchiveObjectRequest       = pkgservice.ArchiveObjectRequest
+	ArchiveObjectResponse      = pkgservice.ArchiveObjectResponse
+	BackendHealthInfo          = pkgservice.BackendHealthInfo
+	BackendInfo                = pkgservice.BackendInfo
+	BatchDeleteObjectsRequest  = pkgservice.BatchDeleteObjectsRequest
+	BatchDeleteObjectsResponse = pkgservice.BatchDeleteObjectsResponse
+	BatchDeleteResult          = pkgservice.BatchDeleteResult
+	BatchGetObjectsRequest     = pkgservice.BatchGetObjectsRequest
+	BatchGetObjectsResponse    = pkgservice.BatchGetObjectsResponse
+	BatchGetResult             = pkgservice.BatchGetResult
+	BatchPutObjectsRequest     = pkgservice.BatchPutObjectsRequest
+	BatchPutObjectsResponse    = pkgservice.BatchPutObjectsResponse
+	BatchPutResult             = pkgservice.BatchPutResult
+	CopyObjectRequest          = pkgservice.CopyObjectRequest
+	CopyObjectResponse         = pkgservice.CopyObjectResponse
+	DeleteObjectRequest        = pkgservice.DeleteObjectRequest
+	DeleteObjectResponse       = pkgservice.DeleteObjectResponse
+	GetBackendHealthRequest    = pkgservice.GetBackendHealthRequest
+	GetBackendHealthResponse   = pkgservice.GetBackendHealthResponse
+	GetObjectPolicyRequest     = pkgservice.GetObjectPolicyRequest
+	GetObjectPolicyResponse    = pkgservice.GetObjectPolicyResponse
+	GetObjectRequest           = pkgservice.GetObjectRequest
+	GetObjectResponse          = pkgservice.GetObjectResponse
+	GetTenantQuotasRequest     = pkgservice.GetTenantQuotasRequest
+	GetTenantQuotasResponse    = pkgservice.GetTenantQuotasResponse
+	GetTenantUsageRequest      = pkgservice.GetTenantUsageRequest
+	GetTenantUsageResponse     = pkgservice.GetTenantUsageResponse
+	HeadObjectRequest          = pkgservice.HeadObjectRequest
+	HeadObjectResponse         = pkgservice.HeadObjectResponse
+	ListBackendsRequest        = pkgservice.ListBackendsRequest
+	ListBackendsResponse       = pkgservice.ListBackendsResponse
+	ListByTagRequest           = pkgservice.ListByTagRequest
+	ListByTagResponse          = pkgservice.ListByTagResponse
+	ListByTenantRequest        = pkgservice.ListByTenantRequest
+	ListByTenantResponse       = pkgservice.ListByTenantResponse
+	ListObjectsRequest         = pkgservice.ListObjectsRequest
+	ListObjectsResponse        = pkgservice.ListObjectsResponse
+	MigrateObjectRequest       = pkgservice.MigrateObjectRequest
+	MigrateObjectResponse      = pkgservice.MigrateObjectResponse
+	ObjectSummary              = pkgservice.ObjectSummary
+	PutObjectRequest           = pkgservice.PutObjectRequest
+	PutObjectResponse          = pkgservice.PutObjectResponse
+	ReplicateObjectRequest     = pkgservice.ReplicateObjectRequest
+	ReplicateObjectResponse    = pkgservice.ReplicateObjectResponse
+	ReplicationResult          = pkgservice.ReplicationResult
+	RestoreObjectRequest       = pkgservice.RestoreObjectRequest
+	RestoreObjectResponse      = pkgservice.RestoreObjectResponse
+	SetObjectPolicyRequest     = pkgservice.SetObjectPolicyRequest
+	SetObjectPolicyResponse    = pkgservice.SetObjectPolicyResponse
+	SetTenantQuotasRequest     = pkgservice.SetTenantQuotasRequest
+	SetTenantQuotasResponse    = pkgservice.SetTenantQuotasResponse
+	VerificationResult         = pkgservice.VerificationResult
+	VerifyObjectRequest        = pkgservice.VerifyObjectRequest
+	VerifyObjectResponse       = pkgservice.VerifyObjectResponse
+)
+
+// =============================================================================
+// Object Storage Administration
+// =============================================================================
+
+type (
+	BackendType                          = pkgservice.BackendType
+	CompactBackendRequest                = pkgservice.CompactBackendRequest
+	CompactBackendResponse               = pkgservice.CompactBackendResponse
+	CreateBackendRequest                 = pkgservice.CreateBackendRequest
+	CreateBackendResponse                = pkgservice.CreateBackendResponse
+	DeleteBackendRequest                 = pkgservice.DeleteBackendRequest
+	DeleteBackendResponse                = pkgservice.DeleteBackendResponse
+	GCStatus                             = pkgservice.GCStatus
+	GetGarbageCollectionProgressRequest  = pkgservice.GetGarbageCollectionProgressRequest
+	GetGarbageCollectionProgressResponse = pkgservice.GetGarbageCollectionProgressResponse
+	GetStorageStatsRequest               = pkgservice.GetStorageStatsRequest
+	GetStorageStatsResponse              = pkgservice.GetStorageStatsResponse
+	RepairObjectRequest                  = pkgservice.RepairObjectRequest
+	RepairObjectResponse                 = pkgservice.RepairObjectResponse
+	RunGarbageCollectionRequest          = pkgservice.RunGarbageCollectionRequest
+	RunGarbageCollectionResponse         = pkgservice.RunGarbageCollectionResponse
+	SetBackendStatusRequest              = pkgservice.SetBackendStatusRequest
+	SetBackendStatusResponse             = pkgservice.SetBackendStatusResponse
+	StorageTier                          = pkgservice.StorageTier
+	TenantStorageStats                   = pkgservice.TenantStorageStats
+	UpdateBackendRequest                 = pkgservice.UpdateBackendRequest
+	UpdateBackendResponse                = pkgservice.UpdateBackendResponse
+)
+
+// =============================================================================
+// Object Transfer Service
+// =============================================================================
+
+type (
+	FetchObjectRequest         = pkgservice.FetchObjectRequest
+	FetchObjectResponse        = pkgservice.FetchObjectResponse
+	ObjectFetchItem            = pkgservice.ObjectFetchItem
+	StreamFetchObjectsRequest  = pkgservice.StreamFetchObjectsRequest
+	StreamFetchObjectsResponse = pkgservice.StreamFetchObjectsResponse
+)
+
+// =============================================================================
+// Project Service
+// =============================================================================
+
+type (
+	AuthorizeAgentRequest   = pkgservice.AuthorizeAgentRequest
+	CreateProjectRequest    = pkgservice.CreateProjectRequest
+	CreateProjectResponse   = pkgservice.CreateProjectResponse
+	DeleteProjectRequest    = pkgservice.DeleteProjectRequest
+	DeleteProjectResponse   = pkgservice.DeleteProjectResponse
+	GetProjectByNameRequest = pkgservice.GetProjectByNameRequest
+	GetProjectRequest       = pkgservice.GetProjectRequest
+	GetProjectResponse      = pkgservice.GetProjectResponse
+	GrantAgentRoleRequest   = pkgservice.GrantAgentRoleRequest
+	GrantAgentRoleResponse  = pkgservice.GrantAgentRoleResponse
+	ListProjectsRequest     = pkgservice.ListProjectsRequest
+	ListProjectsResponse    = pkgservice.ListProjectsResponse
+	ProjectService          = pkgservice.ProjectService
+	RevokeAgentRoleRequest  = pkgservice.RevokeAgentRoleRequest
+	RevokeAgentRoleResponse = pkgservice.RevokeAgentRoleResponse
+	UpdateProjectRequest    = pkgservice.UpdateProjectRequest
+	UpdateProjectResponse   = pkgservice.UpdateProjectResponse
+)
+
+// =============================================================================
+// RBAC Request/Response Types
+// =============================================================================
+
+type (
+	AuthAssignRoleRequest  = pkgservice.AuthAssignRoleRequest
+	AuthAssignRoleResponse = pkgservice.AuthAssignRoleResponse
+	AuthCreateRoleRequest  = pkgservice.AuthCreateRoleRequest
+	AuthCreateRoleResponse = pkgservice.AuthCreateRoleResponse
+	AuthCreateUserRequest  = pkgservice.AuthCreateUserRequest
+	AuthCreateUserResponse = pkgservice.AuthCreateUserResponse
+	AuthDeleteRoleRequest  = pkgservice.AuthDeleteRoleRequest
+	AuthDeleteRoleResponse = pkgservice.AuthDeleteRoleResponse
+	AuthDeleteUserRequest  = pkgservice.AuthDeleteUserRequest
+	AuthDeleteUserResponse = pkgservice.AuthDeleteUserResponse
+	AuthListRolesRequest   = pkgservice.AuthListRolesRequest
+	AuthListRolesResponse  = pkgservice.AuthListRolesResponse
+	AuthListUsersRequest   = pkgservice.AuthListUsersRequest
+	AuthListUsersResponse  = pkgservice.AuthListUsersResponse
+	AuthRevokeRoleRequest  = pkgservice.AuthRevokeRoleRequest
+	AuthRevokeRoleResponse = pkgservice.AuthRevokeRoleResponse
+	RoleInfo               = pkgservice.RoleInfo
+	UserInfo               = pkgservice.UserInfo
+)
+
+// =============================================================================
+// Seal Service
+// =============================================================================
+
+type (
+	SealService = pkgservice.SealService
+)
+
+// =============================================================================
+// Trust Service (DANE, cross-signed roots, AIA)
+// =============================================================================
+
+type (
+	AutoImportAIARequest        = pkgservice.AutoImportAIARequest
+	AutoImportAIAResponse       = pkgservice.AutoImportAIAResponse
+	CrossSignedRootPoolRequest  = pkgservice.CrossSignedRootPoolRequest
+	CrossSignedRootPoolResponse = pkgservice.CrossSignedRootPoolResponse
+	DANEPublisher               = pkgservice.DANEPublisher
+	PublishDANERequest          = pkgservice.PublishDANERequest
+	PublishDANEResponse         = pkgservice.PublishDANEResponse
+	TrustService                = pkgservice.TrustService
+)
+
+// =============================================================================
+// Vector Service
+// =============================================================================
+
+type (
+	BatchDeleteVectorsRequest     = pkgservice.BatchDeleteVectorsRequest
+	BatchDeleteVectorsResponse    = pkgservice.BatchDeleteVectorsResponse
+	BatchUpsertRequest            = pkgservice.BatchUpsertRequest
+	BatchUpsertResponse           = pkgservice.BatchUpsertResponse
+	CompactNamespaceRequest       = pkgservice.CompactNamespaceRequest
+	CompactNamespaceResponse      = pkgservice.CompactNamespaceResponse
+	CreateNamespaceRequest        = pkgservice.CreateNamespaceRequest
+	CreateNamespaceResponse       = pkgservice.CreateNamespaceResponse
+	DeleteNamespaceRequest        = pkgservice.DeleteNamespaceRequest
+	DeleteNamespaceResponse       = pkgservice.DeleteNamespaceResponse
+	DeleteVectorRequest           = pkgservice.DeleteVectorRequest
+	DeleteVectorResponse          = pkgservice.DeleteVectorResponse
+	GetCompactionProgressRequest  = pkgservice.GetCompactionProgressRequest
+	GetCompactionProgressResponse = pkgservice.GetCompactionProgressResponse
+	GetIndexStatsRequest          = pkgservice.GetIndexStatsRequest
+	GetIndexStatsResponse         = pkgservice.GetIndexStatsResponse
+	GetNamespaceInfoRequest       = pkgservice.GetNamespaceInfoRequest
+	GetNamespaceInfoResponse      = pkgservice.GetNamespaceInfoResponse
+	GetRebuildProgressRequest     = pkgservice.GetRebuildProgressRequest
+	GetRebuildProgressResponse    = pkgservice.GetRebuildProgressResponse
+	GetVectorRequest              = pkgservice.GetVectorRequest
+	GetVectorResponse             = pkgservice.GetVectorResponse
+	HybridSearchRequest           = pkgservice.HybridSearchRequest
+	HybridSearchResponse          = pkgservice.HybridSearchResponse
+	IndexPerformanceMetrics       = pkgservice.IndexPerformanceMetrics
+	ListNamespacesRequest         = pkgservice.ListNamespacesRequest
+	ListNamespacesResponse        = pkgservice.ListNamespacesResponse
+	ListVectorsRequest            = pkgservice.ListVectorsRequest
+	ListVectorsResponse           = pkgservice.ListVectorsResponse
+	NamespaceInfo                 = pkgservice.NamespaceInfo
+	RebuildIndexRequest           = pkgservice.RebuildIndexRequest
+	RebuildIndexResponse          = pkgservice.RebuildIndexResponse
+	SearchByIDRequest             = pkgservice.SearchByIDRequest
+	SearchByIDResponse            = pkgservice.SearchByIDResponse
+	SearchByMetadataRequest       = pkgservice.SearchByMetadataRequest
+	SearchByMetadataResponse      = pkgservice.SearchByMetadataResponse
+	SearchSimilarRequest          = pkgservice.SearchSimilarRequest
+	SearchSimilarResponse         = pkgservice.SearchSimilarResponse
+	UpdateVectorMetadataRequest   = pkgservice.UpdateVectorMetadataRequest
+	UpdateVectorMetadataResponse  = pkgservice.UpdateVectorMetadataResponse
+	UpsertVectorRequest           = pkgservice.UpsertVectorRequest
+	UpsertVectorResponse          = pkgservice.UpsertVectorResponse
+	VectorData                    = pkgservice.VectorData
+	VectorSearchResult            = pkgservice.VectorSearchResult
 )

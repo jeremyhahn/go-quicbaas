@@ -24,6 +24,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,6 +55,58 @@ type fakeBarrierClient struct {
 	lastRekeyReq        *qrdbtransport.BarrierRekeyRequest
 	lastGenRecoveryReq  *qrdbtransport.BarrierGenerateRecoveryKeysRequest
 	lastRecoverReq      *qrdbtransport.BarrierRecoverWithKeysRequest
+
+	rootTokenFunc          func(ctx context.Context, req *qrdbtransport.BarrierGenerateRootTokenRequest) (*qrdbtransport.BarrierRootTokenResponse, error)
+	enableEncryptionFunc   func(ctx context.Context, req *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error)
+	lastRootTokenReq       *qrdbtransport.BarrierGenerateRootTokenRequest
+	lastEnableEncReq       *qrdbtransport.BarrierEnableEncryptionRequest
+	officerRegisterFunc    func(ctx context.Context, req *qrdbtransport.OfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error)
+	officerListFunc        func(ctx context.Context) ([]*qrdbtransport.OfficerStatus, error)
+	officerClaimStatusFunc func(ctx context.Context) ([]*qrdbtransport.OfficerStatus, error)
+	lastOfficerRegisterReq *qrdbtransport.OfficerRegisterRequest
+}
+
+// BarrierGenerateRootToken records the request and delegates to the injected func.
+func (f *fakeBarrierClient) BarrierGenerateRootToken(ctx context.Context, req *qrdbtransport.BarrierGenerateRootTokenRequest) (*qrdbtransport.BarrierRootTokenResponse, error) {
+	f.lastRootTokenReq = req
+	if f.rootTokenFunc != nil {
+		return f.rootTokenFunc(ctx, req)
+	}
+	return &qrdbtransport.BarrierRootTokenResponse{}, nil
+}
+
+// BarrierEnableEncryption records the request and delegates to the injected func.
+func (f *fakeBarrierClient) BarrierEnableEncryption(ctx context.Context, req *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
+	f.lastEnableEncReq = req
+	if f.enableEncryptionFunc != nil {
+		return f.enableEncryptionFunc(ctx, req)
+	}
+	return &qrdbtransport.BarrierEnableEncryptionResponse{}, nil
+}
+
+// OfficerRegister records the request and delegates to the injected func.
+func (f *fakeBarrierClient) OfficerRegister(ctx context.Context, req *qrdbtransport.OfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error) {
+	f.lastOfficerRegisterReq = req
+	if f.officerRegisterFunc != nil {
+		return f.officerRegisterFunc(ctx, req)
+	}
+	return &qrdbtransport.OfficerRegisterResponse{}, nil
+}
+
+// OfficerList delegates to the injected func.
+func (f *fakeBarrierClient) OfficerList(ctx context.Context) ([]*qrdbtransport.OfficerStatus, error) {
+	if f.officerListFunc != nil {
+		return f.officerListFunc(ctx)
+	}
+	return nil, nil
+}
+
+// OfficerClaimStatus delegates to the injected func.
+func (f *fakeBarrierClient) OfficerClaimStatus(ctx context.Context) ([]*qrdbtransport.OfficerStatus, error) {
+	if f.officerClaimStatusFunc != nil {
+		return f.officerClaimStatusFunc(ctx)
+	}
+	return nil, nil
 }
 
 func (f *fakeBarrierClient) BarrierStatus(ctx context.Context) (*qrdbtransport.BarrierStatusResponse, error) {
@@ -867,4 +921,123 @@ func TestBarrierShareInputError_Message(t *testing.T) {
 	err := &BarrierShareInputError{Reason: "test reason"}
 	assert.Contains(t, err.Error(), "test reason")
 	assert.Contains(t, err.Error(), "barrier unseal-shares")
+}
+
+// =============================================================================
+// root-token
+// =============================================================================
+
+// TestRunBarrierRootToken_SendsTheQuorum verifies the shares reach the server
+// and the minted token is surfaced with its one-time warning.
+func TestRunBarrierRootToken_SendsTheQuorum(t *testing.T) {
+	resetBarrierFlags()
+	fb := &fakeBarrierClient{
+		rootTokenFunc: func(_ context.Context, _ *qrdbtransport.BarrierGenerateRootTokenRequest) (*qrdbtransport.BarrierRootTokenResponse, error) {
+			return &qrdbtransport.BarrierRootTokenResponse{
+				Token:     "root-tok-abc",
+				CreatedAt: "2026-08-11T00:00:00Z",
+			}, nil
+		},
+	}
+	restore := withFakeBarrier(fb)
+	defer restore()
+
+	barrierShares = []string{"share-a", "share-b"}
+
+	cmd := &cobra.Command{Use: "root-token"}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	require.NoError(t, runBarrierRootTokenCommand(cmd, nil))
+
+	require.NotNil(t, fb.lastRootTokenReq)
+	assert.Equal(t, []string{"share-a", "share-b"}, fb.lastRootTokenReq.Shares)
+
+	got := out.String()
+	assert.Contains(t, got, "root-tok-abc")
+	assert.Contains(t, got, "ONCE",
+		"the operator must be told the token cannot be retrieved again")
+}
+
+// TestRunBarrierRootToken_RequiresAQuorum verifies no request is sent without
+// shares — the server would reject it, and failing locally is clearer.
+func TestRunBarrierRootToken_RequiresAQuorum(t *testing.T) {
+	resetBarrierFlags()
+	fb := &fakeBarrierClient{}
+	restore := withFakeBarrier(fb)
+	defer restore()
+
+	err := runBarrierRootTokenCommand(&cobra.Command{Use: "root-token"}, nil)
+	require.Error(t, err)
+	assert.Nil(t, fb.lastRootTokenReq)
+}
+
+// =============================================================================
+// enable-encryption
+// =============================================================================
+
+// TestRunBarrierEnableEncryption_SendsTheMigration verifies the tenant scope
+// and strategy parameters reach the server.
+func TestRunBarrierEnableEncryption_SendsTheMigration(t *testing.T) {
+	resetBarrierFlags()
+	fb := &fakeBarrierClient{
+		enableEncryptionFunc: func(_ context.Context, _ *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
+			return &qrdbtransport.BarrierEnableEncryptionResponse{Status: "started", Scope: "tenant:acme"}, nil
+		},
+	}
+	restore := withFakeBarrier(fb)
+	defer restore()
+
+	barrierTenantID = "acme"
+	barrierStrategy = "shamir"
+	barrierThreshold = 2
+	barrierTotalShares = 3
+
+	cmd := &cobra.Command{Use: "enable-encryption"}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	require.NoError(t, runBarrierEnableEncryptionCommand(cmd, nil))
+
+	req := fb.lastEnableEncReq
+	require.NotNil(t, req)
+	assert.Equal(t, "acme", req.TenantID)
+	assert.Equal(t, "shamir", req.Strategy)
+	assert.Equal(t, 2, req.ShamirThreshold)
+	assert.Equal(t, 3, req.ShamirTotal)
+	assert.Contains(t, out.String(), "started")
+}
+
+// TestRunBarrierEnableEncryption_ValidatesLocally verifies combinations the
+// server would reject are refused before a migration is attempted against
+// live data.
+func TestRunBarrierEnableEncryption_ValidatesLocally(t *testing.T) {
+	cases := []struct {
+		name      string
+		strategy  string
+		secret    string
+		threshold int
+		total     int
+	}{
+		{"no strategy", "", "", 0, 0},
+		{"passphrase without passphrase", "passphrase", "", 0, 0},
+		{"shamir threshold below 2", "shamir", "", 1, 3},
+		{"shamir total below threshold", "shamir", "", 3, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetBarrierFlags()
+			fb := &fakeBarrierClient{}
+			restore := withFakeBarrier(fb)
+			defer restore()
+
+			barrierStrategy = tc.strategy
+			barrierSecret = tc.secret
+			barrierThreshold = tc.threshold
+			barrierTotalShares = tc.total
+
+			err := runBarrierEnableEncryptionCommand(&cobra.Command{Use: "enable-encryption"}, nil)
+			require.Error(t, err)
+			assert.Nil(t, fb.lastEnableEncReq,
+				"an invalid migration must not reach the server")
+		})
+	}
 }

@@ -65,12 +65,12 @@ func NewPersistentAuthManager(cfg *AuthConfig, storage interfaces.Storage, log *
 		return nil, api.NewNilInputError("auth.NewPersistentAuthManager", "logger")
 	}
 
-	if cfg.Enabled && cfg.JWTSecret == "" && cfg.JWTSigningKeyID == "" {
-		return nil, api.NewRequiredFieldError("JWT secret or signing key ID")
+	if cfg.Enabled && cfg.JWTSigningKeyID == "" {
+		return nil, api.NewRequiredFieldError("JWT signing key ID")
 	}
 
-	// Default the signing algorithm to ES256 when a signing key ID is configured
-	if cfg.JWTSigningKeyID != "" && cfg.JWTSigningAlgorithm == "" {
+	// Default the signing algorithm to ES256
+	if cfg.JWTSigningAlgorithm == "" {
 		cfg.JWTSigningAlgorithm = "ES256"
 	}
 

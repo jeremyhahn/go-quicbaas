@@ -52,6 +52,7 @@ import (
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -821,6 +822,22 @@ func (s *Server) mapErrorToJSONRPCError(err error) (int, string) {
 		default:
 			return InternalError, "Tool execution failed"
 		}
+	}
+
+	// Spawn-policy refusals (bind mount outside every allowed root, forbidden
+	// sandbox mode or network, integrity tier below the operator's floor) are
+	// authorization decisions about the request, not server faults, and must
+	// not reach the InternalError fallback below.
+	//
+	// OperationNotAllowed is the forbidden-but-authenticated code on this
+	// transport — it is where dberrors.ErrForbidden lands above, and it maps
+	// to a plain HTTP 403. PermissionDenied is deliberately NOT used: it
+	// answers with an OAuth insufficient_scope challenge (see
+	// ErrorPermissionDenied), which would tell a client to go acquire a
+	// broader token for a denial no token can lift. The policy's own message
+	// is returned verbatim so an operator sees which field and root failed.
+	if orchestration.IsPolicyDenial(err) {
+		return OperationNotAllowed, err.Error()
 	}
 
 	// Check error message for common patterns (fallback for non-QBError)

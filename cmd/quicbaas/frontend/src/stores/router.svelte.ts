@@ -41,11 +41,17 @@
  *   #/iam            → IAM
  *   #/kms            → KMS
  *   #/secrets        → Secrets
+ *   #/certificates   → Certificates / Certificate Authority
+ *   #/trust          → Trust composition (cross-sign / AIA / DANE)
+ *   #/crypto         → Crypto console (encrypt/decrypt/sign/verify/hash/random/datakey)
+ *   #/dek            → Data Encryption Keys (create/rotate/reencrypt)
+ *   #/dynamic-secrets → Dynamic Secrets (roles, credential leases)
  *   #/barrier        → Barrier (encryption barrier; replaces #/seal)
  *   #/ceremony       → Multi-officer key ceremony
  *   #/bootstrap      → First-contact trust bootstrap wizard
  *   #/ssh-keys       → SSH Keys
  *   #/sshkeys        → bookmark-friendly alias for /ssh-keys
+ *   #/accounts       → Pooled provider accounts
  *   #/invite/:token → Invite activation (passwordless)
  */
 
@@ -82,6 +88,11 @@ export type RouteName =
   | 'iam'
   | 'kms'
   | 'secrets'
+  | 'certificates'
+  | 'trust'
+  | 'crypto'
+  | 'dek'
+  | 'dynamic-secrets'
   | 'barrier'
   | 'tenant-barrier'
   | 'ceremony'
@@ -91,6 +102,8 @@ export type RouteName =
   | 'inference'
   // ORCHESTRATION — projects
   | 'projects'
+  // ORCHESTRATION — pooled provider accounts
+  | 'accounts'
   // CLUSTER
   | 'cluster'
   | 'invite-activate'
@@ -202,6 +215,21 @@ function parseHash(hash: string): Route {
   if (path === '/secrets') {
     return { name: 'secrets', params: {}, hash };
   }
+  if (path === '/certificates') {
+    return { name: 'certificates', params: {}, hash };
+  }
+  if (path === '/trust') {
+    return { name: 'trust', params: {}, hash };
+  }
+  if (path === '/crypto') {
+    return { name: 'crypto', params: {}, hash };
+  }
+  if (path === '/dek') {
+    return { name: 'dek', params: {}, hash };
+  }
+  if (path === '/dynamic-secrets') {
+    return { name: 'dynamic-secrets', params: {}, hash };
+  }
   if (path === '/barrier' || path === '/seal') {
     // /seal is a legacy alias kept so existing bookmarks resolve to the
     // renamed Barrier surface without a hard 404.
@@ -240,6 +268,9 @@ function parseHash(hash: string): Route {
   }
   if (path === '/projects') {
     return { name: 'projects', params: {}, hash };
+  }
+  if (path === '/accounts') {
+    return { name: 'accounts', params: {}, hash };
   }
   if (path === '/cluster') {
     return { name: 'cluster', params: {}, hash };
@@ -335,6 +366,11 @@ export function routeIAMTab(tab: 'users' | 'tenants' | 'roles' | 'policies'): vo
 }
 export function routeKMS(): void { navigateTo('/kms'); }
 export function routeSecrets(): void { navigateTo('/secrets'); }
+export function routeCertificates(): void { navigateTo('/certificates'); }
+export function routeTrust(): void { navigateTo('/trust'); }
+export function routeCrypto(): void { navigateTo('/crypto'); }
+export function routeDEK(): void { navigateTo('/dek'); }
+export function routeDynamicSecrets(): void { navigateTo('/dynamic-secrets'); }
 export function routeBarrier(): void { navigateTo('/barrier'); }
 export function routeTenantBarrier(): void { navigateTo('/tenant-barrier'); }
 export function routeCeremony(): void { navigateTo('/ceremony'); }
@@ -350,6 +386,7 @@ export function routeMessaging(): void { navigateTo('/messaging'); }
 export function routeScheduler(): void { navigateTo('/scheduler'); }
 export function routeInference(): void { navigateTo('/inference'); }
 export function routeProjects(): void { navigateTo('/projects'); }
+export function routeAccounts(): void { navigateTo('/accounts'); }
 export function routeSessionDetail(id: string): void {
   navigateTo(`/sessions/${encodeURIComponent(id)}`);
 }

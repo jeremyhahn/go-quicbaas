@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
@@ -68,7 +69,7 @@ func setupInviteActivationHandler(t *testing.T) (*IAMHandler, string, iam.Invite
 	}))
 
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-	inviteStore := iam.NewMemoryInviteStore()
+	inviteStore := iamtest.NewMemoryInviteStore()
 	mockSvc := &inviteActivationService{
 		MockQuicBaaS: testutil.NewMockQuicBaaS(),
 		mgr:          &fakeWebAuthnManager{user: &iam.User{ID: inviteUserID, TenantID: inviteTenant, Email: "invitee@example.com"}},
@@ -85,14 +86,8 @@ func setupInviteActivationHandler(t *testing.T) (*IAMHandler, string, iam.Invite
 
 	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
 
-	token, err := iam.GenerateInviteToken()
+	token, _, err := inviteStore.Create(context.Background(), inviteTenant, inviteUserID, time.Hour)
 	require.NoError(t, err)
-	require.NoError(t, inviteStore.Create(context.Background(), &iam.InviteRecord{
-		TokenHash: iam.TokenHashExported(token),
-		UserID:    inviteUserID,
-		TenantID:  inviteTenant,
-		ExpiresAt: time.Now().Add(time.Hour),
-	}))
 
 	return handler, token, inviteStore, func() { server.Close() }
 }
@@ -100,6 +95,7 @@ func setupInviteActivationHandler(t *testing.T) (*IAMHandler, string, iam.Invite
 func inviteTokenReq(method, token string) *http.Request {
 	r := httptest.NewRequest(method, "/api/v1/iam/invites/"+token+"/activate/fido2/begin", nil)
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", inviteTenant)
 	rctx.URLParams.Add("token", token)
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
@@ -133,6 +129,7 @@ func inviteFinishReq(t *testing.T, token string) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/iam/invites/"+token+"/activate/fido2/finish", nil)
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", inviteTenant)
 	rctx.URLParams.Add("token", token)
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
@@ -158,6 +155,7 @@ func TestActivateFIDO2Finish_MissingCredential(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/x", nil)
 	r.Body = io.NopCloser(bytes.NewReader([]byte(`{}`)))
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", inviteTenant)
 	rctx.URLParams.Add("token", token)
 	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 	w := httptest.NewRecorder()
@@ -200,6 +198,8 @@ func TestActivatePIV_Branches(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/api/v1/iam/invites/"+tok+"/activate/piv", nil)
 		r.Body = io.NopCloser(bytes.NewReader([]byte(body)))
 		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("tenant_id", inviteTenant)
+		rctx.URLParams.Add("tenant_id", inviteTenant)
 		rctx.URLParams.Add("token", tok)
 		return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 	}
@@ -233,25 +233,22 @@ func TestGetInvite_UsedAndExpired(t *testing.T) {
 	getReq := func(tok string) *http.Request {
 		r := httptest.NewRequest(http.MethodGet, "/api/v1/iam/invites/"+tok, nil)
 		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("tenant_id", inviteTenant)
+		rctx.URLParams.Add("tenant_id", inviteTenant)
 		rctx.URLParams.Add("token", tok)
 		return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 	}
 
 	// Mark the seeded invite used -> 410.
-	require.NoError(t, store.MarkUsed(context.Background(), token))
+	_, redeemErr := store.Redeem(context.Background(), inviteTenant, token)
+	require.NoError(t, redeemErr)
 	w := httptest.NewRecorder()
 	handler.GetInvite(w, getReq(token))
 	assert.Equal(t, http.StatusGone, w.Code)
 
 	// Seed an expired invite -> 410.
-	expiredToken, err := iam.GenerateInviteToken()
+	expiredToken, _, err := store.Create(context.Background(), inviteTenant, inviteUserID, -time.Hour)
 	require.NoError(t, err)
-	require.NoError(t, store.Create(context.Background(), &iam.InviteRecord{
-		TokenHash: iam.TokenHashExported(expiredToken),
-		UserID:    inviteUserID,
-		TenantID:  inviteTenant,
-		ExpiresAt: time.Now().Add(-time.Hour),
-	}))
 	w = httptest.NewRecorder()
 	handler.GetInvite(w, getReq(expiredToken))
 	assert.Equal(t, http.StatusGone, w.Code)
@@ -262,7 +259,8 @@ func TestActivateFIDO2Begin_UsedInvite(t *testing.T) {
 	handler, token, store, cleanup := setupInviteActivationHandler(t)
 	defer cleanup()
 
-	require.NoError(t, store.MarkUsed(context.Background(), token))
+	_, redeemErrtoken := store.Redeem(context.Background(), inviteTenant, token)
+	require.NoError(t, redeemErrtoken)
 	w := httptest.NewRecorder()
 	handler.ActivateFIDO2Begin(w, inviteTokenReq(http.MethodPost, token))
 	assert.Equal(t, http.StatusGone, w.Code)
@@ -274,19 +272,15 @@ func TestActivateFIDO2Finish_UsedAndExpired(t *testing.T) {
 	defer cleanup()
 
 	// Used invite -> 410.
-	require.NoError(t, store.MarkUsed(context.Background(), token))
+	_, redeemErrtoken := store.Redeem(context.Background(), inviteTenant, token)
+	require.NoError(t, redeemErrtoken)
 	w := httptest.NewRecorder()
 	handler.ActivateFIDO2Finish(w, inviteFinishReq(t, token))
 	assert.Equal(t, http.StatusGone, w.Code)
 
 	// Expired invite -> 410.
-	expiredToken, err := iam.GenerateInviteToken()
+	expiredToken, _, err := store.Create(context.Background(), inviteTenant, inviteUserID, -time.Hour)
 	require.NoError(t, err)
-	require.NoError(t, store.Create(context.Background(), &iam.InviteRecord{
-		TokenHash: iam.TokenHashExported(expiredToken),
-		UserID:    inviteUserID, TenantID: inviteTenant,
-		ExpiresAt: time.Now().Add(-time.Hour),
-	}))
 	w = httptest.NewRecorder()
 	handler.ActivateFIDO2Finish(w, inviteFinishReq(t, expiredToken))
 	assert.Equal(t, http.StatusGone, w.Code)

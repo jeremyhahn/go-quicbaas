@@ -20,6 +20,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/account"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/auth"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/backup"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/batch"
@@ -128,6 +129,12 @@ type Client interface {
 
 	// Project operations (agentic project management)
 	Project() ProjectClient
+
+	// Account operations (pooled provider accounts — the per-tenant pool of
+	// Anthropic/Claude, Codex, and OpenCode logins an agent session can be
+	// spawned against). This is the single canonical entry point for the
+	// surface; no flat or duplicate accessor exists.
+	Account() AccountClient
 
 	// Orchestrator operations (agent fleet management)
 	Orchestrator() OrchestratorClient
@@ -1472,6 +1479,79 @@ type OrchestratorClient = orchestrator.Client
 // ProjectClient is an alias for the project.Client interface.
 type ProjectClient = project.Client
 
+// =============================================================================
+// Account Client Type Aliases (pooled provider accounts)
+// =============================================================================
+
+// AccountClient is an alias for the account.Client interface.
+type AccountClient = account.Client
+
+type (
+	// AccountInfo is an alias for account.AccountInfo.
+	AccountInfo = account.AccountInfo
+
+	// AccountCredential is an alias for account.Credential. Request-only:
+	// no SDK verb ever returns one.
+	AccountCredential = account.Credential
+
+	// AccountProvider is an alias for account.Provider.
+	AccountProvider = account.Provider
+
+	// AccountStatus is an alias for account.Status.
+	AccountStatus = account.Status
+
+	// AccountRefreshPolicy is an alias for account.RefreshPolicy.
+	AccountRefreshPolicy = account.RefreshPolicy
+
+	// CreateAccountRequest is an alias for account.CreateAccountRequest.
+	CreateAccountRequest = account.CreateAccountRequest
+
+	// UpdateAccountRequest is an alias for account.UpdateAccountRequest.
+	UpdateAccountRequest = account.UpdateAccountRequest
+
+	// ListAccountsRequest is an alias for account.ListAccountsRequest.
+	ListAccountsRequest = account.ListAccountsRequest
+
+	// ListAccountsResponse is an alias for account.ListAccountsResponse.
+	ListAccountsResponse = account.ListAccountsResponse
+
+	// RotateAccountCredentialRequest is an alias for
+	// account.RotateCredentialRequest.
+	RotateAccountCredentialRequest = account.RotateCredentialRequest
+
+	// RevokeAccountRequest is an alias for account.RevokeAccountRequest.
+	RevokeAccountRequest = account.RevokeAccountRequest
+
+	// AccountUsageReport is an alias for account.UsageReport.
+	AccountUsageReport = account.UsageReport
+)
+
+const (
+	// AccountProviderClaude pools Anthropic/Claude Code accounts.
+	AccountProviderClaude = account.ProviderClaude
+
+	// AccountProviderCodex pools OpenAI/Codex accounts.
+	AccountProviderCodex = account.ProviderCodex
+
+	// AccountProviderOpenCode pools OpenCode provider configurations.
+	AccountProviderOpenCode = account.ProviderOpenCode
+
+	// AccountStatusActive marks an account eligible for selection.
+	AccountStatusActive = account.StatusActive
+
+	// AccountStatusRevoked marks an account explicitly revoked.
+	AccountStatusRevoked = account.StatusRevoked
+
+	// AccountStatusError marks an account whose last refresh failed.
+	AccountStatusError = account.StatusError
+
+	// AccountRefreshNone marks a credential that never needs refreshing.
+	AccountRefreshNone = account.RefreshNone
+
+	// AccountRefreshOAuth2 marks a credential renewed via an RFC 6749 grant.
+	AccountRefreshOAuth2 = account.RefreshOAuth2
+)
+
 type (
 	// ProjectInfo is an alias for project.ProjectInfo.
 	ProjectInfo = project.ProjectInfo
@@ -1554,6 +1634,7 @@ type client struct {
 	ragClient                RAGClient
 	orchestratorClient       OrchestratorClient
 	projectClient            ProjectClient
+	accountClient            AccountClient
 	qrdb                     qrdbState
 	address                  string
 	acmeTransportOnce        sync.Once
@@ -1593,6 +1674,18 @@ func NewClient(address string, opts ...Option) (Client, error) {
 	for _, opt := range opts {
 		if err := opt(options); err != nil {
 			return nil, err
+		}
+	}
+
+	// Embedded mode: when the caller did not inject a secret registry, adopt
+	// the one the embedded QuicBaaS service exposes. The secrets manager is a
+	// core, always-on service (the server builds its resolver registry in every
+	// mode); auto-wiring it here means Security().SecretResolver() is reachable
+	// through any embedded client without an explicit WithSecretRegistry, so
+	// kms:// / credential:// URIs resolve instead of failing closed.
+	if options.secretRegistry == nil && options.embeddedService != nil {
+		if svc, ok := options.embeddedService.(service.QuicBaaS); ok {
+			options.secretRegistry = svc.SecretRegistry()
 		}
 	}
 
@@ -2418,6 +2511,24 @@ func (c *client) Project() ProjectClient {
 	return c.projectClient
 }
 
+// Account returns the Account client for managing pooled provider accounts.
+func (c *client) Account() AccountClient {
+	c.mu.RLock()
+	if c.accountClient != nil {
+		c.mu.RUnlock()
+		return c.accountClient
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.accountClient == nil {
+		c.accountClient = newAccountClient(c.transport)
+	}
+	return c.accountClient
+}
+
 // Client constructors - wire up all client implementations
 func newKVClient(t Transport) KVClient                         { return kv.NewClient(t) }
 func newBatchClient(t Transport) BatchClient                   { return batch.NewClient(t) }
@@ -2453,3 +2564,4 @@ func newOllamaClient(t Transport) OllamaClient                 { return ollama.N
 func newRAGClient(t Transport) RAGClient                       { return rag.NewClient(t) }
 func newOrchestratorClient(t Transport) OrchestratorClient     { return orchestrator.NewClient(t) }
 func newProjectClient(t Transport) ProjectClient               { return project.NewClient(t) }
+func newAccountClient(t Transport) AccountClient               { return account.NewClient(t) }

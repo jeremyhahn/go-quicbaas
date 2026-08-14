@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -289,4 +290,32 @@ func TestParamTenantIsolation_ListPrefixesAreMutuallyExclusive(t *testing.T) {
 	scopedA := paramTenantScopedPath("tenant-a", "config")
 	assert.True(t, strings.HasPrefix(scopedA, prefixA))
 	assert.False(t, strings.HasPrefix(scopedA, prefixB))
+}
+
+// =============================================================================
+// System-tenant scoping tests
+// =============================================================================
+
+// TestParameterTenant_SystemTenantIsPlatformScoped proves a caller carrying
+// the literal system tenant is treated identically to single-tenant mode
+// rather than being isolated into a tenant namespace named "system".
+func TestParameterTenant_SystemTenantIsPlatformScoped(t *testing.T) {
+	for _, tenantID := range []string{"", qrdbsdk.SystemTenantID} {
+		t.Run("tenantID="+tenantID, func(t *testing.T) {
+			assert.Equal(t, "/config/db", paramTenantScopedPath(tenantID, "/config/db"))
+			assert.True(t, paramPathBelongsToTenant(tenantID, "/any/path"))
+			assert.NoError(t, paramEnforceTenantAccess(tenantID, "/any/path", "GetParameter"))
+		})
+	}
+}
+
+// TestParameterTenant_OrdinaryTenantStaysIsolated proves the system-tenant
+// carve-out does not widen ordinary tenants' reach: a lookalike ID that
+// merely shares the "system" prefix is still fully isolated.
+func TestParameterTenant_OrdinaryTenantStaysIsolated(t *testing.T) {
+	scoped := paramTenantScopedPath("system-2", "/config/db")
+	assert.Equal(t, "tenant/system-2//config/db", scoped)
+	assert.False(t, paramPathBelongsToTenant("system-2", "/config/db"))
+	err := paramEnforceTenantAccess("system-2", "/config/db", "GetParameter")
+	require.Error(t, err)
 }

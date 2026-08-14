@@ -17,6 +17,7 @@ package mocks
 import (
 	"context"
 
+	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -123,6 +124,9 @@ type MockQuicBaaS struct {
 	OllamaServiceFunc             func() service.OllamaService
 	CertificateServiceFunc        func() service.CertificateService
 	TrustServiceFunc              func() service.TrustService
+	AttestationServiceFunc        func() service.AttestationService
+	PIVServiceFunc                func() service.PIVService
+	FIDO2ServiceFunc              func() service.FIDO2Service
 	ACMEServiceFunc               func() service.ACMEServicer
 	DynamicSecretsServiceFunc     func() service.DynamicSecretsService
 	ObjectStorageServiceFunc      func() service.ObjectStorageService
@@ -131,6 +135,7 @@ type MockQuicBaaS struct {
 	ObjectTransferServiceFunc     func() service.ObjectTransferService
 	SchedulerServiceFunc          func() service.SchedulerService
 	ProjectServiceFunc            func() service.ProjectService
+	AccountServiceFunc            func() service.AccountService
 	AgentAdminServiceFunc         func() service.AgentAdminService
 	SSHClientFunc                 func() xkmsssh.Client
 	MessagingServiceFunc          func() messaging.Service
@@ -156,6 +161,7 @@ type MockQuicBaaS struct {
 	MockObjectTransferService     *MockObjectTransferService
 	MockSchedulerService          *MockSchedulerService
 	MockProjectService            *MockProjectService
+	MockAccountService            *MockAccountService
 	MockAgentAdminService         *MockAgentAdminService
 	MockMessagingService          *MockMessagingService
 	// MockSSHClient is a caller-supplied xkmsssh.Client implementation
@@ -703,6 +709,30 @@ func (m *MockQuicBaaS) Trust() service.TrustService {
 	return nil
 }
 
+// Attestation returns the configured AttestationService stub, or nil.
+func (m *MockQuicBaaS) Attestation() service.AttestationService {
+	if m.AttestationServiceFunc != nil {
+		return m.AttestationServiceFunc()
+	}
+	return nil
+}
+
+// PIV returns the configured PIVService stub, or nil.
+func (m *MockQuicBaaS) PIV() service.PIVService {
+	if m.PIVServiceFunc != nil {
+		return m.PIVServiceFunc()
+	}
+	return nil
+}
+
+// FIDO2 returns the configured FIDO2Service stub, or nil.
+func (m *MockQuicBaaS) FIDO2() service.FIDO2Service {
+	if m.FIDO2ServiceFunc != nil {
+		return m.FIDO2ServiceFunc()
+	}
+	return nil
+}
+
 func (m *MockQuicBaaS) ACME() service.ACMEServicer {
 	if m.ACMEServiceFunc != nil {
 		return m.ACMEServiceFunc()
@@ -781,6 +811,17 @@ func (m *MockQuicBaaS) Project() service.ProjectService {
 	}
 	if m.MockProjectService != nil {
 		return m.MockProjectService
+	}
+	return nil
+}
+
+// Account returns the configured account service mock.
+func (m *MockQuicBaaS) Account() service.AccountService {
+	if m.AccountServiceFunc != nil {
+		return m.AccountServiceFunc()
+	}
+	if m.MockAccountService != nil {
+		return m.MockAccountService
 	}
 	return nil
 }
@@ -912,6 +953,16 @@ func (m *MockQuicBaaS) SetQRDBClient(provider service.QRDBClientProvider) {
 	// No-op in mock
 }
 
+// SetSecretRegistry is a no-op in the mock.
+func (m *MockQuicBaaS) SetSecretRegistry(reg *qrdbsecret.ResolverRegistry) {
+	// No-op in mock
+}
+
+// SecretRegistry returns nil in the mock.
+func (m *MockQuicBaaS) SecretRegistry() *qrdbsecret.ResolverRegistry {
+	return nil
+}
+
 // LoginCeremonyFunc allows tests to stub the login-ceremony facade.
 // Declared on the struct below via the mock's function-field convention is
 // not used here; the simple accessor returns the stored value.
@@ -956,6 +1007,7 @@ func NewMockQuicBaaSWithAllSubservices() *MockQuicBaaS {
 		MockObjectTransferService:     &MockObjectTransferService{},
 		MockSchedulerService:          &MockSchedulerService{},
 		MockProjectService:            &MockProjectService{},
+		MockAccountService:            &MockAccountService{},
 		MockAgentAdminService:         &MockAgentAdminService{},
 		MockMessagingService:          &MockMessagingService{},
 	}

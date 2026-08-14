@@ -40,46 +40,70 @@ func NewAppManager(storage AppStorage, tenants TenantManager) *AppManager {
 	}
 }
 
-// RegisterApp registers a new OAuth2 application.
+// RegisterApp registers a new OAuth2 application. The returned Application
+// carries the plaintext client secret (the only time it is visible); no RFC 7592
+// registration access token is issued. Use RegisterDCRApp for clients created
+// through Dynamic Client Registration, which must own such a token.
 func (m *AppManager) RegisterApp(ctx context.Context, tenantID string, opts RegisterAppOptions) (*Application, error) {
+	app, _, err := m.registerApp(ctx, tenantID, opts, false)
+	return app, err
+}
+
+// registerApp is the single creation path for OAuth2 applications. When
+// withRegistrationToken is set it also mints an RFC 7592 registration access
+// token, persists only its hash on the application record, and returns the
+// plaintext token — which the caller must hand to the client because it is
+// never recoverable afterwards. The token hash is written in the SAME storage
+// write as the application, so a registered DCR client can never exist without
+// its management credential.
+func (m *AppManager) registerApp(ctx context.Context, tenantID string, opts RegisterAppOptions, withRegistrationToken bool) (*Application, string, error) {
 	// Validate inputs
 	if err := m.validateRegisterOptions(opts); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	// Check tenant quota
 	if m.tenants != nil {
 		if err := m.tenants.CheckQuota(ctx, tenantID, QuotaResourceApps); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
 
 	// Generate client ID and secret
 	clientID, err := generateClientID(tenantID, opts.Name)
 	if err != nil {
-		return nil, &IAMContextError{Message: "failed to generate client ID", Cause: err}
+		return nil, "", &IAMContextError{Message: "failed to generate client ID", Cause: err}
 	}
 
 	clientSecret, hashedSecret, err := generateClientSecret()
 	if err != nil {
-		return nil, &IAMContextError{Message: "failed to generate client secret", Cause: err}
+		return nil, "", &IAMContextError{Message: "failed to generate client secret", Cause: err}
+	}
+
+	var registrationToken, registrationTokenHash string
+	if withRegistrationToken {
+		registrationToken, registrationTokenHash, err = generateRegistrationAccessToken()
+		if err != nil {
+			return nil, "", &IAMContextError{Message: "failed to generate registration access token", Cause: err}
+		}
 	}
 
 	now := time.Now()
 
 	// Create application
 	app := &Application{
-		ClientID:        clientID,
-		ClientSecret:    hashedSecret,
-		Name:            opts.Name,
-		TenantID:        tenantID,
-		RedirectURIs:    opts.RedirectURIs,
-		ResourcePrefix:  opts.ResourcePrefix,
-		DefaultAudience: opts.DefaultAudience,
-		GrantTypes:      opts.GrantTypes,
-		ResponseTypes:   opts.ResponseTypes,
-		Created:         now,
-		Updated:         now,
+		ClientID:              clientID,
+		ClientSecret:          hashedSecret,
+		RegistrationTokenHash: registrationTokenHash,
+		Name:                  opts.Name,
+		TenantID:              tenantID,
+		RedirectURIs:          opts.RedirectURIs,
+		ResourcePrefix:        opts.ResourcePrefix,
+		DefaultAudience:       opts.DefaultAudience,
+		GrantTypes:            opts.GrantTypes,
+		ResponseTypes:         opts.ResponseTypes,
+		Created:               now,
+		Updated:               now,
 	}
 
 	// Set defaults
@@ -92,32 +116,73 @@ func (m *AppManager) RegisterApp(ctx context.Context, tenantID string, opts Regi
 
 	// Store application
 	if err := m.storage.CreateApp(ctx, app); err != nil {
-		return nil, &IAMContextError{Message: "failed to store application", Cause: err}
+		return nil, "", &IAMContextError{Message: "failed to store application", Cause: err}
 	}
 
-	// Return application with plaintext secret (only time it's visible)
+	// Return application with plaintext secret (only time it's visible). The
+	// registration token hash never leaves the manager.
 	result := *app
 	result.ClientSecret = clientSecret
+	result.RegistrationTokenHash = ""
 
-	return &result, nil
+	return &result, registrationToken, nil
 }
 
-// GetApp retrieves an application by client ID.
+// GetApp retrieves an application by client ID. The lookup is NOT tenant
+// scoped; callers that hold a tenant (every authenticated management surface)
+// must use GetAppInTenant so a client id from one tenant cannot address a
+// client in another.
 func (m *AppManager) GetApp(ctx context.Context, clientID string) (*Application, error) {
 	app, err := m.storage.GetApp(ctx, clientID)
 	if err != nil {
 		return nil, err
 	}
-
-	// Don't return the hashed secret
-	app.ClientSecret = ""
-	return app, nil
+	return redactAppSecrets(app), nil
 }
 
-// UpdateApp updates an existing application.
+// GetAppInTenant retrieves an application by client ID, requiring it to belong
+// to tenantID. An empty tenantID falls back to the unscoped lookup.
+func (m *AppManager) GetAppInTenant(ctx context.Context, tenantID, clientID string) (*Application, error) {
+	app, err := m.resolveApp(ctx, tenantID, clientID)
+	if err != nil {
+		return nil, err
+	}
+	return redactAppSecrets(app), nil
+}
+
+// resolveApp loads the raw stored application, tenant-scoped when tenantID is
+// non-empty. It is the single read seam every AppManager verb funnels through,
+// so tenant scoping cannot be forgotten in one path and enforced in another.
+// The returned record still carries its credential hashes; callers that hand it
+// to a consumer must redact it.
+func (m *AppManager) resolveApp(ctx context.Context, tenantID, clientID string) (*Application, error) {
+	if tenantID == "" {
+		return m.storage.GetApp(ctx, clientID)
+	}
+	return m.storage.GetAppByTenant(ctx, tenantID, clientID)
+}
+
+// redactAppSecrets clears every credential-bearing field before an Application
+// leaves the manager. It is the single place the hashed client secret and the
+// RFC 7592 registration access token hash are stripped, so no read path can
+// leak them to a transport.
+func redactAppSecrets(app *Application) *Application {
+	app.ClientSecret = ""
+	app.RegistrationTokenHash = ""
+	return app
+}
+
+// UpdateApp updates an existing application. The lookup is NOT tenant scoped;
+// callers that hold a tenant must use UpdateAppInTenant.
 func (m *AppManager) UpdateApp(ctx context.Context, clientID string, opts UpdateAppOptions) (*Application, error) {
+	return m.UpdateAppInTenant(ctx, "", clientID, opts)
+}
+
+// UpdateAppInTenant updates an application, requiring it to belong to tenantID.
+// An empty tenantID falls back to the unscoped lookup.
+func (m *AppManager) UpdateAppInTenant(ctx context.Context, tenantID, clientID string, opts UpdateAppOptions) (*Application, error) {
 	// Get existing application
-	app, err := m.storage.GetApp(ctx, clientID)
+	app, err := m.resolveApp(ctx, tenantID, clientID)
 	if err != nil {
 		return nil, err
 	}
@@ -155,13 +220,23 @@ func (m *AppManager) UpdateApp(ctx context.Context, clientID string, opts Update
 		return nil, &IAMContextError{Message: "failed to update application", Cause: err}
 	}
 
-	// Don't return the hashed secret
-	app.ClientSecret = ""
-	return app, nil
+	return redactAppSecrets(app), nil
 }
 
-// DeleteApp deletes an application.
+// DeleteApp deletes an application. The lookup is NOT tenant scoped; callers
+// that hold a tenant must use DeleteAppInTenant.
 func (m *AppManager) DeleteApp(ctx context.Context, clientID string) error {
+	return m.DeleteAppInTenant(ctx, "", clientID)
+}
+
+// DeleteAppInTenant deletes an application, requiring it to belong to tenantID.
+// An empty tenantID falls back to the unscoped delete.
+func (m *AppManager) DeleteAppInTenant(ctx context.Context, tenantID, clientID string) error {
+	if tenantID != "" {
+		if _, err := m.storage.GetAppByTenant(ctx, tenantID, clientID); err != nil {
+			return err
+		}
+	}
 	if err := m.storage.DeleteApp(ctx, clientID); err != nil {
 		return &IAMContextError{Message: "failed to delete application", Cause: err}
 	}
@@ -177,7 +252,7 @@ func (m *AppManager) ListApps(ctx context.Context, tenantID string, opts ListOpt
 
 	// Remove hashed secrets
 	for _, app := range apps {
-		app.ClientSecret = ""
+		redactAppSecrets(app)
 	}
 
 	return apps, nil
@@ -208,6 +283,7 @@ func (m *AppManager) RotateSecret(ctx context.Context, clientID string) (*Applic
 	// Return application with plaintext secret (only time it's visible)
 	result := *app
 	result.ClientSecret = clientSecret
+	result.RegistrationTokenHash = ""
 
 	return &result, nil
 }
@@ -226,9 +302,7 @@ func (m *AppManager) ValidateClient(ctx context.Context, clientID, clientSecret 
 		return nil, &IAMMessageError{Message: "invalid client credentials"}
 	}
 
-	// Don't return the hashed secret
-	app.ClientSecret = ""
-	return app, nil
+	return redactAppSecrets(app), nil
 }
 
 // ValidateClientCredentials validates client credentials and returns whether they are valid.

@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // =============================================================================
@@ -432,4 +434,15 @@ func TestInvalidTenantPrefixError(t *testing.T) {
 			t.Error("errors.Is should match ErrInvalidTenantPrefix")
 		}
 	})
+}
+
+// TestOrchestrationSystemTenantIDMatchesQRDB guards the literal duplicated in
+// this package (necessary so the dependency-light standalone agent binary
+// avoids importing go-qrdb/sdk/go) against drift from qrdb's canonical system
+// tenant id. This test file is compiled only for `go test`, so it does not
+// pull qrdbsdk into the pkg/agent production binary.
+func TestOrchestrationSystemTenantIDMatchesQRDB(t *testing.T) {
+	if SystemTenantID != qrdbsdk.SystemTenantID {
+		t.Errorf("SystemTenantID = %q, want %q (qrdbsdk.SystemTenantID)", SystemTenantID, qrdbsdk.SystemTenantID)
+	}
 }

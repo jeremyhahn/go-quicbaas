@@ -46,6 +46,14 @@ type restTogglableProbe struct{ sealedState bool }
 
 func (p *restTogglableProbe) IsSealed() bool { return p.sealedState }
 
+// restCeremonyStateProbe reports the ceremony state that decides whether the
+// pre-operational sealed-window exemptions still apply. operational=false is a
+// daemon whose init ceremony is unfinished; operational=true is the
+// already-initialized daemon (restart / post-boot re-seal).
+type restCeremonyStateProbe struct{ operational bool }
+
+func (p *restCeremonyStateProbe) IsOperational() bool { return p.operational }
+
 // restRecordingSink captures the sealed-window bypass audit events.
 type restRecordingSink struct{ events [][2]string }
 
@@ -58,9 +66,15 @@ func (s *restRecordingSink) SealedWindowAuthBypass(transport, operation string) 
 // setupRouter installs) runs FIRST, the platform-token validator gate with
 // the shared sealed-window bypass runs SECOND. Both consume the same probe
 // and the same canonical-table derivation, mirroring setupRouter.
-func newSealedValidatorChain(probe *restTogglableProbe, authorizer ValidatorAuthorizer, sink *restRecordingSink, final http.Handler) http.Handler {
+func newSealedValidatorChain(
+	probe *restTogglableProbe,
+	operational sealedwindow.OperationalProbe,
+	authorizer ValidatorAuthorizer,
+	sink *restRecordingSink,
+	final http.Handler,
+) http.Handler {
 	mw := newValidatorMiddleware(authorizer)
-	mw.sealedBypass = sealedwindow.NewAuthBypass(probe, sink)
+	mw.sealedBypass = sealedwindow.NewAuthBypass(probe, operational, sink)
 	sealed := qrdbsdk.SealedWindowMiddleware(probe, sealedwindow.RESTAllowlist())
 	return sealed(mw.AuthorizeViaValidator(final))
 }
@@ -75,14 +89,17 @@ func newSealedValidatorChain(probe *restTogglableProbe, authorizer ValidatorAuth
 //	unsealed+valid scope          -> 200 (normal enforcement, unchanged)
 func TestRESTSealedWindowAuthBypass_ValidatorGate(t *testing.T) {
 	cases := []struct {
-		name       string
-		sealed     bool
-		method     string
-		path       string
-		bearer     string
-		wantStatus int
-		wantAudit  int
-		wantAuthz  bool
+		name string
+		// sealed is the barrier state; operational is the ceremony state that
+		// governs the pre-operational half of the exemption.
+		sealed      bool
+		operational bool
+		method      string
+		path        string
+		bearer      string
+		wantStatus  int
+		wantAudit   int
+		wantAuthz   bool
 	}{
 		{
 			name:       "sealed allowlisted unauthenticated admitted",
@@ -101,12 +118,43 @@ func TestRESTSealedWindowAuthBypass_ValidatorGate(t *testing.T) {
 			wantAudit:  1,
 		},
 		{
-			name:       "sealed init prefix admitted",
+			name:       "sealed pre-operational init status admitted",
 			sealed:     true,
 			method:     http.MethodGet,
 			path:       "/api/v1/init/status",
 			wantStatus: http.StatusOK,
 			wantAudit:  1,
+		},
+		// Scope axis, end to end: the ceremony status / claim routes are
+		// ScopePreOperational. On an already-initialized (operational) sealed
+		// daemon the sealed middleware still SERVES them — they stay on the
+		// deny-gate allowlist — but the exemption has expired, so the
+		// validator gate demands a token and the unauthenticated request is
+		// rejected instead of admitted.
+		{
+			name:        "sealed operational init status requires auth",
+			sealed:      true,
+			operational: true,
+			method:      http.MethodGet,
+			path:        "/api/v1/init/status",
+			wantStatus:  http.StatusUnauthorized,
+		},
+		{
+			name:        "sealed operational claim-cert begin requires auth",
+			sealed:      true,
+			operational: true,
+			method:      http.MethodPost,
+			path:        "/api/v1/init/claim-cert/begin",
+			wantStatus:  http.StatusUnauthorized,
+		},
+		{
+			name:        "sealed operational unseal still admitted",
+			sealed:      true,
+			operational: true,
+			method:      http.MethodPost,
+			path:        "/api/v1/barrier/unseal",
+			wantStatus:  http.StatusOK,
+			wantAudit:   1,
 		},
 		{
 			name:       "sealed non-allowlisted sealed error",
@@ -152,7 +200,9 @@ func TestRESTSealedWindowAuthBypass_ValidatorGate(t *testing.T) {
 				},
 			}
 			final := &testHandler{}
-			chain := newSealedValidatorChain(probe, authorizer, sink, final)
+			chain := newSealedValidatorChain(
+				probe, &restCeremonyStateProbe{operational: tc.operational},
+				authorizer, sink, final)
 
 			req := httptest.NewRequest(tc.method, tc.path, nil)
 			if tc.bearer != "" {
@@ -183,7 +233,8 @@ func TestRESTSealedWindowAuthBypass_ResealCycle(t *testing.T) {
 		ret: &platformtoken.AuthorizedContext{Subject: "alice", Scopes: []string{"tenant_barrier:unseal"}},
 	}
 	final := &testHandler{}
-	chain := newSealedValidatorChain(probe, authorizer, sink, final)
+	chain := newSealedValidatorChain(
+		probe, &restCeremonyStateProbe{}, authorizer, sink, final)
 
 	do := func(method, path, bearer string) int {
 		final.called = false
@@ -219,7 +270,7 @@ func TestRESTSealedWindowAuthBypass_DefaultDenyGate(t *testing.T) {
 	probe := &restTogglableProbe{sealedState: true}
 	sink := &restRecordingSink{}
 	mw := newValidatorMiddleware(&recordingValidatorAuthorizer{})
-	mw.sealedBypass = sealedwindow.NewAuthBypass(probe, sink)
+	mw.sealedBypass = sealedwindow.NewAuthBypass(probe, &restCeremonyStateProbe{}, sink)
 	final := &testHandler{}
 	sealed := qrdbsdk.SealedWindowMiddleware(probe, sealedwindow.RESTAllowlist())
 	chain := sealed(mw.EnforceDefaultDeny("")(final))
@@ -261,7 +312,7 @@ func TestRESTSealedWindowAuthBypass_TokenBindingGate(t *testing.T) {
 	mw := NewAuthzMiddleware(&AuthzMiddlewareConfig{
 		TokenValidator: &alwaysInvalidTokenValidator{},
 	})
-	mw.sealedBypass = sealedwindow.NewAuthBypass(probe, sink)
+	mw.sealedBypass = sealedwindow.NewAuthBypass(probe, &restCeremonyStateProbe{}, sink)
 	final := &testHandler{}
 	chain := mw.EnforceTokenBinding(final)
 

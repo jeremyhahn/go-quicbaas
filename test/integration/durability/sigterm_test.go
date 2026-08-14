@@ -19,8 +19,8 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"errors"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -105,19 +105,19 @@ func reservePort(t *testing.T) int {
 	return listener.Addr().(*net.TCPAddr).Port
 }
 
-// waitForREST polls the daemon's HTTPS health endpoint until it answers or the
-// deadline expires. The daemon issues its own CA during first boot, so the
-// probe does not verify the chain — reachability is the only signal needed.
+// waitForREST waits until the daemon's HTTPS listener is accepting TLS
+// connections, or the deadline expires. The daemon mints its own CA during
+// first boot, so this probe cannot chain-verify the presented certificate --
+// and QuicBaaS bans InsecureSkipVerify outright, so verification is never
+// disabled. Instead the probe performs a real handshake and treats a
+// *certificate verification* failure as proof that the listener answered.
+// Connection-level errors (refused, reset, timeout) mean the daemon is not up
+// yet, so the probe keeps polling. Reachability is the only signal needed.
 func waitForREST(t *testing.T, port int, exited <-chan struct{}) error {
 	t.Helper()
 
-	client := &http.Client{
-		Timeout: 2 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: probing the daemon's self-issued first-boot CA
-		},
-	}
-	url := "https://127.0.0.1:" + strconv.Itoa(port) + "/health"
+	addr := "127.0.0.1:" + strconv.Itoa(port)
+	dialer := &tls.Dialer{Config: &tls.Config{MinVersion: tls.VersionTLS13}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), daemonReadyTimeout)
 	defer cancel()
@@ -131,16 +131,19 @@ func waitForREST(t *testing.T, port int, exited <-chan struct{}) error {
 		case <-exited:
 			return &qberrors.MessageError{Message: "daemon exited before becoming ready"}
 		case <-ticker.C:
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-			if err != nil {
-				continue
+			probeCtx, probeCancel := context.WithTimeout(ctx, 2*time.Second)
+			conn, err := dialer.DialContext(probeCtx, "tcp", addr)
+			probeCancel()
+			if err == nil {
+				conn.Close()
+				return nil
 			}
-			resp, err := client.Do(req)
-			if err != nil {
-				continue
+			// The listener answered with a certificate this client has no
+			// reason to trust: still proof the daemon is serving TLS.
+			var verifyErr *tls.CertificateVerificationError
+			if errors.As(err, &verifyErr) {
+				return nil
 			}
-			resp.Body.Close()
-			return nil
 		}
 	}
 }

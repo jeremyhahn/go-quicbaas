@@ -117,7 +117,7 @@ func TestEnforceDefaultDeny_PublicBypass(t *testing.T) {
 		"/api/v1/auth/register/begin",
 		"/api/v1/auth/providers/tenant-a/google/login",
 		"/api/v1/auth/providers/tenant-a/google/callback",
-		"/api/v1/iam/invites/abc/activate/piv",
+		"/api/v1/iam/tenant-a/invites/abc/activate/piv",
 		"/acme/directory",
 		"/ui/index.html",
 		"/docs/",

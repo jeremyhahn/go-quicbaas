@@ -171,8 +171,6 @@ func TestCeremonyInitialize_Success(t *testing.T) {
 				SPKIPin:    "pin",
 				CACertPEM:  []byte("ca"),
 				TLSCertPEM: []byte("tls"),
-				SOCertPEM:  []byte("so"),
-				SOKeyPEM:   []byte("sokey"),
 				State:      "initialized",
 				ShareCount: 3,
 			}, nil

@@ -1,0 +1,199 @@
+// QuicBaaS Pooled Provider Account Protocol Buffer Definitions v1
+//
+// An Account is one pooled provider credential (a single Anthropic/Claude
+// login, OpenAI/Codex API key, or OpenCode provider config) that an agent
+// session can be spawned against. See docs/orchestration/accounts.md.
+//
+// SECURITY INVARIANT: AccountCredential is a REQUEST-ONLY message. It appears
+// exclusively in CreateAccountRequest and RotateAccountCredentialRequest and
+// is never a field of any response message. The Account message carries
+// metadata only — no token, key, or provider config bytes ever cross the wire
+// outbound.
+//
+// Copyright (c) 2026 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.account.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// =============================================================================
+// AccountService — pooled provider account lifecycle
+// =============================================================================
+
+service AccountService {
+    rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
+    rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
+    rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
+    rpc UpdateAccount(UpdateAccountRequest) returns (UpdateAccountResponse);
+    rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse);
+    rpc RotateAccountCredential(RotateAccountCredentialRequest) returns (RotateAccountCredentialResponse);
+    rpc RevokeAccount(RevokeAccountRequest) returns (RevokeAccountResponse);
+    rpc SetDefaultAccount(SetDefaultAccountRequest) returns (SetDefaultAccountResponse);
+    rpc GetAccountUsage(GetAccountUsageRequest) returns (GetAccountUsageResponse);
+}
+
+// =============================================================================
+// Messages
+// =============================================================================
+
+// Account is the non-secret metadata record for one pooled provider
+// credential. It deliberately has no credential field.
+message Account {
+    string id                     = 1;
+    string tenant_id              = 2;
+    string project_id             = 3;
+    // provider is one of "claude", "codex", "opencode".
+    string provider               = 4;
+    string display_name           = 5;
+    bool   is_default             = 6;
+    // status is one of "active", "revoked", "error", "limited".
+    string status                 = 7;
+    // refresh_policy is one of "none", "oauth2".
+    string refresh_policy         = 8;
+    int64  created_at_unix        = 9;
+    int64  updated_at_unix        = 10;
+    int64  last_used_at_unix      = 11;
+    int64  last_refreshed_at_unix = 12;
+    string last_error             = 13;
+    // available_at_unix is when a "limited" account rejoins the selectable
+    // pool. Zero on every other status.
+    int64  available_at_unix      = 14;
+    // credential_expires_at_unix mirrors the credential envelope's expiry.
+    // Zero means UNKNOWN, not "never expires".
+    int64  credential_expires_at_unix = 15;
+    // last_validated_at_unix is the last time the credential was successfully
+    // loaded and projected into a spawn.
+    int64  last_validated_at_unix = 16;
+    // credential_health is derived from credential_expires_at_unix:
+    // "unknown", "valid", "expiring", or "expired".
+    string credential_health      = 17;
+}
+
+// AccountCredential is the secret envelope. REQUEST-ONLY — never returned.
+message AccountCredential {
+    map<string, string> env                  = 1;
+    map<string, bytes>  files                = 2;
+    string              access_token         = 3;
+    string              refresh_token        = 4;
+    int64               expires_at_unix      = 5;
+    string              token_endpoint       = 6;
+    string              client_id            = 7;
+    repeated string     scopes               = 8;
+    string              access_token_env_key = 9;
+}
+
+// AccountUsage is the cumulative token usage recorded against an account.
+message AccountUsage {
+    int64                total_tokens      = 1;
+    int64                budget_limit      = 2;
+    double               percent_used      = 3;
+    map<string, int64>   by_agent          = 4;
+    int64                last_updated_unix = 5;
+}
+
+message CreateAccountRequest {
+    string            tenant_id      = 1;
+    string            project_id     = 2;
+    string            provider       = 3;
+    string            display_name   = 4;
+    bool              is_default     = 5;
+    string            refresh_policy = 6;
+    AccountCredential credential     = 7;
+}
+
+message CreateAccountResponse {
+    Account account   = 1;
+    int64   timestamp = 2;
+}
+
+message GetAccountRequest {
+    string tenant_id  = 1;
+    string account_id = 2;
+}
+
+message GetAccountResponse {
+    Account account   = 1;
+    int64   timestamp = 2;
+}
+
+message ListAccountsRequest {
+    string tenant_id  = 1;
+    string provider   = 2;
+    string project_id = 3;
+}
+
+message ListAccountsResponse {
+    repeated Account accounts  = 1;
+    int32            total     = 2;
+    int64            timestamp = 3;
+}
+
+message UpdateAccountRequest {
+    string tenant_id        = 1;
+    string account_id       = 2;
+    string display_name     = 3;
+    string project_id       = 4;
+    bool   clear_project_id = 5;
+    string refresh_policy   = 6;
+}
+
+message UpdateAccountResponse {
+    Account account   = 1;
+    int64   timestamp = 2;
+}
+
+message DeleteAccountRequest {
+    string tenant_id  = 1;
+    string account_id = 2;
+}
+
+message DeleteAccountResponse {
+    string account_id = 1;
+    bool   deleted    = 2;
+    int64  timestamp  = 3;
+}
+
+message RotateAccountCredentialRequest {
+    string            tenant_id  = 1;
+    string            account_id = 2;
+    AccountCredential credential = 3;
+}
+
+message RotateAccountCredentialResponse {
+    string account_id = 1;
+    int64  timestamp  = 2;
+}
+
+message RevokeAccountRequest {
+    string tenant_id  = 1;
+    string account_id = 2;
+    string reason     = 3;
+}
+
+message RevokeAccountResponse {
+    Account account   = 1;
+    int64   timestamp = 2;
+}
+
+message SetDefaultAccountRequest {
+    string tenant_id  = 1;
+    string account_id = 2;
+}
+
+message SetDefaultAccountResponse {
+    string account_id = 1;
+    int64  timestamp  = 2;
+}
+
+message GetAccountUsageRequest {
+    string tenant_id  = 1;
+    string account_id = 2;
+}
+
+message GetAccountUsageResponse {
+    AccountUsage usage     = 1;
+    int64        timestamp = 2;
+}

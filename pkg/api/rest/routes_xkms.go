@@ -62,6 +62,14 @@ func registerXKMSRoutes(s *Server, r chi.Router) {
 		r.Post("/unseal", s.HandleXKMSUnseal)
 		r.Get("/seal/capability", s.HandleXKMSCanSeal)
 
+		// FIDO2 routes (tenant-scoped WebAuthn ceremony over the xkms
+		// FIDO2Service wire shape; authz-gated — pre-auth passkey login
+		// rides the canonical public login surfaces instead)
+		r.Post("/fido2/register/begin", s.HandleXKMSFIDO2BeginRegistration)
+		r.Post("/fido2/register/finish", s.HandleXKMSFIDO2FinishRegistration)
+		r.Post("/fido2/authenticate/begin", s.HandleXKMSFIDO2BeginAuthentication)
+		r.Post("/fido2/authenticate/finish", s.HandleXKMSFIDO2FinishAuthentication)
+
 		// PIV routes
 		r.Get("/piv/slots", s.HandleXKMSListPIVSlots)
 		r.Get("/piv/slots/{slot}/cert", s.HandleXKMSGetPIVCertificate)

@@ -37,6 +37,20 @@ service CertificateService {
 
   // GetTLSConfig returns a TLS configuration for secure communications.
   rpc GetTLSConfig(GetTLSConfigRequest) returns (GetTLSConfigResponse);
+
+  // CrossSign cross-signs an external root certificate with the local CA,
+  // producing a cross-certificate that lets relying parties anchored on the
+  // local CA validate chains rooted at the foreign root.
+  rpc CrossSign(CrossSignRequest) returns (CrossSignResponse);
+
+  // Chain resolves the issuer chain for a certificate by walking its
+  // Authority Information Access extension. The chain is ordered issuer-first
+  // and root-last and excludes the leaf.
+  rpc Chain(CertificateChainRequest) returns (CertificateChainResponse);
+
+  // IssueDeviceIdentity issues a TCG device identity certificate: an
+  // Endorsement Key, an Attestation Key, or an IEEE 802.1AR IDevID.
+  rpc IssueDeviceIdentity(IssueDeviceIdentityRequest) returns (IssueDeviceIdentityResponse);
 }
 
 // =============================================================================
@@ -357,6 +371,101 @@ message GetTLSConfigResponse {
 
   // Timestamp is when the configuration was generated.
   google.protobuf.Timestamp timestamp = 8;
+}
+
+// =============================================================================
+// Certificate Extensions Request/Response
+// =============================================================================
+
+// CrossSignRequest asks the CA to cross-sign an external root certificate.
+message CrossSignRequest {
+  // ForeignRootPEM is the PEM-encoded external root certificate whose subject
+  // and public key are re-certified under the local CA.
+  bytes foreign_root_pem = 1;
+
+  // TenantID optionally scopes the operation to a specific tenant.
+  string tenant_id = 2;
+}
+
+// CrossSignResponse returns the cross-signed certificate.
+message CrossSignResponse {
+  // CrossSignedPEM is the PEM-encoded cross-signed certificate.
+  bytes cross_signed_pem = 1;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+// CertificateChainRequest asks the CA to resolve a certificate's issuer chain.
+message CertificateChainRequest {
+  // CertificatePEM is the PEM-encoded certificate whose chain is resolved.
+  bytes certificate_pem = 1;
+
+  // TenantID optionally scopes the operation to a specific tenant.
+  string tenant_id = 2;
+}
+
+// CertificateChainResponse returns the resolved chain, ordered issuer-first
+// and root-last. The leaf itself is not included.
+message CertificateChainResponse {
+  // ChainPEM holds one PEM-encoded certificate per chain element.
+  repeated bytes chain_pem = 1;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+// IssueDeviceIdentityRequest asks the CA to issue a TCG device identity
+// certificate.
+message IssueDeviceIdentityRequest {
+  // Type selects the identity flavor: "ek", "ak" or "idevid".
+  string type = 1;
+
+  // DeviceID uniquely identifies the device requesting identity. It becomes
+  // the certificate subject Common Name and the TCG PermanentIdentifier.
+  string device_id = 2;
+
+  // CSRPEM is the TCG-CSR-IDEVID, PEM-wrapped or raw packed bytes. Required
+  // for the "idevid" flavor.
+  bytes csr_pem = 3;
+
+  // EKPub is the Endorsement Key public key, PEM- or DER-encoded PKIX.
+  // Required for the "ek" flavor.
+  bytes ek_pub = 4;
+
+  // AKPub is the Attestation Key public key, PEM- or DER-encoded PKIX.
+  // Required for the "ak" flavor.
+  bytes ak_pub = 5;
+
+  // QualifyingData optionally binds the certificate to a TPM quote.
+  bytes qualifying_data = 6;
+
+  // ValidityDays overrides the profile default validity period.
+  int32 validity_days = 7;
+
+  // TenantID scopes the issuance to a specific tenant.
+  string tenant_id = 8;
+}
+
+// IssueDeviceIdentityResponse returns the issued device identity certificate.
+message IssueDeviceIdentityResponse {
+  // CertificatePEM is the PEM-encoded device identity certificate.
+  bytes certificate_pem = 1;
+
+  // ChainPEM is the PEM-encoded issuing CA chain.
+  bytes chain_pem = 2;
+
+  // SerialNumber is the hexadecimal certificate serial number.
+  string serial_number = 3;
+
+  // NotBefore is when the certificate becomes valid.
+  google.protobuf.Timestamp not_before = 4;
+
+  // NotAfter is when the certificate expires.
+  google.protobuf.Timestamp not_after = 5;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 6;
 }
 
 // =============================================================================

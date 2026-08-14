@@ -17,9 +17,15 @@ export declare class UnixClient implements Client {
     readonly messaging: any;
     readonly scheduler: any;
     readonly projects: any;
+    readonly accounts: any;
     readonly iam: any;
     readonly kms: any;
     readonly secrets: any;
+    readonly ca: any;
+    readonly trust: any;
+    readonly crypto: any;
+    readonly dek: any;
+    readonly dynamicSecrets: any;
     readonly barrier: any;
     readonly tenantBarrier: any;
     readonly ceremony: any;

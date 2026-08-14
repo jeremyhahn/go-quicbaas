@@ -14,58 +14,37 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/initmarker"
 )
 
 // initDoneMarkerName is the filename of the marker dropped into the data dir
-// by `quicbaasd init`. It mirrors the constant of the same name in
-// cmd/quicbaasd/init.go. The marker is the authoritative record of the barrier
-// strategy (and shamir threshold/total) chosen at init time; the daemon reads
-// it at start so the running data-plane barrier matches the init decision.
-//
-// The constant is duplicated rather than imported because pkg/server must not
-// depend on cmd/quicbaasd (the dependency direction is cmd → pkg). The JSON
-// shape below is the read-only contract shared by both ends.
-const initDoneMarkerName = ".quicbaasd_init_done"
+// by `quicbaasd init`. Both the writer (cmd/quicbaasd) and this reader import
+// the single canonical definition from pkg/initmarker so the two ends can
+// never drift.
+const initDoneMarkerName = initmarker.FileName
 
-// persistedInitMarker is the read-only view of the init-done marker the daemon
-// consults at start. It is a strict subset of cmd/quicbaasd.initDoneMarker —
-// only the fields the data-plane barrier needs to honor the init decision are
-// declared. JSON tags MUST match the writer in cmd/quicbaasd/init.go.
-type persistedInitMarker struct {
-	BarrierStrategy string `json:"barrier_strategy"`
-	Shares          int    `json:"shares"`
-	Threshold       int    `json:"threshold"`
-}
-
-// readInitMarker loads the persisted init-done marker from dataDir. It returns
-// (nil, nil) when no marker is present (a fresh, never-initialised data dir),
-// so callers can fall back to the config default. A malformed marker surfaces
-// a DataPlaneBarrierError so the operator sees a precise failure rather than a
-// silent fall-through to the wrong strategy.
-func readInitMarker(dataDir string) (*persistedInitMarker, error) {
-	if dataDir == "" {
-		return nil, nil
-	}
-	raw, err := os.ReadFile(filepath.Join(dataDir, initDoneMarkerName))
+// readInitMarker loads the persisted init-done marker from dataDir via the
+// shared pkg/initmarker parser. It returns (nil, nil) when no marker is
+// present (a fresh, never-initialised data dir), so callers can fall back to
+// the config default. A malformed marker surfaces a DataPlaneBarrierError so
+// the operator sees a precise failure rather than a silent fall-through to
+// the wrong strategy.
+func readInitMarker(dataDir string) (*initmarker.Marker, error) {
+	marker, err := initmarker.Read(dataDir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+		stage := "read init marker"
+		var readErr *initmarker.ReadError
+		if errors.As(err, &readErr) && readErr.Stage == "parse" {
+			stage = "parse init marker"
 		}
-		return nil, &DataPlaneBarrierError{Stage: "read init marker", Cause: err}
+		return nil, &DataPlaneBarrierError{Stage: stage, Cause: err}
 	}
-	var marker persistedInitMarker
-	if err := json.Unmarshal(raw, &marker); err != nil {
-		return nil, &DataPlaneBarrierError{Stage: "parse init marker", Cause: err}
-	}
-	return &marker, nil
+	return marker, nil
 }
 
 // resolveBarrierStrategy returns the barrier strategy parameters the data-plane
@@ -84,13 +63,20 @@ func readInitMarker(dataDir string) (*persistedInitMarker, error) {
 //  3. Config default — a fresh data dir with no marker and no override uses
 //     cfg.Seal as-is (DefaultSealConfig => "passphrase").
 //
-// The returned values are (strategyID, threshold, totalShares). threshold/total
-// are only meaningful for the shamir strategy; for none/passphrase they are
-// returned unchanged from cfg so non-shamir callers can ignore them.
+// The returned values are (strategyID, threshold, totalShares, fromMarker).
+// threshold/total are only meaningful for the shamir strategy; for
+// none/passphrase they are returned unchanged from cfg so non-shamir callers
+// can ignore them.
+//
+// fromMarker reports whether the strategy came from case (2) — a persisted
+// init decision — as opposed to an override or the config default. Callers
+// that need to distinguish "the operator ran init and chose this" from "nobody
+// said anything, so this is the default" must consult it: the config default
+// is itself "passphrase", so a non-empty strategy alone proves nothing.
 func resolveBarrierStrategy(
 	cfg *config.Config,
 	operatorOverride bool,
-) (qrdbsdk.StrategyID, int, int, error) {
+) (qrdbsdk.StrategyID, int, int, bool, error) {
 	// Resolve the configured strategy, applying the P4 hardware-prefer
 	// auto-detect policy for the "auto" sentinel (resolveEffectiveSealStrategy
 	// returns the empty/passphrase default and every explicit value unchanged).
@@ -100,13 +86,13 @@ func resolveBarrierStrategy(
 
 	// (1) Explicit operator override short-circuits the marker lookup.
 	if operatorOverride {
-		return qrdbsdk.StrategyID(cfgStrategy), threshold, totalShares, nil
+		return qrdbsdk.StrategyID(cfgStrategy), threshold, totalShares, false, nil
 	}
 
 	// (2) Consult the persisted init marker.
 	marker, err := readInitMarker(cfg.Storage.DataDir)
 	if err != nil {
-		return "", 0, 0, err
+		return "", 0, 0, false, err
 	}
 	if marker != nil && marker.BarrierStrategy != "" {
 		strategy := normalizeBarrierStrategy(marker.BarrierStrategy)
@@ -118,11 +104,11 @@ func resolveBarrierStrategy(
 				totalShares = marker.Shares
 			}
 		}
-		return strategy, threshold, totalShares, nil
+		return strategy, threshold, totalShares, true, nil
 	}
 
 	// (3) No marker, no override: fall back to the config default.
-	return qrdbsdk.StrategyID(cfgStrategy), threshold, totalShares, nil
+	return qrdbsdk.StrategyID(cfgStrategy), threshold, totalShares, false, nil
 }
 
 // normalizeBarrierStrategy maps the init CLI's strategy aliases onto the

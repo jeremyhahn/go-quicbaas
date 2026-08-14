@@ -1372,21 +1372,22 @@ func TestFT2_Shutdown_FullComponentStack(t *testing.T) {
 // Initialize Auth Manager - Error Paths
 // =============================================================================
 
-func TestFT2_AuthManager_NoJWTSecret(t *testing.T) {
+func TestFT2_AuthManager_NoSigningKeyID(t *testing.T) {
 	saveAndRestoreSeams(t)
 
 	cfg := createFTConfig(t)
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	// Creating an auth manager with no JWT secret and no signing key should fail.
+	// Creating an enabled auth manager without a JWT signing key ID must fail.
 	authCfg := &auth.AuthConfig{
-		Enabled:   true,
-		JWTSecret: "",
+		Enabled:         true,
+		JWTSigningKeyID: "",
 	}
 
 	authMgr, authErr := auth.NewInMemoryAuthManager(authCfg, srv.logger)
 	assert.Error(t, authErr)
+	assert.ErrorContains(t, authErr, "JWT signing key ID")
 	assert.Nil(t, authMgr)
 }
 
@@ -1428,7 +1429,6 @@ func TestFT2_InitializeIAMComponents_Full(t *testing.T) {
 	cfg.Server.Mode = config.ServerModeStandalone
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Auth.AllowPasswordAuth = true
-	cfg.Auth.JWTSecret = "test-jwt-secret-at-least-32chars!!"
 	cfg.Auth.BootstrapAdmin = true
 	cfg.Auth.InsecureDevMode = true
 	cfg.Auth.Enabled = true

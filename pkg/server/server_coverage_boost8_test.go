@@ -49,8 +49,6 @@ func TestBoost8_Shutdown_FullSubsystemConstellation(t *testing.T) {
 	srv.messagingService = &messaging.PushService{}
 	srv.watchBridge = &watchbridge.WatchBridge{}
 	srv.qrdbClient = &ShardedClient{}
-	srv.localBackend = &LocalBackend{}
-	srv.fileBackend = &FileBackend{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

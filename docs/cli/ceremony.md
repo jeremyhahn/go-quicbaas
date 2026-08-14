@@ -12,9 +12,12 @@ choice of whether to think of the flow as "initialise this daemon"
 
 Use `ceremony` when:
 
-- The data dir was initialised with `--barrier-strategy shamir` and
-  the daemon is now running with `pending_ceremony.json` waiting for
-  officer participation.
+- The data dir was initialised with `--barrier-strategy shamir` and the
+  daemon is now serving its sealed-window surface: officers register, the
+  ceremony splits the secret, and each officer claims their share live.
+  Shares are never written to disk — they are held in memguard enclaves
+  inside the daemon and released to each officer exactly once, over that
+  officer's own mTLS certificate.
 - You are completing or auditing an in-progress ceremony from an
   operator workstation other than the daemon host.
 

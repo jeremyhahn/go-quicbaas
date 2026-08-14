@@ -21,7 +21,7 @@ import (
 	stderrors "errors"
 	"testing"
 
-	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+	sshSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -142,7 +142,7 @@ func TestPrintSSHKey_FullKey(t *testing.T) {
 	cmd := &cobra.Command{Use: "t"}
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
-	k := &xkmsssh.Key{
+	k := &sshSDK.Key{
 		Scope:       "user",
 		Owner:       "alice",
 		Name:        "k1",
@@ -164,7 +164,7 @@ func TestPrintSSHKey_NoCommentNoPublic(t *testing.T) {
 	cmd := &cobra.Command{Use: "t"}
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
-	k := &xkmsssh.Key{
+	k := &sshSDK.Key{
 		Scope: "user", Owner: "alice", Name: "k1",
 		Algorithm: "rsa", Fingerprint: "SHA256:def",
 	}

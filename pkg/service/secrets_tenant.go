@@ -21,6 +21,7 @@ package service
 import (
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
@@ -34,7 +35,7 @@ const secretsTenantSeparator = "/"
 // For single-tenant mode (empty tenantID), the secret ID is returned as-is.
 // Format: "tenant/{tenantID}/{secretID}".
 func secretsTenantScopedID(tenantID, secretID string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return secretID
 	}
 	return secretsTenantPrefix + tenantID + secretsTenantSeparator + secretID
@@ -43,7 +44,7 @@ func secretsTenantScopedID(tenantID, secretID string) string {
 // secretsTenantStripID removes the tenant prefix from a secret ID.
 // If the secret ID doesn't have a tenant prefix, it is returned as-is.
 func secretsTenantStripID(tenantID, secretID string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return secretID
 	}
 	prefix := secretsTenantPrefix + tenantID + secretsTenantSeparator
@@ -54,7 +55,7 @@ func secretsTenantStripID(tenantID, secretID string) string {
 // For single-tenant mode (empty tenantID), all secrets belong.
 // For multi-tenant mode, the secret must have the matching tenant prefix.
 func secretsTenantBelongsTo(tenantID, secretID string) bool {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return true
 	}
 	prefix := secretsTenantPrefix + tenantID + secretsTenantSeparator
@@ -65,7 +66,7 @@ func secretsTenantBelongsTo(tenantID, secretID string) bool {
 // For single-tenant mode, returns empty string (list all).
 // For multi-tenant mode, returns "tenant/{tenantID}/".
 func secretsTenantListPrefix(tenantID string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return ""
 	}
 	return secretsTenantPrefix + tenantID + secretsTenantSeparator
@@ -74,8 +75,8 @@ func secretsTenantListPrefix(tenantID string) string {
 // enforceSecretsTenantAccess validates that the requesting tenant has access to the secret.
 // Returns nil if access is allowed, or an error if the tenant doesn't own the secret.
 func enforceSecretsTenantAccess(tenantID, secretID, operation string) error {
-	if tenantID == "" {
-		return nil // Single-tenant mode, no access control
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return nil // Single-tenant mode / system tenant, no access control
 	}
 	if !secretsTenantBelongsTo(tenantID, secretID) {
 		return NewError(errors.ErrCrossTenantAccess, "secrets."+operation,

@@ -37,6 +37,10 @@ var errCert = errors.New("certificate: boom")
 type fakeCertService struct {
 	failNext    bool
 	initialized bool
+
+	CrossSignFunc           func(ctx context.Context, req *service.CrossSignRequest) (*service.CrossSignResponse, error)
+	ChainFunc               func(ctx context.Context, req *service.CertificateChainRequest) (*service.CertificateChainResponse, error)
+	IssueDeviceIdentityFunc func(ctx context.Context, req *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error)
 }
 
 func (f *fakeCertService) maybeErr() error {
@@ -180,6 +184,14 @@ func certCases() []certCase {
 		{"IsRevoked", &service.IsRevokedRequest{SerialNumber: "1"}, &certclient.IsRevokedRequest{SerialNumber: "1"}, &service.PutRequest{}},
 		{"CAInfo", &service.CAInfoRequest{}, &certclient.CAInfoRequest{}, &service.PutRequest{}},
 		{"ListCertificates", &service.ListCertificatesRequest{Limit: 10}, &certclient.ListCertificatesRequest{Limit: 10}, &service.PutRequest{}},
+
+		// Certificate extensions — Security().CertificateExt().
+		{"CrossSign", &service.CrossSignRequest{ForeignRootPEM: []byte("r")}, &certclient.CrossSignRequest{ForeignRootPEM: []byte("r")}, &service.PutRequest{}},
+		{"Chain", &service.CertificateChainRequest{CertificatePEM: []byte("c")}, &certclient.ChainRequest{CertificatePEM: []byte("c")}, &service.PutRequest{}},
+		{"IssueDeviceIdentity",
+			&service.IssueDeviceIdentityRequest{Type: "ek", DeviceID: "d", EKPub: []byte("k")},
+			&certclient.DeviceIdentityRequest{Type: certclient.DeviceIdentityEK, DeviceID: "d", EKPub: []byte("k")},
+			&service.PutRequest{}},
 	}
 }
 
@@ -307,4 +319,42 @@ func TestConvertCertResponses_Populated(t *testing.T) {
 		assert.Equal(t, 2, out.TotalCount)
 		assert.Equal(t, "a.example.com", out.Certificates[0].CommonName)
 	})
+}
+
+// CrossSign satisfies service.CertificateService, honouring failNext so the
+// shared certCases table exercises the error path for the extension verbs too.
+func (f *fakeCertService) CrossSign(ctx context.Context, req *service.CrossSignRequest) (*service.CrossSignResponse, error) {
+	if f.CrossSignFunc != nil {
+		return f.CrossSignFunc(ctx, req)
+	}
+	if err := f.maybeErr(); err != nil {
+		return nil, err
+	}
+	return &service.CrossSignResponse{CrossSignedPEM: []byte("cross-signed")}, nil
+}
+
+// Chain satisfies service.CertificateService.
+func (f *fakeCertService) Chain(ctx context.Context, req *service.CertificateChainRequest) (*service.CertificateChainResponse, error) {
+	if f.ChainFunc != nil {
+		return f.ChainFunc(ctx, req)
+	}
+	if err := f.maybeErr(); err != nil {
+		return nil, err
+	}
+	return &service.CertificateChainResponse{ChainPEM: [][]byte{[]byte("issuer"), []byte("root")}}, nil
+}
+
+// IssueDeviceIdentity satisfies service.CertificateService.
+func (f *fakeCertService) IssueDeviceIdentity(ctx context.Context, req *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error) {
+	if f.IssueDeviceIdentityFunc != nil {
+		return f.IssueDeviceIdentityFunc(ctx, req)
+	}
+	if err := f.maybeErr(); err != nil {
+		return nil, err
+	}
+	return &service.IssueDeviceIdentityResponse{
+		CertificatePEM: []byte("device-cert"),
+		ChainPEM:       []byte("chain"),
+		SerialNumber:   "cafe",
+	}, nil
 }

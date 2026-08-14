@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
@@ -260,11 +261,13 @@ func InjectSubjectIntoContext(ctx context.Context, config *InterceptorConfig, to
 // validateTenantHeader validates that the x-tenant-id header matches the token's tenant.
 // This is a critical security check that prevents cross-tenant access attacks.
 // If a user's token has a tenant ID, the x-tenant-id header MUST match it.
-// If the token has no tenant ID (single-tenant mode), this check is skipped.
+// If the token carries no tenant ID, or carries the system tenant (empty and
+// the literal qrdbsdk.SystemTenantID are the same platform scope per
+// qrdbsdk.IsSystemTenant), this check is skipped: a system-tenant caller is
+// not isolated into a tenant namespace, so there is no per-tenant header for
+// it to match.
 func validateTenantHeader(ctx context.Context, subject *interfaces.Subject, log *logger.Logger) error {
-	// If the user has no tenant ID in their token, skip tenant validation
-	// This allows single-tenant deployments to work without tenant headers
-	if subject.TenantID == "" {
+	if qrdbsdk.IsSystemTenant(subject.TenantID) {
 		return nil
 	}
 

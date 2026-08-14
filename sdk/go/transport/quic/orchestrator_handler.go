@@ -44,15 +44,18 @@ var orchestratorResponseConverters = map[string]orchestratorResponseConverter{
 	"PromptSession": convertPromptSessionResponse,
 	"SessionStatus": convertSessionStatusResponse,
 	"CloseSession":  convertCloseSessionResponse,
-	"ListSessions":  convertListSessionsResponse,
-	"CreateTask":    convertCreateTaskResponse,
-	"GetTask":       convertGetTaskResponse,
-	"ListTasks":     convertListTasksResponse,
-	"ClaimTask":     convertClaimTaskResponse,
-	"CompleteTask":  convertCompleteTaskResponse,
-	"ListBackends":  convertListBackendsResponse,
-	"Health":        convertHealthResponse,
-	"Inference":     convertInferenceResponse,
+
+	"RotateSessionAccount": convertRotateSessionAccountResponse,
+
+	"ListSessions": convertListSessionsResponse,
+	"CreateTask":   convertCreateTaskResponse,
+	"GetTask":      convertGetTaskResponse,
+	"ListTasks":    convertListTasksResponse,
+	"ClaimTask":    convertClaimTaskResponse,
+	"CompleteTask": convertCompleteTaskResponse,
+	"ListBackends": convertListBackendsResponse,
+	"Health":       convertHealthResponse,
+	"Inference":    convertInferenceResponse,
 }
 
 // decodeOrchestratorResponse decodes raw wire bytes into the appropriate SDK
@@ -142,6 +145,19 @@ func convertCloseSessionResponse(data []byte) (interface{}, error) {
 			"quic.convertCloseSessionResponse", "failed to unmarshal response")
 	}
 	return wire.Response(), nil
+}
+
+// convertRotateSessionAccountResponse converts JSON data to a
+// RotateSessionAccountResponse. The server encodes
+// orchestration.RotateSessionAccountResult, whose JSON tags mirror the SDK
+// type field for field, so no intermediate wire struct is involved.
+func convertRotateSessionAccountResponse(data []byte) (interface{}, error) {
+	var resp orchestrator.RotateSessionAccountResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"quic.convertRotateSessionAccountResponse", "failed to unmarshal response")
+	}
+	return &resp, nil
 }
 
 // convertListSessionsResponse converts JSON data to a ListSessionsResponse.

@@ -63,6 +63,9 @@ type QRDBEmbeddedServicers struct {
     Share          QRDBShareServicer         // optional — Shamir share submit/track
     AuthFactor     QRDBAuthFactorServicer    // optional — factor enrol/verify
     UserAuthFactor QRDBUserAuthFactorServicer // optional — per-user MFA
+    User           QRDBUserServicer          // optional — qrdb user store; needed to
+                                             //   resolve a subject to a uint64 user id
+                                             //   during user-login factor enrollment
 }
 ```
 
@@ -97,94 +100,110 @@ qrdb-backed accessors return an explicit configuration error rather
 than falling through to the network transport — making the missing
 wiring obvious instead of silent.
 
-## baas_kv_admin_adapter: bridging service and transport interfaces
+## The node path: servicers come straight off the qrdb engine
 
-The qrdb embedded transport constructor wants `service.KVServicer +
-service.AdminServicer`. QuicBaaS already has a `*baasTransport` that
-implements the full qrdb `transport.Client` surface (KV, Admin,
-Barrier, Ceremony, Credential, ...) against the in-process KV store.
+An earlier design bridged the qrdb embedded transport onto a QuicBaaS
+`*baasTransport` through two adapter types, `BaasKVAdapter` and
+`BaasAdminAdapter`, in a `pkg/server/baas_kv_admin_adapter.go`. **None
+of that exists any more.** `baasTransport`, the adapters, their
+constructors, `ShardedClient.EmbeddedTransportForShard`, and the
+`BaasTransportNotSupportedError` they returned were all removed once
+standalone and clustered mode began embedding the real qrdb engine
+(see [composition.md](composition.md), Phases B and C). Do not
+reintroduce them.
 
-The two interface families overlap conceptually but are not identical:
+The servicers now come directly off the embedded qrdb node's own
+service graph. `*server.Server` exposes them as accessors, and
+`cmd/quicbaas/embedded_qrdb.go` carries a compile-time assertion that
+the set is present:
 
-- `transport.KVClient` methods take varargs `WriteOption / ReadOption`
-  that control wire-level behaviour (linearizability hints, etc.).
-- `service.KVServicer` methods take an explicit
-  `consistency.ReadOptions` value or a `writemode.Mode` enum, and
-  expose extra methods (`PutEntity`, `GetEntity`, `DeleteEntity`,
-  `ListEntities`, `*Stale`, `*WithConsistency`, `*WithMode`) that have
-  no `transport.*` counterpart.
+| Accessor | Returns | Feeds |
+|----------|---------|-------|
+| `GetQRDBKVServicer()` | `qrdbsdk.KVServicer` | `servicers.KV` (required) |
+| `GetQRDBAdminServicer()` | `qrdbsdk.AdminServicer` | `servicers.Admin` (required) |
+| `GetQRDBUserServicer()` | `qrdbsdk.UserServicer` | `servicers.User` |
+| `GetQRDBUserAuthFactorServicer()` | `qrdbsdk.UserAuthFactorServicer` | `servicers.UserAuthFactor` |
+| `GetQRDBTenantServicer()` | `qrdbsdk.ServiceTenantServicer` | `servicers.Tenant` |
+| `GetCeremonyServices()` | `*server.CeremonyServices` | `servicers.Ceremony`, `servicers.Credential`, barrier fallback |
+| `GetDataPlaneBarrierService()` | `server.BaasBarrierService` | `servicers.Barrier` (preferred) |
 
-Rather than re-architect `baasTransport` to satisfy both interface
-families (which would push service-layer semantics into a transport
-type),
-[`pkg/server/baas_kv_admin_adapter.go`](../../pkg/server/baas_kv_admin_adapter.go)
-ships two thin adapter types that wrap a `*baasTransport`:
-
-| Adapter | Wraps | Satisfies | Operations |
-|---------|-------|-----------|------------|
-| `BaasKVAdapter` | `*baasTransport` | `service.KVServicer` | KV CRUD, scans, `*Stale`/`*WithConsistency`/`*WithMode` variants funnel to the same in-process store. Entity ops return `BaasTransportNotSupportedError`. |
-| `BaasAdminAdapter` | `*baasTransport` | `service.AdminServicer` | Health, Status, Peers (synthetic single-node responses), Capabilities. Raft-layer ops (AddMember, RemoveMember, RequestSnapshot, Drain, StartShard, StopShard) return `BaasTransportNotSupportedError`. |
-
-The semantic mapping is honest about what the embedded transport is:
-there is no Raft layer in single-process mode, so:
-
-- All `*Stale` variants delegate to the strong-read methods (the store
-  has exactly one revision — every read sees the latest committed
-  value by construction).
-- All `*WithMode`/`*WithConsistency` variants ignore the hint and
-  delegate to the base method.
-- Single-node admin responses report `IsLeader: true`,
-  `ShardCount: 1`, no peers.
-
-Both adapters return `nil` if their wrapped transport is `nil`, which
-lets the CLI detect missing wiring cheaply.
+The KV and Admin servicers are the canonical service-layer
+implementations backed by the in-process engine, so no interface
+bridging is needed: barrier, ceremony, credential and tenant
+operations route through the node's own SDK client embedded transport
+with no intermediate layer.
 
 ## CLI embedded mode wiring
 
 The CLI's wiring path lives at
-[`cmd/quicbaas/embedded_qrdb.go`](../../cmd/quicbaas/embedded_qrdb.go):
+[`cmd/quicbaas/embedded_qrdb.go`](../../cmd/quicbaas/embedded_qrdb.go),
+in `buildEmbeddedQRDBServicers`:
 
 ```go
-// 1) Pull the per-shard *baasTransport from the embedded server.
-sharded := es.server.GetQRDBClient()
-transport, err := sharded.EmbeddedTransportForShard(embeddedKVAdminShardID)
+// 1) KV + Admin come straight off the node's service graph.
+kv := es.server.GetQRDBKVServicer()
+admin := es.server.GetQRDBAdminServicer()
+if kv == nil || admin == nil {
+    return quicbaas.QRDBEmbeddedServicers{},
+        &EmbeddedQRDBWiringError{Stage: "qrdb node services"}
+}
+servicers := quicbaas.QRDBEmbeddedServicers{KV: kv, Admin: admin}
 
-// 2) Wrap it in the service-layer adapters.
-kv := server.NewBaasKVAdapter(transport)
-admin := server.NewBaasAdminAdapter(transport)
-
-// 3) Build the servicer payload.
-servicers := quicbaas.QRDBEmbeddedServicers{
-    KV:    kv,
-    Admin: admin,
+// 2) User store + unified-login factor service, so a factor enrolled via
+//    Security().Auth().Factors().Add lands in the SAME instance the login
+//    ceremony resolves against.
+if userSvc := es.server.GetQRDBUserServicer(); userSvc != nil {
+    servicers.User = userSvc
+}
+if uafSvc := es.server.GetQRDBUserAuthFactorServicer(); uafSvc != nil {
+    servicers.UserAuthFactor = uafSvc
 }
 
-// 4) Layer in the bootstrap ceremony stack if it exists.
+// 3) Tenant servicer — the node's own SDK client does not register one on
+//    its embedded transport, so TenantMgmt() and the per-tenant barrier
+//    verbs need it wired explicitly here.
+if tenantSvc := es.server.GetQRDBTenantServicer(); tenantSvc != nil {
+    servicers.Tenant = tenantSvc
+}
+
+// 4) Ceremony + credential from the node's bootstrap ceremony stack.
 if ceremonyStack := es.server.GetCeremonyServices(); ceremonyStack != nil {
     servicers.Ceremony   = ceremonyStack.Ceremony
     servicers.Credential = ceremonyStack.Credential
 }
 
-// 5) Hand the SDK its WithEmbeddedQRDB option.
-return quicbaas.WithEmbeddedQRDB(servicers), nil
+// 5) The REAL data-plane barrier (persistent, PebbleDB-backed), falling
+//    back to the bootstrap-window barrier when seal is disabled.
+if dp := es.server.GetDataPlaneBarrierService(); dp != nil {
+    servicers.Barrier = dp
+} else if cs := es.server.GetCeremonyServices(); cs != nil && cs.Barrier != nil {
+    servicers.Barrier = cs.Barrier
+}
 ```
 
-`embeddedKVAdminShardID = 1` — single-shard is the CLI embedded-mode
-convention (matching `pkg/service/quicbaas.go`'s admin dispatch).
+The barrier precedence is load-bearing: `Security().Barrier()` must
+operate on the persistent data-plane barrier, **not** the bootstrap
+ceremony's ephemeral in-memory one. When seal is disabled,
+`startService` populates `GetCeremonyServices()` with the bootstrap
+stack instead, so the embedded transport serves the same
+bootstrap-window barrier every other transport sees.
 
-The CLI surfaces wiring failures as
-`*EmbeddedQRDBWiringError`:
+`embeddedQRDBOption` wraps `buildEmbeddedQRDBServicers` and returns
+`quicbaas.WithEmbeddedQRDB(servicers)`, so a wiring failure surfaces to
+the operator instead of silently dropping back to a no-op qrdb client.
+
+The CLI surfaces wiring failures as `*EmbeddedQRDBWiringError`:
 
 ```go
 type EmbeddedQRDBWiringError struct {
-    Stage string // "embedded server" | "sharded client" | "shard transport" | "adapter construction"
+    Stage string // "embedded server" | "qrdb node services"
     Cause error
 }
 ```
 
-Each stage maps to a precise failure mode the operator can diagnose
-without reading source. `Unwrap()` exposes the cause for
-`errors.As`/`errors.Is` traversal.
+`Unwrap()` exposes the cause for `errors.As`/`errors.Is` traversal.
+There is no shard-selection stage: the node client answers for every
+shard ID, so no shard is chosen at wiring time.
 
 ## Routing diagram
 
@@ -202,9 +221,9 @@ flowchart LR
     end
 
     subgraph Server [pkg/server.Server in-process]
-        Service[service.Service]
-        BaasT[*baasTransport shard 1]
-        Adapter[BaasKVAdapter / BaasAdminAdapter]
+        Service[service.QuicBaaS]
+        Node[qrdbnode.Node — embedded qrdb engine]
+        Servicers[node servicers: KV / Admin / User / Tenant]
         Ceremony[ceremonyStack: Ceremony + Credential + Barrier]
         Pebble[(PebbleDB store)]
     end
@@ -212,14 +231,14 @@ flowchart LR
     Cobra --> SDK
     SDK -->|WithEmbedded| Embedded
     Embedded -->|KV / IAM / Cluster / Crypto| Service
-    Service --> BaasT
+    Service --> Node
 
     SDK -->|Security.Barrier/Ceremony/Credentials| QRDBClient
     QRDBClient -->|WithEmbeddedQRDB| QRDBEmbedded
-    QRDBEmbedded -->|KV ops| Adapter
-    Adapter --> BaasT
+    QRDBEmbedded -->|KV / Admin / User / Tenant| Servicers
+    Servicers --> Node
     QRDBEmbedded -->|Ceremony / Credential| Ceremony
-    BaasT --> Pebble
+    Node --> Pebble
     Ceremony --> Pebble
 ```
 
@@ -236,7 +255,10 @@ serialisation, no network roundtrip.
 | `Barrier` | No | Yes | Full barrier surface: `status`, `init`, `unseal`, `seal`, `rekey`, `recovery`, `enable-encryption` (system and per-tenant) |
 | `Ceremony` | No | Yes (when ceremonyStack present) | `Security().Ceremony()` |
 | `Credential` | No | Yes (when ceremonyStack present) | `Security().Credentials()` |
-| `Tenant`, `CustodianGroup`, `Share`, `AuthFactor`, `UserAuthFactor` | No | Not yet | Reserved for forthcoming embedded-mode work |
+| `Tenant` | No | Yes (when the node exposes one) | `TenantMgmt()` and the per-tenant barrier verbs |
+| `User` | No | Yes (when the node exposes one) | Subject → uint64 user-id resolution for factor enrollment |
+| `UserAuthFactor` | No | Yes (when the node exposes one) | Unified-login factor enrol/verify against the login ceremony's own store |
+| `CeremonyCA`, `CustodianGroup`, `Share`, `AuthFactor` | No | Not wired | Planned: the SDK accepts them, but `buildEmbeddedQRDBServicers` sets none of them today, so calls hit the qrdb embedded transport's `NilServiceError` |
 
 All servicers listed in the "Wired by CLI" = Yes rows are fully operational in embedded mode,
 including the complete barrier surface. The bootstrap barrier is wired to the embedded qrdb
@@ -253,20 +275,24 @@ follows the same pattern:
 srv, err := server.NewServer(cfg)
 // ... srv.Start() ...
 
-// 2) Assemble the QRDBEmbeddedServicers payload.
-sharded := srv.GetQRDBClient()
-t, err := sharded.EmbeddedTransportForShard(1)
+// 2) Assemble the QRDBEmbeddedServicers payload from the node's servicers.
 servicers := quicbaas.QRDBEmbeddedServicers{
-    KV:    server.NewBaasKVAdapter(t),
-    Admin: server.NewBaasAdminAdapter(t),
+    KV:    srv.GetQRDBKVServicer(),
+    Admin: srv.GetQRDBAdminServicer(),
 }
 if cs := srv.GetCeremonyServices(); cs != nil {
     servicers.Ceremony   = cs.Ceremony
     servicers.Credential = cs.Credential
 }
+if dp := srv.GetDataPlaneBarrierService(); dp != nil {
+    servicers.Barrier = dp
+}
 
-// 3) Construct the SDK client with both options.
-sdk, err := quicbaas.NewClient(
+// 3) Construct the SDK client with both options. NewClient takes an address
+//    first. The embedded transport never dials it, but NewClient rejects an
+//    empty string outright, so pass the deployment's configured address (the
+//    CLI passes whatever --address resolved to).
+sdk, err := quicbaas.NewClient(address,
     quicbaas.WithEmbedded(srv.Service()),
     quicbaas.WithEmbeddedQRDB(servicers),
 )
@@ -275,6 +301,11 @@ defer sdk.Close()
 // 4) All Security() accessors now route in-process.
 credCli, err := sdk.Security().Credentials()
 ```
+
+`WithEmbeddedQRDB` validates eagerly: it returns an invalid-input error
+if `servicers.KV` or `servicers.Admin` is nil. Every other servicer is
+optional, and an operation against an absent one returns the qrdb
+embedded transport's typed `NilServiceError`.
 
 Omitting `WithEmbeddedQRDB` is a configuration error, not a silent
 fall-through: the qrdb sub-client refuses to initialise without an
@@ -290,7 +321,7 @@ silent fall-through hid bugs during gap-1 development.
 | Auth | bypassed (caller already has process privilege) | enforced by middleware / interceptors |
 | Serialisation | none | proto / JSON encode/decode |
 | Cancellation | `context.Context` only | `context.Context` + listener timeout |
-| Failure modes | `BaasTransportNotSupportedError` for Raft-only ops | listener errors + auth + serialisation |
+| Failure modes | `NilServiceError` for an unwired servicer; `*EmbeddedQRDBWiringError` at construction | listener errors + auth + serialisation |
 | Use case | init, single-host CLI, libraries, integration tests | production multi-node clusters |
 
 Embedded mode is **not** a security boundary. Any in-process caller
@@ -299,10 +330,6 @@ authentication / authorisation chain.
 
 ## Test coverage
 
-- [`pkg/server/baas_kv_admin_adapter_test.go`](../../pkg/server/baas_kv_admin_adapter_test.go)
-  asserts the interface satisfaction and exercises every adapter
-  method (positive paths + the `BaasTransportNotSupportedError`
-  branches).
 - [`cmd/quicbaas/embedded_qrdb_test.go`](../../cmd/quicbaas/embedded_qrdb_test.go)
   drives `buildEmbeddedQRDBServicers` against the staged server
   fixtures and asserts the `EmbeddedQRDBWiringError` stages.
@@ -321,5 +348,7 @@ authentication / authorisation chain.
   embedded transport ultimately serves.
 - [`docs/cli/init.md`](../cli/init.md) — the canonical caller of
   embedded mode (the init ceremony runs entirely in-process).
-- [`docs/embedding/`](../embedding/) — broader library-embedding
-  guidance for non-CLI consumers.
+- [`docs/sdk/`](../sdk/) — the SDK reference a library consumer works
+  against once the embedded transport is wired. (Note:
+  `docs/embedding/` is **not** related — it covers vector embedding
+  providers, not embedding the SDK.)

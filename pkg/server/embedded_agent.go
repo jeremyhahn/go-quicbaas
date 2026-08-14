@@ -194,7 +194,14 @@ func (s *Server) startEmbeddedAgent() error {
 
 	// Build backends from config. Each backend kind maps to a constructor
 	// via the dispatch table below.
-	backends, buildErr := buildEmbeddedAgentBackends(cfg.Backends, cfg.OllamaURL, mcpResolver, log)
+	// The container network sandboxed sessions run in. Empty resolves to the
+	// isolated default; "host" is honored only because an operator set it.
+	sandboxNetwork, networkErr := orchestration.ParseSandboxNetwork(cfg.SandboxNetwork)
+	if networkErr != nil {
+		return &ServerCauseError{Message: "embedded agent: invalid sandbox_network", Cause: networkErr}
+	}
+
+	backends, buildErr := buildEmbeddedAgentBackends(cfg.Backends, cfg.OllamaURL, sandboxNetwork, mcpResolver, log)
 	if buildErr != nil {
 		return buildErr
 	}
@@ -237,6 +244,15 @@ func (s *Server) startEmbeddedAgent() error {
 		ImageRegistry:    cfg.ImageRegistry,
 		Logger:           log,
 		WorkDir:          cfg.DataDir,
+		// The embedded agent shares this host with the orchestrator, so it
+		// enforces the SAME bind-mount policy the orchestrator does: the
+		// managed projects root (tenant-scoped) plus the operator's allowlist.
+		// Without it a spawn dispatched over the bufconn would bypass the
+		// control plane's mount check entirely.
+		MountPolicy: &orchestration.MountPolicy{
+			ProjectsRoot: s.config.Orchestration.EffectiveProjectsRoot(s.config.Storage.DataDir),
+			AllowedRoots: s.config.Orchestration.Sandbox.AllowedMountRoots,
+		},
 	})
 	if rtErr != nil {
 		return &ServerCauseError{Message: "embedded agent: construct runtime", Cause: rtErr}
@@ -435,7 +451,13 @@ func (s *Server) buildEmbeddedAgentMCPResolver(hostname string, log interfaces.L
 // buildEmbeddedAgentBackends constructs the backend map from the configured
 // list. Only "ollama" is supported for the embedded agent; unsupported kinds
 // are skipped with a warning.
-func buildEmbeddedAgentBackends(kinds []string, ollamaURL string, mcpResolver orchestration.MCPPresetResolver, log interfaces.Logger) (map[string]orchestration.AgentBackend, error) {
+func buildEmbeddedAgentBackends(
+	kinds []string,
+	ollamaURL string,
+	sandboxNetwork orchestration.SandboxNetwork,
+	mcpResolver orchestration.MCPPresetResolver,
+	log interfaces.Logger,
+) (map[string]orchestration.AgentBackend, error) {
 	if len(kinds) == 0 {
 		kinds = []string{"ollama"}
 	}
@@ -463,9 +485,10 @@ func buildEmbeddedAgentBackends(kinds []string, ollamaURL string, mcpResolver or
 		"claude": func() (map[string]orchestration.AgentBackend, error) {
 			b := orchestration.NewACPBackend(orchestration.ACPBackendConfig{
 				Command:           "claude",
-				Args:              []string{"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--disable-slash-commands"},
+				Args:              []string{"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--disable-slash-commands"},
 				DefaultModel:      "",
 				CLIMode:           true,
+				SandboxNetwork:    sandboxNetwork,
 				MCPPresetResolver: mcpResolver,
 			})
 			b.SetLogger(log)
@@ -485,6 +508,7 @@ func buildEmbeddedAgentBackends(kinds []string, ollamaURL string, mcpResolver or
 				Command:           "opencode",
 				Args:              []string{"acp"},
 				DefaultModel:      "",
+				SandboxNetwork:    sandboxNetwork,
 				MCPPresetResolver: mcpResolver,
 			})
 			b.SetLogger(log)

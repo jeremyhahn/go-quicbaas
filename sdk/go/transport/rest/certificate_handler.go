@@ -101,6 +101,17 @@ func (h *certificateRESTHandler) handleRequest(ctx context.Context, _ string, me
 		return h.handleGetTLSConfig(ctx, req)
 	case "GenerateCRL":
 		return h.handleGenerateCRL(ctx, req)
+
+	// Certificate extensions — Security().CertificateExt(). See
+	// certificate_extensions_handler.go. They must be routed explicitly: the
+	// generic fallback below would derive "/api/v1/certificate/crosssign" and
+	// return an untyped body.
+	case "CrossSign":
+		return h.handleCrossSign(ctx, req)
+	case "Chain":
+		return h.handleChain(ctx, req)
+	case "IssueDeviceIdentity":
+		return h.handleIssueDeviceIdentity(ctx, req)
 	default:
 		// Anything not explicitly typed falls back to the generic
 		// dispatch path which returns interface{}.

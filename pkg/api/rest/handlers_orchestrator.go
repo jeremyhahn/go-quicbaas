@@ -16,6 +16,7 @@
 package rest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	stderrors "errors"
@@ -45,6 +46,7 @@ func registerOrchestratorRoutes(s *Server, r chi.Router) {
 		r.Get("/sessions/{sessionID}", s.HandleOrchestratorSessionStatus)
 		r.Delete("/sessions/{sessionID}", s.HandleOrchestratorCloseSession)
 		r.Get("/sessions", s.HandleOrchestratorListSessions)
+		r.Post("/sessions/{sessionID}/rotate-account", s.HandleOrchestratorRotateSessionAccount)
 
 		// Session event stream (Phase 4). SSE-based live tail; the same
 		// handler serves scrollback via ?from=N&follow=0.
@@ -264,7 +266,16 @@ func spawnRequestHasExplicitPersistent(body []byte) bool {
 	return ok
 }
 
-// HandleOrchestratorPrompt handles POST /api/v1/orchestrator/sessions/{sessionID}/prompt - Prompt a session.
+// HandleOrchestratorPrompt handles POST /api/v1/orchestrator/sessions/{sessionID}/prompt.
+//
+// The turn is asynchronous. The handler records the prompt and a turn_started
+// marker on the session event log, dispatches the turn on a context detached
+// from this request, and answers 202 Accepted with the turn ID — well inside
+// the REST server's 25s request cap, which a real multi-minute agent turn
+// could never fit under. The agent's output is delivered on the session event
+// stream at GET /api/v1/orchestrator/sessions/{sessionID}/events, and the turn
+// ends when a turn_completed or turn_failed event carrying the same turn ID
+// appears there. A client that disconnects mid-turn does not cancel it.
 func (s *Server) HandleOrchestratorPrompt(w http.ResponseWriter, r *http.Request) {
 	ctx, _ := resolveOrchestratorTenant(r)
 
@@ -299,13 +310,13 @@ func (s *Server) HandleOrchestratorPrompt(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	resp, err := agentSvc.PromptSession(ctx, &req)
+	ack, err := agentSvc.PromptSessionAsync(ctx, &req)
 	if err != nil {
 		handleOrchestratorError(w, r, err)
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, resp)
+	RespondJSON(w, r, http.StatusAccepted, ack)
 }
 
 // HandleOrchestratorSessionStatus handles GET /api/v1/orchestrator/sessions/{sessionID} - Get session status.
@@ -358,6 +369,65 @@ func (s *Server) HandleOrchestratorCloseSession(w http.ResponseWriter, r *http.R
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)
+}
+
+// HandleOrchestratorRotateSessionAccount handles
+// POST /api/v1/orchestrator/sessions/{sessionID}/rotate-account — move a
+// session onto a different pooled provider account.
+//
+// The same verb runs automatically when a turn fails on a classified provider
+// limit; this is the operator's door to it. It authorizes as
+// orchestrator:spawn (see pkg/api/rest/authz_pep_mapping.go): the resume path
+// closes the agent process and reconstitutes it against a newly selected
+// pooled credential, which is a spawn's authority and not a close's.
+//
+// The body is optional — an empty POST rotates with no reason and no hold.
+func (s *Server) HandleOrchestratorRotateSessionAccount(w http.ResponseWriter, r *http.Request) {
+	ctx, _ := resolveOrchestratorTenant(r)
+
+	agentSvc := s.getAgentService(w, r)
+	if agentSvc == nil {
+		return
+	}
+
+	sessionID := chi.URLParam(r, "sessionID")
+	if sessionID == "" {
+		RespondBadRequest(w, r, "session ID is required")
+		return
+	}
+
+	rotator, err := orchestration.RotationServiceFrom(agentSvc, "rest")
+	if err != nil {
+		RespondError(w, r, http.StatusNotImplemented, err)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		RespondBadRequest(w, r, "failed to read request body")
+		return
+	}
+	defer r.Body.Close()
+
+	req := &orchestration.RotateSessionAccountRequest{}
+	if len(bytes.TrimSpace(body)) > 0 {
+		if err := json.Unmarshal(body, req); err != nil {
+			RespondBadRequest(w, r, "invalid JSON body")
+			return
+		}
+	}
+
+	// The path segment is the authority on which session moves; a body that
+	// names a different one would make the PEP's path-scoped decision a lie.
+	req.SessionID = sessionID
+
+	result, err := rotator.RotateSessionAccount(ctx, req)
+	if err != nil {
+		handleOrchestratorError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, result)
 }
 
 // HandleOrchestratorListSessions handles GET /api/v1/orchestrator/sessions - List active sessions.
@@ -1380,10 +1450,35 @@ func handleOrchestratorError(w http.ResponseWriter, r *http.Request, err error) 
 }
 
 // isOrchForbiddenError checks if the error represents a permission denial.
+//
+// Spawn-policy refusals — a bind mount outside every allowed root, a sandbox
+// mode or network the policy forbids, an integrity tier below the operator's
+// floor — are classified here rather than dropping to the 500 fallback. Each
+// carries an actionable message naming the offending field, and a 500 tells an
+// operator nothing about whether they hit a misconfiguration or a server
+// fault. See orchestration.IsPolicyDenial.
 func isOrchForbiddenError(err error) bool {
 	var notLead *orchestration.NotLeadOfParentError
 	return stderrors.Is(err, orchestration.ErrNotLeadOfParent) ||
-		stderrors.As(err, &notLead)
+		stderrors.As(err, &notLead) ||
+		orchestration.IsPolicyDenial(err) ||
+		isGRPCPermissionDenied(err)
+}
+
+// isGRPCPermissionDenied reports whether err carries a gRPC
+// codes.PermissionDenied status. A spawn dispatched to a remote agent daemon
+// is policy-checked a second time on that daemon (pkg/agent Runtime.Spawn),
+// and its denial arrives here wrapped in a RemoteBackendRPCError that unwraps
+// to the grpc status error. Without this the last line of defence would answer
+// 500.
+func isGRPCPermissionDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	if st, ok := grpcstatus.FromError(err); ok {
+		return st.Code() == grpccodes.PermissionDenied
+	}
+	return false
 }
 
 // isOrchNotFoundError checks if the error is a not-found type. Surfacing
@@ -1469,6 +1564,9 @@ func isOrchConflictError(err error) bool {
 	var versionConflict *orchestration.TaskVersionConflictError
 	var agentAlreadyExists *orchestration.AgentAlreadyExistsError
 	var workflowAlreadyExists *orchestration.WorkflowAlreadyExistsError
+	// A session that may not rotate is a state conflict, not a bad request:
+	// the caller named a real session and only its policy stands in the way.
+	var notRotatable *orchestration.SessionNotRotatableError
 	return stderrors.Is(err, orchestration.ErrTaskAlreadyClaimed) ||
 		stderrors.Is(err, orchestration.ErrTaskAlreadyExists) ||
 		stderrors.Is(err, orchestration.ErrTaskVersionConflict) ||
@@ -1479,7 +1577,9 @@ func isOrchConflictError(err error) bool {
 		stderrors.As(err, &alreadyExists) ||
 		stderrors.As(err, &versionConflict) ||
 		stderrors.As(err, &agentAlreadyExists) ||
-		stderrors.As(err, &workflowAlreadyExists)
+		stderrors.As(err, &workflowAlreadyExists) ||
+		stderrors.Is(err, orchestration.ErrSessionNotRotatable) ||
+		stderrors.As(err, &notRotatable)
 }
 
 // =============================================================================

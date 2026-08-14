@@ -69,7 +69,7 @@ The 3-node stack is defined in `test/integration/docker-compose.cluster.yml`.
 Location: `test/integration/seal/`
 
 ```
-make integration-test-seal             # awskms (LocalStack) + Vault
+make integration-test-seal             # awskms (Floci) + Vault
 ```
 
 For hardware strategies (TPM2, PKCS11, swtpm, SoftHSM) run inside the devcontainer

@@ -24,6 +24,7 @@ By default, QuicBaaS binds only to Unix sockets for maximum security. Explicitly
 # .quicbaas.yaml - Minimal network exposure (recommended)
 server:
   host: "127.0.0.1"           # Bind to localhost only
+  sealed_bind_host: "127.0.0.1"  # Sealed-window (pre-unseal) listeners; loopback default
   port: 8080                   # REST API port
   grpc_port: 9090              # gRPC port
   unix_socket: "/var/run/quicbaas/quicbaas.sock"  # Default transport
@@ -53,6 +54,10 @@ server:
 ```yaml
 server:
   host: "0.0.0.0"              # Required for pod networking
+  # Sealed-window (pre-unseal ceremony/unseal) listeners stay on loopback by
+  # default; set sealed_bind_host: "0.0.0.0" only if remote Shamir officers
+  # must reach the sealed surface from outside the pod.
+  # sealed_bind_host: "127.0.0.1"
   port: 8080
   grpc_port: 9090
   enable_tcp: true
@@ -287,20 +292,21 @@ Configure short-lived access tokens with longer refresh tokens:
 security:
   auth:
     enabled: true
-    jwt_secret: "${JWT_SECRET}"     # 32+ character secret from environment
     token_ttl: 15m                   # Short-lived access tokens (15 minutes)
     refresh_token_ttl: 24h           # Refresh tokens valid for 24 hours
     max_refresh_count: 48            # Maximum refreshes before re-authentication
 ```
 
+Tokens are signed with the ES256 key auto-generated in the xkms keystore at first boot; there is no JWT secret to configure.
+
 **Programmatic token configuration:**
 
 ```go
 authConfig := &auth.AuthConfig{
-    Enabled:         true,
-    JWTSecret:       os.Getenv("JWT_SECRET"),
-    TokenTTL:        15 * time.Minute,      // Access token
-    RefreshTokenTTL: 24 * time.Hour,        // Refresh token
+    Enabled:             true,
+    JWTSigningKeyID:     "quicbaas-jwt-signing", // xkms-backed ES256 signing key
+    TokenTTL:            15 * time.Minute,       // Access token
+    RefreshTokenTTL:     24 * time.Hour,         // Refresh token
 }
 ```
 
@@ -1162,28 +1168,28 @@ openssl s_client -connect localhost:8080 -tls1_2 < /dev/null
 
 ### Secrets Management
 
-**Never store secrets in configuration files:**
+**JWT signing keys are not managed secrets.** There is no `jwt_secret` — no JWT key material can be configured at all. The ES256 token-signing key is generated inside the configured xkms backend at first boot and never leaves the keystore. The hardening decision is backend choice: select a hardware-backed xkms backend (TPM 2.0 or PKCS#11) so the signing key is hardware-protected.
+
+**Never store the remaining secrets (backup keys, provider credentials) in configuration files:**
 
 ```yaml
 # BAD - Secret in config file
-security:
-  auth:
-    jwt_secret: "my-super-secret-key"    # NEVER do this!
+backup:
+  encryption_key: "my-super-secret-key"        # NEVER do this!
 
 # GOOD - Secret from environment
-security:
-  auth:
-    jwt_secret: "${JWT_SECRET}"           # From environment variable
+backup:
+  encryption_key: "${BACKUP_ENCRYPTION_KEY}"   # From environment variable
 ```
 
 **Environment variable management:**
 
 ```bash
 # Set secrets via environment (not in shell history)
-read -s JWT_SECRET && export JWT_SECRET
+read -s BACKUP_ENCRYPTION_KEY && export BACKUP_ENCRYPTION_KEY
 
 # Or use a secrets manager
-export JWT_SECRET=$(vault kv get -field=jwt_secret secret/quicbaas)
+export BACKUP_ENCRYPTION_KEY=$(vault kv get -field=backup_encryption_key secret/quicbaas)
 export KMS_MASTER_KEY=$(aws secretsmanager get-secret-value --secret-id quicbaas/kms --query SecretString --output text)
 ```
 
@@ -1197,7 +1203,7 @@ metadata:
   namespace: quicbaas
 type: Opaque
 data:
-  jwt-secret: <base64-encoded-secret>
+  backup-encryption-key: <base64-encoded-secret>
   kms-master-key: <base64-encoded-key>
 ---
 apiVersion: apps/v1
@@ -1210,11 +1216,11 @@ spec:
       containers:
         - name: quicbaas
           env:
-            - name: JWT_SECRET
+            - name: BACKUP_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
                   name: quicbaas-secrets
-                  key: jwt-secret
+                  key: backup-encryption-key
 ```
 
 **HashiCorp Vault integration:**
@@ -1222,11 +1228,11 @@ spec:
 ```bash
 # Store secrets in Vault
 vault kv put secret/quicbaas \
-  jwt_secret="$(openssl rand -base64 32)" \
+  backup_encryption_key="$(openssl rand -base64 32)" \
   kms_master_key="$(openssl rand -base64 32)"
 
 # Retrieve at runtime
-export JWT_SECRET=$(vault kv get -field=jwt_secret secret/quicbaas)
+export BACKUP_ENCRYPTION_KEY=$(vault kv get -field=backup_encryption_key secret/quicbaas)
 ```
 
 ### Backup Encryption

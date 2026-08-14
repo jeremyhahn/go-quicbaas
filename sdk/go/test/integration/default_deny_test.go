@@ -35,7 +35,7 @@ func TestDefaultDenyRejectsAnonymous(t *testing.T) {
 	SkipIfNoDocker(t)
 	SkipIfNoServer(t)
 
-	httpClient := &http.Client{Timeout: 10 * time.Second}
+	httpClient := newHTTPClient(10 * time.Second)
 
 	t.Run("anonymous request to protected entities path is denied", func(t *testing.T) {
 		ctx, cancel := DefaultContext(t)

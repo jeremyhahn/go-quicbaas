@@ -265,8 +265,18 @@ func TestRequiresTenantIsolation(t *testing.T) {
 			expected: false,
 		},
 		{
+			name:     "literal system tenant does not require isolation",
+			tenantID: SystemTenantID,
+			expected: false,
+		},
+		{
 			name:     "non-empty tenant requires isolation",
 			tenantID: "tenant-123",
+			expected: true,
+		},
+		{
+			name:     "different-case lookalike still requires isolation",
+			tenantID: "System",
 			expected: true,
 		},
 	}

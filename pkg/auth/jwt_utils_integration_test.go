@@ -28,11 +28,7 @@ import (
 
 // TestGenerateTokensForUser_ConsecutiveCalls tests multiple token generations
 func TestGenerateTokensForUser_ConsecutiveCalls(t *testing.T) {
-	config := &AuthConfig{
-		JWTSecret:       "test-consecutive-secret",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 	tokenStore := NewMockTokenStore()
 
 	user := &User{
@@ -64,7 +60,7 @@ func TestGenerateTokensForUser_ConsecutiveCalls(t *testing.T) {
 
 	// All tokens should be valid
 	for _, token := range tokens {
-		claims, err := validateJWTTokenLegacy(token.AccessToken, config.JWTSecret)
+		claims, err := validateJWTToken(token.AccessToken, config)
 		assert.NoError(t, err)
 		assert.Equal(t, user.ID, claims.UserID)
 	}
@@ -72,11 +68,7 @@ func TestGenerateTokensForUser_ConsecutiveCalls(t *testing.T) {
 
 // TestConcurrentTokenGeneration tests concurrent token generation
 func TestConcurrentTokenGeneration(t *testing.T) {
-	config := &AuthConfig{
-		JWTSecret:       "concurrent-secret",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 	tokenStore := NewMockTokenStore()
 
 	user := &User{
@@ -118,7 +110,7 @@ func TestConcurrentTokenGeneration(t *testing.T) {
 	assert.Equal(t, numGoroutines, len(tokens))
 	for i := 0; i < len(tokens); i++ {
 		// Validate token
-		claims, err := validateJWTTokenLegacy(tokens[i].AccessToken, config.JWTSecret)
+		claims, err := validateJWTToken(tokens[i].AccessToken, config)
 		assert.NoError(t, err)
 		assert.Equal(t, user.ID, claims.UserID)
 	}
@@ -133,11 +125,11 @@ func TestConcurrentTokenGeneration(t *testing.T) {
 
 // TestVeryShortTTL tests token generation and validation with very short TTL
 func TestVeryShortTTL(t *testing.T) {
-	config := &AuthConfig{
-		JWTSecret:       "short-ttl-secret",
-		TokenTTL:        500 * time.Millisecond,
-		RefreshTokenTTL: 1 * time.Second,
-	}
+	config := newTestAuthConfig(t)
+	// JWT exp claims are truncated to whole seconds (jwt.TimePrecision), so the
+	// TTL must exceed one second or the token can be expired at issue time.
+	config.TokenTTL = 1500 * time.Millisecond
+	config.RefreshTokenTTL = 2 * time.Second
 	tokenStore := NewMockTokenStore()
 
 	user := &User{
@@ -151,39 +143,37 @@ func TestVeryShortTTL(t *testing.T) {
 	require.NoError(t, err)
 
 	// Validate immediately (should work)
-	claims, err := validateJWTTokenLegacy(token.AccessToken, config.JWTSecret)
+	claims, err := validateJWTToken(token.AccessToken, config)
 	require.NoError(t, err, "Token should be valid immediately after creation")
 	assert.NotNil(t, claims)
 
 	// Wait for token to expire
-	time.Sleep(700 * time.Millisecond)
+	time.Sleep(1700 * time.Millisecond)
 
 	// Validate again (should fail)
-	claims, err = validateJWTTokenLegacy(token.AccessToken, config.JWTSecret)
+	claims, err = validateJWTToken(token.AccessToken, config)
 	assert.Error(t, err, "Token should be expired after TTL")
 	assert.Nil(t, claims)
 }
 
-// TestGenerateTokensWithDifferentSecrets ensures different secrets produce different tokens
-func TestGenerateTokensWithDifferentSecrets(t *testing.T) {
-	secrets := []string{"secret1", "secret2", "secret3"}
+// TestGenerateTokensWithDifferentKeys ensures different signing keys produce
+// different tokens and each token only validates with its own key.
+func TestGenerateTokensWithDifferentKeys(t *testing.T) {
 	user := &User{
-		ID:       "user-diff-secrets",
-		Username: "diffsecrets",
+		ID:       "user-diff-keys",
+		Username: "diffkeys",
 		Roles:    []string{"admin"},
 	}
 
-	tokens := make([]string, len(secrets))
+	numKeys := 3
+	configs := make([]*AuthConfig, numKeys)
+	tokens := make([]string, numKeys)
 
-	for i, secret := range secrets {
-		config := &AuthConfig{
-			JWTSecret:       secret,
-			TokenTTL:        1 * time.Hour,
-			RefreshTokenTTL: 24 * time.Hour,
-		}
+	for i := 0; i < numKeys; i++ {
+		configs[i] = newTestAuthConfig(t)
 		tokenStore := NewMockTokenStore()
 
-		token, err := generateTokensForUser(user, config, tokenStore)
+		token, err := generateTokensForUser(user, configs[i], tokenStore)
 		require.NoError(t, err)
 		tokens[i] = token.AccessToken
 	}
@@ -192,21 +182,21 @@ func TestGenerateTokensWithDifferentSecrets(t *testing.T) {
 	for i := 0; i < len(tokens); i++ {
 		for j := i + 1; j < len(tokens); j++ {
 			assert.NotEqual(t, tokens[i], tokens[j],
-				fmt.Sprintf("Tokens with different secrets should be different: %s vs %s", secrets[i], secrets[j]))
+				fmt.Sprintf("Tokens signed with different keys should be different: %d vs %d", i, j))
 		}
 	}
 
-	// Each token should only validate with its corresponding secret
-	for i, secret := range secrets {
-		claims, err := validateJWTTokenLegacy(tokens[i], secret)
+	// Each token should only validate with its corresponding key
+	for i := range configs {
+		claims, err := validateJWTToken(tokens[i], configs[i])
 		assert.NoError(t, err)
 		assert.Equal(t, user.ID, claims.UserID)
 
-		// Should fail with other secrets
-		for j, otherSecret := range secrets {
+		// Should fail with other keys
+		for j := range configs {
 			if i != j {
-				_, err := validateJWTTokenLegacy(tokens[i], otherSecret)
-				assert.Error(t, err, fmt.Sprintf("Token %d should not validate with secret %d", i, j))
+				_, err := validateJWTToken(tokens[i], configs[j])
+				assert.Error(t, err, fmt.Sprintf("Token %d should not validate with key %d", i, j))
 			}
 		}
 	}

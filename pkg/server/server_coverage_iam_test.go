@@ -30,7 +30,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/pem"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -193,61 +192,6 @@ func TestHealthChecker_GetOverallHealth_BothComponentsReportUnhealthy(t *testing
 
 // =============================================================================
 // file_kv_store.go — error paths and directory-filtering branches
-//
-// The unit-tagged tests cover the happy path. These tests cover the
-// subdir-skipping, tmp-file-skipping, and invalid-hex-skipping branches in
-// Scan/List, plus the NewFileKVStore empty-dataDir error.
-// =============================================================================
-
-func TestNewFileKVStore_EmptyDataDirReturnsTypedError(t *testing.T) {
-	store, err := NewFileKVStore("")
-	require.Error(t, err)
-	assert.Nil(t, store)
-}
-
-func TestFileKVStore_Scan_SkipsSubdirsAndInvalidEntries(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewFileKVStore(dir)
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	// Seed a real entry.
-	require.NoError(t, store.Put(ctx, "real-key", []byte("v")))
-
-	// Subdir under the data dir — Scan must skip it.
-	require.NoError(t, os.Mkdir(filepath.Join(dir, "subdir"), 0o750))
-
-	// .tmp suffix — Scan must skip it.
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "leftover.tmp"), []byte("x"), 0o600))
-
-	// Invalid hex filename — Scan must skip it via filenameToKey error.
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "not-hex!"), []byte("x"), 0o600))
-
-	var got []string
-	require.NoError(t, store.Scan(ctx, "", func(key string, value []byte) error {
-		got = append(got, key)
-		return nil
-	}))
-	assert.ElementsMatch(t, []string{"real-key"}, got)
-}
-
-func TestFileKVStore_List_SkipsSubdirsAndInvalidEntries(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewFileKVStore(dir)
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	require.NoError(t, store.Put(ctx, "a-key", []byte("v")))
-	require.NoError(t, store.Put(ctx, "b-key", []byte("v")))
-	require.NoError(t, os.Mkdir(filepath.Join(dir, "subdir"), 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "leftover.tmp"), []byte("x"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "not-hex!"), []byte("x"), 0o600))
-
-	keys, err := store.List(ctx, "")
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"a-key", "b-key"}, keys)
-}
-
 // =============================================================================
 // TODO Phase F: PebbleKVStore was removed in Phase E (the dead embedded
 // transport path that used it has been deleted). Add Phase F integration tests
@@ -539,53 +483,6 @@ func TestReconcileAdminRole_PresentAfterSeed(t *testing.T) {
 	role, err := c.identityStore.GetRole(ctx, AdminTenantID, AdminRoleID)
 	require.NoError(t, err)
 	assert.Equal(t, AdminRoleID, role.ID)
-}
-
-// =============================================================================
-// ceremony_wiring.go — SOCertSPKIThumbprint error branches
-// =============================================================================
-
-func TestSOCertSPKIThumbprint_EmptyInputReturnsSentinel(t *testing.T) {
-	_, err := SOCertSPKIThumbprint(nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrSOCertEmpty)
-}
-
-func TestSOCertSPKIThumbprint_NoPEMBlockReturnsSentinel(t *testing.T) {
-	_, err := SOCertSPKIThumbprint([]byte("not a pem block"))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrSOCertNoPEMBlock)
-}
-
-func TestSOCertSPKIThumbprint_ValidCertReturnsThumbprint(t *testing.T) {
-	cert := newTestSelfSignedCertPEM(t)
-	thumb, err := SOCertSPKIThumbprint(cert)
-	require.NoError(t, err)
-	assert.NotEmpty(t, thumb)
-}
-
-// =============================================================================
-// helpers
-// =============================================================================
-
-// newTestSelfSignedCertPEM produces a real PEM-encoded self-signed X.509
-// certificate suitable for SOCertSPKIThumbprint testing. Generated fresh
-// per test to keep the test hermetic.
-func newTestSelfSignedCertPEM(t *testing.T) []byte {
-	t.Helper()
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	tmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "spki-test"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
-	require.NoError(t, err)
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
 // TestServer_EnsureOrchestratorDaemonClient_WriteCacheError covers the

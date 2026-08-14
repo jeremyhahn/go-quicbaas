@@ -460,9 +460,15 @@ check-insecure-tls: ## Enforce InsecureSkipVerify allowlist - empty allowlist me
 
 
 .PHONY: vet
-vet: ## Run go vet
-	@echo "$(BLUE)Running go vet...$(NC)"
-	$(GOCMD) vet ./...
+vet: ## Run go vet across every tag pass (untagged vet skips tag-gated packages)
+	@echo "$(BLUE)Running go vet (maximal tags)...$(NC)"
+	$(GOCMD) vet -tags '$(TEST_TAGS)' ./...
+	@echo "$(BLUE)Running go vet (minimal tags)...$(NC)"
+	$(GOCMD) vet -tags '$(MINIMAL_TEST_TAGS)' ./...
+	@echo "$(BLUE)Running go vet (desktop GUI tags)...$(NC)"
+	$(GOCMD) vet -tags '$(DESKTOP_TEST_TAGS)' ./...
+	@echo "$(BLUE)Running go vet (integration tree)...$(NC)"
+	$(GOCMD) vet -tags 'integration $(strip $(INTEGRATION_BUILD_TAGS)) $(TEST_EXTRA_TAGS)' ./test/...
 
 ##@ Build
 
@@ -580,6 +586,46 @@ build-cli: build-ui ## Build the client (quicbaas) — single binary with embedd
 	@echo "$(GREEN)Build successful: $(BIN_DIR)/$(APP_NAME)$(NC)"
 	@echo "$(BLUE)Version info:$(NC)"
 	@$(BIN_DIR)/$(APP_NAME) version --short
+
+##@ Deploy
+
+# Local dev-daemon redeploy configuration. Defaults match the self-hosting
+# daemon; override on the command line, e.g.:
+#   make redeploy DEPLOY_CONFIG=/etc/quicbaas.yaml DEPLOY_REST_PORT=8443
+DEPLOY_CONFIG    ?= /tmp/qb-self.yaml
+DEPLOY_DATA_DIR  ?= /tmp/qb-self-data
+DEPLOY_LOG       ?= /tmp/qb-self.log
+DEPLOY_REST_PORT ?= 18444
+
+.PHONY: redeploy
+redeploy: ## Rebuild client + daemon (embedded web UI) and restart the local dev daemon
+	@# build-cli FIRST: it regenerates the frontend dist that build-daemon
+	@# embeds (pkg/api/rest/ui/dist via go:embed). The reverse order ships a
+	@# daemon whose web UI is one build stale.
+	@$(MAKE) build-cli
+	@$(MAKE) build-daemon
+	@echo "$(BLUE)Stopping $(APP_NAME)d (config: $(DEPLOY_CONFIG))...$(NC)"
+	@# Bracketed first character keeps the pattern from matching this recipe's
+	@# own shell (whose argv contains the pattern), which pkill would otherwise
+	@# terminate along with the daemon.
+	@pkill -f "[q]uicbaasd start --config $(DEPLOY_CONFIG)" || true
+	@for i in $$(seq 1 50); do \
+		pgrep -f "[q]uicbaasd start --config $(DEPLOY_CONFIG)" >/dev/null || break; \
+		sleep 0.2; \
+	done
+	@if pgrep -f "[q]uicbaasd start --config $(DEPLOY_CONFIG)" >/dev/null; then \
+		echo "$(RED)Daemon did not stop within 10s$(NC)"; exit 1; \
+	fi
+	@echo "$(BLUE)Starting $(BIN_DIR)/$(APP_NAME)d...$(NC)"
+	@nohup $(BIN_DIR)/$(APP_NAME)d start --config $(DEPLOY_CONFIG) --data-dir $(DEPLOY_DATA_DIR) >> $(DEPLOY_LOG) 2>&1 &
+	@for i in $$(seq 1 100); do \
+		curl -skf https://127.0.0.1:$(DEPLOY_REST_PORT)/api/v1/health >/dev/null 2>&1 && break; \
+		sleep 0.3; \
+	done
+	@curl -skf https://127.0.0.1:$(DEPLOY_REST_PORT)/api/v1/health >/dev/null 2>&1 \
+		|| (echo "$(RED)Daemon failed readiness after restart — check $(DEPLOY_LOG)$(NC)" && exit 1)
+	@echo "$(GREEN)Redeployed: daemon restarted, web UI live at https://127.0.0.1:$(DEPLOY_REST_PORT)$(NC)"
+	@echo "$(YELLOW)Desktop GUI ($(BIN_DIR)/$(APP_NAME)) was rebuilt — relaunch it to pick up the new UI$(NC)"
 
 .PHONY: build-static
 build-static: build-static-daemon build-static-cli ## Build static binaries for containers
@@ -761,9 +807,77 @@ install: build ## Install the binary
 
 ##@ Testing
 
-# Build test tags (combine optional features with !integration exclusion)
-# Note: Go 1.25+ requires space-separated tags, not comma-separated
-TEST_TAGS := !integration $(strip $(BUILD_TAGS))
+# ==============================================================================
+# Test tag matrix
+# ==============================================================================
+# Go compiles a file only when its //go:build constraint is satisfied, so a
+# package sitting behind a tag that no test pass supplies is skipped in silence:
+# `go test` prints "no test files" and the target still goes green. Every tag
+# used anywhere under pkg/ or cmd/ must therefore appear in one of the passes
+# below, or be listed in TAG_GATE_EXEMPT with the reason it cannot run.
+# `make check-build-tags` enforces that and is a prerequisite of `make test`.
+#
+#   TEST_TAGS          maximal pass: every default-on feature compiled in.
+#   MINIMAL_TEST_TAGS  minimal pass: every optional feature OFF, so the
+#                      !rest / !quic / !mcp / !rag / !timeseries / !vector /
+#                      !raft / !otel / !l2_redis / !desktop stub and no-op
+#                      files -- and the tests asserting their behaviour --
+#                      actually compile. The maximal pass can never reach
+#                      these, because a tag and its negation are mutually
+#                      exclusive within a single `go test` invocation.
+#   DESKTOP_TEST_TAGS  Wails GUI bindings pass. Needs the webkit2gtk
+#                      development libraries, so it gets its own target;
+#                      `make test` must stay runnable with no GUI toolchain.
+#
+# TEST_EXTRA_TAGS gate tests only and must never change a shipped binary, so
+# they live here and deliberately NOT in BUILD_TAGS:
+#   canary    memory-scrubbing canary assertions in pkg/api/rest/secureio
+#   otel      OpenTelemetry tracing helpers in pkg/api/grpc
+#   l2_redis  Redis L2 cache; its unit tests drive an in-process mock client
+#
+# rest/quic/mcp/rag gate whole transport packages. Without them `go test`
+# reports "no test files" for pkg/api/{rest,quic,mcp} and PASSES, so every
+# authz-mapping, sealed-window and opcode-parity guard in those packages was
+# silently absent from this gate — a control that appears present but never
+# executes. They are listed here, not in BUILD_TAGS, because they must gate
+# tests without altering a shipped binary.
+TEST_EXTRA_TAGS := canary otel l2_redis rest quic mcp rag
+
+# Note: Go 1.25+ requires space-separated tags, not comma-separated.
+# The leading !integration is documentation: `integration` is simply absent
+# from the list, which is what actually excludes the integration-tagged files.
+TEST_TAGS := !integration $(strip $(BUILD_TAGS)) $(TEST_EXTRA_TAGS)
+MINIMAL_TEST_TAGS := !integration hashicorpmetrics local
+DESKTOP_TEST_TAGS := !integration $(strip $(BUILD_TAGS)) $(TEST_EXTRA_TAGS) desktop webkit2_41
+
+# Tag lists for tools that reject the decorative !integration entry.
+LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
+
+# Tags deliberately outside every test pass, each with the reason. Anything
+# not covered above and not listed here fails `make check-build-tags`.
+#   linux darwin windows unix   set by the toolchain from GOOS, never by us
+#   ignore                      Go convention for a permanently excluded file
+#   integration                 has its own gate: `make integration-test`
+#   coverage                    coverage-mode toggle, driven by coverage targets
+#   production                  shipped-build-only tag, and mutually exclusive
+#                               with the !production test mocks in pkg/secrets
+#   pkcs11 swtpm tpm_simulator  need real or simulated crypto hardware
+#   awskms gcpkms azurekv vault
+#   awss3 gcpstorage azureblob minio
+#                               need live cloud credentials / endpoints
+#   gpu                         needs an NVIDIA GPU
+#   quicbaas_signal             pkg/signal DOES NOT COMPILE. Its kvAdapter is
+#                               missing DeleteIfPresent, which go-signal's
+#                               store.KVClient requires and which go-qrdb's
+#                               sdk/go/transport.KVClient cannot supply
+#                               atomically. That primitive is what makes
+#                               one-time prekey consumption single-use, so this
+#                               needs a qrdb SDK addition -- the package is
+#                               currently unbuildable, not merely untested.
+TAG_GATE_EXEMPT := linux darwin windows unix ignore integration coverage production \
+	pkcs11 swtpm tpm_simulator \
+	awskms gcpkms azurekv vault awss3 gcpstorage azureblob minio \
+	gpu quicbaas_signal
 
 # IAM_TEST_TAGS: retained alias for TEST_TAGS. IAM is now always compiled
 # (the 'iam' build tag was removed in phase C1-G), so no extra tag is needed
@@ -772,7 +886,7 @@ TEST_TAGS := !integration $(strip $(BUILD_TAGS))
 IAM_TEST_TAGS := $(TEST_TAGS)
 
 .PHONY: test
-test: check-insecure-tls ## Run unit tests (excludes integration tests)
+test: check-insecure-tls check-build-tags ## Run unit tests (excludes integration tests)
 	@echo "$(BLUE)Running unit tests (excludes integration tests)...$(NC)"
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(TEST_TAGS)$(NC)"
@@ -791,6 +905,46 @@ endif
 		printf "$(GREEN)Total time: %ds$(NC)\n" $$SECONDS; \
 	fi; \
 	exit $$TEST_RESULT
+
+.PHONY: check-build-tags
+check-build-tags: ## Fail if any //go:build tag is absent from every test pass
+	@echo "$(BLUE)Checking build-tag coverage of the test gate...$(NC)"
+	@mkdir -p $(BUILD_DIR)
+	@printf '%s\n' $(TEST_TAGS) $(MINIMAL_TEST_TAGS) $(DESKTOP_TEST_TAGS) $(TAG_GATE_EXEMPT) \
+		| sed 's/^!//' | sort -u > $(BUILD_DIR)/tag-gate-covered.txt
+	@grep -rh --include='*.go' '^//go:build' pkg cmd \
+		| sed 's|^//go:build||' \
+		| tr ' ()!' '\n\n\n\n' \
+		| grep -E '^[A-Za-z_][A-Za-z0-9_.]*$$' \
+		| grep -Ev '^go1\.' \
+		| sort -u > $(BUILD_DIR)/tag-gate-found.txt
+	@missing=$$(grep -vxF -f $(BUILD_DIR)/tag-gate-covered.txt $(BUILD_DIR)/tag-gate-found.txt || true); \
+	if [ -n "$$missing" ]; then \
+		echo "$(RED)These //go:build tags gate code that NO test pass compiles:$(NC)"; \
+		printf '  %s\n' $$missing; \
+		echo "$(YELLOW)Tests behind them are invisible to the gate: go test reports$(NC)"; \
+		echo "$(YELLOW)'no test files' and the target passes green.$(NC)"; \
+		echo "$(YELLOW)Fix by adding each tag to TEST_TAGS, MINIMAL_TEST_TAGS or$(NC)"; \
+		echo "$(YELLOW)DESKTOP_TEST_TAGS, or to TAG_GATE_EXEMPT with the reason.$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Build-tag gate coverage OK ($$(wc -l < $(BUILD_DIR)/tag-gate-found.txt) tags)$(NC)"
+
+.PHONY: test-minimal
+test-minimal: check-insecure-tls check-build-tags ## Run unit tests with every optional feature OFF (covers the !tag stub/no-op paths)
+	@echo "$(BLUE)Running unit tests with all optional features disabled...$(NC)"
+	@echo "$(YELLOW)Build tags: $(MINIMAL_TEST_TAGS)$(NC)"
+	$(GOTEST) -p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
+
+.PHONY: test-desktop
+test-desktop: check-insecure-tls check-build-tags ## Run the Wails desktop binding tests (needs webkit2gtk dev libraries)
+	@echo "$(BLUE)Running desktop GUI binding tests...$(NC)"
+	@echo "$(YELLOW)Build tags: $(DESKTOP_TEST_TAGS)$(NC)"
+	$(GOTEST) -p 2 -tags '$(DESKTOP_TEST_TAGS)' -timeout=10m ./cmd/...
+
+.PHONY: test-all-tags
+test-all-tags: test test-minimal test-desktop ## Run every test pass in the tag matrix
+	@echo "$(GREEN)All tag passes completed successfully$(NC)"
 
 .PHONY: test-fips
 test-fips: ## Run tests in FIPS mode
@@ -1015,7 +1169,10 @@ integration-test-signalbridge: ## Run Signal Bridge integration tests (docker-co
 .PHONY: integration-test-standalone
 integration-test-standalone: ## Phase F: Run standalone (no-Raft, in-process embedded qrdb engine) integration tests (no docker required)
 	@echo "$(BLUE)Running Phase F standalone integration tests (in-process, no docker)...$(NC)"
-	@GOFLAGS=-mod=mod $(GOTEST) -v -tags integration -timeout 120s ./test/integration/standalone/...
+	@# No -mod=mod: this repo is used inside a go.work workspace, where any -mod
+	@# other than readonly/vendor is rejected outright, so the flag made the
+	@# target unrunnable rather than permissive.
+	@$(GOTEST) -v -tags integration -timeout 120s ./test/integration/standalone/...
 	@echo "$(GREEN)✓ Phase F standalone integration tests PASSED$(NC)"
 
 .PHONY: integration-test-cluster
@@ -1155,8 +1312,8 @@ integration-test-seal: ## Run cloud-backed barrier seal integration tests (awskm
 	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans 2>/dev/null || true; \
 	echo "$(YELLOW)Building seal-test image (quicbaasd + quicbaas built with -tags 'awskms vault')...$(NC)"; \
 	docker compose -f $$COMPOSE_FILE build seal-test 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
-	echo "$(YELLOW)Starting emulators (localstack KMS + vault dev server)...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE up -d localstack vault; \
+	echo "$(YELLOW)Starting emulators (floci KMS + vault dev server)...$(NC)"; \
+	docker compose -f $$COMPOSE_FILE up -d floci vault; \
 	echo "$(YELLOW)Running seal integration tests...$(NC)"; \
 	docker compose -f $$COMPOSE_FILE run --rm -T seal-test; \
 	RESULT=$$?; \
@@ -1471,6 +1628,15 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	fi; \
 	rm -rf test/integration/certs; \
 	go run test/integration/gen-certs/main.go test/integration/certs; \
+	for f in ca.crt node1.crt node1.key node2.crt node2.key node3.crt node3.key admin.crt; do \
+		if [ ! -s test/integration/certs/$$f ]; then \
+			echo "$(RED)  ✗ certificate fixture missing or empty: test/integration/certs/$$f$(NC)"; \
+			echo "$(RED)    An aborted run can leave a root-owned empty certs/ dir that Docker recreated$(NC)"; \
+			echo "$(RED)    for the bind mount. Remove it (sudo rm -rf test/integration/certs) and retry.$(NC)"; \
+			echo "$(RED)    Starting the cluster now would fail as 'TLS cert file does not exist'.$(NC)"; \
+			exit 1; \
+		fi; \
+	done; \
 	echo "$(GREEN)  ✓ Raft mTLS certificates generated$(NC)"; \
 	echo ""; \
 	echo "$(YELLOW)Cleaning up any previous test containers and volumes...$(NC)"; \
@@ -1490,7 +1656,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	fi; \
 	echo ""; \
 	echo "$(YELLOW)Starting integration test cluster...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE up -d test-node1 test-node2 test-node3 localstack minio azurite fake-gcs-server $$OLLAMA_UP_SERVICES; \
+	docker compose -f $$COMPOSE_FILE up -d test-node1 test-node2 test-node3 floci minio azurite fake-gcs-server $$OLLAMA_UP_SERVICES; \
 	echo ""; \
 	echo "$(YELLOW)Waiting for cluster nodes to be healthy (checking every 5s, max 120s)...$(NC)"; \
 	WAIT_COUNT=0; \
@@ -1569,12 +1735,12 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 		echo "$(YELLOW)  ⚠ MCP port check timed out, tests may fail for MCP transport$(NC)"; \
 	fi; \
 	echo ""; \
-	echo "$(YELLOW)Waiting for storage backends (LocalStack, MinIO, Azurite) to be ready...$(NC)"; \
+	echo "$(YELLOW)Waiting for storage backends (Floci, MinIO, Azurite) to be ready...$(NC)"; \
 	STORAGE_WAIT=0; \
 	STORAGE_MAX_WAIT=30; \
 	while [ $$STORAGE_WAIT -lt $$STORAGE_MAX_WAIT ]; do \
 		STORAGE_READY=0; \
-		if docker compose -f $$COMPOSE_FILE exec -T localstack sh -c "curl -sf http://localhost:4566/_localstack/health" >/dev/null 2>&1; then \
+		if docker compose -f $$COMPOSE_FILE exec -T floci sh -c "curl -sf http://localhost:4566/_floci/health | grep -q '\"s3\":\"running\"'" >/dev/null 2>&1; then \
 			STORAGE_READY=$$((STORAGE_READY + 1)); \
 		fi; \
 		if docker compose -f $$COMPOSE_FILE exec -T minio sh -c "curl -sf http://localhost:9000/minio/health/live" >/dev/null 2>&1; then \
@@ -2108,7 +2274,7 @@ benchmark-fips: ## Run benchmarks in FIPS mode
 lint: ## Run linters
 	@echo "$(BLUE)Running linters...$(NC)"
 	@test -x $(GOLINT) || (echo "$(RED)golangci-lint not installed. Run: make install-tools$(NC)" && exit 1)
-	$(GOLINT) run --timeout=5m ./...
+	$(GOLINT) run --timeout=5m --build-tags '$(LINT_BUILD_TAGS)' ./...
 
 .PHONY: coverage
 coverage: ## Generate coverage report (unit only; excludes generated code)
@@ -2187,6 +2353,7 @@ gosec: ## Run gosec security scanner
 		$$GOSEC_BIN -exclude=G104,G109,G115,G117,G204,G301,G304,G402,G404,G407,G602,G703,G704 -severity medium -confidence medium \
 			-exclude-dir=test -exclude-dir=testdata -exclude-dir=vendor -exclude-dir=sdk -exclude-dir=.tmp -exclude-dir=.deps \
 			-exclude-generated \
+			-tags "$$(echo '$(LINT_BUILD_TAGS)' | tr ' ' ',')" \
 			-fmt=text -out=$(BUILD_DIR)/gosec-report.txt ./...; \
 		GOSEC_EXIT=$$?; \
 		ISSUE_COUNT=$$(grep -oP 'Issues\s*:\s*\K[0-9]+' $(BUILD_DIR)/gosec-report.txt 2>/dev/null || echo "0"); \
@@ -2610,11 +2777,11 @@ watch: ## Watch for changes and rebuild
 ##@ CI/CD
 
 .PHONY: ci
-ci: deps fmt-check vet lint gosec vuln trivy build test race check-coverage ## Run CI pipeline locally (matches GitHub CI)
+ci: deps fmt-check vet lint gosec vuln trivy build test test-minimal race check-coverage ## Run CI pipeline locally (matches GitHub CI)
 	@echo "$(GREEN)CI pipeline completed successfully$(NC)"
 
 .PHONY: ci-full
-ci-full: deps fmt-check vet lint gosec vuln trivy build test race coverage integration-test ## Run full CI pipeline with integration tests
+ci-full: deps fmt-check vet lint gosec vuln trivy build test test-minimal test-desktop race coverage integration-test ## Run full CI pipeline with integration tests
 	@echo "$(GREEN)Full CI pipeline completed successfully$(NC)"
 
 .PHONY: pre-commit
@@ -2954,6 +3121,41 @@ coverage-orchestration: ## Generate coverage report for orchestration package
 bench-orchestration: ## Run orchestration package benchmarks
 	@echo "$(BLUE)Running orchestration benchmarks...$(NC)"
 	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags 'rag mcp $(BUILD_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/orchestration/...
+
+# =============================================================================
+# Pooled Provider Account Tests (the `quicbaas agent account` surface)
+#
+# The account surface spans six transports plus the SDK and CLI, so its
+# targets fan out across every package that carries a piece of it rather than
+# a single directory.
+# =============================================================================
+
+ACCOUNT_PKGS := ./pkg/service/... ./pkg/api/rest/... ./pkg/api/grpc/... ./pkg/api/quic/... ./pkg/api/mcp/... ./cmd/quicbaas/...
+
+.PHONY: test-account
+test-account: ## Run pooled provider account unit tests (service + all transports + CLI)
+	@echo "$(BLUE)Running pooled provider account tests...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -count=1 -tags '$(BUILD_TAGS)' -run 'Account' $(ACCOUNT_PKGS)
+	@echo "$(BLUE)Running SDK account client + transport tests...$(NC)"
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -count=1 -run 'Account' ./client/account/... ./transport/...
+
+.PHONY: coverage-account
+coverage-account: ## Generate coverage report for the pooled provider account surface
+	@mkdir -p $(COVERAGE_DIR)
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -coverprofile=../../$(COVERAGE_DIR)/coverage-account.out -covermode=atomic ./client/account/...
+	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-account.out -o $(COVERAGE_DIR)/coverage-account.html
+	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-account.out | grep total
+
+.PHONY: bench-account
+bench-account: ## Run pooled provider account benchmarks
+	@echo "$(BLUE)Running pooled provider account benchmarks...$(NC)"
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -run=^$$ ./client/account/...
+
+.PHONY: integration-test-account
+integration-test-account: ## Run pooled provider account CLI integration tests (all transports)
+	@echo "$(BLUE)Running pooled provider account CLI integration tests...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -count=1 -tags 'integration $(INTEGRATION_BUILD_TAGS)' \
+		-run 'TestAgentAccount' ./test/integration/cli/...
 
 # =============================================================================
 # KV Store Adapter Tests

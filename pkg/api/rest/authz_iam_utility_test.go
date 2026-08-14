@@ -143,7 +143,12 @@ func TestIAMUtilityRoutes_EveryRouteHasMapping(t *testing.T) {
 		// mount (pre-auth bootstrap), and the xkms WebAuthn ceremony mount
 		// authenticates via the ceremony itself; both are outside the gated
 		// utility group.
-		if strings.HasPrefix(concrPath, "/api/v1/iam/invites") ||
+		// Matched by segment, not prefix: the invite mount carries the tenant
+		// in the middle of the path ("/api/v1/iam/{tenant_id}/invites/..."),
+		// so a "/api/v1/iam/invites" prefix stopped matching when the tenant
+		// moved there and every invite route silently fell through to the
+		// gated-utility branch.
+		if strings.Contains(concrPath, "/invites") ||
 			strings.Contains(concrPath, "/webauthn") {
 			return nil
 		}

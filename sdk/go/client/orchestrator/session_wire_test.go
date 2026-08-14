@@ -117,6 +117,58 @@ func TestPromptSessionWireResponse(t *testing.T) {
 			t.Error("Error() must describe the failure even without a session id")
 		}
 	})
+
+	t.Run("an accepted turn is reported as started, not finished", func(t *testing.T) {
+		const acceptedPayload = `{"session_id":"sess-1","turn_id":"turn-1","status":"accepted",` +
+			`"sequence":7,"model":"claude-fable-5","timestamp":1786207030175886792}`
+		var wire PromptSessionWire
+		if err := json.Unmarshal([]byte(acceptedPayload), &wire); err != nil {
+			t.Fatalf("decode accepted payload: %v", err)
+		}
+
+		resp, err := wire.Response()
+		if err != nil {
+			t.Fatalf("Response() error = %v", err)
+		}
+		if !resp.Accepted {
+			t.Error("Accepted = false for a turn the server took for background execution")
+		}
+		if resp.Done {
+			t.Error("Done = true for a turn that has only just started")
+		}
+		if resp.TurnID != "turn-1" {
+			t.Errorf("TurnID = %q, want the ID the caller follows the turn by", resp.TurnID)
+		}
+		if resp.Sequence != 7 {
+			t.Errorf("Sequence = %d, want the turn_started sequence to attach from", resp.Sequence)
+		}
+		if resp.Response != "" {
+			t.Errorf("Response = %q, want empty: the output arrives on the event stream", resp.Response)
+		}
+		if resp.Model != "claude-fable-5" {
+			t.Errorf("Model = %q", resp.Model)
+		}
+	})
+
+	t.Run("an acceptance without a turn id is a typed error", func(t *testing.T) {
+		resp, err := NewPromptSessionAccepted("s1", "", 3, "")
+		if err == nil {
+			t.Fatalf("got %+v, want an error for an ack the caller cannot follow", resp)
+		}
+		var missing *MissingTurnIDError
+		if !errors.As(err, &missing) {
+			t.Fatalf("error %v should be a *MissingTurnIDError", err)
+		}
+		if missing.SessionID != "s1" {
+			t.Errorf("SessionID = %q, want the session the ack belonged to", missing.SessionID)
+		}
+		if missing.Error() == "" {
+			t.Error("Error() must describe the failure")
+		}
+		if (&MissingTurnIDError{}).Error() == "" {
+			t.Error("Error() must describe the failure even without a session id")
+		}
+	})
 }
 
 func TestSessionStatusWireResponse(t *testing.T) {

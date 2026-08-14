@@ -344,40 +344,57 @@ func TestAgentService_AppendSessionEvent(t *testing.T) {
 		t.Fatalf("expected one appended event, got %d", len(got))
 	}
 
-	// A gap (wrong sequence) is logged, not propagated — must not panic.
-	svc.appendSessionEvent(ctx, &SessionEvent{SessionID: "sess-1", TenantID: "tenant-1", Sequence: 99})
-}
-
-func TestAgentService_NextSessionSequence(t *testing.T) {
-	ctx := context.Background()
-	svc := newWorkflowTestService(t)
-
-	// No log installed → 0.
-	if got := svc.nextSessionSequence(ctx, "t", "s"); got != 0 {
-		t.Fatalf("expected 0 without a log, got %d", got)
-	}
-
-	log := NewMemorySessionEventLog()
-	svc.SetSessionEventLog(log)
-
-	// Empty session → next sequence is 1.
-	if got := svc.nextSessionSequence(ctx, "tenant-1", "sess-1"); got != 1 {
-		t.Fatalf("expected first sequence 1, got %d", got)
-	}
-
-	ev := &SessionEvent{
+	// A caller-supplied sequence is ignored: appendSessionEvent assigns the
+	// next one itself, so a stale value can never open a gap in the log.
+	stale := &SessionEvent{
 		SessionID: "sess-1",
 		TenantID:  "tenant-1",
-		Sequence:  1,
 		Timestamp: time.Now().UTC(),
+		Sequence:  99,
 		Kind:      KindSystemMessage,
-		System:    &SystemMessagePayload{Message: "x"},
+		System:    &SystemMessagePayload{Message: "stale"},
 	}
-	if err := log.Append(ctx, ev); err != nil {
-		t.Fatalf("Append: %v", err)
+	svc.appendSessionEvent(ctx, stale)
+	if stale.Sequence != 2 {
+		t.Fatalf("expected the assigned sequence to be 2, got %d", stale.Sequence)
 	}
-	if got := svc.nextSessionSequence(ctx, "tenant-1", "sess-1"); got != 2 {
-		t.Fatalf("expected next sequence 2, got %d", got)
+}
+
+func TestAppendNextSessionEvent_AssignsSequences(t *testing.T) {
+	ctx := context.Background()
+	log := NewMemorySessionEventLog()
+
+	for want := uint64(1); want <= 3; want++ {
+		ev := &SessionEvent{
+			SessionID: "sess-1",
+			TenantID:  "tenant-1",
+			Timestamp: time.Now().UTC(),
+			Kind:      KindSystemMessage,
+			System:    &SystemMessagePayload{Message: "x"},
+		}
+		if err := AppendNextSessionEvent(ctx, log, ev); err != nil {
+			t.Fatalf("AppendNextSessionEvent: %v", err)
+		}
+		if ev.Sequence != want {
+			t.Fatalf("expected sequence %d, got %d", want, ev.Sequence)
+		}
+	}
+}
+
+func TestAppendNextSessionEvent_InvalidInput(t *testing.T) {
+	ctx := context.Background()
+
+	if err := AppendNextSessionEvent(ctx, nil, &SessionEvent{SessionID: "s", TenantID: "t"}); err == nil {
+		t.Fatal("expected an error when no event log is configured")
+	}
+	if err := AppendNextSessionEvent(ctx, NewMemorySessionEventLog(), nil); err == nil {
+		t.Fatal("expected an error for a nil event")
+	}
+	// A malformed event still surfaces the log's own validation failure
+	// rather than being retried into oblivion.
+	err := AppendNextSessionEvent(ctx, NewMemorySessionEventLog(), &SessionEvent{TenantID: "t"})
+	if err == nil {
+		t.Fatal("expected an error for an event with no session ID")
 	}
 }
 

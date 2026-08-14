@@ -343,13 +343,13 @@ func TestCodexExecBackend_PromptSuccess(t *testing.T) {
 		t.Fatalf("Spawn: %v", err)
 	}
 
-	var events []string
+	var events []SessionEventKind
 	resp, err := b.Prompt(ctx, &PromptRequest{
 		SessionID:    sess.ID,
 		Prompt:       "do the thing",
 		SystemPrompt: "be terse",
-		EventCallback: func(_, eventType, _ string) {
-			events = append(events, eventType)
+		EventCallback: func(ev *SessionEvent) {
+			events = append(events, ev.Kind)
 		},
 	})
 	if err != nil {
@@ -361,8 +361,10 @@ func TestCodexExecBackend_PromptSuccess(t *testing.T) {
 	if len(resp.Content) != 1 || resp.Content[0].Type != "text" {
 		t.Fatalf("unexpected content: %+v", resp.Content)
 	}
-	if len(events) == 0 {
-		t.Fatal("expected at least the start event callback")
+	// codex exec emits a system_message start marker followed by the stdout
+	// assistant chunk.
+	if len(events) != 2 || events[0] != KindSystemMessage || events[1] != KindAssistantChunk {
+		t.Fatalf("unexpected event kinds: %v", events)
 	}
 }
 

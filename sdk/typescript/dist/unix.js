@@ -52,6 +52,7 @@ class UnixOrchestratorClient {
     async spawnSession(_req) { return notImpl('spawnSession'); }
     async promptSession(_req) { return notImpl('promptSession'); }
     async closeSession(_req) { return notImpl('closeSession'); }
+    async rotateSessionAccount(_req) { return notImpl('rotateSessionAccount'); }
     async getSessionHistory(_req) { return notImpl('getSessionHistory'); }
     // eslint-disable-next-line @typescript-eslint/require-await
     async *subscribeSession(_req) { return notImpl('subscribeSession'); }
@@ -77,7 +78,7 @@ class UnixAuthClient {
     async authValidate(_token) { return notImpl('authValidate'); }
     async authLogin(_credentials) { return notImpl('authLogin'); }
     async webAuthnBeginLogin(_tenantID, _email) { return notImpl('webAuthnBeginLogin'); }
-    async webAuthnFinishLogin(_tenantID, _email, _credential) { return notImpl('webAuthnFinishLogin'); }
+    async webAuthnFinishLogin(_challenge, _credential) { return notImpl('webAuthnFinishLogin'); }
     async loginPIV() { return notImpl('loginPIV'); }
     async logout(_token) { return notImpl('logout'); }
     async registerBegin(_req) { return notImpl('registerBegin'); }
@@ -107,11 +108,23 @@ export class UnixClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     projects = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    accounts = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     iam = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     kms = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     secrets = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ca = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    trust = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    crypto = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    dek = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    dynamicSecrets = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     barrier = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

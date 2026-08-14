@@ -21,7 +21,7 @@
 // Unlike the cli barrier suite (which exercises the pure-qrdb software /
 // shamir / none strategies against a fresh daemon), this suite spins up a
 // daemon configured with a CLOUD strategy (awskms, vault, ...) pointed at a
-// local emulator (LocalStack KMS, a Vault dev server) and drives the full
+// local emulator (Floci KMS, a Vault dev server) and drives the full
 //
 //	barrier init -> seal -> unseal
 //

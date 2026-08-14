@@ -13,12 +13,11 @@
 
 // Package secrets provides secret resolution capabilities for configuration files.
 // It supports multiple resolution strategies including literal values, local/remote KMS,
-// auto-generated secrets, and encrypted values.
+// and encrypted values.
 //
 // The core SecretResolver, SecretValue, ResolverRegistry, and ResolvedStrategy types
 // are re-exported from the canonical go-qrdb secret package. Only quicbaas-specific
-// concrete resolvers (LocalKMSResolver, RemoteKMSResolver, AutoGenResolver) are
-// implemented here.
+// concrete resolvers (LocalKMSResolver, RemoteKMSResolver) are implemented here.
 package secrets
 
 import qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
@@ -41,7 +40,11 @@ const (
 	// StrategyRemoteKMS indicates the value was resolved using remote KMS decryption.
 	StrategyRemoteKMS = qrdbsecret.StrategyRemoteKMS
 
-	// StrategyAutoGen indicates the value was auto-generated.
+	// StrategyAutoGen indicates the value was generated rather than read from
+	// an existing entry. The constant is owned by go-qrdb and re-exported here
+	// for resolvers that mint values; quicbaas's own generate-on-first-use path
+	// (kms://<path>?ensure=true) reports StrategyLocalKMS because the value is
+	// served from the KMS on every call after the first.
 	StrategyAutoGen = qrdbsecret.StrategyAutoGen
 
 	// StrategyEncrypted indicates the value was resolved from an encrypted source.

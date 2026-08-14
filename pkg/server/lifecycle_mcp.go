@@ -79,7 +79,8 @@ func (s *Server) startMCPServer() error {
 	// pass-through while the barrier is unsealed; the instant the barrier is
 	// sealed (post-boot `barrier seal`), only the canonical sealed-window
 	// tool surface remains callable.
-	mcpServer.SetSealedWindowGate(s.SealedWindowProbe(), qbsealedwindow.MCPAllowlist())
+	mcpServer.SetSealedWindowGate(s.SealedWindowProbe(), s.OperationalProbe(),
+		qbsealedwindow.MCPAllowlist())
 
 	// Wire the qrdb credential management service into the MCP server so
 	// the qrdb_credential_* tools serve real responses against the same

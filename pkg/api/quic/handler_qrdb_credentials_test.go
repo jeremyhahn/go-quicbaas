@@ -178,7 +178,7 @@ func TestQRDBCredentialHandlers_HappyPaths(t *testing.T) {
 	server := newQRDBCredentialServer(t, &quicMockCredentialServicer{})
 	ctx := context.Background()
 
-	_, err := server.qrdbCredentialSubmit(ctx, mustMarshal(t, &pb.CredentialSubmitRequest{Name: "c1", Value: "v1"}))
+	_, err := server.qrdbCredentialSubmit(ctx, mustMarshal(t, &pb.CredentialSubmitRequest{Name: "c1", Value: []byte("v1")}))
 	require.NoError(t, err)
 
 	strategy, err := server.qrdbCredentialStrategy(ctx, nil)
@@ -197,7 +197,7 @@ func TestQRDBCredentialHandlers_HappyPaths(t *testing.T) {
 	assert.Equal(t, []string{"cred-a"}, lResp.GetNames())
 
 	rotateOut, err := server.qrdbCredentialRotate(ctx, mustMarshal(t, &pb.CredentialRotateRequest{
-		Name: "c1", NewValue: "v2", GracePeriodSeconds: 60,
+		Name: "c1", NewValue: []byte("v2"), GracePeriodSeconds: 60,
 	}))
 	require.NoError(t, err)
 	var rResp pb.CredentialRotateResponse
@@ -209,7 +209,7 @@ func TestQRDBCredentialHandlers_HappyPaths(t *testing.T) {
 	require.NoError(t, err)
 	var vResp pb.CredentialRetrieveVersionResponse
 	require.NoError(t, proto.Unmarshal(verOut, &vResp))
-	assert.Equal(t, "version-value", vResp.GetValue())
+	assert.Equal(t, []byte("version-value"), vResp.GetValue())
 
 	listVerOut, err := server.qrdbCredentialListVersions(ctx, mustMarshal(t, &pb.CredentialListVersionsRequest{Name: "c1"}))
 	require.NoError(t, err)
@@ -284,7 +284,7 @@ func TestQRDBCredentialHandlers_ServiceErrors(t *testing.T) {
 			return server.qrdbCredentialList(ctx, mustMarshal(t, &pb.CredentialListRequest{}))
 		}},
 		{"rotate", func() ([]byte, error) {
-			return server.qrdbCredentialRotate(ctx, mustMarshal(t, &pb.CredentialRotateRequest{Name: "c", NewValue: "v"}))
+			return server.qrdbCredentialRotate(ctx, mustMarshal(t, &pb.CredentialRotateRequest{Name: "c", NewValue: []byte("v")}))
 		}},
 		{"retrieve-version", func() ([]byte, error) {
 			return server.qrdbCredentialRetrieveVersion(ctx, mustMarshal(t, &pb.CredentialRetrieveVersionRequest{Name: "c"}))

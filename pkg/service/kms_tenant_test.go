@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -304,4 +305,33 @@ func TestTenantKeyID_ListPrefixMatchesScopedKeys(t *testing.T) {
 	prefix := tenantListPrefix(tenantID)
 	assert.True(t, strings.HasPrefix(scoped, prefix),
 		"scoped key should start with tenant list prefix")
+}
+
+// =============================================================================
+// System-tenant scoping tests
+// =============================================================================
+
+// TestKMSTenant_SystemTenantIsPlatformScoped proves a caller carrying the
+// literal system tenant is treated identically to single-tenant mode (no key
+// prefixing, unrestricted access) rather than being isolated into a tenant
+// namespace named "system".
+func TestKMSTenant_SystemTenantIsPlatformScoped(t *testing.T) {
+	for _, tenantID := range []string{"", qrdbsdk.SystemTenantID} {
+		t.Run("tenantID="+tenantID, func(t *testing.T) {
+			assert.Equal(t, "my-key", tenantScopedKeyID(tenantID, "my-key"))
+			assert.True(t, tenantKeyBelongsTo(tenantID, "any-key"))
+			assert.NoError(t, enforceTenantAccess(tenantID, "any-key", "GetKey"))
+		})
+	}
+}
+
+// TestKMSTenant_OrdinaryTenantStaysIsolated proves the system-tenant carve-out
+// does not widen ordinary tenants' reach: a lookalike ID that merely shares
+// the "system" prefix is still fully isolated.
+func TestKMSTenant_OrdinaryTenantStaysIsolated(t *testing.T) {
+	scoped := tenantScopedKeyID("system-2", "my-key")
+	assert.Equal(t, "tenant/system-2/my-key", scoped)
+	assert.False(t, tenantKeyBelongsTo("system-2", "my-key"))
+	err := enforceTenantAccess("system-2", "my-key", "GetKey")
+	require.Error(t, err)
 }

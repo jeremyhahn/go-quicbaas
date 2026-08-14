@@ -29,6 +29,25 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
+// sessionSSEHeartbeatInterval is how often the live tail emits an SSE comment
+// frame while no session events are flowing.
+//
+// The heartbeat exists so a silent stream — an agent thinking for minutes with
+// nothing to say — is distinguishable from a dead one by everything between
+// the handler and the client. The interval is chosen against the smallest idle
+// timeout in the common path: nginx's proxy_read_timeout, HAProxy's timeout
+// tunnel, and AWS ALB's idle timeout all default to 60 seconds. At 15 seconds
+// three consecutive heartbeats can be lost before any of them would reap the
+// connection, and the cost is a dozen bytes per attached client per 15s.
+const sessionSSEHeartbeatInterval = 15 * time.Second
+
+// sessionSSERetryAdvice is the reconnection delay advertised to EventSource
+// clients via the SSE `retry:` field. Browsers otherwise pick their own
+// (typically 3s); stating it explicitly keeps browser and SDK reconnect
+// windows inside orchestration.DefaultPresenceLinger, which is what makes a
+// reconnect invisible in the transcript.
+const sessionSSERetryAdvice = 2 * time.Second
+
 // sessionLogAccessor is the optional interface the agent service may satisfy
 // so REST handlers can reach the underlying SessionEventLog. Declared
 // locally so this file has no dependency on the concrete implementation.
@@ -112,7 +131,28 @@ func (s *Server) HandleOrchestratorSessionEvents(w http.ResponseWriter, r *http.
 		respondSessionHistoryJSON(ctx, w, r, log, tenantID, sessionID, fromSeq)
 		return
 	}
-	serveSessionEventsSSE(ctx, w, r, log, tenantID, sessionID, fromSeq, follow, sessionOperatorID(ctx, tenantID))
+	serveSessionEventsSSE(ctx, w, r, sessionEventStreamOptions{
+		Log:        log,
+		Presence:   s.sessionPresence,
+		TenantID:   tenantID,
+		SessionID:  sessionID,
+		FromSeq:    fromSeq,
+		Follow:     follow,
+		OperatorID: sessionOperatorID(ctx, tenantID),
+		Interface:  "web",
+		OnWarn:     s.warnSessionStream,
+	})
+}
+
+// warnSessionStream reports a non-fatal session-stream condition (a presence
+// append that failed, a connection whose write deadline could not be cleared)
+// through the server's logger. Passed to the stream loop as a closure so the
+// streaming helpers stay free of the Server type and remain directly testable.
+func (s *Server) warnSessionStream(err error) {
+	if err == nil || s.logger == nil {
+		return
+	}
+	s.logger.WithField("component", "session-events").Warn(err.Error())
 }
 
 // sessionOperatorID derives the display identity used to attribute presence
@@ -189,64 +229,135 @@ func respondSessionHistoryJSON(ctx context.Context, w http.ResponseWriter, r *ht
 	})
 }
 
-// serveSessionEventsSSE streams events as Server-Sent Events. The stream
-// begins with a replay from fromSeq, then (when follow=true) transitions
-// to a live tail. Both phases write one `event:` frame per SessionEvent
-// with the sequence as the SSE `id:` so browser clients can resume.
-//
-// Flushing goes through http.NewResponseController so the call reaches the real
-// connection even when the logging middleware has wrapped the ResponseWriter
-// (the wrapper exposes Unwrap; see middleware_flush.go). Flushing is treated as
-// best-effort: a writer that cannot flush still streams (net/http auto-flushes
-// on Write), so we never refuse the connection with a 500 the way the old
-// `w.(http.Flusher)` hard assertion did.
-func serveSessionEventsSSE(ctx context.Context, w http.ResponseWriter, r *http.Request, log orchestration.SessionEventLog, tenantID, sessionID string, fromSeq uint64, follow bool, operatorID string) {
-	rc := http.NewResponseController(w)
-	flush := func() {
-		// ErrNotSupported is the only documented error and is non-fatal here:
-		// the events still reach the client on the next Write/close.
-		_ = rc.Flush()
+// sessionEventStreamOptions carries everything serveSessionEventsSSE needs.
+// Grouping them keeps the streaming loop free of the Server type — the tests
+// drive it directly — while leaving room for the presence tracker and the
+// warning sink without an unreadable positional parameter list.
+type sessionEventStreamOptions struct {
+	// Log is the transcript the stream replays and tails.
+	Log orchestration.SessionEventLog
+	// Presence records operator_joined/operator_left with reconnect
+	// suppression. Nil disables presence tracking entirely.
+	Presence *orchestration.SessionPresence
+	// TenantID and SessionID address the transcript.
+	TenantID  string
+	SessionID string
+	// FromSeq is the first sequence to replay.
+	FromSeq uint64
+	// Follow selects the live tail after replay drains.
+	Follow bool
+	// OperatorID attributes presence events; empty disables them.
+	OperatorID string
+	// Interface names the client surface in presence payloads.
+	Interface string
+	// HeartbeatInterval overrides sessionSSEHeartbeatInterval. Zero or less
+	// selects the default; tests compress it to observe keepalive frames
+	// without waiting on the production interval.
+	HeartbeatInterval time.Duration
+	// OnWarn receives non-fatal stream conditions. Nil discards them.
+	OnWarn func(error)
+}
+
+// warn reports a non-fatal condition when a sink is configured.
+func (o sessionEventStreamOptions) warn(err error) {
+	if err != nil && o.OnWarn != nil {
+		o.OnWarn(err)
 	}
+}
+
+// SessionStreamDeadlineError reports that the connection's write deadline
+// could not be cleared for a streaming response. The stream still runs, but it
+// remains subject to http.Server.WriteTimeout and will be cut when that
+// elapses, so the condition is worth surfacing to an operator.
+type SessionStreamDeadlineError struct {
+	// SessionID is the session whose stream is affected.
+	SessionID string
+	// Cause is the ResponseController failure.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *SessionStreamDeadlineError) Error() string {
+	return fmt.Sprintf("session %s: cannot clear write deadline for stream, it will be cut at the server WriteTimeout: %v",
+		e.SessionID, e.Cause)
+}
+
+// Unwrap exposes the ResponseController failure to errors.Is/As.
+func (e *SessionStreamDeadlineError) Unwrap() error { return e.Cause }
+
+// serveSessionEventsSSE streams events as Server-Sent Events. The stream
+// begins with a replay from opts.FromSeq, then (when opts.Follow) transitions
+// to a live tail. Both phases write one `event:` frame per SessionEvent with
+// the sequence as the SSE `id:` so clients can resume from Last-Event-ID.
+//
+// Flushing and deadline control go through http.NewResponseController so the
+// calls reach the real connection even when the logging middleware has wrapped
+// the ResponseWriter (the wrapper exposes Unwrap; see middleware_flush.go).
+//
+// The write deadline is cleared first. http.Server.WriteTimeout arms an
+// absolute write deadline on the connection when the request is read and never
+// extends it, so without this a streaming response is severed exactly
+// WriteTimeout after it began — 30s with the shipped defaults — regardless of
+// how much data is still flowing. Clearing it per-connection is the supported
+// way to exempt a streaming handler (raising WriteTimeout globally would
+// weaken every unary route instead).
+func serveSessionEventsSSE(ctx context.Context, w http.ResponseWriter, r *http.Request, opts sessionEventStreamOptions) {
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		opts.warn(&SessionStreamDeadlineError{SessionID: opts.SessionID, Cause: err})
+	}
+	// ErrNotSupported means the writer cannot flush (an in-memory recorder in
+	// a test, say). That is not fatal: net/http auto-flushes on Write, so the
+	// stream still reaches a real client. Any other flush error is the
+	// connection failing and ends the stream.
+	flush := func() error {
+		if err := rc.Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			return err
+		}
+		return nil
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no") // disable proxy buffering
 	w.WriteHeader(http.StatusOK)
-	flush()
+	if _, err := fmt.Fprintf(w, "retry: %d\n\n", sessionSSERetryAdvice.Milliseconds()); err != nil {
+		return
+	}
+	if err := flush(); err != nil {
+		return
+	}
 
 	// Register live subscription BEFORE draining history so events that
 	// arrive during the history read get buffered for post-drain delivery.
 	var liveCh <-chan *orchestration.SessionEvent
-	var unsubscribe func()
-	if follow {
-		ch, unsub, err := log.Subscribe(ctx, tenantID, sessionID)
+	if opts.Follow {
+		ch, unsubscribe, err := opts.Log.Subscribe(ctx, opts.TenantID, opts.SessionID)
 		if err != nil {
 			writeSSEError(w, flush, "subscribe failed: "+err.Error())
 			return
 		}
 		liveCh = ch
-		unsubscribe = unsub
 		defer unsubscribe()
 
-		// Multi-participant presence: record this attach as an
-		// operator_joined event so every other live attacher (human or
-		// agent) sees who is watching, and symmetrically record
-		// operator_left when the connection ends (client navigates away,
-		// tab closes, network drop). Best-effort: a presence-append failure
-		// must never abort the actual transcript stream.
-		appendPresenceEvent(ctx, log, tenantID, sessionID, orchestration.KindOperatorJoined, operatorID, "web")
-		defer appendPresenceEvent(context.WithoutCancel(ctx), log, tenantID, sessionID, orchestration.KindOperatorLeft, operatorID, "web")
+		// Multi-participant presence: record this attach so every other live
+		// attacher (human or agent) sees who is watching. The tracker decides
+		// whether the join and the matching departure are worth writing to the
+		// durable transcript — a stream that drops and resumes within the
+		// linger window produces no events at all.
+		defer opts.Presence.Join(ctx, opts.Log, opts.TenantID, opts.SessionID, opts.OperatorID, opts.Interface)()
 	}
 
 	// History replay. Paginate in 256-event chunks so an enormous session
 	// doesn't pin memory or hold the write loop hostage.
-	cursor := fromSeq
+	cursor := opts.FromSeq
 	if cursor == 0 {
 		cursor = 1
 	}
 	historyEnd := uint64(0)
 	for {
-		page, next, err := log.Range(ctx, tenantID, sessionID, cursor, 256)
+		page, next, err := opts.Log.Range(ctx, opts.TenantID, opts.SessionID, cursor, 256)
 		if err != nil {
 			writeSSEError(w, flush, "range failed: "+err.Error())
 			return
@@ -265,15 +376,19 @@ func serveSessionEventsSSE(ctx context.Context, w http.ResponseWriter, r *http.R
 		cursor = next
 	}
 
-	if !follow {
+	if !opts.Follow {
 		return
 	}
 
 	// Live tail. Drop events whose sequence falls within the history we
 	// just delivered — covers the brief window where a live event arrived
 	// while we were mid-page.
-	pingTicker := time.NewTicker(15 * time.Second)
-	defer pingTicker.Stop()
+	interval := opts.HeartbeatInterval
+	if interval <= 0 {
+		interval = sessionSSEHeartbeatInterval
+	}
+	heartbeat := time.NewTicker(interval)
+	defer heartbeat.Stop()
 
 	for {
 		select {
@@ -290,13 +405,17 @@ func serveSessionEventsSSE(ctx context.Context, w http.ResponseWriter, r *http.R
 				return
 			}
 			historyEnd = ev.Sequence
-		case <-pingTicker.C:
-			// SSE comment line keeps proxies and browsers from timing out
-			// during quiet sessions. Comments are ignored by EventSource.
+		case <-heartbeat.C:
+			// SSE comment line: ignored by every conforming reader, but it
+			// puts bytes on the wire so an idle session cannot look dead to a
+			// proxy — and so a client that has gone away is detected here
+			// rather than at the next real event.
 			if _, err := fmt.Fprintf(w, ": ping %d\n\n", time.Now().Unix()); err != nil {
 				return
 			}
-			flush()
+			if err := flush(); err != nil {
+				return
+			}
 		}
 	}
 }
@@ -310,7 +429,7 @@ func serveSessionEventsSSE(ctx context.Context, w http.ResponseWriter, r *http.R
 //
 // The data payload is a SessionEventEnvelope — the same shape returned by the
 // JSON history path — so SSE and history readers share one parse path.
-func writeSSEEvent(w http.ResponseWriter, flush func(), ev *orchestration.SessionEvent, fromReplay bool) error {
+func writeSSEEvent(w http.ResponseWriter, flush func() error, ev *orchestration.SessionEvent, fromReplay bool) error {
 	payload, err := json.Marshal(newSessionEventEnvelope(ev, fromReplay))
 	if err != nil {
 		return err
@@ -318,71 +437,14 @@ func writeSSEEvent(w http.ResponseWriter, flush func(), ev *orchestration.Sessio
 	if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", ev.Sequence, ev.Kind, payload); err != nil {
 		return err
 	}
-	flush()
-	return nil
+	return flush()
 }
 
 // writeSSEError emits a terminal "error" SSE frame before closing the
 // connection. Clients can distinguish this from normal event frames via
-// the `event: error` header.
-func writeSSEError(w http.ResponseWriter, flush func(), msg string) {
+// the `event: error` header, and must not treat it as a dropped connection
+// to be retried — the server has decided the stream cannot continue.
+func writeSSEError(w http.ResponseWriter, flush func() error, msg string) {
 	_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", msg)
-	flush()
-}
-
-// maxPresenceAppendAttempts bounds the optimistic-concurrency retry below. A
-// live attach/detach races the orchestrator control loop (which appends
-// prompt/assistant/tool events on the same session) for the next sequence
-// number; a handful of immediate retries absorbs that race without ever
-// blocking on a timer.
-const maxPresenceAppendAttempts = 8
-
-// appendPresenceEvent records an operator_joined or operator_left event so
-// every attacher — human or agent — can see who else is watching a session in
-// real time (PresenceIndicator on the frontend renders exactly these events).
-// It is best-effort: a failure here must never interrupt the transcript
-// stream, so all errors are swallowed after the retry budget is exhausted.
-//
-// SessionEventLog.Append requires the caller to supply the exact next
-// sequence number and rejects a stale one with ErrSessionLogGap. Because a
-// live SSE attach is a genuine concurrent writer against the same session
-// (racing the orchestrator control loop's own appends), the read-then-write
-// of LatestSequence+Append is retried immediately on a detected gap rather
-// than assumed atomic, unlike the control loop's own single-writer call
-// sites (pkg/orchestration/orchestrator.go nextSessionSequence).
-func appendPresenceEvent(ctx context.Context, log orchestration.SessionEventLog, tenantID, sessionID string, kind orchestration.SessionEventKind, operatorID, iface string) {
-	if log == nil || operatorID == "" {
-		return
-	}
-	event := &orchestration.SessionEvent{
-		TenantID:  tenantID,
-		SessionID: sessionID,
-		Timestamp: time.Now().UTC(),
-		Source:    "operator:" + operatorID,
-		Kind:      kind,
-	}
-	switch kind {
-	case orchestration.KindOperatorJoined:
-		event.OperatorJoined = &orchestration.OperatorJoinedPayload{OperatorID: operatorID, Interface: iface}
-	case orchestration.KindOperatorLeft:
-		event.OperatorLeft = &orchestration.OperatorLeftPayload{OperatorID: operatorID, Interface: iface}
-	default:
-		return
-	}
-
-	for attempt := 0; attempt < maxPresenceAppendAttempts; attempt++ {
-		latest, err := log.LatestSequence(ctx, tenantID, sessionID)
-		if err != nil {
-			return
-		}
-		event.Sequence = latest + 1
-		err = log.Append(ctx, event)
-		if err == nil {
-			return
-		}
-		if errors.Is(err, orchestration.ErrSessionLogGap) {
-			continue // another writer won the race for this sequence; retry immediately
-		}
-		return // non-retryable persistence failure; presence is best-effort
-	}
+	_ = flush()
 }

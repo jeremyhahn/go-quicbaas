@@ -63,7 +63,7 @@ func newWireMountValidatorServer(t *testing.T, probe *restTogglableProbe, author
 	s.SetBarrierService(&fakeBarrierService{})
 	s.SetCeremonyService(&fakeCeremonyService{})
 	s.SetValidatorAuthzEnforcement(authorizer)
-	s.SetSealedWindowGate(probe, sealedwindow.RESTAllowlist())
+	s.SetSealedWindowGate(probe, &restCeremonyStateProbe{}, sealedwindow.RESTAllowlist())
 	return s
 }
 

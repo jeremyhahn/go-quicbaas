@@ -90,6 +90,7 @@ var (
 // BarrierCeremony() call. Tests substitute their own factory to inject
 // mocks.
 type CeremonyClient interface {
+	CeremonyInitialize(ctx context.Context, req *qrdbtransport.CeremonyInitializeRequest) (*qrdbtransport.CeremonyInitializeResponse, error)
 	CeremonyStatus(ctx context.Context) (*qrdbtransport.CeremonyStatusResponse, error)
 	CeremonyClaimCertBegin(ctx context.Context, req *qrdbtransport.ClaimCertBeginRequest) (*qrdbtransport.ClaimCertBeginResponse, error)
 	CeremonyClaimCertComplete(ctx context.Context, req *qrdbtransport.ClaimCertCompleteRequest) (*qrdbtransport.ClaimCertCompleteResponse, error)
@@ -196,12 +197,27 @@ func newInitCommand() *cobra.Command {
 		Short: "Bootstrap-time ceremony commands (status, claim-cert, claim-share, ...)",
 		Long: `Bootstrap-time ceremony commands.
 
-These commands drive the initialization ceremony — the post-bootstrap
-flow that issues officer certificates, distributes Shamir shares, and
-enrols external officers. The verb set mirrors xkmsctl init.
+These commands drive the initialization ceremony against a RUNNING daemon.
+The verb set mirrors xkmsctl init.
+
+For an M-of-N (shamir) barrier the daemon boots SEALED and serves these
+verbs from its sealed window. The order follows go-qrdb's Security Officer
+distribution model — shares are never written to disk and are released to
+each officer exactly once, live, over their own mTLS certificate:
+
+  1. officer register        Enrol each officer's CSR (returns their cert
+                             and share index, never share bytes)
+  2. initialize              Run the ceremony: split the secret and seal one
+                             share per officer into a memguard enclave
+  3. claim-cert              Each officer claims their issued certificate
+  4. claim-share             Each officer claims their share (release-once)
+  5. quicbaas barrier unseal A quorum submits shares to unseal
 
 Verbs:
+  initialize               Run the initialization ceremony
   status                   Show the current ceremony state
+  officer register|list|status
+                           Manage Security Officer enrolment
   claim-cert               Two-step certificate claim (begin then complete)
   claim-share              Claim the officer's Shamir share (challenge-response)
   sign-csr                 SO-authorised CSR signing
@@ -211,7 +227,9 @@ Verbs:
 	cmd.PersistentFlags().StringVar(&initOutputFmt, "output", "table",
 		"Output format (json, yaml, table)")
 
+	cmd.AddCommand(newInitInitializeCommand())
 	cmd.AddCommand(newInitStatusCommand())
+	cmd.AddCommand(newInitOfficerCommand())
 	cmd.AddCommand(newInitClaimCertCommand())
 	cmd.AddCommand(newInitClaimShareCommand())
 	cmd.AddCommand(newInitSignCSRCommand())

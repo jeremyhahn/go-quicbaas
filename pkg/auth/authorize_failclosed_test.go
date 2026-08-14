@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,11 +43,7 @@ func assertAuthorizerNotConfigured(t *testing.T, err error) {
 func TestInMemoryAuthorize_FailsClosed(t *testing.T) {
 	ctx := context.Background()
 	log := createTestLogger(t)
-	am, err := NewInMemoryAuthManager(&AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-		TokenTTL:  time.Hour,
-	}, log)
+	am, err := NewInMemoryAuthManager(newTestAuthConfig(t), log)
 	require.NoError(t, err)
 
 	admin, err := am.CreateUser("alice", []string{"admin"})
@@ -72,10 +67,7 @@ func TestInMemoryAuthorize_FailsClosed(t *testing.T) {
 // disabled the manager allows all (no decision is made).
 func TestInMemoryAuthorize_DisabledAllows(t *testing.T) {
 	log := createTestLogger(t)
-	am, err := NewInMemoryAuthManager(&AuthConfig{
-		Enabled:   false,
-		JWTSecret: "test-secret-key",
-	}, log)
+	am, err := NewInMemoryAuthManager(&AuthConfig{Enabled: false}, log)
 	require.NoError(t, err)
 
 	require.NoError(t,
@@ -88,11 +80,7 @@ func TestPersistentAuthorize_FailsClosed(t *testing.T) {
 	ctx := context.Background()
 	log := createPersistentTestLogger(t)
 	storage := newAuthMockStorage()
-	pam, err := NewPersistentAuthManager(&AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-		TokenTTL:  time.Hour,
-	}, storage, log)
+	pam, err := NewPersistentAuthManager(newTestAuthConfig(t), storage, log)
 	require.NoError(t, err)
 	defer pam.Close()
 
@@ -110,10 +98,7 @@ func TestPersistentAuthorize_FailsClosed(t *testing.T) {
 func TestPersistentAuthorize_DisabledAllows(t *testing.T) {
 	log := createPersistentTestLogger(t)
 	storage := newAuthMockStorage()
-	pam, err := NewPersistentAuthManager(&AuthConfig{
-		Enabled:   false,
-		JWTSecret: "test-secret-key",
-	}, storage, log)
+	pam, err := NewPersistentAuthManager(&AuthConfig{Enabled: false}, storage, log)
 	require.NoError(t, err)
 	defer pam.Close()
 

@@ -98,7 +98,7 @@ func (e *CeremonyFieldConflictError) Error() string {
 func (r *ToolRegistry) registerCeremonyTools() {
 	r.addTool(ToolDefinition{
 		Name:        "qrdb_ceremony_initialize",
-		Description: "Initialise the system ceremony: issue TLS and SO certificates, optionally start M-of-N officer enrollment.",
+		Description: "Initialise the system ceremony: issue the TLS certificate, optionally start M-of-N officer enrollment.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -526,12 +526,7 @@ func ceremonyInitToMap(info *service.CeremonyInitInfo) map[string]interface{} {
 		"state":        info.State,
 		"share_count":  info.ShareCount,
 	}
-	if len(info.SOCertPEM) > 0 {
-		resp["so_cert_pem"] = string(info.SOCertPEM)
-	}
-	if len(info.SOKeyPEM) > 0 {
-		resp["so_key_pem"] = string(info.SOKeyPEM)
-	}
+	// The SO identity is CSR-based; the server never holds officer private keys.
 	return resp
 }
 

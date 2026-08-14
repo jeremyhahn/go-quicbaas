@@ -22,14 +22,10 @@ package main
 
 import (
 	"context"
-	"crypto/x509"
-	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -37,120 +33,29 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/initmarker"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 )
 
-// ---------------------------------------------------------------------------
-// Officer enrollment kinds
-// ---------------------------------------------------------------------------
-
-// officerKind identifies how an SO officer's identity material is delivered
-// to the ceremony. Each kind is dispatched through a distinct loader in
-// officerLoaders and validated according to the kind's own rules.
-type officerKind string
-
-const (
-	// officerKindCSR indicates the officer supplied a PEM-encoded
-	// certificate signing request. The daemon CA signs the CSR during
-	// the ceremony and returns the issued certificate.
-	officerKindCSR officerKind = "csr"
-
-	// officerKindCert indicates the officer supplied a PEM-encoded X.509
-	// certificate already issued by an external CA. The certificate is
-	// validated against the configured --trusted-ca pool.
-	officerKindCert officerKind = "cert"
-
-	// officerKindPubKey indicates the officer supplied a PEM-encoded
-	// public key. Trust is admin-asserted; no chain validation runs.
-	officerKindPubKey officerKind = "pubkey"
-)
-
-// officerSpec captures a parsed --so flag value: "<username>:<kind>:<path>".
-type officerSpec struct {
-	Username string
-	Kind     officerKind
-	Path     string
+// InvalidAdminFactorError reports an --admin-factor value outside the
+// canonical go-qrdb vocabulary.
+type InvalidAdminFactorError struct {
+	Cause error
 }
 
-// officerMaterial is the loader output for an --so flag value. Exactly one
-// of CSRPEM, CertPEM, or PubKeyPEM is populated, matching the kind.
-type officerMaterial struct {
-	Username  string
-	Kind      officerKind
-	CSRPEM    []byte
-	CertPEM   []byte
-	PubKeyPEM []byte
+// Error returns a human-readable description.
+func (e *InvalidAdminFactorError) Error() string {
+	return "init: invalid --admin-factor (must be one of mtls, fido2, piv): " + e.Cause.Error()
 }
 
-// officerLoader reads, decodes, and validates the file referenced by an
-// officerSpec, returning a populated officerMaterial.
-type officerLoader func(spec officerSpec) (*officerMaterial, error)
+// Unwrap returns the wrapped error.
+func (e *InvalidAdminFactorError) Unwrap() error { return e.Cause }
 
-// officerLoaders is the map-based dispatch table per the project rule:
-// "Use map-based dispatch instead of large switch statements for O(1)
-// constant-time lookup." Adding a new officer kind requires only a new
-// loader and a single map entry.
-var officerLoaders = map[officerKind]officerLoader{
-	officerKindCSR:    loadOfficerCSR,
-	officerKindCert:   loadOfficerCert,
-	officerKindPubKey: loadOfficerPubKey,
-}
-
-// ---------------------------------------------------------------------------
-// Init subcommand error types
-// ---------------------------------------------------------------------------
-
-// ErrInvalidOfficerFormat is returned when a --so value does not match the
-// "username:kind:path" format.
-var ErrInvalidOfficerFormat = errors.New("init: --so value must be username:KIND:/path/to/file (KIND ∈ csr|cert|pubkey)")
-
-// ErrEmptyOfficerUsername is returned when the username portion of a --so
-// flag value is empty.
-var ErrEmptyOfficerUsername = errors.New("init: officer username must not be empty")
-
-// ErrEmptyOfficerPath is returned when the file path portion of a --so flag
-// value is empty.
-var ErrEmptyOfficerPath = errors.New("init: officer file path must not be empty")
-
-// ErrUnknownOfficerKind is returned when the kind portion of a --so flag
-// value is not one of the registered kinds.
-var ErrUnknownOfficerKind = errors.New("init: --so kind must be one of csr, cert, pubkey")
-
-// ErrOfficerFileNotFound is returned when the file referenced by --so does
-// not exist on disk.
-var ErrOfficerFileNotFound = errors.New("init: officer file not found")
-
-// ErrOfficerFileRead is returned when an officer file cannot be read.
-var ErrOfficerFileRead = errors.New("init: failed to read officer file")
-
-// ErrOfficerPEMDecode is returned when an officer file does not contain
-// valid PEM data.
-var ErrOfficerPEMDecode = errors.New("init: officer file does not contain valid PEM data")
-
-// ErrCSRParseFailed is returned when an officer CSR file cannot be parsed.
-var ErrCSRParseFailed = errors.New("init: failed to parse certificate request")
-
-// ErrCSRSignatureInvalid is returned when an officer CSR's self-signature
-// does not verify.
-var ErrCSRSignatureInvalid = errors.New("init: CSR self-signature verification failed")
-
-// ErrCertParseFailed is returned when an officer certificate file cannot be
-// parsed.
-var ErrCertParseFailed = errors.New("init: failed to parse certificate")
-
-// ErrPubKeyParseFailed is returned when an officer public-key file cannot
-// be parsed.
-var ErrPubKeyParseFailed = errors.New("init: failed to parse public key")
-
-// ErrTrustedCANotFound is returned when a --trusted-ca path does not exist.
-var ErrTrustedCANotFound = errors.New("init: --trusted-ca path not found")
-
-// ErrTrustedCARead is returned when a --trusted-ca file cannot be read.
-var ErrTrustedCARead = errors.New("init: failed to read --trusted-ca file")
-
-// ErrTrustedCANoCerts is returned when a --trusted-ca file contains no
-// certificates.
-var ErrTrustedCANoCerts = errors.New("init: --trusted-ca file contains no PEM certificates")
+// barrierStrategyShamir is the operator-facing name of the M-of-N Shamir
+// barrier strategy. Its barrier is never initialized inline: qrdb's bootstrap
+// orchestrator defers it to the ceremony, so init treats it as the one
+// strategy that starts no server.
+const barrierStrategyShamir = "shamir"
 
 // ErrSecretRequiredForSoftware is returned when --barrier-strategy=passphrase is
 // requested without a passphrase. The passphrase barrier is sealed with the
@@ -160,192 +65,6 @@ var ErrSecretRequiredForSoftware = errors.New("init: --passphrase is required wh
 // ErrInvalidCredentialStrategy is returned when --credential-strategy is
 // not one of the canonical values.
 var ErrInvalidCredentialStrategy = errors.New("init: --credential-strategy must be one of manual, barrier")
-
-// ---------------------------------------------------------------------------
-// Loaders (map-based dispatch entries)
-// ---------------------------------------------------------------------------
-
-// loadOfficerCSR reads a PEM-encoded certificate signing request, parses
-// it, and verifies its self-signature.
-func loadOfficerCSR(spec officerSpec) (*officerMaterial, error) {
-	data, err := readOfficerFile(spec.Path)
-	if err != nil {
-		return nil, err
-	}
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, &SentinelDetailError{Sentinel: ErrOfficerPEMDecode, Detail: spec.Path}
-	}
-	csr, err := x509.ParseCertificateRequest(block.Bytes)
-	if err != nil {
-		return nil, &SentinelDetailError{Sentinel: ErrCSRParseFailed, Detail: fmt.Sprintf("%s: %v", spec.Path, err)}
-	}
-	if err := csr.CheckSignature(); err != nil {
-		return nil, &SentinelDetailError{Sentinel: ErrCSRSignatureInvalid, Detail: fmt.Sprintf("%s: %v", spec.Path, err)}
-	}
-	return &officerMaterial{
-		Username: spec.Username,
-		Kind:     spec.Kind,
-		CSRPEM:   data,
-	}, nil
-}
-
-// loadOfficerCert reads a PEM-encoded X.509 certificate and parses it.
-// The certificate is NOT chain-validated here; chain validation happens
-// during ceremony enrollment against the configured --trusted-ca pool.
-func loadOfficerCert(spec officerSpec) (*officerMaterial, error) {
-	data, err := readOfficerFile(spec.Path)
-	if err != nil {
-		return nil, err
-	}
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, &SentinelDetailError{Sentinel: ErrOfficerPEMDecode, Detail: spec.Path}
-	}
-	if _, err := x509.ParseCertificate(block.Bytes); err != nil {
-		return nil, &SentinelDetailError{Sentinel: ErrCertParseFailed, Detail: fmt.Sprintf("%s: %v", spec.Path, err)}
-	}
-	return &officerMaterial{
-		Username: spec.Username,
-		Kind:     spec.Kind,
-		CertPEM:  data,
-	}, nil
-}
-
-// loadOfficerPubKey reads a PEM-encoded public key and parses it. Trust is
-// admin-asserted; no further validation runs.
-func loadOfficerPubKey(spec officerSpec) (*officerMaterial, error) {
-	data, err := readOfficerFile(spec.Path)
-	if err != nil {
-		return nil, err
-	}
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, &SentinelDetailError{Sentinel: ErrOfficerPEMDecode, Detail: spec.Path}
-	}
-	if _, err := x509.ParsePKIXPublicKey(block.Bytes); err != nil {
-		return nil, &SentinelDetailError{Sentinel: ErrPubKeyParseFailed, Detail: fmt.Sprintf("%s: %v", spec.Path, err)}
-	}
-	return &officerMaterial{
-		Username:  spec.Username,
-		Kind:      spec.Kind,
-		PubKeyPEM: data,
-	}, nil
-}
-
-// readOfficerFile returns the bytes of a file referenced by an --so flag,
-// translating filesystem errors into the canonical typed errors above.
-func readOfficerFile(path string) ([]byte, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, &SentinelDetailError{Sentinel: ErrOfficerFileNotFound, Detail: path}
-		}
-		return nil, &SentinelDetailError{Sentinel: ErrOfficerFileRead, Detail: fmt.Sprintf("%s: %v", path, err)}
-	}
-	if info.IsDir() {
-		return nil, &SentinelDetailError{Sentinel: ErrOfficerFileRead, Detail: fmt.Sprintf("%s is a directory", path)}
-	}
-	// #nosec G304 - officer file path is provided by the operator during init
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, &SentinelDetailError{Sentinel: ErrOfficerFileRead, Detail: fmt.Sprintf("%s: %v", path, err)}
-	}
-	return data, nil
-}
-
-// ---------------------------------------------------------------------------
-// Officer flag parsing
-// ---------------------------------------------------------------------------
-
-// parseOfficerSpec parses a single "--so" flag value of the form
-// "username:KIND:/path/to/file" and returns the parsed officerSpec.
-func parseOfficerSpec(value string) (officerSpec, error) {
-	// The path component may itself contain ":" on Windows, but the first
-	// two delimiters split off username and kind unambiguously.
-	parts := strings.SplitN(value, ":", 3)
-	if len(parts) != 3 {
-		return officerSpec{}, &SentinelDetailError{Sentinel: ErrInvalidOfficerFormat, Detail: fmt.Sprintf("%q", value)}
-	}
-	username := strings.TrimSpace(parts[0])
-	kindStr := strings.TrimSpace(parts[1])
-	path := strings.TrimSpace(parts[2])
-	if username == "" {
-		return officerSpec{}, &SentinelDetailError{Sentinel: ErrEmptyOfficerUsername, Detail: fmt.Sprintf("%q", value)}
-	}
-	if path == "" {
-		return officerSpec{}, &SentinelDetailError{Sentinel: ErrEmptyOfficerPath, Detail: fmt.Sprintf("%q", value)}
-	}
-	kind := officerKind(strings.ToLower(kindStr))
-	if _, ok := officerLoaders[kind]; !ok {
-		return officerSpec{}, &SentinelDetailError{Sentinel: ErrUnknownOfficerKind, Detail: fmt.Sprintf("%q", kindStr)}
-	}
-	return officerSpec{Username: username, Kind: kind, Path: path}, nil
-}
-
-// loadOfficer dispatches an officerSpec through officerLoaders to produce
-// the validated officerMaterial. Unknown kinds were already rejected by
-// parseOfficerSpec, so this lookup is total in practice.
-func loadOfficer(spec officerSpec) (*officerMaterial, error) {
-	loader, ok := officerLoaders[spec.Kind]
-	if !ok {
-		return nil, &SentinelDetailError{Sentinel: ErrUnknownOfficerKind, Detail: fmt.Sprintf("%q", spec.Kind)}
-	}
-	return loader(spec)
-}
-
-// loadOfficers parses every --so flag value, dispatches each through the
-// loader table, and returns the resulting materials.
-func loadOfficers(values []string) ([]*officerMaterial, error) {
-	out := make([]*officerMaterial, 0, len(values))
-	for _, raw := range values {
-		spec, err := parseOfficerSpec(raw)
-		if err != nil {
-			return nil, err
-		}
-		material, err := loadOfficer(spec)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, material)
-	}
-	return out, nil
-}
-
-// ---------------------------------------------------------------------------
-// Trusted CA handling (multi-pool roots for external-CA validation)
-// ---------------------------------------------------------------------------
-
-// loadTrustedCAs reads each --trusted-ca path, accumulates the certs into
-// an x509.CertPool, and returns it. Empty input returns nil so callers
-// can distinguish "no external CAs configured" from "configured but empty".
-func loadTrustedCAs(paths []string) (*x509.CertPool, error) {
-	if len(paths) == 0 {
-		return nil, nil
-	}
-	pool := x509.NewCertPool()
-	for _, path := range paths {
-		info, err := os.Stat(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil, &SentinelDetailError{Sentinel: ErrTrustedCANotFound, Detail: path}
-			}
-			return nil, &SentinelDetailError{Sentinel: ErrTrustedCARead, Detail: fmt.Sprintf("%s: %v", path, err)}
-		}
-		if info.IsDir() {
-			return nil, &SentinelDetailError{Sentinel: ErrTrustedCARead, Detail: fmt.Sprintf("%s is a directory", path)}
-		}
-		// #nosec G304 - trusted-ca path is provided by the operator
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, &SentinelDetailError{Sentinel: ErrTrustedCARead, Detail: fmt.Sprintf("%s: %v", path, err)}
-		}
-		if !pool.AppendCertsFromPEM(data) {
-			return nil, &SentinelDetailError{Sentinel: ErrTrustedCANoCerts, Detail: path}
-		}
-	}
-	return pool, nil
-}
 
 // ---------------------------------------------------------------------------
 // Strategy validators
@@ -383,19 +102,21 @@ type inlineInitFlags struct {
 	threshold          int
 	hostname           string
 	sans               string
-	adminBundle        string
 	dataDir            string
 	credentialStrategy string
-	officers           []string
-	trustedCAs         []string
+	adminFactors       []string
+	passkeyDevice      string
 }
 
-// wireInlineInitFlags attaches the full Phase 11 init flag set onto cmd.
-// The canonical subset (so-pin/user-pin/barrier-strategy/shares/threshold
-// /hostname/sans/admin-bundle) is wired here so the locked surface stays
-// in lock-step with the inline-ceremony surface; the four extra flags
-// (init-data-dir/credential-strategy/so/trusted-ca) add the Phase 11
-// additions on top.
+// wireInlineInitFlags attaches the full init flag set onto cmd. The canonical
+// subset (so-pin/user-pin/barrier-strategy/shares/threshold/hostname/sans) is
+// wired here so the locked surface stays in lock-step; init-data-dir and
+// credential-strategy add the deployment-local options on top.
+//
+// There are deliberately no officer flags. Under qrdb's Security Officer
+// distribution model officers are registered against the RUNNING daemon
+// through the sealed window (officer-register), never as init-time files —
+// see runInlineInit.
 func wireInlineInitFlags(cmd *cobra.Command, f *inlineInitFlags) {
 	// Canonical flags (locked surface).
 	cmd.Flags().StringVar(&f.soPin, "so-pin", "",
@@ -414,18 +135,21 @@ func wireInlineInitFlags(cmd *cobra.Command, f *inlineInitFlags) {
 		"FQDN written into the admin/server certificate CN")
 	cmd.Flags().StringVar(&f.sans, "sans", "",
 		"Comma-separated additional DNS / IP SANs")
-	cmd.Flags().StringVar(&f.adminBundle, "admin-bundle", "-",
-		"Path for the admin client cert+key bundle (default: stdout, one-shot)")
 
 	// Phase 11 inline-ceremony additions.
 	cmd.Flags().StringVar(&f.dataDir, "init-data-dir", "",
 		"Per-init data directory (overrides root --data-dir for the init ceremony)")
 	cmd.Flags().StringVar(&f.credentialStrategy, "credential-strategy", "barrier",
 		"Credential management strategy: manual | barrier")
-	cmd.Flags().StringSliceVar(&f.officers, "so", nil,
-		"SO officer in format username:KIND:/path/to/file (KIND ∈ csr|cert|pubkey, repeatable)")
-	cmd.Flags().StringSliceVar(&f.trustedCAs, "trusted-ca", nil,
-		"PEM file with CA certificates for external-CA officer validation (repeatable)")
+
+	// Admin LOGIN factors. Distinct from the barrier's seal strategy: a seal
+	// strategy protects the barrier key at rest, a login factor proves who a
+	// human is. The flag name and vocabulary match xkmsd so all daemons in the
+	// stack accept identical arguments.
+	cmd.Flags().StringSliceVar(&f.adminFactors, "admin-factor", nil,
+		"Administrator login factor: mtls | fido2 | piv (repeatable; mtls is always enrolled)")
+	cmd.Flags().StringVar(&f.passkeyDevice, "passkey-device", "",
+		"Select one FIDO2 authenticator when several are attached")
 }
 
 // validateInlineInitFlags applies all Phase 11 inline-ceremony validation
@@ -436,64 +160,46 @@ func validateInlineInitFlags(f *inlineInitFlags) error {
 	if err := validateCredentialStrategy(f.credentialStrategy); err != nil {
 		return err
 	}
+	// A SPIFFE trust domain is mandatory: without it the admin certificate init
+	// issues carries no tenant SAN and cannot authenticate. Checked here, in the
+	// validation seam, so the failure lands BEFORE any side effect — no data
+	// dir, no CA, no marker. See SPIFFETrustDomainRequiredError for why this is
+	// required rather than synthesized or worked around with HRD seeding.
+	if cfg == nil || cfg.IAM.SPIFFETrustDomain == "" {
+		return &SPIFFETrustDomainRequiredError{}
+	}
 	// The passphrase (software) barrier is sealed with the admin's passphrase at
 	// init; it is REQUIRED (no deployment-derived default). "none" needs none;
 	// "shamir" is initialized through the M-of-N ceremony.
 	if isPassphraseStrategy(f.barrierStrategy) && f.secret == "" {
 		return ErrSecretRequiredForSoftware
 	}
-	// Officers and trusted-CAs are validated lazily by their loaders so
-	// the operator gets a precise per-file error rather than a generic
-	// "validation failed". No flag-level cross-checks are needed at this
-	// layer.
+	// Reject an unknown --admin-factor here, in the validation seam, so the
+	// failure lands BEFORE any state exists. go-qrdb owns the vocabulary, so
+	// parsing through its canonical parser keeps all three daemons in step
+	// rather than each maintaining its own list.
+	if len(f.adminFactors) > 0 {
+		if _, err := qrdbsdk.ParseAdminFactors(f.adminFactors); err != nil {
+			return &InvalidAdminFactorError{Cause: err}
+		}
+	}
+
+	// Shamir needs no further flag-level checks here: --shares / --threshold
+	// are validated by the canonical surface, and the officer set is supplied
+	// to the ceremony against the running daemon rather than at init time.
 	return nil
 }
 
 // initDoneMarkerName is the filename of the marker dropped into --data-dir
 // after a successful init. Its presence is the canonical "this data dir has
 // already been initialised" signal; absence permits the init flow to run.
-const initDoneMarkerName = ".quicbaasd_init_done"
+// The single definition lives in pkg/initmarker, which the daemon-side
+// reader (pkg/server) imports too, so the writer and parser can never drift.
+const initDoneMarkerName = initmarker.FileName
 
-// pendingCeremonyFileName is the filename used by the shamir init path to
-// persist requested ceremony parameters between init and the daemon's next
-// start. The state machine that drives ceremony.claim-cert reads this on
-// daemon start to resume the in-flight ceremony.
-const pendingCeremonyFileName = "pending_ceremony.json"
-
-// initDoneMarker is the on-disk record dropped after a successful init.
-// Operators and tooling can inspect it to confirm the init parameters
-// without rerunning the command.
-type initDoneMarker struct {
-	BarrierStrategy    string    `json:"barrier_strategy"`
-	CredentialStrategy string    `json:"credential_strategy"`
-	Hostname           string    `json:"hostname,omitempty"`
-	OfficerCount       int       `json:"officer_count"`
-	Shares             int       `json:"shares,omitempty"`
-	Threshold          int       `json:"threshold,omitempty"`
-	CompletedAt        time.Time `json:"completed_at"`
-}
-
-// pendingCeremonyState is written by the shamir init path so the daemon can
-// resume the ceremony on its next start. Officers are stored by username +
-// kind only; their submitted material lives alongside the marker as separate
-// files (one per officer) referenced by the path field.
-type pendingCeremonyState struct {
-	Strategy           string                   `json:"strategy"`
-	Shares             int                      `json:"shares"`
-	Threshold          int                      `json:"threshold"`
-	CredentialStrategy string                   `json:"credential_strategy"`
-	Officers           []pendingCeremonyOfficer `json:"officers,omitempty"`
-	CreatedAt          time.Time                `json:"created_at"`
-}
-
-// pendingCeremonyOfficer captures the per-officer state written alongside
-// pending_ceremony.json so subsequent ceremony.claim-* invocations can
-// resume from the persisted material.
-type pendingCeremonyOfficer struct {
-	Username string `json:"username"`
-	Kind     string `json:"kind"`
-	Path     string `json:"path"`
-}
+// initDoneMarker is the on-disk record dropped after a successful init
+// (alias of the shared pkg/initmarker.Marker).
+type initDoneMarker = initmarker.Marker
 
 // runInlineInit is the canonical "quicbaasd init" entry point. The flow:
 //
@@ -503,16 +209,22 @@ type pendingCeremonyOfficer struct {
 //     --data-dir for the init ceremony so test runs can target a tmpdir).
 //  3. If the data dir already holds an init-done marker, fail with
 //     InitAlreadyDoneError rather than silently re-running.
-//  4. Load every --so officer through the dispatch table and the --trusted-ca
-//     pool. These calls validate the material BEFORE any state is persisted
-//     so an invalid CSR or unparseable PEM aborts the init cleanly.
-//  5. For barrier strategies that bring up a running daemon (none, passphrase):
-//     construct an embedded Server, call Start (which runs the IAM
-//     bootstrap and persists the admin assignment + invite), then Shutdown.
-//  6. For shamir: persist a pending_ceremony.json file in the data dir so
-//     the operator can complete the ceremony via "quicbaas ceremony
-//     claim-cert begin ..." after a subsequent "quicbaasd start".
-//  7. Drop the init-done marker and emit a brief operator summary.
+//  4. For "none" and "passphrase": construct an embedded Server and call
+//     Start, which brings up the CA (TLS is always on so first-boot can issue
+//     the admin mTLS credential), runs the IAM first-boot via qrdb's canonical
+//     bootstrap orchestrator (system tenant, built-in roles, platform admin +
+//     admin-mTLS certificate) and enrolls the SO / user PINs, then Shutdown.
+//  5. For "shamir": do NOT start a server. qrdb's bootstrap orchestrator
+//     documents the locked deferred-init architecture — the system barrier
+//     comes up SEALED and is initialized and unsealed by the M-of-N ceremony
+//     BEFORE BootstrapSystem runs, because "Shamir barrier initialization is
+//     the ceremony's job (multiple SOs), never inline" (go-qrdb
+//     pkg/bootstrap/bootstrap.go). init therefore only records the operator's
+//     chosen strategy so the daemon boots sealed into its sealed window, where
+//     officers register, the ceremony runs, and each share is claimed live.
+//     Starting an embedded server here would boot sealed and fail with
+//     EmbeddedSealedBootError.
+//  6. Drop the init-done marker and emit a brief operator summary.
 //
 // All steps treat the data dir as the canonical persistence root. Failure at
 // any point leaves the data dir in whatever state it was at — re-running
@@ -537,51 +249,40 @@ func runInlineInit(cmd *cobra.Command, f *inlineInitFlags) error {
 		return &InitAlreadyDoneError{DataDir: dataDir}
 	}
 
-	officers, err := loadOfficers(f.officers)
-	if err != nil {
-		return err
-	}
-
-	pool, err := loadTrustedCAs(f.trustedCAs)
-	if err != nil {
-		return err
-	}
-
-	switch f.barrierStrategy {
-	case "none", "disabled":
-		if err := runInitEmbeddedServer(dataDir, f, false); err != nil {
-			return err
-		}
-	case "passphrase":
-		if err := runInitEmbeddedServer(dataDir, f, true); err != nil {
-			return err
-		}
-	case "shamir":
-		if err := writePendingCeremonyState(dataDir, f, officers); err != nil {
-			return err
-		}
-	default:
-		// Unreachable: validateInlineInitFlags + supportedBarrierStrategies
-		// already rejected anything outside {none, disabled, passphrase,
-		// shamir}. Keep the branch so future strategy additions surface a
-		// clean error rather than silently no-op.
+	if _, ok := supportedBarrierStrategies[f.barrierStrategy]; !ok {
+		// Defence in depth: validateInlineInitFlags already rejected anything
+		// outside the supported set. Keep the guard so a future strategy
+		// addition surfaces a clean error rather than silently no-op'ing.
 		return &UnsupportedBarrierStrategyError{Strategy: f.barrierStrategy}
+	}
+
+	// "none" and "passphrase" run the embedded server, because that is the
+	// path that reaches the first-boot bootstrap orchestrator: system tenant,
+	// built-in roles, platform admin and the admin's mTLS certificate. Only
+	// "passphrase" enables the seal layer during init; "none" has no barrier.
+	//
+	// "shamir" runs nothing here. Its barrier is initialized by the M-of-N
+	// ceremony against the running daemon, and first-boot follows the unseal
+	// rather than preceding it — see this function's doc comment.
+	if f.barrierStrategy != barrierStrategyShamir {
+		if err := runInitEmbeddedServer(dataDir, f, isPassphraseStrategy(f.barrierStrategy)); err != nil {
+			return err
+		}
 	}
 
 	marker := initDoneMarker{
 		BarrierStrategy:    f.barrierStrategy,
 		CredentialStrategy: f.credentialStrategy,
 		Hostname:           f.hostname,
-		OfficerCount:       len(officers),
 		Shares:             f.shares,
 		Threshold:          f.threshold,
 		CompletedAt:        time.Now().UTC(),
 	}
-	if err := writeInitDoneMarker(markerPath, &marker); err != nil {
-		return err
+	if err := initmarker.Write(dataDir, &marker); err != nil {
+		return &OpError{Op: "init: write init-done marker", Cause: err}
 	}
 
-	printInitSummary(cmd, f, dataDir, len(officers), pool != nil)
+	printInitSummary(cmd, f, dataDir)
 	return nil
 }
 
@@ -600,17 +301,21 @@ func resolveInitDataDir(f *inlineInitFlags) string {
 }
 
 // runInitEmbeddedServer constructs an embedded Server (no listeners) against
-// dataDir, runs the full startup sequence so initializeIAMComponents and
-// firstBootBootstrap persist the admin + invite, then shuts down. The
-// embedded flag suppresses every transport listener; the only public surface
-// is via Server.Service() which we do not consume here.
+// dataDir, runs the full startup sequence so initializeCA, initializeIAMComponents
+// and firstBootBootstrap establish the CA, the system tenant, the built-in
+// roles and the platform admin's mTLS credential, then shuts down. The embedded
+// flag suppresses every transport listener; the only public surface is via
+// Server.Service() which we do not consume here.
 //
 // barrierEnabled selects whether the seal manager is wired. For "none" /
 // "disabled" the barrier stays off; for "passphrase" we enable it so the
 // data-plane seal manager initialises its state alongside the IAM bootstrap.
-// "shamir" never reaches this path — its pending state is written separately
-// and the daemon comes up on the next "quicbaasd start".
-func runInitEmbeddedServer(dataDir string, f *inlineInitFlags, barrierEnabled bool) error {
+// Shamir never reaches this function — its barrier belongs to the ceremony.
+func runInitEmbeddedServer(
+	dataDir string,
+	f *inlineInitFlags,
+	barrierEnabled bool,
+) error {
 	initCfg := buildInitConfig(dataDir, f, barrierEnabled)
 
 	// When the passphrase barrier is enabled, inject the passphrase via
@@ -636,48 +341,26 @@ func runInitEmbeddedServer(dataDir string, f *inlineInitFlags, barrierEnabled bo
 		return &OpError{Op: "init: start server", Cause: err}
 	}
 
-	// Fully initialize the data-plane barrier at SERVER init so the daemon comes
-	// up with a usable (initialized) barrier. The operator supplies the
-	// passphrase here, once; the runtime client only ever unseals with it and
-	// never performs init. Only the software strategy takes a passphrase at this
-	// layer — "none" needs no secret, and shamir is initialized through the
-	// locked M-of-N ceremony (writePendingCeremonyState), not here.
-	if barrierEnabled && isPassphraseStrategy(f.barrierStrategy) {
-		if err := initializeSoftwareBarrier(srv, f.secret); err != nil {
-			_ = srv.Shutdown(context.Background())
-			return err
-		}
+	// Barrier initialization is NOT hand-rolled here. For "passphrase" the
+	// embedded qrdb node initializes and unseals its barrier from the
+	// injected passphrase during Start, and qrdb's canonical bootstrap
+	// orchestrator (qrdbsdk.BootstrapSystem, invoked by the server's
+	// first-boot) observes / completes it idempotently.
+
+	// Enroll the operator's Security Officer and user PINs into the SAME PIN
+	// backend the embedded node verifies against. --so-pin / --user-pin are
+	// mandatory for every barrier-bearing strategy; without this call they were
+	// collected and discarded, leaving the backend uninitialised so every later
+	// SO-authorized operation failed.
+	if err := srv.EnrollInitPINs(f.soPin, f.userPin); err != nil {
+		_ = srv.Shutdown(context.Background())
+		return &OpError{Op: "init: enroll ceremony PINs", Cause: err}
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return &OpError{Op: "init: shutdown server", Cause: err}
-	}
-	return nil
-}
-
-// initializeSoftwareBarrier initializes the data-plane software barrier with the
-// operator's passphrase so the seal store persists the root key. It is
-// idempotent: re-running init against an already-initialized data dir is a
-// no-op rather than an error.
-func initializeSoftwareBarrier(srv *server.Server, secret string) error {
-	svc := srv.GetDataPlaneBarrierService()
-	if svc == nil {
-		return errors.New("init: data-plane barrier service unavailable; cannot initialize software barrier")
-	}
-	// The passphrase (software) barrier is sealed with the admin's passphrase,
-	// run through the KDF inside qrdb's deferred software strategy. The passphrase
-	// is REQUIRED (validated in validateInlineInitFlags) — there is no
-	// deployment-derived default. The admin keeps it and supplies it to
-	// `barrier unseal` on restart.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := svc.BarrierInitialize(ctx, secret); err != nil {
-		if errors.Is(err, qrdbsdk.ErrAlreadyInitialized) {
-			return nil
-		}
-		return &OpError{Op: "init: initialize software barrier", Cause: err}
 	}
 	return nil
 }
@@ -689,11 +372,26 @@ func initializeSoftwareBarrier(srv *server.Server, secret string) error {
 // timeseries subsystems. The goal is to bring up just enough of the server
 // to drive the IAM bootstrap and persist its state.
 func buildInitConfig(dataDir string, f *inlineInitFlags, barrierEnabled bool) *config.Config {
+	// operatorCfg is the daemon's loaded configuration (package-level `cfg`),
+	// aliased before the local shadow below so the settings that must survive
+	// into the init run can be read from it.
+	operatorCfg := cfg
+
 	cfg := config.Default()
 	cfg.Server.Embedded = true
 	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendPebble
 	cfg.Storage.DataDir = dataDir
+
+	// Honour the operator's storage backend. This function starts from
+	// config.Default(), so hard-coding a backend here would silently override
+	// storage.backend / QUICBAAS_STORAGE_BACKEND and leave init writing to a
+	// different engine than the daemon later reads from — first boot would
+	// appear to succeed and `quicbaasd start` would come up with no IAM state.
+	// Pebble remains the default for a config that names no backend.
+	cfg.Storage.Backend = config.StorageBackendPebble
+	if operatorCfg != nil && operatorCfg.Storage.Backend != "" {
+		cfg.Storage.Backend = operatorCfg.Storage.Backend
+	}
 
 	// Disable every listener at the config level too, so any code that
 	// inspects the per-protocol Enabled flag (rather than Server.Embedded)
@@ -704,22 +402,54 @@ func buildInitConfig(dataDir string, f *inlineInitFlags, barrierEnabled bool) *c
 	cfg.Server.MCP.Enabled = false
 	cfg.Server.Unix.Enabled = false
 
-	// TLS off — init does not need a CA chain. The first regular "start"
-	// will bring up the CA against the same data dir.
-	cfg.Security.TLSEnabled = false
+	// TLS ON — not to serve anything (every listener above is disabled and the
+	// server runs embedded), but because initializeCA early-returns when TLS is
+	// off, and the CA is what first-boot needs to issue the platform admin's
+	// mTLS certificate and what the ceremony needs to sign officer CSRs. The CA
+	// is file-backed under the data dir, so bootstrapping it here also means the
+	// subsequent `quicbaasd start` loads the CA this ceremony established rather
+	// than minting a second, unrelated one.
+	cfg.Security.TLSEnabled = true
 
 	// Seal: propagate the barrier strategy so that when quicbaasd start
 	// reads this config (or when the embedded server's lifecycle reads
 	// cfg.Seal.Strategy) it builds the correct data-plane StorageBarrier.
 	// For "none"/"disabled" the barrier is left disabled; for "passphrase"
 	// it is enabled so the seal sub-store is initialised under dataDir.
+	//
+	// Shamir never reaches this function (runInlineInit skips the embedded
+	// server for it), so barrierEnabled is only ever the passphrase decision
+	// here. The shamir M-of-N parameters are recorded in the init-done marker
+	// instead, and the daemon boots sealed on them.
 	cfg.Seal.Enabled = barrierEnabled
 	cfg.Seal.Strategy = f.barrierStrategy
 
 	// Auth: keep AllowPasswordAuth false so the firstBootBootstrap path
-	// (which seeds the system tenant admin + invite) runs.
+	// (which seeds the system tenant admin + its mTLS certificate) runs.
 	cfg.Auth.AllowPasswordAuth = false
 	cfg.Auth.InsecureDevMode = false
+
+	// Propagate the operator's login-factor selection so first-boot enrolls
+	// the administrator with the credentials they asked for. Without this the
+	// admin would silently fall back to the mTLS baseline and an operator who
+	// requested a passkey would discover it only at their first login attempt.
+	cfg.Auth.AdminFactors = f.adminFactors
+	cfg.Auth.PasskeyDevice = f.passkeyDevice
+
+	// Propagate the operator's SPIFFE trust domain into the init run. This is
+	// load-bearing, not cosmetic: the xkms CAAdapter stamps the tenant-scoped
+	// SPIFFE URI SAN onto the admin certificate ONLY when a trust domain is set,
+	// and REST's deriveLoginTenant resolves (and pins) the login tenant from
+	// exactly that SAN. Because this function starts from config.Default()
+	// rather than the loaded config, omitting this line would issue an admin
+	// certificate with CN=admin and NO SANs, which then fails login with
+	// "login tenant could not be resolved".
+	//
+	// validateInlineInitFlags guarantees a non-empty value on the CLI path; the
+	// guard keeps this safe for direct callers (tests) that bypass validation.
+	if operatorCfg != nil && operatorCfg.IAM.SPIFFETrustDomain != "" {
+		cfg.IAM.SPIFFETrustDomain = operatorCfg.IAM.SPIFFETrustDomain
+	}
 	if f.hostname != "" {
 		cfg.Server.Host = f.hostname
 	}
@@ -752,97 +482,34 @@ func buildInitConfig(dataDir string, f *inlineInitFlags, barrierEnabled bool) *c
 	return cfg
 }
 
-// writePendingCeremonyState persists the shamir ceremony parameters under
-// dataDir so the operator can resume via "quicbaas ceremony claim-cert begin
-// ...". The officer materials submitted via --so are stored at their
-// original paths; we only record the metadata required to identify them on
-// resume.
-//
-// The state file uses an atomic-rename write to avoid partially-written JSON
-// being read by a concurrent ceremony tool.
-func writePendingCeremonyState(dataDir string, f *inlineInitFlags, officers []*officerMaterial) error {
-	pendingOfficers := make([]pendingCeremonyOfficer, 0, len(officers))
-	for i, raw := range f.officers {
-		spec, err := parseOfficerSpec(raw)
-		if err != nil {
-			return err
-		}
-		_ = officers[i] // material already loaded for validation; the path is the persisted reference
-		pendingOfficers = append(pendingOfficers, pendingCeremonyOfficer{
-			Username: spec.Username,
-			Kind:     string(spec.Kind),
-			Path:     spec.Path,
-		})
-	}
-	state := &pendingCeremonyState{
-		Strategy:           f.barrierStrategy,
-		Shares:             f.shares,
-		Threshold:          f.threshold,
-		CredentialStrategy: f.credentialStrategy,
-		Officers:           pendingOfficers,
-		CreatedAt:          time.Now().UTC(),
-	}
-	raw, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return &OpError{Op: "init: marshal pending ceremony state", Cause: err}
-	}
-	target := filepath.Join(dataDir, pendingCeremonyFileName)
-	tmp := target + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return &OpError{Op: fmt.Sprintf("init: write %s", tmp), Cause: err}
-	}
-	if err := os.Rename(tmp, target); err != nil {
-		return &OpError{Op: fmt.Sprintf("init: rename pending ceremony state to %s", target), Cause: err}
-	}
-	return nil
-}
-
-// writeInitDoneMarker writes the init-done marker file with 0600 permissions
-// using an atomic rename so an interrupted init cannot leave a half-written
-// marker that fools the next invocation.
-func writeInitDoneMarker(path string, m *initDoneMarker) error {
-	raw, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return &OpError{Op: "init: marshal init-done marker", Cause: err}
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return &OpError{Op: fmt.Sprintf("init: write %s", tmp), Cause: err}
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return &OpError{Op: fmt.Sprintf("init: rename init-done marker to %s", path), Cause: err}
-	}
-	return nil
-}
-
 // printInitSummary writes a short operator summary to stderr (so the
 // command's stdout stays clean for tooling that captures it). The summary
 // names the barrier strategy, data dir, officer count, and any next steps
 // specific to the chosen strategy.
-func printInitSummary(cmd *cobra.Command, f *inlineInitFlags, dataDir string, officerCount int, trustedCAs bool) {
+func printInitSummary(cmd *cobra.Command, f *inlineInitFlags, dataDir string) {
 	out := cmd.ErrOrStderr()
 	fmt.Fprintln(out, "=== quicbaasd init: complete ===")
 	fmt.Fprintf(out, "  DataDir:            %s\n", dataDir)
 	fmt.Fprintf(out, "  BarrierStrategy:    %s\n", f.barrierStrategy)
-	if f.barrierStrategy == "shamir" {
+	if f.barrierStrategy == barrierStrategyShamir {
 		fmt.Fprintf(out, "  Shamir Mode:        %d-of-%d\n", f.threshold, f.shares)
 	}
 	fmt.Fprintf(out, "  CredentialStrategy: %s\n", f.credentialStrategy)
 	if f.hostname != "" {
 		fmt.Fprintf(out, "  Hostname:           %s\n", f.hostname)
 	}
-	if officerCount > 0 {
-		fmt.Fprintf(out, "  Officers:           %d (validated)\n", officerCount)
-	}
-	if trustedCAs {
-		fmt.Fprintf(out, "  TrustedCAPaths:     %d\n", len(f.trustedCAs))
-	}
 	fmt.Fprintln(out)
 	switch f.barrierStrategy {
-	case "shamir":
-		fmt.Fprintln(out, "Next steps:")
-		fmt.Fprintf(out, "  1) Start the daemon: quicbaasd start --data-dir %s\n", dataDir)
-		fmt.Fprintln(out, "  2) Complete the ceremony: quicbaas ceremony claim-cert begin ...")
+	case barrierStrategyShamir:
+		fmt.Fprintln(out, "The Shamir barrier is NOT initialized yet, by design: it is the M-of-N")
+		fmt.Fprintln(out, "ceremony's job, and shares are never written to disk. Next steps:")
+		fmt.Fprintf(out, "  1) Start the daemon: quicbaasd start --data-dir %s (boots SEALED)\n", dataDir)
+		fmt.Fprintln(out, "  2) Register each officer's CSR:  quicbaas init officer register \\")
+		fmt.Fprintln(out, "         --username <name> --csr <file>   (returns their signed certificate)")
+		fmt.Fprintf(out, "  3) Run the ceremony:  quicbaas init initialize --threshold %d --shares %d\n", f.threshold, f.shares)
+		fmt.Fprintln(out, "  4) Each officer claims live, from their own host, with their own key:")
+		fmt.Fprintln(out, "         quicbaas init claim-cert  then  quicbaas init claim-share")
+		fmt.Fprintln(out, "  5) A quorum submits shares to unseal:  quicbaas barrier unseal --share <value>")
 	default:
 		fmt.Fprintln(out, "Next step:")
 		fmt.Fprintf(out, "  Start the daemon: quicbaasd start --data-dir %s\n", dataDir)

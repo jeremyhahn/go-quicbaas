@@ -225,8 +225,6 @@ type CeremonyInitResponse struct {
 	TLSCertPEM string `json:"tls_cert_pem"`
 	State      string `json:"state"`
 	ShareCount int    `json:"share_count"`
-	SOCertPEM  string `json:"so_cert_pem,omitempty"`
-	SOKeyPEM   string `json:"so_key_pem,omitempty"`
 }
 
 // CeremonyStatusResponse is the response from Client.CeremonyStatus.

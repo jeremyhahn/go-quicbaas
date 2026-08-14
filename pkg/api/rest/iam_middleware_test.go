@@ -131,55 +131,6 @@ func TestJWTMiddleware(t *testing.T) {
 	})
 }
 
-// TestTenantMiddleware tests the TenantMiddleware handler.
-func TestTenantMiddleware(t *testing.T) {
-	t.Run("missing tenant ID", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
-
-		nextCalled := false
-		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			nextCalled = true
-		})
-
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("tenant_id", "")
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//resources", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-		w := httptest.NewRecorder()
-
-		handler.TenantMiddleware(next).ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "tenant ID is required")
-		assert.False(t, nextCalled)
-	})
-
-	t.Run("tenant manager not available", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
-
-		nextCalled := false
-		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			nextCalled = true
-		})
-
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("tenant_id", "tenant-123")
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/resources", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-		w := httptest.NewRecorder()
-
-		handler.TenantMiddleware(next).ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Contains(t, w.Body.String(), "tenant manager not available")
-		assert.False(t, nextCalled)
-	})
-}
-
 // TestABACMiddleware tests the ABACMiddleware handler.
 func TestABACMiddleware(t *testing.T) {
 	t.Run("user not authenticated nil", func(t *testing.T) {

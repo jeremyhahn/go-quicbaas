@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -117,7 +118,7 @@ func TestExecContainerRuntime_BuildRunArgs(t *testing.T) {
 			Image: "alpine:latest",
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		if !strings.HasPrefix(joined, "run -d") {
@@ -140,7 +141,7 @@ func TestExecContainerRuntime_BuildRunArgs(t *testing.T) {
 			Args:       []string{"-g", "daemon off;"},
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		expectations := []string{
@@ -170,7 +171,7 @@ func TestExecContainerRuntime_BuildRunArgs_WithGPU(t *testing.T) {
 			GPUEnabled: true,
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		if !strings.Contains(joined, "--gpus all") {
@@ -185,7 +186,7 @@ func TestExecContainerRuntime_BuildRunArgs_WithGPU(t *testing.T) {
 			GPUEnabled: true,
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		if !strings.Contains(joined, "--device nvidia.com/gpu=all") {
@@ -200,7 +201,7 @@ func TestExecContainerRuntime_BuildRunArgs_WithGPU(t *testing.T) {
 			GPUEnabled: false,
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		if strings.Contains(joined, "--gpus") || strings.Contains(joined, "--device") {
@@ -219,7 +220,7 @@ func TestExecContainerRuntime_BuildRunArgs_WithMounts(t *testing.T) {
 			},
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		if !strings.Contains(joined, "-v /host/data:/container/data") {
@@ -236,7 +237,7 @@ func TestExecContainerRuntime_BuildRunArgs_WithMounts(t *testing.T) {
 			},
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		if !strings.Contains(joined, "-v /host/config:/etc/config:ro") {
@@ -254,7 +255,7 @@ func TestExecContainerRuntime_BuildRunArgs_WithMounts(t *testing.T) {
 			},
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		if !strings.Contains(joined, "-v /data:/mnt/data") {
@@ -267,42 +268,22 @@ func TestExecContainerRuntime_BuildRunArgs_WithMounts(t *testing.T) {
 }
 
 func TestExecContainerRuntime_BuildRunArgs_WithEnv(t *testing.T) {
-	t.Run("SingleEnvVar", func(t *testing.T) {
+	// The environment is referenced by file path, never inlined: see
+	// container_env_file.go and TestContainerEnv_ValueNeverReachesArgv.
+	t.Run("EnvFileIsReferencedByPath", func(t *testing.T) {
 		rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t)}
 		spec := &ContainerSpec{
 			Image: "alpine:latest",
 			Env:   map[string]string{"MY_VAR": "hello"},
 		}
 
-		args := rt.buildRunArgs(spec)
-		joined := strings.Join(args, " ")
+		joined := strings.Join(rt.buildRunArgs(spec, "/run/secrets/env"), " ")
 
-		if !strings.Contains(joined, "-e MY_VAR=hello") {
-			t.Errorf("expected env flag, got %q", joined)
+		if !strings.Contains(joined, envFileFlag+" /run/secrets/env") {
+			t.Errorf("expected %s reference, got %q", envFileFlag, joined)
 		}
-	})
-
-	t.Run("MultipleEnvVarsSorted", func(t *testing.T) {
-		rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t)}
-		spec := &ContainerSpec{
-			Image: "alpine:latest",
-			Env: map[string]string{
-				"ZZZ_VAR": "last",
-				"AAA_VAR": "first",
-				"MMM_VAR": "middle",
-			},
-		}
-
-		args := rt.buildRunArgs(spec)
-
-		// Find positions of env vars to verify sorted order.
-		joined := strings.Join(args, " ")
-		aIdx := strings.Index(joined, "AAA_VAR")
-		mIdx := strings.Index(joined, "MMM_VAR")
-		zIdx := strings.Index(joined, "ZZZ_VAR")
-
-		if aIdx >= mIdx || mIdx >= zIdx {
-			t.Errorf("expected env vars in sorted order, got %q", joined)
+		if strings.Contains(joined, "hello") {
+			t.Errorf("environment value leaked into args: %q", joined)
 		}
 	})
 
@@ -313,10 +294,12 @@ func TestExecContainerRuntime_BuildRunArgs_WithEnv(t *testing.T) {
 			Env:   map[string]string{},
 		}
 
-		args := rt.buildRunArgs(spec)
-		joined := strings.Join(args, " ")
+		joined := strings.Join(rt.buildRunArgs(spec, ""), " ")
 
-		if strings.Contains(joined, "-e") {
+		if strings.Contains(joined, envFileFlag) {
+			t.Errorf("expected no %s flag for empty env, got %q", envFileFlag, joined)
+		}
+		if strings.Contains(joined, " -e ") {
 			t.Errorf("expected no -e flags for empty env, got %q", joined)
 		}
 	})
@@ -330,7 +313,7 @@ func TestExecContainerRuntime_BuildRunArgs_WithNetwork(t *testing.T) {
 			Network: "host",
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		if !strings.Contains(joined, "--network host") {
@@ -345,7 +328,7 @@ func TestExecContainerRuntime_BuildRunArgs_WithNetwork(t *testing.T) {
 			Network: "my-custom-net",
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		if !strings.Contains(joined, "--network my-custom-net") {
@@ -359,7 +342,7 @@ func TestExecContainerRuntime_BuildRunArgs_WithNetwork(t *testing.T) {
 			Image: "alpine:latest",
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		if strings.Contains(joined, "--network") {
@@ -376,7 +359,7 @@ func TestExecContainerRuntime_BuildRunArgs_WithPorts(t *testing.T) {
 			Ports: []string{"8080:80"},
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		if !strings.Contains(joined, "-p 8080:80") {
@@ -391,7 +374,7 @@ func TestExecContainerRuntime_BuildRunArgs_WithPorts(t *testing.T) {
 			Ports: []string{"8080:80", "8443:443"},
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		if !strings.Contains(joined, "-p 8080:80") {
@@ -411,7 +394,7 @@ func TestExecContainerRuntime_BuildRunArgs_WithLabels(t *testing.T) {
 			Labels: map[string]string{"app": "quicbaas"},
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		if !strings.Contains(joined, "--label app=quicbaas") {
@@ -429,7 +412,7 @@ func TestExecContainerRuntime_BuildRunArgs_WithLabels(t *testing.T) {
 			},
 		}
 
-		args := rt.buildRunArgs(spec)
+		args := rt.buildRunArgs(spec, "")
 		joined := strings.Join(args, " ")
 
 		aIdx := strings.Index(joined, "aaa=first")
@@ -688,6 +671,192 @@ func TestContainerMount_Validate(t *testing.T) {
 			t.Fatal("expected error")
 		}
 	})
+
+	t.Run("EveryMountKindIsAccepted", func(t *testing.T) {
+		for _, m := range []*ContainerMount{
+			{Source: "/a", Target: "/b", Type: MountTypeBind},
+			{Source: "app-data", Target: "/b", Type: MountTypeVolume},
+			{Target: "/scratch", Type: MountTypeTmpfs},
+		} {
+			if err := m.Validate(); err != nil {
+				t.Fatalf("Validate(%+v): %v", m, err)
+			}
+		}
+	})
+
+	t.Run("UnknownMountKindIsRejected", func(t *testing.T) {
+		m := &ContainerMount{Source: "/a", Target: "/b", Type: "overlay"}
+		err := m.Validate()
+		var validErr *InputValidationError
+		if !errors.As(err, &validErr) {
+			t.Fatalf("expected InputValidationError, got %T (%v)", err, err)
+		}
+		if validErr.Field != "type" {
+			t.Errorf("Field = %q, want type", validErr.Field)
+		}
+	})
+
+	// A tmpfs has no host source. Accepting one and dropping it at launch
+	// would let a measured field vanish from the running container.
+	t.Run("TmpfsRejectsASource", func(t *testing.T) {
+		m := &ContainerMount{Source: "/a", Target: "/scratch", Type: MountTypeTmpfs}
+		if err := m.Validate(); err == nil {
+			t.Fatal("expected a tmpfs mount with a host source to be rejected")
+		}
+	})
+
+	t.Run("NonTmpfsStillRequiresASource", func(t *testing.T) {
+		m := &ContainerMount{Target: "/b", Type: MountTypeBind}
+		if err := m.Validate(); err == nil {
+			t.Fatal("expected a bind mount without a source to be rejected")
+		}
+	})
+}
+
+func TestContainerMount_RunArgs(t *testing.T) {
+	// An untyped mount must emit exactly what it always did, so specs
+	// written before Type existed produce a byte-identical command line.
+	t.Run("UntypedMountKeepsTheShortForm", func(t *testing.T) {
+		m := ContainerMount{Source: "/host", Target: "/container", ReadOnly: true}
+		want := []string{"-v", "/host:/container:ro"}
+		if got := m.RunArgs(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("RunArgs() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("TypedMountUsesMountFlag", func(t *testing.T) {
+		cases := []struct {
+			name  string
+			mount ContainerMount
+			want  []string
+		}{
+			{
+				name:  "Bind",
+				mount: ContainerMount{Source: "/host", Target: "/container", Type: MountTypeBind},
+				want:  []string{"--mount", "type=bind,source=/host,destination=/container"},
+			},
+			{
+				name:  "BindReadOnly",
+				mount: ContainerMount{Source: "/host", Target: "/container", ReadOnly: true, Type: MountTypeBind},
+				want:  []string{"--mount", "type=bind,source=/host,destination=/container,readonly"},
+			},
+			{
+				name:  "Volume",
+				mount: ContainerMount{Source: "app-data", Target: "/data", Type: MountTypeVolume},
+				want:  []string{"--mount", "type=volume,source=app-data,destination=/data"},
+			},
+			{
+				name:  "TmpfsHasNoSource",
+				mount: ContainerMount{Target: "/scratch", Type: MountTypeTmpfs},
+				want:  []string{"--mount", "type=tmpfs,destination=/scratch"},
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if got := tc.mount.RunArgs(); !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("RunArgs() = %v, want %v", got, tc.want)
+				}
+			})
+		}
+	})
+}
+
+// TestExecContainerRuntime_BuildRunArgs_Privilege proves the launched
+// container carries the privilege the spec measured. If these flags were
+// missing, ContainerConfigDigest would attest to a configuration the runtime
+// never applied.
+func TestExecContainerRuntime_BuildRunArgs_Privilege(t *testing.T) {
+	t.Run("PrivilegedAndCapabilitiesAreApplied", func(t *testing.T) {
+		rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t)}
+		spec := &ContainerSpec{
+			Image:      "alpine:latest",
+			Privileged: true,
+			CapAdd:     []string{"CAP_SYS_ADMIN", "CAP_NET_RAW"},
+			CapDrop:    []string{"CAP_MKNOD"},
+		}
+
+		joined := strings.Join(rt.buildRunArgs(spec, ""), " ")
+		for _, want := range []string{
+			"--privileged",
+			"--cap-add CAP_NET_RAW",
+			"--cap-add CAP_SYS_ADMIN",
+			"--cap-drop CAP_MKNOD",
+		} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("expected %q in args, got %q", want, joined)
+			}
+		}
+	})
+
+	// The command line must sort capabilities exactly as the digest does,
+	// or a spec could measure one way and launch another.
+	t.Run("CapabilityOrderMatchesTheMeasuredOrder", func(t *testing.T) {
+		rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t)}
+		forward := &ContainerSpec{Image: "alpine", CapAdd: []string{"CAP_SYS_ADMIN", "CAP_CHOWN"}}
+		shuffled := &ContainerSpec{Image: "alpine", CapAdd: []string{"CAP_CHOWN", "CAP_SYS_ADMIN"}}
+
+		a := rt.buildRunArgs(forward, "")
+		b := rt.buildRunArgs(shuffled, "")
+		if !reflect.DeepEqual(a, b) {
+			t.Fatalf("capability order leaked into the command line:\n%v\n%v", a, b)
+		}
+		if !strings.Contains(strings.Join(a, " "), "--cap-add CAP_CHOWN --cap-add CAP_SYS_ADMIN") {
+			t.Fatalf("capabilities are not emitted in sorted order: %v", a)
+		}
+		// The caller's slice must survive the launch unmodified.
+		if !reflect.DeepEqual(forward.CapAdd, []string{"CAP_SYS_ADMIN", "CAP_CHOWN"}) {
+			t.Fatalf("buildRunArgs mutated the caller's CapAdd: %v", forward.CapAdd)
+		}
+	})
+
+	t.Run("ZeroValuesEmitNothing", func(t *testing.T) {
+		rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t)}
+		spec := &ContainerSpec{
+			Image:  "alpine:latest",
+			Mounts: []ContainerMount{{Source: "/host", Target: "/container"}},
+		}
+
+		joined := strings.Join(rt.buildRunArgs(spec, ""), " ")
+		for _, unwanted := range []string{"--privileged", "--cap-add", "--cap-drop", "--mount"} {
+			if strings.Contains(joined, unwanted) {
+				t.Errorf("unexpected %q in args for a zero-valued spec: %q", unwanted, joined)
+			}
+		}
+		if !strings.Contains(joined, "-v /host:/container") {
+			t.Errorf("untyped mount must keep the short form, got %q", joined)
+		}
+	})
+
+	t.Run("TypedMountIsApplied", func(t *testing.T) {
+		rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t)}
+		spec := &ContainerSpec{
+			Image: "alpine:latest",
+			Mounts: []ContainerMount{
+				{Target: "/scratch", Type: MountTypeTmpfs},
+				{Source: "/host", Target: "/container", Type: MountTypeBind, ReadOnly: true},
+			},
+		}
+
+		joined := strings.Join(rt.buildRunArgs(spec, ""), " ")
+		for _, want := range []string{
+			"--mount type=tmpfs,destination=/scratch",
+			"--mount type=bind,source=/host,destination=/container,readonly",
+		} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("expected %q in args, got %q", want, joined)
+			}
+		}
+	})
+
+	t.Run("InteractiveLaunchCarriesPrivilegeToo", func(t *testing.T) {
+		rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t)}
+		spec := &ContainerSpec{Image: "alpine", Privileged: true, CapDrop: []string{"ALL"}}
+
+		joined := strings.Join(rt.buildInteractiveRunArgs(spec, "agent-1", ""), " ")
+		if !strings.Contains(joined, "--privileged") || !strings.Contains(joined, "--cap-drop ALL") {
+			t.Fatalf("interactive launch dropped the privilege flags: %q", joined)
+		}
+	})
 }
 
 func TestTruncateID(t *testing.T) {
@@ -868,7 +1037,7 @@ func TestExecContainerRuntime_RunInteractive_StartsProcess(t *testing.T) {
 
 		// For unit testing, we test the argument building and validation.
 		// The actual process start is tested with a real binary.
-		args := rt.buildInteractiveRunArgs(spec, "test-interactive")
+		args := rt.buildInteractiveRunArgs(spec, "test-interactive", "")
 		joined := strings.Join(args, " ")
 
 		if !strings.HasPrefix(joined, "run -i --rm") {
@@ -1026,7 +1195,7 @@ func TestExecContainerRuntime_BuildInteractiveRunArgs(t *testing.T) {
 			Image: "alpine:latest",
 		}
 
-		args := rt.buildInteractiveRunArgs(spec, "quicbaas-acp-abc123")
+		args := rt.buildInteractiveRunArgs(spec, "quicbaas-acp-abc123", "")
 		joined := strings.Join(args, " ")
 
 		if !strings.HasPrefix(joined, "run -i --rm") {
@@ -1067,7 +1236,7 @@ func TestExecContainerRuntime_BuildInteractiveRunArgs(t *testing.T) {
 			GPUEnabled: true,
 		}
 
-		args := rt.buildInteractiveRunArgs(spec, "quicbaas-acp-deadbeef")
+		args := rt.buildInteractiveRunArgs(spec, "quicbaas-acp-deadbeef", "/run/secrets/env")
 		joined := strings.Join(args, " ")
 
 		expectations := []string{
@@ -1075,8 +1244,7 @@ func TestExecContainerRuntime_BuildInteractiveRunArgs(t *testing.T) {
 			"--name quicbaas-acp-deadbeef",
 			"--network host",
 			"--workdir /workspace",
-			"-e API_KEY=test-key",
-			"-e MODEL=ollama/llama3",
+			envFileFlag + " /run/secrets/env",
 			"-v /home/user/.claude:/home/agent/.claude:ro",
 			"-v /workspace:/workspace",
 			"--label quicbaas.role=agent",
@@ -1102,7 +1270,7 @@ func TestExecContainerRuntime_BuildInteractiveRunArgs(t *testing.T) {
 			AutoRemove: true, // should be ignored; interactive always uses --rm
 		}
 
-		args := rt.buildInteractiveRunArgs(spec, "test-container")
+		args := rt.buildInteractiveRunArgs(spec, "test-container", "")
 		for _, arg := range args {
 			if arg == "-d" {
 				t.Error("interactive args must not contain -d")
@@ -1116,7 +1284,7 @@ func TestExecContainerRuntime_BuildInteractiveRunArgs(t *testing.T) {
 			Image: "alpine:latest",
 		}
 
-		args := rt.buildInteractiveRunArgs(spec, "test-container")
+		args := rt.buildInteractiveRunArgs(spec, "test-container", "")
 		joined := strings.Join(args, " ")
 
 		if !strings.Contains(joined, "--rm") {
@@ -1131,7 +1299,7 @@ func TestExecContainerRuntime_BuildInteractiveRunArgs(t *testing.T) {
 			GPUEnabled: true,
 		}
 
-		args := rt.buildInteractiveRunArgs(spec, "test-gpu")
+		args := rt.buildInteractiveRunArgs(spec, "test-gpu", "")
 		joined := strings.Join(args, " ")
 
 		if !strings.Contains(joined, "--device nvidia.com/gpu=all") {

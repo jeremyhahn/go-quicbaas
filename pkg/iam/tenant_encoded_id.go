@@ -29,9 +29,11 @@ const tenantIDSeparator = "."
 
 // systemTenantID is the shared / system tenant used as the read-tolerant
 // fallback for legacy identifiers that predate tenant-encoding (i.e. ids minted
-// before this scheme that carry no separator). It matches qrdb's reserved
-// "system" tenant so the routing KVStore resolves it to the shared store.
-const systemTenantID = "system"
+// before this scheme that carry no separator). It aliases the package's
+// canonical SystemTenantID (operator_sso.go), which in turn aliases qrdb's
+// reserved "system" tenant, so the routing KVStore resolves it to the shared
+// store and the two constants can never drift apart.
+const systemTenantID = SystemTenantID
 
 // encodeTenantID mints a tenant-encoded identifier of the form
 // "<tenantID><sep><raw>". When tenantID is empty the raw id is returned

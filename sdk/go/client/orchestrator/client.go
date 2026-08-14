@@ -33,6 +33,10 @@ type Client interface {
 	SpawnSession(ctx context.Context, req *SpawnSessionRequest) (*SpawnSessionResponse, error)
 
 	// PromptSession sends a prompt to an existing session.
+	// PromptSession sends a prompt to an agent session. The call returns as
+	// soon as the server has recorded and dispatched the turn; the agent's
+	// output arrives on the session event stream. See PromptSessionResponse
+	// for the two response shapes.
 	PromptSession(ctx context.Context, req *PromptSessionRequest) (*PromptSessionResponse, error)
 
 	// SessionStatus returns the status of a session.
@@ -43,6 +47,15 @@ type Client interface {
 
 	// ListSessions returns all active sessions.
 	ListSessions(ctx context.Context, req *ListSessionsRequest) (*ListSessionsResponse, error)
+
+	// RotateSessionAccount moves a session onto a different pooled provider
+	// account, keeping its identifier, transcript and cost history. The same
+	// verb runs automatically when a turn fails on a classified provider
+	// limit; this is the operator's door to it.
+	//
+	// Only a session spawned with AccountAuto or AccountAllow may rotate — a
+	// bare AccountID pin is honored and answered with a conflict.
+	RotateSessionAccount(ctx context.Context, req *RotateSessionAccountRequest) (*RotateSessionAccountResponse, error)
 
 	// CreateTask creates a new task.
 	CreateTask(ctx context.Context, req *CreateTaskRequest) (*Task, error)
@@ -241,6 +254,78 @@ type SpawnSessionRequest struct {
 	// platform tools). Serialized as mcp_servers; the server forwards each
 	// server's connection material to the spawned agent's environment.
 	MCPServers []MCPServerConfig `json:"mcp_servers,omitempty"`
+
+	// --- Pooled provider account selection (see sdk/go/client/account) -----
+
+	// AccountID pins the session to a specific pooled provider account.
+	// Leaving both AccountID and AccountAuto unset preserves the pre-account
+	// behavior: the backend authenticates however its CLI already does.
+	AccountID string `json:"account_id,omitempty"`
+
+	// AccountAuto requests strategy-based account selection when AccountID
+	// is empty. This is the only way to reach the dynamic (least-usage)
+	// strategy from outside the process.
+	AccountAuto bool `json:"account_auto,omitempty"`
+
+	// AccountStrategy names the selection strategy ("static",
+	// "least_usage"). Empty selects the registry default. Ignored unless
+	// AccountAuto is true.
+	AccountStrategy string `json:"account_strategy,omitempty"`
+
+	// AccountAllow optionally names the accounts this session may use and
+	// rotate through — "these three seats, nothing else". It is an additive
+	// filter, never a source: an ID the tenant does not own is simply not a
+	// candidate.
+	//
+	// Together with AccountAuto it is what authorizes rotation. A session with
+	// neither is treated as a deliberate pin and is never moved off its
+	// account, so a caller that wants RotateSessionAccount to work on a
+	// specific set of seats sets this.
+	AccountAllow []string `json:"account_allow,omitempty"`
+}
+
+// RotateSessionAccountRequest asks the server to move one session onto a
+// different pooled provider account.
+type RotateSessionAccountRequest struct {
+	// SessionID is the session to move. Required.
+	SessionID string `json:"session_id"`
+
+	// Reason is recorded on the closed account segment and in the session
+	// transcript. Optional.
+	Reason string `json:"reason,omitempty"`
+
+	// HoldOutgoing holds the account being left out of the pool until
+	// AvailableAt, so the next selection — for this session or any other —
+	// does not walk straight back into the seat that was just condemned. An
+	// operator rotating for a reason of their own (rebalancing, retiring a
+	// seat) leaves it false.
+	HoldOutgoing bool `json:"hold_outgoing,omitempty"`
+
+	// AvailableAt is when a held outgoing account rejoins the pool. Ignored
+	// unless HoldOutgoing is set; the zero time applies the server's default
+	// backoff.
+	AvailableAt time.Time `json:"available_at,omitempty"`
+}
+
+// RotateSessionAccountResponse reports the outcome of a rotation.
+type RotateSessionAccountResponse struct {
+	// SessionID is the session, unchanged — a rotation never renames one.
+	SessionID string `json:"session_id"`
+
+	// PreviousAccountID is the account the session was moved off.
+	PreviousAccountID string `json:"previous_account_id,omitempty"`
+
+	// AccountID is the replacement now in force.
+	AccountID string `json:"account_id"`
+
+	// Strategy names the policy that selected the replacement.
+	Strategy string `json:"strategy,omitempty"`
+
+	// Mode reports which mechanism moved the session: "in_place" swapped the
+	// stored credential configuration with no process restart and no replay;
+	// "resume" closed the agent process and reconstituted it against the
+	// replacement, replaying the transcript.
+	Mode string `json:"mode"`
 }
 
 // MCPServerConfig declares an MCP server made available to a spawned agent.
@@ -271,25 +356,50 @@ type PromptSessionRequest struct {
 
 // PromptSessionResponse is the response from prompting a session.
 //
-// PromptSession is a synchronous turn: the call blocks until the agent has
-// finished responding, so a returned response always describes a completed
-// turn and Done is true. Failures are reported as errors, never as a
-// zero-valued response. Build it with NewPromptSessionResponse so the
+// Prompting an existing session is asynchronous: the call returns as soon as
+// the server has recorded the turn and dispatched it, long before the agent
+// has finished. Such a response has Accepted true, Done false, an empty
+// Response, and a TurnID — the turn's output arrives on the session event
+// stream (SubscribeSessionEvents), and the turn ends when a turn_completed or
+// turn_failed event carrying the same TurnID appears there.
+//
+// Prompting a backend with no session is a stateless one-shot and stays
+// synchronous: Done is true and Response holds the whole turn.
+//
+// Failures are reported as errors, never as a zero-valued response. Build the
+// response with NewPromptSessionAccepted or NewPromptSessionResponse so the
 // flattening and completion rules stay in one place.
 type PromptSessionResponse struct {
 	// SessionID identifies the session that produced the turn.
 	SessionID string `json:"session_id"`
 
-	// Response is the concatenated text of the turn's content blocks.
+	// Response is the concatenated text of the turn's content blocks. Empty
+	// for an accepted asynchronous turn, which has produced no output yet.
 	Response string `json:"response"`
 
-	// Done reports that the agent's turn completed.
+	// Done reports that the agent's turn completed. Never true for an
+	// accepted asynchronous turn; observe its terminal state on the session
+	// event stream instead.
 	Done bool `json:"done"`
+
+	// Accepted reports that the server took the turn for background
+	// execution. Mutually exclusive with Done.
+	Accepted bool `json:"accepted,omitempty"`
+
+	// TurnID correlates an accepted turn with its turn_started event and with
+	// the turn_completed / turn_failed event that closes it.
+	TurnID string `json:"turn_id,omitempty"`
+
+	// Sequence is the session-log sequence of the accepted turn's
+	// turn_started event. Pass it as SubscribeSessionEventsRequest.FromSequence
+	// to receive the whole turn with no gap and no duplicates.
+	Sequence uint64 `json:"sequence,omitempty"`
 
 	// Model is the model that produced the turn, when the backend reports it.
 	Model string `json:"model,omitempty"`
 
 	// StopReason is why the agent stopped ("end_turn", "max_tokens", ...).
+	// Empty for an accepted turn, which has not stopped yet.
 	StopReason string `json:"stop_reason,omitempty"`
 }
 
@@ -874,6 +984,33 @@ func (c *client) CloseSession(ctx context.Context, req *CloseSessionRequest) (*C
 	result, ok := resp.(*CloseSessionResponse)
 	if !ok {
 		return nil, errors.NewInternal("orchestrator.CloseSession", "invalid response type")
+	}
+
+	return result, nil
+}
+
+// RotateSessionAccount moves a session onto a different pooled provider account.
+func (c *client) RotateSessionAccount(ctx context.Context, req *RotateSessionAccountRequest) (*RotateSessionAccountResponse, error) {
+	if err := validateRotateSessionAccountRequest(req); err != nil {
+		return nil, err
+	}
+
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.RotateSessionAccount", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "RotateSessionAccount", req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("orchestrator.RotateSessionAccount", "nil response from server")
+	}
+
+	result, ok := resp.(*RotateSessionAccountResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.RotateSessionAccount", "invalid response type")
 	}
 
 	return result, nil
@@ -1618,6 +1755,16 @@ func validateCloseSessionRequest(req *CloseSessionRequest) error {
 	}
 	if req.SessionID == "" {
 		return errors.NewInvalidInput("orchestrator.CloseSession", "session ID is required")
+	}
+	return nil
+}
+
+func validateRotateSessionAccountRequest(req *RotateSessionAccountRequest) error {
+	if req == nil {
+		return errors.NewInvalidInput("orchestrator.RotateSessionAccount", "request is required")
+	}
+	if req.SessionID == "" {
+		return errors.NewInvalidInput("orchestrator.RotateSessionAccount", "session ID is required")
 	}
 	return nil
 }

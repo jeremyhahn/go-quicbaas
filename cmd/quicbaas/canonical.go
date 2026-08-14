@@ -134,7 +134,7 @@ func augmentCanonicalAuthCmd(parent *cobra.Command) {
 		parent.AddCommand(factor)
 	}
 	// Replace the legacy "auth login" stub with the canonical
-	// Security().Auth().Factors().Login() wired version. The legacy
+	// Security().Auth().BeginLogin/FinishLogin wired version. The legacy
 	// command is rebound under "login-info" so its help text remains
 	// reachable.
 	if legacy, ok := existing["login"]; ok {

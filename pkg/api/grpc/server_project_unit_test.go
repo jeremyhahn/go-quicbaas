@@ -41,6 +41,13 @@ type grpcMockProjectService struct {
 	updateFunc func(context.Context, *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error)
 	deleteFunc func(context.Context, *service.DeleteProjectRequest) (*service.DeleteProjectResponse, error)
 	listFunc   func(context.Context, *service.ListProjectsRequest) (*service.ListProjectsResponse, error)
+	grantFunc  func(context.Context, *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error)
+	revokeFunc func(context.Context, *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error)
+
+	// roles is the mock's agent role map. The default grant/revoke behaviour
+	// mutates a single entry, mirroring the real service, so tests can prove
+	// the other entries survive.
+	roles map[string]orchestration.ProjectRole
 }
 
 func sampleProject() *orchestration.Project {
@@ -102,12 +109,35 @@ func (m *grpcMockProjectService) AuthorizeAgent(context.Context, *service.Author
 	return nil
 }
 
-func (m *grpcMockProjectService) GrantAgentRole(context.Context, *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
-	return &service.GrantAgentRoleResponse{}, nil
+func (m *grpcMockProjectService) GrantAgentRole(ctx context.Context, req *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
+	if m.grantFunc != nil {
+		return m.grantFunc(ctx, req)
+	}
+	if m.roles == nil {
+		m.roles = make(map[string]orchestration.ProjectRole)
+	}
+	m.roles[req.AgentID] = req.Role
+	return &service.GrantAgentRoleResponse{
+		ProjectID: req.ProjectID,
+		AgentID:   req.AgentID,
+		Role:      req.Role,
+		Timestamp: time.Now(),
+	}, nil
 }
 
-func (m *grpcMockProjectService) RevokeAgentRole(context.Context, *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error) {
-	return &service.RevokeAgentRoleResponse{}, nil
+func (m *grpcMockProjectService) RevokeAgentRole(ctx context.Context, req *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error) {
+	if m.revokeFunc != nil {
+		return m.revokeFunc(ctx, req)
+	}
+	if m.roles == nil {
+		m.roles = make(map[string]orchestration.ProjectRole)
+	}
+	m.roles[req.AgentID] = orchestration.ProjectRoleDenied
+	return &service.RevokeAgentRoleResponse{
+		ProjectID: req.ProjectID,
+		AgentID:   req.AgentID,
+		Timestamp: time.Now(),
+	}, nil
 }
 
 func newProjectServer(t *testing.T, svc service.ProjectService) *ProjectServer {
@@ -215,6 +245,34 @@ func TestProjectServer_ValidationErrors(t *testing.T) {
 			_, err := srv.ListProjects(ctx, &pb.ListProjectsRequest{})
 			return err
 		}},
+		{"grant-no-tenant", func() error {
+			_, err := srv.GrantAgentRole(ctx, &pb.GrantAgentRoleRequest{ProjectId: "p", AgentId: "a", Role: "lead"})
+			return err
+		}},
+		{"grant-no-project", func() error {
+			_, err := srv.GrantAgentRole(ctx, &pb.GrantAgentRoleRequest{TenantId: "t", AgentId: "a", Role: "lead"})
+			return err
+		}},
+		{"grant-no-agent", func() error {
+			_, err := srv.GrantAgentRole(ctx, &pb.GrantAgentRoleRequest{TenantId: "t", ProjectId: "p", Role: "lead"})
+			return err
+		}},
+		{"grant-no-role", func() error {
+			_, err := srv.GrantAgentRole(ctx, &pb.GrantAgentRoleRequest{TenantId: "t", ProjectId: "p", AgentId: "a"})
+			return err
+		}},
+		{"revoke-no-tenant", func() error {
+			_, err := srv.RevokeAgentRole(ctx, &pb.RevokeAgentRoleRequest{ProjectId: "p", AgentId: "a"})
+			return err
+		}},
+		{"revoke-no-project", func() error {
+			_, err := srv.RevokeAgentRole(ctx, &pb.RevokeAgentRoleRequest{TenantId: "t", AgentId: "a"})
+			return err
+		}},
+		{"revoke-no-agent", func() error {
+			_, err := srv.RevokeAgentRole(ctx, &pb.RevokeAgentRoleRequest{TenantId: "t", ProjectId: "p"})
+			return err
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -290,6 +348,150 @@ func TestProjectServer_ServiceErrorMapping(t *testing.T) {
 		})
 		_, err := srv.GetProjectByName(ctx, &pb.GetProjectByNameRequest{TenantId: "t", Name: "demo"})
 		assert.Equal(t, codes.NotFound, status.Code(err))
+	})
+}
+
+// =============================================================================
+// Agent role membership
+// =============================================================================
+
+// TestProjectServer_GrantAgentRole asserts the RPC threads every field into the
+// service request and converts the response back faithfully.
+func TestProjectServer_GrantAgentRole(t *testing.T) {
+	var seen *service.GrantAgentRoleRequest
+	stamp := time.Unix(1_700_003_600, 0).UTC()
+	srv := newProjectServer(t, &grpcMockProjectService{
+		grantFunc: func(_ context.Context, req *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
+			seen = req
+			return &service.GrantAgentRoleResponse{
+				ProjectID: req.ProjectID,
+				AgentID:   req.AgentID,
+				Role:      req.Role,
+				Timestamp: stamp,
+			}, nil
+		},
+	})
+
+	resp, err := srv.GrantAgentRole(context.Background(), &pb.GrantAgentRoleRequest{
+		TenantId: "tenant-1", ProjectId: "proj-1", AgentId: "agent-3", Role: "worker",
+	})
+	require.NoError(t, err)
+
+	require.NotNil(t, seen)
+	assert.Equal(t, "tenant-1", seen.TenantID)
+	assert.Equal(t, "proj-1", seen.ProjectID)
+	assert.Equal(t, "agent-3", seen.AgentID)
+	assert.Equal(t, orchestration.ProjectRole("worker"), seen.Role)
+
+	assert.Equal(t, "proj-1", resp.ProjectId)
+	assert.Equal(t, "agent-3", resp.AgentId)
+	assert.Equal(t, "worker", resp.Role)
+	assert.Equal(t, stamp.Unix(), resp.Timestamp)
+}
+
+// TestProjectServer_GrantAgentRole_PreservesOtherAgents is the regression for
+// the data-loss scenario the dedicated RPC exists to prevent. Routing the grant
+// through UpdateProject would send a single-entry agent_roles map, and the
+// service REPLACES the whole map from that field — wiping every other agent.
+// The grant path must instead mutate exactly one entry.
+func TestProjectServer_GrantAgentRole_PreservesOtherAgents(t *testing.T) {
+	var updateCalls int
+	mock := &grpcMockProjectService{
+		roles: map[string]orchestration.ProjectRole{
+			"agent-1": orchestration.ProjectRole("lead"),
+			"agent-2": orchestration.ProjectRole("observer"),
+		},
+		updateFunc: func(context.Context, *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error) {
+			updateCalls++
+			return &service.UpdateProjectResponse{Project: sampleProject(), Timestamp: time.Now()}, nil
+		},
+	}
+	srv := newProjectServer(t, mock)
+
+	_, err := srv.GrantAgentRole(context.Background(), &pb.GrantAgentRoleRequest{
+		TenantId: "tenant-1", ProjectId: "proj-1", AgentId: "agent-3", Role: "worker",
+	})
+	require.NoError(t, err)
+
+	assert.Zero(t, updateCalls, "grant must not be emulated through UpdateProject")
+	assert.Equal(t, map[string]orchestration.ProjectRole{
+		"agent-1": orchestration.ProjectRole("lead"),
+		"agent-2": orchestration.ProjectRole("observer"),
+		"agent-3": orchestration.ProjectRole("worker"),
+	}, mock.roles)
+}
+
+// TestProjectServer_RevokeAgentRole asserts field threading, the response
+// conversion, and that only the named agent is denied.
+func TestProjectServer_RevokeAgentRole(t *testing.T) {
+	mock := &grpcMockProjectService{
+		roles: map[string]orchestration.ProjectRole{
+			"agent-1": orchestration.ProjectRole("lead"),
+			"agent-2": orchestration.ProjectRole("observer"),
+		},
+	}
+	srv := newProjectServer(t, mock)
+
+	resp, err := srv.RevokeAgentRole(context.Background(), &pb.RevokeAgentRoleRequest{
+		TenantId: "tenant-1", ProjectId: "proj-1", AgentId: "agent-2",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "proj-1", resp.ProjectId)
+	assert.Equal(t, "agent-2", resp.AgentId)
+	assert.NotZero(t, resp.Timestamp)
+
+	assert.Equal(t, orchestration.ProjectRole("lead"), mock.roles["agent-1"],
+		"revoking agent-2 must not disturb agent-1")
+	assert.Equal(t, orchestration.ProjectRoleDenied, mock.roles["agent-2"])
+}
+
+// TestProjectServer_AgentRoleErrorMapping covers the service-error path for both
+// membership verbs.
+func TestProjectServer_AgentRoleErrorMapping(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("grant-not-found", func(t *testing.T) {
+		srv := newProjectServer(t, &grpcMockProjectService{
+			grantFunc: func(context.Context, *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
+				return nil, &service.ProjectNotFoundError{TenantID: "t", ProjectID: "p"}
+			},
+		})
+		_, err := srv.GrantAgentRole(ctx, &pb.GrantAgentRoleRequest{
+			TenantId: "t", ProjectId: "p", AgentId: "a", Role: "lead",
+		})
+		assert.Equal(t, codes.NotFound, status.Code(err))
+	})
+
+	t.Run("grant-internal", func(t *testing.T) {
+		srv := newProjectServer(t, &grpcMockProjectService{
+			grantFunc: func(context.Context, *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
+				return nil, errors.New("db down")
+			},
+		})
+		_, err := srv.GrantAgentRole(ctx, &pb.GrantAgentRoleRequest{
+			TenantId: "t", ProjectId: "p", AgentId: "a", Role: "lead",
+		})
+		assert.Equal(t, codes.Internal, status.Code(err))
+	})
+
+	t.Run("revoke-not-found", func(t *testing.T) {
+		srv := newProjectServer(t, &grpcMockProjectService{
+			revokeFunc: func(context.Context, *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error) {
+				return nil, &service.ProjectNotFoundError{TenantID: "t", ProjectID: "p"}
+			},
+		})
+		_, err := srv.RevokeAgentRole(ctx, &pb.RevokeAgentRoleRequest{TenantId: "t", ProjectId: "p", AgentId: "a"})
+		assert.Equal(t, codes.NotFound, status.Code(err))
+	})
+
+	t.Run("revoke-invalid", func(t *testing.T) {
+		srv := newProjectServer(t, &grpcMockProjectService{
+			revokeFunc: func(context.Context, *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error) {
+				return nil, &service.ProjectInvalidError{Field: "agent_id", Message: "bad"}
+			},
+		})
+		_, err := srv.RevokeAgentRole(ctx, &pb.RevokeAgentRoleRequest{TenantId: "t", ProjectId: "p", AgentId: "a"})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	})
 }
 

@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -370,10 +369,7 @@ func createPersistentTestLogger(t *testing.T) *logger.Logger {
 func TestNewPersistentAuthManager(t *testing.T) {
 	// Valid test case
 	t.Run("valid config with defaults", func(t *testing.T) {
-		config := &AuthConfig{
-			Enabled:   true,
-			JWTSecret: "test-secret-key",
-		}
+		config := newTestAuthConfig(t)
 		storage := newAuthMockStorage()
 		log := createPersistentTestLogger(t)
 
@@ -397,10 +393,7 @@ func TestNewPersistentAuthManager(t *testing.T) {
 	})
 
 	t.Run("nil storage", func(t *testing.T) {
-		config := &AuthConfig{
-			Enabled:   true,
-			JWTSecret: "test-secret-key",
-		}
+		config := newTestAuthConfig(t)
 		log := createPersistentTestLogger(t)
 
 		pam, err := NewPersistentAuthManager(config, nil, log)
@@ -410,10 +403,7 @@ func TestNewPersistentAuthManager(t *testing.T) {
 	})
 
 	t.Run("nil logger", func(t *testing.T) {
-		config := &AuthConfig{
-			Enabled:   true,
-			JWTSecret: "test-secret-key",
-		}
+		config := newTestAuthConfig(t)
 		storage := newAuthMockStorage()
 
 		pam, err := NewPersistentAuthManager(config, storage, nil)
@@ -422,10 +412,9 @@ func TestNewPersistentAuthManager(t *testing.T) {
 		assert.Contains(t, err.Error(), "logger cannot be nil")
 	})
 
-	t.Run("missing JWT secret when enabled", func(t *testing.T) {
+	t.Run("missing JWT signing key ID when enabled", func(t *testing.T) {
 		config := &AuthConfig{
-			Enabled:   true,
-			JWTSecret: "",
+			Enabled: true,
 		}
 		storage := newAuthMockStorage()
 		log := createPersistentTestLogger(t)
@@ -433,7 +422,7 @@ func TestNewPersistentAuthManager(t *testing.T) {
 		pam, err := NewPersistentAuthManager(config, storage, log)
 		assert.Error(t, err)
 		assert.Nil(t, pam)
-		assert.Contains(t, err.Error(), "JWT secret or signing key ID is required")
+		assert.Contains(t, err.Error(), "JWT signing key ID is required")
 	})
 
 	t.Run("auth disabled", func(t *testing.T) {
@@ -474,11 +463,7 @@ func TestPersistentAuthorizeDisabled(t *testing.T) {
 // TestPersistentRevokeToken tests the RevokeToken method.
 func TestPersistentRevokeToken(t *testing.T) {
 	log := createPersistentTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-		TokenTTL:  1 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
@@ -512,10 +497,7 @@ func TestPersistentRevokeToken(t *testing.T) {
 // TestPersistentCreateUser tests the CreateUser method.
 func TestPersistentCreateUser(t *testing.T) {
 	log := createPersistentTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
@@ -567,10 +549,7 @@ func TestPersistentCreateUser(t *testing.T) {
 // TestPersistentDeleteUser tests the DeleteUser method.
 func TestPersistentDeleteUser(t *testing.T) {
 	log := createPersistentTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
@@ -590,10 +569,7 @@ func TestPersistentDeleteUser(t *testing.T) {
 // TestPersistentUpdateUserRoles tests the UpdateUserRoles method.
 func TestPersistentUpdateUserRoles(t *testing.T) {
 	log := createPersistentTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
@@ -614,10 +590,7 @@ func TestPersistentUpdateUserRoles(t *testing.T) {
 // TestPersistentClose tests the Close method.
 func TestPersistentClose(t *testing.T) {
 	log := createPersistentTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
@@ -630,10 +603,7 @@ func TestPersistentClose(t *testing.T) {
 // TestPersistentGetters tests the getter methods.
 func TestPersistentGetters(t *testing.T) {
 	log := createPersistentTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
@@ -650,11 +620,7 @@ func TestPersistentGetters(t *testing.T) {
 // TestPersistentConcurrentAccess tests concurrent access.
 func TestPersistentConcurrentAccess(t *testing.T) {
 	log := createPersistentTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-		TokenTTL:  1 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)

@@ -111,8 +111,8 @@ func (m *AgentHealthMonitor) Stop() error {
 }
 
 // CheckAll performs a health check on all active sessions. Sessions in the
-// "active" or "idle" state are checked for liveness. Sessions that return
-// an error or are in "error"/"closed" state are marked unhealthy.
+// "active", "idle" or "resumable" state are checked for liveness. Sessions that
+// return an error or are in "error"/"closed" state are marked unhealthy.
 func (m *AgentHealthMonitor) CheckAll(ctx context.Context) *HealthCheckReport {
 	checkCtx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
@@ -175,8 +175,7 @@ func (m *AgentHealthMonitor) CheckSession(ctx context.Context, sessionID string)
 		}, nil
 	}
 
-	healthy := statusResp.State == SessionStateActive ||
-		statusResp.State == SessionStateIdle
+	healthy := isHealthySessionState(statusResp.State)
 
 	return &SessionHealthResult{
 		SessionID: sessionID,
@@ -228,8 +227,7 @@ func (m *AgentHealthMonitor) checkSingleSession(ctx context.Context, session *Se
 	}
 
 	result.State = statusResp.State
-	result.Healthy = statusResp.State == SessionStateActive ||
-		statusResp.State == SessionStateIdle
+	result.Healthy = isHealthySessionState(statusResp.State)
 
 	if !result.Healthy {
 		m.logger.Warnf("agent health check: session %s in state %q",
@@ -237,4 +235,20 @@ func (m *AgentHealthMonitor) checkSingleSession(ctx context.Context, session *Se
 	}
 
 	return result
+}
+
+// isHealthySessionState reports whether a session state describes a session
+// that can still serve a turn.
+//
+// A resumable session counts as healthy: nothing about it is broken. Its agent
+// process is gone because the daemon restarted, and the next prompt recreates
+// it — reporting that as a fault would raise an alert for every session on
+// every restart.
+func isHealthySessionState(state SessionState) bool {
+	switch state {
+	case SessionStateActive, SessionStateIdle, SessionStateResumable:
+		return true
+	default:
+		return false
+	}
 }

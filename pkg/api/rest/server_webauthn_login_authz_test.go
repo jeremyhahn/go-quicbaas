@@ -22,38 +22,36 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
 // =============================================================================
-// Router-level pre-auth contract for the tenant-scoped WebAuthn LOGIN ceremony.
+// Router-level pre-auth contract for the login ceremonies.
 //
-// Regression guard for the production outage where the root-mounted
-// /api/v1/tenants group gained useAPIAuthzMiddleware (the tenant-barrier
-// middleware-layering fix) and thereby demanded a bearer token on
-// POST /api/v1/tenants/{tenant}/webauthn/login/begin — the very call a browser
-// makes BEFORE it holds any token. Browser sign-in became impossible.
+// Regression guard for the production outage class where an authz
+// middleware-layering change demanded a bearer token on a login-begin route —
+// the very call a browser makes BEFORE it holds any token — making sign-in
+// impossible.
 //
 // Contract (identical under BOTH enforcement postures):
 //
-//	login/begin  + login/finish, no token  -> admitted (reaches the handler)
-//	register/begin, register/finish, no token -> 401 (still gated)
-//	every other tenant route, no token     -> 401 (still gated)
+//	/api/v1/auth/login/{begin,finish}, no token          -> admitted
+//	/api/v1/iam/{t}/webauthn/login/{begin,finish}, no token -> admitted
+//	webauthn registration routes, no token               -> 401 (still gated)
+//	every other tenant route, no token                   -> 401 (still gated)
 //
 // The tests drive the REAL router built by setupRouter: a predicate unit test
 // cannot catch a routing/middleware-layering hole.
 // =============================================================================
 
-// preAuthLoginPaths are the login-ceremony routes on the legacy
-// /api/v1/tenants mount — the surface the TypeScript SDK and the SPA login
-// view call, and the one the production outage broke. This mount is always
+// preAuthLoginPaths are the unified login-ceremony routes — the surface the
+// TypeScript SDK and the SPA login view call. This mount is always
 // registered, so an admitted request must reach its handler.
 var preAuthLoginPaths = []string{
-	"/api/v1/tenants/system/webauthn/login/begin",
-	"/api/v1/tenants/system/webauthn/login/finish",
+	"/api/v1/auth/login/begin",
+	"/api/v1/auth/login/finish",
 }
 
 // canonicalXKMSLoginPaths are the same ceremony on the canonical xkms-native
@@ -67,16 +65,12 @@ var canonicalXKMSLoginPaths = []string{
 	"/api/v1/iam/system/webauthn/login/finish",
 }
 
-// gatedTenantSiblingPaths are sibling routes under the SAME chi groups that must
-// remain gated. register/{begin,finish} enroll a NEW authenticator against a
-// caller-supplied user_id, so a public mount would be an account-takeover
-// primitive; the remaining entries are ordinary tenant administration.
+// gatedTenantSiblingPaths are tenant-administration routes that must remain
+// gated: no login-ceremony exemption may widen onto them.
 var gatedTenantSiblingPaths = []struct {
 	method string
 	path   string
 }{
-	{http.MethodPost, "/api/v1/tenants/system/webauthn/register/begin"},
-	{http.MethodPost, "/api/v1/tenants/system/webauthn/register/finish"},
 	{http.MethodGet, "/api/v1/tenants/system/users"},
 	{http.MethodGet, "/api/v1/tenants"},
 	{http.MethodGet, "/api/v1/tenants/system/barrier/status"},
@@ -169,40 +163,6 @@ func TestRouter_WebAuthnLogin_PreAuthUnderValidatorEnforcement(t *testing.T) {
 	}
 }
 
-// TestRouter_WebAuthnRegister_StillAuthorizedWithToken proves the enrollment
-// sibling is not merely 401-on-missing-header but genuinely flows through the
-// validator gate with the tenant-surface permission when a token IS presented.
-func TestRouter_WebAuthnRegister_StillAuthorizedWithToken(t *testing.T) {
-	authorizer := &recordingValidatorAuthorizer{
-		ret: &platformtoken.AuthorizedContext{Subject: "admin", TenantID: "system"},
-	}
-	s, _ := newTestServer(t)
-	s.SetValidatorAuthzEnforcement(authorizer)
-
-	rr := serveWebAuthn(s, http.MethodPost,
-		"/api/v1/tenants/system/webauthn/register/begin", "tok")
-
-	require.True(t, authorizer.called, "validator must gate the enrollment route")
-	assert.Equal(t, "tenants:create", authorizer.gotPerm)
-	assert.NotEqual(t, http.StatusUnauthorized, rr.Code)
-}
-
-// TestRouter_WebAuthnRegister_ScopeDeniedForbidden pins the deny half of the
-// enrollment route's gate: a token without the required scope is 403, never
-// silently admitted.
-func TestRouter_WebAuthnRegister_ScopeDeniedForbidden(t *testing.T) {
-	authorizer := &recordingValidatorAuthorizer{
-		retErr: &platformtoken.ScopeDeniedError{Required: "tenants:create"},
-	}
-	s, _ := newTestServer(t)
-	s.SetValidatorAuthzEnforcement(authorizer)
-
-	rr := serveWebAuthn(s, http.MethodPost,
-		"/api/v1/tenants/system/webauthn/register/begin", "tok")
-
-	assert.Equal(t, http.StatusForbidden, rr.Code)
-}
-
 // --- Default-deny enforcement -------------------------------------------------
 
 // newDefaultDenyRouterServer builds a real REST server under the default-deny
@@ -258,9 +218,9 @@ func TestRouter_WebAuthnLogin_PreAuthIgnoresBadToken(t *testing.T) {
 	s := newDefaultDenyRouterServer(t)
 
 	rr := serveWebAuthn(s, http.MethodPost,
-		"/api/v1/tenants/system/webauthn/login/begin", "garbage")
+		"/api/v1/auth/login/begin", "garbage")
 
-	assertReachedHandler(t, rr, "/api/v1/tenants/system/webauthn/login/begin")
+	assertReachedHandler(t, rr, "/api/v1/auth/login/begin")
 }
 
 // --- Sealed-window semantics --------------------------------------------------
@@ -278,9 +238,9 @@ func TestRouter_WebAuthnLogin_SealedWindowUnaffected(t *testing.T) {
 	}
 	s, _ := newTestServer(t)
 	s.SetValidatorAuthzEnforcement(authorizer)
-	s.SetSealedWindowGate(probe, sealedwindow.RESTAllowlist())
+	s.SetSealedWindowGate(probe, &restCeremonyStateProbe{}, sealedwindow.RESTAllowlist())
 
-	const path = "/api/v1/tenants/system/webauthn/login/begin"
+	const path = "/api/v1/auth/login/begin"
 
 	rr := serveWebAuthn(s, http.MethodPost, path, "")
 	assert.Equal(t, http.StatusServiceUnavailable, rr.Code,
@@ -301,33 +261,32 @@ func TestPreAuthRoutePredicates(t *testing.T) {
 		path string
 		want bool
 	}{
-		// Legacy tenant mount.
-		{"tenants login begin", "/api/v1/tenants/system/webauthn/login/begin", true},
-		{"tenants login finish", "/api/v1/tenants/system/webauthn/login/finish", true},
-		{"tenants login begin other tenant", "/api/v1/tenants/acme-corp/webauthn/login/begin", true},
-		{"tenants login begin trailing slash", "/api/v1/tenants/system/webauthn/login/begin/", true},
 		// Canonical xkms mount.
 		{"iam login begin", "/api/v1/iam/system/webauthn/login/begin", true},
 		{"iam login finish", "/api/v1/iam/system/webauthn/login/finish", true},
+		{"iam login begin other tenant", "/api/v1/iam/acme-corp/webauthn/login/begin", true},
+		{"iam login begin trailing slash", "/api/v1/iam/system/webauthn/login/begin/", true},
 
-		// Enrollment ceremonies stay gated on both mounts.
-		{"tenants register begin gated", "/api/v1/tenants/system/webauthn/register/begin", false},
-		{"tenants register finish gated", "/api/v1/tenants/system/webauthn/register/finish", false},
+		// The deleted legacy tenant mount must NOT be pre-auth exempt.
+		{"legacy tenants login begin gone", "/api/v1/tenants/system/webauthn/login/begin", false},
+		{"legacy tenants login finish gone", "/api/v1/tenants/system/webauthn/login/finish", false},
+
+		// Enrollment ceremonies stay gated.
 		{"iam registration begin gated", "/api/v1/iam/system/webauthn/registration/begin", false},
 		{"iam registration status gated", "/api/v1/iam/system/webauthn/registration/status", false},
 
 		// No prefix widening in either direction.
-		{"parent webauthn group gated", "/api/v1/tenants/system/webauthn", false},
-		{"parent login group gated", "/api/v1/tenants/system/webauthn/login", false},
-		{"deeper path gated", "/api/v1/tenants/system/webauthn/login/begin/extra", false},
+		{"parent webauthn group gated", "/api/v1/iam/system/webauthn", false},
+		{"parent login group gated", "/api/v1/iam/system/webauthn/login", false},
+		{"deeper path gated", "/api/v1/iam/system/webauthn/login/begin/extra", false},
 		{"tenant admin gated", "/api/v1/tenants/system/users", false},
 		{"tenant barrier gated", "/api/v1/tenants/system/barrier/unseal", false},
 
 		// Malformed paths never match.
-		{"empty tenant segment", "/api/v1/tenants//webauthn/login/begin", false},
-		{"missing tenant segment", "/api/v1/tenants/webauthn/login/begin", false},
-		{"relative path", "api/v1/tenants/system/webauthn/login/begin", false},
-		{"double leading slash", "//api/v1/tenants/system/webauthn/login/begin", false},
+		{"empty tenant segment", "/api/v1/iam//webauthn/login/begin", false},
+		{"missing tenant segment", "/api/v1/iam/webauthn/login/begin", false},
+		{"relative path", "api/v1/iam/system/webauthn/login/begin", false},
+		{"double leading slash", "//api/v1/iam/system/webauthn/login/begin", false},
 		{"root", "/", false},
 		{"empty", "", false},
 		{"wrong group", "/api/v1/projects/system/webauthn/login/begin", false},

@@ -742,7 +742,7 @@ func TestServiceLeaseToProto(t *testing.T) {
 		result := serviceLeaseToProto(l)
 		require.NotNil(t, result)
 		assert.Equal(t, "lease-123", result.LeaseId)
-		assert.Equal(t, "postgres/creds/readonly", result.RoleName)
+		assert.Equal(t, "postgres/creds/readonly", result.SecretPath)
 		assert.Equal(t, pb.LeaseState_LEASE_STATE_ACTIVE, result.State)
 		assert.True(t, result.Renewable)
 	})

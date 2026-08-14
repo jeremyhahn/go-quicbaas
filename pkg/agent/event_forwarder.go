@@ -161,7 +161,7 @@ func (f *EventForwarder) Stop(ctx context.Context) error {
 }
 
 // ObserveEvent enqueues one event for forwarding. Called from the
-// Runtime's AgentEventCallback hook. Assigns the event its per-session
+// Runtime's SessionEventCallback hook. Assigns the event its per-session
 // sequence number at enqueue time so ordering reflects the order events
 // were observed, not delivered.
 //
@@ -196,41 +196,21 @@ func (f *EventForwarder) ObserveEvent(event *orchestration.SessionEvent) {
 	}
 }
 
-// CallbackFor returns an AgentEventCallback closure the runtime can install
-// on each Spawn. The callback translates the backend's ad-hoc event model
-// (sessionID, eventType, details) into structured SessionEvents — producing
-// one AssistantChunk per assistant event, one ToolInvocation per tool
-// event, etc. Unknown event types become SystemMessage events.
-func (f *EventForwarder) CallbackFor(tenantID, backend string) orchestration.AgentEventCallback {
-	return func(sessionID, eventType, details string) {
-		ev := &orchestration.SessionEvent{
-			SessionID: sessionID,
-			TenantID:  tenantID,
-			Source:    "agent:" + backend,
-			Timestamp: time.Now().UTC(),
+// CallbackFor returns a SessionEventCallback closure the runtime can install
+// on each Prompt. Backends emit structured SessionEvents with SessionID,
+// Kind, and payload populated; the callback stamps the daemon-known tenant
+// and source (when the backend left them empty) and enqueues the event for
+// forwarding to the control plane's session log.
+func (f *EventForwarder) CallbackFor(tenantID, backend string) orchestration.SessionEventCallback {
+	return func(ev *orchestration.SessionEvent) {
+		if ev == nil {
+			return
 		}
-		switch eventType {
-		case "prompt":
-			ev.Kind = orchestration.KindPromptSubmitted
-			ev.Prompt = &orchestration.PromptSubmittedPayload{Prompt: details}
-		case "assistant", "assistant_chunk":
-			ev.Kind = orchestration.KindAssistantChunk
-			ev.AssistantChunk = &orchestration.AssistantChunkPayload{Text: details}
-		case "tool", "tool_call":
-			ev.Kind = orchestration.KindToolInvocation
-			ev.ToolInvocation = &orchestration.ToolInvocationPayload{
-				Name: details,
-			}
-		case "tool_result":
-			ev.Kind = orchestration.KindToolResult
-			ev.ToolResult = &orchestration.ToolResultPayload{Content: details}
-		default:
-			ev.Kind = orchestration.KindSystemMessage
-			ev.System = &orchestration.SystemMessagePayload{
-				Level:   "info",
-				Message: details,
-				Code:    eventType,
-			}
+		if ev.TenantID == "" {
+			ev.TenantID = tenantID
+		}
+		if ev.Source == "" {
+			ev.Source = "agent:" + backend
 		}
 		f.ObserveEvent(ev)
 	}

@@ -948,3 +948,14 @@ func TestBuildValidationPrompt_NilArtifactSkipped(t *testing.T) {
 		t.Fatal("expected nil artifact 1 to be skipped")
 	}
 }
+
+// PromptSessionAsync mirrors the production contract: the turn is acknowledged
+// immediately and its output would flow to the session event log.
+func (m *mockAgentServiceForValidator) PromptSessionAsync(ctx context.Context, req *PromptSessionRequest) (*PromptTurnAck, error) {
+	return &PromptTurnAck{
+		SessionID: req.SessionID,
+		TurnID:    "turn-test",
+		Status:    TurnStatusAccepted,
+		Sequence:  1,
+	}, nil
+}

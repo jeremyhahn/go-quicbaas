@@ -16,24 +16,20 @@ package iam
 import (
 	"context"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // SystemTenantID is the reserved control-plane tenant that hosts operator
-// identities. It mirrors qrdb's reserved "system" tenant and is prefix-isolated
-// (it lives in the shared/system store, NOT a per-tenant barrier), so it is
-// readable before any tenant barrier unseals. Operator SSO providers (e.g. an
-// Okta or generic OIDC IdP for staff/operators) are registered against this
-// tenant; a federated callback for it mints a quicbaas bearer for the operator
-// through the standard broker token path.
-const SystemTenantID = systemTenantID
-
-// IsSystemTenant reports whether tenantID is the reserved control-plane/system
-// tenant. Operator SSO is the only intended use of federation against this
-// tenant; all other tenants federate their own data-plane users.
-func IsSystemTenant(tenantID string) bool {
-	return tenantID == SystemTenantID
-}
+// identities. It aliases qrdb's canonical tenant.SystemTenantID directly
+// (rather than duplicating the "system" literal) so the two constants can
+// never drift. It is prefix-isolated (it lives in the shared/system store,
+// NOT a per-tenant barrier), so it is readable before any tenant barrier
+// unseals. Operator SSO providers (e.g. an Okta or generic OIDC IdP for
+// staff/operators) are registered against this tenant; a federated callback
+// for it mints a quicbaas bearer for the operator through the standard
+// broker token path.
+const SystemTenantID = qrdbsdk.SystemTenantID
 
 // BootstrapNotReadyError indicates an operator-SSO provider was registered for
 // the system tenant before the bootstrap admin existed. This protects the

@@ -80,6 +80,11 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 		return nil, api.NewConfigUnmarshalError("config.Loader.Load", err)
 	}
 
+	// TLS is required for EVERYTHING: no config file or environment value
+	// may disable it. The mapstructure binding for security.tls_enabled was
+	// removed; this line is defence in depth for any future decoding path.
+	cfg.Security.TLSEnabled = true
+
 	// Apply environment variable overrides for fields that may not be in the config file
 	// but have environment variables set. Viper's AutomaticEnv only works during Get()
 	// calls, not during Unmarshal for keys not in the config file.
@@ -100,6 +105,11 @@ func (l *Loader) applyEnvironmentOverrides(cfg *Config) {
 	// Server mode override
 	if val := os.Getenv("QUICBAAS_SERVER_MODE"); val != "" {
 		cfg.Server.Mode = val
+	}
+
+	// Sealed-window bind host override (pre-unseal ceremony/unseal listeners)
+	if val := os.Getenv("QUICBAAS_SERVER_SEALED_BIND_HOST"); val != "" {
+		cfg.Server.SealedBindHost = val
 	}
 
 	// Server GRPC configuration
@@ -150,10 +160,9 @@ func (l *Loader) applyEnvironmentOverrides(cfg *Config) {
 		cfg.Server.Unix.Socket = val
 	}
 
-	// Security configuration
-	if val := os.Getenv("QUICBAAS_SECURITY_TLS_ENABLED"); val != "" {
-		cfg.Security.TLSEnabled = parseBool(val)
-	}
+	// Security configuration. There is deliberately NO override for
+	// security.tls_enabled: TLS is required for everything and cannot be
+	// disabled through configuration.
 	if val := os.Getenv("QUICBAAS_SECURITY_TLS_CLIENT_AUTH"); val != "" {
 		cfg.Security.TLSClientAuth = parseBool(val)
 	}

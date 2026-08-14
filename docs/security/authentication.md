@@ -66,10 +66,15 @@ The token's `aud` claim must match the MCP server's resource URI.
 | `/.well-known/openid-configuration` | OIDC | OIDC discovery |
 | `/.well-known/jwks.json` | - | Public keys |
 
-### Dynamic Client Registration (RFC 7591)
+### Dynamic Client Registration (RFC 7591 / RFC 7592)
+
+Registering a client mints an authentication principal, so the surface is
+**disabled by default** and requires an initial access token when enabled. See
+`iam.dynamic_client_registration` in [IAM configuration](../iam/configuration.md).
 
 ```bash
 POST /oauth2/register
+Authorization: Bearer <initial access token>   # a platform token
 Content-Type: application/json
 
 {
@@ -79,6 +84,52 @@ Content-Type: application/json
   "token_endpoint_auth_method": "client_secret_basic"
 }
 ```
+
+The new client is created in **the tenant the initial access token
+authenticated into**. A request header can never select the tenant, and an
+unauthenticated registration never lands in the `system` (control-plane)
+tenant — it is refused unless the operator explicitly configured a non-system
+`anonymous_tenant_id`.
+
+The `201 Created` response carries two credentials that are shown **once** and
+are not recoverable:
+
+| Field | Purpose |
+|-------|---------|
+| `client_secret` | Client authentication at the token endpoint |
+| `registration_access_token` | The sole credential for the client configuration endpoint (RFC 7592) |
+| `registration_client_uri` | The client configuration endpoint for this client |
+
+#### Client configuration endpoint (RFC 7592)
+
+```bash
+GET|PUT|DELETE /oauth2/register/{client_id}
+Authorization: Bearer <registration_access_token>
+```
+
+These three verbs authenticate **solely** with the registration access token —
+the registrant holds no platform token — so they are a deliberate pre-auth
+carve-out in the REST authorization chain. The token is a real, fail-closed
+gate:
+
+- 256 bits of entropy, issued once at registration;
+- stored only as a SHA-256 hash on the client record, never in plaintext;
+- verified by constant-time comparison against the hash **for that exact
+  `client_id`**, so a token for client A can never address client B, and — since
+  a client belongs to exactly one tenant — never crosses a tenant boundary;
+- when the request also carries a verified principal, the client must
+  additionally live in that principal's tenant (the tenant narrows, never
+  widens, the lookup);
+- a client created outside DCR owns no registration access token and cannot be
+  managed through RFC 7592 at all.
+
+Every failure — absent, malformed, unknown or mismatched token, unknown client,
+cross-tenant attempt — answers the same opaque `401 invalid_token`, so the
+endpoint cannot be used to enumerate client ids.
+
+The sibling create route (`POST /oauth2/register`, no `client_id` segment) is
+**not** part of that carve-out: it stays behind the standard authorization chain
+and is PEP-mapped to `tenants:create`.
 
 ## External IdP Federation
 
@@ -101,53 +152,21 @@ When configured, MCP clients authenticate with the external IdP, and QuicBaaS va
 
 ## JWT Signing
 
-QuicBaaS supports two JWT signing modes:
+JWT signing is asymmetric only. There is no JWT key material in the configuration file — the former `auth.jwt_secret`, `auth.jwt_signing_key_id`, and `auth.jwt_signing_algorithm` fields were removed, and shared-secret (HS256) tokens are rejected outright to eliminate algorithm-confusion attacks.
 
-| Mode | Algorithm | Key Material | Use Case |
-|------|-----------|-------------|----------|
-| Asymmetric (recommended) | ES256/ES384/ES512/RS256/RS384/RS512 | KMS-backed key pair | Production |
-| Symmetric (legacy) | HS256 | Shared secret | Development/testing |
+### xkms-Backed Signing Key (Automatic)
 
-### Asymmetric Signing via KMS (Recommended)
+The IAM/OIDC subsystem signs tokens with an ES256 key held in the configured xkms backend under the common name `oidc-signing`. On first boot the key is generated automatically inside the backend selected by the BackendResolver (TPM 2.0, PKCS#11, or software keystore) — see `pkg/iam/oidc_keymanager.go` (`NewSigningKeyManagerFromXKMS`). The private key never leaves the keystore; signing is delegated to the keystore's `crypto.Signer`, and each token carries a `kid` header matching the published JWKS.
 
-Tokens are signed using an ECDSA or RSA private key managed by the KMS. The `kid` (Key ID) header is included in each token for key identification. Verification uses only the public key, enabling verification-only nodes that cannot sign.
+Rotation generates a fresh ES256 key in the xkms backend and demotes the previous key into a JWKS overlap window, so in-flight tokens remain verifiable until they expire.
 
-```yaml
-auth:
-  enabled: true
-  jwt_signing_key_id: "my-jwt-signing-key"
-  jwt_signing_algorithm: "ES256"  # Defaults to ES256 when omitted
-```
+### Per-Tenant Signing Keys
 
-When `jwt_signing_key_id` is set, the auth manager:
-1. Retrieves the `crypto.Signer` from KMS via `xkms.SignerByID()`
-2. Extracts the public key for token verification
-3. Signs tokens with the configured algorithm (default: ES256)
-4. Includes `kid` header in each token for key rotation support
+Dedicated tenants can opt in to their own signing key via tenant OIDC settings. `TenantSigningKeyResolver` (`pkg/iam/oidc_tenant_signing.go`) maps each tenant to its key manager, and the aggregated JWKS publishes the global key plus every tenant key. Per-tenant IAM data (users, policies, sessions, WebAuthn credentials, OIDC settings) is barrier-isolated via the tenant-routed KV store.
 
-If the KMS signer fails to initialize and a `jwt_secret` is also configured, the manager falls back to HS256 with a warning. If no fallback is available, initialization fails.
+### Internal Auth Manager (pkg/auth)
 
-### Symmetric Signing (Legacy/Development)
-
-For backward compatibility and development, HS256 signing with a shared secret is supported:
-
-```yaml
-auth:
-  enabled: true
-  jwt_secret: "your-secret-key-32-chars-minimum"
-```
-
-### Migration from HS256 to ES256
-
-During migration, both signing methods can be active simultaneously. The token validation layer inspects the token's signing method and routes to the appropriate verification key:
-
-- ECDSA/RSA tokens are verified with the configured public key
-- HMAC tokens are verified with the shared secret (if still configured)
-
-To migrate:
-1. Configure both `jwt_secret` and `jwt_signing_key_id`
-2. New tokens are signed with ES256; existing HS256 tokens remain valid
-3. After all HS256 tokens expire, remove `jwt_secret`
+The internal `pkg/auth` manager (embedded and test paths) is asymmetric-only as well: ES256 by default, with the keystore-backed signer supplied via `SetAsymmetricSigning` when `JWTSigningKeyID` is set. HMAC tokens fail validation unconditionally.
 
 ## Direct JWT Authentication
 
@@ -288,11 +307,11 @@ Wildcards in roles match all resources/actions. Actions are checked by exact mat
 1. **Hardware Attestation**: FIDO2/WebAuthn and TPM verify authenticator identity
 2. **Phishing Resistant**: Credentials bound to origin; no replay attacks possible
 3. **Zero Shared Secrets**: No password databases; each authenticator holds its private key
-4. **JWT Signing**: Asymmetric ES256 via KMS (recommended) or HS256 shared secret (legacy)
+4. **JWT Signing**: Asymmetric ES256 via an xkms-backed keystore key; no shared secrets
 5. **Token Binding**: OAuth2 access tokens bound to mTLS client certificate via `cnf.x5t#S256` (RFC 8705)
 6. **Token Uniqueness**: Cryptographic nonce in every token prevents replay
 7. **Key Identification**: `kid` header in asymmetric tokens supports key rotation
-8. **Dual Validation**: Both HS256 and ES256 tokens accepted during migration
+8. **HMAC Rejection**: HS256 tokens are rejected outright (algorithm-confusion hardening)
 9. **Internal Key Protection**: Prevents user data from overwriting auth data
 10. **Role Validation**: Built-in roles cannot be modified
 11. **Authenticator Tracking**: Sign count and last-used timestamp prevent cloning
@@ -301,8 +320,8 @@ Wildcards in roles match all resources/actions. Actions are checked by exact mat
 
 1. **Passwordless-First**: Always use WebAuthn or smartcard for users; no passwords
 2. **Use mTLS + Bound Tokens**: Service accounts use TLS client auth + RFC 8705 `cnf` binding
-3. **Asymmetric Signing**: Use `jwt_signing_key_id` with KMS (ES256) for production tokens
-4. **Store Keys Securely**: Keep signing keys in KMS, not on disk or in environment variables
+3. **Hardware-Backed Signing**: Configure a hardware xkms backend (TPM 2.0 or PKCS#11) so the auto-generated signing key is hardware-protected
+4. **Store Keys Securely**: Signing keys live in the xkms keystore and never appear on disk, in configuration, or in environment variables
 5. **Rotate Credentials**: Refresh access tokens before expiry; rotate mTLS certs regularly
 6. **Revoke on Logout**: Revoke refresh tokens and close mTLS sessions on logout
 7. **Least Privilege**: Assign minimal required roles; avoid admin role when possible

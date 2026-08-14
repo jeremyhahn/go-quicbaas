@@ -157,7 +157,14 @@ func TestExecuteXKMSToolDispatchesCorrectly(t *testing.T) {
 		"xkms.piv.storeCert",
 		"xkms.piv.deleteCert",
 		"xkms.piv.generateKey",
+		"xkms.piv.importCert",
+		"xkms.piv.exportCert",
 		"xkms.piv.generateCSR",
+		// FIDO2 / WebAuthn ceremony operations
+		"xkms.fido2.beginRegistration",
+		"xkms.fido2.finishRegistration",
+		"xkms.fido2.beginAuthentication",
+		"xkms.fido2.finishAuthentication",
 		// CA operations
 		"xkms.ca.getBundle",
 		"xkms.ca.getCert",

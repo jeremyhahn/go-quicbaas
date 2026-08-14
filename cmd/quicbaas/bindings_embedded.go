@@ -261,7 +261,10 @@ func (b *EmbeddedServerBinding) buildConfig(opts EmbeddedStartOptions) (*config.
 
 	cfg.Logging.Level = logLevel
 
-	cfg.Security.TLSEnabled = false
+	// TLS is required for EVERYTHING — the embedded desktop server's REST
+	// listener is a real network listener and must serve TLS from the
+	// auto-provisioned CA under its data dir.
+	cfg.Security.TLSEnabled = true
 	cfg.Discovery.Enabled = false
 	cfg.Backup.Enabled = false
 	cfg.KMS.Enabled = false

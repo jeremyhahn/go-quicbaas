@@ -1,0 +1,182 @@
+// QuicBaaS PIV Protocol Buffer Definitions v1
+//
+// The PIV surface (quicbaas.PIV) is the go-xkms PIVService contract
+// verbatim: backend-scoped slot operations (file / pkcs11 / tpm2) exchanging
+// the xkms transport wire shapes field-for-field. The server delegates every
+// RPC to the PIV composition service (pkg/service PIVService), which
+// forwards to the composed go-xkms service singleton; QuicBaaS adds no PIV
+// logic of its own.
+//
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+
+syntax = "proto3";
+
+package quicbaas.piv.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// =============================================================================
+// PIV Service
+// =============================================================================
+
+// PIVService exposes backend-scoped PIV slot operations through gRPC.
+service PIVService {
+  // ListPIVSlots returns the status of all PIV slots in a backend.
+  rpc ListPIVSlots(PIVListSlotsRequest) returns (PIVListSlotsResponse);
+
+  // GetPIVCertificate retrieves the certificate stored in a PIV slot.
+  rpc GetPIVCertificate(PIVGetCertificateRequest) returns (PIVGetCertificateResponse);
+
+  // StorePIVCertificate stores a certificate in a PIV slot.
+  rpc StorePIVCertificate(PIVStoreCertificateRequest) returns (PIVStoreCertificateResponse);
+
+  // DeletePIVCertificate removes the certificate from a PIV slot.
+  rpc DeletePIVCertificate(PIVDeleteCertificateRequest) returns (PIVDeleteCertificateResponse);
+
+  // GeneratePIVKey generates a new key pair in a PIV slot.
+  rpc GeneratePIVKey(PIVGenerateKeyRequest) returns (PIVGenerateKeyResponse);
+
+  // ImportPIVCertificate imports a certificate into a PIV slot.
+  rpc ImportPIVCertificate(PIVStoreCertificateRequest) returns (PIVStoreCertificateResponse);
+
+  // ExportPIVCertificate exports the certificate from a PIV slot.
+  rpc ExportPIVCertificate(PIVGetCertificateRequest) returns (PIVGetCertificateResponse);
+
+  // GeneratePIVCSR generates a certificate signing request for a PIV slot key.
+  rpc GeneratePIVCSR(PIVGenerateCSRRequest) returns (PIVGenerateCSRResponse);
+}
+
+// =============================================================================
+// Messages (field-for-field mirrors of the go-xkms transport wire shapes)
+// =============================================================================
+
+// PIVPageRequest mirrors the go-xkms transport PageRequest embedded in list
+// requests.
+message PIVPageRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+  string sort_field = 3;
+  int32 sort_order = 4;
+}
+
+// PIVPageResponse mirrors the go-xkms transport PageResponse embedded in
+// list responses.
+message PIVPageResponse {
+  int32 page = 1;
+  int32 page_size = 2;
+  int32 total = 3;
+  bool has_more = 4;
+}
+
+// PIVListSlotsRequest selects the backend whose slots are listed.
+message PIVListSlotsRequest {
+  string backend = 1;
+  string tenant_id = 2;
+  PIVPageRequest page = 3;
+}
+
+// PIVSlotStatus is the status of a single PIV slot.
+message PIVSlotStatus {
+  string slot = 1;
+  string name = 2;
+  string description = 3;
+  bool has_cert = 4;
+  bool has_key = 5;
+  string subject = 6;
+  string issuer = 7;
+  string algorithm = 8;
+  int32 key_size = 9;
+  string not_after = 10;
+  string fingerprint = 11;
+  string backend = 12;
+}
+
+// PIVListSlotsResponse contains the list of PIV slots.
+message PIVListSlotsResponse {
+  repeated PIVSlotStatus slots = 1;
+  PIVPageResponse page = 2;
+}
+
+// PIVGetCertificateRequest retrieves (or exports) a PIV slot certificate.
+message PIVGetCertificateRequest {
+  string backend = 1;
+  string slot = 2;
+  // format is "pem" or "der".
+  string format = 3;
+  string tenant_id = 4;
+}
+
+// PIVGetCertificateResponse contains the certificate data.
+message PIVGetCertificateResponse {
+  string slot = 1;
+  bytes certificate = 2;
+  string format = 3;
+}
+
+// PIVStoreCertificateRequest stores (or imports) a certificate in a slot.
+message PIVStoreCertificateRequest {
+  string backend = 1;
+  string slot = 2;
+  bytes certificate = 3;
+  string format = 4;
+  string tenant_id = 5;
+}
+
+// PIVStoreCertificateResponse acknowledges a store / import.
+message PIVStoreCertificateResponse {}
+
+// PIVDeleteCertificateRequest removes the certificate from a slot.
+message PIVDeleteCertificateRequest {
+  string backend = 1;
+  string slot = 2;
+  string tenant_id = 3;
+}
+
+// PIVDeleteCertificateResponse acknowledges a delete.
+message PIVDeleteCertificateResponse {}
+
+// PIVGenerateKeyRequest generates a new key pair in a slot.
+message PIVGenerateKeyRequest {
+  string backend = 1;
+  string slot = 2;
+  // algorithm is "rsa2048", "rsa4096", "ecdsap256", "ecdsap384", or
+  // "ed25519".
+  string algorithm = 3;
+  string subject = 4;
+  string organization = 5;
+  string country = 6;
+  // output_format is "self-signed" (default), "public-key", "csr", or
+  // "ca-signed".
+  string output_format = 7;
+  int32 validity_days = 8;
+  string tenant_id = 9;
+}
+
+// PIVGenerateKeyResponse contains the generated material.
+message PIVGenerateKeyResponse {
+  string slot = 1;
+  bytes certificate = 2;
+  bytes public_key = 3;
+  bytes csr = 4;
+  bytes chain_pem = 5;
+}
+
+// PIVGenerateCSRRequest generates a CSR for the key in a slot.
+message PIVGenerateCSRRequest {
+  string backend = 1;
+  string slot = 2;
+  string subject = 3;
+  string organization = 4;
+  string organizational_unit = 5;
+  string country = 6;
+  string state = 7;
+  string locality = 8;
+  string tenant_id = 9;
+}
+
+// PIVGenerateCSRResponse contains the generated CSR.
+message PIVGenerateCSRResponse {
+  string slot = 1;
+  bytes csr = 2;
+}

@@ -72,6 +72,19 @@ func (s *OrchestratorServer) SpawnSession(ctx context.Context, req *pb.SpawnSess
 		ContainerConfig:    protoContainerSpecToService(req.ContainerConfig),
 		HostAffinity:       req.HostAffinity,
 		HostAffinityStrict: req.HostAffinityStrict,
+		// Without this the gRPC transport silently spawns a one-shot session:
+		// the backend runs a fresh process per prompt, the agent keeps no
+		// conversation context, and the session is not a resume candidate
+		// after a daemon restart. REST and MCP already carry the flag.
+		Persistent: req.Persistent,
+
+		// Pooled provider account selection. AccountAuto is what makes the
+		// dynamic (least-usage) strategy requestable at all, so dropping it
+		// here would leave the strategy unreachable from outside the process.
+		AccountID:       req.AccountId,
+		AccountAuto:     req.AccountAuto,
+		AccountStrategy: req.AccountStrategy,
+		AccountAllow:    req.AccountAllow,
 	}
 
 	// Mirror the REST handler: thread strict on context so the
@@ -96,6 +109,17 @@ func (s *OrchestratorServer) SpawnSession(ctx context.Context, req *pb.SpawnSess
 }
 
 // PromptSession sends a prompt to an agent session.
+//
+// A prompt naming a session is dispatched asynchronously: the orchestrator
+// records the prompt and a turn_started marker on the session event log, runs
+// the turn on a context detached from this RPC, and answers immediately with
+// the turn ID. The agent's output streams over SubscribeSessionEvents and the
+// turn ends with a turn_completed or turn_failed event carrying that ID. A
+// real agent turn runs for minutes, which no unary RPC deadline accommodates.
+//
+// A prompt with no session is a stateless one-shot against the named backend.
+// It has no event log to publish to, so it stays synchronous and returns the
+// completed turn inline.
 func (s *OrchestratorServer) PromptSession(ctx context.Context, req *pb.PromptSessionRequest) (*pb.PromptSessionResponse, error) {
 	s.logger.Debug("Processing PromptSession request")
 
@@ -113,6 +137,21 @@ func (s *OrchestratorServer) PromptSession(ctx context.Context, req *pb.PromptSe
 		Model:        req.Model,
 		SystemPrompt: req.SystemPrompt,
 		UseRAG:       req.UseRag,
+	}
+
+	if req.SessionId != "" {
+		ack, ackErr := s.agentSvc.PromptSessionAsync(tenantCtx, svcReq)
+		if ackErr != nil {
+			return nil, convertOrchestratorError(ackErr)
+		}
+		return &pb.PromptSessionResponse{
+			SessionId: ack.SessionID,
+			TurnId:    ack.TurnID,
+			Status:    ack.Status,
+			Sequence:  ack.Sequence,
+			Model:     ack.Model,
+			Timestamp: timestamppb.New(time.Unix(0, ack.Timestamp)),
+		}, nil
 	}
 
 	resp, err := s.agentSvc.PromptSession(tenantCtx, svcReq)
@@ -180,6 +219,59 @@ func (s *OrchestratorServer) CloseSession(ctx context.Context, req *pb.CloseSess
 		SessionId: resp.SessionID,
 		Timestamp: timestamppb.New(time.Unix(resp.Timestamp, 0)),
 	}, nil
+}
+
+// RotateSessionAccount moves a session onto a different pooled provider
+// account.
+//
+// The same verb runs automatically when a turn fails on a classified provider
+// limit; this is the operator's door to it — "this seat is bad, move my session
+// now". It authorizes as orchestrator:spawn rather than orchestrator:close or
+// :status: the resume path literally closes the agent process and reconstitutes
+// it against a newly selected pooled credential, which is the authority a spawn
+// carries and no weaker verb does.
+func (s *OrchestratorServer) RotateSessionAccount(ctx context.Context, req *pb.RotateSessionAccountRequest) (*pb.RotateSessionAccountResponse, error) {
+	s.logger.WithField("session_id", req.GetSessionId()).Debug("Processing RotateSessionAccount request")
+
+	if req.GetSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+
+	rotator, err := orchestration.RotationServiceFrom(s.agentSvc, "grpc")
+	if err != nil {
+		return nil, convertOrchestratorError(err)
+	}
+
+	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+
+	result, err := rotator.RotateSessionAccount(tenantCtx, &orchestration.RotateSessionAccountRequest{
+		SessionID:    req.GetSessionId(),
+		Reason:       req.GetReason(),
+		HoldOutgoing: req.GetHoldOutgoing(),
+		AvailableAt:  timeFromUnixSeconds(req.GetAvailableAtUnix()),
+	})
+	if err != nil {
+		return nil, convertOrchestratorError(err)
+	}
+
+	return &pb.RotateSessionAccountResponse{
+		SessionId:         result.SessionID,
+		PreviousAccountId: result.PreviousAccountID,
+		AccountId:         result.AccountID,
+		Strategy:          result.Strategy,
+		Mode:              string(result.Mode),
+		Timestamp:         timestamppb.Now(),
+	}, nil
+}
+
+// timeFromUnixSeconds converts a Unix-seconds wire value to a time.Time,
+// mapping zero to the zero time so "unset" survives the round trip rather than
+// arriving as 1970.
+func timeFromUnixSeconds(sec int64) time.Time {
+	if sec == 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0).UTC()
 }
 
 // ListSessions returns all active sessions.
@@ -844,6 +936,8 @@ func serviceSessionStateToProto(ss orchestration.SessionState) pb.SessionState {
 		return pb.SessionState_SESSION_STATE_CLOSED
 	case orchestration.SessionStateError:
 		return pb.SessionState_SESSION_STATE_ERROR
+	case orchestration.SessionStateResumable:
+		return pb.SessionState_SESSION_STATE_RESUMABLE
 	default:
 		return pb.SessionState_SESSION_STATE_UNSPECIFIED
 	}
@@ -1057,6 +1151,15 @@ func convertOrchestratorError(err error) error {
 		return err
 	}
 
+	// Spawn-policy refusals (bind mount outside every allowed root, forbidden
+	// sandbox mode or network, integrity tier below the operator's floor) are
+	// authorization decisions about the request, not server faults. They must
+	// arrive as PermissionDenied with their actionable message intact rather
+	// than as the Internal fallback at the bottom of this function.
+	if orchestration.IsPolicyDenial(err) {
+		return status.Error(codes.PermissionDenied, err.Error())
+	}
+
 	// Check orchestration-specific typed errors
 	var agentNotFoundErr *orchestration.AgentNotFoundError
 	if stderrors.As(err, &agentNotFoundErr) {
@@ -1106,6 +1209,28 @@ func convertOrchestratorError(err error) error {
 	var jobNotFoundErr *orchestration.JobNotFoundError
 	if stderrors.As(err, &jobNotFoundErr) {
 		return status.Error(codes.NotFound, jobNotFoundErr.Error())
+	}
+
+	// An unknown session is a lookup miss on every other transport — REST's
+	// isOrchNotFoundError already answers 404 for it — so gRPC says NotFound
+	// rather than dropping it into the Internal fallback below.
+	var sessionNotFoundErr *orchestration.SessionNotFoundError
+	if stderrors.As(err, &sessionNotFoundErr) {
+		return status.Error(codes.NotFound, sessionNotFoundErr.Error())
+	}
+
+	// A session that may not rotate is a state problem, not a bad request: the
+	// caller named a real session and the only thing wrong is its policy.
+	var notRotatableErr *orchestration.SessionNotRotatableError
+	if stderrors.As(err, &notRotatableErr) {
+		return status.Error(codes.FailedPrecondition, notRotatableErr.Error())
+	}
+
+	// No pooled-account rotation on this deployment at all — nothing the
+	// caller can change about the request would help.
+	var rotationUnsupportedErr *orchestration.SessionRotationUnsupportedError
+	if stderrors.As(err, &rotationUnsupportedErr) {
+		return status.Error(codes.Unimplemented, rotationUnsupportedErr.Error())
 	}
 
 	var agentSvcErr *orchestration.AgentServiceError

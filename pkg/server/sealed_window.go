@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"net"
 	"runtime"
 	"strconv"
 	"time"
@@ -136,12 +137,22 @@ func newSealedWindowClient(s *Server, cs *CeremonyServices) (*qrdbsdk.Client, er
 		return nil, &SealedWindowBootError{Stage: "node seal services"}
 	}
 
-	tp, err := qrdbembedded.New(
-		newSealedKVServicerProxy(s),
-		newSealedAdminServicerProxy(s),
+	opts := []qrdbembedded.Option{
 		qrdbembedded.WithBarrierService(cs.Barrier),
 		qrdbembedded.WithCeremonyService(cs.Ceremony),
 		qrdbembedded.WithCredentialService(cs.Credential),
+	}
+	// Wire the canonical pin.PINBackend so barrier verbs served during the
+	// sealed window honor the SOPin / UserPin fields of the canonical
+	// requests (provision on initialize, verify on rekey / recovery) against
+	// the SAME backend the node verifies post-unseal.
+	if s.pinBackend != nil {
+		opts = append(opts, qrdbembedded.WithPINBackend(s.pinBackend))
+	}
+	tp, err := qrdbembedded.New(
+		newSealedKVServicerProxy(s),
+		newSealedAdminServicerProxy(s),
+		opts...,
 	)
 	if err != nil {
 		return nil, &SealedWindowBootError{Stage: "sealed embedded transport", Cause: err}
@@ -350,7 +361,7 @@ func (s *Server) startSealedGRPCServer() error {
 		listenersStarted++
 	}
 	if s.config.Server.GRPC.Enabled {
-		tcpAddress := grpcTCPAddress(s.config)
+		tcpAddress := sealedListenAddress(s.config, s.config.Server.GRPC.Port)
 		tcpListener, err := listenFunc("tcp", tcpAddress)
 		if err != nil {
 			return &SealedWindowBootError{Stage: "sealed grpc tcp listener", Cause: err}
@@ -417,9 +428,12 @@ func (s *Server) stopSealedTransports() {
 	s.ceremonyServices = nil
 }
 
-// grpcTCPAddress resolves the gRPC TCP listen address from config, shared by
-// the sealed-phase and full-boot gRPC bring-ups.
-func grpcTCPAddress(cfg *config.Config) string {
-	host := cfg.Server.ResolveBindHost(cfg.Server.GRPC.BindAddress)
-	return host + ":" + strconv.Itoa(cfg.Server.GRPC.Port)
+// sealedListenAddress resolves the listen address for a sealed-window
+// listener: the dedicated sealed-phase bind host (loopback unless
+// Server.SealedBindHost opts into a routable address) joined with the
+// protocol port. Server.Host and the per-protocol BindAddress overrides
+// deliberately do not apply while sealed; they govern only the post-unseal
+// full-boot listeners.
+func sealedListenAddress(cfg *config.Config, port int) string {
+	return net.JoinHostPort(cfg.Server.ResolveSealedBindHost(), strconv.Itoa(port))
 }

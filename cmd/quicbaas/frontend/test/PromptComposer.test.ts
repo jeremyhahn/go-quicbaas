@@ -25,6 +25,7 @@ const { mocks } = vi.hoisted(() => ({
 vi.mock('../src/stores/sessionStore.svelte.ts', () => ({
   sessionStore: {
     events: [],
+    turnStatus: 'idle',
     activeSession: {
       session_id: 'sess-1',
       backend: 'claude',

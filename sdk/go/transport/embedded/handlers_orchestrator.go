@@ -45,6 +45,16 @@ func handleOrchestratorSpawnSession(ctx context.Context, svc service.QuicBaaS, r
 		WorkDir:      r.WorkDir,
 		Env:          r.Env,
 		HostAffinity: r.HostAffinity,
+
+		// Pooled provider account selection. AccountAuto is the only way to
+		// reach the dynamic (least-usage) strategy.
+		AccountID:       r.AccountID,
+		AccountAuto:     r.AccountAuto,
+		AccountStrategy: r.AccountStrategy,
+		// AccountAllow is the second thing that authorizes rotation (the other
+		// being AccountAuto); dropping it here would make an explicitly
+		// enumerated pool unreachable in-process.
+		AccountAllow: r.AccountAllow,
 	})
 	if err != nil {
 		return nil, err
@@ -66,10 +76,23 @@ func handleOrchestratorPromptSession(ctx context.Context, svc service.QuicBaaS, 
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "PromptSession")
 	}
-	resp, err := agentSvc.PromptSession(ctx, &orchestration.PromptSessionRequest{
+	svcReq := &orchestration.PromptSessionRequest{
 		SessionID: r.SessionID,
 		Prompt:    r.Prompt,
-	})
+	}
+
+	// A prompt naming a session is asynchronous even in-process: the embedded
+	// transport must honour the same turn contract as the remote ones, or a
+	// caller that switches transports would see the turn semantics change.
+	if svcReq.SessionID != "" {
+		ack, ackErr := agentSvc.PromptSessionAsync(ctx, svcReq)
+		if ackErr != nil {
+			return nil, ackErr
+		}
+		return orchestratorSDK.NewPromptSessionAccepted(ack.SessionID, ack.TurnID, ack.Sequence, ack.Model)
+	}
+
+	resp, err := agentSvc.PromptSession(ctx, svcReq)
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +150,42 @@ func handleOrchestratorCloseSession(ctx context.Context, svc service.QuicBaaS, r
 	return &orchestratorSDK.CloseSessionResponse{
 		SessionID: resp.SessionID,
 		Closed:    true,
+	}, nil
+}
+
+// handleOrchestratorRotateSessionAccount moves a session onto a different
+// pooled provider account. The rotation verb is not on AgentService — the
+// account pool is optional — so it is reached through the same capability
+// narrowing every other transport uses.
+func handleOrchestratorRotateSessionAccount(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.RotateSessionAccountRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "RotateSessionAccount",
+			"*orchestrator.RotateSessionAccountRequest", reflect.TypeOf(req).String())
+	}
+	agentSvc := svc.Agent()
+	if agentSvc == nil {
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "RotateSessionAccount")
+	}
+	rotator, err := orchestration.RotationServiceFrom(agentSvc, "embedded")
+	if err != nil {
+		return nil, err
+	}
+	result, err := rotator.RotateSessionAccount(ctx, &orchestration.RotateSessionAccountRequest{
+		SessionID:    r.SessionID,
+		Reason:       r.Reason,
+		HoldOutgoing: r.HoldOutgoing,
+		AvailableAt:  r.AvailableAt,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &orchestratorSDK.RotateSessionAccountResponse{
+		SessionID:         result.SessionID,
+		PreviousAccountID: result.PreviousAccountID,
+		AccountID:         result.AccountID,
+		Strategy:          result.Strategy,
+		Mode:              string(result.Mode),
 	}, nil
 }
 

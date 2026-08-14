@@ -43,18 +43,25 @@ func TestAmbiguousAutoDiscoveryError_Message(t *testing.T) {
 	assert.Contains(t, got, "--method")
 }
 
-func TestAmbiguousPIVReaderError_Message(t *testing.T) {
-	e := &AmbiguousPIVReaderError{Readers: []string{"r1", "r2"}}
+func TestInvalidPIVBackendError_Message(t *testing.T) {
+	e := &InvalidPIVBackendError{Backend: "opgp"}
 	got := e.Error()
-	assert.Contains(t, got, "r1")
-	assert.Contains(t, got, "r2")
-	assert.Contains(t, got, "--reader")
+	assert.Contains(t, got, "opgp")
+	assert.Contains(t, got, "file | pkcs11 | tpm2")
 }
 
-func TestPIVReaderNotFoundError_Message(t *testing.T) {
-	e := &PIVReaderNotFoundError{Name: "Yubico PIV"}
-	assert.Contains(t, e.Error(), "Yubico PIV")
-	assert.Contains(t, e.Error(), "not found")
+func TestPIVLocalBackendUnsupportedError_Message(t *testing.T) {
+	e := &PIVLocalBackendUnsupportedError{Backend: "tpm2", Reason: "no client-local TPM2 PIV storage"}
+	assert.Contains(t, e.Error(), "tpm2")
+	assert.Contains(t, e.Error(), "no client-local TPM2 PIV storage")
+}
+
+func TestPIVLocalSessionError_Message(t *testing.T) {
+	cause := stderrors.New("boom")
+	e := &PIVLocalSessionError{Op: "read certificate", Cause: cause}
+	assert.Contains(t, e.Error(), "read certificate")
+	assert.Contains(t, e.Error(), "boom")
+	assert.ErrorIs(t, e, cause)
 }
 
 func TestPIVPINRequiredError_Message(t *testing.T) {

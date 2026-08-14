@@ -515,8 +515,38 @@ func splitLines(data []byte) []string {
 // (QUICBAAS_SEAL_PASSPHRASE auto-unseal) of the passphrase matrix cells.
 const matrixPassphrase = "init-matrix-passphrase-2026"
 
+// matrixTrustDomain is the SPIFFE trust domain every matrix init runs under.
+// It is mandatory: the CA stamps spiffe://<trust-domain>/tenant/system/user/admin
+// onto the admin certificate and login resolves the tenant from that SAN, so
+// init fails closed without it.
+const matrixTrustDomain = "quicbaas.integration.test"
+
+// writeInitConfig writes the minimal config file `quicbaasd init` needs and
+// returns its path.
+//
+// The trust domain has to travel in a CONFIG FILE rather than an environment
+// variable: viper's AutomaticEnv only resolves keys it already knows from a
+// default or a config file, so QUICBAAS_IAM_SPIFFE_TRUST_DOMAIN alone is
+// silently ignored. Passing it here keeps the init helpers hermetic while
+// still exercising the real operator path.
+func writeInitConfig(dataDir string) (string, error) {
+	path := filepath.Join(dataDir, "init-config.yaml")
+	body := "iam:\n  spiffe_trust_domain: " + matrixTrustDomain + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		return "", fmt.Errorf("writeInitConfig: %w", err)
+	}
+	return path, nil
+}
+
 func runInit(ctx context.Context, binary string, strategy string, dataDir string) (string, error) {
-	args := []string{"init", "--barrier-strategy", strategy, "--data-dir", dataDir}
+	if err := os.MkdirAll(dataDir, 0o750); err != nil {
+		return "", fmt.Errorf("runInit: mkdir data dir: %w", err)
+	}
+	cfgPath, cfgErr := writeInitConfig(dataDir)
+	if cfgErr != nil {
+		return "", cfgErr
+	}
+	args := []string{"init", "--config", cfgPath, "--barrier-strategy", strategy, "--data-dir", dataDir}
 	switch strategy {
 	case "none":
 		// PINs intentionally omitted — the daemon rejects them under "none".
@@ -545,32 +575,27 @@ func runInit(ctx context.Context, binary string, strategy string, dataDir string
 // officer kinds (csr / cert / pubkey). The officer material is generated
 // hermetically per call in dataDir so no host state is left behind.
 func runShamirInit(ctx context.Context, binary string, dataDir string) (string, error) {
-	officerDir := filepath.Join(dataDir, "officers")
-	if mkErr := os.MkdirAll(officerDir, 0o700); mkErr != nil {
-		return "", fmt.Errorf("runShamirInit: mkdir officer dir: %w", mkErr)
+	// No officer material is supplied here, deliberately. Under go-qrdb's
+	// Security Officer distribution model officers register against the
+	// RUNNING daemon (barrier officer-register, reachable from the sealed
+	// window), and the M-of-N barrier is created by the ceremony rather than
+	// inline at init. `quicbaasd init --barrier-strategy shamir` therefore
+	// only records the operator's chosen M-of-N parameters.
+	if err := os.MkdirAll(dataDir, 0o750); err != nil {
+		return "", fmt.Errorf("runShamirInit: mkdir data dir: %w", err)
 	}
-	csrPath := filepath.Join(officerDir, "alice.csr.pem")
-	certPath := filepath.Join(officerDir, "bob.cert.pem")
-	pubPath := filepath.Join(officerDir, "carol.pub.pem")
-	if err := writeOfficerCSR(csrPath, "alice"); err != nil {
-		return "", err
-	}
-	if err := writeOfficerCert(certPath, "bob"); err != nil {
-		return "", err
-	}
-	if err := writeOfficerPubKey(pubPath, "carol"); err != nil {
-		return "", err
+	cfgPath, cfgErr := writeInitConfig(dataDir)
+	if cfgErr != nil {
+		return "", cfgErr
 	}
 	args := []string{
 		"init",
+		"--config", cfgPath,
 		"--barrier-strategy", "shamir",
 		"--so-pin", "so-pin-1234",
 		"--user-pin", "user-pin-1234",
 		"--shares", "3",
 		"--threshold", "2",
-		"--so", "alice:csr:" + csrPath,
-		"--so", "bob:cert:" + certPath,
-		"--so", "carol:pubkey:" + pubPath,
 		"--data-dir", dataDir,
 	}
 	cmd := exec.CommandContext(ctx, binary, args...) // #nosec G204
@@ -946,9 +971,6 @@ func probeUnix(ctx context.Context, path string) error {
 // cmd/quicbaasd and the integration tests below.
 const initDoneMarkerName = ".quicbaasd_init_done"
 
-// pendingCeremonyFileName mirrors cmd/quicbaasd/init.go's constant.
-const pendingCeremonyFileName = "pending_ceremony.json"
-
 // onDiskInitDoneMarker is the subset of cmd/quicbaasd/init.go's
 // initDoneMarker struct the matrix needs to assert. Keeping the struct
 // local makes the test self-contained and avoids a circular dependency
@@ -957,7 +979,6 @@ type onDiskInitDoneMarker struct {
 	BarrierStrategy    string    `json:"barrier_strategy"`
 	CredentialStrategy string    `json:"credential_strategy"`
 	Hostname           string    `json:"hostname,omitempty"`
-	OfficerCount       int       `json:"officer_count"`
 	Shares             int       `json:"shares,omitempty"`
 	Threshold          int       `json:"threshold,omitempty"`
 	CompletedAt        time.Time `json:"completed_at"`
@@ -978,42 +999,6 @@ func readInitDoneMarker(dataDir string) (*onDiskInitDoneMarker, error) {
 		return nil, &MarkerParseError{Path: path, Cause: err}
 	}
 	return &m, nil
-}
-
-// onDiskPendingCeremonyState mirrors the corresponding daemon struct so
-// the shamir tests can assert the ceremony's persisted threshold /
-// shares / officer count.
-type onDiskPendingCeremonyState struct {
-	Strategy           string                         `json:"strategy"`
-	Shares             int                            `json:"shares"`
-	Threshold          int                            `json:"threshold"`
-	CredentialStrategy string                         `json:"credential_strategy"`
-	Officers           []onDiskPendingCeremonyOfficer `json:"officers,omitempty"`
-	CreatedAt          time.Time                      `json:"created_at"`
-}
-
-// onDiskPendingCeremonyOfficer mirrors the per-officer entry in
-// pending_ceremony.json.
-type onDiskPendingCeremonyOfficer struct {
-	Username string `json:"username"`
-	Kind     string `json:"kind"`
-	Path     string `json:"path"`
-}
-
-// readPendingCeremonyState parses the shamir ceremony state file. Used
-// only by the shamir matrix rows.
-func readPendingCeremonyState(dataDir string) (*onDiskPendingCeremonyState, error) {
-	path := filepath.Join(dataDir, pendingCeremonyFileName)
-	// #nosec G304 - path rooted at t.TempDir()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, &CeremonyStateReadError{Path: path, Cause: err}
-	}
-	var s onDiskPendingCeremonyState
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return nil, &CeremonyStateParseError{Path: path, Cause: err}
-	}
-	return &s, nil
 }
 
 // caChainPath returns the path quicbaasd writes the platform CA chain
@@ -1072,33 +1057,3 @@ func (e *MarkerParseError) Error() string {
 
 // Unwrap exposes the underlying cause.
 func (e *MarkerParseError) Unwrap() error { return e.Cause }
-
-// CeremonyStateReadError indicates the pending ceremony state file could
-// not be read.
-type CeremonyStateReadError struct {
-	Path  string
-	Cause error
-}
-
-// Error returns a human-readable description.
-func (e *CeremonyStateReadError) Error() string {
-	return "pending ceremony state " + e.Path + ": read: " + e.Cause.Error()
-}
-
-// Unwrap exposes the underlying cause.
-func (e *CeremonyStateReadError) Unwrap() error { return e.Cause }
-
-// CeremonyStateParseError indicates the pending ceremony state file was
-// unparseable JSON.
-type CeremonyStateParseError struct {
-	Path  string
-	Cause error
-}
-
-// Error returns a human-readable description.
-func (e *CeremonyStateParseError) Error() string {
-	return "pending ceremony state " + e.Path + ": parse: " + e.Cause.Error()
-}
-
-// Unwrap exposes the underlying cause.
-func (e *CeremonyStateParseError) Unwrap() error { return e.Cause }

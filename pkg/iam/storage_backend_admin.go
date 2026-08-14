@@ -16,7 +16,6 @@ package iam
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"time"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -413,101 +412,3 @@ func (s *BackendImpersonationStorage) scanSessions(ctx context.Context) ([]*Impe
 }
 
 // -----------------------------------------------------------------------------
-// BackendInviteStore — InviteStore on top of KVStore.
-// -----------------------------------------------------------------------------
-
-// keyPrefixInvite namespaces the WebAuthn / activation invite records.
-const keyPrefixInvite = KeyPrefixIAM + "invite:"
-
-func inviteKey(tokenHash string) string {
-	return keyPrefixInvite + strings.ToLower(tokenHash)
-}
-
-// BackendInviteStore implements InviteStore using a KVStore. The first-boot
-// bootstrap stores an invite that must outlive the daemon process: an operator
-// might activate hours after the cluster comes up.
-type BackendInviteStore struct {
-	kv interfaces.KVStore
-}
-
-// NewBackendInviteStore constructs a persistent InviteStore.
-func NewBackendInviteStore(kv interfaces.KVStore) *BackendInviteStore {
-	return &BackendInviteStore{kv: kv}
-}
-
-// Compile-time check.
-var _ InviteStore = (*BackendInviteStore)(nil)
-
-// Create stores a new invite record keyed by its token hash.
-func (s *BackendInviteStore) Create(ctx context.Context, record *InviteRecord) error {
-	if record == nil || record.TokenHash == "" {
-		return &dberrors.QBError{Code: dberrors.ErrInvalidInput, Op: "iam.invite.create"}
-	}
-	data, err := json.Marshal(record)
-	if err != nil {
-		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.invite.create", Err: err}
-	}
-	return s.kv.Put(ctx, inviteKey(record.TokenHash), data)
-}
-
-// GetByToken returns the record for the supplied plaintext token. The
-// plaintext is hashed before the lookup; the raw token is never persisted.
-func (s *BackendInviteStore) GetByToken(ctx context.Context, token string) (*InviteRecord, error) {
-	hash := tokenHash(token)
-	data, err := s.kv.Get(ctx, inviteKey(hash))
-	if err != nil {
-		if dberrors.IsNotFound(err) {
-			return nil, ErrInviteNotFound
-		}
-		return nil, err
-	}
-	var rec InviteRecord
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.invite.get", Err: err}
-	}
-	return &rec, nil
-}
-
-// MarkUsed atomically flips the Used bit. Bootstrap invites are single-use
-// and the surrounding handler already validates the call sequence, so the
-// read-modify-write below is safe under single-writer usage.
-func (s *BackendInviteStore) MarkUsed(ctx context.Context, token string) error {
-	hash := tokenHash(token)
-	data, err := s.kv.Get(ctx, inviteKey(hash))
-	if err != nil {
-		if dberrors.IsNotFound(err) {
-			return ErrInviteNotFound
-		}
-		return err
-	}
-	var rec InviteRecord
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.invite.mark_used", Err: err}
-	}
-	if rec.Used {
-		return ErrInviteUsed
-	}
-	rec.Used = true
-	out, err := json.Marshal(&rec)
-	if err != nil {
-		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.invite.mark_used", Err: err}
-	}
-	return s.kv.Put(ctx, inviteKey(hash), out)
-}
-
-// GC drops expired or already-consumed records.
-func (s *BackendInviteStore) GC(ctx context.Context) error {
-	now := time.Now()
-	return s.kv.Scan(ctx, keyPrefixInvite, func(key string, value []byte) error {
-		var rec InviteRecord
-		if err := json.Unmarshal(value, &rec); err != nil {
-			// Drop malformed rows so corruption does not block GC.
-			_ = s.kv.Delete(ctx, key)
-			return nil
-		}
-		if rec.Used || now.After(rec.ExpiresAt) {
-			_ = s.kv.Delete(ctx, key)
-		}
-		return nil
-	})
-}

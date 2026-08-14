@@ -14,9 +14,6 @@
 package server
 
 import (
-	"crypto/x509"
-	"encoding/pem"
-	"errors"
 	"log/slog"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -156,22 +153,33 @@ func buildBootstrapCeremonyServices(logger *slog.Logger, dataDir string) (*Cerem
 // with no split-brain state.
 //
 // The KV and Admin servicers come from the node's service graph; the qrdb
-// embedded transport requires both. All construction failures are returned
-// as CeremonyWiringError with a stage identifying the failing step.
+// embedded transport requires both. pinBackend is the canonical
+// pin.PINBackend the daemon verifies SO / user PINs against; wiring it via
+// qrdbembedded.WithPINBackend is what makes the transport-level barrier
+// verbs honor the SOPin / UserPin fields of BarrierInitializeRequest (and
+// verify the SO PIN on rekey / recovery-generate) instead of silently
+// dropping them. A nil pinBackend preserves the PIN-less dev behavior. All
+// construction failures are returned as CeremonyWiringError with a stage
+// identifying the failing step.
 func newBootstrapCeremonyClient(
 	kv qrdbsdk.KVServicer,
 	admin qrdbsdk.AdminServicer,
 	cs *CeremonyServices,
+	pinBackend qrdbsdk.PINBackend,
 ) (*qrdbsdk.Client, error) {
 	if cs == nil || cs.Barrier == nil || cs.Ceremony == nil || cs.Credential == nil {
 		return nil, &CeremonyWiringError{Stage: "bootstrap-client services"}
 	}
 
-	tp, err := qrdbembedded.New(kv, admin,
+	opts := []qrdbembedded.Option{
 		qrdbembedded.WithBarrierService(cs.Barrier),
 		qrdbembedded.WithCeremonyService(cs.Ceremony),
 		qrdbembedded.WithCredentialService(cs.Credential),
-	)
+	}
+	if pinBackend != nil {
+		opts = append(opts, qrdbembedded.WithPINBackend(pinBackend))
+	}
+	tp, err := qrdbembedded.New(kv, admin, opts...)
 	if err != nil {
 		return nil, &CeremonyWiringError{Stage: "bootstrap-transport", Cause: err}
 	}
@@ -183,60 +191,4 @@ func newBootstrapCeremonyClient(
 		return nil, &CeremonyWiringError{Stage: "bootstrap-client", Cause: err}
 	}
 	return client, nil
-}
-
-// SOCertSPKIThumbprintError indicates a failure computing the SPKI
-// thumbprint for an SO certificate (e.g., the certificate PEM is malformed
-// or contains no public key).
-type SOCertSPKIThumbprintError struct {
-	Reason string
-}
-
-// Error implements the error interface.
-func (e *SOCertSPKIThumbprintError) Error() string {
-	return "so cert spki thumbprint: " + e.Reason
-}
-
-// ErrSOCertEmpty indicates the SO certificate PEM input is empty.
-var ErrSOCertEmpty = errors.New("so cert spki thumbprint: empty PEM input")
-
-// ErrSOCertNoPEMBlock indicates the SO certificate PEM input does not contain
-// a parseable PEM block.
-var ErrSOCertNoPEMBlock = errors.New("so cert spki thumbprint: no PEM block")
-
-// ErrSOCertNoSPKI indicates the SO certificate PEM block is empty or missing
-// SubjectPublicKeyInfo bytes.
-var ErrSOCertNoSPKI = errors.New("so cert spki thumbprint: no SubjectPublicKeyInfo bytes")
-
-// SOCertSPKIThumbprint computes the SHA-256 SubjectPublicKeyInfo thumbprint
-// of an SO certificate, returned as base64url-encoded text per RFC 7517 §4.8.
-//
-// The thumbprint is the SHA-256 digest of the DER-encoded SPKI bytes (RFC
-// 5280 §4.1.2.7), NOT of the full certificate. SPKI binding is what allows
-// admin recognition to survive certificate renewal: as long as the public
-// key remains the same, a renewed SO cert presents the same thumbprint and
-// is recognized as the same admin user.
-//
-// The input MUST be a single PEM-encoded X.509 certificate. Pass the cert
-// PEM directly; do NOT attempt to parse and re-encode — the SPKI bytes are
-// extracted from the inner certificate body without reconstructing them.
-func SOCertSPKIThumbprint(certPEM []byte) (string, error) {
-	if len(certPEM) == 0 {
-		return "", ErrSOCertEmpty
-	}
-	block, _ := pem.Decode(certPEM)
-	if block == nil {
-		return "", ErrSOCertNoPEMBlock
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return "", &SOCertSPKIThumbprintError{Reason: err.Error()}
-	}
-	if len(cert.RawSubjectPublicKeyInfo) == 0 {
-		return "", ErrSOCertNoSPKI
-	}
-	// The SPKI-thumbprint algorithm is owned by go-qrdb (the single canonical
-	// implementation for the whole stack), consumed via the SDK; quicbaas must
-	// not reimplement it.
-	return qrdbsdk.ComputeSPKIThumbprint(cert), nil
 }

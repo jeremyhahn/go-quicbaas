@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
@@ -44,27 +45,18 @@ func setupIAMHandlerWithInvite(t *testing.T) (*IAMHandler, string, string, strin
 
 	// Wire the persistent invite store onto the mock service so the handler
 	// resolves it via getInviteStore — the production injection seam.
-	store := iam.NewMemoryInviteStore()
+	store := iamtest.NewMemoryInviteStore()
 	mockSvc, ok := server.service.(*testutil.MockQuicBaaS)
 	require.True(t, ok, "mock service must be *testutil.MockQuicBaaS")
 	mockSvc.InviteStoreOverride = store
 
-	// Seed a pending user directly in the invite store.
-	token, err := iam.GenerateInviteToken()
-	require.NoError(t, err)
-
-	tenantID := "tenant-invite"
+	tenantID := inviteTenant
 	userID := "user-invite-1"
 
-	expiresAt := time.Now().Add(time.Hour)
-	record := &iam.InviteRecord{
-		TokenHash: iam.TokenHashExported(token),
-		UserID:    userID,
-		TenantID:  tenantID,
-		ExpiresAt: expiresAt,
-	}
-	require.NoError(t, store.Create(context.Background(), record))
-
+	// Seed the invite through the store; the token is minted there.
+	token, record, err := store.Create(context.Background(), tenantID, userID, time.Hour)
+	require.NoError(t, err)
+	_ = record
 	return handler, token, tenantID, userID, store, cleanup
 }
 
@@ -74,6 +66,7 @@ func TestGetInvite_Valid(t *testing.T) {
 	defer cleanup()
 
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", inviteTenant)
 	rctx.URLParams.Add("token", token)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/invites/"+token, nil)
@@ -97,6 +90,7 @@ func TestGetInvite_NotFound(t *testing.T) {
 
 	bogusToken := "0000000000000000000000000000000000000000000000000000000000000000"
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", inviteTenant)
 	rctx.URLParams.Add("token", bogusToken)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/invites/"+bogusToken, nil)
@@ -113,17 +107,14 @@ func TestGetInvite_Expired(t *testing.T) {
 	handler, _, _, _, store, cleanup := setupIAMHandlerWithInvite(t)
 	defer cleanup()
 
-	expToken, err := iam.GenerateInviteToken()
+	// Seed in the SAME tenant the request targets. Under tenant-scoped
+	// invitations a token created elsewhere is simply absent, which would make
+	// this assert 404-not-found rather than the 410-expired it is about.
+	expToken, _, err := store.Create(context.Background(), inviteTenant, "user-exp", -time.Minute)
 	require.NoError(t, err)
-	expRecord := &iam.InviteRecord{
-		TokenHash: iam.TokenHashExported(expToken),
-		UserID:    "user-exp",
-		TenantID:  "t1",
-		ExpiresAt: time.Now().Add(-time.Minute),
-	}
-	require.NoError(t, store.Create(context.Background(), expRecord))
 
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", inviteTenant)
 	rctx.URLParams.Add("token", expToken)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/invites/"+expToken, nil)
@@ -142,6 +133,7 @@ func TestActivateFIDO2Begin_InviteNotFound(t *testing.T) {
 
 	bogus := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", inviteTenant)
 	rctx.URLParams.Add("token", bogus)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/invites/"+bogus+"/activate/fido2/begin", nil)
@@ -160,6 +152,7 @@ func TestActivateFIDO2Begin_ValidInvite_WebAuthnNotConfigured(t *testing.T) {
 	defer cleanup()
 
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", inviteTenant)
 	rctx.URLParams.Add("token", token)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/invites/"+token+"/activate/fido2/begin", nil)
@@ -179,6 +172,7 @@ func TestActivateFIDO2Finish_InvalidBody(t *testing.T) {
 	defer cleanup()
 
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", inviteTenant)
 	rctx.URLParams.Add("token", token)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/invites/"+token+"/activate/fido2/finish",
@@ -199,6 +193,7 @@ func TestActivatePIV_MissingCert(t *testing.T) {
 	defer cleanup()
 
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", inviteTenant)
 	rctx.URLParams.Add("token", token)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/invites/"+token+"/activate/piv",
@@ -219,6 +214,7 @@ func TestActivatePIV_PIVNotConfigured(t *testing.T) {
 	defer cleanup()
 
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", inviteTenant)
 	rctx.URLParams.Add("token", token)
 
 	body := `{"cert_pem":"-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"}`

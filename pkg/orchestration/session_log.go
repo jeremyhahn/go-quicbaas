@@ -15,10 +15,54 @@ package orchestration
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"time"
 )
+
+// maxSequenceAssignAttempts bounds the optimistic-concurrency retry in
+// AppendNextSessionEvent. A session has several genuine concurrent writers —
+// the orchestrator's own turn dispatch, background turn goroutines, and every
+// live attacher recording its presence — that race for the next sequence
+// number. A handful of immediate retries absorbs the race without ever
+// blocking on a timer.
+const maxSequenceAssignAttempts = 8
+
+// AppendNextSessionEvent assigns event.Sequence from the log's current tail
+// and appends, retrying immediately when a concurrent writer wins the race for
+// that sequence. It is the single write path for every session event producer:
+// SessionEventLog.Append deliberately requires an exact sequence so the log
+// stays gapless, which makes the read-then-write dance a shared concern rather
+// than something each caller re-invents.
+//
+// The event's Sequence field is overwritten; callers must not pre-assign it.
+func AppendNextSessionEvent(ctx context.Context, log SessionEventLog, event *SessionEvent) error {
+	if log == nil {
+		return &SessionLogError{Op: "append: no event log configured"}
+	}
+	if event == nil {
+		return &SessionLogError{Op: "append", Cause: ErrSessionEventNil}
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < maxSequenceAssignAttempts; attempt++ {
+		latest, err := log.LatestSequence(ctx, event.TenantID, event.SessionID)
+		if err != nil {
+			return &SessionLogError{Op: "append: read latest sequence", Cause: err}
+		}
+		event.Sequence = latest + 1
+		lastErr = log.Append(ctx, event)
+		if lastErr == nil {
+			return nil
+		}
+		if errors.Is(lastErr, ErrSessionLogGap) {
+			continue // another writer took this sequence; re-read and retry
+		}
+		return lastErr
+	}
+	return lastErr
+}
 
 // SessionEventLog is the storage + fan-out surface for session-scoped
 // events. Every session-related change produced by the daemon (prompts,

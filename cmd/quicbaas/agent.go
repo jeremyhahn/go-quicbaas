@@ -80,6 +80,7 @@ Examples:
 	cmd.AddCommand(newAgentHeartbeatCommand())
 	cmd.AddCommand(newAgentServeCommand())
 	cmd.AddCommand(newAgentDeployCommand())
+	cmd.AddCommand(newAgentAccountCommand())
 
 	return cmd
 }

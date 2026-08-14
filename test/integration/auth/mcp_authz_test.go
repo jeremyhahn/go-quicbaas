@@ -95,11 +95,12 @@ func newTestMCPContext(t *testing.T, allowed ...string) *testMCPContext {
 
 	authCfg := &auth.AuthConfig{
 		Enabled:         true,
-		JWTSecret:       "test-mcp-secret-key-for-integration-testing",
+		JWTSigningKeyID: "test-mcp-jwt-signing-key",
 		TokenTTL:        1 * time.Hour,
 		RefreshTokenTTL: 24 * time.Hour,
 		MaxTokens:       100,
 	}
+	configureTestJWTSigning(t, authCfg)
 
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)

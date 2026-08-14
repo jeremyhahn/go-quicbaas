@@ -260,11 +260,12 @@ func newTestMultiTenantContext(t *testing.T) *testMultiTenantContext {
 
 	authCfg := &auth.AuthConfig{
 		Enabled:         true,
-		JWTSecret:       "test-multi-tenant-secret-key-for-testing",
+		JWTSigningKeyID: "test-multi-tenant-signing-key",
 		TokenTTL:        1 * time.Hour,
 		RefreshTokenTTL: 24 * time.Hour,
 		MaxTokens:       100,
 	}
+	configureTestJWTSigning(t, authCfg)
 
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)

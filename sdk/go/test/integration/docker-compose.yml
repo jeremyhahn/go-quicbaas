@@ -18,6 +18,8 @@ services:
     command:
       - /usr/local/bin/quicbaasd
       - node
+      - --config
+      - /etc/quicbaas/quicbaas.yaml
       - --discovery=static
       - --grpc-port=50051
       - --http-port=8080
@@ -32,16 +34,19 @@ services:
       - QUICBAAS_LOGGING_FORMAT=console
       - QUICBAAS_STORAGE_DATA_DIR=/data
       - QUICBAAS_SERVER_HOST=0.0.0.0
+      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
+      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       - QUICBAAS_SERVER_ENABLE_TCP=true
       - QUICBAAS_SERVER_ENABLE_REST=true
       - QUICBAAS_SERVER_UNIX_SOCKET=/var/run/quicbaas/quicbaas.sock
       - QUICBAAS_KMS_ENABLED=true
       - QUICBAAS_KMS_BACKEND=software
       - QUICBAAS_SECRETS_ENABLED=true
-      # The SDK suite talks plain HTTP/gRPC (http://localhost:58080, nc TCP
-      # checks). Disable TLS so the REST/gRPC listeners serve cleartext;
-      # Security.TLSEnabled defaults to true otherwise.
-      - QUICBAAS_SECURITY_TLS_ENABLED=false
+      # TLS is mandatory stack-wide: the REST listener serves HTTPS with the
+      # shared integration cert fixtures (quicbaas.yaml security.tls_*). The
+      # suite pins test/integration/certs/ca.crt as the client RootCAs (see
+      # setup_test.go suiteTLS); no InsecureSkipVerify anywhere.
       # Default-deny scope -> RBAC gate ON (the secure default). The suite
       # bootstraps a platform token via public OAuth2 (DCR + client_credentials)
       # and attaches it to every protected data-plane request; an anonymous
@@ -52,6 +57,12 @@ services:
       - quicbaas-data:/data
       - quicbaas-logs:/var/log/quicbaas
       - quicbaas-socket:/var/run/quicbaas
+      # Server config: fixture-cert TLS identity + cert-bound bootstrap admin
+      # + RFC 7591 DCR enablement (keys the env surface cannot express).
+      - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
+      # Shared integration cert fixtures (gen-certs): serving cert valid for
+      # localhost, client CA, and the bootstrap admin client cert bundle.
+      - ../../../../test/integration/certs:/etc/quicbaas/certs:ro
     networks:
       - sdk-test-network
     healthcheck:

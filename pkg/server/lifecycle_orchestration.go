@@ -31,7 +31,21 @@ import (
 func (s *Server) startOrchestration() error {
 	s.logger.Info("Initializing agent orchestration service...")
 
-	store := orchestration.NewInMemoryAgentStore()
+	// Durable orchestration state binds to the tenant-routed KVStore, the same
+	// seam the IAM stores use: records are written inside the owning tenant's
+	// barrier (own DEK + namespace) rather than a shared table, and they
+	// survive a restart. Session records live here too — they are what makes a
+	// session addressable again after the daemon that hosted it is gone.
+	orchKV := s.durableKVStore()
+	if orchKV == nil {
+		orchKV = kvstore.NewMemory()
+		s.logger.Warn("No qrdb storage attached; orchestration state is in-memory and will not survive a restart")
+	}
+	orchStoreOpts := []orchestration.StoreOption{
+		orchestration.WithStoreAuditor(newOrchestrationStoreAuditor(s.auditLoggerForStores)),
+	}
+
+	store := orchestration.NewAgentStore(orchKV, orchStoreOpts...)
 	backends := make(map[string]orchestration.AgentBackend)
 
 	// Register Ollama backend if the Ollama service is available.
@@ -59,11 +73,14 @@ func (s *Server) startOrchestration() error {
 	// where a single long-running process handles multiple prompts with
 	// full conversation context across turns.
 	backends["claude"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
-		Command:      "claude",
-		Args:         []string{"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--disable-slash-commands"},
-		DefaultModel: "", // Let Claude Code use its configured default model.
-		TeamMode:     s.config.Orchestration.ClaudeTeamMode,
-		CLIMode:      true,
+		Command: "claude",
+		// --no-session-persistence is NOT listed here: it is a resume-policy
+		// decision the backend applies from NativeSessionResume.
+		Args:                []string{"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--disable-slash-commands"},
+		DefaultModel:        "", // Let Claude Code use its configured default model.
+		TeamMode:            s.config.Orchestration.ClaudeTeamMode,
+		CLIMode:             true,
+		NativeSessionResume: s.config.Orchestration.ClaudeNativeSessionResume,
 	})
 	s.logger.Info("Claude backend registered for orchestration")
 
@@ -117,21 +134,14 @@ func (s *Server) startOrchestration() error {
 		SetWorkflowLoader(wl *orchestration.WorkflowLoader)
 		SetSessionEventLog(log orchestration.SessionEventLog)
 		SetProjectAuthz(authz *orchestration.ProjectAuthz)
+		SetProjectStore(store orchestration.ProjectStore)
+		SetMountPolicy(policy *orchestration.MountPolicy)
+		SetTrustPolicy(policy orchestration.TrustPolicy)
+		SetTranscriptReplayBudget(budget int)
+		SetCostTracker(tracker orchestration.CostTracker)
+		SetAccountStore(store orchestration.AccountStore)
 	})
 	if ok {
-		// Durable orchestration state binds to the tenant-routed KVStore, the
-		// same seam the IAM stores use. Tasks therefore survive a restart, and
-		// a barrier-isolated tenant's tasks are written inside that tenant's
-		// own barrier (own DEK + namespace) rather than a shared table.
-		orchKV := s.durableKVStore()
-		if orchKV == nil {
-			orchKV = kvstore.NewMemory()
-			s.logger.Warn("No qrdb storage attached; orchestration tasks are in-memory and will not survive a restart")
-		}
-		orchStoreOpts := []orchestration.StoreOption{
-			orchestration.WithStoreAuditor(newOrchestrationStoreAuditor(s.auditLoggerForStores)),
-		}
-
 		wirer.SetTaskStore(orchestration.NewTaskStore(orchKV, orchStoreOpts...))
 		wirer.SetTenantGuard(orchestration.NewTenantGuard(logAdapter))
 
@@ -152,6 +162,32 @@ func (s *Server) startOrchestration() error {
 		}
 		wirer.SetProjectAuthz(orchestration.NewProjectAuthz(projectStore))
 		s.logger.Info("Project authorization attached to orchestration service")
+
+		// Managed project workspaces: spawn resolves a managed project's work
+		// directory from the SAME durable store CreateProject provisions into,
+		// and refuses to start until provisioning is ready. Extra sandbox
+		// mounts are validated against the projects root + operator allowlist
+		// (deny-by-default; an unwired policy denies everything).
+		projectsRoot := s.config.Orchestration.EffectiveProjectsRoot(s.config.Storage.DataDir)
+		wirer.SetProjectStore(projectStore)
+		wirer.SetMountPolicy(&orchestration.MountPolicy{
+			ProjectsRoot: projectsRoot,
+			AllowedRoots: s.config.Orchestration.Sandbox.AllowedMountRoots,
+		})
+
+		// Trust axis (orchestration.trust_policy): the integrity floor every
+		// spawn resolves TrustLevelDefault against. An unparsable value is
+		// FATAL rather than a warning — falling back would install the
+		// weakest policy under an operator who asked for the strictest.
+		trustPolicy, trustErr := orchestration.ParseTrustPolicy(s.config.Orchestration.TrustPolicy)
+		if trustErr != nil {
+			return trustErr
+		}
+		wirer.SetTrustPolicy(trustPolicy)
+		s.logger.Infof("Agent trust policy: %s (integrity floor)", trustPolicy.String())
+		if wsErr := s.wireProjectWorkspaces(projectStore, projectsRoot); wsErr != nil {
+			s.logger.Warnf("Managed project workspaces disabled: %v", wsErr)
+		}
 		// Reuse the registry created during IAM init so enrollment-time
 		// registrations are immediately visible to dispatch. Builds one over
 		// the same durable store only if IAM init never ran.
@@ -208,11 +244,7 @@ func (s *Server) startOrchestration() error {
 		// (conversation transcripts) survive a daemon restart instead of
 		// evaporating with the process. Falls back to an in-memory store only
 		// when no qrdb storage is attached (storage-less dev boot).
-		jobKVStore := s.durableKVStore()
-		if jobKVStore == nil {
-			jobKVStore = kvstore.NewMemory()
-			s.logger.Warn("No qrdb storage attached; orchestration jobs and session transcripts are in-memory and will not survive a restart")
-		}
+		jobKVStore := orchKV
 		wirer.SetKVStore(jobKVStore)
 		s.logger.Info("KV store attached to orchestration service for job persistence")
 
@@ -244,6 +276,111 @@ func (s *Server) startOrchestration() error {
 			}
 		}
 
+		// Wire the per-tenant token ledger. It binds to the SAME tenant-routed,
+		// durable orchKV as tasks/projects/agents/sessions, so usage records
+		// are written inside the owning tenant's barrier (own DEK + namespace)
+		// and survive a restart. Every ledger key is additionally namespaced by
+		// tenant ID (see cost_tracker_store.go), so one tenant's usage can
+		// neither be read nor influence account selection for another even when
+		// a deployment routes both to one physical store.
+		//
+		// This is what makes the ledger real: agentServiceImpl.recordTurnUsage
+		// charges every completed turn to it, and LeastUsageAccountStrategy
+		// reads it back to balance a pool of provider accounts.
+		costTracker := orchestration.NewCostTracker(orchKV, logAdapter)
+		wirer.SetCostTracker(costTracker)
+		s.logger.Info("Token cost ledger attached to orchestration service (durable KV-backed, tenant-namespaced)")
+
+		// Bind the account service's usage reporting to the SAME ledger the
+		// turn path writes to. Without this, AccountService.GetAccountUsage
+		// reports "not configured" over every transport while the ledger it
+		// should be reading is sitting right here.
+		if s.quicBaaSService != nil {
+			if usageWirer, usageOK := s.quicBaaSService.Account().(interface {
+				SetUsageTracker(orchestration.CostTracker)
+			}); usageOK {
+				usageWirer.SetUsageTracker(costTracker)
+				s.logger.Info("Account usage reporting bound to the orchestration cost ledger")
+			}
+		}
+
+		// Wire the pooled provider account resolver (see
+		// pkg/orchestration/account_resolver.go) so a spawn that sets
+		// SpawnRequest.AccountID / AccountAuto can select and materialize a
+		// pooled Anthropic/Claude, Codex, or OpenCode credential instead of
+		// the daemon host's shared identity dirs. Backed by the same
+		// tenant-routed, durable orchKV as tasks/projects/agents for
+		// metadata, and by the platform's SecretsManager (StoreOptions with
+		// a tenant-specific DEK — see account_secret_store.go) for the
+		// credential envelope itself, so it is encrypted at rest via the
+		// same barrier path as every other secret.
+		//
+		// The registry is built over the cost ledger above, so both the
+		// "static" (use account X) and "least_usage" (use the account with the
+		// least usage) strategies the owner asked for are registered and
+		// selectable by name from a spawn request.
+		if s.secretsManager != nil {
+			// Provider registry first: it decides which providers may run the
+			// refresh grant and supplies the token endpoint / client id /
+			// access-token env key an account did not set for itself. Built-ins
+			// (Anthropic, OpenAI, OpenCode) are merged with whatever
+			// orchestration.account_providers configures.
+			accountProviders, providerErr := orchestration.NewAccountProviderRegistry(
+				accountProviderDescriptors(s.config.Orchestration.AccountProviders)...)
+			if providerErr != nil {
+				return providerErr
+			}
+
+			accountStore := orchestration.NewAccountStore(orchKV, orchStoreOpts...)
+			accountSecrets := orchestration.NewAccountSecretStore(s.secretsManager)
+			accountTokens := orchestration.NewAccountTokenManager(accountSecrets, accountStore, 0,
+				orchestration.WithAccountProviders(accountProviders))
+
+			// Install the RFC 6749 refresh_token-grant client on every
+			// oauth-capable provider. Without this every oauth2 account fails
+			// its first renewal with "refresher not configured" at spawn time,
+			// which is precisely when a live workload notices.
+			refreshedProviders := accountTokens.RegisterOAuthRefreshers(
+				orchestration.NewOAuth2TokenRefresher(orchestration.OAuth2RefresherConfig{}))
+			s.logger.Infof("OAuth2 token refresher registered for pooled account providers: %v", refreshedProviders)
+
+			// The account write path validates against the SAME registry, so an
+			// oauth2 account with no resolvable token endpoint is rejected by
+			// CreateAccount/RotateAccountCredential instead of at spawn.
+			if s.quicBaaSService != nil {
+				if providerWirer, providerOK := s.quicBaaSService.Account().(interface {
+					SetProviderRegistry(*orchestration.AccountProviderRegistry)
+				}); providerOK {
+					providerWirer.SetProviderRegistry(accountProviders)
+				}
+			}
+
+			accountStrategies := orchestration.NewAccountStrategyRegistry(costTracker)
+			accountResolver := orchestration.NewAccountResolver(
+				accountStore, accountTokens, accountStrategies,
+				append(orchStoreOpts, orchestration.WithStoreLogger(logAdapter))...)
+
+			// Give the orchestrator the SAME metadata store the resolver reads
+			// from, so a turn that fails on a provider rate/usage limit can put
+			// a durable hold on the offending account (AccountStatusLimited +
+			// AvailableAt) before selecting a replacement. Without it the
+			// rotation still finds a different account for THIS session, but
+			// the exhausted one stays nominally active and every other session
+			// rediscovers the same limit for itself.
+			wirer.SetAccountStore(accountStore)
+
+			for _, name := range []string{"claude", "opencode"} {
+				if b, ok := backends[name]; ok {
+					if acpBackend, ok := b.(*orchestration.ACPBackend); ok {
+						acpBackend.SetAccountResolver(accountResolver)
+					}
+				}
+			}
+			s.logger.Info("Pooled provider account resolver attached to claude/opencode orchestration backends (strategies: static, least_usage)")
+		} else {
+			s.logger.Warn("No secrets manager attached; pooled provider accounts are disabled (spawns with account_id/account_auto will fail closed)")
+		}
+
 		// Wire the session event log so attachers can replay + tail session
 		// events. Backed by the SAME tenant-routed, durable KV store as job
 		// persistence (jobKVStore, above) — conversation transcripts
@@ -261,6 +398,27 @@ func (s *Server) startOrchestration() error {
 		} else {
 			wirer.SetSessionEventLog(sessionLog)
 			s.logger.Info("Session event log attached (durable KV-backed, tenant-routed, qrdb barrier-encrypted at rest)")
+		}
+
+		wirer.SetTranscriptReplayBudget(s.config.Orchestration.TranscriptReplayBudget)
+
+		// Restore the session registry from the durable store. Without this a
+		// session spawned before the restart is unaddressable and a prompt
+		// against it fails with "either backend or session_id must be
+		// provided". Persistent local sessions come back in the resumable
+		// state: their agent process is recreated by the next prompt, not at
+		// boot, so a restart does not fork a subprocess for every session
+		// anyone ever spawned. Must run after the session event log is wired —
+		// the replayed transcript is read from it.
+		type sessionLoader interface {
+			LoadPersistedSessions(ctx context.Context) error
+		}
+		if loader, loaderOK := agentSvc.(sessionLoader); loaderOK {
+			loadCtx, loadCancel := context.WithTimeout(context.Background(), s.config.Server.ShutdownTimeout)
+			if loadErr := loader.LoadPersistedSessions(loadCtx); loadErr != nil {
+				s.logger.Warnf("Session restoration from durable store failed: %v", loadErr)
+			}
+			loadCancel()
 		}
 
 		// Wire the remote-backend resolver so daemon-kind registrations are

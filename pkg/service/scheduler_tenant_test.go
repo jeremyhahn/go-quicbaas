@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -317,4 +318,32 @@ func TestSchedulerTenantJobName_ScopeAndBelongsTo(t *testing.T) {
 
 	// But not to a different tenant
 	assert.False(t, schedulerTenantJobBelongsTo("other-corp", tenantID))
+}
+
+// =============================================================================
+// System-tenant scoping tests
+// =============================================================================
+
+// TestSchedulerTenant_SystemTenantIsPlatformScoped proves a caller carrying
+// the literal system tenant is treated identically to single-tenant mode
+// rather than being isolated into a tenant namespace named "system".
+func TestSchedulerTenant_SystemTenantIsPlatformScoped(t *testing.T) {
+	for _, tenantID := range []string{"", qrdbsdk.SystemTenantID} {
+		t.Run("tenantID="+tenantID, func(t *testing.T) {
+			assert.Equal(t, "nightly-backup", schedulerTenantScopedJobName(tenantID, "nightly-backup"))
+			assert.True(t, schedulerTenantJobBelongsTo(tenantID, "any-other-tenant"))
+			assert.NoError(t, schedulerTenantEnforceAccess(tenantID, "any-other-tenant", "RunJob"))
+		})
+	}
+}
+
+// TestSchedulerTenant_OrdinaryTenantStaysIsolated proves the system-tenant
+// carve-out does not widen ordinary tenants' reach: a lookalike ID that
+// merely shares the "system" prefix is still fully isolated.
+func TestSchedulerTenant_OrdinaryTenantStaysIsolated(t *testing.T) {
+	scoped := schedulerTenantScopedJobName("system-2", "nightly-backup")
+	assert.Equal(t, "tenant/system-2/nightly-backup", scoped)
+	assert.False(t, schedulerTenantJobBelongsTo("system-2", "other-tenant"))
+	err := schedulerTenantEnforceAccess("system-2", "other-tenant", "RunJob")
+	require.Error(t, err)
 }

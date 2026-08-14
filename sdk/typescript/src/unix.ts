@@ -55,6 +55,8 @@ import type {
   RegisterAgentRequest,
   RegisterAgentResponse,
   RemoveAgentRequest,
+  RotateSessionAccountRequest,
+  RotateSessionAccountResponse,
   SessionEventEnvelope,
   SpawnSessionRequest,
   SpawnSessionResponse,
@@ -114,6 +116,7 @@ class UnixOrchestratorClient implements OrchestratorClient {
   async spawnSession(_req: SpawnSessionRequest): Promise<SpawnSessionResponse> { return notImpl('spawnSession'); }
   async promptSession(_req: PromptSessionRequest): Promise<PromptSessionResponse> { return notImpl('promptSession'); }
   async closeSession(_req: CloseSessionRequest): Promise<CloseSessionResponse> { return notImpl('closeSession'); }
+  async rotateSessionAccount(_req: RotateSessionAccountRequest): Promise<RotateSessionAccountResponse> { return notImpl('rotateSessionAccount'); }
   async getSessionHistory(_req: GetSessionHistoryRequest): Promise<GetSessionHistoryResponse> { return notImpl('getSessionHistory'); }
   // eslint-disable-next-line @typescript-eslint/require-await
   async *subscribeSession(_req: SubscribeSessionEventsRequest): AsyncIterable<SessionEventEnvelope> { return notImpl('subscribeSession'); }
@@ -139,8 +142,8 @@ class UnixOrchestratorClient implements OrchestratorClient {
 class UnixAuthClient implements AuthClient {
   async authValidate(_token?: string): Promise<boolean> { return notImpl('authValidate'); }
   async authLogin(_credentials: { username: string; password: string }): Promise<void> { return notImpl('authLogin'); }
-  async webAuthnBeginLogin(_tenantID: string, _email: string): Promise<import('./types.js').CredentialAssertionJSON> { return notImpl('webAuthnBeginLogin'); }
-  async webAuthnFinishLogin(_tenantID: string, _email: string, _credential: import('./types.js').PublicKeyCredentialJSON): Promise<import('./types.js').AuthTokenResponse> { return notImpl('webAuthnFinishLogin'); }
+  async webAuthnBeginLogin(_tenantID: string, _email: string): Promise<import('./types.js').WebAuthnLoginChallenge> { return notImpl('webAuthnBeginLogin'); }
+  async webAuthnFinishLogin(_challenge: import('./types.js').WebAuthnLoginChallenge, _credential: import('./types.js').PublicKeyCredentialJSON): Promise<import('./types.js').AuthTokenResponse> { return notImpl('webAuthnFinishLogin'); }
   async loginPIV(): Promise<import('./types.js').AuthTokenResponse> { return notImpl('loginPIV'); }
   async logout(_token?: string): Promise<void> { return notImpl('logout'); }
   async registerBegin(_req: import('./interfaces.js').SelfRegisterBeginRequest): Promise<import('./interfaces.js').SelfRegisterBeginResponse> { return notImpl('registerBegin'); }
@@ -171,11 +174,23 @@ export class UnixClient implements Client {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly projects: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly accounts: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly iam: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly kms: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly secrets: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly ca: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly trust: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly crypto: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly dek: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly dynamicSecrets: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly barrier: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

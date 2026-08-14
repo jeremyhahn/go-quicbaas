@@ -22,10 +22,12 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
+	accountSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/account"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/auth"
 	operationsSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/operations"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	projectSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/project"
+	sshSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
@@ -66,12 +68,6 @@ type KMSClientFactory func() (KMSClient, error)
 
 // kmsClientFactory creates KMS clients.
 var kmsClientFactory KMSClientFactory = createKMSClient
-
-// DEKClientFactory is a function type for creating DEK clients.
-type DEKClientFactory func() (DEKClient, error)
-
-// dekClientFactory creates DEK clients.
-var dekClientFactory DEKClientFactory = createDEKClient
 
 // SealClientFactory is a function type for creating seal clients.
 type SealClientFactory func() (SealClient, error)
@@ -128,6 +124,24 @@ type ProjectClientFactory func() (projectSDK.Client, error)
 // projectClientFactory creates project clients. Defaults to createSDKProjectClient.
 var projectClientFactory ProjectClientFactory = createSDKProjectClient
 
+// SSHClientFactory is a function type for creating SSH clients. The returned
+// client routes through the active SDK transport, so `quicbaas ssh ...`
+// behaves identically on rest / grpc / quic / mcp / unix / embedded.
+type SSHClientFactory func() (sshSDK.Client, error)
+
+// sshClientFactory creates SSH clients. Defaults to createSDKSSHClient.
+var sshClientFactory SSHClientFactory = createSDKSSHClient
+
+// AccountClientFactory is a function type for creating pooled provider
+// account clients. The returned client routes through the active SDK
+// transport, so `quicbaas agent account ...` behaves identically on rest /
+// grpc / quic / mcp / unix / embedded.
+type AccountClientFactory func() (accountSDK.Client, error)
+
+// accountClientFactory creates account clients. Defaults to
+// createSDKAccountClient.
+var accountClientFactory AccountClientFactory = createSDKAccountClient
+
 // =============================================================================
 // Interface Definitions
 // =============================================================================
@@ -163,19 +177,6 @@ type KMSClient interface {
 	KMSUnwrapKey(ctx context.Context, req *service.UnwrapKeyRequest) (*service.UnwrapKeyResponse, error)
 	KMSSetKeySafety(ctx context.Context, req *service.SetKeySafetyRequest) (*service.SetKeySafetyResponse, error)
 	KMSClearKeySafety(ctx context.Context, req *service.ClearKeySafetyRequest) (*service.ClearKeySafetyResponse, error)
-	Close() error
-}
-
-// DEKClient defines the interface for data encryption key operations.
-type DEKClient interface {
-	KMSCreateDEK(ctx context.Context, req *service.CreateDEKRequest) (*service.CreateDEKResponse, error)
-	KMSGetDEK(ctx context.Context, req *service.GetDEKRequest) (*service.GetDEKResponse, error)
-	KMSListDEKs(ctx context.Context, req *service.ListDEKsRequest) (*service.ListDEKsResponse, error)
-	KMSRotateDEK(ctx context.Context, req *service.RotateDEKRequest) (*service.RotateDEKResponse, error)
-	KMSDeleteDEK(ctx context.Context, req *service.DeleteDEKRequest) (*service.DeleteDEKResponse, error)
-	KMSGetDEKStatus(ctx context.Context, req *service.GetDEKStatusRequest) (*service.GetDEKStatusResponse, error)
-	KMSSetDefaultDEK(ctx context.Context, req *service.SetDefaultDEKRequest) (*service.SetDefaultDEKResponse, error)
-	KMSSetDEKSafety(ctx context.Context, req *service.SetDEKSafetyRequest) (*service.SetDEKSafetyResponse, error)
 	Close() error
 }
 
@@ -237,6 +238,7 @@ type OrchestratorClient interface {
 	PromptSession(ctx context.Context, req *orchestratorSDK.PromptSessionRequest) (*orchestratorSDK.PromptSessionResponse, error)
 	SessionStatus(ctx context.Context, req *orchestratorSDK.SessionStatusRequest) (*orchestratorSDK.SessionStatusResponse, error)
 	CloseSession(ctx context.Context, req *orchestratorSDK.CloseSessionRequest) (*orchestratorSDK.CloseSessionResponse, error)
+	RotateSessionAccount(ctx context.Context, req *orchestratorSDK.RotateSessionAccountRequest) (*orchestratorSDK.RotateSessionAccountResponse, error)
 	ListSessions(ctx context.Context, req *orchestratorSDK.ListSessionsRequest) (*orchestratorSDK.ListSessionsResponse, error)
 	CreateTask(ctx context.Context, req *orchestratorSDK.CreateTaskRequest) (*orchestratorSDK.Task, error)
 	GetTask(ctx context.Context, req *orchestratorSDK.GetTaskRequest) (*orchestratorSDK.Task, error)
@@ -380,6 +382,16 @@ func createSDKProjectClient() (projectSDK.Client, error) {
 	return sdk.Project(), nil
 }
 
+// createSDKAccountClient creates an SDK client for pooled provider account
+// operations.
+func createSDKAccountClient() (accountSDK.Client, error) {
+	sdk, err := sdkClientFactory()
+	if err != nil {
+		return nil, err
+	}
+	return sdk.Account(), nil
+}
+
 // createCryptoClient creates a client for cryptographic operations based on transport.
 func createCryptoClient() (CryptoClient, error) {
 	switch transport {
@@ -401,18 +413,6 @@ func createKMSClient() (KMSClient, error) {
 		return createMCPKMSClient()
 	default:
 		return createSDKKMSClient()
-	}
-}
-
-// createDEKClient creates a client for DEK operations based on transport.
-func createDEKClient() (DEKClient, error) {
-	switch transport {
-	case "grpc", "":
-		return createGRPCClient()
-	case "mcp":
-		return createMCPDEKClient()
-	default:
-		return createSDKDEKClient()
 	}
 }
 
@@ -597,11 +597,16 @@ func resetFactories() {
 	secretsClientFactory = createGRPCSecretsClient
 	timeSeriesClientFactory = createTimeSeriesClient
 	authClientFactory = createSDKAuthClient
-	dekClientFactory = createDEKClient
 	backendClientFactory = createBackendClient
 	safetyClientFactory = createSafetyClient
 	backupClientFactory = createBackupClient
 	orchestratorClientFactory = createOrchestratorSDKClient
 	projectClientFactory = createSDKProjectClient
+	accountClientFactory = createSDKAccountClient
 	mcpCallerFactory = createSDKMCPCaller
+	sdkDEKClientFactory = createSDKDEKServiceClient
+	dynamicSecretsClientFactory = createSDKDynamicSecretsClient
+	trustClientFactory = createSDKTrustClient
+	acmeServerClientFactory = createSDKACMEServerClient
+	acmeProtocolClientFactory = createSDKACMEProtocolClient
 }

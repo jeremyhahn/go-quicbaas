@@ -60,7 +60,6 @@ server:
 # generated admin client cert via auth.bootstrap_admin_piv_cert_path.
 auth:
   enabled: true
-  jwt_secret: "integration-test-secret-key-at-least-32-characters-long"
   token_ttl: 1h
   refresh_token_ttl: 24h
   bootstrap_admin: true

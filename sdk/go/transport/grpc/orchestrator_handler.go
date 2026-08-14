@@ -43,31 +43,32 @@ type orchestratorHandlerFunc func(ctx context.Context, conn *grpc.ClientConn, re
 
 // orchestratorMethodMap maps SDK method names to handler functions for O(1) dispatch.
 var orchestratorMethodMap = map[string]orchestratorHandlerFunc{
-	"Health":            handleOrchestratorHealth,
-	"ListBackends":      handleOrchestratorListBackends,
-	"SpawnSession":      handleOrchestratorSpawnSession,
-	"PromptSession":     handleOrchestratorPromptSession,
-	"SessionStatus":     handleOrchestratorSessionStatus,
-	"CloseSession":      handleOrchestratorCloseSession,
-	"ListSessions":      handleOrchestratorListSessions,
-	"CreateTask":        handleOrchestratorCreateTask,
-	"GetTask":           handleOrchestratorGetTask,
-	"ListTasks":         handleOrchestratorListTasks,
-	"ClaimTask":         handleOrchestratorClaimTask,
-	"CompleteTask":      handleOrchestratorCompleteTask,
-	"RegisterAgent":     handleOrchestratorRegisterAgent,
-	"GetAgent":          handleOrchestratorGetAgent,
-	"ListAgents":        handleOrchestratorListAgents,
-	"RemoveAgent":       handleOrchestratorRemoveAgent,
-	"AgentHeartbeat":    handleOrchestratorAgentHeartbeat,
-	"DecomposeTask":     handleOrchestratorDecomposeTask,
-	"SpawnChildJob":     handleOrchestratorSpawnChildJob,
-	"StartJob":          handleOrchestratorStartJob,
-	"GetJobStatus":      handleOrchestratorGetJobStatus,
-	"ListJobs":          handleOrchestratorListJobs,
-	"CancelJob":         handleOrchestratorCancelJob,
-	"GetSessionHistory": handleOrchestratorGetSessionHistory,
-	"Inference":         handleOrchestratorInference,
+	"Health":               handleOrchestratorHealth,
+	"ListBackends":         handleOrchestratorListBackends,
+	"SpawnSession":         handleOrchestratorSpawnSession,
+	"PromptSession":        handleOrchestratorPromptSession,
+	"SessionStatus":        handleOrchestratorSessionStatus,
+	"CloseSession":         handleOrchestratorCloseSession,
+	"RotateSessionAccount": handleOrchestratorRotateSessionAccount,
+	"ListSessions":         handleOrchestratorListSessions,
+	"CreateTask":           handleOrchestratorCreateTask,
+	"GetTask":              handleOrchestratorGetTask,
+	"ListTasks":            handleOrchestratorListTasks,
+	"ClaimTask":            handleOrchestratorClaimTask,
+	"CompleteTask":         handleOrchestratorCompleteTask,
+	"RegisterAgent":        handleOrchestratorRegisterAgent,
+	"GetAgent":             handleOrchestratorGetAgent,
+	"ListAgents":           handleOrchestratorListAgents,
+	"RemoveAgent":          handleOrchestratorRemoveAgent,
+	"AgentHeartbeat":       handleOrchestratorAgentHeartbeat,
+	"DecomposeTask":        handleOrchestratorDecomposeTask,
+	"SpawnChildJob":        handleOrchestratorSpawnChildJob,
+	"StartJob":             handleOrchestratorStartJob,
+	"GetJobStatus":         handleOrchestratorGetJobStatus,
+	"ListJobs":             handleOrchestratorListJobs,
+	"CancelJob":            handleOrchestratorCancelJob,
+	"GetSessionHistory":    handleOrchestratorGetSessionHistory,
+	"Inference":            handleOrchestratorInference,
 }
 
 // handleOrchestratorGetSessionHistory is the one-shot gRPC handler for a
@@ -232,6 +233,15 @@ func handleOrchestratorSpawnSession(ctx context.Context, conn *grpc.ClientConn, 
 		HostAffinity:       sdkReq.HostAffinity,
 		HostAffinityStrict: sdkReq.HostAffinityStrict,
 		TenantId:           tenantID,
+
+		// Pooled provider account selection. AccountAuto is the only way to
+		// reach the dynamic (least-usage) strategy, so it must cross the wire.
+		AccountId:       sdkReq.AccountID,
+		AccountAuto:     sdkReq.AccountAuto,
+		AccountStrategy: sdkReq.AccountStrategy,
+		// AccountAllow is the second thing that authorizes rotation, so it has
+		// to cross the wire alongside AccountAuto.
+		AccountAllow: sdkReq.AccountAllow,
 	}
 	protoResp := &pb.SpawnSessionResponse{}
 
@@ -267,8 +277,17 @@ func handleOrchestratorPromptSession(ctx context.Context, conn *grpc.ClientConn,
 		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.PromptSession")
 	}
 
-	// Flatten through the shared converter so gRPC applies the same content
-	// and turn-completion rules as the JSON transports.
+	// Dispatch on status through the shared converters so gRPC applies the
+	// same acceptance and turn-completion rules as the JSON transports.
+	if protoResp.GetStatus() == orchestrator.TurnStatusAccepted {
+		return orchestrator.NewPromptSessionAccepted(
+			protoResp.GetSessionId(),
+			protoResp.GetTurnId(),
+			protoResp.GetSequence(),
+			protoResp.GetModel(),
+		)
+	}
+
 	blocks := make([]orchestrator.PromptContentBlock, 0, len(protoResp.GetContent()))
 	for _, block := range protoResp.GetContent() {
 		blocks = append(blocks, orchestrator.PromptContentBlock{
@@ -335,6 +354,50 @@ func handleOrchestratorCloseSession(ctx context.Context, conn *grpc.ClientConn, 
 		SessionID: protoResp.GetSessionId(),
 		Closed:    true,
 	}, nil
+}
+
+// handleOrchestratorRotateSessionAccount moves a session onto a different
+// pooled provider account. AvailableAt crosses the wire as Unix seconds
+// (available_at_unix), matching how the account surface already carries the
+// same value; the zero time stays zero so "unset" survives the round trip.
+func handleOrchestratorRotateSessionAccount(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.RotateSessionAccountRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.RotateSessionAccount", "invalid request type")
+	}
+
+	tenantID := transport.TenantFromContext(ctx)
+
+	protoReq := &pb.RotateSessionAccountRequest{
+		SessionId:       sdkReq.SessionID,
+		TenantId:        tenantID,
+		Reason:          sdkReq.Reason,
+		HoldOutgoing:    sdkReq.HoldOutgoing,
+		AvailableAtUnix: unixOrZero(sdkReq.AvailableAt),
+	}
+	protoResp := &pb.RotateSessionAccountResponse{}
+
+	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_RotateSessionAccount_FullMethodName, protoReq, protoResp)
+	if invokeErr != nil {
+		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.RotateSessionAccount")
+	}
+
+	return &orchestrator.RotateSessionAccountResponse{
+		SessionID:         protoResp.GetSessionId(),
+		PreviousAccountID: protoResp.GetPreviousAccountId(),
+		AccountID:         protoResp.GetAccountId(),
+		Strategy:          protoResp.GetStrategy(),
+		Mode:              protoResp.GetMode(),
+	}, nil
+}
+
+// unixOrZero is the inverse of timeFromUnix (account_handler.go): the zero
+// time stays 0 on the wire so "unset" is not sent as 1970-01-01.
+func unixOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }
 
 func handleOrchestratorListSessions(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {

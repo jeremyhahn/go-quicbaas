@@ -1066,6 +1066,7 @@ func TestP10_StartGRPCServer_ListenerError(t *testing.T) {
 	mockSvc.On("Scheduler").Return(nil)
 	mockSvc.On("Messaging").Return(nil)
 	mockSvc.On("Embedding").Return(nil)
+	mockSvc.On("Project").Return(nil)
 
 	seamMu.Lock()
 	initSealManagerFn = func(_ *logger.Logger) error { return nil }
@@ -1312,41 +1313,6 @@ func TestP15_Shutdown_StopTimeSeriesError(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestP15_Shutdown_LocalBackendCloseError covers server.go L621-624
-// (localBackend.Close error is accumulated during shutdown).
-func TestP15_Shutdown_LocalBackendCloseError(t *testing.T) {
-	saveAndRestoreSeams(t)
-	tmpDir := t.TempDir()
-	cfg := createFTConfig(t)
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendPebble
-	cfg.Storage.DataDir = filepath.Join(tmpDir, "lb-close-err")
-	cfg.Security.TLSEnabled = false
-	cfg.Server.Embedded = true
-
-	seamMu.Lock()
-	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
-	initSealManagerFn = func(_ *logger.Logger) error { return nil }
-	seamMu.Unlock()
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	err = srv.initialize()
-	require.NoError(t, err)
-
-	// Manually assign a LocalBackend to exercise the shutdown close path.
-	// NewLocalBackend returns nil in stub mode, so use a literal value.
-	srv.localBackend = &LocalBackend{}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	err = srv.Shutdown(ctx)
-	// The stub LocalBackend.Close() is a no-op, but this covers the
-	// non-nil localBackend shutdown code path in server.go L621-624.
-	t.Logf("Shutdown result: %v", err)
-}
-
 // -----------------------------------------------------------------------------
 // lifecycle_embedding.go provider error path registration
 // -----------------------------------------------------------------------------
@@ -1381,9 +1347,11 @@ func TestP15_RegisterEmbeddingProviders_DuplicateOllama(t *testing.T) {
 // lifecycle.go: startService file_kv_store error (L1051).
 // -----------------------------------------------------------------------------
 
-// TestP15_StartService_FileKVStoreCreationError covers lifecycle.go L1051-1053
-// (FileKVStore creation fails when data directory is invalid).
-func TestP15_StartService_FileKVStoreCreationError(t *testing.T) {
+// TestP15_StartService_FileStorageCreationError asserts initialize() fails
+// when the file-backed storage engine cannot create its data directory.
+// Storage is qrdb's own file engine (pkg/storage/file); quicbaas does not
+// implement a store of its own.
+func TestP15_StartService_FileStorageCreationError(t *testing.T) {
 	saveAndRestoreSeams(t)
 	cfg := createFTConfig(t)
 	cfg.Server.Mode = config.ServerModeStandalone
@@ -1402,7 +1370,7 @@ func TestP15_StartService_FileKVStoreCreationError(t *testing.T) {
 	require.NoError(t, err)
 
 	err = srv.initialize()
-	// Should fail when trying to create FileKVStore at invalid path
+	// Should fail when trying to create the file store at an invalid path
 	assert.Error(t, err)
 	t.Logf("initialize error (expected): %v", err)
 }

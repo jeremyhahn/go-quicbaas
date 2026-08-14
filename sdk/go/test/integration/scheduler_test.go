@@ -1307,7 +1307,7 @@ func doSchedulerRequest(ctx context.Context, method, reqURL string, body []byte,
 	}
 	authorize(httpReq)
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := newHTTPClient(10 * time.Second)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}

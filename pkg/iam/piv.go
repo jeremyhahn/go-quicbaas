@@ -85,10 +85,23 @@ func NewPIVActivator(deps PIVActivatorDependencies) (*PIVActivator, error) {
 //
 // It validates the invite token, verifies the certificate chain (ClientAuth EKU required),
 // fetches the pending user, transitions the user to active, stores the certificate thumbprint,
-// and marks the invite as consumed.
-func (a *PIVActivator) Activate(ctx context.Context, token string, certPEM []byte) error {
-	// 1. Look up the invite.
-	invite, err := a.inviteStore.GetByToken(ctx, token)
+// and consumes the invite.
+//
+// tenantID is required because invitations live in that tenant's own store: a
+// token issued for one tenant is simply absent from another, so isolation is
+// structural rather than a check that could be forgotten. A token replayed
+// against the wrong tenant is indistinguishable from one that never existed.
+func (a *PIVActivator) Activate(ctx context.Context, tenantID, token string, certPEM []byte) error {
+	if tenantID == "" {
+		return ErrInviteNotFound
+	}
+
+	// 1. Look up the invite WITHOUT consuming it. Validation runs first
+	//    because the expensive, failure-prone work (chain verification, user
+	//    lookup) must not burn a single-use token when it fails: an operator
+	//    presenting the wrong certificate should be able to retry with the
+	//    right one rather than having to be re-invited.
+	invite, err := a.inviteStore.Lookup(ctx, tenantID, token)
 	if err != nil {
 		return err // typed: ErrInviteNotFound
 	}
@@ -152,11 +165,14 @@ func (a *PIVActivator) Activate(ctx context.Context, token string, certPEM []byt
 		return &PIVActivationUpdateError{Cause: err}
 	}
 
-	// 7. Consume the invite.
-	if err := a.inviteStore.MarkUsed(ctx, token); err != nil {
+	// 7. Consume the invite. Redeem is the single-winner primitive: concurrent
+	//    redemptions resolve to exactly one, so two racing activations cannot
+	//    both succeed. The earlier Used check is an early-out for the common
+	//    case, not the enforcement point — that lives here.
+	if _, err := a.inviteStore.Redeem(ctx, tenantID, token); err != nil {
 		// The user is already activated; log but don't fail the caller.
 		a.logAudit(ctx, invite.TenantID, invite.UserID, "piv_activate", "warning", map[string]interface{}{
-			"warning": "failed to mark invite used after activation: " + err.Error(),
+			"warning": "failed to consume invite after activation: " + err.Error(),
 		})
 	} else {
 		a.logAudit(ctx, invite.TenantID, invite.UserID, "piv_activate", "success", map[string]interface{}{

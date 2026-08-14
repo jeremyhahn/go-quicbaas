@@ -202,18 +202,3 @@ func TestPIVErrors_Error(t *testing.T) {
 // -----------------------------------------------------------------------------
 // invite.go — InviteTokenGenerationError + TokenHashExported
 // -----------------------------------------------------------------------------
-
-func TestInviteTokenGenerationError_ErrorAndUnwrap(t *testing.T) {
-	cause := errors.New("rng down")
-	e := &InviteTokenGenerationError{Cause: cause}
-	assert.Contains(t, e.Error(), "rng down")
-	assert.Equal(t, cause, e.Unwrap())
-}
-
-func TestTokenHashExported(t *testing.T) {
-	h1 := TokenHashExported("token")
-	h2 := TokenHashExported("token")
-	assert.Equal(t, h1, h2)
-	assert.Len(t, h1, 64) // SHA-256 hex
-	assert.NotEqual(t, h1, TokenHashExported("other"))
-}

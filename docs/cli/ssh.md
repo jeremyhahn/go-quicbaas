@@ -7,6 +7,19 @@ indirectly: `quicbaas agent deploy --ssh-key-name <name>` looks up
 the key in the store and uses it to dial the remote host without
 ever materialising the PEM bytes outside the server process.
 
+## Transport
+
+Every subcommand goes through `quicbaas.SDK().Security().SSH()`, so SSH uses
+the same global `--server` / `--transport` / `--tls-*` flags as every other
+`quicbaas` verb and is subject to the same authentication and authorization.
+All six transports (rest, grpc, quic, mcp, unix, embedded) serve the full SSH
+surface, so a script written against one works unchanged against the others.
+
+> The CLI no longer builds a go-xkms client of its own, and the `XKMSD_URL` /
+> `XKMSD_TOKEN` environment variables and the `~/.quicbaas/ssh-store` local
+> file store are gone. To reach a remote store, point `--server` at the
+> quicbaasd that owns it.
+
 ## Subcommands
 
 | Command | Description |
@@ -20,6 +33,9 @@ ever materialising the PEM bytes outside the server process.
 | `known-hosts list` | Show pinned hosts |
 | `known-hosts remove` | Unpin a host |
 | `known-hosts import-file` | Bulk-import an existing `~/.ssh/known_hosts` |
+| `authorized add` | Store an `authorized_keys` line under a name |
+| `authorized list` | List stored `authorized_keys` entries |
+| `authorized remove` | Delete a stored `authorized_keys` entry |
 
 ## Scope model
 
@@ -116,7 +132,32 @@ HOST       SCOPE  OWNER   TYPE     FINGERPRINT
 gpu-host    user   jhahn   ed25519  SHA256:abc...
 ```
 
+## quicbaas ssh authorized
+
+Store `authorized_keys` entries server-side so a fleet's inbound key policy
+lives next to the keys themselves rather than in per-host files.
+
+```bash
+quicbaas ssh authorized add "$(quicbaas ssh keys export --name fleet-deploy)" \
+  --name fleet-deploy --scope user
+```
+
+```bash
+quicbaas ssh authorized list --scope user
+```
+
+```bash
+quicbaas ssh authorized remove --name fleet-deploy --scope user
+```
+
+| Flag | Description |
+|------|-------------|
+| `--name` | Entry name, unique within `(scope, owner)`. Required for add/remove. |
+| `--scope` | `user` \| `tenant` \| `service`. Defaults to `user`. |
+| `--owner` | Override owner. Defaults to `$USER`. |
+
 ## See also
 
 - [Fleet quick start](../agents/fleet-quickstart.md)
 - [Agent deploy reference](../agents/deploy.md)
+- [SDK security surface — SSH](../sdk/security.md#ssh--sshservice)

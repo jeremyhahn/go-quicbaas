@@ -11,22 +11,20 @@ Configuration secrets can be stored in various backends and referenced using URI
 | Scheme | Format | Description |
 |--------|--------|-------------|
 | `kms://` | `kms://path/to/secret` | Local QuicBaaS KMS secrets store |
+| `kms://` + `?ensure=true` | `kms://path?ensure=true&len=32&enc=base64` | Local KMS, generated and persisted on first use |
 | `remote-kms://` | `remote-kms://host:port/path` | Remote QuicBaaS instance |
-| Auto-generation | Literal placeholder values | Auto-generate cryptographic secrets |
+| `literal://` | `literal://value` | Force-quote a value that would otherwise look like a reference (owned by go-qrdb) |
 
-### Auto-Generation Placeholders
+### Dispatch Is By Scheme Only
 
-The following placeholder values trigger automatic secret generation:
+A resolver claims a value by its URI scheme, never by its content. A value that
+carries no registered scheme is **not** a secret reference: it is used verbatim
+under `StrategyLiteral`, and `ConfigProcessor` leaves the field untouched.
 
-| Placeholder | Case Sensitive | Description |
-|-------------|----------------|-------------|
-| `auto` | No | Explicit auto-generation trigger |
-| `123456` | N/A | Common weak password placeholder |
-| `changeme` | No | Common placeholder indicating value needs replacement |
-| `CHANGEME` | No | Upper case variant |
-| `placeholder` | No | Explicit placeholder indicator |
-
-Placeholder matching is case-insensitive and whitespace is trimmed before comparison.
+This means placeholder-looking values such as `123456`, `changeme`, or `auto`
+are ordinary literals. Substituting generated entropy for them would silently
+corrupt length-constrained fields — a 43-character base64 value written into a
+TPM `TPM2B_AUTH` field (32-byte maximum) fails with `TPM_RC_SIZE`.
 
 ## Basic Usage
 
@@ -43,7 +41,7 @@ kms:
     awskms:
       secret-access-key: remote-kms://provisioning.example.com:9443/aws/secret
     yubikey:
-      pin: auto  # Will be auto-generated on first bootstrap
+      pin: kms://config/yubikey/pin?ensure=true&len=8&enc=numeric  # Minted on first boot, stable thereafter
 ```
 
 ### Programmatic Usage
@@ -60,7 +58,6 @@ registry := secrets.NewResolverRegistry()
 // Register resolvers for each scheme you need
 registry.Register(secrets.NewLocalKMSResolver(kmsClient))
 registry.Register(secrets.NewRemoteKMSResolver(remoteClient))
-registry.Register(secrets.NewAutoGenResolver())
 
 // Resolve individual values
 value, err := registry.Resolve(ctx, "kms://config/database/password")
@@ -98,22 +95,20 @@ for _, resolved := range result.Resolved {
 }
 ```
 
-## Auto-Generation
+## Generate-On-First-Use
 
-The `AutoGenResolver` generates cryptographically secure secrets when configuration values match certain placeholders:
+A secret that has not been provisioned yet is expressed with the `ensure` form
+of the `kms://` scheme. The first resolution mints the value and persists it via
+`SecretsService.EnsureSecret`; every later resolution returns the **same** bytes,
+so the secret can be bound to a config field across reboots.
 
-| Placeholder | Description |
-|-------------|-------------|
-| `auto` | Explicit auto-generation trigger |
-| `123456` | Common weak password placeholder |
-| `changeme` | Common placeholder |
-| `CHANGEME` | Upper case variant |
-| `placeholder` | Explicit placeholder |
+| Parameter | Values | Default | Description |
+|-----------|--------|---------|-------------|
+| `ensure` | boolean | `false` | Generate and store the secret when it is absent |
+| `len` | positive integer | `32` | Entropy length: bytes for `base64`/`hex`/`raw`, digits for `numeric` |
+| `enc` | `base64`, `hex`, `numeric`, `raw` | `base64` | Output encoding |
 
-Generated secrets are:
-- 32 bytes (256 bits) of cryptographically random data
-- URL-safe base64 encoded (no padding)
-- Unique per generation (not cached)
+The query string is not part of the secret identity; only the path is.
 
 Example:
 
@@ -121,8 +116,12 @@ Example:
 kms:
   backends:
     tpm2:
-      srk-auth: auto  # Will generate: "k7Hj9mQx2Bv5Nf8Wd3Ry6Tp0Ls4Uc1Xz"
+      srk-auth: kms://config/tpm/srk-auth?ensure=true&len=24&enc=base64
 ```
+
+A `SecretsClient` that does not implement `SecretsEnsurer` reports a typed
+`ResolutionFailedError` for an `ensure=true` URI rather than degrading to a
+plain read that is guaranteed to fail on first boot.
 
 ## Resolver Types
 
@@ -177,14 +176,15 @@ type RemoteSecretsClient interface {
 
 Default timeout is 30 seconds. Use the `WithTimeout` option to customize.
 
-### AutoGenResolver
-
-Generates high-entropy secrets for placeholder values:
+The `SecretsEnsurer` interface adds generate-on-first-use support to a
+`SecretsClient`, backing the `?ensure=true` form:
 
 ```go
-resolver := secrets.NewAutoGenResolver()
-resolver = resolver.WithSecretSize(64)  // 64 bytes instead of default 32
-registry.Register(resolver)
+type SecretsEnsurer interface {
+    // EnsureSecret returns the secret at secretID, generating and persisting it
+    // with the requested length/encoding when it does not yet exist.
+    EnsureSecret(ctx context.Context, secretID string, length int, encoding string) ([]byte, error)
+}
 ```
 
 ## Error Handling
@@ -272,7 +272,8 @@ The `ResolverRegistry` is thread-safe and can be used concurrently from multiple
 2. **Logging**: Never log resolved secret values; log paths/URIs only
 3. **Transport Security**: `remote-kms://` should only be used over TLS
 4. **Access Control**: KMS backends should enforce proper authorization
-5. **Auto-Generation**: Auto-generated secrets should be persisted to KMS after generation
+5. **Generation**: Generated secrets must be persisted (`kms://...?ensure=true`); a value regenerated per boot cannot be bound to a config field
+6. **No Content Matching**: Resolvers dispatch by scheme only; a scheme-less value is a literal and is never replaced
 
 ## Integration with go-trusted-platform
 
@@ -293,11 +294,7 @@ func SetupSecretsResolution(kmsClient secrets.SecretsClient, remoteClient secret
     // Create the resolver registry
     registry := secrets.NewResolverRegistry()
 
-    // Register auto-generation resolver (handles placeholder values)
-    autoResolver := secrets.NewAutoGenResolver()
-    registry.Register(autoResolver)
-
-    // Register local KMS resolver (handles kms:// URIs)
+    // Register local KMS resolver (handles kms:// URIs, including ?ensure=true)
     if kmsClient != nil {
         localResolver := secrets.NewLocalKMSResolver(kmsClient)
         registry.Register(localResolver)

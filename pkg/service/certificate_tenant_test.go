@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -204,4 +205,32 @@ func TestCertTenantSerial_ListPrefixMatchesScopedSerials(t *testing.T) {
 	prefix := certTenantListPrefix(tenantID)
 	assert.True(t, strings.HasPrefix(scoped, prefix),
 		"scoped serial should start with tenant list prefix")
+}
+
+// =============================================================================
+// System-tenant scoping tests
+// =============================================================================
+
+// TestCertificateTenant_SystemTenantIsPlatformScoped proves a caller carrying
+// the literal system tenant is treated identically to single-tenant mode
+// rather than being isolated into a tenant namespace named "system".
+func TestCertificateTenant_SystemTenantIsPlatformScoped(t *testing.T) {
+	for _, tenantID := range []string{"", qrdbsdk.SystemTenantID} {
+		t.Run("tenantID="+tenantID, func(t *testing.T) {
+			assert.Equal(t, "01AB", certTenantScopedSerial(tenantID, "01AB"))
+			assert.True(t, certTenantSerialBelongsTo(tenantID, "any-serial"))
+			assert.NoError(t, certEnforceTenantAccess(tenantID, "any-serial", "GetCertificate"))
+		})
+	}
+}
+
+// TestCertificateTenant_OrdinaryTenantStaysIsolated proves the system-tenant
+// carve-out does not widen ordinary tenants' reach: a lookalike ID that
+// merely shares the "system" prefix is still fully isolated.
+func TestCertificateTenant_OrdinaryTenantStaysIsolated(t *testing.T) {
+	scoped := certTenantScopedSerial("system-2", "01AB")
+	assert.Equal(t, "tenant/system-2/01AB", scoped)
+	assert.False(t, certTenantSerialBelongsTo("system-2", "01AB"))
+	err := certEnforceTenantAccess("system-2", "01AB", "GetCertificate")
+	require.Error(t, err)
 }

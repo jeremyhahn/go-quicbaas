@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,10 +50,41 @@ type agentServiceImpl struct {
 	logger           interfaces.Logger
 	eventSubscribers sync.Map // map[string]*subscriberList keyed by tenantID/jobID
 	sandboxPolicy    SandboxPolicy
+	trustPolicy      TrustPolicy           // integrity floor every spawn resolves against
 	tenantPolicies   TenantPolicyProvider  // optional resolver for per-tenant overrides
 	remoteResolver   RemoteBackendResolver // optional: routes daemon-kind registrations to RemoteACPBackend
 	sessionLog       SessionEventLog       // optional: append-only per-session event log for attach/replay
 	projectAuthz     *ProjectAuthz         // optional: enforces per-project agent role matrix
+	costTracker      CostTracker           // optional: per-tenant/account/project/job token ledger
+	projectStore     ProjectStore          // optional: durable project records for managed workspaces
+	mountPolicy      *MountPolicy          // optional: bind-mount policy; nil denies every host mount
+
+	// accountStore is the pooled provider account metadata store. Optional:
+	// without it rotation still selects a replacement, but the limit hold on
+	// the account it left is not durable. See SetAccountStore.
+	accountStore AccountStore
+
+	// limitClassifier decides whether a failed turn was a provider limit.
+	// Nil selects the built-in heuristic (see NewAccountLimitClassifier).
+	limitClassifier AccountLimitClassifier
+
+	// accountLimitBackoff is how long an account is held out of the pool when
+	// the provider named no retry time. Zero selects
+	// DefaultAccountLimitBackoff.
+	accountLimitBackoff time.Duration
+
+	// resumeMu serializes the reconstitution of one session so two prompts
+	// arriving together cannot each start a replacement agent process for it.
+	resumeMu keyedMutex
+
+	// transcriptReplayBudget bounds, in characters, the transcript primed into
+	// a resumed agent. Zero selects DefaultReplayBudget.
+	transcriptReplayBudget int
+
+	// turnsInFlight counts asynchronous turns accepted by PromptSessionAsync
+	// that have not yet written their terminal event. Shutdown waits on it so
+	// a transcript never stops mid-turn.
+	turnsInFlight sync.WaitGroup
 }
 
 // TenantPolicyProvider supplies per-tenant policy overrides that can tighten
@@ -62,6 +94,21 @@ type TenantPolicyProvider interface {
 	// SandboxPolicy returns the tenant's sandbox policy override if one is
 	// configured, or nil to defer to the server-level policy.
 	SandboxPolicy(tenantID string) *SandboxPolicy
+}
+
+// TenantTrustPolicyProvider is the trust-axis counterpart of
+// TenantPolicyProvider, implemented additionally by providers that also carry
+// a per-tenant integrity floor. It is a separate, optional interface so a
+// provider that only knows about the sandbox axis keeps satisfying
+// TenantPolicyProvider unchanged; the orchestrator type-asserts for it and
+// falls back to the server-level TrustPolicy when it is absent.
+//
+// Like the sandbox override, a trust override may only TIGHTEN the server
+// policy — see ResolveTrustLevel.
+type TenantTrustPolicyProvider interface {
+	// TrustPolicy returns the tenant's trust policy override if one is
+	// configured, or nil to defer to the server-level policy.
+	TrustPolicy(tenantID string) *TrustPolicy
 }
 
 // RemoteBackendResolver lets the BackendDispatcher route a backend name to a
@@ -149,6 +196,30 @@ type sessionRecord struct {
 	ContainerID string
 	CreatedAt   int64
 
+	// accountID is the pooled provider account this session's agent process
+	// authenticates as, mirrored from the durable SessionRecord so the turn
+	// path can attribute token usage to it without a KV read on every turn.
+	// Empty when the session did not use the account pool.
+	//
+	// Atomic because rotation moves it while turns are reading it to attribute
+	// their usage: a torn read here would charge tokens to a half-written
+	// account ID, which is worse than charging them to either account. Access
+	// through AccountID / SetAccountID.
+	accountID atomic.Pointer[string]
+
+	// Persistent mirrors the durable record: the session holds a long-running
+	// agent process carrying conversation context across turns.
+	Persistent bool
+
+	// resumable marks a record reconstituted from the durable store at boot
+	// whose agent process is gone. The session is addressable — Status and
+	// Prompt resolve it — but the process is recreated on the next prompt, not
+	// at boot. It is cleared once the backend has reconstituted the session.
+	//
+	// Atomic because Status and Prompt read it concurrently while a resume
+	// flips it, and the record is shared by pointer through s.sessions.
+	resumable atomic.Bool
+
 	// HostAffinity records the daemon host the session was actually spawned
 	// on. Spawn resolves a backend via the RemoteBackendResolver (which applies
 	// host-affinity, tenant, and GPU filtering) and the live session lives
@@ -172,6 +243,20 @@ type sessionRecord struct {
 	// resolution via the localBackendPin context marker. HostAffinity is empty
 	// in this case because local backends are not host-bound.
 	BackendLocal bool
+}
+
+// AccountID returns the pooled provider account currently serving the session,
+// or "" when it uses none.
+func (r *sessionRecord) AccountID() string {
+	if id := r.accountID.Load(); id != nil {
+		return *id
+	}
+	return ""
+}
+
+// SetAccountID records the pooled provider account now serving the session.
+func (r *sessionRecord) SetAccountID(accountID string) {
+	r.accountID.Store(&accountID)
 }
 
 // resolvedHostBackend is implemented by backends that route to a specific
@@ -519,10 +604,6 @@ func (s *agentServiceImpl) SetRemoteBackendResolver(r RemoteBackendResolver) {
 	s.remoteResolver = r
 }
 
-// SetSessionEventLog installs the append-only session event log. When set,
-// session lifecycle events (spawn, prompt submission, close) are appended
-// for attacher consumption. Passing nil disables the log — useful for
-// embedded deployments that don't need scrollback.
 // SetProjectAuthz configures the project-level authorization helper. When set,
 // ClaimTask enforces the project's AgentRoles matrix for scoped tasks.
 // Unscoped tasks (empty ProjectID) bypass authorization unchanged.
@@ -530,6 +611,52 @@ func (s *agentServiceImpl) SetProjectAuthz(authz *ProjectAuthz) {
 	s.projectAuthz = authz
 }
 
+// SetProjectStore configures the durable project store consulted at spawn
+// time. When set, a spawn scoped to a server-managed project resolves its
+// work directory from the managed workspace and is refused with
+// ProjectWorkspaceNotReadyError until provisioning reaches the ready state.
+func (s *agentServiceImpl) SetProjectStore(store ProjectStore) {
+	s.projectStore = store
+}
+
+// SetMountPolicy configures the policy that authorizes every host bind mount a
+// spawn request would place in an agent sandbox — the resolved work directory,
+// any caller-supplied container-spec mounts, and ExtraMounts. Bind mounts are
+// deny-by-default: with no policy wired, every one of them is refused.
+func (s *agentServiceImpl) SetMountPolicy(policy *MountPolicy) {
+	s.mountPolicy = policy
+}
+
+// SetTrustPolicy configures the integrity floor every spawn resolves against
+// (orchestration.trust_policy). The zero value, TrustPolicyOptIn, resolves
+// TrustLevelDefault to TrustLevelNone and rejects nothing; a stricter policy
+// raises the floor for every request, including the ones that name no level at
+// all, and refuses a level the target host cannot prove.
+func (s *agentServiceImpl) SetTrustPolicy(policy TrustPolicy) {
+	s.trustPolicy = policy
+}
+
+// TrustPolicy returns the configured integrity floor.
+func (s *agentServiceImpl) TrustPolicy() TrustPolicy {
+	return s.trustPolicy
+}
+
+// SetCostTracker configures the token ledger every completed turn is recorded
+// against. Without it a turn's reported usage is discarded, and
+// LeastUsageAccountStrategy has nothing to balance on.
+func (s *agentServiceImpl) SetCostTracker(tracker CostTracker) {
+	s.costTracker = tracker
+}
+
+// CostTracker returns the configured token ledger, or nil when none is wired.
+func (s *agentServiceImpl) CostTracker() CostTracker {
+	return s.costTracker
+}
+
+// SetSessionEventLog installs the append-only session event log. When set,
+// session lifecycle events (spawn, prompt submission, close) are appended
+// for attacher consumption. Passing nil disables the log — useful for
+// embedded deployments that don't need scrollback.
 func (s *agentServiceImpl) SetSessionEventLog(log SessionEventLog) {
 	s.sessionLog = log
 }
@@ -542,30 +669,21 @@ func (s *agentServiceImpl) SessionEventLog() SessionEventLog {
 }
 
 // appendSessionEvent persists a session event on behalf of the orchestrator
-// control loop. Errors are logged but never propagated — append is a
-// side effect of the main operation (spawn, prompt, close) and must not
-// fail those operations on its own.
+// control loop. The sequence number is assigned by AppendNextSessionEvent, the
+// package's single write path, which retries when a concurrent writer (a
+// background turn goroutine, another transport, or a live attacher recording
+// presence) wins the race for the next sequence.
+//
+// Errors are logged but never propagated — append is a side effect of the main
+// operation (spawn, prompt, close) and must not fail those operations on its
+// own.
 func (s *agentServiceImpl) appendSessionEvent(ctx context.Context, event *SessionEvent) {
 	if s.sessionLog == nil {
 		return
 	}
-	if err := s.sessionLog.Append(ctx, event); err != nil {
+	if err := AppendNextSessionEvent(ctx, s.sessionLog, event); err != nil {
 		s.logger.Warnf("orchestration: append session event %s seq=%d: %v", event.SessionID, event.Sequence, err)
 	}
-}
-
-// nextSessionSequence returns the next sequence number to assign to an
-// event appended on behalf of the orchestrator. Falls back to 1 on lookup
-// error so the first event of a fresh session starts at 1 as expected.
-func (s *agentServiceImpl) nextSessionSequence(ctx context.Context, tenantID, sessionID string) uint64 {
-	if s.sessionLog == nil {
-		return 0
-	}
-	latest, err := s.sessionLog.LatestSequence(ctx, tenantID, sessionID)
-	if err != nil {
-		return 1
-	}
-	return latest + 1
 }
 
 // sessionCreator extracts a friendly identifier for the operator who
@@ -610,6 +728,62 @@ func (s *agentServiceImpl) resolveSandboxMode(
 	hasRuntime := backendHasRuntime ||
 		(s.containerRuntime != nil && s.containerRuntime.IsAvailable())
 	return ResolveSandboxMode(req.EffectiveSandboxMode(), s.sandboxPolicy, tenantOverride, hasRuntime)
+}
+
+// resolveTrustLevel turns a requested TrustLevel into the effective integrity
+// tier the spawn must run at, given the server's TrustPolicy, any tenant
+// override, and what the runtime that will launch the agent can actually
+// prove. It is the trust-axis twin of resolveSandboxMode and is called from the
+// same pre-side-effect chokepoint, so a tier the host cannot satisfy fails the
+// spawn instead of silently degrading to no integrity guarantee at all.
+func (s *agentServiceImpl) resolveTrustLevel(
+	ctx context.Context,
+	requested TrustLevel,
+	backend AgentBackend,
+) (TrustLevel, error) {
+	var tenantOverride *TrustPolicy
+	if provider, ok := s.tenantPolicies.(TenantTrustPolicyProvider); ok {
+		tenantOverride = provider.TrustPolicy(TenantFromContext(ctx))
+	}
+	return ResolveTrustLevel(requested, s.trustPolicy, tenantOverride, s.trustCapabilities(backend))
+}
+
+// trustCapabilities reports what the runtime that will launch this spawn can
+// prove. The backend's own runtime is consulted first because an ACP backend
+// with a container runtime launches the agent itself; the orchestrator's
+// runtime is the fallback for the backends whose containers it launches.
+//
+// The zero value — no capability at all — is returned for a remote spawn and
+// for a spawn with no runtime, so a required tier fails closed rather than
+// resolving to an unprovable claim.
+func (s *agentServiceImpl) trustCapabilities(backend AgentBackend) TrustCapabilities {
+	if acp, ok := backend.(*ACPBackend); ok && acp.containerRuntime != nil {
+		return runtimeTrustCapabilities(acp.containerRuntime)
+	}
+	return runtimeTrustCapabilities(s.containerRuntime)
+}
+
+// pinVerifyingRuntime is the Tier 0 capability expressed as behavior: a
+// runtime that verifies, after launch, that the container it created came from
+// the pinned content digest. ExecContainerRuntime satisfies it; a runtime that
+// does not is not credited with digest pinning it cannot enforce.
+type pinVerifyingRuntime interface {
+	VerifyPinnedImage(ctx context.Context, spec *ContainerSpec, containerID string) error
+}
+
+// runtimeTrustCapabilities reports the tiers one runtime can satisfy.
+func runtimeTrustCapabilities(runtime ContainerRuntime) TrustCapabilities {
+	if runtime == nil || !runtime.IsAvailable() {
+		return TrustCapabilities{}
+	}
+	// An attesting runtime answers for itself across all three tiers.
+	if attesting, ok := runtime.(AttestingContainerRuntime); ok {
+		return attesting.TrustCapabilities()
+	}
+	if _, ok := runtime.(pinVerifyingRuntime); ok {
+		return TrustCapabilities{DigestPinning: true}
+	}
+	return TrustCapabilities{}
 }
 
 // validateTenant checks tenant access if the guard is configured.
@@ -876,18 +1050,33 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		}
 	}
 
-	// Resolve work directory: request > project path > current directory
+	// Resolve work directory: request > managed project workspace >
+	// registered project path > current directory. A server-managed
+	// workspace additionally gates the spawn on its provisioning state:
+	// starting an agent in a half-cloned tree produces work against the
+	// wrong base, so anything but ready is refused.
 	workDir := req.WorkDir
+	if workDir == "" && req.ProjectID != "" {
+		managedDir, managedErr := s.managedWorkspaceDir(ctx, req.ProjectID)
+		if managedErr != nil {
+			return nil, managedErr
+		}
+		workDir = managedDir
+	}
 	if workDir == "" && req.ProjectID != "" {
 		if project, ok := s.lookupProject(req.ProjectID); ok {
 			workDir = project.Path
 		}
 	}
 	if workDir == "" {
-		workDir = "."
+		workDir = WorkDirCurrent
 	}
 
+	// The event channel keeps the caller's own tenant (empty for an untenanted
+	// caller) so messaging topics are unchanged, while durable records are
+	// filed under the resolved storage tenant, which is never empty.
 	tenantID := TenantFromContext(ctx)
+	storageTenant := StorageTenant(ctx)
 	now := time.Now().UnixNano()
 
 	// Sandboxed container path — only used for backends that don't handle
@@ -913,8 +1102,46 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		return nil, modeErr
 	}
 
+	// Resolve the integrity tier against the operator's TrustPolicy + tenant
+	// override + host capability, on the same pre-side-effect chokepoint as the
+	// sandbox mode. The RESOLVED level — never req.TrustLevel — is what the
+	// container spec and the backend request carry, so a request that names no
+	// level still runs at the floor the operator requires.
+	effectiveTrust, trustErr := s.resolveTrustLevel(ctx, req.TrustLevel, backend)
+	if trustErr != nil {
+		return nil, trustErr
+	}
+
+	// Every host path this spawn would bind-mount into the sandbox is
+	// authorized against the operator's mount policy before any side effect
+	// (container spawn or backend call). Deny-by-default: with no policy wired
+	// every host mount is refused.
+	if mountErr := s.authorizeSandboxMounts(ctx, req, workDir, effectiveMode); mountErr != nil {
+		return nil, mountErr
+	}
+
+	// Network isolation is the sandbox axis's second dimension: a container that
+	// still shares the host's network namespace can dial every loopback-bound
+	// service on it. Like the trust tier, the network is resolved from operator
+	// configuration and a caller that asked for the host namespace is refused —
+	// see sandbox_network_policy.go.
+	effectiveNetwork, networkErr := s.resolveSandboxNetwork(backend, containerConfigNetwork(req))
+	if networkErr != nil {
+		return nil, networkErr
+	}
+
+	// The durable record is built before the spawn so it captures the operator's
+	// request, not the request as the backend leaves it. Spawn mutates the
+	// environment in place to carry freshly minted MCP material whose
+	// certificates are deleted when the session closes; persisting that would
+	// resume the session against material that no longer exists. See
+	// newDurableSessionRecord.
+	durable := newDurableSessionRecord(
+		req, storageTenant, workDir, model, effectiveMode, effectiveTrust, sessionHost, backendLocal)
+
 	if effectiveMode == SandboxModeRequired && !backendHandlesContainers && s.containerRuntime != nil && s.containerRuntime.IsAvailable() {
-		containerID, spawnErr := s.spawnSandboxedSession(ctx, req, workDir, model)
+		containerID, spawnErr := s.spawnSandboxedSession(
+			ctx, req, workDir, model, effectiveTrust, effectiveNetwork)
 		if spawnErr != nil {
 			return nil, spawnErr
 		}
@@ -931,24 +1158,19 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 			Backend:      req.Backend,
 			ProjectID:    req.ProjectID,
 			Model:        model,
-			TenantID:     tenantID,
+			TenantID:     storageTenant,
 			ContainerID:  containerID,
 			CreatedAt:    now,
 			HostAffinity: sessionHost,
 			BackendLocal: backendLocal,
+			Persistent:   req.Persistent,
 		})
 
-		record := &SessionRecord{
-			SessionID:    sessionID,
-			ProjectID:    req.ProjectID,
-			Backend:      req.Backend,
-			Model:        model,
-			WorkDir:      workDir,
-			Status:       SessionStateActive,
-			CreatedAt:    now,
-			LastActivity: now,
-		}
-		if storeErr := s.store.PutSession(ctx, record); storeErr != nil {
+		durable.SessionID = sessionID
+		durable.ContainerID = containerID
+		durable.CreatedAt = now
+		durable.LastActivity = now
+		if storeErr := s.store.PutSession(ctx, durable); storeErr != nil {
 			s.sessions.Delete(sessionID)
 			return nil, &AgentServiceError{
 				Sentinel: ErrAgentServiceUnavailable,
@@ -978,17 +1200,23 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 	// Standard backend spawn path. Sandboxed is derived from the resolved
 	// effective mode for legacy backends that still consult it.
 	spawnReq := &SpawnRequest{
-		ProjectID:      req.ProjectID,
-		WorkDir:        workDir,
-		Model:          model,
-		MCPServers:     req.MCPServers,
-		SystemPrompt:   req.SystemPrompt,
-		Env:            req.Env,
-		ExtraArgs:      req.ExtraArgs,
-		Persistent:     req.Persistent,
-		SandboxMode:    effectiveMode,
-		Sandboxed:      effectiveMode == SandboxModeRequired,
-		ContainerImage: req.ContainerImage,
+		ProjectID:       req.ProjectID,
+		WorkDir:         workDir,
+		Model:           model,
+		MCPServers:      req.MCPServers,
+		SystemPrompt:    req.SystemPrompt,
+		Env:             req.Env,
+		ExtraArgs:       req.ExtraArgs,
+		ExtraMounts:     append([]ContainerMount(nil), req.ExtraMounts...),
+		Persistent:      req.Persistent,
+		SandboxMode:     effectiveMode,
+		Sandboxed:       effectiveMode == SandboxModeRequired,
+		TrustLevel:      effectiveTrust,
+		ContainerImage:  req.ContainerImage,
+		AccountID:       req.AccountID,
+		AccountAuto:     req.AccountAuto,
+		AccountStrategy: req.AccountStrategy,
+		AccountAllow:    append([]string(nil), req.AccountAllow...),
 	}
 
 	session, err := backend.Spawn(ctx, spawnReq)
@@ -997,28 +1225,43 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 	}
 
 	// Track the session in memory for fast lookup
-	s.sessions.Store(session.ID, &sessionRecord{
+	mem := &sessionRecord{
 		Backend:      req.Backend,
 		ProjectID:    req.ProjectID,
 		Model:        model,
-		TenantID:     tenantID,
+		TenantID:     storageTenant,
 		CreatedAt:    session.CreatedAt,
 		HostAffinity: sessionHost,
 		BackendLocal: backendLocal,
-	})
+		Persistent:   req.Persistent,
+	}
+	mem.SetAccountID(session.AccountID)
+	s.sessions.Store(session.ID, mem)
 
 	// Persist session metadata to the store
-	record := &SessionRecord{
-		SessionID:    session.ID,
-		ProjectID:    req.ProjectID,
-		Backend:      req.Backend,
-		Model:        model,
-		WorkDir:      workDir,
-		Status:       SessionStateActive,
-		CreatedAt:    session.CreatedAt,
-		LastActivity: now,
+	durable.SessionID = session.ID
+	if session.Model != "" {
+		durable.Model = session.Model
 	}
-	if err := s.store.PutSession(ctx, record); err != nil {
+	// Record the account the backend RESOLVED to, not the one the caller asked
+	// for. A spawn that requested strategy-based selection named no account at
+	// all; persisting the resolved one is what lets a resume replay the same
+	// account instead of re-running selection against a pool whose usage has
+	// moved on. See spawnRequestFromRecord.
+	if session.AccountID != "" {
+		durable.AccountID = session.AccountID
+		durable.AccountStrategy = session.AccountStrategy
+		// Open the first account segment so cost attribution is a history from
+		// the very first turn rather than becoming one only after a rotation.
+		durable.AccountHistory = []AccountAssignment{{
+			AccountID: session.AccountID,
+			Strategy:  session.AccountStrategy,
+			From:      session.CreatedAt,
+		}}
+	}
+	durable.CreatedAt = session.CreatedAt
+	durable.LastActivity = now
+	if err := s.store.PutSession(ctx, durable); err != nil {
 		// Roll back in-memory tracking on store failure
 		s.sessions.Delete(session.ID)
 		return nil, &AgentServiceError{
@@ -1049,7 +1292,6 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 			LastActivity: time.Unix(0, now).UTC(),
 		})
 		s.appendSessionEvent(ctx, &SessionEvent{
-			Sequence:  s.nextSessionSequence(ctx, tenantID, session.ID),
 			SessionID: session.ID,
 			TenantID:  tenantID,
 			Timestamp: time.Unix(0, now).UTC(),
@@ -1071,12 +1313,81 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 	}, nil
 }
 
+// WorkDirCurrent is the work-directory value a spawn falls back to when no
+// request field, managed workspace, or registered project supplies one. It
+// names the daemon's own working directory, is never a host bind-mount source,
+// and is the one work-directory value the mount policy does not apply to.
+//
+// It is exported because the remote agent daemon (pkg/agent) authorizes the
+// same field against the same policy and must recognize the same sentinel; a
+// second copy of the literal in that package could drift from this one.
+const WorkDirCurrent = "."
+
+// authorizeSandboxMounts authorizes every host path this spawn would
+// bind-mount into an agent sandbox against the operator's MountPolicy, scoped
+// to the requesting tenant. It runs before any side effect, so a rejected
+// spawn has started no container and called no backend.
+//
+// Three sources reach a container runtime and all three are caller-controlled:
+//
+//   - work_dir, which BOTH sandbox paths bind-mount read-write into the
+//     container (spawnSandboxedSession below and
+//     ACPBackend.spawnContainerJSONRPC, which maps it to /workspace). The
+//     container runs as the daemon's own uid, so an unchecked work_dir of "/"
+//     is host root read-write for the agent. This is why the check lives here
+//     rather than in either backend: one policy decision, both paths.
+//   - container_config.mounts, the caller-supplied full container spec.
+//   - extra_mounts.
+//
+// The work directory and the container spec's mounts are authorized when the
+// spawn will actually be containerized, which is exactly when they become host
+// bind mounts; extra_mounts is authorized on every path, since it exists only
+// to be mounted and a request carrying it under a non-sandboxed mode is a
+// request the operator should hear about either way.
+func (s *agentServiceImpl) authorizeSandboxMounts(
+	ctx context.Context,
+	req *SpawnSessionRequest,
+	workDir string,
+	mode SandboxMode,
+) error {
+	tenantID := StorageTenant(ctx)
+
+	if len(req.ExtraMounts) > 0 {
+		if err := s.mountPolicy.Authorize(tenantID, MountFieldExtraMounts, req.ExtraMounts); err != nil {
+			return err
+		}
+	}
+	if mode != SandboxModeRequired {
+		return nil
+	}
+	if workDir != "" && workDir != WorkDirCurrent {
+		if err := s.mountPolicy.AuthorizeSource(tenantID, MountFieldWorkDir, workDir); err != nil {
+			return err
+		}
+	}
+	if req.ContainerConfig != nil && len(req.ContainerConfig.Mounts) > 0 {
+		if err := s.mountPolicy.Authorize(
+			tenantID, MountFieldContainerConfig, req.ContainerConfig.Mounts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // spawnSandboxedSession builds a ContainerSpec and runs the container.
+//
+// Everything privileged on the spec was decided by SpawnSession before this
+// function was reached: every bind-mount source passed authorizeSandboxMounts,
+// trustLevel is the tier RESOLVED against the operator's TrustPolicy, and
+// network is the network resolved from operator configuration. None of the
+// three is the value the caller asked for.
 func (s *agentServiceImpl) spawnSandboxedSession(
 	ctx context.Context,
 	req *SpawnSessionRequest,
 	workDir string,
 	model string,
+	trustLevel TrustLevel,
+	network SandboxNetwork,
 ) (string, error) {
 	// Use the provided container config, or build one from request fields.
 	var spec *ContainerSpec
@@ -1102,13 +1413,28 @@ func (s *agentServiceImpl) spawnSandboxedSession(
 		}
 	}
 
-	// Add project directory as a mount if a work dir is set and no mounts configured.
-	if workDir != "" && len(spec.Mounts) == 0 {
+	// The resolved tier and network override whatever the spec carried: a
+	// caller-supplied ContainerConfig must not be able to name a weaker trust
+	// level than the policy resolved to, nor a network the operator did not
+	// choose. A request naming host networking never reaches this point —
+	// resolveSandboxNetwork already failed the spawn.
+	spec.TrustLevel = trustLevel
+	spec.Network = network.String()
+
+	// Add project directory as a mount if a work dir is set and no mounts
+	// configured. Only an absolute path can be a host bind-mount source; the
+	// "." fallback names the daemon's own directory and is carried as the
+	// container's WorkDir alone.
+	if filepath.IsAbs(workDir) && len(spec.Mounts) == 0 {
 		spec.Mounts = []ContainerMount{{
 			Source: workDir,
 			Target: workDir,
 		}}
 	}
+
+	// Extra mounts were already authorized against the mount policy by
+	// SpawnSession before any side effects; append them verbatim.
+	spec.Mounts = append(spec.Mounts, req.ExtraMounts...)
 
 	containerID, err := s.containerRuntime.Run(ctx, spec)
 	if err != nil {
@@ -1118,27 +1444,55 @@ func (s *agentServiceImpl) spawnSandboxedSession(
 	return containerID, nil
 }
 
-// PromptSession sends a prompt to an agent session or backend.
-func (s *agentServiceImpl) PromptSession(ctx context.Context, req *PromptSessionRequest) (*PromptSessionResponse, error) {
+// promptTurnPlan is a validated, fully-resolved prompt request: the backend
+// that will run the turn, the model it will use, and a context pinned to the
+// instance that owns the session. Planning is separated from execution so the
+// asynchronous path can fail fast on a bad request — before it acknowledges
+// anything — and then hand the identical plan to a background goroutine.
+type promptTurnPlan struct {
+	// ctx is the caller's context pinned to the session's backend instance.
+	ctx context.Context
+
+	// backend is the resolved agent backend that runs the turn.
+	backend AgentBackend
+
+	// backendName is the backend's registry name, used to attribute events.
+	backendName string
+
+	// model is the resolved model, which may be empty when the backend picks.
+	model string
+
+	// tenantID scopes every session-log write for this turn.
+	tenantID string
+
+	// operator identifies who submitted the prompt, for event attribution.
+	operator string
+
+	// request is the backend-level prompt built from the service request.
+	request *PromptRequest
+}
+
+// planPromptTurn validates a prompt request and resolves everything the turn
+// needs to run. Every error it returns is a caller error, so both the
+// synchronous and the asynchronous entry points can surface it directly.
+func (s *agentServiceImpl) planPromptTurn(ctx context.Context, req *PromptSessionRequest) (*promptTurnPlan, error) {
 	if err := s.validateTenant(ctx); err != nil {
 		return nil, err
 	}
-
-	if req.Prompt == "" {
+	if req == nil || req.Prompt == "" {
 		return nil, &AgentServiceError{Sentinel: ErrPromptRequired}
 	}
 
-	// Determine which backend to use
+	// Determine which backend to use: explicit request field first, then the
+	// backend recorded when the session was spawned.
 	backendName := req.Backend
 	if backendName == "" && req.SessionID != "" {
-		// Find backend from session record
 		if rec, ok := s.sessions.Load(req.SessionID); ok {
 			if sr, ok := rec.(*sessionRecord); ok {
 				backendName = sr.Backend
 			}
 		}
 	}
-
 	if backendName == "" {
 		return nil, &AgentServiceError{
 			Sentinel: ErrBackendRequired,
@@ -1158,7 +1512,6 @@ func (s *agentServiceImpl) PromptSession(ctx context.Context, req *PromptSession
 		return nil, err
 	}
 
-	// Resolve model
 	model := req.Model
 	if model == "" && req.ProjectID != "" {
 		if project, ok := s.lookupProject(req.ProjectID); ok {
@@ -1166,66 +1519,131 @@ func (s *agentServiceImpl) PromptSession(ctx context.Context, req *PromptSession
 		}
 	}
 
-	promptReq := &PromptRequest{
-		SessionID:     req.SessionID,
-		ProjectID:     req.ProjectID,
-		Prompt:        req.Prompt,
-		Model:         model,
-		SystemPrompt:  req.SystemPrompt,
-		EventCallback: req.EventCallback,
+	return &promptTurnPlan{
+		ctx:         ctx,
+		backend:     backend,
+		backendName: backendName,
+		model:       model,
+		tenantID:    TenantFromContext(ctx),
+		operator:    sessionCreator(ctx),
+		request: &PromptRequest{
+			SessionID:     req.SessionID,
+			ProjectID:     req.ProjectID,
+			Prompt:        req.Prompt,
+			Model:         model,
+			SystemPrompt:  req.SystemPrompt,
+			EventCallback: req.EventCallback,
+		},
+	}, nil
+}
+
+// appendPromptSubmitted records the operator's prompt on the session log
+// before the turn is dispatched, so attachers see what was asked even when
+// the backend call fails outright.
+func (p *promptTurnPlan) appendPromptSubmitted(s *agentServiceImpl) {
+	if s.sessionLog == nil || p.request.SessionID == "" {
+		return
+	}
+	s.appendSessionEvent(p.ctx, &SessionEvent{
+		SessionID: p.request.SessionID,
+		TenantID:  p.tenantID,
+		Timestamp: time.Now().UTC(),
+		Source:    "operator:" + p.operator,
+		Kind:      KindPromptSubmitted,
+		Prompt: &PromptSubmittedPayload{
+			Prompt:       p.request.Prompt,
+			Model:        p.model,
+			SystemPrompt: p.request.SystemPrompt,
+		},
+	})
+}
+
+// runPromptTurn dispatches the planned turn to the backend and records the
+// agent's output on the session log. It is shared by the synchronous and
+// asynchronous entry points so both produce an identical transcript.
+//
+// ctx is passed explicitly rather than taken from the plan: the asynchronous
+// path runs on a context detached from the request that accepted the turn.
+func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPlan) (*PromptSessionResponse, error) {
+	// A session restored from the durable store has no agent process until
+	// something needs one. Reconstituting it here — rather than at boot —
+	// keeps a daemon restart from forking a subprocess for every session
+	// anyone ever spawned, and puts the restoration on a context that carries
+	// the caller's tenant. A failure is returned rather than swallowed: the
+	// alternative is a fresh, context-free agent answering as though it
+	// remembered the conversation.
+	if err := s.ensureSessionLive(ctx, plan.backend, plan.request.SessionID); err != nil {
+		return nil, err
 	}
 
-	// Append a PromptSubmitted event BEFORE dispatching so attachers see
-	// the prompt even if the backend call fails.
-	tenantID := TenantFromContext(ctx)
-	if s.sessionLog != nil && req.SessionID != "" {
-		now := time.Now().UTC()
-		s.appendSessionEvent(ctx, &SessionEvent{
-			Sequence:  s.nextSessionSequence(ctx, tenantID, req.SessionID),
-			SessionID: req.SessionID,
-			TenantID:  tenantID,
-			Timestamp: now,
-			Source:    "operator:" + sessionCreator(ctx),
-			Kind:      KindPromptSubmitted,
-			Prompt: &PromptSubmittedPayload{
-				Prompt:       req.Prompt,
-				Model:        model,
-				SystemPrompt: req.SystemPrompt,
-			},
-		})
+	// Stream the backend's transcript events (assistant chunks, chain-of-
+	// thought, tool calls/results) onto the session log live, so attachers
+	// watch the agent work instead of waiting for one final aggregate.
+	// streamedChunks counts KindAssistantChunk events so the post-turn
+	// aggregate append below can be skipped when the answer already streamed —
+	// otherwise the transcript would show the whole answer twice.
+	var streamedChunks atomic.Uint64
+	if s.sessionLog != nil && plan.request.SessionID != "" {
+		knownSessionID := plan.request.SessionID
+		callerCallback := plan.request.EventCallback
+		// Backend notification handlers fire from their own goroutines, so
+		// serialize stamping + append; appendSessionEvent retries sequence
+		// races but ordering within the turn should reflect emission order.
+		var callbackMu sync.Mutex
+		plan.request.EventCallback = func(ev *SessionEvent) {
+			if ev == nil {
+				return
+			}
+			callbackMu.Lock()
+			if ev.SessionID == "" {
+				ev.SessionID = knownSessionID
+			}
+			ev.TenantID = plan.tenantID
+			ev.Source = "agent:" + plan.backendName
+			if ev.Timestamp.IsZero() {
+				ev.Timestamp = time.Now().UTC()
+			}
+			if ev.Kind == KindAssistantChunk {
+				streamedChunks.Add(1)
+			}
+			s.appendSessionEvent(ctx, ev)
+			callbackMu.Unlock()
+			if callerCallback != nil {
+				callerCallback(ev)
+			}
+		}
 	}
 
-	resp, err := backend.Prompt(ctx, promptReq)
+	resp, err := plan.backend.Prompt(ctx, plan.request)
 	if err != nil {
 		return nil, err
 	}
 
-	// Update last activity in the store for persistent sessions
-	sessionID := req.SessionID
+	// Update last activity in the store for persistent sessions.
+	sessionID := plan.request.SessionID
 	if sessionID == "" {
 		sessionID = resp.SessionID
 	}
 	if sessionID != "" {
-		if updateErr := s.store.UpdateSessionActivity(ctx, sessionID); updateErr != nil {
+		if updateErr := s.store.UpdateSessionActivity(ctx, StorageTenant(ctx), sessionID); updateErr != nil {
 			s.logger.Warnf("failed to update session activity: session=%s err=%s", sessionID, updateErr.Error())
 		}
 	}
 
-	// Append assistant output as a single AssistantChunk with stop_reason.
-	// Backend-side streaming will eventually produce multiple chunks; for
-	// non-streaming responses (claude/codex/opencode's current shape) we
-	// still emit exactly one event with the full text.
-	if s.sessionLog != nil && sessionID != "" {
+	// Append assistant output as a single aggregate AssistantChunk — but only
+	// when the backend streamed no chunks of its own during the turn. A
+	// streaming backend already put the answer on the log piece by piece;
+	// appending the aggregate too would show it twice.
+	if s.sessionLog != nil && sessionID != "" && streamedChunks.Load() == 0 {
 		for _, block := range resp.Content {
 			if block.Type != "text" || block.Text == "" {
 				continue
 			}
 			s.appendSessionEvent(ctx, &SessionEvent{
-				Sequence:  s.nextSessionSequence(ctx, tenantID, sessionID),
 				SessionID: sessionID,
-				TenantID:  tenantID,
+				TenantID:  plan.tenantID,
 				Timestamp: time.Now().UTC(),
-				Source:    "agent:" + backendName,
+				Source:    "agent:" + plan.backendName,
 				Kind:      KindAssistantChunk,
 				AssistantChunk: &AssistantChunkPayload{
 					Text:       block.Text,
@@ -1236,13 +1654,173 @@ func (s *agentServiceImpl) PromptSession(ctx context.Context, req *PromptSession
 		}
 	}
 
+	// Charge the turn's reported token usage to its tenant, pooled provider
+	// account, project, and (inside a control-loop job) job/agent. This is the
+	// single point where a completed turn becomes cost data: it runs on both
+	// the synchronous and asynchronous paths because both funnel through here.
+	s.recordTurnUsage(ctx, sessionID, plan.request.ProjectID, resp.Usage)
+
 	return &PromptSessionResponse{
 		SessionID:  resp.SessionID,
 		Content:    resp.Content,
 		Model:      resp.Model,
 		StopReason: resp.StopReason,
 		Timestamp:  time.Now().UnixNano(),
+		Usage:      resp.Usage,
 	}, nil
+}
+
+// PromptSession sends a prompt to an agent session or backend and blocks until
+// the turn finishes.
+//
+// This is the orchestrator's internal turn primitive: the control loop, the
+// task decomposer, and the response validators all need the completed turn in
+// hand to make their next decision, and they run inside the daemon where no
+// request deadline applies. Operator-facing transports must use
+// PromptSessionAsync instead — a real agent turn runs for minutes, far beyond
+// any transport's request timeout.
+func (s *agentServiceImpl) PromptSession(ctx context.Context, req *PromptSessionRequest) (*PromptSessionResponse, error) {
+	plan, err := s.planPromptTurn(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	plan.appendPromptSubmitted(s)
+	return s.runPromptTurn(plan.ctx, plan)
+}
+
+// PromptSessionAsync implements AgentService.
+func (s *agentServiceImpl) PromptSessionAsync(ctx context.Context, req *PromptSessionRequest) (*PromptTurnAck, error) {
+	plan, err := s.planPromptTurn(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if plan.request.SessionID == "" {
+		return nil, &AgentServiceError{
+			Sentinel: ErrSessionIDRequired,
+			Message:  "an asynchronous turn publishes its output to a session event log, so a session is required; spawn one first or use Infer for a stateless call",
+		}
+	}
+	if s.sessionLog == nil {
+		return nil, &AgentServiceError{
+			Sentinel: ErrSessionLogRequired,
+			Message:  "an asynchronous turn publishes its output to the session event log",
+		}
+	}
+
+	turnID, err := generateID()
+	if err != nil {
+		return nil, err
+	}
+
+	// Record the prompt and open the turn BEFORE acknowledging, so a client
+	// that attaches the instant it sees the ack cannot miss the turn's start.
+	plan.appendPromptSubmitted(s)
+	started := &SessionEvent{
+		SessionID: plan.request.SessionID,
+		TenantID:  plan.tenantID,
+		Timestamp: time.Now().UTC(),
+		Source:    "operator:" + plan.operator,
+		Kind:      KindTurnStarted,
+		TurnStarted: &TurnStartedPayload{
+			TurnID:  turnID,
+			Backend: plan.backendName,
+			Model:   plan.model,
+		},
+	}
+	if appendErr := AppendNextSessionEvent(ctx, s.sessionLog, started); appendErr != nil {
+		// Unlike the best-effort appends elsewhere, this one is the contract:
+		// without a persisted turn_started there is nothing for the caller to
+		// attach to, so refuse the turn rather than run it unobservably.
+		return nil, &AgentServiceError{
+			Sentinel: ErrTurnNotAccepted,
+			Message:  appendErr.Error(),
+		}
+	}
+
+	s.dispatchTurn(plan, turnID)
+
+	return &PromptTurnAck{
+		SessionID: plan.request.SessionID,
+		TurnID:    turnID,
+		Status:    TurnStatusAccepted,
+		Sequence:  started.Sequence,
+		Backend:   plan.backendName,
+		Model:     plan.model,
+		Timestamp: time.Now().UnixNano(),
+	}, nil
+}
+
+// dispatchTurn runs an accepted turn in the background and closes it with a
+// terminal turn_completed or turn_failed event.
+//
+// The turn runs on context.WithoutCancel: it keeps the caller's values (tenant
+// binding, authenticated principal, backend pinning) while shedding the
+// caller's cancellation, which is the whole point of the asynchronous
+// contract — the agent must survive the HTTP request that started it ending,
+// whether by normal completion or client disconnect.
+//
+// turnsInFlight tracks the goroutine so a shutting-down orchestrator can wait
+// for accepted turns to close out their event logs instead of tearing the
+// process down mid-transcript.
+func (s *agentServiceImpl) dispatchTurn(plan *promptTurnPlan, turnID string) {
+	turnCtx := context.WithoutCancel(plan.ctx)
+	startedAt := time.Now()
+
+	s.turnsInFlight.Add(1)
+	go func() {
+		defer s.turnsInFlight.Done()
+
+		resp, err := s.runPromptTurn(turnCtx, plan)
+		elapsed := time.Since(startedAt).Milliseconds()
+
+		event := &SessionEvent{
+			SessionID: plan.request.SessionID,
+			TenantID:  plan.tenantID,
+			Timestamp: time.Now().UTC(),
+			Source:    "agent:" + plan.backendName,
+		}
+		if err != nil {
+			s.logger.Warnf("orchestration: turn failed: session=%s turn=%s err=%s",
+				plan.request.SessionID, turnID, err.Error())
+			event.Kind = KindTurnFailed
+			event.TurnFailed = &TurnFailedPayload{
+				TurnID:     turnID,
+				Error:      err.Error(),
+				DurationMS: elapsed,
+			}
+		} else {
+			event.Kind = KindTurnCompleted
+			event.TurnCompleted = &TurnCompletedPayload{
+				TurnID:     turnID,
+				StopReason: resp.StopReason,
+				Model:      resp.Model,
+				DurationMS: elapsed,
+			}
+		}
+		s.appendSessionEvent(turnCtx, event)
+
+		// A turn that failed because the provider refused the session's account
+		// is the one failure the orchestrator can answer by itself. Rotation
+		// runs AFTER the terminal event so the transcript records what actually
+		// happened — the turn failed, and then the session moved — rather than
+		// hiding the failure behind an automatic retry the operator never asked
+		// for. The next prompt runs on the replacement account.
+		if err != nil {
+			s.rotateOnAccountLimit(turnCtx, plan.request.SessionID, err)
+		}
+	}()
+}
+
+// WaitForTurns blocks until every turn accepted by PromptSessionAsync has
+// written its terminal turn_completed or turn_failed event.
+//
+// It is deliberately not wired into daemon shutdown: an agent turn runs for
+// minutes, and a shutdown that stalls that long is worse than a transcript
+// that resumes on restart. Its purpose is to give callers that genuinely need
+// a quiescent log — tests above all — a synchronization point, so nothing has
+// to poll or sleep waiting for a background turn to land.
+func (s *agentServiceImpl) WaitForTurns() {
+	s.turnsInFlight.Wait()
 }
 
 // Infer runs a stateless fleet-routed inference call against the named
@@ -1338,7 +1916,7 @@ func (s *agentServiceImpl) SessionStatus(ctx context.Context, req *SessionStatus
 	backendName, err := s.findSessionBackend(req.SessionID)
 	if err != nil {
 		// Not in memory; check the persistent store
-		record, storeErr := s.store.GetSession(ctx, req.SessionID)
+		record, storeErr := s.store.GetSession(ctx, StorageTenant(ctx), req.SessionID)
 		if storeErr != nil {
 			// Return the original session-not-found error
 			return nil, err
@@ -1348,6 +1926,24 @@ func (s *agentServiceImpl) SessionStatus(ctx context.Context, req *SessionStatus
 			SessionID:    record.SessionID,
 			State:        record.Status,
 			LastActivity: record.LastActivity,
+			Uptime:       0,
+			Timestamp:    time.Now().UnixNano(),
+		}, nil
+	}
+
+	// A session restored from the durable store has no agent process to ask,
+	// so its state is reported from the registry. Asking the backend would
+	// report it as missing, which is exactly the wrong answer: the session is
+	// intact and the next prompt reconstitutes it.
+	if mem, ok := s.liveSessionRecord(req.SessionID); ok && mem.resumable.Load() {
+		lastActivity := mem.CreatedAt
+		if record, storeErr := s.store.GetSession(ctx, mem.TenantID, req.SessionID); storeErr == nil {
+			lastActivity = record.LastActivity
+		}
+		return &SessionStatusResponse{
+			SessionID:    req.SessionID,
+			State:        SessionStateResumable,
+			LastActivity: lastActivity,
 			Uptime:       0,
 			Timestamp:    time.Now().UnixNano(),
 		}, nil
@@ -1389,6 +1985,8 @@ func (s *agentServiceImpl) CloseSession(ctx context.Context, req *CloseSessionRe
 	if err != nil {
 		return nil, err
 	}
+	tenantID := TenantFromContext(ctx)
+	storageTenant := StorageTenant(ctx)
 
 	// Pin re-resolution to the backend instance that holds the live session.
 	ctx = s.pinSessionBackend(ctx, req.SessionID)
@@ -1398,31 +1996,33 @@ func (s *agentServiceImpl) CloseSession(ctx context.Context, req *CloseSessionRe
 		return nil, err
 	}
 
-	if err := backend.Close(ctx, req.SessionID); err != nil {
-		return nil, err
+	// A resumable session has no agent process, so there is nothing for the
+	// backend to close — asking it would fail with "session not found" and
+	// leave the durable record open forever. Closing it here is the operator
+	// declining the resume, which is a legitimate way to end the session.
+	mem, hasMem := s.liveSessionRecord(req.SessionID)
+	if !hasMem || !mem.resumable.Load() {
+		if err := backend.Close(ctx, req.SessionID); err != nil {
+			return nil, err
+		}
 	}
 
 	// If the session had a container, stop it.
-	if val, ok := s.sessions.Load(req.SessionID); ok {
-		if rec, ok := val.(*sessionRecord); ok && rec.ContainerID != "" {
-			if s.containerRuntime != nil {
-				if stopErr := s.containerRuntime.Stop(ctx, rec.ContainerID); stopErr != nil {
-					s.logger.Warnf("failed to stop container for session %s: %s", req.SessionID, stopErr.Error())
-				}
-			}
+	if hasMem && mem.ContainerID != "" && s.containerRuntime != nil {
+		if stopErr := s.containerRuntime.Stop(ctx, mem.ContainerID); stopErr != nil {
+			s.logger.Warnf("failed to stop container for session %s: %s", req.SessionID, stopErr.Error())
 		}
 	}
 
 	s.sessions.Delete(req.SessionID)
 
 	// Update the persistent store to mark the session as closed
-	if updateErr := s.store.UpdateSessionStatus(ctx, req.SessionID, SessionStateClosed); updateErr != nil {
+	if updateErr := s.store.UpdateSessionStatus(ctx, storageTenant, req.SessionID, SessionStateClosed); updateErr != nil {
 		s.logger.Warnf("failed to update session status in store: session=%s err=%s", req.SessionID, updateErr.Error())
 	}
 
 	s.logger.Debugf("closed session: id=%s backend=%s", req.SessionID, backendName)
 
-	tenantID := TenantFromContext(ctx)
 	s.publishEvent(ctx, tenantID, "session_closed", map[string]string{
 		"session_id": req.SessionID,
 		"backend":    backendName,
@@ -1433,7 +2033,6 @@ func (s *agentServiceImpl) CloseSession(ctx context.Context, req *CloseSessionRe
 	if s.sessionLog != nil {
 		now := time.Now().UTC()
 		s.appendSessionEvent(ctx, &SessionEvent{
-			Sequence:  s.nextSessionSequence(ctx, tenantID, req.SessionID),
 			SessionID: req.SessionID,
 			TenantID:  tenantID,
 			Timestamp: now,
@@ -1457,13 +2056,14 @@ func (s *agentServiceImpl) CloseSession(ctx context.Context, req *CloseSessionRe
 }
 
 // ListSessions returns all sessions, merging live in-memory state with
-// persisted store records. In-memory sessions are treated as active;
-// store records provide historical and metadata context.
-// When a TenantGuard is configured, sessions are filtered by the
-// requesting tenant.
+// persisted store records. A session that survived a restart but has no agent
+// process reports as resumable, so an operator can tell at a glance which
+// sessions are running and which are waiting to be reconstituted.
+//
+// Results are scoped to the requesting tenant. A caller with no tenant — the
+// embedded, single-tenant case — sees every session; a caller with one sees
+// only its own, in memory and in the store alike.
 func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRequest) (*ListSessionsResponse, error) {
-	// ListSessions can work without tenant context (returns all sessions).
-	// When tenant is provided, results are filtered to that tenant.
 	requestingTenant := TenantFromContext(ctx)
 
 	// Build a set of in-memory (live) session IDs
@@ -1485,24 +2085,29 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 			return true
 		}
 
-		// Apply tenant filter when guard is active
-		if s.tenantGuard != nil && requestingTenant != "" && rec.TenantID != requestingTenant {
+		// Apply tenant filter. A record is another tenant's the moment the
+		// caller names a tenant that is not its owner, guard or no guard.
+		if requestingTenant != "" && rec.TenantID != requestingTenant {
 			return true
 		}
 
 		liveSet[sessionID] = struct{}{}
 
+		state := SessionStateActive
+		if rec.resumable.Load() {
+			state = SessionStateResumable
+		}
 		info := &SessionInfo{
 			SessionID: sessionID,
 			ProjectID: rec.ProjectID,
 			Backend:   rec.Backend,
 			Model:     rec.Model,
-			State:     SessionStateActive,
+			State:     state,
 			CreatedAt: rec.CreatedAt,
 		}
 
 		// Enrich with store data if available
-		if record, err := s.store.GetSession(ctx, sessionID); err == nil {
+		if record, err := s.store.GetSession(ctx, rec.TenantID, sessionID); err == nil {
 			info.LastActivity = record.LastActivity
 		}
 
@@ -1510,8 +2115,9 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 		return true
 	})
 
-	// Merge in persisted sessions not currently live
-	records, err := s.store.ListSessions(ctx)
+	// Merge in persisted sessions not currently live. The scan is bounded to
+	// the caller's tenant subtree, so no other tenant's sessions are reachable.
+	records, err := s.listStoredSessions(ctx, requestingTenant)
 	if err != nil {
 		s.logger.Warnf("failed to list sessions from store: %s", err.Error())
 	} else {
@@ -1546,6 +2152,16 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 		Sessions:  sessions,
 		Timestamp: time.Now().UnixNano(),
 	}, nil
+}
+
+// listStoredSessions reads the durable session records visible to a caller:
+// one tenant's subtree when the caller names a tenant, every tenant's when it
+// does not (the embedded, single-tenant case).
+func (s *agentServiceImpl) listStoredSessions(ctx context.Context, tenantID string) ([]*SessionRecord, error) {
+	if tenantID == "" {
+		return s.store.ListAllSessions(ctx)
+	}
+	return s.store.ListSessions(ctx, tenantID)
 }
 
 // DecomposeTask uses an agent to decompose a task into work items.
@@ -1735,48 +2351,6 @@ func (s *agentServiceImpl) HealthCheck(ctx context.Context) (*HealthCheckReport,
 	monitor := NewAgentHealthMonitor(s, s.logger)
 	report := monitor.CheckAll(ctx)
 	return report, nil
-}
-
-// LoadPersistedSessions loads existing sessions from the store on startup.
-// It iterates persisted session records and restores in-memory tracking for
-// sessions that are still in an active state and have a registered backend.
-func (s *agentServiceImpl) LoadPersistedSessions(ctx context.Context) error {
-	records, err := s.store.ListSessions(ctx)
-	if err != nil {
-		return &AgentServiceError{
-			Sentinel: ErrAgentServiceUnavailable,
-			Message:  "failed to load persisted sessions: " + err.Error(),
-		}
-	}
-
-	restored := 0
-	for _, record := range records {
-		// Only restore active sessions
-		if record.Status != SessionStateActive && record.Status != SessionStateIdle {
-			continue
-		}
-
-		// Verify the backend is still registered
-		if _, backendErr := s.lookupBackend(record.Backend); backendErr != nil {
-			s.logger.Warnf("skipping persisted session %s: backend %s not available", record.SessionID, record.Backend)
-			continue
-		}
-
-		s.sessions.Store(record.SessionID, &sessionRecord{
-			Backend:   record.Backend,
-			ProjectID: record.ProjectID,
-			Model:     record.Model,
-			CreatedAt: record.CreatedAt,
-		})
-
-		restored++
-	}
-
-	if restored > 0 {
-		s.logger.Debugf("restored %d persisted sessions", restored)
-	}
-
-	return nil
 }
 
 // =============================================================================
@@ -2424,6 +2998,7 @@ func (s *agentServiceImpl) resumeJob(ctx context.Context, status *JobStatus) err
 
 	// Create new ControlLoop with the same service and logger.
 	loop := NewControlLoop(s, s.logger)
+	loop.SetCostTracker(s.costTracker)
 
 	// Restore accumulated context from persisted memory.
 	if status.Memory != nil {
@@ -2571,6 +3146,45 @@ func (s *agentServiceImpl) defaultBackendName() string {
 		return false // stop after first
 	})
 	return first
+}
+
+// managedWorkspaceDir resolves the work directory for a spawn scoped to a
+// server-managed project. It returns:
+//
+//   - ("", nil) when no durable project store is wired, the project is not a
+//     durable record (e.g. it names an in-memory RegisteredProject), or the
+//     record is not server-managed — the caller falls through to the legacy
+//     resolution chain;
+//   - (path, nil) when the managed workspace is ready;
+//   - ("", *ProjectWorkspaceNotReadyError) when the workspace exists but is
+//     still pending/cloning or has failed;
+//   - ("", err) when the store itself failed, so the readiness gate can never
+//     be skipped by an outage.
+func (s *agentServiceImpl) managedWorkspaceDir(ctx context.Context, projectID string) (string, error) {
+	if s.projectStore == nil {
+		return "", nil
+	}
+	tenantID := StorageTenant(ctx)
+	project, err := s.projectStore.Get(ctx, tenantID, projectID)
+	if err != nil {
+		var notFound *ProjectStoreNotFoundError
+		if errors.As(err, &notFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	if !project.Provisioning.Managed {
+		return "", nil
+	}
+	if project.Provisioning.State != ProvisioningStateReady {
+		return "", &ProjectWorkspaceNotReadyError{
+			TenantID:  tenantID,
+			ProjectID: projectID,
+			State:     project.Provisioning.State,
+			Reason:    project.Provisioning.Error,
+		}
+	}
+	return project.Workspace.Path, nil
 }
 
 // lookupProject retrieves a project by ID.
@@ -2963,6 +3577,10 @@ func (s *agentServiceImpl) StartJob(ctx context.Context, req *StartJobRequest) (
 	}
 
 	loop := NewControlLoop(s, s.logger)
+	// Hand the job's control loop the same ledger the turn path records into,
+	// so a workflow's cost_controls budget is checked against usage that is
+	// actually being written.
+	loop.SetCostTracker(s.costTracker)
 
 	// Load workflow from file if a workflow file path is specified.
 	// This always runs first so the workflow is registered in the loader

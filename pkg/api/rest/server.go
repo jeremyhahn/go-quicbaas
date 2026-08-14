@@ -121,6 +121,12 @@ type Config struct {
 	// time from their own config struct.
 	IAMSelfServiceRegistration config.IAMSelfServiceRegistrationConfig
 
+	// IAMDynamicClientRegistration is the per-server RFC 7591 Dynamic Client
+	// Registration policy. When zero-valued the registration endpoint is
+	// disabled (the safe default) and anonymous registration is impossible:
+	// a token-less caller can neither create a client nor pick its tenant.
+	IAMDynamicClientRegistration config.IAMDynamicClientRegistrationConfig
+
 	// SPIFFETrustDomain is the operator-configured SPIFFE trust domain used to
 	// derive (and pin) the login tenant from a client certificate's
 	// tenant-scoped SPIFFE URI SAN. When empty, SPIFFE-SAN tenant derivation
@@ -330,6 +336,13 @@ type Server struct {
 	// wiring; the handlers report 501 Not Implemented.
 	userAuthFactorSvc qrdbsdk.UserAuthFactorServicer
 
+	// sessionPresence records operator_joined / operator_left for live
+	// session-event attachments (handlers_session_events.go). It is owned by
+	// the server because presence is per-process state shared by every
+	// concurrent attach, and it must be flushed on shutdown so a restart
+	// never leaves phantom operators in a transcript.
+	sessionPresence *orchestration.SessionPresence
+
 	startTime time.Time
 	mu        sync.RWMutex
 	started   bool
@@ -356,6 +369,7 @@ func NewServer(svc service.QuicBaaS, config *Config, log *logger.Logger) (*Serve
 		logger:    log.WithField("component", "rest-api"),
 		startTime: time.Now(),
 	}
+	s.sessionPresence = orchestration.NewSessionPresence(orchestration.DefaultPresenceLinger, s.warnSessionStream)
 
 	// Default router: single-shard routing to shard 1
 	s.shardRouter = routing.New()
@@ -576,44 +590,10 @@ func (s *Server) setupRouter() {
 			// Mounted at both /api/v1/ssh (canonical) and /api/v1/xkms/v1/ssh
 			// (the path prefix the go-xkms REST SSH SDK client expects — this
 			// alias lets CLIs set XKMSD_URL to the quicbaasd base and reuse
-			// the go-xkms client unchanged).
-			r.Route("/ssh", func(r chi.Router) {
-				r.Post("/keys", s.HandleGenerateSSHKey)
-				r.Post("/keys/import", s.HandleImportSSHKey)
-				r.Get("/keys", s.HandleListSSHKeys)
-				r.Get("/keys/{scope}/{owner}/{name}", s.HandleGetSSHKey)
-				r.Delete("/keys/{scope}/{owner}/{name}", s.HandleDeleteSSHKey)
-				r.Get("/keys/{scope}/{owner}/{name}/public", s.HandleExportSSHKeyPublic)
-				r.Post("/keys/{scope}/{owner}/{name}/sign", s.HandleSignSSHDigest)
-
-				r.Post("/known-hosts", s.HandleAddKnownHost)
-				r.Get("/known-hosts", s.HandleListKnownHosts)
-				r.Delete("/known-hosts/{host}", s.HandleRemoveKnownHost)
-				r.Post("/known-hosts/{host}/verify", s.HandleVerifyKnownHost)
-
-				r.Post("/authorized", s.HandleEmitAuthorized)
-				r.Post("/authorized/verify", s.HandleVerifyAuthorized)
-			})
-
-			// Alias: /api/v1/xkms/v1/ssh/* → same handlers as /api/v1/ssh/*.
-			// Matches the xkms SDK REST client's fixed path prefix.
-			r.Route("/xkms/v1/ssh", func(r chi.Router) {
-				r.Post("/keys", s.HandleGenerateSSHKey)
-				r.Post("/keys/import", s.HandleImportSSHKey)
-				r.Get("/keys", s.HandleListSSHKeys)
-				r.Get("/keys/{scope}/{owner}/{name}", s.HandleGetSSHKey)
-				r.Delete("/keys/{scope}/{owner}/{name}", s.HandleDeleteSSHKey)
-				r.Get("/keys/{scope}/{owner}/{name}/public", s.HandleExportSSHKeyPublic)
-				r.Post("/keys/{scope}/{owner}/{name}/sign", s.HandleSignSSHDigest)
-
-				r.Post("/known-hosts", s.HandleAddKnownHost)
-				r.Get("/known-hosts", s.HandleListKnownHosts)
-				r.Delete("/known-hosts/{host}", s.HandleRemoveKnownHost)
-				r.Post("/known-hosts/{host}/verify", s.HandleVerifyKnownHost)
-
-				r.Post("/authorized", s.HandleEmitAuthorized)
-				r.Post("/authorized/verify", s.HandleVerifyAuthorized)
-			})
+			// the go-xkms client unchanged). Both mounts share one route
+			// table: registerSSHRoutes in handlers_ssh.go.
+			r.Route("/ssh", s.registerSSHRoutes)
+			r.Route("/xkms/v1/ssh", s.registerSSHRoutes)
 
 			// Seal routes (LEGACY — superseded by /api/v1/barrier/*).
 			// Each handler stamps Deprecation/Sunset/Link headers per
@@ -786,6 +766,10 @@ func (s *Server) setupRouter() {
 			// Trust composition routes (cross-sign / AIA)
 			registerTrustRoutes(s, r)
 
+			// Attestation routes (xkms statement/chain verification +
+			// the container attestation orchestration seam)
+			registerAttestationRoutes(s, r)
+
 			// ACME (RFC 8555) server-control routes (register-challenge / issue).
 			// The raw RFC 8555 directory endpoints are mounted at the router
 			// root (see registerACMEDirectoryRoutes below) per the ACME URL
@@ -819,6 +803,11 @@ func (s *Server) setupRouter() {
 
 			// Project routes (tenant → project → workflow hierarchy)
 			registerProjectRoutes(s, r)
+
+			// Pooled provider account routes (per-tenant pool of
+			// Anthropic/Claude, Codex, and OpenCode logins an agent
+			// session can be spawned against).
+			registerAccountRoutes(s, r)
 
 			// Orchestrator routes (agent sessions, tasks, backends).
 			// Agent admin routes (disable/enable) are registered inside the
@@ -1582,6 +1571,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("Shutting down REST API server")
 
 	s.closed = true
+
+	// Commit any deferred operator departures before the listener goes away,
+	// so an operator who was attached at shutdown is recorded as having left
+	// rather than lingering in the transcript forever.
+	s.sessionPresence.Close()
 
 	if s.server != nil {
 		if err := s.server.Shutdown(ctx); err != nil {

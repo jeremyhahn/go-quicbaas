@@ -128,12 +128,7 @@ func ceremonyInitToResponse(info *service.CeremonyInitInfo) map[string]interface
 		"state":        info.State,
 		"share_count":  info.ShareCount,
 	}
-	if len(info.SOCertPEM) > 0 {
-		resp["so_cert_pem"] = string(info.SOCertPEM)
-	}
-	if len(info.SOKeyPEM) > 0 {
-		resp["so_key_pem"] = string(info.SOKeyPEM)
-	}
+	// The SO identity is CSR-based; the server never holds officer private keys.
 	return resp
 }
 

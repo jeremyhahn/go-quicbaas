@@ -48,3 +48,19 @@ func (s *Server) registerTrustService(grpcServer *ggrpc.Server, quicbaasService 
 	grpcapi.RegisterTrustServiceServer(grpcServer, quicbaasService)
 	s.logger.Info("Registered TrustService gRPC service")
 }
+
+// registerAttestationService registers the AttestationService handlers on the
+// gRPC listener. Unlike the certificate and trust services there is no
+// availability gate: the verifier half composes go-xkms pkg/attestation and
+// is always present, and the orchestration half reports its own typed
+// not-configured error, so registering unconditionally is what keeps the gRPC
+// surface symmetric with REST /api/v1/attestation and the
+// QUIC/MCP/Unix/embedded transports.
+func (s *Server) registerAttestationService(grpcServer *ggrpc.Server, quicbaasService *grpcapi.Server) {
+	if s.quicBaaSService == nil {
+		s.logger.Info("QuicBaaS service not available, skipping AttestationService gRPC registration")
+		return
+	}
+	grpcapi.RegisterAttestationServiceServer(grpcServer, quicbaasService)
+	s.logger.Info("Registered AttestationService gRPC service")
+}

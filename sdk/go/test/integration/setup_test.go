@@ -15,8 +15,11 @@ package integration
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,11 +36,17 @@ const (
 	// DefaultGRPCAddress is the default gRPC address for tests.
 	DefaultGRPCAddress = "localhost:50151"
 
-	// DefaultRESTAddress is the default REST address for tests.
-	DefaultRESTAddress = "http://localhost:58080"
+	// DefaultRESTAddress is the default REST address for tests. TLS is
+	// mandatory stack-wide, so the REST listener always serves HTTPS.
+	DefaultRESTAddress = "https://localhost:58080"
 
 	// DefaultHealthEndpoint is the health check endpoint.
-	DefaultHealthEndpoint = "http://localhost:58080/api/v1/health/live"
+	DefaultHealthEndpoint = DefaultRESTAddress + "/api/v1/health/live"
+
+	// tlsServerName is the SAN the suite verifies the server certificate
+	// against. The fixture serving leaf (node1.crt) carries DNS:localhost
+	// and IP:127.0.0.1 SANs.
+	tlsServerName = "localhost"
 
 	// DefaultStartupTimeout is the maximum time to wait for server startup.
 	DefaultStartupTimeout = 60 * time.Second
@@ -61,7 +70,131 @@ var (
 
 	// mockOnlyMode indicates if running only mock tests (no Docker required).
 	mockOnlyMode bool
+
+	// suiteTLSMu guards suiteTLSConfig.
+	suiteTLSMu sync.Mutex
+
+	// suiteTLSConfig caches the TLS client configuration pinned to the
+	// integration CA fixture. Nil until the fixture has been loaded.
+	suiteTLSConfig *tls.Config
+
+	// certsFixtureDir is the shared integration cert fixture directory
+	// (test/integration/certs) the docker-compose mounts into the container
+	// at /etc/quicbaas/certs. Resolved (and generated when absent) by
+	// ensureFixtureCerts during setup.
+	certsFixtureDir string
 )
+
+// suiteTLS returns the TLS client configuration that pins trust to the
+// integration CA fixture the server serves its certificates under (RootCAs +
+// ServerName; explicitly no InsecureSkipVerify). The result is cached for
+// the whole suite.
+func suiteTLS() (*tls.Config, error) {
+	suiteTLSMu.Lock()
+	defer suiteTLSMu.Unlock()
+	if suiteTLSConfig != nil {
+		return suiteTLSConfig, nil
+	}
+	pemBytes, err := fetchServerCA()
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemBytes) {
+		return nil, &qberrors.MessageError{Message: "no certificates parsed from server CA chain"}
+	}
+	suiteTLSConfig = &tls.Config{
+		RootCAs:    pool,
+		ServerName: tlsServerName,
+		MinVersion: tls.VersionTLS13,
+	}
+	return suiteTLSConfig, nil
+}
+
+// resetSuiteTLS drops the cached TLS configuration. Called before starting
+// containers so a regenerated cert fixture is never trusted from a stale pin.
+func resetSuiteTLS() {
+	suiteTLSMu.Lock()
+	defer suiteTLSMu.Unlock()
+	suiteTLSConfig = nil
+}
+
+// fetchServerCA obtains the PEM CA the server serves its TLS certificates
+// under. QUICBAAS_TEST_CA overrides with an explicit path; otherwise the
+// shared integration CA fixture (test/integration/certs/ca.crt, mounted into
+// the container by docker-compose.yml) is read from the host checkout.
+func fetchServerCA() ([]byte, error) {
+	if path := os.Getenv("QUICBAAS_TEST_CA"); path != "" {
+		return os.ReadFile(path) // #nosec G304 - operator-supplied test CA path
+	}
+	if certsFixtureDir == "" {
+		return nil, &qberrors.MessageError{Message: "cert fixture directory not resolved (setup has not run)"}
+	}
+	return os.ReadFile(filepath.Join(certsFixtureDir, "ca.crt")) // #nosec G304 - path rooted at repo fixture dir
+}
+
+// fixtureCertFiles are the fixture files the suite and the server require:
+// the CA pair (client trust + serving chain), the bootstrap admin client
+// cert bundle, and the node1 serving pair quicbaas.yaml points the TLS
+// listener at.
+var fixtureCertFiles = []string{
+	"ca.crt", "ca.key",
+	"admin.crt", "admin.key",
+	"node1.crt", "node1.key",
+}
+
+// ensureFixtureCerts resolves the shared integration cert fixture directory
+// relative to the compose dir and generates the fixtures with
+// test/integration/gen-certs when any required file is missing — the same
+// generator the Makefile integration targets use, so both suites share one
+// CA.
+func ensureFixtureCerts(composeDir string) error {
+	repoRoot := filepath.Clean(filepath.Join(composeDir, "..", "..", "..", ".."))
+	certsFixtureDir = filepath.Join(repoRoot, "test", "integration", "certs")
+
+	missing := false
+	for _, f := range fixtureCertFiles {
+		if _, err := os.Stat(filepath.Join(certsFixtureDir, f)); err != nil {
+			missing = true
+			break
+		}
+	}
+	if !missing {
+		return nil
+	}
+
+	cmd := exec.Command("go", "run", "./test/integration/gen-certs", certsFixtureDir)
+	cmd.Dir = repoRoot
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return &qberrors.WrappedMessageError{
+			Message: "generate integration cert fixtures: " + string(out),
+			Cause:   err,
+		}
+	}
+	return nil
+}
+
+// newHTTPClient returns an HTTP client that verifies the server's certificate
+// against the pinned CA chain. If the chain has not been bootstrapped the
+// client trusts an empty pool, so every request fails loudly with a
+// certificate verification error instead of silently using system roots.
+func newHTTPClient(timeout time.Duration) *http.Client {
+	tlsCfg, err := suiteTLS()
+	if err != nil {
+		tlsCfg = &tls.Config{
+			RootCAs:    x509.NewCertPool(),
+			ServerName: tlsServerName,
+			MinVersion: tls.VersionTLS13,
+		}
+	}
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig:   tlsCfg,
+			DisableKeepAlives: true,
+		},
+	}
+}
 
 // TestEnvironment holds the test infrastructure state.
 type TestEnvironment struct {
@@ -137,6 +270,12 @@ func setup() error {
 		return &qberrors.WrappedMessageError{Message: "failed to find docker-compose.yml", Cause: err}
 	}
 	env.DockerComposeDir = dir
+
+	// Resolve (and generate when absent) the cert fixtures BEFORE any health
+	// probing: the pinned CA and the admin PIV bundle both come from them.
+	if err := ensureFixtureCerts(dir); err != nil {
+		return &qberrors.WrappedMessageError{Message: "failed to prepare cert fixtures", Cause: err}
+	}
 
 	// Check if server is already running
 	if isServerHealthy() {
@@ -254,6 +393,25 @@ func findDockerComposeDir() (string, error) {
 func startContainers(dir string) error {
 	fmt.Println("Starting test containers...")
 
+	// A rebuilt container may serve a regenerated cert fixture; never trust
+	// a stale pin.
+	resetSuiteTLS()
+
+	// Remove any leftover stack state first. A previous run whose setup
+	// failed skips teardown, and a stale data volume poisons this boot: the
+	// first-boot admin bootstrap (cert-bound PIV identity) only runs once
+	// per data dir, so reusing state from a differently-configured boot
+	// leaves the suite without its bootstrap credential.
+	downArgs := []string{"compose", "-f", filepath.Join(dir, "docker-compose.yml"), "down", "-v", "--remove-orphans"}
+	downCmd := exec.Command("docker", downArgs...)
+	downCmd.Dir = dir
+	if out, err := downCmd.CombinedOutput(); err != nil {
+		return &qberrors.WrappedMessageError{
+			Message: "docker compose down (pre-start cleanup) failed: " + string(out),
+			Cause:   err,
+		}
+	}
+
 	args := []string{"compose", "-f", filepath.Join(dir, "docker-compose.yml"), "up", "-d", "--build", "--wait"}
 
 	cmd := exec.Command("docker", args...)
@@ -299,8 +457,12 @@ func getContainerLogs(dir string) (string, error) {
 	return string(output), nil
 }
 
-// isServerHealthy checks if the server is healthy by testing TCP connectivity.
-// This works with mTLS since we only check if ports are reachable.
+// isServerHealthy checks if the server is healthy. The gRPC port gets a TCP
+// reachability probe (the suite's live gRPC coverage rides mock transports;
+// only the listener presence matters here). REST must answer a real HTTPS 200
+// on the liveness path with a certificate that verifies against the pinned
+// integration CA — a wrong-scheme or stale server fails here instead of
+// poisoning setup.
 func isServerHealthy() bool {
 	// Check gRPC port (50151 external -> 50051 internal)
 	grpcConn, err := net.DialTimeout("tcp", "localhost:50151", 2*time.Second)
@@ -309,14 +471,25 @@ func isServerHealthy() bool {
 	}
 	grpcConn.Close()
 
-	// Check REST port (58080 external -> 8080 internal)
-	restConn, err := net.DialTimeout("tcp", "localhost:58080", 2*time.Second)
+	// Verified HTTPS liveness check on the REST listener.
+	tlsCfg, err := suiteTLS()
 	if err != nil {
 		return false
 	}
-	restConn.Close()
-
-	return true
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig:   tlsCfg,
+			DisableKeepAlives: true,
+		},
+	}
+	endpoint := getEnvOrDefault("QUICBAAS_REST_ADDRESS", DefaultRESTAddress) + "/api/v1/health/live"
+	resp, err := client.Get(endpoint)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // waitForHealthy waits for the server to become healthy.

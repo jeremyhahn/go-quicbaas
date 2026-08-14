@@ -121,10 +121,13 @@ Browser → REST /api/v1/iam/{tenant}/webauthn/registration/begin
                  __xkms:webauthn/credentials/<id>)
 ```
 
-The legacy `/api/v1/tenants/{tenant_id}/webauthn` routes route through
+At the time of this migration the legacy
+`/api/v1/tenants/{tenant_id}/webauthn` routes still routed through
 `IAMHandler.BeginRegistration` → `service.WebAuthnManager` → the same
-`XKMSWebAuthnManager` → the same per-tenant xkms service. Both surfaces
-are equivalent; the canonical path is recommended for new clients.
+per-tenant xkms service. **That legacy mount has since been deleted**;
+the canonical `/api/v1/iam/{tenant_id}/webauthn` mount is the only
+REST ceremony surface, and browser/TypeScript-SDK login uses the
+unified ceremony at `/api/v1/auth/login/{begin,finish}`.
 
 ## Decisions baked in
 
@@ -151,9 +154,10 @@ are equivalent; the canonical path is recommended for new clients.
 
 ## Backward compatibility
 
-- The legacy `/api/v1/tenants/{tenant_id}/webauthn/...` routes remain
-  wired and route through the same per-tenant xkms service. Existing
-  REST clients keep working.
+- (Historical) the legacy `/api/v1/tenants/{tenant_id}/webauthn/...`
+  routes remained wired at the time of this migration. They were
+  deleted in the later FIDO2/PIV surface unification; clients now use
+  the canonical mount or the unified login ceremony.
 - The `service.WebAuthnManager` interface is unchanged; downstream
   consumers see no signature drift.
 - `iam.SessionStorage` and `iam.MemorySessionStorage` retain their

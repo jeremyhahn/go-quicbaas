@@ -282,7 +282,7 @@ func (s *Server) HandleCredentialRetrieveVersion(w http.ResponseWriter, r *http.
 	}
 
 	RespondJSON(w, r, http.StatusOK, qrdbtransport.CredentialRetrieveVersionResponse{
-		Value: string(value),
+		Value: value,
 	})
 }
 

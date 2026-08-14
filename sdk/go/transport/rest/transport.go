@@ -40,6 +40,7 @@ var ErrStreamNotSupported = errors.New(errors.CodeUnimplemented, "rest",
 type Transport struct {
 	cfg                 *transport.Config
 	client              *http.Client
+	streamClient        *http.Client // lazily built by streamHTTPClient; no per-request timeout
 	baseURL             string
 	basePath            string // URL path prefix for all requests (from HTTP URL addresses)
 	headers             map[string]string
@@ -55,10 +56,13 @@ type Transport struct {
 	backupHandler       *backupHandler
 	orchestratorHandler *orchestratorHandler
 	projectHandler      *projectRESTHandler
+	accountHandler      *accountRESTHandler
+	sshHandler          *sshRESTHandler
 	certificateHandler  *certificateRESTHandler
 	kmsHandler          *kmsRESTHandler
 	dekHandler          *dekRESTHandler
 	secretsHandler      *secretsRESTHandler
+	dynSecretsHandler   *dynamicSecretsRESTHandler
 	cryptoHandler       *cryptoRESTHandler
 	messagingHandler    *messagingRESTHandler
 	timeseriesHandler   *timeseriesRESTHandler
@@ -138,11 +142,16 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 	// Initialize Project handler
 	t.projectHandler = newProjectRESTHandler(t)
 
+	// Initialize pooled provider account handler
+	t.accountHandler = newAccountRESTHandler(t)
+	t.sshHandler = newSSHRESTHandler(t)
+
 	// Initialize Certificate handler
 	t.certificateHandler = newCertificateRESTHandler(t)
 	t.kmsHandler = newKMSRESTHandler(t)
 	t.dekHandler = newDEKRESTHandler(t)
 	t.secretsHandler = newSecretsRESTHandler(t)
+	t.dynSecretsHandler = newDynamicSecretsRESTHandler(t)
 	t.cryptoHandler = newCryptoRESTHandler(t)
 	t.messagingHandler = newMessagingRESTHandler(t)
 	t.timeseriesHandler = newTimeseriesRESTHandler(t)
@@ -284,6 +293,18 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 		return t.projectHandler.handleRequest(ctx, method, req)
 	}
 
+	// Route SSH requests through the SSH handler. The routes it targets are
+	// the same /api/v1/ssh mount the go-xkms REST SSH client alias uses, so
+	// the SDK and that client observe one server surface.
+	if isSSHService(service) {
+		return t.sshHandler.handleRequest(ctx, method, req)
+	}
+
+	// Route pooled provider account requests through the Account handler.
+	if isAccountService(service) {
+		return t.accountHandler.handleRequest(ctx, method, req)
+	}
+
 	// Route Certificate requests through the Certificate handler for
 	// proper typed response decoding.
 	if isCertificateService(service) {
@@ -304,6 +325,13 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 	// Route Secrets requests through the Secrets handler.
 	if isSecretsService(service) {
 		return t.secretsHandler.handleRequest(ctx, method, req)
+	}
+
+	// Route DynamicSecrets requests through the DynamicSecrets handler.
+	// The engine is mounted at /api/v1/secrets/dynamic, which the generic
+	// service/method endpoint mapping cannot reach.
+	if isDynamicSecretsService(service) {
+		return t.dynSecretsHandler.handleRequest(ctx, method, req)
 	}
 
 	// Route Crypto requests through the Crypto handler.
@@ -1383,9 +1411,38 @@ func (t *Transport) convertHTTPError(err error, op string) error {
 }
 
 // RequestStream initiates a streaming request.
-// REST does not support bidirectional streaming, so this returns ErrStreamNotSupported.
+//
+// REST has no bidirectional streaming, so this rejects every RPC that needs
+// it with ErrStreamNotSupported — except Orchestrator.SubscribeSessionEvents,
+// which is server-to-client only and rides the SSE endpoint documented at
+// GET /api/v1/orchestrator/sessions/{id}/events (see orchestrator_stream.go).
 func (t *Transport) RequestStream(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
+	if isOrchestratorService(service) && method == "SubscribeSessionEvents" {
+		return t.orchestratorHandler.subscribeSessionEvents(ctx, req)
+	}
 	return nil, ErrStreamNotSupported
+}
+
+// streamHTTPClient returns an HTTP client for long-lived server-streaming
+// reads (SSE). It shares the transport's connection pool and TLS
+// configuration but has no overall request timeout: a follow stream can
+// legitimately outlive t.client's configured timeout, so cancellation for
+// streaming calls comes solely from the caller's context, matching the gRPC
+// and QUIC stream transports.
+func (t *Transport) streamHTTPClient() *http.Client {
+	t.mu.RLock()
+	client := t.streamClient
+	t.mu.RUnlock()
+	if client != nil {
+		return client
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.streamClient == nil {
+		t.streamClient = &http.Client{Transport: t.client.Transport}
+	}
+	return t.streamClient
 }
 
 // Conn returns the underlying HTTP client.
@@ -1484,6 +1541,12 @@ func (t *Transport) mapCertificateMethod(method string) (string, string) {
 		return "/api/v1/certificate/ca/bundle", http.MethodGet
 	case "ListCertificates":
 		return "/api/v1/certificate/ca/list", http.MethodGet
+	case "CrossSign":
+		return "/api/v1/certificate/cross-sign", http.MethodPost
+	case "Chain":
+		return "/api/v1/certificate/chain", http.MethodPost
+	case "IssueDeviceIdentity":
+		return "/api/v1/certificate/device-identity", http.MethodPost
 	default:
 		return "/api/v1/certificate/" + strings.ToLower(method), http.MethodPost
 	}

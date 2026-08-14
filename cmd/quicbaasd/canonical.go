@@ -38,7 +38,6 @@ type canonicalInitFlags struct {
 	threshold       int
 	hostname        string
 	sans            string
-	adminBundle     string
 }
 
 // validBarrierStrategies is the canonical --barrier-strategy set per
@@ -108,28 +107,6 @@ func (e *CanonicalRedirectError) Error() string {
 		"' (per docs/08-bootstrap-auth-architecture.md §6). Run: " + e.New
 }
 
-// PendingFactorBackendError is emitted by "auth" subcommand handlers
-// before M10 / M14 land.
-type PendingFactorBackendError struct {
-	Op string
-}
-
-// Error returns a human-readable description.
-func (e *PendingFactorBackendError) Error() string {
-	return e.Op + " is not yet wired to the SDK; pending M10 and M14"
-}
-
-// PendingCredentialBackendError is emitted by "credential" subcommand
-// handlers before the credential service surface ships in the SDK.
-type PendingCredentialBackendError struct {
-	Op string
-}
-
-// Error returns a human-readable description.
-func (e *PendingCredentialBackendError) Error() string {
-	return e.Op + " is not yet wired to the SDK CredentialService"
-}
-
 // PINsNotAllowedError is returned when --so-pin or --user-pin is supplied
 // alongside a barrier strategy that has no SO/User credential concept
 // (currently "none" and "disabled"). The error is explicit rather than
@@ -158,6 +135,45 @@ type UnsupportedBarrierStrategyError struct {
 func (e *UnsupportedBarrierStrategyError) Error() string {
 	return "init: barrier strategy " + e.Strategy + " is recognised but not yet wired; " +
 		"supported strategies: none, passphrase, shamir"
+}
+
+// SPIFFETrustDomainRequiredError is returned by "quicbaasd init" when
+// iam.spiffe_trust_domain is not configured.
+//
+// It is a hard requirement, not a warning, because the trust domain is what
+// makes the admin credential init issues actually usable: the xkms CA stamps
+// the tenant-scoped SPIFFE URI SAN
+// (spiffe://<trust-domain>/tenant/system/user/admin) onto the admin
+// certificate ONLY when a trust domain is set, and REST login resolves — and
+// pins — the tenant from exactly that SAN. Without it the certificate carries
+// no SPIFFE SAN, login falls back to home-realm discovery, a freshly
+// initialized node has no HRD routing entries, and the operator gets
+// "401 login tenant could not be resolved" from the credential init just
+// handed them.
+//
+// The rejected alternatives, recorded so they are not re-litigated:
+//   - Synthesizing a trust domain (e.g. from --hostname) would bake a PINNED
+//     security identifier into every issued certificate; configuring a real
+//     trust domain later would silently invalidate all of them.
+//   - Seeding a system-tenant home-realm entry would make "system" resolvable
+//     for ANY unrouted login attempt, permanently widening the authentication
+//     surface to buy first-boot convenience.
+//
+// Requiring the value invents no security identifier and widens nothing; the
+// operator must declare a trust domain eventually regardless.
+type SPIFFETrustDomainRequiredError struct{}
+
+// Error returns a human-readable description naming the exact config key and
+// an example value.
+func (e *SPIFFETrustDomainRequiredError) Error() string {
+	return "init: iam.spiffe_trust_domain is required and is not set.\n" +
+		"  It is what lets the issued admin certificate authenticate: the CA stamps\n" +
+		"  spiffe://<trust-domain>/tenant/system/user/admin onto it and login resolves\n" +
+		"  the tenant from that SAN. Without it, login fails closed with\n" +
+		"  \"login tenant could not be resolved\".\n" +
+		"  Set it in your config file, for example:\n" +
+		"      iam:\n" +
+		"        spiffe_trust_domain: quicbaas.example.test"
 }
 
 // InitAlreadyDoneError is returned by "quicbaasd init" when the data
@@ -200,8 +216,7 @@ Canonical environment variables (Viper-bound):
   QUICBAAS_SHARES              equivalent to --shares
   QUICBAAS_THRESHOLD           equivalent to --threshold
   QUICBAAS_HOSTNAME            equivalent to --hostname
-  QUICBAAS_SANS                equivalent to --sans
-  QUICBAAS_ADMIN_BUNDLE        equivalent to --admin-bundle`,
+  QUICBAAS_SANS                equivalent to --sans`,
 		Args: cobra.NoArgs,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			return resolveAndValidateInlineInit(cmd, f, "QUICBAAS")
@@ -227,7 +242,6 @@ func resolveAndValidateInlineInit(cmd *cobra.Command, f *inlineInitFlags, envPre
 		threshold:       f.threshold,
 		hostname:        f.hostname,
 		sans:            f.sans,
-		adminBundle:     f.adminBundle,
 	}
 	if err := resolveAndValidateCanonicalInit(cmd, canonical, envPrefix); err != nil {
 		return err
@@ -243,7 +257,6 @@ func resolveAndValidateInlineInit(cmd *cobra.Command, f *inlineInitFlags, envPre
 	f.threshold = canonical.threshold
 	f.hostname = canonical.hostname
 	f.sans = canonical.sans
-	f.adminBundle = canonical.adminBundle
 	return nil
 }
 
@@ -265,7 +278,6 @@ func resolveAndValidateCanonicalInit(cmd *cobra.Command, f *canonicalInitFlags, 
 		"barrier-strategy": &f.barrierStrategy,
 		"hostname":         &f.hostname,
 		"sans":             &f.sans,
-		"admin-bundle":     &f.adminBundle,
 	}
 	intSinks := map[string]*int{
 		"shares":    &f.shares,
@@ -279,7 +291,6 @@ func resolveAndValidateCanonicalInit(cmd *cobra.Command, f *canonicalInitFlags, 
 		"threshold":        "THRESHOLD",
 		"hostname":         "HOSTNAME",
 		"sans":             "SANS",
-		"admin-bundle":     "ADMIN_BUNDLE",
 	}
 	for flagName, envKey := range bindings {
 		_ = v.BindEnv(flagName, envPrefix+"_"+envKey)
@@ -489,6 +500,11 @@ func newCanonicalBootstrapCmd() *cobra.Command {
 }
 
 // newCanonicalCredentialCmd builds the canonical "credential" command.
+// The daemon exposes the canonical command shape; the credential operations
+// run through the quicbaas SDK CredentialService in the CLIENT binary
+// ("quicbaas credential ..."), which shipped with the Phase 8e credential
+// surface. Like the barrier / ceremony / ca daemon-side trees, these verbs
+// redirect the operator to the client rather than pretending to be pending.
 func newCanonicalCredentialCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "credential",
@@ -500,7 +516,7 @@ func newCanonicalCredentialCmd() *cobra.Command {
 			Use:   v,
 			Short: "Credential " + v,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				return &PendingCredentialBackendError{Op: "credential " + v}
+				return &MessageError{Message: fmt.Sprintf("quicbaasd credential %s: invoke via 'quicbaas credential %s' or 'qrdb credential %s'", v, v, v)}
 			},
 		})
 	}
@@ -508,6 +524,10 @@ func newCanonicalCredentialCmd() *cobra.Command {
 }
 
 // newCanonicalAuthCmd builds the canonical "auth" command.
+// The daemon exposes the canonical command shape; login and N-factor
+// management run through the quicbaas SDK Security().Auth() surface in the
+// CLIENT binary ("quicbaas auth ..."). Like the barrier / ceremony / ca
+// daemon-side trees, these verbs redirect the operator to the client.
 func newCanonicalAuthCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth",
@@ -517,7 +537,7 @@ func newCanonicalAuthCmd() *cobra.Command {
 		Use:   "login",
 		Short: "Authenticate the active session",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return &PendingFactorBackendError{Op: "auth login"}
+			return &MessageError{Message: "quicbaasd auth login: invoke via 'quicbaas auth login'"}
 		},
 	})
 	factor := &cobra.Command{Use: "factor", Short: "N-factor management"}
@@ -527,7 +547,7 @@ func newCanonicalAuthCmd() *cobra.Command {
 			Use:   v,
 			Short: "Factor " + v,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				return &PendingFactorBackendError{Op: "auth factor " + v}
+				return &MessageError{Message: fmt.Sprintf("quicbaasd auth factor %s: invoke via 'quicbaas auth factor %s'", v, v)}
 			},
 		})
 	}

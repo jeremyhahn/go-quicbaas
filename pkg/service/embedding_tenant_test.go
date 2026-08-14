@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -262,4 +263,32 @@ func TestEmbeddingCrossTenantAccessError_EmptyFields(t *testing.T) {
 	err := &EmbeddingCrossTenantAccessError{}
 	msg := err.Error()
 	assert.Contains(t, msg, "embedding cross-tenant access denied")
+}
+
+// =============================================================================
+// System-tenant scoping tests
+// =============================================================================
+
+// TestEmbeddingTenant_SystemTenantIsPlatformScoped proves a caller carrying
+// the literal system tenant is treated identically to single-tenant mode
+// rather than being isolated into a tenant namespace named "system".
+func TestEmbeddingTenant_SystemTenantIsPlatformScoped(t *testing.T) {
+	for _, tenantID := range []string{"", qrdbsdk.SystemTenantID} {
+		t.Run("tenantID="+tenantID, func(t *testing.T) {
+			assert.Equal(t, "hello world", embeddingTenantScopedCacheKey(tenantID, "hello world"))
+			assert.True(t, embeddingCacheKeyBelongsToTenant(tenantID, "any-key"))
+			assert.NoError(t, enforceEmbeddingTenantAccess(tenantID, "any-key", "Get"))
+		})
+	}
+}
+
+// TestEmbeddingTenant_OrdinaryTenantStaysIsolated proves the system-tenant
+// carve-out does not widen ordinary tenants' reach: a lookalike ID that
+// merely shares the "system" prefix is still fully isolated.
+func TestEmbeddingTenant_OrdinaryTenantStaysIsolated(t *testing.T) {
+	scoped := embeddingTenantScopedCacheKey("system-2", "hello world")
+	assert.Equal(t, "emb-tenant/system-2/hello world", scoped)
+	assert.False(t, embeddingCacheKeyBelongsToTenant("system-2", "hello world"))
+	err := enforceEmbeddingTenantAccess("system-2", "hello world", "Get")
+	require.Error(t, err)
 }

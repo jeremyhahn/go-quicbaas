@@ -3792,3 +3792,14 @@ func TestControlLoop_AgentSpec_HostAffinityPropagatedToSpawnReq(t *testing.T) {
 		t.Errorf("expected HostAffinity 'gpu-host' on SpawnSessionRequest, got %q", capturedSpawnReq.HostAffinity)
 	}
 }
+
+// PromptSessionAsync mirrors the production contract: the turn is acknowledged
+// immediately and its output would flow to the session event log.
+func (m *controlLoopMockService) PromptSessionAsync(ctx context.Context, req *PromptSessionRequest) (*PromptTurnAck, error) {
+	return &PromptTurnAck{
+		SessionID: req.SessionID,
+		TurnID:    "turn-test",
+		Status:    TurnStatusAccepted,
+		Sequence:  1,
+	}, nil
+}

@@ -119,6 +119,7 @@ func (m *mockRAGSDKClient) Close() error {
 }
 
 func (m *mockRAGSDKClient) Project() quicbaas.ProjectClient { return nil }
+func (m *mockRAGSDKClient) Account() quicbaas.AccountClient { return nil }
 
 func (m *mockRAGSDKClient) Orchestrator() quicbaas.OrchestratorClient { return nil }
 

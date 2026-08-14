@@ -199,6 +199,48 @@ func TestConfig_Validate_InvalidEnums(t *testing.T) {
 	if err := c.Validate(); !errors.Is(err, ErrConfigUnknownRuntime) {
 		t.Fatalf("expected ErrConfigUnknownRuntime, got %v", err)
 	}
+
+	// A malformed sandbox network must be rejected at startup rather than
+	// reaching the container runtime's command line.
+	c = newTestConfig(t)
+	c.SandboxNetwork = "--privileged"
+	if err := c.Validate(); !errors.Is(err, ErrConfigUnknownNetwork) {
+		t.Fatalf("expected ErrConfigUnknownNetwork, got %v", err)
+	}
+}
+
+// TestConfig_SandboxNetwork covers the network dimension of the sandbox: the
+// default isolates the host network namespace, and every valid operator value
+// (including the deliberate "host" escape hatch) round-trips.
+func TestConfig_SandboxNetwork(t *testing.T) {
+	t.Parallel()
+
+	c := newTestConfig(t)
+	if err := c.Validate(); err != nil {
+		t.Fatalf("an unset sandbox network must be valid: %v", err)
+	}
+	if got := c.EffectiveSandboxNetwork(); got != orchestration.SandboxNetworkBridge {
+		t.Errorf("default sandbox network = %q, want %q", got, orchestration.SandboxNetworkBridge)
+	}
+	if !c.EffectiveSandboxNetwork().IsolatesHost() {
+		t.Error("the default sandbox network must isolate the host network namespace")
+	}
+
+	for value, want := range map[string]orchestration.SandboxNetwork{
+		"bridge":          orchestration.SandboxNetworkBridge,
+		"none":            orchestration.SandboxNetworkNone,
+		"host":            orchestration.SandboxNetworkHost,
+		"quicbaas-agents": orchestration.SandboxNetwork("quicbaas-agents"),
+	} {
+		c = newTestConfig(t)
+		c.SandboxNetwork = value
+		if err := c.Validate(); err != nil {
+			t.Fatalf("Validate() with sandbox_network=%q: %v", value, err)
+		}
+		if got := c.EffectiveSandboxNetwork(); got != want {
+			t.Errorf("EffectiveSandboxNetwork() for %q = %q, want %q", value, got, want)
+		}
+	}
 }
 
 func TestConfig_DefaultsFillIn(t *testing.T) {

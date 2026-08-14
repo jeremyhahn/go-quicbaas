@@ -49,6 +49,11 @@ type Project struct {
 	// Git contains the repository metadata.
 	Git ProjectGit `json:"git" yaml:"git"`
 
+	// Provisioning tracks server-managed workspace provisioning. The zero
+	// value describes a bring-your-own-path project the server never
+	// provisions.
+	Provisioning ProjectProvisioning `json:"provisioning" yaml:"provisioning"`
+
 	// Permissions defines the per-agent role matrix for this project.
 	Permissions ProjectPermissions `json:"permissions" yaml:"permissions"`
 
@@ -84,6 +89,72 @@ type ProjectGit struct {
 
 	// CurrentSHA is updated by agents during job runs to track HEAD.
 	CurrentSHA string `json:"current_sha,omitempty" yaml:"current_sha,omitempty"`
+}
+
+// ProjectProvisioningState is the lifecycle state of a server-managed
+// project workspace.
+type ProjectProvisioningState string
+
+const (
+	// ProvisioningStatePending means the workspace directory exists but the
+	// git clone has not started yet.
+	ProvisioningStatePending ProjectProvisioningState = "pending"
+
+	// ProvisioningStateCloning means the git clone is in progress.
+	ProvisioningStateCloning ProjectProvisioningState = "cloning"
+
+	// ProvisioningStateReady means the workspace is fully provisioned and
+	// sessions may run in it.
+	ProvisioningStateReady ProjectProvisioningState = "ready"
+
+	// ProvisioningStateFailed means provisioning failed; see
+	// ProjectProvisioning.Error for the reason.
+	ProvisioningStateFailed ProjectProvisioningState = "failed"
+)
+
+// ProjectProvisioning tracks server-managed workspace provisioning on a
+// project record. Credential material is never stored here — credential
+// references live on the create request and are resolved at clone time only.
+type ProjectProvisioning struct {
+	// Managed is true when the server owns the workspace directory
+	// lifecycle (provision on create, teardown on delete).
+	Managed bool `json:"managed,omitempty" yaml:"managed,omitempty"`
+
+	// State is the provisioning lifecycle state. Empty for unmanaged
+	// projects.
+	State ProjectProvisioningState `json:"state,omitempty" yaml:"state,omitempty"`
+
+	// Error carries the failure reason when State is failed.
+	Error string `json:"error,omitempty" yaml:"error,omitempty"`
+
+	// UpdatedAt is the time of the last state transition.
+	UpdatedAt time.Time `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
+}
+
+// ProjectWorkspaceNotReadyError reports a spawn attempt against a managed
+// workspace that is not in the ready state.
+type ProjectWorkspaceNotReadyError struct {
+	// TenantID owns the project.
+	TenantID string
+
+	// ProjectID identifies the project whose workspace is not ready.
+	ProjectID string
+
+	// State is the workspace's current provisioning state.
+	State ProjectProvisioningState
+
+	// Reason carries the provisioning error when State is failed.
+	Reason string
+}
+
+// Error implements the error interface.
+func (e *ProjectWorkspaceNotReadyError) Error() string {
+	msg := "project workspace not ready: tenant=" + e.TenantID +
+		" project=" + e.ProjectID + " state=" + string(e.State)
+	if e.Reason != "" {
+		msg += ": " + e.Reason
+	}
+	return msg
 }
 
 // ProjectPermissions holds the per-agent role matrix for a project.

@@ -27,6 +27,26 @@ type Probe interface {
 	IsSealed() bool
 }
 
+// OperationalProbe reports whether the deployment has left the initialization
+// ceremony's pre-operational phase. It is the second axis of the strict
+// ceremony model: verbs marked Names.PreOperationalOnly keep their
+// authentication exemption only while this probe reports NOT operational (see
+// the Scope constants and Table).
+//
+// FAIL CLOSED IS THE CONTRACT. An implementation MUST return true whenever it
+// cannot POSITIVELY establish that the ceremony is still unfinished — an
+// absent dependency, a status read that errors, and an unrecognized ceremony
+// state all report operational. AuthBypass applies the same rule to the probe
+// itself: a nil OperationalProbe is treated as operational. An unavailable
+// probe therefore NARROWS the unauthenticated surface; it can never widen it.
+//
+// The single-method shape mirrors Probe so the wiring that installs the
+// sealed-window allowlists installs both probes together, in one place, per
+// transport.
+type OperationalProbe interface {
+	IsOperational() bool
+}
+
 // AuditSink receives one event per sealed-window authentication bypass. The
 // bypass is a privileged admit (an unauthenticated request reaches a
 // handler), so every admit leaves an audit trail carrying the transport and
@@ -36,6 +56,42 @@ type Probe interface {
 // block or fail the request.
 type AuditSink interface {
 	SealedWindowAuthBypass(transport, operation string)
+}
+
+// restPathSet is one scope's REST allowlist in qrdb's matching form: exact
+// paths plus the "/"-suffixed prefix entries. It mirrors qrdb's REST
+// sealed-window middleware exactly — entries ending in "/" are prefix
+// matches, everything else matches the request path in full.
+type restPathSet struct {
+	exact    map[string]struct{}
+	prefixes []string
+}
+
+// newRESTPathSet splits a derived REST allowlist into its exact and prefix
+// halves.
+func newRESTPathSet(paths []string) restPathSet {
+	set := restPathSet{exact: make(map[string]struct{}, len(paths))}
+	for _, path := range paths {
+		if strings.HasSuffix(path, "/") {
+			set.prefixes = append(set.prefixes, path)
+			continue
+		}
+		set.exact[path] = struct{}{}
+	}
+	return set
+}
+
+// matches reports whether path is admitted by this set.
+func (s restPathSet) matches(path string) bool {
+	if _, ok := s.exact[path]; ok {
+		return true
+	}
+	for _, prefix := range s.prefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // AuthBypass is the single sealed-state-aware authentication-bypass
@@ -52,61 +108,95 @@ type AuditSink interface {
 // unsealed every predicate returns false so full enforcement applies with
 // zero behavior change.
 //
+// The allowlist is split across the two exemption scopes of the strict
+// ceremony model, and each request is matched against the scopes that
+// currently apply:
+//
+//   - ScopeAlways — the barrier / unseal / recovery surface. Exempt in EVERY
+//     ceremony state. A daemon restarted after a completed ceremony is
+//     operational AND sealed, and these verbs are the only way back to a
+//     usable data plane, so they must never depend on the ceremony state.
+//   - ScopePreOperational — the self-authorizing ceremony claim handshakes
+//     and the read-only ceremony status probe. Exempt only while the
+//     OperationalProbe reports NOT operational. Serving the claim endpoints
+//     unauthenticated on an already-initialized daemon is a live
+//     vulnerability, so that exemption expires with the ceremony.
+//
+// The two scopes together are exactly ScopeAll (see InScope), so a
+// pre-operational daemon has the same exempt surface it always had while an
+// operational one loses only the ceremony claim/status exemption.
+//
 // All per-transport lookup sets are derived once, at construction, from the
 // SAME canonical table (Table / RESTExtra) that feeds the sealed-window deny
 // gates, so the bypass surface can never drift from the sealed surface.
 // The zero of the type is unusable; a nil *AuthBypass is safe and never
 // bypasses, so gates may consult an uninstalled predicate unconditionally.
 type AuthBypass struct {
-	probe Probe
-	sink  AuditSink
+	probe       Probe
+	operational OperationalProbe
+	sink        AuditSink
 
-	// grpcMethods holds the fully-qualified gRPC method paths
+	// grpcAlways / grpcPreOp hold the fully-qualified gRPC method paths
 	// ("/qrdb.v1.QRDBService/BarrierUnseal"), matched in full against
 	// FullMethod exactly as the qrdb sealed-window interceptor does.
-	grpcMethods map[string]struct{}
+	grpcAlways map[string]struct{}
+	grpcPreOp  map[string]struct{}
 
-	// restExact / restPrefixes mirror qrdb's REST sealed-window path
-	// matching: entries ending in "/" are prefix matches, everything else
-	// matches exactly.
-	restExact    map[string]struct{}
-	restPrefixes []string
+	// restAlways / restPreOp are the REST path allowlists per scope.
+	restAlways restPathSet
+	restPreOp  restPathSet
 
-	// nativeOps is the native quicbaas-quic (opcode, sub-op) allowlist.
-	nativeOps map[QUICOp]struct{}
+	// nativeAlways / nativePreOp are the native quicbaas-quic (opcode,
+	// sub-op) allowlists per scope.
+	nativeAlways map[QUICOp]struct{}
+	nativePreOp  map[QUICOp]struct{}
 
-	// qrdbQUICMethods is the qrdb-quic ALPN bridge method allowlist.
-	qrdbQUICMethods map[string]struct{}
+	// qrdbQUICAlways / qrdbQUICPreOp are the qrdb-quic ALPN bridge method
+	// allowlists per scope.
+	qrdbQUICAlways map[string]struct{}
+	qrdbQUICPreOp  map[string]struct{}
 
-	// mcpTools is the MCP tool-name allowlist.
-	mcpTools map[string]struct{}
+	// mcpAlways / mcpPreOp are the MCP tool-name allowlists per scope.
+	mcpAlways map[string]struct{}
+	mcpPreOp  map[string]struct{}
 }
 
 // NewAuthBypass derives the shared sealed-window authentication-bypass
-// predicate from the canonical derivation table. probe is the single
-// sealed-window probe lifecycle installs on every transport; a nil probe
-// yields a predicate that never bypasses. sink receives one audit event per
-// bypass and may be nil (no auditing — tests only; production wiring always
-// supplies a sink).
-func NewAuthBypass(probe Probe, sink AuditSink) *AuthBypass {
+// predicate from the canonical derivation table.
+//
+// probe is the single sealed-window probe lifecycle installs on every
+// transport; a nil probe yields a predicate that never bypasses.
+//
+// operational is the ceremony-state probe that decides whether the
+// ScopePreOperational exemptions still apply. It FAILS CLOSED: a nil probe
+// (or one reporting operational) means the pre-operational verbs get no
+// exemption at all, so an unwired or unavailable probe narrows the
+// unauthenticated surface to the state-independent ScopeAlways set instead of
+// widening it.
+//
+// sink receives one audit event per bypass and may be nil (no auditing —
+// tests only; production wiring always supplies a sink).
+func NewAuthBypass(probe Probe, operational OperationalProbe, sink AuditSink) *AuthBypass {
 	b := &AuthBypass{
-		probe:           probe,
-		sink:            sink,
-		grpcMethods:     make(map[string]struct{}),
-		restExact:       make(map[string]struct{}),
-		nativeOps:       QUICAllowlist(),
-		qrdbQUICMethods: QRDBQUICAllowlist(),
-		mcpTools:        MCPAllowlist(),
+		probe:          probe,
+		operational:    operational,
+		sink:           sink,
+		grpcAlways:     make(map[string]struct{}),
+		grpcPreOp:      make(map[string]struct{}),
+		restAlways:     newRESTPathSet(RESTAllowlistScoped(ScopeAlways)),
+		restPreOp:      newRESTPathSet(RESTAllowlistScoped(ScopePreOperational)),
+		nativeAlways:   QUICAllowlistScoped(ScopeAlways),
+		nativePreOp:    QUICAllowlistScoped(ScopePreOperational),
+		qrdbQUICAlways: QRDBQUICAllowlistScoped(ScopeAlways),
+		qrdbQUICPreOp:  QRDBQUICAllowlistScoped(ScopePreOperational),
+		mcpAlways:      MCPAllowlistScoped(ScopeAlways),
+		mcpPreOp:       MCPAllowlistScoped(ScopePreOperational),
 	}
-	for _, method := range GRPCFullMethodAllowlist() {
-		b.grpcMethods[method] = struct{}{}
+	for _, method := range GRPCFullMethodAllowlistScoped(ScopeAlways) {
+		b.grpcAlways[method] = struct{}{}
 	}
-	for _, path := range RESTAllowlist() {
-		if strings.HasSuffix(path, "/") {
-			b.restPrefixes = append(b.restPrefixes, path)
-			continue
-		}
-		b.restExact[path] = struct{}{}
+	for _, method := range GRPCFullMethodAllowlistScoped(ScopePreOperational) {
+		b.grpcPreOp[method] = struct{}{}
 	}
 	return b
 }
@@ -117,6 +207,22 @@ func (b *AuthBypass) sealed() bool {
 	return b != nil && b.probe != nil && b.probe.IsSealed()
 }
 
+// preOperational reports whether the ScopePreOperational exemptions still
+// apply.
+//
+// FAIL CLOSED: an absent operational probe is treated as OPERATIONAL, so the
+// pre-operational exemption is withheld. An unavailable probe must never
+// widen the unauthenticated surface — the ceremony claim handshakes stay
+// authenticated whenever the ceremony state cannot be positively established
+// as unfinished (the probe implementation applies the same rule to its own
+// dependencies; see OperationalProbe).
+func (b *AuthBypass) preOperational() bool {
+	if b.operational == nil {
+		return false
+	}
+	return !b.operational.IsOperational()
+}
+
 // audit emits the bypass audit event. Best-effort; a nil sink is a no-op.
 func (b *AuthBypass) audit(transport, operation string) {
 	if b.sink != nil {
@@ -124,10 +230,23 @@ func (b *AuthBypass) audit(transport, operation string) {
 	}
 }
 
+// admits is the shared scope decision for the set-based transports: an entry
+// in the always set is exempt in every ceremony state, an entry in the
+// pre-operational set only while the ceremony is unfinished.
+func admits[K comparable](b *AuthBypass, always, preOp map[K]struct{}, key K) bool {
+	if _, ok := always[key]; ok {
+		return true
+	}
+	if _, ok := preOp[key]; !ok {
+		return false
+	}
+	return b.preOperational()
+}
+
 // BypassesGRPC reports whether the gRPC (or Unix-over-gRPC, which shares the
 // interceptor chain) request identified by fullMethod bypasses
-// authentication because the barrier is sealed and the method is on the
-// sealed-window allowlist.
+// authentication because the barrier is sealed and the method is exempt in
+// the daemon's current ceremony state.
 //
 // Matching is on the FULL service-qualified path, byte-for-byte identical to
 // the sealed-window interceptor's own matching, so the bypass surface can
@@ -138,7 +257,7 @@ func (b *AuthBypass) BypassesGRPC(fullMethod string) bool {
 	if !b.sealed() {
 		return false
 	}
-	if _, ok := b.grpcMethods[fullMethod]; !ok {
+	if !admits(b, b.grpcAlways, b.grpcPreOp, fullMethod) {
 		return false
 	}
 	b.audit("grpc", fullMethod)
@@ -146,31 +265,28 @@ func (b *AuthBypass) BypassesGRPC(fullMethod string) bool {
 }
 
 // BypassesRESTPath reports whether the REST request path bypasses
-// authentication because the barrier is sealed and the path is on the
-// sealed-window allowlist. Path matching mirrors qrdb's REST sealed-window
-// middleware exactly: allowlist entries ending in "/" are prefix matches,
-// everything else matches exactly. Emits the audit event on every bypass.
+// authentication because the barrier is sealed and the path is exempt in the
+// daemon's current ceremony state. Path matching mirrors qrdb's REST
+// sealed-window middleware exactly: allowlist entries ending in "/" are
+// prefix matches, everything else matches exactly. Emits the audit event on
+// every bypass.
 func (b *AuthBypass) BypassesRESTPath(path string) bool {
 	if !b.sealed() {
 		return false
 	}
-	if _, ok := b.restExact[path]; ok {
-		b.audit("rest", path)
-		return true
+	exempt := b.restAlways.matches(path) ||
+		(b.restPreOp.matches(path) && b.preOperational())
+	if !exempt {
+		return false
 	}
-	for _, prefix := range b.restPrefixes {
-		if strings.HasPrefix(path, prefix) {
-			b.audit("rest", path)
-			return true
-		}
-	}
-	return false
+	b.audit("rest", path)
+	return true
 }
 
 // BypassesNativeQUIC reports whether the native quicbaas-quic request
 // (opcode + raw payload) bypasses authentication because the barrier is
-// sealed and the operation is on the sealed-window allowlist. The sub-op
-// byte is payload[0] for the sub-dispatched opcodes (OpBarrier /
+// sealed and the operation is exempt in the daemon's current ceremony state.
+// The sub-op byte is payload[0] for the sub-dispatched opcodes (OpBarrier /
 // OpCeremony); every other opcode matches on the opcode alone (SubOp zero —
 // real sub-op codes start at 0x01, so zero is unambiguous). Emits the audit
 // event on every bypass.
@@ -182,7 +298,7 @@ func (b *AuthBypass) BypassesNativeQUIC(opcode byte, payload []byte) bool {
 	if (opcode == opBarrier || opcode == opCeremony) && len(payload) > 0 {
 		key.SubOp = payload[0]
 	}
-	if _, ok := b.nativeOps[key]; !ok {
+	if !admits(b, b.nativeAlways, b.nativePreOp, key) {
 		return false
 	}
 	b.audit("quic", fmt.Sprintf("opcode 0x%02X sub-op 0x%02X", key.Opcode, key.SubOp))
@@ -190,13 +306,13 @@ func (b *AuthBypass) BypassesNativeQUIC(opcode byte, payload []byte) bool {
 }
 
 // BypassesQRDBQUIC reports whether the qrdb-quic ALPN bridge method bypasses
-// authentication because the barrier is sealed and the method is on the
-// sealed-window allowlist. Emits the audit event on every bypass.
+// authentication because the barrier is sealed and the method is exempt in
+// the daemon's current ceremony state. Emits the audit event on every bypass.
 func (b *AuthBypass) BypassesQRDBQUIC(method string) bool {
 	if !b.sealed() {
 		return false
 	}
-	if _, ok := b.qrdbQUICMethods[method]; !ok {
+	if !admits(b, b.qrdbQUICAlways, b.qrdbQUICPreOp, method) {
 		return false
 	}
 	b.audit("qrdb-quic", method)
@@ -204,13 +320,14 @@ func (b *AuthBypass) BypassesQRDBQUIC(method string) bool {
 }
 
 // BypassesMCPTool reports whether the MCP tools/call for the named tool
-// bypasses authentication because the barrier is sealed and the tool is on
-// the sealed-window allowlist. Emits the audit event on every bypass.
+// bypasses authentication because the barrier is sealed and the tool is
+// exempt in the daemon's current ceremony state. Emits the audit event on
+// every bypass.
 func (b *AuthBypass) BypassesMCPTool(name string) bool {
 	if !b.sealed() {
 		return false
 	}
-	if _, ok := b.mcpTools[name]; !ok {
+	if !admits(b, b.mcpAlways, b.mcpPreOp, name) {
 		return false
 	}
 	b.audit("mcp", name)

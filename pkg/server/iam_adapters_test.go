@@ -4,6 +4,9 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"testing"
 	"time"
 
@@ -16,14 +19,19 @@ import (
 func createTestAuthManager(t *testing.T) *auth.InMemoryAuthManager {
 	t.Helper()
 	log := mustCreateLogger()
+	signingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
 	cfg := &auth.AuthConfig{
 		Enabled:         true,
-		JWTSecret:       "test-secret-key-at-least-32-chars-long",
+		JWTSigningKeyID: "test-signing-key",
 		TokenTTL:        1 * time.Hour,
 		RefreshTokenTTL: 24 * time.Hour,
 		RefreshWindow:   5 * time.Minute,
 		MaxTokens:       10,
 	}
+	auth.SetAsymmetricSigning(cfg, signingKey)
+
 	mgr, err := auth.NewInMemoryAuthManager(cfg, log)
 	require.NoError(t, err)
 	return mgr

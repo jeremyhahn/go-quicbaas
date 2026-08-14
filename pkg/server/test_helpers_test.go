@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,9 +41,11 @@ func getFreePort(t *testing.T) int {
 
 // createTestConfig creates a test configuration with security features disabled.
 func createTestConfig(t *testing.T) *config.Config {
-	// Create temporary directory for test data
-	tempDir, err := os.MkdirTemp("", "quicbaas-server-test-*")
-	require.NoError(t, err)
+	// Create temporary directory for test data. t.TempDir() is used rather than
+	// os.MkdirTemp so the testing package reclaims it even if a test mutates
+	// cfg.Storage.DataDir and cleanupTestData's safety guard declines to remove
+	// the mutated path.
+	tempDir := t.TempDir()
 
 	// Get free ports for testing to avoid conflicts
 	httpPort := getFreePort(t)
@@ -94,8 +97,23 @@ func createTestConfig(t *testing.T) *config.Config {
 
 // cleanupTestData removes test data directory.
 func cleanupTestData(t *testing.T, cfg *config.Config) {
-	// Get the parent temp directory
+	// The parent of the data dir is the temp dir createTestConfig made.
 	tempDir := filepath.Dir(cfg.Storage.DataDir)
+
+	// HARD SAFETY GUARD. Tests are free to point Storage.DataDir at a path that
+	// cannot be created in order to exercise a storage-init failure — e.g.
+	// "/proc/cannot-create-quicbaas-storage". filepath.Dir of that is "/proc",
+	// and blindly removing it both violates the project rule that unit tests
+	// must never modify the host and hangs the suite for minutes walking
+	// procfs's self-referential symlinks. Only ever delete inside the OS temp
+	// dir, which is the only place createTestConfig ever allocates.
+	root := os.TempDir()
+	rel, err := filepath.Rel(root, tempDir)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		t.Logf("Skipping cleanup of %q: outside the temp dir (%q)", tempDir, root)
+		return
+	}
+
 	if err := os.RemoveAll(tempDir); err != nil {
 		t.Logf("Warning: failed to cleanup test data: %v", err)
 	}

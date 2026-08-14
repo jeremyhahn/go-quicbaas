@@ -8,6 +8,10 @@
 
 server:
   host: "0.0.0.0"
+  # Bind host for the sealed-window (pre-unseal ceremony/unseal) listeners;
+  # loopback by default — set to 0.0.0.0 only when remote Shamir officers
+  # must reach the sealed surface. Post-unseal listeners use host above.
+  sealed_bind_host: "127.0.0.1"
   grpc:
     enabled: true
     port: 9091

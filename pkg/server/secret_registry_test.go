@@ -139,7 +139,7 @@ func TestBuildSecretRegistry_NilNode_SkipsCredentialResolver(t *testing.T) {
 	reg := srv.buildSecretRegistry()
 	require.NotNil(t, reg)
 
-	// At least the kms/remote-kms/autogen adapters must be registered.
+	// At least the kms/remote-kms adapters must be registered.
 	assert.GreaterOrEqual(t, len(reg.Resolvers()), 1,
 		"at least one resolver (kms://) must be registered")
 
@@ -163,6 +163,30 @@ func TestBuildSecretRegistry_NilNode_LiteralFallthrough(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "plain-value", sv.String())
 	assert.Equal(t, qrdbsecret.StrategyLiteral, sv.Strategy)
+}
+
+// TestBuildSecretRegistry_PlaceholderValuesResolveVerbatim guards the resolver
+// SPI contract that dispatch happens by URI scheme only. Values that merely
+// look like placeholders carry no scheme, so they must round-trip untouched
+// under StrategyLiteral instead of being swapped for generated entropy — the
+// regression that replaced a 6-digit TPM PIN with 43 base64 characters and
+// blew the 32-byte TPM2B_AUTH limit.
+func TestBuildSecretRegistry_PlaceholderValuesResolveVerbatim(t *testing.T) {
+	t.Parallel()
+	srv := withTempServer(t)
+	reg := srv.buildSecretRegistry()
+	require.NotNil(t, reg)
+
+	for _, raw := range []string{"123456", "auto", "changeme", "CHANGEME", "placeholder"} {
+		assert.False(t, reg.IsSecretURI(raw),
+			"%q carries no scheme and must not be treated as a secret reference", raw)
+
+		sv, err := reg.Resolve(context.Background(), raw)
+		require.NoError(t, err)
+		assert.Equal(t, raw, sv.String(),
+			"%q must resolve verbatim through the literal fallback", raw)
+		assert.Equal(t, qrdbsecret.StrategyLiteral, sv.Strategy)
+	}
 }
 
 // =============================================================================

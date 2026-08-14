@@ -43,10 +43,7 @@ func TestPersistentRefreshTokenErrorPaths(t *testing.T) {
 	})
 
 	t.Run("invalid refresh token", func(t *testing.T) {
-		config := &AuthConfig{
-			Enabled:   true,
-			JWTSecret: "test-secret-key",
-		}
+		config := newTestAuthConfig(t)
 		storage := newAuthMockStorage()
 		pam, err := NewPersistentAuthManager(config, storage, log)
 		require.NoError(t, err)
@@ -57,12 +54,7 @@ func TestPersistentRefreshTokenErrorPaths(t *testing.T) {
 	})
 
 	t.Run("refresh token not in store", func(t *testing.T) {
-		config := &AuthConfig{
-			Enabled:         true,
-			JWTSecret:       "test-secret-key",
-			TokenTTL:        1 * time.Hour,
-			RefreshTokenTTL: 24 * time.Hour,
-		}
+		config := newTestAuthConfig(t)
 		storage := newAuthMockStorage()
 		pam, err := NewPersistentAuthManager(config, storage, log)
 		require.NoError(t, err)
@@ -87,12 +79,7 @@ func TestPersistentRefreshTokenErrorPaths(t *testing.T) {
 	})
 
 	t.Run("user not found", func(t *testing.T) {
-		config := &AuthConfig{
-			Enabled:         true,
-			JWTSecret:       "test-secret-key",
-			TokenTTL:        1 * time.Hour,
-			RefreshTokenTTL: 24 * time.Hour,
-		}
+		config := newTestAuthConfig(t)
 		storage := newAuthMockStorage()
 		pam, err := NewPersistentAuthManager(config, storage, log)
 		require.NoError(t, err)
@@ -138,10 +125,7 @@ func TestPersistentRevokeTokenErrorPaths(t *testing.T) {
 func TestPersistentDeleteUserErrorPaths(t *testing.T) {
 	log := createPersistentTestLogger(t)
 
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
 	require.NoError(t, err)
@@ -175,10 +159,7 @@ func TestPersistentDeleteUserErrorPaths(t *testing.T) {
 func TestPersistentUpdateUserRolesErrorPaths(t *testing.T) {
 	log := createPersistentTestLogger(t)
 
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
 	require.NoError(t, err)
@@ -211,10 +192,7 @@ func TestPersistentUpdateUserRolesErrorPaths(t *testing.T) {
 func TestPersistentCloseWithNonPersistentTokenStore(t *testing.T) {
 	log := createPersistentTestLogger(t)
 
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
 	require.NoError(t, err)
@@ -231,10 +209,7 @@ func TestPersistentCloseWithNonPersistentTokenStore(t *testing.T) {
 func TestPersistentCreateUserErrorPaths(t *testing.T) {
 	log := createPersistentTestLogger(t)
 
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
 	require.NoError(t, err)
@@ -264,12 +239,7 @@ func TestPersistentAuthManager_IssueTokenForUser_Success(t *testing.T) {
 	log := createPersistentTestLogger(t)
 	ctx := context.Background()
 
-	config := &AuthConfig{
-		Enabled:         true,
-		JWTSecret:       "test-secret-key-32chars-minimum!",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
 	require.NoError(t, err)
@@ -312,10 +282,7 @@ func TestPersistentAuthManager_IssueTokenForUser_NilUser(t *testing.T) {
 	log := createPersistentTestLogger(t)
 	ctx := context.Background()
 
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key-32chars-minimum!",
-	}
+	config := newTestAuthConfig(t)
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
 	require.NoError(t, err)
@@ -332,12 +299,7 @@ func TestPersistentAuthManager_ValidateToken_Success(t *testing.T) {
 	log := createPersistentTestLogger(t)
 	ctx := context.Background()
 
-	config := &AuthConfig{
-		Enabled:         true,
-		JWTSecret:       "test-secret-key-32chars-minimum!",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
 	require.NoError(t, err)
@@ -383,10 +345,7 @@ func TestPersistentAuthManager_ValidateToken_EmptyToken(t *testing.T) {
 	log := createPersistentTestLogger(t)
 	ctx := context.Background()
 
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key-32chars-minimum!",
-	}
+	config := newTestAuthConfig(t)
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
 	require.NoError(t, err)
@@ -404,12 +363,7 @@ func TestPersistentAuthManager_ValidateToken_RevokedToken(t *testing.T) {
 	log := createPersistentTestLogger(t)
 	ctx := context.Background()
 
-	config := &AuthConfig{
-		Enabled:         true,
-		JWTSecret:       "test-secret-key-32chars-minimum!",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 	storage := newAuthMockStorage()
 	pam, err := NewPersistentAuthManager(config, storage, log)
 	require.NoError(t, err)

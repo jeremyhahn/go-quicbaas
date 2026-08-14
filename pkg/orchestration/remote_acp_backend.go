@@ -233,6 +233,16 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 		ContainerImage: req.ContainerImage,
 		TenantId:       b.registration.TenantID,
 		Persistent:     req.Persistent,
+		// The pooled account is selected and materialized by the daemon that
+		// actually runs the agent — the credential lives in that daemon's own
+		// secret store, never on the wire. Only the caller's request is
+		// forwarded; the remote daemon persists the account it resolved on its
+		// own session record and resumes against it. A remote session is not
+		// resumable by this control plane (see SessionRecord.Resumable), so no
+		// pin is needed on this side.
+		AccountId:       req.AccountID,
+		AccountAuto:     req.AccountAuto,
+		AccountStrategy: req.AccountStrategy,
 	}
 	resp, rpcErr := client.Spawn(b.authCtx(ctx), pbReq)
 	if rpcErr != nil {
@@ -303,7 +313,18 @@ func (b *RemoteACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 		out.Content = append(out.Content, protoContentBlocksToRuntime(frame.GetContent())...)
 		if req.EventCallback != nil {
 			for _, block := range frame.GetContent() {
-				req.EventCallback(out.SessionID, block.GetType(), block.GetText())
+				if block.GetText() == "" {
+					continue
+				}
+				req.EventCallback(&SessionEvent{
+					SessionID: out.SessionID,
+					Kind:      KindAssistantChunk,
+					AssistantChunk: &AssistantChunkPayload{
+						Text:       block.GetText(),
+						StopReason: out.StopReason,
+						Model:      out.Model,
+					},
+				})
 			}
 		}
 	}
@@ -626,10 +647,11 @@ func protoContentBlocksToRuntime(in []*proto.ContentBlock) []ContentBlock {
 // protoSessionStateMap dispatches proto SessionState -> runtime SessionState
 // in O(1).
 var protoSessionStateMap = map[proto.SessionState]SessionState{
-	proto.SessionState_SESSION_STATE_ACTIVE: SessionStateActive,
-	proto.SessionState_SESSION_STATE_IDLE:   SessionStateIdle,
-	proto.SessionState_SESSION_STATE_CLOSED: SessionStateClosed,
-	proto.SessionState_SESSION_STATE_ERROR:  SessionStateError,
+	proto.SessionState_SESSION_STATE_ACTIVE:    SessionStateActive,
+	proto.SessionState_SESSION_STATE_IDLE:      SessionStateIdle,
+	proto.SessionState_SESSION_STATE_CLOSED:    SessionStateClosed,
+	proto.SessionState_SESSION_STATE_ERROR:     SessionStateError,
+	proto.SessionState_SESSION_STATE_RESUMABLE: SessionStateResumable,
 }
 
 func protoSessionStateToRuntime(s proto.SessionState) SessionState {

@@ -197,6 +197,15 @@ func init() {
 	// "barrier" command group per docs/08-bootstrap-auth-architecture.md §6.
 	configureCanonicalSurface()
 	rootCmd.AddCommand(newCryptoCommand())
+
+	// Security composition surface: Data Encryption Keys, dynamic secrets,
+	// trust artifacts, and ACME. Each tree delegates to the matching
+	// Security() sub-service over the active SDK transport.
+	rootCmd.AddCommand(newDEKCommand())
+	rootCmd.AddCommand(newDynamicSecretsCommand())
+	rootCmd.AddCommand(newTrustCommand())
+	rootCmd.AddCommand(newACMECommand())
+
 	rootCmd.AddCommand(newSSHCommand())
 	rootCmd.AddCommand(newTimeSeriesCommands())
 	rootCmd.AddCommand(newVectorCommands())

@@ -4,6 +4,7 @@
 package config
 
 import (
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -21,6 +22,13 @@ const (
 	// ServerModeDevCluster runs multiple local nodes for development testing.
 	ServerModeDevCluster = "devcluster"
 )
+
+// DefaultSealedBindHost is the loopback listen host used by the sealed-window
+// (pre-unseal ceremony / unseal) listeners when Server.SealedBindHost is
+// unset. Keeping the sealed surface on loopback by default prevents the
+// pre-unseal API from being exposed network-wide by deployments that bind
+// Server.Host to 0.0.0.0.
+const DefaultSealedBindHost = "127.0.0.1"
 
 // TenantIsolationMode constants define the supported tenant isolation strategies.
 const (
@@ -187,6 +195,49 @@ type IAMSelfServiceRegistrationConfig struct {
 	// present in AllowedIsolationModes.
 	// Default: "default".
 	TenantBarrierVolumePool string `mapstructure:"tenant_barrier_volume_pool"`
+}
+
+// SystemTenantID is the control-plane tenant. It mirrors qrdb's
+// tenant.SystemTenantID; it is duplicated as a literal here so the config
+// package (which every binary imports, including ones built without the qrdb
+// runtime) stays dependency-free. A drift would be caught by
+// TestDCRConfigSystemTenantMatchesQRDB in the rest package.
+const SystemTenantID = "system"
+
+// IAMDynamicClientRegistrationConfig gates the RFC 7591 Dynamic Client
+// Registration endpoint (POST /oauth2/register).
+//
+// DCR mints an OAuth2 client — a first-class authentication principal — so it
+// is DISABLED by default and, when enabled, requires an initial access token
+// (a platform token; the caller's tenant governs where the client lands).
+// Anonymous registration is an explicit, separately configured opt-in that must
+// name a non-system landing tenant: an unauthenticated caller must never be
+// able to create a client in the control plane.
+type IAMDynamicClientRegistrationConfig struct {
+	// Enabled controls whether POST /oauth2/register accepts registrations at
+	// all. Default: false (the endpoint answers 403).
+	Enabled bool `mapstructure:"enabled"`
+
+	// AnonymousTenantID enables UNAUTHENTICATED dynamic client registration and
+	// names the tenant such clients are created in. Empty (the default) means an
+	// initial access token is REQUIRED and a token-less registration is refused
+	// with 401. It must never name the system tenant.
+	AnonymousTenantID string `mapstructure:"anonymous_tenant_id"`
+}
+
+// Validate returns an error if the IAMDynamicClientRegistrationConfig contains
+// an invalid combination of field values. It is called during daemon startup.
+func (c *IAMDynamicClientRegistrationConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.AnonymousTenantID == SystemTenantID {
+		return &ConfigValidationError{
+			Field:   "iam.dynamic_client_registration.anonymous_tenant_id",
+			Message: "must not be the system tenant; anonymous registration may never create control-plane clients",
+		}
+	}
+	return nil
 }
 
 // ValidRoleNames enumerates the six built-in FIPS 140-3 role names.
@@ -393,6 +444,10 @@ type IAMConfig struct {
 	// SelfServiceRegistration controls the self-service tenant registration surface.
 	SelfServiceRegistration IAMSelfServiceRegistrationConfig `mapstructure:"self_service_registration"`
 
+	// DynamicClientRegistration controls the RFC 7591 Dynamic Client
+	// Registration surface (POST /oauth2/register). Disabled by default.
+	DynamicClientRegistration IAMDynamicClientRegistrationConfig `mapstructure:"dynamic_client_registration"`
+
 	// SPIFFETrustDomain is the operator-configured SPIFFE trust domain. When
 	// set, broker-issued client certificates carry a tenant-scoped SPIFFE URI
 	// SAN (spiffe://<trust-domain>/tenant/<tenantID>/<kind>/<name>) and login
@@ -486,25 +541,10 @@ type AuthConfig struct {
 	// Default: false
 	Enabled bool `mapstructure:"enabled"`
 
-	// JWTSecret is the secret key for signing JWT tokens with HS256.
-	// REQUIRED when Enabled is true and JWTSigningKeyID is not set.
-	// Should be a secure random string of at least 32 characters.
-	// Deprecated: Use JWTSigningKeyID with asymmetric signing for production.
-	JWTSecret string `mapstructure:"jwt_secret"`
-
-	// JWTSigningKeyID is the KMS key identifier for asymmetric JWT signing.
-	// When set, tokens are signed using the specified KMS key (e.g., ES256)
-	// instead of the shared JWTSecret (HS256). For production deployments,
-	// this is strongly recommended over symmetric HS256 signing.
-	// Example: "quicbaas-jwt-signing"
-	JWTSigningKeyID string `mapstructure:"jwt_signing_key_id"`
-
-	// JWTSigningAlgorithm specifies the asymmetric signing algorithm to use
-	// when JWTSigningKeyID is configured. Supported values:
-	//   "ES256" (default), "ES384", "ES512" (ECDSA)
-	//   "RS256", "RS384", "RS512" (RSA)
-	// Ignored when JWTSigningKeyID is empty (HS256 fallback).
-	JWTSigningAlgorithm string `mapstructure:"jwt_signing_algorithm"`
+	// JWT signing keys are never configured here. Token signing is asymmetric
+	// (ES256) with keys generated on first boot and stored in the xkms backend;
+	// dedicated tenants may opt in to their own signing key via tenant OIDC
+	// settings. See pkg/iam SigningKeyManager and TenantSigningKeyResolver.
 
 	// TokenTTL is the duration that access tokens are valid.
 	// Default: 1h
@@ -569,6 +609,37 @@ type AuthConfig struct {
 	// In production the activation banner path (paths a/b/c in
 	// firstBootBootstrap) should be used instead.
 	BootstrapAdminPIVCertPath string `mapstructure:"bootstrap_admin_piv_cert_path"`
+
+	// BootstrapAdminCSRPath is the path to a PEM-encoded PKCS#10 certificate
+	// signing request supplied by the administrator. When set, first-boot
+	// selects the CSR-sign enrollment path: the platform CA signs this CSR and
+	// binds the resulting certificate's canonical SPKI thumbprint to the admin
+	// user, so the admin's private key never reaches this host.
+	//
+	// When unset, first-boot falls back to generate-and-distribute: the CA
+	// creates the keypair and writes both the certificate and the key under
+	// <data-dir>/admin for the operator to collect and remove.
+	BootstrapAdminCSRPath string `mapstructure:"bootstrap_admin_csr_path"`
+
+	// AdminFactors is the ordered set of LOGIN factors enrolled for the
+	// bootstrap administrator at first boot: any of "mtls", "fido2", "piv".
+	// Empty means the mTLS baseline alone.
+	//
+	// This is a distinct concern from the barrier's seal strategy. A seal
+	// strategy answers "how is the barrier key protected at rest"; a login
+	// factor answers "how does a human prove who they are". Conflating them
+	// produces an init that can unseal a database nobody can log into.
+	//
+	// go-qrdb owns the vocabulary and the ordering (mTLS is always enrolled
+	// first, as the baseline that needs no hardware attached); go-xkms
+	// implements the CTAP2 / PIV ceremonies. Both reach this daemon through
+	// the go-xkms SDK, which is why hardware factors are available here and
+	// not in a bare go-qrdb deployment.
+	AdminFactors []string `mapstructure:"admin_factors"`
+
+	// PasskeyDevice selects one FIDO2 authenticator when several are attached
+	// to the host running first boot. Empty auto-selects the only one present.
+	PasskeyDevice string `mapstructure:"passkey_device"`
 
 	// InsecureDevMode allows insecure default credentials (e.g., admin/admin)
 	// for development and testing. When false (default), the server rejects
@@ -742,6 +813,15 @@ type EmbeddedAgentConfig struct {
 	// backend.
 	SandboxPolicy string `mapstructure:"sandbox_policy"`
 
+	// SandboxNetwork is the container network sandboxed sessions run in:
+	// "bridge" (default — the container gets its own network namespace with
+	// egress), "none" (no egress at all), "host", or the name of a
+	// user-defined runtime network. "host" shares this machine's network
+	// namespace with the agent container, which lets it reach every
+	// loopback-bound service on the host; it is honored, but only because it
+	// was configured here deliberately.
+	SandboxNetwork string `mapstructure:"sandbox_network"`
+
 	// SandboxImage is a convenience setting that supplies the OCI image used
 	// for sandboxed sessions across every configured backend when ImageMap
 	// does not already name one. The image must have the backend agent binary
@@ -786,10 +866,110 @@ type OrchestrationConfig struct {
 	// Default: "llama3"
 	OllamaChatModel string `mapstructure:"ollama_chat_model"`
 
+	// ClaudeNativeSessionResume selects the Claude CLI's own on-disk session
+	// store as the mechanism for resuming a session after a daemon restart.
+	//
+	// Default (false): the CLI runs with --no-session-persistence and keeps no
+	// transcript on the host. A session interrupted by a restart is
+	// reconstituted by replaying the durable, barrier-encrypted transcript from
+	// the session event log into a fresh process.
+	//
+	// True: the CLI keeps its own transcript under the daemon's home directory
+	// and a resume is performed with "--resume <session-id>", restoring tool
+	// calls and results as well as messages, with nothing re-sent by QuicBaaS.
+	// The trade is a plaintext copy of every conversation on the host
+	// filesystem, outside the storage barrier — enable it only where that
+	// filesystem is already inside the trust boundary.
+	ClaudeNativeSessionResume bool `mapstructure:"claude_native_session_resume"`
+
+	// TranscriptReplayBudget bounds, in characters, the transcript replayed
+	// into a resumed agent when ClaudeNativeSessionResume is false. Oldest
+	// turns are dropped first and the agent is told how many were omitted.
+	// Zero selects orchestration.DefaultReplayBudget (48 KiB).
+	TranscriptReplayBudget int `mapstructure:"transcript_replay_budget"`
+
 	// HostAffinity configures how strictly host_affinity hints on
 	// SpawnSession / Inference requests are enforced when the named host is
 	// offline. See SchedulerHostAffinityConfig.
 	HostAffinity SchedulerHostAffinityConfig `mapstructure:"host_affinity"`
+
+	// ProjectsRoot is the root directory for server-managed project
+	// workspaces. Each managed workspace is provisioned at
+	// <projects_root>/<tenant_id>/<project_id>/workspace with 0700
+	// permissions. When set it must be an absolute path. Empty derives
+	// "<storage.data_dir>/projects" — see EffectiveProjectsRoot.
+	ProjectsRoot string `mapstructure:"projects_root"`
+
+	// Sandbox configures the sandbox mount policy applied to the host bind
+	// mounts requested on orchestrated agent sessions.
+	Sandbox OrchestrationSandboxConfig `mapstructure:"sandbox"`
+
+	// TrustPolicy is the integrity floor every spawned agent session must
+	// meet. It is the trust axis, orthogonal to the sandbox axis: the sandbox
+	// policy answers "is the agent isolated from the host", this one answers
+	// "is the agent the code we approved, and can the host prove it".
+	//
+	// Accepted values, in ascending strictness:
+	//
+	//	"opt-in"   (default) no integrity requirement. A session gets a tier
+	//	           only when it asks for one.
+	//	"pinned"   Tier 0: every agent container must be launched from an
+	//	           immutable image content digest, verified after launch.
+	//	"attested" Tier 1: Tier 0 plus a host TPM quote verified against the
+	//	           session's expected PCR set. Requires a TPM.
+	//	"measured" Tier 2: Tier 1 plus measured launch — the image and launch
+	//	           configuration are extended into a PCR before the container
+	//	           starts and included in the quote.
+	//
+	// The floor is what a request naming no level resolves to, and a request
+	// naming a WEAKER level is refused rather than honored. A tier the target
+	// host cannot prove is also refused, never silently downgraded: raising
+	// this beyond what the deployment's container runtime supports fails
+	// spawns closed. See orchestration.TrustPolicy / ResolveTrustLevel.
+	TrustPolicy string `mapstructure:"trust_policy"`
+
+	// AccountProviders defines, or overrides, the OAuth defaults applied to
+	// pooled agent accounts per provider (token endpoint, client id, scopes,
+	// access-token environment variable). Built-in providers are merged
+	// first and an entry here fills or replaces individual fields; a pooled
+	// account's own credential always wins over both. See
+	// AccountProviderConfig and docs/orchestration/accounts.md.
+	AccountProviders []AccountProviderConfig `mapstructure:"account_providers"`
+}
+
+// OrchestrationSandboxConfig configures the sandbox mount policy for
+// orchestrated agent sessions.
+type OrchestrationSandboxConfig struct {
+	// AllowedMountRoots is an operator-configured allowlist of absolute
+	// host directories under which a sandbox bind mount may be sourced, in
+	// addition to the requesting tenant's own subtree of the managed
+	// projects root. Every mount source outside both — the session's work
+	// directory included — is denied.
+	//
+	// Unlike the projects root these roots are NOT tenant-scoped: the
+	// operator named them explicitly and every tenant may mount from them.
+	// Do not list a directory holding one tenant's data.
+	AllowedMountRoots []string `mapstructure:"allowed_mount_roots"`
+}
+
+// OrchestrationTrustPolicies lists the accepted orchestration.trust_policy
+// values. It mirrors orchestration.ParseTrustPolicy, which is the authority;
+// pkg/config cannot import pkg/orchestration (that package's tests import this
+// one), so the vocabulary is restated here for early config validation and the
+// two are kept in step by TestValidateOrchestration_TrustPolicy.
+var OrchestrationTrustPolicies = []string{"opt-in", "pinned", "attested", "measured"}
+
+// EffectiveProjectsRoot returns ProjectsRoot when set, defaulting to
+// "<dataDir>/projects" when empty. dataDir is the top-level storage data
+// directory (Storage.DataDir).
+func (c OrchestrationConfig) EffectiveProjectsRoot(dataDir string) string {
+	if c.ProjectsRoot != "" {
+		return c.ProjectsRoot
+	}
+	if dataDir == "" {
+		return ""
+	}
+	return filepath.Join(dataDir, "projects")
 }
 
 // SchedulerHostAffinityConfig controls operator policy for the host_affinity
@@ -1000,6 +1180,16 @@ type ServerConfig struct {
 	Host              string `mapstructure:"host"`
 	ExposeShardHeader bool   `mapstructure:"expose_shard_header"`
 
+	// SealedBindHost is the listen host used by the sealed-window (pre-unseal
+	// ceremony / unseal) listeners on REST, gRPC, QUIC, and MCP. It is
+	// deliberately independent of Host and the per-protocol BindAddress
+	// overrides so a deployment that binds the full post-unseal API on
+	// 0.0.0.0 does not also expose the pre-unseal surface network-wide.
+	// Empty = "127.0.0.1" (loopback). Set to a routable address (for
+	// example "0.0.0.0") only when remote Shamir officers must reach the
+	// ceremony/unseal surface during the sealed window.
+	SealedBindHost string `mapstructure:"sealed_bind_host"`
+
 	// AdditionalSANDNS lists extra DNS names to include in the server's
 	// auto-generated TLS certificate SANs. Required when operators reach
 	// this server via a hostname that differs from Host (for example, a
@@ -1055,6 +1245,18 @@ func (c *ServerConfig) ResolveBindHost(override string) string {
 		return override
 	}
 	return c.Host
+}
+
+// ResolveSealedBindHost returns the listen host for the sealed-window
+// (pre-unseal) listeners: SealedBindHost when non-empty, otherwise the
+// loopback default DefaultSealedBindHost. Server.Host and the per-protocol
+// BindAddress overrides never apply while sealed — the ceremony/unseal
+// surface stays on loopback unless an operator explicitly opts in.
+func (c *ServerConfig) ResolveSealedBindHost() string {
+	if c.SealedBindHost != "" {
+		return c.SealedBindHost
+	}
+	return DefaultSealedBindHost
 }
 
 // MCPAuthorizationConfig contains MCP authorization settings.
@@ -1306,8 +1508,12 @@ type StorageConfig struct {
 
 // SecurityConfig contains security and encryption settings.
 type SecurityConfig struct {
-	// TLSEnabled indicates TLS is enabled. Always true in production; retained for config compatibility.
-	TLSEnabled    bool   `mapstructure:"tls_enabled"`
+	// TLSEnabled indicates TLS is enabled. TLS is REQUIRED for every network
+	// transport: there is no operator-facing knob to disable it (the field is
+	// excluded from config-file/env binding) and the loader forces it true.
+	// The field exists only as internal lifecycle state so in-process test
+	// harnesses can compose listener-less servers.
+	TLSEnabled    bool   `mapstructure:"-"`
 	TLSCertFile   string `mapstructure:"tls_cert_file"`
 	TLSKeyFile    string `mapstructure:"tls_key_file"`
 	TLSCAFile     string `mapstructure:"tls_ca_file"`

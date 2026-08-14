@@ -287,6 +287,7 @@ func VerifyLeaderStability(t *testing.T, cluster *TestCluster, duration time.Dur
 	var leaderHistory []uint64
 	checkCount := 0
 	changeCount := 0
+	gapCount := 0
 
 	deadlineCtx, deadlineCancel := context.WithTimeout(context.Background(), duration)
 	defer deadlineCancel()
@@ -301,15 +302,16 @@ func VerifyLeaderStability(t *testing.T, cluster *TestCluster, duration time.Dur
 			stableLeader, stable := isDominantLeaderStable(leaderHistory, minStableChecks)
 			if !stable {
 				t.Fatalf(
-					"Leader did not stabilize: no leader held >%d%% of %d checks (history: %v)",
-					dominantLeaderThreshold, len(leaderHistory), leaderHistory,
+					"Leader did not stabilize: no leader held >%d%% of %d checks "+
+						"(%d checks observed no leader at all; history: %v, 0 = no leader)",
+					dominantLeaderThreshold, len(leaderHistory), gapCount, leaderHistory,
 				)
 			}
 
 			t.Logf(
 				"Leader stability verified: node %d dominant across %d checks "+
-					"(%d transient changes observed)",
-				stableLeader, checkCount, changeCount,
+					"(%d transient changes, %d transient no-leader gaps observed)",
+				stableLeader, checkCount, changeCount, gapCount,
 			)
 			return
 
@@ -320,13 +322,32 @@ func VerifyLeaderStability(t *testing.T, cluster *TestCluster, duration time.Dur
 			currentLeader, _, queryErr := cluster.FindLeader(queryCtx)
 			queryCancel()
 
-			require.NoError(t, queryErr, "Failed to find leader during stability check %d", checkCount)
-			require.NotNil(t, currentLeader, "Leader disappeared during stability check %d", checkCount)
+			// A momentary "no leader" observation is the FIRST HALF of every
+			// leader change: Raft goes leader -> election -> new leader, and
+			// FindLeader is a single-shot query with no retry that reports
+			// "no leader found in cluster" for any node that answers mid
+			// election (or whose status RPC is slow enough to be skipped).
+			// Aborting here would make this verifier tolerate a leader change
+			// A -> B while failing on the election gap A -> none -> B that
+			// necessarily precedes it. Record the gap instead and let the
+			// window evaluation below decide: gaps count against every
+			// dominance percentage, and a trailing run of them fails both
+			// strategies, so a GENUINE loss of leader availability still
+			// fails - only a transient one is absorbed.
+			if queryErr != nil || currentLeader == nil {
+				leaderHistory = append(leaderHistory, noLeaderObserved)
+				gapCount++
+				t.Logf("No leader observed during stability check %d (gap #%d): %v",
+					checkCount, gapCount, queryErr)
+				continue
+			}
 
 			leaderHistory = append(leaderHistory, currentLeader.ID)
 
 			// Log transient changes for diagnostic purposes without failing.
-			if len(leaderHistory) > 1 && leaderHistory[len(leaderHistory)-1] != leaderHistory[len(leaderHistory)-2] {
+			// A gap is reported above, so only leader-to-leader moves reach here.
+			if len(leaderHistory) > 1 && leaderHistory[len(leaderHistory)-2] != noLeaderObserved &&
+				leaderHistory[len(leaderHistory)-1] != leaderHistory[len(leaderHistory)-2] {
 				changeCount++
 				t.Logf(
 					"Leader changed from node %d to node %d (check %d, change #%d)",
@@ -400,6 +421,13 @@ func isDominantLeaderStable(history []uint64, minChecks int) (uint64, bool) {
 	return 0, false
 }
 
+// noLeaderObserved is the history sentinel for a check in which no leader could
+// be resolved. Node IDs are 1-based, so zero is unambiguous. It counts toward
+// the observation total but can never win a dominance evaluation, which is what
+// makes a sustained loss of leadership fail while a one-check election gap does
+// not.
+const noLeaderObserved uint64 = 0
+
 // leaderFrequency counts the occurrences of each leader in the history.
 func leaderFrequency(history []uint64) map[uint64]int {
 	freq := make(map[uint64]int, 2)
@@ -414,6 +442,9 @@ func mostFrequentLeader(freq map[uint64]int) (uint64, int) {
 	var bestLeader uint64
 	var bestCount int
 	for nodeID, c := range freq {
+		if nodeID == noLeaderObserved {
+			continue
+		}
 		if c > bestCount {
 			bestLeader = nodeID
 			bestCount = c

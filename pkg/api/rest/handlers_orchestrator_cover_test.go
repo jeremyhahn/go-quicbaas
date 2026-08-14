@@ -66,8 +66,9 @@ func TestHandleOrchestratorPrompt_Errors(t *testing.T) {
 		map[string]string{"sessionID": "s1"}))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
-	// Service error -> 500
-	agentSvc.promptSessionFunc = func(_ context.Context, _ *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error) {
+	// A dispatch failure is reported synchronously: the turn never started,
+	// so there is nothing on the event stream for the caller to discover.
+	agentSvc.promptAsyncFunc = func(_ context.Context, _ *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error) {
 		return nil, errors.New("backend down")
 	}
 	w = httptest.NewRecorder()

@@ -89,11 +89,12 @@ func newTestVectorRBACContext(t *testing.T, allowed ...string) *testVectorRBACCo
 
 	authCfg := &auth.AuthConfig{
 		Enabled:         true,
-		JWTSecret:       "test-vector-rbac-secret-key-for-testing",
+		JWTSigningKeyID: "test-vector-rbac-signing-key",
 		TokenTTL:        1 * time.Hour,
 		RefreshTokenTTL: 24 * time.Hour,
 		MaxTokens:       100,
 	}
+	configureTestJWTSigning(t, authCfg)
 
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)

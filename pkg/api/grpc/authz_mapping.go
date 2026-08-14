@@ -48,6 +48,9 @@ var brokerServiceDescs = []grpc.ServiceDesc{
 	pb.DEKManagement_ServiceDesc,
 	pb.CertificateService_ServiceDesc,
 	pb.TrustService_ServiceDesc,
+	pb.AttestationService_ServiceDesc,
+	pb.FIDO2Service_ServiceDesc,
+	pb.PIVService_ServiceDesc,
 	pb.VectorDB_ServiceDesc,
 	pb.VectorAdmin_ServiceDesc,
 	pb.ObjectStorageService_ServiceDesc,
@@ -59,6 +62,8 @@ var brokerServiceDescs = []grpc.ServiceDesc{
 	pb.ParameterStore_ServiceDesc,
 	pb.DynamicSecretsService_ServiceDesc,
 	pb.ProjectService_ServiceDesc,
+	pb.AccountService_ServiceDesc,
+	pb.SSHService_ServiceDesc,
 	pb.OllamaService_ServiceDesc,
 }
 
@@ -96,6 +101,16 @@ var publicGRPCMethods = map[string]bool{
 	"/quicbaas.v1.QuicBaaS/Login":          true, // legacy unauthenticated login entry point
 	"/quicbaas.login.v1.Login/BeginLogin":  true,
 	"/quicbaas.login.v1.Login/FinishLogin": true,
+
+	// FIDO2 authentication ceremony: WebAuthn IS the authentication
+	// mechanism — the caller holds no token until FinishAuthentication
+	// mints one. This mirrors the pre-auth posture of the REST
+	// /api/v1/iam/{tenant}/webauthn/login/{begin,finish} routes
+	// (authz_public_routes.go). The registration pair stays GATED
+	// (user_authfactors:add) because it binds a new authenticator to a
+	// caller-supplied identity.
+	"/quicbaas.fido2.v1.FIDO2Service/BeginAuthentication":  true,
+	"/quicbaas.fido2.v1.FIDO2Service/FinishAuthentication": true,
 
 	// qrdb.v1 composition surface: Health is a liveness probe that carries no
 	// data, matching the public posture of /quicbaas.v1.QuicBaaS/Health. The
@@ -306,10 +321,79 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.certificate.v1.CertificateService/GetCACertificate":  {"certs", "read"},
 	"/quicbaas.certificate.v1.CertificateService/GetTLSConfig":      {"certs", "read"},
 
+	// Certificate extension verbs (server_certificate_extensions.go).
+	//
+	// CrossSign mints a CA certificate: it re-certifies a foreign ROOT's
+	// subject and public key with basicConstraints CA:TRUE. qrdb states the
+	// boundary explicitly — "Holding certs:generate must not imply the
+	// authority to mint a new signing CA" (go-qrdb/pkg/permission/
+	// acme_admin_scope.go) — so it authorizes with ca:create.
+	//
+	// Chain runs the CA's Authority Information Access walk, which fetches
+	// issuer certificates over the network and imports them into the CA
+	// certificate store. That is the same mutation TrustService/AutoImportAIA
+	// performs, so it carries the same write-strength verb; mapping it to
+	// certs:read would let a read-only principal drive the importer.
+	//
+	// IssueDeviceIdentity mints TCG EK / AK / IEEE 802.1AR IDevID
+	// certificates. Those are END-ENTITY certificates, so they stay in the
+	// leaf-issuance family: certs:generate.
+	"/quicbaas.certificate.v1.CertificateService/CrossSign":           {"ca", "create"},
+	"/quicbaas.certificate.v1.CertificateService/Chain":               {"certs", "generate"},
+	"/quicbaas.certificate.v1.CertificateService/IssueDeviceIdentity": {"certs", "generate"},
+
+	// ---- quicbaas.attestation.v1.AttestationService ----
+	//
+	// Attestation gets its own resource vocabulary rather than borrowing
+	// certs:* or ca:*. The verbs answer a different question — "is this
+	// host and this workload in the state we approved?" — and a principal
+	// that may read the certificate store has no business driving a TPM
+	// quote or reading a host's PCR values, which are a fingerprint of the
+	// platform's boot state.
+	//
+	// Verify and VerifyChain are pure computations over caller-supplied
+	// material: they mutate nothing, so they carry the read-strength
+	// attestation:verify.
+	//
+	// AttestContainer is NOT a read. It drives the registered attestor,
+	// which on the standalone path extends a PCR at measured launch and
+	// asks the host TPM for a signed quote — an interaction with hardware
+	// that a fleet attestor additionally records against a device registry.
+	// It therefore carries its own write-strength verb rather than sharing
+	// one with the verification pair.
+	"/quicbaas.attestation.v1.AttestationService/Verify":          {"attestation", "verify"},
+	"/quicbaas.attestation.v1.AttestationService/VerifyChain":     {"attestation", "verify"},
+	"/quicbaas.attestation.v1.AttestationService/AttestContainer": {"attestation", "attest"},
+
 	// ---- quicbaas.certificate.v1.TrustService ----
 	"/quicbaas.certificate.v1.TrustService/CrossSignedRootPool": {"certs", "read"},
 	"/quicbaas.certificate.v1.TrustService/AutoImportAIA":       {"certs", "generate"},
 	"/quicbaas.certificate.v1.TrustService/PublishDANE":         {"certs", "generate"},
+
+	// ---- quicbaas.fido2.v1.FIDO2Service (registration pair) ----
+	//
+	// The registration ceremony binds a NEW authenticator to a
+	// caller-supplied identity, so it carries the same tuple the REST PEP
+	// assigns to /api/v1/iam/{tenant}/webauthn/registration/*
+	// (authz_pep_mapping.go): user_authfactors:add. The authentication
+	// pair is pre-auth and lives in publicGRPCMethods.
+	"/quicbaas.fido2.v1.FIDO2Service/BeginRegistration":  {"user_authfactors", "add"},
+	"/quicbaas.fido2.v1.FIDO2Service/FinishRegistration": {"user_authfactors", "add"},
+
+	// ---- quicbaas.piv.v1.PIVService ----
+	//
+	// Same piv:* family the REST PEP assigns to /api/v1/xkms/piv/*
+	// (authz_pep_mapping.go): slot reads are piv:read, certificate and key
+	// mutations are piv:write / piv:delete, and CSR generation exercises
+	// the slot's private key so it carries the use-strength verb.
+	"/quicbaas.piv.v1.PIVService/ListPIVSlots":         {"piv", "read"},
+	"/quicbaas.piv.v1.PIVService/GetPIVCertificate":    {"piv", "read"},
+	"/quicbaas.piv.v1.PIVService/ExportPIVCertificate": {"piv", "read"},
+	"/quicbaas.piv.v1.PIVService/StorePIVCertificate":  {"piv", "write"},
+	"/quicbaas.piv.v1.PIVService/ImportPIVCertificate": {"piv", "write"},
+	"/quicbaas.piv.v1.PIVService/DeletePIVCertificate": {"piv", "delete"},
+	"/quicbaas.piv.v1.PIVService/GeneratePIVKey":       {"piv", "write"},
+	"/quicbaas.piv.v1.PIVService/GeneratePIVCSR":       {"piv", "use"},
 
 	// ---- quicbaas.barrier.v1.Barrier (system barrier lifecycle) ----
 	"/quicbaas.barrier.v1.Barrier/BarrierStatus":                {"tenant_barrier", "status"},
@@ -444,12 +528,21 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.v1.ObjectTransferService/StreamFetchObjects": {"objstore", "get"},
 
 	// ---- quicbaas.orchestrator.v1.OrchestratorService ----
-	"/quicbaas.orchestrator.v1.OrchestratorService/SpawnSession":           {"orchestrator", "spawn"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/SpawnChildJob":          {"orchestrator", "job_start"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/PromptSession":          {"orchestrator", "prompt"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/SessionStatus":          {"orchestrator", "status"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/CloseSession":           {"orchestrator", "close"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/ListSessions":           {"orchestrator", "list"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SpawnSession":  {"orchestrator", "spawn"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SpawnChildJob": {"orchestrator", "job_start"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/PromptSession": {"orchestrator", "prompt"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SessionStatus": {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/CloseSession":  {"orchestrator", "close"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListSessions":  {"orchestrator", "list"},
+	// Rotation closes the session's agent process and reconstitutes it against
+	// a newly selected pooled credential — the authority a spawn carries, not a
+	// close or a status read. orchestrator:spawn is therefore the deliberate
+	// choice: it is exactly the permission the session was created with, and
+	// the weaker close/status verbs must never let a caller consume a
+	// different account's credential. Mirrored on REST
+	// (/api/v1/orchestrator/.../rotate-account), QUIC (rotateSubOpPermissions)
+	// and MCP (quicbaas_orchestrator_rotate_account).
+	"/quicbaas.orchestrator.v1.OrchestratorService/RotateSessionAccount":   {"orchestrator", "spawn"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/SubscribeSessionEvents": {"orchestrator", "status"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/CreateTask":             {"orchestrator", "task_create"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/GetTask":                {"orchestrator", "task_read"},
@@ -531,6 +624,59 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.project.v1.ProjectService/ListProjects":     {"project", "list"},
 	"/quicbaas.project.v1.ProjectService/UpdateProject":    {"project", "update"},
 	"/quicbaas.project.v1.ProjectService/DeleteProject":    {"project", "delete"},
+	// Membership verbs mirror the REST PEP rules for
+	// PUT/DELETE /api/v1/projects/{id}/permissions/{agent_id}.
+	"/quicbaas.project.v1.ProjectService/GrantAgentRole":  {"project", "grant"},
+	"/quicbaas.project.v1.ProjectService/RevokeAgentRole": {"project", "revoke"},
+
+	// ---- quicbaas.account.v1.AccountService ----
+	// Pooled provider accounts custody credential material (an Anthropic /
+	// Codex / OpenCode login), so they authorize with the qrdb credentials:*
+	// vocabulary — the same family the /api/v1/secrets and /v1/credentials
+	// REST surfaces use (pkg/api/rest/authz_pep_mapping.go). qrdb registers
+	// no account:* family; when one is added these mappings should move to it.
+	//
+	// Reads use credentials:retrieve (the item-read verb) even though no
+	// account response carries secret material: over-restricting a read is
+	// the safe direction, and it keeps a single "who may see this account at
+	// all" grant rather than splitting metadata reads from secret reads.
+	"/quicbaas.account.v1.AccountService/CreateAccount":           {"credentials", "store"},
+	"/quicbaas.account.v1.AccountService/GetAccount":              {"credentials", "retrieve"},
+	"/quicbaas.account.v1.AccountService/ListAccounts":            {"credentials", "list"},
+	"/quicbaas.account.v1.AccountService/UpdateAccount":           {"credentials", "store"},
+	"/quicbaas.account.v1.AccountService/DeleteAccount":           {"credentials", "delete"},
+	"/quicbaas.account.v1.AccountService/RotateAccountCredential": {"credentials", "rotate"},
+	// Revoking excludes the account from every selection strategy — a
+	// destructive lifecycle transition, so it takes the delete-grade verb.
+	"/quicbaas.account.v1.AccountService/RevokeAccount":     {"credentials", "delete"},
+	"/quicbaas.account.v1.AccountService/SetDefaultAccount": {"credentials", "store"},
+	"/quicbaas.account.v1.AccountService/GetAccountUsage":   {"credentials", "retrieve"},
+
+	// ---- quicbaas.ssh.v1.SSHService ----
+	// SSH assets are cryptographic keys, so they authorize with the qrdb
+	// keys:* vocabulary — byte-for-byte the same (resource, action) pairs the
+	// REST PEP assigns to /api/v1/ssh (pkg/api/rest/authz_pep_mapping.go
+	// sshOps). One grant therefore authorizes the same SSH verb identically
+	// on REST, gRPC, Unix, QUIC, and MCP. qrdb does register an ssh:* family
+	// (ssh:read / ssh:write / ssh:delete); migrating to it is a cross-surface
+	// change that must move REST and this map together, not one of them.
+	"/quicbaas.ssh.v1.SSHService/GenerateSSHKey":     {"keys", "create"},
+	"/quicbaas.ssh.v1.SSHService/ImportSSHKey":       {"keys", "import"},
+	"/quicbaas.ssh.v1.SSHService/GetSSHKey":          {"keys", "get"},
+	"/quicbaas.ssh.v1.SSHService/ListSSHKeys":        {"keys", "list"},
+	"/quicbaas.ssh.v1.SSHService/DeleteSSHKey":       {"keys", "delete"},
+	"/quicbaas.ssh.v1.SSHService/ExportSSHPublicKey": {"keys", "get"},
+	"/quicbaas.ssh.v1.SSHService/SignSSHDigest":      {"keys", "sign"},
+
+	"/quicbaas.ssh.v1.SSHService/AddSSHKnownHost":    {"keys", "create"},
+	"/quicbaas.ssh.v1.SSHService/ListSSHKnownHosts":  {"keys", "list"},
+	"/quicbaas.ssh.v1.SSHService/RemoveSSHKnownHost": {"keys", "delete"},
+
+	"/quicbaas.ssh.v1.SSHService/AddSSHAuthorizedKey":    {"keys", "create"},
+	"/quicbaas.ssh.v1.SSHService/ListSSHAuthorizedKeys":  {"keys", "list"},
+	"/quicbaas.ssh.v1.SSHService/RemoveSSHAuthorizedKey": {"keys", "delete"},
+	// Emitting an authorized_keys line is a formatting read of a public key.
+	"/quicbaas.ssh.v1.SSHService/EmitSSHAuthorizedKey": {"keys", "get"},
 
 	// ---- quicbaas.ollama.v1.OllamaService ----
 	"/quicbaas.ollama.v1.OllamaService/Health":         {"ollama", "health"},

@@ -106,20 +106,25 @@ type ProjectQuotas struct {
 }
 
 // ProjectInfo contains information about a project.
+//
+// The JSON tags are the canonical project wire shape. Every transport that
+// carries a project over JSON (MCP tool results, QUIC frame payloads) encodes
+// these exact keys, so the type decodes a server response directly instead of
+// each transport re-declaring a parallel wire struct.
 type ProjectInfo struct {
-	ID               string
-	TenantID         string
-	Name             string
-	Description      string
-	Workspace        ProjectWorkspace
-	HostAffinity     string
-	DefaultLeadAgent string
-	Git              ProjectGit
-	Permissions      ProjectPermissions
-	Quotas           ProjectQuotas
-	Metadata         map[string]string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID               string             `json:"id"`
+	TenantID         string             `json:"tenant_id"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description,omitempty"`
+	Workspace        ProjectWorkspace   `json:"workspace"`
+	HostAffinity     string             `json:"host_affinity,omitempty"`
+	DefaultLeadAgent string             `json:"default_lead_agent,omitempty"`
+	Git              ProjectGit         `json:"git"`
+	Permissions      ProjectPermissions `json:"permissions"`
+	Quotas           ProjectQuotas      `json:"quotas"`
+	Metadata         map[string]string  `json:"metadata,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
 }
 
 // CreateProjectRequest is a request to create a new project.
@@ -194,8 +199,8 @@ type UpdateProjectRequest struct {
 
 // ListProjectsResponse is the response from listing projects.
 type ListProjectsResponse struct {
-	Projects []*ProjectInfo
-	Total    int
+	Projects []*ProjectInfo `json:"projects"`
+	Total    int            `json:"total"`
 }
 
 // GrantAgentRoleRequest sets a role for an agent in a project.

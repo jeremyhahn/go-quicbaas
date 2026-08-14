@@ -1,18 +1,20 @@
 <!--
   EventCard dispatches a ParsedSessionEvent to the appropriate sub-component.
-  Consecutive assistant chunks with the same source are coalesced before being
-  passed here by the parent (EventStream).
+  Consecutive assistant chunks or thought fragments with the same source are
+  coalesced before being passed here by the parent (EventStream).
 -->
 <script lang="ts">
   import type { ParsedSessionEvent } from '../../stores/sessionStore.svelte.ts';
   import PromptEvent from './events/PromptEvent.svelte';
   import AssistantEvent from './events/AssistantEvent.svelte';
+  import ThoughtEvent from './events/ThoughtEvent.svelte';
   import ToolInvocationEvent from './events/ToolInvocationEvent.svelte';
   import ToolResultEvent from './events/ToolResultEvent.svelte';
   import FileOpEvent from './events/FileOpEvent.svelte';
   import SystemMessageEvent from './events/SystemMessageEvent.svelte';
   import OperatorPresenceEvent from './events/OperatorPresenceEvent.svelte';
   import SessionClosedEvent from './events/SessionClosedEvent.svelte';
+  import TurnLifecycleEvent from './events/TurnLifecycleEvent.svelte';
 
   let {
     event,
@@ -32,6 +34,12 @@
       text={event.assistantChunk ?? ''}
       source={event.source ?? ''}
       {isStreaming}
+    />
+
+  {:else if event.kind === 'thought'}
+    <ThoughtEvent
+      text={event.thoughtText ?? ''}
+      source={event.source ?? ''}
     />
 
   {:else if event.kind === 'tool_invocation'}
@@ -76,6 +84,16 @@
         session resumed
       </span>
     </div>
+
+  {:else if event.kind === 'turn_started' || event.kind === 'turn_completed' || event.kind === 'turn_failed'}
+    <TurnLifecycleEvent
+      kind={event.kind}
+      backend={event.turnBackend}
+      model={event.turnModel}
+      stopReason={event.turnStopReason}
+      durationMs={event.turnDurationMs}
+      error={event.turnError}
+    />
 
   {:else}
     <!-- Unknown event kind: render raw JSON for debugging. -->

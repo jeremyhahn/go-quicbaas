@@ -46,6 +46,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 )
 
@@ -473,5 +474,8 @@ func daemonCAHTTPClient(t *testing.T, srv *server.Server) *http.Client {
 	}
 }
 
-// Ensure iam package is used (invite types are referenced in doc comments).
-var _ iam.InviteStore = (*iam.MemoryInviteStore)(nil)
+// Ensure the iam package is used (invite types are referenced in doc comments).
+// The in-memory store now lives in pkg/iam/iamtest: quicbaas keeps no invite
+// store implementation in production code, since go-qrdb owns token
+// generation, digesting, single-use redemption, and tenant routing.
+var _ iam.InviteStore = (*iamtest.MemoryInviteStore)(nil)

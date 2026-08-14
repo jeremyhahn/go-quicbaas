@@ -47,7 +47,6 @@ var canonicalInitFlagNames = []string{
 	"threshold",
 	"hostname",
 	"sans",
-	"admin-bundle",
 }
 
 // TestCanonicalSurface_RootHasAllSubcommands verifies every canonical

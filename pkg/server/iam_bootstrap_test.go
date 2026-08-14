@@ -18,121 +18,445 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
-	"strings"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
+
+// bootstrapAdminEmail is the deterministic address the qrdb first-boot adapter
+// synthesizes for the platform admin in the system tenant.
+const bootstrapAdminEmail = "admin@" + qrdbsdk.SystemTenantID + ".qrdb.local"
+
+// testTrustDomain is the SPIFFE trust domain these tests configure. First-boot
+// fails closed without one (see ErrNoSPIFFETrustDomain), because the admin
+// certificate would carry no tenant SAN and could not authenticate.
+const testTrustDomain = "quicbaas.example.test"
 
 // ---------------------------------------------------------------------------
 // printFirstBootBanner
 // ---------------------------------------------------------------------------
 
-func TestPrintFirstBootBanner_ContainsURL(t *testing.T) {
+func TestPrintFirstBootBanner_GenerateAndDistribute(t *testing.T) {
 	var buf bytes.Buffer
-	printFirstBootBanner(&buf, "https://localhost:8443/ui/#/invite/abc123")
+	printFirstBootBanner(&buf, adminEnrollmentBanner{
+		CertPath:   "/var/lib/quicbaas/admin/admin.crt",
+		KeyPath:    "/var/lib/quicbaas/admin/admin.key",
+		Thumbprint: "Zm9vYmFy",
+	})
 
 	output := buf.String()
-	assert.Contains(t, output, "https://localhost:8443/ui/#/invite/abc123",
-		"banner must include the full activation URL")
-	assert.Contains(t, output, "FIRST-BOOT BOOTSTRAP",
-		"banner must include the bootstrap heading")
-	// Phase 11 reworded the banner (now: "Shown ONCE.") to match the
-	// three-option ceremony copy from the unification plan.
-	assert.Contains(t, output, "Shown ONCE",
-		"banner must warn the operator that the activation URL is shown once")
+	assert.Contains(t, output, "/var/lib/quicbaas/admin/admin.crt",
+		"banner must tell the operator where the admin certificate is")
+	assert.Contains(t, output, "/var/lib/quicbaas/admin/admin.key",
+		"banner must tell the operator where the admin private key is")
+	assert.Contains(t, output, "Zm9vYmFy", "banner must show the bound SPKI thumbprint")
+	assert.NotContains(t, output, "/invite/",
+		"the invite activation URL was deleted; the banner must never print one")
 }
 
-func TestPrintFirstBootBanner_EmptyURLSafe(t *testing.T) {
-	// Passing an empty URL should not panic; the banner is still printed.
+func TestPrintFirstBootBanner_CSRSignPathOmitsKey(t *testing.T) {
 	var buf bytes.Buffer
-	printFirstBootBanner(&buf, "")
-	assert.NotEmpty(t, buf.String())
+	printFirstBootBanner(&buf, adminEnrollmentBanner{
+		CertPath:   "/var/lib/quicbaas/admin/admin.crt",
+		Thumbprint: "Zm9vYmFy",
+	})
+
+	output := buf.String()
+	assert.Contains(t, output, "never reached this host",
+		"the CSR-sign banner must state that the private key stayed with the admin")
+	assert.NotContains(t, output, "admin.key",
+		"no key file exists on the CSR-sign path, so none may be advertised")
 }
 
-// TestFirstBootBootstrap_ActivationURLUsesCanonicalInviteRoute is the
-// authoritative regression test for the dead-activation-URL bug: the banner
-// printed the query-string form (#/activate?token=<hex>) which the SPA router
-// does not map, bouncing the operator silently to #/login. The router maps the
-// activation view ONLY at the path-parameter route #/invite/:token. This test
-// asserts the generated activation URL embeds the real invite token under the
-// canonical /ui/#/invite/ route and never the dead query-string form.
-func TestFirstBootBootstrap_ActivationURLUsesCanonicalInviteRoute(t *testing.T) {
+func TestPrintFirstBootBanner_NoCertificateIssued(t *testing.T) {
+	// A CA-less deployment still prints a banner; it must say plainly that no
+	// certificate was issued rather than pointing at a file that is not there.
+	var buf bytes.Buffer
+	printFirstBootBanner(&buf, adminEnrollmentBanner{})
+
+	output := buf.String()
+	require.NotEmpty(t, output)
+	assert.Contains(t, output, "NO admin certificate")
+	assert.NotContains(t, output, "admin.crt")
+}
+
+// ---------------------------------------------------------------------------
+// firstBootBootstrap: admin-mTLS enrollment (the point of first-boot)
+// ---------------------------------------------------------------------------
+
+// TestFirstBootBootstrap_BindsCanonicalSPKIThumbprintAndMintsNoInvite is the
+// authoritative regression test for the admin-mTLS bootstrap.
+//
+// Before the seams were wired, firstBootBootstrap passed only
+// Tenants/Roles/Users/Logger to qrdb's FirstBootInitialize, so qrdb's step 4
+// (cert issuance + SPKI binding) never ran: the admin ended first-boot with NO
+// certificate and NO cert binding, and quicbaas instead minted an invite token
+// and printed an /ui/#/invite/<token> activation URL — the mechanism §08
+// deleted. This test fails on that code in three independent ways: no
+// certificate is written, the admin carries no SPKI CertBinding, and an invite
+// is created.
+func TestFirstBootBootstrap_BindsCanonicalSPKIThumbprintAndMintsNoInvite(t *testing.T) {
 	srv := withTempServer(t)
 	srv.config.Auth.AllowPasswordAuth = false
 	srv.config.Auth.InsecureDevMode = false
+	// The platform CA is up before IAM init in the real boot order
+	// (initializeCA runs from Server.initialize before startService).
+	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
+
+	c, _ := buildTestIAMComponentsWithFactors(t)
+	invites := &recordingInviteStore{InviteStore: c.inviteStore}
+	c.inviteStore = invites
+
+	var banner adminEnrollmentBanner
+	restore := captureFirstBootBanner(t, &banner)
+	defer restore()
+
+	ctx := context.Background()
+	require.NoError(t, srv.firstBootBootstrap(ctx, c))
+
+	// 1. A certificate was issued and persisted for the operator to collect.
+	certPath := filepath.Join(srv.config.Storage.DataDir, adminBundleDirName, adminCertFileName)
+	require.Equal(t, certPath, banner.CertPath,
+		"the banner must point at the certificate that was written")
+	certPEM, err := os.ReadFile(certPath)
+	require.NoError(t, err, "first-boot must write the issued admin certificate")
+
+	keyPath := filepath.Join(srv.config.Storage.DataDir, adminBundleDirName, adminKeyFileName)
+	require.Equal(t, keyPath, banner.KeyPath,
+		"the generate-and-distribute path must also write the admin key")
+	keyPEM, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, keyPEM)
+
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block, "admin certificate must be valid PEM")
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	// 2. The admin user carries the CANONICAL binding: qrdb's SPKI thumbprint,
+	//    not a hex digest over the certificate DER.
+	want := qrdbsdk.ComputeSPKIThumbprint(cert)
+	require.NotEmpty(t, want)
+	assert.Equal(t, want, banner.Thumbprint,
+		"first-boot must report the canonical SPKI thumbprint it bound")
+
+	admin, err := c.identityStore.GetUserByEmail(ctx, bootstrapAdminEmail)
+	require.NoError(t, err, "first-boot must have created the platform admin")
+	require.NotEmpty(t, admin.CertBindings,
+		"the admin must end first-boot with an mTLS cert binding")
+
+	var bound *qrdbsdk.CertBinding
+	for i := range admin.CertBindings {
+		if admin.CertBindings[i].Kind == qrdbsdk.CertBindingSPKIThumbprint {
+			bound = &admin.CertBindings[i]
+			break
+		}
+	}
+	require.NotNil(t, bound,
+		"the admin binding must use the canonical SPKI-thumbprint kind")
+	assert.Equal(t, want, bound.Thumbprint,
+		"the bound thumbprint must be qrdbsdk.ComputeSPKIThumbprint of the issued cert")
+	assert.Equal(t, want, admin.SPKIThumbprint())
+
+	// 3. No invite token was minted, stored, or stamped on the user.
+	assert.Zero(t, invites.creates,
+		"first-boot must not create an invite record; admin enrollment is cert-based")
+	assert.Empty(t, admin.InviteToken,
+		"first-boot must not stamp an invite token on the admin user")
+	assert.Nil(t, admin.InviteExpiresAt)
+}
+
+// TestFirstBootBootstrap_IssuedCertIsLoginResolvable asserts the certificate
+// first-boot issued is enrolled as an mtls auth factor. Without it the
+// certificate authenticates the TLS handshake but `auth login --method mtls`
+// fails FinishLogin with "factor not found".
+func TestFirstBootBootstrap_IssuedCertIsLoginResolvable(t *testing.T) {
+	srv := withTempServer(t)
+	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
+
+	c, factors := buildTestIAMComponentsWithFactors(t)
+
+	var banner adminEnrollmentBanner
+	restore := captureFirstBootBanner(t, &banner)
+	defer restore()
+
+	ctx := context.Background()
+	require.NoError(t, srv.firstBootBootstrap(ctx, c))
+
+	certPEM, err := os.ReadFile(banner.CertPath)
+	require.NoError(t, err)
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	// This is the exact lookup go-qrdb's LoginResolver performs.
+	factor, err := factors.LookupByCredentialKey(ctx, qrdbsdk.AuthFactorMTLS,
+		iam.MTLSSPKICredentialKey(cert))
+	require.NoError(t, err,
+		"the issued admin certificate must be enrolled as an mtls login factor")
+	require.NotNil(t, factor)
+}
+
+// TestFirstBootBootstrap_CSRSignPathKeepsAdminKeyOffHost covers admin-mTLS
+// Path B: with auth.bootstrap_admin_csr_path set, the CA signs the operator's
+// CSR and this host never holds the admin private key.
+func TestFirstBootBootstrap_CSRSignPathKeepsAdminKeyOffHost(t *testing.T) {
+	srv := withTempServer(t)
+	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
+	srv.config.Auth.BootstrapAdminCSRPath = writeTestAdminCSR(t, t.TempDir())
 
 	c := buildTestIAMComponents(t)
 
-	var capturedURL string
-	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, url string) {
-		capturedURL = url
+	var banner adminEnrollmentBanner
+	restore := captureFirstBootBanner(t, &banner)
+	defer restore()
+
+	ctx := context.Background()
+	require.NoError(t, srv.firstBootBootstrap(ctx, c))
+
+	assert.NotEmpty(t, banner.CertPath, "the signed certificate must be written")
+	assert.Empty(t, banner.KeyPath,
+		"the CSR-sign path must not produce a private key on this host")
+	_, err := os.Stat(filepath.Join(srv.config.Storage.DataDir, adminBundleDirName, adminKeyFileName))
+	assert.True(t, os.IsNotExist(err), "no admin key file may exist on the CSR-sign path")
+
+	admin, err := c.identityStore.GetUserByEmail(ctx, bootstrapAdminEmail)
+	require.NoError(t, err)
+	assert.NotEmpty(t, admin.SPKIThumbprint(),
+		"the CSR-signed certificate must still be SPKI-bound to the admin")
+}
+
+// TestFirstBootBootstrap_EmptyAdminCSRFailsClosed covers the error path for the
+// CSR-sign configuration: an empty CSR file must abort rather than silently
+// falling through to generate-and-distribute, which would leave a private key
+// on a host the operator deliberately kept it off.
+func TestFirstBootBootstrap_EmptyAdminCSRFailsClosed(t *testing.T) {
+	srv := withTempServer(t)
+	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
+
+	empty := filepath.Join(t.TempDir(), "admin.csr")
+	require.NoError(t, os.WriteFile(empty, nil, 0o600))
+	srv.config.Auth.BootstrapAdminCSRPath = empty
+
+	c := buildTestIAMComponents(t)
+
+	err := srv.firstBootBootstrap(context.Background(), c)
+	require.Error(t, err)
+	// FirstBootBootstrapError.Unwrap yields the sentinel, so reach the cause
+	// through the typed error rather than errors.Is.
+	var fb *FirstBootBootstrapError
+	require.ErrorAs(t, err, &fb)
+	assert.ErrorIs(t, fb.Cause, ErrEmptyAdminCSR)
+}
+
+// TestFirstBootBootstrap_MissingAdminCSRFailsClosed covers the other CSR
+// misconfiguration: a path that does not exist.
+func TestFirstBootBootstrap_MissingAdminCSRFailsClosed(t *testing.T) {
+	srv := withTempServer(t)
+	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
+	srv.config.Auth.BootstrapAdminCSRPath = filepath.Join(t.TempDir(), "absent.csr")
+
+	c := buildTestIAMComponents(t)
+
+	err := srv.firstBootBootstrap(context.Background(), c)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrFirstBootBootstrap)
+	assert.Contains(t, err.Error(), "read admin CSR")
+}
+
+// TestFirstBootBootstrap_NoCAStillCreatesAdmin covers the CA-less deployment:
+// tenant, roles, admin and the admin assignment are still created; only the
+// certificate is absent.
+func TestFirstBootBootstrap_NoCAStillCreatesAdmin(t *testing.T) {
+	srv := withTempServer(t)
+	require.Nil(t, srv.xkmsCA)
+
+	c := buildTestIAMComponents(t)
+
+	var banner adminEnrollmentBanner
+	restore := captureFirstBootBanner(t, &banner)
+	defer restore()
+
+	ctx := context.Background()
+	require.NoError(t, srv.firstBootBootstrap(ctx, c))
+
+	assert.Empty(t, banner.CertPath, "no CA means no certificate is written")
+	_, err := c.identityStore.GetUserByEmail(ctx, bootstrapAdminEmail)
+	require.NoError(t, err, "the admin user must exist even without a CA")
+
+	assignments, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{
+		ActiveOnly: true,
+		Limit:      10,
+	})
+	require.NoError(t, err)
+	assert.Len(t, assignments, 1)
+}
+
+// TestFirstBootBootstrap_NoDataDirRefusesToWriteAdminBundle covers the
+// fail-closed guard: with storage.data_dir unset, filepath.Join would produce
+// the relative path "admin" and drop the admin PRIVATE KEY into the process
+// CWD (the source tree in development). First-boot must refuse instead.
+func TestFirstBootBootstrap_NoDataDirRefusesToWriteAdminBundle(t *testing.T) {
+	srv := withTempServer(t)
+	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
+	srv.config.Storage.DataDir = ""
+
+	c := buildTestIAMComponents(t)
+
+	var banner adminEnrollmentBanner
+	restore := captureFirstBootBanner(t, &banner)
+	defer restore()
+
+	err := srv.firstBootBootstrap(context.Background(), c)
+	require.Error(t, err)
+	var fb *FirstBootBootstrapError
+	require.ErrorAs(t, err, &fb)
+	assert.ErrorIs(t, fb.Cause, ErrNoDataDirForAdminBundle)
+
+	// Nothing may have been written relative to the working directory.
+	_, statErr := os.Stat(filepath.Join(adminBundleDirName, adminKeyFileName))
+	assert.True(t, os.IsNotExist(statErr),
+		"no admin key may be written into the working directory")
+}
+
+// TestFirstBootBootstrap_AdminCertCarriesSystemTenantSPIFFESAN is the
+// regression test for the "no headless path from init to an authenticated CLI"
+// defect: the init-issued admin certificate was CN=admin with NO SANs at all,
+// so REST's tenant resolution found no SPIFFE SAN, fell through to home-realm
+// discovery, found no routing entry on a fresh node, and failed closed with
+// 401 "login tenant could not be resolved". The operator could not use the very
+// credential first-boot had just handed them.
+//
+// The assertion is end-to-end on the resolution contract, not just the SAN
+// bytes: it feeds the issued certificate to the same iam.TenantFromPeerCert
+// core that deriveLoginTenant delegates to, with NO home-realm resolver — i.e.
+// exactly a freshly initialized node — and requires the system tenant back.
+func TestFirstBootBootstrap_AdminCertCarriesSystemTenantSPIFFESAN(t *testing.T) {
+	const trustDomain = "quicbaas.example.test"
+
+	srv := withTempServer(t)
+	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.config.IAM.SPIFFETrustDomain = trustDomain
+
+	c := buildTestIAMComponents(t)
+
+	var banner adminEnrollmentBanner
+	restore := captureFirstBootBanner(t, &banner)
+	defer restore()
+
+	ctx := context.Background()
+	require.NoError(t, srv.firstBootBootstrap(ctx, c))
+
+	certPEM, err := os.ReadFile(banner.CertPath)
+	require.NoError(t, err)
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	// The certificate must carry a SPIFFE URI SAN in the configured trust domain.
+	require.NotEmpty(t, cert.URIs,
+		"the init-issued admin certificate must carry a SPIFFE URI SAN; without one no tenant can be resolved at login")
+	var spiffeURI string
+	for _, u := range cert.URIs {
+		if u.Scheme == "spiffe" {
+			spiffeURI = u.String()
+			break
+		}
 	}
-	defer func() { printFirstBootBannerFn = origPrint }()
+	require.NotEmpty(t, spiffeURI, "expected a spiffe:// URI SAN, got %v", cert.URIs)
+	assert.Contains(t, spiffeURI, trustDomain,
+		"the SAN must be scoped to the configured trust domain")
+	assert.Contains(t, spiffeURI, qrdbsdk.SystemTenantID,
+		"the admin lives in the system tenant, so the SAN must name it")
 
-	require.NoError(t, srv.firstBootBootstrap(context.Background(), c))
-	require.NotEmpty(t, capturedURL, "activation URL must have been captured")
+	// The contract that actually matters: resolution with NO home-realm
+	// resolver — a freshly initialized node — must yield the system tenant.
+	tenantID, err := iam.TenantFromPeerCert(ctx, cert, trustDomain, nil, iam.RealmHints{})
+	require.NoError(t, err,
+		"a fresh node with no HRD entries must still resolve the login tenant from the cert SAN")
+	assert.Equal(t, qrdbsdk.SystemTenantID, tenantID)
+}
 
-	// Canonical route + real token after the prefix.
-	const inviteRoutePrefix = "/ui/#/invite/"
-	assert.Contains(t, capturedURL, inviteRoutePrefix,
-		"activation URL must use the canonical SPA route the router maps")
-	parts := strings.SplitN(capturedURL, inviteRoutePrefix, 2)
-	require.Len(t, parts, 2)
-	assert.NotEmpty(t, parts[1], "the invite token must follow /ui/#/invite/")
+// TestFirstBootBootstrap_AdminCertSANPinsTrustDomain covers the negative half of
+// the pin: a certificate issued under one trust domain must NOT resolve against
+// a different configured trust domain.
+func TestFirstBootBootstrap_AdminCertSANPinsTrustDomain(t *testing.T) {
+	srv := withTempServer(t)
+	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.config.IAM.SPIFFETrustDomain = "issued.example.test"
 
-	// The dead query-string form the SPA router never matched must be gone.
-	assert.NotContains(t, capturedURL, "#/activate?token=",
-		"activation URL must NOT use the dead #/activate?token= route")
-	assert.NotContains(t, capturedURL, "/activate",
-		"activation URL must not reference the dead /activate path at all")
+	c := buildTestIAMComponents(t)
 
-	// The token in the URL must resolve to the stored invite record.
-	record, err := c.inviteStore.GetByToken(context.Background(), parts[1])
-	require.NoError(t, err, "token from the URL must resolve to a stored invite")
-	assert.False(t, record.Used, "invite must not be pre-consumed")
+	var banner adminEnrollmentBanner
+	restore := captureFirstBootBanner(t, &banner)
+	defer restore()
+
+	ctx := context.Background()
+	require.NoError(t, srv.firstBootBootstrap(ctx, c))
+
+	certPEM, err := os.ReadFile(banner.CertPath)
+	require.NoError(t, err)
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	_, err = iam.TenantFromPeerCert(ctx, cert, "someone.else.test", nil, iam.RealmHints{})
+	require.Error(t, err, "a foreign trust domain must fail closed, never resolve")
 }
 
 // ---------------------------------------------------------------------------
 // firstBootBootstrap: fresh storage
 // ---------------------------------------------------------------------------
 
-func TestFirstBootBootstrap_FreshStorage_CreatesAdminAndPrintsInvite(t *testing.T) {
+func TestFirstBootBootstrap_FreshStorage_CreatesAdminAssignment(t *testing.T) {
 	srv := withTempServer(t)
 	srv.config.Auth.AllowPasswordAuth = false
 	srv.config.Auth.InsecureDevMode = false
-	srv.config.Auth.BootstrapAdminUsername = "admin@quicbaas.local"
+	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 
 	c := buildTestIAMComponents(t)
 
-	// Capture stderr output by redirecting printFirstBootBanner through a
-	// buffer — we test firstBootBootstrap directly with a captured writer.
 	var stderrCapture bytes.Buffer
 	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(w interface{ WriteString(string) (int, error) }, url string) {
-		printFirstBootBanner(&stderrCapture, url)
+	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
+		printFirstBootBanner(&stderrCapture, b)
 	}
 	defer func() { printFirstBootBannerFn = origPrint }()
 
-	err := srv.firstBootBootstrap(context.Background(), c)
-	require.NoError(t, err)
+	require.NoError(t, srv.firstBootBootstrap(context.Background(), c))
 
-	// The activation URL must appear in the captured output and must use the
-	// canonical SPA route (#/invite/<token>), not the dead query-string form.
 	output := stderrCapture.String()
-	assert.Contains(t, output, "/ui/#/invite/",
-		"activation URL must be printed to stderr on first boot using the canonical #/invite/ route")
-	assert.NotContains(t, output, "#/activate?token=",
-		"banner must NOT use the dead #/activate?token= route the SPA router does not map")
+	assert.Contains(t, output, "FIRST-BOOT COMPLETE")
+	assert.NotContains(t, output, "/invite/",
+		"the invite activation URL must never be printed again")
 
-	// An active admin assignment must exist.
 	assignments, listErr := c.adminManager.ListAssignments(context.Background(), iam.ListAdminAssignmentsOptions{
 		ActiveOnly: true,
 		Limit:      10,
@@ -163,7 +487,7 @@ func TestFirstBootBootstrap_ExistingAdmin_Skipped(t *testing.T) {
 
 	var bannerCalled bool
 	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ string) {
+	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ adminEnrollmentBanner) {
 		bannerCalled = true
 	}
 	defer func() { printFirstBootBannerFn = origPrint }()
@@ -183,11 +507,10 @@ func TestFirstBootBootstrap_ExistingAdmin_Skipped(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// firstBootBootstrap: insecure dev mode skips first-boot invite path
+// firstBootBootstrap: password-auth deployments never reach the cert path
 // ---------------------------------------------------------------------------
 
 func TestFirstBootBootstrap_SkippedWhenPasswordAuthEnabled(t *testing.T) {
-	// When AllowPasswordAuth=true the bootstrap invite path must not run.
 	srv := withTempServer(t)
 	srv.config.Auth.AllowPasswordAuth = true
 	srv.config.Auth.InsecureDevMode = false
@@ -197,7 +520,7 @@ func TestFirstBootBootstrap_SkippedWhenPasswordAuthEnabled(t *testing.T) {
 
 	var bannerCalled bool
 	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ string) {
+	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ adminEnrollmentBanner) {
 		bannerCalled = true
 	}
 	defer func() { printFirstBootBannerFn = origPrint }()
@@ -208,7 +531,7 @@ func TestFirstBootBootstrap_SkippedWhenPasswordAuthEnabled(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	assert.False(t, bannerCalled, "no invite banner when password auth is enabled")
+	assert.False(t, bannerCalled, "no banner when password auth is enabled")
 
 	assignments, listErr := c.adminManager.ListAssignments(context.Background(), iam.ListAdminAssignmentsOptions{
 		ActiveOnly: true,
@@ -231,45 +554,6 @@ func TestFirstBootBootstrapError_IsAndMessage(t *testing.T) {
 	assert.Contains(t, err.Error(), "first-boot bootstrap")
 	assert.Contains(t, err.Error(), "create bootstrap admin user")
 	assert.Contains(t, err.Error(), "storage failure")
-}
-
-// ---------------------------------------------------------------------------
-// Invite token in store after bootstrap
-// ---------------------------------------------------------------------------
-
-func TestFirstBootBootstrap_InviteTokenStoredWithExpiry(t *testing.T) {
-	srv := withTempServer(t)
-	srv.config.Auth.AllowPasswordAuth = false
-	srv.config.Auth.InsecureDevMode = false
-
-	c := buildTestIAMComponents(t)
-
-	// Intercept the printed URL to extract the token.
-	var capturedURL string
-	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, url string) {
-		capturedURL = url
-	}
-	defer func() { printFirstBootBannerFn = origPrint }()
-
-	require.NoError(t, srv.firstBootBootstrap(context.Background(), c))
-	require.NotEmpty(t, capturedURL, "activation URL must have been captured")
-
-	// Extract token from the canonical route: …/ui/#/invite/<TOKEN>
-	const inviteRoutePrefix = "/ui/#/invite/"
-	parts := strings.SplitN(capturedURL, inviteRoutePrefix, 2)
-	require.Len(t, parts, 2, "activation URL must contain the canonical "+inviteRoutePrefix+" route")
-	token := parts[1]
-
-	// The invite record must be retrievable and not yet used.
-	record, err := c.inviteStore.GetByToken(context.Background(), token)
-	require.NoError(t, err)
-	assert.False(t, record.Used, "invite must not be pre-consumed")
-	assert.True(t, record.ExpiresAt.After(time.Now()), "invite must not be expired")
-	// Per the unified bootstrap (Phase 5): admin user lives in qrdb's
-	// canonical "system" tenant via qrdbfirstboot.Initialize, and the
-	// invite record is bound to that same tenant.
-	assert.Equal(t, "system", record.TenantID)
 }
 
 // ---------------------------------------------------------------------------
@@ -301,10 +585,9 @@ func buildTestIAMComponentsWithFactors(t *testing.T) (*iamComponents, *testutil.
 		t.Fatalf("buildTestIAMComponents: create default tenant: %v", err)
 	}
 	// The bootstrap admin lives in the reserved "system" tenant (qrdb's
-	// SystemTenantID), so provision it too — BindAdminToSOCert's fallback
-	// scans the system tenant, not "default".
+	// SystemTenantID), so provision it too.
 	if _, err := tenantManager.CreateTenant(ctx, iam.CreateTenantOptions{
-		ID:   "system",
+		ID:   qrdbsdk.SystemTenantID,
 		Name: "System Tenant",
 	}); err != nil {
 		t.Fatalf("buildTestIAMComponents: create system tenant: %v", err)
@@ -341,8 +624,53 @@ func buildTestIAMComponentsWithFactors(t *testing.T) (*iamComponents, *testutil.
 		tenantManager:    tenantManager,
 		identityStore:    identityStore,
 		adminManager:     adminManager,
-		inviteStore:      iam.NewMemoryInviteStore(),
+		inviteStore:      iamtest.NewMemoryInviteStore(),
 		qrdbUserIDs:      testutil.NewAutoQRDBUserIDs(),
 		certLoginFactors: certLoginFactors,
 	}, certFactors
+}
+
+// captureFirstBootBanner redirects the banner seam into dst and returns the
+// restore func.
+func captureFirstBootBanner(t *testing.T, dst *adminEnrollmentBanner) func() {
+	t.Helper()
+	orig := printFirstBootBannerFn
+	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
+		*dst = b
+	}
+	return func() { printFirstBootBannerFn = orig }
+}
+
+// recordingInviteStore counts Create calls so a test can assert that the
+// deleted invite path is not silently resurrected.
+type recordingInviteStore struct {
+	iam.InviteStore
+	creates int
+}
+
+// Create records the call and delegates to the wrapped store.
+func (s *recordingInviteStore) Create(
+	ctx context.Context,
+	tenantID, userID string,
+	ttl time.Duration,
+) (string, *iam.InviteRecord, error) {
+	s.creates++
+	return s.InviteStore.Create(ctx, tenantID, userID, ttl)
+}
+
+// writeTestAdminCSR generates an admin-held keypair, writes the corresponding
+// CSR under dir, and returns its path. The key stays in the test — mirroring
+// the operator whose key never reaches the daemon.
+func writeTestAdminCSR(t *testing.T, dir string) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: "admin"},
+	}, key)
+	require.NoError(t, err)
+	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
+	path := filepath.Join(dir, "admin.csr")
+	require.NoError(t, os.WriteFile(path, csrPEM, 0o600))
+	return path
 }

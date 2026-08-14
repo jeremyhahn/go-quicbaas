@@ -177,10 +177,11 @@ iam:
 
 ### Administrator Certificate Bindings
 
-Binding a client certificate to an administrator — either the non-interactive
-`auth.bootstrap_admin_piv_cert_path` path or the init-ceremony SO certificate —
-enrolls an **mtls auth factor** alongside the user-side thumbprint. Both writes
-are required and serve different lookups:
+Binding a client certificate to an administrator — the non-interactive
+`auth.bootstrap_admin_piv_cert_path` path — enrolls an **mtls auth factor**
+alongside the user-side thumbprint. (The SO identity is CSR-based; the server
+never holds officer private keys, so there is no server-issued SO certificate
+to bind.) Both writes are required and serve different lookups:
 
 | Write | Store | Consumer |
 |---|---|---|
@@ -288,7 +289,10 @@ Key metadata:
 - **User Passwords**: No `password` field in user creation or login. All user authentication is WebAuthn or smartcard.
 - **OAuth2 Password Grant**: The `password` grant type (RFC 6749 §4.3) is removed. Use `authorization_code` with PKCE instead.
 - **OAuth2 Implicit Grant**: Removed per OAuth 2.1. Use `authorization_code` with PKCE.
-- **POST /api/v1/auth/login**: Returns 404. Replaced by WebAuthn `/webauthn/login/begin` and `/webauthn/login/finish`.
+- **Password login**: There is no password verb. Login is the
+  unified factor ceremony `POST /api/v1/auth/login/begin` +
+  `POST /api/v1/auth/login/finish` (mtls / fido2 / piv proof), or the
+  tenant WebAuthn mount `/api/v1/iam/{tenant_id}/webauthn/login/{begin,finish}`.
 
 ## Configuration
 

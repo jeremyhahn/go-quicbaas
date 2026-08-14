@@ -188,7 +188,7 @@ func (s *Server) startQUICServer() error {
 	// barrier is unsealed; the instant the barrier is sealed (post-boot
 	// `barrier seal`), only the canonical sealed-window surface remains
 	// reachable.
-	quicServer.SetSealedWindowGate(s.SealedWindowProbe(),
+	quicServer.SetSealedWindowGate(s.SealedWindowProbe(), s.OperationalProbe(),
 		qbsealedwindow.QUICAllowlist(), qbsealedwindow.QRDBQUICAllowlist())
 
 	// Start QUIC server

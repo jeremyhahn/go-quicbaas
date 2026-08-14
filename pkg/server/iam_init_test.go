@@ -23,7 +23,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -64,241 +63,24 @@ func TestIAMComponents_GettersReturnNil(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 11: admin <-> SO certificate SPKI thumbprint binding
-// ---------------------------------------------------------------------------
-
-// TestBindAdminToSOCert_PinsThumbprintAndActivatesAdmin walks the full SO-cert
-// binding flow that backs path (a) of the first-boot ceremony banner.
-// firstBootBootstrap creates a pending admin user; once the operator completes
-// the local ceremony, BindAdminToSOCert pins the SO certificate's canonical
-// login thumbprint — hex(SHA-256(cert.Raw)) — to that user. A subsequent mTLS /
-// PIV handshake presenting the same cert is recognized as the admin.
-//
-// This is the regression guard for the thumbprint-index collision: the binding
-// MUST use the same digest the login lookup computes, and the admin MUST be
-// findable via GetUserByPIVThumbprint(sha256(cert.Raw)).
-func TestBindAdminToSOCert_PinsThumbprintAndActivatesAdmin(t *testing.T) {
-	srv := withTempServer(t)
-	srv.config.Auth.AllowPasswordAuth = false
-	srv.config.Auth.InsecureDevMode = false
-
-	c := buildTestIAMComponents(t)
-	srv.iamComponents = c
-
-	// Run the first-boot bootstrap so the pending admin exists.
-	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ string) {}
-	defer func() { printFirstBootBannerFn = origPrint }()
-
-	require.NoError(t, srv.firstBootBootstrap(context.Background(), c))
-	require.NotEmpty(t, srv.bootstrapAdminUserID, "firstBootBootstrap must record bootstrap admin UserID")
-	require.Equal(t, "system", srv.bootstrapAdminTenantID)
-
-	// Generate an SO certificate to bind. The helper returns the canonical
-	// login thumbprint (sha256(cert.Raw)) — the value every login path uses.
-	soCertPEM, loginThumbWant := newTestSOCertWithSPKI(t, "alice")
-
-	// Bind the SO cert.
-	require.NoError(t, srv.BindAdminToSOCert(context.Background(), soCertPEM))
-
-	// The admin user stores the cert-DER login thumbprint and is active.
-	user, err := c.identityStore.GetUser(context.Background(), srv.bootstrapAdminTenantID, srv.bootstrapAdminUserID)
-	require.NoError(t, err)
-	require.NotNil(t, user)
-	assert.Equal(t, loginThumbWant, user.PIVThumbprint(),
-		"BindAdminToSOCert must persist hex(SHA-256(cert.Raw)) — the canonical login lookup key — as a PIV-attested binding")
-	assert.Equal(t, iam.UserStateActive, user.State,
-		"binding the SO cert must transition the admin from pending to active")
-
-	// Regression: the SO-bound admin MUST be findable by the login lookup,
-	// which keys on sha256(cert.Raw). Before the fix the binding stored the
-	// SPKI digest and this lookup failed with "no user found".
-	ctx := iam.ContextWithTenant(context.Background(), srv.bootstrapAdminTenantID)
-	found, err := c.identityStore.GetUserByPIVThumbprint(ctx, loginThumbWant)
-	require.NoError(t, err, "SO-bound admin must be resolvable by the login lookup key")
-	require.NotNil(t, found)
-	assert.Equal(t, srv.bootstrapAdminUserID, found.ID,
-		"GetUserByPIVThumbprint must resolve the SO-bound admin")
-
-	// Regression: the PIV (cert.Raw) and SPKI digests no longer collide on the
-	// PIV binding — they are distinct values, and only the login
-	// (cert.Raw) digest indexes the user. Looking up by the SPKI digest must NOT
-	// find the admin.
-	spkiDigest, err := SOCertSPKIThumbprint(soCertPEM)
-	require.NoError(t, err)
-	require.NotEqual(t, loginThumbWant, spkiDigest,
-		"login (cert.Raw) and SPKI digests must differ — they are different algorithms")
-	if _, err := c.identityStore.GetUserByPIVThumbprint(ctx, spkiDigest); err == nil {
-		t.Fatal("SPKI digest must NOT resolve a user — only the cert.Raw login digest indexes the admin")
-	}
-}
-
-// TestBindAdminToSOCert_EnrollsMTLSLoginFactor is the regression guard for the
-// SO-cert half of the split-store bug: pinning the thumbprint alone left the
-// bound certificate unable to complete `quicbaas auth login --method mtls`. The
-// binding must ALSO enroll the mtls factor the unified login ceremony resolves.
-func TestBindAdminToSOCert_EnrollsMTLSLoginFactor(t *testing.T) {
-	srv := withTempServer(t)
-	c, certFactors := buildTestIAMComponentsWithFactors(t)
-	srv.iamComponents = c
-
-	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ string) {}
-	defer func() { printFirstBootBannerFn = origPrint }()
-	require.NoError(t, srv.firstBootBootstrap(context.Background(), c))
-
-	soCertPEM, _ := newTestSOCertWithSPKI(t, "alice")
-	require.NoError(t, srv.BindAdminToSOCert(context.Background(), soCertPEM))
-
-	cert, err := parseCertLoginPEM(soCertPEM)
-	require.NoError(t, err)
-	assertCertLoginFactorEnrolled(t, certFactors, cert)
-
-	// The factor must bind to the SAME qrdb user the binding targeted.
-	qrdbUserID, err := c.qrdbUserIDs.QRDBUserID(context.Background(), srv.bootstrapAdminTenantID, srv.bootstrapAdminUserID)
-	require.NoError(t, err)
-	factor, err := certFactors.LookupByCredentialKey(context.Background(),
-		qrdbsdk.AuthFactorMTLS, iam.MTLSSPKICredentialKey(cert))
-	require.NoError(t, err)
-	assert.Equal(t, qrdbUserID, factor.UserID, "the login factor must bind to the bootstrap admin")
-	assert.Equal(t, "so_cert", factor.Metadata["binding_source"])
-}
-
-// TestBindAdminToSOCert_EnrollFailureLeavesNoBinding pins the ordering: the
-// login factor is enrolled BEFORE the thumbprint is persisted, so a failed
-// enrollment leaves no half-bound admin behind.
-func TestBindAdminToSOCert_EnrollFailureLeavesNoBinding(t *testing.T) {
-	srv := withTempServer(t)
-	c, certFactors := buildTestIAMComponentsWithFactors(t)
-	srv.iamComponents = c
-
-	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ string) {}
-	defer func() { printFirstBootBannerFn = origPrint }()
-	require.NoError(t, srv.firstBootBootstrap(context.Background(), c))
-
-	certFactors.AddErr = errors.New("factor store unavailable")
-	soCertPEM, _ := newTestSOCertWithSPKI(t, "alice")
-
-	err := srv.BindAdminToSOCert(context.Background(), soCertPEM)
-	require.Error(t, err, "a factor-enrollment failure must fail the SO-cert binding closed")
-	var bootErr *FirstBootBootstrapError
-	require.ErrorAs(t, err, &bootErr)
-	assert.Equal(t, "enroll so cert mtls login factor", bootErr.Op)
-
-	user, err := c.identityStore.GetUser(context.Background(), srv.bootstrapAdminTenantID, srv.bootstrapAdminUserID)
-	require.NoError(t, err)
-	assert.Empty(t, user.PIVThumbprint(),
-		"no thumbprint may be pinned when the login factor could not be enrolled")
-}
-
-// TestBindAdminToSOCert_RebindingSameCertIsIdempotent ensures binding the SAME
-// SO certificate twice yields the same login thumbprint and leaves the admin
-// resolvable. The login lookup keys on the full certificate DER (cert.Raw), so
-// — unlike an SPKI binding — a renewed certificate with a fresh serial produces
-// a NEW thumbprint; idempotence here is per-certificate, not per-public-key.
-func TestBindAdminToSOCert_RebindingSameCertIsIdempotent(t *testing.T) {
-	srv := withTempServer(t)
-	srv.config.Auth.AllowPasswordAuth = false
-	srv.config.Auth.InsecureDevMode = false
-
-	c := buildTestIAMComponents(t)
-	srv.iamComponents = c
-
-	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ string) {}
-	defer func() { printFirstBootBannerFn = origPrint }()
-	require.NoError(t, srv.firstBootBootstrap(context.Background(), c))
-
-	priv := mustGenerateECKey(t)
-	cert := mustIssueSelfSignedCert(t, priv, "alice", time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
-
-	require.NoError(t, srv.BindAdminToSOCert(context.Background(), cert))
-	user1, err := c.identityStore.GetUser(context.Background(), "system", srv.bootstrapAdminUserID)
-	require.NoError(t, err)
-	first := user1.PIVThumbprint()
-
-	require.NoError(t, srv.BindAdminToSOCert(context.Background(), cert))
-	user2, err := c.identityStore.GetUser(context.Background(), "system", srv.bootstrapAdminUserID)
-	require.NoError(t, err)
-	assert.Equal(t, first, user2.PIVThumbprint(),
-		"re-binding the same SO certificate must yield the same login thumbprint")
-
-	want, err := soCertLoginThumbprint(cert)
-	require.NoError(t, err)
-	assert.Equal(t, want, first,
-		"stored thumbprint must be hex(SHA-256(cert.Raw))")
-}
-
-// TestBindAdminToSOCert_RejectsMissingBootstrapAdmin ensures the binding
-// path returns a FirstBootBootstrapError wrapping
-// ErrBootstrapAdminMissing when called before firstBootBootstrap has
-// populated the bootstrap admin. The outer error wraps the canonical
-// ErrFirstBootBootstrap sentinel for errors.Is traversal; the cause
-// preserves the underlying ErrBootstrapAdminMissing for callers that
-// inspect the typed FirstBootBootstrapError.
-func TestBindAdminToSOCert_RejectsMissingBootstrapAdmin(t *testing.T) {
-	srv := withTempServer(t)
-	// Intentionally do NOT call firstBootBootstrap.
-	srv.iamComponents = nil
-
-	soCertPEM, _ := newTestSOCertWithSPKI(t, "alice")
-	err := srv.BindAdminToSOCert(context.Background(), soCertPEM)
-	if err == nil {
-		t.Fatal("expected FirstBootBootstrapError when iamComponents is nil")
-	}
-	if !errors.Is(err, ErrFirstBootBootstrap) {
-		t.Errorf("got %v, want errors.Is(ErrFirstBootBootstrap)", err)
-	}
-	var typedErr *FirstBootBootstrapError
-	if !errors.As(err, &typedErr) {
-		t.Fatalf("got %T, want *FirstBootBootstrapError", err)
-	}
-	if !errors.Is(typedErr.Cause, ErrBootstrapAdminMissing) {
-		t.Errorf("typedErr.Cause = %v, want errors.Is(ErrBootstrapAdminMissing)", typedErr.Cause)
-	}
-}
-
-// TestBindAdminToSOCert_RejectsMalformedPEM verifies the binding path surfaces
-// soCertLoginThumbprint errors as a typed FirstBootBootstrapError.
-func TestBindAdminToSOCert_RejectsMalformedPEM(t *testing.T) {
-	srv := withTempServer(t)
-	c := buildTestIAMComponents(t)
-	srv.iamComponents = c
-
-	origPrint := printFirstBootBannerFn
-	printFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ string) {}
-	defer func() { printFirstBootBannerFn = origPrint }()
-	require.NoError(t, srv.firstBootBootstrap(context.Background(), c))
-
-	if err := srv.BindAdminToSOCert(context.Background(), []byte("not a pem block")); err == nil {
-		t.Fatal("expected error for malformed PEM input")
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Test fixtures (local to this test file; see test_helpers_test.go for
 // shared helpers like withTempServer / buildTestIAMComponents).
 // ---------------------------------------------------------------------------
 
-// newTestSOCertWithSPKI generates a self-signed SO certificate and returns its
-// PEM bytes alongside the expected canonical login thumbprint —
-// hex(SHA-256(cert.Raw)) — which is exactly what BindAdminToSOCert pins to the
-// PIV binding index and what every login path computes. The thumbprint is
-// produced via the same soCertLoginThumbprint helper the production binding
-// uses, so the tests assert the real code path. (Despite the historical name,
-// the returned digest is the cert-DER login thumbprint, NOT the SPKI digest —
-// the SPKI digest collided with the PIV index and was unreachable by any login
-// lookup; see BindAdminToSOCert.)
+// newTestSOCertWithSPKI generates a self-signed client certificate and returns
+// its PEM bytes alongside the CANONICAL mTLS identifier — qrdb's SPKI
+// thumbprint (base64url SHA-256 over SubjectPublicKeyInfo). The thumbprint is
+// produced via the same parseCertLoginPEM + qrdbsdk.ComputeSPKIThumbprint pair
+// the production binding paths use, so the tests assert the real code path.
 func newTestSOCertWithSPKI(t *testing.T, commonName string) ([]byte, string) {
 	t.Helper()
 	priv := mustGenerateECKey(t)
 	certPEM := mustIssueSelfSignedCert(t, priv, commonName, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
-	thumbprint, err := soCertLoginThumbprint(certPEM)
+	cert, err := parseCertLoginPEM(certPEM)
 	if err != nil {
 		t.Fatalf("compute login thumbprint: %v", err)
 	}
-	return certPEM, thumbprint
+	return certPEM, qrdbsdk.ComputeSPKIThumbprint(cert)
 }
 
 // mustGenerateECKey returns a fresh P-256 ECDSA private key.
@@ -374,29 +156,6 @@ func TestReconcileAdminRole_NilIdentityStoreIsNoOp(t *testing.T) {
 	// Defensive: passing a nil identity store should not panic and should
 	// return nil so the caller's bootstrap flow continues unaffected.
 	require.NoError(t, reconcileAdminRole(context.Background(), nil))
-}
-
-// TestBindAdminToSOCert_RejectsNilIdentityStore covers the second guard of
-// BindAdminToSOCert: when iamComponents is present but its identityStore is nil,
-// the bind must still fail closed with a typed FirstBootBootstrapError wrapping
-// ErrBootstrapAdminMissing (rather than dereferencing the nil store).
-func TestBindAdminToSOCert_RejectsNilIdentityStore(t *testing.T) {
-	srv := withTempServer(t)
-	// Present iamComponents, but with a nil identityStore.
-	srv.iamComponents = &iamComponents{}
-
-	soCertPEM, _ := newTestSOCertWithSPKI(t, "alice")
-	err := srv.BindAdminToSOCert(context.Background(), soCertPEM)
-	if err == nil {
-		t.Fatal("expected error when identityStore is nil")
-	}
-	var typedErr *FirstBootBootstrapError
-	if !errors.As(err, &typedErr) {
-		t.Fatalf("got %T, want *FirstBootBootstrapError", err)
-	}
-	if !errors.Is(typedErr.Cause, ErrBootstrapAdminMissing) {
-		t.Errorf("typedErr.Cause = %v, want errors.Is(ErrBootstrapAdminMissing)", typedErr.Cause)
-	}
 }
 
 // writeTestCAPEM generates a self-signed ECDSA CA certificate and writes it as

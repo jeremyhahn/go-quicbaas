@@ -28,6 +28,8 @@
     ProjectRole,
     GrantAgentRoleRequest,
     RevokeAgentRoleRequest,
+    CreateProjectRequest,
+    UpdateProjectRequest,
   } from '@quicbaas/sdk';
   import type { AgentRegistration } from '@quicbaas/sdk';
   import {
@@ -37,6 +39,7 @@
     Plus,
     RefreshCw,
     Trash2,
+    Pencil,
     ShieldOff,
     Shield,
     Users,
@@ -94,13 +97,36 @@
   let showCreateDialog = $state(false);
   let createName = $state('');
   let createDescription = $state('');
+  let createWorkspacePath = $state('');
+  let createGitRepoUrl = $state('');
+  let createGitBranch = $state('');
+  let createHostAffinity = $state('');
+  let createTokenBudget = $state(0);
+  let createGpuMinutes = $state(0);
+  let createMaxConcurrency = $state(0);
   let createError = $state('');
   let creating = $state(false);
+
+  /**
+   * numOrUndefined treats 0 (and any non-positive value) as "unlimited" —
+   * the field is omitted from the request entirely rather than sent as an
+   * explicit 0.
+   */
+  function numOrUndefined(v: number): number | undefined {
+    return v > 0 ? v : undefined;
+  }
 
   function openCreateDialog(): void {
     showCreateDialog = true;
     createName = '';
     createDescription = '';
+    createWorkspacePath = '';
+    createGitRepoUrl = '';
+    createGitBranch = '';
+    createHostAffinity = '';
+    createTokenBudget = 0;
+    createGpuMinutes = 0;
+    createMaxConcurrency = 0;
     createError = '';
   }
 
@@ -113,11 +139,19 @@
     createError = '';
     try {
       const client = await getSDKClient();
-      await client.projects.createProject({
+      const req: CreateProjectRequest = {
         tenant_id: orchestratorStore.activeTenantID,
         name: createName.trim(),
         description: createDescription.trim() || undefined,
-      });
+        workspace_path: createWorkspacePath.trim() || undefined,
+        git_repo_url: createGitRepoUrl.trim() || undefined,
+        git_default_branch: createGitBranch.trim() || undefined,
+        host_affinity: createHostAffinity.trim() || undefined,
+        token_budget: numOrUndefined(createTokenBudget),
+        gpu_minutes: numOrUndefined(createGpuMinutes),
+        max_concurrency: numOrUndefined(createMaxConcurrency),
+      };
+      await client.projects.createProject(req);
       showToast('success', `Project "${createName.trim()}" created`);
       showCreateDialog = false;
       await fetchAll();
@@ -150,6 +184,108 @@
       showToast('error', `Delete failed: ${msg}`);
     } finally {
       deleting = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Edit project
+  // ---------------------------------------------------------------------------
+
+  let editTarget = $state<Project | null>(null);
+  let editDescription = $state('');
+  let editWorkspacePath = $state('');
+  let editGitRepoUrl = $state('');
+  let editGitBranch = $state('');
+  let editHostAffinity = $state('');
+  let editTokenBudget = $state(0);
+  let editGpuMinutes = $state(0);
+  let editMaxConcurrency = $state(0);
+  let editError = $state('');
+  let editing = $state(false);
+
+  function openEditDialog(project: Project): void {
+    editTarget = project;
+    editDescription = project.description ?? '';
+    editWorkspacePath = project.workspace?.path ?? '';
+    editGitRepoUrl = project.git?.repo_url ?? '';
+    editGitBranch = project.git?.default_branch ?? '';
+    editHostAffinity = project.host_affinity ?? '';
+    editTokenBudget = project.quotas?.token_budget ?? 0;
+    editGpuMinutes = project.quotas?.gpu_minutes ?? 0;
+    editMaxConcurrency = project.quotas?.max_concurrency ?? 0;
+    editError = '';
+  }
+
+  /**
+   * stringIfChanged returns the trimmed value when it is non-empty and
+   * differs from the original — matching UpdateProjectRequest's
+   * presence-based "set" semantics (there is no clear_* flag for these
+   * fields, so a cleared field simply isn't sent).
+   */
+  function stringIfChanged(next: string, original: string): string | undefined {
+    const trimmed = next.trim();
+    if (trimmed === '' || trimmed === original) return undefined;
+    return trimmed;
+  }
+
+  /** numIfChanged mirrors stringIfChanged for the numeric quota fields. */
+  function numIfChanged(next: number, original: number | undefined): number | undefined {
+    const parsed = numOrUndefined(next);
+    if (parsed === undefined || parsed === original) return undefined;
+    return parsed;
+  }
+
+  async function submitEdit(): Promise<void> {
+    if (!editTarget) return;
+    editing = true;
+    editError = '';
+    try {
+      const client = await getSDKClient();
+      const req: UpdateProjectRequest = {
+        tenant_id: orchestratorStore.activeTenantID,
+        project_id: editTarget.id,
+      };
+
+      const trimmedDesc = editDescription.trim();
+      const originalDesc = editTarget.description ?? '';
+      if (trimmedDesc !== originalDesc) {
+        if (trimmedDesc === '') {
+          req.clear_description = true;
+        } else {
+          req.description = trimmedDesc;
+        }
+      }
+
+      const workspacePath = stringIfChanged(editWorkspacePath, editTarget.workspace?.path ?? '');
+      if (workspacePath !== undefined) req.workspace_path = workspacePath;
+
+      const gitRepoUrl = stringIfChanged(editGitRepoUrl, editTarget.git?.repo_url ?? '');
+      if (gitRepoUrl !== undefined) req.git_repo_url = gitRepoUrl;
+
+      const gitBranch = stringIfChanged(editGitBranch, editTarget.git?.default_branch ?? '');
+      if (gitBranch !== undefined) req.git_default_branch = gitBranch;
+
+      const hostAffinity = stringIfChanged(editHostAffinity, editTarget.host_affinity ?? '');
+      if (hostAffinity !== undefined) req.host_affinity = hostAffinity;
+
+      const tokenBudget = numIfChanged(editTokenBudget, editTarget.quotas?.token_budget);
+      if (tokenBudget !== undefined) req.token_budget = tokenBudget;
+
+      const gpuMinutes = numIfChanged(editGpuMinutes, editTarget.quotas?.gpu_minutes);
+      if (gpuMinutes !== undefined) req.gpu_minutes = gpuMinutes;
+
+      const maxConcurrency = numIfChanged(editMaxConcurrency, editTarget.quotas?.max_concurrency);
+      if (maxConcurrency !== undefined) req.max_concurrency = maxConcurrency;
+
+      await client.projects.updateProject(req);
+      showToast('success', `Project "${editTarget.name}" updated`);
+      editTarget = null;
+      await fetchAll();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      editError = `Update failed: ${msg}`;
+    } finally {
+      editing = false;
     }
   }
 
@@ -257,7 +393,7 @@
     aria-label="Create project"
     onkeydown={(e) => { if (e.key === 'Escape') { showCreateDialog = false; } }}
   >
-    <div class="modal-box max-w-sm">
+    <div class="modal-box max-w-md">
       <h3 class="font-bold text-base">New Project</h3>
       <div class="form-control mt-4 gap-3">
         <div>
@@ -284,6 +420,103 @@
             bind:value={createDescription}
           />
         </div>
+        <div>
+          <label class="label py-1" for="proj-workspace-path">
+            <span class="label-text text-xs">Workspace Path</span>
+          </label>
+          <input
+            id="proj-workspace-path"
+            type="text"
+            class="input input-bordered input-sm w-full font-mono"
+            placeholder="/home/agent/workspace"
+            bind:value={createWorkspacePath}
+          />
+          <p class="text-xs text-base-content/40 mt-1">
+            Becomes the working directory for sessions spawned under this project.
+          </p>
+        </div>
+        <div>
+          <label class="label py-1" for="proj-git-url">
+            <span class="label-text text-xs">Git Repo URL</span>
+          </label>
+          <input
+            id="proj-git-url"
+            type="text"
+            class="input input-bordered input-sm w-full"
+            placeholder="https://github.com/org/repo.git"
+            bind:value={createGitRepoUrl}
+          />
+        </div>
+        <div>
+          <label class="label py-1" for="proj-git-branch">
+            <span class="label-text text-xs">Git Branch</span>
+          </label>
+          <input
+            id="proj-git-branch"
+            type="text"
+            class="input input-bordered input-sm w-full"
+            placeholder="main"
+            bind:value={createGitBranch}
+          />
+        </div>
+
+        <details class="collapse collapse-arrow bg-base-100 rounded-box">
+          <summary class="collapse-title text-xs font-semibold py-2 min-h-0">Advanced</summary>
+          <div class="collapse-content flex flex-col gap-3 pt-1">
+            <div>
+              <label class="label py-1" for="proj-host-affinity">
+                <span class="label-text text-xs">Host Affinity</span>
+              </label>
+              <input
+                id="proj-host-affinity"
+                type="text"
+                class="input input-bordered input-sm w-full"
+                placeholder="Optional daemon host/name"
+                bind:value={createHostAffinity}
+              />
+            </div>
+            <div>
+              <label class="label py-1" for="proj-token-budget">
+                <span class="label-text text-xs">Token Budget</span>
+              </label>
+              <input
+                id="proj-token-budget"
+                type="number"
+                min="0"
+                class="input input-bordered input-sm w-full"
+                placeholder="0 = unlimited"
+                bind:value={createTokenBudget}
+              />
+            </div>
+            <div>
+              <label class="label py-1" for="proj-gpu-minutes">
+                <span class="label-text text-xs">GPU Minutes</span>
+              </label>
+              <input
+                id="proj-gpu-minutes"
+                type="number"
+                min="0"
+                class="input input-bordered input-sm w-full"
+                placeholder="0 = unlimited"
+                bind:value={createGpuMinutes}
+              />
+            </div>
+            <div>
+              <label class="label py-1" for="proj-max-concurrency">
+                <span class="label-text text-xs">Max Concurrency</span>
+              </label>
+              <input
+                id="proj-max-concurrency"
+                type="number"
+                min="0"
+                class="input input-bordered input-sm w-full"
+                placeholder="0 = unlimited"
+                bind:value={createMaxConcurrency}
+              />
+            </div>
+          </div>
+        </details>
+
         {#if createError}
           <p class="text-xs text-error">{createError}</p>
         {/if}
@@ -350,6 +583,156 @@
     </div>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="modal-backdrop" onclick={() => { deleteTarget = null; }} onkeydown={() => {}}></div>
+  </dialog>
+{/if}
+
+<!-- Edit project dialog -->
+{#if editTarget}
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <dialog
+    class="modal modal-open"
+    aria-modal="true"
+    aria-label="Edit project"
+    onkeydown={(e) => { if (e.key === 'Escape') { editTarget = null; } }}
+  >
+    <div class="modal-box max-w-md">
+      <h3 class="font-bold text-base">Edit Project — {editTarget.name}</h3>
+      <div class="form-control mt-4 gap-3">
+        <div>
+          <label class="label py-1" for="edit-proj-desc">
+            <span class="label-text text-xs">Description</span>
+          </label>
+          <input
+            id="edit-proj-desc"
+            type="text"
+            class="input input-bordered input-sm w-full"
+            placeholder="Optional description"
+            bind:value={editDescription}
+          />
+        </div>
+        <div>
+          <label class="label py-1" for="edit-proj-workspace-path">
+            <span class="label-text text-xs">Workspace Path</span>
+          </label>
+          <input
+            id="edit-proj-workspace-path"
+            type="text"
+            class="input input-bordered input-sm w-full font-mono"
+            placeholder="/home/agent/workspace"
+            bind:value={editWorkspacePath}
+          />
+          <p class="text-xs text-base-content/40 mt-1">
+            Becomes the working directory for sessions spawned under this project.
+          </p>
+        </div>
+        <div>
+          <label class="label py-1" for="edit-proj-git-url">
+            <span class="label-text text-xs">Git Repo URL</span>
+          </label>
+          <input
+            id="edit-proj-git-url"
+            type="text"
+            class="input input-bordered input-sm w-full"
+            placeholder="https://github.com/org/repo.git"
+            bind:value={editGitRepoUrl}
+          />
+        </div>
+        <div>
+          <label class="label py-1" for="edit-proj-git-branch">
+            <span class="label-text text-xs">Git Branch</span>
+          </label>
+          <input
+            id="edit-proj-git-branch"
+            type="text"
+            class="input input-bordered input-sm w-full"
+            placeholder="main"
+            bind:value={editGitBranch}
+          />
+        </div>
+
+        <details class="collapse collapse-arrow bg-base-100 rounded-box">
+          <summary class="collapse-title text-xs font-semibold py-2 min-h-0">Advanced</summary>
+          <div class="collapse-content flex flex-col gap-3 pt-1">
+            <div>
+              <label class="label py-1" for="edit-proj-host-affinity">
+                <span class="label-text text-xs">Host Affinity</span>
+              </label>
+              <input
+                id="edit-proj-host-affinity"
+                type="text"
+                class="input input-bordered input-sm w-full"
+                placeholder="Optional daemon host/name"
+                bind:value={editHostAffinity}
+              />
+            </div>
+            <div>
+              <label class="label py-1" for="edit-proj-token-budget">
+                <span class="label-text text-xs">Token Budget</span>
+              </label>
+              <input
+                id="edit-proj-token-budget"
+                type="number"
+                min="0"
+                class="input input-bordered input-sm w-full"
+                placeholder="0 = unlimited"
+                bind:value={editTokenBudget}
+              />
+            </div>
+            <div>
+              <label class="label py-1" for="edit-proj-gpu-minutes">
+                <span class="label-text text-xs">GPU Minutes</span>
+              </label>
+              <input
+                id="edit-proj-gpu-minutes"
+                type="number"
+                min="0"
+                class="input input-bordered input-sm w-full"
+                placeholder="0 = unlimited"
+                bind:value={editGpuMinutes}
+              />
+            </div>
+            <div>
+              <label class="label py-1" for="edit-proj-max-concurrency">
+                <span class="label-text text-xs">Max Concurrency</span>
+              </label>
+              <input
+                id="edit-proj-max-concurrency"
+                type="number"
+                min="0"
+                class="input input-bordered input-sm w-full"
+                placeholder="0 = unlimited"
+                bind:value={editMaxConcurrency}
+              />
+            </div>
+          </div>
+        </details>
+
+        {#if editError}
+          <p class="text-xs text-error">{editError}</p>
+        {/if}
+      </div>
+      <div class="modal-action">
+        <button
+          class="btn btn-sm btn-ghost"
+          onclick={() => { editTarget = null; }}
+          disabled={editing}
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-sm btn-primary"
+          onclick={() => { void submitEdit(); }}
+          disabled={editing}
+        >
+          {#if editing}
+            <span class="loading loading-spinner loading-xs"></span>
+          {/if}
+          Save
+        </button>
+      </div>
+    </div>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="modal-backdrop" onclick={() => { editTarget = null; }} onkeydown={() => {}}></div>
   </dialog>
 {/if}
 
@@ -450,12 +833,29 @@
               {#if project.description}
                 <div class="text-xs text-base-content/40 truncate mt-0.5">{project.description}</div>
               {/if}
+              {#if project.workspace?.path}
+                <div
+                  class="text-xs font-mono text-base-content/40 truncate mt-0.5"
+                  title={project.workspace.path}
+                >
+                  {project.workspace.path}
+                </div>
+              {/if}
             </div>
 
             <!-- Tenant + timestamps -->
             <div class="hidden sm:flex items-center gap-4 text-xs text-base-content/40 shrink-0">
               <span class="font-mono">{project.id.slice(0, 8)}&hellip;</span>
             </div>
+
+            <!-- Edit button -->
+            <button
+              class="btn btn-ghost btn-xs btn-square"
+              onclick={() => { openEditDialog(project); }}
+              aria-label="Edit project"
+            >
+              <Pencil class="h-3.5 w-3.5" />
+            </button>
 
             <!-- Delete button -->
             <button

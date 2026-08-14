@@ -243,3 +243,41 @@ func (s *tenantRoutingKVStore) Exists(ctx context.Context, key string) (bool, er
 	}
 	return store.Exists(ctx, key)
 }
+
+// InviteStoreError reports a failure constructing the per-tenant invitation
+// store.
+type InviteStoreError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *InviteStoreError) Error() string {
+	return "iam: failed to build the per-tenant invite store: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *InviteStoreError) Unwrap() error { return e.Cause }
+
+// buildTenantInviteStore constructs the IAM invitation store over go-qrdb's
+// per-tenant invitation store.
+//
+// quicbaas keeps no invite store of its own. Token generation, digesting,
+// single-use redemption and tenant routing are all qrdb's, which is the point:
+// this repository previously kept a parallel copy of each. A nil node yields a
+// nil store, which the caller treats as "invitations unavailable" rather than
+// silently falling back to a non-persistent one — an invite that vanished on
+// restart would strand the operator holding the activation URL.
+func (s *Server) buildTenantInviteStore() (iam.InviteStore, error) {
+	if s.qrdbNode == nil {
+		return nil, nil
+	}
+	svcs := s.qrdbNode.Services()
+	if svcs == nil || svcs.StoreResolver == nil {
+		return nil, nil
+	}
+	store, err := qrdbsdk.NewTenantInviteStore(svcs.StoreResolver)
+	if err != nil {
+		return nil, &InviteStoreError{Cause: err}
+	}
+	return iam.NewQRDBInviteStore(store), nil
+}

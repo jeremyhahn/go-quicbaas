@@ -50,8 +50,9 @@ import (
 // sseTestServer wires the real handler helpers against a MemorySessionEventLog
 // so we can exercise the full SSE path over a real HTTP connection.
 type sseTestServer struct {
-	log orchestration.SessionEventLog
-	srv *httptest.Server
+	log      orchestration.SessionEventLog
+	presence *orchestration.SessionPresence
+	srv      *httptest.Server
 }
 
 // newSSETestServer constructs a test HTTP server that routes
@@ -59,6 +60,10 @@ type sseTestServer struct {
 func newSSETestServer(t *testing.T) *sseTestServer {
 	t.Helper()
 	log := orchestration.NewMemorySessionEventLog()
+	// A short linger keeps the reconnect-suppression window observable in a
+	// test without ever waiting on wall-clock time in the common path.
+	presence := orchestration.NewSessionPresence(50*time.Millisecond, nil)
+	t.Cleanup(presence.Close)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Extract sessionID from path: /sessions/{id}/events.
@@ -97,12 +102,22 @@ func newSSETestServer(t *testing.T) *sseTestServer {
 			respondSessionHistoryJSON(ctx, w, r, log, tenantID, sessionID, fromSeq)
 			return
 		}
-		serveSessionEventsSSE(ctx, w, r, log, tenantID, sessionID, fromSeq, follow, sessionOperatorID(ctx, tenantID))
+		serveSessionEventsSSE(ctx, w, r, sessionEventStreamOptions{
+			Log:        log,
+			Presence:   presence,
+			TenantID:   tenantID,
+			SessionID:  sessionID,
+			FromSeq:    fromSeq,
+			Follow:     follow,
+			OperatorID: sessionOperatorID(ctx, tenantID),
+			Interface:  "web",
+		})
 	})
 
 	return &sseTestServer{
-		log: log,
-		srv: httptest.NewServer(handler),
+		log:      log,
+		presence: presence,
+		srv:      httptest.NewServer(handler),
 	}
 }
 

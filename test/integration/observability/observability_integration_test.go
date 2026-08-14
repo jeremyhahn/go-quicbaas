@@ -17,6 +17,9 @@ package observability
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"fmt"
 	"testing"
 	"time"
@@ -82,12 +85,18 @@ func TestCompleteFlow(t *testing.T) {
 	defer tracer.Shutdown(ctx)
 
 	// 3. Initialize Auth
-	authManager, err := auth.NewInMemoryAuthManager(&auth.AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key-12345",
-		TokenTTL:  1 * time.Hour,
-		MaxTokens: 10,
-	}, log)
+	signingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	authCfg := &auth.AuthConfig{
+		Enabled:         true,
+		JWTSigningKeyID: "test-observability-signing-key",
+		TokenTTL:        1 * time.Hour,
+		MaxTokens:       10,
+	}
+	auth.SetAsymmetricSigning(authCfg, signingKey)
+
+	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
 
 	// Create test user

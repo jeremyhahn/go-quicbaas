@@ -68,9 +68,6 @@ func TestMapRequestToPermission_XKMSWebAuthnEnrollmentDoesNotWidenSiblings(t *te
 		{"iam sessions", "/api/v1/iam/sessions", http.MethodGet, "users", "read"},
 		{"iam audit", "/api/v1/iam/audit", http.MethodGet, "audit", "query"},
 		{"iam approve", "/api/v1/iam/users/u1/approve", http.MethodPost, "users", "enable"},
-		// The legacy /api/v1/tenants WebAuthn mount is unchanged: it keeps the
-		// surface-wide tenants:* mapping its own gate has always used.
-		{"legacy register begin", "/api/v1/tenants/system/webauthn/register/begin", http.MethodPost, "tenants", "create"},
 	}
 
 	for _, tc := range tests {

@@ -72,14 +72,26 @@ func TestGetToolQRDBPermission_Mapped(t *testing.T) {
 	}
 }
 
+// TestGetToolQRDBPermission_Unmapped pins the default-deny half of the mapper.
+//
+// Two distinct cases must stay unmapped:
+//
+//  1. the reviewed, deliberately dead surfaces declared in unmappedToolGroups
+//     (authz_qrdb_unmapped.go) — no sibling REST/gRPC rule exists to copy, so
+//     guessing a permission at a security boundary is worse than denying;
+//  2. any name that is not a registered tool, including a NEAR MISS of one
+//     ("quicbaas_kms_generate" vs the real "quicbaas_kms_generate_key"). The
+//     KMS, crypto and secrets families are mapped exactly, one entry per tool,
+//     with no prefix catch-all, so a near miss must not inherit a permission.
 func TestGetToolQRDBPermission_Unmapped(t *testing.T) {
-	// Surfaces with no qrdb permission family must be unmapped (default-deny).
 	for _, tool := range []string{
+		// Declared dead: see unmappedToolGroups.
+		"quicbaas_iam_group_create",
+		"quicbaas_iam_policy_update",
+		"quicbaas_mfa_enroll_begin",
+		"quicbaas_login_begin",
+		// Not registered tools.
 		"quicbaas_kms_generate",
-		"quicbaas_crypto_sign",
-		"quicbaas_secrets_store",
-		"agent_enable",
-		"quicbaas_embedding_generate",
 		"quicbaas_unknown_thing",
 	} {
 		_, _, ok := getToolQRDBPermission(tool)

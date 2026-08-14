@@ -34,14 +34,6 @@ func TestQUICKMSClient_StructCreation(t *testing.T) {
 	assert.NotNil(t, client)
 }
 
-func TestQUICDEKClient_StructCreation(t *testing.T) {
-	t.Parallel()
-
-	// Test struct can be created with nil client for interface compliance
-	client := &QUICDEKClient{client: nil}
-	assert.NotNil(t, client)
-}
-
 func TestQUICSecretsClient_StructCreation(t *testing.T) {
 	t.Parallel()
 
@@ -188,11 +180,6 @@ func TestQUICClientInterfaceCompliance(t *testing.T) {
 		var _ KMSClient = (*QUICKMSClient)(nil)
 	})
 
-	t.Run("QUICDEKClient_implements_DEKClient", func(t *testing.T) {
-		t.Parallel()
-		var _ DEKClient = (*QUICDEKClient)(nil)
-	})
-
 	t.Run("QUICSecretsClient_implements_SecretsClient", func(t *testing.T) {
 		t.Parallel()
 		var _ SecretsClient = (*QUICSecretsClient)(nil)
@@ -237,12 +224,6 @@ func TestQUICErrorHandling(t *testing.T) {
 
 func TestQUICKMSClient_NilClient(t *testing.T) {
 	client := &QUICKMSClient{client: nil}
-	assert.NotNil(t, client)
-}
-
-// TestQUICDEKClient_NilClient verifies that nil client struct exists.
-func TestQUICDEKClient_NilClient(t *testing.T) {
-	client := &QUICDEKClient{client: nil}
 	assert.NotNil(t, client)
 }
 

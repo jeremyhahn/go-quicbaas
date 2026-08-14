@@ -33,6 +33,7 @@ import (
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -133,6 +134,10 @@ type quicBaaS struct {
 	backupMgr    interfaces.BackupManager
 	logger       interfaces.Logger
 
+	// secretRegistry is the unified secret resolver registry built by the
+	// server; wired via SetSecretRegistry so embedded SDK clients can adopt it.
+	secretRegistry *qrdbsecret.ResolverRegistry
+
 	// QRDB SDK client provider for type-safe access to core KV operations
 	qrdbClient QRDBClientProvider
 
@@ -164,6 +169,9 @@ type quicBaaS struct {
 	ollamaService             OllamaService
 	certificateService        CertificateService
 	trustService              TrustService
+	attestationService        AttestationService
+	pivService                PIVService
+	fido2Service              FIDO2Service
 	acmeService               ACMEServicer
 	dynamicSecretsService     DynamicSecretsService
 	objectStorageService      ObjectStorageService
@@ -172,6 +180,7 @@ type quicBaaS struct {
 	objectTransferService     ObjectTransferService
 	schedulerService          SchedulerService
 	projectService            ProjectService
+	accountService            AccountService
 	agentAdminService         AgentAdminService
 	agentService              orchestration.AgentService
 	messagingService          messaging.Service
@@ -588,6 +597,23 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		}
 	}
 
+	// The Attestation service is always wired: its verifier half composes
+	// go-xkms pkg/attestation and needs nothing from the deployment, while
+	// its orchestration half reports ErrAttestationNoAttestor until an
+	// application registers a ContainerAttestor. Constructing it
+	// unconditionally means Security().Attestation() never returns nil and
+	// every transport can route to it.
+	svc.attestationService = NewAttestationService(b.attestationTrustAnchors, b.containerAttestor)
+
+	// The PIV and FIDO2 services are always wired. PIV is a stateless
+	// delegate to the composed go-xkms service singleton (typed
+	// not-initialized errors come from go-xkms until the singleton is up).
+	// FIDO2 resolves the per-tenant xkms relying-party service through the
+	// IAM WebAuthn factory at call time and reports ErrFIDO2NotConfigured
+	// until that manager is wired.
+	svc.pivService = NewPIVService()
+	svc.fido2Service = NewFIDO2Service(svc)
+
 	// Wire the composed ACME (RFC 8555) servicer when pkg/server built one.
 	// ACME composition (CA + qrdb-backed storage + base URL) lives in
 	// pkg/server where those dependencies are available; the builder only
@@ -693,6 +719,21 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 
 	svc.projectService = NewProjectService(orchestration.NewProjectStore(orchKV, orchOpts...))
 	svc.agentAdminService = NewAgentAdminService(orchestration.NewAgentRegistry(orchKV, orchOpts...))
+
+	// Pooled provider accounts. Metadata lives in the same orchestration KV
+	// as projects/agents; the credential envelope lives behind the platform
+	// SecretsManager (tenant-specific DEK — see
+	// orchestration/account_secret_store.go), never in the KV record. When no
+	// SecretsManager is configured the secret half is nil and every
+	// credential-bearing verb fails closed with an AccountStoreError rather
+	// than silently persisting an unencrypted envelope.
+	var accountSecrets *orchestration.AccountSecretStore
+	if b.secretsManager != nil {
+		if secretsMgr, ok := b.secretsManager.(interfaces.SecretsManager); ok {
+			accountSecrets = orchestration.NewAccountSecretStore(secretsMgr)
+		}
+	}
+	svc.accountService = NewAccountService(orchestration.NewAccountStore(orchKV, orchOpts...), accountSecrets)
 
 	if svc.logger != nil {
 		svc.logger.WithFields(map[string]interface{}{
@@ -4869,6 +4910,31 @@ func (s *quicBaaS) Trust() TrustService {
 	return s.trustService
 }
 
+// Attestation returns the Attestation service surfaced under
+// Security().Attestation(). It is always non-nil: the verifier half composes
+// go-xkms pkg/attestation and has no external dependency, and the
+// orchestration half reports its own not-configured error.
+func (s *quicBaaS) Attestation() AttestationService {
+	return s.attestationService
+}
+
+// PIV returns the backend-scoped PIV composition service surfaced under
+// Security().Auth().PIV(). It is always non-nil: every verb delegates to
+// the composed go-xkms service, whose typed errors report the
+// not-initialized case.
+func (s *quicBaaS) PIV() PIVService {
+	return s.pivService
+}
+
+// FIDO2 returns the tenant-scoped WebAuthn ceremony composition service
+// surfaced under Security().Auth().FIDO2(). It is always non-nil: it
+// resolves the per-tenant xkms relying-party service at call time and
+// reports ErrFIDO2NotConfigured until the xkms-backed WebAuthn manager is
+// wired.
+func (s *quicBaaS) FIDO2() FIDO2Service {
+	return s.fido2Service
+}
+
 // ACME returns the ACME (RFC 8555) composition service (returns nil if not
 // configured). It exposes the server-side challenge-registration and
 // issuance verbs surfaced under Security().ACME().Server(), backed by the
@@ -4946,6 +5012,11 @@ func (s *quicBaaS) SSHClient() xkmsssh.Client {
 // Project returns the Project service for managing agentic project entities.
 func (s *quicBaaS) Project() ProjectService {
 	return s.projectService
+}
+
+// Account returns the Account service for managing pooled provider accounts.
+func (s *quicBaaS) Account() AccountService {
+	return s.accountService
 }
 
 // AgentAdmin returns the Agent Admin service for global agent lifecycle management.
@@ -5100,6 +5171,19 @@ func (s *quicBaaS) SetDatabaseService(ds DatabaseService) {
 // This is called after the ShardedClient is initialized.
 func (s *quicBaaS) SetQRDBClient(provider QRDBClientProvider) {
 	s.qrdbClient = provider
+}
+
+// SetSecretRegistry wires the unified secret resolver registry into the
+// service. Called by the server after buildSecretRegistry, so embedded SDK
+// clients can adopt it (Security().SecretResolver()) without WithSecretRegistry.
+func (s *quicBaaS) SetSecretRegistry(reg *qrdbsecret.ResolverRegistry) {
+	s.secretRegistry = reg
+}
+
+// SecretRegistry returns the unified secret resolver registry, or nil before
+// SetSecretRegistry has wired it.
+func (s *quicBaaS) SecretRegistry() *qrdbsecret.ResolverRegistry {
+	return s.secretRegistry
 }
 
 // LoginCeremony returns the unified login-ceremony facade. Returns nil before

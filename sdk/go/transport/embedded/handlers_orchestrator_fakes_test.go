@@ -389,4 +389,19 @@ type orchMock struct {
 
 func (m *orchMock) Agent() orchestration.AgentService     { return m.agent }
 func (m *orchMock) Project() service.ProjectService       { return m.proj }
+func (m *orchMock) Account() service.AccountService       { return nil }
 func (m *orchMock) AgentAdmin() service.AgentAdminService { return m.admin }
+
+// PromptSessionAsync mirrors the production contract: the turn is acknowledged
+// immediately and its output would flow to the session event log.
+func (f *fakeAgentService) PromptSessionAsync(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error) {
+	if err := f.err(); err != nil {
+		return nil, err
+	}
+	return &orchestration.PromptTurnAck{
+		SessionID: req.SessionID,
+		TurnID:    "turn-test",
+		Status:    orchestration.TurnStatusAccepted,
+		Sequence:  1,
+	}, nil
+}

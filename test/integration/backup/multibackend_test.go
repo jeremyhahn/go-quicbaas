@@ -183,9 +183,9 @@ func TestBackupRestore_LocalStorage(t *testing.T) {
 	}
 }
 
-// TestBackupRestore_S3Storage tests backup and restore operations using S3/LocalStack.
+// TestBackupRestore_S3Storage tests backup and restore operations using S3 (Floci).
 func TestBackupRestore_S3Storage(t *testing.T) {
-	requireLocalStack(t)
+	requireFloci(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -787,7 +787,7 @@ func TestBackupRestore_WithEncryption(t *testing.T) {
 			// Skip if backend not available
 			switch bc.storageBackend {
 			case "s3":
-				requireLocalStack(t)
+				requireFloci(t)
 			case "minio":
 				requireMinIO(t)
 			case "azure":

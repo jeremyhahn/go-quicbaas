@@ -24,6 +24,7 @@ import (
 
 	"google.golang.org/grpc/metadata"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
@@ -40,19 +41,15 @@ func TestNewInMemoryAuthManager(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name: "missing JWT secret when enabled",
+			name: "missing JWT signing key ID when enabled",
 			config: &AuthConfig{
-				Enabled:   true,
-				JWTSecret: "",
+				Enabled: true,
 			},
 			expectError: true,
 		},
 		{
-			name: "valid config",
-			config: &AuthConfig{
-				Enabled:   true,
-				JWTSecret: "test-secret-key",
-			},
+			name:        "valid config",
+			config:      newTestAuthConfig(t),
 			expectError: false,
 		},
 		{
@@ -84,11 +81,7 @@ func TestNewInMemoryAuthManager(t *testing.T) {
 
 func TestRevokeToken(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-		TokenTTL:  1 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -120,10 +113,7 @@ func TestRevokeToken(t *testing.T) {
 
 func TestCreateUser(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -187,11 +177,7 @@ func TestCreateUser(t *testing.T) {
 // TestCreateUserWithTenant tests multi-tenant user creation.
 func TestCreateUserWithTenant(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key-for-tenant-tests",
-		TokenTTL:  1 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -272,11 +258,7 @@ func TestCreateUserWithTenant(t *testing.T) {
 // external providers (mTLS certificates, FIDO2/WebAuthn).
 func TestIssueTokenForUser(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-		TokenTTL:  1 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -456,10 +438,7 @@ func TestUserGetTenantID(t *testing.T) {
 // TestInMemoryCreateUserWithTenant tests multi-tenant user creation.
 func TestInMemoryCreateUserWithTenant(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
 
@@ -492,10 +471,7 @@ func TestInMemoryCreateUserWithTenant(t *testing.T) {
 // TestInMemoryIssueTokenForUser tests the IssueTokenForUser method.
 func TestInMemoryIssueTokenForUser(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
 
@@ -604,6 +580,30 @@ func TestValidateTenantHeaderCoverage(t *testing.T) {
 		}
 		err := validateTenantHeader(context.Background(), subject, log)
 		assert.NoError(t, err)
+	})
+
+	t.Run("literal system tenant in subject skips validation", func(t *testing.T) {
+		// A system-tenant caller is the structurally privileged platform
+		// scope, not an isolated tenant namespace, so it has no per-tenant
+		// header to match — same treatment as an empty TenantID.
+		subject := &interfaces.Subject{
+			ID:       "operator-1",
+			TenantID: qrdbsdk.SystemTenantID,
+		}
+		err := validateTenantHeader(context.Background(), subject, log)
+		assert.NoError(t, err)
+	})
+
+	t.Run("ordinary lookalike tenant still enforced", func(t *testing.T) {
+		// A tenant ID that merely shares the "system" prefix must not be
+		// treated as the system tenant: the header check still applies.
+		subject := &interfaces.Subject{
+			ID:       "user-1",
+			TenantID: "system-2",
+		}
+		err := validateTenantHeader(context.Background(), subject, log)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "missing request metadata")
 	})
 
 	t.Run("tenant in subject but no metadata", func(t *testing.T) {
@@ -894,10 +894,7 @@ func TestUserStoreUpdateUserFromInterface(t *testing.T) {
 // TestBuildSubjectFromTokenCoverage tests the buildSubjectFromToken function.
 func TestBuildSubjectFromTokenCoverage(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
 
@@ -938,13 +935,13 @@ func TestNewAuthManagerFactoryCoverage(t *testing.T) {
 	})
 
 	t.Run("nil logger returns error", func(t *testing.T) {
-		cfg := &AuthConfig{Enabled: true, JWTSecret: "secret"}
+		cfg := newTestAuthConfig(t)
 		_, err := NewAuthManager(cfg, nil, nil)
 		assert.Error(t, err)
 	})
 
 	t.Run("nil storage returns in-memory manager", func(t *testing.T) {
-		cfg := &AuthConfig{Enabled: true, JWTSecret: "secret"}
+		cfg := newTestAuthConfig(t)
 		mgr, err := NewAuthManager(cfg, nil, log)
 		require.NoError(t, err)
 		_, ok := mgr.(*InMemoryAuthManager)
@@ -952,7 +949,7 @@ func TestNewAuthManagerFactoryCoverage(t *testing.T) {
 	})
 
 	t.Run("mock storage returns persistent manager", func(t *testing.T) {
-		cfg := &AuthConfig{Enabled: true, JWTSecret: "secret"}
+		cfg := newTestAuthConfig(t)
 		mockStor := NewMockStorage()
 		mgr, err := NewAuthManager(cfg, mockStor, log)
 		require.NoError(t, err)
@@ -1074,10 +1071,7 @@ func TestMustBootstrap_UnknownManagerType(t *testing.T) {
 // TestMustBootstrap_InMemoryManager tests MustBootstrap with the in-memory manager.
 func TestMustBootstrap_InMemoryManager(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key-must-bootstrap",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -1094,10 +1088,7 @@ func TestMustBootstrap_InMemoryManager(t *testing.T) {
 // TestMustBootstrap_InMemoryManagerDefaultAdmin tests MustBootstrap with default admin username.
 func TestMustBootstrap_InMemoryManagerDefaultAdmin(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key-default-admin",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -1113,10 +1104,7 @@ func TestMustBootstrap_InMemoryManagerDefaultAdmin(t *testing.T) {
 // TestMustBootstrap_NilConfig tests MustBootstrap with nil bootstrap config.
 func TestMustBootstrap_NilConfig(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-nil-config",
-	}
+	config := newTestAuthConfig(t)
 
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
@@ -1133,10 +1121,7 @@ func TestMustBootstrap_NilConfig(t *testing.T) {
 // TestInMemoryAuthManagerGetters tests getter methods.
 func TestInMemoryAuthManagerGetters(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 	am, err := NewInMemoryAuthManager(config, log)
 	require.NoError(t, err)
 

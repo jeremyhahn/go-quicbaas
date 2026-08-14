@@ -16,7 +16,6 @@
 package server
 
 import (
-	"fmt"
 	"time"
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
@@ -41,8 +40,13 @@ func (s *Server) startSealedRESTServer() error {
 
 	clonedTLSConfig := cloneTLSConfig(s.tlsConfig)
 
+	// One address for both the server config and Start: the sealed-phase
+	// bind host (loopback by default). Server.Host and REST.BindAddress do
+	// not apply to the pre-unseal surface.
+	address := sealedListenAddress(s.config, s.config.Server.REST.Port)
+
 	restConfig := &restapi.Config{
-		Address:           fmt.Sprintf("%s:%d", s.config.Server.ResolveBindHost(s.config.Server.REST.BindAddress), s.config.Server.REST.Port),
+		Address:           address,
 		ReadTimeout:       s.config.Server.ReadTimeout,
 		WriteTimeout:      s.config.Server.WriteTimeout,
 		IdleTimeout:       s.config.Server.IdleTimeout,
@@ -76,9 +80,9 @@ func (s *Server) startSealedRESTServer() error {
 	// Constant-sealed gate: this listener only ever serves the sealed
 	// window; it is torn down when the barrier unseals and the full boot
 	// replaces it.
-	restServer.SetSealedWindowGate(constantSealedProbe{}, sealedwindow.RESTAllowlist())
+	restServer.SetSealedWindowGate(constantSealedProbe{}, s.OperationalProbe(),
+		sealedwindow.RESTAllowlist())
 
-	address := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.REST.Port)
 	if err := restServer.Start(address); err != nil {
 		return &SealedWindowBootError{Stage: "sealed rest listener", Cause: err}
 	}

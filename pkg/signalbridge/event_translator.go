@@ -38,6 +38,11 @@ const maxInlineToolArgs = 256
 // attachmentPromotionThreshold — keeps conversations readable.
 const maxInlineToolResult = 1024
 
+// maxInlineThought bounds the inline rendering of an agent
+// chain-of-thought fragment. Reasoning streams are chatty; longer
+// fragments are truncated with an ellipsis.
+const maxInlineThought = 512
+
 // Sender is the narrow subset of SignalClient the translator uses.
 // Defined as an interface so tests can swap in a FakeSender that
 // records Send/Edit calls.
@@ -111,6 +116,7 @@ type translatorHandler func(ctx context.Context, t *EventTranslator, conversatio
 // bots.
 var eventHandlers = map[orchestration.SessionEventKind]translatorHandler{
 	orchestration.KindAssistantChunk:  handleAssistantChunk,
+	orchestration.KindAgentThought:    handleAgentThought,
 	orchestration.KindToolInvocation:  handleToolInvocation,
 	orchestration.KindToolResult:      handleToolResult,
 	orchestration.KindFileOp:          handleFileOp,
@@ -191,6 +197,25 @@ func handleAssistantChunk(ctx context.Context, t *EventTranslator, conversationI
 // because the translator hands fully-specified messages to Send.
 func nextRollingTimestamp(t *EventTranslator) int64 {
 	return clockNowMilli()
+}
+
+// handleAgentThought renders an agent chain-of-thought fragment as a
+// short 💭 line. Thoughts share the ToolDetails verbosity knob because
+// both expose agent internals rather than the final answer.
+func handleAgentThought(ctx context.Context, t *EventTranslator, conversationID string, kind ConversationKind, prefs VerbosityPrefs, evt *orchestration.SessionEvent) error {
+	if !prefs.ToolDetails || evt.Thought == nil || evt.Thought.Text == "" {
+		return nil
+	}
+	text := evt.Thought.Text
+	if len(text) > maxInlineThought {
+		text = text[:maxInlineThought] + "…"
+	}
+	return t.sender.Send(ctx, OutboundMessage{
+		ConversationID: conversationID,
+		Kind:           kind,
+		Body:           "💭 " + text,
+		Timestamp:      clockNowMilli(),
+	})
 }
 
 // handleToolInvocation sends the 🔧 line and records its timestamp so

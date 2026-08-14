@@ -1,0 +1,281 @@
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+// Package permission declares the permissions QuicBaaS contributes to the
+// single qrdb RBAC vocabulary, the built-in roles that hold them by default,
+// the separated duty each belongs to, and registers all three in qrdb's global
+// registries.
+//
+// go-qrdb owns the policy decision point and the canonical "resource:action"
+// permission vocabulary, but it deliberately does not know about higher-layer
+// domain concepts. It exposes the extension points for exactly that:
+// qrdbsdk.RegisterPermissions (the vocabulary),
+// qrdbsdk.RegisterPermissionRoleGrant (the default role placement) and
+// qrdbsdk.RegisterPermissionDuty (the FIPS 140-3 AS10.03 separated duty). This
+// package is the ONE place QuicBaaS uses them, so there is exactly one list of
+// broker contributions rather than scattered init() calls.
+//
+// Why registration matters: a permission that is not in qrdb's registry cannot
+// be held by any role. go-qrdb's role store validates every permission on role
+// create/update (pkg/role.validatePermissions) and rejects an unregistered one
+// with InvalidPermissionError. A transport authz table that maps an endpoint
+// onto an unregistered permission therefore ships a DEAD endpoint that merely
+// looks wired: the PEP resolves a permission no token can ever carry. The
+// per-transport guard tests (see Register below) make that a build failure.
+//
+// Why the role grant matters: registration alone only makes a permission
+// grantable. A registered permission with no default role grant lands in none
+// of qrdb's five built-in roles and is reachable only through a hand-authored
+// custom role — a deployment-time workaround for a declaration-time omission.
+// Role placement is metadata carried by the permission (qrdb's
+// pkg/permission.RegisterRoleGrant), and pkg/role.BuiltInRoles is a live
+// projection of that registry evaluated at role-seed time, so a grant declared
+// here reaches the seeded roles as long as it is registered first. It is: the
+// production call site is server.NewServer, and role seeding happens strictly
+// downstream of it, inside the embedded qrdb node's bootstrap / first-boot.
+//
+// Why the duty matters: FIPS 140-3 AS10.03 separates module GOVERNANCE (the
+// Security Officer's own duties) from cryptographic USE, and qrdb decides
+// Security-Officer grantability on the duty each permission's AUTHOR declares
+// (qrdb's pkg/permission.RegisterDuty). qrdb also applies an unoverridable
+// backstop over unambiguously cryptographic action verbs — sign, encrypt,
+// decrypt, wrap, unwrap, derive, kdf, mac, hmac, attest, quote — in EVERY
+// resource family, including one a higher layer contributed. Declaring the duty
+// here anyway means the classification is stated by the author rather than
+// inferred from a verb's spelling, and it is stated in the same literal as the
+// permission and its roles. Omission is fail-safe in qrdb (an undeclared
+// permission is not SO-grantable), but an omission at THIS layer must still be
+// deliberate, so a contribution distinguishes "outside the Security Officer's
+// duties" from "nobody has decided yet" — see the duty type below.
+//
+// Scope: every permission declared here takes qrdb's default ScopeSelf — the
+// permission acts on the identity's own tenant, and the system-tenant rule
+// lifts it across tenants for a system-tenant identity. qrdb re-exports
+// RegisterPermissionScope, so ScopeCross and ScopeTenantOnly are reachable
+// from this layer, but neither is right for attestation: ScopeTenantOnly would
+// deny the system tenant the host's own attestation surface, and ScopeCross
+// would deny it to every tenant-local identity. ScopeSelf plus the
+// system-tenant rule already yields both. Permissions absent from qrdb's scope
+// registry resolve to ScopeSelf (permission.LookupScope), so the default is
+// taken by omission rather than by a no-op registration call.
+package permission
+
+import (
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+)
+
+// Attestation permissions.
+//
+// Attestation has its own resource vocabulary rather than borrowing certs:* or
+// trust:*: the verbs answer "is this host and this workload in the state we
+// approved?", and a principal allowed to read the certificate store has no
+// business driving a TPM quote or reading a host's PCR values, which
+// fingerprint its boot state.
+//
+// The read/write split below is the one all five transports already encode
+// (pkg/api/grpc/authz_mapping.go, pkg/api/rest/authz_pep_mapping.go,
+// pkg/api/quic/handler_authz_qrdb.go, pkg/api/mcp/authz_qrdb.go).
+const (
+	// AttestationVerify ("attestation:verify") authorizes verification of an
+	// attestation statement or of an attestation certificate chain. Both are
+	// pure computations over caller-supplied material: they mutate nothing and
+	// touch no hardware, so this is the read-strength verb of the family.
+	AttestationVerify qrdbsdk.Permission = "attestation:verify"
+
+	// AttestationAttest ("attestation:attest") authorizes driving the
+	// registered attestor — extending a PCR and asking the host TPM for a
+	// signed quote over the resulting boot state. It is a host-level mutation
+	// and the write-strength verb of the family; it must never be conflated
+	// with AttestationVerify.
+	AttestationAttest qrdbsdk.Permission = "attestation:attest"
+)
+
+// duty states which of FIPS 140-3 AS10.03's separated duties a contributed
+// permission belongs to. It is a distinct type from qrdbsdk.PermissionDuty for
+// one reason: qrdb's zero value, PermissionDutyUndeclared, is a legitimate
+// OUTCOME ("no part of the Security Officer's duties"), so a bare
+// qrdbsdk.PermissionDuty field could not tell an author who decided that apart
+// from an author who decided nothing. Here the zero value is dutyUnstated,
+// which is never a valid contribution, so a missing duty fails
+// TestContributions_DeclareARolePlacementAndADuty exactly as an empty roles
+// list does.
+type duty int
+
+const (
+	// dutyUnstated is the zero value and is never valid: nobody has said which
+	// separated duty the permission belongs to. It exists only so that the
+	// omission is detectable.
+	dutyUnstated duty = iota
+
+	// dutyOutsideSecurityOfficer states that the permission is no part of the
+	// Security Officer's duties AND performs no cryptographic primitive, so
+	// nothing is declared to qrdb. That is both the accurate and the fail-safe
+	// statement: qrdb treats an undeclared permission as not SO-grantable
+	// (RegisterRoleGrant panics with UndeclaredDutyError), whereas declaring
+	// PermissionDutyGovernance would widen the permission into something the
+	// Security Officer may hold. qrdb's RegisterDuty deliberately rejects
+	// PermissionDutyUndeclared as a declarable value — "undeclared" is
+	// expressed by omitting the call — which is why this maps to no call at
+	// all.
+	dutyOutsideSecurityOfficer
+
+	// dutyGovernance maps to qrdbsdk.PermissionDutyGovernance: module and
+	// security governance, the only classification qrdb admits onto the
+	// Security Officer role.
+	dutyGovernance
+
+	// dutyCryptoUse maps to qrdbsdk.PermissionDutyCryptoUse: performance of a
+	// cryptographic primitive with key material, barred from the Security
+	// Officer role at registration time and again by qrdb's runtime RBAC
+	// deny-list.
+	dutyCryptoUse
+)
+
+// qrdbDuties maps the duties that have a qrdb declaration onto it. A duty
+// absent from this map produces no RegisterPermissionDuty call: dutyUnstated
+// because there is nothing to say (a declaration bug the guard test catches),
+// dutyOutsideSecurityOfficer because in qrdb the statement IS the omission.
+var qrdbDuties = map[duty]qrdbsdk.PermissionDuty{
+	dutyGovernance: qrdbsdk.PermissionDutyGovernance,
+	dutyCryptoUse:  qrdbsdk.PermissionDutyCryptoUse,
+}
+
+// contribution pairs one contributed permission with the built-in roles that
+// hold it by default and with the separated duty it belongs to. Keeping the
+// three together makes the triple the unit of declaration: a permission cannot
+// be added to the vocabulary without the author stating, in the same literal,
+// which built-in roles receive it and which side of the FIPS 140-3 AS10.03
+// duty boundary it falls on.
+type contribution struct {
+	permission qrdbsdk.Permission
+	roles      []string
+	duty       duty
+}
+
+// contributions is the single source of truth for everything QuicBaaS adds to
+// qrdb's RBAC model, in a stable order. Register writes exactly this list, All
+// projects the permissions out of it, and the per-transport guard tests diff
+// their authz mapping tables against qrdbsdk.AllPermissions() after calling
+// Register.
+//
+// Role placement follows qrdb's own built-in sets, which are FLAT — Admin does
+// not inherit Operator's grants (pkg/role.BuiltInRoles materializes five
+// independent projections of the grant registry), so every role that should
+// hold a permission is listed explicitly.
+//
+// Grants are always concrete permissions, never an "attestation:*"
+// whole-segment wildcard: a wildcard would collapse the read/write split that
+// all four transport authz tables carefully encode, handing anyone who may
+// verify a caller-supplied statement the ability to drive the host TPM.
+var contributions = []contribution{
+	{
+		// attestation:verify is a pure computation over caller-supplied
+		// material — the same strength tier as keys:verify, which Operator
+		// already holds — and it is the day-to-day verb a workload or CI
+		// identity uses to check a peer's statement. Admin is listed too
+		// because it holds attestation:attest: an identity that may request a
+		// quote but not verify the resulting statement is incoherent, and Admin
+		// holds the read verb of every other family it can write (certs:read
+		// beside certs:generate, trust:read beside trust:write). qrdb's roles
+		// are flat, so Admin needs the explicit grant.
+		permission: AttestationVerify,
+		roles: []string{
+			qrdbsdk.PermissionRoleAdmin,
+			qrdbsdk.PermissionRoleOperator,
+		},
+		// Neither governance nor cryptographic use. It touches no key at all:
+		// the verification runs over a caller-supplied statement or chain,
+		// which is why qrdb excludes the "verify" verb from its cryptographic
+		// backstop (keys:verify is barred by an explicit DutyCryptoUse
+		// declaration, because THERE the key is the module's). It is also no
+		// part of the Security Officer's module-governance duties — it is a
+		// data-plane read verb held by Admin and Operator — so declaring it
+		// governance would overstate it and make it SO-grantable. Leaving it
+		// undeclared in qrdb is therefore both the accurate and the fail-safe
+		// choice, and it is pinned by
+		// TestRegister_KeepsVerifyOutsideTheSecurityOfficerDuties.
+		duty: dutyOutsideSecurityOfficer,
+	},
+	{
+		// attestation:attest extends a PCR on the HOST TPM and asks for a
+		// signed quote — a host-level mutation that fingerprints platform boot
+		// state, sitting beside Admin's certs:generate and trust:write.
+		//
+		// Deliberately granted to no other built-in role:
+		//   - Operator / User: both hold read-strength attestation only; a
+		//     routine data-plane identity must not reshape host PCR state.
+		//   - Auditor: read-only STATE visibility (FIPS 140-3 AS10.10). A quote
+		//     request mutates the TPM, so it is not auditor-shaped even though
+		//     its result is evidence.
+		//   - SO: a quote is a signing operation, and the Security Officer is
+		//     barred from cryptographic operations under FIPS 140-3 AS10.03.
+		//     qrdb enforces that structurally for THIS permission, not just for
+		//     the keys:* family: RegisterRoleGrant panics with
+		//     SoDViolationError for any permission whose action names an
+		//     unambiguous cryptographic primitive in any resource family, and
+		//     "attest" is one of them, so an SO grant added to the list below
+		//     would fail at registration. The DutyCryptoUse declaration states
+		//     the same classification explicitly instead of leaning on the
+		//     verb, and qrdb's runtime RBAC deny-list rejects the operation a
+		//     third time at authorization time. This declaration and
+		//     TestRegister_WithholdsAttestFromReadOnlyAndSORoles therefore pin
+		//     an outcome qrdb already guarantees rather than being its only
+		//     guarantee — which is what the User and Auditor exclusions above
+		//     genuinely are.
+		permission: AttestationAttest,
+		roles: []string{
+			qrdbsdk.PermissionRoleAdmin,
+		},
+		duty: dutyCryptoUse,
+	},
+}
+
+// All returns every permission QuicBaaS contributes to qrdb's registry, in a
+// stable order.
+func All() []qrdbsdk.Permission {
+	perms := make([]qrdbsdk.Permission, 0, len(contributions))
+	for _, c := range contributions {
+		perms = append(perms, c.permission)
+	}
+	return perms
+}
+
+// Register adds every QuicBaaS-contributed permission to qrdb's process-global
+// permission registry, declares its separated duty, and records its default
+// built-in role placement. It is idempotent (the registrations are map inserts
+// and a duty re-declared identically is a no-op) and safe for concurrent use,
+// so tests may call it freely.
+//
+// Ordering: permissions are registered and their duties declared before their
+// grants, so that a grant never names a permission the registry has not yet
+// admitted and the Security-Officer guard always sees the author's
+// classification rather than a not-yet-declared one. The whole call happens
+// before any role is seeded.
+//
+// Production call site: server.NewServer (pkg/server/server.go), the broker's
+// composition root. Registering there guarantees the vocabulary, its duty and
+// its role placement exist before any role is seeded, any role create/update is
+// validated, and any transport PEP resolves a permission.
+func Register() {
+	qrdbsdk.RegisterPermissions(All()...)
+	for _, c := range contributions {
+		if qrdbDuty, declared := qrdbDuties[c.duty]; declared {
+			qrdbsdk.RegisterPermissionDuty(qrdbDuty, c.permission)
+		}
+	}
+	for _, c := range contributions {
+		for _, role := range c.roles {
+			qrdbsdk.RegisterPermissionRoleGrant(role, c.permission)
+		}
+	}
+}

@@ -41,18 +41,19 @@ passphrase.
 
 | Backend  | Tag       | Emulator                         | Status |
 |----------|-----------|----------------------------------|--------|
-| awskms   | `awskms`  | LocalStack KMS                   | docker-emulatable |
+| awskms   | `awskms`  | Floci KMS                        | docker-emulatable |
 | vault    | `vault`   | HashiCorp Vault dev server       | docker-emulatable |
 | gcpkms   | `gcpkms`  | none faithful                    | needs real GCP |
 | azurekv  | `azurekv` | none faithful                    | needs real Azure |
 | pkcs11   | `pkcs11`  | SoftHSM2 (CGO)                   | hardware follow-up |
 | tpm2     | (none)    | swtpm + tpm_simulator            | hardware follow-up |
 
-### awskms — LocalStack KMS
+### awskms — Floci KMS
 
-`awskms_test.go` creates a symmetric AES-256 CMK in LocalStack via the AWS SDK,
-then points `seal.awskms.endpoint` at LocalStack. Pure docker, no real
-credentials (`AWS_ACCESS_KEY_ID=test`). Compose service: `localstack`
+`awskms_test.go` creates a symmetric AES-256 CMK in Floci via the AWS SDK,
+then points `seal.awskms.endpoint` at Floci. Pure docker, no real
+credentials (`AWS_ACCESS_KEY_ID=test`). Floci is MIT-licensed and needs no
+auth token. Compose service: `floci`
 (`SERVICES=kms`).
 
 ### vault — HashiCorp Vault dev server
@@ -133,7 +134,7 @@ go test -v -tags 'integration awskms vault' ./test/integration/seal/...
 ```
 
 `make integration-test-seal` builds the seal-tagged daemon + CLI into the
-`seal-test` image, starts the `localstack` + `vault` emulators, and runs the
+`seal-test` image, starts the `floci` + `vault` emulators, and runs the
 suite against them — no real cloud credentials required.
 
 ## KNOWN BLOCKER (cloud factories)

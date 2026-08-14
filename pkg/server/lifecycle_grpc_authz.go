@@ -148,7 +148,8 @@ func (s *Server) grpcAuthorizationInterceptors() (ggrpc.UnaryServerInterceptor, 
 	// allowlist". Unsealed, the predicate is inert and enforcement is
 	// unchanged. Same single probe instance as every other transport gate.
 	sealedBypass := qbsealedwindow.NewAuthBypass(
-		s.SealedWindowProbe(), qbsealedwindow.NewLoggerAuditSink(s.logger))
+		s.SealedWindowProbe(), s.OperationalProbe(),
+		qbsealedwindow.NewLoggerAuditSink(s.logger))
 
 	return grpcapi.UnaryAuthorizationInterceptor(validator, grpcapi.WithSealedWindowAuthBypass(sealedBypass)),
 		grpcapi.StreamAuthorizationInterceptor(validator, grpcapi.WithSealedWindowAuthBypass(sealedBypass)), nil

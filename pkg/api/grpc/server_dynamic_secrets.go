@@ -355,7 +355,8 @@ func serviceCredentialToProto(cred *credentials.Credential) *pb.Credential {
 
 	// Extract common credential fields from Data map
 	protoCred := &pb.Credential{
-		Metadata: cred.Data,
+		CredentialId: cred.CredentialID,
+		Metadata:     cred.Data,
 	}
 
 	// Map common database credential fields
@@ -390,14 +391,16 @@ func serviceLeaseToProto(l *lease.Lease) *pb.Lease {
 	}
 
 	protoLease := &pb.Lease{
-		LeaseId:   l.LeaseID,
-		RoleName:  l.SecretPath,
-		State:     leaseStateToProto(l.State()),
-		Ttl:       durationpb.New(l.RemainingTTL()),
-		ExpiresAt: timestamppb.New(l.ExpiresAt),
-		CreatedAt: timestamppb.New(l.IssuedAt),
-		Renewable: l.Renewable,
-		MaxTtl:    durationpb.New(l.TTL),
+		LeaseId:    l.LeaseID,
+		SecretPath: l.SecretPath,
+		State:      leaseStateToProto(l.State()),
+		Ttl:        durationpb.New(l.RemainingTTL()),
+		ExpiresAt:  timestamppb.New(l.ExpiresAt),
+		CreatedAt:  timestamppb.New(l.IssuedAt),
+		Renewable:  l.Renewable,
+		MaxTtl:     durationpb.New(l.TTL),
+		RenewCount: int32(l.RenewCount), //nolint:gosec // G115: renewal count is bounded
+		Metadata:   l.Metadata,
 	}
 
 	// Set renewed timestamp if available

@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -110,6 +111,36 @@ func TestRequireTenantSubject_MissingPrincipal(t *testing.T) {
 	_, ok := requireTenantSubject(w, req)
 	assert.False(t, ok)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestRequireTenantSubject_SystemTenantRejected proves a principal carrying
+// the literal system tenant is rejected exactly like an empty TenantID: the
+// system tenant is the structurally privileged platform scope, not an
+// isolated tenant namespace, so tenant-scoped handlers (e.g. sessions) must
+// never treat it as "has a tenant".
+func TestRequireTenantSubject_SystemTenantRejected(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req = req.WithContext(ctxWithTestSubject(req.Context(), "u1", qrdbsdk.SystemTenantID))
+	w := httptest.NewRecorder()
+
+	_, ok := requireTenantSubject(w, req)
+	assert.False(t, ok)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "tenant ID is required")
+}
+
+// TestRequireTenantSubject_OrdinaryTenantStillIsolated proves the system-tenant
+// carve-out does not widen ordinary tenants' reach: a lookalike ID that merely
+// shares the "system" prefix is still an ordinary, isolated tenant and passes
+// the gate normally.
+func TestRequireTenantSubject_OrdinaryTenantStillIsolated(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req = req.WithContext(ctxWithTestSubject(req.Context(), "u1", "system-2"))
+	w := httptest.NewRecorder()
+
+	subject, ok := requireTenantSubject(w, req)
+	require.True(t, ok)
+	assert.Equal(t, "system-2", subject.TenantID)
 }
 
 func TestQueryIdentityMatches_NoParams(t *testing.T) {

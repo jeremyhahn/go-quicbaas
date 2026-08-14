@@ -5,11 +5,10 @@ Authentication and N-factor management for QuicBaaS sessions.
 ## Overview
 
 The `auth` tree manages operator authentication sessions and the
-multi-factor enrolment state behind them. Phase 8e replaced the
-legacy single-factor login stub with the canonical
-`Security().Auth().Factors().Login()` dispatcher, and added the
-`auth factor` subgroup that mirrors qrdb's User N-AuthFactor model
-verb-for-verb.
+multi-factor enrolment state behind them. Login is the unified
+ceremony — `Security().Auth().BeginLogin` / `FinishLogin` — and the
+`auth factor` subgroup mirrors qrdb's User N-AuthFactor enrolment
+model verb-for-verb (add / list / remove / rotate / relabel).
 
 All verbs route through the SDK `Security().Auth()` accessor (see
 [`docs/sdk/security.md`](../sdk/security.md#auth--authservice`)).
@@ -41,15 +40,15 @@ QuicBaaS authentication is **passwordless** — there is no
 username/password verb on the canonical surface. The supported
 factor types are:
 
-- **WebAuthn (passkey)**: platform authenticator (Touch ID, Windows
-  Hello, biometric) or roaming security key (YubiKey, Titan).
-- **FIDO2 / CTAP2**: direct device interaction (USB-HID, PC/SC, BLE).
-- **PIV smartcard**: insert a smartcard and enter PIN.
-- **mTLS**: provide a TLS client certificate (for service accounts).
+- **FIDO2 / WebAuthn (passkey)**: local CTAP2 authenticator over
+  USB-HID (YubiKey, SoloKey, Nitrokey, ...), driven with the
+  server-issued WebAuthn options.
+- **PIV**: client-local go-xkms PIV backend (`file` / `pkcs11` /
+  `tpm2`); physical smart cards are reachable through the `pkcs11`
+  backend. There is no PC/SC reader model.
+- **mTLS**: TLS client certificate (service accounts).
 
-The `factor` subgroup manages enrolment for the first three; mTLS is
-configured via the global `--tls-cert` / `--tls-key` flags on every
-verb.
+The `factor` subgroup manages enrolment for all three factor types.
 
 ## login
 
@@ -57,37 +56,46 @@ Authenticate with a QuicBaaS server and obtain an access token using
 a hardware authenticator.
 
 ```bash
-# Login with auto-detected method (the server picks based on enrolled factors)
-quicbaas auth login alice@example.com
+# Login with auto-discovery (client cert, then FIDO2 device, then local PIV slot)
+quicbaas auth login --username alice@example.com
 
-# Login with WebAuthn explicitly
-quicbaas auth login alice@example.com --method webauthn
+# Login with a FIDO2 authenticator explicitly
+quicbaas auth login --username alice@example.com --method fido2
 
-# Login with PIV smartcard
-quicbaas auth login alice@example.com --method smartcard
+# Login with the local PIV backend (file backend by default)
+quicbaas auth login --username alice@example.com --method piv \
+  --piv-backend file --piv-dir ~/.quicbaas/piv --slot 9a
 
-# Store the token in a custom location
-quicbaas auth login alice@example.com --token-file /path/to/token
-
-# Print the token to stdout without storing
-quicbaas auth login alice@example.com --no-store
+# Login with a PKCS#11 smart card
+quicbaas auth login --username alice@example.com --method piv \
+  --piv-backend pkcs11 --pkcs11-module /usr/lib/libykcs11.so --pin 123456
 
 # Login with mTLS client certificate (service account)
-quicbaas auth login --address quicbaas.example.com:50051 \
-  --tls --tls-cert client.crt --tls-key client.key --tls-ca ca.crt
+quicbaas auth login --method mtls --client-cert client.pem
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--token-file <path>` | `~/.quicbaas/token` | Custom token file location |
-| `--no-store` | `false` | Don't store token; print to stdout instead |
-| `--method <name>` | (auto-detect) | `webauthn` / `fido2` / `smartcard` / `mtls` |
-| `--factor-id <id>` | (auto-select) | Pin login to a specific enrolled factor |
+| `--method <name>` | (auto-discover) | `mtls` / `fido2` / `piv` |
+| `--username <s>` | (none) | Username (subject) for login |
+| `--factor <id>` | (auto-select) | Pin login to a specific enrolled factor |
+| `--client-cert <path>` | `~/.quicbaas/admin.pem` | Client certificate PEM (`--method mtls`) |
+| `--device <path>` | (first connected) | FIDO2 local HID device path (`--method fido2`) |
+| `--origin <url>` | `https://<rpId>` | WebAuthn origin override (`--method fido2`) |
+| `--piv-backend <name>` | `file` | Local PIV backend: `file` / `pkcs11` / `tpm2` (`--method piv`) |
+| `--piv-dir <path>` | `~/.quicbaas/piv` | Local PIV key/cert dir (`file` backend) |
+| `--pkcs11-module <path>` | (none) | PKCS#11 library path (`pkcs11` backend) |
+| `--pkcs11-token <label>` | (none) | PKCS#11 token label (`pkcs11` backend) |
+| `--slot <id>` | `9a` | PIV slot id (`--method piv`) |
+| `--pin <s>` | `$QUICBAAS_USER_PIN` | PKCS#11 User PIN (`pkcs11` backend) |
+| `--save-token` | `false` | Persist the issued session token to `--token-path` |
 
-Internally `login` calls `Security().Auth().Factors().Login(...)`
-with the supplied username and method. The server issues a
-challenge, the client signs it with the matching factor, and the
-server returns an access + refresh token pair.
+Internally `login` drives the unified ceremony:
+`Security().Auth().BeginLogin(...)` obtains the factor-typed
+challenge, the client produces the proof locally (mTLS handshake /
+CTAP2 assertion / local PIV signature over the nonce), and
+`Security().Auth().FinishLogin(...)` verifies it server-side and
+returns the bearer + refresh token.
 
 ## logout
 
@@ -139,32 +147,43 @@ quicbaas auth factor list --output json
 | `--user <id>` | (current user) | List factors for a different user (requires permission) |
 | `--output <format>` | `table` | `json` or `table` |
 
-Each row shows the factor ID, factor name (`webauthn`, `fido2`,
-`piv`, `mtls`), label, and enrolled-at timestamp.
+Each row shows the factor ID, factor type (`fido2`, `piv`,
+`mtls`), label, and enrolled-at timestamp.
 
 ## factor add
 
 Enrol a new factor.
 
 ```bash
-# Enrol a WebAuthn passkey (interactive — server prompts via the auth ceremony)
-quicbaas auth factor add --name webauthn --label "Laptop passkey"
+# Enrol a FIDO2 passkey (drives the connected CTAP2 authenticator
+# through the server-issued WebAuthn registration ceremony)
+quicbaas auth factor add --type fido2 --label "Laptop passkey" --user alice@example.com
 
-# Enrol a PIV smartcard
-quicbaas auth factor add --name piv --label "Corporate ID"
+# Enrol a PIV factor from the client-local PIV backend slot
+quicbaas auth factor add --type piv --label "Corporate ID" \
+  --piv-backend file --piv-dir ~/.quicbaas/piv --slot 9a
 
 # Enrol an mTLS client certificate (cert pre-issued)
-quicbaas auth factor add --name mtls \
+quicbaas auth factor add --type mtls \
   --label "Service: ingest" \
-  --proof @/etc/quicbaas/svc-ingest.crt
+  --cert /etc/quicbaas/svc-ingest.crt
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--name <factor>` | (required) | `webauthn` / `fido2` / `piv` / `mtls` |
-| `--label <string>` | (none) | Human-readable label for the factor |
-| `--proof @<path>` or `--proof <inline>` | (factor-specific) | Factor-specific proof material |
-| `--user <id>` | (current user) | Enrol the factor for a different user (admin-only) |
+| `--type <factor>` | (required) | `fido2` / `piv` / `mtls` |
+| `--label <string>` | (required) | Human-readable label for the factor |
+| `--user <id>` | (current user) | Subject to enrol the factor for |
+| `--tenant <id>` | (none) | Tenant scope |
+| `--cert <path>` | (none) | Certificate PEM path (`--type mtls`) |
+| `--device <path>` | (first connected) | FIDO2 local HID device (`--type fido2`) |
+| `--origin <url>` | `https://<rpId>` | WebAuthn origin override (`--type fido2`) |
+| `--piv-backend <name>` | `file` | Local PIV backend: `file` / `pkcs11` / `tpm2` (`--type piv`) |
+| `--piv-dir <path>` | `~/.quicbaas/piv` | Local PIV key/cert dir (`file` backend) |
+| `--slot <id>` | `9a` | PIV slot id (`--type piv`) |
+| `--pin <s>` | (none) | PKCS#11 User PIN (`pkcs11` backend) |
+| `--pkcs11-module <path>` | (none) | PKCS#11 library path (`pkcs11` backend) |
+| `--pkcs11-token <label>` | (none) | PKCS#11 token label (`pkcs11` backend) |
 
 The canonical SDK call:
 
@@ -236,15 +255,17 @@ location.
 
 | Type | When |
 |------|------|
-| `AuthLoginNoMethodError` | `login` cannot determine a method and the user has no enrolled factors |
-| `AuthFactorNameRequiredError` | `factor add` invoked without `--name` |
-| `AuthFactorIDRequiredError` | `factor remove` / `rotate` / `relabel` invoked without a factor ID |
-| `LastFactorRemovalError` | `factor remove` would leave the user with no enrolled factors and `--force` was not supplied |
+| `NoFactorsAvailableError` | `login` auto-discovery finds no client cert, no FIDO2 device, and no local PIV certificate |
+| `InvalidFactorTypeError` | `factor add` invoked without `--type` or with an unknown type |
+| `MissingLabelError` | `factor add` / `rotate` invoked without `--label` |
+| `MissingFactorIDError` | `factor remove` / `rotate` invoked without a factor ID |
+| `InvalidPIVBackendError` | `--piv-backend` is not `file` / `pkcs11` / `tpm2` |
+| `PIVPINRequiredError` | `--method piv` on the `pkcs11` backend without `--pin` / `QUICBAAS_USER_PIN` |
 
 ## See also
 
 - [`docs/sdk/security.md`](../sdk/security.md) — full `Security().Auth()`
-  surface including FIDO2 / WebAuthn / PIV / Factors sub-services.
+  surface including FIDO2 / PIV / Devices / Factors sub-services.
 - [`docs/security/authentication.md`](../security/authentication.md) —
   server-side authentication architecture.
 - [`docs/cli/iam.md`](iam.md) — user, role, and group management.

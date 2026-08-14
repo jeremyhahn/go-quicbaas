@@ -20,18 +20,24 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/initmarker"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
@@ -40,6 +46,7 @@ import (
 // "--barrier-strategy none" does not require --so-pin / --user-pin and
 // completes successfully against a fresh data dir.
 func TestRunInlineInit_NoneStrategy_WorksWithoutPINs(t *testing.T) {
+	requireTestTrustDomain(t)
 	dataDir := t.TempDir()
 	f := &inlineInitFlags{
 		barrierStrategy:    "none",
@@ -170,6 +177,7 @@ func TestRunInlineInit_InvalidBarrierStrategyRejected(t *testing.T) {
 // dir returns InitAlreadyDoneError. The error references the data dir so
 // operators have a single message that names the offending path.
 func TestRunInlineInit_InitDoneMarkerIdempotency(t *testing.T) {
+	requireTestTrustDomain(t)
 	dataDir := t.TempDir()
 	f := &inlineInitFlags{
 		barrierStrategy:    "none",
@@ -205,6 +213,7 @@ func TestRunInlineInit_InitDoneMarkerIdempotency(t *testing.T) {
 // (mirroring "quicbaasd start --data-dir ..."). The admin assignment
 // count must remain at exactly one after the second start.
 func TestRunInlineInit_PersistenceRoundTrip(t *testing.T) {
+	requireTestTrustDomain(t)
 	dataDir := t.TempDir()
 	f := &inlineInitFlags{
 		barrierStrategy:    "passphrase",
@@ -252,62 +261,6 @@ func TestRunInlineInit_PersistenceRoundTrip(t *testing.T) {
 
 	// The bootstrap admin lives in qrdb's canonical system tenant.
 	assert.Equal(t, iam.AdminRoleSuperAdmin, assignments[0].AdminRole)
-}
-
-// TestRunInlineInit_ShamirWritesPendingState verifies the shamir branch
-// of runInlineInit: pending_ceremony.json is written under the data dir
-// with the requested officer + threshold + share configuration.
-func TestRunInlineInit_ShamirWritesPendingState(t *testing.T) {
-	tmp := t.TempDir()
-	dataDir := filepath.Join(tmp, "data")
-	csrPath := filepath.Join(tmp, "alice.csr.pem")
-	certPath := filepath.Join(tmp, "bob.cert.pem")
-	pubPath := filepath.Join(tmp, "carol.pub.pem")
-	writeTestCSRFile(t, csrPath, "alice")
-	writeTestCertFile(t, certPath, "bob")
-	writeTestPubKeyFile(t, pubPath, "carol")
-
-	f := &inlineInitFlags{
-		barrierStrategy:    "shamir",
-		soPin:              "so-pin-1234",
-		userPin:            "user-pin-1234",
-		credentialStrategy: "barrier",
-		shares:             3,
-		threshold:          2,
-		officers: []string{
-			"alice:csr:" + csrPath,
-			"bob:cert:" + certPath,
-			"carol:pubkey:" + pubPath,
-		},
-		dataDir: dataDir,
-	}
-	cmd := &cobra.Command{Use: "init"}
-	if err := runInlineInit(cmd, f); err != nil {
-		t.Fatalf("runInlineInit(shamir) error: %v", err)
-	}
-
-	statePath := filepath.Join(dataDir, pendingCeremonyFileName)
-	raw, err := os.ReadFile(statePath)
-	if err != nil {
-		t.Fatalf("read pending ceremony state: %v", err)
-	}
-	var state pendingCeremonyState
-	if err := json.Unmarshal(raw, &state); err != nil {
-		t.Fatalf("unmarshal pending ceremony state: %v", err)
-	}
-	assert.Equal(t, "shamir", state.Strategy)
-	assert.Equal(t, 3, state.Shares)
-	assert.Equal(t, 2, state.Threshold)
-	require.Len(t, state.Officers, 3)
-	assert.Equal(t, "alice", state.Officers[0].Username)
-	assert.Equal(t, "csr", state.Officers[0].Kind)
-	assert.Equal(t, csrPath, state.Officers[0].Path)
-
-	// Init-done marker MUST also be present so a second invocation is
-	// rejected with InitAlreadyDoneError.
-	if _, err := os.Stat(filepath.Join(dataDir, initDoneMarkerName)); err != nil {
-		t.Fatalf("expected init-done marker after shamir init: %v", err)
-	}
 }
 
 // TestRunInlineInit_ShamirRequiresThresholdAndShares verifies that
@@ -390,7 +343,11 @@ func TestBuildInitConfig_DisablesAllListeners(t *testing.T) {
 	assert.False(t, cfg.Server.QUIC.Enabled, "init must not enable QUIC listener")
 	assert.False(t, cfg.Server.MCP.Enabled, "init must not enable MCP listener")
 	assert.False(t, cfg.Server.Unix.Enabled, "init must not enable Unix listener")
-	assert.False(t, cfg.Security.TLSEnabled, "init must not require TLS")
+	// TLS is ON even though nothing listens: initializeCA early-returns when
+	// TLS is disabled, and init needs the CA to issue the platform admin's
+	// mTLS certificate and to sign officer CSRs.
+	assert.True(t, cfg.Security.TLSEnabled,
+		"init must bootstrap the CA, which requires TLSEnabled")
 	assert.Equal(t, config.ServerModeStandalone, cfg.Server.Mode,
 		"init must run in standalone mode")
 }
@@ -429,4 +386,259 @@ func TestResolveInitDataDir_PrefersInitDataDir(t *testing.T) {
 
 	cfg.Storage.DataDir = ""
 	assert.Equal(t, "/from-global", resolveInitDataDir(f))
+}
+
+// ---------------------------------------------------------------------------
+// §08 invariant 5: init leaves identical IAM state for every barrier strategy
+// ---------------------------------------------------------------------------
+
+// TestRunInlineInit_EveryStrategyRunsFirstBoot is the regression test for the
+// strategy-dependent bootstrap: "shamir" used to skip the embedded server
+// entirely and only drop a pending_ceremony.json, so a shamir cluster came up
+// with NO system tenant, NO built-in roles and NO platform admin, while "none"
+// and "passphrase" got all three. §08 invariant 5 requires init to leave
+// identical IAM state whichever way the barrier is sealed.
+//
+// It doubles as the coverage for the CA bootstrap: init used to force
+// TLSEnabled=false, which made initializeCA early-return and left xkmsCA nil,
+// so first-boot could not issue the admin's mTLS certificate on the init path.
+func TestRunInlineInit_EveryStrategyRunsFirstBoot(t *testing.T) {
+	requireTestTrustDomain(t)
+	cases := []struct {
+		name           string
+		flags          func(dataDir string) *inlineInitFlags
+		wantPendingCer bool
+	}{
+		{
+			name: "none",
+			flags: func(dataDir string) *inlineInitFlags {
+				return &inlineInitFlags{
+					barrierStrategy:    "none",
+					credentialStrategy: "barrier",
+					dataDir:            dataDir,
+				}
+			},
+		},
+		{
+			name: "passphrase",
+			flags: func(dataDir string) *inlineInitFlags {
+				return &inlineInitFlags{
+					barrierStrategy:    "passphrase",
+					credentialStrategy: "barrier",
+					dataDir:            dataDir,
+					secret:             "init-passphrase-1234567890",
+					soPin:              "so-pin-12345678",
+					userPin:            "user-pin-12345678",
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			cmd := &cobra.Command{Use: "init"}
+			require.NoError(t, runInlineInit(cmd, tc.flags(dataDir)))
+
+			// The init-done marker proves the run completed.
+			require.FileExists(t, filepath.Join(dataDir, initDoneMarkerName))
+
+			// First-boot ran: the platform admin's mTLS credential exists.
+			// This is only reachable when the embedded server started AND the
+			// CA was bootstrapped, so it covers items 4 and 6 together.
+			certPath := filepath.Join(dataDir, "admin", "admin.crt")
+			certPEM, err := os.ReadFile(certPath)
+			require.NoError(t, err,
+				"%s init must run first-boot and issue the admin certificate", tc.name)
+
+			block, _ := pem.Decode(certPEM)
+			require.NotNil(t, block, "admin certificate must be valid PEM")
+			cert, err := x509.ParseCertificate(block.Bytes)
+			require.NoError(t, err)
+			assert.NotEmpty(t, qrdbsdk.ComputeSPKIThumbprint(cert),
+				"the issued admin certificate must have a resolvable SPKI thumbprint")
+
+			// The private key is written alongside it for the operator to
+			// collect (generate-and-distribute; no --bootstrap-admin-csr here).
+			require.FileExists(t, filepath.Join(dataDir, "admin", "admin.key"))
+
+			// The dead pending-ceremony mechanism must never resurface.
+			assert.NoFileExists(t, filepath.Join(dataDir, "pending_ceremony.json"),
+				"%s must not write pending-ceremony state", tc.name)
+		})
+	}
+}
+
+// TestRunInlineInit_ShamirDefersToCeremony pins the locked deferred-init
+// architecture at the init boundary. go-qrdb's bootstrap orchestrator states
+// that "Shamir barrier initialization is the ceremony's job (multiple SOs),
+// never inline", so `quicbaasd init --barrier-strategy shamir` must start no
+// server, run no first-boot, split no secret, and above all write no share to
+// disk. It records the operator's chosen M-of-N parameters and stops; the
+// daemon then boots SEALED and the ceremony runs against it.
+func TestRunInlineInit_ShamirDefersToCeremony(t *testing.T) {
+	requireTestTrustDomain(t)
+	dataDir := filepath.Join(t.TempDir(), "data")
+	f := &inlineInitFlags{
+		barrierStrategy:    "shamir",
+		credentialStrategy: "barrier",
+		dataDir:            dataDir,
+		shares:             3,
+		threshold:          2,
+		soPin:              "so-pin-12345678",
+		userPin:            "user-pin-12345678",
+	}
+	cmd := &cobra.Command{Use: "init"}
+	require.NoError(t, runInlineInit(cmd, f))
+
+	// The run completed and recorded the M-of-N parameters the daemon boots on.
+	marker, err := initmarker.Read(dataDir)
+	require.NoError(t, err)
+	require.NotNil(t, marker)
+	assert.Equal(t, "shamir", marker.BarrierStrategy)
+	assert.Equal(t, 2, marker.Threshold)
+	assert.Equal(t, 3, marker.Shares)
+
+	// No share material of any kind reached the filesystem. This is the
+	// security invariant: shares live only in memguard enclaves inside the
+	// running daemon until each officer claims theirs over their own mTLS
+	// certificate, exactly once.
+	assert.NoDirExists(t, filepath.Join(dataDir, "officers"),
+		"shamir init must never write per-officer share bundles")
+	var stray []string
+	_ = filepath.WalkDir(dataDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil //nolint:nilerr // a walk error must not fail the scan
+		}
+		if strings.Contains(d.Name(), "share") {
+			stray = append(stray, path)
+		}
+		return nil
+	})
+	assert.Empty(t, stray, "no file named for a share may exist under the data dir")
+
+	// First-boot did NOT run: it follows the ceremony's unseal, not init.
+	assert.NoFileExists(t, filepath.Join(dataDir, "admin", "admin.crt"),
+		"shamir first-boot must wait for the ceremony to unseal the barrier")
+}
+
+// TestBuildInitConfig_EnablesCAForEveryStrategy pins the item-6 fix at the
+// config layer: init must turn TLS on (which is what gates initializeCA) while
+// still binding no listener, for every supported strategy.
+func TestBuildInitConfig_EnablesCAForEveryStrategy(t *testing.T) {
+	for _, strategy := range []string{"none", "disabled", "passphrase", "shamir"} {
+		t.Run(strategy, func(t *testing.T) {
+			f := &inlineInitFlags{barrierStrategy: strategy}
+			cfg := buildInitConfig(t.TempDir(), f, isPassphraseStrategy(strategy))
+
+			assert.True(t, cfg.Security.TLSEnabled,
+				"initializeCA early-returns when TLS is off, leaving no CA to issue the admin cert")
+			assert.True(t, cfg.Server.Embedded)
+			assert.False(t, cfg.Server.REST.Enabled, "init must still bind no listener")
+			assert.False(t, cfg.Server.GRPC.Enabled)
+			assert.False(t, cfg.Server.QUIC.Enabled)
+		})
+	}
+}
+
+// TestBuildInitConfig_PropagatesSPIFFETrustDomain is the regression test for the
+// "no headless path from init to an authenticated CLI" defect at its root cause.
+//
+// buildInitConfig starts from config.Default(), so it silently DISCARDED the
+// operator's iam.spiffe_trust_domain. With no trust domain the xkms CAAdapter
+// skips SPIFFE SAN stamping, the init-issued admin certificate comes out as
+// CN=admin with no SANs, and REST login fails closed with "login tenant could
+// not be resolved" — the operator cannot use the credential init handed them.
+func TestBuildInitConfig_PropagatesSPIFFETrustDomain(t *testing.T) {
+	const trustDomain = "quicbaas.example.test"
+
+	// Stand in for the daemon's loaded configuration.
+	prev := cfg
+	t.Cleanup(func() { cfg = prev })
+	cfg = config.Default()
+	cfg.IAM.SPIFFETrustDomain = trustDomain
+
+	f := &inlineInitFlags{barrierStrategy: "none"}
+	got := buildInitConfig(t.TempDir(), f, false)
+
+	assert.Equal(t, trustDomain, got.IAM.SPIFFETrustDomain,
+		"init must carry the operator's SPIFFE trust domain so the admin cert gets a tenant SAN")
+}
+
+// TestBuildInitConfig_NoOperatorTrustDomainLeavesItEmpty covers the other
+// branch: with nothing configured, init must not invent a trust domain. A
+// synthesized value would be baked into every issued certificate and PINNED by
+// login, so a later real configuration would invalidate them all.
+func TestBuildInitConfig_NoOperatorTrustDomainLeavesItEmpty(t *testing.T) {
+	prev := cfg
+	t.Cleanup(func() { cfg = prev })
+	cfg = config.Default()
+	cfg.IAM.SPIFFETrustDomain = ""
+
+	f := &inlineInitFlags{barrierStrategy: "none"}
+	got := buildInitConfig(t.TempDir(), f, false)
+
+	assert.Empty(t, got.IAM.SPIFFETrustDomain,
+		"init must not synthesize a SPIFFE trust domain")
+}
+
+// requireTestTrustDomain sets the SPIFFE trust domain on the daemon's loaded
+// configuration for the duration of the test.
+//
+// iam.spiffe_trust_domain is a HARD requirement for `quicbaasd init`: it is
+// what makes the issued admin certificate carry the tenant SPIFFE SAN that
+// login resolves the tenant from. Every test that expects init to succeed must
+// therefore supply one, exactly as a real operator must.
+func requireTestTrustDomain(t *testing.T) {
+	t.Helper()
+	prev := cfg
+	t.Cleanup(func() { cfg = prev })
+	if cfg == nil {
+		cfg = config.Default()
+	} else {
+		clone := *cfg
+		cfg = &clone
+	}
+	cfg.IAM.SPIFFETrustDomain = "quicbaas.test"
+}
+
+// TestRunInlineInit_RequiresSPIFFETrustDomain is the fail-closed regression
+// test for the owner decision: init must REFUSE when iam.spiffe_trust_domain is
+// unset, rather than issuing an admin certificate that cannot authenticate.
+//
+// It also pins the "before any side effect" requirement: no data dir, no CA and
+// no init marker may exist after the refusal.
+//
+// No revert experiment is needed to prove this test is non-vacuous: it asserts
+// the TYPED error, the exact config key, the example value, AND the absence of
+// the data dir, marker and admin certificate. A missing guard cannot produce
+// that combination — init would instead succeed and leave those artifacts
+// behind, failing every one of the assertions below.
+func TestRunInlineInit_RequiresSPIFFETrustDomain(t *testing.T) {
+	prev := cfg
+	t.Cleanup(func() { cfg = prev })
+	cfg = config.Default()
+	cfg.IAM.SPIFFETrustDomain = ""
+
+	dataDir := filepath.Join(t.TempDir(), "not-yet-created")
+	f := &inlineInitFlags{
+		barrierStrategy:    "none",
+		credentialStrategy: "barrier",
+		dataDir:            dataDir,
+	}
+
+	err := runInlineInit(&cobra.Command{Use: "init"}, f)
+	require.Error(t, err, "init must refuse without a SPIFFE trust domain")
+
+	var typed *SPIFFETrustDomainRequiredError
+	require.ErrorAs(t, err, &typed, "got %T (%v)", err, err)
+
+	// The message must name the exact key and show an example value.
+	assert.Contains(t, err.Error(), "iam.spiffe_trust_domain")
+	assert.Contains(t, err.Error(), "spiffe_trust_domain: quicbaas.example.test")
+
+	// Fail BEFORE any side effect.
+	assert.NoDirExists(t, dataDir, "init must not create the data dir before validating")
+	assert.NoFileExists(t, filepath.Join(dataDir, initDoneMarkerName))
+	assert.NoFileExists(t, filepath.Join(dataDir, "admin", "admin.crt"))
 }

@@ -19,14 +19,42 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
+
+// =============================================================================
+// OAuth 2.0 Dynamic Client Registration (RFC 7591) and its management protocol
+// (RFC 7592).
+//
+// AUTHENTICATION MODEL — the two layers and how they compose:
+//
+//	POST /oauth2/register (create) is a PRIVILEGED operation: it mints an
+//	OAuth2 client, which is an authentication principal. It is therefore
+//	gated by the standard REST authz chain (useAPIAuthzMiddleware, installed
+//	on the route group in iam.go) and PEP-mapped to tenants:create. The
+//	presented platform token IS the RFC 7591 "initial access token", and the
+//	tenant it authenticated into is the tenant the new client lands in — a
+//	caller can never choose someone else's tenant. Registration is also
+//	config-gated off by default (config.IAMDynamicClientRegistrationConfig).
+//
+//	GET/PUT/DELETE /oauth2/register/{client_id} (the RFC 7592 client
+//	configuration endpoint) authenticate SOLELY with the registration access
+//	token issued for that exact client, per RFC 7592 §2. A registrant holds no
+//	platform token — it holds the per-client credential — so these three paths
+//	are a deliberate pre-auth carve-out declared in preAuthRouteTemplates
+//	(authz_public_routes.go), which every enforcement posture honors. The
+//	carve-out is safe ONLY because the registration access token is a real,
+//	fail-closed gate: see iam.AppManager.AuthorizeRegistrationAccess.
+//
+// The carve-out is whole-path and segment-exact, so it exempts exactly the
+// three management verbs and never the sibling create route.
+// =============================================================================
 
 // DynamicClientRequest represents an RFC 7591 Dynamic Client Registration request.
 type DynamicClientRequest struct {
@@ -96,7 +124,9 @@ type DynamicClientResponse struct {
 	// ClientSecretExpiresAt is the Unix timestamp when client_secret expires (0 = never)
 	ClientSecretExpiresAt int64 `json:"client_secret_expires_at,omitempty"`
 
-	// RegistrationAccessToken is a bearer token for accessing client configuration endpoint
+	// RegistrationAccessToken is the bearer token for the client configuration
+	// endpoint (RFC 7592 §2). It is returned ONLY in the registration response —
+	// the server stores a hash and can never reproduce it.
 	RegistrationAccessToken string `json:"registration_access_token,omitempty"`
 
 	// RegistrationClientURI is the URL of the client configuration endpoint
@@ -125,17 +155,42 @@ type DCRError struct {
 	ErrorDescription string `json:"error_description,omitempty"`
 }
 
-// DCR error codes per RFC 7591 Section 3.2.2.
+// DCR error codes per RFC 7591 Section 3.2.2, plus the RFC 6750 bearer-token
+// codes the RFC 7592 management endpoints answer with.
 const (
 	DCRErrorInvalidRedirectURI          = "invalid_redirect_uri"
 	DCRErrorInvalidClientMetadata       = "invalid_client_metadata"
 	DCRErrorInvalidSoftwareStatement    = "invalid_software_statement"
 	DCRErrorUnapprovedSoftwareStatement = "unapproved_software_statement"
+	// DCRErrorInvalidToken is returned whenever a registration access token is
+	// absent, malformed, unknown or does not belong to the addressed client.
+	DCRErrorInvalidToken = "invalid_token"
+	// DCRErrorAccessDenied is returned when the registration surface itself is
+	// switched off by operator configuration.
+	DCRErrorAccessDenied = "access_denied"
 )
 
-// RegisterDynamicClient handles POST /oauth2/register for Dynamic Client Registration (RFC 7591).
+// dcrInvalidTokenDescription is the single, deliberately opaque description
+// returned for every RFC 7592 authorization failure. Distinguishing "unknown
+// client" from "wrong token" would turn the endpoint into a client-id oracle.
+const dcrInvalidTokenDescription = "invalid registration access token"
+
+// RegisterDynamicClient handles POST /oauth2/register for Dynamic Client
+// Registration (RFC 7591).
+//
+// The endpoint is disabled unless the operator enables it, and the tenant the
+// new client is created in is derived from the caller's verified identity — it
+// is NEVER taken from a request header and NEVER defaults to the control-plane
+// system tenant.
 func (h *IAMHandler) RegisterDynamicClient(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	// Operator gate + tenant resolution BEFORE any state is touched.
+	tenantID, dcrErr := h.dcrRegistrationTenant(r)
+	if dcrErr != nil {
+		respondDCRError(w, dcrErr.status, dcrErr.code, dcrErr.description)
+		return
+	}
 
 	// Parse request body
 	var req DynamicClientRequest
@@ -150,26 +205,9 @@ func (h *IAMHandler) RegisterDynamicClient(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Get app manager from service
-	appProvider, ok := h.server.service.(interface {
-		GetAppManager(ctx context.Context) (*iam.AppManager, error)
-	})
+	appManager, ok := h.dcrAppManager(w, ctx, "dynamic registration not available")
 	if !ok {
-		respondDCRError(w, http.StatusInternalServerError, DCRErrorInvalidClientMetadata, "dynamic registration not available")
 		return
-	}
-
-	appManager, err := appProvider.GetAppManager(ctx)
-	if err != nil {
-		respondDCRError(w, http.StatusInternalServerError, DCRErrorInvalidClientMetadata, "failed to get app manager")
-		return
-	}
-
-	// Determine tenant ID: extract from the initial access token, falling back
-	// to the control-plane system tenant for unauthenticated DCR.
-	tenantID := extractTenantFromRequest(r)
-	if tenantID == "" {
-		tenantID = qrdbsdk.SystemTenantID
 	}
 
 	// Build RegisterAppOptions from DCR request
@@ -185,8 +223,9 @@ func (h *IAMHandler) RegisterDynamicClient(w http.ResponseWriter, r *http.Reques
 		opts.Name = "Dynamic Client"
 	}
 
-	// Register the application
-	app, err := appManager.RegisterApp(ctx, tenantID, opts)
+	// Register the application together with its RFC 7592 registration access
+	// token. The token is the sole credential for the management endpoints.
+	app, registrationToken, err := appManager.RegisterDCRApp(ctx, tenantID, opts)
 	if err != nil {
 		// Map IAM errors to DCR errors
 		respondDCRError(w, http.StatusBadRequest, DCRErrorInvalidClientMetadata, err.Error())
@@ -199,6 +238,10 @@ func (h *IAMHandler) RegisterDynamicClient(w http.ResponseWriter, r *http.Reques
 		ClientSecret:          app.ClientSecret, // Only time it's visible
 		ClientIDIssuedAt:      app.Created.Unix(),
 		ClientSecretExpiresAt: 0, // Never expires
+
+		// RFC 7592 management credential + endpoint. Also only visible here.
+		RegistrationAccessToken: registrationToken,
+		RegistrationClientURI:   requestAbsoluteURI(r) + "/" + app.ClientID,
 
 		// Echo back accepted values
 		RedirectURIs:            app.RedirectURIs,
@@ -241,6 +284,91 @@ func (h *IAMHandler) RegisterDynamicClient(w http.ResponseWriter, r *http.Reques
 type dcrValidationError struct {
 	code        string
 	description string
+}
+
+// dcrGateError is a refusal produced before any client state is touched: the
+// registration surface is disabled, or the caller has not proven which tenant
+// it may register in.
+type dcrGateError struct {
+	status      int
+	code        string
+	description string
+}
+
+// dcrConfig returns the effective Dynamic Client Registration policy. A nil
+// server or config yields the zero value, which is "disabled" — the surface
+// fails closed for every partially-constructed handler.
+func (h *IAMHandler) dcrConfig() config.IAMDynamicClientRegistrationConfig {
+	if h.server == nil || h.server.config == nil {
+		return config.IAMDynamicClientRegistrationConfig{}
+	}
+	return h.server.config.IAMDynamicClientRegistration
+}
+
+// dcrRegistrationTenant resolves the tenant a dynamic client registration
+// creates its client in, or the refusal that stops the request.
+//
+// Precedence, fail-closed at every step:
+//
+//  1. The surface must be enabled by the operator (403 otherwise).
+//  2. The verified principal's tenant (the RFC 7591 initial access token) wins.
+//     The authz middleware on the route group put it there; a caller cannot
+//     forge or override it, and cannot name another tenant.
+//  3. Only if no verified tenant exists may an explicitly configured ANONYMOUS
+//     landing tenant be used — never the control-plane system tenant, which is
+//     re-checked here because the rest.Config may be populated programmatically
+//     by an embedded caller that bypassed config validation.
+//  4. Otherwise the registration is refused with 401: an initial access token
+//     is required.
+func (h *IAMHandler) dcrRegistrationTenant(r *http.Request) (string, *dcrGateError) {
+	cfg := h.dcrConfig()
+	if !cfg.Enabled {
+		return "", &dcrGateError{
+			status:      http.StatusForbidden,
+			code:        DCRErrorAccessDenied,
+			description: "dynamic client registration is disabled",
+		}
+	}
+
+	if ac := AuthorizedContextFromRequest(r.Context()); ac != nil && ac.TenantID != "" {
+		return ac.TenantID, nil
+	}
+
+	if cfg.AnonymousTenantID != "" {
+		if cfg.AnonymousTenantID == qrdbsdk.SystemTenantID {
+			return "", &dcrGateError{
+				status:      http.StatusForbidden,
+				code:        DCRErrorAccessDenied,
+				description: "anonymous dynamic client registration into the system tenant is not permitted",
+			}
+		}
+		return cfg.AnonymousTenantID, nil
+	}
+
+	return "", &dcrGateError{
+		status:      http.StatusUnauthorized,
+		code:        DCRErrorInvalidToken,
+		description: "an initial access token is required for dynamic client registration",
+	}
+}
+
+// dcrAppManager resolves the AppManager, writing the RFC 7591 error response
+// and reporting false when the capability is not wired.
+func (h *IAMHandler) dcrAppManager(w http.ResponseWriter, ctx context.Context, unavailable string) (*iam.AppManager, bool) {
+	appProvider, ok := h.server.service.(interface {
+		GetAppManager(ctx context.Context) (*iam.AppManager, error)
+	})
+	if !ok {
+		respondDCRError(w, http.StatusInternalServerError, DCRErrorInvalidClientMetadata, unavailable)
+		return nil, false
+	}
+
+	appManager, err := appProvider.GetAppManager(ctx)
+	if err != nil {
+		respondDCRError(w, http.StatusInternalServerError, DCRErrorInvalidClientMetadata, "failed to get app manager")
+		return nil, false
+	}
+	return appManager, true
 }
 
 // validateDCRRequest validates the DCR request according to RFC 7591.
@@ -379,19 +507,6 @@ func isValidDCRResponseType(responseType string) bool {
 	return validResponseTypes[responseType]
 }
 
-// extractTenantFromRequest extracts tenant ID from initial access token or header.
-func extractTenantFromRequest(r *http.Request) string {
-	// Check for X-Tenant-ID header
-	if tenantID := r.Header.Get("X-Tenant-ID"); tenantID != "" {
-		return tenantID
-	}
-
-	// Could also extract from initial access token claims if provided
-	// For now, return empty to use default
-
-	return ""
-}
-
 // respondDCRError writes a DCR error response.
 func respondDCRError(w http.ResponseWriter, statusCode int, errorCode, description string) {
 	w.Header().Set("Content-Type", "application/json")
@@ -404,46 +519,55 @@ func respondDCRError(w http.ResponseWriter, statusCode int, errorCode, descripti
 	})
 }
 
-// validateRegistrationAccessToken validates the registration_access_token from the Authorization header.
-// Per RFC 7592, the registration_access_token is required for GET/PUT/DELETE operations on the
-// client configuration endpoint. This token must match the token issued during initial registration.
-// Returns the client ID associated with the token, or an empty string and error if validation fails.
+// authorizeRegistrationAccess is the single gate on the RFC 7592 client
+// configuration endpoints. It requires a Bearer registration access token that
+// was issued for THIS client_id, verified by constant-time comparison against
+// the hash stored on the client record (iam.AppManager.AuthorizeRegistrationAccess).
 //
-// Note: Full implementation requires AppManager to store and validate registration access tokens
-// alongside client credentials. Currently, clients can be accessed by client_id only.
-func (h *IAMHandler) validateRegistrationAccessToken(r *http.Request, clientID string) (bool, string) {
-	// Extract Bearer token from Authorization header
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		return false, "missing Authorization header"
+// It fails closed: a missing/malformed header, an unknown client, a client that
+// owns no registration token, a token belonging to a different client, and a
+// client outside the caller's authenticated tenant all produce the same opaque
+// 401 so the endpoint cannot be used to enumerate clients.
+//
+// On success it returns the AppManager and the resolved (redacted) application,
+// whose TenantID is authoritative for the subsequent tenant-scoped mutation.
+func (h *IAMHandler) authorizeRegistrationAccess(w http.ResponseWriter, r *http.Request, clientID string) (*iam.AppManager, *iam.Application, bool) {
+	token, err := extractBearerToken(r)
+	if err != nil {
+		respondDCRError(w, http.StatusUnauthorized, DCRErrorInvalidToken, dcrInvalidTokenDescription)
+		return nil, nil, false
 	}
 
-	parts := strings.SplitN(authHeader, " ", 2)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return false, "invalid Authorization header format"
+	appManager, ok := h.dcrAppManager(w, r.Context(), "client management not available")
+	if !ok {
+		return nil, nil, false
 	}
 
-	token := strings.TrimSpace(parts[1])
-	if token == "" {
-		return false, "empty registration_access_token"
+	// When the request carries a verified principal (the authz middleware ran,
+	// or a management call is proxied by an authenticated operator), the client
+	// must additionally live in that principal's tenant. A registration token is
+	// already client-specific — this only narrows, never widens.
+	tenantID := ""
+	if ac := AuthorizedContextFromRequest(r.Context()); ac != nil {
+		tenantID = ac.TenantID
 	}
 
-	// Registration access token validation requires:
-	// 1. AppManager to store registration_access_token with each app
-	// 2. Token to be cryptographically verified or looked up
-	// 3. Token to be associated with the specific client_id
-	//
-	// For now, we accept any valid bearer token format.
-	// Full implementation will be added when AppManager supports registration access tokens.
-	// See RFC 7592 Section 2.1 for requirements.
-	return true, ""
+	app, err := appManager.AuthorizeRegistrationAccess(r.Context(), tenantID, clientID, token)
+	if err != nil {
+		h.logAuditEvent(r.Context(), tenantID, iam.AuditEventAppEvent, iam.AuditCategoryAdministration,
+			"dynamic_client_management_denied", iam.AuditOutcomeFailure,
+			&iam.AuditResource{Type: "application", ID: clientID},
+			map[string]interface{}{"reason": err.Error()})
+		respondDCRError(w, http.StatusUnauthorized, DCRErrorInvalidToken, dcrInvalidTokenDescription)
+		return nil, nil, false
+	}
+
+	return appManager, app, true
 }
 
 // GetDynamicClient handles GET /oauth2/register/{client_id} for reading client configuration.
 // This is RFC 7592 (OAuth 2.0 Dynamic Client Registration Management Protocol).
 func (h *IAMHandler) GetDynamicClient(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	// Extract client_id from path
 	clientID := chi.URLParam(r, "client_id")
 	if clientID == "" {
@@ -451,32 +575,9 @@ func (h *IAMHandler) GetDynamicClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate registration_access_token from Authorization header (RFC 7592)
-	// The token must be associated with this specific client_id
-	if valid, errMsg := h.validateRegistrationAccessToken(r, clientID); !valid {
-		respondDCRError(w, http.StatusUnauthorized, "invalid_token", errMsg)
-		return
-	}
-
-	// Get app manager from service
-	appProvider, ok := h.server.service.(interface {
-		GetAppManager(ctx context.Context) (*iam.AppManager, error)
-	})
+	// The registration access token is the credential (RFC 7592 §2).
+	_, app, ok := h.authorizeRegistrationAccess(w, r, clientID)
 	if !ok {
-		respondDCRError(w, http.StatusInternalServerError, DCRErrorInvalidClientMetadata, "client management not available")
-		return
-	}
-
-	appManager, err := appProvider.GetAppManager(ctx)
-	if err != nil {
-		respondDCRError(w, http.StatusInternalServerError, DCRErrorInvalidClientMetadata, "failed to get app manager")
-		return
-	}
-
-	// Get the application
-	app, err := appManager.GetApp(ctx, clientID)
-	if err != nil {
-		respondDCRError(w, http.StatusNotFound, DCRErrorInvalidClientMetadata, "client not found")
 		return
 	}
 
@@ -485,6 +586,7 @@ func (h *IAMHandler) GetDynamicClient(w http.ResponseWriter, r *http.Request) {
 		ClientID:                app.ClientID,
 		ClientIDIssuedAt:        app.Created.Unix(),
 		ClientSecretExpiresAt:   0,
+		RegistrationClientURI:   requestAbsoluteURI(r),
 		RedirectURIs:            app.RedirectURIs,
 		TokenEndpointAuthMethod: "client_secret_basic",
 		GrantTypes:              app.GrantTypes,
@@ -509,6 +611,13 @@ func (h *IAMHandler) UpdateDynamicClient(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Authorize FIRST: an unauthorized caller must learn nothing about the
+	// client, not even whether its proposed metadata would have validated.
+	appManager, current, ok := h.authorizeRegistrationAccess(w, r, clientID)
+	if !ok {
+		return
+	}
+
 	// Parse request body
 	var req DynamicClientRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -519,28 +628,6 @@ func (h *IAMHandler) UpdateDynamicClient(w http.ResponseWriter, r *http.Request)
 	// Validate request
 	if err := validateDCRRequest(&req); err != nil {
 		respondDCRError(w, http.StatusBadRequest, err.code, err.description)
-		return
-	}
-
-	// Validate registration_access_token from Authorization header (RFC 7592)
-	// The token must be associated with this specific client_id
-	if valid, errMsg := h.validateRegistrationAccessToken(r, clientID); !valid {
-		respondDCRError(w, http.StatusUnauthorized, "invalid_token", errMsg)
-		return
-	}
-
-	// Get app manager from service
-	appProvider, ok := h.server.service.(interface {
-		GetAppManager(ctx context.Context) (*iam.AppManager, error)
-	})
-	if !ok {
-		respondDCRError(w, http.StatusInternalServerError, DCRErrorInvalidClientMetadata, "client management not available")
-		return
-	}
-
-	appManager, err := appProvider.GetAppManager(ctx)
-	if err != nil {
-		respondDCRError(w, http.StatusInternalServerError, DCRErrorInvalidClientMetadata, "failed to get app manager")
 		return
 	}
 
@@ -559,18 +646,27 @@ func (h *IAMHandler) UpdateDynamicClient(w http.ResponseWriter, r *http.Request)
 		opts.ResponseTypes = &req.ResponseTypes
 	}
 
-	// Update the application
-	app, err := appManager.UpdateApp(ctx, clientID, opts)
+	// Update the application, scoped to the tenant that owns it.
+	app, err := appManager.UpdateAppInTenant(ctx, current.TenantID, clientID, opts)
 	if err != nil {
 		respondDCRError(w, http.StatusBadRequest, DCRErrorInvalidClientMetadata, err.Error())
 		return
 	}
+
+	h.logAuditEvent(ctx, app.TenantID, iam.AuditEventAppEvent, iam.AuditCategoryAdministration,
+		"dynamic_client_update", iam.AuditOutcomeSuccess,
+		&iam.AuditResource{Type: "application", ID: app.ClientID},
+		map[string]interface{}{
+			"redirect_uris": app.RedirectURIs,
+			"grant_types":   app.GrantTypes,
+		})
 
 	// Build response (without secret)
 	resp := &DynamicClientResponse{
 		ClientID:                app.ClientID,
 		ClientIDIssuedAt:        app.Created.Unix(),
 		ClientSecretExpiresAt:   0,
+		RegistrationClientURI:   requestAbsoluteURI(r),
 		RedirectURIs:            app.RedirectURIs,
 		TokenEndpointAuthMethod: "client_secret_basic",
 		GrantTypes:              app.GrantTypes,
@@ -604,33 +700,20 @@ func (h *IAMHandler) DeleteDynamicClient(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Validate registration_access_token from Authorization header (RFC 7592)
-	// The token must be associated with this specific client_id
-	if valid, errMsg := h.validateRegistrationAccessToken(r, clientID); !valid {
-		respondDCRError(w, http.StatusUnauthorized, "invalid_token", errMsg)
-		return
-	}
-
-	// Get app manager from service
-	appProvider, ok := h.server.service.(interface {
-		GetAppManager(ctx context.Context) (*iam.AppManager, error)
-	})
+	appManager, app, ok := h.authorizeRegistrationAccess(w, r, clientID)
 	if !ok {
-		respondDCRError(w, http.StatusInternalServerError, DCRErrorInvalidClientMetadata, "client management not available")
 		return
 	}
 
-	appManager, err := appProvider.GetAppManager(ctx)
-	if err != nil {
-		respondDCRError(w, http.StatusInternalServerError, DCRErrorInvalidClientMetadata, "failed to get app manager")
-		return
-	}
-
-	// Delete the application
-	if err := appManager.DeleteApp(ctx, clientID); err != nil {
+	// Delete the application, scoped to the tenant that owns it.
+	if err := appManager.DeleteAppInTenant(ctx, app.TenantID, clientID); err != nil {
 		respondDCRError(w, http.StatusNotFound, DCRErrorInvalidClientMetadata, "client not found")
 		return
 	}
+
+	h.logAuditEvent(ctx, app.TenantID, iam.AuditEventAppEvent, iam.AuditCategoryAdministration,
+		"dynamic_client_delete", iam.AuditOutcomeSuccess,
+		&iam.AuditResource{Type: "application", ID: clientID}, nil)
 
 	// Return 204 No Content
 	w.WriteHeader(http.StatusNoContent)

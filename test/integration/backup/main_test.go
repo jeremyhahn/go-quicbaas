@@ -17,6 +17,7 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net"
 	"net/http"
@@ -30,7 +31,7 @@ import (
 // Backend availability flags set during TestMain
 var (
 	clusterReady     bool
-	localStackReady  bool
+	flociReady       bool
 	minioReady       bool
 	azuriteReady     bool
 	gcsEmulatorReady bool
@@ -49,10 +50,21 @@ const (
 // These use Docker service hostnames for the integration test container.
 const (
 	defaultQuicBaaSEndpoint = "https://test-node1:8080"
-	defaultS3Endpoint       = "http://localstack:4566"
+	defaultS3Endpoint       = "http://floci:4566"
 	defaultMinIOEndpoint    = "minio:9000"
 	defaultAzuriteEndpoint  = "http://azurite:10000"
 	defaultGCSEndpoint      = "http://fake-gcs-server:4443"
+)
+
+// Floci emulator readiness contract.
+const (
+	// flociHealthPath is Floci's native health endpoint. It reports a
+	// per-service state map, unlike a plain liveness probe.
+	flociHealthPath = "/_floci/health"
+
+	// flociServiceRunning is the state Floci reports for a service that is
+	// fully wired and able to serve requests.
+	flociServiceRunning = "running"
 )
 
 // TestMain sets up and tears down the test environment.
@@ -63,12 +75,12 @@ func TestMain(m *testing.M) {
 		log.Fatal("QuicBaaS cluster must be ready for backup integration tests")
 	}
 
-	// Check LocalStack (S3 emulator) availability
-	localStackReady = checkS3Availability()
-	if localStackReady {
-		log.Println("LocalStack (S3) is available for backup tests")
+	// Check Floci (S3 emulator) availability
+	flociReady = checkS3Availability()
+	if flociReady {
+		log.Println("Floci (S3) is available for backup tests")
 	} else {
-		log.Fatal("LocalStack (S3) must be available for backup integration tests")
+		log.Fatal("Floci (S3) must be available for backup integration tests")
 	}
 
 	// Check MinIO availability
@@ -122,19 +134,33 @@ func waitForClusterReady() bool {
 	return false
 }
 
-// checkS3Availability checks if LocalStack (S3 emulator) is available.
+// checkS3Availability reports whether the Floci S3 emulator is ready.
+//
+// Readiness requires more than a 200 from the health endpoint: the response
+// must show the s3 service itself in the "running" state. A bare status-code
+// check can pass while the service handlers are still coming up, which
+// surfaces later as a spurious backup-test failure.
 func checkS3Availability() bool {
 	endpoint := getS3Endpoint()
 	client := helpers.NewHTTPClient(5 * time.Second)
 
-	// LocalStack health check endpoint
-	resp, err := client.Get(endpoint + "/_localstack/health")
+	resp, err := client.Get(endpoint + flociHealthPath)
 	if err != nil {
 		return false
 	}
 	defer resp.Body.Close()
 
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+
+	var health struct {
+		Services map[string]string `json:"services"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		return false
+	}
+	return health.Services["s3"] == flociServiceRunning
 }
 
 // checkMinIOAvailability checks if MinIO is available.
@@ -194,7 +220,7 @@ func getQuicBaaSEndpoint() string {
 	return defaultQuicBaaSEndpoint
 }
 
-// getS3Endpoint returns the S3/LocalStack endpoint.
+// getS3Endpoint returns the S3 (Floci) endpoint.
 func getS3Endpoint() string {
 	if endpoint := os.Getenv(envS3Endpoint); endpoint != "" {
 		return endpoint
@@ -246,11 +272,11 @@ func requireCluster(t *testing.T) {
 	}
 }
 
-// requireLocalStack fails the test if LocalStack is not available.
-func requireLocalStack(t *testing.T) {
+// requireFloci fails the test if the Floci S3 emulator is not available.
+func requireFloci(t *testing.T) {
 	t.Helper()
-	if !localStackReady {
-		t.Fatal("LocalStack (S3) must be available for this test")
+	if !flociReady {
+		t.Fatal("Floci (S3) must be available for this test")
 	}
 }
 

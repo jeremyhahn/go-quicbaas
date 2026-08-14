@@ -46,6 +46,8 @@ type fakeCeremonyClient struct {
 	completeClaimShareFunc func(ctx context.Context, req *qrdbtransport.CompleteClaimShareRequest) (*qrdbtransport.CompleteClaimShareResponse, error)
 	signCSRFunc            func(ctx context.Context, req *qrdbtransport.SignCSRInitRequest) (*qrdbtransport.SignCSRInitResponse, error)
 	enrollFunc             func(ctx context.Context, req *qrdbtransport.EnrollExternalOfficerRequest) (*qrdbtransport.EnrollExternalOfficerResponse, error)
+	initializeFunc         func(ctx context.Context, req *qrdbtransport.CeremonyInitializeRequest) (*qrdbtransport.CeremonyInitializeResponse, error)
+	lastInitializeReq      *qrdbtransport.CeremonyInitializeRequest
 
 	lastBeginReq         *qrdbtransport.ClaimCertBeginRequest
 	lastCompleteReq      *qrdbtransport.ClaimCertCompleteRequest
@@ -53,6 +55,15 @@ type fakeCeremonyClient struct {
 	lastCompleteShareReq *qrdbtransport.CompleteClaimShareRequest
 	lastSignReq          *qrdbtransport.SignCSRInitRequest
 	lastEnrollReq        *qrdbtransport.EnrollExternalOfficerRequest
+}
+
+// CeremonyInitialize records the request and delegates to the injected func.
+func (f *fakeCeremonyClient) CeremonyInitialize(ctx context.Context, req *qrdbtransport.CeremonyInitializeRequest) (*qrdbtransport.CeremonyInitializeResponse, error) {
+	f.lastInitializeReq = req
+	if f.initializeFunc != nil {
+		return f.initializeFunc(ctx, req)
+	}
+	return &qrdbtransport.CeremonyInitializeResponse{}, nil
 }
 
 func (f *fakeCeremonyClient) CeremonyStatus(ctx context.Context) (*qrdbtransport.CeremonyStatusResponse, error) {

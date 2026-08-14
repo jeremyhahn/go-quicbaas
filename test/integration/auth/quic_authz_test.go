@@ -596,8 +596,13 @@ func TestQUICOpcodePermissionEnforcement(t *testing.T) {
 		{"TSWritePoint_timeseries_write_point", quic.OpTSWritePoint, []byte{}, "timeseries:write_point"},
 		{"TSDeleteSeries_timeseries_delete_series", quic.OpTSDeleteSeries, []byte{}, "timeseries:delete_series"},
 
-		// Ceremony dispatch authorizes at the surface level.
-		{"Ceremony_ceremony_status", quic.OpCeremony, []byte{}, "ceremony:status"},
+		// Ceremony dispatch is sub-op-aware, exactly like Barrier: payload[0]
+		// selects the permission and an empty payload is default-denied.
+		// Authorizing the whole ceremony surface under ceremony:status was a
+		// privilege escalation (the read-only Auditor holds ceremony:status,
+		// while CeremonySignCSR mints the CA) - see the comment on
+		// ceremonySubOpPermissions in pkg/api/quic/handler_authz_qrdb.go.
+		{"CeremonyStatus_ceremony_status", quic.OpCeremony, []byte{quic.SubOpCeremonyStatus}, "ceremony:status"},
 
 		// Barrier dispatch is sub-op-aware: payload[0] selects the permission.
 		{"BarrierStatus_tenant_barrier_status", quic.OpBarrier, []byte{quic.SubOpBarrierStatus}, "tenant_barrier:status"},

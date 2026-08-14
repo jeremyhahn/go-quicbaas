@@ -15,6 +15,8 @@ package secrets
 
 import (
 	"context"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -35,6 +37,93 @@ type SecretsClient interface {
 	// GetSecret retrieves a secret by its ID/path from the local KMS.
 	// Returns the secret data as bytes, or an error if the secret cannot be retrieved.
 	GetSecret(ctx context.Context, secretID string) ([]byte, error)
+}
+
+// SecretsEnsurer is the optional capability a SecretsClient may implement to
+// support the `?ensure=true` form of a kms:// URI: generate-on-first-use with
+// the given entropy length and encoding, then return the SAME value on every
+// later call (idempotent).
+//
+// This is what makes the platform work securely out of the box: config carries
+// references like
+//
+//	kms://ca/root/keys/0/password?ensure=true&len=32&enc=base64
+//
+// and the very first boot mints a high-entropy secret rather than failing with
+// "secret not found" because nothing has been provisioned yet.
+//
+// A SecretsClient that does not implement this interface simply does not
+// support ensure=true; the resolver then reports a typed error instead of
+// silently degrading to a plain read that is guaranteed to fail on first boot.
+type SecretsEnsurer interface {
+	// EnsureSecret returns the secret at secretID, generating and persisting it
+	// with the requested length/encoding when it does not yet exist.
+	EnsureSecret(ctx context.Context, secretID string, length int, encoding string) ([]byte, error)
+}
+
+// kmsURIOptions holds the parsed query parameters of a kms:// URI.
+type kmsURIOptions struct {
+	// ensure requests generate-on-first-use semantics.
+	ensure bool
+	// length is the entropy length (bytes for base64/hex/raw, digits for numeric).
+	length int
+	// encoding is the output encoding: base64 | hex | numeric | raw.
+	encoding string
+}
+
+// Default entropy for `ensure=true` when the URI omits len/enc.
+const (
+	defaultEnsureLength   = 32
+	defaultEnsureEncoding = "base64"
+)
+
+// parseKMSURI splits a kms:// URI into the secret path (the stable secret
+// identity) and its options. The query string MUST NOT be part of the secret
+// ID — treating the whole remainder as the ID (the historical behaviour) made
+// `?ensure=true&len=32&enc=base64` part of the name and silently discarded the
+// auto-generation contract.
+func parseKMSURI(raw string) (string, *kmsURIOptions, error) {
+	rest := strings.TrimPrefix(raw, kmsURIPrefix)
+	opts := &kmsURIOptions{
+		length:   defaultEnsureLength,
+		encoding: defaultEnsureEncoding,
+	}
+
+	path := rest
+	if i := strings.IndexByte(rest, '?'); i >= 0 {
+		path = rest[:i]
+		q, err := url.ParseQuery(rest[i+1:])
+		if err != nil {
+			return "", nil, NewInvalidSecretURIError("parseKMSURI", raw, "malformed query string")
+		}
+		if v := q.Get("ensure"); v != "" {
+			b, perr := strconv.ParseBool(v)
+			if perr != nil {
+				return "", nil, NewInvalidSecretURIError("parseKMSURI", raw, "ensure must be a boolean")
+			}
+			opts.ensure = b
+		}
+		if v := q.Get("len"); v != "" {
+			n, perr := strconv.Atoi(v)
+			if perr != nil || n <= 0 {
+				return "", nil, NewInvalidSecretURIError("parseKMSURI", raw, "len must be a positive integer")
+			}
+			opts.length = n
+		}
+		if v := q.Get("enc"); v != "" {
+			switch v {
+			case "base64", "hex", "numeric", "raw":
+				opts.encoding = v
+			default:
+				return "", nil, NewInvalidSecretURIError("parseKMSURI", raw, "enc must be base64, hex, numeric, or raw")
+			}
+		}
+	}
+
+	if path == "" {
+		return "", nil, NewInvalidSecretURIError("parseKMSURI", raw, "path cannot be empty")
+	}
+	return path, opts, nil
 }
 
 // LocalKMSResolver resolves secrets from the local QuicBaaS KMS using the kms:// URI scheme.
@@ -92,10 +181,27 @@ func (r *LocalKMSResolver) Resolve(ctx context.Context, raw string) (*SecretValu
 		return nil, NewInvalidSecretURIError(op, raw, "path cannot be empty")
 	}
 
-	// Extract the path from the URI
-	path := strings.TrimPrefix(raw, kmsURIPrefix)
-	if path == "" {
-		return nil, NewInvalidSecretURIError(op, raw, "path cannot be empty")
+	// Split the secret identity from its options. The query string is NOT part
+	// of the secret ID.
+	path, opts, err := parseKMSURI(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	// ensure=true: generate-on-first-use. This is the contract platform configs
+	// rely on (kms://...?ensure=true&len=32&enc=base64) so a first boot mints
+	// the secret instead of failing "not found" against an empty store.
+	if opts.ensure {
+		ensurer, ok := r.client.(SecretsEnsurer)
+		if !ok {
+			return nil, NewResolutionFailedError(op, raw,
+				"ensure=true requested but the KMS client does not support secret generation", nil)
+		}
+		secretData, ensureErr := ensurer.EnsureSecret(ctx, path, opts.length, opts.encoding)
+		if ensureErr != nil {
+			return nil, NewResolutionFailedError(op, raw, "failed to ensure secret in KMS", ensureErr)
+		}
+		return NewSecretValue(raw, secretData, StrategyLocalKMS), nil
 	}
 
 	// Retrieve the secret from the client

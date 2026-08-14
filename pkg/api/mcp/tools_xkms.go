@@ -28,6 +28,7 @@ import (
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // xkmsToolPrefix is the prefix used for all xkms-compatible MCP tool names.
@@ -46,6 +47,35 @@ func ensureXKMSInitialized() error {
 		return &XKMSNotInitializedError{}
 	}
 	return nil
+}
+
+// pivService resolves the service-layer PIV composition service
+// (Security().Auth().PIV() server half) — the single canonical path every
+// transport uses. It fails closed with a typed error when the service facade
+// is not wired.
+func (r *ToolRegistry) pivService() (service.PIVService, error) {
+	if r.service == nil {
+		return nil, api.NewServiceUnavailableError("piv")
+	}
+	pivSvc := r.service.PIV()
+	if pivSvc == nil {
+		return nil, api.NewServiceUnavailableError("piv")
+	}
+	return pivSvc, nil
+}
+
+// fido2Service resolves the service-layer FIDO2 ceremony composition service
+// (Security().Auth().FIDO2() server half). It fails closed with a typed
+// error when the service facade is not wired.
+func (r *ToolRegistry) fido2Service() (service.FIDO2Service, error) {
+	if r.service == nil {
+		return nil, api.NewServiceUnavailableError("fido2")
+	}
+	fido2Svc := r.service.FIDO2()
+	if fido2Svc == nil {
+		return nil, api.NewServiceUnavailableError("fido2")
+	}
+	return fido2Svc, nil
 }
 
 // initXKMSHandlers initializes the handler map for the given ToolRegistry.
@@ -80,7 +110,15 @@ func (r *ToolRegistry) initXKMSHandlers() map[string]XKMSToolHandler {
 		"xkms.piv.storeCert":   r.handleXKMSPIVStoreCert,
 		"xkms.piv.deleteCert":  r.handleXKMSPIVDeleteCert,
 		"xkms.piv.generateKey": r.handleXKMSPIVGenerateKey,
+		"xkms.piv.importCert":  r.handleXKMSPIVImportCert,
+		"xkms.piv.exportCert":  r.handleXKMSPIVExportCert,
 		"xkms.piv.generateCSR": r.handleXKMSPIVGenerateCSR,
+
+		// FIDO2 / WebAuthn ceremony operations (tenant-scoped)
+		"xkms.fido2.beginRegistration":    r.handleXKMSFIDO2BeginRegistration,
+		"xkms.fido2.finishRegistration":   r.handleXKMSFIDO2FinishRegistration,
+		"xkms.fido2.beginAuthentication":  r.handleXKMSFIDO2BeginAuthentication,
+		"xkms.fido2.finishAuthentication": r.handleXKMSFIDO2FinishAuthentication,
 
 		// CA operations
 		"xkms.ca.getBundle":   r.handleTrustedCAGetBundle,
@@ -491,6 +529,91 @@ func (r *ToolRegistry) registerXKMSPIVTools() {
 				"subject": map[string]interface{}{"type": "string", "description": "CSR subject common name"},
 			},
 			"required": []string{"backend", "slot"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "xkms.piv.importCert",
+		Description: "Import a certificate into a PIV slot",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"backend":     map[string]interface{}{"type": "string", "description": "Backend containing the PIV slot"},
+				"slot":        map[string]interface{}{"type": "string", "description": "PIV slot identifier"},
+				"certificate": map[string]interface{}{"type": "string", "description": "Base64-encoded certificate data"},
+				"format":      map[string]interface{}{"type": "string", "description": "Certificate format: pem or der"},
+			},
+			"required": []string{"backend", "slot", "certificate", "format"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "xkms.piv.exportCert",
+		Description: "Export the certificate from a PIV slot",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"backend": map[string]interface{}{"type": "string", "description": "Backend containing the PIV slot"},
+				"slot":    map[string]interface{}{"type": "string", "description": "PIV slot identifier"},
+				"format":  map[string]interface{}{"type": "string", "description": "Certificate format: pem or der"},
+			},
+			"required": []string{"backend", "slot"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "xkms.fido2.beginRegistration",
+		Description: "Begin a WebAuthn registration ceremony for the tenant's relying party",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id":    map[string]interface{}{"type": "string", "description": "Tenant scope; defaults to the authenticated tenant"},
+				"username":     map[string]interface{}{"type": "string", "description": "Username (email) to register the credential for"},
+				"display_name": map[string]interface{}{"type": "string", "description": "Human-readable display name"},
+			},
+			"required": []string{"username"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "xkms.fido2.finishRegistration",
+		Description: "Finish a WebAuthn registration ceremony",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id":        map[string]interface{}{"type": "string", "description": "Tenant scope; defaults to the authenticated tenant"},
+				"session_id":       map[string]interface{}{"type": "string", "description": "Session ID returned by beginRegistration"},
+				"attestation_json": map[string]interface{}{"type": "string", "description": "WebAuthn PublicKeyCredential attestation JSON from the authenticator"},
+			},
+			"required": []string{"session_id", "attestation_json"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "xkms.fido2.beginAuthentication",
+		Description: "Begin a WebAuthn authentication ceremony",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{"type": "string", "description": "Tenant scope; defaults to the authenticated tenant"},
+				"username":  map[string]interface{}{"type": "string", "description": "Username (email) whose registered credentials are challenged"},
+			},
+			"required": []string{"username"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "xkms.fido2.finishAuthentication",
+		Description: "Finish a WebAuthn authentication ceremony and mint the relying party token",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id":      map[string]interface{}{"type": "string", "description": "Tenant scope; defaults to the authenticated tenant"},
+				"session_id":     map[string]interface{}{"type": "string", "description": "Session ID returned by beginAuthentication"},
+				"username":       map[string]interface{}{"type": "string", "description": "Username (email) whose credentials are being asserted"},
+				"assertion_json": map[string]interface{}{"type": "string", "description": "WebAuthn PublicKeyCredential assertion JSON from the authenticator"},
+			},
+			"required": []string{"session_id", "username", "assertion_json"},
 		},
 	})
 }
@@ -1403,13 +1526,17 @@ func (r *ToolRegistry) handleXKMSPIVListSlots(ctx context.Context, args map[stri
 	if err := ensureXKMSInitialized(); err != nil {
 		return nil, err
 	}
+	pivSvc, err := r.pivService()
+	if err != nil {
+		return nil, err
+	}
 
 	backend := getString(args, "backend")
 	if backend == "" {
 		return nil, api.NewRequiredFieldError("backend")
 	}
 
-	resp, err := xkmssdk.ServiceListPIVSlots(ctx, &transport.ListPIVSlotsRequest{
+	resp, err := pivSvc.ListPIVSlots(ctx, &transport.ListPIVSlotsRequest{
 		Backend: backend,
 	})
 	if err != nil {
@@ -1422,6 +1549,10 @@ func (r *ToolRegistry) handleXKMSPIVListSlots(ctx context.Context, args map[stri
 // handleXKMSPIVGetCert retrieves a certificate from a PIV slot.
 func (r *ToolRegistry) handleXKMSPIVGetCert(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	if err := ensureXKMSInitialized(); err != nil {
+		return nil, err
+	}
+	pivSvc, err := r.pivService()
+	if err != nil {
 		return nil, err
 	}
 
@@ -1440,7 +1571,7 @@ func (r *ToolRegistry) handleXKMSPIVGetCert(ctx context.Context, args map[string
 		format = "pem"
 	}
 
-	resp, err := xkmssdk.ServiceGetPIVCertificate(ctx, &transport.GetPIVCertificateRequest{
+	resp, err := pivSvc.GetPIVCertificate(ctx, &transport.GetPIVCertificateRequest{
 		Backend: backend,
 		Slot:    slot,
 		Format:  format,
@@ -1459,6 +1590,10 @@ func (r *ToolRegistry) handleXKMSPIVGetCert(ctx context.Context, args map[string
 // handleXKMSPIVStoreCert stores a certificate in a PIV slot.
 func (r *ToolRegistry) handleXKMSPIVStoreCert(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	if err := ensureXKMSInitialized(); err != nil {
+		return nil, err
+	}
+	pivSvc, err := r.pivService()
+	if err != nil {
 		return nil, err
 	}
 
@@ -1485,7 +1620,7 @@ func (r *ToolRegistry) handleXKMSPIVStoreCert(ctx context.Context, args map[stri
 		return nil, api.NewRequiredFieldError("format")
 	}
 
-	if err := xkmssdk.ServiceStorePIVCertificate(ctx, &transport.StorePIVCertificateRequest{
+	if err := pivSvc.StorePIVCertificate(ctx, &transport.StorePIVCertificateRequest{
 		Backend:     backend,
 		Slot:        slot,
 		Certificate: certData,
@@ -1504,6 +1639,10 @@ func (r *ToolRegistry) handleXKMSPIVDeleteCert(ctx context.Context, args map[str
 	if err := ensureXKMSInitialized(); err != nil {
 		return nil, err
 	}
+	pivSvc, err := r.pivService()
+	if err != nil {
+		return nil, err
+	}
 
 	backend := getString(args, "backend")
 	if backend == "" {
@@ -1515,7 +1654,7 @@ func (r *ToolRegistry) handleXKMSPIVDeleteCert(ctx context.Context, args map[str
 		return nil, api.NewRequiredFieldError("slot")
 	}
 
-	if err := xkmssdk.ServiceDeletePIVCertificate(ctx, &transport.DeletePIVCertificateRequest{
+	if err := pivSvc.DeletePIVCertificate(ctx, &transport.DeletePIVCertificateRequest{
 		Backend: backend,
 		Slot:    slot,
 	}); err != nil {
@@ -1532,6 +1671,10 @@ func (r *ToolRegistry) handleXKMSPIVGenerateKey(ctx context.Context, args map[st
 	if err := ensureXKMSInitialized(); err != nil {
 		return nil, err
 	}
+	pivSvc, err := r.pivService()
+	if err != nil {
+		return nil, err
+	}
 
 	backend := getString(args, "backend")
 	if backend == "" {
@@ -1543,7 +1686,7 @@ func (r *ToolRegistry) handleXKMSPIVGenerateKey(ctx context.Context, args map[st
 		return nil, api.NewRequiredFieldError("slot")
 	}
 
-	resp, err := xkmssdk.ServiceGeneratePIVKey(ctx, &transport.GeneratePIVKeyRequest{
+	resp, err := pivSvc.GeneratePIVKey(ctx, &transport.GeneratePIVKeyRequest{
 		Backend:   backend,
 		Slot:      slot,
 		Algorithm: getString(args, "algorithm"),
@@ -1565,6 +1708,10 @@ func (r *ToolRegistry) handleXKMSPIVGenerateCSR(ctx context.Context, args map[st
 	if err := ensureXKMSInitialized(); err != nil {
 		return nil, err
 	}
+	pivSvc, err := r.pivService()
+	if err != nil {
+		return nil, err
+	}
 
 	backend := getString(args, "backend")
 	if backend == "" {
@@ -1576,7 +1723,7 @@ func (r *ToolRegistry) handleXKMSPIVGenerateCSR(ctx context.Context, args map[st
 		return nil, api.NewRequiredFieldError("slot")
 	}
 
-	resp, err := xkmssdk.ServiceGeneratePIVCSR(ctx, &transport.GeneratePIVCSRRequest{
+	resp, err := pivSvc.GeneratePIVCSR(ctx, &transport.GeneratePIVCSRRequest{
 		Backend: backend,
 		Slot:    slot,
 		Subject: getString(args, "subject"),
@@ -1589,6 +1736,232 @@ func (r *ToolRegistry) handleXKMSPIVGenerateCSR(ctx context.Context, args map[st
 		"slot": resp.Slot,
 		"csr":  base64.StdEncoding.EncodeToString(resp.CSR),
 	})
+}
+
+// handleXKMSPIVImportCert imports a certificate into a PIV slot.
+func (r *ToolRegistry) handleXKMSPIVImportCert(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if err := ensureXKMSInitialized(); err != nil {
+		return nil, err
+	}
+	pivSvc, err := r.pivService()
+	if err != nil {
+		return nil, err
+	}
+
+	backend := getString(args, "backend")
+	if backend == "" {
+		return nil, api.NewRequiredFieldError("backend")
+	}
+
+	slot := getString(args, "slot")
+	if slot == "" {
+		return nil, api.NewRequiredFieldError("slot")
+	}
+
+	certData, err := decodeBase64Arg(args, "certificate")
+	if err != nil {
+		return nil, err
+	}
+	if certData == nil {
+		return nil, api.NewRequiredFieldError("certificate")
+	}
+
+	format := getString(args, "format")
+	if format == "" {
+		return nil, api.NewRequiredFieldError("format")
+	}
+
+	if err := pivSvc.ImportPIVCertificate(ctx, &transport.StorePIVCertificateRequest{
+		Backend:     backend,
+		Slot:        slot,
+		Certificate: certData,
+		Format:      format,
+	}); err != nil {
+		return nil, &XKMSOperationError{Operation: "piv.importCert", Cause: err}
+	}
+
+	return marshalResult(map[string]interface{}{
+		"success": true,
+	})
+}
+
+// handleXKMSPIVExportCert exports the certificate from a PIV slot.
+func (r *ToolRegistry) handleXKMSPIVExportCert(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if err := ensureXKMSInitialized(); err != nil {
+		return nil, err
+	}
+	pivSvc, err := r.pivService()
+	if err != nil {
+		return nil, err
+	}
+
+	backend := getString(args, "backend")
+	if backend == "" {
+		return nil, api.NewRequiredFieldError("backend")
+	}
+
+	slot := getString(args, "slot")
+	if slot == "" {
+		return nil, api.NewRequiredFieldError("slot")
+	}
+
+	format := getString(args, "format")
+	if format == "" {
+		format = "pem"
+	}
+
+	resp, err := pivSvc.ExportPIVCertificate(ctx, &transport.GetPIVCertificateRequest{
+		Backend: backend,
+		Slot:    slot,
+		Format:  format,
+	})
+	if err != nil {
+		return nil, &XKMSOperationError{Operation: "piv.exportCert", Cause: err}
+	}
+
+	return marshalResult(map[string]interface{}{
+		"slot":        resp.Slot,
+		"certificate": base64.StdEncoding.EncodeToString(resp.Certificate),
+		"format":      resp.Format,
+	})
+}
+
+// =============================================================================
+// FIDO2 / WebAuthn Ceremony Tool Handlers
+// =============================================================================
+//
+// The four ceremony verbs delegate to the service-layer FIDO2 composition
+// service (Security().Auth().FIDO2() server half), which resolves the
+// tenant's xkms relying-party service and forwards through go-xkms's
+// canonical FIDO2 servicer adapter. The tenant scope comes from the
+// tenant_id argument, falling back to the authenticated request context.
+//
+// Unlike REST and QUIC — where the authentication ceremony is pre-auth
+// because WebAuthn IS the authentication — the MCP surface keeps ALL four
+// verbs behind authorization: widening the unauthenticated MCP tool surface
+// is an owner decision (see the quicbaas_login_begin / quicbaas_login_finish
+// precedent in authz_qrdb_unmapped.go). Authenticated callers can still
+// drive the full ceremony (e.g. step-up verification of an enrolled factor).
+
+// fido2TenantFromArgs resolves the tenant scope for a FIDO2 ceremony tool
+// call: an explicit tenant_id argument wins, otherwise the authenticated
+// request context supplies it.
+func fido2TenantFromArgs(ctx context.Context, args map[string]interface{}) string {
+	if tenantID := getString(args, "tenant_id"); tenantID != "" {
+		return tenantID
+	}
+	return iam.TenantFromContext(ctx)
+}
+
+// handleXKMSFIDO2BeginRegistration starts a WebAuthn registration ceremony
+// for the tenant's relying party.
+func (r *ToolRegistry) handleXKMSFIDO2BeginRegistration(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	fido2Svc, err := r.fido2Service()
+	if err != nil {
+		return nil, err
+	}
+
+	username := getString(args, "username")
+	if username == "" {
+		return nil, api.NewRequiredFieldError("username")
+	}
+
+	resp, err := fido2Svc.BeginRegistration(ctx, fido2TenantFromArgs(ctx, args), &transport.BeginRegistrationRequest{
+		Username:    username,
+		DisplayName: getString(args, "display_name"),
+	})
+	if err != nil {
+		return nil, &XKMSOperationError{Operation: "fido2.beginRegistration", Cause: err}
+	}
+
+	return marshalResult(resp)
+}
+
+// handleXKMSFIDO2FinishRegistration completes a WebAuthn registration
+// ceremony.
+func (r *ToolRegistry) handleXKMSFIDO2FinishRegistration(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	fido2Svc, err := r.fido2Service()
+	if err != nil {
+		return nil, err
+	}
+
+	sessionID := getString(args, "session_id")
+	if sessionID == "" {
+		return nil, api.NewRequiredFieldError("session_id")
+	}
+
+	attestationJSON := getString(args, "attestation_json")
+	if attestationJSON == "" {
+		return nil, api.NewRequiredFieldError("attestation_json")
+	}
+
+	resp, err := fido2Svc.FinishRegistration(ctx, fido2TenantFromArgs(ctx, args), &transport.FinishRegistrationRequest{
+		SessionID:       sessionID,
+		AttestationJSON: attestationJSON,
+	})
+	if err != nil {
+		return nil, &XKMSOperationError{Operation: "fido2.finishRegistration", Cause: err}
+	}
+
+	return marshalResult(resp)
+}
+
+// handleXKMSFIDO2BeginAuthentication starts a WebAuthn authentication
+// ceremony.
+func (r *ToolRegistry) handleXKMSFIDO2BeginAuthentication(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	fido2Svc, err := r.fido2Service()
+	if err != nil {
+		return nil, err
+	}
+
+	username := getString(args, "username")
+	if username == "" {
+		return nil, api.NewRequiredFieldError("username")
+	}
+
+	resp, err := fido2Svc.BeginAuthentication(ctx, fido2TenantFromArgs(ctx, args), &transport.BeginAuthenticationRequest{
+		Username: username,
+	})
+	if err != nil {
+		return nil, &XKMSOperationError{Operation: "fido2.beginAuthentication", Cause: err}
+	}
+
+	return marshalResult(resp)
+}
+
+// handleXKMSFIDO2FinishAuthentication completes a WebAuthn authentication
+// ceremony and returns the relying party's post-authentication token.
+func (r *ToolRegistry) handleXKMSFIDO2FinishAuthentication(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	fido2Svc, err := r.fido2Service()
+	if err != nil {
+		return nil, err
+	}
+
+	sessionID := getString(args, "session_id")
+	if sessionID == "" {
+		return nil, api.NewRequiredFieldError("session_id")
+	}
+
+	username := getString(args, "username")
+	if username == "" {
+		return nil, api.NewRequiredFieldError("username")
+	}
+
+	assertionJSON := getString(args, "assertion_json")
+	if assertionJSON == "" {
+		return nil, api.NewRequiredFieldError("assertion_json")
+	}
+
+	resp, err := fido2Svc.FinishAuthentication(ctx, fido2TenantFromArgs(ctx, args), &transport.FinishAuthenticationRequest{
+		SessionID:     sessionID,
+		Username:      username,
+		AssertionJSON: assertionJSON,
+	})
+	if err != nil {
+		return nil, &XKMSOperationError{Operation: "fido2.finishAuthentication", Cause: err}
+	}
+
+	return marshalResult(resp)
 }
 
 // =============================================================================

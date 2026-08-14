@@ -428,7 +428,6 @@ func TestInvalidSecretURIError_Error(t *testing.T) {
 }
 
 // TestEntropyGenerationFailedError_ErrorMethod tests all branch combinations
-// (renamed to avoid conflict with autogen_resolver_test.go)
 func TestEntropyGenerationFailedError_ErrorMethod(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -488,7 +487,6 @@ func TestEntropyGenerationFailedError_ErrorMethod(t *testing.T) {
 }
 
 // TestEntropyGenerationFailedError_UnwrapMethod tests error unwrapping
-// (renamed to avoid conflict with autogen_resolver_test.go)
 func TestEntropyGenerationFailedError_UnwrapMethod(t *testing.T) {
 	tests := []struct {
 		name      string

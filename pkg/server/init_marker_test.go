@@ -107,7 +107,7 @@ func TestResolveBarrierStrategy_NoMarkerUsesConfigDefault(t *testing.T) {
 	cfg := config.Default()
 	cfg.Storage.DataDir = t.TempDir()
 
-	strategy, _, _, err := resolveBarrierStrategy(cfg, false)
+	strategy, _, _, _, err := resolveBarrierStrategy(cfg, false)
 	require.NoError(t, err)
 	assert.Equal(t, qrdbsdk.StrategyPassphrase, strategy)
 }
@@ -120,7 +120,7 @@ func TestResolveBarrierStrategy_MarkerNoneWins(t *testing.T) {
 	cfg.Storage.DataDir = t.TempDir()
 	writeTestInitMarker(t, cfg.Storage.DataDir, "none", 0, 0)
 
-	strategy, _, _, err := resolveBarrierStrategy(cfg, false)
+	strategy, _, _, _, err := resolveBarrierStrategy(cfg, false)
 	require.NoError(t, err)
 	assert.Equal(t, qrdbsdk.StrategyNone, strategy)
 }
@@ -132,7 +132,7 @@ func TestResolveBarrierStrategy_MarkerDisabledAliasMapsToNone(t *testing.T) {
 	cfg.Storage.DataDir = t.TempDir()
 	writeTestInitMarker(t, cfg.Storage.DataDir, "disabled", 0, 0)
 
-	strategy, _, _, err := resolveBarrierStrategy(cfg, false)
+	strategy, _, _, _, err := resolveBarrierStrategy(cfg, false)
 	require.NoError(t, err)
 	assert.Equal(t, qrdbsdk.StrategyNone, strategy)
 }
@@ -144,7 +144,7 @@ func TestResolveBarrierStrategy_MarkerPassphraseWins(t *testing.T) {
 	cfg.Storage.DataDir = t.TempDir()
 	writeTestInitMarker(t, cfg.Storage.DataDir, "passphrase", 0, 0)
 
-	strategy, _, _, err := resolveBarrierStrategy(cfg, false)
+	strategy, _, _, _, err := resolveBarrierStrategy(cfg, false)
 	require.NoError(t, err)
 	assert.Equal(t, qrdbsdk.StrategyPassphrase, strategy)
 }
@@ -160,7 +160,7 @@ func TestResolveBarrierStrategy_MarkerShamirCarriesThresholdAndShares(t *testing
 	// from the marker, not the config default.
 	writeTestInitMarker(t, cfg.Storage.DataDir, "shamir", 3, 5)
 
-	strategy, threshold, total, err := resolveBarrierStrategy(cfg, false)
+	strategy, threshold, total, _, err := resolveBarrierStrategy(cfg, false)
 	require.NoError(t, err)
 	assert.Equal(t, qrdbsdk.StrategyShamir, strategy)
 	assert.Equal(t, 3, threshold)
@@ -177,10 +177,66 @@ func TestResolveBarrierStrategy_ExplicitOverrideWins(t *testing.T) {
 	// Marker says none, but operator override pins passphrase.
 	writeTestInitMarker(t, cfg.Storage.DataDir, "none", 0, 0)
 
-	strategy, _, _, err := resolveBarrierStrategy(cfg, true)
+	strategy, _, _, _, err := resolveBarrierStrategy(cfg, true)
 	require.NoError(t, err)
 	assert.Equal(t, qrdbsdk.StrategyPassphrase, strategy,
 		"explicit operator override must win over the persisted init marker")
+}
+
+// TestBuildQRDBConfig_ShamirMarkerEnablesNodeSeal is the regression test for the
+// gap that would otherwise swallow the whole M-of-N ceremony.
+//
+// `quicbaasd init --barrier-strategy shamir` deliberately initializes no
+// barrier — go-qrdb's bootstrap orchestrator reserves that for the ceremony
+// ("Shamir barrier initialization is the ceremony's job (multiple SOs), never
+// inline"). The node must therefore boot SEALED so its sealed window can serve
+// officer registration and the ceremony. Resolving only the STRATEGY from the
+// marker was not enough: seal.enabled came from config alone, so a data dir
+// initialized for shamir booted UNSEALED, skipped the sealed window, and ran
+// first-boot against an unprotected data plane, silently ignoring the
+// operator's chosen strategy.
+func TestBuildQRDBConfig_ShamirMarkerEnablesNodeSeal(t *testing.T) {
+	cfg := config.Default()
+	cfg.Storage.DataDir = t.TempDir()
+	cfg.Seal.Enabled = false // config says nothing; the marker is the record
+	writeTestInitMarker(t, cfg.Storage.DataDir, "shamir", 2, 3)
+
+	qcfg := mustBuildQRDBConfig(t, cfg, false)
+
+	assert.True(t, qcfg.Seal.Enabled,
+		"a shamir init marker must bring the node up sealed, or the ceremony never runs")
+	assert.Equal(t, "shamir", qcfg.Seal.Strategy)
+	assert.Equal(t, 2, qcfg.Seal.ShamirThreshold)
+	assert.Equal(t, 3, qcfg.Seal.ShamirTotal)
+}
+
+// TestBuildQRDBConfig_NoMarkerLeavesSealDisabled pins the other side of that
+// rule. The config default strategy is itself "passphrase", so keying the
+// decision off a non-empty resolved strategy would seal every node whose
+// config never asked for a barrier. Only a persisted init decision enables it.
+func TestBuildQRDBConfig_NoMarkerLeavesSealDisabled(t *testing.T) {
+	cfg := config.Default()
+	cfg.Storage.DataDir = t.TempDir() // fresh dir: no marker
+	cfg.Seal.Enabled = false
+
+	qcfg := mustBuildQRDBConfig(t, cfg, false)
+
+	assert.False(t, qcfg.Seal.Enabled,
+		"an uninitialized data dir must not silently boot sealed")
+}
+
+// TestBuildQRDBConfig_NoneMarkerLeavesSealDisabled verifies the "none" strategy
+// is exempt: it is the explicit choice to run without a barrier.
+func TestBuildQRDBConfig_NoneMarkerLeavesSealDisabled(t *testing.T) {
+	cfg := config.Default()
+	cfg.Storage.DataDir = t.TempDir()
+	cfg.Seal.Enabled = false
+	writeTestInitMarker(t, cfg.Storage.DataDir, "none", 0, 0)
+
+	qcfg := mustBuildQRDBConfig(t, cfg, false)
+
+	assert.False(t, qcfg.Seal.Enabled,
+		"--barrier-strategy none must not bring up a barrier")
 }
 
 // TestResolveBarrierStrategy_MalformedMarkerSurfacesError verifies a malformed
@@ -191,7 +247,7 @@ func TestResolveBarrierStrategy_MalformedMarkerSurfacesError(t *testing.T) {
 	require.NoError(t, os.WriteFile(
 		filepath.Join(cfg.Storage.DataDir, initDoneMarkerName), []byte("{bad"), 0o600))
 
-	_, _, _, err := resolveBarrierStrategy(cfg, false)
+	_, _, _, _, err := resolveBarrierStrategy(cfg, false)
 	require.Error(t, err)
 	var dpErr *DataPlaneBarrierError
 	require.ErrorAs(t, err, &dpErr)
@@ -217,7 +273,7 @@ func TestBuildDataPlaneBarrierService_MarkerNoneRoundTrip(t *testing.T) {
 	cfg.Seal.StrategyExplicit = false
 	writeTestInitMarker(t, cfg.Storage.DataDir, "none", 0, 0)
 
-	svc, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
+	svc, _, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 	require.NotNil(t, closer)
@@ -245,7 +301,7 @@ func TestBuildDataPlaneBarrierService_ExplicitOverrideBeatsMarker(t *testing.T) 
 	cfg.Seal.StrategyExplicit = true
 	writeTestInitMarker(t, cfg.Storage.DataDir, "none", 0, 0)
 
-	svc, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
+	svc, _, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 	require.NotNil(t, closer)
@@ -268,7 +324,7 @@ func TestBuildDataPlaneBarrierService_MarkerShamirBuilds(t *testing.T) {
 	cfg.Seal.StrategyExplicit = false
 	writeTestInitMarker(t, cfg.Storage.DataDir, "shamir", 2, 3)
 
-	svc, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
+	svc, _, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 	require.NotNil(t, closer)
@@ -306,7 +362,7 @@ func TestResolveBarrierStrategy_EmptyStrategyDefaultsToPassphrase(t *testing.T) 
 
 	// operatorOverride=true short-circuits the marker lookup so the defaulted
 	// strategy is returned directly.
-	strategy, _, _, err := resolveBarrierStrategy(cfg, true)
+	strategy, _, _, _, err := resolveBarrierStrategy(cfg, true)
 	require.NoError(t, err)
 	assert.Equal(t, qrdbsdk.StrategyPassphrase, strategy)
 }

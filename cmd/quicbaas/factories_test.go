@@ -1227,64 +1227,6 @@ func TestMockCryptoClient_DefaultMethods(t *testing.T) {
 	})
 }
 
-func TestMockDEKClient_DefaultMethods(t *testing.T) {
-	client := &MockDEKClient{}
-	ctx := context.Background()
-
-	t.Run("KMSCreateDEK", func(t *testing.T) {
-		resp, err := client.KMSCreateDEK(ctx, &service.CreateDEKRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("KMSGetDEK", func(t *testing.T) {
-		resp, err := client.KMSGetDEK(ctx, &service.GetDEKRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("KMSListDEKs", func(t *testing.T) {
-		resp, err := client.KMSListDEKs(ctx, &service.ListDEKsRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("KMSRotateDEK", func(t *testing.T) {
-		resp, err := client.KMSRotateDEK(ctx, &service.RotateDEKRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("KMSDeleteDEK", func(t *testing.T) {
-		resp, err := client.KMSDeleteDEK(ctx, &service.DeleteDEKRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("KMSGetDEKStatus", func(t *testing.T) {
-		resp, err := client.KMSGetDEKStatus(ctx, &service.GetDEKStatusRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("KMSSetDefaultDEK", func(t *testing.T) {
-		resp, err := client.KMSSetDefaultDEK(ctx, &service.SetDefaultDEKRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("KMSSetDEKSafety", func(t *testing.T) {
-		resp, err := client.KMSSetDEKSafety(ctx, &service.SetDEKSafetyRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("Close", func(t *testing.T) {
-		err := client.Close()
-		assert.NoError(t, err)
-	})
-}
-
 func TestMockBackendClient_DefaultMethods(t *testing.T) {
 	client := &MockBackendClient{}
 	ctx := context.Background()

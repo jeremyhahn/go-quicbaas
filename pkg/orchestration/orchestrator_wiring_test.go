@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -892,12 +894,23 @@ func TestOrchestrator_SpawnSession_Sandboxed(t *testing.T) {
 	impl := svc.(*agentServiceImpl)
 	impl.SetContainerRuntime(rt)
 
+	// A containerized spawn bind-mounts its work directory into the container,
+	// so the directory has to be one the mount policy authorizes for this
+	// tenant — here, its own managed workspace under the projects root. See
+	// spawn_mount_policy_test.go for the denial cases.
+	projectsRoot := filepath.Join(t.TempDir(), "projects")
+	workspace := filepath.Join(projectsRoot, SystemTenantID, "proj-1", workspaceDirName)
+	if mkErr := os.MkdirAll(workspace, 0o700); mkErr != nil {
+		t.Fatalf("MkdirAll: %v", mkErr)
+	}
+	impl.SetMountPolicy(&MountPolicy{ProjectsRoot: projectsRoot})
+
 	resp, spawnErr := svc.SpawnSession(context.Background(), &SpawnSessionRequest{
 		Backend:        "mock",
 		Sandboxed:      true,
 		ContainerImage: "quicbaas/agent:latest",
 		Env:            map[string]string{"API_KEY": "test-key"},
-		WorkDir:        "/workspace",
+		WorkDir:        workspace,
 	})
 	if spawnErr != nil {
 		t.Fatalf("expected no error, got %v", spawnErr)
@@ -968,9 +981,8 @@ func TestOrchestrator_SpawnSession_Sandboxed_WithContainerConfig(t *testing.T) {
 		Backend:   "mock",
 		Sandboxed: true,
 		ContainerConfig: &ContainerSpec{
-			Image:   "custom/image:v2",
-			Network: "host",
-			Env:     map[string]string{"CUSTOM": "value"},
+			Image: "custom/image:v2",
+			Env:   map[string]string{"CUSTOM": "value"},
 		},
 	})
 	if spawnErr != nil {
@@ -985,8 +997,15 @@ func TestOrchestrator_SpawnSession_Sandboxed_WithContainerConfig(t *testing.T) {
 	if rt.runCalls[0].Spec.Image != "custom/image:v2" {
 		t.Errorf("expected custom image, got %q", rt.runCalls[0].Spec.Image)
 	}
-	if rt.runCalls[0].Spec.Network != "host" {
-		t.Errorf("expected host network, got %q", rt.runCalls[0].Spec.Network)
+	if rt.runCalls[0].Spec.Env["CUSTOM"] != "value" {
+		t.Errorf("expected the spec's environment to survive, got %v", rt.runCalls[0].Spec.Env)
+	}
+	// The network is operator configuration, not a request field: a
+	// caller-supplied spec runs in the isolated default, and a spec naming
+	// "host" fails the spawn outright (see
+	// TestSpawnSession_ContainerConfigHostNetwork_Refused).
+	if got := rt.runCalls[0].Spec.Network; got != SandboxNetworkDefault.String() {
+		t.Errorf("expected the operator default network %q, got %q", SandboxNetworkDefault, got)
 	}
 }
 

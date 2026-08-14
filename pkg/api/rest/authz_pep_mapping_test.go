@@ -250,6 +250,13 @@ func TestMapRequestToPermission(t *testing.T) {
 		{"ssh known-hosts verify", "/api/v1/ssh/known-hosts/example.com/verify", http.MethodPost, "keys", "verify", true},
 		{"ssh authorized emit", "/api/v1/ssh/authorized", http.MethodPost, "keys", "get", true},
 		{"ssh authorized verify", "/api/v1/ssh/authorized/verify", http.MethodPost, "keys", "verify", true},
+		// Authorized-key CRUD. The "/authorized/keys" suffix must beat the
+		// bare "/keys" key-CRUD suffix within its match tier, otherwise an
+		// authorized-key write would authorize as a private-key write.
+		{"ssh authorized add", "/api/v1/ssh/authorized/keys", http.MethodPost, "keys", "create", true},
+		{"ssh authorized list", "/api/v1/ssh/authorized/keys", http.MethodGet, "keys", "list", true},
+		{"ssh authorized get", "/api/v1/ssh/authorized/keys/system/admin/deploy", http.MethodGet, "keys", "get", true},
+		{"ssh authorized remove", "/api/v1/ssh/authorized/keys/system/admin/deploy", http.MethodDelete, "keys", "delete", true},
 		// xkms-SDK alias — identical semantics, different mount prefix (lets CLIs
 		// point XKMSD_URL at quicbaasd and reuse the go-xkms REST client unchanged).
 		{"ssh xkms alias keys list", "/api/v1/xkms/v1/ssh/keys", http.MethodGet, "keys", "list", true},

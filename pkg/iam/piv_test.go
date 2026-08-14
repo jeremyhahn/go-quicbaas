@@ -87,11 +87,11 @@ func pivTestLeaf(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, cl
 }
 
 // setupPIVTest creates a ready-to-use PIVActivator with a pending user and a valid invite token.
-func setupPIVTest(t *testing.T) (activator *PIVActivator, token string, userStorage *mockUserStorage, inviteStore *MemoryInviteStore) {
+func setupPIVTest(t *testing.T) (activator *PIVActivator, token string, userStorage *mockUserStorage, inviteStore *fakeInviteStore) {
 	t.Helper()
 
 	userStorage = newMockUserStorage()
-	inviteStore = NewMemoryInviteStore()
+	inviteStore = newFakeInviteStore()
 
 	// Create a pending user.
 	user := &User{
@@ -106,20 +106,12 @@ func setupPIVTest(t *testing.T) (activator *PIVActivator, token string, userStor
 		t.Fatalf("create user: %v", err)
 	}
 
-	// Generate an invite token and store the record.
+	// Issue the invite through the store; the token is minted by the store,
+	// never by the caller.
 	var genErr error
-	token, genErr = GenerateInviteToken()
+	token, _, genErr = inviteStore.Create(context.Background(), "tenant-1", "user-piv-1", time.Hour)
 	if genErr != nil {
-		t.Fatalf("generate invite token: %v", genErr)
-	}
-	record := &InviteRecord{
-		TokenHash: tokenHash(token),
-		UserID:    "user-piv-1",
-		TenantID:  "tenant-1",
-		ExpiresAt: time.Now().Add(time.Hour),
-	}
-	if err := inviteStore.Create(context.Background(), record); err != nil {
-		t.Fatalf("store invite: %v", err)
+		t.Fatalf("create invite: %v", genErr)
 	}
 
 	ca, caKey := pivTestCA(t)
@@ -148,7 +140,7 @@ func TestPIVActivator_Valid(t *testing.T) {
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
-	inviteStore := NewMemoryInviteStore()
+	inviteStore := newFakeInviteStore()
 
 	user := &User{
 		ID:       "u1",
@@ -160,13 +152,7 @@ func TestPIVActivator_Valid(t *testing.T) {
 	}
 	_ = userStorage.CreateUser(ctx, user)
 
-	token, _ := GenerateInviteToken()
-	_ = inviteStore.Create(ctx, &InviteRecord{
-		TokenHash: tokenHash(token),
-		UserID:    "u1",
-		TenantID:  "t1",
-		ExpiresAt: time.Now().Add(time.Hour),
-	})
+	token, _, _ := inviteStore.Create(ctx, "t1", "u1", time.Hour)
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()
@@ -183,7 +169,7 @@ func TestPIVActivator_Valid(t *testing.T) {
 		t.Fatalf("NewPIVActivator: %v", err)
 	}
 
-	if err := act.Activate(ctx, token, certPEM); err != nil {
+	if err := act.Activate(ctx, "t1", token, certPEM); err != nil {
 		t.Fatalf("Activate: %v", err)
 	}
 
@@ -204,18 +190,12 @@ func TestPIVActivator_ExpiredInvite(t *testing.T) {
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
-	inviteStore := NewMemoryInviteStore()
+	inviteStore := newFakeInviteStore()
 
 	user := &User{ID: "u2", TenantID: "t1", Email: "e@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
-	token, _ := GenerateInviteToken()
-	_ = inviteStore.Create(ctx, &InviteRecord{
-		TokenHash: tokenHash(token),
-		UserID:    "u2",
-		TenantID:  "t1",
-		ExpiresAt: time.Now().Add(-time.Minute), // already expired
-	})
+	token, _, _ := inviteStore.Create(ctx, "t1", "u2", -time.Minute) // already expired
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()
@@ -229,7 +209,7 @@ func TestPIVActivator_ExpiredInvite(t *testing.T) {
 		InviteStore: inviteStore,
 	})
 
-	err := act.Activate(ctx, token, certPEM)
+	err := act.Activate(ctx, "t1", token, certPEM)
 	if !errors.Is(err, ErrInviteExpired) {
 		t.Fatalf("expected ErrInviteExpired, got %v", err)
 	}
@@ -240,18 +220,12 @@ func TestPIVActivator_UntrustedCert(t *testing.T) {
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
-	inviteStore := NewMemoryInviteStore()
+	inviteStore := newFakeInviteStore()
 
 	user := &User{ID: "u3", TenantID: "t1", Email: "f@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
-	token, _ := GenerateInviteToken()
-	_ = inviteStore.Create(ctx, &InviteRecord{
-		TokenHash: tokenHash(token),
-		UserID:    "u3",
-		TenantID:  "t1",
-		ExpiresAt: time.Now().Add(time.Hour),
-	})
+	token, _, _ := inviteStore.Create(ctx, "t1", "u3", time.Hour)
 
 	// Trust only ca2, but present a cert signed by ca1.
 	ca1, ca1Key := pivTestCA(t)
@@ -268,7 +242,7 @@ func TestPIVActivator_UntrustedCert(t *testing.T) {
 		InviteStore: inviteStore,
 	})
 
-	err := act.Activate(ctx, token, certPEM)
+	err := act.Activate(ctx, "t1", token, certPEM)
 	if !errors.Is(err, ErrPIVCertRejected) {
 		t.Fatalf("expected ErrPIVCertRejected, got %v", err)
 	}
@@ -280,18 +254,12 @@ func TestPIVActivate_RejectsUntrustedIssuer(t *testing.T) {
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
-	inviteStore := NewMemoryInviteStore()
+	inviteStore := newFakeInviteStore()
 
 	user := &User{ID: "u5", TenantID: "t1", Email: "h@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
-	token, _ := GenerateInviteToken()
-	_ = inviteStore.Create(ctx, &InviteRecord{
-		TokenHash: tokenHash(token),
-		UserID:    "u5",
-		TenantID:  "t1",
-		ExpiresAt: time.Now().Add(time.Hour),
-	})
+	token, _, _ := inviteStore.Create(ctx, "t1", "u5", time.Hour)
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()
@@ -309,7 +277,7 @@ func TestPIVActivate_RejectsUntrustedIssuer(t *testing.T) {
 		t.Fatalf("NewPIVActivator: %v", err)
 	}
 
-	activateErr := act.Activate(ctx, token, certPEM)
+	activateErr := act.Activate(ctx, "t1", token, certPEM)
 	if activateErr == nil {
 		t.Fatal("expected error but got nil")
 	}
@@ -328,18 +296,12 @@ func TestPIVActivate_AcceptsTrustedIssuer(t *testing.T) {
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
-	inviteStore := NewMemoryInviteStore()
+	inviteStore := newFakeInviteStore()
 
 	user := &User{ID: "u6", TenantID: "t1", Email: "i@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
-	token, _ := GenerateInviteToken()
-	_ = inviteStore.Create(ctx, &InviteRecord{
-		TokenHash: tokenHash(token),
-		UserID:    "u6",
-		TenantID:  "t1",
-		ExpiresAt: time.Now().Add(time.Hour),
-	})
+	token, _, _ := inviteStore.Create(ctx, "t1", "u6", time.Hour)
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()
@@ -357,7 +319,7 @@ func TestPIVActivate_AcceptsTrustedIssuer(t *testing.T) {
 		t.Fatalf("NewPIVActivator: %v", err)
 	}
 
-	if err := act.Activate(ctx, token, certPEM); err != nil {
+	if err := act.Activate(ctx, "t1", token, certPEM); err != nil {
 		t.Fatalf("expected success but got: %v", err)
 	}
 }
@@ -368,18 +330,12 @@ func TestPIVActivate_EmptyTrustedIssuers(t *testing.T) {
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
-	inviteStore := NewMemoryInviteStore()
+	inviteStore := newFakeInviteStore()
 
 	user := &User{ID: "u7", TenantID: "t1", Email: "j@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
-	token, _ := GenerateInviteToken()
-	_ = inviteStore.Create(ctx, &InviteRecord{
-		TokenHash: tokenHash(token),
-		UserID:    "u7",
-		TenantID:  "t1",
-		ExpiresAt: time.Now().Add(time.Hour),
-	})
+	token, _, _ := inviteStore.Create(ctx, "t1", "u7", time.Hour)
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()
@@ -396,20 +352,21 @@ func TestPIVActivate_EmptyTrustedIssuers(t *testing.T) {
 		t.Fatalf("NewPIVActivator: %v", err)
 	}
 
-	if err := act.Activate(ctx, token, certPEM); err != nil {
+	if err := act.Activate(ctx, "t1", token, certPEM); err != nil {
 		t.Fatalf("expected success but got: %v", err)
 	}
 }
 
-// markUsedFailInviteStore wraps an InviteStore and fails MarkUsed so the
-// post-activation audit "warning" branch is exercised (the user is already
-// active, so the caller must not see an error).
-type markUsedFailInviteStore struct {
+// redeemFailInviteStore wraps an InviteStore and fails Redeem so the
+// post-activation audit "warning" branch is exercised: the user is already
+// active by that point, so the caller must not see an error even though the
+// invite could not be consumed.
+type redeemFailInviteStore struct {
 	InviteStore
 }
 
-func (s markUsedFailInviteStore) MarkUsed(ctx context.Context, token string) error {
-	return &dberrors.MessageError{Message: "simulated MarkUsed failure"}
+func (s redeemFailInviteStore) Redeem(ctx context.Context, tenantID, token string) (*InviteRecord, error) {
+	return nil, &dberrors.MessageError{Message: "simulated Redeem failure"}
 }
 
 // TestNewPIVActivator_MissingDependencies covers each fail-closed configuration
@@ -418,7 +375,7 @@ func (s markUsedFailInviteStore) MarkUsed(ctx context.Context, token string) err
 func TestNewPIVActivator_MissingDependencies(t *testing.T) {
 	roots := x509.NewCertPool()
 	us := newMockUserStorage()
-	is := NewMemoryInviteStore()
+	is := newFakeInviteStore()
 
 	cases := []struct {
 		name string
@@ -448,12 +405,11 @@ func TestPIVActivator_AuditOnSuccess(t *testing.T) {
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
-	inviteStore := NewMemoryInviteStore()
+	inviteStore := newFakeInviteStore()
 	audit := &mockAuditLogger{}
 
 	_ = userStorage.CreateUser(ctx, &User{ID: "ua", TenantID: "t1", Email: "a@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()})
-	token, _ := GenerateInviteToken()
-	_ = inviteStore.Create(ctx, &InviteRecord{TokenHash: tokenHash(token), UserID: "ua", TenantID: "t1", ExpiresAt: time.Now().Add(time.Hour)})
+	token, _, _ := inviteStore.Create(ctx, "t1", "ua", time.Hour)
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()
@@ -470,7 +426,7 @@ func TestPIVActivator_AuditOnSuccess(t *testing.T) {
 		t.Fatalf("NewPIVActivator: %v", err)
 	}
 
-	if err := act.Activate(ctx, token, certPEM); err != nil {
+	if err := act.Activate(ctx, "t1", token, certPEM); err != nil {
 		t.Fatalf("Activate: %v", err)
 	}
 	if len(audit.events) != 1 {
@@ -481,19 +437,18 @@ func TestPIVActivator_AuditOnSuccess(t *testing.T) {
 	}
 }
 
-// TestPIVActivator_AuditOnMarkUsedFailure verifies that when MarkUsed fails after
+// TestPIVActivator_AuditOnRedeemFailure verifies that when Redeem fails after
 // the user is already activated, the caller still succeeds and a failure-outcome
 // audit event is emitted (the non-success branch of logAudit).
-func TestPIVActivator_AuditOnMarkUsedFailure(t *testing.T) {
+func TestPIVActivator_AuditOnRedeemFailure(t *testing.T) {
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
-	inviteStore := NewMemoryInviteStore()
+	inviteStore := newFakeInviteStore()
 	audit := &mockAuditLogger{}
 
 	_ = userStorage.CreateUser(ctx, &User{ID: "ub", TenantID: "t1", Email: "b@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()})
-	token, _ := GenerateInviteToken()
-	_ = inviteStore.Create(ctx, &InviteRecord{TokenHash: tokenHash(token), UserID: "ub", TenantID: "t1", ExpiresAt: time.Now().Add(time.Hour)})
+	token, _, _ := inviteStore.Create(ctx, "t1", "ub", time.Hour)
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()
@@ -503,7 +458,7 @@ func TestPIVActivator_AuditOnMarkUsedFailure(t *testing.T) {
 	act, err := NewPIVActivator(PIVActivatorDependencies{
 		Roots:       roots,
 		UserStorage: userStorage,
-		InviteStore: markUsedFailInviteStore{InviteStore: inviteStore},
+		InviteStore: redeemFailInviteStore{InviteStore: inviteStore},
 		AuditLogger: audit,
 	})
 	if err != nil {
@@ -511,8 +466,8 @@ func TestPIVActivator_AuditOnMarkUsedFailure(t *testing.T) {
 	}
 
 	// Activation must still succeed for the caller despite the MarkUsed failure.
-	if err := act.Activate(ctx, token, certPEM); err != nil {
-		t.Fatalf("Activate should not fail when MarkUsed fails post-activation: %v", err)
+	if err := act.Activate(ctx, "t1", token, certPEM); err != nil {
+		t.Fatalf("Activate should not fail when Redeem fails post-activation: %v", err)
 	}
 	if len(audit.events) != 1 {
 		t.Fatalf("expected 1 audit event, got %d", len(audit.events))
@@ -536,18 +491,12 @@ func TestPIVActivator_UserNotPending(t *testing.T) {
 	ctx := context.Background()
 
 	userStorage := newMockUserStorage()
-	inviteStore := NewMemoryInviteStore()
+	inviteStore := newFakeInviteStore()
 
 	user := &User{ID: "u4", TenantID: "t1", Email: "g@x.com", State: UserStateActive, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
-	token, _ := GenerateInviteToken()
-	_ = inviteStore.Create(ctx, &InviteRecord{
-		TokenHash: tokenHash(token),
-		UserID:    "u4",
-		TenantID:  "t1",
-		ExpiresAt: time.Now().Add(time.Hour),
-	})
+	token, _, _ := inviteStore.Create(ctx, "t1", "u4", time.Hour)
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()
@@ -561,7 +510,7 @@ func TestPIVActivator_UserNotPending(t *testing.T) {
 		InviteStore: inviteStore,
 	})
 
-	err := act.Activate(ctx, token, certPEM)
+	err := act.Activate(ctx, "t1", token, certPEM)
 	if !errors.Is(err, ErrUserNotPending) {
 		t.Fatalf("expected ErrUserNotPending, got %v", err)
 	}

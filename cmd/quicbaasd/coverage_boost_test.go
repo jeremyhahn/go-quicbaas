@@ -39,6 +39,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/initmarker"
 )
 
 // =============================================================================
@@ -54,6 +56,7 @@ import (
 // no PINs, embedded server brought up and shut down, init-done marker
 // dropped, and the marker's recorded strategy matches.
 func TestRunInlineInit_NoneStrategy_DropsMarker(t *testing.T) {
+	requireTestTrustDomain(t)
 	dataDir := t.TempDir()
 	f := &inlineInitFlags{
 		barrierStrategy:    "none",
@@ -76,6 +79,7 @@ func TestRunInlineInit_NoneStrategy_DropsMarker(t *testing.T) {
 // TestRunInlineInit_SoftwareStrategy_DropsMarker drives the "software"
 // strategy where the seal subsystem is enabled. PINs are required here.
 func TestRunInlineInit_SoftwareStrategy_DropsMarker(t *testing.T) {
+	requireTestTrustDomain(t)
 	dataDir := t.TempDir()
 	f := &inlineInitFlags{
 		barrierStrategy:    "passphrase",
@@ -97,51 +101,10 @@ func TestRunInlineInit_SoftwareStrategy_DropsMarker(t *testing.T) {
 	assert.Equal(t, "node.example", marker.Hostname)
 }
 
-// TestRunInlineInit_ShamirStrategy_WritesPendingState drives the shamir
-// branch: a pending_ceremony.json is written, the marker records the
-// share/threshold parameters, and officers are recorded by username+kind.
-func TestRunInlineInit_ShamirStrategy_WritesPendingState(t *testing.T) {
-	tmp := t.TempDir()
-	dataDir := filepath.Join(tmp, "data")
-	csrPath := filepath.Join(tmp, "alice.csr.pem")
-	writeBoostCSRFile(t, csrPath, "alice")
-
-	f := &inlineInitFlags{
-		barrierStrategy:    "shamir",
-		soPin:              "so-pin-1234",
-		userPin:            "user-pin-1234",
-		credentialStrategy: "barrier",
-		shares:             3,
-		threshold:          2,
-		officers:           []string{"alice:csr:" + csrPath},
-		dataDir:            dataDir,
-	}
-	cmd := &cobra.Command{Use: "init"}
-	require.NoError(t, runInlineInit(cmd, f))
-
-	raw, err := os.ReadFile(filepath.Join(dataDir, pendingCeremonyFileName))
-	require.NoError(t, err)
-	var state pendingCeremonyState
-	require.NoError(t, json.Unmarshal(raw, &state))
-	assert.Equal(t, "shamir", state.Strategy)
-	assert.Equal(t, 3, state.Shares)
-	assert.Equal(t, 2, state.Threshold)
-	require.Len(t, state.Officers, 1)
-	assert.Equal(t, "alice", state.Officers[0].Username)
-
-	// The init-done marker records share/threshold for shamir runs.
-	mraw, err := os.ReadFile(filepath.Join(dataDir, initDoneMarkerName))
-	require.NoError(t, err)
-	var marker initDoneMarker
-	require.NoError(t, json.Unmarshal(mraw, &marker))
-	assert.Equal(t, 3, marker.Shares)
-	assert.Equal(t, 2, marker.Threshold)
-	assert.Equal(t, 1, marker.OfficerCount)
-}
-
 // TestRunInlineInit_AlreadyDone returns InitAlreadyDoneError on a second
 // invocation against the same data dir.
 func TestRunInlineInit_AlreadyDone(t *testing.T) {
+	requireTestTrustDomain(t)
 	dataDir := t.TempDir()
 	f := &inlineInitFlags{
 		barrierStrategy:    "none",
@@ -179,6 +142,9 @@ func TestRunInlineInit_EmptyDataDir(t *testing.T) {
 	defer func() { cfg = origCfg; dataDir = origDataDir }()
 
 	cfg = config.Default()
+	// Supply a trust domain so validation reaches the data-dir check this test
+	// is about, rather than failing earlier on the SPIFFE requirement.
+	cfg.IAM.SPIFFETrustDomain = "quicbaas.test"
 	cfg.Storage.DataDir = ""
 	dataDir = ""
 
@@ -187,38 +153,6 @@ func TestRunInlineInit_EmptyDataDir(t *testing.T) {
 	err := runInlineInit(cmd, f)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--data-dir is required")
-}
-
-// TestRunInlineInit_InvalidOfficerAborts ensures a malformed --so value
-// aborts the run before any state is persisted (no marker is dropped).
-func TestRunInlineInit_InvalidOfficerAborts(t *testing.T) {
-	dataDir := t.TempDir()
-	f := &inlineInitFlags{
-		barrierStrategy:    "none",
-		credentialStrategy: "barrier",
-		officers:           []string{"bad-format-no-colons"},
-		dataDir:            dataDir,
-	}
-	cmd := &cobra.Command{Use: "init"}
-	err := runInlineInit(cmd, f)
-	assert.ErrorIs(t, err, ErrInvalidOfficerFormat)
-	_, statErr := os.Stat(filepath.Join(dataDir, initDoneMarkerName))
-	assert.True(t, os.IsNotExist(statErr), "no marker should be dropped on officer parse failure")
-}
-
-// TestRunInlineInit_BadTrustedCAAborts ensures a missing --trusted-ca path
-// aborts the run with the canonical typed error.
-func TestRunInlineInit_BadTrustedCAAborts(t *testing.T) {
-	dataDir := t.TempDir()
-	f := &inlineInitFlags{
-		barrierStrategy:    "none",
-		credentialStrategy: "barrier",
-		trustedCAs:         []string{filepath.Join(dataDir, "absent-ca.pem")},
-		dataDir:            dataDir,
-	}
-	cmd := &cobra.Command{Use: "init"}
-	err := runInlineInit(cmd, f)
-	assert.ErrorIs(t, err, ErrTrustedCANotFound)
 }
 
 // =============================================================================
@@ -277,72 +211,40 @@ func TestRunInitEmbeddedServer_StartsAndShutsDown(t *testing.T) {
 }
 
 // =============================================================================
-// writePendingCeremonyState error path
+// shared init-done marker (pkg/initmarker)
 // =============================================================================
 
-// TestWritePendingCeremonyState_BadOfficerSpec covers the error branch in
-// writePendingCeremonyState where a previously-parsed officer string fails
-// to re-parse (defensive path). We feed a mismatched officers slice so the
-// re-parse inside the function fails.
-func TestWritePendingCeremonyState_BadOfficerSpec(t *testing.T) {
+// TestInitMarker_WriteReadRoundTrip writes and reads back a marker through
+// the shared pkg/initmarker package the daemon-side reader also imports.
+func TestInitMarker_WriteReadRoundTrip(t *testing.T) {
 	dataDir := t.TempDir()
-	f := &inlineInitFlags{
-		barrierStrategy: "shamir",
-		officers:        []string{"not-a-valid-spec"},
-	}
-	// officers slice length must match f.officers length for the index
-	// access; supply a single placeholder material.
-	mats := []*officerMaterial{{Username: "x"}}
-	err := writePendingCeremonyState(dataDir, f, mats)
-	assert.ErrorIs(t, err, ErrInvalidOfficerFormat)
-}
-
-// TestWritePendingCeremonyState_WriteFails covers the write error branch by
-// pointing dataDir at a path that cannot be written to.
-func TestWritePendingCeremonyState_WriteFails(t *testing.T) {
-	require.NotEqual(t, 0, os.Geteuid(), "Test must not run as root")
-	f := &inlineInitFlags{
-		barrierStrategy: "shamir",
-		shares:          3,
-		threshold:       2,
-	}
-	err := writePendingCeremonyState("/proc/nonexistent/dir", f, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "init: write")
-}
-
-// =============================================================================
-// writeInitDoneMarker error path
-// =============================================================================
-
-// TestWriteInitDoneMarker_HappyPath writes and reads back a marker.
-func TestWriteInitDoneMarker_HappyPath(t *testing.T) {
-	path := filepath.Join(t.TempDir(), initDoneMarkerName)
 	m := &initDoneMarker{BarrierStrategy: "none", CredentialStrategy: "barrier"}
-	require.NoError(t, writeInitDoneMarker(path, m))
+	require.NoError(t, initmarker.Write(dataDir, m))
 
-	raw, err := os.ReadFile(path)
+	got, err := initmarker.Read(dataDir)
 	require.NoError(t, err)
-	var got initDoneMarker
-	require.NoError(t, json.Unmarshal(raw, &got))
+	require.NotNil(t, got)
 	assert.Equal(t, "none", got.BarrierStrategy)
+	assert.True(t, initmarker.Exists(dataDir))
 }
 
-// TestWriteInitDoneMarker_WriteFails covers the temp-file write error path.
-func TestWriteInitDoneMarker_WriteFails(t *testing.T) {
+// TestInitMarker_WriteFails covers the temp-file write error path.
+func TestInitMarker_WriteFails(t *testing.T) {
 	require.NotEqual(t, 0, os.Geteuid(), "Test must not run as root")
 	m := &initDoneMarker{BarrierStrategy: "none"}
-	err := writeInitDoneMarker("/proc/nonexistent/dir/marker", m)
+	err := initmarker.Write("/proc/nonexistent/dir", m)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "init: write")
+	var typed *initmarker.WriteError
+	require.ErrorAs(t, err, &typed)
 }
 
 // =============================================================================
 // printInitSummary branches
 // =============================================================================
 
-// TestPrintInitSummary_ShamirBranch exercises the shamir branch which prints
-// the M-of-N mode line and the two-step next-steps block.
+// TestPrintInitSummary_ShamirBranch exercises the shamir branch, which must
+// direct the operator to the live ceremony rather than to any on-disk officer
+// bundle: shares are never written to disk.
 func TestPrintInitSummary_ShamirBranch(t *testing.T) {
 	cmd := &cobra.Command{Use: "init"}
 	var buf safeBuffer
@@ -353,15 +255,16 @@ func TestPrintInitSummary_ShamirBranch(t *testing.T) {
 		hostname:           "node.example",
 		shares:             3,
 		threshold:          2,
-		trustedCAs:         []string{"/a", "/b"},
 	}
-	printInitSummary(cmd, f, "/data", 2, true)
+	printInitSummary(cmd, f, "/data")
 	out := buf.String()
 	assert.Contains(t, out, "2-of-3")
 	assert.Contains(t, out, "node.example")
-	assert.Contains(t, out, "ceremony claim-cert")
-	assert.Contains(t, out, "Officers:")
-	assert.Contains(t, out, "TrustedCAPaths:")
+	assert.Contains(t, out, "boots SEALED")
+	assert.Contains(t, out, "officer register")
+	assert.Contains(t, out, "claim-share")
+	assert.NotContains(t, out, "officers/",
+		"shamir init must never point the operator at an on-disk share bundle")
 }
 
 // TestPrintInitSummary_DefaultBranch exercises the non-shamir branch with
@@ -374,84 +277,15 @@ func TestPrintInitSummary_DefaultBranch(t *testing.T) {
 		barrierStrategy:    "none",
 		credentialStrategy: "barrier",
 	}
-	printInitSummary(cmd, f, "/data", 0, false)
+	printInitSummary(cmd, f, "/data")
 	out := buf.String()
 	assert.Contains(t, out, "Start the daemon")
-	assert.NotContains(t, out, "Officers:")
 	assert.NotContains(t, out, "Hostname:")
 }
 
 // =============================================================================
 // Officer loader parse-failure branches (cert / pubkey)
 // =============================================================================
-
-// TestLoadOfficerCert_ParseFails feeds a PEM block whose bytes are not a
-// valid certificate, covering the ParseCertificate error branch.
-func TestLoadOfficerCert_ParseFails(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "bad.cert.pem")
-	writePEMBlock(t, path, "CERTIFICATE", []byte("not-a-real-cert"))
-	_, err := loadOfficerCert(officerSpec{Username: "x", Kind: officerKindCert, Path: path})
-	assert.ErrorIs(t, err, ErrCertParseFailed)
-}
-
-// TestLoadOfficerPubKey_ParseFails feeds a PEM block whose bytes are not a
-// valid PKIX public key, covering the ParsePKIXPublicKey error branch.
-func TestLoadOfficerPubKey_ParseFails(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "bad.pub.pem")
-	writePEMBlock(t, path, "PUBLIC KEY", []byte("not-a-real-key"))
-	_, err := loadOfficerPubKey(officerSpec{Username: "x", Kind: officerKindPubKey, Path: path})
-	assert.ErrorIs(t, err, ErrPubKeyParseFailed)
-}
-
-// TestLoadOfficerCSR_ParseFails feeds a PEM block whose bytes are not a
-// valid CSR, covering the ParseCertificateRequest error branch.
-func TestLoadOfficerCSR_ParseFails(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "bad.csr.pem")
-	writePEMBlock(t, path, "CERTIFICATE REQUEST", []byte("not-a-real-csr"))
-	_, err := loadOfficerCSR(officerSpec{Username: "x", Kind: officerKindCSR, Path: path})
-	assert.ErrorIs(t, err, ErrCSRParseFailed)
-}
-
-// TestLoadOfficers_PropagatesLoaderError ensures loadOfficers surfaces a
-// loader-level error (file not found) rather than swallowing it.
-func TestLoadOfficers_PropagatesLoaderError(t *testing.T) {
-	_, err := loadOfficers([]string{"alice:csr:/no/such/file.pem"})
-	assert.ErrorIs(t, err, ErrOfficerFileNotFound)
-}
-
-// TestLoadOfficers_PropagatesParseError ensures loadOfficers surfaces a
-// parse-level error before any loader is invoked.
-func TestLoadOfficers_PropagatesParseError(t *testing.T) {
-	_, err := loadOfficers([]string{":csr:/tmp/x"})
-	assert.ErrorIs(t, err, ErrEmptyOfficerUsername)
-}
-
-// TestLoadOfficers_Empty returns an empty slice and no error.
-func TestLoadOfficers_Empty(t *testing.T) {
-	out, err := loadOfficers(nil)
-	require.NoError(t, err)
-	assert.Empty(t, out)
-}
-
-// TestLoadTrustedCAs_DirectoryRejected covers the directory branch of the
-// trusted-CA loader.
-func TestLoadTrustedCAs_DirectoryRejected(t *testing.T) {
-	dir := t.TempDir()
-	_, err := loadTrustedCAs([]string{dir})
-	assert.ErrorIs(t, err, ErrTrustedCARead)
-}
-
-// TestLoadTrustedCAs_MultipleValid loads two PEM files into the same pool.
-func TestLoadTrustedCAs_MultipleValid(t *testing.T) {
-	tmp := t.TempDir()
-	a := filepath.Join(tmp, "a.pem")
-	b := filepath.Join(tmp, "b.pem")
-	writeBoostCertFile(t, a, "ca-a")
-	writeBoostCertFile(t, b, "ca-b")
-	pool, err := loadTrustedCAs([]string{a, b})
-	require.NoError(t, err)
-	require.NotNil(t, pool)
-}
 
 // =============================================================================
 // barrierStrategyAllowsPINs
@@ -476,14 +310,6 @@ func TestCanonicalErrorMessages(t *testing.T) {
 		e := &CanonicalRedirectError{Old: "quicbaasd seal", New: "quicbaasd barrier"}
 		assert.Contains(t, e.Error(), "quicbaasd seal")
 		assert.Contains(t, e.Error(), "quicbaasd barrier")
-	})
-	t.Run("PendingFactorBackendError", func(t *testing.T) {
-		e := &PendingFactorBackendError{Op: "auth login"}
-		assert.Contains(t, e.Error(), "auth login")
-	})
-	t.Run("PendingCredentialBackendError", func(t *testing.T) {
-		e := &PendingCredentialBackendError{Op: "credential rotate"}
-		assert.Contains(t, e.Error(), "credential rotate")
 	})
 	t.Run("PINsNotAllowedError", func(t *testing.T) {
 		e := &PINsNotAllowedError{Strategy: "none"}
@@ -554,32 +380,36 @@ func TestCanonicalBootstrapHandlers(t *testing.T) {
 }
 
 // TestCanonicalCredentialHandlers verifies each credential subcommand RunE
-// returns PendingCredentialBackendError.
+// emits a redirect-style error pointing at the runtime client — never a
+// pending-backend stub.
 func TestCanonicalCredentialHandlers(t *testing.T) {
 	for _, verb := range []string{"submit", "list", "rotate"} {
 		cmd, _, err := rootCmd.Find([]string{"credential", verb})
 		require.NoError(t, err)
 		require.NotNil(t, cmd.RunE)
 		runErr := cmd.RunE(cmd, nil)
-		var typed *PendingCredentialBackendError
-		require.ErrorAs(t, runErr, &typed)
+		require.Error(t, runErr)
+		assert.Contains(t, runErr.Error(), "quicbaas credential "+verb)
 	}
 }
 
 // TestCanonicalAuthHandlers verifies the auth login and factor subcommand
-// RunE handlers return PendingFactorBackendError.
+// RunE handlers emit redirect-style errors pointing at the runtime client —
+// never a pending-backend stub.
 func TestCanonicalAuthHandlers(t *testing.T) {
 	login, _, err := rootCmd.Find([]string{"auth", "login"})
 	require.NoError(t, err)
-	var loginErr *PendingFactorBackendError
-	require.ErrorAs(t, login.RunE(login, nil), &loginErr)
+	loginErr := login.RunE(login, nil)
+	require.Error(t, loginErr)
+	assert.Contains(t, loginErr.Error(), "quicbaas auth login")
 
 	for _, verb := range []string{"list", "add", "remove", "rotate", "relabel"} {
 		cmd, _, err := rootCmd.Find([]string{"auth", "factor", verb})
 		require.NoError(t, err)
 		require.NotNil(t, cmd.RunE)
-		var typed *PendingFactorBackendError
-		require.ErrorAs(t, cmd.RunE(cmd, nil), &typed)
+		runErr := cmd.RunE(cmd, nil)
+		require.Error(t, runErr)
+		assert.Contains(t, runErr.Error(), "quicbaas auth factor "+verb)
 	}
 }
 
@@ -606,6 +436,7 @@ func TestCanonicalInitCmd_PreRunERejectsBadStrategy(t *testing.T) {
 // TestCanonicalInitCmd_RunEHappyPath drives the canonical init command's
 // RunE closure end-to-end against a temp data dir using the "none" strategy.
 func TestCanonicalInitCmd_RunEHappyPath(t *testing.T) {
+	requireTestTrustDomain(t)
 	dataDir := t.TempDir()
 	cmd := newCanonicalInitCmd()
 	require.NoError(t, cmd.Flags().Set("barrier-strategy", "none"))

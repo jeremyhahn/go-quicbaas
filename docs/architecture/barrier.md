@@ -130,7 +130,11 @@ When `barrier.enabled: true`, the daemon:
 3. Constructs `*seal.StorageBarrier` from the configured strategy chain.
 4. If sealed at boot, runs the pre-host listener serving only the
    allowlist (`/v1/health`, `/v1/barrier/*`, `/v1/init/*`,
-   `/v1/bootstrap/*`).
+   `/v1/bootstrap/*`). These sealed-phase listeners bind
+   `server.sealed_bind_host` (default `127.0.0.1`), not `server.host`;
+   remote Shamir officer ceremonies require an explicit opt-in via
+   `QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0`. Post-unseal listeners
+   keep the normal `server.host` / `bind_address` resolution.
 5. After unseal, opens the data-plane Pebble through the encrypting
    `vfs.FS`, builds the full service graph, and starts the multi-protocol
    server.

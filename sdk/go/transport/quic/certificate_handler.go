@@ -59,6 +59,14 @@ var certificateResponseDecoders = map[string]certificateResponseDecoder{
 	"VerifyCertificate": decodeVerifyCertificateResponse,
 	"GetCACertificate":  decodeGetCACertificateResponse,
 	"GetTLSConfig":      decodeGetTLSConfigResponse,
+
+	// Certificate extensions — Security().CertificateExt(). These ride the
+	// OpOrchestrator dispatch byte with a sub-op byte (see protocol.go
+	// SubOpCertExt*); the server encodes the canonical pkg/service response
+	// structs, whose snake_case JSON tags match the leaf SDK types.
+	"CrossSign":           decodeCrossSignResponse,
+	"Chain":               decodeCertificateChainResponse,
+	"IssueDeviceIdentity": decodeDeviceIdentityResponse,
 }
 
 // decodeCertificateResponse decodes raw wire bytes into the SDK certificate type
@@ -136,4 +144,28 @@ func decodeGetTLSConfigResponse(data []byte) (interface{}, error) {
 func wrapCertificateDecode(method string, err error) error {
 	return errors.Wrap(err, errors.CodeInternal,
 		"quic.decodeCertificateResponse", "failed to unmarshal "+method+" response")
+}
+
+func decodeCrossSignResponse(data []byte) (interface{}, error) {
+	var resp certificate.CrossSignResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, wrapCertificateDecode("CrossSign", err)
+	}
+	return &resp, nil
+}
+
+func decodeCertificateChainResponse(data []byte) (interface{}, error) {
+	var resp certificate.ChainResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, wrapCertificateDecode("Chain", err)
+	}
+	return &resp, nil
+}
+
+func decodeDeviceIdentityResponse(data []byte) (interface{}, error) {
+	var resp certificate.DeviceIdentityResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, wrapCertificateDecode("IssueDeviceIdentity", err)
+	}
+	return &resp, nil
 }

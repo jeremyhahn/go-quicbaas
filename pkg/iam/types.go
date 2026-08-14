@@ -308,6 +308,17 @@ type Application struct {
 	// ClientSecret is the OAuth client secret (hashed)
 	ClientSecret string `json:"client_secret,omitempty" yaml:"client_secret,omitempty"`
 
+	// RegistrationTokenHash is the SHA-256 hash (HashTokenValue) of the RFC 7592
+	// registration access token issued when this client was created through
+	// Dynamic Client Registration. It is the ONLY credential that authorizes the
+	// client-configuration endpoints (GET/PUT/DELETE /oauth2/register/{id}).
+	//
+	// Empty means the client was NOT created through DCR and therefore has no
+	// RFC 7592 management credential: the management endpoints refuse it
+	// (fail-closed). The plaintext token exists only in the registration
+	// response; the manager redacts this hash from every Application it returns.
+	RegistrationTokenHash string `json:"registration_token_hash,omitempty" yaml:"registration_token_hash,omitempty"`
+
 	// Name is the application display name
 	Name string `json:"name" yaml:"name"`
 
@@ -954,6 +965,44 @@ func (u *User) SetPIVThumbprint(thumbprint string) {
 		kept = append(kept, qrdbsdk.CertBinding{
 			Thumbprint: thumbprint,
 			Kind:       qrdbsdk.CertBindingPIVAttested,
+		})
+	}
+	if len(kept) == 0 {
+		u.CertBindings = nil
+		return
+	}
+	u.CertBindings = kept
+}
+
+// SPKIThumbprint returns the thumbprint of the user's first canonical
+// SPKI-thumbprint cert binding, or the empty string when the user has none.
+// This is the binding the admin-mTLS enrollment path establishes and the one
+// qrdb's UserByCertThumbprint index resolves natively.
+func (u *User) SPKIThumbprint() string {
+	for i := range u.CertBindings {
+		if u.CertBindings[i].Kind == qrdbsdk.CertBindingSPKIThumbprint && u.CertBindings[i].Thumbprint != "" {
+			return u.CertBindings[i].Thumbprint
+		}
+	}
+	return ""
+}
+
+// SetSPKIThumbprint replaces the user's canonical SPKI-thumbprint bindings with
+// a single binding for thumbprint. A blank thumbprint clears them. Bindings of
+// other kinds (notably PIV-attested) are preserved untouched. The thumbprint
+// MUST come from qrdbsdk.ComputeSPKIThumbprint — it is the single canonical
+// mTLS identifier and is stable across certificate renewal with the same key.
+func (u *User) SetSPKIThumbprint(thumbprint string) {
+	kept := u.CertBindings[:0:0]
+	for i := range u.CertBindings {
+		if u.CertBindings[i].Kind != qrdbsdk.CertBindingSPKIThumbprint {
+			kept = append(kept, u.CertBindings[i])
+		}
+	}
+	if thumbprint != "" {
+		kept = append(kept, qrdbsdk.CertBinding{
+			Thumbprint: thumbprint,
+			Kind:       qrdbsdk.CertBindingSPKIThumbprint,
 		})
 	}
 	if len(kept) == 0 {

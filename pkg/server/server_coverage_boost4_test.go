@@ -45,27 +45,6 @@ import (
 // after Shutdown is closed=true and no panic.
 // =============================================================================
 
-func TestBoost4_Shutdown_TraversesEmptyLocalBackendBranch(t *testing.T) {
-	srv := withTempServer(t)
-	// LocalBackend is a stub type. NewLocalBackend returns nil under BaaS
-	// mode, but the field accepts a manually-assigned empty struct so the
-	// Shutdown branch `if s.localBackend != nil` runs. Close() is a no-op.
-	srv.localBackend = &LocalBackend{}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	require.NoError(t, srv.Shutdown(ctx))
-}
-
-func TestBoost4_Shutdown_TraversesEmptyFileBackendBranch(t *testing.T) {
-	srv := withTempServer(t)
-	srv.fileBackend = &FileBackend{}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	require.NoError(t, srv.Shutdown(ctx))
-}
-
 // TestBoost4_Shutdown_TraversesShardedClientBranch verifies the qrdbClient
 // cleanup branch. An empty ShardedClient has no transportStore and no
 // cached clients; Close returns nil without contacting any backend.
@@ -104,13 +83,11 @@ func TestBoost4_Shutdown_TraversesWatchBridgeBranch(t *testing.T) {
 
 // TestBoost4_Shutdown_MultipleSubsystemsInOneCall exercises several
 // branches in a single Shutdown invocation so the cleanup ordering
-// (Workers → Backend → Catalog → … → LocalBackend → FileBackend) is
+// (Workers → Backend → Catalog → … → messaging → watch bridge) is
 // exercised once end-to-end. Cleanup order is part of the Shutdown
 // contract.
 func TestBoost4_Shutdown_MultipleSubsystemsInOneCall(t *testing.T) {
 	srv := withTempServer(t)
-	srv.localBackend = &LocalBackend{}
-	srv.fileBackend = &FileBackend{}
 	srv.qrdbClient = &ShardedClient{}
 	srv.messagingService = &messaging.PushService{}
 	srv.watchBridge = &watchbridge.WatchBridge{}

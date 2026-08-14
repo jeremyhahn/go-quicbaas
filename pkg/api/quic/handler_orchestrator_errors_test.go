@@ -57,6 +57,11 @@ func TestHandleOrchestratorSession_ServiceErrors(t *testing.T) {
 		promptSessionFunc: func(context.Context, *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error) {
 			return nil, sentinel
 		},
+		// A session-scoped prompt is dispatched asynchronously, so the error
+		// surfaces from the acceptance call rather than the turn itself.
+		promptAsyncFunc: func(context.Context, *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error) {
+			return nil, sentinel
+		},
 		sessionStatusFunc: func(context.Context, *orchestration.SessionStatusRequest) (*orchestration.SessionStatusResponse, error) {
 			return nil, sentinel
 		},

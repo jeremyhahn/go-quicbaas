@@ -47,10 +47,10 @@ type TestDatabaseConfig struct {
 
 // TestAuthConfig represents authentication configuration.
 type TestAuthConfig struct {
-	JWTSecret    string `json:"jwt_secret"`
-	APIKeyHash   string `json:"api_key_hash"`
-	SessionKey   string `json:"session_key"`
-	RefreshToken string `json:"refresh_token"`
+	APISigningKey string `json:"api_signing_key"`
+	APIKeyHash    string `json:"api_key_hash"`
+	SessionKey    string `json:"session_key"`
+	RefreshToken  string `json:"refresh_token"`
 }
 
 // TestEncryptionConfig represents encryption configuration.
@@ -93,10 +93,10 @@ type TestConfigWithMaps struct {
 
 // TestMixedConfig represents configuration with mixed resolution types.
 type TestMixedConfig struct {
-	Database TestDatabaseConfig `json:"database"`
-	APIKey   string             `json:"api_key"`
-	AutoKey  string             `json:"auto_key"`
-	Literal  string             `json:"literal"`
+	Database    TestDatabaseConfig `json:"database"`
+	APIKey      string             `json:"api_key"`
+	Placeholder string             `json:"placeholder"`
+	Literal     string             `json:"literal"`
 }
 
 // TestRealConfig represents a realistic quicbaas-like configuration.
@@ -204,7 +204,9 @@ func deleteProcessorTestSecret(t *testing.T, endpoint, path string) {
 	}
 }
 
-// createProcessorTestRegistry creates a registry with both KMS and AutoGen resolvers.
+// createProcessorTestRegistry creates a registry with the local KMS resolver.
+// Values carrying no registered scheme are left verbatim by the literal
+// fallback in the registry.
 func createProcessorTestRegistry(t *testing.T, endpoint string) *secrets.ResolverRegistry {
 	t.Helper()
 
@@ -212,12 +214,8 @@ func createProcessorTestRegistry(t *testing.T, endpoint string) *secrets.Resolve
 	kmsResolver := secrets.NewLocalKMSResolver(kmsClient)
 	require.NotNil(t, kmsResolver)
 
-	autoGenResolver := secrets.NewAutoGenResolver()
-	require.NotNil(t, autoGenResolver)
-
 	registry := secrets.NewResolverRegistry()
 	registry.Register(kmsResolver)
-	registry.Register(autoGenResolver)
 
 	return registry
 }
@@ -237,15 +235,15 @@ func TestConfigProcessor_NestedStruct(t *testing.T) {
 
 	// Store test secrets
 	secretPaths := map[string]string{
-		testPrefix + "/db/password":     "super-secret-db-password",
-		testPrefix + "/auth/jwt":        "jwt-secret-key-12345",
-		testPrefix + "/auth/apikey":     "api-key-hash-abcdef",
-		testPrefix + "/auth/session":    "session-key-xyz789",
-		testPrefix + "/auth/refresh":    "refresh-token-qwerty",
-		testPrefix + "/encrypt/master":  "master-encryption-key",
-		testPrefix + "/encrypt/data":    "data-encryption-key",
-		testPrefix + "/encrypt/signing": "signing-key-rsa256",
-		testPrefix + "/encrypt/iv":      "initialization-vector-16",
+		testPrefix + "/db/password":          "super-secret-db-password",
+		testPrefix + "/auth/api-signing-key": "api-signing-key-12345",
+		testPrefix + "/auth/apikey":          "api-key-hash-abcdef",
+		testPrefix + "/auth/session":         "session-key-xyz789",
+		testPrefix + "/auth/refresh":         "refresh-token-qwerty",
+		testPrefix + "/encrypt/master":       "master-encryption-key",
+		testPrefix + "/encrypt/data":         "data-encryption-key",
+		testPrefix + "/encrypt/signing":      "signing-key-rsa256",
+		testPrefix + "/encrypt/iv":           "initialization-vector-16",
 	}
 
 	for path, value := range secretPaths {
@@ -273,10 +271,10 @@ func TestConfigProcessor_NestedStruct(t *testing.T) {
 			SSLMode:  "require",
 		},
 		Auth: TestAuthConfig{
-			JWTSecret:    fmt.Sprintf("kms://%s/auth/jwt", testPrefix),
-			APIKeyHash:   fmt.Sprintf("kms://%s/auth/apikey", testPrefix),
-			SessionKey:   fmt.Sprintf("kms://%s/auth/session", testPrefix),
-			RefreshToken: fmt.Sprintf("kms://%s/auth/refresh", testPrefix),
+			APISigningKey: fmt.Sprintf("kms://%s/auth/api-signing-key", testPrefix),
+			APIKeyHash:    fmt.Sprintf("kms://%s/auth/apikey", testPrefix),
+			SessionKey:    fmt.Sprintf("kms://%s/auth/session", testPrefix),
+			RefreshToken:  fmt.Sprintf("kms://%s/auth/refresh", testPrefix),
 		},
 		Encryption: TestEncryptionConfig{
 			MasterKey:    fmt.Sprintf("kms://%s/encrypt/master", testPrefix),
@@ -297,7 +295,7 @@ func TestConfigProcessor_NestedStruct(t *testing.T) {
 
 	// Verify resolved values contain expected secrets
 	assertSecretContains(t, cfg.Database.Password, "super-secret-db-password")
-	assertSecretContains(t, cfg.Auth.JWTSecret, "jwt-secret-key-12345")
+	assertSecretContains(t, cfg.Auth.APISigningKey, "api-signing-key-12345")
 	assertSecretContains(t, cfg.Auth.APIKeyHash, "api-key-hash-abcdef")
 	assertSecretContains(t, cfg.Auth.SessionKey, "session-key-xyz789")
 	assertSecretContains(t, cfg.Auth.RefreshToken, "refresh-token-qwerty")
@@ -498,7 +496,8 @@ func TestConfigProcessor_Maps(t *testing.T) {
 	t.Logf("Successfully processed map config with %d secrets resolved", result.Resolved)
 }
 
-// TestConfigProcessor_MixedResolution tests config with both kms:// and auto placeholders.
+// TestConfigProcessor_MixedResolution tests config with kms:// references
+// alongside scheme-less values that must survive processing verbatim.
 func TestConfigProcessor_MixedResolution(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -532,9 +531,9 @@ func TestConfigProcessor_MixedResolution(t *testing.T) {
 			Password: fmt.Sprintf("kms://%s/db/password", testPrefix),
 			SSLMode:  "require",
 		},
-		APIKey:  fmt.Sprintf("kms://%s/api/key", testPrefix),
-		AutoKey: "auto", // Should trigger auto-generation
-		Literal: "plain-text-value",
+		APIKey:      fmt.Sprintf("kms://%s/api/key", testPrefix),
+		Placeholder: "123456", // Scheme-less: must NOT be rewritten
+		Literal:     "plain-text-value",
 	}
 
 	result, err := processor.Process(ctx, cfg)
@@ -543,21 +542,20 @@ func TestConfigProcessor_MixedResolution(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Empty(t, result.Errors)
 	assert.Empty(t, result.Unresolved)
-	assert.Equal(t, 3, result.Resolved, "Should resolve 3 secrets (2 KMS + 1 auto)")
+	assert.Equal(t, 2, result.Resolved, "Should resolve 2 KMS secrets")
 
 	// Verify KMS-resolved secrets
 	assertSecretContains(t, cfg.Database.Password, "database-secret-password")
 	assertSecretContains(t, cfg.APIKey, "api-secret-key-value")
 
-	// Verify auto-generated secret
-	assert.NotEqual(t, "auto", cfg.AutoKey, "Auto placeholder should be replaced")
-	assert.NotEmpty(t, cfg.AutoKey, "Auto-generated key should not be empty")
-	assert.Greater(t, len(cfg.AutoKey), 20, "Auto-generated key should be substantial")
+	// A scheme-less value is not a secret reference: it must survive verbatim.
+	assert.Equal(t, "123456", cfg.Placeholder,
+		"Scheme-less value must not be rewritten by any resolver")
 
 	// Verify literal is unchanged
 	assert.Equal(t, "plain-text-value", cfg.Literal)
 
-	t.Logf("Successfully processed mixed config with KMS and auto-gen resolution")
+	t.Logf("Successfully processed mixed config with KMS resolution and literal passthrough")
 }
 
 // TestConfigProcessor_Result tests that ProcessResult contains resolved paths and strategies.
@@ -588,23 +586,20 @@ func TestConfigProcessor_Result(t *testing.T) {
 	processor := secrets.NewConfigProcessor(registry)
 
 	type TestResultConfig struct {
-		Secret1 string
-		Secret2 string
-		Secret3 string
-		AutoGen string
-		Literal string
+		Secret1     string
+		Secret2     string
+		Secret3     string
+		Placeholder string
+		Literal     string
 	}
 
 	cfg := &TestResultConfig{
-		Secret1: fmt.Sprintf("kms://%s/secret1", testPrefix),
-		Secret2: fmt.Sprintf("kms://%s/secret2", testPrefix),
-		Secret3: fmt.Sprintf("kms://%s/secret3", testPrefix),
-		AutoGen: "changeme",
-		Literal: "not-a-secret",
+		Secret1:     fmt.Sprintf("kms://%s/secret1", testPrefix),
+		Secret2:     fmt.Sprintf("kms://%s/secret2", testPrefix),
+		Secret3:     fmt.Sprintf("kms://%s/secret3", testPrefix),
+		Placeholder: "changeme",
+		Literal:     "not-a-secret",
 	}
-
-	// Store original auto-gen value for comparison
-	originalAutoGen := cfg.AutoGen
 
 	result, err := processor.Process(ctx, cfg)
 
@@ -612,16 +607,16 @@ func TestConfigProcessor_Result(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Empty(t, result.Errors)
 	assert.Empty(t, result.Unresolved)
-	assert.Equal(t, 4, result.Resolved)
+	assert.Equal(t, 3, result.Resolved)
 
 	// Verify KMS-resolved secrets contain the expected values
 	assertSecretContains(t, cfg.Secret1, "value-one")
 	assertSecretContains(t, cfg.Secret2, "value-two")
 	assertSecretContains(t, cfg.Secret3, "value-three")
 
-	// Verify auto-generated secret was replaced
-	assert.NotEqual(t, originalAutoGen, cfg.AutoGen, "Auto-gen placeholder should be replaced")
-	assert.NotEmpty(t, cfg.AutoGen, "Auto-generated value should not be empty")
+	// A scheme-less value is not a secret reference: it must survive verbatim.
+	assert.Equal(t, "changeme", cfg.Placeholder,
+		"Scheme-less value must not be rewritten by any resolver")
 
 	// Verify literal is not resolved
 	assert.Equal(t, "not-a-secret", cfg.Literal)
@@ -657,21 +652,21 @@ func TestConfigProcessor_PartialFailure(t *testing.T) {
 	processor := secrets.NewConfigProcessor(registry)
 
 	type TestPartialConfig struct {
-		Exists1  string
-		Exists2  string
-		Missing1 string
-		Missing2 string
-		AutoGen  string
-		Literal  string
+		Exists1     string
+		Exists2     string
+		Missing1    string
+		Missing2    string
+		Placeholder string
+		Literal     string
 	}
 
 	cfg := &TestPartialConfig{
-		Exists1:  fmt.Sprintf("kms://%s/exists/1", testPrefix),
-		Exists2:  fmt.Sprintf("kms://%s/exists/2", testPrefix),
-		Missing1: fmt.Sprintf("kms://%s/missing/1", testPrefix),
-		Missing2: fmt.Sprintf("kms://%s/missing/2", testPrefix),
-		AutoGen:  "placeholder",
-		Literal:  "not-modified",
+		Exists1:     fmt.Sprintf("kms://%s/exists/1", testPrefix),
+		Exists2:     fmt.Sprintf("kms://%s/exists/2", testPrefix),
+		Missing1:    fmt.Sprintf("kms://%s/missing/1", testPrefix),
+		Missing2:    fmt.Sprintf("kms://%s/missing/2", testPrefix),
+		Placeholder: "placeholder",
+		Literal:     "not-modified",
 	}
 
 	result, err := processor.Process(ctx, cfg)
@@ -679,8 +674,8 @@ func TestConfigProcessor_PartialFailure(t *testing.T) {
 	require.NoError(t, err, "Process should not return error even with partial failures")
 	require.NotNil(t, result)
 
-	// Should have 3 resolved (2 existing + 1 autogen)
-	assert.Equal(t, 3, result.Resolved, "Should resolve 3 secrets")
+	// Should have 2 resolved (the 2 existing KMS secrets)
+	assert.Equal(t, 2, result.Resolved, "Should resolve 2 secrets")
 
 	// Should have 2 errors (for missing secrets)
 	assert.Len(t, result.Errors, 2, "Should have 2 errors for missing secrets")
@@ -698,9 +693,9 @@ func TestConfigProcessor_PartialFailure(t *testing.T) {
 	assert.Contains(t, cfg.Missing1, "kms://", "Missing1 should retain kms:// URI")
 	assert.Contains(t, cfg.Missing2, "kms://", "Missing2 should retain kms:// URI")
 
-	// Verify autogen still worked
-	assert.NotEqual(t, "placeholder", cfg.AutoGen)
-	assert.NotEmpty(t, cfg.AutoGen)
+	// A scheme-less value is not a secret reference: it must survive verbatim.
+	assert.Equal(t, "placeholder", cfg.Placeholder,
+		"Scheme-less value must not be rewritten by any resolver")
 
 	// Verify literal unchanged
 	assert.Equal(t, "not-modified", cfg.Literal)
@@ -908,8 +903,8 @@ func TestConfigProcessor_ConcurrentProcessing(t *testing.T) {
 	processor := secrets.NewConfigProcessor(registry)
 
 	type SimpleConfig struct {
-		Secret  string
-		AutoGen string
+		Secret      string
+		Placeholder string
 	}
 
 	const numConfigs = 10
@@ -923,8 +918,8 @@ func TestConfigProcessor_ConcurrentProcessing(t *testing.T) {
 	for i := 0; i < numConfigs; i++ {
 		go func(index int) {
 			cfg := &SimpleConfig{
-				Secret:  fmt.Sprintf("kms://%s/shared/secret", testPrefix),
-				AutoGen: "auto",
+				Secret:      fmt.Sprintf("kms://%s/shared/secret", testPrefix),
+				Placeholder: "123456",
 			}
 
 			result, err := processor.Process(ctx, cfg)
@@ -937,27 +932,22 @@ func TestConfigProcessor_ConcurrentProcessing(t *testing.T) {
 		}(i)
 	}
 
-	autoGenValues := make(map[string]bool)
 	for i := 0; i < numConfigs; i++ {
 		r := <-results
 		require.NoError(t, r.err, "Config %d should process successfully", r.index)
 		require.NotNil(t, r.result)
-		assert.Equal(t, 2, r.result.Resolved)
+		assert.Equal(t, 1, r.result.Resolved)
 		assert.Empty(t, r.result.Errors)
 
 		// Verify shared secret resolved consistently
 		assertSecretContains(t, r.cfg.Secret, "shared-secret-value")
 
-		// Verify auto-generated values are unique
-		assert.NotEqual(t, "auto", r.cfg.AutoGen)
-		assert.False(t, autoGenValues[r.cfg.AutoGen],
-			"Auto-generated value should be unique across configs")
-		autoGenValues[r.cfg.AutoGen] = true
+		// Scheme-less values must survive concurrent processing verbatim.
+		assert.Equal(t, "123456", r.cfg.Placeholder,
+			"Scheme-less value must not be rewritten by any resolver")
 	}
 
-	assert.Len(t, autoGenValues, numConfigs, "All auto-generated values should be unique")
-
-	t.Logf("Successfully processed %d configs concurrently with unique auto-generated values", numConfigs)
+	t.Logf("Successfully processed %d configs concurrently", numConfigs)
 }
 
 // TestConfigProcessor_ContextCancellation tests proper handling of context cancellation.

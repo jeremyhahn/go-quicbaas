@@ -136,8 +136,6 @@ func TestHandleCeremonyInitialize_OK(t *testing.T) {
 				TLSCertPEM: []byte("tls"),
 				State:      "initialized",
 				ShareCount: 3,
-				SOCertPEM:  []byte("socert"),
-				SOKeyPEM:   []byte("sokey"),
 			}, nil
 		},
 	}
@@ -153,8 +151,16 @@ func TestHandleCeremonyInitialize_OK(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp["spki_pin"] != "pin" || resp["so_cert_pem"] != "socert" || resp["so_key_pem"] != "sokey" {
+	if resp["spki_pin"] != "pin" {
 		t.Fatalf("unexpected init body: %v", resp)
+	}
+	// The SO identity is CSR-based; the server never returns SO certificate
+	// or key material.
+	if _, present := resp["so_cert_pem"]; present {
+		t.Fatalf("SO certificate leaked into REST response: %v", resp)
+	}
+	if _, present := resp["so_key_pem"]; present {
+		t.Fatalf("SO private key leaked into REST response: %v", resp)
 	}
 }
 

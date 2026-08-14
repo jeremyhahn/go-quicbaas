@@ -152,9 +152,16 @@ function makeFinishTokens(): Record<string, unknown> {
   };
 }
 
-/** The go-webauthn assertion challenge envelope the begin endpoint returns. */
+/**
+ * The unified-ceremony login challenge webAuthnBeginLogin returns: ceremony +
+ * relying-party session ids plus the go-webauthn assertion options envelope.
+ */
 function makeChallengeEnvelope(): unknown {
-  return { publicKey: { challenge: 'abc123', timeout: 60000 } };
+  return {
+    session_id: 'ceremony-1',
+    rp_session_id: 'rp-1',
+    options: { publicKey: { challenge: 'abc123', timeout: 60000 } },
+  };
 }
 
 /** Build an APIError-like rejection carrying an HTTP status. */
@@ -238,10 +245,17 @@ describe('LoginView', () => {
       };
       expect(getArg.publicKey.challenge).toBeInstanceOf(ArrayBuffer);
 
-      // Finish login called with the serialized assertion.
+      // Finish login called with the in-flight challenge and the serialized
+      // assertion (the ceremony carries the tenant scope server-side).
       expect(mockWebAuthnFinishLogin).toHaveBeenCalledTimes(1);
-      expect(mockWebAuthnFinishLogin.mock.calls[0][0]).toBe('system');
-      expect(mockWebAuthnFinishLogin.mock.calls[0][1]).toBe('alice@example.com');
+      expect(mockWebAuthnFinishLogin.mock.calls[0][0]).toMatchObject({
+        session_id: 'ceremony-1',
+        rp_session_id: 'rp-1',
+      });
+      expect(mockWebAuthnFinishLogin.mock.calls[0][1]).toMatchObject({
+        id: 'cred-id-stub',
+        type: 'public-key',
+      });
     });
   });
 
@@ -512,7 +526,9 @@ describe('LoginView', () => {
 
     await waitFor(() => {
       expect(mockWebAuthnBeginLogin).toHaveBeenCalledWith('globex', 'alice@example.com');
-      expect(mockWebAuthnFinishLogin.mock.calls[0][0]).toBe('globex');
+      expect(mockWebAuthnFinishLogin.mock.calls[0][0]).toMatchObject({
+        session_id: 'ceremony-1',
+      });
     });
   });
 

@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -41,7 +42,7 @@ func TestBuildQRDBConfig_MemoryBackend(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Storage.Backend = config.StorageBackendMemory
 
-	qcfg := buildQRDBConfig(cfg, false)
+	qcfg := mustBuildQRDBConfig(t, cfg, false)
 
 	require.NotNil(t, qcfg)
 	assert.Equal(t, "", qcfg.Raft.DataDir, "no DataDir when storage is memory")
@@ -56,7 +57,7 @@ func TestBuildQRDBConfig_PebbleBackend(t *testing.T) {
 	cfg.Storage.Backend = config.StorageBackendPebble
 	cfg.Storage.DataDir = "/tmp/qrdb-test-data"
 
-	qcfg := buildQRDBConfig(cfg, false)
+	qcfg := mustBuildQRDBConfig(t, cfg, false)
 
 	require.NotNil(t, qcfg)
 	assert.Equal(t, "/tmp/qrdb-test-data", qcfg.Raft.DataDir)
@@ -69,7 +70,7 @@ func TestBuildQRDBConfig_FileBackend(t *testing.T) {
 	cfg.Storage.Backend = config.StorageBackendFile
 	cfg.Storage.DataDir = "/tmp/qrdb-file-data"
 
-	qcfg := buildQRDBConfig(cfg, false)
+	qcfg := mustBuildQRDBConfig(t, cfg, false)
 
 	require.NotNil(t, qcfg)
 	require.Len(t, qcfg.Databases, 1)
@@ -80,7 +81,7 @@ func TestBuildQRDBConfig_UnknownBackendDefaultsToMemory(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Storage.Backend = "nonexistent"
 
-	qcfg := buildQRDBConfig(cfg, false)
+	qcfg := mustBuildQRDBConfig(t, cfg, false)
 
 	require.NotNil(t, qcfg)
 	require.Len(t, qcfg.Databases, 1)
@@ -95,7 +96,7 @@ func TestBuildQRDBConfig_SealEnabled(t *testing.T) {
 	cfg.Seal.Threshold = 2
 	cfg.Seal.TotalShares = 3
 
-	qcfg := buildQRDBConfig(cfg, false)
+	qcfg := mustBuildQRDBConfig(t, cfg, false)
 
 	assert.True(t, qcfg.Seal.Enabled)
 	assert.Equal(t, "shamir", qcfg.Seal.Strategy)
@@ -109,7 +110,7 @@ func TestBuildQRDBConfig_SealStrategyDefault(t *testing.T) {
 	cfg.Seal.Enabled = true
 	cfg.Seal.Strategy = ""
 
-	qcfg := buildQRDBConfig(cfg, false)
+	qcfg := mustBuildQRDBConfig(t, cfg, false)
 
 	assert.Equal(t, "passphrase", qcfg.Seal.Strategy)
 }
@@ -119,7 +120,7 @@ func TestBuildQRDBConfig_DataDirFallbackToBarrierDir(t *testing.T) {
 	cfg.Storage.DataDir = ""
 	cfg.Seal.BarrierDir = "/tmp/barrier/barrier.db"
 
-	qcfg := buildQRDBConfig(cfg, false)
+	qcfg := mustBuildQRDBConfig(t, cfg, false)
 
 	// DataDir should fall back to BarrierDir when Storage.DataDir is empty.
 	assert.Equal(t, "/tmp/barrier/barrier.db", qcfg.Raft.DataDir)
@@ -133,7 +134,7 @@ func TestBuildXKMSCryptoOptions_SoftwareStrategy(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Seal.Strategy = "passphrase"
 
-	opts, err := buildXKMSCryptoOptions(cfg, nil, nil)
+	opts, _, err := buildXKMSCryptoOptions(cfg, nil, nil, nil)
 
 	require.NoError(t, err)
 	// Must return at least 3 options: StrategyRegistry, PINBackend, FactorRegistry.
@@ -144,7 +145,7 @@ func TestBuildXKMSCryptoOptions_NoneStrategy(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Seal.Strategy = "none"
 
-	opts, err := buildXKMSCryptoOptions(cfg, nil, nil)
+	opts, _, err := buildXKMSCryptoOptions(cfg, nil, nil, nil)
 
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(opts), 3)
@@ -155,7 +156,7 @@ func TestBuildXKMSCryptoOptions_EmptyStrategy(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Seal.Strategy = ""
 
-	opts, err := buildXKMSCryptoOptions(cfg, nil, nil)
+	opts, _, err := buildXKMSCryptoOptions(cfg, nil, nil, nil)
 
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(opts), 3)
@@ -295,7 +296,7 @@ func buildMemoryStandaloneNode(t *testing.T) *qrdbnode.Node {
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Storage.DataDir = t.TempDir()
 
-	qcfg := buildQRDBConfig(cfg, false)
+	qcfg := mustBuildQRDBConfig(t, cfg, false)
 	// Disable all protocol listeners: we only need the embedded transport.
 	qcfg.Protocols.REST = false
 	qcfg.Protocols.GRPC = false
@@ -303,7 +304,7 @@ func buildMemoryStandaloneNode(t *testing.T) *qrdbnode.Node {
 	qcfg.Protocols.Unix = false
 	qcfg.Protocols.MCP = false
 
-	serverOpts, err := buildXKMSCryptoOptions(cfg, nil, nil)
+	serverOpts, _, err := buildXKMSCryptoOptions(cfg, nil, nil, nil)
 	require.NoError(t, err)
 
 	node, err := qrdbnode.NewStandaloneNode(
@@ -326,7 +327,7 @@ func TestBuildQRDBConfig_ClusterMode_SetsRaftAddress(t *testing.T) {
 	cfg.Raft.RaftAddress = "10.0.0.1:63101"
 	cfg.Raft.NodeID = 1
 
-	qcfg := buildQRDBConfig(cfg, true)
+	qcfg := mustBuildQRDBConfig(t, cfg, true)
 
 	assert.Equal(t, "10.0.0.1:63101", qcfg.Raft.RaftAddress)
 	assert.Equal(t, uint64(1), qcfg.Raft.ReplicaID)
@@ -338,7 +339,7 @@ func TestBuildQRDBConfig_ClusterMode_DefaultShardID(t *testing.T) {
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Raft.NodeID = 2
 
-	qcfg := buildQRDBConfig(cfg, true)
+	qcfg := mustBuildQRDBConfig(t, cfg, true)
 
 	assert.Equal(t, uint64(1), qcfg.Raft.ShardID, "ShardID defaults to 1 for the KV shard")
 	assert.Equal(t, uint64(2), qcfg.Raft.DeploymentID)
@@ -350,7 +351,7 @@ func TestBuildQRDBConfig_ClusterMode_PeersWithIDPrefix(t *testing.T) {
 	cfg.Raft.NodeID = 1
 	cfg.Raft.JoinAddresses = []string{"1=10.0.0.1:63101", "2=10.0.0.2:63101", "3=10.0.0.3:63101"}
 
-	qcfg := buildQRDBConfig(cfg, true)
+	qcfg := mustBuildQRDBConfig(t, cfg, true)
 
 	assert.Contains(t, qcfg.Raft.Peers, "1=10.0.0.1:63101")
 	assert.Contains(t, qcfg.Raft.Peers, "2=10.0.0.2:63101")
@@ -363,7 +364,7 @@ func TestBuildQRDBConfig_ClusterMode_NoPeersWithoutIDPrefix(t *testing.T) {
 	// JoinAddresses without "id=" prefix: no Peers set
 	cfg.Raft.JoinAddresses = []string{"10.0.0.1:63101", "10.0.0.2:63101"}
 
-	qcfg := buildQRDBConfig(cfg, true)
+	qcfg := mustBuildQRDBConfig(t, cfg, true)
 
 	assert.Empty(t, qcfg.Raft.Peers, "no Peers string when join addresses lack id= prefix")
 }
@@ -389,7 +390,7 @@ func TestBuildQRDBConfig_ClusterMode_DiscoveryMethodMap(t *testing.T) {
 			cfg.Raft.NodeID = 1
 			cfg.Discovery.Type = tt.quicbaasMethod
 
-			qcfg := buildQRDBConfig(cfg, true)
+			qcfg := mustBuildQRDBConfig(t, cfg, true)
 			assert.Equal(t, tt.wantQRDB, qcfg.Discovery.Method)
 		})
 	}
@@ -401,7 +402,7 @@ func TestBuildQRDBConfig_ClusterMode_DeploymentIDFallback(t *testing.T) {
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Raft.NodeID = 0
 
-	qcfg := buildQRDBConfig(cfg, true)
+	qcfg := mustBuildQRDBConfig(t, cfg, true)
 
 	assert.Equal(t, uint64(1), qcfg.Raft.DeploymentID, "DeploymentID must not be zero")
 }
@@ -416,7 +417,7 @@ func TestBuildQRDBConfig_ClusterMode_ExplicitDeploymentIDWins(t *testing.T) {
 	cfg.Raft.NodeID = 7        // would otherwise be used as DeploymentID
 	cfg.Raft.DeploymentID = 42 // explicit operator value — must win
 
-	qcfg := buildQRDBConfig(cfg, true)
+	qcfg := mustBuildQRDBConfig(t, cfg, true)
 
 	assert.Equal(t, uint64(42), qcfg.Raft.DeploymentID,
 		"explicit cfg.Raft.DeploymentID must take precedence over NodeID")
@@ -431,7 +432,7 @@ func TestBuildQRDBConfig_ClusterMode_DeploymentIDFallsBackToNodeID(t *testing.T)
 	cfg.Raft.NodeID = 5
 	cfg.Raft.DeploymentID = 0 // unset
 
-	qcfg := buildQRDBConfig(cfg, true)
+	qcfg := mustBuildQRDBConfig(t, cfg, true)
 
 	assert.Equal(t, uint64(5), qcfg.Raft.DeploymentID,
 		"DeploymentID should fall back to NodeID when not explicitly set")
@@ -951,4 +952,15 @@ func TestSoftwarePINProvider_Storage_MkdirError(t *testing.T) {
 	var pinErr *PINBackendError
 	require.ErrorAs(t, err, &pinErr)
 	require.Equal(t, "mkdir pin dir", pinErr.Stage)
+}
+
+// mustBuildQRDBConfig wraps buildQRDBConfig for tests that exercise the
+// mapping logic itself and treat a resolution failure as fatal.
+func mustBuildQRDBConfig(t *testing.T, cfg *config.Config, clusterMode bool) *qrdbsdk.DaemonConfig {
+	t.Helper()
+	qcfg, err := buildQRDBConfig(cfg, clusterMode)
+	if err != nil {
+		t.Fatalf("buildQRDBConfig: %v", err)
+	}
+	return qcfg
 }

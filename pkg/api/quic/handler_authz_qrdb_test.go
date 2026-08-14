@@ -40,7 +40,11 @@ func TestGetQRDBPermission_Mapped(t *testing.T) {
 		{OpCertIssue, nil, "certs", "generate"},
 		// OpBarrier is sub-op-aware; payload[0] must select the sub-operation.
 		{OpBarrier, []byte{SubOpBarrierStatus}, "tenant_barrier", "status"},
-		{OpCeremony, nil, "ceremony", "status"},
+		// OpCeremony is sub-op-aware too; the read and the trust-root writes must
+		// resolve to different permissions (see
+		// handler_ceremony_authz_guard_test.go for the full spec).
+		{OpCeremony, []byte{SubOpCeremonyStatus}, "ceremony", "status"},
+		{OpCeremony, []byte{SubOpCeremonyInitialize}, "ceremony", "initialize"},
 		{OpVectorSearchSimilar, nil, "vector", "search_similar"},
 		{OpCreateUser, nil, "users", "create"},
 		// Stage 0.5 broker data-plane surfaces.
@@ -75,6 +79,13 @@ func TestGetQRDBPermission_Unmapped(t *testing.T) {
 	} {
 		_, _, ok := getQRDBPermission(op, nil)
 		assert.False(t, ok, "opcode 0x%02X should be unmapped", op)
+	}
+
+	// The sub-op dispatch opcodes carry no surface-level permission: without a
+	// sub-op byte there is nothing to authorize, so they fail closed.
+	for _, op := range []byte{OpBarrier, OpCeremony} {
+		_, _, ok := getQRDBPermission(op, nil)
+		assert.False(t, ok, "dispatch opcode 0x%02X must be unmapped without a sub-op", op)
 	}
 }
 

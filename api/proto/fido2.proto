@@ -1,0 +1,118 @@
+// QuicBaaS FIDO2 / WebAuthn Ceremony Protocol Buffer Definitions v1
+//
+// The FIDO2 ceremony surface (quicbaas.FIDO2) is the go-xkms FIDO2 transport
+// contract verbatim: BeginRegistration / FinishRegistration /
+// BeginAuthentication / FinishAuthentication exchanging opaque WebAuthn
+// ceremony JSON (options_json / attestation_json / assertion_json) plus an
+// opaque session id. The only QuicBaaS addition is the explicit tenant_id on
+// each request, because QuicBaaS runs one relying-party service per tenant
+// while xkms runs exactly one. The server delegates to the tenant-scoped
+// FIDO2 composition service (pkg/service FIDO2Service), which wraps the
+// per-tenant xkms relying-party service in go-xkms's canonical FIDO2
+// servicer adapter.
+//
+// SECURITY: the authentication verbs (BeginAuthentication /
+// FinishAuthentication) are pre-auth — WebAuthn IS the authentication
+// mechanism, matching the public posture of the REST
+// /api/v1/iam/{tenant}/webauthn/login/* routes. The registration verbs bind
+// a new authenticator to a user and are authz-gated (user_authfactors:add),
+// matching /api/v1/iam/{tenant}/webauthn/registration/*.
+//
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+
+syntax = "proto3";
+
+package quicbaas.fido2.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+// =============================================================================
+// FIDO2 Service
+// =============================================================================
+
+// FIDO2Service exposes the tenant-scoped WebAuthn ceremony through gRPC.
+// Every RPC delegates to the QuicBaaS FIDO2() composition service.
+service FIDO2Service {
+  // BeginRegistration starts a WebAuthn registration ceremony and returns
+  // the CredentialCreationOptions JSON plus the ceremony session id.
+  rpc BeginRegistration(FIDO2BeginRegistrationRequest) returns (FIDO2BeginRegistrationResponse);
+
+  // FinishRegistration completes a WebAuthn registration ceremony with the
+  // authenticator attestation JSON.
+  rpc FinishRegistration(FIDO2FinishRegistrationRequest) returns (FIDO2FinishRegistrationResponse);
+
+  // BeginAuthentication starts a WebAuthn authentication ceremony and
+  // returns the CredentialRequestOptions JSON plus the ceremony session id.
+  rpc BeginAuthentication(FIDO2BeginAuthenticationRequest) returns (FIDO2BeginAuthenticationResponse);
+
+  // FinishAuthentication completes a WebAuthn authentication ceremony with
+  // the authenticator assertion JSON.
+  rpc FinishAuthentication(FIDO2FinishAuthenticationRequest) returns (FIDO2FinishAuthenticationResponse);
+}
+
+// =============================================================================
+// Messages (field-for-field mirrors of the go-xkms transport wire shapes,
+// plus tenant_id)
+// =============================================================================
+
+// FIDO2BeginRegistrationRequest starts a registration ceremony for a user.
+message FIDO2BeginRegistrationRequest {
+  // tenant_id selects the tenant relying party. Required.
+  string tenant_id = 1;
+  string username = 2;
+  string display_name = 3;
+}
+
+// FIDO2BeginRegistrationResponse carries the session id and the
+// JSON-marshaled WebAuthn registration options.
+message FIDO2BeginRegistrationResponse {
+  string session_id = 1;
+  string options_json = 2;
+}
+
+// FIDO2FinishRegistrationRequest carries the authenticator attestation back
+// to the server.
+message FIDO2FinishRegistrationRequest {
+  string tenant_id = 1;
+  string session_id = 2;
+  string attestation_json = 3;
+}
+
+// FIDO2FinishRegistrationResponse contains the registration result.
+message FIDO2FinishRegistrationResponse {
+  bool success = 1;
+  string credential_id = 2;
+  string token = 3;
+  string message = 4;
+}
+
+// FIDO2BeginAuthenticationRequest starts an authentication ceremony.
+message FIDO2BeginAuthenticationRequest {
+  string tenant_id = 1;
+  string username = 2;
+}
+
+// FIDO2BeginAuthenticationResponse carries the session id and the
+// JSON-marshaled WebAuthn authentication options.
+message FIDO2BeginAuthenticationResponse {
+  string session_id = 1;
+  string options_json = 2;
+}
+
+// FIDO2FinishAuthenticationRequest carries the authenticator assertion back
+// to the server.
+message FIDO2FinishAuthenticationRequest {
+  string tenant_id = 1;
+  string session_id = 2;
+  string username = 3;
+  string assertion_json = 4;
+}
+
+// FIDO2FinishAuthenticationResponse contains the authentication result.
+message FIDO2FinishAuthenticationResponse {
+  bool success = 1;
+  string token = 2;
+  string username = 3;
+  string message = 4;
+}

@@ -57,7 +57,6 @@ server:
 # Authentication: PIV/mTLS bootstrap admin, identical to the shared cluster.
 auth:
   enabled: true
-  jwt_secret: "integration-test-secret-key-at-least-32-characters-long"
   token_ttl: 1h
   refresh_token_ttl: 24h
   bootstrap_admin: true

@@ -27,8 +27,6 @@ import (
 	"testing"
 	"time"
 
-	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 )
 
@@ -73,27 +71,6 @@ func TestResolveCanonicalDefaultClientCert_ExplicitPresent(t *testing.T) {
 func TestResolveCanonicalDefaultClientCert_ExplicitMissing(t *testing.T) {
 	if got := resolveCanonicalDefaultClientCert("/no/such/file.pem"); got != "" {
 		t.Fatalf("expected empty, got %q", got)
-	}
-}
-
-// TestSelectCanonicalPIVReader covers all branches.
-func TestSelectCanonicalPIVReader(t *testing.T) {
-	readers := []quicbaas.PIVReader{{Name: "A"}, {Name: "B"}}
-	if _, err := selectCanonicalPIVReader(readers, ""); err == nil {
-		t.Error("expected ambiguity error")
-	} else {
-		var ae *AmbiguousPIVReaderError
-		if !errors.As(err, &ae) {
-			t.Errorf("expected *AmbiguousPIVReaderError, got %T", err)
-		}
-	}
-	if _, err := selectCanonicalPIVReader(readers, "Missing"); err == nil {
-		t.Error("expected not-found error")
-	} else {
-		var nf *PIVReaderNotFoundError
-		if !errors.As(err, &nf) {
-			t.Errorf("expected *PIVReaderNotFoundError, got %T", err)
-		}
 	}
 }
 

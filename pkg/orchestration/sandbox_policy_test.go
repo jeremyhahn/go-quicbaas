@@ -144,10 +144,12 @@ func TestResolveSandboxMode(t *testing.T) {
 		{"tenant_required_overrides_optin_default_no_runtime", SandboxModeDefault, SandboxPolicyOptIn, ptr(SandboxPolicyRequired), false, SandboxModeRequired, true},
 		{"tenant_required_overrides_none_request", SandboxModeNone, SandboxPolicyOptIn, ptr(SandboxPolicyRequired), true, SandboxModeNone, true},
 
-		// Tenant override loosens a strict server policy.
-		{"tenant_optin_overrides_required_none", SandboxModeNone, SandboxPolicyRequired, ptr(SandboxPolicyOptIn), true, SandboxModeNone, false},
-		{"tenant_preferred_overrides_required_default_with_runtime", SandboxModeDefault, SandboxPolicyRequired, ptr(SandboxPolicyPreferred), true, SandboxModeRequired, false},
-		{"tenant_preferred_overrides_required_default_no_runtime", SandboxModeDefault, SandboxPolicyRequired, ptr(SandboxPolicyPreferred), false, SandboxModeNone, false},
+		// A tenant override may only TIGHTEN: a laxer one is ignored and the
+		// server policy still governs. Otherwise a tenant record would be a way
+		// out of the operator's baseline.
+		{"tenant_optin_cannot_loosen_required_none", SandboxModeNone, SandboxPolicyRequired, ptr(SandboxPolicyOptIn), true, SandboxModeNone, true},
+		{"tenant_preferred_cannot_loosen_required_with_runtime", SandboxModeDefault, SandboxPolicyRequired, ptr(SandboxPolicyPreferred), true, SandboxModeRequired, false},
+		{"tenant_preferred_cannot_loosen_required_no_runtime", SandboxModeDefault, SandboxPolicyRequired, ptr(SandboxPolicyPreferred), false, SandboxModeRequired, true},
 
 		// Nil tenant override is a no-op.
 		{"nil_override_equals_server_policy", SandboxModeDefault, SandboxPolicyRequired, nil, true, SandboxModeRequired, false},

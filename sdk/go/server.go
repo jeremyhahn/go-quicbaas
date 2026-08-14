@@ -221,6 +221,23 @@ var WithTLSCertificate = server.WithTLSCertificate
 // error across every transport.
 var WithDANEPublisher = server.WithDANEPublisher
 
+// WithContainerAttestor returns a ServerOption that registers the
+// application-supplied container attestor behind
+// Security().Attestation().AttestContainer. QuicBaaS implements image digest
+// pinning, host TPM quote and measured launch itself and can fill this seam
+// with them via service.NewRuntimeContainerAttestor; fleet automation —
+// device registry, scheduled re-attestation, quarantine on drift — belongs to
+// the embedding application, which registers its own attestor here.
+// Until an attestor is registered, AttestContainer returns a typed
+// not-configured error across every transport.
+var WithContainerAttestor = server.WithContainerAttestor
+
+// WithAttestationTrustAnchors returns a ServerOption that sets the root
+// certificates every Security().Attestation() verification is anchored
+// against. Callers may still supply additional per-request anchors in the
+// verify options; these are the deployment-wide defaults.
+var WithAttestationTrustAnchors = server.WithAttestationTrustAnchors
+
 // =============================================================================
 // Configuration Factory Functions
 // =============================================================================

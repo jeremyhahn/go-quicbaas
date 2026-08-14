@@ -37,6 +37,8 @@ import (
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	acmeclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/acme"
+	certclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
+	sshclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 	trustclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/trust"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -48,13 +50,12 @@ import (
 // =============================================================================
 
 const (
-	acmeServiceName        = "quicbaas.ACME"
-	trustServiceName       = "quicbaas.Trust"
-	webauthnServiceName    = "quicbaas.WebAuthn"
-	pivServiceName         = "quicbaas.PIV"
-	authFactorsServiceName = "quicbaas.AuthFactors"
-	authServiceName        = "quicbaas.Auth"
-	certExtServiceName     = "quicbaas.Certificate"
+	acmeServiceName    = "quicbaas.ACME"
+	trustServiceName   = "quicbaas.Trust"
+	fido2ServiceName   = "quicbaas.FIDO2"
+	pivServiceName     = "quicbaas.PIV"
+	authServiceName    = "quicbaas.Auth"
+	certExtServiceName = "quicbaas.Certificate"
 )
 
 // =============================================================================
@@ -221,10 +222,10 @@ type (
 	// FinishAuthentication / FinishLogin.
 	FIDO2FinishAuthenticationResponse = xkmstransport.FinishAuthenticationResponse
 
-	// PIVListSlotsRequest is the request payload for PIV.ListSlots.
+	// PIVListSlotsRequest is the request payload for PIV.ListPIVSlots.
 	PIVListSlotsRequest = xkmstransport.ListPIVSlotsRequest
 
-	// PIVListSlotsResponse is the response payload for PIV.ListSlots.
+	// PIVListSlotsResponse is the response payload for PIV.ListPIVSlots.
 	PIVListSlotsResponse = xkmstransport.ListPIVSlotsResponse
 
 	// PIVSlotStatus is a single PIV slot's status entry.
@@ -235,6 +236,12 @@ type (
 
 	// PIVGetCertificateResponse contains a stored PIV certificate.
 	PIVGetCertificateResponse = xkmstransport.GetPIVCertificateResponse
+
+	// PIVStoreCertificateRequest stores or imports a PIV certificate.
+	PIVStoreCertificateRequest = xkmstransport.StorePIVCertificateRequest
+
+	// PIVDeleteCertificateRequest removes a stored PIV certificate.
+	PIVDeleteCertificateRequest = xkmstransport.DeletePIVCertificateRequest
 
 	// PIVGenerateKeyRequest generates a new PIV key + cert.
 	PIVGenerateKeyRequest = xkmstransport.GeneratePIVKeyRequest
@@ -440,6 +447,36 @@ type TrustBootstrapClient interface {
 }
 
 // =============================================================================
+// SSH Service Sub-Interface
+// =============================================================================
+
+// SSHService is the Security() sub-service for SSH key, known-hosts, and
+// authorized-keys management. It is a type alias for the canonical go-xkms
+// SSH client contract: QuicBaaS composes that contract over its own
+// multi-protocol transports rather than declaring a parallel one.
+//
+//	Keys()           — generate / import / get / list / delete / export /
+//	                   forward-signing ssh.Signer
+//	KnownHosts()     — pin / list / remove / verify / HostKeyCallback
+//	AuthorizedKeys() — add / get / list / remove / emit / verify
+//
+// Session().Dial and Console report CodeUnimplemented on every QuicBaaS
+// transport: an outbound SSH session must run in the caller's own process,
+// and terminating it on the server would turn a key vault into an SSH jump
+// host. Remote keys still drive a local session — resolve Keys().Signer,
+// which delegates each signature over the wire and never moves the private
+// half. This matches go-xkms, whose remote transports refuse both verbs for
+// the same reason.
+//
+// Close() is a no-op: the transport belongs to the parent SDK client.
+type SSHService = sshclient.Client
+
+// newSSHService builds the transport-backed SSH service.
+func newSSHService(t transport.Transport) SSHService {
+	return sshclient.NewClient(t)
+}
+
+// =============================================================================
 // Certificate Extensions (CrossSign / Chain / IssueDeviceIdentity)
 // =============================================================================
 
@@ -460,192 +497,72 @@ type CertificateExtensions interface {
 	IssueDeviceIdentity(ctx context.Context, req *DeviceIdentityRequest) (*DeviceIdentityResponse, error)
 }
 
-// DeviceIdentityType selects the TCG identity certificate flavor.
-type DeviceIdentityType string
+// DeviceIdentityType selects the TCG identity certificate flavor. It aliases
+// the leaf client/certificate type so transport handlers — which cannot import
+// this package — can construct the values the SDK asserts on.
+type DeviceIdentityType = certclient.DeviceIdentityType
 
 const (
 	// DeviceIdentityEK issues an Endorsement Key certificate.
-	DeviceIdentityEK DeviceIdentityType = "ek"
+	DeviceIdentityEK = certclient.DeviceIdentityEK
 
 	// DeviceIdentityAK issues an Attestation Key certificate.
-	DeviceIdentityAK DeviceIdentityType = "ak"
+	DeviceIdentityAK = certclient.DeviceIdentityAK
 
 	// DeviceIdentityIDevID issues an IEEE 802.1AR IDevID certificate.
-	DeviceIdentityIDevID DeviceIdentityType = "idevid"
+	DeviceIdentityIDevID = certclient.DeviceIdentityIDevID
 )
 
 // DeviceIdentityRequest describes a TCG device identity issuance request.
-type DeviceIdentityRequest struct {
-	// Type selects the identity flavor (EK, AK, IDevID).
-	Type DeviceIdentityType `json:"type"`
-
-	// DeviceID uniquely identifies the device requesting identity.
-	DeviceID string `json:"device_id"`
-
-	// CSRPEM is the PEM-encoded CSR (TCG-CSR-IDEVID for IDevID).
-	CSRPEM []byte `json:"csr_pem,omitempty"`
-
-	// EKPub is the EK public key PEM (required for EK/AK issuance).
-	EKPub []byte `json:"ek_pub,omitempty"`
-
-	// AKPub is the AK public key PEM (required for AK certificates).
-	AKPub []byte `json:"ak_pub,omitempty"`
-
-	// QualifyingData optionally binds the certificate to a TPM quote.
-	QualifyingData []byte `json:"qualifying_data,omitempty"`
-
-	// ValidityDays overrides the profile default validity period.
-	ValidityDays int `json:"validity_days,omitempty"`
-
-	// TenantID scopes the issuance to a specific tenant.
-	TenantID string `json:"tenant_id,omitempty"`
-}
+type DeviceIdentityRequest = certclient.DeviceIdentityRequest
 
 // DeviceIdentityResponse is the issued device identity certificate.
-type DeviceIdentityResponse struct {
-	CertificatePEM []byte    `json:"certificate_pem"`
-	ChainPEM       []byte    `json:"chain_pem"`
-	SerialNumber   string    `json:"serial_number"`
-	NotBefore      time.Time `json:"not_before"`
-	NotAfter       time.Time `json:"not_after"`
-}
+type DeviceIdentityResponse = certclient.DeviceIdentityResponse
 
 // =============================================================================
-// WebAuthn Sub-Interface (relying party)
+// FIDO2 Sub-Interface (WebAuthn relying-party ceremony)
 // =============================================================================
 
-// WebAuthnClient is the SDK surface for WebAuthn relying-party operations
-// (registration + login ceremony). MDS validation is toggled per the
-// existing server config.
-type WebAuthnClient interface {
-	// BeginRegistration starts a WebAuthn registration ceremony for the
-	// supplied user identity. Returns CredentialCreationOptions.
-	BeginRegistration(ctx context.Context, user *WebAuthnUser) (*FIDO2BeginRegistrationResponse, error)
+// FIDO2Client is the single canonical WebAuthn/FIDO2 ceremony surface
+// (registration + authentication) for the stack. The verb shape and the
+// payload types are go-xkms's FIDO2 transport contract verbatim
+// (BeginRegistration / FinishRegistration / BeginAuthentication /
+// FinishAuthentication over the xkms wire types); the SDK adds no parallel
+// ceremony model.
+//
+// Tenant scoping is out-of-band: the ceremony targets the tenant carried on
+// the request context via transport.ContextWithTenant, falling back to the
+// transport's configured default tenant. Local CTAP2 authenticator discovery
+// is a separate, deliberately non-transport surface — see Devices().
+type FIDO2Client interface {
+	// BeginRegistration starts a WebAuthn registration ceremony and
+	// returns the JSON-marshaled CredentialCreationOptions plus the opaque
+	// ceremony session ID.
+	BeginRegistration(ctx context.Context, req *FIDO2BeginRegistrationRequest) (*FIDO2BeginRegistrationResponse, error)
 
-	// FinishRegistration completes a WebAuthn registration ceremony.
-	FinishRegistration(ctx context.Context, user *WebAuthnUser, response *FIDO2FinishRegistrationRequest) (*WebAuthnCredential, error)
+	// FinishRegistration completes a WebAuthn registration ceremony with
+	// the authenticator attestation produced by the client.
+	FinishRegistration(ctx context.Context, req *FIDO2FinishRegistrationRequest) (*FIDO2FinishRegistrationResponse, error)
 
-	// BeginLogin starts a WebAuthn authentication ceremony.
-	// Returns CredentialRequestOptions.
-	BeginLogin(ctx context.Context, user *WebAuthnUser) (*FIDO2BeginAuthenticationResponse, error)
+	// BeginAuthentication starts a WebAuthn authentication ceremony and
+	// returns the JSON-marshaled CredentialRequestOptions plus the opaque
+	// ceremony session ID.
+	BeginAuthentication(ctx context.Context, req *FIDO2BeginAuthenticationRequest) (*FIDO2BeginAuthenticationResponse, error)
 
-	// FinishLogin completes a WebAuthn authentication ceremony and
-	// returns the issued session.
-	FinishLogin(ctx context.Context, user *WebAuthnUser, response *FIDO2FinishAuthenticationRequest) (*WebAuthnSession, error)
+	// FinishAuthentication completes a WebAuthn authentication ceremony
+	// with the authenticator assertion and returns the issued token.
+	FinishAuthentication(ctx context.Context, req *FIDO2FinishAuthenticationRequest) (*FIDO2FinishAuthenticationResponse, error)
 }
-
-// WebAuthnUser identifies a user enrolled with the WebAuthn relying party.
-type WebAuthnUser struct {
-	// Username is the unique identifier. For email-based systems, use
-	// the email address.
-	Username string `json:"username"`
-
-	// DisplayName is the human-friendly name shown to the user during
-	// authenticator prompts.
-	DisplayName string `json:"display_name"`
-
-	// UserID is the WebAuthn user handle (base64url-encoded).
-	UserID string `json:"user_id,omitempty"`
-}
-
-// WebAuthnCredential summarises a registered credential.
-type WebAuthnCredential struct {
-	CredentialID    string `json:"credential_id"`
-	UserID          string `json:"user_id"`
-	AAGUID          string `json:"aaguid"`
-	AttestationType string `json:"attestation_type"`
-	SignCount       uint32 `json:"sign_count"`
-}
-
-// WebAuthnSession represents a successful WebAuthn login session.
-type WebAuthnSession struct {
-	UserID    string    `json:"user_id"`
-	Username  string    `json:"username"`
-	Token     string    `json:"token"`
-	IssuedAt  time.Time `json:"issued_at"`
-	ExpiresAt time.Time `json:"expires_at"`
-}
-
-// =============================================================================
-// PIV Sub-Interface (vendor-agnostic via PC/SC)
-// =============================================================================
-
-// PIVClient is the SDK surface for vendor-agnostic PIV smartcard operations.
-// Vendor-specific behavior MUST be hidden behind capability detection (e.g.,
-// YubiKey attestation is exposed only when the connected reader supports it).
-type PIVClient interface {
-	// ListReaders enumerates connected PC/SC readers.
-	ListReaders(ctx context.Context) (*PIVListReadersResponse, error)
-
-	// ListSlots enumerates PIV slots on a specific reader. Returns the
-	// primary slots (9a/9c/9d/9e) plus retired key slots when present.
-	ListSlots(ctx context.Context, reader string) (*PIVListSlotsResponse, error)
-
-	// GetCertificate retrieves the certificate stored in a PIV slot.
-	GetCertificate(ctx context.Context, reader, slot string) (*x509.Certificate, error)
-
-	// Sign signs the supplied digest with the slot's private key.
-	// pin is the User PIN; algo selects the signing algorithm
-	// ("rsa-pkcs1", "ecdsa", "ed25519").
-	Sign(ctx context.Context, req *PIVSignRequest) (*PIVSignResponse, error)
-
-	// Attest produces a YubiKey-style attestation certificate when the
-	// device supports it. Returns ErrPIVAttestationUnsupported on cards
-	// without attestation.
-	Attest(ctx context.Context, reader, slot string) (*PIVAttestResponse, error)
-}
-
-// PIVListReadersResponse is the response payload for PIV.ListReaders.
-type PIVListReadersResponse struct {
-	Readers []PIVReader `json:"readers"`
-}
-
-// PIVReader describes a single PC/SC reader.
-type PIVReader struct {
-	// Name is the PC/SC reader name.
-	Name string `json:"name"`
-
-	// CardPresent indicates whether a card is currently inserted.
-	CardPresent bool `json:"card_present"`
-
-	// Vendor is the card vendor identification when known.
-	Vendor string `json:"vendor,omitempty"`
-}
-
-// PIVSignRequest describes a PIV slot signing request.
-type PIVSignRequest struct {
-	Reader string `json:"reader"`
-	Slot   string `json:"slot"`
-	PIN    string `json:"pin"`
-	Digest []byte `json:"digest"`
-	Algo   string `json:"algo"`
-}
-
-// PIVSignResponse contains a slot signature.
-type PIVSignResponse struct {
-	Signature []byte `json:"signature"`
-	Algo      string `json:"algo"`
-}
-
-// PIVAttestResponse contains a slot attestation certificate.
-type PIVAttestResponse struct {
-	AttestationCertPEM []byte `json:"attestation_cert_pem"`
-	IntermediatePEM    []byte `json:"intermediate_pem,omitempty"`
-}
-
-// ErrPIVAttestationUnsupported is returned by PIV.Attest when the card
-// vendor does not implement attestation.
-var ErrPIVAttestationUnsupported = sdkerrors.NewNotFound(
-	"piv.Attest", "card does not support attestation")
 
 // =============================================================================
 // Auth Factor Sub-Interface (M14)
 // =============================================================================
 
 // AuthFactorsClient exposes go-qrdb's User N-AuthFactor model. Implementations
-// delegate to qrdb's AuthFactor service via the configured transport. The
-// Login() method dispatches by factor type and consumes the appropriate
-// challenge/response flow.
+// delegate to qrdb's AuthFactor service via the configured transport. Login
+// itself is NOT part of this surface: the unified login ceremony is
+// AuthService.BeginLogin / AuthService.FinishLogin, which rides every
+// transport.
 type AuthFactorsClient interface {
 	// Add enrolls a new auth factor for a user.
 	Add(ctx context.Context, req *AuthFactorEnrollRequest) (*AuthFactorEnrollResponse, error)
@@ -664,42 +581,6 @@ type AuthFactorsClient interface {
 
 	// Relabel updates the human-readable label of an enrolled factor.
 	Relabel(ctx context.Context, factorID, label string) error
-
-	// Login performs a type-dispatched login that issues a challenge,
-	// awaits the caller's signed response, and returns a session token.
-	// The req.FactorName field selects the dispatch (mtls / fido2 / piv).
-	Login(ctx context.Context, req *AuthFactorLoginRequest) (*AuthFactorLoginResponse, error)
-}
-
-// AuthFactorLoginRequest is the input to AuthFactors.Login.
-type AuthFactorLoginRequest struct {
-	// Username identifies the user attempting to log in.
-	Username string `json:"username"`
-
-	// FactorName selects which factor flow to execute (mtls / fido2 /
-	// piv). When empty, the server auto-discovers based on the supplied
-	// proof material.
-	FactorName string `json:"factor_name,omitempty"`
-
-	// FactorID optionally pins the login to a specific enrolled factor.
-	FactorID string `json:"factor_id,omitempty"`
-
-	// Proof is factor-specific authentication proof (e.g., PIV signed
-	// challenge, FIDO2 assertion, mTLS client cert).
-	Proof []byte `json:"proof,omitempty"`
-
-	// Metadata carries any factor-specific context required to verify
-	// the proof (e.g., authenticator data for FIDO2).
-	Metadata map[string]string `json:"metadata,omitempty"`
-}
-
-// AuthFactorLoginResponse is the result of a successful AuthFactors.Login.
-type AuthFactorLoginResponse struct {
-	UserID    string    `json:"user_id"`
-	Username  string    `json:"username"`
-	Token     string    `json:"token"`
-	IssuedAt  time.Time `json:"issued_at"`
-	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // =============================================================================
@@ -709,20 +590,26 @@ type AuthFactorLoginResponse struct {
 // AuthService is the extended Auth sub-interface returned by
 // SecurityService.Auth(). It embeds the existing AuthClient surface
 // (Login/RefreshToken/sessions/...) AND adds factor-typed sub-services
-// (FIDO2, WebAuthn, PIV, Factors) per §5e of the architecture spec.
+// (FIDO2, PIV, Devices, Factors) per §5e of the architecture spec.
 //
 // Embedding AuthClient preserves backward compatibility: any consumer
 // that called Security().Auth().Login(...) continues to work unchanged.
 type AuthService interface {
 	AuthClient
 
-	// WebAuthn returns the WebAuthn relying-party client. It is the single
-	// canonical ceremony accessor (registration + login) for the stack;
-	// CTAP2 local-device discovery is exposed separately via Devices().
-	WebAuthn() WebAuthnClient
+	// FIDO2 returns the WebAuthn/FIDO2 relying-party ceremony client. It
+	// is the single canonical ceremony accessor (registration +
+	// authentication) for the stack, in go-xkms's FIDO2 verb shape; CTAP2
+	// local-device discovery is exposed separately via Devices(). The
+	// ceremony targets the tenant carried on the request context
+	// (transport.ContextWithTenant) or the transport's default tenant.
+	FIDO2() FIDO2Client
 
-	// PIV returns the vendor-agnostic PIV smartcard client.
-	PIV() PIVClient
+	// PIV returns the backend-scoped PIV client in go-xkms's PIVService
+	// shape (backends: file / pkcs11 / tpm2). Card/hardware interaction is
+	// client-local per xkms convention; these verbs manage PIV slots on
+	// the composed server-side backends.
+	PIV() XKMSPIVService
 
 	// Devices returns the client-LOCAL CTAP2 authenticator helper. Unlike
 	// the WebAuthn ceremony (which is a server round-trip), Devices()
@@ -1096,15 +983,11 @@ type certExtImpl struct {
 	t transport.Transport
 }
 
-type certCrossSignRequest struct {
-	ForeignRootPEM []byte `json:"foreign_root_pem"`
-}
+type certCrossSignRequest = certclient.CrossSignRequest
 
 // CertCrossSignResponse is the wire-level response payload for
 // CertificateExtensions.CrossSign.
-type CertCrossSignResponse struct {
-	CrossSignedPEM []byte `json:"cross_signed_pem"`
-}
+type CertCrossSignResponse = certclient.CrossSignResponse
 
 func (c *certExtImpl) CrossSign(ctx context.Context, foreignRootPEM []byte) ([]byte, error) {
 	if len(foreignRootPEM) == 0 {
@@ -1127,15 +1010,11 @@ func (c *certExtImpl) CrossSign(ctx context.Context, foreignRootPEM []byte) ([]b
 	return out.CrossSignedPEM, nil
 }
 
-type certChainRequest struct {
-	CertificatePEM []byte `json:"certificate_pem"`
-}
+type certChainRequest = certclient.ChainRequest
 
 // CertChainResponse is the wire-level response payload for
 // CertificateExtensions.Chain. ChainPEM is ordered issuer-first.
-type CertChainResponse struct {
-	ChainPEM [][]byte `json:"chain_pem"`
-}
+type CertChainResponse = certclient.ChainResponse
 
 func (c *certExtImpl) Chain(ctx context.Context, certPEM []byte) ([][]byte, error) {
 	if len(certPEM) == 0 {
@@ -1189,183 +1068,143 @@ func newCertificateExtensions(t transport.Transport) CertificateExtensions {
 	return &certExtImpl{t: t}
 }
 
-// webauthnImpl implements WebAuthnClient.
-type webauthnImpl struct {
+// fido2TransportClient is the transport-backed FIDO2Client. Each verb is a
+// single request on the quicbaas.FIDO2 service carrying the xkms wire
+// payload verbatim; the concrete transport bridges it to the per-tenant
+// xkms relying-party service on the server.
+type fido2TransportClient struct {
 	t transport.Transport
 }
 
-type webauthnBeginRegistrationRequest struct {
-	User *WebAuthnUser `json:"user"`
-}
-
-func (c *webauthnImpl) BeginRegistration(ctx context.Context, user *WebAuthnUser) (*FIDO2BeginRegistrationResponse, error) {
-	if user == nil {
-		return nil, sdkerrors.NewInvalidInput("webauthn.BeginRegistration", "user is required")
-	}
-	if user.Username == "" {
-		return nil, sdkerrors.NewInvalidInput("webauthn.BeginRegistration", "username is required")
-	}
+// BeginRegistration starts a WebAuthn registration ceremony.
+func (c *fido2TransportClient) BeginRegistration(ctx context.Context, req *FIDO2BeginRegistrationRequest) (*FIDO2BeginRegistrationResponse, error) {
 	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("webauthn.BeginRegistration", "context is required")
+		return nil, sdkerrors.NewInvalidInput("fido2.BeginRegistration", "context is required")
 	}
-	resp, err := c.t.Request(ctx, webauthnServiceName, "BeginRegistration", &webauthnBeginRegistrationRequest{User: user})
+	if req == nil {
+		return nil, sdkerrors.NewInvalidInput("fido2.BeginRegistration", "request is required")
+	}
+	if req.Username == "" {
+		return nil, sdkerrors.NewInvalidInput("fido2.BeginRegistration", "username is required")
+	}
+	resp, err := c.t.Request(ctx, fido2ServiceName, "BeginRegistration", req)
 	if err != nil {
 		return nil, err
 	}
 	if resp == nil {
-		return nil, sdkerrors.NewInternal("webauthn.BeginRegistration", "nil response from server")
+		return nil, sdkerrors.NewInternal("fido2.BeginRegistration", "nil response from server")
 	}
 	out, ok := resp.(*FIDO2BeginRegistrationResponse)
 	if !ok {
-		return nil, sdkerrors.NewInternal("webauthn.BeginRegistration", "invalid response type")
+		return nil, sdkerrors.NewInternal("fido2.BeginRegistration", "invalid response type")
 	}
 	return out, nil
 }
 
-type webauthnFinishRegistrationRequest struct {
-	User     *WebAuthnUser                   `json:"user"`
-	Response *FIDO2FinishRegistrationRequest `json:"response"`
-}
-
-func (c *webauthnImpl) FinishRegistration(ctx context.Context, user *WebAuthnUser, response *FIDO2FinishRegistrationRequest) (*WebAuthnCredential, error) {
-	if user == nil {
-		return nil, sdkerrors.NewInvalidInput("webauthn.FinishRegistration", "user is required")
-	}
-	if response == nil {
-		return nil, sdkerrors.NewInvalidInput("webauthn.FinishRegistration", "response is required")
-	}
+// FinishRegistration completes a WebAuthn registration ceremony.
+func (c *fido2TransportClient) FinishRegistration(ctx context.Context, req *FIDO2FinishRegistrationRequest) (*FIDO2FinishRegistrationResponse, error) {
 	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("webauthn.FinishRegistration", "context is required")
+		return nil, sdkerrors.NewInvalidInput("fido2.FinishRegistration", "context is required")
 	}
-	resp, err := c.t.Request(ctx, webauthnServiceName, "FinishRegistration", &webauthnFinishRegistrationRequest{
-		User:     user,
-		Response: response,
-	})
+	if req == nil {
+		return nil, sdkerrors.NewInvalidInput("fido2.FinishRegistration", "request is required")
+	}
+	if req.SessionID == "" {
+		return nil, sdkerrors.NewInvalidInput("fido2.FinishRegistration", "session_id is required")
+	}
+	if req.AttestationJSON == "" {
+		return nil, sdkerrors.NewInvalidInput("fido2.FinishRegistration", "attestation_json is required")
+	}
+	resp, err := c.t.Request(ctx, fido2ServiceName, "FinishRegistration", req)
 	if err != nil {
 		return nil, err
 	}
 	if resp == nil {
-		return nil, sdkerrors.NewInternal("webauthn.FinishRegistration", "nil response from server")
+		return nil, sdkerrors.NewInternal("fido2.FinishRegistration", "nil response from server")
 	}
-	// Already a typed credential (in-process / future transports).
-	if out, ok := resp.(*WebAuthnCredential); ok {
-		return out, nil
+	out, ok := resp.(*FIDO2FinishRegistrationResponse)
+	if !ok {
+		return nil, sdkerrors.NewInternal("fido2.FinishRegistration", "invalid response type")
 	}
-	// REST transport returns the xkms ceremony result; adapt it to the
-	// SDK credential view. The xkms FinishRegistration response carries
-	// the issued token and the WebAuthn user handle as CredentialID.
-	if out, ok := resp.(*xkmstransport.FinishRegistrationResponse); ok {
-		return &WebAuthnCredential{
-			CredentialID: out.CredentialID,
-			UserID:       out.CredentialID,
-		}, nil
-	}
-	return nil, sdkerrors.NewInternal("webauthn.FinishRegistration", "invalid response type")
+	return out, nil
 }
 
-type webauthnBeginLoginRequest struct {
-	User *WebAuthnUser `json:"user"`
-}
-
-func (c *webauthnImpl) BeginLogin(ctx context.Context, user *WebAuthnUser) (*FIDO2BeginAuthenticationResponse, error) {
-	if user == nil {
-		return nil, sdkerrors.NewInvalidInput("webauthn.BeginLogin", "user is required")
-	}
-	if user.Username == "" {
-		return nil, sdkerrors.NewInvalidInput("webauthn.BeginLogin", "username is required")
-	}
+// BeginAuthentication starts a WebAuthn authentication ceremony.
+func (c *fido2TransportClient) BeginAuthentication(ctx context.Context, req *FIDO2BeginAuthenticationRequest) (*FIDO2BeginAuthenticationResponse, error) {
 	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("webauthn.BeginLogin", "context is required")
+		return nil, sdkerrors.NewInvalidInput("fido2.BeginAuthentication", "context is required")
 	}
-	resp, err := c.t.Request(ctx, webauthnServiceName, "BeginLogin", &webauthnBeginLoginRequest{User: user})
+	if req == nil {
+		return nil, sdkerrors.NewInvalidInput("fido2.BeginAuthentication", "request is required")
+	}
+	if req.Username == "" {
+		return nil, sdkerrors.NewInvalidInput("fido2.BeginAuthentication", "username is required")
+	}
+	resp, err := c.t.Request(ctx, fido2ServiceName, "BeginAuthentication", req)
 	if err != nil {
 		return nil, err
 	}
 	if resp == nil {
-		return nil, sdkerrors.NewInternal("webauthn.BeginLogin", "nil response from server")
+		return nil, sdkerrors.NewInternal("fido2.BeginAuthentication", "nil response from server")
 	}
 	out, ok := resp.(*FIDO2BeginAuthenticationResponse)
 	if !ok {
-		return nil, sdkerrors.NewInternal("webauthn.BeginLogin", "invalid response type")
+		return nil, sdkerrors.NewInternal("fido2.BeginAuthentication", "invalid response type")
 	}
 	return out, nil
 }
 
-type webauthnFinishLoginRequest struct {
-	User     *WebAuthnUser                     `json:"user"`
-	Response *FIDO2FinishAuthenticationRequest `json:"response"`
-}
-
-func (c *webauthnImpl) FinishLogin(ctx context.Context, user *WebAuthnUser, response *FIDO2FinishAuthenticationRequest) (*WebAuthnSession, error) {
-	if user == nil {
-		return nil, sdkerrors.NewInvalidInput("webauthn.FinishLogin", "user is required")
-	}
-	if response == nil {
-		return nil, sdkerrors.NewInvalidInput("webauthn.FinishLogin", "response is required")
-	}
+// FinishAuthentication completes a WebAuthn authentication ceremony.
+func (c *fido2TransportClient) FinishAuthentication(ctx context.Context, req *FIDO2FinishAuthenticationRequest) (*FIDO2FinishAuthenticationResponse, error) {
 	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("webauthn.FinishLogin", "context is required")
+		return nil, sdkerrors.NewInvalidInput("fido2.FinishAuthentication", "context is required")
 	}
-	resp, err := c.t.Request(ctx, webauthnServiceName, "FinishLogin", &webauthnFinishLoginRequest{
-		User:     user,
-		Response: response,
-	})
+	if req == nil {
+		return nil, sdkerrors.NewInvalidInput("fido2.FinishAuthentication", "request is required")
+	}
+	if req.SessionID == "" {
+		return nil, sdkerrors.NewInvalidInput("fido2.FinishAuthentication", "session_id is required")
+	}
+	if req.AssertionJSON == "" {
+		return nil, sdkerrors.NewInvalidInput("fido2.FinishAuthentication", "assertion_json is required")
+	}
+	resp, err := c.t.Request(ctx, fido2ServiceName, "FinishAuthentication", req)
 	if err != nil {
 		return nil, err
 	}
 	if resp == nil {
-		return nil, sdkerrors.NewInternal("webauthn.FinishLogin", "nil response from server")
+		return nil, sdkerrors.NewInternal("fido2.FinishAuthentication", "nil response from server")
 	}
-	// Already a typed session (in-process / future transports).
-	if out, ok := resp.(*WebAuthnSession); ok {
-		return out, nil
+	out, ok := resp.(*FIDO2FinishAuthenticationResponse)
+	if !ok {
+		return nil, sdkerrors.NewInternal("fido2.FinishAuthentication", "invalid response type")
 	}
-	// REST transport returns the xkms ceremony result; adapt it to the
-	// SDK session view.
-	if out, ok := resp.(*xkmstransport.FinishAuthenticationResponse); ok {
-		return &WebAuthnSession{
-			Username: out.Username,
-			Token:    out.Token,
-		}, nil
-	}
-	return nil, sdkerrors.NewInternal("webauthn.FinishLogin", "invalid response type")
+	return out, nil
 }
 
-// pivImpl implements PIVClient.
-type pivImpl struct {
+// pivTransportClient is the transport-backed XKMSPIVService. Each verb is a
+// single request on the quicbaas.PIV service carrying the xkms wire payload
+// verbatim; the concrete transport bridges it to the composed xkms PIV
+// service (backend-scoped slots: file / pkcs11 / tpm2) on the server.
+type pivTransportClient struct {
 	t transport.Transport
 }
 
-type pivListSlotsRequestPayload struct {
-	Reader string `json:"reader"`
+// pivRequest performs one quicbaas.PIV transport round-trip after common
+// nil-ctx / nil-req validation.
+func (c *pivTransportClient) pivRequest(ctx context.Context, method string, req interface{}) (interface{}, error) {
+	if ctx == nil {
+		return nil, sdkerrors.NewInvalidInput("piv."+method, "context is required")
+	}
+	return c.t.Request(ctx, pivServiceName, method, req)
 }
 
-func (c *pivImpl) ListReaders(ctx context.Context) (*PIVListReadersResponse, error) {
-	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("piv.ListReaders", "context is required")
+// ListPIVSlots returns the status of all PIV slots in the requested backend.
+func (c *pivTransportClient) ListPIVSlots(ctx context.Context, req *PIVListSlotsRequest) (*PIVListSlotsResponse, error) {
+	if req == nil {
+		return nil, sdkerrors.NewInvalidInput("piv.ListPIVSlots", "request is required")
 	}
-	resp, err := c.t.Request(ctx, pivServiceName, "ListReaders", struct{}{})
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil {
-		return &PIVListReadersResponse{}, nil
-	}
-	out, ok := resp.(*PIVListReadersResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("piv.ListReaders", "invalid response type")
-	}
-	return out, nil
-}
-
-func (c *pivImpl) ListSlots(ctx context.Context, reader string) (*PIVListSlotsResponse, error) {
-	if reader == "" {
-		return nil, sdkerrors.NewInvalidInput("piv.ListSlots", "reader is required")
-	}
-	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("piv.ListSlots", "context is required")
-	}
-	resp, err := c.t.Request(ctx, pivServiceName, "ListSlots", &pivListSlotsRequestPayload{Reader: reader})
+	resp, err := c.pivRequest(ctx, "ListPIVSlots", req)
 	if err != nil {
 		return nil, err
 	}
@@ -1374,109 +1213,132 @@ func (c *pivImpl) ListSlots(ctx context.Context, reader string) (*PIVListSlotsRe
 	}
 	out, ok := resp.(*PIVListSlotsResponse)
 	if !ok {
-		return nil, sdkerrors.NewInternal("piv.ListSlots", "invalid response type")
+		return nil, sdkerrors.NewInternal("piv.ListPIVSlots", "invalid response type")
 	}
 	return out, nil
 }
 
-type pivGetCertificateRequestPayload struct {
-	Reader string `json:"reader"`
-	Slot   string `json:"slot"`
-}
-
-// PIVGetCertificateResponsePayload is the wire-level response payload for
-// PIV.GetCertificate. CertDER is DER-encoded.
-type PIVGetCertificateResponsePayload struct {
-	CertDER []byte `json:"cert_der"`
-}
-
-func (c *pivImpl) GetCertificate(ctx context.Context, reader, slot string) (*x509.Certificate, error) {
-	if reader == "" {
-		return nil, sdkerrors.NewInvalidInput("piv.GetCertificate", "reader is required")
-	}
-	if slot == "" {
-		return nil, sdkerrors.NewInvalidInput("piv.GetCertificate", "slot is required")
-	}
-	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("piv.GetCertificate", "context is required")
-	}
-	resp, err := c.t.Request(ctx, pivServiceName, "GetCertificate", &pivGetCertificateRequestPayload{
-		Reader: reader,
-		Slot:   slot,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil {
-		return nil, sdkerrors.NewNotFound("piv.GetCertificate", "certificate not found")
-	}
-	out, ok := resp.(*PIVGetCertificateResponsePayload)
-	if !ok {
-		return nil, sdkerrors.NewInternal("piv.GetCertificate", "invalid response type")
-	}
-	cert, err := x509.ParseCertificate(out.CertDER)
-	if err != nil {
-		return nil, sdkerrors.Wrap(err, sdkerrors.CodeInternal,
-			"piv.GetCertificate", "failed to parse DER certificate")
-	}
-	return cert, nil
-}
-
-func (c *pivImpl) Sign(ctx context.Context, req *PIVSignRequest) (*PIVSignResponse, error) {
+// GetPIVCertificate retrieves the certificate stored in a PIV slot.
+func (c *pivTransportClient) GetPIVCertificate(ctx context.Context, req *PIVGetCertificateRequest) (*PIVGetCertificateResponse, error) {
 	if req == nil {
-		return nil, sdkerrors.NewInvalidInput("piv.Sign", "request is required")
-	}
-	if req.Reader == "" {
-		return nil, sdkerrors.NewInvalidInput("piv.Sign", "reader is required")
+		return nil, sdkerrors.NewInvalidInput("piv.GetPIVCertificate", "request is required")
 	}
 	if req.Slot == "" {
-		return nil, sdkerrors.NewInvalidInput("piv.Sign", "slot is required")
+		return nil, sdkerrors.NewInvalidInput("piv.GetPIVCertificate", "slot is required")
 	}
-	if len(req.Digest) == 0 {
-		return nil, sdkerrors.NewInvalidInput("piv.Sign", "digest is required")
-	}
-	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("piv.Sign", "context is required")
-	}
-	resp, err := c.t.Request(ctx, pivServiceName, "Sign", req)
+	resp, err := c.pivRequest(ctx, "GetPIVCertificate", req)
 	if err != nil {
 		return nil, err
 	}
 	if resp == nil {
-		return nil, sdkerrors.NewInternal("piv.Sign", "nil response from server")
+		return nil, sdkerrors.NewNotFound("piv.GetPIVCertificate", "certificate not found")
 	}
-	out, ok := resp.(*PIVSignResponse)
+	out, ok := resp.(*PIVGetCertificateResponse)
 	if !ok {
-		return nil, sdkerrors.NewInternal("piv.Sign", "invalid response type")
+		return nil, sdkerrors.NewInternal("piv.GetPIVCertificate", "invalid response type")
 	}
 	return out, nil
 }
 
-type pivAttestRequest struct {
-	Reader string `json:"reader"`
-	Slot   string `json:"slot"`
+// StorePIVCertificate stores a certificate in a PIV slot.
+func (c *pivTransportClient) StorePIVCertificate(ctx context.Context, req *PIVStoreCertificateRequest) error {
+	if req == nil {
+		return sdkerrors.NewInvalidInput("piv.StorePIVCertificate", "request is required")
+	}
+	if req.Slot == "" {
+		return sdkerrors.NewInvalidInput("piv.StorePIVCertificate", "slot is required")
+	}
+	_, err := c.pivRequest(ctx, "StorePIVCertificate", req)
+	return err
 }
 
-func (c *pivImpl) Attest(ctx context.Context, reader, slot string) (*PIVAttestResponse, error) {
-	if reader == "" {
-		return nil, sdkerrors.NewInvalidInput("piv.Attest", "reader is required")
+// DeletePIVCertificate removes the certificate from a PIV slot.
+func (c *pivTransportClient) DeletePIVCertificate(ctx context.Context, req *PIVDeleteCertificateRequest) error {
+	if req == nil {
+		return sdkerrors.NewInvalidInput("piv.DeletePIVCertificate", "request is required")
 	}
-	if slot == "" {
-		return nil, sdkerrors.NewInvalidInput("piv.Attest", "slot is required")
+	if req.Slot == "" {
+		return sdkerrors.NewInvalidInput("piv.DeletePIVCertificate", "slot is required")
 	}
-	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("piv.Attest", "context is required")
+	_, err := c.pivRequest(ctx, "DeletePIVCertificate", req)
+	return err
+}
+
+// GeneratePIVKey generates a new key pair in a PIV slot with a self-signed
+// certificate.
+func (c *pivTransportClient) GeneratePIVKey(ctx context.Context, req *PIVGenerateKeyRequest) (*PIVGenerateKeyResponse, error) {
+	if req == nil {
+		return nil, sdkerrors.NewInvalidInput("piv.GeneratePIVKey", "request is required")
 	}
-	resp, err := c.t.Request(ctx, pivServiceName, "Attest", &pivAttestRequest{Reader: reader, Slot: slot})
+	if req.Slot == "" {
+		return nil, sdkerrors.NewInvalidInput("piv.GeneratePIVKey", "slot is required")
+	}
+	resp, err := c.pivRequest(ctx, "GeneratePIVKey", req)
 	if err != nil {
 		return nil, err
 	}
 	if resp == nil {
-		return nil, ErrPIVAttestationUnsupported
+		return nil, sdkerrors.NewInternal("piv.GeneratePIVKey", "nil response from server")
 	}
-	out, ok := resp.(*PIVAttestResponse)
+	out, ok := resp.(*PIVGenerateKeyResponse)
 	if !ok {
-		return nil, sdkerrors.NewInternal("piv.Attest", "invalid response type")
+		return nil, sdkerrors.NewInternal("piv.GeneratePIVKey", "invalid response type")
+	}
+	return out, nil
+}
+
+// ImportPIVCertificate imports a certificate into a PIV slot.
+func (c *pivTransportClient) ImportPIVCertificate(ctx context.Context, req *PIVStoreCertificateRequest) error {
+	if req == nil {
+		return sdkerrors.NewInvalidInput("piv.ImportPIVCertificate", "request is required")
+	}
+	if req.Slot == "" {
+		return sdkerrors.NewInvalidInput("piv.ImportPIVCertificate", "slot is required")
+	}
+	_, err := c.pivRequest(ctx, "ImportPIVCertificate", req)
+	return err
+}
+
+// ExportPIVCertificate exports the certificate from a PIV slot.
+func (c *pivTransportClient) ExportPIVCertificate(ctx context.Context, req *PIVGetCertificateRequest) (*PIVGetCertificateResponse, error) {
+	if req == nil {
+		return nil, sdkerrors.NewInvalidInput("piv.ExportPIVCertificate", "request is required")
+	}
+	if req.Slot == "" {
+		return nil, sdkerrors.NewInvalidInput("piv.ExportPIVCertificate", "slot is required")
+	}
+	resp, err := c.pivRequest(ctx, "ExportPIVCertificate", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, sdkerrors.NewNotFound("piv.ExportPIVCertificate", "certificate not found")
+	}
+	out, ok := resp.(*PIVGetCertificateResponse)
+	if !ok {
+		return nil, sdkerrors.NewInternal("piv.ExportPIVCertificate", "invalid response type")
+	}
+	return out, nil
+}
+
+// GeneratePIVCSR generates a certificate signing request for a PIV slot key.
+func (c *pivTransportClient) GeneratePIVCSR(ctx context.Context, req *PIVGenerateCSRRequest) (*PIVGenerateCSRResponse, error) {
+	if req == nil {
+		return nil, sdkerrors.NewInvalidInput("piv.GeneratePIVCSR", "request is required")
+	}
+	if req.Slot == "" {
+		return nil, sdkerrors.NewInvalidInput("piv.GeneratePIVCSR", "slot is required")
+	}
+	resp, err := c.pivRequest(ctx, "GeneratePIVCSR", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, sdkerrors.NewInternal("piv.GeneratePIVCSR", "nil response from server")
+	}
+	out, ok := resp.(*PIVGenerateCSRResponse)
+	if !ok {
+		return nil, sdkerrors.NewInternal("piv.GeneratePIVCSR", "invalid response type")
 	}
 	return out, nil
 }
@@ -1867,30 +1729,6 @@ func (c *authFactorsImpl) Relabel(ctx context.Context, factorID, label string) e
 	return err
 }
 
-func (c *authFactorsImpl) Login(ctx context.Context, req *AuthFactorLoginRequest) (*AuthFactorLoginResponse, error) {
-	if req == nil {
-		return nil, sdkerrors.NewInvalidInput("authfactors.Login", "request is required")
-	}
-	if req.Username == "" {
-		return nil, sdkerrors.NewInvalidInput("authfactors.Login", "username is required")
-	}
-	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("authfactors.Login", "context is required")
-	}
-	resp, err := c.t.Request(ctx, authFactorsServiceName, "Login", req)
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil {
-		return nil, sdkerrors.NewInternal("authfactors.Login", "nil response from server")
-	}
-	out, ok := resp.(*AuthFactorLoginResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("authfactors.Login", "invalid response type")
-	}
-	return out, nil
-}
-
 // =============================================================================
 // AuthService Implementation (extended Auth surface)
 // =============================================================================
@@ -1900,12 +1738,12 @@ func (c *authFactorsImpl) Login(ctx context.Context, req *AuthFactorLoginRequest
 // delegated to the underlying client.auth() so behavior is unchanged.
 type authServiceImpl struct {
 	AuthClient
-	c        *client
-	t        transport.Transport
-	webauthn WebAuthnClient
-	piv      PIVClient
-	devices  LocalDevices
-	factors  AuthFactorsClient
+	c       *client
+	t       transport.Transport
+	fido2   FIDO2Client
+	piv     XKMSPIVService
+	devices LocalDevices
+	factors AuthFactorsClient
 }
 
 func newAuthService(c *client) AuthService {
@@ -1914,15 +1752,15 @@ func newAuthService(c *client) AuthService {
 		AuthClient: c.auth(),
 		c:          c,
 		t:          t,
-		webauthn:   &webauthnImpl{t: t},
-		piv:        &pivImpl{t: t},
+		fido2:      &fido2TransportClient{t: t},
+		piv:        &pivTransportClient{t: t},
 		devices:    newLocalDevices(),
 		factors:    &authFactorsImpl{c: c, t: t},
 	}
 }
 
-func (s *authServiceImpl) WebAuthn() WebAuthnClient   { return s.webauthn }
-func (s *authServiceImpl) PIV() PIVClient             { return s.piv }
+func (s *authServiceImpl) FIDO2() FIDO2Client         { return s.fido2 }
+func (s *authServiceImpl) PIV() XKMSPIVService        { return s.piv }
 func (s *authServiceImpl) Devices() LocalDevices      { return s.devices }
 func (s *authServiceImpl) Factors() AuthFactorsClient { return s.factors }
 

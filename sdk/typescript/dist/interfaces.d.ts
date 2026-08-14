@@ -3,7 +3,13 @@ import type { EmbeddingsClient } from './embedding_sdk.js';
 import type { MessagingClient } from './messaging_sdk.js';
 import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
-import type { AgentBackendInfo, AuthTokenResponse, DeployAgentResult, DeployAgentSpec, InferenceRequest, InferenceResponse, InferenceChunk, CredentialAssertionJSON, PublicKeyCredentialJSON, SSHKey, SSHScope, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, SSHPublicKey, SignRequest, SignResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse, AgentRegistration, CloseSessionRequest, CloseSessionResponse, CreateKeyRequest, CreateKeyResponse, CreateTenantRequest, CreateTenantResponse, CreateTaskRequest, CreateTaskResponse, CreateUserRequest, CreateUserResponse, CreateWorkflowRequest, CreateWorkflowResponse, DecomposeTaskRequest, DecomposeTaskResponse, GetAgentRequest, GetSecretResponse, GetSessionHistoryRequest, GetSessionHistoryResponse, HealthCheckReport, IAMRole, IAMPolicy, IAMTenant, IAMUser, JobEvent, JobStatus, KMSDecryptRequest, KMSDecryptResponse, KMSEncryptRequest, KMSEncryptResponse, ListAgentsRequest, ListAgentsResponse, ListKeysResponse, ListPoliciesResponse, ListRolesResponse, ListSecretsResponse, ListSessionsRequest, ListSessionsResponse, ListTenantsResponse, ListUsersResponse, ListWorkflowsResponse, PromptSessionRequest, PromptSessionResponse, RegisterAgentRequest, RegisterAgentResponse, RemoveAgentRequest, DisableAgentRequest, DisableAgentResponse, EnableAgentRequest, EnableAgentResponse, RekeyRequest, RekeyResponse, RotateKeyResponse, RotateRootKeyResponse, RotateSecretResponse, ListSecretVersionsResponse, SetDefaultKeyResponse, SealStatus, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierShamirSharesResponse, BarrierShamirDeleteShareRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareRequest, CeremonyClaimShareResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, SessionEventEnvelope, SessionInfo, SpawnSessionRequest, SpawnSessionResponse, ClaimTaskRequest, CompleteTaskRequest, StartJobRequest, StartJobResponse, StoreSecretRequest, SubscribeSessionEventsRequest, Task, UnsealRequest, UnsealResponse, WorkflowDefinition } from './types.js';
+import type { AccountsClient } from './accounts.js';
+import type { CAClient } from './ca.js';
+import type { TrustClient } from './trust.js';
+import type { CryptoClient } from './crypto.js';
+import type { DEKClient } from './dek.js';
+import type { DynamicSecretsClient } from './dynamicsecrets.js';
+import type { AgentBackendInfo, AuthTokenResponse, DeployAgentResult, DeployAgentSpec, InferenceRequest, InferenceResponse, InferenceChunk, PublicKeyCredentialJSON, WebAuthnLoginChallenge, SSHKey, SSHScope, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, SSHPublicKey, SignRequest, SignResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse, AgentRegistration, CloseSessionRequest, CloseSessionResponse, CreateKeyRequest, CreateKeyResponse, CreateTenantRequest, CreateTenantResponse, CreateTaskRequest, CreateTaskResponse, CreateUserRequest, CreateUserResponse, CreateWorkflowRequest, CreateWorkflowResponse, DecomposeTaskRequest, DecomposeTaskResponse, GetAgentRequest, GetSecretResponse, GetSessionHistoryRequest, GetSessionHistoryResponse, HealthCheckReport, IAMRole, IAMPolicy, IAMTenant, IAMUser, JobEvent, JobStatus, KMSDecryptRequest, KMSDecryptResponse, KMSEncryptRequest, KMSEncryptResponse, ListAgentsRequest, ListAgentsResponse, ListKeysResponse, ListPoliciesResponse, ListRolesResponse, ListSecretsResponse, ListSessionsRequest, ListSessionsResponse, ListTenantsResponse, ListUsersResponse, ListWorkflowsResponse, PromptSessionRequest, PromptSessionResponse, RegisterAgentRequest, RegisterAgentResponse, RemoveAgentRequest, DisableAgentRequest, DisableAgentResponse, EnableAgentRequest, EnableAgentResponse, RekeyRequest, RekeyResponse, RotateKeyResponse, RotateRootKeyResponse, RotateSecretResponse, RotateSessionAccountRequest, RotateSessionAccountResponse, ListSecretVersionsResponse, SetDefaultKeyResponse, SealStatus, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierShamirSharesResponse, BarrierShamirDeleteShareRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareRequest, CeremonyClaimShareResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, SessionEventEnvelope, SessionInfo, SpawnSessionRequest, SpawnSessionResponse, ClaimTaskRequest, CompleteTaskRequest, StartJobRequest, StartJobResponse, StoreSecretRequest, SubscribeSessionEventsRequest, Task, UnsealRequest, UnsealResponse, WorkflowDefinition } from './types.js';
 export interface ConnectionClient {
     connect(address: string, transport?: string, tenantID?: string): Promise<void>;
     disconnect(): Promise<void>;
@@ -28,6 +34,7 @@ export interface OrchestratorClient {
     spawnSession(req: SpawnSessionRequest): Promise<SpawnSessionResponse>;
     promptSession(req: PromptSessionRequest): Promise<PromptSessionResponse>;
     closeSession(req: CloseSessionRequest): Promise<CloseSessionResponse>;
+    rotateSessionAccount(req: RotateSessionAccountRequest): Promise<RotateSessionAccountResponse>;
     getSessionHistory(req: GetSessionHistoryRequest): Promise<GetSessionHistoryResponse>;
     subscribeSession(req: SubscribeSessionEventsRequest): AsyncIterable<SessionEventEnvelope>;
     createWorkflow(req: CreateWorkflowRequest): Promise<CreateWorkflowResponse>;
@@ -75,8 +82,8 @@ export interface AuthClient {
         username: string;
         password: string;
     }): Promise<void>;
-    webAuthnBeginLogin(tenantID: string, email: string): Promise<CredentialAssertionJSON>;
-    webAuthnFinishLogin(tenantID: string, email: string, credential: PublicKeyCredentialJSON): Promise<AuthTokenResponse>;
+    webAuthnBeginLogin(tenantID: string, email: string): Promise<WebAuthnLoginChallenge>;
+    webAuthnFinishLogin(challenge: WebAuthnLoginChallenge, credential: PublicKeyCredentialJSON): Promise<AuthTokenResponse>;
     loginPIV(): Promise<AuthTokenResponse>;
     registerBegin(req: SelfRegisterBeginRequest): Promise<SelfRegisterBeginResponse>;
     registerFinish(req: SelfRegisterFinishRequest): Promise<SelfRegisterFinishResponse>;
@@ -344,9 +351,43 @@ export interface Client {
     readonly messaging: MessagingClient;
     readonly scheduler: SchedulerClient;
     readonly projects: ProjectsClient;
+    /**
+     * accounts manages the pooled provider account pool (Anthropic/Claude,
+     * OpenAI/Codex, OpenCode) an agent session can be spawned against.
+     */
+    readonly accounts: AccountsClient;
     readonly iam: IAMClient;
     readonly kms: KMSClient;
     readonly secrets: SecretsClient;
+    /**
+     * ca exposes certificate authority administration (issue, sign-csr,
+     * revoke, verify, CA info/bundle/list, CRL generation). Mirrors the CLI's
+     * `quicbaas ca` command group plus sign-csr/verify/CRL.
+     */
+    readonly ca: CAClient;
+    /**
+     * trust exposes cross-sign root pool retrieval, AIA auto-import, and DANE
+     * publication — a pure composition surface over the xkms TrustedCA.
+     */
+    readonly trust: TrustClient;
+    /**
+     * crypto exposes low-level cryptographic primitives (encrypt, decrypt,
+     * rewrap, sign, verify, hash, random, data-key generation) backed by
+     * KMS-held keys.
+     */
+    readonly crypto: CryptoClient;
+    /**
+     * dek manages envelope-encryption Data Encryption Keys: creation,
+     * rotation, deletion, default selection, AEAD safety limits, and
+     * background re-encryption. Paths: /api/v1/kms/deks/*.
+     */
+    readonly dek: DEKClient;
+    /**
+     * dynamicSecrets manages credential-generation roles, on-demand
+     * short-lived credential minting, and lease renewal/revocation.
+     * Paths: /api/v1/secrets/dynamic/*.
+     */
+    readonly dynamicSecrets: DynamicSecretsClient;
     /**
      * barrier is the canonical surface for sealed-storage operations.
      * Replaces the legacy seal accessor; new code must use barrier.

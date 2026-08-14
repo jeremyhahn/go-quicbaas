@@ -14,7 +14,7 @@
 |------------|----------|-----------------|------------|
 | **Multi-Model** | KV + Vector + Time-series + Objects | Usually single model | Vector only |
 | **AI-Native** | RAG pipelines, multi-provider embeddings, MCP tools | External integration required | Limited to search |
-| **Agentic Ready** | 300+ MCP tools for AI agents | No agent support | Minimal |
+| **Agentic Ready** | 500 MCP tools registered, 450 reachable by AI agents | No agent support | Minimal |
 | **Security** | IAM/ABAC/PEP, FIPS 140-3, per-tenant encryption | Varies | Basic |
 | **BaaS Features** | IAM, KMS, Secrets, Scheduler, Service Discovery | Separate services required | None |
 | **Auth** | WebAuthn, OAuth2/OIDC, SSO, MFA | Basic auth | API keys |
@@ -35,7 +35,7 @@
 - **Vector Search** - HNSW/IVF indexing with similarity search, hybrid search, and metadata filtering
 - **RAG Pipelines** - Embed -> search -> rerank -> build context with token-aware limits
 - **Embedding Providers** - Ollama, OpenAI, LMStudio, Voyage AI with caching
-- **MCP Protocol** - 297 tools for AI agent integration (Claude, Codex, Gemini, etc.)
+- **MCP Protocol** - 500 registered tools, 450 of them reachable, for AI agent integration (Claude, Codex, Gemini, etc.)
 
 ### Security & Identity
 - **IAM System** - Multi-tenant identity with users, groups, roles, policies, and sessions
@@ -377,55 +377,73 @@ curl -X POST http://localhost:8080/api/v1/rag/query \
 
 ### MCP Tools (AI Agents)
 
-QuicBaaS exposes **297 MCP tools** across 24 categories for comprehensive AI agent integration:
+QuicBaaS registers **500 MCP tools** across 29 categories (counted at the
+registration site, `pkg/api/mcp/tools.go`'s `registerTools`, on the default
+build; `WITH_RAG=0` drops the five RAG tools, leaving 495). Fifty IAM tools
+(federation, GDPR, groups, policy, identity linking, MFA and login) are declared
+deliberately unmapped in `pkg/api/mcp/authz_qrdb_unmapped.go` and are therefore
+filtered out of `tools/list` under the default-deny authorization gate, leaving
+**450 reachable tools** for AI agent integration:
 
 | Category | Tools | Description |
 |----------|-------|-------------|
-| **Core KV/Cluster** | 35 | CRUD, batch, transactions, cluster ops, backup, health |
-| **KMS** | 32 | Key generation, rotation, DEK management, encryption ops |
-| **Secrets** | 11 | Versioned secrets, rotation, watch API |
-| **Crypto** | 12 | Encrypt, decrypt, sign, verify, HMAC, hash |
-| **IAM** | 62 | Tenants, users, groups, roles, policies, GDPR, admin |
-| **Vector** | 22 | Upsert, search, namespace, stats, rebalancing |
-| **Embedding** | 7 | Generation, batch ops, provider management |
-| **RAG** | 2 | Query, context building |
-| **Ollama** | 5 | Embedding and model operations |
-| **Time-Series** | 7 | Write, query, retention, metrics |
-| **Certificates** | 6 | Issue, sign, revoke, verify |
-| **Dynamic Secrets** | 8 | Role management, credential generation |
+| **IAM** | 112 | Tenants, users, groups, roles, policies, sessions, MFA, GDPR, federation |
+| **Orchestration** | 47 | Agent sessions, jobs, tasks, fleet, pooled accounts, projects |
+| **go-xkms compat** | 47 | Keys, certs, CA, PIV, FIDO2, PIN |
+| **KMS + DEK** | 39 | Key generation, rotation, DEK management, cluster DEK sync |
+| **Object Storage** | 34 | Objects, admin, transfers, policies |
+| **Vector** | 24 | Upsert, search, namespaces, index rebuild |
+| **Secrets** | 21 | Versioned secrets, rotation, dynamic secrets |
+| **Barrier** | 20 | System and per-tenant barrier init, seal, unseal |
+| **SSH** | 14 | Key and certificate operations |
+| **Crypto** | 13 | Encrypt, decrypt, sign, verify, HMAC, hash |
+| **KV + batch** | 11 | CRUD, range, batch, transactions |
+| **Cluster ops** | 11 | Nodes, shards, rebalance, migration |
+| **Scheduler** | 11 | Jobs CRUD, trigger, pause/resume, history |
+| **Messaging** | 10 | Publish, subscribe, channel management |
+| **Ceremony** | 9 | Shamir M-of-N initialization ceremony |
+| **Certificates** | 9 | Issue, sign, revoke, verify, extensions |
+| **Credentials** | 8 | Versioned named-credential rotation |
 | **Parameters** | 8 | Config CRUD, batch, search |
-| **Object Storage** | 36 | Objects, admin, transfers, policies |
-| **Scheduler** | 10 | Jobs CRUD, trigger, pause/resume, history |
 | **Seal/Unseal** | 8 | Initialization, seal status, rekey |
-| **Cluster DEK** | 9 | Node sync, re-encryption management |
+| **Embedding** | 7 | Generation, batch ops, provider management |
+| **Time-Series** | 7 | Write, query, retention, metrics |
+| **RAG** | 5 | Query, context building, indexing |
+| **Ollama** | 5 | Embedding and model operations |
+| **Backup** | 5 | Create, restore, verify, list, delete |
+| **Cache** | 4 | Stats, clear, configuration |
+| **Attestation** | 3 | Verify, verify chain, attest container |
+| **Trust** | 3 | DANE publication, cross-signed pools, AIA import |
+| **Health** | 3 | Liveness, readiness, health check |
+| **Tenant admin** | 2 | Quota and entitlement updates |
 
 ```json
 // Key-Value operations
-{"tool": "quicbaas.kv.put", "arguments": {"key": "user:1", "value": "base64data"}}
-{"tool": "quicbaas.kv.get", "arguments": {"key": "user:1"}}
-{"tool": "quicbaas.batch.put", "arguments": {"items": [{"key": "k1", "value": "v1"}]}}
+{"tool": "qrdb_put", "arguments": {"entityType": "user", "id": 1, "data": "base64data"}}
+{"tool": "qrdb_get", "arguments": {"entityType": "user", "id": 1}}
+{"tool": "quicbaas_batch_put", "arguments": {"operations": [{"entityType": "user", "id": 1, "data": "base64data"}]}}
 
 // Vector search
-{"tool": "quicbaas.vector.upsert", "arguments": {"namespace": "docs", "id": "doc1", "vector": [0.1, 0.2]}}
-{"tool": "quicbaas.vector.search", "arguments": {"namespace": "docs", "vector": [0.1, 0.2], "topK": 10}}
+{"tool": "qrdb_vector_upsert", "arguments": {"namespace": "docs", "id": "doc1", "vector": "[0.1, 0.2]"}}
+{"tool": "quicbaas_vector_search", "arguments": {"namespace": "docs", "vector": [0.1, 0.2], "k": 10}}
 
 // RAG pipeline
-{"tool": "quicbaas.rag.query", "arguments": {"query": "How does Raft work?", "namespace": "docs"}}
+{"tool": "quicbaas_rag_query", "arguments": {"query": "How does Raft work?", "namespace": "docs", "top_k": 10}}
 
 // KMS operations
-{"tool": "quicbaas.kms.generateKey", "arguments": {"keyId": "my-key", "algorithm": "AES256"}}
-{"tool": "quicbaas.crypto.encrypt", "arguments": {"keyId": "my-key", "plaintext": "base64data"}}
+{"tool": "quicbaas_kms_generate_key", "arguments": {"name": "my-key", "algorithm": "AES-256-GCM"}}
+{"tool": "quicbaas_crypto_encrypt", "arguments": {"key_id": "my-key", "plaintext": "base64data"}}
 
 // Secrets management
-{"tool": "quicbaas.secrets.store", "arguments": {"path": "apps/myapp/db", "data": {"password": "secret"}}}
-{"tool": "quicbaas.secrets.get", "arguments": {"path": "apps/myapp/db"}}
+{"tool": "quicbaas_secrets_store", "arguments": {"name": "myapp-db", "data": "base64data"}}
+{"tool": "quicbaas_secrets_get", "arguments": {"secret_id": "sec-123"}}
 
 // IAM operations
-{"tool": "quicbaas.iam.createUser", "arguments": {"tenantId": "acme", "username": "alice"}}
-{"tool": "quicbaas.iam.checkPermission", "arguments": {"subject": "user:alice", "action": "read", "resource": "docs:*"}}
+{"tool": "quicbaas_iam_user_create", "arguments": {"tenant_id": "acme", "email": "alice@acme.com", "name": "Alice"}}
+{"tool": "quicbaas_iam_admin_check_permission", "arguments": {"user_id": "usr-1", "permission": "user:create"}}
 
 // Scheduler
-{"tool": "quicbaas.scheduler.createJob", "arguments": {"name": "backup", "schedule": "0 2 * * *"}}
+{"tool": "quicbaas_scheduler_create_job", "arguments": {"name": "backup", "type": "recurring", "schedule": "0 2 * * *", "handler": "backup"}}
 ```
 
 ## Performance
@@ -442,9 +460,7 @@ QuicBaaS exposes **297 MCP tools** across 24 categories for comprehensive AI age
 ## Documentation
 
 ### Getting Started
-- [Quickstart Guide](docs/getting-started/quickstart.md)
 - [CLI Reference](docs/cli/README.md)
-- [Configuration](docs/configuration/README.md)
 
 ### Core Features
 - [Architecture Overview](docs/architecture/README.md)
@@ -456,6 +472,11 @@ QuicBaaS exposes **297 MCP tools** across 24 categories for comprehensive AI age
 - [Vector Search](docs/vector/README.md) - HNSW indexing, similarity search, multi-tenancy
 - [RAG Context API](docs/rag/README.md) - Context building for LLMs
 - [Ollama Integration](docs/ollama/README.md) - Embedding generation
+
+### Agent Orchestration
+- [Orchestration Overview](docs/orchestration/overview.md) - Architecture, MCP tools, session lifecycle
+- [Orchestration Security](docs/orchestration/security.md) - Multi-tenancy, sandbox and trust policy
+- [Container Trust](docs/orchestration/container-trust.md) - Digest pinning, host attestation, measured launch
 
 ### Security & Identity
 - [IAM System](docs/iam/README.md) - Users, groups, roles, multi-tenancy
@@ -471,7 +492,7 @@ QuicBaaS exposes **297 MCP tools** across 24 categories for comprehensive AI age
 - [Build Tags Reference](docs/BUILD_TAGS.md) - Modular compilation options
 
 ### Storage
-- [Storage Backends](docs/storage/backends.md) - Memory, File, PebbleDB, Raft
+- [Storage Architecture](docs/storage/architecture.md) - Memory, File, PebbleDB, Raft
 - [Object Storage](docs/storage/object/README.md) - Multi-backend with catalog and tiering
 - [Parameter Store](docs/parameters/README.md) - Configuration management
 
@@ -484,7 +505,7 @@ QuicBaaS exposes **297 MCP tools** across 24 categories for comprehensive AI age
 ### Operations
 - [Container Secrets](docs/kubernetes/README.md) - Kubernetes, Docker, Podman
 - [Monitoring](docs/operations/monitoring.md)
-- [Backup & Restore](docs/operations/backup.md)
+- [Backup & Restore](docs/operations/backup-recovery.md)
 - [Cluster Operations](docs/cluster/README.md)
 - [Production Checklist](docs/deployment/production-checklist.md)
 
@@ -536,7 +557,7 @@ helm install quicbaas ./deployments/helm/quicbaas
 
 ## Contributing
 
-Contributions welcome! See [docs/development/testing-guide.md](docs/development/testing-guide.md) for guidelines.
+Contributions welcome.
 
 ## License
 

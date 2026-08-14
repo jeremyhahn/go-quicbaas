@@ -24,13 +24,13 @@ The composition contract is the locked architecture rule **"qrdb(L2) =
 software only + distributed encryption + tenant-safe primitives; xkms(L3)
 = all hardware; quicbaas(L4) = RAG orchestration + LLM generation + API
 facade; composition via `With*`"**.
-This page documents how `pkg/server/compose.go` enforces that rule and
-how `cmd/quicbaasd` consumes the result.
+This page documents how `pkg/server/crypto_options.go` enforces that rule
+and how `cmd/quicbaasd` consumes the result.
 
 ## Why composition (not inheritance)
 
 The earlier design embedded a hardcoded `seal.StrategyRegistry` inside
-qrdb and a parallel `authfactors.Factor` set inside qrdbjust to satisfy
+qrdb and a parallel auth-factor set inside qrdb just to satisfy
 unit tests. That violated three rules at once:
 
 1. Hardware code lived in two repos (qrdb + xkms), drifting out of
@@ -49,17 +49,18 @@ quicbaas, where the xkms SDK already lives.
 ## The composition seam
 
 The entry point is
-[`pkg/server/compose.go`](../../pkg/server/compose.go):
+[`pkg/server/crypto_options.go`](../../pkg/server/crypto_options.go):
 
 ```go
-// pkg/server/compose.go:88
-func XKMSCryptoOptions(cfg *XKMSCryptoConfig) ([]qrdbserver.ServerOption, error)
+func XKMSCryptoOptions(cfg *XKMSCryptoConfig) ([]qrdbsdk.ServerOption, error)
 ```
 
-It returns the canonical set of `qrdbserver.ServerOption` values for
-an embedded qrdb server configured according to `cfg`. The returned
-slice is independent of the input and safe to pass directly to
-`qrdbserver.New(...)`.
+It returns the canonical set of `qrdbsdk.ServerOption` values for an
+embedded qrdb server configured according to `cfg`. Every type in the
+signature is a qrdb **SDK** re-export, not a `go-qrdb/pkg/*` type — that
+is the SDK boundary the whole stack is built on. The returned slice is
+independent of the input and safe to pass directly to a qrdbsdk-composed
+qrdb server.
 
 ### XKMSCryptoConfig
 
@@ -71,12 +72,18 @@ defaults.
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `Logger` | `*slog.Logger` | `slog.Default()` | Composition-time log sink |
-| `PINStorage` | `pin.Storage` | in-memory map | Backing store for the default SoftwareBackend |
-| `PINBackend` | `pin.PINBackend` | constructed from `PINStorage` | Override the default with a hardware PIN backend (TPM2 / PKCS#11) |
-| `StrategyFactories` | `map[seal.StrategyID]seal.StrategyFactory` | empty | Hardware-backed sealing strategies registered alongside the software defaults |
-| `Factors` | `[]authfactors.Factor` | empty | xkms-backed authentication factors (FIDO2 / PIV / PKCS#11) |
+| `PINStorage` | `qrdbsdk.PINStorage` | nil — in-memory only, not persistent across restarts | Backing store for the default SoftwareBackend |
+| `PINBackend` | `qrdbsdk.PINBackend` | constructed from `PINStorage` | Override the default with a hardware PIN backend (TPM2 / PKCS#11). When set, `PINStorage` is ignored. |
+| `StrategyFactories` | `map[qrdbsdk.StrategyID]qrdbsdk.StrategyFactory` | empty | Hardware-backed sealing strategies registered alongside the software defaults |
+| `Factors` | `[]qrdbsdk.AuthFactorPlugin` | empty | xkms-backed authentication factors (FIDO2 / PIV / PKCS#11) |
+| `CeremonyCA` | `qrdbsdk.CeremonyCA` | nil | The CA the embedded node's init ceremony issues from. Appended as `qrdbsdk.WithCeremonyCA` when non-nil. |
 
-Source: [`pkg/server/compose.go:33-61`](../../pkg/server/compose.go).
+Note that qrdb's default factor registry is **empty**: mTLS is not an
+`AuthFactorPlugin` — qrdb handles mTLS login natively in its
+`LoginResolver` — so a deployment that wants any factor at all,
+software mTLS included, registers it through `cfg.Factors`.
+
+Source: [`pkg/server/crypto_options.go`](../../pkg/server/crypto_options.go).
 
 ### Composition algorithm
 
@@ -93,42 +100,49 @@ flowchart TD
     DefaultLog --> Strategy
     KeepLog --> Strategy
 
-    Strategy[strategyReg = seal.NewDefaultStrategyRegistry] --> StrategyLoop[for each cfg.StrategyFactories]
+    Strategy[strategyReg = qrdbsdk.NewDefaultStrategyRegistry] --> StrategyLoop[for each cfg.StrategyFactories]
     StrategyLoop --> Register[strategyReg.Register name, factory]
     Register --> RegisterErr{err?}
-    RegisterErr -->|yes| FailReg[return ComposeError stage='register strategy']
+    RegisterErr -->|yes| FailReg[return XKMSCryptoError stage='register strategy']
     RegisterErr -->|no| StrategyLoop
     StrategyLoop --> PinCheck
 
     PinCheck{cfg.PINBackend nil?} -->|no| UseCustom[pinBackend = cfg.PINBackend]
-    PinCheck -->|yes| MakeSoftware[pinBackend = pin.NewSoftwareBackend cfg.PINStorage, pin.AutoDetectHashConfig]
+    PinCheck -->|yes| MakeSoftware[pinBackend = qrdbsdk.NewSoftwareBackend cfg.PINStorage, qrdbsdk.AutoDetectHashConfig]
     MakeSoftware --> SoftErr{err?}
-    SoftErr -->|yes| FailPin[return ComposeError stage='construct default pin.SoftwareBackend']
+    SoftErr -->|yes| FailPin[return XKMSCryptoError stage='construct default qrdbsdk.SoftwareBackend']
     SoftErr -->|no| Factors
     UseCustom --> Factors
 
-    Factors[factorReg = authfactors.NewFactorRegistry] --> FactorLoop[for each cfg.Factors]
-    FactorLoop --> RegFactor[factorReg.Register factor]
+    Factors[factorReg = qrdbsdk.NewFactorRegistry] --> FactorLoop[for each cfg.Factors]
+    FactorLoop --> NilCheckF{factor nil?}
+    NilCheckF -->|yes| FailNil[return XKMSCryptoError stage='register factor #N' cause=ErrNilFactor]
+    NilCheckF -->|no| RegFactor[factorReg.Register factor]
     RegFactor --> FactorErr{err?}
-    FactorErr -->|yes| FailFactor[return ComposeError stage='register factor']
+    FactorErr -->|yes| FailFactor[return XKMSCryptoError stage='register factor name']
     FactorErr -->|no| FactorLoop
-    FactorLoop --> Return
+    FactorLoop --> CACheck
 
-    Return[return WithStrategyRegistry, WithPINBackend, WithFactorRegistry]
+    CACheck{cfg.CeremonyCA nil?} -->|no| AppendCA[append WithCeremonyCA]
+    CACheck -->|yes| Return
+    AppendCA --> Return
+
+    Return[return WithStrategyRegistry, WithPINBackend, WithFactorRegistry, +WithCeremonyCA]
 ```
 
 The algorithm is intentionally additive: software defaults are
 created first, hardware overrides are layered on top, and every
-register call surfaces a typed `ComposeError` that names the failing
+register call surfaces a typed `XKMSCryptoError` that names the failing
 stage.
 
 ```go
-// pkg/server/compose.go:99
-return nil, &ComposeError{Stage: "register strategy " + string(name), Cause: err}
+return nil, &XKMSCryptoError{Stage: "register strategy " + string(name), Cause: err}
 ```
 
-`*ComposeError` implements `Error()` and `Unwrap()` so callers can
-`errors.As(err, &ce)` to inspect the failing stage.
+`*XKMSCryptoError` implements `Error()` and `Unwrap()` so callers can
+`errors.As(err, &xe)` to inspect the failing stage. A nil entry in
+`cfg.Factors` is caught before `f.Name()` is called and reported with
+the `ErrNilFactor` cause, rather than panicking.
 
 ## Defaults (cfg nil)
 
@@ -137,10 +151,10 @@ deployment):
 
 | Component | Concrete type | Strategies | Notes |
 |-----------|---------------|------------|-------|
-| `StrategyRegistry` | `seal.NewDefaultStrategyRegistry()` | `Software`, `None` | Provided by qrdb |
-| `PINBackend` | `pin.NewSoftwareBackend(nil, pin.AutoDetectHashConfig())` | n/a | PBKDF2 in FIPS mode, Argon2id otherwise |
-| `FactorRegistry` | `authfactors.NewFactorRegistry()` | empty | Caller adds factors via `cfg.Factors` |
-| `CeremonyCA` | (unset) | n/a | Ceremony falls back to its software CA |
+| `StrategyRegistry` | `qrdbsdk.NewDefaultStrategyRegistry()` | `Software`, `None` | Provided by qrdb |
+| `PINBackend` | `qrdbsdk.NewSoftwareBackend(nil, qrdbsdk.AutoDetectHashConfig())` | n/a | PBKDF2 in FIPS mode, Argon2id otherwise |
+| `FactorRegistry` | `qrdbsdk.NewFactorRegistry()` | empty | Caller adds factors via `cfg.Factors` |
+| `CeremonyCA` | (unset) | n/a | **No `WithCeremonyCA` option is emitted, so qrdb's ceremony CA stays unset and every CA-dependent ceremony verb fails closed.** There is no software-CA fallback inside `XKMSCryptoOptions`. |
 
 ## Hardware deployments
 
@@ -151,30 +165,43 @@ advertises every active strategy. The same is true for `cfg.Factors`.
 A typical hardware-enabled composition looks like:
 
 ```go
-// quicbaasd / lifecycle wiring
 cfg := &server.XKMSCryptoConfig{
-    Logger:     slogger,
-    PINStorage: pinStore,            // PebbleDB-backed, scoped to the data dir
-    StrategyFactories: map[seal.StrategyID]seal.StrategyFactory{
-        seal.StrategyTPM2:    xkms.NewTPM2StrategyFactory(tpmDevice),
-        seal.StrategyPKCS11:  xkms.NewPKCS11StrategyFactory(p11Module),
-        seal.StrategyAWSKMS:  xkms.NewAWSKMSStrategyFactory(awsCfg),
+    Logger: slogger,
+    StrategyFactories: map[qrdbsdk.StrategyID]qrdbsdk.StrategyFactory{
+        xkmssdk.StrategyTPM2: func() (qrdbsdk.SealingStrategy, error) {
+            return buildTPM2Strategy(serverCfg)
+        },
     },
-    Factors: []authfactors.Factor{
-        xkms.NewFIDO2Factor(fido2Authenticator),
-        xkms.NewPIVFactor(pivReader),
-    },
+    Factors:    buildXKMSFactors(serverCfg), // []qrdbsdk.AuthFactorPlugin
+    PINBackend: pinBackend,
+    CeremonyCA: ceremonyCA,
 }
 opts, err := server.XKMSCryptoOptions(cfg)
-if err != nil {
-    return err
-}
-qrdbServer, err := qrdbserver.New(opts...)
 ```
 
-`PINBackend` is left nil so the SoftwareBackend with persistent
-storage is constructed automatically; a TPM2-backed PIN would be
-supplied by setting `cfg.PINBackend` directly.
+That is essentially what `buildXKMSCryptoOptions`
+(`pkg/server/qrdb_node.go`) does at daemon start. It does **not** hand
+`XKMSCryptoOptions` a raw hardware constructor: quicbaas keeps its own
+`hardwareStrategyFactory` registry, `hardwareStrategyFactories`
+(`pkg/server/seal_factories.go`), keyed by `qrdbsdk.StrategyID` and
+populated from `init()`. The TPM2 factory registers unconditionally; the
+five build-tagged backends — `awskms`, `gcpkms`, `azurekv`, `vault`,
+`pkcs11` — each register from their own guarded file
+(`seal_factory_awskms.go` and siblings). A strategy configured without
+its tag compiled is absent from the map and yields a
+`StrategyNotCompiledError` telling the operator which `-tags` value to
+rebuild with.
+
+`buildXKMSCryptoOptions` then wraps the one factory matching
+`cfg.Seal.Strategy` in a closure that captures the quicbaas
+`*config.Config`, adapting it to the argument-free
+`qrdbsdk.StrategyFactory` shape.
+
+`PINBackend` is resolved separately by `buildPINBackend` before
+`XKMSCryptoOptions` is called, so on the daemon path `PINStorage` is
+never consulted. A `tpm2` PIN verifies over the **same** TPM open the
+seal strategy holds — never a second open — and fails closed with
+`PINRequiresTPMSealError` when no TPM2 seal is active.
 
 ## How CeremonyCA fits in
 
@@ -184,12 +211,20 @@ constructed by the bootstrap flow; hardware deployments inject an
 xkms-backed CA (typically rooted in TPM2 or PKCS#11) via the
 `WithCeremonyCA` option on the qrdb embedded server.
 
-`XKMSCryptoOptions` does not own the CeremonyCA; that wiring
+`XKMSCryptoOptions` **does** carry the CeremonyCA: `XKMSCryptoConfig`
+has a `CeremonyCA qrdbsdk.CeremonyCA` field, and when it is non-nil the
+function appends `qrdbsdk.WithCeremonyCA(cfg.CeremonyCA)` to the option
+slice. On the daemon path `buildXKMSCryptoOptions` threads
+`s.ceremonyCA` into that field.
+
+What `XKMSCryptoOptions` does not do is *construct* the CA. That wiring
 lives alongside the bootstrap services in
 [`pkg/server/ceremony_wiring.go`](../../pkg/server/ceremony_wiring.go).
 The CA is built once per data dir, persists across daemon restarts,
-and is the source of truth for officer issuance + ceremony share
-distribution.
+and is the source of truth for the ceremony's TLS serving certificate,
+officer CSR signatures, and the CA bundle / SPKI pin the operator
+verifies. Leave it nil and every CA-dependent ceremony verb fails
+closed — there is no fallback.
 
 ## Phase B: standalone mode embeds the real qrdb engine
 
@@ -215,8 +250,9 @@ in-process.
 standalone branch, which:
 
 1. Calls `buildQRDBConfig` to map quicbaas `Storage/Seal/Raft` config fields
-   to a `*qrdbconfig.Config`.
-2. Calls `buildQRDBComposeOpts` which invokes `XKMSCryptoOptions` with
+   to a `*qrdbsdk.DaemonConfig` (the SDK re-export of qrdb's `pkg/config`
+   types — quicbaas never imports `go-qrdb/pkg/config` directly).
+2. Calls `buildXKMSCryptoOptions` which invokes `XKMSCryptoOptions` with
    hardware strategy factories from `seal_factories.go` populated for the
    configured strategy.
 3. Calls `qrdbnode.NewStandaloneNode(ctx, qcfg, serverOpts, ...)` — the
@@ -244,7 +280,7 @@ client for every shard ID; the qrdb engine handles all routing internally.
 
 ### Hardware crypto injection
 
-`buildQRDBComposeOpts` wraps each entry in `hardwareStrategyFactories`
+`buildXKMSCryptoOptions` wraps each entry in `hardwareStrategyFactories`
 (populated at `init()` time by `seal_factories.go` and the tagged
 `seal_factory_*.go` files) as a `qrdbsdk.StrategyFactory` closure that
 captures the quicbaas `*config.Config`. The resulting `[]qrdbsdk.ServerOption`
@@ -301,10 +337,20 @@ and clustered), creates a `nodeBackedShardedClient`, and populates
 | `cfg.Discovery.Multicast.ClusterSecret` | `qcfg.Discovery.MulticastSecret` | HMAC secret for multicast |
 | `cfg.Raft.TLSCertFile` / `TLSKeyFile` / `TLSCAFile` | `quicraftconfig.MTLSConfig` | Loaded and passed via `WithRaftMTLS` |
 
-### `baasTransport` (legacy, unreachable in cluster mode)
+### `baasTransport` (deleted)
 
-`baasTransport*.go` still compiles but is unreachable in cluster mode since
-Phase C. It will be deleted in Phase E once Phase D confirms no references remain.
+Phase E completed: the `baasTransport` type, its per-shard Pebble stores, the
+`BaasKVAdapter` / `BaasAdminAdapter` service-layer adapters,
+`ShardedClient.EmbeddedTransportForShard`, and `BaasTransportNotSupportedError`
+are all gone from `pkg/server`. The only survivor of the `Baas*` naming is
+`pkg/server/interfaces_baas.go`, which is a set of type aliases onto the qrdb
+SDK (`BaasBarrierService = qrdbsdk.BarrierServicer`), not a transport.
+
+A few stale `baasTransport` mentions remain in Go comments
+(`lifecycle_databases.go`, `ceremony_wiring.go`, `lifecycle.go`,
+`cmd/quicbaas/client.go`); they describe a layer that no longer exists. Do not
+reintroduce it — see [embedded-mode.md](embedded-mode.md) for the node-servicer
+path that replaced it.
 
 ## Wire path: composer → qrdb server → SDK consumer
 
@@ -314,17 +360,17 @@ sequenceDiagram
     participant CLI as quicbaasd start
     participant LC as pkg/server.Server (lifecycle)
     participant Compose as XKMSCryptoOptions
-    participant QRDB as qrdbserver.New
+    participant QRDB as qrdbnode.NewStandaloneNode
     participant CC as Ceremony/Credential services
     participant SDK as quicbaas SDK client
 
     CLI->>LC: Server.Start()
-    LC->>LC: build XKMSCryptoConfig (cfg.Logger / StrategyFactories / Factors)
+    LC->>LC: buildXKMSCryptoOptions — assemble XKMSCryptoConfig
     LC->>Compose: XKMSCryptoOptions(cfg)
-    Compose-->>LC: []qrdbserver.ServerOption (WithStrategyRegistry, WithPINBackend, WithFactorRegistry)
-    LC->>QRDB: qrdbserver.New(opts...)
-    QRDB-->>LC: *qrdbserver.Server (embedded)
-    LC->>CC: buildBootstrapCeremonyServices(qrdb)
+    Compose-->>LC: []qrdbsdk.ServerOption (WithStrategyRegistry, WithPINBackend, WithFactorRegistry, +WithCeremonyCA)
+    LC->>QRDB: NewStandaloneNode(ctx, qcfg, serverOpts, ...)
+    QRDB-->>LC: *qrdbnode.Node (embedded engine)
+    LC->>CC: buildBootstrapCeremonyServices(logger, dataDir)
     CC-->>LC: ceremonyStack (Ceremony, Credential, Barrier servicers)
     LC-->>CLI: listeners up
 
@@ -335,34 +381,36 @@ sequenceDiagram
 
 ## Failure modes
 
-`ComposeError` carries the wiring stage that failed:
+`XKMSCryptoError` carries the wiring stage that failed:
 
 | Stage prefix | Cause |
 |--------------|-------|
 | `register strategy <id>` | A `StrategyFactory` returned a non-nil error from `Register` (usually a duplicate-name collision with the software defaults) |
-| `construct default pin.SoftwareBackend` | `pin.NewSoftwareBackend` failed (typically out-of-memory or invalid `pin.AutoDetectHashConfig` in a sandboxed FIPS environment) |
-| `register factor <name>` | A `Factor` returned a non-nil error from `Register` (usually a duplicate-name collision) |
+| `construct default qrdbsdk.SoftwareBackend` | `qrdbsdk.NewSoftwareBackend` failed (typically out-of-memory or invalid `qrdbsdk.AutoDetectHashConfig` in a sandboxed FIPS environment) |
+| `register factor #<i>` | `cfg.Factors[i]` is nil; `Cause` is `ErrNilFactor`. Caught before `f.Name()` so the composition returns an error instead of panicking. |
+| `register factor <name>` | An `AuthFactorPlugin` returned a non-nil error from `Register` (usually a duplicate-name collision) |
 
-All three are recoverable: the operator can prune the duplicate, fix
-the hash config, and rerun `quicbaasd start`. `XKMSCryptoOptions`
-is idempotent — calling it twice with the same `cfg` produces two
-independent registries, so a retry is safe.
+All are recoverable: the operator can prune the duplicate, fix the hash
+config, and rerun `quicbaasd start`. `XKMSCryptoOptions` is idempotent —
+calling it twice with the same `cfg` produces two independent
+registries, so a retry is safe.
 
 ## Test coverage
 
-- [`pkg/server/compose_test.go`](../../pkg/server/compose_test.go)
-  exercises every branch: nil cfg, software-only cfg, duplicate
-  strategy registration, duplicate factor registration, custom
-  PINBackend override, and `ComposeError.Unwrap` traversal.
-- The same harness runs against an xkms `StrategyFactory` test double
-  to confirm hardware factories integrate without panic.
+- [`pkg/server/crypto_options_test.go`](../../pkg/server/crypto_options_test.go)
+  and
+  [`pkg/server/crypto_options_errors_test.go`](../../pkg/server/crypto_options_errors_test.go)
+  exercise the branches: nil cfg, software-only cfg, duplicate strategy
+  registration, nil and duplicate factor registration, custom
+  PINBackend override, CeremonyCA passthrough, and
+  `XKMSCryptoError.Unwrap` traversal.
 
 ## Relationship to the rest of the platform
 
 | Layer | Repo | Role | Composition seam |
 |-------|------|------|------------------|
 | L2 | go-qrdb | Software StorageBarrier + canonical first-boot + named credentials + **tenant-safe vector storage + persistent HNSW + embedding provider proxy** | `WithStrategyRegistry`, `WithPINBackend`, `WithFactorRegistry`, `WithCeremonyCA` |
-| L3 | go-xkms | All hardware backends + all hardware factors | Producers of `StrategyFactory` and `authfactors.Factor` |
+| L3 | go-xkms | All hardware backends + all hardware factors | Producers of `qrdbsdk.StrategyFactory` and `qrdbsdk.AuthFactorPlugin` |
 | **L4** | **go-quicbaas** | **Composer + multi-protocol facade + SDK frontage + RAG orchestration + LLM text generation + chunking + ranking + context assembly** | `XKMSCryptoOptions` is the single point where qrdb(L2) and xkms(L3) meet; go-quicbaas owns RAG pipeline logic and delegates vector ops to qrdb via SDK |
 | L5 | go-trusted-platform | Downstream consumer | Imports `sdk/go` only — never touches qrdb or xkms directly |
 

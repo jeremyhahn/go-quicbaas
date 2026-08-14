@@ -60,7 +60,7 @@ func TestNewAuthManager(t *testing.T) {
 		},
 		{
 			name:           "nil storage creates in-memory auth",
-			config:         &AuthConfig{Enabled: true, JWTSecret: "test-secret"},
+			config:         newTestAuthConfig(t),
 			storage:        nil,
 			expectError:    false,
 			expectInMemory: true,
@@ -92,10 +92,7 @@ func TestNewAuthManager(t *testing.T) {
 }
 
 func TestNewAuthManagerWithNilLogger(t *testing.T) {
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret",
-	}
+	config := newTestAuthConfig(t)
 
 	authManager, err := NewAuthManager(config, nil, nil)
 	assert.Error(t, err)
@@ -131,10 +128,7 @@ func TestIsMemoryOnlyMode(t *testing.T) {
 
 func TestMustBootstrapInMemory(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	tests := []struct {
 		name            string
@@ -204,10 +198,7 @@ func TestMustBootstrapUnknownType(t *testing.T) {
 
 func TestInMemoryAuthManagerMethods(t *testing.T) {
 	log := createTestLogger(t)
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key",
-	}
+	config := newTestAuthConfig(t)
 
 	// Create auth manager via factory
 	authManager, err := NewAuthManager(config, nil, log)

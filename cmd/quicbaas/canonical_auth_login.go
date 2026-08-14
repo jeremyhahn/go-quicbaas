@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,7 +51,10 @@ type canonicalAuthLoginOptions struct {
 	clientCertPath string
 	device         string
 	origin         string
-	reader         string
+	pivBackend     string
+	pivDir         string
+	pkcs11Module   string
+	pkcs11Token    string
 	slot           string
 	pin            string
 	saveToken      bool
@@ -150,36 +154,61 @@ func (e *AmbiguousAutoDiscoveryError) Error() string {
 		strings.Join(e.Methods, ", ") + "); pass --method to pick one"
 }
 
-// AmbiguousPIVReaderError is returned when --method piv sees more than
-// one reader and the operator did not pass --reader.
-type AmbiguousPIVReaderError struct {
-	Readers []string
+// InvalidPIVBackendError is returned when --piv-backend is not one of the
+// go-xkms PIV backends (file | pkcs11 | tpm2).
+type InvalidPIVBackendError struct {
+	Backend string
 }
 
 // Error returns a human-readable description.
-func (e *AmbiguousPIVReaderError) Error() string {
-	return "auth login --method piv: multiple PC/SC readers connected (" +
-		strings.Join(e.Readers, ", ") + "); pass --reader <name>"
+func (e *InvalidPIVBackendError) Error() string {
+	return "invalid --piv-backend " + strconv.Quote(e.Backend) +
+		": must be one of file | pkcs11 | tpm2"
 }
 
-// PIVReaderNotFoundError is returned when --reader matches no PC/SC
-// reader.
-type PIVReaderNotFoundError struct {
-	Name string
+// PIVLocalBackendUnsupportedError is returned when the selected local PIV
+// backend cannot be used by this binary (missing build tag or an upstream
+// go-xkms capability gap).
+type PIVLocalBackendUnsupportedError struct {
+	Backend string
+	Reason  string
 }
 
 // Error returns a human-readable description.
-func (e *PIVReaderNotFoundError) Error() string {
-	return "auth login --method piv: reader " + e.Name + " not found"
+func (e *PIVLocalBackendUnsupportedError) Error() string {
+	return "piv backend " + e.Backend + " is unavailable: " + e.Reason
 }
 
-// PIVPINRequiredError is returned when --method piv requires a PIN but
-// none was supplied.
+// PIVLocalSessionError wraps failures from the client-local PIV session
+// (storage construction, certificate reads, nonce signing).
+type PIVLocalSessionError struct {
+	Op    string
+	Cause error
+}
+
+// Error returns a human-readable description.
+func (e *PIVLocalSessionError) Error() string {
+	return "local piv: " + e.Op + " failed: " + e.Cause.Error()
+}
+
+// Unwrap returns the wrapped cause.
+func (e *PIVLocalSessionError) Unwrap() error { return e.Cause }
+
+// Sentinel causes for PIVLocalSessionError.
+var (
+	errHomeDirUnavailable   = errors.New("cannot resolve home directory")
+	errXKMSServiceInUse     = errors.New("the in-process xkms service is already initialized by another component; local PIV cannot share it")
+	errPKCS11ModuleRequired = errors.New("--pkcs11-module is required for the pkcs11 backend")
+	errEmptyPIVSignature    = errors.New("empty signature")
+)
+
+// PIVPINRequiredError is returned when --method piv on the pkcs11 backend
+// requires a PIN but none was supplied.
 type PIVPINRequiredError struct{}
 
 // Error returns a human-readable description.
 func (e *PIVPINRequiredError) Error() string {
-	return "auth login --method piv: User PIN is required (set --pin or QUICBAAS_USER_PIN)"
+	return "auth login --method piv: PKCS#11 User PIN is required (set --pin or QUICBAAS_USER_PIN)"
 }
 
 // FIDO2OperationError wraps errors from FIDO2 hardware operations.
@@ -286,8 +315,9 @@ func newCanonicalAuthLoginCmdV2() *cobra.Command {
 		Long: `Authenticate using one of the enrolled factors.
 
 Auto-discovery probes for a client cert at the default path, then for
-a connected FIDO2 device, then for a PC/SC PIV reader. Passing
---method skips auto-discovery.
+a connected FIDO2 device, then for a certificate in the local PIV
+backend slot (--piv-backend / --piv-dir / --slot). Passing --method
+skips auto-discovery.
 
 Per docs/08-bootstrap-auth-architecture.md §5c the login flow is
 vendor-agnostic: YubiKey, SoloKey, Nitrokey, TouchID, Windows Hello,
@@ -311,9 +341,12 @@ or any CTAP2 / NIST SP 800-73-4 device works.`,
 	// begin step returns, and the authenticator binds the assertion to it.
 	cmd.Flags().StringVar(&opts.origin, "origin", "",
 		"WebAuthn origin (--method fido2; default: https://<server-issued rpId>)")
-	cmd.Flags().StringVar(&opts.reader, "reader", "", "PC/SC reader name (--method piv)")
+	cmd.Flags().StringVar(&opts.pivBackend, "piv-backend", localPIVBackendFile, "Local PIV backend: file | pkcs11 | tpm2 (--method piv)")
+	cmd.Flags().StringVar(&opts.pivDir, "piv-dir", defaultLocalPIVDir, "Local PIV key/certificate directory (--method piv, file backend)")
+	cmd.Flags().StringVar(&opts.pkcs11Module, "pkcs11-module", "", "PKCS#11 library path (--method piv, pkcs11 backend)")
+	cmd.Flags().StringVar(&opts.pkcs11Token, "pkcs11-token", "", "PKCS#11 token label (--method piv, pkcs11 backend)")
 	cmd.Flags().StringVar(&opts.slot, "slot", "9a", "PIV slot id (--method piv; default 9a)")
-	cmd.Flags().StringVar(&opts.pin, "pin", "", "PIV User PIN (--method piv; falls back to QUICBAAS_USER_PIN)")
+	cmd.Flags().StringVar(&opts.pin, "pin", "", "PKCS#11 User PIN (--method piv, pkcs11 backend; falls back to QUICBAAS_USER_PIN)")
 	cmd.Flags().BoolVar(&opts.saveToken, "save-token", false, "Persist the issued session token to --token-path")
 	cmd.Flags().StringVar(&opts.tokenPath, "token-path", "", "Where to write the session token (default: ~/.quicbaas/session.token)")
 	return cmd
@@ -489,10 +522,18 @@ func autoDiscoverCanonicalAuthMethod(ctx context.Context, opts *canonicalAuthLog
 				hasFIDO2 = true
 			}
 		}
-		if piv, err := canonicalAuthPIV("auth login auto-discovery"); err == nil && piv != nil {
-			if rd, rerr := piv.ListReaders(ctx); rerr == nil && rd != nil && len(rd.Readers) > 0 {
+		if session, serr := newLocalPIVSessionFunc(localPIVConfigFromLogin(opts)); serr == nil && session != nil {
+			// PIV material is discovered LOCALLY: a certificate present in
+			// the configured slot of the local go-xkms PIV backend means a
+			// PIV login is possible.
+			slot := opts.slot
+			if slot == "" {
+				slot = "9a"
+			}
+			if cert, cerr := session.Certificate(slot); cerr == nil && cert != nil {
 				hasPIV = true
 			}
+			_ = session.Close()
 		}
 	}
 
@@ -533,10 +574,16 @@ func proveCanonicalMTLS(_ context.Context, opts *canonicalAuthLoginOptions, _ *q
 	return rawFingerprint, nil, meta, nil
 }
 
-// proveCanonicalPIV signs the SERVER-issued challenge nonce with the PIV card.
-// Signing the server nonce (rather than a client-chosen value) gives the
-// ceremony replay protection; the qrdb PIV authenticator verifies the
-// signature over begin.Nonce against the enrolled certificate.
+// proveCanonicalPIV signs the SERVER-issued challenge nonce with the local
+// PIV slot key. Signing the server nonce (rather than a client-chosen value)
+// gives the ceremony replay protection; the qrdb PIV authenticator (go-xkms
+// PIVHardwareFactorVerifier) verifies the signature over SHA-256(begin.Nonce)
+// against the enrolled certificate.
+//
+// The card/key interaction is CLIENT-LOCAL: the go-xkms PIV backend selected
+// by --piv-backend runs in-process (file | pkcs11 | tpm2), matching xkmsctl's
+// embedded mode. The remote Security().Auth().PIV() surface manages the
+// server's slots and is not involved in login.
 //
 // The primary lookup key is the renewal-stable SHA-256 of the slot
 // certificate's SubjectPublicKeyInfo; altLookupKeys carries the legacy
@@ -544,59 +591,58 @@ func proveCanonicalMTLS(_ context.Context, opts *canonicalAuthLoginOptions, _ *q
 // resolving. The lookup keys only locate the factor — possession is proven
 // by the signature the server verifies against the enrolled certificate.
 func proveCanonicalPIV(ctx context.Context, opts *canonicalAuthLoginOptions, begin *qrdbtransport.BeginLoginResponse) (lookupKey []byte, altLookupKeys [][]byte, signature []byte, meta map[string]string, err error) {
-	piv, perr := canonicalAuthPIV("auth login --method piv")
-	if perr != nil {
-		return nil, nil, nil, nil, perr
+	session, serr := newLocalPIVSessionFunc(localPIVConfigFromLogin(opts))
+	if serr != nil {
+		return nil, nil, nil, nil, serr
 	}
-	readers, rerr := piv.ListReaders(ctx)
-	if rerr != nil {
-		return nil, nil, nil, nil, &PIVOperationError{Op: "ListReaders", Cause: rerr}
-	}
-	if readers == nil || len(readers.Readers) == 0 {
-		return nil, nil, nil, nil, &PIVOperationError{Op: "ListReaders", Cause: errors.New("no PC/SC readers detected")}
-	}
-	reader, derr := selectCanonicalPIVReader(readers.Readers, opts.reader)
-	if derr != nil {
-		return nil, nil, nil, nil, derr
-	}
+	defer func() { _ = session.Close() }()
+
 	slot := opts.slot
 	if slot == "" {
 		slot = "9a"
 	}
-	cert, cerr := piv.GetCertificate(ctx, reader.Name, slot)
+	cert, cerr := session.Certificate(slot)
 	if cerr != nil {
-		return nil, nil, nil, nil, &PIVOperationError{Op: "GetCertificate", Cause: cerr}
+		return nil, nil, nil, nil, &PIVOperationError{Op: "Certificate", Cause: cerr}
 	}
 	if cert == nil {
-		return nil, nil, nil, nil, &PIVOperationError{Op: "GetCertificate", Cause: errors.New("nil certificate")}
+		return nil, nil, nil, nil, &PIVOperationError{Op: "Certificate", Cause: errors.New("nil certificate")}
 	}
-	if opts.pin == "" {
-		return nil, nil, nil, nil, &PIVPINRequiredError{}
-	}
-	digest := sha256.Sum256(begin.Nonce)
-	signResp, serr := piv.Sign(ctx, &quicbaas.PIVSignRequest{
-		Reader: reader.Name,
-		Slot:   slot,
-		PIN:    opts.pin,
-		Digest: digest[:],
-		Algo:   pivAlgoFromCanonicalCert(cert),
-	})
-	if serr != nil {
-		return nil, nil, nil, nil, &PIVOperationError{Op: "Sign", Cause: serr}
-	}
-	if signResp == nil {
-		return nil, nil, nil, nil, &PIVOperationError{Op: "Sign", Cause: errors.New("nil signature response")}
+	sig, sgerr := session.SignNonce(ctx, slot, begin.Nonce)
+	if sgerr != nil {
+		return nil, nil, nil, nil, &PIVOperationError{Op: "SignNonce", Cause: sgerr}
 	}
 	sum := sha256.Sum256(cert.Raw)
 	spkiSum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
 	meta = map[string]string{
-		"reader":      reader.Name,
+		"backend":     localPIVBackendOrDefault(opts.pivBackend),
 		"slot":        slot,
-		"sign_algo":   signResp.Algo,
+		"sign_algo":   pivAlgoFromCanonicalCert(cert),
 		"cert_cn":     cert.Subject.CommonName,
 		"cert_serial": cert.SerialNumber.String(),
 	}
-	return spkiSum[:], [][]byte{sum[:]}, signResp.Signature, meta, nil
+	return spkiSum[:], [][]byte{sum[:]}, sig, meta, nil
+}
+
+// localPIVConfigFromLogin projects the login options onto the local PIV
+// session configuration.
+func localPIVConfigFromLogin(opts *canonicalAuthLoginOptions) *localPIVConfig {
+	return &localPIVConfig{
+		backend:      opts.pivBackend,
+		dir:          opts.pivDir,
+		pin:          opts.pin,
+		pkcs11Module: opts.pkcs11Module,
+		pkcs11Token:  opts.pkcs11Token,
+	}
+}
+
+// localPIVBackendOrDefault normalizes an empty --piv-backend to the file
+// default for metadata reporting.
+func localPIVBackendOrDefault(backend string) string {
+	if backend == "" {
+		return localPIVBackendFile
+	}
+	return backend
 }
 
 // canonicalFIDO2AssertFunc drives a connected CTAP2 authenticator through a
@@ -748,27 +794,6 @@ func canonicalAuthDevices(op string) (quicbaas.LocalDevices, error) {
 		return nil, &SecuritySurfaceUnavailableError{Op: op}
 	}
 	return d, nil
-}
-
-// selectCanonicalPIVReader picks the reader matching name, or returns
-// an ambiguity / not-found error.
-func selectCanonicalPIVReader(readers []quicbaas.PIVReader, name string) (*quicbaas.PIVReader, error) {
-	if name != "" {
-		for i := range readers {
-			if readers[i].Name == name {
-				return &readers[i], nil
-			}
-		}
-		return nil, &PIVReaderNotFoundError{Name: name}
-	}
-	if len(readers) == 1 {
-		return &readers[0], nil
-	}
-	names := make([]string, 0, len(readers))
-	for i := range readers {
-		names = append(names, readers[i].Name)
-	}
-	return nil, &AmbiguousPIVReaderError{Readers: names}
 }
 
 // ---------------------------------------------------------------------------

@@ -297,6 +297,52 @@ func TestOrchestratorGRPC_Spawn_Success(t *testing.T) {
 	assert.Equal(t, "claude", resp.Backend)
 }
 
+// TestOrchestratorGRPC_Spawn_CarriesPersistentFlag pins the flag that decides
+// whether a session holds a long-running agent process. Dropping it here made
+// every gRPC-spawned session one-shot: no conversation context across turns,
+// and nothing to resume after a daemon restart.
+func TestOrchestratorGRPC_Spawn_CarriesPersistentFlag(t *testing.T) {
+	var seen *orchestration.SpawnSessionRequest
+	agentSvc := &grpcTestAgentService{
+		spawnSessionFunc: func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
+			seen = req
+			return &orchestration.SpawnSessionResponse{SessionID: "session-abc", Backend: req.Backend}, nil
+		},
+	}
+	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
+
+	_, err := server.SpawnSession(context.Background(), &pb.SpawnSessionRequest{
+		Backend:    "claude",
+		Persistent: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, seen)
+	assert.True(t, seen.Persistent, "gRPC spawn dropped the persistent flag")
+
+	seen = nil
+	_, err = server.SpawnSession(context.Background(), &pb.SpawnSessionRequest{Backend: "claude"})
+	require.NoError(t, err)
+	require.NotNil(t, seen)
+	assert.False(t, seen.Persistent, "gRPC spawn invented a persistent flag the caller did not set")
+}
+
+// TestOrchestratorGRPC_SessionStateConversion pins the resumable state across
+// the proto boundary: a session restored after a restart must not surface to a
+// gRPC client as UNSPECIFIED.
+func TestOrchestratorGRPC_SessionStateConversion(t *testing.T) {
+	cases := map[orchestration.SessionState]pb.SessionState{
+		orchestration.SessionStateActive:    pb.SessionState_SESSION_STATE_ACTIVE,
+		orchestration.SessionStateIdle:      pb.SessionState_SESSION_STATE_IDLE,
+		orchestration.SessionStateResumable: pb.SessionState_SESSION_STATE_RESUMABLE,
+		orchestration.SessionStateClosed:    pb.SessionState_SESSION_STATE_CLOSED,
+		orchestration.SessionStateError:     pb.SessionState_SESSION_STATE_ERROR,
+		orchestration.SessionState("bogus"): pb.SessionState_SESSION_STATE_UNSPECIFIED,
+	}
+	for in, want := range cases {
+		assert.Equal(t, want, serviceSessionStateToProto(in), "state %q", in)
+	}
+}
+
 func TestOrchestratorGRPC_Spawn_MissingBackend(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
@@ -654,4 +700,15 @@ func TestOrchestratorGRPC_GetTask_MissingTaskID(t *testing.T) {
 
 	assert.Nil(t, resp)
 	assert.Error(t, err)
+}
+
+// PromptSessionAsync mirrors the production contract: the turn is acknowledged
+// immediately and its output would flow to the session event log.
+func (m *grpcTestAgentService) PromptSessionAsync(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error) {
+	return &orchestration.PromptTurnAck{
+		SessionID: req.SessionID,
+		TurnID:    "turn-test",
+		Status:    orchestration.TurnStatusAccepted,
+		Sequence:  1,
+	}, nil
 }

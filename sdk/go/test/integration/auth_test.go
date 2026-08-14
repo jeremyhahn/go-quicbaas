@@ -83,7 +83,7 @@ func TestAuthEndpointDiscovery(t *testing.T) {
 				t.Fatalf("failed to create request: %v", err)
 			}
 
-			client := &http.Client{Timeout: 10 * time.Second}
+			client := newHTTPClient(10 * time.Second)
 			resp, err := client.Do(req)
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
@@ -127,7 +127,7 @@ func TestPIVLoginRejectsNonMTLS(t *testing.T) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -160,7 +160,7 @@ func TestTokenValidation(t *testing.T) {
 			t.Fatalf("failed to create request: %v", err)
 		}
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -186,7 +186,7 @@ func TestTokenValidation(t *testing.T) {
 		}
 		req.Header.Set("Authorization", "Bearer invalid_token_here")
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -230,7 +230,7 @@ func TestTokenRefresh(t *testing.T) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -260,7 +260,7 @@ func TestTokenRefresh(t *testing.T) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -287,7 +287,7 @@ func TestJWKS(t *testing.T) {
 			t.Fatalf("failed to create request: %v", err)
 		}
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -331,7 +331,7 @@ func TestOpenIDConfiguration(t *testing.T) {
 			t.Fatalf("failed to create request: %v", err)
 		}
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -379,7 +379,7 @@ func TestLogout(t *testing.T) {
 			t.Fatalf("failed to create request: %v", err)
 		}
 
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)

@@ -859,25 +859,34 @@ func TestAgentRegistry_CorruptRecord(t *testing.T) {
 // session_store: GetSession corrupt-entry branches
 // -----------------------------------------------------------------------------
 
-// TestAgentStore_GetSession_WrongType covers GetSession's branch where the
-// stored value is not a []byte.
-func TestAgentStore_GetSession_WrongType(t *testing.T) {
-	store := NewInMemoryAgentStore().(*inMemoryAgentStore)
-	store.sessions.Store("sess-1", 12345) // wrong type
+// TestAgentStore_GetSession_CorruptJSON covers GetSession's unmarshal-error
+// branch: a record whose stored bytes are not a decodable session record is
+// reported as a marshal error rather than surfacing as an empty session.
+func TestAgentStore_GetSession_CorruptJSON(t *testing.T) {
+	kv := kvstore.NewMemory()
+	if err := kv.Put(context.Background(), "orch/session/system/sess-1", []byte("{not json")); err != nil {
+		t.Fatalf("seed corrupt record: %v", err)
+	}
+	store := NewAgentStore(kv)
 
-	_, err := store.GetSession(context.Background(), "sess-1")
+	_, err := store.GetSession(context.Background(), "", "sess-1")
 	var se *AgentStoreError
 	if !errors.As(err, &se) || !errors.Is(se, ErrAgentStoreMarshal) {
 		t.Fatalf("want AgentStoreError(marshal), got %v", err)
 	}
 }
 
-// TestAgentStore_GetSession_CorruptJSON covers GetSession's unmarshal-error branch.
-func TestAgentStore_GetSession_CorruptJSON(t *testing.T) {
-	store := NewInMemoryAgentStore().(*inMemoryAgentStore)
-	store.sessions.Store("sess-1", []byte("{not json"))
+// TestAgentStore_ListSessions_CorruptJSON covers the scan path's decode-error
+// branch: a corrupt record aborts the listing with a typed error rather than
+// silently shortening the result.
+func TestAgentStore_ListSessions_CorruptJSON(t *testing.T) {
+	kv := kvstore.NewMemory()
+	if err := kv.Put(context.Background(), "orch/session/system/sess-1", []byte("{not json")); err != nil {
+		t.Fatalf("seed corrupt record: %v", err)
+	}
+	store := NewAgentStore(kv)
 
-	_, err := store.GetSession(context.Background(), "sess-1")
+	_, err := store.ListSessions(context.Background(), "system")
 	var se *AgentStoreError
 	if !errors.As(err, &se) || !errors.Is(se, ErrAgentStoreMarshal) {
 		t.Fatalf("want AgentStoreError(marshal), got %v", err)

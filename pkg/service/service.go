@@ -32,8 +32,10 @@ package service
 
 import (
 	"context"
+	"crypto/x509"
 	"time"
 
+	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
@@ -115,6 +117,26 @@ type QuicBaaS interface {
 	// Security().Trust(), backed by the xkms TrustedCA via the CA adapter.
 	Trust() TrustService
 
+	// Attestation returns the Attestation service surfaced under
+	// Security().Attestation(). It is always configured: the verifier half
+	// composes go-xkms pkg/attestation and needs no external dependency,
+	// while the orchestration half returns a typed not-configured error
+	// until an application registers a ContainerAttestor.
+	Attestation() AttestationService
+
+	// PIV returns the backend-scoped PIV composition service surfaced
+	// under Security().Auth().PIV(). Always configured: every verb
+	// delegates to the composed go-xkms service, whose typed errors
+	// report the not-initialized case.
+	PIV() PIVService
+
+	// FIDO2 returns the tenant-scoped WebAuthn ceremony composition
+	// service surfaced under Security().Auth().FIDO2(). Always
+	// configured: it resolves the per-tenant xkms relying-party service
+	// at call time and returns a typed not-configured error until the
+	// xkms-backed WebAuthn manager is wired.
+	FIDO2() FIDO2Service
+
 	// ACME returns the ACME (RFC 8555) composition service (returns nil if
 	// not configured). It exposes the server-side challenge-registration and
 	// issuance verbs surfaced under Security().ACME(). ACME is HTTP-native:
@@ -160,6 +182,12 @@ type QuicBaaS interface {
 	// Project returns the Project service for managing agentic project entities.
 	// Projects sit between Tenant and Workflow in the hierarchy.
 	Project() ProjectService
+
+	// Account returns the Account service for managing pooled provider
+	// accounts (the per-tenant pool of Anthropic/Claude, Codex, and OpenCode
+	// logins an agent session can be spawned against). Never returns
+	// credential material — see pkg/service/account_service.go.
+	Account() AccountService
 
 	// AgentAdmin returns the Agent Admin service for global agent lifecycle management.
 	// This service handles enabling and disabling agents across all projects.
@@ -219,6 +247,17 @@ type QuicBaaS interface {
 	// at runtime. Called by the server once the qrdb node (which hosts the
 	// in-process LoginClient) is constructed.
 	SetLoginService(svc LoginServicer)
+
+	// SetSecretRegistry wires the unified secret resolver registry (built by
+	// the server's buildSecretRegistry in every mode) into the service so that
+	// embedded SDK clients auto-populate Security().SecretResolver() without an
+	// explicit WithSecretRegistry. The secrets manager is a core, always-on
+	// service; this makes its resolver reachable through the embedded facade.
+	SetSecretRegistry(reg *qrdbsecret.ResolverRegistry)
+
+	// SecretRegistry returns the unified secret resolver registry, or nil
+	// before SetSecretRegistry has wired it.
+	SecretRegistry() *qrdbsecret.ResolverRegistry
 
 	// Close gracefully shuts down the service and all backend components
 	Close() error
@@ -1650,6 +1689,19 @@ type ServiceBuilder interface {
 	// unset, PublishDANE returns a typed not-configured error.
 	WithDANEPublisher(publisher DANEPublisher) ServiceBuilder
 
+	// WithContainerAttestor sets the application-supplied container
+	// attestor used by Attestation().AttestContainer. QuicBaaS ships the
+	// standalone tiers in pkg/orchestration and can fill this seam with
+	// NewRuntimeContainerAttestor; a fleet manager such as
+	// go-trusted-platform supplies its own. When unset, AttestContainer
+	// returns a typed not-configured error.
+	WithContainerAttestor(attestor ContainerAttestor) ServiceBuilder
+
+	// WithAttestationTrustAnchors sets the root certificates every
+	// attestation verification is anchored against. When unset, only the
+	// per-request anchors supplied in the verify options apply.
+	WithAttestationTrustAnchors(anchors []*x509.Certificate) ServiceBuilder
+
 	// WithACMEService sets the composed ACME (RFC 8555) servicer that backs
 	// Security().ACME(). The servicer is built in pkg/server where the CA,
 	// qrdb KVStore (for ACME persistence) and the externally reachable base
@@ -1720,6 +1772,8 @@ type serviceBuilder struct {
 	orchestrationAuditor      orchestration.StoreAuditor
 	caService                 interface{}
 	danePublisher             DANEPublisher
+	containerAttestor         ContainerAttestor
+	attestationTrustAnchors   []*x509.Certificate
 	acmeService               ACMEServicer
 	catalogManager            catalog.CatalogManager
 	backendManager            catalog.BackendManager
@@ -1814,6 +1868,16 @@ func (b *serviceBuilder) WithCAService(caService interface{}) ServiceBuilder {
 
 func (b *serviceBuilder) WithDANEPublisher(publisher DANEPublisher) ServiceBuilder {
 	b.danePublisher = publisher
+	return b
+}
+
+func (b *serviceBuilder) WithContainerAttestor(attestor ContainerAttestor) ServiceBuilder {
+	b.containerAttestor = attestor
+	return b
+}
+
+func (b *serviceBuilder) WithAttestationTrustAnchors(anchors []*x509.Certificate) ServiceBuilder {
+	b.attestationTrustAnchors = anchors
 	return b
 }
 

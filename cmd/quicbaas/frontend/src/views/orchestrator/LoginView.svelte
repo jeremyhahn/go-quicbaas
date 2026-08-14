@@ -27,7 +27,7 @@
     NOT use raw fetch for transport; raw fetch is gone.
 
   Token storage:
-    On success the server returns { access_token, refresh_token, id_token }.
+    On success the server returns { access_token, refresh_token }.
     The tokens are handed to the shared auth store (setAuthenticated), which
     persists access_token to localStorage under "quicbaas_token" AND flips the
     in-tab auth status to 'authenticated'. The status flip is essential: the
@@ -182,9 +182,9 @@
       // email — and neither can the message shown to the user. Reporting them
       // separately would rebuild the tenant/user enumeration oracle the
       // deleted tenant-listing endpoint used to be.
-      let challengeOptions;
+      let challenge;
       try {
-        challengeOptions = await client.auth.webAuthnBeginLogin(trimmedTenant, trimmedEmail);
+        challenge = await client.auth.webAuthnBeginLogin(trimmedTenant, trimmedEmail);
       } catch (e: unknown) {
         errorMessage = e instanceof TypeError
           ? "Can't reach the server right now."
@@ -197,7 +197,7 @@
       // server emits the go-webauthn `{ publicKey: { challenge, ... } }`
       // envelope with base64url binary members; the helper unwraps it and
       // decodes challenge / allowCredentials into ArrayBuffers.
-      const publicKey = parseRequestOptions(challengeOptions);
+      const publicKey = parseRequestOptions(challenge.options);
       const assertion = await navigator.credentials.get({ publicKey });
 
       if (assertion === null) {
@@ -209,8 +209,9 @@
       // Step 3: Serialize the assertion into the base64url JSON go-webauthn parses.
       const credential = encodeAssertionResponse(assertion as PublicKeyCredential);
 
-      // Step 4: Finish login via SDK — server verifies and returns tokens.
-      const tokens = await client.auth.webAuthnFinishLogin(trimmedTenant, trimmedEmail, credential);
+      // Step 4: Finish login via SDK — the unified ceremony verifies the
+      // assertion and returns the bearer + rotating refresh credential.
+      const tokens = await client.auth.webAuthnFinishLogin(challenge, credential);
       // Only a completed sign-in earns the prefill slot.
       rememberTenant(trimmedTenant);
       handleAuthSuccess(tokens);

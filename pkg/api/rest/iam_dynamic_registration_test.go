@@ -24,282 +24,198 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
+
+// dcrAnonymousTenant is the non-system landing tenant used by the tests that
+// exercise the anonymous-registration opt-in.
+const dcrAnonymousTenant = "tenant-dcr-anon"
+
+// setupDCRHandler builds an IAM handler whose service exposes NO AppManager
+// (so every request that clears the authentication gate stops at the
+// "not available" branch) with the supplied Dynamic Client Registration policy.
+// It is the harness for the gate + request-validation assertions; the
+// end-to-end lifecycle tests use setupAppHandler, which wires a real manager.
+func setupDCRHandler(t *testing.T, cfg config.IAMDynamicClientRegistrationConfig) (*IAMHandler, func()) {
+	t.Helper()
+	handler, server, cleanup := setupIAMHandler(t)
+	server.config.IAMDynamicClientRegistration = cfg
+	return handler, cleanup
+}
+
+// setupOpenDCRHandler is setupDCRHandler with anonymous registration enabled
+// into a non-system tenant — the configuration under which the RFC 7591
+// request-validation rules are reachable without a token.
+func setupOpenDCRHandler(t *testing.T) (*IAMHandler, func()) {
+	t.Helper()
+	return setupDCRHandler(t, config.IAMDynamicClientRegistrationConfig{
+		Enabled:           true,
+		AnonymousTenantID: dcrAnonymousTenant,
+	})
+}
+
+// dcrRegisterRequest builds a POST /oauth2/register request with a JSON body.
+func dcrRegisterRequest(body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	return req
+}
 
 // TestRegisterDynamicClient tests the RegisterDynamicClient handler.
 func TestRegisterDynamicClient(t *testing.T) {
 	t.Run("invalid JSON body", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader("invalid json"))
-		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
+		handler.RegisterDynamicClient(w, dcrRegisterRequest("invalid json"))
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, w.Body.String(), "invalid JSON request body")
 	})
 
 	t.Run("missing redirect_uris for authorization_code grant", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		body := `{"grant_types":["authorization_code"],"client_name":"Test Client"}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
+		handler.RegisterDynamicClient(w, dcrRegisterRequest(`{"grant_types":["authorization_code"],"client_name":"Test Client"}`))
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, w.Body.String(), "redirect_uris required for authorization_code")
 	})
 
 	t.Run("invalid redirect_uri - empty string in array", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		// Empty string redirect URI should be invalid
-		body := `{"grant_types":["authorization_code"],"redirect_uris":[""]}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
+		handler.RegisterDynamicClient(w, dcrRegisterRequest(`{"grant_types":["authorization_code"],"redirect_uris":[""]}`))
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, w.Body.String(), "invalid redirect_uri")
 	})
 
 	t.Run("unsupported grant_type", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		body := `{"grant_types":["invalid_grant"],"redirect_uris":["https://example.com/callback"]}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
+		handler.RegisterDynamicClient(w, dcrRegisterRequest(`{"grant_types":["invalid_grant"],"redirect_uris":["https://example.com/callback"]}`))
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, w.Body.String(), "unsupported grant_type")
 	})
 
 	t.Run("unsupported response_type", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		body := `{"grant_types":["client_credentials"],"response_types":["invalid_type"]}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
+		handler.RegisterDynamicClient(w, dcrRegisterRequest(`{"grant_types":["client_credentials"],"response_types":["invalid_response"]}`))
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, w.Body.String(), "unsupported response_type")
 	})
 
 	t.Run("unsupported token_endpoint_auth_method", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		body := `{"grant_types":["client_credentials"],"token_endpoint_auth_method":"invalid_method"}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
+		handler.RegisterDynamicClient(w, dcrRegisterRequest(`{"grant_types":["client_credentials"],"token_endpoint_auth_method":"invalid_method"}`))
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, w.Body.String(), "unsupported token_endpoint_auth_method")
 	})
 
 	t.Run("dynamic registration not available", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		body := `{"grant_types":["client_credentials"],"client_name":"Test Client"}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
+		handler.RegisterDynamicClient(w, dcrRegisterRequest(`{"grant_types":["client_credentials"],"client_name":"Test Client"}`))
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		assert.Contains(t, w.Body.String(), "dynamic registration not available")
 	})
 
-	t.Run("valid redirect URIs - HTTPS", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
+	// Each accepted redirect-URI form must clear validation and reach the
+	// (unwired) app manager rather than being rejected as malformed.
+	acceptedRedirects := map[string]string{
+		"HTTPS":          "https://example.com/callback",
+		"localhost HTTP": "http://localhost:8080/callback",
+		"127.0.0.1 HTTP": "http://127.0.0.1:8080/callback",
+		"IPv6 localhost": "http://[::1]:8080/callback",
+		"custom scheme":  "com.example.app:/callback",
+	}
+	for name, uri := range acceptedRedirects {
+		t.Run("valid redirect URI - "+name, func(t *testing.T) {
+			handler, cleanup := setupOpenDCRHandler(t)
+			defer cleanup()
 
-		body := `{"grant_types":["authorization_code"],"redirect_uris":["https://example.com/callback"]}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
+			w := httptest.NewRecorder()
+			handler.RegisterDynamicClient(w, dcrRegisterRequest(`{"grant_types":["authorization_code"],"redirect_uris":["`+uri+`"]}`))
 
-		handler.RegisterDynamicClient(w, req)
-
-		// Will fail at app manager check, but validates the redirect URI
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Contains(t, w.Body.String(), "dynamic registration not available")
-	})
-
-	t.Run("valid redirect URIs - localhost HTTP", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
-
-		body := `{"grant_types":["authorization_code"],"redirect_uris":["http://localhost:8080/callback"]}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Contains(t, w.Body.String(), "dynamic registration not available")
-	})
-
-	t.Run("valid redirect URIs - 127.0.0.1 HTTP", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
-
-		body := `{"grant_types":["authorization_code"],"redirect_uris":["http://127.0.0.1:8080/callback"]}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Contains(t, w.Body.String(), "dynamic registration not available")
-	})
-
-	t.Run("valid redirect URIs - IPv6 localhost", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
-
-		body := `{"grant_types":["authorization_code"],"redirect_uris":["http://[::1]:8080/callback"]}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Contains(t, w.Body.String(), "dynamic registration not available")
-	})
-
-	t.Run("valid redirect URIs - custom scheme", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
-
-		body := `{"grant_types":["authorization_code"],"redirect_uris":["com.example.app:/callback"]}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Contains(t, w.Body.String(), "dynamic registration not available")
-	})
-
-	t.Run("with tenant header", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
-
-		body := `{"grant_types":["client_credentials"],"client_name":"Test Client"}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Tenant-ID", "custom-tenant")
-		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Contains(t, w.Body.String(), "dynamic registration not available")
-	})
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+			assert.Contains(t, w.Body.String(), "dynamic registration not available")
+		})
+	}
 
 	t.Run("default grant type requires redirect_uris", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
 		// Empty grant_types defaults to authorization_code which requires redirect_uris
-		body := `{"client_name":"Test Client"}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
+		handler.RegisterDynamicClient(w, dcrRegisterRequest(`{"client_name":"Test Client"}`))
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, w.Body.String(), "redirect_uris required for authorization_code")
 	})
 
 	t.Run("valid grant types - refresh_token", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		// Test refresh_token grant type
-		body := `{"grant_types":["refresh_token"],"client_name":"Test Client"}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
+		handler.RegisterDynamicClient(w, dcrRegisterRequest(`{"grant_types":["refresh_token"],"client_name":"Test Client"}`))
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		assert.Contains(t, w.Body.String(), "dynamic registration not available")
 	})
 
 	t.Run("device code grant type", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		body := `{"grant_types":["urn:ietf:params:oauth:grant-type:device_code"],"client_name":"Test Client"}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
+		handler.RegisterDynamicClient(w, dcrRegisterRequest(`{"grant_types":["urn:ietf:params:oauth:grant-type:device_code"],"client_name":"Test Client"}`))
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		assert.Contains(t, w.Body.String(), "dynamic registration not available")
 	})
 
 	t.Run("all valid response types", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		body := `{"grant_types":["client_credentials"],"response_types":["code","token","id_token"]}`
-		req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-
-		handler.RegisterDynamicClient(w, req)
+		handler.RegisterDynamicClient(w, dcrRegisterRequest(`{"grant_types":["client_credentials"],"response_types":["code","token","id_token"]}`))
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		assert.Contains(t, w.Body.String(), "dynamic registration not available")
 	})
 
 	t.Run("all valid token auth methods", func(t *testing.T) {
-		// Test each valid auth method
 		validMethods := []string{"client_secret_basic", "client_secret_post", "none", "private_key_jwt"}
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
 		for _, method := range validMethods {
-			body := `{"grant_types":["client_credentials"],"token_endpoint_auth_method":"` + method + `"}`
-			req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
-			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
-
-			handler.RegisterDynamicClient(w, req)
+			handler.RegisterDynamicClient(w, dcrRegisterRequest(`{"grant_types":["client_credentials"],"token_endpoint_auth_method":"`+method+`"}`))
 
 			assert.Equal(t, http.StatusInternalServerError, w.Code)
 			assert.Contains(t, w.Body.String(), "dynamic registration not available")
@@ -307,10 +223,10 @@ func TestRegisterDynamicClient(t *testing.T) {
 	})
 }
 
-// TestGetDynamicClient tests the GetDynamicClient handler.
+// TestGetDynamicClient tests the GetDynamicClient handler's gate.
 func TestGetDynamicClient(t *testing.T) {
 	t.Run("missing client_id", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
 		rctx := chi.NewRouteContext()
@@ -326,69 +242,42 @@ func TestGetDynamicClient(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "client_id required")
 	})
 
-	t.Run("missing authorization header", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
+	// Every malformed-credential shape must produce the SAME opaque 401: the
+	// endpoint must not describe which part of the credential was wrong.
+	malformedAuth := map[string]string{
+		"missing authorization header":      "",
+		"invalid authorization header":      "InvalidFormat",
+		"non-bearer authorization scheme":   "Basic YWJjOmRlZg==",
+		"bearer with empty token":           "Bearer ",
+		"bearer with whitespace-only token": "Bearer    ",
+	}
+	for name, header := range malformedAuth {
+		t.Run(name, func(t *testing.T) {
+			handler, cleanup := setupOpenDCRHandler(t)
+			defer cleanup()
 
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("client_id", "client-123")
+			req := httptest.NewRequest(http.MethodGet, "/oauth2/register/client-123", nil)
+			if header != "" {
+				req.Header.Set("Authorization", header)
+			}
+			req = withChiParams(req, map[string]string{"client_id": "client-123"})
+			w := httptest.NewRecorder()
 
-		req := httptest.NewRequest(http.MethodGet, "/oauth2/register/client-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-		w := httptest.NewRecorder()
+			handler.GetDynamicClient(w, req)
 
-		handler.GetDynamicClient(w, req)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-		assert.Contains(t, w.Body.String(), "missing Authorization header")
-	})
-
-	t.Run("invalid authorization header format", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
-
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("client_id", "client-123")
-
-		req := httptest.NewRequest(http.MethodGet, "/oauth2/register/client-123", nil)
-		req.Header.Set("Authorization", "InvalidFormat")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-		w := httptest.NewRecorder()
-
-		handler.GetDynamicClient(w, req)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-		assert.Contains(t, w.Body.String(), "invalid Authorization header format")
-	})
-
-	t.Run("empty bearer token", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
-
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("client_id", "client-123")
-
-		req := httptest.NewRequest(http.MethodGet, "/oauth2/register/client-123", nil)
-		req.Header.Set("Authorization", "Bearer ")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-		w := httptest.NewRecorder()
-
-		handler.GetDynamicClient(w, req)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-		assert.Contains(t, w.Body.String(), "empty registration_access_token")
-	})
+			assert.Equal(t, http.StatusUnauthorized, w.Code)
+			assert.Contains(t, w.Body.String(), DCRErrorInvalidToken)
+			assert.Contains(t, w.Body.String(), dcrInvalidTokenDescription)
+		})
+	}
 
 	t.Run("client management not available", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("client_id", "client-123")
-
 		req := httptest.NewRequest(http.MethodGet, "/oauth2/register/client-123", nil)
-		req.Header.Set("Authorization", "Bearer valid-token")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req.Header.Set("Authorization", "Bearer some-token")
+		req = withChiParams(req, map[string]string{"client_id": "client-123"})
 		w := httptest.NewRecorder()
 
 		handler.GetDynamicClient(w, req)
@@ -398,18 +287,15 @@ func TestGetDynamicClient(t *testing.T) {
 	})
 }
 
-// TestUpdateDynamicClient tests the UpdateDynamicClient handler.
+// TestUpdateDynamicClient tests the UpdateDynamicClient handler's gate.
 func TestUpdateDynamicClient(t *testing.T) {
 	t.Run("missing client_id", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
-
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("client_id", "")
 
 		req := httptest.NewRequest(http.MethodPut, "/oauth2/register/", strings.NewReader("{}"))
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = withChiParams(req, map[string]string{"client_id": ""})
 		w := httptest.NewRecorder()
 
 		handler.UpdateDynamicClient(w, req)
@@ -418,75 +304,46 @@ func TestUpdateDynamicClient(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "client_id required")
 	})
 
-	t.Run("invalid JSON body", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
-
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("client_id", "client-123")
-
-		req := httptest.NewRequest(http.MethodPut, "/oauth2/register/client-123", strings.NewReader("invalid json"))
-		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-		w := httptest.NewRecorder()
-
-		handler.UpdateDynamicClient(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "invalid JSON request body")
-	})
-
-	t.Run("invalid redirect_uri - empty string", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
-
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("client_id", "client-123")
-
-		// Empty redirect URI in array should be invalid
-		body := `{"grant_types":["authorization_code"],"redirect_uris":[""]}`
-		req := httptest.NewRequest(http.MethodPut, "/oauth2/register/client-123", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-		w := httptest.NewRecorder()
-
-		handler.UpdateDynamicClient(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "invalid redirect_uri")
-	})
-
 	t.Run("missing authorization header", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("client_id", "client-123")
-
-		body := `{"grant_types":["client_credentials"]}`
-		req := httptest.NewRequest(http.MethodPut, "/oauth2/register/client-123", strings.NewReader(body))
+		req := httptest.NewRequest(http.MethodPut, "/oauth2/register/client-123", strings.NewReader(`{"grant_types":["client_credentials"]}`))
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = withChiParams(req, map[string]string{"client_id": "client-123"})
 		w := httptest.NewRecorder()
 
 		handler.UpdateDynamicClient(w, req)
 
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
-		assert.Contains(t, w.Body.String(), "missing Authorization header")
+		assert.Contains(t, w.Body.String(), dcrInvalidTokenDescription)
+	})
+
+	// An unauthorized caller must be refused BEFORE the body is looked at, so a
+	// malformed body from an anonymous caller is still a 401 (not a 400 that
+	// would confirm the endpoint parsed anything for them).
+	t.Run("invalid JSON body without credential is still 401", func(t *testing.T) {
+		handler, cleanup := setupOpenDCRHandler(t)
+		defer cleanup()
+
+		req := httptest.NewRequest(http.MethodPut, "/oauth2/register/client-123", strings.NewReader("invalid json"))
+		req.Header.Set("Content-Type", "application/json")
+		req = withChiParams(req, map[string]string{"client_id": "client-123"})
+		w := httptest.NewRecorder()
+
+		handler.UpdateDynamicClient(w, req)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 
 	t.Run("client management not available", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("client_id", "client-123")
-
-		body := `{"grant_types":["client_credentials"]}`
-		req := httptest.NewRequest(http.MethodPut, "/oauth2/register/client-123", strings.NewReader(body))
+		req := httptest.NewRequest(http.MethodPut, "/oauth2/register/client-123", strings.NewReader(`{"grant_types":["client_credentials"]}`))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer valid-token")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req.Header.Set("Authorization", "Bearer some-token")
+		req = withChiParams(req, map[string]string{"client_id": "client-123"})
 		w := httptest.NewRecorder()
 
 		handler.UpdateDynamicClient(w, req)
@@ -496,17 +353,14 @@ func TestUpdateDynamicClient(t *testing.T) {
 	})
 }
 
-// TestDeleteDynamicClient tests the DeleteDynamicClient handler.
+// TestDeleteDynamicClient tests the DeleteDynamicClient handler's gate.
 func TestDeleteDynamicClient(t *testing.T) {
 	t.Run("missing client_id", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("client_id", "")
-
 		req := httptest.NewRequest(http.MethodDelete, "/oauth2/register/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = withChiParams(req, map[string]string{"client_id": ""})
 		w := httptest.NewRecorder()
 
 		handler.DeleteDynamicClient(w, req)
@@ -516,32 +370,26 @@ func TestDeleteDynamicClient(t *testing.T) {
 	})
 
 	t.Run("missing authorization header", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("client_id", "client-123")
-
 		req := httptest.NewRequest(http.MethodDelete, "/oauth2/register/client-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = withChiParams(req, map[string]string{"client_id": "client-123"})
 		w := httptest.NewRecorder()
 
 		handler.DeleteDynamicClient(w, req)
 
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
-		assert.Contains(t, w.Body.String(), "missing Authorization header")
+		assert.Contains(t, w.Body.String(), dcrInvalidTokenDescription)
 	})
 
 	t.Run("client management not available", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
+		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("client_id", "client-123")
-
 		req := httptest.NewRequest(http.MethodDelete, "/oauth2/register/client-123", nil)
-		req.Header.Set("Authorization", "Bearer valid-token")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req.Header.Set("Authorization", "Bearer some-token")
+		req = withChiParams(req, map[string]string{"client_id": "client-123"})
 		w := httptest.NewRecorder()
 
 		handler.DeleteDynamicClient(w, req)
@@ -663,32 +511,6 @@ func TestIsValidDCRResponseType(t *testing.T) {
 	})
 }
 
-// TestExtractTenantFromRequest tests the extractTenantFromRequest helper function.
-func TestExtractTenantFromRequest(t *testing.T) {
-	t.Run("with X-Tenant-ID header", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.Header.Set("X-Tenant-ID", "tenant-123")
-
-		tenantID := extractTenantFromRequest(req)
-		assert.Equal(t, "tenant-123", tenantID)
-	})
-
-	t.Run("without X-Tenant-ID header", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-
-		tenantID := extractTenantFromRequest(req)
-		assert.Equal(t, "", tenantID)
-	})
-
-	t.Run("with empty X-Tenant-ID header", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.Header.Set("X-Tenant-ID", "")
-
-		tenantID := extractTenantFromRequest(req)
-		assert.Equal(t, "", tenantID)
-	})
-}
-
 // TestRespondDCRError tests the respondDCRError helper function.
 func TestRespondDCRError(t *testing.T) {
 	t.Run("basic error response", func(t *testing.T) {
@@ -713,7 +535,7 @@ func TestRespondDCRError(t *testing.T) {
 
 	t.Run("unauthorized error", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		respondDCRError(w, http.StatusUnauthorized, "invalid_token", "token expired")
+		respondDCRError(w, http.StatusUnauthorized, DCRErrorInvalidToken, "token expired")
 
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 		assert.Contains(t, w.Body.String(), "invalid_token")
@@ -726,4 +548,6 @@ func TestDCRErrorConstants(t *testing.T) {
 	assert.Equal(t, "invalid_client_metadata", DCRErrorInvalidClientMetadata)
 	assert.Equal(t, "invalid_software_statement", DCRErrorInvalidSoftwareStatement)
 	assert.Equal(t, "unapproved_software_statement", DCRErrorUnapprovedSoftwareStatement)
+	assert.Equal(t, "invalid_token", DCRErrorInvalidToken)
+	assert.Equal(t, "access_denied", DCRErrorAccessDenied)
 }

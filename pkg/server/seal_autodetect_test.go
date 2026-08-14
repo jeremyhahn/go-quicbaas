@@ -160,7 +160,7 @@ func TestResolveBarrierStrategy_AutoFallsBackToPassphrase(t *testing.T) {
 	cfg.Seal.Strategy = string(config.BackendAuto)
 	cfg.Storage.DataDir = t.TempDir() // fresh dir, no init marker
 
-	strategy, _, _, err := resolveBarrierStrategy(cfg, false)
+	strategy, _, _, _, err := resolveBarrierStrategy(cfg, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

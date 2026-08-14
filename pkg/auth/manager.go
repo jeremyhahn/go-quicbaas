@@ -16,15 +16,9 @@
 // IAM authentication factors (mTLS, PIV, FIDO2/WebAuthn, OIDC) that issue tokens via
 // IssueTokenForUser after a factor has verified the caller's identity.
 //
-// JWT signing supports two modes:
-//   - Asymmetric (ES256/RS256 via KMS): Set JWTSigningKeyID in AuthConfig. This is
-//     the recommended mode for production deployments.
-//   - Symmetric (HS256): Set JWTSecret in AuthConfig. This is the legacy mode
-//     retained for backward compatibility and development convenience.
-//
-// During migration, both modes can be active simultaneously. Tokens signed with
-// either method are accepted for verification if the corresponding key material
-// is configured.
+// JWT signing is asymmetric only (ES256/RS256 via KMS): set JWTSigningKeyID in
+// AuthConfig and provide the KMS-backed signer via SetAsymmetricSigning. Key
+// material never appears in configuration files.
 package auth
 
 import (
@@ -59,7 +53,6 @@ type AuthManager = InMemoryAuthManager
 // AuthConfig configures authentication behavior.
 type AuthConfig struct {
 	Enabled             bool          // Enable authentication
-	JWTSecret           string        // Secret for HS256 JWT signing (legacy, use JWTSigningKeyID for production)
 	JWTSigningKeyID     string        // KMS key ID for asymmetric JWT signing (e.g., "quicbaas-jwt-signing")
 	JWTSigningAlgorithm string        // Asymmetric algorithm: "ES256" (default), "ES384", "RS256", etc.
 	TokenTTL            time.Duration // Access token TTL
@@ -179,20 +172,19 @@ func (r *TokenValidationResult) GetRoles() []string {
 }
 
 // NewInMemoryAuthManager creates a new in-memory authentication manager.
-// When JWTSigningKeyID is set, asymmetric signing is enabled and JWTSecret
-// is optional (used only for verifying legacy HS256 tokens during migration).
-// When JWTSigningKeyID is empty, JWTSecret is required for HS256 signing.
+// JWTSigningKeyID is required when authentication is enabled; tokens are
+// signed with the KMS-backed signer configured via SetAsymmetricSigning.
 func NewInMemoryAuthManager(cfg *AuthConfig, log *logger.Logger) (*InMemoryAuthManager, error) {
 	if cfg == nil {
 		return nil, api.NewNilInputError("auth.NewAuthManager", "config")
 	}
 
-	if cfg.Enabled && cfg.JWTSecret == "" && cfg.JWTSigningKeyID == "" {
-		return nil, api.NewRequiredFieldError("JWT secret or signing key ID")
+	if cfg.Enabled && cfg.JWTSigningKeyID == "" {
+		return nil, api.NewRequiredFieldError("JWT signing key ID")
 	}
 
-	// Default the signing algorithm to ES256 when a signing key ID is configured
-	if cfg.JWTSigningKeyID != "" && cfg.JWTSigningAlgorithm == "" {
+	// Default the signing algorithm to ES256
+	if cfg.JWTSigningAlgorithm == "" {
 		cfg.JWTSigningAlgorithm = "ES256"
 	}
 
@@ -220,8 +212,6 @@ func NewInMemoryAuthManager(cfg *AuthConfig, log *logger.Logger) (*InMemoryAuthM
 	if cfg.JWTSigningKeyID != "" {
 		log.Infof("Authentication manager initialized with asymmetric signing (algorithm=%s, keyID=%s)",
 			cfg.JWTSigningAlgorithm, cfg.JWTSigningKeyID)
-	} else {
-		log.Info("Authentication manager initialized with symmetric HS256 signing")
 	}
 	return am, nil
 }
@@ -422,9 +412,8 @@ func (am *InMemoryAuthManager) CreateUserWithTenant(username, tenantID string, r
 	return user, nil
 }
 
-// generateTokens generates access and refresh tokens with unique nonces.
-// Uses asymmetric signing when JWTSigningKeyID is configured, otherwise
-// falls back to HS256 with the shared JWTSecret.
+// generateTokens generates access and refresh tokens with unique nonces
+// using the configured asymmetric signer.
 func (am *InMemoryAuthManager) generateTokens(user *User) (*Token, error) {
 	now := time.Now()
 	expiresAt := now.Add(am.config.TokenTTL)

@@ -17,6 +17,7 @@ import (
 	"context"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -124,7 +125,7 @@ func (r *routingTestKV) resolve(ctx context.Context) (*memStore, error) {
 	if r.sealed[tenantID] {
 		return nil, errTenantSealedTest
 	}
-	if tenantID == "" || tenantID == systemTenantID {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return r.shared, nil
 	}
 	if st, ok := r.stores[tenantID]; ok {

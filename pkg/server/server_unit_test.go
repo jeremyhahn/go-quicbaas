@@ -435,36 +435,6 @@ func TestShardedClient_ForShard_EmbeddedReturnsError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Backend stub tests
-// ---------------------------------------------------------------------------
-
-func TestFileBackend(t *testing.T) {
-	t.Run("NewFileBackend returns nil", func(t *testing.T) {
-		log := mustCreateLogger()
-		result := NewFileBackend(nil, 1, log)
-		assert.Nil(t, result)
-	})
-
-	t.Run("Close is no-op", func(t *testing.T) {
-		fb := &FileBackend{}
-		assert.NoError(t, fb.Close())
-	})
-}
-
-func TestLocalBackend(t *testing.T) {
-	t.Run("NewLocalBackend returns nil", func(t *testing.T) {
-		log := mustCreateLogger()
-		result := NewLocalBackend(1, log)
-		assert.Nil(t, result)
-	})
-
-	t.Run("Close is no-op", func(t *testing.T) {
-		lb := &LocalBackend{}
-		assert.NoError(t, lb.Close())
-	})
-}
-
-// ---------------------------------------------------------------------------
 // TestableApp tests
 // ---------------------------------------------------------------------------
 
@@ -627,30 +597,6 @@ func TestServer_LifecycleNoopMethods(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Server.Shutdown with components tests
 // ---------------------------------------------------------------------------
-
-func TestServer_ShutdownWithLocalBackend(t *testing.T) {
-	t.Run("shutdown with local backend", func(t *testing.T) {
-		srv := withTempServer(t)
-		srv.localBackend = &LocalBackend{}
-
-		ctx := context.Background()
-		err := srv.Shutdown(ctx)
-		assert.NoError(t, err)
-		assert.True(t, srv.IsClosed())
-	})
-}
-
-func TestServer_ShutdownWithFileBackend(t *testing.T) {
-	t.Run("shutdown with file backend", func(t *testing.T) {
-		srv := withTempServer(t)
-		srv.fileBackend = &FileBackend{}
-
-		ctx := context.Background()
-		err := srv.Shutdown(ctx)
-		assert.NoError(t, err)
-		assert.True(t, srv.IsClosed())
-	})
-}
 
 func TestServer_ShutdownWithShardedClient(t *testing.T) {
 	t.Run("shutdown with sharded client", func(t *testing.T) {
@@ -870,24 +816,6 @@ func TestServer_StartSecrets_Disabled(t *testing.T) {
 		srv := withTempServer(t)
 		srv.config.Secrets.Enabled = false
 		assert.NoError(t, srv.startSecrets())
-	})
-}
-
-// ---------------------------------------------------------------------------
-// FileKVStore empty value test
-// ---------------------------------------------------------------------------
-
-func TestFileKVStore_EmptyValue(t *testing.T) {
-	t.Run("stores and retrieves empty value", func(t *testing.T) {
-		store, err := NewFileKVStore(t.TempDir())
-		require.NoError(t, err)
-		ctx := context.Background()
-
-		require.NoError(t, store.Put(ctx, "empty", []byte{}))
-
-		got, err := store.Get(ctx, "empty")
-		require.NoError(t, err)
-		assert.Empty(t, got)
 	})
 }
 

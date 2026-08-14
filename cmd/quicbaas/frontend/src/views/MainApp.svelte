@@ -50,6 +50,7 @@
   import CostView from './orchestrator/CostView.svelte';
   import InferenceView from './orchestrator/InferenceView.svelte';
   import ProjectsView from './orchestrator/ProjectsView.svelte';
+  import AccountsView from './orchestrator/AccountsView.svelte';
   import ComingSoon from './ComingSoon.svelte';
   import LoginView from './orchestrator/LoginView.svelte';
   import RegisterView from './orchestrator/RegisterView.svelte';
@@ -73,6 +74,11 @@
   import InviteActivateView from './security/InviteActivateView.svelte';
   import KMSView from './security/KMSView.svelte';
   import SecretsView from './security/SecretsView.svelte';
+  import CertificatesView from './security/CertificatesView.svelte';
+  import TrustView from './security/TrustView.svelte';
+  import CryptoView from './security/CryptoView.svelte';
+  import DEKView from './security/DEKView.svelte';
+  import DynamicSecretsView from './security/DynamicSecretsView.svelte';
   import BarrierView from './security/BarrierView.svelte';
   import TenantBarrierView from './security/TenantBarrierView.svelte';
   import CeremonyView from './security/CeremonyView.svelte';
@@ -139,10 +145,16 @@
     ChevronLeft,
     KeyRound,
     FolderKanban,
+    UserCog,
     Users,
     Compass,
     LogIn,
     LogOut,
+    FileBadge,
+    ShieldCheck,
+    Binary,
+    KeySquare,
+    Timer,
   } from 'lucide-svelte';
 
   // ---------------------------------------------------------------------------
@@ -191,6 +203,7 @@
         { id: 'costs',         label: 'Cost Tracking',icon: DollarSign,    implemented: true },
         { id: 'inference',     label: 'Inference',    icon: Sparkles,      implemented: true },
         { id: 'projects',      label: 'Projects',     icon: FolderKanban,  implemented: true },
+        { id: 'accounts',      label: 'Accounts',     icon: UserCog,       implemented: true },
       ],
     },
     {
@@ -222,6 +235,11 @@
         { id: 'iam',       label: 'IAM',       icon: Shield,   implemented: true },
         { id: 'kms',       label: 'KMS',       icon: Key,      implemented: true },
         { id: 'secrets',   label: 'Secrets',   icon: EyeOff,   implemented: true },
+        { id: 'certificates', label: 'Certificates', icon: FileBadge,  implemented: true },
+        { id: 'trust',     label: 'Trust',     icon: ShieldCheck, implemented: true },
+        { id: 'crypto',    label: 'Crypto Console', icon: Binary, implemented: true },
+        { id: 'dek',       label: 'DEKs',      icon: KeySquare, implemented: true },
+        { id: 'dynamic-secrets', label: 'Dynamic Secrets', icon: Timer, implemented: true },
         { id: 'barrier',   label: 'Barrier',   icon: Lock,     implemented: true },
         { id: 'tenant-barrier', label: 'Tenant Barrier', icon: LockKeyhole, implemented: true },
         { id: 'ceremony',  label: 'Ceremony',  icon: Users,    implemented: true },
@@ -599,6 +617,21 @@
             {:else if routerStore.name === 'secrets'}
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">Secrets</li>
+            {:else if routerStore.name === 'certificates'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Certificates</li>
+            {:else if routerStore.name === 'trust'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Trust</li>
+            {:else if routerStore.name === 'crypto'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Crypto Console</li>
+            {:else if routerStore.name === 'dek'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">DEKs</li>
+            {:else if routerStore.name === 'dynamic-secrets'}
+              <li class="text-base-content/40">Security</li>
+              <li class="font-medium">Dynamic Secrets</li>
             {:else if routerStore.name === 'barrier'}
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">Barrier</li>
@@ -617,6 +650,9 @@
             {:else if routerStore.name === 'projects'}
               <li class="text-base-content/40">Orchestration</li>
               <li class="font-medium">Projects</li>
+            {:else if routerStore.name === 'accounts'}
+              <li class="text-base-content/40">Orchestration</li>
+              <li class="font-medium">Accounts</li>
             {:else if routerStore.name === 'cluster'}
               <li class="text-base-content/40">Cluster</li>
               <li class="font-medium">Dashboard</li>
@@ -888,6 +924,31 @@
           <SecretsView />
         </div>
 
+      {:else if routerStore.name === 'certificates'}
+        <div class="flex-1 overflow-y-auto">
+          <CertificatesView />
+        </div>
+
+      {:else if routerStore.name === 'trust'}
+        <div class="flex-1 overflow-y-auto">
+          <TrustView />
+        </div>
+
+      {:else if routerStore.name === 'crypto'}
+        <div class="flex-1 overflow-y-auto">
+          <CryptoView />
+        </div>
+
+      {:else if routerStore.name === 'dek'}
+        <div class="flex-1 overflow-y-auto">
+          <DEKView />
+        </div>
+
+      {:else if routerStore.name === 'dynamic-secrets'}
+        <div class="flex-1 overflow-y-auto">
+          <DynamicSecretsView />
+        </div>
+
       {:else if routerStore.name === 'barrier'}
         <div class="flex-1 overflow-y-auto">
           <BarrierView />
@@ -916,6 +977,11 @@
       {:else if routerStore.name === 'projects'}
         <div class="flex-1 overflow-y-auto">
           <ProjectsView />
+        </div>
+
+      {:else if routerStore.name === 'accounts'}
+        <div class="flex-1 overflow-y-auto">
+          <AccountsView />
         </div>
 
       {:else if routerStore.name === 'cluster'}

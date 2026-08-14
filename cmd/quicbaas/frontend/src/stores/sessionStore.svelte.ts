@@ -45,6 +45,7 @@ const HISTORY_PAGE_SIZE = 100;
 export type EventKind =
   | 'prompt'
   | 'assistant_chunk'
+  | 'thought'
   | 'tool_invocation'
   | 'tool_result'
   | 'file_op'
@@ -52,7 +53,39 @@ export type EventKind =
   | 'operator_joined'
   | 'operator_left'
   | 'closed'
-  | 'resumed';
+  | 'resumed'
+  | 'turn_started'
+  | 'turn_completed'
+  | 'turn_failed';
+
+/**
+ * TurnStatus is the operator-facing activity state for the active session,
+ * derived entirely from real signals already present in the transcript and
+ * the live subscription — never from a fabricated timer:
+ *
+ *   - 'idle'         no turn is outstanding; the agent is waiting on input.
+ *   - 'pending'      a prompt was submitted (optimistically or confirmed) but
+ *                    the orchestrator hasn't recorded turn_started for it yet
+ *                    — the request is in flight but the turn has not opened.
+ *   - 'working'      a turn_started event has arrived with no matching
+ *                    turn_completed/turn_failed (same turn_id) yet: the agent
+ *                    is authoritatively still running the turn.
+ *   - 'disconnected' the live SSE tail errored or the active transport does
+ *                    not support streaming, so activity can no longer be
+ *                    tracked live.
+ *
+ * The server emits turn_started when it dispatches a turn and
+ * turn_completed/turn_failed when it ends (see
+ * pkg/orchestration/session_events.go); those events, matched on turn_id,
+ * are the authoritative source for this state. The older heuristic —
+ * inferring activity from assistant_chunk stop_reason and
+ * tool_invocation/tool_result pairing — is kept only as a fallback for
+ * transcripts recorded before turn lifecycle events existed.
+ */
+export type TurnStatus = 'idle' | 'pending' | 'working' | 'disconnected';
+
+/** ConnectionStatus reflects the health of the live SSE subscription. */
+type ConnectionStatus = 'connected' | 'unavailable' | 'error';
 
 export interface ParsedSessionEvent {
   /** Sequence number from the server envelope. */
@@ -76,6 +109,11 @@ export interface ParsedSessionEvent {
   stopReason?: string;
   source?: string;
 
+  // thought — the agent's streamed reasoning fragment (see
+  // pkg/orchestration/session_events.go's AgentThoughtPayload). Rendered
+  // collapsed by default, distinct from the final assistantChunk text.
+  thoughtText?: string;
+
   toolName?: string;
   toolArgs?: Record<string, unknown>;
   invocationId?: string;
@@ -93,6 +131,18 @@ export interface ParsedSessionEvent {
   operatorId?: string;
 
   closeReason?: string;
+
+  // turn_started / turn_completed / turn_failed — see
+  // pkg/orchestration/session_events.go's TurnStartedPayload,
+  // TurnCompletedPayload, and TurnFailedPayload. turnId is populated for all
+  // three kinds and is what correlates a turn_started with the
+  // turn_completed/turn_failed that closes it.
+  turnId?: string;
+  turnBackend?: string;
+  turnModel?: string;
+  turnStopReason?: string;
+  turnDurationMs?: number;
+  turnError?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +158,11 @@ let sessionsLoading = $state(false);
 let activeSession: SessionStatusResponse | null = $state(null);
 let events: ParsedSessionEvent[] = $state([]);
 let historyExhausted = $state(false);
+// True only for the initial history fetch a session open triggers — distinct
+// from EventStream's own pagination spinner — so the UI can tell "we haven't
+// looked yet" apart from "we looked, and there's genuinely nothing here".
+let historyLoading = $state(false);
+let connectionStatus: ConnectionStatus = $state('connected');
 
 // Private: cursor for history pagination (oldest sequence fetched so far).
 let _historyFromSeq = $state(0);
@@ -129,6 +184,9 @@ export const sessionStore = {
   get activeSession() { return activeSession; },
   get events() { return events; },
   get historyExhausted() { return historyExhausted; },
+  get historyLoading() { return historyLoading; },
+  get connectionStatus() { return connectionStatus; },
+  get turnStatus() { return computeTurnStatus(); },
 };
 
 // ---------------------------------------------------------------------------
@@ -167,10 +225,20 @@ export async function openSession(session: SessionStatusResponse): Promise<void>
   activeSession = session;
   events = [];
   historyExhausted = false;
+  connectionStatus = 'connected';
   _historyFromSeq = 1;
 
-  // Load the first history page before starting the live tail.
-  await loadMoreHistory();
+  // Load the first history page before starting the live tail. historyLoading
+  // is scoped to this initial fetch only — EventStream's own isLoadingHistory
+  // covers the later scroll-triggered pagination case — so the UI can show a
+  // "loading history" state that is visually distinct from "no history at
+  // all" (see EventStream's empty-state gating).
+  historyLoading = true;
+  try {
+    await loadMoreHistory();
+  } finally {
+    historyLoading = false;
+  }
 
   // Start live subscription from wherever history ended.
   const latestSeq = events.length > 0 ? (events[events.length - 1]?.sequence ?? 0) + 1 : 0;
@@ -183,6 +251,8 @@ export function closeActiveSession(): void {
   activeSession = null;
   events = [];
   historyExhausted = false;
+  historyLoading = false;
+  connectionStatus = 'connected';
   _historyFromSeq = 0;
 }
 
@@ -285,9 +355,11 @@ function startLiveSubscription(sessionID: string, fromSeq: number): void {
       // Other transport errors stay at error level.
       const msg = err instanceof Error ? err.message : String(err);
       if (/streaming unsupported/i.test(msg)) {
+        connectionStatus = 'unavailable';
         console.info('[sessionStore] live updates unavailable on REST transport (use QUIC or gRPC for tailing)');
         return;
       }
+      connectionStatus = 'error';
       console.error('[sessionStore] subscription error', err);
     }
   })();
@@ -311,7 +383,122 @@ function appendEvent(ev: ParsedSessionEvent): void {
       return;
     }
   }
+
+  // Guard against duplicate delivery when the tail of the history replay
+  // overlaps the start of the live SSE subscription (openSession resumes the
+  // live tail from the sequence right after the last history page, but a
+  // slow-arriving history page and a fast-arriving live event could in
+  // principle race). Real server sequences are unique and strictly
+  // increasing, so a duplicate can only ever appear at or behind the last
+  // event we already hold — this keeps the common append path O(1) and only
+  // pays for the lookup in the actual overlap case.
+  const last = events[events.length - 1];
+  if (ev.sequence > 0 && last !== undefined && ev.sequence <= last.sequence) {
+    if (events.some((e) => e.sequence === ev.sequence)) return;
+  }
+
   events = [...events, ev].slice(-MAX_EVENTS);
+}
+
+/**
+ * Derive the current TurnStatus from the transcript and connection health.
+ * See the TurnStatus doc comment for the full state-to-signal mapping.
+ *
+ * turn_started/turn_completed/turn_failed, matched by turn_id, are
+ * authoritative whenever the loaded transcript contains at least one of
+ * them: "working" holds from turn_started until the matching terminal event
+ * arrives, full stop — no chunk/tool-call guessing. The older heuristic only
+ * runs for transcripts that predate these events (no turn lifecycle event
+ * has ever been observed in the currently-loaded window).
+ */
+function computeTurnStatus(): TurnStatus {
+  if (connectionStatus === 'error' || connectionStatus === 'unavailable') return 'disconnected';
+
+  let lastPromptIdx = -1;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]?.kind === 'prompt') {
+      lastPromptIdx = i;
+      break;
+    }
+  }
+  if (lastPromptIdx === -1) return 'idle'; // no prompt has been sent yet this session.
+
+  const hasTurnLifecycleEvents = events.some(
+    (e) => e.kind === 'turn_started' || e.kind === 'turn_completed' || e.kind === 'turn_failed',
+  );
+  if (hasTurnLifecycleEvents) {
+    return computeTurnStatusFromLifecycleEvents(lastPromptIdx);
+  }
+  return computeTurnStatusFromHeuristic(lastPromptIdx);
+}
+
+/**
+ * Authoritative turn-status derivation: find the most recently started turn
+ * and check whether its terminal event (same turn_id) has arrived.
+ */
+function computeTurnStatusFromLifecycleEvents(lastPromptIdx: number): TurnStatus {
+  let lastTurnStartIdx = -1;
+  let lastTurnId: string | undefined;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]?.kind === 'turn_started') {
+      lastTurnStartIdx = i;
+      lastTurnId = events[i]?.turnId;
+      break;
+    }
+  }
+
+  if (lastTurnStartIdx === -1) {
+    // No turn_started in the currently-loaded window. If a terminal event
+    // still arrived after the last prompt, its turn_started has simply
+    // scrolled out of view (e.g. paginated history) rather than never
+    // having happened, so the turn is resolved; otherwise it's genuinely
+    // in flight and the orchestrator hasn't recorded turn_started yet.
+    for (let i = lastPromptIdx + 1; i < events.length; i++) {
+      const ev = events[i];
+      if (ev?.kind === 'turn_completed' || ev?.kind === 'turn_failed') return 'idle';
+    }
+    return 'pending';
+  }
+
+  for (let i = lastTurnStartIdx + 1; i < events.length; i++) {
+    const ev = events[i];
+    if (ev === undefined) continue;
+    if ((ev.kind === 'turn_completed' || ev.kind === 'turn_failed') && ev.turnId === lastTurnId) {
+      // The turn resolved. If a newer prompt was submitted after that with no
+      // turn_started of its own yet, that next turn is in flight.
+      return lastPromptIdx > i ? 'pending' : 'idle';
+    }
+  }
+
+  // turn_started with no terminal event yet: the agent is authoritatively
+  // still working the turn.
+  return 'working';
+}
+
+/**
+ * Legacy heuristic, kept only for transcripts recorded before turn_started/
+ * turn_completed/turn_failed existed on the wire: infer activity from the
+ * most recent assistant_chunk's stop_reason and tool_invocation/tool_result
+ * pairing since the last prompt.
+ */
+function computeTurnStatusFromHeuristic(lastPromptIdx: number): TurnStatus {
+  if (lastPromptIdx === events.length - 1) return 'pending'; // sent, nothing back yet.
+
+  let chunkOpen = false;
+  const pendingInvocations = new Set<string>();
+  for (let i = lastPromptIdx + 1; i < events.length; i++) {
+    const ev = events[i];
+    if (ev === undefined) continue;
+    if (ev.kind === 'assistant_chunk') {
+      chunkOpen = ev.stopReason === undefined || ev.stopReason === '';
+    } else if (ev.kind === 'tool_invocation' && ev.invocationId) {
+      pendingInvocations.add(ev.invocationId);
+    } else if (ev.kind === 'tool_result' && ev.toolResultInvocationId) {
+      pendingInvocations.delete(ev.toolResultInvocationId);
+    }
+  }
+
+  return chunkOpen || pendingInvocations.size > 0 ? 'working' : 'idle';
 }
 
 /**
@@ -362,6 +549,7 @@ export function removeLocalPrompt(prompt: string): void {
 const SERVER_KIND_TO_EVENT_KIND: Record<string, EventKind> = {
   prompt_submitted: 'prompt',
   assistant_chunk: 'assistant_chunk',
+  agent_thought: 'thought',
   tool_invocation: 'tool_invocation',
   tool_result: 'tool_result',
   file_op: 'file_op',
@@ -370,6 +558,9 @@ const SERVER_KIND_TO_EVENT_KIND: Record<string, EventKind> = {
   operator_left: 'operator_left',
   session_closed: 'closed',
   session_resumed: 'resumed',
+  turn_started: 'turn_started',
+  turn_completed: 'turn_completed',
+  turn_failed: 'turn_failed',
 };
 
 /** Safely read a nested object field from an unknown payload value. */
@@ -405,6 +596,12 @@ function parseEnvelope(env: SessionEventEnvelope): ParsedSessionEvent {
       const a = objField(payload, 'assistant_chunk');
       base.assistantChunk = String(a['text'] ?? '');
       base.stopReason = a['stop_reason'] as string | undefined;
+      break;
+    }
+
+    case 'thought': {
+      const t = objField(payload, 'thought');
+      base.thoughtText = String(t['text'] ?? '');
       break;
     }
 
@@ -460,6 +657,31 @@ function parseEnvelope(env: SessionEventEnvelope): ParsedSessionEvent {
 
     case 'resumed':
       break;
+
+    case 'turn_started': {
+      const t = objField(payload, 'turn_started');
+      base.turnId = t['turn_id'] as string | undefined;
+      base.turnBackend = t['backend'] as string | undefined;
+      base.turnModel = t['model'] as string | undefined;
+      break;
+    }
+
+    case 'turn_completed': {
+      const t = objField(payload, 'turn_completed');
+      base.turnId = t['turn_id'] as string | undefined;
+      base.turnStopReason = t['stop_reason'] as string | undefined;
+      base.turnModel = t['model'] as string | undefined;
+      base.turnDurationMs = t['duration_ms'] as number | undefined;
+      break;
+    }
+
+    case 'turn_failed': {
+      const t = objField(payload, 'turn_failed');
+      base.turnId = t['turn_id'] as string | undefined;
+      base.turnError = t['error'] as string | undefined;
+      base.turnDurationMs = t['duration_ms'] as number | undefined;
+      break;
+    }
 
     default:
       // Unknown kind — leave raw field for inspection.

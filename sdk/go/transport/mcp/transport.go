@@ -320,9 +320,60 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	isEmbedding := isMCPEmbeddingService(service)
 	isIAM := isMCPIAMService(service)
 	isOrchestrator := isMCPOrchestratorService(service)
+	isAccount := isMCPAccountService(service)
+	isSSH := isMCPSSHService(service)
+	isProject := isMCPProjectService(service)
 	isCertificate := isMCPCertificateService(service)
 	isMessaging := isMCPMessagingService(service)
 	isObjectStorage := isMCPObjectStorageService(service)
+	isAttestation := isMCPAttestationService(service)
+	isDynamicSecrets := isMCPDynamicSecretsService(service)
+	isPIV := isMCPPIVService(service)
+	isFIDO2 := isMCPFIDO2Service(service)
+
+	// The PIV surface is a closed set of xkms.piv.* tools; a method with no
+	// tool fails fast with a typed Unimplemented naming the transport.
+	if isPIV {
+		if _, ok := pivToolName(method); !ok {
+			return nil, errors.NewUnimplemented("mcp.piv."+method,
+				"method not exposed by the PIV MCP tool set")
+		}
+	}
+
+	// Likewise for the FIDO2 ceremony surface (xkms.fido2.* tools).
+	if isFIDO2 {
+		if _, ok := fido2ToolName(method); !ok {
+			return nil, errors.NewUnimplemented("mcp.fido2."+method,
+				"method not exposed by the FIDO2 MCP tool set")
+		}
+	}
+
+	// The Project surface is a closed set of tools. A method with no tool
+	// (GetByName) fails fast with a typed Unimplemented naming the transport
+	// rather than asking the server for a tool it does not register.
+	if isProject {
+		if _, ok := projectToolName(method); !ok {
+			return nil, newProjectUnsupportedError(method)
+		}
+	}
+
+	// The DynamicSecrets surface is a closed set of eight tools; fail fast on
+	// a method the server does not register rather than calling a tool that
+	// does not exist.
+	if isDynamicSecrets {
+		if _, ok := dynamicSecretsToolName(method); !ok {
+			return nil, newDynamicSecretsUnsupportedError(method)
+		}
+	}
+
+	// The SSH surface is likewise a closed set of tools; fail fast on a
+	// method the server does not register.
+	if isSSH {
+		if _, ok := sshToolName(method); !ok {
+			return nil, newSSHUnsupportedError(method)
+		}
+	}
+
 	var arguments map[string]interface{}
 	var err error
 
@@ -370,6 +421,15 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		if err != nil {
 			return nil, err
 		}
+	} else if isSSH {
+		// SSH ships two binary-bearing verbs (import PEM, sign digest) whose
+		// tool arguments are base64 under _b64 names; the rest pass through
+		// their JSON tags unchanged.
+		sh := newSSHMCPHandler()
+		arguments, err = sh.transformRequest(method, reqBody)
+		if err != nil {
+			return nil, err
+		}
 	} else if isCertificate {
 		ch := newCertificateHandler(t)
 		arguments, err = ch.transformRequest(method, reqBody)
@@ -388,6 +448,47 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		if err != nil {
 			return nil, err
 		}
+	} else if isDynamicSecrets {
+		// The dynamic secrets tool schema is string-typed: durations travel as
+		// Go duration strings and the generator config as a JSON string, so
+		// the generic argument conversion would send the wrong shapes.
+		dh := newDynamicSecretsHandler()
+		arguments, err = dh.transformRequest(method, reqBody)
+		if err != nil {
+			return nil, err
+		}
+	} else if isAttestation {
+		// Attestation carries binary evidence and a certificate chain; the
+		// MCP tool schema is string-typed, so the handler base64-encodes
+		// the former and concatenates the latter into one PEM bundle.
+		ah := newAttestationHandler()
+		arguments, err = ah.transformRequest(method, reqBody)
+		if err != nil {
+			return nil, err
+		}
+	} else if isPIV {
+		// PIV requests are the go-xkms transport structs; their JSON tags
+		// are the tool argument names, so the transform is a round-trip.
+		ph := newPIVMCPHandler()
+		arguments, err = ph.transformRequest(method, reqBody)
+		if err != nil {
+			return nil, err
+		}
+	} else if isFIDO2 {
+		// FIDO2 requests are the go-xkms transport structs. The tenant
+		// scope is injected from the request context, mirroring the
+		// scheduler enrichment: xkms wire structs carry no tenant field
+		// because xkms runs a single relying party.
+		fh := newFIDO2MCPHandler()
+		arguments, err = fh.transformRequest(method, reqBody)
+		if err != nil {
+			return nil, err
+		}
+		if _, hasTenant := arguments["tenant_id"]; !hasTenant {
+			if tid := transport.TenantFromContext(ctx); tid != "" {
+				arguments["tenant_id"] = tid
+			}
+		}
 	} else {
 		// Convert request to tool arguments using generic conversion
 		arguments = t.convertToArguments(reqBody)
@@ -403,6 +504,52 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	if isVector {
 		vh := newVectorHandler(t)
 		return vh.transformResponse(method, result)
+	}
+
+	// Transform response for the Attestation service so callers receive the
+	// leaf typed response every other transport returns instead of a map.
+	if isAttestation {
+		ah := newAttestationHandler()
+		return ah.transformResponse(method, result)
+	}
+
+	// Transform PIV and FIDO2 results into the go-xkms transport response
+	// types every other transport returns.
+	if isPIV {
+		ph := newPIVMCPHandler()
+		return ph.transformResponse(method, result)
+	}
+	if isFIDO2 {
+		fh := newFIDO2MCPHandler()
+		return fh.transformResponse(method, result)
+	}
+
+	// Transform response for the pooled provider Account service. The
+	// generic convertToArguments path already produced the tool arguments:
+	// the SDK account request types carry the same snake_case JSON tags the
+	// tools expect, so no request transform is needed.
+	if isSSH {
+		sh := newSSHMCPHandler()
+		return sh.transformResponse(method, result)
+	}
+
+	if isAccount {
+		ah := newAccountMCPHandler()
+		return ah.transformResponse(method, result)
+	}
+
+	// Transform the DynamicSecrets result so callers receive the leaf typed
+	// response every other transport returns instead of a raw map.
+	if isDynamicSecrets {
+		dh := newDynamicSecretsHandler()
+		return dh.transformResponse(method, result)
+	}
+
+	// Transform response for the Project service. The project tools return the
+	// pkg/service response envelopes, which do not match the flat SDK types.
+	if isProject {
+		ph := newProjectMCPHandler()
+		return ph.transformResponse(method, result)
 	}
 
 	// Transform response for Scheduler service
@@ -746,6 +893,14 @@ func (t *Transport) sendRPC(ctx context.Context, method string, params interface
 // mapToToolName maps a service/method combination to an MCP tool name.
 // Pattern: quicbaas_<lowercase_operation>
 func (t *Transport) mapToToolName(service, method string) string {
+	return ToolName(service, method)
+}
+
+// ToolName derives the MCP tool name the server registers for an SDK
+// service/method pair. It is the single source of truth for SDK-side tool
+// naming and is exported so the server package can assert, at build time,
+// that every name the SDK can emit is actually registered.
+func ToolName(service, method string) string {
 	// If method is already a fully-formed tool name (starts with "quicbaas_"
 	// or "qrdb_"), return it as-is. This handles cases where the CLI passes
 	// pre-constructed tool names directly.
@@ -764,6 +919,66 @@ func (t *Transport) mapToToolName(service, method string) string {
 		if iamIdx >= 0 {
 			subsystem := service[iamIdx+5:]
 			return "quicbaas_iam_" + strings.ToLower(subsystem) + "_" + camelToSnake(method)
+		}
+	}
+
+	// Orchestrator session tools are named after the operation, not the RPC
+	// (quicbaas_orchestrator_prompt, not _prompt_session), so the generic
+	// service_method derivation below does not reach them.
+	if isMCPOrchestratorService(service) {
+		if toolName, ok := orchestratorMethodTools[method]; ok {
+			return toolName
+		}
+	}
+
+	// Pooled provider account tools are likewise named after the operation
+	// (agent_account_rotate, not _rotate_credential).
+	if isMCPAccountService(service) {
+		if toolName, ok := accountMethodTools[method]; ok {
+			return toolName
+		}
+	}
+
+	// SSH tools are named after the resource and operation (ssh_key_generate,
+	// not _generate_key), so the generic derivation below would never reach
+	// them.
+	if isMCPSSHService(service) {
+		if toolName, ok := sshToolName(method); ok {
+			return toolName
+		}
+	}
+
+	// Dynamic secrets tools are registered under quicbaas_dynamic_secrets_*;
+	// the generic derivation collapses the service name to "dynamicsecrets"
+	// and would never reach them.
+	if isMCPDynamicSecretsService(service) {
+		if toolName, ok := dynamicSecretsToolName(method); ok {
+			return toolName
+		}
+	}
+
+	// PIV tools are the xkms compatibility set (xkms.piv.*) — dotted names
+	// the generic quicbaas_* derivation would never produce.
+	if isMCPPIVService(service) {
+		if toolName, ok := pivToolName(method); ok {
+			return toolName
+		}
+	}
+
+	// FIDO2 ceremony tools are likewise the xkms compatibility set
+	// (xkms.fido2.*).
+	if isMCPFIDO2Service(service) {
+		if toolName, ok := fido2ToolName(method); ok {
+			return toolName
+		}
+	}
+
+	// Project tools are named after the resource and operation (project_create,
+	// project_grant_agent), not the RPC, and carry no quicbaas_ prefix, so the
+	// generic derivation below would never reach them.
+	if isMCPProjectService(service) {
+		if toolName, ok := projectToolName(method); ok {
+			return toolName
 		}
 	}
 
@@ -828,6 +1043,27 @@ func (t *Transport) mapToToolName(service, method string) string {
 			return name
 		}
 		return "quicbaas_kms_" + camelToSnake(method)
+	case "DEK":
+		// DEK method names already embed the resource noun ("CreateDEK"), so
+		// the generic derivation would double it (quicbaas_dek_create_dek).
+		// Keep in sync with pkg/api/mcp/tools_kms_dek.go registrations.
+		dekToolMap := map[string]string{
+			"CreateDEK":               "quicbaas_dek_create",
+			"GetDEK":                  "quicbaas_dek_get",
+			"ListDEKs":                "quicbaas_dek_list",
+			"RotateDEK":               "quicbaas_dek_rotate",
+			"DeleteDEK":               "quicbaas_dek_delete",
+			"GetDEKStatus":            "quicbaas_dek_status",
+			"SetDefaultDEK":           "quicbaas_dek_set_default",
+			"SetDEKSafety":            "quicbaas_dek_set_safety",
+			"ClearDEKSafety":          "quicbaas_dek_clear_safety",
+			"StartReencryption":       "quicbaas_dek_start_reencryption",
+			"GetReencryptionProgress": "quicbaas_dek_get_reencryption_progress",
+		}
+		if toolName, ok := dekToolMap[method]; ok {
+			return toolName
+		}
+		return "quicbaas_dek_" + camelToSnake(method)
 	case "Secrets":
 		return "quicbaas_secrets_" + camelToSnake(method)
 	case "Crypto":

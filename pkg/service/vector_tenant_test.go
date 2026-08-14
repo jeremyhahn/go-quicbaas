@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -289,4 +290,32 @@ func TestVectorTenantIsolation_ListPrefixesAreMutuallyExclusive(t *testing.T) {
 	scopedA := vectorTenantScopedNamespace("tenant-a", "embeddings")
 	assert.True(t, strings.HasPrefix(scopedA, prefixA))
 	assert.False(t, strings.HasPrefix(scopedA, prefixB))
+}
+
+// =============================================================================
+// System-tenant scoping tests
+// =============================================================================
+
+// TestVectorTenant_SystemTenantIsPlatformScoped proves a caller carrying the
+// literal system tenant is treated identically to single-tenant mode rather
+// than being isolated into a tenant namespace named "system".
+func TestVectorTenant_SystemTenantIsPlatformScoped(t *testing.T) {
+	for _, tenantID := range []string{"", qrdbsdk.SystemTenantID} {
+		t.Run("tenantID="+tenantID, func(t *testing.T) {
+			assert.Equal(t, "embeddings", vectorTenantScopedNamespace(tenantID, "embeddings"))
+			assert.True(t, vectorNamespaceBelongsToTenant(tenantID, "any-namespace"))
+			assert.NoError(t, vectorEnforceTenantAccess(tenantID, "any-namespace", "Search"))
+		})
+	}
+}
+
+// TestVectorTenant_OrdinaryTenantStaysIsolated proves the system-tenant
+// carve-out does not widen ordinary tenants' reach: a lookalike ID that
+// merely shares the "system" prefix is still fully isolated.
+func TestVectorTenant_OrdinaryTenantStaysIsolated(t *testing.T) {
+	scoped := vectorTenantScopedNamespace("system-2", "embeddings")
+	assert.Equal(t, "tenant/system-2/embeddings", scoped)
+	assert.False(t, vectorNamespaceBelongsToTenant("system-2", "embeddings"))
+	err := vectorEnforceTenantAccess("system-2", "embeddings", "Search")
+	require.Error(t, err)
 }

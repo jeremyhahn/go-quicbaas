@@ -31,6 +31,7 @@ import (
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // Protocol Constants.
@@ -214,7 +215,11 @@ const (
 	OpAuthBeginLogin  byte = 0x78
 	OpAuthFinishLogin byte = 0x79
 
-	// Dynamic Secrets Operations (0x64-0x6B).
+	// Dynamic Secrets Operations (0x64-0x6B). These are top-level opcodes, not
+	// OpOrchestrator sub-ops, so the dynamic secrets surface consumes none of
+	// the shared sub-op space. They MUST match
+	// sdk/go/transport/quic/protocol.go OpDynamicSecrets* byte-for-byte;
+	// TestDynamicSecretsOpcodeParity pins the values on both sides.
 	OpDynamicSecretsCreateRole  byte = 0x64
 	OpDynamicSecretsGetRole     byte = 0x65
 	OpDynamicSecretsListRoles   byte = 0x66
@@ -451,6 +456,7 @@ const (
 	// Orchestrator Operations - uses OpOrchestrator (0x8F) as dispatch opcode
 	// with sub-operation code in the first byte of payload.
 	OpOrchestrator byte = 0x8F // Orchestrator dispatch opcode (sub-op in payload[0])
+
 )
 
 // Scheduler sub-operation codes (used in payload[0] when OpScheduler is the main opcode).
@@ -518,6 +524,237 @@ const (
 	// Inference (0x0D) - stateless fleet-routed inference (aggregate response).
 	SubOpOrchestratorInference byte = 0x0D
 )
+
+// Session account rotation sub-operation code. It rides the OpOrchestrator
+// (0x8F) dispatch byte like every other sub-vocabulary here, in its own
+// disjoint 0x20 slot: the single-byte top-level opcode space is fully
+// allocated, and 0x0E — the next byte after Inference — would fall inside the
+// contiguous orchestrator range that authorizes at the surface level as
+// orchestrator:status. Rotation is a write, so it must resolve its own
+// permission (see rotateSubOpPermissions in handler_authz_qrdb.go), which
+// requires a sub-op OUTSIDE the surface-level range.
+//
+// 0x20 is free on this dispatch byte: accounts start at 0x30, projects at
+// 0x40, SSH at 0x50, certificate extensions at 0x60 and attestation at 0x70.
+// (The messaging 0x20-0x2F range rides OpMsg/OpScheduler (0x00), a different
+// dispatch byte, so there is no collision.)
+//
+// Cross-reference: sdk/go/transport/quic/protocol.go
+// SubOpOrchestratorRotateAccount — the two files MUST stay in sync, and
+// TestQUICOrchestratorRotateSubOpParity asserts the literal byte on both sides.
+const (
+	SubOpOrchestratorRotateAccount byte = 0x20
+)
+
+// isRotateSubOp reports whether subOp is the session account rotation verb
+// carried on the OpOrchestrator dispatch byte.
+func isRotateSubOp(subOp byte) bool {
+	return subOp == SubOpOrchestratorRotateAccount
+}
+
+// Pooled provider account sub-operation codes. These ride the SAME
+// OpOrchestrator (0x8F) dispatch byte as the orchestrator sub-ops above, in a
+// disjoint 0x30-0x38 range — the identical "shared dispatch opcode, disjoint
+// sub-op range" pattern the scheduler (0x01-0x1F), messaging (0x20-0x2F) and
+// extended-vector (0x40-0x4F) sub-ops already use on OpScheduler/OpMsg (0x00).
+// The top-level opcode space is effectively exhausted (0x60 is the only free
+// byte and is reserved), so a new dispatch byte is not available.
+//
+// Authorization is sub-op aware: getQRDBPermission resolves the account range
+// against accountSubOpPermissions (credentials:*) rather than the surface-level
+// orchestrator:status the rest of OpOrchestrator uses. Credential-custody
+// operations must never authorize under the weaker orchestrator vocabulary.
+const (
+	SubOpAccountCreate     byte = 0x30
+	SubOpAccountGet        byte = 0x31
+	SubOpAccountList       byte = 0x32
+	SubOpAccountUpdate     byte = 0x33
+	SubOpAccountDelete     byte = 0x34
+	SubOpAccountRotate     byte = 0x35
+	SubOpAccountRevoke     byte = 0x36
+	SubOpAccountSetDefault byte = 0x37
+	SubOpAccountUsage      byte = 0x38
+)
+
+// isAccountSubOp reports whether a sub-opcode carried on OpOrchestrator
+// belongs to the pooled provider account range.
+func isAccountSubOp(subOp byte) bool {
+	return subOp >= SubOpAccountCreate && subOp <= SubOpAccountUsage
+}
+
+// Project sub-operation codes. Like the account range above they ride the
+// OpOrchestrator (0x8F) dispatch byte, in their own disjoint 0x40-0x47 range.
+// The top-level opcode space is exhausted, so a project dispatch byte is not
+// available; the sub-op range keeps the vocabularies separate.
+//
+// Authorization is sub-op aware: getQRDBPermission resolves the project range
+// against projectSubOpPermissions (project:*) rather than the surface-level
+// orchestrator:status the rest of OpOrchestrator uses, matching the REST PEP
+// (pkg/api/rest/authz_pep_mapping.go) and gRPC (pkg/api/grpc/authz_mapping.go)
+// mappings.
+//
+// These MUST match sdk/go/transport/quic/protocol.go SubOpProject*
+// byte-for-byte.
+const (
+	SubOpProjectCreate          byte = 0x40
+	SubOpProjectGet             byte = 0x41
+	SubOpProjectGetByName       byte = 0x42
+	SubOpProjectList            byte = 0x43
+	SubOpProjectUpdate          byte = 0x44
+	SubOpProjectDelete          byte = 0x45
+	SubOpProjectGrantAgentRole  byte = 0x46
+	SubOpProjectRevokeAgentRole byte = 0x47
+)
+
+// isProjectSubOp reports whether a sub-opcode carried on OpOrchestrator
+// belongs to the project range.
+func isProjectSubOp(subOp byte) bool {
+	return subOp >= SubOpProjectCreate && subOp <= SubOpProjectRevokeAgentRole
+}
+
+// SSH sub-operation codes. Like accounts and projects, the SSH surface rides
+// the OpOrchestrator (0x8F) dispatch byte in its own disjoint range
+// (0x50-0x5D) because the single-byte top-level opcode space is fully
+// allocated. The sub-op range keeps the vocabularies separate.
+//
+// Authorization is sub-op aware: getQRDBPermission resolves the SSH range
+// against sshSubOpPermissions (keys:*) rather than the surface-level
+// orchestrator:status the rest of OpOrchestrator uses, matching the REST PEP
+// (pkg/api/rest/authz_pep_mapping.go sshOps) and gRPC
+// (pkg/api/grpc/authz_mapping.go) mappings byte-for-byte.
+//
+// These MUST match sdk/go/transport/quic/protocol.go SubOpSSH* byte-for-byte.
+const (
+	SubOpSSHGenerateKey         byte = 0x50
+	SubOpSSHImportKey           byte = 0x51
+	SubOpSSHGetKey              byte = 0x52
+	SubOpSSHListKeys            byte = 0x53
+	SubOpSSHDeleteKey           byte = 0x54
+	SubOpSSHExportPublicKey     byte = 0x55
+	SubOpSSHSignDigest          byte = 0x56
+	SubOpSSHAddKnownHost        byte = 0x57
+	SubOpSSHListKnownHosts      byte = 0x58
+	SubOpSSHRemoveKnownHost     byte = 0x59
+	SubOpSSHAddAuthorizedKey    byte = 0x5A
+	SubOpSSHListAuthorizedKeys  byte = 0x5B
+	SubOpSSHRemoveAuthorizedKey byte = 0x5C
+	SubOpSSHEmitAuthorizedKey   byte = 0x5D
+)
+
+// isSSHSubOp reports whether a sub-opcode carried on OpOrchestrator belongs
+// to the SSH range.
+func isSSHSubOp(subOp byte) bool {
+	return subOp >= SubOpSSHGenerateKey && subOp <= SubOpSSHEmitAuthorizedKey
+}
+
+// Certificate extension sub-operation codes. The CrossSign / Chain /
+// IssueDeviceIdentity verbs behind Security().CertificateExt() ride the
+// OpOrchestrator (0x8F) dispatch byte in their own disjoint 0x60-0x62 range,
+// the same "shared opcode, disjoint sub-op range" arrangement accounts
+// (0x30-0x38), projects (0x40-0x47) and SSH (0x50-0x5D) use.
+//
+// A dedicated top-level opcode is not available: every byte in 0x00-0xFF is
+// claimed across protocol.go and protocol_iam.go, and the one apparently free
+// value (0x60) is still the legacy password-login opcode in the SDK's
+// protocol table (sdk/go/transport/quic/protocol.go OpAuthLogin), so reusing
+// it would silently collide on the wire.
+//
+// Cross-reference: sdk/go/transport/quic/protocol.go SubOpCertExt* — the two
+// files MUST stay in sync.
+const (
+	SubOpCertExtCrossSign           byte = 0x60
+	SubOpCertExtChain               byte = 0x61
+	SubOpCertExtIssueDeviceIdentity byte = 0x62
+)
+
+// isCertExtSubOp reports whether subOp belongs to the certificate extension
+// range carried on the OpOrchestrator dispatch byte.
+func isCertExtSubOp(subOp byte) bool {
+	return subOp >= SubOpCertExtCrossSign && subOp <= SubOpCertExtIssueDeviceIdentity
+}
+
+// Attestation sub-operation codes. The standalone trusted-computing verbs
+// behind Security().Attestation() ride the OpOrchestrator (0x8F) dispatch byte
+// in their own disjoint 0x70-0x72 range, the same "shared opcode, disjoint
+// sub-op range" arrangement accounts (0x30-0x38), projects (0x40-0x47), SSH
+// (0x50-0x5D) and certificate extensions (0x60-0x62) use.
+//
+// A dedicated top-level opcode is not available: every byte in 0x00-0xFF is
+// claimed across protocol.go and protocol_iam.go.
+//
+// Cross-reference: sdk/go/transport/quic/protocol.go SubOpAttestation* — the
+// two files MUST stay in sync.
+const (
+	SubOpAttestationVerify          byte = 0x70
+	SubOpAttestationVerifyChain     byte = 0x71
+	SubOpAttestationAttestContainer byte = 0x72
+)
+
+// isAttestationSubOp reports whether subOp belongs to the attestation range
+// carried on the OpOrchestrator dispatch byte.
+func isAttestationSubOp(subOp byte) bool {
+	return subOp >= SubOpAttestationVerify && subOp <= SubOpAttestationAttestContainer
+}
+
+// PIV sub-operation codes. The backend-scoped PIV verbs behind
+// Security().Auth().PIV() — the go-xkms PIVService contract verbatim — ride
+// the OpOrchestrator (0x8F) dispatch byte in their own disjoint 0x80-0x87
+// range, the same "shared opcode, disjoint sub-op range" arrangement accounts
+// (0x30-0x38), projects (0x40-0x47), SSH (0x50-0x5D), certificate extensions
+// (0x60-0x62) and attestation (0x70-0x72) use.
+//
+// Authorization resolves per sub-op in handler_authz_qrdb.go against the
+// piv:* family, matching the REST xkms compatibility mapping
+// (pkg/api/rest/authz_pep_mapping.go xkmsOps) and the MCP mapping
+// (pkg/api/mcp/authz_qrdb.go xkms.piv.*) exactly.
+//
+// Cross-reference: sdk/go/transport/quic/protocol.go SubOpPIV* — the two
+// files MUST stay in sync.
+const (
+	SubOpPIVListSlots   byte = 0x80
+	SubOpPIVGetCert     byte = 0x81
+	SubOpPIVStoreCert   byte = 0x82
+	SubOpPIVDeleteCert  byte = 0x83
+	SubOpPIVGenerateKey byte = 0x84
+	SubOpPIVImportCert  byte = 0x85
+	SubOpPIVExportCert  byte = 0x86
+	SubOpPIVGenerateCSR byte = 0x87
+)
+
+// isPIVSubOp reports whether subOp belongs to the PIV range carried on the
+// OpOrchestrator dispatch byte.
+func isPIVSubOp(subOp byte) bool {
+	return subOp >= SubOpPIVListSlots && subOp <= SubOpPIVGenerateCSR
+}
+
+// FIDO2 sub-operation codes. The tenant-scoped WebAuthn ceremony verbs behind
+// Security().Auth().FIDO2() — the go-xkms FIDO2 transport contract with an
+// explicit tenant scope — ride the OpOrchestrator (0x8F) dispatch byte in
+// their own disjoint 0x90-0x93 range.
+//
+// Authorization mirrors the REST canonical mount
+// (pkg/api/rest/authz_pep_mapping.go + authz_public_routes.go): the
+// registration verbs are authenticator (factor) enrollment and resolve
+// user_authfactors:add in handler_authz_qrdb.go, while BeginAuthentication /
+// FinishAuthentication are PRE-AUTH — WebAuthn IS the authentication, the
+// caller holds no token until the ceremony completes — exactly like
+// OpAuthBeginLogin / OpAuthFinishLogin (see isPublicSubOperation in
+// handler_fido2.go).
+//
+// Cross-reference: sdk/go/transport/quic/protocol.go SubOpFIDO2* — the two
+// files MUST stay in sync.
+const (
+	SubOpFIDO2BeginRegistration    byte = 0x90
+	SubOpFIDO2FinishRegistration   byte = 0x91
+	SubOpFIDO2BeginAuthentication  byte = 0x92
+	SubOpFIDO2FinishAuthentication byte = 0x93
+)
+
+// isFIDO2SubOp reports whether subOp belongs to the FIDO2 range carried on
+// the OpOrchestrator dispatch byte.
+func isFIDO2SubOp(subOp byte) bool {
+	return subOp >= SubOpFIDO2BeginRegistration && subOp <= SubOpFIDO2FinishAuthentication
+}
 
 // Secrets sub-operation codes (used in payload[0] when OpSecretsSubDispatch is the main opcode).
 // These are NOT wire opcodes - they are decoded from the request payload.
@@ -910,6 +1147,16 @@ func ErrorToStatus(err error) byte {
 		default:
 			return StatusInternalError
 		}
+	}
+
+	// Spawn-policy refusals (bind mount outside every allowed root, forbidden
+	// sandbox mode or network, integrity tier below the operator's floor) are
+	// authorization decisions about the request, not server faults. Classify
+	// them before the message heuristics below so they answer
+	// PermissionDenied with their actionable text instead of falling through
+	// to StatusInternalError.
+	if orchestration.IsPolicyDenial(err) {
+		return StatusPermissionDenied
 	}
 
 	// Check for "not found" patterns in error messages for IAM errors

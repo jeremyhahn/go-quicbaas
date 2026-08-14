@@ -43,10 +43,25 @@ const (
 
 // ExecContainerRuntime implements ContainerRuntime by shelling out to
 // docker or podman. No Go library dependencies - just exec.Command.
+//
+// It implements Tier 0 of the trust model: a spec that resolves to an
+// immutable content digest is launched as "repository@sha256:<hex>" and the
+// resulting container is verified to have been created from that exact image.
+// It implements no higher tier — see TPMAttestingRuntime for Tiers 1 and 2.
 type ExecContainerRuntime struct {
 	command string
 	logger  interfaces.Logger
+
+	// inspect performs a "<runtime> inspect --format ..." query. It is a
+	// field rather than a plain method so the digest-verification path can
+	// be exercised without a container runtime installed; nil means use
+	// the real exec-backed implementation.
+	inspect inspectFunc
 }
+
+// inspectFunc runs a docker/podman inspect query and returns its trimmed
+// stdout.
+type inspectFunc func(ctx context.Context, args ...string) (string, error)
 
 // Compile-time interface check.
 var _ ContainerRuntime = (*ExecContainerRuntime)(nil)
@@ -101,8 +116,19 @@ func (r *ExecContainerRuntime) Run(ctx context.Context, spec *ContainerSpec) (st
 		return "", err
 	}
 
-	args := r.buildRunArgs(spec)
-	r.logger.Debugf("container run: %s %s", r.command, strings.Join(args, " "))
+	// The environment travels in a private 0600 file, never in argv. The
+	// detached run process reads it while it parses its command line, so the
+	// file is released as soon as cmd.Run returns.
+	envFile, envErr := writeContainerEnvFile(spec.Env)
+	if envErr != nil {
+		return "", envErr
+	}
+	if envFile.Cleanup != nil {
+		defer envFile.Cleanup()
+	}
+
+	args := r.buildRunArgs(spec, envFile.Path)
+	r.logger.Debugf("container run: %s %s", r.command, redactRunArgs(args))
 
 	cmd := exec.CommandContext(ctx, r.command, args...)
 	var stdout, stderr bytes.Buffer
@@ -126,7 +152,16 @@ func (r *ExecContainerRuntime) Run(ctx context.Context, spec *ContainerSpec) (st
 	}
 
 	containerID := strings.TrimSpace(stdout.String())
-	r.logger.Infof("container started: %s (id=%s)", spec.Image, truncateID(containerID))
+
+	// Tier 0: confirm the container the runtime actually created came from
+	// the pinned image. Passing repository@digest on the command line is
+	// necessary but not sufficient — verifying after the fact closes the
+	// gap between "we asked for this image" and "this image is what ran".
+	if err := r.VerifyPinnedImage(ctx, spec, containerID); err != nil {
+		return containerID, err
+	}
+
+	r.logger.Infof("container started: %s (id=%s)", spec.PinnedImageReference(), truncateID(containerID))
 	return containerID, nil
 }
 
@@ -156,8 +191,22 @@ func (r *ExecContainerRuntime) RunInteractive(ctx context.Context, spec *Contain
 		containerName = interactiveContainerPrefix + id
 	}
 
-	args := r.buildInteractiveRunArgs(spec, containerName)
-	r.logger.Infof("container run interactive: %s %v", r.command, args)
+	// The environment travels in a private 0600 file, never in argv. Unlike
+	// the detached path, this process runs for the whole session and the
+	// runtime may not have parsed the file by the time Start returns, so the
+	// file's lifetime is handed to the caller through InteractiveProcess.
+	envFile, envErr := writeContainerEnvFile(spec.Env)
+	if envErr != nil {
+		return nil, envErr
+	}
+	releaseEnvFile := func() {
+		if envFile.Cleanup != nil {
+			envFile.Cleanup()
+		}
+	}
+
+	args := r.buildInteractiveRunArgs(spec, containerName, envFile.Path)
+	r.logger.Debugf("container run interactive: %s %s", r.command, redactRunArgs(args))
 
 	cmd := exec.CommandContext(ctx, r.command, args...)
 	// stderr goes to discard for now — container logs are captured separately
@@ -165,6 +214,7 @@ func (r *ExecContainerRuntime) RunInteractive(ctx context.Context, spec *Contain
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
+		releaseEnvFile()
 		return nil, &ContainerInteractiveStartError{
 			Image:     spec.Image,
 			Operation: "stdin-pipe",
@@ -174,6 +224,7 @@ func (r *ExecContainerRuntime) RunInteractive(ctx context.Context, spec *Contain
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
+		releaseEnvFile()
 		closeErr := stdinPipe.Close()
 		if closeErr != nil {
 			r.logger.Debugf("container interactive: failed to close stdin pipe: %v", closeErr)
@@ -190,6 +241,7 @@ func (r *ExecContainerRuntime) RunInteractive(ctx context.Context, spec *Contain
 	cmd.Stderr = io.Discard
 
 	if err := cmd.Start(); err != nil {
+		releaseEnvFile()
 		closeErr := stdinPipe.Close()
 		if closeErr != nil {
 			r.logger.Debugf("container interactive: failed to close stdin pipe: %v", closeErr)
@@ -201,13 +253,28 @@ func (r *ExecContainerRuntime) RunInteractive(ctx context.Context, spec *Contain
 		}
 	}
 
-	r.logger.Infof("container interactive started: %s (name=%s, pid=%d)",
-		spec.Image, containerName, cmd.Process.Pid)
+	r.logger.Infof("container interactive started: %s (name=%s, pid=%d, env_file=%s)",
+		spec.PinnedImageReference(), containerName, cmd.Process.Pid, envFile.Path)
+
+	// Tier 0: an interactive container is created asynchronously by the
+	// foreground `run -i` process, so the verification is performed against
+	// the container name once it exists. VerifyPinnedImage tolerates a
+	// not-yet-created container by design (see its doc comment) — the pin
+	// itself is already enforced on the command line above.
+	if err := r.VerifyPinnedImage(ctx, spec, containerName); err != nil {
+		releaseEnvFile()
+		closeErr := stdinPipe.Close()
+		if closeErr != nil {
+			r.logger.Debugf("container interactive: failed to close stdin pipe: %v", closeErr)
+		}
+		return nil, err
+	}
 
 	return &InteractiveProcess{
 		ContainerID: containerName,
 		Stdin:       stdinPipe,
 		Stdout:      stdoutPipe,
+		Cleanup:     envFile.Cleanup,
 	}, nil
 }
 
@@ -346,8 +413,11 @@ func (r *ExecContainerRuntime) Pull(ctx context.Context, image string) error {
 	return nil
 }
 
-// buildRunArgs constructs the argument list for a detached docker/podman run command.
-func (r *ExecContainerRuntime) buildRunArgs(spec *ContainerSpec) []string {
+// buildRunArgs constructs the argument list for a detached docker/podman run
+// command. envFile is the path of the private file holding spec.Env, as
+// produced by writeContainerEnvFile; it is empty for a spec with no
+// environment.
+func (r *ExecContainerRuntime) buildRunArgs(spec *ContainerSpec, envFile string) []string {
 	args := []string{"run", "-d"}
 
 	if spec.Name != "" {
@@ -358,20 +428,21 @@ func (r *ExecContainerRuntime) buildRunArgs(spec *ContainerSpec) []string {
 		args = append(args, "--rm")
 	}
 
-	args = r.appendCommonRunArgs(args, spec)
+	args = r.appendCommonRunArgs(args, spec, envFile)
 
 	return args
 }
 
 // buildInteractiveRunArgs constructs the argument list for an interactive
 // docker/podman run command. Interactive containers use -i (stdin open)
-// and --rm (auto-remove on exit) instead of -d (detached).
-func (r *ExecContainerRuntime) buildInteractiveRunArgs(spec *ContainerSpec, containerName string) []string {
+// and --rm (auto-remove on exit) instead of -d (detached). envFile carries
+// spec.Env exactly as it does for the detached form.
+func (r *ExecContainerRuntime) buildInteractiveRunArgs(spec *ContainerSpec, containerName, envFile string) []string {
 	args := []string{"run", "-i", "--rm"}
 
 	args = append(args, "--name", containerName)
 
-	args = r.appendCommonRunArgs(args, spec)
+	args = r.appendCommonRunArgs(args, spec, envFile)
 
 	return args
 }
@@ -379,7 +450,10 @@ func (r *ExecContainerRuntime) buildInteractiveRunArgs(spec *ContainerSpec, cont
 // appendCommonRunArgs appends container configuration flags shared between
 // detached and interactive run modes: network, workdir, env, mounts, ports,
 // labels, GPU, image, command, and args.
-func (r *ExecContainerRuntime) appendCommonRunArgs(args []string, spec *ContainerSpec) []string {
+//
+// envFile is referenced by path; no environment VALUE is ever placed in the
+// argument vector. See container_env_file.go for why.
+func (r *ExecContainerRuntime) appendCommonRunArgs(args []string, spec *ContainerSpec, envFile string) []string {
 	if spec.User != "" {
 		args = append(args, "--user", spec.User)
 	}
@@ -392,20 +466,32 @@ func (r *ExecContainerRuntime) appendCommonRunArgs(args []string, spec *Containe
 		args = append(args, "--workdir", spec.WorkDir)
 	}
 
-	// Sort env keys for deterministic output.
-	if len(spec.Env) > 0 {
-		keys := make([]string, 0, len(spec.Env))
-		for k := range spec.Env {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			args = append(args, "-e", k+"="+spec.Env[k])
-		}
+	// Privilege is emitted here so the launched container matches the spec
+	// ContainerConfigDigest measured. Capabilities are sorted by the same
+	// helper the digest uses: if the two orderings could differ, a spec could
+	// measure one way and launch another.
+	if spec.Privileged {
+		args = append(args, "--privileged")
 	}
 
-	for _, m := range spec.Mounts {
-		args = append(args, "-v", m.Format())
+	for _, capability := range sortedCopy(spec.CapAdd) {
+		args = append(args, "--cap-add", capability)
+	}
+
+	for _, capability := range sortedCopy(spec.CapDrop) {
+		args = append(args, "--cap-drop", capability)
+	}
+
+	// The environment is passed by reference to a private 0600 file. A caller
+	// that supplied no file gets a container with no spec environment rather
+	// than an inline "-e KEY=VALUE" fallback: failing closed here is what
+	// keeps a credential out of /proc/<pid>/cmdline unconditionally.
+	if envFile != "" {
+		args = append(args, envFileFlag, envFile)
+	}
+
+	for i := range spec.Mounts {
+		args = append(args, spec.Mounts[i].RunArgs()...)
 	}
 
 	for _, p := range spec.Ports {
@@ -437,7 +523,10 @@ func (r *ExecContainerRuntime) appendCommonRunArgs(args []string, spec *Containe
 		}
 	}
 
-	args = append(args, spec.Image)
+	// Launch by immutable content digest when the spec is pinned. An
+	// unpinned spec yields the reference unchanged, so this is a no-op for
+	// every pre-existing caller.
+	args = append(args, spec.PinnedImageReference())
 
 	if len(spec.Command) > 0 {
 		args = append(args, spec.Command...)

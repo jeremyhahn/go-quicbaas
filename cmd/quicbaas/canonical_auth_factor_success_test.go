@@ -31,7 +31,6 @@ type fakeAuthFactorsClient struct {
 	removeFunc  func(ctx context.Context, factorID string, force bool) error
 	rotateFunc  func(ctx context.Context, oldID string, newFactor *quicbaas.AuthFactorEnrollRequest) (*quicbaas.AuthFactorEnrollResponse, error)
 	relabelFunc func(ctx context.Context, factorID, label string) error
-	loginFunc   func(ctx context.Context, req *quicbaas.AuthFactorLoginRequest) (*quicbaas.AuthFactorLoginResponse, error)
 }
 
 func (f *fakeAuthFactorsClient) Add(ctx context.Context, req *quicbaas.AuthFactorEnrollRequest) (*quicbaas.AuthFactorEnrollResponse, error) {
@@ -67,13 +66,6 @@ func (f *fakeAuthFactorsClient) Relabel(ctx context.Context, factorID, label str
 		return f.relabelFunc(ctx, factorID, label)
 	}
 	return nil
-}
-
-func (f *fakeAuthFactorsClient) Login(ctx context.Context, req *quicbaas.AuthFactorLoginRequest) (*quicbaas.AuthFactorLoginResponse, error) {
-	if f.loginFunc != nil {
-		return f.loginFunc(ctx, req)
-	}
-	return &quicbaas.AuthFactorLoginResponse{}, nil
 }
 
 // fakeAuthService embeds quicbaas.AuthService (nil) and overrides only the
@@ -283,17 +275,17 @@ func TestRunCanonicalAuthFactorRotate_SDKError(t *testing.T) {
 	}))
 }
 
-// fakeAuthServiceFull lets tests configure WebAuthn/PIV/Factors accessors.
+// fakeAuthServiceFull lets tests configure FIDO2/PIV/Factors accessors.
 type fakeAuthServiceFull struct {
 	quicbaas.AuthService
-	factors  quicbaas.AuthFactorsClient
-	webauthn quicbaas.WebAuthnClient
-	piv      quicbaas.PIVClient
+	factors quicbaas.AuthFactorsClient
+	fido2   quicbaas.FIDO2Client
+	piv     quicbaas.XKMSPIVService
 }
 
 func (f *fakeAuthServiceFull) Factors() quicbaas.AuthFactorsClient { return f.factors }
-func (f *fakeAuthServiceFull) WebAuthn() quicbaas.WebAuthnClient   { return f.webauthn }
-func (f *fakeAuthServiceFull) PIV() quicbaas.PIVClient             { return f.piv }
+func (f *fakeAuthServiceFull) FIDO2() quicbaas.FIDO2Client         { return f.fido2 }
+func (f *fakeAuthServiceFull) PIV() quicbaas.XKMSPIVService        { return f.piv }
 
 func newFakeAuthClient(auth quicbaas.AuthService) quicbaas.Client {
 	return &fakeSecurityClient{security: &fakeSecurityService{auth: auth}}
@@ -316,18 +308,10 @@ func TestCanonicalAuthService_NilAuthSurface(t *testing.T) {
 	require.ErrorAs(t, err, &typed)
 }
 
-func TestCanonicalAuthWebAuthn_NilSubClient(t *testing.T) {
-	// Auth() is present but WebAuthn() returns nil.
-	withFakeSDKClientForCanonicalAuth(t, newFakeAuthClient(&fakeAuthServiceFull{webauthn: nil}), nil)
-	_, err := canonicalAuthWebAuthn("test")
-	require.Error(t, err)
-	var typed *SecuritySurfaceUnavailableError
-	require.ErrorAs(t, err, &typed)
-}
-
-func TestCanonicalAuthPIV_NilSubClient(t *testing.T) {
-	withFakeSDKClientForCanonicalAuth(t, newFakeAuthClient(&fakeAuthServiceFull{piv: nil}), nil)
-	_, err := canonicalAuthPIV("test")
+func TestCanonicalAuthFIDO2_NilSubClient(t *testing.T) {
+	// Auth() is present but FIDO2() returns nil.
+	withFakeSDKClientForCanonicalAuth(t, newFakeAuthClient(&fakeAuthServiceFull{fido2: nil}), nil)
+	_, err := canonicalAuthFIDO2("test")
 	require.Error(t, err)
 	var typed *SecuritySurfaceUnavailableError
 	require.ErrorAs(t, err, &typed)

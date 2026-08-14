@@ -1,0 +1,592 @@
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+// tenant_barrier.go exposes the PER-TENANT barrier: the tenant-admin
+// self-service surface for a dedicated, tenant-owned encryption barrier.
+//
+// This is a different barrier from `quicbaas barrier`, and deliberately so.
+// The system barrier protects the control plane and is the system admin's;
+// a tenant barrier protects one tenant's data with that tenant's OWN seal
+// strategy and credentials, so sealing it crypto-shreds that tenant's data
+// and the infrastructure operator — holding neither the passphrase nor a
+// Shamir quorum — cannot unseal it.
+//
+// quicbaas implements none of this. Per-tenant barriers are delegated
+// entirely to the embedded go-qrdb node (BarrierRegistry / TenantBarrier),
+// with the seal strategy selected from the xkms StrategyRegistry injected at
+// composition time. These verbs are a thin pass-through to the SDK's tenant
+// client, which is what keeps the CLI, the five network transports, and the
+// embedded transport describing one implementation rather than several.
+//
+// Unlike the system barrier's ceremony, this surface is a documented
+// sealed-window EXCLUSION: a tenant barrier is post-unseal, tenant-admin
+// self-service, so it is served by the regular listener once the system is
+// live (see pkg/api/sealedwindow).
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"strings"
+	"text/tabwriter"
+
+	"github.com/spf13/cobra"
+
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+)
+
+// =============================================================================
+// Flags
+// =============================================================================
+
+var (
+	tenantBarrierTenantID  string
+	tenantBarrierStrategy  string
+	tenantBarrierSecret    string
+	tenantBarrierThreshold int
+	tenantBarrierShares    int
+	tenantBarrierShare     string
+	tenantBarrierOutputFmt string
+)
+
+// =============================================================================
+// Client interface and factory
+// =============================================================================
+
+// TenantBarrierClient is the subset of the qrdb TenantClient surface the
+// per-tenant barrier verbs need. The CLI never instantiates it directly;
+// tests substitute their own factory.
+type TenantBarrierClient interface {
+	TenantBarrierInit(ctx context.Context, req *qrdbtransport.TenantBarrierInitRequest) (*qrdbtransport.TenantBarrierInitResponse, error)
+	TenantBarrierUnseal(ctx context.Context, req *qrdbtransport.TenantBarrierUnsealRequest) error
+	TenantBarrierUnsealShare(ctx context.Context, req *qrdbtransport.TenantBarrierUnsealShareRequest) (*qrdbtransport.TenantBarrierUnsealProgress, error)
+	TenantBarrierSeal(ctx context.Context, req *qrdbtransport.TenantBarrierSealRequest) error
+	TenantBarrierStatus(ctx context.Context, req *qrdbtransport.TenantBarrierStatusRequest) (*qrdbtransport.TenantBarrierStatusResponse, error)
+	TenantBarrierOfficerList(ctx context.Context, tenantID string) ([]*qrdbtransport.OfficerStatus, error)
+	TenantBarrierOfficerClaimStatus(ctx context.Context, tenantID string) ([]*qrdbtransport.OfficerStatus, error)
+}
+
+// TenantBarrierClientFactory creates TenantBarrierClient instances.
+type TenantBarrierClientFactory func() (TenantBarrierClient, error)
+
+// tenantBarrierClientFactory creates TenantBarrierClient instances. Defaults
+// to the SDK-backed implementation; tests override this for injection.
+var tenantBarrierClientFactory TenantBarrierClientFactory = createSDKTenantBarrierClient
+
+// createSDKTenantBarrierClient returns the SDK tenant client. The SDK selects
+// the active transport per the global --transport flag, so every verb below
+// works identically across rest, grpc, quic, mcp, unix, and embedded.
+func createSDKTenantBarrierClient() (TenantBarrierClient, error) {
+	sdk, err := sdkClientFactory()
+	if err != nil {
+		return nil, err
+	}
+	return sdk.TenantMgmtService().Tenant()
+}
+
+// =============================================================================
+// Command tree
+// =============================================================================
+
+// newTenantBarrierCommand builds the 'quicbaas tenant barrier' group.
+func newTenantBarrierCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "barrier",
+		Short: "Manage a tenant's own encryption barrier",
+		Long: `Manage a tenant's dedicated encryption barrier.
+
+A tenant barrier is the tenant's own, not the operator's: it is protected
+by that tenant's chosen seal strategy and credentials. Sealing it
+crypto-shreds the tenant's data, and an infrastructure operator holding
+neither the passphrase nor a Shamir quorum cannot unseal it.
+
+This is separate from ` + "`quicbaas barrier`" + `, which manages the SYSTEM
+barrier protecting the control plane.
+
+A tenant on a SHARED barrier has no barrier of its own to manage; those
+calls are rejected as entitlement violations, not authorization failures.
+
+Verbs:
+  status         Show the tenant barrier's state and strategy
+  init           Initialize the tenant barrier with a seal strategy
+  unseal         Unseal with a passphrase or key
+  unseal-share   Submit one Shamir share toward the quorum
+  seal           Seal the barrier (crypto-shreds until unsealed again)
+  officer        List tenant Security Officers / claim status`,
+	}
+
+	cmd.PersistentFlags().StringVar(&tenantBarrierTenantID, "tenant", "",
+		"Tenant whose barrier is being managed (required)")
+	cmd.PersistentFlags().StringVar(&tenantBarrierOutputFmt, "output", "table",
+		"Output format (json, yaml, table)")
+
+	cmd.AddCommand(newTenantBarrierStatusCommand())
+	cmd.AddCommand(newTenantBarrierInitCommand())
+	cmd.AddCommand(newTenantBarrierUnsealCommand())
+	cmd.AddCommand(newTenantBarrierUnsealShareCommand())
+	cmd.AddCommand(newTenantBarrierSealCommand())
+	cmd.AddCommand(newTenantBarrierOfficerCommand())
+
+	return cmd
+}
+
+// requireTenantID enforces the shared --tenant precondition. Every verb needs
+// it, and defaulting to the system tenant would silently point a destructive
+// operation at the wrong barrier.
+func requireTenantID(op string) error {
+	if tenantBarrierTenantID == "" {
+		return errors.Newf(errors.ErrInvalidInput, op, "--tenant is required")
+	}
+	return nil
+}
+
+// =============================================================================
+// status
+// =============================================================================
+
+// newTenantBarrierStatusCommand builds 'quicbaas tenant barrier status'.
+func newTenantBarrierStatusCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show the tenant barrier's state and strategy",
+		Long: `Show a tenant barrier's state.
+
+Reports whether the barrier is initialized and sealed, which strategy
+protects it, whether that strategy is hardware-backed, and the Shamir
+M-of-N parameters when applicable.
+
+Example:
+  quicbaas tenant barrier status --tenant acme`,
+		RunE: runTenantBarrierStatusCommand,
+	}
+}
+
+// runTenantBarrierStatusCommand executes 'tenant barrier status'.
+func runTenantBarrierStatusCommand(cmd *cobra.Command, _ []string) error {
+	if err := requireTenantID("tenant.barrier.status"); err != nil {
+		return err
+	}
+	client, err := tenantBarrierClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	resp, err := client.TenantBarrierStatus(ctx, &qrdbtransport.TenantBarrierStatusRequest{
+		TenantID: tenantBarrierTenantID,
+	})
+	if err != nil {
+		return formatError(err)
+	}
+	return formatTenantBarrierStatus(resp, tenantBarrierOutputFmt, cmd.OutOrStdout())
+}
+
+// =============================================================================
+// init
+// =============================================================================
+
+// newTenantBarrierInitCommand builds 'quicbaas tenant barrier init'.
+func newTenantBarrierInitCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "init",
+		Short: "Initialize the tenant barrier",
+		Long: `Initialize a tenant's own barrier.
+
+The strategy is selected from the strategy registry the deployment
+injected, so a tenant may be protected by a passphrase, a Shamir quorum,
+or hardware (TPM / PKCS#11 / cloud KMS) independently of how the SYSTEM
+barrier is sealed.
+
+Examples:
+  quicbaas tenant barrier init --tenant acme --strategy passphrase --passphrase "$PP"
+  quicbaas tenant barrier init --tenant acme --strategy shamir --threshold 2 --shares 3`,
+		RunE: runTenantBarrierInitCommand,
+	}
+	cmd.Flags().StringVar(&tenantBarrierStrategy, "strategy", "",
+		"Seal strategy: passphrase | shamir | pkcs11 | tpm2 | awskms | gcpkms | azurekv | vault")
+	cmd.Flags().StringVar(&tenantBarrierSecret, "passphrase", "",
+		"Passphrase (required for --strategy=passphrase)")
+	cmd.Flags().IntVar(&tenantBarrierThreshold, "threshold", 0,
+		"Shamir M-of-N threshold (required for --strategy=shamir)")
+	cmd.Flags().IntVar(&tenantBarrierShares, "shares", 0,
+		"Total Shamir shares (required for --strategy=shamir)")
+	return cmd
+}
+
+// runTenantBarrierInitCommand executes 'tenant barrier init'.
+func runTenantBarrierInitCommand(cmd *cobra.Command, _ []string) error {
+	if err := requireTenantID("tenant.barrier.init"); err != nil {
+		return err
+	}
+	if tenantBarrierStrategy == "" {
+		return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.init",
+			"--strategy is required")
+	}
+	// Validate locally what the server would reject anyway. Initializing a
+	// barrier is not idempotent from the tenant's point of view, so a clean
+	// local failure is preferable to a half-understood server error.
+	if isPassphraseStrategyName(tenantBarrierStrategy) && tenantBarrierSecret == "" {
+		return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.init",
+			"--passphrase is required when --strategy=passphrase")
+	}
+	if tenantBarrierStrategy == "shamir" {
+		if tenantBarrierThreshold < 2 {
+			return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.init",
+				"--threshold must be >= 2 when --strategy=shamir")
+		}
+		if tenantBarrierShares < tenantBarrierThreshold {
+			return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.init",
+				"--shares must be >= --threshold")
+		}
+	}
+
+	client, err := tenantBarrierClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	resp, err := client.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{
+		TenantID:   tenantBarrierTenantID,
+		Strategy:   tenantBarrierStrategy,
+		Passphrase: tenantBarrierSecret,
+		Threshold:  tenantBarrierThreshold,
+		Shares:     tenantBarrierShares,
+	})
+	if err != nil {
+		return formatError(err)
+	}
+	return formatTenantBarrierInit(resp, tenantBarrierOutputFmt, cmd.OutOrStdout())
+}
+
+// =============================================================================
+// unseal / unseal-share
+// =============================================================================
+
+// newTenantBarrierUnsealCommand builds 'quicbaas tenant barrier unseal'.
+func newTenantBarrierUnsealCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "unseal",
+		Short: "Unseal the tenant barrier with a passphrase",
+		Long: `Unseal a tenant barrier.
+
+For a Shamir-sealed tenant barrier use 'unseal-share' instead: a quorum
+must each submit their own share.
+
+Example:
+  quicbaas tenant barrier unseal --tenant acme --passphrase "$PP"`,
+		RunE: runTenantBarrierUnsealCommand,
+	}
+	cmd.Flags().StringVar(&tenantBarrierSecret, "passphrase", "",
+		"Passphrase protecting the tenant barrier (required)")
+	return cmd
+}
+
+// runTenantBarrierUnsealCommand executes 'tenant barrier unseal'.
+func runTenantBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
+	if err := requireTenantID("tenant.barrier.unseal"); err != nil {
+		return err
+	}
+	if tenantBarrierSecret == "" {
+		return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.unseal",
+			"--passphrase is required (use 'unseal-share' for a Shamir barrier)")
+	}
+
+	client, err := tenantBarrierClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	if err := client.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
+		TenantID: tenantBarrierTenantID,
+		Key:      []byte(tenantBarrierSecret),
+	}); err != nil {
+		return formatError(err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Tenant barrier %s unsealed.\n", tenantBarrierTenantID)
+	return nil
+}
+
+// newTenantBarrierUnsealShareCommand builds 'tenant barrier unseal-share'.
+func newTenantBarrierUnsealShareCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "unseal-share",
+		Short: "Submit one Shamir share toward the tenant quorum",
+		Long: `Submit a single Shamir share.
+
+Each officer runs this with their own share. The response reports quorum
+progress; the barrier unseals when the threshold is met. Shares are
+accumulated in memory and discarded once the quorum completes, so a later
+unseal requires fresh submissions.
+
+Example:
+  quicbaas tenant barrier unseal-share --tenant acme --share "$SHARE"`,
+		RunE: runTenantBarrierUnsealShareCommand,
+	}
+	cmd.Flags().StringVar(&tenantBarrierShare, "share", "",
+		"One Shamir share (required)")
+	return cmd
+}
+
+// runTenantBarrierUnsealShareCommand executes 'tenant barrier unseal-share'.
+func runTenantBarrierUnsealShareCommand(cmd *cobra.Command, _ []string) error {
+	if err := requireTenantID("tenant.barrier.unseal-share"); err != nil {
+		return err
+	}
+	if tenantBarrierShare == "" {
+		return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.unseal-share",
+			"--share is required")
+	}
+
+	client, err := tenantBarrierClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	progress, err := client.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
+		TenantID: tenantBarrierTenantID,
+		Share:    tenantBarrierShare,
+	})
+	if err != nil {
+		return formatError(err)
+	}
+	return formatTenantBarrierProgress(progress, tenantBarrierOutputFmt, cmd.OutOrStdout())
+}
+
+// =============================================================================
+// seal
+// =============================================================================
+
+// newTenantBarrierSealCommand builds 'quicbaas tenant barrier seal'.
+func newTenantBarrierSealCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "seal",
+		Short: "Seal the tenant barrier",
+		Long: `Seal a tenant barrier.
+
+Sealing renders that tenant's data unreadable until the barrier is
+unsealed again with the tenant's own credentials. Nobody else — including
+the infrastructure operator — can reverse it.
+
+Example:
+  quicbaas tenant barrier seal --tenant acme --yes`,
+		RunE: runTenantBarrierSealCommand,
+	}
+	cmd.Flags().BoolVarP(&barrierAssumeYes, "yes", "y", false,
+		"Skip the confirmation prompt")
+	return cmd
+}
+
+// runTenantBarrierSealCommand executes 'tenant barrier seal'.
+func runTenantBarrierSealCommand(cmd *cobra.Command, _ []string) error {
+	if err := requireTenantID("tenant.barrier.seal"); err != nil {
+		return err
+	}
+	// Sealing is effectively destructive from the tenant's perspective, so it
+	// is confirmed by default rather than on request.
+	if !barrierAssumeYes {
+		return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.seal",
+			"sealing tenant %q makes its data unreadable until unsealed with the tenant's own credentials; re-run with --yes to confirm",
+			tenantBarrierTenantID)
+	}
+
+	client, err := tenantBarrierClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	if err := client.TenantBarrierSeal(ctx, &qrdbtransport.TenantBarrierSealRequest{
+		TenantID: tenantBarrierTenantID,
+	}); err != nil {
+		return formatError(err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Tenant barrier %s sealed.\n", tenantBarrierTenantID)
+	return nil
+}
+
+// =============================================================================
+// officer
+// =============================================================================
+
+// newTenantBarrierOfficerCommand builds 'quicbaas tenant barrier officer'.
+func newTenantBarrierOfficerCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "officer",
+		Short: "Inspect the tenant's Security Officers",
+		Long: `Inspect a tenant's Security Officers.
+
+Reports public metadata only — username, share index, auth factor,
+certificate thumbprint. Share bytes are never returned by any verb here.`,
+	}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List the tenant's enrolled Security Officers",
+		RunE:  runTenantBarrierOfficerListCommand,
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "status",
+		Short: "Show per-officer claim status for the tenant",
+		RunE:  runTenantBarrierOfficerStatusCommand,
+	})
+	return cmd
+}
+
+// runTenantBarrierOfficerListCommand executes 'tenant barrier officer list'.
+func runTenantBarrierOfficerListCommand(cmd *cobra.Command, _ []string) error {
+	if err := requireTenantID("tenant.barrier.officer.list"); err != nil {
+		return err
+	}
+	client, err := tenantBarrierClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	officers, err := client.TenantBarrierOfficerList(ctx, tenantBarrierTenantID)
+	if err != nil {
+		return formatError(err)
+	}
+	return formatOfficerStatusList(officers, tenantBarrierOutputFmt, cmd.OutOrStdout())
+}
+
+// runTenantBarrierOfficerStatusCommand executes 'tenant barrier officer status'.
+func runTenantBarrierOfficerStatusCommand(cmd *cobra.Command, _ []string) error {
+	if err := requireTenantID("tenant.barrier.officer.status"); err != nil {
+		return err
+	}
+	client, err := tenantBarrierClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	officers, err := client.TenantBarrierOfficerClaimStatus(ctx, tenantBarrierTenantID)
+	if err != nil {
+		return formatError(err)
+	}
+	return formatOfficerStatusList(officers, tenantBarrierOutputFmt, cmd.OutOrStdout())
+}
+
+// =============================================================================
+// Output formatting
+// =============================================================================
+
+// formatTenantBarrierStatus renders a tenant barrier's state.
+func formatTenantBarrierStatus(
+	resp *qrdbtransport.TenantBarrierStatusResponse,
+	format string,
+	w io.Writer,
+) error {
+	if resp == nil {
+		return errors.Newf(errors.ErrInternal, "tenant.barrier.status", "empty response")
+	}
+	outputFormat, err := cli.ParseOutputFormat(format)
+	if err != nil {
+		return err
+	}
+	if outputFormat == cli.OutputFormatJSON {
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(resp)
+	}
+
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(tw, "TENANT BARRIER\n")
+	fmt.Fprintf(tw, "%s\n", strings.Repeat("=", 60))
+	fmt.Fprintf(tw, "Tenant:\t%s\n", resp.TenantID)
+	fmt.Fprintf(tw, "Initialized:\t%t\n", resp.Initialized)
+	fmt.Fprintf(tw, "Sealed:\t%t\n", resp.Sealed)
+	fmt.Fprintf(tw, "Strategy:\t%s\n", resp.Strategy)
+	fmt.Fprintf(tw, "Hardware-backed:\t%t\n", resp.HardwareBacked)
+	if resp.ShamirThreshold > 0 {
+		fmt.Fprintf(tw, "Shamir:\t%d-of-%d\n", resp.ShamirThreshold, resp.ShamirTotal)
+	}
+	return tw.Flush()
+}
+
+// formatTenantBarrierInit renders the initialization result.
+func formatTenantBarrierInit(
+	resp *qrdbtransport.TenantBarrierInitResponse,
+	format string,
+	w io.Writer,
+) error {
+	if resp == nil {
+		return errors.Newf(errors.ErrInternal, "tenant.barrier.init", "empty response")
+	}
+	outputFormat, err := cli.ParseOutputFormat(format)
+	if err != nil {
+		return err
+	}
+	if outputFormat == cli.OutputFormatJSON {
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(resp)
+	}
+
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(tw, "Tenant:\t%s\n", resp.TenantID)
+	fmt.Fprintf(tw, "Strategy:\t%s\n", resp.Strategy)
+	if resp.Threshold > 0 {
+		fmt.Fprintf(tw, "Shamir:\t%d-of-%d\n", resp.Threshold, resp.TotalShares)
+	}
+	return tw.Flush()
+}
+
+// formatTenantBarrierProgress renders Shamir quorum progress.
+func formatTenantBarrierProgress(
+	progress *qrdbtransport.TenantBarrierUnsealProgress,
+	format string,
+	w io.Writer,
+) error {
+	if progress == nil {
+		return errors.Newf(errors.ErrInternal, "tenant.barrier.unseal-share", "empty response")
+	}
+	outputFormat, err := cli.ParseOutputFormat(format)
+	if err != nil {
+		return err
+	}
+	if outputFormat == cli.OutputFormatJSON {
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(progress)
+	}
+
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(tw, "Tenant:\t%s\n", progress.TenantID)
+	fmt.Fprintf(tw, "Shares:\t%d of %d submitted\n", progress.Submitted, progress.Required)
+	fmt.Fprintf(tw, "Complete:\t%t\n", progress.Complete)
+	return tw.Flush()
+}

@@ -107,56 +107,6 @@ func (c *QUICKMSClient) Close() error {
 	return c.client.Close()
 }
 
-// QUICDEKClient wraps the QUIC client to implement the DEKClient interface.
-type QUICDEKClient struct {
-	client *quic.Client
-}
-
-// KMSCreateDEK creates a new Data Encryption Key.
-func (c *QUICDEKClient) KMSCreateDEK(ctx context.Context, req *service.CreateDEKRequest) (*service.CreateDEKResponse, error) {
-	return c.client.KMSCreateDEK(ctx, req)
-}
-
-// KMSGetDEK retrieves a DEK by path.
-func (c *QUICDEKClient) KMSGetDEK(ctx context.Context, req *service.GetDEKRequest) (*service.GetDEKResponse, error) {
-	return c.client.KMSGetDEK(ctx, req)
-}
-
-// KMSListDEKs lists all DEKs matching optional filters.
-func (c *QUICDEKClient) KMSListDEKs(ctx context.Context, req *service.ListDEKsRequest) (*service.ListDEKsResponse, error) {
-	return c.client.KMSListDEKs(ctx, req)
-}
-
-// KMSRotateDEK rotates a DEK to a new version.
-func (c *QUICDEKClient) KMSRotateDEK(ctx context.Context, req *service.RotateDEKRequest) (*service.RotateDEKResponse, error) {
-	return c.client.KMSRotateDEK(ctx, req)
-}
-
-// KMSDeleteDEK deletes a DEK.
-func (c *QUICDEKClient) KMSDeleteDEK(ctx context.Context, req *service.DeleteDEKRequest) (*service.DeleteDEKResponse, error) {
-	return c.client.KMSDeleteDEK(ctx, req)
-}
-
-// KMSGetDEKStatus retrieves detailed DEK status.
-func (c *QUICDEKClient) KMSGetDEKStatus(ctx context.Context, req *service.GetDEKStatusRequest) (*service.GetDEKStatusResponse, error) {
-	return c.client.KMSGetDEKStatus(ctx, req)
-}
-
-// KMSSetDefaultDEK sets a DEK as the default for its path.
-func (c *QUICDEKClient) KMSSetDefaultDEK(ctx context.Context, req *service.SetDefaultDEKRequest) (*service.SetDefaultDEKResponse, error) {
-	return c.client.KMSSetDefaultDEK(ctx, req)
-}
-
-// KMSSetDEKSafety sets AEAD safety limits for a DEK.
-func (c *QUICDEKClient) KMSSetDEKSafety(ctx context.Context, req *service.SetDEKSafetyRequest) (*service.SetDEKSafetyResponse, error) {
-	return c.client.KMSSetDEKSafety(ctx, req)
-}
-
-// Close closes the QUIC client connection.
-func (c *QUICDEKClient) Close() error {
-	return c.client.Close()
-}
-
 // QUICSecretsClient wraps the QUIC client to implement the SecretsClient interface.
 type QUICSecretsClient struct {
 	client *quic.Client
@@ -449,15 +399,6 @@ func createQUICKMSClient() (KMSClient, error) {
 	return &QUICKMSClient{client: client}, nil
 }
 
-// createQUICDEKClient creates a QUIC client for DEK operations.
-func createQUICDEKClient() (DEKClient, error) {
-	client, err := createQUICClientInternal()
-	if err != nil {
-		return nil, err
-	}
-	return &QUICDEKClient{client: client}, nil
-}
-
 // createQUICSecretsClient creates a QUIC client for secrets operations.
 func createQUICSecretsClient() (SecretsClient, error) {
 	client, err := createQUICClientInternal()
@@ -506,7 +447,6 @@ func createQUICCryptoClient() (CryptoClient, error) {
 // Compile-time interface checks.
 var (
 	_ KMSClient     = (*QUICKMSClient)(nil)
-	_ DEKClient     = (*QUICDEKClient)(nil)
 	_ SecretsClient = (*QUICSecretsClient)(nil)
 	_ SealClient    = (*QUICSealClient)(nil)
 	_ BackendClient = (*QUICBackendClient)(nil)

@@ -272,16 +272,31 @@ This document provides a comprehensive overview of all CLI commands in QuicBaaS,
 
 ### KMS DEK Management
 
+`kms dek` is a deprecated alias that mounts the canonical `dek` tree below;
+every verb, transport and test in that table applies unchanged. The legacy
+`kms dek generate` verb survives as an alias of `dek create`.
+
 | Command | gRPC | REST | QUIC | Unix | MCP | Tests | Status |
 |---------|------|------|------|------|-----|-------|--------|
-| `kms dek generate` | Y | Y | Y | - | Y | B | Complete |
-| `kms dek get` | Y | Y | Y | - | Y | B | Complete |
-| `kms dek list` | Y | Y | Y | - | Y | B | Complete |
-| `kms dek rotate` | Y | Y | Y | - | Y | B | Complete |
-| `kms dek delete` | Y | Y | Y | - | Y | B | Complete |
-| `kms dek status` | Y | Y | Y | - | Y | B | Complete |
-| `kms dek set-default` | Y | Y | Y | - | Y | B | Complete |
-| `kms dek set-safety` | Y | Y | Y | - | Y | B | Complete |
+| `kms dek *` | Y | Y | Y | Y | Y | B | Deprecated alias of `dek` |
+
+### DEK Management (canonical `dek` tree)
+
+All verbs route through `Security().DEK()` on the active SDK transport.
+
+| Command | gRPC | REST | QUIC | Unix | MCP | Tests | Status |
+|---------|------|------|------|------|-----|-------|--------|
+| `dek create` (alias `generate`) | Y | Y | Y | Y | Y | U | Complete |
+| `dek get` | Y | Y | Y | Y | Y | U | Complete |
+| `dek list` | Y | Y | Y | Y | Y | U | Complete |
+| `dek rotate` | Y | Y | Y | Y | Y | U | Complete |
+| `dek delete` | Y | Y | Y | Y | Y | U | Complete |
+| `dek status` | Y | Y | Y | Y | Y | U | Complete |
+| `dek set-default` | Y | Y | Y | Y | Y | U | Complete |
+| `dek set-safety` | Y | Y | Y | Y | Y | U | Complete |
+| `dek clear-safety` | Y | Y | Y | Y | Y | U | Complete |
+| `dek reencrypt` | Y | Y | Y | Y | Y | U | Complete |
+| `dek reencrypt-progress` | Y | Y | Y | Y | Y | U | Complete |
 
 ### KMS Backend
 
@@ -419,6 +434,22 @@ This document provides a comprehensive overview of all CLI commands in QuicBaaS,
 | `secrets get-prefix` | Y | Y | Y | - | Y | B | Complete |
 | `secrets watch` | Y | Y | Y | - | Y | U | Complete |
 | `secrets fetch` | Y | Y | Y | - | Y | U | Complete |
+
+## Dynamic Secrets Module
+
+Alias: `quicbaas dynsec`. All eight verbs route through
+`Security().DynamicSecrets()`; Unix delegates to the gRPC handler verbatim.
+
+| Command | gRPC | REST | QUIC | Unix | MCP | Tests | Status |
+|---------|------|------|------|------|-----|-------|--------|
+| `dynamic-secrets role create` | Y | Y | Y | Y | Y | U | Complete |
+| `dynamic-secrets role get` | Y | Y | Y | Y | Y | U | Complete |
+| `dynamic-secrets role list` | Y | Y | Y | Y | Y | U | Complete |
+| `dynamic-secrets role delete` | Y | Y | Y | Y | Y | U | Complete |
+| `dynamic-secrets generate` | Y | Y | Y | Y | Y | U | Complete |
+| `dynamic-secrets lease renew` | Y | Y | Y | Y | Y | U | Complete |
+| `dynamic-secrets lease revoke` | Y | Y | Y | Y | Y | U | Complete |
+| `dynamic-secrets lease list` | Y | Y | Y | Y | Y | U | Complete |
 
 ## Time Series Module
 

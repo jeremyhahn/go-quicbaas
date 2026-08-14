@@ -17,7 +17,6 @@ package server
 
 import (
 	"crypto/tls"
-	"fmt"
 	"time"
 
 	quicapi "github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
@@ -47,7 +46,7 @@ func (s *Server) startSealedQUICServer() error {
 	tlsConfig.NextProtos = []string{"quicbaas-quic", quicapi.QRDBALPN}
 
 	quicConfig := &quicapi.Config{
-		ListenAddr:                 fmt.Sprintf("%s:%d", s.config.Server.ResolveBindHost(s.config.Server.QUIC.BindAddress), s.config.Server.QUIC.Port),
+		ListenAddr:                 sealedListenAddress(s.config, s.config.Server.QUIC.Port),
 		TLSConfig:                  tlsConfig,
 		MaxStreams:                 1000,
 		MaxIdleTimeout:             30 * time.Second,
@@ -77,7 +76,7 @@ func (s *Server) startSealedQUICServer() error {
 
 	// Constant-sealed gate on both dispatch paths (native opcodes and the
 	// qrdb-quic ALPN bridge).
-	quicServer.SetSealedWindowGate(constantSealedProbe{},
+	quicServer.SetSealedWindowGate(constantSealedProbe{}, s.OperationalProbe(),
 		sealedwindow.QUICAllowlist(), sealedwindow.QRDBQUICAllowlist())
 
 	if err := quicServer.Start(); err != nil {

@@ -56,9 +56,8 @@ func generateNonce() (string, error) {
 }
 
 // generateTokensForUser generates access and refresh tokens for a user.
-// When the config specifies a JWTSigningKeyID, tokens are signed using the
-// provided crypto.Signer with the configured asymmetric algorithm. Otherwise,
-// tokens are signed with HS256 using the JWTSecret for backward compatibility.
+// Tokens are signed using the provided crypto.Signer with the configured
+// asymmetric algorithm.
 func generateTokensForUser(user *User, config *AuthConfig, tokenStore TokenStoreInterface) (*Token, error) {
 	now := time.Now()
 	expiresAt := now.Add(config.TokenTTL)
@@ -127,14 +126,9 @@ func generateTokensForUser(user *User, config *AuthConfig, tokenStore TokenStore
 	}, nil
 }
 
-// signToken signs a JWT claims set using the configured signing method.
-// When JWTSigningKeyID is set, uses asymmetric signing via crypto.Signer.
-// Otherwise, falls back to HS256 with the shared JWTSecret.
+// signToken signs a JWT claims set using the configured asymmetric signer.
 func signToken(claims *Claims, config *AuthConfig) (string, error) {
-	if config.JWTSigningKeyID != "" {
-		return signTokenAsymmetric(claims, config)
-	}
-	return signTokenHMAC(claims, config)
+	return signTokenAsymmetric(claims, config)
 }
 
 // signTokenAsymmetric signs a JWT token using the asymmetric crypto.Signer.
@@ -156,20 +150,8 @@ func signTokenAsymmetric(claims *Claims, config *AuthConfig) (string, error) {
 	return tokenString, nil
 }
 
-// signTokenHMAC signs a JWT token using HS256 with the shared secret.
-func signTokenHMAC(claims *Claims, config *AuthConfig) (string, error) {
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(config.JWTSecret))
-	if err != nil {
-		return "", err
-	}
-	return tokenString, nil
-}
-
 // validateJWTToken validates a JWT token and returns claims.
-// Supports both asymmetric (ECDSA/RSA) and symmetric (HMAC) signing methods
-// to enable migration from HS256 to ES256. During migration, tokens signed
-// with either method are accepted if the corresponding key material is available.
+// Only asymmetric (ECDSA/RSA) signing methods are accepted.
 func validateJWTToken(tokenString string, config *AuthConfig) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		return resolveVerificationKey(token, config)
@@ -187,32 +169,16 @@ func validateJWTToken(tokenString string, config *AuthConfig) (*Claims, error) {
 }
 
 // resolveVerificationKey returns the appropriate verification key based on
-// the token's signing method. This enables dual-validation during migration
-// from HS256 to asymmetric signing.
+// the token's signing method. Only asymmetric methods are accepted; symmetric
+// (HMAC) tokens are rejected to eliminate algorithm-confusion attacks.
 func resolveVerificationKey(token *jwt.Token, config *AuthConfig) (interface{}, error) {
 	switch token.Method.(type) {
-	case *jwt.SigningMethodECDSA:
+	case *jwt.SigningMethodECDSA, *jwt.SigningMethodRSA:
 		if config.jwtPublicKey != nil {
 			return config.jwtPublicKey, nil
 		}
 		return nil, &api.UnexpectedSigningMethodError{
 			Algorithm: fmt.Sprintf("%v (no public key configured)", token.Header["alg"]),
-		}
-
-	case *jwt.SigningMethodRSA:
-		if config.jwtPublicKey != nil {
-			return config.jwtPublicKey, nil
-		}
-		return nil, &api.UnexpectedSigningMethodError{
-			Algorithm: fmt.Sprintf("%v (no public key configured)", token.Header["alg"]),
-		}
-
-	case *jwt.SigningMethodHMAC:
-		if config.JWTSecret != "" {
-			return []byte(config.JWTSecret), nil
-		}
-		return nil, &api.UnexpectedSigningMethodError{
-			Algorithm: fmt.Sprintf("%v (HS256 disabled)", token.Header["alg"]),
 		}
 
 	default:
@@ -220,31 +186,6 @@ func resolveVerificationKey(token *jwt.Token, config *AuthConfig) (interface{}, 
 			Algorithm: fmt.Sprintf("%v", token.Header["alg"]),
 		}
 	}
-}
-
-// validateJWTTokenLegacy validates a JWT token using only the HMAC shared secret.
-// This preserves the original validation behavior for backward compatibility
-// with callers that do not have access to the full AuthConfig.
-func validateJWTTokenLegacy(tokenString, jwtSecret string) (*Claims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		// Validate signing method
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, &api.UnexpectedSigningMethodError{
-				Algorithm: fmt.Sprintf("%v", token.Header["alg"]),
-			}
-		}
-		return []byte(jwtSecret), nil
-	})
-	if err != nil {
-		return nil, api.NewInvalidTokenError("auth.validateJWTToken", err)
-	}
-
-	claims, ok := token.Claims.(*Claims)
-	if !ok || !token.Valid {
-		return nil, api.NewInvalidTokenClaimsError("auth.validateJWTToken")
-	}
-
-	return claims, nil
 }
 
 // SetAsymmetricSigning configures the AuthConfig for asymmetric JWT signing.

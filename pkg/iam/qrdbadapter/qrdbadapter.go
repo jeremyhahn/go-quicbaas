@@ -158,13 +158,30 @@ func (a *RoleAdapter) CreateRole(ctx context.Context, req *qrdbsdk.CreateRoleReq
 // =============================================================================
 
 // UserAdapter exposes quicbaas IdentityStore user operations as a qrdb
-// UserCreator. Use WrapUser to construct.
+// UserCreator AND as the admin-mTLS CertBinder seam. Use WrapUser to construct.
+//
+// The two roles belong on one type because the binder must address the very
+// user the creator just wrote: qrdb's CertBinder is handed qrdb's numeric user
+// id, while quicbaas's IdentityStore is keyed by its own string UUID. The
+// adapter remembers the record it created so the binding lands on the right
+// user without a second, lossy id translation.
 type UserAdapter struct {
 	store *iam.IdentityStore
+
+	// created is the user CreateUser most recently wrote. firstboot.Initialize
+	// calls Binder.BindAdminCert only in the same, single-threaded run that
+	// created the admin, so a plain field is the whole correlation needed.
+	created *iam.User
 }
 
-// WrapUser adapts a quicbaas IdentityStore to the qrdb UserCreator
-// surface qrdbfirstboot.Initialize consumes.
+// Compile-time proof that the adapter satisfies both first-boot seams.
+var (
+	_ qrdbsdk.FirstBootUserCreator = (*UserAdapter)(nil)
+	_ qrdbsdk.CertBinder           = (*UserAdapter)(nil)
+)
+
+// WrapUser adapts a quicbaas IdentityStore to the qrdb UserCreator and
+// CertBinder surfaces qrdbfirstboot.Initialize consumes.
 func WrapUser(store *iam.IdentityStore) *UserAdapter { return &UserAdapter{store: store} }
 
 // CreateUser satisfies qrdbfirstboot.UserCreator. Synthesizes the email
@@ -181,11 +198,11 @@ func WrapUser(store *iam.IdentityStore) *UserAdapter { return &UserAdapter{store
 // (iam.User.ID) as the authoritative identity for its OIDC / PEP /
 // session / SPKI-binding layers, so the adapter does NOT cram the
 // quicbaas string id into qrdb's numeric ID field. The returned
-// qrdbsdk.User therefore carries no ID (zero value); qrdbfirstboot only
-// reads the returned ID when a CertBinder is wired (quicbaas wires
-// none — it re-resolves its own user via GetUserByEmail). The stable
-// cross-store correlation key is the username, which is preserved
-// verbatim on both sides.
+// qrdbsdk.User therefore carries no ID (zero value). quicbaas wires this
+// same adapter as qrdbfirstboot's CertBinder, and BindAdminCert addresses
+// the admin through the record remembered here rather than through qrdb's
+// numeric id. The stable cross-store correlation key is the username, which
+// is preserved verbatim on both sides.
 func (a *UserAdapter) CreateUser(ctx context.Context, req *qrdbsdk.CreateUserRequest) (*qrdbsdk.User, error) {
 	if a == nil || a.store == nil {
 		return nil, &NilDependencyError{Name: "IdentityStore"}
@@ -210,6 +227,7 @@ func (a *UserAdapter) CreateUser(ctx context.Context, req *qrdbsdk.CreateUserReq
 		}
 		return nil, err
 	}
+	a.created = u
 	return &qrdbsdk.User{
 		Username: u.Name,
 		TenantID: u.TenantID,
@@ -218,9 +236,85 @@ func (a *UserAdapter) CreateUser(ctx context.Context, req *qrdbsdk.CreateUserReq
 	}, nil
 }
 
+// CreatedUser returns the quicbaas user record CreateUser most recently wrote,
+// or nil when this adapter has not created one. First-boot callers use it to
+// reach the admin they just provisioned without re-querying the store.
+func (a *UserAdapter) CreatedUser() *iam.User {
+	if a == nil {
+		return nil
+	}
+	return a.created
+}
+
+// BindAdminCert satisfies qrdbfirstboot.CertBinder: it pins the admin
+// certificate's canonical SPKI thumbprint (base64url SHA-256 over
+// SubjectPublicKeyInfo, computed by firstboot via qrdb's
+// user.ComputeSPKIThumbprint) onto the admin user, so a subsequent mTLS
+// handshake presenting that certificate authenticates as the admin.
+//
+// The qrdbUserID argument is qrdb's server-assigned numeric id. quicbaas's
+// UserAdapter.CreateUser deliberately does not surface that id (see its doc
+// comment) — the authoritative handle on this side is the string UUID of the
+// record this adapter just created, which is what the binding is written
+// against.
+func (a *UserAdapter) BindAdminCert(ctx context.Context, tenantID string, qrdbUserID uint64, thumbprint string) error {
+	if a == nil || a.store == nil {
+		return &NilDependencyError{Name: "IdentityStore"}
+	}
+	if a.created == nil {
+		return &AdminBindTargetError{TenantID: tenantID, QRDBUserID: qrdbUserID}
+	}
+	if thumbprint == "" {
+		return &AdminBindThumbprintError{TenantID: tenantID, UserID: a.created.ID}
+	}
+	if tenantID == "" {
+		tenantID = a.created.TenantID
+	}
+	updated, err := a.store.UpdateUser(ctx, tenantID, a.created.ID, iam.UpdateUserOptions{
+		SPKICertThumbprint: &thumbprint,
+	})
+	if err != nil {
+		return err
+	}
+	a.created = updated
+	return nil
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
+
+// AdminBindTargetError reports that BindAdminCert was called on an adapter
+// that never created a user, so there is no admin record to bind the
+// certificate to.
+type AdminBindTargetError struct {
+	// TenantID is the tenant first-boot asked to bind within.
+	TenantID string
+	// QRDBUserID is qrdb's numeric id for the admin it created.
+	QRDBUserID uint64
+}
+
+// Error implements the error interface.
+func (e *AdminBindTargetError) Error() string {
+	return "qrdbadapter: cannot bind admin certificate in tenant " + e.TenantID +
+		": this adapter created no user"
+}
+
+// AdminBindThumbprintError reports that BindAdminCert was handed an empty SPKI
+// thumbprint. Binding an empty value would silently clear the admin's mTLS
+// identity, so the seam fails closed instead.
+type AdminBindThumbprintError struct {
+	// TenantID owns the admin user.
+	TenantID string
+	// UserID is the quicbaas string id of the admin user.
+	UserID string
+}
+
+// Error implements the error interface.
+func (e *AdminBindThumbprintError) Error() string {
+	return "qrdbadapter: refusing to bind an empty SPKI thumbprint to admin user " +
+		e.UserID + " in tenant " + e.TenantID
+}
 
 // NilDependencyError reports that a required adapter dependency (the wrapped
 // manager/store, or a request argument) was nil. Name identifies the missing

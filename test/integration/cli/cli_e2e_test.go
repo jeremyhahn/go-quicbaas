@@ -893,7 +893,10 @@ func TestCLIDEKHelp(t *testing.T) {
 	output, err := runCommand(ctx, binary, "kms", "dek", "--help")
 	require.NoError(t, err, "KMS DEK help should succeed")
 
-	assert.Contains(t, output, "generate", "Should list generate command")
+	// "create" is the canonical verb; "generate" survives only as a cobra
+	// alias, and cobra does not print aliases in the command list, so the
+	// help text lists "create".
+	assert.Contains(t, output, "create", "Should list create command")
 	assert.Contains(t, output, "delete", "Should list delete command")
 	assert.Contains(t, output, "rotate", "Should list rotate command")
 	t.Logf("KMS DEK help executed successfully")

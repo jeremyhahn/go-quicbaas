@@ -2049,24 +2049,6 @@ func TestCreateKMSClient_MCPTransport(t *testing.T) {
 	require.NotNil(t, client)
 }
 
-func TestCreateDEKClient_MCPTransport(t *testing.T) {
-	origTransport := transport
-	origFactory := sdkClientFactory
-	defer func() {
-		transport = origTransport
-		sdkClientFactory = origFactory
-	}()
-
-	transport = "mcp"
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return &mockSDKClientForMCP{mockTransport: &mockMCPTransport{}}, nil
-	}
-
-	client, err := createDEKClient()
-	require.NoError(t, err)
-	require.NotNil(t, client)
-}
-
 func TestCreateBackendClient_MCPTransport(t *testing.T) {
 	origTransport := transport
 	origFactory := sdkClientFactory
@@ -2118,24 +2100,6 @@ func TestCreateKMSClient_MCPFactoryError(t *testing.T) {
 	}
 
 	client, err := createKMSClient()
-	assert.Error(t, err)
-	assert.Nil(t, client)
-}
-
-func TestCreateDEKClient_MCPFactoryError(t *testing.T) {
-	origTransport := transport
-	origFactory := sdkClientFactory
-	defer func() {
-		transport = origTransport
-		sdkClientFactory = origFactory
-	}()
-
-	transport = "mcp"
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return nil, assert.AnError
-	}
-
-	client, err := createDEKClient()
 	assert.Error(t, err)
 	assert.Nil(t, client)
 }

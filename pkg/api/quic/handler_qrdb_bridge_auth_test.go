@@ -58,7 +58,8 @@ func newBridgeAuthTestServer(t *testing.T, sealed, requireAuthz bool) (*Server, 
 	s.logger = createTestLogger()
 	s.ctx = context.Background()
 	probe := &fakeSealedProbe{sealed: sealed}
-	s.SetSealedWindowGate(probe, sealedwindow.QUICAllowlist(), sealedwindow.QRDBQUICAllowlist())
+	s.SetSealedWindowGate(probe, &quicCeremonyStateProbe{},
+		sealedwindow.QUICAllowlist(), sealedwindow.QRDBQUICAllowlist())
 	s.SetBarrierService(&e2eBarrierService{})
 	if requireAuthz {
 		s.SetValidatorEnforcement(&fakeValidatorAuthorizer{})
@@ -125,7 +126,13 @@ func TestQRDBBridgeAuthRequired_Decision(t *testing.T) {
 		// are admitted without a certificate WHILE SEALED (audited bypass).
 		{"authz on sealed no cert unseal", true, true, "barrier.Unseal", nil, false},
 		{"authz on sealed no cert shamir share", true, true, "barrier.ShamirUnsealShare", nil, false},
-		{"authz on sealed no cert ceremony", true, true, "ceremony.Initialize", nil, false},
+		{"authz on sealed no cert ceremony status", true, true, "ceremony.Status", nil, false},
+
+		// StrictCeremonyExclusions withholds the trust-minting ceremony verbs
+		// from the sealed window on every transport, so the bypass never
+		// admits them and the predicate still demands a verified peer cert.
+		{"authz on sealed no cert ceremony initialize", true, true, "ceremony.Initialize", nil, true},
+		{"authz on sealed no cert ceremony sign-csr", true, true, "ceremony.SignCSR", nil, true},
 
 		// Sealed + NON-allowlisted stays fail-closed (the sealed deny gate
 		// rejects these first in dispatch; the predicate is fail-closed too).

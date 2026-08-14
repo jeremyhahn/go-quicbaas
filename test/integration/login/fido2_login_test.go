@@ -21,7 +21,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,9 +43,9 @@ import (
 // with a REAL credential id was byte-identical to finishing with a bogus one
 // ("factor not found").
 //
-// The registration here runs through the XKMSWebAuthnManager REST mount
-// (/api/v1/tenants/{tenant}/webauthn/register/*) — the exact surface the GUI
-// self-registration, invite-activation and IAM-console flows use. The
+// The registration here runs through the canonical xkms-native REST mount
+// (/api/v1/iam/{tenant}/webauthn/registration/*) — the single tenant-scoped
+// ceremony surface (the legacy /api/v1/tenants mount was deleted). The
 // authenticator is go-xkms's headless CTAP2 software adapter, so the ceremony
 // is a real cryptographic exchange, not a fixture.
 //
@@ -51,30 +53,68 @@ import (
 // the finish step with "factor not found".
 // =============================================================================
 
-// webAuthnRegisterPath is the manager-backed registration mount. It routes
-// through pkg/api/rest.IAMHandler -> iam.XKMSWebAuthnManager -> the per-tenant
+// webAuthnRegistrationPath is the canonical xkms-native registration mount.
+// It routes through pkg/api/rest's MountXKMSWebAuthnRoutes -> the per-tenant
 // xkms relying party, whose credential store carries the qrdb factor
 // write-through.
-func webAuthnRegisterPath(tenantID, step string) string {
-	return "/api/v1/tenants/" + tenantID + "/webauthn/register/" + step
+func webAuthnRegistrationPath(tenantID, step string) string {
+	return "/api/v1/iam/" + tenantID + "/webauthn/registration/" + step
+}
+
+// xkmsSessionHeader is the ceremony correlation header the xkms WebAuthn HTTP
+// handler emits from begin and consumes on finish.
+const xkmsSessionHeader = "X-Session-Id"
+
+// postForSession issues a POST with optional headers and returns the response
+// body, the X-Session-Id header, and the HTTP status.
+func postForSession(
+	ctx context.Context,
+	c *restCeremonyClient,
+	path string,
+	body []byte,
+	headers map[string]string,
+) ([]byte, string, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, strings.NewReader(string(body)))
+	if err != nil {
+		return nil, "", 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", resp.StatusCode, err
+	}
+	return respBody, resp.Header.Get(xkmsSessionHeader), resp.StatusCode, nil
 }
 
 // registerPasskey drives a full WebAuthn registration ceremony for the given
-// subject against the manager mount and returns the base64url credential id the
-// authenticator minted — the value the unified login submits as its lookup key.
+// subject against the canonical mount and returns the base64url credential id
+// the authenticator minted — the value the unified login submits as its
+// lookup key.
 func registerPasskey(
 	ctx context.Context,
 	c *restCeremonyClient,
 	adapter *webauthnclient.SoftwareAdapter,
 	subject string,
 ) (string, error) {
-	beginBody, _ := json.Marshal(map[string]string{"user_id": subject})
-	optionsJSON, status, err := c.post(ctx, webAuthnRegisterPath(systemTenantID, "begin"), beginBody)
+	beginBody, _ := json.Marshal(map[string]string{"email": subject})
+	optionsJSON, sessionID, status, err := postForSession(ctx, c,
+		webAuthnRegistrationPath(systemTenantID, "begin"), beginBody, nil)
 	if err != nil {
 		return "", err
 	}
 	if status != http.StatusOK {
-		return "", fmt.Errorf("register/begin returned %d: %s", status, string(optionsJSON))
+		return "", fmt.Errorf("registration/begin returned %d: %s", status, string(optionsJSON))
+	}
+	if sessionID == "" {
+		return "", fmt.Errorf("registration/begin returned no %s header", xkmsSessionHeader)
 	}
 
 	attestation, err := adapter.MakeCredential(optionsJSON)
@@ -82,21 +122,14 @@ func registerPasskey(
 		return "", fmt.Errorf("software authenticator MakeCredential: %w", err)
 	}
 
-	var credential map[string]any
-	if jerr := json.Unmarshal(attestation, &credential); jerr != nil {
-		return "", fmt.Errorf("decode attestation: %w", jerr)
-	}
-
-	finishBody, _ := json.Marshal(map[string]any{
-		"user_id":    subject,
-		"credential": credential,
-	})
-	respBody, status, err := c.post(ctx, webAuthnRegisterPath(systemTenantID, "finish"), finishBody)
+	respBody, _, status, err := postForSession(ctx, c,
+		webAuthnRegistrationPath(systemTenantID, "finish"), attestation,
+		map[string]string{xkmsSessionHeader: sessionID})
 	if err != nil {
 		return "", err
 	}
 	if status != http.StatusOK {
-		return "", fmt.Errorf("register/finish returned %d: %s", status, string(respBody))
+		return "", fmt.Errorf("registration/finish returned %d: %s", status, string(respBody))
 	}
 
 	return credentialIDFromWebAuthnDocument(attestation)

@@ -28,6 +28,22 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
+// credJSON marshals a qrdb credential wire struct into a request body.
+//
+// The credential wire types carry their values as []byte so binary material
+// round-trips byte-for-byte; over JSON that renders as base64 (RFC 4648), not
+// as a plain string. Marshalling the real wire struct keeps these tests
+// honest about the encoding instead of hand-writing a literal that the
+// decoder would reject.
+func credJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	return string(b)
+}
+
 // fakeCredentialService is a hand-written test double for the qrdb
 // CredentialServicer interface. Each method delegates to an optional
 // function field so individual tests can shape happy-path and error
@@ -202,7 +218,8 @@ func TestHandleCredentialSubmit(t *testing.T) {
 	}
 	s := credServer(t, svc)
 
-	w := doCredReq(t, s, http.MethodPost, "/v1/credentials/submit", `{"name":"db","value":"secret"}`)
+	w := doCredReq(t, s, http.MethodPost, "/v1/credentials/submit",
+		credJSON(t, qrdbtransport.CredentialSubmitRequest{Name: "db", Value: []byte("secret")}))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", w.Code)
 	}
@@ -338,7 +355,11 @@ func TestHandleCredentialRotate_WithGrace(t *testing.T) {
 		},
 	}
 	w := doCredReq(t, credServer(t, svc), http.MethodPost, "/v1/credentials/db/rotate",
-		`{"name":"ignored","new_value":"newpass","grace_period_seconds":30}`)
+		credJSON(t, qrdbtransport.CredentialRotateRequest{
+			Name:               "ignored",
+			NewValue:           []byte("newpass"),
+			GracePeriodSeconds: 30,
+		}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -364,7 +385,8 @@ func TestHandleCredentialRotate_NoGraceOmitsField(t *testing.T) {
 			return &qrdbsdk.RotateResult{Name: name, NewVersion: 1}, nil
 		},
 	}
-	w := doCredReq(t, credServer(t, svc), http.MethodPost, "/v1/credentials/db/rotate", `{"new_value":"x"}`)
+	w := doCredReq(t, credServer(t, svc), http.MethodPost, "/v1/credentials/db/rotate",
+		credJSON(t, qrdbtransport.CredentialRotateRequest{NewValue: []byte("x")}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -386,7 +408,8 @@ func TestHandleCredentialRotate_InvalidGracePeriod(t *testing.T) {
 			return nil, qrdbsdk.ErrInvalidGracePeriod
 		},
 	}
-	w := doCredReq(t, credServer(t, svc), http.MethodPost, "/v1/credentials/db/rotate", `{"new_value":"x"}`)
+	w := doCredReq(t, credServer(t, svc), http.MethodPost, "/v1/credentials/db/rotate",
+		credJSON(t, qrdbtransport.CredentialRotateRequest{NewValue: []byte("x")}))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
@@ -461,7 +484,7 @@ func TestHandleCredentialRetrieveVersion(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Value != "the-value" {
+	if string(resp.Value) != "the-value" {
 		t.Fatalf("unexpected value %q", resp.Value)
 	}
 }

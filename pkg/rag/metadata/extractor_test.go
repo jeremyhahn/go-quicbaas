@@ -443,10 +443,12 @@ func TestExtractor_ExtractGitInfo_NotGitRepo(t *testing.T) {
 	require.NoError(t, err)
 
 	extractor := NewExtractor(ExtractorConfig{EnableGit: true})
-	_, err = extractor.ExtractGitInfo(testFile)
+	gitInfo, err := extractor.ExtractGitInfo(testFile)
 
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not a git repository")
+	// require, not assert: dereferencing a nil error below would take down
+	// the whole package binary rather than this one test.
+	require.ErrorIs(t, err, ErrNotGitRepository)
+	assert.Nil(t, gitInfo)
 }
 
 func TestExtractor_ExtractGitInfo_Caching(t *testing.T) {
@@ -621,29 +623,80 @@ func TestDetectLanguage(t *testing.T) {
 	}
 }
 
+// writeFakeGitDir lays down the minimum structure git's own is_git_directory
+// rule accepts, so the walk tests exercise a repository rather than a bare
+// directory that merely happens to be named .git.
+func writeFakeGitDir(t *testing.T, root string) {
+	t.Helper()
+	gitDir := filepath.Join(root, ".git")
+	require.NoError(t, os.MkdirAll(filepath.Join(gitDir, "objects"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(gitDir, "refs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+}
+
 func TestFindGitDir(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create nested directories
 	nestedDir := filepath.Join(tmpDir, "a", "b", "c")
-	err := os.MkdirAll(nestedDir, 0755)
-	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(nestedDir, 0o755))
 
-	// Create .git directory at root
-	gitDir := filepath.Join(tmpDir, ".git")
-	err = os.Mkdir(gitDir, 0755)
-	require.NoError(t, err)
+	writeFakeGitDir(t, tmpDir)
 
 	// Should find .git from nested directory
 	found := findGitDir(nestedDir)
 	assert.Equal(t, tmpDir, found)
 }
 
+// TestFindGitDir_NotFound covers the negative branch of the walk. It cannot
+// simply assert "" for a temp directory: the walk continues to the filesystem
+// root, so a repository anywhere above the OS temp directory is a legitimate
+// hit that says nothing about the code. The hermetic property is that the walk
+// never claims a directory whose .git is absent or structurally invalid, so
+// the test builds its own chain and checks both.
 func TestFindGitDir_NotFound(t *testing.T) {
 	tmpDir := t.TempDir()
+	nestedDir := filepath.Join(tmpDir, "a", "b")
+	require.NoError(t, os.MkdirAll(nestedDir, 0o755))
 
-	found := findGitDir(tmpDir)
-	assert.Empty(t, found)
+	outside := findGitDir(tmpDir)
+	assert.NotEqual(t, tmpDir, findGitDir(nestedDir),
+		"a directory with no .git of its own must never be reported as the repository root")
+	assert.Equal(t, outside, findGitDir(nestedDir),
+		"with no repository in the subtree the walk must resolve to the same ancestor from either depth")
+
+	// An empty .git is not a repository: the walk must step over it and keep
+	// resolving to whatever it resolved to before.
+	require.NoError(t, os.Mkdir(filepath.Join(nestedDir, ".git"), 0o755))
+	assert.Equal(t, outside, findGitDir(nestedDir),
+		"an empty .git must not be mistaken for a repository")
+
+	// Completing the structure makes it a repository.
+	writeFakeGitDir(t, nestedDir)
+	assert.Equal(t, nestedDir, findGitDir(nestedDir))
+}
+
+func TestIsGitDir(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	assert.False(t, isGitDir(filepath.Join(tmpDir, "absent")), "a missing path is not a git dir")
+
+	filePath := filepath.Join(tmpDir, "file")
+	require.NoError(t, os.WriteFile(filePath, []byte("x"), 0o644))
+	assert.False(t, isGitDir(filePath), "a regular file is not a git dir")
+
+	partial := filepath.Join(tmpDir, "partial")
+	require.NoError(t, os.MkdirAll(filepath.Join(partial, "objects"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(partial, "refs"), 0o755))
+	assert.False(t, isGitDir(partial), "a .git without HEAD is not a git dir")
+
+	require.NoError(t, os.Mkdir(filepath.Join(partial, "HEAD"), 0o755))
+	assert.False(t, isGitDir(partial), "HEAD must be a file, not a directory")
+
+	complete := filepath.Join(tmpDir, "complete")
+	require.NoError(t, os.MkdirAll(complete, 0o755))
+	writeFakeGitDir(t, complete)
+	assert.True(t, isGitDir(filepath.Join(complete, ".git")))
 }
 
 func TestIsStopWord(t *testing.T) {

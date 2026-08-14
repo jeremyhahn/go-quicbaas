@@ -78,6 +78,20 @@ func (p *sealedKVServicerProxy) Put(ctx context.Context, key string, value []byt
 	return svc.Put(ctx, key, value)
 }
 
+// PutIfAbsent resolves the live servicer and forwards the conditional write.
+//
+// resolve() is what fails closed while the barrier is sealed, so the guarantee
+// is unchanged: a sealed window refuses the write outright rather than
+// answering "not stored", which a caller would otherwise read as "someone else
+// already claimed this key".
+func (p *sealedKVServicerProxy) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	svc, err := p.resolve()
+	if err != nil {
+		return false, err
+	}
+	return svc.PutIfAbsent(ctx, key, value)
+}
+
 func (p *sealedKVServicerProxy) Get(ctx context.Context, key string) ([]byte, error) {
 	svc, err := p.resolve()
 	if err != nil {

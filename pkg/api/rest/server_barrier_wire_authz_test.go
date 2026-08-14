@@ -56,7 +56,7 @@ func newBarrierValidatorServer(t *testing.T, probe *restTogglableProbe, authoriz
 	s, _ := newTestServer(t)
 	s.SetBarrierService(&fakeBarrierService{})
 	s.SetValidatorAuthzEnforcement(authorizer)
-	s.SetSealedWindowGate(probe, sealedwindow.RESTAllowlist())
+	s.SetSealedWindowGate(probe, &restCeremonyStateProbe{}, sealedwindow.RESTAllowlist())
 	return s
 }
 

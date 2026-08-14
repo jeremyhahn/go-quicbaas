@@ -32,15 +32,75 @@ func (p *fakeSealedProbe) IsSealed() bool { return p.sealed }
 // populated (the gate methods touch nothing else).
 func newGateTestServer(probe SealedWindowProbe) *Server {
 	s := &Server{}
-	s.SetSealedWindowGate(probe, sealedwindow.QUICAllowlist(), sealedwindow.QRDBQUICAllowlist())
+	s.SetSealedWindowGate(probe, &quicCeremonyStateProbe{},
+		sealedwindow.QUICAllowlist(), sealedwindow.QRDBQUICAllowlist())
 	return s
 }
 
-// TestSealedWindowTable_OpcodeLockstep pins the sealedwindow package's
-// private opcode/sub-op mirror against the authoritative protocol constants
-// in this package: the derivation table cannot import the tag-gated quic
-// package, so this guard is what keeps the two in lock-step.
+// canonicalQUICOps pins every native-QUIC entry of the canonical
+// sealed-window table to the authoritative protocol constants in this
+// package. The derivation table cannot import the tag-gated quic package, so
+// this map is what keeps the two in lock-step.
+//
+// It deliberately covers the trust-minting ceremony verbs as well: their
+// entries stay in the table so it diffs mechanically against qrdb's, even
+// though StrictCeremonyExclusions keeps them out of every allowlist.
+var canonicalQUICOps = map[sealedwindow.Verb][]sealedwindow.QUICOp{
+	sealedwindow.VerbHealth:                       {{Opcode: OpHealth}},
+	sealedwindow.VerbBarrierStatus:                {{Opcode: OpBarrier, SubOp: SubOpBarrierStatus}},
+	sealedwindow.VerbBarrierInitialize:            {{Opcode: OpBarrier, SubOp: SubOpBarrierInitialize}},
+	sealedwindow.VerbBarrierUnseal:                {{Opcode: OpBarrier, SubOp: SubOpBarrierUnseal}},
+	sealedwindow.VerbShamirInitialize:             {{Opcode: OpBarrier, SubOp: SubOpBarrierShamirInitialize}},
+	sealedwindow.VerbShamirUnsealShare:            {{Opcode: OpBarrier, SubOp: SubOpBarrierShamirUnsealShare}},
+	sealedwindow.VerbShamirUnsealShares:           {{Opcode: OpBarrier, SubOp: SubOpBarrierShamirUnsealShares}},
+	sealedwindow.VerbRekey:                        {{Opcode: OpBarrier, SubOp: SubOpBarrierRekey}},
+	sealedwindow.VerbRecoveryGenerate:             {{Opcode: OpBarrier, SubOp: SubOpBarrierRecoveryGenerate}},
+	sealedwindow.VerbRecoveryRecover:              {{Opcode: OpBarrier, SubOp: SubOpBarrierRecoveryRecover}},
+	sealedwindow.VerbRecoveryDelete:               {{Opcode: OpBarrier, SubOp: SubOpBarrierRecoveryDelete}},
+	sealedwindow.VerbRecoveryStatus:               {{Opcode: OpBarrier, SubOp: SubOpBarrierRecoveryStatus}},
+	sealedwindow.VerbRootToken:                    {{Opcode: OpBarrier, SubOp: SubOpBarrierRootToken}},
+	sealedwindow.VerbOfficerList:                  {{Opcode: OpCeremony, SubOp: SubOpCeremonyListOfficers}},
+	sealedwindow.VerbCeremonyInitialize:           {{Opcode: OpCeremony, SubOp: SubOpCeremonyInitialize}},
+	sealedwindow.VerbCeremonyStatus:               {{Opcode: OpCeremony, SubOp: SubOpCeremonyStatus}},
+	sealedwindow.VerbCeremonyClaimCertBegin:       {{Opcode: OpCeremony, SubOp: SubOpCeremonyClaimCertBegin}},
+	sealedwindow.VerbCeremonyClaimCertComplete:    {{Opcode: OpCeremony, SubOp: SubOpCeremonyClaimCertComplete}},
+	sealedwindow.VerbCeremonyOfficerShareBegin:    {{Opcode: OpCeremony, SubOp: SubOpCeremonyBeginClaimShare}},
+	sealedwindow.VerbCeremonyOfficerShareComplete: {{Opcode: OpCeremony, SubOp: SubOpCeremonyCompleteClaimShare}},
+	sealedwindow.VerbCeremonySignCSR:              {{Opcode: OpCeremony, SubOp: SubOpCeremonySignCSR}},
+	sealedwindow.VerbCeremonyEnrollExtOfficer:     {{Opcode: OpCeremony, SubOp: SubOpCeremonyEnrollExternalOfficer}},
+}
+
+// TestSealedWindowTable_OpcodeLockstep asserts the canonical table's private
+// opcode mirror still names the same bytes this package dispatches on, in
+// both directions: every verb this package knows about must carry exactly the
+// listed ops, and no table verb may carry a native-QUIC op this guard does
+// not account for.
 func TestSealedWindowTable_OpcodeLockstep(t *testing.T) {
+	for verb, ops := range canonicalQUICOps {
+		assert.Equal(t, ops, sealedwindow.Table[verb].QUIC,
+			"canonical table drifted from the protocol constants for verb %q", verb)
+	}
+	for verb, names := range sealedwindow.Table {
+		if len(names.QUIC) == 0 {
+			continue
+		}
+		_, known := canonicalQUICOps[verb]
+		assert.Truef(t, known, "verb %q gained a native-QUIC op with no lock-step guard", verb)
+	}
+}
+
+// TestQUICAllowlist_AdmitsAndExcludes asserts the derived native-QUIC
+// allowlist admits exactly the verbs the strict model permits while sealed.
+//
+// The three trust-minting ceremony sub-ops are DENIED. quicbaas adopts
+// go-xkms's strict ceremony model (sealedwindow.StrictCeremonyExclusions):
+// initialize mints the CA and the SO credential, sign-csr issues from that
+// CA, and enroll-external-officer seals a Shamir share to a caller-supplied
+// key. Serving any of them while sealed — where the allowlist ALSO exempts
+// the caller from authentication — hands an unauthenticated peer the trust
+// root. They run in-process under `quicbaasd init` instead, before any
+// listener exists.
+func TestQUICAllowlist_AdmitsAndExcludes(t *testing.T) {
 	allow := sealedwindow.QUICAllowlist()
 
 	expectAllowed := []sealedwindow.QUICOp{
@@ -57,15 +117,12 @@ func TestSealedWindowTable_OpcodeLockstep(t *testing.T) {
 		{Opcode: OpBarrier, SubOp: SubOpBarrierRecoveryDelete},
 		{Opcode: OpBarrier, SubOp: SubOpBarrierRecoveryStatus},
 		{Opcode: OpBarrier, SubOp: SubOpBarrierRootToken},
-		{Opcode: OpCeremony, SubOp: SubOpCeremonyInitialize},
 		{Opcode: OpCeremony, SubOp: SubOpCeremonyStatus},
 		{Opcode: OpCeremony, SubOp: SubOpCeremonyClaimCertBegin},
 		{Opcode: OpCeremony, SubOp: SubOpCeremonyClaimCertComplete},
 		{Opcode: OpCeremony, SubOp: SubOpCeremonyBeginClaimShare},
 		{Opcode: OpCeremony, SubOp: SubOpCeremonyCompleteClaimShare},
-		{Opcode: OpCeremony, SubOp: SubOpCeremonySignCSR},
 		{Opcode: OpCeremony, SubOp: SubOpCeremonyListOfficers},
-		{Opcode: OpCeremony, SubOp: SubOpCeremonyEnrollExternalOfficer},
 	}
 	for _, op := range expectAllowed {
 		_, ok := allow[op]
@@ -73,6 +130,13 @@ func TestSealedWindowTable_OpcodeLockstep(t *testing.T) {
 	}
 
 	expectDenied := []sealedwindow.QUICOp{
+		// Withheld by StrictCeremonyExclusions on every transport.
+		{Opcode: OpCeremony, SubOp: SubOpCeremonyInitialize},
+		{Opcode: OpCeremony, SubOp: SubOpCeremonySignCSR},
+		{Opcode: OpCeremony, SubOp: SubOpCeremonyEnrollExternalOfficer},
+
+		// Never in any transport's window: sealing and the tenant/encryption
+		// administration surfaces all require an unsealed data plane.
 		{Opcode: OpBarrier, SubOp: SubOpBarrierSeal},
 		{Opcode: OpBarrier, SubOp: SubOpBarrierEnableEncryption},
 		{Opcode: OpBarrier, SubOp: SubOpBarrierUpdateTenantQuotas},
@@ -103,6 +167,12 @@ func TestSealedWindowDeniesOp_SealedAdmitDenyTable(t *testing.T) {
 		{"shamir unseal-share admitted", OpBarrier, []byte{SubOpBarrierShamirUnsealShare}, false},
 		{"ceremony status admitted", OpCeremony, []byte{SubOpCeremonyStatus}, false},
 		{"ceremony claim-cert begin admitted", OpCeremony, []byte{SubOpCeremonyClaimCertBegin}, false},
+
+		// StrictCeremonyExclusions: the trust-minting ceremony verbs are
+		// refused while sealed on this transport as on every other.
+		{"ceremony initialize denied", OpCeremony, []byte{SubOpCeremonyInitialize}, true},
+		{"ceremony sign-csr denied", OpCeremony, []byte{SubOpCeremonySignCSR}, true},
+		{"ceremony enroll-external-officer denied", OpCeremony, []byte{SubOpCeremonyEnrollExternalOfficer}, true},
 
 		{"barrier seal denied", OpBarrier, []byte{SubOpBarrierSeal}, true},
 		{"barrier enable-encryption denied", OpBarrier, []byte{SubOpBarrierEnableEncryption}, true},
@@ -146,9 +216,12 @@ func TestSealedWindowDeniesQRDBMethod_SealedAdmitDenyTable(t *testing.T) {
 		{"barrier.Unseal", false},
 		{"barrier.ShamirUnsealShare", false},
 		{"barrier.RootToken", false},
-		{"ceremony.Initialize", false},
-		{"ceremony.SignCSR", false},
-		{"ceremony.EnrollExternalOfficer", false},
+		{"ceremony.Status", false},
+
+		// StrictCeremonyExclusions applies to the qrdb-quic bridge too.
+		{"ceremony.Initialize", true},
+		{"ceremony.SignCSR", true},
+		{"ceremony.EnrollExternalOfficer", true},
 
 		{"barrier.Seal", true},
 		{"barrier.EnableEncryption", true},

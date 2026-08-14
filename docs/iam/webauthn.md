@@ -15,12 +15,19 @@ persistence flows through xkms's qrdb adapter
 (`xkms.NewQRDBUserStoreAdapter`) so each tenant has an isolated user
 namespace inside the platform tenant's qrdb keyspace.
 
-REST surface is mounted at two paths:
+REST surface is mounted at one canonical path:
 
-- Legacy: `/api/v1/tenants/{tenant_id}/webauthn/{register,login}/{begin,finish}`
-- Canonical (Phase 5): `/api/v1/iam/{tenant_id}/webauthn/{registration,login}/{begin,finish}`
+- `/api/v1/iam/{tenant_id}/webauthn/{registration,login}/{begin,finish}`
+  (plus `registration/status`), served by xkms's native WebAuthn HTTP
+  handler via the per-tenant factory.
 
-Both paths route to the same per-tenant xkms service via the factory.
+The legacy `/api/v1/tenants/{tenant_id}/webauthn/*` mount (including
+its credential-management endpoints) was deleted. Browser and
+TypeScript-SDK login now uses the unified login ceremony at
+`/api/v1/auth/login/{begin,finish}` (`type: fido2`), which mints the
+OIDC bearer + refresh token; the xkms mount remains the ceremony
+surface the Go SDK's `Security().Auth().FIDO2()` REST transport
+drives.
 
 ## Features
 
@@ -131,14 +138,22 @@ Client                    Server                    Authenticator
 
 #### Step 1: Begin Registration
 
-Initiate credential registration for an authenticated user.
+Initiate credential registration for an authenticated user. The
+opaque ceremony session id is returned in the `X-Session-Id` response
+header and must be echoed on finish.
 
 ```http
-POST /api/v1/tenants/{tenant_id}/webauthn/register/begin
+POST /api/v1/iam/{tenant_id}/webauthn/registration/begin
 Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "email": "alice@example.com",
+  "display_name": "Alice Smith"
+}
 ```
 
-Response:
+Response (`X-Session-Id: <session>` header + options body):
 ```json
 {
   "publicKey": {
@@ -170,11 +185,14 @@ Response:
 
 #### Step 2: Complete Registration
 
-Submit the authenticator's attestation response. The credential data uses the standard WebAuthn format with proper base64url encoding.
+Submit the authenticator's attestation response — the raw
+`navigator.credentials.create()` PublicKeyCredential JSON is the
+request body, correlated by the `X-Session-Id` header from begin.
 
 ```http
-POST /api/v1/tenants/{tenant_id}/webauthn/register/finish
+POST /api/v1/iam/{tenant_id}/webauthn/registration/finish
 Authorization: Bearer <access_token>
+X-Session-Id: <session>
 Content-Type: application/json
 
 {
@@ -196,14 +214,11 @@ Content-Type: application/json
 - Public key extraction and COSE key parsing
 - Attestation verification (when attestation is not "none")
 
-Response:
+Response (xkms auth response):
 ```json
 {
-  "id": "credential-id-base64url",
-  "user_id": "user_abc123",
-  "name": "Authenticator 2025-01-07",
-  "created_at": "2025-01-07T10:30:00Z",
-  "transports": ["internal"]
+  "token": "<post-registration token>",
+  "user_id": "dXNlcl9hYmMxMjM"
 }
 ```
 
@@ -235,10 +250,12 @@ Client                    Server                    Authenticator
 
 #### Step 1: Begin Login
 
-Initiate WebAuthn authentication for a user.
+Initiate WebAuthn authentication for a user. This route is public —
+WebAuthn IS the authentication mechanism. The ceremony session id is
+returned in the `X-Session-Id` response header.
 
 ```http
-POST /api/v1/tenants/{tenant_id}/webauthn/login/begin
+POST /api/v1/iam/{tenant_id}/webauthn/login/begin
 Content-Type: application/json
 
 {
@@ -246,7 +263,7 @@ Content-Type: application/json
 }
 ```
 
-Response:
+Response (`X-Session-Id: <session>` header + options body):
 ```json
 {
   "publicKey": {
@@ -272,10 +289,13 @@ Response:
 
 #### Step 2: Complete Login
 
-Submit the authenticator's assertion response.
+Submit the authenticator's assertion response — the raw
+`navigator.credentials.get()` PublicKeyCredential JSON is the request
+body, correlated by the `X-Session-Id` header from begin.
 
 ```http
-POST /api/v1/tenants/{tenant_id}/webauthn/login/finish
+POST /api/v1/iam/{tenant_id}/webauthn/login/finish
+X-Session-Id: <session>
 Content-Type: application/json
 
 {
@@ -297,70 +317,29 @@ Content-Type: application/json
 - Sign count validation for clone detection
 - User verification flag checking
 
-Response:
+Response (xkms auth response):
 ```json
 {
-  "access_token": "eyJhbGciOiJSUzI1NiIs...",
-  "token_type": "Bearer",
-  "expires_in": 3600,
-  "refresh_token": "dGhpcyBpcyBhIHJlZnJlc2g...",
-  "user": {
-    "id": "user_abc123",
-    "email": "alice@example.com",
-    "name": "Alice Smith"
-  }
+  "token": "<post-login token>",
+  "user_id": "dXNlcl9hYmMxMjM"
 }
 ```
+
+The xkms mount's login token is not an OIDC bearer. Applications that
+need the full OIDC access/refresh token pair (the SPA, the TypeScript
+SDK, the CLI) log in through the unified ceremony instead:
+`POST /api/v1/auth/login/begin` (`type: fido2`) issues the WebAuthn
+challenge and `POST /api/v1/auth/login/finish` verifies the assertion
+server-side and mints the bearer + rotating refresh token.
 
 ### Credential Management
 
-#### List Credentials
-
-```http
-GET /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials
-Authorization: Bearer <access_token>
-```
-
-Response:
-```json
-{
-  "credentials": [
-    {
-      "id": "credential-id-1",
-      "name": "MacBook Touch ID",
-      "created_at": "2025-01-01T10:00:00Z",
-      "last_used_at": "2025-01-07T08:30:00Z",
-      "transports": ["internal"]
-    },
-    {
-      "id": "credential-id-2",
-      "name": "YubiKey 5",
-      "created_at": "2025-01-05T14:00:00Z",
-      "last_used_at": null,
-      "transports": ["usb", "nfc"]
-    }
-  ]
-}
-```
-
-#### Rename Credential
-
-```http
-PUT /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id}
-Authorization: Bearer <access_token>
-Content-Type: application/json
-
-{
-  "name": "Work Laptop Touch ID"
-}
-```
-
-#### Delete Credential
-
-```http
-DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id}
-Authorization: Bearer <access_token>
-```
+The legacy per-user credential CRUD endpoints
+(`/api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials`)
+were deleted with the legacy mount. Enrolled WebAuthn credentials are
+managed as qrdb user auth factors via
+`Security().Auth().Factors()` (list / remove / rotate / relabel) and
+the `quicbaas auth factor` CLI.
 
 ## Frontend Integration
 
@@ -369,13 +348,18 @@ Authorization: Bearer <access_token>
 Using the Web Authentication API:
 
 ```javascript
-// Registration
-async function registerWebAuthn() {
+// Registration (canonical xkms mount; session travels in X-Session-Id)
+async function registerWebAuthn(email, displayName) {
   // 1. Get options from server
-  const beginResponse = await fetch('/api/v1/tenants/my-tenant/webauthn/register/begin', {
+  const beginResponse = await fetch('/api/v1/iam/my-tenant/webauthn/registration/begin', {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}` }
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ email, display_name: displayName })
   });
+  const sessionId = beginResponse.headers.get('X-Session-Id');
   const options = await beginResponse.json();
 
   // 2. Decode base64url fields for the browser API
@@ -402,12 +386,13 @@ async function registerWebAuthn() {
     }
   };
 
-  // 5. Send to server
-  const finishResponse = await fetch('/api/v1/tenants/my-tenant/webauthn/register/finish', {
+  // 5. Send to server (raw PublicKeyCredential JSON, session header)
+  const finishResponse = await fetch('/api/v1/iam/my-tenant/webauthn/registration/finish', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      'X-Session-Id': sessionId
     },
     body: JSON.stringify(body)
   });
@@ -415,14 +400,16 @@ async function registerWebAuthn() {
   return finishResponse.json();
 }
 
-// Authentication
+// Authentication (ceremony-only; for an OIDC bearer use
+// POST /api/v1/auth/login/{begin,finish} with type "fido2" instead)
 async function loginWebAuthn(email) {
   // 1. Get options from server
-  const beginResponse = await fetch('/api/v1/tenants/my-tenant/webauthn/login/begin', {
+  const beginResponse = await fetch('/api/v1/iam/my-tenant/webauthn/login/begin', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email })
   });
+  const sessionId = beginResponse.headers.get('X-Session-Id');
   const options = await beginResponse.json();
 
   // 2. Decode base64url fields
@@ -447,10 +434,13 @@ async function loginWebAuthn(email) {
     }
   };
 
-  // 5. Send to server
-  const finishResponse = await fetch('/api/v1/tenants/my-tenant/webauthn/login/finish', {
+  // 5. Send to server (raw PublicKeyCredential JSON, session header)
+  const finishResponse = await fetch('/api/v1/iam/my-tenant/webauthn/login/finish', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Session-Id': sessionId
+    },
     body: JSON.stringify(body)
   });
 
@@ -496,8 +486,10 @@ function WebAuthnManager() {
     }
   };
 
-  const deleteCredential = async (credentialId) => {
-    await fetch(`/api/v1/tenants/my-tenant/users/me/webauthn/credentials/${credentialId}`, {
+  const deleteCredential = async (factorId) => {
+    // Enrolled passkeys are qrdb user auth factors; remove via the
+    // auth-factor surface (see Security().Auth().Factors()).
+    await fetch(`/v1/users/factors/${factorId}`, {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${token}` }
     });

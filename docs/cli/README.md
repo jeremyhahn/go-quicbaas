@@ -49,6 +49,8 @@ quicbaas data delete user john --yes
 | [ceremony](ceremony.md) | Initialisation ceremony state machine | status / claim-cert / claim-share (begin+complete handshake) / sign-csr / enroll-external-officer |
 | [bootstrap](bootstrap.md) | Trust-bootstrap the CA bundle | auto / dane / noise / spki / direct |
 | [ca](ca.md) | Certificate Authority operations | info / bundle / list / issue / revoke / export-bundle |
+| [acme](acme.md) | ACME (RFC 8555) broker-as-CA operations | register-challenge / issue / new-order / finalize-order / renew |
+| [trust](trust.md) | Trust artifacts | publish-dane / cross-signed-roots / auto-import-aia |
 | [credential](credential.md) | Named credential service (versioned rotation) | submit / list / rotate / retrieve / versions / delete / gc |
 | [init](init.md) | `quicbaasd init` daemon-side ceremony | First-boot bootstrap with persisted state |
 | [seal](seal.md) | _Deprecated alias_ — forwards to `barrier` | Migration guide only |
@@ -62,6 +64,8 @@ quicbaas data delete user john --yes
 | [kms](kms.md) | Key Management System | Generate, rotate, encrypt, decrypt |
 | [secrets](secrets.md) | Secrets management | Versioned, encrypted secret storage |
 | [crypto](crypto.md) | Encryption-as-a-service | Transit encryption operations |
+| [dek](dek.md) | Data Encryption Key management | create / get / list / rotate / delete / status / set-default / set-safety / clear-safety / reencrypt / reencrypt-progress |
+| [dynamic-secrets](dynamic-secrets.md) | Dynamic credential roles and leases | role create/get/list/delete, generate, lease renew/revoke/list |
 
 ### Data Management
 

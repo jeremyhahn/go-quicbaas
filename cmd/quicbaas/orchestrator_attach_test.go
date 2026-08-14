@@ -152,6 +152,47 @@ func TestPrettyAttachRenderer_AssistantChunk(t *testing.T) {
 	assert.Contains(t, got, "end_turn")
 }
 
+func TestPrettyAttachRenderer_AgentThought(t *testing.T) {
+	f := makeTempFile(t)
+	r := &prettyAttachRenderer{out: f}
+	env := mkEnvelope(t, "s1", 2, map[string]interface{}{
+		"kind": "agent_thought",
+		"thought": map[string]interface{}{
+			"text": "weighing the options",
+		},
+	})
+	require.NoError(t, r.Render(env))
+	got := readBack(t, f)
+	assert.Contains(t, got, "agent_thought")
+	assert.Contains(t, got, "~ weighing the options")
+}
+
+func TestPrettyAttachRenderer_AgentThoughtTruncated(t *testing.T) {
+	f := makeTempFile(t)
+	r := &prettyAttachRenderer{out: f}
+	env := mkEnvelope(t, "s1", 2, map[string]interface{}{
+		"kind": "agent_thought",
+		"thought": map[string]interface{}{
+			"text": strings.Repeat("x", 2000),
+		},
+	})
+	require.NoError(t, r.Render(env))
+	got := readBack(t, f)
+	assert.Contains(t, got, "\u2026")
+	assert.NotContains(t, got, strings.Repeat("x", 1025))
+}
+
+func TestPrettyAttachRenderer_AgentThoughtNilPayload(t *testing.T) {
+	f := makeTempFile(t)
+	r := &prettyAttachRenderer{out: f}
+	env := mkEnvelope(t, "s1", 2, map[string]interface{}{
+		"kind": "agent_thought",
+	})
+	require.NoError(t, r.Render(env))
+	got := readBack(t, f)
+	assert.Contains(t, got, "agent_thought")
+}
+
 func TestPrettyAttachRenderer_ToolInvocation(t *testing.T) {
 	f := makeTempFile(t)
 	r := &prettyAttachRenderer{out: f}

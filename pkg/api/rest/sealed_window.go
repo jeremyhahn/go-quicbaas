@@ -45,14 +45,26 @@ import (
 // control surface. Unsealed, the predicate is inert and enforcement is
 // unchanged.
 //
+// operational is the ceremony-state probe that decides whether the
+// pre-operational half of that exemption still applies (the self-authorizing
+// ceremony claim handshakes and the ceremony status probe). It FAILS CLOSED:
+// nil, or a probe reporting operational, withholds those exemptions so the
+// claim routes require authentication on an already-initialized sealed daemon.
+// The barrier / unseal surface is state-independent and is unaffected.
+//
 // Must be called before Start (it rebuilds the router, mirroring
 // SetAuthorizationService). A nil probe leaves the gate uninstalled.
-func (s *Server) SetSealedWindowGate(probe qrdbsdk.SealedWindowProbe, allowlist []string) {
+func (s *Server) SetSealedWindowGate(
+	probe qrdbsdk.SealedWindowProbe,
+	operational sealedwindow.OperationalProbe,
+	allowlist []string,
+) {
 	s.sealedProbe = probe
 	s.sealedAllowlist = allowlist
 
 	if probe != nil {
-		s.sealedBypass = sealedwindow.NewAuthBypass(probe, sealedwindow.NewLoggerAuditSink(s.logger))
+		s.sealedBypass = sealedwindow.NewAuthBypass(
+			probe, operational, sealedwindow.NewLoggerAuditSink(s.logger))
 	} else {
 		s.sealedBypass = nil
 	}

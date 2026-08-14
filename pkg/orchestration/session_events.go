@@ -36,6 +36,10 @@ const (
 	// final fragment carries StopReason.
 	KindAssistantChunk SessionEventKind = "assistant_chunk"
 
+	// KindAgentThought records a fragment of the agent's chain-of-thought
+	// (extended thinking / reasoning) emitted while working a turn.
+	KindAgentThought SessionEventKind = "agent_thought"
+
 	// KindToolInvocation records the agent invoking a tool (Read, Write,
 	// Edit, Grep, Bash, etc.) with its arguments.
 	KindToolInvocation SessionEventKind = "tool_invocation"
@@ -68,6 +72,13 @@ const (
 	// daemon or central restart.
 	KindSessionResumed SessionEventKind = "session_resumed"
 
+	// KindAccountRotated records that the session was moved onto a different
+	// pooled provider account. It is its own kind rather than a plain system
+	// message because it is the point at which the conversation's cost
+	// attribution changes hands: an operator reading a transcript needs to see
+	// exactly where one account's segment ended and the next began.
+	KindAccountRotated SessionEventKind = "account_rotated"
+
 	// KindInferenceSubmitted records a stateless inference prompt submitted
 	// through the fleet-routed Infer path. Distinct from KindPromptSubmitted
 	// which requires a prior session Spawn.
@@ -76,7 +87,81 @@ const (
 	// KindInferenceCompleted records the successful completion of a stateless
 	// inference call. Carries the model name and stop reason from the backend.
 	KindInferenceCompleted SessionEventKind = "inference_completed"
+
+	// KindTurnStarted marks the orchestrator accepting an agent turn for
+	// background execution. It is appended synchronously, before the prompt
+	// dispatch returns its acknowledgement, so an attacher that subscribes
+	// immediately after the ack always observes the turn.
+	KindTurnStarted SessionEventKind = "turn_started"
+
+	// KindTurnCompleted marks an accepted turn finishing successfully. It is
+	// the terminal event of a turn and carries the same TurnID as the
+	// KindTurnStarted that opened it.
+	KindTurnCompleted SessionEventKind = "turn_completed"
+
+	// KindTurnFailed marks an accepted turn ending in an error. Terminal for
+	// the turn; carries the failure text so operators see why the agent
+	// stopped without having to correlate server logs.
+	KindTurnFailed SessionEventKind = "turn_failed"
 )
+
+// Turn lifecycle status values. They label a turn in the acknowledgement
+// returned by AgentService.PromptSessionAsync and in the turn lifecycle
+// events, so a consumer reading either surface sees the same vocabulary.
+const (
+	// TurnStatusAccepted reports that the orchestrator persisted the turn and
+	// dispatched it; the agent's output will arrive on the session event log.
+	TurnStatusAccepted = "accepted"
+
+	// TurnStatusCompleted reports a turn that finished successfully.
+	TurnStatusCompleted = "completed"
+
+	// TurnStatusFailed reports a turn that ended in an error.
+	TurnStatusFailed = "failed"
+)
+
+// TurnStartedPayload is the payload for KindTurnStarted. It opens a turn: an
+// attacher that sees this event without a matching KindTurnCompleted or
+// KindTurnFailed knows the agent is still working.
+type TurnStartedPayload struct {
+	// TurnID correlates this event with the KindTurnCompleted or
+	// KindTurnFailed that closes the turn, and with the TurnID returned in
+	// the dispatch acknowledgement.
+	TurnID string `json:"turn_id"`
+
+	// Backend is the agent backend the turn was dispatched to.
+	Backend string `json:"backend,omitempty"`
+
+	// Model is the model resolved for the turn, when known up front.
+	Model string `json:"model,omitempty"`
+}
+
+// TurnCompletedPayload is the payload for KindTurnCompleted.
+type TurnCompletedPayload struct {
+	// TurnID matches the TurnStartedPayload that opened the turn.
+	TurnID string `json:"turn_id"`
+
+	// StopReason is why the agent stopped ("end_turn", "max_tokens", ...).
+	StopReason string `json:"stop_reason,omitempty"`
+
+	// Model is the model that produced the turn, as reported by the backend.
+	Model string `json:"model,omitempty"`
+
+	// DurationMS is the wall-clock time the turn took, in milliseconds.
+	DurationMS int64 `json:"duration_ms,omitempty"`
+}
+
+// TurnFailedPayload is the payload for KindTurnFailed.
+type TurnFailedPayload struct {
+	// TurnID matches the TurnStartedPayload that opened the turn.
+	TurnID string `json:"turn_id"`
+
+	// Error is the failure text surfaced to operators.
+	Error string `json:"error"`
+
+	// DurationMS is the wall-clock time before the failure, in milliseconds.
+	DurationMS int64 `json:"duration_ms,omitempty"`
+}
 
 // InferenceSubmittedPayload is the payload for KindInferenceSubmitted.
 type InferenceSubmittedPayload struct {
@@ -142,6 +227,7 @@ type SessionEvent struct {
 	// Exactly one of these is populated; the rest are nil.
 	Prompt         *PromptSubmittedPayload `json:"prompt,omitempty"`
 	AssistantChunk *AssistantChunkPayload  `json:"assistant_chunk,omitempty"`
+	Thought        *AgentThoughtPayload    `json:"thought,omitempty"`
 	ToolInvocation *ToolInvocationPayload  `json:"tool_invocation,omitempty"`
 	ToolResult     *ToolResultPayload      `json:"tool_result,omitempty"`
 	FileOp         *FileOpPayload          `json:"file_op,omitempty"`
@@ -150,6 +236,9 @@ type SessionEvent struct {
 	OperatorLeft   *OperatorLeftPayload    `json:"operator_left,omitempty"`
 	Closed         *SessionClosedPayload   `json:"closed,omitempty"`
 	Resumed        *SessionResumedPayload  `json:"resumed,omitempty"`
+	TurnStarted    *TurnStartedPayload     `json:"turn_started,omitempty"`
+	TurnCompleted  *TurnCompletedPayload   `json:"turn_completed,omitempty"`
+	TurnFailed     *TurnFailedPayload      `json:"turn_failed,omitempty"`
 }
 
 // PromptSubmittedPayload is the payload for KindPromptSubmitted.
@@ -178,6 +267,11 @@ type AssistantChunkPayload struct {
 
 	// Model is the model that produced this chunk.
 	Model string `json:"model,omitempty"`
+}
+
+// AgentThoughtPayload carries one fragment of agent reasoning.
+type AgentThoughtPayload struct {
+	Text string `json:"text"`
 }
 
 // ToolInvocationPayload describes a tool call the agent made.

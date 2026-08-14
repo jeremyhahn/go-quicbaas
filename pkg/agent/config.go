@@ -24,6 +24,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -117,6 +118,27 @@ type Config struct {
 	// to drain before forcefully terminating. Zero means 30 seconds.
 	ShutdownGrace time.Duration `json:"shutdown_grace,omitempty" yaml:"shutdown_grace,omitempty"`
 
+	// SandboxNetwork is the container network sandboxed sessions run in.
+	// Empty resolves to orchestration.SandboxNetworkDefault: an isolated
+	// namespace with egress, so an agent reaches its provider API but not the
+	// host's loopback-bound services. Setting it to "host" is the explicit
+	// operator decision that removes network isolation entirely; see
+	// orchestration.ParseSandboxNetwork.
+	SandboxNetwork string `json:"sandbox_network,omitempty" yaml:"sandbox_network,omitempty"`
+
+	// AllowedMountRoots is the operator's allowlist of absolute host
+	// directories a spawn request may bind-mount into a sandbox container on
+	// this daemon. It is the daemon-side counterpart of the control plane's
+	// orchestration.sandbox.allowed_mount_roots.
+	//
+	// Deny-by-default: the zero value is an empty allowlist, under which a
+	// sandboxed spawn naming ANY work directory is refused. A daemon has no
+	// managed projects root of its own, so unlike the control plane it has no
+	// tenant-scoped grant to fall back on — the operator must name every root
+	// the fleet is allowed to mount from. There is deliberately no setting
+	// that turns the check off.
+	AllowedMountRoots []string `json:"allowed_mount_roots,omitempty" yaml:"allowed_mount_roots,omitempty"`
+
 	// MCPEndpoint is the fully-qualified https://host:port/mcp address of the
 	// QuicBaaS MCP listener this daemon's spawned agents should dial when an
 	// operator attaches the "quicbaas" MCP preset. It is supplied by the
@@ -167,7 +189,42 @@ func (c *Config) Validate() error {
 	default:
 		return &SentinelDetailError{Sentinel: ErrConfigUnknownRuntime, Detail: fmt.Sprintf("%q", c.ContainerRuntime)}
 	}
+	if _, err := orchestration.ParseSandboxNetwork(c.SandboxNetwork); err != nil {
+		return &SentinelDetailError{
+			Sentinel: ErrConfigUnknownNetwork,
+			Detail:   fmt.Sprintf("%q", c.SandboxNetwork),
+		}
+	}
+	// Mount roots are compared against absolute container mount sources, so a
+	// relative entry could never match and would silently disable the grant
+	// the operator meant to configure. Reject it at startup instead.
+	for i, root := range c.AllowedMountRoots {
+		if !filepath.IsAbs(root) {
+			return &SentinelDetailError{
+				Sentinel: ErrConfigMountRootNotAbsolute,
+				Detail:   fmt.Sprintf("allowed_mount_roots[%d]: %q", i, root),
+			}
+		}
+	}
 	return nil
+}
+
+// MountPolicy returns the bind-mount policy this daemon enforces on every
+// sandboxed spawn. A daemon owns no managed projects root, so the policy is
+// exactly the operator's allowlist; an empty allowlist denies every mount.
+func (c *Config) MountPolicy() *orchestration.MountPolicy {
+	return &orchestration.MountPolicy{AllowedRoots: c.AllowedMountRoots}
+}
+
+// EffectiveSandboxNetwork returns the configured container network for
+// sandboxed sessions, resolved to the isolated default when unset. A value
+// that fails validation cannot reach here: Validate rejects it.
+func (c *Config) EffectiveSandboxNetwork() orchestration.SandboxNetwork {
+	network, err := orchestration.ParseSandboxNetwork(c.SandboxNetwork)
+	if err != nil {
+		return orchestration.SandboxNetworkDefault
+	}
+	return network
 }
 
 // EffectiveBackends returns the backend list with defaults applied.
@@ -208,4 +265,11 @@ var (
 	ErrConfigFieldRequired  = errors.New("agent: config field required")
 	ErrConfigUnknownBackend = errors.New("agent: unknown backend")
 	ErrConfigUnknownRuntime = errors.New("agent: unknown container runtime selector")
+	ErrConfigUnknownNetwork = errors.New("agent: invalid sandbox network")
+
+	// ErrConfigMountRootNotAbsolute reports an allowed_mount_roots entry that
+	// is not an absolute path. Such an entry can never match a container mount
+	// source, so accepting it would leave the operator believing they had
+	// granted a root they had not.
+	ErrConfigMountRootNotAbsolute = errors.New("agent: allowed mount root must be an absolute path")
 )

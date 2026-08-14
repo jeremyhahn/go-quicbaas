@@ -32,6 +32,14 @@ type quicTogglableProbe struct{ sealedState bool }
 
 func (p *quicTogglableProbe) IsSealed() bool { return p.sealedState }
 
+// quicCeremonyStateProbe reports the ceremony state that decides whether the
+// pre-operational sealed-window exemptions still apply. operational=false is a
+// daemon whose init ceremony is unfinished; operational=true is the
+// already-initialized daemon (restart / post-boot re-seal).
+type quicCeremonyStateProbe struct{ operational bool }
+
+func (p *quicCeremonyStateProbe) IsOperational() bool { return p.operational }
+
 // quicRecordingSink captures the sealed-window bypass audit events.
 type quicRecordingSink struct{ events [][2]string }
 
@@ -66,11 +74,17 @@ type dispatchOutcome struct {
 	authzResp    *Response
 }
 
-func newQUICSealedFixture(probe *quicTogglableProbe, authorizer ValidatorAuthorizer, sink *quicRecordingSink) *quicSealedFixture {
+func newQUICSealedFixture(
+	probe *quicTogglableProbe,
+	operational sealedwindow.OperationalProbe,
+	authorizer ValidatorAuthorizer,
+	sink *quicRecordingSink,
+) *quicSealedFixture {
 	server := &Server{}
-	server.SetSealedWindowGate(probe, sealedwindow.QUICAllowlist(), sealedwindow.QRDBQUICAllowlist())
+	server.SetSealedWindowGate(probe, operational,
+		sealedwindow.QUICAllowlist(), sealedwindow.QRDBQUICAllowlist())
 
-	bypass := sealedwindow.NewAuthBypass(probe, sink)
+	bypass := sealedwindow.NewAuthBypass(probe, operational, sink)
 	handler := NewHandler(&mockService{}, nil, nil, nil, createTestLogger(),
 		WithHandlerValidatorAuthorizer(authorizer),
 		WithHandlerSealedWindowBypass(bypass),
@@ -98,11 +112,14 @@ func TestQUICSealedWindowAuthBypass_Composition(t *testing.T) {
 	unsealReq := &Request{Opcode: OpBarrier, Payload: []byte{SubOpBarrierUnseal}}
 	statusReq := &Request{Opcode: OpBarrier, Payload: []byte{SubOpBarrierStatus}}
 	sealReq := &Request{Opcode: OpBarrier, Payload: []byte{SubOpBarrierSeal}}
+	ceremonyStatusReq := &Request{Opcode: OpCeremony, Payload: []byte{SubOpCeremonyStatus}}
+	claimCertReq := &Request{Opcode: OpCeremony, Payload: []byte{SubOpCeremonyClaimCertBegin}}
 	kvReq := &Request{Opcode: OpGet}
 
 	cases := []struct {
 		name         string
 		sealed       bool
+		operational  bool
 		req          *Request
 		token        string
 		wantSealed   bool
@@ -122,6 +139,40 @@ func TestQUICSealedWindowAuthBypass_Composition(t *testing.T) {
 			name:         "sealed allowlisted status admitted unauthenticated",
 			sealed:       true,
 			req:          statusReq,
+			wantAdmitted: true,
+			wantAudit:    1,
+		},
+		{
+			name:         "sealed pre-operational ceremony status admitted unauthenticated",
+			sealed:       true,
+			req:          ceremonyStatusReq,
+			wantAdmitted: true,
+			wantAudit:    1,
+		},
+		// Scope axis, end to end: the ceremony status / claim sub-ops are
+		// ScopePreOperational. On an already-initialized (operational) sealed
+		// daemon the server gate still SERVES them — they stay on the deny-gate
+		// allowlist — but the exemption has expired, so the handler demands a
+		// token and the unauthenticated request is refused.
+		{
+			name:        "sealed operational ceremony status requires token",
+			sealed:      true,
+			operational: true,
+			req:         ceremonyStatusReq,
+			wantStatus:  StatusUnauthorized,
+		},
+		{
+			name:        "sealed operational claim-cert begin requires token",
+			sealed:      true,
+			operational: true,
+			req:         claimCertReq,
+			wantStatus:  StatusUnauthorized,
+		},
+		{
+			name:         "sealed operational unseal still admitted",
+			sealed:       true,
+			operational:  true,
+			req:          unsealReq,
 			wantAdmitted: true,
 			wantAudit:    1,
 		},
@@ -162,7 +213,8 @@ func TestQUICSealedWindowAuthBypass_Composition(t *testing.T) {
 					authzCtx: &platformtoken.AuthorizedContext{Subject: "u1", TenantID: "system"},
 				},
 			}
-			fixture := newQUICSealedFixture(probe, authorizer, sink)
+			fixture := newQUICSealedFixture(
+				probe, &quicCeremonyStateProbe{operational: tc.operational}, authorizer, sink)
 
 			req := &Request{Opcode: tc.req.Opcode, Payload: tc.req.Payload, Token: tc.token}
 			out := fixture.dispatch(req)
@@ -194,7 +246,7 @@ func TestQUICSealedWindowAuthBypass_ResealCycle(t *testing.T) {
 			authzCtx: &platformtoken.AuthorizedContext{Subject: "u1"},
 		},
 	}
-	fixture := newQUICSealedFixture(probe, authorizer, sink)
+	fixture := newQUICSealedFixture(probe, &quicCeremonyStateProbe{}, authorizer, sink)
 
 	unseal := func(token string) dispatchOutcome {
 		return fixture.dispatch(&Request{Opcode: OpBarrier, Payload: []byte{SubOpBarrierUnseal}, Token: token})
@@ -229,12 +281,12 @@ func TestQUICSealedWindowAuthBypass_ResealCycle(t *testing.T) {
 // uninstalled (nil never bypasses).
 func TestSetSealedWindowGate_BuildsAuthBypass(t *testing.T) {
 	s := &Server{}
-	s.SetSealedWindowGate(&quicTogglableProbe{sealedState: true},
+	s.SetSealedWindowGate(&quicTogglableProbe{sealedState: true}, &quicCeremonyStateProbe{},
 		sealedwindow.QUICAllowlist(), sealedwindow.QRDBQUICAllowlist())
 	assert.NotNil(t, s.sealedBypass)
 	assert.True(t, s.sealedBypass.BypassesNativeQUIC(OpBarrier, []byte{SubOpBarrierUnseal}))
 
-	s.SetSealedWindowGate(nil, nil, nil)
+	s.SetSealedWindowGate(nil, nil, nil, nil)
 	assert.Nil(t, s.sealedBypass)
 	assert.False(t, s.sealedBypass.BypassesNativeQUIC(OpBarrier, []byte{SubOpBarrierUnseal}))
 }

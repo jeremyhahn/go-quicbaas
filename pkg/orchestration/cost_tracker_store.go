@@ -25,11 +25,13 @@ import (
 
 // Key prefix constants for cost tracking KV keys.
 const (
-	costKeyPrefix = "cost:"
-	jobSegment    = ":job:"
-	agentSegment  = ":agent:"
-	totalSuffix   = ":total"
-	budgetSuffix  = ":budget"
+	costKeyPrefix  = "cost:"
+	jobSegment     = ":job:"
+	agentSegment   = ":agent:"
+	totalSuffix    = ":total"
+	budgetSuffix   = ":budget"
+	accountSegment = "cost:account:"
+	projectSegment = "cost:project:"
 )
 
 // kvCostTracker is a KV-backed implementation of CostTracker.
@@ -347,6 +349,95 @@ func (ct *kvCostTracker) agentKey(tenantID, jobID, agentID string) string {
 
 func (ct *kvCostTracker) budgetKey(tenantID, jobID string) string {
 	return costKeyPrefix + tenantID + jobSegment + jobID + budgetSuffix
+}
+
+func (ct *kvCostTracker) accountKey(tenantID, accountID string) string {
+	return accountSegment + tenantID + ":" + accountID
+}
+
+func (ct *kvCostTracker) projectKey(tenantID, projectID string) string {
+	return projectSegment + tenantID + ":" + projectID
+}
+
+// =============================================================================
+// Account / Project attribution
+// =============================================================================
+
+// RecordTurnUsage attributes usage.Tokens to every populated dimension of
+// usage in one call. See the CostTracker.RecordTurnUsage doc comment for why
+// a single entry point exists instead of requiring the caller to sequence
+// several Record* calls.
+func (ct *kvCostTracker) RecordTurnUsage(ctx context.Context, usage TurnUsage) error {
+	if usage.TenantID == "" {
+		return &CostInvalidInputError{Field: "tenant_id", Message: "must not be empty"}
+	}
+	if usage.Tokens <= 0 {
+		return &CostInvalidInputError{Field: "tokens", Message: "must be positive"}
+	}
+
+	if usage.JobID != "" && usage.AgentID != "" {
+		if err := ct.RecordTokenUsage(ctx, usage.TenantID, usage.JobID, usage.AgentID, usage.Tokens); err != nil {
+			return err
+		}
+	}
+	if usage.AccountID != "" {
+		if err := ct.incrementCounter(ctx, ct.accountKey(usage.TenantID, usage.AccountID), usage.Tokens); err != nil {
+			return &UsageRecordError{TenantID: usage.TenantID, JobID: usage.JobID, AgentID: usage.AgentID, Cause: err}
+		}
+	}
+	if usage.ProjectID != "" {
+		if err := ct.incrementCounter(ctx, ct.projectKey(usage.TenantID, usage.ProjectID), usage.Tokens); err != nil {
+			return &UsageRecordError{TenantID: usage.TenantID, JobID: usage.JobID, AgentID: usage.AgentID, Cause: err}
+		}
+	}
+	return nil
+}
+
+// GetAccountUsage returns the cumulative usage report for a pooled provider
+// account.
+func (ct *kvCostTracker) GetAccountUsage(ctx context.Context, tenantID, accountID string) (*UsageReport, error) {
+	if tenantID == "" {
+		return nil, &CostInvalidInputError{Field: "tenant_id", Message: "must not be empty"}
+	}
+	if accountID == "" {
+		return nil, &CostInvalidInputError{Field: "account_id", Message: "must not be empty"}
+	}
+	total, err := ct.readCounter(ctx, ct.accountKey(tenantID, accountID))
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return &UsageReport{LastUpdated: time.Now().UnixNano()}, nil
+		}
+		return nil, &UsageRetrievalError{TenantID: tenantID, Cause: err}
+	}
+	return &UsageReport{TotalTokens: total, LastUpdated: time.Now().UnixNano()}, nil
+}
+
+// GetProjectUsage returns the cumulative usage report for a project.
+func (ct *kvCostTracker) GetProjectUsage(ctx context.Context, tenantID, projectID string) (*UsageReport, error) {
+	if tenantID == "" {
+		return nil, &CostInvalidInputError{Field: "tenant_id", Message: "must not be empty"}
+	}
+	if projectID == "" {
+		return nil, &CostInvalidInputError{Field: "project_id", Message: "must not be empty"}
+	}
+	total, err := ct.readCounter(ctx, ct.projectKey(tenantID, projectID))
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return &UsageReport{LastUpdated: time.Now().UnixNano()}, nil
+		}
+		return nil, &UsageRetrievalError{TenantID: tenantID, Cause: err}
+	}
+	return &UsageReport{TotalTokens: total, LastUpdated: time.Now().UnixNano()}, nil
+}
+
+// AccountTokens implements AccountUsageLookup so a CostTracker can be handed
+// directly to LeastUsageAccountStrategy.
+func (ct *kvCostTracker) AccountTokens(ctx context.Context, tenantID, accountID string) (int64, error) {
+	report, err := ct.GetAccountUsage(ctx, tenantID, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return report.TotalTokens, nil
 }
 
 // int64ToBytes encodes an int64 as a big-endian byte slice.

@@ -68,6 +68,16 @@ var (
 	orchWorkflowName string
 	orchWorkflowFile string
 
+	// Pooled provider account flags.
+	orchAccountID       string
+	orchAccountAuto     bool
+	orchAccountStrategy string
+	orchAccountAllow    []string
+
+	// Rotation flags.
+	orchRotateReason       string
+	orchRotateHoldOutgoing bool
+
 	// Display flags.
 	orchVerbosity string
 )
@@ -102,6 +112,7 @@ Examples:
 	cmd.AddCommand(newOrchPromptCommand())
 	cmd.AddCommand(newOrchStatusCommand())
 	cmd.AddCommand(newOrchCloseCommand())
+	cmd.AddCommand(newOrchRotateAccountCommand())
 	cmd.AddCommand(newOrchSessionsCommand())
 	cmd.AddCommand(newOrchAttachCommand())
 	cmd.AddCommand(newOrchBackendsCommand())
@@ -128,9 +139,15 @@ Examples:
 
 // orchContext creates a context with the global tenant ID and timeout.
 func orchContext() (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
-	ctx = sdktransport.ContextWithTenant(ctx, globalTenantID)
+	ctx, cancel := context.WithTimeout(orchTenantContext(), globalTimeout)
 	return ctx, cancel
+}
+
+// orchTenantContext returns a tenant-stamped context with no deadline. Use it
+// for open-ended streaming attaches, where the global request timeout would
+// cut the stream off mid-turn; one-shot calls use orchContext instead.
+func orchTenantContext() context.Context {
+	return sdktransport.ContextWithTenant(context.Background(), globalTenantID)
 }
 
 // =============================================================================
@@ -159,6 +176,14 @@ Examples:
 		"Sandbox selector: default (server policy), required (force container), none (force raw exec)")
 	cmd.Flags().StringVar(&orchHostAffinity, "host-affinity", "",
 		"Pin the session to a specific agent daemon by Name or Host (e.g. 'gpu-host' or '198.51.100.91:9091'). Empty = any available daemon.")
+	cmd.Flags().StringVar(&orchAccountID, "account-id", "",
+		"Pin the session to a specific pooled provider account. A bare pin is honored: the session is never rotated off it.")
+	cmd.Flags().BoolVar(&orchAccountAuto, "account-auto", false,
+		"Select a pooled provider account with the configured strategy, and authorize rotation across the whole tenant/project/provider pool.")
+	cmd.Flags().StringVar(&orchAccountStrategy, "account-strategy", "",
+		"Account selection strategy: static | least_usage. Empty selects the registry default. Ignored unless --account-auto is set.")
+	cmd.Flags().StringSliceVar(&orchAccountAllow, "account-allow", nil,
+		"Restrict the session to these pooled account IDs and authorize it to rotate between them. Repeatable.")
 
 	if err := cmd.MarkFlagRequired("backend"); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to mark backend flag as required: %v\n", err)
@@ -204,6 +229,15 @@ func runOrchSpawn(cmd *cobra.Command, args []string) error {
 		Model:        orchModel,
 		SandboxMode:  mode,
 		HostAffinity: orchHostAffinity,
+
+		// Pooled provider account selection. --account-auto and
+		// --account-allow are the two things that authorize a later
+		// `orchestrator rotate-account`; a bare --account-id is a deliberate
+		// pin and is never moved.
+		AccountID:       orchAccountID,
+		AccountAuto:     orchAccountAuto,
+		AccountStrategy: orchAccountStrategy,
+		AccountAllow:    orchAccountAllow,
 	}
 
 	resp, err := client.SpawnSession(ctx, req)
@@ -218,23 +252,40 @@ func runOrchSpawn(cmd *cobra.Command, args []string) error {
 // Prompt Command
 // =============================================================================
 
+// promptFollow controls whether `orchestrator prompt` stays attached to the
+// session event stream after the server accepts the turn.
+var promptFollow bool
+
 // newOrchPromptCommand creates the prompt subcommand.
 func newOrchPromptCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "prompt <sessionID> <text>",
 		Short: "Send a prompt to an agent session",
-		Long: `Send a prompt to an active agent session and display the response.
+		Long: `Send a prompt to an active agent session and stream the agent's response.
+
+The server accepts the turn and dispatches it in the background — a real agent
+turn runs for minutes, far longer than any request/response transport can hold
+a connection open. By default the CLI then attaches to the session's event
+stream and renders the turn as it happens, so the command still reads as a
+synchronous conversation. The turn keeps running on the server even if the CLI
+is interrupted; reattach with "quicbaas orchestrator attach".
+
+Pass --follow=false to print the acceptance acknowledgement and exit
+immediately, which is what scripts and CI jobs usually want.
 
 Examples:
   quicbaas orchestrator prompt sess_abc123 "Write unit tests for the auth handler"
-  quicbaas orchestrator prompt sess_abc123 "Refactor the database layer" --output json`,
+  quicbaas orchestrator prompt sess_abc123 "Refactor the database layer" --follow=false --output json`,
 		Args: cobra.ExactArgs(2),
 		RunE: runOrchPrompt,
 	}
+	cmd.Flags().BoolVar(&promptFollow, "follow", true,
+		"Stream the turn's events until it completes; false prints the acknowledgement and exits")
+	return cmd
 }
 
 // runOrchPrompt executes the prompt command.
-func runOrchPrompt(cmd *cobra.Command, args []string) error {
+func runOrchPrompt(_ *cobra.Command, args []string) error {
 	sessionID := args[0]
 	promptText := args[1]
 
@@ -257,7 +308,12 @@ func runOrchPrompt(cmd *cobra.Command, args []string) error {
 		return formatError(err)
 	}
 
-	return formatOrchPromptResponse(resp, orchOutputFmt, os.Stdout)
+	// A stateless one-shot, or an explicit opt-out, has nothing to follow.
+	if !resp.Accepted || !promptFollow {
+		return formatOrchPromptResponse(resp, orchOutputFmt, os.Stdout)
+	}
+
+	return followPromptTurn(client, resp, orchOutputFmt, os.Stdout)
 }
 
 // =============================================================================
@@ -341,6 +397,65 @@ func runOrchClose(cmd *cobra.Command, args []string) error {
 	}
 
 	return formatOrchCloseResponse(resp, orchOutputFmt, os.Stdout)
+}
+
+// =============================================================================
+// Rotate Account Command
+// =============================================================================
+
+// newOrchRotateAccountCommand creates the rotate-account subcommand.
+func newOrchRotateAccountCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "rotate-account <sessionID>",
+		Short: "Move a session onto a different pooled provider account",
+		Long: `Move a running agent session onto a different pooled provider account.
+
+The session keeps its identifier, transcript and cost history; the replacement
+account opens a new attribution segment. QuicBaaS also rotates automatically
+when a turn fails on a classified provider limit — this is the operator's door
+to the same verb ("this seat is bad, move my session now").
+
+Only a session spawned with --account-auto or --account-allow may rotate. A
+bare --account-id pin is deliberate and is honored.
+
+Examples:
+  quicbaas orchestrator rotate-account sess_abc123
+  quicbaas orchestrator rotate-account sess_abc123 --reason "seat retired" --hold-outgoing`,
+		Args: cobra.ExactArgs(1),
+		RunE: runOrchRotateAccount,
+	}
+
+	cmd.Flags().StringVar(&orchRotateReason, "reason", "",
+		"Reason recorded on the closed account segment and in the session transcript")
+	cmd.Flags().BoolVar(&orchRotateHoldOutgoing, "hold-outgoing", false,
+		"Hold the outgoing account out of the pool for the server's default backoff so the next selection does not pick it again")
+
+	return cmd
+}
+
+// runOrchRotateAccount executes the rotate-account command.
+func runOrchRotateAccount(cmd *cobra.Command, args []string) error {
+	sessionID := args[0]
+
+	client, err := orchestratorClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+	defer client.Close()
+
+	ctx, cancel := orchContext()
+	defer cancel()
+
+	resp, err := client.RotateSessionAccount(ctx, &orchestratorSDK.RotateSessionAccountRequest{
+		SessionID:    sessionID,
+		Reason:       orchRotateReason,
+		HoldOutgoing: orchRotateHoldOutgoing,
+	})
+	if err != nil {
+		return formatError(err)
+	}
+
+	return formatOrchRotateAccountResponse(resp, orchOutputFmt, os.Stdout)
 }
 
 // =============================================================================
@@ -805,6 +920,20 @@ func formatOrchPromptResponse(resp *orchestratorSDK.PromptSessionResponse, forma
 		if resp.SessionID != "" {
 			fmt.Fprintf(tw, "Session ID:\t%s\n", resp.SessionID)
 		}
+		if resp.Accepted {
+			// The turn was dispatched, not finished. Report what the operator
+			// needs to find it again rather than "Done: false", which reads
+			// like a failure.
+			fmt.Fprintf(tw, "Turn ID:\t%s\n", resp.TurnID)
+			fmt.Fprintf(tw, "Status:\taccepted\n")
+			fmt.Fprintf(tw, "\n")
+			if err := tw.Flush(); err != nil {
+				return err
+			}
+			fmt.Fprintf(w, "Agent is working. Follow it with:\n  quicbaas orchestrator attach %s --from %d\n",
+				resp.SessionID, resp.Sequence)
+			return nil
+		}
 		fmt.Fprintf(tw, "Done:\t%v\n", resp.Done)
 		// Surface why the agent stopped whenever it is not the ordinary
 		// end of a turn, so a truncated answer is not mistaken for a
@@ -822,6 +951,11 @@ func formatOrchPromptResponse(resp *orchestratorSDK.PromptSessionResponse, forma
 		return nil
 
 	default:
+		if resp.Accepted {
+			fmt.Fprintf(w, "Agent is working. Follow it with:\n  quicbaas orchestrator attach %s --from %d\n",
+				resp.SessionID, resp.Sequence)
+			return nil
+		}
 		if resp.Response != "" {
 			fmt.Fprintf(w, "%s\n", resp.Response)
 		}
@@ -891,6 +1025,38 @@ func formatOrchCloseResponse(resp *orchestratorSDK.CloseSessionResponse, format 
 
 	default:
 		fmt.Fprintf(w, "Session %s closed\n", resp.SessionID)
+		return nil
+	}
+}
+
+// formatOrchRotateAccountResponse formats a rotation result for output.
+func formatOrchRotateAccountResponse(resp *orchestratorSDK.RotateSessionAccountResponse, format string, w io.Writer) error {
+	outputFmt, err := cli.ParseOutputFormat(format)
+	if err != nil {
+		return err
+	}
+
+	switch outputFmt {
+	case cli.OutputFormatJSON:
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(resp)
+
+	case cli.OutputFormatYAML:
+		return yaml.NewEncoder(w).Encode(resp)
+
+	case cli.OutputFormatTable:
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(tw, "Session ID:\t%s\n", resp.SessionID)
+		fmt.Fprintf(tw, "Previous Account:\t%s\n", resp.PreviousAccountID)
+		fmt.Fprintf(tw, "Account:\t%s\n", resp.AccountID)
+		fmt.Fprintf(tw, "Strategy:\t%s\n", resp.Strategy)
+		fmt.Fprintf(tw, "Mode:\t%s\n", resp.Mode)
+		return tw.Flush()
+
+	default:
+		fmt.Fprintf(w, "Session %s moved from account %s to %s (%s)\n",
+			resp.SessionID, resp.PreviousAccountID, resp.AccountID, resp.Mode)
 		return nil
 	}
 }

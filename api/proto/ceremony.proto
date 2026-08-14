@@ -97,8 +97,10 @@ message CeremonyInitializeResponse {
   string spki_pin = 1;
   string ca_cert_pem = 2;
   string tls_cert_pem = 3;
-  string so_cert_pem = 4;
-  string so_key_pem = 5;
+  // Fields 4 and 5 held so_cert_pem / so_key_pem. The SO identity is
+  // CSR-based; the server never holds officer private keys.
+  reserved 4, 5;
+  reserved "so_cert_pem", "so_key_pem";
   string state = 6;
   int32 share_count = 7;
 }

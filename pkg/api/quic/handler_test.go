@@ -20,10 +20,12 @@ import (
 	"errors"
 	"testing"
 
+	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 
 	schedulerpkg "github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
@@ -36,7 +38,10 @@ import (
 // =============================================================================
 
 type mockService struct {
-	loginSvc service.LoginServicer
+	loginSvc       service.LoginServicer
+	attestationSvc service.AttestationService
+	pivSvc         service.PIVService
+	fido2Svc       service.FIDO2Service
 	// KV Operations
 	putFn    func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
 	getFn    func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
@@ -576,6 +581,18 @@ func (m *mockService) Trust() service.TrustService {
 	return nil
 }
 
+func (m *mockService) Attestation() service.AttestationService {
+	return m.attestationSvc
+}
+
+func (m *mockService) PIV() service.PIVService {
+	return m.pivSvc
+}
+
+func (m *mockService) FIDO2() service.FIDO2Service {
+	return m.fido2Svc
+}
+
 func (m *mockService) ACME() service.ACMEServicer {
 	return nil
 }
@@ -618,6 +635,14 @@ func (m *mockService) Agent() orchestration.AgentService {
 func (m *mockService) Project() service.ProjectService {
 	return nil
 }
+
+func (m *mockService) Account() service.AccountService {
+	return nil
+}
+
+func (m *mockService) SecretRegistry() *qrdbsecret.ResolverRegistry { return nil }
+
+func (m *mockService) SetSecretRegistry(reg *qrdbsecret.ResolverRegistry) {}
 
 func (m *mockService) AgentAdmin() service.AgentAdminService {
 	return nil

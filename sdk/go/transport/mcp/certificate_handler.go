@@ -55,6 +55,12 @@ var certificateMethodToTool = map[string]string{
 	"VerifyCertificate": "quicbaas_certificate_verify",
 	"GetCACertificate":  "quicbaas_certificate_get_ca",
 	"GetTLSConfig":      "quicbaas_certificate_get_tls_config",
+
+	// Certificate extensions — Security().CertificateExt(). See
+	// certificate_extensions_handler.go.
+	"CrossSign":           "quicbaas_certificate_cross_sign",
+	"Chain":               "quicbaas_certificate_chain",
+	"IssueDeviceIdentity": "quicbaas_certificate_issue_device_identity",
 }
 
 // mapCertificateMethodToTool returns the MCP tool name for a Certificate
@@ -90,6 +96,12 @@ func (h *certificateHandler) transformRequest(method string, req interface{}) (m
 		return map[string]interface{}{}, nil
 	case "GetTLSConfig":
 		return h.transformGetTLSConfigRequest(req)
+	case "CrossSign":
+		return h.transformCrossSignRequest(req)
+	case "Chain":
+		return h.transformChainRequest(req)
+	case "IssueDeviceIdentity":
+		return h.transformIssueDeviceIdentityRequest(req)
 	default:
 		return nil, newCertificateUnsupportedError(method)
 	}
@@ -111,6 +123,12 @@ func (h *certificateHandler) transformResponse(method string, req, resp interfac
 		return h.transformGetCAResponse(resp)
 	case "GetTLSConfig":
 		return h.transformGetTLSConfigResponse(req, resp)
+	case "CrossSign":
+		return h.transformCrossSignResponse(resp)
+	case "Chain":
+		return h.transformChainResponse(resp)
+	case "IssueDeviceIdentity":
+		return h.transformIssueDeviceIdentityResponse(resp)
 	default:
 		return nil, newCertificateUnsupportedError(method)
 	}

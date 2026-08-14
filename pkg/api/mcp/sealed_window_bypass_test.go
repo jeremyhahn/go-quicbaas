@@ -34,6 +34,14 @@ type mcpTogglableProbe struct{ sealedState bool }
 
 func (p *mcpTogglableProbe) IsSealed() bool { return p.sealedState }
 
+// mcpCeremonyStateProbe reports the ceremony state that decides whether the
+// pre-operational sealed-window exemptions still apply. operational=false is a
+// daemon whose init ceremony is unfinished; operational=true is the
+// already-initialized daemon (restart / post-boot re-seal).
+type mcpCeremonyStateProbe struct{ operational bool }
+
+func (p *mcpCeremonyStateProbe) IsOperational() bool { return p.operational }
+
 // mcpRecordingSink captures the sealed-window bypass audit events.
 type mcpRecordingSink struct{ events [][2]string }
 
@@ -62,19 +70,25 @@ func (c *countingMCPAuthorizer) Authorize(_ context.Context, token, requiredPerm
 // armed, then swaps the bypass sink for the recording sink so audits are
 // observable. Mirrors the production wiring order (lifecycle installs the
 // validator, then the sealed gate).
-func newSealedBypassTestServer(t *testing.T, probe *mcpTogglableProbe, authorizer ValidatorAuthorizer, sink *mcpRecordingSink) *Server {
+func newSealedBypassTestServer(
+	t *testing.T,
+	probe *mcpTogglableProbe,
+	operational sealedwindow.OperationalProbe,
+	authorizer ValidatorAuthorizer,
+	sink *mcpRecordingSink,
+) *Server {
 	t.Helper()
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
 	require.NoError(t, err)
 	s := NewServer(nil, &Config{ServerName: "test", ServerVersion: "0", Transport: "http"}, log)
 	require.NotNil(t, s)
 	s.SetValidatorAuthorizer(authorizer)
-	s.SetSealedWindowGate(probe, sealedwindow.MCPAllowlist())
+	s.SetSealedWindowGate(probe, operational, sealedwindow.MCPAllowlist())
 
 	// Install a recording sink in place of the logger sink (same probe, same
 	// canonical derivation) so the tests can assert audit emission.
 	s.sealedMu.Lock()
-	s.sealedBypass = sealedwindow.NewAuthBypass(probe, sink)
+	s.sealedBypass = sealedwindow.NewAuthBypass(probe, operational, sink)
 	s.sealedMu.Unlock()
 	return s
 }
@@ -109,6 +123,7 @@ func TestMCPSealedWindowAuthBypass_Composition(t *testing.T) {
 	cases := []struct {
 		name        string
 		sealed      bool
+		operational bool
 		tool        string
 		token       string
 		wantCode    int
@@ -130,6 +145,42 @@ func TestMCPSealedWindowAuthBypass_Composition(t *testing.T) {
 			tool:      "qrdb_barrier_status",
 			wantCode:  ServiceUnavailable,
 			wantAudit: 1,
+		},
+		{
+			name:      "sealed pre-operational ceremony status admitted to execution",
+			sealed:    true,
+			tool:      "qrdb_ceremony_status",
+			wantCode:  ServiceUnavailable, // ceremony facade absent: execution reached
+			wantAudit: 1,
+		},
+		// Scope axis, end to end: the ceremony status / claim tools are
+		// ScopePreOperational. On an already-initialized (operational) sealed
+		// daemon the deny gate still SERVES them — they stay on its allowlist —
+		// but the exemption has expired, so the authorization layer demands a
+		// token and the unauthenticated call is refused.
+		{
+			name:        "sealed operational ceremony status requires token",
+			sealed:      true,
+			operational: true,
+			tool:        "qrdb_ceremony_status",
+			wantCode:    AuthenticationRequired,
+			wantAuthErr: true,
+		},
+		{
+			name:        "sealed operational claim-cert begin requires token",
+			sealed:      true,
+			operational: true,
+			tool:        "qrdb_ceremony_claim_cert_begin",
+			wantCode:    AuthenticationRequired,
+			wantAuthErr: true,
+		},
+		{
+			name:        "sealed operational unseal still admitted to execution",
+			sealed:      true,
+			operational: true,
+			tool:        "qrdb_barrier_unseal",
+			wantCode:    ServiceUnavailable,
+			wantAudit:   1,
 		},
 		{
 			name:       "sealed non-allowlisted sealed error",
@@ -169,7 +220,8 @@ func TestMCPSealedWindowAuthBypass_Composition(t *testing.T) {
 			authorizer := &countingMCPAuthorizer{
 				authzCtx: &platformtoken.AuthorizedContext{Subject: "u1", TenantID: "system"},
 			}
-			s := newSealedBypassTestServer(t, probe, authorizer, sink)
+			s := newSealedBypassTestServer(
+				t, probe, &mcpCeremonyStateProbe{operational: tc.operational}, authorizer, sink)
 
 			resp := callTool(s, tc.token, tc.tool)
 			require.NotNil(t, resp.Error, "every case ends in a typed JSON-RPC error in this harness")
@@ -199,7 +251,7 @@ func TestMCPSealedWindowAuthBypass_ResealCycle(t *testing.T) {
 	authorizer := &countingMCPAuthorizer{
 		authzCtx: &platformtoken.AuthorizedContext{Subject: "u1"},
 	}
-	s := newSealedBypassTestServer(t, probe, authorizer, sink)
+	s := newSealedBypassTestServer(t, probe, &mcpCeremonyStateProbe{}, authorizer, sink)
 
 	// Unsealed: no token -> AuthenticationRequired; valid token -> executes.
 	resp := callTool(s, "", "qrdb_barrier_unseal")
@@ -237,6 +289,6 @@ func TestSealedWindowBypassesTool_NilSafety(t *testing.T) {
 	assert.False(t, s.sealedWindowBypassesTool("qrdb_barrier_unseal"))
 
 	// Installing with a nil probe also leaves the bypass uninstalled.
-	s.SetSealedWindowGate(nil, sealedwindow.MCPAllowlist())
+	s.SetSealedWindowGate(nil, nil, sealedwindow.MCPAllowlist())
 	assert.False(t, s.sealedWindowBypassesTool("qrdb_barrier_unseal"))
 }

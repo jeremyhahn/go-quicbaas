@@ -212,6 +212,7 @@ func (r *ToolRegistry) registerTools() {
 	// Register Certificate tools
 	r.registerCertificateTools()
 	r.registerTrustTools()
+	r.registerAttestationTools()
 
 	// Register Dynamic Secrets tools
 	r.registerDynamicSecretsTools()
@@ -221,6 +222,10 @@ func (r *ToolRegistry) registerTools() {
 
 	// Register Project tools
 	r.registerProjectTools()
+
+	// Register pooled provider account tools
+	r.registerAccountTools()
+	r.registerSSHTools()
 
 	// Register Scheduler tools
 	r.registerSchedulerTools()
@@ -1309,6 +1314,14 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 			return r.executeProjectTool(ctx, name, args)
 		}
 
+		// Check if it's a pooled provider account tool
+		if isSSHTool(name) {
+			return r.executeSSHTool(ctx, name, args)
+		}
+		if isAccountTool(name) {
+			return r.executeAccountTool(ctx, name, args)
+		}
+
 		// Check if it's a Scheduler tool
 		if isSchedulerTool(name) {
 			return r.executeSchedulerTool(ctx, name, args)
@@ -1342,6 +1355,12 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		// Check if it's a Trust tool (cross-sign / AIA composition)
 		if isTrustTool(name) {
 			return r.executeTrustTool(ctx, name, args)
+		}
+
+		// Check if it's an Attestation tool (xkms statement/chain
+		// verification + the container attestation seam)
+		if isAttestationTool(name) {
+			return r.executeAttestationTool(ctx, name, args)
 		}
 
 		// Check if it's a Dynamic Secrets tool

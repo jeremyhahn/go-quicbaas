@@ -35,7 +35,7 @@ func buildBootstrapClientFixture(t *testing.T) *Server {
 	require.NoError(t, err)
 
 	client, err := newBootstrapCeremonyClient(
-		s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bundle)
+		s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bundle, nil)
 	require.NoError(t, err)
 	require.NotNil(t, client)
 	t.Cleanup(func() { _ = client.Close() })
@@ -54,7 +54,7 @@ func TestNewBootstrapCeremonyClient_NilServices(t *testing.T) {
 		"missing barrier": {Ceremony: (&CeremonyServices{}).Ceremony},
 	} {
 		t.Run(name, func(t *testing.T) {
-			client, err := newBootstrapCeremonyClient(nil, nil, bundle)
+			client, err := newBootstrapCeremonyClient(nil, nil, bundle, nil)
 			require.Nil(t, client)
 			var wireErr *CeremonyWiringError
 			require.Truef(t, errors.As(err, &wireErr),
@@ -70,7 +70,7 @@ func TestNewBootstrapCeremonyClient_NilKVAdmin(t *testing.T) {
 	bundle, err := buildBootstrapCeremonyServices(slog.Default(), t.TempDir())
 	require.NoError(t, err)
 
-	client, err := newBootstrapCeremonyClient(nil, nil, bundle)
+	client, err := newBootstrapCeremonyClient(nil, nil, bundle, nil)
 	require.Nil(t, client)
 	var wireErr *CeremonyWiringError
 	require.Truef(t, errors.As(err, &wireErr),
@@ -112,7 +112,7 @@ func TestBootstrapWiring_PersistentBarrierStrategy(t *testing.T) {
 	cfg.Storage.DataDir = t.TempDir()
 	cfg.Seal = config.DefaultSealConfig() // Enabled=false, Strategy=passphrase
 
-	dpSvc, rawBarrier, dpCloser, err := buildDataPlaneBarrierService(cfg, slog.Default())
+	dpSvc, rawBarrier, _, dpCloser, err := buildDataPlaneBarrierService(cfg, slog.Default())
 	require.NoError(t, err)
 	require.NotNil(t, dpSvc)
 	require.NotNil(t, rawBarrier)
@@ -127,7 +127,7 @@ func TestBootstrapWiring_PersistentBarrierStrategy(t *testing.T) {
 	s := &Server{logger: buildTestLogger(t), qrdbNode: node}
 
 	client, err := newBootstrapCeremonyClient(
-		s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bundle)
+		s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bundle, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 

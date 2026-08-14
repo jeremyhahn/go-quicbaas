@@ -43,6 +43,22 @@ func (m *mockResolver) Resolve(ctx context.Context, raw string) (*SecretValue, e
 	return NewSecretValue(raw, []byte(raw[7:]), StrategyLocalKMS), nil
 }
 
+// mockOtherResolver is a second test resolver bound to a different scheme,
+// used to verify that the registry dispatches strictly by URI scheme.
+type mockOtherResolver struct{}
+
+func (m *mockOtherResolver) Scheme() string {
+	return "other"
+}
+
+func (m *mockOtherResolver) CanResolve(raw string) bool {
+	return len(raw) > 8 && raw[:8] == "other://"
+}
+
+func (m *mockOtherResolver) Resolve(ctx context.Context, raw string) (*SecretValue, error) {
+	return NewSecretValue(raw, []byte("other-"+raw[8:]), StrategyRemoteKMS), nil
+}
+
 // failingResolver always fails to resolve.
 type failingResolver struct{}
 
@@ -862,19 +878,19 @@ func TestConfigProcessor_Process_DeeplyNestedStructs(t *testing.T) {
 
 func TestConfigProcessor_Process_MultipleResolvers(t *testing.T) {
 	type Config struct {
-		MockSecret string
-		AutoSecret string
+		MockSecret  string
+		OtherSecret string
 	}
 
 	registry := NewResolverRegistry()
 	registry.Register(&mockResolver{})
-	registry.Register(NewAutoGenResolver())
+	registry.Register(&mockOtherResolver{})
 
 	processor := NewConfigProcessor(registry)
 
 	cfg := &Config{
-		MockSecret: "mock://value",
-		AutoSecret: "auto",
+		MockSecret:  "mock://value",
+		OtherSecret: "other://value",
 	}
 
 	ctx := context.Background()
@@ -888,14 +904,65 @@ func TestConfigProcessor_Process_MultipleResolvers(t *testing.T) {
 		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
 	}
 
-	// Verify mock resolved
+	// Each resolver must have claimed only its own scheme.
 	if cfg.MockSecret != "value" {
 		t.Errorf("expected 'value', got %q", cfg.MockSecret)
 	}
 
-	// Verify auto generated (should be non-empty and different from original)
-	if cfg.AutoSecret == "auto" || cfg.AutoSecret == "" {
-		t.Errorf("expected auto-generated secret, got %q", cfg.AutoSecret)
+	if cfg.OtherSecret != "other-value" {
+		t.Errorf("expected 'other-value', got %q", cfg.OtherSecret)
+	}
+}
+
+// TestConfigProcessor_Process_SchemelessValueIsVerbatim guards the resolver SPI
+// contract: dispatch is by URI scheme only. A scheme-less config value — even
+// one that looks like a placeholder ("123456", "changeme", "auto") — is not a
+// secret reference and must survive processing byte-for-byte. Silently swapping
+// such a value for generated entropy corrupts length-constrained fields such as
+// a TPM TPM2B_AUTH.
+func TestConfigProcessor_Process_SchemelessValueIsVerbatim(t *testing.T) {
+	type Config struct {
+		UserPIN  string
+		Password string
+		Mode     string
+	}
+
+	registry := NewResolverRegistry()
+	registry.Register(&mockResolver{})
+
+	processor := NewConfigProcessor(registry)
+
+	cfg := &Config{
+		UserPIN:  "123456",
+		Password: "changeme",
+		Mode:     "auto",
+	}
+
+	ctx := context.Background()
+	result, err := processor.Process(ctx, cfg)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Resolved != 0 {
+		t.Fatalf("expected 0 resolved secrets, got %d", result.Resolved)
+	}
+
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected no errors, got %v", result.Errors)
+	}
+
+	if cfg.UserPIN != "123456" {
+		t.Errorf("expected UserPIN '123456', got %q", cfg.UserPIN)
+	}
+
+	if cfg.Password != "changeme" {
+		t.Errorf("expected Password 'changeme', got %q", cfg.Password)
+	}
+
+	if cfg.Mode != "auto" {
+		t.Errorf("expected Mode 'auto', got %q", cfg.Mode)
 	}
 }
 

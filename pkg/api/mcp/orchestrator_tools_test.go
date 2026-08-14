@@ -197,6 +197,7 @@ type mockAgentService struct {
 	listProjectsFn    func(ctx context.Context, req *orchestration.ListProjectsRequest) (*orchestration.ListProjectsResponse, error)
 	spawnFn           func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error)
 	promptFn          func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error)
+	promptAsyncFn     func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error)
 	statusFn          func(ctx context.Context, req *orchestration.SessionStatusRequest) (*orchestration.SessionStatusResponse, error)
 	closeFn           func(ctx context.Context, req *orchestration.CloseSessionRequest) (*orchestration.CloseSessionResponse, error)
 	listSessionsFn    func(ctx context.Context, req *orchestration.ListSessionsRequest) (*orchestration.ListSessionsResponse, error)
@@ -422,4 +423,18 @@ func isRequiredFieldError(err error, field string) bool {
 		return de.Field == field
 	}
 	return false
+}
+
+// PromptSessionAsync mirrors the production contract: the turn is acknowledged
+// immediately and its output would flow to the session event log.
+func (m *mockAgentService) PromptSessionAsync(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error) {
+	if m.promptAsyncFn != nil {
+		return m.promptAsyncFn(ctx, req)
+	}
+	return &orchestration.PromptTurnAck{
+		SessionID: req.SessionID,
+		TurnID:    "turn-test",
+		Status:    orchestration.TurnStatusAccepted,
+		Sequence:  1,
+	}, nil
 }

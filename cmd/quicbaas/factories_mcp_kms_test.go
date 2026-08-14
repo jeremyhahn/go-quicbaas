@@ -147,54 +147,6 @@ func TestParseKMSListKeysResponseInvalidData(t *testing.T) {
 	}
 }
 
-// TestParseDEKListResponse verifies DEK list parsing.
-func TestParseDEKListResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"deks": []interface{}{
-			map[string]interface{}{
-				"path":        "/tenants/acme",
-				"algorithm":   "AES-256-GCM",
-				"version":     float64(1),
-				"status":      "active",
-				"usage_count": float64(100),
-				"bytes_used":  float64(1024),
-			},
-		},
-	}
-
-	resp, err := parseDEKListResponse(result)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(resp.DEKs) != 1 {
-		t.Fatalf("expected 1 DEK, got %d", len(resp.DEKs))
-	}
-
-	if resp.DEKs[0].Path != "/tenants/acme" {
-		t.Errorf("expected path '/tenants/acme', got '%s'", resp.DEKs[0].Path)
-	}
-
-	if resp.DEKs[0].UsageCount != 100 {
-		t.Errorf("expected usage_count 100, got %d", resp.DEKs[0].UsageCount)
-	}
-}
-
-// TestParseDEKListResponseInvalidData verifies error handling.
-func TestParseDEKListResponseInvalidData(t *testing.T) {
-	// Test with no deks field
-	result := map[string]interface{}{}
-
-	resp, err := parseDEKListResponse(result)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(resp.DEKs) != 0 {
-		t.Errorf("expected 0 DEKs, got %d", len(resp.DEKs))
-	}
-}
-
 // TestParseSafetyCheckResponse verifies safety check parsing.
 func TestParseSafetyCheckResponse(t *testing.T) {
 	result := map[string]interface{}{
@@ -590,6 +542,7 @@ func (m *mockSDKClientForMCP) CustodianGroup() (quicbaas.QRDBCustodianGroupClien
 func (m *mockSDKClientForMCP) Share() (quicbaas.QRDBShareClient, error)  { return nil, nil }
 func (m *mockSDKClientForMCP) Orchestrator() quicbaas.OrchestratorClient { return nil }
 func (m *mockSDKClientForMCP) Project() quicbaas.ProjectClient           { return nil }
+func (m *mockSDKClientForMCP) Account() quicbaas.AccountClient           { return nil }
 
 var _ quicbaas.Client = (*mockSDKClientForMCP)(nil)
 
@@ -641,29 +594,6 @@ func TestCreateMCPKMSClient(t *testing.T) {
 			return nil, &dberrors.MessageError{Message: "sdk error"}
 		}
 		client, err := createMCPKMSClient()
-		assert.Error(t, err)
-		assert.Nil(t, client)
-	})
-}
-
-func TestCreateMCPDEKClient(t *testing.T) {
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	t.Run("Success", func(t *testing.T) {
-		sdkClientFactory = func() (quicbaas.Client, error) {
-			return newMockMCPSDKClient(nil), nil
-		}
-		client, err := createMCPDEKClient()
-		require.NoError(t, err)
-		assert.NotNil(t, client)
-	})
-
-	t.Run("Error", func(t *testing.T) {
-		sdkClientFactory = func() (quicbaas.Client, error) {
-			return nil, &dberrors.MessageError{Message: "sdk error"}
-		}
-		client, err := createMCPDEKClient()
 		assert.Error(t, err)
 		assert.Nil(t, client)
 	})
@@ -936,115 +866,6 @@ func TestMCPKMSClientMethods(t *testing.T) {
 // Test MCP DEK Client Methods
 // =============================================================================
 
-func TestMCPDEKClientMethods(t *testing.T) {
-	now := time.Now().Format(time.RFC3339)
-	responses := map[string]interface{}{
-		"quicbaas_dek_create": toolResp(map[string]interface{}{
-			"path": "/app/dek-1", "key_id": "dek-001", "version": float64(1),
-			"algorithm": "AES_256", "created_at": now,
-		}),
-		"quicbaas_dek_get": toolResp(map[string]interface{}{
-			"path": "/app/dek-1", "key_id": "dek-001", "version": float64(1),
-			"algorithm": "AES_256", "status": "active", "created_at": now,
-		}),
-		"quicbaas_dek_list": toolResp(map[string]interface{}{
-			"deks": []interface{}{
-				map[string]interface{}{
-					"path": "/app/dek-1", "key_id": "dek-001", "status": "active",
-				},
-			},
-			"total": float64(1),
-		}),
-		"quicbaas_dek_rotate": toolResp(map[string]interface{}{
-			"path": "/app/dek-1", "new_version": float64(2), "rotated_at": now,
-		}),
-		"quicbaas_dek_delete": toolResp(map[string]interface{}{
-			"path": "/app/dek-1", "deleted": true,
-		}),
-		"quicbaas_dek_status": toolResp(map[string]interface{}{
-			"path": "/app/dek-1", "status": "active",
-		}),
-		"quicbaas_dek_set_default": toolResp(map[string]interface{}{
-			"path": "/app/dek-1", "set_default": true,
-		}),
-		"quicbaas_dek_set_safety": toolResp(map[string]interface{}{
-			"path": "/app/dek-1", "safety_configured": true,
-		}),
-	}
-
-	sdk := newMockMCPSDKClient(responses)
-	client := &mcpDEKClient{sdk: sdk}
-	ctx := context.Background()
-
-	t.Run("CreateDEK", func(t *testing.T) {
-		resp, err := client.KMSCreateDEK(ctx, &service.CreateDEKRequest{
-			Path:           "/app/dek-1",
-			Algorithm:      "AES_256",
-			Description:    "test dek",
-			MaxOperations:  1000,
-			MaxBytes:       1024 * 1024,
-			WarningPercent: 80,
-		})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("GetDEK", func(t *testing.T) {
-		resp, err := client.KMSGetDEK(ctx, &service.GetDEKRequest{Path: "/app/dek-1"})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("ListDEKs", func(t *testing.T) {
-		resp, err := client.KMSListDEKs(ctx, &service.ListDEKsRequest{
-			Prefix: "/app", Recursive: true, Limit: 10,
-		})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("RotateDEK", func(t *testing.T) {
-		resp, err := client.KMSRotateDEK(ctx, &service.RotateDEKRequest{
-			Path: "/app/dek-1", Background: true,
-		})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("DeleteDEK", func(t *testing.T) {
-		resp, err := client.KMSDeleteDEK(ctx, &service.DeleteDEKRequest{
-			Path: "/app/dek-1", Force: true, MigrateTo: "/app/dek-2",
-		})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("GetDEKStatus", func(t *testing.T) {
-		resp, err := client.KMSGetDEKStatus(ctx, &service.GetDEKStatusRequest{Path: "/app/dek-1"})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("SetDefaultDEK", func(t *testing.T) {
-		resp, err := client.KMSSetDefaultDEK(ctx, &service.SetDefaultDEKRequest{Path: "/app/dek-1"})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("SetDEKSafety", func(t *testing.T) {
-		resp, err := client.KMSSetDEKSafety(ctx, &service.SetDEKSafetyRequest{
-			Path: "/app/dek-1", MaxOperations: 1000, MaxBytes: 1024 * 1024, WarningPercent: 80,
-		})
-		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("Close", func(t *testing.T) {
-		err := client.Close()
-		assert.NoError(t, err)
-	})
-}
-
 // =============================================================================
 // Test MCP Backend Client Methods
 // =============================================================================
@@ -1204,50 +1025,6 @@ func TestMCPKMSClientTransportError(t *testing.T) {
 
 	t.Run("ClearKeySafetyError", func(t *testing.T) {
 		_, err := client.KMSClearKeySafety(ctx, &service.ClearKeySafetyRequest{KeyID: "key-1"})
-		assert.Error(t, err)
-	})
-}
-
-func TestMCPDEKClientTransportError(t *testing.T) {
-	tr := &mockMCPTransport{
-		requestFunc: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
-			return nil, &dberrors.MessageError{Message: "transport error"}
-		},
-	}
-	sdk := &mockSDKClientForMCP{mockTransport: tr}
-	client := &mcpDEKClient{sdk: sdk}
-	ctx := context.Background()
-
-	t.Run("CreateDEKError", func(t *testing.T) {
-		_, err := client.KMSCreateDEK(ctx, &service.CreateDEKRequest{Path: "/test"})
-		assert.Error(t, err)
-	})
-	t.Run("GetDEKError", func(t *testing.T) {
-		_, err := client.KMSGetDEK(ctx, &service.GetDEKRequest{Path: "/test"})
-		assert.Error(t, err)
-	})
-	t.Run("ListDEKsError", func(t *testing.T) {
-		_, err := client.KMSListDEKs(ctx, &service.ListDEKsRequest{})
-		assert.Error(t, err)
-	})
-	t.Run("RotateDEKError", func(t *testing.T) {
-		_, err := client.KMSRotateDEK(ctx, &service.RotateDEKRequest{Path: "/test"})
-		assert.Error(t, err)
-	})
-	t.Run("DeleteDEKError", func(t *testing.T) {
-		_, err := client.KMSDeleteDEK(ctx, &service.DeleteDEKRequest{Path: "/test"})
-		assert.Error(t, err)
-	})
-	t.Run("GetDEKStatusError", func(t *testing.T) {
-		_, err := client.KMSGetDEKStatus(ctx, &service.GetDEKStatusRequest{Path: "/test"})
-		assert.Error(t, err)
-	})
-	t.Run("SetDefaultDEKError", func(t *testing.T) {
-		_, err := client.KMSSetDefaultDEK(ctx, &service.SetDefaultDEKRequest{Path: "/test"})
-		assert.Error(t, err)
-	})
-	t.Run("SetDEKSafetyError", func(t *testing.T) {
-		_, err := client.KMSSetDEKSafety(ctx, &service.SetDEKSafetyRequest{Path: "/test"})
 		assert.Error(t, err)
 	})
 }

@@ -29,7 +29,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"errors"
 	"math/big"
 	"net"
 	"testing"
@@ -91,8 +90,8 @@ func TestSDK_M10_Surface_Reachable(t *testing.T) {
 		_ quicbaas.TrustService          = nil
 		_ quicbaas.CertificateExtensions = nil
 		_ quicbaas.LocalDevices          = nil
-		_ quicbaas.WebAuthnClient        = nil
-		_ quicbaas.PIVClient             = nil
+		_ quicbaas.FIDO2Client           = nil
+		_ quicbaas.XKMSPIVService        = nil
 		_ quicbaas.AuthFactorsClient     = nil
 		_ quicbaas.AuthService           = nil
 
@@ -115,15 +114,17 @@ func TestSDK_M10_Surface_Reachable(t *testing.T) {
 		_ quicbaas.FIDO2FinishAuthenticationRequest  = quicbaas.FIDO2FinishAuthenticationRequest{}
 		_ quicbaas.FIDO2FinishAuthenticationResponse = quicbaas.FIDO2FinishAuthenticationResponse{}
 
-		_ quicbaas.PIVListSlotsRequest       = quicbaas.PIVListSlotsRequest{}
-		_ quicbaas.PIVListSlotsResponse      = quicbaas.PIVListSlotsResponse{}
-		_ quicbaas.PIVSlotStatus             = quicbaas.PIVSlotStatus{}
-		_ quicbaas.PIVGetCertificateRequest  = quicbaas.PIVGetCertificateRequest{}
-		_ quicbaas.PIVGetCertificateResponse = quicbaas.PIVGetCertificateResponse{}
-		_ quicbaas.PIVGenerateKeyRequest     = quicbaas.PIVGenerateKeyRequest{}
-		_ quicbaas.PIVGenerateKeyResponse    = quicbaas.PIVGenerateKeyResponse{}
-		_ quicbaas.PIVGenerateCSRRequest     = quicbaas.PIVGenerateCSRRequest{}
-		_ quicbaas.PIVGenerateCSRResponse    = quicbaas.PIVGenerateCSRResponse{}
+		_ quicbaas.PIVListSlotsRequest         = quicbaas.PIVListSlotsRequest{}
+		_ quicbaas.PIVListSlotsResponse        = quicbaas.PIVListSlotsResponse{}
+		_ quicbaas.PIVSlotStatus               = quicbaas.PIVSlotStatus{}
+		_ quicbaas.PIVGetCertificateRequest    = quicbaas.PIVGetCertificateRequest{}
+		_ quicbaas.PIVGetCertificateResponse   = quicbaas.PIVGetCertificateResponse{}
+		_ quicbaas.PIVStoreCertificateRequest  = quicbaas.PIVStoreCertificateRequest{}
+		_ quicbaas.PIVDeleteCertificateRequest = quicbaas.PIVDeleteCertificateRequest{}
+		_ quicbaas.PIVGenerateKeyRequest       = quicbaas.PIVGenerateKeyRequest{}
+		_ quicbaas.PIVGenerateKeyResponse      = quicbaas.PIVGenerateKeyResponse{}
+		_ quicbaas.PIVGenerateCSRRequest       = quicbaas.PIVGenerateCSRRequest{}
+		_ quicbaas.PIVGenerateCSRResponse      = quicbaas.PIVGenerateCSRResponse{}
 
 		_ quicbaas.AuthFactorEnrollRequest     = quicbaas.AuthFactorEnrollRequest{}
 		_ quicbaas.AuthFactorEnrollResponse    = quicbaas.AuthFactorEnrollResponse{}
@@ -188,8 +189,8 @@ func TestSDK_M10_SecurityAccessors(t *testing.T) {
 	if auth.Devices() == nil {
 		t.Error("Auth().Devices() returned nil")
 	}
-	if auth.WebAuthn() == nil {
-		t.Error("Auth().WebAuthn() returned nil")
+	if auth.FIDO2() == nil {
+		t.Error("Auth().FIDO2() returned nil")
 	}
 	if auth.PIV() == nil {
 		t.Error("Auth().PIV() returned nil")
@@ -535,17 +536,18 @@ func TestSDK_Devices_LocalAccessorReachable(t *testing.T) {
 }
 
 // =============================================================================
-// WebAuthn
+// FIDO2 ceremony
 // =============================================================================
 
-func TestSDK_WebAuthn_BeginRegistration_HappyPath(t *testing.T) {
+func TestSDK_FIDO2_BeginRegistration_HappyPath(t *testing.T) {
 	c, rt := newClientWithMockTransport(t)
 	defer c.Close()
 
-	rt.setResponse("quicbaas.WebAuthn", "BeginRegistration",
+	rt.setResponse("quicbaas.FIDO2", "BeginRegistration",
 		&quicbaas.FIDO2BeginRegistrationResponse{SessionID: "go"}, nil)
 
-	out, err := c.Security().Auth().WebAuthn().BeginRegistration(context.Background(), &quicbaas.WebAuthnUser{Username: "alice"})
+	out, err := c.Security().Auth().FIDO2().BeginRegistration(context.Background(),
+		&quicbaas.FIDO2BeginRegistrationRequest{Username: "alice"})
 	if err != nil {
 		t.Fatalf("BeginRegistration: %v", err)
 	}
@@ -554,109 +556,108 @@ func TestSDK_WebAuthn_BeginRegistration_HappyPath(t *testing.T) {
 	}
 }
 
-func TestSDK_WebAuthn_FinishLogin_HappyPath(t *testing.T) {
+func TestSDK_FIDO2_FinishAuthentication_HappyPath(t *testing.T) {
 	c, rt := newClientWithMockTransport(t)
 	defer c.Close()
 
-	rt.setResponse("quicbaas.WebAuthn", "FinishLogin",
-		&quicbaas.WebAuthnSession{UserID: "u-1", Username: "alice", Token: "JWT"}, nil)
+	rt.setResponse("quicbaas.FIDO2", "FinishAuthentication",
+		&quicbaas.FIDO2FinishAuthenticationResponse{Success: true, Username: "alice", Token: "JWT"}, nil)
 
-	sess, err := c.Security().Auth().WebAuthn().FinishLogin(
+	out, err := c.Security().Auth().FIDO2().FinishAuthentication(
 		context.Background(),
-		&quicbaas.WebAuthnUser{Username: "alice"},
-		&quicbaas.FIDO2FinishAuthenticationRequest{Username: "alice"},
+		&quicbaas.FIDO2FinishAuthenticationRequest{
+			SessionID:     "sess",
+			Username:      "alice",
+			AssertionJSON: `{"id":"cred"}`,
+		},
 	)
 	if err != nil {
-		t.Fatalf("FinishLogin: %v", err)
+		t.Fatalf("FinishAuthentication: %v", err)
 	}
-	if sess.Token != "JWT" {
-		t.Errorf("unexpected token %q", sess.Token)
+	if out.Token != "JWT" {
+		t.Errorf("unexpected token %q", out.Token)
 	}
 }
 
-func TestSDK_WebAuthn_BeginLogin_Validation(t *testing.T) {
+func TestSDK_FIDO2_BeginAuthentication_Validation(t *testing.T) {
 	c, _ := newClientWithMockTransport(t)
 	defer c.Close()
-	cli := c.Security().Auth().WebAuthn()
+	cli := c.Security().Auth().FIDO2()
 
-	if _, err := cli.BeginLogin(context.Background(), nil); !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for nil user, got %v", err)
+	if _, err := cli.BeginAuthentication(context.Background(), nil); !sdkerrors.IsInvalidInput(err) {
+		t.Errorf("expected InvalidInput for nil request, got %v", err)
 	}
-	if _, err := cli.BeginLogin(context.Background(), &quicbaas.WebAuthnUser{}); !sdkerrors.IsInvalidInput(err) {
+	if _, err := cli.BeginAuthentication(context.Background(), &quicbaas.FIDO2BeginAuthenticationRequest{}); !sdkerrors.IsInvalidInput(err) {
 		t.Errorf("expected InvalidInput for empty username, got %v", err)
 	}
 }
 
 // =============================================================================
-// PIV — vendor-agnostic
+// PIV — xkms backend-scoped shape
 // =============================================================================
 
-func TestSDK_PIV_ListReaders_VendorAgnostic(t *testing.T) {
+func TestSDK_PIV_ListPIVSlots_HappyPath(t *testing.T) {
 	c, rt := newClientWithMockTransport(t)
 	defer c.Close()
 
-	rt.setResponse("quicbaas.PIV", "ListReaders",
-		&quicbaas.PIVListReadersResponse{
-			Readers: []quicbaas.PIVReader{
-				{Name: "Yubico YubiKey OTP+CCID", Vendor: "Yubico", CardPresent: true},
-				{Name: "Nitrokey Pro 2", Vendor: "Nitrokey", CardPresent: true},
+	rt.setResponse("quicbaas.PIV", "ListPIVSlots",
+		&quicbaas.PIVListSlotsResponse{
+			Slots: []quicbaas.PIVSlotStatus{
+				{Slot: "9a", HasCert: true},
+				{Slot: "9c", HasCert: false},
 			},
 		}, nil)
 
-	out, err := c.Security().Auth().PIV().ListReaders(context.Background())
+	out, err := c.Security().Auth().PIV().ListPIVSlots(context.Background(),
+		&quicbaas.PIVListSlotsRequest{Backend: "file"})
 	if err != nil {
-		t.Fatalf("ListReaders: %v", err)
+		t.Fatalf("ListPIVSlots: %v", err)
 	}
-	if len(out.Readers) != 2 {
-		t.Fatalf("expected 2 readers, got %d", len(out.Readers))
+	if len(out.Slots) != 2 {
+		t.Fatalf("expected 2 slots, got %d", len(out.Slots))
 	}
-	if out.Readers[0].Vendor == out.Readers[1].Vendor {
-		t.Error("expected distinct vendors (vendor-agnostic API)")
+	if out.Slots[0].Slot != "9a" || !out.Slots[0].HasCert {
+		t.Errorf("unexpected slot entry: %+v", out.Slots[0])
 	}
 }
 
-func TestSDK_PIV_GetCertificate_HappyPath(t *testing.T) {
+func TestSDK_PIV_GetPIVCertificate_HappyPath(t *testing.T) {
 	c, rt := newClientWithMockTransport(t)
 	defer c.Close()
 
 	_, der := makeSelfSignedCert(t, "piv-cert")
-	rt.setResponse("quicbaas.PIV", "GetCertificate",
-		&quicbaas.PIVGetCertificateResponsePayload{CertDER: der}, nil)
+	pemBlock := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	rt.setResponse("quicbaas.PIV", "GetPIVCertificate",
+		&quicbaas.PIVGetCertificateResponse{Slot: "9a", Certificate: pemBlock, Format: "pem"}, nil)
 
-	cert, err := c.Security().Auth().PIV().GetCertificate(context.Background(), "reader1", "9a")
+	out, err := c.Security().Auth().PIV().GetPIVCertificate(context.Background(),
+		&quicbaas.PIVGetCertificateRequest{Backend: "file", Slot: "9a", Format: "pem"})
 	if err != nil {
-		t.Fatalf("GetCertificate: %v", err)
+		t.Fatalf("GetPIVCertificate: %v", err)
+	}
+	block, _ := pem.Decode(out.Certificate)
+	if block == nil {
+		t.Fatal("expected PEM certificate")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse certificate: %v", err)
 	}
 	if cert.Subject.CommonName != "piv-cert" {
 		t.Errorf("unexpected CN %q", cert.Subject.CommonName)
 	}
 }
 
-func TestSDK_PIV_Sign_Validation(t *testing.T) {
+func TestSDK_PIV_GeneratePIVKey_Validation(t *testing.T) {
 	c, _ := newClientWithMockTransport(t)
 	defer c.Close()
 	cli := c.Security().Auth().PIV()
 
-	if _, err := cli.Sign(context.Background(), nil); !sdkerrors.IsInvalidInput(err) {
+	if _, err := cli.GeneratePIVKey(context.Background(), nil); !sdkerrors.IsInvalidInput(err) {
 		t.Errorf("expected InvalidInput for nil request, got %v", err)
 	}
-	if _, err := cli.Sign(context.Background(), &quicbaas.PIVSignRequest{Slot: "9a"}); !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput for empty reader, got %v", err)
-	}
-}
-
-func TestSDK_PIV_Attest_NilResponse_Unsupported(t *testing.T) {
-	c, rt := newClientWithMockTransport(t)
-	defer c.Close()
-
-	rt.setResponse("quicbaas.PIV", "Attest", nil, nil)
-
-	_, err := c.Security().Auth().PIV().Attest(context.Background(), "r1", "9a")
-	if err == nil {
-		t.Fatal("expected error for nil response")
-	}
-	if !errors.Is(err, quicbaas.ErrPIVAttestationUnsupported) {
-		t.Errorf("expected ErrPIVAttestationUnsupported, got %v", err)
+	if _, err := cli.GeneratePIVKey(context.Background(), &quicbaas.PIVGenerateKeyRequest{Backend: "file"}); !sdkerrors.IsInvalidInput(err) {
+		t.Errorf("expected InvalidInput for missing slot, got %v", err)
 	}
 }
 
@@ -721,32 +722,6 @@ func TestSDK_AuthFactors_List_RoutesToQRDBUserSurface(t *testing.T) {
 	// Input validation still runs client-side, before any routing.
 	if _, err := c.Security().Auth().Factors().List(context.Background(), ""); !sdkerrors.IsInvalidInput(err) {
 		t.Errorf("expected InvalidInput for empty subject, got %v", err)
-	}
-}
-
-func TestSDK_AuthFactors_Login_HappyPath(t *testing.T) {
-	c, rt := newClientWithMockTransport(t)
-	defer c.Close()
-
-	expected := &quicbaas.AuthFactorLoginResponse{
-		UserID:    "u-1",
-		Username:  "alice",
-		Token:     "JWT",
-		IssuedAt:  time.Now(),
-		ExpiresAt: time.Now().Add(time.Hour),
-	}
-	rt.setResponse("quicbaas.AuthFactors", "Login", expected, nil)
-
-	out, err := c.Security().Auth().Factors().Login(context.Background(), &quicbaas.AuthFactorLoginRequest{
-		Username:   "alice",
-		FactorName: "fido2",
-		Proof:      []byte("assertion"),
-	})
-	if err != nil {
-		t.Fatalf("Login: %v", err)
-	}
-	if out.Token != "JWT" {
-		t.Errorf("unexpected token %q", out.Token)
 	}
 }
 

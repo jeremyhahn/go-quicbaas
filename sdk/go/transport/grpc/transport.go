@@ -315,6 +315,25 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// Check if this is a pooled provider Account service request. Account
+	// SDK types are plain Go structs, so the handler converts them to the
+	// generated AccountService proto types before calling gRPC. This branch
+	// also serves the Unix transport, which delegates to gRPC verbatim.
+	if isAccountService(service) {
+		handler := newAccountHandler(conn)
+		return handler.handleRequest(ctx, service, method, req)
+	}
+
+	// Check if this is a Project service request and route through the project
+	// handler. Project SDK types are plain Go structs, so the handler converts
+	// them to the generated ProjectService proto types before calling gRPC.
+	// This branch also serves the Unix transport, which delegates to gRPC
+	// verbatim.
+	if isProjectService(service) {
+		handler := newProjectHandler(conn)
+		return handler.handleRequest(ctx, service, method, req)
+	}
+
 	// Check if this is a Certificate service request and route through the
 	// certificate handler. Certificate services use plain Go structs which
 	// don't implement proto.Message, so we need to convert them to the
@@ -324,12 +343,53 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// Check if this is an SSH service request and route through the SSH
+	// handler. The SDK SSH surface reuses the go-xkms SSH DTOs, which are
+	// plain Go structs, so they must be converted to the generated
+	// SSHService proto types before calling gRPC.
+	if isSSHService(service) {
+		handler := newSSHHandler(conn)
+		return handler.handleRequest(ctx, service, method, req)
+	}
+
 	// Check if this is a Trust service request and route through the trust
 	// handler. The SDK trust surface uses plain Go structs that don't
 	// implement proto.Message, so they must be converted to the generated
 	// TrustService proto types before calling gRPC.
 	if isTrustService(service) {
 		handler := newTrustHandler(conn)
+		return handler.handleRequest(ctx, service, method, req)
+	}
+
+	// Check if this is an Attestation service request and route through the
+	// attestation handler, for the same reason as Trust: the SDK
+	// attestation surface uses plain Go structs that don't implement
+	// proto.Message and must be converted to the generated
+	// AttestationService proto types first.
+	if isAttestationService(service) {
+		handler := newAttestationHandler(conn)
+		return handler.handleRequest(ctx, service, method, req)
+	}
+
+	// Check if this is a FIDO2 ceremony request and route through the FIDO2
+	// handler. The SDK FIDO2 surface exchanges the go-xkms transport wire
+	// structs, which don't implement proto.Message, so they must be
+	// converted to the generated FIDO2Service proto types first. The tenant
+	// scope is resolved from the request context and rides the proto
+	// tenant_id field. This branch also serves the Unix transport, which
+	// delegates to gRPC verbatim.
+	if isFIDO2Service(service) {
+		handler := newFIDO2Handler(conn)
+		return handler.handleRequest(ctx, service, method, req)
+	}
+
+	// Check if this is a PIV service request and route through the PIV
+	// handler, for the same reason as FIDO2: the SDK PIV surface exchanges
+	// the go-xkms transport wire structs, which must be converted to the
+	// generated PIVService proto types. This branch also serves the Unix
+	// transport, which delegates to gRPC verbatim.
+	if isPIVService(service) {
+		handler := newPIVHandler(conn)
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
@@ -354,6 +414,16 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		if herr != nil {
 			return nil, herr
 		}
+		return handler.handleRequest(ctx, service, method, req)
+	}
+
+	// Check if this is a DynamicSecrets service request and route it through
+	// the dynamic secrets handler. The SDK dynamic secrets client sends plain
+	// Go structs; the handler converts them to the generated
+	// DynamicSecretsService proto types and decodes the reply back into the
+	// leaf client/dynamicsecrets response types.
+	if isDynamicSecretsService(service) {
+		handler := newDynamicSecretsHandler(conn)
 		return handler.handleRequest(ctx, service, method, req)
 	}
 

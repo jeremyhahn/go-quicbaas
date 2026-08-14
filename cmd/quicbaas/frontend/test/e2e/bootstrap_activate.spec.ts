@@ -245,7 +245,7 @@ test.describe('Security > Invite Activation — bootstrap activate flow', () => 
 
       // --- Phase 2: log in with a passkey using the same authenticator. ---
       const finishStatus = page.waitForResponse((resp) =>
-        resp.url().includes('/webauthn/login/finish') && resp.request().method() === 'POST',
+        resp.url().includes('/auth/login/finish') && resp.request().method() === 'POST',
       );
 
       await page.evaluate(() => {

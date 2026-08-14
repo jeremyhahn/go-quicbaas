@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
+	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -50,6 +51,9 @@ type MockQuicBaaS struct {
 	// These are returned by the corresponding accessor methods.
 	CertificateSvc   service.CertificateService
 	TrustSvc         service.TrustService
+	AttestationSvc   service.AttestationService
+	PIVSvc           service.PIVService
+	FIDO2Svc         service.FIDO2Service
 	ACMESvc          service.ACMEServicer
 	EmbeddingService service.EmbeddingService
 	OllamaService    service.OllamaService
@@ -544,6 +548,21 @@ func (m *MockQuicBaaS) Trust() service.TrustService {
 	return m.TrustSvc
 }
 
+// Attestation returns AttestationSvc when set, otherwise nil.
+func (m *MockQuicBaaS) Attestation() service.AttestationService {
+	return m.AttestationSvc
+}
+
+// PIV returns PIVSvc when set, otherwise nil.
+func (m *MockQuicBaaS) PIV() service.PIVService {
+	return m.PIVSvc
+}
+
+// FIDO2 returns FIDO2Svc when set, otherwise nil.
+func (m *MockQuicBaaS) FIDO2() service.FIDO2Service {
+	return m.FIDO2Svc
+}
+
 // ACME returns ACMESvc when set, otherwise nil.
 func (m *MockQuicBaaS) ACME() service.ACMEServicer {
 	return m.ACMESvc
@@ -611,6 +630,22 @@ func (m *MockQuicBaaS) Project() service.ProjectService {
 	return svc
 }
 
+// Account returns the pooled provider account service. Server bring-up calls
+// Account() unconditionally when registering the gRPC AccountService, so this
+// returns nil when the test has registered no expectation instead of panicking
+// (the same accommodation Close makes for Server.Shutdown). Tests that assert
+// account wiring can still register On("Account") as usual.
+func (m *MockQuicBaaS) Account() service.AccountService {
+	for _, call := range m.ExpectedCalls {
+		if call.Method == "Account" {
+			args := m.Called()
+			svc, _ := args.Get(0).(service.AccountService)
+			return svc
+		}
+	}
+	return nil
+}
+
 // AgentAdmin delegates to testify mock infrastructure.
 func (m *MockQuicBaaS) AgentAdmin() service.AgentAdminService {
 	args := m.Called()
@@ -662,6 +697,16 @@ func (m *MockQuicBaaS) SetDatabaseService(ds service.DatabaseService) {
 // SetQRDBClient is a no-op for the mock.
 func (m *MockQuicBaaS) SetQRDBClient(provider service.QRDBClientProvider) {
 	// No-op for mock
+}
+
+// SetSecretRegistry is a no-op for the mock.
+func (m *MockQuicBaaS) SetSecretRegistry(reg *qrdbsecret.ResolverRegistry) {
+	// No-op for mock
+}
+
+// SecretRegistry returns nil for the mock.
+func (m *MockQuicBaaS) SecretRegistry() *qrdbsecret.ResolverRegistry {
+	return nil
 }
 
 // LoginCeremony returns the stored login-ceremony facade (nil unless set).

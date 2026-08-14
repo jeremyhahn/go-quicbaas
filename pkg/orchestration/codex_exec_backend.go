@@ -208,14 +208,29 @@ func (b *CodexExecBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 	cmd.Stdin = strings.NewReader(full)
 
 	if req.EventCallback != nil {
-		req.EventCallback(req.SessionID, "agent:codex_exec_start", b.command+" exec")
+		req.EventCallback(&SessionEvent{
+			SessionID: req.SessionID,
+			Kind:      KindSystemMessage,
+			System: &SystemMessagePayload{
+				Level:   "info",
+				Code:    "codex_exec_start",
+				Message: b.command + " exec",
+			},
+		})
 	}
 
 	output, runErr := cmd.CombinedOutput()
 	stdout := string(output)
 
 	if req.EventCallback != nil && stdout != "" {
-		req.EventCallback(req.SessionID, "agent:oneshot_response", stdout)
+		req.EventCallback(&SessionEvent{
+			SessionID: req.SessionID,
+			Kind:      KindAssistantChunk,
+			AssistantChunk: &AssistantChunkPayload{
+				Text:  stdout,
+				Model: model,
+			},
+		})
 	}
 
 	if runErr != nil {

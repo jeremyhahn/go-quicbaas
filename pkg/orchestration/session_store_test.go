@@ -55,7 +55,7 @@ func TestInMemoryAgentStore_PutSession(t *testing.T) {
 	}
 
 	// Verify it was stored
-	got, err := store.GetSession(context.Background(), "session-1")
+	got, err := store.GetSession(context.Background(), "", "session-1")
 	if err != nil {
 		t.Fatalf("expected no error on get, got %v", err)
 	}
@@ -115,7 +115,7 @@ func TestInMemoryAgentStore_PutSession_Update(t *testing.T) {
 		t.Fatalf("failed update put: %v", err)
 	}
 
-	got, err := store.GetSession(context.Background(), "session-1")
+	got, err := store.GetSession(context.Background(), "", "session-1")
 	if err != nil {
 		t.Fatalf("failed get: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestInMemoryAgentStore_GetSession(t *testing.T) {
 		t.Fatalf("failed to put: %v", err)
 	}
 
-	got, err := store.GetSession(context.Background(), "session-get")
+	got, err := store.GetSession(context.Background(), "", "session-get")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -182,7 +182,7 @@ func TestInMemoryAgentStore_GetSession_NotFound(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryAgentStore()
-	_, err := store.GetSession(context.Background(), "nonexistent")
+	_, err := store.GetSession(context.Background(), "", "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent session")
 	}
@@ -195,7 +195,7 @@ func TestInMemoryAgentStore_GetSession_EmptyID(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryAgentStore()
-	_, err := store.GetSession(context.Background(), "")
+	_, err := store.GetSession(context.Background(), "", "")
 	if err == nil {
 		t.Fatal("expected error for empty session ID")
 	}
@@ -211,7 +211,7 @@ func TestInMemoryAgentStore_GetSession_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := store.GetSession(ctx, "session-1")
+	_, err := store.GetSession(ctx, "", "session-1")
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -235,13 +235,13 @@ func TestInMemoryAgentStore_DeleteSession(t *testing.T) {
 		t.Fatalf("failed to put: %v", err)
 	}
 
-	err := store.DeleteSession(context.Background(), "session-del")
+	err := store.DeleteSession(context.Background(), "", "session-del")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
 	// Verify it was deleted
-	_, err = store.GetSession(context.Background(), "session-del")
+	_, err = store.GetSession(context.Background(), "", "session-del")
 	if !errors.Is(err, ErrAgentStoreNotFound) {
 		t.Fatalf("expected ErrAgentStoreNotFound after delete, got %v", err)
 	}
@@ -251,7 +251,7 @@ func TestInMemoryAgentStore_DeleteSession_NotFound(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryAgentStore()
-	err := store.DeleteSession(context.Background(), "nonexistent")
+	err := store.DeleteSession(context.Background(), "", "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent session")
 	}
@@ -264,7 +264,7 @@ func TestInMemoryAgentStore_DeleteSession_EmptyID(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryAgentStore()
-	err := store.DeleteSession(context.Background(), "")
+	err := store.DeleteSession(context.Background(), "", "")
 	if err == nil {
 		t.Fatal("expected error for empty session ID")
 	}
@@ -280,7 +280,7 @@ func TestInMemoryAgentStore_DeleteSession_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := store.DeleteSession(ctx, "session-1")
+	err := store.DeleteSession(ctx, "", "session-1")
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -307,7 +307,7 @@ func TestInMemoryAgentStore_ListSessions(t *testing.T) {
 		}
 	}
 
-	result, err := store.ListSessions(context.Background())
+	result, err := store.ListSessions(context.Background(), "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -320,7 +320,7 @@ func TestInMemoryAgentStore_ListSessions_Empty(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryAgentStore()
-	result, err := store.ListSessions(context.Background())
+	result, err := store.ListSessions(context.Background(), "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -336,7 +336,7 @@ func TestInMemoryAgentStore_ListSessions_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := store.ListSessions(ctx)
+	_, err := store.ListSessions(ctx, "")
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -361,12 +361,12 @@ func TestInMemoryAgentStore_UpdateSessionStatus(t *testing.T) {
 		t.Fatalf("failed to put: %v", err)
 	}
 
-	err := store.UpdateSessionStatus(context.Background(), "session-status", SessionStateClosed)
+	err := store.UpdateSessionStatus(context.Background(), "", "session-status", SessionStateClosed)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	got, err := store.GetSession(context.Background(), "session-status")
+	got, err := store.GetSession(context.Background(), "", "session-status")
 	if err != nil {
 		t.Fatalf("failed to get: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestInMemoryAgentStore_UpdateSessionStatus_NotFound(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryAgentStore()
-	err := store.UpdateSessionStatus(context.Background(), "nonexistent", SessionStateClosed)
+	err := store.UpdateSessionStatus(context.Background(), "", "nonexistent", SessionStateClosed)
 	if err == nil {
 		t.Fatal("expected error for nonexistent session")
 	}
@@ -395,7 +395,7 @@ func TestInMemoryAgentStore_UpdateSessionStatus_EmptyID(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryAgentStore()
-	err := store.UpdateSessionStatus(context.Background(), "", SessionStateClosed)
+	err := store.UpdateSessionStatus(context.Background(), "", "", SessionStateClosed)
 	if err == nil {
 		t.Fatal("expected error for empty session ID")
 	}
@@ -424,12 +424,12 @@ func TestInMemoryAgentStore_UpdateSessionActivity(t *testing.T) {
 		t.Fatalf("failed to put: %v", err)
 	}
 
-	err := store.UpdateSessionActivity(context.Background(), "session-activity")
+	err := store.UpdateSessionActivity(context.Background(), "", "session-activity")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	got, err := store.GetSession(context.Background(), "session-activity")
+	got, err := store.GetSession(context.Background(), "", "session-activity")
 	if err != nil {
 		t.Fatalf("failed to get: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestInMemoryAgentStore_UpdateSessionActivity_NotFound(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryAgentStore()
-	err := store.UpdateSessionActivity(context.Background(), "nonexistent")
+	err := store.UpdateSessionActivity(context.Background(), "", "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent session")
 	}
@@ -455,7 +455,7 @@ func TestInMemoryAgentStore_UpdateSessionActivity_EmptyID(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryAgentStore()
-	err := store.UpdateSessionActivity(context.Background(), "")
+	err := store.UpdateSessionActivity(context.Background(), "", "")
 	if err == nil {
 		t.Fatal("expected error for empty session ID")
 	}

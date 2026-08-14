@@ -15,9 +15,11 @@ package signalbridge
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 )
 
 // translateEvent runs a single event through the translator and returns
@@ -221,6 +223,93 @@ func TestTranslate_SessionResumed_NilPayload(t *testing.T) {
 	sender, _, _ := translateEvent(t, orchestration.SessionEvent{Kind: orchestration.KindSessionResumed})
 	if len(sender.sends) != 0 {
 		t.Fatalf("nil payload should not send")
+	}
+}
+
+// agentThoughtEnvelope builds an envelope from a raw agent_thought wire
+// payload. The typed SessionEvent marshaling helper is bypassed on
+// purpose: agent_thought is consumed via its JSON wire contract.
+func agentThoughtEnvelope(t *testing.T, payload string) *orchestratorSDK.SessionEventEnvelope {
+	t.Helper()
+	env := envelopeFor(t, 1, orchestration.SessionEvent{})
+	env.PayloadJSON = []byte(payload)
+	return env
+}
+
+// TestTranslate_AgentThought renders the 💭 chain-of-thought line.
+func TestTranslate_AgentThought(t *testing.T) {
+	tr, sender, _ := newTestTranslator(t)
+	env := agentThoughtEnvelope(t, `{"kind":"agent_thought","thought":{"text":"weighing the options"}}`)
+	if err := tr.Translate(context.Background(), "conv-1", ConversationDM, env); err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if !contains(lastBody(sender), "💭") || !contains(lastBody(sender), "weighing the options") {
+		t.Fatalf("body = %q", lastBody(sender))
+	}
+}
+
+// TestTranslate_AgentThought_Truncated caps long reasoning fragments at
+// maxInlineThought with an ellipsis.
+func TestTranslate_AgentThought_Truncated(t *testing.T) {
+	tr, sender, _ := newTestTranslator(t)
+	long := strings.Repeat("x", maxInlineThought+100)
+	env := agentThoughtEnvelope(t, `{"kind":"agent_thought","thought":{"text":"`+long+`"}}`)
+	if err := tr.Translate(context.Background(), "conv-1", ConversationDM, env); err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	body := lastBody(sender)
+	if !contains(body, "…") {
+		t.Fatalf("expected truncation ellipsis, body = %q", body)
+	}
+	if contains(body, strings.Repeat("x", maxInlineThought+1)) {
+		t.Fatalf("body not truncated to maxInlineThought")
+	}
+}
+
+// TestTranslate_AgentThought_Disabled suppresses thoughts when the
+// ToolDetails verbosity knob is off.
+func TestTranslate_AgentThought_Disabled(t *testing.T) {
+	tr, sender, mgr := newTestTranslator(t)
+	prefs := DefaultVerbosityPrefs()
+	prefs.ToolDetails = false
+	if err := mgr.SetVerbosity("conv-1", ConversationDM, prefs); err != nil {
+		t.Fatalf("set verbosity: %v", err)
+	}
+	env := agentThoughtEnvelope(t, `{"kind":"agent_thought","thought":{"text":"secret reasoning"}}`)
+	if err := tr.Translate(context.Background(), "conv-1", ConversationDM, env); err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if len(sender.sends) != 0 {
+		t.Fatalf("agent thought should be suppressed, got %+v", sender.sends)
+	}
+}
+
+// TestTranslate_AgentThought_NilPayload is a no-op when the thought body
+// is missing or empty.
+func TestTranslate_AgentThought_NilPayload(t *testing.T) {
+	for _, payload := range []string{
+		`{"kind":"agent_thought"}`,
+		`{"kind":"agent_thought","thought":{"text":""}}`,
+	} {
+		tr, sender, _ := newTestTranslator(t)
+		env := agentThoughtEnvelope(t, payload)
+		if err := tr.Translate(context.Background(), "conv-1", ConversationDM, env); err != nil {
+			t.Fatalf("translate %s: %v", payload, err)
+		}
+		if len(sender.sends) != 0 {
+			t.Fatalf("payload %s should not send", payload)
+		}
+	}
+}
+
+// TestTranslate_AgentThought_BadShape returns invalid-input when the
+// thought field violates the wire contract.
+func TestTranslate_AgentThought_BadShape(t *testing.T) {
+	tr, _, _ := newTestTranslator(t)
+	env := agentThoughtEnvelope(t, `{"kind":"agent_thought","thought":"not-an-object"}`)
+	err := tr.Translate(context.Background(), "conv-1", ConversationDM, env)
+	if !IsKind(err, ErrKindInvalidInput) {
+		t.Fatalf("want invalid_input, got %v", err)
 	}
 }
 

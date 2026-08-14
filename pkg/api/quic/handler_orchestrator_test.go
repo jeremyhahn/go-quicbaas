@@ -32,6 +32,7 @@ import (
 type testAgentService struct {
 	spawnSessionFunc  func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error)
 	promptSessionFunc func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error)
+	promptAsyncFunc   func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error)
 	sessionStatusFunc func(ctx context.Context, req *orchestration.SessionStatusRequest) (*orchestration.SessionStatusResponse, error)
 	closeSessionFunc  func(ctx context.Context, req *orchestration.CloseSessionRequest) (*orchestration.CloseSessionResponse, error)
 	listSessionsFunc  func(ctx context.Context, req *orchestration.ListSessionsRequest) (*orchestration.ListSessionsResponse, error)
@@ -1154,4 +1155,18 @@ func TestHandleOrchestratorInference_WithHostAffinity(t *testing.T) {
 	if affinity != "node-1" {
 		t.Errorf("expected host affinity=node-1, got %q", affinity)
 	}
+}
+
+// PromptSessionAsync mirrors the production contract: the turn is acknowledged
+// immediately and its output would flow to the session event log.
+func (m *testAgentService) PromptSessionAsync(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error) {
+	if m.promptAsyncFunc != nil {
+		return m.promptAsyncFunc(ctx, req)
+	}
+	return &orchestration.PromptTurnAck{
+		SessionID: req.SessionID,
+		TurnID:    "turn-test",
+		Status:    orchestration.TurnStatusAccepted,
+		Sequence:  1,
+	}, nil
 }

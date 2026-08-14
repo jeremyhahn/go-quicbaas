@@ -77,19 +77,37 @@ type resourceAction struct {
 	action   string
 }
 
-// getToolResourceAction returns the resource and action required for a given tool.
-// Returns empty strings if the tool is not found (should be treated as requiring admin).
+// getToolResourceAction returns the broker-vocabulary resource and action
+// required for a given tool. Exact matches win; among prefix matches the LONGEST
+// matching prefix wins. An unknown tool falls back to cluster:admin, the
+// strongest permission, so a tool that is not described here is never admitted
+// cheaply.
+//
+// Longest-prefix selection is REQUIRED for correctness, not merely tidiness: Go
+// randomises map iteration order, and toolPrefixMapping deliberately contains
+// overlapping pairs whose actions differ — "qrdb_barrier_status" (Read) inside
+// "qrdb_barrier" (Admin), "qrdb_ceremony_status" (Read) inside "qrdb_ceremony"
+// (Admin), and "qrdb_credential_delete" (Delete) inside "qrdb_credential"
+// (Write). A first-match-wins loop over a randomised range resolved those tools
+// to a different permission from run to run; for the credential pair that
+// intermittently authorized a delete as a write.
 func getToolResourceAction(toolName string) (resource, action string) {
 	// Check exact matches first
 	if mapping, ok := toolResourceMapping[toolName]; ok {
 		return mapping.resource, mapping.action
 	}
 
-	// Check prefix patterns
+	// Check prefix patterns, longest match first.
+	bestLen := -1
+	var best resourceAction
 	for prefix, mapping := range toolPrefixMapping {
-		if strings.HasPrefix(toolName, prefix) {
-			return mapping.resource, mapping.action
+		if strings.HasPrefix(toolName, prefix) && len(prefix) > bestLen {
+			bestLen = len(prefix)
+			best = mapping
 		}
+	}
+	if bestLen >= 0 {
+		return best.resource, best.action
 	}
 
 	// Default to requiring admin access for unknown tools
@@ -194,13 +212,14 @@ var toolResourceMapping = map[string]resourceAction{
 	"quicbaas_logout": {interfaces.ResourceUsers, interfaces.ActionWrite},
 
 	// Orchestrator Operations - Read
-	"quicbaas_orchestrator_discover":      {interfaces.ResourceOrchestrator, interfaces.ActionRead},
-	"quicbaas_orchestrator_list":          {interfaces.ResourceOrchestrator, interfaces.ActionRead},
-	"quicbaas_orchestrator_status":        {interfaces.ResourceOrchestrator, interfaces.ActionRead},
-	"quicbaas_orchestrator_list_sessions": {interfaces.ResourceOrchestrator, interfaces.ActionRead},
-	"quicbaas_orchestrator_list_backends": {interfaces.ResourceOrchestrator, interfaces.ActionRead},
-	"quicbaas_orchestrator_health":        {interfaces.ResourceOrchestrator, interfaces.ActionRead},
-	"quicbaas_orchestrator_cache_get":     {interfaces.ResourceOrchestrator, interfaces.ActionRead},
+	"quicbaas_orchestrator_discover":        {interfaces.ResourceOrchestrator, interfaces.ActionRead},
+	"quicbaas_orchestrator_list":            {interfaces.ResourceOrchestrator, interfaces.ActionRead},
+	"quicbaas_orchestrator_status":          {interfaces.ResourceOrchestrator, interfaces.ActionRead},
+	"quicbaas_orchestrator_session_history": {interfaces.ResourceOrchestrator, interfaces.ActionRead},
+	"quicbaas_orchestrator_list_sessions":   {interfaces.ResourceOrchestrator, interfaces.ActionRead},
+	"quicbaas_orchestrator_list_backends":   {interfaces.ResourceOrchestrator, interfaces.ActionRead},
+	"quicbaas_orchestrator_health":          {interfaces.ResourceOrchestrator, interfaces.ActionRead},
+	"quicbaas_orchestrator_cache_get":       {interfaces.ResourceOrchestrator, interfaces.ActionRead},
 
 	// Orchestrator Operations - Write
 	"quicbaas_orchestrator_register":  {interfaces.ResourceOrchestrator, interfaces.ActionWrite},
@@ -220,6 +239,18 @@ var toolResourceMapping = map[string]resourceAction{
 	"project_grant_agent":  {interfaces.ResourceOrchestrator, interfaces.ActionAdmin},
 	"project_revoke_agent": {interfaces.ResourceOrchestrator, interfaces.ActionAdmin},
 
+	// Pooled provider account operations. Accounts custody credential
+	// material, so reads take the secrets resource and writes are admin-grade.
+	"quicbaas_agent_account_create":      {interfaces.ResourceSecrets, interfaces.ActionWrite},
+	"quicbaas_agent_account_get":         {interfaces.ResourceSecrets, interfaces.ActionRead},
+	"quicbaas_agent_account_list":        {interfaces.ResourceSecrets, interfaces.ActionRead},
+	"quicbaas_agent_account_update":      {interfaces.ResourceSecrets, interfaces.ActionWrite},
+	"quicbaas_agent_account_delete":      {interfaces.ResourceSecrets, interfaces.ActionAdmin},
+	"quicbaas_agent_account_rotate":      {interfaces.ResourceSecrets, interfaces.ActionWrite},
+	"quicbaas_agent_account_revoke":      {interfaces.ResourceSecrets, interfaces.ActionAdmin},
+	"quicbaas_agent_account_set_default": {interfaces.ResourceSecrets, interfaces.ActionWrite},
+	"quicbaas_agent_account_usage":       {interfaces.ResourceSecrets, interfaces.ActionRead},
+
 	// Agent Admin Operations - require admin
 	"agent_disable": {interfaces.ResourceOrchestrator, interfaces.ActionAdmin},
 	"agent_enable":  {interfaces.ResourceOrchestrator, interfaces.ActionAdmin},
@@ -228,6 +259,23 @@ var toolResourceMapping = map[string]resourceAction{
 // toolPrefixMapping contains prefix-based mappings for tool groups.
 var toolPrefixMapping = map[string]resourceAction{
 	// KMS Operations
+	// SSH tools authorize under the keys resource: SSH assets are
+	// cryptographic keys, matching the qrdb keys:* mapping in authz_qrdb.go.
+	"quicbaas_ssh_key_generate":      {interfaces.ResourceKeys, interfaces.ActionWrite},
+	"quicbaas_ssh_key_import":        {interfaces.ResourceKeys, interfaces.ActionWrite},
+	"quicbaas_ssh_key_get":           {interfaces.ResourceKeys, interfaces.ActionRead},
+	"quicbaas_ssh_key_list":          {interfaces.ResourceKeys, interfaces.ActionRead},
+	"quicbaas_ssh_key_delete":        {interfaces.ResourceKeys, interfaces.ActionDelete},
+	"quicbaas_ssh_key_export":        {interfaces.ResourceKeys, interfaces.ActionRead},
+	"quicbaas_ssh_key_sign":          {interfaces.ResourceKeys, interfaces.ActionRead},
+	"quicbaas_ssh_known_host_add":    {interfaces.ResourceKeys, interfaces.ActionWrite},
+	"quicbaas_ssh_known_host_list":   {interfaces.ResourceKeys, interfaces.ActionRead},
+	"quicbaas_ssh_known_host_remove": {interfaces.ResourceKeys, interfaces.ActionDelete},
+	"quicbaas_ssh_authorized_add":    {interfaces.ResourceKeys, interfaces.ActionWrite},
+	"quicbaas_ssh_authorized_list":   {interfaces.ResourceKeys, interfaces.ActionRead},
+	"quicbaas_ssh_authorized_remove": {interfaces.ResourceKeys, interfaces.ActionDelete},
+	"quicbaas_ssh_authorized_emit":   {interfaces.ResourceKeys, interfaces.ActionRead},
+
 	"quicbaas_kms_get":              {interfaces.ResourceKMS, interfaces.ActionRead},
 	"quicbaas_kms_list":             {interfaces.ResourceKMS, interfaces.ActionRead},
 	"quicbaas_kms_create":           {interfaces.ResourceKMS, interfaces.ActionWrite},
@@ -263,6 +311,13 @@ var toolPrefixMapping = map[string]resourceAction{
 	"quicbaas_secrets_watch":               {interfaces.ResourceSecrets, interfaces.ActionRead},
 
 	// Trust Operations (cross-sign / AIA / DANE composition over the CA)
+	// Attestation tools. Verification is a read-strength computation over
+	// caller-supplied material; attest_container drives the host TPM and is
+	// therefore a write.
+	"quicbaas_attestation_verify":           {interfaces.ResourceCertificate, interfaces.ActionRead},
+	"quicbaas_attestation_verify_chain":     {interfaces.ResourceCertificate, interfaces.ActionRead},
+	"quicbaas_attestation_attest_container": {interfaces.ResourceCertificate, interfaces.ActionWrite},
+
 	"quicbaas_trust_cross_signed_root_pool": {interfaces.ResourceCertificate, interfaces.ActionRead},
 	"quicbaas_trust_auto_import_aia":        {interfaces.ResourceCertificate, interfaces.ActionWrite},
 	"quicbaas_trust_publish_dane":           {interfaces.ResourceCertificate, interfaces.ActionWrite},
@@ -304,10 +359,12 @@ var toolPrefixMapping = map[string]resourceAction{
 	"quicbaas_parameter_batch_delete": {interfaces.ResourceParameters, interfaces.ActionDelete},
 	"quicbaas_parameter_search":       {interfaces.ResourceParameters, interfaces.ActionRead},
 
-	// qrdb-mirror prefix tools (data plane owned by go-qrdb). Ordering within
-	// the prefix map does not matter for correctness because getToolResourceAction
-	// uses HasPrefix; the more specific prefixes (e.g. *_search/*_get → Read,
-	// *_delete → Delete) are listed so they match before broader fallbacks.
+	// qrdb-mirror prefix tools (data plane owned by go-qrdb). DECLARATION ORDER
+	// IS MEANINGLESS: this is a map, and Go randomises range order. Correctness
+	// for the overlapping pairs below (*_status inside the surface prefix,
+	// qrdb_credential_delete inside qrdb_credential) comes solely from
+	// getToolResourceAction selecting the LONGEST matching prefix. Do not
+	// reintroduce a first-match-wins loop.
 
 	// Vector (mirror set)
 	"qrdb_vector_search":       {interfaces.ResourceVector, interfaces.ActionRead},

@@ -46,7 +46,9 @@ Tenants provide isolation and multi-tenancy capabilities, allowing
 multiple organizations or customers to share a QuicBaaS cluster
 while maintaining complete data and access control separation.
 
-Each tenant has its own set of users, groups, roles, and policies.`,
+Each tenant has its own set of users, groups, roles, and policies, and —
+when provisioned with dedicated isolation — its own encryption barrier,
+managed under "tenant barrier".`,
 	}
 
 	// Add subcommands
@@ -55,6 +57,11 @@ Each tenant has its own set of users, groups, roles, and policies.`,
 	cmd.AddCommand(newIAMTenantUpdateCommand())
 	cmd.AddCommand(newIAMTenantDeleteCommand())
 	cmd.AddCommand(newIAMTenantListCommand())
+
+	// The per-tenant barrier is tenant-admin self-service and lives under the
+	// tenant it belongs to, keeping it clearly distinct from `quicbaas barrier`
+	// (the SYSTEM barrier). Both are delegated to the embedded qrdb node.
+	cmd.AddCommand(newTenantBarrierCommand())
 
 	return cmd
 }

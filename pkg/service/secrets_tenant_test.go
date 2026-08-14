@@ -19,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // =============================================================================
@@ -245,4 +247,32 @@ func TestSecretsTenantIsolation_ListPrefixesAreMutuallyExclusive(t *testing.T) {
 	scopedA := secretsTenantScopedID("tenant-a", "secret")
 	assert.True(t, strings.HasPrefix(scopedA, prefixA))
 	assert.False(t, strings.HasPrefix(scopedA, prefixB))
+}
+
+// =============================================================================
+// System-tenant scoping tests
+// =============================================================================
+
+// TestSecretsTenant_SystemTenantIsPlatformScoped proves a caller carrying the
+// literal system tenant is treated identically to single-tenant mode rather
+// than being isolated into a tenant namespace named "system".
+func TestSecretsTenant_SystemTenantIsPlatformScoped(t *testing.T) {
+	for _, tenantID := range []string{"", qrdbsdk.SystemTenantID} {
+		t.Run("tenantID="+tenantID, func(t *testing.T) {
+			assert.Equal(t, "my-secret", secretsTenantScopedID(tenantID, "my-secret"))
+			assert.True(t, secretsTenantBelongsTo(tenantID, "any-secret"))
+			assert.NoError(t, enforceSecretsTenantAccess(tenantID, "any-secret", "GetSecret"))
+		})
+	}
+}
+
+// TestSecretsTenant_OrdinaryTenantStaysIsolated proves the system-tenant
+// carve-out does not widen ordinary tenants' reach: a lookalike ID that
+// merely shares the "system" prefix is still fully isolated.
+func TestSecretsTenant_OrdinaryTenantStaysIsolated(t *testing.T) {
+	scoped := secretsTenantScopedID("system-2", "my-secret")
+	assert.Equal(t, "tenant/system-2/my-secret", scoped)
+	assert.False(t, secretsTenantBelongsTo("system-2", "my-secret"))
+	err := enforceSecretsTenantAccess("system-2", "my-secret", "GetSecret")
+	require.Error(t, err)
 }

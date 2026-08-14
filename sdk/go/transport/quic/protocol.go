@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 
+	sshclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
@@ -121,6 +122,20 @@ const (
 	// Unified login ceremony (0x78-0x79, free on both SDK and server).
 	OpAuthBeginLogin  byte = 0x78
 	OpAuthFinishLogin byte = 0x79
+
+	// Dynamic Secrets Operations (0x64-0x6B). These MUST match
+	// pkg/api/quic/protocol.go OpDynamicSecrets* byte-for-byte; the server
+	// dispatches them as top-level opcodes (no sub-op byte), so no slice of
+	// the OpOrchestrator sub-op space is consumed. TestDynamicSecretsOpcodes
+	// pins the values.
+	OpDynamicSecretsCreateRole  byte = 0x64
+	OpDynamicSecretsGetRole     byte = 0x65
+	OpDynamicSecretsListRoles   byte = 0x66
+	OpDynamicSecretsDeleteRole  byte = 0x67
+	OpDynamicSecretsGenerate    byte = 0x68
+	OpDynamicSecretsRenewLease  byte = 0x69
+	OpDynamicSecretsRevokeLease byte = 0x6A
+	OpDynamicSecretsListLeases  byte = 0x6B
 
 	// RBAC Operations (0x70-0x77).
 	OpRBACCreateUser byte = 0x70
@@ -428,6 +443,24 @@ const (
 	SubOpOrchestratorInference byte = 0x0D
 )
 
+// SubOpOrchestratorRotateAccount carries the session pooled-account rotation
+// verb on the OpOrchestrator (0x8F) dispatch byte, in its own disjoint 0x20
+// slot rather than at the end of the contiguous 0x01-0x0D orchestrator range.
+//
+// The placement is load-bearing, not cosmetic: the server authorizes the
+// contiguous range at the surface level as orchestrator:status, and rotation is
+// a write that must resolve orchestrator:spawn. A sub-op inside that range
+// could not do so. 0x20 is free on this dispatch byte — accounts start at 0x30,
+// projects at 0x40, SSH at 0x50, certificate extensions at 0x60 and attestation
+// at 0x70.
+//
+// Cross-reference: pkg/api/quic/protocol.go SubOpOrchestratorRotateAccount —
+// the two files MUST stay in sync, and the parity test in
+// pkg/api/quic asserts the literal byte on both sides.
+const (
+	SubOpOrchestratorRotateAccount byte = 0x20
+)
+
 // orchestratorMethodToSubOp maps Orchestrator method names to their sub-operation
 // codes for O(1) lookup. All entries use OpOrchestrator (0x8F) as the wire opcode
 // with the SubOp byte prepended to the payload.
@@ -436,21 +469,146 @@ var orchestratorMethodToSubOp = map[string]byte{
 	"PromptSession": SubOpOrchestratorPrompt,
 	"SessionStatus": SubOpOrchestratorSessionStatus,
 	"CloseSession":  SubOpOrchestratorCloseSession,
-	"ListSessions":  SubOpOrchestratorListSessions,
-	"CreateTask":    SubOpOrchestratorCreateTask,
-	"GetTask":       SubOpOrchestratorGetTask,
-	"ListTasks":     SubOpOrchestratorListTasks,
-	"ClaimTask":     SubOpOrchestratorClaimTask,
-	"CompleteTask":  SubOpOrchestratorCompleteTask,
-	"ListBackends":  SubOpOrchestratorListBackends,
-	"Health":        SubOpOrchestratorHealth,
-	"Inference":     SubOpOrchestratorInference,
+
+	"RotateSessionAccount": SubOpOrchestratorRotateAccount,
+
+	"ListSessions": SubOpOrchestratorListSessions,
+	"CreateTask":   SubOpOrchestratorCreateTask,
+	"GetTask":      SubOpOrchestratorGetTask,
+	"ListTasks":    SubOpOrchestratorListTasks,
+	"ClaimTask":    SubOpOrchestratorClaimTask,
+	"CompleteTask": SubOpOrchestratorCompleteTask,
+	"ListBackends": SubOpOrchestratorListBackends,
+	"Health":       SubOpOrchestratorHealth,
+	"Inference":    SubOpOrchestratorInference,
 }
 
 // OrchestratorMethodToSubOp converts an Orchestrator method name to its sub-operation code.
 // Returns false if the method is not a known Orchestrator sub-operation.
 func OrchestratorMethodToSubOp(method string) (byte, bool) {
 	subOp, ok := orchestratorMethodToSubOp[method]
+	return subOp, ok
+}
+
+// Pooled provider account sub-operation codes. They ride the SAME
+// OpOrchestrator (0x8F) dispatch byte in a disjoint 0x30-0x38 range; the
+// server resolves them in handleOrchestratorDispatch and authorizes them
+// against credentials:* rather than orchestrator:*. These MUST match
+// pkg/api/quic/protocol.go SubOpAccount* byte-for-byte.
+const (
+	SubOpAccountCreate     byte = 0x30
+	SubOpAccountGet        byte = 0x31
+	SubOpAccountList       byte = 0x32
+	SubOpAccountUpdate     byte = 0x33
+	SubOpAccountDelete     byte = 0x34
+	SubOpAccountRotate     byte = 0x35
+	SubOpAccountRevoke     byte = 0x36
+	SubOpAccountSetDefault byte = 0x37
+	SubOpAccountUsage      byte = 0x38
+)
+
+// accountMethodToSubOp maps SDK Account method names to their sub-operation
+// codes for O(1) lookup.
+var accountMethodToSubOp = map[string]byte{
+	"Create":           SubOpAccountCreate,
+	"Get":              SubOpAccountGet,
+	"List":             SubOpAccountList,
+	"Update":           SubOpAccountUpdate,
+	"Delete":           SubOpAccountDelete,
+	"RotateCredential": SubOpAccountRotate,
+	"Revoke":           SubOpAccountRevoke,
+	"SetDefault":       SubOpAccountSetDefault,
+	"Usage":            SubOpAccountUsage,
+}
+
+// AccountMethodToSubOp converts an Account method name to its sub-operation
+// code. Returns false when the method is not a known account sub-operation.
+func AccountMethodToSubOp(method string) (byte, bool) {
+	subOp, ok := accountMethodToSubOp[method]
+	return subOp, ok
+}
+
+// Project sub-operation codes. They ride the SAME OpOrchestrator (0x8F)
+// dispatch byte in a disjoint 0x40-0x47 range; the server resolves them in
+// handleOrchestratorDispatch and authorizes them against project:* rather than
+// orchestrator:*. These MUST match pkg/api/quic/protocol.go SubOpProject*
+// byte-for-byte.
+const (
+	SubOpProjectCreate          byte = 0x40
+	SubOpProjectGet             byte = 0x41
+	SubOpProjectGetByName       byte = 0x42
+	SubOpProjectList            byte = 0x43
+	SubOpProjectUpdate          byte = 0x44
+	SubOpProjectDelete          byte = 0x45
+	SubOpProjectGrantAgentRole  byte = 0x46
+	SubOpProjectRevokeAgentRole byte = 0x47
+)
+
+// projectMethodToSubOp maps SDK Project method names to their sub-operation
+// codes for O(1) lookup.
+var projectMethodToSubOp = map[string]byte{
+	"Create":          SubOpProjectCreate,
+	"Get":             SubOpProjectGet,
+	"GetByName":       SubOpProjectGetByName,
+	"List":            SubOpProjectList,
+	"Update":          SubOpProjectUpdate,
+	"Delete":          SubOpProjectDelete,
+	"GrantAgentRole":  SubOpProjectGrantAgentRole,
+	"RevokeAgentRole": SubOpProjectRevokeAgentRole,
+}
+
+// ProjectMethodToSubOp converts a Project method name to its sub-operation
+// code. Returns false when the method is not a known project sub-operation.
+func ProjectMethodToSubOp(method string) (byte, bool) {
+	subOp, ok := projectMethodToSubOp[method]
+	return subOp, ok
+}
+
+// SSH sub-operation codes. They ride the SAME OpOrchestrator (0x8F) dispatch
+// byte in a disjoint 0x50-0x5D range; the server resolves them in
+// handleOrchestratorDispatch and authorizes them against keys:* rather than
+// orchestrator:*. These MUST match pkg/api/quic/protocol.go SubOpSSH*
+// byte-for-byte.
+const (
+	SubOpSSHGenerateKey         byte = 0x50
+	SubOpSSHImportKey           byte = 0x51
+	SubOpSSHGetKey              byte = 0x52
+	SubOpSSHListKeys            byte = 0x53
+	SubOpSSHDeleteKey           byte = 0x54
+	SubOpSSHExportPublicKey     byte = 0x55
+	SubOpSSHSignDigest          byte = 0x56
+	SubOpSSHAddKnownHost        byte = 0x57
+	SubOpSSHListKnownHosts      byte = 0x58
+	SubOpSSHRemoveKnownHost     byte = 0x59
+	SubOpSSHAddAuthorizedKey    byte = 0x5A
+	SubOpSSHListAuthorizedKeys  byte = 0x5B
+	SubOpSSHRemoveAuthorizedKey byte = 0x5C
+	SubOpSSHEmitAuthorizedKey   byte = 0x5D
+)
+
+// sshMethodToSubOp maps SDK SSH method names to their sub-operation codes for
+// O(1) lookup.
+var sshMethodToSubOp = map[string]byte{
+	sshclient.MethodGenerateKey:         SubOpSSHGenerateKey,
+	sshclient.MethodImportKey:           SubOpSSHImportKey,
+	sshclient.MethodGetKey:              SubOpSSHGetKey,
+	sshclient.MethodListKeys:            SubOpSSHListKeys,
+	sshclient.MethodDeleteKey:           SubOpSSHDeleteKey,
+	sshclient.MethodExportPublicKey:     SubOpSSHExportPublicKey,
+	sshclient.MethodSignDigest:          SubOpSSHSignDigest,
+	sshclient.MethodAddKnownHost:        SubOpSSHAddKnownHost,
+	sshclient.MethodListKnownHosts:      SubOpSSHListKnownHosts,
+	sshclient.MethodRemoveKnownHost:     SubOpSSHRemoveKnownHost,
+	sshclient.MethodAddAuthorizedKey:    SubOpSSHAddAuthorizedKey,
+	sshclient.MethodListAuthorizedKeys:  SubOpSSHListAuthorizedKeys,
+	sshclient.MethodRemoveAuthorizedKey: SubOpSSHRemoveAuthorizedKey,
+	sshclient.MethodEmitAuthorizedKey:   SubOpSSHEmitAuthorizedKey,
+}
+
+// SSHMethodToSubOp converts an SSH method name to its sub-operation code.
+// Returns false when the method is not a known SSH sub-operation.
+func SSHMethodToSubOp(method string) (byte, bool) {
+	subOp, ok := sshMethodToSubOp[method]
 	return subOp, ok
 }
 
@@ -636,6 +794,139 @@ var barrierMethodToSubOp = map[string]byte{
 }
 
 // BarrierMethodToSubOp converts a Barrier method name to a sub-operation code.
+// Certificate extension sub-operation codes. The CrossSign / Chain /
+// IssueDeviceIdentity verbs behind Security().CertificateExt() ride the
+// OpOrchestrator (0x8F) dispatch byte in their own disjoint 0x60-0x62 range,
+// the same "shared opcode, disjoint sub-op range" arrangement accounts
+// (0x30-0x38), projects (0x40-0x47) and SSH (0x50-0x5D) use. The top-level
+// opcode space is fully allocated — note that 0x60 is still OpAuthLogin here.
+//
+// Cross-reference: pkg/api/quic/protocol.go SubOpCertExt* — the two files MUST
+// stay in sync.
+const (
+	SubOpCertExtCrossSign           byte = 0x60
+	SubOpCertExtChain               byte = 0x61
+	SubOpCertExtIssueDeviceIdentity byte = 0x62
+)
+
+// certExtMethodToSubOp maps the Certificate service extension methods to their
+// sub-operation codes for O(1) lookup. The wire opcode is OpOrchestrator.
+var certExtMethodToSubOp = map[string]byte{
+	"CrossSign":           SubOpCertExtCrossSign,
+	"Chain":               SubOpCertExtChain,
+	"IssueDeviceIdentity": SubOpCertExtIssueDeviceIdentity,
+}
+
+// CertExtMethodToSubOp returns the sub-operation code for a certificate
+// extension method, and whether the method rides the OpCertExt dispatch byte.
+// The six base certificate verbs have their own top-level opcodes and return
+// ok=false here.
+func CertExtMethodToSubOp(method string) (byte, bool) {
+	subOp, ok := certExtMethodToSubOp[method]
+	return subOp, ok
+}
+
+// Attestation sub-operation codes. The Verify / VerifyChain / AttestContainer
+// verbs behind Security().Attestation() ride the OpOrchestrator (0x8F)
+// dispatch byte in their own disjoint 0x70-0x72 range, the same "shared
+// opcode, disjoint sub-op range" arrangement accounts (0x30-0x38), projects
+// (0x40-0x47), SSH (0x50-0x5D) and certificate extensions (0x60-0x62) use.
+//
+// Cross-reference: pkg/api/quic/protocol.go SubOpAttestation* — the two files
+// MUST stay in sync.
+const (
+	SubOpAttestationVerify          byte = 0x70
+	SubOpAttestationVerifyChain     byte = 0x71
+	SubOpAttestationAttestContainer byte = 0x72
+)
+
+// attestationMethodToSubOp maps Attestation service methods to their
+// sub-operation codes for O(1) lookup. The wire opcode is OpOrchestrator.
+var attestationMethodToSubOp = map[string]byte{
+	"Verify":          SubOpAttestationVerify,
+	"VerifyChain":     SubOpAttestationVerifyChain,
+	"AttestContainer": SubOpAttestationAttestContainer,
+}
+
+// AttestationMethodToSubOp returns the sub-operation code for an attestation
+// method and whether the method is wired over QUIC.
+func AttestationMethodToSubOp(method string) (byte, bool) {
+	subOp, ok := attestationMethodToSubOp[method]
+	return subOp, ok
+}
+
+// PIV sub-operation codes. The eight backend-scoped PIV verbs behind
+// Security().Auth().PIV() — the go-xkms PIVService contract verbatim — ride
+// the OpOrchestrator (0x8F) dispatch byte in their own disjoint 0x80-0x87
+// range.
+//
+// Cross-reference: pkg/api/quic/protocol.go SubOpPIV* — the two files MUST
+// stay in sync.
+const (
+	SubOpPIVListSlots   byte = 0x80
+	SubOpPIVGetCert     byte = 0x81
+	SubOpPIVStoreCert   byte = 0x82
+	SubOpPIVDeleteCert  byte = 0x83
+	SubOpPIVGenerateKey byte = 0x84
+	SubOpPIVImportCert  byte = 0x85
+	SubOpPIVExportCert  byte = 0x86
+	SubOpPIVGenerateCSR byte = 0x87
+)
+
+// pivMethodToSubOp maps PIV service methods to their sub-operation codes for
+// O(1) lookup. The wire opcode is OpOrchestrator. The method vocabulary is
+// the xkms PIVService interface verbatim.
+var pivMethodToSubOp = map[string]byte{
+	"ListPIVSlots":         SubOpPIVListSlots,
+	"GetPIVCertificate":    SubOpPIVGetCert,
+	"StorePIVCertificate":  SubOpPIVStoreCert,
+	"DeletePIVCertificate": SubOpPIVDeleteCert,
+	"GeneratePIVKey":       SubOpPIVGenerateKey,
+	"ImportPIVCertificate": SubOpPIVImportCert,
+	"ExportPIVCertificate": SubOpPIVExportCert,
+	"GeneratePIVCSR":       SubOpPIVGenerateCSR,
+}
+
+// PIVMethodToSubOp returns the sub-operation code for a PIV method and
+// whether the method is wired over QUIC.
+func PIVMethodToSubOp(method string) (byte, bool) {
+	subOp, ok := pivMethodToSubOp[method]
+	return subOp, ok
+}
+
+// FIDO2 sub-operation codes. The four tenant-scoped WebAuthn ceremony verbs
+// behind Security().Auth().FIDO2() ride the OpOrchestrator (0x8F) dispatch
+// byte in their own disjoint 0x90-0x93 range. The tenant scope travels as a
+// "tenant_id" field injected into the JSON body from the request context
+// (transport.TenantFromContext), the same enrichment the orchestrator verbs
+// use.
+//
+// Cross-reference: pkg/api/quic/protocol.go SubOpFIDO2* — the two files MUST
+// stay in sync.
+const (
+	SubOpFIDO2BeginRegistration    byte = 0x90
+	SubOpFIDO2FinishRegistration   byte = 0x91
+	SubOpFIDO2BeginAuthentication  byte = 0x92
+	SubOpFIDO2FinishAuthentication byte = 0x93
+)
+
+// fido2MethodToSubOp maps FIDO2 service methods to their sub-operation codes
+// for O(1) lookup. The wire opcode is OpOrchestrator. The method vocabulary
+// is the xkms FIDO2Service interface verbatim.
+var fido2MethodToSubOp = map[string]byte{
+	"BeginRegistration":    SubOpFIDO2BeginRegistration,
+	"FinishRegistration":   SubOpFIDO2FinishRegistration,
+	"BeginAuthentication":  SubOpFIDO2BeginAuthentication,
+	"FinishAuthentication": SubOpFIDO2FinishAuthentication,
+}
+
+// FIDO2MethodToSubOp returns the sub-operation code for a FIDO2 method and
+// whether the method is wired over QUIC.
+func FIDO2MethodToSubOp(method string) (byte, bool) {
+	subOp, ok := fido2MethodToSubOp[method]
+	return subOp, ok
+}
+
 func BarrierMethodToSubOp(method string) (byte, bool) {
 	subOp, ok := barrierMethodToSubOp[method]
 	return subOp, ok
@@ -1073,6 +1364,18 @@ var methodToOpcode = map[string]byte{
 	"Certificate/GetCACertificate":  OpCertGetCA,
 	"Certificate/GetTLSConfig":      OpCertGetTLSConfig,
 
+	// Certificate extensions ride the OpOrchestrator dispatch byte with the
+	// sub-op in payload[0]; see CertExtMethodToSubOp.
+	"Certificate/CrossSign":           OpOrchestrator,
+	"Certificate/Chain":               OpOrchestrator,
+	"Certificate/IssueDeviceIdentity": OpOrchestrator,
+
+	// Attestation rides the OpOrchestrator dispatch byte with the sub-op in
+	// payload[0]; see AttestationMethodToSubOp.
+	"Attestation/Verify":          OpOrchestrator,
+	"Attestation/VerifyChain":     OpOrchestrator,
+	"Attestation/AttestContainer": OpOrchestrator,
+
 	// Trust Operations (legacy)
 	"Trust/CrossSignedRootPool": OpTrustCrossSignedRootPool,
 	"Trust/AutoImportAIA":       OpTrustAutoImportAIA,
@@ -1344,6 +1647,51 @@ var methodToOpcode = map[string]byte{
 	"quicbaas.Certificate/VerifyCertificate": OpCertVerify,
 	"quicbaas.Certificate/GetCACertificate":  OpCertGetCA,
 	"quicbaas.Certificate/GetTLSConfig":      OpCertGetTLSConfig,
+
+	// Certificate extensions ride the OpOrchestrator dispatch byte with the
+	// sub-op in payload[0]; see CertExtMethodToSubOp.
+	"quicbaas.Certificate/CrossSign":           OpOrchestrator,
+	"quicbaas.Certificate/Chain":               OpOrchestrator,
+	"quicbaas.Certificate/IssueDeviceIdentity": OpOrchestrator,
+
+	// Attestation rides the OpOrchestrator dispatch byte with the sub-op in
+	// payload[0]; see AttestationMethodToSubOp.
+	"quicbaas.Attestation/Verify":          OpOrchestrator,
+	"quicbaas.Attestation/VerifyChain":     OpOrchestrator,
+	"quicbaas.Attestation/AttestContainer": OpOrchestrator,
+
+	// PIV rides the OpOrchestrator dispatch byte with the sub-op in
+	// payload[0]; see PIVMethodToSubOp. The verbs and payloads are the
+	// go-xkms PIVService transport contract verbatim.
+	"quicbaas.PIV/ListPIVSlots":         OpOrchestrator,
+	"quicbaas.PIV/GetPIVCertificate":    OpOrchestrator,
+	"quicbaas.PIV/StorePIVCertificate":  OpOrchestrator,
+	"quicbaas.PIV/DeletePIVCertificate": OpOrchestrator,
+	"quicbaas.PIV/GeneratePIVKey":       OpOrchestrator,
+	"quicbaas.PIV/ImportPIVCertificate": OpOrchestrator,
+	"quicbaas.PIV/ExportPIVCertificate": OpOrchestrator,
+	"quicbaas.PIV/GeneratePIVCSR":       OpOrchestrator,
+
+	// FIDO2 rides the OpOrchestrator dispatch byte with the sub-op in
+	// payload[0]; see FIDO2MethodToSubOp. The verbs and payloads are the
+	// go-xkms FIDO2 transport contract verbatim, tenant-scoped via the
+	// injected tenant_id field.
+	"quicbaas.FIDO2/BeginRegistration":    OpOrchestrator,
+	"quicbaas.FIDO2/FinishRegistration":   OpOrchestrator,
+	"quicbaas.FIDO2/BeginAuthentication":  OpOrchestrator,
+	"quicbaas.FIDO2/FinishAuthentication": OpOrchestrator,
+
+	// Dynamic Secrets Operations (0x64-0x6B). The server exposes these as
+	// top-level opcodes (pkg/api/quic/handler.go), so each verb resolves
+	// directly without an OpOrchestrator sub-op byte.
+	"quicbaas.DynamicSecrets/CreateRole":         OpDynamicSecretsCreateRole,
+	"quicbaas.DynamicSecrets/GetRole":            OpDynamicSecretsGetRole,
+	"quicbaas.DynamicSecrets/ListRoles":          OpDynamicSecretsListRoles,
+	"quicbaas.DynamicSecrets/DeleteRole":         OpDynamicSecretsDeleteRole,
+	"quicbaas.DynamicSecrets/GenerateCredential": OpDynamicSecretsGenerate,
+	"quicbaas.DynamicSecrets/RenewLease":         OpDynamicSecretsRenewLease,
+	"quicbaas.DynamicSecrets/RevokeLease":        OpDynamicSecretsRevokeLease,
+	"quicbaas.DynamicSecrets/ListLeases":         OpDynamicSecretsListLeases,
 
 	// Trust Operations (0x7A-0x7C). CrossSignedRootPool, AutoImportAIA and
 	// PublishDANE are wired across the QUIC transport.
@@ -1643,6 +1991,46 @@ var methodToOpcode = map[string]byte{
 	"quicbaas.Orchestrator/Health":        OpOrchestrator,
 	"quicbaas.Orchestrator/Inference":     OpOrchestrator,
 
+	// Pooled provider Account Operations - share OpOrchestrator (0x8F); the
+	// SubOp byte (0x30-0x38) selects the account sub-operation.
+	"quicbaas.Account/Create":           OpOrchestrator,
+	"quicbaas.Account/Get":              OpOrchestrator,
+	"quicbaas.Account/List":             OpOrchestrator,
+	"quicbaas.Account/Update":           OpOrchestrator,
+	"quicbaas.Account/Delete":           OpOrchestrator,
+	"quicbaas.Account/RotateCredential": OpOrchestrator,
+	"quicbaas.Account/Revoke":           OpOrchestrator,
+	"quicbaas.Account/SetDefault":       OpOrchestrator,
+	"quicbaas.Account/Usage":            OpOrchestrator,
+
+	// Project Operations - share OpOrchestrator (0x8F); the SubOp byte
+	// (0x40-0x47) selects the project sub-operation.
+	"quicbaas.Project/Create":          OpOrchestrator,
+	"quicbaas.Project/Get":             OpOrchestrator,
+	"quicbaas.Project/GetByName":       OpOrchestrator,
+	"quicbaas.Project/List":            OpOrchestrator,
+	"quicbaas.Project/Update":          OpOrchestrator,
+	"quicbaas.Project/Delete":          OpOrchestrator,
+	"quicbaas.Project/GrantAgentRole":  OpOrchestrator,
+	"quicbaas.Project/RevokeAgentRole": OpOrchestrator,
+
+	// SSH Operations - share OpOrchestrator (0x8F); the SubOp byte
+	// (0x50-0x5D) selects the SSH sub-operation.
+	"quicbaas.SSH/GenerateKey":         OpOrchestrator,
+	"quicbaas.SSH/ImportKey":           OpOrchestrator,
+	"quicbaas.SSH/GetKey":              OpOrchestrator,
+	"quicbaas.SSH/ListKeys":            OpOrchestrator,
+	"quicbaas.SSH/DeleteKey":           OpOrchestrator,
+	"quicbaas.SSH/ExportPublicKey":     OpOrchestrator,
+	"quicbaas.SSH/SignDigest":          OpOrchestrator,
+	"quicbaas.SSH/AddKnownHost":        OpOrchestrator,
+	"quicbaas.SSH/ListKnownHosts":      OpOrchestrator,
+	"quicbaas.SSH/RemoveKnownHost":     OpOrchestrator,
+	"quicbaas.SSH/AddAuthorizedKey":    OpOrchestrator,
+	"quicbaas.SSH/ListAuthorizedKeys":  OpOrchestrator,
+	"quicbaas.SSH/RemoveAuthorizedKey": OpOrchestrator,
+	"quicbaas.SSH/EmitAuthorizedKey":   OpOrchestrator,
+
 	// Legacy short-form Orchestrator keys (without quicbaas. prefix).
 	"Orchestrator/SpawnSession":  OpOrchestrator,
 	"Orchestrator/PromptSession": OpOrchestrator,
@@ -1759,6 +2147,16 @@ var opcodeToMethod = map[byte]string{
 	OpCertVerify:       "quicbaas.Certificate/VerifyCertificate",
 	OpCertGetCA:        "quicbaas.Certificate/GetCACertificate",
 	OpCertGetTLSConfig: "quicbaas.Certificate/GetTLSConfig",
+
+	// Dynamic Secrets Operations
+	OpDynamicSecretsCreateRole:  "quicbaas.DynamicSecrets/CreateRole",
+	OpDynamicSecretsGetRole:     "quicbaas.DynamicSecrets/GetRole",
+	OpDynamicSecretsListRoles:   "quicbaas.DynamicSecrets/ListRoles",
+	OpDynamicSecretsDeleteRole:  "quicbaas.DynamicSecrets/DeleteRole",
+	OpDynamicSecretsGenerate:    "quicbaas.DynamicSecrets/GenerateCredential",
+	OpDynamicSecretsRenewLease:  "quicbaas.DynamicSecrets/RenewLease",
+	OpDynamicSecretsRevokeLease: "quicbaas.DynamicSecrets/RevokeLease",
+	OpDynamicSecretsListLeases:  "quicbaas.DynamicSecrets/ListLeases",
 
 	// Trust Operations
 	OpTrustCrossSignedRootPool: "quicbaas.Trust/CrossSignedRootPool",

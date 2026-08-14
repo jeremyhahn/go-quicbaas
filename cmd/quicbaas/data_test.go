@@ -158,6 +158,7 @@ func (m *mockSDKClient) Close() error {
 }
 
 func (m *mockSDKClient) Project() quicbaas.ProjectClient { return nil }
+func (m *mockSDKClient) Account() quicbaas.AccountClient { return nil }
 
 func (m *mockSDKClient) Orchestrator() quicbaas.OrchestratorClient { return nil }
 

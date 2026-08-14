@@ -355,13 +355,6 @@ func (e *QRDBUserStorageRequiredError) Unwrap() error {
 // ErrFirstBootBootstrap is returned when the first-boot admin bootstrap fails.
 var ErrFirstBootBootstrap = errors.New("first-boot bootstrap failed")
 
-// ErrBootstrapAdminMissing is returned by BindAdminToSOCert when no
-// bootstrap admin user exists yet. Operators see this when they invoke
-// path (a) on a server that has already been initialized — the admin
-// already exists with a different binding and a fresh first-boot bootstrap
-// is required.
-var ErrBootstrapAdminMissing = errors.New("bootstrap admin user not found")
-
 // ErrAdminRoleMissing is returned by reconcileAdminRole when qrdb's canonical
 // admin role is absent from the system tenant after first-boot. qrdb's
 // first-boot is the sole creator of the built-in admin role; this error means

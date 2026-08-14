@@ -387,6 +387,10 @@ export interface SpawnSessionRequest {
     host_affinity?: string;
     host_affinity_strict?: boolean;
     mcp_servers?: MCPServerConfig[];
+    account_id?: string;
+    account_auto?: boolean;
+    account_strategy?: string;
+    account_allow?: string[];
 }
 export interface SpawnSessionResponse {
     session_id: string;
@@ -408,6 +412,20 @@ export interface CloseSessionRequest {
 export interface CloseSessionResponse {
     session_id: string;
     closed: boolean;
+}
+export type AccountRotationMode = 'in_place' | 'resume';
+export interface RotateSessionAccountRequest {
+    session_id: string;
+    reason?: string;
+    hold_outgoing?: boolean;
+    available_at?: string;
+}
+export interface RotateSessionAccountResponse {
+    session_id: string;
+    previous_account_id?: string;
+    account_id: string;
+    strategy?: string;
+    mode: AccountRotationMode;
 }
 export interface ListSessionsRequest {
     tenantID: string;
@@ -1157,10 +1175,6 @@ export interface CeremonyInitializeResponse {
     ca_cert_pem: string;
     /** PEM-encoded TLS certificate issued for the server. */
     tls_cert_pem: string;
-    /** PEM-encoded Security Officer certificate. */
-    so_cert_pem?: string;
-    /** PEM-encoded Security Officer private key. */
-    so_key_pem?: string;
     /** Ceremony state after initialization. */
     state: string;
     /** Number of Shamir shares generated. */
@@ -1382,10 +1396,15 @@ export type UserVerificationRequirement = 'required' | 'preferred' | 'discourage
 export type AuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
 export interface AuthTokenResponse {
     access_token: string;
-    id_token: string;
+    id_token?: string;
     refresh_token: string;
     token_type: string;
     expires_in: number;
     user?: IAMUser;
+}
+export interface WebAuthnLoginChallenge {
+    session_id: string;
+    rp_session_id: string;
+    options: CredentialAssertionJSON;
 }
 //# sourceMappingURL=types.d.ts.map

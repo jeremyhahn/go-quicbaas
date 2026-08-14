@@ -24,7 +24,10 @@
 //
 //   - kms://path/to/secret - Local QuicBaaS KMS secrets store
 //   - remote-kms://host:port/path - Remote QuicBaaS instance
-//   - auto, 123456, changeme, placeholder - Auto-generate secrets
+//
+// Dispatch is by URI scheme only. A value carrying no registered scheme is
+// not a secret reference: it is used verbatim (the literal fallback owned by
+// go-qrdb, which also honours an explicit literal:// prefix).
 //
 // # Basic Usage
 //
@@ -33,7 +36,6 @@
 //	registry := secrets.NewResolverRegistry()
 //	registry.Register(secrets.NewLocalKMSResolver(kmsClient))
 //	registry.Register(secrets.NewRemoteKMSResolver(remoteClient))
-//	registry.Register(secrets.NewAutoGenResolver())
 //
 // Use the registry to resolve individual secret references:
 //
@@ -63,20 +65,26 @@
 //	// config.Database.Password now contains the resolved value
 //	fmt.Printf("Resolved %d secrets\n", result.Resolved)
 //
-// # Auto-Generation
+// # Generate-On-First-Use
 //
-// The AutoGenResolver generates high-entropy secrets when configuration
-// values match certain placeholders. This is useful for initial setup
-// when secrets haven't been provisioned yet:
+// A config field whose secret has not been provisioned yet is expressed with
+// the ensure form of the kms:// scheme, which mints the secret on first use
+// and persists it, so every later boot resolves the SAME value:
 //
-//   - "auto" - triggers auto-generation
-//   - "123456" - common placeholder
-//   - "changeme" - common placeholder
-//   - "CHANGEME" - common placeholder
-//   - "placeholder" - explicit placeholder
+//	kms://ca/root/keys/0/password?ensure=true&len=32&enc=base64
 //
-// Generated secrets are 32 bytes (256 bits) of cryptographically random
-// data, base64-encoded using URL-safe encoding.
+// Query parameters:
+//
+//   - ensure - boolean; when true the secret is generated and stored if absent
+//   - len    - positive integer entropy length; bytes for base64/hex/raw,
+//     digits for numeric (default 32)
+//   - enc    - output encoding: base64, hex, numeric, or raw (default base64)
+//
+// The query string is not part of the secret identity; only the path is.
+// LocalKMSResolver delegates this to SecretsService.EnsureSecret through the
+// SecretsEnsurer interface, so the value is durable rather than regenerated
+// per boot. A SecretsClient that does not implement SecretsEnsurer reports a
+// typed ResolutionFailedError instead of degrading to a plain read.
 //
 // # Error Handling
 //

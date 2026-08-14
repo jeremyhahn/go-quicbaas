@@ -210,8 +210,8 @@ func (h *Phase4Handler) HandleDeleteBackup(w http.ResponseWriter, r *http.Reques
 
 // =============================================================================
 // Authentication Operations
-// (Password-based login is intentionally not exposed. Use the per-factor
-// endpoints under /api/v1/tenants/{tid}/webauthn/login/{begin,finish} and
+// (Password-based login is intentionally not exposed. Use the unified login
+// ceremony under /api/v1/auth/login/{begin,finish} (mtls / fido2 / piv) or
 // /api/v1/auth/login/piv to obtain access tokens.)
 // =============================================================================
 

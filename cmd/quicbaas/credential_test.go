@@ -110,7 +110,7 @@ func (f *fakeCredentialClient) CredentialRetrieveVersion(ctx context.Context, re
 	if f.retrieveVersionFunc != nil {
 		return f.retrieveVersionFunc(ctx, req)
 	}
-	return &qrdbtransport.CredentialRetrieveVersionResponse{Value: "secret"}, nil
+	return &qrdbtransport.CredentialRetrieveVersionResponse{Value: []byte("secret")}, nil
 }
 
 func (f *fakeCredentialClient) CredentialListVersions(ctx context.Context, req *qrdbtransport.CredentialListVersionsRequest) (*qrdbtransport.CredentialListVersionsResponse, error) {
@@ -213,7 +213,7 @@ func TestCredentialSubmit_Success(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastSubmitReq)
 	assert.Equal(t, "my-key", fc.lastSubmitReq.Name)
-	assert.Equal(t, "topsecret", fc.lastSubmitReq.Value)
+	assert.Equal(t, []byte("topsecret"), fc.lastSubmitReq.Value)
 	assert.Contains(t, out.String(), `credential "my-key" submitted`)
 }
 
@@ -416,7 +416,7 @@ func TestCredentialRotate_Success(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastRotateReq)
 	assert.Equal(t, "my-key", fc.lastRotateReq.Name)
-	assert.Equal(t, "newSecret", fc.lastRotateReq.NewValue)
+	assert.Equal(t, []byte("newSecret"), fc.lastRotateReq.NewValue)
 	assert.Equal(t, int64(24*60*60), fc.lastRotateReq.GracePeriodSeconds)
 	assert.Contains(t, out.String(), "rotated my-key")
 	assert.Contains(t, out.String(), "previous v3 -> new v4")
@@ -553,7 +553,7 @@ func TestCredentialRetrieve_Current(t *testing.T) {
 	defer resetCredentialFlags()
 	fc := &fakeCredentialClient{
 		retrieveVersionFunc: func(_ context.Context, req *qrdbtransport.CredentialRetrieveVersionRequest) (*qrdbtransport.CredentialRetrieveVersionResponse, error) {
-			return &qrdbtransport.CredentialRetrieveVersionResponse{Value: "current-value"}, nil
+			return &qrdbtransport.CredentialRetrieveVersionResponse{Value: []byte("current-value")}, nil
 		},
 	}
 	defer withFakeCredentialFactory(fc)()

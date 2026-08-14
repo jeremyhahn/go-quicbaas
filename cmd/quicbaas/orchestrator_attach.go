@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -133,7 +134,7 @@ type attachRenderer interface {
 }
 
 // pickAttachRenderer dispatches on the --format flag value.
-func pickAttachRenderer(format string, out *os.File) (attachRenderer, error) {
+func pickAttachRenderer(format string, out io.Writer) (attachRenderer, error) {
 	switch format {
 	case "", "pretty":
 		return &prettyAttachRenderer{out: out}, nil
@@ -149,7 +150,7 @@ func pickAttachRenderer(format string, out *os.File) (attachRenderer, error) {
 // frequently piped into pagers and log collectors; add colors behind a
 // --color flag when the UX demands it.
 type prettyAttachRenderer struct {
-	out *os.File
+	out io.Writer
 }
 
 // genericEvent captures the subset of fields the renderer needs without
@@ -169,6 +170,9 @@ type genericEvent struct {
 		Text       string `json:"text"`
 		StopReason string `json:"stop_reason,omitempty"`
 	} `json:"assistant_chunk,omitempty"`
+	Thought *struct {
+		Text string `json:"text"`
+	} `json:"thought,omitempty"`
 	ToolInvocation *struct {
 		Name string `json:"name"`
 	} `json:"tool_invocation,omitempty"`
@@ -211,6 +215,10 @@ func (p *prettyAttachRenderer) Render(env *orchestratorSDK.SessionEventEnvelope)
 			if ev.AssistantChunk.StopReason != "" {
 				body += "\n  (stop: " + ev.AssistantChunk.StopReason + ")"
 			}
+		}
+	case "agent_thought":
+		if ev.Thought != nil {
+			body = "\n  ~ " + truncateForPretty(ev.Thought.Text, 1024)
 		}
 	case "tool_invocation":
 		if ev.ToolInvocation != nil {
@@ -258,7 +266,7 @@ func truncateForPretty(s string, n int) string {
 // jsonAttachRenderer emits one JSON object per line: the outer envelope's
 // fields plus an inlined payload object. Compatible with jq piping.
 type jsonAttachRenderer struct {
-	out *os.File
+	out io.Writer
 }
 
 // Render dumps the envelope + decoded payload as a single-line JSON object.

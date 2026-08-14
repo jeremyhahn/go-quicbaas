@@ -85,6 +85,11 @@ type caServiceAdapter struct {
 	mu sync.RWMutex
 	ca xkmssdk.TrustedCA
 
+	// serialGen produces the 128-bit random serial numbers used for
+	// cross-signed certificates. It is created lazily by serialGenerator()
+	// under mu so an adapter built by any constructor path has one.
+	serialGen xkmssdk.SerialGenerator
+
 	// spiffeTrustDomain is the operator-configured SPIFFE trust domain. When
 	// non-empty alongside a request TenantID, the adapter instructs the
 	// embedded CA to stamp a tenant-scoped SPIFFE URI SAN

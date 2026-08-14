@@ -137,6 +137,113 @@ export type {
   RevokeAgentRoleRequest,
   RevokeAgentRoleResponse,
 } from './projects.js';
+export type {
+  AccountsClient,
+  Account,
+  AccountProvider,
+  AccountStatus,
+  AccountRefreshPolicy,
+  AccountCredential,
+  CreateAccountRequest,
+  CreateAccountResponse,
+  GetAccountResponse,
+  ListAccountsRequest,
+  ListAccountsResponse,
+  UpdateAccountRequest,
+  UpdateAccountResponse,
+  DeleteAccountResponse,
+  RotateAccountCredentialRequest,
+  RotateAccountCredentialResponse,
+  RevokeAccountRequest,
+  RevokeAccountResponse,
+  SetDefaultAccountResponse,
+  AccountUsage,
+  GetAccountUsageResponse,
+} from './accounts.js';
+export type {
+  CAClient,
+  CertificateUsage,
+  CertificateKeyAlgorithm,
+  IssueCertificateRequest,
+  IssueCertificateResponse,
+  SignCSRRequest,
+  SignCSRResponse,
+  RevokeCertificateResponse,
+  VerifyCertificateResponse,
+  GetCACertificateResponse,
+  CAInfoResponse,
+  CABundleResponse,
+  CertificateSummary,
+  ListCertificatesRequest,
+  ListCertificatesResponse,
+  GenerateCRLResponse,
+  IsRevokedResponse,
+} from './ca.js';
+export type {
+  TrustClient,
+  CrossSignedRootPoolResponse,
+  AutoImportAIARequest,
+  AutoImportAIAResponse,
+  PublishDANERequest,
+  PublishDANEResponse,
+} from './trust.js';
+export type {
+  CryptoClient,
+  HashAlgorithm as CryptoHashAlgorithm,
+  CryptoEncryptRequest,
+  CryptoEncryptResponse,
+  CryptoDecryptRequest,
+  CryptoDecryptResponse,
+  CryptoRewrapRequest,
+  CryptoRewrapResponse,
+  CryptoSignRequest,
+  CryptoSignResponse,
+  CryptoVerifyRequest,
+  CryptoVerifyResponse,
+  CryptoHashRequest,
+  CryptoHashResponse,
+  CryptoRandomResponse,
+  CryptoDataKeyRequest,
+  CryptoDataKeyResponse,
+} from './crypto.js';
+export type {
+  DEKClient,
+  DEKAlgorithm,
+  DEKMetadata,
+  CreateDEKRequest,
+  CreateDEKResponse,
+  GetDEKResponse,
+  ListDEKsRequest,
+  ListDEKsResponse,
+  RotateDEKRequest,
+  RotateDEKResponse,
+  DeleteDEKRequest,
+  DeleteDEKResponse,
+  ReencryptionProgress,
+  GetDEKStatusResponse,
+  SetDefaultDEKResponse,
+  SetDEKSafetyRequest,
+  DEKSafetyConfig,
+  SetDEKSafetyResponse,
+  ClearDEKSafetyResponse,
+  StartReencryptionRequest,
+  StartReencryptionResponse,
+  GetReencryptionProgressResponse,
+} from './dek.js';
+export type {
+  DynamicSecretsClient,
+  DynamicSecretRole,
+  CreateRoleRequest as DynamicSecretCreateRoleRequest,
+  ListRolesResponse as ListDynamicSecretRolesResponse,
+  DeleteRoleResponse,
+  GenerateCredentialRequest,
+  GenerateCredentialResponse,
+  RenewLeaseRequest,
+  RenewLeaseResponse,
+  RevokeLeaseResponse,
+  LeaseInfo,
+  ListLeasesResponse,
+} from './dynamicsecrets.js';
 
 // All domain types.
 export type * from './types.js';
@@ -174,6 +281,11 @@ export {
   RestBootstrapClient,
   RestClusterClient,
 } from './rest.js';
+
+// Certificate authority / trust / crypto REST clients — exported so callers
+// can construct each sub-client directly without going through the full
+// RestClient.
+export { RestCAClient, RestTrustClient, RestCryptoClient } from './rest.js';
 
 // Stub transport error types — exported so callers can catch them explicitly.
 export { GrpcWebNotImplementedError } from './grpc_web.js';

@@ -22,6 +22,7 @@ import (
 	"context"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
@@ -35,7 +36,7 @@ const paramTenantSeparator = "/"
 // For single-tenant mode (empty tenantID), the path is returned as-is.
 // Format: "tenant/{tenantID}/{path}".
 func paramTenantScopedPath(tenantID, path string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return path
 	}
 	return paramTenantPrefix + tenantID + paramTenantSeparator + path
@@ -44,7 +45,7 @@ func paramTenantScopedPath(tenantID, path string) string {
 // paramTenantStripPath removes the tenant prefix from a parameter path.
 // If the path doesn't have a tenant prefix, it is returned as-is.
 func paramTenantStripPath(tenantID, path string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return path
 	}
 	prefix := paramTenantPrefix + tenantID + paramTenantSeparator
@@ -55,7 +56,7 @@ func paramTenantStripPath(tenantID, path string) string {
 // For single-tenant mode (empty tenantID), all paths belong.
 // For multi-tenant mode, the path must have the matching tenant prefix.
 func paramPathBelongsToTenant(tenantID, path string) bool {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return true
 	}
 	prefix := paramTenantPrefix + tenantID + paramTenantSeparator
@@ -66,7 +67,7 @@ func paramPathBelongsToTenant(tenantID, path string) bool {
 // For single-tenant mode, returns empty string (list all).
 // For multi-tenant mode, returns "tenant/{tenantID}/".
 func paramTenantListPrefix(tenantID string) string {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return ""
 	}
 	return paramTenantPrefix + tenantID + paramTenantSeparator
@@ -75,8 +76,8 @@ func paramTenantListPrefix(tenantID string) string {
 // paramEnforceTenantAccess validates that the requesting tenant has access to the parameter path.
 // Returns nil if access is allowed, or an error if the tenant doesn't own the path.
 func paramEnforceTenantAccess(tenantID, path, operation string) error {
-	if tenantID == "" {
-		return nil // Single-tenant mode, no access control
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return nil // Single-tenant mode / system tenant, no access control
 	}
 	if !paramPathBelongsToTenant(tenantID, path) {
 		return NewError(errors.ErrCrossTenantAccess, "parameterstore."+operation,

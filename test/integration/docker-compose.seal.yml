@@ -14,7 +14,7 @@
 #     round-trip through the CLI (see test/integration/seal/).
 #
 # Pure-docker emulators (no real cloud credentials):
-#   * localstack  — AWS KMS emulator for the awskms strategy.
+#   * floci       — AWS KMS emulator for the awskms strategy (MIT, tokenless).
 #   * vault       — HashiCorp Vault dev server (Transit) for the vault strategy.
 #
 # gcpkms / azurekv have no faithful local KMS-key-wrapping emulator (the GCS /
@@ -23,20 +23,26 @@
 # test/integration/seal/README.md for the exact real-cloud requirements.
 
 services:
-  # AWS KMS emulator for the awskms seal strategy.
-  localstack:
-    image: localstack/localstack:latest
-    hostname: localstack
+  # AWS KMS emulator for the awskms seal strategy. Floci is MIT-licensed and
+  # needs no auth token; it serves the same port 4566 as LocalStack did.
+  floci:
+    image: floci/floci:latest
+    hostname: floci
     environment:
-      - SERVICES=kms
-      - DEBUG=0
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
     networks:
       - seal-test-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      # Assert KMS itself reports "running" rather than just probing the port:
+      # a port-open check goes green before the handlers are wired and turns
+      # emulator warm-up into spurious seal-test failures.
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:4566/_floci/health -o /tmp/floci-health.json && grep -q '\"kms\":\"running\"' /tmp/floci-health.json",
+        ]
       interval: 5s
       timeout: 3s
       retries: 15
@@ -91,8 +97,8 @@ services:
       - CGO_ENABLED=0
       - QUICBAASD_BINARY=/usr/local/bin/quicbaasd
       - QUICBAAS_BINARY=/usr/local/bin/quicbaas
-      # LocalStack KMS endpoint + dummy creds (awskms_test.go).
-      - AWS_ENDPOINT_URL=http://localstack:4566
+      # Floci KMS endpoint + dummy creds (awskms_test.go).
+      - AWS_ENDPOINT_URL=http://floci:4566
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
@@ -102,7 +108,7 @@ services:
     networks:
       - seal-test-network
     depends_on:
-      localstack:
+      floci:
         condition: service_healthy
       vault:
         condition: service_healthy
@@ -130,7 +136,7 @@ services:
   # The node reuses the shared cluster's test-node1 hostname + generated cert
   # material (test/integration/gen-certs -> ./certs) so the helpers package
   # defaults (endpoints, PIV admin cert, integration CA key) apply unchanged.
-  # Neither service depends on the localstack/vault emulators — `docker
+  # Neither service depends on the floci/vault emulators — `docker
   # compose run tenantbarrier-test` starts only this pair.
 
   # Seal-enabled single-node quicbaasd under test.
@@ -149,6 +155,9 @@ services:
       - QUICBAAS_LOGGING_FORMAT=json
       - QUICBAAS_STORAGE_DATA_DIR=/data
       - QUICBAAS_SERVER_HOST=0.0.0.0
+      # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
+      # explicit opt-in so remote Shamir officers can reach the sealed surface.
+      - QUICBAAS_SERVER_SEALED_BIND_HOST=0.0.0.0
       # System barrier: passphrase strategy, auto-initialised + auto-unsealed
       # at startup (cmd/quicbaasd runDaemon injects WithSealPassphrase when
       # this env var is set and seal.enabled=true in the config).

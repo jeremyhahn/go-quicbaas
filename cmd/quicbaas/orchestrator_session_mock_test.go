@@ -143,6 +143,14 @@ func (m *mockOrchestratorClient) EnableAgent(ctx context.Context, req *orchestra
 	return &orchestratorSDK.EnableAgentResponse{}, nil
 }
 
+// RotateSessionAccount satisfies orchestratorSDK.Client.
+func (m *mockOrchestratorClient) RotateSessionAccount(ctx context.Context, req *orchestratorSDK.RotateSessionAccountRequest) (*orchestratorSDK.RotateSessionAccountResponse, error) {
+	if m.rotateAccountFn != nil {
+		return m.rotateAccountFn(ctx, req)
+	}
+	return &orchestratorSDK.RotateSessionAccountResponse{SessionID: req.SessionID}, nil
+}
+
 // DisableAgent satisfies orchestratorSDK.Client.
 func (m *mockOrchestratorClient) DisableAgent(ctx context.Context, req *orchestratorSDK.DisableAgentRequest) (*orchestratorSDK.DisableAgentResponse, error) {
 	return &orchestratorSDK.DisableAgentResponse{}, nil

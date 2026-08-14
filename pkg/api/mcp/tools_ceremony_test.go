@@ -153,8 +153,6 @@ func TestCeremonyToolsExecuteSuccess(t *testing.T) {
 			SPKIPin:    "pin1",
 			CACertPEM:  []byte("ca-pem"),
 			TLSCertPEM: []byte("tls-pem"),
-			SOCertPEM:  []byte("so-pem"),
-			SOKeyPEM:   []byte("so-key"),
 			State:      "READY",
 			ShareCount: 3,
 		},
@@ -188,8 +186,10 @@ func TestCeremonyToolsExecuteSuccess(t *testing.T) {
 		assert.Equal(t, "READY", m["state"])
 		assert.Equal(t, 3, m["share_count"])
 		assert.Equal(t, "ca-pem", m["ca_cert_pem"])
-		assert.Equal(t, "so-pem", m["so_cert_pem"])
-		assert.Equal(t, "so-key", m["so_key_pem"])
+		// The SO identity is CSR-based; the server never returns SO
+		// certificate or key material.
+		assert.NotContains(t, m, "so_cert_pem")
+		assert.NotContains(t, m, "so_key_pem")
 
 		require.NotNil(t, fake.gotInitReq)
 		assert.Equal(t, "so", fake.gotInitReq.SOPin)

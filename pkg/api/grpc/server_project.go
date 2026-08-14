@@ -238,6 +238,78 @@ func (s *ProjectServer) ListProjects(ctx context.Context, req *pb.ListProjectsRe
 	}, nil
 }
 
+// GrantAgentRole handles the GrantAgentRole RPC. It sets one agent's role
+// without replacing the rest of the project's role map, which is what an
+// UpdateProject-based emulation would do.
+func (s *ProjectServer) GrantAgentRole(ctx context.Context, req *pb.GrantAgentRoleRequest) (*pb.GrantAgentRoleResponse, error) {
+	s.logger.WithField("project_id", req.ProjectId).
+		WithField("agent_id", req.AgentId).
+		Debug("Processing GrantAgentRole request")
+
+	if req.TenantId == "" {
+		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if req.ProjectId == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_id is required")
+	}
+	if req.AgentId == "" {
+		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
+	}
+	if req.Role == "" {
+		return nil, status.Error(codes.InvalidArgument, "role is required")
+	}
+
+	resp, err := s.projectSvc.GrantAgentRole(ctx, &service.GrantAgentRoleRequest{
+		TenantID:  req.TenantId,
+		ProjectID: req.ProjectId,
+		AgentID:   req.AgentId,
+		Role:      orchestration.ProjectRole(req.Role),
+	})
+	if err != nil {
+		return nil, convertProjectError(err)
+	}
+
+	return &pb.GrantAgentRoleResponse{
+		ProjectId: resp.ProjectID,
+		AgentId:   resp.AgentID,
+		Role:      string(resp.Role),
+		Timestamp: resp.Timestamp.Unix(),
+	}, nil
+}
+
+// RevokeAgentRole handles the RevokeAgentRole RPC. It denies one agent and
+// leaves every other agent's role intact.
+func (s *ProjectServer) RevokeAgentRole(ctx context.Context, req *pb.RevokeAgentRoleRequest) (*pb.RevokeAgentRoleResponse, error) {
+	s.logger.WithField("project_id", req.ProjectId).
+		WithField("agent_id", req.AgentId).
+		Debug("Processing RevokeAgentRole request")
+
+	if req.TenantId == "" {
+		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if req.ProjectId == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_id is required")
+	}
+	if req.AgentId == "" {
+		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
+	}
+
+	resp, err := s.projectSvc.RevokeAgentRole(ctx, &service.RevokeAgentRoleRequest{
+		TenantID:  req.TenantId,
+		ProjectID: req.ProjectId,
+		AgentID:   req.AgentId,
+	})
+	if err != nil {
+		return nil, convertProjectError(err)
+	}
+
+	return &pb.RevokeAgentRoleResponse{
+		ProjectId: resp.ProjectID,
+		AgentId:   resp.AgentID,
+		Timestamp: resp.Timestamp.Unix(),
+	}, nil
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================

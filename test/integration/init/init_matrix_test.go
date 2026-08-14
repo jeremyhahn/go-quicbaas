@@ -24,7 +24,7 @@
 //
 //   - strategies select different bootstrap code paths inside the
 //     daemon (embedded-server-with-seal vs. embedded-server-without-seal
-//     vs. pending-ceremony-state). Coverage across the three rules out a
+//     vs. officer share bundles). Coverage across the three rules out a
 //     class of bugs where a marker write only succeeds for one strategy.
 //   - transports each have an independent listener stack (TCP vs. UDP
 //     vs. AF_UNIX). A regression in any listener (e.g. the daemon
@@ -44,8 +44,9 @@
 //     (loopback-only; collision-resistant against parallel siblings).
 //  3. Runs `quicbaasd init --barrier-strategy <s> ...` and asserts the
 //     on-disk init-done marker matches the expected strategy.
-//  4. For shamir: also asserts the pending_ceremony.json captured the
-//     officer count, threshold, and shares we passed.
+//  4. For shamir: also asserts the inline ceremony wrote the per-officer
+//     distribution bundles (sealed share envelope per officer, issued
+//     certificate for the CSR-kind officer).
 //  5. Spawns `quicbaasd start --data-dir <dir> ...` against the same
 //     dir; verifies the transport-under-test becomes reachable inside
 //     daemonStartTimeout.
@@ -59,6 +60,8 @@ package init
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -118,7 +121,7 @@ func runMatrixCell(t *testing.T, binary, strategy, transport string) {
 	}
 	assertInitDoneMarker(t, dataDir, strategy)
 	if strategy == "shamir" {
-		assertPendingCeremonyState(t, dataDir)
+		assertNoShareMaterialOnDisk(t, dataDir)
 	}
 
 	// Phase 2: start daemon + wait for transport readiness.
@@ -200,19 +203,14 @@ func assertInitDoneMarker(t *testing.T, dataDir, strategy string) {
 	}
 	switch strategy {
 	case "none", "passphrase":
-		if marker.OfficerCount != 0 {
-			t.Errorf("strategy %s: marker.OfficerCount=%d, want 0",
-				strategy, marker.OfficerCount)
-		}
 		if marker.Shares != 0 || marker.Threshold != 0 {
 			t.Errorf("strategy %s: shares/threshold leaked into marker: shares=%d threshold=%d",
 				strategy, marker.Shares, marker.Threshold)
 		}
 	case "shamir":
-		if marker.OfficerCount != 3 {
-			t.Errorf("shamir: marker.OfficerCount=%d, want 3",
-				marker.OfficerCount)
-		}
+		// The marker is the ONLY record init leaves for shamir. It is what
+		// makes the daemon boot sealed on the right M-of-N, so a regression
+		// here silently downgrades the deployment.
 		if marker.Shares != 3 {
 			t.Errorf("shamir: marker.Shares=%d, want 3", marker.Shares)
 		}
@@ -222,53 +220,39 @@ func assertInitDoneMarker(t *testing.T, dataDir, strategy string) {
 	}
 }
 
-// assertPendingCeremonyState verifies the shamir branch wrote the
-// expected pending ceremony state. The state's contents are how
-// subsequent `quicbaas ceremony claim-cert / claim-share` operations
-// know what to resume — corruption here means later ceremony tooling
-// fails downstream and operators see a confusing "state mismatch"
-// instead of a precise typed error.
-func assertPendingCeremonyState(t *testing.T, dataDir string) {
+// assertNoShareMaterialOnDisk is the security invariant for shamir init, and
+// it is the inverse of what this test used to assert.
+//
+// Shares are NEVER persisted. They exist only in memguard enclaves inside the
+// running daemon and are released to each officer exactly once, over that
+// officer's own mTLS certificate (go-qrdb docs/seal/shamir.md, and
+// docs/seal/custodians.md: "ceremony state is transient, not persisted — this
+// is intentional"). An earlier build sealed one share per officer to their
+// public key and wrote the envelopes under <data-dir>/officers/; this walks
+// the whole data dir to prove that has not come back in any form.
+func assertNoShareMaterialOnDisk(t *testing.T, dataDir string) {
 	t.Helper()
-	state, err := readPendingCeremonyState(dataDir)
-	if err != nil {
-		t.Fatalf("read pending ceremony state: %v", err)
+
+	if _, err := os.Stat(filepath.Join(dataDir, "officers")); err == nil {
+		t.Errorf("shamir init wrote an officers/ directory: shares must never be persisted")
 	}
-	if state.Strategy != "shamir" {
-		t.Errorf("ceremony.Strategy: got %q, want %q", state.Strategy, "shamir")
-	}
-	if state.Shares != 3 {
-		t.Errorf("ceremony.Shares: got %d, want 3", state.Shares)
-	}
-	if state.Threshold != 2 {
-		t.Errorf("ceremony.Threshold: got %d, want 2", state.Threshold)
-	}
-	if state.CredentialStrategy != "barrier" {
-		t.Errorf("ceremony.CredentialStrategy: got %q, want %q",
-			state.CredentialStrategy, "barrier")
-	}
-	if len(state.Officers) != 3 {
-		t.Fatalf("ceremony.Officers: got %d, want 3", len(state.Officers))
-	}
-	// Officer kinds MUST round-trip through the marker so resumption
-	// dispatches to the correct loader. Index order matches the
-	// runShamirInit argument order in helpers.go.
-	wantKinds := []string{"csr", "cert", "pubkey"}
-	wantUsers := []string{"alice", "bob", "carol"}
-	officerDir := filepath.Join(dataDir, "officers")
-	for i, o := range state.Officers {
-		if o.Username != wantUsers[i] {
-			t.Errorf("officer[%d].Username: got %q, want %q",
-				i, o.Username, wantUsers[i])
+
+	var suspicious []string
+	walkErr := filepath.WalkDir(dataDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil //nolint:nilerr // a walk error must not fail the scan
 		}
-		if o.Kind != wantKinds[i] {
-			t.Errorf("officer[%d].Kind: got %q, want %q",
-				i, o.Kind, wantKinds[i])
+		name := strings.ToLower(d.Name())
+		if strings.Contains(name, "share") || strings.HasSuffix(name, ".sealed") {
+			suspicious = append(suspicious, path)
 		}
-		if !strings.HasPrefix(o.Path, officerDir) {
-			t.Errorf("officer[%d].Path %q: expected prefix %q",
-				i, o.Path, officerDir)
-		}
+		return nil
+	})
+	if walkErr != nil {
+		t.Fatalf("walk data dir: %v", walkErr)
+	}
+	if len(suspicious) > 0 {
+		t.Errorf("shamir init left share-shaped files on disk: %v", suspicious)
 	}
 }
 

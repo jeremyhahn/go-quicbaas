@@ -1,0 +1,256 @@
+// QuicBaaS Attestation Protocol Buffer Definitions v1
+// Standalone trusted computing: attestation statement / chain verification
+// composed from go-xkms, plus the container attestation orchestration seam.
+//
+// Copyright (c) 2026 QuicBaaS Project
+// Licensed under AGPL-3.0
+
+syntax = "proto3";
+
+package quicbaas.attestation.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "google/protobuf/timestamp.proto";
+
+// =============================================================================
+// Attestation Service
+// =============================================================================
+
+// AttestationService is the gRPC face of Security().Attestation().
+//
+// Verify and VerifyChain are a thin transport over the go-xkms attestation
+// verifier: QuicBaaS reimplements no signature check and no chain walk.
+// AttestContainer crosses the container attestation orchestration seam and
+// returns a not-configured error until an embedding application registers an
+// attestor on the server.
+service AttestationService {
+  // Verify validates a complete attestation statement: certificate chain,
+  // signature over the attestation data, and — when requested — nonce
+  // freshness and PCR values.
+  rpc Verify(VerifyAttestationRequest) returns (VerifyAttestationResponse);
+
+  // VerifyChain validates only the certificate chain carried by an
+  // attestation statement.
+  rpc VerifyChain(VerifyAttestationChainRequest) returns (VerifyAttestationChainResponse);
+
+  // AttestContainer requests attestation evidence for a container from the
+  // registered container attestor.
+  rpc AttestContainer(AttestContainerRequest) returns (AttestContainerResponse);
+}
+
+// AttestationVerifyOptions is the wire form of the go-xkms attestation
+// VerifyOptions.
+message AttestationVerifyOptions {
+  // TrustedRootsPem are additional PEM-encoded trust anchors accepted for
+  // this call, on top of any configured on the server.
+  repeated bytes trusted_roots_pem = 1;
+
+  // CheckFreshness enables the nonce and timestamp freshness check.
+  bool check_freshness = 2;
+
+  // ExpectedNonce is the nonce the attestation must carry.
+  bytes expected_nonce = 3;
+
+  // FreshnessWindowSeconds is the maximum acceptable attestation age.
+  // Zero selects the xkms default of 300 seconds.
+  int64 freshness_window_seconds = 4;
+
+  // VerifyPcrs enables PCR comparison against expected_pcrs.
+  bool verify_pcrs = 5;
+
+  // ExpectedPcrs are the golden PCR values keyed by PCR index.
+  map<uint32, bytes> expected_pcrs = 6;
+
+  // AllowSelfSigned permits a self-signed attesting certificate. Lab and
+  // simulator use only.
+  bool allow_self_signed = 7;
+}
+
+// VerifyAttestationRequest carries a wire-portable attestation statement.
+message VerifyAttestationRequest {
+  // Format identifies the attestation format, e.g. "tpm2" or "oci-image".
+  string format = 1;
+
+  // Backend names the backend that produced the attestation.
+  string backend = 2;
+
+  // ChainPem is the attesting key's certificate chain, leaf first.
+  repeated bytes chain_pem = 3;
+
+  // AttestedKeyDer is the PKIX DER encoding of the attested public key.
+  bytes attested_key_der = 4;
+
+  // AttestationData is the evidence the signature covers.
+  bytes attestation_data = 5;
+
+  // Signature is the attesting key's signature over attestation_data.
+  bytes signature = 6;
+
+  // SignatureAlgorithm names the x509 signature algorithm. Empty means
+  // infer it from the leaf certificate.
+  string signature_algorithm = 7;
+
+  // Nonce is the challenge the attestation was bound to.
+  bytes nonce = 8;
+
+  // CreatedAt is the RFC 3339 timestamp the attestation was produced at.
+  string created_at = 9;
+
+  // Pcrs holds the attested PCR values keyed by index.
+  map<uint32, bytes> pcrs = 10;
+
+  // Options configures the verification.
+  AttestationVerifyOptions options = 11;
+}
+
+// VerifyAttestationResponse reports the outcome of a verification.
+message VerifyAttestationResponse {
+  // Valid is the authoritative result.
+  bool valid = 1;
+
+  // Format echoes the attestation format.
+  string format = 2;
+
+  // Backend echoes the attestation backend.
+  string backend = 3;
+
+  // ChainValid reports whether the certificate chain validated.
+  bool chain_valid = 4;
+
+  // SignatureValid reports whether the attestation signature validated.
+  bool signature_valid = 5;
+
+  // FreshnessValid reports whether the freshness check passed.
+  bool freshness_valid = 6;
+
+  // PcrsValid reports whether the PCR comparison passed.
+  bool pcrs_valid = 7;
+
+  // Reason explains the failure when valid is false.
+  string reason = 8;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 9;
+}
+
+// VerifyAttestationChainRequest carries the certificate chain to validate.
+message VerifyAttestationChainRequest {
+  // Format identifies the attestation format the chain belongs to.
+  string format = 1;
+
+  // ChainPem is the certificate chain, leaf first.
+  repeated bytes chain_pem = 2;
+
+  // Options configures anchoring and self-signed acceptance.
+  AttestationVerifyOptions options = 3;
+}
+
+// VerifyAttestationChainResponse reports whether the chain validated.
+message VerifyAttestationChainResponse {
+  // Valid reports whether the chain validated.
+  bool valid = 1;
+
+  // Reason explains the failure when valid is false.
+  string reason = 2;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// AttestContainerRequest describes the container to attest.
+message AttestContainerRequest {
+  // DeviceID identifies the host the container runs on.
+  string device_id = 1;
+
+  // ContainerID identifies the running container. Empty attests the host
+  // alone, which is what a scheduler does before placing an agent.
+  string container_id = 2;
+
+  // Image is the pinned image reference, "repository@sha256:<hex>".
+  string image = 3;
+
+  // ImageDigest is the immutable content digest of the image.
+  string image_digest = 4;
+
+  // TrustLabel is the operator-assigned workload identity.
+  string trust_label = 5;
+
+  // TrustLevel names the required tier: "pinned", "attested" or "measured".
+  string trust_level = 6;
+
+  // ExpectedPcrs is the golden PCR set the host quote is checked against.
+  map<uint32, bytes> expected_pcrs = 7;
+
+  // MeasurementPcr is the PCR index carrying the launch measurement.
+  int32 measurement_pcr = 8;
+
+  // MeasurementBank names the PCR bank for the launch measurement.
+  string measurement_bank = 9;
+
+  // Nonce is caller-supplied qualifying data.
+  bytes nonce = 10;
+}
+
+// AttestContainerResponse is the attestation evidence produced for a
+// container.
+message AttestContainerResponse {
+  // Attested reports whether evidence was produced successfully.
+  bool attested = 1;
+
+  // DeviceID echoes the attested host.
+  string device_id = 2;
+
+  // ContainerID echoes the attested container.
+  string container_id = 3;
+
+  // Image is the pinned image reference that was attested.
+  string image = 4;
+
+  // ImageDigest is the immutable content digest of that image.
+  string image_digest = 5;
+
+  // ConfigDigest is the deterministic digest of the launch configuration.
+  string config_digest = 6;
+
+  // TrustLabel echoes the operator-assigned workload identity.
+  string trust_label = 7;
+
+  // TrustLevel is the tier this evidence satisfies.
+  string trust_level = 8;
+
+  // Nonce is the qualifying data the quote is bound to.
+  bytes nonce = 9;
+
+  // Quoted is the raw TPMS_ATTEST structure produced by the TPM.
+  bytes quoted = 10;
+
+  // Signature is the attestation key's signature over quoted.
+  bytes signature = 11;
+
+  // Pcrs holds the quoted PCR values keyed by index.
+  map<uint32, bytes> pcrs = 12;
+
+  // EventLog is the raw TCG measurement log, when the host exposes one.
+  bytes event_log = 13;
+
+  // Measured reports whether the launch measurement was extended into
+  // measurement_pcr before the container started.
+  bool measured = 14;
+
+  // MeasurementPcr is the PCR index carrying the launch measurement.
+  int32 measurement_pcr = 15;
+
+  // MeasurementBank is the PCR bank the measurement was extended into.
+  string measurement_bank = 16;
+
+  // LaunchMeasurement is the exact byte string extended into
+  // measurement_pcr, so a verifier can replay it.
+  bytes launch_measurement = 17;
+
+  // AttestedAt is when the quote was taken.
+  google.protobuf.Timestamp attested_at = 18;
+
+  // Timestamp is when the request was processed.
+  google.protobuf.Timestamp timestamp = 19;
+}

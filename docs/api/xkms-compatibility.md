@@ -33,8 +33,8 @@ the authentication context into key attributes for both paths.
 | Ceremony (status / claim-cert / claim-share begin+complete / sign-csr / enroll-external-officer) | Yes — `Security().Ceremony()` on all six transports | n/a |
 | Credentials (submit/list/rotate/retrieve/versions/delete/gc) | Yes — `Security().Credentials()` on all six transports | n/a |
 | CA admin (info / bundle / list / issue / revoke / export-bundle) | Yes — `Security().Certificate()` (Phase 8e added `CAInfo` + `ListCertificates`) | Legacy `/api/v1/xkms/ca/*` routes retained for backward compatibility |
-| Auth factors (factor list/add/remove/rotate/relabel + Login) | Yes — `Security().Auth().Factors()` | n/a |
-| FIDO2 + WebAuthn + PIV | Yes — `Security().Auth().{FIDO2,WebAuthn,PIV}()` | Legacy `/api/v1/xkms/fido2/*` + `/api/v1/xkms/piv/*` routes still served |
+| Auth factors (factor list/add/remove/rotate/relabel) | Yes — `Security().Auth().Factors()` (login is `Security().Auth().BeginLogin/FinishLogin`) | n/a |
+| FIDO2 + PIV | Yes — `Security().Auth().{FIDO2,PIV}()` on all six transports (`quicbaas.FIDO2` / `quicbaas.PIV` verbs) | `/api/v1/xkms/fido2/*` + `/api/v1/xkms/piv/*` routes bridge to the same composed services |
 | ACME (server + client) | Yes — `Security().ACME().{Server,Client}()` | n/a |
 | Trust bootstrap | Yes — `Security().Trust().Bootstrap()` (single canonical lib in xkms/pkg/trust/bootstrap) | n/a |
 | Key management (Generate / Get / Delete / List / Rotate) | Yes — `Security().KMS()` | Wire-compatible legacy REST + MCP tools |
@@ -74,8 +74,8 @@ import go-xkms directly and have not migrated to the QuicBaaS SDK.
 | **Ceremony (canonical)** | Status, ClaimCert, BeginClaimShare/CompleteClaimShare, SignCSR, EnrollExternalOfficer, Initialize | `POST /api/v1/ceremony/*` | `quicbaas.ceremony.*` | `quicbaas.v1.CeremonyService` | `Security().Ceremony()` |
 | **Credentials (canonical)** | Submit, List, Rotate, RetrieveVersion, ListVersions, Delete, GCExpired | `POST /api/v1/credentials/*` | `quicbaas.credentials.*` | `quicbaas.v1.CredentialService` | `Security().Credentials()` |
 | **CA admin (Phase 8e canonical)** | CAInfo, GetCABundle, ListCertificates, IssueCertificate, RevokeCertificate, SignCSR | `GET /api/v1/ca/info`, `GET /api/v1/ca/bundle`, `GET /api/v1/ca/certificates`, `POST /api/v1/ca/issue`, `POST /api/v1/ca/revoke`, `POST /api/v1/ca/sign` | `quicbaas.ca.*` | `quicbaas.v1.CertificateService` | `Security().Certificate()` |
-| **PIV (compat)** | ListSlots, GetCert, StoreCert, DeleteCert, GenerateKey, GenerateCSR | `GET /piv/slots`, `GET /piv/slots/{slot}/cert`, `PUT /piv/slots/{slot}/cert`, `DELETE /piv/slots/{slot}/cert`, `POST /piv/slots/{slot}/key`, `POST /piv/slots/{slot}/csr` | `xkms.piv.listSlots`, `xkms.piv.getCert`, `xkms.piv.storeCert`, `xkms.piv.deleteCert`, `xkms.piv.generateKey`, `xkms.piv.generateCSR` | -- | `Security().Auth().PIV()` |
-| **FIDO2 (compat)** | BeginRegistration, FinishRegistration, BeginAuthentication, FinishAuthentication | `POST /fido2/register/begin`, `POST /fido2/register/finish`, `POST /fido2/authenticate/begin`, `POST /fido2/authenticate/finish` | `xkms.fido2.beginRegistration`, `xkms.fido2.finishRegistration`, `xkms.fido2.beginAuthentication`, `xkms.fido2.finishAuthentication` | -- | `Security().Auth().FIDO2()` (native) or `Security().Auth().WebAuthn()` (RP ceremony) |
+| **PIV** | ListSlots, GetCert, StoreCert, DeleteCert, GenerateKey, ImportCert, ExportCert, GenerateCSR | `GET /piv/slots`, `GET /piv/slots/{slot}/cert`, `PUT /piv/slots/{slot}/cert`, `DELETE /piv/slots/{slot}/cert`, `POST /piv/slots/{slot}/key`, `POST /piv/slots/{slot}/csr` (Import maps onto `PUT .../cert`, Export onto `GET .../cert` — quicbaasd does not mount xkms's dedicated `/import` and `/export` routes) | `xkms.piv.listSlots`, `xkms.piv.getCert`, `xkms.piv.storeCert`, `xkms.piv.deleteCert`, `xkms.piv.generateKey`, `xkms.piv.importCert`, `xkms.piv.exportCert`, `xkms.piv.generateCSR` | `quicbaas.piv.v1.PIVService` | `Security().Auth().PIV()` |
+| **FIDO2** | BeginRegistration, FinishRegistration, BeginAuthentication, FinishAuthentication | `POST /fido2/register/begin`, `POST /fido2/register/finish`, `POST /fido2/authenticate/begin`, `POST /fido2/authenticate/finish` | `xkms.fido2.beginRegistration`, `xkms.fido2.finishRegistration`, `xkms.fido2.beginAuthentication`, `xkms.fido2.finishAuthentication` | `quicbaas.fido2.v1.FIDO2Service` | `Security().Auth().FIDO2()` |
 | **CA (legacy compat)** | GetBundle, GetCert, SignCSR, IssueCert, RevokeCert, GenerateCRL, IsRevoked | `GET /ca/bundle`, `GET /ca/cert`, `POST /ca/sign`, `POST /ca/issue`, `POST /ca/revoke`, `POST /ca/crl`, `GET /ca/revoked/{serial}` | `xkms.ca.getBundle`, `xkms.ca.getCert`, `xkms.ca.signCSR`, `xkms.ca.issueCert`, `xkms.ca.revokeCert`, `xkms.ca.generateCRL`, `xkms.ca.isRevoked` | -- | `Security().Certificate()` (use the native surface for new code) |
 | **PIN admin** | SetSO, SetUser, ChangeSO, ChangeUser, VerifySO, VerifyUser, LockoutStatus, ResetLockout | `POST /pin/so/set`, `POST /pin/user/set`, `POST /pin/so/change`, `POST /pin/user/change`, `POST /pin/so/verify`, `POST /pin/user/verify`, `GET /pin/lockout`, `POST /pin/lockout/reset` | `xkms.pin.setSO`, `xkms.pin.setUser`, `xkms.pin.changeSO`, `xkms.pin.changeUser`, `xkms.pin.verifySO`, `xkms.pin.verifyUser`, `xkms.pin.lockoutStatus`, `xkms.pin.resetLockout` | `BarrierService.PINStatus` (selected verbs) | qrdb PINBackend (composed; no direct SDK accessor — barrier and ceremony flows manage PINs) |
 
@@ -88,6 +88,17 @@ Notes:
   spoken. They forward in-process to the same backends the native
   surface uses, so behaviour is identical; only the routes/tool names
   differ.
+- The FIDO2 compat surface is tenant-scoped: pass `?tenant_id=` on
+  the REST routes (or the `tenant_id` MCP tool argument); otherwise
+  the authenticated principal's tenant is used.
+- All four `/api/v1/xkms/fido2/*` routes — and the matching
+  `xkms.fido2.*` MCP tools — are **authorization-gated**, including
+  the authenticate legs (registration → `user_authfactors:add`,
+  authentication → `user_authfactors:get`). Pre-auth passkey login
+  deliberately lives only on the canonical public surfaces: the
+  unified ceremony at `/api/v1/auth/login/{begin,finish}` and the
+  tenant WebAuthn mount at
+  `/api/v1/iam/{tenant_id}/webauthn/login/{begin,finish}`.
 
 ## REST endpoints
 
@@ -210,9 +221,11 @@ Defined in [`pkg/api/mcp/tools_xkms.go`](../../pkg/api/mcp/tools_xkms.go).
 `xkms.seal`, `xkms.unseal`, `xkms.canSeal`
 
 **PIV:**
-`xkms.piv.listSlots`, `xkms.piv.getCert`, `xkms.piv.storeCert`, `xkms.piv.deleteCert`, `xkms.piv.generateKey`, `xkms.piv.generateCSR`
+`xkms.piv.listSlots`, `xkms.piv.getCert`, `xkms.piv.storeCert`, `xkms.piv.deleteCert`, `xkms.piv.generateKey`, `xkms.piv.importCert`, `xkms.piv.exportCert`, `xkms.piv.generateCSR`
 
-**FIDO2:**
+**FIDO2** (tenant via `tenant_id` argument, else the authenticated
+tenant; all four tools authorization-gated — see the operations-matrix
+notes):
 `xkms.fido2.beginRegistration`, `xkms.fido2.finishRegistration`, `xkms.fido2.beginAuthentication`, `xkms.fido2.finishAuthentication`
 
 **CA (legacy):**

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
@@ -82,15 +83,17 @@ func createTestMiddleware(validator *mockTokenValidator, authzSvc *mockAuthzServ
 
 // testHandler is a simple handler that records if it was called.
 type testHandler struct {
-	called bool
-	userID string
-	roles  []string
+	called   bool
+	userID   string
+	roles    []string
+	tenantID string
 }
 
 func (h *testHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.called = true
 	h.userID = GetUserID(r.Context())
 	h.roles = GetUserRoles(r.Context())
+	h.tenantID = iam.TenantFromContext(r.Context())
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"success": true}`))
 }
@@ -459,6 +462,54 @@ func TestAuthzMiddleware_AllowedAccess(t *testing.T) {
 	}
 	if ctx["user_agent"] != "test-client/1.0" {
 		t.Errorf("Expected user_agent 'test-client/1.0', got '%v'", ctx["user_agent"])
+	}
+}
+
+// TestAuthzMiddleware_BindsTenantContext proves the REST authz middleware
+// binds the caller's tenant into the request context (iam.ContextWithTenant),
+// matching the gRPC authz interceptor's contextWithAuthorizedSubject. Before
+// this, REST requests reached tenant-scoped service helpers (iam.TenantFromContext)
+// with an empty context tenant regardless of the caller's actual tenant.
+func TestAuthzMiddleware_BindsTenantContext(t *testing.T) {
+	tests := []struct {
+		name        string
+		tokenTenant string
+		wantTenant  string
+	}{
+		{"ordinary tenant is bound into context", "acme-corp", "acme-corp"},
+		{"system tenant is bound into context", iam.SystemTenantID, iam.SystemTenantID},
+		{"empty tenant leaves context tenant empty", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			validator := &mockTokenValidator{
+				result: &auth.TokenValidationResult{
+					Valid:     true,
+					UserID:    "user-123",
+					TenantID:  tt.tokenTenant,
+					ExpiresAt: time.Now().Add(time.Hour),
+				},
+			}
+			authzSvc := &mockAuthzService{
+				decision: &interfaces.AuthorizationDecision{Allowed: true},
+			}
+			middleware := createTestMiddleware(validator, authzSvc)
+			handler := &testHandler{}
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/keys/test", nil)
+			req.Header.Set("Authorization", "Bearer valid-token")
+			rr := httptest.NewRecorder()
+
+			middleware.Authorize(handler).ServeHTTP(rr, req)
+
+			if !handler.called {
+				t.Fatal("expected handler to be called")
+			}
+			if handler.tenantID != tt.wantTenant {
+				t.Errorf("iam.TenantFromContext() = %q, want %q", handler.tenantID, tt.wantTenant)
+			}
+		})
 	}
 }
 

@@ -350,6 +350,10 @@ func TestScanIndex_RangeParams(t *testing.T) {
 
 type mockCertificateService struct {
 	mock.Mock
+
+	CrossSignFunc           func(ctx context.Context, req *service.CrossSignRequest) (*service.CrossSignResponse, error)
+	ChainFunc               func(ctx context.Context, req *service.CertificateChainRequest) (*service.CertificateChainResponse, error)
+	IssueDeviceIdentityFunc func(ctx context.Context, req *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error)
 }
 
 func (m *mockCertificateService) IssueCertificate(ctx context.Context, req *service.IssueCertificateRequest) (*service.IssueCertificateResponse, error) {
@@ -3331,4 +3335,30 @@ func TestGRPCRemaining91_ServerTimeseries_NilService(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, codes.Unimplemented, status.Code(err))
 	})
+}
+
+// CrossSign satisfies service.CertificateService. The certificate-extension
+// verbs are exercised by the dedicated extension tests; this double records
+// the call and returns the configured response.
+func (m *mockCertificateService) CrossSign(ctx context.Context, req *service.CrossSignRequest) (*service.CrossSignResponse, error) {
+	if m.CrossSignFunc != nil {
+		return m.CrossSignFunc(ctx, req)
+	}
+	return &service.CrossSignResponse{}, nil
+}
+
+// Chain satisfies service.CertificateService.
+func (m *mockCertificateService) Chain(ctx context.Context, req *service.CertificateChainRequest) (*service.CertificateChainResponse, error) {
+	if m.ChainFunc != nil {
+		return m.ChainFunc(ctx, req)
+	}
+	return &service.CertificateChainResponse{}, nil
+}
+
+// IssueDeviceIdentity satisfies service.CertificateService.
+func (m *mockCertificateService) IssueDeviceIdentity(ctx context.Context, req *service.IssueDeviceIdentityRequest) (*service.IssueDeviceIdentityResponse, error) {
+	if m.IssueDeviceIdentityFunc != nil {
+		return m.IssueDeviceIdentityFunc(ctx, req)
+	}
+	return &service.IssueDeviceIdentityResponse{}, nil
 }

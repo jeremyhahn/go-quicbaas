@@ -264,7 +264,7 @@ type AWSKMSBackendConfig struct {
 	KeyID string `yaml:"key_id" json:"key_id"`
 	// RoleARN is the role to assume (optional).
 	RoleARN string `yaml:"role_arn" json:"role_arn"`
-	// Endpoint is the endpoint override (for LocalStack, etc.).
+	// Endpoint is the endpoint override (for Floci and other emulators).
 	Endpoint string `yaml:"endpoint" json:"endpoint"`
 }
 

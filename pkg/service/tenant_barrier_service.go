@@ -90,22 +90,15 @@ func NewTenantBarrierService(qrdb qrdbtransport.TenantClient) TenantBarrierServi
 	return &tenantBarrierService{qrdb: qrdb}
 }
 
-// isSystemTenantSubject reports whether tenantID identifies a system-tenant
-// (control-plane) principal. Both representations are canonical: transports
-// that resolve the caller tenant from a SPIFFE SAN stamp
-// qrdbsdk.SystemTenantID, while pre-tenant contexts carry an empty TenantID.
-func isSystemTenantSubject(tenantID string) bool {
-	return tenantID == "" || tenantID == qrdbsdk.SystemTenantID
-}
-
 // enforceTenantBinding is the MUTATION gate: it ensures the authenticated
 // caller (from ctx) is mutating their own tenant's barrier. Two invariants are
 // enforced:
 //
-//  1. System-tenant callers (empty TenantID or qrdbsdk.SystemTenantID) are
-//     denied — the system admin holds no per-tenant barrier key, consistent
-//     with qrdb's ScopeTenantOnly posture; tenant admins self-bootstrap their
-//     own barriers per the locked architecture.
+//  1. System-tenant callers (qrdbsdk.IsSystemTenant: empty TenantID or the
+//     literal SystemTenantID) are denied — the system admin holds no
+//     per-tenant barrier key, consistent with qrdb's ScopeTenantOnly
+//     posture; tenant admins self-bootstrap their own barriers per the
+//     locked architecture.
 //  2. The caller's TenantID must equal targetTenantID — cross-tenant barrier
 //     operations are denied regardless of which permissions are in the token scp.
 //
@@ -119,7 +112,7 @@ func enforceTenantBinding(ctx context.Context, op, targetTenantID string) error 
 	if !ok || !subject.Authenticated {
 		return NewError(errors.ErrForbidden, op, "no authenticated principal in request context")
 	}
-	if isSystemTenantSubject(subject.TenantID) {
+	if qrdbsdk.IsSystemTenant(subject.TenantID) {
 		// System-tenant callers carry no per-tenant key; barrier mutations are
 		// explicitly scoped to tenant principals (ScopeTenantOnly).
 		return NewError(errors.ErrForbidden, op, "system-tenant callers may not perform per-tenant barrier operations")
@@ -141,7 +134,7 @@ func enforceTenantReadBinding(ctx context.Context, op, targetTenantID string) er
 	if !ok || !subject.Authenticated {
 		return NewError(errors.ErrForbidden, op, "no authenticated principal in request context")
 	}
-	if isSystemTenantSubject(subject.TenantID) {
+	if qrdbsdk.IsSystemTenant(subject.TenantID) {
 		// Control-plane observability: system-tenant callers may read any
 		// tenant barrier's status (never mutate it).
 		return nil

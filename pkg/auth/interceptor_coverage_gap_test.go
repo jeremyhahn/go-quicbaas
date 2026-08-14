@@ -31,7 +31,7 @@ import (
 // disabled, exercising the disabled branch of the wrapper (previously 0%).
 func TestStreamAuthInterceptor_Disabled(t *testing.T) {
 	log := createTestLogger(t)
-	am, err := NewInMemoryAuthManager(&AuthConfig{Enabled: false, JWTSecret: "s"}, log)
+	am, err := NewInMemoryAuthManager(&AuthConfig{Enabled: false}, log)
 	require.NoError(t, err)
 
 	interceptor := StreamAuthInterceptor(am, log)
@@ -53,7 +53,7 @@ func TestStreamAuthInterceptor_Disabled(t *testing.T) {
 // bypasses authentication through the backward-compatible wrapper.
 func TestStreamAuthInterceptor_PublicMethod(t *testing.T) {
 	log := createTestLogger(t)
-	am, err := NewInMemoryAuthManager(&AuthConfig{Enabled: true, JWTSecret: "s"}, log)
+	am, err := NewInMemoryAuthManager(newTestAuthConfig(t), log)
 	require.NoError(t, err)
 
 	interceptor := StreamAuthInterceptor(am, log)
@@ -76,7 +76,7 @@ func TestStreamAuthInterceptor_PublicMethod(t *testing.T) {
 // gate fails closed rather than trusting an unauthenticated principal.
 func TestInjectSubjectIntoContext_InvalidToken(t *testing.T) {
 	log := createTestLogger(t)
-	am, err := NewInMemoryAuthManager(&AuthConfig{Enabled: true, JWTSecret: "test-secret-key"}, log)
+	am, err := NewInMemoryAuthManager(newTestAuthConfig(t), log)
 	require.NoError(t, err)
 
 	cfg := &InterceptorConfig{AuthManager: am, Logger: log}
@@ -92,7 +92,7 @@ func TestInjectSubjectIntoContext_InvalidToken(t *testing.T) {
 // derived Subject being injected for downstream service-layer authorization.
 func TestInjectSubjectIntoContext_ValidToken(t *testing.T) {
 	log := createTestLogger(t)
-	am, err := NewInMemoryAuthManager(&AuthConfig{Enabled: true, JWTSecret: "test-secret-key"}, log)
+	am, err := NewInMemoryAuthManager(newTestAuthConfig(t), log)
 	require.NoError(t, err)
 
 	user, err := am.CreateUser("injectuser", []string{"readwrite"})
@@ -115,11 +115,9 @@ func TestInjectSubjectIntoContext_ValidToken(t *testing.T) {
 // This guards the AllowAnonymous branch of the missing-token handling.
 func TestStreamAuthInterceptor_AllowAnonymousMissingToken(t *testing.T) {
 	log := createTestLogger(t)
-	am, err := NewInMemoryAuthManager(&AuthConfig{
-		Enabled:        true,
-		AllowAnonymous: true,
-		JWTSecret:      "test-secret-key",
-	}, log)
+	cfg := newTestAuthConfig(t)
+	cfg.AllowAnonymous = true
+	am, err := NewInMemoryAuthManager(cfg, log)
 	require.NoError(t, err)
 
 	interceptor := StreamAuthInterceptor(am, log)
@@ -142,7 +140,7 @@ func TestStreamAuthInterceptor_AllowAnonymousMissingToken(t *testing.T) {
 // for a valid token, since Authorize is now unconditionally fail-closed.
 func TestStreamAuthInterceptor_LegacyFailClosed(t *testing.T) {
 	log := createTestLogger(t)
-	am, err := NewInMemoryAuthManager(&AuthConfig{Enabled: true, JWTSecret: "test-secret-key"}, log)
+	am, err := NewInMemoryAuthManager(newTestAuthConfig(t), log)
 	require.NoError(t, err)
 
 	user, err := am.CreateUser("legacyuser", []string{"readwrite"})

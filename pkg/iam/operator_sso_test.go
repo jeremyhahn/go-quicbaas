@@ -14,6 +14,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/oauth2"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // stubAdminGate is a controllable AdminPresenceChecker for exercising the
@@ -311,12 +313,13 @@ func TestRegisterProvider_NonSystemTenant_UnaffectedByGate(t *testing.T) {
 	})
 }
 
-// TestIsSystemTenant covers the system-tenant helper.
-func TestIsSystemTenant(t *testing.T) {
-	if !IsSystemTenant(SystemTenantID) {
-		t.Fatal("SystemTenantID must be recognized as the system tenant")
-	}
-	if IsSystemTenant("tenant-acme") {
-		t.Fatal("a data-plane tenant must not be the system tenant")
+// TestSystemTenantIDMatchesQRDB guards SystemTenantID (an alias, not a
+// duplicated literal) against drift from qrdb's canonical constant. The
+// system-tenant predicate itself (empty-or-literal matching) now lives
+// exclusively in go-qrdb/sdk/go as qrdbsdk.IsSystemTenant; quicbaas does not
+// keep a local copy of that logic.
+func TestSystemTenantIDMatchesQRDB(t *testing.T) {
+	if SystemTenantID != qrdbsdk.SystemTenantID {
+		t.Errorf("SystemTenantID = %q, want %q (qrdbsdk.SystemTenantID)", SystemTenantID, qrdbsdk.SystemTenantID)
 	}
 }

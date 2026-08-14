@@ -14,12 +14,16 @@
   Coalescing: consecutive assistant_chunk events with the same source are
   merged into one AssistantEvent block before rendering. The last chunk
   in an in-flight stream has no stop_reason; once stop_reason appears the
-  block is finalised.
+  block is finalised. Consecutive thought events (agent_thought fragments)
+  with the same source are merged the same way into one ThoughtEvent block;
+  they carry no stop_reason of their own — a thought "block" simply ends
+  when the next event is of a different kind or source.
 -->
 <script lang="ts">
   import { sessionStore, loadMoreHistory } from '../../stores/sessionStore.svelte.ts';
   import type { ParsedSessionEvent } from '../../stores/sessionStore.svelte.ts';
   import EventCard from './EventCard.svelte';
+  import SessionReadyState from './SessionReadyState.svelte';
 
   // ---------------------------------------------------------------------------
   // Constants
@@ -69,41 +73,62 @@
    * Build the coalesced render list from the current window slice.
    * Consecutive assistant_chunk events from the same source are merged.
    * The merged event carries the concatenated text; isStreaming is true
-   * while no stop_reason has been seen yet.
+   * while no stop_reason has been seen yet. Consecutive thought events from
+   * the same source are merged the same way, but have no stop_reason of
+   * their own, so their merged block is never marked isStreaming.
    */
   function coalesce(events: ParsedSessionEvent[]): CoalescedItem[] {
     const items: CoalescedItem[] = [];
 
     for (const ev of events) {
-      if (ev.kind !== 'assistant_chunk') {
-        items.push({ key: ev.sequence, event: ev, isStreaming: false });
+      if (ev.kind === 'assistant_chunk') {
+        const last = items[items.length - 1];
+        if (
+          last !== undefined &&
+          last.event.kind === 'assistant_chunk' &&
+          last.event.source === ev.source
+        ) {
+          // Merge into previous block.
+          const merged: ParsedSessionEvent = {
+            ...last.event,
+            assistantChunk: (last.event.assistantChunk ?? '') + (ev.assistantChunk ?? ''),
+            stopReason: ev.stopReason,
+          };
+          items[items.length - 1] = {
+            key: last.key,
+            event: merged,
+            isStreaming: ev.stopReason === undefined || ev.stopReason === '',
+          };
+        } else {
+          items.push({
+            key: ev.sequence,
+            event: ev,
+            isStreaming: ev.stopReason === undefined || ev.stopReason === '',
+          });
+        }
         continue;
       }
 
-      const last = items[items.length - 1];
-      if (
-        last !== undefined &&
-        last.event.kind === 'assistant_chunk' &&
-        last.event.source === ev.source
-      ) {
-        // Merge into previous block.
-        const merged: ParsedSessionEvent = {
-          ...last.event,
-          assistantChunk: (last.event.assistantChunk ?? '') + (ev.assistantChunk ?? ''),
-          stopReason: ev.stopReason,
-        };
-        items[items.length - 1] = {
-          key: last.key,
-          event: merged,
-          isStreaming: ev.stopReason === undefined || ev.stopReason === '',
-        };
-      } else {
-        items.push({
-          key: ev.sequence,
-          event: ev,
-          isStreaming: ev.stopReason === undefined || ev.stopReason === '',
-        });
+      if (ev.kind === 'thought') {
+        const last = items[items.length - 1];
+        if (
+          last !== undefined &&
+          last.event.kind === 'thought' &&
+          last.event.source === ev.source
+        ) {
+          // Merge into previous block.
+          const merged: ParsedSessionEvent = {
+            ...last.event,
+            thoughtText: (last.event.thoughtText ?? '') + (ev.thoughtText ?? ''),
+          };
+          items[items.length - 1] = { key: last.key, event: merged, isStreaming: false };
+        } else {
+          items.push({ key: ev.sequence, event: ev, isStreaming: false });
+        }
+        continue;
       }
+
+      items.push({ key: ev.sequence, event: ev, isStreaming: false });
     }
 
     return items;
@@ -249,11 +274,25 @@
     <EventCard event={item.event} isStreaming={item.isStreaming} />
   {/each}
 
-  <!-- Empty state -->
-  {#if allEvents.length === 0}
-    <div class="flex flex-1 items-center justify-center text-base-content/30 text-sm">
-      No events yet. Send a prompt to start the session.
+  <!-- Loading state: the initial history fetch is still in flight. Gated
+       ahead of the empty state so a brand-new session never flashes "ready"
+       before we've actually checked whether it has history. -->
+  {#if sessionStore.historyLoading}
+    <div
+      class="flex flex-1 items-center justify-center gap-2 text-base-content/30 text-sm"
+      data-testid="history-loading"
+    >
+      <span class="loading loading-spinner loading-sm"></span>
+      Loading session history…
     </div>
+
+  <!-- Ready state: history has been checked and there is genuinely nothing
+       yet — a brand-new chat. -->
+  {:else if allEvents.length === 0}
+    <SessionReadyState
+      backend={sessionStore.activeSession?.backend ?? ''}
+      model={sessionStore.activeSession?.model}
+    />
   {/if}
 
   <!-- Bottom sentinel: auto-scroll target. -->

@@ -169,7 +169,7 @@ security:
 
 **JWT Authentication:**
 
-- [ ] Generate strong JWT signing secret (minimum 256-bit)
+- [ ] Configure a hardware-backed xkms backend (TPM 2.0 or PKCS#11) so the auto-generated ES256 signing key is hardware-protected
 - [ ] Configure token TTL (recommended 1 hour or less)
 - [ ] Set up refresh token mechanism
 - [ ] Configure token revocation
@@ -181,9 +181,10 @@ iam:
   auth:
     local:
       enabled: true
-      jwt_secret: ${JWT_SECRET}  # Use environment variable
       token_ttl: 1h
 ```
+
+There is no JWT secret to generate or manage: the ES256 signing key is created inside the configured xkms backend on first boot and never leaves the keystore.
 
 **OIDC Integration:**
 
@@ -200,7 +201,7 @@ iam:
     client_secret: ${OIDC_CLIENT_SECRET}
 ```
 
-- [ ] JWT secret securely stored (not in config file, use env var or secrets manager)
+- [ ] JWT signing key resides in the xkms keystore (verify no key material in config files or environment)
 - [ ] API keys rotated if used
 - [ ] Default credentials changed/removed
 
@@ -844,6 +845,9 @@ curl -s http://localhost:8080/health/live
 # /etc/quicbaas/quicbaas.yaml - Production configuration
 server:
   host: "0.0.0.0"
+  # Sealed-window (pre-unseal ceremony/unseal) listeners default to loopback;
+  # opt in to "0.0.0.0" only for remote Shamir officer ceremonies.
+  sealed_bind_host: "127.0.0.1"
   port: 8080
   grpc_port: 9090
   max_connections: 1000

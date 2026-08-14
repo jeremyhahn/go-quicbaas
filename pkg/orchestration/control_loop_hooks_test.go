@@ -48,6 +48,22 @@ func (m *hookMockCostTracker) CheckBudget(_ context.Context, _, _ string) (Budge
 	return m.status, m.statusErr
 }
 
+func (m *hookMockCostTracker) RecordTurnUsage(_ context.Context, _ TurnUsage) error {
+	return nil
+}
+
+func (m *hookMockCostTracker) GetAccountUsage(_ context.Context, _, _ string) (*UsageReport, error) {
+	return nil, nil
+}
+
+func (m *hookMockCostTracker) GetProjectUsage(_ context.Context, _, _ string) (*UsageReport, error) {
+	return nil, nil
+}
+
+func (m *hookMockCostTracker) AccountTokens(_ context.Context, _, _ string) (int64, error) {
+	return 0, nil
+}
+
 // =============================================================================
 // Mock PeerMessagingService for hook tests
 // =============================================================================

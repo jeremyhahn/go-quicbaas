@@ -21,8 +21,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -93,51 +91,6 @@ func (h *IAMHandler) JWTMiddleware(next http.Handler) http.Handler {
 		if userInfo != nil && userInfo.TenantID != "" {
 			ctx = context.WithValue(ctx, ContextKeyTenant, userInfo.TenantID)
 		}
-
-		// Call next handler with enriched context
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-// TenantMiddleware extracts tenant ID from URL path and validates tenant existence.
-// This middleware should be applied to tenant-scoped endpoints.
-func (h *IAMHandler) TenantMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-
-		// Extract tenant ID from URL path
-		tenantID := chi.URLParam(r, "tenant_id")
-		if tenantID == "" {
-			RespondIAMError(w, r, http.StatusBadRequest,
-				NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
-			return
-		}
-
-		// Get tenant manager
-		tenantMgr, ok := h.server.service.(interface {
-			GetTenantManager(ctx context.Context) (TenantManager, error)
-		})
-		if !ok {
-			RespondIAMError(w, r, http.StatusInternalServerError,
-				NewIAMAPIError(ErrInternalError, "tenant manager not available"))
-			return
-		}
-
-		mgr, err := tenantMgr.GetTenantManager(ctx)
-		if err != nil {
-			h.server.handleServiceError(w, r, err)
-			return
-		}
-
-		// Validate tenant exists
-		tenant, err := mgr.GetTenant(ctx, tenantID)
-		if err != nil {
-			h.server.handleServiceError(w, r, err)
-			return
-		}
-
-		// Add tenant to context
-		ctx = context.WithValue(ctx, ContextKeyTenant, tenant.ID)
 
 		// Call next handler with enriched context
 		next.ServeHTTP(w, r.WithContext(ctx))

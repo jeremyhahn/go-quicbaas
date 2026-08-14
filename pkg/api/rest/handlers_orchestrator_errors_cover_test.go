@@ -45,6 +45,54 @@ func TestHandleOrchestratorError_Dispatch(t *testing.T) {
 		{"invalid_input", orchestration.ErrBackendRequired, http.StatusBadRequest},
 		{"conflict", orchestration.ErrTaskAlreadyClaimed, http.StatusConflict},
 		{"forbidden", orchestration.ErrNotLeadOfParent, http.StatusForbidden},
+		// Every spawn-policy refusal is a 403 carrying its actionable message.
+		// These used to fall through to 500, leaving an operator unable to tell
+		// a mount-allowlist misconfiguration from a server fault.
+		{
+			"mount_not_allowed",
+			&orchestration.MountNotAllowedError{
+				Field:    orchestration.MountFieldWorkDir,
+				TenantID: "tenant-a",
+				Source:   "/etc",
+				Reason:   "outside every allowed mount root",
+			},
+			http.StatusForbidden,
+		},
+		{
+			"sandbox_mode_violation",
+			&orchestration.SandboxModeViolationError{
+				Requested: orchestration.SandboxModeNone,
+				Policy:    orchestration.SandboxPolicyRequired,
+				Reason:    "raw exec forbidden under this policy",
+			},
+			http.StatusForbidden,
+		},
+		{
+			"trust_level_violation",
+			&orchestration.TrustLevelViolationError{
+				Requested: orchestration.TrustLevelPinned,
+				Policy:    orchestration.TrustPolicyAttested,
+				Reason:    "below the operator's integrity floor",
+			},
+			http.StatusForbidden,
+		},
+		{
+			"sandbox_network_not_allowed",
+			&orchestration.SandboxNetworkNotAllowedError{
+				Requested: "host",
+				Effective: orchestration.SandboxNetworkDefault,
+			},
+			http.StatusForbidden,
+		},
+		// A policy denial raised on the remote agent daemon arrives as a gRPC
+		// PermissionDenied status; the daemon is the last line of defence and
+		// its verdict must not be flattened into a 500 either.
+		{
+			"policy_denied_grpc",
+			grpcstatus.Error(grpccodes.PermissionDenied,
+				`mount not allowed (work_dir) for tenant "tenant-a": "/etc": outside every allowed mount root`),
+			http.StatusForbidden,
+		},
 		{"internal", errors.New("some unexpected failure"), http.StatusInternalServerError},
 	}
 	for _, tt := range tests {
@@ -61,6 +109,33 @@ func TestIsOrchForbiddenError(t *testing.T) {
 	assert.True(t, isOrchForbiddenError(orchestration.ErrNotLeadOfParent))
 	assert.False(t, isOrchForbiddenError(errors.New("other")))
 	assert.False(t, isOrchForbiddenError(nil))
+
+	// A genuine server fault arriving from a remote daemon must stay a 500;
+	// only PermissionDenied is re-shaped as forbidden.
+	assert.False(t, isGRPCPermissionDenied(nil))
+	assert.False(t, isGRPCPermissionDenied(errors.New("plain")))
+	assert.False(t, isGRPCPermissionDenied(grpcstatus.Error(grpccodes.Internal, "boom")))
+	assert.True(t, isGRPCPermissionDenied(grpcstatus.Error(grpccodes.PermissionDenied, "denied")))
+}
+
+// TestHandleOrchestratorError_PolicyDenialKeepsMessage asserts the 403 body
+// still names the offending field, tenant and path. The whole point of not
+// answering 500 is that the operator can act on the response.
+func TestHandleOrchestratorError_PolicyDenialKeepsMessage(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", nil)
+	handleOrchestratorError(w, r, &orchestration.MountNotAllowedError{
+		Field:    orchestration.MountFieldWorkDir,
+		TenantID: "tenant-a",
+		Source:   "/etc/shadow",
+		Reason:   "mount source is outside the tenant's projects root and every allowed mount root",
+	})
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	body := w.Body.String()
+	assert.Contains(t, body, orchestration.MountFieldWorkDir)
+	assert.Contains(t, body, "tenant-a")
+	assert.Contains(t, body, "/etc/shadow")
 }
 
 // RespondForbidden writes a 403 with the supplied detail.

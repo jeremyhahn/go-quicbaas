@@ -67,11 +67,12 @@ func TestUserAuthentication(t *testing.T) {
 
 	authCfg := &auth.AuthConfig{
 		Enabled:         true,
-		JWTSecret:       "test-secret-key-for-jwt-signing",
+		JWTSigningKeyID: "test-jwt-signing-key",
 		TokenTTL:        1 * time.Hour,
 		RefreshTokenTTL: 7 * 24 * time.Hour,
 		MaxTokens:       10,
 	}
+	configureTestJWTSigning(t, authCfg)
 
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
@@ -122,12 +123,13 @@ func TestTokenRefresh(t *testing.T) {
 
 	authCfg := &auth.AuthConfig{
 		Enabled:         true,
-		JWTSecret:       "test-secret-key-for-jwt-signing",
+		JWTSigningKeyID: "test-jwt-signing-key",
 		TokenTTL:        5 * time.Second, // Short TTL for testing
 		RefreshTokenTTL: 1 * time.Hour,
 		RefreshWindow:   1 * time.Second,
 		MaxTokens:       10,
 	}
+	configureTestJWTSigning(t, authCfg)
 
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
@@ -169,11 +171,12 @@ func TestTokenIssuanceLogging(t *testing.T) {
 	require.NoError(t, err)
 
 	authCfg := &auth.AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key-for-jwt-signing",
-		TokenTTL:  1 * time.Hour,
-		MaxTokens: 10,
+		Enabled:         true,
+		JWTSigningKeyID: "test-jwt-signing-key",
+		TokenTTL:        1 * time.Hour,
+		MaxTokens:       10,
 	}
+	configureTestJWTSigning(t, authCfg)
 
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
@@ -201,11 +204,12 @@ func TestSessionManagement(t *testing.T) {
 	require.NoError(t, err)
 
 	authCfg := &auth.AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key-for-jwt-signing",
-		TokenTTL:  1 * time.Hour,
-		MaxTokens: 10,
+		Enabled:         true,
+		JWTSigningKeyID: "test-jwt-signing-key",
+		TokenTTL:        1 * time.Hour,
+		MaxTokens:       10,
 	}
+	configureTestJWTSigning(t, authCfg)
 
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
@@ -275,11 +279,12 @@ func TestUserCreationPolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	authCfg := &auth.AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key-for-jwt-signing",
-		TokenTTL:  1 * time.Hour,
-		MaxTokens: 10,
+		Enabled:         true,
+		JWTSigningKeyID: "test-jwt-signing-key",
+		TokenTTL:        1 * time.Hour,
+		MaxTokens:       10,
 	}
+	configureTestJWTSigning(t, authCfg)
 
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
@@ -322,11 +327,12 @@ func TestTokenOperationThroughput(t *testing.T) {
 	require.NoError(t, err)
 
 	authCfg := &auth.AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key-for-jwt-signing",
-		TokenTTL:  1 * time.Hour,
-		MaxTokens: 10,
+		Enabled:         true,
+		JWTSigningKeyID: "test-jwt-signing-key",
+		TokenTTL:        1 * time.Hour,
+		MaxTokens:       10,
 	}
+	configureTestJWTSigning(t, authCfg)
 
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)
@@ -372,11 +378,12 @@ func TestServiceAccountTokens(t *testing.T) {
 	require.NoError(t, err)
 
 	authCfg := &auth.AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key-for-jwt-signing",
-		TokenTTL:  1 * time.Hour,
-		MaxTokens: 10,
+		Enabled:         true,
+		JWTSigningKeyID: "test-jwt-signing-key",
+		TokenTTL:        1 * time.Hour,
+		MaxTokens:       10,
 	}
+	configureTestJWTSigning(t, authCfg)
 
 	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
 	require.NoError(t, err)

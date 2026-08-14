@@ -16,6 +16,7 @@ package mcp
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -39,6 +40,24 @@ func newOrchestratorMCPHandler() *orchestratorMCPHandler {
 	return &orchestratorMCPHandler{}
 }
 
+// orchestratorMethodTools maps Orchestrator SDK methods to the MCP tool names
+// the server actually registers. The server names session tools after the
+// operation (quicbaas_orchestrator_prompt) while the SDK names the method
+// (PromptSession), so the transport's generic service_method derivation would
+// ask for tools that do not exist. Methods absent from this map fall through to
+// that derivation, which is correct for the ones whose names already agree
+// (ListSessions, Inference, the job and fleet surfaces).
+var orchestratorMethodTools = map[string]string{
+	"SpawnSession":  "quicbaas_orchestrator_spawn",
+	"PromptSession": "quicbaas_orchestrator_prompt",
+	"SessionStatus": "quicbaas_orchestrator_status",
+	"CloseSession":  "quicbaas_orchestrator_close",
+
+	"RotateSessionAccount": "quicbaas_orchestrator_rotate_account",
+
+	"GetSessionHistory": "quicbaas_orchestrator_session_history",
+}
+
 // orchestratorMCPTransform decodes one MCP tool result into its SDK type.
 type orchestratorMCPTransform func(raw []byte) (interface{}, error)
 
@@ -49,7 +68,11 @@ var orchestratorMCPTransforms = map[string]orchestratorMCPTransform{
 	"PromptSession": decodeMCPPromptSession,
 	"SessionStatus": decodeMCPSessionStatus,
 	"CloseSession":  decodeMCPCloseSession,
-	"ListSessions":  decodeMCPListSessions,
+
+	"RotateSessionAccount": decodeMCPRotateSessionAccount,
+
+	"ListSessions":      decodeMCPListSessions,
+	"GetSessionHistory": decodeMCPSessionHistory,
 }
 
 // transformResponse converts the raw MCP tool result to the expected SDK type
@@ -102,6 +125,74 @@ func decodeMCPPromptSession(raw []byte) (interface{}, error) {
 	return wire.Response()
 }
 
+// decodeMCPSessionHistory decodes quicbaas_orchestrator_session_history output.
+//
+// This is how an MCP caller observes an asynchronous turn: MCP has no
+// server-push channel, so instead of subscribing it pages the durable
+// transcript from the sequence the prompt acknowledgement returned until the
+// turn's terminal event appears.
+func decodeMCPSessionHistory(raw []byte) (interface{}, error) {
+	var wire sessionHistoryWire
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.GetSessionHistory", "failed to decode MCP session history result")
+	}
+	return wire.response()
+}
+
+// sessionHistoryWire mirrors the quicbaas_orchestrator_session_history tool
+// result. The tool returns the stored SessionEvent objects inline, while the
+// SDK exposes each one as an envelope with the event carried verbatim under
+// PayloadJSON, so the events are re-encoded here rather than reshaped — the
+// SDK deliberately does not model every event kind.
+type sessionHistoryWire struct {
+	SessionID string            `json:"session_id"`
+	TenantID  string            `json:"tenant_id"`
+	Events    []json.RawMessage `json:"events"`
+	NextSeq   uint64            `json:"next_seq"`
+}
+
+// sessionEventHeader is the addressing subset lifted out of each stored event
+// so an envelope can be built without interpreting the payload.
+type sessionEventHeader struct {
+	Sequence  uint64    `json:"sequence"`
+	SessionID string    `json:"session_id"`
+	TenantID  string    `json:"tenant_id"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// response converts the tool result into the SDK history response.
+func (w *sessionHistoryWire) response() (*orchestrator.GetSessionHistoryResponse, error) {
+	out := &orchestrator.GetSessionHistoryResponse{
+		Events:  make([]*orchestrator.SessionEventEnvelope, 0, len(w.Events)),
+		NextSeq: w.NextSeq,
+	}
+	for _, raw := range w.Events {
+		var header sessionEventHeader
+		if err := json.Unmarshal(raw, &header); err != nil {
+			return nil, errors.Wrap(err, errors.CodeInternal,
+				"mcp.orchestrator.GetSessionHistory", "failed to decode session event")
+		}
+		sessionID := header.SessionID
+		if sessionID == "" {
+			sessionID = w.SessionID
+		}
+		tenantID := header.TenantID
+		if tenantID == "" {
+			tenantID = w.TenantID
+		}
+		out.Events = append(out.Events, &orchestrator.SessionEventEnvelope{
+			SessionID:   sessionID,
+			TenantID:    tenantID,
+			Sequence:    header.Sequence,
+			Timestamp:   header.Timestamp,
+			PayloadJSON: raw,
+			FromReplay:  true,
+		})
+	}
+	return out, nil
+}
+
 // decodeMCPSessionStatus decodes quicbaas_orchestrator_status output.
 func decodeMCPSessionStatus(raw []byte) (interface{}, error) {
 	var wire orchestrator.SessionStatusWire
@@ -120,6 +211,18 @@ func decodeMCPCloseSession(raw []byte) (interface{}, error) {
 			"mcp.orchestrator.CloseSession", "failed to decode MCP close session result")
 	}
 	return wire.Response(), nil
+}
+
+// decodeMCPRotateSessionAccount decodes quicbaas_orchestrator_rotate_account
+// output. The tool result mirrors the SDK response field for field, so the
+// decode is direct.
+func decodeMCPRotateSessionAccount(raw []byte) (interface{}, error) {
+	var resp orchestrator.RotateSessionAccountResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.RotateSessionAccount", "failed to decode MCP rotate account result")
+	}
+	return &resp, nil
 }
 
 // decodeMCPListSessions decodes quicbaas_orchestrator_list_sessions output.

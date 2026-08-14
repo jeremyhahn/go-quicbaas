@@ -25,59 +25,46 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
-	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// rejectingWebAuthnManager fails every ceremony with a configurable error, so a
-// test can replay each distinguishable back-end outcome through the handler.
-type rejectingWebAuthnManager struct {
+// rejectingLoginClient fails every ceremony leg with a configurable error, so
+// a test can replay each distinguishable back-end outcome through the unified
+// login ceremony handlers (/api/v1/auth/login/{begin,finish}).
+type rejectingLoginClient struct {
 	err error
 }
 
-func (m *rejectingWebAuthnManager) BeginRegistration(_ context.Context, _, _ string) (map[string]interface{}, error) {
-	return nil, m.err
+func (c *rejectingLoginClient) ResolveIdentity(_ context.Context, _ string) (*qrdbtransport.Identity, error) {
+	return nil, c.err
 }
 
-func (m *rejectingWebAuthnManager) FinishRegistration(_ context.Context, _, _ string, _ map[string]interface{}) error {
-	return m.err
+func (c *rejectingLoginClient) BeginLogin(_ context.Context, _ qrdbtransport.BeginLoginRequest) (*qrdbtransport.BeginLoginResponse, error) {
+	return nil, c.err
 }
 
-func (m *rejectingWebAuthnManager) BeginLogin(_ context.Context, _, _ string) (map[string]interface{}, error) {
-	return nil, m.err
+func (c *rejectingLoginClient) FinishLogin(_ context.Context, _ qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error) {
+	return nil, c.err
 }
 
-func (m *rejectingWebAuthnManager) FinishLogin(_ context.Context, _ string, _ map[string]interface{}) (*iam.User, error) {
-	return nil, m.err
-}
+func (c *rejectingLoginClient) Logout(_ context.Context, _ string) error { return c.err }
 
-// setupRejectingWebAuthnHandler builds an IAM handler whose WebAuthn manager
+// setupRejectingCeremonyHandler builds an IAM handler whose login ceremony
 // always fails with err.
-func setupRejectingWebAuthnHandler(t *testing.T, err error) *IAMHandler {
+func setupRejectingCeremonyHandler(t *testing.T, err error) (*IAMHandler, func()) {
 	t.Helper()
-
-	log, logErr := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-	require.NoError(t, logErr)
-
-	mockSvc := &webAuthnService{
-		MockQuicBaaS: testutil.NewMockQuicBaaS(),
-		mgr:          &rejectingWebAuthnManager{err: err},
-		audit:        &captureAuditLogger{},
-	}
-	cfg := DefaultConfig()
-	cfg.Address = ":0"
-	server, srvErr := NewServer(mockSvc.MockQuicBaaS, cfg, log)
-	require.NoError(t, srvErr)
-	server.service = mockSvc
-	return NewIAMHandler(IAMHandlerDependencies{Server: server})
+	handler, _, cleanup := setupIAMHandler(t)
+	handler.server.service.SetLoginService(service.NewLoginService(&rejectingLoginClient{err: err}))
+	return handler, cleanup
 }
 
-// distinguishableLoginFailures are the back-end outcomes that used to produce
-// DIFFERENT HTTP responses. Each one answers a question an anonymous caller has
-// no right to ask: does this tenant exist, does this user exist, does this user
-// hold a security key.
+// distinguishableLoginFailures are the back-end outcomes that must NOT produce
+// different HTTP responses. Each one answers a question an anonymous caller
+// has no right to ask: does this tenant exist, does this user exist, does
+// this user hold a security key.
 var distinguishableLoginFailures = []struct {
 	name string
 	err  error
@@ -100,33 +87,35 @@ var distinguishableLoginFailures = []struct {
 	},
 }
 
-// serveBeginLogin runs the WebAuthn login-begin handler against a manager that
-// fails with err and returns the recorded response.
-func serveBeginLogin(t *testing.T, err error) *httptest.ResponseRecorder {
+// serveCeremonyBeginLogin runs the unified login-begin handler against a
+// ceremony that fails with err and returns the recorded response.
+func serveCeremonyBeginLogin(t *testing.T, err error) *httptest.ResponseRecorder {
 	t.Helper()
-	handler := setupRejectingWebAuthnHandler(t, err)
-	req := webAuthnReq(http.MethodPost,
-		map[string]string{"email": "alice@example.com"},
-		map[string]string{"tenant_id": "acme-corp"})
+	handler, cleanup := setupRejectingCeremonyHandler(t, err)
+	defer cleanup()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/begin",
+		strings.NewReader(`{"type":"fido2","hint":"alice@example.com","tenant_id":"acme-corp"}`))
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	handler.BeginLogin(w, req)
+	handler.CeremonyBeginLogin(w, req)
 	return w
 }
 
-// TestBeginLogin_NoEnumerationViaErrorResponse is the security regression guard
-// for the login-begin oracle. Deleting the anonymous tenant-listing endpoint is
-// only half the fix: if login-begin still answers "no such tenant" differently
-// from "no such user", an anonymous caller can enumerate the same namespaces one
-// request at a time. Every failure must be byte-identical.
-func TestBeginLogin_NoEnumerationViaErrorResponse(t *testing.T) {
-	baseline := serveBeginLogin(t, distinguishableLoginFailures[0].err)
+// TestCeremonyBeginLogin_NoEnumerationViaErrorResponse is the security
+// regression guard for the login-begin oracle on the unified ceremony (the
+// surface browser sign-in rides). If login-begin answers "no such tenant"
+// differently from "no such user", an anonymous caller can enumerate tenant
+// and user namespaces one request at a time. Every failure must be
+// byte-identical.
+func TestCeremonyBeginLogin_NoEnumerationViaErrorResponse(t *testing.T) {
+	baseline := serveCeremonyBeginLogin(t, distinguishableLoginFailures[0].err)
 
 	require.Equal(t, http.StatusUnauthorized, baseline.Code,
 		"login-begin failures must be a uniform 401")
 
 	for _, tc := range distinguishableLoginFailures[1:] {
 		t.Run(tc.name, func(t *testing.T) {
-			w := serveBeginLogin(t, tc.err)
+			w := serveCeremonyBeginLogin(t, tc.err)
 
 			assert.Equal(t, baseline.Code, w.Code,
 				"status differs from %q — the status code is an enumeration oracle",
@@ -138,13 +127,13 @@ func TestBeginLogin_NoEnumerationViaErrorResponse(t *testing.T) {
 	}
 }
 
-// TestBeginLogin_RejectionLeaksNoBackendDetail asserts the uniform response
-// carries none of the identifiers or back-end vocabulary the underlying error
-// contained.
-func TestBeginLogin_RejectionLeaksNoBackendDetail(t *testing.T) {
+// TestCeremonyBeginLogin_RejectionLeaksNoBackendDetail asserts the uniform
+// response carries none of the identifiers or back-end vocabulary the
+// underlying error contained.
+func TestCeremonyBeginLogin_RejectionLeaksNoBackendDetail(t *testing.T) {
 	for _, tc := range distinguishableLoginFailures {
 		t.Run(tc.name, func(t *testing.T) {
-			w := serveBeginLogin(t, tc.err)
+			w := serveCeremonyBeginLogin(t, tc.err)
 			body := w.Body.String()
 
 			for _, leak := range []string{"tenant", "user", "not found", "credential", "unreachable", "acme-corp", "ghost@example.com"} {
@@ -157,17 +146,19 @@ func TestBeginLogin_RejectionLeaksNoBackendDetail(t *testing.T) {
 	}
 }
 
-// TestFinishLogin_NoEnumerationViaErrorResponse pins the same uniformity on the
-// second leg of the ceremony: a forged assertion against a non-existent tenant
-// must be indistinguishable from a genuinely failed assertion.
-func TestFinishLogin_NoEnumerationViaErrorResponse(t *testing.T) {
+// TestCeremonyFinishLogin_NoEnumerationViaErrorResponse pins the same
+// uniformity on the second leg of the ceremony: a forged proof against a
+// non-existent tenant must be indistinguishable from a genuinely failed
+// proof.
+func TestCeremonyFinishLogin_NoEnumerationViaErrorResponse(t *testing.T) {
 	serve := func(err error) *httptest.ResponseRecorder {
-		handler := setupRejectingWebAuthnHandler(t, err)
-		req := webAuthnReq(http.MethodPost,
-			map[string]interface{}{"credential": map[string]interface{}{"id": "cred-1"}},
-			map[string]string{"tenant_id": "acme-corp"})
+		handler, cleanup := setupRejectingCeremonyHandler(t, err)
+		defer cleanup()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/finish",
+			strings.NewReader(`{"session_id":"s1","type":"fido2","lookup_key":"Y3JlZC0x"}`))
+		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		handler.FinishLogin(w, req)
+		handler.CeremonyFinishLogin(w, req)
 		return w
 	}
 
@@ -188,10 +179,10 @@ func TestFinishLogin_NoEnumerationViaErrorResponse(t *testing.T) {
 // threaded back into the response.
 func TestRespondLoginRejected_IsConstant(t *testing.T) {
 	first := httptest.NewRecorder()
-	RespondLoginRejected(first, httptest.NewRequest(http.MethodPost, "/api/v1/tenants/a/webauthn/login/begin", nil))
+	RespondLoginRejected(first, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/begin", nil))
 
 	second := httptest.NewRecorder()
-	RespondLoginRejected(second, httptest.NewRequest(http.MethodPost, "/api/v1/tenants/zzz/webauthn/login/begin", nil))
+	RespondLoginRejected(second, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/finish", nil))
 
 	assert.Equal(t, http.StatusUnauthorized, first.Code)
 	assert.Equal(t, first.Code, second.Code)

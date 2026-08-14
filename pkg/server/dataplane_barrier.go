@@ -93,10 +93,16 @@ func (e *DataPlaneBarrierError) Unwrap() error { return e.Cause }
 //     matches the qrdb embedded server's own setupBarrier path.
 //
 // The returned BaasBarrierService is the qrdbsdk.BarrierService wrapper
-// around the concrete StorageBarrier. The second return value is the raw
-// *qrdbsdk.StorageBarrier so callers can build an atrest.Encryptor from it.
-// The returned io.Closer closes the underlying PebbleDB instance; the caller
-// must call Close when done.
+// around the concrete StorageBarrier, wired to a persistent-barrier ceremony
+// service exactly the way qrdbd wires its own (NewBarrierServiceWithCeremony:
+// the ceremony service is installed as the barrier's CeremonyDistributor and
+// RecoveryDistributor, so the officer / share-claim / recovery verbs work
+// instead of failing typed "ceremony service not configured"). The second
+// return value is the raw *qrdbsdk.StorageBarrier so callers can build an
+// atrest.Encryptor from it. The third is the ceremony core so composition
+// stages can attach the platform CA (SetCA) and the init ceremony can drive
+// officer enrollment. The returned io.Closer closes the underlying PebbleDB
+// instance; the caller must call Close when done.
 //
 // The data-plane barrier is constructed whenever a persistent data directory
 // is available, INDEPENDENT of cfg.Seal.Enabled. cfg.Seal.Enabled only governs
@@ -113,9 +119,9 @@ func (e *DataPlaneBarrierError) Unwrap() error { return e.Cause }
 func buildDataPlaneBarrierService(
 	cfg *config.Config,
 	logger *slog.Logger,
-) (BaasBarrierService, *qrdbsdk.StorageBarrier, io.Closer, error) {
+) (BaasBarrierService, *qrdbsdk.StorageBarrier, *qrdbsdk.CeremonyService, io.Closer, error) {
 	if cfg == nil || cfg.Storage.DataDir == "" {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -126,11 +132,11 @@ func buildDataPlaneBarrierService(
 	// ------------------------------------------------------------------ //
 	sealDir := filepath.Join(cfg.Storage.DataDir, "seal")
 	if err := os.MkdirAll(sealDir, 0o750); err != nil {
-		return nil, nil, nil, &DataPlaneBarrierError{Stage: "mkdir seal dir", Cause: err}
+		return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "mkdir seal dir", Cause: err}
 	}
 	pebble, err := qrdbsdk.NewPebbleStorage(qrdbsdk.DefaultPebbleConfig(sealDir))
 	if err != nil {
-		return nil, nil, nil, &DataPlaneBarrierError{Stage: "open pebble seal store", Cause: err}
+		return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "open pebble seal store", Cause: err}
 	}
 
 	// ------------------------------------------------------------------ //
@@ -154,10 +160,10 @@ func buildDataPlaneBarrierService(
 	// none strategy instead of the "passphrase" config default. For shamir the
 	// persisted threshold/total are returned too so the barrier registers the
 	// same M-of-N the init ceremony recorded.
-	strategy, threshold, totalShares, err := resolveBarrierStrategy(cfg, cfg.Seal.StrategyExplicit)
+	strategy, threshold, totalShares, _, err := resolveBarrierStrategy(cfg, cfg.Seal.StrategyExplicit)
 	if err != nil {
 		_ = pebble.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	// Hardware/cloud strategies (tpm2/pkcs11/awskms/gcpkms/azurekv/vault) are
@@ -168,13 +174,13 @@ func buildDataPlaneBarrierService(
 	strategies, err := buildHardwareSealStrategies(cfg)
 	if err != nil {
 		_ = pebble.Close()
-		return nil, nil, nil, &DataPlaneBarrierError{Stage: "build hardware strategies", Cause: err}
+		return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "build hardware strategies", Cause: err}
 	}
 	if strategies == nil {
 		strategies, err = buildSealStrategies(strategy, threshold, totalShares)
 		if err != nil {
 			_ = pebble.Close()
-			return nil, nil, nil, &DataPlaneBarrierError{Stage: "build strategies", Cause: err}
+			return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "build strategies", Cause: err}
 		}
 	}
 
@@ -207,7 +213,7 @@ func buildDataPlaneBarrierService(
 	barrier, err := qrdbsdk.NewStorageBarrier(logger, backend, barrierCfg, strategies...)
 	if err != nil {
 		_ = pebble.Close()
-		return nil, nil, nil, &DataPlaneBarrierError{Stage: "construct storage barrier", Cause: err}
+		return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "construct storage barrier", Cause: err}
 	}
 
 	logger.Info("data-plane StorageBarrier constructed",
@@ -215,15 +221,42 @@ func buildDataPlaneBarrierService(
 		slog.String("seal_dir", sealDir),
 	)
 
+	// Wire the ceremony service over the SAME persistent barrier, mirroring
+	// qrdbd's buildSealServices: a barrier-sealed credential service feeds a
+	// ceremony core whose DataDir is the seal sub-store, and
+	// NewBarrierServiceWithCeremony installs the ceremony core as the
+	// barrier's CeremonyDistributor and RecoveryDistributor. Without this the
+	// officer / share / recovery verbs on the data-plane barrier fail with the
+	// typed "ceremony service not configured" error.
+	credCore, err := qrdbsdk.NewVersionedCredentialService(
+		&qrdbsdk.CredentialConfig{Strategy: qrdbsdk.CredentialStrategyBarrier},
+		barrier,
+		logger,
+	)
+	if err != nil {
+		_ = pebble.Close()
+		return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "construct credential service", Cause: err}
+	}
+	ceremonyCore, err := qrdbsdk.NewCeremonyService(
+		&qrdbsdk.CeremonyConfig{DataDir: sealDir},
+		barrier,
+		credCore,
+		logger,
+	)
+	if err != nil {
+		_ = pebble.Close()
+		return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "construct ceremony service", Cause: err}
+	}
+
 	// Wrap the qrdb BarrierService so `barrier status` reports the configured
 	// strategy even while the barrier is sealed/uninitialised (qrdb only reports
 	// the ACTIVE strategy, which is empty until init/unseal). See
 	// strategyAwareBarrierService.
 	svc := &strategyAwareBarrierService{
-		BaasBarrierService: qrdbsdk.NewBarrierService(barrier),
+		BaasBarrierService: qrdbsdk.NewBarrierServiceWithCeremony(barrier, ceremonyCore),
 		configuredStrategy: string(effectiveStrategy),
 	}
-	return svc, barrier, pebble, nil
+	return svc, barrier, ceremonyCore, pebble, nil
 }
 
 // buildSealStrategies instantiates the concrete SealingStrategy slice for

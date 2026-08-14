@@ -1165,7 +1165,7 @@ func TestAgentService_SpawnSession_PersistsToStore(t *testing.T) {
 	}
 
 	// Verify the session was persisted to the store
-	record, err := store.GetSession(context.Background(), resp.SessionID)
+	record, err := store.GetSession(context.Background(), "", resp.SessionID)
 	if err != nil {
 		t.Fatalf("expected session in store, got error: %v", err)
 	}
@@ -1211,7 +1211,7 @@ func TestAgentService_CloseSession_UpdatesStore(t *testing.T) {
 	}
 
 	// Verify the store record was updated to closed
-	record, err := store.GetSession(context.Background(), spawnResp.SessionID)
+	record, err := store.GetSession(context.Background(), "", spawnResp.SessionID)
 	if err != nil {
 		t.Fatalf("expected session in store, got error: %v", err)
 	}
@@ -1312,36 +1312,55 @@ func TestAgentService_SessionStatus_FallsBackToStore(t *testing.T) {
 	}
 }
 
+// TestAgentService_LoadPersistedSessions pins which durable records become
+// addressable again at boot. Only a persistent session with a registered
+// backend is restored: a closed session is over, a one-shot session held no
+// process to miss, and a session whose backend is gone cannot be reached.
 func TestAgentService_LoadPersistedSessions(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryAgentStore()
 
-	// Pre-populate store with active and closed sessions
-	activeRecord := &SessionRecord{
-		SessionID: "active-session-1",
-		ProjectID: "proj-1",
-		Backend:   "mock",
-		Model:     "llama3",
-		Status:    SessionStateActive,
-		CreatedAt: 1000,
+	persistentRecord := &SessionRecord{
+		SessionID:    "active-session-1",
+		TenantID:     "tenant-a",
+		ProjectID:    "proj-1",
+		Backend:      "mock",
+		Model:        "llama3",
+		WorkDir:      "/w",
+		Persistent:   true,
+		BackendLocal: true,
+		Status:       SessionStateActive,
+		CreatedAt:    1000,
 	}
 	closedRecord := &SessionRecord{
-		SessionID: "closed-session-1",
-		ProjectID: "proj-2",
-		Backend:   "mock",
-		Status:    SessionStateClosed,
-		CreatedAt: 500,
+		SessionID:  "closed-session-1",
+		TenantID:   "tenant-a",
+		ProjectID:  "proj-2",
+		Backend:    "mock",
+		Persistent: true,
+		Status:     SessionStateClosed,
+		CreatedAt:  500,
 	}
 	noBackendRecord := &SessionRecord{
-		SessionID: "orphan-session-1",
-		ProjectID: "proj-3",
-		Backend:   "nonexistent",
+		SessionID:  "orphan-session-1",
+		TenantID:   "tenant-a",
+		ProjectID:  "proj-3",
+		Backend:    "nonexistent",
+		Persistent: true,
+		Status:     SessionStateActive,
+		CreatedAt:  800,
+	}
+	oneShotRecord := &SessionRecord{
+		SessionID: "oneshot-session-1",
+		TenantID:  "tenant-a",
+		ProjectID: "proj-4",
+		Backend:   "mock",
 		Status:    SessionStateActive,
-		CreatedAt: 800,
+		CreatedAt: 900,
 	}
 
-	for _, r := range []*SessionRecord{activeRecord, closedRecord, noBackendRecord} {
+	for _, r := range []*SessionRecord{persistentRecord, closedRecord, noBackendRecord, oneShotRecord} {
 		if err := store.PutSession(context.Background(), r); err != nil {
 			t.Fatalf("failed to store record: %v", err)
 		}
@@ -1355,26 +1374,35 @@ func TestAgentService_LoadPersistedSessions(t *testing.T) {
 		t.Fatalf("failed to create service: %v", err)
 	}
 
-	// Load persisted sessions
 	impl := svc.(*agentServiceImpl)
 	if err := impl.LoadPersistedSessions(context.Background()); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	// Only the active session with a valid backend should be restored
-	_, found := impl.sessions.Load("active-session-1")
+	rec, found := impl.liveSessionRecord("active-session-1")
 	if !found {
-		t.Error("expected active-session-1 to be restored in memory")
+		t.Fatal("expected active-session-1 to be restored in memory")
+	}
+	if !rec.resumable.Load() {
+		t.Error("a restored persistent session must report as resumable, not live")
 	}
 
-	_, found = impl.sessions.Load("closed-session-1")
-	if found {
+	if _, found := impl.sessions.Load("closed-session-1"); found {
 		t.Error("expected closed-session-1 to NOT be restored in memory")
 	}
-
-	_, found = impl.sessions.Load("orphan-session-1")
-	if found {
+	if _, found := impl.sessions.Load("orphan-session-1"); found {
 		t.Error("expected orphan-session-1 to NOT be restored (backend not available)")
+	}
+	if _, found := impl.sessions.Load("oneshot-session-1"); found {
+		t.Error("expected a non-persistent session to NOT be restored: it held no process to miss")
+	}
+
+	oneShot, err := store.GetSession(context.Background(), "tenant-a", "oneshot-session-1")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if oneShot.Status != SessionStateClosed {
+		t.Errorf("non-persistent session status = %q after restart, want closed", oneShot.Status)
 	}
 }
 

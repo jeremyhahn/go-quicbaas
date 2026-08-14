@@ -39,5 +39,7 @@ func startGRPCSpan(ctx context.Context, name string, attrs map[string]interface{
 		}
 	}
 	ctx, span := tracer.Start(ctx, name, trace.WithAttributes(kvs...))
-	return ctx, span.End
+	// span.End is variadic (func(...trace.SpanEndOption)), so it cannot be
+	// returned directly as the plain func() this helper's !otel twin promises.
+	return ctx, func() { span.End() }
 }

@@ -119,6 +119,74 @@ type SpawnRequest struct {
 	SandboxMode    SandboxMode `json:"sandbox_mode,omitempty"`
 	Sandboxed      bool        `json:"sandboxed,omitempty"`
 	ContainerImage string      `json:"container_image,omitempty"`
+
+	// ExtraMounts are additional, policy-authorized host bind mounts for the
+	// sandbox container. The orchestrator validates them against its
+	// MountPolicy before the backend ever sees the request; backends append
+	// them to the container spec verbatim.
+	ExtraMounts []ContainerMount `json:"extra_mounts,omitempty"`
+
+	// Trust dimension (see container_trust.go and trust_policy.go). These
+	// mirror the ContainerSpec trust fields and are copied onto the spec by
+	// the sandbox spawn path. Every one is inert at its zero value, so a
+	// spawn that does not ask for trusted computing behaves exactly as it did
+	// before the dimension existed.
+	//
+	// ImageDigest pins ContainerImage to an immutable "sha256:<hex>" content
+	// digest; the runtime then launches repository@digest instead of the
+	// mutable tag and verifies the created container against it.
+	ImageDigest string `json:"image_digest,omitempty"`
+
+	// TrustLevel is the integrity tier required of this session. The
+	// orchestrator resolves TrustLevelDefault against its TrustPolicy before
+	// dispatching, the same way it resolves SandboxModeDefault.
+	TrustLevel TrustLevel `json:"trust_level,omitempty"`
+
+	// TrustLabel is the operator-assigned workload identity folded into the
+	// launch measurement.
+	TrustLabel string `json:"trust_label,omitempty"`
+
+	// ExpectedPCRs is the golden PCR set a Tier 1 host quote is checked
+	// against, keyed by PCR index.
+	ExpectedPCRs map[uint32][]byte `json:"expected_pcrs,omitempty"`
+
+	// Account pool fields (see account.go / account_resolver.go).
+	//
+	// AccountID pins the spawn to a specific pooled provider account (one of
+	// several e.g. Anthropic/Claude logins). Leaving both AccountID and
+	// AccountAuto unset preserves the pre-account-pool default behavior
+	// exactly: the backend authenticates however its underlying CLI already
+	// does (the host user's global ~/.claude, ~/.codex, ~/.config/opencode).
+	AccountID string `json:"account_id,omitempty"`
+
+	// AccountAuto requests strategy-based account selection (static or
+	// least-usage — see AccountSelectionStrategy) when AccountID is empty.
+	AccountAuto bool `json:"account_auto,omitempty"`
+
+	// AccountStrategy selects a specific registered AccountSelectionStrategy
+	// by name for this spawn. Empty selects the tenant's configured default.
+	// Ignored unless AccountAuto is true.
+	AccountStrategy string `json:"account_strategy,omitempty"`
+
+	// AccountAllow optionally restricts selection to these accounts — the
+	// rotation pool chosen for this agent. Empty means the whole
+	// tenant/project/provider pool is eligible, which is the pre-existing
+	// behavior.
+	AccountAllow []string `json:"account_allow,omitempty"`
+
+	// AccountExclude removes accounts from selection for this one spawn.
+	// Rotation sets it to the account that just hit a limit so a replacement
+	// can never be the same account, independently of when its hold lapses.
+	AccountExclude []string `json:"account_exclude,omitempty"`
+
+	// AccountHomeDir is set by ACPBackend.Spawn itself (never by a caller)
+	// when the resolved account carries file-based credentials (e.g.
+	// OpenCode's auth.json). It names a fresh, per-session temporary
+	// directory holding those files; spawnJSONRPC/spawnContainerJSONRPC use
+	// it in place of a bare isolation directory / the host's shared config
+	// mount when non-empty. Not serialized: it is spawn-time wiring state,
+	// not caller-supplied configuration.
+	AccountHomeDir string `json:"-"`
 }
 
 // EffectiveSandboxMode returns the sandbox mode the backend should honor,
@@ -134,19 +202,20 @@ func (r *SpawnRequest) EffectiveSandboxMode() SandboxMode {
 	return SandboxModeDefault
 }
 
-// AgentEventCallback is called by backends during prompt execution to stream
-// real-time events (tool calls, responses, file operations). The system always
-// calls this -- display filtering happens downstream in the CLI/GUI layer.
-type AgentEventCallback func(sessionID, eventType, details string)
+// SessionEventCallback receives structured transcript events emitted by a
+// backend while a turn runs. The backend populates SessionID, Kind, and the
+// matching payload; the consumer stamps TenantID, Source, Sequence, and
+// Timestamp before persisting or forwarding.
+type SessionEventCallback func(event *SessionEvent)
 
 // PromptRequest contains parameters for prompting an agent.
 type PromptRequest struct {
-	SessionID     string             `json:"session_id,omitempty"`
-	ProjectID     string             `json:"project_id,omitempty"`
-	Prompt        string             `json:"prompt"`
-	Model         string             `json:"model,omitempty"`
-	SystemPrompt  string             `json:"system_prompt,omitempty"`
-	EventCallback AgentEventCallback `json:"-"` // Real-time event streaming (not serialized)
+	SessionID     string               `json:"session_id,omitempty"`
+	ProjectID     string               `json:"project_id,omitempty"`
+	Prompt        string               `json:"prompt"`
+	Model         string               `json:"model,omitempty"`
+	SystemPrompt  string               `json:"system_prompt,omitempty"`
+	EventCallback SessionEventCallback `json:"-"` // Real-time event streaming (not serialized)
 }
 
 // PromptResponse contains the agent's response.
@@ -155,6 +224,13 @@ type PromptResponse struct {
 	Content    []ContentBlock `json:"content"`
 	Model      string         `json:"model,omitempty"`
 	StopReason string         `json:"stop_reason,omitempty"`
+
+	// Usage is the token accounting the agent published for this turn, or nil
+	// when the backend's CLI publishes none. It is what the orchestrator
+	// attributes to the turn's tenant / account / project / job — see
+	// agentServiceImpl.recordTurnUsage. Nil means "not measured", not "zero":
+	// no usage is recorded for such a turn rather than an estimate.
+	Usage *TokenUsage `json:"usage,omitempty"`
 }
 
 // Session represents an active agent session.
@@ -167,6 +243,16 @@ type Session struct {
 	PID       int          `json:"pid,omitempty"`
 	WorkDir   string       `json:"work_dir"`
 	CreatedAt int64        `json:"created_at"`
+
+	// AccountID and AccountStrategy report which pooled provider account (if
+	// any) this session was spawned against and which AccountSelectionStrategy
+	// chose it ("pinned" when the caller set SpawnRequest.AccountID directly).
+	// Both are empty when the spawn did not use the account pool. Callers that
+	// persist a durable session record are expected to copy these through so a
+	// cost anomaly can be traced back to the account and policy that produced
+	// it.
+	AccountID       string `json:"account_id,omitempty"`
+	AccountStrategy string `json:"account_strategy,omitempty"`
 }
 
 // SessionState represents the state of a session.
@@ -178,6 +264,12 @@ const (
 
 	// SessionStateIdle indicates the session is idle and waiting for input.
 	SessionStateIdle SessionState = "idle"
+
+	// SessionStateResumable indicates the session's durable record survived a
+	// daemon restart but its agent process did not. The session is addressable
+	// and its transcript is intact; the process is recreated by the next
+	// prompt, which restores the conversation before the turn runs.
+	SessionStateResumable SessionState = "resumable"
 
 	// SessionStateClosed indicates the session has been terminated.
 	SessionStateClosed SessionState = "closed"

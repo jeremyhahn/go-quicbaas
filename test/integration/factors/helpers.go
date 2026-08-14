@@ -90,6 +90,25 @@ func (m *memKV) Put(_ context.Context, key string, val []byte) error {
 	return nil
 }
 
+// PutIfAbsent stores val at key only when the key is absent, reporting
+// whether it stored. The write is performed under the same exclusive lock as
+// the existence check so the operation is atomic with respect to concurrent
+// callers — a compare-and-set that raced would defeat the very property the
+// auth-factor service uses this for (single-winner enrolment).
+func (m *memKV) PutIfAbsent(_ context.Context, key string, val []byte) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.store[key]; exists {
+		return false, nil
+	}
+	// Defensive copy so the caller can mutate val without poisoning the
+	// stored bytes.
+	cp := make([]byte, len(val))
+	copy(cp, val)
+	m.store[key] = cp
+	return true, nil
+}
+
 // Get returns the value at key or a KeyNotFoundError when absent.
 func (m *memKV) Get(_ context.Context, key string) ([]byte, error) {
 	m.mu.RLock()

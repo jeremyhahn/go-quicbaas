@@ -74,4 +74,8 @@ var (
 	// ErrTrustServiceUnavailable indicates the trust composition service
 	// is not available (the server has no cross-sign / AIA capable CA).
 	ErrTrustServiceUnavailable = errors.New("trust service not available")
+
+	// ErrAttestationServiceUnavailable indicates the attestation service
+	// is not available on this server build.
+	ErrAttestationServiceUnavailable = errors.New("attestation service not available")
 )

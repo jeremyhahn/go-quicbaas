@@ -382,7 +382,7 @@ func TestEntityErrorHandling(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 
 		authorize(req)
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := newHTTPClient(10 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -419,7 +419,7 @@ func entityPut(ctx context.Context, entityType string, id uint64, data interface
 	req.Header.Set("Content-Type", "application/json")
 
 	authorize(req)
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := newHTTPClient(10 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
@@ -456,7 +456,7 @@ func entityGet(ctx context.Context, entityType string, id uint64) (*entityRespon
 	}
 
 	authorize(req)
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := newHTTPClient(10 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
@@ -497,7 +497,7 @@ func entityDelete(ctx context.Context, entityType string, id uint64) error {
 	}
 
 	authorize(req)
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := newHTTPClient(10 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "request failed", Cause: err}
@@ -540,7 +540,7 @@ func entityList(ctx context.Context, entityType string, limit int, cursor string
 	}
 
 	authorize(req)
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := newHTTPClient(10 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, &qberrors.WrappedMessageError{Message: "request failed", Cause: err}

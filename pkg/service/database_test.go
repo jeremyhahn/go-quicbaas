@@ -122,7 +122,7 @@ func (m *mockDBServicer) SealDatabase(_ context.Context, _ string) error { retur
 func (m *mockDBServicer) UnsealDatabase(_ context.Context, _ string, _ qrdbsdk.Credentials) error {
 	return nil
 }
-func (m *mockDBServicer) DatabaseBarrierStatus(_ string) (*qrdbsdk.BarrierStatus, error) {
+func (m *mockDBServicer) DatabaseBarrierStatus(_ context.Context, _ string) (*qrdbsdk.BarrierStatus, error) {
 	return nil, nil
 }
 

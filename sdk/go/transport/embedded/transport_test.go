@@ -22,10 +22,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 	healthclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/health"
@@ -403,6 +405,9 @@ func (m *mockQuicBaaS) Embedding() service.EmbeddingService           { return n
 func (m *mockQuicBaaS) Ollama() service.OllamaService                 { return nil }
 func (m *mockQuicBaaS) Certificate() service.CertificateService       { return nil }
 func (m *mockQuicBaaS) Trust() service.TrustService                   { return nil }
+func (m *mockQuicBaaS) Attestation() service.AttestationService       { return nil }
+func (m *mockQuicBaaS) PIV() service.PIVService                       { return nil }
+func (m *mockQuicBaaS) FIDO2() service.FIDO2Service                   { return nil }
 func (m *mockQuicBaaS) ACME() service.ACMEServicer                    { return nil }
 func (m *mockQuicBaaS) DynamicSecrets() service.DynamicSecretsService { return nil }
 func (m *mockQuicBaaS) ObjectStorageService() service.ObjectStorageService {
@@ -425,6 +430,9 @@ func (m *mockQuicBaaS) Database() service.DatabaseService                       
 func (m *mockQuicBaaS) SetDatabaseService(ds service.DatabaseService)                {}
 func (m *mockQuicBaaS) AgentAdmin() service.AgentAdminService                        { return nil }
 func (m *mockQuicBaaS) Project() service.ProjectService                              { return nil }
+func (m *mockQuicBaaS) Account() service.AccountService                              { return nil }
+func (m *mockQuicBaaS) SecretRegistry() *qrdbsecret.ResolverRegistry                 { return nil }
+func (m *mockQuicBaaS) SetSecretRegistry(reg *qrdbsecret.ResolverRegistry)           {}
 func (m *mockQuicBaaS) Close() error                                                 { return nil }
 func (m *mockQuicBaaS) LoginCeremony() service.LoginServicer                         { return nil }
 func (m *mockQuicBaaS) SetLoginService(svc service.LoginServicer)                    {}

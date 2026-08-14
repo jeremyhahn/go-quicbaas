@@ -24,10 +24,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -42,7 +44,10 @@ import (
 
 type mockService struct {
 	// Trust composition (cross-sign / AIA)
-	trustSvc service.TrustService
+	trustSvc       service.TrustService
+	attestationSvc service.AttestationService
+	pivSvc         service.PIVService
+	fido2Svc       service.FIDO2Service
 
 	// KV Operations
 	putFunc    func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
@@ -499,6 +504,18 @@ func (m *mockService) Trust() service.TrustService {
 	return m.trustSvc
 }
 
+func (m *mockService) Attestation() service.AttestationService {
+	return m.attestationSvc
+}
+
+func (m *mockService) PIV() service.PIVService {
+	return m.pivSvc
+}
+
+func (m *mockService) FIDO2() service.FIDO2Service {
+	return m.fido2Svc
+}
+
 func (m *mockService) ACME() service.ACMEServicer {
 	return nil
 }
@@ -526,6 +543,14 @@ func (m *mockService) SchedulerEngine() *schedulerpkg.SchedulerEngine { return n
 func (m *mockService) Project() service.ProjectService {
 	return nil
 }
+
+func (m *mockService) Account() service.AccountService {
+	return nil
+}
+
+func (m *mockService) SecretRegistry() *qrdbsecret.ResolverRegistry { return nil }
+
+func (m *mockService) SetSecretRegistry(reg *qrdbsecret.ResolverRegistry) {}
 
 // SSHClient returns nil for the mcp mock; tests that exercise SSH
 // routing wire a real xkmsssh.Client directly.

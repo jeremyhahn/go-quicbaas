@@ -3,7 +3,8 @@
   prompt composer for a single session.
 
   Layout:
-  - Header: session ID + backend chip + status badge + Close-confirm + Prompt-modal
+  - Header: session ID + backend chip + status badge + Rotate-account +
+    Close-confirm + Prompt-modal
   - Right-side metadata panel: tenant, model, container_id, created_at, last_active
     (collapsible on narrow viewports via a toggle button)
   - Event timeline: EventStream (virtualized, scroll-managed)
@@ -11,12 +12,13 @@
 -->
 <script lang="ts">
   import { untrack } from 'svelte';
-  import type { SessionStatusResponse } from '@quicbaas/sdk';
+  import type { SessionStatusResponse, RotateSessionAccountResponse } from '@quicbaas/sdk';
   import { sessionStore, openSession, closeActiveSession, requestCloseSession } from '../../stores/sessionStore.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import EventStream from './EventStream.svelte';
   import PromptComposer from './PromptComposer.svelte';
   import PresenceIndicator from './PresenceIndicator.svelte';
+  import SessionActivityIndicator from './SessionActivityIndicator.svelte';
   import StatusBadge from '../core/StatusBadge.svelte';
   import { formatDateTime } from '../../lib/time.ts';
   import { X, ChevronRight, ChevronDown } from 'lucide-svelte';
@@ -38,6 +40,18 @@
   let promptText = $state('');
   let prompting = $state(false);
   let metadataOpen = $state(true); // collapsible on narrow viewports
+
+  // Rotate-account dialog state. The dialog IS the confirmation gate — opening
+  // it only reveals the form; the API call fires only when the operator
+  // clicks the dialog's own confirm button.
+  let rotateDialogOpen = $state(false);
+  let rotating = $state(false);
+  let rotateReason = $state('');
+  let rotateHoldOutgoing = $state(false);
+  // datetime-local input value (local time, no timezone) for available_at.
+  let rotateAvailableAt = $state('');
+  let rotateError = $state('');
+  let rotateResult: RotateSessionAccountResponse | null = $state(null);
 
   // Optimistic close: a successful Close should reflect in the UI immediately
   // rather than waiting for the server's session_closed event to echo back over
@@ -90,6 +104,57 @@
     } finally {
       isClosing = false;
     }
+  }
+
+  // openRotateDialog resets the form to a blank slate every time it opens so
+  // a previous rotation's reason/result never bleeds into the next attempt.
+  function openRotateDialog(): void {
+    rotateReason = '';
+    rotateHoldOutgoing = false;
+    rotateAvailableAt = '';
+    rotateError = '';
+    rotateResult = null;
+    rotateDialogOpen = true;
+  }
+
+  async function confirmRotateAccount(): Promise<void> {
+    if (rotating) return;
+    rotating = true;
+    rotateError = '';
+    try {
+      const client = await getSDKClient();
+      const availableAtISO =
+        rotateHoldOutgoing && rotateAvailableAt ? new Date(rotateAvailableAt).toISOString() : undefined;
+      rotateResult = await client.orchestrator.rotateSessionAccount({
+        session_id: session.session_id,
+        reason: rotateReason.trim() || undefined,
+        hold_outgoing: rotateHoldOutgoing || undefined,
+        available_at: availableAtISO,
+      });
+    } catch (err: unknown) {
+      rotateError = parseRotateError(err);
+    } finally {
+      rotating = false;
+    }
+  }
+
+  // parseRotateError mirrors SpawnDialog's error parsing: a structured
+  // envelope ({error, hint, request_id}), a JSON-string error body (e.g. the
+  // 409 SessionNotRotatable response), or a plain Error.
+  function parseRotateError(err: unknown): string {
+    if (err && typeof err === 'object' && 'envelope' in err) {
+      const env = (err as { envelope?: { error?: string } }).envelope;
+      if (env?.error) return env.error;
+    }
+    const raw = err instanceof Error ? err.message : String(err);
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof parsed.error === 'string') return parsed.error;
+      if (typeof parsed.message === 'string') return parsed.message;
+    } catch {
+      // not JSON — fall through
+    }
+    return raw;
   }
 
   async function sendPrompt(): Promise<void> {
@@ -203,6 +268,121 @@
   </dialog>
 {/if}
 
+<!-- Rotate account dialog -->
+{#if rotateDialogOpen}
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <dialog
+    class="modal modal-open"
+    aria-modal="true"
+    aria-label="Rotate session account"
+    onkeydown={(e) => { if (e.key === 'Escape' && !rotating) { rotateDialogOpen = false; } }}
+  >
+    <div class="modal-box max-w-lg">
+      <h3 class="font-bold text-base mb-1">Rotate Account</h3>
+      <p class="text-xs text-base-content/40 font-mono mb-3">{session.session_id}</p>
+
+      {#if rotateResult}
+        <div class="space-y-2 text-sm" data-testid="rotate-result">
+          <p class="text-base-content/70">Rotation succeeded.</p>
+          <div class="flex items-center gap-2 font-mono text-xs">
+            <span class="badge badge-ghost">{rotateResult.previous_account_id || '(none)'}</span>
+            <span>&rarr;</span>
+            <span class="badge badge-primary">{rotateResult.account_id}</span>
+          </div>
+          <p>
+            Mode: <span class="font-mono">{rotateResult.mode}</span>
+            {#if rotateResult.mode === 'resume'}
+              <span class="text-base-content/50"> — the agent process was restarted; the transcript was replayed.</span>
+            {:else}
+              <span class="text-base-content/50"> — the running process kept its environment swapped in place.</span>
+            {/if}
+          </p>
+        </div>
+        <div class="modal-action">
+          <button class="btn btn-sm btn-primary" onclick={() => { rotateDialogOpen = false; }}>
+            Done
+          </button>
+        </div>
+      {:else}
+        <p class="text-xs text-base-content/60 mb-3">
+          Moves this session onto a different pooled provider account. If the
+          agent runs as a persistent or sandboxed process, rotation
+          <strong>restarts</strong> it (<span class="font-mono">mode: resume</span>) —
+          the transcript is preserved via replay, but the process itself does
+          not survive in place. Only sessions spawned with automatic account
+          selection or an allow-list can rotate.
+        </p>
+
+        <label class="form-control">
+          <div class="label"><span class="label-text">Reason (optional)</span></div>
+          <input
+            type="text"
+            class="input input-bordered input-sm"
+            bind:value={rotateReason}
+            placeholder="e.g. rebalancing load"
+            disabled={rotating}
+            aria-label="Rotation reason"
+          />
+        </label>
+
+        <label class="form-control mt-2">
+          <div class="flex items-center gap-2 py-1">
+            <input
+              type="checkbox"
+              class="checkbox checkbox-sm"
+              bind:checked={rotateHoldOutgoing}
+              disabled={rotating}
+              aria-label="Hold outgoing account"
+            />
+            <span class="label-text">Hold the outgoing account (mark it limited)</span>
+          </div>
+        </label>
+
+        {#if rotateHoldOutgoing}
+          <label class="form-control">
+            <div class="label"><span class="label-text-alt">Available again at (optional)</span></div>
+            <input
+              type="datetime-local"
+              class="input input-bordered input-sm"
+              bind:value={rotateAvailableAt}
+              disabled={rotating}
+              aria-label="Outgoing account available at"
+            />
+          </label>
+        {/if}
+
+        {#if rotateError}
+          <div class="alert alert-error py-2 px-3 text-sm mt-2" role="alert">{rotateError}</div>
+        {/if}
+
+        <div class="modal-action">
+          <button
+            class="btn btn-sm btn-ghost"
+            onclick={() => { rotateDialogOpen = false; }}
+            disabled={rotating}
+          >
+            Cancel
+          </button>
+          <button
+            class="btn btn-sm btn-warning"
+            onclick={() => { void confirmRotateAccount(); }}
+            disabled={rotating}
+            aria-label="Confirm rotate account"
+          >
+            {#if rotating}
+              <span class="loading loading-spinner loading-xs"></span>
+            {:else}
+              Rotate Account
+            {/if}
+          </button>
+        </div>
+      {/if}
+    </div>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="modal-backdrop" onclick={() => { if (!rotating) rotateDialogOpen = false; }} onkeydown={() => {}}></div>
+  </dialog>
+{/if}
+
 <div class="flex flex-col h-full overflow-hidden">
 
   <!-- Session header -->
@@ -222,6 +402,9 @@
     </div>
 
     <div class="flex items-center gap-2 flex-wrap">
+      {#if displayStatus !== 'closed'}
+        <SessionActivityIndicator />
+      {/if}
       <PresenceIndicator />
 
       <!-- Metadata panel toggle (mobile) -->
@@ -246,6 +429,13 @@
           aria-label="Send prompt to session"
         >
           Prompt
+        </button>
+        <button
+          class="btn btn-xs btn-warning"
+          onclick={() => { openRotateDialog(); }}
+          aria-label="Rotate session account"
+        >
+          Rotate Account
         </button>
         <button
           class="btn btn-xs btn-error gap-1"

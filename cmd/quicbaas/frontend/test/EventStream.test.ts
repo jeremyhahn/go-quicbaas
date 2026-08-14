@@ -32,11 +32,15 @@ function makeEvents(n: number): ParsedSessionEvent[] {
 
 let mockEvents: ParsedSessionEvent[] = [];
 let mockHistoryExhausted = false;
+let mockHistoryLoading = false;
+let mockActiveSession: { backend: string; model?: string } | null = { backend: 'claude', model: 'claude-3-5-sonnet' };
 
 vi.mock('../src/stores/sessionStore.svelte.ts', () => ({
   sessionStore: {
     get events() { return mockEvents; },
     get historyExhausted() { return mockHistoryExhausted; },
+    get historyLoading() { return mockHistoryLoading; },
+    get activeSession() { return mockActiveSession; },
   },
   loadMoreHistory: vi.fn().mockResolvedValue(undefined),
 }));
@@ -56,11 +60,32 @@ describe('EventStream', () => {
   beforeEach(() => {
     mockEvents = [];
     mockHistoryExhausted = false;
+    mockHistoryLoading = false;
+    mockActiveSession = { backend: 'claude', model: 'claude-3-5-sonnet' };
   });
 
-  it('renders empty state when there are no events', () => {
+  it('renders the ready state (backend + waiting message) when there are no events', () => {
     render(EventStream);
-    expect(screen.getByText(/No events yet/i)).toBeInTheDocument();
+    expect(screen.getByTestId('session-ready-state')).toBeInTheDocument();
+    expect(screen.getByText(/ready and waiting/i)).toBeInTheDocument();
+    expect(screen.getByText('claude')).toBeInTheDocument();
+  });
+
+  it('does NOT render the ready state while the initial history fetch is in flight', () => {
+    mockHistoryLoading = true;
+    render(EventStream);
+    expect(screen.queryByTestId('session-ready-state')).toBeNull();
+    expect(screen.getByTestId('history-loading')).toBeInTheDocument();
+    expect(screen.getByText(/Loading session history/i)).toBeInTheDocument();
+  });
+
+  it('does not render the loading indicator once history has resolved', async () => {
+    mockEvents = makeEvents(3);
+    mockHistoryLoading = false;
+    render(EventStream);
+    await Promise.resolve();
+    expect(screen.queryByTestId('history-loading')).toBeNull();
+    expect(screen.queryByTestId('session-ready-state')).toBeNull();
   });
 
   it('renders ≤50 event cards even when the store has 200 events', async () => {
@@ -99,5 +124,58 @@ describe('EventStream', () => {
   it('has a log role for accessibility', () => {
     render(EventStream);
     expect(screen.getByRole('log')).toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------------
+  // coalescing
+  // ---------------------------------------------------------------------------
+  it('coalesces consecutive thought events from the same source into one block', async () => {
+    mockEvents = [
+      {
+        sequence: 1,
+        timestamp: '2025-01-01T00:00:00Z',
+        kind: 'thought',
+        raw: {},
+        source: 'agent:claude',
+        thoughtText: 'first fragment ',
+      },
+      {
+        sequence: 2,
+        timestamp: '2025-01-01T00:00:01Z',
+        kind: 'thought',
+        raw: {},
+        source: 'agent:claude',
+        thoughtText: 'second fragment',
+      },
+    ];
+    const { container } = render(EventStream);
+    await Promise.resolve();
+    // Two source thought fragments merge into a single rendered event card.
+    expect(countEventCards(container)).toBe(1);
+    expect(screen.getByText('first fragment second fragment')).toBeInTheDocument();
+  });
+
+  it('does not coalesce thought events from different sources', async () => {
+    mockEvents = [
+      {
+        sequence: 1,
+        timestamp: '2025-01-01T00:00:00Z',
+        kind: 'thought',
+        raw: {},
+        source: 'agent:claude',
+        thoughtText: 'from claude',
+      },
+      {
+        sequence: 2,
+        timestamp: '2025-01-01T00:00:01Z',
+        kind: 'thought',
+        raw: {},
+        source: 'agent:ollama',
+        thoughtText: 'from ollama',
+      },
+    ];
+    const { container } = render(EventStream);
+    await Promise.resolve();
+    expect(countEventCards(container)).toBe(2);
   });
 });

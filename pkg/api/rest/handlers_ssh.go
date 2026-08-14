@@ -199,6 +199,36 @@ func (e *SSHAuthorizedNotFoundError) Error() string {
 }
 
 // =============================================================================
+// Routes
+// =============================================================================
+
+// registerSSHRoutes installs the SSH route table on r. Both the canonical
+// /api/v1/ssh mount and the /api/v1/xkms/v1/ssh alias (the prefix the
+// go-xkms REST SSH client expects) share this single table, so the two
+// mounts can never drift apart.
+func (s *Server) registerSSHRoutes(r chi.Router) {
+	r.Post("/keys", s.HandleGenerateSSHKey)
+	r.Post("/keys/import", s.HandleImportSSHKey)
+	r.Get("/keys", s.HandleListSSHKeys)
+	r.Get("/keys/{scope}/{owner}/{name}", s.HandleGetSSHKey)
+	r.Delete("/keys/{scope}/{owner}/{name}", s.HandleDeleteSSHKey)
+	r.Get("/keys/{scope}/{owner}/{name}/public", s.HandleExportSSHKeyPublic)
+	r.Post("/keys/{scope}/{owner}/{name}/sign", s.HandleSignSSHDigest)
+
+	r.Post("/known-hosts", s.HandleAddKnownHost)
+	r.Get("/known-hosts", s.HandleListKnownHosts)
+	r.Delete("/known-hosts/{host}", s.HandleRemoveKnownHost)
+	r.Post("/known-hosts/{host}/verify", s.HandleVerifyKnownHost)
+
+	r.Post("/authorized", s.HandleEmitAuthorized)
+	r.Post("/authorized/verify", s.HandleVerifyAuthorized)
+	r.Post("/authorized/keys", s.HandleAddAuthorizedKey)
+	r.Get("/authorized/keys", s.HandleListAuthorizedKeys)
+	r.Get("/authorized/keys/{scope}/{owner}/{name}", s.HandleGetAuthorizedKey)
+	r.Delete("/authorized/keys/{scope}/{owner}/{name}", s.HandleRemoveAuthorizedKey)
+}
+
+// =============================================================================
 // Handlers — Keys
 // =============================================================================
 
@@ -493,6 +523,74 @@ func (s *Server) HandleEmitAuthorized(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeSSHJSON(w, sshEmitResponse{Line: line}, http.StatusOK)
+}
+
+// HandleAddAuthorizedKey persists an authorized_keys entry. Added so the
+// authorized-keys surface is complete on REST: the SDK client, the CLI, and
+// the desktop binding all need add/list/remove, not just emit/verify.
+func (s *Server) HandleAddAuthorizedKey(w http.ResponseWriter, r *http.Request) {
+	client, ok := s.requireSSHClient(w, r)
+	if !ok {
+		return
+	}
+	var req xkmsssh.AddAuthorizedKeyRequest
+	if err := decodeSSHBody(r, &req); err != nil {
+		writeSSHError(w, err)
+		return
+	}
+	if err := client.AuthorizedKeys().Add(r.Context(), req); err != nil {
+		writeSSHError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+}
+
+// HandleListAuthorizedKeys enumerates authorized_keys entries for the
+// (scope, owner) query pair.
+func (s *Server) HandleListAuthorizedKeys(w http.ResponseWriter, r *http.Request) {
+	client, ok := s.requireSSHClient(w, r)
+	if !ok {
+		return
+	}
+	list, err := client.AuthorizedKeys().List(r.Context(), xkmsssh.ListAuthorizedKeysRequest{
+		Scope: r.URL.Query().Get("scope"),
+		Owner: r.URL.Query().Get("owner"),
+	})
+	if err != nil {
+		writeSSHError(w, err)
+		return
+	}
+	writeSSHJSON(w, sshAuthorizedListResponse{Items: list}, http.StatusOK)
+}
+
+// HandleGetAuthorizedKey returns one authorized_keys entry by name.
+func (s *Server) HandleGetAuthorizedKey(w http.ResponseWriter, r *http.Request) {
+	client, ok := s.requireSSHClient(w, r)
+	if !ok {
+		return
+	}
+	entry, err := client.AuthorizedKeys().Get(r.Context(),
+		chi.URLParam(r, "scope"), chi.URLParam(r, "owner"), chi.URLParam(r, "name"))
+	if err != nil {
+		writeSSHError(w, err)
+		return
+	}
+	writeSSHJSON(w, entry, http.StatusOK)
+}
+
+// HandleRemoveAuthorizedKey deletes one authorized_keys entry by name.
+func (s *Server) HandleRemoveAuthorizedKey(w http.ResponseWriter, r *http.Request) {
+	client, ok := s.requireSSHClient(w, r)
+	if !ok {
+		return
+	}
+	err := client.AuthorizedKeys().Remove(r.Context(),
+		chi.URLParam(r, "scope"), chi.URLParam(r, "owner"), chi.URLParam(r, "name"))
+	if err != nil {
+		writeSSHError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // HandleVerifyAuthorized checks a fingerprint against the stored

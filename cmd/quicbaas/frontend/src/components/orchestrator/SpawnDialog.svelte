@@ -4,12 +4,18 @@
 -->
 <script lang="ts">
   import { SandboxMode } from '@quicbaas/sdk';
-  import type { AgentBackendInfo, SandboxModeValue, MCPServerConfig } from '@quicbaas/sdk';
+  import type { AgentBackendInfo, SandboxModeValue, MCPServerConfig, Project, Account } from '@quicbaas/sdk';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { agentStore } from '../../stores/agentStore.svelte.ts';
   import { orchestratorStore } from '../../stores/orchestrator.svelte.ts';
   import { routeSessionDetail } from '../../stores/router.svelte.ts';
   import { refreshSessions } from '../../stores/sessionStore.svelte.ts';
+  import { providerLabel, isKnownAccountProvider } from '../../lib/accountLabels.ts';
+
+  // Sentinel value for the "Automatic (strategy)" option in the account
+  // selector — distinct from the empty string, which means "unset" (neither
+  // account_id nor account_auto is sent).
+  const ACCOUNT_AUTO_VALUE = '__auto__';
 
   // ---------------------------------------------------------------------------
   // Props
@@ -30,6 +36,18 @@
   let backends: AgentBackendInfo[] = $state([]);
   let backendsLoaded = $state(false);
   let selectedBackend = $state('');
+  let projects: Project[] = $state([]);
+  let selectedProjectId = $state('');
+  let accounts: Account[] = $state([]);
+  // '' = unset (backend authenticates however its CLI already does),
+  // ACCOUNT_AUTO_VALUE = strategy-based selection, anything else = an account ID.
+  let accountSelection = $state('');
+  let accountStrategy = $state('');
+  // accountAllow names the accounts a pinned session may additionally rotate
+  // through (account_allow). Only meaningful alongside a specific account_id
+  // pin — see docs/orchestration/accounts.md "Rotation policy": a bare pin
+  // with no allow list is deliberately not rotatable.
+  let accountAllow: string[] = $state([]);
   let model = $state('');
   let hostAffinity = $state('');
   let sandboxMode: SandboxModeValue = $state(SandboxMode.Default);
@@ -63,10 +81,22 @@
   $effect(() => {
     if (!open) return;
     backendsLoaded = false;
+    selectedProjectId = '';
+    accountSelection = '';
+    accountStrategy = '';
+    accountAllow = [];
     void (async () => {
       try {
         const client = await getSDKClient();
-        const raw = await client.orchestrator.listBackends();
+        const [raw, projResp, acctResp] = await Promise.all([
+          client.orchestrator.listBackends(),
+          client.projects
+            .listProjects(orchestratorStore.activeTenantID)
+            .catch(() => ({ projects: [] })),
+          client.accounts
+            .listAccounts({ tenant_id: orchestratorStore.activeTenantID })
+            .catch(() => ({ accounts: [], total: 0 })),
+        ]);
         const seen = new Set<string>();
         backends = raw.filter((b) => {
           if (seen.has(b.name)) return false;
@@ -78,14 +108,56 @@
         } else {
           selectedBackend = '';
         }
+        projects = projResp.projects ?? [];
+        accounts = acctResp.accounts ?? [];
       } catch {
         backends = [];
         selectedBackend = '';
+        projects = [];
+        accounts = [];
       } finally {
         backendsLoaded = true;
       }
     })();
   });
+
+  // selectedProject resolves the Project object for the current selection, or
+  // undefined when "None" is chosen — used to surface the workspace path hint.
+  const selectedProject = $derived(projects.find((p) => p.id === selectedProjectId));
+
+  // selectableAccounts narrows the account picker to the selected backend's
+  // provider ONLY when that mapping is unambiguous (backend "claude" ->
+  // provider "claude", etc). For any other backend name — including ones the
+  // account subsystem has no opinion about — every account stays visible.
+  // This is a UX convenience, never a hard block: the server, not this
+  // dropdown, decides whether an account is usable with a given backend (see
+  // bug #59 — a hardcoded backend allowlist in this same dialog).
+  const selectableAccounts = $derived(
+    isKnownAccountProvider(selectedBackend)
+      ? accounts.filter((a) => a.provider === selectedBackend)
+      : accounts,
+  );
+
+  // isPinnedAccount is true when the operator chose a specific account (not
+  // Unset, not Automatic) — the only mode where account_allow is meaningful:
+  // pairing a pin with an allow-list is what authorizes rotation for an
+  // otherwise-unrotatable session.
+  const isPinnedAccount = $derived(accountSelection !== '' && accountSelection !== ACCOUNT_AUTO_VALUE);
+
+  // The allow-list only applies to a pinned account; clear any stale
+  // selections made before switching away from that mode so a leftover
+  // account_allow can never survive an Unset/Automatic submission.
+  $effect(() => {
+    if (!isPinnedAccount && accountAllow.length > 0) {
+      accountAllow = [];
+    }
+  });
+
+  function toggleAccountAllow(accountID: string): void {
+    accountAllow = accountAllow.includes(accountID)
+      ? accountAllow.filter((id) => id !== accountID)
+      : [...accountAllow, accountID];
+  }
 
   // ---------------------------------------------------------------------------
   // Submit
@@ -101,10 +173,15 @@
       const resp = await client.orchestrator.spawnSession({
         tenantID: orchestratorStore.activeTenantID,
         backend: selectedBackend,
+        project_id: selectedProjectId || undefined,
         model: model || undefined,
         host_affinity: hostAffinity || undefined,
         sandbox_mode: sandboxMode,
         mcp_servers: buildMCPServers(),
+        account_id: accountSelection && accountSelection !== ACCOUNT_AUTO_VALUE ? accountSelection : undefined,
+        account_auto: accountSelection === ACCOUNT_AUTO_VALUE ? true : undefined,
+        account_strategy: accountSelection === ACCOUNT_AUTO_VALUE && accountStrategy ? accountStrategy : undefined,
+        account_allow: isPinnedAccount && accountAllow.length > 0 ? accountAllow : undefined,
       });
 
       // If an initial prompt was provided, send it immediately.
@@ -191,6 +268,100 @@
           <div class="text-xs text-base-content/50">Loading backends…</div>
         {/if}
       </label>
+
+      <!-- Project -->
+      <label class="form-control">
+        <div class="label"><span class="label-text">Project (optional)</span></div>
+        <select
+          class="select select-bordered select-sm"
+          bind:value={selectedProjectId}
+          aria-label="Select project"
+        >
+          <option value="">None</option>
+          {#each projects as p (p.id)}
+            <option value={p.id}>{p.name}</option>
+          {/each}
+        </select>
+        {#if selectedProject?.workspace?.path}
+          <div class="label">
+            <span class="label-text-alt text-base-content/50">
+              Session runs in {selectedProject.workspace.path}
+            </span>
+          </div>
+        {/if}
+      </label>
+
+      <!-- Pooled provider account -->
+      <label class="form-control">
+        <div class="label"><span class="label-text">Account (optional)</span></div>
+        <select
+          class="select select-bordered select-sm"
+          bind:value={accountSelection}
+          aria-label="Select account"
+        >
+          <option value="">Unset (backend default)</option>
+          <option value={ACCOUNT_AUTO_VALUE}>Automatic (strategy)</option>
+          {#each selectableAccounts as a (a.id)}
+            <option value={a.id}>{a.display_name || a.id} — {providerLabel(a.provider)}</option>
+          {/each}
+        </select>
+        {#if accountSelection === ACCOUNT_AUTO_VALUE}
+          <div class="label">
+            <span class="label-text-alt text-base-content/50">Selection strategy</span>
+          </div>
+          <select
+            class="select select-bordered select-sm"
+            bind:value={accountStrategy}
+            aria-label="Select account strategy"
+          >
+            <option value="">Registry default</option>
+            <option value="static">Static</option>
+            <option value="least_usage">Least usage</option>
+          </select>
+        {/if}
+      </label>
+
+      <!-- account_allow: rotation allow-list, only meaningful alongside a pin -->
+      {#if isPinnedAccount}
+        <label class="form-control">
+          <div class="label"><span class="label-text">Allow rotation to (optional)</span></div>
+          {#if selectableAccounts.length > 0}
+            <div
+              class="flex flex-col gap-1 border border-base-300 rounded-md p-2 max-h-32 overflow-y-auto"
+              data-testid="account-allow-list"
+            >
+              {#each selectableAccounts as a (a.id)}
+                <label class="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    class="checkbox checkbox-xs"
+                    checked={accountAllow.includes(a.id)}
+                    onchange={() => toggleAccountAllow(a.id)}
+                    aria-label={`Allow rotation to ${a.display_name || a.id}`}
+                  />
+                  <span>{a.display_name || a.id} — {providerLabel(a.provider)}</span>
+                </label>
+              {/each}
+            </div>
+            <div class="label">
+              <span class="label-text-alt text-base-content/50">
+                The session starts on the account selected above and may rotate
+                to any account checked here on a rate limit or operator request.
+              </span>
+            </div>
+          {/if}
+          {#if accountAllow.length === 0}
+            <div
+              class="alert alert-warning py-2 px-3 text-xs mt-1"
+              role="alert"
+              data-testid="account-not-rotatable-hint"
+            >
+              This session will be pinned to this account and cannot rotate to
+              another one — select at least one account above to allow rotation.
+            </div>
+          {/if}
+        </label>
+      {/if}
 
       <!-- Model -->
       <label class="form-control">

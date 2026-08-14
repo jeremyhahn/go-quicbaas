@@ -181,11 +181,23 @@ var defaultDenyPublicPrefixes = []string{
 	// Build info (consumed by the GUI dashboard).
 	"/api/v1/version",
 
-	// OIDC / OAuth2 discovery + token surface (root-mounted).
+	// OIDC / OAuth2 discovery + token surface (root-mounted). The endpoints are
+	// named individually rather than by a blanket "/oauth2" prefix: that prefix
+	// also covered the Dynamic Client Registration surface, making POST
+	// /oauth2/register anonymously reachable. Each entry below either needs no
+	// credential (discovery) or authenticates with the credential carried IN the
+	// request (client_secret / access token / refresh token). The RFC 7592
+	// client-configuration paths are public via preAuthRouteTemplates instead,
+	// which cannot widen to the sibling create route.
 	"/.well-known/openid-configuration",
 	"/.well-known/oauth-authorization-server",
 	"/.well-known/jwks.json",
-	"/oauth2",
+	"/oauth2/authorize",
+	"/oauth2/token",
+	"/oauth2/token-mtls",
+	"/oauth2/userinfo",
+	"/oauth2/revoke",
+	"/oauth2/introspect",
 
 	// Token lifecycle + hardware-attested / ceremony login + self-registration.
 	// The ceremonies authenticate the caller; no bearer exists yet.
@@ -198,7 +210,11 @@ var defaultDenyPublicPrefixes = []string{
 	// missing/invalid token themselves.
 	"/api/v1/auth/validate",
 	"/api/v1/auth/logout",
-	"/api/v1/auth/webauthn",
+	// The WebAuthn ceremonies are mounted per tenant, not under /api/v1/auth;
+	// preAuthRouteTemplates admits their two login legs. The former
+	// "/api/v1/auth/webauthn" prefix matched no route, so it is deleted here too
+	// — the two allowlists must name the same real routes
+	// (TestAuthzTablesAgreeOnPublicSurface).
 	"/api/v1/auth/login/piv",
 	"/api/v1/auth/login/begin",
 	"/api/v1/auth/login/finish",
@@ -208,8 +224,11 @@ var defaultDenyPublicPrefixes = []string{
 	// Federated login redirect + IdP callback (no bearer available yet).
 	"/api/v1/auth/providers",
 
-	// Invite activation (FIDO2 / PIV) — the activation IS the bootstrap.
-	"/api/v1/iam/invites",
+	// Invite activation (FIDO2 / PIV) is NOT listed here. Its paths carry the
+	// tenant as a segment ("/api/v1/iam/{tenant}/invites/{token}/..."), which a
+	// literal prefix cannot express, so it is matched by the pre-auth route
+	// TEMPLATES via isPreAuthRoute above. Adding a literal "/api/v1/iam" prefix
+	// here instead would open every IAM route pre-auth.
 
 	// Agent enrollment bootstrap — the daemon authenticates via its mTLS
 	// client certificate on the handshake; the handler mints credentials.
@@ -265,7 +284,9 @@ type defaultDenyScopeRule struct {
 // IAM-write / barrier / credential / ceremony) called out in the design.
 //
 // Resource names are qrdb-canonical and agree with authz_pep_mapping.go: kms /
-// crypto / dek -> keys; the KV data plane -> kv; secrets/credentials ->
+// crypto -> keys (the DEK routes are mounted UNDER /api/v1/kms/deks and are
+// covered by the kms prefix; a standalone "/api/v1/dek" prefix was never
+// mounted and has been removed); the KV data plane -> kv; secrets/credentials ->
 // credentials; certificates/trust/acme -> certs; barrier/seal ->
 // tenant_barrier; IAM tenant admin -> tenants. The single vocabulary means the
 // scp the issuer mints (qrdb perm Names) is matched verbatim here.
@@ -278,23 +299,40 @@ var defaultDenyScopeTable = map[string]defaultDenyScopeRule{
 	// Crypto / key-management plane (qrdb resource "keys").
 	"/api/v1/kms":     {read: "keys:get", write: "keys:create"},
 	"/api/v1/crypto":  {read: "keys:get", write: "keys:create"},
-	"/api/v1/dek":     {read: "keys:get", write: "keys:create"},
 	"/api/v1/secrets": {read: "credentials:retrieve", write: "credentials:store"},
 
-	// Certificate / trust / ACME control plane (qrdb resource "certs").
+	// Secret side-surfaces mounted as SIBLINGS of /api/v1/secrets (server.go).
+	// Prefix matching requires prefix+"/", so "/api/v1/secrets" does NOT cover
+	// "/api/v1/secrets-versions" and each needs its own rule — the same reason
+	// they each need their own pepMapping entry.
+	"/api/v1/secrets-versions": {read: "credentials:list_versions", write: "credentials:store"},
+	"/api/v1/secrets-prefix":   {read: "credentials:retrieve", write: "credentials:store"},
+	"/api/v1/secrets-watch":    {read: "credentials:retrieve", write: "credentials:store"},
+
+	// Certificate control plane (qrdb resource "certs").
 	"/api/v1/certificates": {read: "certs:read", write: "certs:generate"},
-	"/api/v1/trust":        {read: "certs:read", write: "certs:generate"},
-	"/api/v1/acme":         {read: "certs:read", write: "certs:generate"},
+
+	// Trust composition + ACME control plane. qrdb registers dedicated broker
+	// families for both (broker_scope.go TrustRead/TrustWrite, ACMERead/
+	// ACMEWrite), so these agree with the pepMapping entries for the same
+	// prefixes rather than borrowing the coarser certs:* verbs.
+	"/api/v1/trust": {read: "trust:read", write: "trust:write"},
+	"/api/v1/acme":  {read: "acme:read", write: "acme:write"},
+
+	// go-xkms compatibility surface. Coarse only: the validator posture resolves
+	// every endpoint granularly via xkmsOps (authz_pep_mapping.go), and this
+	// coarse rule is never weaker than the granular one.
+	"/api/v1/xkms": {read: "keys:get", write: "keys:create"},
 
 	// Data plane (KV-family surfaces; qrdb resource "kv"). /api/v1/keys is the
 	// KV data plane (NOT cryptographic keys) per the PEP correspondence.
 	"/api/v1/keys":         {read: "kv:get", write: "kv:put"},
 	"/api/v1/entities":     {read: "kv:get", write: "kv:put"},
 	"/api/v1/kv":           {read: "kv:get", write: "kv:put"},
-	"/api/v1/query":        {read: "kv:get", write: "kv:get"},
+	"/api/v1/query":        {read: "kv:range", write: "kv:range"},
 	"/api/v1/entity-types": {read: "kv:get", write: "kv:get"},
 	"/api/v1/transaction":  {read: "transaction:execute", write: "transaction:execute"},
-	"/api/v1/batch":        {read: "kv:put", write: "kv:put"},
+	"/api/v1/batch":        {read: "batch:execute", write: "batch:execute"},
 	"/api/v1/timeseries":   {read: "timeseries:query", write: "timeseries:write"},
 
 	// IAM management surface (tenant/user/role/policy admin; qrdb resource "tenants").
@@ -314,6 +352,14 @@ var defaultDenyScopeTable = map[string]defaultDenyScopeRule{
 	// CRUD, permission checks and impersonation. Mirrors the qrdb roles:* family
 	// the PEP mapping uses for the same prefix.
 	"/api/v1/admin": {read: "roles:read", write: "roles:assign"},
+
+	// RFC 7591 Dynamic Client Registration (root-mounted /oauth2/register).
+	// Creating an OAuth2 client is a tenant-administration write, so it demands
+	// the same tenants:create the PEP mapping assigns it. The RFC 7592
+	// management verbs under this prefix never reach the table: they are
+	// pre-auth (preAuthRouteTemplates) and gated by their registration access
+	// token instead.
+	"/oauth2/register": {read: "tenants:read", write: "tenants:create"},
 
 	// qrdb-wire mounts at the router root.
 	"/v1/credentials": {read: "credentials:retrieve", write: "credentials:store"},
@@ -338,28 +384,11 @@ var barrierScopeTable = map[string]defaultDenyScopeRule{
 	"/api/v1/barrier": {read: "tenant_barrier:status", write: "tenant_barrier:init"},
 	// Root-wire mount — qrdb SDK compatibility.
 	"/v1/barrier": {read: "tenant_barrier:status", write: "tenant_barrier:init"},
-	// Legacy seal surface (server.go ~line 570). Granular ops below cover the
-	// registered sub-paths; the fallback here catches truly-unknown sub-paths.
-	"/api/v1/seal": {read: "tenant_barrier:status", write: "tenant_barrier:seal"},
-}
-
-// legacySealOps maps the legacy /api/v1/seal sub-paths to their granular
-// qrdb-canonical scopes so the default-deny gate grants the same precision
-// as the /api/v1/barrier surface. Routes are from server.go ~line 570.
-var legacySealOps = []struct {
-	suffix string
-	method string
-	scope  string
-}{
-	{"/status", http.MethodGet, "tenant_barrier:status"},
-	{"/init", http.MethodPost, "tenant_barrier:init"},
-	{"/unseal", http.MethodPost, "tenant_barrier:unseal"},
-	{"/seal", http.MethodPost, "tenant_barrier:seal"},
-	{"/rekey", http.MethodPost, "seal:rekey"},
-	{"/recovery/generate", http.MethodPost, "seal:generate_recovery"},
-	{"/recovery", http.MethodDelete, "seal:generate_recovery"},
-	{"/root/generate", http.MethodPost, "seal:bootstrap"},
-	{"/rotate-root", http.MethodPost, "seal:rekey"},
+	// Legacy seal surface (server.go). The shared legacySealOps table
+	// (authz_pep_mapping.go) covers the registered sub-paths; the fallback here
+	// catches truly-unknown sub-paths and mirrors the coarse "/api/v1/seal"
+	// pepMapping entry.
+	legacySealPrefix: {read: "tenant_barrier:status", write: "tenant_barrier:seal"},
 }
 
 // barrierScopeForRequest returns the granular qrdb "resource:action" scope for
@@ -387,14 +416,16 @@ func barrierScopeForRequest(path, method string) string {
 	// matching works identically for /api/v1/barrier and /v1/barrier.
 	rel := path[len(matchedPrefix):]
 
-	// Legacy seal surface — consult legacySealOps.
-	if matchedPrefix == "/api/v1/seal" {
+	// Legacy seal surface — consult the shared legacySealOps table owned by the
+	// PEP mapping (authz_pep_mapping.go) so this gate and the validator gate
+	// resolve the legacy seal verbs to the SAME scope by construction.
+	if matchedPrefix == legacySealPrefix {
 		for _, op := range legacySealOps {
 			if !strings.EqualFold(op.method, method) {
 				continue
 			}
 			if strings.HasSuffix(rel, op.suffix) {
-				return op.scope
+				return op.resource + ":" + op.action
 			}
 		}
 		// Coarse fallback for unregistered legacy seal sub-paths.

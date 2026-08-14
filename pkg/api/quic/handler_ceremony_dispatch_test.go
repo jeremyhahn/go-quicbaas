@@ -41,7 +41,6 @@ func (m *mockCeremonyServicer) CeremonyInitialize(context.Context, *service.Cere
 	}
 	return &service.CeremonyInitInfo{
 		SPKIPin: "pin", CACertPEM: []byte("ca"), TLSCertPEM: []byte("tls"),
-		SOCertPEM: []byte("so"), SOKeyPEM: []byte("sokey"),
 		State: "initialized", ShareCount: 3,
 	}, nil
 }

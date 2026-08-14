@@ -89,6 +89,33 @@ type CreateProjectRequest struct {
 	GPUMinutes       int64
 	MaxConcurrency   int
 	Metadata         map[string]string
+
+	// WorkspaceManaged requests a server-managed workspace: the server
+	// provisions <projects_root>/<tenant_id>/<project_id>/workspace (0700)
+	// and, when GitRepoURL is set, clones it there as a tracked background
+	// provisioning step. Mutually exclusive with WorkspacePath
+	// (bring-your-own-path projects are never provisioned).
+	WorkspaceManaged bool
+
+	// GitCredentialSecretRef names a secret (SecretID) in the quicbaas
+	// secrets store holding an HTTPS access token used for the clone.
+	// Requires WorkspaceManaged, an https:// GitRepoURL, and is mutually
+	// exclusive with GitSSHKeyName. The token is resolved at clone time and
+	// never persisted on the project record.
+	GitCredentialSecretRef string
+
+	// GitCredentialUsername optionally pairs a username with the HTTPS
+	// token. Empty selects the provisioner default.
+	GitCredentialUsername string
+
+	// GitSSHKeyName / GitSSHKeyScope / GitSSHKeyOwner reference an xkms-held
+	// SSH key used for git-over-SSH auth, mirroring the deploy Spec's
+	// (name, scope, owner) triple. Requires WorkspaceManaged and an SSH
+	// GitRepoURL; mutually exclusive with GitCredentialSecretRef. Scope
+	// defaults to "tenant" and owner to the tenant ID.
+	GitSSHKeyName  string
+	GitSSHKeyScope string
+	GitSSHKeyOwner string
 }
 
 // CreateProjectResponse is returned after a successful project creation.
@@ -282,8 +309,9 @@ func (e *ProjectRoleInvalidError) Error() string {
 
 // projectServiceImpl implements ProjectService using a ProjectStore.
 type projectServiceImpl struct {
-	store orchestration.ProjectStore
-	authz *orchestration.ProjectAuthz
+	store       orchestration.ProjectStore
+	authz       *orchestration.ProjectAuthz
+	provisioner *ProjectWorkspaceProvisioner
 }
 
 // NewProjectService creates a new ProjectService backed by the given store.
@@ -300,7 +328,25 @@ func (s *projectServiceImpl) Store() orchestration.ProjectStore {
 	return s.store
 }
 
-// CreateProject validates and persists a new project.
+// SetWorkspaceProvisioner wires the managed-workspace provisioner. The server
+// binds it after construction, once the projects root, secrets service and
+// xkms SSH client it composes are all available — the same post-construction
+// rebind pattern SetAgentRegistry uses. Without it, requests that ask for a
+// managed workspace fail with ProjectProvisioningUnavailableError.
+func (s *projectServiceImpl) SetWorkspaceProvisioner(p *ProjectWorkspaceProvisioner) {
+	s.provisioner = p
+}
+
+// WorkspaceProvisioner returns the wired provisioner, or nil.
+func (s *projectServiceImpl) WorkspaceProvisioner() *ProjectWorkspaceProvisioner {
+	return s.provisioner
+}
+
+// CreateProject validates and persists a new project. A managed-workspace
+// request additionally provisions the workspace directory and, when a git
+// repository URL is present, starts the tracked background clone; the call
+// returns immediately with the project's provisioning state (pending) rather
+// than blocking on the clone.
 func (s *projectServiceImpl) CreateProject(ctx context.Context, req *CreateProjectRequest) (*CreateProjectResponse, error) {
 	if req == nil {
 		return nil, &ProjectInvalidError{Message: "request must not be nil"}
@@ -310,6 +356,9 @@ func (s *projectServiceImpl) CreateProject(ctx context.Context, req *CreateProje
 	}
 	if req.Name == "" {
 		return nil, &ProjectInvalidError{Field: "name", Message: "project name is required"}
+	}
+	if err := s.validateWorkspaceRequest(req); err != nil {
+		return nil, err
 	}
 
 	project := &orchestration.Project{
@@ -341,14 +390,96 @@ func (s *projectServiceImpl) CreateProject(ctx context.Context, req *CreateProje
 		project.Permissions = orchestration.ProjectPermissions{AgentRoles: req.AgentRoles}
 	}
 
+	if req.WorkspaceManaged {
+		workspace, provErr := s.provisioner.Provision(req.TenantID, project.ID)
+		if provErr != nil {
+			return nil, provErr
+		}
+		project.Workspace.Path = workspace
+		project.Provisioning = orchestration.ProjectProvisioning{
+			Managed:   true,
+			State:     orchestration.ProvisioningStateReady,
+			UpdatedAt: time.Now().UTC(),
+		}
+		if req.GitRepoURL != "" {
+			project.Provisioning.State = orchestration.ProvisioningStatePending
+		}
+	}
+
 	if err := s.store.Create(ctx, project); err != nil {
+		if req.WorkspaceManaged {
+			// The record never existed, so the directory must not either.
+			// A failed teardown leaves an orphan a retried create reuses
+			// (Provision is idempotent); the create error is what matters.
+			if tdErr := s.provisioner.Teardown(req.TenantID, project.ID); tdErr != nil {
+				return nil, s.convertStoreError(err)
+			}
+		}
 		return nil, s.convertStoreError(err)
+	}
+
+	if req.WorkspaceManaged && req.GitRepoURL != "" {
+		spec := &ProjectGitSpec{
+			RepoURL:        req.GitRepoURL,
+			Branch:         req.GitDefaultBranch,
+			TokenSecretRef: req.GitCredentialSecretRef,
+			TokenUsername:  req.GitCredentialUsername,
+			SSHKey: SSHKeyRef{
+				Name:  req.GitSSHKeyName,
+				Scope: req.GitSSHKeyScope,
+				Owner: req.GitSSHKeyOwner,
+			},
+		}
+		if cloneErr := s.provisioner.StartClone(ctx, project, spec); cloneErr != nil {
+			return nil, cloneErr
+		}
 	}
 
 	return &CreateProjectResponse{
 		Project:   project,
 		Timestamp: time.Now().UTC(),
 	}, nil
+}
+
+// validateWorkspaceRequest enforces the managed-workspace and git-credential
+// request invariants before any side effects.
+func (s *projectServiceImpl) validateWorkspaceRequest(req *CreateProjectRequest) error {
+	hasToken := req.GitCredentialSecretRef != ""
+	hasSSHKey := req.GitSSHKeyName != ""
+
+	if req.WorkspaceManaged && req.WorkspacePath != "" {
+		return &ProjectInvalidError{
+			Field:   "workspace_path",
+			Message: "workspace path and managed workspace are mutually exclusive",
+		}
+	}
+	if hasToken && hasSSHKey {
+		return &ProjectInvalidError{
+			Field:   "git_credential_secret_ref",
+			Message: "git credential secret ref and git ssh key ref are mutually exclusive",
+		}
+	}
+	if (hasToken || hasSSHKey) && req.GitRepoURL == "" {
+		return &ProjectInvalidError{
+			Field:   "git_repo_url",
+			Message: "git credentials require a git repository URL",
+		}
+	}
+	if (hasToken || hasSSHKey) && !req.WorkspaceManaged {
+		return &ProjectInvalidError{
+			Field:   "workspace_managed",
+			Message: "git credentials require a managed workspace",
+		}
+	}
+	if req.WorkspaceManaged {
+		if s.provisioner == nil {
+			return &ProjectProvisioningUnavailableError{Reason: "workspace provisioning is not wired on this server"}
+		}
+		if req.GitRepoURL != "" && !s.provisioner.CanClone() {
+			return &ProjectProvisioningUnavailableError{Reason: "git provisioning is not wired on this server"}
+		}
+	}
+	return nil
 }
 
 // GetProject retrieves a project by ID.
@@ -471,7 +602,10 @@ func (s *projectServiceImpl) UpdateProject(ctx context.Context, req *UpdateProje
 	}, nil
 }
 
-// DeleteProject removes a project.
+// DeleteProject removes a project. A managed workspace is torn down before
+// the record is deleted, so a teardown failure leaves the project intact and
+// the delete retryable rather than leaking an unowned directory tree.
+// Bring-your-own-path workspaces are never touched.
 func (s *projectServiceImpl) DeleteProject(ctx context.Context, req *DeleteProjectRequest) (*DeleteProjectResponse, error) {
 	if req == nil {
 		return nil, &ProjectInvalidError{Message: "request must not be nil"}
@@ -481,6 +615,22 @@ func (s *projectServiceImpl) DeleteProject(ctx context.Context, req *DeleteProje
 	}
 	if req.ProjectID == "" {
 		return nil, &ProjectInvalidError{Field: "project_id", Message: "project ID is required"}
+	}
+
+	project, err := s.store.Get(ctx, req.TenantID, req.ProjectID)
+	if err != nil {
+		return nil, s.convertStoreError(err)
+	}
+
+	if project.Provisioning.Managed {
+		if s.provisioner == nil {
+			return nil, &ProjectProvisioningUnavailableError{
+				Reason: "cannot tear down managed workspace: workspace provisioning is not wired on this server",
+			}
+		}
+		if tdErr := s.provisioner.Teardown(req.TenantID, req.ProjectID); tdErr != nil {
+			return nil, tdErr
+		}
 	}
 
 	if err := s.store.Delete(ctx, req.TenantID, req.ProjectID); err != nil {

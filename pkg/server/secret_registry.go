@@ -64,6 +64,34 @@ func (c *lazyKMSSecretsClient) GetSecret(ctx context.Context, secretID string) (
 	return resp.Data, nil
 }
 
+// Compile-time check that lazyKMSSecretsClient supports ensure=true.
+var _ secrets.SecretsEnsurer = (*lazyKMSSecretsClient)(nil)
+
+// EnsureSecret implements secrets.SecretsEnsurer: it returns the secret at
+// secretID, generating and persisting a fresh high-entropy value on first use.
+// This backs the `kms://...?ensure=true&len=N&enc=E` form that platform configs
+// use for CA key passwords, TPM SRK auth, ACME account keys, and similar — so a
+// first boot provisions them automatically instead of failing "not found".
+// EnsureSecret is idempotent: later calls return the same stored value.
+func (c *lazyKMSSecretsClient) EnsureSecret(ctx context.Context, secretID string, length int, encoding string) ([]byte, error) {
+	if c.s.quicBaaSService == nil {
+		return nil, &ErrKMSUnavailableError{}
+	}
+	svc := c.s.quicBaaSService.Secrets()
+	if svc == nil {
+		return nil, &ErrKMSUnavailableError{}
+	}
+	resp, err := svc.EnsureSecret(ctx, &service.EnsureSecretRequest{
+		SecretID: secretID,
+		Length:   length,
+		Encoding: encoding,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
 // buildSecretRegistry constructs the unified secret resolver registry for this
 // Server. It is called after the qrdb node is online (so the credential store
 // is available) but before startSecrets, giving the kms:// and remote-kms://
@@ -76,7 +104,11 @@ func (c *lazyKMSSecretsClient) GetSecret(ctx context.Context, secretID string) (
 //  2. kms:// — local KMS via a lazy SecretsClient that returns ErrKMSUnavailableError
 //     before startSecrets completes. After startSecrets the full KMS is available.
 //  3. remote-kms:// — remote KMS (nil client = returns InvalidSecretURIError on resolve).
-//  4. autogen — generates high-entropy secrets for placeholder values.
+//
+// A value that matches no registered scheme is NOT a secret reference: the
+// registry returns it verbatim under StrategyLiteral. Generate-on-first-use is
+// expressed with `kms://<path>?ensure=true`, never by pattern-matching the
+// value itself.
 //
 // The returned registry is stored on s.secretRegistry and also accessible via
 // GetSecretRegistry() for SDK consumers.
@@ -128,9 +160,6 @@ func (s *Server) buildSecretRegistry() *qrdbsecret.ResolverRegistry {
 	// 3. remote-kms:// — remote KMS with a nil client. The RemoteKMSResolver
 	// guards against a nil client in Resolve, returning an appropriate error.
 	reg.Register(secrets.NewRemoteKMSResolver(nil))
-
-	// 4. autogen — generates crypto-random base64 secrets for placeholder values.
-	reg.Register(secrets.NewAutoGenResolver())
 
 	return reg
 }

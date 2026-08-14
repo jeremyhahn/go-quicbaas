@@ -91,6 +91,9 @@ var (
 	barrierSOPin          string
 	barrierUserPin        string
 	barrierRecoveryShares []string
+	barrierTenantID       string
+	barrierMechanism      string
+	barrierAvailability   string
 )
 
 // =============================================================================
@@ -111,6 +114,30 @@ type BarrierClient interface {
 	BarrierRekey(ctx context.Context, req *qrdbtransport.BarrierRekeyRequest) (*qrdbtransport.BarrierRekeyResponse, error)
 	BarrierGenerateRecoveryKeys(ctx context.Context, req *qrdbtransport.BarrierGenerateRecoveryKeysRequest) (*qrdbtransport.BarrierRecoveryKeysResponse, error)
 	BarrierRecoverWithKeys(ctx context.Context, req *qrdbtransport.BarrierRecoverWithKeysRequest) error
+
+	// BarrierGenerateRootToken mints a root token from a Shamir quorum. The
+	// token is a break-glass credential: it is returned exactly once and is
+	// never recoverable from the server afterwards.
+	BarrierGenerateRootToken(ctx context.Context, req *qrdbtransport.BarrierGenerateRootTokenRequest) (*qrdbtransport.BarrierRootTokenResponse, error)
+
+	// BarrierEnableEncryption migrates a previously-unencrypted barrier to an
+	// encrypted one. It requires an UNSEALED data plane, which is why it is
+	// deliberately excluded from the sealed-window allowlist.
+	BarrierEnableEncryption(ctx context.Context, req *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error)
+
+	// OfficerRegister enrols a Security Officer from their CSR. The ceremony
+	// CA signs it and binds the officer to the issued certificate's SPKI
+	// thumbprint; the response carries the certificate and the officer's share
+	// index, never share bytes. This is step 1 of go-qrdb's Security Officer
+	// distribution model and is reachable while the barrier is still sealed.
+	OfficerRegister(ctx context.Context, req *qrdbtransport.OfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error)
+
+	// OfficerList lists the enrolled Security Officers (public metadata only).
+	OfficerList(ctx context.Context) ([]*qrdbtransport.OfficerStatus, error)
+
+	// OfficerClaimStatus reports per-officer enrolment and claim state. It
+	// never returns share bytes.
+	OfficerClaimStatus(ctx context.Context) ([]*qrdbtransport.OfficerStatus, error)
 }
 
 // BarrierClientFactory is a function type for creating BarrierClient instances.
@@ -177,12 +204,20 @@ func (e *PINsNotAllowedError) Error() string {
 // BarrierShareInputError is returned when the --share / --shares-file
 // invariants of `barrier unseal-shares` are violated.
 type BarrierShareInputError struct {
+	// Op names the verb the operator invoked. Several verbs collect a share
+	// quorum, so a hard-coded name here would send an operator who ran
+	// `barrier root-token` off to debug `barrier unseal-shares`.
+	Op     string
 	Reason string
 }
 
 // Error returns a human-readable description.
 func (e *BarrierShareInputError) Error() string {
-	return "barrier unseal-shares: " + e.Reason
+	op := e.Op
+	if op == "" {
+		op = "barrier unseal-shares"
+	}
+	return op + ": " + e.Reason
 }
 
 // =============================================================================
@@ -208,7 +243,10 @@ Verbs mirror qrdbctl / xkmsctl so operators have a consistent surface:
   unseal-shares  Unseal with one or more Shamir shares (--share/--shares-file)
   seal           Seal the barrier
   rekey          Rotate the barrier master key (optionally regenerate Shamir shares)
-  recovery       Generate or use recovery keys (generate | recover)`,
+  recovery       Generate or use recovery keys (generate | recover)
+  root-token     Mint a break-glass root token from a Shamir quorum
+  enable-encryption
+                 Migrate an unencrypted barrier to an encrypted one`,
 	}
 
 	cmd.PersistentFlags().StringVar(&barrierOutputFmt, "output", "table",
@@ -222,6 +260,8 @@ Verbs mirror qrdbctl / xkmsctl so operators have a consistent surface:
 	cmd.AddCommand(newBarrierSealCommand())
 	cmd.AddCommand(newBarrierRekeyCommand())
 	cmd.AddCommand(newBarrierRecoveryCommand())
+	cmd.AddCommand(newBarrierRootTokenCommand())
+	cmd.AddCommand(newBarrierEnableEncryptionCommand())
 
 	return cmd
 }
@@ -511,7 +551,7 @@ Examples:
 
 // runBarrierUnsealSharesCommand executes 'barrier unseal-shares'.
 func runBarrierUnsealSharesCommand(_ *cobra.Command, _ []string) error {
-	shares, err := resolveUnsealShares(barrierShares, barrierSharesFile)
+	shares, err := resolveUnsealShares(barrierShares, barrierSharesFile, "barrier unseal-shares")
 	if err != nil {
 		return formatError(err)
 	}
@@ -530,17 +570,20 @@ func runBarrierUnsealSharesCommand(_ *cobra.Command, _ []string) error {
 }
 
 // resolveUnsealShares enforces the --share / --shares-file invariants
-// and returns the flattened share list.
-func resolveUnsealShares(shares []string, sharesFile string) ([]string, error) {
+// and returns the flattened share list. op names the invoking verb so the
+// error points at the command the operator actually ran.
+func resolveUnsealShares(shares []string, sharesFile, op string) ([]string, error) {
 	hasFlag := len(shares) > 0
 	hasFile := sharesFile != ""
 	if hasFlag && hasFile {
 		return nil, &BarrierShareInputError{
+			Op:     op,
 			Reason: "exactly one of --share (repeatable) or --shares-file is allowed",
 		}
 	}
 	if !hasFlag && !hasFile {
 		return nil, &BarrierShareInputError{
+			Op:     op,
 			Reason: "one of --share (repeatable) or --shares-file is required",
 		}
 	}
@@ -980,4 +1023,211 @@ func formatBarrierRecoveryKeys(resp *qrdbtransport.BarrierRecoveryKeysResponse, 
 		fmt.Fprintf(w, "Keys sealed to officers: %d\n", resp.ShareCount)
 		return nil
 	}
+}
+
+// =============================================================================
+// root-token
+// =============================================================================
+
+// newBarrierRootTokenCommand builds 'quicbaas barrier root-token'.
+func newBarrierRootTokenCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "root-token",
+		Short: "Mint a break-glass root token from a Shamir quorum",
+		Long: `Mint a root token.
+
+A quorum of Security Officers each supply their share; the server
+reconstructs the secret and issues a single root token. This is a
+break-glass credential — it is returned EXACTLY ONCE and cannot be
+retrieved from the server afterwards. Capture it at the point of issue
+and store it under the same controls as the shares themselves.
+
+Example:
+  quicbaas barrier root-token --share "$SHARE_A" --share "$SHARE_B"`,
+		RunE: runBarrierRootTokenCommand,
+	}
+	cmd.Flags().StringSliceVar(&barrierShares, "share", nil,
+		"Shamir share (repeatable; a quorum is required)")
+	cmd.Flags().StringVar(&barrierSharesFile, "shares-file", "",
+		"File containing one share per line ('-' reads stdin)")
+	return cmd
+}
+
+// runBarrierRootTokenCommand executes 'barrier root-token'.
+func runBarrierRootTokenCommand(cmd *cobra.Command, _ []string) error {
+	shares, err := resolveUnsealShares(barrierShares, barrierSharesFile, "barrier root-token")
+	if err != nil {
+		return formatError(err)
+	}
+
+	client, err := barrierClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	resp, err := client.BarrierGenerateRootToken(ctx, &qrdbtransport.BarrierGenerateRootTokenRequest{
+		Shares: shares,
+	})
+	if err != nil {
+		return formatError(err)
+	}
+	return formatBarrierRootToken(resp, barrierOutputFmt, cmd.OutOrStdout())
+}
+
+// formatBarrierRootToken renders the minted token.
+func formatBarrierRootToken(
+	resp *qrdbtransport.BarrierRootTokenResponse,
+	format string,
+	w io.Writer,
+) error {
+	if resp == nil {
+		return errors.Newf(errors.ErrInternal, "barrier.root-token", "empty response")
+	}
+	outputFormat, err := cli.ParseOutputFormat(format)
+	if err != nil {
+		return err
+	}
+	if outputFormat == cli.OutputFormatJSON {
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(resp)
+	}
+
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(tw, "ROOT TOKEN\n")
+	fmt.Fprintf(tw, "%s\n", strings.Repeat("=", 60))
+	fmt.Fprintf(tw, "Token:\t%s\n", resp.Token)
+	if resp.CreatedAt != "" {
+		fmt.Fprintf(tw, "Created:\t%s\n", resp.CreatedAt)
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "This token is shown ONCE and cannot be retrieved again.")
+	return nil
+}
+
+// =============================================================================
+// enable-encryption
+// =============================================================================
+
+// newBarrierEnableEncryptionCommand builds 'quicbaas barrier enable-encryption'.
+func newBarrierEnableEncryptionCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "enable-encryption",
+		Short: "Migrate an unencrypted barrier to an encrypted one",
+		Long: `Enable at-rest encryption on a deployment that was initialised
+without a barrier.
+
+The migration re-encrypts existing data, so it requires an UNSEALED data
+plane and cannot run during the sealed window. Scope it to one tenant
+with --tenant, or omit it to migrate the system barrier.
+
+A tenant on a SHARED barrier cannot be migrated independently — the
+server rejects that as an entitlement violation, not an auth failure.
+
+Example:
+  quicbaas barrier enable-encryption --strategy passphrase --passphrase "$PP"
+  quicbaas barrier enable-encryption --tenant acme --strategy shamir \
+      --threshold 2 --total 3`,
+		RunE: runBarrierEnableEncryptionCommand,
+	}
+	cmd.Flags().StringVar(&barrierTenantID, "tenant", "",
+		"Tenant to migrate (omit for the system barrier)")
+	cmd.Flags().StringVar(&barrierStrategy, "strategy", "",
+		"Target seal strategy: none | passphrase | shamir | pkcs11 | tpm2 | awskms | gcpkms | azurekv | vault")
+	cmd.Flags().StringVar(&barrierMechanism, "mechanism", "",
+		"Backend-specific mechanism (hardware strategies)")
+	cmd.Flags().StringVar(&barrierAvailability, "availability", "",
+		"Backend availability hint (hardware strategies)")
+	cmd.Flags().StringVar(&barrierSecret, "passphrase", "",
+		"Passphrase (required for --strategy=passphrase)")
+	cmd.Flags().IntVar(&barrierThreshold, "threshold", 0,
+		"Shamir M-of-N threshold (required for --strategy=shamir)")
+	cmd.Flags().IntVar(&barrierTotalShares, "total", 0,
+		"Total Shamir shares (required for --strategy=shamir)")
+	return cmd
+}
+
+// runBarrierEnableEncryptionCommand executes 'barrier enable-encryption'.
+func runBarrierEnableEncryptionCommand(cmd *cobra.Command, _ []string) error {
+	if barrierStrategy == "" {
+		return errors.Newf(errors.ErrInvalidInput, "barrier.enable-encryption",
+			"--strategy is required")
+	}
+	// Fail locally on a combination the server would reject anyway, so the
+	// operator learns before a migration is attempted against live data.
+	if isPassphraseStrategyName(barrierStrategy) && barrierSecret == "" {
+		return errors.Newf(errors.ErrInvalidInput, "barrier.enable-encryption",
+			"--passphrase is required when --strategy=passphrase")
+	}
+	if barrierStrategy == "shamir" {
+		if barrierThreshold < 2 {
+			return errors.Newf(errors.ErrInvalidInput, "barrier.enable-encryption",
+				"--threshold must be >= 2 when --strategy=shamir")
+		}
+		if barrierTotalShares < barrierThreshold {
+			return errors.Newf(errors.ErrInvalidInput, "barrier.enable-encryption",
+				"--total must be >= --threshold")
+		}
+	}
+
+	client, err := barrierClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	resp, err := client.BarrierEnableEncryption(ctx, &qrdbtransport.BarrierEnableEncryptionRequest{
+		TenantID:        barrierTenantID,
+		Strategy:        barrierStrategy,
+		Mechanism:       barrierMechanism,
+		Availability:    barrierAvailability,
+		Passphrase:      barrierSecret,
+		ShamirThreshold: barrierThreshold,
+		ShamirTotal:     barrierTotalShares,
+	})
+	if err != nil {
+		return formatError(err)
+	}
+	return formatBarrierEnableEncryption(resp, barrierOutputFmt, cmd.OutOrStdout())
+}
+
+// isPassphraseStrategyName reports whether the strategy name selects the
+// passphrase-sealed barrier.
+func isPassphraseStrategyName(strategy string) bool {
+	return strategy == "passphrase" || strategy == "software"
+}
+
+// formatBarrierEnableEncryption renders the migration acknowledgement.
+func formatBarrierEnableEncryption(
+	resp *qrdbtransport.BarrierEnableEncryptionResponse,
+	format string,
+	w io.Writer,
+) error {
+	if resp == nil {
+		return errors.Newf(errors.ErrInternal, "barrier.enable-encryption", "empty response")
+	}
+	outputFormat, err := cli.ParseOutputFormat(format)
+	if err != nil {
+		return err
+	}
+	if outputFormat == cli.OutputFormatJSON {
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(resp)
+	}
+
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(tw, "Status:\t%s\n", resp.Status)
+	if resp.Scope != "" {
+		fmt.Fprintf(tw, "Scope:\t%s\n", resp.Scope)
+	}
+	return tw.Flush()
 }

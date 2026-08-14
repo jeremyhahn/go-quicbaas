@@ -121,10 +121,10 @@ quicbaas server start \
 
 ```yaml
 security:
-  # Authentication
+  # Authentication (tokens are signed with the ES256 key auto-generated
+  # in the xkms keystore at first boot; no JWT secret is configurable)
   auth:
     enabled: true
-    jwt_secret: ${JWT_SECRET}
     token_ttl: 1h
 
   # Authorization (RBAC)

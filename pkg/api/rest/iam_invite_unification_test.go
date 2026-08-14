@@ -30,32 +30,37 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
-// markUsedFailingInviteStore wraps a MemoryInviteStore but always fails MarkUsed.
-// It exercises the security-relevant path where a one-time token cannot be
-// recorded as consumed: the handler must NOT report success and leave a live
-// (still-redeemable) invite behind.
+// markUsedFailingInviteStore wraps a MemoryInviteStore but always fails the
+// redemption, so the handler's "could not consume a one-time token" path can be
+// exercised. That path is security-relevant: an unconsumed token stays
+// redeemable, so the handler must NOT report success.
 type markUsedFailingInviteStore struct {
-	inner *iam.MemoryInviteStore
+	inner *iamtest.MemoryInviteStore
 }
 
-func (s *markUsedFailingInviteStore) Create(ctx context.Context, record *iam.InviteRecord) error {
-	return s.inner.Create(ctx, record)
+func (s *markUsedFailingInviteStore) Lookup(ctx context.Context, tenantID, token string) (*iam.InviteRecord, error) {
+	return s.inner.Lookup(ctx, tenantID, token)
 }
 
-func (s *markUsedFailingInviteStore) GetByToken(ctx context.Context, token string) (*iam.InviteRecord, error) {
-	return s.inner.GetByToken(ctx, token)
+func (s *markUsedFailingInviteStore) Create(
+	ctx context.Context,
+	tenantID, userID string,
+	ttl time.Duration,
+) (string, *iam.InviteRecord, error) {
+	return s.inner.Create(ctx, tenantID, userID, ttl)
 }
 
-func (s *markUsedFailingInviteStore) MarkUsed(_ context.Context, _ string) error {
-	return errMarkUsedFailed
+func (s *markUsedFailingInviteStore) Redeem(_ context.Context, _, _ string) (*iam.InviteRecord, error) {
+	return nil, errMarkUsedFailed
 }
 
 func (s *markUsedFailingInviteStore) GC(ctx context.Context) error {
-	return s.inner.GC(ctx)
+	return nil
 }
 
 type markUsedError struct{}
@@ -127,20 +132,15 @@ func newUnificationInviteHandler(t *testing.T, inviteStore iam.InviteStore) (*IA
 // the persistent store) MUST be retrievable through the REST GetInvite handler.
 // Before the fix the handler read a private in-memory store and returned 404.
 func TestInvite_FirstBootStyleInviteIsRetrievableThroughREST(t *testing.T) {
-	persistent := iam.NewMemoryInviteStore()
+	persistent := iamtest.NewMemoryInviteStore()
 	handler, tenantID, userID := newUnificationInviteHandler(t, persistent)
 
 	// Mint and store an invite exactly as firstBootBootstrap does.
-	token, err := iam.GenerateInviteToken()
+	token, _, err := persistent.Create(context.Background(), tenantID, userID, time.Hour)
 	require.NoError(t, err)
-	require.NoError(t, persistent.Create(context.Background(), &iam.InviteRecord{
-		TokenHash: iam.TokenHashExported(token),
-		UserID:    userID,
-		TenantID:  tenantID,
-		ExpiresAt: time.Now().Add(24 * time.Hour),
-	}))
 
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", tenantID)
 	rctx.URLParams.Add("token", token)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/invites/"+token, nil)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -195,13 +195,14 @@ func TestInvite_RESTCreatedInviteLandsInSameStore(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, mock.InviteStoreOverride, store,
 		"getInviteStore must resolve the SAME store instance CreateUser wrote to")
-	record, err := store.GetByToken(ctx, token)
+	record, err := store.Lookup(ctx, "tenant-rest", token)
 	require.NoError(t, err)
 	require.NotNil(t, record)
 	assert.False(t, record.Used)
 
 	// And GetInvite over that token returns 200 (end-to-end redeemability).
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", "tenant-rest")
 	rctx.URLParams.Add("token", token)
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/iam/invites/"+token, nil)
 	getReq = getReq.WithContext(context.WithValue(getReq.Context(), chi.RouteCtxKey, rctx))
@@ -214,21 +215,16 @@ func TestInvite_RESTCreatedInviteLandsInSameStore(t *testing.T) {
 // MarkUsed error path: when the one-time token cannot be recorded as consumed,
 // the handler must NOT report success (the invite would otherwise remain live).
 func TestActivateFIDO2Finish_MarkUsedFailureSurfaces(t *testing.T) {
-	failing := &markUsedFailingInviteStore{inner: iam.NewMemoryInviteStore()}
+	failing := &markUsedFailingInviteStore{inner: iamtest.NewMemoryInviteStore()}
 	handler, tenantID, userID := newUnificationInviteHandler(t, failing)
 
-	token, err := iam.GenerateInviteToken()
+	token, _, err := failing.Create(context.Background(), tenantID, userID, time.Hour)
 	require.NoError(t, err)
-	require.NoError(t, failing.Create(context.Background(), &iam.InviteRecord{
-		TokenHash: iam.TokenHashExported(token),
-		UserID:    userID,
-		TenantID:  tenantID,
-		ExpiresAt: time.Now().Add(time.Hour),
-	}))
 
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/iam/invites/"+token+"/activate/fido2/finish", nil)
 	r.Body = io.NopCloser(bytes.NewReader([]byte(`{"credential":{"id":"abc","response":{}}}`)))
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", tenantID)
 	rctx.URLParams.Add("token", token)
 	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 	w := httptest.NewRecorder()
@@ -249,6 +245,7 @@ func TestGetInvite_StoreUnavailableFailsClosed(t *testing.T) {
 
 	token := "1111111111111111111111111111111111111111111111111111111111111111"
 	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", "tenant-unify")
 	rctx.URLParams.Add("token", token)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/invites/"+token, nil)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))

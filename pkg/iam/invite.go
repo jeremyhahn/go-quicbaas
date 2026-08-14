@@ -5,157 +5,142 @@
 //
 // go-quicbaas is dual-licensed:
 //
-// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
-//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//  1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//     See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
 //
-// 2. Commercial License
-//    Contact licensing@automatethethings.com for commercial licensing options.
+//  2. Commercial License
+//     Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package iam provides Identity and Access Management functionality for QuicBaaS.
 package iam
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
-	"sync"
+	"errors"
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
-// InviteRecord stores the state of a single invite token.
+// InviteRecord is the projection of an invitation this package's callers use.
+//
+// It carries no token: the plaintext exists only in the value returned by
+// Create, and only its digest is ever stored.
 type InviteRecord struct {
-	// TokenHash is the SHA-256 hex of the plaintext token.
-	TokenHash string
-
 	// UserID is the user this invite activates.
 	UserID string
 
 	// TenantID is the tenant the user belongs to.
 	TenantID string
 
-	// ExpiresAt is when the invite becomes invalid.
+	// ExpiresAt is when the invite stops being redeemable.
 	ExpiresAt time.Time
 
-	// Used indicates the invite has been consumed.
+	// Used reports whether the invite has been consumed.
 	Used bool
 }
 
-// InviteStore defines the interface for managing invite tokens.
+// InviteStore issues and redeems one-time activation invitations.
+//
+// Every method names its tenant because invitations live in that tenant's own
+// store — see qrdb's invite.TenantStore. A token issued for one tenant is not
+// present in another's store at all, so presenting it to the wrong tenant is
+// ErrInviteNotFound, the same answer a fabricated token gets.
+//
+// The implementation is qrdb's; this interface exists so PIVActivator and the
+// REST handlers can be tested without storage, and so quicbaas keeps its own
+// HTTP-mapped error values. There is no second implementation of the
+// invitation lifecycle in this repository — that duplication was removed.
 type InviteStore interface {
-	// Create stores a new invite record.
-	Create(ctx context.Context, record *InviteRecord) error
+	// Create issues an invitation and returns the plaintext token, which is
+	// returned exactly once and is not recoverable afterwards.
+	Create(ctx context.Context, tenantID, userID string, ttl time.Duration) (token string, record *InviteRecord, err error)
 
-	// GetByToken looks up an invite by the plaintext token.
-	// Returns ErrInviteNotFound when not present.
-	GetByToken(ctx context.Context, token string) (*InviteRecord, error)
+	// Lookup resolves a token within a tenant without consuming it.
+	Lookup(ctx context.Context, tenantID, token string) (*InviteRecord, error)
 
-	// MarkUsed atomically marks the invite as consumed.
-	// Returns ErrInviteNotFound when not present, ErrInviteUsed when already consumed.
-	MarkUsed(ctx context.Context, token string) error
-
-	// GC removes expired or used records.
-	GC(ctx context.Context) error
+	// Redeem consumes a token within a tenant exactly once. Concurrent
+	// redemptions resolve to exactly one winner; the losers get ErrInviteUsed.
+	Redeem(ctx context.Context, tenantID, token string) (*InviteRecord, error)
 }
 
-// MemoryInviteStore is a thread-safe in-memory InviteStore implementation.
-type MemoryInviteStore struct {
-	mu      sync.RWMutex
-	records map[string]*InviteRecord // keyed by TokenHash
+// qrdbInviteStore adapts qrdb's tenant-scoped invitation store to this
+// package's interface and error values.
+//
+// The adaptation is deliberately thin: it translates errors and projects the
+// entity. All token generation, digesting, single-use enforcement and tenant
+// routing belong to qrdb, which is the point — this repository previously kept
+// its own copy of each.
+type qrdbInviteStore struct {
+	store *qrdbsdk.TenantInviteStore
 }
 
-// NewMemoryInviteStore creates a new in-memory InviteStore.
-func NewMemoryInviteStore() *MemoryInviteStore {
-	return &MemoryInviteStore{
-		records: make(map[string]*InviteRecord),
+// NewQRDBInviteStore adapts a qrdb tenant invitation store.
+func NewQRDBInviteStore(store *qrdbsdk.TenantInviteStore) InviteStore {
+	return &qrdbInviteStore{store: store}
+}
+
+// Compile-time check.
+var _ InviteStore = (*qrdbInviteStore)(nil)
+
+// Create implements InviteStore.
+func (s *qrdbInviteStore) Create(ctx context.Context, tenantID, userID string, ttl time.Duration) (string, *InviteRecord, error) {
+	token, entity, err := s.store.Create(ctx, userID, tenantID, ttl)
+	if err != nil {
+		return "", nil, translateInviteError(err)
+	}
+	return token, projectInvite(entity), nil
+}
+
+// Lookup implements InviteStore.
+func (s *qrdbInviteStore) Lookup(ctx context.Context, tenantID, token string) (*InviteRecord, error) {
+	entity, err := s.store.Lookup(ctx, tenantID, token)
+	if err != nil {
+		return nil, translateInviteError(err)
+	}
+	return projectInvite(entity), nil
+}
+
+// Redeem implements InviteStore.
+func (s *qrdbInviteStore) Redeem(ctx context.Context, tenantID, token string) (*InviteRecord, error) {
+	entity, err := s.store.Redeem(ctx, tenantID, token)
+	if err != nil {
+		return nil, translateInviteError(err)
+	}
+	return projectInvite(entity), nil
+}
+
+// projectInvite narrows a qrdb invitation to what this package's callers read.
+func projectInvite(entity *qrdbsdk.InviteEntity) *InviteRecord {
+	if entity == nil {
+		return nil
+	}
+	return &InviteRecord{
+		UserID:    entity.UserID,
+		TenantID:  entity.TenantID,
+		ExpiresAt: entity.ExpiresAt,
+		Used:      entity.Redeemed(),
 	}
 }
 
-// Create stores a new invite record.
-func (s *MemoryInviteStore) Create(_ context.Context, record *InviteRecord) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.records[record.TokenHash] = record
-	return nil
-}
-
-// GetByToken looks up an invite by the plaintext token.
-func (s *MemoryInviteStore) GetByToken(_ context.Context, token string) (*InviteRecord, error) {
-	hash := tokenHash(token)
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	r, ok := s.records[hash]
-	if !ok {
-		return nil, ErrInviteNotFound
-	}
-	// Return a copy to avoid external mutation.
-	copy := *r
-	return &copy, nil
-}
-
-// MarkUsed atomically marks the invite as consumed.
-func (s *MemoryInviteStore) MarkUsed(_ context.Context, token string) error {
-	hash := tokenHash(token)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r, ok := s.records[hash]
-	if !ok {
+// translateInviteError maps qrdb's sentinel errors onto this package's
+// HTTP-mapped QBError values.
+//
+// The mapping is not cosmetic: these values carry the status code the REST
+// layer returns, so passing qrdb's plain sentinels through would turn a
+// deliberate 404/403 into a 500. Anything unrecognised is returned unchanged
+// rather than being flattened into "not found", which would report a storage
+// outage as a missing invitation.
+func translateInviteError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, qrdbsdk.ErrInviteNotFound), errors.Is(err, qrdbsdk.ErrInviteEmptyToken):
 		return ErrInviteNotFound
-	}
-	if r.Used {
+	case errors.Is(err, qrdbsdk.ErrInviteExpired):
+		return ErrInviteExpired
+	case errors.Is(err, qrdbsdk.ErrInviteAlreadyRedeemed):
 		return ErrInviteUsed
+	default:
+		return err
 	}
-	r.Used = true
-	return nil
-}
-
-// GC removes expired or already-used invite records.
-func (s *MemoryInviteStore) GC(_ context.Context) error {
-	now := time.Now()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for k, r := range s.records {
-		if r.Used || now.After(r.ExpiresAt) {
-			delete(s.records, k)
-		}
-	}
-	return nil
-}
-
-// GenerateInviteToken generates a cryptographically random 32-byte invite token
-// encoded as a hex string (64 characters).
-func GenerateInviteToken() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", &InviteTokenGenerationError{Cause: err}
-	}
-	return hex.EncodeToString(b), nil
-}
-
-// tokenHash returns the SHA-256 hex of the plaintext token.
-func tokenHash(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
-// TokenHashExported returns the SHA-256 hex of the plaintext token.
-// This is the exported form of tokenHash, intended for callers outside the iam package
-// that need to construct an InviteRecord manually (e.g., REST handlers).
-func TokenHashExported(token string) string {
-	return tokenHash(token)
-}
-
-// InviteTokenGenerationError is returned when secure random generation fails.
-type InviteTokenGenerationError struct {
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *InviteTokenGenerationError) Error() string {
-	return "failed to generate invite token: " + e.Cause.Error()
-}
-
-// Unwrap returns the underlying cause.
-func (e *InviteTokenGenerationError) Unwrap() error {
-	return e.Cause
 }

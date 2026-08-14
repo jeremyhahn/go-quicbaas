@@ -107,11 +107,7 @@ func createTestPersistentAuthManager(t *testing.T) (*PersistentAuthManager, *Moc
 	mockStorage := NewMockStorage()
 	log := createTestLogger(t)
 
-	config := &AuthConfig{
-		Enabled:   true,
-		JWTSecret: "test-secret-key-for-bootstrap",
-		TokenTTL:  1 * time.Hour,
-	}
+	config := newTestAuthConfig(t)
 
 	authManager, err := NewPersistentAuthManager(config, mockStorage, log)
 	require.NoError(t, err)
@@ -296,11 +292,7 @@ func TestBootstrap(t *testing.T) {
 		defer failableStorage.Close()
 
 		log := createTestLogger(t)
-		config := &AuthConfig{
-			Enabled:   true,
-			JWTSecret: "test-secret-key",
-			TokenTTL:  1 * time.Hour,
-		}
+		config := newTestAuthConfig(t)
 
 		authManager, err := NewPersistentAuthManager(config, failableStorage, log)
 		require.NoError(t, err)
@@ -448,11 +440,7 @@ func TestBootstrapIntegration(t *testing.T) {
 		defer mockStorage.Close()
 
 		log := createTestLogger(t)
-		config := &AuthConfig{
-			Enabled:   true,
-			JWTSecret: "test-secret-key",
-			TokenTTL:  1 * time.Hour,
-		}
+		config := newTestAuthConfig(t)
 
 		// First instance - bootstrap
 		authManager1, err := NewPersistentAuthManager(config, mockStorage, log)

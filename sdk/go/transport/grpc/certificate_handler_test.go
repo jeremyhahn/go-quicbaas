@@ -159,6 +159,12 @@ func TestCertificateHandlerMap_Coverage(t *testing.T) {
 		"VerifyCertificate",
 		"GetCACertificate",
 		"GetTLSConfig",
+
+		// Certificate extensions — Security().CertificateExt(). See
+		// certificate_extensions_handler.go.
+		"CrossSign",
+		"Chain",
+		"IssueDeviceIdentity",
 	}
 	if len(certificateHandlerMap) != len(want) {
 		t.Fatalf("certificateHandlerMap has %d entries, want %d", len(certificateHandlerMap), len(want))

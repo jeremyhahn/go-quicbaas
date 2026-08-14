@@ -135,6 +135,8 @@ func (s *Server) startRESTServer() error {
 		},
 		// SPIFFE trust domain for login tenant derivation (and pinning).
 		SPIFFETrustDomain: s.config.IAM.SPIFFETrustDomain,
+		// RFC 7591 Dynamic Client Registration policy (disabled by default).
+		IAMDynamicClientRegistration: s.config.IAM.DynamicClientRegistration,
 	}
 
 	// Wire the home-realm discovery resolver over the shared/system store so
@@ -301,7 +303,8 @@ func (s *Server) startRESTServer() error {
 	// barrier is unsealed; the instant the barrier is sealed (post-boot
 	// `barrier seal`), only the canonical sealed-window surface remains
 	// reachable. Must run after every other Set* (it rebuilds the router).
-	restServer.SetSealedWindowGate(s.SealedWindowProbe(), qbsealedwindow.RESTAllowlist())
+	restServer.SetSealedWindowGate(s.SealedWindowProbe(), s.OperationalProbe(),
+		qbsealedwindow.RESTAllowlist())
 
 	// Start REST server
 	address := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.REST.Port)

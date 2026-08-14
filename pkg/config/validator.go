@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -605,6 +606,33 @@ func (v *Validator) validateOrchestration(cfg *OrchestrationConfig) {
 			fmt.Sprintf("invalid mode: %q (valid: %q, %q)",
 				cfg.HostAffinity.Mode, HostAffinityModeSoft, HostAffinityModeHard))
 	}
+
+	// The managed-workspace root and every extra-mount allowlist entry are
+	// compared against container mount sources by absolute-path prefix, so a
+	// relative entry could never match and would silently disable the policy
+	// it was meant to configure. Reject them up front.
+	if cfg.ProjectsRoot != "" && !filepath.IsAbs(cfg.ProjectsRoot) {
+		v.addError("orchestration.projects_root",
+			fmt.Sprintf("must be an absolute path: %q", cfg.ProjectsRoot))
+	}
+	for i, root := range cfg.Sandbox.AllowedMountRoots {
+		if root == "" || !filepath.IsAbs(root) {
+			v.addError(fmt.Sprintf("orchestration.sandbox.allowed_mount_roots[%d]", i),
+				fmt.Sprintf("must be an absolute path: %q", root))
+		}
+	}
+
+	// An unrecognized trust policy must fail the config rather than fall back
+	// to the zero value: the fallback is the WEAKEST policy, so a typo in
+	// "attested" would silently disable the integrity floor the operator
+	// believed they had configured. Empty is the documented default.
+	if cfg.TrustPolicy != "" && !slices.Contains(OrchestrationTrustPolicies, cfg.TrustPolicy) {
+		v.addError("orchestration.trust_policy",
+			fmt.Sprintf("invalid policy: %q (valid: %s)",
+				cfg.TrustPolicy, strings.Join(OrchestrationTrustPolicies, ", ")))
+	}
+
+	v.validateAccountProviders(cfg.AccountProviders)
 }
 
 // isFIPSAvailable checks if FIPS mode is available on the host system.

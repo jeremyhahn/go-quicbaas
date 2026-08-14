@@ -115,6 +115,34 @@ func TenantFromContext(ctx context.Context) string {
 	return ""
 }
 
+// SystemTenantID is the reserved tenant a record is filed under when the
+// caller supplied none. It mirrors qrdb's system tenant, which the REST, gRPC
+// and MCP transports already substitute before a request reaches the
+// orchestrator, so an untenanted in-process caller and an untenanted request
+// file their records in the same scope rather than in two different ones.
+//
+// The value is duplicated as a literal (rather than imported from
+// qrdbsdk.SystemTenantID) because this package is reachable from the
+// dependency-light standalone agent binary (cmd/quicbaas agent-serve ->
+// pkg/agent -> pkg/orchestration), which deliberately imports neither
+// go-qrdb/sdk/go nor pkg/iam. A drift between the two literals is caught by
+// TestOrchestrationSystemTenantIDMatchesQRDB in tenant_guard_test.go.
+const SystemTenantID = "system"
+
+// StorageTenant returns the tenant a durable orchestration record belongs to.
+//
+// Every record key begins with its owning tenant, so an empty segment would
+// collapse distinct tenants' keyspaces. Callers that reach the orchestrator
+// without a tenant — in-process embedded use, and unit tests — are therefore
+// resolved to the system tenant, the same identifier the transports already
+// substitute for an untenanted request.
+func StorageTenant(ctx context.Context) string {
+	if tenantID := TenantFromContext(ctx); tenantID != "" {
+		return tenantID
+	}
+	return SystemTenantID
+}
+
 // ContextWithTenant returns a new context with the tenant ID set for orchestration.
 func ContextWithTenant(ctx context.Context, tenantID string) context.Context {
 	return context.WithValue(ctx, tenantContextKey{}, tenantID)

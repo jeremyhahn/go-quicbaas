@@ -17,6 +17,7 @@ import (
 	"context"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
@@ -127,9 +128,12 @@ func IsSameTenant(tenantA, tenantB string) bool {
 }
 
 // RequiresTenantIsolation returns true if tenant isolation is required.
-// Returns false if in single-tenant mode (tenantID is empty).
+// Returns false for the system tenant — the empty string or the literal
+// SystemTenantID — since both denote the structurally privileged
+// control-plane scope rather than an isolated tenant namespace. See
+// qrdbsdk.IsSystemTenant (go-qrdb/sdk/go) for the canonical predicate.
 func RequiresTenantIsolation(tenantID string) bool {
-	return tenantID != ""
+	return !qrdbsdk.IsSystemTenant(tenantID)
 }
 
 // SuperAdminContext contains information about a SuperAdmin's cross-tenant access.

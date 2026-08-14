@@ -426,9 +426,7 @@ func TestBarrierAuthz_FullCanonicalTable(t *testing.T) {
 
 // TestBarrierAuthz_LegacySealGranularScope asserts that the legacy
 // /api/v1/seal surface resolves to the same granular per-operation scopes as
-// the canonical /api/v1/barrier surface (via requiredScopeForRequest). The PEP
-// validator (mapRequestToPermission) intentionally leaves /api/v1/seal unmapped
-// per the task spec.
+// the canonical /api/v1/barrier surface (via requiredScopeForRequest).
 func TestBarrierAuthz_LegacySealGranularScope(t *testing.T) {
 	cases := []struct {
 		path      string
@@ -455,23 +453,40 @@ func TestBarrierAuthz_LegacySealGranularScope(t *testing.T) {
 	}
 }
 
-// TestBarrierAuthz_LegacySealPEPUnmapped asserts that mapRequestToPermission
-// returns ok=false for legacy /api/v1/seal paths per the task spec (the
-// validator-PEP must not newly admit the deprecated surface).
-func TestBarrierAuthz_LegacySealPEPUnmapped(t *testing.T) {
+// TestBarrierAuthz_LegacySealPEPMatchesDefaultDeny asserts that the validator
+// PEP and the default-deny gate resolve every legacy /api/v1/seal operation to
+// the SAME scope.
+//
+// An earlier revision deliberately left /api/v1/seal unmapped in the validator
+// PEP. That posture made the surface a hard 403 under the production
+// RequireAuthz default — including for the Security().Seal() SDK service, which
+// the Go, TypeScript and JavaScript REST transports still route here — and made
+// the handlers' RFC 8594 Deprecation/Sunset headers unreachable, so a client
+// could never learn the surface was deprecated. Both gates now read the single
+// legacySealOps table (authz_pep_mapping.go).
+func TestBarrierAuthz_LegacySealPEPMatchesDefaultDeny(t *testing.T) {
 	sealPaths := []struct {
 		path   string
 		method string
 	}{
 		{"/api/v1/seal/status", http.MethodGet},
 		{"/api/v1/seal/init", http.MethodPost},
+		{"/api/v1/seal/unseal", http.MethodPost},
+		{"/api/v1/seal/seal", http.MethodPost},
 		{"/api/v1/seal/rekey", http.MethodPost},
+		{"/api/v1/seal/recovery/generate", http.MethodPost},
+		{"/api/v1/seal/recovery", http.MethodDelete},
+		{"/api/v1/seal/root/generate", http.MethodPost},
+		{"/api/v1/seal/rotate-root", http.MethodPost},
 	}
 	for _, tc := range sealPaths {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
-			_, _, ok := mapRequestToPermission(tc.path, tc.method)
-			if ok {
-				t.Errorf("mapRequestToPermission(%q, %q) ok=true; legacy /api/v1/seal must remain unmapped in the PEP validator", tc.path, tc.method)
+			resource, action, ok := mapRequestToPermission(tc.path, tc.method)
+			if !ok {
+				t.Fatalf("mapRequestToPermission(%q, %q) ok=false; the legacy seal surface is mounted and must authorize, not hard-403", tc.path, tc.method)
+			}
+			if got, want := resource+":"+action, requiredScopeForRequest(tc.path, tc.method); got != want {
+				t.Errorf("PEP scope %q != default-deny scope %q", got, want)
 			}
 		})
 	}

@@ -23,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
@@ -304,6 +305,17 @@ func injectPrincipal(ctx context.Context, subject interfaces.Subject, authzCtx *
 	if authzCtx != nil {
 		ctx = authorizedContextIntoContext(ctx, authzCtx)
 	}
+
+	// Bind the caller's tenant into the context so the service / storage
+	// layer resolves row-level isolation from iam.TenantFromContext (the
+	// canonical RLS source), matching the gRPC authz interceptor's
+	// contextWithAuthorizedSubject. Without this, REST requests reached
+	// tenant-scoped service helpers with an empty context tenant regardless
+	// of the caller's actual tenant. Only set the tenant key when the token
+	// carries one; an empty TenantID leaves single-tenant behavior unchanged.
+	if subject.TenantID != "" {
+		ctx = iam.ContextWithTenant(ctx, subject.TenantID)
+	}
 	return ctx
 }
 
@@ -357,8 +369,13 @@ func GetUsername(ctx context.Context) string {
 var publicEndpoints = []string{
 	// Token management endpoints
 	"/api/v1/auth/refresh",
-	// Hardware-attested login endpoints (WebAuthn + PIV) — tokens are not yet available here.
-	"/api/v1/auth/webauthn",
+	// Hardware-attested PIV login — no token is available yet. The WebAuthn
+	// ceremony is NOT here: it is mounted per tenant under
+	// /api/v1/iam/{tenant_id}/webauthn (iam_xkms_webauthn_mount.go) and is
+	// admitted through preAuthRouteTemplates, which names the two login legs
+	// only. The former "/api/v1/auth/webauthn" entry matched no mounted route,
+	// so it exempted nothing today while pre-authorizing any future mount
+	// beneath it — including a registration leg that must stay gated.
 	"/api/v1/auth/login/piv",
 	// Unified login ceremony (mtls / fido2 / piv) — the ceremony itself
 	// authenticates; no bearer is available yet.

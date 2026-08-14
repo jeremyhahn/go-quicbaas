@@ -35,7 +35,7 @@ package config
 // Credentials are optional: when AccessKeyID/SecretAccessKey are empty the
 // go-xkms backend falls back to the default AWS credential chain (environment
 // variables, shared config, IAM role, IRSA). Endpoint overrides the KMS
-// endpoint for testing against a local mock such as LocalStack.
+// endpoint for testing against a local emulator such as Floci.
 type AWSSealConfig struct {
 	// Region is the AWS region hosting the KMS key (e.g. "us-east-1"). Required.
 	Region string `mapstructure:"region"`
@@ -56,7 +56,7 @@ type AWSSealConfig struct {
 	SessionToken string `mapstructure:"session_token"`
 
 	// Endpoint overrides the KMS service endpoint. Optional; used to target a
-	// local mock (LocalStack) in tests. Empty uses the standard regional endpoint.
+	// local emulator (Floci) in tests. Empty uses the standard regional endpoint.
 	Endpoint string `mapstructure:"endpoint"`
 }
 

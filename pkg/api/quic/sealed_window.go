@@ -42,8 +42,17 @@ const sealedWindowMessage = "barrier sealed"
 // pkg/api/sealedwindow (see sealedwindow.QUICAllowlist and
 // sealedwindow.QRDBQUICAllowlist) so the two dispatch paths cannot drift.
 // Safe to call before Start; a nil probe leaves the gate uninstalled.
+//
+// operational is the ceremony-state probe that decides whether the
+// pre-operational half of the authentication exemption still applies (the
+// self-authorizing ceremony claim handshakes and the ceremony status probe).
+// It FAILS CLOSED: nil, or a probe reporting operational, withholds those
+// exemptions so the claim operations require a credential on an
+// already-initialized sealed daemon. The barrier / unseal surface is
+// state-independent and is unaffected.
 func (s *Server) SetSealedWindowGate(
 	probe SealedWindowProbe,
+	operational sealedwindow.OperationalProbe,
 	opAllow map[sealedwindow.QUICOp]struct{},
 	qrdbAllow map[string]struct{},
 ) {
@@ -59,7 +68,8 @@ func (s *Server) SetSealedWindowGate(
 	// are admitted without a verified client certificate.
 	var bypass *sealedwindow.AuthBypass
 	if probe != nil {
-		bypass = sealedwindow.NewAuthBypass(probe, sealedwindow.NewLoggerAuditSink(s.logger))
+		bypass = sealedwindow.NewAuthBypass(
+			probe, operational, sealedwindow.NewLoggerAuditSink(s.logger))
 	}
 
 	s.svcMu.Lock()

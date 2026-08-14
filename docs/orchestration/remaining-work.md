@@ -1,28 +1,21 @@
 # Orchestrator Integration - Remaining Work
 
-## Current State (2026-03-31)
+## Current State (2026-03-31; Priority 1 re-verified DONE 2026-08-12)
 - 8765 PASS, 48 FAIL, 0 SKIP across full integration test suite
 - Agent/fleet CLI tests pass on REST transport
 - Orchestrator CLI tests partially pass on REST (tenant propagation issue)
-- gRPC/QUIC/Unix/MCP transports silently skip orchestrator commands (no proto definitions)
 
-## Priority 1: Proto Definitions for Orchestrator gRPC Service
+## Priority 1: Proto Definitions for Orchestrator gRPC Service — DONE
 
-The orchestrator has REST and MCP API handlers but NO protobuf service definitions. The gRPC server has Go methods (`OrchestratorSpawn`, `OrchestratorHealth`, etc.) but they aren't registered as a gRPC service because there's no `.proto` file.
-
-**What's needed:**
-- Add orchestrator RPC methods to `api/proto/quicbaas.proto`
-- Run `protoc` to generate Go code
-- Register the orchestrator service in the gRPC server
-- Update the SDK gRPC handler to use proper proto types instead of JSON payloads
-- This enables gRPC, QUIC, Unix, and MCP transports for orchestrator commands
-
-**Files:**
-- `api/proto/quicbaas.proto` - add orchestrator service definition
-- `api/proto/quicbaas_grpc.pb.go` - regenerate
-- `api/proto/quicbaas.pb.go` - regenerate
-- `pkg/api/grpc/server.go` - register orchestrator service
-- `sdk/go/transport/grpc/orchestrator_handler.go` - use proto types
+*(Re-verified 2026-08-12.)* This has shipped since this document was written:
+`api/proto/orchestrator.proto` declares `service OrchestratorService` with
+generated `orchestrator.pb.go` / `orchestrator_grpc.pb.go`, and orchestrator
+handlers exist in `sdk/go/transport/{embedded,grpc,rest,quic,mcp}/`
+(`unix` delegates to the gRPC transport over UDS). The earlier statement that
+gRPC/QUIC/Unix/MCP silently skip orchestrator commands no longer describes the
+tree. Remaining follow-up: confirm the compile-time transport interface
+assertions cover the orchestrator client in every transport package (00 L4
+conformance).
 
 ## Priority 2: Tenant Propagation Through SDK
 

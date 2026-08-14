@@ -50,8 +50,13 @@ quicbaas agent serve \
   --tenant acme \
   --agent-cert /var/lib/quicbaas-agent/agent.crt \
   --agent-key  /var/lib/quicbaas-agent/agent.key \
-  --server-ca  /var/lib/quicbaas-agent/server-ca.crt
+  --server-ca  /var/lib/quicbaas-agent/server-ca.crt \
+  --allowed-mount-root /srv/agent-workspaces
 ```
+
+`--allowed-mount-root` is repeatable and required in practice: without it the
+daemon refuses every sandboxed spawn that names a work directory. See
+[Bind-Mount Allowlist Reference](#bind-mount-allowlist-reference).
 
 ### Registration Flow (first start)
 
@@ -117,6 +122,140 @@ quicbaas iam tenant update acme --sandbox-policy=required
 ```
 
 **Precedence:** Tenant override > Daemon policy > Request-specific mode
+
+## Sandbox Network Reference
+
+Sandboxing has two independent isolation dimensions. `--sandbox-policy` decides
+whether the agent runs in a container at all; `--sandbox-network` decides
+whether that container gets its own network namespace.
+
+| `--sandbox-network` | Container namespace | Egress | Can reach the host's `127.0.0.1` services |
+|---------------------|---------------------|--------|-------------------------------------------|
+| `bridge` (default)  | Own                 | Yes, NAT through the runtime bridge | No |
+| `none`              | Own, loopback only  | No     | No |
+| `<network name>`    | Own, on a user-defined runtime network | Per network | No |
+| `host`              | **The host's**      | Yes    | **Yes — every one of them** |
+
+`bridge` is the default because an ACP agent needs outbound HTTPS to reach its
+provider API (`api.anthropic.com`, a remote Ollama, an OIDC issuer) but has no
+legitimate reason to reach services bound to the daemon host's loopback
+interface — the daemon's own admin listeners, local metrics endpoints, a
+`127.0.0.1` datastore. Host firewall rules for those services generally assume
+no container can reach them.
+
+`host` remains available for hosts that genuinely need it, but only as an
+operator decision recorded in configuration:
+
+```bash
+quicbaas agent serve --sandbox-network host ...      # remote agent daemon
+quicbaasd start --embedded-agent-sandbox-network host  # embedded agent
+```
+
+A spawn request cannot select the network: there is no network field on the
+request, so no tenant, workflow, or `container_config` can move a session onto
+the host namespace. Choosing `host` is logged once per backend at WARN.
+
+**Choosing `host` for a loopback MCP endpoint.** When the QuicBaaS MCP endpoint
+a sandboxed agent dials resolves to `127.0.0.1` — which is what the *embedded*
+agent's resolver produces, because control plane and agent share a host — a
+bridged container cannot reach it. Either give the agent a routable MCP endpoint
+(`--mcp-endpoint https://<host>:<port>/mcp`, which is how a remote agent daemon
+is always configured) or set `--embedded-agent-sandbox-network host` and accept
+that the container shares the host namespace. Reaching a *provider* API needs no
+special handling: `bridge` has egress.
+
+## Bind-Mount Allowlist Reference
+
+Sandboxing's third isolation dimension. `--sandbox-policy` decides whether the
+agent runs in a container, `--sandbox-network` decides whether that container
+gets its own network namespace, and `--allowed-mount-root` decides how much of
+**this host's filesystem** the container can see.
+
+```bash
+quicbaas agent serve \
+  --allowed-mount-root /srv/agent-workspaces \
+  --allowed-mount-root /srv/models ...
+```
+
+```yaml
+allowed_mount_roots:
+  - /srv/agent-workspaces
+  - /srv/models
+```
+
+| Setting | Effect on a sandboxed spawn naming a `work_dir` |
+|---------|------------------------------------------------|
+| omitted (default) | **Every** spawn naming a work directory is refused |
+| one or more absolute roots | Only sources resolving under a listed root are accepted |
+
+Deny-by-default is deliberate. The daemon's Spawn RPC takes `work_dir` straight
+off the wire, and the ACP backend bind-mounts it into the container **read-write
+as the daemon's own uid**. An unchecked `work_dir` of `/` is therefore this
+host's root filesystem, writable, for the agent — reachable by any principal
+holding `agent:runtime:spawn`. There is no setting that turns the check off.
+
+`pkg/agent.Runtime.Spawn` enforces it through the same
+`orchestration.MountPolicy` the control plane uses, so both enforcement points
+behave identically:
+
+- **Resolved, not lexical.** Each source is resolved with
+  `filepath.EvalSymlinks` and re-tested, so an agent that plants a symlink
+  inside its own workspace cannot have the link's target mounted on the next
+  spawn. A source that does not exist is refused — the runtime would create it
+  root-owned and its identity could not be checked.
+- **Roots match on segment boundaries.** `/srv/models` does not grant
+  `/srv/models-staging`.
+- **Both mount-bearing fields are covered.** `work_dir` is authorized when the
+  spawn is containerized, which is exactly when it becomes a bind mount;
+  `extra_mounts` is authorized on every path, since it exists for no other
+  purpose.
+
+The roots are **not** tenant-scoped: a daemon manages no project workspaces of
+its own, so the operator's list is shared by every tenant it serves. Do not list
+a directory holding one tenant's data on a daemon serving several. Non-absolute
+entries fail `Validate()` at startup rather than silently granting nothing.
+
+### Why the daemon checks again
+
+The control plane authorizes the same fields in `SpawnSession`, but the daemon's
+check is the last line, not a duplicate:
+
+1. A spawn whose **control-plane-resolved** sandbox mode is not `required` skips
+   the control plane's `work_dir` authorization entirely — yet this daemon's own
+   `--sandbox-policy` may still containerize it. Only a check against the mode
+   resolved *here* covers that.
+2. The daemon's filesystem layout is its own. A path the control plane allowed
+   means something different on this host.
+
+A refused mount is returned as gRPC `PERMISSION_DENIED` carrying the offending
+field, tenant and path, which the control plane re-surfaces as HTTP 403.
+
+## Container Environment and Credentials
+
+A sandboxed session's environment carries its provider credentials: the pooled
+account's API key or OAuth access token, plus the agent's MCP connection
+material. Those values never appear on the container runtime's command line.
+
+`/proc/<pid>/cmdline` is world readable on a default Linux host and is what
+`ps` prints, so a `docker run -e KEY=VALUE` argument would publish the value to
+every local user for as long as the run process lives. The daemon instead writes
+the container's environment to a private file (mode `0600`, in a `0700`
+per-launch directory) and passes `--env-file <path>`:
+
+- The detached launch path releases the file as soon as the runtime process exits.
+- A sandboxed ACP session's file lives as long as the container and is removed
+  when the session is closed, on its own cleanup slot — independent of the
+  session's MCP certificate directory and its pooled-account credential
+  directory, so an account rotation cannot delete a file the running container
+  still needs.
+- Log lines render the argument vector with every environment value replaced by
+  `[redacted]`, and the vector itself is a DEBUG-level diagnostic.
+
+There is no configuration flag that restores inline environment arguments. An
+environment entry the line-oriented env-file format cannot carry — a value
+containing a newline (which would inject an undeclared variable into the
+container), a name containing `=` or whitespace, a name starting with `#` — is
+rejected at spec validation and the launch fails.
 
 ## Required IAM Scopes
 
@@ -447,6 +586,7 @@ The daemon enforces:
 
 - **Tenant isolation:** Requests for tenants other than the configured `--tenant` are rejected with `PERMISSION_DENIED`
 - **Sandbox enforcement:** The daemon's `--sandbox-policy` controls whether raw exec is permitted (defaults to `required`, forbidding raw exec)
+- **Bind-mount allowlist:** A sandboxed spawn may only bind-mount host paths resolving under `--allowed-mount-root`; with no roots configured every wire-supplied `work_dir` and extra mount is refused (see [Bind-Mount Allowlist Reference](#bind-mount-allowlist-reference))
 - **JWT scope validation:** Only RPCs authorized by the daemon's OAuth2 scopes are allowed (e.g., `agent:runtime:spawn` for Spawn RPC)
 - **Session state encryption:** Session state is encrypted at rest using the tenant's DEK (Data Encryption Key) from the control plane's KMS
 - **Audit logging:** Every RPC is logged with tenant, backend, session ID, sandbox mode, and result
@@ -483,6 +623,9 @@ sudo mount -o bind,ro /var/lib/quicbaas-agent /var/lib/quicbaas-agent
 - **Docker image**: `deployments/agent-daemon/Dockerfile`
 - **CLI flags**: `quicbaas agent serve --help`
 - **Policy semantics**: `pkg/orchestration/sandbox_policy.go`
+- **Bind-mount policy**: `pkg/orchestration/mount_policy.go` (shared with the control plane)
+- **Network isolation**: `pkg/orchestration/sandbox_network.go`
+- **Container environment transport**: `pkg/orchestration/container_env_file.go`
 - **Daemon API types**: `pkg/agent/config.go`
 - **Registration flow**: `pkg/agent/enrollment.go`
 
@@ -538,7 +681,15 @@ server:
     host_affinity: gpu-node-01   # self-tag for host_affinity routing
     gpu_available: true
     data_dir: /var/lib/quicbaas/embedded-agent
+    sandbox_policy: opt-in     # opt-in | preferred | required
+    sandbox_network: bridge    # bridge (default) | none | host | <network name>
 ```
+
+The embedded agent has **no** bind-mount key of its own: it shares a host with
+the orchestrator, so it enforces the orchestrator's policy —
+`orchestration.projects_root` (tenant-scoped) plus
+`orchestration.sandbox.allowed_mount_roots`. Without that, a spawn dispatched
+over the bufconn would bypass the control plane's mount check.
 
 ### CLI flags
 
@@ -550,6 +701,8 @@ server:
 | `--embedded-agent-host-affinity` | hostname | Affinity tag for routing |
 | `--embedded-agent-gpu` | false | Advertise GPU capability |
 | `--embedded-agent-data-dir` | `<data-dir>/embedded-agent` | Session state directory |
+| `--embedded-agent-sandbox-policy` | opt-in | How `DEFAULT` sandbox requests resolve |
+| `--embedded-agent-sandbox-network` | bridge | Container network for sandboxed sessions; `host` removes network isolation |
 
 ### Agent ID
 

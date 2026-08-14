@@ -63,6 +63,7 @@ var (
 	embeddedAgentDataDir       string
 	embeddedAgentSandboxImage  string
 	embeddedAgentSandboxPolicy string
+	embeddedAgentSandboxNet    string
 	embeddedAgentAutoPull      bool
 
 	// Discovery flags for node command.
@@ -242,6 +243,7 @@ func addServerFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&embeddedAgentDataDir, "embedded-agent-data-dir", "", "Working directory for embedded agent session state (default: <data-dir>/embedded-agent)")
 	cmd.Flags().StringVar(&embeddedAgentSandboxImage, "embedded-agent-sandbox-image", "", "OCI image the embedded agent spawns for sandboxed sessions (must have the backend agent on PATH)")
 	cmd.Flags().StringVar(&embeddedAgentSandboxPolicy, "embedded-agent-sandbox-policy", "", "Embedded agent sandbox policy: opt-in (default), preferred, or required")
+	cmd.Flags().StringVar(&embeddedAgentSandboxNet, "embedded-agent-sandbox-network", "", "Container network for embedded-agent sandboxed sessions: bridge (default), none, host, or a network name. \"host\" removes network isolation from the agent container.")
 	cmd.Flags().BoolVar(&embeddedAgentAutoPull, "embedded-agent-auto-pull", false, "Pre-pull the embedded agent sandbox image(s) at startup (leave off for locally-built images)")
 }
 
@@ -700,6 +702,9 @@ func applyServerFlags(cmd *cobra.Command) {
 	}
 	if cmd.Flags().Changed("embedded-agent-sandbox-policy") {
 		cfg.Server.EmbeddedAgent.SandboxPolicy = embeddedAgentSandboxPolicy
+	}
+	if cmd.Flags().Changed("embedded-agent-sandbox-network") {
+		cfg.Server.EmbeddedAgent.SandboxNetwork = embeddedAgentSandboxNet
 	}
 	if cmd.Flags().Changed("embedded-agent-auto-pull") {
 		cfg.Server.EmbeddedAgent.AutoPull = embeddedAgentAutoPull

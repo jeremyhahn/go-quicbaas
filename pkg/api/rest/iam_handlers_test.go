@@ -33,6 +33,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
@@ -135,7 +136,7 @@ func newMockQuicBaaSWithIAM() (*mockQuicBaaSWithIAM, *iam.MemoryStorage) {
 	// Wire the canonical persistent invite store so the CreateUser invite path
 	// (and the activation endpoints) resolve ONE store via getInviteStore —
 	// the same unification the production server uses.
-	mock.InviteStoreOverride = iam.NewMemoryInviteStore()
+	mock.InviteStoreOverride = iamtest.NewMemoryInviteStore()
 	return mock, memStorage
 }
 

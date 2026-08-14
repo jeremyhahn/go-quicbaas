@@ -30,39 +30,37 @@ import (
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
 
-// fakeWebAuthnClient is a test double for quicbaas.WebAuthnClient. The
-// enrollment ceremony drives BeginRegistration (the single canonical begin
-// surface) and FinishRegistration; the remaining methods satisfy the interface
-// and fail loudly if a test path reaches them unexpectedly.
-type fakeWebAuthnClient struct {
+// fakeFIDO2Client is a test double for quicbaas.FIDO2Client. The enrollment
+// ceremony drives BeginRegistration (the single canonical begin surface) and
+// FinishRegistration; the remaining methods satisfy the interface and fail
+// loudly if a test path reaches them unexpectedly.
+type fakeFIDO2Client struct {
 	beginResp  *quicbaas.FIDO2BeginRegistrationResponse
 	beginErr   error
-	beginUser  *quicbaas.WebAuthnUser
-	finishResp *quicbaas.WebAuthnCredential
+	beginReq   *quicbaas.FIDO2BeginRegistrationRequest
+	finishResp *quicbaas.FIDO2FinishRegistrationResponse
 	finishErr  error
 	finishReq  *quicbaas.FIDO2FinishRegistrationRequest
-	finishUser *quicbaas.WebAuthnUser
 	called     bool
 }
 
-func (w *fakeWebAuthnClient) BeginRegistration(_ context.Context, user *quicbaas.WebAuthnUser) (*quicbaas.FIDO2BeginRegistrationResponse, error) {
-	w.beginUser = user
+func (w *fakeFIDO2Client) BeginRegistration(_ context.Context, req *quicbaas.FIDO2BeginRegistrationRequest) (*quicbaas.FIDO2BeginRegistrationResponse, error) {
+	w.beginReq = req
 	return w.beginResp, w.beginErr
 }
 
-func (w *fakeWebAuthnClient) FinishRegistration(_ context.Context, user *quicbaas.WebAuthnUser, response *quicbaas.FIDO2FinishRegistrationRequest) (*quicbaas.WebAuthnCredential, error) {
+func (w *fakeFIDO2Client) FinishRegistration(_ context.Context, req *quicbaas.FIDO2FinishRegistrationRequest) (*quicbaas.FIDO2FinishRegistrationResponse, error) {
 	w.called = true
-	w.finishUser = user
-	w.finishReq = response
+	w.finishReq = req
 	return w.finishResp, w.finishErr
 }
 
-func (w *fakeWebAuthnClient) BeginLogin(context.Context, *quicbaas.WebAuthnUser) (*quicbaas.FIDO2BeginAuthenticationResponse, error) {
-	return nil, stderrors.New("BeginLogin not expected")
+func (w *fakeFIDO2Client) BeginAuthentication(context.Context, *quicbaas.FIDO2BeginAuthenticationRequest) (*quicbaas.FIDO2BeginAuthenticationResponse, error) {
+	return nil, stderrors.New("BeginAuthentication not expected")
 }
 
-func (w *fakeWebAuthnClient) FinishLogin(context.Context, *quicbaas.WebAuthnUser, *quicbaas.FIDO2FinishAuthenticationRequest) (*quicbaas.WebAuthnSession, error) {
-	return nil, stderrors.New("FinishLogin not expected")
+func (w *fakeFIDO2Client) FinishAuthentication(context.Context, *quicbaas.FIDO2FinishAuthenticationRequest) (*quicbaas.FIDO2FinishAuthenticationResponse, error) {
+	return nil, stderrors.New("FinishAuthentication not expected")
 }
 
 // attestationDoc is a minimal navigator.credentials.create() PublicKeyCredential
@@ -76,12 +74,12 @@ const fido2AttestationDoc = `{"id":"AQIDBAUGBwgJCgsMDQ4PEA","rawId":"AQIDBAUGBwg
 // issued session id, and the base64url credential id is returned for
 // MethodParams["credential_id"].
 func TestEnrollCanonicalFIDO2_Success(t *testing.T) {
-	webauthn := &fakeWebAuthnClient{
+	fido2 := &fakeFIDO2Client{
 		beginResp: &quicbaas.FIDO2BeginRegistrationResponse{
 			SessionID:   "sess-123",
 			OptionsJSON: `{"publicKey":{"challenge":"abc"}}`,
 		},
-		finishResp: &quicbaas.WebAuthnCredential{CredentialID: "AQIDBAUGBwgJCgsMDQ4PEA"},
+		finishResp: &quicbaas.FIDO2FinishRegistrationResponse{Success: true, CredentialID: "AQIDBAUGBwgJCgsMDQ4PEA"},
 	}
 
 	var seamOptions []byte
@@ -101,7 +99,7 @@ func TestEnrollCanonicalFIDO2_Success(t *testing.T) {
 		fido2Origin: "https://rp.example.com",
 	}
 
-	credID, err := enrollCanonicalFIDO2(context.Background(), f, webauthn, register)
+	credID, err := enrollCanonicalFIDO2(context.Background(), f, fido2, register)
 	require.NoError(t, err)
 
 	// The credential id is the base64url rawId from the attestation — the exact
@@ -109,9 +107,9 @@ func TestEnrollCanonicalFIDO2_Success(t *testing.T) {
 	assert.Equal(t, "AQIDBAUGBwgJCgsMDQ4PEA", credID)
 
 	// BeginRegistration carried the username/display name.
-	require.NotNil(t, webauthn.beginUser)
-	assert.Equal(t, "alice", webauthn.beginUser.Username)
-	assert.Equal(t, "yubikey-5", webauthn.beginUser.DisplayName)
+	require.NotNil(t, fido2.beginReq)
+	assert.Equal(t, "alice", fido2.beginReq.Username)
+	assert.Equal(t, "yubikey-5", fido2.beginReq.DisplayName)
 
 	// The create seam received the server options + the device/origin flags.
 	assert.Equal(t, `{"publicKey":{"challenge":"abc"}}`, string(seamOptions))
@@ -120,10 +118,10 @@ func TestEnrollCanonicalFIDO2_Success(t *testing.T) {
 
 	// FinishRegistration was completed under the issued session id with the
 	// authenticator's attestation.
-	require.True(t, webauthn.called)
-	require.NotNil(t, webauthn.finishReq)
-	assert.Equal(t, "sess-123", webauthn.finishReq.SessionID)
-	assert.Equal(t, fido2AttestationDoc, webauthn.finishReq.AttestationJSON)
+	require.True(t, fido2.called)
+	require.NotNil(t, fido2.finishReq)
+	assert.Equal(t, "sess-123", fido2.finishReq.SessionID)
+	assert.Equal(t, fido2AttestationDoc, fido2.finishReq.AttestationJSON)
 }
 
 // TestBuildCanonicalEnrollRequest_RejectsFIDO2 pins the post-write-through
@@ -284,7 +282,7 @@ func TestRunCanonicalAuthFactorRotate_FIDO2CeremonyFailureKeepsOldFactor(t *test
 // TestEnrollCanonicalFIDO2_MissingOptions fails closed with the typed error
 // when the server's BeginRegistration response carries no creation options.
 func TestEnrollCanonicalFIDO2_MissingOptions(t *testing.T) {
-	webauthn := &fakeWebAuthnClient{
+	fido2 := &fakeFIDO2Client{
 		beginResp: &quicbaas.FIDO2BeginRegistrationResponse{SessionID: "s", OptionsJSON: ""},
 	}
 	register := func(context.Context, []byte, string, string) ([]byte, error) {
@@ -294,24 +292,24 @@ func TestEnrollCanonicalFIDO2_MissingOptions(t *testing.T) {
 
 	_, err := enrollCanonicalFIDO2(context.Background(),
 		&canonicalAuthFactorAddFlags{factorType: "fido2", label: "l", user: "u"},
-		webauthn, register)
+		fido2, register)
 	require.Error(t, err)
 	var typed *MissingFIDO2RegistrationOptionsError
 	require.ErrorAs(t, err, &typed)
-	assert.False(t, webauthn.called, "FinishRegistration must not run on a missing-options failure")
+	assert.False(t, fido2.called, "FinishRegistration must not run on a missing-options failure")
 }
 
 // TestEnrollCanonicalFIDO2_BeginError surfaces a server BeginRegistration error.
 func TestEnrollCanonicalFIDO2_BeginError(t *testing.T) {
 	want := stderrors.New("transport down")
-	webauthn := &fakeWebAuthnClient{beginErr: want}
+	fido2 := &fakeFIDO2Client{beginErr: want}
 	register := func(context.Context, []byte, string, string) ([]byte, error) {
 		t.Fatal("create seam must not run when BeginRegistration fails")
 		return nil, nil
 	}
 	_, err := enrollCanonicalFIDO2(context.Background(),
 		&canonicalAuthFactorAddFlags{factorType: "fido2", label: "l", user: "u"},
-		webauthn, register)
+		fido2, register)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, want)
 }
@@ -319,7 +317,7 @@ func TestEnrollCanonicalFIDO2_BeginError(t *testing.T) {
 // TestEnrollCanonicalFIDO2_DeviceError surfaces a CTAP2 create-step error and
 // never reaches FinishRegistration.
 func TestEnrollCanonicalFIDO2_DeviceError(t *testing.T) {
-	webauthn := &fakeWebAuthnClient{
+	fido2 := &fakeFIDO2Client{
 		beginResp: &quicbaas.FIDO2BeginRegistrationResponse{SessionID: "s", OptionsJSON: `{"publicKey":{}}`},
 	}
 	want := &FIDO2OperationError{Op: "Register", Cause: stderrors.New("no key touched")}
@@ -328,18 +326,18 @@ func TestEnrollCanonicalFIDO2_DeviceError(t *testing.T) {
 	}
 	_, err := enrollCanonicalFIDO2(context.Background(),
 		&canonicalAuthFactorAddFlags{factorType: "fido2", label: "l", user: "u"},
-		webauthn, register)
+		fido2, register)
 	require.Error(t, err)
 	var typed *FIDO2OperationError
 	require.ErrorAs(t, err, &typed)
-	assert.False(t, webauthn.called, "FinishRegistration must not run after a device error")
+	assert.False(t, fido2.called, "FinishRegistration must not run after a device error")
 }
 
 // TestEnrollCanonicalFIDO2_FinishError surfaces a server FinishRegistration
 // error.
 func TestEnrollCanonicalFIDO2_FinishError(t *testing.T) {
 	want := stderrors.New("session expired")
-	webauthn := &fakeWebAuthnClient{
+	fido2 := &fakeFIDO2Client{
 		beginResp: &quicbaas.FIDO2BeginRegistrationResponse{SessionID: "s", OptionsJSON: `{"publicKey":{}}`},
 		finishErr: want,
 	}
@@ -348,7 +346,7 @@ func TestEnrollCanonicalFIDO2_FinishError(t *testing.T) {
 	}
 	_, err := enrollCanonicalFIDO2(context.Background(),
 		&canonicalAuthFactorAddFlags{factorType: "fido2", label: "l", user: "u"},
-		webauthn, register)
+		fido2, register)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, want)
 }

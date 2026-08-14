@@ -18,6 +18,9 @@ package rest
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
@@ -2398,14 +2401,20 @@ func newTestAuthManager(t *testing.T) *auth.AuthManager {
 	})
 	require.NoError(t, err)
 
-	mgr, err := auth.NewInMemoryAuthManager(&auth.AuthConfig{
+	signingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	cfg := &auth.AuthConfig{
 		Enabled:         true,
-		JWTSecret:       "test-secret-key-for-unit-tests-32chars!",
+		JWTSigningKeyID: "test-signing-key",
 		TokenTTL:        1 * time.Hour,
 		RefreshTokenTTL: 24 * time.Hour,
 		RefreshWindow:   5 * time.Minute,
 		MaxTokens:       10,
-	}, log)
+	}
+	auth.SetAsymmetricSigning(cfg, signingKey)
+
+	mgr, err := auth.NewInMemoryAuthManager(cfg, log)
 	require.NoError(t, err)
 	return mgr
 }

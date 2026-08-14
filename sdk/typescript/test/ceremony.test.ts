@@ -73,8 +73,6 @@ describe('RestCeremonyClient.initialize', () => {
         spki_pin: 'sha256-abc',
         ca_cert_pem: '-----BEGIN CERTIFICATE-----',
         tls_cert_pem: '-----BEGIN CERTIFICATE-----',
-        so_cert_pem: '-----BEGIN CERTIFICATE-----',
-        so_key_pem: '-----BEGIN PRIVATE KEY-----',
         state: 'awaiting-claims',
         share_count: 5,
       }),
@@ -94,7 +92,6 @@ describe('RestCeremonyClient.initialize', () => {
     });
 
     expect(result.share_count).toBe(5);
-    expect(result.so_cert_pem).toBeDefined();
     expect(result.state).toBe('awaiting-claims');
   });
 

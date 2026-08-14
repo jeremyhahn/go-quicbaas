@@ -64,6 +64,13 @@ type XKMSCryptoConfig struct {
 	// want a software mTLS factor or any hardware factor must register
 	// them here.
 	Factors []qrdbsdk.AuthFactorPlugin
+
+	// CeremonyCA is the certificate authority the embedded qrdb node's init
+	// ceremony issues from: the TLS serving certificate, officer CSR signatures,
+	// and the CA bundle / SPKI pin the operator verifies. Nil leaves qrdb's
+	// ceremony CA unset, which fails every CA-dependent ceremony verb closed.
+	// quicbaas supplies the late-bound wrapper over the platform xkms CA.
+	CeremonyCA qrdbsdk.CeremonyCA
 }
 
 // XKMSCryptoOptions builds the qrdb server options that inject go-xkms
@@ -134,11 +141,15 @@ func XKMSCryptoOptions(cfg *XKMSCryptoConfig) ([]qrdbsdk.ServerOption, error) {
 		slog.Int("registered_factors", len(factorReg.List())),
 	)
 
-	return []qrdbsdk.ServerOption{
+	opts := []qrdbsdk.ServerOption{
 		qrdbsdk.WithStrategyRegistry(strategyReg),
 		qrdbsdk.WithPINBackend(pinBackend),
 		qrdbsdk.WithFactorRegistry(factorReg),
-	}, nil
+	}
+	if cfg.CeremonyCA != nil {
+		opts = append(opts, qrdbsdk.WithCeremonyCA(cfg.CeremonyCA))
+	}
+	return opts, nil
 }
 
 // XKMSCryptoError describes a failure in XKMSCryptoOptions. Stage names

@@ -1,41 +1,40 @@
 # QuicBaaS Cloud KMS Integration Test Environment
-# LocalStack for AWS KMS and other cloud service emulators
-# Used for testing cloud KMS providers without actual cloud credentials
+# Floci (MIT-licensed, tokenless AWS emulator) for AWS KMS and other cloud
+# service emulators. Used for testing cloud KMS providers without actual
+# cloud credentials.
 
 version: '3.8'
 
 services:
-  # LocalStack - AWS Services Emulator (KMS, Secrets Manager, etc.)
-  localstack:
-    image: localstack/localstack:latest
-    container_name: quicbaas-localstack
-    hostname: localstack
+  # Floci - AWS Services Emulator (KMS, Secrets Manager, etc.)
+  floci:
+    image: floci/floci:latest
+    container_name: quicbaas-floci
+    hostname: floci
     ports:
-      - "4566:4566"       # LocalStack edge port
-      - "4571:4571"       # Legacy: Edge port
+      - "4566:4566"       # Floci gateway (all services on one port)
     environment:
-      # LocalStack configuration
-      - SERVICES=kms,secretsmanager
-      - DEBUG=1
-      - PERSISTENCE=1
       - AWS_DEFAULT_REGION=us-east-1
-      - DOCKER_HOST=unix:///var/run/docker.sock
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
 
-      # Disable telemetry
-      - DISABLE_CORS_CHECKS=1
-      - DISABLE_CUSTOM_CORS_S3=1
-      - DISABLE_CUSTOM_CORS_APIGATEWAY=1
-
-      # Performance
-      - LAMBDA_EXECUTOR=local
-      - LAMBDA_REMOTE_DOCKER=false
+      # Persist emulator state across restarts.
+      - FLOCI_STORAGE_MODE=persistent
+      - FLOCI_STORAGE_PERSISTENT_PATH=/var/lib/floci
     volumes:
-      - localstack-data:/var/lib/localstack
+      - floci-data:/var/lib/floci
+      # Floci runs Docker-backed services (e.g. Lambda) in real containers.
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - kms-cloud-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      # Assert the services this stack uses report "running" rather than just
+      # probing the port, so warm-up cannot be mistaken for readiness.
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:4566/_floci/health -o /tmp/floci-health.json && grep -q '\"kms\":\"running\"' /tmp/floci-health.json && grep -q '\"secretsmanager\":\"running\"' /tmp/floci-health.json",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -50,8 +49,8 @@ services:
     container_name: quicbaas-awskms-test
     hostname: awskms-test
     environment:
-      # AWS LocalStack configuration
-      - AWS_ENDPOINT=http://localstack:4566
+      # AWS emulator (Floci) configuration
+      - AWS_ENDPOINT=http://floci:4566
       - AWS_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
@@ -68,13 +67,11 @@ services:
     networks:
       - kms-cloud-network
     depends_on:
-      localstack:
+      floci:
         condition: service_healthy
     command: >
       sh -c "
-        echo 'Waiting for LocalStack to be ready...' &&
-        sleep 5 &&
-        echo 'Running AWS KMS integration tests...' &&
+        echo 'Running AWS KMS integration tests (Floci gated by depends_on: service_healthy)...' &&
         go test -v -tags 'awskms integration' -run 'TestAWSKMSIntegration' -timeout 10m ./pkg/keyring/... | tee /test-results/awskms-integration-test.log &&
         echo 'AWS KMS integration tests completed'
       "
@@ -85,10 +82,10 @@ networks:
     name: quicbaas-kms-cloud-network
 
 volumes:
-  localstack-data:
+  floci-data:
     driver: local
     labels:
-      com.quicbaas.service: "localstack"
+      com.quicbaas.service: "floci"
       com.quicbaas.type: "data"
 
   awskms-test-cache:

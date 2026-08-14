@@ -2,7 +2,7 @@
 
 ACP is an open standard ([agentclientprotocol.com](https://agentclientprotocol.com)) for communicating with AI coding agents. It defines a JSON-RPC 2.0 based protocol for session management and prompt execution over stdin/stdout.
 
-go-quicbaas implements an ACP client through the `ACPBackend` and `StdioTransport` types in `pkg/acp`.
+go-quicbaas implements an ACP client through the `ACPBackend` and `StdioTransport` types in `pkg/orchestration` (`acp_backend.go` and `transport.go`).
 
 ## Architecture
 

@@ -40,7 +40,8 @@ func newSealedGateTestServer(t *testing.T, sealed bool) *Server {
 	require.NoError(t, err)
 	s := NewServer(nil, &Config{ServerName: "test", ServerVersion: "0", Transport: "http"}, log)
 	require.NotNil(t, s)
-	s.SetSealedWindowGate(&fakeMCPSealedProbe{sealed: sealed}, sealedwindow.MCPAllowlist())
+	s.SetSealedWindowGate(&fakeMCPSealedProbe{sealed: sealed}, &mcpCeremonyStateProbe{},
+		sealedwindow.MCPAllowlist())
 	return s
 }
 
@@ -59,10 +60,16 @@ func TestSealedWindowDeniesTool_SealedAdmitDenyTable(t *testing.T) {
 		{"qrdb_barrier_unseal", false},
 		{"qrdb_barrier_shamir_unseal_share", false},
 		{"qrdb_barrier_root_token", false},
-		{"qrdb_ceremony_initialize", false},
 		{"qrdb_ceremony_status", false},
-		{"qrdb_ceremony_sign_csr", false},
 		{"quicbaas_ceremony_list_officers", false},
+
+		// The strict ceremony model (sealedwindow.StrictCeremonyExclusions)
+		// withholds the ceremony verbs that MINT or DISTRIBUTE trust from
+		// EVERY transport's sealed window, MCP included. They are driven
+		// in-process by `quicbaasd init`, never by an unauthenticated MCP
+		// client against a sealed daemon.
+		{"qrdb_ceremony_initialize", true},
+		{"qrdb_ceremony_sign_csr", true},
 
 		{"qrdb_barrier_seal", true},
 		{"qrdb_barrier_enable_encryption", true},

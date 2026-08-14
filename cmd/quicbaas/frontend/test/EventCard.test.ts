@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, fireEvent } from '@testing-library/svelte';
 import EventCard from '../src/components/orchestrator/EventCard.svelte';
 import type { ParsedSessionEvent } from '../src/stores/sessionStore.svelte.ts';
 
@@ -57,6 +57,35 @@ describe('EventCard', () => {
     const event = makeEvent({ kind: 'assistant_chunk', assistantChunk: 'done' });
     const { container } = render(EventCard, { props: { event, isStreaming: false } });
     expect(container.querySelector('.animate-pulse')).toBeNull();
+  });
+
+  // ---------------------------------------------------------------------------
+  // thought
+  // ---------------------------------------------------------------------------
+  it('renders a collapsed "Thinking…" summary for a thought event', () => {
+    const event = makeEvent({ kind: 'thought', thoughtText: 'weighing the options', source: 'agent:claude' });
+    const { container } = render(EventCard, { props: { event } });
+    expect(screen.getByText(/Thinking/i)).toBeInTheDocument();
+    const details = container.querySelector('details');
+    expect(details).toBeTruthy();
+    expect(details!.open).toBe(false);
+  });
+
+  it('does not show the thought text until expanded', () => {
+    const event = makeEvent({ kind: 'thought', thoughtText: 'weighing the options' });
+    const { container } = render(EventCard, { props: { event } });
+    const details = container.querySelector('details') as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+  });
+
+  it('expands to show the full thought text on click', async () => {
+    const event = makeEvent({ kind: 'thought', thoughtText: 'weighing the options' });
+    const { container } = render(EventCard, { props: { event } });
+    const summary = screen.getByLabelText('Toggle agent thinking');
+    await fireEvent.click(summary);
+    const details = container.querySelector('details') as HTMLDetailsElement;
+    expect(details.open).toBe(true);
+    expect(screen.getByText('weighing the options')).toBeInTheDocument();
   });
 
   // ---------------------------------------------------------------------------
@@ -175,6 +204,35 @@ describe('EventCard', () => {
     const event = makeEvent({ kind: 'resumed' });
     render(EventCard, { props: { event } });
     expect(screen.getByText(/resumed/i)).toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------------
+  // turn_started / turn_completed / turn_failed
+  // ---------------------------------------------------------------------------
+  it('renders an unobtrusive marker for turn_started', () => {
+    const event = makeEvent({ kind: 'turn_started', turnId: 't1', turnBackend: 'ollama', turnModel: 'llama3' });
+    const { container } = render(EventCard, { props: { event } });
+    expect(container.querySelector('[data-testid="turn-started-marker"]')).toBeTruthy();
+    expect(screen.getByText('llama3')).toBeInTheDocument();
+  });
+
+  it('renders an unobtrusive marker with duration for turn_completed', () => {
+    const event = makeEvent({
+      kind: 'turn_completed',
+      turnId: 't1',
+      turnStopReason: 'end_turn',
+      turnDurationMs: 4200,
+    });
+    const { container } = render(EventCard, { props: { event } });
+    expect(container.querySelector('[data-testid="turn-completed-marker"]')).toBeTruthy();
+    expect(screen.getByText('4.2s')).toBeInTheDocument();
+  });
+
+  it('renders turn_failed visibly with the agent error, not silently', () => {
+    const event = makeEvent({ kind: 'turn_failed', turnId: 't1', turnError: 'backend crashed' });
+    const { container } = render(EventCard, { props: { event } });
+    expect(container.querySelector('.alert-error')).toBeTruthy();
+    expect(screen.getByText('backend crashed')).toBeInTheDocument();
   });
 
   // ---------------------------------------------------------------------------

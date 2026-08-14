@@ -309,49 +309,69 @@ func TestEventForwarder_DialError(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// CallbackFor — every event-type branch
+// CallbackFor — stamping + enqueue of structured events
 // -----------------------------------------------------------------------------
 
-func TestEventForwarder_CallbackFor_AllKinds(t *testing.T) {
+// TestEventForwarder_CallbackFor_StampsAndEnqueues verifies the structured
+// callback stamps tenant and source onto backend-emitted events (which leave
+// both empty) and enqueues them for forwarding.
+func TestEventForwarder_CallbackFor_StampsAndEnqueues(t *testing.T) {
 	f := newTestForwarder(t, EventForwarderConfig{QueueSize: 64})
 	cb := f.CallbackFor("tenantA", "acp")
 
-	cases := []struct {
-		eventType string
-		want      orchestration.SessionEventKind
-	}{
-		{"prompt", orchestration.KindPromptSubmitted},
-		{"assistant", orchestration.KindAssistantChunk},
-		{"assistant_chunk", orchestration.KindAssistantChunk},
-		{"tool", orchestration.KindToolInvocation},
-		{"tool_call", orchestration.KindToolInvocation},
-		{"tool_result", orchestration.KindToolResult},
-		{"unknown_type", orchestration.KindSystemMessage},
+	cb(&orchestration.SessionEvent{
+		SessionID:      "sess",
+		Kind:           orchestration.KindAssistantChunk,
+		AssistantChunk: &orchestration.AssistantChunkPayload{Text: "hello"},
+	})
+
+	if len(f.queue) != 1 {
+		t.Fatalf("queue len=%d, want 1", len(f.queue))
 	}
-	for _, tc := range cases {
-		cb("sess", tc.eventType, "detail-"+tc.eventType)
+	entry := <-f.queue
+	ev := entry.event
+	if ev.TenantID != "tenantA" {
+		t.Fatalf("tenant=%q, want tenantA", ev.TenantID)
+	}
+	if ev.Source != "agent:acp" {
+		t.Fatalf("source=%q, want agent:acp", ev.Source)
+	}
+	if ev.Kind != orchestration.KindAssistantChunk || ev.AssistantChunk == nil || ev.AssistantChunk.Text != "hello" {
+		t.Fatalf("payload not preserved: %+v", ev)
+	}
+	if ev.Sequence == 0 {
+		t.Fatal("expected ObserveEvent to assign a sequence")
+	}
+	if ev.Timestamp.IsZero() {
+		t.Fatal("expected ObserveEvent to assign a timestamp")
+	}
+}
+
+// TestEventForwarder_CallbackFor_PreservesExistingStamps verifies the
+// callback does not overwrite tenant/source already set upstream, and that a
+// nil event is ignored rather than enqueued.
+func TestEventForwarder_CallbackFor_PreservesExistingStamps(t *testing.T) {
+	f := newTestForwarder(t, EventForwarderConfig{QueueSize: 64})
+	cb := f.CallbackFor("tenantA", "acp")
+
+	cb(nil)
+	if len(f.queue) != 0 {
+		t.Fatal("nil event must not enqueue")
 	}
 
-	// Drain the queue and verify each event's kind.
-	got := map[orchestration.SessionEventKind]int{}
-	for len(f.queue) > 0 {
-		entry := <-f.queue
-		got[entry.event.Kind]++
+	cb(&orchestration.SessionEvent{
+		SessionID: "sess",
+		TenantID:  "tenantB",
+		Source:    "operator:alice",
+		Kind:      orchestration.KindSystemMessage,
+		System:    &orchestration.SystemMessagePayload{Level: "info", Message: "m"},
+	})
+	entry := <-f.queue
+	if entry.event.TenantID != "tenantB" {
+		t.Fatalf("tenant overwritten: %q", entry.event.TenantID)
 	}
-	if got[orchestration.KindPromptSubmitted] != 1 {
-		t.Fatalf("prompt count=%d", got[orchestration.KindPromptSubmitted])
-	}
-	if got[orchestration.KindAssistantChunk] != 2 {
-		t.Fatalf("assistant count=%d", got[orchestration.KindAssistantChunk])
-	}
-	if got[orchestration.KindToolInvocation] != 2 {
-		t.Fatalf("tool count=%d", got[orchestration.KindToolInvocation])
-	}
-	if got[orchestration.KindToolResult] != 1 {
-		t.Fatalf("tool_result count=%d", got[orchestration.KindToolResult])
-	}
-	if got[orchestration.KindSystemMessage] != 1 {
-		t.Fatalf("system count=%d", got[orchestration.KindSystemMessage])
+	if entry.event.Source != "operator:alice" {
+		t.Fatalf("source overwritten: %q", entry.event.Source)
 	}
 }
 

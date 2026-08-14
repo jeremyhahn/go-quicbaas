@@ -276,8 +276,9 @@ func TestDevelopmentConfig(t *testing.T) {
 	cfg := DevelopmentConfig()
 	require.NotNil(t, cfg)
 
-	// Development should be less secure
-	assert.False(t, cfg.Security.TLSEnabled)
+	// TLS is required for EVERYTHING — even development config keeps it on
+	// so the CA bootstraps and the admin mTLS credential can be issued.
+	assert.True(t, cfg.Security.TLSEnabled)
 	assert.False(t, cfg.Security.FIPSMode)
 
 	// Development should use debug level
@@ -442,6 +443,16 @@ func TestEnvironmentVariableOverrides(t *testing.T) {
 		cfg, err := Load("")
 		require.NoError(t, err)
 		assert.Equal(t, "memory", cfg.Storage.Backend)
+	})
+
+	t.Run("QUICBAAS_SERVER_SEALED_BIND_HOST override", func(t *testing.T) {
+		os.Setenv("QUICBAAS_SERVER_SEALED_BIND_HOST", "0.0.0.0")
+		defer os.Unsetenv("QUICBAAS_SERVER_SEALED_BIND_HOST")
+
+		cfg, err := Load("")
+		require.NoError(t, err)
+		assert.Equal(t, "0.0.0.0", cfg.Server.SealedBindHost)
+		assert.Equal(t, "0.0.0.0", cfg.Server.ResolveSealedBindHost())
 	})
 
 	t.Run("QUICBAAS_SERVER_GRPC_ENABLED override", func(t *testing.T) {

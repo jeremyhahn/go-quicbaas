@@ -238,7 +238,7 @@ func TestBuildEmbeddedAgentBackends_DefaultsToOllama(t *testing.T) {
 	t.Parallel()
 
 	log := makeNoopLogger()
-	backends, err := buildEmbeddedAgentBackends(nil, "http://127.0.0.1:11434", nil, log)
+	backends, err := buildEmbeddedAgentBackends(nil, "http://127.0.0.1:11434", orchestration.SandboxNetworkDefault, nil, log)
 	require.NoError(t, err)
 	_, ok := backends["ollama"]
 	assert.True(t, ok, "default backend must be ollama")
@@ -249,7 +249,7 @@ func TestBuildEmbeddedAgentBackends_UnknownKindSkipped(t *testing.T) {
 
 	log := makeNoopLogger()
 	// Mixing a valid backend with an unknown one: should succeed with just the valid backend.
-	backends, err := buildEmbeddedAgentBackends([]string{"ollama", "unknown-kind"}, "", nil, log)
+	backends, err := buildEmbeddedAgentBackends([]string{"ollama", "unknown-kind"}, "", orchestration.SandboxNetworkDefault, nil, log)
 	require.NoError(t, err)
 	_, ok := backends["ollama"]
 	assert.True(t, ok)
@@ -259,7 +259,7 @@ func TestBuildEmbeddedAgentBackends_AllUnknownReturnsError(t *testing.T) {
 	t.Parallel()
 
 	log := makeNoopLogger()
-	_, err := buildEmbeddedAgentBackends([]string{"unsupported-a", "unsupported-b"}, "", nil, log)
+	_, err := buildEmbeddedAgentBackends([]string{"unsupported-a", "unsupported-b"}, "", orchestration.SandboxNetworkDefault, nil, log)
 	require.Error(t, err, "all-unknown backends must return error")
 }
 
@@ -494,7 +494,7 @@ func TestBuildEmbeddedAgentBackends_ACPKinds(t *testing.T) {
 
 	log := makeNoopLogger()
 	backends, err := buildEmbeddedAgentBackends(
-		[]string{"ollama", "claude", "codex", "opencode"}, "", nil, log)
+		[]string{"ollama", "claude", "codex", "opencode"}, "", orchestration.SandboxNetworkDefault, nil, log)
 	require.NoError(t, err)
 
 	for _, name := range []string{"ollama", "claude", "codex", "opencode"} {

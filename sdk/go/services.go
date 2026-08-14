@@ -47,9 +47,12 @@ type ClusterManagementService interface {
 // authentication, sealing, key management, secrets, and certificates.
 //
 // Auth() returns an AuthService composed of the existing AuthClient plus
-// the M10 factor-typed sub-services (FIDO2, WebAuthn, PIV, Factors). Code
-// that previously called Security().Auth().Login(...) keeps working
-// because AuthService embeds AuthClient.
+// the factor-typed sub-services: FIDO2() (the canonical WebAuthn ceremony
+// client in go-xkms's verb shape), PIV() (the xkms backend-scoped PIV
+// surface), Devices() (client-LOCAL CTAP2 discovery), and Factors()
+// (multi-factor enrollment). Code that previously called
+// Security().Auth().Login(...) keeps working because AuthService embeds
+// AuthClient.
 //
 // ACME(), Trust(), and CertificateExt() expose M10 primitives sourced
 // from go-xkms (ACME, TrustedCA, TCG identity issuance) and re-published
@@ -76,6 +79,19 @@ type SecurityService interface {
 	// AIA-driven root import.
 	Trust() TrustService
 
+	// Attestation exposes the standalone trusted-computing surface:
+	// verification of hardware attestation statements and certificate
+	// chains (composed from go-xkms pkg/attestation), the Tier 0 image
+	// endorsement check, and the container attestation orchestration
+	// seam. It is always non-nil; AttestContainer reports a typed
+	// not-configured error until an embedder registers an attestor.
+	Attestation() AttestationService
+
+	// SSH exposes SSH key, known-hosts, and authorized-keys management.
+	// This is the single canonical SDK entry point for the SSH surface —
+	// callers never import go-xkms's SSH client directly.
+	SSH() SSHService
+
 	// Barrier exposes the qrdb StorageBarrier lifecycle (initialize,
 	// unseal, seal, status, rekey, Shamir share management). This is
 	// the single canonical SDK entry point — there is no flat
@@ -98,8 +114,8 @@ type SecurityService interface {
 	Credentials() (QRDBCredentialClient, error)
 
 	// SecretResolver returns the unified secret resolver registry populated
-	// during server initialization. It dispatches credential://, kms://,
-	// remote-kms://, and autogen resolution in registration order. Returns
+	// during server initialization. It dispatches credential://, kms://, and
+	// remote-kms:// resolution in registration order. Returns
 	// nil when the client was constructed without WithSecretRegistry (e.g.
 	// a pure network client that has no access to the in-process server).
 	// go-trusted-platform consumes this as the single canonical entry point
@@ -195,17 +211,23 @@ func (s *clusterManagementService) Cache() CacheClient           { return s.c.Ca
 
 // securityService delegates SecurityService methods to the underlying client.
 // The new Auth() returns an AuthService that composes the existing AuthClient
-// plus FIDO2/WebAuthn/PIV/Factors sub-services. ACME(), Trust(), and
+// plus FIDO2/PIV/Devices/Factors sub-services. ACME(), Trust(), and
 // CertificateExt() expose new M10 primitives.
 type securityService struct {
 	c *client
 
-	authOnce    sync.Once
-	authSvc     AuthService
-	acmeOnce    sync.Once
-	acmeSvc     ACMEService
-	trustOnce   sync.Once
-	trustSvc    TrustService
+	authOnce  sync.Once
+	authSvc   AuthService
+	acmeOnce  sync.Once
+	acmeSvc   ACMEService
+	trustOnce sync.Once
+	trustSvc  TrustService
+
+	attestationOnce sync.Once
+	attestationSvc  AttestationService
+
+	sshOnce     sync.Once
+	sshSvc      SSHService
 	certExtOnce sync.Once
 	certExt     CertificateExtensions
 }
@@ -244,6 +266,26 @@ func (s *securityService) Trust() TrustService {
 		s.trustSvc = newTrustService(s.c.transport)
 	})
 	return s.trustSvc
+}
+
+// Attestation returns the trusted-computing sub-service. The returned
+// client routes over the configured transport, so the same verbs behave
+// identically on embedded, REST, gRPC, QUIC, MCP, and Unix.
+func (s *securityService) Attestation() AttestationService {
+	s.attestationOnce.Do(func() {
+		s.attestationSvc = newAttestationService(s.c.transport)
+	})
+	return s.attestationSvc
+}
+
+// SSH returns the SSH sub-service (keys, known hosts, authorized keys).
+// The returned client routes over the configured transport, so the same
+// verbs behave identically on embedded, REST, gRPC, QUIC, MCP, and Unix.
+func (s *securityService) SSH() SSHService {
+	s.sshOnce.Do(func() {
+		s.sshSvc = newSSHService(s.c.transport)
+	})
+	return s.sshSvc
 }
 
 // Barrier returns the QRDB BarrierClient. The QRDB transport is

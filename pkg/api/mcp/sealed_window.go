@@ -54,7 +54,19 @@ func (e *SealedWindowError) Error() string {
 // pkg/api/sealedwindow (sealedwindow.MCPAllowlist) so the MCP surface cannot
 // drift from the REST / gRPC / QUIC gates. A nil probe leaves the gate
 // uninstalled.
-func (s *Server) SetSealedWindowGate(probe SealedWindowProbe, allowlist map[string]struct{}) {
+//
+// operational is the ceremony-state probe that decides whether the
+// pre-operational half of the authentication exemption still applies (the
+// self-authorizing ceremony claim tools and the ceremony status tool). It
+// FAILS CLOSED: nil, or a probe reporting operational, withholds those
+// exemptions so the claim tools require a token on an already-initialized
+// sealed daemon. The barrier / unseal tools are state-independent and are
+// unaffected.
+func (s *Server) SetSealedWindowGate(
+	probe SealedWindowProbe,
+	operational sealedwindow.OperationalProbe,
+	allowlist map[string]struct{},
+) {
 	// Derive the shared sealed-window authentication-bypass predicate from
 	// the same probe. tools/call consults it so that WHILE SEALED the
 	// allowlisted tools that pass the gate are admitted WITHOUT a bearer
@@ -64,7 +76,8 @@ func (s *Server) SetSealedWindowGate(probe SealedWindowProbe, allowlist map[stri
 	// authorization is unchanged.
 	var bypass *sealedwindow.AuthBypass
 	if probe != nil {
-		bypass = sealedwindow.NewAuthBypass(probe, sealedwindow.NewLoggerAuditSink(s.logger))
+		bypass = sealedwindow.NewAuthBypass(
+			probe, operational, sealedwindow.NewLoggerAuditSink(s.logger))
 	}
 
 	s.sealedMu.Lock()

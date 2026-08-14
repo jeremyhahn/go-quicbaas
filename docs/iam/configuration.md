@@ -103,11 +103,10 @@ iam:
     # Issuer URL (must match token iss claim)
     issuer: "https://iam.example.com"
 
-    # Token signing
-    signing_algorithm: RS256
-    signing_key: "${OIDC_SIGNING_KEY}"
-    # Or use file path:
-    # signing_key_file: /etc/quicbaas/keys/oidc-signing.pem
+    # Token signing is not configurable: an ES256 key (common name
+    # "oidc-signing") is generated in the configured xkms backend on first
+    # boot and never leaves the keystore. Dedicated tenants may opt in to
+    # their own signing key via tenant OIDC settings.
 
     # Token lifetimes
     access_token_ttl: 1h
@@ -132,10 +131,22 @@ iam:
       enabled: true
       validate_audience: true
 
-    # Dynamic Client Registration (RFC 7591)
-    dynamic_registration:
-      enabled: true
-      require_https_redirect: true  # false for development
+    # Dynamic Client Registration (RFC 7591) — see also
+    # docs/security/authentication.md. Registering a client mints an
+    # authentication principal, so this surface is off by default.
+    dynamic_client_registration:
+      # false (default): POST /oauth2/register answers 403 access_denied.
+      enabled: false
+
+      # Empty (default): an initial access token is REQUIRED; a token-less
+      # registration is refused with 401 and the new client is created in the
+      # tenant that token authenticated into.
+      #
+      # Setting this enables UNAUTHENTICATED registration and names the tenant
+      # such clients land in. It must never be "system": anonymous callers may
+      # not create control-plane clients (rejected by config validation and
+      # again at request time).
+      anonymous_tenant_id: ""
 
   # MCP Authorization Configuration
   mcp:

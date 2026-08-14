@@ -43,6 +43,7 @@ type mockAgentService struct {
 	listProjectsFunc     func(ctx context.Context, req *orchestration.ListProjectsRequest) (*orchestration.ListProjectsResponse, error)
 	spawnSessionFunc     func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error)
 	promptSessionFunc    func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error)
+	promptAsyncFunc      func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error)
 	sessionStatusFunc    func(ctx context.Context, req *orchestration.SessionStatusRequest) (*orchestration.SessionStatusResponse, error)
 	closeSessionFunc     func(ctx context.Context, req *orchestration.CloseSessionRequest) (*orchestration.CloseSessionResponse, error)
 	listSessionsFunc     func(ctx context.Context, req *orchestration.ListSessionsRequest) (*orchestration.ListSessionsResponse, error)
@@ -874,15 +875,21 @@ func TestOrchestratorHealth_ServiceUnavailable(t *testing.T) {
 // Prompt Tests
 // =============================================================================
 
+// TestOrchestratorPrompt_Success pins the asynchronous turn contract: the
+// handler answers 202 Accepted with the turn's identity, never the agent's
+// output. A 200 carrying content would mean the handler had blocked on the
+// agent, which no REST request can survive.
 func TestOrchestratorPrompt_Success(t *testing.T) {
 	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	agentSvc.promptSessionFunc = func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error) {
-		return &orchestration.PromptSessionResponse{
+	agentSvc.promptAsyncFunc = func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error) {
+		return &orchestration.PromptTurnAck{
 			SessionID: req.SessionID,
-			Content:   []orchestration.ContentBlock{{Type: "text", Text: "hello world"}},
-			Timestamp: time.Now().Unix(),
+			TurnID:    "turn-1",
+			Status:    orchestration.TurnStatusAccepted,
+			Sequence:  7,
+			Timestamp: time.Now().UnixNano(),
 		}, nil
 	}
 
@@ -901,7 +908,14 @@ func TestOrchestratorPrompt_Success(t *testing.T) {
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorPrompt(rec, req)
 
-	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, http.StatusAccepted, rec.Code)
+
+	var ack orchestration.PromptTurnAck
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ack))
+	assert.Equal(t, "sess-1", ack.SessionID)
+	assert.Equal(t, "turn-1", ack.TurnID)
+	assert.Equal(t, orchestration.TurnStatusAccepted, ack.Status)
+	assert.Equal(t, uint64(7), ack.Sequence)
 }
 
 func TestOrchestratorPrompt_MissingPrompt(t *testing.T) {
@@ -1481,3 +1495,17 @@ func TestOrchestratorCreateTask_WithHostAffinityAndGPU(t *testing.T) {
 
 // Ensure time import doesn't get removed.
 var _ = time.Second
+
+// PromptSessionAsync mirrors the production contract: the turn is acknowledged
+// immediately and its output would flow to the session event log.
+func (m *mockAgentService) PromptSessionAsync(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error) {
+	if m.promptAsyncFunc != nil {
+		return m.promptAsyncFunc(ctx, req)
+	}
+	return &orchestration.PromptTurnAck{
+		SessionID: req.SessionID,
+		TurnID:    "turn-test",
+		Status:    orchestration.TurnStatusAccepted,
+		Sequence:  1,
+	}, nil
+}
