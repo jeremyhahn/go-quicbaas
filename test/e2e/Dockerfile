@@ -17,7 +17,7 @@
 # docker-compose.e2e.yml via additional_contexts, exactly like the integration
 # compose files.
 
-ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf awss3 gcpstorage azureblob minio"
+ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio"
 ARG PLAYWRIGHT_VERSION=v1.49.0-jammy
 
 # ============================================================================

@@ -136,7 +136,7 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile
       args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf awss3 gcpstorage azureblob minio}"
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
     hostname: integration-test
     user: "0:0"
     # Increase memory limit to handle test compilation
@@ -322,7 +322,7 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf awss3 gcpstorage azureblob minio}"
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
         COVER: "${COVER:-}"
     hostname: test-node1
     # Add capabilities required for multicast networking
@@ -450,7 +450,7 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf awss3 gcpstorage azureblob minio}"
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
         COVER: "${COVER:-}"
     hostname: test-node2
     # Add capabilities required for multicast networking
@@ -580,7 +580,7 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf awss3 gcpstorage azureblob minio}"
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
         COVER: "${COVER:-}"
     hostname: test-node3
     # Add capabilities required for multicast networking
@@ -713,7 +713,7 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf awss3 gcpstorage azureblob minio}"
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
         COVER: "${COVER:-}"
     hostname: test-node4
     profiles:
@@ -830,7 +830,7 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
       args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf awss3 gcpstorage azureblob minio}"
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
         COVER: "${COVER:-}"
     hostname: test-node5
     profiles:

@@ -6,7 +6,11 @@ ARG GO_VERSION=1.26
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
-ARG BUILD_TAGS=
+# gms_pure_go is the floor, not a feature: the builder below is CGO_ENABLED=0
+# and dolthub/go-mysql-server's internal/regex has no file satisfying
+# `cgo && !gms_pure_go` without cgo, so the link fails on "build constraints
+# exclude all Go files". Callers passing BUILD_TAGS must keep it in the list.
+ARG BUILD_TAGS=gms_pure_go
 
 # Stage 1: Build stage
 FROM golang:${GO_VERSION}-alpine AS builder

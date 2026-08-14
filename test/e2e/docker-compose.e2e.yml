@@ -19,7 +19,7 @@ services:
         workspace: ../../..
       dockerfile: test/e2e/Dockerfile
       args:
-        BUILD_TAGS: "${E2E_BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf awss3 gcpstorage azureblob minio}"
+        BUILD_TAGS: "${E2E_BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
     environment:
       E2E_PROJECT: "${E2E_PROJECT:-chromium-no-backend}"
       E2E_BACKEND: "${E2E_BACKEND:-ollama}"
