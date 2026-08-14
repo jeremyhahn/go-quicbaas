@@ -117,8 +117,8 @@ func TestIsValidCompareTargetExhaustive(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "invalid similar typo versoin",
-			target:   CompareTarget("versoin"), //nolint:misspell // the misspelling is the test input
+			name:     "invalid similar typo versoin", //nolint:misspell // the misspelling is the case being described
+			target:   CompareTarget("versoin"),       //nolint:misspell // the misspelling is the test input
 			expected: false,
 		},
 	}
