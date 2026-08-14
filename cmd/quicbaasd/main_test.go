@@ -493,11 +493,10 @@ func TestInitConfig_ConfigFileParseFail(t *testing.T) {
 
 // TestPrepareDaemon_DataDirCreationFail tests prepareDaemon when data directory
 // creation fails due to permissions.
+// The path below lives under /proc, where mkdir is refused for every uid --
+// procfs simply does not support it. No root guard is needed or wanted
+// (testing-guidelines.md, Fault Injection).
 func TestPrepareDaemon_DataDirCreationFail(t *testing.T) {
-	// Fail if running as root since root can write anywhere and this test
-	// relies on permission denial.
-	require.NotEqual(t, 0, os.Geteuid(), "Test must not run as root")
-
 	testLog := createTestLogger(t)
 	log = testLog
 
@@ -513,11 +512,8 @@ func TestPrepareDaemon_DataDirCreationFail(t *testing.T) {
 
 // TestPrepareDaemon_SocketDirCreationFail tests prepareDaemon when socket directory
 // creation fails due to permissions.
+// Same /proc trick as the data-dir case: mkdir under procfs fails for root too.
 func TestPrepareDaemon_SocketDirCreationFail(t *testing.T) {
-	// Fail if running as root since root can write anywhere and this test
-	// relies on permission denial.
-	require.NotEqual(t, 0, os.Geteuid(), "Test must not run as root")
-
 	testLog := createTestLogger(t)
 	log = testLog
 
@@ -2949,9 +2945,6 @@ func TestInitConfig_ConfigFileFoundInSearchPath(t *testing.T) {
 // The server start fails because the data directory is made read-only after
 // prepareDaemon creates it, causing TLS/storage initialization to fail.
 func TestRunDaemon_ServerStartError(t *testing.T) {
-	// This test requires non-root to ensure permission denial works.
-	require.NotEqual(t, 0, os.Geteuid(), "Test must not run as root")
-
 	testLog := createTestLogger(t)
 	log = testLog
 
@@ -2968,13 +2961,13 @@ func TestRunDaemon_ServerStartError(t *testing.T) {
 	cfg.Logging.Format = "json"
 	cfg.Logging.Output = "stdout"
 
-	// Make the data directory read-only after prepareDaemon creates it,
-	// so that srv.Start() fails when it tries to write TLS certs or open storage.
-	require.NoError(t, os.Chmod(tempDir, 0o444))
-	defer func() {
-		// Restore permissions so t.TempDir() cleanup succeeds.
-		_ = os.Chmod(tempDir, 0o755)
-	}()
+	// Start puts its TLS material in "<data dir>/certs" (pkg/server/lifecycle.go).
+	// Occupying that name with a regular file makes the directory creation fail
+	// with ENOTDIR, which root cannot walk through -- a read-only data directory
+	// would only stop an unprivileged uid, and CI job containers run as root
+	// (testing-guidelines.md, Fault Injection). prepareDaemon still succeeds
+	// first, so the error genuinely comes from srv.Start().
+	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "certs"), []byte("blocking"), 0o644))
 
 	err := runDaemon("test-start-fail")
 	require.Error(t, err)

@@ -2087,7 +2087,11 @@ func TestCompressFile_InvalidCompressionLevel(t *testing.T) {
 	assert.FileExists(t, testFile+".gz")
 }
 
-func TestCompressFile_ReadOnlyDestDir(t *testing.T) {
+// compressFile writes to "<source>.gz". A directory already sitting on that
+// name makes the create fail with EISDIR, which root does not bypass -- a
+// read-only parent directory would only fail for an unprivileged uid
+// (testing-guidelines.md, Fault Injection).
+func TestCompressFile_DestPathIsDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	logFile := filepath.Join(tmpDir, "audit.log")
 	readOnlyDir := filepath.Join(tmpDir, "readonly")
@@ -2099,13 +2103,11 @@ func TestCompressFile_ReadOnlyDestDir(t *testing.T) {
 	require.NoError(t, err)
 	defer al.Close()
 
-	// Create source file in read-only dir
 	testFile := filepath.Join(readOnlyDir, "test.log")
 	require.NoError(t, os.WriteFile(testFile, []byte("data"), 0o644))
 
-	// Make directory read-only to prevent creating .gz file
-	require.NoError(t, os.Chmod(readOnlyDir, 0o444))
-	defer os.Chmod(readOnlyDir, 0o755)
+	// Occupy the destination name with a directory so the create cannot succeed.
+	require.NoError(t, os.MkdirAll(testFile+".gz", 0o755))
 
 	err = al.compressFile(testFile, gzip.DefaultCompression)
 	require.Error(t, err)

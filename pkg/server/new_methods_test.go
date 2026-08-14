@@ -323,20 +323,21 @@ func TestSaveServerCert_BadCertDirectory(t *testing.T) {
 	assert.Contains(t, err.Error(), "create certs directory")
 }
 
-func TestSaveServerCert_ReadOnlyCertDir(t *testing.T) {
+// A directory standing where the certificate file belongs makes the write fail
+// with EISDIR for every uid; a read-only parent only stops an unprivileged one,
+// and CI job containers run as root (testing-guidelines.md, Fault Injection).
+func TestSaveServerCert_WhenCertPathIsDirectory(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	certDir := filepath.Join(tmpDir, "certs")
 	require.NoError(t, os.MkdirAll(certDir, 0750))
 
 	certPath := filepath.Join(certDir, "server.crt")
+	require.NoError(t, os.MkdirAll(certPath, 0750))
 
 	issued := &xkmsca.IssuedCertificate{
 		CertificatePEM: []byte("cert"),
 	}
-
-	require.NoError(t, os.Chmod(certDir, 0444))
-	t.Cleanup(func() { os.Chmod(certDir, 0755) })
 
 	err := saveServerCert(issued, certPath)
 	require.Error(t, err)

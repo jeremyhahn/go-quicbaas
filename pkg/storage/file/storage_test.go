@@ -14,11 +14,13 @@
 package file
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1406,49 +1408,38 @@ func TestSet_MkdirAllFailure_WhenParentIsFile(t *testing.T) {
 	assert.True(t, errors.Is(err, errors.ErrStorage))
 }
 
-func TestSet_OpenFileFailure_WhenDirIsReadOnly(t *testing.T) {
-	require.NotEqual(t, 0, os.Getuid(), "Permission tests must not run as root")
-
+// Set stages the value in "<path>.tmp" before renaming it into place. A
+// directory already occupying that temp path makes OpenFile return EISDIR, so
+// this reaches the create branch with MkdirAll already past -- and unlike a
+// read-only parent it fails for every uid (testing-guidelines.md, Fault
+// Injection).
+func TestSet_OpenFileFailure_WhenTempPathIsDirectory(t *testing.T) {
 	storage := createTestStorage(t)
 	defer storage.Close()
 
-	// Create a subdirectory and make it read-only
-	readOnlyDir := filepath.Join(storage.config.DataDir, "readonly")
-	require.NoError(t, os.MkdirAll(readOnlyDir, 0755))
-	require.NoError(t, os.Chmod(readOnlyDir, 0555))
-	defer os.Chmod(readOnlyDir, 0755) // Cleanup
+	tmpPath := storage.keyToPath([]byte("readonly/key")) + ".tmp"
+	require.NoError(t, os.MkdirAll(tmpPath, 0755))
 
-	// Try to set a key in the read-only directory
 	err := storage.Set([]byte("readonly/key"), []byte("value"))
 
 	require.Error(t, err)
+	assert.ErrorIs(t, err, syscall.EISDIR)
 	assert.True(t, errors.Is(err, errors.ErrStorage))
 }
 
-func TestSet_RenameFailure_WhenTargetDirIsReadOnly(t *testing.T) {
-	require.NotEqual(t, 0, os.Getuid(), "Permission tests must not run as root")
-
-	tempDir := t.TempDir()
-
-	// Create storage with a writable directory first
-	config := DefaultConfig()
-	config.DataDir = tempDir
-
-	storage, err := New(config, nil)
-	require.NoError(t, err)
+// Set writes a temp file and renames it over the target. Renaming a file onto
+// a non-empty directory fails for every uid, so this reaches the rename branch
+// specifically -- MkdirAll and OpenFile both succeed first.
+func TestSet_RenameFailure_WhenTargetIsNonEmptyDir(t *testing.T) {
+	storage := createTestStorage(t)
 	defer storage.Close()
 
-	// Write a file first so we can verify rename fails later
-	require.NoError(t, storage.Set([]byte("test-key"), []byte("initial")))
+	// Occupy the key's final path with a directory that is not empty.
+	target := storage.keyToPath([]byte("new-key"))
+	require.NoError(t, os.MkdirAll(target, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(target, "occupant"), []byte("x"), 0644))
 
-	// Make the directory read-only after creating the tmp file but before rename
-	// This is tricky to test since rename happens atomically, so we test by making
-	// the dir read-only and trying a new write
-	require.NoError(t, os.Chmod(tempDir, 0555))
-	defer os.Chmod(tempDir, 0755) // Cleanup
-
-	// Try to set a new key - should fail during OpenFile or Rename
-	err = storage.Set([]byte("new-key"), []byte("value"))
+	err := storage.Set([]byte("new-key"), []byte("value"))
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, errors.ErrStorage))
@@ -1473,22 +1464,38 @@ func TestDelete_RemoveFailure_WhenPathIsDirectory(t *testing.T) {
 	assert.True(t, errors.Is(err, errors.ErrStorage))
 }
 
-func TestScan_WalkDirError_WhenSubdirIsUnreadable(t *testing.T) {
-	require.NotEqual(t, 0, os.Getuid(), "Permission tests must not run as root")
-
+// WalkDir reports an error from its own root when that root does not exist,
+// which reaches the walkErr branch for every uid.
+func TestScan_WalkDirError_WhenDataDirIsMissing(t *testing.T) {
 	storage := createTestStorage(t)
 	defer storage.Close()
 
-	// Create a valid key first
 	require.NoError(t, storage.Set([]byte("valid-key"), []byte("valid-value")))
+	require.NoError(t, os.RemoveAll(storage.config.DataDir))
 
-	// Create an unreadable subdirectory
-	unreadableDir := filepath.Join(storage.config.DataDir, "unreadable")
-	require.NoError(t, os.MkdirAll(unreadableDir, 0755))
-	require.NoError(t, os.Chmod(unreadableDir, 0000))
-	defer os.Chmod(unreadableDir, 0755) // Cleanup
+	results, err := storage.Scan(nil, nil)
 
-	// Scan should fail when it encounters the unreadable directory
+	require.Error(t, err)
+	assert.Nil(t, results)
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	assert.True(t, errors.Is(err, errors.ErrStorage))
+}
+
+// WalkDir yields a symlink as a non-directory entry (it lstats), so the
+// callback goes on to ReadFile, which follows the link to a directory and
+// returns EISDIR. Root does not bypass that either.
+func TestScan_ReadFileError_WhenEntryIsSymlinkToDir(t *testing.T) {
+	storage := createTestStorage(t)
+	defer storage.Close()
+
+	require.NoError(t, storage.Set([]byte("unreadable-key"), []byte("value")))
+
+	keyPath := storage.keyToPath([]byte("unreadable-key"))
+	targetDir := filepath.Join(t.TempDir(), "target")
+	require.NoError(t, os.MkdirAll(targetDir, 0755))
+	require.NoError(t, os.Remove(keyPath))
+	require.NoError(t, os.Symlink(targetDir, keyPath))
+
 	results, err := storage.Scan(nil, nil)
 
 	require.Error(t, err)
@@ -1496,44 +1503,33 @@ func TestScan_WalkDirError_WhenSubdirIsUnreadable(t *testing.T) {
 	assert.True(t, errors.Is(err, errors.ErrStorage))
 }
 
-func TestScan_ReadFileError_WhenFileIsUnreadable(t *testing.T) {
-	require.NotEqual(t, 0, os.Getuid(), "Permission tests must not run as root")
-
+func TestSnapshot_WalkDirError_WhenDataDirIsMissing(t *testing.T) {
 	storage := createTestStorage(t)
 	defer storage.Close()
 
-	// Create a valid key
-	require.NoError(t, storage.Set([]byte("unreadable-key"), []byte("value")))
+	require.NoError(t, storage.Set([]byte("valid-key"), []byte("valid-value")))
+	require.NoError(t, os.RemoveAll(storage.config.DataDir))
 
-	// Make the file unreadable
-	keyPath := storage.keyToPath([]byte("unreadable-key"))
-	require.NoError(t, os.Chmod(keyPath, 0000))
-	defer os.Chmod(keyPath, 0644) // Cleanup
-
-	// Scan should fail when it can't read the file
-	results, err := storage.Scan(nil, nil)
+	snapshot, err := storage.CreateSnapshotMap()
 
 	require.Error(t, err)
-	assert.Nil(t, results)
+	assert.Nil(t, snapshot)
+	assert.ErrorIs(t, err, fs.ErrNotExist)
 	assert.True(t, errors.Is(err, errors.ErrStorage))
 }
 
-func TestSnapshot_WalkDirError_WhenSubdirIsUnreadable(t *testing.T) {
-	require.NotEqual(t, 0, os.Getuid(), "Permission tests must not run as root")
-
+func TestSnapshot_ReadFileError_WhenEntryIsSymlinkToDir(t *testing.T) {
 	storage := createTestStorage(t)
 	defer storage.Close()
 
-	// Create a valid key first
-	require.NoError(t, storage.Set([]byte("valid-key"), []byte("valid-value")))
+	require.NoError(t, storage.Set([]byte("unreadable-key"), []byte("value")))
 
-	// Create an unreadable subdirectory
-	unreadableDir := filepath.Join(storage.config.DataDir, "unreadable")
-	require.NoError(t, os.MkdirAll(unreadableDir, 0755))
-	require.NoError(t, os.Chmod(unreadableDir, 0000))
-	defer os.Chmod(unreadableDir, 0755) // Cleanup
+	keyPath := storage.keyToPath([]byte("unreadable-key"))
+	targetDir := filepath.Join(t.TempDir(), "target")
+	require.NoError(t, os.MkdirAll(targetDir, 0755))
+	require.NoError(t, os.Remove(keyPath))
+	require.NoError(t, os.Symlink(targetDir, keyPath))
 
-	// Snapshot should fail when it encounters the unreadable directory
 	snapshot, err := storage.CreateSnapshotMap()
 
 	require.Error(t, err)
@@ -1541,47 +1537,19 @@ func TestSnapshot_WalkDirError_WhenSubdirIsUnreadable(t *testing.T) {
 	assert.True(t, errors.Is(err, errors.ErrStorage))
 }
 
-func TestSnapshot_ReadFileError_WhenFileIsUnreadable(t *testing.T) {
-	require.NotEqual(t, 0, os.Getuid(), "Permission tests must not run as root")
-
+// Restore clears the tree with its own WalkDir before writing; a missing root
+// fails that first pass.
+func TestRestore_WalkDirError_WhenDataDirIsMissing(t *testing.T) {
 	storage := createTestStorage(t)
 	defer storage.Close()
 
-	// Create a valid key
-	require.NoError(t, storage.Set([]byte("unreadable-key"), []byte("value")))
-
-	// Make the file unreadable
-	keyPath := storage.keyToPath([]byte("unreadable-key"))
-	require.NoError(t, os.Chmod(keyPath, 0000))
-	defer os.Chmod(keyPath, 0644) // Cleanup
-
-	// Snapshot should fail when it can't read the file
-	snapshot, err := storage.CreateSnapshotMap()
-
-	require.Error(t, err)
-	assert.Nil(t, snapshot)
-	assert.True(t, errors.Is(err, errors.ErrStorage))
-}
-
-func TestRestore_WalkDirError_WhenSubdirIsUnreadable(t *testing.T) {
-	require.NotEqual(t, 0, os.Getuid(), "Permission tests must not run as root")
-
-	storage := createTestStorage(t)
-	defer storage.Close()
-
-	// Create a valid key first
 	require.NoError(t, storage.Set([]byte("valid-key"), []byte("valid-value")))
+	require.NoError(t, os.RemoveAll(storage.config.DataDir))
 
-	// Create an unreadable subdirectory
-	unreadableDir := filepath.Join(storage.config.DataDir, "unreadable")
-	require.NoError(t, os.MkdirAll(unreadableDir, 0755))
-	require.NoError(t, os.Chmod(unreadableDir, 0000))
-	defer os.Chmod(unreadableDir, 0755) // Cleanup
-
-	// Restore should fail during the clear phase when it encounters the unreadable directory
 	err := storage.Restore(map[string][]byte{"new-key": []byte("new-value")})
 
 	require.Error(t, err)
+	assert.ErrorIs(t, err, fs.ErrNotExist)
 	assert.True(t, errors.Is(err, errors.ErrStorage))
 }
 
@@ -1604,19 +1572,16 @@ func TestRestore_MkdirAllFailure_WhenParentIsFile(t *testing.T) {
 	assert.True(t, errors.Is(err, errors.ErrStorage))
 }
 
-func TestRestore_OpenFileFailure_WhenDirIsReadOnly(t *testing.T) {
-	require.NotEqual(t, 0, os.Getuid(), "Permission tests must not run as root")
-
+// Restore stages each entry through "<path>.tmp". Pre-creating a directory at
+// that temp path makes OpenFile return EISDIR, reaching the create branch after
+// MkdirAll has already succeeded -- and it does so for every uid.
+func TestRestore_OpenFileFailure_WhenTempPathIsDirectory(t *testing.T) {
 	storage := createTestStorage(t)
 	defer storage.Close()
 
-	// Create a subdirectory and make it read-only
-	readOnlyDir := filepath.Join(storage.config.DataDir, "readonly")
-	require.NoError(t, os.MkdirAll(readOnlyDir, 0755))
-	require.NoError(t, os.Chmod(readOnlyDir, 0555))
-	defer os.Chmod(readOnlyDir, 0755) // Cleanup
+	tmpPath := storage.keyToPath([]byte("readonly/key")) + ".tmp"
+	require.NoError(t, os.MkdirAll(tmpPath, 0755))
 
-	// Restore with a key that would go into the read-only directory
 	snapshot := map[string][]byte{
 		"readonly/key": []byte("value"),
 	}
@@ -1627,26 +1592,18 @@ func TestRestore_OpenFileFailure_WhenDirIsReadOnly(t *testing.T) {
 	assert.True(t, errors.Is(err, errors.ErrStorage))
 }
 
-func TestLen_WalkDirError_WhenSubdirIsUnreadable(t *testing.T) {
-	require.NotEqual(t, 0, os.Getuid(), "Permission tests must not run as root")
-
+func TestLen_WalkDirError_WhenDataDirIsMissing(t *testing.T) {
 	storage := createTestStorage(t)
 	defer storage.Close()
 
-	// Create a valid key first
 	require.NoError(t, storage.Set([]byte("valid-key"), []byte("valid-value")))
+	require.NoError(t, os.RemoveAll(storage.config.DataDir))
 
-	// Create an unreadable subdirectory
-	unreadableDir := filepath.Join(storage.config.DataDir, "unreadable")
-	require.NoError(t, os.MkdirAll(unreadableDir, 0755))
-	require.NoError(t, os.Chmod(unreadableDir, 0000))
-	defer os.Chmod(unreadableDir, 0755) // Cleanup
-
-	// Len should fail when it encounters the unreadable directory
 	count, err := storage.Len()
 
 	require.Error(t, err)
 	assert.Equal(t, 0, count)
+	assert.ErrorIs(t, err, fs.ErrNotExist)
 	assert.True(t, errors.Is(err, errors.ErrStorage))
 }
 
@@ -1666,8 +1623,16 @@ func TestPathToKey_ReturnsRelativePathForPathOutsideDataDir(t *testing.T) {
 	assert.True(t, strings.HasPrefix(key, ".."))
 }
 
+// The clear phase only ever calls os.Remove on a regular file, and for uid 0
+// that unlink cannot be made to fail through filesystem shape alone -- there is
+// no ENOTDIR/ENOENT equivalent for "unlink refused". Until FileStorage grows a
+// filesystem seam this branch is only reachable as a normal user, so the test
+// skips under root rather than asserting the environment
+// (testing-guidelines.md, Fault Injection).
 func TestRestore_RemoveFailure_WhenFileInProtectedDir(t *testing.T) {
-	require.NotEqual(t, 0, os.Getuid(), "Permission tests must not run as root")
+	if os.Getuid() == 0 {
+		t.Skip("root bypasses directory write permission; no uid-independent shape for a failing unlink")
+	}
 
 	storage := createTestStorage(t)
 	defer storage.Close()
@@ -3490,22 +3455,21 @@ func TestRestore_MkdirAllError(t *testing.T) {
 // temp file for a snapshot entry fails because the data directory is
 // read-only. The WalkDir phase succeeds (only reads), MkdirAll succeeds
 // (dir already exists), but OpenFile fails due to permission denied.
-func TestRestore_OpenFileError_ReadOnlyDir(t *testing.T) {
-	require.NotEqual(t, 0, os.Getuid(), "Permission tests must not run as root")
+func TestRestore_OpenFileError_WhenTempPathIsDirectory(t *testing.T) {
 	store := createTestFileStorage(t)
 	defer store.Close()
 
-	// Do NOT add any data so WalkDir has nothing to remove (no .json files
-	// to delete). Make the data dir read-only so OpenFile fails.
-	require.NoError(t, os.Chmod(store.config.DataDir, 0555))
-	defer os.Chmod(store.config.DataDir, 0755) //nolint:errcheck // cleanup
+	// Do NOT add any data, so the clear pass has no .json file to remove and
+	// the failure is unambiguously the staging OpenFile. A directory sitting on
+	// the temp path makes that call return EISDIR for any uid.
+	require.NoError(t, os.MkdirAll(store.keyToPath([]byte("key"))+".tmp", 0755))
 
 	snapshot := map[string][]byte{
 		"key": []byte("value"),
 	}
 
 	err := store.Restore(snapshot)
-	assert.Error(t, err, "should fail when data dir is read-only")
+	assert.Error(t, err, "should fail when the staging temp path is a directory")
 }
 
 // TestPathToKey_RelError tests pathToKey when filepath.Rel fails because
@@ -3519,39 +3483,32 @@ func TestPathToKey_RelError(t *testing.T) {
 	assert.Equal(t, "", result, "pathToKey should return empty for unrelateable path")
 }
 
-// TestExists_StatPermissionError tests Exists when os.Stat returns a
-// permission error (not IsNotExist) covering the non-NotExist error path.
-func TestExists_StatPermissionError(t *testing.T) {
-	require.NotEqual(t, 0, os.Getuid(), "Permission tests must not run as root")
+// TestExists_StatError_WhenParentIsFile covers the branch where os.Stat fails
+// with something other than IsNotExist. A regular file used as a path component
+// yields ENOTDIR, which root cannot bypass.
+func TestExists_StatError_WhenParentIsFile(t *testing.T) {
 	store := createTestFileStorage(t)
 	defer store.Close()
 
-	// Create a file inside a subdirectory
-	require.NoError(t, store.Set([]byte("sub/file"), []byte("data")))
-
-	// Remove execute permission on the subdirectory so stat fails
-	// with permission denied (not ENOENT)
-	subDir := filepath.Join(store.config.DataDir, "sub")
-	require.NoError(t, os.Chmod(subDir, 0644))
-	defer os.Chmod(subDir, 0755) //nolint:errcheck // cleanup
+	// "sub" is a regular file, so stat of "sub/file.json" cannot resolve.
+	require.NoError(t, os.WriteFile(filepath.Join(store.config.DataDir, "sub"), []byte("data"), 0644))
 
 	_, err := store.Exists([]byte("sub/file"))
-	assert.Error(t, err, "should fail with permission error on stat")
+	require.Error(t, err, "should fail with ENOTDIR on stat")
+	assert.ErrorIs(t, err, syscall.ENOTDIR)
 }
 
-// TestList_ListKeysError tests List when listKeys fails because the
-// data directory is inaccessible.
-func TestList_ListKeysError(t *testing.T) {
-	require.NotEqual(t, 0, os.Getuid(), "Permission tests must not run as root")
+// TestList_ListKeysError tests List when listKeys fails because the walk root
+// does not exist.
+func TestList_ListKeysError_WhenDataDirIsMissing(t *testing.T) {
 	store := createTestFileStorage(t)
 	defer store.Close()
 
-	// Remove read+execute permission on the data directory
-	require.NoError(t, os.Chmod(store.config.DataDir, 0200))
-	defer os.Chmod(store.config.DataDir, 0755) //nolint:errcheck // cleanup
+	require.NoError(t, os.RemoveAll(store.config.DataDir))
 
 	_, err := store.List(nil)
-	assert.Error(t, err, "should fail when data directory is inaccessible")
+	require.Error(t, err, "should fail when the data directory is missing")
+	assert.ErrorIs(t, err, fs.ErrNotExist)
 }
 
 // =============================================================================

@@ -995,18 +995,17 @@ func TestValidateStorage_ErrorPaths(t *testing.T) {
 		assert.NoError(t, err)
 		assert.True(t, info.IsDir())
 	})
-	t.Run("read-only parent directory", func(t *testing.T) {
-		require.NotEqual(t, 0, os.Getuid(), "Test must not run as root")
+	t.Run("parent is a regular file", func(t *testing.T) {
 		cfg := Default()
 		tmpDir := t.TempDir()
-		// Create a read-only directory
+		// A regular file cannot be a path component, so MkdirAll below returns
+		// ENOTDIR for every uid -- unlike a read-only parent, which root walks
+		// straight through (testing-guidelines.md, Fault Injection).
 		roDir := filepath.Join(tmpDir, "readonly")
-		err := os.Mkdir(roDir, 0o555)
-		require.NoError(t, err)
-		// Try to create subdirectory in read-only dir
+		require.NoError(t, os.WriteFile(roDir, []byte("blocking"), 0o644))
 		cfg.Storage.DataDir = filepath.Join(roDir, "data")
 		cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
-		err = Validate(cfg)
+		err := Validate(cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "storage.data_dir")
 	})
@@ -1213,13 +1212,15 @@ func TestEnsureDirectoryWritable_EdgeCases(t *testing.T) {
 		assert.NoError(t, err)
 		assert.True(t, info.IsDir())
 	})
-	t.Run("read-only directory", func(t *testing.T) {
-		require.NotEqual(t, 0, os.Getuid(), "Test must not run as root")
+	t.Run("write probe blocked by a directory", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		roDir := filepath.Join(tmpDir, "readonly")
-		err := os.Mkdir(roDir, 0o555)
-		require.NoError(t, err)
-		err = v.ensureDirectoryWritable(roDir)
+		require.NoError(t, os.Mkdir(roDir, 0o755))
+		// ensureDirectoryWritable probes with a fixed ".write_test" name, so a
+		// directory of that name makes the create fail with EISDIR for every
+		// uid (testing-guidelines.md, Fault Injection).
+		require.NoError(t, os.Mkdir(filepath.Join(roDir, ".write_test"), 0o755))
+		err := v.ensureDirectoryWritable(roDir)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not writable")
 	})
@@ -2178,15 +2179,18 @@ func TestValidator_EnsureDirectoryWritable_EdgeCases(t *testing.T) {
 		{
 			name: "directory is not writable",
 			setup: func() string {
+				// The write probe uses a fixed ".write_test" name; a directory
+				// there blocks it for every uid, where a read-only mode would
+				// only stop an unprivileged one and CI runs as root
+				// (testing-guidelines.md, Fault Injection).
 				dir := filepath.Join(tmpDir, "readonly-dir-"+t.Name())
-				os.MkdirAll(dir, 0750)
-				os.Chmod(dir, 0444) // Read-only
+				os.MkdirAll(filepath.Join(dir, ".write_test"), 0750)
 				return dir
 			},
 			wantErr: true,
 			cleanup: func() {
 				dir := filepath.Join(tmpDir, "readonly-dir-"+t.Name())
-				os.Chmod(dir, 0750)
+				os.RemoveAll(filepath.Join(dir, ".write_test"))
 			},
 		},
 	}
