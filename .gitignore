@@ -113,3 +113,10 @@ LOCK
 
 # Dockerized e2e artifacts
 /test/e2e/.docker-results/
+
+# compiled binaries and node_modules never enter the module tree
+/quicbaas
+/quicbaasd
+/registry
+cmd/quicbaas/quicbaas
+node_modules/
