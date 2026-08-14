@@ -148,6 +148,8 @@ services:
       dockerfile: test/integration/Dockerfile.node
       args:
         BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
+      secrets:
+        - gomodauth
     hostname: test-node1
     environment:
       - CGO_ENABLED=0
@@ -192,6 +194,8 @@ services:
       dockerfile: test/integration/Dockerfile
       args:
         BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
+      secrets:
+        - gomodauth
     hostname: tenantbarrier-test
     user: "0:0"
     mem_limit: 4g
@@ -229,3 +233,11 @@ networks:
 
 volumes:
   tenantbarrier-data:
+
+# Gitea module-fetch credentials for the image builds (dependency-resolution.md
+# §6). Dockerfile and Dockerfile.node resolve first-party modules by tag and
+# read this; Dockerfile.seal still builds from the `workspace` named context
+# above and does not, which is why that context is still declared here.
+secrets:
+  gomodauth:
+    file: ${GOMODAUTH_ENV:-/tmp/quicbaas-gomodauth.env}

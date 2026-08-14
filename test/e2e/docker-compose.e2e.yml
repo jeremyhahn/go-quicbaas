@@ -15,11 +15,11 @@ services:
   e2e:
     build:
       context: ../..
-      additional_contexts:
-        workspace: ../../..
       dockerfile: test/e2e/Dockerfile
       args:
         BUILD_TAGS: "${E2E_BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
+      secrets:
+        - gomodauth
     environment:
       E2E_PROJECT: "${E2E_PROJECT:-chromium-no-backend}"
       E2E_BACKEND: "${E2E_BACKEND:-ollama}"
@@ -28,3 +28,12 @@ services:
     volumes:
       # Surface Playwright artifacts (traces/screenshots/report) to the host.
       - ./.docker-results:/app/cmd/quicbaas/frontend/test-results
+
+# Gitea module-fetch credentials for the image builds, as a BuildKit secret
+# rather than an env var or build arg (dependency-resolution.md §6). The file
+# is staged by `make integration-test` from the environment the runner injects
+# and is gitignored; when it is absent or empty the builds fall back to the
+# public proxy, which is what happens on GitHub.
+secrets:
+  gomodauth:
+    file: ${GOMODAUTH_ENV:-/tmp/quicbaas-gomodauth.env}

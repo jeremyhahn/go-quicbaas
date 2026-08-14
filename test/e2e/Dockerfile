@@ -4,7 +4,7 @@
 # Playwright browsers, no daemon toolchain. Three stages:
 #
 #   ui-builder   (node)     — builds the TypeScript SDK + Svelte UI dist.
-#   daemon-builder (golang) — reconstructs the go.work workspace (same model as
+#   daemon-builder (golang) — resolves first-party modules from Gitea by tag
 #                             test/integration/Dockerfile), embeds the fresh UI
 #                             dist, and builds quicbaasd.
 #   runner (playwright)     — Playwright image (browsers preinstalled) carrying
@@ -56,69 +56,28 @@ FROM golang:1.26.6-alpine AS daemon-builder
 ARG BUILD_TAGS
 RUN apk add --no-cache git make bash ca-certificates
 
-WORKDIR /workspace
-
-# Sibling repos from the workspace named context (see docker-compose.e2e.yml).
-COPY --from=workspace go-libsignal  ./go-libsignal
-COPY --from=workspace go-objstore   ./go-objstore
-COPY --from=workspace go-qrdb       ./go-qrdb
-COPY --from=workspace go-quicraft   ./go-quicraft
-COPY --from=workspace go-signal     ./go-signal
-COPY --from=workspace go-truststrap ./go-truststrap
-COPY --from=workspace go-xkms       ./go-xkms
-COPY --from=workspace go-codec      ./go-codec
-COPY --from=workspace go-frost      ./go-frost
-COPY . ./go-quicbaas
-
-# Embed the freshly-built UI dist (overrides whatever is committed) into both
-# the go:embed path and the frontend tree.
-COPY --from=ui-builder /src/cmd/quicbaas/frontend/dist ./go-quicbaas/pkg/api/rest/ui/dist
-COPY --from=ui-builder /src/cmd/quicbaas/frontend/dist ./go-quicbaas/cmd/quicbaas/frontend/dist
-
-# Pruned go.work — identical model to test/integration/Dockerfile.
-RUN { \
-        echo 'go 1.26.5'; \
-        echo ''; \
-        echo 'use ('; \
-        echo '	./go-libsignal'; \
-        echo '	./go-objstore'; \
-        echo '	./go-objstore/api/sdks/go'; \
-        echo '	./go-qrdb'; \
-        echo '	./go-qrdb/sdk/go'; \
-        echo '	./go-quicbaas'; \
-        echo '	./go-quicbaas/sdk/go'; \
-        echo '	./go-quicraft'; \
-        echo '	./go-signal'; \
-        echo '	./go-xkms'; \
-        echo '	./go-codec'; \
-        echo '	./go-frost'; \
-        echo '	./go-xkms/sdk/go'; \
-        echo '	./go-xkms/xkey'; \
-        echo ')'; \
-        echo ''; \
-        echo 'replace ('; \
-        echo '	github.com/jeremyhahn/go-libsignal v0.0.0       => ./go-libsignal'; \
-        echo '	github.com/jeremyhahn/go-objstore v0.0.0        => ./go-objstore'; \
-        echo '	github.com/jeremyhahn/go-qrdb v0.0.0            => ./go-qrdb'; \
-        echo '	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0     => ./go-qrdb/sdk/go'; \
-        echo '	github.com/jeremyhahn/go-quicbaas v0.0.0        => ./go-quicbaas'; \
-        echo '	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0 => ./go-quicbaas/sdk/go'; \
-        echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
-        echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
-        echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
-        echo '	github.com/jeremyhahn/go-codec v1.3.0           => ./go-codec'; \
-        echo '	github.com/jeremyhahn/go-frost v0.1.4-alpha     => ./go-frost'; \
-        echo '	github.com/jeremyhahn/go-frost v0.1.6-alpha     => ./go-frost'; \
-        echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
-        echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha  => ./go-objstore'; \
-        echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha      => ./go-xkms'; \
-        echo ')'; \
-    } > go.work
-
 WORKDIR /workspace/go-quicbaas
+
+COPY go.mod go.sum ./
+COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+
+# Gitea credentials arrive as a BuildKit secret, mounted on tmpfs for this RUN
+# alone and sourced rather than exported, so the token reaches neither a layer,
+# image metadata, nor a command line (dependency-resolution.md §6). Optional by
+# design, so the same Dockerfile builds against the public proxy.
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    go mod download
+
+COPY . .
+
+# The built UI is baked into the daemon's embedded asset directories.
+COPY --from=ui-builder /src/cmd/quicbaas/frontend/dist ./pkg/api/rest/ui/dist
+COPY --from=ui-builder /src/cmd/quicbaas/frontend/dist ./cmd/quicbaas/frontend/dist
+
 RUN rm -f pkg/api/rest/debug_integration.go pkg/api/rest/debug_noop.go || true
-RUN rm -f go.sum sdk/go/go.sum
-RUN CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
+RUN CGO_ENABLED=0 GOOS=linux \
     go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd
 
 # ============================================================================
