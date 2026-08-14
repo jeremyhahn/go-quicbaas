@@ -1,0 +1,100 @@
+# Integration suite — the five-node quicbaas cluster against real daemons.
+#
+# Separate from ci.yml on purpose (devops.md §5): this stands up a five-node
+# cluster plus its supporting services in containers, builds the daemon, the
+# CLI and the test-runner images from tagged modules, and takes on the order of
+# an hour. §5's shape for exactly this case is a scheduled workflow with
+# workflow_dispatch and a paths filter, so the per-push gate stays fast and
+# honest while the suite still runs.
+#
+# Why not a job inside ci.yml: Gitea does not honour job-level
+# continue-on-error for the overall run conclusion, so an advisory job there
+# could only lie or hold the whole gate red. Observed on run 367, 2026-08-14.
+#
+# This suite ran dark until 2026-08-14. Its first real execution — once the
+# harness was rebuilt on tagged modules and per-run certificates moved into an
+# in-stack init service — surfaced a defect the unit suite cannot see:
+#
+# KNOWN FAILURE, tracked as #57: Raft never becomes operational. The nodes come
+# up and answer HTTP health checks within five seconds, then the suite warns
+# "Could not verify Raft operations after 60s" and continues, and every gRPC
+# endpoint reports TRANSIENT_FAILURE for the rest of the run. Healthy over
+# HTTP, dead over gRPC is the starting point for that investigation. Until #57
+# is fixed this workflow is expected to be red; that is the point of it being
+# here and not in the gate.
+name: Integration
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  # Gitea has no API to re-run a finished run (ci-template v1.3).
+  workflow_dispatch:
+  push:
+    branches: [ master, develop ]
+    paths:
+      - 'pkg/**'
+      - 'cmd/**'
+      - 'sdk/**'
+      - 'test/integration/**'
+      - '**/Dockerfile*'
+      - 'Makefile'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/integration.yml'
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.26.6'
+
+jobs:
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      # The stack builds several images in one run; the runner's stock free
+      # space is not enough for them plus the toolchain caches.
+      - name: Free up disk space
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker system prune -af --volumes
+          echo "=== Disk space after cleanup ==="
+          df -h
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      # Every service runs in a container with its binary baked in, and the
+      # per-run certificates are produced by an init service into a named
+      # volume, so this step needs nothing from the host but a Docker daemon
+      # (devops.md §4). `make integration-test` stages the module-fetch
+      # credentials for the image builds itself.
+      - name: Run integration tests
+        timeout-minutes: 90
+        run: make integration-test
+
+      - name: Upload integration test results
+        if: always() && github.server_url == 'https://github.com'
+        uses: actions/upload-artifact@v6
+        with:
+          name: integration-test-results
+          path: |
+            *.out
+            *.log
+          retention-days: 7
