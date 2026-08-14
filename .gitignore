@@ -72,7 +72,7 @@ test/benchmark/results/
 test/benchmark/profiles/*.prof
 
 # Generated code
-*.pb.go
+# *.pb.go — generated protobuf IS committed: module consumers cannot run protoc (dependency-resolution.md)
 *_generated.go
 vendor/
 

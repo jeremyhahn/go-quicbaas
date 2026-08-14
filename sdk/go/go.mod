@@ -10,7 +10,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jeremyhahn/go-qrdb v0.1.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.1.0-alpha
-	github.com/jeremyhahn/go-quicbaas v0.1.1-alpha
+	github.com/jeremyhahn/go-quicbaas v0.1.2-alpha
 	github.com/jeremyhahn/go-xkms v0.3.1-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.3.1-alpha
 	github.com/quic-go/quic-go v0.61.0
