@@ -120,3 +120,6 @@ LOCK
 /registry
 cmd/quicbaas/quicbaas
 node_modules/
+
+# example app runtime data (generated key stores; invalid zip paths)
+examples/orchestration/*/data/
