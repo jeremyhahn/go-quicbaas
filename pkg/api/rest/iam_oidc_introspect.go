@@ -18,6 +18,7 @@ package rest
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"net/http"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -81,7 +82,8 @@ func (h *IAMHandler) Introspect(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := provider.Introspect(ctx, introReq)
 	if err != nil {
-		if oauthErr, ok := err.(*iam.OAuthError); ok {
+		oauthErr := &iam.OAuthError{}
+		if errors.As(err, &oauthErr) {
 			RespondOAuthError(w, r, http.StatusBadRequest, &OAuthError{
 				Code:             oauthErr.ErrorCode,
 				ErrorDescription: oauthErr.ErrorDescription,

@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -305,7 +306,7 @@ func (s *BackendFederationStorage) GetLinksByUser(ctx context.Context, userID st
 		_, fullID := decodeTenantID(id)
 		l, err := s.getRouted(ctx, fullID)
 		if err != nil {
-			if err == ErrLinkNotFound {
+			if errors.Is(err, ErrLinkNotFound) {
 				continue
 			}
 			return nil, err

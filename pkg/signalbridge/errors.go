@@ -13,7 +13,10 @@
 
 package signalbridge
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Error is the canonical typed error for the signalbridge package.
 // All public APIs return an *Error (or a wrapped *Error) — no fmt.Errorf
@@ -122,15 +125,14 @@ func wrapError(op string, kind ErrKind, cause error, msg string) *Error {
 // bare errors.Is check, IsKind matches any Error in the chain.
 func IsKind(err error, kind ErrKind) bool {
 	for err != nil {
-		e, ok := err.(*Error)
-		if ok && e.Kind == kind {
-			return true
-		}
-		u, ok := err.(interface{ Unwrap() error })
-		if !ok {
+		var e *Error
+		if !errors.As(err, &e) {
 			return false
 		}
-		err = u.Unwrap()
+		if e.Kind == kind {
+			return true
+		}
+		err = e.Cause
 	}
 	return false
 }

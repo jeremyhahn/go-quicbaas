@@ -15,6 +15,7 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -667,27 +668,33 @@ func (s *projectServiceImpl) ListProjects(ctx context.Context, req *ListProjects
 
 // convertStoreError translates orchestration store errors into service-layer errors.
 func (s *projectServiceImpl) convertStoreError(err error) error {
-	switch e := err.(type) {
-	case *orchestration.ProjectStoreNotFoundError:
+	var (
+		storeNotFound *orchestration.ProjectStoreNotFoundError
+		notFound      *orchestration.ProjectNotFoundError
+		alreadyExists *orchestration.ProjectAlreadyExistsError
+		invalid       *orchestration.ProjectInvalidError
+	)
+	switch {
+	case stderrors.As(err, &storeNotFound):
 		return &ProjectNotFoundError{
-			TenantID:  e.TenantID,
-			ProjectID: e.ProjectID,
-			Name:      e.Name,
+			TenantID:  storeNotFound.TenantID,
+			ProjectID: storeNotFound.ProjectID,
+			Name:      storeNotFound.Name,
 		}
-	case *orchestration.ProjectNotFoundError:
+	case stderrors.As(err, &notFound):
 		// Legacy agent-domain not-found error: only has ProjectID.
 		return &ProjectNotFoundError{
-			ProjectID: e.ProjectID,
+			ProjectID: notFound.ProjectID,
 		}
-	case *orchestration.ProjectAlreadyExistsError:
+	case stderrors.As(err, &alreadyExists):
 		return &ProjectAlreadyExistsError{
-			TenantID: e.TenantID,
-			Name:     e.Name,
+			TenantID: alreadyExists.TenantID,
+			Name:     alreadyExists.Name,
 		}
-	case *orchestration.ProjectInvalidError:
+	case stderrors.As(err, &invalid):
 		return &ProjectInvalidError{
-			Field:   e.Field,
-			Message: e.Message,
+			Field:   invalid.Field,
+			Message: invalid.Message,
 		}
 	default:
 		return err
@@ -711,16 +718,20 @@ func (s *projectServiceImpl) AuthorizeAgent(ctx context.Context, req *AuthorizeA
 
 	err := s.authz.AuthorizeAgentForTenant(ctx, req.TenantID, req.ProjectID, req.AgentID, req.RequiredRole)
 	if err != nil {
-		switch e := err.(type) {
-		case *orchestration.ProjectAccessDeniedError:
+		var (
+			denied      *orchestration.ProjectAccessDeniedError
+			roleInvalid *orchestration.ProjectRoleInvalidError
+		)
+		switch {
+		case stderrors.As(err, &denied):
 			return &ProjectAccessDeniedError{
-				ProjectID:    e.ProjectID,
-				AgentID:      e.AgentID,
-				RequiredRole: e.RequiredRole,
-				ActualRole:   e.ActualRole,
+				ProjectID:    denied.ProjectID,
+				AgentID:      denied.AgentID,
+				RequiredRole: denied.RequiredRole,
+				ActualRole:   denied.ActualRole,
 			}
-		case *orchestration.ProjectRoleInvalidError:
-			return &ProjectRoleInvalidError{Role: e.Role}
+		case stderrors.As(err, &roleInvalid):
+			return &ProjectRoleInvalidError{Role: roleInvalid.Role}
 		default:
 			return err
 		}

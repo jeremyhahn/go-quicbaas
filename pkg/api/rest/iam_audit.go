@@ -17,6 +17,7 @@ package rest
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -181,7 +182,7 @@ func (h *IAMHandler) GetAuditEvent(w http.ResponseWriter, r *http.Request) {
 	// Get event
 	event, err := logger.GetEvent(ctx, tenantID, eventID)
 	if err != nil {
-		if err == iam.ErrAuditEventNotFound {
+		if errors.Is(err, iam.ErrAuditEventNotFound) {
 			RespondIAMError(w, r, http.StatusNotFound,
 				NewIAMAPIError(ErrNotFound, "audit event not found: "+eventID))
 			return

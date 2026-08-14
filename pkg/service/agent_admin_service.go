@@ -15,6 +15,7 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -174,14 +175,14 @@ type AgentStreamCloser interface {
 	CloseAgentStreams(ctx context.Context, agentID string) error
 }
 
-// ErrAgentStreamCloseNotImplemented is returned when no stream-close registry
+// AgentStreamCloseNotImplementedError is returned when no stream-close registry
 // has been wired. Callers should treat this as a non-fatal advisory.
-type ErrAgentStreamCloseNotImplemented struct {
+type AgentStreamCloseNotImplementedError struct {
 	AgentID string
 }
 
 // Error implements the error interface.
-func (e *ErrAgentStreamCloseNotImplemented) Error() string {
+func (e *AgentStreamCloseNotImplementedError) Error() string {
 	return "agent stream close not implemented: no stream registry wired for agent=" + e.AgentID
 }
 
@@ -292,7 +293,7 @@ func (s *agentAdminServiceImpl) DisableAgent(ctx context.Context, req *DisableAg
 	}
 	// NOTE: If no stream-closer is wired, streams will time out naturally once
 	// the agent's token refresh fails after OAuth2 client revocation.
-	// See AgentStreamCloser and ErrAgentStreamCloseNotImplemented for details.
+	// See AgentStreamCloser and AgentStreamCloseNotImplementedError for details.
 
 	// Emit agent.disabled audit event.
 	_ = s.emitAuditEvent(ctx, "agent.disabled", req.TenantID, req.AgentID, true)
@@ -390,12 +391,11 @@ func (s *agentAdminServiceImpl) ListAgentRegistrations(ctx context.Context, req 
 
 // convertRegistryError translates registry errors into service-layer errors.
 func (s *agentAdminServiceImpl) convertRegistryError(err error, tenantID, agentID string) error {
-	switch err.(type) {
-	case *orchestration.AgentNotFoundError:
+	var notFound *orchestration.AgentNotFoundError
+	if stderrors.As(err, &notFound) {
 		return &AgentAdminNotFoundError{TenantID: tenantID, AgentID: agentID}
-	default:
-		return err
 	}
+	return err
 }
 
 // emitAuditEvent emits an audit event when an audit logger is configured.

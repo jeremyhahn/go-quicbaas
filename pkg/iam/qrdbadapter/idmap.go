@@ -15,6 +15,7 @@ package qrdbadapter
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -209,7 +210,7 @@ func (m *BackendIDMap) Unlink(ctx context.Context, tenantID, uuid string) error 
 	ctx = withTenant(ctx, tenantID)
 	qrdbID, err := m.ToQRDB(ctx, tenantID, uuid)
 	if err != nil {
-		if err == ErrIDMapNotFound {
+		if errors.Is(err, ErrIDMapNotFound) {
 			return nil
 		}
 		return err

@@ -14,6 +14,7 @@
 package catalog
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
@@ -377,7 +378,7 @@ func (m *indexManager) listByPrefix(ctx context.Context, prefix []byte, opts *Li
 	if len(startCursor) > 0 {
 		iter.SeekGE(startCursor)
 		// Skip the cursor key itself (we already returned it)
-		if iter.Valid() && string(iter.Key()) == string(startCursor) {
+		if iter.Valid() && bytes.Equal(iter.Key(), startCursor) {
 			iter.Next()
 		}
 	} else {

@@ -17,6 +17,7 @@ package rest
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -151,7 +152,8 @@ func (h *IAMHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 	// Perform authorization
 	resp, err := provider.Authorize(ctx, req)
 	if err != nil {
-		if oauthErr, ok := err.(*iam.OAuthError); ok {
+		oauthErr := &iam.OAuthError{}
+		if errors.As(err, &oauthErr) {
 			RespondOAuthError(w, r, http.StatusBadRequest, &OAuthError{
 				Code:             oauthErr.ErrorCode,
 				ErrorDescription: oauthErr.ErrorDescription,
@@ -275,7 +277,8 @@ func (h *IAMHandler) Token(w http.ResponseWriter, r *http.Request) {
 	// Exchange for tokens
 	tokenResp, err := provider.Token(ctx, req)
 	if err != nil {
-		if oauthErr, ok := err.(*iam.OAuthError); ok {
+		oauthErr := &iam.OAuthError{}
+		if errors.As(err, &oauthErr) {
 			statusCode := http.StatusBadRequest
 			if oauthErr.ErrorCode == ErrInvalidClient {
 				statusCode = http.StatusUnauthorized
@@ -335,7 +338,7 @@ func (h *IAMHandler) UserInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parts := strings.SplitN(authHeader, " ", 2)
-	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
 		RespondOAuthError(w, r, http.StatusUnauthorized,
 			NewInvalidRequestError("invalid authorization header format"))
 		return
@@ -368,7 +371,8 @@ func (h *IAMHandler) UserInfo(w http.ResponseWriter, r *http.Request) {
 	// Get user info
 	userInfo, err := provider.UserInfo(ctx, accessToken)
 	if err != nil {
-		if oauthErr, ok := err.(*iam.OAuthError); ok {
+		oauthErr := &iam.OAuthError{}
+		if errors.As(err, &oauthErr) {
 			RespondOAuthError(w, r, http.StatusUnauthorized, &OAuthError{
 				Code:             oauthErr.ErrorCode,
 				ErrorDescription: oauthErr.ErrorDescription,
@@ -433,7 +437,8 @@ func (h *IAMHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 
 	// Revoke token
 	if err := provider.Revoke(ctx, revokeReq); err != nil {
-		if oauthErr, ok := err.(*iam.OAuthError); ok {
+		oauthErr := &iam.OAuthError{}
+		if errors.As(err, &oauthErr) {
 			RespondOAuthError(w, r, http.StatusBadRequest, &OAuthError{
 				Code:             oauthErr.ErrorCode,
 				ErrorDescription: oauthErr.ErrorDescription,

@@ -18,6 +18,7 @@ package rest
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"net/http"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -139,7 +140,8 @@ func (h *IAMHandler) TokenMTLS(w http.ResponseWriter, r *http.Request) {
 
 	tokenResp, err := provider.TokenMTLS(ctx, mtlsReq)
 	if err != nil {
-		if oauthErr, ok := err.(*iam.OAuthError); ok {
+		oauthErr := &iam.OAuthError{}
+		if errors.As(err, &oauthErr) {
 			statusCode := http.StatusBadRequest
 			if oauthErr.ErrorCode == iam.ErrOAuthInvalidClient {
 				statusCode = http.StatusUnauthorized

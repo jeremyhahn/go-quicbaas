@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -374,7 +375,7 @@ func (s *BackendSessionExtStorage) Delete(ctx context.Context, sessionID string)
 	ctx = withTenant(ctx, tenantID)
 	existing, err := s.getRouted(ctx, fullID)
 	if err != nil {
-		if err == ErrSessionNotFound {
+		if errors.Is(err, ErrSessionNotFound) {
 			return nil // Idempotent delete.
 		}
 		return err
@@ -421,7 +422,7 @@ func (s *BackendSessionExtStorage) listByUser(ctx context.Context, tenantID, use
 		_, fullID := decodeTenantID(id)
 		session, err := s.getRouted(ctx, fullID)
 		if err != nil {
-			if err == ErrSessionNotFound {
+			if errors.Is(err, ErrSessionNotFound) {
 				continue
 			}
 			return nil, err

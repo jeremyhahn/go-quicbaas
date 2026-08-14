@@ -16,6 +16,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	stderrors "errors"
@@ -260,7 +261,7 @@ func isNilInterface(v interface{}) bool {
 	}
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {
-	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface:
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface:
 		return rv.IsNil()
 	}
 	return false
@@ -2036,9 +2037,9 @@ func (t *transactionService) compareVersion(actual, expected uint64, op CompareO
 func (t *transactionService) compareValue(actual, expected []byte, op CompareOperator) bool {
 	switch op {
 	case CompareOperatorEqual:
-		return string(actual) == string(expected)
+		return bytes.Equal(actual, expected)
 	case CompareOperatorNotEqual:
-		return string(actual) != string(expected)
+		return !bytes.Equal(actual, expected)
 	default:
 		return false
 	}

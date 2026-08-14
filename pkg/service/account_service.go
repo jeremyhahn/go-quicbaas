@@ -15,6 +15,7 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -572,33 +573,41 @@ func effectiveRefreshPolicy(policy orchestration.AccountRefreshPolicy) orchestra
 // error as its Cause so errors.Is against the orchestration sentinels still
 // works for callers that care about the specific reason.
 func convertAccountStoreError(err error) error {
-	switch e := err.(type) {
-	case *orchestration.AccountNotFoundError:
-		return &AccountNotFoundError{TenantID: e.TenantID, AccountID: e.AccountID}
-	case *orchestration.AccountInvalidError:
-		return &AccountInvalidError{Field: e.Field, Message: e.Message, Cause: err}
-	case *orchestration.AccountCredentialModeInvalidError:
+	var (
+		notFound      *orchestration.AccountNotFoundError
+		invalid       *orchestration.AccountInvalidError
+		modeInvalid   *orchestration.AccountCredentialModeInvalidError
+		refreshNeeded *orchestration.AccountRefreshTokenRequiredError
+		staticRefresh *orchestration.AccountStaticTokenRefreshableError
+		endpointUnres *orchestration.AccountProviderEndpointUnresolvedError
+	)
+	switch {
+	case stderrors.As(err, &notFound):
+		return &AccountNotFoundError{TenantID: notFound.TenantID, AccountID: notFound.AccountID}
+	case stderrors.As(err, &invalid):
+		return &AccountInvalidError{Field: invalid.Field, Message: invalid.Message, Cause: err}
+	case stderrors.As(err, &modeInvalid):
 		return &AccountInvalidError{
 			Field:   "refresh_policy",
-			Message: "unrecognized credential mode " + e.Mode + " (valid: oauth2, none)",
+			Message: "unrecognized credential mode " + modeInvalid.Mode + " (valid: oauth2, none)",
 			Cause:   err,
 		}
-	case *orchestration.AccountRefreshTokenRequiredError:
+	case stderrors.As(err, &refreshNeeded):
 		return &AccountInvalidError{
 			Field:   "credential.refresh_token",
 			Message: "an oauth2 account must supply a refresh token",
 			Cause:   err,
 		}
-	case *orchestration.AccountStaticTokenRefreshableError:
+	case stderrors.As(err, &staticRefresh):
 		return &AccountInvalidError{
 			Field:   "credential.refresh_token",
 			Message: "a static (none) account must not supply a refresh token",
 			Cause:   err,
 		}
-	case *orchestration.AccountProviderEndpointUnresolvedError:
+	case stderrors.As(err, &endpointUnres):
 		return &AccountInvalidError{
 			Field:   "credential.token_endpoint",
-			Message: "no token endpoint for provider " + string(e.Provider) + ": set it on the account or configure orchestration.account_providers",
+			Message: "no token endpoint for provider " + string(endpointUnres.Provider) + ": set it on the account or configure orchestration.account_providers",
 			Cause:   err,
 		}
 	default:

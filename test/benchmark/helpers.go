@@ -15,6 +15,7 @@
 package benchmark
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -31,6 +32,7 @@ import (
 var (
 	_ = warmupBenchmark
 	_ = warmupServer
+	_ = benchTLSConfig
 )
 
 // benchTLSConfig returns a TLS configuration for benchmark clients.
@@ -452,7 +454,7 @@ func (bs *BenchmarkServer) CompareAndSwap(ctx context.Context, key string, oldVa
 		return false, nil
 	}
 
-	if string(currentValue) != string(oldValue) {
+	if !bytes.Equal(currentValue, oldValue) {
 		return false, nil
 	}
 

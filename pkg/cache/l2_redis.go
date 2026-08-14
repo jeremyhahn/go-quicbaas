@@ -18,6 +18,7 @@ package cache
 import (
 	"context"
 	"crypto/tls"
+	stderrors "errors"
 	"sync"
 	"time"
 
@@ -233,7 +234,9 @@ func NewRedisL2Cache(ctx context.Context, config RedisL2Config, logger interface
 
 	// Verify connection
 	if err := client.Ping(ctx).Err(); err != nil {
-		client.Close()
+		// Nothing useful to do with a close error on a client that never
+		// connected; the ping failure is the error worth reporting.
+		_ = client.Close()
 		return nil, errors.Wrapf(err, errors.ErrUnavailable, "NewRedisL2Cache", "failed to connect to redis")
 	}
 
@@ -266,7 +269,7 @@ func (r *RedisL2Cache) Get(ctx context.Context, key string) ([]byte, error) {
 
 	result, err := r.client.Get(ctx, key).Bytes()
 	if err != nil {
-		if err == redis.Nil {
+		if stderrors.Is(err, redis.Nil) {
 			return nil, errors.NotFound("RedisL2Cache.Get", key)
 		}
 		return nil, errors.Wrapf(err, errors.ErrInternal, "RedisL2Cache.Get", "redis get failed")

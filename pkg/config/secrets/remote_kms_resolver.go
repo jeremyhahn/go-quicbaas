@@ -150,22 +150,12 @@ func (r *RemoteKMSResolver) parseURI(raw string) (host string, path string, err 
 	}
 
 	// Find the first slash after the host portion
-	slashIndex := strings.Index(remainder, "/")
-	if slashIndex == -1 {
+	host, path, found := strings.Cut(remainder, "/")
+	if !found {
 		return "", "", NewInvalidSecretURIError(op, raw, "URI is missing path separator")
 	}
-
-	if slashIndex == 0 {
-		return "", "", NewInvalidSecretURIError(op, raw, "URI is missing host")
-	}
-
-	// Extract host and path
-	host = remainder[:slashIndex]
-	path = remainder[slashIndex+1:]
-
-	// Validate host is not empty
 	if host == "" {
-		return "", "", NewInvalidSecretURIError(op, raw, "URI host cannot be empty")
+		return "", "", NewInvalidSecretURIError(op, raw, "URI is missing host")
 	}
 
 	// Validate path is not empty
