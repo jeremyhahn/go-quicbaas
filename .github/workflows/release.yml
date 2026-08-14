@@ -5,13 +5,21 @@ on:
     tags:
       - 'v*'
 
+# GOPROXY / GOSUMDB are deliberately absent, as in ci.yml. GOPRIVATE comes from
+# the runner (dependency-resolution.md §6) and already exempts
+# github.com/jeremyhahn/* from proxy and checksum database; setting
+# `GOPROXY: direct` and `GOSUMDB: off` here additionally routed every
+# third-party module around proxy.golang.org with sumdb verification off,
+# resolving them from mutable VCS refs. §1 says not to add them.
+#
+# REGISTRY follows the server: ghcr.io does not exist on Gitea and a Gitea token
+# cannot authenticate to it, so releases there go to Gitea's own registry at the
+# web host and port (lessons.md).
 env:
   GO_VERSION: '1.26.6'
-  REGISTRY: ghcr.io
+  REGISTRY: ${{ github.server_url == 'https://github.com' && 'ghcr.io' || '198.51.100.91:3001' }}
   IMAGE_NAME_DAEMON: jeremyhahn/quicbaasd
   IMAGE_NAME_CLI: jeremyhahn/quicbaas
-  GOPROXY: direct
-  GOSUMDB: off
 
 permissions:
   contents: write
@@ -83,13 +91,13 @@ jobs:
           ### Docker Images
           \`\`\`bash
           # QuicBaaS daemon (multi-arch: amd64, arm64)
-          docker pull ghcr.io/jeremyhahn/quicbaasd:${{ steps.get_version.outputs.version }}
+          docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ steps.get_version.outputs.version }}
 
           # QuicBaaS CLI tool (multi-arch: amd64, arm64)
-          docker pull ghcr.io/jeremyhahn/quicbaas:${{ steps.get_version.outputs.version }}
+          docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaas:${{ steps.get_version.outputs.version }}
 
           # FIPS 140-3 compliant daemon (Linux only)
-          docker pull ghcr.io/jeremyhahn/quicbaasd:${{ steps.get_version.outputs.version }}-fips
+          docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ steps.get_version.outputs.version }}-fips
           \`\`\`
 
           ### Verify Checksums
@@ -183,14 +191,18 @@ jobs:
           mkdir -p /workspace/dist
 
           # Build daemon
+          # gms_pure_go: these are CGO_ENABLED=0 builds, and
+          # dolthub/go-mysql-server's internal/regex has no file satisfying
+          # `cgo && !gms_pure_go` without cgo, so the link fails on "build
+          # constraints exclude all Go files". Same tag the Makefile sets.
           echo "Building quicbaasd..."
-          CGO_ENABLED=0 go build -buildvcs=false -ldflags="${LDFLAGS}" \
+          CGO_ENABLED=0 go build -tags gms_pure_go -buildvcs=false -ldflags="${LDFLAGS}" \
             -o /workspace/dist/quicbaasd \
             ./cmd/quicbaasd
 
           # Build CLI
           echo "Building quicbaas CLI..."
-          CGO_ENABLED=0 go build -buildvcs=false -ldflags="${LDFLAGS}" \
+          CGO_ENABLED=0 go build -tags gms_pure_go -buildvcs=false -ldflags="${LDFLAGS}" \
             -o /workspace/dist/quicbaas \
             ./cmd/quicbaas
 
@@ -645,7 +657,7 @@ jobs:
             });
 
             const currentBody = release.data.body || '';
-            const dockerInfo = `\n\n## Docker Images\n\nQuicBaaS Daemon (multi-arch: amd64, arm64):\n\n- \`ghcr.io/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}\`\n\nQuicBaaS CLI (multi-arch: amd64, arm64):\n\n- \`ghcr.io/jeremyhahn/quicbaas:${{ needs.create-release.outputs.version }}\`\n\nQuicBaaS FIPS 140-3 Daemon (multi-arch: amd64, arm64):\n\n- \`ghcr.io/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}-fips\`\n\nAll images support both \`linux/amd64\` and \`linux/arm64\` platforms.\n`;
+            const dockerInfo = `\n\n## Docker Images\n\nQuicBaaS Daemon (multi-arch: amd64, arm64):\n\n- \`${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}\`\n\nQuicBaaS CLI (multi-arch: amd64, arm64):\n\n- \`${{ env.REGISTRY }}/jeremyhahn/quicbaas:${{ needs.create-release.outputs.version }}\`\n\nQuicBaaS FIPS 140-3 Daemon (multi-arch: amd64, arm64):\n\n- \`${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}-fips\`\n\nAll images support both \`linux/amd64\` and \`linux/arm64\` platforms.\n`;
 
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
@@ -678,11 +690,11 @@ jobs:
           echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "# QuicBaaS daemon (multi-Raft distributed KV store)" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ghcr.io/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# QuicBaaS CLI tool" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ghcr.io/jeremyhahn/quicbaas:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaas:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# FIPS 140-3 compliant daemon" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ghcr.io/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}-fips" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}-fips" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
