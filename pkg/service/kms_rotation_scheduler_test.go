@@ -243,13 +243,28 @@ func (m *rotationKMSManager) rotationCount() int {
 	return len(m.rotations)
 }
 
+// lastMetadataUpdate returns a snapshot, not the stored pointer. The scheduler
+// keeps mutating the metadata it handed in -- UpdateStoredMetadata writes
+// RotationPolicy.NextRotation through the same object -- so returning the
+// pointer and releasing the lock let a caller read a field that was being
+// written from the scheduler goroutine. The race detector reports it against
+// waitForCond, which polls exactly that field.
 func (m *rotationKMSManager) lastMetadataUpdate() *kms.KeyMetadata {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.metadataUpds) == 0 {
 		return nil
 	}
-	return m.metadataUpds[len(m.metadataUpds)-1]
+	last := m.metadataUpds[len(m.metadataUpds)-1]
+	if last == nil {
+		return nil
+	}
+	snapshot := *last
+	if last.RotationPolicy != nil {
+		policy := *last.RotationPolicy
+		snapshot.RotationPolicy = &policy
+	}
+	return &snapshot
 }
 
 // buildRotationSchedulerKMS returns a kmsServiceImpl wired to mgr.
