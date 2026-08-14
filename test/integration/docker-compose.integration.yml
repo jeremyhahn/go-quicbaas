@@ -272,7 +272,6 @@ services:
     command: >
       bash -c "
         set -o pipefail;
-        rm -f /workspace/go-quicbaas/go.sum /workspace/go-quicbaas/sdk/go/go.sum &&
         echo 'Waiting for cluster to be fully operational...' &&
         /usr/local/bin/health_check.sh &&
         echo 'Cluster is ready.' &&
