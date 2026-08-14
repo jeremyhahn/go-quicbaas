@@ -459,7 +459,13 @@ jobs:
       # API is GitHub-only, so both steps are guarded. Neither gates -- the
       # gate is the CLI step below, which runs on both servers.
       - name: Run Trivy security scanner (SARIF for code scanning)
-        uses: aquasecurity/trivy-action@0.33.1
+        # @master, matching the two uses in the Trivy job. The pinned "0.33.1"
+        # that used to be here does not exist as a ref, and act_runner resolves
+        # every action in a job before running any step -- including ones behind
+        # an `if:` that will never fire on this server -- so an unresolvable ref
+        # failed the whole Docker job with "reference not found" before a single
+        # step executed.
+        uses: aquasecurity/trivy-action@master
         if: github.server_url == 'https://github.com'
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
