@@ -105,8 +105,12 @@ func TestRunOrchInferenceAggregate_JSONOutput(t *testing.T) {
 
 // TestRunOrchInferenceAggregate_ClientError verifies that a client error is
 // propagated as a non-nil error return.
+// Not parallel: it writes the package-level inferOutputFmt, and running that
+// alongside another parallel test doing the same is a data race the detector
+// reports (against TestRunOrchInferenceStream_ClientError). withInferenceFlags
+// restores the flag afterwards, as the dispatch tests do.
 func TestRunOrchInferenceAggregate_ClientError(t *testing.T) {
-	t.Parallel()
+	withInferenceFlags(t)
 
 	client := &mockOrchestratorClient{
 		inferenceFn: func(_ context.Context, _ *orchestratorSDK.InferenceRequest) (*orchestratorSDK.InferenceResponse, error) {
@@ -227,8 +231,9 @@ func TestRunOrchInferenceStream_JSONOutput(t *testing.T) {
 
 // TestRunOrchInferenceStream_ClientError verifies that a stream dial error is
 // propagated.
+// Not parallel, for the same reason as the aggregate case above.
 func TestRunOrchInferenceStream_ClientError(t *testing.T) {
-	t.Parallel()
+	withInferenceFlags(t)
 
 	client := &mockOrchestratorClient{
 		inferenceStreamFn: func(_ context.Context, _ *orchestratorSDK.InferenceRequest) (<-chan *orchestratorSDK.InferenceChunk, error) {
