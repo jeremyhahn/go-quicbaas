@@ -87,17 +87,20 @@ func TestValidateBootstrapResponse_MissingFieldsReturnRejectedError(t *testing.T
 // TestWriteCredentials_FailsOnReadOnlyDir verifies that writeCredentials
 // returns an EnrollmentCredentialsSaveError when it cannot create temp files
 // due to a read-only directory.
-func TestWriteCredentials_FailsOnReadOnlyDir(t *testing.T) {
+func TestWriteCredentials_FailsWhenParentIsFile(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	// Make the directory read-only so CreateTemp inside writeCredentials fails.
-	if err := os.Chmod(dir, 0o555); err != nil {
-		t.Fatalf("chmod: %v", err)
+	// A regular file cannot also be the directory CreateTemp writes into, so
+	// this fails with ENOTDIR for every uid -- a read-only parent would only
+	// stop an unprivileged one, and CI job containers run as root
+	// (testing-guidelines.md, Fault Injection).
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocked, []byte("blocking"), 0o644); err != nil {
+		t.Fatalf("write blocking file: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
-	path := filepath.Join(dir, "credentials.json")
+	path := filepath.Join(blocked, "credentials.json")
 	creds := &persistedCredentials{
 		ClientID:         "c",
 		ClientSecret:     "s",

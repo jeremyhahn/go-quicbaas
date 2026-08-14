@@ -4289,23 +4289,18 @@ func TestLocalStorage_DownloadGenericError(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create a backup directory but make the data file unreadable
+	// Download opens "<base>/<id>/data". Making "<id>" a regular file means
+	// that open fails with ENOTDIR -- an error that is not IsNotExist, which is
+	// the branch under test, and one no uid can bypass. A mode-000 data file
+	// would only stop an unprivileged reader and CI runs as root
+	// (testing-guidelines.md, Fault Injection).
 	backupID := "test-backup"
-	backupDir := filepath.Join(tmpDir, backupID)
-	err = os.MkdirAll(backupDir, 0o755)
+	err = os.WriteFile(filepath.Join(tmpDir, backupID), []byte("not a directory"), 0o644)
 	require.NoError(t, err)
 
-	dataPath := filepath.Join(backupDir, "data")
-	err = os.WriteFile(dataPath, []byte("test"), 0o000) // No read permissions
-	require.NoError(t, err)
-
-	// Attempt to download should fail with permission error
 	_, err = storage.Download(ctx, backupID)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "open backup data failed")
-
-	// Cleanup
-	os.Chmod(dataPath, 0o644)
 }
 
 // TestAES256GCMEncryptor_InvalidKeyError tests encryption error paths.

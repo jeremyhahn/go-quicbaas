@@ -2770,10 +2770,11 @@ func TestRestore_ReadOnlyDir_95(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	// Make dir read-only
-	err = os.Chmod(tmpDir, 0o500)
-	require.NoError(t, err)
-	defer os.Chmod(tmpDir, 0o700) //nolint:errcheck // cleanup
+	// Occupy the staging temp path with a directory so the OpenFile that
+	// Restore uses to write "key" fails with EISDIR. A read-only data
+	// directory would only stop an unprivileged uid, and CI runs as root
+	// (testing-guidelines.md, Fault Injection).
+	require.NoError(t, os.MkdirAll(store.keyToPath([]byte("key"))+".tmp", 0o755))
 
 	snapshot := map[string][]byte{
 		"key": []byte("value"),
@@ -3086,14 +3087,14 @@ func TestSetUnlocked_MkdirAllError(t *testing.T) {
 	store := createTestFileStorage(t)
 	defer store.Close()
 
-	// Make the data directory read-only to prevent MkdirAll from creating subdirs
-	err := os.Chmod(store.config.DataDir, 0o500)
-	require.NoError(t, err)
-	defer os.Chmod(store.config.DataDir, 0o700) //nolint:errcheck // cleanup
+	// A regular file where "subdir" needs to be a directory: MkdirAll returns
+	// ENOTDIR, which root cannot walk through, unlike a read-only parent
+	// (testing-guidelines.md, Fault Injection).
+	require.NoError(t, os.WriteFile(filepath.Join(store.config.DataDir, "subdir"), []byte("blocking"), 0o644))
 
-	// Try to set a key with a subdirectory that doesn't exist
-	err = store.Set([]byte("subdir/new-key"), []byte("value"))
+	err := store.Set([]byte("subdir/new-key"), []byte("value"))
 	assert.Error(t, err)
+	assert.ErrorIs(t, err, syscall.ENOTDIR)
 }
 
 // ---------------------------------------------------------------------------
@@ -3108,16 +3109,15 @@ func TestRestore_WriteErrorPath(t *testing.T) {
 	err := store.Set([]byte("pre-existing"), []byte("data"))
 	require.NoError(t, err)
 
-	// Now make dir read-only AFTER WalkDir so the file removal succeeds
-	// but writing new data fails
+	// The clear pass still removes "pre-existing"; the write pass then fails
+	// because "new-subdir" is a regular file, so MkdirAll returns ENOTDIR --
+	// an error root cannot bypass, unlike a read-only data directory
+	// (testing-guidelines.md, Fault Injection).
 	snapshot := map[string][]byte{
 		"new-subdir/key": []byte("value"),
 	}
 
-	// Make data dir read-only
-	err = os.Chmod(store.config.DataDir, 0o500)
-	require.NoError(t, err)
-	defer os.Chmod(store.config.DataDir, 0o700) //nolint:errcheck // cleanup
+	require.NoError(t, os.WriteFile(filepath.Join(store.config.DataDir, "new-subdir"), []byte("blocking"), 0o644))
 
 	err = store.Restore(snapshot)
 	assert.Error(t, err)
@@ -3692,12 +3692,14 @@ func TestSetUnlocked_ReadOnlyDir(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	// Make the data directory read-only to force MkdirAll error on nested key
-	require.NoError(t, os.Chmod(readOnlyDir, 0o444))
-	defer os.Chmod(readOnlyDir, 0o755)
+	// "nested" is a regular file, so MkdirAll for "nested/deep" returns
+	// ENOTDIR -- for every uid, unlike a read-only data directory
+	// (testing-guidelines.md, Fault Injection).
+	require.NoError(t, os.WriteFile(filepath.Join(readOnlyDir, "nested"), []byte("blocking"), 0o644))
 
 	err = store.Set([]byte("nested/deep/key"), []byte("value"))
 	require.Error(t, err)
+	assert.ErrorIs(t, err, syscall.ENOTDIR)
 	assert.True(t, errors.Is(err, errors.ErrStorage))
 }
 
@@ -3819,9 +3821,12 @@ func TestRestore_ReadOnlyDir(t *testing.T) {
 	// Write a file so WalkDir has something to encounter
 	require.NoError(t, store.Set([]byte("existing"), []byte("val")))
 
-	// Make read-only to prevent Remove during restore
-	require.NoError(t, os.Chmod(subDir, 0o555))
-	defer os.Chmod(subDir, 0o755)
+	// The clear pass removes "existing" and the write pass then stages "new"
+	// through "<path>.tmp"; a directory sitting there makes that OpenFile
+	// return EISDIR. The original read-only directory targeted the unlink
+	// instead, which root performs happily (testing-guidelines.md, Fault
+	// Injection).
+	require.NoError(t, os.MkdirAll(store.keyToPath([]byte("new"))+".tmp", 0o755))
 
 	err = store.Restore(map[string][]byte{"new": []byte("val")})
 	require.Error(t, err)

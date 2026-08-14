@@ -3633,10 +3633,14 @@ func TestSyslogExporter_SendRemoteWithAllEventFields(t *testing.T) {
 // openLogFile - cover the MkdirAll error path (read-only parent)
 // ---------------------------------------------------------------------------
 
-func TestOpenLogFile_ReadOnlyParent(t *testing.T) {
+// openLogFile does MkdirAll on the file's parent before opening it. A regular
+// file standing in as a path component makes that MkdirAll return ENOTDIR for
+// every uid; a mode-0500 parent only stops an unprivileged one
+// (testing-guidelines.md, Fault Injection).
+func TestOpenLogFile_ParentIsFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	readOnlyDir := filepath.Join(tmpDir, "readonly")
-	err := os.MkdirAll(readOnlyDir, 0o500)
+	err := os.WriteFile(readOnlyDir, []byte("blocking"), 0o644)
 	require.NoError(t, err)
 
 	log := createTestLogger(t)
@@ -3661,6 +3665,15 @@ func TestOpenLogFile_ReadOnlyParent(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewSyslogExporter_EmptyNetworkWithAddress(t *testing.T) {
+	// An empty Network means "local syslog", and NewSyslogExporter connects
+	// before it returns -- so this test needs a syslog socket to exist. A CI
+	// job container has none, which is ambient host state the test cannot
+	// assert its way around (lessons.md, "Tests that depend on ambient host
+	// state"). Skip where the daemon is absent rather than fail there.
+	if _, err := os.Stat("/dev/log"); err != nil {
+		t.Skip("no local syslog socket at /dev/log")
+	}
+
 	log := createTestLogger(t)
 
 	cfg := &SyslogExporterConfig{
@@ -7037,8 +7050,10 @@ func TestAuditLogger_CompressFileDestPermission(t *testing.T) {
 	err = os.WriteFile(roFile, []byte("data"), 0o644)
 	require.NoError(t, err)
 
-	os.Chmod(roDir, 0o555)
-	defer os.Chmod(roDir, 0o755)
+	// compressFile creates "<source>.gz"; a directory already on that name
+	// makes the create fail with EISDIR for every uid, where a read-only
+	// parent would not stop root (testing-guidelines.md, Fault Injection).
+	require.NoError(t, os.MkdirAll(roFile+".gz", 0o755))
 
 	compressErr := al.compressFile(roFile, 6)
 	assert.Error(t, compressErr)
@@ -7330,12 +7345,18 @@ func TestAuditLogger_VerifySignatureWithoutSigning(t *testing.T) {
 	assert.True(t, valid)
 }
 
-// TestAuditLogger_OpenLogFileError tests file opening errors.
+// TestAuditLogger_OpenLogFileError tests file opening errors. The log path is
+// a directory, so openLogFile's MkdirAll succeeds on the parent and the
+// OpenFile under test fails with EISDIR -- for every uid. It used to point at
+// /root/nonexistent/audit.log, which root simply creates, so the error never
+// happened on a CI runner (testing-guidelines.md, Fault Injection).
 func TestAuditLogger_OpenLogFileError(t *testing.T) {
-	// Try to create a file in a non-existent directory with no write permissions
+	logPath := filepath.Join(t.TempDir(), "audit.log")
+	require.NoError(t, os.MkdirAll(logPath, 0o750))
+
 	cfg := &AuditConfig{
 		Enabled: true,
-		File:    "/root/nonexistent/audit.log",
+		File:    logPath,
 	}
 
 	log := createTestLogger(t)
