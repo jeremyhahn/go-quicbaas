@@ -7,9 +7,9 @@ name: CI
 
 on:
   push:
-    branches: [ master, develop ]
+    branches: [main]
   pull_request:
-    branches: [ master, develop ]
+    branches: [main]
   # Gitea has no API to re-run a finished run (ci-template v1.3).
   workflow_dispatch:
 
