@@ -11,17 +11,18 @@
 # continue-on-error for the overall run conclusion, so an advisory job there
 # could only lie or hold the whole gate red. Observed on run 367, 2026-08-14.
 #
-# This suite ran dark until 2026-08-14. Its first real execution — once the
-# harness was rebuilt on tagged modules and per-run certificates moved into an
-# in-stack init service — surfaced a defect the unit suite cannot see:
+# This suite ran dark until 2026-08-14, so its failures are first-execution
+# findings rather than regressions. Tracked as #57.
 #
-# KNOWN FAILURE, tracked as #57: Raft never becomes operational. The nodes come
-# up and answer HTTP health checks within five seconds, then the suite warns
-# "Could not verify Raft operations after 60s" and continues, and every gRPC
-# endpoint reports TRANSIENT_FAILURE for the rest of the run. Healthy over
-# HTTP, dead over gRPC is the starting point for that investigation. Until #57
-# is fixed this workflow is expected to be red; that is the point of it being
-# here and not in the gate.
+# One of them has been fixed and is worth knowing about, because the symptom
+# named the wrong culprit: compose starts an init service once for `up` and
+# again for the later `run`, and the certificate generator regenerated on the
+# second start. That minted a fresh CA under the same subject name while nodes
+# 1-3 were already running on the first one, so every client saw "x509:
+# certificate signed by unknown authority" against an authority it could name
+# by subject. It reads as a broken cluster and is rotated trust. gen-certs is
+# now a no-op when the material is already present; per-run freshness comes
+# from `down --volumes` between runs, not from rewriting a live volume.
 name: Integration
 
 on:

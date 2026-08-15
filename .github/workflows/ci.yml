@@ -158,12 +158,9 @@ jobs:
             });
 
   # The integration suite lives in integration.yml, not here (devops.md §5).
-  # It stands up a five-node cluster in containers -- an hour of work rather
-  # than the seconds this gate is meant to take -- and it is currently red on
-  # a product defect tracked as #57 (Raft never becomes operational; the nodes
-  # answer HTTP health checks and refuse gRPC). Never-wire-red: it stayed in
-  # this gate while the failure was still believed to be harness, and came out
-  # once the harness was proven correct and the defect proven real. Gitea does
+  # It stands up a five-node cluster in containers and takes on the order of an
+  # hour, which is not what this gate is for; that alone is why it is a
+  # workflow of its own. It is also currently red, tracked as #57. Gitea does
   # not honour job-level continue-on-error for a run's conclusion, so an
   # advisory job here could only lie or hold the whole gate red.
 

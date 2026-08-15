@@ -79,6 +79,20 @@ func main() {
 		log.Fatalf("Failed to create output directory %s: %v", outDir, err) //nolint:gosec // CLI tool with controlled input
 	}
 
+	// Regenerating over a complete set would mint a second CA under the same
+	// subject name, leaving nodes that already loaded the first one presenting
+	// leaves the new CA cannot verify. That reads as "x509: certificate signed
+	// by unknown authority" against an authority the client can name, which
+	// looks like a broken cluster rather than rotated trust. Compose starts
+	// this service once for `up` and again for the later `run`, so the second
+	// execution has to be a no-op. Material stays per-run because the volume
+	// is destroyed with `down --volumes` before each run, not because this
+	// program rewrites it.
+	if files := expectedFiles(outDir); allPresent(files) {
+		fmt.Printf("Certificates already present in %s (%d files); leaving them alone\n", outDir, len(files)) //nolint:forbidigo // CLI tool output
+		return
+	}
+
 	// Generate CA key pair and self-signed certificate.
 	caKey, caCertDER, caCert, err := generateCA()
 	if err != nil {
@@ -169,6 +183,35 @@ func main() {
 }
 
 // generateCA creates a self-signed ECDSA P-256 CA certificate.
+// expectedFiles returns every path a complete generation writes into outDir.
+func expectedFiles(outDir string) []string {
+	files := []string{
+		filepath.Join(outDir, "ca.crt"),
+		filepath.Join(outDir, "ca.key"),
+	}
+	for i := 1; i <= nodeCount; i++ {
+		files = append(files,
+			filepath.Join(outDir, fmt.Sprintf("node%d.crt", i)),
+			filepath.Join(outDir, fmt.Sprintf("node%d.key", i)),
+		)
+	}
+	return append(files,
+		filepath.Join(outDir, "admin.crt"),
+		filepath.Join(outDir, "admin.key"),
+	)
+}
+
+// allPresent reports whether every path exists. A partial set is treated as
+// absent so that an interrupted generation is redone rather than half-used.
+func allPresent(files []string) bool {
+	for _, f := range files {
+		if _, err := os.Stat(f); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
 func generateCA() (*ecdsa.PrivateKey, []byte, *x509.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
