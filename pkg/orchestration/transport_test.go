@@ -93,7 +93,7 @@ func TestStdioTransport_SendReceive(t *testing.T) {
 	transport := newStdioTransportFromPipes(clientWrite, clientRead)
 	defer transport.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	resp, err := transport.Send(ctx, "test/method", map[string]string{"key": "value"})
@@ -270,7 +270,7 @@ func TestStdioTransport_InvalidJSON(t *testing.T) {
 		serverWrite.Write(data)
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	resp, err := transport.Send(ctx, "test", nil)
@@ -401,7 +401,7 @@ func TestStdioTransport_SendDoneChannel(t *testing.T) {
 		transport.Close()
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	_, err = transport.Send(ctx, "test", nil)
@@ -520,7 +520,10 @@ func TestStdioTransport_ReadLoopNonNumericID(t *testing.T) {
 		serverWrite.Write(data)
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	// Generous deadline: this test proves non-numeric-ID/blank-line
+	// handling, not latency, and a 2s budget flaked on a loaded CI runner
+	// executing several -race jobs concurrently (runner-log-proven).
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// Send should get the valid response (ID 1)
@@ -564,7 +567,7 @@ func TestStdioTransport_ReadLoopUnmatchedID(t *testing.T) {
 		serverWrite.Write(data)
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	resp, err := transport.Send(ctx, "test", nil)
