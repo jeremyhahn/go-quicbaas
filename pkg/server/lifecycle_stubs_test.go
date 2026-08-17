@@ -26,23 +26,11 @@ package server
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestLifecycle_StopMCPServer_NoOp(t *testing.T) {
-	srv := withTempServer(t)
-	assert.NoError(t, srv.stopMCPServer())
-}
-
-func TestLifecycle_StopQUICServer_NoServerIsNoOp(t *testing.T) {
-	srv := withTempServer(t)
-	srv.quicServer = nil
-	assert.NoError(t, srv.stopQUICServer())
-}
 
 func TestLifecycle_StopRESTServer_NoServerIsNoOp(t *testing.T) {
 	srv := withTempServer(t)
@@ -53,26 +41,6 @@ func TestLifecycle_StopRESTServer_NoServerIsNoOp(t *testing.T) {
 func TestLifecycle_StopEmbedding_NoOp(t *testing.T) {
 	srv := withTempServer(t)
 	assert.NoError(t, srv.stopEmbedding())
-}
-
-func TestLifecycle_StartMCPServer_DisabledIsNoOp(t *testing.T) {
-	srv := withTempServer(t)
-	srv.config.Server.MCP.Enabled = false
-	require.NoError(t, srv.startMCPServer())
-}
-
-func TestLifecycle_StartMCPServer_EnabledReturnsNotCompiled(t *testing.T) {
-	srv := withTempServer(t)
-	srv.config.Server.MCP.Enabled = true
-	err := srv.startMCPServer()
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrMCPNotCompiled))
-}
-
-func TestLifecycle_StartQUICServer_DisabledIsNoOp(t *testing.T) {
-	srv := withTempServer(t)
-	srv.config.Server.QUIC.Enabled = false
-	require.NoError(t, srv.startQUICServer())
 }
 
 func TestLifecycle_StartRESTServer_NoOp(t *testing.T) {

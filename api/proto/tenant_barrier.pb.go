@@ -24,6 +24,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
@@ -997,7 +998,7 @@ var File_api_proto_tenant_barrier_proto protoreflect.FileDescriptor
 
 const file_api_proto_tenant_barrier_proto_rawDesc = "" +
 	"\n" +
-	"\x1eapi/proto/tenant_barrier.proto\x12\x12quicbaas.tenant.v1\x1a\x1bgoogle/protobuf/empty.proto\"\xa9\x01\n" +
+	"\x1eapi/proto/tenant_barrier.proto\x12\x12quicbaas.tenant.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xa9\x01\n" +
 	"\x18TenantBarrierInitRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1e\n" +
 	"\n" +
@@ -1073,16 +1074,16 @@ const file_api_proto_tenant_barrier_proto_rawDesc = "" +
 	"\x14allow_volume_storage\x18\x04 \x01(\bR\x12allowVolumeStorage\x12?\n" +
 	"\x1callow_system_managed_barrier\x18\x05 \x01(\bR\x19allowSystemManagedBarrier\x12.\n" +
 	"\x13allow_dedicated_wal\x18\x06 \x01(\bR\x11allowDedicatedWal\x122\n" +
-	"\x15allowed_barrier_modes\x18\a \x03(\tR\x13allowedBarrierModes2\x94\x06\n" +
-	"\rTenantBarrier\x12c\n" +
-	"\x04Init\x12,.quicbaas.tenant.v1.TenantBarrierInitRequest\x1a-.quicbaas.tenant.v1.TenantBarrierInitResponse\x12P\n" +
-	"\x06Unseal\x12..quicbaas.tenant.v1.TenantBarrierUnsealRequest\x1a\x16.google.protobuf.Empty\x12s\n" +
-	"\vUnsealShare\x123.quicbaas.tenant.v1.TenantBarrierUnsealShareRequest\x1a/.quicbaas.tenant.v1.TenantBarrierUnsealProgress\x12L\n" +
-	"\x04Seal\x12,.quicbaas.tenant.v1.TenantBarrierSealRequest\x1a\x16.google.protobuf.Empty\x12i\n" +
-	"\x06Status\x12..quicbaas.tenant.v1.TenantBarrierStatusRequest\x1a/.quicbaas.tenant.v1.TenantBarrierStatusResponse\x12d\n" +
-	"\x10EnableEncryption\x128.quicbaas.tenant.v1.TenantBarrierEnableEncryptionRequest\x1a\x16.google.protobuf.Empty\x12U\n" +
-	"\fUpdateQuotas\x12-.quicbaas.tenant.v1.UpdateTenantQuotasRequest\x1a\x16.google.protobuf.Empty\x12a\n" +
-	"\x12UpdateEntitlements\x123.quicbaas.tenant.v1.UpdateTenantEntitlementsRequest\x1a\x16.google.protobuf.EmptyB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"\x15allowed_barrier_modes\x18\a \x03(\tR\x13allowedBarrierModes2\xf6\a\n" +
+	"\rTenantBarrier\x12|\n" +
+	"\x04Init\x12,.quicbaas.tenant.v1.TenantBarrierInitRequest\x1a-.quicbaas.tenant.v1.TenantBarrierInitResponse\"\x17\xc2\xf3\x18\x13tenant_barrier:init\x12k\n" +
+	"\x06Unseal\x12..quicbaas.tenant.v1.TenantBarrierUnsealRequest\x1a\x16.google.protobuf.Empty\"\x19\xc2\xf3\x18\x15tenant_barrier:unseal\x12\x8e\x01\n" +
+	"\vUnsealShare\x123.quicbaas.tenant.v1.TenantBarrierUnsealShareRequest\x1a/.quicbaas.tenant.v1.TenantBarrierUnsealProgress\"\x19\xc2\xf3\x18\x15tenant_barrier:unseal\x12e\n" +
+	"\x04Seal\x12,.quicbaas.tenant.v1.TenantBarrierSealRequest\x1a\x16.google.protobuf.Empty\"\x17\xc2\xf3\x18\x13tenant_barrier:seal\x12\x84\x01\n" +
+	"\x06Status\x12..quicbaas.tenant.v1.TenantBarrierStatusRequest\x1a/.quicbaas.tenant.v1.TenantBarrierStatusResponse\"\x19\xc2\xf3\x18\x15tenant_barrier:status\x12\x8a\x01\n" +
+	"\x10EnableEncryption\x128.quicbaas.tenant.v1.TenantBarrierEnableEncryptionRequest\x1a\x16.google.protobuf.Empty\"$\xc2\xf3\x18 tenant_barrier:enable_encryption\x12m\n" +
+	"\fUpdateQuotas\x12-.quicbaas.tenant.v1.UpdateTenantQuotasRequest\x1a\x16.google.protobuf.Empty\"\x16\xc2\xf3\x18\x12tenants:set_quotas\x12\x7f\n" +
+	"\x12UpdateEntitlements\x123.quicbaas.tenant.v1.UpdateTenantEntitlementsRequest\x1a\x16.google.protobuf.Empty\"\x1c\xc2\xf3\x18\x18tenants:set_entitlementsB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_tenant_barrier_proto_rawDescOnce sync.Once

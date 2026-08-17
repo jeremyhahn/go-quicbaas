@@ -56,7 +56,6 @@ type testCluster struct {
 	grpcEndpoint string
 	quicEndpoint string
 	unixSocket   string
-	mcpEndpoint  string
 	client       *http.Client
 	grpcConn     *grpc.ClientConn
 }
@@ -200,14 +199,6 @@ func getUnixSocket() string {
 	return "/var/run/quicbaas/grpc-node1.sock"
 }
 
-// getMCPEndpoint returns the MCP endpoint.
-func getMCPEndpoint() string {
-	if endpoint := os.Getenv("QUICBAAS_NODE1_MCP"); endpoint != "" {
-		return endpoint
-	}
-	return "https://test-node1:8888/mcp"
-}
-
 func getQUICEndpoint() string {
 	if endpoint := os.Getenv("QUICBAAS_NODE1_QUIC"); endpoint != "" {
 		return endpoint
@@ -221,7 +212,6 @@ func setupTestCluster(t *testing.T) *testCluster {
 	grpcEndpoint := getGRPCEndpoint()
 	quicEndpoint := getQUICEndpoint()
 	unixSocket := getUnixSocket()
-	mcpEndpoint := getMCPEndpoint()
 
 	// Create HTTP client that does not follow redirects.
 	// This is important for OAuth2/OIDC testing where we need to inspect
@@ -258,7 +248,6 @@ func setupTestCluster(t *testing.T) *testCluster {
 		grpcEndpoint: grpcEndpoint,
 		quicEndpoint: quicEndpoint,
 		unixSocket:   unixSocket,
-		mcpEndpoint:  mcpEndpoint,
 		client:       httpClient,
 		grpcConn:     grpcConn,
 	}

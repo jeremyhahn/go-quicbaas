@@ -103,6 +103,7 @@ func (v *Validator) Validate(cfg *Config) error {
 	v.validateRaft(&cfg.Raft, &cfg.Server)
 	v.validateSecurity(&cfg.Security)
 	v.validateAuthzPosture(&cfg.Security, &cfg.Server)
+	v.validateNetworkServingTLS(&cfg.Server, &cfg.Security)
 	v.validateAuth(&cfg.Auth)
 	v.validateLogging(&cfg.Logging)
 	v.validateKMS(&cfg.KMS)
@@ -140,13 +141,6 @@ func (v *Validator) validateServer(cfg *ServerConfig) {
 	if cfg.GRPC.Enabled {
 		if cfg.GRPC.Port < 1 || cfg.GRPC.Port > 65535 {
 			v.addError("server.grpc.port", fmt.Sprintf("gRPC port must be between 1 and 65535, got %d", cfg.GRPC.Port))
-		}
-	}
-
-	// Validate QUIC configuration
-	if cfg.QUIC.Enabled {
-		if cfg.QUIC.Port < 1 || cfg.QUIC.Port > 65535 {
-			v.addError("server.quic.port", fmt.Sprintf("QUIC port must be between 1 and 65535, got %d", cfg.QUIC.Port))
 		}
 	}
 
@@ -420,7 +414,7 @@ func (v *Validator) validateSecurity(cfg *SecurityConfig) {
 // compliance regimes (FedRAMP/HIPAA/PCI/IL4-5): a server must never silently
 // reach a fail-open state on a network-reachable surface. When the default-deny
 // authorization gate is disabled (RequireAuthz == false) AND at least one
-// network transport (REST, gRPC, QUIC, MCP) is enabled, startup is REFUSED
+// network transport (REST, gRPC, MCP) is enabled, startup is REFUSED
 // unless the operator has explicitly acknowledged insecure development mode via
 // Security.InsecureDevMode. The Unix domain socket is an in-host transport and
 // is intentionally excluded — it does not expose a network-reachable surface.
@@ -436,9 +430,6 @@ func (v *Validator) validateAuthzPosture(sec *SecurityConfig, server *ServerConf
 	if server.GRPC.Enabled {
 		enabled = append(enabled, "server.grpc")
 	}
-	if server.QUIC.Enabled {
-		enabled = append(enabled, "server.quic")
-	}
 	if server.MCP.Enabled {
 		enabled = append(enabled, "server.mcp")
 	}
@@ -452,6 +443,40 @@ func (v *Validator) validateAuthzPosture(sec *SecurityConfig, server *ServerConf
 			"which would expose a fail-open surface on a network-reachable listener; "+
 			"set security.require_authz=true for production, "+
 			"or set security.insecure_dev_mode=true to explicitly acknowledge running without authorization for local development only",
+		strings.Join(enabled, ", ")))
+}
+
+// validateNetworkServingTLS enforces that network serving requires security
+// TLS. Network serving runs exclusively on the embedded qrdb node's unified
+// multi-protocol server (see (*Config).NetworkServing): whenever
+// server.rest.enabled, server.grpc.enabled, or server.mcp.enabled is true,
+// the node's own listener for that protocol comes up on the configured
+// port — and qrdb's transports are TLS-only, so enabling any of them without
+// security TLS would compose a listener that can never serve a handshake.
+// Per-protocol port range validation is already performed by validateServer;
+// this check only adds the TLS requirement.
+func (v *Validator) validateNetworkServingTLS(server *ServerConfig, sec *SecurityConfig) {
+	if sec.TLSEnabled {
+		return
+	}
+
+	enabled := make([]string, 0, 3)
+	if server.REST.Enabled {
+		enabled = append(enabled, "server.rest.enabled")
+	}
+	if server.GRPC.Enabled {
+		enabled = append(enabled, "server.grpc.enabled")
+	}
+	if server.MCP.Enabled {
+		enabled = append(enabled, "server.mcp.enabled")
+	}
+	if len(enabled) == 0 {
+		return
+	}
+
+	v.addError("security.tls_enabled", fmt.Sprintf(
+		"network serving requires TLS (security.tls_enabled=false) while [%s] are enabled; "+
+			"the embedded qrdb node's unified server transports are TLS-only",
 		strings.Join(enabled, ", ")))
 }
 

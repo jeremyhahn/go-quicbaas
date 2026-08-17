@@ -98,6 +98,22 @@ const (
 	// and the write-strength verb of the family; it must never be conflated
 	// with AttestationVerify.
 	AttestationAttest qrdbsdk.Permission = "attestation:attest"
+
+	// AuditRecord ("audit_events:record") authorizes emitting (writing) a
+	// new event onto the audit chain — the remote-write counterpart to
+	// go-qrdb's own audit:read / audit:query (pkg/permission.AuditRead /
+	// AuditQuery in go-qrdb, the read-strength verbs of go-qrdb's OWN
+	// "audit" resource family). go-qrdb owns "audit" outright (it ships no
+	// write verb of its own — the chain is written in-process by the node's
+	// own subsystems, never over the wire) and
+	// TestAll_DoesNotShadowAQRDBPermission forbids QuicBaaS from adding any
+	// action to a resource family qrdb already owns (the single-PDP,
+	// no-forked-vocabulary rule), so this deliberately lives in its own
+	// "audit_events" resource — adjacent and discoverable, never a
+	// same-named extension of qrdb's family — for the verb a REMOTE caller
+	// (e.g. a downstream platform composing this IAM plane) needs to record
+	// an event via RecordAuditEvent (api/proto/iam/iam.proto).
+	AuditRecord qrdbsdk.Permission = "audit_events:record"
 )
 
 // duty states which of FIPS 140-3 AS10.03's separated duties a contributed
@@ -237,6 +253,35 @@ var contributions = []contribution{
 			qrdbsdk.PermissionRoleAdmin,
 		},
 		duty: dutyCryptoUse,
+	},
+	{
+		// audit:record is granted to Admin and Operator — the day-to-day
+		// service identities that emit their own operational events (the
+		// scenario RecordAuditEvent exists for: a downstream platform's
+		// service identity recording into this IAM plane's chain), mirroring
+		// go-qrdb's own AuditRead/AuditQuery role placement on Admin and
+		// Operator for the read side of the same resource family.
+		//
+		// Deliberately NOT granted to Auditor: FIPS 140-3 AS10.10 gives the
+		// Auditor read-only STATE visibility (the same reasoning
+		// AttestationAttest's comment above states for withholding a write
+		// verb from Auditor); a role whose entire purpose is independent
+		// oversight must never be able to add entries to the record it
+		// oversees. Not granted to SO either — recording an application-level
+		// event is an operational duty, not module governance, so it falls
+		// outside the Security Officer's role by the same reasoning as
+		// AttestationVerify below.
+		permission: AuditRecord,
+		roles: []string{
+			qrdbsdk.PermissionRoleAdmin,
+			qrdbsdk.PermissionRoleOperator,
+		},
+		// Neither governance nor cryptographic use: recording an audit event
+		// touches no key material and does not deconfigure module
+		// state — it is a plain data-plane write, the audit-resource
+		// equivalent of AttestationVerify's read-strength "outside the
+		// Security Officer's duties" classification.
+		duty: dutyOutsideSecurityOfficer,
 	},
 }
 

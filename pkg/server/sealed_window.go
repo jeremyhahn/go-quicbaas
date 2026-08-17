@@ -252,14 +252,6 @@ func (s *Server) runSealedWindow() error {
 		s.stopSealedTransports()
 		return err
 	}
-	if err := s.startSealedQUICServer(); err != nil {
-		s.stopSealedTransports()
-		return err
-	}
-	if err := s.startSealedMCPServer(); err != nil {
-		s.stopSealedTransports()
-		return err
-	}
 
 	s.logger.Info("Sealed-window listeners serving the canonical sealed surface; waiting for unseal")
 
@@ -386,18 +378,6 @@ func (s *Server) startSealedGRPCServer() error {
 // transports over the complete service graph. Idempotent: nil components
 // are skipped.
 func (s *Server) stopSealedTransports() {
-	if s.quicServer != nil {
-		if err := s.stopQUICServer(); err != nil {
-			s.logger.WithError(err).Warn("Failed to stop sealed-window QUIC server")
-		}
-		s.quicServer = nil
-	}
-	if s.mcpServer != nil {
-		if err := s.stopMCPServer(); err != nil {
-			s.logger.WithError(err).Warn("Failed to stop sealed-window MCP server")
-		}
-		s.mcpServer = nil
-	}
 	if s.restServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		if err := s.stopRESTServer(ctx); err != nil {

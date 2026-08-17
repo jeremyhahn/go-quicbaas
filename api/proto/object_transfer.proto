@@ -10,16 +10,22 @@ package quicbaas.v1;
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+
 // ObjectTransferService enables peer-to-peer object data transfer.
 // Used by recovering nodes to fetch objects marked as pending after
 // metadata-only snapshot recovery.
 service ObjectTransferService {
   // FetchObject retrieves object data from a peer's local object store.
-  rpc FetchObject(FetchObjectRequest) returns (FetchObjectResponse);
+  rpc FetchObject(FetchObjectRequest) returns (FetchObjectResponse) {
+      option (qrdb.v1.permission) = "objstore:get";
+  }
 
   // StreamFetchObjects retrieves multiple objects in a single stream.
   // More efficient for bulk recovery after snapshot restoration.
-  rpc StreamFetchObjects(StreamFetchObjectsRequest) returns (stream FetchObjectResponse);
+  rpc StreamFetchObjects(StreamFetchObjectsRequest) returns (stream FetchObjectResponse) {
+      option (qrdb.v1.permission) = "objstore:get";
+  }
 }
 
 // FetchObjectRequest requests object data from a peer.

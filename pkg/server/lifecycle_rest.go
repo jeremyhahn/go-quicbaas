@@ -62,7 +62,15 @@ var (
 	restShutdownFn = func(srv *restapi.Server, ctx context.Context) error { return srv.Shutdown(ctx) }
 )
 
-// startRESTServer initializes and starts the REST server.
+// startRESTServer initializes the REST server WITHOUT starting a TCP
+// listener. REST network serving (server.rest.enabled) now runs exclusively
+// on the embedded qrdb node's own unified-server REST/HTTP3 listener (see
+// (*config.Config).NetworkServing and pkg/server/qrdb_node.go's
+// buildQRDBConfig/unifiedModuleServerOptions), which already owns
+// server.rest.port. This mirrors lifecycle_mcp.go's buildMCPServer: quicbaas
+// builds the fully-wired, non-listening *restapi.Server so ModuleRESTServer
+// can hand its handler surface to the unified server's RegisterHTTP
+// (pkg/apimodule/module_http.go), but starts no listener of its own.
 func (s *Server) startRESTServer() error {
 	// Skip in embedded mode
 	if s.config.Server.Embedded {
@@ -75,8 +83,31 @@ func (s *Server) startRESTServer() error {
 		return nil
 	}
 
-	s.logger.Info("Initializing REST server...")
+	s.logger.Info("Initializing REST server (unified-server binding, no local listener)...")
 
+	restServer, err := s.buildRESTServer()
+	if err != nil {
+		return err
+	}
+
+	s.restServer = restServer
+
+	// Wire mTLS authenticators from operator config (rest && iam builds only;
+	// other build combinations compile a no-op stub).
+	if err := s.wireIAMMTLSAuthenticators(); err != nil {
+		return err
+	}
+
+	s.logger.Info("REST server bound to the unified-server module surface")
+	return nil
+}
+
+// buildRESTServer assembles a fully wired *restapi.Server from the composed
+// server state WITHOUT starting a listener. It is shared by the legacy REST
+// listener (startRESTServer) and the unified-API-server ServiceModule's lazy
+// REST binding (ModuleRESTServer), so both surfaces are built from identical
+// wiring.
+func (s *Server) buildRESTServer() (*restapi.Server, error) {
 	// Clone TLS config to avoid concurrent writes from HTTP/2 setup
 	// racing with other servers (QUIC, gRPC) that share s.tlsConfig.
 	clonedTLSConfig := cloneTLSConfig(s.tlsConfig)
@@ -87,7 +118,7 @@ func (s *Server) startRESTServer() error {
 	// here indicates a malformed or missing PEM file and causes startup to abort.
 	if clonedTLSConfig != nil {
 		if err := appendOperatorClientCAsFn(s, clonedTLSConfig); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -96,7 +127,7 @@ func (s *Server) startRESTServer() error {
 	// browser so the server can read r.TLS.PeerCertificates[0] in the PIV handler.
 	if clonedTLSConfig != nil && s.config.IAM.PIVLogin.Enabled {
 		if err := appendPIVClientCAsFn(s, clonedTLSConfig); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -137,6 +168,8 @@ func (s *Server) startRESTServer() error {
 		SPIFFETrustDomain: s.config.IAM.SPIFFETrustDomain,
 		// RFC 7591 Dynamic Client Registration policy (disabled by default).
 		IAMDynamicClientRegistration: s.config.IAM.DynamicClientRegistration,
+		// RFC 9728 protected-resource metadata policy (disabled by default),
+		MCPAuthorization: s.config.Server.MCP.Authorization,
 	}
 
 	// Wire the home-realm discovery resolver over the shared/system store so
@@ -147,9 +180,9 @@ func (s *Server) startRESTServer() error {
 	// Create REST server using QuicBaaS facade
 	restServer, err := newREST(s.quicBaaSService, restConfig, s.logger)
 	if err != nil {
-		return &qberrors.QBError{
+		return nil, &qberrors.QBError{
 			Code: qberrors.ErrInternal,
-			Op:   "server.startRESTServer",
+			Op:   "server.buildRESTServer",
 			Err:  &ServerCauseError{Message: "failed to create REST server", Cause: err},
 		}
 	}
@@ -165,9 +198,9 @@ func (s *Server) startRESTServer() error {
 	}
 	restKVShards := kvShards(s.config.Server.Shards, restVectorShardID, s.config.TimeSeries.ShardID, restKMSShardID)
 	if err := validateRouting(restKVShards, s.config.Server.EntityShardPins); err != nil {
-		return &qberrors.QBError{
+		return nil, &qberrors.QBError{
 			Code: qberrors.ErrConfiguration,
-			Op:   "server.startRESTServer",
+			Op:   "server.buildRESTServer",
 			Err:  &ServerCauseError{Message: "invalid routing config", Cause: err},
 		}
 	}
@@ -232,32 +265,19 @@ func (s *Server) startRESTServer() error {
 		restServer.SetClusterSecretHandler(delivery.Handler())
 	}
 
-	// Wire the credential management service into the REST server so the
-	// /v1/credentials/* endpoints serve real responses. The service is the
-	// same instance the embedded SDK transport dispatches Security().
-	// Credentials() calls to, ensuring a uniform credential surface across
-	// every transport.
-	if s.ceremonyServices != nil && s.ceremonyServices.Credential != nil {
-		restServer.SetCredentialService(s.ceremonyServices.Credential)
-		s.logger.Info("Credential service wired into REST server")
-	}
-
-	// Wire the qrdb user + user auth-factor services into the REST server so
-	// the /users/by-username and /v1/users/factors/* wire endpoints (which
-	// the qrdb SDK factor surface targets) serve real responses. The lazy
-	// proxies resolve the embedded node servicer per call, so the surface
-	// follows the node's sealed/unsealed state on BOTH the seal-enabled and
-	// seal-disabled boot paths and always operates on the SAME user /
-	// UserAuthFactor stores the unified-login ceremony resolves against.
-	restServer.SetUserService(newQRDBUserServicerProxy(s))
-	restServer.SetUserAuthFactorService(newQRDBUserAuthFactorServicerProxy(s))
-	s.logger.Info("qrdb user and user auth-factor services wired into REST server")
+	// The credential management service and the qrdb user + user
+	// auth-factor services are wired into the MCP server (lifecycle_mcp.go)
+	// but NOT the REST server: go-qrdb's unified REST server natively serves
+	// /v1/credentials, /users/by-username, and /v1/users/factors/* on the
+	// same listener, so a quicbaas-side REST re-serving of those paths would
+	// only shadow or race qrdb's own handlers. MCP has no equivalent native
+	// surface from qrdb, so the MCP tool registry keeps its own wiring.
 
 	// Wire barrier and ceremony services into the REST server so the
-	// root-level /v1/barrier/* and /v1/ceremony/* endpoints (which the qrdb
-	// SDK REST sub-client targets) serve real responses. These are the same
-	// facades the gRPC/QUIC/MCP transports use, keeping barrier/ceremony
-	// behaviour symmetric across every transport.
+	// canonical /api/v1/barrier/* and /api/v1/init/* endpoints serve real
+	// responses. These are the same facades the gRPC/QUIC/MCP transports
+	// use, keeping barrier/ceremony behaviour symmetric across every
+	// transport.
 	barrierSvc, ceremonySvc := s.buildBarrierCeremonyServices()
 	restServer.SetBarrierService(barrierSvc)
 	restServer.SetCeremonyService(ceremonySvc)
@@ -284,19 +304,21 @@ func (s *Server) startRESTServer() error {
 		s.logger.Info("Seal service wired into service facade")
 	}
 
-	// Wire the RBAC authorization middleware onto the REST server. This mirrors
-	// the MCP transport (configureMCPAuth in lifecycle_mcp.go): the same OIDC
-	// tokens are validated and the same role model enforced, so an
-	// authenticated-but-unprivileged caller is denied protected /api/v1
-	// endpoints with 403 while public routes (health, login, oauth2/token,
-	// activation) stay open. SetAuthorizationService rebuilds the router with
-	// the middleware installed, so it MUST run before Start. The call is a
-	// no-op when IAM/OIDC is unavailable (see the rest && !iam stub),
+	// Wire the module's qrdb ModuleAuthFallback seam (pkg/apimodule
+	// module_http.go AuthenticateHTTP, backed by
+	// pkg/api/rest/auth_support.go Server.AuthenticateHTTP): a caller
+	// reaching a unified-API-server module route WITHOUT a qrdb-authenticated
+	// identity is authenticated by the same central platform-token Validator
+	// every transport shares, then authorized by qrdb's ONE RBAC authorizer
+	// (store-resolved roles unioned with the token's ScopePermissions).
+	// Gated by SecurityConfig.RequireAuthz (a no-op when false, mirroring
+	// the gRPC/QUIC/MCP transports); the call is also a no-op when IAM/OIDC
+	// is unavailable under RequireAuthz=false (see the rest && !iam stub),
 	// preserving the prior no-authz behaviour for storage-less / embedded
-	// boots. Under RequireAuthz gate construction is fail-closed: a
+	// boots. Under RequireAuthz=true gate construction is fail-closed: a
 	// returned *AuthzGateConstructionError aborts startup.
 	if err := s.configureRESTAuthz(restServer); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Install the probe-driven sealed-window gate. A pass-through while the
@@ -306,26 +328,46 @@ func (s *Server) startRESTServer() error {
 	restServer.SetSealedWindowGate(s.SealedWindowProbe(), s.OperationalProbe(),
 		qbsealedwindow.RESTAllowlist())
 
-	// Start REST server
-	address := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.REST.Port)
-	if err := restServer.Start(address); err != nil {
-		return &qberrors.QBError{
-			Code: qberrors.ErrInternal,
-			Op:   "server.startRESTServer",
-			Err:  &ServerCauseError{Message: "failed to start REST server", Cause: err},
+	return restServer, nil
+}
+
+// ModuleRESTServer resolves the *restapi.Server backing the unified-API-
+// server module's HTTP surface (pkg/apimodule RegisterHTTP). It prefers the
+// running legacy REST server so both surfaces share one handler state; when
+// the legacy REST listener is disabled it lazily constructs a non-listening
+// restapi.Server from the identical configuration (buildRESTServer).
+// Returns nil while the QuicBaaS facade is still composing — module routes
+// answer 503 until then.
+func (s *Server) ModuleRESTServer() *restapi.Server {
+	s.mu.RLock()
+	if s.restServer != nil {
+		srv := s.restServer
+		s.mu.RUnlock()
+		return srv
+	}
+	composing := s.quicBaaSService == nil
+	s.mu.RUnlock()
+	if composing {
+		return nil
+	}
+
+	s.moduleRESTOnce.Do(func() {
+		srv, err := s.buildRESTServer()
+		if err != nil {
+			s.logger.Errorf("module REST binding: server construction failed: %v", err)
+			return
 		}
+		s.mu.Lock()
+		s.moduleREST = srv
+		s.mu.Unlock()
+	})
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.moduleREST != nil {
+		return s.moduleREST
 	}
-
-	s.restServer = restServer
-
-	// Wire mTLS authenticators from operator config (rest && iam builds only;
-	// other build combinations compile a no-op stub).
-	if err := s.wireIAMMTLSAuthenticators(); err != nil {
-		return err
-	}
-
-	s.logger.Infof("REST server started on %s", address)
-	return nil
+	return s.restServer
 }
 
 // cloneTLSConfig returns a clone of cfg, or nil if cfg is nil.

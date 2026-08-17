@@ -1,4 +1,4 @@
-//go:build !quic
+//go:build !quic || !rest
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC

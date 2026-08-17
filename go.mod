@@ -22,12 +22,13 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-libsignal v0.1.1-alpha
 	github.com/jeremyhahn/go-objstore v0.2.1-alpha
-	github.com/jeremyhahn/go-qrdb v0.4.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.4.0-alpha
-	github.com/jeremyhahn/go-quicbaas/sdk/go v0.1.2-alpha
-	github.com/jeremyhahn/go-xkms v0.4.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.4.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.5.8-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.5.8-alpha
+	github.com/jeremyhahn/go-quicbaas/sdk/go v0.2.0-alpha
+	github.com/jeremyhahn/go-xkms v0.7.2-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.7.2-alpha
 	github.com/klauspost/compress v1.18.4
+	github.com/mark3labs/mcp-go v0.45.0
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
 	github.com/mochi-mqtt/server/v2 v2.7.9
 	github.com/prometheus/client_golang v1.23.2
@@ -98,7 +99,7 @@ require (
 	github.com/jeremyhahn/go-frost v0.1.7-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.4.2-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.1.2-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.4.0-alpha // indirect
+	github.com/jeremyhahn/go-xkms/xkey v0.7.1-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
@@ -110,7 +111,6 @@ require (
 	github.com/leaanthony/u v1.1.1 // indirect
 	github.com/lestrrat-go/strftime v1.2.0 // indirect
 	github.com/mailru/easyjson v0.9.2 // indirect
-	github.com/mark3labs/mcp-go v0.45.0 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/minio/minlz v1.1.0 // indirect

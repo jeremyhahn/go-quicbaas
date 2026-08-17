@@ -10,6 +10,8 @@ package quicbaas.kms.v1;
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+
 // =============================================================================
 // Key Management Service
 // =============================================================================
@@ -19,90 +21,144 @@ option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 // with comprehensive access control and audit logging.
 service KeyManagement {
   // GenerateKey creates a new cryptographic key with specified parameters.
-  rpc GenerateKey(GenerateKeyRequest) returns (GenerateKeyResponse);
+  rpc GenerateKey(GenerateKeyRequest) returns (GenerateKeyResponse) {
+      option (qrdb.v1.permission) = "keys:create";
+  }
 
   // ImportKey imports an externally generated key into the KMS.
-  rpc ImportKey(ImportKeyRequest) returns (ImportKeyResponse);
+  rpc ImportKey(ImportKeyRequest) returns (ImportKeyResponse) {
+      option (qrdb.v1.permission) = "keys:import";
+  }
 
   // GetKey retrieves key material or public key by key ID.
-  rpc GetKey(GetKeyRequest) returns (GetKeyResponse);
+  rpc GetKey(GetKeyRequest) returns (GetKeyResponse) {
+      option (qrdb.v1.permission) = "keys:get";
+  }
 
   // GetPublicKey retrieves the DER-encoded public key component of an
   // asymmetric key without exposing private key material.
-  rpc GetPublicKey(GetPublicKeyRequest) returns (GetPublicKeyResponse);
+  rpc GetPublicKey(GetPublicKeyRequest) returns (GetPublicKeyResponse) {
+      option (qrdb.v1.permission) = "keys:get";
+  }
 
   // ListKeys returns all keys accessible to the requester with pagination.
-  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse) {
+      option (qrdb.v1.permission) = "keys:list";
+  }
 
   // ListKeyVersions returns all versions of a key.
-  rpc ListKeyVersions(ListKeyVersionsRequest) returns (ListKeyVersionsResponse);
+  rpc ListKeyVersions(ListKeyVersionsRequest) returns (ListKeyVersionsResponse) {
+      option (qrdb.v1.permission) = "keys:list";
+  }
 
   // RotateKey creates a new version of an existing key.
-  rpc RotateKey(RotateKeyRequest) returns (RotateKeyResponse);
+  rpc RotateKey(RotateKeyRequest) returns (RotateKeyResponse) {
+      option (qrdb.v1.permission) = "keys:rotate";
+  }
 
   // RevokeKey marks a key version as revoked and unusable.
-  rpc RevokeKey(RevokeKeyRequest) returns (RevokeKeyResponse);
+  rpc RevokeKey(RevokeKeyRequest) returns (RevokeKeyResponse) {
+      option (qrdb.v1.permission) = "keys:delete";
+  }
 
   // DeleteKey permanently removes a key and all its versions.
-  rpc DeleteKey(DeleteKeyRequest) returns (DeleteKeyResponse);
+  rpc DeleteKey(DeleteKeyRequest) returns (DeleteKeyResponse) {
+      option (qrdb.v1.permission) = "keys:delete";
+  }
 
   // UpdateKeyStatus enables or disables a key or key version.
-  rpc UpdateKeyStatus(UpdateKeyStatusRequest) returns (UpdateKeyStatusResponse);
+  rpc UpdateKeyStatus(UpdateKeyStatusRequest) returns (UpdateKeyStatusResponse) {
+      option (qrdb.v1.permission) = "keys:rotate";
+  }
 
   // GetKeyMetadata retrieves metadata for a key without exposing key material.
-  rpc GetKeyMetadata(GetKeyMetadataRequest) returns (GetKeyMetadataResponse);
+  rpc GetKeyMetadata(GetKeyMetadataRequest) returns (GetKeyMetadataResponse) {
+      option (qrdb.v1.permission) = "keys:get";
+  }
 
   // UpdateKeyMetadata updates mutable metadata fields for a key.
-  rpc UpdateKeyMetadata(UpdateKeyMetadataRequest) returns (UpdateKeyMetadataResponse);
+  rpc UpdateKeyMetadata(UpdateKeyMetadataRequest) returns (UpdateKeyMetadataResponse) {
+      option (qrdb.v1.permission) = "keys:rotate";
+  }
 
   // SetKeyPolicy sets the access control policy for a key.
-  rpc SetKeyPolicy(SetKeyPolicyRequest) returns (SetKeyPolicyResponse);
+  rpc SetKeyPolicy(SetKeyPolicyRequest) returns (SetKeyPolicyResponse) {
+      option (qrdb.v1.permission) = "keys:rotate";
+  }
 
   // GetKeyPolicy retrieves the access control policy for a key.
-  rpc GetKeyPolicy(GetKeyPolicyRequest) returns (GetKeyPolicyResponse);
+  rpc GetKeyPolicy(GetKeyPolicyRequest) returns (GetKeyPolicyResponse) {
+      option (qrdb.v1.permission) = "keys:get";
+  }
 
   // DeleteKeyPolicy removes the access control policy for a key, restoring
   // the default-allow-all behaviour for authenticated principals.
-  rpc DeleteKeyPolicy(DeleteKeyPolicyRequest) returns (DeleteKeyPolicyResponse);
+  rpc DeleteKeyPolicy(DeleteKeyPolicyRequest) returns (DeleteKeyPolicyResponse) {
+      option (qrdb.v1.permission) = "keys:delete";
+  }
 
   // SetKeyRotationPolicy sets or replaces the automatic rotation policy for a key.
-  rpc SetKeyRotationPolicy(SetKeyRotationPolicyRequest) returns (SetKeyRotationPolicyResponse);
+  rpc SetKeyRotationPolicy(SetKeyRotationPolicyRequest) returns (SetKeyRotationPolicyResponse) {
+      option (qrdb.v1.permission) = "keys:rotate";
+  }
 
   // GetKeyRotationPolicy retrieves the current automatic rotation policy for a key.
-  rpc GetKeyRotationPolicy(GetKeyRotationPolicyRequest) returns (GetKeyRotationPolicyResponse);
+  rpc GetKeyRotationPolicy(GetKeyRotationPolicyRequest) returns (GetKeyRotationPolicyResponse) {
+      option (qrdb.v1.permission) = "keys:get";
+  }
 
   // DeleteKeyRotationPolicy removes the rotation policy for a key, disabling
   // automatic rotation.
-  rpc DeleteKeyRotationPolicy(DeleteKeyRotationPolicyRequest) returns (DeleteKeyRotationPolicyResponse);
+  rpc DeleteKeyRotationPolicy(DeleteKeyRotationPolicyRequest) returns (DeleteKeyRotationPolicyResponse) {
+      option (qrdb.v1.permission) = "keys:delete";
+  }
 
   // GetSupportedAlgorithms returns the list of cryptographic algorithms
   // supported by the current backend. Use this to check if specific algorithms
   // like ChaCha20-Poly1305 are available before attempting operations.
-  rpc GetSupportedAlgorithms(GetSupportedAlgorithmsRequest) returns (GetSupportedAlgorithmsResponse);
+  rpc GetSupportedAlgorithms(GetSupportedAlgorithmsRequest) returns (GetSupportedAlgorithmsResponse) {
+      option (qrdb.v1.permission) = "keys:list";
+  }
 
   // BackendStatus returns health and capability information about the KMS backend.
-  rpc BackendStatus(BackendStatusRequest) returns (BackendStatusResponse);
+  rpc BackendStatus(BackendStatusRequest) returns (BackendStatusResponse) {
+      option (qrdb.v1.permission) = "backends:read";
+  }
 
   // BackendTest performs a seal/unseal test cycle to verify backend functionality.
-  rpc BackendTest(BackendTestRequest) returns (BackendTestResponse);
+  rpc BackendTest(BackendTestRequest) returns (BackendTestResponse) {
+      option (qrdb.v1.permission) = "backends:read";
+  }
 
   // ExportKey exports a key wrapped with a wrapping key.
-  rpc ExportKey(ExportKeyRequest) returns (ExportKeyResponse);
+  rpc ExportKey(ExportKeyRequest) returns (ExportKeyResponse) {
+      option (qrdb.v1.permission) = "keys:export";
+  }
 
   // UnwrapKey imports a wrapped key into the KMS.
-  rpc UnwrapKey(UnwrapKeyRequest) returns (UnwrapKeyResponse);
+  rpc UnwrapKey(UnwrapKeyRequest) returns (UnwrapKeyResponse) {
+      option (qrdb.v1.permission) = "keys:unwrap";
+  }
 
   // SetKeySafety configures AEAD safety limits for a key.
-  rpc SetKeySafety(SetKeySafetyRequest) returns (SetKeySafetyResponse);
+  rpc SetKeySafety(SetKeySafetyRequest) returns (SetKeySafetyResponse) {
+      option (qrdb.v1.permission) = "keys:rotate";
+  }
 
   // ClearKeySafety removes custom AEAD safety limits from a key.
-  rpc ClearKeySafety(ClearKeySafetyRequest) returns (ClearKeySafetyResponse);
+  rpc ClearKeySafety(ClearKeySafetyRequest) returns (ClearKeySafetyResponse) {
+      option (qrdb.v1.permission) = "keys:rotate";
+  }
 
   // SafetyCheck returns warnings for keys/DEKs approaching safety limits.
-  rpc SafetyCheck(SafetyCheckRequest) returns (SafetyCheckResponse);
+  rpc SafetyCheck(SafetyCheckRequest) returns (SafetyCheckResponse) {
+      option (qrdb.v1.permission) = "keys:get";
+  }
 
   // SafetyReport returns a comprehensive safety report for all keys/DEKs.
-  rpc SafetyReport(SafetyReportRequest) returns (SafetyReportResponse);
+  rpc SafetyReport(SafetyReportRequest) returns (SafetyReportResponse) {
+      option (qrdb.v1.permission) = "keys:get";
+  }
 }
 
 // =============================================================================
@@ -113,49 +169,77 @@ service KeyManagement {
 // Secrets are encrypted at rest and support automatic rotation policies.
 service SecretsManagement {
   // StoreSecret stores a secret with optional metadata and encryption.
-  rpc StoreSecret(StoreSecretRequest) returns (StoreSecretResponse);
+  rpc StoreSecret(StoreSecretRequest) returns (StoreSecretResponse) {
+      option (qrdb.v1.permission) = "credentials:store";
+  }
 
   // GetSecret retrieves the latest version of a secret.
-  rpc GetSecret(GetSecretRequest) returns (GetSecretResponse);
+  rpc GetSecret(GetSecretRequest) returns (GetSecretResponse) {
+      option (qrdb.v1.permission) = "credentials:retrieve";
+  }
 
   // ListSecrets returns all secrets accessible to the authenticated user.
-  rpc ListSecrets(ListSecretsRequest) returns (ListSecretsResponse);
+  rpc ListSecrets(ListSecretsRequest) returns (ListSecretsResponse) {
+      option (qrdb.v1.permission) = "credentials:list";
+  }
 
   // DeleteSecret permanently removes a secret and all its versions.
-  rpc DeleteSecret(DeleteSecretRequest) returns (DeleteSecretResponse);
+  rpc DeleteSecret(DeleteSecretRequest) returns (DeleteSecretResponse) {
+      option (qrdb.v1.permission) = "credentials:delete";
+  }
 
   // GetSecretVersion retrieves a specific version of a secret.
-  rpc GetSecretVersion(GetSecretVersionRequest) returns (GetSecretVersionResponse);
+  rpc GetSecretVersion(GetSecretVersionRequest) returns (GetSecretVersionResponse) {
+      option (qrdb.v1.permission) = "credentials:retrieve_version";
+  }
 
   // ListSecretVersions returns all versions of a secret.
-  rpc ListSecretVersions(ListSecretVersionsRequest) returns (ListSecretVersionsResponse);
+  rpc ListSecretVersions(ListSecretVersionsRequest) returns (ListSecretVersionsResponse) {
+      option (qrdb.v1.permission) = "credentials:list_versions";
+  }
 
   // RollbackSecret rolls back to a previous version of a secret.
-  rpc RollbackSecret(RollbackSecretRequest) returns (RollbackSecretResponse);
+  rpc RollbackSecret(RollbackSecretRequest) returns (RollbackSecretResponse) {
+      option (qrdb.v1.permission) = "credentials:submit";
+  }
 
   // RotateSecret manually rotates a secret to a new value.
-  rpc RotateSecret(RotateSecretRequest) returns (RotateSecretResponse);
+  rpc RotateSecret(RotateSecretRequest) returns (RotateSecretResponse) {
+      option (qrdb.v1.permission) = "credentials:rotate";
+  }
 
   // UpdateSecretStatus enables or disables a secret.
-  rpc UpdateSecretStatus(UpdateSecretStatusRequest) returns (UpdateSecretStatusResponse);
+  rpc UpdateSecretStatus(UpdateSecretStatusRequest) returns (UpdateSecretStatusResponse) {
+      option (qrdb.v1.permission) = "credentials:submit";
+  }
 
   // SetRotationPolicy sets or updates the automatic rotation policy.
-  rpc SetRotationPolicy(SetRotationPolicyRequest) returns (SetRotationPolicyResponse);
+  rpc SetRotationPolicy(SetRotationPolicyRequest) returns (SetRotationPolicyResponse) {
+      option (qrdb.v1.permission) = "credentials:strategy";
+  }
 
   // GetRotationPolicy retrieves the current rotation policy for a secret.
-  rpc GetRotationPolicy(GetRotationPolicyRequest) returns (GetRotationPolicyResponse);
+  rpc GetRotationPolicy(GetRotationPolicyRequest) returns (GetRotationPolicyResponse) {
+      option (qrdb.v1.permission) = "credentials:list";
+  }
 
   // GetSecretsByPrefix retrieves all secrets matching a path prefix.
-  rpc GetSecretsByPrefix(GetSecretsByPrefixRequest) returns (GetSecretsByPrefixResponse);
+  rpc GetSecretsByPrefix(GetSecretsByPrefixRequest) returns (GetSecretsByPrefixResponse) {
+      option (qrdb.v1.permission) = "credentials:list";
+  }
 
   // WatchSecretsByPrefix streams secret changes for a prefix.
-  rpc WatchSecretsByPrefix(WatchSecretsRequest) returns (stream SecretChange);
+  rpc WatchSecretsByPrefix(WatchSecretsRequest) returns (stream SecretChange) {
+      option (qrdb.v1.permission) = "credentials:list";
+  }
 
   // EnsureSecret implements the Vault-style generate-on-first-access primitive.
   // If a secret at the given path already exists it is returned unchanged.
   // If it does not exist a fresh random value is generated, stored, and returned.
   // Exactly one concurrent caller across the cluster receives generated=true.
-  rpc EnsureSecret(EnsureSecretRequest) returns (EnsureSecretResponse);
+  rpc EnsureSecret(EnsureSecretRequest) returns (EnsureSecretResponse) {
+      option (qrdb.v1.permission) = "credentials:store";
+  }
 }
 
 // =============================================================================
@@ -167,43 +251,69 @@ service SecretsManagement {
 // key versioning and rotation support.
 service Crypto {
   // Encrypt encrypts plaintext data using a named encryption key.
-  rpc Encrypt(CryptoEncryptRequest) returns (CryptoEncryptResponse);
+  rpc Encrypt(CryptoEncryptRequest) returns (CryptoEncryptResponse) {
+      option (qrdb.v1.permission) = "keys:encrypt";
+  }
 
   // Decrypt decrypts ciphertext that was encrypted with a named key.
-  rpc Decrypt(CryptoDecryptRequest) returns (CryptoDecryptResponse);
+  rpc Decrypt(CryptoDecryptRequest) returns (CryptoDecryptResponse) {
+      option (qrdb.v1.permission) = "keys:decrypt";
+  }
 
   // Rewrap re-encrypts ciphertext with the latest version of the key.
-  rpc Rewrap(RewrapRequest) returns (RewrapResponse);
+  rpc Rewrap(RewrapRequest) returns (RewrapResponse) {
+      option (qrdb.v1.permission) = "keys:unwrap";
+  }
 
   // EncryptBatch performs multiple encrypt operations in a single request.
-  rpc EncryptBatch(EncryptBatchRequest) returns (EncryptBatchResponse);
+  rpc EncryptBatch(EncryptBatchRequest) returns (EncryptBatchResponse) {
+      option (qrdb.v1.permission) = "keys:encrypt";
+  }
 
   // DecryptBatch performs multiple decrypt operations in a single request.
-  rpc DecryptBatch(DecryptBatchRequest) returns (DecryptBatchResponse);
+  rpc DecryptBatch(DecryptBatchRequest) returns (DecryptBatchResponse) {
+      option (qrdb.v1.permission) = "keys:decrypt";
+  }
 
   // GenerateDataKey generates a data encryption key for envelope encryption.
-  rpc GenerateDataKey(GenerateDataKeyRequest) returns (GenerateDataKeyResponse);
+  rpc GenerateDataKey(GenerateDataKeyRequest) returns (GenerateDataKeyResponse) {
+      option (qrdb.v1.permission) = "keys:derive";
+  }
 
   // GenerateWrappedDataKey generates an encrypted data key without plaintext.
-  rpc GenerateWrappedDataKey(GenerateWrappedDataKeyRequest) returns (GenerateWrappedDataKeyResponse);
+  rpc GenerateWrappedDataKey(GenerateWrappedDataKeyRequest) returns (GenerateWrappedDataKeyResponse) {
+      option (qrdb.v1.permission) = "keys:wrap";
+  }
 
   // Sign creates a digital signature of data using a named signing key.
-  rpc Sign(SignRequest) returns (SignResponse);
+  rpc Sign(SignRequest) returns (SignResponse) {
+      option (qrdb.v1.permission) = "keys:sign";
+  }
 
   // Verify verifies a digital signature against data using a named key.
-  rpc Verify(VerifyRequest) returns (VerifyResponse);
+  rpc Verify(VerifyRequest) returns (VerifyResponse) {
+      option (qrdb.v1.permission) = "keys:verify";
+  }
 
   // GenerateHMAC generates an HMAC of data using a named key.
-  rpc GenerateHMAC(HMACRequest) returns (HMACResponse);
+  rpc GenerateHMAC(HMACRequest) returns (HMACResponse) {
+      option (qrdb.v1.permission) = "keys:sign";
+  }
 
   // VerifyHMAC verifies an HMAC against data using a named key.
-  rpc VerifyHMAC(VerifyHMACRequest) returns (VerifyHMACResponse);
+  rpc VerifyHMAC(VerifyHMACRequest) returns (VerifyHMACResponse) {
+      option (qrdb.v1.permission) = "keys:verify";
+  }
 
   // GenerateRandom generates high-quality random bytes.
-  rpc GenerateRandom(GenerateRandomRequest) returns (GenerateRandomResponse);
+  rpc GenerateRandom(GenerateRandomRequest) returns (GenerateRandomResponse) {
+      option (qrdb.v1.permission) = "keys:derive";
+  }
 
   // Hash computes a cryptographic hash of data.
-  rpc Hash(HashRequest) returns (HashResponse);
+  rpc Hash(HashRequest) returns (HashResponse) {
+      option (qrdb.v1.permission) = "keys:sign";
+  }
 }
 
 // =============================================================================
@@ -214,37 +324,59 @@ service Crypto {
 // DEKs support multi-tenant isolation through path-based namespacing.
 service DEKManagement {
   // CreateDEK creates a new Data Encryption Key at the specified path.
-  rpc CreateDEK(CreateDEKRequest) returns (CreateDEKResponse);
+  rpc CreateDEK(CreateDEKRequest) returns (CreateDEKResponse) {
+      option (qrdb.v1.permission) = "keys:create";
+  }
 
   // GetDEK retrieves DEK metadata by path.
-  rpc GetDEK(GetDEKRequest) returns (GetDEKResponse);
+  rpc GetDEK(GetDEKRequest) returns (GetDEKResponse) {
+      option (qrdb.v1.permission) = "keys:get";
+  }
 
   // ListDEKs returns all DEKs matching the optional path prefix.
-  rpc ListDEKs(ListDEKsRequest) returns (ListDEKsResponse);
+  rpc ListDEKs(ListDEKsRequest) returns (ListDEKsResponse) {
+      option (qrdb.v1.permission) = "keys:list";
+  }
 
   // RotateDEK creates a new version of an existing DEK.
-  rpc RotateDEK(RotateDEKRequest) returns (RotateDEKResponse);
+  rpc RotateDEK(RotateDEKRequest) returns (RotateDEKResponse) {
+      option (qrdb.v1.permission) = "keys:rotate";
+  }
 
   // DeleteDEK removes a DEK (requires force or migration).
-  rpc DeleteDEK(DeleteDEKRequest) returns (DeleteDEKResponse);
+  rpc DeleteDEK(DeleteDEKRequest) returns (DeleteDEKResponse) {
+      option (qrdb.v1.permission) = "keys:delete";
+  }
 
   // GetDEKStatus retrieves detailed DEK status including AEAD usage.
-  rpc GetDEKStatus(GetDEKStatusRequest) returns (GetDEKStatusResponse);
+  rpc GetDEKStatus(GetDEKStatusRequest) returns (GetDEKStatusResponse) {
+      option (qrdb.v1.permission) = "keys:get";
+  }
 
   // SetDefaultDEK marks a DEK as the default for its path level.
-  rpc SetDefaultDEK(SetDefaultDEKRequest) returns (SetDefaultDEKResponse);
+  rpc SetDefaultDEK(SetDefaultDEKRequest) returns (SetDefaultDEKResponse) {
+      option (qrdb.v1.permission) = "keys:rotate";
+  }
 
   // SetDEKSafety configures AEAD safety limits for a DEK.
-  rpc SetDEKSafety(SetDEKSafetyRequest) returns (SetDEKSafetyResponse);
+  rpc SetDEKSafety(SetDEKSafetyRequest) returns (SetDEKSafetyResponse) {
+      option (qrdb.v1.permission) = "keys:rotate";
+  }
 
   // ClearDEKSafety removes custom AEAD safety limits from a DEK.
-  rpc ClearDEKSafety(ClearDEKSafetyRequest) returns (ClearDEKSafetyResponse);
+  rpc ClearDEKSafety(ClearDEKSafetyRequest) returns (ClearDEKSafetyResponse) {
+      option (qrdb.v1.permission) = "keys:rotate";
+  }
 
   // StartReencryption begins background re-encryption of data with new DEK version.
-  rpc StartReencryption(StartReencryptionRequest) returns (StartReencryptionResponse);
+  rpc StartReencryption(StartReencryptionRequest) returns (StartReencryptionResponse) {
+      option (qrdb.v1.permission) = "keys:rotate";
+  }
 
   // GetReencryptionProgress returns the current progress of re-encryption operation.
-  rpc GetReencryptionProgress(GetReencryptionProgressRequest) returns (GetReencryptionProgressResponse);
+  rpc GetReencryptionProgress(GetReencryptionProgressRequest) returns (GetReencryptionProgressResponse) {
+      option (qrdb.v1.permission) = "keys:get";
+  }
 }
 
 // =============================================================================

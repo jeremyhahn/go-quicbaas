@@ -31,8 +31,12 @@ func TestValidateValidConfig(t *testing.T) {
 	cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
 	cfg.Storage.Backend = StorageBackendPebble
 
-	// Disable TLS for this test (it requires cert/key files)
+	// Disable TLS for this test (it requires cert/key files). Network
+	// serving requires TLS (validateNetworkServingTLS), so also disable it.
 	cfg.Security.TLSEnabled = false
+	cfg.Server.REST.Enabled = false
+	cfg.Server.GRPC.Enabled = false
+	cfg.Server.MCP.Enabled = false
 
 	err := Validate(cfg)
 	assert.NoError(t, err)
@@ -59,6 +63,8 @@ func TestValidateServerConfig(t *testing.T) {
 				cfg.Server.REST.Port = 8080
 				cfg.Server.GRPC.Enabled = true
 				cfg.Server.GRPC.Port = 9090
+				// Network serving requires TLS (validateNetworkServingTLS).
+				cfg.Security.TLSEnabled = true
 			},
 			expectError: false,
 		},
@@ -109,15 +115,6 @@ func TestValidateServerConfig(t *testing.T) {
 			errorField:  "server.grpc.port",
 		},
 		{
-			name: "invalid QUIC port",
-			modify: func(cfg *Config) {
-				cfg.Server.QUIC.Enabled = true
-				cfg.Server.QUIC.Port = 0
-			},
-			expectError: true,
-			errorField:  "server.quic.port",
-		},
-		{
 			name: "invalid MCP port",
 			modify: func(cfg *Config) {
 				cfg.Server.MCP.Enabled = true
@@ -149,8 +146,6 @@ func TestValidateServerConfig(t *testing.T) {
 				cfg.Server.REST.Port = 0
 				cfg.Server.GRPC.Enabled = false
 				cfg.Server.GRPC.Port = 0
-				cfg.Server.QUIC.Enabled = false
-				cfg.Server.QUIC.Port = 0
 				cfg.Server.MCP.Enabled = false
 				cfg.Server.MCP.Port = 0
 			},
@@ -169,8 +164,13 @@ func TestValidateServerConfig(t *testing.T) {
 			// Disable raft to avoid raft validation issues
 			cfg.Raft.NodeID = 0
 
-			// Disable TLS for tests that do not expect security errors
+			// Disable TLS for tests that do not expect security errors. Network
+			// serving requires TLS (validateNetworkServingTLS), so also disable
+			// it here — these tests target unrelated config sections.
 			cfg.Security.TLSEnabled = false
+			cfg.Server.REST.Enabled = false
+			cfg.Server.GRPC.Enabled = false
+			cfg.Server.MCP.Enabled = false
 
 			tt.modify(cfg)
 
@@ -274,8 +274,13 @@ func TestValidateServerMode(t *testing.T) {
 			// Disable raft to avoid raft validation issues by default
 			cfg.Raft.NodeID = 0
 
-			// Disable TLS for tests that do not expect security errors
+			// Disable TLS for tests that do not expect security errors. Network
+			// serving requires TLS (validateNetworkServingTLS), so also disable
+			// it here — these tests target unrelated config sections.
 			cfg.Security.TLSEnabled = false
+			cfg.Server.REST.Enabled = false
+			cfg.Server.GRPC.Enabled = false
+			cfg.Server.MCP.Enabled = false
 
 			tt.modify(cfg)
 
@@ -411,8 +416,13 @@ func TestValidateRaftConfig(t *testing.T) {
 			cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
 			cfg.Storage.Backend = StorageBackendPebble
 
-			// Disable TLS for tests that do not expect security errors
+			// Disable TLS for tests that do not expect security errors. Network
+			// serving requires TLS (validateNetworkServingTLS), so also disable
+			// it here — these tests target unrelated config sections.
 			cfg.Security.TLSEnabled = false
+			cfg.Server.REST.Enabled = false
+			cfg.Server.GRPC.Enabled = false
+			cfg.Server.MCP.Enabled = false
 
 			tt.modify(cfg)
 
@@ -566,8 +576,13 @@ func TestValidateStorageConfig(t *testing.T) {
 			// Disable raft to avoid raft validation issues
 			cfg.Raft.NodeID = 0
 
-			// Disable TLS for tests that do not expect security errors
+			// Disable TLS for tests that do not expect security errors. Network
+			// serving requires TLS (validateNetworkServingTLS), so also disable
+			// it here — these tests target unrelated config sections.
 			cfg.Security.TLSEnabled = false
+			cfg.Server.REST.Enabled = false
+			cfg.Server.GRPC.Enabled = false
+			cfg.Server.MCP.Enabled = false
 
 			tt.modify(cfg)
 
@@ -604,7 +619,12 @@ func TestValidateSecurityConfig(t *testing.T) {
 		{
 			name: "valid security config - disabled",
 			modify: func(cfg *Config) {
+				// Network serving requires TLS (validateNetworkServingTLS); also
+				// disable it so this case isolates the security-config outcome.
 				cfg.Security.TLSEnabled = false
+				cfg.Server.REST.Enabled = false
+				cfg.Server.GRPC.Enabled = false
+				cfg.Server.MCP.Enabled = false
 			},
 			expectError: false,
 		},
@@ -766,8 +786,13 @@ func TestValidateLoggingConfig(t *testing.T) {
 			// Disable raft to avoid raft validation issues
 			cfg.Raft.NodeID = 0
 
-			// Disable TLS for tests that do not expect security errors
+			// Disable TLS for tests that do not expect security errors. Network
+			// serving requires TLS (validateNetworkServingTLS), so also disable
+			// it here — these tests target unrelated config sections.
 			cfg.Security.TLSEnabled = false
+			cfg.Server.REST.Enabled = false
+			cfg.Server.GRPC.Enabled = false
+			cfg.Server.MCP.Enabled = false
 
 			tt.modify(cfg)
 
@@ -939,8 +964,12 @@ func TestValidateRaftWithClusterMode(t *testing.T) {
 		cfg.Storage.Backend = StorageBackendPebble
 		cfg.Raft.NodeID = 0
 
-		// Disable TLS for this test
+		// Disable TLS for this test. Network serving requires TLS
+		// (validateNetworkServingTLS), so also disable it.
 		cfg.Security.TLSEnabled = false
+		cfg.Server.REST.Enabled = false
+		cfg.Server.GRPC.Enabled = false
+		cfg.Server.MCP.Enabled = false
 
 		err := Validate(cfg)
 		require.Error(t, err)
@@ -957,8 +986,12 @@ func TestValidateRaftWithClusterMode(t *testing.T) {
 		cfg.Raft.NodeID = 1
 		cfg.Raft.RaftAddress = ""
 
-		// Disable TLS for this test
+		// Disable TLS for this test. Network serving requires TLS
+		// (validateNetworkServingTLS), so also disable it.
 		cfg.Security.TLSEnabled = false
+		cfg.Server.REST.Enabled = false
+		cfg.Server.GRPC.Enabled = false
+		cfg.Server.MCP.Enabled = false
 
 		err := Validate(cfg)
 		require.Error(t, err)
@@ -974,8 +1007,12 @@ func TestValidateRaftWithClusterMode(t *testing.T) {
 		cfg.Storage.Backend = StorageBackendPebble
 		cfg.Raft.NodeID = 0
 
-		// Disable TLS for this test
+		// Disable TLS for this test. Network serving requires TLS
+		// (validateNetworkServingTLS), so also disable it.
 		cfg.Security.TLSEnabled = false
+		cfg.Server.REST.Enabled = false
+		cfg.Server.GRPC.Enabled = false
+		cfg.Server.MCP.Enabled = false
 
 		err := Validate(cfg)
 		assert.NoError(t, err)
@@ -987,8 +1024,12 @@ func TestValidateRaftWithClusterMode(t *testing.T) {
 		cfg.Storage.Backend = StorageBackendMemory
 		cfg.Raft.NodeID = 0
 
-		// Disable TLS for this test
+		// Disable TLS for this test. Network serving requires TLS
+		// (validateNetworkServingTLS), so also disable it.
 		cfg.Security.TLSEnabled = false
+		cfg.Server.REST.Enabled = false
+		cfg.Server.GRPC.Enabled = false
+		cfg.Server.MCP.Enabled = false
 
 		err := Validate(cfg)
 		assert.NoError(t, err)
@@ -1003,8 +1044,12 @@ func TestRaftBackendIsNoLongerValid(t *testing.T) {
 		cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
 		cfg.Storage.Backend = "raft" // No longer valid
 
-		// Disable TLS for this test
+		// Disable TLS for this test. Network serving requires TLS
+		// (validateNetworkServingTLS), so also disable it.
 		cfg.Security.TLSEnabled = false
+		cfg.Server.REST.Enabled = false
+		cfg.Server.GRPC.Enabled = false
+		cfg.Server.MCP.Enabled = false
 
 		err := Validate(cfg)
 		require.Error(t, err)
@@ -1024,7 +1069,13 @@ func newAuthzPostureConfig(t *testing.T) *Config {
 	cfg.Storage.DataDir = tmpDir
 	cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
 	cfg.Storage.Backend = StorageBackendPebble
+	// Baseline: no network serving, no TLS. Subtests that specifically
+	// exercise network-serving posture enable REST/GRPC/MCP (and, per
+	// validateNetworkServingTLS, TLS) themselves.
 	cfg.Security.TLSEnabled = false
+	cfg.Server.REST.Enabled = false
+	cfg.Server.GRPC.Enabled = false
+	cfg.Server.MCP.Enabled = false
 	return cfg
 }
 
@@ -1035,7 +1086,6 @@ func TestValidateAuthzPosture(t *testing.T) {
 		cfg.Security.InsecureDevMode = false
 		cfg.Server.REST.Enabled = true
 		cfg.Server.GRPC.Enabled = false
-		cfg.Server.QUIC.Enabled = false
 		cfg.Server.MCP.Enabled = false
 
 		err := Validate(cfg)
@@ -1049,6 +1099,10 @@ func TestValidateAuthzPosture(t *testing.T) {
 		cfg := newAuthzPostureConfig(t)
 		cfg.Security.RequireAuthz = false
 		cfg.Security.InsecureDevMode = true
+		// Network serving requires TLS regardless of authz posture
+		// (validateNetworkServingTLS); enable it here so this case isolates
+		// the authz-posture outcome under test.
+		cfg.Security.TLSEnabled = true
 		cfg.Server.REST.Enabled = true
 
 		err := Validate(cfg)
@@ -1061,7 +1115,6 @@ func TestValidateAuthzPosture(t *testing.T) {
 		cfg.Security.InsecureDevMode = false
 		cfg.Server.REST.Enabled = false
 		cfg.Server.GRPC.Enabled = false
-		cfg.Server.QUIC.Enabled = false
 		cfg.Server.MCP.Enabled = false
 		// Unix domain socket is NOT a network transport and must not trip the gate.
 		cfg.Server.Unix.Enabled = true
@@ -1074,9 +1127,12 @@ func TestValidateAuthzPosture(t *testing.T) {
 		cfg := newAuthzPostureConfig(t)
 		cfg.Security.RequireAuthz = true
 		cfg.Security.InsecureDevMode = false
+		// Network serving requires TLS regardless of authz posture
+		// (validateNetworkServingTLS); enable it here so this case isolates
+		// the authz-posture outcome under test.
+		cfg.Security.TLSEnabled = true
 		cfg.Server.REST.Enabled = true
 		cfg.Server.GRPC.Enabled = true
-		cfg.Server.QUIC.Enabled = true
 		cfg.Server.MCP.Enabled = true
 
 		err := Validate(cfg)
@@ -1089,12 +1145,11 @@ func TestValidateAuthzPosture(t *testing.T) {
 		cfg.Security.InsecureDevMode = false
 		cfg.Server.REST.Enabled = true
 		cfg.Server.GRPC.Enabled = true
-		cfg.Server.QUIC.Enabled = true
 		cfg.Server.MCP.Enabled = true
 
 		err := Validate(cfg)
 		require.Error(t, err)
-		for _, transport := range []string{"server.rest", "server.grpc", "server.quic", "server.mcp"} {
+		for _, transport := range []string{"server.rest", "server.grpc", "server.mcp"} {
 			assert.Contains(t, err.Error(), transport)
 		}
 	})
@@ -1105,7 +1160,6 @@ func TestValidateAuthzPosture(t *testing.T) {
 		cfg.Security.InsecureDevMode = false
 		cfg.Server.REST.Enabled = false
 		cfg.Server.GRPC.Enabled = true
-		cfg.Server.QUIC.Enabled = false
 		cfg.Server.MCP.Enabled = false
 
 		err := Validate(cfg)
@@ -1186,8 +1240,12 @@ func BenchmarkValidate(b *testing.B) {
 	cfg.Storage.Backend = StorageBackendPebble
 	cfg.Raft.NodeID = 0
 
-	// Disable TLS for benchmark
+	// Disable TLS for benchmark. Network serving requires TLS
+	// (validateNetworkServingTLS), so also disable it.
 	cfg.Security.TLSEnabled = false
+	cfg.Server.REST.Enabled = false
+	cfg.Server.GRPC.Enabled = false
+	cfg.Server.MCP.Enabled = false
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

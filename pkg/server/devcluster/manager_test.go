@@ -42,10 +42,6 @@ func createTestBaseConfig() *config.Config {
 				Enabled: true,
 				Port:    8080,
 			},
-			QUIC: config.ServerQUICConfig{
-				Enabled: true,
-				Port:    10443,
-			},
 			MCP: config.ServerMCPConfig{
 				Enabled: true,
 				Port:    11443,
@@ -249,7 +245,6 @@ func TestNodeConfigGeneration(t *testing.T) {
 			BasePorts: config.DevClusterPorts{
 				GRPC: 9090,
 				REST: 8080,
-				QUIC: 10443,
 				MCP:  11443,
 				Raft: 63001,
 			},
@@ -274,7 +269,6 @@ func TestNodeConfigGeneration(t *testing.T) {
 		assert.Equal(t, uint64(1), nodes[0].NodeID)
 		assert.Equal(t, 9090, nodes[0].GRPCPort)
 		assert.Equal(t, 8080, nodes[0].RESTPort)
-		assert.Equal(t, 10443, nodes[0].QUICPort)
 		assert.Equal(t, 11443, nodes[0].MCPPort)
 		assert.Equal(t, 63001, nodes[0].RaftPort)
 		assert.Equal(t, "./dev-data/node-1", nodes[0].DataDir)
@@ -286,7 +280,6 @@ func TestNodeConfigGeneration(t *testing.T) {
 		assert.Equal(t, uint64(2), nodes[1].NodeID)
 		assert.Equal(t, 9091, nodes[1].GRPCPort)
 		assert.Equal(t, 8081, nodes[1].RESTPort)
-		assert.Equal(t, 10444, nodes[1].QUICPort)
 		assert.Equal(t, 11444, nodes[1].MCPPort)
 		assert.Equal(t, 63002, nodes[1].RaftPort)
 		assert.Equal(t, "./dev-data/node-2", nodes[1].DataDir)
@@ -297,7 +290,6 @@ func TestNodeConfigGeneration(t *testing.T) {
 		assert.Equal(t, uint64(3), nodes[2].NodeID)
 		assert.Equal(t, 9092, nodes[2].GRPCPort)
 		assert.Equal(t, 8082, nodes[2].RESTPort)
-		assert.Equal(t, 10445, nodes[2].QUICPort)
 		assert.Equal(t, 11445, nodes[2].MCPPort)
 		assert.Equal(t, 63003, nodes[2].RaftPort)
 		assert.Equal(t, "./dev-data/node-3", nodes[2].DataDir)
@@ -315,7 +307,6 @@ func TestNodeConfigGeneration(t *testing.T) {
 			BasePorts: config.DevClusterPorts{
 				GRPC: 9090,
 				REST: 8080,
-				QUIC: 10443,
 				MCP:  11443,
 				Raft: 63001,
 			},

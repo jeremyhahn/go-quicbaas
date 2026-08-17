@@ -39,29 +39,6 @@ import (
 // asserts this structurally.
 // =============================================================================
 
-// registerAccountRoutes mounts the pooled provider account routes under
-// /api/v1/agent-accounts.
-//
-// The surface is a top-level sibling of /api/v1/orchestrator rather than a
-// sub-path of it: the PEP resolves accounts against the qrdb credentials:*
-// family, not orchestrator:*, and a dedicated prefix keeps that resolution
-// exact instead of relying on suffix precedence against the ~20 orchestrator
-// special rules.
-func registerAccountRoutes(s *Server, r chi.Router) {
-	r.Route("/agent-accounts", func(r chi.Router) {
-		r.Post("/", s.HandleCreateAccount)
-		r.Get("/", s.HandleListAccounts)
-		r.Get("/{id}", s.HandleGetAccount)
-		r.Put("/{id}", s.HandleUpdateAccount)
-		r.Delete("/{id}", s.HandleDeleteAccount)
-
-		r.Post("/{id}/rotate", s.HandleRotateAccountCredential)
-		r.Post("/{id}/revoke", s.HandleRevokeAccount)
-		r.Post("/{id}/default", s.HandleSetDefaultAccount)
-		r.Get("/{id}/usage", s.HandleGetAccountUsage)
-	})
-}
-
 // =============================================================================
 // REST Request/Response Types
 // =============================================================================

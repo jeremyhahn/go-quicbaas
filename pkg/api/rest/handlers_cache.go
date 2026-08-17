@@ -60,18 +60,6 @@ type UpdateCacheConfigResponse struct {
 	Message string `json:"message"`
 }
 
-// registerCacheRoutes registers cache-related routes.
-func registerCacheRoutes(s *Server, r interface {
-	Get(pattern string, h http.HandlerFunc)
-	Post(pattern string, h http.HandlerFunc)
-	Put(pattern string, h http.HandlerFunc)
-}) {
-	r.Get("/cache/stats", s.HandleGetCacheStats)
-	r.Post("/cache/clear", s.HandleClearCache)
-	r.Get("/cache/config", s.HandleGetCacheConfig)
-	r.Put("/cache/config", s.HandleUpdateCacheConfig)
-}
-
 // HandleGetCacheStats returns cache statistics.
 // GET /api/v1/cache/stats.
 func (s *Server) HandleGetCacheStats(w http.ResponseWriter, r *http.Request) {

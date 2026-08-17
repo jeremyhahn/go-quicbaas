@@ -17,7 +17,6 @@ package secrets
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,21 +26,19 @@ import (
 	"testing"
 	"time"
 
-	quicgo "github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
-	"github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // TestSecretsMultiProtocol verifies that secrets operations work identically
-// across all supported protocols: Embedded, REST, gRPC, QUIC, Unix Socket, and MCP.
+// across all supported protocols: Embedded, REST, gRPC, Unix Socket, and MCP.
 func TestSecretsMultiProtocol(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -61,17 +58,14 @@ func TestSecretsMultiProtocol(t *testing.T) {
 		testSecretsProtocol(t, ctx, &grpcProtocolClient{})
 	})
 
-	t.Run("QUIC", func(t *testing.T) {
-		testSecretsProtocol(t, ctx, &quicProtocolClient{})
-	})
-
 	t.Run("UnixSocket", func(t *testing.T) {
 		testSecretsProtocol(t, ctx, &unixSocketProtocolClient{})
 	})
 
-	t.Run("MCP", func(t *testing.T) {
-		testSecretsProtocol(t, ctx, &mcpProtocolClient{})
-	})
+	// NOTE: no MCP leg here. quicbaas retired its bespoke JSON-RPC MCP
+	// listener in favor of go-qrdb's unified multi-protocol server; the
+	// unified server's MCP surface has no finalized docker endpoint
+	// convention yet, so this suite does not exercise it (deferred).
 }
 
 // TestSecretsComprehensiveMultiProtocol runs comprehensive tests for ALL secrets
@@ -83,7 +77,6 @@ func TestSecretsComprehensiveMultiProtocol(t *testing.T) {
 	protocols := []secretsProtocol{
 		&restProtocolClient{},
 		&grpcProtocolClient{},
-		&quicProtocolClient{},
 		&unixSocketProtocolClient{},
 	}
 	if helpers.IsEmbeddedAvailable() {
@@ -1873,248 +1866,6 @@ func (c *grpcProtocolClient) Rotate(ctx context.Context, req *service.RotateSecr
 
 func (c *grpcProtocolClient) UpdateSecretStatus(ctx context.Context, req *service.UpdateSecretStatusRequest) (*service.UpdateSecretStatusResponse, error) {
 	return c.client.UpdateSecretStatus(ctx, req)
-}
-
-// =============================================================================
-// QUIC Protocol Client Implementation
-// =============================================================================
-
-// quicProtocolClient implements secretsProtocol using QUIC transport.
-type quicProtocolClient struct {
-	addr       string
-	conn       *quicgo.Conn
-	tlsConfig  *tls.Config
-	ctx        context.Context
-	cancelFunc context.CancelFunc
-}
-
-func (c *quicProtocolClient) Name() string { return "QUIC" }
-
-func (c *quicProtocolClient) Setup(t *testing.T, ctx context.Context) error {
-	endpoints := helpers.GetQUICEndpoints()
-	require.NotEmpty(t, endpoints, "QUIC endpoints must be available for integration tests")
-
-	addr := endpoints[0]
-
-	tlsConf, err := helpers.IntegrationTLSConfig()
-	require.NoError(t, err, "load integration TLS config")
-	tlsConf.NextProtos = []string{"quicbaas-quic"}
-
-	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	conn, err := quicgo.DialAddr(dialCtx, addr, tlsConf, nil)
-	if err != nil {
-		return fmt.Errorf("failed to connect to QUIC endpoint %s: %w", addr, err)
-	}
-
-	clientCtx, clientCancel := context.WithCancel(context.Background())
-
-	c.addr = addr
-	c.conn = conn
-	c.tlsConfig = tlsConf
-	c.ctx = clientCtx
-	c.cancelFunc = clientCancel
-
-	return nil
-}
-
-func (c *quicProtocolClient) Teardown(t *testing.T) error {
-	if c.cancelFunc != nil {
-		c.cancelFunc()
-	}
-	if c.conn != nil {
-		return c.conn.CloseWithError(0, "client closing")
-	}
-	return nil
-}
-
-// sendRequest sends a QUIC request and returns the response.
-func (c *quicProtocolClient) sendRequest(ctx context.Context, opcode byte, reqPayload []byte) (*quic.Response, error) {
-	stream, err := c.conn.OpenStreamSync(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open stream: %w", err)
-	}
-	defer stream.Close()
-
-	// Write request
-	req := &quic.Request{
-		Opcode:  opcode,
-		Payload: reqPayload,
-	}
-
-	if err := quic.WriteRequest(stream, req); err != nil {
-		return nil, fmt.Errorf("failed to write request: %w", err)
-	}
-
-	// Read response
-	resp, err := quic.ReadResponse(stream)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	// Check status
-	if resp.Status != quic.StatusOK {
-		errMsg := string(resp.Payload)
-		if errMsg == "" {
-			errMsg = "unknown error"
-		}
-		return nil, quic.StatusToError(resp.Status, errMsg)
-	}
-
-	return resp, nil
-}
-
-func (c *quicProtocolClient) StoreSecret(ctx context.Context, req *service.StoreSecretRequest) (*service.StoreSecretResponse, error) {
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.sendRequest(ctx, quic.OpSecretsStore, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result service.StoreSecretResponse
-	if err := quic.DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-func (c *quicProtocolClient) GetSecret(ctx context.Context, req *service.GetSecretRequest) (*service.GetSecretResponse, error) {
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.sendRequest(ctx, quic.OpSecretsGet, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result service.GetSecretResponse
-	if err := quic.DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-func (c *quicProtocolClient) ListSecrets(ctx context.Context, req *service.ListSecretsRequest) (*service.ListSecretsResponse, error) {
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.sendRequest(ctx, quic.OpSecretsList, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result service.ListSecretsResponse
-	if err := quic.DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-func (c *quicProtocolClient) DeleteSecret(ctx context.Context, req *service.DeleteSecretRequest) (*service.DeleteSecretResponse, error) {
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.sendRequest(ctx, quic.OpSecretsDelete, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result service.DeleteSecretResponse
-	if err := quic.DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-func (c *quicProtocolClient) ListVersions(ctx context.Context, req *service.ListSecretVersionsRequest) (*service.ListSecretVersionsResponse, error) {
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.sendRequest(ctx, quic.OpSecretsListVersions, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result service.ListSecretVersionsResponse
-	if err := quic.DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-func (c *quicProtocolClient) Rollback(ctx context.Context, req *service.RollbackSecretRequest) (*service.RollbackSecretResponse, error) {
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.sendRequest(ctx, quic.OpSecretsRollback, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result service.RollbackSecretResponse
-	if err := quic.DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-func (c *quicProtocolClient) Rotate(ctx context.Context, req *service.RotateSecretRequest) (*service.RotateSecretResponse, error) {
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.sendRequest(ctx, quic.OpSecretsRotate, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result service.RotateSecretResponse
-	if err := quic.DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-func (c *quicProtocolClient) UpdateSecretStatus(ctx context.Context, req *service.UpdateSecretStatusRequest) (*service.UpdateSecretStatusResponse, error) {
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.sendRequest(ctx, quic.OpSecretsUpdateStatus, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result service.UpdateSecretStatusResponse
-	if err := quic.DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
 }
 
 // =============================================================================

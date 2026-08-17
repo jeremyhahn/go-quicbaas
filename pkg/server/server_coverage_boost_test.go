@@ -61,7 +61,6 @@ func TestBoost_Start_StandaloneModeBlocksUntilShutdown(t *testing.T) {
 	cfg.Server.GRPC.Enabled = true
 	cfg.Server.GRPC.Port = getFreePort(t)
 	cfg.Server.REST.Enabled = false
-	cfg.Server.QUIC.Enabled = false
 	cfg.Server.MCP.Enabled = false
 
 	// Stub IAM and CA so initialize() succeeds without external dependencies.

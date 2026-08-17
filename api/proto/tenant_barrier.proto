@@ -20,6 +20,7 @@ syntax = "proto3";
 package quicbaas.tenant.v1;
 
 import "google/protobuf/empty.proto";
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
@@ -36,41 +37,57 @@ service TenantBarrier {
   // exactly once, never persisted). For none/passphrase, shares is empty and
   // a google.protobuf.Empty is the effective response (but Init always returns
   // TenantBarrierInitResponse to keep the shape uniform).
-  rpc Init(TenantBarrierInitRequest) returns (TenantBarrierInitResponse);
+  rpc Init(TenantBarrierInitRequest) returns (TenantBarrierInitResponse) {
+      option (qrdb.v1.permission) = "tenant_barrier:init";
+  }
 
   // Unseal unseals the per-tenant barrier with a single key (passphrase
   // strategy). Empty key material is rejected by qrdb.
-  rpc Unseal(TenantBarrierUnsealRequest) returns (google.protobuf.Empty);
+  rpc Unseal(TenantBarrierUnsealRequest) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "tenant_barrier:unseal";
+  }
 
   // UnsealShare submits a single Shamir share toward the per-tenant barrier's
   // quorum threshold. Unseals automatically once enough distinct shares have
   // been submitted.
-  rpc UnsealShare(TenantBarrierUnsealShareRequest) returns (TenantBarrierUnsealProgress);
+  rpc UnsealShare(TenantBarrierUnsealShareRequest) returns (TenantBarrierUnsealProgress) {
+      option (qrdb.v1.permission) = "tenant_barrier:unseal";
+  }
 
   // Seal seals the per-tenant barrier.
-  rpc Seal(TenantBarrierSealRequest) returns (google.protobuf.Empty);
+  rpc Seal(TenantBarrierSealRequest) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "tenant_barrier:seal";
+  }
 
   // Status reports the per-tenant barrier's sealed/initialized state and
   // active strategy metadata, including Shamir threshold/total.
-  rpc Status(TenantBarrierStatusRequest) returns (TenantBarrierStatusResponse);
+  rpc Status(TenantBarrierStatusRequest) returns (TenantBarrierStatusResponse) {
+      option (qrdb.v1.permission) = "tenant_barrier:status";
+  }
 
   // EnableEncryption migrates a tenant's dedicated barrier from the none
   // (unencrypted) strategy to a keyed strategy in place. Requires
   // tenant_barrier:enable_encryption on the target tenant. The embedded
   // qrdb node's EncryptionMigrator drives the migration; the transport
   // BarrierClient stub returns UNIMPLEMENTED.
-  rpc EnableEncryption(TenantBarrierEnableEncryptionRequest) returns (google.protobuf.Empty);
+  rpc EnableEncryption(TenantBarrierEnableEncryptionRequest) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "tenant_barrier:enable_encryption";
+  }
 
   // UpdateQuotas sets the engine-level numeric resource limits for the tenant
   // (databases, keys, storage bytes, etc.). Requires tenants:set_quotas.
   // Delegates to the embedded qrdb node's TenantServicer.UpdateQuotas.
-  rpc UpdateQuotas(UpdateTenantQuotasRequest) returns (google.protobuf.Empty);
+  rpc UpdateQuotas(UpdateTenantQuotasRequest) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "tenants:set_quotas";
+  }
 
   // UpdateEntitlements sets the engine-level feature entitlements for the
   // tenant (isolation tiers, dedicated-storage features, barrier modes).
   // Requires tenants:set_entitlements. Delegates to the embedded qrdb node's
   // TenantServicer.UpdateEntitlements.
-  rpc UpdateEntitlements(UpdateTenantEntitlementsRequest) returns (google.protobuf.Empty);
+  rpc UpdateEntitlements(UpdateTenantEntitlementsRequest) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "tenants:set_entitlements";
+  }
 }
 
 // =============================================================================

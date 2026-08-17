@@ -32,7 +32,6 @@ func TestSealedListenAddress_LoopbackDefault(t *testing.T) {
 
 	assert.Equal(t, "127.0.0.1:8443", sealedListenAddress(cfg, cfg.Server.REST.Port))
 	assert.Equal(t, "127.0.0.1:9443", sealedListenAddress(cfg, cfg.Server.GRPC.Port))
-	assert.Equal(t, "127.0.0.1:10443", sealedListenAddress(cfg, cfg.Server.QUIC.Port))
 	assert.Equal(t, "127.0.0.1:11443", sealedListenAddress(cfg, cfg.Server.MCP.Port))
 }
 
@@ -58,12 +57,10 @@ func TestSealedListenAddress_IgnoresPerProtocolBindAddress(t *testing.T) {
 	cfg.Server.Host = "0.0.0.0"
 	cfg.Server.REST.BindAddress = "10.0.0.1"
 	cfg.Server.GRPC.BindAddress = "10.0.0.2"
-	cfg.Server.QUIC.BindAddress = "10.0.0.3"
 	cfg.Server.MCP.BindAddress = "10.0.0.4"
 
 	assert.Equal(t, "127.0.0.1:8443", sealedListenAddress(cfg, cfg.Server.REST.Port))
 	assert.Equal(t, "127.0.0.1:9443", sealedListenAddress(cfg, cfg.Server.GRPC.Port))
-	assert.Equal(t, "127.0.0.1:10443", sealedListenAddress(cfg, cfg.Server.QUIC.Port))
 	assert.Equal(t, "127.0.0.1:11443", sealedListenAddress(cfg, cfg.Server.MCP.Port))
 
 	// The full-boot resolution path is untouched: BindAddress still wins there.

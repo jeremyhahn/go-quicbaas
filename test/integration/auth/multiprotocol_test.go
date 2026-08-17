@@ -254,7 +254,7 @@ func getOrCreateTestCredentials(ctx context.Context, httpEndpoint string) (*Clie
 // =============================================================================
 
 // TestAuthMultiProtocol verifies that authorization works identically
-// across all supported protocols: Embedded, REST, gRPC, QUIC, Unix Socket, and MCP.
+// across all supported protocols: Embedded, REST, gRPC, QUIC, and Unix Socket.
 func TestAuthMultiProtocol(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -281,9 +281,10 @@ func TestAuthMultiProtocol(t *testing.T) {
 		testAuthProtocol(t, ctx, &unixSocketAuthClient{})
 	})
 
-	t.Run("MCP", func(t *testing.T) {
-		testAuthProtocol(t, ctx, &mcpAuthClient{})
-	})
+	// NOTE: no MCP leg here. quicbaas retired its bespoke JSON-RPC MCP
+	// listener in favor of go-qrdb's unified multi-protocol server; the
+	// unified server's MCP surface has no finalized docker endpoint
+	// convention yet, so this suite does not exercise it (deferred).
 }
 
 // testAuthProtocol runs the authorization test suite against a protocol.
@@ -769,12 +770,14 @@ func (c *quicAuthClient) Setup(t *testing.T, ctx context.Context) error {
 	}
 	c.endpoint = endpoints[0]
 
-	// Create QUIC transport configuration
+	// Create QUIC (HTTP/3) transport configuration. The ALPN is left for
+	// quictransport.New to default to "h3" (RFC 9114): this transport now
+	// speaks the same REST dialect as the REST transport over HTTP/3, not
+	// the retired "quicbaas-quic" opcode protocol.
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	if err != nil {
 		return fmt.Errorf("load integration TLS config: %w", err)
 	}
-	tlsCfg.NextProtos = []string{"quicbaas-quic"}
 	cfg := &transport.Config{
 		Address:         c.endpoint,
 		Timeout:         30 * time.Second,
@@ -819,32 +822,27 @@ func (c *quicAuthClient) GetWithToken(ctx context.Context, token, entityType, ke
 		return nil, fmt.Errorf("QUIC transport not initialized")
 	}
 
-	// Set the auth token on the transport
-	c.transport.SetAuthToken(token)
+	// Set the auth token on the transport. quictransport.Transport embeds
+	// *rest.Transport, so SetHeader is the same seam the REST transport uses.
+	c.transport.SetHeader("Authorization", "Bearer "+token)
 
-	// Build get request
-	req := map[string]interface{}{
-		"entity_type": entityType,
-		"id":          hash.FNV1a(key),
-	}
+	req := &service.GetRequest{EntityType: entityType, ID: hash.FNV1a(key)}
 
-	// Send request using QuicBaaS/Get
-	_, err := c.transport.Request(ctx, "QuicBaaS", "Get", req)
+	// Send request via the shared REST-dialect KV handler.
+	_, err := c.transport.Request(ctx, "KV", "Get", req)
 	if err != nil {
 		errStr := err.Error()
-		if contains(errStr, "unauthorized") || contains(errStr, "unauthenticated") {
+		if contains(errStr, "unauthorized") || contains(errStr, "unauthenticated") || contains(errStr, "forbidden") {
 			return &AuthResult{
 				Success:   false,
 				ErrorCode: "unauthenticated",
 			}, nil
 		}
-		// Key not found is OK - means we got past auth
-		if contains(errStr, "not found") {
-			return &AuthResult{Success: true}, nil
-		}
 		return nil, err
 	}
 
+	// A successful response (whether or not the key was Found) means the
+	// request got past authentication/authorization.
 	return &AuthResult{Success: true}, nil
 }
 
@@ -853,28 +851,19 @@ func (c *quicAuthClient) GetWithoutToken(ctx context.Context, entityType, key st
 		return nil, fmt.Errorf("QUIC transport not initialized")
 	}
 
-	// Clear any existing auth token
-	c.transport.SetAuthToken("")
+	// Clear any existing auth token.
+	c.transport.SetHeader("Authorization", "")
 
-	// Build get request
-	req := map[string]interface{}{
-		"entity_type": entityType,
-		"id":          hash.FNV1a(key),
-	}
+	req := &service.GetRequest{EntityType: entityType, ID: hash.FNV1a(key)}
 
-	// Send request using QuicBaaS/Get
-	_, err := c.transport.Request(ctx, "QuicBaaS", "Get", req)
+	_, err := c.transport.Request(ctx, "KV", "Get", req)
 	if err != nil {
 		errStr := err.Error()
-		if contains(errStr, "unauthorized") || contains(errStr, "unauthenticated") {
+		if contains(errStr, "unauthorized") || contains(errStr, "unauthenticated") || contains(errStr, "forbidden") {
 			return &AuthResult{
 				Success:   false,
 				ErrorCode: "unauthenticated",
 			}, nil
-		}
-		// Key not found is OK - means we got past auth
-		if contains(errStr, "not found") {
-			return &AuthResult{Success: true}, nil
 		}
 		return nil, err
 	}
@@ -980,251 +969,6 @@ func (c *unixSocketAuthClient) GetWithoutToken(ctx context.Context, entityType, 
 				Success:   false,
 				ErrorCode: getGRPCErrorCode(st.Code()),
 			}, nil
-		}
-		return nil, err
-	}
-
-	return &AuthResult{Success: true}, nil
-}
-
-// =============================================================================
-// MCP Protocol Implementation
-// =============================================================================
-
-type mcpAuthClient struct {
-	endpoint    string
-	httpClient  *http.Client
-	initialized atomic.Bool
-	requestID   atomic.Uint64
-}
-
-func (c *mcpAuthClient) Name() string { return "MCP" }
-
-func (c *mcpAuthClient) GetHTTPEndpoint() string {
-	// Extract base HTTP endpoint from MCP endpoint
-	// MCP endpoint is typically http://host:port/mcp, REST is https://host:8080
-	if c.endpoint == "" {
-		return ""
-	}
-	// Remove /mcp suffix if present
-	base := strings.TrimSuffix(c.endpoint, "/mcp")
-	// Replace MCP port (8888) with REST port (8080) if needed
-	base = strings.Replace(base, ":8888", ":8080", 1)
-	// REST server uses HTTPS
-	base = strings.Replace(base, "http://", "https://", 1)
-	return base
-}
-
-func (c *mcpAuthClient) Setup(t *testing.T, ctx context.Context) error {
-	endpoints := helpers.GetMCPEndpoints()
-	if len(endpoints) == 0 {
-		return fmt.Errorf("no MCP endpoints available")
-	}
-	c.endpoint = endpoints[0]
-	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
-
-	// Initialize the MCP session
-	if err := c.initialize(ctx); err != nil {
-		return fmt.Errorf("failed to initialize MCP session: %w", err)
-	}
-
-	return nil
-}
-
-func (c *mcpAuthClient) Teardown(t *testing.T) error {
-	return nil
-}
-
-// initialize performs the MCP protocol handshake
-func (c *mcpAuthClient) initialize(ctx context.Context) error {
-	if c.initialized.Load() {
-		return nil
-	}
-
-	// Send initialize request
-	initReq := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "initialize",
-		"params": map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{},
-			"clientInfo": map[string]interface{}{
-				"name":    "quicbaas-test-client",
-				"version": "1.0.0",
-			},
-		},
-		"id": c.requestID.Add(1),
-	}
-
-	body, err := json.Marshal(initReq)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", c.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	// Read response but we don't need to parse it for now
-	_, err = io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	// Send initialized notification
-	notifyReq := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "notifications/initialized",
-	}
-
-	body, err = json.Marshal(notifyReq)
-	if err != nil {
-		return err
-	}
-
-	req, err = http.NewRequestWithContext(ctx, "POST", c.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err = c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	c.initialized.Store(true)
-	return nil
-}
-
-func (c *mcpAuthClient) ObtainToken(ctx context.Context, creds *ClientCredentials) (*AuthResult, error) {
-	httpEndpoint := c.GetHTTPEndpoint()
-	if httpEndpoint == "" {
-		return nil, fmt.Errorf("no HTTP endpoint available for OIDC token flow")
-	}
-	return obtainTokenViaREST(ctx, httpEndpoint, creds)
-}
-
-// callTool calls an MCP tool with the given arguments
-func (c *mcpAuthClient) callTool(ctx context.Context, toolName string, args map[string]interface{}, token string) (json.RawMessage, error) {
-	mcpReq := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name":      toolName,
-			"arguments": args,
-		},
-		"id": c.requestID.Add(1),
-	}
-
-	body, err := json.Marshal(mcpReq)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", c.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var mcpResp struct {
-		Result struct {
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-			IsError bool `json:"isError"`
-		} `json:"result"`
-		Error *struct {
-			Message string `json:"message"`
-			Code    int    `json:"code"`
-		} `json:"error"`
-	}
-
-	if err := json.Unmarshal(respBody, &mcpResp); err != nil {
-		return nil, fmt.Errorf("failed to parse MCP response: %w", err)
-	}
-
-	if mcpResp.Error != nil {
-		return nil, fmt.Errorf("MCP error: %s", mcpResp.Error.Message)
-	}
-
-	if mcpResp.Result.IsError {
-		if len(mcpResp.Result.Content) > 0 {
-			return nil, fmt.Errorf("MCP tool error: %s", mcpResp.Result.Content[0].Text)
-		}
-		return nil, fmt.Errorf("MCP tool execution failed")
-	}
-
-	if len(mcpResp.Result.Content) > 0 {
-		return json.RawMessage(mcpResp.Result.Content[0].Text), nil
-	}
-
-	return nil, nil
-}
-
-func (c *mcpAuthClient) GetWithToken(ctx context.Context, token, entityType, key string) (*AuthResult, error) {
-	_, err := c.callTool(ctx, "quicbaas_kv_get", map[string]interface{}{
-		"entity_type": entityType,
-		"key":         key,
-	}, token)
-	if err != nil {
-		errStr := err.Error()
-		if contains(errStr, "unauthorized") || contains(errStr, "unauthenticated") {
-			return &AuthResult{
-				Success:   false,
-				ErrorCode: "unauthenticated",
-			}, nil
-		}
-		// Key not found is OK - means we got past auth
-		if contains(errStr, "not found") {
-			return &AuthResult{Success: true}, nil
-		}
-		return nil, err
-	}
-
-	return &AuthResult{Success: true}, nil
-}
-
-func (c *mcpAuthClient) GetWithoutToken(ctx context.Context, entityType, key string) (*AuthResult, error) {
-	_, err := c.callTool(ctx, "quicbaas_kv_get", map[string]interface{}{
-		"entity_type": entityType,
-		"key":         key,
-	}, "")
-	if err != nil {
-		errStr := err.Error()
-		if contains(errStr, "unauthorized") || contains(errStr, "unauthenticated") {
-			return &AuthResult{
-				Success:   false,
-				ErrorCode: "unauthenticated",
-			}, nil
-		}
-		// Key not found is OK - means we got past auth
-		if contains(errStr, "not found") {
-			return &AuthResult{Success: true}, nil
 		}
 		return nil, err
 	}

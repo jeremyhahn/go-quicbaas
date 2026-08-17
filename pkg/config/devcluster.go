@@ -34,7 +34,6 @@ type DevClusterConfig struct {
 type DevClusterPorts struct {
 	GRPC int `mapstructure:"grpc"` // Default: 9090 (nodes: 9090, 9091, 9092)
 	REST int `mapstructure:"rest"` // Default: 8080 (nodes: 8080, 8081, 8082)
-	QUIC int `mapstructure:"quic"` // Default: 10443 (nodes: 10443, 10444, 10445)
 	MCP  int `mapstructure:"mcp"`  // Default: 11443 (nodes: 11443, 11444, 11445)
 	Raft int `mapstructure:"raft"` // Default: 63001 (nodes: 63001, 63002, 63003)
 }
@@ -47,7 +46,6 @@ func DefaultDevClusterConfig() *DevClusterConfig {
 		BasePorts: DevClusterPorts{
 			GRPC: 9090,
 			REST: 8080,
-			QUIC: 10443,
 			MCP:  11443,
 			Raft: 63001,
 		},
@@ -60,7 +58,6 @@ func DefaultDevClusterPorts() DevClusterPorts {
 	return DevClusterPorts{
 		GRPC: 9090,
 		REST: 8080,
-		QUIC: 10443,
 		MCP:  11443,
 		Raft: 63001,
 	}

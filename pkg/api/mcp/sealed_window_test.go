@@ -17,7 +17,6 @@ package mcp
 
 import (
 	"context"
-	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,13 +31,13 @@ type fakeMCPSealedProbe struct{ sealed bool }
 
 func (p *fakeMCPSealedProbe) IsSealed() bool { return p.sealed }
 
-// newSealedGateTestServer builds an MCP server (no listeners started) with
-// the sealed-window gate installed over the canonical allowlist.
+// newSealedGateTestServer builds an MCP tool-registry server with the
+// sealed-window gate installed over the canonical allowlist.
 func newSealedGateTestServer(t *testing.T, sealed bool) *Server {
 	t.Helper()
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
 	require.NoError(t, err)
-	s := NewServer(nil, &Config{ServerName: "test", ServerVersion: "0", Transport: "http"}, log)
+	s := NewServer(nil, &Config{ServerName: "test", ServerVersion: "0"}, log)
 	require.NotNil(t, s)
 	s.SetSealedWindowGate(&fakeMCPSealedProbe{sealed: sealed}, &mcpCeremonyStateProbe{},
 		sealedwindow.MCPAllowlist())
@@ -97,32 +96,25 @@ func TestSealedWindowDeniesTool_UnsealedPassThrough(t *testing.T) {
 
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
 	require.NoError(t, err)
-	unwired := NewServer(nil, &Config{Transport: "http"}, log)
+	unwired := NewServer(nil, &Config{}, log)
 	assert.False(t, unwired.sealedWindowDeniesTool("quicbaas_kv_get"))
 }
 
-// TestHandleToolsCall_SealedDeniesOffAllowlist asserts the tools/call
-// dispatcher rejects an off-allowlist tool with the sealed envelope BEFORE
-// authorization or execution, and that the response is a JSON-RPC error
-// carrying the typed SealedWindowError message.
-func TestHandleToolsCall_SealedDeniesOffAllowlist(t *testing.T) {
+// TestInvokeTool_SealedDeniesOffAllowlist asserts the tool dispatcher rejects
+// an off-allowlist tool with the typed SealedWindowError BEFORE authorization
+// or execution runs.
+func TestInvokeTool_SealedDeniesOffAllowlist(t *testing.T) {
 	s := newSealedGateTestServer(t, true)
 
-	req := &JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "tools/call",
-		Params: map[string]interface{}{
-			"name":      "quicbaas_kv_get",
-			"arguments": map[string]interface{}{},
-		},
-	}
-	resp := s.handleToolsCall(context.Background(), req)
-	require.NotNil(t, resp)
-	require.NotNil(t, resp.Error, "sealed off-allowlist tool must produce a JSON-RPC error")
-	data, _ := resp.Error.Data.(string)
-	assert.Contains(t, data, "barrier sealed")
-	assert.Contains(t, data, "quicbaas_kv_get")
+	result, err := s.InvokeTool(context.Background(), "quicbaas_kv_get", map[string]interface{}{})
+	require.Nil(t, result)
+	require.Error(t, err, "sealed off-allowlist tool must produce an error")
+
+	var sealedErr *SealedWindowError
+	require.ErrorAs(t, err, &sealedErr)
+	assert.Equal(t, "quicbaas_kv_get", sealedErr.Tool)
+	assert.Contains(t, err.Error(), "barrier sealed")
+	assert.Contains(t, err.Error(), "quicbaas_kv_get")
 }
 
 // TestSealedWindowError_Message pins the coarse sealed envelope wording.
@@ -131,32 +123,4 @@ func TestSealedWindowError_Message(t *testing.T) {
 	assert.Equal(t,
 		"barrier sealed: tool quicbaas_kv_get is not available until the barrier is unsealed",
 		err.Error())
-}
-
-// TestStartHTTPTransport_BindFailureIsFatal asserts B2 (process-fatal
-// transport construction): a listener bind failure surfaces synchronously
-// from Start() as a typed *HTTPListenError so the daemon can abort startup,
-// instead of being logged from a goroutine while the daemon continues
-// without an MCP surface.
-func TestStartHTTPTransport_BindFailureIsFatal(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
-	require.NoError(t, err)
-
-	// Occupy a port, then point the MCP server at it.
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = occupied.Close() })
-
-	s := NewServer(nil, &Config{
-		ServerName:    "test",
-		ServerVersion: "0",
-		Transport:     "http",
-		HTTPAddr:      occupied.Addr().String(),
-	}, log)
-
-	err = s.Start()
-	var listenErr *HTTPListenError
-	require.ErrorAs(t, err, &listenErr, "bind failure must be a typed HTTPListenError, got %v", err)
-	assert.Equal(t, occupied.Addr().String(), listenErr.Addr)
-	assert.False(t, s.running.Load(), "server must not report running after a bind failure")
 }

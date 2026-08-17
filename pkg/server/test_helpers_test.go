@@ -88,9 +88,8 @@ func createTestConfig(t *testing.T) *config.Config {
 	cfg.Discovery.Enabled = false
 	cfg.Raft.EnableBootstrap = false
 
-	// Disable MCP and QUIC for unit tests
+	// Disable MCP for unit tests
 	cfg.Server.MCP.Enabled = false
-	cfg.Server.QUIC.Enabled = false
 
 	return cfg
 }
@@ -170,10 +169,6 @@ func createMinTestCfg(tmpDir string) *config.Config {
 				Port:    0,
 			},
 			REST: config.ServerRESTConfig{
-				Enabled: false,
-				Port:    0,
-			},
-			QUIC: config.ServerQUICConfig{
 				Enabled: false,
 				Port:    0,
 			},

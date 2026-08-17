@@ -338,26 +338,46 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		BloomFilterSize:   1000000,
 		BloomFilterHashes: 7,
 	})
+	// RBACAuthorizer wires PEPService/PolicyEngine.Evaluate onto the single
+	// qrdb decision point (P6.1 end-state of the unified login-plane plan):
+	// qrdb's own RBAC authorizer, decorated with a live-reloaded ABAC policy
+	// set, is the WHOLE decision — the SAME store-resolved role grants and
+	// ABAC overlay every other qrdb-fronted authz gate consults
+	// (GetQRDBNodeClient().RBAC()). ABACSync/Simulator keep that live
+	// decorator synchronized with the policy store on every CRUD mutation
+	// and back SimulatePolicy's isolated draft-policy dry run, respectively.
 	policyEngine := iam.NewPolicyEngine(iam.PolicyEngineOptions{
-		Storage: backendStorage,
-		Cache:   policyCache,
+		Storage:        backendStorage,
+		Cache:          policyCache,
+		RBACAuthorizer: newQRDBPEPRBACAuthorizer(s),
+		ABACSync:       newQRDBABACSync(s, tenantManager, backendStorage),
+		Simulator:      newQRDBPolicySimulator(),
 	})
+	// Initial ABAC load: post-unseal, now that the IAM policy store is
+	// readable and the qrdb node is already live (initializeIAMComponents
+	// runs after node construction, see lifecycle.go), push every
+	// previously stored policy into the node's live ABAC decorator before
+	// the first request is evaluated.
+	if syncErr := policyEngine.SyncABAC(context.Background()); syncErr != nil {
+		s.logger.WithError(syncErr).Warn("Initial ABAC policy sync failed; live enforcement may not reflect previously stored policies")
+	}
 
 	// Create app manager
 	appManager := iam.NewAppManager(backendStorage, tenantManager)
 
-	// Create audit logger backed by the persistent, per-tenant KVStore so audit
-	// events survive daemon restarts and are encrypted-at-rest in the owning
-	// tenant's barrier (a barrier-isolated tenant's events live in its own
-	// store, never a global table). This mirrors the session/MFA backend stores
-	// above; the in-memory store remains the NewAuditLogger default for
-	// non-backend contexts (e.g. tests, embedded callers without a KVStore).
-	auditLogger, err := iam.NewAuditLogger(
-		iam.WithAuditStorage(iam.NewBackendAuditStorage(iamKV)),
-	)
-	if err != nil {
-		return nil, &IAMComponentInitError{Component: "audit logger", Cause: err}
+	// Create the audit logger backed by the embedded qrdb node's audit chain
+	// (node_audit_logger.go) — the ONE audit plane every subsystem emits
+	// onto (P5.2 of the login-plane plan): a durable, tamper-evident
+	// HMAC-chained file log (or a queryable in-memory ring in embedded/test
+	// contexts with no persistent audit path), never a per-tenant KV store
+	// or an in-memory fallback that loses records on restart. The sink is
+	// idempotently constructed here in case IAM init runs before the qrdb
+	// node wiring populates it (unifiedModuleServerOptions,
+	// qrdb_node.go) — both paths share the exact same sink instance.
+	if s.qrdbAuditSink == nil {
+		s.qrdbAuditSink = s.newQRDBAuditSink()
 	}
+	auditLogger := NewNodeAuditLogger(s.qrdbAuditSink)
 
 	// Create session storage (WebAuthn sessions) and extended session manager.
 	// Both route through the per-tenant KVStore so a barrier-isolated tenant's
@@ -1489,15 +1509,17 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 	iampb.RegisterSessionServiceServer(grpcServer, sessionServer)
 	s.logger.Info("Registered Session gRPC service")
 
-	// Register Audit service with fallback to in-memory logger
+	// Register Audit service. The audit logger is ALWAYS the node-backed
+	// NodeAuditLogger (node_audit_logger.go) once IAM composes — there is
+	// no in-memory fallback (P5.2: a fallback that loses records on
+	// restart is the defect the unified audit plane exists to eliminate).
+	// A nil return here means IAM itself failed to compose, in which case
+	// skipping Audit gRPC registration is correct: nothing else registered
+	// either.
 	auditLogger, _ := getter.GetAuditLogger(ctx)
 	if auditLogger == nil {
-		auditLogger, err = iam.NewAuditLogger()
-		if err != nil {
-			s.logger.WithError(err).Error("Failed to create fallback audit logger, skipping Audit gRPC registration")
-			return
-		}
-		s.logger.Info("Using in-memory audit logger fallback for gRPC")
+		s.logger.Error("Audit logger unavailable, skipping Audit gRPC registration")
+		return
 	}
 	auditAdapter := grpcapi.NewAuditServiceAdapter(auditLogger)
 	auditServer := grpcapi.NewAuditServer(auditAdapter, s.logger)

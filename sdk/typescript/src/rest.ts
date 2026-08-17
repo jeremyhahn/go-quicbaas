@@ -1522,9 +1522,11 @@ class RestAuthClient implements AuthClient {
   // loginPIV performs mTLS PIV smartcard login. credentials:'include' and
   // mode:'cors' ensure the browser presents the client certificate during
   // the TLS handshake so the server can read r.TLS.PeerCertificates[0].
-  // Maps to POST /api/v1/auth/login/piv.
+  // Maps to POST /api/v1/iam/login/piv (P3.3 de-collision: moved off
+  // /api/v1/auth/login/piv, which xkms's module now owns on a composed
+  // node as part of its own session-login plane).
   async loginPIV(): Promise<AuthTokenResponse> {
-    const resp = await fetch(`${this.baseUrl}/api/v1/auth/login/piv`, {
+    const resp = await fetch(`${this.baseUrl}/api/v1/iam/login/piv`, {
       method: 'POST',
       credentials: 'include',
       mode: 'cors',

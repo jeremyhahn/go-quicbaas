@@ -27,6 +27,8 @@ package quicbaas.fido2.v1;
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+
 // =============================================================================
 // FIDO2 Service
 // =============================================================================
@@ -36,11 +38,15 @@ option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 service FIDO2Service {
   // BeginRegistration starts a WebAuthn registration ceremony and returns
   // the CredentialCreationOptions JSON plus the ceremony session id.
-  rpc BeginRegistration(FIDO2BeginRegistrationRequest) returns (FIDO2BeginRegistrationResponse);
+  rpc BeginRegistration(FIDO2BeginRegistrationRequest) returns (FIDO2BeginRegistrationResponse) {
+      option (qrdb.v1.permission) = "user_authfactors:add";
+  }
 
   // FinishRegistration completes a WebAuthn registration ceremony with the
   // authenticator attestation JSON.
-  rpc FinishRegistration(FIDO2FinishRegistrationRequest) returns (FIDO2FinishRegistrationResponse);
+  rpc FinishRegistration(FIDO2FinishRegistrationRequest) returns (FIDO2FinishRegistrationResponse) {
+      option (qrdb.v1.permission) = "user_authfactors:add";
+  }
 
   // BeginAuthentication starts a WebAuthn authentication ceremony and
   // returns the CredentialRequestOptions JSON plus the ceremony session id.

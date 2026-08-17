@@ -69,10 +69,15 @@ func TestDeleteOldAuditEvents_Validation(t *testing.T) {
 	handler, _, cleanup := setupAuditDeleteHandler(t)
 	defer cleanup()
 
-	// Missing tenant_id -> 400
+	// Missing tenant_id no longer 400s: it defaults to the caller's own
+	// authenticated tenant (iam.ResolveRequestTenant) — empty in this
+	// unauthenticated test context — and the request proceeds past tenant
+	// resolution and the "before" parse (present and valid) to the next
+	// real check, requireSubject, which 401s with no authenticated
+	// caller on the request.
 	w := httptest.NewRecorder()
 	handler.DeleteOldAuditEvents(w, httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?before=2024-01-01T00:00:00Z", nil))
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 
 	// Missing before -> 400
 	w = httptest.NewRecorder()

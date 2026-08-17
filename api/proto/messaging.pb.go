@@ -13,6 +13,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -2878,7 +2879,7 @@ var File_api_proto_messaging_proto protoreflect.FileDescriptor
 
 const file_api_proto_messaging_proto_rawDesc = "" +
 	"\n" +
-	"\x19api/proto/messaging.proto\x12\x15quicbaas.messaging.v1\"\xf7\x01\n" +
+	"\x19api/proto/messaging.proto\x12\x15quicbaas.messaging.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xf7\x01\n" +
 	"\aChannel\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05codec\x18\x02 \x01(\tR\x05codec\x12\x1d\n" +
@@ -3127,22 +3128,22 @@ const file_api_proto_messaging_proto_rawDesc = "" +
 	"\x16CODEC_TYPE_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fCODEC_TYPE_JSON\x10\x01\x12\x16\n" +
 	"\x12CODEC_TYPE_MSGPACK\x10\x02\x12\x17\n" +
-	"\x13CODEC_TYPE_PROTOBUF\x10\x032\xc0\f\n" +
-	"\x10MessagingService\x12|\n" +
-	"\rCreateChannel\x124.quicbaas.messaging.v1.MessagingCreateChannelRequest\x1a5.quicbaas.messaging.v1.MessagingCreateChannelResponse\x12|\n" +
-	"\rDeleteChannel\x124.quicbaas.messaging.v1.MessagingDeleteChannelRequest\x1a5.quicbaas.messaging.v1.MessagingDeleteChannelResponse\x12s\n" +
+	"\x13CODEC_TYPE_PROTOBUF\x10\x032\x8a\x0f\n" +
+	"\x10MessagingService\x12\x9a\x01\n" +
+	"\rCreateChannel\x124.quicbaas.messaging.v1.MessagingCreateChannelRequest\x1a5.quicbaas.messaging.v1.MessagingCreateChannelResponse\"\x1c\xc2\xf3\x18\x18messaging:channel_create\x12\x9a\x01\n" +
+	"\rDeleteChannel\x124.quicbaas.messaging.v1.MessagingDeleteChannelRequest\x1a5.quicbaas.messaging.v1.MessagingDeleteChannelResponse\"\x1c\xc2\xf3\x18\x18messaging:channel_delete\x12\x8f\x01\n" +
 	"\n" +
-	"GetChannel\x121.quicbaas.messaging.v1.MessagingGetChannelRequest\x1a2.quicbaas.messaging.v1.MessagingGetChannelResponse\x12y\n" +
-	"\fListChannels\x123.quicbaas.messaging.v1.MessagingListChannelsRequest\x1a4.quicbaas.messaging.v1.MessagingListChannelsResponse\x12p\n" +
-	"\tSubscribe\x120.quicbaas.messaging.v1.MessagingSubscribeRequest\x1a1.quicbaas.messaging.v1.MessagingSubscribeResponse\x12v\n" +
-	"\vUnsubscribe\x122.quicbaas.messaging.v1.MessagingUnsubscribeRequest\x1a3.quicbaas.messaging.v1.MessagingUnsubscribeResponse\x12j\n" +
-	"\aPublish\x12..quicbaas.messaging.v1.MessagingPublishRequest\x1a/.quicbaas.messaging.v1.MessagingPublishResponse\x12y\n" +
-	"\fPublishDelta\x123.quicbaas.messaging.v1.MessagingPublishDeltaRequest\x1a4.quicbaas.messaging.v1.MessagingPublishDeltaResponse\x12\x81\x01\n" +
-	"\x13StreamNotifications\x12:.quicbaas.messaging.v1.MessagingStreamNotificationsRequest\x1a,.quicbaas.messaging.v1.MessagingNotification0\x01\x12y\n" +
-	"\fWatchChannel\x123.quicbaas.messaging.v1.MessagingWatchChannelRequest\x1a4.quicbaas.messaging.v1.MessagingWatchChannelResponse\x12m\n" +
-	"\bGetStats\x12/.quicbaas.messaging.v1.MessagingGetStatsRequest\x1a0.quicbaas.messaging.v1.MessagingGetStatsResponse\x12|\n" +
-	"\rGetDedupStats\x124.quicbaas.messaging.v1.MessagingGetDedupStatsRequest\x1a5.quicbaas.messaging.v1.MessagingGetDedupStatsResponse\x12\x82\x01\n" +
-	"\x0fGetChannelStats\x126.quicbaas.messaging.v1.MessagingGetChannelStatsRequest\x1a7.quicbaas.messaging.v1.MessagingGetChannelStatsResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"GetChannel\x121.quicbaas.messaging.v1.MessagingGetChannelRequest\x1a2.quicbaas.messaging.v1.MessagingGetChannelResponse\"\x1a\xc2\xf3\x18\x16messaging:channel_read\x12\x95\x01\n" +
+	"\fListChannels\x123.quicbaas.messaging.v1.MessagingListChannelsRequest\x1a4.quicbaas.messaging.v1.MessagingListChannelsResponse\"\x1a\xc2\xf3\x18\x16messaging:channel_list\x12\x89\x01\n" +
+	"\tSubscribe\x120.quicbaas.messaging.v1.MessagingSubscribeRequest\x1a1.quicbaas.messaging.v1.MessagingSubscribeResponse\"\x17\xc2\xf3\x18\x13messaging:subscribe\x12\x91\x01\n" +
+	"\vUnsubscribe\x122.quicbaas.messaging.v1.MessagingUnsubscribeRequest\x1a3.quicbaas.messaging.v1.MessagingUnsubscribeResponse\"\x19\xc2\xf3\x18\x15messaging:unsubscribe\x12\x81\x01\n" +
+	"\aPublish\x12..quicbaas.messaging.v1.MessagingPublishRequest\x1a/.quicbaas.messaging.v1.MessagingPublishResponse\"\x15\xc2\xf3\x18\x11messaging:publish\x12\x90\x01\n" +
+	"\fPublishDelta\x123.quicbaas.messaging.v1.MessagingPublishDeltaRequest\x1a4.quicbaas.messaging.v1.MessagingPublishDeltaResponse\"\x15\xc2\xf3\x18\x11messaging:publish\x12\x96\x01\n" +
+	"\x13StreamNotifications\x12:.quicbaas.messaging.v1.MessagingStreamNotificationsRequest\x1a,.quicbaas.messaging.v1.MessagingNotification\"\x13\xc2\xf3\x18\x0fmessaging:watch0\x01\x12\x8e\x01\n" +
+	"\fWatchChannel\x123.quicbaas.messaging.v1.MessagingWatchChannelRequest\x1a4.quicbaas.messaging.v1.MessagingWatchChannelResponse\"\x13\xc2\xf3\x18\x0fmessaging:watch\x12\x82\x01\n" +
+	"\bGetStats\x12/.quicbaas.messaging.v1.MessagingGetStatsRequest\x1a0.quicbaas.messaging.v1.MessagingGetStatsResponse\"\x13\xc2\xf3\x18\x0fmessaging:stats\x12\x91\x01\n" +
+	"\rGetDedupStats\x124.quicbaas.messaging.v1.MessagingGetDedupStatsRequest\x1a5.quicbaas.messaging.v1.MessagingGetDedupStatsResponse\"\x13\xc2\xf3\x18\x0fmessaging:stats\x12\x97\x01\n" +
+	"\x0fGetChannelStats\x126.quicbaas.messaging.v1.MessagingGetChannelStatsRequest\x1a7.quicbaas.messaging.v1.MessagingGetChannelStatsResponse\"\x13\xc2\xf3\x18\x0fmessaging:statsB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_messaging_proto_rawDescOnce sync.Once

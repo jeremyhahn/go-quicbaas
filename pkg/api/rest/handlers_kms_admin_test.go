@@ -412,7 +412,7 @@ func TestMapRequestToPermission_KMSAdminRoutes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resource, action, ok := mapRequestToPermission(tt.path, tt.method)
+			resource, action, ok := routePermissionForPath(tt.path, tt.method)
 			require.True(t, ok, "expected mapping for %s %s", tt.method, tt.path)
 			assert.Equal(t, tt.wantResource, resource)
 			assert.Equal(t, tt.wantAction, action)

@@ -1126,22 +1126,6 @@ type ServerRESTConfig struct {
 	BindAddress string `mapstructure:"bind_address"`
 }
 
-// ServerQUICConfig contains QUIC server configuration.
-type ServerQUICConfig struct {
-	Enabled                bool          `mapstructure:"enabled"`
-	Port                   int           `mapstructure:"port"`
-	MaxStreams             int           `mapstructure:"max_streams"`
-	MaxIdleTimeout         time.Duration `mapstructure:"max_idle_timeout"`
-	HandshakeIdleTimeout   time.Duration `mapstructure:"handshake_idle_timeout"`
-	MaxStreamReceiveWindow uint64        `mapstructure:"max_stream_receive_window"`
-
-	// BindAddress optionally overrides Server.Host for the QUIC listener,
-	// allowing this protocol to bind to a private-ingress interface (SC-7)
-	// independently of the other listeners. Empty = use Server.Host
-	// (current behavior).
-	BindAddress string `mapstructure:"bind_address"`
-}
-
 // ServerMCPConfig contains MCP (Model Context Protocol) server configuration.
 type ServerMCPConfig struct {
 	Enabled             bool                         `mapstructure:"enabled"`
@@ -1214,11 +1198,24 @@ type ServerConfig struct {
 	// See EmbeddedAgentConfig for field semantics.
 	EmbeddedAgent EmbeddedAgentConfig `mapstructure:"embedded_agent"`
 
-	// Protocol-specific configurations
+	// Protocol-specific configurations. Network serving runs exclusively on
+	// the embedded qrdb node's unified multi-protocol server (see
+	// (*Config).NetworkServing and pkg/server/qrdb_node.go's
+	// unifiedModuleServerOptions/buildQRDBConfig): when REST.Enabled,
+	// GRPC.Enabled, or MCP.Enabled is true, the node's own listener for that
+	// protocol comes up on the corresponding Port and serves the broker
+	// ServiceModule (pkg/apimodule), gated per-RPC by qrdb's reflection
+	// interceptor over option (qrdb.v1.permission). There is no separate
+	// legacy listener — these ARE the unified server's protocol gates.
 	GRPC ServerGRPCConfig `mapstructure:"grpc"`
 	REST ServerRESTConfig `mapstructure:"rest"`
-	QUIC ServerQUICConfig `mapstructure:"quic"`
 	MCP  ServerMCPConfig  `mapstructure:"mcp"`
+	// Unix serves the gRPC surface over a local Unix domain socket for CLI
+	// compatibility. This is local IPC, not network serving: it is served by
+	// quicbaas itself (a live, fully-registered *grpc.Server), independent of
+	// whether REST/GRPC/MCP network serving is enabled — mirroring go-xkms's
+	// local-IPC split (qrdb's unified server transports are TLS-only network
+	// listeners; they carry no Unix-domain-socket transport of their own).
 	Unix ServerUnixConfig `mapstructure:"unix"`
 
 	// Timeouts and limits
@@ -1904,6 +1901,20 @@ type CAConfig struct {
 	// secret registry after the credential store is online — so any reference
 	// scheme supported by the registry is valid here.
 	RootKeyPassword string `mapstructure:"root_key_password"`
+}
+
+// NetworkServing reports whether any network protocol is enabled. Network
+// serving runs exclusively on the embedded qrdb node's unified multi-protocol
+// server: the node's own REST/gRPC/MCP listeners take Server.REST.Port /
+// Server.GRPC.Port / Server.MCP.Port and serve the QuicBaaS capability plane
+// through the registered ServiceModule (pkg/apimodule), gated per-RPC by
+// qrdb's reflection interceptor over option (qrdb.v1.permission). It
+// therefore requires explicit TLS material (qrdb's transports are TLS-only) —
+// validateNetworkServingTLS enforces this. The Unix domain socket listener
+// (Server.Unix) is local IPC, served by quicbaas itself, and is deliberately
+// excluded here — mirroring go-xkms's (*Config).NetworkServing.
+func (c *Config) NetworkServing() bool {
+	return c.Server.REST.Enabled || c.Server.GRPC.Enabled || c.Server.MCP.Enabled
 }
 
 // Clone creates a deep copy of the Config.

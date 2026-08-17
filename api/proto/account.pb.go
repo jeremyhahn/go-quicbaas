@@ -22,6 +22,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -1459,7 +1460,7 @@ var File_api_proto_account_proto protoreflect.FileDescriptor
 
 const file_api_proto_account_proto_rawDesc = "" +
 	"\n" +
-	"\x17api/proto/account.proto\x12\x13quicbaas.account.v1\"\x8c\x05\n" +
+	"\x17api/proto/account.proto\x12\x13quicbaas.account.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\x8c\x05\n" +
 	"\aAccount\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x1d\n" +
@@ -1593,18 +1594,18 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"account_id\x18\x02 \x01(\tR\taccountId\"p\n" +
 	"\x17GetAccountUsageResponse\x127\n" +
 	"\x05usage\x18\x01 \x01(\v2!.quicbaas.account.v1.AccountUsageR\x05usage\x12\x1c\n" +
-	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp2\xdd\a\n" +
-	"\x0eAccountService\x12f\n" +
-	"\rCreateAccount\x12).quicbaas.account.v1.CreateAccountRequest\x1a*.quicbaas.account.v1.CreateAccountResponse\x12]\n" +
+	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp2\xb6\t\n" +
+	"\x0eAccountService\x12}\n" +
+	"\rCreateAccount\x12).quicbaas.account.v1.CreateAccountRequest\x1a*.quicbaas.account.v1.CreateAccountResponse\"\x15\xc2\xf3\x18\x11credentials:store\x12w\n" +
 	"\n" +
-	"GetAccount\x12&.quicbaas.account.v1.GetAccountRequest\x1a'.quicbaas.account.v1.GetAccountResponse\x12c\n" +
-	"\fListAccounts\x12(.quicbaas.account.v1.ListAccountsRequest\x1a).quicbaas.account.v1.ListAccountsResponse\x12f\n" +
-	"\rUpdateAccount\x12).quicbaas.account.v1.UpdateAccountRequest\x1a*.quicbaas.account.v1.UpdateAccountResponse\x12f\n" +
-	"\rDeleteAccount\x12).quicbaas.account.v1.DeleteAccountRequest\x1a*.quicbaas.account.v1.DeleteAccountResponse\x12\x84\x01\n" +
-	"\x17RotateAccountCredential\x123.quicbaas.account.v1.RotateAccountCredentialRequest\x1a4.quicbaas.account.v1.RotateAccountCredentialResponse\x12f\n" +
-	"\rRevokeAccount\x12).quicbaas.account.v1.RevokeAccountRequest\x1a*.quicbaas.account.v1.RevokeAccountResponse\x12r\n" +
-	"\x11SetDefaultAccount\x12-.quicbaas.account.v1.SetDefaultAccountRequest\x1a..quicbaas.account.v1.SetDefaultAccountResponse\x12l\n" +
-	"\x0fGetAccountUsage\x12+.quicbaas.account.v1.GetAccountUsageRequest\x1a,.quicbaas.account.v1.GetAccountUsageResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"GetAccount\x12&.quicbaas.account.v1.GetAccountRequest\x1a'.quicbaas.account.v1.GetAccountResponse\"\x18\xc2\xf3\x18\x14credentials:retrieve\x12y\n" +
+	"\fListAccounts\x12(.quicbaas.account.v1.ListAccountsRequest\x1a).quicbaas.account.v1.ListAccountsResponse\"\x14\xc2\xf3\x18\x10credentials:list\x12}\n" +
+	"\rUpdateAccount\x12).quicbaas.account.v1.UpdateAccountRequest\x1a*.quicbaas.account.v1.UpdateAccountResponse\"\x15\xc2\xf3\x18\x11credentials:store\x12~\n" +
+	"\rDeleteAccount\x12).quicbaas.account.v1.DeleteAccountRequest\x1a*.quicbaas.account.v1.DeleteAccountResponse\"\x16\xc2\xf3\x18\x12credentials:delete\x12\x9c\x01\n" +
+	"\x17RotateAccountCredential\x123.quicbaas.account.v1.RotateAccountCredentialRequest\x1a4.quicbaas.account.v1.RotateAccountCredentialResponse\"\x16\xc2\xf3\x18\x12credentials:rotate\x12~\n" +
+	"\rRevokeAccount\x12).quicbaas.account.v1.RevokeAccountRequest\x1a*.quicbaas.account.v1.RevokeAccountResponse\"\x16\xc2\xf3\x18\x12credentials:delete\x12\x89\x01\n" +
+	"\x11SetDefaultAccount\x12-.quicbaas.account.v1.SetDefaultAccountRequest\x1a..quicbaas.account.v1.SetDefaultAccountResponse\"\x15\xc2\xf3\x18\x11credentials:store\x12\x86\x01\n" +
+	"\x0fGetAccountUsage\x12+.quicbaas.account.v1.GetAccountUsageRequest\x1a,.quicbaas.account.v1.GetAccountUsageResponse\"\x18\xc2\xf3\x18\x14credentials:retrieveB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_account_proto_rawDescOnce sync.Once

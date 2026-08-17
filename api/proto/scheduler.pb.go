@@ -13,6 +13,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -2149,7 +2150,7 @@ var File_api_proto_scheduler_proto protoreflect.FileDescriptor
 
 const file_api_proto_scheduler_proto_rawDesc = "" +
 	"\n" +
-	"\x19api/proto/scheduler.proto\x12\x15quicbaas.scheduler.v1\"\xa2\a\n" +
+	"\x19api/proto/scheduler.proto\x12\x15quicbaas.scheduler.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xa2\a\n" +
 	"\x03Job\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
@@ -2364,20 +2365,21 @@ const file_api_proto_scheduler_proto_rawDesc = "" +
 	"\x16OWNER_TYPE_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11OWNER_TYPE_SYSTEM\x10\x01\x12\x15\n" +
 	"\x11OWNER_TYPE_TENANT\x10\x02\x12\x18\n" +
-	"\x14OWNER_TYPE_DELEGATED\x10\x032\xcd\b\n" +
-	"\x10SchedulerService\x12^\n" +
-	"\tCreateJob\x12'.quicbaas.scheduler.v1.CreateJobRequest\x1a(.quicbaas.scheduler.v1.CreateJobResponse\x12U\n" +
-	"\x06GetJob\x12$.quicbaas.scheduler.v1.GetJobRequest\x1a%.quicbaas.scheduler.v1.GetJobResponse\x12^\n" +
-	"\tUpdateJob\x12'.quicbaas.scheduler.v1.UpdateJobRequest\x1a(.quicbaas.scheduler.v1.UpdateJobResponse\x12^\n" +
-	"\tDeleteJob\x12'.quicbaas.scheduler.v1.DeleteJobRequest\x1a(.quicbaas.scheduler.v1.DeleteJobResponse\x12[\n" +
-	"\bListJobs\x12&.quicbaas.scheduler.v1.ListJobsRequest\x1a'.quicbaas.scheduler.v1.ListJobsResponse\x12a\n" +
+	"\x14OWNER_TYPE_DELEGATED\x10\x032\xbe\n" +
 	"\n" +
-	"TriggerJob\x12(.quicbaas.scheduler.v1.TriggerJobRequest\x1a).quicbaas.scheduler.v1.TriggerJobResponse\x12[\n" +
-	"\bPauseJob\x12&.quicbaas.scheduler.v1.PauseJobRequest\x1a'.quicbaas.scheduler.v1.PauseJobResponse\x12^\n" +
-	"\tResumeJob\x12'.quicbaas.scheduler.v1.ResumeJobRequest\x1a(.quicbaas.scheduler.v1.ResumeJobResponse\x12^\n" +
-	"\tCancelJob\x12'.quicbaas.scheduler.v1.CancelJobRequest\x1a(.quicbaas.scheduler.v1.CancelJobResponse\x12j\n" +
-	"\rGetJobHistory\x12+.quicbaas.scheduler.v1.GetJobHistoryRequest\x1a,.quicbaas.scheduler.v1.GetJobHistoryResponse\x12y\n" +
-	"\x12GetSchedulerStatus\x120.quicbaas.scheduler.v1.GetSchedulerStatusRequest\x1a1.quicbaas.scheduler.v1.GetSchedulerStatusResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"\x10SchedulerService\x12t\n" +
+	"\tCreateJob\x12'.quicbaas.scheduler.v1.CreateJobRequest\x1a(.quicbaas.scheduler.v1.CreateJobResponse\"\x14\xc2\xf3\x18\x10scheduler:create\x12i\n" +
+	"\x06GetJob\x12$.quicbaas.scheduler.v1.GetJobRequest\x1a%.quicbaas.scheduler.v1.GetJobResponse\"\x12\xc2\xf3\x18\x0escheduler:read\x12t\n" +
+	"\tUpdateJob\x12'.quicbaas.scheduler.v1.UpdateJobRequest\x1a(.quicbaas.scheduler.v1.UpdateJobResponse\"\x14\xc2\xf3\x18\x10scheduler:update\x12t\n" +
+	"\tDeleteJob\x12'.quicbaas.scheduler.v1.DeleteJobRequest\x1a(.quicbaas.scheduler.v1.DeleteJobResponse\"\x14\xc2\xf3\x18\x10scheduler:delete\x12o\n" +
+	"\bListJobs\x12&.quicbaas.scheduler.v1.ListJobsRequest\x1a'.quicbaas.scheduler.v1.ListJobsResponse\"\x12\xc2\xf3\x18\x0escheduler:list\x12x\n" +
+	"\n" +
+	"TriggerJob\x12(.quicbaas.scheduler.v1.TriggerJobRequest\x1a).quicbaas.scheduler.v1.TriggerJobResponse\"\x15\xc2\xf3\x18\x11scheduler:trigger\x12p\n" +
+	"\bPauseJob\x12&.quicbaas.scheduler.v1.PauseJobRequest\x1a'.quicbaas.scheduler.v1.PauseJobResponse\"\x13\xc2\xf3\x18\x0fscheduler:pause\x12t\n" +
+	"\tResumeJob\x12'.quicbaas.scheduler.v1.ResumeJobRequest\x1a(.quicbaas.scheduler.v1.ResumeJobResponse\"\x14\xc2\xf3\x18\x10scheduler:resume\x12t\n" +
+	"\tCancelJob\x12'.quicbaas.scheduler.v1.CancelJobRequest\x1a(.quicbaas.scheduler.v1.CancelJobResponse\"\x14\xc2\xf3\x18\x10scheduler:cancel\x12\x81\x01\n" +
+	"\rGetJobHistory\x12+.quicbaas.scheduler.v1.GetJobHistoryRequest\x1a,.quicbaas.scheduler.v1.GetJobHistoryResponse\"\x15\xc2\xf3\x18\x11scheduler:history\x12\x8f\x01\n" +
+	"\x12GetSchedulerStatus\x120.quicbaas.scheduler.v1.GetSchedulerStatusRequest\x1a1.quicbaas.scheduler.v1.GetSchedulerStatusResponse\"\x14\xc2\xf3\x18\x10scheduler:statusB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_scheduler_proto_rawDescOnce sync.Once

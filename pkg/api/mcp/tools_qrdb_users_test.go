@@ -679,30 +679,3 @@ func TestQRDBUserToolAuthzMappings(t *testing.T) {
 		assert.True(t, ok, "registered tool %s missing from qrdbToolExactMapping", name)
 	}
 }
-
-// TestQRDBUserToolLegacyAuthzMappings pins the legacy (interfaces.Resource*)
-// mapping treatment: reads map to ActionRead, enroll/rotate/relabel to
-// ActionWrite, remove to ActionDelete — mirroring the qrdb_credential_*
-// entries. Without exact entries these tools would fall through to the
-// cluster-admin default.
-func TestQRDBUserToolLegacyAuthzMappings(t *testing.T) {
-	cases := map[string]struct{ resource, action string }{
-		"qrdb_user_get":                    {"users", "read"},
-		"qrdb_user_get_by_username":        {"users", "read"},
-		"qrdb_user_get_by_cert_thumbprint": {"users", "read"},
-		"qrdb_user_authfactor_list":        {"users", "read"},
-		"qrdb_user_authfactor_get":         {"users", "read"},
-		"qrdb_user_authfactor_login":       {"users", "read"},
-		"qrdb_user_authfactor_add":         {"users", "write"},
-		"qrdb_user_authfactor_rotate":      {"users", "write"},
-		"qrdb_user_authfactor_relabel":     {"users", "write"},
-		"qrdb_user_authfactor_remove":      {"users", "delete"},
-	}
-	for tool, want := range cases {
-		t.Run(tool, func(t *testing.T) {
-			resource, action := getToolResourceAction(tool)
-			assert.Equal(t, want.resource, resource)
-			assert.Equal(t, want.action, action)
-		})
-	}
-}

@@ -20,6 +20,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
@@ -1104,7 +1105,7 @@ var File_api_proto_ceremony_proto protoreflect.FileDescriptor
 
 const file_api_proto_ceremony_proto_rawDesc = "" +
 	"\n" +
-	"\x18api/proto/ceremony.proto\x12\x14quicbaas.ceremony.v1\x1a\x1bgoogle/protobuf/empty.proto\"F\n" +
+	"\x18api/proto/ceremony.proto\x12\x14quicbaas.ceremony.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"F\n" +
 	"\x0fCeremonyOfficer\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12\x17\n" +
 	"\acsr_pem\x18\x02 \x01(\tR\x06csrPem\"\x98\x02\n" +
@@ -1182,17 +1183,18 @@ const file_api_proto_ceremony_proto_rawDesc = "" +
 	"\vshare_bytes\x18\x06 \x01(\fR\n" +
 	"shareBytes\"J\n" +
 	"%CeremonyEnrollExternalOfficerResponse\x12!\n" +
-	"\fsealed_share\x18\x01 \x01(\tR\vsealedShare2\xfa\b\n" +
-	"\bCeremony\x12w\n" +
-	"\x12CeremonyInitialize\x12/.quicbaas.ceremony.v1.CeremonyInitializeRequest\x1a0.quicbaas.ceremony.v1.CeremonyInitializeResponse\x12V\n" +
-	"\x0eCeremonyStatus\x12\x16.google.protobuf.Empty\x1a,.quicbaas.ceremony.v1.CeremonyStatusResponse\x12\x83\x01\n" +
-	"\x16CeremonyClaimCertBegin\x123.quicbaas.ceremony.v1.CeremonyClaimCertBeginRequest\x1a4.quicbaas.ceremony.v1.CeremonyClaimCertBeginResponse\x12\x8c\x01\n" +
-	"\x19CeremonyClaimCertComplete\x126.quicbaas.ceremony.v1.CeremonyClaimCertCompleteRequest\x1a7.quicbaas.ceremony.v1.CeremonyClaimCertCompleteResponse\x12\x86\x01\n" +
-	"\x17CeremonyBeginClaimShare\x124.quicbaas.ceremony.v1.CeremonyBeginClaimShareRequest\x1a5.quicbaas.ceremony.v1.CeremonyBeginClaimShareResponse\x12\x8f\x01\n" +
-	"\x1aCeremonyCompleteClaimShare\x127.quicbaas.ceremony.v1.CeremonyCompleteClaimShareRequest\x1a8.quicbaas.ceremony.v1.CeremonyCompleteClaimShareResponse\x12n\n" +
-	"\x0fCeremonySignCSR\x12,.quicbaas.ceremony.v1.CeremonySignCSRRequest\x1a-.quicbaas.ceremony.v1.CeremonySignCSRResponse\x12b\n" +
-	"\x14CeremonyListOfficers\x12\x16.google.protobuf.Empty\x1a2.quicbaas.ceremony.v1.CeremonyListOfficersResponse\x12\x98\x01\n" +
-	"\x1dCeremonyEnrollExternalOfficer\x12:.quicbaas.ceremony.v1.CeremonyEnrollExternalOfficerRequest\x1a;.quicbaas.ceremony.v1.CeremonyEnrollExternalOfficerResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"\fsealed_share\x18\x01 \x01(\tR\vsealedShare2\xea\n" +
+	"\n" +
+	"\bCeremony\x12\x90\x01\n" +
+	"\x12CeremonyInitialize\x12/.quicbaas.ceremony.v1.CeremonyInitializeRequest\x1a0.quicbaas.ceremony.v1.CeremonyInitializeResponse\"\x17\xc2\xf3\x18\x13ceremony:initialize\x12k\n" +
+	"\x0eCeremonyStatus\x12\x16.google.protobuf.Empty\x1a,.quicbaas.ceremony.v1.CeremonyStatusResponse\"\x13\xc2\xf3\x18\x0fceremony:status\x12\x9c\x01\n" +
+	"\x16CeremonyClaimCertBegin\x123.quicbaas.ceremony.v1.CeremonyClaimCertBeginRequest\x1a4.quicbaas.ceremony.v1.CeremonyClaimCertBeginResponse\"\x17\xc2\xf3\x18\x13ceremony:claim_cert\x12\xa5\x01\n" +
+	"\x19CeremonyClaimCertComplete\x126.quicbaas.ceremony.v1.CeremonyClaimCertCompleteRequest\x1a7.quicbaas.ceremony.v1.CeremonyClaimCertCompleteResponse\"\x17\xc2\xf3\x18\x13ceremony:claim_cert\x12\xa6\x01\n" +
+	"\x17CeremonyBeginClaimShare\x124.quicbaas.ceremony.v1.CeremonyBeginClaimShareRequest\x1a5.quicbaas.ceremony.v1.CeremonyBeginClaimShareResponse\"\x1e\xc2\xf3\x18\x1aceremony:claim_share_begin\x12\xb2\x01\n" +
+	"\x1aCeremonyCompleteClaimShare\x127.quicbaas.ceremony.v1.CeremonyCompleteClaimShareRequest\x1a8.quicbaas.ceremony.v1.CeremonyCompleteClaimShareResponse\"!\xc2\xf3\x18\x1dceremony:claim_share_complete\x12\x85\x01\n" +
+	"\x0fCeremonySignCSR\x12,.quicbaas.ceremony.v1.CeremonySignCSRRequest\x1a-.quicbaas.ceremony.v1.CeremonySignCSRResponse\"\x15\xc2\xf3\x18\x11ceremony:sign_csr\x12w\n" +
+	"\x14CeremonyListOfficers\x12\x16.google.protobuf.Empty\x1a2.quicbaas.ceremony.v1.CeremonyListOfficersResponse\"\x13\xc2\xf3\x18\x0fceremony:status\x12\xb7\x01\n" +
+	"\x1dCeremonyEnrollExternalOfficer\x12:.quicbaas.ceremony.v1.CeremonyEnrollExternalOfficerRequest\x1a;.quicbaas.ceremony.v1.CeremonyEnrollExternalOfficerResponse\"\x1d\xc2\xf3\x18\x19ceremony:enroll_custodianB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_ceremony_proto_rawDescOnce sync.Once

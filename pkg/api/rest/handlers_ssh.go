@@ -202,32 +202,6 @@ func (e *SSHAuthorizedNotFoundError) Error() string {
 // Routes
 // =============================================================================
 
-// registerSSHRoutes installs the SSH route table on r. Both the canonical
-// /api/v1/ssh mount and the /api/v1/xkms/v1/ssh alias (the prefix the
-// go-xkms REST SSH client expects) share this single table, so the two
-// mounts can never drift apart.
-func (s *Server) registerSSHRoutes(r chi.Router) {
-	r.Post("/keys", s.HandleGenerateSSHKey)
-	r.Post("/keys/import", s.HandleImportSSHKey)
-	r.Get("/keys", s.HandleListSSHKeys)
-	r.Get("/keys/{scope}/{owner}/{name}", s.HandleGetSSHKey)
-	r.Delete("/keys/{scope}/{owner}/{name}", s.HandleDeleteSSHKey)
-	r.Get("/keys/{scope}/{owner}/{name}/public", s.HandleExportSSHKeyPublic)
-	r.Post("/keys/{scope}/{owner}/{name}/sign", s.HandleSignSSHDigest)
-
-	r.Post("/known-hosts", s.HandleAddKnownHost)
-	r.Get("/known-hosts", s.HandleListKnownHosts)
-	r.Delete("/known-hosts/{host}", s.HandleRemoveKnownHost)
-	r.Post("/known-hosts/{host}/verify", s.HandleVerifyKnownHost)
-
-	r.Post("/authorized", s.HandleEmitAuthorized)
-	r.Post("/authorized/verify", s.HandleVerifyAuthorized)
-	r.Post("/authorized/keys", s.HandleAddAuthorizedKey)
-	r.Get("/authorized/keys", s.HandleListAuthorizedKeys)
-	r.Get("/authorized/keys/{scope}/{owner}/{name}", s.HandleGetAuthorizedKey)
-	r.Delete("/authorized/keys/{scope}/{owner}/{name}", s.HandleRemoveAuthorizedKey)
-}
-
 // =============================================================================
 // Handlers — Keys
 // =============================================================================

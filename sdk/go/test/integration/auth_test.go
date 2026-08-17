@@ -34,7 +34,9 @@ import (
 //
 //   - /.well-known/jwks.json                 (public JWKS)
 //   - /.well-known/openid-configuration      (public OIDC discovery)
-//   - POST /api/v1/auth/login/piv            (PIV mTLS login; rejects non-mTLS)
+//   - POST /api/v1/iam/login/piv             (PIV mTLS login; rejects non-mTLS;
+//     moved from /api/v1/auth/login/piv by P3.3 -- xkms's module owns that path
+//     on a composed node as part of its own session-login plane)
 //   - POST /api/v1/auth/refresh              (rejects invalid refresh tokens)
 //   - POST /api/v1/auth/validate             (rejects requests without a bearer)
 //   - POST /api/v1/auth/logout               (rejects requests without a token)
@@ -60,7 +62,7 @@ func TestAuthEndpointDiscovery(t *testing.T) {
 		{"openid-config", "/.well-known/openid-configuration", http.MethodGet, []int{http.StatusOK}},
 		// PIV login is the canonical login route. Without a presented mTLS
 		// client certificate it must reject the request rather than 404.
-		{"login-piv", "/api/v1/auth/login/piv", http.MethodPost, []int{http.StatusBadRequest, http.StatusUnauthorized}},
+		{"login-piv", "/api/v1/iam/login/piv", http.MethodPost, []int{http.StatusBadRequest, http.StatusUnauthorized}},
 	}
 
 	for _, ep := range endpoints {
@@ -121,7 +123,7 @@ func TestPIVLoginRejectsNonMTLS(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/auth/login/piv", bytes.NewBufferString("{}"))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/iam/login/piv", bytes.NewBufferString("{}"))
 		if err != nil {
 			t.Fatalf("failed to create request: %v", err)
 		}

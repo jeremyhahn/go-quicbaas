@@ -27,7 +27,12 @@ import (
 
 // TestListAuditEvents tests the ListAuditEvents handler.
 func TestListAuditEvents(t *testing.T) {
-	t.Run("missing tenant_id parameter", func(t *testing.T) {
+	t.Run("missing tenant_id parameter defaults to caller tenant", func(t *testing.T) {
+		// An omitted tenant_id no longer 400s: it defaults to the caller's
+		// own authenticated tenant (iam.ResolveRequestTenant) — empty in
+		// this unauthenticated test context — and the request proceeds
+		// past tenant resolution to the next real dependency (the unwired
+		// audit logger).
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
@@ -36,8 +41,8 @@ func TestListAuditEvents(t *testing.T) {
 
 		handler.ListAuditEvents(w, req)
 
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "tenant_id parameter is required")
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Contains(t, w.Body.String(), "audit logger not available")
 	})
 
 	t.Run("with valid tenant_id", func(t *testing.T) {
@@ -113,7 +118,8 @@ func TestGetAuditEvent(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "event ID is required")
 	})
 
-	t.Run("missing tenant_id parameter", func(t *testing.T) {
+	t.Run("missing tenant_id parameter defaults to caller tenant", func(t *testing.T) {
+		// Same contract change as ListAuditEvents above.
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
@@ -126,8 +132,8 @@ func TestGetAuditEvent(t *testing.T) {
 
 		handler.GetAuditEvent(w, req)
 
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "tenant_id parameter is required")
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Contains(t, w.Body.String(), "audit logger not available")
 	})
 
 	t.Run("audit logger not available", func(t *testing.T) {
@@ -150,7 +156,13 @@ func TestGetAuditEvent(t *testing.T) {
 
 // TestDeleteOldAuditEvents tests the DeleteOldAuditEvents handler.
 func TestDeleteOldAuditEvents(t *testing.T) {
-	t.Run("missing tenant_id parameter", func(t *testing.T) {
+	t.Run("missing tenant_id parameter defaults to caller tenant", func(t *testing.T) {
+		// An omitted tenant_id no longer 400s at the tenant-scoping check:
+		// it defaults to the caller's own authenticated tenant
+		// (iam.ResolveRequestTenant) — empty in this unauthenticated test
+		// context — and the request proceeds to the next validation
+		// (the missing "before" parameter), still 400 but for a different
+		// reason.
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
@@ -160,7 +172,7 @@ func TestDeleteOldAuditEvents(t *testing.T) {
 		handler.DeleteOldAuditEvents(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "tenant_id parameter is required")
+		assert.Contains(t, w.Body.String(), "before parameter is required")
 	})
 
 	t.Run("missing before parameter", func(t *testing.T) {

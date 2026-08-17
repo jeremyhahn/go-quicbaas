@@ -13,6 +13,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
@@ -875,7 +876,7 @@ var File_api_proto_ollama_proto protoreflect.FileDescriptor
 
 const file_api_proto_ollama_proto_rawDesc = "" +
 	"\n" +
-	"\x16api/proto/ollama.proto\x12\x12quicbaas.ollama.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\"4\n" +
+	"\x16api/proto/ollama.proto\x12\x12quicbaas.ollama.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"4\n" +
 	"\x13OllamaHealthRequest\x12\x1d\n" +
 	"\n" +
 	"full_check\x18\x01 \x01(\bR\tfullCheck\"\xbe\x01\n" +
@@ -934,16 +935,16 @@ const file_api_proto_ollama_proto_rawDesc = "" +
 	"\x05count\x18\x04 \x01(\x05R\x05count\x12B\n" +
 	"\x0fprocessing_time\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\x0eprocessingTime\"/\n" +
 	"\x15OllamaEmbeddingVector\x12\x16\n" +
-	"\x06values\x18\x01 \x03(\x02R\x06values2\xf3\x04\n" +
-	"\rOllamaService\x12[\n" +
-	"\x06Health\x12'.quicbaas.ollama.v1.OllamaHealthRequest\x1a(.quicbaas.ollama.v1.OllamaHealthResponse\x12g\n" +
+	"\x06values\x18\x01 \x03(\x02R\x06values2\xeb\x05\n" +
+	"\rOllamaService\x12n\n" +
+	"\x06Health\x12'.quicbaas.ollama.v1.OllamaHealthRequest\x1a(.quicbaas.ollama.v1.OllamaHealthResponse\"\x11\xc2\xf3\x18\rollama:health\x12~\n" +
 	"\n" +
-	"ListModels\x12+.quicbaas.ollama.v1.OllamaListModelsRequest\x1a,.quicbaas.ollama.v1.OllamaListModelsResponse\x12m\n" +
-	"\fGetModelInfo\x12-.quicbaas.ollama.v1.OllamaGetModelInfoRequest\x1a..quicbaas.ollama.v1.OllamaGetModelInfoResponse\x12X\n" +
-	"\x05Embed\x12&.quicbaas.ollama.v1.OllamaEmbedRequest\x1a'.quicbaas.ollama.v1.OllamaEmbedResponse\x12j\n" +
-	"\x0eEmbedWithModel\x12/.quicbaas.ollama.v1.OllamaEmbedWithModelRequest\x1a'.quicbaas.ollama.v1.OllamaEmbedResponse\x12g\n" +
+	"ListModels\x12+.quicbaas.ollama.v1.OllamaListModelsRequest\x1a,.quicbaas.ollama.v1.OllamaListModelsResponse\"\x15\xc2\xf3\x18\x11ollama:model_list\x12\x84\x01\n" +
+	"\fGetModelInfo\x12-.quicbaas.ollama.v1.OllamaGetModelInfoRequest\x1a..quicbaas.ollama.v1.OllamaGetModelInfoResponse\"\x15\xc2\xf3\x18\x11ollama:model_info\x12j\n" +
+	"\x05Embed\x12&.quicbaas.ollama.v1.OllamaEmbedRequest\x1a'.quicbaas.ollama.v1.OllamaEmbedResponse\"\x10\xc2\xf3\x18\follama:embed\x12|\n" +
+	"\x0eEmbedWithModel\x12/.quicbaas.ollama.v1.OllamaEmbedWithModelRequest\x1a'.quicbaas.ollama.v1.OllamaEmbedResponse\"\x10\xc2\xf3\x18\follama:embed\x12y\n" +
 	"\n" +
-	"EmbedBatch\x12+.quicbaas.ollama.v1.OllamaEmbedBatchRequest\x1a,.quicbaas.ollama.v1.OllamaEmbedBatchResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"EmbedBatch\x12+.quicbaas.ollama.v1.OllamaEmbedBatchRequest\x1a,.quicbaas.ollama.v1.OllamaEmbedBatchResponse\"\x10\xc2\xf3\x18\follama:embedB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_ollama_proto_rawDescOnce sync.Once

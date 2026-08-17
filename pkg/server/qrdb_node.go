@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -22,9 +23,16 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	xkmslib "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
+	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
+	"github.com/jeremyhahn/go-quicbaas/pkg/apimodule"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
 
 // defaultVolumePoolDirName is the subdirectory under the node data dir that
@@ -81,6 +89,15 @@ func (e *QRDBNodeError) Unwrap() error { return e.Cause }
 // from the quicbaas Raft and Discovery config sections.
 func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfig, error) {
 	qcfg := &qrdbsdk.DaemonConfig{}
+
+	// Authentication and authorization on the embedded node mirror
+	// quicbaas's own enforcement posture (Security.RequireAuthz — the same
+	// flag that gates the gRPC interceptors and the module token fallback):
+	// the node's middleware guards every qrdb-native plane and provides the
+	// upstream identity for module routes. Stated EXPLICITLY even though
+	// qrdb's zero value is fail-safe (nil ⇒ enabled), so the posture is
+	// legible at the embedding site.
+	qcfg.Auth.Enabled = qrdbsdk.BoolPtr(cfg.Security.RequireAuthz)
 
 	// ------------------------------------------------------------------ //
 	// Data directory: quicbaas uses Storage.DataDir; qrdb uses Raft.DataDir
@@ -170,6 +187,29 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 		poolPath := filepath.Join(dataDir, defaultVolumePoolDirName)
 		qcfg.Storage.VolumePools = []qrdbsdk.DaemonVolumePoolConfig{
 			{Name: "default", Paths: []string{poolPath}, Strategy: "round_robin"},
+		}
+	}
+
+	// Unified API server: network serving runs exclusively on the embedded
+	// node's own multi-protocol server (see (*config.Config).NetworkServing).
+	// The node's REST/gRPC/MCP listeners come up on the SAME ports the legacy
+	// per-protocol config sections have always carried and serve the quicbaas
+	// capability plane through the ServiceModule registered in
+	// unifiedModuleServerOptions, gated per-RPC by qrdb's reflection
+	// interceptor over option (qrdb.v1.permission). A protocol left disabled
+	// (Enabled=false) starts no transport for it. Enabling any protocol here
+	// means node construction runs the full qrdb server start pipeline —
+	// module surfaces answer Unavailable until quicbaasd finishes composing
+	// the QuicBaaS facade.
+	if cfg.NetworkServing() {
+		qcfg.Server.Host = cfg.Server.Host
+		qcfg.Server.AdminPort = cfg.Server.REST.Port
+		qcfg.Server.GRPCPort = cfg.Server.GRPC.Port
+		qcfg.Protocols.REST = cfg.Server.REST.Enabled
+		qcfg.Protocols.GRPC = cfg.Server.GRPC.Enabled
+		qcfg.Protocols.MCP = cfg.Server.MCP.Enabled
+		if qcfg.Protocols.MCP {
+			qcfg.MCP.Port = cfg.Server.MCP.Port
 		}
 	}
 
@@ -426,6 +466,284 @@ func buildXKMSFactors(cfg *config.Config) []qrdbsdk.AuthFactorPlugin {
 	})
 }
 
+// UnifiedTLSNotReadyError is returned to a unified-server TLS handshake that
+// arrives before initializeCA has composed the server TLS material. The
+// handshake fails closed; once the material is composed every new handshake
+// serves the CA-backed configuration.
+type UnifiedTLSNotReadyError struct{}
+
+// Error implements the error interface.
+func (e *UnifiedTLSNotReadyError) Error() string {
+	return "qrdb node: unified server TLS material is not yet composed (CA still initializing)"
+}
+
+// quicBaaSServiceRef returns the composed service.QuicBaaS facade reference
+// under the server mutex, or nil while lifecycle.go is still composing it.
+// It is the late-binding seam the quicbaas ServiceModule resolves through
+// (mirroring xkms's xkmsServiceRef).
+//
+// The assignment site (startService in pkg/server/lifecycle.go) publishes
+// s.quicBaaSService under s.mu.Lock/Unlock, matching this RLock read — the
+// wave-1 finding (unsynchronized publish racing the embedded qrdb node's
+// unified-server request goroutines, which can begin serving before
+// startService finishes composing the facade) is fixed.
+func (s *Server) quicBaaSServiceRef() service.QuicBaaS {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.quicBaaSService
+}
+
+// serverTLSConfigRef returns the CA-backed *tls.Config composed by
+// initializeCA under the server mutex, or nil while it is not yet composed.
+func (s *Server) serverTLSConfigRef() *tls.Config {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tlsConfig
+}
+
+// unifiedServerTLSConfig builds the TLS configuration the embedded node's
+// unified transports serve with. The material is late-bound: initializeCA
+// composes s.tlsConfig AFTER node construction, so every handshake defers to
+// serverTLSConfigRef via GetConfigForClient — failing closed with the typed
+// UnifiedTLSNotReadyError until the CA-backed configuration exists, and
+// picking up later certificate rotations without listener restarts.
+func (s *Server) unifiedServerTLSConfig() *tls.Config {
+	return &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+			cfg := s.serverTLSConfigRef()
+			if cfg == nil {
+				return nil, &UnifiedTLSNotReadyError{}
+			}
+			return cfg, nil
+		},
+	}
+}
+
+// buildModuleShardRouter constructs the identical multi-shard router and
+// vector-operations shard ID pkg/server/lifecycle.go's startGRPCServer
+// builds for the legacy gRPC transport's facade (same kvShards +
+// validateRoutingFn + routing.NewWithShards + EntityShardPins sequence, over
+// the same s.config.Server.Shards / s.config.Vector / s.config.KMS.Raft.ShardID
+// / s.config.TimeSeries.ShardID configuration), so
+// unifiedModuleServerOptions's apimodule.WithShardRouting call threads the
+// SAME routing decisions into the unified server's shared facade. Returns a
+// *QRDBNodeError if an entity shard pin references a shard outside the
+// configured shard list — the same fail-fast contract
+// startGRPCServer enforces via validateRoutingFn.
+func (s *Server) buildModuleShardRouter() (apimodule.ShardRouter, uint64, error) {
+	vectorShardID := s.config.Vector.ShardID
+	if vectorShardID == 0 && s.config.Vector.Enabled {
+		vectorShardID = qbshards.PlatformShardID
+	}
+	kmsShardID := s.config.KMS.Raft.ShardID
+	if kmsShardID == 0 {
+		kmsShardID = qbshards.PlatformShardID
+	}
+	kvShardList := kvShards(s.config.Server.Shards, vectorShardID, s.config.TimeSeries.ShardID, kmsShardID)
+	if err := validateRoutingFn(kvShardList, s.config.Server.EntityShardPins); err != nil {
+		return nil, 0, &QRDBNodeError{Stage: "build module shard router", Cause: err}
+	}
+	router := routing.NewWithShards(kvShardList)
+	for et, shard := range s.config.Server.EntityShardPins {
+		router.SetEntityShard(et, shard)
+	}
+	return router, vectorShardID, nil
+}
+
+// unifiedModuleServerOptions appends the quicbaas ServiceModule, go-xkms's
+// own ServiceModule ("xkms" — Phase 3 of the login-plane plan, so the
+// unified server carries the canonical hardware crypto + identity plane
+// alongside quicbaas's broker/core plane), and, when server.unified is
+// enabled, the unified server TLS material — to the qrdb server options
+// both node constructors pass to the node builder. go-qrdb's route-collision
+// guard fails construction loudly if the two modules' registrations ever
+// overlap.
+//
+// Phase 6 of the unified API server (plans/unified-api-server-2026-08-14.md):
+// the module carries the broker capability planes (Scheduler, Orchestrator,
+// Project, Account, SSH, Messaging, Embedding) as lazily-bound gRPC services.
+// Registration is ADDITIVE — the legacy transport stacks keep serving as
+// today; the module surfaces activate only when the node's server transports
+// are enabled (server.unified.enabled, see buildQRDBConfig), gated per-RPC by
+// qrdb's reflection interceptor over option (qrdb.v1.permission).
+//
+// ORDERING: this runs from node construction, long before lifecycle.go
+// composes the QuicBaaS facade — and when node transports are enabled, node
+// construction invokes the module's RegisterGRPC immediately. The module
+// therefore takes a lazy resolver and binds on the first RPC: until
+// s.quicBaaSService is set, every module RPC answers Unavailable.
+// defaultQRDBAuditRingCapacity is the in-memory audit ring size used ONLY
+// when Storage.DataDir is empty (embedded/test contexts with no durable
+// storage root at all — the same posture the storage layer itself falls
+// back to). Every real deployment has a DataDir, so this path is a
+// defensive fallback, never the production default: P5 forbids an
+// in-memory sink that silently loses records on restart.
+const defaultQRDBAuditRingCapacity = 1024
+
+// qrdbAuditLogSubdir is the subdirectory under Storage.DataDir holding the
+// node's HMAC-chained audit log, mirroring the "databases"/"barrier"
+// subdirectory convention lifecycle.go/lifecycle_databases.go already use
+// and go-xkms's own Auth.Audit.Path pattern (a path under the existing
+// storage/data root, no new top-level config section).
+const qrdbAuditLogSubdir = "audit"
+
+// qrdbAuditLogFile is the chained audit log's filename inside
+// qrdbAuditLogSubdir.
+const qrdbAuditLogFile = "node-audit.log"
+
+// newQRDBAuditSink builds the ONE audit plane every module and quicbaas's
+// own audit emit sites (pkg/server/node_audit_logger.go's NodeAuditLogger)
+// write onto (P5.2 of the login-plane plan, qrdbsdk.WithAuditLogger below):
+// a durable, tamper-evident HMAC-chained file log under
+// Storage.DataDir/audit/, mirroring go-xkms's own newQRDBAuditSink. An
+// in-memory ring buffer is used ONLY as a defensive fallback when
+// Storage.DataDir is empty or the file sink fails to open — logged loudly,
+// never silent, since P5 explicitly forbids a lossy fallback becoming the
+// deployed default. The returned sink is retained on s.qrdbAuditSink and
+// closed during stopQRDBNode, after the node itself, so no in-flight emit
+// races the close.
+func (s *Server) newQRDBAuditSink() qrdbsdk.NodeAuditLogger {
+	dataDir := s.config.Storage.DataDir
+	if dataDir != "" {
+		auditDir := filepath.Join(dataDir, qrdbAuditLogSubdir)
+		if err := os.MkdirAll(auditDir, 0o750); err != nil {
+			s.logger.Error("qrdb node audit sink: failed to create audit directory, falling back to in-memory ring buffer",
+				"dir", auditDir, "error", err)
+		} else {
+			path := filepath.Join(auditDir, qrdbAuditLogFile)
+			sink, err := qrdbsdk.NewAuditFileLogger(path)
+			if err != nil {
+				s.logger.Error("qrdb node audit sink: failed to open chained file logger, falling back to in-memory ring buffer",
+					"path", path, "error", err)
+			} else {
+				s.logger.Info("qrdb node audit sink: HMAC-chained file logger", "path", path)
+				return sink
+			}
+		}
+	}
+	s.logger.Warn("qrdb node audit sink: no durable storage root available, using in-memory ring buffer "+
+		"(records do NOT survive a restart)",
+		"capacity", defaultQRDBAuditRingCapacity)
+	return qrdbsdk.NewAuditRingBuffer(defaultQRDBAuditRingCapacity)
+}
+
+func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) ([]qrdbsdk.ServerOption, error) {
+	// The ONE audit plane (P5.2): every capability module (quicbaas's own
+	// and go-xkms's) and, over the site-by-site migration, quicbaas's own
+	// IAM/OIDC/federation/orchestration/PIV-login/introspection auditing
+	// emit qrdbsdk.NodeAuditEvent onto this SAME sink via the node's
+	// Client().Audit(), instead of a parallel per-tenant KV logger or an
+	// in-memory gRPC fallback.
+	if s.qrdbAuditSink == nil {
+		s.qrdbAuditSink = s.newQRDBAuditSink()
+	}
+	serverOpts = append(serverOpts, qrdbsdk.WithAuditLogger(s.qrdbAuditSink))
+
+	// Build the same multi-shard router and vector shard ID
+	// startGRPCServer's legacy gRPC transport applies to its own facade
+	// instance (buildModuleShardRouter, below) so the module's shared
+	// *grpcapi.Server facade — backing QuicBaaS, FIDO2Service, and, when
+	// enabled, Embedding — routes identically once the unified server's
+	// transports are enabled. s.config is already fully loaded at this point
+	// (config load precedes qrdb node construction), so unlike the QuicBaaS
+	// facade and REST/MCP servers below, the router needs no late-binding
+	// resolver.
+	shardRouter, vectorShardID, err := s.buildModuleShardRouter()
+	if err != nil {
+		return nil, err
+	}
+
+	// The REST and MCP resolvers late-bind the module's HTTP surface
+	// (pkg/apimodule module_http.go, rest builds) and real MCP tools
+	// (module_mcp.go, mcp builds) to servers built from the SAME
+	// configuration path the legacy listeners use (buildRESTServer /
+	// buildMCPServer). Both return nil while the facade composes; module
+	// routes answer 503 and module tools a tool error until then. On
+	// tag-less builds the accessors and the hooks are matching no-ops.
+	module, err := apimodule.NewModule(
+		func() service.QuicBaaS { return s.quicBaaSServiceRef() },
+		s.logger,
+		apimodule.WithNodeInfo(s.config.Raft.NodeID, s.config.Server.Host),
+		apimodule.WithRESTServer(func() *restapi.Server { return s.ModuleRESTServer() }),
+		apimodule.WithMCPServer(func() *mcpapi.Server { return s.ModuleMCPServer() }),
+		apimodule.WithShardRouting(shardRouter, vectorShardID),
+	)
+	if err != nil {
+		return nil, &QRDBNodeError{Stage: "new quicbaas module", Cause: err}
+	}
+	serverOpts = append(serverOpts, qrdbsdk.WithModule(module))
+
+	// Compose go-xkms's own ServiceModule ("xkms") alongside quicbaas's on
+	// the SAME unified server (Phase 3 of the login-plane plan): the
+	// resolver reaches the process-global XKMS service quicbaasd already
+	// initializes via pkg/xkms.Initialize (lifecycle.go's initXKMS,
+	// dbxkms.Initialize -> pkgxkms.Get's backing store) and
+	// pkg/xkms.RegisterBackend (registerXKMSBackendFn) — the SAME service
+	// instance quicbaas's own KMS/Crypto/Certificate/Trust/Attestation/PIV
+	// facades already delegate to (pkg/service/kms.go, crypto.go, ca.go,
+	// certificate_service.go, trust_service.go, attestation_service.go,
+	// piv_service.go). A nil/error return during composition answers the
+	// module's RPCs Unavailable rather than panicking (xkms's own
+	// apimodule.Module.keystore does the same nil-check).
+	xkmsModule, err := xkmssdk.NewServiceModule(
+		func() *xkmslib.XKMSService {
+			svc, getErr := xkmssdk.Get()
+			if getErr != nil {
+				return nil
+			}
+			return svc
+		},
+		// go-xkms v0.7.1-alpha: without these Host self-build options the
+		// module registered zero HTTP routes (RegisterHTTP returned
+		// immediately for lack of a REST resolver -- there is no SDK
+		// re-export for WithServiceModuleRESTServer, and none is needed).
+		// The module now self-builds a non-listening REST surface
+		// (pkg/api/rest NewHostServer) around the resolved XKMSService when
+		// these options are supplied instead.
+		xkmssdk.WithServiceModuleQRDBClient(func() *qrdbsdk.Client { return s.GetQRDBNodeClient() }),
+		xkmssdk.WithServiceModuleWebAuthn(quicbaasWebAuthnConfigToXKMS(s.config.IAM.WebAuthn)),
+		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
+		xkmssdk.WithServiceModulePIVLogin(&xkmssdk.ServiceModulePIVLoginOptions{
+			Enabled:        s.config.IAM.PIVLogin.Enabled,
+			TrustedIssuers: s.config.IAM.PIVLogin.TrustedIssuers,
+		}),
+	)
+	if err != nil {
+		return nil, &QRDBNodeError{Stage: "new xkms module", Cause: err}
+	}
+	serverOpts = append(serverOpts, qrdbsdk.WithModule(xkmsModule))
+
+	// Unified API server TLS: qrdb's transports are TLS-only and take their
+	// material from the WithServerTLS option, not from the daemon config.
+	if s.config.NetworkServing() {
+		serverOpts = append(serverOpts, qrdbsdk.WithServerTLS(s.unifiedServerTLSConfig()))
+	}
+	return serverOpts, nil
+}
+
+// quicbaasWebAuthnConfigToXKMS projects quicbaas's iam.webauthn config
+// section (config.IAMWebAuthnConfig) onto go-xkms's operator-facing
+// WebAuthnConfig shape (xkmssdk.ServiceModuleWebAuthnConfig), so ONE config
+// block drives both quicbaas's own RP layer and the composed xkms module's
+// self-built WebAuthn surface. Enabled tracks whether the quicbaas section
+// is actually configured (RPID set — IAMWebAuthnConfig.Validate requires it
+// unconditionally, there is no separate disable flag on that type), so an
+// unconfigured host leaves the xkms module's WebAuthn routes unmounted
+// exactly as WithServiceModuleWebAuthn's doc comment describes.
+func quicbaasWebAuthnConfigToXKMS(c config.IAMWebAuthnConfig) *xkmssdk.ServiceModuleWebAuthnConfig {
+	return &xkmssdk.ServiceModuleWebAuthnConfig{
+		Enabled:                 c.RPID != "",
+		RPID:                    c.RPID,
+		RPOrigins:               c.RPOrigins,
+		RPDisplayName:           c.RPDisplayName,
+		AttestationPreference:   c.AttestationPreference,
+		AuthenticatorAttachment: c.AuthenticatorAttachment,
+		ResidentKey:             c.ResidentKeyRequirement,
+		UserVerification:        c.UserVerification,
+	}
+}
+
 // initStandaloneQRDBNode constructs the real qrdb standalone node for
 // quicbaas standalone mode. It:
 //
@@ -476,6 +794,12 @@ func (s *Server) initStandaloneQRDBNode() error {
 	// operator's SO / user PINs into the SAME backend the node verifies against.
 	s.pinBackend = pinBackend
 
+	// Register the quicbaas ServiceModule (and unified TLS when enabled).
+	serverOpts, err = s.unifiedModuleServerOptions(serverOpts)
+	if err != nil {
+		return err
+	}
+
 	// Node options: we pass slog.Default() as the logger; in a well-configured
 	// quicbaasd process the default slog handler is set to the same output as
 	// the quicbaas logger so log lines route correctly.
@@ -485,6 +809,14 @@ func (s *Server) initStandaloneQRDBNode() error {
 		// barriers under dedicated DataRoots. Required for EnableEncryption
 		// targeting tenant scopes and for IsolationVolume / IsolationRaft tenants.
 		qrdbnode.WithTenantIsolation(),
+		// Guarantee the node's RBAC authorizer is always wrapped in a
+		// reloadable ABAC decorator (Node.ABACPolicyReloader), even before
+		// any policy exists: pkg/iam's policy CRUD (iam.ABACSync, driven by
+		// qrdbABACSync) is the downstream policy store that calls Reload
+		// after boot, including to add the very first policy. Without this
+		// option a node built with zero initial ABAC policies would run RBAC
+		// undecorated and ABACPolicyReloader would return nil.
+		qrdbnode.WithABACLiveReload(),
 	}
 
 	// Inject the late-bound OIDC session issuer so a successful unified login
@@ -555,15 +887,27 @@ func (s *Server) initStandaloneQRDBNode() error {
 }
 
 // stopQRDBNode closes the qrdb node (standalone or clustered) and clears
-// the reference. It is idempotent; a nil node is silently skipped.
+// the reference. It is idempotent; a nil node is silently skipped. The
+// audit sink is closed AFTER the node so no in-flight emit from a
+// still-running node races the close.
 func (s *Server) stopQRDBNode() error {
 	node := s.qrdbNode
 	if node == nil {
 		return nil
 	}
 	s.qrdbNode = nil
-	if err := node.Close(); err != nil {
-		return &QRDBNodeError{Stage: "close", Cause: err}
+	closeErr := node.Close()
+
+	if s.qrdbAuditSink != nil {
+		sink := s.qrdbAuditSink
+		s.qrdbAuditSink = nil
+		if err := sink.Close(); err != nil && closeErr == nil {
+			closeErr = err
+		}
+	}
+
+	if closeErr != nil {
+		return &QRDBNodeError{Stage: "close", Cause: closeErr}
 	}
 	return nil
 }
@@ -627,11 +971,20 @@ func (s *Server) initClusteredQRDBNode() error {
 	// operator's SO / user PINs into the SAME backend the node verifies against.
 	s.pinBackend = pinBackend
 
+	// Register the quicbaas ServiceModule (and unified TLS when enabled).
+	serverOpts, err = s.unifiedModuleServerOptions(serverOpts)
+	if err != nil {
+		return err
+	}
+
 	nodeOpts := []qrdbnode.NodeOption{
 		qrdbnode.WithLogger(slog.Default()),
 		// Enable per-tenant volume/raft isolation (see initStandaloneQRDBNode
 		// for rationale).
 		qrdbnode.WithTenantIsolation(),
+		// Reloadable ABAC decorator even with zero initial policies (see
+		// initStandaloneQRDBNode for rationale).
+		qrdbnode.WithABACLiveReload(),
 	}
 
 	// Inject the late-bound OIDC session issuer (see initStandaloneQRDBNode).

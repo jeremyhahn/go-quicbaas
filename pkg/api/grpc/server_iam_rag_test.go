@@ -28,8 +28,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	xkmspb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -316,98 +314,6 @@ func TestGRPCPhase2_ObjectStoreReaderFromStorage_StorageError(t *testing.T) {
 	_, err := reader.ReadObject("any")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "storage failure")
-}
-
-// =============================================================================
-// XKMS Server - Additional Encrypt/Decrypt Deep Coverage
-// =============================================================================
-
-func TestGRPCPhase2_XKMSServer_Seal_BackendNotFound(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
-	srv := NewXKMSServer(log)
-	ctx := context.Background()
-
-	// Provide a KeyId so the backend lookup branch (xkms.GetBackend) is triggered,
-	// which returns codes.NotFound when the backend does not exist.
-	_, err := srv.Seal(ctx, &xkmspb.SealRequest{
-		Backend: "nonexistent-xyz",
-		KeyId:   "some-key",
-		Data:    []byte("data"),
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestGRPCPhase2_XKMSServer_Encrypt_BackendNotFound(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
-	srv := NewXKMSServer(log)
-	ctx := context.Background()
-
-	_, err := srv.Encrypt(ctx, &xkmspb.EncryptRequest{
-		KeyId:     "key-1",
-		Backend:   "nonexistent-xyz",
-		Plaintext: []byte("secret data"),
-	})
-	require.Error(t, err)
-	// Should get an error for backend not found
-}
-
-func TestGRPCPhase2_XKMSServer_Decrypt_BackendNotFound(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
-	srv := NewXKMSServer(log)
-	ctx := context.Background()
-
-	_, err := srv.Decrypt(ctx, &xkmspb.DecryptRequest{
-		KeyId:      "key-1",
-		Backend:    "nonexistent-xyz",
-		Ciphertext: []byte("encrypted-data"),
-	})
-	require.Error(t, err)
-}
-
-func TestGRPCPhase2_XKMSServer_GetCert_NotFound(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
-	srv := NewXKMSServer(log)
-
-	_, err := srv.GetCert(context.Background(), &xkmspb.GetCertRequest{KeyId: "nonexistent-key"})
-	require.Error(t, err)
-}
-
-func TestGRPCPhase2_XKMSServer_DeleteCert_EmptyKeyID(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
-	srv := NewXKMSServer(log)
-
-	_, err := srv.DeleteCert(context.Background(), &xkmspb.DeleteCertRequest{KeyId: ""})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestGRPCPhase2_XKMSServer_DeleteCert_NotFound(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
-	srv := NewXKMSServer(log)
-
-	_, err := srv.DeleteCert(context.Background(), &xkmspb.DeleteCertRequest{KeyId: "nonexistent-key"})
-	require.Error(t, err)
-}
-
-func TestGRPCPhase2_XKMSServer_ListCerts_NoBackends(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
-	srv := NewXKMSServer(log)
-
-	resp, err := srv.ListCerts(context.Background(), &xkmspb.ListCertsRequest{})
-	// Should either return empty list or error depending on backend availability
-	if err == nil {
-		assert.NotNil(t, resp)
-	}
-}
-
-func TestGRPCPhase2_XKMSServer_ListBackends(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
-	srv := NewXKMSServer(log)
-
-	resp, err := srv.ListBackends(context.Background(), &xkmspb.ListBackendsRequest{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
 }
 
 // =============================================================================

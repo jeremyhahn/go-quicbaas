@@ -259,7 +259,7 @@ func TestCertificateExtensionPEPMapping(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
-			resource, action, ok := mapRequestToPermission(tc.path, http.MethodPost)
+			resource, action, ok := routePermissionForPath(tc.path, http.MethodPost)
 			require.True(t, ok, "route %s must resolve to a permission (default-deny otherwise)", tc.path)
 			assert.Equal(t, tc.resource, resource)
 			assert.Equal(t, tc.action, action)
@@ -271,7 +271,7 @@ func TestCertificateExtensionPEPMapping(t *testing.T) {
 // boundary qrdb documents: certs:generate must not imply the authority to mint
 // a signing CA.
 func TestCrossSignIsNotReachableWithLeafIssuanceVerb(t *testing.T) {
-	resource, action, ok := mapRequestToPermission("/api/v1/certificate/cross-sign", http.MethodPost)
+	resource, action, ok := routePermissionForPath("/api/v1/certificate/cross-sign", http.MethodPost)
 	require.True(t, ok)
 	assert.NotEqual(t, "certs:generate", resource+":"+action,
 		"cross-signing must require ca:create, not the leaf-issuance verb")

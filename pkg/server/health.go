@@ -68,7 +68,12 @@ func NewHealthChecker(server *Server, log *logger.Logger) *HealthChecker {
 	}
 }
 
-// CheckGRPC checks gRPC server health.
+// CheckGRPC checks gRPC server health. gRPC network serving now runs on the
+// embedded qrdb node's own unified-server listener (see
+// (*config.Config).NetworkServing); h.server.grpcListener only ever reflects
+// the local Unix-domain-socket transport (or a test double). A live local
+// listener always wins; otherwise, when network serving is enabled, health
+// falls through to the unified node's own reported gRPC address.
 func (h *HealthChecker) CheckGRPC() ComponentHealth {
 	health := ComponentHealth{
 		Name:      "grpc",
@@ -82,17 +87,44 @@ func (h *HealthChecker) CheckGRPC() ComponentHealth {
 		return health
 	}
 
-	if h.server.grpcListener == nil {
-		health.Status = HealthStatusUnhealthy
-		health.Message = "gRPC listener not available"
+	if h.server.grpcListener != nil {
+		health.Message = fmt.Sprintf("gRPC server listening on %s", h.server.grpcListener.Addr())
 		return health
 	}
 
-	health.Message = fmt.Sprintf("gRPC server listening on %s", h.server.grpcListener.Addr())
+	if h.server.config.Server.GRPC.Enabled {
+		if node := h.server.qrdbNode; node != nil {
+			if qsrv := node.Server(); qsrv != nil {
+				if addr := qsrv.GRPCAddr(); addr != "" {
+					health.Message = fmt.Sprintf("gRPC server listening on %s (unified)", addr)
+					return health
+				}
+			}
+		}
+		health.Status = HealthStatusUnhealthy
+		health.Message = "gRPC listener not available (network serving is enabled but the unified server is not yet listening)"
+		return health
+	}
+
+	if h.server.config.Server.Unix.Socket != "" {
+		health.Status = HealthStatusUnhealthy
+		health.Message = "gRPC Unix listener not available"
+		return health
+	}
+
+	health.Message = "gRPC not configured (network serving disabled, no Unix socket)"
 	return health
 }
 
-// CheckREST checks REST server health.
+// CheckREST checks REST server health. REST network serving now runs on the
+// embedded qrdb node's own unified-server listener (see
+// (*config.Config).NetworkServing); h.server.restServer backs only the
+// non-listening handler surface RegisterHTTP binds to in that case (see
+// lifecycle_rest.go's startRESTServer), so IsStarted() alone no longer
+// distinguishes healthy from unhealthy. A restServer that IS actually
+// listening (the sealed-window phase, or a caller-injected listener in
+// tests) always wins; otherwise, when network serving is enabled, health
+// falls through to the unified node's own reported REST address.
 func (h *HealthChecker) CheckREST() ComponentHealth {
 	health := ComponentHealth{
 		Name:      "rest",
@@ -106,19 +138,30 @@ func (h *HealthChecker) CheckREST() ComponentHealth {
 		return health
 	}
 
-	if !h.server.restServer.IsStarted() {
-		health.Status = HealthStatusUnhealthy
-		health.Message = "REST server not started"
-		return health
-	}
-
 	if h.server.restServer.IsClosed() {
 		health.Status = HealthStatusUnhealthy
 		health.Message = "REST server is closed"
 		return health
 	}
 
-	health.Message = "REST server operational"
+	if h.server.restServer.IsStarted() {
+		health.Message = "REST server operational"
+		return health
+	}
+
+	if h.server.config.Server.REST.Enabled {
+		if node := h.server.qrdbNode; node != nil {
+			if qsrv := node.Server(); qsrv != nil {
+				if addr := qsrv.RESTAddr(); addr != "" {
+					health.Message = fmt.Sprintf("REST server listening on %s (unified)", addr)
+					return health
+				}
+			}
+		}
+	}
+
+	health.Status = HealthStatusUnhealthy
+	health.Message = "REST server not started"
 	return health
 }
 

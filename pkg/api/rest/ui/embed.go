@@ -37,15 +37,26 @@ var bundleFS embed.FS
 // The default file is index.html; unknown-path requests fall through to
 // index.html so client-side routing works.
 func RegisterUI(r chi.Router) {
-	sub, err := fs.Sub(bundleFS, "dist")
-	if err != nil {
-		return
-	}
-	fileServer := http.FileServer(http.FS(sub))
-	r.Handle("/ui/*", http.StripPrefix("/ui", spaHandler(sub, fileServer)))
+	r.Handle("/ui/*", Handler())
 	r.Get("/ui", func(w http.ResponseWriter, req *http.Request) {
 		http.Redirect(w, req, "/ui/", http.StatusFound)
 	})
+}
+
+// Handler returns the embedded Svelte UI as a standalone http.Handler,
+// already stripped of its "/ui" mount prefix — the same handler RegisterUI
+// mounts at "/ui/*", exposed for callers that register it on a foreign
+// router (the unified-API-server module surface, routes_iam.go
+// uiMountRouteSpecs) instead of a chi.Router owned by this package. Returns
+// a 404-only handler if the embedded bundle cannot be opened (should never
+// happen for a build that embeds pkg/api/rest/ui/dist).
+func Handler() http.Handler {
+	sub, err := fs.Sub(bundleFS, "dist")
+	if err != nil {
+		return http.NotFoundHandler()
+	}
+	fileServer := http.FileServer(http.FS(sub))
+	return http.StripPrefix("/ui", spaHandler(sub, fileServer))
 }
 
 // spaHandler wraps a static file server so that any path that does not match a

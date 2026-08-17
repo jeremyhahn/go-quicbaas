@@ -31,23 +31,6 @@ import (
 // RAG Route Registration
 // ========================================
 
-// registerRAGRoutes registers all RAG-related routes.
-func registerRAGRoutes(s *Server, r chi.Router) {
-	r.Route("/rag", func(r chi.Router) {
-		// All-in-one RAG query
-		r.Post("/query", s.HandleRAGQuery)
-
-		// Context building from user-provided results
-		r.Post("/context", s.HandleRAGBuildContext)
-
-		// Document CRUD
-		r.Get("/documents", s.HandleRAGListDocuments)
-		r.Get("/documents/{id}", s.HandleRAGGetDocument)
-		r.Delete("/documents/{id}", s.HandleRAGDeleteDocument)
-		r.Post("/documents/{id}/reindex", s.HandleRAGReindexDocument)
-	})
-}
-
 // ========================================
 // Request/Response Types
 // ========================================
@@ -697,4 +680,18 @@ func (s *Server) HandleRAGReindexDocument(w http.ResponseWriter, r *http.Request
 		"reindexed": upsertResp.Success,
 		"version":   upsertResp.Version,
 	})
+}
+
+// ragRouteSpecs contributes the RAG surface to the route table (routes.go).
+// It exists in both rag build-tag variants so the table always matches the
+// compiled handler set: this variant serves the real handlers.
+func ragRouteSpecs() []RouteSpec {
+	return []RouteSpec{
+		{Method: "POST", Pattern: "/api/v1/rag/context", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRAGBuildContext }},
+		{Method: "GET", Pattern: "/api/v1/rag/documents", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRAGListDocuments }},
+		{Method: "DELETE", Pattern: "/api/v1/rag/documents/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRAGDeleteDocument }},
+		{Method: "GET", Pattern: "/api/v1/rag/documents/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRAGGetDocument }},
+		{Method: "POST", Pattern: "/api/v1/rag/documents/{id}/reindex", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRAGReindexDocument }},
+		{Method: "POST", Pattern: "/api/v1/rag/query", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRAGQuery }},
+	}
 }

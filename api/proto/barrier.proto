@@ -16,6 +16,7 @@ syntax = "proto3";
 package quicbaas.barrier.v1;
 
 import "google/protobuf/empty.proto";
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
@@ -30,71 +31,107 @@ service Barrier {
   // BarrierInitialize initializes the storage barrier with a single
   // passphrase. Returns FailedPrecondition if the barrier is already
   // initialized.
-  rpc BarrierInitialize(BarrierInitializeRequest) returns (google.protobuf.Empty);
+  rpc BarrierInitialize(BarrierInitializeRequest) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "tenant_barrier:init";
+  }
 
   // BarrierUnseal unseals the barrier using a single passphrase.
-  rpc BarrierUnseal(BarrierUnsealRequest) returns (google.protobuf.Empty);
+  rpc BarrierUnseal(BarrierUnsealRequest) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "tenant_barrier:unseal";
+  }
 
   // BarrierSeal transitions the barrier to the sealed state. Subsequent
   // data operations are rejected until the barrier is unsealed again.
-  rpc BarrierSeal(google.protobuf.Empty) returns (google.protobuf.Empty);
+  rpc BarrierSeal(google.protobuf.Empty) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "tenant_barrier:seal";
+  }
 
   // BarrierStatus reports the current barrier state including the active
   // sealing strategy, hardware backing, and initialization timestamp.
-  rpc BarrierStatus(google.protobuf.Empty) returns (BarrierStatusResponse);
+  rpc BarrierStatus(google.protobuf.Empty) returns (BarrierStatusResponse) {
+      option (qrdb.v1.permission) = "tenant_barrier:status";
+  }
 
   // BarrierShamirInitialize initializes the barrier with Shamir secret
   // sharing, splitting the root key into threshold-of-total shares.
-  rpc BarrierShamirInitialize(BarrierShamirInitializeRequest) returns (BarrierShamirInitializeResponse);
+  rpc BarrierShamirInitialize(BarrierShamirInitializeRequest) returns (BarrierShamirInitializeResponse) {
+      option (qrdb.v1.permission) = "seal:initialize_shamir";
+  }
 
   // BarrierShamirUnsealShare submits a single Shamir share toward the
   // unseal quorum and reports current progress.
-  rpc BarrierShamirUnsealShare(BarrierShamirUnsealShareRequest) returns (BarrierShamirUnsealShareResponse);
+  rpc BarrierShamirUnsealShare(BarrierShamirUnsealShareRequest) returns (BarrierShamirUnsealShareResponse) {
+      option (qrdb.v1.permission) = "barrier:unseal-share";
+  }
 
   // BarrierShamirUnsealShares unseals the barrier using a complete set of
   // Shamir shares supplied in a single call.
-  rpc BarrierShamirUnsealShares(BarrierShamirUnsealSharesRequest) returns (google.protobuf.Empty);
+  rpc BarrierShamirUnsealShares(BarrierShamirUnsealSharesRequest) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "barrier:unseal-share";
+  }
 
   // BarrierShamirListShares returns metadata about persisted Shamir share
   // state (count, threshold, total).
-  rpc BarrierShamirListShares(google.protobuf.Empty) returns (BarrierShamirSharesResponse);
+  rpc BarrierShamirListShares(google.protobuf.Empty) returns (BarrierShamirSharesResponse) {
+      option (qrdb.v1.permission) = "seal:status";
+  }
 
   // BarrierShamirDeleteShare removes a single persisted share by index.
-  rpc BarrierShamirDeleteShare(BarrierShamirDeleteShareRequest) returns (google.protobuf.Empty);
+  rpc BarrierShamirDeleteShare(BarrierShamirDeleteShareRequest) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "seal:rekey";
+  }
 
   // BarrierShamirDeleteAllShares removes every persisted Shamir share.
-  rpc BarrierShamirDeleteAllShares(google.protobuf.Empty) returns (google.protobuf.Empty);
+  rpc BarrierShamirDeleteAllShares(google.protobuf.Empty) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "seal:rekey";
+  }
 
   // BarrierShamirVerify validates the consistency of every persisted share.
-  rpc BarrierShamirVerify(google.protobuf.Empty) returns (google.protobuf.Empty);
+  rpc BarrierShamirVerify(google.protobuf.Empty) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "seal:status";
+  }
 
   // BarrierRekey generates new Shamir shares for the existing root key
   // with the supplied threshold and total parameters.
-  rpc BarrierRekey(BarrierRekeyRequest) returns (BarrierShamirInitializeResponse);
+  rpc BarrierRekey(BarrierRekeyRequest) returns (BarrierShamirInitializeResponse) {
+      option (qrdb.v1.permission) = "seal:rekey";
+  }
 
   // BarrierRecoveryGenerate generates a fresh set of recovery shares for
   // disaster recovery.
-  rpc BarrierRecoveryGenerate(BarrierRecoveryGenerateRequest) returns (BarrierRecoveryKeysResponse);
+  rpc BarrierRecoveryGenerate(BarrierRecoveryGenerateRequest) returns (BarrierRecoveryKeysResponse) {
+      option (qrdb.v1.permission) = "seal:generate_recovery";
+  }
 
   // BarrierRecoveryRecover unseals the barrier using previously generated
   // recovery shares.
-  rpc BarrierRecoveryRecover(BarrierRecoveryRecoverRequest) returns (google.protobuf.Empty);
+  rpc BarrierRecoveryRecover(BarrierRecoveryRecoverRequest) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "seal:recover_with_keys";
+  }
 
   // BarrierRecoveryDelete removes all persisted recovery key metadata.
-  rpc BarrierRecoveryDelete(google.protobuf.Empty) returns (google.protobuf.Empty);
+  rpc BarrierRecoveryDelete(google.protobuf.Empty) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "seal:generate_recovery";
+  }
 
   // BarrierRecoveryStatus reports whether recovery key metadata exists.
-  rpc BarrierRecoveryStatus(google.protobuf.Empty) returns (BarrierRecoveryStatusResponse);
+  rpc BarrierRecoveryStatus(google.protobuf.Empty) returns (BarrierRecoveryStatusResponse) {
+      option (qrdb.v1.permission) = "seal:status";
+  }
 
   // BarrierRootToken generates a fresh root token by proving knowledge of
   // the master key through Shamir shares.
-  rpc BarrierRootToken(BarrierRootTokenRequest) returns (BarrierRootTokenResponse);
+  rpc BarrierRootToken(BarrierRootTokenRequest) returns (BarrierRootTokenResponse) {
+      option (qrdb.v1.permission) = "seal:bootstrap";
+  }
 
   // BarrierEnableEncryption migrates the system barrier from the none
   // (unencrypted) strategy to a keyed strategy in place. This RPC is
   // implemented only when the embedded qrdb node is available; the
   // transport BarrierClient stubs it with UNIMPLEMENTED.
-  rpc BarrierEnableEncryption(BarrierEnableEncryptionRequest) returns (google.protobuf.Empty);
+  rpc BarrierEnableEncryption(BarrierEnableEncryptionRequest) returns (google.protobuf.Empty) {
+      option (qrdb.v1.permission) = "seal:enable_encryption";
+  }
 }
 
 // =============================================================================

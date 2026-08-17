@@ -13,6 +13,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -6702,7 +6703,7 @@ var File_api_proto_objectstorage_proto protoreflect.FileDescriptor
 
 const file_api_proto_objectstorage_proto_rawDesc = "" +
 	"\n" +
-	"\x1dapi/proto/objectstorage.proto\x12\x19quicbaas.objectstorage.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb1\x05\n" +
+	"\x1dapi/proto/objectstorage.proto\x12\x19quicbaas.objectstorage.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xb1\x05\n" +
 	"\x0eObjectMetadata\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x19\n" +
 	"\bshard_id\x18\x02 \x01(\x04R\ashardId\x12\x14\n" +
@@ -7301,45 +7302,46 @@ const file_api_proto_objectstorage_proto_rawDesc = "" +
 	"\x19ENCRYPTION_ALGORITHM_NONE\x10\x01\x12$\n" +
 	" ENCRYPTION_ALGORITHM_AES_256_GCM\x10\x02\x12*\n" +
 	"&ENCRYPTION_ALGORITHM_CHACHA20_POLY1305\x10\x03\"\x04\b\x04\x10\n" +
-	"2\xd0\x17\n" +
-	"\x14ObjectStorageService\x12f\n" +
-	"\tPutObject\x12+.quicbaas.objectstorage.v1.PutObjectRequest\x1a,.quicbaas.objectstorage.v1.PutObjectResponse\x12f\n" +
-	"\tGetObject\x12+.quicbaas.objectstorage.v1.GetObjectRequest\x1a,.quicbaas.objectstorage.v1.GetObjectResponse\x12o\n" +
-	"\fDeleteObject\x12..quicbaas.objectstorage.v1.DeleteObjectRequest\x1a/.quicbaas.objectstorage.v1.DeleteObjectResponse\x12i\n" +
+	"2\x8b\x1c\n" +
+	"\x14ObjectStorageService\x12x\n" +
+	"\tPutObject\x12+.quicbaas.objectstorage.v1.PutObjectRequest\x1a,.quicbaas.objectstorage.v1.PutObjectResponse\"\x10\xc2\xf3\x18\fobjstore:put\x12x\n" +
+	"\tGetObject\x12+.quicbaas.objectstorage.v1.GetObjectRequest\x1a,.quicbaas.objectstorage.v1.GetObjectResponse\"\x10\xc2\xf3\x18\fobjstore:get\x12\x84\x01\n" +
+	"\fDeleteObject\x12..quicbaas.objectstorage.v1.DeleteObjectRequest\x1a/.quicbaas.objectstorage.v1.DeleteObjectResponse\"\x13\xc2\xf3\x18\x0fobjstore:delete\x12|\n" +
 	"\n" +
-	"HeadObject\x12,.quicbaas.objectstorage.v1.HeadObjectRequest\x1a-.quicbaas.objectstorage.v1.HeadObjectResponse\x12l\n" +
-	"\vListObjects\x12-.quicbaas.objectstorage.v1.ListObjectsRequest\x1a..quicbaas.objectstorage.v1.ListObjectsResponse\x12f\n" +
-	"\tListByTag\x12+.quicbaas.objectstorage.v1.ListByTagRequest\x1a,.quicbaas.objectstorage.v1.ListByTagResponse\x12o\n" +
-	"\fListByTenant\x12..quicbaas.objectstorage.v1.ListByTenantRequest\x1a/.quicbaas.objectstorage.v1.ListByTenantResponse\x12i\n" +
+	"HeadObject\x12,.quicbaas.objectstorage.v1.HeadObjectRequest\x1a-.quicbaas.objectstorage.v1.HeadObjectResponse\"\x11\xc2\xf3\x18\robjstore:head\x12\x7f\n" +
+	"\vListObjects\x12-.quicbaas.objectstorage.v1.ListObjectsRequest\x1a..quicbaas.objectstorage.v1.ListObjectsResponse\"\x11\xc2\xf3\x18\robjstore:list\x12y\n" +
+	"\tListByTag\x12+.quicbaas.objectstorage.v1.ListByTagRequest\x1a,.quicbaas.objectstorage.v1.ListByTagResponse\"\x11\xc2\xf3\x18\robjstore:list\x12\x82\x01\n" +
+	"\fListByTenant\x12..quicbaas.objectstorage.v1.ListByTenantRequest\x1a/.quicbaas.objectstorage.v1.ListByTenantResponse\"\x11\xc2\xf3\x18\robjstore:list\x12|\n" +
 	"\n" +
-	"CopyObject\x12,.quicbaas.objectstorage.v1.CopyObjectRequest\x1a-.quicbaas.objectstorage.v1.CopyObjectResponse\x12x\n" +
-	"\x0fReplicateObject\x121.quicbaas.objectstorage.v1.ReplicateObjectRequest\x1a2.quicbaas.objectstorage.v1.ReplicateObjectResponse\x12r\n" +
-	"\rMigrateObject\x12/.quicbaas.objectstorage.v1.MigrateObjectRequest\x1a0.quicbaas.objectstorage.v1.MigrateObjectResponse\x12r\n" +
-	"\rArchiveObject\x12/.quicbaas.objectstorage.v1.ArchiveObjectRequest\x1a0.quicbaas.objectstorage.v1.ArchiveObjectResponse\x12r\n" +
-	"\rRestoreObject\x12/.quicbaas.objectstorage.v1.RestoreObjectRequest\x1a0.quicbaas.objectstorage.v1.RestoreObjectResponse\x12o\n" +
-	"\fVerifyObject\x12..quicbaas.objectstorage.v1.VerifyObjectRequest\x1a/.quicbaas.objectstorage.v1.VerifyObjectResponse\x12x\n" +
-	"\x0fSetObjectPolicy\x121.quicbaas.objectstorage.v1.SetObjectPolicyRequest\x1a2.quicbaas.objectstorage.v1.SetObjectPolicyResponse\x12x\n" +
-	"\x0fGetObjectPolicy\x121.quicbaas.objectstorage.v1.GetObjectPolicyRequest\x1a2.quicbaas.objectstorage.v1.GetObjectPolicyResponse\x12o\n" +
-	"\fListBackends\x12..quicbaas.objectstorage.v1.ListBackendsRequest\x1a/.quicbaas.objectstorage.v1.ListBackendsResponse\x12{\n" +
-	"\x10GetBackendHealth\x122.quicbaas.objectstorage.v1.GetBackendHealthRequest\x1a3.quicbaas.objectstorage.v1.GetBackendHealthResponse\x12\x9c\x01\n" +
-	"\x1bGetObjectStorageTenantUsage\x12=.quicbaas.objectstorage.v1.GetObjectStorageTenantUsageRequest\x1a>.quicbaas.objectstorage.v1.GetObjectStorageTenantUsageResponse\x12\x9f\x01\n" +
-	"\x1cGetObjectStorageTenantQuotas\x12>.quicbaas.objectstorage.v1.GetObjectStorageTenantQuotasRequest\x1a?.quicbaas.objectstorage.v1.GetObjectStorageTenantQuotasResponse\x12\x9f\x01\n" +
-	"\x1cSetObjectStorageTenantQuotas\x12>.quicbaas.objectstorage.v1.SetObjectStorageTenantQuotasRequest\x1a?.quicbaas.objectstorage.v1.SetObjectStorageTenantQuotasResponse\x12h\n" +
-	"\x0fStreamGetObject\x12+.quicbaas.objectstorage.v1.GetObjectRequest\x1a&.quicbaas.objectstorage.v1.ObjectChunk0\x01\x12l\n" +
-	"\x0fStreamPutObject\x12).quicbaas.objectstorage.v1.PutObjectChunk\x1a,.quicbaas.objectstorage.v1.PutObjectResponse(\x01\x12x\n" +
-	"\x0fBatchPutObjects\x121.quicbaas.objectstorage.v1.BatchPutObjectsRequest\x1a2.quicbaas.objectstorage.v1.BatchPutObjectsResponse\x12\x81\x01\n" +
-	"\x12BatchDeleteObjects\x124.quicbaas.objectstorage.v1.BatchDeleteObjectsRequest\x1a5.quicbaas.objectstorage.v1.BatchDeleteObjectsResponse\x12x\n" +
-	"\x0fBatchGetObjects\x121.quicbaas.objectstorage.v1.BatchGetObjectsRequest\x1a2.quicbaas.objectstorage.v1.BatchGetObjectsResponse2\xfb\b\n" +
-	"\x12ObjectStorageAdmin\x12r\n" +
-	"\rCreateBackend\x12/.quicbaas.objectstorage.v1.CreateBackendRequest\x1a0.quicbaas.objectstorage.v1.CreateBackendResponse\x12r\n" +
-	"\rUpdateBackend\x12/.quicbaas.objectstorage.v1.UpdateBackendRequest\x1a0.quicbaas.objectstorage.v1.UpdateBackendResponse\x12r\n" +
-	"\rDeleteBackend\x12/.quicbaas.objectstorage.v1.DeleteBackendRequest\x1a0.quicbaas.objectstorage.v1.DeleteBackendResponse\x12{\n" +
-	"\x10SetBackendStatus\x122.quicbaas.objectstorage.v1.SetBackendStatusRequest\x1a3.quicbaas.objectstorage.v1.SetBackendStatusResponse\x12x\n" +
-	"\x0fGetStorageStats\x121.quicbaas.objectstorage.v1.GetStorageStatsRequest\x1a2.quicbaas.objectstorage.v1.GetStorageStatsResponse\x12\x87\x01\n" +
-	"\x14RunGarbageCollection\x126.quicbaas.objectstorage.v1.RunGarbageCollectionRequest\x1a7.quicbaas.objectstorage.v1.RunGarbageCollectionResponse\x12\x9f\x01\n" +
-	"\x1cGetGarbageCollectionProgress\x12>.quicbaas.objectstorage.v1.GetGarbageCollectionProgressRequest\x1a?.quicbaas.objectstorage.v1.GetGarbageCollectionProgressResponse\x12o\n" +
-	"\fRepairObject\x12..quicbaas.objectstorage.v1.RepairObjectRequest\x1a/.quicbaas.objectstorage.v1.RepairObjectResponse\x12u\n" +
-	"\x0eCompactBackend\x120.quicbaas.objectstorage.v1.CompactBackendRequest\x1a1.quicbaas.objectstorage.v1.CompactBackendResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"CopyObject\x12,.quicbaas.objectstorage.v1.CopyObjectRequest\x1a-.quicbaas.objectstorage.v1.CopyObjectResponse\"\x11\xc2\xf3\x18\robjstore:copy\x12\x90\x01\n" +
+	"\x0fReplicateObject\x121.quicbaas.objectstorage.v1.ReplicateObjectRequest\x1a2.quicbaas.objectstorage.v1.ReplicateObjectResponse\"\x16\xc2\xf3\x18\x12objstore:replicate\x12\x88\x01\n" +
+	"\rMigrateObject\x12/.quicbaas.objectstorage.v1.MigrateObjectRequest\x1a0.quicbaas.objectstorage.v1.MigrateObjectResponse\"\x14\xc2\xf3\x18\x10objstore:migrate\x12\x88\x01\n" +
+	"\rArchiveObject\x12/.quicbaas.objectstorage.v1.ArchiveObjectRequest\x1a0.quicbaas.objectstorage.v1.ArchiveObjectResponse\"\x14\xc2\xf3\x18\x10objstore:archive\x12\x88\x01\n" +
+	"\rRestoreObject\x12/.quicbaas.objectstorage.v1.RestoreObjectRequest\x1a0.quicbaas.objectstorage.v1.RestoreObjectResponse\"\x14\xc2\xf3\x18\x10objstore:restore\x12\x84\x01\n" +
+	"\fVerifyObject\x12..quicbaas.objectstorage.v1.VerifyObjectRequest\x1a/.quicbaas.objectstorage.v1.VerifyObjectResponse\"\x13\xc2\xf3\x18\x0fobjstore:verify\x12\x93\x01\n" +
+	"\x0fSetObjectPolicy\x121.quicbaas.objectstorage.v1.SetObjectPolicyRequest\x1a2.quicbaas.objectstorage.v1.SetObjectPolicyResponse\"\x19\xc2\xf3\x18\x15objstore:write_policy\x12\x92\x01\n" +
+	"\x0fGetObjectPolicy\x121.quicbaas.objectstorage.v1.GetObjectPolicyRequest\x1a2.quicbaas.objectstorage.v1.GetObjectPolicyResponse\"\x18\xc2\xf3\x18\x14objstore:read_policy\x12\x8a\x01\n" +
+	"\fListBackends\x12..quicbaas.objectstorage.v1.ListBackendsRequest\x1a/.quicbaas.objectstorage.v1.ListBackendsResponse\"\x19\xc2\xf3\x18\x15objstore:read_backend\x12\x96\x01\n" +
+	"\x10GetBackendHealth\x122.quicbaas.objectstorage.v1.GetBackendHealthRequest\x1a3.quicbaas.objectstorage.v1.GetBackendHealthResponse\"\x19\xc2\xf3\x18\x15objstore:read_backend\x12\xb7\x01\n" +
+	"\x1bGetObjectStorageTenantUsage\x12=.quicbaas.objectstorage.v1.GetObjectStorageTenantUsageRequest\x1a>.quicbaas.objectstorage.v1.GetObjectStorageTenantUsageResponse\"\x19\xc2\xf3\x18\x15objstore:tenant_usage\x12\xbf\x01\n" +
+	"\x1cGetObjectStorageTenantQuotas\x12>.quicbaas.objectstorage.v1.GetObjectStorageTenantQuotasRequest\x1a?.quicbaas.objectstorage.v1.GetObjectStorageTenantQuotasResponse\"\x1e\xc2\xf3\x18\x1aobjstore:tenant_quota_read\x12\xc0\x01\n" +
+	"\x1cSetObjectStorageTenantQuotas\x12>.quicbaas.objectstorage.v1.SetObjectStorageTenantQuotasRequest\x1a?.quicbaas.objectstorage.v1.SetObjectStorageTenantQuotasResponse\"\x1f\xc2\xf3\x18\x1bobjstore:tenant_quota_write\x12z\n" +
+	"\x0fStreamGetObject\x12+.quicbaas.objectstorage.v1.GetObjectRequest\x1a&.quicbaas.objectstorage.v1.ObjectChunk\"\x10\xc2\xf3\x18\fobjstore:get0\x01\x12~\n" +
+	"\x0fStreamPutObject\x12).quicbaas.objectstorage.v1.PutObjectChunk\x1a,.quicbaas.objectstorage.v1.PutObjectResponse\"\x10\xc2\xf3\x18\fobjstore:put(\x01\x12\x8c\x01\n" +
+	"\x0fBatchPutObjects\x121.quicbaas.objectstorage.v1.BatchPutObjectsRequest\x1a2.quicbaas.objectstorage.v1.BatchPutObjectsResponse\"\x12\xc2\xf3\x18\x0eobjstore:batch\x12\x95\x01\n" +
+	"\x12BatchDeleteObjects\x124.quicbaas.objectstorage.v1.BatchDeleteObjectsRequest\x1a5.quicbaas.objectstorage.v1.BatchDeleteObjectsResponse\"\x12\xc2\xf3\x18\x0eobjstore:batch\x12\x8c\x01\n" +
+	"\x0fBatchGetObjects\x121.quicbaas.objectstorage.v1.BatchGetObjectsRequest\x1a2.quicbaas.objectstorage.v1.BatchGetObjectsResponse\"\x12\xc2\xf3\x18\x0eobjstore:batch2\xbb\n" +
+	"\n" +
+	"\x12ObjectStorageAdmin\x12\x86\x01\n" +
+	"\rCreateBackend\x12/.quicbaas.objectstorage.v1.CreateBackendRequest\x1a0.quicbaas.objectstorage.v1.CreateBackendResponse\"\x12\xc2\xf3\x18\x0eobjstore:admin\x12\x86\x01\n" +
+	"\rUpdateBackend\x12/.quicbaas.objectstorage.v1.UpdateBackendRequest\x1a0.quicbaas.objectstorage.v1.UpdateBackendResponse\"\x12\xc2\xf3\x18\x0eobjstore:admin\x12\x86\x01\n" +
+	"\rDeleteBackend\x12/.quicbaas.objectstorage.v1.DeleteBackendRequest\x1a0.quicbaas.objectstorage.v1.DeleteBackendResponse\"\x12\xc2\xf3\x18\x0eobjstore:admin\x12\x8f\x01\n" +
+	"\x10SetBackendStatus\x122.quicbaas.objectstorage.v1.SetBackendStatusRequest\x1a3.quicbaas.objectstorage.v1.SetBackendStatusResponse\"\x12\xc2\xf3\x18\x0eobjstore:admin\x12\x91\x01\n" +
+	"\x0fGetStorageStats\x121.quicbaas.objectstorage.v1.GetStorageStatsRequest\x1a2.quicbaas.objectstorage.v1.GetStorageStatsResponse\"\x17\xc2\xf3\x18\x13objstore:read_stats\x12\x9b\x01\n" +
+	"\x14RunGarbageCollection\x126.quicbaas.objectstorage.v1.RunGarbageCollectionRequest\x1a7.quicbaas.objectstorage.v1.RunGarbageCollectionResponse\"\x12\xc2\xf3\x18\x0eobjstore:admin\x12\xb3\x01\n" +
+	"\x1cGetGarbageCollectionProgress\x12>.quicbaas.objectstorage.v1.GetGarbageCollectionProgressRequest\x1a?.quicbaas.objectstorage.v1.GetGarbageCollectionProgressResponse\"\x12\xc2\xf3\x18\x0eobjstore:admin\x12\x83\x01\n" +
+	"\fRepairObject\x12..quicbaas.objectstorage.v1.RepairObjectRequest\x1a/.quicbaas.objectstorage.v1.RepairObjectResponse\"\x12\xc2\xf3\x18\x0eobjstore:admin\x12\x89\x01\n" +
+	"\x0eCompactBackend\x120.quicbaas.objectstorage.v1.CompactBackendRequest\x1a1.quicbaas.objectstorage.v1.CompactBackendResponse\"\x12\xc2\xf3\x18\x0eobjstore:adminB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_objectstorage_proto_rawDescOnce sync.Once

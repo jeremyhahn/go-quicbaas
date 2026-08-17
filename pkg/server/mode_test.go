@@ -252,7 +252,6 @@ func TestDevClusterConfig(t *testing.T) {
 		assert.Equal(t, "./dev-data", cfg.DataDir)
 		assert.Equal(t, 9090, cfg.BasePorts.GRPC)
 		assert.Equal(t, 8080, cfg.BasePorts.REST)
-		assert.Equal(t, 10443, cfg.BasePorts.QUIC)
 		assert.Equal(t, 11443, cfg.BasePorts.MCP)
 		assert.Equal(t, 63001, cfg.BasePorts.Raft)
 		assert.Equal(t, "/tmp/quicbaas-node-{n}.sock", cfg.UnixSocketPattern)
@@ -303,7 +302,6 @@ func TestDevClusterConfig(t *testing.T) {
 
 		assert.Equal(t, 9090, ports.GRPC)
 		assert.Equal(t, 8080, ports.REST)
-		assert.Equal(t, 10443, ports.QUIC)
 		assert.Equal(t, 11443, ports.MCP)
 		assert.Equal(t, 63001, ports.Raft)
 	})

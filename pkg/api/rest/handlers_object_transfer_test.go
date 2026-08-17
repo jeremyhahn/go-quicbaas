@@ -571,7 +571,14 @@ func TestRegisterObjectTransferRoutes(t *testing.T) {
 	defer server.Close()
 
 	router := chi.NewRouter()
-	registerObjectTransferRoutes(server, router)
+	// mountObjectTransferTestRoutes mirrors the /object-transfer surface
+	// routes.go (Routes(), GroupAPI) registers in production; the standalone
+	// registerObjectTransferRoutes chi helper was removed once the
+	// table-driven registration became the single source of truth.
+	router.Route("/object-transfer", func(r chi.Router) {
+		r.Post("/fetch", server.HandleFetchObject)
+		r.Post("/stream-fetch", server.HandleStreamFetchObjects)
+	})
 
 	t.Run("fetch route is registered", func(t *testing.T) {
 		reqBody := FetchObjectRESTRequest{ObjectRef: "test"}

@@ -1941,3 +1941,45 @@ func (m *MockAgentAdminService) ListAgentRegistrations(ctx context.Context, req 
 	}
 	return &service.ListAgentRegistrationsResponse{}, nil
 }
+
+// =============================================================================
+// MockFIDO2Service
+// =============================================================================
+
+// MockFIDO2Service is a test double for service.FIDO2Service.
+type MockFIDO2Service struct {
+	BeginRegistrationFunc    func(ctx context.Context, tenantID string, req *xkmstransport.BeginRegistrationRequest) (*xkmstransport.BeginRegistrationResponse, error)
+	FinishRegistrationFunc   func(ctx context.Context, tenantID string, req *xkmstransport.FinishRegistrationRequest) (*xkmstransport.FinishRegistrationResponse, error)
+	BeginAuthenticationFunc  func(ctx context.Context, tenantID string, req *xkmstransport.BeginAuthenticationRequest) (*xkmstransport.BeginAuthenticationResponse, error)
+	FinishAuthenticationFunc func(ctx context.Context, tenantID string, req *xkmstransport.FinishAuthenticationRequest) (*xkmstransport.FinishAuthenticationResponse, error)
+}
+
+var _ service.FIDO2Service = (*MockFIDO2Service)(nil)
+
+func (m *MockFIDO2Service) BeginRegistration(ctx context.Context, tenantID string, req *xkmstransport.BeginRegistrationRequest) (*xkmstransport.BeginRegistrationResponse, error) {
+	if m.BeginRegistrationFunc != nil {
+		return m.BeginRegistrationFunc(ctx, tenantID, req)
+	}
+	return &xkmstransport.BeginRegistrationResponse{SessionID: "mock-session"}, nil
+}
+
+func (m *MockFIDO2Service) FinishRegistration(ctx context.Context, tenantID string, req *xkmstransport.FinishRegistrationRequest) (*xkmstransport.FinishRegistrationResponse, error) {
+	if m.FinishRegistrationFunc != nil {
+		return m.FinishRegistrationFunc(ctx, tenantID, req)
+	}
+	return &xkmstransport.FinishRegistrationResponse{Success: true}, nil
+}
+
+func (m *MockFIDO2Service) BeginAuthentication(ctx context.Context, tenantID string, req *xkmstransport.BeginAuthenticationRequest) (*xkmstransport.BeginAuthenticationResponse, error) {
+	if m.BeginAuthenticationFunc != nil {
+		return m.BeginAuthenticationFunc(ctx, tenantID, req)
+	}
+	return &xkmstransport.BeginAuthenticationResponse{SessionID: "mock-session"}, nil
+}
+
+func (m *MockFIDO2Service) FinishAuthentication(ctx context.Context, tenantID string, req *xkmstransport.FinishAuthenticationRequest) (*xkmstransport.FinishAuthenticationResponse, error) {
+	if m.FinishAuthenticationFunc != nil {
+		return m.FinishAuthenticationFunc(ctx, tenantID, req)
+	}
+	return &xkmstransport.FinishAuthenticationResponse{Success: true}, nil
+}

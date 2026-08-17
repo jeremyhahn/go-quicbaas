@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — BREAKING: unified-node route de-collision (P3.3)
+
+- **`/api/v1/auth/{refresh,logout,validate,login/piv}` dropped from the
+  module surface.** On a composed node (the qrdb-embedded node's own
+  `RegisterHTTP`, `pkg/apimodule/module_http.go`) go-xkms's ServiceModule
+  owns the identical `/api/v1/auth/*` session-login plane; quicbaas's own
+  registrations at those four paths would route-collide. All four are the SAME token/session family — they resolve
+  through the same `authService.sessionAuthority` -> `iam.OIDCProvider`
+  (`pkg/service/quicbaas.go`) that PIV login mints from — so they were
+  removed together. The legacy in-process listener (standalone, non-composed
+  deployments) is unaffected for `refresh`/`logout`/`validate`: they remain
+  reachable at their original paths there.
+- **`POST /api/v1/auth/login/piv` moved to `POST /api/v1/iam/login/piv`.**
+  quicbaas's OIDC-session PIV login capability is kept (it is functionally
+  distinct from the qrdb `LoginCeremony`-backed
+  `/api/v1/auth/login/{begin,finish}`, which is unaffected), but renamed
+  under the IAM namespace to clear the path collision with xkms's own PIV
+  login endpoint, following the same tenant-namespaced-mount convention as
+  `/api/v1/iam/{tenant_id}/webauthn/*`. Both the module surface and the
+  legacy listener serve the new path only — the old path is gone on both.
+  SDK callers (TypeScript `rest.ts` `loginPIV()`, integration tests) were
+  repointed.
+- **`/api/v1/barrier/*` and `/api/v1/init/*` excluded from the module
+  surface** (`pkg/api/rest.ModuleRoutes()`); the legacy listener keeps
+  serving them for the standalone sealed-window boot path.
+
 ### Changed — BREAKING: ceremony claim-share is now a Begin/Complete handshake
 
 - **Single-shot `CeremonyClaimShare` deleted** (tracks go-qrdb's regenerated

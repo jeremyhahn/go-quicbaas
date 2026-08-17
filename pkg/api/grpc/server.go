@@ -118,6 +118,16 @@ func (s *Server) SetVectorShardID(id uint64) {
 	s.vectorShardID = id
 }
 
+// VectorShardID returns the shard ID currently applied to vector operations
+// (the shards.PlatformShardID default from NewServer, or the value SetVectorShardID
+// last applied). It exists so callers composing this facade from a resolved
+// multi-shard configuration — pkg/server/lifecycle.go's legacy gRPC transport
+// and pkg/apimodule's unified-server ServiceModule alike — can verify the
+// value actually took effect.
+func (s *Server) VectorShardID() uint64 {
+	return s.vectorShardID
+}
+
 // SetSealManager sets the seal manager for seal/unseal operations.
 // This should be called during server initialization.
 func (s *Server) SetSealManager(mgr interfaces.SealManager) { //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
@@ -184,6 +194,14 @@ func (s *Server) initMetrics() {
 // SetShardRouter overrides the default shard router.
 func (s *Server) SetShardRouter(r interface{ Route(string, uint64) uint64 }) {
 	s.shardRouter = r
+}
+
+// ShardRouter returns the router currently applied to this facade (the
+// single-shard routing.New() default from NewServer, or the router
+// SetShardRouter last applied). It exists so callers can verify a
+// multi-shard router actually took effect, mirroring VectorShardID.
+func (s *Server) ShardRouter() interface{ Route(string, uint64) uint64 } {
+	return s.shardRouter
 }
 
 // extractWriteMode extracts write mode from gRPC metadata

@@ -19,20 +19,40 @@ package quicbaas.account.v1;
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+
 // =============================================================================
 // AccountService — pooled provider account lifecycle
 // =============================================================================
 
 service AccountService {
-    rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
-    rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
-    rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
-    rpc UpdateAccount(UpdateAccountRequest) returns (UpdateAccountResponse);
-    rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse);
-    rpc RotateAccountCredential(RotateAccountCredentialRequest) returns (RotateAccountCredentialResponse);
-    rpc RevokeAccount(RevokeAccountRequest) returns (RevokeAccountResponse);
-    rpc SetDefaultAccount(SetDefaultAccountRequest) returns (SetDefaultAccountResponse);
-    rpc GetAccountUsage(GetAccountUsageRequest) returns (GetAccountUsageResponse);
+    rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse) {
+        option (qrdb.v1.permission) = "credentials:store";
+    }
+    rpc GetAccount(GetAccountRequest) returns (GetAccountResponse) {
+        option (qrdb.v1.permission) = "credentials:retrieve";
+    }
+    rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse) {
+        option (qrdb.v1.permission) = "credentials:list";
+    }
+    rpc UpdateAccount(UpdateAccountRequest) returns (UpdateAccountResponse) {
+        option (qrdb.v1.permission) = "credentials:store";
+    }
+    rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse) {
+        option (qrdb.v1.permission) = "credentials:delete";
+    }
+    rpc RotateAccountCredential(RotateAccountCredentialRequest) returns (RotateAccountCredentialResponse) {
+        option (qrdb.v1.permission) = "credentials:rotate";
+    }
+    rpc RevokeAccount(RevokeAccountRequest) returns (RevokeAccountResponse) {
+        option (qrdb.v1.permission) = "credentials:delete";
+    }
+    rpc SetDefaultAccount(SetDefaultAccountRequest) returns (SetDefaultAccountResponse) {
+        option (qrdb.v1.permission) = "credentials:store";
+    }
+    rpc GetAccountUsage(GetAccountUsageRequest) returns (GetAccountUsageResponse) {
+        option (qrdb.v1.permission) = "credentials:retrieve";
+    }
 }
 
 // =============================================================================

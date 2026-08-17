@@ -52,14 +52,6 @@ func DefaultConfig() *Config {
 				Enabled: true,
 				Port:    8443,
 			},
-			QUIC: ServerQUICConfig{
-				Enabled:                true,
-				Port:                   10443,
-				MaxStreams:             1000,
-				MaxIdleTimeout:         30 * time.Second,
-				HandshakeIdleTimeout:   5 * time.Second,
-				MaxStreamReceiveWindow: 6 * 1024 * 1024,
-			},
 			MCP: ServerMCPConfig{
 				Enabled: true,
 				Port:    11443,
@@ -270,14 +262,6 @@ func DefaultServerConfig() ServerConfig {
 		REST: ServerRESTConfig{
 			Enabled: true,
 			Port:    8443,
-		},
-		QUIC: ServerQUICConfig{
-			Enabled:                true,
-			Port:                   10443,
-			MaxStreams:             1000,
-			MaxIdleTimeout:         30 * time.Second,
-			HandshakeIdleTimeout:   5 * time.Second,
-			MaxStreamReceiveWindow: 6 * 1024 * 1024,
 		},
 		MCP: ServerMCPConfig{
 			Enabled: true,
@@ -536,7 +520,13 @@ func DevelopmentConfig() *Config {
 	return cfg
 }
 
-// TestConfig returns a configuration suitable for testing.
+// TestConfig returns a configuration suitable for testing. Network serving
+// (REST/gRPC/MCP) is disabled and TLS is off: this profile targets fast,
+// non-network unit tests of unrelated config sections (storage, security,
+// raft, logging). Since network serving requires TLS
+// (validateNetworkServingTLS — qrdb's unified server transports are
+// TLS-only), a test that specifically exercises network-serving posture must
+// opt in to both together rather than relying on this baseline.
 func TestConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
@@ -549,20 +539,12 @@ func TestConfig() *Config {
 			ShutdownTimeout:   5 * time.Second,
 			MaxConnections:    10,
 			GRPC: ServerGRPCConfig{
-				Enabled: true,
+				Enabled: false,
 				Port:    0, // Random port
 			},
 			REST: ServerRESTConfig{
-				Enabled: true,
+				Enabled: false,
 				Port:    0, // Random port
-			},
-			QUIC: ServerQUICConfig{
-				Enabled:                false,
-				Port:                   0,
-				MaxStreams:             100,
-				MaxIdleTimeout:         5 * time.Second,
-				HandshakeIdleTimeout:   2 * time.Second,
-				MaxStreamReceiveWindow: 1024 * 1024,
 			},
 			MCP: ServerMCPConfig{
 				Enabled: false,
@@ -731,8 +713,6 @@ func EmbeddedConfig() *Config {
 	cfg.Server.GRPC.Port = 0
 	cfg.Server.REST.Enabled = false
 	cfg.Server.REST.Port = 0
-	cfg.Server.QUIC.Enabled = false
-	cfg.Server.QUIC.Port = 0
 	cfg.Server.MCP.Enabled = false
 	cfg.Server.MCP.Port = 0
 	cfg.Server.Unix.Enabled = false

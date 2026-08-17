@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package server provides the main orchestration layer for QuicBaaS.
-// It manages the lifecycle of all components including gRPC, REST, QUIC, and MCP servers.
+// It manages the lifecycle of all components including gRPC, REST, and MCP servers.
 package server
 
 import (
@@ -37,7 +37,6 @@ import (
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
-	quicapi "github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
@@ -400,6 +399,16 @@ type Server struct {
 	// Nil for cluster mode (until Phase C).
 	qrdbNode *qrdbnode.Node
 
+	// qrdbAuditSink is the compliance-grade audit sink injected into the
+	// embedded qrdb node (qrdb_node.go newQRDBAuditSink,
+	// qrdbsdk.WithAuditLogger) — the ONE audit plane every module/emit site
+	// (quicbaas's own IAM/OIDC/federation/orchestration/PIV-login/
+	// introspection auditing, and go-xkms's module) is migrating onto
+	// (P5.2 of the login-plane plan). Retained here so Shutdown can close it
+	// after the node (no in-flight emit races the close) and so the audit
+	// read-back path can Query it directly.
+	qrdbAuditSink qrdbsdk.NodeAuditLogger
+
 	// raftClusterAdvertiser is the running Noise NK bootstrap server started
 	// during Raft cluster-TLS auto-enrollment on the first node of a new
 	// cluster. Non-nil only when the software or hardware enrollment path ran
@@ -452,8 +461,14 @@ type Server struct {
 	grpcUnixListener net.Listener // Unix domain socket listener for gRPC
 	grpcAPI          *grpcapi.Server
 	restServer       *restapi.Server
-	quicServer       *quicapi.Server
-	mcpServer        *mcpapi.Server
+
+	// Unified-API-server module bindings (pkg/apimodule): lazily-constructed
+	// non-listening REST/MCP servers backing the module surfaces when the
+	// legacy listeners are disabled. See ModuleRESTServer / ModuleMCPServer.
+	moduleREST     *restapi.Server
+	moduleRESTOnce sync.Once
+	moduleMCP      *mcpapi.Server
+	moduleMCPOnce  sync.Once
 
 	// Health checking
 	health *HealthChecker
@@ -568,7 +583,7 @@ func NewServer(cfg *config.Config, opts ...ServerOption) (*Server, error) {
 }
 
 // Start initializes and starts all server components in order:
-// Storage -> TimeSeriesStorage -> Indexes -> KMS -> Secrets -> Vector -> TimeSeries -> RAG -> Embedding -> Catalog -> Backup -> gRPC -> REST -> QUIC -> MCP.
+// Storage -> TimeSeriesStorage -> Indexes -> KMS -> Secrets -> Vector -> TimeSeries -> RAG -> Embedding -> Catalog -> Backup -> gRPC -> REST -> MCP.
 //
 // Behavior depends on the Server.Embedded configuration:
 //   - Embedded mode (Server.Embedded=true): Returns immediately after initialization.
@@ -631,7 +646,7 @@ func (s *Server) validateServerMode() error {
 // initialize performs the actual server initialization.
 // This is the single source of truth for component startup order.
 // All components are started synchronously in the following order:
-// Storage -> Barrier -> TimeSeriesStorage -> Indexes -> KMS -> Secrets -> Vector -> TimeSeries -> RAG -> Embedding -> Catalog -> Backup -> Service -> Messaging -> gRPC -> REST -> QUIC -> MCP.
+// Storage -> Barrier -> TimeSeriesStorage -> Indexes -> KMS -> Secrets -> Vector -> TimeSeries -> RAG -> Embedding -> Catalog -> Backup -> Service -> Messaging -> gRPC -> REST -> MCP.
 func (s *Server) initialize() error {
 	s.mu.Lock()
 	if s.started {
@@ -838,14 +853,6 @@ func (s *Server) initialize() error {
 		return err
 	}
 
-	if err := s.startQUICServer(); err != nil {
-		return err
-	}
-
-	if err := s.startMCPServer(); err != nil {
-		return err
-	}
-
 	s.logger.Info("All server components started successfully")
 
 	// Log listener info only when not in embedded mode
@@ -856,12 +863,6 @@ func (s *Server) initialize() error {
 		if s.grpcServer != nil {
 			s.logger.Infof("gRPC server listening on %s:%d", s.config.Server.Host, s.config.Server.GRPC.Port)
 		}
-		if s.quicServer != nil {
-			s.logger.Infof("QUIC server listening on %s:%d", s.config.Server.Host, s.config.Server.QUIC.Port)
-		}
-		if s.mcpServer != nil {
-			s.logger.Infof("MCP server listening on %s:%d", s.config.Server.Host, s.config.Server.MCP.Port)
-		}
 	} else {
 		s.logger.Info("Running in embedded mode - access via Server.Service()")
 	}
@@ -870,7 +871,7 @@ func (s *Server) initialize() error {
 }
 
 // Shutdown gracefully shuts down all server components in reverse order:
-// Workers -> Backend -> Catalog -> Backup -> Embedding -> RAG -> WatchBridge -> Messaging -> QUIC -> MCP -> REST -> gRPC -> Indexes -> Service (pollers) -> RaftNode -> BootstrapClient -> ShardedClient -> QRDBNode -> DevCluster -> TimeSeriesStorage.
+// Workers -> Backend -> Catalog -> Backup -> Embedding -> RAG -> WatchBridge -> Messaging -> MCP -> REST -> gRPC -> Indexes -> Service (pollers) -> RaftNode -> BootstrapClient -> ShardedClient -> QRDBNode -> DevCluster -> TimeSeriesStorage.
 //
 // The QuicBaaS service facade MUST close before the sharded qrdb client
 // and the embedded qrdb node: the facade owns background pollers (the
@@ -1012,28 +1013,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 				s.logger.WithError(err).Error("Failed to shutdown messaging service")
 			} else {
 				s.logger.Info("Messaging service shutdown complete")
-			}
-		}
-
-		// Shutdown QUIC server
-		if s.quicServer != nil {
-			s.logger.Info("Shutting down QUIC server...")
-			if err := s.stopQUICServer(); err != nil {
-				errs = append(errs, err)
-				s.logger.WithError(err).Error("Failed to shutdown QUIC server")
-			} else {
-				s.logger.Info("QUIC server shutdown complete")
-			}
-		}
-
-		// Shutdown MCP server
-		if s.mcpServer != nil {
-			s.logger.Info("Shutting down MCP server...")
-			if err := s.stopMCPServer(); err != nil {
-				errs = append(errs, err)
-				s.logger.WithError(err).Error("Failed to shutdown MCP server")
-			} else {
-				s.logger.Info("MCP server shutdown complete")
 			}
 		}
 
@@ -1258,25 +1237,45 @@ func (s *Server) GetRESTServer() *restapi.Server {
 	return s.restServer
 }
 
-// RESTAddr returns the actual network address the REST listener is bound to,
-// or nil when REST is disabled, running in embedded mode, or not yet started.
-// Callers that configure the REST port as 0 (ephemeral) must use this to
-// learn the OS-assigned port rather than reading config.Server.REST.Port.
+// RESTAddr returns the actual network address serving REST, or nil when REST
+// is disabled, running in embedded mode, or not yet listening. Callers that
+// configure the REST port as 0 (ephemeral) must use this to learn the
+// OS-assigned port rather than reading config.Server.REST.Port.
+//
+// REST network serving now runs exclusively on the embedded qrdb node's own
+// unified-server listener (see (*config.Config).NetworkServing); s.restServer
+// backs only the non-listening handler surface RegisterHTTP binds to (see
+// lifecycle_rest.go's startRESTServer), so a live s.restServer.Addr() (the
+// sealed-window phase, or a caller-injected listener in tests) takes priority
+// and the qrdb node's own reported address is the fallback for the normal
+// fully-booted path.
 func (s *Server) RESTAddr() net.Addr {
-	if s.restServer == nil {
+	if s.restServer != nil {
+		if addr := s.restServer.Addr(); addr != nil {
+			return addr
+		}
+	}
+	if s.qrdbNode == nil {
 		return nil
 	}
-	return s.restServer.Addr()
+	qsrv := s.qrdbNode.Server()
+	if qsrv == nil {
+		return nil
+	}
+	addrStr := qsrv.RESTAddr()
+	if addrStr == "" {
+		return nil
+	}
+	tcpAddr, err := net.ResolveTCPAddr("tcp", addrStr)
+	if err != nil {
+		return nil
+	}
+	return tcpAddr
 }
 
 // GetGRPCServer returns the gRPC server (for health checks).
 func (s *Server) GetGRPCServer() *ggrpc.Server {
 	return s.grpcServer
-}
-
-// GetQUICServer returns the QUIC server (for health checks).
-func (s *Server) GetQUICServer() *quicapi.Server {
-	return s.quicServer
 }
 
 // GetCatalogManager returns the catalog manager for object storage operations.
@@ -1451,9 +1450,14 @@ func (s *Server) GetQRDBTenantServicer() qrdbsdk.ServiceTenantServicer {
 	return svcs.Tenant
 }
 
-// Service returns the QuicBaaS facade for direct database operations.
+// Service returns the QuicBaaS facade for direct database operations. The
+// facade is published under s.mu (see startService in lifecycle.go), so this
+// reads through quicBaaSServiceRef rather than the bare field — the unified
+// embedded qrdb node's transports can begin serving requests before
+// startService finishes composing the facade, and this getter is reachable
+// from those request goroutines as well as from the main startup path.
 func (s *Server) Service() service.QuicBaaS {
-	return s.quicBaaSService
+	return s.quicBaaSServiceRef()
 }
 
 // GetCeremonyServices returns the bootstrap ceremony service stack composed

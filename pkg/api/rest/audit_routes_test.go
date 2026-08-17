@@ -82,13 +82,31 @@ func TestRegisterAuditRoutes_WrongMethodReturns405(t *testing.T) {
 	router := chi.NewRouter()
 	RegisterAuditRoutes(router, handler)
 
-	// Test that POST to list endpoint returns 405 (Method Not Allowed)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/audit", nil)
+	// POST is now RecordAuditEvent (the remote audit-emission endpoint,
+	// P5.3), so PATCH — genuinely unregistered on /api/v1/iam/audit —
+	// proves 405 handling still works for a real wrong-method request.
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/iam/audit", nil)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestRegisterAuditRoutes_RecordAuditEventRouteRegistered(t *testing.T) {
+	_, _, _, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	router := chi.NewRouter()
+	RegisterAuditRoutes(router, handler)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/audit", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	assert.NotEqual(t, http.StatusNotFound, w.Code, "route should be registered")
+	assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code, "method should be allowed")
 }
 
 func TestRegisterAuditRoutes_HandlersInvoked(t *testing.T) {
@@ -99,14 +117,18 @@ func TestRegisterAuditRoutes_HandlersInvoked(t *testing.T) {
 	RegisterAuditRoutes(router, handler)
 
 	t.Run("ListAuditEvents handler invoked with missing tenant_id", func(t *testing.T) {
+		// An omitted tenant_id no longer 400s: it defaults to the caller's
+		// own authenticated tenant (iam.ResolveRequestTenant) — empty in
+		// this unauthenticated test context — and the request proceeds
+		// past tenant resolution to the next real dependency (the unwired
+		// audit logger).
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit", nil)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
 
-		// Handler should return 400 due to missing tenant_id parameter
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "tenant_id")
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Contains(t, w.Body.String(), "audit logger not available")
 	})
 
 	t.Run("DeleteOldAuditEvents handler invoked with missing tenant_id", func(t *testing.T) {
@@ -115,7 +137,8 @@ func TestRegisterAuditRoutes_HandlersInvoked(t *testing.T) {
 
 		router.ServeHTTP(w, req)
 
-		// Handler should return 400 due to missing tenant_id
+		// Handler should return 400: tenant_id now defaults to the
+		// caller's tenant, but the "before" parameter is still missing.
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 }

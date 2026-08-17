@@ -51,21 +51,6 @@ var ErrACMEServiceUnavailable = errors.New("acme service not available")
 //     ACMEServicer. In the broker-as-CA model the client verbs are in-process
 //     service calls, not JWS-signed exchanges.
 
-// registerACMERoutes mounts the RFC 8555 endpoints at /acme and the QuicBaaS
-// ACME control verbs at /api/v1/acme. The /acme group is mounted at the chi
-// router root so the directory URL the server advertises
-// (https://host:port/acme/directory) resolves without the /api/v1 prefix,
-// matching the RFC 8555 directory convention.
-func registerACMERoutes(s *Server, apiRouter chi.Router) {
-	apiRouter.Route("/acme", func(r chi.Router) {
-		r.Post("/register-challenge", s.HandleACMERegisterChallenge)
-		r.Post("/issue", s.HandleACMEIssue)
-		r.Post("/new-order", s.HandleACMENewOrder)
-		r.Post("/finalize", s.HandleACMEFinalizeOrder)
-		r.Post("/renew", s.HandleACMERenew)
-	})
-}
-
 // registerACMEDirectoryRoutes mounts the raw RFC 8555 endpoints at the router
 // root (/acme/*). The handlers are resolved from the composed xkms
 // RestServicer at request time so the routes are inert when ACME is not

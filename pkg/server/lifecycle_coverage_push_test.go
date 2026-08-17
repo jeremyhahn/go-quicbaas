@@ -17,7 +17,6 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
 	"net"
 	"os"
 	"path/filepath"
@@ -29,8 +28,6 @@ import (
 	"github.com/stretchr/testify/require"
 	ggrpc "google.golang.org/grpc"
 
-	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
-	quicapi "github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cluster"
@@ -378,37 +375,6 @@ func TestCovPush_StartWatchBridge_Success(t *testing.T) {
 }
 
 // =============================================================================
-// configureMCPAuth (lifecycle_mcp.go:91) - currently 40%
-// Covers: type assertion fails path
-// =============================================================================
-
-func TestCovPush_ConfigureMCPAuth_NoInternalAuthManager(t *testing.T) {
-	saveAndRestoreSeams(t)
-	cfg := createFTConfig(t)
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	// Use a mock that does not implement internalAuthManagerGetter
-	srv.quicBaaSService = testutil.NewMockQuicBaaS()
-
-	seamMu.Lock()
-	mcpStopFn = func(m *mcpapi.Server) error { return nil }
-	seamMu.Unlock()
-
-	mcpConfig := &mcpapi.Config{
-		ServerName:     "test",
-		ServerVersion:  "1.0.0",
-		Transport:      "http",
-		HTTPAddr:       "127.0.0.1:0",
-		RequestTimeout: 5 * time.Second,
-	}
-	mcpServer := mcpapi.NewServer(srv.quicBaaSService, mcpConfig, srv.logger)
-
-	// Should not panic - the type assertion should fail gracefully
-	srv.configureMCPAuth(mcpServer)
-}
-
-// =============================================================================
 // startRAG (lifecycle_rag.go:31) - currently 50%
 // Covers: disabled path, validation failure path
 // =============================================================================
@@ -438,51 +404,6 @@ func TestCovPush_StartRAG_ValidationFailure(t *testing.T) {
 	err = srv.startRAG()
 	assert.NoError(t, err)
 	assert.Nil(t, srv.ragSystem)
-}
-
-// =============================================================================
-// startQUICServer (lifecycle_quic.go:35) - currently 51.9%
-// Covers: creation success + start path with seams
-// =============================================================================
-
-func TestCovPush_StartQUICServer_TLSDisabled(t *testing.T) {
-	t.Parallel()
-	cfg := createFTConfig(t)
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	srv.config.Server.Embedded = false
-	srv.config.Server.QUIC.Enabled = true
-	srv.config.Server.QUIC.Port = 19445
-	srv.config.Security.TLSEnabled = false
-
-	err = srv.startQUICServer()
-	assert.NoError(t, err)
-	assert.Nil(t, srv.quicServer)
-}
-
-func TestCovPush_StartQUICServer_CreationError(t *testing.T) {
-	saveAndRestoreSeams(t)
-	cfg := createFTConfig(t)
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	srv.config.Server.Embedded = false
-	srv.config.Server.QUIC.Enabled = true
-	srv.config.Server.QUIC.Port = 19446
-	srv.config.Security.TLSEnabled = true
-	srv.tlsConfig = &tls.Config{MinVersion: tls.VersionTLS13}
-	srv.quicBaaSService = testutil.NewMockQuicBaaS()
-
-	seamMu.Lock()
-	newQUIC = func(svc service.QuicBaaS, cfg *quicapi.Config, log *logger.Logger, opts ...quicapi.ServerOption) (*quicapi.Server, error) {
-		return nil, &covPushError{msg: "quic creation error"}
-	}
-	seamMu.Unlock()
-
-	err = srv.startQUICServer()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "create QUIC server")
 }
 
 // =============================================================================

@@ -18,7 +18,6 @@ package timeseries
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,7 +28,6 @@ import (
 	"testing"
 	"time"
 
-	quicgo "github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -37,7 +35,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
 
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
-	"github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
@@ -91,9 +88,7 @@ func TestMultiprotocol_WriteAndQueryPoint(t *testing.T) {
 	protocols := []timeseriesProtocol{
 		&restTimeseriesProtocol{},
 		&grpcTimeseriesProtocol{},
-		&quicTimeseriesProtocol{},
 		&unixSocketTimeseriesProtocol{},
-		&mcpTimeseriesProtocol{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedTimeseriesProtocol{})
@@ -171,9 +166,7 @@ func TestMultiprotocol_WriteBatch(t *testing.T) {
 	protocols := []timeseriesProtocol{
 		&restTimeseriesProtocol{},
 		&grpcTimeseriesProtocol{},
-		&quicTimeseriesProtocol{},
 		&unixSocketTimeseriesProtocol{},
-		&mcpTimeseriesProtocol{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedTimeseriesProtocol{})
@@ -248,9 +241,7 @@ func TestMultiprotocol_Aggregations(t *testing.T) {
 	protocols := []timeseriesProtocol{
 		&restTimeseriesProtocol{},
 		&grpcTimeseriesProtocol{},
-		&quicTimeseriesProtocol{},
 		&unixSocketTimeseriesProtocol{},
-		&mcpTimeseriesProtocol{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedTimeseriesProtocol{})
@@ -322,9 +313,7 @@ func TestMultiprotocol_Delete(t *testing.T) {
 	protocols := []timeseriesProtocol{
 		&restTimeseriesProtocol{},
 		&grpcTimeseriesProtocol{},
-		&quicTimeseriesProtocol{},
 		&unixSocketTimeseriesProtocol{},
-		&mcpTimeseriesProtocol{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedTimeseriesProtocol{})
@@ -391,9 +380,7 @@ func TestMultiprotocol_RetentionPolicy(t *testing.T) {
 	protocols := []timeseriesProtocol{
 		&restTimeseriesProtocol{},
 		&grpcTimeseriesProtocol{},
-		&quicTimeseriesProtocol{},
 		&unixSocketTimeseriesProtocol{},
-		&mcpTimeseriesProtocol{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedTimeseriesProtocol{})
@@ -458,9 +445,7 @@ func TestMultiprotocol_ListMetrics(t *testing.T) {
 	protocols := []timeseriesProtocol{
 		&restTimeseriesProtocol{},
 		&grpcTimeseriesProtocol{},
-		&quicTimeseriesProtocol{},
 		&unixSocketTimeseriesProtocol{},
-		&mcpTimeseriesProtocol{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedTimeseriesProtocol{})
@@ -1131,259 +1116,6 @@ func (g *grpcTimeseriesProtocol) SetRetentionPolicy(ctx context.Context, metric 
 }
 
 // =============================================================================
-// QUIC Protocol Implementation
-// =============================================================================
-
-type quicTimeseriesProtocol struct {
-	addr       string
-	conn       *quicgo.Conn
-	tlsConfig  *tls.Config
-	ctx        context.Context
-	cancelFunc context.CancelFunc
-}
-
-func (q *quicTimeseriesProtocol) Name() string { return "QUIC" }
-
-func (q *quicTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) error {
-	endpoints := helpers.GetQUICEndpoints()
-	require.NotEmpty(t, endpoints, "QUIC endpoints must be available for integration tests")
-
-	addr := endpoints[0]
-
-	tlsConf, err := helpers.IntegrationTLSConfig()
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
-	}
-	tlsConf.NextProtos = []string{"quicbaas-quic"}
-
-	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	conn, err := quicgo.DialAddr(dialCtx, addr, tlsConf, nil)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to connect to QUIC endpoint " + addr, Cause: err}
-	}
-
-	clientCtx, clientCancel := context.WithCancel(context.Background())
-
-	q.addr = addr
-	q.conn = conn
-	q.tlsConfig = tlsConf
-	q.ctx = clientCtx
-	q.cancelFunc = clientCancel
-
-	return nil
-}
-
-func (q *quicTimeseriesProtocol) Teardown(t *testing.T) error {
-	if q.cancelFunc != nil {
-		q.cancelFunc()
-	}
-	if q.conn != nil {
-		return q.conn.CloseWithError(0, "client closing")
-	}
-	return nil
-}
-
-func (q *quicTimeseriesProtocol) sendRequest(ctx context.Context, opcode byte, reqPayload []byte) (*quic.Response, error) {
-	stream, err := q.conn.OpenStreamSync(ctx)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
-	}
-	defer stream.Close()
-
-	req := &quic.Request{
-		Opcode:  opcode,
-		Payload: reqPayload,
-	}
-
-	if err := quic.WriteRequest(stream, req); err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to write request", Cause: err}
-	}
-
-	resp, err := quic.ReadResponse(stream)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
-	}
-
-	if resp.Status != quic.StatusOK {
-		errMsg := string(resp.Payload)
-		if errMsg == "" {
-			errMsg = "unknown error"
-		}
-		return nil, quic.StatusToError(resp.Status, errMsg)
-	}
-
-	return resp, nil
-}
-
-func (q *quicTimeseriesProtocol) WritePoint(ctx context.Context, metric string, value float64, timestamp time.Time, tags map[string]string) error {
-	req := &cli.WritePointRequest{
-		Metric:    metric,
-		Tags:      tags,
-		Value:     value,
-		Timestamp: timestamp,
-	}
-
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return err
-	}
-
-	_, err = q.sendRequest(ctx, quic.OpTSWritePoint, payload)
-	return err
-}
-
-func (q *quicTimeseriesProtocol) WriteBatch(ctx context.Context, points []*TimeSeriesPoint) error {
-	cliPoints := make([]cli.WritePointRequest, len(points))
-	for i, p := range points {
-		cliPoints[i] = cli.WritePointRequest{
-			Metric:    p.Metric,
-			Tags:      p.Tags,
-			Value:     p.Value,
-			Timestamp: p.Timestamp,
-		}
-	}
-
-	req := &cli.WriteBatchRequest{
-		Points: cliPoints,
-	}
-
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return err
-	}
-
-	_, err = q.sendRequest(ctx, quic.OpTSWriteBatch, payload)
-	return err
-}
-
-func (q *quicTimeseriesProtocol) Query(ctx context.Context, metric string, start, end time.Time, aggregation string) ([]*TimeSeriesDataPoint, error) {
-	req := &cli.TSQueryRequest{
-		Metric:      metric,
-		StartTime:   start,
-		EndTime:     end,
-		Aggregation: aggregation,
-	}
-
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := q.sendRequest(ctx, quic.OpTSQuery, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result cli.TSQueryResponse
-	if err := quic.DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	points := make([]*TimeSeriesDataPoint, len(result.Points))
-	for i, p := range result.Points {
-		points[i] = &TimeSeriesDataPoint{
-			Metric:    p.Metric,
-			Tags:      p.Tags,
-			Value:     p.Value,
-			Timestamp: p.Timestamp,
-		}
-	}
-
-	return points, nil
-}
-
-func (q *quicTimeseriesProtocol) Delete(ctx context.Context, metric string, start, end time.Time) error {
-	req := &cli.TSDeleteRequest{
-		Metric:    metric,
-		StartTime: &start,
-		EndTime:   &end,
-	}
-
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return err
-	}
-
-	_, err = q.sendRequest(ctx, quic.OpTSDeleteSeries, payload)
-	return err
-}
-
-func (q *quicTimeseriesProtocol) ListMetrics(ctx context.Context, prefix string) ([]string, error) {
-	req := &cli.TSListMetricsRequest{
-		Prefix: prefix,
-	}
-
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := q.sendRequest(ctx, quic.OpTSListMetrics, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result cli.TSListMetricsResponse
-	if err := quic.DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return result.Metrics, nil
-}
-
-func (q *quicTimeseriesProtocol) GetRetentionPolicy(ctx context.Context, metric string) (*RetentionPolicy, error) {
-	req := &cli.TSGetRetentionPolicyRequest{
-		Metric: metric,
-	}
-
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := q.sendRequest(ctx, quic.OpTSGetRetentionPolicy, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result cli.TSGetRetentionPolicyResponse
-	if err := quic.DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	if result.Policy == nil {
-		return &RetentionPolicy{Duration: 0}, nil
-	}
-
-	return &RetentionPolicy{
-		Duration:    result.Policy.Duration,
-		Resolution:  result.Policy.Resolution,
-		Aggregation: result.Policy.Aggregation,
-	}, nil
-}
-
-func (q *quicTimeseriesProtocol) SetRetentionPolicy(ctx context.Context, metric string, policy *RetentionPolicy) error {
-	req := &cli.TSSetRetentionPolicyRequest{
-		Metric: metric,
-		Policy: &cli.TSRetentionPolicy{
-			Duration:    policy.Duration,
-			Resolution:  policy.Resolution,
-			Aggregation: policy.Aggregation,
-		},
-	}
-
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return err
-	}
-
-	_, err = q.sendRequest(ctx, quic.OpTSSetRetentionPolicy, payload)
-	return err
-}
-
-// =============================================================================
 // Unix Socket Protocol Implementation
 // =============================================================================
 
@@ -1537,404 +1269,5 @@ func (u *unixSocketTimeseriesProtocol) SetRetentionPolicy(ctx context.Context, m
 		},
 	}
 	_, err := u.client.TSSetRetentionPolicy(ctx, req)
-	return err
-}
-
-// =============================================================================
-// MCP Protocol Implementation
-// =============================================================================
-
-type mcpTimeseriesProtocol struct {
-	endpoint      string
-	httpClient    *http.Client
-	nextID        int
-	accessToken   string
-	authenticated bool
-}
-
-func (m *mcpTimeseriesProtocol) Name() string { return "MCP" }
-
-func (c *mcpTimeseriesProtocol) authenticate(ctx context.Context) error {
-	// Acquire a bearer through the cluster's PIV mTLS login endpoint.
-	// Password-based login has been removed across all transports; tests
-	// mint a bearer via REST PIV and present it on the protocol under test.
-	restEndpoints := helpers.GetRESTEndpoints()
-	if len(restEndpoints) == 0 {
-		return &qberrors.MessageError{Message: "no REST endpoints available for PIV login"}
-	}
-	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "PIV login failed", Cause: err}
-	}
-	c.accessToken = bearer
-	c.authenticated = true
-	return nil
-}
-
-func (m *mcpTimeseriesProtocol) callMCPToolUnauthenticated(ctx context.Context, toolName string, args map[string]interface{}) (json.RawMessage, error) {
-	mcpReq := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name":      toolName,
-			"arguments": args,
-		},
-		"id": m.nextID,
-	}
-	m.nextID++
-
-	body, err := json.Marshal(mcpReq)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var mcpResp struct {
-		Result struct {
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-			IsError bool `json:"isError"`
-		} `json:"result"`
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-
-	if err := json.Unmarshal(respBody, &mcpResp); err != nil {
-		return nil, err
-	}
-
-	if mcpResp.Error != nil {
-		return nil, &qberrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
-	}
-
-	if mcpResp.Result.IsError && len(mcpResp.Result.Content) > 0 {
-		return nil, &qberrors.MessageError{Message: "MCP tool error: " + mcpResp.Result.Content[0].Text}
-	}
-
-	if len(mcpResp.Result.Content) > 0 {
-		return json.RawMessage(mcpResp.Result.Content[0].Text), nil
-	}
-
-	return nil, nil
-}
-
-func (m *mcpTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) error {
-	endpoints := helpers.GetMCPEndpoints()
-	if len(endpoints) == 0 {
-		return &qberrors.MessageError{Message: "no MCP endpoints available"}
-	}
-	m.endpoint = endpoints[0]
-	m.httpClient = helpers.NewHTTPClient(30 * time.Second)
-	m.nextID = 1
-
-	// Verify MCP endpoint via initialize
-	initReq := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "initialize",
-		"params": map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{},
-			"clientInfo": map[string]interface{}{
-				"name":    "quicbaas-timeseries-test",
-				"version": "1.0.0",
-			},
-		},
-		"id": m.nextID,
-	}
-	m.nextID++
-
-	body, err := json.Marshal(initReq)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to marshal init request", Cause: err}
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "MCP endpoint not reachable at " + m.endpoint, Cause: err}
-	}
-	defer resp.Body.Close()
-
-	// Authenticate after initialization
-	if err := m.authenticate(ctx); err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to authenticate", Cause: err}
-	}
-
-	return nil
-}
-
-func (m *mcpTimeseriesProtocol) Teardown(t *testing.T) error {
-	m.httpClient = nil
-	m.accessToken = ""
-	m.authenticated = false
-	return nil
-}
-
-func (m *mcpTimeseriesProtocol) callMCPTool(ctx context.Context, toolName string, args map[string]interface{}) (json.RawMessage, error) {
-	mcpReq := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name":      toolName,
-			"arguments": args,
-		},
-		"id": m.nextID,
-	}
-	m.nextID++
-
-	body, err := json.Marshal(mcpReq)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if m.authenticated {
-		req.Header.Set("Authorization", "Bearer "+m.accessToken)
-	}
-
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var mcpResp struct {
-		Result struct {
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-			IsError bool `json:"isError"`
-		} `json:"result"`
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-
-	if err := json.Unmarshal(respBody, &mcpResp); err != nil {
-		return nil, err
-	}
-
-	if mcpResp.Error != nil {
-		return nil, &qberrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
-	}
-
-	if mcpResp.Result.IsError && len(mcpResp.Result.Content) > 0 {
-		return nil, &qberrors.MessageError{Message: "MCP tool error: " + mcpResp.Result.Content[0].Text}
-	}
-
-	if len(mcpResp.Result.Content) > 0 {
-		return json.RawMessage(mcpResp.Result.Content[0].Text), nil
-	}
-
-	return nil, nil
-}
-
-func (m *mcpTimeseriesProtocol) WritePoint(ctx context.Context, metric string, value float64, timestamp time.Time, tags map[string]string) error {
-	// The MCP handler uses getString(args, "value"), so value must be a string.
-	// The handler uses parseTagsJSON which calls getString(args, "tags"),
-	// so tags must be a JSON-encoded string.
-	args := map[string]interface{}{
-		"metric":    metric,
-		"value":     strconv.FormatFloat(value, 'f', -1, 64),
-		"timestamp": timestamp.UnixNano(),
-	}
-	if len(tags) > 0 {
-		tagsJSON, err := json.Marshal(tags)
-		if err != nil {
-			return err
-		}
-		args["tags"] = string(tagsJSON)
-	}
-	_, err := m.callMCPTool(ctx, "qrdb_ts_write_point", args)
-	return err
-}
-
-func (m *mcpTimeseriesProtocol) WriteBatch(ctx context.Context, points []*TimeSeriesPoint) error {
-	// The MCP handler uses getString(args, "points") and then json.Unmarshal
-	// into []batchPointJSON, so points must be a JSON-encoded string.
-	// Each point's value field in batchPointJSON is a string type.
-	type batchPoint struct {
-		Metric    string            `json:"metric"`
-		Value     string            `json:"value"`
-		Timestamp int64             `json:"timestamp"`
-		Tags      map[string]string `json:"tags,omitempty"`
-	}
-
-	batchPoints := make([]batchPoint, len(points))
-	for i, p := range points {
-		batchPoints[i] = batchPoint{
-			Metric:    p.Metric,
-			Value:     strconv.FormatFloat(p.Value, 'f', -1, 64),
-			Timestamp: p.Timestamp.UnixNano(),
-			Tags:      p.Tags,
-		}
-	}
-
-	pointsJSON, err := json.Marshal(batchPoints)
-	if err != nil {
-		return err
-	}
-
-	args := map[string]interface{}{
-		"points": string(pointsJSON),
-	}
-	_, err = m.callMCPTool(ctx, "qrdb_ts_write_batch", args)
-	return err
-}
-
-func (m *mcpTimeseriesProtocol) Query(ctx context.Context, metric string, start, end time.Time, aggregation string) ([]*TimeSeriesDataPoint, error) {
-	args := map[string]interface{}{
-		"metric":     metric,
-		"start_time": start.UnixNano(),
-		"end_time":   end.UnixNano(),
-	}
-	if aggregation != "" {
-		args["aggregation"] = aggregation
-	}
-
-	result, err := m.callMCPTool(ctx, "qrdb_ts_query", args)
-	if err != nil {
-		return nil, err
-	}
-
-	// The service TSQueryResponse serializes TSDataPoint.Timestamp as time.Time
-	// (RFC3339 string in JSON), so parse accordingly.
-	var resp struct {
-		Points []struct {
-			Metric    string            `json:"metric"`
-			Tags      map[string]string `json:"tags"`
-			Value     float64           `json:"value"`
-			Timestamp time.Time         `json:"timestamp"`
-		} `json:"points"`
-	}
-	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, err
-	}
-
-	points := make([]*TimeSeriesDataPoint, len(resp.Points))
-	for i, p := range resp.Points {
-		points[i] = &TimeSeriesDataPoint{
-			Metric:    p.Metric,
-			Tags:      p.Tags,
-			Value:     p.Value,
-			Timestamp: p.Timestamp,
-		}
-	}
-
-	return points, nil
-}
-
-func (m *mcpTimeseriesProtocol) Delete(ctx context.Context, metric string, start, end time.Time) error {
-	args := map[string]interface{}{
-		"metric":     metric,
-		"start_time": start.UnixNano(),
-		"end_time":   end.UnixNano(),
-	}
-	_, err := m.callMCPTool(ctx, "qrdb_ts_delete_series", args)
-	return err
-}
-
-func (m *mcpTimeseriesProtocol) ListMetrics(ctx context.Context, prefix string) ([]string, error) {
-	args := map[string]interface{}{}
-	if prefix != "" {
-		args["prefix"] = prefix
-	}
-
-	result, err := m.callMCPTool(ctx, "qrdb_ts_list_metrics", args)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp struct {
-		Metrics []string `json:"metrics"`
-	}
-	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, err
-	}
-
-	return resp.Metrics, nil
-}
-
-func (m *mcpTimeseriesProtocol) GetRetentionPolicy(ctx context.Context, metric string) (*RetentionPolicy, error) {
-	args := map[string]interface{}{
-		"metric": metric,
-	}
-
-	result, err := m.callMCPTool(ctx, "qrdb_ts_get_retention_policy", args)
-	if err != nil {
-		return nil, err
-	}
-
-	// The service TSGetRetentionPolicyResponse wraps the policy in a "policy"
-	// field. TSRetentionPolicy serializes Duration/Resolution as int64
-	// nanoseconds (Go time.Duration JSON marshaling).
-	var resp struct {
-		Policy *struct {
-			Duration    int64  `json:"duration"`
-			Resolution  int64  `json:"resolution"`
-			Aggregation string `json:"aggregation"`
-		} `json:"policy"`
-	}
-	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, err
-	}
-
-	if resp.Policy == nil {
-		return &RetentionPolicy{Duration: 0}, nil
-	}
-
-	return &RetentionPolicy{
-		Duration:    time.Duration(resp.Policy.Duration),
-		Resolution:  time.Duration(resp.Policy.Resolution),
-		Aggregation: resp.Policy.Aggregation,
-	}, nil
-}
-
-func (m *mcpTimeseriesProtocol) SetRetentionPolicy(ctx context.Context, metric string, policy *RetentionPolicy) error {
-	// The MCP handler reads duration_seconds and resolution_seconds via
-	// getInt64, then multiplies by time.Second.
-	args := map[string]interface{}{
-		"metric":           metric,
-		"duration_seconds": int64(policy.Duration.Seconds()),
-	}
-	if policy.Resolution > 0 {
-		args["resolution_seconds"] = int64(policy.Resolution.Seconds())
-	}
-	if policy.Aggregation != "" {
-		args["aggregation"] = policy.Aggregation
-	}
-	_, err := m.callMCPTool(ctx, "qrdb_ts_set_retention_policy", args)
 	return err
 }

@@ -41,14 +41,12 @@ func TestResolveBindHostPerProtocol(t *testing.T) {
 		Host: "0.0.0.0",
 		REST: ServerRESTConfig{BindAddress: "10.0.0.1"},
 		GRPC: ServerGRPCConfig{BindAddress: "10.0.0.2"},
-		QUIC: ServerQUICConfig{}, // unset -> Server.Host
 		MCP:  ServerMCPConfig{BindAddress: "127.0.0.1"},
 		Unix: ServerUnixConfig{},
 	}
 
 	assert.Equal(t, "10.0.0.1", sc.ResolveBindHost(sc.REST.BindAddress))
 	assert.Equal(t, "10.0.0.2", sc.ResolveBindHost(sc.GRPC.BindAddress))
-	assert.Equal(t, "0.0.0.0", sc.ResolveBindHost(sc.QUIC.BindAddress))
 	assert.Equal(t, "127.0.0.1", sc.ResolveBindHost(sc.MCP.BindAddress))
 	assert.Equal(t, "0.0.0.0", sc.ResolveBindHost(sc.Unix.BindAddress))
 }

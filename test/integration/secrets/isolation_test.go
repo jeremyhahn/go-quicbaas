@@ -30,14 +30,12 @@ import (
 	"testing"
 	"time"
 
-	quicgo "github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
-	"github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
@@ -693,83 +691,6 @@ func TestCrossProtocol_GRPCToREST(t *testing.T) {
 	assert.Equal(t, "gRPC", retrievedData["protocol"])
 
 	t.Logf("Successfully retrieved gRPC-created secret via REST")
-
-	// Cleanup via REST
-	deleteSecret(t, restEndpoint, path, true)
-}
-
-// TestCrossProtocol_QUICToREST verifies secret created via QUIC can be retrieved via REST.
-func TestCrossProtocol_QUICToREST(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	quicEndpoints := helpers.GetQUICEndpoints()
-	require.NotEmpty(t, quicEndpoints, "QUIC endpoints must be available for integration tests")
-
-	// Try to connect to QUIC
-	tlsConf, err := helpers.IntegrationTLSConfig()
-	require.NoError(t, err, "load integration TLS config")
-	tlsConf.NextProtos = []string{"quicbaas-quic"}
-
-	dialCtx, dialCancel := context.WithTimeout(ctx, 10*time.Second)
-	defer dialCancel()
-
-	conn, err := quicgo.DialAddr(dialCtx, quicEndpoints[0], tlsConf, nil)
-	require.NoError(t, err, "Failed to connect to QUIC endpoint %s", quicEndpoints[0])
-	defer conn.CloseWithError(0, "test complete")
-
-	path := fmt.Sprintf("test/cross-protocol/quic-to-rest/%d", time.Now().UnixNano())
-
-	// Create via QUIC
-	secretData, err := json.Marshal(map[string]interface{}{
-		"username": "quic-protocol-user",
-		"password": "quic-protocol-password",
-		"protocol": "QUIC",
-	})
-	require.NoError(t, err)
-
-	storeReq := &service.StoreSecretRequest{
-		SecretID:    path,
-		Name:        "cross-protocol-quic-test",
-		Description: "Secret created via QUIC for cross-protocol test",
-		Data:        secretData,
-	}
-
-	payload, err := quic.EncodePayload(storeReq)
-	require.NoError(t, err)
-
-	stream, err := conn.OpenStreamSync(ctx)
-	require.NoError(t, err)
-
-	quicReq := &quic.Request{
-		Opcode:  quic.OpSecretsStore,
-		Payload: payload,
-	}
-
-	err = quic.WriteRequest(stream, quicReq)
-	require.NoError(t, err)
-
-	resp, err := quic.ReadResponse(stream)
-	require.NoError(t, err)
-	stream.Close()
-
-	require.Equal(t, quic.StatusOK, resp.Status, "QUIC store should succeed")
-	t.Logf("Created secret via QUIC: %s", path)
-
-	// Retrieve via REST
-	restEndpoint := getRESTEndpoint()
-	secret := getSecret(t, restEndpoint, path)
-	require.NotNil(t, secret)
-
-	var retrievedData map[string]interface{}
-	err = json.Unmarshal(secret.Data, &retrievedData)
-	require.NoError(t, err)
-
-	assert.Equal(t, "quic-protocol-user", retrievedData["username"])
-	assert.Equal(t, "quic-protocol-password", retrievedData["password"])
-	assert.Equal(t, "QUIC", retrievedData["protocol"])
-
-	t.Logf("Successfully retrieved QUIC-created secret via REST")
 
 	// Cleanup via REST
 	deleteSecret(t, restEndpoint, path, true)

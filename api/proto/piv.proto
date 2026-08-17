@@ -16,6 +16,8 @@ package quicbaas.piv.v1;
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+
 // =============================================================================
 // PIV Service
 // =============================================================================
@@ -23,28 +25,44 @@ option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 // PIVService exposes backend-scoped PIV slot operations through gRPC.
 service PIVService {
   // ListPIVSlots returns the status of all PIV slots in a backend.
-  rpc ListPIVSlots(PIVListSlotsRequest) returns (PIVListSlotsResponse);
+  rpc ListPIVSlots(PIVListSlotsRequest) returns (PIVListSlotsResponse) {
+      option (qrdb.v1.permission) = "piv:read";
+  }
 
   // GetPIVCertificate retrieves the certificate stored in a PIV slot.
-  rpc GetPIVCertificate(PIVGetCertificateRequest) returns (PIVGetCertificateResponse);
+  rpc GetPIVCertificate(PIVGetCertificateRequest) returns (PIVGetCertificateResponse) {
+      option (qrdb.v1.permission) = "piv:read";
+  }
 
   // StorePIVCertificate stores a certificate in a PIV slot.
-  rpc StorePIVCertificate(PIVStoreCertificateRequest) returns (PIVStoreCertificateResponse);
+  rpc StorePIVCertificate(PIVStoreCertificateRequest) returns (PIVStoreCertificateResponse) {
+      option (qrdb.v1.permission) = "piv:write";
+  }
 
   // DeletePIVCertificate removes the certificate from a PIV slot.
-  rpc DeletePIVCertificate(PIVDeleteCertificateRequest) returns (PIVDeleteCertificateResponse);
+  rpc DeletePIVCertificate(PIVDeleteCertificateRequest) returns (PIVDeleteCertificateResponse) {
+      option (qrdb.v1.permission) = "piv:delete";
+  }
 
   // GeneratePIVKey generates a new key pair in a PIV slot.
-  rpc GeneratePIVKey(PIVGenerateKeyRequest) returns (PIVGenerateKeyResponse);
+  rpc GeneratePIVKey(PIVGenerateKeyRequest) returns (PIVGenerateKeyResponse) {
+      option (qrdb.v1.permission) = "piv:write";
+  }
 
   // ImportPIVCertificate imports a certificate into a PIV slot.
-  rpc ImportPIVCertificate(PIVStoreCertificateRequest) returns (PIVStoreCertificateResponse);
+  rpc ImportPIVCertificate(PIVStoreCertificateRequest) returns (PIVStoreCertificateResponse) {
+      option (qrdb.v1.permission) = "piv:write";
+  }
 
   // ExportPIVCertificate exports the certificate from a PIV slot.
-  rpc ExportPIVCertificate(PIVGetCertificateRequest) returns (PIVGetCertificateResponse);
+  rpc ExportPIVCertificate(PIVGetCertificateRequest) returns (PIVGetCertificateResponse) {
+      option (qrdb.v1.permission) = "piv:read";
+  }
 
   // GeneratePIVCSR generates a certificate signing request for a PIV slot key.
-  rpc GeneratePIVCSR(PIVGenerateCSRRequest) returns (PIVGenerateCSRResponse);
+  rpc GeneratePIVCSR(PIVGenerateCSRRequest) returns (PIVGenerateCSRResponse) {
+      option (qrdb.v1.permission) = "piv:use";
+  }
 }
 
 // =============================================================================

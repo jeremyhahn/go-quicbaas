@@ -4739,62 +4739,6 @@ func TestPerformanceMetricsStructure_Validation(t *testing.T) {
 	})
 }
 
-// Test public endpoint detection
-
-func TestIsAuthzPublicEndpointFunction_Coverage(t *testing.T) {
-	testCases := []struct {
-		path     string
-		expected bool
-	}{
-		{"/api/v1/health", true},
-		{"/api/v1/health/ready", true},
-		{"/metrics", true},
-		{"/metrics/custom", true},
-		{"/api/v1/auth/logout", false},
-		{"/api/v1/data", false},
-		{"/api/v1/users", false},
-		{"/health", false}, // Only /api/v1/health is public
-		{"/metric", false}, // Only /metrics is public
-		{"", false},
-		{"/", false},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.path, func(t *testing.T) {
-			result := isAuthzPublicEndpoint(tc.path)
-			assert.Equal(t, tc.expected, result, "Path: %s", tc.path)
-		})
-	}
-}
-
-// Test resource extraction
-
-func TestExtractAuthzResourceFunction_Coverage(t *testing.T) {
-	testCases := []struct {
-		path     string
-		expected string
-	}{
-		{"/api/v1/backups", "backups"},
-		{"/api/v1/users", "users"},
-		{"/api/v1/cache", "cache"},
-		{"/api/v1/cluster", "cluster"},
-		{"/api/v1/data/key", "data"},
-		{"/api", "unknown"},
-		{"/api/v1", "unknown"},
-		{"/", "unknown"},
-		{"", "unknown"},
-		{"api/v1/test", "test"}, // No leading slash but still works
-		{"/a/b/c/d", "unknown"}, // Does not match /api/v1 prefix
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.path, func(t *testing.T) {
-			result := extractAuthzResource(tc.path)
-			assert.Equal(t, tc.expected, result, "Path: %s", tc.path)
-		})
-	}
-}
-
 // Test getClientIP edge cases
 
 func TestGetClientIPFunction_EdgeCases(t *testing.T) {
@@ -9233,28 +9177,4 @@ func TestConversionHelpers_QA90(t *testing.T) {
 		assert.Equal(t, "value2", result["key2"])
 		assert.Equal(t, "value3", result["key3"])
 	})
-}
-
-func TestExtractAuthzResource_QA90EdgeCases(t *testing.T) {
-	tests := []struct {
-		path     string
-		expected string
-	}{
-		{"/api/v1/entities/users/123", "entities"}, // fallback: parts[2] = entities
-		{"/api/v1/query/index", "query"},           // fallback: parts[2] = query
-		{"/api/v1/cluster/status", "cluster"},      // matches /api/v1/cluster -> "cluster"
-		{"/api/v1/backups", "backups"},             // matches /api/v1/backups -> "backups"
-		{"/api/v1/health", "health"},               // fallback: parts[2] = health
-		{"/api/v1/", "unknown"},                    // len(parts) < 3 after trim
-		{"/metrics", "unknown"},                    // len(parts) < 3
-		{"/", "unknown"},                           // len(parts) < 3
-		{"", "unknown"},                            // len(parts) < 3
-	}
-
-	for _, tt := range tests {
-		t.Run("path_"+tt.path, func(t *testing.T) {
-			result := extractAuthzResource(tt.path)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }

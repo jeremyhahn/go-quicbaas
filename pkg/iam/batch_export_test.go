@@ -1984,47 +1984,6 @@ func TestAdminManager_StartImpersonation_MissingReason(t *testing.T) {
 }
 
 // =============================================================================
-// PolicyCompiler - compileAttributeMatcher coverage
-// =============================================================================
-
-func TestPolicyCompiler_CompileWithMatchExpressions(t *testing.T) {
-	compiler := NewPolicyCompiler()
-
-	policy := &Policy{
-		APIVersion: "v1",
-		Kind:       "Policy",
-		Metadata:   PolicyMetadata{Name: "match-expr-test", Tenant: "tenant-1"},
-		Spec: PolicySpec{
-			Subjects: SubjectSelector{
-				Match: map[string]interface{}{
-					"department": "engineering",
-					"level":      "senior",
-				},
-			},
-			Rules: []Rule{
-				{
-					Name:      "allow-senior-eng",
-					Effect:    EffectAllow,
-					Actions:   []string{"*"},
-					Resources: []string{"*"},
-				},
-			},
-		},
-	}
-
-	compiled, err := compiler.Compile(policy)
-	if err != nil {
-		t.Fatalf("Compile failed: %v", err)
-	}
-	if compiled == nil {
-		t.Error("expected compiled policy")
-	}
-	if compiled.SubjectMatcher == nil {
-		t.Error("expected subject matcher")
-	}
-}
-
-// =============================================================================
 // BatchProcessor - more rate limit and error paths
 // =============================================================================
 

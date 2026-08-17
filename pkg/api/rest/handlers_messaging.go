@@ -32,30 +32,6 @@ import (
 // Route Registration
 // =============================================================================
 
-// registerMessagingRoutes registers all messaging notification REST API routes.
-func registerMessagingRoutes(s *Server, r chi.Router) {
-	r.Route("/messaging", func(r chi.Router) {
-		// Channel management routes
-		r.Get("/channels", s.HandleListMessagingChannels)            // List channels
-		r.Post("/channels", s.HandleCreateMessagingChannel)          // Create channel
-		r.Get("/channels/{name}", s.HandleGetMessagingChannel)       // Get channel
-		r.Delete("/channels/{name}", s.HandleDeleteMessagingChannel) // Delete channel
-
-		// Subscription routes
-		r.Post("/subscribe", s.HandleMessagingSubscribe)          // Subscribe to channel
-		r.Delete("/subscribe/{id}", s.HandleMessagingUnsubscribe) // Unsubscribe
-
-		// Publishing routes
-		r.Post("/publish/{channel}", s.HandleMessagingPublish)            // Publish message
-		r.Post("/publish-delta/{channel}", s.HandleMessagingPublishDelta) // Publish delta
-
-		// Stats routes
-		r.Get("/stats", s.HandleMessagingStats)                      // Get messaging service stats
-		r.Get("/stats/{channel}", s.HandleMessagingChannelStats)     // Get per-channel stats
-		r.Get("/dedup/stats/{channel}", s.HandleMessagingDedupStats) // Get dedup stats for channel
-	})
-}
-
 // =============================================================================
 // Request/Response Types for Messaging REST API
 // =============================================================================

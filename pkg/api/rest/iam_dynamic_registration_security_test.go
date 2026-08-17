@@ -410,29 +410,23 @@ func TestDCRRegistration_TenantComesFromPrincipal(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestDCRRouteAuthorizationPosture(t *testing.T) {
-	t.Run("create route is not pre-auth", func(t *testing.T) {
-		assert.False(t, isPreAuthRoute("/oauth2/register"))
-		assert.False(t, isPreAuthRoute("/oauth2/register/"))
-		assert.False(t, isAuthzPublicEndpoint("/oauth2/register"))
-		assert.False(t, isDefaultDenyPublic("/oauth2/register"))
+	t.Run("create route is a permission route, not public", func(t *testing.T) {
+		auth, ok := routeAuthForPath("/oauth2/register", http.MethodPost)
+		require.True(t, ok, "POST /oauth2/register must be in the frozen route table")
+		assert.Equal(t, RouteAuthPermission, auth)
 	})
 
-	t.Run("management route is pre-auth", func(t *testing.T) {
-		assert.True(t, isPreAuthRoute("/oauth2/register/app_tenant_abc"))
-		assert.True(t, isAuthzPublicEndpoint("/oauth2/register/app_tenant_abc"))
-		assert.True(t, isDefaultDenyPublic("/oauth2/register/app_tenant_abc"))
-	})
-
-	t.Run("carve-out does not widen to deeper paths", func(t *testing.T) {
-		assert.False(t, isPreAuthRoute("/oauth2/register/app_tenant_abc/secret"))
-		assert.False(t, isPreAuthRoute("/oauth2/register//"))
+	t.Run("management route is public (RFC 7592 registration-access-token carve-out)", func(t *testing.T) {
+		for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+			auth, ok := routeAuthForPath("/oauth2/register/app_tenant_abc", method)
+			require.Truef(t, ok, "%s /oauth2/register/{client_id} must be in the frozen route table", method)
+			assert.Equalf(t, RouteAuthPublic, auth, "%s /oauth2/register/{client_id}", method)
+		}
 	})
 
 	t.Run("create route requires the tenants:create scope", func(t *testing.T) {
-		assert.Equal(t, "tenants:create", requiredScopeForRequest("/oauth2/register", http.MethodPost))
-
-		resource, action, ok := mapRequestToPermission("/oauth2/register", http.MethodPost)
-		require.True(t, ok, "POST /oauth2/register must be PEP-mapped")
+		resource, action, ok := routePermissionForPath("/oauth2/register", http.MethodPost)
+		require.True(t, ok, "POST /oauth2/register must be a frozen permission route")
 		assert.Equal(t, "tenants", resource)
 		assert.Equal(t, "create", action)
 	})
@@ -446,7 +440,12 @@ func TestDCRRouteAuthorizationPosture(t *testing.T) {
 			"/oauth2/revoke",
 			"/oauth2/introspect",
 		} {
-			assert.True(t, isDefaultDenyPublic(path), "%s must remain reachable pre-token", path)
+			auth, ok := routeAuthForPath(path, http.MethodGet)
+			if !ok {
+				auth, ok = routeAuthForPath(path, http.MethodPost)
+			}
+			require.Truef(t, ok, "%s must be in the frozen route table", path)
+			assert.Equalf(t, RouteAuthPublic, auth, "%s must remain reachable pre-token", path)
 		}
 	})
 }

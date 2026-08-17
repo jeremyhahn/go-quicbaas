@@ -31,26 +31,6 @@ import (
 // Route Registration
 // =============================================================================
 
-// registerSchedulerRoutes registers all scheduler REST API routes.
-func registerSchedulerRoutes(s *Server, r chi.Router) {
-	r.Route("/scheduler", func(r chi.Router) {
-		// Job management routes
-		r.Post("/jobs", s.HandleCreateSchedulerJob)                 // Create job
-		r.Get("/jobs", s.HandleListSchedulerJobs)                   // List jobs
-		r.Get("/jobs/{id}", s.HandleGetSchedulerJob)                // Get job
-		r.Put("/jobs/{id}", s.HandleUpdateSchedulerJob)             // Update job
-		r.Delete("/jobs/{id}", s.HandleDeleteSchedulerJob)          // Delete job
-		r.Post("/jobs/{id}/trigger", s.HandleTriggerSchedulerJob)   // Trigger immediately
-		r.Post("/jobs/{id}/pause", s.HandlePauseSchedulerJob)       // Pause job
-		r.Post("/jobs/{id}/resume", s.HandleResumeSchedulerJob)     // Resume job
-		r.Post("/jobs/{id}/cancel", s.HandleCancelSchedulerJob)     // Cancel job
-		r.Get("/jobs/{id}/history", s.HandleGetSchedulerJobHistory) // Execution history
-
-		// Scheduler status
-		r.Get("/status", s.HandleGetSchedulerStatus) // Scheduler status
-	})
-}
-
 // =============================================================================
 // Request/Response Types for Scheduler REST API
 // =============================================================================

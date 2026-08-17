@@ -21,27 +21,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // =============================================================================
 // Attestation Service Route Registration
 // =============================================================================
-
-// registerAttestationRoutes registers the trusted-computing routes under
-// /api/v1/attestation. Verify and verify-chain delegate to the service-layer
-// AttestationService, which composes the go-xkms attestation verifier;
-// attest-container crosses the orchestration seam and returns a typed
-// not-configured error until an application registers a container attestor.
-func registerAttestationRoutes(s *Server, r chi.Router) {
-	r.Route("/attestation", func(r chi.Router) {
-		r.Post("/verify", s.HandleAttestationVerify)
-		r.Post("/verify-chain", s.HandleAttestationVerifyChain)
-		r.Post("/attest-container", s.HandleAttestationAttestContainer)
-	})
-}
 
 // =============================================================================
 // Request/Response Types

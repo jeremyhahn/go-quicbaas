@@ -13,6 +13,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
@@ -1340,7 +1341,7 @@ var File_api_proto_dynamic_secrets_proto protoreflect.FileDescriptor
 
 const file_api_proto_dynamic_secrets_proto_rawDesc = "" +
 	"\n" +
-	"\x1fapi/proto/dynamic_secrets.proto\x12\x1aquicbaas.dynamicsecrets.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\"\xa8\x03\n" +
+	"\x1fapi/proto/dynamic_secrets.proto\x12\x1aquicbaas.dynamicsecrets.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xa8\x03\n" +
 	"\x04Role\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12%\n" +
 	"\x0egenerator_type\x18\x02 \x01(\tR\rgeneratorType\x12D\n" +
@@ -1450,20 +1451,20 @@ const file_api_proto_dynamic_secrets_proto_rawDesc = "" +
 	"\x17LEASE_STATE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12LEASE_STATE_ACTIVE\x10\x01\x12\x17\n" +
 	"\x13LEASE_STATE_EXPIRED\x10\x02\x12\x17\n" +
-	"\x13LEASE_STATE_REVOKED\x10\x032\xdf\a\n" +
-	"\x15DynamicSecretsService\x12\x7f\n" +
+	"\x13LEASE_STATE_REVOKED\x10\x032\xe7\t\n" +
+	"\x15DynamicSecretsService\x12\xa0\x01\n" +
 	"\n" +
-	"CreateRole\x127.quicbaas.dynamicsecrets.v1.DynSecretsCreateRoleRequest\x1a8.quicbaas.dynamicsecrets.v1.DynSecretsCreateRoleResponse\x12v\n" +
-	"\aGetRole\x124.quicbaas.dynamicsecrets.v1.DynSecretsGetRoleRequest\x1a5.quicbaas.dynamicsecrets.v1.DynSecretsGetRoleResponse\x12|\n" +
-	"\tListRoles\x126.quicbaas.dynamicsecrets.v1.DynSecretsListRolesRequest\x1a7.quicbaas.dynamicsecrets.v1.DynSecretsListRolesResponse\x12\x7f\n" +
+	"CreateRole\x127.quicbaas.dynamicsecrets.v1.DynSecretsCreateRoleRequest\x1a8.quicbaas.dynamicsecrets.v1.DynSecretsCreateRoleResponse\"\x1f\xc2\xf3\x18\x1bdynamic_secrets:role_create\x12\x95\x01\n" +
+	"\aGetRole\x124.quicbaas.dynamicsecrets.v1.DynSecretsGetRoleRequest\x1a5.quicbaas.dynamicsecrets.v1.DynSecretsGetRoleResponse\"\x1d\xc2\xf3\x18\x19dynamic_secrets:role_read\x12\x9b\x01\n" +
+	"\tListRoles\x126.quicbaas.dynamicsecrets.v1.DynSecretsListRolesRequest\x1a7.quicbaas.dynamicsecrets.v1.DynSecretsListRolesResponse\"\x1d\xc2\xf3\x18\x19dynamic_secrets:role_list\x12\xa0\x01\n" +
 	"\n" +
-	"DeleteRole\x127.quicbaas.dynamicsecrets.v1.DynSecretsDeleteRoleRequest\x1a8.quicbaas.dynamicsecrets.v1.DynSecretsDeleteRoleResponse\x12\x83\x01\n" +
-	"\x12GenerateCredential\x125.quicbaas.dynamicsecrets.v1.GenerateCredentialRequest\x1a6.quicbaas.dynamicsecrets.v1.GenerateCredentialResponse\x12k\n" +
+	"DeleteRole\x127.quicbaas.dynamicsecrets.v1.DynSecretsDeleteRoleRequest\x1a8.quicbaas.dynamicsecrets.v1.DynSecretsDeleteRoleResponse\"\x1f\xc2\xf3\x18\x1bdynamic_secrets:role_delete\x12\xa1\x01\n" +
+	"\x12GenerateCredential\x125.quicbaas.dynamicsecrets.v1.GenerateCredentialRequest\x1a6.quicbaas.dynamicsecrets.v1.GenerateCredentialResponse\"\x1c\xc2\xf3\x18\x18dynamic_secrets:generate\x12\x8c\x01\n" +
 	"\n" +
-	"RenewLease\x12-.quicbaas.dynamicsecrets.v1.RenewLeaseRequest\x1a..quicbaas.dynamicsecrets.v1.RenewLeaseResponse\x12n\n" +
-	"\vRevokeLease\x12..quicbaas.dynamicsecrets.v1.RevokeLeaseRequest\x1a/.quicbaas.dynamicsecrets.v1.RevokeLeaseResponse\x12k\n" +
+	"RenewLease\x12-.quicbaas.dynamicsecrets.v1.RenewLeaseRequest\x1a..quicbaas.dynamicsecrets.v1.RenewLeaseResponse\"\x1f\xc2\xf3\x18\x1bdynamic_secrets:lease_renew\x12\x90\x01\n" +
+	"\vRevokeLease\x12..quicbaas.dynamicsecrets.v1.RevokeLeaseRequest\x1a/.quicbaas.dynamicsecrets.v1.RevokeLeaseResponse\" \xc2\xf3\x18\x1cdynamic_secrets:lease_revoke\x12\x8b\x01\n" +
 	"\n" +
-	"ListLeases\x12-.quicbaas.dynamicsecrets.v1.ListLeasesRequest\x1a..quicbaas.dynamicsecrets.v1.ListLeasesResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"ListLeases\x12-.quicbaas.dynamicsecrets.v1.ListLeasesRequest\x1a..quicbaas.dynamicsecrets.v1.ListLeasesResponse\"\x1e\xc2\xf3\x18\x1adynamic_secrets:lease_listB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_dynamic_secrets_proto_rawDescOnce sync.Once

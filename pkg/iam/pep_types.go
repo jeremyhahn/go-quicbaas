@@ -38,7 +38,7 @@ type PolicyUpdate struct {
 	Type PolicyUpdateType `json:"type" yaml:"type"`
 
 	// Policy is the updated policy (nil for delete)
-	Policy *CompiledPolicy `json:"policy,omitempty" yaml:"policy,omitempty"`
+	Policy *Policy `json:"policy,omitempty" yaml:"policy,omitempty"`
 
 	// PolicyID is the policy identifier
 	PolicyID string `json:"policy_id" yaml:"policy_id"`
@@ -137,7 +137,7 @@ type PEPStats struct {
 // This interface allows for different implementations (gRPC, HTTP, etc.).
 type IAMClient interface {
 	// FetchPolicies fetches all policies for a tenant
-	FetchPolicies(tenantID string, patterns []string) ([]*CompiledPolicy, error)
+	FetchPolicies(tenantID string, patterns []string) ([]*Policy, error)
 
 	// Subscribe subscribes to policy updates for a tenant
 	Subscribe(tenantID string, patterns []string) (<-chan *PolicyUpdate, error)

@@ -340,7 +340,6 @@ func TestBuildInitConfig_DisablesAllListeners(t *testing.T) {
 	assert.True(t, cfg.Server.Embedded, "init config must run in embedded mode")
 	assert.False(t, cfg.Server.GRPC.Enabled, "init must not enable gRPC listener")
 	assert.False(t, cfg.Server.REST.Enabled, "init must not enable REST listener")
-	assert.False(t, cfg.Server.QUIC.Enabled, "init must not enable QUIC listener")
 	assert.False(t, cfg.Server.MCP.Enabled, "init must not enable MCP listener")
 	assert.False(t, cfg.Server.Unix.Enabled, "init must not enable Unix listener")
 	// TLS is ON even though nothing listens: initializeCA early-returns when
@@ -536,7 +535,6 @@ func TestBuildInitConfig_EnablesCAForEveryStrategy(t *testing.T) {
 			assert.True(t, cfg.Server.Embedded)
 			assert.False(t, cfg.Server.REST.Enabled, "init must still bind no listener")
 			assert.False(t, cfg.Server.GRPC.Enabled)
-			assert.False(t, cfg.Server.QUIC.Enabled)
 		})
 	}
 }

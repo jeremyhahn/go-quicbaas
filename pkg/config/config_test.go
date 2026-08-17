@@ -343,7 +343,6 @@ func TestEmbeddedModeConfig(t *testing.T) {
 			Embedded: true,
 			GRPC:     ServerGRPCConfig{Enabled: true}, // Should be ignored when Embedded is true
 			REST:     ServerRESTConfig{Enabled: true}, // Should be ignored when Embedded is true
-			QUIC:     ServerQUICConfig{Enabled: true}, // Should be ignored when Embedded is true
 			Unix:     ServerUnixConfig{Socket: "/tmp/test.sock"},
 		}
 
@@ -369,9 +368,6 @@ server:
   rest:
     enabled: false
     port: 8080
-  quic:
-    enabled: false
-    port: 4433
   unix:
     enabled: false
     socket: ""
@@ -386,7 +382,6 @@ logging:
 		assert.True(t, cfg.Server.Embedded, "Embedded mode should be loaded from YAML")
 		assert.False(t, cfg.Server.GRPC.Enabled)
 		assert.False(t, cfg.Server.REST.Enabled)
-		assert.False(t, cfg.Server.QUIC.Enabled)
 		assert.Empty(t, cfg.Server.Unix.Socket)
 	})
 }
@@ -403,7 +398,6 @@ func TestEmbeddedConfigHelper(t *testing.T) {
 	// All network listeners should be disabled
 	assert.False(t, cfg.Server.GRPC.Enabled, "GRPC should be disabled in embedded mode")
 	assert.False(t, cfg.Server.REST.Enabled, "REST should be disabled in embedded mode")
-	assert.False(t, cfg.Server.QUIC.Enabled, "QUIC should be disabled in embedded mode")
 	assert.Empty(t, cfg.Server.Unix.Socket, "Unix socket should be empty in embedded mode")
 
 	// Raft should still be configured for cluster communication
@@ -489,24 +483,6 @@ func TestEnvironmentVariableOverrides(t *testing.T) {
 		cfg, err := Load("")
 		require.NoError(t, err)
 		assert.Equal(t, 7777, cfg.Server.REST.Port)
-	})
-
-	t.Run("QUICBAAS_SERVER_QUIC_ENABLED override", func(t *testing.T) {
-		os.Setenv("QUICBAAS_SERVER_QUIC_ENABLED", "false")
-		defer os.Unsetenv("QUICBAAS_SERVER_QUIC_ENABLED")
-
-		cfg, err := Load("")
-		require.NoError(t, err)
-		assert.False(t, cfg.Server.QUIC.Enabled)
-	})
-
-	t.Run("QUICBAAS_SERVER_QUIC_PORT override", func(t *testing.T) {
-		os.Setenv("QUICBAAS_SERVER_QUIC_PORT", "4444")
-		defer os.Unsetenv("QUICBAAS_SERVER_QUIC_PORT")
-
-		cfg, err := Load("")
-		require.NoError(t, err)
-		assert.Equal(t, 4444, cfg.Server.QUIC.Port)
 	})
 
 	t.Run("QUICBAAS_SERVER_MCP_ENABLED override", func(t *testing.T) {
@@ -980,8 +956,12 @@ func TestValidateStorage_ErrorPaths(t *testing.T) {
 	})
 	t.Run("directory creation fails for nested path", func(t *testing.T) {
 		cfg := Default()
-		// Disable TLS for this storage-focused test
+		// Disable TLS for this storage-focused test. Network serving requires
+		// TLS (validateNetworkServingTLS), so also disable it.
 		cfg.Security.TLSEnabled = false
+		cfg.Server.REST.Enabled = false
+		cfg.Server.GRPC.Enabled = false
+		cfg.Server.MCP.Enabled = false
 		// Use a path that requires directory creation
 		tmpDir := t.TempDir()
 		nestedPath := filepath.Join(tmpDir, "level1", "level2", "level3")
@@ -1368,8 +1348,12 @@ func TestValidator_ConsecutiveValidations(t *testing.T) {
 		tmpDir1 := t.TempDir()
 		cfg1.Storage.DataDir = tmpDir1
 		cfg1.Storage.WALDir = filepath.Join(tmpDir1, "wal")
-		// Disable TLS for this test
+		// Disable TLS for this test. Network serving requires TLS
+		// (validateNetworkServingTLS), so also disable it.
 		cfg1.Security.TLSEnabled = false
+		cfg1.Server.REST.Enabled = false
+		cfg1.Server.GRPC.Enabled = false
+		cfg1.Server.MCP.Enabled = false
 		err1 := Validate(cfg1)
 		assert.NoError(t, err1)
 		cfg2 := Default()

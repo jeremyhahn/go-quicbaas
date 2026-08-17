@@ -149,9 +149,6 @@ func (g *ConfigGenerator) generateYAMLContent(node *NodeInstance) string {
 	sb.WriteString("  rest:\n")
 	sb.WriteString("    enabled: true\n")
 	sb.WriteString(fmt.Sprintf("    port: %d\n", node.RESTPort))
-	sb.WriteString("  quic:\n")
-	sb.WriteString("    enabled: true\n")
-	sb.WriteString(fmt.Sprintf("    port: %d\n", node.QUICPort))
 	sb.WriteString("  mcp:\n")
 	sb.WriteString("    enabled: true\n")
 	sb.WriteString(fmt.Sprintf("    port: %d\n", node.MCPPort))
@@ -209,8 +206,8 @@ func (g *ConfigGenerator) ClusterInfo() string {
 		}
 
 		sb.WriteString(fmt.Sprintf("  Node %d%s:\n", node.NodeID, bootstrapMarker))
-		sb.WriteString(fmt.Sprintf("    gRPC: %d, REST: %d, QUIC: %d, MCP: %d\n",
-			node.GRPCPort, node.RESTPort, node.QUICPort, node.MCPPort))
+		sb.WriteString(fmt.Sprintf("    gRPC: %d, REST: %d, MCP: %d\n",
+			node.GRPCPort, node.RESTPort, node.MCPPort))
 		sb.WriteString(fmt.Sprintf("    Raft: localhost:%d\n", node.RaftPort))
 		sb.WriteString(fmt.Sprintf("    Data: %s\n", node.DataDir))
 		if node.UnixSocket != "" {

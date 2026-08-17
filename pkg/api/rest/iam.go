@@ -69,7 +69,8 @@ func NewIAMHandler(deps IAMHandlerDependencies) *IAMHandler {
 func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 	// OIDC/OAuth discovery endpoints (public) - must be at root level per specs
 	router.Get("/.well-known/openid-configuration", h.GetOIDCConfig)
-	router.Get("/.well-known/oauth-authorization-server", h.GetOAuthASMetadata) // RFC 8414
+	router.Get("/.well-known/oauth-authorization-server", h.GetOAuthASMetadata)         // RFC 8414
+	router.Get("/.well-known/oauth-protected-resource", h.GetProtectedResourceMetadata) // RFC 9728
 	router.Get("/.well-known/jwks.json", h.GetJWKS)
 
 	// OAuth2/OIDC endpoints (public)
@@ -81,41 +82,40 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 	router.Post("/oauth2/introspect", h.Introspect) // RFC 7662 token introspection
 
 	// Dynamic Client Registration (RFC 7591) + its management protocol
-	// (RFC 7592). Registered as a group on the ROOT router (the OIDC discovery
-	// endpoints force root-level registration) carrying the SAME shared authz
-	// chain the other root-mounted IAM groups use, so creating an OAuth2 client
-	// — an authentication principal — is never reachable without a verified
-	// principal under RequireAuthz.
-	//
-	// POST /oauth2/register is PEP-mapped to tenants:create
-	// (authz_pep_mapping.go) and the presented platform token doubles as the
-	// RFC 7591 initial access token: the tenant it authenticated into is the
-	// tenant the new client lands in.
-	//
-	// The three RFC 7592 management verbs below are a DELIBERATE pre-auth
-	// carve-out (preAuthRouteTemplates in authz_public_routes.go): per RFC 7592
-	// §2 their credential is the per-client registration access token, which the
-	// registrant holds instead of a platform token. That token is a real,
-	// fail-closed gate — issued once at registration, stored only as a SHA-256
-	// hash on the client record, and verified by constant-time comparison for
-	// that exact client_id (IAMHandler.authorizeRegistrationAccess). The
-	// carve-out is whole-path and segment-exact, so the sibling create route
-	// above stays gated.
+	// (RFC 7592). Registered as a group on the ROOT router of the legacy
+	// in-process listener, which the unified-API-server architecture never
+	// starts a listener for (pkg/server/lifecycle_rest.go startRESTServer);
+	// it carries no authorization gate here. Live enforcement is the
+	// module-only GroupOAuth2Register RouteSpecs (routes_iam.go): POST (create)
+	// is frozen to tenants:create, and the presented platform token doubles as
+	// the RFC 7591 initial access token. The three RFC 7592 management verbs
+	// below are RouteAuthPublic in the frozen table: per RFC 7592 §2 their
+	// credential is the per-client registration access token, which the
+	// registrant holds instead of a platform token — a real, fail-closed gate
+	// verified by constant-time comparison for that exact client_id
+	// (IAMHandler.authorizeRegistrationAccess).
 	router.Route("/oauth2/register", func(r chi.Router) {
-		h.server.useAPIAuthzMiddleware(r)
-
 		r.Post("/", h.RegisterDynamicClient)
 		r.Get("/{client_id}", h.GetDynamicClient)
 		r.Put("/{client_id}", h.UpdateDynamicClient)
 		r.Delete("/{client_id}", h.DeleteDynamicClient)
 	})
 
-	// Token management endpoints (public).
+	// Token management endpoints (public). refresh/logout/validate and
+	// login/piv stay reachable HERE ONLY (the legacy in-process listener):
+	// P3.3 dropped their module-surface RouteSpecs (routes_iam.go
+	// apiAuthPublicRouteSpecs) because on a composed node xkms's module owns
+	// the identical /api/v1/auth/{refresh,logout,validate,login/piv} paths
+	// as part of its own session-login plane; a standalone (non-composed)
+	// quicbaas deployment still needs all four, so this hand-mount is
+	// deliberately untouched for them. login/piv ALSO gets a second,
+	// permanent mount below at its new IAM-namespaced home
+	// (/api/v1/iam/login/piv) so the module surface and the legacy listener
+	// agree on where a composed node reaches it.
 	router.Route("/api/v1/auth", func(r chi.Router) {
 		r.Post("/refresh", h.RefreshToken)   // Refresh access token
 		r.Post("/logout", h.Logout)          // Revoke access token
 		r.Post("/validate", h.ValidateToken) // Validate access token
-		r.Post("/login/piv", h.PIVLogin)     // PIV smartcard mTLS login
 
 		// Unified login ceremony (mtls / fido2 / piv) — delegates to the
 		// composed qrdb node via the LoginCeremony() facade. Public: the
@@ -129,6 +129,11 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 		r.Post("/register/finish", h.RegisterSelfFinish)
 	})
 
+	// OIDC-session PIV login (P3.3 de-collision): moved from
+	// /api/v1/auth/login/piv, see the comment above and
+	// routes_iam.go iamManagedRouteSpecs for the module-surface twin.
+	router.Post("/api/v1/iam/login/piv", h.PIVLogin)
+
 	// Federated authentication endpoints (public)
 	RegisterFederationAuthRoutes(router, h)
 
@@ -138,23 +143,18 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 
 	// Tenants management
 	router.Route("/api/v1/tenants", func(r chi.Router) {
-		// This group is registered at the ROOT router (the OIDC discovery
-		// endpoints force root-level registration), so it does NOT inherit the
-		// /api/v1 chi group's authorization chain. Install the SAME shared
-		// selector the /api/v1 group uses (useAPIAuthzMiddleware) so the
-		// tenant-management surface is fail-closed under RequireAuthz=true
-		// (AuthorizeViaValidator; every path here is PEP-mapped — tenants:* and
-		// the tenant_barrier:* special rules) and still receives the verified
-		// principal under RequireAuthz=false (EnforceTokenBinding), which the
-		// service-layer tenant-binding gates require to reason about identity.
+		// This group is registered at the ROOT router of the legacy in-process
+		// listener, which the unified-API-server architecture never starts a
+		// listener for (pkg/server/lifecycle_rest.go startRESTServer); it
+		// carries no authorization gate here. Live enforcement for the
+		// tenant-management surface is the module-only GroupIAM RouteSpecs
+		// (routes_iam.go), frozen to the tenants:*/tenant_barrier:* permission
+		// families, served through go-qrdb's unified-server authorizer via BindRoute.
 		//
 		// The WebAuthn ceremony no longer lives on this mount: the xkms-native
 		// mount under /api/v1/iam/{tenant_id}/webauthn is the single
 		// tenant-scoped ceremony surface, and browser login rides the unified
-		// ceremony at /api/v1/auth/login/{begin,finish} (pre-auth via
-		// authz_public_routes.go).
-		h.server.useAPIAuthzMiddleware(r)
-
+		// ceremony at /api/v1/auth/login/{begin,finish} (RouteAuthPublic).
 		r.Get("/", h.ListTenants)
 		r.Post("/", h.CreateTenant)
 		r.Get("/{tenant_id}", h.GetTenant)
@@ -296,18 +296,17 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 
 	// IAM utility endpoints (not tenant-scoped)
 	router.Route("/api/v1/iam", func(r chi.Router) {
-		// This group is registered at the ROOT router (like /api/v1/tenants
-		// above), so it does NOT inherit the /api/v1 chi group's authorization
-		// chain. Install the SAME shared selector (useAPIAuthzMiddleware) so
-		// the sessions / audit / PEP-check / approval surface is fail-closed
-		// under RequireAuthz=true (AuthorizeViaValidator; every path here is
-		// PEP-mapped — see the "/api/v1/iam" entries in authz_pep_mapping.go)
-		// and still receives the verified principal under RequireAuthz=false
-		// (EnforceTokenBinding). EVERY route in this group is gated — there is
-		// no anonymous surface here. The login UI does not enumerate tenants;
-		// the operator types the organization id, so no pre-auth tenant listing
-		// exists to leak one tenant's namespace to another.
-		h.server.useAPIAuthzMiddleware(r)
+		// This group is registered at the ROOT router of the legacy
+		// in-process listener (like /api/v1/tenants above); it carries no
+		// authorization gate here. Live enforcement for the sessions / audit /
+		// PEP-check / approval surface is the module-only GroupIAM RouteSpecs
+		// (routes_iam.go, authz_iam_utility expectations frozen into
+		// routes_permissions_generated.go), served through BindRoute's
+		// go-qrdb's unified-server authorizer via BindRoute. EVERY route in this group is a
+		// RouteAuthPermission entry — there is no anonymous surface here.
+		// The login UI does not enumerate tenants; the operator types the
+		// organization id, so no pre-auth tenant listing exists to leak one
+		// tenant's namespace to another.
 
 		// Admin approval/rejection for pending self-registered users.
 		// Requires Admin@system scope; tenant_id passed as query parameter.
@@ -323,6 +322,7 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 		// Audit endpoints
 		r.Get("/audit", h.ListAuditEvents)
 		r.Get("/audit/{id}", h.GetAuditEvent)
+		r.Post("/audit", h.RecordAuditEvent)
 		r.Delete("/audit", h.DeleteOldAuditEvents)
 
 		// Session management endpoints

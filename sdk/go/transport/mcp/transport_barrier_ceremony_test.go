@@ -13,17 +13,18 @@
 
 // transport_barrier_ceremony_test.go exercises the BarrierClient and
 // CeremonyClient implementations that *Transport satisfies for the qrdb
-// wire contract, driving each method through a fake JSON-RPC MCP server.
+// wire contract, driving each method through a real in-process MCP server
+// (github.com/mark3labs/mcp-go/server).
 
 package mcp
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
+
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
@@ -34,65 +35,36 @@ import (
 // the tool returns inside its text content.
 type toolResultFn func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{}
 
-// newMultiToolMCPServer starts an httptest server that answers initialize and
-// any number of tools/call invocations, delegating the result to fn. It
-// records the tool names that were called for assertion.
-func newMultiToolMCPServer(t *testing.T, fn toolResultFn) (*Transport, *[]string, func()) {
+// newMultiToolMCPServer starts a real in-process MCP server registering
+// every name in tools, delegating each call's result to fn. It records the
+// tool names that were called for assertion.
+func newMultiToolMCPServer(t *testing.T, tools []string, fn toolResultFn) (*Transport, *[]string, func()) {
 	t.Helper()
 	var called []string
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req jsonRPCRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("decode request: %v", err)
-			return
+	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
+	handler := func(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		called = append(called, req.Params.Name)
+		payload := map[string]interface{}{}
+		if fn != nil {
+			payload = fn(t, req.Params.Name, req.GetArguments())
 		}
+		return mcpgo.NewToolResultText(string(mustMarshalJSON(payload))), nil
+	}
+	for _, name := range tools {
+		srv.AddTool(mcpgo.NewTool(name), handler)
+	}
 
-		var result interface{}
-		switch req.Method {
-		case "initialize":
-			result = map[string]interface{}{
-				"protocolVersion": MCPVersion,
-				"serverInfo":      map[string]interface{}{"name": "TestServer", "version": "1.0.0"},
-				"capabilities":    map[string]interface{}{},
-			}
-		case "tools/call":
-			params, _ := req.Params.(map[string]interface{})
-			toolName, _ := params["name"].(string)
-			called = append(called, toolName)
-			args, _ := params["arguments"].(map[string]interface{})
-			payload := map[string]interface{}{}
-			if fn != nil {
-				payload = fn(t, toolName, args)
-			}
-			result = map[string]interface{}{
-				"content": []interface{}{
-					map[string]interface{}{"type": "text", "text": string(mustMarshalJSON(payload))},
-				},
-				"isError": false,
-			}
-		default:
-			t.Errorf("unexpected method %q", req.Method)
-		}
+	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
 
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(jsonRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result:  mustMarshalJSON(result),
-		}); err != nil {
-			t.Errorf("encode response: %v", err)
-		}
-	}))
-
-	tr, err := New(&transport.Config{Address: srv.URL, Timeout: 5 * time.Second})
+	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
 	if err != nil {
-		srv.Close()
+		httpSrv.Close()
 		t.Fatalf("New: %v", err)
 	}
 	return tr, &called, func() {
-		tr.Close()
-		srv.Close()
+		_ = tr.Close()
+		httpSrv.Close()
 	}
 }
 
@@ -100,9 +72,25 @@ func newMultiToolMCPServer(t *testing.T, fn toolResultFn) (*Transport, *[]string
 // Barrier happy-path coverage
 // =============================================================================
 
+var barrierToolNames = []string{
+	"qrdb_barrier_initialize",
+	"qrdb_barrier_unseal",
+	"qrdb_barrier_seal",
+	"qrdb_barrier_status",
+	"qrdb_barrier_shamir_initialize",
+	"qrdb_barrier_shamir_unseal_share",
+	"qrdb_barrier_shamir_unseal_shares",
+	"qrdb_barrier_rekey",
+	"qrdb_barrier_recovery_generate",
+	"qrdb_barrier_recovery_recover",
+	"qrdb_barrier_recovery_delete",
+	"qrdb_barrier_recovery_status",
+	"qrdb_barrier_root_token",
+}
+
 func TestBarrierMethodsEndToEnd(t *testing.T) {
 	ctx := context.Background()
-	tr, called, cleanup := newMultiToolMCPServer(t, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
+	tr, called, cleanup := newMultiToolMCPServer(t, barrierToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
 		switch tool {
 		case "qrdb_barrier_status":
 			return map[string]interface{}{"sealed": false, "strategy": "shamir", "hardware_backed": true}
@@ -110,8 +98,6 @@ func TestBarrierMethodsEndToEnd(t *testing.T) {
 			return map[string]interface{}{"threshold": 2, "total_shares": 3, "share_count": 3}
 		case "qrdb_barrier_shamir_unseal_share":
 			return map[string]interface{}{"required": 2, "submitted": 1, "complete": false}
-		case "qrdb_barrier_shamir_list_shares":
-			return map[string]interface{}{"count": 3, "threshold": 2, "total": 3}
 		case "qrdb_barrier_rekey":
 			return map[string]interface{}{"threshold": 2, "total_shares": 2, "share_count": 2}
 		case "qrdb_barrier_recovery_generate":
@@ -279,9 +265,20 @@ func TestBarrierClosedTransport(t *testing.T) {
 // Ceremony coverage
 // =============================================================================
 
+var ceremonyToolNames = []string{
+	"qrdb_ceremony_initialize",
+	"qrdb_ceremony_status",
+	"qrdb_ceremony_claim_cert_begin",
+	"qrdb_ceremony_claim_cert_complete",
+	"qrdb_ceremony_begin_claim_share",
+	"qrdb_ceremony_complete_claim_share",
+	"qrdb_ceremony_sign_csr",
+	"qrdb_ceremony_enroll_external_officer",
+}
+
 func TestCeremonyMethodsEndToEnd(t *testing.T) {
 	ctx := context.Background()
-	tr, _, cleanup := newMultiToolMCPServer(t, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
+	tr, _, cleanup := newMultiToolMCPServer(t, ceremonyToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
 		switch tool {
 		case "qrdb_ceremony_initialize":
 			return map[string]interface{}{"session_id": "sess-1"}

@@ -14,6 +14,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -859,7 +860,7 @@ var File_api_proto_attestation_proto protoreflect.FileDescriptor
 
 const file_api_proto_attestation_proto_rawDesc = "" +
 	"\n" +
-	"\x1bapi/proto/attestation.proto\x12\x17quicbaas.attestation.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc8\x03\n" +
+	"\x1bapi/proto/attestation.proto\x12\x17quicbaas.attestation.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xc8\x03\n" +
 	"\x18AttestationVerifyOptions\x12*\n" +
 	"\x11trusted_roots_pem\x18\x01 \x03(\fR\x0ftrustedRootsPem\x12'\n" +
 	"\x0fcheck_freshness\x18\x02 \x01(\bR\x0echeckFreshness\x12%\n" +
@@ -952,11 +953,11 @@ const file_api_proto_attestation_proto_rawDesc = "" +
 	"\ttimestamp\x18\x13 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x1a7\n" +
 	"\tPcrsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\rR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x012\xfb\x02\n" +
-	"\x12AttestationService\x12o\n" +
-	"\x06Verify\x121.quicbaas.attestation.v1.VerifyAttestationRequest\x1a2.quicbaas.attestation.v1.VerifyAttestationResponse\x12~\n" +
-	"\vVerifyChain\x126.quicbaas.attestation.v1.VerifyAttestationChainRequest\x1a7.quicbaas.attestation.v1.VerifyAttestationChainResponse\x12t\n" +
-	"\x0fAttestContainer\x12/.quicbaas.attestation.v1.AttestContainerRequest\x1a0.quicbaas.attestation.v1.AttestContainerResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x012\xc6\x03\n" +
+	"\x12AttestationService\x12\x87\x01\n" +
+	"\x06Verify\x121.quicbaas.attestation.v1.VerifyAttestationRequest\x1a2.quicbaas.attestation.v1.VerifyAttestationResponse\"\x16\xc2\xf3\x18\x12attestation:verify\x12\x96\x01\n" +
+	"\vVerifyChain\x126.quicbaas.attestation.v1.VerifyAttestationChainRequest\x1a7.quicbaas.attestation.v1.VerifyAttestationChainResponse\"\x16\xc2\xf3\x18\x12attestation:verify\x12\x8c\x01\n" +
+	"\x0fAttestContainer\x12/.quicbaas.attestation.v1.AttestContainerRequest\x1a0.quicbaas.attestation.v1.AttestContainerResponse\"\x16\xc2\xf3\x18\x12attestation:attestB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_attestation_proto_rawDescOnce sync.Once

@@ -14,32 +14,33 @@
 package iam
 
 import (
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// PolicyCache implements a thread-safe LRU cache for compiled policies.
-// It uses lock-free operations where possible for maximum performance.
+// PolicyCache is a thread-safe TTL cache of raw stored policies, keyed by
+// tenant+name. It is the surviving half of the PEP cache/sync/subscribe
+// distribution layer (P6.1 end-state of the unified login-plane plan): the
+// duplicated local ABAC engine that used to compile policies into
+// CompiledPolicy for fast local evaluation was deleted once qrdb shipped its
+// own live-reload seam (qrdb's abac.Decorator, driven via ABACSync, is now
+// the single decision-affecting compiled representation). This cache no
+// longer influences any authorization decision — PolicyEngine.Evaluate never
+// reads it — it exists purely so PolicyEngine's CRUD methods keep their
+// historical InvalidateAll-on-mutation contract for any caller that still
+// polls it (see NewPolicyCache/InvalidateAll callers in policy.go).
 type PolicyCache struct {
 	// policies maps tenantID:policyName -> cacheEntry
 	policies sync.Map
-
-	// bloomFilter provides quick deny checks
-	bloomFilter *BloomFilter
-
-	// resourceTrie provides fast resource pattern matching
-	resourceTrie *ResourceTrie
 
 	// version tracks cache version to prevent stale data
 	version atomic.Int64
 
 	// config holds cache configuration
 	config *CacheConfig
-
-	// mu protects access to the resource trie
-	trieMu sync.RWMutex
 }
 
 // CacheConfig holds cache configuration.
@@ -50,10 +51,11 @@ type CacheConfig struct {
 	// MaxSize is the maximum number of cached policies
 	MaxSize int
 
-	// BloomFilterSize is the bloom filter size in bits
-	BloomFilterSize int
-
-	// BloomFilterHashes is the number of hash functions for the bloom filter
+	// BloomFilterSize and BloomFilterHashes are retained for API
+	// compatibility with existing callers of NewCacheConfig; the bloom
+	// filter itself was removed along with the deleted local ABAC engine
+	// (it existed solely to short-circuit local deny-rule evaluation).
+	BloomFilterSize   int
 	BloomFilterHashes int
 }
 
@@ -67,9 +69,33 @@ func NewCacheConfig(pepConfig *PEPConfig) *CacheConfig {
 	}
 }
 
-// cacheEntry wraps a compiled policy with metadata.
+// PEPConfig holds the configuration a PolicyCache is built from. Retained
+// for NewCacheConfig's API shape; the PEP struct that used to embed a
+// PolicyCache alongside a local compiler/evaluator was deleted (it was
+// never wired into production — pkg/server drives PolicyEngine directly).
+type PEPConfig struct {
+	// TenantID is the tenant this cache serves.
+	TenantID string
+
+	// CacheTTL is the cache entry time-to-live.
+	CacheTTL time.Duration
+
+	// MaxCacheSize is the maximum number of cached policies.
+	MaxCacheSize int
+}
+
+// DefaultPEPConfig returns a PEPConfig with sensible defaults.
+func DefaultPEPConfig(tenantID string) *PEPConfig {
+	return &PEPConfig{
+		TenantID:     tenantID,
+		CacheTTL:     5 * time.Minute,
+		MaxCacheSize: 10000,
+	}
+}
+
+// cacheEntry wraps a policy with cache metadata.
 type cacheEntry struct {
-	policy    *CompiledPolicy
+	policy    *Policy
 	cachedAt  time.Time
 	expiresAt time.Time
 	version   int64
@@ -78,14 +104,12 @@ type cacheEntry struct {
 // NewPolicyCache creates a new policy cache.
 func NewPolicyCache(config *CacheConfig) *PolicyCache {
 	return &PolicyCache{
-		bloomFilter:  NewBloomFilter(uint64(config.BloomFilterSize), uint32(config.BloomFilterHashes)), //nolint:gosec // G115: config values are validated positive
-		resourceTrie: NewResourceTrie(),
-		config:       config,
+		config: config,
 	}
 }
 
-// Get retrieves a compiled policy from the cache.
-func (c *PolicyCache) Get(tenantID, name string) (*CompiledPolicy, bool) {
+// Get retrieves a policy from the cache.
+func (c *PolicyCache) Get(tenantID, name string) (*Policy, bool) {
 	key := c.makeKey(tenantID, name)
 
 	value, ok := c.policies.Load(key)
@@ -104,9 +128,9 @@ func (c *PolicyCache) Get(tenantID, name string) (*CompiledPolicy, bool) {
 	return entry.policy, true
 }
 
-// Set stores a compiled policy in the cache.
-func (c *PolicyCache) Set(tenantID string, policy *CompiledPolicy) {
-	key := c.makeKey(tenantID, policy.Name)
+// Set stores a policy in the cache.
+func (c *PolicyCache) Set(tenantID string, policy *Policy) {
+	key := c.makeKey(tenantID, policy.Metadata.Name)
 	now := time.Now()
 
 	entry := &cacheEntry{
@@ -117,12 +141,6 @@ func (c *PolicyCache) Set(tenantID string, policy *CompiledPolicy) {
 	}
 
 	c.policies.Store(key, entry)
-
-	// Update bloom filter for deny rules
-	c.updateBloomFilter(policy)
-
-	// Update resource trie
-	c.updateResourceTrie(policy)
 }
 
 // Invalidate removes a specific policy from the cache.
@@ -132,7 +150,9 @@ func (c *PolicyCache) Invalidate(tenantID, name string) {
 	c.version.Add(1)
 }
 
-// InvalidateAll removes all policies for a tenant from the cache.
+// InvalidateAll removes all policies for a tenant from the cache. Driven by
+// every PolicyEngine CRUD mutation (create/update/delete), unchanged from
+// its historical contract.
 func (c *PolicyCache) InvalidateAll(tenantID string) {
 	prefix := tenantID + ":"
 
@@ -146,58 +166,16 @@ func (c *PolicyCache) InvalidateAll(tenantID string) {
 	c.version.Add(1)
 }
 
-// QuickDenyCheck performs a fast bloom filter check for potential deny rules.
-// Returns true if a deny rule might apply (requires full evaluation).
-func (c *PolicyCache) QuickDenyCheck(resource string) bool {
-	if c.bloomFilter == nil {
-		return false
-	}
-	return c.bloomFilter.Contains([]byte(resource))
-}
-
 // GetVersion returns the current cache version.
 func (c *PolicyCache) GetVersion() int64 {
 	return c.version.Load()
 }
 
-// GetApplicablePolicies returns all policies that might apply to a request.
-// This uses the resource trie for fast O(k) lookups.
-func (c *PolicyCache) GetApplicablePolicies(resource string, subject Subject) []*CompiledPolicy {
-	c.trieMu.RLock()
-	defer c.trieMu.RUnlock()
-
-	// Get policies matching the resource pattern
-	value, _, found := c.resourceTrie.Match(resource)
-	if !found {
-		return nil
-	}
-
-	// The trie stores a single policy per pattern
-	// In a production system, we might store multiple policies per pattern
-	var policies []*CompiledPolicy
-	if policy, ok := value.(*CompiledPolicy); ok {
-		policies = []*CompiledPolicy{policy}
-	}
-
-	// Filter by subject
-	var applicable []*CompiledPolicy
-	for _, policy := range policies {
-		if c.subjectMatches(policy, subject) {
-			applicable = append(applicable, policy)
-		}
-	}
-
-	// Sort by priority (higher first)
-	// Use stable sort to maintain insertion order for equal priorities
-	c.sortByPriority(applicable)
-
-	return applicable
-}
-
-// GetAll returns all cached policies for a tenant, sorted by priority (higher first).
-func (c *PolicyCache) GetAll(tenantID string) []*CompiledPolicy {
+// GetAll returns all cached policies for a tenant, sorted by priority
+// (higher first).
+func (c *PolicyCache) GetAll(tenantID string) []*Policy {
 	prefix := tenantID + ":"
-	var policies []*CompiledPolicy
+	var policies []*Policy
 
 	c.policies.Range(func(key, value interface{}) bool {
 		if strings.HasPrefix(key.(string), prefix) { //nolint:errcheck // type assertion guaranteed by sync.Map contract
@@ -210,8 +188,9 @@ func (c *PolicyCache) GetAll(tenantID string) []*CompiledPolicy {
 		return true
 	})
 
-	// Sort policies by priority (higher first) to ensure consistent evaluation order
-	c.sortByPriority(policies)
+	sort.SliceStable(policies, func(i, j int) bool {
+		return policies[i].Metadata.Priority > policies[j].Metadata.Priority
+	})
 
 	return policies
 }
@@ -235,9 +214,8 @@ func (c *PolicyCache) Clear() {
 	c.version.Add(1)
 }
 
-// SetBatch stores multiple compiled policies for a tenant in the cache.
-// This is an alias for the batch interface expected by PolicyEngine.
-func (c *PolicyCache) SetBatch(tenantID string, policies []*CompiledPolicy) {
+// SetBatch stores multiple policies for a tenant in the cache.
+func (c *PolicyCache) SetBatch(tenantID string, policies []*Policy) {
 	for _, policy := range policies {
 		c.Set(tenantID, policy)
 	}
@@ -248,92 +226,8 @@ func (c *PolicyCache) makeKey(tenantID, name string) string {
 	return tenantID + ":" + name
 }
 
-// updateBloomFilter updates the bloom filter with deny rules from a policy.
-func (c *PolicyCache) updateBloomFilter(policy *CompiledPolicy) {
-	// Filter rules by effect to find deny rules
-	for _, rule := range policy.Rules {
-		if rule.Effect == EffectDeny {
-			for _, resource := range rule.Actions {
-				c.bloomFilter.Add([]byte(resource))
-			}
-		}
-	}
-}
-
-// updateResourceTrie updates the resource trie with a policy's resources.
-func (c *PolicyCache) updateResourceTrie(policy *CompiledPolicy) {
-	c.trieMu.Lock()
-	defer c.trieMu.Unlock()
-
-	// Add all resource patterns from all rules
-	for _, rule := range policy.Rules {
-		for _, resource := range rule.Actions {
-			c.resourceTrie.Insert(resource, policy)
-		}
-	}
-}
-
-// subjectMatches checks if a policy applies to a subject.
-func (c *PolicyCache) subjectMatches(policy *CompiledPolicy, subject Subject) bool {
-	if policy.SubjectMatcher == nil {
-		// No subject restrictions - matches all
-		return true
-	}
-
-	matcher := policy.SubjectMatcher
-
-	// Check if subject matches any user filter
-	if len(matcher.Users) > 0 {
-		if _, ok := matcher.Users[subject.ID]; ok {
-			return true
-		}
-	}
-
-	// Check if any of subject's roles match
-	if len(matcher.Roles) > 0 {
-		for _, role := range subject.Roles {
-			if _, ok := matcher.Roles[role]; ok {
-				return true
-			}
-		}
-	}
-
-	// Check if any of subject's groups match
-	if len(matcher.Groups) > 0 {
-		for _, group := range subject.Groups {
-			if _, ok := matcher.Groups[group]; ok {
-				return true
-			}
-		}
-	}
-
-	// If no specific filters, policy applies
-	if len(matcher.Users) == 0 && len(matcher.Roles) == 0 && len(matcher.Groups) == 0 {
-		return true
-	}
-
-	return false
-}
-
-// sortByPriority sorts policies by priority (higher first) using insertion sort.
-// This is efficient for small arrays which is typical for applicable policies.
-// #nosec G602 -- bounds are managed by loop - j >= 0 check prevents underflow, j+1 <= i is bounded
-func (c *PolicyCache) sortByPriority(policies []*CompiledPolicy) {
-	for i := 1; i < len(policies); i++ {
-		key := policies[i]
-		j := i - 1
-
-		// Move elements with lower priority one position ahead
-		for j >= 0 && policies[j].Priority < key.Priority {
-			policies[j+1] = policies[j]
-			j--
-		}
-		policies[j+1] = key
-	}
-}
-
-// EvictExpired removes expired entries from the cache.
-// This should be called periodically to clean up stale entries.
+// EvictExpired removes expired entries from the cache. This should be
+// called periodically to clean up stale entries.
 func (c *PolicyCache) EvictExpired() int {
 	now := time.Now()
 	count := 0
@@ -354,8 +248,8 @@ func (c *PolicyCache) EvictExpired() int {
 	return count
 }
 
-// EvictOldest evicts the oldest entry from the cache.
-// This is used when the cache is full and we need to make room.
+// EvictOldest evicts the oldest entry from the cache. This is used when the
+// cache is full and we need to make room.
 func (c *PolicyCache) EvictOldest() bool {
 	var oldestKey interface{}
 	var oldestTime time.Time
@@ -378,8 +272,8 @@ func (c *PolicyCache) EvictOldest() bool {
 	return false
 }
 
-// EnforceMaxSize ensures the cache does not exceed MaxSize.
-// Evicts oldest entries if necessary.
+// EnforceMaxSize ensures the cache does not exceed MaxSize. Evicts oldest
+// entries if necessary.
 func (c *PolicyCache) EnforceMaxSize() {
 	if c.config.MaxSize <= 0 {
 		return

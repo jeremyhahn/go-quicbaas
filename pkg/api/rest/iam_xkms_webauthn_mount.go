@@ -37,22 +37,19 @@ import (
 // browser sign-in rides the unified login ceremony at
 // /api/v1/auth/login/{begin,finish}.
 //
-// The mount is a ROOT chi.Route (the OIDC discovery endpoints force the whole
-// IAM surface to register at the router root), so it does NOT inherit the
-// /api/v1 chi group's authorization chain. It therefore installs the SAME
-// shared selector the /api/v1 group and the other root-mounted IAM groups use
-// (useAPIAuthzMiddleware). Without it the ENROLLMENT verbs — which bind a new
-// authenticator to a caller-supplied user id with no proof of ownership — are
-// reachable UNAUTHENTICATED under validator (RequireAuthz=true) enforcement,
-// an account-takeover primitive. Under the default-deny posture the selector is
-// a no-op because EnforceDefaultDeny on the TOP router already covers root
-// mounts, so the surface stays gated exactly once.
+// The mount is a ROOT chi.Route on the legacy in-process listener, which the
+// unified-API-server architecture never starts a listener for
+// (pkg/server/lifecycle_rest.go startRESTServer); it carries no
+// authorization gate here. Live enforcement for the ENROLLMENT verbs —
+// registration/begin, registration/finish — is the module-only GroupIAM
+// RouteSpecs (routes_iam.go) served through go-qrdb's unified-server authorizer via BindRoute,
+// frozen to their user_authfactors:add permission so an upstream-identity or
+// local-platform-token caller without that grant cannot bind a new
+// authenticator to another user's account.
 //
-// The LOGIN ceremony (login/begin, login/finish) stays reachable pre-auth: it
-// bypasses every gate from the inside via the tenant-scoped templates in
-// authz_public_routes.go (isAuthzPublicEndpoint / isDefaultDenyPublic), which
-// already list this mount's exact paths. WebAuthn IS the authentication
-// mechanism — the caller holds no token until FinishLogin mints one.
+// The LOGIN ceremony (login/begin, login/finish) is RouteAuthPublic in the
+// frozen table: WebAuthn IS the authentication mechanism — the caller holds
+// no token until FinishLogin mints one.
 //
 // ctx is the initialization context used for the WebAuthn manager lookup;
 // callers must supply a context tied to server startup rather than
@@ -65,8 +62,6 @@ func (h *IAMHandler) MountXKMSWebAuthnRoutes(ctx context.Context, router chi.Rou
 	}
 	dispatch := buildXKMSWebAuthnDispatcher(factory)
 	router.Route("/api/v1/iam/{tenant_id}/webauthn", func(r chi.Router) {
-		h.server.useAPIAuthzMiddleware(r)
-
 		r.Post("/registration/begin", dispatch)
 		r.Post("/registration/finish", dispatch)
 		r.Get("/registration/status", dispatch)
@@ -144,5 +139,29 @@ func buildXKMSWebAuthnDispatcher(factory *iam.WebAuthnServiceFactory) http.Handl
 		r2.URL = &newURL
 
 		handler.HandlerFunc()(w, r2)
+	}
+}
+
+// moduleWebAuthnHandler returns an http.HandlerFunc that resolves the
+// xkms-native WebAuthn factory PER REQUEST (rather than once at mount time)
+// and dispatches to buildXKMSWebAuthnDispatcher. Used by the unified-API-
+// server module surface (routes_iam.go): unlike MountXKMSWebAuthnRoutes'
+// legacy one-time resolution during the bounded server-construction window,
+// this stays reachable even if the xkms-backed manager was not yet available
+// when the module registered its routes, and degrades to 503 rather than
+// being silently absent when it never becomes available.
+func (s *Server) moduleWebAuthnHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h := s.iamHTTP()
+		if h == nil {
+			http.Error(w, "iam is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		factory := h.resolveWebAuthnFactory(r.Context())
+		if factory == nil {
+			http.Error(w, "webauthn is not configured on this tenant", http.StatusServiceUnavailable)
+			return
+		}
+		buildXKMSWebAuthnDispatcher(factory)(w, r)
 	}
 }

@@ -8,11 +8,12 @@ replace github.com/armon/go-metrics => github.com/armon/go-metrics v0.4.1
 require (
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/jeremyhahn/go-qrdb v0.4.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.4.0-alpha
-	github.com/jeremyhahn/go-quicbaas v0.1.2-alpha
-	github.com/jeremyhahn/go-xkms v0.4.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.4.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.5.8-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.5.8-alpha
+	github.com/jeremyhahn/go-quicbaas v0.2.0-alpha
+	github.com/jeremyhahn/go-xkms v0.7.2-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.7.2-alpha
+	github.com/mark3labs/mcp-go v0.45.0
 	github.com/quic-go/quic-go v0.61.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.55.0
@@ -168,7 +169,6 @@ require (
 	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/lestrrat-go/strftime v1.2.0 // indirect
 	github.com/mailru/easyjson v0.9.2 // indirect
-	github.com/mark3labs/mcp-go v0.45.0 // indirect
 	github.com/mattn/go-ieproxy v0.0.12 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/miekg/dns v1.1.72 // indirect

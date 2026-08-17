@@ -279,6 +279,8 @@ func (h *iamHandler) handleAuditRequest(ctx context.Context, method string, req 
 		return h.handleQueryAuditEvents(ctx, client, req)
 	case "Get":
 		return h.handleGetAuditEvent(ctx, client, req)
+	case "Record", "RecordAsync":
+		return h.handleRecordAuditEvent(ctx, client, req)
 	default:
 		return nil, errors.NewUnimplemented("iamHandler.handleAuditRequest",
 			"unsupported method: "+method)

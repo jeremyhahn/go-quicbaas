@@ -44,14 +44,15 @@ func TestConfigureRESTAuthz_InstallsValidatorEnforcement(t *testing.T) {
 	restServer, err := restapi.NewServer(s.quicBaaSService, &restapi.Config{Address: "127.0.0.1:0"}, s.logger)
 	require.NoError(t, err)
 
-	// Must install enforcement without panicking.
-	s.configureRESTAuthz(restServer)
+	require.NoError(t, s.configureRESTAuthz(restServer))
 }
 
-// With RequireAuthz=false and a live OIDC provider, configureRESTAuthz installs
-// the token-binding (DPoP/mTLS) enforcement gate while deferring the RBAC
-// decision. This drives the non-RequireAuthz tail of the function.
-func TestConfigureRESTAuthz_InstallsTokenBinding(t *testing.T) {
+// With RequireAuthz=false, configureRESTAuthz installs no local platform-token
+// fallback at all (mirroring grpcAuthorizationInterceptors returning
+// (nil, nil, nil)): a request reaching the module dispatch path without a
+// qrdb identity passes through anonymously, the historical default. This
+// drives the non-RequireAuthz early-return tail of the function.
+func TestConfigureRESTAuthz_NoOpWhenRequireAuthzFalse(t *testing.T) {
 	provider := newTestOIDCProvider(t)
 	s := &Server{
 		logger:          buildTestLogger(t),
@@ -62,5 +63,5 @@ func TestConfigureRESTAuthz_InstallsTokenBinding(t *testing.T) {
 	restServer, err := restapi.NewServer(s.quicBaaSService, &restapi.Config{Address: "127.0.0.1:0"}, s.logger)
 	require.NoError(t, err)
 
-	s.configureRESTAuthz(restServer)
+	require.NoError(t, s.configureRESTAuthz(restServer))
 }

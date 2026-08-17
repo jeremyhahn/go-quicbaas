@@ -730,10 +730,11 @@ func TestBarrierStatusWiredExecutes(t *testing.T) {
 	assert.Equal(t, "passphrase", result["strategy"])
 }
 
-// TestBarrierStatusUnavailableMapsToServiceUnavailable verifies the secondary
-// hardening: when the barrier service is NOT wired, qrdb_barrier_status returns
-// an error that the MCP error mapper classifies as ServiceUnavailable rather
-// than the misleading generic InternalError ("Tool execution failed").
+// TestBarrierStatusUnavailableMapsToServiceUnavailable verifies that when the
+// barrier service is NOT wired, qrdb_barrier_status returns the typed
+// BarrierServiceUnavailableError rather than a bare/opaque failure, so
+// callers (and the unified server's tool-error text) can distinguish "no
+// service" from a transient failure.
 func TestBarrierStatusUnavailableMapsToServiceUnavailable(t *testing.T) {
 	server, _ := newTestServer(t)
 	// Intentionally do NOT call server.SetBarrierService — the surface stays
@@ -745,11 +746,6 @@ func TestBarrierStatusUnavailableMapsToServiceUnavailable(t *testing.T) {
 	// The unwired sentinel must still be recoverable through the QBError envelope.
 	var notReady *BarrierServiceUnavailableError
 	assert.Truef(t, stderrors.As(err, &notReady), "expected BarrierServiceUnavailableError, got %T", err)
-
-	code, msg := server.mapErrorToJSONRPCError(err)
-	assert.Equalf(t, ServiceUnavailable, code,
-		"unwired barrier service must map to ServiceUnavailable, got code=%d msg=%q", code, msg)
-	assert.Equal(t, "Service unavailable", msg)
 }
 
 // TestBarrierStatusWiredMapsCleanly verifies that once the service is wired the

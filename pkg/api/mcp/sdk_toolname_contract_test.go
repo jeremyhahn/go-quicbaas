@@ -128,6 +128,11 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.Health", "Ping"}: gapAmbiguous + "quicbaas_liveness",
 
 	// --- IAM ---------------------------------------------------------------
+	// Remote audit emission (P5.3 of the unified login-plane plan) shipped
+	// on REST/gRPC only; no MCP tool was registered for it.
+	{"quicbaas.IAM.Audit", "Record"}:      gapNoTool,
+	{"quicbaas.IAM.Audit", "RecordAsync"}: gapNoTool,
+
 	// The locked architecture has no invite tokens (admin enrollment is
 	// cert-based), so the invite surface is deliberately absent from MCP.
 	{"quicbaas.IAM.Invite", "ActivateFIDO2Begin"}:  gapNoTool,

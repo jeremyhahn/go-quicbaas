@@ -11,6 +11,7 @@ package quicbaas.vector.v1;
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
 import "google/protobuf/timestamp.proto";
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 
 // ========================================
 // Vector Database Service
@@ -23,88 +24,128 @@ service VectorDB {
 
   // UpsertVector creates or updates a single vector with metadata.
   // Returns an error if the operation fails or if namespace doesn't exist.
-  rpc UpsertVector(UpsertVectorRequest) returns (UpsertVectorResponse);
+  rpc UpsertVector(UpsertVectorRequest) returns (UpsertVectorResponse) {
+      option (qrdb.v1.permission) = "vector:upsert";
+  }
 
   // BatchUpsertVectors creates or updates multiple vectors atomically.
   // Either all operations succeed or all fail. Ideal for bulk embedding ingestion.
-  rpc BatchUpsertVectors(BatchUpsertVectorsRequest) returns (stream BatchUpsertVectorsResponse);
+  rpc BatchUpsertVectors(BatchUpsertVectorsRequest) returns (stream BatchUpsertVectorsResponse) {
+      option (qrdb.v1.permission) = "vector:batch_upsert";
+  }
 
   // GetVector retrieves a vector by ID with optional metadata.
   // Returns NotFound error if the vector doesn't exist.
-  rpc GetVector(GetVectorRequest) returns (GetVectorResponse);
+  rpc GetVector(GetVectorRequest) returns (GetVectorResponse) {
+      option (qrdb.v1.permission) = "vector:get";
+  }
 
   // UpdateMetadata updates only the metadata for a vector without re-upserting the entire vector.
   // This is more efficient than fetching, modifying, and re-upserting the full vector.
-  rpc UpdateMetadata(UpdateMetadataRequest) returns (UpdateMetadataResponse);
+  rpc UpdateMetadata(UpdateMetadataRequest) returns (UpdateMetadataResponse) {
+      option (qrdb.v1.permission) = "vector:update_metadata";
+  }
 
   // DeleteVector removes a vector by ID.
   // Returns success even if the vector doesn't exist (idempotent).
-  rpc DeleteVector(DeleteVectorRequest) returns (DeleteVectorResponse);
+  rpc DeleteVector(DeleteVectorRequest) returns (DeleteVectorResponse) {
+      option (qrdb.v1.permission) = "vector:delete";
+  }
 
   // BatchDeleteVectors removes multiple vectors atomically.
-  rpc BatchDeleteVectors(BatchDeleteVectorsRequest) returns (BatchDeleteVectorsResponse);
+  rpc BatchDeleteVectors(BatchDeleteVectorsRequest) returns (BatchDeleteVectorsResponse) {
+      option (qrdb.v1.permission) = "vector:batch_delete";
+  }
 
   // Search Operations
 
   // SearchSimilar performs k-NN similarity search to find the nearest neighbors.
   // Supports multiple distance metrics and metadata filtering.
   // Returns results via streaming for large result sets.
-  rpc SearchSimilar(SearchSimilarRequest) returns (stream SearchSimilarResponse);
+  rpc SearchSimilar(SearchSimilarRequest) returns (stream SearchSimilarResponse) {
+      option (qrdb.v1.permission) = "vector:search_similar";
+  }
 
   // SearchByID performs k-NN search using an existing vector as the query.
   // Convenient for "find similar items" without re-sending the embedding.
-  rpc SearchByID(SearchByIDRequest) returns (stream SearchByIDResponse);
+  rpc SearchByID(SearchByIDRequest) returns (stream SearchByIDResponse) {
+      option (qrdb.v1.permission) = "vector:search_by_id";
+  }
 
   // HybridSearch combines similarity search with metadata filtering.
   // First performs k-NN search, then filters results by metadata.
   // Optionally applies reranking for improved relevance.
-  rpc HybridSearch(HybridSearchRequest) returns (stream HybridSearchResponse);
+  rpc HybridSearch(HybridSearchRequest) returns (stream HybridSearchResponse) {
+      option (qrdb.v1.permission) = "vector:hybrid_search";
+  }
 
   // SearchByMetadata searches for vectors based solely on metadata filters.
   // Useful for finding vectors by attributes without providing a query vector.
-  rpc SearchByMetadata(SearchByMetadataRequest) returns (stream SearchByMetadataResponse);
+  rpc SearchByMetadata(SearchByMetadataRequest) returns (stream SearchByMetadataResponse) {
+      option (qrdb.v1.permission) = "vector:search_by_metadata";
+  }
 
   // List Operations
 
   // ListVectors returns all vectors in a namespace with pagination support.
   // Uses server-side streaming for efficient memory usage with large datasets.
-  rpc ListVectors(ListVectorsRequest) returns (stream ListVectorsResponse);
+  rpc ListVectors(ListVectorsRequest) returns (stream ListVectorsResponse) {
+      option (qrdb.v1.permission) = "vector:list";
+  }
 
   // ListNamespaces returns all available namespaces.
-  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
+  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse) {
+      option (qrdb.v1.permission) = "vector:namespace_list";
+  }
 
   // Namespace Management
 
   // CreateNamespace creates a new vector namespace with specified configuration.
   // Namespaces isolate vectors and enable per-namespace indexing strategies.
-  rpc CreateNamespace(CreateNamespaceRequest) returns (CreateNamespaceResponse);
+  rpc CreateNamespace(CreateNamespaceRequest) returns (CreateNamespaceResponse) {
+      option (qrdb.v1.permission) = "vector:namespace_create";
+  }
 
   // UpdateNamespace modifies namespace configuration (e.g., index parameters).
-  rpc UpdateNamespace(UpdateNamespaceRequest) returns (UpdateNamespaceResponse);
+  rpc UpdateNamespace(UpdateNamespaceRequest) returns (UpdateNamespaceResponse) {
+      option (qrdb.v1.permission) = "vector:namespace_create";
+  }
 
   // DeleteNamespace removes a namespace and all its vectors.
   // WARNING: This is a destructive operation that cannot be undone.
-  rpc DeleteNamespace(DeleteNamespaceRequest) returns (DeleteNamespaceResponse);
+  rpc DeleteNamespace(DeleteNamespaceRequest) returns (DeleteNamespaceResponse) {
+      option (qrdb.v1.permission) = "vector:namespace_delete";
+  }
 
   // GetNamespaceInfo retrieves namespace configuration and statistics.
-  rpc GetNamespaceInfo(GetNamespaceInfoRequest) returns (GetNamespaceInfoResponse);
+  rpc GetNamespaceInfo(GetNamespaceInfoRequest) returns (GetNamespaceInfoResponse) {
+      option (qrdb.v1.permission) = "vector:namespace_info";
+  }
 
   // Statistics and Health
 
   // GetVectorStats returns statistics for a namespace or the entire database.
-  rpc GetVectorStats(GetVectorStatsRequest) returns (GetVectorStatsResponse);
+  rpc GetVectorStats(GetVectorStatsRequest) returns (GetVectorStatsResponse) {
+      option (qrdb.v1.permission) = "vector:get_index_stats";
+  }
 
   // Health returns the health status of the vector database.
-  rpc Health(VectorHealthRequest) returns (VectorHealthResponse);
+  rpc Health(VectorHealthRequest) returns (VectorHealthResponse) {
+      option (qrdb.v1.permission) = "vector:namespace_list";
+  }
 
   // Index Operations
 
   // RebuildIndex rebuilds the vector index for a namespace.
   // Useful after bulk imports or to optimize search performance.
-  rpc RebuildIndex(RebuildIndexRequest) returns (RebuildIndexResponse);
+  rpc RebuildIndex(RebuildIndexRequest) returns (RebuildIndexResponse) {
+      option (qrdb.v1.permission) = "vector:rebuild_index";
+  }
 
   // GetIndexProgress returns the progress of an ongoing index rebuild.
-  rpc GetIndexProgress(GetIndexProgressRequest) returns (GetIndexProgressResponse);
+  rpc GetIndexProgress(GetIndexProgressRequest) returns (GetIndexProgressResponse) {
+      option (qrdb.v1.permission) = "vector:get_rebuild_progress";
+  }
 }
 
 // ========================================
@@ -115,30 +156,46 @@ service VectorDB {
 // Typically requires elevated privileges and should be accessed via secure channels.
 service VectorAdmin {
   // GetClusterStats returns cluster-wide vector database statistics.
-  rpc GetClusterStats(GetClusterStatsRequest) returns (GetClusterStatsResponse);
+  rpc GetClusterStats(GetClusterStatsRequest) returns (GetClusterStatsResponse) {
+      option (qrdb.v1.permission) = "vector:get_index_stats";
+  }
 
   // CompactNamespace performs compaction on a namespace to reclaim disk space.
-  rpc CompactNamespace(CompactNamespaceRequest) returns (CompactNamespaceResponse);
+  rpc CompactNamespace(CompactNamespaceRequest) returns (CompactNamespaceResponse) {
+      option (qrdb.v1.permission) = "vector:compact";
+  }
 
   // GetCompactionProgress returns the progress of an ongoing compaction.
-  rpc GetCompactionProgress(GetCompactionProgressRequest) returns (GetCompactionProgressResponse);
+  rpc GetCompactionProgress(GetCompactionProgressRequest) returns (GetCompactionProgressResponse) {
+      option (qrdb.v1.permission) = "vector:get_compaction_progress";
+  }
 
   // ExportVectors exports vectors from a namespace for backup or migration.
-  rpc ExportVectors(ExportVectorsRequest) returns (stream ExportVectorsResponse);
+  rpc ExportVectors(ExportVectorsRequest) returns (stream ExportVectorsResponse) {
+      option (qrdb.v1.permission) = "vector:list";
+  }
 
   // ImportVectors imports vectors into a namespace from a backup or migration.
-  rpc ImportVectors(stream ImportVectorsRequest) returns (ImportVectorsResponse);
+  rpc ImportVectors(stream ImportVectorsRequest) returns (ImportVectorsResponse) {
+      option (qrdb.v1.permission) = "vector:batch_upsert";
+  }
 
   // Scalar Index Management
 
   // CreateScalarIndex creates a scalar field index for metadata filtering acceleration.
-  rpc CreateScalarIndex(CreateScalarIndexRequest) returns (CreateScalarIndexResponse);
+  rpc CreateScalarIndex(CreateScalarIndexRequest) returns (CreateScalarIndexResponse) {
+      option (qrdb.v1.permission) = "vector:rebuild_index";
+  }
 
   // DropScalarIndex removes a scalar field index.
-  rpc DropScalarIndex(DropScalarIndexRequest) returns (DropScalarIndexResponse);
+  rpc DropScalarIndex(DropScalarIndexRequest) returns (DropScalarIndexResponse) {
+      option (qrdb.v1.permission) = "vector:rebuild_index";
+  }
 
   // ListScalarIndexes returns all scalar field indexes for a namespace.
-  rpc ListScalarIndexes(ListScalarIndexesRequest) returns (ListScalarIndexesResponse);
+  rpc ListScalarIndexes(ListScalarIndexesRequest) returns (ListScalarIndexesResponse) {
+      option (qrdb.v1.permission) = "vector:get_index_stats";
+  }
 }
 
 // ========================================

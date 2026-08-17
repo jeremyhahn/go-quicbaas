@@ -1039,13 +1039,34 @@ func TestHandleCompactObjectBackend_ServiceUnavailable(t *testing.T) {
 // Route Registration Tests
 // =============================================================================
 
+// mountObjectStorageAdminTestRoutes mounts the /admin object-storage surface
+// on r exactly as the routes.go table (Routes(), GroupAPIUpload) registers
+// it in production; the standalone registerObjectStorageAdminRoutes chi
+// helper was removed once the table-driven registration became the single
+// source of truth.
+func mountObjectStorageAdminTestRoutes(s *Server, r chi.Router) {
+	r.Route("/admin", func(r chi.Router) {
+		r.Post("/object-backends", s.HandleCreateObjectBackend)
+		r.Put("/object-backends/{name}", s.HandleUpdateObjectBackend)
+		r.Delete("/object-backends/{name}", s.HandleDeleteObjectBackend)
+		r.Put("/object-backends/{name}/status", s.HandleSetObjectBackendStatus)
+		r.Post("/object-backends/{name}/compact", s.HandleCompactObjectBackend)
+
+		r.Get("/storage/stats", s.HandleGetStorageStats)
+		r.Post("/storage/gc", s.HandleRunGarbageCollection)
+		r.Get("/storage/gc/progress", s.HandleGetGarbageCollectionProgress)
+
+		r.Post("/objects/repair", s.HandleRepairObject)
+	})
+}
+
 func TestRegisterObjectStorageAdminRoutes(t *testing.T) {
 	mockAdminSvc := &mockObjectStorageAdminService{}
 	s := newTestObjectStorageAdminServer(mockAdminSvc)
 
 	r := chi.NewRouter()
 	r.Route("/api/v1", func(r chi.Router) {
-		registerObjectStorageAdminRoutes(s, r)
+		mountObjectStorageAdminTestRoutes(s, r)
 	})
 
 	// Test that routes are registered by making requests

@@ -442,13 +442,8 @@ func saveAndRestoreSeams(t *testing.T) {
 	origNewREST := newREST
 	origRESTShutdownFn := restShutdownFn
 
-	// QUIC seams from lifecycle_quic.go
-	origNewQUIC := newQUIC
-	origQUICStopFn := quicStopFn
-
 	// MCP seams from lifecycle_mcp.go
 	origNewMCP := newMCP
-	origMCPStopFn := mcpStopFn
 
 	seamMu.Unlock()
 
@@ -498,13 +493,8 @@ func saveAndRestoreSeams(t *testing.T) {
 		newREST = origNewREST
 		restShutdownFn = origRESTShutdownFn
 
-		// Restore QUIC seams
-		newQUIC = origNewQUIC
-		quicStopFn = origQUICStopFn
-
 		// Restore MCP seams
 		newMCP = origNewMCP
-		mcpStopFn = origMCPStopFn
 	})
 }
 

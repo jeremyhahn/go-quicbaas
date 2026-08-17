@@ -29,25 +29,6 @@ import (
 // Embedding Route Registration
 // ========================================
 
-// registerEmbeddingRoutes registers all Embedding-related routes.
-func registerEmbeddingRoutes(s *Server, r chi.Router) {
-	r.Route("/embedding", func(r chi.Router) {
-		// Embedding generation
-		r.Post("/generate", s.HandleEmbeddingGenerate)
-		r.Post("/batch", s.HandleEmbeddingBatchGenerate)
-
-		// Provider management
-		r.Get("/providers", s.HandleEmbeddingListProviders)
-		r.Get("/providers/{provider}", s.HandleEmbeddingGetProviderInfo)
-		r.Put("/providers/default", s.HandleEmbeddingSetDefaultProvider)
-		r.Put("/providers/{name}/status", s.HandleEmbeddingSetProviderStatus)
-
-		// Cache management
-		r.Get("/cache/stats", s.HandleEmbeddingGetCacheStats)
-		r.Delete("/cache", s.HandleEmbeddingClearCache)
-	})
-}
-
 // ========================================
 // Request/Response Types
 // ========================================

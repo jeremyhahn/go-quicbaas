@@ -13,6 +13,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -324,7 +325,7 @@ var File_api_proto_object_transfer_proto protoreflect.FileDescriptor
 
 const file_api_proto_object_transfer_proto_rawDesc = "" +
 	"\n" +
-	"\x1fapi/proto/object_transfer.proto\x12\vquicbaas.v1\"\x89\x01\n" +
+	"\x1fapi/proto/object_transfer.proto\x12\vquicbaas.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\x89\x01\n" +
 	"\x12FetchObjectRequest\x12\x19\n" +
 	"\bshard_id\x18\x01 \x01(\x04R\ashardId\x12\x1d\n" +
 	"\n" +
@@ -350,10 +351,10 @@ const file_api_proto_object_transfer_proto_rawDesc = "" +
 	"\x0fObjectFetchItem\x12\x1d\n" +
 	"\n" +
 	"object_ref\x18\x01 \x01(\tR\tobjectRef\x12\x1a\n" +
-	"\bchecksum\x18\x02 \x01(\fR\bchecksum2\xcb\x01\n" +
-	"\x15ObjectTransferService\x12P\n" +
-	"\vFetchObject\x12\x1f.quicbaas.v1.FetchObjectRequest\x1a .quicbaas.v1.FetchObjectResponse\x12`\n" +
-	"\x12StreamFetchObjects\x12&.quicbaas.v1.StreamFetchObjectsRequest\x1a .quicbaas.v1.FetchObjectResponse0\x01B3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"\bchecksum\x18\x02 \x01(\fR\bchecksum2\xef\x01\n" +
+	"\x15ObjectTransferService\x12b\n" +
+	"\vFetchObject\x12\x1f.quicbaas.v1.FetchObjectRequest\x1a .quicbaas.v1.FetchObjectResponse\"\x10\xc2\xf3\x18\fobjstore:get\x12r\n" +
+	"\x12StreamFetchObjects\x12&.quicbaas.v1.StreamFetchObjectsRequest\x1a .quicbaas.v1.FetchObjectResponse\"\x10\xc2\xf3\x18\fobjstore:get0\x01B3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_object_transfer_proto_rawDescOnce sync.Once

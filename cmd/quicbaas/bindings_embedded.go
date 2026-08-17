@@ -245,7 +245,6 @@ func (b *EmbeddedServerBinding) buildConfig(opts EmbeddedStartOptions) (*config.
 	cfg.Server.GRPC.Enabled = false
 	cfg.Server.REST.Enabled = true
 	cfg.Server.REST.Port = restPort
-	cfg.Server.QUIC.Enabled = false
 	cfg.Server.MCP.Enabled = false
 	cfg.Server.Unix.Enabled = false
 

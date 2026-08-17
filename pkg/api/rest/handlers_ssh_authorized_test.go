@@ -172,17 +172,44 @@ func TestSSHAuthorizedKeyRemove_NotFound(t *testing.T) {
 // Route table
 // =============================================================================
 
+// mountSSHTestRoutes mirrors the /ssh surface routes.go (Routes(), GroupAPI)
+// registers on BOTH the canonical /api/v1/ssh mount and the go-xkms client
+// alias /api/v1/xkms/v1/ssh; the standalone registerSSHRoutes chi helper was
+// removed once the table-driven registration became the single source of
+// truth for both mounts.
+func mountSSHTestRoutes(s *Server, r chi.Router) {
+	r.Post("/keys", s.HandleGenerateSSHKey)
+	r.Post("/keys/import", s.HandleImportSSHKey)
+	r.Get("/keys", s.HandleListSSHKeys)
+	r.Get("/keys/{scope}/{owner}/{name}", s.HandleGetSSHKey)
+	r.Delete("/keys/{scope}/{owner}/{name}", s.HandleDeleteSSHKey)
+	r.Get("/keys/{scope}/{owner}/{name}/public", s.HandleExportSSHKeyPublic)
+	r.Post("/keys/{scope}/{owner}/{name}/sign", s.HandleSignSSHDigest)
+
+	r.Post("/known-hosts", s.HandleAddKnownHost)
+	r.Get("/known-hosts", s.HandleListKnownHosts)
+	r.Delete("/known-hosts/{host}", s.HandleRemoveKnownHost)
+	r.Post("/known-hosts/{host}/verify", s.HandleVerifyKnownHost)
+
+	r.Post("/authorized", s.HandleEmitAuthorized)
+	r.Post("/authorized/verify", s.HandleVerifyAuthorized)
+	r.Post("/authorized/keys", s.HandleAddAuthorizedKey)
+	r.Get("/authorized/keys", s.HandleListAuthorizedKeys)
+	r.Get("/authorized/keys/{scope}/{owner}/{name}", s.HandleGetAuthorizedKey)
+	r.Delete("/authorized/keys/{scope}/{owner}/{name}", s.HandleRemoveAuthorizedKey)
+}
+
 // TestSSHRoutesRegisteredOnBothMounts proves the canonical mount and the
-// go-xkms client alias share one route table — the reason registerSSHRoutes
-// exists. A route present on only one mount is a silent 404 for whichever
-// client uses the other.
+// go-xkms client alias share one route table — the reason routes.go carries
+// both prefixes for the same handler set. A route present on only one mount
+// is a silent 404 for whichever client uses the other.
 func TestSSHRoutesRegisteredOnBothMounts(t *testing.T) {
 	t.Parallel()
 	router := chi.NewRouter()
 	server := &Server{}
 	router.Route("/api/v1", func(r chi.Router) {
-		r.Route("/ssh", server.registerSSHRoutes)
-		r.Route("/xkms/v1/ssh", server.registerSSHRoutes)
+		r.Route("/ssh", func(r chi.Router) { mountSSHTestRoutes(server, r) })
+		r.Route("/xkms/v1/ssh", func(r chi.Router) { mountSSHTestRoutes(server, r) })
 	})
 
 	routes := map[string]bool{}

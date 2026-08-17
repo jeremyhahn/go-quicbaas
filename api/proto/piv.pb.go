@@ -19,6 +19,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -1119,7 +1120,7 @@ var File_api_proto_piv_proto protoreflect.FileDescriptor
 
 const file_api_proto_piv_proto_rawDesc = "" +
 	"\n" +
-	"\x13api/proto/piv.proto\x12\x0fquicbaas.piv.v1\"\x7f\n" +
+	"\x13api/proto/piv.proto\x12\x0fquicbaas.piv.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\x7f\n" +
 	"\x0ePIVPageRequest\x12\x12\n" +
 	"\x04page\x18\x01 \x01(\x05R\x04page\x12\x1b\n" +
 	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\x12\x1d\n" +
@@ -1203,17 +1204,18 @@ const file_api_proto_piv_proto_rawDesc = "" +
 	"\ttenant_id\x18\t \x01(\tR\btenantId\">\n" +
 	"\x16PIVGenerateCSRResponse\x12\x12\n" +
 	"\x04slot\x18\x01 \x01(\tR\x04slot\x12\x10\n" +
-	"\x03csr\x18\x02 \x01(\fR\x03csr2\xe4\x06\n" +
+	"\x03csr\x18\x02 \x01(\fR\x03csr2\xda\a\n" +
 	"\n" +
-	"PIVService\x12[\n" +
-	"\fListPIVSlots\x12$.quicbaas.piv.v1.PIVListSlotsRequest\x1a%.quicbaas.piv.v1.PIVListSlotsResponse\x12j\n" +
-	"\x11GetPIVCertificate\x12).quicbaas.piv.v1.PIVGetCertificateRequest\x1a*.quicbaas.piv.v1.PIVGetCertificateResponse\x12p\n" +
-	"\x13StorePIVCertificate\x12+.quicbaas.piv.v1.PIVStoreCertificateRequest\x1a,.quicbaas.piv.v1.PIVStoreCertificateResponse\x12s\n" +
-	"\x14DeletePIVCertificate\x12,.quicbaas.piv.v1.PIVDeleteCertificateRequest\x1a-.quicbaas.piv.v1.PIVDeleteCertificateResponse\x12a\n" +
-	"\x0eGeneratePIVKey\x12&.quicbaas.piv.v1.PIVGenerateKeyRequest\x1a'.quicbaas.piv.v1.PIVGenerateKeyResponse\x12q\n" +
-	"\x14ImportPIVCertificate\x12+.quicbaas.piv.v1.PIVStoreCertificateRequest\x1a,.quicbaas.piv.v1.PIVStoreCertificateResponse\x12m\n" +
-	"\x14ExportPIVCertificate\x12).quicbaas.piv.v1.PIVGetCertificateRequest\x1a*.quicbaas.piv.v1.PIVGetCertificateResponse\x12a\n" +
-	"\x0eGeneratePIVCSR\x12&.quicbaas.piv.v1.PIVGenerateCSRRequest\x1a'.quicbaas.piv.v1.PIVGenerateCSRResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"PIVService\x12i\n" +
+	"\fListPIVSlots\x12$.quicbaas.piv.v1.PIVListSlotsRequest\x1a%.quicbaas.piv.v1.PIVListSlotsResponse\"\f\xc2\xf3\x18\bpiv:read\x12x\n" +
+	"\x11GetPIVCertificate\x12).quicbaas.piv.v1.PIVGetCertificateRequest\x1a*.quicbaas.piv.v1.PIVGetCertificateResponse\"\f\xc2\xf3\x18\bpiv:read\x12\x7f\n" +
+	"\x13StorePIVCertificate\x12+.quicbaas.piv.v1.PIVStoreCertificateRequest\x1a,.quicbaas.piv.v1.PIVStoreCertificateResponse\"\r\xc2\xf3\x18\tpiv:write\x12\x83\x01\n" +
+	"\x14DeletePIVCertificate\x12,.quicbaas.piv.v1.PIVDeleteCertificateRequest\x1a-.quicbaas.piv.v1.PIVDeleteCertificateResponse\"\x0e\xc2\xf3\x18\n" +
+	"piv:delete\x12p\n" +
+	"\x0eGeneratePIVKey\x12&.quicbaas.piv.v1.PIVGenerateKeyRequest\x1a'.quicbaas.piv.v1.PIVGenerateKeyResponse\"\r\xc2\xf3\x18\tpiv:write\x12\x80\x01\n" +
+	"\x14ImportPIVCertificate\x12+.quicbaas.piv.v1.PIVStoreCertificateRequest\x1a,.quicbaas.piv.v1.PIVStoreCertificateResponse\"\r\xc2\xf3\x18\tpiv:write\x12{\n" +
+	"\x14ExportPIVCertificate\x12).quicbaas.piv.v1.PIVGetCertificateRequest\x1a*.quicbaas.piv.v1.PIVGetCertificateResponse\"\f\xc2\xf3\x18\bpiv:read\x12n\n" +
+	"\x0eGeneratePIVCSR\x12&.quicbaas.piv.v1.PIVGenerateCSRRequest\x1a'.quicbaas.piv.v1.PIVGenerateCSRResponse\"\v\xc2\xf3\x18\apiv:useB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_piv_proto_rawDescOnce sync.Once

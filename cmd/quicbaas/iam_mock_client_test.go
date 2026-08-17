@@ -591,9 +591,11 @@ func (m *testMockAppClient) RotateSecret(ctx context.Context, tenantID, clientID
 
 // testMockAuditClient implements iam.AuditClient for testing.
 type testMockAuditClient struct {
-	QueryFunc  func(ctx context.Context, filter *iam.AuditFilter) (*iam.AuditQueryResponse, error)
-	GetFunc    func(ctx context.Context, tenantID, eventID string) (*iam.AuditEvent, error)
-	DeleteFunc func(ctx context.Context, req *iam.AuditDeleteRequest) error
+	QueryFunc       func(ctx context.Context, filter *iam.AuditFilter) (*iam.AuditQueryResponse, error)
+	GetFunc         func(ctx context.Context, tenantID, eventID string) (*iam.AuditEvent, error)
+	DeleteFunc      func(ctx context.Context, req *iam.AuditDeleteRequest) error
+	RecordFunc      func(ctx context.Context, event *iam.AuditEvent) (string, error)
+	RecordAsyncFunc func(ctx context.Context, event *iam.AuditEvent) error
 }
 
 func (m *testMockAuditClient) Query(ctx context.Context, filter *iam.AuditFilter) (*iam.AuditQueryResponse, error) {
@@ -625,6 +627,20 @@ func (m *testMockAuditClient) Get(ctx context.Context, tenantID, eventID string)
 func (m *testMockAuditClient) Delete(ctx context.Context, req *iam.AuditDeleteRequest) error {
 	if m.DeleteFunc != nil {
 		return m.DeleteFunc(ctx, req)
+	}
+	return nil
+}
+
+func (m *testMockAuditClient) Record(ctx context.Context, event *iam.AuditEvent) (string, error) {
+	if m.RecordFunc != nil {
+		return m.RecordFunc(ctx, event)
+	}
+	return "evt_recorded", nil
+}
+
+func (m *testMockAuditClient) RecordAsync(ctx context.Context, event *iam.AuditEvent) error {
+	if m.RecordAsyncFunc != nil {
+		return m.RecordAsyncFunc(ctx, event)
 	}
 	return nil
 }

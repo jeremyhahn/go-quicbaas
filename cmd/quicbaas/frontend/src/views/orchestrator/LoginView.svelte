@@ -3,7 +3,7 @@
 
   Two methods are offered:
     1. Passkey (FIDO2 / WebAuthn) — tenant-select then email-then-assertion flow.
-    2. Smartcard (PIV) — TLS client-cert POST to /api/v1/auth/login/piv.
+    2. Smartcard (PIV) — TLS client-cert POST to /api/v1/iam/login/piv.
 
   Organization (tenant) entry:
     The organization id is typed into a free-text field. It is deliberately NOT

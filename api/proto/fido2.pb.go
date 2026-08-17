@@ -30,6 +30,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -541,7 +542,7 @@ var File_api_proto_fido2_proto protoreflect.FileDescriptor
 
 const file_api_proto_fido2_proto_rawDesc = "" +
 	"\n" +
-	"\x15api/proto/fido2.proto\x12\x11quicbaas.fido2.v1\"{\n" +
+	"\x15api/proto/fido2.proto\x12\x11quicbaas.fido2.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"{\n" +
 	"\x1dFIDO2BeginRegistrationRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12!\n" +
@@ -577,10 +578,10 @@ const file_api_proto_fido2_proto_rawDesc = "" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12\x1a\n" +
 	"\busername\x18\x03 \x01(\tR\busername\x12\x18\n" +
-	"\amessage\x18\x04 \x01(\tR\amessage2\x89\x04\n" +
-	"\fFIDO2Service\x12x\n" +
-	"\x11BeginRegistration\x120.quicbaas.fido2.v1.FIDO2BeginRegistrationRequest\x1a1.quicbaas.fido2.v1.FIDO2BeginRegistrationResponse\x12{\n" +
-	"\x12FinishRegistration\x121.quicbaas.fido2.v1.FIDO2FinishRegistrationRequest\x1a2.quicbaas.fido2.v1.FIDO2FinishRegistrationResponse\x12~\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage2\xbf\x04\n" +
+	"\fFIDO2Service\x12\x92\x01\n" +
+	"\x11BeginRegistration\x120.quicbaas.fido2.v1.FIDO2BeginRegistrationRequest\x1a1.quicbaas.fido2.v1.FIDO2BeginRegistrationResponse\"\x18\xc2\xf3\x18\x14user_authfactors:add\x12\x95\x01\n" +
+	"\x12FinishRegistration\x121.quicbaas.fido2.v1.FIDO2FinishRegistrationRequest\x1a2.quicbaas.fido2.v1.FIDO2FinishRegistrationResponse\"\x18\xc2\xf3\x18\x14user_authfactors:add\x12~\n" +
 	"\x13BeginAuthentication\x122.quicbaas.fido2.v1.FIDO2BeginAuthenticationRequest\x1a3.quicbaas.fido2.v1.FIDO2BeginAuthenticationResponse\x12\x81\x01\n" +
 	"\x14FinishAuthentication\x123.quicbaas.fido2.v1.FIDO2FinishAuthenticationRequest\x1a4.quicbaas.fido2.v1.FIDO2FinishAuthenticationResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 

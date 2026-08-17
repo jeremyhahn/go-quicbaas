@@ -9,6 +9,7 @@ syntax = "proto3";
 package quicbaas.v1;
 
 import "api/proto/cluster.proto";
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
@@ -19,114 +20,168 @@ service QuicBaaS {
 
   // Put stores a key-value pair in the database with optional consistency guarantees.
   // Returns an error if the operation fails or if a unique constraint is violated.
-  rpc Put(PutRequest) returns (PutResponse);
+  rpc Put(PutRequest) returns (PutResponse) {
+      option (qrdb.v1.permission) = "kv:put";
+  }
 
   // Get retrieves a value by key with configurable consistency level.
   // Returns NotFound error if the key doesn't exist.
-  rpc Get(GetRequest) returns (GetResponse);
+  rpc Get(GetRequest) returns (GetResponse) {
+      option (qrdb.v1.permission) = "kv:get";
+  }
 
   // Delete removes a key-value pair from the database.
   // Returns success even if the key doesn't exist (idempotent).
-  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse) {
+      option (qrdb.v1.permission) = "kv:delete";
+  }
 
   // List returns all entities of a given type with pagination support.
   // Uses server-side streaming for efficient memory usage with large datasets.
-  rpc List(ListRequest) returns (stream ListResponse);
+  rpc List(ListRequest) returns (stream ListResponse) {
+      option (qrdb.v1.permission) = "kv:list";
+  }
 
   // ListEntityTypes returns all unique entity types stored in the database.
   // Useful for discovering available data types in multi-tenant environments.
-  rpc ListEntityTypes(ListEntityTypesRequest) returns (ListEntityTypesResponse);
+  rpc ListEntityTypes(ListEntityTypesRequest) returns (ListEntityTypesResponse) {
+      option (qrdb.v1.permission) = "admin:status";
+  }
 
   // Watch Operations
 
   // Watch monitors a key for changes and streams events to the client.
   // Returns a stream of WatchResponse messages containing change events.
-  rpc Watch(WatchRequest) returns (stream WatchResponse);
+  rpc Watch(WatchRequest) returns (stream WatchResponse) {
+      option (qrdb.v1.permission) = "watch:watch";
+  }
 
   // Index Operations
 
   // Query searches for entities using secondary indexes.
   // Supports exact match, range queries, and returns results via streaming.
-  rpc Query(QueryRequest) returns (stream QueryResponse);
+  rpc Query(QueryRequest) returns (stream QueryResponse) {
+      option (qrdb.v1.permission) = "kv:range";
+  }
 
   // ScanIndex performs a full index scan with optional filtering.
   // Returns results via streaming for memory efficiency.
-  rpc ScanIndex(ScanRequest) returns (stream ScanResponse);
+  rpc ScanIndex(ScanRequest) returns (stream ScanResponse) {
+      option (qrdb.v1.permission) = "index:scan";
+  }
 
   // Cluster Management
 
   // ClusterStatus returns the current state of all cluster nodes.
   // Includes information about leaders, followers, and health status.
-  rpc ClusterStatus(ClusterStatusRequest) returns (ClusterStatusResponse);
+  rpc ClusterStatus(ClusterStatusRequest) returns (ClusterStatusResponse) {
+      option (qrdb.v1.permission) = "admin:status";
+  }
 
   // GetLeader returns the current leader for a specific shard.
   // Useful for directing write operations to the appropriate node.
-  rpc GetLeader(GetLeaderRequest) returns (GetLeaderResponse);
+  rpc GetLeader(GetLeaderRequest) returns (GetLeaderResponse) {
+      option (qrdb.v1.permission) = "admin:status";
+  }
 
   // AddNode adds a new node to a Raft shard.
-  rpc AddNode(AddNodeRequest) returns (AddNodeResponse);
+  rpc AddNode(AddNodeRequest) returns (AddNodeResponse) {
+      option (qrdb.v1.permission) = "admin:add_member";
+  }
 
   // RemoveNode removes a node from a Raft shard.
-  rpc RemoveNode(RemoveNodeRequest) returns (RemoveNodeResponse);
+  rpc RemoveNode(RemoveNodeRequest) returns (RemoveNodeResponse) {
+      option (qrdb.v1.permission) = "admin:remove_member";
+  }
 
   // CreateShard creates a new Raft shard group.
-  rpc CreateShard(CreateShardRequest) returns (CreateShardResponse);
+  rpc CreateShard(CreateShardRequest) returns (CreateShardResponse) {
+      option (qrdb.v1.permission) = "admin:start_shard";
+  }
 
   // Time-Series Operations
 
   // Aggregate performs time-series aggregation functions over a time range.
   // Supports common aggregations: AVG, SUM, MIN, MAX, COUNT.
-  rpc Aggregate(AggregateRequest) returns (AggregateResponse);
+  rpc Aggregate(AggregateRequest) returns (AggregateResponse) {
+      option (qrdb.v1.permission) = "timeseries:aggregate";
+  }
 
   // TimeSeriesQuery retrieves time-series data points within a time range.
   // Returns data via streaming for large result sets.
-  rpc TimeSeriesQuery(TimeSeriesQueryRequest) returns (stream TimeSeriesQueryResponse);
+  rpc TimeSeriesQuery(TimeSeriesQueryRequest) returns (stream TimeSeriesQueryResponse) {
+      option (qrdb.v1.permission) = "timeseries:query";
+  }
 
   // TSWritePoint writes a single data point to time series storage.
-  rpc TSWritePoint(TSWritePointRequest) returns (TSWritePointResponse);
+  rpc TSWritePoint(TSWritePointRequest) returns (TSWritePointResponse) {
+      option (qrdb.v1.permission) = "timeseries:write_point";
+  }
 
   // TSWriteBatch writes multiple data points atomically.
-  rpc TSWriteBatch(TSWriteBatchRequest) returns (TSWriteBatchResponse);
+  rpc TSWriteBatch(TSWriteBatchRequest) returns (TSWriteBatchResponse) {
+      option (qrdb.v1.permission) = "timeseries:write_batch";
+  }
 
   // TSQuery performs time range queries with optional aggregation.
-  rpc TSQuery(TSQueryRequest) returns (TSQueryResponse);
+  rpc TSQuery(TSQueryRequest) returns (TSQueryResponse) {
+      option (qrdb.v1.permission) = "timeseries:query";
+  }
 
   // TSDeleteSeries deletes a time series or specific data points.
-  rpc TSDeleteSeries(TSDeleteSeriesRequest) returns (TSDeleteSeriesResponse);
+  rpc TSDeleteSeries(TSDeleteSeriesRequest) returns (TSDeleteSeriesResponse) {
+      option (qrdb.v1.permission) = "timeseries:delete_series";
+  }
 
   // TSGetRetentionPolicy retrieves the retention policy for a metric.
-  rpc TSGetRetentionPolicy(TSGetRetentionPolicyRequest) returns (TSGetRetentionPolicyResponse);
+  rpc TSGetRetentionPolicy(TSGetRetentionPolicyRequest) returns (TSGetRetentionPolicyResponse) {
+      option (qrdb.v1.permission) = "timeseries:get_retention";
+  }
 
   // TSSetRetentionPolicy sets the retention policy for a metric.
-  rpc TSSetRetentionPolicy(TSSetRetentionPolicyRequest) returns (TSSetRetentionPolicyResponse);
+  rpc TSSetRetentionPolicy(TSSetRetentionPolicyRequest) returns (TSSetRetentionPolicyResponse) {
+      option (qrdb.v1.permission) = "timeseries:set_retention";
+  }
 
   // TSListMetrics lists all available metrics.
-  rpc TSListMetrics(TSListMetricsRequest) returns (TSListMetricsResponse);
+  rpc TSListMetrics(TSListMetricsRequest) returns (TSListMetricsResponse) {
+      option (qrdb.v1.permission) = "timeseries:list_metrics";
+  }
 
   // Batch Operations
 
   // BatchPut performs multiple Put operations atomically.
   // Either all operations succeed or all fail.
-  rpc BatchPut(BatchPutRequest) returns (BatchPutResponse);
+  rpc BatchPut(BatchPutRequest) returns (BatchPutResponse) {
+      option (qrdb.v1.permission) = "batch:execute";
+  }
 
   // BatchGet retrieves multiple values in a single request.
   // More efficient than multiple individual Get calls.
-  rpc BatchGet(BatchGetRequest) returns (BatchGetResponse);
+  rpc BatchGet(BatchGetRequest) returns (BatchGetResponse) {
+      option (qrdb.v1.permission) = "batch:execute";
+  }
 
   // BatchDelete removes multiple keys atomically.
-  rpc BatchDelete(BatchDeleteRequest) returns (BatchDeleteResponse);
+  rpc BatchDelete(BatchDeleteRequest) returns (BatchDeleteResponse) {
+      option (qrdb.v1.permission) = "batch:execute";
+  }
 
   // StreamBatchPut performs bidirectional streaming for large batch operations.
   // Enables processing millions of records with progress tracking, back-pressure,
   // and the ability to abort mid-stream. Supports chunked transfer with validation.
-  rpc StreamBatchPut(stream StreamBatchPutRequest) returns (stream StreamBatchPutResponse);
+  rpc StreamBatchPut(stream StreamBatchPutRequest) returns (stream StreamBatchPutResponse) {
+      option (qrdb.v1.permission) = "batch:execute";
+  }
 
   // Transaction Operations
 
   // Transaction performs an atomic compare-and-swap transaction.
   // Evaluates comparison conditions and executes success or failure operations.
   // Provides full ACID guarantees via Raft consensus.
-  rpc Transaction(TransactionRequest) returns (TransactionResponse);
+  rpc Transaction(TransactionRequest) returns (TransactionResponse) {
+      option (qrdb.v1.permission) = "transaction:execute";
+  }
 
   // Health and Diagnostics
 
@@ -136,19 +191,29 @@ service QuicBaaS {
   // Backup Operations (Phase 4)
 
   // CreateBackup creates a new backup of the database.
-  rpc CreateBackup(CreateBackupRequest) returns (CreateBackupResponse);
+  rpc CreateBackup(CreateBackupRequest) returns (CreateBackupResponse) {
+      option (qrdb.v1.permission) = "backup:create";
+  }
 
   // ListBackups returns a list of available backups.
-  rpc ListBackups(ListBackupsRequest) returns (ListBackupsResponse);
+  rpc ListBackups(ListBackupsRequest) returns (ListBackupsResponse) {
+      option (qrdb.v1.permission) = "backup:list";
+  }
 
   // RestoreBackup restores the database from a backup.
-  rpc RestoreBackup(RestoreBackupRequest) returns (RestoreBackupResponse);
+  rpc RestoreBackup(RestoreBackupRequest) returns (RestoreBackupResponse) {
+      option (qrdb.v1.permission) = "backup:restore";
+  }
 
   // DeleteBackup deletes a backup.
-  rpc DeleteBackup(DeleteBackupRequest) returns (DeleteBackupResponse);
+  rpc DeleteBackup(DeleteBackupRequest) returns (DeleteBackupResponse) {
+      option (qrdb.v1.permission) = "backup:delete";
+  }
 
   // VerifyBackup verifies the integrity of a backup.
-  rpc VerifyBackup(VerifyBackupRequest) returns (VerifyBackupResponse);
+  rpc VerifyBackup(VerifyBackupRequest) returns (VerifyBackupResponse) {
+      option (qrdb.v1.permission) = "backup:verify";
+  }
 
   // Authentication Operations (Phase 4)
 
@@ -156,93 +221,147 @@ service QuicBaaS {
   rpc Login(LoginRequest) returns (LoginResponse);
 
   // Logout revokes user tokens.
-  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse) {
+      option (qrdb.v1.permission) = "user_authfactors:login";
+  }
 
   // RefreshToken generates a new access token from a refresh token.
-  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse) {
+      option (qrdb.v1.permission) = "user_authfactors:login";
+  }
 
   // ValidateToken validates an authentication token.
-  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse) {
+      option (qrdb.v1.permission) = "user_authfactors:login";
+  }
 
   // User/Role Management (Phase 4)
 
   // CreateUser creates a new user.
-  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
+      option (qrdb.v1.permission) = "users:create";
+  }
 
   // DeleteUser deletes a user.
-  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {
+      option (qrdb.v1.permission) = "users:delete";
+  }
 
   // ListUsers lists all users.
-  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
+      option (qrdb.v1.permission) = "users:list";
+  }
 
   // CreateRole creates a new role.
-  rpc CreateRole(CreateRoleRequest) returns (CreateRoleResponse);
+  rpc CreateRole(CreateRoleRequest) returns (CreateRoleResponse) {
+      option (qrdb.v1.permission) = "roles:create";
+  }
 
   // DeleteRole deletes a role.
-  rpc DeleteRole(DeleteRoleRequest) returns (DeleteRoleResponse);
+  rpc DeleteRole(DeleteRoleRequest) returns (DeleteRoleResponse) {
+      option (qrdb.v1.permission) = "roles:delete";
+  }
 
   // ListRoles lists all roles.
-  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse) {
+      option (qrdb.v1.permission) = "roles:list";
+  }
 
   // AssignRole assigns a role to a user.
-  rpc AssignRole(AssignRoleRequest) returns (AssignRoleResponse);
+  rpc AssignRole(AssignRoleRequest) returns (AssignRoleResponse) {
+      option (qrdb.v1.permission) = "roles:assign";
+  }
 
   // RevokeRole revokes a role from a user.
-  rpc RevokeRole(RevokeRoleRequest) returns (RevokeRoleResponse);
+  rpc RevokeRole(RevokeRoleRequest) returns (RevokeRoleResponse) {
+      option (qrdb.v1.permission) = "roles:unassign";
+  }
 
   // Operations Management (Phase 4)
 
   // MigrateData initiates data migration between storage backends.
-  rpc MigrateData(MigrateDataRequest) returns (MigrateDataResponse);
+  rpc MigrateData(MigrateDataRequest) returns (MigrateDataResponse) {
+      option (qrdb.v1.permission) = "admin:drain";
+  }
 
   // GetMigrationProgress returns the current migration progress.
-  rpc GetMigrationProgress(GetMigrationProgressRequest) returns (GetMigrationProgressResponse);
+  rpc GetMigrationProgress(GetMigrationProgressRequest) returns (GetMigrationProgressResponse) {
+      option (qrdb.v1.permission) = "admin:status";
+  }
 
   // RebalanceCluster initiates cluster rebalancing.
-  rpc RebalanceCluster(RebalanceClusterRequest) returns (RebalanceClusterResponse);
+  rpc RebalanceCluster(RebalanceClusterRequest) returns (RebalanceClusterResponse) {
+      option (qrdb.v1.permission) = "rebalance:execute";
+  }
 
   // GetRebalanceProgress returns the current rebalance progress.
-  rpc GetRebalanceProgress(GetRebalanceProgressRequest) returns (GetRebalanceProgressResponse);
+  rpc GetRebalanceProgress(GetRebalanceProgressRequest) returns (GetRebalanceProgressResponse) {
+      option (qrdb.v1.permission) = "rebalance:report";
+  }
 
   // ReplaceNode replaces a failed node in the cluster.
-  rpc ReplaceNode(ReplaceNodeRequest) returns (ReplaceNodeResponse);
+  rpc ReplaceNode(ReplaceNodeRequest) returns (ReplaceNodeResponse) {
+      option (qrdb.v1.permission) = "admin:add_member";
+  }
 
   // UpgradeNode initiates a rolling upgrade for a node.
-  rpc UpgradeNode(UpgradeNodeRequest) returns (UpgradeNodeResponse);
+  rpc UpgradeNode(UpgradeNodeRequest) returns (UpgradeNodeResponse) {
+      option (qrdb.v1.permission) = "admin:drain";
+  }
 
   // GetUpgradeStatus returns the current upgrade status.
-  rpc GetUpgradeStatus(GetUpgradeStatusRequest) returns (GetUpgradeStatusResponse);
+  rpc GetUpgradeStatus(GetUpgradeStatusRequest) returns (GetUpgradeStatusResponse) {
+      option (qrdb.v1.permission) = "admin:status";
+  }
 
   // Cache Management (Phase 4)
 
   // GetCacheStats returns cache statistics.
-  rpc GetCacheStats(GetCacheStatsRequest) returns (GetCacheStatsResponse);
+  rpc GetCacheStats(GetCacheStatsRequest) returns (GetCacheStatsResponse) {
+      option (qrdb.v1.permission) = "admin:status";
+  }
 
   // ClearCache clears the cache.
-  rpc ClearCache(ClearCacheRequest) returns (ClearCacheResponse);
+  rpc ClearCache(ClearCacheRequest) returns (ClearCacheResponse) {
+      option (qrdb.v1.permission) = "admin:capabilities";
+  }
 
   // GetCacheConfig returns the cache configuration.
-  rpc GetCacheConfig(GetCacheConfigRequest) returns (GetCacheConfigResponse);
+  rpc GetCacheConfig(GetCacheConfigRequest) returns (GetCacheConfigResponse) {
+      option (qrdb.v1.permission) = "admin:status";
+  }
 
   // UpdateCacheConfig updates the cache configuration.
-  rpc UpdateCacheConfig(UpdateCacheConfigRequest) returns (UpdateCacheConfigResponse);
+  rpc UpdateCacheConfig(UpdateCacheConfigRequest) returns (UpdateCacheConfigResponse) {
+      option (qrdb.v1.permission) = "admin:capabilities";
+  }
 
   // Seal Operations
 
   // SealStatus returns the current seal status of the database.
-  rpc SealStatus(SealStatusRequest) returns (SealStatusResponse);
+  rpc SealStatus(SealStatusRequest) returns (SealStatusResponse) {
+      option (qrdb.v1.permission) = "seal:status";
+  }
 
   // SealInit initializes the seal manager and generates key shares (bootstrap).
-  rpc SealInit(SealInitRequest) returns (SealInitResponse);
+  rpc SealInit(SealInitRequest) returns (SealInitResponse) {
+      option (qrdb.v1.permission) = "seal:bootstrap";
+  }
 
   // Unseal provides a key share to attempt unsealing the database.
-  rpc Unseal(UnsealRequest) returns (UnsealResponse);
+  rpc Unseal(UnsealRequest) returns (UnsealResponse) {
+      option (qrdb.v1.permission) = "seal:unseal";
+  }
 
   // Seal re-seals the database (requires unsealed state).
-  rpc Seal(SealRequest) returns (SealResponse);
+  rpc Seal(SealRequest) returns (SealResponse) {
+      option (qrdb.v1.permission) = "seal:seal";
+  }
 
   // SealRekey generates new key shares with a new threshold configuration.
-  rpc SealRekey(SealRekeyRequest) returns (SealRekeyResponse);
+  rpc SealRekey(SealRekeyRequest) returns (SealRekeyResponse) {
+      option (qrdb.v1.permission) = "seal:rekey";
+  }
 }
 
 // ConsistencyLevel defines the read/write consistency guarantees.

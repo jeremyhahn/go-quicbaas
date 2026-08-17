@@ -416,7 +416,7 @@ export interface AuthClient {
   // loginPIV performs PIV smartcard mTLS login. The browser must send a TLS
   // client certificate (credentials: 'include', mode: 'cors') so the server
   // can read r.TLS.PeerCertificates[0] during the handshake.
-  // Maps to POST /api/v1/auth/login/piv.
+  // Maps to POST /api/v1/iam/login/piv.
   // Only implemented on the REST transport; non-browser transports return notImpl.
   loginPIV(): Promise<AuthTokenResponse>;
 

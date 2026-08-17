@@ -10,6 +10,8 @@ package quicbaas.messaging.v1;
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+
 // =============================================================================
 // Messaging Service
 // =============================================================================
@@ -18,29 +20,55 @@ option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 // pub/sub channels, message deduplication, and delta updates.
 service MessagingService {
     // Channel Management
-    rpc CreateChannel(MessagingCreateChannelRequest) returns (MessagingCreateChannelResponse);
-    rpc DeleteChannel(MessagingDeleteChannelRequest) returns (MessagingDeleteChannelResponse);
-    rpc GetChannel(MessagingGetChannelRequest) returns (MessagingGetChannelResponse);
-    rpc ListChannels(MessagingListChannelsRequest) returns (MessagingListChannelsResponse);
+    rpc CreateChannel(MessagingCreateChannelRequest) returns (MessagingCreateChannelResponse) {
+        option (qrdb.v1.permission) = "messaging:channel_create";
+    }
+    rpc DeleteChannel(MessagingDeleteChannelRequest) returns (MessagingDeleteChannelResponse) {
+        option (qrdb.v1.permission) = "messaging:channel_delete";
+    }
+    rpc GetChannel(MessagingGetChannelRequest) returns (MessagingGetChannelResponse) {
+        option (qrdb.v1.permission) = "messaging:channel_read";
+    }
+    rpc ListChannels(MessagingListChannelsRequest) returns (MessagingListChannelsResponse) {
+        option (qrdb.v1.permission) = "messaging:channel_list";
+    }
 
     // Subscription Management
-    rpc Subscribe(MessagingSubscribeRequest) returns (MessagingSubscribeResponse);
-    rpc Unsubscribe(MessagingUnsubscribeRequest) returns (MessagingUnsubscribeResponse);
+    rpc Subscribe(MessagingSubscribeRequest) returns (MessagingSubscribeResponse) {
+        option (qrdb.v1.permission) = "messaging:subscribe";
+    }
+    rpc Unsubscribe(MessagingUnsubscribeRequest) returns (MessagingUnsubscribeResponse) {
+        option (qrdb.v1.permission) = "messaging:unsubscribe";
+    }
 
     // Publishing
-    rpc Publish(MessagingPublishRequest) returns (MessagingPublishResponse);
-    rpc PublishDelta(MessagingPublishDeltaRequest) returns (MessagingPublishDeltaResponse);
+    rpc Publish(MessagingPublishRequest) returns (MessagingPublishResponse) {
+        option (qrdb.v1.permission) = "messaging:publish";
+    }
+    rpc PublishDelta(MessagingPublishDeltaRequest) returns (MessagingPublishDeltaResponse) {
+        option (qrdb.v1.permission) = "messaging:publish";
+    }
 
     // Streaming - Server-side streaming for real-time notifications
-    rpc StreamNotifications(MessagingStreamNotificationsRequest) returns (stream MessagingNotification);
+    rpc StreamNotifications(MessagingStreamNotificationsRequest) returns (stream MessagingNotification) {
+        option (qrdb.v1.permission) = "messaging:watch";
+    }
 
     // Watch Integration - Watch for key changes with messaging notifications
-    rpc WatchChannel(MessagingWatchChannelRequest) returns (MessagingWatchChannelResponse);
+    rpc WatchChannel(MessagingWatchChannelRequest) returns (MessagingWatchChannelResponse) {
+        option (qrdb.v1.permission) = "messaging:watch";
+    }
 
     // Statistics
-    rpc GetStats(MessagingGetStatsRequest) returns (MessagingGetStatsResponse);
-    rpc GetDedupStats(MessagingGetDedupStatsRequest) returns (MessagingGetDedupStatsResponse);
-    rpc GetChannelStats(MessagingGetChannelStatsRequest) returns (MessagingGetChannelStatsResponse);
+    rpc GetStats(MessagingGetStatsRequest) returns (MessagingGetStatsResponse) {
+        option (qrdb.v1.permission) = "messaging:stats";
+    }
+    rpc GetDedupStats(MessagingGetDedupStatsRequest) returns (MessagingGetDedupStatsResponse) {
+        option (qrdb.v1.permission) = "messaging:stats";
+    }
+    rpc GetChannelStats(MessagingGetChannelStatsRequest) returns (MessagingGetChannelStatsResponse) {
+        option (qrdb.v1.permission) = "messaging:stats";
+    }
 }
 
 // =============================================================================

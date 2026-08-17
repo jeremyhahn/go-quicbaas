@@ -11,6 +11,7 @@ package quicbaas.objectstorage.v1;
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
 import "google/protobuf/timestamp.proto";
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 
 // =============================================================================
 // Object Storage Service
@@ -23,107 +24,157 @@ service ObjectStorageService {
 
   // PutObject stores an object in the distributed storage system.
   // Supports configurable replication, tiering, and retention policies.
-  rpc PutObject(PutObjectRequest) returns (PutObjectResponse);
+  rpc PutObject(PutObjectRequest) returns (PutObjectResponse) {
+      option (qrdb.v1.permission) = "objstore:put";
+  }
 
   // GetObject retrieves an object by key with optional metadata.
   // Returns NotFound error if the object doesn't exist.
-  rpc GetObject(GetObjectRequest) returns (GetObjectResponse);
+  rpc GetObject(GetObjectRequest) returns (GetObjectResponse) {
+      option (qrdb.v1.permission) = "objstore:get";
+  }
 
   // DeleteObject removes an object from storage.
   // Supports soft delete (recoverable) or permanent deletion.
-  rpc DeleteObject(DeleteObjectRequest) returns (DeleteObjectResponse);
+  rpc DeleteObject(DeleteObjectRequest) returns (DeleteObjectResponse) {
+      option (qrdb.v1.permission) = "objstore:delete";
+  }
 
   // HeadObject retrieves object metadata without the object body.
   // Efficient for existence checks and metadata queries.
-  rpc HeadObject(HeadObjectRequest) returns (HeadObjectResponse);
+  rpc HeadObject(HeadObjectRequest) returns (HeadObjectResponse) {
+      option (qrdb.v1.permission) = "objstore:head";
+  }
 
   // Listing Operations
 
   // ListObjects returns objects in a namespace with pagination support.
   // Supports prefix filtering for hierarchical organization.
-  rpc ListObjects(ListObjectsRequest) returns (ListObjectsResponse);
+  rpc ListObjects(ListObjectsRequest) returns (ListObjectsResponse) {
+      option (qrdb.v1.permission) = "objstore:list";
+  }
 
   // ListByTag returns object keys matching a specific tag value.
   // Enables tag-based discovery and organization.
-  rpc ListByTag(ListByTagRequest) returns (ListByTagResponse);
+  rpc ListByTag(ListByTagRequest) returns (ListByTagResponse) {
+      option (qrdb.v1.permission) = "objstore:list";
+  }
 
   // ListByTenant returns all objects belonging to a tenant.
   // Supports multi-tenant isolation and billing queries.
-  rpc ListByTenant(ListByTenantRequest) returns (ListByTenantResponse);
+  rpc ListByTenant(ListByTenantRequest) returns (ListByTenantResponse) {
+      option (qrdb.v1.permission) = "objstore:list";
+  }
 
   // Object Operations
 
   // CopyObject creates a copy of an object within the same namespace or across namespaces.
   // Does not transfer data through the client (server-side copy).
-  rpc CopyObject(CopyObjectRequest) returns (CopyObjectResponse);
+  rpc CopyObject(CopyObjectRequest) returns (CopyObjectResponse) {
+      option (qrdb.v1.permission) = "objstore:copy";
+  }
 
   // ReplicateObject initiates replication of an object to specified backend stores.
   // Supports synchronous or asynchronous replication modes.
-  rpc ReplicateObject(ReplicateObjectRequest) returns (ReplicateObjectResponse);
+  rpc ReplicateObject(ReplicateObjectRequest) returns (ReplicateObjectResponse) {
+      option (qrdb.v1.permission) = "objstore:replicate";
+  }
 
   // MigrateObject moves an object from one backend to another.
   // Used for tier transitions or backend consolidation.
-  rpc MigrateObject(MigrateObjectRequest) returns (MigrateObjectResponse);
+  rpc MigrateObject(MigrateObjectRequest) returns (MigrateObjectResponse) {
+      option (qrdb.v1.permission) = "objstore:migrate";
+  }
 
   // ArchiveObject moves an object to archive storage (cold tier).
   // Optionally removes from primary storage after archival.
-  rpc ArchiveObject(ArchiveObjectRequest) returns (ArchiveObjectResponse);
+  rpc ArchiveObject(ArchiveObjectRequest) returns (ArchiveObjectResponse) {
+      option (qrdb.v1.permission) = "objstore:archive";
+  }
 
   // RestoreObject restores an object from archive to active storage.
   // Required before accessing archived objects.
-  rpc RestoreObject(RestoreObjectRequest) returns (RestoreObjectResponse);
+  rpc RestoreObject(RestoreObjectRequest) returns (RestoreObjectResponse) {
+      option (qrdb.v1.permission) = "objstore:restore";
+  }
 
   // VerifyObject validates object integrity across all storage locations.
   // Checks checksums and replication status.
-  rpc VerifyObject(VerifyObjectRequest) returns (VerifyObjectResponse);
+  rpc VerifyObject(VerifyObjectRequest) returns (VerifyObjectResponse) {
+      option (qrdb.v1.permission) = "objstore:verify";
+  }
 
   // Policy Operations
 
   // SetObjectPolicy sets replication, archive, and retention policies for an object.
   // Overrides namespace-level defaults.
-  rpc SetObjectPolicy(SetObjectPolicyRequest) returns (SetObjectPolicyResponse);
+  rpc SetObjectPolicy(SetObjectPolicyRequest) returns (SetObjectPolicyResponse) {
+      option (qrdb.v1.permission) = "objstore:write_policy";
+  }
 
   // GetObjectPolicy retrieves the effective policies for an object.
   // Returns both explicit and inherited policies.
-  rpc GetObjectPolicy(GetObjectPolicyRequest) returns (GetObjectPolicyResponse);
+  rpc GetObjectPolicy(GetObjectPolicyRequest) returns (GetObjectPolicyResponse) {
+      option (qrdb.v1.permission) = "objstore:read_policy";
+  }
 
   // Backend Management
 
   // ListBackends returns all configured storage backends with optional health status.
-  rpc ListBackends(ListBackendsRequest) returns (ListBackendsResponse);
+  rpc ListBackends(ListBackendsRequest) returns (ListBackendsResponse) {
+      option (qrdb.v1.permission) = "objstore:read_backend";
+  }
 
   // GetBackendHealth retrieves detailed health information for a specific backend.
-  rpc GetBackendHealth(GetBackendHealthRequest) returns (GetBackendHealthResponse);
+  rpc GetBackendHealth(GetBackendHealthRequest) returns (GetBackendHealthResponse) {
+      option (qrdb.v1.permission) = "objstore:read_backend";
+  }
 
   // Tenant Operations
 
   // GetObjectStorageTenantUsage returns storage usage statistics for a tenant.
-  rpc GetObjectStorageTenantUsage(GetObjectStorageTenantUsageRequest) returns (GetObjectStorageTenantUsageResponse);
+  rpc GetObjectStorageTenantUsage(GetObjectStorageTenantUsageRequest) returns (GetObjectStorageTenantUsageResponse) {
+      option (qrdb.v1.permission) = "objstore:tenant_usage";
+  }
 
   // GetObjectStorageTenantQuotas retrieves configured quotas for a tenant.
-  rpc GetObjectStorageTenantQuotas(GetObjectStorageTenantQuotasRequest) returns (GetObjectStorageTenantQuotasResponse);
+  rpc GetObjectStorageTenantQuotas(GetObjectStorageTenantQuotasRequest) returns (GetObjectStorageTenantQuotasResponse) {
+      option (qrdb.v1.permission) = "objstore:tenant_quota_read";
+  }
 
   // SetObjectStorageTenantQuotas sets or updates quotas for a tenant.
-  rpc SetObjectStorageTenantQuotas(SetObjectStorageTenantQuotasRequest) returns (SetObjectStorageTenantQuotasResponse);
+  rpc SetObjectStorageTenantQuotas(SetObjectStorageTenantQuotasRequest) returns (SetObjectStorageTenantQuotasResponse) {
+      option (qrdb.v1.permission) = "objstore:tenant_quota_write";
+  }
 
   // Streaming Operations
 
   // StreamGetObject streams large objects in chunks for memory-efficient retrieval.
-  rpc StreamGetObject(GetObjectRequest) returns (stream ObjectChunk);
+  rpc StreamGetObject(GetObjectRequest) returns (stream ObjectChunk) {
+      option (qrdb.v1.permission) = "objstore:get";
+  }
 
   // StreamPutObject accepts object data as a stream of chunks for large uploads.
-  rpc StreamPutObject(stream PutObjectChunk) returns (PutObjectResponse);
+  rpc StreamPutObject(stream PutObjectChunk) returns (PutObjectResponse) {
+      option (qrdb.v1.permission) = "objstore:put";
+  }
 
   // Batch Operations
 
   // BatchPutObjects stores multiple objects atomically.
-  rpc BatchPutObjects(BatchPutObjectsRequest) returns (BatchPutObjectsResponse);
+  rpc BatchPutObjects(BatchPutObjectsRequest) returns (BatchPutObjectsResponse) {
+      option (qrdb.v1.permission) = "objstore:batch";
+  }
 
   // BatchDeleteObjects removes multiple objects atomically.
-  rpc BatchDeleteObjects(BatchDeleteObjectsRequest) returns (BatchDeleteObjectsResponse);
+  rpc BatchDeleteObjects(BatchDeleteObjectsRequest) returns (BatchDeleteObjectsResponse) {
+      option (qrdb.v1.permission) = "objstore:batch";
+  }
 
   // BatchGetObjects retrieves multiple objects in a single request.
-  rpc BatchGetObjects(BatchGetObjectsRequest) returns (BatchGetObjectsResponse);
+  rpc BatchGetObjects(BatchGetObjectsRequest) returns (BatchGetObjectsResponse) {
+      option (qrdb.v1.permission) = "objstore:batch";
+  }
 }
 
 // =============================================================================
@@ -133,31 +184,49 @@ service ObjectStorageService {
 // ObjectStorageAdmin provides administrative operations for storage management.
 service ObjectStorageAdmin {
   // CreateBackend registers a new storage backend.
-  rpc CreateBackend(CreateBackendRequest) returns (CreateBackendResponse);
+  rpc CreateBackend(CreateBackendRequest) returns (CreateBackendResponse) {
+      option (qrdb.v1.permission) = "objstore:admin";
+  }
 
   // UpdateBackend updates backend configuration.
-  rpc UpdateBackend(UpdateBackendRequest) returns (UpdateBackendResponse);
+  rpc UpdateBackend(UpdateBackendRequest) returns (UpdateBackendResponse) {
+      option (qrdb.v1.permission) = "objstore:admin";
+  }
 
   // DeleteBackend removes a storage backend (requires migration of objects).
-  rpc DeleteBackend(DeleteBackendRequest) returns (DeleteBackendResponse);
+  rpc DeleteBackend(DeleteBackendRequest) returns (DeleteBackendResponse) {
+      option (qrdb.v1.permission) = "objstore:admin";
+  }
 
   // SetBackendStatus enables or disables a backend.
-  rpc SetBackendStatus(SetBackendStatusRequest) returns (SetBackendStatusResponse);
+  rpc SetBackendStatus(SetBackendStatusRequest) returns (SetBackendStatusResponse) {
+      option (qrdb.v1.permission) = "objstore:admin";
+  }
 
   // GetStorageStats returns cluster-wide storage statistics.
-  rpc GetStorageStats(GetStorageStatsRequest) returns (GetStorageStatsResponse);
+  rpc GetStorageStats(GetStorageStatsRequest) returns (GetStorageStatsResponse) {
+      option (qrdb.v1.permission) = "objstore:read_stats";
+  }
 
   // RunGarbageCollection initiates garbage collection on specified backends.
-  rpc RunGarbageCollection(RunGarbageCollectionRequest) returns (RunGarbageCollectionResponse);
+  rpc RunGarbageCollection(RunGarbageCollectionRequest) returns (RunGarbageCollectionResponse) {
+      option (qrdb.v1.permission) = "objstore:admin";
+  }
 
   // GetGarbageCollectionProgress returns GC progress.
-  rpc GetGarbageCollectionProgress(GetGarbageCollectionProgressRequest) returns (GetGarbageCollectionProgressResponse);
+  rpc GetGarbageCollectionProgress(GetGarbageCollectionProgressRequest) returns (GetGarbageCollectionProgressResponse) {
+      option (qrdb.v1.permission) = "objstore:admin";
+  }
 
   // RepairObject attempts to repair an object with inconsistent replicas.
-  rpc RepairObject(RepairObjectRequest) returns (RepairObjectResponse);
+  rpc RepairObject(RepairObjectRequest) returns (RepairObjectResponse) {
+      option (qrdb.v1.permission) = "objstore:admin";
+  }
 
   // CompactBackend triggers compaction on a backend.
-  rpc CompactBackend(CompactBackendRequest) returns (CompactBackendResponse);
+  rpc CompactBackend(CompactBackendRequest) returns (CompactBackendResponse) {
+      option (qrdb.v1.permission) = "objstore:admin";
+  }
 }
 
 // =============================================================================

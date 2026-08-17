@@ -1315,6 +1315,14 @@ service AuditService {
 
   // Get a specific audit event
   rpc GetAuditEvent(GetAuditEventRequest) returns (AuditEvent);
+
+  // Record (emit) a new audit event onto the platform audit chain. This is
+  // the remote-write counterpart to Query/Get: a caller (e.g. a downstream
+  // platform composing this IAM plane) records an event synchronously
+  // (async=false, event_id returned) or fire-and-forget (async=true,
+  // event_id empty). The event lands in the CALLER's own authenticated
+  // tenant unless the caller holds cross-tenant (system-tenant) scope.
+  rpc RecordAuditEvent(RecordAuditEventRequest) returns (RecordAuditEventResponse);
 }
 
 // AuditEvent represents a single audit log entry
@@ -1357,6 +1365,27 @@ message QueryAuditEventsResponse {
 message GetAuditEventRequest {
   string tenant_id = 1;
   string event_id = 2;
+}
+
+message RecordAuditEventRequest {
+  // tenant_id is the target tenant. Empty means "the caller's own
+  // authenticated tenant". A value other than the caller's own tenant is
+  // honored only when the caller holds cross-tenant (system-tenant) scope;
+  // otherwise the RPC fails PermissionDenied.
+  string tenant_id = 1;
+
+  // event is the event to record. id and timestamp are assigned by the
+  // chain if left unset.
+  AuditEvent event = 2;
+
+  // async selects Log (false, synchronous, event_id populated in the
+  // response) vs LogAsync (true, fire-and-forget, event_id empty).
+  bool async = 3;
+}
+
+message RecordAuditEventResponse {
+  // event_id is the chain-assigned event ID. Empty when async=true.
+  string event_id = 1;
 }
 
 // =============================================================================

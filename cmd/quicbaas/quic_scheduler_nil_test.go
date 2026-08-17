@@ -1,4 +1,4 @@
-//go:build quic
+//go:build quic && rest
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -13,7 +13,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package main provides nil-client tests for QUIC scheduler and KMS wrappers.
+// Package main provides nil-client tests for the QUIC scheduler wrapper.
 package main
 
 import (
@@ -123,25 +123,7 @@ func TestQUICSchedulerClient_NilClient_Close(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// --------------------------------------------------------------------------
-// QUIC KMS wrapper nil-client delegation tests
-// These verify that all wrapper methods on QUIC KMS/DEK/Secrets/Seal/Backend/
-// Safety/Crypto clients properly panic or return error when the underlying
-// quic.Client is nil (they delegate to nil and would panic).
-// We test struct instantiation and interface compliance instead.
-// --------------------------------------------------------------------------
-
 func TestQUICSecretsClient_NilStruct(t *testing.T) {
 	client := &QUICSecretsClient{client: nil}
-	assert.NotNil(t, client)
-}
-
-func TestQUICSealClient_NilStruct(t *testing.T) {
-	client := &QUICSealClient{client: nil}
-	assert.NotNil(t, client)
-}
-
-func TestQUICCryptoClient_NilStruct(t *testing.T) {
-	client := &QUICCryptoClient{client: nil}
 	assert.NotNil(t, client)
 }

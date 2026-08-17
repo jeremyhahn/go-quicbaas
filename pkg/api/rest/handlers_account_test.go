@@ -33,6 +33,27 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
 )
 
+// mountAccountTestRoutes mounts the /agent-accounts surface on r exactly as
+// the routes.go table (Routes(), GroupAPI) registers it in production; the
+// standalone registerAccountRoutes chi helper was removed once the
+// table-driven registration became the single source of truth, so tests
+// that need a real chi mux (path params, method routing) mount the
+// equivalent routes locally instead of reaching for a shared prod helper.
+func mountAccountTestRoutes(srv *Server, r chi.Router) {
+	r.Route("/agent-accounts", func(r chi.Router) {
+		r.Post("/", srv.HandleCreateAccount)
+		r.Get("/", srv.HandleListAccounts)
+		r.Get("/{id}", srv.HandleGetAccount)
+		r.Put("/{id}", srv.HandleUpdateAccount)
+		r.Delete("/{id}", srv.HandleDeleteAccount)
+
+		r.Post("/{id}/rotate", srv.HandleRotateAccountCredential)
+		r.Post("/{id}/revoke", srv.HandleRevokeAccount)
+		r.Post("/{id}/default", srv.HandleSetDefaultAccount)
+		r.Get("/{id}/usage", srv.HandleGetAccountUsage)
+	})
+}
+
 // newAccountTestServer builds a REST Server whose only wired sub-service is
 // the supplied AccountService, with the real account routes mounted under
 // /api/v1 so path parameters and method routing are exercised end to end.
@@ -43,7 +64,7 @@ func newAccountTestServer(accountSvc service.AccountService) *Server {
 	router := chi.NewRouter()
 	srv := &Server{service: mock, router: router}
 	router.Route("/api/v1", func(r chi.Router) {
-		registerAccountRoutes(srv, r)
+		mountAccountTestRoutes(srv, r)
 	})
 	return srv
 }
@@ -459,7 +480,7 @@ func TestAccountHandlers_ServiceUnavailable(t *testing.T) {
 	mock.AccountServiceFunc = func() service.AccountService { return nil }
 	router := chi.NewRouter()
 	srv := &Server{service: mock, router: router}
-	router.Route("/api/v1", func(r chi.Router) { registerAccountRoutes(srv, r) })
+	router.Route("/api/v1", func(r chi.Router) { mountAccountTestRoutes(srv, r) })
 
 	requests := [][2]string{
 		{http.MethodGet, "/api/v1/agent-accounts?tenant_id=t1"},
@@ -603,7 +624,7 @@ func TestAccountRoutesResolveToRegisteredPermissions(t *testing.T) {
 		{http.MethodGet, "/api/v1/agent-accounts/a1/usage", "credentials", "retrieve"},
 	}
 	for _, tc := range cases {
-		resource, action, ok := mapRequestToPermission(tc.path, tc.method)
+		resource, action, ok := routePermissionForPath(tc.path, tc.method)
 		if !ok {
 			t.Errorf("%s %s is unmapped (hard-403 under RequireAuthz)", tc.method, tc.path)
 			continue
@@ -615,11 +636,20 @@ func TestAccountRoutesResolveToRegisteredPermissions(t *testing.T) {
 }
 
 // TestAccountRoutesAreNotPreAuthExempt asserts the account surface is treated
-// as protected: no allowlist prefix may exempt it from the platform-token gate.
+// as protected in the frozen route table: neither route is RouteAuthPublic.
 func TestAccountRoutesAreNotPreAuthExempt(t *testing.T) {
-	for _, path := range []string{"/api/v1/agent-accounts", "/api/v1/agent-accounts/a1/rotate"} {
-		if isPEPGuardExempt(path) {
-			t.Errorf("account path %q is allowlisted as pre-auth", path)
+	cases := []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/agent-accounts"},
+		{http.MethodPost, "/api/v1/agent-accounts/a1/rotate"},
+	}
+	for _, tc := range cases {
+		auth, ok := routeAuthForPath(tc.path, tc.method)
+		if !ok {
+			t.Errorf("%s %s is not in the frozen route table", tc.method, tc.path)
+			continue
+		}
+		if auth == RouteAuthPublic {
+			t.Errorf("account path %s %s is RouteAuthPublic; must stay gated", tc.method, tc.path)
 		}
 	}
 }

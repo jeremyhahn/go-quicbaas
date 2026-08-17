@@ -75,10 +75,6 @@ func createBaseConfigWithoutSocket() *config.Config {
 				Enabled: true,
 				Port:    8080,
 			},
-			QUIC: config.ServerQUICConfig{
-				Enabled: true,
-				Port:    10443,
-			},
 			MCP: config.ServerMCPConfig{
 				Enabled: true,
 				Port:    11443,
@@ -384,7 +380,6 @@ func TestYAMLGeneration(t *testing.T) {
 		assert.Contains(t, content, "mode: devcluster")
 		assert.Contains(t, content, "grpc:")
 		assert.Contains(t, content, "rest:")
-		assert.Contains(t, content, "quic:")
 		assert.Contains(t, content, "mcp:")
 	})
 

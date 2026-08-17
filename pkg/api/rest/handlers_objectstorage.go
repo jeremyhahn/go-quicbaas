@@ -1389,38 +1389,3 @@ func (s *Server) handleObjectStorageError(w http.ResponseWriter, r *http.Request
 // =============================================================================
 // Route Registration
 // =============================================================================
-
-// registerObjectStorageRoutes registers all object storage routes.
-func registerObjectStorageRoutes(s *Server, r chi.Router) {
-	// All object routes are grouped under a single sub-router so that chi's
-	// prefix-matching logic is applied consistently.  Specific named routes
-	// (list, by-tag, batch, …) must be registered BEFORE the wildcard
-	// catch-all; within a chi sub-router, exact routes always win over "/*".
-	r.Route("/objects", func(r chi.Router) {
-		// Listing routes — exact matches, registered before the wildcard.
-		r.Get("/", s.HandleListObjects)
-		r.Get("/by-tag", s.HandleListByTag)
-		r.Get("/by-tenant/{tenant}", s.HandleListByTenant)
-
-		// Batch routes
-		r.Post("/batch", s.HandleBatchPutObjects)
-		r.Post("/batch/get", s.HandleBatchGetObjects)
-		r.Post("/batch/delete", s.HandleBatchDeleteObjects)
-
-		// Object CRUD and action routes — wildcard catch-all.
-		r.Put("/*", s.handleObjectAction)
-		r.Get("/*", s.handleObjectAction)
-		r.Delete("/*", s.handleObjectAction)
-		r.Head("/*", s.handleObjectAction)
-		r.Post("/*", s.handleObjectAction)
-	})
-
-	// Backend management routes
-	r.Get("/object-backends", s.HandleListObjectBackends)
-	r.Get("/object-backends/{name}/health", s.HandleGetObjectBackendHealth)
-
-	// Tenant management routes
-	r.Get("/tenants/{tenant}/usage", s.HandleGetTenantUsage)
-	r.Get("/tenants/{tenant}/quotas", s.HandleGetTenantQuotas)
-	r.Put("/tenants/{tenant}/quotas", s.HandleSetTenantQuotas)
-}

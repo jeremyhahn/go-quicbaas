@@ -71,7 +71,6 @@ func TestEmbeddedServerBinding_BuildConfig_DefaultsToLoopback(t *testing.T) {
 	assert.True(t, cfg.Server.REST.Enabled)
 	assert.Greater(t, cfg.Server.REST.Port, 0)
 	assert.False(t, cfg.Server.GRPC.Enabled)
-	assert.False(t, cfg.Server.QUIC.Enabled)
 	assert.False(t, cfg.Server.MCP.Enabled)
 	assert.False(t, cfg.Server.Unix.Enabled)
 	assert.Equal(t, config.StorageBackendMemory, cfg.Storage.Backend)

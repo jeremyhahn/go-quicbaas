@@ -398,7 +398,6 @@ func buildInitConfig(dataDir string, f *inlineInitFlags, barrierEnabled bool) *c
 	// short-circuits.
 	cfg.Server.GRPC.Enabled = false
 	cfg.Server.REST.Enabled = false
-	cfg.Server.QUIC.Enabled = false
 	cfg.Server.MCP.Enabled = false
 	cfg.Server.Unix.Enabled = false
 

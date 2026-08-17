@@ -13,6 +13,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -6322,7 +6323,7 @@ var File_api_proto_orchestrator_proto protoreflect.FileDescriptor
 
 const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\n" +
-	"\x1capi/proto/orchestrator.proto\x12\x18quicbaas.orchestrator.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb5\x01\n" +
+	"\x1capi/proto/orchestrator.proto\x12\x18quicbaas.orchestrator.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xb5\x01\n" +
 	"\x0fMCPServerConfig\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x10\n" +
 	"\x03url\x18\x02 \x01(\tR\x03url\x12D\n" +
@@ -6904,43 +6905,43 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\vSandboxMode\x12\x18\n" +
 	"\x14SANDBOX_MODE_DEFAULT\x10\x00\x12\x19\n" +
 	"\x15SANDBOX_MODE_REQUIRED\x10\x01\x12\x15\n" +
-	"\x11SANDBOX_MODE_NONE\x10\x022\xf0\x1c\n" +
-	"\x13OrchestratorService\x12m\n" +
-	"\fSpawnSession\x12-.quicbaas.orchestrator.v1.SpawnSessionRequest\x1a..quicbaas.orchestrator.v1.SpawnSessionResponse\x12p\n" +
-	"\rPromptSession\x12..quicbaas.orchestrator.v1.PromptSessionRequest\x1a/.quicbaas.orchestrator.v1.PromptSessionResponse\x12p\n" +
-	"\rSessionStatus\x12..quicbaas.orchestrator.v1.SessionStatusRequest\x1a/.quicbaas.orchestrator.v1.SessionStatusResponse\x12m\n" +
-	"\fCloseSession\x12-.quicbaas.orchestrator.v1.CloseSessionRequest\x1a..quicbaas.orchestrator.v1.CloseSessionResponse\x12m\n" +
-	"\fListSessions\x12-.quicbaas.orchestrator.v1.ListSessionsRequest\x1a..quicbaas.orchestrator.v1.ListSessionsResponse\x12\x85\x01\n" +
-	"\x14RotateSessionAccount\x125.quicbaas.orchestrator.v1.RotateSessionAccountRequest\x1a6.quicbaas.orchestrator.v1.RotateSessionAccountResponse\x12g\n" +
+	"\x11SANDBOX_MODE_NONE\x10\x022\x92$\n" +
+	"\x13OrchestratorService\x12\x85\x01\n" +
+	"\fSpawnSession\x12-.quicbaas.orchestrator.v1.SpawnSessionRequest\x1a..quicbaas.orchestrator.v1.SpawnSessionResponse\"\x16\xc2\xf3\x18\x12orchestrator:spawn\x12\x89\x01\n" +
+	"\rPromptSession\x12..quicbaas.orchestrator.v1.PromptSessionRequest\x1a/.quicbaas.orchestrator.v1.PromptSessionResponse\"\x17\xc2\xf3\x18\x13orchestrator:prompt\x12\x89\x01\n" +
+	"\rSessionStatus\x12..quicbaas.orchestrator.v1.SessionStatusRequest\x1a/.quicbaas.orchestrator.v1.SessionStatusResponse\"\x17\xc2\xf3\x18\x13orchestrator:status\x12\x85\x01\n" +
+	"\fCloseSession\x12-.quicbaas.orchestrator.v1.CloseSessionRequest\x1a..quicbaas.orchestrator.v1.CloseSessionResponse\"\x16\xc2\xf3\x18\x12orchestrator:close\x12\x84\x01\n" +
+	"\fListSessions\x12-.quicbaas.orchestrator.v1.ListSessionsRequest\x1a..quicbaas.orchestrator.v1.ListSessionsResponse\"\x15\xc2\xf3\x18\x11orchestrator:list\x12\x9d\x01\n" +
+	"\x14RotateSessionAccount\x125.quicbaas.orchestrator.v1.RotateSessionAccountRequest\x1a6.quicbaas.orchestrator.v1.RotateSessionAccountResponse\"\x16\xc2\xf3\x18\x12orchestrator:spawn\x12\x85\x01\n" +
 	"\n" +
-	"CreateTask\x12+.quicbaas.orchestrator.v1.CreateTaskRequest\x1a,.quicbaas.orchestrator.v1.CreateTaskResponse\x12^\n" +
-	"\aGetTask\x12(.quicbaas.orchestrator.v1.GetTaskRequest\x1a).quicbaas.orchestrator.v1.GetTaskResponse\x12d\n" +
-	"\tListTasks\x12*.quicbaas.orchestrator.v1.ListTasksRequest\x1a+.quicbaas.orchestrator.v1.ListTasksResponse\x12d\n" +
-	"\tClaimTask\x12*.quicbaas.orchestrator.v1.ClaimTaskRequest\x1a+.quicbaas.orchestrator.v1.ClaimTaskResponse\x12m\n" +
-	"\fCompleteTask\x12-.quicbaas.orchestrator.v1.CompleteTaskRequest\x1a..quicbaas.orchestrator.v1.CompleteTaskResponse\x12p\n" +
-	"\rDecomposeTask\x12..quicbaas.orchestrator.v1.DecomposeTaskRequest\x1a/.quicbaas.orchestrator.v1.DecomposeTaskResponse\x12y\n" +
-	"\bStartJob\x125.quicbaas.orchestrator.v1.OrchestratorStartJobRequest\x1a6.quicbaas.orchestrator.v1.OrchestratorStartJobResponse\x12\x85\x01\n" +
-	"\fGetJobStatus\x129.quicbaas.orchestrator.v1.OrchestratorGetJobStatusRequest\x1a:.quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse\x12|\n" +
-	"\tCancelJob\x126.quicbaas.orchestrator.v1.OrchestratorCancelJobRequest\x1a7.quicbaas.orchestrator.v1.OrchestratorCancelJobResponse\x12y\n" +
-	"\bListJobs\x125.quicbaas.orchestrator.v1.OrchestratorListJobsRequest\x1a6.quicbaas.orchestrator.v1.OrchestratorListJobsResponse\x12o\n" +
-	"\x12SubscribeJobEvents\x123.quicbaas.orchestrator.v1.SubscribeJobEventsRequest\x1a\".quicbaas.orchestrator.v1.JobEvent0\x01\x12\x85\x01\n" +
-	"\fListBackends\x129.quicbaas.orchestrator.v1.OrchestratorListBackendsRequest\x1a:.quicbaas.orchestrator.v1.OrchestratorListBackendsResponse\x12s\n" +
-	"\x06Health\x123.quicbaas.orchestrator.v1.OrchestratorHealthRequest\x1a4.quicbaas.orchestrator.v1.OrchestratorHealthResponse\x12p\n" +
-	"\rRegisterAgent\x12..quicbaas.orchestrator.v1.RegisterAgentRequest\x1a/.quicbaas.orchestrator.v1.RegisterAgentResponse\x12a\n" +
-	"\bGetAgent\x12).quicbaas.orchestrator.v1.GetAgentRequest\x1a*.quicbaas.orchestrator.v1.GetAgentResponse\x12g\n" +
+	"CreateTask\x12+.quicbaas.orchestrator.v1.CreateTaskRequest\x1a,.quicbaas.orchestrator.v1.CreateTaskResponse\"\x1c\xc2\xf3\x18\x18orchestrator:task_create\x12z\n" +
+	"\aGetTask\x12(.quicbaas.orchestrator.v1.GetTaskRequest\x1a).quicbaas.orchestrator.v1.GetTaskResponse\"\x1a\xc2\xf3\x18\x16orchestrator:task_read\x12\x80\x01\n" +
+	"\tListTasks\x12*.quicbaas.orchestrator.v1.ListTasksRequest\x1a+.quicbaas.orchestrator.v1.ListTasksResponse\"\x1a\xc2\xf3\x18\x16orchestrator:task_list\x12\x81\x01\n" +
+	"\tClaimTask\x12*.quicbaas.orchestrator.v1.ClaimTaskRequest\x1a+.quicbaas.orchestrator.v1.ClaimTaskResponse\"\x1b\xc2\xf3\x18\x17orchestrator:task_claim\x12\x8d\x01\n" +
+	"\fCompleteTask\x12-.quicbaas.orchestrator.v1.CompleteTaskRequest\x1a..quicbaas.orchestrator.v1.CompleteTaskResponse\"\x1e\xc2\xf3\x18\x1aorchestrator:task_complete\x12\x91\x01\n" +
+	"\rDecomposeTask\x12..quicbaas.orchestrator.v1.DecomposeTaskRequest\x1a/.quicbaas.orchestrator.v1.DecomposeTaskResponse\"\x1f\xc2\xf3\x18\x1borchestrator:task_decompose\x12\x95\x01\n" +
+	"\bStartJob\x125.quicbaas.orchestrator.v1.OrchestratorStartJobRequest\x1a6.quicbaas.orchestrator.v1.OrchestratorStartJobResponse\"\x1a\xc2\xf3\x18\x16orchestrator:job_start\x12\xa0\x01\n" +
+	"\fGetJobStatus\x129.quicbaas.orchestrator.v1.OrchestratorGetJobStatusRequest\x1a:.quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse\"\x19\xc2\xf3\x18\x15orchestrator:job_read\x12\x99\x01\n" +
+	"\tCancelJob\x126.quicbaas.orchestrator.v1.OrchestratorCancelJobRequest\x1a7.quicbaas.orchestrator.v1.OrchestratorCancelJobResponse\"\x1b\xc2\xf3\x18\x17orchestrator:job_cancel\x12\x94\x01\n" +
+	"\bListJobs\x125.quicbaas.orchestrator.v1.OrchestratorListJobsRequest\x1a6.quicbaas.orchestrator.v1.OrchestratorListJobsResponse\"\x19\xc2\xf3\x18\x15orchestrator:job_list\x12\x8a\x01\n" +
+	"\x12SubscribeJobEvents\x123.quicbaas.orchestrator.v1.SubscribeJobEventsRequest\x1a\".quicbaas.orchestrator.v1.JobEvent\"\x19\xc2\xf3\x18\x15orchestrator:job_read0\x01\x12\xa4\x01\n" +
+	"\fListBackends\x129.quicbaas.orchestrator.v1.OrchestratorListBackendsRequest\x1a:.quicbaas.orchestrator.v1.OrchestratorListBackendsResponse\"\x1d\xc2\xf3\x18\x19orchestrator:backend_list\x12\x8c\x01\n" +
+	"\x06Health\x123.quicbaas.orchestrator.v1.OrchestratorHealthRequest\x1a4.quicbaas.orchestrator.v1.OrchestratorHealthResponse\"\x17\xc2\xf3\x18\x13orchestrator:health\x12\x91\x01\n" +
+	"\rRegisterAgent\x12..quicbaas.orchestrator.v1.RegisterAgentRequest\x1a/.quicbaas.orchestrator.v1.RegisterAgentResponse\"\x1f\xc2\xf3\x18\x1borchestrator:agent_register\x12~\n" +
+	"\bGetAgent\x12).quicbaas.orchestrator.v1.GetAgentRequest\x1a*.quicbaas.orchestrator.v1.GetAgentResponse\"\x1b\xc2\xf3\x18\x17orchestrator:agent_read\x12\x84\x01\n" +
 	"\n" +
-	"ListAgents\x12+.quicbaas.orchestrator.v1.ListAgentsRequest\x1a,.quicbaas.orchestrator.v1.ListAgentsResponse\x12j\n" +
-	"\vRemoveAgent\x12,.quicbaas.orchestrator.v1.RemoveAgentRequest\x1a-.quicbaas.orchestrator.v1.RemoveAgentResponse\x12s\n" +
-	"\x0eAgentHeartbeat\x12/.quicbaas.orchestrator.v1.AgentHeartbeatRequest\x1a0.quicbaas.orchestrator.v1.AgentHeartbeatResponse\x12d\n" +
+	"ListAgents\x12+.quicbaas.orchestrator.v1.ListAgentsRequest\x1a,.quicbaas.orchestrator.v1.ListAgentsResponse\"\x1b\xc2\xf3\x18\x17orchestrator:agent_list\x12\x89\x01\n" +
+	"\vRemoveAgent\x12,.quicbaas.orchestrator.v1.RemoveAgentRequest\x1a-.quicbaas.orchestrator.v1.RemoveAgentResponse\"\x1d\xc2\xf3\x18\x19orchestrator:agent_remove\x12\x95\x01\n" +
+	"\x0eAgentHeartbeat\x12/.quicbaas.orchestrator.v1.AgentHeartbeatRequest\x1a0.quicbaas.orchestrator.v1.AgentHeartbeatResponse\" \xc2\xf3\x18\x1corchestrator:agent_heartbeat\x12{\n" +
 	"\n" +
-	"PushEvents\x12*.quicbaas.orchestrator.v1.PushEventRequest\x1a&.quicbaas.orchestrator.v1.PushEventAck(\x010\x01\x12}\n" +
-	"\x16SubscribeSessionEvents\x121.quicbaas.orchestrator.v1.SubscribeSessionRequest\x1a..quicbaas.orchestrator.v1.SessionEventEnvelope0\x01\x12d\n" +
-	"\tInference\x12*.quicbaas.orchestrator.v1.InferenceRequest\x1a+.quicbaas.orchestrator.v1.InferenceResponse\x12i\n" +
-	"\x0fInferenceStream\x12*.quicbaas.orchestrator.v1.InferenceRequest\x1a(.quicbaas.orchestrator.v1.InferenceChunk0\x01\x12p\n" +
-	"\rSpawnChildJob\x12..quicbaas.orchestrator.v1.SpawnChildJobRequest\x1a/.quicbaas.orchestrator.v1.SpawnChildJobResponse\x12\x82\x01\n" +
-	"\x13SubmitTaskArtifacts\x124.quicbaas.orchestrator.v1.SubmitTaskArtifactsRequest\x1a5.quicbaas.orchestrator.v1.SubmitTaskArtifactsResponse\x12|\n" +
-	"\x11ListTaskArtifacts\x122.quicbaas.orchestrator.v1.ListTaskArtifactsRequest\x1a3.quicbaas.orchestrator.v1.ListTaskArtifactsResponse\x12v\n" +
-	"\x0fGetTaskArtifact\x120.quicbaas.orchestrator.v1.GetTaskArtifactRequest\x1a1.quicbaas.orchestrator.v1.GetTaskArtifactResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"PushEvents\x12*.quicbaas.orchestrator.v1.PushEventRequest\x1a&.quicbaas.orchestrator.v1.PushEventAck\"\x15\xc2\xf3\x18\x11orchestrator:hook(\x010\x01\x12\x96\x01\n" +
+	"\x16SubscribeSessionEvents\x121.quicbaas.orchestrator.v1.SubscribeSessionRequest\x1a..quicbaas.orchestrator.v1.SessionEventEnvelope\"\x17\xc2\xf3\x18\x13orchestrator:status0\x01\x12\x80\x01\n" +
+	"\tInference\x12*.quicbaas.orchestrator.v1.InferenceRequest\x1a+.quicbaas.orchestrator.v1.InferenceResponse\"\x1a\xc2\xf3\x18\x16orchestrator:inference\x12\x85\x01\n" +
+	"\x0fInferenceStream\x12*.quicbaas.orchestrator.v1.InferenceRequest\x1a(.quicbaas.orchestrator.v1.InferenceChunk\"\x1a\xc2\xf3\x18\x16orchestrator:inference0\x01\x12\x8c\x01\n" +
+	"\rSpawnChildJob\x12..quicbaas.orchestrator.v1.SpawnChildJobRequest\x1a/.quicbaas.orchestrator.v1.SpawnChildJobResponse\"\x1a\xc2\xf3\x18\x16orchestrator:job_start\x12\xa4\x01\n" +
+	"\x13SubmitTaskArtifacts\x124.quicbaas.orchestrator.v1.SubmitTaskArtifactsRequest\x1a5.quicbaas.orchestrator.v1.SubmitTaskArtifactsResponse\" \xc2\xf3\x18\x1corchestrator:artifact_submit\x12\x9c\x01\n" +
+	"\x11ListTaskArtifacts\x122.quicbaas.orchestrator.v1.ListTaskArtifactsRequest\x1a3.quicbaas.orchestrator.v1.ListTaskArtifactsResponse\"\x1e\xc2\xf3\x18\x1aorchestrator:artifact_read\x12\x96\x01\n" +
+	"\x0fGetTaskArtifact\x120.quicbaas.orchestrator.v1.GetTaskArtifactRequest\x1a1.quicbaas.orchestrator.v1.GetTaskArtifactResponse\"\x1e\xc2\xf3\x18\x1aorchestrator:artifact_readB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_orchestrator_proto_rawDescOnce sync.Once

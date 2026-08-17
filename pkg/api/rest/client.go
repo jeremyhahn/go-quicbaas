@@ -100,6 +100,23 @@ func WithTLSConfig(tlsConfig *tls.Config) ClientOption {
 	}
 }
 
+// WithHTTPClient sets a caller-supplied HTTP client, overriding the default
+// http.Client the constructor otherwise builds. This is the seam the QUIC
+// (HTTP/3) CLI clients use to reuse this REST-dialect client unchanged: they
+// supply an *http.Client whose Transport is quic-go's http3.Transport, so
+// requests are framed as HTTP/3 while every endpoint mapping, JSON
+// marshaling, and error decoding in this file stays identical to plain
+// REST.
+func WithHTTPClient(client *http.Client) ClientOption {
+	return func(c *RESTClient) error {
+		if client == nil {
+			return api.NewNilInputError("rest.WithHTTPClient", "client")
+		}
+		c.httpClient = client
+		return nil
+	}
+}
+
 // WithTLS configures TLS with optional client certificates.
 func WithTLS(certFile, keyFile, caFile string) ClientOption {
 	return func(c *RESTClient) error {

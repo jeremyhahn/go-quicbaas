@@ -733,7 +733,12 @@ func TestValidator_ValidateKMS(t *testing.T) {
 		cfg.Storage.DataDir = tmpDir
 		cfg.Storage.WALDir = tmpDir + "/wal"
 		cfg.Storage.Backend = StorageBackendPebble
+		// Network serving requires TLS (validateNetworkServingTLS); disable
+		// network serving too so this case isolates the KMS outcome.
 		cfg.Security.TLSEnabled = false
+		cfg.Server.REST.Enabled = false
+		cfg.Server.GRPC.Enabled = false
+		cfg.Server.MCP.Enabled = false
 
 		err := Validate(cfg)
 		assert.NoError(t, err)
@@ -762,7 +767,12 @@ func TestValidator_ValidateKMS(t *testing.T) {
 		cfg.Storage.DataDir = tmpDir
 		cfg.Storage.WALDir = tmpDir + "/wal"
 		cfg.Storage.Backend = StorageBackendPebble
+		// Network serving requires TLS (validateNetworkServingTLS); disable
+		// network serving too so this case isolates the KMS outcome.
 		cfg.Security.TLSEnabled = false
+		cfg.Server.REST.Enabled = false
+		cfg.Server.GRPC.Enabled = false
+		cfg.Server.MCP.Enabled = false
 
 		err := Validate(cfg)
 		assert.NoError(t, err)

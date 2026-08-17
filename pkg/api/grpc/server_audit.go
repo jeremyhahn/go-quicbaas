@@ -37,6 +37,12 @@ type AuditServer struct {
 type AuditService interface {
 	QueryAuditEvents(ctx context.Context, tenantID string, filter *iam.AuditFilter) ([]*iam.AuditEvent, int, error)
 	GetAuditEvent(ctx context.Context, tenantID, eventID string) (*iam.AuditEvent, error)
+
+	// RecordAuditEvent records event into tenantID's audit chain. When
+	// async is true it fire-and-forgets (LogAsync) and the returned ID may
+	// be empty before the chain assigns one; when false it records
+	// synchronously (Log) and returns the chain-assigned event ID.
+	RecordAuditEvent(ctx context.Context, tenantID string, event *iam.AuditEvent, async bool) (string, error)
 }
 
 // NewAuditServer creates a new Audit gRPC server.
@@ -47,10 +53,17 @@ func NewAuditServer(auditService AuditService, log *logger.Logger) *AuditServer 
 	}
 }
 
-// QueryAuditEvents queries audit events with filters.
+// QueryAuditEvents queries audit events with filters. The caller reads its
+// own authenticated tenant's chain: an empty tenant_id defaults to it, and
+// a different tenant_id is honored only when the caller holds cross-tenant
+// (system-tenant) scope (iam.ResolveRequestTenant) — otherwise the request
+// is rejected PermissionDenied before ever reaching storage, so a rejected
+// query leaks no events.
 func (s *AuditServer) QueryAuditEvents(ctx context.Context, req *iampb.QueryAuditEventsRequest) (*iampb.QueryAuditEventsResponse, error) {
-	if req.TenantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	tenantID, err := iam.ResolveRequestTenant(ctx, req.TenantId)
+	if err != nil {
+		s.logger.WithError(err).Warn("Rejected cross-tenant audit query request")
+		return nil, status.Error(codes.PermissionDenied, err.Error())
 	}
 
 	filter := &iam.AuditFilter{
@@ -72,7 +85,7 @@ func (s *AuditServer) QueryAuditEvents(ctx context.Context, req *iampb.QueryAudi
 		filter.EndTime = &t
 	}
 
-	events, total, err := s.auditService.QueryAuditEvents(ctx, req.TenantId, filter)
+	events, total, err := s.auditService.QueryAuditEvents(ctx, tenantID, filter)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to query audit events")
 		return nil, status.Errorf(codes.Internal, "failed to query audit events: %v", err)
@@ -91,22 +104,109 @@ func (s *AuditServer) QueryAuditEvents(ctx context.Context, req *iampb.QueryAudi
 	}, nil
 }
 
-// GetAuditEvent retrieves a specific audit event.
+// GetAuditEvent retrieves a specific audit event. Tenant scoping mirrors
+// QueryAuditEvents (iam.ResolveRequestTenant): the caller's own tenant, or
+// any tenant when the caller holds cross-tenant (system-tenant) scope.
 func (s *AuditServer) GetAuditEvent(ctx context.Context, req *iampb.GetAuditEventRequest) (*iampb.AuditEvent, error) {
-	if req.TenantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
-	}
 	if req.EventId == "" {
 		return nil, status.Error(codes.InvalidArgument, "event_id is required")
 	}
 
-	event, err := s.auditService.GetAuditEvent(ctx, req.TenantId, req.EventId)
+	tenantID, err := iam.ResolveRequestTenant(ctx, req.TenantId)
+	if err != nil {
+		s.logger.WithError(err).Warn("Rejected cross-tenant audit get request")
+		return nil, status.Error(codes.PermissionDenied, err.Error())
+	}
+
+	event, err := s.auditService.GetAuditEvent(ctx, tenantID, req.EventId)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to get audit event")
 		return nil, status.Errorf(codes.NotFound, "audit event %s not found", req.EventId)
 	}
 
 	return auditEventToProto(event), nil
+}
+
+// RecordAuditEvent records a new audit event onto the platform audit
+// chain — the remote-write counterpart to QueryAuditEvents/GetAuditEvent.
+// Tenant scoping is the SAME rule the read path applies
+// (iam.ResolveRequestTenant): the event lands in the caller's own
+// authenticated tenant unless the caller holds cross-tenant scope.
+func (s *AuditServer) RecordAuditEvent(ctx context.Context, req *iampb.RecordAuditEventRequest) (*iampb.RecordAuditEventResponse, error) {
+	if req.Event == nil {
+		return nil, status.Error(codes.InvalidArgument, "event is required")
+	}
+
+	tenantID, err := iam.ResolveRequestTenant(ctx, req.TenantId)
+	if err != nil {
+		s.logger.WithError(err).Warn("Rejected cross-tenant audit record request")
+		return nil, status.Error(codes.PermissionDenied, err.Error())
+	}
+
+	event := protoToAuditEvent(req.Event)
+	event.TenantID = tenantID
+
+	eventID, err := s.auditService.RecordAuditEvent(ctx, tenantID, event, req.Async)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to record audit event")
+		return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", err)
+	}
+
+	return &iampb.RecordAuditEventResponse{EventId: eventID}, nil
+}
+
+// protoToAuditEvent converts a proto AuditEvent to an iam.AuditEvent — the
+// reverse of auditEventToProto below. ActorType, present on the proto
+// message for the read path's ActorType heuristic, has no distinct
+// iam.AuditActor field beyond ClientID's own "service" heuristic, so a
+// proto ActorType of "service" projects onto Actor.ClientID (matching how
+// auditEventToProto derives ActorType FROM ClientID) and any other value is
+// carried as-is with no ClientID inference.
+func protoToAuditEvent(e *iampb.AuditEvent) *iam.AuditEvent {
+	if e == nil {
+		return nil
+	}
+
+	details := make(map[string]interface{}, len(e.Details))
+	for k, v := range e.Details {
+		details[k] = v
+	}
+	if len(details) == 0 {
+		details = nil
+	}
+
+	var actor *iam.AuditActor
+	if e.ActorId != "" || e.ActorType != "" {
+		actor = &iam.AuditActor{UserID: e.ActorId}
+		if e.ActorType == "service" {
+			actor.ClientID = e.ActorId
+		}
+	}
+
+	var resource *iam.AuditResource
+	if e.ResourceId != "" {
+		resource = &iam.AuditResource{ID: e.ResourceId}
+	}
+
+	var timestamp time.Time
+	if e.Timestamp != nil {
+		timestamp = e.Timestamp.AsTime()
+	}
+
+	return &iam.AuditEvent{
+		ID:        e.Id,
+		TenantID:  e.TenantId,
+		EventType: iam.AuditEventType(e.EventType),
+		Category:  iam.AuditCategory(e.Category),
+		Outcome:   iam.AuditOutcome(e.Outcome),
+		Actor:     actor,
+		Resource:  resource,
+		Action:    e.Action,
+		Details:   details,
+		IPAddress: e.IpAddress,
+		UserAgent: e.UserAgent,
+		Timestamp: timestamp,
+	}
 }
 
 // auditEventToProto converts an iam.AuditEvent to a proto AuditEvent.
@@ -169,16 +269,58 @@ func NewAuditServiceAdapter(auditLogger iam.AuditLogger) *AuditServiceAdapter {
 	}
 }
 
-// QueryAuditEvents queries audit events.
+// QueryAuditEvents queries audit events by delegating to the underlying
+// iam.AuditLogger's Query — the node-backed audit chain in production
+// (NodeAuditLogger, pkg/server/node_audit_logger.go), tenant-filtered. A
+// nil auditLogger (no adapter constructed in production reaches this;
+// defensive only) answers an empty result rather than panicking.
 func (a *AuditServiceAdapter) QueryAuditEvents(ctx context.Context, tenantID string, filter *iam.AuditFilter) ([]*iam.AuditEvent, int, error) {
-	// The AuditLogger interface may not have a query method, so we return empty for now
-	// In a production implementation, this would query the audit log storage
-	return []*iam.AuditEvent{}, 0, nil
+	if a.auditLogger == nil {
+		return []*iam.AuditEvent{}, 0, nil
+	}
+	if filter == nil {
+		filter = &iam.AuditFilter{}
+	}
+	filter.TenantID = tenantID
+	return a.auditLogger.Query(ctx, filter)
 }
 
-// GetAuditEvent gets a specific audit event.
+// GetAuditEvent gets a specific audit event by delegating to the underlying
+// iam.AuditLogger's GetEvent. A nil auditLogger (defensive only) answers
+// NotFound rather than panicking.
 func (a *AuditServiceAdapter) GetAuditEvent(ctx context.Context, tenantID, eventID string) (*iam.AuditEvent, error) {
-	return nil, status.Errorf(codes.NotFound, "audit event %s not found", eventID)
+	if a.auditLogger == nil {
+		return nil, status.Errorf(codes.NotFound, "audit event %s not found", eventID)
+	}
+	event, err := a.auditLogger.GetEvent(ctx, tenantID, eventID)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "audit event %s not found", eventID)
+	}
+	return event, nil
+}
+
+// RecordAuditEvent records event by delegating to the underlying
+// iam.AuditLogger's Log (async=false) or LogAsync (async=true) — the
+// node-backed audit chain in production (NodeAuditLogger,
+// pkg/server/node_audit_logger.go). tenantID is stamped onto event
+// (the caller already resolved and authorized it, RecordAuditEvent above).
+func (a *AuditServiceAdapter) RecordAuditEvent(ctx context.Context, tenantID string, event *iam.AuditEvent, async bool) (string, error) {
+	if a.auditLogger == nil {
+		return "", status.Error(codes.Unavailable, "audit logger not available")
+	}
+	if event == nil {
+		return "", status.Error(codes.InvalidArgument, "event is required")
+	}
+	event.TenantID = tenantID
+
+	if async {
+		a.auditLogger.LogAsync(event)
+		return "", nil
+	}
+	if err := a.auditLogger.Log(ctx, event); err != nil {
+		return "", err
+	}
+	return event.ID, nil
 }
 
 // Compile-time check that AuditServiceAdapter implements AuditService.
@@ -261,6 +403,25 @@ func (m *MemoryAuditService) GetAuditEvent(ctx context.Context, tenantID, eventI
 		return nil, status.Errorf(codes.NotFound, "audit event %s not found", eventID)
 	}
 	return e, nil
+}
+
+// RecordAuditEvent records event in-memory for testing.
+func (m *MemoryAuditService) RecordAuditEvent(ctx context.Context, tenantID string, event *iam.AuditEvent, async bool) (string, error) {
+	if event == nil {
+		return "", status.Error(codes.InvalidArgument, "event is required")
+	}
+	event.TenantID = tenantID
+	if event.ID == "" {
+		event.ID = "event-" + tenantID + "-" + event.Action
+	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now()
+	}
+	m.events[event.ID] = event
+	if async {
+		return "", nil
+	}
+	return event.ID, nil
 }
 
 // AddEvent adds an event for testing.

@@ -33,63 +33,6 @@ import (
 // Vector Route Registration
 // ========================================
 
-// registerVectorRoutes registers all vector database routes.
-func registerVectorRoutes(s *Server, r chi.Router) {
-	r.Route("/vector", func(r chi.Router) {
-		// Health and monitoring
-		r.Get("/health", s.HandleVectorHealth)
-
-		// Namespace management
-		r.Route("/namespaces", func(r chi.Router) {
-			r.Post("/", s.HandleCreateNamespace)                   // Create namespace
-			r.Get("/", s.HandleListNamespaces)                     // List namespaces
-			r.Get("/{namespace}", s.HandleGetNamespaceInfo)        // Get namespace info
-			r.Put("/{namespace}", s.HandleUpdateNamespace)         // Update namespace
-			r.Delete("/{namespace}", s.HandleDeleteNamespace)      // Delete namespace
-			r.Get("/{namespace}/stats", s.HandleGetNamespaceStats) // Get namespace stats
-
-			// Index management
-			r.Post("/{namespace}/index/rebuild", s.HandleRebuildIndex)     // Rebuild index
-			r.Get("/{namespace}/index/progress", s.HandleGetIndexProgress) // Get index progress
-		})
-
-		// Vector CRUD operations
-		r.Route("/namespaces/{namespace}/vectors", func(r chi.Router) {
-			r.Post("/", s.HandleUpsertVector)              // Create/update vector
-			r.Get("/", s.HandleListVectors)                // List vectors
-			r.Post("/batch", s.HandleBatchUpsertVectors)   // Batch upsert
-			r.Delete("/batch", s.HandleBatchDeleteVectors) // Batch delete
-
-			r.Get("/{id}", s.HandleGetVector)               // Get vector
-			r.Put("/{id}", s.HandleUpsertVector)            // Update vector
-			r.Delete("/{id}", s.HandleDeleteVector)         // Delete vector
-			r.Put("/{id}/metadata", s.HandleUpdateMetadata) // Update metadata
-		})
-
-		// Search operations
-		r.Route("/namespaces/{namespace}/search", func(r chi.Router) {
-			r.Post("/similar", s.HandleSearchSimilar) // Similarity search
-			r.Post("/by-id/{id}", s.HandleSearchByID) // Search by ID
-		})
-
-		// Global search operations (namespace specified in request body)
-		r.Post("/hybrid-search", s.HandleHybridSearch)          // Hybrid search
-		r.Post("/search-by-metadata", s.HandleSearchByMetadata) // Metadata search
-
-		// Cluster statistics (alias for admin/stats/global)
-		r.Get("/cluster/stats", s.HandleGetGlobalStats) // Cluster stats
-
-		// Admin operations
-		r.Route("/admin", func(r chi.Router) {
-			r.Get("/stats/global", s.HandleGetGlobalStats)            // Global stats
-			r.Post("/compact", s.HandleCompactNamespace)              // Compact namespace
-			r.Get("/compact/progress", s.HandleGetCompactionProgress) // Compaction progress
-			r.Post("/export/{namespace}", s.HandleExportVectors)      // Export vectors
-			r.Post("/import/{namespace}", s.HandleImportVectors)      // Import vectors
-		})
-	})
-}
-
 // ========================================
 // Health and Monitoring Handlers
 // ========================================

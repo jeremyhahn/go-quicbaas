@@ -562,3 +562,136 @@ func TestAuditSeverity_String(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// Record / RecordAsync (P5.3 remote audit emission)
+// =============================================================================
+
+func TestAuditClient_Record(t *testing.T) {
+	t.Run("success returns chain-assigned event ID", func(t *testing.T) {
+		event := &AuditEvent{TenantID: "tenant-123", Action: "login", Outcome: AuditOutcomeSuccess}
+		mt := &mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				if service != auditServiceName {
+					t.Errorf("expected service %s, got %s", auditServiceName, service)
+				}
+				if method != "Record" {
+					t.Errorf("expected method Record, got %s", method)
+				}
+				recReq, ok := req.(*recordAuditRequest)
+				if !ok {
+					t.Fatal("expected recordAuditRequest")
+				}
+				if recReq.Async {
+					t.Error("expected Async=false for Record")
+				}
+				if recReq.Event != event {
+					t.Error("expected the same event pointer to be threaded through")
+				}
+				return &RecordAuditResponse{EventID: "evt-1"}, nil
+			},
+		}
+
+		client := NewAuditClient(mt)
+		id, err := client.Record(context.Background(), event)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if id != "evt-1" {
+			t.Errorf("expected event ID evt-1, got %s", id)
+		}
+	})
+
+	t.Run("map response is parsed", func(t *testing.T) {
+		mt := &mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				return map[string]interface{}{"event_id": "evt-2"}, nil
+			},
+		}
+		client := NewAuditClient(mt)
+		id, err := client.Record(context.Background(), &AuditEvent{TenantID: "tenant-123"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if id != "evt-2" {
+			t.Errorf("expected event ID evt-2, got %s", id)
+		}
+	})
+
+	t.Run("nil event", func(t *testing.T) {
+		client := NewAuditClient(&mockTransport{})
+		_, err := client.Record(context.Background(), nil)
+		if err == nil || !errors.IsInvalidInput(err) {
+			t.Errorf("expected invalid input error, got %v", err)
+		}
+	})
+
+	t.Run("nil context", func(t *testing.T) {
+		client := NewAuditClient(&mockTransport{})
+		_, err := client.Record(nil, &AuditEvent{TenantID: "tenant-123"})
+		if err == nil || !errors.IsInvalidInput(err) {
+			t.Errorf("expected invalid input error, got %v", err)
+		}
+	})
+
+	t.Run("transport error propagates", func(t *testing.T) {
+		wantErr := errors.NewInternal("test", "boom")
+		mt := &mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				return nil, wantErr
+			},
+		}
+		client := NewAuditClient(mt)
+		_, err := client.Record(context.Background(), &AuditEvent{TenantID: "tenant-123"})
+		if err != wantErr {
+			t.Errorf("expected transport error to propagate, got %v", err)
+		}
+	})
+}
+
+func TestAuditClient_RecordAsync(t *testing.T) {
+	t.Run("success fire-and-forgets with Async=true", func(t *testing.T) {
+		event := &AuditEvent{TenantID: "tenant-123", Action: "login", Outcome: AuditOutcomeSuccess}
+		called := false
+		mt := &mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				called = true
+				if method != "RecordAsync" {
+					t.Errorf("expected method RecordAsync, got %s", method)
+				}
+				recReq, ok := req.(*recordAuditRequest)
+				if !ok {
+					t.Fatal("expected recordAuditRequest")
+				}
+				if !recReq.Async {
+					t.Error("expected Async=true for RecordAsync")
+				}
+				return nil, nil
+			},
+		}
+
+		client := NewAuditClient(mt)
+		if err := client.RecordAsync(context.Background(), event); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !called {
+			t.Error("expected transport to be invoked")
+		}
+	})
+
+	t.Run("nil event", func(t *testing.T) {
+		client := NewAuditClient(&mockTransport{})
+		err := client.RecordAsync(context.Background(), nil)
+		if err == nil || !errors.IsInvalidInput(err) {
+			t.Errorf("expected invalid input error, got %v", err)
+		}
+	})
+
+	t.Run("nil context", func(t *testing.T) {
+		client := NewAuditClient(&mockTransport{})
+		err := client.RecordAsync(nil, &AuditEvent{TenantID: "tenant-123"})
+		if err == nil || !errors.IsInvalidInput(err) {
+			t.Errorf("expected invalid input error, got %v", err)
+		}
+	})
+}

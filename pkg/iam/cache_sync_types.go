@@ -39,9 +39,6 @@ type EnhancedPolicyChangeEvent struct {
 	// Policy contains the full policy object for create/update events.
 	Policy *Policy `json:"policy,omitempty"`
 
-	// CompiledPolicy contains the compiled policy for optimization.
-	CompiledPolicy *CompiledPolicy `json:"compiled_policy,omitempty"`
-
 	// Version is the policy version for ordering events.
 	Version int64 `json:"version"`
 

@@ -13,6 +13,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -1266,7 +1267,7 @@ var File_api_proto_project_proto protoreflect.FileDescriptor
 
 const file_api_proto_project_proto_rawDesc = "" +
 	"\n" +
-	"\x17api/proto/project.proto\x12\x13quicbaas.project.v1\"\xdc\x06\n" +
+	"\x17api/proto/project.proto\x12\x13quicbaas.project.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xdc\x06\n" +
 	"\aProject\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x12\n" +
@@ -1402,17 +1403,17 @@ const file_api_proto_project_proto_rawDesc = "" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x19\n" +
 	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12\x1c\n" +
-	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp2\xd0\x06\n" +
-	"\x0eProjectService\x12f\n" +
-	"\rCreateProject\x12).quicbaas.project.v1.CreateProjectRequest\x1a*.quicbaas.project.v1.CreateProjectResponse\x12]\n" +
+	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp2\xea\a\n" +
+	"\x0eProjectService\x12z\n" +
+	"\rCreateProject\x12).quicbaas.project.v1.CreateProjectRequest\x1a*.quicbaas.project.v1.CreateProjectResponse\"\x12\xc2\xf3\x18\x0eproject:create\x12o\n" +
 	"\n" +
-	"GetProject\x12&.quicbaas.project.v1.GetProjectRequest\x1a'.quicbaas.project.v1.GetProjectResponse\x12i\n" +
-	"\x10GetProjectByName\x12,.quicbaas.project.v1.GetProjectByNameRequest\x1a'.quicbaas.project.v1.GetProjectResponse\x12f\n" +
-	"\rUpdateProject\x12).quicbaas.project.v1.UpdateProjectRequest\x1a*.quicbaas.project.v1.UpdateProjectResponse\x12f\n" +
-	"\rDeleteProject\x12).quicbaas.project.v1.DeleteProjectRequest\x1a*.quicbaas.project.v1.DeleteProjectResponse\x12c\n" +
-	"\fListProjects\x12(.quicbaas.project.v1.ListProjectsRequest\x1a).quicbaas.project.v1.ListProjectsResponse\x12i\n" +
-	"\x0eGrantAgentRole\x12*.quicbaas.project.v1.GrantAgentRoleRequest\x1a+.quicbaas.project.v1.GrantAgentRoleResponse\x12l\n" +
-	"\x0fRevokeAgentRole\x12+.quicbaas.project.v1.RevokeAgentRoleRequest\x1a,.quicbaas.project.v1.RevokeAgentRoleResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"GetProject\x12&.quicbaas.project.v1.GetProjectRequest\x1a'.quicbaas.project.v1.GetProjectResponse\"\x10\xc2\xf3\x18\fproject:read\x12{\n" +
+	"\x10GetProjectByName\x12,.quicbaas.project.v1.GetProjectByNameRequest\x1a'.quicbaas.project.v1.GetProjectResponse\"\x10\xc2\xf3\x18\fproject:read\x12z\n" +
+	"\rUpdateProject\x12).quicbaas.project.v1.UpdateProjectRequest\x1a*.quicbaas.project.v1.UpdateProjectResponse\"\x12\xc2\xf3\x18\x0eproject:update\x12z\n" +
+	"\rDeleteProject\x12).quicbaas.project.v1.DeleteProjectRequest\x1a*.quicbaas.project.v1.DeleteProjectResponse\"\x12\xc2\xf3\x18\x0eproject:delete\x12u\n" +
+	"\fListProjects\x12(.quicbaas.project.v1.ListProjectsRequest\x1a).quicbaas.project.v1.ListProjectsResponse\"\x10\xc2\xf3\x18\fproject:list\x12|\n" +
+	"\x0eGrantAgentRole\x12*.quicbaas.project.v1.GrantAgentRoleRequest\x1a+.quicbaas.project.v1.GrantAgentRoleResponse\"\x11\xc2\xf3\x18\rproject:grant\x12\x80\x01\n" +
+	"\x0fRevokeAgentRole\x12+.quicbaas.project.v1.RevokeAgentRoleRequest\x1a,.quicbaas.project.v1.RevokeAgentRoleResponse\"\x12\xc2\xf3\x18\x0eproject:revokeB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_project_proto_rawDescOnce sync.Once

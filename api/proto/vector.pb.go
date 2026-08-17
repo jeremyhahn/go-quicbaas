@@ -13,6 +13,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -6557,7 +6558,7 @@ var File_api_proto_vector_proto protoreflect.FileDescriptor
 
 const file_api_proto_vector_proto_rawDesc = "" +
 	"\n" +
-	"\x16api/proto/vector.proto\x12\x12quicbaas.vector.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc8\x03\n" +
+	"\x16api/proto/vector.proto\x12\x12quicbaas.vector.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xc8\x03\n" +
 	"\fVectorEntity\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x16\n" +
@@ -7152,38 +7153,39 @@ const file_api_proto_vector_proto_rawDesc = "" +
 	"\x17FILTER_OPERATOR_IS_NULL\x10\f\x12\x1f\n" +
 	"\x1bFILTER_OPERATOR_IS_NOT_NULL\x10\r\x12\x19\n" +
 	"\x15FILTER_OPERATOR_RANGE\x10\x0e\x12\x1e\n" +
-	"\x1aFILTER_OPERATOR_TEXT_MATCH\x10\x0f\"\x04\b\x10\x10\x1e2\xb2\x10\n" +
-	"\bVectorDB\x12a\n" +
-	"\fUpsertVector\x12'.quicbaas.vector.v1.UpsertVectorRequest\x1a(.quicbaas.vector.v1.UpsertVectorResponse\x12u\n" +
-	"\x12BatchUpsertVectors\x12-.quicbaas.vector.v1.BatchUpsertVectorsRequest\x1a..quicbaas.vector.v1.BatchUpsertVectorsResponse0\x01\x12X\n" +
-	"\tGetVector\x12$.quicbaas.vector.v1.GetVectorRequest\x1a%.quicbaas.vector.v1.GetVectorResponse\x12g\n" +
-	"\x0eUpdateMetadata\x12).quicbaas.vector.v1.UpdateMetadataRequest\x1a*.quicbaas.vector.v1.UpdateMetadataResponse\x12a\n" +
-	"\fDeleteVector\x12'.quicbaas.vector.v1.DeleteVectorRequest\x1a(.quicbaas.vector.v1.DeleteVectorResponse\x12s\n" +
-	"\x12BatchDeleteVectors\x12-.quicbaas.vector.v1.BatchDeleteVectorsRequest\x1a..quicbaas.vector.v1.BatchDeleteVectorsResponse\x12f\n" +
-	"\rSearchSimilar\x12(.quicbaas.vector.v1.SearchSimilarRequest\x1a).quicbaas.vector.v1.SearchSimilarResponse0\x01\x12]\n" +
+	"\x1aFILTER_OPERATOR_TEXT_MATCH\x10\x0f\"\x04\b\x10\x10\x1e2\xbf\x14\n" +
+	"\bVectorDB\x12t\n" +
+	"\fUpsertVector\x12'.quicbaas.vector.v1.UpsertVectorRequest\x1a(.quicbaas.vector.v1.UpsertVectorResponse\"\x11\xc2\xf3\x18\rvector:upsert\x12\x8e\x01\n" +
+	"\x12BatchUpsertVectors\x12-.quicbaas.vector.v1.BatchUpsertVectorsRequest\x1a..quicbaas.vector.v1.BatchUpsertVectorsResponse\"\x17\xc2\xf3\x18\x13vector:batch_upsert0\x01\x12h\n" +
+	"\tGetVector\x12$.quicbaas.vector.v1.GetVectorRequest\x1a%.quicbaas.vector.v1.GetVectorResponse\"\x0e\xc2\xf3\x18\n" +
+	"vector:get\x12\x83\x01\n" +
+	"\x0eUpdateMetadata\x12).quicbaas.vector.v1.UpdateMetadataRequest\x1a*.quicbaas.vector.v1.UpdateMetadataResponse\"\x1a\xc2\xf3\x18\x16vector:update_metadata\x12t\n" +
+	"\fDeleteVector\x12'.quicbaas.vector.v1.DeleteVectorRequest\x1a(.quicbaas.vector.v1.DeleteVectorResponse\"\x11\xc2\xf3\x18\rvector:delete\x12\x8c\x01\n" +
+	"\x12BatchDeleteVectors\x12-.quicbaas.vector.v1.BatchDeleteVectorsRequest\x1a..quicbaas.vector.v1.BatchDeleteVectorsResponse\"\x17\xc2\xf3\x18\x13vector:batch_delete\x12\x81\x01\n" +
+	"\rSearchSimilar\x12(.quicbaas.vector.v1.SearchSimilarRequest\x1a).quicbaas.vector.v1.SearchSimilarResponse\"\x19\xc2\xf3\x18\x15vector:search_similar0\x01\x12v\n" +
 	"\n" +
-	"SearchByID\x12%.quicbaas.vector.v1.SearchByIDRequest\x1a&.quicbaas.vector.v1.SearchByIDResponse0\x01\x12c\n" +
-	"\fHybridSearch\x12'.quicbaas.vector.v1.HybridSearchRequest\x1a(.quicbaas.vector.v1.HybridSearchResponse0\x01\x12o\n" +
-	"\x10SearchByMetadata\x12+.quicbaas.vector.v1.SearchByMetadataRequest\x1a,.quicbaas.vector.v1.SearchByMetadataResponse0\x01\x12`\n" +
-	"\vListVectors\x12&.quicbaas.vector.v1.ListVectorsRequest\x1a'.quicbaas.vector.v1.ListVectorsResponse0\x01\x12g\n" +
-	"\x0eListNamespaces\x12).quicbaas.vector.v1.ListNamespacesRequest\x1a*.quicbaas.vector.v1.ListNamespacesResponse\x12j\n" +
-	"\x0fCreateNamespace\x12*.quicbaas.vector.v1.CreateNamespaceRequest\x1a+.quicbaas.vector.v1.CreateNamespaceResponse\x12j\n" +
-	"\x0fUpdateNamespace\x12*.quicbaas.vector.v1.UpdateNamespaceRequest\x1a+.quicbaas.vector.v1.UpdateNamespaceResponse\x12j\n" +
-	"\x0fDeleteNamespace\x12*.quicbaas.vector.v1.DeleteNamespaceRequest\x1a+.quicbaas.vector.v1.DeleteNamespaceResponse\x12m\n" +
-	"\x10GetNamespaceInfo\x12+.quicbaas.vector.v1.GetNamespaceInfoRequest\x1a,.quicbaas.vector.v1.GetNamespaceInfoResponse\x12g\n" +
-	"\x0eGetVectorStats\x12).quicbaas.vector.v1.GetVectorStatsRequest\x1a*.quicbaas.vector.v1.GetVectorStatsResponse\x12[\n" +
-	"\x06Health\x12'.quicbaas.vector.v1.VectorHealthRequest\x1a(.quicbaas.vector.v1.VectorHealthResponse\x12a\n" +
-	"\fRebuildIndex\x12'.quicbaas.vector.v1.RebuildIndexRequest\x1a(.quicbaas.vector.v1.RebuildIndexResponse\x12m\n" +
-	"\x10GetIndexProgress\x12+.quicbaas.vector.v1.GetIndexProgressRequest\x1a,.quicbaas.vector.v1.GetIndexProgressResponse2\x86\a\n" +
-	"\vVectorAdmin\x12j\n" +
-	"\x0fGetClusterStats\x12*.quicbaas.vector.v1.GetClusterStatsRequest\x1a+.quicbaas.vector.v1.GetClusterStatsResponse\x12m\n" +
-	"\x10CompactNamespace\x12+.quicbaas.vector.v1.CompactNamespaceRequest\x1a,.quicbaas.vector.v1.CompactNamespaceResponse\x12|\n" +
-	"\x15GetCompactionProgress\x120.quicbaas.vector.v1.GetCompactionProgressRequest\x1a1.quicbaas.vector.v1.GetCompactionProgressResponse\x12f\n" +
-	"\rExportVectors\x12(.quicbaas.vector.v1.ExportVectorsRequest\x1a).quicbaas.vector.v1.ExportVectorsResponse0\x01\x12f\n" +
-	"\rImportVectors\x12(.quicbaas.vector.v1.ImportVectorsRequest\x1a).quicbaas.vector.v1.ImportVectorsResponse(\x01\x12p\n" +
-	"\x11CreateScalarIndex\x12,.quicbaas.vector.v1.CreateScalarIndexRequest\x1a-.quicbaas.vector.v1.CreateScalarIndexResponse\x12j\n" +
-	"\x0fDropScalarIndex\x12*.quicbaas.vector.v1.DropScalarIndexRequest\x1a+.quicbaas.vector.v1.DropScalarIndexResponse\x12p\n" +
-	"\x11ListScalarIndexes\x12,.quicbaas.vector.v1.ListScalarIndexesRequest\x1a-.quicbaas.vector.v1.ListScalarIndexesResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"SearchByID\x12%.quicbaas.vector.v1.SearchByIDRequest\x1a&.quicbaas.vector.v1.SearchByIDResponse\"\x17\xc2\xf3\x18\x13vector:search_by_id0\x01\x12}\n" +
+	"\fHybridSearch\x12'.quicbaas.vector.v1.HybridSearchRequest\x1a(.quicbaas.vector.v1.HybridSearchResponse\"\x18\xc2\xf3\x18\x14vector:hybrid_search0\x01\x12\x8e\x01\n" +
+	"\x10SearchByMetadata\x12+.quicbaas.vector.v1.SearchByMetadataRequest\x1a,.quicbaas.vector.v1.SearchByMetadataResponse\"\x1d\xc2\xf3\x18\x19vector:search_by_metadata0\x01\x12q\n" +
+	"\vListVectors\x12&.quicbaas.vector.v1.ListVectorsRequest\x1a'.quicbaas.vector.v1.ListVectorsResponse\"\x0f\xc2\xf3\x18\vvector:list0\x01\x12\x82\x01\n" +
+	"\x0eListNamespaces\x12).quicbaas.vector.v1.ListNamespacesRequest\x1a*.quicbaas.vector.v1.ListNamespacesResponse\"\x19\xc2\xf3\x18\x15vector:namespace_list\x12\x87\x01\n" +
+	"\x0fCreateNamespace\x12*.quicbaas.vector.v1.CreateNamespaceRequest\x1a+.quicbaas.vector.v1.CreateNamespaceResponse\"\x1b\xc2\xf3\x18\x17vector:namespace_create\x12\x87\x01\n" +
+	"\x0fUpdateNamespace\x12*.quicbaas.vector.v1.UpdateNamespaceRequest\x1a+.quicbaas.vector.v1.UpdateNamespaceResponse\"\x1b\xc2\xf3\x18\x17vector:namespace_create\x12\x87\x01\n" +
+	"\x0fDeleteNamespace\x12*.quicbaas.vector.v1.DeleteNamespaceRequest\x1a+.quicbaas.vector.v1.DeleteNamespaceResponse\"\x1b\xc2\xf3\x18\x17vector:namespace_delete\x12\x88\x01\n" +
+	"\x10GetNamespaceInfo\x12+.quicbaas.vector.v1.GetNamespaceInfoRequest\x1a,.quicbaas.vector.v1.GetNamespaceInfoResponse\"\x19\xc2\xf3\x18\x15vector:namespace_info\x12\x83\x01\n" +
+	"\x0eGetVectorStats\x12).quicbaas.vector.v1.GetVectorStatsRequest\x1a*.quicbaas.vector.v1.GetVectorStatsResponse\"\x1a\xc2\xf3\x18\x16vector:get_index_stats\x12v\n" +
+	"\x06Health\x12'.quicbaas.vector.v1.VectorHealthRequest\x1a(.quicbaas.vector.v1.VectorHealthResponse\"\x19\xc2\xf3\x18\x15vector:namespace_list\x12{\n" +
+	"\fRebuildIndex\x12'.quicbaas.vector.v1.RebuildIndexRequest\x1a(.quicbaas.vector.v1.RebuildIndexResponse\"\x18\xc2\xf3\x18\x14vector:rebuild_index\x12\x8e\x01\n" +
+	"\x10GetIndexProgress\x12+.quicbaas.vector.v1.GetIndexProgressRequest\x1a,.quicbaas.vector.v1.GetIndexProgressResponse\"\x1f\xc2\xf3\x18\x1bvector:get_rebuild_progress2\xda\b\n" +
+	"\vVectorAdmin\x12\x86\x01\n" +
+	"\x0fGetClusterStats\x12*.quicbaas.vector.v1.GetClusterStatsRequest\x1a+.quicbaas.vector.v1.GetClusterStatsResponse\"\x1a\xc2\xf3\x18\x16vector:get_index_stats\x12\x81\x01\n" +
+	"\x10CompactNamespace\x12+.quicbaas.vector.v1.CompactNamespaceRequest\x1a,.quicbaas.vector.v1.CompactNamespaceResponse\"\x12\xc2\xf3\x18\x0evector:compact\x12\xa0\x01\n" +
+	"\x15GetCompactionProgress\x120.quicbaas.vector.v1.GetCompactionProgressRequest\x1a1.quicbaas.vector.v1.GetCompactionProgressResponse\"\"\xc2\xf3\x18\x1evector:get_compaction_progress\x12w\n" +
+	"\rExportVectors\x12(.quicbaas.vector.v1.ExportVectorsRequest\x1a).quicbaas.vector.v1.ExportVectorsResponse\"\x0f\xc2\xf3\x18\vvector:list0\x01\x12\x7f\n" +
+	"\rImportVectors\x12(.quicbaas.vector.v1.ImportVectorsRequest\x1a).quicbaas.vector.v1.ImportVectorsResponse\"\x17\xc2\xf3\x18\x13vector:batch_upsert(\x01\x12\x8a\x01\n" +
+	"\x11CreateScalarIndex\x12,.quicbaas.vector.v1.CreateScalarIndexRequest\x1a-.quicbaas.vector.v1.CreateScalarIndexResponse\"\x18\xc2\xf3\x18\x14vector:rebuild_index\x12\x84\x01\n" +
+	"\x0fDropScalarIndex\x12*.quicbaas.vector.v1.DropScalarIndexRequest\x1a+.quicbaas.vector.v1.DropScalarIndexResponse\"\x18\xc2\xf3\x18\x14vector:rebuild_index\x12\x8c\x01\n" +
+	"\x11ListScalarIndexes\x12,.quicbaas.vector.v1.ListScalarIndexesRequest\x1a-.quicbaas.vector.v1.ListScalarIndexesResponse\"\x1a\xc2\xf3\x18\x16vector:get_index_statsB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_vector_proto_rawDescOnce sync.Once

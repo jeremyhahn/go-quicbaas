@@ -33,10 +33,9 @@ import (
 
 // ToolRegistry manages MCP tools and their execution.
 type ToolRegistry struct {
-	authChecker *AuthorizationChecker
-	service     service.QuicBaaS
-	logger      *logger.Logger
-	tools       []ToolDefinition
+	service service.QuicBaaS
+	logger  *logger.Logger
+	tools   []ToolDefinition
 
 	// barrierSvc backs every quicbaas_barrier_* tool. Wired
 	// post-construction via SetBarrierService once the qrdb SDK BarrierClient
@@ -877,34 +876,6 @@ func (r *ToolRegistry) addTool(tool ToolDefinition) {
 // ListTools returns all registered tools.
 func (r *ToolRegistry) ListTools() []ToolDefinition {
 	return r.tools
-}
-
-// FilterToolsByAuthorization returns only the tools that the given token is
-// authorized to use. Public tools (health, login, etc.) are always included.
-// Tools that require authentication are included only if CheckToolAuthorization
-// returns nil for the given token. This enables scope-based MCP tool filtering
-// so agents only see tools their service account scopes permit.
-func (r *ToolRegistry) FilterToolsByAuthorization(
-	ctx context.Context,
-	authChecker *AuthorizationChecker,
-	token string,
-) []ToolDefinition {
-	filtered := make([]ToolDefinition, 0, len(r.tools))
-	for _, tool := range r.tools {
-		if IsPublicTool(tool.Name) {
-			filtered = append(filtered, tool)
-			continue
-		}
-		if authChecker.CheckToolAuthorization(ctx, tool.Name, token) == nil {
-			filtered = append(filtered, tool)
-		}
-	}
-	return filtered
-}
-
-// SetAuthorizationChecker sets the authorization checker for the registry.
-func (r *ToolRegistry) SetAuthorizationChecker(checker *AuthorizationChecker) {
-	r.authChecker = checker
 }
 
 // SetBarrierService installs the BarrierServicer used by every

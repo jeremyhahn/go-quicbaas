@@ -16,6 +16,7 @@ syntax = "proto3";
 package quicbaas.ceremony.v1;
 
 import "google/protobuf/empty.proto";
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
@@ -30,43 +31,61 @@ service Ceremony {
   // CeremonyInitialize starts the initialization ceremony, issuing the CA,
   // server TLS certificate, optional SO certificate, and Shamir shares for
   // the supplied officers.
-  rpc CeremonyInitialize(CeremonyInitializeRequest) returns (CeremonyInitializeResponse);
+  rpc CeremonyInitialize(CeremonyInitializeRequest) returns (CeremonyInitializeResponse) {
+      option (qrdb.v1.permission) = "ceremony:initialize";
+  }
 
   // CeremonyStatus reports the current ceremony state and SPKI pin.
-  rpc CeremonyStatus(google.protobuf.Empty) returns (CeremonyStatusResponse);
+  rpc CeremonyStatus(google.protobuf.Empty) returns (CeremonyStatusResponse) {
+      option (qrdb.v1.permission) = "ceremony:status";
+  }
 
   // CeremonyClaimCertBegin starts a certificate-claim challenge for an
   // officer and returns the challenge nonce.
-  rpc CeremonyClaimCertBegin(CeremonyClaimCertBeginRequest) returns (CeremonyClaimCertBeginResponse);
+  rpc CeremonyClaimCertBegin(CeremonyClaimCertBeginRequest) returns (CeremonyClaimCertBeginResponse) {
+      option (qrdb.v1.permission) = "ceremony:claim_cert";
+  }
 
   // CeremonyClaimCertComplete completes a certificate claim by submitting
   // the signed nonce. Returns the issued officer certificate and the CA
   // chain. The signature is base64-encoded to match the REST contract.
-  rpc CeremonyClaimCertComplete(CeremonyClaimCertCompleteRequest) returns (CeremonyClaimCertCompleteResponse);
+  rpc CeremonyClaimCertComplete(CeremonyClaimCertCompleteRequest) returns (CeremonyClaimCertCompleteResponse) {
+      option (qrdb.v1.permission) = "ceremony:claim_cert";
+  }
 
   // CeremonyBeginClaimShare starts the Shamir share claim handshake for an
   // officer who has already claimed their certificate. No thumbprint travels
   // on the wire: the server derives the caller's certificate thumbprint from
   // the mTLS peer chain, so a client cannot assert an identity.
-  rpc CeremonyBeginClaimShare(CeremonyBeginClaimShareRequest) returns (CeremonyBeginClaimShareResponse);
+  rpc CeremonyBeginClaimShare(CeremonyBeginClaimShareRequest) returns (CeremonyBeginClaimShareResponse) {
+      option (qrdb.v1.permission) = "ceremony:claim_share_begin";
+  }
 
   // CeremonyCompleteClaimShare completes the Shamir share claim handshake by
   // submitting the signed challenge nonce. The share is released exactly
   // once, only to the officer whose certificate thumbprint matches the
   // enrolment record.
-  rpc CeremonyCompleteClaimShare(CeremonyCompleteClaimShareRequest) returns (CeremonyCompleteClaimShareResponse);
+  rpc CeremonyCompleteClaimShare(CeremonyCompleteClaimShareRequest) returns (CeremonyCompleteClaimShareResponse) {
+      option (qrdb.v1.permission) = "ceremony:claim_share_complete";
+  }
 
   // CeremonySignCSR submits a CSR for signing during the ceremony.
-  rpc CeremonySignCSR(CeremonySignCSRRequest) returns (CeremonySignCSRResponse);
+  rpc CeremonySignCSR(CeremonySignCSRRequest) returns (CeremonySignCSRResponse) {
+      option (qrdb.v1.permission) = "ceremony:sign_csr";
+  }
 
   // CeremonyListOfficers returns the registry of officers currently
   // enrolled in the ceremony.
-  rpc CeremonyListOfficers(google.protobuf.Empty) returns (CeremonyListOfficersResponse);
+  rpc CeremonyListOfficers(google.protobuf.Empty) returns (CeremonyListOfficersResponse) {
+      option (qrdb.v1.permission) = "ceremony:status";
+  }
 
   // CeremonyEnrollExternalOfficer enrols an officer whose key material
   // lives outside the daemon. Exactly one of cert_pem or pubkey_pem MUST
   // be supplied.
-  rpc CeremonyEnrollExternalOfficer(CeremonyEnrollExternalOfficerRequest) returns (CeremonyEnrollExternalOfficerResponse);
+  rpc CeremonyEnrollExternalOfficer(CeremonyEnrollExternalOfficerRequest) returns (CeremonyEnrollExternalOfficerResponse) {
+      option (qrdb.v1.permission) = "ceremony:enroll_custodian";
+  }
 }
 
 // =============================================================================

@@ -396,8 +396,8 @@ type CacheSyncInterface interface {
 	// GetVersion returns the current cache version.
 	GetVersion() int64
 
-	// Set stores a compiled policy in the cache.
-	Set(tenantID string, policy *CompiledPolicy)
+	// Set stores a policy in the cache.
+	Set(tenantID string, policy *Policy)
 
 	// Invalidate removes a specific policy from the cache.
 	Invalidate(tenantID, name string)
@@ -406,7 +406,7 @@ type CacheSyncInterface interface {
 	InvalidateAll(tenantID string)
 
 	// GetAll returns all cached policies for a tenant.
-	GetAll(tenantID string) []*CompiledPolicy
+	GetAll(tenantID string) []*Policy
 
 	// Size returns the number of cached policies.
 	Size() int

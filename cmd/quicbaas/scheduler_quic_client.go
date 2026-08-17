@@ -1,4 +1,4 @@
-//go:build quic
+//go:build quic && rest
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -18,18 +18,19 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
-// QUICSchedulerClient wraps the QUIC client to implement the SchedulerClient interface.
+// QUICSchedulerClient implements the SchedulerClient interface over HTTP/3.
+// Like QUICSecretsClient, it delegates to pkg/api/rest.RESTClient built with
+// an HTTP/3-over-QUIC http.Client (see newQUICRESTClient in
+// quic_secrets_client.go), so request/response handling is shared with the
+// REST transport rather than duplicated.
 type QUICSchedulerClient struct {
-	client *quic.Client
+	client *rest.RESTClient
 }
 
 // SchedulerCreateJob creates a new scheduled job via QUIC.
@@ -128,61 +129,14 @@ func (c *QUICSchedulerClient) Close() error {
 	return c.client.Close()
 }
 
-// createSchedulerQUICClientFactory creates a QUIC client for scheduler operations.
-// QUIC transport for scheduler commands uses QUIC protocol for low-latency, multiplexed connections.
+// createSchedulerQUICClientFactory creates a QUIC (HTTP/3) client for
+// scheduler operations.
 func createSchedulerQUICClientFactory() (SchedulerClient, error) {
-	logCfg := logger.LogConfig{
-		Level:     getSchedulerLogLevel(),
-		Format:    "json",
-		Output:    "stderr",
-		Component: "quic-scheduler-client",
-	}
-	log, err := logger.New(logCfg)
+	client, err := newQUICRESTClient("quic-scheduler-client")
 	if err != nil {
-		return nil, errors.Wrapf(
-			err,
-			errors.ErrConfiguration,
-			"createSchedulerQUICClientFactory",
-			"failed to create logger",
-		)
+		return nil, err
 	}
-
-	opts := []quic.ClientOption{
-		quic.WithLogger(log),
-		quic.WithTimeout(timeout),
-		quic.WithMaxIdleTimeout(5 * time.Minute),
-	}
-
-	// QUIC always uses TLS — QuicBaaS bans insecure TLS so the operator must
-	// supply a CA via --tls-ca (or set --tls-cert/--tls-key for mTLS).
-	tlsCfg, tlsErr := buildTLSConfig()
-	if tlsErr != nil {
-		return nil, tlsErr
-	}
-	if tlsCfg == nil {
-		return nil, errors.Newf(
-			errors.ErrConfiguration,
-			"createSchedulerQUICClientFactory",
-			"TLS configuration is required for QUIC connections (use --tls-ca)",
-		)
-	}
-	if tlsCfg != nil {
-		tlsCfg.MinVersion = tls.VersionTLS13
-		opts = append(opts, quic.WithTLSConfig(tlsCfg))
-	}
-
-	// Create QUIC client
-	quicClient, err := quic.NewClient(address, opts...)
-	if err != nil {
-		return nil, errors.Wrapf(
-			err,
-			errors.ErrUnavailable,
-			"createSchedulerQUICClientFactory",
-			"failed to create QUIC client for server %s", address,
-		)
-	}
-
-	return &QUICSchedulerClient{client: quicClient}, nil
+	return &QUICSchedulerClient{client: client}, nil
 }
 
 // Compile-time interface check.

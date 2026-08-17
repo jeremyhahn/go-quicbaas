@@ -12,6 +12,7 @@ package quicbaas.attestation.v1;
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
 import "google/protobuf/timestamp.proto";
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 
 // =============================================================================
 // Attestation Service
@@ -28,15 +29,21 @@ service AttestationService {
   // Verify validates a complete attestation statement: certificate chain,
   // signature over the attestation data, and — when requested — nonce
   // freshness and PCR values.
-  rpc Verify(VerifyAttestationRequest) returns (VerifyAttestationResponse);
+  rpc Verify(VerifyAttestationRequest) returns (VerifyAttestationResponse) {
+      option (qrdb.v1.permission) = "attestation:verify";
+  }
 
   // VerifyChain validates only the certificate chain carried by an
   // attestation statement.
-  rpc VerifyChain(VerifyAttestationChainRequest) returns (VerifyAttestationChainResponse);
+  rpc VerifyChain(VerifyAttestationChainRequest) returns (VerifyAttestationChainResponse) {
+      option (qrdb.v1.permission) = "attestation:verify";
+  }
 
   // AttestContainer requests attestation evidence for a container from the
   // registered container attestor.
-  rpc AttestContainer(AttestContainerRequest) returns (AttestContainerResponse);
+  rpc AttestContainer(AttestContainerRequest) returns (AttestContainerResponse) {
+      option (qrdb.v1.permission) = "attestation:attest";
+  }
 }
 
 // AttestationVerifyOptions is the wire form of the go-xkms attestation

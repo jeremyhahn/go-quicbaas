@@ -10,6 +10,8 @@ package quicbaas.parameterstore.v1;
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+
 // =============================================================================
 // Parameter Store Service
 // =============================================================================
@@ -20,36 +22,52 @@ service ParameterStore {
   // GetParameter retrieves a single parameter by path.
   // Returns ErrParameterNotFound if the parameter doesn't exist.
   // Returns ErrParameterExpired if the parameter has expired.
-  rpc GetParameter(GetParameterRequest) returns (GetParameterResponse);
+  rpc GetParameter(GetParameterRequest) returns (GetParameterResponse) {
+      option (qrdb.v1.permission) = "parameters:read";
+  }
 
   // SetParameter creates or updates a parameter.
   // Creates a new parameter if the path doesn't exist.
   // Updates the existing parameter if the path exists (and Overwrite is true).
-  rpc SetParameter(SetParameterRequest) returns (SetParameterResponse);
+  rpc SetParameter(SetParameterRequest) returns (SetParameterResponse) {
+      option (qrdb.v1.permission) = "parameters:write";
+  }
 
   // DeleteParameter removes a parameter by path.
   // Returns ErrParameterNotFound if the parameter doesn't exist.
-  rpc DeleteParameter(DeleteParameterRequest) returns (DeleteParameterResponse);
+  rpc DeleteParameter(DeleteParameterRequest) returns (DeleteParameterResponse) {
+      option (qrdb.v1.permission) = "parameters:delete";
+  }
 
   // GetParameters retrieves multiple parameters by paths (batch get).
   // Missing or expired parameters are reported in errors map.
-  rpc GetParameters(GetParametersRequest) returns (GetParametersResponse);
+  rpc GetParameters(GetParametersRequest) returns (GetParametersResponse) {
+      option (qrdb.v1.permission) = "parameters:read";
+  }
 
   // SetParameters creates or updates multiple parameters atomically.
   // All parameters succeed or all fail.
-  rpc SetParameters(SetParametersRequest) returns (SetParametersResponse);
+  rpc SetParameters(SetParametersRequest) returns (SetParametersResponse) {
+      option (qrdb.v1.permission) = "parameters:write";
+  }
 
   // DeleteParameters removes multiple parameters by paths (batch delete).
   // Missing parameters are reported in results.
-  rpc DeleteParameters(DeleteParametersRequest) returns (DeleteParametersResponse);
+  rpc DeleteParameters(DeleteParametersRequest) returns (DeleteParametersResponse) {
+      option (qrdb.v1.permission) = "parameters:delete";
+  }
 
   // ListParameters returns parameters matching a path prefix.
   // Results are sorted by path and support pagination.
-  rpc ListParameters(ListParametersRequest) returns (ListParametersResponse);
+  rpc ListParameters(ListParametersRequest) returns (ListParametersResponse) {
+      option (qrdb.v1.permission) = "parameters:list";
+  }
 
   // SearchByTags finds parameters matching tag key-value pairs.
   // Multiple tags are ANDed together.
-  rpc SearchByTags(SearchByTagsRequest) returns (SearchByTagsResponse);
+  rpc SearchByTags(SearchByTagsRequest) returns (SearchByTagsResponse) {
+      option (qrdb.v1.permission) = "parameters:search";
+  }
 }
 
 // =============================================================================

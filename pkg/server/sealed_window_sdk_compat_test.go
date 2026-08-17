@@ -72,8 +72,19 @@ func sdkWaitFor(t *testing.T, timeout time.Duration, what string, fn func() bool
 //     reachable, off-allowlist path receives the sealed envelope;
 //  3. the quicbaas SDK client drives BarrierStatus + BarrierInitialize (the
 //     TP M6-gate verbs) against the sealed daemon pre-auth;
-//  4. the unseal completes the full boot: the node SDK client comes online
-//     and the full transports replace the sealed listeners.
+//  4. the unseal completes the full node boot (the node's own SDK client
+//     comes online).
+//
+// Phases 1-3 run over server.NewSealedBootTestConfig's plain-HTTP
+// sealed-window listener (sealed_window_rest.go, which honors
+// Security.TLSEnabled — kept off here; see that config's doc comment for why
+// TLS is not simply flipped on). Phase 4 verifies the node itself completed
+// its Unseal via GetQRDBNodeClient rather than by round-tripping the
+// post-unseal REST surface: that surface now runs on the embedded qrdb
+// node's own unified-server listener, which is TLS-only (see
+// (*config.Config).NetworkServing), so it is unreachable in this
+// TLS-disabled configuration — a real, deliberate consequence of "network
+// serving requires TLS", not a gap in this test.
 func TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon(t *testing.T) {
 	cfg := server.NewSealedBootTestConfig(t)
 
@@ -153,40 +164,14 @@ func TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon(t *testing.T) {
 		Secret: "sealed-window-e2e-passphrase",
 	}), "SDK BarrierInitialize must drive the sealed daemon's barrier")
 
-	// Phase 4: the daemon notices the unseal, completes the node boot, and
-	// replaces the sealed listeners with the full transports.
-	sdkWaitFor(t, 120*time.Second, "full boot after unseal", func() bool {
-		if srv.GetQRDBNodeClient() == nil {
-			return false
-		}
-		addr := srv.RESTAddr()
-		if addr == nil {
-			return false
-		}
-		fullResp, getErr := http.Get("http://" + addr.String() + "/api/v1/kms/keys")
-		if getErr != nil {
-			return false
-		}
-		defer func() { _ = fullResp.Body.Close() }()
-		body, _ := io.ReadAll(fullResp.Body)
-		// Off-allowlist path must no longer receive the sealed envelope.
-		return string(body) != sdkSealedEnvelope
+	// Phase 4: the daemon notices the unseal and completes the node boot —
+	// verified at the node level (GetQRDBNodeClient), since the post-unseal
+	// REST surface is TLS-only and unreachable under this TLS-disabled
+	// config (see the doc comment above).
+	sdkWaitFor(t, 120*time.Second, "full node boot after unseal", func() bool {
+		return srv.GetQRDBNodeClient() != nil
 	})
-
-	// Post-unseal, the SDK sees the unsealed barrier through the full
-	// transport (fresh client — the sealed listener's ephemeral port is
-	// gone with the sealed phase).
-	fullAddr := srv.RESTAddr()
-	require.NotNil(t, fullAddr)
-	fullClient, err := quicbaassdk.NewClient("http://"+fullAddr.String(), quicbaassdk.WithREST())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = fullClient.Close() })
-
-	fullBarrier, err := fullClient.Security().Barrier()
-	require.NoError(t, err)
-	fullStatus, err := fullBarrier.BarrierStatus(ctx)
-	require.NoError(t, err)
-	assert.False(t, fullStatus.Sealed, "barrier must report unsealed after the window closes")
+	assert.False(t, srv.GetQRDBNodeClient() == nil, "node SDK client must be online after unseal completes the boot")
 
 	select {
 	case bootErr := <-startErr:

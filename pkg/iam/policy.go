@@ -19,31 +19,96 @@ import (
 	"time"
 )
 
-// PolicyEngine provides policy management and evaluation.
-type PolicyEngine struct {
-	storage   PolicyStorage
-	cache     *PolicyCache
-	compiler  *PolicyCompiler
-	evaluator *PolicyEvaluator
-	opts      PolicyEngineOptions
-	mu        sync.RWMutex
+// RBACAuthorizer is the SINGLE decision point PolicyEngine.Evaluate
+// delegates to for every request (P6.1 end-state of the unified login-plane
+// plan). On a composed node the implementation wraps qrdb's own RBAC
+// authorizer decorated with a live-reloaded ABAC policy set (abac.Decorator
+// over auth.Authorizer): explicit ABAC deny overrides, explicit ABAC allow
+// grants beyond RBAC, and "no ABAC policy matches" falls through to RBAC —
+// ALL evaluated by qrdb as one atomic decision, not layered locally by
+// pkg/iam. This interface carries no qrdb dependency into pkg/iam; pkg/server
+// injects the real implementation (backed by the embedded qrdb node's
+// RBACClient) at composition time, mirroring how NodeAuditLogger backs
+// iam.AuditLogger without pkg/iam importing qrdb directly.
+type RBACAuthorizer interface {
+	// Authorize returns nil when subject is permitted to perform action on
+	// resource, and a non-nil error (denial or evaluation failure)
+	// otherwise.
+	Authorize(ctx context.Context, subject *Subject, resource, action string) error
 }
 
-// NewPolicyEngine creates a new policy engine.
-func NewPolicyEngine(opts PolicyEngineOptions) *PolicyEngine {
-	compiler := NewPolicyCompiler()
-	evaluator := NewPolicyEvaluator(compiler, opts.Cache)
+// ABACSync is the seam PolicyEngine drives after every policy CRUD mutation
+// (Create/Update/Delete), and once at startup, to keep qrdb's live-reloaded
+// ABAC decorator synchronized with the FULL current policy store across
+// every tenant plus the system tenant's platform-wide policies. Sync must be
+// atomic and all-or-nothing on the qrdb side: an invalid policy set is
+// rejected by the underlying Reload and leaves the previously active set
+// fully in force (see go-qrdb pkg/auth/abac.Decorator.Reload). This
+// interface carries no qrdb dependency into pkg/iam; pkg/server injects the
+// real implementation (backed by the embedded qrdb node's
+// ABACPolicyReloader) at composition time.
+type ABACSync interface {
+	// Sync recomputes the complete cross-tenant policy set from storage and
+	// atomically reloads it into the live authorizer. A failed reload
+	// (invalid policy) returns its error and leaves enforcement unchanged.
+	Sync(ctx context.Context) error
+}
 
+// PolicySimulator is the seam PolicyEngine.SimulatePolicy delegates to for
+// evaluating a single draft policy against a check request in isolation,
+// without persisting the policy or mutating the live enforcement state
+// ABACSync maintains. This interface carries no qrdb dependency into
+// pkg/iam; pkg/server injects the real implementation (a scratch qrdb ABAC
+// decorator scoped to exactly the one draft policy) at composition time.
+type PolicySimulator interface {
+	// Simulate evaluates policy against req in isolation. The returned
+	// CheckResponse's Allowed/MatchedPolicy/MatchedRule/Reason reflect the
+	// draft policy's own rules only (no other stored policy and no RBAC
+	// fallback participate).
+	Simulate(ctx context.Context, policy *Policy, req *CheckRequest) (*CheckResponse, error)
+}
+
+// PolicySimulatorUnavailableError is returned by SimulatePolicy when no
+// PolicySimulator was wired into PolicyEngineOptions (embedded/test
+// contexts with no qrdb node composed).
+type PolicySimulatorUnavailableError struct{}
+
+// Error implements the error interface.
+func (e *PolicySimulatorUnavailableError) Error() string {
+	return "iam: policy simulator not available"
+}
+
+// PolicyEngine provides policy management and evaluation. Evaluate/Check
+// delegate every decision to opts.RBACAuthorizer (the composed qrdb
+// RBAC+ABAC authorizer); PolicyEngine itself performs no local policy
+// compilation or evaluation (P6.1 end-state of the unified login-plane
+// plan — the duplicated local ABAC engine, previously kept as a
+// live-reloadable layer, was deleted once qrdb shipped its own live-reload
+// seam).
+type PolicyEngine struct {
+	storage PolicyStorage
+	cache   *PolicyCache
+	opts    PolicyEngineOptions
+	mu      sync.RWMutex
+}
+
+// NewPolicyEngine creates a new policy engine. opts.RBACAuthorizer becomes
+// Evaluate's single decision point for every request; opts.ABACSync (when
+// set) is driven after every CRUD mutation to keep qrdb's live ABAC
+// decorator synchronized with the policy store.
+func NewPolicyEngine(opts PolicyEngineOptions) *PolicyEngine {
 	return &PolicyEngine{
-		storage:   opts.Storage,
-		cache:     opts.Cache,
-		compiler:  compiler,
-		evaluator: evaluator,
-		opts:      opts,
+		storage: opts.Storage,
+		cache:   opts.Cache,
+		opts:    opts,
 	}
 }
 
-// CreatePolicy creates a new policy.
+// CreatePolicy creates a new policy, then synchronizes qrdb's live ABAC
+// decorator with the full current policy store. A failed sync rejects the
+// write: the just-created policy is deleted from storage (best-effort
+// compensation) and the sync error is returned, leaving both storage and
+// live enforcement in their pre-call state.
 func (e *PolicyEngine) CreatePolicy(ctx context.Context, tenantID string, policy *Policy) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -79,6 +144,15 @@ func (e *PolicyEngine) CreatePolicy(ctx context.Context, tenantID string, policy
 		return err
 	}
 
+	if err := e.syncABAC(ctx); err != nil {
+		// Reject the write: compensate by deleting what was just created.
+		_ = e.storage.DeletePolicy(ctx, tenantID, policy.Metadata.Name)
+		if e.cache != nil {
+			e.cache.InvalidateAll(tenantID)
+		}
+		return err
+	}
+
 	// Invalidate cache
 	if e.cache != nil {
 		e.cache.InvalidateAll(tenantID)
@@ -107,7 +181,10 @@ func (e *PolicyEngine) GetPolicy(ctx context.Context, tenantID, name string) (*P
 	return policy, nil
 }
 
-// UpdatePolicy updates an existing policy.
+// UpdatePolicy updates an existing policy, then synchronizes qrdb's live
+// ABAC decorator with the full current policy store. A failed sync rejects
+// the write: the previous policy value is restored in storage (best-effort
+// compensation) and the sync error is returned.
 func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy *Policy) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -141,6 +218,15 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 		return err
 	}
 
+	if err := e.syncABAC(ctx); err != nil {
+		// Reject the write: compensate by restoring the previous value.
+		_ = e.storage.UpdatePolicy(ctx, tenantID, existing)
+		if e.cache != nil {
+			e.cache.InvalidateAll(tenantID)
+		}
+		return err
+	}
+
 	// Invalidate cache
 	if e.cache != nil {
 		e.cache.InvalidateAll(tenantID)
@@ -149,7 +235,10 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 	return nil
 }
 
-// DeletePolicy deletes a policy by name.
+// DeletePolicy deletes a policy by name, then synchronizes qrdb's live ABAC
+// decorator with the full current policy store. A failed sync rejects the
+// write: the deleted policy is re-created in storage (best-effort
+// compensation) and the sync error is returned.
 func (e *PolicyEngine) DeletePolicy(ctx context.Context, tenantID, name string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -168,6 +257,15 @@ func (e *PolicyEngine) DeletePolicy(ctx context.Context, tenantID, name string) 
 
 	// Delete policy
 	if err := e.storage.DeletePolicy(ctx, tenantID, name); err != nil {
+		return err
+	}
+
+	if err := e.syncABAC(ctx); err != nil {
+		// Reject the write: compensate by re-creating the deleted policy.
+		_ = e.storage.CreatePolicy(ctx, tenantID, existing)
+		if e.cache != nil {
+			e.cache.InvalidateAll(tenantID)
+		}
 		return err
 	}
 
@@ -196,67 +294,79 @@ func (e *PolicyEngine) ValidatePolicy(policy *Policy) error {
 	return policy.Validate()
 }
 
-// TestPolicy evaluates a policy against a test request without persisting it.
-func (e *PolicyEngine) TestPolicy(ctx context.Context, tenantID string, req *CheckRequest) (*CheckResponse, error) {
+// syncABAC drives opts.ABACSync (when configured) to recompute the full
+// cross-tenant policy set from storage and reload it into qrdb's live ABAC
+// decorator. Nil-safe: a nil ABACSync is a no-op success (embedded/test
+// contexts with no qrdb node composed). Callers already hold e.mu.
+func (e *PolicyEngine) syncABAC(ctx context.Context) error {
+	if e.opts.ABACSync == nil {
+		return nil
+	}
+	return e.opts.ABACSync.Sync(ctx)
+}
+
+// SyncABAC performs an out-of-band ABAC sync, driving opts.ABACSync exactly
+// as every CRUD mutation does. It is the composition root's hook for the
+// initial load at startup (post-unseal, once the IAM policy store is
+// readable) so the live decorator reflects every previously stored policy
+// before the first request is evaluated. Nil-safe.
+func (e *PolicyEngine) SyncABAC(ctx context.Context) error {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-
-	return e.evaluator.Evaluate(ctx, req)
+	return e.syncABAC(ctx)
 }
 
-// Evaluate evaluates an authorization request.
+// TestPolicy evaluates a check request against the CURRENT active policies
+// (identical to Evaluate; kept as a distinct name for API/RPC parity with
+// the historical "dry run against live state" contract).
+func (e *PolicyEngine) TestPolicy(ctx context.Context, tenantID string, req *CheckRequest) (*CheckResponse, error) {
+	return e.Evaluate(ctx, req)
+}
+
+// Evaluate evaluates an authorization request by delegating to
+// opts.RBACAuthorizer — the single decision point for RBAC+ABAC on a
+// composed node. A nil RBACAuthorizer (embedded/test contexts with no qrdb
+// node composed) default-denies.
 func (e *PolicyEngine) Evaluate(ctx context.Context, req *CheckRequest) (*CheckResponse, error) {
-	// Ensure cache is populated for the tenant
-	tenantID := req.Subject.TenantID
-	if tenantID == "" {
-		tenantID = req.Subject.Tenant
+	startTime := time.Now()
+
+	if req == nil || req.Subject.ID == "" {
+		return &CheckResponse{
+			Allowed:          false,
+			Reason:           "invalid request: subject required",
+			EvaluationTimeNs: time.Since(startTime).Nanoseconds(),
+		}, nil
 	}
-	if tenantID != "" && e.cache != nil {
-		// Check if cache has policies for this tenant
-		if len(e.cache.GetAll(tenantID)) == 0 {
-			// Cache is empty, populate it (ignore errors, continue with empty cache)
-			_ = e.CompileAndCache(ctx, tenantID)
-		}
+
+	e.mu.RLock()
+	rbac := e.opts.RBACAuthorizer
+	e.mu.RUnlock()
+
+	if rbac == nil {
+		return &CheckResponse{
+			Allowed:          false,
+			Reason:           "no authorizer configured",
+			EvaluationTimeNs: time.Since(startTime).Nanoseconds(),
+		}, nil
 	}
-	return e.evaluator.Evaluate(ctx, req)
+
+	if authErr := rbac.Authorize(ctx, &req.Subject, req.Resource, req.Action); authErr != nil {
+		return &CheckResponse{
+			Allowed:          false,
+			Reason:           "denied: " + authErr.Error(),
+			EvaluationTimeNs: time.Since(startTime).Nanoseconds(),
+		}, nil
+	}
+	return &CheckResponse{
+		Allowed:          true,
+		Reason:           "allowed",
+		EvaluationTimeNs: time.Since(startTime).Nanoseconds(),
+	}, nil
 }
 
-// CompileAndCache compiles all policies for a tenant and caches them.
-func (e *PolicyEngine) CompileAndCache(ctx context.Context, tenantID string) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	// Get all policies for tenant
-	policies, err := e.storage.ListPolicies(ctx, tenantID, ListOptions{})
-	if err != nil {
-		return err
-	}
-
-	// Compile each policy
-	compiled := make([]*CompiledPolicy, 0, len(policies))
-	for _, policy := range policies {
-		cp, err := e.compiler.Compile(policy)
-		if err != nil {
-			// Log error but continue with other policies
-			continue
-		}
-		compiled = append(compiled, cp)
-	}
-
-	// Cache compiled policies
-	if e.cache != nil {
-		e.cache.SetBatch(tenantID, compiled)
-	}
-
-	return nil
-}
-
-// RefreshCache refreshes the policy cache for a tenant.
-func (e *PolicyEngine) RefreshCache(ctx context.Context, tenantID string) error {
-	return e.CompileAndCache(ctx, tenantID)
-}
-
-// ClearCache clears the policy cache.
+// ClearCache clears the policy cache. Retained for API compatibility; qrdb's
+// live ABAC decorator (not this cache) is the actual decision-affecting
+// state, so clearing this cache has no effect on enforcement.
 func (e *PolicyEngine) ClearCache(_ context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -265,13 +375,22 @@ func (e *PolicyEngine) ClearCache(_ context.Context) error {
 		e.cache.Clear()
 	}
 
-	e.compiler.ClearCache()
-
 	return nil
 }
 
-// SimulatePolicy evaluates a draft policy against a check request without persisting.
-// This enables dry-run testing of policies before deployment.
+// SimulatePolicy evaluates a draft policy against a test request without
+// persisting it, by delegating to opts.Simulator (a scratch qrdb ABAC
+// decorator scoped to exactly the one draft policy). Returns
+// PolicySimulatorUnavailableError when no Simulator is configured.
+//
+// SCOPE NOTE: unlike the deleted local ABAC engine, qrdb's Authorizer
+// interface exposes no step-by-step evaluation trace and no matched-rule
+// name on the ALLOW path (Decorator.Authorize returns nil on allow with no
+// match metadata; only the DENY path's PolicyDeniedError carries
+// Policy/Rule names). SimulatePolicy's EvaluationSteps/IncludeTrace output
+// and the ALLOW-path MatchedRule are therefore always empty — this is a
+// precise, reported capability gap, not an approximation of the
+// allow/deny decision itself, which remains exact.
 func (e *PolicyEngine) SimulatePolicy(ctx context.Context, req *PolicySimulationRequest) (*PolicySimulationResult, error) {
 	if req == nil {
 		return nil, NewIAMError(ErrInvalidCheckRequest, "iam.policy.simulate", "request is nil", nil)
@@ -285,135 +404,52 @@ func (e *PolicyEngine) SimulatePolicy(ctx context.Context, req *PolicySimulation
 
 	startTime := time.Now()
 
-	// Validate the policy first
 	if err := req.Policy.Validate(); err != nil {
 		return nil, NewIAMError(ErrPolicyInvalid, "iam.policy.simulate", "policy validation failed", err)
 	}
 
-	// Compile the policy without caching
-	compiled, err := e.compiler.Compile(req.Policy)
+	e.mu.RLock()
+	sim := e.opts.Simulator
+	e.mu.RUnlock()
+	if sim == nil {
+		return nil, &PolicySimulatorUnavailableError{}
+	}
+
+	resp, err := sim.Simulate(ctx, req.Policy, req.CheckRequest)
 	if err != nil {
-		return nil, NewIAMError(ErrPolicyCompilationFailed, "iam.policy.simulate", "policy compilation failed", err)
+		return nil, NewIAMError(ErrPolicyEvaluationFailed, "iam.policy.simulate", "simulation failed", err)
 	}
 
-	// Evaluate using a temporary single-policy setup
 	result := &PolicySimulationResult{
-		Allowed:          false,
-		EvaluationTimeNs: 0,
-		Reason:           "default deny",
+		Allowed:          resp.Allowed,
+		MatchedPolicy:    resp.MatchedPolicy,
+		MatchedRule:      resp.MatchedRule,
+		Reason:           resp.Reason,
+		EvaluationTimeNs: time.Since(startTime).Nanoseconds(),
 	}
-
-	var steps []EvaluationStep
-	stepNum := 0
-
-	// Check subject matching
-	stepNum++
-	subjectMatches := e.evaluator.matchesSubject(compiled.SubjectMatcher, &req.CheckRequest.Subject)
 	if req.IncludeTrace {
-		steps = append(steps, EvaluationStep{
-			StepNumber: stepNum,
+		result.EvaluationSteps = []EvaluationStep{{
+			StepNumber: 1,
 			PolicyName: req.Policy.Metadata.Name,
-			Action:     "subject_match",
-			Result:     subjectMatches,
-			Details:    formatSubjectMatchDetails(&req.CheckRequest.Subject, subjectMatches),
-		})
+			Action:     "evaluate",
+			Result:     resp.Allowed,
+			Details:    "qrdb ABAC decorator does not expose a step-by-step trace; see SimulatePolicy's scope note",
+		}}
 	}
-
-	if !subjectMatches {
-		result.Reason = "subject does not match policy"
-		result.EvaluationSteps = steps
-		result.EvaluationTimeNs = time.Since(startTime).Nanoseconds()
-		return result, nil
-	}
-
-	// Evaluate rules in priority order
-	for _, rule := range compiled.Rules {
-		stepNum++
-
-		// Check action match
-		actionMatches := matchAction(rule.Actions, req.CheckRequest.Action)
-		if req.IncludeTrace {
-			steps = append(steps, EvaluationStep{
-				StepNumber: stepNum,
-				PolicyName: req.Policy.Metadata.Name,
-				RuleName:   rule.Name,
-				Action:     "action_match",
-				Result:     actionMatches,
-				Details:    formatActionMatchDetails(rule.Actions, req.CheckRequest.Action),
-			})
-		}
-
-		if !actionMatches {
-			continue
-		}
-
-		// Check resource match
-		stepNum++
-		var resourceMatches bool
-		if rule.ResourceTrie != nil {
-			_, _, resourceMatches = rule.ResourceTrie.Match(req.CheckRequest.Resource)
-		}
-		if req.IncludeTrace {
-			steps = append(steps, EvaluationStep{
-				StepNumber: stepNum,
-				PolicyName: req.Policy.Metadata.Name,
-				RuleName:   rule.Name,
-				Action:     "resource_match",
-				Result:     resourceMatches,
-				Details:    formatResourceMatchDetails(req.CheckRequest.Resource),
-			})
-		}
-
-		if !resourceMatches {
-			continue
-		}
-
-		// Rule matches - apply effect
-		stepNum++
-		result.MatchedPolicy = req.Policy.Metadata.Name
-		result.MatchedRule = rule.Name
-
-		if rule.Effect == EffectDeny {
-			result.Allowed = false
-			result.Reason = "explicit deny"
-			if req.IncludeTrace {
-				steps = append(steps, EvaluationStep{
-					StepNumber: stepNum,
-					PolicyName: req.Policy.Metadata.Name,
-					RuleName:   rule.Name,
-					Action:     "apply_effect",
-					Result:     false,
-					Details:    "rule effect is DENY",
-				})
-			}
-		} else {
-			result.Allowed = true
-			result.Reason = "allowed by rule"
-			if req.IncludeTrace {
-				steps = append(steps, EvaluationStep{
-					StepNumber: stepNum,
-					PolicyName: req.Policy.Metadata.Name,
-					RuleName:   rule.Name,
-					Action:     "apply_effect",
-					Result:     true,
-					Details:    "rule effect is ALLOW",
-				})
-			}
-		}
-
-		result.EvaluationSteps = steps
-		result.EvaluationTimeNs = time.Since(startTime).Nanoseconds()
-		return result, nil
-	}
-
-	// No rule matched
-	result.EvaluationSteps = steps
-	result.EvaluationTimeNs = time.Since(startTime).Nanoseconds()
 	return result, nil
 }
 
-// GetEffectivePermissions calculates the effective permissions for a subject.
-// It iterates through all applicable policies and determines allowed/denied actions.
+// GetEffectivePermissions calculates the effective permissions for a subject
+// by delegating each resource-pattern/action combination to
+// opts.RBACAuthorizer — the SAME live composed decision Evaluate uses, so
+// the reported permissions can never disagree with a real Check call.
+//
+// SCOPE NOTE: unlike the deleted local ABAC engine, qrdb's Authorizer
+// interface does not report WHICH policy/rule granted an ALLOW (only a DENY
+// carries the matched policy/rule via PolicyDeniedError), so
+// PermissionSet.Sources is populated on the Denied path only; the Allowed
+// path's Sources is always empty. This is a precise, reported capability
+// gap, not an approximation of the allow/deny decision itself.
 func (e *PolicyEngine) GetEffectivePermissions(ctx context.Context, tenantID string, req *EffectivePermissionsRequest) (*EffectivePermissionsResult, error) {
 	if req == nil {
 		return nil, NewIAMError(ErrInvalidCheckRequest, "iam.policy.effectivePermissions", "request is nil", nil)
@@ -427,127 +463,51 @@ func (e *PolicyEngine) GetEffectivePermissions(ctx context.Context, tenantID str
 
 	startTime := time.Now()
 
-	// Ensure tenant ID is set on subject
 	if req.Subject.TenantID == "" {
 		req.Subject.TenantID = tenantID
 	}
 
-	// Get all policies for tenant
-	e.mu.RLock()
-	policies, err := e.storage.ListPolicies(ctx, tenantID, ListOptions{})
-	e.mu.RUnlock()
-
-	if err != nil {
-		return nil, err
-	}
-
-	// Define common actions to check if not specified
 	actionsToCheck := req.Actions
 	if len(actionsToCheck) == 0 {
 		actionsToCheck = []string{"create", "read", "update", "delete", "list", "admin", "*"}
 	}
 
+	e.mu.RLock()
+	rbac := e.opts.RBACAuthorizer
+	e.mu.RUnlock()
+
 	result := &EffectivePermissionsResult{
-		Subject:                req.Subject,
-		Permissions:            make(map[string]*PermissionSet),
-		TotalPoliciesEvaluated: len(policies),
+		Subject:     req.Subject,
+		Permissions: make(map[string]*PermissionSet),
 	}
 
-	// Initialize permission sets for each resource pattern
 	for _, resourcePattern := range req.ResourcePatterns {
-		result.Permissions[resourcePattern] = &PermissionSet{
+		permSet := &PermissionSet{
 			Allowed: make([]string, 0),
 			Denied:  make([]string, 0),
 			Sources: make(map[string][]string),
 		}
-	}
+		result.Permissions[resourcePattern] = permSet
 
-	// Compile policies
-	compiledPolicies := make([]*CompiledPolicy, 0, len(policies))
-	for _, policy := range policies {
-		compiled, err := e.compiler.Compile(policy)
-		if err != nil {
+		if rbac == nil {
 			continue
 		}
-		compiledPolicies = append(compiledPolicies, compiled)
-	}
-
-	// For each resource pattern and action, check permissions
-	for _, resourcePattern := range req.ResourcePatterns {
-		permSet := result.Permissions[resourcePattern]
 
 		for _, action := range actionsToCheck {
-			checkReq := &CheckRequest{
-				Subject:  *req.Subject,
-				Action:   action,
-				Resource: resourcePattern,
-			}
-
-			// Check against all policies
-			isAllowed := false
-			isDenied := false
-			var allowingSources []string
-			var denyingSources []string
-
-			for _, compiled := range compiledPolicies {
-				// Check subject match
-				if !e.evaluator.matchesSubject(compiled.SubjectMatcher, req.Subject) {
-					continue
-				}
-
-				// Check rules
-				for _, rule := range compiled.Rules {
-					if !matchAction(rule.Actions, checkReq.Action) {
-						continue
-					}
-
-					var resourceMatches bool
-					if rule.ResourceTrie != nil {
-						_, _, resourceMatches = rule.ResourceTrie.Match(checkReq.Resource)
-					}
-					if resourceMatches {
-						if rule.Effect == EffectDeny {
-							isDenied = true
-							denyingSources = append(denyingSources, compiled.Name+"/"+rule.Name)
-						} else if rule.Effect == EffectAllow && !isDenied {
-							isAllowed = true
-							allowingSources = append(allowingSources, compiled.Name+"/"+rule.Name)
-						}
-					}
-				}
-			}
-
-			// Record the permission
-			if isDenied {
+			err := rbac.Authorize(ctx, req.Subject, resourcePattern, action)
+			if err != nil {
 				permSet.Denied = append(permSet.Denied, action)
 				if req.IncludeDenyDetails {
-					permSet.Sources[action] = denyingSources
+					permSet.Sources[action] = []string{err.Error()}
 				}
-			} else if isAllowed {
-				permSet.Allowed = append(permSet.Allowed, action)
-				permSet.Sources[action] = allowingSources
+				continue
 			}
+			permSet.Allowed = append(permSet.Allowed, action)
 		}
 	}
 
 	result.EvaluationTimeNs = time.Since(startTime).Nanoseconds()
 	return result, nil
-}
-
-// Helper functions for simulation trace formatting.
-func formatSubjectMatchDetails(subject *Subject, matched bool) string {
-	if matched {
-		return "subject matches policy constraints"
-	}
-	return "subject does not match: " + subject.ID
-}
-
-func formatActionMatchDetails(ruleActions []string, requestAction string) string {
-	return "checking action '" + requestAction + "' against rule actions"
-}
-
-func formatResourceMatchDetails(resource string) string {
-	return "checking resource: " + resource
 }
 
 // matchAction checks if the request action matches any of the rule's actions.
@@ -563,7 +523,7 @@ func matchAction(ruleActions []string, requestAction string) bool {
 // MemoryPolicyCache is an in-memory implementation of PolicyCache.
 type MemoryPolicyCache struct {
 	mu      sync.RWMutex
-	cache   map[string][]*CompiledPolicy
+	cache   map[string][]*Policy
 	ttl     time.Duration
 	expires map[string]time.Time
 }
@@ -571,14 +531,14 @@ type MemoryPolicyCache struct {
 // NewMemoryPolicyCache creates a new in-memory policy cache.
 func NewMemoryPolicyCache(ttl time.Duration) *MemoryPolicyCache {
 	return &MemoryPolicyCache{
-		cache:   make(map[string][]*CompiledPolicy),
+		cache:   make(map[string][]*Policy),
 		expires: make(map[string]time.Time),
 		ttl:     ttl,
 	}
 }
 
-// Get retrieves compiled policies for a tenant.
-func (c *MemoryPolicyCache) Get(ctx context.Context, tenantID string) ([]*CompiledPolicy, error) {
+// Get retrieves cached policies for a tenant.
+func (c *MemoryPolicyCache) Get(ctx context.Context, tenantID string) ([]*Policy, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -598,8 +558,8 @@ func (c *MemoryPolicyCache) Get(ctx context.Context, tenantID string) ([]*Compil
 	return policies, nil
 }
 
-// Set stores compiled policies for a tenant.
-func (c *MemoryPolicyCache) Set(ctx context.Context, tenantID string, policies []*CompiledPolicy) error {
+// Set stores policies for a tenant.
+func (c *MemoryPolicyCache) Set(ctx context.Context, tenantID string, policies []*Policy) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -627,7 +587,7 @@ func (c *MemoryPolicyCache) Clear(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.cache = make(map[string][]*CompiledPolicy)
+	c.cache = make(map[string][]*Policy)
 	c.expires = make(map[string]time.Time)
 
 	return nil

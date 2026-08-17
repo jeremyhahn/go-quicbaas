@@ -55,6 +55,11 @@ func (m *mockAuditService) GetAuditEvent(ctx context.Context, tenantID, eventID 
 	return args.Get(0).(*iam.AuditEvent), args.Error(1)
 }
 
+func (m *mockAuditService) RecordAuditEvent(ctx context.Context, tenantID string, event *iam.AuditEvent, async bool) (string, error) {
+	args := m.Called(ctx, tenantID, event, async)
+	return args.String(0), args.Error(1)
+}
+
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -206,13 +211,22 @@ func TestAuditServer_QueryAuditEvents(t *testing.T) {
 			},
 		},
 		{
-			name: "missing_tenant_id",
+			// An empty tenant_id no longer errors: it defaults to the
+			// caller's own authenticated tenant (iam.ResolveRequestTenant)
+			// — empty in this unauthenticated test context — and the
+			// query proceeds with that (empty) tenant.
+			name: "missing_tenant_id_defaults_to_caller_tenant",
 			request: &iampb.QueryAuditEventsRequest{
 				TenantId: "",
 			},
-			mockSetup:   func(m *mockAuditService) {},
-			expectError: true,
-			errorCode:   codes.InvalidArgument,
+			mockSetup: func(m *mockAuditService) {
+				m.On("QueryAuditEvents", mock.Anything, "", mock.AnythingOfType("*iam.AuditFilter")).
+					Return([]*iam.AuditEvent{}, 0, nil).Once()
+			},
+			expectError: false,
+			validate: func(t *testing.T, resp *iampb.QueryAuditEventsResponse) {
+				assert.Len(t, resp.Events, 0)
+			},
 		},
 		{
 			name: "service_error",
@@ -320,14 +334,22 @@ func TestAuditServer_GetAuditEvent(t *testing.T) {
 			},
 		},
 		{
-			name: "missing_tenant_id",
+			// An empty tenant_id no longer errors: it defaults to the
+			// caller's own authenticated tenant — empty here — and the
+			// lookup proceeds with that tenant.
+			name: "missing_tenant_id_defaults_to_caller_tenant",
 			request: &iampb.GetAuditEventRequest{
 				TenantId: "",
 				EventId:  "event-123",
 			},
-			mockSetup:   func(m *mockAuditService) {},
-			expectError: true,
-			errorCode:   codes.InvalidArgument,
+			mockSetup: func(m *mockAuditService) {
+				m.On("GetAuditEvent", mock.Anything, "", "event-123").
+					Return(&iam.AuditEvent{ID: "event-123"}, nil).Once()
+			},
+			expectError: false,
+			validate: func(t *testing.T, resp *iampb.AuditEvent) {
+				assert.Equal(t, "event-123", resp.Id)
+			},
 		},
 		{
 			name: "missing_event_id",
@@ -521,6 +543,73 @@ func TestAuditServiceAdapter_GetAuditEvent(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, event)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+}
+
+// fakeAuditLogger is a minimal iam.AuditLogger test double proving
+// AuditServiceAdapter delegates to the underlying logger's Query/GetEvent
+// rather than hardcoding empty/not-found (the stub behavior this adapter
+// replaced when the audit read-back was adapted onto the node chain).
+type fakeAuditLogger struct {
+	queryEvents []*iam.AuditEvent
+	queryTotal  int
+	queryErr    error
+	gotFilter   *iam.AuditFilter
+	getEvent    *iam.AuditEvent
+	getErr      error
+}
+
+func (f *fakeAuditLogger) Log(context.Context, *iam.AuditEvent) error { return nil }
+func (f *fakeAuditLogger) LogAsync(*iam.AuditEvent)                   {}
+func (f *fakeAuditLogger) Query(_ context.Context, filter *iam.AuditFilter) ([]*iam.AuditEvent, int, error) {
+	f.gotFilter = filter
+	return f.queryEvents, f.queryTotal, f.queryErr
+}
+func (f *fakeAuditLogger) GetEvent(context.Context, string, string) (*iam.AuditEvent, error) {
+	return f.getEvent, f.getErr
+}
+func (f *fakeAuditLogger) DeleteOlderThan(context.Context, string, time.Time) (int, error) {
+	return 0, nil
+}
+func (f *fakeAuditLogger) Close() error { return nil }
+
+var _ iam.AuditLogger = (*fakeAuditLogger)(nil)
+
+// TestAuditServiceAdapter_QueryAuditEvents_DelegatesAndStampsTenant proves
+// QueryAuditEvents delegates to the underlying logger's Query (rather than
+// the retired always-empty stub) and stamps the tenantID argument onto the
+// filter passed through.
+func TestAuditServiceAdapter_QueryAuditEvents_DelegatesAndStampsTenant(t *testing.T) {
+	want := []*iam.AuditEvent{{ID: "e1", TenantID: "tenant-1"}}
+	fake := &fakeAuditLogger{queryEvents: want, queryTotal: 1}
+	adapter := NewAuditServiceAdapter(fake)
+
+	events, total, err := adapter.QueryAuditEvents(context.Background(), "tenant-1", &iam.AuditFilter{Limit: 10})
+
+	require.NoError(t, err)
+	assert.Equal(t, want, events)
+	assert.Equal(t, 1, total)
+	require.NotNil(t, fake.gotFilter)
+	assert.Equal(t, "tenant-1", fake.gotFilter.TenantID)
+	assert.Equal(t, 10, fake.gotFilter.Limit)
+}
+
+// TestAuditServiceAdapter_GetAuditEvent_Delegates proves GetAuditEvent
+// delegates to the underlying logger's GetEvent (rather than the retired
+// always-not-found stub) on success, and still maps a lookup error to
+// codes.NotFound.
+func TestAuditServiceAdapter_GetAuditEvent_Delegates(t *testing.T) {
+	want := &iam.AuditEvent{ID: "e1", TenantID: "tenant-1"}
+	fake := &fakeAuditLogger{getEvent: want}
+	adapter := NewAuditServiceAdapter(fake)
+
+	event, err := adapter.GetAuditEvent(context.Background(), "tenant-1", "e1")
+	require.NoError(t, err)
+	assert.Equal(t, want, event)
+
+	fake.getEvent, fake.getErr = nil, errors.New("not found")
+	_, err = adapter.GetAuditEvent(context.Background(), "tenant-1", "missing")
+	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 

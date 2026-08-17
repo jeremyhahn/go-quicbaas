@@ -23,9 +23,22 @@ import (
 	"net/http"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
+)
+
+// testTimeout and httpClient are package-level: the bespoke MCP JSON-RPC
+// listener's integration suite (authorization_test.go) that used to define
+// them here was retired when quicbaas adopted go-qrdb's unified MCP server;
+// this Ollama-embedding suite has no dependency on that listener, so it
+// keeps its own minimal HTTP client.
+var (
+	testTimeout = 60 * time.Second
+	httpClient  = helpers.NewHTTPClient(testTimeout)
 )
 
 var ollamaURL = getOllamaEnv("OLLAMA_URL", "http://ollama:11434")

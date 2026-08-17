@@ -687,23 +687,16 @@ func (h *IAMHandler) ListImpersonations(w http.ResponseWriter, r *http.Request) 
 
 // RegisterAdminRoutes registers delegated admin routes on the provided router.
 //
-// The group is a ROOT chi.Route (the IAM surface registers at the router root
-// because the OIDC discovery endpoints must live there), so it does NOT inherit
-// the /api/v1 chi group's authorization chain. It installs the SAME shared
-// selector the /api/v1 group and the other root-mounted IAM groups use
-// (useAPIAuthzMiddleware). Without it the delegated-admin surface — creating an
-// admin assignment, starting an impersonation session — is reachable
-// UNAUTHENTICATED under validator (RequireAuthz=true) enforcement, a
-// privilege-escalation primitive. Under the default-deny posture the selector is
-// a no-op because EnforceDefaultDeny on the TOP router already covers root
-// mounts, so the surface stays gated exactly once. Every endpoint here is
-// PEP-mapped (the "/api/v1/admin" entries in authz_pep_mapping.go) so the
-// validator gate resolves a registered qrdb permission rather than default-denying.
+// The group is a ROOT chi.Route on the legacy in-process listener, which the
+// unified-API-server architecture never starts a listener for
+// (pkg/server/lifecycle_rest.go startRESTServer); it carries no
+// authorization gate here. Live enforcement for the delegated-admin surface
+// — creating an admin assignment, starting an impersonation session — is the
+// module-only GroupIAM RouteSpecs (routes_iam.go), frozen to the "roles:*"
+// permission family, served through go-qrdb's unified-server authorizer via BindRoute.
 func RegisterAdminRoutes(router chi.Router, handler *IAMHandler) {
 	// Admin assignment management
 	router.Route("/api/v1/admin", func(r chi.Router) {
-		handler.server.useAPIAuthzMiddleware(r)
-
 		r.Route("/assignments", func(r chi.Router) {
 			r.Post("/", handler.CreateAdminAssignment)
 			r.Get("/", handler.ListAdminAssignments)

@@ -20,6 +20,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
@@ -1031,7 +1032,7 @@ var File_api_proto_barrier_proto protoreflect.FileDescriptor
 
 const file_api_proto_barrier_proto_rawDesc = "" +
 	"\n" +
-	"\x17api/proto/barrier.proto\x12\x13quicbaas.barrier.v1\x1a\x1bgoogle/protobuf/empty.proto\"2\n" +
+	"\x17api/proto/barrier.proto\x12\x13quicbaas.barrier.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"2\n" +
 	"\x18BarrierInitializeRequest\x12\x16\n" +
 	"\x06secret\x18\x01 \x01(\tR\x06secret\".\n" +
 	"\x14BarrierUnsealRequest\x12\x16\n" +
@@ -1091,26 +1092,29 @@ const file_api_proto_barrier_proto_rawDesc = "" +
 	"passphrase\x18\x04 \x01(\tR\n" +
 	"passphrase\x12)\n" +
 	"\x10shamir_threshold\x18\x05 \x01(\x05R\x0fshamirThreshold\x12!\n" +
-	"\fshamir_total\x18\x06 \x01(\x05R\vshamirTotal2\x90\x0e\n" +
-	"\aBarrier\x12Z\n" +
-	"\x11BarrierInitialize\x12-.quicbaas.barrier.v1.BarrierInitializeRequest\x1a\x16.google.protobuf.Empty\x12R\n" +
-	"\rBarrierUnseal\x12).quicbaas.barrier.v1.BarrierUnsealRequest\x1a\x16.google.protobuf.Empty\x12=\n" +
-	"\vBarrierSeal\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\x12S\n" +
-	"\rBarrierStatus\x12\x16.google.protobuf.Empty\x1a*.quicbaas.barrier.v1.BarrierStatusResponse\x12\x84\x01\n" +
-	"\x17BarrierShamirInitialize\x123.quicbaas.barrier.v1.BarrierShamirInitializeRequest\x1a4.quicbaas.barrier.v1.BarrierShamirInitializeResponse\x12\x87\x01\n" +
-	"\x18BarrierShamirUnsealShare\x124.quicbaas.barrier.v1.BarrierShamirUnsealShareRequest\x1a5.quicbaas.barrier.v1.BarrierShamirUnsealShareResponse\x12j\n" +
-	"\x19BarrierShamirUnsealShares\x125.quicbaas.barrier.v1.BarrierShamirUnsealSharesRequest\x1a\x16.google.protobuf.Empty\x12c\n" +
-	"\x17BarrierShamirListShares\x12\x16.google.protobuf.Empty\x1a0.quicbaas.barrier.v1.BarrierShamirSharesResponse\x12h\n" +
-	"\x18BarrierShamirDeleteShare\x124.quicbaas.barrier.v1.BarrierShamirDeleteShareRequest\x1a\x16.google.protobuf.Empty\x12N\n" +
-	"\x1cBarrierShamirDeleteAllShares\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\x12E\n" +
-	"\x13BarrierShamirVerify\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\x12n\n" +
-	"\fBarrierRekey\x12(.quicbaas.barrier.v1.BarrierRekeyRequest\x1a4.quicbaas.barrier.v1.BarrierShamirInitializeResponse\x12\x80\x01\n" +
-	"\x17BarrierRecoveryGenerate\x123.quicbaas.barrier.v1.BarrierRecoveryGenerateRequest\x1a0.quicbaas.barrier.v1.BarrierRecoveryKeysResponse\x12d\n" +
-	"\x16BarrierRecoveryRecover\x122.quicbaas.barrier.v1.BarrierRecoveryRecoverRequest\x1a\x16.google.protobuf.Empty\x12G\n" +
-	"\x15BarrierRecoveryDelete\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\x12c\n" +
-	"\x15BarrierRecoveryStatus\x12\x16.google.protobuf.Empty\x1a2.quicbaas.barrier.v1.BarrierRecoveryStatusResponse\x12o\n" +
-	"\x10BarrierRootToken\x12,.quicbaas.barrier.v1.BarrierRootTokenRequest\x1a-.quicbaas.barrier.v1.BarrierRootTokenResponse\x12f\n" +
-	"\x17BarrierEnableEncryption\x123.quicbaas.barrier.v1.BarrierEnableEncryptionRequest\x1a\x16.google.protobuf.EmptyB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"\fshamir_total\x18\x06 \x01(\x05R\vshamirTotal2\xb3\x11\n" +
+	"\aBarrier\x12s\n" +
+	"\x11BarrierInitialize\x12-.quicbaas.barrier.v1.BarrierInitializeRequest\x1a\x16.google.protobuf.Empty\"\x17\xc2\xf3\x18\x13tenant_barrier:init\x12m\n" +
+	"\rBarrierUnseal\x12).quicbaas.barrier.v1.BarrierUnsealRequest\x1a\x16.google.protobuf.Empty\"\x19\xc2\xf3\x18\x15tenant_barrier:unseal\x12V\n" +
+	"\vBarrierSeal\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\"\x17\xc2\xf3\x18\x13tenant_barrier:seal\x12n\n" +
+	"\rBarrierStatus\x12\x16.google.protobuf.Empty\x1a*.quicbaas.barrier.v1.BarrierStatusResponse\"\x19\xc2\xf3\x18\x15tenant_barrier:status\x12\xa0\x01\n" +
+	"\x17BarrierShamirInitialize\x123.quicbaas.barrier.v1.BarrierShamirInitializeRequest\x1a4.quicbaas.barrier.v1.BarrierShamirInitializeResponse\"\x1a\xc2\xf3\x18\x16seal:initialize_shamir\x12\xa1\x01\n" +
+	"\x18BarrierShamirUnsealShare\x124.quicbaas.barrier.v1.BarrierShamirUnsealShareRequest\x1a5.quicbaas.barrier.v1.BarrierShamirUnsealShareResponse\"\x18\xc2\xf3\x18\x14barrier:unseal-share\x12\x84\x01\n" +
+	"\x19BarrierShamirUnsealShares\x125.quicbaas.barrier.v1.BarrierShamirUnsealSharesRequest\x1a\x16.google.protobuf.Empty\"\x18\xc2\xf3\x18\x14barrier:unseal-share\x12t\n" +
+	"\x17BarrierShamirListShares\x12\x16.google.protobuf.Empty\x1a0.quicbaas.barrier.v1.BarrierShamirSharesResponse\"\x0f\xc2\xf3\x18\vseal:status\x12x\n" +
+	"\x18BarrierShamirDeleteShare\x124.quicbaas.barrier.v1.BarrierShamirDeleteShareRequest\x1a\x16.google.protobuf.Empty\"\x0e\xc2\xf3\x18\n" +
+	"seal:rekey\x12^\n" +
+	"\x1cBarrierShamirDeleteAllShares\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\"\x0e\xc2\xf3\x18\n" +
+	"seal:rekey\x12V\n" +
+	"\x13BarrierShamirVerify\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\"\x0f\xc2\xf3\x18\vseal:status\x12~\n" +
+	"\fBarrierRekey\x12(.quicbaas.barrier.v1.BarrierRekeyRequest\x1a4.quicbaas.barrier.v1.BarrierShamirInitializeResponse\"\x0e\xc2\xf3\x18\n" +
+	"seal:rekey\x12\x9c\x01\n" +
+	"\x17BarrierRecoveryGenerate\x123.quicbaas.barrier.v1.BarrierRecoveryGenerateRequest\x1a0.quicbaas.barrier.v1.BarrierRecoveryKeysResponse\"\x1a\xc2\xf3\x18\x16seal:generate_recovery\x12\x80\x01\n" +
+	"\x16BarrierRecoveryRecover\x122.quicbaas.barrier.v1.BarrierRecoveryRecoverRequest\x1a\x16.google.protobuf.Empty\"\x1a\xc2\xf3\x18\x16seal:recover_with_keys\x12c\n" +
+	"\x15BarrierRecoveryDelete\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\"\x1a\xc2\xf3\x18\x16seal:generate_recovery\x12t\n" +
+	"\x15BarrierRecoveryStatus\x12\x16.google.protobuf.Empty\x1a2.quicbaas.barrier.v1.BarrierRecoveryStatusResponse\"\x0f\xc2\xf3\x18\vseal:status\x12\x83\x01\n" +
+	"\x10BarrierRootToken\x12,.quicbaas.barrier.v1.BarrierRootTokenRequest\x1a-.quicbaas.barrier.v1.BarrierRootTokenResponse\"\x12\xc2\xf3\x18\x0eseal:bootstrap\x12\x82\x01\n" +
+	"\x17BarrierEnableEncryption\x123.quicbaas.barrier.v1.BarrierEnableEncryptionRequest\x1a\x16.google.protobuf.Empty\"\x1a\xc2\xf3\x18\x16seal:enable_encryptionB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_barrier_proto_rawDescOnce sync.Once

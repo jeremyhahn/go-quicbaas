@@ -23,43 +23,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // =============================================================================
 // Certificate Service Route Registration
 // =============================================================================
-
-// registerCertificateRoutes registers all certificate-related routes.
-func registerCertificateRoutes(s *Server, r chi.Router) {
-	r.Route("/certificate", func(r chi.Router) {
-		r.Post("/issue", s.HandleIssueCertificate)
-		r.Post("/sign-csr", s.HandleSignCSR)
-		r.Post("/revoke", s.HandleRevokeCertificate)
-		r.Post("/verify", s.HandleVerifyCertificate)
-		r.Get("/ca", s.HandleGetCACertificate)
-		r.Post("/tls-config", s.HandleGetTLSConfig)
-
-		// CA administration verbs backing the canonical `quicbaas ca`
-		// CLI: info / bundle / list. Issue and revoke reuse the
-		// existing /issue and /revoke endpoints above; export-bundle is
-		// a client-side write of /ca/bundle so no extra server route is
-		// required.
-		r.Get("/ca/info", s.HandleCAInfo)
-		r.Get("/ca/bundle", s.HandleCABundle)
-		r.Get("/ca/list", s.HandleListCertificates)
-
-		// Certificate extensions backing Security().CertificateExt():
-		// cross-signing an external root, AIA chain resolution, and TCG
-		// device identity (EK / AK / IDevID) issuance. See
-		// handlers_certificate_extensions.go.
-		r.Post("/cross-sign", s.HandleCertificateCrossSign)
-		r.Post("/chain", s.HandleCertificateChain)
-		r.Post("/device-identity", s.HandleCertificateDeviceIdentity)
-	})
-}
 
 // =============================================================================
 // Request/Response Types for REST API

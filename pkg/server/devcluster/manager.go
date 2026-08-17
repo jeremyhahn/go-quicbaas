@@ -54,7 +54,6 @@ type NodeInstance struct {
 	// Port assignments for this node.
 	GRPCPort   int
 	RESTPort   int
-	QUICPort   int
 	MCPPort    int
 	RaftPort   int
 	UnixSocket string
@@ -161,7 +160,6 @@ func (m *Manager) Start(ctx context.Context) error {
 			DataDir:    nodeConfig.Storage.DataDir,
 			GRPCPort:   nodeConfig.Server.GRPC.Port,
 			RESTPort:   nodeConfig.Server.REST.Port,
-			QUICPort:   nodeConfig.Server.QUIC.Port,
 			MCPPort:    nodeConfig.Server.MCP.Port,
 			RaftPort:   m.parseRaftPort(nodeConfig.Raft.RaftAddress),
 			UnixSocket: nodeConfig.Server.Unix.Socket,
@@ -205,7 +203,6 @@ func (m *Manager) generateNodeConfig(nodeIndex int) *config.Config {
 	// Ports per node (auto-incremented from base ports).
 	cfg.Server.GRPC.Port = m.cfg.BasePorts.GRPC + nodeIndex
 	cfg.Server.REST.Port = m.cfg.BasePorts.REST + nodeIndex
-	cfg.Server.QUIC.Port = m.cfg.BasePorts.QUIC + nodeIndex
 	cfg.Server.MCP.Port = m.cfg.BasePorts.MCP + nodeIndex
 
 	// Unix socket per node.

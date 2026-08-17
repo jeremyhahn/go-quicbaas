@@ -11,990 +11,153 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
+// Package quic provides an HTTP/3 over QUIC transport for the QuicBaaS SDK.
+//
+// This transport speaks the exact same REST dialect as sdk/go/transport/rest
+// (identical endpoint mapping, JSON request/response encoding, and error
+// decoding): the only difference is the underlying network protocol. It is
+// implemented by constructing an *http.Client whose RoundTripper is
+// quic-go's http3.Transport, and handing that client to the REST transport
+// via rest.WithHTTPClient. This means the QUIC transport shares 100% of its
+// request-building and response-decoding logic with the REST transport
+// rather than duplicating it — there is no separate wire protocol, opcode
+// set, or handler tree to maintain here.
 package quic
 
 import (
-	"context"
 	"crypto/tls"
-	"sync"
-	"sync/atomic"
-	"time"
+	"net/http"
 
-	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 )
 
-// alpnProtocol is the ALPN protocol identifier for QuicBaaS QUIC.
-const alpnProtocol = "quicbaas-quic"
+// alpnHTTP3 is the ALPN protocol identifier for HTTP/3 (RFC 9114 section 3.1).
+const alpnHTTP3 = "h3"
 
-// Transport implements the transport.Transport interface for QUIC.
-type Transport struct {
-	cfg       *transport.Config
-	opts      *Options
-	conn      *quic.Conn
-	closed    atomic.Bool
-	healthy   atomic.Bool
-	authToken atomic.Value
-
-	mu sync.RWMutex
+// options holds QUIC-transport-specific construction options. It is
+// deliberately narrow: every other setting (timeout, TLS, retries, auth
+// token) already travels on transport.Config and is honored identically to
+// the REST transport, since New ultimately delegates to rest.New.
+type options struct {
+	authToken string
 }
 
-// New creates a new QUIC transport.
+// Option configures the QUIC transport.
+type Option func(*options)
+
+// WithAuthToken sets a Bearer token attached to every request, overriding
+// transport.Config.AuthToken when both are set.
+func WithAuthToken(token string) Option {
+	return func(o *options) {
+		o.authToken = token
+	}
+}
+
+// Transport wraps *rest.Transport so that Close also tears down the
+// underlying HTTP/3 QUIC connections. rest.Transport.Close only knows how to
+// release an *http.Transport's idle connections; it does not recognize
+// http3.Transport, so without this wrapper every QUIC connection this
+// transport opened would leak past Close.
+type Transport struct {
+	*rest.Transport
+	h3 *http3.Transport
+}
+
+// Close closes the HTTP/3 QUIC connections this transport opened, then
+// delegates to the embedded REST transport's Close.
+func (t *Transport) Close() error {
+	h3Err := t.h3.Close()
+	restErr := t.Transport.Close()
+	if h3Err != nil {
+		return h3Err
+	}
+	return restErr
+}
+
+// New creates a new HTTP/3-over-QUIC transport. The returned *Transport
+// dispatches Request/RequestStream calls through the same code path as
+// sdk/go/transport/rest.Transport (via the embedded *rest.Transport); only
+// the underlying http.Client differs. *Transport satisfies transport.Transport,
+// so callers that only need the interface can assign the result directly.
 func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 	if cfg == nil {
 		return nil, errors.NewInvalidInput("quic.New", "config is required")
 	}
-
 	if cfg.Address == "" {
 		return nil, errors.NewInvalidInput("quic.New", "address is required")
 	}
 
-	// Apply options
-	options := DefaultOptions()
-	options.Apply(opts...)
-
-	if err := options.Validate(); err != nil {
-		return nil, err
+	var o options
+	for _, opt := range opts {
+		opt(&o)
 	}
 
-	t := &Transport{
-		cfg:  cfg,
-		opts: options,
+	tlsConfig := buildTLSConfig(cfg)
+
+	h3Transport := &http3.Transport{
+		TLSClientConfig: tlsConfig,
 	}
 
-	// Set initial auth token
-	if options.AuthToken != "" {
-		t.authToken.Store(options.AuthToken)
-	} else {
-		t.authToken.Store("")
+	httpClient := &http.Client{
+		Transport: h3Transport,
+	}
+	if cfg.Timeout > 0 {
+		httpClient.Timeout = cfg.Timeout
 	}
 
-	// Connect to the server
-	if err := t.connect(); err != nil {
-		return nil, err
+	restOpts := []rest.Option{rest.WithHTTPClient(httpClient)}
+
+	authToken := o.authToken
+	if authToken == "" {
+		authToken = cfg.AuthToken
+	}
+	if authToken != "" {
+		restOpts = append(restOpts, rest.WithAuthToken(authToken))
 	}
 
-	return t, nil
-}
-
-// connect establishes the QUIC connection.
-func (t *Transport) connect() error {
-	// Build TLS configuration
-	tlsConfig, err := t.buildTLSConfig()
-	if err != nil {
-		return err
-	}
-
-	// Build QUIC configuration
-	quicConfig := t.buildQUICConfig()
-
-	// Parse address
-	parsed := transport.ParseAddress(t.cfg.Address)
-
-	// Create context with timeout
-	ctx := context.Background()
-	if t.opts.HandshakeTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, t.opts.HandshakeTimeout)
-		defer cancel()
-	}
-
-	// Dial the server
-	conn, err := quic.DialAddr(ctx, parsed.Address, tlsConfig, quicConfig)
-	if err != nil {
-		return errors.Wrap(err, errors.CodeConnection, "quic.connect",
-			"failed to connect to server")
-	}
-
-	t.mu.Lock()
-	t.conn = conn
-	t.mu.Unlock()
-
-	t.healthy.Store(true)
-
-	return nil
-}
-
-// buildTLSConfig creates the TLS configuration for QUIC.
-func (t *Transport) buildTLSConfig() (*tls.Config, error) {
-	var tlsConfig *tls.Config
-
-	if t.opts.TLSConfig != nil {
-		tlsConfig = t.opts.TLSConfig.Clone()
-	} else if t.cfg.TLSConfig != nil {
-		tlsConfig = t.cfg.TLSConfig.Clone()
-	} else {
-		return nil, errors.NewConfiguration("quic.buildTLSConfig",
-			"TLS configuration required for QUIC transport")
-	}
-
-	// QUIC requires TLS 1.3
-	tlsConfig.MinVersion = tls.VersionTLS13
-
-	// Set ALPN protocol
-	if len(tlsConfig.NextProtos) == 0 {
-		tlsConfig.NextProtos = []string{alpnProtocol}
-	}
-
-	return tlsConfig, nil
-}
-
-// buildQUICConfig creates the QUIC configuration.
-func (t *Transport) buildQUICConfig() *quic.Config {
-	return &quic.Config{
-		HandshakeIdleTimeout:           t.opts.HandshakeTimeout,
-		MaxIdleTimeout:                 t.opts.MaxIdleTimeout,
-		KeepAlivePeriod:                t.opts.KeepAlivePeriod,
-		MaxIncomingStreams:             t.opts.MaxIncomingStreams,
-		MaxIncomingUniStreams:          t.opts.MaxIncomingUniStreams,
-		InitialStreamReceiveWindow:     t.opts.InitialStreamReceiveWindow,
-		InitialConnectionReceiveWindow: t.opts.InitialConnectionReceiveWindow,
-		Allow0RTT:                      t.opts.Enable0RTT,
-	}
-}
-
-// Request sends a unary request and returns the response.
-func (t *Transport) Request(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-	if t.closed.Load() {
-		return nil, errors.NewConnection("quic.Request", "transport is closed")
-	}
-
-	return t.requestWithRetry(ctx, service, method, req)
-}
-
-// requestWithRetry executes a request with retry logic.
-func (t *Transport) requestWithRetry(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-	var lastErr error
-	backoff := t.cfg.RetryBackoff
-
-	for attempt := 0; attempt <= t.cfg.MaxRetries; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return nil, errors.Wrap(ctx.Err(), errors.CodeCanceled, "quic.Request",
-					"request canceled during retry")
-			case <-time.After(backoff):
-				backoff = minDuration(backoff*2, t.cfg.MaxRetryBackoff)
-			}
-		}
-
-		resp, err := t.doRequest(ctx, service, method, req)
-		if err == nil {
-			return resp, nil
-		}
-
-		lastErr = err
-
-		if !isRetryableError(err) {
-			return nil, err
-		}
-	}
-
-	return nil, lastErr
-}
-
-// doRequest executes a single request.
-func (t *Transport) doRequest(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
-	// Get opcode for the method
-	opcode, ok := MethodToOpcode(svc, method)
-	if !ok {
-		return nil, errors.NewInvalidInput("quic.doRequest",
-			"unknown method: "+svc+"/"+method)
-	}
-
-	// Transform requests based on service type
-	var transformedReq interface{} = req
-	var isVector bool
-	var isIAM bool
-	var isRAG bool
-	var isCluster bool
-	var isEmbedding bool
-	var isOrchestrator bool
-
-	// Transform Vector requests to server-side format
-	if isVectorService(svc) {
-		isVector = true
-		vh := newVectorHandler(t)
-		var err error
-		transformedReq, err = vh.transformRequest(method, req)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Transform IAM requests to server-side format
-	if isIAMService(svc) {
-		isIAM = true
-		ih := newIAMHandler(t)
-		var err error
-		transformedReq, err = ih.transformRequest(svc, method, req)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Transform RAG requests to server-side format
-	if isRAGService(svc) {
-		isRAG = true
-		var err error
-		transformedReq, err = transformRAGRequest(method, req)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Check if this is a Cluster service request
-	if isClusterService(svc) {
-		isCluster = true
-	}
-
-	// Check if this is an Embedding service request
-	if isEmbeddingService(svc) {
-		isEmbedding = true
-	}
-
-	// Check if this is an Orchestrator service request
-	if isOrchestratorService(svc) {
-		isOrchestrator = true
-	}
-
-	// Pooled provider accounts share the OpOrchestrator dispatch byte with a
-	// disjoint sub-op range (0x30-0x38), the same "shared opcode, disjoint
-	// sub-op range" pattern scheduler/messaging/extended-vector use on
-	// OpScheduler. Keying on the service name keeps dispatch unambiguous.
-	isAccount := isAccountService(svc)
-
-	// Projects likewise share the OpOrchestrator dispatch byte, in their own
-	// disjoint sub-op range (0x40-0x47).
-	isProject := isProjectService(svc)
-
-	// SSH likewise shares the OpOrchestrator dispatch byte, in its own
-	// disjoint sub-op range (0x50-0x5D). The single-byte top-level opcode
-	// space is fully allocated, so every new service rides an existing
-	// dispatch byte this way.
-	isSSH := isSSHService(svc)
-
-	// Detect Barrier and Ceremony services — both use a single dispatch
-	// opcode (OpBarrier / OpCeremony) with the sub-operation byte prepended
-	// to the JSON payload. Identical wire pattern to Orchestrator.
-	isBarrier := isBarrierService(svc)
-	isCeremony := isCeremonyService(svc)
-
-	// Detect Backup service. It uses distinct per-method opcodes
-	// (OpBackupCreate, OpBackupList, ...) and needs no request transform; only
-	// the response must be decoded into the canonical service.*BackupResponse
-	// types so callers get the same shape as every other transport.
-	isBackup := isBackupService(svc)
-
-	// Detect the credential / crypto services. Each uses distinct per-method
-	// opcodes and needs no request transform; only the response must be decoded
-	// into the canonical service.*Response types so callers receive the same
-	// shape every other transport returns.
-	isKMS := isKMSService(svc)
-	isDEK := isDEKService(svc)
-	if isKMS {
-		// A few KMS SDK request shapes differ from the canonical
-		// service.*Request the server decodes (flat rotation-policy body,
-		// PascalCase metadata update); re-encode those into the server wire
-		// shape. All other KMS methods pass through unchanged.
-		var err error
-		transformedReq, err = transformKMSRequest(method, transformedReq)
-		if err != nil {
-			return nil, err
-		}
-	}
-	isCrypto := isCryptoService(svc)
-	isSecrets := isSecretsService(svc)
-
-	// Detect the DynamicSecrets service. Its eight verbs use the server's
-	// dedicated top-level opcodes 0x64-0x6B and need no request transform —
-	// the leaf SDK request structs share the server's snake_case JSON tags.
-	// Only the response needs a typed decode.
-	isDynamicSecrets := isDynamicSecretsService(svc)
-
-	// Detect the Certificate and ObjectStorage services. Both use distinct
-	// per-method opcodes and require no request transform — their SDK request
-	// structs encode to the same wire shape the server unmarshals (Certificate
-	// shares snake_case JSON tags with the server; ObjectStorage shares the
-	// server's untagged PascalCase fields). Only the response must be decoded
-	// into the bespoke SDK types so callers get the same shape every other
-	// transport returns.
-	isCertificate := isCertificateService(svc)
-	isTrust := isTrustService(svc)
-	isAttestation := isAttestationService(svc)
-	isObjectStorage := isObjectStorageService(svc)
-
-	// Detect the PIV and FIDO2 services. Both ride the OpOrchestrator
-	// dispatch byte in their own disjoint sub-op ranges (0x80-0x87 /
-	// 0x90-0x93) and need no request transform: the SDK sends the go-xkms
-	// transport structs, which ARE the wire shape the server decodes. FIDO2
-	// additionally carries the caller's tenant scope as an injected
-	// tenant_id field, mirroring the orchestrator verbs.
-	isPIV := isPIVService(svc)
-	isFIDO2 := isFIDO2Service(svc)
-
-	// Detect the unified login ceremony (quicbaas.Auth/BeginLogin |
-	// FinishLogin). Both use distinct per-method opcodes (OpAuthBeginLogin /
-	// OpAuthFinishLogin) and need no request transform — the qrdb transport
-	// request structs encode directly via JSON. Only the response must be
-	// decoded into the canonical qrdb transport types.
-	isLogin := isLoginCeremonyMethod(svc, method)
-
-	// Detect the session-token lifecycle verbs (Auth/RefreshToken). Their
-	// responses need a typed decode so the caller gets the same SDK type every
-	// other transport returns instead of a raw map.
-	isSessionToken := isSessionTokenMethod(svc, method)
-
-	// Detect the TimeSeries service. The high-level client sends "Write"/"Query"
-	// with its own request structs (int aggregate enums, duration intervals); the
-	// server decodes service.WritePointRequest / service.TSQueryRequest. We
-	// re-encode the request into the server wire shape here.
-	isTimeseries := isTimeseriesService(svc)
-	if isTimeseries {
-		var err error
-		transformedReq, err = transformTimeseriesRequest(method, req)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Detect the Messaging service. The server dispatches every messaging method
-	// on the OpMsg (0x00) opcode with a sub-operation code in payload[0] (range
-	// 0x20-0x2F, disjoint from Scheduler's 0x01-0x1F). The SDK messaging client
-	// sends PascalCase request structs that differ from the server's snake_case
-	// Msg*Request types, so we re-encode the request into the server wire shape
-	// here. Keyed on the service name so it never collides with Scheduler.
-	isMessaging := isMessagingService(svc)
-	if isMessaging {
-		var err error
-		transformedReq, err = transformMessagingRequest(method, req)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Detect the Scheduler service. The server dispatches every scheduler method
-	// on a single opcode (OpScheduler = 0x00) with the per-method sub-operation
-	// code in payload[0], followed by the JSON-encoded request. The SDK scheduler
-	// client sends its own request structs whose field names and enum encodings
-	// differ from the canonical service.*Request types the server unmarshals, so
-	// we re-encode the request into the server wire shape here.
-	isScheduler := isSchedulerService(svc)
-	if isScheduler {
-		var err error
-		transformedReq, err = transformSchedulerRequest(method, req)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Encode request payload
-	payload, err := EncodePayload(transformedReq)
+	restTransport, err := rest.New(cfg, restOpts...)
 	if err != nil {
 		return nil, err
 	}
 
-	// For Orchestrator operations the server uses OpOrchestrator (0x8F) as the
-	// top-level opcode with the sub-operation code in payload[0], followed by
-	// the JSON-encoded request body. We prepend the SubOp byte here so the wire
-	// format matches what handleOrchestratorDispatch expects.
-	if isOrchestrator {
-		// Inject tenant_id from context into the JSON body before SubOp prepend.
-		// The orchestration service validates tenant_id at the business logic layer,
-		// and the SDK request structs deliberately do not expose a TenantID field
-		// (it is resolved from context by every transport, matching gRPC behaviour).
-		payload = injectTenantID(ctx, payload)
-
-		subOp, ok := OrchestratorMethodToSubOp(method)
-		if !ok {
-			return nil, errors.NewInvalidInput("quic.doRequest",
-				"unknown orchestrator method: "+method)
-		}
-		withSubOp := make([]byte, 1+len(payload))
-		withSubOp[0] = subOp
-		copy(withSubOp[1:], payload)
-		payload = withSubOp
-	}
-
-	// Account operations prepend their sub-op byte to the JSON body, exactly
-	// like Orchestrator above. No tenant injection: every account request
-	// carries an explicit tenant_id field, which the service layer requires.
-	if isAccount {
-		subOp, ok := AccountMethodToSubOp(method)
-		if !ok {
-			return nil, errors.NewInvalidInput("quic.doRequest",
-				"unknown account method: "+method)
-		}
-		withSubOp := make([]byte, 1+len(payload))
-		withSubOp[0] = subOp
-		copy(withSubOp[1:], payload)
-		payload = withSubOp
-	}
-
-	// Project operations prepend their sub-op byte the same way. No tenant
-	// injection: every project request carries an explicit tenant_id field,
-	// which the service layer requires.
-	if isProject {
-		subOp, ok := ProjectMethodToSubOp(method)
-		if !ok {
-			return nil, errors.NewInvalidInput("quic.doRequest",
-				"unknown project method: "+method)
-		}
-		withSubOp := make([]byte, 1+len(payload))
-		withSubOp[0] = subOp
-		copy(withSubOp[1:], payload)
-		payload = withSubOp
-	}
-
-	// SSH operations prepend their sub-op byte the same way. No tenant
-	// injection: SSH assets are addressed by the (scope, owner) pair carried
-	// in every request body.
-	if isSSH {
-		subOp, ok := SSHMethodToSubOp(method)
-		if !ok {
-			return nil, errors.NewInvalidInput("quic.doRequest",
-				"unknown ssh method: "+method)
-		}
-		withSubOp := make([]byte, 1+len(payload))
-		withSubOp[0] = subOp
-		copy(withSubOp[1:], payload)
-		payload = withSubOp
-	}
-
-	// For Barrier operations the server uses OpBarrier (0xC0) as the
-	// top-level opcode with the sub-operation code in payload[0]. Same
-	// wire pattern as Orchestrator above.
-	if isBarrier {
-		subOp, ok := BarrierMethodToSubOp(method)
-		if !ok {
-			return nil, errors.NewInvalidInput("quic.doRequest",
-				"unknown barrier method: "+method)
-		}
-		withSubOp := make([]byte, 1+len(payload))
-		withSubOp[0] = subOp
-		copy(withSubOp[1:], payload)
-		payload = withSubOp
-	}
-
-	// The three certificate extension verbs (CrossSign / Chain /
-	// IssueDeviceIdentity) ride the OpOrchestrator dispatch byte in the
-	// disjoint 0x60-0x62 sub-op range, so the sub-op byte is prepended here
-	// exactly as it is for accounts, projects and SSH. The six base
-	// certificate verbs keep their own top-level opcodes and are untouched.
-	if isCertificate {
-		if subOp, ok := CertExtMethodToSubOp(method); ok {
-			withSubOp := make([]byte, 1+len(payload))
-			withSubOp[0] = subOp
-			copy(withSubOp[1:], payload)
-			payload = withSubOp
-		}
-	}
-
-	// The three attestation verbs ride the OpOrchestrator dispatch byte in
-	// the disjoint 0x70-0x72 sub-op range, so the sub-op byte is prepended
-	// here exactly as it is for accounts, projects, SSH and certificate
-	// extensions.
-	if isAttestation {
-		subOp, ok := AttestationMethodToSubOp(method)
-		if !ok {
-			return nil, errors.NewInvalidInput("quic.doRequest",
-				"unknown attestation method: "+method)
-		}
-		withSubOp := make([]byte, 1+len(payload))
-		withSubOp[0] = subOp
-		copy(withSubOp[1:], payload)
-		payload = withSubOp
-	}
-
-	// The eight PIV verbs ride the OpOrchestrator dispatch byte in the
-	// disjoint 0x80-0x87 sub-op range. No tenant injection: PIV slots are
-	// backend-scoped (the xkms model), addressed by the backend field every
-	// request body carries.
-	if isPIV {
-		subOp, ok := PIVMethodToSubOp(method)
-		if !ok {
-			return nil, errors.NewInvalidInput("quic.doRequest",
-				"unknown piv method: "+method)
-		}
-		withSubOp := make([]byte, 1+len(payload))
-		withSubOp[0] = subOp
-		copy(withSubOp[1:], payload)
-		payload = withSubOp
-	}
-
-	// The four FIDO2 ceremony verbs ride the OpOrchestrator dispatch byte in
-	// the disjoint 0x90-0x93 sub-op range. The tenant scope is injected into
-	// the JSON body from the request context before the sub-op prepend,
-	// exactly like the orchestrator verbs: the xkms wire structs carry no
-	// tenant field because xkms runs a single relying party, while QuicBaaS
-	// runs one per tenant.
-	if isFIDO2 {
-		payload = injectTenantID(ctx, payload)
-
-		subOp, ok := FIDO2MethodToSubOp(method)
-		if !ok {
-			return nil, errors.NewInvalidInput("quic.doRequest",
-				"unknown fido2 method: "+method)
-		}
-		withSubOp := make([]byte, 1+len(payload))
-		withSubOp[0] = subOp
-		copy(withSubOp[1:], payload)
-		payload = withSubOp
-	}
-
-	// For Ceremony operations the server uses OpCeremony (0xC1) as the
-	// top-level opcode with the sub-operation code in payload[0].
-	if isCeremony {
-		subOp, ok := CeremonyMethodToSubOp(method)
-		if !ok {
-			return nil, errors.NewInvalidInput("quic.doRequest",
-				"unknown ceremony method: "+method)
-		}
-		withSubOp := make([]byte, 1+len(payload))
-		withSubOp[0] = subOp
-		copy(withSubOp[1:], payload)
-		payload = withSubOp
-	}
-
-	// For Scheduler operations the server uses OpScheduler (0x00) as the
-	// top-level opcode with the sub-operation code in payload[0]. The scheduler
-	// sub-op range (0x01-0x1F) is disjoint from the messaging (0x20-0x2F) and
-	// extended-vector (0x40-0x4F) ranges that share the same OpScheduler dispatch
-	// byte on the server, so keying on the service name keeps dispatch unambiguous.
-	if isScheduler {
-		subOp, ok := SchedulerMethodToSubOp(method)
-		if !ok {
-			return nil, errors.NewInvalidInput("quic.doRequest",
-				"unknown scheduler method: "+method)
-		}
-		withSubOp := make([]byte, 1+len(payload))
-		withSubOp[0] = subOp
-		copy(withSubOp[1:], payload)
-		payload = withSubOp
-	}
-
-	// For Messaging operations the server uses OpMsg (0x00) as the top-level
-	// opcode with the sub-operation code in payload[0]. The messaging sub-op
-	// range (0x20-0x2F) is disjoint from the scheduler range that shares the same
-	// 0x00 dispatch byte, so keying on the service name keeps dispatch
-	// unambiguous on the wire.
-	if isMessaging {
-		subOp, ok := MessagingMethodToSubOp(method)
-		if !ok {
-			return nil, errors.NewInvalidInput("quic.doRequest",
-				"unknown messaging method: "+method)
-		}
-		withSubOp := make([]byte, 1+len(payload))
-		withSubOp[0] = subOp
-		copy(withSubOp[1:], payload)
-		payload = withSubOp
-	}
-
-	// Get auth token
-	token := ""
-	if v := t.authToken.Load(); v != nil {
-		token = v.(string)
-	}
-
-	protoReq := &Request{
-		Opcode:  opcode,
-		Token:   token,
-		Payload: payload,
-	}
-
-	// Open a new stream
-	t.mu.RLock()
-	conn := t.conn
-	t.mu.RUnlock()
-
-	if conn == nil {
-		return nil, errors.NewConnection("quic.doRequest", "connection not available")
-	}
-
-	// Apply default timeout only when the caller has not set a deadline.
-	// This allows callers (e.g., CLI --timeout flag) to provide longer
-	// deadlines that are not clamped by the SDK default.
-	if t.cfg.Timeout > 0 {
-		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, t.cfg.Timeout)
-			defer cancel()
-		}
-	}
-
-	stream, err := conn.OpenStreamSync(ctx)
-	if err != nil {
-		t.healthy.Store(false)
-		return nil, errors.Wrap(err, errors.CodeConnection, "quic.doRequest",
-			"failed to open stream")
-	}
-	defer stream.Close()
-
-	// Write request
-	if err := WriteRequest(stream, protoReq); err != nil {
-		return nil, err
-	}
-
-	// Close the write side to signal request complete
-	if err := stream.Close(); err != nil {
-		return nil, errors.Wrap(err, errors.CodeTransport, "quic.doRequest",
-			"failed to close write side")
-	}
-
-	// Read response
-	resp, err := ReadResponse(stream)
-	if err != nil {
-		return nil, err
-	}
-
-	// Check status
-	if resp.Status != StatusOK {
-		var errMsg string
-		if len(resp.Payload) > 0 {
-			errMsg = string(resp.Payload)
-		} else {
-			errMsg = "request failed"
-		}
-		return nil, StatusToError(resp.Status, errMsg)
-	}
-
-	// Decode response payload
-	if len(resp.Payload) == 0 {
-		// Several services accept a nil response as success (void methods like
-		// messaging Publish/Delete). Route the empty payload through their decoder
-		// so the caller's type expectations are met instead of a bare nil.
-		if isTimeseries {
-			return decodeTimeseriesResponse(method, resp.Payload)
-		}
-		if isMessaging {
-			return decodeMessagingResponse(method, resp.Payload)
-		}
-		return nil, nil
-	}
-
-	// Orchestrator responses may be JSON arrays (e.g., ListBackends returns
-	// []*AgentBackendInfo directly). We decode the raw bytes instead of going
-	// through the generic map[string]interface{} path to handle both shapes.
-	if isAccount {
-		return decodeAccountResponse(method, resp.Payload)
-	}
-	if isProject {
-		return decodeProjectResponse(method, resp.Payload)
-	}
-	if isSSH {
-		return decodeSSHResponse(method, resp.Payload)
-	}
-	if isOrchestrator {
-		return decodeOrchestratorResponse(method, resp.Payload)
-	}
-
-	// Barrier / Ceremony responses are decoded by domain-specific helpers
-	// so per-method converters can be registered without touching the core
-	// transport loop. Both helpers fall back to a generic map decode for
-	// methods that do not yet have a typed converter.
-	if isBarrier {
-		return decodeBarrierResponse(method, resp.Payload)
-	}
-	if isCeremony {
-		return decodeCeremonyResponse(method, resp.Payload)
-	}
-	if isBackup {
-		return decodeBackupResponse(method, resp.Payload)
-	}
-	if isKMS {
-		return decodeKMSResponse(method, resp.Payload)
-	}
-	if isDEK {
-		return decodeDEKResponse(method, resp.Payload)
-	}
-	if isCrypto {
-		return decodeCryptoResponse(method, resp.Payload)
-	}
-	if isSecrets {
-		return decodeSecretsResponse(method, resp.Payload)
-	}
-	if isDynamicSecrets {
-		return decodeDynamicSecretsResponse(method, resp.Payload)
-	}
-	if isScheduler {
-		return decodeSchedulerResponse(method, resp.Payload)
-	}
-	if isTimeseries {
-		return decodeTimeseriesResponse(method, resp.Payload)
-	}
-	if isMessaging {
-		return decodeMessagingResponse(method, resp.Payload)
-	}
-	if isCertificate {
-		return decodeCertificateResponse(method, resp.Payload)
-	}
-	if isTrust {
-		return decodeTrustResponse(method, resp.Payload)
-	}
-	if isAttestation {
-		return decodeAttestationResponse(method, resp.Payload)
-	}
-	if isPIV {
-		return decodePIVResponse(method, resp.Payload)
-	}
-	if isFIDO2 {
-		return decodeFIDO2Response(method, resp.Payload)
-	}
-	if isObjectStorage {
-		return decodeObjectStorageResponse(method, resp.Payload)
-	}
-	if isLogin {
-		return decodeLoginResponse(method, resp.Payload)
-	}
-	if isSessionToken {
-		return decodeSessionTokenResponse(method, resp.Payload)
-	}
-
-	var decoded map[string]interface{}
-	if err := DecodePayload(resp.Payload, &decoded); err != nil {
-		return nil, err
-	}
-
-	// Convert to appropriate SDK type for KV services
-	if isKVService(svc) {
-		return convertKVResponse(method, decoded)
-	}
-
-	// Convert to appropriate SDK type for Vector services
-	if isVector {
-		vh := newVectorHandler(t)
-		return vh.transformResponse(method, decoded)
-	}
-
-	// Convert to appropriate SDK type for IAM services
-	if isIAM {
-		ih := newIAMHandler(t)
-		return ih.transformResponse(svc, method, decoded)
-	}
-
-	// Convert to appropriate SDK type for RAG services
-	if isRAG {
-		return convertRAGResponse(method, decoded)
-	}
-
-	// Convert to appropriate SDK type for Cluster services
-	if isCluster {
-		return convertClusterResponse(method, decoded)
-	}
-
-	// Convert to appropriate SDK type for Embedding services
-	if isEmbedding {
-		return convertEmbeddingResponse(method, decoded)
-	}
-
-	// Return raw map for other services
-	return decoded, nil
+	return &Transport{Transport: restTransport, h3: h3Transport}, nil
 }
 
-// RequestStream initiates a streaming request.
-func (t *Transport) RequestStream(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
-	if t.closed.Load() {
-		return nil, errors.NewConnection("quic.RequestStream", "transport is closed")
-	}
-
-	// Get opcode for the method
-	opcode, ok := MethodToOpcode(service, method)
-	if !ok {
-		return nil, errors.NewInvalidInput("quic.RequestStream",
-			"unknown method: "+service+"/"+method)
-	}
-
-	t.mu.RLock()
-	conn := t.conn
-	t.mu.RUnlock()
-
-	if conn == nil {
-		return nil, errors.NewConnection("quic.RequestStream", "connection not available")
-	}
-
-	// Open a bidirectional stream
-	quicStream, err := conn.OpenStreamSync(ctx)
-	if err != nil {
-		t.healthy.Store(false)
-		return nil, errors.Wrap(err, errors.CodeConnection, "quic.RequestStream",
-			"failed to open stream")
-	}
-
-	// Get auth token
-	token := ""
-	if v := t.authToken.Load(); v != nil {
-		token = v.(string)
-	}
-
-	// Create wrapper stream
-	s := &stream{
-		stream:    quicStream,
-		transport: t,
-		opcode:    opcode,
-		token:     token,
-	}
-
-	// Send initial request if provided
-	if req != nil {
-		if err := s.Send(req); err != nil {
-			quicStream.Close()
-			return nil, err
+// buildTLSConfig constructs the client TLS configuration for the HTTP/3 over
+// QUIC transport. A caller-supplied cfg.TLSConfig is cloned and takes
+// precedence, so mTLS client certificates (including hardware-backed
+// crypto.Signer certificates surfaced through Certificates or
+// GetClientCertificate) are preserved.
+//
+// QUIC mandates TLS 1.3 (RFC 9001 section 4.2): older versions cannot be
+// negotiated over QUIC at all. A caller-supplied MinVersion below TLS 1.3 is
+// therefore raised, never lowered.
+func buildTLSConfig(cfg *transport.Config) *tls.Config {
+	if cfg.TLSConfig != nil {
+		tlsConfig := cfg.TLSConfig.Clone()
+		if tlsConfig.MinVersion < tls.VersionTLS13 {
+			tlsConfig.MinVersion = tls.VersionTLS13
 		}
-	}
-
-	return s, nil
-}
-
-// Conn returns the underlying QUIC connection.
-func (t *Transport) Conn() interface{} {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.conn
-}
-
-// Close closes the transport.
-func (t *Transport) Close() error {
-	if !t.closed.CompareAndSwap(false, true) {
-		return nil
-	}
-
-	t.healthy.Store(false)
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if t.conn != nil {
-		err := t.conn.CloseWithError(0, "transport closed")
-		t.conn = nil
-		if err != nil {
-			return errors.Wrap(err, errors.CodeConnection, "quic.Close",
-				"failed to close connection")
+		if len(tlsConfig.NextProtos) == 0 {
+			tlsConfig.NextProtos = []string{alpnHTTP3}
 		}
+		return tlsConfig
 	}
 
-	return nil
-}
-
-// Healthy returns true if the transport is healthy.
-func (t *Transport) Healthy() bool {
-	if t.closed.Load() {
-		return false
+	return &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		NextProtos: []string{alpnHTTP3},
 	}
-	return t.healthy.Load()
-}
-
-// SetAuthToken sets the authentication token for future requests.
-func (t *Transport) SetAuthToken(token string) {
-	t.authToken.Store(token)
-}
-
-// stream implements transport.Stream for QUIC.
-type stream struct {
-	stream    *quic.Stream
-	transport *Transport
-	opcode    byte
-	token     string
-	closed    atomic.Bool
-}
-
-// Send sends a message on the stream.
-func (s *stream) Send(msg interface{}) error {
-	if s.closed.Load() {
-		return errors.NewConnection("quic.stream.Send", "stream is closed")
-	}
-
-	// Encode payload
-	payload, err := EncodePayload(msg)
-	if err != nil {
-		return err
-	}
-
-	// Build and write request
-	req := &Request{
-		Opcode:  s.opcode,
-		Token:   s.token,
-		Payload: payload,
-	}
-
-	return WriteRequest(s.stream, req)
-}
-
-// Recv receives a message from the stream.
-func (s *stream) Recv() (interface{}, error) {
-	if s.closed.Load() {
-		return nil, errors.NewConnection("quic.stream.Recv", "stream is closed")
-	}
-
-	// Read response
-	resp, err := ReadResponse(s.stream)
-	if err != nil {
-		return nil, err
-	}
-
-	// Check status
-	if resp.Status != StatusOK {
-		var errMsg string
-		if len(resp.Payload) > 0 {
-			errMsg = string(resp.Payload)
-		} else {
-			errMsg = "stream receive failed"
-		}
-		return nil, StatusToError(resp.Status, errMsg)
-	}
-
-	// Decode payload
-	if len(resp.Payload) == 0 {
-		return nil, nil
-	}
-
-	var result map[string]interface{}
-	if err := DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return result, nil
-}
-
-// CloseSend closes the send side of the stream.
-func (s *stream) CloseSend() error {
-	return s.stream.Close()
-}
-
-// Close closes the stream entirely.
-func (s *stream) Close() error {
-	if !s.closed.CompareAndSwap(false, true) {
-		return nil
-	}
-	s.stream.CancelRead(0)
-	return s.stream.Close()
 }
 
 // Factory implements transport.Factory for QUIC.
-type Factory struct {
-	opts []Option
-}
-
-// NewFactory creates a new QUIC transport factory with the given options.
-func NewFactory(opts ...Option) *Factory {
-	return &Factory{opts: opts}
-}
+type Factory struct{}
 
 // Create creates a new QUIC transport.
 func (f *Factory) Create(cfg *transport.Config) (transport.Transport, error) {
-	return New(cfg, f.opts...)
-}
-
-// isRetryableError returns true if the error can be retried.
-func isRetryableError(err error) bool {
-	return errors.IsRetryable(err)
-}
-
-// minDuration returns the minimum of two durations.
-func minDuration(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
-	}
-	return b
+	return New(cfg)
 }

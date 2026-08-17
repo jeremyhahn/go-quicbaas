@@ -15,30 +15,13 @@
 
 package server
 
-import "errors"
-
-// ErrMCPNotCompiled indicates MCP support was not compiled into the binary.
-var ErrMCPNotCompiled = errors.New("mcp support not compiled - build with -tags mcp")
-
-// MCP seam injection points - stub implementations when MCP is not compiled.
-// These variables maintain interface compatibility with the mcp build.
-//
-//nolint:unused // Required for seam injection compatibility with mcp build
-var (
-	_newMCP    interface{} = nil
-	_mcpStopFn interface{} = nil
+import (
+	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
 )
 
-// startMCPServer returns ErrMCPNotCompiled when MCP is not compiled.
-func (s *Server) startMCPServer() error {
-	if s.config.Server.MCP.Enabled {
-		s.logger.Warn("MCP server requested but not compiled - build with -tags mcp")
-		return ErrMCPNotCompiled
-	}
-	return nil
-}
-
-// stopMCPServer is a no-op when MCP is not compiled.
-func (s *Server) stopMCPServer() error {
+// ModuleMCPServer is unavailable without the mcp build tag: the module's MCP
+// hook (pkg/apimodule module_mcp.go) is equally mcp-gated, so no caller can
+// observe a surface here.
+func (s *Server) ModuleMCPServer() *mcpapi.Server {
 	return nil
 }

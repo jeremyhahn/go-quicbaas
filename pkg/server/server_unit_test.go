@@ -156,10 +156,6 @@ func TestServer_Accessors(t *testing.T) {
 		assert.Nil(t, srv.GetGRPCServer())
 	})
 
-	t.Run("GetQUICServer returns nil before start", func(t *testing.T) {
-		assert.Nil(t, srv.GetQUICServer())
-	})
-
 	t.Run("GetCatalogManager returns nil before start", func(t *testing.T) {
 		assert.Nil(t, srv.GetCatalogManager())
 	})
@@ -669,7 +665,6 @@ func TestServer_ConcurrentAccessors(t *testing.T) {
 				srv.GetEffectiveMode()
 				srv.GetRESTServer()
 				srv.GetGRPCServer()
-				srv.GetQUICServer()
 				srv.GetCatalogManager()
 				srv.GetBackendManager()
 				srv.GetWorkerManager()

@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 
@@ -1632,12 +1633,61 @@ func TestOIDCProvider_Token_ClientCredentialsGrant_GrantNotAllowedFinal(t *testi
 // Policy Engine - SimulatePolicy and GetEffectivePermissions tests
 // =============================================================================
 
+// simplePolicySimulator is a minimal, self-contained PolicySimulator test
+// double: exact subject-ID match, exact action match, and resource
+// prefix-wildcard match ("/data/*" matches "/data/test"). It exists purely
+// to exercise PolicyEngine.SimulatePolicy's request-shape validation and
+// response plumbing in this package's tests without depending on qrdb (the
+// real implementation, pkg/server's qrdbPolicySimulator, is exercised by
+// pkg/server's own tests and by pkg/iam's TestPEPService_* guard tests via
+// a real abac.Decorator).
+type simplePolicySimulator struct{}
+
+func (simplePolicySimulator) Simulate(_ context.Context, policy *Policy, req *CheckRequest) (*CheckResponse, error) {
+	subjectMatches := false
+	if len(policy.Spec.Subjects.Users) == 0 {
+		subjectMatches = true
+	}
+	for _, u := range policy.Spec.Subjects.Users {
+		if u == req.Subject.ID {
+			subjectMatches = true
+		}
+	}
+	if !subjectMatches {
+		return &CheckResponse{Allowed: false, Reason: "subject does not match policy"}, nil
+	}
+
+	for _, rule := range policy.Spec.Rules {
+		if !matchAction(rule.Actions, req.Action) {
+			continue
+		}
+		for _, pattern := range rule.Resources {
+			prefix := strings.TrimSuffix(pattern, "*")
+			if !strings.HasPrefix(req.Resource, prefix) {
+				continue
+			}
+			if rule.Effect == EffectDeny {
+				return &CheckResponse{
+					Allowed: false, MatchedPolicy: policy.Metadata.Name, MatchedRule: rule.Name,
+					Reason: "explicit deny",
+				}, nil
+			}
+			return &CheckResponse{
+				Allowed: true, MatchedPolicy: policy.Metadata.Name, MatchedRule: rule.Name,
+				Reason: "allowed by rule",
+			}, nil
+		}
+	}
+	return &CheckResponse{Allowed: false, Reason: "no matching rule"}, nil
+}
+
 func TestPolicyEngine_SimulatePolicy_SuccessFinal(t *testing.T) {
 	ctx := context.Background()
 
 	storage := newMockPolicyStorage()
 	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
+		Storage:   storage,
+		Simulator: simplePolicySimulator{},
 	})
 
 	policy := &Policy{
@@ -1743,7 +1793,8 @@ func TestPolicyEngine_SimulatePolicy_DenyEffectFinal(t *testing.T) {
 
 	storage := newMockPolicyStorage()
 	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
+		Storage:   storage,
+		Simulator: simplePolicySimulator{},
 	})
 
 	policy := &Policy{
@@ -1883,33 +1934,6 @@ func TestPolicyEngine_GetEffectivePermissions_EmptyResourcePatternsFinal(t *test
 
 	_, err := engine.GetEffectivePermissions(ctx, "tenant-1", req)
 	assert.Error(t, err)
-}
-
-// =============================================================================
-// Policy Helper Functions tests
-// =============================================================================
-
-func TestFormatSubjectMatchDetailsFinal(t *testing.T) {
-	subject := &Subject{ID: "user-format-123"}
-
-	matchedDetails := formatSubjectMatchDetails(subject, true)
-	assert.Contains(t, matchedDetails, "matches")
-
-	notMatchedDetails := formatSubjectMatchDetails(subject, false)
-	assert.Contains(t, notMatchedDetails, "does not match")
-	assert.Contains(t, notMatchedDetails, "user-format-123")
-}
-
-func TestFormatActionMatchDetailsFinal(t *testing.T) {
-	details := formatActionMatchDetails([]string{"read", "write"}, "read")
-	assert.Contains(t, details, "read")
-	assert.Contains(t, details, "action")
-}
-
-func TestFormatResourceMatchDetailsFinal(t *testing.T) {
-	details := formatResourceMatchDetails("/api/v1/users")
-	assert.Contains(t, details, "/api/v1/users")
-	assert.Contains(t, details, "resource")
 }
 
 // =============================================================================
@@ -2560,323 +2584,6 @@ func TestSessionPolicy_ValidateCoverage(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 			}
-		})
-	}
-}
-
-// =============================================================================
-// Tests for pep.go - Policy Enforcement Point
-// =============================================================================
-
-func TestPEP_Check(t *testing.T) {
-	// Create a PEP with default config
-	config := &PEPConfig{
-		TenantID: "tenant-pep",
-	}
-	pep := NewPEP(config)
-	defer pep.Close()
-
-	ctx := context.Background()
-
-	t.Run("nil request", func(t *testing.T) {
-		_, err := pep.Check(ctx, nil)
-		assert.Error(t, err)
-	})
-
-	t.Run("empty subject", func(t *testing.T) {
-		req := &CheckRequest{
-			Resource: "resource/1",
-			Action:   "read",
-		}
-		_, err := pep.Check(ctx, req)
-		assert.Error(t, err)
-	})
-
-	t.Run("valid request with no policies", func(t *testing.T) {
-		req := &CheckRequest{
-			Subject: Subject{
-				ID:       "user-1",
-				TenantID: "tenant-pep",
-			},
-			Resource: "resource/1",
-			Action:   "read",
-		}
-		resp, err := pep.Check(ctx, req)
-		require.NoError(t, err)
-		// Default deny when no policies match
-		assert.False(t, resp.Allowed)
-	})
-}
-
-func TestPEP_CheckBatch(t *testing.T) {
-	config := &PEPConfig{
-		TenantID: "tenant-pep",
-	}
-	pep := NewPEP(config)
-	defer pep.Close()
-
-	ctx := context.Background()
-
-	t.Run("nil batch request", func(t *testing.T) {
-		_, err := pep.CheckBatch(ctx, nil)
-		assert.Error(t, err)
-	})
-
-	t.Run("empty batch request", func(t *testing.T) {
-		_, err := pep.CheckBatch(ctx, &BatchCheckRequest{})
-		assert.Error(t, err)
-	})
-
-	t.Run("valid batch request", func(t *testing.T) {
-		req := &BatchCheckRequest{
-			Checks: []*CheckRequest{
-				{
-					Subject:  Subject{ID: "user-1", TenantID: "tenant-pep"},
-					Resource: "resource/1",
-					Action:   "read",
-				},
-				{
-					Subject:  Subject{ID: "user-1", TenantID: "tenant-pep"},
-					Resource: "resource/2",
-					Action:   "write",
-				},
-			},
-		}
-		resp, err := pep.CheckBatch(ctx, req)
-		require.NoError(t, err)
-		assert.Len(t, resp.Responses, 2)
-	})
-}
-
-func TestPEP_LoadPolicy(t *testing.T) {
-	config := &PEPConfig{
-		TenantID: "tenant-pep",
-	}
-	pep := NewPEP(config)
-	defer pep.Close()
-
-	ctx := context.Background()
-
-	t.Run("load valid policy", func(t *testing.T) {
-		policy := &Policy{
-			APIVersion: "abac.quicbaas.io/v1",
-			Kind:       "Policy",
-			Metadata: PolicyMetadata{
-				Name:   "test-policy",
-				Tenant: "tenant-pep",
-			},
-			Spec: PolicySpec{
-				Rules: []Rule{
-					{
-						Name:      "allow-read",
-						Effect:    EffectAllow,
-						Actions:   []string{"read"},
-						Resources: []string{"resource/*"},
-					},
-				},
-			},
-		}
-
-		err := pep.LoadPolicy(ctx, policy)
-		require.NoError(t, err)
-	})
-
-	t.Run("load invalid policy", func(t *testing.T) {
-		policy := &Policy{
-			Metadata: PolicyMetadata{
-				Name:   "", // Invalid: empty name
-				Tenant: "tenant-pep",
-			},
-		}
-
-		err := pep.LoadPolicy(ctx, policy)
-		assert.Error(t, err)
-	})
-}
-
-func TestPEP_RemovePolicy(t *testing.T) {
-	config := &PEPConfig{
-		TenantID: "tenant-pep",
-	}
-	pep := NewPEP(config)
-	defer pep.Close()
-
-	ctx := context.Background()
-
-	// First load a policy
-	policy := &Policy{
-		APIVersion: "abac.quicbaas.io/v1",
-		Kind:       "Policy",
-		Metadata: PolicyMetadata{
-			Name:   "remove-test-policy",
-			Tenant: "tenant-pep",
-		},
-		Spec: PolicySpec{
-			Rules: []Rule{
-				{
-					Name:      "allow-read",
-					Effect:    EffectAllow,
-					Actions:   []string{"read"},
-					Resources: []string{"resource/*"},
-				},
-			},
-		},
-	}
-
-	err := pep.LoadPolicy(ctx, policy)
-	require.NoError(t, err)
-
-	// Remove the policy
-	pep.RemovePolicy("remove-test-policy")
-
-	// The policy should now be removed from cache
-	// (this is a void function, just verify it doesn't panic)
-}
-
-func TestPEP_GetStats(t *testing.T) {
-	config := &PEPConfig{
-		TenantID: "tenant-pep",
-	}
-	pep := NewPEP(config)
-	defer pep.Close()
-
-	stats := pep.GetStats()
-	require.NotNil(t, stats)
-}
-
-func TestPEP_CloseTwice(t *testing.T) {
-	config := &PEPConfig{
-		TenantID: "tenant-pep",
-	}
-	pep := NewPEP(config)
-
-	// First close should succeed
-	err := pep.Close()
-	assert.NoError(t, err)
-
-	// Second close should also succeed (idempotent)
-	err = pep.Close()
-	assert.NoError(t, err)
-}
-
-func TestPEP_CheckAfterClose(t *testing.T) {
-	config := &PEPConfig{
-		TenantID: "tenant-pep",
-	}
-	pep := NewPEP(config)
-
-	err := pep.Close()
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	req := &CheckRequest{
-		Subject:  Subject{ID: "user-1", TenantID: "tenant-pep"},
-		Resource: "resource/1",
-		Action:   "read",
-	}
-
-	// Check after close should return error
-	_, err = pep.Check(ctx, req)
-	assert.ErrorIs(t, err, ErrPEPClosed)
-}
-
-// =============================================================================
-// Tests for resource_trie.go - extractVariableName and splitPath
-// =============================================================================
-
-func TestSplitPathCoverage(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     string
-		expected []string
-	}{
-		{
-			name:     "simple path",
-			path:     "a/b/c",
-			expected: []string{"a", "b", "c"},
-		},
-		{
-			name:     "empty path returns empty slice",
-			path:     "",
-			expected: []string{},
-		},
-		{
-			name:     "path with slash prefix",
-			path:     "/a/b",
-			expected: []string{"a", "b"},
-		},
-		{
-			name:     "single segment",
-			path:     "single",
-			expected: []string{"single"},
-		},
-		{
-			name:     "path with double slashes preserves empty segment",
-			path:     "a//b",
-			expected: []string{"a", "", "b"},
-		},
-		{
-			name:     "path with trailing slash",
-			path:     "a/b/",
-			expected: []string{"a", "b"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := splitPath(tt.path)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestExtractVariableNameCoverage(t *testing.T) {
-	tests := []struct {
-		name     string
-		segment  string
-		expected string
-	}{
-		{
-			name:     "curly brace variable",
-			segment:  "{id}",
-			expected: "id",
-		},
-		{
-			name:     "dollar curly brace variable",
-			segment:  "${user_id}",
-			expected: "user_id",
-		},
-		{
-			name:     "colon prefix variable",
-			segment:  ":param",
-			expected: "param",
-		},
-		{
-			name:     "literal returns itself",
-			segment:  "literal",
-			expected: "literal",
-		},
-		{
-			name:     "empty returns empty",
-			segment:  "",
-			expected: "",
-		},
-		{
-			name:     "partial brace returns itself",
-			segment:  "{id",
-			expected: "{id",
-		},
-		{
-			name:     "complex variable name",
-			segment:  "{tenant_id}",
-			expected: "tenant_id",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			varName := extractVariableName(tt.segment)
-			assert.Equal(t, tt.expected, varName)
 		})
 	}
 }

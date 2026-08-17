@@ -432,23 +432,3 @@ func (s *Server) HandleCompactObjectBackend(w http.ResponseWriter, r *http.Reque
 // =============================================================================
 // Route Registration
 // =============================================================================
-
-// registerObjectStorageAdminRoutes registers all object storage admin routes.
-func registerObjectStorageAdminRoutes(s *Server, r chi.Router) {
-	r.Route("/admin", func(r chi.Router) {
-		// Backend management
-		r.Post("/object-backends", s.HandleCreateObjectBackend)
-		r.Put("/object-backends/{name}", s.HandleUpdateObjectBackend)
-		r.Delete("/object-backends/{name}", s.HandleDeleteObjectBackend)
-		r.Put("/object-backends/{name}/status", s.HandleSetObjectBackendStatus)
-		r.Post("/object-backends/{name}/compact", s.HandleCompactObjectBackend)
-
-		// Storage stats and GC
-		r.Get("/storage/stats", s.HandleGetStorageStats)
-		r.Post("/storage/gc", s.HandleRunGarbageCollection)
-		r.Get("/storage/gc/progress", s.HandleGetGarbageCollectionProgress)
-
-		// Object repair
-		r.Post("/objects/repair", s.HandleRepairObject)
-	})
-}

@@ -14,46 +14,25 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package mcp provides stub implementations when MCP support is not compiled.
-// Build with -tags mcp to enable full MCP functionality.
+// Build with -tags mcp to enable the full MCP tool registry.
 package mcp
 
 import (
-	"errors"
-	"time"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// ErrMCPNotCompiled is returned when MCP functions are called without the mcp build tag.
-var ErrMCPNotCompiled = errors.New("mcp support not compiled - build with -tags mcp")
-
-// Server is a stub for the MCP server when MCP support is not compiled.
+// Server is a stub for the MCP tool-registry server when MCP support is not
+// compiled.
 type Server struct{}
 
 // Config contains MCP server configuration (stub).
 type Config struct {
-	ServerName               string
-	ServerVersion            string
-	Transport                string
-	HTTPAddr                 string
-	RequestTimeout           time.Duration
-	MaxConcurrentRequests    int
-	AuthorizationService     interfaces.AuthorizationService
-	AuthManager              interfaces.AuthManager
-	MCPAuth                  *MCPAuthConfig
-	EnableClientRegistration bool
+	ServerName    string
+	ServerVersion string
 }
 
-// MCPAuthConfig contains MCP authorization configuration (stub).
-type MCPAuthConfig struct {
-	ResourceURI         string
-	AuthorizationServer string
-	Scopes              []string
-}
-
-// NewServer returns an error because MCP support is not compiled.
+// NewServer returns nil because MCP support is not compiled.
 func NewServer(_ service.QuicBaaS, _ *Config, _ *logger.Logger) *Server {
 	return nil
 }
@@ -63,31 +42,11 @@ func DefaultConfig() *Config {
 	return nil
 }
 
-// Start returns an error because MCP support is not compiled.
-func (s *Server) Start() error {
-	return ErrMCPNotCompiled
-}
+// SetBarrierService is a no-op because MCP support is not compiled.
+func (s *Server) SetBarrierService(_ service.BarrierServicer) {}
 
-// Stop returns an error because MCP support is not compiled.
-func (s *Server) Stop() error {
-	return ErrMCPNotCompiled
-}
+// SetCeremonyService is a no-op because MCP support is not compiled.
+func (s *Server) SetCeremonyService(_ service.CeremonyServicer) {}
 
-// SetAuthorizationService is a no-op because MCP support is not compiled.
-func (s *Server) SetAuthorizationService(_ interfaces.AuthorizationService, _ interfaces.AuthManager) {
-}
-
-// SetMCPAuthConfig is a no-op because MCP support is not compiled.
-func (s *Server) SetMCPAuthConfig(_ *MCPAuthConfig) {
-}
-
-// SetAppRegistrar is a no-op because MCP support is not compiled.
-func (s *Server) SetAppRegistrar(_ AppRegistrar) {
-}
-
-// EnableClientRegistrationEndpoint is a no-op because MCP support is not compiled.
-func (s *Server) EnableClientRegistrationEndpoint(_ bool) {
-}
-
-// AppRegistrar is a stub interface for application registration.
-type AppRegistrar interface{}
+// SetTenantBarrierService is a no-op because MCP support is not compiled.
+func (s *Server) SetTenantBarrierService(_ service.TenantBarrierServicer) {}

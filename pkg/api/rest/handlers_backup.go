@@ -91,20 +91,6 @@ type BackupStatusResponse struct {
 	Issues        []string `json:"issues,omitempty"`
 }
 
-// registerBackupRoutes registers backup-related routes.
-func registerBackupRoutes(s *Server, r interface {
-	Get(pattern string, h http.HandlerFunc)
-	Post(pattern string, h http.HandlerFunc)
-	Delete(pattern string, h http.HandlerFunc)
-}) {
-	r.Post("/backups", s.HandleCreateBackup)
-	r.Get("/backups", s.HandleListBackups)
-	r.Post("/backups/{id}/restore", s.HandleRestoreBackup)
-	r.Delete("/backups/{id}", s.HandleDeleteBackup)
-	r.Post("/backups/{id}/verify", s.HandleVerifyBackup)
-	r.Get("/backups/{id}/status", s.HandleBackupStatus)
-}
-
 // HandleCreateBackup creates a new backup.
 // POST /api/v1/backups.
 func (s *Server) HandleCreateBackup(w http.ResponseWriter, r *http.Request) {

@@ -57,10 +57,6 @@ func TestServer_GettersReturnFields(t *testing.T) {
 		assert.Nil(t, srv.GetGRPCServer())
 	})
 
-	t.Run("GetQUICServer is nil before start", func(t *testing.T) {
-		assert.Nil(t, srv.GetQUICServer())
-	})
-
 	t.Run("GetCatalogManager is nil when unwired", func(t *testing.T) {
 		assert.Nil(t, srv.GetCatalogManager())
 	})

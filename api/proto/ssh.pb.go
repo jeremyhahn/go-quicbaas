@@ -22,6 +22,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -1657,7 +1658,7 @@ var File_api_proto_ssh_proto protoreflect.FileDescriptor
 
 const file_api_proto_ssh_proto_rawDesc = "" +
 	"\n" +
-	"\x13api/proto/ssh.proto\x12\x0fquicbaas.ssh.v1\"\xad\x02\n" +
+	"\x13api/proto/ssh.proto\x12\x0fquicbaas.ssh.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xad\x02\n" +
 	"\n" +
 	"SSHKeyInfo\x12\x14\n" +
 	"\x05scope\x18\x01 \x01(\tR\x05scope\x12\x14\n" +
@@ -1775,24 +1776,23 @@ const file_api_proto_ssh_proto_rawDesc = "" +
 	"\x1cSSHEmitAuthorizedKeyResponse\x12\x12\n" +
 	"\x04line\x18\x01 \x01(\tR\x04line\"*\n" +
 	"\x0eSSHAckResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess2\xf2\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess2\xd1\f\n" +
 	"\n" +
-	"\n" +
-	"SSHService\x12Y\n" +
-	"\x0eGenerateSSHKey\x12&.quicbaas.ssh.v1.SSHGenerateKeyRequest\x1a\x1f.quicbaas.ssh.v1.SSHKeyResponse\x12U\n" +
-	"\fImportSSHKey\x12$.quicbaas.ssh.v1.SSHImportKeyRequest\x1a\x1f.quicbaas.ssh.v1.SSHKeyResponse\x12O\n" +
-	"\tGetSSHKey\x12!.quicbaas.ssh.v1.SSHGetKeyRequest\x1a\x1f.quicbaas.ssh.v1.SSHKeyResponse\x12X\n" +
-	"\vListSSHKeys\x12#.quicbaas.ssh.v1.SSHListKeysRequest\x1a$.quicbaas.ssh.v1.SSHListKeysResponse\x12U\n" +
-	"\fDeleteSSHKey\x12$.quicbaas.ssh.v1.SSHDeleteKeyRequest\x1a\x1f.quicbaas.ssh.v1.SSHAckResponse\x12g\n" +
-	"\x12ExportSSHPublicKey\x12*.quicbaas.ssh.v1.SSHExportPublicKeyRequest\x1a%.quicbaas.ssh.v1.SSHPublicKeyResponse\x12^\n" +
-	"\rSignSSHDigest\x12%.quicbaas.ssh.v1.SSHSignDigestRequest\x1a&.quicbaas.ssh.v1.SSHSignDigestResponse\x12[\n" +
-	"\x0fAddSSHKnownHost\x12'.quicbaas.ssh.v1.SSHAddKnownHostRequest\x1a\x1f.quicbaas.ssh.v1.SSHAckResponse\x12j\n" +
-	"\x11ListSSHKnownHosts\x12).quicbaas.ssh.v1.SSHListKnownHostsRequest\x1a*.quicbaas.ssh.v1.SSHListKnownHostsResponse\x12a\n" +
-	"\x12RemoveSSHKnownHost\x12*.quicbaas.ssh.v1.SSHRemoveKnownHostRequest\x1a\x1f.quicbaas.ssh.v1.SSHAckResponse\x12c\n" +
-	"\x13AddSSHAuthorizedKey\x12+.quicbaas.ssh.v1.SSHAddAuthorizedKeyRequest\x1a\x1f.quicbaas.ssh.v1.SSHAckResponse\x12v\n" +
-	"\x15ListSSHAuthorizedKeys\x12-.quicbaas.ssh.v1.SSHListAuthorizedKeysRequest\x1a..quicbaas.ssh.v1.SSHListAuthorizedKeysResponse\x12i\n" +
-	"\x16RemoveSSHAuthorizedKey\x12..quicbaas.ssh.v1.SSHRemoveAuthorizedKeyRequest\x1a\x1f.quicbaas.ssh.v1.SSHAckResponse\x12s\n" +
-	"\x14EmitSSHAuthorizedKey\x12,.quicbaas.ssh.v1.SSHEmitAuthorizedKeyRequest\x1a-.quicbaas.ssh.v1.SSHEmitAuthorizedKeyResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"SSHService\x12j\n" +
+	"\x0eGenerateSSHKey\x12&.quicbaas.ssh.v1.SSHGenerateKeyRequest\x1a\x1f.quicbaas.ssh.v1.SSHKeyResponse\"\x0f\xc2\xf3\x18\vkeys:create\x12f\n" +
+	"\fImportSSHKey\x12$.quicbaas.ssh.v1.SSHImportKeyRequest\x1a\x1f.quicbaas.ssh.v1.SSHKeyResponse\"\x0f\xc2\xf3\x18\vkeys:import\x12]\n" +
+	"\tGetSSHKey\x12!.quicbaas.ssh.v1.SSHGetKeyRequest\x1a\x1f.quicbaas.ssh.v1.SSHKeyResponse\"\f\xc2\xf3\x18\bkeys:get\x12g\n" +
+	"\vListSSHKeys\x12#.quicbaas.ssh.v1.SSHListKeysRequest\x1a$.quicbaas.ssh.v1.SSHListKeysResponse\"\r\xc2\xf3\x18\tkeys:list\x12f\n" +
+	"\fDeleteSSHKey\x12$.quicbaas.ssh.v1.SSHDeleteKeyRequest\x1a\x1f.quicbaas.ssh.v1.SSHAckResponse\"\x0f\xc2\xf3\x18\vkeys:delete\x12u\n" +
+	"\x12ExportSSHPublicKey\x12*.quicbaas.ssh.v1.SSHExportPublicKeyRequest\x1a%.quicbaas.ssh.v1.SSHPublicKeyResponse\"\f\xc2\xf3\x18\bkeys:get\x12m\n" +
+	"\rSignSSHDigest\x12%.quicbaas.ssh.v1.SSHSignDigestRequest\x1a&.quicbaas.ssh.v1.SSHSignDigestResponse\"\r\xc2\xf3\x18\tkeys:sign\x12l\n" +
+	"\x0fAddSSHKnownHost\x12'.quicbaas.ssh.v1.SSHAddKnownHostRequest\x1a\x1f.quicbaas.ssh.v1.SSHAckResponse\"\x0f\xc2\xf3\x18\vkeys:create\x12y\n" +
+	"\x11ListSSHKnownHosts\x12).quicbaas.ssh.v1.SSHListKnownHostsRequest\x1a*.quicbaas.ssh.v1.SSHListKnownHostsResponse\"\r\xc2\xf3\x18\tkeys:list\x12r\n" +
+	"\x12RemoveSSHKnownHost\x12*.quicbaas.ssh.v1.SSHRemoveKnownHostRequest\x1a\x1f.quicbaas.ssh.v1.SSHAckResponse\"\x0f\xc2\xf3\x18\vkeys:delete\x12t\n" +
+	"\x13AddSSHAuthorizedKey\x12+.quicbaas.ssh.v1.SSHAddAuthorizedKeyRequest\x1a\x1f.quicbaas.ssh.v1.SSHAckResponse\"\x0f\xc2\xf3\x18\vkeys:create\x12\x85\x01\n" +
+	"\x15ListSSHAuthorizedKeys\x12-.quicbaas.ssh.v1.SSHListAuthorizedKeysRequest\x1a..quicbaas.ssh.v1.SSHListAuthorizedKeysResponse\"\r\xc2\xf3\x18\tkeys:list\x12z\n" +
+	"\x16RemoveSSHAuthorizedKey\x12..quicbaas.ssh.v1.SSHRemoveAuthorizedKeyRequest\x1a\x1f.quicbaas.ssh.v1.SSHAckResponse\"\x0f\xc2\xf3\x18\vkeys:delete\x12\x81\x01\n" +
+	"\x14EmitSSHAuthorizedKey\x12,.quicbaas.ssh.v1.SSHEmitAuthorizedKeyRequest\x1a-.quicbaas.ssh.v1.SSHEmitAuthorizedKeyResponse\"\f\xc2\xf3\x18\bkeys:getB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_ssh_proto_rawDescOnce sync.Once

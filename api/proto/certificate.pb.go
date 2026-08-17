@@ -13,6 +13,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -2068,7 +2069,7 @@ var File_api_proto_certificate_proto protoreflect.FileDescriptor
 
 const file_api_proto_certificate_proto_rawDesc = "" +
 	"\n" +
-	"\x1bapi/proto/certificate.proto\x12\x17quicbaas.certificate.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xdc\x01\n" +
+	"\x1bapi/proto/certificate.proto\x12\x17quicbaas.certificate.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xdc\x01\n" +
 	"\x12CertificateSubject\x12\x1f\n" +
 	"\vcommon_name\x18\x01 \x01(\tR\n" +
 	"commonName\x12\"\n" +
@@ -2222,21 +2223,25 @@ const file_api_proto_certificate_proto_rawDesc = "" +
 	"TLSVersion\x12\x1b\n" +
 	"\x17TLS_VERSION_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fTLS_VERSION_1_2\x10\x01\x12\x13\n" +
-	"\x0fTLS_VERSION_1_3\x10\x022\x9e\b\n" +
-	"\x12CertificateService\x12w\n" +
-	"\x10IssueCertificate\x120.quicbaas.certificate.v1.IssueCertificateRequest\x1a1.quicbaas.certificate.v1.IssueCertificateResponse\x12\\\n" +
-	"\aSignCSR\x12'.quicbaas.certificate.v1.SignCSRRequest\x1a(.quicbaas.certificate.v1.SignCSRResponse\x12z\n" +
-	"\x11RevokeCertificate\x121.quicbaas.certificate.v1.RevokeCertificateRequest\x1a2.quicbaas.certificate.v1.RevokeCertificateResponse\x12z\n" +
-	"\x11VerifyCertificate\x121.quicbaas.certificate.v1.VerifyCertificateRequest\x1a2.quicbaas.certificate.v1.VerifyCertificateResponse\x12w\n" +
-	"\x10GetCACertificate\x120.quicbaas.certificate.v1.GetCACertificateRequest\x1a1.quicbaas.certificate.v1.GetCACertificateResponse\x12k\n" +
-	"\fGetTLSConfig\x12,.quicbaas.certificate.v1.GetTLSConfigRequest\x1a-.quicbaas.certificate.v1.GetTLSConfigResponse\x12b\n" +
-	"\tCrossSign\x12).quicbaas.certificate.v1.CrossSignRequest\x1a*.quicbaas.certificate.v1.CrossSignResponse\x12l\n" +
-	"\x05Chain\x120.quicbaas.certificate.v1.CertificateChainRequest\x1a1.quicbaas.certificate.v1.CertificateChainResponse\x12\x80\x01\n" +
-	"\x13IssueDeviceIdentity\x123.quicbaas.certificate.v1.IssueDeviceIdentityRequest\x1a4.quicbaas.certificate.v1.IssueDeviceIdentityResponse2\xeb\x02\n" +
-	"\fTrustService\x12\x80\x01\n" +
-	"\x13CrossSignedRootPool\x123.quicbaas.certificate.v1.CrossSignedRootPoolRequest\x1a4.quicbaas.certificate.v1.CrossSignedRootPoolResponse\x12n\n" +
-	"\rAutoImportAIA\x12-.quicbaas.certificate.v1.AutoImportAIARequest\x1a..quicbaas.certificate.v1.AutoImportAIAResponse\x12h\n" +
-	"\vPublishDANE\x12+.quicbaas.certificate.v1.PublishDANERequest\x1a,.quicbaas.certificate.v1.PublishDANEResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"\x0fTLS_VERSION_1_3\x10\x022\xc4\t\n" +
+	"\x12CertificateService\x12\x8b\x01\n" +
+	"\x10IssueCertificate\x120.quicbaas.certificate.v1.IssueCertificateRequest\x1a1.quicbaas.certificate.v1.IssueCertificateResponse\"\x12\xc2\xf3\x18\x0ecerts:generate\x12p\n" +
+	"\aSignCSR\x12'.quicbaas.certificate.v1.SignCSRRequest\x1a(.quicbaas.certificate.v1.SignCSRResponse\"\x12\xc2\xf3\x18\x0ecerts:generate\x12\x8c\x01\n" +
+	"\x11RevokeCertificate\x121.quicbaas.certificate.v1.RevokeCertificateRequest\x1a2.quicbaas.certificate.v1.RevokeCertificateResponse\"\x10\xc2\xf3\x18\fcerts:revoke\x12\x8a\x01\n" +
+	"\x11VerifyCertificate\x121.quicbaas.certificate.v1.VerifyCertificateRequest\x1a2.quicbaas.certificate.v1.VerifyCertificateResponse\"\x0e\xc2\xf3\x18\n" +
+	"certs:read\x12\x87\x01\n" +
+	"\x10GetCACertificate\x120.quicbaas.certificate.v1.GetCACertificateRequest\x1a1.quicbaas.certificate.v1.GetCACertificateResponse\"\x0e\xc2\xf3\x18\n" +
+	"certs:read\x12{\n" +
+	"\fGetTLSConfig\x12,.quicbaas.certificate.v1.GetTLSConfigRequest\x1a-.quicbaas.certificate.v1.GetTLSConfigResponse\"\x0e\xc2\xf3\x18\n" +
+	"certs:read\x12q\n" +
+	"\tCrossSign\x12).quicbaas.certificate.v1.CrossSignRequest\x1a*.quicbaas.certificate.v1.CrossSignResponse\"\r\xc2\xf3\x18\tca:create\x12\x80\x01\n" +
+	"\x05Chain\x120.quicbaas.certificate.v1.CertificateChainRequest\x1a1.quicbaas.certificate.v1.CertificateChainResponse\"\x12\xc2\xf3\x18\x0ecerts:generate\x12\x94\x01\n" +
+	"\x13IssueDeviceIdentity\x123.quicbaas.certificate.v1.IssueDeviceIdentityRequest\x1a4.quicbaas.certificate.v1.IssueDeviceIdentityResponse\"\x12\xc2\xf3\x18\x0ecerts:generate2\xa4\x03\n" +
+	"\fTrustService\x12\x90\x01\n" +
+	"\x13CrossSignedRootPool\x123.quicbaas.certificate.v1.CrossSignedRootPoolRequest\x1a4.quicbaas.certificate.v1.CrossSignedRootPoolResponse\"\x0e\xc2\xf3\x18\n" +
+	"certs:read\x12\x82\x01\n" +
+	"\rAutoImportAIA\x12-.quicbaas.certificate.v1.AutoImportAIARequest\x1a..quicbaas.certificate.v1.AutoImportAIAResponse\"\x12\xc2\xf3\x18\x0ecerts:generate\x12|\n" +
+	"\vPublishDANE\x12+.quicbaas.certificate.v1.PublishDANERequest\x1a,.quicbaas.certificate.v1.PublishDANEResponse\"\x12\xc2\xf3\x18\x0ecerts:generateB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_certificate_proto_rawDescOnce sync.Once

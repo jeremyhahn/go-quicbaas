@@ -28,22 +28,6 @@ import (
 // Ollama Route Registration
 // ========================================
 
-// registerOllamaRoutes registers all Ollama-related routes.
-func registerOllamaRoutes(s *Server, r chi.Router) {
-	r.Route("/ollama", func(r chi.Router) {
-		// Health check
-		r.Get("/health", s.HandleOllamaHealth)
-
-		// Model management
-		r.Get("/models", s.HandleOllamaModelList)
-		r.Get("/models/{model}", s.HandleOllamaModelInfo)
-
-		// Embedding operations
-		r.Post("/embed", s.HandleOllamaEmbed)
-		r.Post("/embed/batch", s.HandleOllamaEmbedBatch)
-	})
-}
-
 // ========================================
 // Request/Response Types
 // ========================================

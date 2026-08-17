@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,7 +33,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest/ui"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
@@ -106,11 +106,6 @@ type Config struct {
 	// certificates from TLSCertFile/TLSKeyFile.
 	TLSConfig *tls.Config
 
-	// Authorization configuration (optional)
-	// Both must be provided to enable authorization middleware
-	TokenValidator TokenValidator                  // JWT token validator
-	AuthzService   interfaces.AuthorizationService // Authorization service
-
 	// PIVClientCert controls PIV certificate-based activation (default: disabled).
 	PIVClientCert PIVClientCertConfig
 
@@ -126,6 +121,14 @@ type Config struct {
 	// disabled (the safe default) and anonymous registration is impossible:
 	// a token-less caller can neither create a client nor pick its tenant.
 	IAMDynamicClientRegistration config.IAMDynamicClientRegistrationConfig
+
+	// MCPAuthorization is the per-server RFC 9728 protected-resource
+	// metadata policy (/.well-known/oauth-protected-resource), the MCP
+	// client-auth discovery counterpart to the OAuth AS metadata endpoint
+	// (RFC 8414) the IAM OIDC provider already serves. When zero-valued
+	// (Enabled false) the endpoint answers 404, the same disabled-by-
+	// default posture every other MCP-auth surface takes.
+	MCPAuthorization config.MCPAuthorizationConfig
 
 	// SPIFFETrustDomain is the operator-configured SPIFFE trust domain used to
 	// derive (and pin) the login tenant from a client certificate's
@@ -208,8 +211,19 @@ type Server struct {
 	// It is created in Start and may be wrapped by a limitListener.
 	listener net.Listener
 
-	// Authorization middleware (optional)
-	authzMiddleware *AuthzMiddleware
+	// moduleAuthorizer is the platform-token validator AuthenticateHTTP
+	// (auth_support.go) authenticates against: when go-qrdb's unified-server
+	// middleware reaches a quicbaas module route WITHOUT a qrdb-authenticated
+	// identity (a platform-JWT caller, which qrdb's own mTLS chain does not
+	// understand), it consults the module's ModuleAuthFallback
+	// (pkg/apimodule module_http.go), which delegates to
+	// Server.AuthenticateHTTP, which validates the token through this seam.
+	// Wired by SetModuleTokenAuthorizer (pkg/server configureRESTAuthz) only
+	// when SecurityConfig.RequireAuthz is enabled; nil means
+	// AuthenticateHTTP fails closed (ModuleAuthorizerRequiredError) and a
+	// platform-token caller with no qrdb identity is denied — matching the
+	// "no authz gate configured" posture with mTLS-only enforcement.
+	moduleAuthorizer ModuleTokenAuthorizer
 
 	// sealedProbe + sealedAllowlist implement the sealed-window gate (see
 	// SetSealedWindowGate in sealed_window.go). While the probe reports
@@ -227,28 +241,6 @@ type Server struct {
 	// admitted without authentication (audited); unsealed it is inert. Nil
 	// until SetSealedWindowGate installs a probe — nil never bypasses.
 	sealedBypass *sealedwindow.AuthBypass
-
-	// bindingEnforcementOnly selects the proof-of-possession-only middleware
-	// (EnforceTokenBinding) over the full RBAC Authorize gate. When true the
-	// router installs DPoP/mTLS token-binding enforcement + AuthorizedContext
-	// injection without the deferred cluster-wide RBAC decision.
-	bindingEnforcementOnly bool
-
-	// defaultDenyEnforcement selects the default-deny scope -> RBAC gate
-	// (EnforceDefaultDeny) installed on the TOP router as a path-predicate. When
-	// true, non-public, non-cluster-mTLS requests must present a valid platform
-	// token carrying the required scope; token-less requests are denied. This is
-	// the opt-in gate behind SecurityConfig.RequireAuthz and takes precedence over
-	// bindingEnforcementOnly when set.
-	defaultDenyEnforcement bool
-
-	// validatorEnforcement selects the central platform-token Validator gate
-	// (AuthorizeViaValidator) on the /api/v1 group. When true, every protected
-	// request is authorized in a SINGLE Validator call (offline signature / iss /
-	// aud / exp + DPoP + scp decision + per-tenant liveness). It is the
-	// reference (REST) RequireAuthz=true posture and supersedes the qrdb online
-	// role-PDP Authorize gate. Mutually exclusive with the other selectors.
-	validatorEnforcement bool
 
 	// hookTaskStore is the task store used by Claude Code hook handlers (optional)
 	hookTaskStore orchestration.TaskStore
@@ -315,27 +307,6 @@ type Server struct {
 	// Nil before wiring; the handlers report 503 Service Unavailable.
 	bootstrapSvc service.BootstrapServicer
 
-	// credentialSvc serves /v1/credentials/* endpoints. Wired by lifecycle
-	// via SetCredentialService once the qrdb credential management service
-	// is online. Nil before wiring; the handlers report 501 Not Implemented.
-	// Routes are mounted at the qrdb-canonical /v1/credentials prefix (not
-	// /api/v1) so the qrdb SDK REST client works unchanged against quicbaasd.
-	credentialSvc qrdbsdk.ServiceCredentialServicer
-
-	// userSvc serves the qrdb-wire GET /users/by-username/{username} lookup
-	// the qrdb SDK factor surface uses to resolve a subject to its uint64
-	// user id. Wired by lifecycle via SetUserService (a lazy proxy over the
-	// embedded node's user store). Nil before wiring; the handler reports
-	// 501 Not Implemented.
-	userSvc qrdbsdk.UserServicer
-
-	// userAuthFactorSvc serves the qrdb-wire /v1/users/factors/* endpoints
-	// (user-login factor enrollment / rotation / revocation). Wired by
-	// lifecycle via SetUserAuthFactorService with the SAME UserAuthFactor
-	// instance the unified-login ceremony resolves against. Nil before
-	// wiring; the handlers report 501 Not Implemented.
-	userAuthFactorSvc qrdbsdk.UserAuthFactorServicer
-
 	// sessionPresence records operator_joined / operator_left for live
 	// session-event attachments (handlers_session_events.go). It is owned by
 	// the server because presence is per-process state shared by every
@@ -374,19 +345,6 @@ func NewServer(svc service.QuicBaaS, config *Config, log *logger.Logger) (*Serve
 	// Default router: single-shard routing to shard 1
 	s.shardRouter = routing.New()
 
-	// Setup authorization middleware if both dependencies are provided
-	if config.TokenValidator != nil && config.AuthzService != nil {
-		s.authzMiddleware = NewAuthzMiddleware(&AuthzMiddlewareConfig{
-			Logger:         s.logger,
-			TokenValidator: config.TokenValidator,
-			AuthzService:   config.AuthzService,
-		})
-		s.logger.Info("Authorization middleware enabled")
-	} else if config.TokenValidator != nil || config.AuthzService != nil {
-		// Only one is provided - log warning and skip authz
-		s.logger.Warn("Authorization middleware not enabled: both TokenValidator and AuthzService are required")
-	}
-
 	// Setup router and routes
 	s.setupRouter()
 
@@ -418,26 +376,6 @@ func (s *Server) setupRouter() {
 		r.Use(qrdbsdk.SealedWindowMiddleware(s.sealedProbe, s.sealedAllowlist))
 	}
 
-	// Propagate the shared sealed-window auth-bypass predicate into the
-	// authz middleware below the sealed gate. Done here (not in the Set*
-	// enforcement methods) because every enforcement selector recreates the
-	// middleware and then rebuilds the router, and SetSealedWindowGate also
-	// rebuilds the router — this single injection point covers every
-	// ordering of those calls.
-	if s.authzMiddleware != nil {
-		s.authzMiddleware.sealedBypass = s.sealedBypass
-	}
-
-	// Default-deny authorization gate (opt-in via SecurityConfig.RequireAuthz).
-	// Installed on the TOP router as a path-predicate so it also covers
-	// root-mounted protected surfaces (IAM management, qrdb-wire mounts) that a
-	// gate scoped to the /api/v1 chi group would miss. When disabled (the
-	// default), the per-group EnforceTokenBinding / Authorize gates below run
-	// unchanged.
-	if s.authzMiddleware != nil && s.defaultDenyEnforcement {
-		r.Use(s.authzMiddleware.EnforceDefaultDeny(s.config.SPIFFETrustDomain))
-	}
-
 	// CORS middleware (if origins configured)
 	if len(s.config.CORSOrigins) > 0 {
 		r.Use(CORSMiddleware(s.config.CORSOrigins))
@@ -453,387 +391,14 @@ func (s *Server) setupRouter() {
 		r.Use(RateLimitMiddleware(s.config.RateLimit))
 	}
 
-	// API v1 routes
-	r.Route("/api/v1", func(r chi.Router) {
-		// Apply the shared protected-API authorization chain (see
-		// useAPIAuthzMiddleware for the selector precedence).
-		s.useAPIAuthzMiddleware(r)
-
-		// Standard API routes with default body size limit (10 MB).
-		// This group protects against memory exhaustion DoS by capping
-		// request body sizes via http.MaxBytesReader.
-		r.Group(func(r chi.Router) {
-			r.Use(BodyLimitMiddleware(s.config.MaxBodySize))
-
-			// Transaction routes
-			r.Post("/transaction", s.HandleTransaction) // Transaction with compare-and-swap
-
-			// Batch operation routes
-			r.Route("/batch", func(r chi.Router) {
-				r.Post("/put", s.HandleBatchPut)       // Atomic batch put
-				r.Post("/get", s.HandleBatchGet)       // Batch get multiple entities
-				r.Post("/delete", s.HandleBatchDelete) // Atomic batch delete
-			})
-
-			// Entity type discovery
-			r.Get("/entity-types", s.HandleListEntityTypes) // List unique entity types
-
-			// Entity CRUD routes (numeric IDs)
-			r.Route("/entities/{type}", func(r chi.Router) {
-				r.Post("/", s.HandlePut)          // Create entity
-				r.Get("/", s.HandleList)          // List entities
-				r.Get("/{id}", s.HandleGet)       // Get entity by ID
-				r.Put("/{id}", s.HandlePut)       // Update entity by ID
-				r.Delete("/{id}", s.HandleDelete) // Delete entity by ID
-			})
-
-			// Key-Value routes (string keys)
-			// These endpoints support string-based keys for key-value store operations,
-			// as opposed to the /entities/ endpoints which use numeric IDs.
-			r.Route("/kv/{type}", func(r chi.Router) {
-				r.Get("/", s.HandleKVList)           // List all key-value pairs for type
-				r.Get("/{key}", s.HandleKVGet)       // Get value by string key
-				r.Put("/{key}", s.HandleKVPut)       // Put/update value by string key
-				r.Post("/{key}", s.HandleKVPut)      // Put/update value by string key (alternative)
-				r.Delete("/{key}", s.HandleKVDelete) // Delete by string key
-			})
-
-			// Query routes
-			r.Route("/query", func(r chi.Router) {
-				r.Get("/{type}/{index}", s.HandleQuery) // Query by index
-				r.Post("/range", s.HandleRangeQuery)    // Range query
-			})
-
-			// KMS routes
-			r.Route("/kms", func(r chi.Router) {
-				// Key management routes
-				r.Post("/keys", s.HandleGenerateKey)                                      // Generate new key
-				r.Post("/keys/import", s.HandleImportKey)                                 // Import key
-				r.Post("/keys/unwrap", s.HandleUnwrapKey)                                 // Unwrap/import wrapped key
-				r.Get("/keys", s.HandleListKeys)                                          // List keys
-				r.Get("/keys/{name}", s.HandleGetKey)                                     // Get key metadata
-				r.Get("/keys/{name}/metadata", s.HandleGetKeyMetadata)                    // Get key metadata only
-				r.Put("/keys/{name}/metadata", s.HandleUpdateKeyMetadata)                 // Update key metadata
-				r.Get("/keys/{name}/public", s.HandleGetPublicKey)                        // Get DER public key
-				r.Post("/keys/{name}/revoke", s.HandleRevokeKey)                          // Revoke key
-				r.Post("/keys/{name}/rotate", s.HandleRotateKey)                          // Rotate key
-				r.Post("/keys/{name}/export", s.HandleExportKey)                          // Export key wrapped
-				r.Put("/keys/{name}/status", s.HandleUpdateKeyStatus)                     // Update key status
-				r.Put("/keys/{name}/default", s.HandleSetDefaultKey)                      // Set key as system default
-				r.Put("/keys/{name}/safety", s.HandleSetKeySafety)                        // Set key safety limits
-				r.Delete("/keys/{name}", s.HandleDeleteKey)                               // Delete key
-				r.Delete("/keys/{name}/safety", s.HandleClearKeySafety)                   // Clear key safety limits
-				r.Get("/keys/{name}/versions", s.HandleListKeyVersions)                   // List key versions
-				r.Put("/keys/{name}/policy", s.HandleSetKeyPolicy)                        // Set key access policy
-				r.Get("/keys/{name}/policy", s.HandleGetKeyPolicy)                        // Get key access policy
-				r.Put("/keys/{name}/rotation-policy", s.HandleSetKeyRotationPolicy)       // Set auto-rotation policy
-				r.Get("/keys/{name}/rotation-policy", s.HandleGetKeyRotationPolicy)       // Get auto-rotation policy
-				r.Delete("/keys/{name}/rotation-policy", s.HandleDeleteKeyRotationPolicy) // Remove auto-rotation policy
-				r.Post("/encrypt/{name}", s.HandleKMSEncrypt)                             // Encrypt data
-				r.Post("/decrypt/{name}", s.HandleKMSDecrypt)                             // Decrypt data
-				r.Get("/algorithms", s.HandleGetSupportedAlgorithms)                      // Supported algorithms
-				r.Get("/backend/status", s.HandleBackendStatus)                           // Backend status
-				r.Post("/backend/test", s.HandleBackendTest)                              // Test backend
-
-				// Safety monitoring routes
-				r.Get("/safety/check", s.HandleSafetyCheck)   // Check keys approaching limits
-				r.Get("/safety/report", s.HandleSafetyReport) // Comprehensive safety report
-
-				// DEK (Data Encryption Key) routes
-				// Uses wildcard routing to support path-based DEK identifiers like "tenant/app/key"
-				r.Route("/deks", func(r chi.Router) {
-					r.Post("/", s.HandleCreateDEK)                   // Create DEK
-					r.Get("/", s.HandleListDEKs)                     // List DEKs
-					r.Put("/default", s.HandleSetDefaultDEKFromBody) // Set default DEK (path in body)
-					r.Get("/*", s.handleDEKGetAction)                // Get DEK or status
-					r.Post("/*", s.handleDEKPostAction)              // Rotate or set-default
-					r.Put("/*", s.handleDEKPutAction)                // Set safety
-					r.Delete("/*", s.handleDEKDeleteAction)          // Delete DEK or clear safety
-				})
-			})
-
-			// Secrets routes
-			// Note: Uses ?action= query param for rollback/rotate/destroy, ?versions=true for listing versions
-			// Wildcard routes handle path-based secret IDs like "app/database/password"
-			r.Route("/secrets", func(r chi.Router) {
-				r.Get("/", s.HandleListSecrets)          // List secrets
-				r.Post("/*", s.handleSecretsPostAction)  // Store/rollback/rotate/enable/disable/destroy secret
-				r.Get("/*", s.HandleGetSecretOrVersions) // Get secret or list versions (uses ?versions=true)
-				r.Delete("/*", s.HandleDeleteSecret)     // Delete secret (use ?destroy=true for permanent)
-			})
-
-			// Secrets prefix, watch, and versions routes (separate to avoid wildcard conflicts)
-			r.Route("/secrets-prefix", func(r chi.Router) {
-				r.Get("/*", s.HandleGetSecretsByPrefix) // Get all secrets by prefix
-			})
-			r.Route("/secrets-watch", func(r chi.Router) {
-				r.Get("/*", s.HandleWatchSecrets) // Watch secrets via SSE
-			})
-			r.Route("/secrets-versions", func(r chi.Router) {
-				r.Get("/*", s.HandleListSecretVersions) // List versions for a secret path
-			})
-
-			// Parameters routes
-			// Uses wildcard routing to support hierarchical paths like "/app/database/host"
-			r.Route("/parameters", func(r chi.Router) {
-				r.Get("/", s.HandleListParameters)                     // List parameters by prefix
-				r.Get("/*", s.HandleGetParameter)                      // Get single parameter
-				r.Put("/*", s.HandleSetParameter)                      // Create/update parameter
-				r.Delete("/*", s.HandleDeleteParameter)                // Delete parameter
-				r.Post("/batch/get", s.HandleGetParametersBatch)       // Batch get
-				r.Post("/batch/set", s.HandleSetParametersBatch)       // Batch set
-				r.Post("/batch/delete", s.HandleDeleteParametersBatch) // Batch delete
-				r.Post("/search", s.HandleSearchParametersByTags)      // Search by tags
-			})
-
-			// SSH routes — proxy to xkms SSH SDK via service.QuicBaaS.SSHClient().
-			// Mounted at both /api/v1/ssh (canonical) and /api/v1/xkms/v1/ssh
-			// (the path prefix the go-xkms REST SSH SDK client expects — this
-			// alias lets CLIs set XKMSD_URL to the quicbaasd base and reuse
-			// the go-xkms client unchanged). Both mounts share one route
-			// table: registerSSHRoutes in handlers_ssh.go.
-			r.Route("/ssh", s.registerSSHRoutes)
-			r.Route("/xkms/v1/ssh", s.registerSSHRoutes)
-
-			// Seal routes (LEGACY — superseded by /api/v1/barrier/*).
-			// Each handler stamps Deprecation/Sunset/Link headers per
-			// RFC 8594 + draft-ietf-httpapi-deprecation-header. See
-			// markSealDeprecated in handlers_seal.go.
-			r.Route("/seal", func(r chi.Router) {
-				r.Get("/status", s.HandleSealStatus)                      // Get seal status
-				r.Post("/init", s.HandleSealInit)                         // Initialize
-				r.Post("/unseal", s.HandleUnseal)                         // Unseal with key share
-				r.Post("/seal", s.HandleSeal)                             // Seal database
-				r.Post("/rekey", s.HandleRekey)                           // Rekey master key
-				r.Post("/recovery/generate", s.HandleGenerateRecoveryKey) // Generate recovery key
-				r.Delete("/recovery", s.HandleDeleteRecoveryKey)          // Delete recovery key
-				r.Post("/root/generate", s.HandleGenerateRootToken)       // Generate root token
-				r.Post("/rotate-root", s.HandleRotateRootKey)             // Rotate root encryption key
-			})
-
-			// Barrier routes — canonical seal-lifecycle surface that
-			// supersedes /api/v1/seal. Mirrors the qrdb /v1/barrier
-			// contract so a single SDK works against both products.
-			r.Route("/barrier", func(r chi.Router) {
-				r.Get("/status", s.HandleBarrierStatus)
-				r.Post("/initialize", s.HandleBarrierInitialize)
-				r.Post("/unseal", s.HandleBarrierUnseal)
-				r.Post("/seal", s.HandleBarrierSeal)
-
-				r.Post("/shamir/initialize", s.HandleBarrierShamirInitialize)
-				r.Post("/shamir/unseal-share", s.HandleBarrierShamirUnsealShare)
-				r.Post("/shamir/unseal-shares", s.HandleBarrierShamirUnsealShares)
-
-				r.Post("/rekey", s.HandleBarrierRekey)
-
-				r.Post("/recovery/generate", s.HandleBarrierRecoveryGenerate)
-				r.Post("/recovery/recover", s.HandleBarrierRecoveryRecover)
-				r.Delete("/recovery", s.HandleBarrierRecoveryDelete)
-				r.Get("/recovery/status", s.HandleBarrierRecoveryStatus)
-
-				r.Post("/root-token", s.HandleBarrierRootToken)
-
-				r.Post("/enable-encryption", s.HandleBarrierEnableEncryption)
-			})
-
-			// Ceremony routes — canonical /api/v1/init surface. The
-			// ceremony lifecycle (M-of-N officer enrollment, certificate
-			// claims, share distribution, CSR signing) lives under /init
-			// to align with the qrdb sealed-window allowlist.
-			r.Route("/init", func(r chi.Router) {
-				r.Get("/status", s.HandleCeremonyStatus)
-				r.Get("/officers", s.HandleCeremonyListOfficers)
-				r.Post("/initialize", s.HandleCeremonyInitialize)
-				r.Post("/claim-cert/begin", s.HandleCeremonyClaimCertBegin)
-				r.Post("/claim-cert/complete", s.HandleCeremonyClaimCertComplete)
-				r.Post("/officer-share/begin", s.HandleCeremonyBeginClaimShare)
-				r.Post("/officer-share/complete", s.HandleCeremonyCompleteClaimShare)
-				r.Post("/sign-csr", s.HandleCeremonySignCSR)
-				r.Post("/enroll-external-officer", s.HandleCeremonyEnrollExternalOfficer)
-			})
-
-			// Bootstrap routes — trust-bootstrap surface for first-touch
-			// CA discovery (DANE, Noise PSK, SPKI pin). Handlers return
-			// 503 Service Unavailable until the truststrap subsystem is
-			// online, then 501 Not Implemented for methods that haven't
-			// been wired to a concrete servicer yet.
-			r.Route("/bootstrap", func(r chi.Router) {
-				r.Post("/auto", s.HandleBootstrapAuto)
-				r.Post("/dane", s.HandleBootstrapDane)
-				r.Post("/noise", s.HandleBootstrapNoise)
-				r.Post("/spki", s.HandleBootstrapSpki)
-			})
-
-			// Crypto routes
-			r.Route("/crypto", func(r chi.Router) {
-				r.Post("/encrypt/{name}", s.HandleCryptoEncrypt)            // Encrypt
-				r.Post("/decrypt/{name}", s.HandleCryptoDecrypt)            // Decrypt
-				r.Post("/rewrap/{name}", s.HandleCryptoRewrap)              // Re-encrypt with latest key
-				r.Post("/sign/{name}", s.HandleCryptoSign)                  // Sign data
-				r.Post("/verify/{name}", s.HandleCryptoVerify)              // Verify signature
-				r.Post("/hash", s.HandleCryptoHash)                         // Hash data
-				r.Post("/random", s.HandleCryptoRandom)                     // Generate random bytes
-				r.Post("/datakey/{name}", s.HandleCryptoDataKey)            // Generate data encryption key
-				r.Post("/encrypt/{name}/batch", s.HandleCryptoBatchEncrypt) // Batch encrypt
-				r.Post("/decrypt/{name}/batch", s.HandleCryptoBatchDecrypt) // Batch decrypt
-			})
-
-			// Cluster management routes
-			r.Route("/cluster", func(r chi.Router) {
-				// Status and information
-				r.Get("/status", s.HandleClusterStatus)       // Cluster status
-				r.Get("/leader/{shardID}", s.HandleGetLeader) // Get shard leader
-				r.Get("/leader", s.HandleGetClusterLeader)    // Get cluster leader
-				r.Get("/shards", s.HandleClusterShards)       // List shard details
-
-				// Node management
-				r.Route("/nodes", func(r chi.Router) {
-					r.Post("/", s.HandleAddNode)                     // Add node
-					r.Get("/", s.HandleListNodes)                    // List nodes
-					r.Get("/non-leader", s.HandleListNonLeaderNodes) // List non-leader nodes for load balancer routing
-					r.Delete("/{nodeId}", s.HandleRemoveNode)        // Remove node
-					r.Put("/{nodeId}/replace", s.HandleReplaceNode)  // Replace node
-				})
-
-				// Rebalance operations
-				r.Route("/rebalance", func(r chi.Router) {
-					r.Post("/", s.HandleStartRebalance)          // Start rebalancing
-					r.Get("/status", s.HandleGetRebalanceStatus) // Get rebalance status
-					r.Get("/plan", s.HandleGetRebalancePlan)     // Get rebalance plan
-				})
-
-				// Migration operations
-				r.Route("/migrate", func(r chi.Router) {
-					r.Post("/", s.HandleStartMigration)          // Start migration
-					r.Get("/status", s.HandleGetMigrationStatus) // Get migration status
-					r.Delete("/", s.HandleCancelMigration)       // Cancel migration
-				})
-
-				// Upgrade operations
-				r.Route("/upgrade", func(r chi.Router) {
-					r.Post("/", s.HandleStartUpgrade)          // Start upgrade
-					r.Get("/status", s.HandleGetUpgradeStatus) // Get upgrade status
-				})
-			})
-
-			// Timeseries routes
-			r.Route("/timeseries", func(r chi.Router) {
-				r.Post("/write", s.HandleWritePoint)
-				r.Post("/write-batch", s.HandleWriteBatch)
-				r.Post("/query", s.HandleTSQuery)
-				r.Delete("/series", s.HandleDeleteSeries)
-				r.Get("/retention/{metric}", s.HandleGetRetentionPolicy)
-				r.Put("/retention/{metric}", s.HandleSetRetentionPolicy)
-				r.Get("/metrics", s.HandleListMetrics)
-			})
-
-			// Health check routes
-			r.Get("/health", s.HandleHealth)
-			r.Get("/health/live", s.HandleLiveness)
-			r.Get("/health/ready", s.HandleReadiness)
-
-			// Version (open — needed by the GUI dashboard).
-			r.Get("/version", s.HandleVersion)
-
-			// Metrics routes
-			r.Route("/metrics", func(r chi.Router) {
-				// Prometheus metrics
-				r.Handle("/", promhttp.HandlerFor(
-					metrics.Registry(),
-					promhttp.HandlerOpts{
-						EnableOpenMetrics: true,
-					},
-				))
-				// Performance metrics (JSON)
-				r.Get("/performance", s.HandlePerformanceMetrics)
-			})
-
-			// Vector database routes
-			registerVectorRoutes(s, r)
-
-			// Ollama integration routes
-			registerOllamaRoutes(s, r)
-
-			// RAG context routes
-			registerRAGRoutes(s, r)
-
-			// Embedding service routes
-			registerEmbeddingRoutes(s, r)
-
-			// Certificate service routes
-			registerCertificateRoutes(s, r)
-
-			// Trust composition routes (cross-sign / AIA)
-			registerTrustRoutes(s, r)
-
-			// Attestation routes (xkms statement/chain verification +
-			// the container attestation orchestration seam)
-			registerAttestationRoutes(s, r)
-
-			// ACME (RFC 8555) server-control routes (register-challenge / issue).
-			// The raw RFC 8555 directory endpoints are mounted at the router
-			// root (see registerACMEDirectoryRoutes below) per the ACME URL
-			// convention.
-			registerACMERoutes(s, r)
-
-			// Cluster CA secret-delivery endpoint (tpm-kek): a joining node POSTs
-			// its node cert + TPM attestation here after enrollment to fetch its
-			// wrapped cluster seed. Inert (unset handler) for barrier/hsm.
-			if s.clusterSecretHandler != nil {
-				r.Post("/cluster/secret", s.clusterSecretHandler)
-			}
-
-			// Dynamic secrets service routes
-			registerDynamicSecretsRoutes(s, r)
-
-			// Scheduler routes
-			registerSchedulerRoutes(s, r)
-
-			// Push notification routes
-			registerMessagingRoutes(s, r)
-
-			// Claude Code hook routes
-			registerHookRoutes(s, r)
-
-			// Cache management routes
-			registerCacheRoutes(s, r)
-
-			// XKMS-compatible routes (go-xkms SDK REST transport compatibility)
-			registerXKMSRoutes(s, r)
-
-			// Project routes (tenant → project → workflow hierarchy)
-			registerProjectRoutes(s, r)
-
-			// Pooled provider account routes (per-tenant pool of
-			// Anthropic/Claude, Codex, and OpenCode logins an agent
-			// session can be spawned against).
-			registerAccountRoutes(s, r)
-
-			// Orchestrator routes (agent sessions, tasks, backends).
-			// Agent admin routes (disable/enable) are registered inside the
-			// orchestrator subrouter for consistency with register/list/get/remove.
-			registerOrchestratorRoutes(s, r)
-		})
-
-		// Upload-heavy routes with larger body size limit (100 MB).
-		// Object storage, backup, and object transfer endpoints accept
-		// larger payloads and use a separate, higher body size limit.
-		r.Group(func(r chi.Router) {
-			r.Use(BodyLimitMiddleware(s.config.MaxUploadBodySize))
-
-			// Object storage routes
-			registerObjectStorageRoutes(s, r)
-
-			// Object storage admin routes
-			registerObjectStorageAdminRoutes(s, r)
-
-			// Object transfer routes (peer-to-peer object data transfer)
-			registerObjectTransferRoutes(s, r)
-
-			// Backup management routes
-			registerBackupRoutes(s, r)
-		})
-	})
+	// Route registration is table-driven: Routes() (routes.go) is the single
+	// source of truth for the REST surface owned by this server's
+	// registration, shared with the unified-API-server ServiceModule
+	// (pkg/apimodule RegisterHTTP). Routes are grouped by middleware profile;
+	// a route whose Enabled guard reports false is not served. The IAM/OIDC
+	// plane, the raw ACME directory, docs, debug, and UI mounts below keep
+	// their dedicated registration owners.
+	s.registerRoutes(r)
 
 	// ACME RFC 8555 directory endpoints. Mounted at the router ROOT (NOT
 	// under /api/v1) so the directory URL the server advertises
@@ -841,149 +406,6 @@ func (s *Server) setupRouter() {
 	// These delegate to the composed go-xkms RestServicer; they respond 503
 	// when ACME is not configured.
 	registerACMEDirectoryRoutes(s, r)
-
-	// Credential management routes mirror the qrdb /v1/credentials/* wire
-	// contract so a qrdb SDK REST client works unchanged against quicbaasd.
-	// Registered at the root (NOT under /api/v1) because the qrdb SDK
-	// transport hardcodes the /v1/credentials prefix.
-	//
-	// Like /v1/barrier below, this mount lives OUTSIDE the /api/v1 chi group,
-	// so it must install the shared protected-API authorization chain itself
-	// (useAPIAuthzMiddleware). Without it the credential verbs are reachable
-	// UNAUTHENTICATED under validator (RequireAuthz=true) enforcement; under
-	// default-deny the selector is a no-op because the TOP-router gate
-	// already covers root mounts. The credential surface is deliberately OFF
-	// the sealed-window allowlist (qrdb keeps versioned-credential rotation
-	// out of the sealed window), so there is no sealed bypass here: every
-	// verb requires a valid platform token in every barrier state.
-	r.Route("/v1/credentials", func(r chi.Router) {
-		s.useAPIAuthzMiddleware(r)
-		r.Get("/", s.HandleCredentialList)
-		r.Get("/strategy", s.HandleCredentialStrategy)
-		r.Post("/submit", s.HandleCredentialSubmit)
-		r.Delete("/{name}", s.HandleCredentialDelete)
-		r.Post("/{name}/rotate", s.HandleCredentialRotate)
-		r.Post("/{name}/gc", s.HandleCredentialGCExpired)
-		r.Get("/{name}/versions", s.HandleCredentialListVersions)
-		r.Get("/{name}/versions/{version}", s.HandleCredentialRetrieveVersion)
-	})
-
-	// Barrier routes mirror the qrdb /v1/barrier/* wire contract so a qrdb
-	// SDK REST client works unchanged against quicbaasd. Registered at the
-	// root (NOT under /api/v1) because the qrdb SDK transport hardcodes the
-	// /v1/barrier prefix. These bind the same Handle* methods as the
-	// /api/v1/barrier surface; both mounts remain available.
-	//
-	// The mount lives OUTSIDE the /api/v1 chi group, so it must install the
-	// shared protected-API authorization chain itself (useAPIAuthzMiddleware,
-	// the SAME selector the /api/v1 group and the root-mounted IAM group use).
-	// Without it the barrier verbs are reachable UNAUTHENTICATED post-unseal
-	// under validator (RequireAuthz=true) enforcement. Under the default-deny
-	// posture the selector is a no-op because EnforceDefaultDeny on the TOP
-	// router already covers root mounts, so the surface stays gated exactly
-	// once. The sealed-window bypass inside each gate keeps the sealed-window
-	// unseal flow admitting allowlisted verbs without a token WHILE SEALED.
-	r.Route("/v1/barrier", func(r chi.Router) {
-		s.useAPIAuthzMiddleware(r)
-		r.Get("/status", s.HandleBarrierStatus)
-		r.Post("/initialize", s.HandleBarrierInitialize)
-		r.Post("/unseal", s.HandleBarrierUnseal)
-		r.Post("/seal", s.HandleBarrierSeal)
-
-		r.Post("/shamir/initialize", s.HandleBarrierShamirInitialize)
-		r.Post("/shamir/unseal-share", s.HandleBarrierShamirUnsealShare)
-		r.Post("/shamir/unseal-shares", s.HandleBarrierShamirUnsealShares)
-
-		r.Post("/rekey", s.HandleBarrierRekey)
-
-		r.Post("/recovery/generate", s.HandleBarrierRecoveryGenerate)
-		r.Post("/recovery/recover", s.HandleBarrierRecoveryRecover)
-		r.Delete("/recovery", s.HandleBarrierRecoveryDelete)
-		r.Get("/recovery/status", s.HandleBarrierRecoveryStatus)
-
-		r.Post("/root-token", s.HandleBarrierRootToken)
-
-		r.Post("/enable-encryption", s.HandleBarrierEnableEncryption)
-	})
-
-	// Ceremony routes mirror the qrdb CeremonyClient wire contract so a qrdb
-	// SDK REST client works unchanged against quicbaasd. The qrdb client
-	// requests the lifecycle verbs under /v1/ceremony/* but routes
-	// enroll-external-officer under /v1/init/* (see go-qrdb
-	// transport_ceremony.go). Registered at the root (NOT under /api/v1)
-	// because the qrdb SDK transport hardcodes those prefixes. These bind the
-	// same Handle* methods as the /api/v1/init surface.
-	//
-	// Like /v1/barrier above, both mounts live OUTSIDE the /api/v1 chi group,
-	// so they must install the shared protected-API authorization chain
-	// themselves (useAPIAuthzMiddleware). The ceremony verbs carry
-	// sealed-window / first-boot semantics: WHILE SEALED every mounted
-	// /v1/ceremony route and the /v1/init/ prefix are on the canonical
-	// sealed-window allowlist (pkg/api/sealedwindow Table + RESTExtra), so
-	// the gate's built-in sealed bypass admits them without a token
-	// (audited) — possession of ceremony material IS the authorization
-	// during first boot. Once unsealed the bypass is inert and every verb
-	// requires its granular ceremony:* scope, matching the gRPC/QUIC/MCP
-	// canon and the default-deny scope table.
-	r.Route("/v1/ceremony", func(r chi.Router) {
-		s.useAPIAuthzMiddleware(r)
-		r.Get("/status", s.HandleCeremonyStatus)
-		r.Get("/officers", s.HandleCeremonyListOfficers)
-		r.Post("/initialize", s.HandleCeremonyInitialize)
-		r.Post("/claim-cert/begin", s.HandleCeremonyClaimCertBegin)
-		r.Post("/claim-cert/complete", s.HandleCeremonyClaimCertComplete)
-		r.Post("/officer-share/begin", s.HandleCeremonyBeginClaimShare)
-		r.Post("/officer-share/complete", s.HandleCeremonyCompleteClaimShare)
-		r.Post("/sign-csr", s.HandleCeremonySignCSR)
-	})
-	r.Route("/v1/init", func(r chi.Router) {
-		s.useAPIAuthzMiddleware(r)
-		r.Post("/enroll-external-officer", s.HandleCeremonyEnrollExternalOfficer)
-	})
-
-	// User lookup wire route. The qrdb SDK factor surface
-	// (Security().Auth().Factors()) resolves a subject (tenant + username) to
-	// its uint64 user id via GET /users/by-username/{username}?tenantID=...
-	// before enrolling a factor. ONLY the read-only lookup is mounted: user
-	// CRUD stays on the quicbaas IAM management surface (/api/v1/iam), which
-	// remains the single canonical user-administration entry point.
-	// Registered at the root (NOT under /api/v1) because the qrdb SDK REST
-	// transport hardcodes the /users prefix.
-	//
-	// Like /v1/barrier above, the mount lives OUTSIDE the /api/v1 chi group,
-	// so it installs the shared protected-API authorization chain itself
-	// (useAPIAuthzMiddleware). The lookup is NOT on the sealed-window
-	// allowlist and is not public: it requires a users:read scope in every
-	// barrier state (the PEP mapping for /users already exists).
-	r.Route("/users", func(r chi.Router) {
-		s.useAPIAuthzMiddleware(r)
-		r.Get("/by-username/{username}", s.HandleQRDBUserByUsername)
-	})
-
-	// User auth-factor wire routes mirror the qrdb /v1/users/factors/* wire
-	// contract (go-qrdb pkg/api/rest/handlers_user_auth_factor.go) so the
-	// qrdb SDK REST client works unchanged against quicbaasd. Enrollment
-	// writes land in the SAME UserAuthFactor store the unified-login ceremony
-	// reads. Registered at the root (NOT under /api/v1) because the qrdb SDK
-	// transport hardcodes the /v1/users/factors prefix.
-	//
-	// Like /v1/barrier above, the mount lives OUTSIDE the /api/v1 chi group,
-	// so it installs the shared protected-API authorization chain itself
-	// (useAPIAuthzMiddleware). The factor surface is NOT on the
-	// sealed-window allowlist and is not public: every verb requires its
-	// user_authfactors:* scope in every barrier state, matching the
-	// default-deny scope table and the gRPC qrdb.v1.UserAuthFactorService
-	// canon (the PEP mapping for /v1/users/factors already exists).
-	r.Route("/v1/users/factors", func(r chi.Router) {
-		s.useAPIAuthzMiddleware(r)
-		r.Post("/", s.HandleUserAuthFactorAdd)
-		r.Get("/list", s.HandleUserAuthFactorList)
-		r.Post("/rotate", s.HandleUserAuthFactorRotate)
-		r.Post("/login", s.HandleUserAuthFactorLogin)
-		r.Get("/{factorID}", s.HandleUserAuthFactorGet)
-		r.Delete("/{factorID}", s.HandleUserAuthFactorRemove)
-		r.Put("/{factorID}/label", s.HandleUserAuthFactorRelabel)
-	})
 
 	// IAM routes
 	// Note: This is at root level because OIDC endpoints must be at /.well-known/*
@@ -1010,35 +432,110 @@ func (s *Server) setupRouter() {
 	s.router = r
 }
 
-// useAPIAuthzMiddleware installs the protected-API authorization middleware
-// chain on r. It is the SINGLE selector for the per-group inbound authz
-// posture, shared by the /api/v1 chi group and the root-mounted IAM
-// management group (/api/v1/tenants, registered in iam.go), so both surfaces
-// enforce the same chain under every posture. Selector precedence:
-//
-//   - validatorEnforcement (RequireAuthz=true): the central platform-token
-//     Validator gate (AuthorizeViaValidator) — fail-closed scp -> permission
-//     decision + principal injection;
-//   - bindingEnforcementOnly (RequireAuthz=false): proof-of-possession-only
-//     token binding (EnforceTokenBinding) — DPoP/mTLS binding enforced on
-//     presented tokens and the verified principal injected, WITHOUT the RBAC
-//     decision;
-//   - otherwise: the legacy RBAC Authorize gate.
-//
-// When defaultDenyEnforcement is active the gate lives on the TOP router
-// (EnforceDefaultDeny) and no per-group middleware is added, so the surface
-// is gated exactly once. A nil authzMiddleware installs nothing.
-func (s *Server) useAPIAuthzMiddleware(r chi.Router) {
-	if s.authzMiddleware == nil || s.defaultDenyEnforcement {
-		return
+// registerRoutes registers the full table-driven route surface onto r: the
+// /api/v1 group with the shared protected-API authorization chain and its
+// two body-limit sub-groups, plus the three qrdb-wire root mounts that
+// remain load-bearing for the standalone sealed-window REST listener
+// (GroupBarrierWire, GroupCeremonyWire, GroupInitWire — see the RouteGroup
+// doc comment in routes.go). The /v1/credentials, /users, and
+// /v1/users/factors wire mounts were removed once go-qrdb's unified REST
+// server started serving those paths natively on the same listener —
+// quicbaas re-serving them would only shadow or race qrdb's own handlers,
+// and none of the three is reachable pre-unseal. An unmatched path under
+// any of these mounts still traverses the mount's middleware (401 before
+// 404), exactly as before the table-driven conversion. The per-request PEP
+// mapping inside the chain remains the authorization decision point for
+// this legacy listener; the table's derived Auth / Resource / Action
+// columns feed the unified server's per-route registration (pkg/apimodule).
+func (s *Server) registerRoutes(r chi.Router) {
+	byGroup := map[RouteGroup][]RouteSpec{}
+	for _, spec := range Routes() {
+		if spec.Enabled != nil && !spec.Enabled(s) {
+			continue
+		}
+		byGroup[spec.Group] = append(byGroup[spec.Group], spec)
 	}
-	switch {
-	case s.validatorEnforcement:
-		r.Use(s.authzMiddleware.AuthorizeViaValidator)
-	case s.bindingEnforcementOnly:
-		r.Use(s.authzMiddleware.EnforceTokenBinding)
-	default:
-		r.Use(s.authzMiddleware.Authorize)
+
+	present := map[string]struct{}{}
+	for _, spec := range Routes() {
+		present[spec.Method+" "+spec.Pattern] = struct{}{}
+	}
+
+	relative := func(pattern, prefix string) string {
+		return strings.TrimPrefix(pattern, prefix)
+	}
+
+	// register binds one spec, preserving the historical chi mount matching:
+	// a collection route registered as Get("/") inside a Route("/parent")
+	// mount also matched the bare /parent path (the mount dispatches it as
+	// "/"), so every flattened trailing-slash pattern registers a bare
+	// alias unless the table already carries a distinct bare route. A bare
+	// mount-root pattern ("/" relative to a wire mount) needs no alias: the
+	// enclosing r.Route mount dispatches the bare prefix itself.
+	register := func(g chi.Router, spec RouteSpec, prefix string) {
+		h := spec.Handler(s)
+		rel := relative(spec.Pattern, prefix)
+		g.MethodFunc(spec.Method, rel, h)
+		if bare := strings.TrimSuffix(rel, "/"); bare != rel && bare != "" {
+			if _, taken := present[spec.Method+" "+strings.TrimSuffix(spec.Pattern, "/")]; !taken {
+				g.MethodFunc(spec.Method, bare, h)
+			}
+		}
+	}
+
+	// /api/v1: the shared authorization chain wraps both body-limit groups.
+	r.Route("/api/v1", func(api chi.Router) {
+		// Standard API routes with the default body size limit.
+		api.Group(func(g chi.Router) {
+			g.Use(BodyLimitMiddleware(s.config.MaxBodySize))
+			for _, spec := range byGroup[GroupAPI] {
+				register(g, spec, "/api/v1")
+			}
+			// Prometheus scrape endpoint: a multi-method http.Handler
+			// mount, registered directly because the table is
+			// http.HandlerFunc-shaped (GET /metrics/performance rides the
+			// table like every other route).
+			g.Route("/metrics", func(m chi.Router) {
+				m.Handle("/", promhttp.HandlerFor(
+					metrics.Registry(),
+					promhttp.HandlerOpts{
+						EnableOpenMetrics: true,
+					},
+				))
+			})
+		})
+
+		// Upload-heavy routes with the larger body size limit.
+		api.Group(func(g chi.Router) {
+			g.Use(BodyLimitMiddleware(s.config.MaxUploadBodySize))
+			for _, spec := range byGroup[GroupAPIUpload] {
+				register(g, spec, "/api/v1")
+			}
+		})
+	})
+
+	// qrdb-wire root mounts (outside the /api/v1 chi group): each installs
+	// the shared protected-API authorization chain itself. These three
+	// groups (unlike the credential/users/user-factors wire groups that
+	// were removed once go-qrdb's unified server took over serving them)
+	// stay because the standalone sealed-window REST listener
+	// (pkg/server/sealed_window_rest.go) binds THIS router directly, before
+	// the unified server exists, and pkg/api/sealedwindow's REST allowlist
+	// requires both the /v1/barrier|ceremony/* wire paths and their
+	// /api/v1/barrier|init/* mirrors to be routable.
+	for _, group := range []RouteGroup{
+		GroupBarrierWire, GroupCeremonyWire, GroupInitWire,
+	} {
+		specs := byGroup[group]
+		if len(specs) == 0 {
+			continue
+		}
+		prefix := routeGroupMounts[group]
+		r.Route(prefix, func(g chi.Router) {
+			for _, spec := range specs {
+				register(g, spec, prefix)
+			}
+		})
 	}
 }
 
@@ -1227,191 +724,24 @@ func (s *Server) SetBootstrapService(svc service.BootstrapServicer) {
 	s.bootstrapSvc = svc
 }
 
-// SetCredentialService installs the credential management facade used by
-// /v1/credentials/* handlers. Lifecycle wiring calls this once the qrdb
-// credential service is available. Passing nil disables the surface
-// (handlers report 501 Not Implemented).
-func (s *Server) SetCredentialService(svc qrdbsdk.ServiceCredentialServicer) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.credentialSvc = svc
-}
-
-// SetUserService installs the qrdb user lookup service used by the
-// /users/by-username/{username} wire handler. Lifecycle wiring passes a lazy
-// proxy over the embedded node's user store so the surface follows the
-// node's sealed/unsealed state. Passing nil disables the surface (handlers
-// report 501 Not Implemented).
-func (s *Server) SetUserService(svc qrdbsdk.UserServicer) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.userSvc = svc
-}
-
-// SetUserAuthFactorService installs the qrdb user auth-factor service used
-// by the /v1/users/factors/* wire handlers. Lifecycle wiring passes a lazy
-// proxy over the embedded node's UserAuthFactor instance — the exact store
-// the unified-login ceremony resolves against. Passing nil disables the
-// surface (handlers report 501 Not Implemented).
-func (s *Server) SetUserAuthFactorService(svc qrdbsdk.UserAuthFactorServicer) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.userAuthFactorSvc = svc
-}
-
-// userService returns the wired qrdb user lookup service under the read
-// lock, or nil when not yet wired.
-func (s *Server) userService() qrdbsdk.UserServicer {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.userSvc
-}
-
-// userAuthFactorService returns the wired qrdb user auth-factor service
-// under the read lock, or nil when not yet wired.
-func (s *Server) userAuthFactorService() qrdbsdk.UserAuthFactorServicer {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.userAuthFactorSvc
-}
-
-// SetAuthorizationService sets the authorization service and token validator after construction.
-// This allows setting authz dependencies after the server is created.
-// Both tokenValidator and authz must be non-nil to enable authorization.
-// This method recreates the router with the new middleware applied.
-func (s *Server) SetAuthorizationService(authz interfaces.AuthorizationService, tokenValidator TokenValidator) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if authz == nil || tokenValidator == nil {
-		s.logger.Warn("SetAuthorizationService called with nil dependency, authorization not enabled")
-		return
-	}
-
-	s.authzMiddleware = NewAuthzMiddleware(&AuthzMiddlewareConfig{
-		Logger:         s.logger,
-		TokenValidator: tokenValidator,
-		AuthzService:   authz,
-	})
-
-	// Rebuild the router with the new middleware
-	s.setupRouter()
-
-	s.logger.Info("Authorization middleware enabled via SetAuthorizationService")
-}
-
-// SetTokenBindingEnforcement installs the proof-of-possession-only middleware
-// (EnforceTokenBinding) after construction: it enforces DPoP / mTLS token binding
-// fail-closed for sender-constrained tokens and injects the verified principal +
-// platform AuthorizedContext, WITHOUT the full RBAC authorization decision. It is
-// the inbound enforcement the broker enables today while cluster-wide RBAC role
-// propagation is validated. The tokenValidator must be non-nil.
+// SetModuleTokenAuthorizer installs the platform-token Validator
+// AuthenticateHTTP (auth_support.go) authenticates against — the seam
+// backing the module's qrdb ModuleAuthFallback (pkg/apimodule
+// module_http.go) for a caller that reaches a module route WITHOUT a
+// qrdb-authenticated identity. authorizer is typically the central
+// platform-token Validator (pkg/server buildPlatformValidator) — the SAME
+// seam the gRPC/QUIC/MCP transports already share — so a platform-JWT
+// caller is authenticated here and then authorized by qrdb's ONE RBAC
+// authorizer (store-resolved roles unioned with the token's
+// ScopePermissions, go-qrdb v0.5.6-alpha+), exactly like an mTLS identity.
 //
-// This method recreates the router with the binding-enforcement middleware
-// applied.
-func (s *Server) SetTokenBindingEnforcement(tokenValidator TokenValidator) {
+// Passing nil makes AuthenticateHTTP fail closed
+// (ModuleAuthorizerRequiredError): a platform-token caller with no qrdb
+// identity is denied rather than silently admitted.
+func (s *Server) SetModuleTokenAuthorizer(authorizer ModuleTokenAuthorizer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if tokenValidator == nil {
-		s.logger.Warn("SetTokenBindingEnforcement called with nil validator, enforcement not enabled")
-		return
-	}
-
-	s.authzMiddleware = NewAuthzMiddleware(&AuthzMiddlewareConfig{
-		Logger:         s.logger,
-		TokenValidator: tokenValidator,
-		// AuthzService is intentionally nil: EnforceTokenBinding does not run the
-		// RBAC decision. Per-resource RBAC is enforced at the handler layer via
-		// the injected AuthorizedContext.
-	})
-	s.bindingEnforcementOnly = true
-	s.defaultDenyEnforcement = false
-	s.validatorEnforcement = false
-
-	// Rebuild the router with the binding-enforcement middleware.
-	s.setupRouter()
-
-	s.logger.Info("Token-binding (DPoP/mTLS) enforcement middleware enabled")
-}
-
-// SetDefaultDenyEnforcement installs the default-deny scope -> RBAC gate
-// (EnforceDefaultDeny) after construction. It is the opt-in inbound
-// authorization posture: non-public, non-cluster-mTLS requests must present a
-// valid platform token carrying the required scope, and token-less requests are
-// denied. It is installed on the TOP router as a path-predicate so it also covers
-// root-mounted protected surfaces (IAM management, qrdb-wire mounts). The
-// tokenValidator must be non-nil.
-//
-// This method recreates the router with the default-deny middleware applied. It
-// is mutually exclusive with SetTokenBindingEnforcement: enabling it disables the
-// per-group token-binding / RBAC gates so the surface is gated exactly once.
-func (s *Server) SetDefaultDenyEnforcement(tokenValidator TokenValidator) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if tokenValidator == nil {
-		s.logger.Warn("SetDefaultDenyEnforcement called with nil validator, enforcement not enabled")
-		return
-	}
-
-	s.authzMiddleware = NewAuthzMiddleware(&AuthzMiddlewareConfig{
-		Logger:         s.logger,
-		TokenValidator: tokenValidator,
-		// AuthzService is intentionally nil: the default-deny gate enforces scope
-		// presence from the token's AuthorizedContext, not the standalone RBAC
-		// role-manager decision (which 403s cluster principals).
-	})
-	s.defaultDenyEnforcement = true
-	s.bindingEnforcementOnly = false
-	s.validatorEnforcement = false
-
-	// Rebuild the router with the default-deny middleware on the top router.
-	s.setupRouter()
-
-	s.logger.Info("Default-deny scope -> RBAC enforcement middleware enabled")
-}
-
-// SetValidatorAuthzEnforcement installs the central platform-token Validator gate
-// (AuthorizeViaValidator) on the /api/v1 group: every protected request is
-// authorized in a SINGLE Validator call that performs offline signature / iss /
-// aud / exp verification, DPoP sender-constraint (RFC 9449) for cnf.jkt-bound
-// tokens, the offline scp -> permission decision, and the per-tenant
-// liveness/revocation check. It REPLACES the prior bespoke token-validate +
-// online qrdb role-PDP path and is the reference (REST) RequireAuthz=true
-// posture.
-//
-// authorizer must be non-nil. This method recreates the router with the
-// validator gate (neither defaultDeny, bindingOnly, nor the legacy Authorize
-// gate) applied to the /api/v1 group.
-func (s *Server) SetValidatorAuthzEnforcement(authorizer ValidatorAuthorizer) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if authorizer == nil {
-		s.logger.Warn("SetValidatorAuthzEnforcement called with nil authorizer, enforcement not enabled")
-		return
-	}
-
-	s.authzMiddleware = NewAuthzMiddleware(&AuthzMiddlewareConfig{
-		Logger:              s.logger,
-		ValidatorAuthorizer: authorizer,
-	})
-	s.validatorEnforcement = true
-	s.defaultDenyEnforcement = false
-	s.bindingEnforcementOnly = false
-
-	// Rebuild the router with the validator gate on the /api/v1 group.
-	s.setupRouter()
-
-	s.logger.Info("REST platform-token validator authorization (offline scp + liveness) enabled")
-}
-
-// HasAuthorizationMiddleware returns true if authorization middleware is configured.
-func (s *Server) HasAuthorizationMiddleware() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.authzMiddleware != nil
+	s.moduleAuthorizer = authorizer
 }
 
 // Start starts the HTTP server. TLS is always enabled: the server prefers the

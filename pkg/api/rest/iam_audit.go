@@ -17,6 +17,7 @@ package rest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -31,11 +32,16 @@ import (
 func (h *IAMHandler) ListAuditEvents(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get tenant ID from context or query parameter
-	tenantID := r.URL.Query().Get("tenant_id")
-	if tenantID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "tenant_id parameter is required"))
+	// Tenant scoping: the caller reads its own authenticated tenant's
+	// chain. An empty tenant_id query parameter defaults to it; a
+	// different tenant_id is honored only when the caller holds
+	// cross-tenant (system-tenant) scope — otherwise the request is
+	// rejected before ever reaching storage, so a rejected query leaks no
+	// events.
+	tenantID, err := iam.ResolveRequestTenant(ctx, r.URL.Query().Get("tenant_id"))
+	if err != nil {
+		RespondIAMError(w, r, http.StatusForbidden,
+			NewIAMAPIError(ErrForbidden, err.Error()))
 		return
 	}
 
@@ -151,10 +157,13 @@ func (h *IAMHandler) GetAuditEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenantID := r.URL.Query().Get("tenant_id")
-	if tenantID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "tenant_id parameter is required"))
+	// Tenant scoping mirrors ListAuditEvents (iam.ResolveRequestTenant):
+	// the caller's own tenant, or any tenant when the caller holds
+	// cross-tenant (system-tenant) scope.
+	tenantID, err := iam.ResolveRequestTenant(ctx, r.URL.Query().Get("tenant_id"))
+	if err != nil {
+		RespondIAMError(w, r, http.StatusForbidden,
+			NewIAMAPIError(ErrForbidden, err.Error()))
 		return
 	}
 
@@ -198,10 +207,16 @@ func (h *IAMHandler) GetAuditEvent(w http.ResponseWriter, r *http.Request) {
 func (h *IAMHandler) DeleteOldAuditEvents(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	tenantID := r.URL.Query().Get("tenant_id")
-	if tenantID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "tenant_id parameter is required"))
+	// Tenant scoping mirrors ListAuditEvents/GetAuditEvent
+	// (iam.ResolveRequestTenant): the caller's own tenant, or any tenant
+	// when the caller holds cross-tenant (system-tenant) scope. This runs
+	// BEFORE the audit:delete permission check below so a caller outside
+	// its own tenant (and without system-tenant scope) never reaches
+	// storage, exactly like the read path.
+	tenantID, err := iam.ResolveRequestTenant(ctx, r.URL.Query().Get("tenant_id"))
+	if err != nil {
+		RespondIAMError(w, r, http.StatusForbidden,
+			NewIAMAPIError(ErrForbidden, err.Error()))
 		return
 	}
 
@@ -308,5 +323,75 @@ func (h *IAMHandler) DeleteOldAuditEvents(w http.ResponseWriter, r *http.Request
 func RegisterAuditRoutes(r chi.Router, handler *IAMHandler) {
 	r.Get("/api/v1/iam/audit", handler.ListAuditEvents)
 	r.Get("/api/v1/iam/audit/{id}", handler.GetAuditEvent)
+	r.Post("/api/v1/iam/audit", handler.RecordAuditEvent)
 	r.Delete("/api/v1/iam/audit", handler.DeleteOldAuditEvents)
+}
+
+// recordAuditEventRequest is the POST /api/v1/iam/audit body: tenant_id is
+// optional (defaults to the caller's own authenticated tenant), event is
+// the iam.AuditEvent to record (TP-specific extra fields ride in
+// event.details — no schema addition beyond this endpoint), and async
+// selects Log (false, synchronous, event_id populated in the response) vs
+// LogAsync (true, fire-and-forget, event_id empty).
+type recordAuditEventRequest struct {
+	TenantID string          `json:"tenant_id,omitempty"`
+	Event    *iam.AuditEvent `json:"event"`
+	Async    bool            `json:"async,omitempty"`
+}
+
+// RecordAuditEvent handles POST /api/v1/iam/audit - record (emit) a new
+// audit event onto the platform audit chain. This is the remote-write
+// counterpart to ListAuditEvents/GetAuditEvent.
+func (h *IAMHandler) RecordAuditEvent(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req recordAuditEventRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "invalid request body: "+err.Error()))
+		return
+	}
+	if req.Event == nil {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "event is required"))
+		return
+	}
+
+	tenantID, err := iam.ResolveRequestTenant(ctx, req.TenantID)
+	if err != nil {
+		RespondIAMError(w, r, http.StatusForbidden,
+			NewIAMAPIError(ErrForbidden, err.Error()))
+		return
+	}
+	req.Event.TenantID = tenantID
+
+	auditLogger, ok := h.server.service.(interface {
+		GetAuditLogger(ctx context.Context) (iam.AuditLogger, error)
+	})
+	if !ok {
+		RespondIAMError(w, r, http.StatusInternalServerError,
+			NewIAMAPIError(ErrInternalError, "audit logger not available"))
+		return
+	}
+	logger, err := auditLogger.GetAuditLogger(ctx)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+	if logger == nil {
+		RespondIAMError(w, r, http.StatusInternalServerError,
+			NewIAMAPIError(ErrInternalError, "audit logger not initialized"))
+		return
+	}
+
+	if req.Async {
+		logger.LogAsync(req.Event)
+		RespondJSON(w, r, http.StatusAccepted, map[string]interface{}{"event_id": ""})
+		return
+	}
+	if err := logger.Log(ctx, req.Event); err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+	RespondJSON(w, r, http.StatusCreated, map[string]interface{}{"event_id": req.Event.ID})
 }

@@ -212,7 +212,7 @@ func TestOrchestratorRotateAccount_UnsupportedDeployment(t *testing.T) {
 // and status verbs must never authorize consuming another account's
 // credential. The value must match the gRPC, QUIC and MCP tables exactly.
 func TestOrchestratorRotateAccount_AuthorizesAsSpawn(t *testing.T) {
-	resource, action, ok := mapRequestToPermission(
+	resource, action, ok := routePermissionForPath(
 		"/api/v1/orchestrator/sessions/session-abc/rotate-account", http.MethodPost)
 	require.True(t, ok, "rotate-account is unmapped; the PEP would default-deny it")
 	assert.Equal(t, "orchestrator", resource)
@@ -233,7 +233,7 @@ func TestOrchestratorRotateAccount_DoesNotWeakenTheSiblingRoutes(t *testing.T) {
 		{"/api/v1/orchestrator/sessions/session-abc/prompt", http.MethodPost, "prompt"},
 	}
 	for _, tc := range tests {
-		resource, action, ok := mapRequestToPermission(tc.path, tc.method)
+		resource, action, ok := routePermissionForPath(tc.path, tc.method)
 		require.True(t, ok, "%s %s", tc.method, tc.path)
 		assert.Equal(t, "orchestrator", resource, "%s %s", tc.method, tc.path)
 		assert.Equal(t, tc.action, action, "%s %s", tc.method, tc.path)

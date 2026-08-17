@@ -1103,74 +1103,6 @@ func (t *Token) IsExpired() bool {
 	return time.Now().After(t.Expires)
 }
 
-// ========== Compiled Policy Types for ABAC Engine ==========
-
-// CompiledPolicy is the compiled form of a policy for fast evaluation.
-type CompiledPolicy struct {
-	Name           string
-	Priority       int
-	SubjectMatcher *SubjectMatcher
-	Rules          []*CompiledRule
-	Variables      map[string]interface{}
-}
-
-// CompiledRule represents a compiled authorization rule.
-type CompiledRule struct {
-	Name         string
-	Effect       Effect
-	Priority     int
-	Actions      []string
-	ResourceTrie *ResourceTrie
-	Conditions   []CompiledCondition
-	Unless       []CompiledCondition
-}
-
-// SubjectMatcher matches subjects against policy selectors.
-type SubjectMatcher struct {
-	Users         map[string]bool
-	Groups        map[string]bool
-	Roles         map[string]bool
-	Services      map[string]bool
-	Matchers      []AttributeMatcher
-	Authenticated bool
-	Any           bool
-}
-
-// AttributeMatcher matches subject attributes.
-type AttributeMatcher interface {
-	Match(subject *Subject) bool
-}
-
-// CompiledCondition represents a compiled condition expression.
-type CompiledCondition interface {
-	Evaluate(ctx *EvalContext) bool
-}
-
-// EvalContext provides context for condition evaluation.
-type EvalContext struct {
-	Subject   *Subject
-	Action    string
-	Resource  string
-	Request   map[string]interface{}
-	Time      time.Time
-	Variables map[string]interface{}
-}
-
-// ResourceTrie is a prefix tree for efficient resource pattern matching.
-type ResourceTrie struct {
-	root *trieNode
-}
-
-type trieNode struct {
-	children     map[string]*trieNode
-	isWildcard   bool
-	isMultiLevel bool
-	isVariable   bool
-	variableName string
-	value        interface{}
-	isTerminal   bool
-}
-
 // PolicyEngineOptions configures the policy engine.
 type PolicyEngineOptions struct {
 	Storage       PolicyStorage
@@ -1178,4 +1110,29 @@ type PolicyEngineOptions struct {
 	CacheTTL      time.Duration
 	MaxCacheSize  int
 	EnableMetrics bool
+
+	// RBACAuthorizer is the SINGLE decision point every Evaluate/Check call
+	// delegates to (P6.1/P6.1-end-state of the unified login-plane plan):
+	// on a composed node this is qrdb's own RBAC-authorizer-decorated-with-
+	// live-reloaded-ABAC (abac.Decorator over auth.Authorizer, reached via
+	// the embedded qrdb node's RBACClient), so ABAC and RBAC are evaluated
+	// together as ONE decision by qrdb, not layered locally. Nil restores
+	// the historical default-deny (embedded/test contexts with no qrdb node
+	// composed).
+	RBACAuthorizer RBACAuthorizer
+
+	// ABACSync is the seam PolicyEngine drives after every policy CRUD
+	// mutation (Create/Update/Delete), and once at startup, to keep qrdb's
+	// live ABAC decorator synchronized with the FULL current policy store
+	// across every tenant. Nil disables live-reload synchronization
+	// (embedded/test contexts with no qrdb node composed) -- CRUD still
+	// mutates storage, it just does not push a Reload anywhere.
+	ABACSync ABACSync
+
+	// Simulator is the seam PolicyEngine.SimulatePolicy delegates to for
+	// evaluating a single draft policy against a check request in
+	// isolation, without persisting the policy or mutating the live
+	// enforcement state. Nil disables SimulatePolicy (returns
+	// ErrSimulatorUnavailable).
+	Simulator PolicySimulator
 }

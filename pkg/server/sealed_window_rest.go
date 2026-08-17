@@ -64,14 +64,17 @@ func (s *Server) startSealedRESTServer() error {
 		return &SealedWindowBootError{Stage: "sealed rest server", Cause: err}
 	}
 
-	// Barrier / ceremony / credential wiring: same facades as every other
-	// transport, resolved through the sealed-window client.
+	// Barrier / ceremony wiring: same facades as every other transport,
+	// resolved through the sealed-window client. Credential management is
+	// NOT wired here: pkg/api/sealedwindow's REST allowlist deliberately
+	// excludes /v1/credentials from the sealed window (qrdb keeps
+	// versioned-credential rotation off the sealed window; the ceremony
+	// flows deliver boot credentials instead), and quicbaas's REST server no
+	// longer carries a credential facade at all now that go-qrdb's unified
+	// server serves /v1/credentials natively post-unseal.
 	barrierSvc, ceremonySvc := s.buildBarrierCeremonyServices()
 	restServer.SetBarrierService(barrierSvc)
 	restServer.SetCeremonyService(ceremonySvc)
-	if s.ceremonyServices != nil && s.ceremonyServices.Credential != nil {
-		restServer.SetCredentialService(s.ceremonyServices.Credential)
-	}
 
 	// Trust bootstrap is stateless composition over go-xkms; first-touch CA
 	// discovery must work in every daemon state.

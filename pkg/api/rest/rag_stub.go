@@ -15,12 +15,8 @@
 
 package rest
 
-import (
-	"github.com/go-chi/chi/v5"
-)
-
-// registerRAGRoutes is a no-op when RAG is disabled.
-func registerRAGRoutes(s *Server, r chi.Router) {
-	// RAG is not enabled - routes not registered
-	s.logger.Debug("RAG support not enabled - skipping RAG route registration")
+// ragRouteSpecs contributes no routes when RAG is disabled, keeping the route
+// table (routes.go) identical to the compiled handler set.
+func ragRouteSpecs() []RouteSpec {
+	return nil
 }

@@ -928,7 +928,6 @@ func TestComponentAccessors_Mocked(t *testing.T) {
 
 		assert.Nil(t, srv.GetRESTServer())
 		assert.Nil(t, srv.GetGRPCServer())
-		assert.Nil(t, srv.GetQUICServer())
 		assert.Nil(t, srv.GetCatalogManager())
 		assert.Nil(t, srv.GetBackendManager())
 		assert.Nil(t, srv.GetWorkerManager())

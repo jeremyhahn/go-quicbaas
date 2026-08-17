@@ -7,9 +7,9 @@ QuicBaaS uses Go build tags for modular compilation. This allows you to customiz
 | Tag | Default | Description |
 |-----|---------|-------------|
 | `raft` | ON | Distributed consensus and clustering |
-| `timeseries` | ON | Time series metrics storage |
-| `vector` | ON | Vector database (HNSW indexing) |
-| `rag` | ON | Retrieval Augmented Generation (requires vector) |
+| `timeseries` | ON | Time series metrics storage (paired with qrdb's `qrdb_ts` engine tag) |
+| `vector` | ON | Vector database (HNSW indexing; paired with qrdb's `qrdb_vector` engine tag) |
+| `rag` | ON | Retrieval Augmented Generation (requires vector; paired with `qrdb_vector`) |
 | `rest` | ON | REST/HTTP API server |
 | `quic` | ON | QUIC protocol support |
 | `mcp` | ON | Model Context Protocol (AI agent tools) |

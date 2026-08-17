@@ -10,27 +10,51 @@ package quicbaas.scheduler.v1;
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+
 // =============================================================================
 // Scheduler Service
 // =============================================================================
 
 service SchedulerService {
     // Job Management
-    rpc CreateJob(CreateJobRequest) returns (CreateJobResponse);
-    rpc GetJob(GetJobRequest) returns (GetJobResponse);
-    rpc UpdateJob(UpdateJobRequest) returns (UpdateJobResponse);
-    rpc DeleteJob(DeleteJobRequest) returns (DeleteJobResponse);
-    rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+    rpc CreateJob(CreateJobRequest) returns (CreateJobResponse) {
+        option (qrdb.v1.permission) = "scheduler:create";
+    }
+    rpc GetJob(GetJobRequest) returns (GetJobResponse) {
+        option (qrdb.v1.permission) = "scheduler:read";
+    }
+    rpc UpdateJob(UpdateJobRequest) returns (UpdateJobResponse) {
+        option (qrdb.v1.permission) = "scheduler:update";
+    }
+    rpc DeleteJob(DeleteJobRequest) returns (DeleteJobResponse) {
+        option (qrdb.v1.permission) = "scheduler:delete";
+    }
+    rpc ListJobs(ListJobsRequest) returns (ListJobsResponse) {
+        option (qrdb.v1.permission) = "scheduler:list";
+    }
 
     // Job Control
-    rpc TriggerJob(TriggerJobRequest) returns (TriggerJobResponse);
-    rpc PauseJob(PauseJobRequest) returns (PauseJobResponse);
-    rpc ResumeJob(ResumeJobRequest) returns (ResumeJobResponse);
-    rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+    rpc TriggerJob(TriggerJobRequest) returns (TriggerJobResponse) {
+        option (qrdb.v1.permission) = "scheduler:trigger";
+    }
+    rpc PauseJob(PauseJobRequest) returns (PauseJobResponse) {
+        option (qrdb.v1.permission) = "scheduler:pause";
+    }
+    rpc ResumeJob(ResumeJobRequest) returns (ResumeJobResponse) {
+        option (qrdb.v1.permission) = "scheduler:resume";
+    }
+    rpc CancelJob(CancelJobRequest) returns (CancelJobResponse) {
+        option (qrdb.v1.permission) = "scheduler:cancel";
+    }
 
     // History and Status
-    rpc GetJobHistory(GetJobHistoryRequest) returns (GetJobHistoryResponse);
-    rpc GetSchedulerStatus(GetSchedulerStatusRequest) returns (GetSchedulerStatusResponse);
+    rpc GetJobHistory(GetJobHistoryRequest) returns (GetJobHistoryResponse) {
+        option (qrdb.v1.permission) = "scheduler:history";
+    }
+    rpc GetSchedulerStatus(GetSchedulerStatusRequest) returns (GetSchedulerStatusResponse) {
+        option (qrdb.v1.permission) = "scheduler:status";
+    }
 }
 
 // =============================================================================

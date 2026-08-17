@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	iam "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
@@ -617,6 +618,71 @@ func sessionLimitParam(reqMap map[string]interface{}) string {
 	return ""
 }
 
+// recordAuditWireRequest mirrors the SDK's unexported recordAuditRequest
+// (sdk/go/client/iam/audit.go) for cross-package JSON decoding: this
+// package cannot reference that unexported type directly, but Event's type
+// (iam.AuditEvent) is exported and already JSON-tagged, so a local wrapper
+// with the same wire shape decodes it faithfully — including EventType and
+// Outcome as their proper enum types, not raw JSON numbers.
+type recordAuditWireRequest struct {
+	Event *iam.AuditEvent `json:"event"`
+	Async bool            `json:"async"`
+}
+
+// sdkAuditEventToServerWire converts an SDK client iam.AuditEvent into the
+// JSON shape the server's pkg/iam.AuditEvent (RecordAuditEvent,
+// pkg/api/rest/iam_audit.go) decodes: string enums (not the SDK's int
+// codes), actor.user_id (not actor.id), resource.id (not target.id). It is
+// the REST-transport twin of convertSDKAuditEventToProto
+// (sdk/go/transport/grpc/iam_session_handlers.go).
+func sdkAuditEventToServerWire(e *iam.AuditEvent) map[string]interface{} {
+	wire := map[string]interface{}{
+		"id":         e.ID,
+		"tenant_id":  e.TenantID,
+		"event_type": e.EventType.String(),
+		"category":   e.EventType.String(),
+		"action":     e.Action,
+		"outcome":    e.Outcome.String(),
+	}
+	if e.Actor != nil {
+		actor := map[string]interface{}{}
+		if e.Actor.ID != "" {
+			actor["user_id"] = e.Actor.ID
+		}
+		if e.Actor.IPAddress != "" {
+			wire["ip_address"] = e.Actor.IPAddress
+		}
+		if e.Actor.UserAgent != "" {
+			wire["user_agent"] = e.Actor.UserAgent
+		}
+		if len(actor) > 0 {
+			wire["actor"] = actor
+		}
+	}
+	resourceID := ""
+	if e.Target != nil {
+		resourceID = e.Target.ID
+	} else if e.Resource != nil {
+		resourceID = e.Resource.ID
+	}
+	if resourceID != "" {
+		wire["resource"] = map[string]interface{}{"type": "resource", "id": resourceID}
+	}
+	if len(e.Details) > 0 {
+		details := make(map[string]string, len(e.Details))
+		for k, v := range e.Details {
+			if s, ok := v.(string); ok {
+				details[k] = s
+			}
+		}
+		wire["details"] = details
+	}
+	if !e.Timestamp.IsZero() {
+		wire["timestamp"] = e.Timestamp
+	}
+	return wire
+}
+
 // handleAuditRequest handles Audit service requests.
 func (h *iamRESTHandler) handleAuditRequest(ctx context.Context, method string, req interface{}) (interface{}, error) {
 	reqMap, _ := toMap(req)
@@ -656,6 +722,33 @@ func (h *iamRESTHandler) handleAuditRequest(ctx context.Context, method string, 
 			auditGetPath += "?tenant_id=" + tenantID
 		}
 		return h.doRequest(ctx, http.MethodGet, auditGetPath, nil)
+
+	case "Record", "RecordAsync":
+		// POST /api/v1/iam/audit. The SDK's rich client-side AuditEvent
+		// (int enums, Actor.ID/Type, Target.ID) has a DIFFERENT wire shape
+		// than the server's pkg/iam.AuditEvent RecordAuditEvent
+		// (pkg/api/rest/iam_audit.go) decodes (string enums, Actor.UserID,
+		// Resource.ID) — the same schema gap convertSDKAuditEventToProto
+		// bridges on the gRPC transport (iam_session_handlers.go). req
+		// cannot be type-asserted to the SDK's unexported recordAuditRequest
+		// from this package, so it is re-decoded (via the exported
+		// iam.AuditEvent type, which round-trips its enum fields correctly)
+		// and re-shaped onto the server's wire contract.
+		data, err := json.Marshal(req)
+		if err != nil {
+			return nil, errors.NewInvalidInput("iamRESTHandler.handleAuditRequest", "invalid request type")
+		}
+		var wire recordAuditWireRequest
+		if err := json.Unmarshal(data, &wire); err != nil {
+			return nil, errors.NewInvalidInput("iamRESTHandler.handleAuditRequest", "invalid request type")
+		}
+		if wire.Event == nil {
+			return nil, errors.NewInvalidInput("iamRESTHandler.handleAuditRequest", "event is required")
+		}
+		return h.doRequest(ctx, http.MethodPost, "/api/v1/iam/audit", map[string]interface{}{
+			"event": sdkAuditEventToServerWire(wire.Event),
+			"async": wire.Async,
+		})
 
 	default:
 		return nil, errors.NewUnimplemented("iamRESTHandler.handleAuditRequest", "unsupported method: "+method)

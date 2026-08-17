@@ -13,6 +13,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -1565,7 +1566,7 @@ var File_api_proto_parameter_store_proto protoreflect.FileDescriptor
 
 const file_api_proto_parameter_store_proto_rawDesc = "" +
 	"\n" +
-	"\x1fapi/proto/parameter_store.proto\x12\x1aquicbaas.parameterstore.v1\"\x90\x04\n" +
+	"\x1fapi/proto/parameter_store.proto\x12\x1aquicbaas.parameterstore.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\x90\x04\n" +
 	"\tParameter\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value\x12=\n" +
@@ -1712,16 +1713,16 @@ const file_api_proto_parameter_store_proto_rawDesc = "" +
 	"\x15PARAMETER_TYPE_STRING\x10\x01\x12\x19\n" +
 	"\x15PARAMETER_TYPE_NUMBER\x10\x02\x12\x17\n" +
 	"\x13PARAMETER_TYPE_JSON\x10\x03\x12\x19\n" +
-	"\x15PARAMETER_TYPE_BINARY\x10\x042\xc9\a\n" +
-	"\x0eParameterStore\x12q\n" +
-	"\fGetParameter\x12/.quicbaas.parameterstore.v1.GetParameterRequest\x1a0.quicbaas.parameterstore.v1.GetParameterResponse\x12q\n" +
-	"\fSetParameter\x12/.quicbaas.parameterstore.v1.SetParameterRequest\x1a0.quicbaas.parameterstore.v1.SetParameterResponse\x12z\n" +
-	"\x0fDeleteParameter\x122.quicbaas.parameterstore.v1.DeleteParameterRequest\x1a3.quicbaas.parameterstore.v1.DeleteParameterResponse\x12t\n" +
-	"\rGetParameters\x120.quicbaas.parameterstore.v1.GetParametersRequest\x1a1.quicbaas.parameterstore.v1.GetParametersResponse\x12t\n" +
-	"\rSetParameters\x120.quicbaas.parameterstore.v1.SetParametersRequest\x1a1.quicbaas.parameterstore.v1.SetParametersResponse\x12}\n" +
-	"\x10DeleteParameters\x123.quicbaas.parameterstore.v1.DeleteParametersRequest\x1a4.quicbaas.parameterstore.v1.DeleteParametersResponse\x12w\n" +
-	"\x0eListParameters\x121.quicbaas.parameterstore.v1.ListParametersRequest\x1a2.quicbaas.parameterstore.v1.ListParametersResponse\x12q\n" +
-	"\fSearchByTags\x12/.quicbaas.parameterstore.v1.SearchByTagsRequest\x1a0.quicbaas.parameterstore.v1.SearchByTagsResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"\x15PARAMETER_TYPE_BINARY\x10\x042\x81\t\n" +
+	"\x0eParameterStore\x12\x86\x01\n" +
+	"\fGetParameter\x12/.quicbaas.parameterstore.v1.GetParameterRequest\x1a0.quicbaas.parameterstore.v1.GetParameterResponse\"\x13\xc2\xf3\x18\x0fparameters:read\x12\x87\x01\n" +
+	"\fSetParameter\x12/.quicbaas.parameterstore.v1.SetParameterRequest\x1a0.quicbaas.parameterstore.v1.SetParameterResponse\"\x14\xc2\xf3\x18\x10parameters:write\x12\x91\x01\n" +
+	"\x0fDeleteParameter\x122.quicbaas.parameterstore.v1.DeleteParameterRequest\x1a3.quicbaas.parameterstore.v1.DeleteParameterResponse\"\x15\xc2\xf3\x18\x11parameters:delete\x12\x89\x01\n" +
+	"\rGetParameters\x120.quicbaas.parameterstore.v1.GetParametersRequest\x1a1.quicbaas.parameterstore.v1.GetParametersResponse\"\x13\xc2\xf3\x18\x0fparameters:read\x12\x8a\x01\n" +
+	"\rSetParameters\x120.quicbaas.parameterstore.v1.SetParametersRequest\x1a1.quicbaas.parameterstore.v1.SetParametersResponse\"\x14\xc2\xf3\x18\x10parameters:write\x12\x94\x01\n" +
+	"\x10DeleteParameters\x123.quicbaas.parameterstore.v1.DeleteParametersRequest\x1a4.quicbaas.parameterstore.v1.DeleteParametersResponse\"\x15\xc2\xf3\x18\x11parameters:delete\x12\x8c\x01\n" +
+	"\x0eListParameters\x121.quicbaas.parameterstore.v1.ListParametersRequest\x1a2.quicbaas.parameterstore.v1.ListParametersResponse\"\x13\xc2\xf3\x18\x0fparameters:list\x12\x88\x01\n" +
+	"\fSearchByTags\x12/.quicbaas.parameterstore.v1.SearchByTagsRequest\x1a0.quicbaas.parameterstore.v1.SearchByTagsResponse\"\x15\xc2\xf3\x18\x11parameters:searchB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_parameter_store_proto_rawDescOnce sync.Once

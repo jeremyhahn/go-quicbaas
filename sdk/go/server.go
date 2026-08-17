@@ -53,7 +53,7 @@ type DANEPublisher = dane.DANEPublisher
 // Config types already exported in this package.
 type ServerFullConfig = config.Config
 
-// ServerNodeConfig contains HTTP/gRPC/QUIC/MCP server listener configuration.
+// ServerNodeConfig contains HTTP/gRPC/MCP server listener configuration.
 type ServerNodeConfig = config.ServerConfig
 
 // ServerGRPCConfig contains gRPC server configuration.
@@ -61,9 +61,6 @@ type ServerGRPCConfig = config.ServerGRPCConfig
 
 // ServerRESTConfig contains REST/HTTP server configuration.
 type ServerRESTConfig = config.ServerRESTConfig
-
-// ServerQUICConfig contains QUIC server configuration.
-type ServerQUICConfig = config.ServerQUICConfig
 
 // ServerMCPConfig contains MCP (Model Context Protocol) server configuration.
 type ServerMCPConfig = config.ServerMCPConfig

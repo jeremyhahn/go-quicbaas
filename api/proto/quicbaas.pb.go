@@ -13,6 +13,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -10137,7 +10138,7 @@ var File_api_proto_quicbaas_proto protoreflect.FileDescriptor
 
 const file_api_proto_quicbaas_proto_rawDesc = "" +
 	"\n" +
-	"\x18api/proto/quicbaas.proto\x12\vquicbaas.v1\x1a\x17api/proto/cluster.proto\"\xce\x02\n" +
+	"\x18api/proto/quicbaas.proto\x12\vquicbaas.v1\x1a\x17api/proto/cluster.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xce\x02\n" +
 	"\n" +
 	"PutRequest\x12\x1f\n" +
 	"\ventity_type\x18\x01 \x01(\tR\n" +
@@ -10955,78 +10956,84 @@ const file_api_proto_quicbaas_proto_rawDesc = "" +
 	"\x15SEAL_MODE_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10SEAL_MODE_MANUAL\x10\x01\x12\x12\n" +
 	"\x0eSEAL_MODE_AUTO\x10\x02\x12\x14\n" +
-	"\x10SEAL_MODE_CRYPTO\x10\x032\xd9&\n" +
-	"\bQuicBaaS\x128\n" +
-	"\x03Put\x12\x17.quicbaas.v1.PutRequest\x1a\x18.quicbaas.v1.PutResponse\x128\n" +
-	"\x03Get\x12\x17.quicbaas.v1.GetRequest\x1a\x18.quicbaas.v1.GetResponse\x12A\n" +
-	"\x06Delete\x12\x1a.quicbaas.v1.DeleteRequest\x1a\x1b.quicbaas.v1.DeleteResponse\x12=\n" +
-	"\x04List\x12\x18.quicbaas.v1.ListRequest\x1a\x19.quicbaas.v1.ListResponse0\x01\x12\\\n" +
-	"\x0fListEntityTypes\x12#.quicbaas.v1.ListEntityTypesRequest\x1a$.quicbaas.v1.ListEntityTypesResponse\x12@\n" +
-	"\x05Watch\x12\x19.quicbaas.v1.WatchRequest\x1a\x1a.quicbaas.v1.WatchResponse0\x01\x12@\n" +
-	"\x05Query\x12\x19.quicbaas.v1.QueryRequest\x1a\x1a.quicbaas.v1.QueryResponse0\x01\x12B\n" +
-	"\tScanIndex\x12\x18.quicbaas.v1.ScanRequest\x1a\x19.quicbaas.v1.ScanResponse0\x01\x12V\n" +
-	"\rClusterStatus\x12!.quicbaas.v1.ClusterStatusRequest\x1a\".quicbaas.v1.ClusterStatusResponse\x12J\n" +
-	"\tGetLeader\x12\x1d.quicbaas.v1.GetLeaderRequest\x1a\x1e.quicbaas.v1.GetLeaderResponse\x12D\n" +
-	"\aAddNode\x12\x1b.quicbaas.v1.AddNodeRequest\x1a\x1c.quicbaas.v1.AddNodeResponse\x12M\n" +
+	"\x10SEAL_MODE_CRYPTO\x10\x032\x870\n" +
+	"\bQuicBaaS\x12D\n" +
+	"\x03Put\x12\x17.quicbaas.v1.PutRequest\x1a\x18.quicbaas.v1.PutResponse\"\n" +
+	"\xc2\xf3\x18\x06kv:put\x12D\n" +
+	"\x03Get\x12\x17.quicbaas.v1.GetRequest\x1a\x18.quicbaas.v1.GetResponse\"\n" +
+	"\xc2\xf3\x18\x06kv:get\x12P\n" +
+	"\x06Delete\x12\x1a.quicbaas.v1.DeleteRequest\x1a\x1b.quicbaas.v1.DeleteResponse\"\r\xc2\xf3\x18\tkv:delete\x12J\n" +
+	"\x04List\x12\x18.quicbaas.v1.ListRequest\x1a\x19.quicbaas.v1.ListResponse\"\v\xc2\xf3\x18\akv:list0\x01\x12n\n" +
+	"\x0fListEntityTypes\x12#.quicbaas.v1.ListEntityTypesRequest\x1a$.quicbaas.v1.ListEntityTypesResponse\"\x10\xc2\xf3\x18\fadmin:status\x12Q\n" +
+	"\x05Watch\x12\x19.quicbaas.v1.WatchRequest\x1a\x1a.quicbaas.v1.WatchResponse\"\x0f\xc2\xf3\x18\vwatch:watch0\x01\x12N\n" +
+	"\x05Query\x12\x19.quicbaas.v1.QueryRequest\x1a\x1a.quicbaas.v1.QueryResponse\"\f\xc2\xf3\x18\bkv:range0\x01\x12R\n" +
+	"\tScanIndex\x12\x18.quicbaas.v1.ScanRequest\x1a\x19.quicbaas.v1.ScanResponse\"\x0e\xc2\xf3\x18\n" +
+	"index:scan0\x01\x12h\n" +
+	"\rClusterStatus\x12!.quicbaas.v1.ClusterStatusRequest\x1a\".quicbaas.v1.ClusterStatusResponse\"\x10\xc2\xf3\x18\fadmin:status\x12\\\n" +
+	"\tGetLeader\x12\x1d.quicbaas.v1.GetLeaderRequest\x1a\x1e.quicbaas.v1.GetLeaderResponse\"\x10\xc2\xf3\x18\fadmin:status\x12Z\n" +
+	"\aAddNode\x12\x1b.quicbaas.v1.AddNodeRequest\x1a\x1c.quicbaas.v1.AddNodeResponse\"\x14\xc2\xf3\x18\x10admin:add_member\x12f\n" +
 	"\n" +
-	"RemoveNode\x12\x1e.quicbaas.v1.RemoveNodeRequest\x1a\x1f.quicbaas.v1.RemoveNodeResponse\x12P\n" +
-	"\vCreateShard\x12\x1f.quicbaas.v1.CreateShardRequest\x1a .quicbaas.v1.CreateShardResponse\x12J\n" +
-	"\tAggregate\x12\x1d.quicbaas.v1.AggregateRequest\x1a\x1e.quicbaas.v1.AggregateResponse\x12^\n" +
-	"\x0fTimeSeriesQuery\x12#.quicbaas.v1.TimeSeriesQueryRequest\x1a$.quicbaas.v1.TimeSeriesQueryResponse0\x01\x12S\n" +
-	"\fTSWritePoint\x12 .quicbaas.v1.TSWritePointRequest\x1a!.quicbaas.v1.TSWritePointResponse\x12S\n" +
-	"\fTSWriteBatch\x12 .quicbaas.v1.TSWriteBatchRequest\x1a!.quicbaas.v1.TSWriteBatchResponse\x12D\n" +
-	"\aTSQuery\x12\x1b.quicbaas.v1.TSQueryRequest\x1a\x1c.quicbaas.v1.TSQueryResponse\x12Y\n" +
-	"\x0eTSDeleteSeries\x12\".quicbaas.v1.TSDeleteSeriesRequest\x1a#.quicbaas.v1.TSDeleteSeriesResponse\x12k\n" +
-	"\x14TSGetRetentionPolicy\x12(.quicbaas.v1.TSGetRetentionPolicyRequest\x1a).quicbaas.v1.TSGetRetentionPolicyResponse\x12k\n" +
-	"\x14TSSetRetentionPolicy\x12(.quicbaas.v1.TSSetRetentionPolicyRequest\x1a).quicbaas.v1.TSSetRetentionPolicyResponse\x12V\n" +
-	"\rTSListMetrics\x12!.quicbaas.v1.TSListMetricsRequest\x1a\".quicbaas.v1.TSListMetricsResponse\x12G\n" +
-	"\bBatchPut\x12\x1c.quicbaas.v1.BatchPutRequest\x1a\x1d.quicbaas.v1.BatchPutResponse\x12G\n" +
-	"\bBatchGet\x12\x1c.quicbaas.v1.BatchGetRequest\x1a\x1d.quicbaas.v1.BatchGetResponse\x12P\n" +
-	"\vBatchDelete\x12\x1f.quicbaas.v1.BatchDeleteRequest\x1a .quicbaas.v1.BatchDeleteResponse\x12]\n" +
-	"\x0eStreamBatchPut\x12\".quicbaas.v1.StreamBatchPutRequest\x1a#.quicbaas.v1.StreamBatchPutResponse(\x010\x01\x12P\n" +
-	"\vTransaction\x12\x1f.quicbaas.v1.TransactionRequest\x1a .quicbaas.v1.TransactionResponse\x12A\n" +
-	"\x06Health\x12\x1a.quicbaas.v1.HealthRequest\x1a\x1b.quicbaas.v1.HealthResponse\x12S\n" +
-	"\fCreateBackup\x12 .quicbaas.v1.CreateBackupRequest\x1a!.quicbaas.v1.CreateBackupResponse\x12P\n" +
-	"\vListBackups\x12\x1f.quicbaas.v1.ListBackupsRequest\x1a .quicbaas.v1.ListBackupsResponse\x12V\n" +
-	"\rRestoreBackup\x12!.quicbaas.v1.RestoreBackupRequest\x1a\".quicbaas.v1.RestoreBackupResponse\x12S\n" +
-	"\fDeleteBackup\x12 .quicbaas.v1.DeleteBackupRequest\x1a!.quicbaas.v1.DeleteBackupResponse\x12S\n" +
-	"\fVerifyBackup\x12 .quicbaas.v1.VerifyBackupRequest\x1a!.quicbaas.v1.VerifyBackupResponse\x12>\n" +
-	"\x05Login\x12\x19.quicbaas.v1.LoginRequest\x1a\x1a.quicbaas.v1.LoginResponse\x12A\n" +
-	"\x06Logout\x12\x1a.quicbaas.v1.LogoutRequest\x1a\x1b.quicbaas.v1.LogoutResponse\x12S\n" +
-	"\fRefreshToken\x12 .quicbaas.v1.RefreshTokenRequest\x1a!.quicbaas.v1.RefreshTokenResponse\x12V\n" +
-	"\rValidateToken\x12!.quicbaas.v1.ValidateTokenRequest\x1a\".quicbaas.v1.ValidateTokenResponse\x12M\n" +
+	"RemoveNode\x12\x1e.quicbaas.v1.RemoveNodeRequest\x1a\x1f.quicbaas.v1.RemoveNodeResponse\"\x17\xc2\xf3\x18\x13admin:remove_member\x12g\n" +
+	"\vCreateShard\x12\x1f.quicbaas.v1.CreateShardRequest\x1a .quicbaas.v1.CreateShardResponse\"\x15\xc2\xf3\x18\x11admin:start_shard\x12d\n" +
+	"\tAggregate\x12\x1d.quicbaas.v1.AggregateRequest\x1a\x1e.quicbaas.v1.AggregateResponse\"\x18\xc2\xf3\x18\x14timeseries:aggregate\x12t\n" +
+	"\x0fTimeSeriesQuery\x12#.quicbaas.v1.TimeSeriesQueryRequest\x1a$.quicbaas.v1.TimeSeriesQueryResponse\"\x14\xc2\xf3\x18\x10timeseries:query0\x01\x12o\n" +
+	"\fTSWritePoint\x12 .quicbaas.v1.TSWritePointRequest\x1a!.quicbaas.v1.TSWritePointResponse\"\x1a\xc2\xf3\x18\x16timeseries:write_point\x12o\n" +
+	"\fTSWriteBatch\x12 .quicbaas.v1.TSWriteBatchRequest\x1a!.quicbaas.v1.TSWriteBatchResponse\"\x1a\xc2\xf3\x18\x16timeseries:write_batch\x12Z\n" +
+	"\aTSQuery\x12\x1b.quicbaas.v1.TSQueryRequest\x1a\x1c.quicbaas.v1.TSQueryResponse\"\x14\xc2\xf3\x18\x10timeseries:query\x12w\n" +
+	"\x0eTSDeleteSeries\x12\".quicbaas.v1.TSDeleteSeriesRequest\x1a#.quicbaas.v1.TSDeleteSeriesResponse\"\x1c\xc2\xf3\x18\x18timeseries:delete_series\x12\x89\x01\n" +
+	"\x14TSGetRetentionPolicy\x12(.quicbaas.v1.TSGetRetentionPolicyRequest\x1a).quicbaas.v1.TSGetRetentionPolicyResponse\"\x1c\xc2\xf3\x18\x18timeseries:get_retention\x12\x89\x01\n" +
+	"\x14TSSetRetentionPolicy\x12(.quicbaas.v1.TSSetRetentionPolicyRequest\x1a).quicbaas.v1.TSSetRetentionPolicyResponse\"\x1c\xc2\xf3\x18\x18timeseries:set_retention\x12s\n" +
+	"\rTSListMetrics\x12!.quicbaas.v1.TSListMetricsRequest\x1a\".quicbaas.v1.TSListMetricsResponse\"\x1b\xc2\xf3\x18\x17timeseries:list_metrics\x12Z\n" +
+	"\bBatchPut\x12\x1c.quicbaas.v1.BatchPutRequest\x1a\x1d.quicbaas.v1.BatchPutResponse\"\x11\xc2\xf3\x18\rbatch:execute\x12Z\n" +
+	"\bBatchGet\x12\x1c.quicbaas.v1.BatchGetRequest\x1a\x1d.quicbaas.v1.BatchGetResponse\"\x11\xc2\xf3\x18\rbatch:execute\x12c\n" +
+	"\vBatchDelete\x12\x1f.quicbaas.v1.BatchDeleteRequest\x1a .quicbaas.v1.BatchDeleteResponse\"\x11\xc2\xf3\x18\rbatch:execute\x12p\n" +
+	"\x0eStreamBatchPut\x12\".quicbaas.v1.StreamBatchPutRequest\x1a#.quicbaas.v1.StreamBatchPutResponse\"\x11\xc2\xf3\x18\rbatch:execute(\x010\x01\x12i\n" +
+	"\vTransaction\x12\x1f.quicbaas.v1.TransactionRequest\x1a .quicbaas.v1.TransactionResponse\"\x17\xc2\xf3\x18\x13transaction:execute\x12A\n" +
+	"\x06Health\x12\x1a.quicbaas.v1.HealthRequest\x1a\x1b.quicbaas.v1.HealthResponse\x12f\n" +
+	"\fCreateBackup\x12 .quicbaas.v1.CreateBackupRequest\x1a!.quicbaas.v1.CreateBackupResponse\"\x11\xc2\xf3\x18\rbackup:create\x12a\n" +
+	"\vListBackups\x12\x1f.quicbaas.v1.ListBackupsRequest\x1a .quicbaas.v1.ListBackupsResponse\"\x0f\xc2\xf3\x18\vbackup:list\x12j\n" +
+	"\rRestoreBackup\x12!.quicbaas.v1.RestoreBackupRequest\x1a\".quicbaas.v1.RestoreBackupResponse\"\x12\xc2\xf3\x18\x0ebackup:restore\x12f\n" +
+	"\fDeleteBackup\x12 .quicbaas.v1.DeleteBackupRequest\x1a!.quicbaas.v1.DeleteBackupResponse\"\x11\xc2\xf3\x18\rbackup:delete\x12f\n" +
+	"\fVerifyBackup\x12 .quicbaas.v1.VerifyBackupRequest\x1a!.quicbaas.v1.VerifyBackupResponse\"\x11\xc2\xf3\x18\rbackup:verify\x12>\n" +
+	"\x05Login\x12\x19.quicbaas.v1.LoginRequest\x1a\x1a.quicbaas.v1.LoginResponse\x12]\n" +
+	"\x06Logout\x12\x1a.quicbaas.v1.LogoutRequest\x1a\x1b.quicbaas.v1.LogoutResponse\"\x1a\xc2\xf3\x18\x16user_authfactors:login\x12o\n" +
+	"\fRefreshToken\x12 .quicbaas.v1.RefreshTokenRequest\x1a!.quicbaas.v1.RefreshTokenResponse\"\x1a\xc2\xf3\x18\x16user_authfactors:login\x12r\n" +
+	"\rValidateToken\x12!.quicbaas.v1.ValidateTokenRequest\x1a\".quicbaas.v1.ValidateTokenResponse\"\x1a\xc2\xf3\x18\x16user_authfactors:login\x12_\n" +
 	"\n" +
-	"CreateUser\x12\x1e.quicbaas.v1.CreateUserRequest\x1a\x1f.quicbaas.v1.CreateUserResponse\x12M\n" +
+	"CreateUser\x12\x1e.quicbaas.v1.CreateUserRequest\x1a\x1f.quicbaas.v1.CreateUserResponse\"\x10\xc2\xf3\x18\fusers:create\x12_\n" +
 	"\n" +
-	"DeleteUser\x12\x1e.quicbaas.v1.DeleteUserRequest\x1a\x1f.quicbaas.v1.DeleteUserResponse\x12J\n" +
-	"\tListUsers\x12\x1d.quicbaas.v1.ListUsersRequest\x1a\x1e.quicbaas.v1.ListUsersResponse\x12M\n" +
+	"DeleteUser\x12\x1e.quicbaas.v1.DeleteUserRequest\x1a\x1f.quicbaas.v1.DeleteUserResponse\"\x10\xc2\xf3\x18\fusers:delete\x12Z\n" +
+	"\tListUsers\x12\x1d.quicbaas.v1.ListUsersRequest\x1a\x1e.quicbaas.v1.ListUsersResponse\"\x0e\xc2\xf3\x18\n" +
+	"users:list\x12_\n" +
 	"\n" +
-	"CreateRole\x12\x1e.quicbaas.v1.CreateRoleRequest\x1a\x1f.quicbaas.v1.CreateRoleResponse\x12M\n" +
+	"CreateRole\x12\x1e.quicbaas.v1.CreateRoleRequest\x1a\x1f.quicbaas.v1.CreateRoleResponse\"\x10\xc2\xf3\x18\froles:create\x12_\n" +
 	"\n" +
-	"DeleteRole\x12\x1e.quicbaas.v1.DeleteRoleRequest\x1a\x1f.quicbaas.v1.DeleteRoleResponse\x12J\n" +
-	"\tListRoles\x12\x1d.quicbaas.v1.ListRolesRequest\x1a\x1e.quicbaas.v1.ListRolesResponse\x12M\n" +
+	"DeleteRole\x12\x1e.quicbaas.v1.DeleteRoleRequest\x1a\x1f.quicbaas.v1.DeleteRoleResponse\"\x10\xc2\xf3\x18\froles:delete\x12Z\n" +
+	"\tListRoles\x12\x1d.quicbaas.v1.ListRolesRequest\x1a\x1e.quicbaas.v1.ListRolesResponse\"\x0e\xc2\xf3\x18\n" +
+	"roles:list\x12_\n" +
 	"\n" +
-	"AssignRole\x12\x1e.quicbaas.v1.AssignRoleRequest\x1a\x1f.quicbaas.v1.AssignRoleResponse\x12M\n" +
+	"AssignRole\x12\x1e.quicbaas.v1.AssignRoleRequest\x1a\x1f.quicbaas.v1.AssignRoleResponse\"\x10\xc2\xf3\x18\froles:assign\x12a\n" +
 	"\n" +
-	"RevokeRole\x12\x1e.quicbaas.v1.RevokeRoleRequest\x1a\x1f.quicbaas.v1.RevokeRoleResponse\x12P\n" +
-	"\vMigrateData\x12\x1f.quicbaas.v1.MigrateDataRequest\x1a .quicbaas.v1.MigrateDataResponse\x12k\n" +
-	"\x14GetMigrationProgress\x12(.quicbaas.v1.GetMigrationProgressRequest\x1a).quicbaas.v1.GetMigrationProgressResponse\x12_\n" +
-	"\x10RebalanceCluster\x12$.quicbaas.v1.RebalanceClusterRequest\x1a%.quicbaas.v1.RebalanceClusterResponse\x12k\n" +
-	"\x14GetRebalanceProgress\x12(.quicbaas.v1.GetRebalanceProgressRequest\x1a).quicbaas.v1.GetRebalanceProgressResponse\x12P\n" +
-	"\vReplaceNode\x12\x1f.quicbaas.v1.ReplaceNodeRequest\x1a .quicbaas.v1.ReplaceNodeResponse\x12P\n" +
-	"\vUpgradeNode\x12\x1f.quicbaas.v1.UpgradeNodeRequest\x1a .quicbaas.v1.UpgradeNodeResponse\x12_\n" +
-	"\x10GetUpgradeStatus\x12$.quicbaas.v1.GetUpgradeStatusRequest\x1a%.quicbaas.v1.GetUpgradeStatusResponse\x12V\n" +
-	"\rGetCacheStats\x12!.quicbaas.v1.GetCacheStatsRequest\x1a\".quicbaas.v1.GetCacheStatsResponse\x12M\n" +
+	"RevokeRole\x12\x1e.quicbaas.v1.RevokeRoleRequest\x1a\x1f.quicbaas.v1.RevokeRoleResponse\"\x12\xc2\xf3\x18\x0eroles:unassign\x12a\n" +
+	"\vMigrateData\x12\x1f.quicbaas.v1.MigrateDataRequest\x1a .quicbaas.v1.MigrateDataResponse\"\x0f\xc2\xf3\x18\vadmin:drain\x12}\n" +
+	"\x14GetMigrationProgress\x12(.quicbaas.v1.GetMigrationProgressRequest\x1a).quicbaas.v1.GetMigrationProgressResponse\"\x10\xc2\xf3\x18\fadmin:status\x12v\n" +
+	"\x10RebalanceCluster\x12$.quicbaas.v1.RebalanceClusterRequest\x1a%.quicbaas.v1.RebalanceClusterResponse\"\x15\xc2\xf3\x18\x11rebalance:execute\x12\x81\x01\n" +
+	"\x14GetRebalanceProgress\x12(.quicbaas.v1.GetRebalanceProgressRequest\x1a).quicbaas.v1.GetRebalanceProgressResponse\"\x14\xc2\xf3\x18\x10rebalance:report\x12f\n" +
+	"\vReplaceNode\x12\x1f.quicbaas.v1.ReplaceNodeRequest\x1a .quicbaas.v1.ReplaceNodeResponse\"\x14\xc2\xf3\x18\x10admin:add_member\x12a\n" +
+	"\vUpgradeNode\x12\x1f.quicbaas.v1.UpgradeNodeRequest\x1a .quicbaas.v1.UpgradeNodeResponse\"\x0f\xc2\xf3\x18\vadmin:drain\x12q\n" +
+	"\x10GetUpgradeStatus\x12$.quicbaas.v1.GetUpgradeStatusRequest\x1a%.quicbaas.v1.GetUpgradeStatusResponse\"\x10\xc2\xf3\x18\fadmin:status\x12h\n" +
+	"\rGetCacheStats\x12!.quicbaas.v1.GetCacheStatsRequest\x1a\".quicbaas.v1.GetCacheStatsResponse\"\x10\xc2\xf3\x18\fadmin:status\x12e\n" +
 	"\n" +
-	"ClearCache\x12\x1e.quicbaas.v1.ClearCacheRequest\x1a\x1f.quicbaas.v1.ClearCacheResponse\x12Y\n" +
-	"\x0eGetCacheConfig\x12\".quicbaas.v1.GetCacheConfigRequest\x1a#.quicbaas.v1.GetCacheConfigResponse\x12b\n" +
-	"\x11UpdateCacheConfig\x12%.quicbaas.v1.UpdateCacheConfigRequest\x1a&.quicbaas.v1.UpdateCacheConfigResponse\x12M\n" +
+	"ClearCache\x12\x1e.quicbaas.v1.ClearCacheRequest\x1a\x1f.quicbaas.v1.ClearCacheResponse\"\x16\xc2\xf3\x18\x12admin:capabilities\x12k\n" +
+	"\x0eGetCacheConfig\x12\".quicbaas.v1.GetCacheConfigRequest\x1a#.quicbaas.v1.GetCacheConfigResponse\"\x10\xc2\xf3\x18\fadmin:status\x12z\n" +
+	"\x11UpdateCacheConfig\x12%.quicbaas.v1.UpdateCacheConfigRequest\x1a&.quicbaas.v1.UpdateCacheConfigResponse\"\x16\xc2\xf3\x18\x12admin:capabilities\x12^\n" +
 	"\n" +
-	"SealStatus\x12\x1e.quicbaas.v1.SealStatusRequest\x1a\x1f.quicbaas.v1.SealStatusResponse\x12G\n" +
-	"\bSealInit\x12\x1c.quicbaas.v1.SealInitRequest\x1a\x1d.quicbaas.v1.SealInitResponse\x12A\n" +
-	"\x06Unseal\x12\x1a.quicbaas.v1.UnsealRequest\x1a\x1b.quicbaas.v1.UnsealResponse\x12;\n" +
-	"\x04Seal\x12\x18.quicbaas.v1.SealRequest\x1a\x19.quicbaas.v1.SealResponse\x12J\n" +
-	"\tSealRekey\x12\x1d.quicbaas.v1.SealRekeyRequest\x1a\x1e.quicbaas.v1.SealRekeyResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"SealStatus\x12\x1e.quicbaas.v1.SealStatusRequest\x1a\x1f.quicbaas.v1.SealStatusResponse\"\x0f\xc2\xf3\x18\vseal:status\x12[\n" +
+	"\bSealInit\x12\x1c.quicbaas.v1.SealInitRequest\x1a\x1d.quicbaas.v1.SealInitResponse\"\x12\xc2\xf3\x18\x0eseal:bootstrap\x12R\n" +
+	"\x06Unseal\x12\x1a.quicbaas.v1.UnsealRequest\x1a\x1b.quicbaas.v1.UnsealResponse\"\x0f\xc2\xf3\x18\vseal:unseal\x12J\n" +
+	"\x04Seal\x12\x18.quicbaas.v1.SealRequest\x1a\x19.quicbaas.v1.SealResponse\"\r\xc2\xf3\x18\tseal:seal\x12Z\n" +
+	"\tSealRekey\x12\x1d.quicbaas.v1.SealRekeyRequest\x1a\x1e.quicbaas.v1.SealRekeyResponse\"\x0e\xc2\xf3\x18\n" +
+	"seal:rekeyB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_quicbaas_proto_rawDescOnce sync.Once

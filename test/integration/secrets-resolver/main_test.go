@@ -90,15 +90,6 @@ func getGRPCEndpoint() string {
 	return endpoint
 }
 
-// getQUICEndpoint returns the QUIC endpoint for integration testing.
-func getQUICEndpoint() string {
-	endpoint := os.Getenv("QUICBAAS_NODE1_QUIC")
-	if endpoint == "" {
-		endpoint = "test-node1:4433"
-	}
-	return endpoint
-}
-
 // getMCPEndpoint returns the MCP endpoint for integration testing.
 func getMCPEndpoint() string {
 	endpoint := os.Getenv("QUICBAAS_NODE1_MCP")

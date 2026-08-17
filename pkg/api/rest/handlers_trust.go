@@ -20,27 +20,12 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // =============================================================================
 // Trust Service Route Registration
 // =============================================================================
-
-// registerTrustRoutes registers the Trust composition routes
-// (cross-sign / AIA) under /api/v1/trust. These delegate to the
-// service-layer TrustService, which composes the xkms TrustedCA. DANE
-// publication is also registered; it returns a typed not-configured error
-// until an application registers a DANE publisher on the server.
-func registerTrustRoutes(s *Server, r chi.Router) {
-	r.Route("/trust", func(r chi.Router) {
-		r.Get("/cross-signed-roots", s.HandleTrustCrossSignedRootPool)
-		r.Post("/auto-import-aia", s.HandleTrustAutoImportAIA)
-		r.Post("/publish-dane", s.HandleTrustPublishDANE)
-	})
-}
 
 // =============================================================================
 // Request/Response Types

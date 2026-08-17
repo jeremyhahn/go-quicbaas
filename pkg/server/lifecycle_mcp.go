@@ -16,64 +16,29 @@
 package server
 
 import (
-	"fmt"
-	"time"
-
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
 	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
-	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
-// MCP seam injection points for unit testing.
-var (
-	newMCP    = mcpapi.NewServer
-	mcpStopFn = func(m *mcpapi.Server) error { return m.Stop() }
-)
+// newMCP is a seam injection point for unit testing buildMCPServer.
+var newMCP = mcpapi.NewServer
 
-// startMCPServer starts the MCP (Model Context Protocol) server if enabled.
-func (s *Server) startMCPServer() error {
-	// Skip in embedded mode: embedded servers expose no network listeners
-	// (gRPC/REST/QUIC apply the same guard), so no MCP HTTP listener — and
-	// therefore no MCP authorization gate — is constructed either.
-	if s.config.Server.Embedded {
-		s.logger.Info("Running in embedded mode - skipping MCP server setup")
-		return nil
-	}
-
-	if !s.config.Server.MCP.Enabled {
-		s.logger.Debug("MCP server disabled in configuration")
-		return nil
-	}
-
-	s.logger.Info("Starting MCP server...")
-
-	// Create MCP server configuration. The MCP HTTP transport reuses the
-	// daemon's in-memory tls.Config (built by initializeCA from OpaqueKeys)
-	// so every public listener — REST, gRPC, QUIC, MCP — presents the same
-	// CA-chained certificate. Without this the MCP listener would fall back
-	// to plain HTTP and clients dialing https://host:11443 would fail with
-	// "http: server gave HTTP response to HTTPS client".
+// buildMCPServer assembles a fully wired *mcpapi.Server tool registry from
+// the composed server state. quicbaas runs no MCP listener of its own: the
+// real Model Context Protocol surface is served by go-qrdb's unified
+// multi-protocol server (mcp-go StreamableHTTP), which dispatches into this
+// tool registry through the unified-API-server module (pkg/apimodule
+// RegisterMCP / ModuleMCPServer below). buildMCPServer wires every backing
+// service the registry's tools need so the module's real MCP tools serve
+// live responses, not placeholder errors.
+func (s *Server) buildMCPServer() (*mcpapi.Server, error) {
 	mcpConfig := &mcpapi.Config{
-		ServerName:     "QuicBaaS",
-		ServerVersion:  "1.0.0",
-		Transport:      "http",
-		HTTPAddr:       fmt.Sprintf("%s:%d", s.config.Server.ResolveBindHost(s.config.Server.MCP.BindAddress), s.config.Server.MCP.Port),
-		RequestTimeout: 30 * time.Second,
-		TLSConfig:      s.tlsConfig,
+		ServerName:    "QuicBaaS",
+		ServerVersion: "1.0.0",
 	}
 
-	// Create MCP server using QuicBaaS facade
+	// Create MCP tool registry using the QuicBaaS facade.
 	mcpServer := newMCP(s.quicBaaSService, mcpConfig, s.logger)
-
-	// Configure auth services if available from IAM components.
-	// This allows the MCP server to validate tokens for authenticated operations
-	// while still allowing public tools (like quicbaas_login) to work without
-	// auth. Under RequireAuthz gate construction is fail-closed: a returned
-	// *AuthzGateConstructionError aborts startup.
-	if err := s.configureMCPAuth(mcpServer); err != nil {
-		return err
-	}
 
 	// Install the probe-driven sealed-window gate on the tool dispatcher. A
 	// pass-through while the barrier is unsealed; the instant the barrier is
@@ -104,8 +69,8 @@ func (s *Server) startMCPServer() error {
 
 	// Wire the per-tenant barrier facade into the MCP server so the
 	// qrdb_tenant_barrier_* tools serve real responses. Same facade as
-	// gRPC/REST/QUIC — quicbaas owns no barrier logic. When nil (qrdb not
-	// yet online) the tools return TenantBarrierServiceUnavailableError.
+	// gRPC/REST — quicbaas owns no barrier logic. When nil (qrdb not yet
+	// online) the tools return TenantBarrierServiceUnavailableError.
 	mcpServer.SetTenantBarrierService(s.buildTenantBarrierService())
 	s.logger.Info("Tenant barrier service wired into MCP server")
 
@@ -119,71 +84,35 @@ func (s *Server) startMCPServer() error {
 	mcpServer.SetUserAuthFactorService(newQRDBUserAuthFactorServicerProxy(s))
 	s.logger.Info("User and UserAuthFactor services wired into MCP server")
 
-	// Start the MCP server. Start is non-blocking for both transports and
-	// binds the HTTP listener SYNCHRONOUSLY, so a port conflict or bad
-	// address is a startup error that aborts the daemon (process-fatal
-	// transport construction) instead of a log line from a goroutine.
-	if err := mcpServer.Start(); err != nil {
-		return &qberrors.QBError{
-			Code: qberrors.ErrInternal,
-			Op:   "server.startMCPServer",
-			Err:  &ServerCauseError{Message: "failed to start MCP server", Cause: err},
-		}
-	}
-
-	s.mcpServer = mcpServer
-	s.logger.Infof("MCP server started on %s:%d", s.config.Server.ResolveBindHost(s.config.Server.MCP.BindAddress), s.config.Server.MCP.Port)
-	return nil
+	return mcpServer, nil
 }
 
-// stopMCPServer gracefully shuts down the MCP server.
-func (s *Server) stopMCPServer() error {
-	if s.mcpServer == nil {
+// ModuleMCPServer resolves the *mcpapi.Server backing the unified-API-server
+// module's real MCP tools (pkg/apimodule RegisterMCP). It lazily constructs
+// the tool registry (buildMCPServer) on first use, once, and memoizes it —
+// every module tool call after that shares the SAME registry state. Returns
+// nil while the QuicBaaS facade is still composing — module tools answer a
+// tool error until then.
+func (s *Server) ModuleMCPServer() *mcpapi.Server {
+	s.mu.RLock()
+	composing := s.quicBaaSService == nil
+	s.mu.RUnlock()
+	if composing {
 		return nil
 	}
 
-	if err := mcpStopFn(s.mcpServer); err != nil {
-		return &qberrors.QBError{
-			Code: qberrors.ErrInternal,
-			Op:   "server.stopMCPServer",
-			Err:  &ServerCauseError{Message: "failed to shutdown MCP server", Cause: err},
+	s.moduleMCPOnce.Do(func() {
+		srv, err := s.buildMCPServer()
+		if err != nil {
+			s.logger.Errorf("module MCP binding: server construction failed: %v", err)
+			return
 		}
-	}
+		s.mu.Lock()
+		s.moduleMCP = srv
+		s.mu.Unlock()
+	})
 
-	return nil
-}
-
-// configureMCPAuth configures authentication services on the MCP server.
-// This wires up the auth manager from IAM components to enable token validation
-// for authenticated MCP operations while still allowing public tools to work.
-// Under RequireAuthz gate construction is fail-closed: a returned
-// *AuthzGateConstructionError aborts startup.
-func (s *Server) configureMCPAuth(mcpServer *mcpapi.Server) error {
-	// Interface to get the internal auth manager for MCP token validation.
-	// The auth manager provides token validation for authenticated operations.
-	type internalAuthManagerGetter interface {
-		GetInternalAuthManager() interfaces.AuthManager
-	}
-
-	// When RequireAuthz=true, install the qrdb-backed authorization decision
-	// point (OIDC token validation + qrdb PDP + canonical tool mapper). When it
-	// installs enforcement we skip the legacy token-only wiring below so the two
-	// do not fight over the auth checker.
-	installed, err := s.configureMCPQRDBAuthz(mcpServer)
-	if err != nil {
-		return err
-	}
-	if installed {
-		return nil
-	}
-
-	// Try to get auth manager from the service via type assertion.
-	// The auth manager is set on the service when IAM components are initialized.
-	if getter, ok := s.quicBaaSService.(internalAuthManagerGetter); ok {
-		if authManager := getter.GetInternalAuthManager(); authManager != nil {
-			s.logger.Debug("Configuring MCP server with auth manager from service")
-			mcpServer.SetAuthorizationService(nil, authManager)
-		}
-	}
-	return nil
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.moduleMCP
 }

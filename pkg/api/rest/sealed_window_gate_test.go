@@ -31,6 +31,13 @@ type restSealedProbe struct{ sealed bool }
 
 func (p *restSealedProbe) IsSealed() bool { return p.sealed }
 
+// restCeremonyStateProbe reports the ceremony state that decides whether the
+// sealed-window bypass admits an unauthenticated request (operational =
+// ceremony completed for this node).
+type restCeremonyStateProbe struct{ operational bool }
+
+func (p *restCeremonyStateProbe) IsOperational() bool { return p.operational }
+
 // newSealedGateRESTServer builds a REST server over the shared mock facade
 // with the sealed-window gate installed from the canonical derivation.
 func newSealedGateRESTServer(t *testing.T, probe *restSealedProbe) *Server {

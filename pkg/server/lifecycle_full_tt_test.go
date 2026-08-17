@@ -35,8 +35,6 @@ import (
 	"github.com/stretchr/testify/require"
 	ggrpc "google.golang.org/grpc"
 
-	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
-	quicapi "github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -218,7 +216,7 @@ func TestServer_StartGRPCServer_TT_NoListenersConfigured(t *testing.T) {
 	require.Error(t, err, "startGRPCServer must fail when no listeners are configured")
 }
 
-// TestServer_InitializeAndShutdown_TT_AllTransports enables the REST, QUIC, and
+// TestServer_InitializeAndShutdown_TT_AllTransports enables the REST and
 // MCP transports alongside gRPC in non-embedded mode so each transport's start
 // branch (and the matching Shutdown teardown branch) executes. Free loopback
 // ports are allocated per-transport so nothing outside the sandbox is touched.
@@ -229,8 +227,6 @@ func TestServer_InitializeAndShutdown_TT_AllTransports(t *testing.T) {
 
 	srv.config.Server.REST.Enabled = true
 	srv.config.Server.REST.Port = getFreePort(t)
-	srv.config.Server.QUIC.Enabled = true
-	srv.config.Server.QUIC.Port = getFreePort(t)
 	srv.config.Server.MCP.Enabled = true
 	srv.config.Server.MCP.Port = getFreePort(t)
 
@@ -263,7 +259,7 @@ func TestServer_InitializeAndShutdown_TT_TLSEnabled(t *testing.T) {
 
 // TestServer_InitializeAndShutdown_TT_TLSNetworkAllTransports drives a
 // non-embedded, TLS-enabled server with every transport enabled. This covers
-// the TLS branches of the REST/QUIC/MCP/gRPC start paths (TLS config cloning,
+// the TLS branches of the REST/MCP/gRPC start paths (TLS config cloning,
 // listener TLS wrapping) plus the CA bootstrap, all in one hermetic run.
 func TestServer_InitializeAndShutdown_TT_TLSNetworkAllTransports(t *testing.T) {
 	saveAndRestoreSeams(t)
@@ -273,8 +269,6 @@ func TestServer_InitializeAndShutdown_TT_TLSNetworkAllTransports(t *testing.T) {
 
 	srv.config.Server.REST.Enabled = true
 	srv.config.Server.REST.Port = getFreePort(t)
-	srv.config.Server.QUIC.Enabled = true
-	srv.config.Server.QUIC.Port = getFreePort(t)
 	srv.config.Server.MCP.Enabled = true
 	srv.config.Server.MCP.Port = getFreePort(t)
 
@@ -305,7 +299,7 @@ func TestServer_InitializeCA_TT_P384Curve(t *testing.T) {
 // transport's stop seam (and the backup-manager close seam) injected to fail.
 // Shutdown must collect each error, continue tearing down the remaining
 // subsystems, and return an aggregate ShutdownError. This covers the
-// error-append branches of the REST/QUIC/MCP/backup teardown stages that the
+// error-append branches of the REST/MCP/backup teardown stages that the
 // happy-path Shutdown leaves uncovered.
 func TestServer_Shutdown_TT_StopFailuresCollected(t *testing.T) {
 	saveAndRestoreSeams(t)
@@ -314,10 +308,6 @@ func TestServer_Shutdown_TT_StopFailuresCollected(t *testing.T) {
 	srv.config.Backup.Enabled = true
 	srv.config.Server.REST.Enabled = true
 	srv.config.Server.REST.Port = getFreePort(t)
-	srv.config.Server.QUIC.Enabled = true
-	srv.config.Server.QUIC.Port = getFreePort(t)
-	srv.config.Server.MCP.Enabled = true
-	srv.config.Server.MCP.Port = getFreePort(t)
 
 	require.NoError(t, srv.initialize(), "full-transport initialize must succeed")
 	require.NotNil(t, srv.restServer)
@@ -326,8 +316,6 @@ func TestServer_Shutdown_TT_StopFailuresCollected(t *testing.T) {
 	// Inject stop failures into the transport and backup teardown seams.
 	sentinel := errors.New("stop refused")
 	restShutdownFn = func(_ *restapi.Server, _ context.Context) error { return sentinel }
-	quicStopFn = func(_ *quicapi.Server) error { return sentinel }
-	mcpStopFn = func(_ *mcpapi.Server) error { return sentinel }
 	closeBackupMgrFn = func(_ *backup.BackupManager) error { return sentinel }
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -353,30 +341,6 @@ func TestServer_Initialize_TT_RESTConstructorFailure(t *testing.T) {
 
 	err := srv.initialize()
 	require.Error(t, err, "a REST construction failure must abort initialize")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(ctx)
-}
-
-// TestServer_Initialize_TT_QUICConstructorFailure injects a QUIC-server
-// construction failure (with TLS enabled so the QUIC start body runs) so the
-// startQUICServer error return and its propagation through initialize both run.
-func TestServer_Initialize_TT_QUICConstructorFailure(t *testing.T) {
-	saveAndRestoreSeams(t)
-	srv := withTempServer(t)
-	srv.config.Server.Embedded = false
-	srv.config.Security.TLSEnabled = true
-	srv.config.Server.QUIC.Enabled = true
-	srv.config.Server.QUIC.Port = getFreePort(t)
-
-	sentinel := errors.New("quic construction refused")
-	newQUIC = func(_ service.QuicBaaS, _ *quicapi.Config, _ *logger.Logger, _ ...quicapi.ServerOption) (*quicapi.Server, error) {
-		return nil, sentinel
-	}
-
-	err := srv.initialize()
-	require.Error(t, err, "a QUIC construction failure must abort initialize")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

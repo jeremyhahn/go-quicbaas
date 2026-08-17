@@ -18,7 +18,6 @@ package cache
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net"
@@ -29,7 +28,6 @@ import (
 	"testing"
 	"time"
 
-	quicgo "github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -38,9 +36,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
@@ -551,9 +547,7 @@ func getAllProtocols() []cacheProtocol {
 	protocols := []cacheProtocol{
 		&restProtocolClient{},
 		&grpcProtocolClient{},
-		&quicProtocolClient{},
 		&unixSocketProtocolClient{},
-		&mcpProtocolClient{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedProtocolClient{})
@@ -568,11 +562,6 @@ func getRESTEndpoint() string {
 		return endpoints[0]
 	}
 	return "https://test-node1:8080"
-}
-
-// getQUICEndpoints returns QUIC endpoints for testing.
-func getQUICEndpoints() []string {
-	return helpers.GetQUICEndpoints()
 }
 
 // isGRPCUnimplementedError checks if the error indicates an unimplemented feature.
@@ -912,198 +901,6 @@ func (c *grpcProtocolClient) UpdateConfig(ctx context.Context, config *CacheConf
 }
 
 // =============================================================================
-// QUIC Protocol Client Implementation
-// =============================================================================
-
-type quicProtocolClient struct {
-	addr       string
-	conn       *quicgo.Conn
-	tlsConfig  *tls.Config
-	ctx        context.Context
-	cancelFunc context.CancelFunc
-}
-
-func (c *quicProtocolClient) Name() string { return "QUIC" }
-
-func (c *quicProtocolClient) Setup(t *testing.T, ctx context.Context) error {
-	endpoints := getQUICEndpoints()
-	if len(endpoints) == 0 {
-		return &qberrors.MessageError{Message: "no QUIC endpoints available"}
-	}
-
-	addr := endpoints[0]
-
-	tlsConf, err := helpers.IntegrationTLSConfig()
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
-	}
-	tlsConf.NextProtos = []string{"quicbaas-quic"}
-
-	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	conn, err := quicgo.DialAddr(dialCtx, addr, tlsConf, nil)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to connect to QUIC endpoint " + addr, Cause: err}
-	}
-
-	clientCtx, clientCancel := context.WithCancel(context.Background())
-
-	c.addr = addr
-	c.conn = conn
-	c.tlsConfig = tlsConf
-	c.ctx = clientCtx
-	c.cancelFunc = clientCancel
-
-	// Probe to verify cache stats feature is available
-	req := &service.GetCacheStatsRequest{}
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		c.cancelFunc()
-		c.conn.CloseWithError(0, "probe failed")
-		return &qberrors.WrappedMessageError{Message: "failed to encode cache stats probe request", Cause: err}
-	}
-
-	_, err = c.sendRequest(ctx, quic.OpGetCacheStats, payload)
-	if err != nil {
-		c.cancelFunc()
-		c.conn.CloseWithError(0, "probe failed")
-		errStr := err.Error()
-		if strings.Contains(errStr, "not implemented") ||
-			strings.Contains(errStr, "Unimplemented") ||
-			strings.Contains(errStr, "unknown opcode") {
-			return &qberrors.WrappedMessageError{Message: "cache stats feature not available", Cause: err}
-		}
-		return &qberrors.WrappedMessageError{Message: "cache stats probe failed", Cause: err}
-	}
-
-	return nil
-}
-
-func (c *quicProtocolClient) Teardown(t *testing.T) error {
-	if c.cancelFunc != nil {
-		c.cancelFunc()
-	}
-	if c.conn != nil {
-		return c.conn.CloseWithError(0, "client closing")
-	}
-	return nil
-}
-
-// sendRequest sends a QUIC request and returns the response.
-func (c *quicProtocolClient) sendRequest(ctx context.Context, opcode byte, reqPayload []byte) (*quic.Response, error) {
-	stream, err := c.conn.OpenStreamSync(ctx)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
-	}
-	defer stream.Close()
-
-	req := &quic.Request{
-		Opcode:  opcode,
-		Payload: reqPayload,
-	}
-
-	if err := quic.WriteRequest(stream, req); err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to write request", Cause: err}
-	}
-
-	resp, err := quic.ReadResponse(stream)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
-	}
-
-	if resp.Status != quic.StatusOK {
-		errMsg := string(resp.Payload)
-		if errMsg == "" {
-			errMsg = "unknown error"
-		}
-		return nil, quic.StatusToError(resp.Status, errMsg)
-	}
-
-	return resp, nil
-}
-
-func (c *quicProtocolClient) GetStats(ctx context.Context) (*CacheStatsResult, error) {
-	req := &service.GetCacheStatsRequest{}
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.sendRequest(ctx, quic.OpGetCacheStats, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result service.GetCacheStatsResponse
-	if err := quic.DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return &CacheStatsResult{
-		HitRate:   result.HitRate,
-		Size:      result.Size,
-		MaxSize:   result.MaxSize,
-		Evictions: result.Evictions,
-		Hits:      result.Hits,
-		Misses:    result.Misses,
-	}, nil
-}
-
-func (c *quicProtocolClient) ClearCache(ctx context.Context, cacheType string) error {
-	req := &service.ClearCacheRequest{
-		EntityType: cacheType,
-		All:        cacheType == "all" || cacheType == "",
-	}
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return err
-	}
-
-	_, err = c.sendRequest(ctx, quic.OpClearCache, payload)
-	return err
-}
-
-func (c *quicProtocolClient) GetConfig(ctx context.Context) (*CacheConfigResult, error) {
-	req := &service.GetCacheConfigRequest{}
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.sendRequest(ctx, quic.OpGetCacheConfig, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result service.GetCacheConfigResponse
-	if err := quic.DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	return &CacheConfigResult{
-		L1Size:          result.L1Size,
-		L1TTL:           result.L1TTL,
-		CleanupInterval: result.CleanupInterval,
-		Enabled:         result.Enabled,
-	}, nil
-}
-
-func (c *quicProtocolClient) UpdateConfig(ctx context.Context, config *CacheConfigUpdate) error {
-	req := &service.UpdateCacheConfigRequest{
-		L1Size:          config.L1Size,
-		L1TTL:           config.L1TTL,
-		CleanupInterval: config.CleanupInterval,
-	}
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return err
-	}
-
-	_, err = c.sendRequest(ctx, quic.OpUpdateCacheConfig, payload)
-	return err
-}
-
 // =============================================================================
 // Unix Socket Protocol Client Implementation
 // =============================================================================
@@ -1218,253 +1015,6 @@ func (c *unixSocketProtocolClient) UpdateConfig(ctx context.Context, config *Cac
 	// Note: CleanupInterval is not in the proto UpdateCacheConfigRequest
 
 	_, err := c.client.UpdateCacheConfig(ctx, req)
-	return err
-}
-
-// =============================================================================
-// MCP Protocol Client Implementation
-// =============================================================================
-
-type mcpProtocolClient struct {
-	endpoint      string
-	httpClient    *http.Client
-	nextID        int
-	accessToken   string
-	authenticated bool
-}
-
-func (c *mcpProtocolClient) Name() string { return "MCP" }
-
-func (c *mcpProtocolClient) Setup(t *testing.T, ctx context.Context) error {
-	endpoints := helpers.GetMCPEndpoints()
-	if len(endpoints) == 0 {
-		return &qberrors.MessageError{Message: "no MCP endpoints available"}
-	}
-	c.endpoint = endpoints[0]
-	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
-	c.nextID = 1
-
-	// Verify MCP endpoint is reachable via initialize
-	initReq := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "initialize",
-		"params": map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{},
-			"clientInfo": map[string]interface{}{
-				"name":    "quicbaas-cache-test",
-				"version": "1.0.0",
-			},
-		},
-		"id": c.nextID,
-	}
-	c.nextID++
-
-	body, err := json.Marshal(initReq)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to marshal init request", Cause: err}
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "MCP endpoint not reachable at " + c.endpoint, Cause: err}
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return &qberrors.MessageError{Message: "MCP initialize failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
-	}
-
-	// Authenticate with the MCP server
-	if err := c.authenticate(ctx); err != nil {
-		return &qberrors.WrappedMessageError{Message: "MCP authentication failed", Cause: err}
-	}
-
-	// Probe to verify cache stats feature is available
-	_, err = c.callMCPTool(ctx, "quicbaas_cache_stats", map[string]interface{}{})
-	if err != nil {
-		errStr := err.Error()
-		if strings.Contains(errStr, "not implemented") ||
-			strings.Contains(errStr, "Unimplemented") ||
-			strings.Contains(errStr, "not found") ||
-			strings.Contains(errStr, "unknown tool") {
-			return &qberrors.WrappedMessageError{Message: "cache stats feature not available", Cause: err}
-		}
-		return &qberrors.WrappedMessageError{Message: "cache stats probe failed", Cause: err}
-	}
-
-	return nil
-}
-
-func (c *mcpProtocolClient) authenticate(ctx context.Context) error {
-	// Acquire a bearer through the cluster's PIV mTLS login endpoint. The
-	// MCP transport itself no longer exposes a login tool — password auth
-	// is removed across all protocols; tests use the REST PIV endpoint to
-	// mint a bearer and then present it on MCP requests.
-	restEndpoints := helpers.GetRESTEndpoints()
-	if len(restEndpoints) == 0 {
-		return &qberrors.MessageError{Message: "no REST endpoints available for PIV login"}
-	}
-	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "PIV login failed", Cause: err}
-	}
-	c.accessToken = bearer
-	c.authenticated = true
-	return nil
-}
-
-func (c *mcpProtocolClient) Teardown(t *testing.T) error {
-	c.httpClient = nil
-	c.accessToken = ""
-	c.authenticated = false
-	return nil
-}
-
-func (c *mcpProtocolClient) callMCPTool(ctx context.Context, toolName string, args map[string]interface{}) (json.RawMessage, error) {
-	mcpReq := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name":      toolName,
-			"arguments": args,
-		},
-		"id": c.nextID,
-	}
-	c.nextID++
-
-	body, err := json.Marshal(mcpReq)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "marshaling MCP request", Cause: err}
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "creating MCP request", Cause: err}
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.authenticated {
-		req.Header.Set("Authorization", "Bearer "+c.accessToken)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "executing MCP request", Cause: err}
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "reading MCP response", Cause: err}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, &qberrors.MessageError{Message: "MCP call failed: status " + strconv.Itoa(resp.StatusCode) + ": " + string(respBody)}
-	}
-
-	var mcpResp struct {
-		Result struct {
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-			IsError bool `json:"isError"`
-		} `json:"result"`
-		Error *struct {
-			Message string `json:"message"`
-			Code    int    `json:"code"`
-		} `json:"error"`
-	}
-
-	if err := json.Unmarshal(respBody, &mcpResp); err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "unmarshaling MCP response", Cause: err}
-	}
-
-	if mcpResp.Error != nil {
-		return nil, &qberrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
-	}
-
-	if mcpResp.Result.IsError {
-		if len(mcpResp.Result.Content) > 0 {
-			return nil, &qberrors.MessageError{Message: "MCP tool error: " + mcpResp.Result.Content[0].Text}
-		}
-		return nil, &qberrors.MessageError{Message: "MCP tool returned error"}
-	}
-
-	if len(mcpResp.Result.Content) > 0 {
-		return json.RawMessage(mcpResp.Result.Content[0].Text), nil
-	}
-
-	return nil, nil
-}
-
-func (c *mcpProtocolClient) GetStats(ctx context.Context) (*CacheStatsResult, error) {
-	result, err := c.callMCPTool(ctx, "quicbaas_cache_stats", map[string]interface{}{})
-	if err != nil {
-		return nil, err
-	}
-
-	var stats CacheStatsResult
-	if err := json.Unmarshal(result, &stats); err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "parsing cache stats", Cause: err}
-	}
-
-	return &stats, nil
-}
-
-func (c *mcpProtocolClient) ClearCache(ctx context.Context, cacheType string) error {
-	args := map[string]interface{}{}
-	if cacheType != "" {
-		args["cache_type"] = cacheType
-	}
-	_, err := c.callMCPTool(ctx, "quicbaas_cache_clear", args)
-	return err
-}
-
-func (c *mcpProtocolClient) GetConfig(ctx context.Context) (*CacheConfigResult, error) {
-	result, err := c.callMCPTool(ctx, "quicbaas_cache_config_get", map[string]interface{}{})
-	if err != nil {
-		return nil, err
-	}
-
-	var config struct {
-		L1Size                 int   `json:"l1_size"`
-		L1TTLSeconds           int64 `json:"l1_ttl_seconds"`
-		CleanupIntervalSeconds int64 `json:"cleanup_interval_seconds"`
-		Enabled                bool  `json:"enabled"`
-	}
-	if err := json.Unmarshal(result, &config); err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "parsing cache config", Cause: err}
-	}
-
-	return &CacheConfigResult{
-		L1Size:          config.L1Size,
-		L1TTL:           time.Duration(config.L1TTLSeconds) * time.Second,
-		CleanupInterval: time.Duration(config.CleanupIntervalSeconds) * time.Second,
-		Enabled:         config.Enabled,
-	}, nil
-}
-
-func (c *mcpProtocolClient) UpdateConfig(ctx context.Context, config *CacheConfigUpdate) error {
-	args := map[string]interface{}{}
-	if config.L1Size != nil {
-		args["l1_size"] = *config.L1Size
-	}
-	if config.L1TTL != nil {
-		args["l1_ttl_seconds"] = int64(config.L1TTL.Seconds())
-	}
-	if config.CleanupInterval != nil {
-		args["cleanup_interval_seconds"] = int64(config.CleanupInterval.Seconds())
-	}
-
-	_, err := c.callMCPTool(ctx, "quicbaas_cache_config_update", args)
 	return err
 }
 

@@ -48,7 +48,6 @@ type NodeInstance struct {
 	// Port assignments for this node.
 	GRPCPort   int
 	RESTPort   int
-	QUICPort   int
 	MCPPort    int
 	RaftPort   int
 	UnixSocket string

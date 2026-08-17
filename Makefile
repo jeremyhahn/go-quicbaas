@@ -159,14 +159,17 @@ ifeq ($(WITH_RAFT),1)
 endif
 
 # Data model features
+# quicbaas data-model features ride on qrdb engines; each feature tag is
+# paired with qrdb's own engine tag (qrdb_ts / qrdb_vector) so the real
+# engine is compiled in rather than qrdb's feature-disabled stub.
 ifeq ($(WITH_TIMESERIES),1)
-  BUILD_TAGS += timeseries
+  BUILD_TAGS += timeseries qrdb_ts
 endif
 ifeq ($(WITH_VECTOR),1)
   BUILD_TAGS += vector qrdb_vector
 endif
 ifeq ($(WITH_RAG),1)
-  BUILD_TAGS += rag
+  BUILD_TAGS += rag qrdb_vector
 endif
 
 # API server features
@@ -317,6 +320,13 @@ PROTOC_GEN_GO := $(shell which protoc-gen-go)
 PROTOC_GEN_GO_GRPC := $(shell which protoc-gen-go-grpc)
 BUF := buf
 
+# PROTO_QRDB_DIR points at a go-qrdb checkout so the quicbaas protos can import
+# pkg/api/grpc/proto/qrdbv1/authz.proto (the qrdb.v1.permission method option
+# the unified server's reflection interceptor enforces). Defaults to the
+# sibling checkout; override with PROTO_QRDB_DIR=/path/to/go-qrdb when the
+# layout differs.
+PROTO_QRDB_DIR ?= ../go-qrdb
+
 # Colors for output (using tput for portability)
 RED := $(shell tput setaf 1 2>/dev/null || echo "")
 GREEN := $(shell tput setaf 2 2>/dev/null || echo "")
@@ -369,7 +379,12 @@ proto-gen: ## Generate protobuf code from .proto files
 		echo "$(RED)protoc-gen-go-grpc not found. Run: make install-proto-tools$(NC)"; \
 		exit 1; \
 	fi
-	@$(PROTOC) --go_out=. --go_opt=paths=source_relative \
+	@if [ ! -f "$(PROTO_QRDB_DIR)/pkg/api/grpc/proto/qrdbv1/authz.proto" ]; then \
+		echo "$(RED)qrdb authz.proto not found under PROTO_QRDB_DIR=$(PROTO_QRDB_DIR)$(NC)"; \
+		exit 1; \
+	fi
+	@$(PROTOC) -I. -I$(PROTO_QRDB_DIR) \
+		--go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 		--go-grpc_opt=require_unimplemented_servers=false \
 		$(PROTO_DIR)/*.proto

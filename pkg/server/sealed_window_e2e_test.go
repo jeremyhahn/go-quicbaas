@@ -36,8 +36,23 @@ import (
 // sealed-window tests: pebble storage, passphrase strategy with NO
 // auto-unseal material, REST on an ephemeral port, gRPC over a Unix socket
 // (the sealed gRPC bring-up requires at least one listener), every optional
-// subsystem off, TLS off (hermetic HTTP). Exported for the external
-// SDK-compat test package.
+// subsystem off, TLS off (hermetic HTTP).
+//
+// TLS is deliberately kept OFF here rather than flipped on for the post-flip
+// unified-server (TLS-only) REST path: enabling Security.TLSEnabled on this
+// config was empirically found to also engage first-boot's automatic system
+// barrier initialize-and-unseal (observed via "barrier initialized" /
+// "barrier initialized strategy=passphrase" appearing immediately at boot,
+// before any sealed-window listener ever starts) — a pre-existing coupling
+// between TLS and first-boot bootstrap this test does not intend to exercise
+// and that defeats its entire premise (driving BarrierInitialize against a
+// genuinely SEALED daemon). Consequently, post-unseal REST reachability
+// (which now requires TLS — see (*config.Config).NetworkServing /
+// validateNetworkServingTLS) is NOT verified by
+// TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon's Phase 4; only the
+// node's own Unseal completion (GetQRDBNodeClient) is. See that test's
+// comments for the full account. Exported for the external SDK-compat test
+// package.
 func NewSealedBootTestConfig(t *testing.T) *config.Config {
 	t.Helper()
 	dataDir := t.TempDir()
@@ -59,7 +74,6 @@ func NewSealedBootTestConfig(t *testing.T) *config.Config {
 	cfg.Server.REST.Port = 0
 	cfg.Server.REST.BindAddress = "127.0.0.1"
 	cfg.Server.GRPC.Enabled = false
-	cfg.Server.QUIC.Enabled = false
 	cfg.Server.MCP.Enabled = false
 	cfg.Server.Unix.Socket = filepath.Join(dataDir, "qb.sock")
 

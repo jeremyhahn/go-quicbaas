@@ -21,8 +21,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
-
-	"github.com/go-chi/chi/v5"
 )
 
 // =============================================================================
@@ -332,11 +330,3 @@ func bytesEqual(a, b []byte) bool {
 // =============================================================================
 // Route Registration
 // =============================================================================
-
-// registerObjectTransferRoutes registers object transfer routes.
-func registerObjectTransferRoutes(s *Server, r chi.Router) {
-	r.Route("/object-transfer", func(r chi.Router) {
-		r.Post("/fetch", s.HandleFetchObject)
-		r.Post("/stream-fetch", s.HandleStreamFetchObjects)
-	})
-}

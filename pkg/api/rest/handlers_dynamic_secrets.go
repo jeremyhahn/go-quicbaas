@@ -30,25 +30,6 @@ import (
 // Dynamic Secrets Service Route Registration
 // =============================================================================
 
-// registerDynamicSecretsRoutes registers all dynamic secrets-related routes.
-func registerDynamicSecretsRoutes(s *Server, r chi.Router) {
-	r.Route("/secrets/dynamic", func(r chi.Router) {
-		// Role management
-		r.Post("/roles", s.HandleCreateDynamicSecretRole)
-		r.Get("/roles/{name}", s.HandleGetDynamicSecretRole)
-		r.Get("/roles", s.HandleListDynamicSecretRoles)
-		r.Delete("/roles/{name}", s.HandleDeleteDynamicSecretRole)
-
-		// Credential generation
-		r.Post("/credentials/{role}", s.HandleGenerateDynamicCredential)
-
-		// Lease management
-		r.Post("/leases/{id}/renew", s.HandleRenewDynamicSecretLease)
-		r.Delete("/leases/{id}", s.HandleRevokeDynamicSecretLease)
-		r.Get("/leases", s.HandleListDynamicSecretLeases)
-	})
-}
-
 // =============================================================================
 // Request/Response Types for REST API
 // =============================================================================

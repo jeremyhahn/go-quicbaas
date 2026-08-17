@@ -132,16 +132,6 @@ func (l *Loader) applyEnvironmentOverrides(cfg *Config) {
 		}
 	}
 
-	// Server QUIC configuration
-	if val := os.Getenv("QUICBAAS_SERVER_QUIC_ENABLED"); val != "" {
-		cfg.Server.QUIC.Enabled = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_SERVER_QUIC_PORT"); val != "" {
-		if port, err := strconv.Atoi(val); err == nil {
-			cfg.Server.QUIC.Port = port
-		}
-	}
-
 	// Server MCP configuration
 	if val := os.Getenv("QUICBAAS_SERVER_MCP_ENABLED"); val != "" {
 		cfg.Server.MCP.Enabled = parseBool(val)

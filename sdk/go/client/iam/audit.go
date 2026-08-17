@@ -41,6 +41,23 @@ type AuditClient interface {
 
 	// Delete removes audit events matching the criteria.
 	Delete(ctx context.Context, req *AuditDeleteRequest) error
+
+	// Record synchronously emits event onto the platform audit chain and
+	// returns the chain-assigned event ID (P5.3: the remote-write
+	// counterpart to Query/Get, closing the last hole in the unified audit
+	// plane — until this, a remote caller like go-trusted-platform could
+	// read the chain but never write to it). event.TenantID selects the
+	// target tenant; empty defaults to the caller's own authenticated
+	// tenant, and any other value is honored only when the caller holds
+	// cross-tenant (system-tenant) scope. TP-specific extra fields ride in
+	// event.Details — there is no separate schema for them.
+	Record(ctx context.Context, event *AuditEvent) (string, error)
+
+	// RecordAsync fire-and-forgets event onto the platform audit chain
+	// (LogAsync server-side): it returns as soon as the request is
+	// accepted, before the event is durably chained. Prefer Record for
+	// anything that must observably land before the call returns.
+	RecordAsync(ctx context.Context, event *AuditEvent) error
 }
 
 // AuditEventType represents the type of audit event.
@@ -517,6 +534,18 @@ type deleteAuditRequest struct {
 
 type deleteAuditResponse struct{}
 
+// recordAuditRequest is the internal Record/RecordAsync request.
+type recordAuditRequest struct {
+	Event *AuditEvent `json:"event"`
+	Async bool        `json:"async"`
+}
+
+// RecordAuditResponse carries the chain-assigned event ID (empty for the
+// async fire-and-forget call).
+type RecordAuditResponse struct {
+	EventID string `json:"event_id"`
+}
+
 // auditClient implements the AuditClient interface.
 type auditClient struct {
 	transport transport.Transport
@@ -585,6 +614,61 @@ func (c *auditClient) Get(ctx context.Context, tenantID, eventID string) (*Audit
 	}
 
 	return parseAuditEventResponse(resp)
+}
+
+// Record synchronously emits event onto the platform audit chain. See
+// AuditClient.Record for the full contract.
+func (c *auditClient) Record(ctx context.Context, event *AuditEvent) (string, error) {
+	if event == nil {
+		return "", errors.NewInvalidInput("iam.audit.Record", "event is required")
+	}
+	if ctx == nil {
+		return "", errors.NewInvalidInput("iam.audit.Record", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, auditServiceName, "Record", &recordAuditRequest{
+		Event: event,
+		Async: false,
+	})
+	if err != nil {
+		return "", err
+	}
+	return parseRecordAuditResponse(resp)
+}
+
+// RecordAsync fire-and-forgets event onto the platform audit chain. See
+// AuditClient.RecordAsync for the full contract.
+func (c *auditClient) RecordAsync(ctx context.Context, event *AuditEvent) error {
+	if event == nil {
+		return errors.NewInvalidInput("iam.audit.RecordAsync", "event is required")
+	}
+	if ctx == nil {
+		return errors.NewInvalidInput("iam.audit.RecordAsync", "context is required")
+	}
+
+	_, err := c.transport.Request(ctx, auditServiceName, "RecordAsync", &recordAuditRequest{
+		Event: event,
+		Async: true,
+	})
+	return err
+}
+
+// parseRecordAuditResponse parses the response from Record.
+func parseRecordAuditResponse(resp interface{}) (string, error) {
+	if resp == nil {
+		return "", nil
+	}
+	switch r := resp.(type) {
+	case *RecordAuditResponse:
+		return r.EventID, nil
+	case map[string]interface{}:
+		if v, ok := r["event_id"].(string); ok {
+			return v, nil
+		}
+		return "", nil
+	default:
+		return "", errors.NewInternal("iam.audit.Record", "invalid response type")
+	}
 }
 
 // Delete removes audit events matching the criteria.

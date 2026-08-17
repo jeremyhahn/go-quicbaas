@@ -13,6 +13,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -10237,7 +10238,7 @@ var File_api_proto_kms_proto protoreflect.FileDescriptor
 
 const file_api_proto_kms_proto_rawDesc = "" +
 	"\n" +
-	"\x13api/proto/kms.proto\x12\x0fquicbaas.kms.v1\"\xe3\x01\n" +
+	"\x13api/proto/kms.proto\x12\x0fquicbaas.kms.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xe3\x01\n" +
 	"\aKeySpec\x12;\n" +
 	"\talgorithm\x18\x01 \x01(\x0e2\x1d.quicbaas.kms.v1.KeyAlgorithmR\talgorithm\x12\x19\n" +
 	"\bkey_size\x18\x02 \x01(\x05R\akeySize\x12/\n" +
@@ -11148,77 +11149,78 @@ const file_api_proto_kms_proto_rawDesc = "" +
 	"\x1eSECRET_CHANGE_TYPE_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aSECRET_CHANGE_TYPE_CREATED\x10\x01\x12\x1e\n" +
 	"\x1aSECRET_CHANGE_TYPE_UPDATED\x10\x02\x12\x1e\n" +
-	"\x1aSECRET_CHANGE_TYPE_DELETED\x10\x032\xa9\x14\n" +
-	"\rKeyManagement\x12X\n" +
-	"\vGenerateKey\x12#.quicbaas.kms.v1.GenerateKeyRequest\x1a$.quicbaas.kms.v1.GenerateKeyResponse\x12R\n" +
-	"\tImportKey\x12!.quicbaas.kms.v1.ImportKeyRequest\x1a\".quicbaas.kms.v1.ImportKeyResponse\x12I\n" +
-	"\x06GetKey\x12\x1e.quicbaas.kms.v1.GetKeyRequest\x1a\x1f.quicbaas.kms.v1.GetKeyResponse\x12[\n" +
-	"\fGetPublicKey\x12$.quicbaas.kms.v1.GetPublicKeyRequest\x1a%.quicbaas.kms.v1.GetPublicKeyResponse\x12O\n" +
-	"\bListKeys\x12 .quicbaas.kms.v1.ListKeysRequest\x1a!.quicbaas.kms.v1.ListKeysResponse\x12d\n" +
-	"\x0fListKeyVersions\x12'.quicbaas.kms.v1.ListKeyVersionsRequest\x1a(.quicbaas.kms.v1.ListKeyVersionsResponse\x12R\n" +
-	"\tRotateKey\x12!.quicbaas.kms.v1.RotateKeyRequest\x1a\".quicbaas.kms.v1.RotateKeyResponse\x12R\n" +
-	"\tRevokeKey\x12!.quicbaas.kms.v1.RevokeKeyRequest\x1a\".quicbaas.kms.v1.RevokeKeyResponse\x12R\n" +
-	"\tDeleteKey\x12!.quicbaas.kms.v1.DeleteKeyRequest\x1a\".quicbaas.kms.v1.DeleteKeyResponse\x12d\n" +
-	"\x0fUpdateKeyStatus\x12'.quicbaas.kms.v1.UpdateKeyStatusRequest\x1a(.quicbaas.kms.v1.UpdateKeyStatusResponse\x12a\n" +
-	"\x0eGetKeyMetadata\x12&.quicbaas.kms.v1.GetKeyMetadataRequest\x1a'.quicbaas.kms.v1.GetKeyMetadataResponse\x12j\n" +
-	"\x11UpdateKeyMetadata\x12).quicbaas.kms.v1.UpdateKeyMetadataRequest\x1a*.quicbaas.kms.v1.UpdateKeyMetadataResponse\x12[\n" +
-	"\fSetKeyPolicy\x12$.quicbaas.kms.v1.SetKeyPolicyRequest\x1a%.quicbaas.kms.v1.SetKeyPolicyResponse\x12[\n" +
-	"\fGetKeyPolicy\x12$.quicbaas.kms.v1.GetKeyPolicyRequest\x1a%.quicbaas.kms.v1.GetKeyPolicyResponse\x12d\n" +
-	"\x0fDeleteKeyPolicy\x12'.quicbaas.kms.v1.DeleteKeyPolicyRequest\x1a(.quicbaas.kms.v1.DeleteKeyPolicyResponse\x12s\n" +
-	"\x14SetKeyRotationPolicy\x12,.quicbaas.kms.v1.SetKeyRotationPolicyRequest\x1a-.quicbaas.kms.v1.SetKeyRotationPolicyResponse\x12s\n" +
-	"\x14GetKeyRotationPolicy\x12,.quicbaas.kms.v1.GetKeyRotationPolicyRequest\x1a-.quicbaas.kms.v1.GetKeyRotationPolicyResponse\x12|\n" +
-	"\x17DeleteKeyRotationPolicy\x12/.quicbaas.kms.v1.DeleteKeyRotationPolicyRequest\x1a0.quicbaas.kms.v1.DeleteKeyRotationPolicyResponse\x12y\n" +
-	"\x16GetSupportedAlgorithms\x12..quicbaas.kms.v1.GetSupportedAlgorithmsRequest\x1a/.quicbaas.kms.v1.GetSupportedAlgorithmsResponse\x12^\n" +
-	"\rBackendStatus\x12%.quicbaas.kms.v1.BackendStatusRequest\x1a&.quicbaas.kms.v1.BackendStatusResponse\x12X\n" +
-	"\vBackendTest\x12#.quicbaas.kms.v1.BackendTestRequest\x1a$.quicbaas.kms.v1.BackendTestResponse\x12R\n" +
-	"\tExportKey\x12!.quicbaas.kms.v1.ExportKeyRequest\x1a\".quicbaas.kms.v1.ExportKeyResponse\x12R\n" +
-	"\tUnwrapKey\x12!.quicbaas.kms.v1.UnwrapKeyRequest\x1a\".quicbaas.kms.v1.UnwrapKeyResponse\x12[\n" +
-	"\fSetKeySafety\x12$.quicbaas.kms.v1.SetKeySafetyRequest\x1a%.quicbaas.kms.v1.SetKeySafetyResponse\x12a\n" +
-	"\x0eClearKeySafety\x12&.quicbaas.kms.v1.ClearKeySafetyRequest\x1a'.quicbaas.kms.v1.ClearKeySafetyResponse\x12X\n" +
-	"\vSafetyCheck\x12#.quicbaas.kms.v1.SafetyCheckRequest\x1a$.quicbaas.kms.v1.SafetyCheckResponse\x12[\n" +
-	"\fSafetyReport\x12$.quicbaas.kms.v1.SafetyReportRequest\x1a%.quicbaas.kms.v1.SafetyReportResponse2\x82\v\n" +
-	"\x11SecretsManagement\x12X\n" +
-	"\vStoreSecret\x12#.quicbaas.kms.v1.StoreSecretRequest\x1a$.quicbaas.kms.v1.StoreSecretResponse\x12R\n" +
-	"\tGetSecret\x12!.quicbaas.kms.v1.GetSecretRequest\x1a\".quicbaas.kms.v1.GetSecretResponse\x12X\n" +
-	"\vListSecrets\x12#.quicbaas.kms.v1.ListSecretsRequest\x1a$.quicbaas.kms.v1.ListSecretsResponse\x12[\n" +
-	"\fDeleteSecret\x12$.quicbaas.kms.v1.DeleteSecretRequest\x1a%.quicbaas.kms.v1.DeleteSecretResponse\x12g\n" +
-	"\x10GetSecretVersion\x12(.quicbaas.kms.v1.GetSecretVersionRequest\x1a).quicbaas.kms.v1.GetSecretVersionResponse\x12m\n" +
-	"\x12ListSecretVersions\x12*.quicbaas.kms.v1.ListSecretVersionsRequest\x1a+.quicbaas.kms.v1.ListSecretVersionsResponse\x12a\n" +
-	"\x0eRollbackSecret\x12&.quicbaas.kms.v1.RollbackSecretRequest\x1a'.quicbaas.kms.v1.RollbackSecretResponse\x12[\n" +
-	"\fRotateSecret\x12$.quicbaas.kms.v1.RotateSecretRequest\x1a%.quicbaas.kms.v1.RotateSecretResponse\x12m\n" +
-	"\x12UpdateSecretStatus\x12*.quicbaas.kms.v1.UpdateSecretStatusRequest\x1a+.quicbaas.kms.v1.UpdateSecretStatusResponse\x12j\n" +
-	"\x11SetRotationPolicy\x12).quicbaas.kms.v1.SetRotationPolicyRequest\x1a*.quicbaas.kms.v1.SetRotationPolicyResponse\x12j\n" +
-	"\x11GetRotationPolicy\x12).quicbaas.kms.v1.GetRotationPolicyRequest\x1a*.quicbaas.kms.v1.GetRotationPolicyResponse\x12m\n" +
-	"\x12GetSecretsByPrefix\x12*.quicbaas.kms.v1.GetSecretsByPrefixRequest\x1a+.quicbaas.kms.v1.GetSecretsByPrefixResponse\x12]\n" +
-	"\x14WatchSecretsByPrefix\x12$.quicbaas.kms.v1.WatchSecretsRequest\x1a\x1d.quicbaas.kms.v1.SecretChange0\x01\x12[\n" +
-	"\fEnsureSecret\x12$.quicbaas.kms.v1.EnsureSecretRequest\x1a%.quicbaas.kms.v1.EnsureSecretResponse2\xfe\b\n" +
-	"\x06Crypto\x12X\n" +
-	"\aEncrypt\x12%.quicbaas.kms.v1.CryptoEncryptRequest\x1a&.quicbaas.kms.v1.CryptoEncryptResponse\x12X\n" +
-	"\aDecrypt\x12%.quicbaas.kms.v1.CryptoDecryptRequest\x1a&.quicbaas.kms.v1.CryptoDecryptResponse\x12I\n" +
-	"\x06Rewrap\x12\x1e.quicbaas.kms.v1.RewrapRequest\x1a\x1f.quicbaas.kms.v1.RewrapResponse\x12[\n" +
-	"\fEncryptBatch\x12$.quicbaas.kms.v1.EncryptBatchRequest\x1a%.quicbaas.kms.v1.EncryptBatchResponse\x12[\n" +
-	"\fDecryptBatch\x12$.quicbaas.kms.v1.DecryptBatchRequest\x1a%.quicbaas.kms.v1.DecryptBatchResponse\x12d\n" +
-	"\x0fGenerateDataKey\x12'.quicbaas.kms.v1.GenerateDataKeyRequest\x1a(.quicbaas.kms.v1.GenerateDataKeyResponse\x12y\n" +
-	"\x16GenerateWrappedDataKey\x12..quicbaas.kms.v1.GenerateWrappedDataKeyRequest\x1a/.quicbaas.kms.v1.GenerateWrappedDataKeyResponse\x12C\n" +
-	"\x04Sign\x12\x1c.quicbaas.kms.v1.SignRequest\x1a\x1d.quicbaas.kms.v1.SignResponse\x12I\n" +
-	"\x06Verify\x12\x1e.quicbaas.kms.v1.VerifyRequest\x1a\x1f.quicbaas.kms.v1.VerifyResponse\x12K\n" +
-	"\fGenerateHMAC\x12\x1c.quicbaas.kms.v1.HMACRequest\x1a\x1d.quicbaas.kms.v1.HMACResponse\x12U\n" +
+	"\x1aSECRET_CHANGE_TYPE_DELETED\x10\x032\xe1\x17\n" +
+	"\rKeyManagement\x12i\n" +
+	"\vGenerateKey\x12#.quicbaas.kms.v1.GenerateKeyRequest\x1a$.quicbaas.kms.v1.GenerateKeyResponse\"\x0f\xc2\xf3\x18\vkeys:create\x12c\n" +
+	"\tImportKey\x12!.quicbaas.kms.v1.ImportKeyRequest\x1a\".quicbaas.kms.v1.ImportKeyResponse\"\x0f\xc2\xf3\x18\vkeys:import\x12W\n" +
+	"\x06GetKey\x12\x1e.quicbaas.kms.v1.GetKeyRequest\x1a\x1f.quicbaas.kms.v1.GetKeyResponse\"\f\xc2\xf3\x18\bkeys:get\x12i\n" +
+	"\fGetPublicKey\x12$.quicbaas.kms.v1.GetPublicKeyRequest\x1a%.quicbaas.kms.v1.GetPublicKeyResponse\"\f\xc2\xf3\x18\bkeys:get\x12^\n" +
+	"\bListKeys\x12 .quicbaas.kms.v1.ListKeysRequest\x1a!.quicbaas.kms.v1.ListKeysResponse\"\r\xc2\xf3\x18\tkeys:list\x12s\n" +
+	"\x0fListKeyVersions\x12'.quicbaas.kms.v1.ListKeyVersionsRequest\x1a(.quicbaas.kms.v1.ListKeyVersionsResponse\"\r\xc2\xf3\x18\tkeys:list\x12c\n" +
+	"\tRotateKey\x12!.quicbaas.kms.v1.RotateKeyRequest\x1a\".quicbaas.kms.v1.RotateKeyResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12c\n" +
+	"\tRevokeKey\x12!.quicbaas.kms.v1.RevokeKeyRequest\x1a\".quicbaas.kms.v1.RevokeKeyResponse\"\x0f\xc2\xf3\x18\vkeys:delete\x12c\n" +
+	"\tDeleteKey\x12!.quicbaas.kms.v1.DeleteKeyRequest\x1a\".quicbaas.kms.v1.DeleteKeyResponse\"\x0f\xc2\xf3\x18\vkeys:delete\x12u\n" +
+	"\x0fUpdateKeyStatus\x12'.quicbaas.kms.v1.UpdateKeyStatusRequest\x1a(.quicbaas.kms.v1.UpdateKeyStatusResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12o\n" +
+	"\x0eGetKeyMetadata\x12&.quicbaas.kms.v1.GetKeyMetadataRequest\x1a'.quicbaas.kms.v1.GetKeyMetadataResponse\"\f\xc2\xf3\x18\bkeys:get\x12{\n" +
+	"\x11UpdateKeyMetadata\x12).quicbaas.kms.v1.UpdateKeyMetadataRequest\x1a*.quicbaas.kms.v1.UpdateKeyMetadataResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12l\n" +
+	"\fSetKeyPolicy\x12$.quicbaas.kms.v1.SetKeyPolicyRequest\x1a%.quicbaas.kms.v1.SetKeyPolicyResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12i\n" +
+	"\fGetKeyPolicy\x12$.quicbaas.kms.v1.GetKeyPolicyRequest\x1a%.quicbaas.kms.v1.GetKeyPolicyResponse\"\f\xc2\xf3\x18\bkeys:get\x12u\n" +
+	"\x0fDeleteKeyPolicy\x12'.quicbaas.kms.v1.DeleteKeyPolicyRequest\x1a(.quicbaas.kms.v1.DeleteKeyPolicyResponse\"\x0f\xc2\xf3\x18\vkeys:delete\x12\x84\x01\n" +
+	"\x14SetKeyRotationPolicy\x12,.quicbaas.kms.v1.SetKeyRotationPolicyRequest\x1a-.quicbaas.kms.v1.SetKeyRotationPolicyResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12\x81\x01\n" +
+	"\x14GetKeyRotationPolicy\x12,.quicbaas.kms.v1.GetKeyRotationPolicyRequest\x1a-.quicbaas.kms.v1.GetKeyRotationPolicyResponse\"\f\xc2\xf3\x18\bkeys:get\x12\x8d\x01\n" +
+	"\x17DeleteKeyRotationPolicy\x12/.quicbaas.kms.v1.DeleteKeyRotationPolicyRequest\x1a0.quicbaas.kms.v1.DeleteKeyRotationPolicyResponse\"\x0f\xc2\xf3\x18\vkeys:delete\x12\x88\x01\n" +
+	"\x16GetSupportedAlgorithms\x12..quicbaas.kms.v1.GetSupportedAlgorithmsRequest\x1a/.quicbaas.kms.v1.GetSupportedAlgorithmsResponse\"\r\xc2\xf3\x18\tkeys:list\x12q\n" +
+	"\rBackendStatus\x12%.quicbaas.kms.v1.BackendStatusRequest\x1a&.quicbaas.kms.v1.BackendStatusResponse\"\x11\xc2\xf3\x18\rbackends:read\x12k\n" +
+	"\vBackendTest\x12#.quicbaas.kms.v1.BackendTestRequest\x1a$.quicbaas.kms.v1.BackendTestResponse\"\x11\xc2\xf3\x18\rbackends:read\x12c\n" +
+	"\tExportKey\x12!.quicbaas.kms.v1.ExportKeyRequest\x1a\".quicbaas.kms.v1.ExportKeyResponse\"\x0f\xc2\xf3\x18\vkeys:export\x12c\n" +
+	"\tUnwrapKey\x12!.quicbaas.kms.v1.UnwrapKeyRequest\x1a\".quicbaas.kms.v1.UnwrapKeyResponse\"\x0f\xc2\xf3\x18\vkeys:unwrap\x12l\n" +
+	"\fSetKeySafety\x12$.quicbaas.kms.v1.SetKeySafetyRequest\x1a%.quicbaas.kms.v1.SetKeySafetyResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12r\n" +
+	"\x0eClearKeySafety\x12&.quicbaas.kms.v1.ClearKeySafetyRequest\x1a'.quicbaas.kms.v1.ClearKeySafetyResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12f\n" +
+	"\vSafetyCheck\x12#.quicbaas.kms.v1.SafetyCheckRequest\x1a$.quicbaas.kms.v1.SafetyCheckResponse\"\f\xc2\xf3\x18\bkeys:get\x12i\n" +
+	"\fSafetyReport\x12$.quicbaas.kms.v1.SafetyReportRequest\x1a%.quicbaas.kms.v1.SafetyReportResponse\"\f\xc2\xf3\x18\bkeys:get2\xe3\r\n" +
+	"\x11SecretsManagement\x12o\n" +
+	"\vStoreSecret\x12#.quicbaas.kms.v1.StoreSecretRequest\x1a$.quicbaas.kms.v1.StoreSecretResponse\"\x15\xc2\xf3\x18\x11credentials:store\x12l\n" +
+	"\tGetSecret\x12!.quicbaas.kms.v1.GetSecretRequest\x1a\".quicbaas.kms.v1.GetSecretResponse\"\x18\xc2\xf3\x18\x14credentials:retrieve\x12n\n" +
+	"\vListSecrets\x12#.quicbaas.kms.v1.ListSecretsRequest\x1a$.quicbaas.kms.v1.ListSecretsResponse\"\x14\xc2\xf3\x18\x10credentials:list\x12s\n" +
+	"\fDeleteSecret\x12$.quicbaas.kms.v1.DeleteSecretRequest\x1a%.quicbaas.kms.v1.DeleteSecretResponse\"\x16\xc2\xf3\x18\x12credentials:delete\x12\x89\x01\n" +
+	"\x10GetSecretVersion\x12(.quicbaas.kms.v1.GetSecretVersionRequest\x1a).quicbaas.kms.v1.GetSecretVersionResponse\" \xc2\xf3\x18\x1ccredentials:retrieve_version\x12\x8c\x01\n" +
+	"\x12ListSecretVersions\x12*.quicbaas.kms.v1.ListSecretVersionsRequest\x1a+.quicbaas.kms.v1.ListSecretVersionsResponse\"\x1d\xc2\xf3\x18\x19credentials:list_versions\x12y\n" +
+	"\x0eRollbackSecret\x12&.quicbaas.kms.v1.RollbackSecretRequest\x1a'.quicbaas.kms.v1.RollbackSecretResponse\"\x16\xc2\xf3\x18\x12credentials:submit\x12s\n" +
+	"\fRotateSecret\x12$.quicbaas.kms.v1.RotateSecretRequest\x1a%.quicbaas.kms.v1.RotateSecretResponse\"\x16\xc2\xf3\x18\x12credentials:rotate\x12\x85\x01\n" +
+	"\x12UpdateSecretStatus\x12*.quicbaas.kms.v1.UpdateSecretStatusRequest\x1a+.quicbaas.kms.v1.UpdateSecretStatusResponse\"\x16\xc2\xf3\x18\x12credentials:submit\x12\x84\x01\n" +
+	"\x11SetRotationPolicy\x12).quicbaas.kms.v1.SetRotationPolicyRequest\x1a*.quicbaas.kms.v1.SetRotationPolicyResponse\"\x18\xc2\xf3\x18\x14credentials:strategy\x12\x80\x01\n" +
+	"\x11GetRotationPolicy\x12).quicbaas.kms.v1.GetRotationPolicyRequest\x1a*.quicbaas.kms.v1.GetRotationPolicyResponse\"\x14\xc2\xf3\x18\x10credentials:list\x12\x83\x01\n" +
+	"\x12GetSecretsByPrefix\x12*.quicbaas.kms.v1.GetSecretsByPrefixRequest\x1a+.quicbaas.kms.v1.GetSecretsByPrefixResponse\"\x14\xc2\xf3\x18\x10credentials:list\x12s\n" +
+	"\x14WatchSecretsByPrefix\x12$.quicbaas.kms.v1.WatchSecretsRequest\x1a\x1d.quicbaas.kms.v1.SecretChange\"\x14\xc2\xf3\x18\x10credentials:list0\x01\x12r\n" +
+	"\fEnsureSecret\x12$.quicbaas.kms.v1.EnsureSecretRequest\x1a%.quicbaas.kms.v1.EnsureSecretResponse\"\x15\xc2\xf3\x18\x11credentials:store2\xd8\n" +
 	"\n" +
-	"VerifyHMAC\x12\".quicbaas.kms.v1.VerifyHMACRequest\x1a#.quicbaas.kms.v1.VerifyHMACResponse\x12a\n" +
-	"\x0eGenerateRandom\x12&.quicbaas.kms.v1.GenerateRandomRequest\x1a'.quicbaas.kms.v1.GenerateRandomResponse\x12C\n" +
-	"\x04Hash\x12\x1c.quicbaas.kms.v1.HashRequest\x1a\x1d.quicbaas.kms.v1.HashResponse2\x8e\b\n" +
-	"\rDEKManagement\x12R\n" +
-	"\tCreateDEK\x12!.quicbaas.kms.v1.CreateDEKRequest\x1a\".quicbaas.kms.v1.CreateDEKResponse\x12I\n" +
-	"\x06GetDEK\x12\x1e.quicbaas.kms.v1.GetDEKRequest\x1a\x1f.quicbaas.kms.v1.GetDEKResponse\x12O\n" +
-	"\bListDEKs\x12 .quicbaas.kms.v1.ListDEKsRequest\x1a!.quicbaas.kms.v1.ListDEKsResponse\x12R\n" +
-	"\tRotateDEK\x12!.quicbaas.kms.v1.RotateDEKRequest\x1a\".quicbaas.kms.v1.RotateDEKResponse\x12R\n" +
-	"\tDeleteDEK\x12!.quicbaas.kms.v1.DeleteDEKRequest\x1a\".quicbaas.kms.v1.DeleteDEKResponse\x12[\n" +
-	"\fGetDEKStatus\x12$.quicbaas.kms.v1.GetDEKStatusRequest\x1a%.quicbaas.kms.v1.GetDEKStatusResponse\x12^\n" +
-	"\rSetDefaultDEK\x12%.quicbaas.kms.v1.SetDefaultDEKRequest\x1a&.quicbaas.kms.v1.SetDefaultDEKResponse\x12[\n" +
-	"\fSetDEKSafety\x12$.quicbaas.kms.v1.SetDEKSafetyRequest\x1a%.quicbaas.kms.v1.SetDEKSafetyResponse\x12a\n" +
-	"\x0eClearDEKSafety\x12&.quicbaas.kms.v1.ClearDEKSafetyRequest\x1a'.quicbaas.kms.v1.ClearDEKSafetyResponse\x12j\n" +
-	"\x11StartReencryption\x12).quicbaas.kms.v1.StartReencryptionRequest\x1a*.quicbaas.kms.v1.StartReencryptionResponse\x12|\n" +
-	"\x17GetReencryptionProgress\x12/.quicbaas.kms.v1.GetReencryptionProgressRequest\x1a0.quicbaas.kms.v1.GetReencryptionProgressResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"\x06Crypto\x12j\n" +
+	"\aEncrypt\x12%.quicbaas.kms.v1.CryptoEncryptRequest\x1a&.quicbaas.kms.v1.CryptoEncryptResponse\"\x10\xc2\xf3\x18\fkeys:encrypt\x12j\n" +
+	"\aDecrypt\x12%.quicbaas.kms.v1.CryptoDecryptRequest\x1a&.quicbaas.kms.v1.CryptoDecryptResponse\"\x10\xc2\xf3\x18\fkeys:decrypt\x12Z\n" +
+	"\x06Rewrap\x12\x1e.quicbaas.kms.v1.RewrapRequest\x1a\x1f.quicbaas.kms.v1.RewrapResponse\"\x0f\xc2\xf3\x18\vkeys:unwrap\x12m\n" +
+	"\fEncryptBatch\x12$.quicbaas.kms.v1.EncryptBatchRequest\x1a%.quicbaas.kms.v1.EncryptBatchResponse\"\x10\xc2\xf3\x18\fkeys:encrypt\x12m\n" +
+	"\fDecryptBatch\x12$.quicbaas.kms.v1.DecryptBatchRequest\x1a%.quicbaas.kms.v1.DecryptBatchResponse\"\x10\xc2\xf3\x18\fkeys:decrypt\x12u\n" +
+	"\x0fGenerateDataKey\x12'.quicbaas.kms.v1.GenerateDataKeyRequest\x1a(.quicbaas.kms.v1.GenerateDataKeyResponse\"\x0f\xc2\xf3\x18\vkeys:derive\x12\x88\x01\n" +
+	"\x16GenerateWrappedDataKey\x12..quicbaas.kms.v1.GenerateWrappedDataKeyRequest\x1a/.quicbaas.kms.v1.GenerateWrappedDataKeyResponse\"\r\xc2\xf3\x18\tkeys:wrap\x12R\n" +
+	"\x04Sign\x12\x1c.quicbaas.kms.v1.SignRequest\x1a\x1d.quicbaas.kms.v1.SignResponse\"\r\xc2\xf3\x18\tkeys:sign\x12Z\n" +
+	"\x06Verify\x12\x1e.quicbaas.kms.v1.VerifyRequest\x1a\x1f.quicbaas.kms.v1.VerifyResponse\"\x0f\xc2\xf3\x18\vkeys:verify\x12Z\n" +
+	"\fGenerateHMAC\x12\x1c.quicbaas.kms.v1.HMACRequest\x1a\x1d.quicbaas.kms.v1.HMACResponse\"\r\xc2\xf3\x18\tkeys:sign\x12f\n" +
+	"\n" +
+	"VerifyHMAC\x12\".quicbaas.kms.v1.VerifyHMACRequest\x1a#.quicbaas.kms.v1.VerifyHMACResponse\"\x0f\xc2\xf3\x18\vkeys:verify\x12r\n" +
+	"\x0eGenerateRandom\x12&.quicbaas.kms.v1.GenerateRandomRequest\x1a'.quicbaas.kms.v1.GenerateRandomResponse\"\x0f\xc2\xf3\x18\vkeys:derive\x12R\n" +
+	"\x04Hash\x12\x1c.quicbaas.kms.v1.HashRequest\x1a\x1d.quicbaas.kms.v1.HashResponse\"\r\xc2\xf3\x18\tkeys:sign2\xbf\t\n" +
+	"\rDEKManagement\x12c\n" +
+	"\tCreateDEK\x12!.quicbaas.kms.v1.CreateDEKRequest\x1a\".quicbaas.kms.v1.CreateDEKResponse\"\x0f\xc2\xf3\x18\vkeys:create\x12W\n" +
+	"\x06GetDEK\x12\x1e.quicbaas.kms.v1.GetDEKRequest\x1a\x1f.quicbaas.kms.v1.GetDEKResponse\"\f\xc2\xf3\x18\bkeys:get\x12^\n" +
+	"\bListDEKs\x12 .quicbaas.kms.v1.ListDEKsRequest\x1a!.quicbaas.kms.v1.ListDEKsResponse\"\r\xc2\xf3\x18\tkeys:list\x12c\n" +
+	"\tRotateDEK\x12!.quicbaas.kms.v1.RotateDEKRequest\x1a\".quicbaas.kms.v1.RotateDEKResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12c\n" +
+	"\tDeleteDEK\x12!.quicbaas.kms.v1.DeleteDEKRequest\x1a\".quicbaas.kms.v1.DeleteDEKResponse\"\x0f\xc2\xf3\x18\vkeys:delete\x12i\n" +
+	"\fGetDEKStatus\x12$.quicbaas.kms.v1.GetDEKStatusRequest\x1a%.quicbaas.kms.v1.GetDEKStatusResponse\"\f\xc2\xf3\x18\bkeys:get\x12o\n" +
+	"\rSetDefaultDEK\x12%.quicbaas.kms.v1.SetDefaultDEKRequest\x1a&.quicbaas.kms.v1.SetDefaultDEKResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12l\n" +
+	"\fSetDEKSafety\x12$.quicbaas.kms.v1.SetDEKSafetyRequest\x1a%.quicbaas.kms.v1.SetDEKSafetyResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12r\n" +
+	"\x0eClearDEKSafety\x12&.quicbaas.kms.v1.ClearDEKSafetyRequest\x1a'.quicbaas.kms.v1.ClearDEKSafetyResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12{\n" +
+	"\x11StartReencryption\x12).quicbaas.kms.v1.StartReencryptionRequest\x1a*.quicbaas.kms.v1.StartReencryptionResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12\x8a\x01\n" +
+	"\x17GetReencryptionProgress\x12/.quicbaas.kms.v1.GetReencryptionProgressRequest\x1a0.quicbaas.kms.v1.GetReencryptionProgressResponse\"\f\xc2\xf3\x18\bkeys:getB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_kms_proto_rawDescOnce sync.Once

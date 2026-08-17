@@ -129,10 +129,12 @@ var (
 // initial access token, so the bootstrap chains off the server's cert-based
 // admin identity (there are no invite tokens or password bootstrap):
 //
-//  1. POST /api/v1/auth/login/piv over mTLS presenting the fixture admin
+//  1. POST /api/v1/iam/login/piv over mTLS presenting the fixture admin
 //     client certificate (auth.bootstrap_admin_piv_cert_path binds the
 //     bootstrap admin user to its SPKI thumbprint at startup) to obtain an
-//     admin bearer — the initial access token.
+//     admin bearer — the initial access token. (Moved from
+//     /api/v1/auth/login/piv by P3.3 -- xkms's module owns that path on a
+//     composed node as part of its own session-login plane.)
 //  2. POST /oauth2/register (RFC 7591 Dynamic Client Registration) with that
 //     bearer to mint a confidential client allowed the client_credentials
 //     grant.
@@ -163,7 +165,7 @@ func doAcquirePlatformToken(ctx context.Context) (string, error) {
 }
 
 // adminPIVToken performs the cert-bound bootstrap-admin login: POST
-// /api/v1/auth/login/piv over mTLS presenting the fixture admin client
+// /api/v1/iam/login/piv over mTLS presenting the fixture admin client
 // certificate. The server bound the bootstrap admin user to this
 // certificate's SPKI thumbprint at startup, so the handshake itself is the
 // credential — no pre-existing token is needed. The returned bearer is the
@@ -196,7 +198,7 @@ func adminPIVToken(ctx context.Context) (string, error) {
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		GetRESTAddress()+"/api/v1/auth/login/piv", nil)
+		GetRESTAddress()+"/api/v1/iam/login/piv", nil)
 	if err != nil {
 		return "", &qberrors.WrappedMessageError{Message: "build PIV login request", Cause: err}
 	}

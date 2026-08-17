@@ -16,9 +16,61 @@ package iam
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
+
+// mockIAMClient implements IAMClient for pep_syncer_test.go.
+type mockIAMClient struct {
+	mu         sync.Mutex
+	policies   []*Policy
+	fetchError error
+	closed     bool
+}
+
+func newMockIAMClient() *mockIAMClient {
+	return &mockIAMClient{}
+}
+
+func (m *mockIAMClient) SetPolicies(policies []*Policy) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.policies = policies
+}
+
+func (m *mockIAMClient) AddPolicy(policy *Policy) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.policies = append(m.policies, policy)
+}
+
+func (m *mockIAMClient) FetchPolicies(_ string, _ []string) ([]*Policy, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fetchError != nil {
+		return nil, m.fetchError
+	}
+	out := make([]*Policy, len(m.policies))
+	copy(out, m.policies)
+	return out, nil
+}
+
+func (m *mockIAMClient) Subscribe(_ string, _ []string) (<-chan *PolicyUpdate, error) {
+	ch := make(chan *PolicyUpdate)
+	close(ch)
+	return ch, nil
+}
+
+func (m *mockIAMClient) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closed = true
+	return nil
+}
+
+// Compile-time interface check.
+var _ IAMClient = (*mockIAMClient)(nil)
 
 func TestNewPolicySyncer(t *testing.T) {
 	client := newMockIAMClient()
@@ -62,15 +114,9 @@ func TestPolicySyncer_SyncNow(t *testing.T) {
 	})
 
 	// Add test policies to mock client
-	client.SetPolicies([]*CompiledPolicy{
-		{
-			Name:     "test-policy-1",
-			Priority: 100,
-		},
-		{
-			Name:     "test-policy-2",
-			Priority: 200,
-		},
+	client.SetPolicies([]*Policy{
+		{Metadata: PolicyMetadata{Name: "test-policy-1", Priority: 100}},
+		{Metadata: PolicyMetadata{Name: "test-policy-2", Priority: 200}},
 	})
 
 	syncer := NewPolicySyncer(client, cache, 30*time.Second, "test-tenant")
@@ -272,11 +318,8 @@ func TestPolicySyncer_PeriodicSync(t *testing.T) {
 	syncer := NewPolicySyncer(client, cache, 50*time.Millisecond, "test-tenant")
 
 	// Add initial policy
-	client.SetPolicies([]*CompiledPolicy{
-		{
-			Name:     "test-policy",
-			Priority: 100,
-		},
+	client.SetPolicies([]*Policy{
+		{Metadata: PolicyMetadata{Name: "test-policy", Priority: 100}},
 	})
 
 	ctx := context.Background()
@@ -295,10 +338,7 @@ func TestPolicySyncer_PeriodicSync(t *testing.T) {
 	}
 
 	// Update policies in mock client
-	client.AddPolicy(&CompiledPolicy{
-		Name:     "test-policy-2",
-		Priority: 200,
-	})
+	client.AddPolicy(&Policy{Metadata: PolicyMetadata{Name: "test-policy-2", Priority: 200}})
 
 	// Wait for next sync
 	time.Sleep(100 * time.Millisecond)
@@ -358,10 +398,7 @@ func BenchmarkPolicySyncer_SyncNow(b *testing.B) {
 
 	// Add test policies
 	for i := 0; i < 100; i++ {
-		client.AddPolicy(&CompiledPolicy{
-			Name:     "policy-" + string(rune('0'+i%10)),
-			Priority: 100 + i,
-		})
+		client.AddPolicy(&Policy{Metadata: PolicyMetadata{Name: "policy-" + string(rune('0'+i%10)), Priority: 100 + i}})
 	}
 
 	syncer := NewPolicySyncer(client, cache, 30*time.Second, "test-tenant")

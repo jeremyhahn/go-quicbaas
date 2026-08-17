@@ -45,7 +45,6 @@ func TestDefaultDevClusterConfig(t *testing.T) {
 		cfg := DefaultDevClusterConfig()
 		assert.Equal(t, 9090, cfg.BasePorts.GRPC, "default GRPC base port should be 9090")
 		assert.Equal(t, 8080, cfg.BasePorts.REST, "default REST base port should be 8080")
-		assert.Equal(t, 10443, cfg.BasePorts.QUIC, "default QUIC base port should be 10443")
 		assert.Equal(t, 11443, cfg.BasePorts.MCP, "default MCP base port should be 11443")
 		assert.Equal(t, 63001, cfg.BasePorts.Raft, "default Raft base port should be 63001")
 	})
@@ -56,7 +55,6 @@ func TestDefaultDevClusterPorts(t *testing.T) {
 		ports := DefaultDevClusterPorts()
 		assert.Equal(t, 9090, ports.GRPC)
 		assert.Equal(t, 8080, ports.REST)
-		assert.Equal(t, 10443, ports.QUIC)
 		assert.Equal(t, 11443, ports.MCP)
 		assert.Equal(t, 63001, ports.Raft)
 	})
@@ -66,12 +64,11 @@ func TestDefaultDevClusterPorts(t *testing.T) {
 		portSet := map[int]string{
 			ports.GRPC: "GRPC",
 			ports.REST: "REST",
-			ports.QUIC: "QUIC",
 			ports.MCP:  "MCP",
 			ports.Raft: "Raft",
 		}
 		// If there were duplicates, the map would have fewer entries
-		assert.Equal(t, 5, len(portSet), "all default ports should be unique")
+		assert.Equal(t, 4, len(portSet), "all default ports should be unique")
 	})
 }
 
@@ -90,14 +87,12 @@ func TestDevClusterConfig_CustomValues(t *testing.T) {
 			BasePorts: DevClusterPorts{
 				GRPC: 19090,
 				REST: 18080,
-				QUIC: 20443,
 				MCP:  21443,
 				Raft: 73001,
 			},
 		}
 		assert.Equal(t, 19090, cfg.BasePorts.GRPC)
 		assert.Equal(t, 18080, cfg.BasePorts.REST)
-		assert.Equal(t, 20443, cfg.BasePorts.QUIC)
 		assert.Equal(t, 21443, cfg.BasePorts.MCP)
 		assert.Equal(t, 73001, cfg.BasePorts.Raft)
 	})
@@ -119,7 +114,6 @@ func TestDevClusterPorts_ZeroValue(t *testing.T) {
 		var ports DevClusterPorts
 		assert.Equal(t, 0, ports.GRPC)
 		assert.Equal(t, 0, ports.REST)
-		assert.Equal(t, 0, ports.QUIC)
 		assert.Equal(t, 0, ports.MCP)
 		assert.Equal(t, 0, ports.Raft)
 	})

@@ -11,6 +11,7 @@ package quicbaas.certificate.v1;
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
 import "google/protobuf/timestamp.proto";
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 
 // =============================================================================
 // Certificate Service
@@ -21,36 +22,54 @@ import "google/protobuf/timestamp.proto";
 // including issuance, CSR signing, revocation, and verification.
 service CertificateService {
   // IssueCertificate generates a new X.509 certificate with the specified parameters.
-  rpc IssueCertificate(IssueCertificateRequest) returns (IssueCertificateResponse);
+  rpc IssueCertificate(IssueCertificateRequest) returns (IssueCertificateResponse) {
+      option (qrdb.v1.permission) = "certs:generate";
+  }
 
   // SignCSR signs a Certificate Signing Request with the CA.
-  rpc SignCSR(SignCSRRequest) returns (SignCSRResponse);
+  rpc SignCSR(SignCSRRequest) returns (SignCSRResponse) {
+      option (qrdb.v1.permission) = "certs:generate";
+  }
 
   // RevokeCertificate marks a certificate as revoked by serial number.
-  rpc RevokeCertificate(RevokeCertificateRequest) returns (RevokeCertificateResponse);
+  rpc RevokeCertificate(RevokeCertificateRequest) returns (RevokeCertificateResponse) {
+      option (qrdb.v1.permission) = "certs:revoke";
+  }
 
   // VerifyCertificate checks if a certificate is valid and not revoked.
-  rpc VerifyCertificate(VerifyCertificateRequest) returns (VerifyCertificateResponse);
+  rpc VerifyCertificate(VerifyCertificateRequest) returns (VerifyCertificateResponse) {
+      option (qrdb.v1.permission) = "certs:read";
+  }
 
   // GetCACertificate returns the CA certificate and bundle.
-  rpc GetCACertificate(GetCACertificateRequest) returns (GetCACertificateResponse);
+  rpc GetCACertificate(GetCACertificateRequest) returns (GetCACertificateResponse) {
+      option (qrdb.v1.permission) = "certs:read";
+  }
 
   // GetTLSConfig returns a TLS configuration for secure communications.
-  rpc GetTLSConfig(GetTLSConfigRequest) returns (GetTLSConfigResponse);
+  rpc GetTLSConfig(GetTLSConfigRequest) returns (GetTLSConfigResponse) {
+      option (qrdb.v1.permission) = "certs:read";
+  }
 
   // CrossSign cross-signs an external root certificate with the local CA,
   // producing a cross-certificate that lets relying parties anchored on the
   // local CA validate chains rooted at the foreign root.
-  rpc CrossSign(CrossSignRequest) returns (CrossSignResponse);
+  rpc CrossSign(CrossSignRequest) returns (CrossSignResponse) {
+      option (qrdb.v1.permission) = "ca:create";
+  }
 
   // Chain resolves the issuer chain for a certificate by walking its
   // Authority Information Access extension. The chain is ordered issuer-first
   // and root-last and excludes the leaf.
-  rpc Chain(CertificateChainRequest) returns (CertificateChainResponse);
+  rpc Chain(CertificateChainRequest) returns (CertificateChainResponse) {
+      option (qrdb.v1.permission) = "certs:generate";
+  }
 
   // IssueDeviceIdentity issues a TCG device identity certificate: an
   // Endorsement Key, an Attestation Key, or an IEEE 802.1AR IDevID.
-  rpc IssueDeviceIdentity(IssueDeviceIdentityRequest) returns (IssueDeviceIdentityResponse);
+  rpc IssueDeviceIdentity(IssueDeviceIdentityRequest) returns (IssueDeviceIdentityResponse) {
+      option (qrdb.v1.permission) = "certs:generate";
+  }
 }
 
 // =============================================================================
@@ -478,16 +497,22 @@ message IssueDeviceIdentityResponse {
 service TrustService {
   // CrossSignedRootPool returns the active CA's cross-sign-aware root set
   // (native root plus any cross-signed roots) as PEM-encoded certificates.
-  rpc CrossSignedRootPool(CrossSignedRootPoolRequest) returns (CrossSignedRootPoolResponse);
+  rpc CrossSignedRootPool(CrossSignedRootPoolRequest) returns (CrossSignedRootPoolResponse) {
+      option (qrdb.v1.permission) = "certs:read";
+  }
 
   // AutoImportAIA walks the AIA extension of each supplied DER-encoded
   // certificate and imports the referenced issuing CA certificates.
-  rpc AutoImportAIA(AutoImportAIARequest) returns (AutoImportAIAResponse);
+  rpc AutoImportAIA(AutoImportAIARequest) returns (AutoImportAIAResponse) {
+      option (qrdb.v1.permission) = "certs:generate";
+  }
 
   // PublishDANE derives the DANE TLSA records for the supplied certificate
   // and publishes them via the registered DANE publisher. Returns a
   // not-configured error when no publisher is registered on the server.
-  rpc PublishDANE(PublishDANERequest) returns (PublishDANEResponse);
+  rpc PublishDANE(PublishDANERequest) returns (PublishDANEResponse) {
+      option (qrdb.v1.permission) = "certs:generate";
+  }
 }
 
 // CrossSignedRootPoolRequest carries no parameters.

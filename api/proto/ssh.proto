@@ -19,27 +19,57 @@ package quicbaas.ssh.v1;
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+
 // =============================================================================
 // SSHService — key, known-hosts, and authorized-keys management
 // =============================================================================
 
 service SSHService {
-    rpc GenerateSSHKey(SSHGenerateKeyRequest) returns (SSHKeyResponse);
-    rpc ImportSSHKey(SSHImportKeyRequest) returns (SSHKeyResponse);
-    rpc GetSSHKey(SSHGetKeyRequest) returns (SSHKeyResponse);
-    rpc ListSSHKeys(SSHListKeysRequest) returns (SSHListKeysResponse);
-    rpc DeleteSSHKey(SSHDeleteKeyRequest) returns (SSHAckResponse);
-    rpc ExportSSHPublicKey(SSHExportPublicKeyRequest) returns (SSHPublicKeyResponse);
-    rpc SignSSHDigest(SSHSignDigestRequest) returns (SSHSignDigestResponse);
+    rpc GenerateSSHKey(SSHGenerateKeyRequest) returns (SSHKeyResponse) {
+        option (qrdb.v1.permission) = "keys:create";
+    }
+    rpc ImportSSHKey(SSHImportKeyRequest) returns (SSHKeyResponse) {
+        option (qrdb.v1.permission) = "keys:import";
+    }
+    rpc GetSSHKey(SSHGetKeyRequest) returns (SSHKeyResponse) {
+        option (qrdb.v1.permission) = "keys:get";
+    }
+    rpc ListSSHKeys(SSHListKeysRequest) returns (SSHListKeysResponse) {
+        option (qrdb.v1.permission) = "keys:list";
+    }
+    rpc DeleteSSHKey(SSHDeleteKeyRequest) returns (SSHAckResponse) {
+        option (qrdb.v1.permission) = "keys:delete";
+    }
+    rpc ExportSSHPublicKey(SSHExportPublicKeyRequest) returns (SSHPublicKeyResponse) {
+        option (qrdb.v1.permission) = "keys:get";
+    }
+    rpc SignSSHDigest(SSHSignDigestRequest) returns (SSHSignDigestResponse) {
+        option (qrdb.v1.permission) = "keys:sign";
+    }
 
-    rpc AddSSHKnownHost(SSHAddKnownHostRequest) returns (SSHAckResponse);
-    rpc ListSSHKnownHosts(SSHListKnownHostsRequest) returns (SSHListKnownHostsResponse);
-    rpc RemoveSSHKnownHost(SSHRemoveKnownHostRequest) returns (SSHAckResponse);
+    rpc AddSSHKnownHost(SSHAddKnownHostRequest) returns (SSHAckResponse) {
+        option (qrdb.v1.permission) = "keys:create";
+    }
+    rpc ListSSHKnownHosts(SSHListKnownHostsRequest) returns (SSHListKnownHostsResponse) {
+        option (qrdb.v1.permission) = "keys:list";
+    }
+    rpc RemoveSSHKnownHost(SSHRemoveKnownHostRequest) returns (SSHAckResponse) {
+        option (qrdb.v1.permission) = "keys:delete";
+    }
 
-    rpc AddSSHAuthorizedKey(SSHAddAuthorizedKeyRequest) returns (SSHAckResponse);
-    rpc ListSSHAuthorizedKeys(SSHListAuthorizedKeysRequest) returns (SSHListAuthorizedKeysResponse);
-    rpc RemoveSSHAuthorizedKey(SSHRemoveAuthorizedKeyRequest) returns (SSHAckResponse);
-    rpc EmitSSHAuthorizedKey(SSHEmitAuthorizedKeyRequest) returns (SSHEmitAuthorizedKeyResponse);
+    rpc AddSSHAuthorizedKey(SSHAddAuthorizedKeyRequest) returns (SSHAckResponse) {
+        option (qrdb.v1.permission) = "keys:create";
+    }
+    rpc ListSSHAuthorizedKeys(SSHListAuthorizedKeysRequest) returns (SSHListAuthorizedKeysResponse) {
+        option (qrdb.v1.permission) = "keys:list";
+    }
+    rpc RemoveSSHAuthorizedKey(SSHRemoveAuthorizedKeyRequest) returns (SSHAckResponse) {
+        option (qrdb.v1.permission) = "keys:delete";
+    }
+    rpc EmitSSHAuthorizedKey(SSHEmitAuthorizedKeyRequest) returns (SSHEmitAuthorizedKeyResponse) {
+        option (qrdb.v1.permission) = "keys:get";
+    }
 }
 
 // =============================================================================

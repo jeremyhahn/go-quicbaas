@@ -211,12 +211,6 @@ func TestNewPolicyEngine(t *testing.T) {
 			if engine.storage == nil {
 				t.Error("engine.storage is nil")
 			}
-			if engine.compiler == nil {
-				t.Error("engine.compiler is nil")
-			}
-			if engine.evaluator == nil {
-				t.Error("engine.evaluator is nil")
-			}
 		})
 	}
 }
@@ -773,10 +767,7 @@ func TestPolicyEngine_TestPolicy(t *testing.T) {
 				Resource: "/test/resource",
 			},
 			setup: func(c *PolicyCache) {
-				policy := createTestPolicy("tenant1", "policy1")
-				compiler := NewPolicyCompiler()
-				compiled, _ := compiler.Compile(policy)
-				c.Set("tenant1", compiled)
+				c.Set("tenant1", createTestPolicy("tenant1", "policy1"))
 			},
 			wantError: false,
 		},
@@ -850,10 +841,7 @@ func TestPolicyEngine_Evaluate(t *testing.T) {
 				Resource: "/test/resource",
 			},
 			setup: func(c *PolicyCache) {
-				policy := createTestPolicy("tenant1", "policy1")
-				compiler := NewPolicyCompiler()
-				compiled, _ := compiler.Compile(policy)
-				c.Set("tenant1", compiled)
+				c.Set("tenant1", createTestPolicy("tenant1", "policy1"))
 			},
 			wantError: false,
 		},
@@ -893,123 +881,6 @@ func TestPolicyEngine_Evaluate(t *testing.T) {
 	}
 }
 
-func TestPolicyEngine_CompileAndCache(t *testing.T) {
-	tests := []struct {
-		name      string
-		tenantID  string
-		setup     func(*mockPolicyStorage)
-		wantError bool
-	}{
-		{
-			name:     "success with policies",
-			tenantID: "tenant1",
-			setup: func(s *mockPolicyStorage) {
-				ctx := context.Background()
-				_ = s.CreatePolicy(ctx, "tenant1", createTestPolicy("tenant1", "policy1"))
-				_ = s.CreatePolicy(ctx, "tenant1", createTestPolicy("tenant1", "policy2"))
-			},
-			wantError: false,
-		},
-		{
-			name:      "success with no policies",
-			tenantID:  "tenant1",
-			setup:     func(s *mockPolicyStorage) {},
-			wantError: false,
-		},
-		{
-			name:     "compilation error - skip invalid policy",
-			tenantID: "tenant1",
-			setup: func(s *mockPolicyStorage) {
-				ctx := context.Background()
-				_ = s.CreatePolicy(ctx, "tenant1", createTestPolicy("tenant1", "policy1"))
-				// Create an invalid policy that will fail compilation
-				invalidPolicy := &Policy{
-					APIVersion: "iam.quicbaas.io/v1",
-					Kind:       "Policy",
-					Metadata: PolicyMetadata{
-						Name:   "invalid",
-						Tenant: "tenant1",
-					},
-					Spec: PolicySpec{
-						Rules: []Rule{}, // No rules - invalid
-					},
-				}
-				_ = s.CreatePolicy(ctx, "tenant1", invalidPolicy)
-			},
-			wantError: false, // Should not error, just skip invalid policies
-		},
-		{
-			name:     "storage error",
-			tenantID: "tenant1",
-			setup: func(s *mockPolicyStorage) {
-				s.listError = &dberrors.MessageError{Message: "storage error"}
-			},
-			wantError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			storage := newMockPolicyStorage()
-			tt.setup(storage)
-
-			cache := NewPolicyCache(&CacheConfig{
-				TTL:               5 * time.Minute,
-				MaxSize:           1000,
-				BloomFilterSize:   1000000,
-				BloomFilterHashes: 7,
-			})
-
-			engine := NewPolicyEngine(PolicyEngineOptions{
-				Storage: storage,
-				Cache:   cache,
-			})
-
-			ctx := context.Background()
-			err := engine.CompileAndCache(ctx, tt.tenantID)
-
-			if tt.wantError {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-			} else {
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
-			}
-		})
-	}
-}
-
-func TestPolicyEngine_RefreshCache(t *testing.T) {
-	storage := newMockPolicyStorage()
-	ctx := context.Background()
-	_ = storage.CreatePolicy(ctx, "tenant1", createTestPolicy("tenant1", "policy1"))
-
-	cache := NewPolicyCache(&CacheConfig{
-		TTL:               5 * time.Minute,
-		MaxSize:           1000,
-		BloomFilterSize:   1000000,
-		BloomFilterHashes: 7,
-	})
-
-	engine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-		Cache:   cache,
-	})
-
-	err := engine.RefreshCache(ctx, "tenant1")
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-
-	// Verify cache was populated
-	policies := cache.GetAll("tenant1")
-	if len(policies) != 1 {
-		t.Errorf("expected 1 cached policy, got %d", len(policies))
-	}
-}
-
 func TestPolicyEngine_ClearCache(t *testing.T) {
 	cache := NewPolicyCache(&CacheConfig{
 		TTL:               5 * time.Minute,
@@ -1019,10 +890,7 @@ func TestPolicyEngine_ClearCache(t *testing.T) {
 	})
 
 	// Add a policy to cache
-	policy := createTestPolicy("tenant1", "policy1")
-	compiler := NewPolicyCompiler()
-	compiled, _ := compiler.Compile(policy)
-	cache.Set("tenant1", compiled)
+	cache.Set("tenant1", createTestPolicy("tenant1", "policy1"))
 
 	engine := NewPolicyEngine(PolicyEngineOptions{
 		Storage: newMockPolicyStorage(),
@@ -1097,10 +965,8 @@ func TestMemoryPolicyCache_Get(t *testing.T) {
 			name: "found",
 			setup: func(c *MemoryPolicyCache) {
 				ctx := context.Background()
-				policy := createTestPolicy("tenant1", "policy1")
-				compiler := NewPolicyCompiler()
-				compiled, _ := compiler.Compile(policy)
-				_ = c.Set(ctx, "tenant1", []*CompiledPolicy{compiled})
+				compiled := createTestPolicy("tenant1", "policy1")
+				_ = c.Set(ctx, "tenant1", []*Policy{compiled})
 			},
 			tenantID:  "tenant1",
 			wantFound: true,
@@ -1110,10 +976,8 @@ func TestMemoryPolicyCache_Get(t *testing.T) {
 			name: "expired",
 			setup: func(c *MemoryPolicyCache) {
 				ctx := context.Background()
-				policy := createTestPolicy("tenant1", "policy1")
-				compiler := NewPolicyCompiler()
-				compiled, _ := compiler.Compile(policy)
-				_ = c.Set(ctx, "tenant1", []*CompiledPolicy{compiled})
+				compiled := createTestPolicy("tenant1", "policy1")
+				_ = c.Set(ctx, "tenant1", []*Policy{compiled})
 				// Set expiration to past
 				c.expires["tenant1"] = time.Now().Add(-1 * time.Minute)
 			},
@@ -1156,18 +1020,16 @@ func TestMemoryPolicyCache_Set(t *testing.T) {
 		name      string
 		ttl       time.Duration
 		tenantID  string
-		policies  []*CompiledPolicy
+		policies  []*Policy
 		wantError bool
 	}{
 		{
 			name:     "store with TTL",
 			ttl:      5 * time.Minute,
 			tenantID: "tenant1",
-			policies: func() []*CompiledPolicy {
-				policy := createTestPolicy("tenant1", "policy1")
-				compiler := NewPolicyCompiler()
-				compiled, _ := compiler.Compile(policy)
-				return []*CompiledPolicy{compiled}
+			policies: func() []*Policy {
+				compiled := createTestPolicy("tenant1", "policy1")
+				return []*Policy{compiled}
 			}(),
 			wantError: false,
 		},
@@ -1175,11 +1037,9 @@ func TestMemoryPolicyCache_Set(t *testing.T) {
 			name:     "store without TTL",
 			ttl:      0,
 			tenantID: "tenant1",
-			policies: func() []*CompiledPolicy {
-				policy := createTestPolicy("tenant1", "policy1")
-				compiler := NewPolicyCompiler()
-				compiled, _ := compiler.Compile(policy)
-				return []*CompiledPolicy{compiled}
+			policies: func() []*Policy {
+				compiled := createTestPolicy("tenant1", "policy1")
+				return []*Policy{compiled}
 			}(),
 			wantError: false,
 		},
@@ -1223,10 +1083,8 @@ func TestMemoryPolicyCache_Invalidate(t *testing.T) {
 	ctx := context.Background()
 
 	// Add a policy
-	policy := createTestPolicy("tenant1", "policy1")
-	compiler := NewPolicyCompiler()
-	compiled, _ := compiler.Compile(policy)
-	_ = cache.Set(ctx, "tenant1", []*CompiledPolicy{compiled})
+	compiled := createTestPolicy("tenant1", "policy1")
+	_ = cache.Set(ctx, "tenant1", []*Policy{compiled})
 
 	// Verify it was added
 	policies, _ := cache.Get(ctx, "tenant1")
@@ -1257,14 +1115,11 @@ func TestMemoryPolicyCache_Clear(t *testing.T) {
 	ctx := context.Background()
 
 	// Add policies for multiple tenants
-	policy1 := createTestPolicy("tenant1", "policy1")
-	compiler := NewPolicyCompiler()
-	compiled1, _ := compiler.Compile(policy1)
-	_ = cache.Set(ctx, "tenant1", []*CompiledPolicy{compiled1})
+	compiled1 := createTestPolicy("tenant1", "policy1")
+	_ = cache.Set(ctx, "tenant1", []*Policy{compiled1})
 
-	policy2 := createTestPolicy("tenant2", "policy2")
-	compiled2, _ := compiler.Compile(policy2)
-	_ = cache.Set(ctx, "tenant2", []*CompiledPolicy{compiled2})
+	compiled2 := createTestPolicy("tenant2", "policy2")
+	_ = cache.Set(ctx, "tenant2", []*Policy{compiled2})
 
 	// Verify they were added
 	policies1, _ := cache.Get(ctx, "tenant1")
@@ -1305,9 +1160,7 @@ func TestMemoryPolicyCache_Concurrent(t *testing.T) {
 	cache := NewMemoryPolicyCache(5 * time.Minute)
 	ctx := context.Background()
 
-	policy := createTestPolicy("tenant1", "policy1")
-	compiler := NewPolicyCompiler()
-	compiled, _ := compiler.Compile(policy)
+	compiled := createTestPolicy("tenant1", "policy1")
 
 	// Run concurrent operations
 	var wg sync.WaitGroup
@@ -1317,7 +1170,7 @@ func TestMemoryPolicyCache_Concurrent(t *testing.T) {
 		// Concurrent writes
 		go func() {
 			defer wg.Done()
-			_ = cache.Set(ctx, "tenant1", []*CompiledPolicy{compiled})
+			_ = cache.Set(ctx, "tenant1", []*Policy{compiled})
 		}()
 
 		// Concurrent reads
@@ -1355,11 +1208,10 @@ func TestPolicyEngine_CacheInvalidation(t *testing.T) {
 		t.Fatalf("failed to create policy: %v", err)
 	}
 
-	// Populate cache
-	err = engine.CompileAndCache(ctx, "tenant1")
-	if err != nil {
-		t.Fatalf("failed to compile and cache: %v", err)
-	}
+	// Populate cache directly (CompileAndCache was removed along with the
+	// deleted local ABAC engine; the cache is no longer decision-affecting,
+	// see PolicyCache's doc comment).
+	cache.Set("tenant1", policy)
 
 	// Verify cache is populated
 	policies := cache.GetAll("tenant1")
@@ -1379,11 +1231,8 @@ func TestPolicyEngine_CacheInvalidation(t *testing.T) {
 		t.Errorf("expected cache to be invalidated after update, got %d policies", len(policies))
 	}
 
-	// Repopulate cache
-	err = engine.CompileAndCache(ctx, "tenant1")
-	if err != nil {
-		t.Fatalf("failed to recompile and cache: %v", err)
-	}
+	// Repopulate cache directly.
+	cache.Set("tenant1", policy)
 
 	// Delete policy - should invalidate cache
 	err = engine.DeletePolicy(ctx, "tenant1", "policy1")

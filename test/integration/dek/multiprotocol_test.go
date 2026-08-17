@@ -34,7 +34,7 @@ import (
 // =============================================================================
 
 // TestDEKMultiProtocol verifies that DEK operations work identically
-// across all supported protocols: Embedded, REST, gRPC, QUIC, Unix Socket, and MCP.
+// across all supported protocols: Embedded, REST, gRPC, and Unix Socket.
 func TestDEKMultiProtocol(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -57,17 +57,14 @@ func TestDEKMultiProtocol(t *testing.T) {
 		testDEKProtocol(t, ctx, &grpcProtocolClient{})
 	})
 
-	t.Run("QUIC", func(t *testing.T) {
-		testDEKProtocol(t, ctx, &quicProtocolClient{})
-	})
-
 	t.Run("UnixSocket", func(t *testing.T) {
 		testDEKProtocol(t, ctx, &unixSocketProtocolClient{})
 	})
 
-	t.Run("MCP", func(t *testing.T) {
-		testDEKProtocol(t, ctx, &mcpProtocolClient{})
-	})
+	// NOTE: no MCP leg here. quicbaas retired its bespoke JSON-RPC MCP
+	// listener in favor of go-qrdb's unified multi-protocol server; the
+	// unified server's MCP surface has no finalized docker endpoint
+	// convention yet, so this suite does not exercise it (deferred).
 }
 
 // testDEKProtocol runs the complete DEK test suite against a protocol.
@@ -136,7 +133,8 @@ func testDEKProtocol(t *testing.T, ctx context.Context, protocol dekProtocol) {
 		testDEKConcurrentOperations(t, ctx, protocol, basePrefix+"-concurrent")
 	})
 
-	// Reconnect QUIC after concurrent test to reset any corrupted connection state
+	// Reconnect the protocol client after the concurrent test to reset any
+	// corrupted connection state (used by protocols with stateful connections).
 	if reconnectable, ok := protocol.(interface{ Reconnect(context.Context) error }); ok {
 		if err := reconnectable.Reconnect(ctx); err != nil {
 			t.Logf("Warning: Failed to reconnect %s after concurrent test: %v", protocol.Name(), err)
@@ -171,9 +169,7 @@ func TestDEKCreate_MultiProtocol(t *testing.T) {
 	protocols := []dekProtocol{
 		&restProtocolClient{},
 		&grpcProtocolClient{},
-		&quicProtocolClient{},
 		&unixSocketProtocolClient{},
-		&mcpProtocolClient{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedProtocolClient{})
@@ -264,9 +260,7 @@ func TestDEKGet_MultiProtocol(t *testing.T) {
 	protocols := []dekProtocol{
 		&restProtocolClient{},
 		&grpcProtocolClient{},
-		&quicProtocolClient{},
 		&unixSocketProtocolClient{},
-		&mcpProtocolClient{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedProtocolClient{})
@@ -345,9 +339,7 @@ func TestDEKList_MultiProtocol(t *testing.T) {
 	protocols := []dekProtocol{
 		&restProtocolClient{},
 		&grpcProtocolClient{},
-		&quicProtocolClient{},
 		&unixSocketProtocolClient{},
-		&mcpProtocolClient{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedProtocolClient{})
@@ -441,9 +433,7 @@ func TestDEKRotate_MultiProtocol(t *testing.T) {
 	protocols := []dekProtocol{
 		&restProtocolClient{},
 		&grpcProtocolClient{},
-		&quicProtocolClient{},
 		&unixSocketProtocolClient{},
-		&mcpProtocolClient{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedProtocolClient{})
@@ -533,9 +523,7 @@ func TestDEKDelete_MultiProtocol(t *testing.T) {
 	protocols := []dekProtocol{
 		&restProtocolClient{},
 		&grpcProtocolClient{},
-		&quicProtocolClient{},
 		&unixSocketProtocolClient{},
-		&mcpProtocolClient{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedProtocolClient{})
@@ -602,9 +590,7 @@ func TestDEKStatus_MultiProtocol(t *testing.T) {
 	protocols := []dekProtocol{
 		&restProtocolClient{},
 		&grpcProtocolClient{},
-		&quicProtocolClient{},
 		&unixSocketProtocolClient{},
-		&mcpProtocolClient{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedProtocolClient{})
@@ -668,9 +654,7 @@ func TestDEKSetDefault_MultiProtocol(t *testing.T) {
 	protocols := []dekProtocol{
 		&restProtocolClient{},
 		&grpcProtocolClient{},
-		&quicProtocolClient{},
 		&unixSocketProtocolClient{},
-		&mcpProtocolClient{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedProtocolClient{})
@@ -740,9 +724,7 @@ func TestDEKSafety_MultiProtocol(t *testing.T) {
 	protocols := []dekProtocol{
 		&restProtocolClient{},
 		&grpcProtocolClient{},
-		&quicProtocolClient{},
 		&unixSocketProtocolClient{},
-		&mcpProtocolClient{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedProtocolClient{})
@@ -813,9 +795,7 @@ func TestDEKReencryption_MultiProtocol(t *testing.T) {
 	protocols := []dekProtocol{
 		&restProtocolClient{},
 		&grpcProtocolClient{},
-		&quicProtocolClient{},
 		&unixSocketProtocolClient{},
-		&mcpProtocolClient{},
 	}
 	if helpers.IsEmbeddedAvailable() {
 		protocols = append(protocols, &embeddedProtocolClient{})
@@ -911,55 +891,18 @@ func testDEKConcurrentOperations(t *testing.T, ctx context.Context, protocol dek
 	require.NoError(t, err)
 	defer cleanupDEK(t, protocol, ctx, path)
 
-	// Reduced concurrency for QUIC to avoid overwhelming the server
 	concurrency := 5
 	var wg sync.WaitGroup
 	errors := make(chan error, concurrency)
 
-	// For QUIC protocol, use separate clients for each concurrent operation
-	// to avoid stream flow control issues on shared connections
-	isQUIC := protocol.Name() == "QUIC"
-
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
-		// For QUIC, add staggered starts to avoid overwhelming the server with simultaneous connections
-		if isQUIC && i > 0 {
-			time.Sleep(100 * time.Millisecond)
-		}
 		go func(idx int) {
 			defer wg.Done()
 
-			// Use per-operation context with timeout for QUIC
-			opCtx := ctx
-			if isQUIC {
-				var cancel context.CancelFunc
-				opCtx, cancel = context.WithTimeout(ctx, 30*time.Second)
-				defer cancel()
-			}
-
-			var getDEKFunc func(context.Context, *service.GetDEKRequest) (*service.GetDEKResponse, error)
-
-			if isQUIC {
-				// Create a separate QUIC client for this goroutine
-				endpoints := getQUICEndpoints()
-				if len(endpoints) == 0 {
-					errors <- fmt.Errorf("no QUIC endpoints available for goroutine %d", idx)
-					return
-				}
-				quicClient, err := NewQUICDEKClient(endpoints[0])
-				if err != nil {
-					errors <- fmt.Errorf("failed to create QUIC client %d: %w", idx, err)
-					return
-				}
-				defer quicClient.Close()
-				getDEKFunc = quicClient.GetDEK
-			} else {
-				getDEKFunc = protocol.GetDEK
-			}
-
 			// Perform concurrent get operations
 			req := &service.GetDEKRequest{Path: path}
-			resp, err := getDEKFunc(opCtx, req)
+			resp, err := protocol.GetDEK(ctx, req)
 			if err != nil {
 				errors <- fmt.Errorf("concurrent get error %d: %w", idx, err)
 				return

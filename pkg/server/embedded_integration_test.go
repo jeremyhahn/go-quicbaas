@@ -63,7 +63,6 @@ func TestEmbeddedModeServerStart(t *testing.T) {
 		require.True(t, cfg.Server.Embedded, "Embedded mode should be enabled")
 		require.False(t, cfg.Server.GRPC.Enabled, "TCP should be disabled")
 		require.False(t, cfg.Server.REST.Enabled, "REST should be disabled")
-		require.False(t, cfg.Server.QUIC.Enabled, "QUIC should be disabled")
 		require.Empty(t, cfg.Server.Unix.Socket, "Unix socket should be empty")
 
 		srv, err := NewServer(cfg)
@@ -97,7 +96,6 @@ func TestEmbeddedModeServerStart(t *testing.T) {
 		// Set specific ports to verify they're NOT bound
 		cfg.Server.REST.Port = getFreePort(t)
 		cfg.Server.GRPC.Port = getFreePort(t)
-		cfg.Server.QUIC.Port = getFreePort(t)
 
 		srv, err := NewServer(cfg)
 		require.NoError(t, err)

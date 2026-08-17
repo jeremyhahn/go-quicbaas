@@ -14,11 +14,9 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	stderrors "errors"
-	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -26,6 +24,10 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+
+	mcpclient "github.com/mark3labs/mcp-go/client"
+	mcptransport "github.com/mark3labs/mcp-go/client/transport"
+	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -37,23 +39,38 @@ const MCPVersion = "2024-11-05"
 // MCPProtocolVersionHeader is the HTTP header for MCP protocol version.
 const MCPProtocolVersionHeader = "MCP-Protocol-Version"
 
-// Transport implements the transport.Transport interface for MCP (Model Context Protocol).
-// MCP uses JSON-RPC 2.0 over HTTP for communication.
+// Transport implements the transport.Transport interface for MCP (Model
+// Context Protocol). It speaks the real Model Context Protocol over
+// Streamable HTTP (github.com/mark3labs/mcp-go): every SDK service/method
+// call is invoked as an MCP tool call against the server, using the SAME
+// tool-name derivation and argument/response transforms as the retired
+// hand-rolled JSON-RPC client. Only the wire engine changed.
 type Transport struct {
-	cfg        *transport.Config
-	client     *http.Client
-	baseURL    string
-	endpoint   string
-	headers    map[string]string
-	closed     atomic.Bool
+	cfg      *transport.Config
+	client   *http.Client
+	baseURL  string
+	endpoint string
+	headers  map[string]string
+	closed   atomic.Bool
+
 	lastHealth atomic.Int64
 	requestID  atomic.Uint64
 
-	// Session state
+	// mcpClient is the real MCP client session used by Request/doRequest: it
+	// owns the negotiated protocol version and the tools/call dispatch.
+	// Constructed lazily by ensureInitialized/connect on first use.
+	mcpClient       *mcpclient.Client
 	initialized     atomic.Bool
 	serverInfo      *serverInfo
 	initMu          sync.Mutex
 	protocolVersion string
+
+	// rawTransport backs CallRPC (rpc.go): a separate, lower-level MCP
+	// transport.Interface that forwards a caller's OWN JSON-RPC frames
+	// (including their own "initialize" handshake) verbatim, independent of
+	// mcpClient's session state. Constructed lazily on first CallRPC.
+	rawTransport   mcptransport.Interface
+	rawTransportMu sync.Mutex
 
 	// Authentication state
 	username      string
@@ -67,56 +84,8 @@ type Transport struct {
 
 // serverInfo holds information about the connected MCP server.
 type serverInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-
-// jsonRPCRequest represents a JSON-RPC 2.0 request message.
-type jsonRPCRequest struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      uint64      `json:"id"`
-	Method  string      `json:"method"`
-	Params  interface{} `json:"params,omitempty"`
-}
-
-// jsonRPCResponse represents a JSON-RPC 2.0 response message.
-type jsonRPCResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      uint64          `json:"id,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *JSONRPCError   `json:"error,omitempty"`
-}
-
-// initializeParams represents parameters for the initialize method.
-type initializeParams struct {
-	ProtocolVersion string            `json:"protocolVersion"`
-	ClientInfo      map[string]string `json:"clientInfo"`
-	Capabilities    map[string]any    `json:"capabilities"`
-}
-
-// initializeResult represents the result of the initialize method.
-type initializeResult struct {
-	ProtocolVersion string                 `json:"protocolVersion"`
-	ServerInfo      serverInfo             `json:"serverInfo"`
-	Capabilities    map[string]interface{} `json:"capabilities"`
-}
-
-// toolCallParams represents parameters for the tools/call method.
-type toolCallParams struct {
-	Name      string                 `json:"name"`
-	Arguments map[string]interface{} `json:"arguments,omitempty"`
-}
-
-// toolCallResult represents the result of a tools/call method.
-type toolCallResult struct {
-	Content []contentItem `json:"content"`
-	IsError bool          `json:"isError,omitempty"`
-}
-
-// contentItem represents a content item in an MCP response.
-type contentItem struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
+	Name    string
+	Version string
 }
 
 // New creates a new MCP transport.
@@ -630,7 +599,7 @@ func (t *Transport) ensureInitialized(ctx context.Context) error {
 		return nil
 	}
 
-	if err := t.initialize(ctx); err != nil {
+	if err := t.connect(ctx); err != nil {
 		return err
 	}
 
@@ -670,35 +639,17 @@ func (t *Transport) ensureAuthenticated(ctx context.Context) error {
 // authenticate performs authentication using the quicbaas_login tool.
 // This tool is public and doesn't require authentication itself.
 func (t *Transport) authenticate(ctx context.Context) error {
-	// quicbaas_login is a public tool that doesn't require authentication
-	params := toolCallParams{
-		Name: "quicbaas_login",
-		Arguments: map[string]interface{}{
-			"username": t.username,
-			"password": t.password,
-		},
-	}
-
-	result, err := t.sendRPC(ctx, "tools/call", params)
+	result, err := t.callTool(ctx, "quicbaas_login", map[string]interface{}{
+		"username": t.username,
+		"password": t.password,
+	})
 	if err != nil {
 		return errors.Wrap(err, errors.CodeUnauthorized, "mcp.authenticate",
 			"failed to authenticate")
 	}
 
-	// Parse tool call result
-	var toolResult toolCallResult
-	if err := json.Unmarshal(result, &toolResult); err != nil {
-		return errors.Wrap(err, errors.CodeInternal, "mcp.authenticate",
-			"failed to parse login response")
-	}
-
-	// Check for tool error
-	if toolResult.IsError {
-		return t.extractToolError(toolResult.Content)
-	}
-
 	// Extract token from response
-	token, err := t.extractAccessToken(toolResult.Content)
+	token, err := t.extractAccessToken(result)
 	if err != nil {
 		return err
 	}
@@ -712,35 +663,27 @@ func (t *Transport) authenticate(ctx context.Context) error {
 	return nil
 }
 
-// extractAccessToken extracts the access token from the login response.
-func (t *Transport) extractAccessToken(content []contentItem) (string, error) {
-	for _, item := range content {
-		// MCP server may not set the type field, so just check for non-empty text
-		if item.Text != "" {
-			// Parse JSON response
-			var loginResp map[string]interface{}
-			if err := json.Unmarshal([]byte(item.Text), &loginResp); err != nil {
-				return "", errors.Wrap(err, errors.CodeInternal, "mcp.extractAccessToken",
-					"failed to parse login response JSON")
-			}
+// extractAccessToken extracts the access token from the (already JSON-decoded)
+// quicbaas_login tool result.
+func (t *Transport) extractAccessToken(result interface{}) (string, error) {
+	loginResp, ok := result.(map[string]interface{})
+	if !ok {
+		return "", errors.New(errors.CodeInternal, "mcp.extractAccessToken",
+			"unexpected login response shape")
+	}
 
-			// Try PascalCase first (Go struct marshaling without JSON tags)
-			if token, ok := loginResp["AccessToken"].(string); ok && token != "" {
-				return token, nil
-			}
+	// Try PascalCase first (Go struct marshaling without JSON tags)
+	if token, ok := loginResp["AccessToken"].(string); ok && token != "" {
+		return token, nil
+	}
 
-			// Try snake_case as fallback
-			if token, ok := loginResp["access_token"].(string); ok && token != "" {
-				return token, nil
-			}
-
-			return "", errors.New(errors.CodeInternal, "mcp.extractAccessToken",
-				"access token not found in login response")
-		}
+	// Try snake_case as fallback
+	if token, ok := loginResp["access_token"].(string); ok && token != "" {
+		return token, nil
 	}
 
 	return "", errors.New(errors.CodeInternal, "mcp.extractAccessToken",
-		"no content in login response")
+		"access token not found in login response")
 }
 
 // isPublicTool returns true if the tool doesn't require authentication.
@@ -756,19 +699,70 @@ func (t *Transport) isPublicTool(toolName string) bool {
 	return publicTools[toolName]
 }
 
-// initialize performs the MCP protocol handshake.
-func (t *Transport) initialize(ctx context.Context) error {
-	params := initializeParams{
-		ProtocolVersion: t.protocolVersion,
-		ClientInfo: map[string]string{
-			"name":    "QuicBaaS Go SDK",
-			"version": "1.0.0",
-		},
-		Capabilities: map[string]any{},
+// streamableHTTPOptions builds the mcp-go Streamable HTTP transport options
+// shared by connect() (the session mcpClient uses for Request/doRequest) and
+// ensureRawTransport (the independent transport CallRPC uses): the same HTTP
+// client and the same dynamically-read header set, so a header set via
+// SetHeader/SetHeaders or the login flow (Authorization) takes effect on
+// every in-flight and future request on both.
+func (t *Transport) streamableHTTPOptions() []mcptransport.StreamableHTTPCOption {
+	opts := []mcptransport.StreamableHTTPCOption{
+		mcptransport.WithHTTPBasicClient(t.client),
+		mcptransport.WithHTTPHeaderFunc(t.dynamicHeaders),
+	}
+	if t.cfg.Timeout > 0 {
+		opts = append(opts, mcptransport.WithHTTPTimeout(t.cfg.Timeout))
+	}
+	return opts
+}
+
+// dynamicHeaders snapshots the transport's current custom headers for the
+// mcp-go client to attach to each outgoing request. Read under RLock so a
+// concurrent SetHeader/SetHeaders (or the login flow setting Authorization)
+// is observed by the very next request.
+func (t *Transport) dynamicHeaders(context.Context) map[string]string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	headers := make(map[string]string, len(t.headers))
+	for k, v := range t.headers {
+		headers[k] = v
+	}
+	return headers
+}
+
+// connect establishes the real MCP Streamable HTTP session used by
+// Request/doRequest: it builds the mcp-go client over the transport's HTTP
+// client, starts the Streamable HTTP transport, and negotiates the MCP
+// protocol version with Initialize.
+func (t *Transport) connect(ctx context.Context) error {
+	mcpClient, err := mcpclient.NewStreamableHttpClient(t.endpoint, t.streamableHTTPOptions()...)
+	if err != nil {
+		return &InitializationError{
+			Op:      "mcp.initialize",
+			Message: "failed to create MCP client",
+			Err:     err,
+		}
 	}
 
-	result, err := t.sendRPC(ctx, "initialize", params)
+	if err := mcpClient.Start(ctx); err != nil {
+		return &InitializationError{
+			Op:      "mcp.initialize",
+			Message: "failed to start MCP session",
+			Err:     err,
+		}
+	}
+
+	initReq := mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: t.protocolVersion,
+			ClientInfo:      mcp.Implementation{Name: "QuicBaaS Go SDK", Version: "1.0.0"},
+			Capabilities:    mcp.ClientCapabilities{},
+		},
+	}
+
+	result, err := mcpClient.Initialize(ctx, initReq)
 	if err != nil {
+		_ = mcpClient.Close()
 		return &InitializationError{
 			Op:      "mcp.initialize",
 			Message: "failed to initialize MCP session",
@@ -776,118 +770,103 @@ func (t *Transport) initialize(ctx context.Context) error {
 		}
 	}
 
-	var initResult initializeResult
-	if err := json.Unmarshal(result, &initResult); err != nil {
-		return &InitializationError{
-			Op:      "mcp.initialize",
-			Message: "failed to parse initialize response",
-			Err:     err,
-		}
-	}
-
-	t.serverInfo = &initResult.ServerInfo
+	t.serverInfo = &serverInfo{Name: result.ServerInfo.Name, Version: result.ServerInfo.Version}
+	t.mcpClient = mcpClient
+	t.lastHealth.Store(time.Now().UnixNano())
 
 	return nil
 }
 
-// callTool invokes an MCP tool via the tools/call method.
-func (t *Transport) callTool(ctx context.Context, name string, arguments map[string]interface{}) (interface{}, error) {
-	params := toolCallParams{
-		Name:      name,
-		Arguments: arguments,
+// ensureRawTransport lazily constructs and starts the independent MCP
+// transport backing CallRPC (rpc.go), separate from mcpClient's session:
+// CallRPC forwards a caller-owned JSON-RPC frame verbatim (including the
+// caller's own "initialize"), so it must not share connect()'s session
+// state or its already-negotiated protocol version.
+func (t *Transport) ensureRawTransport(ctx context.Context) (mcptransport.Interface, error) {
+	t.rawTransportMu.Lock()
+	defer t.rawTransportMu.Unlock()
+
+	if t.rawTransport != nil {
+		return t.rawTransport, nil
 	}
 
-	result, err := t.sendRPC(ctx, "tools/call", params)
+	raw, err := mcptransport.NewStreamableHTTP(t.endpoint, t.streamableHTTPOptions()...)
+	if err != nil {
+		return nil, &InitializationError{
+			Op:      "mcp.CallRPC",
+			Message: "failed to create MCP transport",
+			Err:     err,
+		}
+	}
+
+	if err := raw.Start(ctx); err != nil {
+		return nil, &InitializationError{
+			Op:      "mcp.CallRPC",
+			Message: "failed to start MCP transport",
+			Err:     err,
+		}
+	}
+
+	t.rawTransport = raw
+	return raw, nil
+}
+
+// callTool invokes an MCP tool via the negotiated mcpClient session.
+func (t *Transport) callTool(ctx context.Context, name string, arguments map[string]interface{}) (interface{}, error) {
+	result, err := t.mcpClient.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      name,
+			Arguments: arguments,
+		},
+	})
+	if err != nil {
+		return nil, t.convertHTTPError(err, "mcp.callTool")
+	}
+
+	// Check for tool error
+	if result.IsError {
+		return nil, t.extractToolError(result.Content)
+	}
+
+	t.lastHealth.Store(time.Now().UnixNano())
+
+	// Extract result from content
+	return t.extractContent(result.Content)
+}
+
+// sendRPC forwards a caller-owned JSON-RPC 2.0 request verbatim over the
+// independent raw MCP transport (see ensureRawTransport) and returns the
+// "result" member of the response. It backs ONLY CallRPC (rpc.go); the
+// Request/doRequest path uses callTool over the negotiated mcpClient
+// session instead.
+func (t *Transport) sendRPC(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
+	raw, err := t.ensureRawTransport(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Parse tool call result
-	var toolResult toolCallResult
-	if err := json.Unmarshal(result, &toolResult); err != nil {
-		return nil, &ParseError{
-			Op:      "mcp.callTool",
-			Message: "failed to parse tool result",
-			Err:     err,
-		}
-	}
-
-	// Check for tool error
-	if toolResult.IsError {
-		return nil, t.extractToolError(toolResult.Content)
-	}
-
-	// Extract result from content
-	return t.extractContent(toolResult.Content)
-}
-
-// sendRPC sends a JSON-RPC request and returns the result.
-func (t *Transport) sendRPC(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
 	id := t.requestID.Add(1)
-
-	req := jsonRPCRequest{
+	req := mcptransport.JSONRPCRequest{
 		JSONRPC: "2.0",
-		ID:      id,
+		ID:      mcp.NewRequestId(id),
 		Method:  method,
 		Params:  params,
 	}
 
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, errors.Wrap(err, errors.CodeInvalidInput, "mcp.sendRPC",
-			"failed to encode request body")
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.sendRPC",
-			"failed to create HTTP request")
-	}
-
-	// Set headers
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set(MCPProtocolVersionHeader, t.protocolVersion)
-
-	t.mu.RLock()
-	for k, v := range t.headers {
-		httpReq.Header.Set(k, v)
-	}
-	t.mu.RUnlock()
-
-	// Execute request
-	resp, err := t.client.Do(httpReq)
+	resp, err := raw.SendRequest(ctx, req)
 	if err != nil {
 		return nil, t.convertHTTPError(err, "mcp.sendRPC")
 	}
-	defer resp.Body.Close()
 
-	// Read response body
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.sendRPC",
-			"failed to read response body")
-	}
-
-	// Parse JSON-RPC response
-	var rpcResp jsonRPCResponse
-	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
-		return nil, &ParseError{
-			Op:      "mcp.sendRPC",
-			Message: "failed to parse JSON-RPC response",
-			Err:     err,
-		}
-	}
-
-	// Check for JSON-RPC error
-	if rpcResp.Error != nil {
-		return nil, rpcResp.Error.ToSDKError("mcp.sendRPC")
+	if resp.Error != nil {
+		rpcErr := &JSONRPCError{Code: resp.Error.Code, Message: resp.Error.Message, Data: resp.Error.Data}
+		return nil, rpcErr.ToSDKError("mcp.sendRPC")
 	}
 
 	// Update health timestamp on success
 	t.lastHealth.Store(time.Now().UnixNano())
 
-	return rpcResp.Result, nil
+	return resp.Result, nil
 }
 
 // mapToToolName maps a service/method combination to an MCP tool name.
@@ -1266,42 +1245,38 @@ func convertKeysToSnakeCase(m map[string]interface{}) map[string]interface{} {
 }
 
 // extractContent extracts the result from MCP content items.
-func (t *Transport) extractContent(content []contentItem) (interface{}, error) {
-	if len(content) == 0 {
-		return nil, nil
-	}
-
-	// Find first text content item
-	// Note: Do NOT require item.Type == "text" - the MCP server may return
-	// content items without the type field explicitly set. Just check for non-empty text.
+// Note: Do NOT require the content type to be "text" - the MCP server may
+// return content items without the type field explicitly set. Just check
+// for the first item with non-empty text.
+func (t *Transport) extractContent(content []mcp.Content) (interface{}, error) {
 	for _, item := range content {
-		if item.Text != "" {
-			// Parse JSON from text
-			var result interface{}
-			if err := json.Unmarshal([]byte(item.Text), &result); err != nil {
-				// Return raw text if not valid JSON
-				return item.Text, nil
-			}
-			return result, nil
+		text, ok := mcp.AsTextContent(item)
+		if !ok || text.Text == "" {
+			continue
 		}
+		// Parse JSON from text
+		var result interface{}
+		if err := json.Unmarshal([]byte(text.Text), &result); err != nil {
+			// Return raw text if not valid JSON
+			return text.Text, nil
+		}
+		return result, nil
 	}
 
 	return nil, nil
 }
 
 // extractToolError extracts an error from tool result content.
-// Note: Do NOT require item.Type == "text" - the MCP server may return
-// content items without the type field explicitly set.
-func (t *Transport) extractToolError(content []contentItem) error {
+func (t *Transport) extractToolError(content []mcp.Content) error {
 	for _, item := range content {
-		if item.Text != "" {
-			return errors.New(errors.CodeInternal, "mcp.callTool", item.Text)
+		if text, ok := mcp.AsTextContent(item); ok && text.Text != "" {
+			return errors.New(errors.CodeInternal, "mcp.callTool", text.Text)
 		}
 	}
 	return errors.New(errors.CodeInternal, "mcp.callTool", "tool execution failed")
 }
 
-// convertHTTPError converts HTTP client errors to QBErrors.
+// convertHTTPError converts MCP client / HTTP transport errors to QBErrors.
 func (t *Transport) convertHTTPError(err error, op string) error {
 	if err == nil {
 		return nil
@@ -1313,6 +1288,20 @@ func (t *Transport) convertHTTPError(err error, op string) error {
 	}
 	if stderrors.Is(err, context.DeadlineExceeded) {
 		return errors.Wrap(err, errors.CodeTimeout, op, "request timeout")
+	}
+
+	// Classify protocol-level JSON-RPC failures the mcp-go client surfaces as
+	// sentinel-wrapped errors (a failure completing "tools/call" itself, e.g.
+	// an unknown tool name — distinct from a tool-level IsError result).
+	switch {
+	case stderrors.Is(err, mcp.ErrMethodNotFound), stderrors.Is(err, mcp.ErrResourceNotFound):
+		return errors.Wrap(err, errors.CodeNotFound, op, "not found")
+	case stderrors.Is(err, mcp.ErrInvalidParams), stderrors.Is(err, mcp.ErrInvalidRequest), stderrors.Is(err, mcp.ErrParseError):
+		return errors.Wrap(err, errors.CodeInvalidInput, op, "invalid request")
+	case stderrors.Is(err, mcp.ErrRequestInterrupted):
+		return errors.Wrap(err, errors.CodeCanceled, op, "request interrupted")
+	case stderrors.Is(err, mcp.ErrInternalError):
+		return errors.Wrap(err, errors.CodeInternal, op, "internal error")
 	}
 
 	// Check for network errors
@@ -1339,10 +1328,28 @@ func (t *Transport) Conn() interface{} {
 	return t.client
 }
 
-// Close closes the transport.
+// Close closes the transport, including the negotiated MCP session (if one
+// was ever established) and the independent CallRPC transport (if used).
 func (t *Transport) Close() error {
 	if !t.closed.CompareAndSwap(false, true) {
 		return nil
+	}
+
+	var firstErr error
+
+	if t.mcpClient != nil {
+		if err := t.mcpClient.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	t.rawTransportMu.Lock()
+	raw := t.rawTransport
+	t.rawTransportMu.Unlock()
+	if raw != nil {
+		if err := raw.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 
 	// Close idle connections
@@ -1352,7 +1359,7 @@ func (t *Transport) Close() error {
 		}
 	}
 
-	return nil
+	return firstErr
 }
 
 // Healthy returns true if the transport is healthy.

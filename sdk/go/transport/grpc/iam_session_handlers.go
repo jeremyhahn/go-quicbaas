@@ -15,6 +15,9 @@ package grpc
 
 import (
 	"context"
+	"encoding/json"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	iam "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
@@ -223,6 +226,88 @@ func (h *iamHandler) handleGetAuditEvent(ctx context.Context, client iampb.Audit
 	}
 
 	return convertProtoAuditEventToSDK(resp), nil
+}
+
+// recordAuditWireRequest mirrors the SDK's unexported recordAuditRequest
+// (sdk/go/client/iam/audit.go) for cross-package JSON decoding: this
+// package cannot reference that unexported type directly, but Event's type
+// (iam.AuditEvent) is exported and already JSON-tagged, so a local wrapper
+// with the same wire shape decodes it faithfully — including EventType and
+// Outcome as their proper enum types, not raw JSON numbers.
+type recordAuditWireRequest struct {
+	Event *iam.AuditEvent `json:"event"`
+	Async bool            `json:"async"`
+}
+
+// handleRecordAuditEvent handles Record and RecordAsync requests (async is
+// carried on the request itself, not the method name, so both dispatch
+// here — see iam_handler.go's handleAuditRequest).
+func (h *iamHandler) handleRecordAuditEvent(ctx context.Context, client iampb.AuditServiceClient, req interface{}) (interface{}, error) {
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, errors.NewInvalidInput("handleRecordAuditEvent", "invalid request type")
+	}
+	var wire recordAuditWireRequest
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return nil, errors.NewInvalidInput("handleRecordAuditEvent", "invalid request type")
+	}
+	if wire.Event == nil {
+		return nil, errors.NewInvalidInput("handleRecordAuditEvent", "event is required")
+	}
+
+	pbReq := &iampb.RecordAuditEventRequest{
+		TenantId: wire.Event.TenantID,
+		Event:    convertSDKAuditEventToProto(wire.Event),
+		Async:    wire.Async,
+	}
+
+	resp, err := client.RecordAuditEvent(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleRecordAuditEvent")
+	}
+
+	return &iam.RecordAuditResponse{EventID: resp.EventId}, nil
+}
+
+// convertSDKAuditEventToProto converts an SDK AuditEvent to a proto
+// AuditEvent — the reverse of convertProtoAuditEventToSDK above, used by
+// the Record/RecordAsync remote-write path.
+func convertSDKAuditEventToProto(e *iam.AuditEvent) *iampb.AuditEvent {
+	if e == nil {
+		return nil
+	}
+
+	pb := &iampb.AuditEvent{
+		Id:        e.ID,
+		TenantId:  e.TenantID,
+		EventType: e.EventType.String(),
+		Action:    e.Action,
+		Outcome:   e.Outcome.String(),
+	}
+	if e.Actor != nil {
+		pb.ActorId = e.Actor.ID
+		pb.ActorType = e.Actor.Type
+		pb.IpAddress = e.Actor.IPAddress
+		pb.UserAgent = e.Actor.UserAgent
+	}
+	if e.Target != nil {
+		pb.ResourceId = e.Target.ID
+	} else if e.Resource != nil {
+		pb.ResourceId = e.Resource.ID
+	}
+	if len(e.Details) > 0 {
+		details := make(map[string]string, len(e.Details))
+		for k, v := range e.Details {
+			if s, ok := v.(string); ok {
+				details[k] = s
+			}
+		}
+		pb.Details = details
+	}
+	if !e.Timestamp.IsZero() {
+		pb.Timestamp = timestamppb.New(e.Timestamp)
+	}
+	return pb
 }
 
 // convertProtoSessionToSDK converts a protobuf Session to SDK Session.

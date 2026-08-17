@@ -20,7 +20,6 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -1999,7 +1998,16 @@ func (s *Server) startService() error {
 		return api.NewOperationFailedError("create QuicBaaS", err)
 	}
 
+	// Publish the facade under s.mu so unified-server request goroutines
+	// (which resolve it via quicBaaSServiceRef, see pkg/server/qrdb_node.go)
+	// observe either the pre-composition nil or the fully-built svc, never a
+	// torn/partial value. The embedded qrdb node's transports can begin
+	// accepting connections as soon as node construction completes — well
+	// before startService reaches this point — so this publish must be
+	// synchronized, not a bare field assignment.
+	s.mu.Lock()
 	s.quicBaaSService = svc
+	s.mu.Unlock()
 	s.logger.Info("QuicBaaS facade initialized")
 
 	// Wire the unified secret resolver registry (built unconditionally by
@@ -2028,6 +2036,36 @@ func (s *Server) startService() error {
 				svc.SetLoginService(service.NewLoginService(lc))
 				s.logger.Info("unified login ceremony facade wired from qrdb node")
 			}
+		}
+	}
+
+	// Wire the embedded node's identity clients into the GLOBAL XKMSService
+	// singleton (distinct from svc, quicbaas's own QuicBaaS facade above):
+	// mirrors xkmsd's own composition (go-xkms pkg/server/server.go's
+	// XKMSService.SetUserClients / SetUserAuthFactorClient call sites).
+	// Without this the xkms ServiceModule's self-built REST surface (wired
+	// in unifiedModuleServerOptions, qrdb_node.go) has a nil users client,
+	// so BindUserCert, WebAuthn user resolution, and the credential
+	// surfaces all fail closed with "keystore: subsystem not configured" --
+	// the SAME root cause behind fido2/piv/oidc login failures on a
+	// composed node, even though mTLS (which does not resolve a user via
+	// this client) already works. Runs here (after the qrdb node exists,
+	// alongside where startService already touches the xkms service via
+	// the module's late-bound resolver) rather than at node-construction
+	// time in qrdb_node.go, because xkmssdk.Get() only resolves once
+	// dbxkms.Initialize has run, which happens independently of node
+	// construction ordering.
+	if xkmsService, getErr := xkmssdk.Get(); getErr == nil {
+		if client := s.GetQRDBNodeClient(); client != nil {
+			xkmsService.SetUserClients(client.Users(), client.Roles())
+			// UserAuthFactors returns nil when the transport predates the
+			// user-side surface, so the servicer stays unconfigured rather
+			// than holding a typed-nil client that would panic on first
+			// call (mirrors xkmsd's own nil-check at server.go:672-677).
+			if factors := client.UserAuthFactors(); factors != nil {
+				xkmsService.SetUserAuthFactorClient(factors)
+			}
+			s.logger.Info("embedded qrdb node's user/role/user-auth-factor clients wired into xkms service")
 		}
 	}
 
@@ -2338,12 +2376,6 @@ func (s *Server) startGRPCServer() error {
 	// Register Ollama service (no-op when rag build tag is not set)
 	s.registerOllamaService(grpcServer)
 
-	// Register XKMS service
-	if len(xkmssdk.ServiceBackends()) > 0 {
-		grpcapi.RegisterXKMSServer(grpcServer, s.logger)
-		s.logger.Info("Registered XKMS gRPC service")
-	}
-
 	// Register CertificateService (CA) gRPC handlers. They live on the same
 	// *grpcapi.Server that backs QuicBaaS and delegate to service.Certificate()
 	// which composes the xkms TrustedCA, keeping the gRPC certificate surface
@@ -2383,45 +2415,24 @@ func (s *Server) startGRPCServer() error {
 	s.grpcServer = grpcServer
 	s.grpcAPI = quicbaasService
 
-	listenersStarted := 0
-
-	// Start gRPC Unix socket listener (DEFAULT - for CLI compatibility)
+	// gRPC network serving (server.grpc.enabled) now runs exclusively on the
+	// embedded qrdb node's own unified-server gRPC listener (see
+	// (*config.Config).NetworkServing and pkg/server/qrdb_node.go's
+	// buildQRDBConfig/unifiedModuleServerOptions) — grpcServer above is used
+	// ONLY to serve the local Unix-domain-socket transport (CLI compatibility
+	// / local IPC), independent of network-serving configuration. There is no
+	// TCP listener here anymore: the node already owns server.grpc.port.
 	if s.config.Server.Unix.Socket != "" {
 		if err := s.startUnixSocketListener(grpcServer); err != nil {
 			return err
 		}
-		listenersStarted++
-	}
 
-	// Start TCP listener only if explicitly enabled
-	if s.config.Server.GRPC.Enabled {
-		tcpAddress := fmt.Sprintf("%s:%d", s.config.Server.ResolveBindHost(s.config.Server.GRPC.BindAddress), s.config.Server.GRPC.Port)
-		tcpListener, err := listenFunc("tcp", tcpAddress)
-		if err != nil {
-			return api.NewOperationFailedError("create TCP listener", err)
+		// Give the Unix listener a moment to start.
+		select {
+		case <-time.After(100 * time.Millisecond):
+		case <-s.shutdownChan:
+			return nil
 		}
-		s.grpcListener = tcpListener
-
-		go func() {
-			s.logger.Infof("gRPC server listening on TCP %s", tcpAddress)
-			if err := grpcServer.Serve(tcpListener); err != nil {
-				s.logger.WithError(err).Error("gRPC server TCP error")
-			}
-		}()
-		listenersStarted++
-	}
-
-	// Ensure at least one listener is running
-	if listenersStarted == 0 {
-		return api.NewNoListenersConfiguredError("server.startGRPCServer",
-			"no gRPC listeners configured - enable server.unix.socket or server.grpc.enabled")
-	}
-
-	// Give the server a moment to start
-	select {
-	case <-time.After(100 * time.Millisecond):
-	case <-s.shutdownChan:
-		return nil
 	}
 
 	return nil

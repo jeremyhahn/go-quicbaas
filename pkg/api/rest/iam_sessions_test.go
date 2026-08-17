@@ -2196,15 +2196,22 @@ func TestIAM91_GetBackupCodeStatus_ServiceNotAvailable(t *testing.T) {
 // Audit: Missing params + service not available
 // =============================================================================
 
-func TestIAM91_ListAuditEvents_MissingTenantID(t *testing.T) {
+// TestIAM91_ListAuditEvents_MissingTenantID_DefaultsToCallerTenant proves an
+// omitted tenant_id no longer 400s: it defaults to the caller's own
+// authenticated tenant (iam.ResolveRequestTenant) — empty in this
+// unauthenticated test context — and the request proceeds past tenant
+// resolution to the next real dependency (the unwired audit logger),
+// exactly like the explicit-tenant_id case
+// (TestIAM91_ListAuditEvents_ServiceNotAvailable).
+func TestIAM91_ListAuditEvents_MissingTenantID_DefaultsToCallerTenant(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit", nil)
 	w := httptest.NewRecorder()
 	handler.ListAuditEvents(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "tenant_id parameter is required")
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "audit logger not available")
 }
 
 func TestIAM91_ListAuditEvents_ServiceNotAvailable(t *testing.T) {
@@ -2239,7 +2246,12 @@ func TestIAM91_GetAuditEvent_MissingEventID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestIAM91_GetAuditEvent_MissingTenantID(t *testing.T) {
+// TestIAM91_GetAuditEvent_MissingTenantID_DefaultsToCallerTenant proves an
+// omitted tenant_id no longer 400s: it defaults to the caller's own
+// authenticated tenant (iam.ResolveRequestTenant) — empty in this
+// unauthenticated test context — and the request proceeds past tenant
+// resolution to the next real dependency (the unwired audit logger).
+func TestIAM91_GetAuditEvent_MissingTenantID_DefaultsToCallerTenant(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
@@ -2247,8 +2259,8 @@ func TestIAM91_GetAuditEvent_MissingTenantID(t *testing.T) {
 	req = withChiParams(req, map[string]string{"id": "ev1"})
 	w := httptest.NewRecorder()
 	handler.GetAuditEvent(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "tenant_id parameter is required")
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "audit logger not available")
 }
 
 func TestIAM91_GetAuditEvent_ServiceNotAvailable(t *testing.T) {

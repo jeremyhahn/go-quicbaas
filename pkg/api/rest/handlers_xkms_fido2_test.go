@@ -242,7 +242,7 @@ func TestXKMSFIDO2Routes_PEPVocabulary(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.path, func(t *testing.T) {
-			resource, action, ok := mapRequestToPermission(tc.path, http.MethodPost)
+			resource, action, ok := routePermissionForPath(tc.path, http.MethodPost)
 			require.True(t, ok)
 			assert.Equal(t, tc.wantResource, resource)
 			assert.Equal(t, tc.wantAction, action)
@@ -259,7 +259,8 @@ func TestXKMSFIDO2Routes_NotPublic(t *testing.T) {
 		"/api/v1/xkms/fido2/authenticate/begin",
 		"/api/v1/xkms/fido2/authenticate/finish",
 	} {
-		assert.False(t, isAuthzPublicEndpoint(path), "%s must stay gated", path)
-		assert.False(t, isDefaultDenyPublic(path), "%s must stay gated", path)
+		auth, ok := routeAuthForPath(path, http.MethodPost)
+		require.True(t, ok, "%s must be in the frozen route table", path)
+		assert.Equal(t, RouteAuthPermission, auth, "%s must stay gated", path)
 	}
 }

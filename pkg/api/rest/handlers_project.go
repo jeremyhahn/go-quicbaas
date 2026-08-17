@@ -32,21 +32,6 @@ import (
 // Route Registration
 // =============================================================================
 
-// registerProjectRoutes mounts all project REST routes under /api/v1/projects.
-func registerProjectRoutes(s *Server, r chi.Router) {
-	r.Route("/projects", func(r chi.Router) {
-		r.Post("/", s.HandleCreateProject)
-		r.Get("/", s.HandleListProjects)
-		r.Get("/{id}", s.HandleGetProject)
-		r.Put("/{id}", s.HandleUpdateProject)
-		r.Delete("/{id}", s.HandleDeleteProject)
-
-		// Per-project agent role management
-		r.Put("/{id}/permissions/{agent_id}", s.HandleGrantAgentRole)
-		r.Delete("/{id}/permissions/{agent_id}", s.HandleRevokeAgentRole)
-	})
-}
-
 // =============================================================================
 // REST Request/Response Types
 // =============================================================================

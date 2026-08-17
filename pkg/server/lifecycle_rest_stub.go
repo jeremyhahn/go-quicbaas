@@ -57,3 +57,10 @@ func (s *Server) stopRESTServer(ctx context.Context) error {
 	}
 	return restShutdownFn(s.restServer, ctx)
 }
+
+// ModuleRESTServer is unavailable without the rest build tag: the module's
+// HTTP hook (pkg/apimodule module_http.go) is equally rest-gated, so no
+// caller can observe a surface here.
+func (s *Server) ModuleRESTServer() *restapi.Server {
+	return nil
+}

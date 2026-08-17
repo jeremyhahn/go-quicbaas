@@ -18,7 +18,6 @@ package vector
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,11 +25,9 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
-	quicgo "github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -38,9 +35,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
-	"github.com/jeremyhahn/go-quicbaas/pkg/api/quic"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
@@ -77,7 +72,7 @@ type vectorProtocol interface {
 // =============================================================================
 
 // TestVectorMultiProtocol verifies that vector operations work identically
-// across all supported protocols: REST, gRPC, QUIC, Unix Socket, MCP, and Embedded.
+// across all supported protocols: REST, gRPC, Unix Socket, MCP, and Embedded.
 func TestVectorMultiProtocol(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -91,17 +86,14 @@ func TestVectorMultiProtocol(t *testing.T) {
 		testVectorProtocol(t, ctx, &grpcVectorClient{})
 	})
 
-	t.Run("QUIC", func(t *testing.T) {
-		testVectorProtocol(t, ctx, &quicVectorClient{})
-	})
-
 	t.Run("UnixSocket", func(t *testing.T) {
 		testVectorProtocol(t, ctx, &unixSocketVectorClient{})
 	})
 
-	t.Run("MCP", func(t *testing.T) {
-		testVectorProtocol(t, ctx, &mcpVectorClient{})
-	})
+	// NOTE: no MCP leg here. quicbaas retired its bespoke JSON-RPC MCP
+	// listener in favor of go-qrdb's unified multi-protocol server; the
+	// unified server's MCP surface has no finalized docker endpoint
+	// convention yet, so this suite does not exercise it (deferred).
 
 	if helpers.IsEmbeddedAvailable() {
 		t.Run("Embedded", func(t *testing.T) {
@@ -841,286 +833,6 @@ func (c *grpcVectorClient) SearchVectors(ctx context.Context, namespace string, 
 }
 
 // =============================================================================
-// QUIC Protocol Client
-// =============================================================================
-
-type quicVectorClient struct {
-	addr       string
-	conn       *quicgo.Conn
-	tlsConfig  *tls.Config
-	ctx        context.Context
-	cancelFunc context.CancelFunc
-	// idMap tracks the mapping from uint64 hash to original string ID.
-	// This is needed because the QUIC protocol uses uint64 IDs internally,
-	// but the test interface uses string IDs for consistency across protocols.
-	idMap   map[uint64]string
-	idMapMu sync.RWMutex
-}
-
-func (c *quicVectorClient) Name() string { return "QUIC" }
-
-func (c *quicVectorClient) Setup(t *testing.T, ctx context.Context) error {
-	endpoints := helpers.GetQUICEndpoints()
-	require.NotEmpty(t, endpoints, "QUIC endpoints must be available for integration tests")
-
-	addr := endpoints[0]
-
-	tlsConf, err := helpers.IntegrationTLSConfig()
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
-	}
-	tlsConf.NextProtos = []string{"quicbaas-quic"}
-
-	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	conn, err := quicgo.DialAddr(dialCtx, addr, tlsConf, nil)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to connect to QUIC endpoint " + addr, Cause: err}
-	}
-
-	clientCtx, clientCancel := context.WithCancel(context.Background())
-
-	c.addr = addr
-	c.conn = conn
-	c.tlsConfig = tlsConf
-	c.ctx = clientCtx
-	c.cancelFunc = clientCancel
-	c.idMap = make(map[uint64]string)
-
-	return nil
-}
-
-func (c *quicVectorClient) Teardown(t *testing.T) error {
-	if c.cancelFunc != nil {
-		c.cancelFunc()
-	}
-	if c.conn != nil {
-		return c.conn.CloseWithError(0, "client closing")
-	}
-	return nil
-}
-
-func (c *quicVectorClient) sendRequest(ctx context.Context, opcode byte, reqPayload []byte) (*quic.Response, error) {
-	stream, err := c.conn.OpenStreamSync(ctx)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to open stream", Cause: err}
-	}
-	defer stream.Close()
-
-	req := &quic.Request{
-		Opcode:  opcode,
-		Payload: reqPayload,
-	}
-
-	if err := quic.WriteRequest(stream, req); err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to write request", Cause: err}
-	}
-
-	resp, err := quic.ReadResponse(stream)
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "failed to read response", Cause: err}
-	}
-
-	if resp.Status != quic.StatusOK {
-		errMsg := string(resp.Payload)
-		if errMsg == "" {
-			errMsg = "unknown error"
-		}
-		return nil, quic.StatusToError(resp.Status, errMsg)
-	}
-
-	return resp, nil
-}
-
-// storeIDMapping stores the mapping from uint64 hash to original string ID.
-func (c *quicVectorClient) storeIDMapping(stringID string) uint64 {
-	hashID := hashStringID(stringID)
-	c.idMapMu.Lock()
-	c.idMap[hashID] = stringID
-	c.idMapMu.Unlock()
-	return hashID
-}
-
-// lookupStringID retrieves the original string ID from a uint64 hash.
-// Returns the stringified hash if no mapping is found.
-func (c *quicVectorClient) lookupStringID(hashID uint64) string {
-	c.idMapMu.RLock()
-	stringID, ok := c.idMap[hashID]
-	c.idMapMu.RUnlock()
-	if ok {
-		return stringID
-	}
-	// Fallback to stringified hash if no mapping found
-	return strconv.FormatUint(hashID, 10)
-}
-
-func (c *quicVectorClient) CreateNamespace(ctx context.Context, name string, dimensions int, metric string) error {
-	req := &service.CreateNamespaceRequest{
-		Namespace:      name,
-		Dimension:      uint32(dimensions),
-		DistanceMetric: metric,
-		IndexType:      "HNSW",
-	}
-
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return err
-	}
-
-	_, err = c.sendRequest(ctx, quic.OpVectorCreateNamespace, payload)
-	return err
-}
-
-func (c *quicVectorClient) DeleteNamespace(ctx context.Context, name string) error {
-	req := &service.DeleteNamespaceRequest{
-		Namespace: name,
-	}
-
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return err
-	}
-
-	_, err = c.sendRequest(ctx, quic.OpVectorDeleteNamespace, payload)
-	return err
-}
-
-func (c *quicVectorClient) UpsertVector(ctx context.Context, namespace string, id string, vector []float32, metadata map[string]string) error {
-	// Convert string ID to uint64 for service request and store the mapping
-	idNum := c.storeIDMapping(id)
-
-	// Convert metadata to interface{} map
-	var metaInterface map[string]interface{}
-	if metadata != nil {
-		metaInterface = make(map[string]interface{})
-		for k, v := range metadata {
-			metaInterface[k] = v
-		}
-	}
-
-	req := &service.UpsertVectorRequest{
-		Namespace: namespace,
-		ID:        idNum,
-		Vector:    vector,
-		Metadata:  metaInterface,
-	}
-
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return err
-	}
-
-	_, err = c.sendRequest(ctx, quic.OpVectorUpsert, payload)
-	return err
-}
-
-func (c *quicVectorClient) GetVector(ctx context.Context, namespace string, id string) (*VectorResult, error) {
-	idNum := hashStringID(id)
-
-	req := &service.GetVectorRequest{
-		Namespace:       namespace,
-		ID:              idNum,
-		IncludeVector:   true,
-		IncludeMetadata: true,
-	}
-
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.sendRequest(ctx, quic.OpVectorGet, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var result service.GetVectorResponse
-	if err := quic.DecodePayload(resp.Payload, &result); err != nil {
-		return nil, err
-	}
-
-	vectorResult := &VectorResult{
-		ID:        id,
-		Namespace: namespace,
-		Found:     result.Found,
-		Vector:    result.Vector,
-	}
-
-	if result.Metadata != nil {
-		vectorResult.Metadata = make(map[string]string)
-		for k, v := range result.Metadata {
-			if s, ok := v.(string); ok {
-				vectorResult.Metadata[k] = s
-			}
-		}
-	}
-
-	return vectorResult, nil
-}
-
-func (c *quicVectorClient) DeleteVector(ctx context.Context, namespace string, id string) error {
-	idNum := hashStringID(id)
-
-	req := &service.DeleteVectorRequest{
-		Namespace: namespace,
-		ID:        idNum,
-	}
-
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return err
-	}
-
-	_, err = c.sendRequest(ctx, quic.OpVectorDelete, payload)
-	return err
-}
-
-func (c *quicVectorClient) SearchVectors(ctx context.Context, namespace string, vector []float32, k int) ([]*VectorResult, error) {
-	req := &service.SearchSimilarRequest{
-		Namespace:       namespace,
-		QueryVector:     vector,
-		K:               k,
-		IncludeVectors:  false,
-		IncludeMetadata: true,
-	}
-
-	payload, err := quic.EncodePayload(req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.sendRequest(ctx, quic.OpVectorSearchSimilar, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var searchResp service.SearchSimilarResponse
-	if err := quic.DecodePayload(resp.Payload, &searchResp); err != nil {
-		return nil, err
-	}
-
-	var results []*VectorResult
-	for _, r := range searchResp.Results {
-		result := &VectorResult{
-			ID:    c.lookupStringID(r.ID),
-			Score: r.Score,
-			Found: true,
-		}
-		if r.Metadata != nil {
-			result.Metadata = make(map[string]string)
-			for k, v := range r.Metadata {
-				if s, ok := v.(string); ok {
-					result.Metadata[k] = s
-				}
-			}
-		}
-		results = append(results, result)
-	}
-
-	return results, nil
-}
-
 // =============================================================================
 // Unix Socket Protocol Client
 // =============================================================================
@@ -1305,273 +1017,6 @@ func (c *unixSocketVectorClient) SearchVectors(ctx context.Context, namespace st
 }
 
 // =============================================================================
-// MCP Protocol Client
-// =============================================================================
-
-type mcpVectorClient struct {
-	endpoint      string
-	httpClient    *http.Client
-	nextID        int
-	accessToken   string
-	authenticated bool
-}
-
-func (c *mcpVectorClient) Name() string { return "MCP" }
-
-func (c *mcpVectorClient) Setup(t *testing.T, ctx context.Context) error {
-	endpoints := helpers.GetMCPEndpoints()
-	if len(endpoints) == 0 {
-		return &qberrors.MessageError{Message: "no MCP endpoints available"}
-	}
-	c.endpoint = endpoints[0]
-	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
-	c.nextID = 1
-
-	// Verify MCP endpoint via initialize
-	initReq := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "initialize",
-		"params": map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{},
-			"clientInfo": map[string]interface{}{
-				"name":    "quicbaas-vector-test",
-				"version": "1.0.0",
-			},
-		},
-		"id": c.nextID,
-	}
-	c.nextID++
-
-	body, err := json.Marshal(initReq)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to marshal init request", Cause: err}
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "failed to create request", Cause: err}
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "MCP endpoint not reachable at " + c.endpoint, Cause: err}
-	}
-	defer resp.Body.Close()
-
-	// Authenticate using bootstrap credentials
-	if err := c.authenticate(ctx); err != nil {
-		return &qberrors.WrappedMessageError{Message: "MCP authentication failed", Cause: err}
-	}
-
-	return nil
-}
-
-func (c *mcpVectorClient) authenticate(ctx context.Context) error {
-	// Acquire a bearer through the cluster's PIV mTLS login endpoint.
-	// Password-based login has been removed across all transports; tests
-	// mint a bearer via REST PIV and present it on the protocol under test.
-	restEndpoints := helpers.GetRESTEndpoints()
-	if len(restEndpoints) == 0 {
-		return &qberrors.MessageError{Message: "no REST endpoints available for PIV login"}
-	}
-	bearer, err := helpers.AuthPIVContext(ctx, restEndpoints[0], "", "", "")
-	if err != nil {
-		return &qberrors.WrappedMessageError{Message: "PIV login failed", Cause: err}
-	}
-	c.accessToken = bearer
-
-	return nil
-}
-
-func (c *mcpVectorClient) Teardown(t *testing.T) error {
-	c.httpClient = nil
-	return nil
-}
-
-func (c *mcpVectorClient) callMCPTool(ctx context.Context, toolName string, args map[string]interface{}) (json.RawMessage, error) {
-	mcpReq := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name":      toolName,
-			"arguments": args,
-		},
-		"id": c.nextID,
-	}
-	c.nextID++
-
-	body, err := json.Marshal(mcpReq)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.authenticated && c.accessToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.accessToken)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var mcpResp struct {
-		Result struct {
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-			IsError bool `json:"isError"`
-		} `json:"result"`
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-
-	if err := json.Unmarshal(respBody, &mcpResp); err != nil {
-		return nil, err
-	}
-
-	if mcpResp.Error != nil {
-		return nil, &qberrors.MessageError{Message: "MCP error: " + mcpResp.Error.Message}
-	}
-
-	if mcpResp.Result.IsError && len(mcpResp.Result.Content) > 0 {
-		return nil, &qberrors.MessageError{Message: "MCP tool error: " + mcpResp.Result.Content[0].Text}
-	}
-
-	if len(mcpResp.Result.Content) > 0 {
-		return json.RawMessage(mcpResp.Result.Content[0].Text), nil
-	}
-
-	return nil, nil
-}
-
-func (c *mcpVectorClient) CreateNamespace(ctx context.Context, name string, dimensions int, metric string) error {
-	args := map[string]interface{}{
-		"name":       name,
-		"dimensions": dimensions,
-	}
-	if metric != "" {
-		args["metric"] = metric
-	}
-	_, err := c.callMCPTool(ctx, "qrdb_vector_create_namespace", args)
-	return err
-}
-
-func (c *mcpVectorClient) DeleteNamespace(ctx context.Context, name string) error {
-	args := map[string]interface{}{
-		"name": name,
-	}
-	_, err := c.callMCPTool(ctx, "qrdb_vector_delete_namespace", args)
-	return err
-}
-
-func (c *mcpVectorClient) UpsertVector(ctx context.Context, namespace string, id string, vector []float32, metadata map[string]string) error {
-	args := map[string]interface{}{
-		"namespace": namespace,
-		"id":        id,
-		"vector":    vector,
-	}
-	if len(metadata) > 0 {
-		args["metadata"] = metadata
-	}
-	_, err := c.callMCPTool(ctx, "qrdb_vector_upsert", args)
-	return err
-}
-
-func (c *mcpVectorClient) GetVector(ctx context.Context, namespace string, id string) (*VectorResult, error) {
-	args := map[string]interface{}{
-		"namespace": namespace,
-		"id":        id,
-	}
-
-	result, err := c.callMCPTool(ctx, "qrdb_vector_get", args)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp struct {
-		ID        string            `json:"id"`
-		Namespace string            `json:"namespace"`
-		Vector    []float32         `json:"vector"`
-		Metadata  map[string]string `json:"metadata"`
-		Found     bool              `json:"found"`
-	}
-	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, err
-	}
-
-	return &VectorResult{
-		ID:        resp.ID,
-		Namespace: resp.Namespace,
-		Vector:    resp.Vector,
-		Metadata:  resp.Metadata,
-		Found:     resp.Found,
-	}, nil
-}
-
-func (c *mcpVectorClient) DeleteVector(ctx context.Context, namespace string, id string) error {
-	args := map[string]interface{}{
-		"namespace": namespace,
-		"id":        id,
-	}
-	_, err := c.callMCPTool(ctx, "qrdb_vector_delete", args)
-	return err
-}
-
-func (c *mcpVectorClient) SearchVectors(ctx context.Context, namespace string, vector []float32, k int) ([]*VectorResult, error) {
-	args := map[string]interface{}{
-		"namespace": namespace,
-		"vector":    vector,
-		"k":         k,
-	}
-
-	result, err := c.callMCPTool(ctx, "quicbaas_vector_search", args)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp struct {
-		Results []struct {
-			ID        string            `json:"id"`
-			Namespace string            `json:"namespace"`
-			Vector    []float32         `json:"vector"`
-			Metadata  map[string]string `json:"metadata"`
-			Score     float32           `json:"score"`
-		} `json:"results"`
-	}
-	if err := json.Unmarshal(result, &resp); err != nil {
-		return nil, err
-	}
-
-	results := make([]*VectorResult, len(resp.Results))
-	for i, r := range resp.Results {
-		results[i] = &VectorResult{
-			ID:        r.ID,
-			Namespace: r.Namespace,
-			Vector:    r.Vector,
-			Metadata:  r.Metadata,
-			Score:     r.Score,
-			Found:     true,
-		}
-	}
-
-	return results, nil
-}
-
-// =============================================================================
 // Embedded Protocol Client
 // =============================================================================
 
@@ -1670,14 +1115,4 @@ func generateRandomVector(dimension int) []float32 {
 		vec[i] = rand.Float32()
 	}
 	return vec
-}
-
-// hashStringID converts a string ID to a uint64 hash for QUIC protocol.
-// This is needed because the service layer uses uint64 IDs.
-func hashStringID(id string) uint64 {
-	var hash uint64 = 5381
-	for _, c := range id {
-		hash = ((hash << 5) + hash) + uint64(c)
-	}
-	return hash
 }

@@ -1773,10 +1773,7 @@ func TestPolicyCache_EnforceMaxSize_MultipleCycles(t *testing.T) {
 
 	// Add more policies than max size
 	for i := 0; i < 5; i++ {
-		policy := &CompiledPolicy{
-			Name:           stringFromInt(i),
-			SubjectMatcher: &SubjectMatcher{Users: map[string]bool{"user-1": true}},
-		}
+		policy := &Policy{Metadata: PolicyMetadata{Name: stringFromInt(i)}}
 		cache.Set("tenant-1", policy)
 		time.Sleep(10 * time.Millisecond) // Different timestamps for eviction order
 	}

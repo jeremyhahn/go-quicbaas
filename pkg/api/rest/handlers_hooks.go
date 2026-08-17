@@ -22,8 +22,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -31,15 +29,6 @@ import (
 // =============================================================================
 // Route Registration
 // =============================================================================
-
-// registerHookRoutes registers all Claude Code hook REST API routes.
-func registerHookRoutes(s *Server, r chi.Router) {
-	r.Route("/hooks", func(r chi.Router) {
-		r.Post("/task-created", s.HandleHookTaskCreated)
-		r.Post("/task-completed", s.HandleHookTaskCompleted)
-		r.Post("/teammate-idle", s.HandleHookTeammateIdle)
-	})
-}
 
 // =============================================================================
 // Request/Response Types

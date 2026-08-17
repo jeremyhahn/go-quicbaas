@@ -43,9 +43,55 @@ func (m *policyMockService) GetPolicyEngine(_ context.Context) (*iam.PolicyEngin
 	return m.engine, nil
 }
 
+// testPolicySimulator is a minimal iam.PolicySimulator test double: exact
+// subject-ID match, exact action match, resource prefix-wildcard match
+// ("/test/*" matches "/test/x"). Mirrors pkg/iam's own simplePolicySimulator
+// test double (unexported there); this package cannot import it directly.
+type testPolicySimulator struct{}
+
+func (testPolicySimulator) Simulate(_ context.Context, policy *iam.Policy, req *iam.CheckRequest) (*iam.CheckResponse, error) {
+	subjectMatches := len(policy.Spec.Subjects.Users) == 0
+	for _, u := range policy.Spec.Subjects.Users {
+		if u == req.Subject.ID {
+			subjectMatches = true
+		}
+	}
+	if !subjectMatches {
+		return &iam.CheckResponse{Allowed: false, Reason: "subject does not match policy"}, nil
+	}
+	for _, rule := range policy.Spec.Rules {
+		actionMatches := false
+		for _, a := range rule.Actions {
+			if a == "*" || a == req.Action {
+				actionMatches = true
+			}
+		}
+		if !actionMatches {
+			continue
+		}
+		for _, pattern := range rule.Resources {
+			prefix := pattern
+			if len(prefix) > 0 && prefix[len(prefix)-1] == '*' {
+				prefix = prefix[:len(prefix)-1]
+			}
+			if len(req.Resource) < len(prefix) || req.Resource[:len(prefix)] != prefix {
+				continue
+			}
+			allowed := rule.Effect != iam.EffectDeny
+			return &iam.CheckResponse{
+				Allowed: allowed, MatchedPolicy: policy.Metadata.Name, MatchedRule: rule.Name,
+			}, nil
+		}
+	}
+	return &iam.CheckResponse{Allowed: false, Reason: "no matching rule"}, nil
+}
+
 func setupPolicyHandler(t *testing.T) (*IAMHandler, func()) {
 	t.Helper()
-	engine := iam.NewPolicyEngine(iam.PolicyEngineOptions{Storage: iam.NewMemoryStorage()})
+	engine := iam.NewPolicyEngine(iam.PolicyEngineOptions{
+		Storage:   iam.NewMemoryStorage(),
+		Simulator: testPolicySimulator{},
+	})
 
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
 	require.NoError(t, err)
