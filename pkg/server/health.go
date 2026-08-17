@@ -93,7 +93,7 @@ func (h *HealthChecker) CheckGRPC() ComponentHealth {
 	}
 
 	if h.server.config.Server.GRPC.Enabled {
-		if node := h.server.qrdbNode; node != nil {
+		if node := h.server.getQRDBNode(); node != nil {
 			if qsrv := node.Server(); qsrv != nil {
 				if addr := qsrv.GRPCAddr(); addr != "" {
 					health.Message = fmt.Sprintf("gRPC server listening on %s (unified)", addr)
@@ -132,25 +132,26 @@ func (h *HealthChecker) CheckREST() ComponentHealth {
 		LastCheck: time.Now(),
 	}
 
-	if h.server.restServer == nil {
+	restServer := h.server.getRESTServer()
+	if restServer == nil {
 		health.Status = HealthStatusUnhealthy
 		health.Message = "REST server not initialized"
 		return health
 	}
 
-	if h.server.restServer.IsClosed() {
+	if restServer.IsClosed() {
 		health.Status = HealthStatusUnhealthy
 		health.Message = "REST server is closed"
 		return health
 	}
 
-	if h.server.restServer.IsStarted() {
+	if restServer.IsStarted() {
 		health.Message = "REST server operational"
 		return health
 	}
 
 	if h.server.config.Server.REST.Enabled {
-		if node := h.server.qrdbNode; node != nil {
+		if node := h.server.getQRDBNode(); node != nil {
 			if qsrv := node.Server(); qsrv != nil {
 				if addr := qsrv.RESTAddr(); addr != "" {
 					health.Message = fmt.Sprintf("REST server listening on %s (unified)", addr)

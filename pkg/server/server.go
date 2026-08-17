@@ -504,6 +504,15 @@ type Server struct {
 	started bool
 	closed  bool
 
+	// initWG is held for the duration of initialize() (Storage -> ... ->
+	// REST, including initializeIAMComponents). Shutdown waits on it before
+	// touching any component so a caller that races Shutdown against a
+	// still-running Start (e.g. a test that treats GetQRDBNodeClient()!=nil
+	// as "fully booted", when it only means the qrdb node itself came up --
+	// IAM component init runs after that and still writes to storage) can
+	// never close storage out from under an in-flight initialization step.
+	initWG sync.WaitGroup
+
 	startTime time.Time
 }
 
@@ -660,6 +669,12 @@ func (s *Server) initialize() error {
 	s.started = true
 	s.mu.Unlock()
 
+	// Held until every synchronous startup step below (through
+	// initializeIAMComponents) returns, so Shutdown cannot close storage
+	// while this is still writing to it -- see the initWG field doc.
+	s.initWG.Add(1)
+	defer s.initWG.Done()
+
 	// Fail closed on an unrecognized server mode. An empty mode intentionally
 	// defaults to standalone (see getEffectiveMode); any non-empty mode outside
 	// the valid set {standalone, cluster, devcluster} is a configuration error
@@ -749,7 +764,7 @@ func (s *Server) initialize() error {
 	// transport. runSealedWindow completes the node boot (node.Unseal) and
 	// tears the sealed listeners down before returning, so the full boot
 	// below proceeds against a fully-booted node. See sealed_window.go.
-	if s.qrdbNode != nil && s.qrdbNode.IsSealed() {
+	if node := s.getQRDBNode(); node != nil && node.IsSealed() {
 		if err := s.runSealedWindow(); err != nil {
 			return err
 		}
@@ -812,7 +827,7 @@ func (s *Server) initialize() error {
 	// Upgrade the secrets backend to the persistent KV backend now that the
 	// qrdb SDK client is available. startSecrets() earlier used in-memory as
 	// qrdbClient was not yet set; this call replaces it with the durable store.
-	if s.qrdbNode != nil && s.qrdbClient != nil {
+	if s.getQRDBNode() != nil && s.qrdbClient != nil {
 		if err := s.startSecrets(); err != nil {
 			return err
 		}
@@ -890,6 +905,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 		s.closed = true
 		s.mu.Unlock()
+
+		// Wait for any in-flight initialize() to fully return before
+		// touching a single component. A caller racing Shutdown against a
+		// still-running Start (see the initWG field doc) would otherwise
+		// close storage while initialize() is mid-step -- e.g. pebble
+		// closed under an in-progress initializeIAMComponents write, which
+		// panics the whole test binary rather than merely failing a test.
+		s.initWG.Wait()
 
 		s.logger.Info("Initiating graceful shutdown...")
 		startTime := time.Now()
@@ -1017,7 +1040,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 
 		// Shutdown REST server
-		if s.restServer != nil {
+		if s.getRESTServer() != nil {
 			s.logger.Info("Shutting down REST server...")
 			if err := s.stopRESTServer(ctx); err != nil {
 				errs = append(errs, err)
@@ -1144,7 +1167,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		// must be closed after the sharded client (which holds references to
 		// the node's services) and before the data-plane barrier closer
 		// (which is nil in standalone mode since the node owns the barrier).
-		if s.qrdbNode != nil {
+		if s.getQRDBNode() != nil {
 			s.logger.Info("Shutting down embedded qrdb node...")
 			if err := s.stopQRDBNode(); err != nil {
 				errs = append(errs, err)
@@ -1217,6 +1240,48 @@ func (s *Server) IsClosed() bool {
 	return s.closed
 }
 
+// getQRDBNode returns the current qrdb node, or nil before Start() reaches
+// node construction and after stopQRDBNode clears it. Guarded by s.mu: the
+// node is legitimately read (RESTAddr, health checks, IAM wiring, tenant
+// KV routing) by callers that may run concurrently with the write in
+// initStandaloneQRDBNode/initClusteredQRDBNode -- e.g. a caller polling
+// RESTAddr() while Start() is still initializing, which is a deliberately
+// supported pattern (server_test.go's sealed-boot tests), not a bug in the
+// caller. Runner-log-proven data race (go-quicbaas task 2981/2972): the
+// unguarded field read in RESTAddr() raced the unguarded write in
+// initStandaloneQRDBNode.
+func (s *Server) getQRDBNode() *qrdbnode.Node {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.qrdbNode
+}
+
+// setQRDBNode sets (or clears, with nil) the current qrdb node under the
+// same lock getQRDBNode reads through.
+func (s *Server) setQRDBNode(node *qrdbnode.Node) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.qrdbNode = node
+}
+
+// getRESTServer and setRESTServer are s.restServer's equivalent of
+// getQRDBNode/setQRDBNode -- same rationale (runner-log-proven data race,
+// go-quicbaas task 2981/2972, second race exposed once the qrdbNode one was
+// fixed: RESTAddr()'s read of s.restServer against
+// startSealedRESTServer's/startRESTServer's write, both legitimately
+// concurrent with a caller polling RESTAddr() during startup).
+func (s *Server) getRESTServer() *restapi.Server {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.restServer
+}
+
+func (s *Server) setRESTServer(srv *restapi.Server) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.restServer = srv
+}
+
 // Uptime returns the server uptime.
 func (s *Server) Uptime() time.Duration {
 	return time.Since(s.startTime)
@@ -1234,7 +1299,7 @@ func (s *Server) GetRaftNode() interfaces.RaftNode {
 
 // GetRESTServer returns the REST server (for health checks).
 func (s *Server) GetRESTServer() *restapi.Server {
-	return s.restServer
+	return s.getRESTServer()
 }
 
 // RESTAddr returns the actual network address serving REST, or nil when REST
@@ -1250,15 +1315,16 @@ func (s *Server) GetRESTServer() *restapi.Server {
 // and the qrdb node's own reported address is the fallback for the normal
 // fully-booted path.
 func (s *Server) RESTAddr() net.Addr {
-	if s.restServer != nil {
-		if addr := s.restServer.Addr(); addr != nil {
+	if srv := s.getRESTServer(); srv != nil {
+		if addr := srv.Addr(); addr != nil {
 			return addr
 		}
 	}
-	if s.qrdbNode == nil {
+	node := s.getQRDBNode()
+	if node == nil {
 		return nil
 	}
-	qsrv := s.qrdbNode.Server()
+	qsrv := node.Server()
 	if qsrv == nil {
 		return nil
 	}
@@ -1375,19 +1441,21 @@ func (s *Server) GetQRDBClient() *ShardedClient {
 // operations so that the SDK client is used directly rather than via the
 // BaasTransport layer.
 func (s *Server) GetQRDBNodeClient() *qrdbsdk.Client {
-	if s.qrdbNode == nil {
+	node := s.getQRDBNode()
+	if node == nil {
 		return nil
 	}
-	return s.qrdbNode.Client()
+	return node.Client()
 }
 
 // GetQRDBKVServicer returns the qrdb service.KVServicer exposed by the embedded
 // engine node's service graph. Returns nil when the node is absent.
 func (s *Server) GetQRDBKVServicer() qrdbsdk.KVServicer {
-	if s.qrdbNode == nil {
+	node := s.getQRDBNode()
+	if node == nil {
 		return nil
 	}
-	svcs := s.qrdbNode.Services()
+	svcs := node.Services()
 	if svcs == nil {
 		return nil
 	}
@@ -1397,10 +1465,11 @@ func (s *Server) GetQRDBKVServicer() qrdbsdk.KVServicer {
 // GetQRDBAdminServicer returns the qrdb service.AdminServicer exposed by the
 // embedded engine node's service graph. Returns nil when the node is absent.
 func (s *Server) GetQRDBAdminServicer() qrdbsdk.AdminServicer {
-	if s.qrdbNode == nil {
+	node := s.getQRDBNode()
+	if node == nil {
 		return nil
 	}
-	svcs := s.qrdbNode.Services()
+	svcs := node.Services()
 	if svcs == nil {
 		return nil
 	}
@@ -1413,10 +1482,11 @@ func (s *Server) GetQRDBAdminServicer() qrdbsdk.AdminServicer {
 // (tenant + username) to a uint64 user id against the same user store the
 // login ceremony reads. Returns nil when the node is absent.
 func (s *Server) GetQRDBUserServicer() qrdbsdk.UserServicer {
-	if s.qrdbNode == nil {
+	node := s.getQRDBNode()
+	if node == nil {
 		return nil
 	}
-	return s.qrdbNode.UserService()
+	return node.UserService()
 }
 
 // GetQRDBUserAuthFactorServicer returns the UserAuthFactor service INSTANCE
@@ -1426,10 +1496,11 @@ func (s *Server) GetQRDBUserServicer() qrdbsdk.UserServicer {
 // split-store gap. Returns nil when the node was built without a User
 // service (login ceremony not wired) or before Unseal completes.
 func (s *Server) GetQRDBUserAuthFactorServicer() qrdbsdk.UserAuthFactorServicer {
-	if s.qrdbNode == nil {
+	node := s.getQRDBNode()
+	if node == nil {
 		return nil
 	}
-	return s.qrdbNode.UserAuthFactorService()
+	return node.UserAuthFactorService()
 }
 
 // GetQRDBTenantServicer returns the qrdb tenant.TenantServicer exposed by
@@ -1440,10 +1511,11 @@ func (s *Server) GetQRDBUserAuthFactorServicer() qrdbsdk.UserAuthFactorServicer 
 // service. Returns nil when the node is absent or its service graph is not
 // yet built (e.g. while sealed).
 func (s *Server) GetQRDBTenantServicer() qrdbsdk.ServiceTenantServicer {
-	if s.qrdbNode == nil {
+	node := s.getQRDBNode()
+	if node == nil {
 		return nil
 	}
-	svcs := s.qrdbNode.Services()
+	svcs := node.Services()
 	if svcs == nil {
 		return nil
 	}

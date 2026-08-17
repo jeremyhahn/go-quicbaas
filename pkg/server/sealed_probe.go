@@ -44,7 +44,7 @@ func (p *serverSealedProbe) IsSealed() bool {
 	// Node-owned barrier (seal-enabled boots). IsSealed is false when the
 	// node has no barrier (seal disabled), so this never gates the
 	// seal-disabled path.
-	if node := s.qrdbNode; node != nil && node.IsSealed() {
+	if node := s.getQRDBNode(); node != nil && node.IsSealed() {
 		return true
 	}
 

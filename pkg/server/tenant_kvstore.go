@@ -47,10 +47,11 @@ func (s *Server) tenantRoutedKVStore() interfaces.KVStore {
 // tenantRoutingStore returns the per-tenant routing store, or nil when the
 // embedded node exposes no StoreResolver.
 func (s *Server) tenantRoutingStore() interfaces.KVStore {
-	if s.qrdbNode == nil {
+	node := s.getQRDBNode()
+	if node == nil {
 		return nil
 	}
-	svcs := s.qrdbNode.Services()
+	svcs := node.Services()
 	if svcs == nil || svcs.StoreResolver == nil {
 		return nil
 	}
@@ -80,10 +81,11 @@ func (s *Server) durableKVStore() interfaces.KVStore {
 // (tenant.ErrTenantSealed). The resolver is installed on the REST RBAC provider
 // so an admitted permission is gated by its scope in the subject's own tenant.
 func (s *Server) iamTenantScopeStore() qrdbsdk.PermissionScopeResolver {
-	if s.qrdbNode == nil {
+	node := s.getQRDBNode()
+	if node == nil {
 		return nil
 	}
-	svcs := s.qrdbNode.Services()
+	svcs := node.Services()
 	if svcs == nil || svcs.StoreResolver == nil {
 		return nil
 	}
@@ -268,10 +270,11 @@ func (e *InviteStoreError) Unwrap() error { return e.Cause }
 // silently falling back to a non-persistent one — an invite that vanished on
 // restart would strand the operator holding the activation URL.
 func (s *Server) buildTenantInviteStore() (iam.InviteStore, error) {
-	if s.qrdbNode == nil {
+	node := s.getQRDBNode()
+	if node == nil {
 		return nil, nil
 	}
-	svcs := s.qrdbNode.Services()
+	svcs := node.Services()
 	if svcs == nil || svcs.StoreResolver == nil {
 		return nil, nil
 	}

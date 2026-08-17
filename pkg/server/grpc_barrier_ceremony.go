@@ -111,8 +111,8 @@ func (s *Server) buildBarrierCeremonyServices() (service.BarrierServicer, servic
 	// Wire the embedded node as the EncryptionMigrator. The BarrierClient
 	// transport stubs BarrierEnableEncryption with NotImplementedError; only
 	// the in-process node carries the real migration implementation.
-	if s.qrdbNode != nil {
-		barrierSvc.SetMigrator(s.qrdbNode)
+	if node := s.getQRDBNode(); node != nil {
+		barrierSvc.SetMigrator(node)
 	}
 
 	return barrierSvc, ceremonySvc

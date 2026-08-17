@@ -47,7 +47,6 @@ func (m *Module) RegisterMCP(srv *mcpserver.MCPServer) {
 	}
 
 	for _, spec := range mcpapi.ModuleTools() {
-		spec := spec
 		schema, err := json.Marshal(spec.InputSchema)
 		if err != nil || len(spec.InputSchema) == 0 {
 			// A tool without a marshalable schema still registers, with

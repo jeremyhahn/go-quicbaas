@@ -219,7 +219,7 @@ func (s *Server) runSealedWindow() error {
 	// 1. Wire the node's own seal-layer services. These are the instances
 	// the node reuses when Unseal completes the boot, so ceremony enclave
 	// state made during the window survives into the full boot.
-	svcs := s.qrdbNode.Services()
+	svcs := s.getQRDBNode().Services()
 	if svcs == nil || svcs.Barrier == nil || svcs.Ceremony == nil || svcs.Credential == nil {
 		return &SealedWindowBootError{Stage: "node seal services"}
 	}
@@ -263,7 +263,7 @@ func (s *Server) runSealedWindow() error {
 
 	// 4. Complete the node boot. The barrier is already unsealed, so Unseal
 	// with empty credentials proceeds directly to the data-plane build.
-	if err := s.qrdbNode.Unseal(context.Background(), qrdbsdk.Credentials{}); err != nil {
+	if err := s.getQRDBNode().Unseal(context.Background(), qrdbsdk.Credentials{}); err != nil {
 		s.stopSealedTransports()
 		return &SealedWindowBootError{Stage: "complete node boot", Cause: err}
 	}
@@ -288,7 +288,7 @@ func (s *Server) awaitUnseal() error {
 	for {
 		select {
 		case <-ticker.C:
-			if !s.qrdbNode.IsSealed() {
+			if !s.getQRDBNode().IsSealed() {
 				return nil
 			}
 		case <-s.shutdownChan:
@@ -378,13 +378,13 @@ func (s *Server) startSealedGRPCServer() error {
 // transports over the complete service graph. Idempotent: nil components
 // are skipped.
 func (s *Server) stopSealedTransports() {
-	if s.restServer != nil {
+	if s.getRESTServer() != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		if err := s.stopRESTServer(ctx); err != nil {
 			s.logger.WithError(err).Warn("Failed to stop sealed-window REST server")
 		}
 		cancel()
-		s.restServer = nil
+		s.setRESTServer(nil)
 	}
 	if s.grpcServer != nil {
 		s.stopGRPCServer()

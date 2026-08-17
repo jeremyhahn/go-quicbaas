@@ -461,10 +461,6 @@ func (s *Server) registerRoutes(r chi.Router) {
 		present[spec.Method+" "+spec.Pattern] = struct{}{}
 	}
 
-	relative := func(pattern, prefix string) string {
-		return strings.TrimPrefix(pattern, prefix)
-	}
-
 	// register binds one spec, preserving the historical chi mount matching:
 	// a collection route registered as Get("/") inside a Route("/parent")
 	// mount also matched the bare /parent path (the mount dispatches it as
@@ -474,7 +470,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 	// enclosing r.Route mount dispatches the bare prefix itself.
 	register := func(g chi.Router, spec RouteSpec, prefix string) {
 		h := spec.Handler(s)
-		rel := relative(spec.Pattern, prefix)
+		rel := strings.TrimPrefix(spec.Pattern, prefix)
 		g.MethodFunc(spec.Method, rel, h)
 		if bare := strings.TrimSuffix(rel, "/"); bare != rel && bare != "" {
 			if _, taken := present[spec.Method+" "+strings.TrimSuffix(spec.Pattern, "/")]; !taken {

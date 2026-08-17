@@ -268,7 +268,7 @@ func applyFrozenPermissions(specs []RouteSpec) []RouteSpec {
 // oauth2-register/metrics-scrape/debug-mount surfaces contributed by
 // routes_iam.go. It excludes the explicitly-public root mounts (OIDC
 // discovery, ACME directory, docs, UI, ...), which were never PEP-derived —
-// Routes() appends those separately with their Auth already set. Exported
+// Routes() appends those separately with their Auth already set.
 func rawRouteSpecs() []RouteSpec {
 	specs := []RouteSpec{
 

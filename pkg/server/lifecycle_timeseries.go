@@ -43,7 +43,7 @@ func (s *Server) startTimeSeries() error {
 		return nil
 	}
 
-	s.timeSeriesStorage = newNodeTimeSeriesStorage(s.qrdbNode.Client())
+	s.timeSeriesStorage = newNodeTimeSeriesStorage(s.getQRDBNode().Client())
 	s.logger.Info("Time series storage wired via qrdb node SDK transport")
 	return nil
 }

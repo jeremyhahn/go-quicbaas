@@ -89,10 +89,11 @@ func (s *Server) qrdbTenantClient() *qrdbsdk.Client {
 	if s.tenantSDKClient != nil {
 		return s.tenantSDKClient
 	}
-	if s.qrdbNode == nil {
+	node := s.getQRDBNode()
+	if node == nil {
 		return nil
 	}
-	svcs := s.qrdbNode.Services()
+	svcs := node.Services()
 	if svcs == nil || svcs.Tenant == nil {
 		return nil
 	}

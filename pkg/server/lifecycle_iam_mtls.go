@@ -75,11 +75,12 @@ func (e *MTLSConfigError) Unwrap() error {
 //   - A non-empty file path that cannot be read or parsed IS a fatal error,
 //     returned as MTLSConfigError so config typos fail fast at startup.
 func (s *Server) wireIAMMTLSAuthenticators() error {
-	if s.restServer == nil {
+	restServer := s.getRESTServer()
+	if restServer == nil {
 		return nil
 	}
 
-	h, ok := s.restServer.IAMHandler().(*restapi.IAMHandler)
+	h, ok := restServer.IAMHandler().(*restapi.IAMHandler)
 	if !ok || h == nil {
 		// IAM handler not wired — nothing to do.
 		return nil

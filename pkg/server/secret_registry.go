@@ -122,9 +122,9 @@ func (s *Server) buildSecretRegistry() *qrdbsecret.ResolverRegistry {
 	// Guard against a nil qrdbNode (test-stub / external-CA path where the
 	// node is not built): no credential resolver is registered in that case,
 	// so credential:// URIs fall through to the literal strategy.
-	if s.qrdbNode != nil {
-		if svcs := s.qrdbNode.Services(); svcs != nil && svcs.Credential != nil {
-			br := s.qrdbNode.BarrierRegistry()
+	if node := s.getQRDBNode(); node != nil {
+		if svcs := node.Services(); svcs != nil && svcs.Credential != nil {
+			br := node.BarrierRegistry()
 			if br != nil {
 				// Tenant-scoped: routes to the per-tenant barrier-backed
 				// CredentialService when the request context carries a tenant ID,

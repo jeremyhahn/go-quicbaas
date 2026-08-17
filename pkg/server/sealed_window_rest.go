@@ -90,7 +90,7 @@ func (s *Server) startSealedRESTServer() error {
 		return &SealedWindowBootError{Stage: "sealed rest listener", Cause: err}
 	}
 
-	s.restServer = restServer
+	s.setRESTServer(restServer)
 	s.logger.Infof("Sealed-window REST server started on %s", address)
 	return nil
 }

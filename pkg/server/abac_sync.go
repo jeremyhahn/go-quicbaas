@@ -49,10 +49,11 @@ var _ iam.ABACSync = (*qrdbABACSync)(nil)
 // all-or-nothing on the qrdb side: an invalid policy set is rejected and
 // leaves the previously active set fully in force.
 func (a *qrdbABACSync) Sync(ctx context.Context) error {
-	if a.server.qrdbNode == nil {
+	node := a.server.getQRDBNode()
+	if node == nil {
 		return &QRDBNodeClientUnavailableError{}
 	}
-	reloader := a.server.qrdbNode.ABACPolicyReloader()
+	reloader := node.ABACPolicyReloader()
 	if reloader == nil {
 		// The node was constructed without WithABACLiveReload and has no
 		// policies to reload into -- nothing to do (matches qrdb's own

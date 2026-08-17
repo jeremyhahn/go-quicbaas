@@ -75,8 +75,8 @@ func (s *Server) runBootstrapSystem(ctx context.Context, deps *qrdbsdk.FirstBoot
 // StorageBarrier is wrapped in a fresh registry. Nil when neither exists —
 // the caller then keeps the direct first-boot path.
 func (s *Server) bootstrapBarrierRegistry() *qrdbsdk.BarrierRegistry {
-	if s.qrdbNode != nil {
-		if registry := s.qrdbNode.BarrierRegistry(); registry != nil {
+	if node := s.getQRDBNode(); node != nil {
+		if registry := node.BarrierRegistry(); registry != nil {
 			return registry
 		}
 	}

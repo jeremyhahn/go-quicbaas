@@ -88,30 +88,49 @@ func TestNewModule_RegistersRoleGrants_NewBrokerDataPlaneServices(t *testing.T) 
 	}
 }
 
-// TestNewModule_RegistersRoleGrants_XKMSWireServices proves
-// contributeGRPCPermissions's generic proto-reflection pass also picks up the
-// permission vocabulary declared by the eight xkms-wire services this module
-// registers (kms.proto's KeyManagement/DEKManagement/SecretsManagement/
-// Crypto, certificate.proto's CertificateService/TrustService,
-// attestation.proto's AttestationService, piv.proto's PIVService) — the same
-// zero-extra-code mechanism TestNewModule_RegistersRoleGrants_NewBrokerDataPlaneServices
-// proves for the broker data-plane services, requiring no edit to
-// module_grants.go itself.
-func TestNewModule_RegistersRoleGrants_XKMSWireServices(t *testing.T) {
-	_, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
-	require.NoError(t, err)
+// TestNewModule_RegistersRoleGrants_XKMSWireServicesNotDuplicated is the
+// inverse of what this test used to prove. Before Phase 3 of the
+// login-plane plan, quicbaas's own module.go registered quicbaas.v1 wrapper
+// services for KeyManagement, DEKManagement, Crypto, CertificateService,
+// TrustService, AttestationService, and PIVService, and this test asserted
+// that contributeGRPCPermissions's generic proto-reflection pass picked up
+// their permission vocabulary. Phase 3 deliberately removed those seven
+// registrations from grpcRegistrations (module.go's doc comment above it):
+// go-xkms's OWN ServiceModule now serves the identical capability as its
+// canonical xkms.v1 KeystoreService surface on the same unified server, and
+// registering both here would duplicate that surface under a redundant
+// proto name. Runner-log-proven (go-quicbaas task 2972): the old assertion
+// now fails deterministically (not a flake -- reproduces with a plain `go
+// test`, no -race needed), because the permissions genuinely are not
+// contributed by this module's own registration pass any more.
+//
+// What's worth guarding now is the opposite invariant: that these seven
+// services' permissions do NOT reappear in quicbaas's own contribution, so
+// a future edit to grpcRegistrations can't silently reintroduce the
+// duplicate proto surface Phase 3 removed.
+//
+// keys:create/keys:get/keys:list are deliberately excluded from this list:
+// kms.proto declares them too, but they are not exclusive to it --
+// ssh.proto (SSHService, still registered) declares the identical strings
+// for its own SSH-key operations, so their presence in the contributed set
+// proves nothing about whether kms.proto's KeyManagement/DEKManagement
+// leaked back in. ca:create/certs:generate/certs:read/attestation:verify/
+// piv:read are exclusive to certificate.proto/piv.proto/attestation.proto
+// (grepped api/proto/*.proto to confirm), so their absence is a clean
+// signal.
+func TestNewModule_RegistersRoleGrants_XKMSWireServicesNotDuplicated(t *testing.T) {
+	set := map[string]struct{}{}
+	contributeGRPCPermissions(set)
 
-	for _, perm := range []qrdbsdk.Permission{
-		"keys:create",
-		"keys:get",
-		"keys:list",
+	for _, perm := range []string{
 		"ca:create",
 		"certs:generate",
 		"certs:read",
 		"attestation:verify",
 		"piv:read",
 	} {
-		assert.True(t, qrdbsdk.IsPermissionRegistered(perm),
-			"%s must be registered by the xkms-wire services' proto permission options", perm)
+		_, ok := set[perm]
+		assert.False(t, ok,
+			"%s must not be contributed by quicbaas's own module -- it is go-xkms's ServiceModule's canonical xkms.v1 surface now (Phase 3); reintroducing it here would duplicate that surface", perm)
 	}
 }

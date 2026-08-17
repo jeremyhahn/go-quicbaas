@@ -270,8 +270,8 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// initialise barrier, DEK, and quotas on the engine side BEFORE BaaS
 	// metadata is written. This is the correctness gap identified in Phase D.5:
 	// without this wiring, per-tenant barrier init and DEK lifecycle never fire.
-	if s.qrdbNode != nil {
-		if svcs := s.qrdbNode.Services(); svcs != nil && svcs.Tenant != nil {
+	if node := s.getQRDBNode(); node != nil {
+		if svcs := node.Services(); svcs != nil && svcs.Tenant != nil {
 			tenantManager.SetQRDBTenantProvisioner(newQRDBTenantProvisionerAdapter(svcs.Tenant))
 			s.logger.Info("qrdb TenantServicer wired into IAM tenant lifecycle (barrier+DEK+quota)")
 		}
@@ -306,7 +306,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// an inconsistent state in which there is no place to store users — so IAM
 	// fails closed rather than silently routing to an empty store. (The
 	// client-less path returned (nil, nil) earlier, before this point.)
-	if s.qrdbNode == nil {
+	if s.getQRDBNode() == nil {
 		return nil, &QRDBUserStorageRequiredError{}
 	}
 	qrdbUserStorage := qrdbadapter.NewQRDBUserStorage(

@@ -52,10 +52,11 @@ func (s *Server) startRESTServer() error {
 // instance is present. This mirrors the real implementation so that
 // test seam overrides work correctly even without the rest build tag.
 func (s *Server) stopRESTServer(ctx context.Context) error {
-	if s.restServer == nil {
+	restServer := s.getRESTServer()
+	if restServer == nil {
 		return nil
 	}
-	return restShutdownFn(s.restServer, ctx)
+	return restShutdownFn(restServer, ctx)
 }
 
 // ModuleRESTServer is unavailable without the rest build tag: the module's

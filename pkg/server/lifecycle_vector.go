@@ -46,7 +46,7 @@ func (s *Server) startVector() error {
 
 	s.logger.Info("Initializing vector service...")
 
-	nodeClient := s.qrdbNode.Client()
+	nodeClient := s.getQRDBNode().Client()
 	nodeStorage := newNodeVectorStorage(nodeClient)
 	logAdapter := logger.NewAdapter(s.logger)
 	opts := []service.VectorServiceOption{

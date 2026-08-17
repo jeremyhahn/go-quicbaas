@@ -90,7 +90,7 @@ func (s *Server) startRESTServer() error {
 		return err
 	}
 
-	s.restServer = restServer
+	s.setRESTServer(restServer)
 
 	// Wire mTLS authenticators from operator config (rest && iam builds only;
 	// other build combinations compile a no-op stub).
@@ -385,11 +385,12 @@ func cloneTLSConfig(cfg *tls.Config) *tls.Config {
 
 // stopRESTServer gracefully shuts down the REST server.
 func (s *Server) stopRESTServer(ctx context.Context) error {
-	if s.restServer == nil {
+	restServer := s.getRESTServer()
+	if restServer == nil {
 		return nil
 	}
 
-	if err := restShutdownFn(s.restServer, ctx); err != nil {
+	if err := restShutdownFn(restServer, ctx); err != nil {
 		return &qberrors.QBError{
 			Code: qberrors.ErrInternal,
 			Op:   "server.stopRESTServer",

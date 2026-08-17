@@ -880,7 +880,7 @@ func (s *Server) initStandaloneQRDBNode() error {
 		return &QRDBNodeError{Stage: "new standalone node", Cause: err}
 	}
 
-	s.qrdbNode = node
+	s.setQRDBNode(node)
 
 	s.logger.Info("Standalone qrdb node started; at-rest encryption and hardware crypto active")
 	return nil
@@ -891,11 +891,11 @@ func (s *Server) initStandaloneQRDBNode() error {
 // audit sink is closed AFTER the node so no in-flight emit from a
 // still-running node races the close.
 func (s *Server) stopQRDBNode() error {
-	node := s.qrdbNode
+	node := s.getQRDBNode()
 	if node == nil {
 		return nil
 	}
-	s.qrdbNode = nil
+	s.setQRDBNode(nil)
 	closeErr := node.Close()
 
 	if s.qrdbAuditSink != nil {
@@ -1066,7 +1066,7 @@ func (s *Server) initClusteredQRDBNode() error {
 		return &QRDBNodeError{Stage: "new clustered node", Cause: err}
 	}
 
-	s.qrdbNode = node
+	s.setQRDBNode(node)
 
 	s.logger.Infof("Clustered qrdb node started; members: %d, at-rest encryption and hardware crypto active",
 		len(members))

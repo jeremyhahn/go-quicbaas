@@ -589,18 +589,26 @@ func TestServer_GetKVStore_Local_ReturnsStoreForEmbeddedShard(t *testing.T) {
 
 func TestHealthChecker_CheckREST_Local_UnhealthyWhenNotStarted(t *testing.T) {
 	srv := withTempServer(t)
-	// Under the non-rest build (pkg/api/rest/stub.go, //go:build !rest), the
-	// REST server stub reports IsClosed()==true unconditionally ("REST
-	// support is not compiled"), and CheckREST checks IsClosed() before
-	// IsStarted(), so a present-but-unstarted stub always takes the "is
-	// closed" branch, never the "not started" one -- that branch is only
-	// reachable with the real server.go, under the `rest` tag, where a
-	// present-but-never-started server has closed==false, started==false.
-	srv.restServer = &restapi.Server{}
+	stub := &restapi.Server{}
+	srv.restServer = stub
 
+	// Which branch CheckREST takes for a present-but-never-started server is
+	// itself build-tag dependent: under the non-rest build
+	// (pkg/api/rest/stub.go, //go:build !rest), the REST server stub reports
+	// IsClosed()==true unconditionally ("REST support is not compiled"), and
+	// CheckREST checks IsClosed() before IsStarted(), so a zero-value stub
+	// always takes the "is closed" branch. Under the `rest` tag, the real
+	// server.go's zero value has closed==false, started==false, so it
+	// reaches "not started" instead. Ask the zero value itself which branch
+	// this build takes rather than hardcoding one, so the test is correct
+	// (and exercises the real behavior) under both.
 	got := srv.GetHealthChecker().CheckREST()
 	assert.Equal(t, HealthStatusUnhealthy, got.Status)
-	assert.Contains(t, got.Message, "closed")
+	if stub.IsClosed() {
+		assert.Contains(t, got.Message, "closed")
+	} else {
+		assert.Contains(t, got.Message, "not started")
+	}
 }
 
 // =============================================================================

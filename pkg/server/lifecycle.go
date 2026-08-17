@@ -1824,20 +1824,20 @@ func (s *Server) startService() error {
 	// Both standalone and clustered modes set s.qrdbNode via
 	// initStandaloneQRDBNode / initClusteredQRDBNode respectively, so this
 	// branch is the live path for all configured server modes.
-	if s.qrdbNode != nil {
+	if node := s.getQRDBNode(); node != nil {
 		// Standalone/clustered node path: back the ShardedClient with the
 		// qrdb node's SDK client. All shard IDs resolve to the same client;
 		// the embedded engine handles routing internally. The node's SDK
 		// client already has barrier/ceremony/credential wired via its
 		// embedded transport — no duplicate construction needed here.
-		s.qrdbClient = newNodeBackedShardedClient(s.qrdbNode)
+		s.qrdbClient = newNodeBackedShardedClient(node)
 		s.logger.Info("qrdb ShardedClient backed by real qrdb engine node")
 
 		// Populate s.ceremonyServices from the node's services so that the
 		// gRPC barrier/ceremony adapters and REST /api/v1/init/* routes can
 		// resolve the barrier and ceremony service without re-building the
 		// stack.
-		if svcs := s.qrdbNode.Services(); svcs != nil && svcs.Barrier != nil {
+		if svcs := node.Services(); svcs != nil && svcs.Barrier != nil {
 			s.ceremonyServices = &CeremonyServices{
 				Barrier:    svcs.Barrier,
 				Credential: svcs.Credential,
@@ -2030,8 +2030,8 @@ func (s *Server) startService() error {
 	// a transport.LoginClient. The facade forwards BeginLogin/FinishLogin to it
 	// and enforces the mTLS anti-spoofing model. When no node (or login client)
 	// is present the facade fails closed with LoginCeremonyUnavailableError.
-	if s.qrdbNode != nil {
-		if nodeClient := s.qrdbNode.Client(); nodeClient != nil {
+	if node := s.getQRDBNode(); node != nil {
+		if nodeClient := node.Client(); nodeClient != nil {
 			if lc := nodeClient.Login(); lc != nil {
 				svc.SetLoginService(service.NewLoginService(lc))
 				s.logger.Info("unified login ceremony facade wired from qrdb node")
