@@ -589,13 +589,18 @@ func TestServer_GetKVStore_Local_ReturnsStoreForEmbeddedShard(t *testing.T) {
 
 func TestHealthChecker_CheckREST_Local_UnhealthyWhenNotStarted(t *testing.T) {
 	srv := withTempServer(t)
-	// Under the non-rest build the REST server stub reports IsStarted()==false,
-	// so a present-but-unstarted server takes the "not started" branch.
+	// Under the non-rest build (pkg/api/rest/stub.go, //go:build !rest), the
+	// REST server stub reports IsClosed()==true unconditionally ("REST
+	// support is not compiled"), and CheckREST checks IsClosed() before
+	// IsStarted(), so a present-but-unstarted stub always takes the "is
+	// closed" branch, never the "not started" one -- that branch is only
+	// reachable with the real server.go, under the `rest` tag, where a
+	// present-but-never-started server has closed==false, started==false.
 	srv.restServer = &restapi.Server{}
 
 	got := srv.GetHealthChecker().CheckREST()
 	assert.Equal(t, HealthStatusUnhealthy, got.Status)
-	assert.Contains(t, got.Message, "not started")
+	assert.Contains(t, got.Message, "closed")
 }
 
 // =============================================================================

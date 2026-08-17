@@ -7,7 +7,12 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
 ARG GOFIPS140=v1.0.0
-ARG BUILD_TAGS=
+# gms_pure_go is the floor, not a feature: this builder is CGO_ENABLED=0 and
+# dolthub/go-mysql-server's internal/regex has no file satisfying
+# `cgo && !gms_pure_go` without cgo, so the link fails on "build constraints
+# exclude all Go files" (see Dockerfile's identical comment). release.yml
+# never overrides BUILD_TAGS for this image, so this default is load-bearing.
+ARG BUILD_TAGS=gms_pure_go
 
 # Stage 1: Build stage with FIPS support
 FROM golang:${GO_VERSION}-bookworm AS builder
@@ -27,28 +32,30 @@ WORKDIR /build
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 
-# Copy local dependencies (staged by Makefile into .deps/)
-COPY .deps/ /deps/
-
-# Rewrite local replace directives to point to staged deps
-RUN sed -i 's|=> /home/.*/go-quicraft|=> /deps/go-quicraft|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> /home/.*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> /home/.*/go-qrdb$|=> /deps/go-qrdb|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> /home/.*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> /home/.*/go-xkms$|=> /deps/go-xkms|g' go.mod sdk/go/go.mod
-
-# Download remaining dependencies
-RUN GONOSUMCHECK='*' go mod download
+# Until 2026-08-14 this stage copied working-tree clones out of a .deps/
+# directory and rewrote a set of relative `replace` directives to point at
+# them (see Dockerfile's identical comment). Both are gone: .deps/ was
+# deleted with the decoupling, and the only replaces left in go.mod are the
+# intra-repo sdk/go one and an armon/go-metrics version pin, neither of which
+# needs rewriting. The COPY of a directory that no longer exists failed the
+# build outright.
+#
+# go.mod pins first-party modules published to the internal Gitea, which this
+# download cannot reach on its own: the runner injects GOPRIVATE and the
+# tokenised insteadOf rewrite into the *job* environment
+# (dependency-resolution.md §6), and a docker build does not inherit it. They
+# arrive as a BuildKit secret, never a build arg, mounted on tmpfs for this
+# RUN alone and never becoming a layer. The mount is optional by design: on
+# GitHub Actions no secret is supplied and these modules resolve from the
+# public proxy once tags are mirrored (§7), so the same Dockerfile builds on
+# both hosts.
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    GONOSUMCHECK='*' go mod download
 
 # Copy source code
 COPY . .
-
-# Rewrite replace directives again (COPY . . overwrites go.mod)
-RUN sed -i 's|=> /home/.*/go-quicraft|=> /deps/go-quicraft|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> /home/.*/go-qrdb/sdk/go|=> /deps/go-qrdb/sdk/go|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> /home/.*/go-qrdb$|=> /deps/go-qrdb|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> /home/.*/go-xkms/sdk/go|=> /deps/go-xkms/sdk/go|g' go.mod sdk/go/go.mod && \
-    sed -i 's|=> /home/.*/go-xkms$|=> /deps/go-xkms|g' go.mod sdk/go/go.mod
 
 # Build arguments
 ARG VERSION

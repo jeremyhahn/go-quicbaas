@@ -239,7 +239,9 @@ func annotateFile(path string, perms map[string]string, annotated map[string]boo
 	}
 
 	result := insertImport(out)
-	return count, os.WriteFile(path, []byte(strings.Join(result, "\n")), 0o644)
+	// Rewriting a .proto source file in place with annotations -- world-
+	// readable source code meant to be committed, not sensitive data.
+	return count, os.WriteFile(path, []byte(strings.Join(result, "\n")), 0o644) // #nosec G306 -- generated/annotated source file, not sensitive data
 }
 
 // markAnnotated records the table entries an already-annotated file carries so

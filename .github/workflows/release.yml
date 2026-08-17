@@ -162,12 +162,16 @@ jobs:
           #!/bin/bash
           set -e
 
-          # Install build dependencies
+          # Install build dependencies. file: used by the "Verify binaries
+          # are statically linked" step below -- without it, `set -e` aborts
+          # the whole script there (on "file: command not found") even
+          # though both binaries already built successfully.
           apt-get update
           apt-get install -y --no-install-recommends \
             build-essential \
             ca-certificates \
-            git
+            git \
+            file
 
           # Build information
           VERSION="${VERSION}"
@@ -188,7 +192,7 @@ jobs:
 
           echo "Building for linux/${GOARCH} with CGO_ENABLED=0"
 
-          mkdir -p /workspace/dist
+          mkdir -p /src/dist
 
           # Build daemon
           # gms_pure_go: these are CGO_ENABLED=0 builds, and
@@ -197,19 +201,19 @@ jobs:
           # constraints exclude all Go files". Same tag the Makefile sets.
           echo "Building quicbaasd..."
           CGO_ENABLED=0 go build -tags gms_pure_go -buildvcs=false -ldflags="${LDFLAGS}" \
-            -o /workspace/dist/quicbaasd \
+            -o /src/dist/quicbaasd \
             ./cmd/quicbaasd
 
           # Build CLI
           echo "Building quicbaas CLI..."
           CGO_ENABLED=0 go build -tags gms_pure_go -buildvcs=false -ldflags="${LDFLAGS}" \
-            -o /workspace/dist/quicbaas \
+            -o /src/dist/quicbaas \
             ./cmd/quicbaas
 
           # Verify binaries are statically linked
           echo ""
           echo "Verifying static builds..."
-          for binary in /workspace/dist/*; do
+          for binary in /src/dist/*; do
             echo "Checking $binary:"
             file "$binary"
             ldd "$binary" 2>&1 || echo "  ✓ Static binary (no dynamic dependencies)"
@@ -217,23 +221,54 @@ jobs:
           done
 
           # Set permissions
-          chmod +x /workspace/dist/*
+          chmod +x /src/dist/*
           EOF
 
           chmod +x build.sh
 
-          # Run build in native container for the target architecture
-          docker run --rm \
+          # Run build in a native container for the target architecture.
+          #
+          # NOT `docker run -v $(pwd):/workspace`: $(pwd) here is a path
+          # INSIDE THIS JOB CONTAINER (e.g. /workspace/jeremyhahn/go-quicbaas),
+          # but act_runner talks to the HOST's docker daemon over the socket
+          # -- the daemon tries to bind-mount that path from ITS OWN
+          # filesystem, where it doesn't exist in that shape. Runner-log-
+          # proven (task 2940 and every other Build Binaries run):
+          #   docker: Error response from daemon: error while creating mount
+          #   source path '/workspace/jeremyhahn/go-quicbaas': mkdir
+          #   /workspace: file exists
+          # `docker cp` sidesteps this entirely: the CLI (running in this job
+          # container, which does have the files) streams them to the daemon
+          # over the API rather than asking the daemon to resolve a bind-mount
+          # path itself, so it works regardless of where the two filesystems
+          # actually live relative to each other.
+          #
+          # This container's `go build` also needs the Gitea fetch
+          # credentials the runner injects into this job's shell
+          # (GOPRIVATE/GIT_CONFIG_*, dependency-resolution.md §6) to resolve
+          # go-xkms/go-qrdb. `docker create` (unlike `docker run`) does not
+          # reliably forward bare `-e NAME` host-value passthrough, so each
+          # var is explicitly expanded here (empty string when unset, e.g. on
+          # GitHub Actions).
+          CID=$(docker create \
             --platform=${{ matrix.platform }} \
-            -v $(pwd):/workspace \
-            -w /workspace \
-            -e VERSION=${{ needs.create-release.outputs.version }} \
-            -e COMMIT=${{ github.sha }} \
-            -e DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-            -e GOARCH=${{ matrix.arch }} \
-            -e WITH_FIPS=${{ matrix.fips }} \
+            -w /src \
+            -e VERSION="${{ needs.create-release.outputs.version }}" \
+            -e COMMIT="${{ github.sha }}" \
+            -e DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -e GOARCH="${{ matrix.arch }}" \
+            -e WITH_FIPS="${{ matrix.fips }}" \
+            -e GOPRIVATE="${GOPRIVATE:-}" \
+            -e GIT_CONFIG_COUNT="${GIT_CONFIG_COUNT:-}" \
+            -e GIT_CONFIG_KEY_0="${GIT_CONFIG_KEY_0:-}" \
+            -e GIT_CONFIG_VALUE_0="${GIT_CONFIG_VALUE_0:-}" \
             golang:1.26-bookworm \
-            bash /workspace/build.sh
+            bash /src/build.sh)
+          docker cp . "$CID":/src
+          docker start -a "$CID"
+          mkdir -p dist
+          docker cp "$CID":/src/dist/. ./dist/
+          docker rm "$CID" >/dev/null
 
           # Verify binaries were created
           echo "Build artifacts:"
@@ -395,6 +430,29 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # docker build does NOT inherit the job environment
+      # (dependency-resolution.md §6), so the Gitea fetch credentials the
+      # runner injects into this job's shell (GOPRIVATE/GIT_CONFIG_*) have to
+      # be staged into a file and handed to buildx as a secret mount --
+      # Dockerfile's `RUN --mount=type=secret,id=gomodauth` expects one but
+      # nothing in this workflow previously supplied it, so `go mod
+      # download` for the private go-xkms/go-qrdb modules had no
+      # credentials. Empty on GitHub Actions (those vars are unset there),
+      # which is fine: the mount is optional and falls back to public
+      # resolution.
+      - name: Stage Gitea module credentials
+        run: |
+          umask 077
+          : > gomodauth.env
+          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
+            {
+              echo "export GOPRIVATE=${GOPRIVATE:-}"
+              echo "export GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT:-1}"
+              echo "export GIT_CONFIG_KEY_0=${GIT_CONFIG_KEY_0:-}"
+              echo "export GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-}"
+            } > gomodauth.env
+          fi
+
       # devops.md §8: no image reaches a registry unscanned. Built amd64-only
       # and loaded into the local daemon so Trivy can read it; the multi-arch
       # push below shares the same buildx cache, so this costs a load rather
@@ -412,6 +470,8 @@ jobs:
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -442,6 +502,8 @@ jobs:
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -477,6 +539,21 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # See the daemon job's comment: buildkit needs the credentials staged
+      # into a file to hand to it as a secret.
+      - name: Stage Gitea module credentials
+        run: |
+          umask 077
+          : > gomodauth.env
+          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
+            {
+              echo "export GOPRIVATE=${GOPRIVATE:-}"
+              echo "export GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT:-1}"
+              echo "export GIT_CONFIG_KEY_0=${GIT_CONFIG_KEY_0:-}"
+              echo "export GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-}"
+            } > gomodauth.env
+          fi
+
       # devops.md §8: no image reaches a registry unscanned. See the daemon job
       # for why this builds amd64-only and loads rather than pushing.
       - name: Build CLI image for scanning
@@ -492,6 +569,8 @@ jobs:
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -522,6 +601,8 @@ jobs:
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -555,6 +636,21 @@ jobs:
             type=semver,pattern={{version}}-fips
             type=raw,value=latest-fips,enable={{is_default_branch}}
 
+      # See the daemon job's comment: buildkit needs the credentials staged
+      # into a file to hand to it as a secret.
+      - name: Stage Gitea module credentials
+        run: |
+          umask 077
+          : > gomodauth.env
+          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
+            {
+              echo "export GOPRIVATE=${GOPRIVATE:-}"
+              echo "export GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT:-1}"
+              echo "export GIT_CONFIG_KEY_0=${GIT_CONFIG_KEY_0:-}"
+              echo "export GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-}"
+            } > gomodauth.env
+          fi
+
       # devops.md §8: no image reaches a registry unscanned. See the daemon job
       # for why this builds amd64-only and loads rather than pushing.
       - name: Build FIPS image for scanning
@@ -570,6 +666,8 @@ jobs:
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -600,6 +698,8 @@ jobs:
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
