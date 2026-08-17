@@ -128,3 +128,10 @@ examples/orchestration/*/data/
 # the repo by default (see GOMODAUTH_ENV in the Makefile); this is the guard
 # for anyone who points it at the working tree.
 gomodauth*
+
+# The frozen route-permission table is REQUIRED SOURCE, not a build
+# artifact: consumers compile pkg/api/rest against it and nothing
+# regenerates it in a module download. The v0.2.0-alpha module zip
+# shipped without it (unbuildable with -tags rest) for exactly this
+# reason — same failure mode as the v0.1.1-alpha gitignored *.pb.go.
+!pkg/api/rest/routes_permissions_generated.go
