@@ -60,14 +60,24 @@ func shortTTUnixSocketPath(t *testing.T) string {
 // TestServer_InitializeAndShutdown_TT_NetworkGRPC drives a non-embedded
 // initialize so the real gRPC listener body executes and binds, then a graceful
 // Shutdown.
+//
+// gRPC network serving (server.grpc.enabled) runs exclusively on the embedded
+// qrdb node's own unified-server listener now (lifecycle.go's
+// startGRPCServer doc comment: "There is no TCP listener here anymore: the
+// node already owns server.grpc.port") -- srv.grpcListener is set only
+// during the sealed-window bootstrap phase, which this test never enters, so
+// it asserted a listener that was never going to exist. The listener
+// startGRPCServer itself still owns is the local Unix-domain-socket
+// transport, so that's what this test binds and checks instead.
 func TestServer_InitializeAndShutdown_TT_NetworkGRPC(t *testing.T) {
 	saveAndRestoreSeams(t)
 	srv := withTempServer(t)
 	srv.config.Server.Embedded = false
+	srv.config.Server.Unix.Socket = shortTTUnixSocketPath(t)
 
 	require.NoError(t, srv.initialize(), "network initialize must succeed")
 	require.NotNil(t, srv.grpcServer, "gRPC server must be constructed in network mode")
-	require.NotNil(t, srv.grpcListener, "gRPC listener must be bound in network mode")
+	require.NotNil(t, srv.grpcUnixListener, "gRPC Unix-socket listener must be bound in network mode")
 
 	grpcHealth := srv.GetHealthChecker().CheckGRPC()
 	assert.Equal(t, HealthStatusHealthy, grpcHealth.Status,
@@ -130,7 +140,9 @@ func TestServer_InitializeAndShutdown_TT_WithMessagingAndOrchestration(t *testin
 // TestServer_InitializeAndShutdown_TT_FullStackNetworkGRPC drives the broadest
 // hermetic lifecycle: a non-embedded server with object storage, KMS, backup,
 // messaging + watch bridge, orchestration, and the embedded agent all enabled.
-// The real gRPC listener body runs (TCP + unix socket) and the subsequent
+// The real gRPC listener body runs (the Unix-domain-socket transport --
+// startGRPCServer no longer owns a TCP listener; see the doc comment on
+// TestServer_InitializeAndShutdown_TT_NetworkGRPC) and the subsequent
 // Shutdown walks the full reverse-order teardown with each subsystem present.
 func TestServer_InitializeAndShutdown_TT_FullStackNetworkGRPC(t *testing.T) {
 	saveAndRestoreSeams(t)
@@ -152,7 +164,7 @@ func TestServer_InitializeAndShutdown_TT_FullStackNetworkGRPC(t *testing.T) {
 	require.NoError(t, srv.initialize(), "full-stack network initialize must succeed")
 	require.NotNil(t, srv.embeddedAgentState, "embedded agent must be started")
 	require.NotNil(t, srv.grpcServer, "gRPC server must be constructed in network mode")
-	require.NotNil(t, srv.grpcListener, "gRPC listener must be bound")
+	require.NotNil(t, srv.grpcUnixListener, "gRPC Unix-socket listener must be bound")
 	require.NotNil(t, srv.catalogManager)
 	require.NotNil(t, srv.backupManager)
 	require.NotNil(t, srv.messagingService)
@@ -198,10 +210,19 @@ func TestServer_StartUnixSocketListener_TT_MkdirFailure(t *testing.T) {
 	require.Error(t, err, "an uncreatable socket directory must produce an error")
 }
 
-// TestServer_StartGRPCServer_TT_NoListenersConfigured covers the guard that
-// rejects a gRPC start when neither a Unix socket nor the TCP listener is
-// configured.
-func TestServer_StartGRPCServer_TT_NoListenersConfigured(t *testing.T) {
+// TestServer_StartGRPCServer_TT_NoUnixSocketConfigured_Succeeds covers what
+// used to be a guard rejecting a gRPC start when neither a Unix socket nor a
+// TCP listener was configured. That guard is gone along with the TCP
+// listener itself (lifecycle.go's startGRPCServer doc comment: "There is no
+// TCP listener here anymore: the node already owns server.grpc.port") --
+// network-only serving with no local Unix-socket IPC is now a legitimate
+// deployment shape (the embedded qrdb node's unified-server listener still
+// serves gRPC over the network regardless of this function), so
+// startGRPCServer constructing an unbound *grpc.Server and returning nil is
+// correct, not a silently-swallowed error. This proves that behavior stays
+// intentional rather than a future edit reintroducing a stale guard against
+// a listener startGRPCServer no longer owns.
+func TestServer_StartGRPCServer_TT_NoUnixSocketConfigured_Succeeds(t *testing.T) {
 	saveAndRestoreSeams(t)
 	srv := withTempServer(t)
 	srv.config.Server.Embedded = false
@@ -213,7 +234,9 @@ func TestServer_StartGRPCServer_TT_NoListenersConfigured(t *testing.T) {
 	require.NoError(t, srv.startService())
 
 	err := srv.startGRPCServer()
-	require.Error(t, err, "startGRPCServer must fail when no listeners are configured")
+	require.NoError(t, err, "startGRPCServer must succeed with no Unix socket configured -- network gRPC serving is owned by the qrdb node, not this function")
+	require.NotNil(t, srv.grpcServer, "the *grpc.Server is still constructed for the local Unix-socket transport, just left unbound")
+	require.Nil(t, srv.grpcUnixListener, "no Unix listener should be created when Unix.Socket is empty")
 }
 
 // TestServer_InitializeAndShutdown_TT_AllTransports enables the REST and

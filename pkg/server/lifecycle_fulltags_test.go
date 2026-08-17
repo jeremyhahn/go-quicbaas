@@ -866,6 +866,18 @@ func TestP10_Initialize_StartStorageError(t *testing.T) {
 	assert.Error(t, err) // startStorage fails => covers L290-292
 }
 
+// TestP10_Initialize_StartGRPCError proves initialize() propagates a
+// startGRPCServer failure. It used to force that failure via "no listeners
+// configured" (neither Unix socket nor TCP), but startGRPCServer no longer
+// owns a TCP listener at all (lifecycle.go: "There is no TCP listener here
+// anymore: the node already owns server.grpc.port") and the "no listeners"
+// guard was removed along with it -- a Unix-socket-less config now
+// legitimately succeeds (see
+// TestServer_StartGRPCServer_TT_NoUnixSocketConfigured_Succeeds in
+// lifecycle_full_tt_test.go). The remaining real failure mode of
+// startGRPCServer's Unix-socket path is the listenFunc seam itself, so this
+// now configures a real socket path and injects a listen failure there,
+// which initialize() must still propagate.
 func TestP10_Initialize_StartGRPCError(t *testing.T) {
 	saveAndRestoreSeams(t)
 	cfg := createFTConfig(t)
@@ -874,19 +886,22 @@ func TestP10_Initialize_StartGRPCError(t *testing.T) {
 	cfg.Security.TLSEnabled = false
 	cfg.Server.Embedded = false
 	cfg.Server.GRPC.Enabled = false
-	cfg.Server.Unix.Socket = "" // No listeners => error
+	cfg.Server.Unix.Socket = shortTTUnixSocketPath(t)
 
 	seamMu.Lock()
 	initIAMComponentsFn = func(_ *Server) (service.IAMComponents, error) { return nil, nil }
 	initSealManagerFn = func(_ *logger.Logger) error { return nil }
 	validateRoutingFn = func(_ []uint64, _ map[string]uint64) error { return nil }
+	listenFunc = func(network, address string) (net.Listener, error) {
+		return nil, errors.New("injected listen error")
+	}
 	seamMu.Unlock()
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
 	err = srv.initialize()
-	assert.Error(t, err) // No listeners configured => covers L405-407
+	assert.Error(t, err) // startGRPCServer's Unix-socket listenFunc fails => initialize must propagate it
 }
 
 // =============================================================================
@@ -1031,7 +1046,14 @@ func TestP10_FullLifecycle_WithREST_GRPC(t *testing.T) {
 
 // =============================================================================
 // 19. Lifecycle gRPC listener validation error
-// Covers lifecycle.go L1447-1448 (TCP listener creation failure)
+//
+// startGRPCServer no longer creates a TCP listener at all (lifecycle.go:
+// "There is no TCP listener here anymore: the node already owns
+// server.grpc.port") -- the only listener it still owns is the Unix-domain
+// socket, so that's the listenFunc call this test needs to reach. With
+// Unix.Socket == "" the injected listenFunc failure below was never called
+// (startUnixSocketListener is skipped entirely when the socket path is
+// empty), so the test passed a real socket path in but exercised nothing.
 // =============================================================================
 
 func TestP10_StartGRPCServer_ListenerError(t *testing.T) {
@@ -1041,8 +1063,7 @@ func TestP10_StartGRPCServer_ListenerError(t *testing.T) {
 	srv.config.Security.TLSEnabled = false
 	srv.config.Server.Embedded = false
 	srv.config.Server.GRPC.Enabled = true
-	srv.config.Server.GRPC.Port = -1 // Invalid port
-	srv.config.Server.Unix.Socket = ""
+	srv.config.Server.Unix.Socket = shortTTUnixSocketPath(t)
 
 	// Set up mock expectations for all service methods called during gRPC registration
 	mockSvc := srv.quicBaaSService.(*testutil.MockQuicBaaS)
