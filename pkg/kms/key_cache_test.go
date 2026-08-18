@@ -332,6 +332,31 @@ func TestTTL_MaxTTLEnforced(t *testing.T) {
 	}
 }
 
+// waitForExpiry blocks until keyID is no longer served by the cache, failing
+// the test if it outlives deadline. Expiry is wall-clock driven, so a test
+// that needs a key gone waits for the transition rather than assuming a sleep
+// sized just above the TTL outran it - on a loaded runner under -race it
+// routinely does not.
+func waitForExpiry(t *testing.T, cache *KeyCache, keyID string, deadline time.Duration) {
+	t.Helper()
+
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	timer := time.NewTimer(deadline)
+	defer timer.Stop()
+
+	for {
+		if _, found := cache.Get(keyID); !found {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-timer.C:
+			t.Fatalf("key %q did not expire within %s", keyID, deadline)
+		}
+	}
+}
+
 // TestTTL_CustomPerKey tests custom TTL per key.
 func TestTTL_CustomPerKey(t *testing.T) {
 	cache := NewKeyCache(&KeyCacheOptions{
@@ -339,16 +364,35 @@ func TestTTL_CustomPerKey(t *testing.T) {
 	})
 	defer cache.Close()
 
-	// Put keys with different TTLs
-	cache.Put("short", []byte("v1"), 10*time.Millisecond)
-	cache.Put("medium", []byte("v2"), 30*time.Millisecond)
-	cache.Put("long", []byte("v3"), 50*time.Millisecond)
+	// The assertions here are about ordering - short expires first, then
+	// medium, while long outlives both - so each key that must still be alive
+	// at a checkpoint needs enough headroom that a loaded runner cannot expire
+	// it early. The original 10/30/50ms spread only gave 'medium' a 2x margin
+	// over the sleep that preceded it, and failed intermittently under
+	// `go test -race -count=20 ./pkg/kms/`. Every assertion below is
+	// unchanged; only the margins and the way the test waits moved.
+	const (
+		shortTTL  = 10 * time.Millisecond
+		mediumTTL = 300 * time.Millisecond
+		longTTL   = 30 * time.Second
+	)
 
-	// After 15ms, only short should be expired
-	time.Sleep(15 * time.Millisecond)
-	if _, found := cache.Get("short"); found {
-		t.Error("expected 'short' to be expired")
+	for _, k := range []struct {
+		id       string
+		material []byte
+		ttl      time.Duration
+	}{
+		{"short", []byte("v1"), shortTTL},
+		{"medium", []byte("v2"), mediumTTL},
+		{"long", []byte("v3"), longTTL},
+	} {
+		if err := cache.Put(k.id, k.material, k.ttl); err != nil {
+			t.Fatalf("Put(%q) failed: %v", k.id, err)
+		}
 	}
+
+	// Once short has expired, medium and long must both still be cached.
+	waitForExpiry(t, cache, "short", longTTL)
 	if _, found := cache.Get("medium"); !found {
 		t.Error("expected 'medium' to still exist")
 	}
@@ -356,11 +400,8 @@ func TestTTL_CustomPerKey(t *testing.T) {
 		t.Error("expected 'long' to still exist")
 	}
 
-	// After 35ms total, medium should also be expired
-	time.Sleep(20 * time.Millisecond)
-	if _, found := cache.Get("medium"); found {
-		t.Error("expected 'medium' to be expired")
-	}
+	// Once medium has expired too, long must still be cached.
+	waitForExpiry(t, cache, "medium", longTTL)
 	if _, found := cache.Get("long"); !found {
 		t.Error("expected 'long' to still exist")
 	}
