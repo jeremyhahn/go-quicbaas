@@ -2815,6 +2815,14 @@ clean: ## Clean build artifacts and test data
 # #3 — it repeatedly destroyed the codex-review job image and failed 16 review
 # runs portfolio-wide).
 #
+# What this does NOT give you: isolation between two concurrent runs of this
+# repo's own stacks. Compose project names here come from the compose file's
+# directory (`integration`, `e2e`, ...), exactly as every test target already
+# uses them, so a second checkout or a concurrent run of the same suite shares
+# them. That is a property of the test harness, not of this target, and CI does
+# not run this target — the integration workflow lets `make integration-test`
+# tear down its own stack instead. This is a manual, opt-in developer target.
+#
 # Images built by this repo's `docker build` / `buildx build` targets. Images
 # built by compose are removed with the stack itself (`down --rmi local`).
 DOCKER_LOCAL_IMAGES := \
@@ -2835,7 +2843,7 @@ DOCKER_COMPOSE_NAMED_STACKS := \
 	tenantbarrier:test/integration/docker-compose.seal.yml
 
 .PHONY: clean-docker
-clean-docker: ## Clean this project's Docker resources (leaves other projects on the host alone)
+clean-docker: ## Clean this project's Docker stacks and images (never prunes the host)
 	@echo "$(BLUE)Cleaning QuicBaaS Docker resources...$(NC)"
 	@find . -name 'docker-compose*.yml' -not -path '*/node_modules/*' | while read -r compose_file; do \
 		$(DOCKER) compose -f "$$compose_file" down --volumes --remove-orphans --rmi local 2>/dev/null || true; \

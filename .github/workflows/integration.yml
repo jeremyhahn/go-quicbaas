@@ -55,20 +55,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
       # The stack builds several images in one run; the runner's stock free
-      # space is not enough for them plus the toolchain caches, so leftovers
-      # from earlier runs of THIS suite are cleared first.
+      # space is not enough for them plus the toolchain caches.
       #
-      # `make clean-docker` is scoped to this project's compose stacks and image
-      # tags on purpose. It must not become a host-global
-      # `docker system prune -af --volumes`: the runners are shared, and that
-      # deletes every unused image and named volume on the host, including the
-      # ones other repositories' jobs depend on (incident 2026-08-17, #3 — it
-      # repeatedly destroyed the codex-review job image and failed 16 review
-      # runs portfolio-wide).
+      # Nothing here touches Docker, deliberately. The suite reclaims its own
+      # space: `make integration-test` brings its compose stack down with
+      # `--volumes --remove-orphans` and removes the five node images and the
+      # test-runner image before it rebuilds them, and brings the stack down
+      # again when it finishes. A host-global
+      # `sudo docker system prune -af --volumes` used to run here instead; the
+      # runners are shared, and that deletes every unused image and named
+      # volume on the host. On 2026-08-17 it repeatedly destroyed the
+      # codex-review job image on gpu-host and omega and failed 16 review runs
+      # portfolio-wide (#3). Space beyond this job's own stack is host
+      # maintenance, not this workflow's to reclaim.
       - name: Free up disk space
         run: |
           echo "=== Disk space before cleanup ==="
@@ -77,9 +77,11 @@ jobs:
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
-          make clean-docker
           echo "=== Disk space after cleanup ==="
           df -h
+
+      - name: Checkout code
+        uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v6
