@@ -413,6 +413,13 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
+        # No credentials to push with on Gitea, and REGISTRY there resolves
+        # to the plain-HTTP internal registry (198.51.100.91:3001), which
+        # docker/login-action always contacts over HTTPS -- unguarded this
+        # fails every run with "http: server gave HTTP response to HTTPS
+        # client" (tasks 3612/3613/3614) before a single build step runs.
+        # Matches ci.yml's Docker job login guard.
+        if: github.server_url == 'https://github.com'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -489,7 +496,10 @@ jobs:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE: ${{ env.IMAGE_NAME_DAEMON }}
 
+      # No credentials to push with on Gitea (see the login step above)
+      # -- skip the push there rather than fail after a successful scan.
       - name: Build and push Docker image
+        if: github.server_url == 'https://github.com'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -522,6 +532,13 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
+        # No credentials to push with on Gitea, and REGISTRY there resolves
+        # to the plain-HTTP internal registry (198.51.100.91:3001), which
+        # docker/login-action always contacts over HTTPS -- unguarded this
+        # fails every run with "http: server gave HTTP response to HTTPS
+        # client" (tasks 3612/3613/3614) before a single build step runs.
+        # Matches ci.yml's Docker job login guard.
+        if: github.server_url == 'https://github.com'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -588,7 +605,9 @@ jobs:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE: ${{ env.IMAGE_NAME_CLI }}
 
+      # No credentials to push with on Gitea (see the login step above).
       - name: Build and push CLI Docker image
+        if: github.server_url == 'https://github.com'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -621,6 +640,13 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
+        # No credentials to push with on Gitea, and REGISTRY there resolves
+        # to the plain-HTTP internal registry (198.51.100.91:3001), which
+        # docker/login-action always contacts over HTTPS -- unguarded this
+        # fails every run with "http: server gave HTTP response to HTTPS
+        # client" (tasks 3612/3613/3614) before a single build step runs.
+        # Matches ci.yml's Docker job login guard.
+        if: github.server_url == 'https://github.com'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -685,7 +711,9 @@ jobs:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE: ${{ env.IMAGE_NAME_DAEMON }}
 
+      # No credentials to push with on Gitea (see the login step above).
       - name: Build and push FIPS Docker image
+        if: github.server_url == 'https://github.com'
         uses: docker/build-push-action@v6
         with:
           context: .

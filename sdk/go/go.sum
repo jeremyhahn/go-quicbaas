@@ -365,10 +365,10 @@ github.com/jeremyhahn/go-quicraft v0.4.2-alpha h1:clal9zNcy3A5jPWAani66JfkMWXT0L
 github.com/jeremyhahn/go-quicraft v0.4.2-alpha/go.mod h1:0Z/9RFjYvzrfod+fIPzXjqPjMa92x6le2Ta3OWIRBxk=
 github.com/jeremyhahn/go-truststrap v0.1.2-alpha h1:rkb3PngbOLrmaZyLQM4ifXqkY9k5vc+yyU569Vp2gYo=
 github.com/jeremyhahn/go-truststrap v0.1.2-alpha/go.mod h1:adfwW38ejKrQ7kGGGP2d9/csTTDbfVuklO0kbgCzuBM=
-github.com/jeremyhahn/go-xkms v0.7.2-alpha h1:rl3rFWEeI+z9kkXfkoDGpKkPTCyXa8IY1ykF1kD0Ye4=
-github.com/jeremyhahn/go-xkms v0.7.2-alpha/go.mod h1:4u8jJxCubdC/33r4aPn0xOZNf3MzMEePFKgisDO0/g4=
-github.com/jeremyhahn/go-xkms/sdk/go v0.7.2-alpha h1:EW8ecM2SGz9fJOH57teyEUSnA3xQa1ruwFt+27Gdjgc=
-github.com/jeremyhahn/go-xkms/sdk/go v0.7.2-alpha/go.mod h1:HAC67i+j30Fw3K7p4Om0thO3YG+KCOR554PeIxlCojc=
+github.com/jeremyhahn/go-xkms v0.7.4-alpha h1:yqotTJW88d31bsAcrvTT1pe9ixt+jmJK6GNq89XRBKA=
+github.com/jeremyhahn/go-xkms v0.7.4-alpha/go.mod h1:4u8jJxCubdC/33r4aPn0xOZNf3MzMEePFKgisDO0/g4=
+github.com/jeremyhahn/go-xkms/sdk/go v0.7.4-alpha h1:bHpxQLk+jQ+lCoxeoJbHoHlMyGkoJrw1H4vwdakQOrY=
+github.com/jeremyhahn/go-xkms/sdk/go v0.7.4-alpha/go.mod h1:HAC67i+j30Fw3K7p4Om0thO3YG+KCOR554PeIxlCojc=
 github.com/jeroenrinzema/psql-wire v0.18.0 h1:w8VZLCbyzx5UHQb3zojTBWYuOd9L2TlgrboD5jpsC4E=
 github.com/jeroenrinzema/psql-wire v0.18.0/go.mod h1:i7+aXJyIrgcXmbTkij68LdFs03w2f9kt18HIUo+eXmY=
 github.com/jmespath/go-jmespath v0.4.0 h1:BEgLn5cpjn8UN1mAw4NjwDrS35OdebyEtFe+9YPoQUg=
