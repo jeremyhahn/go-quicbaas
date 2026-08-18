@@ -19,6 +19,7 @@ import (
 	"errors"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1028,9 +1029,19 @@ func TestConcurrent_DuringCleanup(t *testing.T) {
 // background cleanup goroutine - against readers copying the same entry.
 func TestConcurrent_GetNeverObservesZeroedMaterial(t *testing.T) {
 	const (
-		keyID      = "racy-key"
-		readers    = 4
-		iterations = 1000
+		keyID   = "racy-key"
+		readers = 4
+
+		// The writer runs until the readers have logged minHits successful
+		// concurrent reads, so the test cannot pass by finishing before any
+		// reader was scheduled or by never landing a cache hit - either would
+		// leave the invariant unexercised. minIterations keeps it churning
+		// through every eviction path even once that quota is met, and
+		// maxIterations bounds the loop so a genuine failure to read reports
+		// as an explicit failure rather than hanging.
+		minHits       = 100
+		minIterations = 1000
+		maxIterations = 5_000_000
 	)
 
 	material := bytes.Repeat([]byte{0xA5}, 64)
@@ -1043,8 +1054,51 @@ func TestConcurrent_GetNeverObservesZeroedMaterial(t *testing.T) {
 	})
 	defer cache.Close()
 
-	var wg sync.WaitGroup
+	var (
+		wg     sync.WaitGroup
+		ready  sync.WaitGroup
+		hits   atomic.Int64
+		failed atomic.Bool
+	)
+	start := make(chan struct{})
 	done := make(chan struct{})
+
+	ready.Add(readers)
+	for r := 0; r < readers; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			// Park on the start barrier so every reader is running before the
+			// writer begins evicting.
+			ready.Done()
+			<-start
+
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+
+				if got, found := cache.Get(keyID); found {
+					if !bytes.Equal(got, material) {
+						failed.Store(true)
+						t.Errorf("Get reported a hit but returned %x, want %x", got, material)
+						return
+					}
+					hits.Add(1)
+				}
+
+				// Yield so the writer is not starved of the write lock by
+				// readers spinning on the read lock.
+				runtime.Gosched()
+			}
+		}()
+	}
+
+	ready.Wait()
+	close(start)
 
 	// Writer: continuously republishes and evicts the entry so readers are
 	// copying material that eviction is concurrently zeroing.
@@ -1053,7 +1107,14 @@ func TestConcurrent_GetNeverObservesZeroedMaterial(t *testing.T) {
 		defer wg.Done()
 		defer close(done)
 
-		for i := 0; i < iterations; i++ {
+		for i := 0; i < maxIterations; i++ {
+			if failed.Load() {
+				return
+			}
+			if i >= minIterations && hits.Load() >= minHits {
+				return
+			}
+
 			if err := cache.Put(keyID, material, time.Millisecond); err != nil {
 				t.Errorf("Put failed: %v", err)
 				return
@@ -1070,31 +1131,14 @@ func TestConcurrent_GetNeverObservesZeroedMaterial(t *testing.T) {
 		}
 	}()
 
-	for r := 0; r < readers; r++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
-			for {
-				select {
-				case <-done:
-					return
-				default:
-				}
-
-				if got, found := cache.Get(keyID); found && !bytes.Equal(got, material) {
-					t.Errorf("Get reported a hit but returned %x, want %x", got, material)
-					return
-				}
-
-				// Yield so the writer is not starved of the write lock by
-				// readers spinning on the read lock.
-				runtime.Gosched()
-			}
-		}()
-	}
-
 	wg.Wait()
+
+	// Without this the test would silently degrade into a no-op if readers
+	// stopped overlapping the writer.
+	if got := hits.Load(); !failed.Load() && got < minHits {
+		t.Fatalf("readers logged %d concurrent cache hits, want >= %d: the "+
+			"copy-versus-zero invariant was never exercised", got, minHits)
+	}
 }
 
 // TestZeroMemory_OnDelete tests memory is zeroed on delete.
