@@ -17,7 +17,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -279,7 +281,12 @@ func TestTTL_KeyAccessibleBeforeExpiry(t *testing.T) {
 	cache := NewKeyCache(nil)
 	defer cache.Close()
 
-	ttl := 50 * time.Millisecond
+	// The TTL only has to outlast five 5ms sleeps, but it is set far above
+	// that on purpose: at 50ms this test used to fail on loaded CI runners
+	// (three hits instead of five) simply because the sleeps and the -race
+	// instrumentation overran the key's lifetime. That is a wall-clock margin,
+	// not a weaker assertion - every check below is unchanged.
+	ttl := 5 * time.Second
 	material := []byte("value1")
 	err := cache.Put("key1", material, ttl)
 	if err != nil {
@@ -326,6 +333,31 @@ func TestTTL_MaxTTLEnforced(t *testing.T) {
 	}
 }
 
+// waitForExpiry blocks until keyID is no longer served by the cache, failing
+// the test if it outlives deadline. Expiry is wall-clock driven, so a test
+// that needs a key gone waits for the transition rather than assuming a sleep
+// sized just above the TTL outran it - on a loaded runner under -race it
+// routinely does not.
+func waitForExpiry(t *testing.T, cache *KeyCache, keyID string, deadline time.Duration) {
+	t.Helper()
+
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	timer := time.NewTimer(deadline)
+	defer timer.Stop()
+
+	for {
+		if _, found := cache.Get(keyID); !found {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-timer.C:
+			t.Fatalf("key %q did not expire within %s", keyID, deadline)
+		}
+	}
+}
+
 // TestTTL_CustomPerKey tests custom TTL per key.
 func TestTTL_CustomPerKey(t *testing.T) {
 	cache := NewKeyCache(&KeyCacheOptions{
@@ -333,16 +365,35 @@ func TestTTL_CustomPerKey(t *testing.T) {
 	})
 	defer cache.Close()
 
-	// Put keys with different TTLs
-	cache.Put("short", []byte("v1"), 10*time.Millisecond)
-	cache.Put("medium", []byte("v2"), 30*time.Millisecond)
-	cache.Put("long", []byte("v3"), 50*time.Millisecond)
+	// The assertions here are about ordering - short expires first, then
+	// medium, while long outlives both - so each key that must still be alive
+	// at a checkpoint needs enough headroom that a loaded runner cannot expire
+	// it early. The original 10/30/50ms spread only gave 'medium' a 2x margin
+	// over the sleep that preceded it, and failed intermittently under
+	// `go test -race -count=20 ./pkg/kms/`. Every assertion below is
+	// unchanged; only the margins and the way the test waits moved.
+	const (
+		shortTTL  = 10 * time.Millisecond
+		mediumTTL = 300 * time.Millisecond
+		longTTL   = 30 * time.Second
+	)
 
-	// After 15ms, only short should be expired
-	time.Sleep(15 * time.Millisecond)
-	if _, found := cache.Get("short"); found {
-		t.Error("expected 'short' to be expired")
+	for _, k := range []struct {
+		id       string
+		material []byte
+		ttl      time.Duration
+	}{
+		{"short", []byte("v1"), shortTTL},
+		{"medium", []byte("v2"), mediumTTL},
+		{"long", []byte("v3"), longTTL},
+	} {
+		if err := cache.Put(k.id, k.material, k.ttl); err != nil {
+			t.Fatalf("Put(%q) failed: %v", k.id, err)
+		}
 	}
+
+	// Once short has expired, medium and long must both still be cached.
+	waitForExpiry(t, cache, "short", longTTL)
 	if _, found := cache.Get("medium"); !found {
 		t.Error("expected 'medium' to still exist")
 	}
@@ -350,11 +401,8 @@ func TestTTL_CustomPerKey(t *testing.T) {
 		t.Error("expected 'long' to still exist")
 	}
 
-	// After 35ms total, medium should also be expired
-	time.Sleep(20 * time.Millisecond)
-	if _, found := cache.Get("medium"); found {
-		t.Error("expected 'medium' to be expired")
-	}
+	// Once medium has expired too, long must still be cached.
+	waitForExpiry(t, cache, "medium", longTTL)
 	if _, found := cache.Get("long"); !found {
 		t.Error("expected 'long' to still exist")
 	}
@@ -971,6 +1019,126 @@ func TestConcurrent_DuringCleanup(t *testing.T) {
 	wg.Wait()
 
 	// Should complete without panics during concurrent cleanup
+}
+
+// TestConcurrent_GetNeverObservesZeroedMaterial pins the ownership invariant
+// between readers and eviction: key material is zeroed on eviction, so a Get
+// that reports a hit must return the material that was cached, never the
+// random-then-zero pattern a concurrent eviction writes over it. It exercises
+// every path that zeroes an entry - Delete, Clear, Put's replace path and the
+// background cleanup goroutine - against readers copying the same entry.
+func TestConcurrent_GetNeverObservesZeroedMaterial(t *testing.T) {
+	const (
+		keyID   = "racy-key"
+		readers = 4
+
+		// The writer runs until the readers have logged minHits successful
+		// concurrent reads, so the test cannot pass by finishing before any
+		// reader was scheduled or by never landing a cache hit - either would
+		// leave the invariant unexercised. minIterations keeps it churning
+		// through every eviction path even once that quota is met, and
+		// maxIterations bounds the loop so a genuine failure to read reports
+		// as an explicit failure rather than hanging.
+		minHits       = 100
+		minIterations = 1000
+		maxIterations = 5_000_000
+	)
+
+	material := bytes.Repeat([]byte{0xA5}, 64)
+
+	// A 1ms cleanup interval keeps the background eviction goroutine running
+	// against the readers for the whole test; the matching TTL below makes
+	// every entry a candidate for it.
+	cache := NewKeyCache(&KeyCacheOptions{
+		CleanupInterval: time.Millisecond,
+	})
+	defer cache.Close()
+
+	var (
+		wg     sync.WaitGroup
+		ready  sync.WaitGroup
+		hits   atomic.Int64
+		failed atomic.Bool
+	)
+	start := make(chan struct{})
+	done := make(chan struct{})
+
+	ready.Add(readers)
+	for r := 0; r < readers; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			// Park on the start barrier so every reader is running before the
+			// writer begins evicting.
+			ready.Done()
+			<-start
+
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+
+				if got, found := cache.Get(keyID); found {
+					if !bytes.Equal(got, material) {
+						failed.Store(true)
+						t.Errorf("Get reported a hit but returned %x, want %x", got, material)
+						return
+					}
+					hits.Add(1)
+				}
+
+				// Yield so the writer is not starved of the write lock by
+				// readers spinning on the read lock.
+				runtime.Gosched()
+			}
+		}()
+	}
+
+	ready.Wait()
+	close(start)
+
+	// Writer: continuously republishes and evicts the entry so readers are
+	// copying material that eviction is concurrently zeroing.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(done)
+
+		for i := 0; i < maxIterations; i++ {
+			if failed.Load() {
+				return
+			}
+			if i >= minIterations && hits.Load() >= minHits {
+				return
+			}
+
+			if err := cache.Put(keyID, material, time.Millisecond); err != nil {
+				t.Errorf("Put failed: %v", err)
+				return
+			}
+			switch i % 3 {
+			case 0:
+				cache.Delete(keyID)
+			case 1:
+				cache.Clear()
+			default:
+				// Left in place for the cleanup goroutine to expire, or for
+				// the next iteration's Put to replace.
+			}
+		}
+	}()
+
+	wg.Wait()
+
+	// Without this the test would silently degrade into a no-op if readers
+	// stopped overlapping the writer.
+	if got := hits.Load(); !failed.Load() && got < minHits {
+		t.Fatalf("readers logged %d concurrent cache hits, want >= %d: the "+
+			"copy-versus-zero invariant was never exercised", got, minHits)
+	}
 }
 
 // TestZeroMemory_OnDelete tests memory is zeroed on delete.
