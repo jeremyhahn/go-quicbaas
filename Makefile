@@ -2808,10 +2808,41 @@ clean: ## Clean build artifacts and test data
 	$(GOCMD) clean -cache -testcache
 	@echo "$(GREEN)Cleanup complete$(NC)"
 
+# Docker cleanup is scoped to the resources this repo creates, by name. It must
+# never be a host-global `docker system prune -af --volumes`: the CI runners are
+# shared, and that deletes every unused image and named volume on the host,
+# including the ones other repositories' jobs depend on (incident 2026-08-17,
+# #3 — it repeatedly destroyed the codex-review job image and failed 16 review
+# runs portfolio-wide).
+#
+# Images built by this repo's `docker build` / `buildx build` targets. Images
+# built by compose are removed with the stack itself (`down --rmi local`).
+DOCKER_LOCAL_IMAGES := \
+	$(DOCKER_IMAGE):$(DOCKER_TAG) \
+	$(DOCKER_IMAGE):latest \
+	$(DOCKER_IMAGE):dev \
+	$(DOCKER_IMAGE):fips \
+	$(DOCKER_IMAGE)-test:latest \
+	$(DOCKER_IMAGE)-devcontainer:latest \
+	$(DOCKER_IMAGE)-integration-test:latest \
+	$(DOCKER_IMAGE)-integration-node:latest
+
+# Stacks the test targets run under an explicit `docker compose -p` name. Every
+# other stack takes its project name from its compose file's directory, so
+# bringing that file down is enough.
+DOCKER_COMPOSE_PROJECTS := seal-hw tenantbarrier
+
 .PHONY: clean-docker
-clean-docker: ## Clean Docker resources
-	@echo "$(BLUE)Cleaning Docker resources...$(NC)"
-	$(DOCKER) system prune -af --volumes
+clean-docker: ## Clean this project's Docker resources (leaves other projects on the host alone)
+	@echo "$(BLUE)Cleaning QuicBaaS Docker resources...$(NC)"
+	@find . -name 'docker-compose*.yml' -not -path './node_modules/*' | while read -r compose_file; do \
+		$(DOCKER) compose -f "$$compose_file" down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
+	done
+	@for project in $(DOCKER_COMPOSE_PROJECTS); do \
+		$(DOCKER) compose -p $$project down --volumes --remove-orphans 2>/dev/null || true; \
+	done
+	@$(DOCKER) rmi -f $(DOCKER_LOCAL_IMAGES) 2>/dev/null || true
+	@echo "$(GREEN)QuicBaaS Docker resources removed$(NC)"
 
 .PHONY: clean-all
 clean-all: clean clean-docker proto-clean cluster-clean ## Clean everything
