@@ -2428,7 +2428,7 @@ gosec: ## Run gosec security scanner
 		echo "$(YELLOW)Install with: make install-gosec$(NC)"; \
 		exit 1; \
 	fi; \
-	$$GOSEC_BIN -exclude=$(GOSEC_EXCLUDE) -severity medium -confidence medium \
+	$$GOSEC_BIN -concurrency 4 -exclude=$(GOSEC_EXCLUDE) -severity medium -confidence medium \
 		-exclude-dir=test -exclude-dir=testdata -exclude-dir=vendor -exclude-dir=sdk -exclude-dir=.tmp -exclude-dir=.deps \
 		-exclude-generated \
 		-tags "$$(echo '$(LINT_BUILD_TAGS)' | tr ' ' ',')" \
