@@ -339,14 +339,20 @@ SIEM events include signature IDs for correlation:
 ### Go API
 
 ```go
-import "github.com/jeremyhahn/go-quicbaas/pkg/security"
+import (
+    "os"
+
+    "github.com/jeremyhahn/go-quicbaas/pkg/security"
+)
 
 // Create audit logger
 cfg := &security.AuditConfig{
     Enabled:          true,
     File:             "/var/log/quicbaas/audit.log",
     SignLogs:         true,
-    SignKey:          "your-hmac-key", // >= 14 bytes (112 bits)
+    // At least 14 bytes (112 bits). Generate with `openssl rand -base64 32`
+    // and load it from protected configuration rather than hardcoding it.
+    SignKey:          os.Getenv("AUDIT_SIGN_KEY"),
     Compress:         true,
     CompressionLevel: security.CompressionLevelDefault,
     SyslogEnabled:    true,
