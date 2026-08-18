@@ -55,6 +55,7 @@ const (
 const (
 	ErrCodeAuditConfigNil        = "AUDIT_CONFIG_NIL"
 	ErrCodeAuditSignKeyRequired  = "AUDIT_SIGN_KEY_REQUIRED"
+	ErrCodeAuditSignKeyTooShort  = "AUDIT_SIGN_KEY_TOO_SHORT"
 	ErrCodeAuditFileOpen         = "AUDIT_FILE_OPEN"
 	ErrCodeAuditFileRotate       = "AUDIT_FILE_ROTATE"
 	ErrCodeAuditEventSign        = "AUDIT_EVENT_SIGN"
@@ -1319,6 +1320,21 @@ type AuditLogger struct {
 	rotationWatchers atomic.Int64
 }
 
+// MinAuditSignKeyLen is the shortest HMAC signing key accepted for
+// tamper-evident audit logs. FIPS 140-3 (SP 800-107) requires HMAC keys of at
+// least 112 bits, and Go's crypto/hmac panics on shorter keys under
+// GODEBUG=fips140=only.
+const MinAuditSignKeyLen = 14
+
+// newSignKeyTooShortError reports a signing key below the FIPS 140-3 minimum.
+func newSignKeyTooShortError(keyLen int) *AuditError {
+	return &AuditError{
+		Code: ErrCodeAuditSignKeyTooShort,
+		Message: fmt.Sprintf("sign_key must be at least %d bytes (%d bits); got %d",
+			MinAuditSignKeyLen, MinAuditSignKeyLen*8, keyLen),
+	}
+}
+
 // AuditConfig configures audit logging behavior.
 type AuditConfig struct {
 	Enabled          bool          `json:"enabled"`
@@ -1328,7 +1344,7 @@ type AuditConfig struct {
 	Compress         bool          `json:"compress"`
 	CompressionLevel int           `json:"compression_level"` // gzip compression level (0-9, -1 for default, -2 for Huffman only)
 	SignLogs         bool          `json:"sign_logs"`         // Tamper-proof logging
-	SignKey          string        `json:"sign_key"`          // HMAC key for signatures
+	SignKey          string        `json:"sign_key"`          // HMAC key for signatures; at least MinAuditSignKeyLen bytes
 	BufferSize       int           `json:"buffer_size"`       // Buffer size for batching
 	FlushInterval    time.Duration `json:"flush_interval"`    // Auto-flush interval
 
@@ -1454,6 +1470,9 @@ func NewAuditLogger(cfg *AuditConfig, log *logger.Logger) (*AuditLogger, error) 
 				Code:    ErrCodeAuditSignKeyRequired,
 				Message: "sign_key is required when sign_logs is enabled",
 			}
+		}
+		if len(cfg.SignKey) < MinAuditSignKeyLen {
+			return nil, newSignKeyTooShortError(len(cfg.SignKey))
 		}
 		al.signKey = []byte(cfg.SignKey)
 	}
@@ -1908,6 +1927,13 @@ func (al *AuditLogger) LogTenantDEKOperation(ctx context.Context, action, tenant
 
 // signEvent creates an HMAC signature for the audit event.
 func (al *AuditLogger) signEvent(event *AuditEvent) (string, error) {
+	// NewAuditLogger rejects short keys, so this only guards a logger built
+	// by other means. crypto/hmac panics on such keys in FIPS 140-only mode;
+	// a typed error keeps that a caller-visible failure instead.
+	if len(al.signKey) < MinAuditSignKeyLen {
+		return "", newSignKeyTooShortError(len(al.signKey))
+	}
+
 	// Create canonical representation for signing
 	data := fmt.Sprintf("%s|%s|%s|%s|%s|%s",
 		event.Timestamp.Format(time.RFC3339Nano),
