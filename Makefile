@@ -2827,10 +2827,12 @@ DOCKER_LOCAL_IMAGES := \
 	$(DOCKER_IMAGE)-integration-test:latest \
 	$(DOCKER_IMAGE)-integration-node:latest
 
-# Stacks the test targets run under an explicit `docker compose -p` name. Every
-# other stack takes its project name from its compose file's directory, so
-# bringing that file down is enough.
-DOCKER_COMPOSE_PROJECTS := seal-hw tenantbarrier
+# Stacks the test targets run under an explicit `docker compose -p` name, as
+# <project>:<compose file>. Every other stack takes its project name from its
+# compose file's directory, so bringing that file down is enough.
+DOCKER_COMPOSE_NAMED_STACKS := \
+	seal-hw:test/integration/docker-compose.seal-hardware.yml \
+	tenantbarrier:test/integration/docker-compose.seal.yml
 
 .PHONY: clean-docker
 clean-docker: ## Clean this project's Docker resources (leaves other projects on the host alone)
@@ -2838,8 +2840,8 @@ clean-docker: ## Clean this project's Docker resources (leaves other projects on
 	@find . -name 'docker-compose*.yml' -not -path '*/node_modules/*' | while read -r compose_file; do \
 		$(DOCKER) compose -f "$$compose_file" down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
 	done
-	@for project in $(DOCKER_COMPOSE_PROJECTS); do \
-		$(DOCKER) compose -p $$project down --volumes --remove-orphans 2>/dev/null || true; \
+	@for stack in $(DOCKER_COMPOSE_NAMED_STACKS); do \
+		$(DOCKER) compose -p "$${stack%%:*}" -f "$${stack#*:}" down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
 	done
 	@$(DOCKER) rmi -f $(DOCKER_LOCAL_IMAGES) 2>/dev/null || true
 	@echo "$(GREEN)QuicBaaS Docker resources removed$(NC)"
