@@ -17,11 +17,15 @@
 #
 # Two sources, both literal:
 #
-#   1. This repo's own Docker commands in the Makefile and scripts/ — the `-t`
-#      of every `docker build` / `buildx build` and the destination of every
-#      `docker tag`. Backslash continuations are joined first, so a build spread
-#      over several lines is one command here, and a variable assigned a literal
-#      in that same command is resolved.
+#   1. This repo's own Docker commands in the Makefile and in every shell script
+#      under it — the `-t` of every `docker build` / `buildx build` and the
+#      destination of every `docker tag`. Backslash continuations are joined
+#      first, so a build spread over several lines is one command here, and a
+#      variable assigned a literal in that same command is resolved. The script
+#      sweep is recursive on purpose: a producer added under `test/`,
+#      `deployments/` or any other subdirectory is as real as one in `scripts/`,
+#      and a scan that only looked at `scripts/*.sh` would let it escape both
+#      cleanup and this check.
 #
 #   2. The explicit `image:` tag of every Compose service that also has a
 #      `build:` — the identity Compose gives the image it builds.
@@ -43,13 +47,27 @@ ROOT=${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}
 cd "$ROOT"
 
 # Source 1: this repository's own docker commands.
+# Every file that may contain one of this repository's own docker commands: the
+# Makefile and every shell script beneath it. Vendored and generated trees are
+# not ours to answer for, and the two scripts of this check name image tags only
+# as data, so they are excluded rather than read as producers.
+docker_command_files() {
+    if [ -f Makefile ]; then
+        echo ./Makefile
+    fi
+    find . \
+        -path ./.git -prune -o \
+        -name node_modules -prune -o \
+        -name vendor -prune -o \
+        -name '*.sh' -print |
+        grep -vx -e ./scripts/docker-image-inventory.sh -e ./scripts/verify-clean-docker.sh |
+        sort
+}
+
 scan_docker_commands() {
     local file
-    for file in Makefile scripts/*.sh; do
+    while IFS= read -r file; do
         [ -f "$file" ] || continue
-        case "$file" in
-            scripts/docker-image-inventory.sh|scripts/verify-clean-docker.sh) continue ;;
-        esac
         # Join backslash continuations so each logical command is one record:
         # a build's `-t` and the variable assignment it refers to then sit in
         # the same record, which is also the shell's own view of them.
@@ -150,7 +168,7 @@ scan_docker_commands() {
                   if (unresolved) exit 1
                 }
                 ' || return 1
-    done
+    done < <(docker_command_files)
 }
 
 # Source 2: the explicit `image:` of every Compose service that builds.

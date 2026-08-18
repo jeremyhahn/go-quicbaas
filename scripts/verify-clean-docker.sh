@@ -105,13 +105,22 @@ compare_coverage() {
 }
 
 # Writes a self-contained repository under $1 whose DOCKER_LOCAL_IMAGES is $2
-# and whose sole build produces $3, plus a compose file that builds
+# and whose sole Makefile build produces $3, plus a compose file that builds
 # fixture-compose:latest and pulls redis:7-alpine. The build is spread over
 # continuation lines because a line-at-a-time scan would miss it. $4, when
-# given, is a tag the fixture only ever removes and never builds.
+# given, is a tag the fixture only ever removes and never builds. $5, when
+# given, is built by a script nested well below the top level, where a sweep
+# of `scripts/*.sh` alone would never look.
 write_fixture() {
-    local dir=$1 cleaned=$2 built=$3 removed=${4:-}
+    local dir=$1 cleaned=$2 built=$3 removed=${4:-} nested=${5:-}
     mkdir -p "$dir"
+    if [ -n "$nested" ]; then
+        mkdir -p "$dir/test/tools"
+        {
+            echo "#!/usr/bin/env bash"
+            printf 'docker build -t %s .\n' "$nested"
+        } > "$dir/test/tools/build-image.sh"
+    fi
     {
         echo "DOCKER_IMAGE := fixture"
         echo "DOCKER_TAG := 9.9.9"
@@ -225,6 +234,18 @@ if grep -qx "someone-elses/image:latest" "$WORK/laundered-out/created"; then
 fi
 if ! grep -qx "someone-elses/image:latest" "$WORK/laundered-out/extra"; then
     fail "a foreign tag removed but never built was not reported as out of scope"
+fi
+
+# The scan has to reach every script in the repository, not just `scripts/*.sh`.
+# A build hidden a few directories down is an image cleanup would leave behind,
+# and a scan that cannot see it reports the coverage check as clean.
+echo "case: a producer in a nested script is still seen"
+write_fixture "$WORK/nested" "" "fixture-multiline:latest" "" "fixture-nested:latest"
+if ! compare_coverage "$WORK/nested" "$WORK/nested-out"; then
+    fail "the fixture inventory could not be derived: $(tr '\n' ' ' < "$WORK/nested-out/err")"
+fi
+if ! grep -qx "fixture-nested:latest" "$WORK/nested-out/missing"; then
+    fail "a 'docker build -t' in a script below the top level was not derived"
 fi
 
 # A producer named by a variable resolved at run time cannot be cleaned up by

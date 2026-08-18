@@ -1607,6 +1607,15 @@ stage-gomodauth: ## Stage Gitea module-fetch credentials for the image builds
 		echo "$(YELLOW)  (dependency-resolution.md section 6 -- the Gitea runners inject it)$(NC)"; \
 	fi
 
+# Teardown is armed by an EXIT trap before the first container exists, because
+# the workflow no longer prunes the runner behind this job (#3): what this stack
+# leaves behind now stays behind. The recipe can leave early from a build
+# failure, an unhealthy cluster, a `set -e` trip or a cancelled job, and every
+# one of those paths used to skip the `down` near the end. The trap covers all
+# of them; TORN_DOWN keeps it from repeating a teardown an explicit path already
+# did. It is best-effort on purpose — a teardown error must not overwrite the
+# test result the caller is waiting for, and the explicit `down`s still report
+# their own failures loudly.
 .PHONY: integration-test
 integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by default; OLLAMA_CPU=1 or GPU_HOST=<host> to include)
 	@echo "$(BLUE)Running Docker integration tests...$(NC)"
@@ -1668,6 +1677,8 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	OLLAMA_UP_SERVICES=""; \
 	if [ $$START_LOCAL_OLLAMA -eq 1 ]; then OLLAMA_UP_SERVICES="ollama ollama-setup"; fi; \
 	echo "$(BLUE)  Ollama mode: enabled=$$OLLAMA_ENABLED gpu=$$TEST_GPU local-container=$$START_LOCAL_OLLAMA url=$$OLLAMA_URL$(NC)"; \
+	TORN_DOWN=0; \
+	trap 'if [ $$TORN_DOWN -eq 0 ]; then echo "$(YELLOW)Tearing down the integration stack...$(NC)"; docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans >/dev/null 2>&1 || true; fi' EXIT; \
 	cp go.mod /tmp/quicbaas-gomod-backup; \
 	cp sdk/go/go.mod /tmp/quicbaas-sdk-gomod-backup; \
 	echo "$(YELLOW)CLI binary and mTLS certificates are produced inside the stack$(NC)"; \
@@ -1722,6 +1733,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 		echo "$(YELLOW)Recent logs:$(NC)"; \
 		docker compose -f $$COMPOSE_FILE logs --tail=20; \
 		docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+		TORN_DOWN=1; \
 		exit 1; \
 	fi; \
 	echo ""; \
@@ -1860,6 +1872,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	echo ""; \
 	echo "$(BLUE)Stopping integration test cluster...$(NC)"; \
 	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+	TORN_DOWN=1; \
 	echo "$(YELLOW)Restoring go.mod files (if modified by container)...$(NC)"; \
 	if [ -f /tmp/quicbaas-gomod-backup ]; then cp /tmp/quicbaas-gomod-backup go.mod; fi; \
 	if [ -f /tmp/quicbaas-sdk-gomod-backup ]; then cp /tmp/quicbaas-sdk-gomod-backup sdk/go/go.mod; fi; \
@@ -2837,7 +2850,8 @@ clean: ## Clean build artifacts and test data
 # instead torn down by the target that runs it, where the name is unambiguous
 # because that target just used it: `integration-test` brings its stack down
 # with `--volumes --remove-orphans` and removes those six images by name before
-# it rebuilds them, and brings the stack down again when it finishes.
+# it rebuilds them, and an EXIT trap brings the stack down again on every way
+# out of that recipe.
 DOCKER_LOCAL_IMAGES := \
 	$(DOCKER_IMAGE):$(DOCKER_TAG) \
 	$(DOCKER_IMAGE):latest \
@@ -3718,8 +3732,13 @@ verify-clean-docker: ## Fail if clean-docker reaches beyond this project's image
 	@echo "$(BLUE)verify-clean-docker: checking cleanup scope and failure propagation...$(NC)"
 	@bash scripts/verify-clean-docker.sh
 
+.PHONY: verify-integration-teardown
+verify-integration-teardown: ## Fail if the integration stack can outlive a run that left early
+	@echo "$(BLUE)verify-integration-teardown: checking the stack comes down on the early-exit path...$(NC)"
+	@bash scripts/verify-integration-teardown.sh
+
 .PHONY: verify
-verify: verify-naming verify-cli-flags verify-api-shapes verify-clean-docker ## Run all cross-project verifications
+verify: verify-naming verify-cli-flags verify-api-shapes verify-clean-docker verify-integration-teardown ## Run all cross-project verifications
 	@echo "$(GREEN)All verifications OK$(NC)"
 
 # =============================================================================
