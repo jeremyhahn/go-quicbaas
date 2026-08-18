@@ -83,16 +83,16 @@ func TestConvertAlgorithmApproved(t *testing.T) {
 	}
 }
 
-// TestConvertAlgorithmSHA1OutsideFIPS verifies SHA1 - and the empty and
-// unrecognized resting values that historically meant SHA1 - still resolve to
-// HMAC-SHA1 when the process is not in FIPS mode. No HMAC is computed here, so
-// this is safe to assert in either runtime.
+// TestConvertAlgorithmSHA1OutsideFIPS verifies SHA1 - and the empty resting
+// value that predates the field and means SHA1 - still resolve to HMAC-SHA1
+// when the process is not in FIPS mode. No HMAC is computed here, so this is
+// safe to assert in either runtime.
 func TestConvertAlgorithmSHA1OutsideFIPS(t *testing.T) {
 	original := fipsEnabled
 	fipsEnabled = func() bool { return false }
 	t.Cleanup(func() { fipsEnabled = original })
 
-	for _, input := range []MFAAlgorithm{MFAAlgorithmSHA1, "", "INVALID"} {
+	for _, input := range []MFAAlgorithm{MFAAlgorithmSHA1, ""} {
 		t.Run(string(input), func(t *testing.T) {
 			result, err := convertAlgorithm("test.convert", input)
 			require.NoError(t, err)
@@ -107,7 +107,7 @@ func TestConvertAlgorithmSHA1OutsideFIPS(t *testing.T) {
 func TestConvertAlgorithmRejectsSHA1UnderFIPS(t *testing.T) {
 	forceFIPSPolicy(t)
 
-	for _, input := range []MFAAlgorithm{MFAAlgorithmSHA1, "", "INVALID"} {
+	for _, input := range []MFAAlgorithm{MFAAlgorithmSHA1, ""} {
 		t.Run(string(input), func(t *testing.T) {
 			_, err := convertAlgorithm("test.convert", input)
 			require.Error(t, err)
@@ -202,4 +202,138 @@ func TestVerifyCodeStoredSHA1Secret(t *testing.T) {
 	})
 	require.NoError(t, m.VerifyCode(ctx, "user-legacy", "tenant-123", code),
 		"an enrollment provisioned with SHA1 must keep verifying outside FIPS mode")
+}
+
+// TestConvertAlgorithmRejectsUnknown verifies an unrecognized identifier fails
+// closed in every mode instead of acquiring SHA1's meaning.
+func TestConvertAlgorithmRejectsUnknown(t *testing.T) {
+	for _, input := range []MFAAlgorithm{"INVALID", "MD5", "SHA3-256"} {
+		t.Run(string(input), func(t *testing.T) {
+			_, err := convertAlgorithm("test.convert", input)
+			require.Error(t, err)
+
+			var unsupported *MFAAlgorithmUnsupportedError
+			require.True(t, errors.As(err, &unsupported), "want *MFAAlgorithmUnsupportedError, got %T", err)
+			assert.Equal(t, input, unsupported.Algorithm)
+			assert.Contains(t, unsupported.Error(), "unsupported TOTP algorithm "+string(input))
+
+			forceFIPSPolicy(t)
+			_, err = convertAlgorithm("test.convert", input)
+			require.Error(t, err)
+			assert.True(t, errors.As(err, &unsupported))
+		})
+	}
+}
+
+// TestMFASecretValidateRejectsUnknownAlgorithm verifies a corrupted record
+// cannot be persisted. An empty algorithm predates the field and stays valid.
+func TestMFASecretValidateRejectsUnknownAlgorithm(t *testing.T) {
+	secret := func(algo MFAAlgorithm) *MFASecret {
+		return &MFASecret{
+			ID: "secret-1", UserID: "user-123", TenantID: "tenant-123",
+			Secret: testTOTPSecret, Algorithm: algo, Digits: 6, Period: 30,
+		}
+	}
+
+	require.NoError(t, secret("").Validate(), "an empty algorithm is a legacy record, not a corrupt one")
+	require.NoError(t, secret(MFAAlgorithmSHA1).Validate())
+	require.NoError(t, secret(MFAAlgorithmSHA256).Validate())
+
+	err := secret("MD5").Validate()
+	require.Error(t, err)
+	var unsupported *MFAAlgorithmUnsupportedError
+	assert.True(t, errors.As(err, &unsupported), "want *MFAAlgorithmUnsupportedError, got %T", err)
+}
+
+// TestCompleteEnrollmentUsesProvisionedParameters verifies a pending enrollment
+// is completed against the parameters encoded in the URI the authenticator
+// scanned, not against a configuration that changed in the meantime - a
+// restart, a rolling deployment, or a move into FIPS mode during the ten
+// minute enrollment window.
+func TestCompleteEnrollmentUsesProvisionedParameters(t *testing.T) {
+	storage := NewMemoryMFAStorage()
+	ctx := context.Background()
+
+	provisioning := MFAConfig{Issuer: "QuicBaaS", Digits: 6, Period: 30, Algorithm: MFAAlgorithmSHA256, Skew: 1, BackupCodes: 10}
+	issuer, err := NewMFAManager(WithMFAStorage(storage), WithMFAConfig(provisioning))
+	require.NoError(t, err)
+
+	enrollment, err := issuer.BeginEnrollment(ctx, "user-123", "tenant-123", MFAMethodTOTP)
+	require.NoError(t, err)
+	code := generateValidTOTPCode(t, enrollment.Secret, provisioning)
+
+	// A second manager over the same store, configured differently.
+	completer, err := NewMFAManager(WithMFAStorage(storage), WithMFAConfig(MFAConfig{
+		Issuer: "QuicBaaS", Digits: 8, Period: 60, Algorithm: MFAAlgorithmSHA512, Skew: 1, BackupCodes: 10,
+	}))
+	require.NoError(t, err)
+
+	require.NoError(t, completer.CompleteEnrollment(ctx, enrollment.EnrollmentID, code),
+		"the code the authenticator was provisioned to produce must be accepted")
+
+	stored, err := storage.GetSecret(ctx, "user-123", "tenant-123")
+	require.NoError(t, err)
+	assert.Equal(t, MFAAlgorithmSHA256, stored.Algorithm)
+	assert.Equal(t, 6, stored.Digits)
+	assert.Equal(t, 30, stored.Period)
+}
+
+// TestCompleteEnrollmentLegacyEnrollmentUsesConfig verifies an enrollment
+// persisted before the provisioning parameters were recorded still completes,
+// using the manager's configuration as it did before.
+func TestCompleteEnrollmentLegacyEnrollmentUsesConfig(t *testing.T) {
+	m, err := NewMFAManager()
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	legacy := &MFAEnrollment{
+		ID:          "enrollment-legacy",
+		UserID:      "user-123",
+		TenantID:    "tenant-123",
+		Method:      MFAMethodTOTP,
+		Secret:      testTOTPSecret,
+		ExpiresAt:   time.Now().Add(10 * time.Minute),
+		MaxAttempts: 5,
+		Created:     time.Now(),
+	}
+	require.NoError(t, m.storage.SaveEnrollment(ctx, legacy))
+
+	code := generateValidTOTPCode(t, legacy.Secret, m.config)
+	require.NoError(t, m.CompleteEnrollment(ctx, legacy.ID, code))
+
+	stored, err := m.storage.GetSecret(ctx, "user-123", "tenant-123")
+	require.NoError(t, err)
+	assert.Equal(t, m.config.Algorithm, stored.Algorithm)
+}
+
+// TestVerifyChallengeSurfacesAlgorithmRejection verifies the authentication API
+// - not just VerifyCode - reports the re-enrollment requirement, and that the
+// refusal does not consume one of the user's verification attempts.
+func TestVerifyChallengeSurfacesAlgorithmRejection(t *testing.T) {
+	m, err := NewMFAManager(WithMFAConfig(MFAConfig{Algorithm: MFAAlgorithmSHA256}))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, m.storage.SaveSecret(ctx, &MFASecret{
+		ID: "secret-legacy", UserID: "user-legacy", TenantID: "tenant-123",
+		Secret: testTOTPSecret, Algorithm: MFAAlgorithmSHA1, Digits: 6, Period: 30,
+		Issuer: "QuicBaaS", AccountName: "legacy@quicbaas.io", Verified: true, Created: time.Now(),
+	}))
+
+	challenge, err := m.BeginChallenge(ctx, "user-legacy", "tenant-123", "session-token")
+	require.NoError(t, err)
+
+	forceFIPSPolicy(t)
+
+	resp, err := m.VerifyChallenge(ctx, challenge.ID, "000000")
+	require.Error(t, err)
+	assert.Nil(t, resp)
+
+	var notApproved *MFAAlgorithmNotApprovedError
+	require.True(t, errors.As(err, &notApproved), "want *MFAAlgorithmNotApprovedError, got %T", err)
+	assert.NotErrorIs(t, err, ErrMFACodeInvalid, "a policy refusal must not masquerade as a wrong code")
+
+	unchanged, err := m.storage.GetChallenge(ctx, challenge.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 0, unchanged.Attempts, "a policy refusal must not consume an attempt")
 }

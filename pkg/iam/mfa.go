@@ -164,7 +164,10 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 
 	qrCodeURI := auth.GetProvisioningURI()
 
-	// Create enrollment
+	// Create enrollment. The provisioning parameters are recorded alongside
+	// the secret: they are baked into the URI the authenticator app scanned,
+	// so completion must verify against them and not against a configuration
+	// that may have changed in the meantime.
 	enrollment := &MFAEnrollment{
 		ID:          uuid.New().String(),
 		UserID:      userID,
@@ -172,6 +175,9 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 		Method:      method,
 		Secret:      secret,
 		QRCodeURI:   qrCodeURI,
+		Algorithm:   m.config.Algorithm,
+		Digits:      m.config.Digits,
+		Period:      m.config.Period,
 		ExpiresAt:   time.Now().Add(10 * time.Minute), // 10 minute enrollment window
 		Attempts:    0,
 		MaxAttempts: 5,
@@ -221,8 +227,9 @@ func (m *DefaultMFAManager) CompleteEnrollment(ctx context.Context, enrollmentID
 		return ErrMFAMaxAttemptsExceeded
 	}
 
-	// Verify code
-	algorithm, err := convertAlgorithm("iam.mfa.enroll.complete", m.config.Algorithm)
+	// Verify code against the parameters this enrollment was provisioned with.
+	provisioned := m.provisioningParams(enrollment)
+	algorithm, err := convertAlgorithm("iam.mfa.enroll.complete", provisioned.Algorithm)
 	if err != nil {
 		return err
 	}
@@ -230,8 +237,8 @@ func (m *DefaultMFAManager) CompleteEnrollment(ctx context.Context, enrollmentID
 	otpConfig := otp.Config{
 		Type:      otp.TypeTOTP,
 		Secret:    enrollment.Secret,
-		Digits:    uint(m.config.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
-		Period:    uint(m.config.Period), // #nosec G115 -- Period is bounded config value (typically 30)
+		Digits:    uint(provisioned.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
+		Period:    uint(provisioned.Period), // #nosec G115 -- Period is bounded config value (typically 30)
 		Algorithm: algorithm,
 		Skew:      uint(m.config.Skew), // #nosec G115 -- Skew is bounded config value (typically 1)
 	}
@@ -265,9 +272,9 @@ func (m *DefaultMFAManager) CompleteEnrollment(ctx context.Context, enrollmentID
 		UserID:      enrollment.UserID,
 		TenantID:    enrollment.TenantID,
 		Secret:      enrollment.Secret,
-		Algorithm:   m.config.Algorithm,
-		Digits:      m.config.Digits,
-		Period:      m.config.Period,
+		Algorithm:   provisioned.Algorithm,
+		Digits:      provisioned.Digits,
+		Period:      provisioned.Period,
 		Issuer:      m.config.Issuer,
 		AccountName: accountName,
 		Verified:    true,
@@ -413,6 +420,13 @@ func (m *DefaultMFAManager) VerifyChallenge(ctx context.Context, challengeID, co
 				Token:                challenge.SessionToken,
 				BackupCodesRemaining: remaining,
 			}, nil
+		}
+
+		// A refusal to use the enrollment's algorithm is not a failed
+		// authentication attempt: surface it so the caller sees that the user
+		// has to re-enroll, and do not consume one of their attempts.
+		if isMFAAlgorithmPolicyError(err) {
+			return nil, err
 		}
 
 		// Increment attempt counter

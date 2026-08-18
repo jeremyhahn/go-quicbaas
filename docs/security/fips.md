@@ -140,7 +140,10 @@ derives TOTP codes with HMAC-SHA256 instead.
 | Verifying a secret enrolled as SHA1 | supported, using the algorithm the secret was provisioned with | refused - the user must re-enroll |
 
 Each secret records the algorithm it was provisioned with (`MFASecret.Algorithm`)
-and verification uses that stored value, never the current default. Changing the
+and verification uses that stored value, never the current default. A pending
+enrollment likewise records the parameters baked into the QR code it issued, so
+an enrollment started before a switch into FIPS mode still completes against the
+code the authenticator app was provisioned to produce. Changing the
 configured default therefore never invalidates an existing enrollment; a
 deployment can move to SHA256 and keep verifying every SHA1 secret already in
 the store.

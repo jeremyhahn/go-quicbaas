@@ -15,6 +15,7 @@ package iam
 
 import (
 	"crypto/fips140"
+	"errors"
 
 	"github.com/jeremyhahn/go-auth/pkg/otp"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -61,6 +62,31 @@ var fipsApprovedMFAAlgorithms = map[MFAAlgorithm]struct{}{
 	MFAAlgorithmSHA512: {},
 }
 
+// MFAAlgorithmUnsupportedError is returned when a TOTP secret or configuration
+// names a hash algorithm QuicBaaS does not implement. It fails closed: an
+// unrecognized identifier is never given a cryptographic meaning it was not
+// stored with.
+type MFAAlgorithmUnsupportedError struct {
+	// Algorithm is the algorithm that was rejected.
+	Algorithm MFAAlgorithm
+}
+
+// Error implements the error interface.
+func (e *MFAAlgorithmUnsupportedError) Error() string {
+	return "unsupported TOTP algorithm " + string(e.Algorithm) +
+		"; supported algorithms are SHA1, SHA256 and SHA512"
+}
+
+// NewMFAAlgorithmUnsupportedError creates a typed error for an unrecognized
+// TOTP algorithm.
+func NewMFAAlgorithmUnsupportedError(op string, algorithm MFAAlgorithm) *dberrors.QBError {
+	return &dberrors.QBError{
+		Code: ErrMFAInvalid.Code,
+		Op:   op,
+		Err:  &MFAAlgorithmUnsupportedError{Algorithm: algorithm},
+	}
+}
+
 // MFAAlgorithmNotApprovedError is returned when a TOTP secret or configuration
 // names a hash algorithm that this process may not use because it is running
 // in FIPS 140-3 mode.
@@ -98,13 +124,17 @@ func defaultMFAAlgorithm() MFAAlgorithm {
 // convertAlgorithm converts MFAAlgorithm to otp.Algorithm, rejecting any
 // algorithm the current process may not use.
 //
-// An empty or unrecognized value keeps its historical meaning of SHA1 so that
-// no already-stored secret changes meaning; in FIPS mode it is then rejected
-// along with an explicit SHA1.
+// An empty value keeps its historical meaning of SHA1: it predates the field,
+// so reading it as anything else would change the meaning of a secret already
+// in the store. Any other unrecognized value fails closed - a corrupted or
+// future identifier never silently acquires a cryptographic meaning.
 func convertAlgorithm(op string, algo MFAAlgorithm) (otp.Algorithm, error) {
+	if algo == "" {
+		algo = MFAAlgorithmSHA1
+	}
 	otpAlgo, known := mfaAlgorithms[algo]
 	if !known {
-		algo, otpAlgo = MFAAlgorithmSHA1, otp.AlgorithmSHA1
+		return otpAlgo, NewMFAAlgorithmUnsupportedError(op, algo)
 	}
 	if fipsEnabled() {
 		if _, approved := fipsApprovedMFAAlgorithms[algo]; !approved {
@@ -112,4 +142,44 @@ func convertAlgorithm(op string, algo MFAAlgorithm) (otp.Algorithm, error) {
 		}
 	}
 	return otpAlgo, nil
+}
+
+// isMFAAlgorithmPolicyError reports whether err is a refusal to use an
+// algorithm, as opposed to a failure to authenticate. The two must not be
+// conflated: a policy refusal is not the user presenting a wrong code.
+func isMFAAlgorithmPolicyError(err error) bool {
+	var notApproved *MFAAlgorithmNotApprovedError
+	var unsupported *MFAAlgorithmUnsupportedError
+	return errors.As(err, &notApproved) || errors.As(err, &unsupported)
+}
+
+// mfaProvisioningParams are the TOTP parameters an authenticator app was
+// provisioned with. They are encoded into the enrollment's otpauth:// URI, so
+// verification has to use them rather than whatever the manager is configured
+// with by the time the user types the code.
+type mfaProvisioningParams struct {
+	Algorithm MFAAlgorithm
+	Digits    int
+	Period    int
+}
+
+// provisioningParams returns the parameters the enrollment was issued with,
+// falling back per field to the current configuration for an enrollment
+// persisted before those parameters were recorded.
+func (m *DefaultMFAManager) provisioningParams(enrollment *MFAEnrollment) mfaProvisioningParams {
+	params := mfaProvisioningParams{
+		Algorithm: enrollment.Algorithm,
+		Digits:    enrollment.Digits,
+		Period:    enrollment.Period,
+	}
+	if params.Algorithm == "" {
+		params.Algorithm = m.config.Algorithm
+	}
+	if params.Digits == 0 {
+		params.Digits = m.config.Digits
+	}
+	if params.Period == 0 {
+		params.Period = m.config.Period
+	}
+	return params
 }

@@ -123,6 +123,14 @@ func (s *MFASecret) Validate() error {
 	if s.Period < 15 || s.Period > 120 {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa_secret.validate", "period must be between 15 and 120 seconds", nil)
 	}
+	// An empty algorithm predates the field and means SHA1; anything else must
+	// be one QuicBaaS implements, so a corrupted record cannot be persisted
+	// and later reinterpreted.
+	if s.Algorithm != "" {
+		if _, known := mfaAlgorithms[s.Algorithm]; !known {
+			return NewMFAAlgorithmUnsupportedError("iam.mfa_secret.validate", s.Algorithm)
+		}
+	}
 	return nil
 }
 
@@ -145,6 +153,16 @@ type MFAEnrollment struct {
 
 	// QRCodeURI is the otpauth:// URI for QR code generation
 	QRCodeURI string `json:"qr_code_uri"`
+
+	// Algorithm is the hash algorithm encoded in QRCodeURI. Empty on an
+	// enrollment persisted before the parameters were recorded.
+	Algorithm MFAAlgorithm `json:"algorithm,omitempty"`
+
+	// Digits is the number of digits encoded in QRCodeURI (0 if unrecorded)
+	Digits int `json:"digits,omitempty"`
+
+	// Period is the time step in seconds encoded in QRCodeURI (0 if unrecorded)
+	Period int `json:"period,omitempty"`
 
 	// ExpiresAt is when the enrollment expires
 	ExpiresAt time.Time `json:"expires_at"`
