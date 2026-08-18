@@ -79,17 +79,17 @@ that sits alongside the original Phase 4 plan in `PLAN.md`.
 ```sh
 # No old import paths anywhere outside pkg/auth/policy and pkg/seal/policy.
 grep -r 'go-xkms/pkg/\(policy\|rbac\|authz\)\b' --include='*.go' \
-    /mnt/vm-host-1/go-xkms/ \
+    <go-xkms-checkout>/ \
     | grep -v "/pkg/auth/policy" | grep -v "/pkg/seal/policy"
 # (zero hits)
 
 # All imports use the renamed paths.
 grep -r 'go-xkms/pkg/\(keypolicy\|keyrbac\|keyauthz\)\b' --include='*.go' \
-    /mnt/vm-host-1/go-xkms/ | wc -l
+    <go-xkms-checkout>/ | wc -l
 # (>0)
 
 # auth.Identity references in production code resolve to the qrdb alias.
-grep -r 'auth\.Identity\b' --include='*.go' /mnt/vm-host-1/go-xkms/ \
+grep -r 'auth\.Identity\b' --include='*.go' <go-xkms-checkout>/ \
     | grep -v 'qrdbauth\|qrdb/pkg/auth\|_test.go'
 # (only legitimate uses of the type alias; the standalone struct is gone)
 ```
@@ -97,5 +97,5 @@ grep -r 'auth\.Identity\b' --include='*.go' /mnt/vm-host-1/go-xkms/ \
 ## See also
 
 - `PLAN.md` — the original identity-refactor plan.
-- `/mnt/vm-host-1/go-xkms/docs/auth/layering.md` — xkms-side layering doc.
-- `/mnt/vm-host-1/go-qrdb/docs/auth/layering.md` — qrdb-side layering doc.
+- `<go-xkms-checkout>/docs/auth/layering.md` — xkms-side layering doc.
+- `<go-qrdb-checkout>/docs/auth/layering.md` — qrdb-side layering doc.

@@ -1421,8 +1421,8 @@ curl http://localhost:8080/v1/metrics/
 
 ## See Also
 
-- [Cluster Management](../cluster/README.md) - Cluster operations and configuration
-- [Raft Consensus](../raft/README.md) - Raft implementation details
-- [Security Guide](../security/README.md) - Security configuration
-- [Secrets Engine](../secrets/README.md) - Secrets management
-- [CLI Reference](../cli/README.md) - Command-line tools
+- [Cluster Management](../cluster/user.md) - Cluster operations and configuration
+- Raft Consensus - Raft implementation details
+- [Security Guide](../security-hardening/user.md) - Security configuration
+- [Secrets Engine](../secrets/user.md) - Secrets management
+- CLI Reference - Command-line tools

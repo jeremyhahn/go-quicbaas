@@ -1,4 +1,7 @@
-# Time Series Architecture
+# Time Series — Architecture
+
+> **Status: NORMATIVE** · Last verified: 2026-08-19
+> Design, component boundaries and data flow. Feature folder: `docs/timeseries/`.
 
 ## Overview
 

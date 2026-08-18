@@ -1,4 +1,7 @@
-# Cache Architecture
+# Cache — Architecture
+
+> **Status: NORMATIVE** · Last verified: 2026-08-19
+> Design and boundaries of the L1/L2 cache. Feature folder: `docs/cache/`.
 
 ## Overview
 
