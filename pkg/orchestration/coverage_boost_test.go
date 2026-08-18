@@ -5528,18 +5528,6 @@ func TestCmdReadCloser_Close_Error(t *testing.T) {
 }
 
 // =============================================================================
-// container_runtime — NewExecContainerRuntime (uses "docker" command)
-// =============================================================================
-
-func TestNewExecContainerRuntime_DockerUnavailable(t *testing.T) {
-	t.Parallel()
-
-	// "docker" is likely not available in test environment.
-	// We exercise the constructor — it may fail or succeed depending on env.
-	_, _ = NewExecContainerRuntime(&containerTestLogger{t: t})
-}
-
-// =============================================================================
 // agent_registry — Heartbeat success path (status transition)
 // =============================================================================
 
@@ -6834,8 +6822,10 @@ func TestContainerRuntime_GenerateContainerID_Unique(t *testing.T) {
 // container_runtime — NewExecContainerRuntime default (no args)
 // =============================================================================
 
+// The runtime this constructor detects must report itself available. The test
+// is sequential because stubRuntimePATH sets PATH for the duration.
 func TestNewExecContainerRuntime_Default(t *testing.T) {
-	t.Parallel()
+	stubRuntimePATH(t, RuntimeDocker)
 
 	rt, err := NewExecContainerRuntime(&peerTestLogger{})
 	if err != nil {
@@ -6844,7 +6834,9 @@ func TestNewExecContainerRuntime_Default(t *testing.T) {
 	if rt == nil {
 		t.Fatal("expected non-nil runtime")
 	}
-	_ = rt.IsAvailable()
+	if !rt.IsAvailable() {
+		t.Errorf("detected runtime %q must report itself available", rt.Command())
+	}
 }
 
 // =============================================================================
