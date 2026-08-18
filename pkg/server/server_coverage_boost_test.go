@@ -87,12 +87,7 @@ func TestBoost_Start_StandaloneModeBlocksUntilShutdown(t *testing.T) {
 	// across both orderings via shutdownOnce.
 	srv.TriggerShutdown()
 
-	select {
-	case err := <-done:
-		assert.NoError(t, err, "Start should return cleanly after TriggerShutdown")
-	case <-time.After(10 * time.Second):
-		t.Fatal("Start did not return within 10s after TriggerShutdown")
-	}
+	awaitNoError(t, done, "Start after TriggerShutdown")
 
 	// Tidy up.
 	require.NoError(t, srv.Shutdown(context.Background()))

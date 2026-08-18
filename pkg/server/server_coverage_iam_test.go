@@ -78,12 +78,7 @@ func TestSetupSignalHandlers_ClosesShutdownChanOnSignal(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, proc.Signal(syscall.SIGTERM))
 
-	select {
-	case <-shutdown:
-		// Expected: shutdown chan closed.
-	case <-time.After(2 * time.Second):
-		t.Fatal("setupSignalHandlers did not close the shutdown channel within 2s")
-	}
+	awaitSignal(t, shutdown, "setupSignalHandlers closing the shutdown channel")
 
 	// Send the signal a second time. The goroutine's sync.Once-guarded
 	// close() recovers from the double-close panic, so the second

@@ -23,7 +23,6 @@ package server
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -158,12 +157,7 @@ func TestServer_Start_EmbeddedModeReturnsImmediately(t *testing.T) {
 		done <- srv.Start()
 	}()
 
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("Start in embedded mode did not return within 10s")
-	}
+	awaitNoError(t, done, "Start in embedded mode")
 
 	require.NoError(t, srv.Shutdown(context.Background()))
 }
@@ -178,12 +172,7 @@ func TestServer_Start_EmbeddedClusterModeReturnsImmediately(t *testing.T) {
 		done <- srv.Start()
 	}()
 
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("Start in embedded cluster mode did not return within 10s")
-	}
+	awaitNoError(t, done, "Start in embedded cluster mode")
 
 	require.NoError(t, srv.Shutdown(context.Background()))
 }
@@ -201,12 +190,7 @@ func TestServer_Start_EmbeddedWithKMSAndOrchEnabled(t *testing.T) {
 		done <- srv.Start()
 	}()
 
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(15 * time.Second):
-		t.Fatal("Start did not return within 15s")
-	}
+	awaitNoError(t, done, "Start in embedded mode with KMS enabled")
 
 	require.NoError(t, srv.Shutdown(context.Background()))
 }
@@ -221,19 +205,13 @@ func TestServer_Start_StandaloneBlocksAndUnblocks(t *testing.T) {
 		done <- srv.Start()
 	}()
 
-	// Wait briefly for Start to enter the blocking <-shutdownChan,
-	// then trigger shutdown to release it. We synchronize through the
-	// shutdownChan close which happens on the goroutine path inside
-	// setupSignalHandlers; TriggerShutdown drives the same effect.
+	// Release the blocking <-shutdownChan Start parks on. We synchronize
+	// through the shutdownChan close which happens on the goroutine path
+	// inside setupSignalHandlers; TriggerShutdown drives the same effect.
 	// No time.Sleep — we use channel coordination only.
 	srv.TriggerShutdown()
 
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("Start did not unblock after TriggerShutdown")
-	}
+	awaitNoError(t, done, "Start after TriggerShutdown")
 
 	require.NoError(t, srv.Shutdown(context.Background()))
 }

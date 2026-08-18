@@ -330,15 +330,10 @@ func TestEmbeddedModeStartBlocking(t *testing.T) {
 			done <- srv.Start()
 		}()
 
-		// Start() should return within a reasonable time in embedded mode
-		// (not block forever waiting for shutdown signal)
-		select {
-		case err := <-done:
-			require.NoError(t, err)
-			t.Log("Start() returned without blocking")
-		case <-time.After(60 * time.Second):
-			t.Fatal("Start() should not block forever in embedded mode")
-		}
+		// Start() must return on its own in embedded mode rather than block
+		// forever waiting for a shutdown signal.
+		awaitNoError(t, done, "Start in embedded mode")
+		t.Log("Start() returned without blocking")
 
 		// Cleanup
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
