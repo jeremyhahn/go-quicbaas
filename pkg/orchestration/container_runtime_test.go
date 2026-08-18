@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -62,27 +64,89 @@ func newContainerTestLogger(t *testing.T) *containerTestLogger {
 	return &containerTestLogger{t: t}
 }
 
-func TestExecContainerRuntime_AutoDetect(t *testing.T) {
-	t.Run("DetectsAvailableRuntime", func(t *testing.T) {
-		logger := newContainerTestLogger(t)
-		rt, err := NewExecContainerRuntime(logger)
+// stubRuntimePATH points PATH at a directory holding only the named container
+// runtimes, each a stub executable that succeeds for any argument.
+//
+// Auto-detection probes "<command> version" through PATH (see detectRuntime),
+// so without this the outcome is whatever the host happens to have installed:
+// the FIPS CI image ships no container runtime on purpose, a developer
+// workstation usually ships one, and a test written against either answer is
+// only exercised on half the machines that run it. Pinning PATH lets both
+// sides of the detection contract run everywhere, with no skips.
+//
+// The caller must be a sequential test. t.Setenv is process-wide state, and it
+// panics if the calling test is parallel; sequential tests are safe because the
+// testing package releases parallel tests only after every sequential one has
+// returned, so no other test observes the stubbed PATH.
+func stubRuntimePATH(t *testing.T, runtimes ...string) {
+	t.Helper()
 
-		// On systems with docker or podman, this succeeds.
-		// On systems without either, we get the expected error.
-		if err != nil {
-			var notAvail *ContainerRuntimeNotAvailableError
-			if !errors.As(err, &notAvail) {
-				t.Fatalf("expected ContainerRuntimeNotAvailableError, got %T: %v", err, err)
-			}
-			if !errors.Is(err, ErrContainerRuntimeNotAvailable) {
-				t.Error("expected errors.Is(err, ErrContainerRuntimeNotAvailable)")
-			}
-			return
+	dir := t.TempDir()
+	for _, name := range runtimes {
+		stub := filepath.Join(dir, name)
+		if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("write %s stub: %v", name, err)
 		}
+		// WriteFile's mode is masked by the process umask; detection needs the
+		// execute bit whatever umask the runner was started with.
+		if err := os.Chmod(stub, 0o755); err != nil {
+			t.Fatalf("chmod %s stub: %v", name, err)
+		}
+	}
 
-		cmd := rt.Command()
-		if cmd != RuntimeDocker && cmd != RuntimePodman {
-			t.Errorf("expected docker or podman, got %q", cmd)
+	t.Setenv("PATH", dir)
+}
+
+func TestExecContainerRuntime_AutoDetect(t *testing.T) {
+	t.Run("DetectsDocker", func(t *testing.T) {
+		stubRuntimePATH(t, RuntimeDocker)
+
+		rt, err := NewExecContainerRuntime(newContainerTestLogger(t))
+		if err != nil {
+			t.Fatalf("NewExecContainerRuntime: %v", err)
+		}
+		if rt.Command() != RuntimeDocker {
+			t.Errorf("expected %q, got %q", RuntimeDocker, rt.Command())
+		}
+	})
+
+	t.Run("FallsBackToPodman", func(t *testing.T) {
+		stubRuntimePATH(t, RuntimePodman)
+
+		rt, err := NewExecContainerRuntime(newContainerTestLogger(t))
+		if err != nil {
+			t.Fatalf("NewExecContainerRuntime: %v", err)
+		}
+		if rt.Command() != RuntimePodman {
+			t.Errorf("expected %q, got %q", RuntimePodman, rt.Command())
+		}
+	})
+
+	t.Run("PrefersDockerOverPodman", func(t *testing.T) {
+		stubRuntimePATH(t, RuntimeDocker, RuntimePodman)
+
+		rt, err := NewExecContainerRuntime(newContainerTestLogger(t))
+		if err != nil {
+			t.Fatalf("NewExecContainerRuntime: %v", err)
+		}
+		if rt.Command() != RuntimeDocker {
+			t.Errorf("expected docker to win over podman, got %q", rt.Command())
+		}
+	})
+
+	t.Run("ReportsUnavailableRuntime", func(t *testing.T) {
+		stubRuntimePATH(t) // neither docker nor podman on PATH
+
+		_, err := NewExecContainerRuntime(newContainerTestLogger(t))
+		if err == nil {
+			t.Fatal("expected error when no container runtime is on PATH")
+		}
+		var notAvail *ContainerRuntimeNotAvailableError
+		if !errors.As(err, &notAvail) {
+			t.Fatalf("expected ContainerRuntimeNotAvailableError, got %T: %v", err, err)
+		}
+		if !errors.Is(err, ErrContainerRuntimeNotAvailable) {
+			t.Error("expected errors.Is(err, ErrContainerRuntimeNotAvailable)")
 		}
 	})
 
@@ -425,21 +489,55 @@ func TestExecContainerRuntime_BuildRunArgs_WithLabels(t *testing.T) {
 
 func TestExecContainerRuntime_IsAvailable(t *testing.T) {
 	t.Run("DetectRuntimeDocker", func(t *testing.T) {
-		// This test verifies the detection function runs without panic.
-		// The result depends on the host environment.
-		result := detectRuntime(RuntimeDocker)
-		_ = result // boolean depends on environment
+		stubRuntimePATH(t, RuntimeDocker)
+
+		if !detectRuntime(RuntimeDocker) {
+			t.Error("expected docker on PATH to be detected")
+		}
 	})
 
 	t.Run("DetectRuntimePodman", func(t *testing.T) {
-		result := detectRuntime(RuntimePodman)
-		_ = result
+		stubRuntimePATH(t, RuntimePodman)
+
+		if !detectRuntime(RuntimePodman) {
+			t.Error("expected podman on PATH to be detected")
+		}
+	})
+
+	t.Run("DetectRuntimeAbsent", func(t *testing.T) {
+		stubRuntimePATH(t)
+
+		if detectRuntime(RuntimeDocker) {
+			t.Error("expected false for docker missing from PATH")
+		}
+		if detectRuntime(RuntimePodman) {
+			t.Error("expected false for podman missing from PATH")
+		}
 	})
 
 	t.Run("DetectRuntimeNonexistent", func(t *testing.T) {
-		result := detectRuntime("nonexistent-container-runtime-xyz")
-		if result {
+		stubRuntimePATH(t, RuntimeDocker)
+
+		if detectRuntime("nonexistent-container-runtime-xyz") {
 			t.Error("expected false for nonexistent runtime")
+		}
+	})
+
+	t.Run("ReportsAvailable", func(t *testing.T) {
+		stubRuntimePATH(t, RuntimeDocker)
+
+		rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t)}
+		if !rt.IsAvailable() {
+			t.Error("expected IsAvailable to be true with docker on PATH")
+		}
+	})
+
+	t.Run("ReportsUnavailable", func(t *testing.T) {
+		stubRuntimePATH(t)
+
+		rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t)}
+		if rt.IsAvailable() {
+			t.Error("expected IsAvailable to be false with docker missing from PATH")
 		}
 	})
 }
