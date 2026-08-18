@@ -3,6 +3,8 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The capability on every transport, with permissions. Feature folder: `docs/object-storage/`.
 
+
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -1686,7 +1688,7 @@ quicbaas_objectstorage_admin_operation_errors_total{operation="...", error_type=
 
 ### See Also
 
-- [Backends](backends.md) - Backend configuration
-- [Replication](replication.md) - Replication strategies
-- [Tiering](tiering.md) - Storage tier policies
-- [CLI Usage](cli-usage.md) - Complete CLI reference
+- Backends - Backend configuration
+- Replication - Replication strategies
+- Tiering - Storage tier policies
+- CLI Usage - Complete CLI reference

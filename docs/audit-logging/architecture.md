@@ -545,6 +545,6 @@ count, err := logger.DeleteOlderThan(ctx, tenantID, cutoffTime)
 
 ## See Also
 
-- [Admin & Impersonation](admin-impersonation.md) - Delegated administration roles
-- [API Reference](api-reference.md) - Complete API documentation
-- [GDPR Compliance](gdpr.md) - Data export and deletion
+- Admin & Impersonation - Delegated administration roles
+- API Reference - Complete API documentation
+- GDPR Compliance - Data export and deletion

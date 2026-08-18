@@ -3,6 +3,7 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The capability on every transport, with permissions. Feature folder: `docs/credentials/`.
 
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -32,8 +33,6 @@ Every row below is derived from source, not from prose. The columns mean:
 
 ## secret — NO SDK CLIENT PACKAGE (sdk/go/client/secret absent)
 
-
-Complete API documentation for the QuicBaaS Credentials Engine covering REST, gRPC, and MCP interfaces.
 
 ## REST API
 

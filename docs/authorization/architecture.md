@@ -214,7 +214,7 @@ ${env.region}          # Geographic region
 
 ### Policy
 
-Rules that determine access. See [ABAC Policy Syntax](abac-policy-syntax.md) for complete reference.
+Rules that determine access. See ABAC Policy Syntax for complete reference.
 
 ## Policy Structure
 
@@ -903,10 +903,10 @@ Sample debug output:
 
 ## See Also
 
-- [ABAC Policy Syntax Reference](abac-policy-syntax.md) - Complete policy language documentation
+- ABAC Policy Syntax Reference - Complete policy language documentation
 - [IAM Architecture](architecture.md) - Overall IAM system design
-- [API Reference](api-reference.md) - REST and gRPC API documentation
-- [Audit Logging](audit-logging.md) - Authorization audit logging configuration
+- API Reference - REST and gRPC API documentation
+- Audit Logging - Authorization audit logging configuration
 
 
 ---

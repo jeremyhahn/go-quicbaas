@@ -1941,7 +1941,7 @@ raft:
 
 #### Object Storage Configuration
 
-See [backends.md](backends.md) for backend-specific options.
+See backends.md for backend-specific options.
 
 ### Value Metadata
 

@@ -342,6 +342,6 @@ Claude Code:
 | Document | Description |
 |----------|-------------|
 | [Architecture](architecture.md) | Pipeline components, data flow, adapter pattern |
-| [Configuration](configuration.md) | Detailed configuration reference |
-| [Embedding Providers](../embedding/README.md) | Embedding provider setup |
-| [Provider Reference](../embedding/providers.md) | Model dimensions and specifications |
+| Configuration | Detailed configuration reference |
+| [Embedding Providers](../embeddings/user.md) | Embedding provider setup |
+| [Provider Reference](../embeddings/engineering.md) | Model dimensions and specifications |

@@ -3,6 +3,7 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The capability on every transport, with permissions. Feature folder: `docs/agent-orchestration/`.
 
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -79,10 +80,6 @@ MCP tools: `quicbaas_agent_fleet_heartbeat`, `quicbaas_agent_fleet_list`, `quicb
 | `SubscribeSessionEvents` | dedicated handler (path not statically recoverable) | ? | yes | yes | MISSING | — |
 | `UpdateWorkflow` | dedicated handler (path not statically recoverable) | ? | yes | yes | MISSING | — |
 
-
-Request and response schemas for orchestration tools exposed via the Model Context Protocol. Agent tools are registered when the `mcp` build tag is active. RAG indexing tools additionally require the `rag` and `vector` build tags.
-
-**This page is not exhaustive.** It covers 19 of the 32 tools registered by `orchestrator_tools.go` (27), `orchestrator_cache_tools.go` (2) and `rag_index_tools.go` (3). The following 13 registered tools have no schema section here yet: `quicbaas_orchestrator_start_job`, `_get_job_status`, `_cancel_job`, `_list_jobs`, `_task_create`, `_inference`, `quicbaas_task_get_artifact`, `quicbaas_task_list_artifacts`, and the five `quicbaas_agent_fleet_*` tools. For the complete registered inventory with permissions, see [../agents/mcp-tools.md](../agents/mcp-tools.md); for the pooled-account family see [accounts.md](accounts.md).
 
 ## Agent Tools
 
@@ -263,7 +260,7 @@ tool returns only an acknowledgement — it never carries the agent's output.
 Read the turn back with `quicbaas_orchestrator_session_history`, paging from the
 returned `sequence` until an event of kind `turn_completed` or `turn_failed`
 carrying the same `turn_id` appears. See
-[Asynchronous Agent Turns](async-turns.md).
+Asynchronous Agent Turns.
 
 A prompt with no `session_id` is a stateless one-shot: it has no event log to
 publish to, so the completed turn is returned inline under `content`.
@@ -851,7 +848,7 @@ Retrieve a cached analysis result by project and key.
 
 MCP tool naming conventions and the complete registered inventory of
 orchestration tools with their authorization mappings. Request and response
-schemas live in [orchestration/mcp-tools.md](../orchestration/mcp-tools.md).
+schemas live in [orchestration/mcp-tools.md](api.md).
 
 Registration sites: `pkg/api/mcp/orchestrator_tools.go` (27),
 `orchestrator_cache_tools.go` (2), `account_tools.go` (9),
@@ -865,7 +862,7 @@ The orchestration surface uses six tool prefixes:
 | Prefix | Count | Scope | Description |
 |--------|-------|-------|-------------|
 | `quicbaas_orchestrator_*` | 22 | Session / project / job management | Agent lifecycle, project discovery, ACP session management, jobs, agent cache |
-| `quicbaas_agent_account_*` | 9 | Pooled provider accounts | Credential envelopes, rotation, usage — see [accounts.md](../orchestration/accounts.md) |
+| `quicbaas_agent_account_*` | 9 | Pooled provider accounts | Credential envelopes, rotation, usage — see [accounts.md](../agentic-projects/engineering.md) |
 | `quicbaas_agent_fleet_*` | 5 | Fleet registry | Register / list / heartbeat the QuicBaaS agent daemons themselves |
 | `project_*` | 7 | Project CRUD and agent grants | `project_create`/`get`/`list`/`update`/`delete`, `project_grant_agent`, `project_revoke_agent` |
 | `quicbaas_task_*` | 2 | Task artifacts | `quicbaas_task_get_artifact`, `quicbaas_task_list_artifacts` |
@@ -926,8 +923,8 @@ from `orchestrator_cache_tools.go`.
 | `quicbaas_agent_fleet_heartbeat` | `orchestrator:agent_heartbeat` | Update an agent's last-seen timestamp |
 
 Full request and response schemas for every tool above are in
-[orchestration/mcp-tools.md](../orchestration/mcp-tools.md); the pooled-account
-family is documented in [orchestration/accounts.md](../orchestration/accounts.md).
+[orchestration/mcp-tools.md](api.md); the pooled-account
+family is documented in [orchestration/accounts.md](../agentic-projects/engineering.md).
 
 ### Planned: `quicbaas_orch_*` coordination tools
 

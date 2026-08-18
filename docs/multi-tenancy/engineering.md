@@ -223,7 +223,7 @@ Enable-encryption requires:
 3. For cloud KMS / HSM: corresponding provider is reachable and provisioned
 4. Sufficient quorum for multi-shard coordination (IsolationRaft mode)
 
-See [Barrier Architecture: Enable-Encryption](../architecture/barrier.md#enable-encryption-barrier-migration) for details.
+See [Barrier Architecture: Enable-Encryption](../barrier/architecture.md#enable-encryption-barrier-migration) for details.
 
 
 ---

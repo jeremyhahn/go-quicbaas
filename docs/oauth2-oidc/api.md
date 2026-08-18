@@ -3,6 +3,7 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The capability on every transport, with permissions. Feature folder: `docs/oauth2-oidc/`.
 
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -52,8 +53,6 @@ Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes regis
 | `RevokeSession` | `DELETE /api/v1/auth/sessions/{id}` | **no** | yes | yes | MISSING | — |
 | `ValidateToken` | `POST /api/v1/auth/validate` | **no** | yes | yes | yes | — |
 
-
-How MCP authorization integrates with QuicBaaS's Identity and Access Management system.
 
 ## Overview
 
@@ -479,10 +478,10 @@ Solution: Request token with required scopes (`mcp:tools`, `mcp:resources`).
 
 ## See Also
 
-- [MCP Authorization](../api/mcp-authorization.md) - OAuth 2.1 protocol reference
-- [Authentication](../security/authentication.md) - General authentication guide
-- [IAM Configuration](configuration.md) - Complete IAM config reference
-- [ABAC Policies](abac.md) - Fine-grained access control
+- [MCP Authorization](api.md) - OAuth 2.1 protocol reference
+- Authentication - General authentication guide
+- IAM Configuration - Complete IAM config reference
+- ABAC Policies - Fine-grained access control
 
 
 ---

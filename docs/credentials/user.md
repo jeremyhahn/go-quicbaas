@@ -213,9 +213,9 @@ credentials:
 | Document | Description |
 |----------|-------------|
 | [Architecture](architecture.md) | Component design and provider interface |
-| [Configuration](configuration.md) | Complete configuration reference |
-| [CLI Usage](cli-usage.md) | Command-line interface reference |
-| [API Reference](api-reference.md) | REST, gRPC, and MCP API documentation |
+| Configuration | Complete configuration reference |
+| [CLI Usage](cli.md) | Command-line interface reference |
+| [API Reference](api.md) | REST, gRPC, and MCP API documentation |
 
 ## Use Cases
 

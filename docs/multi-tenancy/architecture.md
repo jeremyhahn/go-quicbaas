@@ -228,7 +228,7 @@ Master Key (KMS / HSM)
         +-- Database DEK (dek:tenant:{tenantID2}:db:{dbName})
 ```
 
-See [Per-Database Encryption](../security/per-database-encryption.md) for
+See Per-Database Encryption for
 full details on DEK management and the barrier seal/unseal lifecycle.
 
 ## Platform Shard Access Control
@@ -288,8 +288,8 @@ separate in-memory per-process vector index. Vector data is persisted and
 encrypted within qrdb shards, leveraging the same multi-tenant isolation as
 other KV operations.
 
-See [Vector Database Architecture](vector.md) for the vector operations API
-and [Embedding Provider Integration](../embedding/README.md) for how the SDK
+See Vector Database Architecture for the vector operations API
+and [Embedding Provider Integration](../embeddings/user.md) for how the SDK
 embedding providers are consumed.
 
 ## Agent Session Log and State Encryption
@@ -362,11 +362,11 @@ outcomes are captured, regardless of which transport delivered the request.
 
 ## Cross-References
 
-- [KMS Security](../security/kms.md)
-- [Shard ID Allocation](shard-ids.md)
-- [Multi-Tenancy Keyspace](multi-tenancy.md)
-- [Per-Database Encryption](../security/per-database-encryption.md)
-- [Vector Database Architecture](vector.md)
-- [Embedding Provider Integration](../embedding/README.md)
-- [Database API Reference](../api/database.md)
-- [Database CLI Reference](../cli/database.md)
+- [KMS Security](../kms/architecture.md)
+- Shard ID Allocation
+- Multi-Tenancy Keyspace
+- Per-Database Encryption
+- Vector Database Architecture
+- [Embedding Provider Integration](../embeddings/user.md)
+- [Database API Reference](../data-services/api.md)
+- [Database CLI Reference](../data-services/cli.md)

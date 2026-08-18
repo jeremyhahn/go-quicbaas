@@ -3,6 +3,8 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The capability on every transport, with permissions. Feature folder: `docs/scheduler/`.
 
+
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -65,11 +67,11 @@ The scheduler API is exposed via all supported protocols for maximum interoperab
 
 ## Protocol-Specific Documentation
 
-- [REST API Reference](api-reference-rest.md)
-- [gRPC API Reference](api-reference-grpc.md)
-- [QUIC API Reference](api-reference-quic.md)
-- [MCP API Reference](api-reference-mcp.md)
-- [Unix Socket API Reference](api-reference-unix.md)
+- [REST API Reference](api.md)
+- [gRPC API Reference](api.md)
+- [QUIC API Reference](api.md)
+- [MCP API Reference](api.md)
+- [Unix Socket API Reference](api.md)
 
 ## Common Data Types
 

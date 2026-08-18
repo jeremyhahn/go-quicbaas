@@ -3,43 +3,49 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The cache capability on every transport, plus the in-process Go API.
 
+## Transport matrix
+
+Every row below is derived from source, not from prose. The columns mean:
+
+- **SDK method** — the method name `sdk/go/client/<pkg>` passes to
+  `transport.Request(ctx, serviceName, "<method>", req)`.
+- **REST route (transport)** — where `sdk/go/transport/rest` sends it.
+- **Served?** — whether that exact method+path pair is registered in the
+  server's route table (`pkg/api/rest/*.go`). A **no** is a live SDK-to-server
+  mismatch, not a documentation gap.
+- **gRPC** — whether `sdk/go/transport/grpc` routes the service through a typed
+  handler. **Unix inherits this column exactly**: the Unix transport is gRPC
+  over `AF_UNIX` and delegates every `Request` to it
+  (`sdk/go/transport/unix/transport.go:114`).
+- **QUIC** is likewise not a separate column: `sdk/go/transport/quic` embeds
+  `*rest.Transport` and swaps only the `http.Client` for an `http3.Transport`
+  (`sdk/go/transport/quic/transport.go:86`), so every QUIC row is its REST row
+  carried over HTTP/3. See the caveat in
+  [../multiprotocol-api/architecture.md](../multiprotocol-api/architecture.md):
+  **no component in this repository serves HTTP/3 today.**
+- **MCP** — whether the SDK routes the service to an MCP tool; the registered
+  server-side tool names are listed above the table.
+- **Embedded** — the `service/method` key registered in
+  `sdk/go/transport/embedded/transport.go`.
+- **Permission** — `resource:action` from
+  `pkg/api/rest/routes_permissions_generated.go`.
+
+### `quicbaas.Cache` — SDK package `sdk/go/client/cache`
+
+Dedicated transport handlers: rest=no, grpc=no, mcp=no; embedded routes registered: 4; MCP tools registered server-side: 0.
+
+| SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
+|---|---|---|---|---|---|---|
+| `ClearCache` | `POST /api/v1/cache/clearcache` *(default branch)* | **no** | MISSING | MISSING | MISSING | — |
+| `GetCacheConfig` | `POST /api/v1/cache/getcacheconfig` *(default branch)* | **no** | MISSING | MISSING | MISSING | — |
+| `GetCacheStats` | `POST /api/v1/cache/getcachestats` *(default branch)* | **no** | MISSING | MISSING | MISSING | — |
+| `UpdateCacheConfig` | `POST /api/v1/cache/updatecacheconfig` *(default branch)* | **no** | MISSING | MISSING | MISSING | — |
+
+
 ## Overview
 
 The cache system is primarily accessed through the CLI and internal Go APIs. Direct REST/gRPC endpoints are available through the observability API for cache metrics.
 
-## Transport matrix
-
-One row per capability, showing its form on each of the six transports
-(the six named in the portfolio API conventions). The transport model itself — why REST and
-QUIC always carry identical rows, and why Unix and gRPC do — is in
-[../multiprotocol-api/architecture.md](../multiprotocol-api/architecture.md).
-
-SDK entry point: `Client.ClusterMgmt().Cache()`, returning
-`sdk/go/client/cache.Client` (aliased as `quicbaas.CacheClient` in
-`sdk/go/quicbaas.go:757`). Every method dispatches through
-`transport.Request(ctx, "quicbaas.Cache", "<Method>", req)`.
-
-| Capability | SDK method | REST (server) | gRPC | QUIC | MCP | Unix | Embedded |
-|---|---|---|---|---|---|---|---|
-| Read statistics | `GetCacheStats` | `GET /api/v1/cache/stats` | MISSING | as REST over HTTP/3 | MISSING | MISSING | `quicbaas.Cache/GetStats` |
-| Clear entries | `ClearCache` | `POST /api/v1/cache/clear` | MISSING | as REST over HTTP/3 | MISSING | MISSING | `quicbaas.Cache/Clear` |
-| Read configuration | `GetCacheConfig` | `GET /api/v1/cache/config` | MISSING | as REST over HTTP/3 | MISSING | MISSING | `quicbaas.Cache/GetConfig` |
-| Update configuration | `UpdateCacheConfig` | `PUT /api/v1/cache/config` | MISSING | as REST over HTTP/3 | MISSING | MISSING | `quicbaas.Cache/UpdateConfig` |
-| Invalidate | — | `POST /api/v1/cache/invalidate` mapped, **no server route** | MISSING | — | MISSING | MISSING | MISSING |
-| Warm | — (CLI-local) | `POST /api/v1/cache/warm` mapped, **no server route** | MISSING | — | MISSING | MISSING | MISSING |
-
-Cache is a **Tier 1** capability in the ownership registry, so all six
-transports are required and the `MISSING` cells are real gaps, not scope
-boundaries. They are written as rows rather than omitted so the gap is
-countable: `sdk/go/transport/grpc/`, `sdk/go/transport/mcp/` and
-`sdk/go/transport/unix/` contain no cache handler of any kind. The Unix
-transport is gRPC over `AF_UNIX` — `sdk/go/transport/unix/transport.go:114`
-delegates every `Request` to the embedded gRPC transport — so it inherits
-gRPC's absence exactly, and closing the gRPC gap closes the Unix one with it.
-
-**No `docs/13` gap number has been assigned to these rows.** They are recorded
-here as the first written statement of the gap; assigning the identifier is the
-registry owner's call, not this document's.
 
 ### Required permissions
 

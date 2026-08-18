@@ -147,7 +147,7 @@ Node Overrides (server.node_object_storage)
 Tenant/Shard Config (object_storage.tenants.{id})
 ```
 
-See [Configuration Reference](configuration.md) for details.
+See Configuration Reference for details.
 
 ## API Coverage
 
@@ -193,32 +193,32 @@ See [Configuration Reference](configuration.md) for details.
 | Document | Description |
 |----------|-------------|
 | [Architecture](architecture.md) | System design, catalog schema, data flow |
-| [Configuration](configuration.md) | Three-layer config reference |
-| [API Reference](api-reference.md) | REST, gRPC, and MCP APIs |
-| [CLI Usage](cli-usage.md) | Command-line interface reference |
+| Configuration | Three-layer config reference |
+| API Reference | REST, gRPC, and MCP APIs |
+| CLI Usage | Command-line interface reference |
 
 ### Feature Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Encryption](encryption.md) | KMS integration and transparent encryption |
-| [Replication](replication.md) | Multi-backend replication strategies |
-| [Tiering](tiering.md) | Archive and storage tiering policies |
-| [Catalog](catalog.md) | Catalog operations and queries |
-| [Access Control](access-control.md) | RBAC/ABAC and object ACLs |
+| Encryption | KMS integration and transparent encryption |
+| Replication | Multi-backend replication strategies |
+| Tiering | Archive and storage tiering policies |
+| Catalog | Catalog operations and queries |
+| Access Control | RBAC/ABAC and object ACLs |
 
 ### Backend Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Backends](backends.md) | Backend-specific configuration (S3, GCS, Azure, etc.) |
-| [State Machine](statemachine.md) | ObjectStore Raft state machine |
+| Backends | Backend-specific configuration (S3, GCS, Azure, etc.) |
+| State Machine | ObjectStore Raft state machine |
 
 ### Admin Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Admin Operations](admin-operations.md) | Backend management, GC, repair, compaction |
+| Admin Operations | Backend management, GC, repair, compaction |
 
 ## Design Principles
 

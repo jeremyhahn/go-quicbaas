@@ -3,6 +3,8 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The capability on every transport, with permissions. Feature folder: `docs/kms/`.
 
+
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:

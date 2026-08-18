@@ -3,6 +3,8 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The capability on every transport, with permissions. Feature folder: `docs/agentic-projects/`.
 
+
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -58,4 +60,5 @@ MCP tools: `quicbaas_agent_account_create`, `quicbaas_agent_account_delete`, `qu
 | `Delete` | dedicated handler (path not statically recoverable) | ? | yes | yes | yes | — |
 | `List` | dedicated handler (path not statically recoverable) | ? | yes | yes | yes | — |
 | `Usage` | dedicated handler (path not statically recoverable) | ? | yes | yes | yes | — |
+
 

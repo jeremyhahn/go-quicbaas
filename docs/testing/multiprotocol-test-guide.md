@@ -593,6 +593,6 @@ client, err := quicbaas.New(quicbaas.WithEmbedded(svc))
 
 ## See Also
 
-- [test/integration/CLAUDE.md](../test/integration/CLAUDE.md) - Integration test conventions
-- [test/integration/README.md](../test/integration/README.md) - Integration test overview
-- [docs/ROADMAP-cleanup.md](../docs/ROADMAP-cleanup.md) - Protocol compliance status
+- test/integration/CLAUDE.md - Integration test conventions
+- test/integration/README.md - Integration test overview
+- docs/ROADMAP-cleanup.md - Protocol compliance status

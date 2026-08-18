@@ -468,7 +468,7 @@ Source: [`cmd/quicbaas/credential.go`](../../cmd/quicbaas/credential.go).
 
 For SDK-level docs (versioned-rotation semantics, grace period,
 storage layout) see
-[`docs/sdk/credentials.md`](../sdk/credentials.md).
+[`docs/sdk/credentials.md`](engineering.md).
 
 ### Verb summary
 
@@ -668,14 +668,14 @@ echo "$PASS" | mysql -h db.internal -u service -p
 ### Transport coverage
 
 All seven verbs work on every transport. See the matrix in
-[`docs/sdk/credentials.md`](../sdk/credentials.md#transport-coverage).
+[`docs/sdk/credentials.md`](engineering.md#transport-coverage).
 
 ### See also
 
-- [`docs/sdk/credentials.md`](../sdk/credentials.md) — full SDK
+- [`docs/sdk/credentials.md`](engineering.md) — full SDK
   contract, including version metadata, storage layout, and the
   versioned-rotation lifecycle diagram.
-- [`docs/sdk/security.md`](../sdk/security.md) —
+- [`docs/sdk/security.md`](../ssh/engineering.md) —
   `Security().Credentials()` accessor.
-- [`docs/credentials/README.md`](../credentials/README.md) — the
+- [`docs/credentials/README.md`](user.md) — the
   broader credentials engine (CA, database creds, dynamic secrets).

@@ -473,10 +473,10 @@ curl -X POST https://quicbaas.example.com/oauth2/token \
 
 ## See Also
 
-- [MCP Authorization](../api/mcp-authorization.md) - Complete OAuth 2.1 reference
-- [MCP Integration](mcp-integration.md) - IdP federation and role mapping
-- [Developer Guide](developer-guide.md) - Integration examples
-- [ABAC Policies](abac.md) - Fine-grained access control
+- [MCP Authorization](../oauth2-oidc/api.md) - Complete OAuth 2.1 reference
+- MCP Integration - IdP federation and role mapping
+- [Developer Guide](engineering.md) - Integration examples
+- [ABAC Policies](../authorization/architecture.md) - Fine-grained access control
 
 
 ---
@@ -1439,9 +1439,9 @@ result = client.call("tools/call", {
 
 #### See Also
 
-- [MCP Authorization](../api/mcp-authorization.md) - Complete OAuth 2.1 reference
-- [MCP API](../api/mcp.md) - MCP protocol documentation
-- [IAM Configuration](configuration.md) - Server configuration
+- [MCP Authorization](../oauth2-oidc/api.md) - Complete OAuth 2.1 reference
+- [MCP API](../mcp-server/api.md) - MCP protocol documentation
+- IAM Configuration - Server configuration
 
 
 ---
@@ -2277,9 +2277,9 @@ if response.Authenticator.SignCount <= storedCredential.SignCount {
 
 ### See Also
 
-- [API Reference](api-reference.md) - Complete API documentation
-- [Authentication](../security/authentication.md) - General authentication guide
-- [MFA](api-reference.md#mfa-api) - TOTP multi-factor authentication
+- [API Reference](api.md) - Complete API documentation
+- Authentication - General authentication guide
+- [MFA](api.md#mfa-api) - TOTP multi-factor authentication
 
 
 ---
@@ -2573,9 +2573,9 @@ GDPR operations are available via all protocols:
 
 ## Authentication
 
-QuicBaaS uses **passwordless, hardware-backed authentication exclusively**. Users authenticate via WebAuthn/FIDO2 or PIV smartcard. Service accounts use mTLS with bound OAuth2 tokens. See [Passwordless Authentication](../auth/passwordless.md) for complete details.
+QuicBaaS uses **passwordless, hardware-backed authentication exclusively**. Users authenticate via WebAuthn/FIDO2 or PIV smartcard. Service accounts use mTLS with bound OAuth2 tokens. See [Passwordless Authentication](architecture.md) for complete details.
 
-> **Breaking Change (v1.1.0):** MCP token parameters (`_token`, `accessToken`) in request body are no longer supported. Use `Authorization: Bearer <token>` header. See [MCP Authorization](../api/mcp-authorization.md#migration-guide).
+> **Breaking Change (v1.1.0):** MCP token parameters (`_token`, `accessToken`) in request body are no longer supported. Use `Authorization: Bearer <token>` header. See [MCP Authorization](../oauth2-oidc/api.md#migration-guide).
 >
 > **Breaking Change (v2.0.0):** Password-based authentication is removed. User passwords are no longer supported. All users must enroll a hardware authenticator (WebAuthn passkey, security key, or PIV smartcard).
 
@@ -2598,7 +2598,7 @@ Authentication adapts to your storage backend:
 
 ### OAuth 2.1 (MCP Authorization)
 
-MCP clients authenticate using OAuth 2.1 with mandatory PKCE. See [MCP Authorization](../api/mcp-authorization.md) for complete flow.
+MCP clients authenticate using OAuth 2.1 with mandatory PKCE. See [MCP Authorization](../oauth2-oidc/api.md) for complete flow.
 
 #### PKCE Requirements
 
@@ -2643,7 +2643,7 @@ The token's `aud` claim must match the MCP server's resource URI.
 
 Registering a client mints an authentication principal, so the surface is
 **disabled by default** and requires an initial access token when enabled. See
-`iam.dynamic_client_registration` in [IAM configuration](../iam/configuration.md).
+`iam.dynamic_client_registration` in IAM configuration.
 
 ```bash
 POST /oauth2/register
@@ -2775,7 +2775,7 @@ log.Printf("Auth Method: %v", claims.AMR) // ["webauthn","hwk"] or ["mtls","hwk"
 log.Printf("Attestation: %s", claims.AttestationMethod)
 ```
 
-**Note:** User creation with passwords is deprecated. Users are created in `pending` status and must activate by enrolling a hardware authenticator. See [User Flow](../auth/passwordless.md#user-flow-invite--activate--login).
+**Note:** User creation with passwords is deprecated. Users are created in `pending` status and must activate by enrolling a hardware authenticator. See [User Flow](architecture.md#user-flow-invite--activate--login).
 
 ### Storage Modes
 
@@ -2901,13 +2901,13 @@ Wildcards in roles match all resources/actions. Actions are checked by exact mat
 8. **Audit & Monitor**: Log all authentication events; alert on failed attempts or anomalies
 9. **Multiple Authenticators**: Recommend users enroll backup authenticators (e.g., passkey + hardware key)
 10. **AAGUID Allowlist**: Verify FIDO2 device identities via AAGUID when attestation is enabled
-11. See [Passwordless Authentication](../auth/passwordless.md) for detailed architecture
+11. See [Passwordless Authentication](architecture.md) for detailed architecture
 
 ### See Also
 
-- [MCP Authorization](../api/mcp-authorization.md) - OAuth 2.1 for MCP
-- [Authorization](authorization.md) - RBAC/ABAC
-- [IAM Configuration](../iam/configuration.md) - Identity management
-- [Security Overview](README.md)
-- [KMS](kms.md)
-- [Secrets](secrets.md)
+- [MCP Authorization](../oauth2-oidc/api.md) - OAuth 2.1 for MCP
+- Authorization - RBAC/ABAC
+- IAM Configuration - Identity management
+- Security Overview
+- KMS
+- Secrets

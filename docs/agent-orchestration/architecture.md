@@ -124,8 +124,8 @@ since it buckets RAG indexing under RAG rather than orchestration.
 
 The tables below name the tools grouped by the file that registers them. Full
 request and response schemas for the orchestrator, RAG indexing and cache
-families are in [mcp-tools.md](mcp-tools.md); pooled-account tools are covered
-in [accounts.md](accounts.md).
+families are in mcp-tools.md; pooled-account tools are covered
+in accounts.md.
 
 ### Agent and Session Management (27 tools)
 
@@ -163,7 +163,7 @@ Registered by `pkg/api/mcp/orchestrator_tools.go`.
 
 ### Pooled Provider Accounts (9 tools)
 
-Registered by `pkg/api/mcp/account_tools.go`. See [accounts.md](accounts.md).
+Registered by `pkg/api/mcp/account_tools.go`. See accounts.md.
 
 | Tool                                    | Description                                      |
 |-----------------------------------------|--------------------------------------------------|
@@ -224,7 +224,7 @@ The transcript is not stored on the record. It lives in the session event log, w
 
 ## Backend Types
 
-Backends are classified by `BackendKind`: **agent** (ACP-compatible, persistent sessions, tool use) or **model_server** (stateless prompt/response). See [backends.md](backends.md) for details.
+Backends are classified by `BackendKind`: **agent** (ACP-compatible, persistent sessions, tool use) or **model_server** (stateless prompt/response). See backends.md for details.
 
 ### ACP Backend (`acp`) -- Kind: `agent`
 
@@ -264,18 +264,18 @@ pre-side-effect chokepoint and both deny-by-default:
 
 | Axis | Question | Reference |
 |------|----------|-----------|
-| Sandbox | Is the agent isolated from the host? | [Remote Agent Daemon](../agents/daemon.md#sandbox-policy-reference) |
-| Trust | Is the agent the code we approved, and can the host prove it? | [Container Trust](container-trust.md) |
+| Sandbox | Is the agent isolated from the host? | [Remote Agent Daemon](engineering.md#sandbox-policy-reference) |
+| Trust | Is the agent the code we approved, and can the host prove it? | Container Trust |
 
 The policy that admits a spawn on either axis is summarized in
-[security.md](security.md).
+security.md.
 
 ## See Also
 
-- [Container Trust](container-trust.md) — digest pinning, host attestation, measured launch.
-- [Agent Orchestration Security](security.md) — multi-tenancy, ACLs, sandbox and trust policy.
-- [MCP Tool Reference](mcp-tools.md) — request and response schemas.
-- [Backends](backends.md) — backend kinds and capabilities.
+- Container Trust — digest pinning, host attestation, measured launch.
+- Agent Orchestration Security — multi-tenancy, ACLs, sandbox and trust policy.
+- MCP Tool Reference — request and response schemas.
+- Backends — backend kinds and capabilities.
 
 
 ---
@@ -1805,7 +1805,7 @@ isolated from the host?"), and neither answer implies the other. A container can
 be perfectly isolated while running an image someone swapped under a mutable
 tag, and a digest-pinned image can run with no sandbox at all. QuicBaaS
 therefore resolves the two on separate axes. This document covers the trust
-axis; see [Sandbox Policy](../agents/daemon.md#sandbox-policy-reference) for the
+axis; see [Sandbox Policy](engineering.md#sandbox-policy-reference) for the
 other one, and the [orthogonal sandbox axis](#the-orthogonal-sandbox-axis)
 section below for how they interact.
 
@@ -2157,18 +2157,18 @@ Bind mounts are deny-by-default: only sources under the requesting tenant's
 subtree of the managed projects root, or under an operator-configured allowlist
 root, are permitted.
 
-Full operator reference: [Remote Agent Daemon](../agents/daemon.md) —
-[Sandbox Policy](../agents/daemon.md#sandbox-policy-reference),
-[Sandbox Network](../agents/daemon.md#sandbox-network-reference),
-[Bind-Mount Allowlist](../agents/daemon.md#bind-mount-allowlist-reference).
+Full operator reference: [Remote Agent Daemon](engineering.md) —
+[Sandbox Policy](engineering.md#sandbox-policy-reference),
+[Sandbox Network](engineering.md#sandbox-network-reference),
+[Bind-Mount Allowlist](engineering.md#bind-mount-allowlist-reference).
 
 ### See Also
 
-- [Agent Orchestration Security](security.md) — the security surface this
+- Agent Orchestration Security — the security surface this
   document expands on.
-- [Agent Orchestration Overview](overview.md) — the orchestration layer as a
+- Agent Orchestration Overview — the orchestration layer as a
   whole.
-- [Remote Agent Daemon](../agents/daemon.md) — operator reference for the
+- [Remote Agent Daemon](engineering.md) — operator reference for the
   sandbox axis.
 
 
@@ -2313,7 +2313,7 @@ Operator notes:
 - A spawn dispatched to a remote agent daemon is authorized **twice**: against
   the control plane's roots here, and again on the daemon against its own
   `allowed_mount_roots` (see
-  [agent daemon](../agents/daemon.md#bind-mount-allowlist-reference)). Both must
+  [agent daemon](engineering.md#bind-mount-allowlist-reference)). Both must
   permit the path. The daemon's check is not a duplicate — a spawn whose
   control-plane-resolved mode is not `required` skips the `work_dir`
   authorization above, while the daemon's own `sandbox_policy` may still
@@ -2406,7 +2406,7 @@ This section covers the policy that admits a spawn. The tiers themselves --
 digest pinning and detached signatures, the deterministic configuration digest,
 the host quote and its binding to the PCR read, measured launch, and the SDK
 seams a fleet operator fills -- are documented in
-[Container Trust](container-trust.md).
+Container Trust.
 
 ### Service Integration Pattern
 
@@ -3087,7 +3087,7 @@ prompt and the final response.
 `AgentStore` (`NewAgentStore`) persists the durable description of an agent
 session: enough to address it after a restart and, for a persistent session, to
 reconstitute the agent process that served it. See
-[session-resume.md](session-resume.md).
+session-resume.md.
 
 `ListAllSessions` is the one cross-tenant scan in the orchestration stores. It
 exists for boot-time restoration, which runs before any tenant context is
@@ -3130,7 +3130,7 @@ Each agent role specifies `mcp_scopes` in the workflow YAML. These scopes follow
 mcp_scopes: [orchestrator:read, kms:read, secrets:read]
 ```
 
-The MCP server filters the tools/list response based on the agent's scopes. An agent only sees tools it is authorized to use. See [MCP Permissions](mcp-permissions.md) for details.
+The MCP server filters the tools/list response based on the agent's scopes. An agent only sees tools it is authorized to use. See MCP Permissions for details.
 
 ### Permission Matrix by Role
 

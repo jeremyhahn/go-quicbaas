@@ -220,12 +220,12 @@ l2_hit_rate = l2_hits / (l2_hits + l2_misses) × 100%
 | Document | Description |
 |----------|-------------|
 | [Architecture](architecture.md) | Cache internals, LRU algorithm, data flow |
-| [Configuration](configuration.md) | Complete configuration reference |
-| [CLI Usage](cli-usage.md) | Command-line interface guide |
-| [API Reference](api-reference.md) | Go API and metrics endpoints |
+| [Configuration](engineering.md) | Complete configuration reference |
+| [CLI Usage](cli.md) | Command-line interface guide |
+| [API Reference](api.md) | Go API and metrics endpoints |
 
 ## See Also
 
-- [Storage Engine](../architecture/storage-engine.md)
-- [Performance Tuning](../performance/README.md)
-- [CLI Reference](../cli/README.md)
+- [Storage Engine](../data-services/architecture.md)
+- Performance Tuning
+- CLI Reference

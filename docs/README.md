@@ -1,179 +1,172 @@
 # QuicBaaS Documentation
 
-High-performance distributed key-value database with vector similarity search built on multi-Raft consensus and PebbleDB storage.
+> **Status: NORMATIVE** · Last verified: 2026-08-19
+> The index of feature documentation and the record of this repository's
+> migration state. Conflicts with this document are defects.
 
-## Quick Start
+Every implemented feature has a folder here holding five documents:
+
+```
+docs/<feature>/
+    architecture.md   design, component boundaries, data flow, rejected alternatives
+    engineering.md    exported surface, invariants, errors, configuration, tests
+    cli.md            every verb and flag, with runnable examples
+    api.md            the capability on every transport, with permissions
+    user.md           task-oriented usage, in the order tasks are done
+```
+
+**All five files exist in every folder.** Where a feature has no CLI or no API
+of its own, the file says so and says why — an absent file is
+indistinguishable from an unwritten one.
+
+## Migration state
+
+**Complete.** 38 feature folders, 190 files, migrated 2026-08-19. Counting is
+derived, not maintained: `ls docs/*/architecture.md | wc -l`.
+
+Documentation was reshaped from the previous layout (a `docs/api/`,
+`docs/architecture/`, `docs/cli/` and `docs/security/` split, plus per-topic
+folders) into the folders below. Content was **moved and absorbed, not
+rewritten**; where a document contradicted the code, the document was corrected
+and the correction noted in place.
+
+Four directories are deliberately **not** feature folders and keep their
+existing shape:
+
+| Directory | Why it is not a feature folder |
+|---|---|
+| `deployment/` | Operational guides — Kubernetes manifests, production checklist. Not a capability. |
+| `design/` | Working design documents and roadmaps for work that is planned, not built. A feature folder describes what exists. |
+| `identity-refactor/` | A cross-repo migration plan, still awaiting sign-off. |
+| `testing/` | Contributor guides for running the suites. |
+
+`ROADMAP.md` is stamped **ARCHIVE**: it predates the unified-API-server model
+and is kept as a record of decisions, not as a plan.
+
+## Features
+
+### Application layer — owned by this repository
+
+| Feature | What it is |
+|---|---|
+| [agent-orchestration/](agent-orchestration/) | Agent sessions, jobs, workflows, fleet, inference backends, container trust and sandboxing |
+| [agentic-projects/](agentic-projects/) | Agentic project management and pooled third-party provider accounts |
+| [messaging/](messaging/) | Channels, pub/sub, delta publishing, deduplication |
+| [scheduler/](scheduler/) | Distributed job scheduling, cron and delayed jobs, leader-elected execution |
+| [cache/](cache/) | L1 in-memory LRU with optional L2 Redis, entity-aware |
+| [rag/](rag/) | Retrieval-augmented generation: chunking, ranking, context assembly |
+| [embeddings/](embeddings/) | Embedding providers — Ollama, OpenAI, Voyage, LM Studio |
+| [ollama/](ollama/) | The Ollama client: embeddings, chat, model inventory, health |
+| [iam/](iam/) | Identity lifecycle across fifteen sub-services: users, roles, groups, tenants, sessions, MFA, WebAuthn, GDPR |
+| [oauth2-oidc/](oauth2-oidc/) | OAuth 2.1 / OIDC provider, MCP authorization, external IdP federation, DPoP |
+| [authorization/](authorization/) | RBAC through go-qrdb's PDP, plus the ABAC attribute overlay |
+| [audit-logging/](audit-logging/) | The audit trail: recording, querying, signing |
+| [multi-tenancy/](multi-tenancy/) | Tenant lifecycle and per-tenant barriers |
+| [parameter-store/](parameter-store/) | Tenanted configuration parameters |
+| [object-storage/](object-storage/) | Tenanted object storage: backends, tiering, replication, catalog |
+| [observability/](observability/) | Health, liveness, readiness, metrics, logging, tracing |
+
+### Composed stack — this repository's surface over the layers below
+
+| Feature | What it is |
+|---|---|
+| [composition/](composition/) | The composer: building go-xkms adapters and injecting them into go-qrdb. The capability this repository alone owns |
+| [multiprotocol-api/](multiprotocol-api/) | The unified API server and the transport model — start here to understand how any capability reaches any transport |
+| [go-sdk/](go-sdk/) | The Go SDK, the canonical entry point for the whole stack |
+| [mcp-server/](mcp-server/) | The Model Context Protocol surface: 459 registered tools, scope-filtered per principal |
+| [desktop-gui/](desktop-gui/) | The Wails desktop application and the embedded web UI |
+| [data-services/](data-services/) | KV, DAO, collections, transactions, batch, sharding, storage engine |
+| [vector/](vector/) | Vector namespaces, search, indexing |
+| [timeseries/](timeseries/) | Time-series write and query, retention |
+| [cluster/](cluster/) | Raft consensus, membership, discovery, rebalancing, node operations |
+| [kms/](kms/) | Key management and cryptographic operations |
+| [data-encryption-keys/](data-encryption-keys/) | DEK lifecycle, rotation, re-encryption, the safety interlock |
+| [secrets/](secrets/) | The secrets engine, dynamic secrets, secret-reference resolution |
+| [credentials/](credentials/) | Credential storage and lifecycle |
+| [barrier/](barrier/) | The system barrier: init, unseal, seal, rekey, recovery, Shamir custody |
+| [certificate-authority/](certificate-authority/) | Certificate issuance, ACME (RFC 8555), trust anchors |
+| [ssh/](ssh/) | Server-held SSH keys, known hosts, authorized keys |
+| [bootstrap/](bootstrap/) | First-boot ceremony and trust bootstrap |
+| [backup-restore/](backup-restore/) | Backup to S3/Azure/GCS/MinIO, restore, scheduling |
+| [codec/](codec/) | Serialization |
+| [security-hardening/](security-hardening/) | FIPS mode, TLS posture, ingress binding, the hardening baseline |
+| [signal-bridge/](signal-bridge/) | The go-signal bridge (build-tag gated) |
+| [websocket/](websocket/) | The WebSocket server package — **see the note below** |
+
+## Three things a new reader should know before planning against these docs
+
+These were found while verifying the documentation against the code during the
+2026-08-19 migration. They are recorded here because each one invalidates a
+plan that the surrounding documentation would otherwise support.
+
+1. **Nothing in this repository serves HTTP/3.** The SDK's `quic` transport
+   (`sdk/go/transport/quic`) embeds `*rest.Transport` and swaps only the
+   `http.Client` for an `http3.Transport`. There is no `ServerQUICConfig`, no
+   `--quic-port` on `quicbaasd`, and no `http3.Server` anywhere under `pkg/`.
+   Every QUIC row in an `api.md` is its REST row carried over HTTP/3 by a
+   client that currently has nothing to dial.
+   Detail: [multiprotocol-api/architecture.md](multiprotocol-api/architecture.md).
+
+2. **The WebSocket server is not mounted on any listener.**
+   `pkg/api/websocket` is imported by nothing outside itself. A running
+   `quicbaasd` does not accept WebSocket upgrades.
+   Detail: [websocket/api.md](websocket/api.md).
+
+3. **Environment variables work only where they are explicitly read.**
+   `pkg/config/loader.go` honours one list of 47 variables in
+   `applyEnvironmentOverrides`. It also calls `viper.AutomaticEnv()`, but the
+   config struct is populated by `Unmarshal`, and viper's automatic binding does
+   not reach `Unmarshal` targets for keys never registered with `SetDefault` or
+   `BindEnv` — and none are. A `QUICBAAS_*` variable outside that list is
+   silently ignored. Each feature's `engineering.md` states which of its
+   settings are file-only.
+
+## Where the transports are documented
+
+Rather than repeat the transport model in 38 places, it lives once in
+[multiprotocol-api/architecture.md](multiprotocol-api/architecture.md), and each
+feature's `api.md` carries a matrix generated from source: SDK method names from
+`sdk/go/client/<pkg>`, REST routes from the transport's route tables, a
+served-or-not check against the server's own route table in `pkg/api/rest`, MCP
+tool names from the server tool registry, embedded routes from the embedded
+transport, and the required `resource:action` from
+`pkg/api/rest/routes_permissions_generated.go`.
+
+A **no** in the `Served?` column is a live SDK-to-server mismatch, not a
+documentation gap. Several exist and are named in place.
+
+## Quick start
 
 ```bash
-# Start server (REST :18080, gRPC :19090, MCP :11443, QUIC :10443, Unix socket)
+# Start a server. REST, gRPC and a Unix socket; MCP from config.
 quicbaasd start --http-port 18080 --grpc-port 19090 \
   --unix-socket /tmp/quicbaas.sock --data-dir ./data
 
-# Basic operations (transport auto-selected from --address scheme)
-quicbaas --address https://localhost:18080 data put users user1 '{"name": "Alice"}'
-quicbaas --address https://localhost:18080 data get users user1
+# Basic operations.
+quicbaas --address https://quicbaas.example.com:18080 data put users user1 '{"name":"Alice"}'
+quicbaas --address https://quicbaas.example.com:18080 data get users user1
 
-# Vector search
+# Vector search.
 quicbaas vector namespace create embeddings --dimension 384
 quicbaas vector upsert embeddings --id doc1 --vector "0.1,0.2,..." --metadata '{"title":"Doc"}'
 quicbaas vector search similar embeddings --vector "0.1,0.2,..." --k 10
 ```
 
-### Deploy a fleet agent and run inference
+Feature-specific getting-started material is in each folder's `user.md`.
 
-```bash
-# 1. Stage an SSH key in the xkms-backed key store (private key never leaves the server).
-quicbaas ssh keys generate --name fleet-deploy --type ed25519 --scope user
-quicbaas ssh keys export-public --name fleet-deploy --scope user --owner $USER
-# → copy the printed public key into ~/.ssh/authorized_keys on the target host.
+## Contributing to these docs
 
-# 2. Deploy an agent that exposes the local Ollama instance to the fleet.
-quicbaas agent deploy \
-  --ssh user@target-host \
-  --ssh-key-name fleet-deploy \
-  --server https://<server-ip>:18080 \
-  --backend ollama \
-  --binary bin/quicbaas-static \
-  --wait-online 2m
-
-# 3. Run a stateless prompt — routed transparently to the agent's local Ollama.
-quicbaas orchestrator inference \
-  --backend ollama \
-  --model qwen3:1.7b \
-  --prompt "explain QUIC in three sentences"
-
-# Streaming variant (NDJSON over the same SDK call):
-quicbaas orchestrator inference \
-  --backend ollama --model qwen3:1.7b \
-  --prompt "explain QUIC" --stream
-```
-
-The same flow is available in the **web/desktop GUI** at `Orchestration > Inference`
-(see [GUI: Desktop & Web](gui/desktop-and-web.md) and the
-[Inference view section](agents/inference.md#using-the-gui)). All five
-transports — REST, gRPC, QUIC, MCP, Unix socket — accept the same
-`orchestrator inference` command via the SDK transport abstraction
-(see [API](api/) for protocol details).
-
-## Documentation Index
-
-| Section | Description |
-|---------|-------------|
-| [Services](services.md) | Complete list of all 28 services with 204+ operations |
-| [Architecture](architecture/) | System design, components, data flow |
-| [CLI Reference](cli/) | Complete command-line interface reference |
-| [API](api/) | REST, gRPC, QUIC, and MCP protocol documentation |
-| [Agents & Fleet Inference](agents/) | Fleet deploy, mTLS bootstrap, sessionless inference |
-| [GUI Walkthroughs](gui/README.md) | Interactive walkthroughs for all 22+ web and desktop views |
-| [GUI Quick Start](gui/desktop-and-web.md) | Wails desktop app and embedded web UI overview |
-| [Deployment](deployment/) | Production deployment guides and checklists |
-| [Signal](signal/README.md) | Signal service documentation |
-
-### Core Components
-
-| Component | Description |
-|-----------|-------------|
-| [Storage](storage/) | PebbleDB storage engine, LSM-tree, key encoding |
-| [Raft](raft/) | Multi-raft consensus, replication, leader election |
-| [Cache](cache/) | In-memory caching layer, configuration, tuning |
-| [Codec](codec/) | Dual-codec system (MessagePack/JSON), serialization |
-| [DAO](dao/) | Data Access Object layer, CRUD operations, pagination |
-
-### Features
-
-| Feature | Description |
-|---------|-------------|
-| [Vector Database](vector/) | Vector similarity search, HNSW indexes |
-| [Time Series](timeseries/) | Metrics storage, retention policies, Raft consensus |
-| [RAG Pipeline](rag/) | Retrieval-Augmented Generation, hybrid search, context building |
-| [Embedding Providers](embedding/) | Ollama, LMStudio, OpenAI, Voyage AI |
-| [Passwordless Authentication](auth/passwordless.md) | Hardware-backed FIDO2/WebAuthn, PIV smartcard, mTLS |
-| [IAM](iam/) | Identity and access management, ABAC policies, OAuth2/OIDC |
-| [Security](security/) | KMS, secrets engine, seal/unseal, encryption |
-| [Multi-Tenant Service Isolation](security/multi-tenancy.md) | Tenant isolation, resource boundaries, security policies |
-| [Kubernetes](kubernetes/) | Container secrets integration, Helm charts |
-
-### Real-Time & Messaging
-
-| Topic | Description |
-|-------|-------------|
-| [Messaging](messaging/) | Real-time pub/sub, delta publishing, channels |
-| [WebSocket](websocket/) | WebSocket server, MQTT/AMQP/STOMP subprotocols |
-| [Scheduler](scheduler/) | Distributed job scheduling, cron expressions |
-
-### Transactions
-
-| Topic | Description |
-|-------|-------------|
-| [DAO Transactions](transactions/dao_transactions.md) | Entity-aware transactions, read-your-own-writes |
-| [Distributed Transactions](transactions/distributed_transactions.md) | 2PC coordinator, cross-shard transactions |
-| [Optimistic Locking](transactions/optimistic_locking.md) | Version-based concurrency control |
-
-### Batch Operations
-
-| Topic | Description |
-|-------|-------------|
-| [Atomic Batch Operations](architecture/batch-operations.md) | Multi-key atomic writes |
-| [Conditional Batch](batch/conditional_batch.md) | Precondition-based batch operations |
-| [Streaming Batch](batch/streaming_batch.md) | Large dataset streaming with progress tracking |
-
-### Operations
-
-| Topic | Description |
-|-------|-------------|
-| [Backup & Recovery](operations/) | Multi-backend backup (S3, Azure, GCS, MinIO), restore, scheduling |
-| [Cluster](cluster/) | Cluster management, discovery, membership, scaling |
-| [KMS](kms/) | Key management service configuration |
-| [Secrets](secrets/) | Secrets engine operations |
-| [Deployment](deployment/) | Production checklists, performance tuning, HA setup |
-
-## Project Structure
-
-```
-docs/
-|-- architecture/      # System design and components
-|-- api/               # Protocol documentation (REST, gRPC, QUIC, MCP)
-|-- batch/             # Batch operations documentation
-|-- cache/             # Caching layer
-|-- cli/               # CLI command reference
-|-- cluster/           # Cluster operations
-|-- codec/             # Serialization system
-|-- dao/               # Data Access Object layer
-|-- deployment/        # Production deployment guides
-|-- embedding/         # Embedding providers
-|-- iam/               # Identity and access management
-|-- kms/               # Key management service
-|-- kubernetes/        # Container secrets integration
-|-- messaging/         # Real-time messaging and notifications
-|-- operations/        # Backup, recovery, monitoring
-|-- raft/              # Consensus and replication
-|-- rag/               # RAG pipeline and context building
-|-- scheduler/         # Distributed job scheduling
-|-- secrets/           # Secrets engine
-|-- security/          # Encryption and secrets
-|-- signal/            # Signal service
-|-- storage/           # Storage engine internals
-|-- testing/           # Testing guides and patterns
-|-- timeseries/        # Time series database
-|-- transactions/      # Transaction documentation
-|-- vector/            # Vector database
-+-- websocket/         # WebSocket server and subprotocols
-```
-
-## Key Capabilities
-
-| Capability | Details |
-|------------|---------|
-| Storage | PebbleDB (LSM-tree), MVCC, compression |
-| Consensus | Multi-raft via QuicRaft, linearizable reads |
-| APIs | gRPC (150K+ ops/sec), REST, QUIC, MCP |
-| Vector Search | HNSW indexes, cosine/euclidean/dot product |
-| Transactions | DAO transactions, 2PC distributed transactions |
-| Batch Operations | Atomic, conditional, streaming batches |
-| Messaging | WebSocket pub/sub, MQTT/AMQP/STOMP, delta publishing |
-| Security | AES-256-GCM, Shamir's Secret Sharing, mTLS |
-| IAM | ABAC policies, OAuth2/OIDC, WebAuthn/FIDO2 |
-
-## Support
-
-- [GitHub Issues](https://github.com/jeremyhahn/go-quicbaas/issues) - Bug reports and feature requests
+- **A PR that changes a feature's behaviour without touching its folder is an
+  incomplete PR.**
+- Docs follow code for work already shipped: where a document contradicts the
+  code, the document is wrong. Fix the document to the canonical name and note
+  the correction. Never create an identifier to make a document true.
+- For new work the order reverses: the doc is written or updated in the same PR
+  as the code, far enough ahead to be reviewed as the requirement.
+- Every Go identifier, path, CLI verb and config key must be grepped in this
+  repository before it is written down.
+- **These folders publish.** No internal addresses, host names, workstation
+  paths or internal issue references. Use `quicbaas.example.com`,
+  `<install-dir>`, `$XDG_CONFIG_HOME/...`.
+- Update the `Last verified:` stamp only after checking the claims, not after
+  re-reading the prose.

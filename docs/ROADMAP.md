@@ -1,5 +1,21 @@
 # QuicBaaS Architecture Roadmap
 
+> **Status: ARCHIVE — historical record. Do NOT build from this document.**
+> Last verified: 2026-08-19
+>
+> This roadmap predates the unified-API-server model and the feature-docs
+> migration. Its architecture diagram, its phase list and several of its
+> "critical files" no longer describe the code. It is kept because the phase
+> history records what was decided and when; it is not a plan to execute
+> against.
+>
+> **For current documentation, start at [README.md](README.md)** and read the
+> feature folder for the capability you are working on. Those are verified
+> against code and stamped; this document is not.
+>
+> Corrections made 2026-08-19 rather than leaving stale claims in place are
+> marked inline as **[CORRECTED 2026-08-19]**.
+
 ## Vision
 
 One KMS implementation, one interface contract. Both xkmsd and quicbaasd use go-xkms `XKMSService` for all crypto business logic. Both expose `transport.Client` as the SDK interface. xkey works with either server without code changes.
@@ -120,7 +136,15 @@ Multi-tenancy has been addressed across Phases 1-2. The go-xkms SDK includes Ten
 - REST handlers, MCP tools, and gRPC handlers for all expanded services.
 - Barrier integration deferred to a separate effort (see What's Next).
 
-### Phase 6: Documentation and Final Verification -- IN PROGRESS
+### Phase 6: Documentation and Final Verification -- SUPERSEDED
+
+**[CORRECTED 2026-08-19]** This phase was still marked IN PROGRESS while the
+architecture it describes had already been replaced by the unified-API-server
+model. Documentation is no longer tracked as a roadmap phase: it is tracked as
+the feature-folder migration recorded in [README.md](README.md), which is
+per-feature and verified against code.
+
+The original text:
 
 - Documenting completed phases and updated architecture.
 - Verifying all integration tests pass across protocols.
@@ -140,5 +164,5 @@ Multi-tenancy has been addressed across Phases 1-2. The go-xkms SDK includes Ten
 | `pkg/kms/xkms_backend.go` | Adapts go-xkms backends to QuicBaaS's KMS Backend interface |
 | `pkg/kms/storage_adapter.go` | KVStoreStorageAdapter: bridges QuicBaaS KVStore to go-xkms storage (tenant-prefixed) |
 | `pkg/service/kms.go` | KMS service wrapper with tenant extraction from auth context |
-| `pkg/security/tenant_dek_manager.go` | Per-tenant DEK and KEK management |
-| `pkg/seal/manager.go` | Seal manager (to be refactored to go-xkms Barrier) |
+| ~~`pkg/security/tenant_dek_manager.go`~~ | **[CORRECTED 2026-08-19] Does not exist.** No file under `pkg/security/` matches `*dek*`. The DEK surface is documented at [data-encryption-keys/](data-encryption-keys/architecture.md). |
+| ~~`pkg/seal/manager.go`~~ | **[CORRECTED 2026-08-19] Does not exist.** `pkg/seal/` contains only `types.go`. The barrier manager the refactor anticipated now lives at `pkg/barrier/manager.go` with `pkg/barrier/strategies.go`, so this row's "to be refactored" note describes work that has since happened. |

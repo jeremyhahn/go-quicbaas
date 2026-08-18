@@ -3,6 +3,7 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The capability on every transport, with permissions. Feature folder: `docs/rag/`.
 
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -41,8 +42,6 @@ MCP tools: `quicbaas_rag_build_context`, `quicbaas_rag_query`
 | `BuildContext` | `POST /api/v1/rag/context` | yes | yes | MISSING | MISSING | `rag:query` |
 | `Query` | `POST /api/v1/rag/query` | yes | yes | MISSING | MISSING | `rag:query` |
 
-
-This document provides detailed reference for the RAG (Retrieval-Augmented Generation) MCP tools in QuicBaaS.
 
 ## Overview
 
@@ -332,4 +331,4 @@ RAG tools work seamlessly with vector tools:
 3. quicbaas_vector_get         - Retrieve specific vectors
 ```
 
-See [Vector Tools Reference](../vector/mcp-tools.md) for vector operations.
+See Vector Tools Reference for vector operations.

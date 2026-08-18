@@ -802,10 +802,10 @@ Wire in via `service.WithKMSAuditLogger(myLogger)`.
 
 ### See Also
 
-- [Crypto](crypto.md) - Encryption as a Service
-- [Secrets](secrets.md) - Secret Storage
-- [Cluster DEK](cluster-dek.md) - Cluster encryption keys
-- [Security Overview](README.md)
+- Crypto - Encryption as a Service
+- Secrets - Secret Storage
+- Cluster DEK - Cluster encryption keys
+- [Security Overview](user.md)
 
 
 ---
@@ -981,10 +981,10 @@ quicbaas crypto verify signing-key --data "contract text" --signature "$SIG"
 
 ### See Also
 
-- [KMS](kms.md) - Key management
-- [Secrets](secrets.md) - Secret storage
-- [Seal/Unseal](seal.md) - Master key protection
-- [Security Overview](README.md)
+- KMS - Key management
+- Secrets - Secret storage
+- Seal/Unseal - Master key protection
+- [Security Overview](user.md)
 
 
 ---
@@ -1234,7 +1234,7 @@ There is **no application-level envelope DEK** wrapping these payloads:
   operator key isolation) is achieved by configuring a dedicated per-tenant
   qrdb barrier sealed by any `go-xkms` hardware or cloud strategy. This is an
   operator configuration choice — the data plane barrier routing is not
-  hardcoded. See [qrdb barrier documentation](../architecture/barrier.md).
+  hardcoded. See [qrdb barrier documentation](../barrier/architecture.md).
 
 - **Per-key KMS authorization** for finer-grained access control is enforced
   by the KMS authorization layer (Phase 3 control). This is orthogonal to
@@ -1242,7 +1242,7 @@ There is **no application-level envelope DEK** wrapping these payloads:
 
 ### Cross-References
 
-- [Multi-Tenant Architecture](../architecture/multi-tenant.md)
-- [Database API Reference](../api/database.md)
-- [Cluster DEK Management](cluster-dek.md)
-- [KMS Multi-Tenancy](kms-multi-tenancy.md)
+- [Multi-Tenant Architecture](../multi-tenancy/architecture.md)
+- [Database API Reference](../data-services/api.md)
+- Cluster DEK Management
+- KMS Multi-Tenancy

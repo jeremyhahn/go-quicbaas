@@ -294,9 +294,9 @@ The Parameter Store service is fully thread-safe:
 
 ## See Also
 
-- [README](README.md) - Overview and quick start
-- [API Reference](api-reference.md) - Complete API documentation
-- [Access Control](access-control.md) - RBAC/ABAC policies
+- README - Overview and quick start
+- API Reference - Complete API documentation
+- Access Control - RBAC/ABAC policies
 
 ## Service-Layer Tenant Isolation
 

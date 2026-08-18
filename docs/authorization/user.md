@@ -16,8 +16,8 @@ QuicBaaS implements Role-Based Access Control (RBAC) for fine-grained authorizat
 > `platformtoken.Authorize(claims).RequireScope("resource:action")`; token
 > subjects are qrdb users. The `RoleManager` / `auth.Role` code shown below
 > describes the **deleted fork API** and is retained only as conceptual
-> background — see [Authorization](authorization.md) and
-> [Authentication](authentication.md).
+> background — see Authorization and
+> Authentication.
 
 ## Overview
 
@@ -827,7 +827,7 @@ Common patterns to look for:
 
 ## See Also
 
-- [Authentication](authentication.md) - JWT authentication
-- [ABAC](abac.md) - Attribute-based access control
-- [Security Overview](README.md) - Security architecture
-- [API Reference](../api/README.md) - Full API documentation
+- Authentication - JWT authentication
+- ABAC - Attribute-based access control
+- Security Overview - Security architecture
+- [API Reference](../multiprotocol-api/architecture.md) - Full API documentation

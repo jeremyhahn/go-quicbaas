@@ -192,11 +192,11 @@ kms:
 ## Documentation
 
 - [Architecture](architecture.md) - Key hierarchy and DEK path resolution
-- [Configuration](configuration.md) - Complete configuration reference
-- [API Reference](api-reference.md) - REST, gRPC, and MCP API
-- [CLI Usage](cli-usage.md) - Command-line interface
+- Configuration - Complete configuration reference
+- [API Reference](api.md) - REST, gRPC, and MCP API
+- [CLI Usage](cli.md) - Command-line interface
 
 ## See Also
 
-- [Secrets Documentation](../secrets/README.md) - Secrets engine
-- [Security Overview](../security/README.md) - Security architecture
+- [Secrets Documentation](../secrets/user.md) - Secrets engine
+- [Security Overview](../security-hardening/user.md) - Security architecture

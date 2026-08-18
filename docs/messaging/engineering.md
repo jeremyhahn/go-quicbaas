@@ -581,10 +581,10 @@ sdk/go/
 
 ## Related Documentation
 
-- [Delta Publishing](delta-publishing.md) - Delta computation and wire format
+- [Delta Publishing](architecture.md) - Delta computation and wire format
 - [Architecture](architecture.md) - System design overview
-- [API Reference](api-reference.md) - Core operations
-- [CLI Reference](cli-reference.md) - Command-line usage
+- API Reference - Core operations
+- [CLI Reference](cli.md) - Command-line usage
 
 
 ---
@@ -1039,7 +1039,7 @@ const subscription = await messaging.subscribe('events', {
 
 ### Related Documentation
 
-- [Go SDK](sdk-go.md) - Go client reference
-- [Delta Publishing](delta-publishing.md) - Delta computation and wire format
+- [Go SDK](engineering.md) - Go client reference
+- [Delta Publishing](architecture.md) - Delta computation and wire format
 - [Architecture](architecture.md) - System design overview
-- [REST API Reference](api-reference-rest.md) - REST endpoint reference
+- [REST API Reference](api.md) - REST endpoint reference

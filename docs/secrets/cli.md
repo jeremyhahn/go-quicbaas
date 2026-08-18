@@ -817,8 +817,8 @@ quicbaas secrets get database/prod
 
 ## See Also
 
-- [API Reference](api-reference.md) - REST, gRPC, and MCP API documentation
-- [Configuration](configuration.md) - Server configuration options
+- [API Reference](api.md) - REST, gRPC, and MCP API documentation
+- Configuration - Server configuration options
 - [Architecture](architecture.md) - Encryption and storage design
 
 
@@ -1071,7 +1071,7 @@ dispatch paths cannot marshal:
 |-----------|---------|------|
 | REST | [`sdk/go/transport/rest/dynamicsecrets_handler.go`](../../sdk/go/transport/rest/dynamicsecrets_handler.go) | `/api/v1/secrets/dynamic/*`; substitutes the role-name / lease-ID path parameters |
 | gRPC | [`sdk/go/transport/grpc/dynamicsecrets_handler.go`](../../sdk/go/transport/grpc/dynamicsecrets_handler.go) | `quicbaas.dynamicsecrets.v1.DynamicSecretsService` |
-| QUIC | [`sdk/go/transport/quic/dynamicsecrets_handler.go`](../../sdk/go/transport/quic/dynamicsecrets_handler.go) | top-level opcodes `0x64`-`0x6B` |
+| QUIC | `sdk/go/transport/quic/dynamicsecrets_handler.go` | top-level opcodes `0x64`-`0x6B` |
 | MCP | [`sdk/go/transport/mcp/dynamicsecrets_handler.go`](../../sdk/go/transport/mcp/dynamicsecrets_handler.go) | the eight `quicbaas_dynamic_secrets_*` tools |
 | Unix | delegates to the gRPC handler verbatim | gRPC over a domain socket |
 | embedded | [`sdk/go/transport/embedded/handlers_dynamicsecrets.go`](../../sdk/go/transport/embedded/handlers_dynamicsecrets.go) | in-process service call |

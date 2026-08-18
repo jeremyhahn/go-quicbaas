@@ -101,7 +101,7 @@ quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice Smith"
 quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice" --roles admin,developer
 ```
 
-**No Password Field:** QuicBaaS is passwordless. Users enroll hardware authenticators instead. See [Passwordless Authentication](../auth/passwordless.md).
+**No Password Field:** QuicBaaS is passwordless. Users enroll hardware authenticators instead. See [Passwordless Authentication](architecture.md).
 
 ### user get
 
@@ -691,9 +691,9 @@ Users enroll and manage hardware authenticators via the Web UI or REST API:
 
 - **WebAuthn (Passkey)**: Platform authenticators (Touch ID, Windows Hello) or roaming keys (YubiKey, Titan)
 - **PIV Smartcard**: If PIV support is enabled
-- **mTLS Certificate**: For service accounts (see [Passwordless Authentication](../auth/passwordless.md))
+- **mTLS Certificate**: For service accounts (see [Passwordless Authentication](architecture.md))
 
-Users can register **multiple authenticators** as backups. See the [WebAuthn API](../iam/webauthn.md) or GUI for enrolling and managing credentials.
+Users can register **multiple authenticators** as backups. See the [WebAuthn API](engineering.md) or GUI for enrolling and managing credentials.
 
 ### Security Best Practices
 
@@ -702,7 +702,7 @@ Users can register **multiple authenticators** as backups. See the [WebAuthn API
 3. **Regular Audit**: Monitor user creation and deletion events; review inactive users
 4. **TLS**: Use TLS for all API calls
 5. **Backup Authenticators**: Encourage users to register multiple authenticators to prevent lockout
-6. **See Also**: [Passwordless Authentication](../auth/passwordless.md) for the authentication model
+6. **See Also**: [Passwordless Authentication](architecture.md) for the authentication model
 
 ### Notes
 
@@ -729,14 +729,14 @@ ceremony — `Security().Auth().BeginLogin` / `FinishLogin` — and the
 model verb-for-verb (add / list / remove / rotate / relabel).
 
 All verbs route through the SDK `Security().Auth()` accessor (see
-[`docs/sdk/security.md`](../sdk/security.md#auth--authservice`)).
+[`docs/sdk/security.md`](../ssh/engineering.md#auth--authservice`)).
 Transport selection is automatic per the global `--transport` flag.
 
 Source:
 [`cmd/quicbaas/canonical.go:128`](../../cmd/quicbaas/canonical.go)
 (wiring) and the per-verb files
-[`cmd/quicbaas/auth_login.go`](../../cmd/quicbaas/auth_login.go) +
-[`cmd/quicbaas/auth_factor.go`](../../cmd/quicbaas/auth_factor.go).
+`cmd/quicbaas/auth_login.go` +
+`cmd/quicbaas/auth_factor.go`.
 
 ### Verb summary
 
@@ -982,10 +982,10 @@ location.
 
 ### See also
 
-- [`docs/sdk/security.md`](../sdk/security.md) — full `Security().Auth()`
+- [`docs/sdk/security.md`](../ssh/engineering.md) — full `Security().Auth()`
   surface including FIDO2 / PIV / Devices / Factors sub-services.
-- [`docs/security/authentication.md`](../security/authentication.md) —
+- `docs/security/authentication.md` —
   server-side authentication architecture.
-- [`docs/cli/iam.md`](iam.md) — user, role, and group management.
-- [`docs/auth/passwordless.md`](../auth/passwordless.md) — passwordless
+- `docs/cli/iam.md` — user, role, and group management.
+- [`docs/auth/passwordless.md`](architecture.md) — passwordless
   authentication background.

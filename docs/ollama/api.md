@@ -3,6 +3,7 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The capability on every transport, with permissions. Feature folder: `docs/ollama/`.
 
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -48,8 +49,6 @@ MCP tools: `quicbaas_ollama_embed`, `quicbaas_ollama_embed_batch`, `quicbaas_oll
 | `IsAvailable` | MISSING | ? | MISSING | MISSING | MISSING | — |
 | `ListModels` | MISSING | ? | MISSING | MISSING | MISSING | — |
 
-
-This document describes the REST API endpoints for Ollama integration.
 
 ## Endpoints
 

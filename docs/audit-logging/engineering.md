@@ -505,8 +505,8 @@ Key-use events are emitted from the service layer and therefore cover all transp
 
 ## See Also
 
-- [Security README](README.md) - Security overview
-- [KMS Security](kms.md) - Per-key authorization and policy management
-- [Hardening Guide](hardening-guide.md) - Production hardening
-- [Authentication](authentication.md) - Authentication configuration
-- [RBAC](rbac.md) - Authorization and access control
+- Security README - Security overview
+- KMS Security - Per-key authorization and policy management
+- Hardening Guide - Production hardening
+- Authentication - Authentication configuration
+- RBAC - Authorization and access control

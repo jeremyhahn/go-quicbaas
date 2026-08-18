@@ -225,9 +225,9 @@ QUICBAAS_ORCHESTRATION_ENABLED=true
 
 ## Next Steps
 
-- See [CLI Reference](/docs/orchestration/cli-reference.md) for complete command documentation
-- See [Fleet Management](/docs/orchestration/fleet-management.md) for agent lifecycle details
-- See [Overview](/docs/orchestration/overview.md) for architecture and design principles
+- See CLI Reference for complete command documentation
+- See Fleet Management for agent lifecycle details
+- See Overview for architecture and design principles
 
 
 ---
@@ -257,7 +257,7 @@ regardless of which transport you select.
 >   spiffe_trust_domain: quicbaas.example.test
 > ```
 >
-> See [docs/cli/init.md](../cli/init.md#prerequisite-iamspiffe_trust_domain-required)
+> See [docs/cli/init.md](../bootstrap/cli.md#prerequisite-iamspiffe_trust_domain-required)
 > for the full rationale.
 
 ```bash
@@ -446,11 +446,11 @@ operator CLI / GUI
 
 ### Related docs
 
-- [Inference reference](inference.md) — full RPC, REST, SDK, GUI reference.
-- [Agent deploy reference](deploy.md) — every flag, every step.
-- [Daemon design](daemon.md) — agent runtime, registration, event forwarding.
-- [GUI: Desktop & Web](../gui/desktop-and-web.md) — Wails desktop and browser UI.
-- [API](../api/) — REST / gRPC / QUIC / MCP protocol details.
+- Inference reference — full RPC, REST, SDK, GUI reference.
+- Agent deploy reference — every flag, every step.
+- Daemon design — agent runtime, registration, event forwarding.
+- GUI: Desktop & Web — Wails desktop and browser UI.
+- [API](../multiprotocol-api) — REST / gRPC / QUIC / MCP protocol details.
 
 
 ---
@@ -644,7 +644,7 @@ embedding client. This ensures:
 - **Unified provider configuration** — one source of truth in qrdb.
 - **No provider duplication** — qrdb's Ollama/OpenAI/Voyage adapters are the only implementations.
 
-See [Embedding Provider Integration](../embedding/README.md) for configuration and usage.
+See [Embedding Provider Integration](../embeddings/user.md) for configuration and usage.
 
 ### Session Events
 
@@ -920,7 +920,7 @@ Start a standalone instance for local development:
 quicbaasd start
 ```
 
-By default, QuicBaaS listens on `localhost:9090` with PebbleDB storage. For cluster mode, see the [multi-host documentation](multi-host.md).
+By default, QuicBaaS listens on `localhost:9090` with PebbleDB storage. For cluster mode, see the multi-host documentation.
 
 ### Step 2: Configure Hooks
 
@@ -963,7 +963,7 @@ Create or edit `.claude/settings.json` in your project root to send task lifecyc
 }
 ```
 
-For remote servers, replace `localhost:9090` with the QuicBaaS server address. See [hooks integration](hooks-integration.md) for full details on payload formats and error handling.
+For remote servers, replace `localhost:9090` with the QuicBaaS server address. See hooks integration for full details on payload formats and error handling.
 
 ### Step 3: Configure MCP Server
 
@@ -1004,7 +1004,7 @@ Add the channel server as a second MCP entry in `.mcp.json` to receive push even
 }
 ```
 
-See [channels documentation](channels.md) for configuration options and remote proxy mode.
+See channels documentation for configuration options and remote proxy mode.
 
 ### Step 5: Test the Integration
 

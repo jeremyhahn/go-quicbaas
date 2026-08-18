@@ -449,16 +449,16 @@ docs/websocket/
 
 ## Related Documentation
 
-- [Architecture](architecture.md) - System design and component overview
-- [API Reference](api-reference.md) - Core operations and message types
-- [REST API Reference](api-reference-rest.md) - REST/SSE endpoint documentation
-- [gRPC API Reference](api-reference-grpc.md) - gRPC service documentation
-- [QUIC API Reference](api-reference-quic.md) - QUIC opcode documentation
-- [MCP API Reference](api-reference-mcp.md) - MCP tool documentation
-- [Unix API Reference](api-reference-unix.md) - Unix socket documentation
-- [Delta Publishing](delta-publishing.md) - Delta computation and wire format
-- [Go SDK](sdk-go.md) - Go SDK installation and usage
-- [JavaScript SDK](sdk-javascript.md) - JavaScript SDK installation and usage
-- [CLI Reference](cli-reference.md) - CLI command reference
+- Architecture - System design and component overview
+- API Reference - Core operations and message types
+- REST API Reference - REST/SSE endpoint documentation
+- gRPC API Reference - gRPC service documentation
+- QUIC API Reference - QUIC opcode documentation
+- MCP API Reference - MCP tool documentation
+- Unix API Reference - Unix socket documentation
+- Delta Publishing - Delta computation and wire format
+- Go SDK - Go SDK installation and usage
+- JavaScript SDK - JavaScript SDK installation and usage
+- CLI Reference - CLI command reference
 - [WebSocket Architecture](../websocket/architecture.md) - WebSocket server design
-- [WebSocket Subprotocols](../websocket/subprotocols.md) - MQTT, AMQP, STOMP support
+- [WebSocket Subprotocols](../websocket/engineering.md) - MQTT, AMQP, STOMP support

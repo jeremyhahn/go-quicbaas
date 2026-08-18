@@ -690,7 +690,7 @@ There are zero `NotImplementedError` returns on this surface — Phase
 ### CLI parity
 
 Every SDK method has a matching `quicbaas credential` verb. See
-[`docs/cli/credential`](../cli/) (the canonical surface is documented
+[`docs/cli/credential`](../multiprotocol-api) (the canonical surface is documented
 in [`cmd/quicbaas/credential.go`](../../cmd/quicbaas/credential.go)
 and exercised by
 [`cmd/quicbaas/credential_test.go`](../../cmd/quicbaas/credential_test.go)):
@@ -793,11 +793,11 @@ func newSecret() string { return "" /* generate with crypto/rand */ }
 
 ### See also
 
-- [`docs/sdk/security.md`](security.md) — full `Security()` accessor
+- `docs/sdk/security.md` — full `Security()` accessor
   tree.
-- [`docs/credentials/README.md`](../credentials/README.md) — the
+- [`docs/credentials/README.md`](user.md) — the
   broader credentials engine (CA + database creds + dynamic secrets).
-- [`docs/architecture/composition.md`](../architecture/composition.md)
+- [`docs/architecture/composition.md`](../composition/architecture.md)
   — how the credential service is composed at server startup.
 - `quicbaas credential` — the CLI verb tree mirroring the SDK
   surface.

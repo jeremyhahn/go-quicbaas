@@ -194,12 +194,12 @@ go-xkms automatically tracks nonce uniqueness and bytes encrypted per key to pre
 ## Documentation
 
 - [Architecture](architecture.md) - Encryption and storage design
-- [Configuration](configuration.md) - Complete configuration reference
-- [Config Resolution](config-resolution.md) - Secret resolution in config files
-- [API Reference](api-reference.md) - REST and gRPC API documentation
-- [CLI Usage](cli-usage.md) - Command-line interface guide
+- Configuration - Complete configuration reference
+- [Config Resolution](engineering.md) - Secret resolution in config files
+- [API Reference](api.md) - REST and gRPC API documentation
+- [CLI Usage](cli.md) - Command-line interface guide
 
 ## See Also
 
-- [KMS Documentation](../kms/README.md) - Key Management Service
-- [Security Overview](../security/README.md) - Security architecture
+- [KMS Documentation](../kms/user.md) - Key Management Service
+- [Security Overview](../security-hardening/user.md) - Security architecture

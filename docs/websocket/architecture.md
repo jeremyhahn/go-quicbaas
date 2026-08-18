@@ -1,4 +1,7 @@
-# WebSocket Server Architecture
+# WebSocket — Architecture
+
+> **Status: NORMATIVE** · Last verified: 2026-08-19
+> Design, component boundaries and data flow. Feature folder: `docs/websocket/`.
 
 ## Overview
 
@@ -379,6 +382,6 @@ WebSocket errors are handled gracefully without blocking the server:
 
 ## Related Documentation
 
-- [Subprotocols](subprotocols.md) - MQTT, AMQP, STOMP, Echo details
+- [Subprotocols](engineering.md) - MQTT, AMQP, STOMP, Echo details
 - [Messaging Architecture](../messaging/architecture.md) - Push notification system
-- [API Reference](../messaging/api-reference.md) - Push API operations
+- API Reference - Push API operations

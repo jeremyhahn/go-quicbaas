@@ -3,6 +3,7 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The capability on every transport, with permissions. Feature folder: `docs/secrets/`.
 
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -66,8 +67,6 @@ Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes regis
 | `RenewLease` | dedicated handler (path not statically recoverable) | ? | yes | yes | yes | — |
 | `RevokeLease` | dedicated handler (path not statically recoverable) | ? | yes | yes | yes | — |
 
-
-Complete API documentation for the QuicBaaS Secrets Engine covering REST, gRPC, and MCP interfaces.
 
 ## REST API
 
@@ -1710,6 +1709,6 @@ When rotating a secret, encryption options are inherited from the previous versi
 
 ## See Also
 
-- [CLI Usage](cli-usage.md) - Command-line interface guide
-- [Configuration](configuration.md) - Server configuration options
+- [CLI Usage](cli.md) - Command-line interface guide
+- Configuration - Server configuration options
 - [Architecture](architecture.md) - Encryption and storage design

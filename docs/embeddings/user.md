@@ -9,7 +9,7 @@ QuicBaaS supports multiple embedding providers for generating vector representat
 
 The provider implementations belong to **go-qrdb**, not to QuicBaaS. `pkg/embedding` is a thin adapter: `embedding.Manager` wraps `qrdbsdk.EmbeddingManager`, and every provider constructor delegates to its `qrdbsdk` counterpart. The adapter exists only to bridge QuicBaaS's single-text `Embed(text) -> []float32` shape onto qrdb's batch-first `Embed(texts, model) -> EmbeddingResult` shape (`pkg/embedding/bridge.go`).
 
-**When QuicBaaS code needs embeddings it goes through the manager, never through a provider constructor.** The manager is what carries tenant scoping and the shared provider configuration; constructing a provider directly bypasses both and creates a second, unscoped client. See [Inference](../agents/inference.md#embedding-providers) for the rule and its rationale.
+**When QuicBaaS code needs embeddings it goes through the manager, never through a provider constructor.** The manager is what carries tenant scoping and the shared provider configuration; constructing a provider directly bypasses both and creates a second, unscoped client. See [Inference](../agent-orchestration/user.md#embedding-providers) for the rule and its rationale.
 
 ## Supported Providers
 
@@ -96,7 +96,7 @@ go build -tags 'vector qrdb_vector' ./...
 
 ## Configuration
 
-See [providers.md](providers.md) for detailed provider setup and model reference.
+See providers.md for detailed provider setup and model reference.
 
 ## Error Handling
 

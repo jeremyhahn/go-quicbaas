@@ -240,7 +240,7 @@ Send a prompt to an active agent session and stream the agent's response.
 The turn itself is asynchronous — the server accepts it and runs it in the
 background, because a real agent turn outlasts any request timeout. The CLI then
 attaches to the session's event stream so the command still reads as a
-synchronous conversation. See [Asynchronous Agent Turns](async-turns.md).
+synchronous conversation. See Asynchronous Agent Turns.
 
 ```bash
 quicbaas orchestrator prompt sess_abc123 "Write unit tests for auth handler"
@@ -735,9 +735,9 @@ NDJSON, one chunk per line:
 
 #### See also
 
-- [Fleet quick start](../agents/fleet-quickstart.md) — full deploy + inference walkthrough.
-- [agents/inference.md](../agents/inference.md) — RPC, REST, SDK, and GUI reference.
-- [agents/deploy.md](../agents/deploy.md) — how to put an agent on a remote host.
+- [Fleet quick start](user.md) — full deploy + inference walkthrough.
+- [agents/inference.md](user.md) — RPC, REST, SDK, and GUI reference.
+- [agents/deploy.md](cli.md) — how to put an agent on a remote host.
 
 ### quicbaas orchestrator backends list
 
@@ -797,7 +797,7 @@ gRPC channel.
 ### quicbaas agent deploy
 
 Provisions a QuicBaaS agent daemon on a remote host. See the
-[deploy reference](../agents/deploy.md) for the full step-by-step
+[deploy reference](cli.md) for the full step-by-step
 breakdown of what this command does on the wire.
 
 #### Flags
@@ -862,14 +862,14 @@ but communicates via an in-process bufconn transport (no network hop). Use this
 when the orchestrator host itself has Ollama and you want zero-latency inference
 without deploying a separate process.
 
-See [embedded agent mode](../agents/daemon.md#embedded-agent-mode) for full details.
+See [embedded agent mode](engineering.md#embedded-agent-mode) for full details.
 
 ### See also
 
-- [Fleet quick start](../agents/fleet-quickstart.md) — full E2E walkthrough
-- [Daemon design](../agents/daemon.md) — agent runtime internals
-- [Deploy reference](../agents/deploy.md) — every flag, every step
-- [Inference reference](../agents/inference.md) — what `agent deploy --backend ollama` enables
+- [Fleet quick start](user.md) — full E2E walkthrough
+- [Daemon design](engineering.md) — agent runtime internals
+- [Deploy reference](cli.md) — every flag, every step
+- [Inference reference](user.md) — what `agent deploy --backend ollama` enables
 
 
 ---

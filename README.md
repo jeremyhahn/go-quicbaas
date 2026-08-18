@@ -132,7 +132,7 @@ IAM/ABAC (~96 commands) is always compiled into every binary and has no build
 tag; QuicBaaS is the central identity broker, so a no-IAM artifact is not
 supported.
 
-See [docs/BUILD_TAGS.md](docs/BUILD_TAGS.md) for complete reference including KMS backends, codecs, and object storage tags.
+See [docs/multiprotocol-api/engineering.md](docs/multiprotocol-api/engineering.md) for the complete build-tag reference, including KMS backends, codecs and object-storage tags.
 
 ## Storage Backend Configuration
 
@@ -455,59 +455,43 @@ filtered out of `tools/list` under the default-deny authorization gate, leaving
 | **P99 Latency** | 11.64 ms |
 | **ABAC Evaluation** | < 5 microseconds |
 | **Cache Hit** | < 100 nanoseconds |
-| **Vector Search** | HNSW O(log n) |
+| **Vector Search** | brute-force scan — `auto` and `hnsw` both resolve to in-memory linear search today ([details](docs/vector/engineering.md)) |
 
 ## Documentation
 
-### Getting Started
-- [CLI Reference](docs/cli/README.md)
+Every feature has a folder under [`docs/`](docs/) holding five documents —
+architecture, engineering, CLI, API and user guide. Start at
+**[docs/README.md](docs/README.md)**, which is the index and the migration
+record.
 
-### Core Features
-- [Architecture Overview](docs/architecture/README.md)
-- [Key-Value Store](docs/storage/README.md)
-- [Transactions](docs/architecture/transactions.md)
-- [Caching](docs/cache/README.md)
+### Start here
+- [Documentation index](docs/README.md) — all 38 feature folders
+- [Multiprotocol API](docs/multiprotocol-api/) — the transport model: how any capability reaches REST, gRPC, QUIC, MCP, Unix or embedded
+- [Go SDK](docs/go-sdk/) — the canonical entry point
+- [Composition](docs/composition/) — how the stack is assembled at startup
 
-### AI & ML
-- [Vector Search](docs/vector/README.md) - HNSW indexing, similarity search, multi-tenancy
-- [RAG Context API](docs/rag/README.md) - Context building for LLMs
-- [Ollama Integration](docs/ollama/README.md) - Embedding generation
+### Core
+- [Data services](docs/data-services/) — KV, DAO, transactions, batch, sharding, storage engine
+- [Cache](docs/cache/) · [Codec](docs/codec/) · [Cluster](docs/cluster/) · [Backup & restore](docs/backup-restore/)
 
-### Agent Orchestration
-- [Orchestration Overview](docs/orchestration/overview.md) - Architecture, MCP tools, session lifecycle
-- [Orchestration Security](docs/orchestration/security.md) - Multi-tenancy, sandbox and trust policy
-- [Container Trust](docs/orchestration/container-trust.md) - Digest pinning, host attestation, measured launch
+### AI and agents
+- [Agent orchestration](docs/agent-orchestration/) — sessions, jobs, workflows, fleet, container trust
+- [Agentic projects](docs/agentic-projects/) — projects and pooled provider accounts
+- [Vector](docs/vector/) · [RAG](docs/rag/) · [Embeddings](docs/embeddings/) · [Ollama](docs/ollama/)
+- [MCP server](docs/mcp-server/) — 459 tools, scope-filtered per principal
 
-### Security & Identity
-- [IAM System](docs/iam/README.md) - Users, groups, roles, multi-tenancy
-- [ABAC Policies](docs/iam/abac.md) - Attribute-based access control
-- [Policy Syntax](docs/iam/abac-policy-syntax.md) - Policy language reference
-- [WebAuthn/FIDO2](docs/iam/webauthn.md) - Passwordless authentication
-- [KMS](docs/security/kms.md) - Key management service
-- [Secrets Engine](docs/secrets/README.md) - Secret storage with versioning
-- [Security Hardening](docs/security/hardening-guide.md)
-- [FIPS Compliance](docs/security/fips.md)
+### Security and identity
+- [IAM](docs/iam/) · [Authorization](docs/authorization/) · [OAuth 2.1 / OIDC](docs/oauth2-oidc/) · [Audit logging](docs/audit-logging/)
+- [Barrier](docs/barrier/) · [KMS](docs/kms/) · [Data encryption keys](docs/data-encryption-keys/) · [Secrets](docs/secrets/) · [Credentials](docs/credentials/)
+- [Certificate authority](docs/certificate-authority/) · [SSH](docs/ssh/) · [Multi-tenancy](docs/multi-tenancy/) · [Security hardening](docs/security-hardening/)
 
-### Build & Deploy
-- [Build Tags Reference](docs/BUILD_TAGS.md) - Modular compilation options
-
-### Storage
-- [Storage Architecture](docs/storage/architecture.md) - Memory, File, PebbleDB, Raft
-- [Object Storage](docs/storage/object/README.md) - Multi-backend with catalog and tiering
-- [Parameter Store](docs/parameters/README.md) - Configuration management
-
-### APIs & SDKs
-- [Go SDK](docs/sdk/go/README.md) - Unified client library
-- [gRPC API](docs/api/grpc.md)
-- [REST API](docs/api/rest.md)
-- [MCP Protocol](docs/api/mcp.md) - AI agent integration
+### Services and surfaces
+- [Messaging](docs/messaging/) · [Scheduler](docs/scheduler/) · [Object storage](docs/object-storage/) · [Parameter store](docs/parameter-store/) · [Time series](docs/timeseries/)
+- [Desktop GUI](docs/desktop-gui/) · [Observability](docs/observability/) · [Signal bridge](docs/signal-bridge/) · [WebSocket](docs/websocket/)
 
 ### Operations
-- [Container Secrets](docs/kubernetes/README.md) - Kubernetes, Docker, Podman
-- [Monitoring](docs/operations/monitoring.md)
-- [Backup & Restore](docs/operations/backup-recovery.md)
-- [Cluster Operations](docs/cluster/README.md)
-- [Production Checklist](docs/deployment/production-checklist.md)
+- [Bootstrap](docs/bootstrap/) — first-boot ceremony and trust bootstrap
+- [Production checklist](docs/deployment/production-checklist.md) · [Kubernetes](docs/deployment/kubernetes.md)
 
 ## Architecture
 

@@ -308,7 +308,7 @@ idToken, err := tokenService.GenerateIDToken(ctx, &iam.IDTokenRequest{
 })
 ```
 
-See [IAM Documentation](../iam/README.md) for complete token management.
+See IAM Documentation for complete token management.
 
 ### X.509 Certificates
 
@@ -551,8 +551,8 @@ type DynamicSecretsService interface {
 
 ### Related Documentation
 
-- [Static Secrets](./README.md)
-- [IAM & Authentication](../iam/README.md)
-- [Kubernetes Integration](../kubernetes/README.md)
-- [CLI Reference](./cli-usage.md)
-- [API Reference](./api-reference.md)
+- [Static Secrets](user.md)
+- IAM & Authentication
+- [Kubernetes Integration](engineering.md)
+- [CLI Reference](cli.md)
+- [API Reference](api.md)

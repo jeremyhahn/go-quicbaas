@@ -5,6 +5,8 @@
 
 > **Overview**: QuicBaaS provides a unified authorization system that protects all API protocols (REST, gRPC, QUIC, MCP) with configurable access control.
 
+
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -453,13 +455,13 @@ deliberately undeclared read verb is refused to `so` with
 
 For in-depth configuration and usage:
 
-- **[RBAC Documentation](./rbac.md)** - Role-Based Access Control
+- **RBAC Documentation** - Role-Based Access Control
   - Built-in roles and permissions
   - Custom role creation
   - Permission matrix
   - Performance tuning
 
-- **[ABAC Documentation](../iam/abac.md)** - Attribute-Based Access Control
+- **[ABAC Documentation](architecture.md)** - Attribute-Based Access Control
   - Policy syntax and structure
   - Attribute evaluation
   - Context-based access
@@ -535,7 +537,7 @@ server.SetAuthorizationService(authzService, authManager)
 - `quicbaas_version`
 - `quicbaas_liveness`
 
-See [MCP Authorization](../api/mcp-authorization.md) for complete OAuth 2.1 flow.
+See [MCP Authorization](../oauth2-oidc/api.md) for complete OAuth 2.1 flow.
 
 ## Metrics
 
@@ -588,8 +590,8 @@ security:
 
 ## See Also
 
-- [MCP Authorization](../api/mcp-authorization.md) - OAuth 2.1 for MCP
-- [Authentication](./authentication.md) - JWT token management
-- [IAM Overview](../iam/README.md) - Identity and Access Management
-- [IAM Configuration](../iam/configuration.md) - IAM settings
-- [Security Overview](./README.md) - Security features
+- [MCP Authorization](../oauth2-oidc/api.md) - OAuth 2.1 for MCP
+- Authentication - JWT token management
+- IAM Overview - Identity and Access Management
+- IAM Configuration - IAM settings
+- Security Overview - Security features

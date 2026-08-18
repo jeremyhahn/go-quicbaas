@@ -3,6 +3,8 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The capability on every transport, with permissions. Feature folder: `docs/iam/`.
 
+
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -30,7 +32,7 @@ Every row below is derived from source, not from prose. The columns mean:
 - **Permission** — `resource:action` from
   `pkg/api/rest/routes_permissions_generated.go`.
 
-### `(no serviceName const)` — SDK package `sdk/go/client/iam`
+### `quicbaas.IAM.Admin` — SDK package `sdk/go/client/iam`
 
 Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 0; MCP tools registered server-side: 52.
 
@@ -38,6 +40,28 @@ MCP tools: `quicbaas_iam_app_delete`, `quicbaas_iam_app_get`, `quicbaas_iam_app_
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
+
+### `quicbaas.Auth` — SDK package `sdk/go/client/auth`
+
+Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 6; MCP tools registered server-side: 0.
+
+| SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
+|---|---|---|---|---|---|---|
+| `BeginFederatedLogin` | `POST /api/v1/auth/beginfederatedlogin` *(default branch)* | **no** | yes | yes | MISSING | — |
+| `GetJWKS` | `POST /api/v1/auth/getjwks` *(default branch)* | **no** | yes | yes | MISSING | — |
+| `GetOpenIDConfiguration` | `POST /api/v1/auth/getopenidconfiguration` *(default branch)* | **no** | yes | yes | MISSING | — |
+| `GetProvider` | `POST /api/v1/auth/getprovider` *(default branch)* | **no** | yes | yes | MISSING | — |
+| `GetSession` | `GET /api/v1/auth/session` | **no** | yes | yes | MISSING | — |
+| `HandleFederatedCallback` | `POST /api/v1/auth/handlefederatedcallback` *(default branch)* | **no** | yes | yes | MISSING | — |
+| `IntrospectToken` | `POST /api/v1/auth/introspecttoken` *(default branch)* | **no** | yes | yes | MISSING | — |
+| `ListProviders` | `POST /api/v1/auth/listproviders` *(default branch)* | **no** | yes | yes | MISSING | — |
+| `ListSessions` | `GET /api/v1/auth/sessions` | **no** | yes | yes | MISSING | — |
+| `Login` | `POST /api/v1/auth/login` | **no** | yes | yes | yes | — |
+| `Logout` | `POST /api/v1/auth/logout` | **no** | yes | yes | yes | — |
+| `RefreshToken` | `POST /api/v1/auth/refresh` | **no** | yes | yes | yes | — |
+| `RevokeAllSessions` | `POST /api/v1/auth/revokeallsessions` *(default branch)* | **no** | yes | yes | MISSING | — |
+| `RevokeSession` | `DELETE /api/v1/auth/sessions/{id}` | **no** | yes | yes | MISSING | — |
+| `ValidateToken` | `POST /api/v1/auth/validate` | **no** | yes | yes | yes | — |
 
 
 ### IAM is fifteen sub-services, not one
@@ -586,7 +610,7 @@ Response:
 
 ## WebAuthn API
 
-WebAuthn provides passwordless authentication using hardware security keys and platform authenticators. For detailed integration guides and frontend examples, see the [WebAuthn Guide](webauthn.md).
+WebAuthn provides passwordless authentication using hardware security keys and platform authenticators. For detailed integration guides and frontend examples, see the [WebAuthn Guide](engineering.md).
 
 The ceremony is served by the canonical xkms-native mount at
 `/api/v1/iam/{tenant_id}/webauthn/*`. The legacy
@@ -1166,7 +1190,7 @@ All errors follow this format:
 
 ## See Also
 
-- [WebAuthn Guide](webauthn.md) - Detailed WebAuthn integration guide
-- [Audit Logging](audit-logging.md) - Audit logging and permissions
-- [ABAC Policy Syntax](abac-policy-syntax.md) - Policy language reference
-- [Developer Guide](developer-guide.md) - Integration overview
+- [WebAuthn Guide](engineering.md) - Detailed WebAuthn integration guide
+- [Audit Logging](../audit-logging/architecture.md) - Audit logging and permissions
+- [ABAC Policy Syntax](../authorization/engineering.md) - Policy language reference
+- [Developer Guide](engineering.md) - Integration overview

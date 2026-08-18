@@ -289,12 +289,12 @@ parameter_store:
 ## Related Documentation
 
 - [Architecture](architecture.md) - Storage design and data flow
-- [API Reference](api-reference.md) - Complete REST and gRPC API documentation
-- [CLI Usage](cli-usage.md) - Command-line interface reference
-- [Access Control](access-control.md) - RBAC roles and ABAC policy examples
+- API Reference - Complete REST and gRPC API documentation
+- CLI Usage - Command-line interface reference
+- Access Control - RBAC roles and ABAC policy examples
 
 ## See Also
 
-- [KMS Documentation](../kms/README.md) - Key management for encryption
-- [IAM Documentation](../iam/README.md) - Identity and access management
-- [Secrets Documentation](../secrets/README.md) - Secrets management (for sensitive values)
+- [KMS Documentation](../kms/user.md) - Key management for encryption
+- IAM Documentation - Identity and access management
+- [Secrets Documentation](../secrets/user.md) - Secrets management (for sensitive values)

@@ -110,7 +110,7 @@ QuicBaaS exposes 5 Ollama-related MCP tools:
 | `quicbaas_ollama_model_info` | Get detailed information about a model |
 | `quicbaas_ollama_health` | Check Ollama connectivity |
 
-See [MCP Tools Reference](../mcp/ollama-tools.md) for detailed usage.
+See MCP Tools Reference for detailed usage.
 
 ## Service Layer
 
@@ -132,6 +132,6 @@ type OllamaService interface {
 
 ## Next Steps
 
-- [Configuration Guide](configuration.md) - Detailed configuration options
-- [API Reference](api-reference.md) - REST API documentation
-- [RAG Integration](../rag/README.md) - Building RAG context with embeddings
+- [Configuration Guide](engineering.md) - Detailed configuration options
+- [API Reference](api.md) - REST API documentation
+- [RAG Integration](../rag/user.md) - Building RAG context with embeddings

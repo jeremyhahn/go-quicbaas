@@ -386,7 +386,7 @@ quicbaas iam simulate \
 
 ## See Also
 
-- [README](README.md) - Overview and quick start
+- README - Overview and quick start
 - [Architecture](architecture.md) - Internal design
-- [IAM Documentation](../iam/README.md) - Identity and access management
-- [ABAC Guide](../iam/abac.md) - ABAC policy reference
+- IAM Documentation - Identity and access management
+- [ABAC Guide](../authorization/architecture.md) - ABAC policy reference

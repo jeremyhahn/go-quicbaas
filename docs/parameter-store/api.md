@@ -3,6 +3,7 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The capability on every transport, with permissions. Feature folder: `docs/parameter-store/`.
 
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -45,8 +46,6 @@ Dedicated transport handlers: rest=no, grpc=no, mcp=no; embedded routes register
 | `SetParameter` | MISSING | ? | MISSING | MISSING | MISSING | — |
 | `SetParameters` | MISSING | ? | MISSING | MISSING | MISSING | — |
 
-
-Complete API documentation for the Parameter Store service.
 
 ## REST API
 
@@ -554,6 +553,6 @@ Search parameters by tags.
 
 ## See Also
 
-- [README](README.md) - Overview and quick start
+- README - Overview and quick start
 - [Architecture](architecture.md) - Internal design
-- [CLI Usage](cli-usage.md) - Command-line interface
+- CLI Usage - Command-line interface

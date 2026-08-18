@@ -3,6 +3,8 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The capability on every transport, with permissions. Feature folder: `docs/messaging/`.
 
+
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -186,11 +188,11 @@ WatchChannel(keyPrefix string, opts WatchOptions) (*Watcher, error)
 
 Detailed API documentation for each protocol:
 
-- [REST API Reference](api-reference-rest.md) - HTTP endpoints and payloads
-- [gRPC API Reference](api-reference-grpc.md) - Service definitions and streaming
-- [QUIC API Reference](api-reference-quic.md) - Low-latency transport usage
-- [MCP API Reference](api-reference-mcp.md) - AI/LLM tool integration
-- [Unix Socket API Reference](api-reference-unix.md) - Local IPC operations
+- [REST API Reference](api.md) - HTTP endpoints and payloads
+- [gRPC API Reference](api.md) - Service definitions and streaming
+- [QUIC API Reference](api.md) - Low-latency transport usage
+- [MCP API Reference](api.md) - AI/LLM tool integration
+- [Unix Socket API Reference](api.md) - Local IPC operations
 
 ## Error Codes
 
@@ -207,8 +209,8 @@ Detailed API documentation for each protocol:
 ## Related Documentation
 
 - [Architecture](architecture.md) - Push system design
-- [Configuration](configuration.md) - Server configuration
-- [CLI Usage](cli-usage.md) - Command-line operations
+- Configuration - Server configuration
+- CLI Usage - Command-line operations
 
 
 ---
@@ -763,11 +765,11 @@ All endpoints return a standard error envelope:
 
 ### Related Documentation
 
-- [Push API Reference](api-reference.md) -- Protocol-agnostic operations overview
+- Push API Reference -- Protocol-agnostic operations overview
 - [Architecture](architecture.md) -- Push system design
-- [Delta Publishing](delta-publishing.md) -- Delta computation details
-- [CLI Reference](cli-reference.md) -- Command-line operations
-- [Go SDK](sdk-go.md) -- Go client library
+- [Delta Publishing](architecture.md) -- Delta computation details
+- [CLI Reference](cli.md) -- Command-line operations
+- [Go SDK](engineering.md) -- Go client library
 
 
 ---
@@ -1423,11 +1425,11 @@ grpcurl -plaintext -d '{"name":"orders"}' \
 
 ### Related Documentation
 
-- [Push API Reference](api-reference.md) - Protocol-agnostic overview
+- Push API Reference - Protocol-agnostic overview
 - [Architecture](architecture.md) - Messaging system design
-- [Delta Publishing](delta-publishing.md) - Delta update details
-- [Go SDK](sdk-go.md) - Go client library
-- [CLI Reference](cli-reference.md) - Command-line usage
+- [Delta Publishing](architecture.md) - Delta update details
+- [Go SDK](engineering.md) - Go client library
+- [CLI Reference](cli.md) - Command-line usage
 
 
 ---
@@ -1827,10 +1829,10 @@ quicbaas msg dedup-stats orders \
 
 ### Related Documentation
 
-- [API Reference](api-reference.md) -- Messaging API overview
-- [CLI Reference](cli-reference.md) -- Full CLI command reference
+- API Reference -- Messaging API overview
+- [CLI Reference](cli.md) -- Full CLI command reference
 - [Architecture](architecture.md) -- Messaging system design
-- [Delta Publishing](delta-publishing.md) -- Delta computation details
+- [Delta Publishing](architecture.md) -- Delta computation details
 
 
 ---
@@ -2274,11 +2276,11 @@ All tool invocations return errors via the MCP error response format. Errors are
 
 ### Related Documentation
 
-- [Push API Reference](api-reference.md) - Core messaging API
+- Push API Reference - Core messaging API
 - [Architecture](architecture.md) - Push system design
-- [Delta Publishing](delta-publishing.md) - Delta compression details
-- [CLI Reference](cli-reference.md) - Command-line operations
-- [Go SDK](sdk-go.md) - Go client library
+- [Delta Publishing](architecture.md) - Delta compression details
+- [CLI Reference](cli.md) - Command-line operations
+- [Go SDK](engineering.md) - Go client library
 
 
 ---
@@ -2482,7 +2484,7 @@ This makes UDS the lowest-latency transport for same-host communication, typical
 
 ### Related Documentation
 
-- [API Reference](api-reference.md) - Messaging API overview
-- [CLI Reference](cli-reference.md) - Command-line messaging operations
-- [Go SDK](sdk-go.md) - Go client library usage
+- API Reference - Messaging API overview
+- [CLI Reference](cli.md) - Command-line messaging operations
+- [Go SDK](engineering.md) - Go client library usage
 - [Architecture](architecture.md) - Messaging system design

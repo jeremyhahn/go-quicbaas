@@ -1,4 +1,7 @@
-# Codec Architecture
+# Codec — Architecture
+
+> **Status: NORMATIVE** · Last verified: 2026-08-19
+> Design, component boundaries and data flow. Feature folder: `docs/codec/`.
 
 QuicBaaS implements a dual-codec architecture that separates storage encoding from wire encoding, optimizing both disk I/O performance and API flexibility.
 

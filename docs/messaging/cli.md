@@ -567,6 +567,6 @@ msg:
 
 ## Related Documentation
 
-- [API Reference](api-reference.md) - Messaging API overview
+- API Reference - Messaging API overview
 - [Architecture](architecture.md) - Messaging system design
-- [Delta Publishing](delta-publishing.md) - Delta computation details
+- [Delta Publishing](architecture.md) - Delta computation details

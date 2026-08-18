@@ -48,7 +48,7 @@ kms:
 
 The **primary KMS crypto backend** — the go-xkms backend that holds the KMS key
 universe and is registered as the go-xkms default — is selected by the
-process-wide [`crypto:` block](../configuration/crypto.md), resolved through the
+process-wide [`crypto:` block](../composition/engineering.md), resolved through the
 central `BackendResolver` (`pkg/server/backend_resolver.go`). `startKMS`
 (`pkg/server/lifecycle.go`) builds the KMS backend spec with this precedence
 (highest first):
@@ -69,7 +69,7 @@ that distributes operations across multiple registered backends by algorithm,
 priority, and health. It sits on top of the primary backend chosen by the
 `crypto:` block. For the full backend matrix, build tags, per-subsystem overrides
 (CA / PIN / barrier AEAD), and the typed fail-closed errors, see
-[Crypto Backend Selection](../configuration/crypto.md).
+[Crypto Backend Selection](../composition/engineering.md).
 
 ## Multi-Backend Routing
 
@@ -515,7 +515,7 @@ kms:
 > TPM path (§5.4), and the seal-strategy auto-detect (§5.5) are all shipped in
 > `pkg/server/backend_resolver.go` + `pkg/config/crypto.go`. This page is the
 > design of record; the **operator reference** for the `crypto:` block lives at
-> [configuration/crypto.md](../configuration/crypto.md). Code `file:line`
+> [configuration/crypto.md](../composition/engineering.md). Code `file:line`
 > references below are indicative — the functions named are the stable anchors.
 
 ### 1. Executive Summary

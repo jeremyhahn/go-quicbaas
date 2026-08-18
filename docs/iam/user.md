@@ -95,17 +95,17 @@ spec:
 | Document | Description |
 |----------|-------------|
 | [Architecture](architecture.md) | System architecture and components |
-| [Configuration](configuration.md) | Complete configuration reference |
-| [Deployment](deployment.md) | Deployment models and scaling |
-| [MCP Integration](mcp-integration.md) | OAuth 2.1 for MCP, IdP federation |
-| [ABAC Policy Syntax](abac-policy-syntax.md) | Complete policy language reference |
-| [Developer Guide](developer-guide.md) | Integrating apps with QuicBaaS IAM |
-| [API Reference](api-reference.md) | REST and gRPC API documentation |
-| [WebAuthn Guide](webauthn.md) | Passwordless authentication with passkeys and security keys |
-| [Session Renewal](session-renewal.md) | Short access tokens, rotating refresh credentials, SPA/CLI renewal |
-| [GDPR Compliance](gdpr.md) | Consent, data export, and deletion |
-| [Admin & Impersonation](admin-impersonation.md) | Delegated administration and user impersonation |
-| [Audit Logging](audit-logging.md) | Security event tracking and permissions |
+| Configuration | Complete configuration reference |
+| [Deployment](user.md) | Deployment models and scaling |
+| MCP Integration | OAuth 2.1 for MCP, IdP federation |
+| [ABAC Policy Syntax](../authorization/engineering.md) | Complete policy language reference |
+| [Developer Guide](engineering.md) | Integrating apps with QuicBaaS IAM |
+| [API Reference](api.md) | REST and gRPC API documentation |
+| [WebAuthn Guide](engineering.md) | Passwordless authentication with passkeys and security keys |
+| [Session Renewal](engineering.md) | Short access tokens, rotating refresh credentials, SPA/CLI renewal |
+| [GDPR Compliance](engineering.md) | Consent, data export, and deletion |
+| [Admin & Impersonation](architecture.md) | Delegated administration and user impersonation |
+| [Audit Logging](../audit-logging/architecture.md) | Security event tracking and permissions |
 
 ## External Dependencies
 

@@ -3,6 +3,8 @@
 > **Status: NORMATIVE** · Last verified: 2026-08-19
 > The capability on every transport, with permissions. Feature folder: `docs/embeddings/`.
 
+
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -45,4 +47,5 @@ MCP tools: `quicbaas_embedding_batch`, `quicbaas_embedding_cache_clear`, `quicba
 | `GetProviderInfo` | `GET /api/v1/embedding/providers/{provider}` | yes | yes | yes | MISSING | `embedding:list_models` |
 | `ListProviders` | `GET /api/v1/embedding/providers` | yes | yes | yes | MISSING | `embedding:list_models` |
 | `SetDefaultProvider` | `PUT /api/v1/embedding/providers/default` | yes | yes | yes | MISSING | `embedding:list_models` |
+
 
