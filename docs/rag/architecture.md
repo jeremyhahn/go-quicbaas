@@ -1,4 +1,7 @@
-# RAG Pipeline Architecture
+# RAG — Architecture
+
+> **Status: NORMATIVE** · Last verified: 2026-08-19
+> Design, component boundaries and data flow. Feature folder: `docs/rag/`.
 
 ## Overview
 
