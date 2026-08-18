@@ -2835,7 +2835,7 @@ DOCKER_COMPOSE_PROJECTS := seal-hw tenantbarrier
 .PHONY: clean-docker
 clean-docker: ## Clean this project's Docker resources (leaves other projects on the host alone)
 	@echo "$(BLUE)Cleaning QuicBaaS Docker resources...$(NC)"
-	@find . -name 'docker-compose*.yml' -not -path './node_modules/*' | while read -r compose_file; do \
+	@find . -name 'docker-compose*.yml' -not -path '*/node_modules/*' | while read -r compose_file; do \
 		$(DOCKER) compose -f "$$compose_file" down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
 	done
 	@for project in $(DOCKER_COMPOSE_PROJECTS); do \
