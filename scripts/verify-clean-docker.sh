@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # verify-clean-docker.sh — pin the three halves of clean-docker's contract: it
-# covers every image this repository creates, it removes those and nothing else,
-# and it never reports success after a removal failed.
+# covers every image this repository creates under a name it writes literally,
+# it removes those and nothing else, and it never reports success after a
+# removal failed.
 #
 # This target used to be `docker system prune -af --volumes`, which on the
 # shared CI runners deleted every unused image and named volume on the host and
 # repeatedly destroyed another job's image (#3). The scope checks are what keep
-# it from drifting back. The coverage check is what keeps DOCKER_LOCAL_IMAGES
-# from silently falling behind the build targets: it re-derives the inventory
-# from the `docker build -t` / `docker tag` / `docker rmi` commands themselves,
-# so a new image this repo starts producing fails the check until cleanup knows
-# about it. The failure checks cover the shell trap that a `for` loop reports
+# it from drifting back. The coverage check keeps DOCKER_LOCAL_IMAGES from
+# silently falling behind the build targets, by comparing it against the
+# inventory scripts/docker-image-inventory.sh derives from the build commands
+# themselves. The failure checks cover the shell trap that a `for` loop reports
 # only its last command's status, so an early `docker rmi` failure followed by
 # an absent tag would otherwise exit 0.
 #
@@ -76,68 +76,14 @@ called() {
     grep -qx "$1" "$WORK/calls.log"
 }
 
-# Every image identity this repository creates, read back out of the commands
-# that create it: each `-t` of a `docker build` / `buildx build`, each `docker
-# tag` destination, and each literal argument of a `docker rmi`. Deriving it
-# here rather than from DOCKER_LOCAL_IMAGES is the whole point — an omission
-# from that list is exactly what this check has to be able to see.
-#
-# Make variables are expanded from make itself; a shell variable is resolved
-# when the same file assigns it a literal. Anything left unresolved is a hard
-# error, not a silent gap.
-derive_created_images() {
-    local file
-    for file in Makefile scripts/*.sh; do
-        [ "$file" = "scripts/verify-clean-docker.sh" ] && continue
-        [ -f "$file" ] || continue
-        awk \
-            -v docker_image="$(make --no-print-directory print-DOCKER_IMAGE)" \
-            -v docker_tag="$(make --no-print-directory print-DOCKER_TAG)" \
-            -v docker_registry="$(make --no-print-directory print-DOCKER_REGISTRY)" \
-            '
-            function resolve(tok,   name) {
-                gsub(/^["'"'"']|["'"'"']$/, "", tok)
-                gsub(/\$\(DOCKER_IMAGE\)/, docker_image, tok)
-                gsub(/\$\(DOCKER_TAG\)/, docker_tag, tok)
-                gsub(/\$\(DOCKER_REGISTRY\)/, docker_registry, tok)
-                if (tok ~ /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/) {
-                    name = tok
-                    gsub(/[$\{\}]/, "", name)
-                    if (name in literal) tok = literal[name]
-                }
-                return tok
-            }
-            # A shell assignment of a bare literal, so `-t "$AGENT_IMAGE"` resolves.
-            /^[A-Za-z_][A-Za-z0-9_]*=["'"'"']?[A-Za-z0-9._\/:-]+["'"'"']?$/ {
-                eq = index($0, "=")
-                value = substr($0, eq + 1)
-                gsub(/^["'"'"']|["'"'"']$/, "", value)
-                literal[substr($0, 1, eq - 1)] = value
-            }
-            # Comments describe these commands without running them.
-            /^[ \t]*@?#/ { next }
-            {
-                n = split($0, tok, /[ \t]+/)
-                if ($0 ~ /(docker|\$\(DOCKER\))[ \t]+(buildx[ \t]+)?build[ \t]/) {
-                    for (i = 1; i < n; i++) if (tok[i] == "-t") print resolve(tok[i + 1])
-                }
-                if ($0 ~ /(docker|\$\(DOCKER\))[ \t]+tag[ \t]/) {
-                    for (i = 1; i + 2 <= n; i++) if (tok[i] == "tag") { print resolve(tok[i + 2]); break }
-                }
-                if ($0 ~ /(docker|\$\(DOCKER\))[ \t]+rmi[ \t]/) {
-                    seen = 0
-                    for (i = 1; i <= n; i++) {
-                        if (tok[i] == "rmi") { seen = 1; continue }
-                        if (!seen || tok[i] ~ /^-/) continue
-                        # `$$foo` is a runtime shell variable, never an identity.
-                        if (tok[i] ~ /\$\$/) continue
-                        if (tok[i] !~ /^["'"'"']?[A-Za-z0-9$._\/:{}-]+["'"'"']?$/) break
-                        print resolve(tok[i])
-                    }
-                }
-            }
-            ' "$file"
-    done | awk '{ if ($0 !~ /:/) $0 = $0 ":latest"; print }' | sort -u
+# Image identities the repository at $1 creates but its DOCKER_LOCAL_IMAGES does
+# not list, one per line. The inventory is derived from the build commands, not
+# from that list, which is what lets this see an omission from it.
+coverage_gaps() {
+    local root=$1
+    comm -23 \
+        <(ROOT="$root" bash "$ROOT/scripts/docker-image-inventory.sh" | sort -u) \
+        <(make --no-print-directory -C "$root" print-DOCKER_LOCAL_IMAGES | tr ' ' '\n' | sed '/^$/d' | sort -u)
 }
 
 # The tag list comes from the Makefile so the behaviour cases cannot drift from it.
@@ -150,18 +96,57 @@ present_tag="${our_tags[0]}"
 absent_tag="${our_tags[1]}"
 
 echo "case: cleanup covers every image this repository creates"
-printf '%s\n' "${our_tags[@]}" | sort -u > "$WORK/cleaned.txt"
-derive_created_images > "$WORK/created.txt"
-if [ ! -s "$WORK/created.txt" ]; then
-    fail "derived no image identities at all — the deriver has stopped matching the build commands"
+inventory=$(bash scripts/docker-image-inventory.sh)
+if [ -z "$inventory" ]; then
+    fail "derived no image identities at all — the inventory has stopped matching the build commands"
 fi
-if grep -q '\$' "$WORK/created.txt"; then
-    fail "could not resolve an image identity to a literal: $(grep '\$' "$WORK/created.txt" | tr '\n' ' ')"
-fi
-uncleaned=$(comm -23 "$WORK/created.txt" "$WORK/cleaned.txt")
+uncleaned=$(coverage_gaps "$ROOT")
 if [ -n "$uncleaned" ]; then
     fail "this repository creates images that clean-docker leaves behind: $(echo "$uncleaned" | tr '\n' ' ')"
     fail "add them to DOCKER_LOCAL_IMAGES in the Makefile"
+fi
+
+# A build spread over continuation lines and a Compose service's explicit
+# `image:` are both easy for a line-at-a-time scan to miss, and missing either
+# would make the coverage check above pass while cleanup leaves images behind.
+# This fixture proves the derivation reaches both: neither is listed in its
+# DOCKER_LOCAL_IMAGES, so both must come back as gaps.
+echo "case: a multiline build and a compose image: tag are both seen as gaps"
+mkdir -p "$WORK/fixture"
+cat > "$WORK/fixture/Makefile" <<'FIXTURE'
+DOCKER_IMAGE := fixture
+DOCKER_TAG := 9.9.9
+DOCKER_REGISTRY := registry.invalid
+DOCKER_LOCAL_IMAGES :=
+
+print-%:
+	@echo "$($*)"
+
+.PHONY: fixture-build
+fixture-build:
+	docker build \
+		-f Dockerfile.fixture \
+		-t fixture-multiline:latest \
+		.
+FIXTURE
+cat > "$WORK/fixture/docker-compose.yml" <<'FIXTURE'
+services:
+  built:
+    image: fixture-compose:latest
+    build:
+      context: .
+  pulled:
+    image: redis:7-alpine
+FIXTURE
+fixture_gaps=$(coverage_gaps "$WORK/fixture")
+if ! printf '%s\n' "$fixture_gaps" | grep -qx "fixture-multiline:latest"; then
+    fail "a 'docker build -t' spread over continuation lines was not derived"
+fi
+if ! printf '%s\n' "$fixture_gaps" | grep -qx "fixture-compose:latest"; then
+    fail "the explicit image: of a building compose service was not derived"
+fi
+if printf '%s\n' "$fixture_gaps" | grep -qx "redis:7-alpine"; then
+    fail "claimed an image the repository only pulls"
 fi
 
 echo "case: only this project's tags, and only the ones the daemon reports"

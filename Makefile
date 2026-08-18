@@ -2815,20 +2815,22 @@ clean: ## Clean build artifacts and test data
 # #3 — it repeatedly destroyed the codex-review job image and failed 16 review
 # runs portfolio-wide).
 #
-# This is the complete inventory of image identities this repository produces:
-# every `docker build -t` / `buildx build -t` tag, every `docker tag`
-# destination, and the compose-built images the integration suite already
-# enumerates by name when it forces a rebuild (see `integration-test`).
-# scripts/verify-clean-docker.sh re-derives that inventory from those commands
-# and fails if this list has drifted from them, so a new build target cannot
-# quietly escape cleanup.
+# This is every image identity the repository creates under a name it writes
+# literally: the `-t` of its own `docker build`s, the destination of its own
+# `docker tag`s, the images `integration-test` already enumerates by name when
+# it forces a rebuild, and the explicit `image:` of a Compose service that
+# builds. scripts/docker-image-inventory.sh re-derives all of that from those
+# commands and files; `make verify-clean-docker` fails when this list has
+# drifted from it, so a new image-producing target cannot quietly escape
+# cleanup.
 #
-# Compose *stacks* are deliberately not swept here, only the images they built.
-# A stack's project name is derived from its compose file's directory, so
-# `integration` names whichever checkout on the host used it last, and `down`
-# acts on running resources — a sweep would stop a concurrent run's containers
-# and delete its volumes. Each stack is torn down by the target that creates it,
-# where the name is unambiguous because that target just used it.
+# Compose services with no explicit `image:` are deliberately absent. Compose
+# names those `<project>-<service>`, and the project name is the directory
+# Compose ran in or a target's `-p` override — for the root docker-compose.yml
+# it is the checkout directory's own name. Those names identify whichever
+# checkout on the host used them last, not this repository, so each stack is
+# torn down by the target that runs it, where the name is unambiguous because
+# that target just used it.
 DOCKER_LOCAL_IMAGES := \
 	$(DOCKER_IMAGE):$(DOCKER_TAG) \
 	$(DOCKER_IMAGE):latest \
@@ -2839,6 +2841,9 @@ DOCKER_LOCAL_IMAGES := \
 	$(DOCKER_IMAGE)-integration-test:latest \
 	$(DOCKER_IMAGE)-integration-node:latest \
 	$(DOCKER_IMAGE)-claude-code-agent:latest \
+	$(DOCKER_IMAGE)-e2e-sandbox-agent:latest \
+	$(DOCKER_IMAGE)/swtpm:latest \
+	signalbridge:latest \
 	$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG) \
 	$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):latest \
 	go-quicbaas-quicbaas-node1:latest \
