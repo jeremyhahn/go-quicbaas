@@ -818,3 +818,50 @@ func TestAuditLogger_GetSIEMExporter(t *testing.T) {
 
 	assert.Nil(t, al.GetSIEMExporter())
 }
+
+// TestAuditLogger_RotationWatcherDoesNotLeakAcrossRotations verifies that the
+// rotation watcher's lifetime is tied to the logger and not to the log file
+// handle: rotating repeatedly reopens the file, and must not accumulate one
+// watcher goroutine (and its ticker) per rotation.
+func TestAuditLogger_RotationWatcherDoesNotLeakAcrossRotations(t *testing.T) {
+	cfg := &AuditConfig{
+		Enabled:    true,
+		File:       filepath.Join(t.TempDir(), "audit.log"),
+		MaxSize:    1,
+		MaxBackups: 3,
+	}
+
+	al, err := NewAuditLogger(cfg, createTestLogger(t))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, al.Close())
+	}()
+
+	require.Eventually(t, func() bool { return al.rotationWatchers.Load() == 1 },
+		2*time.Second, 5*time.Millisecond,
+		"logger should start exactly one rotation watcher")
+
+	// Force three rotations; each one closes, renames and reopens the log file.
+	oversized := make([]byte, cfg.MaxSize*1024*1024+1)
+	for i := 0; i < 3; i++ {
+		al.mu.Lock()
+		_, writeErr := al.file.Write(oversized)
+		var rotateErr error
+		if writeErr == nil {
+			rotateErr = al.rotateIfNeeded()
+		}
+		al.mu.Unlock()
+		require.NoError(t, writeErr)
+		require.NoError(t, rotateErr, "rotation %d failed", i)
+	}
+
+	al.mu.Lock()
+	info, statErr := al.file.Stat()
+	al.mu.Unlock()
+	require.NoError(t, statErr)
+	require.Zero(t, info.Size(), "the last rotation should have left a fresh, empty log file")
+
+	require.Never(t, func() bool { return al.rotationWatchers.Load() != 1 },
+		500*time.Millisecond, 10*time.Millisecond,
+		"rotation must not start additional watchers")
+}

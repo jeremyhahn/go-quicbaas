@@ -1312,6 +1312,11 @@ type AuditLogger struct {
 	shutdown       chan struct{}
 	siemExporter   *SIEMExporter
 	syslogExporter *SyslogExporter
+
+	// rotationWatchers counts the live checkRotation goroutines. A logger owns
+	// exactly one for its lifetime, so this stays at 1 no matter how often the
+	// log file is rotated and reopened.
+	rotationWatchers atomic.Int64
 }
 
 // AuditConfig configures audit logging behavior.
@@ -1513,6 +1518,9 @@ func NewAuditLogger(cfg *AuditConfig, log *logger.Logger) (*AuditLogger, error) 
 
 	// Start auto-flush routine
 	go al.autoFlush()
+
+	// Start the single rotation watcher for the lifetime of this logger.
+	go al.checkRotation()
 
 	log.Infof("Audit logger initialized: file=%s sign_logs=%v compress=%v compression_level=%d siem=%v syslog=%v",
 		cfg.File, cfg.SignLogs, cfg.Compress, cfg.CompressionLevel, cfg.SIEM, cfg.SyslogEnabled)
@@ -1952,17 +1960,21 @@ func (al *AuditLogger) openLogFile() error {
 
 	al.file = file
 
-	// Check if rotation is needed
-	go al.checkRotation()
-
 	return nil
 }
 
-// checkRotation checks if log rotation is needed.
+// checkRotation periodically rotates the audit log once it exceeds the
+// configured maximum size. It runs until the logger is closed.
+//
+// Exactly one instance runs per logger; it is started by NewAuditLogger and
+// must never be started from openLogFile, which runs again on every rotation.
 func (al *AuditLogger) checkRotation() {
 	if al.config.File == "" {
 		return
 	}
+
+	al.rotationWatchers.Add(1)
+	defer al.rotationWatchers.Add(-1)
 
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
