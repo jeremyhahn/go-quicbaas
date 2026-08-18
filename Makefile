@@ -2815,12 +2815,19 @@ clean: ## Clean build artifacts and test data
 # #3 — it repeatedly destroyed the codex-review job image and failed 16 review
 # runs portfolio-wide).
 #
-# These tags are unambiguous: nothing else on the host builds them. Compose
-# stacks are deliberately NOT swept here, because their identity is not. Compose
-# derives a project name from the compose file's directory, so `integration` or
-# `e2e` names whichever checkout on the host used it last, and `down` acts on
-# running resources — a sweep would stop a concurrent run's containers and
-# delete its volumes. Each stack is torn down by the target that creates it,
+# This is the complete inventory of image identities this repository produces:
+# every `docker build -t` / `buildx build -t` tag, every `docker tag`
+# destination, and the compose-built images the integration suite already
+# enumerates by name when it forces a rebuild (see `integration-test`).
+# scripts/verify-clean-docker.sh re-derives that inventory from those commands
+# and fails if this list has drifted from them, so a new build target cannot
+# quietly escape cleanup.
+#
+# Compose *stacks* are deliberately not swept here, only the images they built.
+# A stack's project name is derived from its compose file's directory, so
+# `integration` names whichever checkout on the host used it last, and `down`
+# acts on running resources — a sweep would stop a concurrent run's containers
+# and delete its volumes. Each stack is torn down by the target that creates it,
 # where the name is unambiguous because that target just used it.
 DOCKER_LOCAL_IMAGES := \
 	$(DOCKER_IMAGE):$(DOCKER_TAG) \
@@ -2830,7 +2837,19 @@ DOCKER_LOCAL_IMAGES := \
 	$(DOCKER_IMAGE)-test:latest \
 	$(DOCKER_IMAGE)-devcontainer:latest \
 	$(DOCKER_IMAGE)-integration-test:latest \
-	$(DOCKER_IMAGE)-integration-node:latest
+	$(DOCKER_IMAGE)-integration-node:latest \
+	$(DOCKER_IMAGE)-claude-code-agent:latest \
+	$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG) \
+	$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):latest \
+	go-quicbaas-quicbaas-node1:latest \
+	go-quicbaas-quicbaas-node2:latest \
+	go-quicbaas-quicbaas-node3:latest \
+	integration-integration-test:latest \
+	integration-test-node1:latest \
+	integration-test-node2:latest \
+	integration-test-node3:latest \
+	integration-test-node4:latest \
+	integration-test-node5:latest
 
 .PHONY: clean-docker
 clean-docker: ## Remove the Docker images this project builds (never prunes the host)
@@ -2843,15 +2862,20 @@ clean-docker: ## Remove the Docker images this project builds (never prunes the 
 	@# denied) propagates instead of reading as "no such image". Removal failures
 	@# are accumulated: a `for` loop otherwise reports only its last command's
 	@# status, and an early failure followed by an absent tag would exit 0.
+	@#
+	@# Removal is never forced. These tags are fixed, so on a shared runner a
+	@# concurrent checkout of this repository can be using one; `rmi -f` would
+	@# untag it out from under that run. Unforced `rmi` refuses instead, and the
+	@# refusal is reported rather than swallowed.
 	@present=$$($(DOCKER) images --format '{{.Repository}}:{{.Tag}}') || exit $$?; \
 	status=0; \
 	for image in $(DOCKER_LOCAL_IMAGES); do \
 		if printf '%s\n' "$$present" | grep -qxF "$$image"; then \
-			$(DOCKER) rmi -f "$$image" || status=1; \
+			$(DOCKER) rmi "$$image" || status=1; \
 		fi; \
 	done; \
 	if [ $$status -ne 0 ]; then \
-		echo "$(RED)Some QuicBaaS images could not be removed$(NC)"; \
+		echo "$(RED)Some QuicBaaS images could not be removed (in use?)$(NC)"; \
 		exit $$status; \
 	fi; \
 	echo "$(GREEN)QuicBaaS Docker images removed$(NC)"
