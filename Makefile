@@ -2808,23 +2808,20 @@ clean: ## Clean build artifacts and test data
 	$(GOCMD) clean -cache -testcache
 	@echo "$(GREEN)Cleanup complete$(NC)"
 
-# Docker cleanup is scoped to the resources this repo creates, by name. It must
-# never be a host-global `docker system prune -af --volumes`: the CI runners are
+# Docker cleanup is scoped to the images this repo builds, by tag. It must never
+# be a host-global `docker system prune -af --volumes`: the CI runners are
 # shared, and that deletes every unused image and named volume on the host,
 # including the ones other repositories' jobs depend on (incident 2026-08-17,
 # #3 — it repeatedly destroyed the codex-review job image and failed 16 review
 # runs portfolio-wide).
 #
-# What this does NOT give you: isolation between two concurrent runs of this
-# repo's own stacks. Compose project names here come from the compose file's
-# directory (`integration`, `e2e`, ...), exactly as every test target already
-# uses them, so a second checkout or a concurrent run of the same suite shares
-# them. That is a property of the test harness, not of this target, and CI does
-# not run this target — the integration workflow lets `make integration-test`
-# tear down its own stack instead. This is a manual, opt-in developer target.
-#
-# Images built by this repo's `docker build` / `buildx build` targets. Images
-# built by compose are removed with the stack itself (`down --rmi local`).
+# These tags are unambiguous: nothing else on the host builds them. Compose
+# stacks are deliberately NOT swept here, because their identity is not. Compose
+# derives a project name from the compose file's directory, so `integration` or
+# `e2e` names whichever checkout on the host used it last, and `down` acts on
+# running resources — a sweep would stop a concurrent run's containers and
+# delete its volumes. Each stack is torn down by the target that creates it,
+# where the name is unambiguous because that target just used it.
 DOCKER_LOCAL_IMAGES := \
 	$(DOCKER_IMAGE):$(DOCKER_TAG) \
 	$(DOCKER_IMAGE):latest \
@@ -2835,24 +2832,19 @@ DOCKER_LOCAL_IMAGES := \
 	$(DOCKER_IMAGE)-integration-test:latest \
 	$(DOCKER_IMAGE)-integration-node:latest
 
-# Stacks the test targets run under an explicit `docker compose -p` name, as
-# <project>:<compose file>. Every other stack takes its project name from its
-# compose file's directory, so bringing that file down is enough.
-DOCKER_COMPOSE_NAMED_STACKS := \
-	seal-hw:test/integration/docker-compose.seal-hardware.yml \
-	tenantbarrier:test/integration/docker-compose.seal.yml
-
 .PHONY: clean-docker
-clean-docker: ## Clean this project's Docker stacks and images (never prunes the host)
-	@echo "$(BLUE)Cleaning QuicBaaS Docker resources...$(NC)"
-	@find . -name 'docker-compose*.yml' -not -path '*/node_modules/*' | while read -r compose_file; do \
-		$(DOCKER) compose -f "$$compose_file" down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
+clean-docker: ## Remove the Docker images this project builds (never prunes the host)
+	@echo "$(BLUE)Removing QuicBaaS Docker images...$(NC)"
+	@if ! command -v $(DOCKER) > /dev/null 2>&1; then \
+		echo "$(RED)Error: Docker is not installed$(NC)"; \
+		exit 1; \
+	fi
+	@for image in $(DOCKER_LOCAL_IMAGES); do \
+		if $(DOCKER) image inspect "$$image" > /dev/null 2>&1; then \
+			$(DOCKER) rmi -f "$$image"; \
+		fi; \
 	done
-	@for stack in $(DOCKER_COMPOSE_NAMED_STACKS); do \
-		$(DOCKER) compose -p "$${stack%%:*}" -f "$${stack#*:}" down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
-	done
-	@$(DOCKER) rmi -f $(DOCKER_LOCAL_IMAGES) 2>/dev/null || true
-	@echo "$(GREEN)QuicBaaS Docker resources removed$(NC)"
+	@echo "$(GREEN)QuicBaaS Docker images removed$(NC)"
 
 .PHONY: clean-all
 clean-all: clean clean-docker proto-clean cluster-clean ## Clean everything
