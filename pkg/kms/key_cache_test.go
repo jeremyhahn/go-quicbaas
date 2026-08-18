@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -279,7 +280,12 @@ func TestTTL_KeyAccessibleBeforeExpiry(t *testing.T) {
 	cache := NewKeyCache(nil)
 	defer cache.Close()
 
-	ttl := 50 * time.Millisecond
+	// The TTL only has to outlast five 5ms sleeps, but it is set far above
+	// that on purpose: at 50ms this test used to fail on loaded CI runners
+	// (three hits instead of five) simply because the sleeps and the -race
+	// instrumentation overran the key's lifetime. That is a wall-clock margin,
+	// not a weaker assertion - every check below is unchanged.
+	ttl := 5 * time.Second
 	material := []byte("value1")
 	err := cache.Put("key1", material, ttl)
 	if err != nil {
@@ -971,6 +977,83 @@ func TestConcurrent_DuringCleanup(t *testing.T) {
 	wg.Wait()
 
 	// Should complete without panics during concurrent cleanup
+}
+
+// TestConcurrent_GetNeverObservesZeroedMaterial pins the ownership invariant
+// between readers and eviction: key material is zeroed on eviction, so a Get
+// that reports a hit must return the material that was cached, never the
+// random-then-zero pattern a concurrent eviction writes over it. It exercises
+// every path that zeroes an entry - Delete, Clear, Put's replace path and the
+// background cleanup goroutine - against readers copying the same entry.
+func TestConcurrent_GetNeverObservesZeroedMaterial(t *testing.T) {
+	const (
+		keyID      = "racy-key"
+		readers    = 4
+		iterations = 1000
+	)
+
+	material := bytes.Repeat([]byte{0xA5}, 64)
+
+	// A 1ms cleanup interval keeps the background eviction goroutine running
+	// against the readers for the whole test; the matching TTL below makes
+	// every entry a candidate for it.
+	cache := NewKeyCache(&KeyCacheOptions{
+		CleanupInterval: time.Millisecond,
+	})
+	defer cache.Close()
+
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+
+	// Writer: continuously republishes and evicts the entry so readers are
+	// copying material that eviction is concurrently zeroing.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(done)
+
+		for i := 0; i < iterations; i++ {
+			if err := cache.Put(keyID, material, time.Millisecond); err != nil {
+				t.Errorf("Put failed: %v", err)
+				return
+			}
+			switch i % 3 {
+			case 0:
+				cache.Delete(keyID)
+			case 1:
+				cache.Clear()
+			default:
+				// Left in place for the cleanup goroutine to expire, or for
+				// the next iteration's Put to replace.
+			}
+		}
+	}()
+
+	for r := 0; r < readers; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+
+				if got, found := cache.Get(keyID); found && !bytes.Equal(got, material) {
+					t.Errorf("Get reported a hit but returned %x, want %x", got, material)
+					return
+				}
+
+				// Yield so the writer is not starved of the write lock by
+				// readers spinning on the read lock.
+				runtime.Gosched()
+			}
+		}()
+	}
+
+	wg.Wait()
 }
 
 // TestZeroMemory_OnDelete tests memory is zeroed on delete.
