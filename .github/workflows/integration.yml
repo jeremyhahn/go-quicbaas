@@ -57,6 +57,21 @@ jobs:
     steps:
       # The stack builds several images in one run; the runner's stock free
       # space is not enough for them plus the toolchain caches.
+      #
+      # Nothing here touches Docker, deliberately. The suite reclaims its own
+      # space: `make integration-test` brings its compose stack down with
+      # `--volumes --remove-orphans` and removes the five node images and the
+      # test-runner image before it rebuilds them, and arms an EXIT trap before
+      # the first container exists so the stack comes down on every way out of
+      # the recipe — a failed build or an unhealthy cluster included, not only
+      # the run that reached its last line (pinned by
+      # `make verify-integration-teardown`). A host-global
+      # `sudo docker system prune -af --volumes` used to run here instead; the
+      # runners are shared, and that deletes every unused image and named
+      # volume on the host. On 2026-08-17 it repeatedly destroyed the
+      # codex-review job image on gpu-host and omega and failed 16 review runs
+      # portfolio-wide (#3). Space beyond this job's own stack is host
+      # maintenance, not this workflow's to reclaim.
       - name: Free up disk space
         run: |
           echo "=== Disk space before cleanup ==="
@@ -65,7 +80,6 @@ jobs:
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker system prune -af --volumes
           echo "=== Disk space after cleanup ==="
           df -h
 
