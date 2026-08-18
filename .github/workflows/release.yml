@@ -503,8 +503,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         run: |
@@ -538,8 +538,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
   build-docker-cli:
     name: Build Docker CLI Image
@@ -612,8 +612,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         run: |
@@ -646,8 +646,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
   build-docker-fips:
     name: Build Docker FIPS Image
@@ -718,8 +718,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         run: |
@@ -752,8 +752,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
   create-checksums:
     name: Create Master Checksums
