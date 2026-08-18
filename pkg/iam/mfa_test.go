@@ -25,17 +25,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testTOTPSecret is a 160-bit base32 TOTP secret - the size otp.GenerateSecret
+// issues for a real enrollment. FIPS 140-only mode rejects HMAC keys shorter
+// than 112 bits, so a fixture secret must not be shorter than production's.
+const testTOTPSecret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+
 // Helper to generate a valid TOTP code for testing
 func generateValidTOTPCode(t *testing.T, secret string, config MFAConfig) string {
 	t.Helper()
 	otpConfig := otp.Config{
-		Type:      otp.TypeTOTP,
-		Secret:    secret,
-		Digits:    uint(config.Digits),
-		Period:    uint(config.Period),
-		Algorithm: convertAlgorithm(config.Algorithm),
-		Skew:      uint(config.Skew),
+		Type:   otp.TypeTOTP,
+		Secret: secret,
+		Digits: uint(config.Digits),
+		Period: uint(config.Period),
+		Skew:   uint(config.Skew),
 	}
+
+	algorithm, err := convertAlgorithm("test.totp.generate", config.Algorithm)
+	require.NoError(t, err)
+	otpConfig.Algorithm = algorithm
 
 	auth, err := otp.NewAuthenticator(otpConfig)
 	require.NoError(t, err)
@@ -64,7 +72,7 @@ func TestNewMFAManager(t *testing.T) {
 				assert.Equal(t, "QuicBaaS", m.config.Issuer)
 				assert.Equal(t, 6, m.config.Digits)
 				assert.Equal(t, 30, m.config.Period)
-				assert.Equal(t, MFAAlgorithmSHA1, m.config.Algorithm)
+				assert.Equal(t, wantDefaultMFAAlgorithm(), m.config.Algorithm)
 				assert.Equal(t, 1, m.config.Skew)
 				assert.Equal(t, 10, m.config.BackupCodes)
 			},
@@ -142,7 +150,7 @@ func TestNewMFAManager(t *testing.T) {
 					Issuer:    "TestApp",
 					Digits:    6,
 					Period:    30,
-					Algorithm: MFAAlgorithmSHA1,
+					Algorithm: defaultMFAAlgorithm(),
 					Skew:      10, // invalid (> 5)
 				}),
 			},
@@ -225,8 +233,8 @@ func TestBeginEnrollment(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -451,8 +459,8 @@ func TestBeginChallenge(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -509,8 +517,8 @@ func TestBeginChallenge(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  false, // not verified
@@ -598,8 +606,8 @@ func TestVerifyChallenge(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -628,8 +636,8 @@ func TestVerifyChallenge(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -655,8 +663,8 @@ func TestVerifyChallenge(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -678,8 +686,8 @@ func TestVerifyChallenge(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -815,8 +823,8 @@ func TestVerifyCode(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  false,
@@ -836,8 +844,8 @@ func TestVerifyCode(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -892,8 +900,8 @@ func TestDisableMFA(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -964,8 +972,8 @@ func TestGetMFAStatus(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -1065,8 +1073,8 @@ func TestIsMFARequired(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -1091,8 +1099,8 @@ func TestIsMFARequired(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  false,
@@ -1139,8 +1147,8 @@ func TestGenerateBackupCodes(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -1184,8 +1192,8 @@ func TestGenerateBackupCodes(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  false,
@@ -1204,8 +1212,8 @@ func TestGenerateBackupCodes(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -1281,8 +1289,8 @@ func TestVerifyBackupCode(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -1331,8 +1339,8 @@ func TestVerifyBackupCode(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -1354,8 +1362,8 @@ func TestVerifyBackupCode(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -1379,8 +1387,8 @@ func TestVerifyBackupCode(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -1465,8 +1473,8 @@ func TestGetBackupCodeStatus(t *testing.T) {
 					ID:        "secret-1",
 					UserID:    "user-123",
 					TenantID:  "tenant-123",
-					Secret:    "JBSWY3DPEHPK3PXP",
-					Algorithm: MFAAlgorithmSHA1,
+					Secret:    testTOTPSecret,
+					Algorithm: defaultMFAAlgorithm(),
 					Digits:    6,
 					Period:    30,
 					Verified:  true,
@@ -1538,26 +1546,6 @@ func TestGetBackupCodeStatus(t *testing.T) {
 					tt.validate(t, status)
 				}
 			}
-		})
-	}
-}
-
-// TestConvertAlgorithm tests the algorithm conversion function
-func TestConvertAlgorithm(t *testing.T) {
-	tests := []struct {
-		input    MFAAlgorithm
-		expected otp.Algorithm
-	}{
-		{MFAAlgorithmSHA1, otp.AlgorithmSHA1},
-		{MFAAlgorithmSHA256, otp.AlgorithmSHA256},
-		{MFAAlgorithmSHA512, otp.AlgorithmSHA512},
-		{"INVALID", otp.AlgorithmSHA1}, // Default case
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.input), func(t *testing.T) {
-			result := convertAlgorithm(tt.input)
-			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -1647,8 +1635,8 @@ func TestVerifyChallengeIncrementAttempts(t *testing.T) {
 		ID:        "secret-1",
 		UserID:    "user-123",
 		TenantID:  "tenant-123",
-		Secret:    "JBSWY3DPEHPK3PXP",
-		Algorithm: MFAAlgorithmSHA1,
+		Secret:    testTOTPSecret,
+		Algorithm: defaultMFAAlgorithm(),
 		Digits:    6,
 		Period:    30,
 		Verified:  true,
@@ -1761,8 +1749,8 @@ func TestDisableMFAWithEnrollmentAndChallenge(t *testing.T) {
 		ID:        "secret-1",
 		UserID:    "user-123",
 		TenantID:  "tenant-123",
-		Secret:    "JBSWY3DPEHPK3PXP",
-		Algorithm: MFAAlgorithmSHA1,
+		Secret:    testTOTPSecret,
+		Algorithm: defaultMFAAlgorithm(),
 		Digits:    6,
 		Period:    30,
 		Verified:  true,

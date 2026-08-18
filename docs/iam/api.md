@@ -910,6 +910,12 @@ Error Response (403 Forbidden):
 
 ## MFA API
 
+TOTP codes are derived with HMAC-SHA1 by default (RFC 6238) and with
+HMAC-SHA256 in FIPS mode, where SHA1 is not an approved algorithm. Each
+enrollment stores the algorithm it was provisioned with, so changing the
+default never invalidates an existing enrollment. See
+[FIPS 140-3 capability differences](../security/fips.md#totp-multi-factor-authentication).
+
 ### Get MFA Status
 
 ```
