@@ -2,8 +2,8 @@ name: TEMP GHA Cache Probe
 
 on:
   push:
-    branches:
-      - 'issue/25-**'
+  pull_request:
+    branches: [main]
 
 jobs:
   probe:
