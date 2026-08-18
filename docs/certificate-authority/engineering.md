@@ -363,7 +363,7 @@ Example for node1:
 DNS.1 = node1.quicbaas.local
 DNS.2 = quicbaas-0.quicbaas-headless.default.svc
 IP.1 = 10.0.0.1
-IP.2 = 192.168.1.10
+IP.2 = 203.0.113.10
 ```
 
 ### Configuring Client Certificate Verification

@@ -210,7 +210,7 @@ quicbaas vector upsert --vector-file vec.bin --metadata '{"doc_id":"123"}'
 
 # Cluster management
 quicbaas cluster status
-quicbaas cluster add-node --address 192.168.1.10:50051
+quicbaas cluster add-node --address 203.0.113.10:50051
 ```
 
 ## Dual-Codec System

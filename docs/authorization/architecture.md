@@ -194,7 +194,7 @@ type AuthorizationRequest struct {
     Action   string
 
     // Context contains additional contextual information
-    // Example: {"ip_address": "192.168.1.100", "time": "2025-01-15T10:30:00Z"}
+    // Example: {"ip_address": "203.0.113.100", "time": "2025-01-15T10:30:00Z"}
     Context map[string]interface{}
 }
 ```
@@ -665,7 +665,7 @@ req := &interfaces.AuthorizationRequest{
     Resource: "keys",
     Action:   "read",
     Context: map[string]interface{}{
-        "ip_address": "192.168.1.100",
+        "ip_address": "203.0.113.100",
     },
 }
 

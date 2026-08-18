@@ -110,8 +110,8 @@ quicbaas ssh keys list --scope user
 
 ```
 NAME           SCOPE  OWNER   TYPE     FINGERPRINT (SHA256)
-fleet-deploy   user   jhahn   ed25519  ZF8u2vF+...
-laptop-key     user   jhahn   ed25519  Pa9g3xR-...
+fleet-deploy   user   deploy  ed25519  ZF8u2vF+...
+laptop-key     user   deploy  ed25519  Pa9g3xR-...
 ```
 
 ## quicbaas ssh known-hosts
@@ -121,7 +121,7 @@ key changes.
 
 ```bash
 quicbaas ssh known-hosts add \
-  --host gpu-host \
+  --host gpu-node-01 \
   --fingerprint "SHA256:abc..." \
   --scope user
 ```
@@ -131,8 +131,8 @@ quicbaas ssh known-hosts list
 ```
 
 ```
-HOST       SCOPE  OWNER   TYPE     FINGERPRINT
-gpu-host    user   jhahn   ed25519  SHA256:abc...
+HOST         SCOPE  OWNER   TYPE     FINGERPRINT
+gpu-node-01  user   deploy  ed25519  SHA256:abc...
 ```
 
 ## quicbaas ssh authorized

@@ -3984,7 +3984,7 @@ The page displays a searchable, filterable table of agents:
 **Table** — Columns:
 
 - **ID** — unique agent identifier (e.g., `agt_abc123def456`), truncated with tooltip
-- **Name** — human-readable agent name (e.g., `gpu-host`, `agent-01`)
+- **Name** — human-readable agent name (e.g., `gpu-node-01`, `agent-01`)
 - **Host** — IP address or hostname where the agent runs
 - **Type** — backend type (e.g., `acp`, `ollama`, `opencode`)
 - **Status** — badge: "online" (green), "offline" (red), "unknown" (gray)
@@ -4152,7 +4152,7 @@ Model: qwen3:1.7b | Stop Reason: end_turn | Elapsed: 2.34s
 ```
 Recent Inference Calls (last 10):
 
-14:35:20  [Ollama | qwen3:1.7b | gpu-host]
+14:35:20  [Ollama | qwen3:1.7b | gpu-node-01]
           Q: Explain QUIC
           ⏱️ 2.34s
           [Expand to show response]

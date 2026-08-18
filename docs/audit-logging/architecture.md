@@ -50,7 +50,7 @@ event := &iam.AuditEvent{
         UserID: "user-456",
         Email:  "user@example.com",
     },
-    IPAddress: "192.168.1.100",
+    IPAddress: "203.0.113.100",
     UserAgent: "Mozilla/5.0...",
 }
 
@@ -150,7 +150,7 @@ Response:
         "user_id": "user-456",
         "email": "user@example.com"
       },
-      "ip_address": "192.168.1.100",
+      "ip_address": "203.0.113.100",
       "user_agent": "Mozilla/5.0..."
     }
   ],

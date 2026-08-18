@@ -24,6 +24,12 @@ indistinguishable from an unwritten one.
 **Complete.** 38 feature folders, 190 files, migrated 2026-08-19. Counting is
 derived, not maintained: `ls docs/*/architecture.md | wc -l`.
 
+**This file is the migration record.** New features get a folder from day one;
+do not add a flat `.md` at the `docs/` root, and do not recreate the old
+`docs/api/`, `docs/architecture/`, `docs/cli/` or `docs/security/` split — those
+directories were removed deliberately and their content is inside the feature
+folders.
+
 Documentation was reshaped from the previous layout (a `docs/api/`,
 `docs/architecture/`, `docs/cli/` and `docs/security/` split, plus per-topic
 folders) into the folders below. Content was **moved and absorbed, not

@@ -83,7 +83,7 @@ quicbaas credentials cert issue api-server \
 quicbaas credentials cert issue mtls-service \
   --usage both \
   --dns "service.local" \
-  --ip "10.0.0.5,192.168.1.100"
+  --ip "10.0.0.5,203.0.113.100"
 
 # Issue with full subject
 quicbaas credentials cert issue web-server \

@@ -165,9 +165,9 @@ time.hour between 9..17 and time.weekday in [mon..fri]
 ```yaml
 # IP address
 request.ip in 10.0.0.0/8               # Single CIDR
-request.ip in [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]  # Multiple
+request.ip in [10.0.0.0/8, 172.16.0.0/12, 203.0.113.0/24]  # Multiple
 request.ip notin 0.0.0.0/0             # Exclusion
-request.ip == 192.168.1.100            # Exact IP
+request.ip == 203.0.113.100            # Exact IP
 
 # Named networks (defined in tenant config)
 request.ip in $corporate_network        # Named network reference

@@ -439,7 +439,7 @@ audit:
   "operation": "kms.encrypt",
   "resource": "user-data-key",
   "result": "success",
-  "ip_address": "192.168.1.100",
+  "ip_address": "203.0.113.100",
   "details": {
     "key_version": 3,
     "algorithm": "AES-256-GCM"

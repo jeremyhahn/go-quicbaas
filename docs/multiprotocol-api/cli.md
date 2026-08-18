@@ -250,7 +250,7 @@ quicbaas start --fips --log-level debug
 quicbaas start --config /etc/quicbaas/config.yaml
 
 # Start as a cluster node
-quicbaas start --node-id 2 --raft-address 192.168.1.2:63000
+quicbaas start --node-id 2 --raft-address 203.0.113.2:63000
 ```
 
 ### Server Features

@@ -467,7 +467,7 @@ Full distributed mode with Raft consensus. Multiple QuicBaaS nodes, agents on an
 A long-lived daemon (`quicbaas agent serve`) runs on remote GPU hosts and exposes an AgentRuntime gRPC service. The central orchestrator calls this service to spawn sandboxed (containerized) sessions. This is the **sandbox-first** default.
 
 ```
-  CENTRAL QUICBAAS               REMOTE GPU HOST (198.51.100.91)
+  CENTRAL QUICBAAS               REMOTE GPU HOST (gpu-host.example.com)
 ┌────────────────────────┐     ┌──────────────────────────────────────┐
 │                        │     │                                       │
 │ BackendDispatcher      │     │  quicbaas agent serve                 │
@@ -693,7 +693,7 @@ When `sandboxed: false`, the orchestrator spawns the agent as a local subprocess
 #### Integration Architecture
 
 ```
-HOST A (vm-host-1)                           HOST B (vm-host-3)
+HOST A                                         HOST B
 ┌──────────────────────────────┐               ┌──────────────────────────────┐
 │ Claude Code Session          │               │ Claude Code Session          │
 │ (Lead Agent + Workers)       │               │ (Workers)                    │

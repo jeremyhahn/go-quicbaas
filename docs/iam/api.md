@@ -763,7 +763,7 @@ Response:
       "last_active": "2025-01-15T14:22:00Z",
       "expires_at": "2025-01-15T18:30:00Z",
       "mfa_verified": true,
-      "ip_address": "192.168.1.100",
+      "ip_address": "203.0.113.100",
       "user_agent": "Mozilla/5.0...",
       "device_info": "Chrome on macOS"
     }
@@ -848,7 +848,7 @@ Response:
       "outcome": "success",
       "actor_id": "user_xyz",
       "actor_type": "user",
-      "ip_address": "192.168.1.100",
+      "ip_address": "203.0.113.100",
       "user_agent": "Mozilla/5.0...",
       "timestamp": "2025-01-15T10:30:00Z",
       "details": {
@@ -1090,7 +1090,7 @@ Content-Type: application/json
   "action": "read",
   "resource": "orders://orders/12345",
   "context": {
-    "ip_address": "192.168.1.100",
+    "ip_address": "203.0.113.100",
     "time": "2025-01-15T10:30:00Z"
   }
 }

@@ -67,7 +67,7 @@ POST /api/v1/credentials/certificates
   "province": "California",
   "locality": "San Francisco",
   "dns_names": ["my-service.local", "my-service.svc.cluster.local"],
-  "ip_addresses": ["10.0.0.5", "192.168.1.100"],
+  "ip_addresses": ["10.0.0.5", "203.0.113.100"],
   "email_addresses": ["admin@example.com"],
   "uris": ["spiffe://cluster.local/ns/default/sa/my-service"],
   "validity_days": 90,

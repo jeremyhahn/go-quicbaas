@@ -106,10 +106,10 @@ Register agent workers on remote machines:
 
 ```bash
 # Register agent with default model
-quicbaas agent register --name worker-1 --host 192.168.1.10:9090 --type claude
+quicbaas agent register --name worker-1 --host 203.0.113.10:9090 --type claude
 
 # Register with custom model
-quicbaas agent register --name worker-2 --host 192.168.1.11:9090 --type claude \
+quicbaas agent register --name worker-2 --host 203.0.113.11:9090 --type claude \
   --model claude-3-opus-20250219
 
 # Register Ollama agent for local inference
@@ -126,8 +126,8 @@ quicbaas agent list
 
 # Output:
 # ID                                      NAME            HOST                TYPE        STATUS
-# a1b2c3d4-e5f6-7890-abcd-ef1234567890  worker-1        192.168.1.10:9090   claude      running
-# e5f6-7890-abcd-ef1234567890-a1b2c3d4  worker-2        192.168.1.11:9090   claude      registered
+# a1b2c3d4-e5f6-7890-abcd-ef1234567890  worker-1        203.0.113.10:9090   claude      running
+# e5f6-7890-abcd-ef1234567890-a1b2c3d4  worker-2        203.0.113.11:9090   claude      registered
 ```
 
 ## 9. Create and Assign Tasks
@@ -183,20 +183,20 @@ quicbaas orchestrator close sess_abc123def456
 
 Deploy agents on multiple machines:
 
-### On Node 1 (192.168.1.10)
+### On Node 1 (203.0.113.10)
 
 ```bash
 # Register the agent
-quicbaas agent register --name prod-agent-01 --host 192.168.1.10:9090 --type claude
+quicbaas agent register --name prod-agent-01 --host 203.0.113.10:9090 --type claude
 
 # Start agent process
 quicbaas orchestrator spawn --backend claude &
 ```
 
-### On Node 2 (192.168.1.11)
+### On Node 2 (203.0.113.11)
 
 ```bash
-quicbaas agent register --name prod-agent-02 --host 192.168.1.11:9090 --type claude
+quicbaas agent register --name prod-agent-02 --host 203.0.113.11:9090 --type claude
 
 quicbaas orchestrator spawn --backend claude &
 ```
@@ -568,7 +568,7 @@ quicbaas orchestrator inference \
 # Pin to a specific daemon
 quicbaas orchestrator inference \
   --backend ollama \
-  --host-affinity gpu-host \
+  --host-affinity gpu-node-01 \
   --model qwen3:1.7b \
   --prompt "summarise the NIST CSF"
 

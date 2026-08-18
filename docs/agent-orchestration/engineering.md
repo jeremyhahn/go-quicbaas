@@ -3010,9 +3010,9 @@ running     -->  error  -->  offline
 Register a new agent with the fleet:
 
 ```bash
-quicbaas agent register --name "worker-1" --host 192.168.1.10:9090 --type claude --tenant dev-team
+quicbaas agent register --name "worker-1" --host 203.0.113.10:9090 --type claude --tenant dev-team
 
-quicbaas agent register --name "worker-2" --host 192.168.1.11:9090 --type claude \
+quicbaas agent register --name "worker-2" --host 203.0.113.11:9090 --type claude \
   --model claude-3-opus-20250219 \
   --tenant dev-team
 
@@ -3038,7 +3038,7 @@ List all agents with optional filters:
 quicbaas agent list --tenant dev-team
 
 # Filter by host
-quicbaas agent list --tenant dev-team --host 192.168.1.10:9090
+quicbaas agent list --tenant dev-team --host 203.0.113.10:9090
 
 # Filter by status
 quicbaas agent list --tenant dev-team --status running
@@ -3133,7 +3133,7 @@ curl -X POST http://localhost:8080/api/v1/orchestrator/agents \
   -H "Content-Type: application/json" \
   -d '{
     "name": "worker-1",
-    "host": "192.168.1.10:9090",
+    "host": "203.0.113.10:9090",
     "type": "claude",
     "backend": "claude",
     "model": "claude-3-opus-20250219",
@@ -3147,7 +3147,7 @@ Response `201 Created`:
   "agent": {
     "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "name": "worker-1",
-    "host": "192.168.1.10:9090",
+    "host": "203.0.113.10:9090",
     "type": "claude",
     "backend": "claude",
     "model": "claude-3-opus-20250219",
@@ -3165,7 +3165,7 @@ List agents with optional filters:
 curl http://localhost:8080/api/v1/orchestrator/agents?status=running \
   -H "X-Tenant-ID: dev-team"
 
-curl http://localhost:8080/api/v1/orchestrator/agents?host=192.168.1.10:9090 \
+curl http://localhost:8080/api/v1/orchestrator/agents?host=203.0.113.10:9090 \
   -H "X-Tenant-ID: dev-team"
 
 curl http://localhost:8080/api/v1/orchestrator/agents?type=claude \
@@ -3182,7 +3182,7 @@ Response `200 OK`:
     {
       "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "name": "worker-1",
-      "host": "192.168.1.10:9090",
+      "host": "203.0.113.10:9090",
       "type": "claude",
       "backend": "claude",
       "model": "claude-3-opus-20250219",
@@ -3210,7 +3210,7 @@ Response `200 OK`:
   "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "tenant_id": "dev-team",
   "name": "worker-1",
-  "host": "192.168.1.10:9090",
+  "host": "203.0.113.10:9090",
   "type": "claude",
   "backend": "claude",
   "model": "claude-3-opus-20250219",

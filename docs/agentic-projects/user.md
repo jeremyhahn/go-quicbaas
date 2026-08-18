@@ -33,11 +33,11 @@ Each discovered project contains:
 ```json
 {
   "name": "software",
-  "path": "/mnt/vm-host-1/automatethethings/software",
+  "path": "/workspace/software",
   "has_claude_md": true,
   "has_agents": true,
   "agent_files": [
-    "/mnt/vm-host-1/automatethethings/software/.claude/agents/go-quicbaas.md"
+    "/workspace/software/.claude/agents/go-quicbaas.md"
   ]
 }
 ```
@@ -45,7 +45,7 @@ Each discovered project contains:
 ## Example Directory Structure
 
 ```
-/mnt/vm-host-1/automatethethings/
+/workspace/
   software/
     CLAUDE.md
     .claude/agents/
@@ -57,7 +57,7 @@ Each discovered project contains:
     main.go
 ```
 
-Scanning `/mnt/vm-host-1/automatethethings/` discovers `software` (has both markers) and `another-project` (has `CLAUDE.md`). The `not-a-project` directory is skipped.
+Scanning `/workspace/` discovers `software` (has both markers) and `another-project` (has `CLAUDE.md`). The `not-a-project` directory is skipped.
 
 ## MCP Tool
 

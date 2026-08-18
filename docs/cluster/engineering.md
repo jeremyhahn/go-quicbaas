@@ -598,7 +598,7 @@ X509v3 Key Usage: critical
 X509v3 Extended Key Usage:
     TLS Web Server Authentication, TLS Web Client Authentication
 X509v3 Subject Alternative Name:
-    DNS:node1.example.com, IP:192.168.1.10
+    DNS:node1.example.com, IP:203.0.113.10
 ```
 
 ### Certificate Generation
@@ -626,7 +626,7 @@ subjectAltName = @alt_names
 
 [alt_names]
 DNS.1 = node1.example.com
-IP.1 = 192.168.1.10
+IP.1 = 203.0.113.10
 EOF
 
 # Generate CSR and sign

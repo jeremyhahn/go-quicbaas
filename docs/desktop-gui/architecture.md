@@ -122,7 +122,7 @@ QuicBaaS needs a web-based UI that serves two contexts:
 1. **Desktop GUI** - When `quicbaas` is run with no subcommands and a display is available, launch a Wails desktop app
 2. **Server WebUI** - The same Svelte frontend embedded in `quicbaasd` for browser-based administration
 
-This follows the proven pattern from go-qrdb (`/mnt/vm-host-1/go-qrdb/cmd/qrdb/`) which already implements dual-context Wails GUI with Svelte + TypeScript SDK dual-transport (Wails IPC + REST).
+This follows the proven pattern from go-qrdb (`<go-qrdb-checkout>/cmd/qrdb/`) which already implements dual-context Wails GUI with Svelte + TypeScript SDK dual-transport (Wails IPC + REST).
 
 ### Implementation Priority: Seal/Unseal/Barrier First
 
@@ -147,10 +147,10 @@ The seal/barrier system is the foundation - nothing else works without it. We im
 - `pkg/server/lifecycle.go` - initBarrier() server integration
 
 #### Reference Files (go-qrdb):
-- `/mnt/vm-host-1/go-qrdb/cmd/qrdb/bindings_seal.go` - GUI seal bindings pattern
-- `/mnt/vm-host-1/go-qrdb/cmd/qrdb/gui_desktop.go` - Wails launcher pattern
-- `/mnt/vm-host-1/go-qrdb/cmd/qrdb/display_*.go` - display detection
-- `/mnt/vm-host-1/go-qrdb/sdk/typescript/src/factory.ts` - dual-transport SDK
+- `<go-qrdb-checkout>/cmd/qrdb/bindings_seal.go` - GUI seal bindings pattern
+- `<go-qrdb-checkout>/cmd/qrdb/gui_desktop.go` - Wails launcher pattern
+- `<go-qrdb-checkout>/cmd/qrdb/display_*.go` - display detection
+- `<go-qrdb-checkout>/sdk/typescript/src/factory.ts` - dual-transport SDK
 
 ### Architecture
 

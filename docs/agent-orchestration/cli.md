@@ -685,7 +685,7 @@ quicbaas orchestrator inference \
 
 # Pin to a specific agent.
 quicbaas orchestrator inference \
-  --backend ollama --host-affinity gpu-host \
+  --backend ollama --host-affinity gpu-node-01 \
   --prompt "summarise the NIST CSF"
 
 # Same command over each transport.
@@ -762,8 +762,8 @@ quicbaas orchestrator backends list --output json
 List the agent daemons currently registered in the fleet:
 
 ```
-ID                  NAME       HOST              TYPE   STATUS   LAST SEEN
-agt_abc123def456    gpu-host    198.51.100.91    acp    running  2026-04-25T17:12:59Z
+ID                  NAME         HOST                  TYPE   STATUS   LAST SEEN
+agt_abc123def456    gpu-node-01  gpu-host.example.com  acp    running  2026-04-25T17:12:59Z
 ```
 
 The same data is rendered live by the GUI under **Orchestration →
@@ -829,9 +829,9 @@ quicbaas ssh keys export-public --name fleet-deploy --scope user --owner "$USER"
 
 # 2. Deploy.
 quicbaas agent deploy \
-  --ssh jhahn@gpu-host \
+  --ssh deploy@gpu-node-01 \
   --ssh-key-name fleet-deploy \
-  --server https://198.51.100.52:18080 \
+  --server https://quicbaas.example.com:18080 \
   --backend ollama \
   --binary bin/quicbaas-static \
   --wait-online 2m
