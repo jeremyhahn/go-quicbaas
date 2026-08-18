@@ -2817,20 +2817,27 @@ clean: ## Clean build artifacts and test data
 #
 # This is every image identity the repository creates under a name it writes
 # literally: the `-t` of its own `docker build`s, the destination of its own
-# `docker tag`s, the images `integration-test` already enumerates by name when
-# it forces a rebuild, and the explicit `image:` of a Compose service that
-# builds. scripts/docker-image-inventory.sh re-derives all of that from those
-# commands and files; `make verify-clean-docker` fails when this list has
-# drifted from it, so a new image-producing target cannot quietly escape
-# cleanup.
+# `docker tag`s, and the explicit `image:` of a Compose service that builds.
+# scripts/docker-image-inventory.sh re-derives all of that from those commands
+# and files; `make verify-clean-docker` fails when this list has drifted from
+# it in either direction, so a new image-producing target cannot quietly escape
+# cleanup and a tag no producer here names cannot be reached.
 #
-# Compose services with no explicit `image:` are deliberately absent. Compose
-# names those `<project>-<service>`, and the project name is the directory
-# Compose ran in or a target's `-p` override — for the root docker-compose.yml
-# it is the checkout directory's own name. Those names identify whichever
-# checkout on the host used them last, not this repository, so each stack is
-# torn down by the target that runs it, where the name is unambiguous because
-# that target just used it.
+# Ownership comes from producers only. That a target runs `docker rmi X` is not
+# evidence that X is ours — it is the claim being checked — so removals are not
+# an inventory source.
+#
+# Compose services with no explicit `image:` are therefore deliberately absent,
+# and that is why `integration-integration-test` and `integration-test-node1..5`
+# are not listed here. Compose names those `<project>-<service>`, and the
+# project name is the directory Compose ran in or a target's `-p` override — for
+# the root docker-compose.yml it is the checkout directory's own name, and two
+# compose files in one directory share a name. Those names identify whichever
+# checkout on the host used them last, not this repository. Each such stack is
+# instead torn down by the target that runs it, where the name is unambiguous
+# because that target just used it: `integration-test` brings its stack down
+# with `--volumes --remove-orphans` and removes those six images by name before
+# it rebuilds them, and brings the stack down again when it finishes.
 DOCKER_LOCAL_IMAGES := \
 	$(DOCKER_IMAGE):$(DOCKER_TAG) \
 	$(DOCKER_IMAGE):latest \
@@ -2848,13 +2855,7 @@ DOCKER_LOCAL_IMAGES := \
 	$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):latest \
 	go-quicbaas-quicbaas-node1:latest \
 	go-quicbaas-quicbaas-node2:latest \
-	go-quicbaas-quicbaas-node3:latest \
-	integration-integration-test:latest \
-	integration-test-node1:latest \
-	integration-test-node2:latest \
-	integration-test-node3:latest \
-	integration-test-node4:latest \
-	integration-test-node5:latest
+	go-quicbaas-quicbaas-node3:latest
 
 .PHONY: clean-docker
 clean-docker: ## Remove the Docker images this project builds (never prunes the host)

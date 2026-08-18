@@ -2,21 +2,26 @@
 # docker-image-inventory.sh — print every Docker image identity this repository
 # creates under a name it writes literally, one per line, sorted.
 #
-# This is the authoritative answer to "what should `make clean-docker` remove?",
+# This is the authoritative answer to "what may `make clean-docker` remove?",
 # derived from the commands that create the images rather than from the
 # Makefile's DOCKER_LOCAL_IMAGES list. scripts/verify-clean-docker.sh compares
 # the two, so a new image-producing target fails `make verify` until cleanup
 # knows about it. Deriving independently is the point: reading the list under
 # test cannot detect an omission from it.
 #
+# Ownership is derived from producers only — the commands that bring an image
+# into existence. A removal command is not evidence of ownership: `docker rmi X`
+# in this repository says only that something here deletes X, which is the very
+# claim cleanup is being checked against. Deriving from removals would let any
+# tag vouch for itself.
+#
 # Two sources, both literal:
 #
 #   1. This repo's own Docker commands in the Makefile and scripts/ — the `-t`
-#      of every `docker build` / `buildx build`, the destination of every
-#      `docker tag`, and the arguments of every `docker rmi`. Backslash
-#      continuations are joined first, so a build spread over several lines is
-#      one command here, and a variable assigned a literal in that same command
-#      is resolved.
+#      of every `docker build` / `buildx build` and the destination of every
+#      `docker tag`. Backslash continuations are joined first, so a build spread
+#      over several lines is one command here, and a variable assigned a literal
+#      in that same command is resolved.
 #
 #   2. The explicit `image:` tag of every Compose service that also has a
 #      `build:` — the identity Compose gives the image it builds.
@@ -25,13 +30,12 @@
 # Compose names those `<project>-<service>`, and the project name is the
 # directory Compose ran in or a target's `-p` override — for the root
 # docker-compose.yml it is the checkout directory's own name, which differs
-# between a developer's clone and a CI workspace. Reproducing that here would
-# mean reimplementing Compose's project-name resolution, and the names it
-# produces belong to whichever checkout on the host used them last rather than
-# to the repository. Those stacks are torn down by the target that runs them,
-# where the name is unambiguous because that target just used it — and where
-# the target names the images literally (as `integration-test` does), source 1
-# above picks them up.
+# between a developer's clone and a CI workspace, and two files in one directory
+# share a name. Reproducing that here would mean reimplementing Compose's
+# project-name resolution over 29 compose files and their invocation sites, and
+# the names it produces belong to whichever checkout on the host used them last
+# rather than to this repository. Those stacks are torn down by the target that
+# runs them, where the name is unambiguous because that target just used it.
 
 set -euo pipefail
 
@@ -75,17 +79,13 @@ scan_docker_commands() {
                     }
                     return tok
                 }
-                function emit(tok, producer,   id) {
+                function emit(tok,   id) {
                     id = resolve(tok)
                     if (id ~ /\$/) {
                         # A producer we cannot name is a hole in the inventory,
-                        # so it fails the run rather than dropping out of it. A
-                        # remover we cannot name is not a hole: whatever it
-                        # removes, some producer already named.
-                        if (producer) {
-                            printf "%s: cannot resolve the image built by %s to a literal name\n", origin, tok > "/dev/stderr"
-                            unresolved++
-                        }
+                        # so it fails the run rather than dropping out of it.
+                        printf "%s: cannot resolve the image built by %s to a literal name\n", origin, tok > "/dev/stderr"
+                        unresolved++
                         return
                     }
                     if (id !~ /:/) id = id ":latest"
@@ -136,18 +136,13 @@ scan_docker_commands() {
                             if (t == "buildx") continue
                             if (t == "build") { mode = "build"; continue }
                             if (t == "tag")   { mode = "tag";   continue }
-                            if (t == "rmi")   { mode = "rmi";   continue }
                             mode = ""; continue
                         }
                         if (mode == "build") {
-                            if (t == "-t" && i < n) emit(tok[i + 1], 1)
+                            if (t == "-t" && i < n) emit(tok[i + 1])
                         } else if (mode == "tag") {
                             if (t ~ /^-/) continue
-                            if (++positional == 2) { emit(t, 1); mode = "" }
-                        } else if (mode == "rmi") {
-                            if (t ~ /^-/) continue
-                            if (unquote(t) !~ /^[A-Za-z0-9$._\/:{}-]+$/) { mode = ""; continue }
-                            emit(t, 0)
+                            if (++positional == 2) { emit(t); mode = "" }
                         }
                         if (ends_command) mode = ""
                     }

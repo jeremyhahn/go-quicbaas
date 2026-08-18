@@ -11,9 +11,12 @@
 # equal the inventory scripts/docker-image-inventory.sh derives from the build
 # commands themselves — in both directions, because a tag the list holds but no
 # build produces is another repository's, and reaching it is the failure #3 is
-# about. The failure checks cover the shell trap that a `for` loop reports only
-# its last command's status, so an early `docker rmi` failure followed by an
-# absent tag would otherwise exit 0.
+# about. That inventory is derived from producers alone, so a `docker rmi` this
+# repository happens to run cannot authorize the tag it removes; the fixture
+# below holds that line, since a removal-sourced inventory would let every
+# cleanup tag vouch for itself. The failure checks cover the shell trap that a
+# `for` loop reports only its last command's status, so an early `docker rmi`
+# failure followed by an absent tag would otherwise exit 0.
 #
 # Docker is faked through PATH; no daemon, no images, no host state.
 
@@ -104,9 +107,10 @@ compare_coverage() {
 # Writes a self-contained repository under $1 whose DOCKER_LOCAL_IMAGES is $2
 # and whose sole build produces $3, plus a compose file that builds
 # fixture-compose:latest and pulls redis:7-alpine. The build is spread over
-# continuation lines because a line-at-a-time scan would miss it.
+# continuation lines because a line-at-a-time scan would miss it. $4, when
+# given, is a tag the fixture only ever removes and never builds.
 write_fixture() {
-    local dir=$1 cleaned=$2 built=$3
+    local dir=$1 cleaned=$2 built=$3 removed=${4:-}
     mkdir -p "$dir"
     {
         echo "DOCKER_IMAGE := fixture"
@@ -123,6 +127,12 @@ write_fixture() {
         printf '\t\t-f Dockerfile.fixture \\\n'
         printf '\t\t-t %s \\\n' "$built"
         printf '\t\t.\n'
+        if [ -n "$removed" ]; then
+            echo
+            echo ".PHONY: fixture-remove"
+            echo "fixture-remove:"
+            printf '\tdocker rmi %s\n' "$removed"
+        fi
     } > "$dir/Makefile"
     cat > "$dir/docker-compose.yml" <<'FIXTURE'
 services:
@@ -196,6 +206,25 @@ if ! grep -qx "someone-elses/image:latest" "$WORK/foreign-out/extra"; then
 fi
 if [ -s "$WORK/foreign-out/missing" ]; then
     fail "reported a gap in a fixture that lists everything it builds: $(tr '\n' ' ' < "$WORK/foreign-out/missing")"
+fi
+
+# Ownership has to come from producers alone. A repository that removes a tag
+# has said nothing about creating it, so pairing `docker rmi someone-elses/...`
+# with the same entry in DOCKER_LOCAL_IMAGES must not launder it into scope —
+# otherwise every cleanup tag authorizes itself and the check means nothing.
+echo "case: a 'docker rmi' does not make the tag it removes ours"
+write_fixture "$WORK/laundered" \
+    "fixture-multiline:latest fixture-compose:latest someone-elses/image:latest" \
+    "fixture-multiline:latest" \
+    "someone-elses/image:latest"
+if ! compare_coverage "$WORK/laundered" "$WORK/laundered-out"; then
+    fail "the fixture inventory could not be derived: $(tr '\n' ' ' < "$WORK/laundered-out/err")"
+fi
+if grep -qx "someone-elses/image:latest" "$WORK/laundered-out/created"; then
+    fail "a 'docker rmi' argument was treated as an image this repository creates"
+fi
+if ! grep -qx "someone-elses/image:latest" "$WORK/laundered-out/extra"; then
+    fail "a foreign tag removed but never built was not reported as out of scope"
 fi
 
 # A producer named by a variable resolved at run time cannot be cleaned up by
