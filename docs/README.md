@@ -121,6 +121,52 @@ plan that the surrounding documentation would otherwise support.
    silently ignored. Each feature's `engineering.md` states which of its
    settings are file-only.
 
+## What "Last verified: 2026-08-19" does and does not claim on these pages
+
+Every file carries the stamp, and the stamp was earned differently depending on
+how the file came to be. Saying so is the point: a stamp that means two things
+without saying which is worse than no stamp.
+
+**Fully verified.** Everything authored during the migration, and every
+`api.md` transport matrix. The matrices are generated from source on each
+publish, so they cannot drift silently. Every CLI verb and flag written during
+the migration was read out of the cobra tree in `cmd/`, every config key out of
+`pkg/config`, every route out of `pkg/api/rest`.
+
+**Verified structurally, with a residue.** Content moved from the previous
+layout was checked by extracting every backticked identifier from every feature
+document and grepping it against `pkg/`, `sdk/`, `cmd/`, `api/`, and then
+against the go-qrdb and go-xkms module sources. Of 3,330 identifiers:
+
+| Outcome | Count |
+|---|---|
+| resolve in this repository | 2,466 |
+| resolve in go-qrdb or go-xkms (correct: docs describing consumed types) | 491 |
+| resolve nowhere | 373 |
+
+Of the 373, 49 are dotted selectors whose base type does exist here, and a
+further share are not Go identifiers at all — wire error codes
+(`CHANNEL_NOT_FOUND`, `DEK_NOT_FOUND`), third-party environment variables
+(`ANTHROPIC_BASE_URL`), Svelte icon component names (`CheckCircle2`,
+`Building2`) and build-output paths. **The remainder is genuine stale-identifier
+drift inherited from the previous documentation and not yet corrected.**
+
+Reproduce the check:
+
+```bash
+grep -oh '`[^`]\+`' docs/*/*.md | tr -d '`' \
+  | grep -E '^([A-Za-z_][A-Za-z0-9_]*\.)?[A-Z][A-Za-z0-9_]{2,}$' | sort -u \
+  | while read -r id; do
+      grep -rqF -- "${id##*.}" pkg sdk cmd api || echo "MISS $id"
+    done
+```
+
+Correcting that residue is a second pass, per feature, and it is the natural
+next piece of work on this documentation. Doing it feature by feature is
+deliberate: a bulk find-and-replace across 190 files is how a correct name gets
+replaced with a plausible wrong one.
+
+
 ## Where the transports are documented
 
 Rather than repeat the transport model in 38 places, it lives once in
