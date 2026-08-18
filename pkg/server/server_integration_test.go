@@ -137,12 +137,7 @@ func TestTriggerShutdownMultiple(t *testing.T) {
 	srv.TriggerShutdown()
 
 	// Verify channel is closed
-	select {
-	case <-srv.shutdownChan:
-		// Expected
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("Shutdown channel should be closed")
-	}
+	awaitSignal(t, srv.shutdownChan, "TriggerShutdown closing the shutdown channel")
 
 	// Second trigger should not panic
 	srv.TriggerShutdown()
