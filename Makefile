@@ -2839,12 +2839,22 @@ clean-docker: ## Remove the Docker images this project builds (never prunes the 
 		echo "$(RED)Error: Docker is not installed$(NC)"; \
 		exit 1; \
 	fi
-	@for image in $(DOCKER_LOCAL_IMAGES); do \
-		if $(DOCKER) image inspect "$$image" > /dev/null 2>&1; then \
-			$(DOCKER) rmi -f "$$image"; \
+	@# One daemon call decides what exists, so its failure (daemon down, access
+	@# denied) propagates instead of reading as "no such image". Removal failures
+	@# are accumulated: a `for` loop otherwise reports only its last command's
+	@# status, and an early failure followed by an absent tag would exit 0.
+	@present=$$($(DOCKER) images --format '{{.Repository}}:{{.Tag}}') || exit $$?; \
+	status=0; \
+	for image in $(DOCKER_LOCAL_IMAGES); do \
+		if printf '%s\n' "$$present" | grep -qxF "$$image"; then \
+			$(DOCKER) rmi -f "$$image" || status=1; \
 		fi; \
-	done
-	@echo "$(GREEN)QuicBaaS Docker images removed$(NC)"
+	done; \
+	if [ $$status -ne 0 ]; then \
+		echo "$(RED)Some QuicBaaS images could not be removed$(NC)"; \
+		exit $$status; \
+	fi; \
+	echo "$(GREEN)QuicBaaS Docker images removed$(NC)"
 
 .PHONY: clean-all
 clean-all: clean clean-docker proto-clean cluster-clean ## Clean everything
@@ -3669,8 +3679,17 @@ verify-api-shapes: ## Diff QuicBaaS Barrier*/Ceremony*/Bootstrap* TS types again
 	@echo "$(BLUE)verify-api-shapes: comparing TypeScript types against go-qrdb canonical Go types...$(NC)"
 	@scripts/verify-api-shapes.sh
 
+# Read a Makefile variable from a script: `make print-DOCKER_LOCAL_IMAGES`.
+print-%:
+	@echo "$($*)"
+
+.PHONY: verify-clean-docker
+verify-clean-docker: ## Fail if clean-docker reaches beyond this project's image tags or hides a failure
+	@echo "$(BLUE)verify-clean-docker: checking cleanup scope and failure propagation...$(NC)"
+	@bash scripts/verify-clean-docker.sh
+
 .PHONY: verify
-verify: verify-naming verify-cli-flags verify-api-shapes ## Run all cross-project verifications
+verify: verify-naming verify-cli-flags verify-api-shapes verify-clean-docker ## Run all cross-project verifications
 	@echo "$(GREEN)All verifications OK$(NC)"
 
 # =============================================================================
