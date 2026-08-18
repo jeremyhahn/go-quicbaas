@@ -1905,14 +1905,14 @@ func TestAuditLogger_VerifySignatureVariants(t *testing.T) {
 		{
 			name:        "signing enabled but empty signature",
 			signLogs:    true,
-			signKey:     "test-key",
+			signKey:     "test-key-112bits!",
 			eventSig:    "",
 			expectValid: true,
 		},
 		{
 			name:        "signing enabled with invalid signature",
 			signLogs:    true,
-			signKey:     "test-key",
+			signKey:     "test-key-112bits!",
 			eventSig:    "invalid-signature",
 			expectValid: false,
 		},
@@ -3712,8 +3712,7 @@ func TestVerifySignature_WithEmptySignKey(t *testing.T) {
 		Signature: "some-signature",
 	}
 
-	// With nil signKey, signEvent will still work (HMAC handles nil key)
-	// but the signature won't match
+	// With no signing key, signEvent fails and verification must not pass.
 	result := al.VerifySignature(event)
 	assert.False(t, result)
 }
@@ -3732,7 +3731,7 @@ func TestLog_SignEventError(t *testing.T) {
 			FlushInterval: 1 * time.Second,
 		},
 		logger:   log,
-		signKey:  nil, // nil key should still work (HMAC doesn't reject nil keys)
+		signKey:  nil, // no usable signing key
 		writer:   &bytes.Buffer{},
 		shutdown: make(chan struct{}),
 	}
@@ -3745,9 +3744,12 @@ func TestLog_SignEventError(t *testing.T) {
 	}
 
 	err := al.Log(context.Background(), event)
-	// Should succeed since HMAC works with nil keys
-	assert.NoError(t, err)
-	assert.NotEmpty(t, event.Signature)
+	require.Error(t, err)
+
+	var auditErr *AuditError
+	require.True(t, errors.As(err, &auditErr))
+	assert.Equal(t, ErrCodeAuditEventSign, auditErr.Code)
+	assert.Empty(t, event.Signature)
 }
 
 // ---------------------------------------------------------------------------
@@ -3930,6 +3932,7 @@ func TestLog_WithSignLogs_Success(t *testing.T) {
 		logger:   log,
 		file:     f,
 		writer:   f,
+		signKey:  []byte("test-sign-key-that-is-32-bytes!"),
 		shutdown: make(chan struct{}),
 	}
 
@@ -3984,6 +3987,7 @@ func TestVerifySignature_ValidSignedLogs(t *testing.T) {
 		logger:   log,
 		file:     f,
 		writer:   f,
+		signKey:  []byte("test-sign-key-that-is-32-bytes!"),
 		shutdown: make(chan struct{}),
 	}
 
@@ -4678,7 +4682,7 @@ func TestAuditLogger_VerifySignature_EdgeCases(t *testing.T) {
 		config := &AuditConfig{
 			Enabled:  true,
 			SignLogs: true,
-			SignKey:  "test-key",
+			SignKey:  "test-key-112bits!",
 		}
 
 		al, err := NewAuditLogger(config, log)
@@ -5599,7 +5603,7 @@ func TestAuditLogger_VerifySignature_WithEmptySignature(t *testing.T) {
 	config := &AuditConfig{
 		Enabled:  true,
 		SignLogs: true,
-		SignKey:  "test-key",
+		SignKey:  "test-key-112bits!",
 	}
 
 	al, err := NewAuditLogger(config, log)
@@ -7088,6 +7092,60 @@ func TestNewAuditLogger_RequiresSignKey(t *testing.T) {
 	assert.Equal(t, ErrCodeAuditSignKeyRequired, auditErr.Code)
 }
 
+// TestNewAuditLogger_RejectsShortSignKey ensures HMAC keys weaker than the
+// FIPS 140-3 minimum of 112 bits are refused rather than silently accepted.
+func TestNewAuditLogger_RejectsShortSignKey(t *testing.T) {
+	log := createTestLogger(t)
+
+	for _, signKey := range []string{"k", "short-key-13b"} {
+		t.Run(signKey, func(t *testing.T) {
+			require.Less(t, len(signKey), MinAuditSignKeyLen)
+
+			cfg := &AuditConfig{
+				Enabled:  true,
+				SignLogs: true,
+				SignKey:  signKey,
+			}
+			al, err := NewAuditLogger(cfg, log)
+			require.Error(t, err)
+			assert.Nil(t, al)
+
+			var auditErr *AuditError
+			require.True(t, errors.As(err, &auditErr))
+			assert.Equal(t, ErrCodeAuditSignKeyTooShort, auditErr.Code)
+		})
+	}
+}
+
+// TestNewAuditLogger_AcceptsMinimumLengthSignKey pins the boundary: a key of
+// exactly MinAuditSignKeyLen bytes is accepted and signs events.
+func TestNewAuditLogger_AcceptsMinimumLengthSignKey(t *testing.T) {
+	signKey := strings.Repeat("k", MinAuditSignKeyLen)
+
+	cfg := &AuditConfig{
+		Enabled:  true,
+		SignLogs: true,
+		SignKey:  signKey,
+	}
+	al, err := NewAuditLogger(cfg, createTestLogger(t))
+	require.NoError(t, err)
+	defer al.Close()
+
+	event := &AuditEvent{
+		Timestamp: time.Now(),
+		Username:  "admin",
+		Action:    ActionRead,
+		Resource:  "data",
+		Result:    ResultSuccess,
+	}
+	sig, err := al.signEvent(event)
+	require.NoError(t, err)
+	require.NotEmpty(t, sig)
+
+	event.Signature = sig
+	assert.True(t, al.VerifySignature(event))
+}
+
 func TestNewAuditLogger_DisabledIsNoop(t *testing.T) {
 	cfg := &AuditConfig{Enabled: false}
 	log := createTestLogger(t)
@@ -7446,7 +7504,7 @@ func TestAuditLogger_LogWithSigningError(t *testing.T) {
 		Enabled:       true,
 		File:          auditFile,
 		SignLogs:      true,
-		SignKey:       "test-key",
+		SignKey:       "test-key-112bits!",
 		FlushInterval: 10 * time.Millisecond,
 	}
 
@@ -7595,7 +7653,7 @@ func TestAuditLogger_VerifySignatureWithError(t *testing.T) {
 	cfg := &AuditConfig{
 		Enabled:  true,
 		SignLogs: true,
-		SignKey:  "test-key",
+		SignKey:  "test-key-112bits!",
 	}
 
 	log := createTestLogger(t)

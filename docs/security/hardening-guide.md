@@ -994,6 +994,10 @@ security:
     sign_key: "${AUDIT_SIGN_KEY}"      # HMAC-SHA256 key from environment
 ```
 
+The signing key must be at least 14 bytes (112 bits) per FIPS 140-3
+(SP 800-107); the audit logger refuses to start with a shorter key. Generate
+one with `openssl rand -base64 32`.
+
 **Audit log entry format with HMAC:**
 
 ```json

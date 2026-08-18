@@ -37,6 +37,11 @@ security:
     sign_key: "${AUDIT_SIGN_KEY}"  # HMAC-SHA256 key (environment variable)
 ```
 
+`sign_key` must be at least 14 bytes (112 bits) — the HMAC key minimum in
+FIPS 140-3 (SP 800-107). Shorter keys are rejected at startup with
+`AUDIT_SIGN_KEY_TOO_SHORT`; an empty key with `sign_logs: true` is rejected
+with `AUDIT_SIGN_KEY_REQUIRED`. Use a random 32-byte key.
+
 Signed log entries include:
 
 ```json
@@ -341,7 +346,7 @@ cfg := &security.AuditConfig{
     Enabled:          true,
     File:             "/var/log/quicbaas/audit.log",
     SignLogs:         true,
-    SignKey:          "your-hmac-key",
+    SignKey:          "your-hmac-key", // >= 14 bytes (112 bits)
     Compress:         true,
     CompressionLevel: security.CompressionLevelDefault,
     SyslogEnabled:    true,
