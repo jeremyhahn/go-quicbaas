@@ -78,10 +78,14 @@ scan_docker_commands() {
                 function emit(tok, producer,   id) {
                     id = resolve(tok)
                     if (id ~ /\$/) {
-                        # A producer we cannot name is a hole in the inventory;
-                        # a remover we cannot name is not, because whatever it
-                        # removes some producer already named.
-                        if (producer) printf "unresolved\t%s\t%s\n", origin, tok > "/dev/stderr"
+                        # A producer we cannot name is a hole in the inventory,
+                        # so it fails the run rather than dropping out of it. A
+                        # remover we cannot name is not a hole: whatever it
+                        # removes, some producer already named.
+                        if (producer) {
+                            printf "%s: cannot resolve the image built by %s to a literal name\n", origin, tok > "/dev/stderr"
+                            unresolved++
+                        }
                         return
                     }
                     if (id !~ /:/) id = id ":latest"
@@ -148,8 +152,9 @@ scan_docker_commands() {
                         if (ends_command) mode = ""
                     }
                   }
+                  if (unresolved) exit 1
                 }
-                '
+                ' || return 1
     done
 }
 
@@ -181,4 +186,4 @@ DOCKER_IMAGE=$(make --no-print-directory print-DOCKER_IMAGE)
 DOCKER_TAG=$(make --no-print-directory print-DOCKER_TAG)
 DOCKER_REGISTRY=$(make --no-print-directory print-DOCKER_REGISTRY)
 
-{ scan_docker_commands; scan_compose_image_tags; } | sort -u
+{ scan_docker_commands && scan_compose_image_tags; } | sort -u

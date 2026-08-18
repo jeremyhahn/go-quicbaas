@@ -7,12 +7,13 @@
 # This target used to be `docker system prune -af --volumes`, which on the
 # shared CI runners deleted every unused image and named volume on the host and
 # repeatedly destroyed another job's image (#3). The scope checks are what keep
-# it from drifting back. The coverage check keeps DOCKER_LOCAL_IMAGES from
-# silently falling behind the build targets, by comparing it against the
-# inventory scripts/docker-image-inventory.sh derives from the build commands
-# themselves. The failure checks cover the shell trap that a `for` loop reports
-# only its last command's status, so an early `docker rmi` failure followed by
-# an absent tag would otherwise exit 0.
+# it from drifting back. The coverage check requires DOCKER_LOCAL_IMAGES to
+# equal the inventory scripts/docker-image-inventory.sh derives from the build
+# commands themselves — in both directions, because a tag the list holds but no
+# build produces is another repository's, and reaching it is the failure #3 is
+# about. The failure checks cover the shell trap that a `for` loop reports only
+# its last command's status, so an early `docker rmi` failure followed by an
+# absent tag would otherwise exit 0.
 #
 # Docker is faked through PATH; no daemon, no images, no host state.
 
@@ -76,60 +77,54 @@ called() {
     grep -qx "$1" "$WORK/calls.log"
 }
 
-# Image identities the repository at $1 creates but its DOCKER_LOCAL_IMAGES does
-# not list, one per line. The inventory is derived from the build commands, not
-# from that list, which is what lets this see an omission from it.
-coverage_gaps() {
-    local root=$1
-    comm -23 \
-        <(ROOT="$root" bash "$ROOT/scripts/docker-image-inventory.sh" | sort -u) \
-        <(make --no-print-directory -C "$root" print-DOCKER_LOCAL_IMAGES | tr ' ' '\n' | sed '/^$/d' | sort -u)
+# Compares what the repository at $1 creates against what its cleanup removes,
+# writing three files under $2:
+#
+#   created — the inventory, derived from the build commands rather than from
+#             DOCKER_LOCAL_IMAGES, which is what lets this see a drift in it
+#   missing — created but never cleaned: images left behind
+#   extra   — cleaned but never created: tags outside this repository's own
+#
+# Returns non-zero if the inventory could not be derived at all. That is a
+# failure in its own right: an inventory that quietly dropped a producer would
+# read here as "nothing missing".
+compare_coverage() {
+    local root=$1 out=$2
+    mkdir -p "$out"
+    if ! ROOT="$root" bash "$ROOT/scripts/docker-image-inventory.sh" > "$out/created" 2> "$out/err"; then
+        return 1
+    fi
+    sort -u -o "$out/created" "$out/created"
+    make --no-print-directory -C "$root" print-DOCKER_LOCAL_IMAGES |
+        tr ' ' '\n' | sed '/^$/d' | sort -u > "$out/cleaned"
+    comm -23 "$out/created" "$out/cleaned" > "$out/missing"
+    comm -13 "$out/created" "$out/cleaned" > "$out/extra"
 }
 
-# The tag list comes from the Makefile so the behaviour cases cannot drift from it.
-read -r -a our_tags <<< "$(make --no-print-directory print-DOCKER_LOCAL_IMAGES)"
-if [ "${#our_tags[@]}" -lt 2 ]; then
-    echo "verify-clean-docker: expected DOCKER_LOCAL_IMAGES to list this project's tags" >&2
-    exit 1
-fi
-present_tag="${our_tags[0]}"
-absent_tag="${our_tags[1]}"
-
-echo "case: cleanup covers every image this repository creates"
-inventory=$(bash scripts/docker-image-inventory.sh)
-if [ -z "$inventory" ]; then
-    fail "derived no image identities at all — the inventory has stopped matching the build commands"
-fi
-uncleaned=$(coverage_gaps "$ROOT")
-if [ -n "$uncleaned" ]; then
-    fail "this repository creates images that clean-docker leaves behind: $(echo "$uncleaned" | tr '\n' ' ')"
-    fail "add them to DOCKER_LOCAL_IMAGES in the Makefile"
-fi
-
-# A build spread over continuation lines and a Compose service's explicit
-# `image:` are both easy for a line-at-a-time scan to miss, and missing either
-# would make the coverage check above pass while cleanup leaves images behind.
-# This fixture proves the derivation reaches both: neither is listed in its
-# DOCKER_LOCAL_IMAGES, so both must come back as gaps.
-echo "case: a multiline build and a compose image: tag are both seen as gaps"
-mkdir -p "$WORK/fixture"
-cat > "$WORK/fixture/Makefile" <<'FIXTURE'
-DOCKER_IMAGE := fixture
-DOCKER_TAG := 9.9.9
-DOCKER_REGISTRY := registry.invalid
-DOCKER_LOCAL_IMAGES :=
-
-print-%:
-	@echo "$($*)"
-
-.PHONY: fixture-build
-fixture-build:
-	docker build \
-		-f Dockerfile.fixture \
-		-t fixture-multiline:latest \
-		.
-FIXTURE
-cat > "$WORK/fixture/docker-compose.yml" <<'FIXTURE'
+# Writes a self-contained repository under $1 whose DOCKER_LOCAL_IMAGES is $2
+# and whose sole build produces $3, plus a compose file that builds
+# fixture-compose:latest and pulls redis:7-alpine. The build is spread over
+# continuation lines because a line-at-a-time scan would miss it.
+write_fixture() {
+    local dir=$1 cleaned=$2 built=$3
+    mkdir -p "$dir"
+    {
+        echo "DOCKER_IMAGE := fixture"
+        echo "DOCKER_TAG := 9.9.9"
+        echo "DOCKER_REGISTRY := registry.invalid"
+        echo "DOCKER_LOCAL_IMAGES := $cleaned"
+        echo
+        echo "print-%:"
+        printf '\t@echo "$($*)"\n'
+        echo
+        echo ".PHONY: fixture-build"
+        echo "fixture-build:"
+        printf '\tdocker build \\\n'
+        printf '\t\t-f Dockerfile.fixture \\\n'
+        printf '\t\t-t %s \\\n' "$built"
+        printf '\t\t.\n'
+    } > "$dir/Makefile"
+    cat > "$dir/docker-compose.yml" <<'FIXTURE'
 services:
   built:
     image: fixture-compose:latest
@@ -138,15 +133,78 @@ services:
   pulled:
     image: redis:7-alpine
 FIXTURE
-fixture_gaps=$(coverage_gaps "$WORK/fixture")
-if ! printf '%s\n' "$fixture_gaps" | grep -qx "fixture-multiline:latest"; then
+}
+
+# The behaviour cases take their tags from the derived inventory rather than
+# from DOCKER_LOCAL_IMAGES, so a tag added to that list without a producer
+# cannot vouch for itself.
+echo "case: cleanup covers exactly the images this repository creates"
+if ! compare_coverage "$ROOT" "$WORK/real"; then
+    fail "the image inventory could not be derived: $(tr '\n' ' ' < "$WORK/real/err")"
+fi
+if [ ! -s "$WORK/real/created" ]; then
+    fail "derived no image identities at all — the inventory has stopped matching the build commands"
+fi
+if [ -s "$WORK/real/missing" ]; then
+    fail "this repository creates images clean-docker leaves behind: $(tr '\n' ' ' < "$WORK/real/missing")"
+    fail "add them to DOCKER_LOCAL_IMAGES in the Makefile"
+fi
+if [ -s "$WORK/real/extra" ]; then
+    fail "clean-docker removes tags this repository does not create: $(tr '\n' ' ' < "$WORK/real/extra")"
+    fail "cleanup may only reach this repository's own images — see #3"
+fi
+
+read -r -a our_tags <<< "$(tr '\n' ' ' < "$WORK/real/created")"
+if [ "${#our_tags[@]}" -lt 2 ]; then
+    echo "verify-clean-docker: expected the inventory to derive at least two images" >&2
+    exit 1
+fi
+present_tag="${our_tags[0]}"
+absent_tag="${our_tags[1]}"
+
+# A build spread over continuation lines and a Compose service's explicit
+# `image:` are both easy for a line-at-a-time scan to miss, and missing either
+# would let the coverage check pass while cleanup leaves images behind. Neither
+# is listed in this fixture, so both must come back as gaps.
+echo "case: a multiline build and a compose image: tag are both seen as gaps"
+write_fixture "$WORK/gaps" "" "fixture-multiline:latest"
+if ! compare_coverage "$WORK/gaps" "$WORK/gaps-out"; then
+    fail "the fixture inventory could not be derived: $(tr '\n' ' ' < "$WORK/gaps-out/err")"
+fi
+if ! grep -qx "fixture-multiline:latest" "$WORK/gaps-out/missing"; then
     fail "a 'docker build -t' spread over continuation lines was not derived"
 fi
-if ! printf '%s\n' "$fixture_gaps" | grep -qx "fixture-compose:latest"; then
+if ! grep -qx "fixture-compose:latest" "$WORK/gaps-out/missing"; then
     fail "the explicit image: of a building compose service was not derived"
 fi
-if printf '%s\n' "$fixture_gaps" | grep -qx "redis:7-alpine"; then
+if grep -qx "redis:7-alpine" "$WORK/gaps-out/missing"; then
     fail "claimed an image the repository only pulls"
+fi
+
+# The other direction. A tag nothing here builds is another repository's, and
+# cleanup reaching it is the whole failure #3 is about — so listing one has to
+# fail verification, not be blessed by it.
+echo "case: a cleanup tag this repository does not create is rejected"
+write_fixture "$WORK/foreign" \
+    "fixture-multiline:latest fixture-compose:latest someone-elses/image:latest" \
+    "fixture-multiline:latest"
+if ! compare_coverage "$WORK/foreign" "$WORK/foreign-out"; then
+    fail "the fixture inventory could not be derived: $(tr '\n' ' ' < "$WORK/foreign-out/err")"
+fi
+if ! grep -qx "someone-elses/image:latest" "$WORK/foreign-out/extra"; then
+    fail "a cleanup tag no build produces was not reported as out of scope"
+fi
+if [ -s "$WORK/foreign-out/missing" ]; then
+    fail "reported a gap in a fixture that lists everything it builds: $(tr '\n' ' ' < "$WORK/foreign-out/missing")"
+fi
+
+# A producer named by a variable resolved at run time cannot be cleaned up by
+# name, so it must break the inventory rather than drop out of it — otherwise
+# an image that escapes cleanup reads here as "nothing missing".
+echo "case: a build tag that cannot be resolved to a literal fails the inventory"
+write_fixture "$WORK/unresolved" "" '"$$RUNTIME_TAG"'
+if compare_coverage "$WORK/unresolved" "$WORK/unresolved-out"; then
+    fail "an unresolvable build tag was silently dropped from the inventory"
 fi
 
 echo "case: only this project's tags, and only the ones the daemon reports"
