@@ -410,7 +410,7 @@ func (c *MFAConfig) ApplyDefaults() {
 		c.Period = 30
 	}
 	if c.Algorithm == "" {
-		c.Algorithm = MFAAlgorithmSHA1
+		c.Algorithm = defaultMFAAlgorithm()
 	}
 	if c.Skew == 0 {
 		c.Skew = 1

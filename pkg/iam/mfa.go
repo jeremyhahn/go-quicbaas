@@ -141,6 +141,11 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 	}
 
 	// Create OTP authenticator to get provisioning URI
+	algorithm, err := convertAlgorithm("iam.mfa.enroll", m.config.Algorithm)
+	if err != nil {
+		return nil, err
+	}
+
 	otpConfig := otp.Config{
 		Type:        otp.TypeTOTP,
 		Secret:      secret,
@@ -148,7 +153,7 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 		AccountName: accountName,
 		Digits:      uint(m.config.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
 		Period:      uint(m.config.Period), // #nosec G115 -- Period is bounded config value (typically 30)
-		Algorithm:   convertAlgorithm(m.config.Algorithm),
+		Algorithm:   algorithm,
 		Skew:        uint(m.config.Skew), // #nosec G115 -- Skew is bounded config value (typically 1)
 	}
 
@@ -217,12 +222,17 @@ func (m *DefaultMFAManager) CompleteEnrollment(ctx context.Context, enrollmentID
 	}
 
 	// Verify code
+	algorithm, err := convertAlgorithm("iam.mfa.enroll.complete", m.config.Algorithm)
+	if err != nil {
+		return err
+	}
+
 	otpConfig := otp.Config{
 		Type:      otp.TypeTOTP,
 		Secret:    enrollment.Secret,
 		Digits:    uint(m.config.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
 		Period:    uint(m.config.Period), // #nosec G115 -- Period is bounded config value (typically 30)
-		Algorithm: convertAlgorithm(m.config.Algorithm),
+		Algorithm: algorithm,
 		Skew:      uint(m.config.Skew), // #nosec G115 -- Skew is bounded config value (typically 1)
 	}
 
@@ -459,13 +469,20 @@ func (m *DefaultMFAManager) VerifyCode(ctx context.Context, userID, tenantID, co
 		return ErrMFANotEnrolled
 	}
 
-	// Create authenticator
+	// Create authenticator. The algorithm is the one the secret was
+	// provisioned with, not the current config: an existing enrollment keeps
+	// verifying after the configured default changes.
+	algorithm, err := convertAlgorithm("iam.mfa.verify", secret.Algorithm)
+	if err != nil {
+		return err
+	}
+
 	otpConfig := otp.Config{
 		Type:      otp.TypeTOTP,
 		Secret:    secret.Secret,
 		Digits:    uint(secret.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
 		Period:    uint(secret.Period), // #nosec G115 -- Period is bounded config value (typically 30)
-		Algorithm: convertAlgorithm(secret.Algorithm),
+		Algorithm: algorithm,
 		Skew:      uint(m.config.Skew), // #nosec G115 -- Skew is bounded config value (typically 1)
 	}
 
@@ -714,18 +731,6 @@ func (m *DefaultMFAManager) GetBackupCodeStatus(ctx context.Context, userID, ten
 		GeneratedAt:   backupSet.Created,
 		RegeneratedAt: backupSet.Regenerated,
 	}, nil
-}
-
-// convertAlgorithm converts MFAAlgorithm to otp.Algorithm.
-func convertAlgorithm(algo MFAAlgorithm) otp.Algorithm {
-	switch algo {
-	case MFAAlgorithmSHA256:
-		return otp.AlgorithmSHA256
-	case MFAAlgorithmSHA512:
-		return otp.AlgorithmSHA512
-	default:
-		return otp.AlgorithmSHA1
-	}
 }
 
 // generateBackupCode generates a random 8-character alphanumeric backup code.

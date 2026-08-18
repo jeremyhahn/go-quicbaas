@@ -25,7 +25,7 @@ func validMFASecret(tenantID, userID string) *MFASecret {
 		ID:       "sec-" + userID,
 		UserID:   userID,
 		TenantID: tenantID,
-		Secret:   "JBSWY3DPEHPK3PXP",
+		Secret:   testTOTPSecret,
 		Digits:   6,
 		Period:   30,
 	}
@@ -37,7 +37,7 @@ func validEnrollment(tenantID, userID string) *MFAEnrollment {
 		UserID:    userID,
 		TenantID:  tenantID,
 		Method:    MFAMethodTOTP,
-		Secret:    "JBSWY3DPEHPK3PXP",
+		Secret:    testTOTPSecret,
 		ExpiresAt: time.Now().Add(10 * time.Minute),
 	}
 }
@@ -75,8 +75,8 @@ func TestBackendMFAStorage_SecretIsolatedToBarrier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSecret: %v", err)
 	}
-	if got.Secret != "JBSWY3DPEHPK3PXP" {
-		t.Fatalf("secret = %q, want JBSWY3DPEHPK3PXP", got.Secret)
+	if got.Secret != testTOTPSecret {
+		t.Fatalf("secret = %q, want %q", got.Secret, testTOTPSecret)
 	}
 }
 

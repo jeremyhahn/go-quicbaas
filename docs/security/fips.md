@@ -118,6 +118,48 @@ When Go FIPS mode is enabled, only these algorithms are available. Non-approved 
 | HMAC-SHA-384 | HMAC with SHA-384 |
 | HMAC-SHA-512 | HMAC with SHA-512 |
 
+## Capability Differences in FIPS Mode
+
+FIPS mode is a constrained variant of the same product: the code is identical,
+and only the algorithms the process is permitted to use change. This section
+records every capability that behaves differently, and what an operator has to
+do about it.
+
+### TOTP Multi-Factor Authentication
+
+RFC 6238 baselines TOTP on HMAC-SHA1, and that remains the default outside FIPS
+mode - every authenticator app implements it and existing enrollments are
+unaffected. HMAC-SHA1 is not FIPS 140-3 approved, so in FIPS mode QuicBaaS
+derives TOTP codes with HMAC-SHA256 instead.
+
+| | Normal build | FIPS mode |
+|---|---|---|
+| Default algorithm for new enrollments | SHA1 | SHA256 |
+| Enrollment with `mfa.algorithm: SHA256` / `SHA512` | supported | supported |
+| Enrollment with `mfa.algorithm: SHA1` | supported | refused - `TOTP algorithm SHA1 is not FIPS 140-3 approved` |
+| Verifying a secret enrolled as SHA1 | supported, using the algorithm the secret was provisioned with | refused - the user must re-enroll |
+
+Each secret records the algorithm it was provisioned with (`MFASecret.Algorithm`)
+and verification uses that stored value, never the current default. Changing the
+configured default therefore never invalidates an existing enrollment; a
+deployment can move to SHA256 and keep verifying every SHA1 secret already in
+the store.
+
+**Re-enrollment is required for SHA1 secrets in FIPS mode.** The shared secret is
+bound to the algorithm the authenticator app was provisioned with, so an
+HMAC-SHA1 code cannot be computed without HMAC-SHA1. There is no migration that
+preserves such a secret - the operator must have those users re-enroll. QuicBaaS
+never silently downgrades to SHA1 to make an existing secret work, and the
+refusal is a typed error (`*iam.MFAAlgorithmNotApprovedError`) on the normal
+error path, not a panic.
+
+To find the affected enrollments before switching a deployment into FIPS mode,
+list the stored secrets whose `algorithm` is `SHA1` or empty (an empty value
+predates the field and means SHA1).
+
+Newly issued secrets are 160 bits (RFC 4226 recommends at least 128); FIPS
+140-only mode additionally rejects HMAC keys shorter than 112 bits.
+
 ## TLS Requirements
 
 ### Minimum TLS Version
@@ -265,6 +307,7 @@ if status.Enabled {
 | crypto operation failed | Using non-approved algorithm | Use only FIPS-approved algorithms |
 | TLS version below minimum | TLS 1.1 or lower | Configure TLS 1.2+ |
 | cipher suite not FIPS-approved | Non-approved cipher | Configure approved cipher suite |
+| TOTP algorithm SHA1 is not FIPS 140-3 approved | An MFA enrollment provisioned with HMAC-SHA1, or `mfa.algorithm: SHA1` in configuration | Have the user re-enroll MFA; see [Capability Differences](#totp-multi-factor-authentication) |
 
 ## See Also
 
