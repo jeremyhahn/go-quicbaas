@@ -3122,6 +3122,69 @@ When the orchestrator assigns work to an agent, the identity provisioning flow i
 
 Tokens contain standard OIDC claims plus custom scope claims that the MCP authorization layer uses for tool filtering.
 
+### Client Credential Storage
+
+`CreateServiceAccount` and `RotateCredentials` return the client secret to the
+caller exactly once. What the store keeps in `ServiceAccount.SecretHash` is a
+PBKDF2-HMAC-SHA256 digest, so a compromised store yields no usable credential.
+The stored form is self-describing:
+
+```
+$pbkdf2-sha256$i=<iterations>$<base64 salt>$<base64 derived key>
+```
+
+Exactly one work factor is accepted, and a digest carrying any other iteration
+count is refused. That is a security property, not a simplification: an
+ineligible account is verified against a fixed-cost equalizer digest, so a
+record holding a cheaper work factor would answer measurably faster than an
+unknown client ID and disclose that it exists, while a dearer one would let a
+tampered record decide how long a request worker is occupied.
+
+**Raising the work factor therefore does not migrate existing secrets.** Digests
+at the previous count stop parsing, so they are treated as legacy and fail
+closed. The procedure is mandatory and deliberate:
+
+1. Raise `pbkdf2Iterations` and regenerate `timingEqualizerDigest` to match —
+   `TestTimingEqualizerDigest_MatchesCurrentParameters` fails until you do.
+2. Run `InvalidateLegacySecretHashes(ctx, tenantID)` for each tenant. Every
+   account written under the old count now reads as legacy and is cleared.
+3. Reissue with `RotateCredentials(ctx, accountID)` and distribute the new
+   secrets.
+
+Between steps 1 and 3 the affected service accounts cannot authenticate. This
+is cheap in practice because service accounts are short-lived machine
+identities the orchestrator creates and deletes per job, but it is a real
+outage for any long-lived account and has to be scheduled rather than
+discovered.
+
+PBKDF2 is also the only choice here that satisfies the repository's own
+compliance gate: CI runs under `GODEBUG=fips140=only`, and PBKDF2-HMAC-SHA256
+is approved under SP 800-132. The derivation uses the standard library's
+`crypto/pbkdf2`, which is served by the Go Cryptographic Module.
+
+`OrchestratorAuthService.AuthenticateServiceAccount(ctx, clientID, clientSecret)`
+is the only way to check a presented pair. It fails closed and is
+non-enumerating: an unknown client ID, a revoked or expired account, a legacy or
+cleared hash, and a wrong secret all return the same detail-free
+`*ServiceAccountAuthFailedError` and all perform exactly one key derivation, so
+neither the error nor the time taken reveals which client IDs exist. The
+specific reason goes only to the audit log.
+
+#### Migrating pre-KDF records
+
+Service accounts written before the KDF landed stored the hex-encoded client
+secret in `SecretHash`, which is a recoverable credential rather than a digest.
+Those records are treated as compromised, never migrated in place:
+
+1. `AuthenticateServiceAccount` rejects any account whose stored hash does not
+   parse as a digest, and logs a warning naming the account.
+2. `InvalidateLegacySecretHashes(ctx, tenantID)` clears every legacy hash in a
+   tenant — revoked accounts included, since their stored secret is just as
+   readable — and reports how many it cleared. The accounts survive; their
+   credentials stop working.
+3. `RotateCredentials(ctx, accountID)` issues a fresh secret, hashed with the
+   current KDF, and hands the plaintext back to the operator once.
+
 ### Scope-Based MCP Permissions
 
 Each agent role specifies `mcp_scopes` in the workflow YAML. These scopes follow the `resource:action` format:
