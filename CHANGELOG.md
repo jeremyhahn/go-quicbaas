@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0-alpha] - 2026-08-19
+
+MINOR rather than PATCH because the route de-collision below is breaking, and
+pre-1.0 that is where breakage lives (release-versioning.md §1).
+
+### Fixed
+
+- **`StdioTransport.Send` no longer discards a response that races the
+  transport close.** `Send` selected on the response channel and the
+  transport's `done` channel together. `readLoop` delivers a response before
+  it observes EOF and closes `done`, so an agent that answers and then
+  immediately exits left both cases ready — and `select` chooses uniformly
+  among ready cases. Roughly half the time the delivered response was thrown
+  away and the call returned `ErrSessionClosed`. This affected any short-lived
+  or one-shot ACP agent, not only tests; it surfaced as an intermittent
+  `TestACPBackend_JSONRPC_Spawn_InitializeError` failure.
+
+### Security
+
+- **The form-encoded OAuth2 endpoints now bound their request bodies.**
+  `/oauth2/token`, `/oauth2/token-mtls`, `/oauth2/revoke` and
+  `/oauth2/introspect` are `RouteAuthPublic` and are registered outside the
+  `BodyLimitMiddleware` group, so `ParseForm` would buffer an unbounded body
+  from an unauthenticated caller. All four are capped at 1 MB via the new
+  exported `MaxOAuth2FormBytes`.
+
+### Changed
+
+- First-party dependencies moved to the current tags: go-qrdb and its SDK to
+  `v0.6.0-alpha`, go-xkms, its SDK and xkey to `v0.7.5-alpha`, go-quicraft to
+  `v0.6.2-alpha`, go-truststrap to `v0.1.4-alpha`, go-frost to `v0.1.8-alpha`,
+  go-luks2 to `v0.1.7-alpha`.
+
+### Build
+
+- `make vuln` distinguishes a govulncheck killed by a signal (exit >128, in
+  practice the job container's memory cap) from a real vulnerability finding,
+  instead of reporting both as "found reachable vulnerabilities". Still
+  fail-closed in both cases.
+
 ### Changed — BREAKING: unified-node route de-collision (P3.3)
 
 - **`/api/v1/auth/{refresh,logout,validate,login/piv}` dropped from the
