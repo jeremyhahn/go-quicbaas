@@ -18,6 +18,7 @@ import (
 	"errors"
 
 	"github.com/jeremyhahn/go-auth/pkg/otp"
+
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
