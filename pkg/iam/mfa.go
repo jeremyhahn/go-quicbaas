@@ -125,10 +125,20 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to cancel existing enrollments", err)
 	}
 
-	// Generate secret
-	secret, err := otp.GenerateSecret()
+	// Generate the shared secret into protected memory, and render the base32
+	// form only where it is genuinely required: the provisioning URI the user
+	// scans, and the enrollment record that has to survive until they confirm
+	// the code. Destroy releases the protected copy as soon as both exist, so
+	// the unwipeable string is the only one that outlives this call.
+	protectedSecret, err := otp.GenerateProtectedSecret()
 	if err != nil {
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to generate secret", err)
+	}
+	defer protectedSecret.Destroy()
+
+	secret, err := otp.EncodeSecret(protectedSecret)
+	if err != nil {
+		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to encode secret", err)
 	}
 
 	// Get account name (email) from user storage if available
@@ -162,7 +172,10 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to create authenticator", err)
 	}
 
-	qrCodeURI := auth.GetProvisioningURI()
+	qrCodeURI, err := auth.ProvisioningURI()
+	if err != nil {
+		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to build provisioning URI", err)
+	}
 
 	// Create enrollment. The provisioning parameters are recorded alongside
 	// the secret: they are baked into the URI the authenticator app scanned,
