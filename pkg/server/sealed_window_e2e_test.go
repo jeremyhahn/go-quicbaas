@@ -99,25 +99,6 @@ func NewSealedBootTestConfig(t *testing.T) *config.Config {
 	return cfg
 }
 
-// waitFor polls fn every 100ms until it returns true or the deadline
-// elapses (channel-based, no sleeps in the assertion path).
-func waitFor(t *testing.T, timeout time.Duration, what string, fn func() bool) {
-	t.Helper()
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	deadline := time.After(timeout)
-	for {
-		select {
-		case <-ticker.C:
-			if fn() {
-				return
-			}
-		case <-deadline:
-			t.Fatalf("timed out waiting for %s", what)
-		}
-	}
-}
-
 // TestSealedBoot_ShutdownWhileSealedIsClean asserts a daemon shut down while
 // still waiting for unseal aborts the boot with the typed
 // SealedWindowShutdownError, tears the sealed listeners down, and neither
@@ -131,7 +112,7 @@ func TestSealedBoot_ShutdownWhileSealedIsClean(t *testing.T) {
 	startErr := make(chan error, 1)
 	go func() { startErr <- srv.Start() }()
 
-	waitFor(t, 60*time.Second, "sealed-window REST listener", func() bool {
+	awaitCond(t, "the sealed-window REST listener to come up", func() bool {
 		return srv.RESTAddr() != nil
 	})
 	require.True(t, srv.qrdbNode.IsSealed(), "node must boot sealed without auto-unseal material")
@@ -142,13 +123,9 @@ func TestSealedBoot_ShutdownWhileSealedIsClean(t *testing.T) {
 	// tears the sealed listeners + client down before returning.
 	srv.TriggerShutdown()
 
-	select {
-	case bootErr := <-startErr:
-		var sdErr *SealedWindowShutdownError
-		require.ErrorAs(t, bootErr, &sdErr, "boot must abort with the typed sealed-window shutdown error, got %v", bootErr)
-	case <-time.After(60 * time.Second):
-		t.Fatal("Start did not return after shutdown was triggered during the sealed window")
-	}
+	bootErr := awaitResult(t, startErr, "Start after shutdown during the sealed window")
+	var sdErr *SealedWindowShutdownError
+	require.ErrorAs(t, bootErr, &sdErr, "boot must abort with the typed sealed-window shutdown error, got %v", bootErr)
 
 	assert.Nil(t, srv.sealedWindowClient, "sealed-window client torn down on aborted boot")
 	assert.Nil(t, srv.restServer, "sealed REST listener torn down on aborted boot")

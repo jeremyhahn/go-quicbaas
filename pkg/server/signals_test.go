@@ -19,7 +19,6 @@ import (
 	"os"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,20 +37,14 @@ func TestSignalHandlers(t *testing.T) {
 		// Setup signal handlers
 		setupSignalHandlers(shutdownChan, srv.logger)
 
-		// Send SIGTERM to ourselves
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			proc, _ := os.FindProcess(os.Getpid())
-			proc.Signal(syscall.SIGTERM)
-		}()
+		// Send SIGTERM to ourselves. setupSignalHandlers registers its
+		// signal.Notify channel synchronously, so the signal cannot be
+		// missed and no delay is needed before sending it.
+		proc, err := os.FindProcess(os.Getpid())
+		require.NoError(t, err)
+		require.NoError(t, proc.Signal(syscall.SIGTERM))
 
-		// Wait for shutdown signal (with timeout)
-		select {
-		case <-shutdownChan:
-			// Expected
-		case <-time.After(2 * time.Second):
-			t.Fatal("Shutdown signal not received")
-		}
+		awaitSignal(t, shutdownChan, "the SIGTERM handler closing the shutdown channel")
 	})
 
 	t.Run("SIGINT", func(t *testing.T) {
@@ -66,20 +59,14 @@ func TestSignalHandlers(t *testing.T) {
 		// Setup signal handlers
 		setupSignalHandlers(shutdownChan, srv.logger)
 
-		// Send SIGINT to ourselves
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			proc, _ := os.FindProcess(os.Getpid())
-			proc.Signal(syscall.SIGINT)
-		}()
+		// Send SIGINT to ourselves. setupSignalHandlers registers its
+		// signal.Notify channel synchronously, so the signal cannot be
+		// missed and no delay is needed before sending it.
+		proc, err := os.FindProcess(os.Getpid())
+		require.NoError(t, err)
+		require.NoError(t, proc.Signal(syscall.SIGINT))
 
-		// Wait for shutdown signal (with timeout)
-		select {
-		case <-shutdownChan:
-			// Expected
-		case <-time.After(2 * time.Second):
-			t.Fatal("Shutdown signal not received")
-		}
+		awaitSignal(t, shutdownChan, "the SIGINT handler closing the shutdown channel")
 	})
 
 	t.Run("MultipleSignals", func(t *testing.T) {
@@ -94,22 +81,15 @@ func TestSignalHandlers(t *testing.T) {
 		// Setup signal handlers
 		setupSignalHandlers(shutdownChan, srv.logger)
 
-		// Send multiple signals (only first should close channel)
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			proc, _ := os.FindProcess(os.Getpid())
-			proc.Signal(syscall.SIGTERM)
-			time.Sleep(50 * time.Millisecond)
-			proc.Signal(syscall.SIGTERM)
-		}()
+		// Send multiple signals (only the first should close the channel).
+		proc, err := os.FindProcess(os.Getpid())
+		require.NoError(t, err)
+		require.NoError(t, proc.Signal(syscall.SIGTERM))
 
-		// Wait for first shutdown signal
-		select {
-		case <-shutdownChan:
-			// Expected
-		case <-time.After(2 * time.Second):
-			t.Fatal("Shutdown signal not received")
-		}
+		// Wait for the first shutdown signal, then re-deliver: the
+		// once-guarded close must not panic on the second delivery.
+		awaitSignal(t, shutdownChan, "the first SIGTERM closing the shutdown channel")
+		require.NoError(t, proc.Signal(syscall.SIGTERM))
 
 		// Channel should already be closed
 		select {
@@ -135,12 +115,7 @@ func TestSignalHandlerIntegration(t *testing.T) {
 		// Verify shutdown is triggered
 		srv.TriggerShutdown()
 
-		select {
-		case <-srv.shutdownChan:
-			// Expected
-		case <-time.After(1 * time.Second):
-			t.Fatal("Shutdown not triggered")
-		}
+		awaitSignal(t, srv.shutdownChan, "TriggerShutdown closing the shutdown channel")
 
 		assert.False(t, srv.IsClosed()) // Shutdown method not called yet
 	})

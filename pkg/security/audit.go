@@ -55,6 +55,7 @@ const (
 const (
 	ErrCodeAuditConfigNil        = "AUDIT_CONFIG_NIL"
 	ErrCodeAuditSignKeyRequired  = "AUDIT_SIGN_KEY_REQUIRED"
+	ErrCodeAuditSignKeyTooShort  = "AUDIT_SIGN_KEY_TOO_SHORT"
 	ErrCodeAuditFileOpen         = "AUDIT_FILE_OPEN"
 	ErrCodeAuditFileRotate       = "AUDIT_FILE_ROTATE"
 	ErrCodeAuditEventSign        = "AUDIT_EVENT_SIGN"
@@ -1312,6 +1313,26 @@ type AuditLogger struct {
 	shutdown       chan struct{}
 	siemExporter   *SIEMExporter
 	syslogExporter *SyslogExporter
+
+	// rotationWatchers counts the live checkRotation goroutines. A logger owns
+	// exactly one for its lifetime, so this stays at 1 no matter how often the
+	// log file is rotated and reopened.
+	rotationWatchers atomic.Int64
+}
+
+// MinAuditSignKeyLen is the shortest HMAC signing key accepted for
+// tamper-evident audit logs. FIPS 140-3 (SP 800-107) requires HMAC keys of at
+// least 112 bits, and Go's crypto/hmac panics on shorter keys under
+// GODEBUG=fips140=only.
+const MinAuditSignKeyLen = 14
+
+// newSignKeyTooShortError reports a signing key below the FIPS 140-3 minimum.
+func newSignKeyTooShortError(keyLen int) *AuditError {
+	return &AuditError{
+		Code: ErrCodeAuditSignKeyTooShort,
+		Message: fmt.Sprintf("sign_key must be at least %d bytes (%d bits); got %d",
+			MinAuditSignKeyLen, MinAuditSignKeyLen*8, keyLen),
+	}
 }
 
 // AuditConfig configures audit logging behavior.
@@ -1323,7 +1344,7 @@ type AuditConfig struct {
 	Compress         bool          `json:"compress"`
 	CompressionLevel int           `json:"compression_level"` // gzip compression level (0-9, -1 for default, -2 for Huffman only)
 	SignLogs         bool          `json:"sign_logs"`         // Tamper-proof logging
-	SignKey          string        `json:"sign_key"`          // HMAC key for signatures
+	SignKey          string        `json:"sign_key"`          // HMAC key for signatures; at least MinAuditSignKeyLen bytes
 	BufferSize       int           `json:"buffer_size"`       // Buffer size for batching
 	FlushInterval    time.Duration `json:"flush_interval"`    // Auto-flush interval
 
@@ -1450,6 +1471,9 @@ func NewAuditLogger(cfg *AuditConfig, log *logger.Logger) (*AuditLogger, error) 
 				Message: "sign_key is required when sign_logs is enabled",
 			}
 		}
+		if len(cfg.SignKey) < MinAuditSignKeyLen {
+			return nil, newSignKeyTooShortError(len(cfg.SignKey))
+		}
 		al.signKey = []byte(cfg.SignKey)
 	}
 
@@ -1513,6 +1537,9 @@ func NewAuditLogger(cfg *AuditConfig, log *logger.Logger) (*AuditLogger, error) 
 
 	// Start auto-flush routine
 	go al.autoFlush()
+
+	// Start the single rotation watcher for the lifetime of this logger.
+	go al.checkRotation()
 
 	log.Infof("Audit logger initialized: file=%s sign_logs=%v compress=%v compression_level=%d siem=%v syslog=%v",
 		cfg.File, cfg.SignLogs, cfg.Compress, cfg.CompressionLevel, cfg.SIEM, cfg.SyslogEnabled)
@@ -1900,6 +1927,13 @@ func (al *AuditLogger) LogTenantDEKOperation(ctx context.Context, action, tenant
 
 // signEvent creates an HMAC signature for the audit event.
 func (al *AuditLogger) signEvent(event *AuditEvent) (string, error) {
+	// NewAuditLogger rejects short keys, so this only guards a logger built
+	// by other means. crypto/hmac panics on such keys in FIPS 140-only mode;
+	// a typed error keeps that a caller-visible failure instead.
+	if len(al.signKey) < MinAuditSignKeyLen {
+		return "", newSignKeyTooShortError(len(al.signKey))
+	}
+
 	// Create canonical representation for signing
 	data := fmt.Sprintf("%s|%s|%s|%s|%s|%s",
 		event.Timestamp.Format(time.RFC3339Nano),
@@ -1952,17 +1986,21 @@ func (al *AuditLogger) openLogFile() error {
 
 	al.file = file
 
-	// Check if rotation is needed
-	go al.checkRotation()
-
 	return nil
 }
 
-// checkRotation checks if log rotation is needed.
+// checkRotation periodically rotates the audit log once it exceeds the
+// configured maximum size. It runs until the logger is closed.
+//
+// Exactly one instance runs per logger; it is started by NewAuditLogger and
+// must never be started from openLogFile, which runs again on every rotation.
 func (al *AuditLogger) checkRotation() {
 	if al.config.File == "" {
 		return
 	}
+
+	al.rotationWatchers.Add(1)
+	defer al.rotationWatchers.Add(-1)
 
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()

@@ -125,10 +125,20 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to cancel existing enrollments", err)
 	}
 
-	// Generate secret
-	secret, err := otp.GenerateSecret()
+	// Generate the shared secret into protected memory, and render the base32
+	// form only where it is genuinely required: the provisioning URI the user
+	// scans, and the enrollment record that has to survive until they confirm
+	// the code. Destroy releases the protected copy as soon as both exist, so
+	// the unwipeable string is the only one that outlives this call.
+	protectedSecret, err := otp.GenerateProtectedSecret()
 	if err != nil {
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to generate secret", err)
+	}
+	defer protectedSecret.Destroy()
+
+	secret, err := otp.EncodeSecret(protectedSecret)
+	if err != nil {
+		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to encode secret", err)
 	}
 
 	// Get account name (email) from user storage if available
@@ -141,6 +151,11 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 	}
 
 	// Create OTP authenticator to get provisioning URI
+	algorithm, err := convertAlgorithm("iam.mfa.enroll", m.config.Algorithm)
+	if err != nil {
+		return nil, err
+	}
+
 	otpConfig := otp.Config{
 		Type:        otp.TypeTOTP,
 		Secret:      secret,
@@ -148,7 +163,7 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 		AccountName: accountName,
 		Digits:      uint(m.config.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
 		Period:      uint(m.config.Period), // #nosec G115 -- Period is bounded config value (typically 30)
-		Algorithm:   convertAlgorithm(m.config.Algorithm),
+		Algorithm:   algorithm,
 		Skew:        uint(m.config.Skew), // #nosec G115 -- Skew is bounded config value (typically 1)
 	}
 
@@ -157,9 +172,15 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to create authenticator", err)
 	}
 
-	qrCodeURI := auth.GetProvisioningURI()
+	qrCodeURI, err := auth.ProvisioningURI()
+	if err != nil {
+		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to build provisioning URI", err)
+	}
 
-	// Create enrollment
+	// Create enrollment. The provisioning parameters are recorded alongside
+	// the secret: they are baked into the URI the authenticator app scanned,
+	// so completion must verify against them and not against a configuration
+	// that may have changed in the meantime.
 	enrollment := &MFAEnrollment{
 		ID:          uuid.New().String(),
 		UserID:      userID,
@@ -167,6 +188,9 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 		Method:      method,
 		Secret:      secret,
 		QRCodeURI:   qrCodeURI,
+		Algorithm:   m.config.Algorithm,
+		Digits:      m.config.Digits,
+		Period:      m.config.Period,
 		ExpiresAt:   time.Now().Add(10 * time.Minute), // 10 minute enrollment window
 		Attempts:    0,
 		MaxAttempts: 5,
@@ -216,13 +240,19 @@ func (m *DefaultMFAManager) CompleteEnrollment(ctx context.Context, enrollmentID
 		return ErrMFAMaxAttemptsExceeded
 	}
 
-	// Verify code
+	// Verify code against the parameters this enrollment was provisioned with.
+	provisioned := m.provisioningParams(enrollment)
+	algorithm, err := convertAlgorithm("iam.mfa.enroll.complete", provisioned.Algorithm)
+	if err != nil {
+		return err
+	}
+
 	otpConfig := otp.Config{
 		Type:      otp.TypeTOTP,
 		Secret:    enrollment.Secret,
-		Digits:    uint(m.config.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
-		Period:    uint(m.config.Period), // #nosec G115 -- Period is bounded config value (typically 30)
-		Algorithm: convertAlgorithm(m.config.Algorithm),
+		Digits:    uint(provisioned.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
+		Period:    uint(provisioned.Period), // #nosec G115 -- Period is bounded config value (typically 30)
+		Algorithm: algorithm,
 		Skew:      uint(m.config.Skew), // #nosec G115 -- Skew is bounded config value (typically 1)
 	}
 
@@ -255,9 +285,9 @@ func (m *DefaultMFAManager) CompleteEnrollment(ctx context.Context, enrollmentID
 		UserID:      enrollment.UserID,
 		TenantID:    enrollment.TenantID,
 		Secret:      enrollment.Secret,
-		Algorithm:   m.config.Algorithm,
-		Digits:      m.config.Digits,
-		Period:      m.config.Period,
+		Algorithm:   provisioned.Algorithm,
+		Digits:      provisioned.Digits,
+		Period:      provisioned.Period,
 		Issuer:      m.config.Issuer,
 		AccountName: accountName,
 		Verified:    true,
@@ -405,6 +435,13 @@ func (m *DefaultMFAManager) VerifyChallenge(ctx context.Context, challengeID, co
 			}, nil
 		}
 
+		// A refusal to use the enrollment's algorithm is not a failed
+		// authentication attempt: surface it so the caller sees that the user
+		// has to re-enroll, and do not consume one of their attempts.
+		if isMFAAlgorithmPolicyError(err) {
+			return nil, err
+		}
+
 		// Increment attempt counter
 		challenge.Attempts++
 		if saveErr := m.storage.SaveChallenge(ctx, challenge); saveErr != nil {
@@ -459,13 +496,20 @@ func (m *DefaultMFAManager) VerifyCode(ctx context.Context, userID, tenantID, co
 		return ErrMFANotEnrolled
 	}
 
-	// Create authenticator
+	// Create authenticator. The algorithm is the one the secret was
+	// provisioned with, not the current config: an existing enrollment keeps
+	// verifying after the configured default changes.
+	algorithm, err := convertAlgorithm("iam.mfa.verify", secret.Algorithm)
+	if err != nil {
+		return err
+	}
+
 	otpConfig := otp.Config{
 		Type:      otp.TypeTOTP,
 		Secret:    secret.Secret,
 		Digits:    uint(secret.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
 		Period:    uint(secret.Period), // #nosec G115 -- Period is bounded config value (typically 30)
-		Algorithm: convertAlgorithm(secret.Algorithm),
+		Algorithm: algorithm,
 		Skew:      uint(m.config.Skew), // #nosec G115 -- Skew is bounded config value (typically 1)
 	}
 
@@ -714,18 +758,6 @@ func (m *DefaultMFAManager) GetBackupCodeStatus(ctx context.Context, userID, ten
 		GeneratedAt:   backupSet.Created,
 		RegeneratedAt: backupSet.Regenerated,
 	}, nil
-}
-
-// convertAlgorithm converts MFAAlgorithm to otp.Algorithm.
-func convertAlgorithm(algo MFAAlgorithm) otp.Algorithm {
-	switch algo {
-	case MFAAlgorithmSHA256:
-		return otp.AlgorithmSHA256
-	case MFAAlgorithmSHA512:
-		return otp.AlgorithmSHA512
-	default:
-		return otp.AlgorithmSHA1
-	}
 }
 
 // generateBackupCode generates a random 8-character alphanumeric backup code.

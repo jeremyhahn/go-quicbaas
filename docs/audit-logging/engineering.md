@@ -40,6 +40,11 @@ security:
     sign_key: "${AUDIT_SIGN_KEY}"  # HMAC-SHA256 key (environment variable)
 ```
 
+`sign_key` must be at least 14 bytes (112 bits) — the HMAC key minimum in
+FIPS 140-3 (SP 800-107). Shorter keys are rejected at startup with
+`AUDIT_SIGN_KEY_TOO_SHORT`; an empty key with `sign_logs: true` is rejected
+with `AUDIT_SIGN_KEY_REQUIRED`. Use a random 32-byte key.
+
 Signed log entries include:
 
 ```json
@@ -337,14 +342,20 @@ SIEM events include signature IDs for correlation:
 ### Go API
 
 ```go
-import "github.com/jeremyhahn/go-quicbaas/pkg/security"
+import (
+    "os"
+
+    "github.com/jeremyhahn/go-quicbaas/pkg/security"
+)
 
 // Create audit logger
 cfg := &security.AuditConfig{
     Enabled:          true,
     File:             "/var/log/quicbaas/audit.log",
     SignLogs:         true,
-    SignKey:          "your-hmac-key",
+    // At least 14 bytes (112 bits). Generate with `openssl rand -base64 32`
+    // and load it from protected configuration rather than hardcoding it.
+    SignKey:          os.Getenv("AUDIT_SIGN_KEY"),
     Compress:         true,
     CompressionLevel: security.CompressionLevelDefault,
     SyslogEnabled:    true,

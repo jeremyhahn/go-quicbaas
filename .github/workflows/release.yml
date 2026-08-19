@@ -13,8 +13,10 @@ on:
 # resolving them from mutable VCS refs. §1 says not to add them.
 #
 # REGISTRY follows the server: ghcr.io does not exist on Gitea and a Gitea token
-# cannot authenticate to it, so releases there go to Gitea's own registry at the
-# web host and port (lessons.md).
+# cannot authenticate to it, so it resolves to Gitea's own registry at the web
+# host and port (lessons.md). Nothing is pushed there -- the build-docker* jobs
+# have no registry credentials on Gitea and skip every push -- so on that server
+# REGISTRY only prefixes the local tag the Trivy gate scans.
 env:
   GO_VERSION: '1.26.6'
   REGISTRY: ${{ github.server_url == 'https://github.com' && 'ghcr.io' || '198.51.100.91:3001' }}
@@ -44,8 +46,13 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION}"
 
+      # Container images are pushed only on the GitHub path (see the
+      # build-docker* jobs). The notes are generated to match, so a Gitea
+      # release never advertises a manifest that was never published.
       - name: Generate changelog
         id: changelog
+        env:
+          PUBLISHES_IMAGES: ${{ github.server_url == 'https://github.com' }}
         run: |
           # Get previous tag
           PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
@@ -78,15 +85,19 @@ jobs:
           **Quick Start**:
           \`\`\`bash
           # Download and run daemon directly (Linux amd64 example)
-          wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.get_version.outputs.version }}/quicbaasd-${{ steps.get_version.outputs.version }}-linux-amd64
+          wget ${{ github.server_url }}/${{ github.repository }}/releases/download/v${{ steps.get_version.outputs.version }}/quicbaasd-${{ steps.get_version.outputs.version }}-linux-amd64
           chmod +x quicbaasd-${{ steps.get_version.outputs.version }}-linux-amd64
           ./quicbaasd-${{ steps.get_version.outputs.version }}-linux-amd64 --help
 
           # Download and run CLI directly
-          wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.get_version.outputs.version }}/quicbaas-${{ steps.get_version.outputs.version }}-linux-amd64
+          wget ${{ github.server_url }}/${{ github.repository }}/releases/download/v${{ steps.get_version.outputs.version }}/quicbaas-${{ steps.get_version.outputs.version }}-linux-amd64
           chmod +x quicbaas-${{ steps.get_version.outputs.version }}-linux-amd64
           ./quicbaas-${{ steps.get_version.outputs.version }}-linux-amd64 --help
           \`\`\`
+          EOF
+
+          if [ "${PUBLISHES_IMAGES}" = "true" ]; then
+            cat >> CHANGELOG.md << EOF
 
           ### Docker Images
           \`\`\`bash
@@ -99,13 +110,26 @@ jobs:
           # FIPS 140-3 compliant daemon (Linux only)
           docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ steps.get_version.outputs.version }}-fips
           \`\`\`
+          EOF
+          else
+            cat >> CHANGELOG.md << 'EOF'
+
+          ### Container Images
+
+          None. This release was not built on GitHub, where the image push jobs
+          hold their registry credentials, so no container images were published
+          for it. The binaries listed above are the complete set of artifacts.
+          EOF
+          fi
+
+          cat >> CHANGELOG.md << EOF
 
           ### Verify Checksums
           \`\`\`bash
           sha256sum -c checksums.txt
           \`\`\`
 
-          **Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${GITHUB_REF_NAME}
+          **Full Changelog**: ${{ github.server_url }}/${{ github.repository }}/compare/${PREV_TAG}...${GITHUB_REF_NAME}
           EOF
 
           cat CHANGELOG.md
@@ -479,8 +503,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         run: |
@@ -514,8 +538,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
   build-docker-cli:
     name: Build Docker CLI Image
@@ -588,8 +612,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         run: |
@@ -622,8 +646,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
   build-docker-fips:
     name: Build Docker FIPS Image
@@ -694,8 +718,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         run: |
@@ -728,8 +752,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
   create-checksums:
     name: Create Master Checksums
@@ -773,7 +797,10 @@ jobs:
     runs-on: ubuntu-latest
     if: success()
     steps:
+      # Skipped off GitHub, where no image was pushed -- appending pull
+      # commands there would contradict the notes the release was created with.
       - name: Update release notes
+        if: github.server_url == 'https://github.com'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -795,6 +822,8 @@ jobs:
             });
 
       - name: Release summary
+        env:
+          PUBLISHES_IMAGES: ${{ github.server_url == 'https://github.com' }}
         run: |
           echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -809,20 +838,28 @@ jobs:
           echo "#### macOS/Darwin Binaries" >> $GITHUB_STEP_SUMMARY
           echo "- **Standard** (amd64, arm64) - quicbaasd, quicbaas" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Docker Images" >> $GITHUB_STEP_SUMMARY
-          echo "- Multi-arch (amd64, arm64) daemon and CLI images" >> $GITHUB_STEP_SUMMARY
-          echo "- FIPS 140-3 compliant daemon image (GOFIPS140=v1.0.0)" >> $GITHUB_STEP_SUMMARY
+          if [ "${PUBLISHES_IMAGES}" = "true" ]; then
+            echo "#### Docker Images" >> $GITHUB_STEP_SUMMARY
+            echo "- Multi-arch (amd64, arm64) daemon and CLI images" >> $GITHUB_STEP_SUMMARY
+            echo "- FIPS 140-3 compliant daemon image (GOFIPS140=v1.0.0)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "#### Container Images" >> $GITHUB_STEP_SUMMARY
+            echo "- None. Images are built and scanned on every server but pushed" >> $GITHUB_STEP_SUMMARY
+            echo "  only from GitHub, which holds the registry credentials." >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "All artifacts include SHA256 checksums for verification" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "# QuicBaaS daemon (multi-Raft distributed KV store)" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# QuicBaaS CLI tool" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaas:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# FIPS 140-3 compliant daemon" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}-fips" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          if [ "${PUBLISHES_IMAGES}" = "true" ]; then
+            echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
+            echo '```bash' >> $GITHUB_STEP_SUMMARY
+            echo "# QuicBaaS daemon (multi-Raft distributed KV store)" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "# QuicBaaS CLI tool" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaas:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "# FIPS 140-3 compliant daemon" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}-fips" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi

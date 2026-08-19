@@ -152,12 +152,7 @@ func TestServerShutdown(t *testing.T) {
 		srv.TriggerShutdown()
 
 		// Shutdown channel should be closed
-		select {
-		case <-srv.shutdownChan:
-			// Expected
-		case <-time.After(1 * time.Second):
-			t.Fatal("Shutdown channel not closed")
-		}
+		awaitSignal(t, srv.shutdownChan, "TriggerShutdown closing the shutdown channel")
 	})
 }
 
@@ -302,12 +297,7 @@ func TestServerConcurrency(t *testing.T) {
 		}
 
 		// Shutdown channel should be closed
-		select {
-		case <-srv.shutdownChan:
-			// Expected
-		case <-time.After(1 * time.Second):
-			t.Fatal("Shutdown channel not closed")
-		}
+		awaitSignal(t, srv.shutdownChan, "TriggerShutdown closing the shutdown channel")
 	})
 
 	t.Run("ConcurrentStateReads", func(t *testing.T) {

@@ -18,10 +18,10 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-msgpack/v2 v2.1.5
 	github.com/hashicorp/vault/api v1.23.0
-	github.com/jeremyhahn/go-auth v0.1.0-alpha
+	github.com/jeremyhahn/go-auth v0.1.2-alpha
 	github.com/jeremyhahn/go-codec v1.4.0
-	github.com/jeremyhahn/go-libsignal v0.1.1-alpha
-	github.com/jeremyhahn/go-objstore v0.2.1-alpha
+	github.com/jeremyhahn/go-libsignal v0.1.2-alpha
+	github.com/jeremyhahn/go-objstore v0.2.2-alpha
 	github.com/jeremyhahn/go-qrdb v0.5.8-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.5.8-alpha
 	github.com/jeremyhahn/go-quicbaas/sdk/go v0.2.1-alpha
@@ -97,7 +97,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/jeremyhahn/go-frost v0.1.7-alpha // indirect
-	github.com/jeremyhahn/go-quicraft v0.4.2-alpha // indirect
+	github.com/jeremyhahn/go-quicraft v0.5.1-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.1.2-alpha // indirect
 	github.com/jeremyhahn/go-xkms/xkey v0.7.1-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect

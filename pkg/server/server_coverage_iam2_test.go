@@ -414,11 +414,7 @@ func TestSetupSignalHandlers_HandlesSIGINT(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, proc.Signal(os.Interrupt))
 
-	select {
-	case <-shutdown:
-	case <-time.After(2 * time.Second):
-		t.Fatal("setupSignalHandlers did not handle SIGINT in time")
-	}
+	awaitSignal(t, shutdown, "setupSignalHandlers handling SIGINT")
 }
 
 // =============================================================================

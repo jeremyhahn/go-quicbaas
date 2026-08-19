@@ -45,12 +45,23 @@ import (
 // sdkSealedEnvelope is qrdb's documented REST sealed-window deny body.
 const sdkSealedEnvelope = `{"error":"barrier sealed","code":"SEALED"}`
 
-// sdkWaitFor polls fn every 100ms until true or the deadline elapses.
-func sdkWaitFor(t *testing.T, timeout time.Duration, what string, fn func() bool) {
+// sdkWaitFor polls fn every 100ms until it reports true. Like the in-package
+// awaitCond helper it is bounded by the test binary's own deadline rather
+// than by a fixed wall clock, so a busy machine cannot fail a boot that is
+// merely slow; this file is in the external server_test package and so cannot
+// reuse that helper directly.
+func sdkWaitFor(t *testing.T, what string, fn func() bool) {
 	t.Helper()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	deadline := time.After(timeout)
+	// A nil channel blocks forever, which is the right behaviour under
+	// `go test -timeout 0`.
+	var deadline <-chan time.Time
+	if testDeadline, ok := t.Deadline(); ok {
+		// Leave a margin for this test to report its own failure before
+		// the harness panics the process with a stack dump.
+		deadline = time.After(time.Until(testDeadline) - 5*time.Second)
+	}
 	for {
 		select {
 		case <-ticker.C:
@@ -106,7 +117,7 @@ func TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon(t *testing.T) {
 	// Phase 1: the sealed-window REST listener comes up and serves the
 	// barrier status verb.
 	var baseURL string
-	sdkWaitFor(t, 60*time.Second, "sealed-window REST listener", func() bool {
+	sdkWaitFor(t, "the sealed-window REST listener to serve barrier status", func() bool {
 		addr := srv.RESTAddr()
 		if addr == nil {
 			return false
@@ -168,7 +179,7 @@ func TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon(t *testing.T) {
 	// verified at the node level (GetQRDBNodeClient), since the post-unseal
 	// REST surface is TLS-only and unreachable under this TLS-disabled
 	// config (see the doc comment above).
-	sdkWaitFor(t, 120*time.Second, "full node boot after unseal", func() bool {
+	sdkWaitFor(t, "the full node boot to complete after unseal", func() bool {
 		return srv.GetQRDBNodeClient() != nil
 	})
 	assert.False(t, srv.GetQRDBNodeClient() == nil, "node SDK client must be online after unseal completes the boot")

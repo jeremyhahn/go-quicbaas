@@ -106,14 +106,23 @@ type KeyCacheOptions struct {
 }
 
 // cacheEntry represents a cached key with expiration.
+//
+// material, expiresAt and size are immutable for the lifetime of the entry
+// with one exception: material is zeroed when the entry is evicted, and that
+// only ever happens while KeyCache.mu is held for writing. Readers therefore
+// copy material under the read lock and never observe an eviction in
+// progress. accessedAt is the only field mutated in place, so it is a Unix
+// nanosecond timestamp updated atomically - that keeps Get on the read lock
+// instead of forcing every cache hit to serialize on the write lock.
 type cacheEntry struct {
 	material   []byte
 	expiresAt  time.Time
 	size       int
-	accessedAt time.Time
+	accessedAt atomic.Int64
 }
 
 // zeroMemory overwrites the key material with random data then zeros.
+// Must be called with KeyCache.mu held for writing.
 func (e *cacheEntry) zeroMemory() {
 	if len(e.material) > 0 {
 		// First pass: fill with random data
@@ -251,12 +260,13 @@ func (kc *KeyCache) Put(keyID string, material []byte, ttl time.Duration) error 
 	}
 
 	now := time.Now()
-	kc.entries[keyID] = &cacheEntry{
-		material:   materialCopy,
-		expiresAt:  now.Add(ttl),
-		size:       len(materialCopy),
-		accessedAt: now,
+	entry := &cacheEntry{
+		material:  materialCopy,
+		expiresAt: now.Add(ttl),
+		size:      len(materialCopy),
 	}
+	entry.accessedAt.Store(now.UnixNano())
+	kc.entries[keyID] = entry
 
 	return nil
 }
@@ -269,33 +279,39 @@ func (kc *KeyCache) Get(keyID string) ([]byte, bool) {
 		return nil, false
 	}
 
+	// The read lock is held across the copy. Eviction zeroes key material
+	// under the write lock, so holding the read lock for the whole lookup is
+	// what stops a reader from copying material that is being wiped out from
+	// under it and reporting the result as a cache hit.
 	kc.mu.RLock()
-	entry, exists := kc.entries[keyID]
-	kc.mu.RUnlock()
 
+	entry, exists := kc.entries[keyID]
 	if !exists {
+		kc.mu.RUnlock()
 		kc.misses.Add(1)
 		return nil, false
 	}
 
 	// Check expiration
-	if time.Now().After(entry.expiresAt) {
+	now := time.Now()
+	if now.After(entry.expiresAt) {
+		kc.mu.RUnlock()
 		kc.misses.Add(1)
 		// Expired - remove it
 		kc.Delete(keyID)
 		return nil, false
 	}
 
-	// Update access time
-	kc.mu.Lock()
-	entry.accessedAt = time.Now()
-	kc.mu.Unlock()
-
-	kc.hits.Add(1)
+	// Update access time for LRU ordering
+	entry.accessedAt.Store(now.UnixNano())
 
 	// Return a copy to prevent external mutation
 	materialCopy := make([]byte, len(entry.material))
 	copy(materialCopy, entry.material)
+
+	kc.mu.RUnlock()
+
+	kc.hits.Add(1)
 	return materialCopy, true
 }
 
@@ -410,15 +426,16 @@ func (kc *KeyCache) evictLRU() {
 
 	var (
 		oldestKey  string
-		oldestTime time.Time
+		oldestTime int64
 	)
 
 	// Find least recently accessed entry
 	first := true
 	for keyID, entry := range kc.entries {
-		if first || entry.accessedAt.Before(oldestTime) {
+		accessedAt := entry.accessedAt.Load()
+		if first || accessedAt < oldestTime {
 			oldestKey = keyID
-			oldestTime = entry.accessedAt
+			oldestTime = accessedAt
 			first = false
 		}
 	}

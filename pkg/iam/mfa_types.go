@@ -123,6 +123,14 @@ func (s *MFASecret) Validate() error {
 	if s.Period < 15 || s.Period > 120 {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa_secret.validate", "period must be between 15 and 120 seconds", nil)
 	}
+	// An empty algorithm predates the field and means SHA1; anything else must
+	// be one QuicBaaS implements, so a corrupted record cannot be persisted
+	// and later reinterpreted.
+	if s.Algorithm != "" {
+		if _, known := mfaAlgorithms[s.Algorithm]; !known {
+			return NewMFAAlgorithmUnsupportedError("iam.mfa_secret.validate", s.Algorithm)
+		}
+	}
 	return nil
 }
 
@@ -145,6 +153,16 @@ type MFAEnrollment struct {
 
 	// QRCodeURI is the otpauth:// URI for QR code generation
 	QRCodeURI string `json:"qr_code_uri"`
+
+	// Algorithm is the hash algorithm encoded in QRCodeURI. Empty on an
+	// enrollment persisted before the parameters were recorded.
+	Algorithm MFAAlgorithm `json:"algorithm,omitempty"`
+
+	// Digits is the number of digits encoded in QRCodeURI (0 if unrecorded)
+	Digits int `json:"digits,omitempty"`
+
+	// Period is the time step in seconds encoded in QRCodeURI (0 if unrecorded)
+	Period int `json:"period,omitempty"`
 
 	// ExpiresAt is when the enrollment expires
 	ExpiresAt time.Time `json:"expires_at"`
@@ -177,6 +195,29 @@ func (e *MFAEnrollment) Validate() error {
 	}
 	if e.Secret == "" {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa_enrollment.validate", "secret is required", nil)
+	}
+	// The provisioning tuple is validated per field rather than as a unit. A
+	// record written before these fields existed carries the zero value for
+	// each, and provisioningParams reconstructs those; a partially populated
+	// record is therefore legitimate and must not be rejected. What must be
+	// rejected is an out-of-range value, because CompleteEnrollment converts
+	// Digits and Period to uint before handing them to the OTP library - a
+	// negative int persisted here would arrive there as a huge unsigned value.
+	// MFASecret.Validate already enforces the same bounds on the stored-secret
+	// side; this closes the matching hole on the enrollment side.
+	if e.Digits != 0 && (e.Digits < 6 || e.Digits > 8) {
+		return NewIAMError(ErrMFAInvalid, "iam.mfa_enrollment.validate", "digits must be 6, 7, or 8", nil)
+	}
+	if e.Period != 0 && (e.Period < 15 || e.Period > 120) {
+		return NewIAMError(ErrMFAInvalid, "iam.mfa_enrollment.validate", "period must be between 15 and 120 seconds", nil)
+	}
+	// An empty algorithm predates the field and means SHA1; anything else must
+	// be one QuicBaaS implements, so a corrupted or future identifier cannot be
+	// persisted and later acquire a cryptographic meaning.
+	if e.Algorithm != "" {
+		if _, known := mfaAlgorithms[e.Algorithm]; !known {
+			return NewIAMError(ErrMFAInvalid, "iam.mfa_enrollment.validate", "unsupported algorithm: "+string(e.Algorithm), nil)
+		}
 	}
 	return nil
 }
@@ -410,7 +451,7 @@ func (c *MFAConfig) ApplyDefaults() {
 		c.Period = 30
 	}
 	if c.Algorithm == "" {
-		c.Algorithm = MFAAlgorithmSHA1
+		c.Algorithm = defaultMFAAlgorithm()
 	}
 	if c.Skew == 0 {
 		c.Skew = 1

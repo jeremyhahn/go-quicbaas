@@ -1607,6 +1607,15 @@ stage-gomodauth: ## Stage Gitea module-fetch credentials for the image builds
 		echo "$(YELLOW)  (dependency-resolution.md section 6 -- the Gitea runners inject it)$(NC)"; \
 	fi
 
+# Teardown is armed by an EXIT trap before the first container exists, because
+# the workflow no longer prunes the runner behind this job (#3): what this stack
+# leaves behind now stays behind. The recipe can leave early from a build
+# failure, an unhealthy cluster, a `set -e` trip or a cancelled job, and every
+# one of those paths used to skip the `down` near the end. The trap covers all
+# of them; TORN_DOWN keeps it from repeating a teardown an explicit path already
+# did. It is best-effort on purpose — a teardown error must not overwrite the
+# test result the caller is waiting for, and the explicit `down`s still report
+# their own failures loudly.
 .PHONY: integration-test
 integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by default; OLLAMA_CPU=1 or GPU_HOST=<host> to include)
 	@echo "$(BLUE)Running Docker integration tests...$(NC)"
@@ -1668,6 +1677,8 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	OLLAMA_UP_SERVICES=""; \
 	if [ $$START_LOCAL_OLLAMA -eq 1 ]; then OLLAMA_UP_SERVICES="ollama ollama-setup"; fi; \
 	echo "$(BLUE)  Ollama mode: enabled=$$OLLAMA_ENABLED gpu=$$TEST_GPU local-container=$$START_LOCAL_OLLAMA url=$$OLLAMA_URL$(NC)"; \
+	TORN_DOWN=0; \
+	trap 'if [ $$TORN_DOWN -eq 0 ]; then echo "$(YELLOW)Tearing down the integration stack...$(NC)"; docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans >/dev/null 2>&1 || true; fi' EXIT; \
 	cp go.mod /tmp/quicbaas-gomod-backup; \
 	cp sdk/go/go.mod /tmp/quicbaas-sdk-gomod-backup; \
 	echo "$(YELLOW)CLI binary and mTLS certificates are produced inside the stack$(NC)"; \
@@ -1722,6 +1733,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 		echo "$(YELLOW)Recent logs:$(NC)"; \
 		docker compose -f $$COMPOSE_FILE logs --tail=20; \
 		docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+		TORN_DOWN=1; \
 		exit 1; \
 	fi; \
 	echo ""; \
@@ -1860,6 +1872,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	echo ""; \
 	echo "$(BLUE)Stopping integration test cluster...$(NC)"; \
 	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+	TORN_DOWN=1; \
 	echo "$(YELLOW)Restoring go.mod files (if modified by container)...$(NC)"; \
 	if [ -f /tmp/quicbaas-gomod-backup ]; then cp /tmp/quicbaas-gomod-backup go.mod; fi; \
 	if [ -f /tmp/quicbaas-sdk-gomod-backup ]; then cp /tmp/quicbaas-sdk-gomod-backup sdk/go/go.mod; fi; \
@@ -2808,10 +2821,84 @@ clean: ## Clean build artifacts and test data
 	$(GOCMD) clean -cache -testcache
 	@echo "$(GREEN)Cleanup complete$(NC)"
 
+# Docker cleanup is scoped to the images this repo builds, by tag. It must never
+# be a host-global `docker system prune -af --volumes`: the CI runners are
+# shared, and that deletes every unused image and named volume on the host,
+# including the ones other repositories' jobs depend on (incident 2026-08-17,
+# #3 — it repeatedly destroyed the codex-review job image and failed 16 review
+# runs portfolio-wide).
+#
+# This is every image identity the repository creates under a name it writes
+# literally: the `-t` of its own `docker build`s, the destination of its own
+# `docker tag`s, and the explicit `image:` of a Compose service that builds.
+# scripts/docker-image-inventory.sh re-derives all of that from those commands
+# and files; `make verify-clean-docker` fails when this list has drifted from
+# it in either direction, so a new image-producing target cannot quietly escape
+# cleanup and a tag no producer here names cannot be reached.
+#
+# Ownership comes from producers only. That a target runs `docker rmi X` is not
+# evidence that X is ours — it is the claim being checked — so removals are not
+# an inventory source.
+#
+# Compose services with no explicit `image:` are therefore deliberately absent,
+# and that is why `integration-integration-test` and `integration-test-node1..5`
+# are not listed here. Compose names those `<project>-<service>`, and the
+# project name is the directory Compose ran in or a target's `-p` override — for
+# the root docker-compose.yml it is the checkout directory's own name, and two
+# compose files in one directory share a name. Those names identify whichever
+# checkout on the host used them last, not this repository. Each such stack is
+# instead torn down by the target that runs it, where the name is unambiguous
+# because that target just used it: `integration-test` brings its stack down
+# with `--volumes --remove-orphans` and removes those six images by name before
+# it rebuilds them, and an EXIT trap brings the stack down again on every way
+# out of that recipe.
+DOCKER_LOCAL_IMAGES := \
+	$(DOCKER_IMAGE):$(DOCKER_TAG) \
+	$(DOCKER_IMAGE):latest \
+	$(DOCKER_IMAGE):dev \
+	$(DOCKER_IMAGE):fips \
+	$(DOCKER_IMAGE)-test:latest \
+	$(DOCKER_IMAGE)-devcontainer:latest \
+	$(DOCKER_IMAGE)-integration-test:latest \
+	$(DOCKER_IMAGE)-integration-node:latest \
+	$(DOCKER_IMAGE)-claude-code-agent:latest \
+	$(DOCKER_IMAGE)-e2e-sandbox-agent:latest \
+	$(DOCKER_IMAGE)/swtpm:latest \
+	signalbridge:latest \
+	$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG) \
+	$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):latest \
+	go-quicbaas-quicbaas-node1:latest \
+	go-quicbaas-quicbaas-node2:latest \
+	go-quicbaas-quicbaas-node3:latest
+
 .PHONY: clean-docker
-clean-docker: ## Clean Docker resources
-	@echo "$(BLUE)Cleaning Docker resources...$(NC)"
-	$(DOCKER) system prune -af --volumes
+clean-docker: ## Remove the Docker images this project builds (never prunes the host)
+	@echo "$(BLUE)Removing QuicBaaS Docker images...$(NC)"
+	@if ! command -v $(DOCKER) > /dev/null 2>&1; then \
+		echo "$(RED)Error: Docker is not installed$(NC)"; \
+		exit 1; \
+	fi
+	@# One daemon call decides what exists, so its failure (daemon down, access
+	@# denied) propagates instead of reading as "no such image". Removal failures
+	@# are accumulated: a `for` loop otherwise reports only its last command's
+	@# status, and an early failure followed by an absent tag would exit 0.
+	@#
+	@# Removal is never forced. These tags are fixed, so on a shared runner a
+	@# concurrent checkout of this repository can be using one; `rmi -f` would
+	@# untag it out from under that run. Unforced `rmi` refuses instead, and the
+	@# refusal is reported rather than swallowed.
+	@present=$$($(DOCKER) images --format '{{.Repository}}:{{.Tag}}') || exit $$?; \
+	status=0; \
+	for image in $(DOCKER_LOCAL_IMAGES); do \
+		if printf '%s\n' "$$present" | grep -qxF "$$image"; then \
+			$(DOCKER) rmi "$$image" || status=1; \
+		fi; \
+	done; \
+	if [ $$status -ne 0 ]; then \
+		echo "$(RED)Some QuicBaaS images could not be removed (in use?)$(NC)"; \
+		exit $$status; \
+	fi; \
+	echo "$(GREEN)QuicBaaS Docker images removed$(NC)"
 
 .PHONY: clean-all
 clean-all: clean clean-docker proto-clean cluster-clean ## Clean everything
@@ -3636,8 +3723,22 @@ verify-api-shapes: ## Diff QuicBaaS Barrier*/Ceremony*/Bootstrap* TS types again
 	@echo "$(BLUE)verify-api-shapes: comparing TypeScript types against go-qrdb canonical Go types...$(NC)"
 	@scripts/verify-api-shapes.sh
 
+# Read a Makefile variable from a script: `make print-DOCKER_LOCAL_IMAGES`.
+print-%:
+	@echo "$($*)"
+
+.PHONY: verify-clean-docker
+verify-clean-docker: ## Fail if clean-docker reaches beyond this project's image tags or hides a failure
+	@echo "$(BLUE)verify-clean-docker: checking cleanup scope and failure propagation...$(NC)"
+	@bash scripts/verify-clean-docker.sh
+
+.PHONY: verify-integration-teardown
+verify-integration-teardown: ## Fail if the integration stack can outlive a run that left early
+	@echo "$(BLUE)verify-integration-teardown: checking the stack comes down on the early-exit path...$(NC)"
+	@bash scripts/verify-integration-teardown.sh
+
 .PHONY: verify
-verify: verify-naming verify-cli-flags verify-api-shapes ## Run all cross-project verifications
+verify: verify-naming verify-cli-flags verify-api-shapes verify-clean-docker verify-integration-teardown ## Run all cross-project verifications
 	@echo "$(GREEN)All verifications OK$(NC)"
 
 # =============================================================================

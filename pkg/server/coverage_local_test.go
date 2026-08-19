@@ -77,12 +77,7 @@ func TestSetupSignalHandlers_Local_ClosesShutdownOnSignal(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, proc.Signal(syscall.SIGTERM))
 
-	select {
-	case <-shutdown:
-		// Expected.
-	case <-time.After(2 * time.Second):
-		t.Fatal("setupSignalHandlers did not close the shutdown channel within 2s")
-	}
+	awaitSignal(t, shutdown, "setupSignalHandlers closing the shutdown channel")
 
 	// A second signal must not crash: the once-guarded close recovers from
 	// the close-on-closed-channel panic.
@@ -508,13 +503,7 @@ func TestServer_Start_Local_NonEmbeddedBlocksUntilShutdown(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- srv.Start() }()
 
-	select {
-	case err := <-done:
-		require.NoError(t, err,
-			"Start must return nil once the shutdown channel is already closed")
-	case <-time.After(30 * time.Second):
-		t.Fatal("Start did not return even though shutdown was already triggered")
-	}
+	awaitNoError(t, done, "Start with the shutdown channel already closed")
 
 	// Now that Start has returned, it is safe to read server state and tear down.
 	require.NotNil(t, srv.grpcServer, "the non-embedded path must have wired the gRPC server")
