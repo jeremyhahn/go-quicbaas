@@ -22,8 +22,8 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-libsignal v0.1.2-alpha
 	github.com/jeremyhahn/go-objstore v0.2.2-alpha
-	github.com/jeremyhahn/go-qrdb v0.6.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.6.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.7.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.7.0-alpha
 	github.com/jeremyhahn/go-quicbaas/sdk/go v0.3.0-alpha
 	github.com/jeremyhahn/go-xkms v0.7.5-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.7.5-alpha
@@ -98,7 +98,7 @@ require (
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.6.2-alpha // indirect
-	github.com/jeremyhahn/go-truststrap v0.1.4-alpha // indirect
+	github.com/jeremyhahn/go-truststrap v0.2.0-alpha // indirect
 	github.com/jeremyhahn/go-xkms/xkey v0.7.5-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
