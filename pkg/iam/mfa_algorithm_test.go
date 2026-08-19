@@ -278,10 +278,16 @@ func TestCompleteEnrollmentUsesProvisionedParameters(t *testing.T) {
 	assert.Equal(t, 30, stored.Period)
 }
 
-// TestCompleteEnrollmentLegacyEnrollmentUsesConfig verifies an enrollment
+// TestCompleteEnrollmentLegacyEnrollmentUsesSHA1 verifies an enrollment
 // persisted before the provisioning parameters were recorded still completes,
-// using the manager's configuration as it did before.
-func TestCompleteEnrollmentLegacyEnrollmentUsesConfig(t *testing.T) {
+// and that it is read as SHA1 - the algorithm it must have been provisioned
+// with, since the field did not exist yet - rather than as whatever the
+// manager is configured with now. The distinction is invisible outside FIPS
+// mode, where the configured default is also SHA1, and load-bearing inside it:
+// defaultMFAAlgorithm() returns SHA256 there, so resolving from configuration
+// would verify a SHA1 QR code under SHA256 and reject every code the
+// authenticator app produces.
+func TestCompleteEnrollmentLegacyEnrollmentUsesSHA1(t *testing.T) {
 	m, err := NewMFAManager()
 	require.NoError(t, err)
 
@@ -303,7 +309,9 @@ func TestCompleteEnrollmentLegacyEnrollmentUsesConfig(t *testing.T) {
 
 	stored, err := m.storage.GetSecret(ctx, "user-123", "tenant-123")
 	require.NoError(t, err)
-	assert.Equal(t, m.config.Algorithm, stored.Algorithm)
+	// Resolved explicitly, not inherited as the blank the enrollment carried:
+	// the completed secret has to record the algorithm actually used.
+	assert.Equal(t, MFAAlgorithmSHA1, stored.Algorithm)
 }
 
 // TestVerifyChallengeSurfacesAlgorithmRejection verifies the authentication API

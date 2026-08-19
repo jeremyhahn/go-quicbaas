@@ -172,11 +172,12 @@ type mfaProvisioningParams struct {
 // configured default is not a safe stand-in for it: defaultMFAAlgorithm()
 // returns SHA256 once the process is in FIPS mode, so substituting it here
 // would verify a SHA1-provisioned QR code under SHA256 and reject every code
-// the authenticator app produces. The empty value is passed through instead,
-// and convertAlgorithm applies its historical SHA1 meaning - the same reading
-// the stored-secret path already uses. In FIPS mode that legacy enrollment is
-// then refused outright rather than silently mis-verified, which is the
-// documented "the user must re-enroll" outcome.
+// the authenticator app produces. The empty value resolves to SHA1 explicitly
+// - the same historical reading convertAlgorithm and the stored-secret path
+// already apply - so the secret written at completion records the algorithm
+// actually used rather than inheriting the blank. In FIPS mode that legacy
+// enrollment is then refused outright rather than silently mis-verified,
+// which is the documented "the user must re-enroll" outcome.
 //
 // Digits and Period do take the configured value: neither has a default that
 // changes underneath the operator the way the algorithm does, so the current
@@ -187,6 +188,9 @@ func (m *DefaultMFAManager) provisioningParams(enrollment *MFAEnrollment) mfaPro
 		Algorithm: enrollment.Algorithm,
 		Digits:    enrollment.Digits,
 		Period:    enrollment.Period,
+	}
+	if params.Algorithm == "" {
+		params.Algorithm = MFAAlgorithmSHA1
 	}
 	if params.Digits == 0 {
 		params.Digits = m.config.Digits
