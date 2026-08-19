@@ -2456,11 +2456,19 @@ vuln: ## Run govulncheck to scan for known vulnerabilities
 	@echo "$(BLUE)Running vulnerability scan with govulncheck...$(NC)"
 	@GOVULNCHECK_BIN=$$(command -v govulncheck 2>/dev/null || echo "$$HOME/go/bin/govulncheck"); \
 	if [ -x "$$GOVULNCHECK_BIN" ]; then \
-		$$GOVULNCHECK_BIN ./... || { \
+		$$GOVULNCHECK_BIN ./...; rc=$$?; \
+		if [ $$rc -eq 0 ]; then \
+			echo "$(GREEN)Vulnerability scan complete$(NC)"; \
+		elif [ $$rc -gt 128 ]; then \
+			echo "$(RED)govulncheck was KILLED by signal $$(($$rc - 128)) (exit $$rc) -- it did NOT report a vulnerability.$(NC)"; \
+			echo "$(RED)On a 16 GB job container this is the memory cap: govulncheck holds the whole$(NC)"; \
+			echo "$(RED)package graph and its SSA live, which GOMEMLIMIT cannot collect. Re-run when$(NC)"; \
+			echo "$(RED)the host is quieter, or raise the cap -- do not read this as a finding.$(NC)"; \
+			exit $$rc; \
+		else \
 			echo "$(RED)govulncheck found reachable vulnerabilities$(NC)"; \
-			exit 1; \
-		}; \
-		echo "$(GREEN)Vulnerability scan complete$(NC)"; \
+			exit $$rc; \
+		fi; \
 	else \
 		echo "$(YELLOW)govulncheck not found$(NC)"; \
 		echo "$(YELLOW)Install with: make install-govulncheck$(NC)"; \
