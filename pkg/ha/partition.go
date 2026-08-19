@@ -161,7 +161,10 @@ func NewPartitionDetector(raftNode interfaces.RaftNode, config *PartitionConfig,
 		config.HealthCheckTimeout = 5 * time.Second
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// The detector owns this context for its whole lifetime; cancel is retained
+	// on the struct and called by Stop. gosec cannot follow it across the
+	// struct field.
+	ctx, cancel := context.WithCancel(context.Background()) // #nosec G118 -- cancel is stored on pd and invoked in Stop.
 
 	pd := &PartitionDetector{
 		raftNode: raftNode,

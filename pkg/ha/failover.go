@@ -143,7 +143,10 @@ func NewFailoverManager(raftNode interfaces.RaftNode, config *FailoverConfig, lo
 		config.HealthCheckTimeout = 5 * time.Second
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// The manager owns this context for its whole lifetime; cancel is retained
+	// on the struct and called by Stop. gosec cannot follow it across the
+	// struct field.
+	ctx, cancel := context.WithCancel(context.Background()) // #nosec G118 -- cancel is stored on fm and invoked in Stop.
 
 	fm := &FailoverManager{
 		raftNode:        raftNode,

@@ -193,7 +193,10 @@ func NewMultiDCManager(localRaftNode interfaces.RaftNode, config *MultiDCConfig,
 		config.SyncTimeout = 10 * time.Second
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// The manager owns this context for its whole lifetime; cancel is retained
+	// on the struct and called by Stop. gosec cannot follow it across the
+	// struct field.
+	ctx, cancel := context.WithCancel(context.Background()) // #nosec G118 -- cancel is stored on mdm and invoked in Stop.
 
 	mdm := &MultiDCManager{
 		localRaftNode: localRaftNode,

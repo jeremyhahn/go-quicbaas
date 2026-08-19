@@ -151,7 +151,13 @@ func RespondPayloadTooLarge(w http.ResponseWriter, r *http.Request, maxBytes int
 func RespondInternalError(w http.ResponseWriter, r *http.Request, err error) {
 	requestID := GetRequestID(r.Context())
 
-	// Log the actual error server-side for debugging correlation
+	// Log the actual error server-side for debugging correlation.
+	// The message is a constant and the caller-supplied data travels only as
+	// slog attribute values, which every slog handler escapes when it writes
+	// them. gosec's own G706 config scopes the check to the message argument
+	// (CheckArgs: []int{0}) for exactly that reason, but it does not honour
+	// that scoping and flags the tainted attribute values anyway.
+	// #nosec G706 -- constant message; attribute values are escaped by the slog handler.
 	slog.Error("internal server error",
 		slog.String("request_id", requestID),
 		slog.String("error", err.Error()),

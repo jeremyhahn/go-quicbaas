@@ -189,6 +189,7 @@ func (h *IAMHandler) Token(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Parse form data
+	r.Body = http.MaxBytesReader(w, r.Body, MaxOAuth2FormBytes)
 	if err := r.ParseForm(); err != nil {
 		RespondOAuthError(w, r, http.StatusBadRequest,
 			NewInvalidRequestError("failed to parse form data"))
@@ -392,6 +393,7 @@ func (h *IAMHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Parse form data
+	r.Body = http.MaxBytesReader(w, r.Body, MaxOAuth2FormBytes)
 	if err := r.ParseForm(); err != nil {
 		RespondOAuthError(w, r, http.StatusBadRequest,
 			NewInvalidRequestError("failed to parse form data"))

@@ -61,6 +61,7 @@ func (h *IAMHandler) TokenMTLS(w http.ResponseWriter, r *http.Request) {
 	}
 	peerCert := r.TLS.PeerCertificates[0]
 
+	r.Body = http.MaxBytesReader(w, r.Body, MaxOAuth2FormBytes)
 	if err := r.ParseForm(); err != nil {
 		RespondOAuthError(w, r, http.StatusBadRequest,
 			NewInvalidRequestError("failed to parse form data"))

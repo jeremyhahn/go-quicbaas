@@ -52,6 +52,15 @@ const DefaultMaxBodySize int64 = 10 << 20 // 10 MB
 // upload-heavy endpoints such as object storage and backup (100 MB).
 const DefaultMaxUploadBodySize int64 = 100 << 20 // 100 MB
 
+// MaxOAuth2FormBytes bounds the request body of the form-encoded OAuth2
+// endpoints. The largest legitimate field is a JWT client assertion or a
+// refresh token, so 1 MB sits far above any real request while keeping
+// ParseForm from buffering an attacker-supplied body. Those endpoints are
+// public and are mounted both on the legacy router (iam.go) and through the
+// module route specs (routes_iam.go), only one of which installs
+// BodyLimitMiddleware, so each handler applies this limit itself.
+const MaxOAuth2FormBytes int64 = 1 << 20 // 1 MB
+
 // Security header constants.
 const (
 	// HeaderStrictTransportSecurity is the HSTS header name.

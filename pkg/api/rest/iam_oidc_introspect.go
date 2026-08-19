@@ -42,6 +42,7 @@ import (
 func (h *IAMHandler) Introspect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	r.Body = http.MaxBytesReader(w, r.Body, MaxOAuth2FormBytes)
 	if err := r.ParseForm(); err != nil {
 		RespondOAuthError(w, r, http.StatusBadRequest,
 			NewInvalidRequestError("failed to parse form data"))
