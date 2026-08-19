@@ -24,7 +24,7 @@ require (
 	github.com/jeremyhahn/go-objstore v0.2.2-alpha
 	github.com/jeremyhahn/go-qrdb v0.6.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.6.0-alpha
-	github.com/jeremyhahn/go-quicbaas/sdk/go v0.2.1-alpha
+	github.com/jeremyhahn/go-quicbaas/sdk/go v0.3.0-alpha
 	github.com/jeremyhahn/go-xkms v0.7.5-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.7.5-alpha
 	github.com/klauspost/compress v1.18.4

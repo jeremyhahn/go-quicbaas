@@ -8,11 +8,11 @@ replace github.com/armon/go-metrics => github.com/armon/go-metrics v0.4.1
 require (
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/jeremyhahn/go-qrdb v0.5.8-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.5.8-alpha
-	github.com/jeremyhahn/go-quicbaas v0.2.1-alpha
-	github.com/jeremyhahn/go-xkms v0.7.4-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.7.4-alpha
+	github.com/jeremyhahn/go-qrdb v0.6.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.6.0-alpha
+	github.com/jeremyhahn/go-quicbaas v0.3.0-alpha
+	github.com/jeremyhahn/go-xkms v0.7.5-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.7.5-alpha
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/quic-go/quic-go v0.61.0
 	github.com/stretchr/testify v1.11.1
@@ -150,12 +150,12 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
-	github.com/jeremyhahn/go-auth v0.1.0-alpha // indirect
+	github.com/jeremyhahn/go-auth v0.1.2-alpha // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
-	github.com/jeremyhahn/go-frost v0.1.7-alpha // indirect
-	github.com/jeremyhahn/go-objstore v0.2.1-alpha // indirect
-	github.com/jeremyhahn/go-quicraft v0.4.2-alpha // indirect
-	github.com/jeremyhahn/go-truststrap v0.1.2-alpha // indirect
+	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
+	github.com/jeremyhahn/go-objstore v0.2.2-alpha // indirect
+	github.com/jeremyhahn/go-quicraft v0.6.2-alpha // indirect
+	github.com/jeremyhahn/go-truststrap v0.1.4-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
