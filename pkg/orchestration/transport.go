@@ -183,6 +183,17 @@ func (t *StdioTransport) Send(ctx context.Context, method string, params any) (*
 		}
 		return resp, nil
 	case <-t.done:
+		// An agent that answers and immediately exits leaves both cases ready:
+		// readLoop always delivers the response before it observes EOF and
+		// closes done. select picks uniformly among ready cases, so the answer
+		// has to be re-checked here or it is discarded at random.
+		select {
+		case resp, ok := <-respCh:
+			if ok {
+				return resp, nil
+			}
+		default:
+		}
 		return nil, &TransportError{Operation: "send", Cause: ErrSessionClosed}
 	}
 }
