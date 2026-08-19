@@ -1,4 +1,11 @@
-# ci-template: v1.1 (customized)
+# ci-template: v1.8 (customized)
+#
+# v1.8 adopted 2026-08-19: gosec now triages its own exit code in the Makefile
+# target, the way `vuln` already did. A shell renders a signal death as 128+N,
+# so an OOM kill left 137 and the target's `|| exit 1` collapsed it into the
+# same red as a real finding -- the conflation that ci-template v1.8 was written
+# from, on this repository. v1.6 (GOMEMLIMIT/GOMAXPROCS on the security job) and
+# v1.7 (gosec -concurrency 4) were already carried here, so this closes the gap.
 # Reconciled against software/templates/github-actions/ci.yml in the
 # automatethethings repo (devops.md §1/§8/§9). Divergence outside the
 # repo-specific blocks below is a defect.

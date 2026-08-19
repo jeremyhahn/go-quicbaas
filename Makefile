@@ -2445,11 +2445,20 @@ gosec: ## Run gosec security scanner
 		-exclude-dir=test -exclude-dir=testdata -exclude-dir=vendor -exclude-dir=sdk -exclude-dir=.tmp -exclude-dir=.deps \
 		-exclude-generated \
 		-tags "$$(echo '$(LINT_BUILD_TAGS)' | tr ' ' ',')" \
-		-fmt=sarif -out=$(BUILD_DIR)/gosec.sarif -stdout -verbose=text ./... || { \
+		-fmt=sarif -out=$(BUILD_DIR)/gosec.sarif -stdout -verbose=text ./...; rc=$$?; \
+	if [ $$rc -eq 0 ]; then \
+		echo "$(GREEN)Security scan complete - no issues found$(NC)"; \
+	elif [ $$rc -gt 128 ]; then \
+		echo "$(RED)gosec was KILLED by signal $$(($$rc - 128)) (exit $$rc) -- it did NOT report a finding.$(NC)"; \
+		echo "$(RED)A shell renders a signal death as 128+N, and the old '|| exit 1' here collapsed$(NC)"; \
+		echo "$(RED)that into the same red as real findings -- someone then hunts a vulnerability$(NC)"; \
+		echo "$(RED)that was never reported. This is memory pressure in the job container.$(NC)"; \
+		echo "$(RED)Re-run when the host is quieter; confirm locally before treating it as a finding.$(NC)"; \
+		exit $$rc; \
+	else \
 		echo "$(RED)Security issues found (SARIF: $(BUILD_DIR)/gosec.sarif)$(NC)"; \
-		exit 1; \
-	}; \
-	echo "$(GREEN)Security scan complete - no issues found$(NC)"
+		exit $$rc; \
+	fi
 
 .PHONY: vuln
 vuln: ## Run govulncheck to scan for known vulnerabilities
