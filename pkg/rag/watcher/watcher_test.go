@@ -19,6 +19,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -581,20 +582,31 @@ func TestWatcher_MaxDepth(t *testing.T) {
 		t.Fatal("timeout waiting for event from level1")
 	}
 
-	// Give time to process
-	time.Sleep(500 * time.Millisecond)
-
 	// File in level2 should NOT be watched (exceeds max depth)
 	testFile2 := filepath.Join(subDir2, "test2.txt")
 	err = os.WriteFile(testFile2, []byte("content"), 0644)
 	require.NoError(t, err)
 
-	// Should not receive event
-	select {
-	case event := <-w.Events():
-		t.Fatalf("unexpected event from level2: %+v", event)
-	case <-time.After(1 * time.Second):
-		// Expected - no event
+	// What this asserts is that nothing under level2 is watched, so judge each
+	// event by its path. Treating *any* event as a failure does not work here:
+	// one os.WriteFile emits a create and then a modify, and the level1 write
+	// above consumed only the first, so its second event is still queued. The
+	// earlier form of this test relied on that leftover being delivered during
+	// a fixed sleep, and reported it as a MaxDepth violation whenever a loaded
+	// machine delayed it past the window — failing on a correct implementation
+	// and naming a level1 path in the process.
+	deadline := time.After(1 * time.Second)
+	for {
+		select {
+		case event := <-w.Events():
+			if strings.HasPrefix(event.Path, subDir2) {
+				t.Fatalf("level2 exceeds MaxDepth and must not be watched, got: %+v", event)
+			}
+			// Anything else is the level1 write still draining. Keep reading:
+			// returning early would leave the level2 window unobserved.
+		case <-deadline:
+			return
+		}
 	}
 }
 
