@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0-alpha] - 2026-08-20
+
+MINOR rather than PATCH because the span since `0.3.0-alpha` carries breaking
+change, and pre-1.0 that is where breakage lives (release-versioning.md §1).
+Two things break in it: service-account client secrets are now derived with
+PBKDF2-HMAC-SHA256, so secrets issued before this release no longer verify;
+and the dependency bump below moves go-qrdb across two minors, go-quicraft
+across two, and go-signal and go-libsignal across one each, which reaches
+consumers through the type-alias re-exports in `sdk/go`.
+
 ### Changed
 
 - First-party dependencies moved to the current tags in both modules: go-qrdb
@@ -21,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that handed out the whole pair; the public half is now reached without
   touching the secret. The bytes published in the pre-key bundle are
   unchanged.
+
+### Security
+
+- **Service-account client secrets are derived with PBKDF2-HMAC-SHA256.**
+  Secrets issued before this release no longer verify; re-issue them. Local
+  deployments are wiped and re-bootstrapped, which is the pre-release upgrade
+  path (release-versioning.md §1).
 
 ## [0.3.0-alpha] - 2026-08-19
 
