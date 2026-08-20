@@ -519,21 +519,23 @@ func ImportSymmetricKey(ctx context.Context, backendName string, attrs *xkmssdk.
 	// Get the underlying backend from the keystore
 	underlyingBackend := keyStore.KeyProvider()
 
-	// RawKeyImporter is an interface for backends that support raw key import
-	// (bypassing the import token flow for internal/testing use)
-	type RawKeyImporter interface {
-		ImportRawKey(attrs *xkmssdk.KeyAttributes, keyMaterial []byte) error
-	}
-
-	// Try raw import first (preferred for internal use - no token flow required)
-	if rawImporter, ok := underlyingBackend.(RawKeyImporter); ok {
-		if err := rawImporter.ImportRawKey(attrs, material); err != nil {
-			return &api.KeyImportError{Cause: err}
-		}
-		return nil
-	}
-
-	// Fall back to the standard import flow with proper wrapping
+	// THE IMPORT-TOKEN FLOW IS THE ONLY PATH. There is no raw-import
+	// shortcut, and the wrapping below is not a fallback from one.
+	//
+	// This used to type-assert backends to a locally-declared RawKeyImporter
+	// and call ImportRawKey "preferred for internal use — no token flow
+	// required". No go-xkms backend has ever had that method, so the assertion
+	// never matched and every import took the wrapping path anyway. A dead
+	// preferred path is worse than no path: the next reader optimises or
+	// debugs the branch that never runs.
+	//
+	// It is not reinstated as a real capability because that would be a
+	// go-xkms decision, not ours (docs/00 L8), and because the token flow is
+	// what makes the backend STORE wrapped material: raw bytes still reach
+	// WrapKey below, but ImportKey — the call that persists the key — only
+	// ever receives the wrapped form. If go-xkms ever adds a method by that
+	// name, it must be adopted deliberately; nothing here will start calling
+	// it silently, because nothing here asks for it.
 	importBackend, ok := underlyingBackend.(xkmssdk.ImportExportBackend)
 	if !ok {
 		return &dberrors.QBError{
@@ -543,8 +545,8 @@ func ImportSymmetricKey(ctx context.Context, backendName string, attrs *xkmssdk.
 		}
 	}
 
-	// Step 1: Get import parameters (generates RSA wrapping key pair)
-	// Use RSA-OAEP-SHA256 as the default wrapping algorithm
+	// Step 1: get import parameters, which generate the RSA wrapping key pair.
+	// RSA-OAEP-SHA256 is the wrapping algorithm.
 	importParams, err := importBackend.GetImportParameters(ctx, attrs, xkmssdk.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err != nil {
 		return &api.KeyImportError{Detail: "failed to get import parameters", Cause: err}

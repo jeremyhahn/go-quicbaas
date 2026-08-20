@@ -100,10 +100,14 @@ func TestGetSymmetricKey_SuccessWithSymmetricBackend(t *testing.T) {
 	assert.NotNil(t, key)
 }
 
-// TestImportSymmetricKey_SuccessImportExportFlow exercises the full
-// ImportExportBackend fallback path (GetImportParameters -> WrapKey ->
-// ImportKey) inside ImportSymmetricKey. The symmetric provider does not
-// implement RawKeyImporter, so this path is taken.
+// TestImportSymmetricKey_SuccessImportExportFlow exercises the import-token
+// flow (GetImportParameters -> WrapKey -> ImportKey) inside ImportSymmetricKey.
+//
+// This is THE path, not a fallback from one. The comment here used to explain
+// the flow as what happens "because the symmetric provider does not implement
+// RawKeyImporter" — describing a branch that no backend has ever been able to
+// take. See TestNoBackendOffersRawKeyImport for the tripwire that keeps that
+// true.
 func TestImportSymmetricKey_SuccessImportExportFlow(t *testing.T) {
 	setupSymmetricTestXKMS(t)
 
@@ -206,4 +210,42 @@ func TestNewJWTSigner_KeyNotFound(t *testing.T) {
 	signer := NewJWTSigner()
 	_, err := signer.SignWithKeyID("software:signing:ecdsa-p256:does-not-exist", JWTClaims{"sub": "x"})
 	require.Error(t, err)
+}
+
+// TestNoBackendOffersRawKeyImport is a TRIPWIRE, not a behaviour test.
+//
+// ImportSymmetricKey used to type-assert backends to a locally-declared
+// RawKeyImporter and call ImportRawKey, commented "preferred for internal use
+// — no token flow required". No go-xkms backend has ever had that method, so
+// the assertion never matched and every import took the wrapping path anyway.
+// The dead branch and its comment are gone.
+//
+// This asserts the PREMISE that justified removing it, so the premise cannot
+// quietly stop being true: adopting a raw-import path must be a decision
+// somebody makes, with the unwrapped-material question asked out loud, rather
+// than something that starts happening because an upstream release added a
+// method the old code was already reaching for.
+//
+// SCOPE, STATED RATHER THAN IMPLIED: this checks the ONE provider a unit test
+// can construct — the software/symmetric backend. Production can be handed
+// tpm2, pkcs11, awskms, gcpkms, azurekv or phone providers, and none of those
+// are reachable from here. So this is a tripwire on the backend most likely to
+// grow such a method first, not proof that no backend anywhere has one. A
+// wider guard needs the hardware and cloud fixtures the integration suite has.
+func TestNoBackendOffersRawKeyImport(t *testing.T) {
+	setupSymmetricTestXKMS(t)
+
+	type rawKeyImporter interface {
+		ImportRawKey(attrs *xkmssdk.KeyAttributes, keyMaterial []byte) error
+	}
+
+	keyStore, err := xkmssdk.ServiceGetBackend("software")
+	require.NoError(t, err)
+
+	if _, offersRawImport := keyStore.KeyProvider().(rawKeyImporter); offersRawImport {
+		t.Fatal("a go-xkms backend now offers ImportRawKey. The removed dead path " +
+			"asserted exactly this interface, so it would have started routing " +
+			"unwrapped key material the moment this became true. Decide whether " +
+			"raw import is wanted — do not simply delete this test.")
+	}
 }
