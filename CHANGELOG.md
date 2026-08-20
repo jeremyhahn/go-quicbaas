@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- First-party dependencies moved to the current tags in both modules: go-qrdb
+  and its SDK to `v0.9.0-alpha`, go-xkms, its SDK and xkey to `v0.7.7-alpha`,
+  go-signal to `v0.2.0-alpha`, go-libsignal to `v0.2.0-alpha`, and go-objstore
+  to `v0.3.0-alpha`. Minimal version selection carries go-quicraft to
+  `v0.8.0-alpha` and go-truststrap to `v0.2.0-alpha`.
+
+- **`signalbridge` reads the Kyber pre-key's public half through
+  `SerializedPublicKey`.** go-libsignal `v0.2.0-alpha` moved the KEM secret
+  key into guarded memory and withdrew the `KyberPreKey.KeyPair()` accessor
+  that handed out the whole pair; the public half is now reached without
+  touching the secret. The bytes published in the pre-key bundle are
+  unchanged.
+
 ## [0.3.0-alpha] - 2026-08-19
 
 MINOR rather than PATCH because the route de-collision below is breaking, and

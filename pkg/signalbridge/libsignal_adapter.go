@@ -209,7 +209,7 @@ func (a *LibSignalAdapter) GeneratePreKeyBundle(account SignalAccount, numOneTim
 		sig := kpk.Signature()
 		kyberMaterial = append(kyberMaterial, KyberPreKeyMaterial{
 			ID:        a.nextKyberPreKeyID,
-			Public:    kpk.KeyPair().Public.Serialize(),
+			Public:    kpk.SerializedPublicKey(),
 			Signature: sig,
 		})
 		lastResortKyberID = a.nextKyberPreKeyID

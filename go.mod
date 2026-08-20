@@ -20,13 +20,13 @@ require (
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/jeremyhahn/go-auth v0.1.2-alpha
 	github.com/jeremyhahn/go-codec v1.4.0
-	github.com/jeremyhahn/go-libsignal v0.1.2-alpha
-	github.com/jeremyhahn/go-objstore v0.2.2-alpha
-	github.com/jeremyhahn/go-qrdb v0.7.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.7.0-alpha
+	github.com/jeremyhahn/go-libsignal v0.2.0-alpha
+	github.com/jeremyhahn/go-objstore v0.3.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.9.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.9.0-alpha
 	github.com/jeremyhahn/go-quicbaas/sdk/go v0.3.0-alpha
-	github.com/jeremyhahn/go-xkms v0.7.5-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.7.5-alpha
+	github.com/jeremyhahn/go-xkms v0.7.7-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.7.7-alpha
 	github.com/klauspost/compress v1.18.4
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
@@ -97,9 +97,9 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
-	github.com/jeremyhahn/go-quicraft v0.6.2-alpha // indirect
+	github.com/jeremyhahn/go-quicraft v0.8.0-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.2.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.7.5-alpha // indirect
+	github.com/jeremyhahn/go-xkms/xkey v0.7.7-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
@@ -139,10 +139,10 @@ require (
 	go.mongodb.org/mongo-driver v1.17.9 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.8.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/mod v0.39.0 // indirect
-	golang.org/x/telemetry v0.0.0-20260708182218-49f421fb7959 // indirect
+	golang.org/x/mod v0.40.0 // indirect
+	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
 	golang.org/x/term v0.45.0 // indirect
-	golang.org/x/tools v0.48.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/src-d/go-errors.v1 v1.0.0 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.0 // indirect
@@ -229,7 +229,7 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-sockaddr v1.0.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/jeremyhahn/go-signal v0.1.1-alpha
+	github.com/jeremyhahn/go-signal v0.2.0-alpha
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
@@ -278,7 +278,7 @@ require (
 	golang.org/x/arch v0.30.0 // indirect
 	golang.org/x/crypto v0.55.0
 	golang.org/x/exp v0.0.0-20260529124908-c761662dc8c9 // indirect
-	golang.org/x/net v0.57.0
+	golang.org/x/net v0.58.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0
