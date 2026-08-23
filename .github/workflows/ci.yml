@@ -71,10 +71,16 @@ jobs:
       # `make lint` is the contract (devops.md §4). It passes the Makefile's
       # LINT_BUILD_TAGS, without which golangci-lint typechecks the tag-gated
       # packages in their disabled configuration and reports phantom errors --
-      # e.g. undefined accountToREST in pkg/api/rest under !rest. Installing
-      # @latest with no pin is §9.
+      # e.g. undefined accountToREST in pkg/api/rest under !rest.
+      #
+      # Pinned, per devops.md §9 and company task #122. The version is not a
+      # detail: at identical flags v2.12.2 and v2.13.1 produce DISJOINT finding
+      # sets on this tree (0 and 16 respectively), so `@latest` let the gate
+      # turn red with no commit behind it -- which is what happened on
+      # 2026-08-20. v2.13.x also over-reports and panics on Go 1.26. Bump this
+      # deliberately, together with the rest of the portfolio.
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
       - name: Run golangci-lint (make lint)
         run: make lint

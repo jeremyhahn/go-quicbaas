@@ -42,6 +42,10 @@ GOGET := $(GOCMD) get
 GOMOD := $(GOCMD) mod
 GOFMT ?= gofmt
 GOLINT := $(shell go env GOPATH)/bin/golangci-lint
+# Pinned per devops.md §9 and company task #122. $(GOBIN) is shared across
+# checkouts on the build hosts, so an unpinned install in one tree silently
+# changes every other tree's lint verdict.
+GOLANGCI_VERSION := v2.12.2
 
 # Benchmark configuration
 BENCHTIME ?= 100ms
@@ -2760,10 +2764,10 @@ install-trivy: ## Install Trivy vulnerability scanner
 	fi
 
 .PHONY: install-golangci-lint
-install-golangci-lint: ## Install golangci-lint
-	@echo "$(BLUE)Installing golangci-lint...$(NC)"
-	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-	@echo "$(GREEN)golangci-lint installed$(NC)"
+install-golangci-lint: ## Install golangci-lint (pinned -- see GOLANGCI_VERSION)
+	@echo "$(BLUE)Installing golangci-lint $(GOLANGCI_VERSION)...$(NC)"
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
+	@echo "$(GREEN)golangci-lint $(GOLANGCI_VERSION) installed$(NC)"
 
 .PHONY: install-tools
 install-tools: install-golangci-lint install-gosec install-govulncheck install-trivy ## Install development tools
