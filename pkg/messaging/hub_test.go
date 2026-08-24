@@ -16,6 +16,9 @@ package messaging
 import (
 	"context"
 	"errors"
+	"fmt"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -1163,4 +1166,147 @@ func TestNotificationHub_ListChannelsEmpty(t *testing.T) {
 		channels := hub.ListChannels()
 		assert.Empty(t, channels)
 	})
+}
+
+// TestNotificationHub_RegisterBeforeSubscribe is the #76 regression. A caller
+// registers a client and THEN subscribes it; the hub must honour that order
+// even when both operations are already buffered by the time the Run loop
+// starts and the loop's select could otherwise service the subscribe first.
+//
+// Pre-filling both buffers before Run starts makes the defect deterministic:
+// every Run iteration then has both a register and a subscribe case ready, and
+// the pre-fix fire-and-forget code lets the select pick a subscribe before the
+// matching register — handleSubscribe then sees an unregistered client and
+// rejects it. Across n independent pairs the probability the pre-fix code
+// happens to service every register first is ~2^-n, so n=32 fails with
+// overwhelming probability. The fixed code drains pending registrations at the
+// top of handleSubscribe, so every iteration subscribes regardless of pick
+// order — deterministically, and it stays green under `-race -count`.
+func TestNotificationHub_RegisterBeforeSubscribe(t *testing.T) {
+	t.Parallel()
+
+	const n = 32
+	log := newTestLogger(t)
+	hub := NewNotificationHubWithBufferSize(log, 2*n)
+
+	// Pre-fill both buffers BEFORE the loop starts, in the caller's order
+	// (register then subscribe) for each client. Direct sends reproduce exactly
+	// the "both channels buffer-ready" condition the caller creates via
+	// RegisterClient (non-blocking) followed by SubscribeToChannel.
+	reqs := make([]*SubscribeRequest, n)
+	for i := 0; i < n; i++ {
+		client := NewClient(fmt.Sprintf("client-%d", i), 0)
+		hub.register <- client
+		req := &SubscribeRequest{
+			Client:   client,
+			Channel:  "race-channel",
+			Response: make(chan error, 1),
+		}
+		hub.subscribe <- req
+		reqs[i] = req
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	go hub.Run(ctx)
+	defer hub.Stop()
+
+	for i, req := range reqs {
+		select {
+		case err := <-req.Response:
+			require.NoErrorf(t, err, "iteration %d: a client registered before it subscribes must subscribe successfully", i)
+		case <-ctx.Done():
+			t.Fatalf("iteration %d: timed out waiting for the subscribe response", i)
+		}
+	}
+}
+
+// TestNotificationHub_ServesUnderRegisterFlood is a liveness + concurrency guard
+// for the bounded-snapshot drain in handleSubscribe (#76 fix follow-up). Several
+// goroutines keep h.register saturated while a subscribe runs and the hub is
+// then stopped; both the subscribe and the shutdown must make progress, and the
+// drain runs under -race against the concurrent producers.
+//
+// Note on coverage: the bound itself (handleSubscribe drains at most the entries
+// present at entry) is guaranteed BY CONSTRUCTION — `for i := 0; i < n; i++`
+// provably terminates — so it needs no runtime proof. This test does NOT claim
+// to deterministically red on a drain-until-empty regression: in practice the
+// tight receive loop out-races even a saturating producer and empties the
+// buffer, so a `for len(h.register) > 0` loop usually still terminates here.
+// Its jobs are (1) assert the positive liveness property under concurrent
+// registration load and (2) exercise the drain under the race detector. The
+// deterministic correctness of the drain is covered by
+// TestNotificationHub_RegisterBeforeSubscribe.
+func TestNotificationHub_ServesUnderRegisterFlood(t *testing.T) {
+	t.Parallel()
+
+	log := newTestLogger(t)
+	hub := NewNotificationHub(log)
+
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+
+	hubExited := make(chan struct{})
+	go func() {
+		hub.Run(ctx)
+		close(hubExited)
+	}()
+	require.Eventually(t, func() bool { return hub.IsRunning() }, testTimeout, testPollInterval)
+
+	// Register the subscriber BEFORE the flood, while h.register has room, so its
+	// registration is never dropped by the saturating flood below and later
+	// subscribes need no new registration.
+	client := NewClient("subscriber", 0)
+	hub.RegisterClient(client)
+	require.NoError(t, hub.SubscribeToChannel(client, "warmup"))
+
+	// Keep h.register saturated with interruptible blocking sends from several
+	// goroutines: each `case hub.register <- floodClient` blocks until the hub
+	// makes room, so as the hub drains an entry a blocked send refills it. This
+	// exercises the bounded drain against concurrent producers under -race. The
+	// select on stopFlood keeps each sender interruptible so none leak on a full
+	// buffer after shutdown.
+	floodClient := NewClient("flood", 0)
+	stopFlood := make(chan struct{})
+	var floodWG sync.WaitGroup
+	for i := 0; i < runtime.NumCPU()+2; i++ {
+		floodWG.Add(1)
+		go func() {
+			defer floodWG.Done()
+			for {
+				select {
+				case hub.register <- floodClient:
+				case <-stopFlood:
+					return
+				}
+			}
+		}()
+	}
+
+	// A subscribe must still complete under the saturating flood — on a
+	// drain-until-empty loop its handleSubscribe never returns and this hangs.
+	subDone := make(chan error, 1)
+	go func() { subDone <- hub.SubscribeToChannel(client, "under-flood") }()
+	select {
+	case err := <-subDone:
+		require.NoError(t, err, "subscribe must complete under a saturating registration flood (bounded drain)")
+	case <-time.After(testTimeout):
+		close(stopFlood)
+		floodWG.Wait()
+		t.Fatal("subscribe did not complete under a saturating register flood — the drain starved the Run loop")
+	}
+
+	// Shutdown must also make progress under the flood: the Run loop has to
+	// service h.done, which a starving drain would prevent.
+	hub.Stop()
+	select {
+	case <-hubExited:
+	case <-time.After(testTimeout):
+		close(stopFlood)
+		floodWG.Wait()
+		t.Fatal("hub did not shut down under a saturating register flood — the drain starved the Run loop")
+	}
+
+	close(stopFlood)
+	floodWG.Wait()
 }

@@ -93,6 +93,11 @@ jobs:
     env:
       GOFIPS140: latest
       GODEBUG: fips140=only
+      # Mirrors `make test`'s tag set. A bare `go test` under-reports the FIPS
+      # boundary: ~287 failures are a MISSING build tag (codec_json, ...), not a
+      # FIPS refusal, and it misses pkg/server (its KMS symmetric path compiles
+      # only with tags). Measured on #114.
+      FIPS_TAGS: "!integration hashicorpmetrics local raft timeseries qrdb_ts vector qrdb_vector rag rest quic mcp quicbaas_mqtt quicbaas_amqp quicbaas_stomp codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go canary otel l2_redis"
     steps:
       - uses: actions/checkout@v6
 
@@ -100,11 +105,144 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      # Build every package under fips140=only. Compilation triggers no FIPS
+      # refusals (those are runtime), so the whole repo is validated here
+      # regardless of the scoped test set below.
       - name: Build all packages (FIPS mode)
-        run: go build ./...
+        run: go build -tags "$FIPS_TAGS" ./...
 
-      - name: Unit tests (FIPS mode)
-        run: go test -count=1 -timeout=900s ./...
+      # Scoped FIPS boundary — owner ruling 2026-08-23 (#114): option 2 (scope
+      # the gate honestly to the packages compliant under GODEBUG=fips140=only
+      # TODAY) now; option 1 (full remediation) is tracked as the #114
+      # programme. This job STAYS REQUIRED in ci-gate and reports a true,
+      # shrinking boundary — it never skips. The test universe mirrors
+      # `make test` (./pkg/... ./cmd/... with the tag set); the packages listed
+      # below refuse under fips140=only today and are EXCLUDED until their #114
+      # remediation line item lands.
+      #
+      # RULES:
+      #  * This list may only SHRINK. Removing an entry (its remediation landed)
+      #    is expected; ADDING one means a change made a compliant package
+      #    non-compliant — fix the change, do not grow the list.
+      #  * Every entry maps to a remediation line item on #114 (A/B/C/D/E).
+      - name: Unit tests (FIPS mode, scoped — see #114)
+        run: |
+          # pipefail so a failing `go list` cannot be masked by the grep that
+          # filters it, and set -e/-u so a partial discovery aborts the step
+          # rather than silently shrinking the FIPS boundary (a vacuous pass is
+          # exactly the gate-integrity failure #114 exists to close).
+          set -euo pipefail
+          FIPS_EXCLUDE='
+          github.com/jeremyhahn/go-quicbaas/pkg/agent/deploy               # X25519 SSH kex — #114 item E / #111
+          github.com/jeremyhahn/go-quicbaas/pkg/api/websocket             # SHA-1 in RFC-6455 handshake (coder/websocket dep) — #114 item B
+          github.com/jeremyhahn/go-quicbaas/pkg/api/websocket/subprotocol # SHA-1 in RFC-6455 handshake (coder/websocket dep) — #114 item B
+          github.com/jeremyhahn/go-quicbaas/pkg/backup                    # AES-GCM arbitrary IV — #114 item A
+          github.com/jeremyhahn/go-quicbaas/pkg/catalog                   # AES-GCM arbitrary IV — #114 item A
+          github.com/jeremyhahn/go-quicbaas/pkg/iam                       # legacy SHA-1 TOTP test — #114 item B (code already refuses; test needs a !fips guard)
+          github.com/jeremyhahn/go-quicbaas/pkg/kms                       # AES-GCM arbitrary IV — #114 item A
+          github.com/jeremyhahn/go-quicbaas/pkg/secrets                   # AES-GCM arbitrary IV + ChaCha20-Poly1305 — #114 items A, C
+          github.com/jeremyhahn/go-quicbaas/pkg/security                  # AES-GCM arbitrary IV — #114 item A
+          github.com/jeremyhahn/go-quicbaas/pkg/server                    # AES-GCM arbitrary IV (KMS symmetric path) — #114 item A
+          github.com/jeremyhahn/go-quicbaas/pkg/signalbridge             # X25519 + SHA-1 (Signal primitives) — #114 items E, B
+          github.com/jeremyhahn/go-quicbaas/pkg/storage/encryption      # AES-GCM arbitrary IV — #114 item A
+          github.com/jeremyhahn/go-quicbaas/pkg/xkms                      # AES-GCM arbitrary IV + sub-112-bit HMAC key — #114 items A, D
+          '
+          # Strip the trailing "# ..." annotation AND the whitespace before it so
+          # each pattern is the bare import path (a trailing space would make the
+          # grep -vxF match nothing and silently exclude nobody).
+          EXCLUDE_LIST=$(printf '%s\n' "$FIPS_EXCLUDE" | sed -E 's/[[:space:]]*#.*$//' | awk 'NF')
+          # NO SILENT EXCLUSION. Every exclusion must carry a #114 remediation
+          # reference in its inline comment. This is the check the base-authority
+          # gate below cannot make: a package NEW in this PR (absent on the base
+          # branch) added to FIPS_EXCLUDE is invisible to the base comparison
+          # (its name was never compliant-on-base), so without this it could be
+          # dropped from the fips140=only gate with no trace. Requiring a #114
+          # line item forces every exclusion — new or pre-existing — to be an
+          # explicit, reviewable claim rather than a silent omission.
+          UNJUSTIFIED=$(printf '%s\n' "$FIPS_EXCLUDE" | awk 'NF' | grep -v '#114' || true)
+          if [ -n "$UNJUSTIFIED" ]; then
+            echo "These FIPS exclusions lack a #114 remediation reference — every excluded package must cite its #114 line item (no silent exclusions):" >&2
+            printf '%s\n' "$UNJUSTIFIED" >&2
+            exit 1
+          fi
+          # Capture `go list` on its own so its exit status is checked (set -e)
+          # before it is ever piped into grep.
+          ALL=$(go list -tags "$FIPS_TAGS" ./pkg/... ./cmd/...)
+          # Every exclusion must resolve to a discovered package, so a typo or a
+          # renamed/removed package can never sit in the list silently excluding
+          # nothing.
+          UNRESOLVED=$(printf '%s\n' "$EXCLUDE_LIST" | grep -vxF "$ALL" || true)
+          if [ -n "$UNRESOLVED" ]; then
+            echo "These #114 exclusions no longer match a discovered package — remove or fix them:" >&2
+            printf '%s\n' "$UNRESOLVED" >&2
+            exit 1
+          fi
+          # The PROTECTED base branch is the authority on what is FIPS-compliant,
+          # NOT this branch's own copy of the two lists. Comparing the branch's
+          # discovered-minus-excluded set against the branch's OWN
+          # .github/fips-compliant-packages.txt (the diff below) is self-
+          # referential: a PR can add a compliant package to FIPS_EXCLUDE AND
+          # delete it from the baseline in the same branch — both branch-local
+          # sets still agree, UNRESOLVED stays empty — and that package silently
+          # stops running under fips140=only while this gate passes. Close that
+          # hole by rejecting any package that is compliant on the base branch
+          # but excluded here: a compliant package must be REMEDIATED, never
+          # moved into the exclusion list. Only runs when a base ref exists
+          # (pull_request); a push to main is itself the new authority.
+          if [ -n "${GITHUB_BASE_REF:-}" ]; then
+            git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF" >/dev/null 2>&1 || true
+            # FAIL CLOSED: on a pull_request the protected-base authority MUST be
+            # resolvable. If the base ref cannot be resolved the check cannot run,
+            # and a check that cannot run must not pass — otherwise the guard is
+            # defeated simply by making the base unreachable. Distinct from the
+            # base genuinely lacking the file (first introduction), handled below
+            # as a pass.
+            if ! git rev-parse --verify --quiet "origin/${GITHUB_BASE_REF}" >/dev/null; then
+              echo "FIPS base-authority check FAILED: could not resolve origin/${GITHUB_BASE_REF} on a pull_request. The protected-base authority is required — refusing to pass without it (fail closed)." >&2
+              exit 1
+            fi
+            # cat-file -e distinguishes "file absent on base" (exit != 0 → first
+            # introduction, a legitimate pass) from a transient read failure, so
+            # an empty read is never silently treated as "nothing to check".
+            if git cat-file -e "origin/${GITHUB_BASE_REF}:.github/fips-compliant-packages.txt" 2>/dev/null; then
+              BASE_COMPLIANT=$(git show "origin/${GITHUB_BASE_REF}:.github/fips-compliant-packages.txt" | awk 'NF')
+              REGRESSED=$(printf '%s\n' "$EXCLUDE_LIST" | grep -xF -f <(printf '%s\n' "$BASE_COMPLIANT") || true)
+              if [ -n "$REGRESSED" ]; then
+                echo "These packages are FIPS-compliant on ${GITHUB_BASE_REF} but newly EXCLUDED here — that silently drops them from the fips140=only gate. Remediate them (make them pass), do not exclude:" >&2
+                printf '%s\n' "$REGRESSED" >&2
+                exit 1
+              fi
+              echo "FIPS base-authority check: no compliant package on ${GITHUB_BASE_REF} is excluded here ($(printf '%s\n' "$BASE_COMPLIANT" | grep -c .) base-compliant packages checked)."
+            else
+              echo "FIPS base-authority check: base ${GITHUB_BASE_REF} has no fips-compliant-packages.txt yet — nothing to regress against (first introduction)."
+            fi
+          fi
+          # LC_ALL=C so the ordering is byte-wise and reproducible: a
+          # locale-aware sort orders "apimodule" before "api/rest" (punctuation
+          # folded) while the runner's C locale orders "/" (0x2f) before letters,
+          # so an unpinned sort produces a different order than the checked-in
+          # baseline was generated under and the diff below fails on ordering,
+          # not on a real boundary change. Both sides use LC_ALL=C.
+          PKGS=$(printf '%s\n' "$ALL" | grep -vxF "$EXCLUDE_LIST" | LC_ALL=C sort)
+          # Enforce the FIPS boundary BY NAME against the checked-in baseline,
+          # and with it the EXHAUSTIVE PARTITION: discovered = compliant ∪
+          # excluded, with no third state. PKGS is discovered-minus-excluded, so
+          # requiring baseline == PKGS means every discovered package is either
+          # in the compliant baseline or in FIPS_EXCLUDE — a package that is
+          # neither (a new, untested, unexcluded package) lands in PKGS, is
+          # absent from the baseline, and reddens this diff by name. It also
+          # catches a compliant package dropping out of discovery (build-tag or
+          # layout change) and a stale baseline entry. A bare count cannot: an
+          # addition can offset a removal, and it names no package. Update the
+          # baseline deliberately in the same PR when a package is added or an
+          # exclusion is remediated (the list only shrinks).
+          if ! diff -u <(LC_ALL=C sort .github/fips-compliant-packages.txt) <(printf '%s\n' "$PKGS"); then
+            echo "FIPS-tested package set drifted from .github/fips-compliant-packages.txt (diff above)." >&2
+            echo "If this change is intended, update that file in the same PR." >&2
+            exit 1
+          fi
+          echo "FIPS-scoped test packages ($(printf '%s\n' "$PKGS" | grep -c .)):"; printf '%s\n' "$PKGS"
+          go test -count=1 -timeout=900s -tags "$FIPS_TAGS" $PKGS
 
   test:
     name: Unit Tests
@@ -232,8 +370,46 @@ jobs:
       # in pkg/security. All of it predates this workflow and none of it is a
       # CI fix -- widening the gate is tracked separately. Left at the scope it
       # has always had rather than pretending to a coverage it does not deliver.
+      # pkg/iam is split out with its own, longer timeout. `-timeout` in
+      # `go test` is PER PACKAGE, and one value for every package meant
+      # pkg/iam's runtime set the bound for all of them: measured on run 5792
+      # (job 23585) it consumed the whole 10m and died with
+      # `panic: test timed out after 10m0s` while the test it named had been
+      # running 1s. Nothing was hung -- the package needs more than 600s under
+      # -race on a contended runner (188s locally, idle, with the make tag
+      # set). The panic failed the job, so CI Gate was unreachable for EVERY
+      # pull request regardless of what it changed (#104).
+      #
+      # Splitting rather than raising the single value keeps the tight 10m
+      # bound on everything else, so a genuine hang anywhere else still fails
+      # fast instead of holding a runner for twice as long. The 20m here is
+      # headroom over the measured 600s+, not a target; pkg/iam's race runtime
+      # is a real cost and reducing it is tracked as code work in #100
+      # (bcrypt at default cost in tests, and a goroutine leak in
+      # BatchManager.ImportUsers).
+      #
+      # Discovery is its OWN step. A `go list` inside command substitution
+      # cannot fail the job: the runner's `bash -e -o pipefail` applies to the
+      # outer `go test`, and a substitution that exits nonzero merely expands to
+      # a shorter list -- or an empty one, which makes `go test` fall back to
+      # the current directory and pass. That would be a green race gate with no
+      # race coverage. Resolving the list here means a discovery failure, an
+      # unloadable package, or an unexpectedly empty result fails the step
+      # outright, and the count is logged so the number is auditable rather than
+      # assumed.
+      - name: Resolve the race package list
+        run: |
+          go list ./pkg/... ./cmd/... \
+            | grep -vx 'github.com/jeremyhahn/go-quicbaas/pkg/iam' \
+            > "${RUNNER_TEMP}/race-packages.txt"
+          test -s "${RUNNER_TEMP}/race-packages.txt"
+          echo "race package list: $(wc -l < "${RUNNER_TEMP}/race-packages.txt") packages"
+
       - name: Run tests with race detector
-        run: go test -race -timeout=10m ./pkg/... ./cmd/...
+        run: xargs -a "${RUNNER_TEMP}/race-packages.txt" -x go test -race -timeout=10m
+
+      - name: Run pkg/iam tests with race detector
+        run: go test -race -timeout=20m ./pkg/iam/
 
   security:
     name: Security Scan

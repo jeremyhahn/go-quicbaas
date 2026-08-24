@@ -613,6 +613,32 @@ func (h *NotificationHub) handleUnregister(client *Client) {
 func (h *NotificationHub) handleSubscribe(req *SubscribeRequest) {
 	defer close(req.Response)
 
+	// Honour the register-before-subscribe order the caller expressed (#76).
+	// A caller registers a client and THEN subscribes it (PushService.Subscribe;
+	// WebSocketClient.Start followed by Subscribe). RegisterClient enqueues the
+	// client on the buffered h.register channel and returns; SubscribeToChannel
+	// then enqueues this request on the separate buffered h.subscribe channel.
+	// The Run loop selects across the two channels independently, so when both
+	// are buffer-ready Go may pick this subscribe before the matching register —
+	// and the guard below would then reject a client the caller has already
+	// registered. Because the register send happens-before the subscribe send in
+	// the caller (same goroutine, sequential channel sends), the matching
+	// registration is already queued on h.register by the time this subscribe is
+	// handled. The hub goroutine is the sole receiver of h.register.
+	//
+	// Drain EXACTLY the registrations buffered at entry — snapshot the length
+	// once and receive that many — never "until empty". Concurrent RegisterClient
+	// callers can refill h.register without bound; a drain-until-empty loop would
+	// then never return and would starve shutdown, unregister, broadcast and
+	// every other subscribe (the whole Run loop blocks in here). The snapshot is
+	// sufficient: the matching registration is among the entries present at entry
+	// (happens-before), and receives cannot block because this is the only
+	// receiver and there are at least n buffered. Registrations that arrive after
+	// the snapshot are handled by the Run loop on a later iteration.
+	for n := len(h.register); n > 0; n-- {
+		h.handleRegister(<-h.register)
+	}
+
 	// Check if client is registered
 	if _, exists := h.clients[req.Client]; !exists {
 		req.Response <- &errors.QBError{
