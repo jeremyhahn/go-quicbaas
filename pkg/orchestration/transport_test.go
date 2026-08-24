@@ -240,26 +240,35 @@ func TestStdioTransport_ConcurrentSend(t *testing.T) {
 }
 
 func TestStdioTransport_InvalidJSON(t *testing.T) {
-	// Write invalid JSON to the transport's stdout
+	// stdout of the "server": the transport reads responses from clientRead.
 	clientRead, serverWrite, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, clientWrite, err := os.Pipe()
+	// stdin of the "server": the transport writes requests to clientWrite; we
+	// read them from serverReqRead. Reading the request is the synchronization
+	// point — Send stores its pending waiter BEFORE it writes the request, so a
+	// response written only after we have read the request cannot be dispatched
+	// before the waiter exists. Writing the response unconditionally (as this
+	// test previously did) races readLoop against Send's pending.Store and the
+	// ID-1 response was dropped ~intermittently, hanging Send until its deadline
+	// (#128 — "context deadline exceeded").
+	serverReqRead, clientWrite, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer serverReqRead.Close()
 
 	transport := newStdioTransportFromPipes(clientWrite, clientRead)
 	defer transport.Close()
 
-	// Write malformed JSON followed by a valid response
 	go func() {
-		// Write invalid JSON line
-		serverWrite.Write([]byte("this is not json\n"))
+		// Wait for the request, guaranteeing Send has registered its waiter.
+		_, _ = bufio.NewReader(serverReqRead).ReadString('\n')
 
-		// Write a valid response for ID 1
+		// A malformed line the readLoop must skip, then the real response.
+		_, _ = serverWrite.Write([]byte("this is not json\n"))
 		resp := JSONRPCMessage{
 			JSONRPC: JSONRPCVersion,
 			ID:      float64(1),
@@ -267,7 +276,7 @@ func TestStdioTransport_InvalidJSON(t *testing.T) {
 		}
 		data, _ := json.Marshal(resp)
 		data = append(data, '\n')
-		serverWrite.Write(data)
+		_, _ = serverWrite.Write(data)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

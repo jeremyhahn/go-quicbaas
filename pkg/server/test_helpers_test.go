@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,14 +30,38 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
 
-// getFreePort returns a free port by binding to port 0 and releasing it.
+var (
+	issuedPortsMu sync.Mutex
+	issuedPorts   = map[int]bool{}
+)
+
+// getFreePort returns a free TCP port on 127.0.0.1.
+//
+// Binding to :0 and releasing is inherently time-of-check-to-time-of-use: the
+// port is free when probed but can be taken before the caller binds it. Within
+// this test binary (pkg/server runs its tests in one process, many in parallel)
+// the dominant race is getFreePort handing the SAME port to two callers — one
+// closes its probe listener, a later probe is reassigned that now-free port, and
+// both servers then try to bind it (EADDRINUSE, #127/#128). Guard against that by
+// never returning a port already issued in this process; a probe that lands on an
+// already-issued port is retried. Cross-process reuse (another package's test
+// binary) is left to the wide ephemeral range and is not addressed here.
 func getFreePort(t *testing.T) int {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	port := listener.Addr().(*net.TCPAddr).Port
-	require.NoError(t, listener.Close())
-	return port
+	issuedPortsMu.Lock()
+	defer issuedPortsMu.Unlock()
+	for attempt := 0; attempt < 100; attempt++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		port := listener.Addr().(*net.TCPAddr).Port
+		require.NoError(t, listener.Close())
+		if !issuedPorts[port] {
+			issuedPorts[port] = true
+			return port
+		}
+	}
+	t.Fatal("getFreePort: could not find an unissued free port in 100 attempts")
+	return 0
 }
 
 // createTestConfig creates a test configuration with security features disabled.

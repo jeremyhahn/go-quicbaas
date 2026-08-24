@@ -58,6 +58,15 @@ type fsWatcher struct {
 	started bool
 	stopCh  chan struct{}
 	wg      sync.WaitGroup
+
+	// Test seams (nil in production; a nil channel case never fires and a nil
+	// func is never called, so these have zero effect on shipped behavior).
+	// They let tests drive the debounce/batch cycle deterministically instead of
+	// betting on wall-clock timing: onDebounce fires after each event is added to
+	// the debouncer, and a send on manualFlush forces a batch flush. Set before
+	// Start so the processBatches/processEvents goroutines observe them.
+	manualFlush chan struct{}
+	onDebounce  func()
 }
 
 // New creates a new file system watcher with the given configuration.
@@ -316,6 +325,9 @@ func (w *fsWatcher) processEvents(ctx context.Context) {
 
 			// Send to debouncer
 			w.debouncer.Add(*e)
+			if w.onDebounce != nil {
+				w.onDebounce()
+			}
 
 		case err, ok := <-w.watcher.Errors:
 			if !ok {
@@ -349,6 +361,10 @@ func (w *fsWatcher) processBatches(ctx context.Context) {
 			// Flush remaining events
 			w.flushEvents()
 			return
+
+		case <-w.manualFlush:
+			// Test-driven flush (nil channel in production: never fires).
+			w.flushEvents()
 
 		case <-ticker.C:
 			w.flushEvents()
