@@ -126,11 +126,14 @@ func TestStdioTransport_Close(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Kept open for the life of the transport: on EOF readLoop closes the
+	// session itself, and Close() would then return early through its
+	// compare-and-swap without ever running the body under test.
 	clientRead, serverWrite, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverWrite.Close()
+	defer serverWrite.Close()
 
 	transport := newStdioTransportFromPipes(clientWrite, clientRead)
 
@@ -298,12 +301,14 @@ func TestStdioTransport_Notify(t *testing.T) {
 	}
 	defer serverRead.Close()
 
-	// We don't need to read responses for notifications
+	// No responses are needed for a notification, but this end must stay open
+	// for the life of the transport: readLoop treats EOF on it as the session
+	// ending and sets closed, which would race Notify's own closed check.
 	clientRead, serverWrite, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverWrite.Close()
+	defer serverWrite.Close()
 
 	transport := newStdioTransportFromPipes(clientWrite, clientRead)
 	defer transport.Close()
@@ -350,7 +355,7 @@ func TestStdioTransport_PID(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		serverWrite.Close()
+		defer serverWrite.Close()
 
 		transport := newStdioTransportFromPipes(clientWrite, clientRead)
 		defer transport.Close()
@@ -362,12 +367,13 @@ func TestStdioTransport_PID(t *testing.T) {
 }
 
 func TestStdioTransport_WriteError(t *testing.T) {
-	// Create a pipe and immediately close the write end so writes fail
+	// Left open: an EOF here would close the session and Notify would report
+	// ErrSessionClosed instead of the write failure this test is about.
 	clientRead, serverWrite, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverWrite.Close()
+	defer serverWrite.Close()
 
 	_, clientWrite, err := os.Pipe()
 	if err != nil {
