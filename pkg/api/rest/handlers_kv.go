@@ -378,19 +378,15 @@ func (s *Server) HandleKVList(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Wait for first response or error
-	var listResp *service.ListResponse
-	select {
-	case listResp = <-stream:
-		// Got response
-	case err := <-errChan:
-		if err != nil {
-			s.handleServiceError(w, r, err)
-			return
-		}
-	case <-ctx.Done():
+	listResp, timedOut, err := firstListResponse(ctx, stream, errChan)
+	switch {
+	case timedOut:
 		RespondError(w, r, http.StatusRequestTimeout, &RequestTimeoutError{
 			Timeout: 30 * time.Second,
 		})
+		return
+	case err != nil:
+		s.handleServiceError(w, r, err)
 		return
 	}
 
