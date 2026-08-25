@@ -16,6 +16,7 @@
 package security
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"io"
@@ -864,4 +865,48 @@ func TestAuditLogger_RotationWatcherDoesNotLeakAcrossRotations(t *testing.T) {
 	require.Never(t, func() bool { return al.rotationWatchers.Load() != 1 },
 		500*time.Millisecond, 10*time.Millisecond,
 		"rotation must not start additional watchers")
+}
+
+// TestAuditLogger_LogAfterRotationLandsInTheCurrentFile pins the property the
+// existing rotation tests leave uncovered: that the write path and the file
+// handle still agree once the log has rotated.
+//
+// Every other rotation test in this package stops at `al.file != nil`, which
+// stays true while al.writer still points at the descriptor the rotation
+// closed. Flush hides the split too, because it syncs al.file — so the logger
+// reports healthy while nothing is being recorded. The assertion here is that
+// the event reaches the CURRENT file, not merely that Log returned no error.
+func TestAuditLogger_LogAfterRotationLandsInTheCurrentFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "audit.log")
+
+	// Start the file above MaxSize so the first rotateIfNeeded rotates.
+	require.NoError(t, os.WriteFile(logPath, bytes.Repeat([]byte("A"), 2*1024*1024), 0o600))
+
+	al, err := NewAuditLogger(&AuditConfig{
+		Enabled:    true,
+		File:       logPath,
+		MaxSize:    1,
+		MaxBackups: 5,
+	}, createTestLogger(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = al.Close() })
+
+	al.mu.Lock()
+	err = al.rotateIfNeeded()
+	al.mu.Unlock()
+	require.NoError(t, err)
+
+	const marker = "post-rotation-marker"
+	require.NoError(t, al.Log(context.Background(), &AuditEvent{
+		Action:   marker,
+		Resource: "audit",
+		Result:   "success",
+	}), "Log after rotation")
+	require.NoError(t, al.Flush())
+
+	current, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	require.Contains(t, string(current), marker,
+		"the post-rotation event did not reach the current audit log")
 }

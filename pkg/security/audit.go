@@ -1486,7 +1486,6 @@ func NewAuditLogger(cfg *AuditConfig, log *logger.Logger) (*AuditLogger, error) 
 				Cause:   err,
 			}
 		}
-		al.writer = al.file
 	} else {
 		al.writer = os.Stdout
 	}
@@ -1985,6 +1984,19 @@ func (al *AuditLogger) openLogFile() error {
 	}
 
 	al.file = file
+
+	// Rebind the write path to the handle that was just opened. al.writer and
+	// al.file are two views of the same destination, and rotation closes and
+	// replaces the file underneath: binding the writer only at construction
+	// left every write after the first rotation going to the closed
+	// descriptor. Only file-backed loggers reach this function -- the
+	// os.Stdout and io.Discard writers are chosen in NewAuditLogger when
+	// cfg.File is empty, and rotateIfNeeded returns early on a nil al.file --
+	// so this cannot overwrite either of them.
+	//
+	// Callers hold al.mu (rotateIfNeeded) or have not yet published the
+	// logger (NewAuditLogger), so no additional locking is needed here.
+	al.writer = file
 
 	return nil
 }
