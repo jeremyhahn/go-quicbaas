@@ -62,6 +62,16 @@ type streamingExec struct {
 }
 
 func newTestSSHServer(t *testing.T, allowedUser, allowedPass string) *testSSHServer {
+	return newTestSSHServerKex(t, allowedUser, allowedPass, nil)
+}
+
+// newTestSSHServerKex is newTestSSHServer with an explicit server-side
+// key-exchange set. A nil kex leaves x/crypto/ssh's defaults in place; a
+// single-element kex lets a test assert the negotiated algorithm by
+// construction (the peer offers nothing else) — which is how the FIPS tests
+// prove the client used an approved key exchange rather than merely that no
+// error occurred (#111).
+func newTestSSHServerKex(t *testing.T, allowedUser, allowedPass string, kex []string) *testSSHServer {
 	t.Helper()
 	srv := &testSSHServer{
 		t:        t,
@@ -79,6 +89,7 @@ func newTestSSHServer(t *testing.T, allowedUser, allowedPass string) *testSSHSer
 			return nil, errors.New("invalid credentials")
 		},
 	}
+	srv.config.KeyExchanges = kex
 	srv.config.AddHostKey(srv.hostKey)
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")

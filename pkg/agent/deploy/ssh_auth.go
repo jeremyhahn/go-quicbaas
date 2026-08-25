@@ -54,6 +54,7 @@ func DialSSHWithAuth(ctx context.Context, spec *Spec, authMethods []ssh.AuthMeth
 		HostKeyCallback: hostKeyCb,
 		Timeout:         defaultDialTimeout,
 	}
+	applyFIPSAlgorithms(cfg)
 
 	addr := normalizeHostPort(spec.Host)
 
@@ -112,6 +113,7 @@ func DialSSHWithAuthAndHostKey(ctx context.Context, spec *Spec, authMethods []ss
 		HostKeyCallback: hostKey,
 		Timeout:         defaultDialTimeout,
 	}
+	applyFIPSAlgorithms(cfg)
 
 	addr := normalizeHostPort(spec.Host)
 

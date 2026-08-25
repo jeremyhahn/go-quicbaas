@@ -81,6 +81,7 @@ func DialSSH(ctx context.Context, spec *Spec) (*SSHClient, error) {
 		HostKeyCallback: hostKeyCb,
 		Timeout:         defaultDialTimeout,
 	}
+	applyFIPSAlgorithms(cfg)
 
 	addr := normalizeHostPort(spec.Host)
 
