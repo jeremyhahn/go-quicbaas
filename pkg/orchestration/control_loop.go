@@ -2032,27 +2032,10 @@ func parseReviewResponse(text string) (*ReviewResponse, error) {
 	return &review, nil
 }
 
-// extractJSONFromText finds the first JSON object in a text response.
+// extractJSONFromText finds the first JSON object in a text response. Braces
+// inside string literals are content, not structure — see extractBalanced.
 func extractJSONFromText(text string) string {
-	start := strings.Index(text, "{")
-	if start < 0 {
-		return ""
-	}
-
-	depth := 0
-	for i := start; i < len(text); i++ {
-		switch text[i] {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return text[start : i+1]
-			}
-		}
-	}
-
-	return ""
+	return extractBalanced(text, '{', '}')
 }
 
 // extractPromptSessionText extracts the text content from a PromptSessionResponse.
