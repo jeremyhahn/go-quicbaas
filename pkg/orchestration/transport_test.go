@@ -25,6 +25,15 @@ import (
 	"time"
 )
 
+// stdioTestTimeout bounds a Send whose answer is already ordered after the
+// request that registers its waiter. It is a liveness backstop, not a race
+// budget: every stdio test using it synchronizes on the request first, so a
+// value this generous should never be approached. When one of these tests
+// times out, the ordering has broken and the number is not the thing to
+// change -- raising it converts a fast failure into a slow one and leaves the
+// defect (#140; #128 was diagnosed after exactly that 2s -> 30s raise).
+const stdioTestTimeout = 10 * time.Second
+
 // mockResponder reads newline-delimited JSON-RPC requests from r and writes
 // responses to w. It echoes back the request method in the result field.
 func mockResponder(t *testing.T, r io.Reader, w io.WriteCloser, done chan struct{}) {
@@ -507,22 +516,34 @@ func TestStdioTransport_ReadLoopNonNumericID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, clientWrite, err := os.Pipe()
+	// stdin of the "server": the transport writes its request to clientWrite and
+	// we read it from serverReqRead. Reading the request is the synchronization
+	// point -- Send stores its pending waiter BEFORE writing the request
+	// (transport.go, pending.Store then writeMessage), so a response written
+	// only after the request has been read cannot be dispatched before the
+	// waiter exists. Answering unconditionally raced readLoop against that
+	// Store and dropped the ID-1 response, hanging Send until its deadline
+	// (#140; the same defect #129 fixed in TestStdioTransport_InvalidJSON).
+	serverReqRead, clientWrite, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer serverReqRead.Close()
 
 	transport := newStdioTransportFromPipes(clientWrite, clientRead)
 	defer transport.Close()
 
 	// Write a message with a string ID (not numeric), followed by a valid one
 	go func() {
+		// Wait for the request, guaranteeing Send has registered its waiter.
+		_, _ = bufio.NewReader(serverReqRead).ReadString('\n')
+
 		// String ID -- should be skipped by readLoop
 		msg1 := `{"jsonrpc":"2.0","id":"string-id","result":"skip"}` + "\n"
-		serverWrite.Write([]byte(msg1))
+		_, _ = serverWrite.Write([]byte(msg1))
 
 		// Empty line -- should be skipped
-		serverWrite.Write([]byte("\n"))
+		_, _ = serverWrite.Write([]byte("\n"))
 
 		// Valid numeric ID response
 		resp := JSONRPCMessage{
@@ -532,13 +553,12 @@ func TestStdioTransport_ReadLoopNonNumericID(t *testing.T) {
 		}
 		data, _ := json.Marshal(resp)
 		data = append(data, '\n')
-		serverWrite.Write(data)
+		_, _ = serverWrite.Write(data)
 	}()
 
-	// Generous deadline: this test proves non-numeric-ID/blank-line
-	// handling, not latency, and a 2s budget flaked on a loaded CI runner
-	// executing several -race jobs concurrently (runner-log-proven).
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// With the answer ordered after the request, the response cannot be missed,
+	// so this bounds a handful of pipe writes rather than hiding a lost race.
+	ctx, cancel := context.WithTimeout(context.Background(), stdioTestTimeout)
 	defer cancel()
 
 	// Send should get the valid response (ID 1)
@@ -558,18 +578,24 @@ func TestStdioTransport_ReadLoopUnmatchedID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, clientWrite, err := os.Pipe()
+	// Same synchronization point as TestStdioTransport_ReadLoopNonNumericID:
+	// the ID-1 response must not be written until the request proves Send has
+	// registered its waiter, or readLoop discards it and Send hangs (#140).
+	serverReqRead, clientWrite, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer serverReqRead.Close()
 
 	transport := newStdioTransportFromPipes(clientWrite, clientRead)
 	defer transport.Close()
 
 	go func() {
+		_, _ = bufio.NewReader(serverReqRead).ReadString('\n')
+
 		// Response for ID 999 -- nobody is waiting for this
 		msg := `{"jsonrpc":"2.0","id":999,"result":"orphan"}` + "\n"
-		serverWrite.Write([]byte(msg))
+		_, _ = serverWrite.Write([]byte(msg))
 
 		// Valid response for ID 1
 		resp := JSONRPCMessage{
@@ -579,10 +605,10 @@ func TestStdioTransport_ReadLoopUnmatchedID(t *testing.T) {
 		}
 		data, _ := json.Marshal(resp)
 		data = append(data, '\n')
-		serverWrite.Write(data)
+		_, _ = serverWrite.Write(data)
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), stdioTestTimeout)
 	defer cancel()
 
 	resp, err := transport.Send(ctx, "test", nil)
