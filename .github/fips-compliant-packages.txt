@@ -1,6 +1,7 @@
 github.com/jeremyhahn/go-quicbaas/cmd/quicbaas
 github.com/jeremyhahn/go-quicbaas/cmd/quicbaasd
 github.com/jeremyhahn/go-quicbaas/pkg/agent
+github.com/jeremyhahn/go-quicbaas/pkg/agent/deploy
 github.com/jeremyhahn/go-quicbaas/pkg/api
 github.com/jeremyhahn/go-quicbaas/pkg/api/grpc
 github.com/jeremyhahn/go-quicbaas/pkg/api/mcp

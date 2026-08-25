@@ -133,7 +133,6 @@ jobs:
           # exactly the gate-integrity failure #114 exists to close).
           set -euo pipefail
           FIPS_EXCLUDE='
-          github.com/jeremyhahn/go-quicbaas/pkg/agent/deploy               # X25519 SSH kex — #114 item E / #111
           github.com/jeremyhahn/go-quicbaas/pkg/api/websocket             # SHA-1 in RFC-6455 handshake (coder/websocket dep) — #114 item B
           github.com/jeremyhahn/go-quicbaas/pkg/api/websocket/subprotocol # SHA-1 in RFC-6455 handshake (coder/websocket dep) — #114 item B
           github.com/jeremyhahn/go-quicbaas/pkg/backup                    # AES-GCM arbitrary IV — #114 item A
@@ -781,10 +780,20 @@ jobs:
           case "${{ needs.docker.result }}" in
             success) echo "OK   docker" ;;
             skipped)
-              if [ "${{ github.event_name }}" = 'push' ]; then
-                echo "FAIL docker (skipped on a push)"; BAD=1
-              else
+              if [ "${{ github.event_name }}" != 'push' ]; then
                 echo "OK   docker (push-only job, event=${{ github.event_name }})"
+              elif [ "${{ needs.lint.result }}" != 'success' ] || [ "${{ needs.test.result }}" != 'success' ]; then
+                # docker carries `needs: [lint, test]`, so when either of those
+                # fails docker is skipped without ever being given a chance to
+                # run. The genuine failure has already set BAD, so reporting
+                # docker as failed here adds nothing and misdirects whoever
+                # reads the gate log -- which is the one thing agents are told
+                # to read instead of the run conclusion (#135).
+                echo "SKIP docker (dependency failed; not a docker failure)"
+              else
+                # Dependencies green and docker still skipped on a push means
+                # the job never ran when it should have. Fail closed.
+                echo "FAIL docker (skipped on a push with its dependencies green)"; BAD=1
               fi ;;
             *) echo "FAIL docker (${{ needs.docker.result }})"; BAD=1 ;;
           esac
