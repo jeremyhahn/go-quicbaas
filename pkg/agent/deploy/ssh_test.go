@@ -44,6 +44,21 @@ type testSSHServer struct {
 	writes   map[string][]byte
 	mu       sync.Mutex
 	wg       sync.WaitGroup
+
+	// streaming, when set, takes over the exec response for that command: the
+	// server writes continuously and never sends an exit status, so the
+	// client's copier goroutines stay busy for as long as the test needs.
+	streaming *streamingExec
+}
+
+// streamingExec keeps a command's output flowing so a test can act while the
+// client copiers are demonstrably mid-copy. flowing closes after the first
+// chunk reaches the wire; stop ends the stream.
+type streamingExec struct {
+	cmd     string
+	flowing chan struct{}
+	stop    chan struct{}
+	once    sync.Once
 }
 
 func newTestSSHServer(t *testing.T, allowedUser, allowedPass string) *testSSHServer {
@@ -197,10 +212,32 @@ func (s *testSSHServer) runExec(ch ssh.Channel, cmd string) {
 		return
 	}
 	s.mu.Lock()
+	streaming := s.streaming
 	stdout := s.execOut[cmd]
 	stderr := s.execErr[cmd]
 	fail := s.execFail[cmd]
 	s.mu.Unlock()
+
+	if streaming != nil && streaming.cmd == cmd {
+		chunk := []byte(strings.Repeat("o", 32<<10))
+		errChunk := []byte(strings.Repeat("e", 4<<10))
+		for {
+			if _, err := ch.Write(chunk); err != nil {
+				return
+			}
+			if _, err := ch.Stderr().Write(errChunk); err != nil {
+				return
+			}
+			streaming.once.Do(func() { close(streaming.flowing) })
+			select {
+			case <-streaming.stop:
+				sendExit(ch, 0)
+				return
+			default:
+			}
+		}
+	}
+
 	if stdout != "" {
 		_, _ = io.WriteString(ch, stdout)
 	}
@@ -539,5 +576,137 @@ func TestShellQuote(t *testing.T) {
 		if got := shellQuote(tc.in); got != tc.want {
 			t.Fatalf("shellQuote(%q)=%q want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestExec_CancellationReadsOutputWhileCopiersAreStillRunning is the
+// end-to-end half of the fix: it proves SSHClient.Exec's cancellation path is
+// safe against the live ssh copier goroutines, not merely that syncBuffer is
+// safe in isolation.
+//
+// The server streams without ever sending an exit status, so Session.Run never
+// returns and the stdout/stderr copiers keep writing for the whole test. The
+// flowing signal comes from the SERVER after the first chunk is on the wire --
+// deliberately not from the client copier, because a signal out of the copier
+// goroutine would establish a happens-before edge to the reader and the race
+// detector would then correctly conclude there is no race. Signalling from the
+// far end orders nothing on the client side, and because the stream continues,
+// the copiers are demonstrably mid-copy when Exec takes its cancellation
+// branch and reads what they have produced.
+//
+// Under -race this fails if Exec's sinks are unsynchronized.
+func TestExec_CancellationReadsOutputWhileCopiersAreStillRunning(t *testing.T) {
+	srv := newTestSSHServer(t, "u", "p")
+
+	stream := &streamingExec{
+		cmd:     "noisy",
+		flowing: make(chan struct{}),
+		stop:    make(chan struct{}),
+	}
+	srv.mu.Lock()
+	srv.streaming = stream
+	srv.mu.Unlock()
+	t.Cleanup(func() { close(stream.stop) })
+
+	c, err := DialSSH(context.Background(), &Spec{
+		Host: srv.addr(), SSHUser: "u", SSHPassword: "p", InsecureHostKey: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	execDone := make(chan error, 1)
+	go func() {
+		_, _, execErr := c.Exec(ctx, "noisy")
+		execDone <- execErr
+	}()
+
+	// Output is on the wire, so the copiers are running and will keep running:
+	// the command never ends on its own.
+	select {
+	case <-stream.flowing:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the server never started streaming; the copiers were never running")
+	}
+
+	cancel()
+
+	select {
+	case execErr := <-execDone:
+		if execErr == nil {
+			t.Fatal("Exec returned no error for a cancelled command")
+		}
+		var remoteErr *RemoteExecError
+		if !errors.As(execErr, &remoteErr) {
+			t.Fatalf("want RemoteExecError, got %T", execErr)
+		}
+		if !errors.Is(execErr, context.Canceled) {
+			t.Fatalf("want a context.Canceled cause, got %v", execErr)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Exec did not return after its context was cancelled")
+	}
+}
+
+// TestSyncBuffer_ReadableWhileBeingWritten is the deterministic half of the
+// cancellation-race fix. The end-to-end test above depends on the ssh copiers
+// and the race detector overlapping, which is a bet; this one drives the
+// concurrent access directly.
+//
+// It also pins the snapshot property: String must never observe a torn write,
+// so every length it reports must be a whole number of chunks. The reader is
+// bounded by the writers finishing rather than by reaching an expected length,
+// because an unguarded buffer does not reliably reach one -- it corrupts.
+func TestSyncBuffer_ReadableWhileBeingWritten(t *testing.T) {
+	const (
+		writers = 4
+		rounds  = 500
+		chunk   = "0123456789abcdef"
+	)
+
+	var b syncBuffer
+
+	stop := make(chan struct{})
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			// Exec's cancellation branch reads exactly like this, while the
+			// ssh copiers are still writing.
+			if n := len(b.String()); n%len(chunk) != 0 {
+				t.Errorf("String observed a torn write: length %d is not a multiple of %d", n, len(chunk))
+				return
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	wg.Add(writers)
+	for range writers {
+		go func() {
+			defer wg.Done()
+			for range rounds {
+				if _, err := b.Write([]byte(chunk)); err != nil {
+					t.Errorf("Write: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(stop)
+	<-readerDone
+
+	if got, want := len(b.String()), writers*rounds*len(chunk); got != want {
+		t.Errorf("final length = %d, want %d", got, want)
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -145,7 +146,7 @@ func (c *SSHClient) Exec(ctx context.Context, cmd string) (string, string, error
 	}
 	defer session.Close()
 
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr syncBuffer
 	session.Stdout = &stdout
 	session.Stderr = &stderr
 
@@ -167,6 +168,40 @@ func (c *SSHClient) Exec(ctx context.Context, cmd string) (string, string, error
 		}
 		return stdout.String(), stderr.String(), nil
 	}
+}
+
+// syncBuffer is an output sink that may be read while the writer is still
+// running.
+//
+// ssh.Session streams a command's stdout and stderr from its own goroutines,
+// started by Session.Start and only joined by Session.Wait. Exec's
+// cancellation branch does not join them: Signal(SIGTERM) is best effort and
+// returns immediately, so the copiers are still writing when Exec reads what
+// they have produced so far. Against a bare bytes.Buffer that is a data race,
+// and the value returned is whatever the reader happened to observe mid-write.
+//
+// The mutex makes the partial output a consistent snapshot instead. It does
+// not make the output complete -- a cancelled command's output is legitimately
+// partial -- only well defined.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+// Write appends p to the buffer. It satisfies io.Writer, which is what
+// ssh.Session requires of Stdout and Stderr.
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+// String returns a snapshot of everything written so far. It is safe to call
+// while the writer is still running.
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // WriteFile writes data to the remote path using cat > path; for
