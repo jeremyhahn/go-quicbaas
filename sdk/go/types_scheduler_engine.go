@@ -46,6 +46,19 @@ type (
 	JobStatus = schedengine.JobStatus
 	// OwnerType identifies who owns a job (system / tenant / ...).
 	OwnerType = schedengine.OwnerType
+	// JobUpdateParams is the field set UpdateJob reconciles a stored job to.
+	JobUpdateParams = schedengine.JobUpdateParams
+	// JobExecution is one recorded run of a job, as returned by
+	// GetJobHistory.
+	JobExecution = schedengine.JobExecution
+	// SchedulerEngineStats is the engine's runtime counter set, as returned
+	// by Stats.
+	SchedulerEngineStats = schedengine.SchedulerStats
+	// SchedulerEngineConfig is the engine's effective configuration, as
+	// returned by Config. Named for the engine because the unqualified
+	// SchedulerConfig is already taken by the deployment config type in
+	// server.go, which is a different thing entirely.
+	SchedulerEngineConfig = schedengine.SchedulerConfig
 )
 
 // Scheduler engine constants.
