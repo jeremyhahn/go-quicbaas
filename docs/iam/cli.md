@@ -806,7 +806,15 @@ quicbaas auth login --method mtls --client-cert client.pem
 | `--pkcs11-token <label>` | (none) | PKCS#11 token label (`pkcs11` backend) |
 | `--slot <id>` | `9a` | PIV slot id (`--method piv`) |
 | `--pin <s>` | `$QUICBAAS_USER_PIN` | PKCS#11 User PIN (`pkcs11` backend) |
-| `--save-token` | `false` | Persist the issued session token to `--token-path` |
+| `--show-token` | `false` | Print the issued session token to stdout |
+| `--save-token` | `false` | **Deprecated and ignored** — the token is always stored |
+
+`login` **stores the session token and prints nothing secret by default**
+(owner ruling on #58). The credential is written to `--token-path`
+(default `~/.quicbaas/token`, which is what `cli.GetDefaultTokenPath` returns)
+on every successful login. A login whose credential cannot be stored fails
+rather than reporting success — with the token no longer on stdout, an unstored
+token is unreachable. Scripts that need the raw bearer pass `--show-token`.
 
 Internally `login` drives the unified ceremony:
 `Security().Auth().BeginLogin(...)` obtains the factor-typed

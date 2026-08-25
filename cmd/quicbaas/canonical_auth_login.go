@@ -27,6 +27,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -59,6 +60,7 @@ type canonicalAuthLoginOptions struct {
 	slot           string
 	pin            string
 	saveToken      bool
+	showToken      bool
 	tokenPath      string
 }
 
@@ -349,8 +351,15 @@ or any CTAP2 / NIST SP 800-73-4 device works.`,
 	cmd.Flags().StringVar(&opts.pkcs11Token, "pkcs11-token", "", "PKCS#11 token label (--method piv, pkcs11 backend)")
 	cmd.Flags().StringVar(&opts.slot, "slot", "9a", "PIV slot id (--method piv; default 9a)")
 	cmd.Flags().StringVar(&opts.pin, "pin", "", "PKCS#11 User PIN (--method piv, pkcs11 backend; falls back to QUICBAAS_USER_PIN)")
+	cmd.Flags().BoolVar(&opts.showToken, "show-token", false, "Print the issued session token to stdout (default: stored only)")
 	cmd.Flags().BoolVar(&opts.saveToken, "save-token", false, "Persist the issued session token to --token-path")
-	cmd.Flags().StringVar(&opts.tokenPath, "token-path", "", "Where to write the session token (default: ~/.quicbaas/session.token)")
+	// Storing the credential is now unconditional, so the flag that used to
+	// request it decides nothing. It stays accepted so existing invocations
+	// keep working.
+	if err := cmd.Flags().MarkDeprecated("save-token", "the session token is always stored; the flag is ignored"); err != nil {
+		panic("auth login: cannot deprecate --save-token: " + err.Error())
+	}
+	cmd.Flags().StringVar(&opts.tokenPath, "token-path", "", "Where to write the session token (default: ~/.quicbaas/token)")
 	return cmd
 }
 
@@ -437,31 +446,63 @@ func runCanonicalAuthLoginV2(ctx context.Context, opts *canonicalAuthLoginOption
 		return err
 	}
 
-	out := os.Stdout
-	var subject, tenant string
-	if resp.Identity != nil {
-		subject = resp.Identity.Subject
-		tenant = resp.Identity.TenantID
+	// The session token is stored, always, before anything is rendered. A
+	// login whose credential could not be persisted is a failure and not a
+	// success with a warning: the default no longer prints the token, so an
+	// unstored token is one the caller has no way to reach.
+	//
+	// The refresh credential is persisted alongside the bearer: without it
+	// every command run more than 15 minutes after login (notably
+	// `quicbaas mcp serve --stdio`) would fail with "authentication required"
+	// instead of transparently renewing the session.
+	savedPath, werr := writeCanonicalSessionToken(opts.tokenPath, resp.Bearer, resp.RefreshToken, resp.ExpiresAt)
+	if werr != nil {
+		return werr
 	}
-	fmt.Fprintf(out, "User:       %s\n", subject)
-	if tenant != "" {
-		fmt.Fprintf(out, "Tenant:     %s\n", tenant)
-	}
-	fmt.Fprintf(out, "Token:      %s\n", resp.Bearer)
-	fmt.Fprintf(out, "Expires At: %s\n", resp.ExpiresAt.Format("2006-01-02T15:04:05Z"))
 
-	if opts.saveToken {
-		// The refresh credential is persisted alongside the bearer: without it
-		// every command run more than 15 minutes after login (notably
-		// `quicbaas mcp serve --stdio`) would fail with "authentication
-		// required" instead of transparently renewing the session.
-		path, werr := writeCanonicalSessionToken(opts.tokenPath, resp.Bearer, resp.RefreshToken, resp.ExpiresAt)
-		if werr != nil {
-			return werr
-		}
-		fmt.Fprintf(out, "Token saved to %s\n", path)
+	summary := canonicalLoginSummary{
+		Bearer:    resp.Bearer,
+		ExpiresAt: resp.ExpiresAt,
+		SavedPath: savedPath,
+		ShowToken: opts.showToken,
 	}
+	if resp.Identity != nil {
+		summary.Subject = resp.Identity.Subject
+		summary.Tenant = resp.Identity.TenantID
+	}
+	summary.write(os.Stdout)
 	return nil
+}
+
+// canonicalLoginSummary is the render-ready result of a completed login.
+type canonicalLoginSummary struct {
+	Subject   string
+	Tenant    string
+	Bearer    string
+	ExpiresAt time.Time
+	// SavedPath is where the session token was stored.
+	SavedPath string
+	// ShowToken reports whether the caller asked for the bearer on stdout.
+	ShowToken bool
+}
+
+// write renders the summary to out.
+//
+// The bearer token is printed only when the caller passed --show-token. By
+// default `auth login` stores the credential and emits nothing secret, because
+// stdout is captured by terminal scrollback, shell history, CI logs, and
+// anything tee'ing the session -- the leak surface the handle-secrets-by-shape
+// rule exists to close (owner ruling on #58).
+func (s canonicalLoginSummary) write(out io.Writer) {
+	fmt.Fprintf(out, "User:       %s\n", s.Subject)
+	if s.Tenant != "" {
+		fmt.Fprintf(out, "Tenant:     %s\n", s.Tenant)
+	}
+	if s.ShowToken {
+		fmt.Fprintf(out, "Token:      %s\n", s.Bearer)
+	}
+	fmt.Fprintf(out, "Expires At: %s\n", s.ExpiresAt.Format("2006-01-02T15:04:05Z"))
+	fmt.Fprintf(out, "Token saved to %s\n", s.SavedPath)
 }
 
 // canonicalFactorType maps a CLI method name to the qrdb transport factor type.

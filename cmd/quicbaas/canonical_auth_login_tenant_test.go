@@ -55,6 +55,13 @@ type fakeLoginAuthService struct {
 	beginErr   error
 	finishResp *qrdbtransport.FinishLoginResponse
 	finishErr  error
+
+	// finishRefresh is the renewal credential the QuicBaaS session layer adds
+	// on top of the qrdb factor response. It lives here because the embedded
+	// qrdb type has no such field, so a fake that only carried finishResp could
+	// never produce one -- and no test could have caught a login that dropped
+	// it.
+	finishRefresh string
 }
 
 // BeginLogin records the request and returns the canned response.
@@ -77,7 +84,10 @@ func (f *fakeLoginAuthService) FinishLogin(_ context.Context, req qrdbtransport.
 	if f.finishResp == nil {
 		return nil, nil
 	}
-	return &quicbaas.FinishLoginResponse{FinishLoginResponse: f.finishResp}, nil
+	return &quicbaas.FinishLoginResponse{
+		FinishLoginResponse: f.finishResp,
+		RefreshToken:        f.finishRefresh,
+	}, nil
 }
 
 // newFakeLoginClient wires the login fake through the SDK accessor chain the
@@ -159,10 +169,24 @@ func TestCanonicalLoginTenant_Empty(t *testing.T) {
 // runCanonicalAuthLoginV2 — tenant propagation
 // =============================================================================
 
+// sandboxCredentialStore points the credential store at a throwaway HOME for
+// the duration of the test.
+//
+// `auth login` stores the session token on every success, so a test that drives
+// a login to completion would otherwise write the developer's real
+// ~/.quicbaas/token -- overwriting a live credential and leaving state that
+// makes later tests read a token they expected not to find.
+func sandboxCredentialStore(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+}
+
 // TestRunCanonicalAuthLoginV2_FIDO2_SendsTenant is the REGRESSION test for the
 // bare-UNAUTHORIZED bug: "auth login --method fido2" must scope BeginLogin to
 // the tenant, because the server's WebAuthn relying party is per-tenant.
 func TestRunCanonicalAuthLoginV2_FIDO2_SendsTenant(t *testing.T) {
+	sandboxCredentialStore(t)
+
 	auth := &fakeLoginAuthService{
 		beginResp:  newFIDO2BeginResponse(),
 		finishResp: newFinishResponse(),
@@ -193,6 +217,8 @@ func TestRunCanonicalAuthLoginV2_FIDO2_SendsTenant(t *testing.T) {
 // not FIDO2-specific: every method carries it so the login session the server
 // opens is bound to the right tenant for FinishLogin verification.
 func TestRunCanonicalAuthLoginV2_MTLSSendsTenant(t *testing.T) {
+	sandboxCredentialStore(t)
+
 	auth := &fakeLoginAuthService{
 		beginResp:  &qrdbtransport.BeginLoginResponse{SessionID: "s1", Nonce: []byte("nonce")},
 		finishResp: newFinishResponse(),
@@ -232,6 +258,8 @@ func TestRunCanonicalAuthLoginV2_MissingTenant(t *testing.T) {
 // system tenant) is what scopes the ceremony. No per-command tenant flag
 // exists, so a regression here silently reintroduces the unscoped login.
 func TestNewCanonicalAuthLoginCmdV2_InheritsGlobalTenant(t *testing.T) {
+	sandboxCredentialStore(t)
+
 	auth := &fakeLoginAuthService{
 		beginResp:  newFIDO2BeginResponse(),
 		finishResp: newFinishResponse(),

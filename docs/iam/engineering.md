@@ -1605,9 +1605,11 @@ clients and use `/api/v1/auth/refresh`.
 
 #### CLI / MCP
 
-- `quicbaas auth login --save-token` writes `access_token`, `refresh_token`,
-  `expires_at`, and `token_type` into the `cli.TokenData` envelope at
-  `~/.quicbaas/token`.
+- `quicbaas auth login` writes `access_token`, `refresh_token`, `expires_at`,
+  and `token_type` into the `cli.TokenData` envelope at `~/.quicbaas/token` on
+  every successful login, and prints no token to stdout unless `--show-token`
+  is passed (owner ruling on #58). `--save-token` is deprecated and ignored:
+  storing the credential is unconditional.
 - `loadStoredAuthToken()` resolves through `cli.TokenManager`: a token inside
   the skew window is renewed first and the rotated pair is written back.
 - Renewal is single-flight (mutex plus a re-read under the lock), so parallel
