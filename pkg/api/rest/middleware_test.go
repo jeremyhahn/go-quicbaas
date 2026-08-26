@@ -866,7 +866,12 @@ func TestGetClientIPWithVariousHeaders(t *testing.T) {
 			name:       "IPv6 address",
 			headers:    map[string]string{},
 			remoteAddr: "[::1]:8080",
-			expected:   "[::1]",
+			// Bare, not "[::1]". net/http brackets an IPv6 peer; the brackets
+			// are transport syntax, not part of the address, and the old
+			// expectation kept them -- so this value reached the rate limiter
+			// as a key no IP parser accepts, and audit records as a
+			// non-address.
+			expected: "::1",
 		},
 	}
 

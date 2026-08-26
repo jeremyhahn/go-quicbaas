@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -462,7 +463,13 @@ func RateLimitMiddleware(requestsPerSecond int) func(http.Handler) http.Handler 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Extract client IP from request
-			clientIP := getClientIP(r)
+			// limiterKey collapses an IPv6 source to its /64 so one
+			// allocation cannot mint an unbounded number of buckets, and so
+			// the limit applies to IPv6 clients at all. It does NOT make this
+			// key trustworthy: getClientIP still honours X-Forwarded-For with
+			// no trusted-proxy allowlist, so this bound is memory-only until
+			// #156 lands the trusted-proxy keying.
+			clientIP := limiterKey(getClientIP(r))
 
 			// Check if request is allowed
 			if !limiter.Allow(clientIP) {
@@ -554,12 +561,53 @@ func (e *PayloadTooLargeError) Error() string {
 	return "request body too large: maximum size is " + strconv.FormatInt(e.MaxBytes, 10) + " bytes"
 }
 
+// maxRateLimiterBuckets caps how many per-source buckets a BOUNDED
+// rateLimiter will hold. Beyond it, un-tracked sources share one overflow
+// bucket.
+//
+// The map is otherwise unbounded, and nothing throttles its growth: a NEW key
+// is always admitted because it is created with a full bucket, so the limiter
+// constrains reuse but never creation. Entries therefore accrue at the request
+// rate, and cleanupLoop evicts nothing for 10 minutes — measured at ~140 bytes
+// per entry, 10k req/s from distinct sources reaches ~840 MB before the first
+// eviction is considered. A single IPv6 /64 supplies 2^64 addresses, so this
+// needs no botnet (#167).
+//
+// 100,000 entries is ~12 MB, a reasonable ceiling for a server process and far
+// above any plausible count of concurrently-active legitimate sources.
+const maxRateLimiterBuckets = 100000
+
 // rateLimiter implements a token bucket rate limiter per client IP.
+//
+// The bucket map is bounded only when maxBuckets is set, and that is
+// deliberately opt-in rather than the default. **A cap must never be applied to
+// a limiter whose key an attacker can forge**, because the two combine into a
+// denial of service that neither has alone:
+//
+//	forgeable key + no cap  -> attacker grows the map (memory exhaustion)
+//	forgeable key + a cap   -> attacker fills the cap with minted keys, then
+//	                           drains the shared overflow, and every legitimate
+//	                           source not already in the map is served from
+//	                           that empty bucket. One peer throttles everyone.
+//
+// So bounding is safe only where the key is the transport peer. Today that is
+// oauth2ClientAuthLimiter (remoteAddrKey). RateLimitMiddleware keys on
+// getClientIP, which honours X-Forwarded-For with no trusted-proxy allowlist,
+// so it stays UNBOUNDED until #156 makes its key trustworthy — the bound and
+// the trustworthy keying have to land together, and #156 is where they do.
 type rateLimiter struct {
 	rate    int                     // requests per second
 	buckets map[string]*tokenBucket // client IP -> bucket
 	mu      sync.RWMutex
 	cleanup *time.Ticker
+
+	// maxBuckets bounds len(buckets); zero means unbounded.
+	maxBuckets int
+
+	// overflow serves every source that arrives once buckets is full, and is
+	// nil on an unbounded limiter. See Allow for why the alternatives
+	// (evicting, or refusing outright) are both worse.
+	overflow *tokenBucket
 }
 
 // tokenBucket implements the token bucket algorithm.
@@ -571,7 +619,10 @@ type tokenBucket struct {
 	mu        sync.Mutex
 }
 
-// newRateLimiter creates a new rate limiter.
+// newRateLimiter creates an UNBOUNDED rate limiter: one bucket per key, for as
+// many keys as arrive. Correct for a limiter keyed on something a caller can
+// forge — see the rateLimiter doc comment for why adding a cap there would be
+// a denial of service rather than a fix.
 func newRateLimiter(requestsPerSecond int) *rateLimiter {
 	rl := &rateLimiter{
 		rate:    requestsPerSecond,
@@ -585,7 +636,41 @@ func newRateLimiter(requestsPerSecond int) *rateLimiter {
 	return rl
 }
 
+// newBoundedRateLimiter creates a rate limiter that tracks at most maxBuckets
+// sources, serving the rest from one shared overflow bucket.
+//
+// ONLY for a limiter keyed on the transport peer. Passing a forgeable key here
+// hands an attacker a service-wide throttle: they mint keys to fill the cap,
+// then drain the overflow that every subsequent legitimate source is served
+// from.
+func newBoundedRateLimiter(requestsPerSecond, maxBuckets int) *rateLimiter {
+	rl := newRateLimiter(requestsPerSecond)
+	rl.maxBuckets = maxBuckets
+	rl.overflow = &tokenBucket{
+		tokens:    float64(requestsPerSecond),
+		capacity:  float64(requestsPerSecond),
+		rate:      float64(requestsPerSecond),
+		lastCheck: time.Now(),
+	}
+	return rl
+}
+
 // Allow checks if a request from the given client IP is allowed.
+//
+// On a BOUNDED limiter, once the map holds maxBuckets sources a source without
+// a bucket is served from the shared overflow bucket rather than being given
+// one of its own. The two obvious alternatives are both worse:
+//
+//   - Evicting to make room (LRU or otherwise) turns eviction into the bypass.
+//     An attacker whose bucket is evicted gets a FRESH, FULL bucket on the next
+//     request, so spending the map is how you reset your own limit — and an
+//     attacker who can drive eviction can flush a victim's bucket deliberately.
+//   - Refusing at the cap hands the attacker a global denial of service for the
+//     price of filling a map: every legitimate newcomer is locked out.
+//
+// Sharing degrades newcomers during a flood without ever admitting one for
+// free, which is the safe direction. cleanupLoop still drains idle entries, so
+// capacity returns on its own once a flood stops.
 func (rl *rateLimiter) Allow(clientIP string) bool {
 	rl.mu.RLock()
 	bucket, exists := rl.buckets[clientIP]
@@ -596,13 +681,17 @@ func (rl *rateLimiter) Allow(clientIP string) bool {
 		// Double-check after acquiring write lock
 		bucket, exists = rl.buckets[clientIP]
 		if !exists {
-			bucket = &tokenBucket{
-				tokens:    float64(rl.rate),
-				capacity:  float64(rl.rate),
-				rate:      float64(rl.rate),
-				lastCheck: time.Now(),
+			if rl.maxBuckets > 0 && len(rl.buckets) >= rl.maxBuckets {
+				bucket = rl.overflow
+			} else {
+				bucket = &tokenBucket{
+					tokens:    float64(rl.rate),
+					capacity:  float64(rl.rate),
+					rate:      float64(rl.rate),
+					lastCheck: time.Now(),
+				}
+				rl.buckets[clientIP] = bucket
 			}
-			rl.buckets[clientIP] = bucket
 		}
 		rl.mu.Unlock()
 	}
@@ -666,11 +755,28 @@ func getClientIP(r *http.Request) string {
 		return strings.TrimSpace(xri)
 	}
 
-	// Fall back to RemoteAddr
-	if idx := strings.LastIndex(r.RemoteAddr, ":"); idx > 0 {
-		return r.RemoteAddr[:idx]
+	// Fall back to RemoteAddr.
+	//
+	// SplitHostPort, not a split on the last colon. net/http writes an IPv6
+	// peer as "[2001:db8::1]:1234", and the naive form returned
+	// "[2001:db8::1]" — brackets included, which no IP parser accepts — while
+	// a bare "2001:db8::1" was mangled into "2001:db8:" by splitting on its
+	// own last colon. Both values then flowed into the rate limiter as keys
+	// and into audit records as addresses, where a mangled address is worse
+	// than an absent one.
+	// The empty-host guard keeps degenerate inputs behaving as they did: ":"
+	// splits successfully into empty host and empty port, and turning that
+	// into "" rather than ":" would be a gratuitous change to a value that is
+	// meaningless either way.
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && host != "" {
+		return host
 	}
 
+	// No port to split, or nothing useful in it: return the address as it is.
+	// A bracket-less multi-colon value such as "::1:8080" is a valid IPv6
+	// address in its own right, so it is left whole rather than truncated at
+	// its last colon — net/http brackets a real IPv6 peer, so an unbracketed
+	// one is an address, not an address and a port.
 	return r.RemoteAddr
 }
 
@@ -717,7 +823,11 @@ const oauth2ClientAuthRateLimit = 10
 // importing this package without serving these endpoints does not carry the
 // cleanup goroutine and its ticker.
 var oauth2ClientAuthLimiter = sync.OnceValue(func() *rateLimiter {
-	return newRateLimiter(oauth2ClientAuthRateLimit)
+	// Bounded, and safe to bound: these endpoints key on remoteAddrKey, the
+	// transport peer, which a caller cannot forge. RateLimitMiddleware is NOT
+	// bounded because its key comes from getClientIP and is forgeable — see
+	// the rateLimiter doc comment.
+	return newBoundedRateLimiter(oauth2ClientAuthRateLimit, maxRateLimiterBuckets)
 })
 
 // remoteAddrKey identifies a client by its transport peer address ONLY.
@@ -736,9 +846,49 @@ var oauth2ClientAuthLimiter = sync.OnceValue(func() *rateLimiter {
 // needs a trusted-proxy configuration, tracked separately.
 func remoteAddrKey(r *http.Request) string {
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
+		return limiterKey(host)
 	}
-	return r.RemoteAddr
+	return limiterKey(r.RemoteAddr)
+}
+
+// limiterKey reduces a source address to the unit a rate limit should apply
+// to: an IPv6 address collapses to its /64, everything else is returned as-is.
+//
+// Two reasons, and the second matters more than the memory one:
+//
+//   - A /64 is the smallest routine IPv6 allocation, so it is 2^64 addresses
+//     that belong to ONE subscriber. Keying on the full address lets a single
+//     allocation mint an unbounded number of buckets (#167).
+//   - Without this the rate limit is effectively IPv4-only. An IPv6 client
+//     evades it entirely by rotating within its own prefix — every request
+//     from a fresh address, every fresh address a full bucket. Aggregation is
+//     what makes the limit apply to IPv6 clients at all.
+//
+// The cost is that unrelated clients sharing a prefix share an allowance, so
+// the limiter over-limits rather than under-limits. That is the same trade
+// already recorded for remoteAddrKey above, and the same safe direction:
+// over-limiting is visible and diagnosable, under-limiting is the
+// vulnerability shipped.
+//
+// A value that does not parse as an IP is returned unchanged. getClientIP can
+// hand over arbitrary header content (#156), and inventing structure for it
+// here would only obscure that.
+func limiterKey(addr string) string {
+	// X-Forwarded-For legitimately carries bracketed IPv6 ("[2001:db8::1]"),
+	// and getClientIP returns header content verbatim. Without this, adding
+	// brackets would yield a different bucket from the bare address — the
+	// bracketing itself would be the bypass this function exists to close.
+	parsed := strings.TrimSuffix(strings.TrimPrefix(addr, "["), "]")
+
+	ip, err := netip.ParseAddr(parsed)
+	if err != nil || !ip.Is6() || ip.Is4In6() {
+		return addr
+	}
+	prefix, err := ip.Prefix(64)
+	if err != nil {
+		return addr
+	}
+	return prefix.String()
 }
 
 // RateLimitOAuth2ClientAuth bounds an unauthenticated OAuth2 endpoint whose

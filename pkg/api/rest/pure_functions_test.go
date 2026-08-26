@@ -1064,7 +1064,11 @@ func TestGetClientIPExhaustive(t *testing.T) {
 		{
 			name:       "RemoteAddr IPv6 with port in brackets",
 			remoteAddr: "[2001:db8::1]:12345",
-			expectedIP: "[2001:db8::1]", // LastIndex finds : after bracket, strips port correctly
+			// Was "[2001:db8::1]", with a comment claiming the port was
+			// "stripped correctly". It stripped the port and kept the
+			// brackets, which is not an address: netip.ParseAddr rejects it,
+			// so IPv6 aggregation silently did nothing on this path (#167).
+			expectedIP: "2001:db8::1",
 		},
 		{
 			name:       "RemoteAddr localhost",
@@ -1117,7 +1121,12 @@ func TestGetClientIPExhaustive(t *testing.T) {
 		{
 			name:       "RemoteAddr with multiple colons no brackets",
 			remoteAddr: "::1:8080",
-			expectedIP: "::1",
+			// Whole, not truncated to "::1". Without brackets this is a valid
+			// IPv6 address in its own right, and net/http brackets a real
+			// IPv6 peer -- so an unbracketed multi-colon value is an address,
+			// not an address and a port. The old expectation silently
+			// discarded part of it.
+			expectedIP: "::1:8080",
 		},
 	}
 
