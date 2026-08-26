@@ -2340,7 +2340,27 @@ lint: ## Run linters
 	# it had already printed "0 issues" -- a green analysis reported as a red
 	# job. The budget exists to catch a hang, so it needs to sit above the
 	# honest worst case rather than near the median.
-	$(GOLINT) run --timeout=20m --build-tags '$(LINT_BUILD_TAGS)' ./...
+	#
+	# The exit code is triaged the way `vuln` and `gosec` already triage theirs.
+	# A shell renders a signal death as 128+N, so an OOM kill leaves 137 -- and
+	# without this, that is indistinguishable from golangci-lint reporting real
+	# findings. Both are just "make: *** [lint] Error", which is how three kills
+	# on 2026-08-26 (#154) read as lint failures on code that lints clean.
+	@$(GOLINT) run --timeout=20m --build-tags '$(LINT_BUILD_TAGS)' ./...; rc=$$?; \
+	if [ $$rc -eq 0 ]; then \
+		exit 0; \
+	elif [ $$rc -gt 128 ]; then \
+		echo "$(RED)golangci-lint was KILLED by signal $$(($$rc - 128)) (exit $$rc) -- it did NOT report findings.$(NC)"; \
+		echo "$(RED)This is the job container's memory cap, not a lint result: the linters hold the$(NC)"; \
+		echo "$(RED)whole package graph and its type information live across ~1300 files, and the$(NC)"; \
+		echo "$(RED)kill lands before any report is written. Re-run when the host is quieter, or$(NC)"; \
+		echo "$(RED)raise the cap -- do not read this as a finding, and do not go looking through$(NC)"; \
+		echo "$(RED)the diff for the cause.$(NC)"; \
+		exit $$rc; \
+	else \
+		echo "$(RED)golangci-lint reported findings (exit $$rc)$(NC)"; \
+		exit $$rc; \
+	fi
 
 .PHONY: coverage
 coverage: ## Generate coverage report (unit only; excludes generated code)
