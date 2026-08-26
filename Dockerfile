@@ -73,10 +73,26 @@ RUN CGO_ENABLED=0 GOOS=linux GONOSUMCHECK='*' go build -mod=mod -tags "${BUILD_T
 RUN file quicbaasd && file quicbaas
 
 # Stage 2: Runtime stage (minimal)
-FROM alpine:latest
+#
+# The base is PINNED, and the packages are upgraded on top of it. Those pull in
+# opposite directions on purpose, and the image needs both:
+#
+#   * `alpine:latest` made the shipped image unreproducible — whether a given
+#     build carried a vulnerability depended on when it ran, with no commit
+#     behind the change. Same defect class as installing a scanner at
+#     `@latest`, which ci.yml pins for the same reason.
+#   * A pin alone would freeze the base at whatever packages it shipped with,
+#     so a patched libcrypto3 could never reach the image without a bump here.
+#     `apk upgrade` is what actually closes a CVE between base releases.
+#
+# Bump the pin deliberately; `apk upgrade` covers the interval in between.
+FROM alpine:3.24.1
 
-# Install runtime dependencies
-RUN apk --no-cache add ca-certificates tzdata
+# Install runtime dependencies, patched. Measured 2026-08-26: alpine 3.24.1
+# ships libcrypto3/libssl3 3.5.7-r0, which carries CVE-2026-14456 (HIGH,
+# openssl DoS); `apk upgrade` takes them to 3.5.8-r0 and the image scans clean.
+RUN apk upgrade --no-cache && \
+    apk --no-cache add ca-certificates tzdata
 
 # Create non-root user
 RUN addgroup -g 1000 quicbaas && \

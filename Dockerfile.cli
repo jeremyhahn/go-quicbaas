@@ -68,10 +68,17 @@ RUN CGO_ENABLED=0 GOOS=linux GONOSUMCHECK='*' go build -mod=mod -tags "${BUILD_T
 RUN file quicbaas
 
 # Stage 2: Minimal runtime stage
-FROM alpine:latest
+#
+# Pinned base plus `apk upgrade`, for the reasons spelled out in the main
+# Dockerfile's runtime stage: the pin makes the image reproducible, and the
+# upgrade is what lets a patched package reach it between base releases.
+# Keep the two files' pins in step — they are the same base.
+FROM alpine:3.24.1
 
-# Install minimal runtime dependencies
-RUN apk --no-cache add ca-certificates
+# Install minimal runtime dependencies, patched (see the main Dockerfile:
+# 3.24.1 ships libcrypto3/libssl3 3.5.7-r0 with CVE-2026-14456).
+RUN apk upgrade --no-cache && \
+    apk --no-cache add ca-certificates
 
 # Create non-root user
 RUN addgroup -g 1000 quicbaas && \
