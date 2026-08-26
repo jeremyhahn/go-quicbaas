@@ -2429,8 +2429,20 @@ coverage-report: coverage ## Show coverage in browser
 #   G404 math/rand. Retry/backoff jitter only (pkg/rag/pipeline/retry.go,
 #        examples/timeseries). Jitter must be cheap and merely unpredictable
 #        enough to desynchronize retries; it is not a security primitive.
-#   G703 path traversal. Same paths as G304 -- constructed from validated
-#        config, never joined with caller-supplied segments.
+#   G703 path traversal via taint analysis. Two sites, neither on a request
+#        path, both re-validated 2026-08-26 against gosec v2.29.0 AND v2.28.0
+#        -- identical findings under both, so this does not turn on the
+#        scanner version.
+#        scripts/protoannotate/main.go globs a HARDCODED constant (protoDir =
+#        "api/proto"); it is a build-time source rewriter that takes no
+#        external input and ships in no binary.
+#        cmd/quicbaas/canonical_auth_login.go stats a client-cert path read
+#        from one of four named env vars, expanding a leading "~" and nothing
+#        else. The environment belongs to the user already running the CLI --
+#        anyone who can set it can already execute as that user -- and os.Stat
+#        only probes existence, never opening the file.
+#        Deliberately NOT "the same paths as G304": neither site is server
+#        config. Do not extend this entry to a site reachable from a request.
 #   G704 SSRF via taint analysis. The flagged requests are the federation and
 #        ACME clients calling endpoints from stored provider configuration.
 GOSEC_EXCLUDE := G115,G117,G204,G304,G404,G703,G704
