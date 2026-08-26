@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
@@ -510,12 +509,12 @@ func TestOIDCTokenAuthorizationCode(t *testing.T) {
 	ctx := context.Background()
 
 	// Hash the client secret
-	hashedSecret, _ := bcrypt.GenerateFromPassword([]byte("test-secret"), bcrypt.DefaultCost)
+	hashedSecret := currentSecretHash(t, "test-secret")
 
 	// Setup test data
 	app := &Application{
 		ClientID:      "test-client",
-		ClientSecret:  string(hashedSecret),
+		ClientSecret:  hashedSecret,
 		TenantID:      "tenant-1",
 		RedirectURIs:  []string{"https://example.com/callback"},
 		ResponseTypes: []string{ResponseTypeCode},
@@ -616,12 +615,12 @@ func TestOIDCRefresh(t *testing.T) {
 	ctx := context.Background()
 
 	// Hash the client secret
-	hashedSecret, _ := bcrypt.GenerateFromPassword([]byte("test-secret"), bcrypt.DefaultCost)
+	hashedSecret := currentSecretHash(t, "test-secret")
 
 	// Setup test data
 	app := &Application{
 		ClientID:     "test-client",
-		ClientSecret: string(hashedSecret),
+		ClientSecret: hashedSecret,
 		TenantID:     "tenant-1",
 		GrantTypes:   []string{GrantTypeRefreshToken},
 	}
@@ -724,12 +723,12 @@ func TestOIDCRevoke(t *testing.T) {
 	ctx := context.Background()
 
 	// Hash the client secret
-	hashedSecret, _ := bcrypt.GenerateFromPassword([]byte("test-secret"), bcrypt.DefaultCost)
+	hashedSecret := currentSecretHash(t, "test-secret")
 
 	// Setup test data
 	app := &Application{
 		ClientID:     "test-client",
-		ClientSecret: string(hashedSecret),
+		ClientSecret: hashedSecret,
 		TenantID:     "tenant-1",
 	}
 	appStorage.CreateApp(ctx, app)
@@ -1330,12 +1329,12 @@ func TestOIDCTokenWithResourceIndicator(t *testing.T) {
 	ctx := context.Background()
 
 	// Hash the client secret
-	hashedSecret, _ := bcrypt.GenerateFromPassword([]byte("test-secret"), bcrypt.DefaultCost)
+	hashedSecret := currentSecretHash(t, "test-secret")
 
 	// Setup test data
 	app := &Application{
 		ClientID:      "test-client",
-		ClientSecret:  string(hashedSecret),
+		ClientSecret:  hashedSecret,
 		TenantID:      "tenant-1",
 		RedirectURIs:  []string{"https://example.com/callback"},
 		ResponseTypes: []string{ResponseTypeCode},
@@ -1482,12 +1481,12 @@ func TestOIDCClientCredentialsWithResourceIndicator(t *testing.T) {
 	ctx := context.Background()
 
 	// Hash the client secret
-	hashedSecret, _ := bcrypt.GenerateFromPassword([]byte("test-secret"), bcrypt.DefaultCost)
+	hashedSecret := currentSecretHash(t, "test-secret")
 
 	// Setup test application with client_credentials grant
 	app := &Application{
 		ClientID:     "service-client",
-		ClientSecret: string(hashedSecret),
+		ClientSecret: hashedSecret,
 		TenantID:     "tenant-1",
 		GrantTypes:   []string{GrantTypeClientCredentials},
 	}

@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func TestSessionManager_Create(t *testing.T) {
@@ -1450,14 +1449,15 @@ func TestOIDCProvider_Token_ClientCredentialsGrantFinal(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create app with client_credentials grant
-	// IMPORTANT: Store bcrypt-hashed secret because mockAppStorage.ValidateClientSecret uses bcrypt
+	// Seed the current PBKDF2 credential form: the storages verify only that
+	// form since #37, and a legacy digest is refused rather than checked.
 	clientID := "cc-client-" + uuid.New().String()[:8]
 	plainSecret := "secret-" + uuid.New().String()
-	hashedSecret := hashClientSecretBcryptFinal(plainSecret)
+	hashedSecret := hashClientSecretFinal(t, plainSecret)
 
 	app := &Application{
 		ClientID:     clientID,
-		ClientSecret: hashedSecret, // Store bcrypt-hashed secret
+		ClientSecret: hashedSecret,
 		TenantID:     tenantID,
 		Name:         "CC Test App",
 		GrantTypes:   []string{GrantTypeClientCredentials},
@@ -1579,14 +1579,14 @@ func TestOIDCProvider_Token_ClientCredentialsGrant_GrantNotAllowedFinal(t *testi
 	require.NoError(t, err)
 
 	// Create app WITHOUT client_credentials grant
-	// IMPORTANT: Store bcrypt-hashed secret
+	// Seed the current PBKDF2 credential form (#37).
 	clientID := "no-cc-client-" + uuid.New().String()[:8]
 	plainSecret := "secret-" + uuid.New().String()
-	hashedSecret := hashClientSecretBcryptFinal(plainSecret)
+	hashedSecret := hashClientSecretFinal(t, plainSecret)
 
 	app := &Application{
 		ClientID:     clientID,
-		ClientSecret: hashedSecret, // Store bcrypt-hashed secret
+		ClientSecret: hashedSecret,
 		TenantID:     tenantID,
 		Name:         "No CC App",
 		GrantTypes:   []string{GrantTypeAuthorizationCode}, // Only auth code
@@ -2118,10 +2118,10 @@ func TestBackendStorage_ValidateClientSecretFinal(t *testing.T) {
 	err := storage.CreateTenant(ctx, tenant)
 	require.NoError(t, err)
 
-	// Create app with bcrypt hashed secret
+	// Create app with the current PBKDF2 credential form (#37).
 	clientID := "secret-app-final-" + uuid.New().String()[:8]
 	plainSecret := "my-secret-password-final"
-	hashedSecret := hashClientSecretBcryptFinal(plainSecret)
+	hashedSecret := hashClientSecretFinal(t, plainSecret)
 
 	app := &Application{
 		ClientID:     clientID,
@@ -2492,10 +2492,12 @@ func hashTokenForTestFinal(token string) string {
 	return hex.EncodeToString(hash[:])
 }
 
-func hashClientSecretBcryptFinal(secret string) string {
-	// Using bcrypt to match what BackendStorage.ValidateClientSecret expects
-	hash, _ := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
-	return string(hash)
+// hashClientSecretFinal produces the PBKDF2 digest BackendStorage.ValidateClientSecret
+// expects since the #37 migration. These tests exercise session and token flows,
+// so they seed the current credential form rather than a legacy bcrypt digest.
+func hashClientSecretFinal(t *testing.T, secret string) string {
+	t.Helper()
+	return currentSecretHash(t, secret)
 }
 
 // =============================================================================

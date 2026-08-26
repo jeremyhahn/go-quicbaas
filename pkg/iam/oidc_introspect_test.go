@@ -21,8 +21,6 @@ import (
 	"net/url"
 	"testing"
 	"time"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 // mintAccessToken issues a signed access token through the provider's token
@@ -211,13 +209,10 @@ func TestOIDCAuthenticateClient(t *testing.T) {
 	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 
-	hashed, herr := bcrypt.GenerateFromPassword([]byte("s3cret"), bcrypt.DefaultCost)
-	if herr != nil {
-		t.Fatalf("bcrypt error = %v", herr)
-	}
+	hashed := currentSecretHash(t, "s3cret")
 	appStorage.apps["rs-client"] = &Application{
 		ClientID:     "rs-client",
-		ClientSecret: string(hashed),
+		ClientSecret: hashed,
 	}
 
 	if err := provider.AuthenticateClient(ctx, "rs-client", "s3cret"); err != nil {

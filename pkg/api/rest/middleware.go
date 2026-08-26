@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"strconv"
@@ -671,4 +672,98 @@ func getClientIP(r *http.Request) string {
 	}
 
 	return r.RemoteAddr
+}
+
+// oauth2ClientAuthRateLimit is the per-source-IP request rate allowed across
+// the OAuth2 client-authenticating endpoints, and the burst (the bucket's
+// capacity equals its rate).
+//
+// Three endpoints qualify — POST /oauth2/token, /oauth2/revoke and
+// /oauth2/introspect. All three are RouteAuthPublic, and on all three the
+// caller's "client authentication" IS a call to ValidateClientSecret, so since
+// #37 every attempt costs one PBKDF2 derivation whether or not the client
+// exists — measured at ~308ms on a 32-core host, so roughly 100 req/s saturates
+// every core. Without a bound, one unauthenticated sender is a CPU-exhaustion
+// amplifier on any of them; the enumeration oracle that derivation closes would
+// have been traded for a denial of service (#118 F1).
+//
+// 10/s caps a single source at ~3.1 core-seconds per second — about 3 of 32
+// cores — so saturating the host now takes ~11 distinct sources rather than
+// one. It is orders of magnitude above legitimate traffic: client_credentials
+// fetches are periodic, governed by token TTL, so even a thousand clients
+// behind one NAT gateway refreshing on a 15-minute TTL is ~1.1 req/s.
+const oauth2ClientAuthRateLimit = 10
+
+// oauth2ClientAuthLimiter is the single limiter shared by all three endpoints
+// and by every registration path that serves them.
+//
+// ONE bucket per source across the trio, not one per route: the resource being
+// protected is total KDF CPU per source, not per-route fairness. Three separate
+// buckets would triple a single sender's effective budget for the same amount
+// of derivation work, which is the thing the bound exists to cap.
+//
+// The registration paths are exactly two, and they do not overlap:
+//
+//   - the hand-written chi registrations in IAMHandler.RegisterRoutes (iam.go),
+//     which is what the legacy in-process listener serves. Server.registerRoutes
+//     binds only GroupAPI, GroupAPIUpload and the three qrdb-wire groups — it
+//     never binds GroupOAuth2Core — so the spec-level wrapper does NOT reach
+//     this path and it carries its own;
+//   - the route table's GroupOAuth2Core specs (routes_iam.go), bound by
+//     apimodule.RegisterHTTP through ModuleRoutes and Server.BindRoute, which
+//     is what the unified API server serves.
+//
+// It is created on first use rather than at package init so that a binary
+// importing this package without serving these endpoints does not carry the
+// cleanup goroutine and its ticker.
+var oauth2ClientAuthLimiter = sync.OnceValue(func() *rateLimiter {
+	return newRateLimiter(oauth2ClientAuthRateLimit)
+})
+
+// remoteAddrKey identifies a client by its transport peer address ONLY.
+//
+// It deliberately does NOT use getClientIP, which honours X-Forwarded-For and
+// X-Real-IP with no trusted-proxy allowlist. Keying a limiter on a header the
+// caller controls is not a limit at all: a fresh forged value yields a fresh
+// bucket, initialised full, so every request is admitted — and the bucket map
+// grows unboundedly while that happens. On an unauthenticated endpoint that is
+// a bypass of exactly the control this exists to provide.
+//
+// The cost is that behind a reverse proxy every request shares the proxy's
+// address and the limit becomes effectively global. That is the safe direction
+// to be wrong in: over-limiting is visible and diagnosable, under-limiting is
+// the vulnerability shipped. Restoring per-client granularity behind a proxy
+// needs a trusted-proxy configuration, tracked separately.
+func remoteAddrKey(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+// RateLimitOAuth2ClientAuth bounds an unauthenticated OAuth2 endpoint whose
+// client authentication runs the PBKDF2 client-secret verification, per source
+// IP and against a bucket shared with its sibling endpoints.
+//
+// Every path that serves /oauth2/token, /oauth2/revoke or /oauth2/introspect
+// must wrap its handler with this; a path that does not is an unbounded route
+// to the same KDF. A new OAuth2 endpoint that reaches ValidateClientSecret
+// belongs behind this wrapper too — the deciding question is whether an
+// unauthenticated caller can make it derive, not which verb it is.
+//
+// The two serving paths wrap in different places (see oauth2ClientAuthLimiter)
+// and each request therefore passes through exactly one wrapper. Wrapping the
+// same request twice would spend two tokens per attempt and halve the effective
+// limit, so a new serving path adds a wrapper only where none already applies.
+func RateLimitOAuth2ClientAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !oauth2ClientAuthLimiter().Allow(remoteAddrKey(r)) {
+			RespondError(w, r, http.StatusTooManyRequests, &RateLimitError{
+				Limit:  oauth2ClientAuthRateLimit,
+				Period: "1s",
+			})
+			return
+		}
+		next(w, r)
+	}
 }

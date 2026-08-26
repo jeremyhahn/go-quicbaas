@@ -261,7 +261,11 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// Create the persistent IAM storage. The store satisfies TenantStorage,
 	// UserStorage, GroupStorage, RoleStorage, PolicyStorage, AppStorage, and
 	// TokenStorage so every IAM mutation survives daemon restarts.
-	backendStorage := iam.NewBackendStorage(iamKV)
+	// The logger is wired so a pre-KDF client secret announces itself: the
+	// refusal is collapsed into an opaque invalid_client before it reaches the
+	// caller, so without this an upgrade over legacy records would look like a
+	// broken token endpoint rather than a rotation the operator has to perform.
+	backendStorage := iam.NewBackendStorage(iamKV, iam.WithStorageLogger(s.logger))
 
 	// Create tenant manager backed by the persistent IAM storage
 	tenantManager := iam.NewDefaultTenantManager(backendStorage)

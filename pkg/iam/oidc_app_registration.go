@@ -89,8 +89,8 @@ func generateRegistrationAccessToken() (string, string, error) {
 //
 // It returns the application carrying the plaintext client secret and, as the
 // second value, the plaintext registration access token. Both are visible only
-// here: the store keeps a bcrypt hash of the secret and a SHA-256 hash of the
-// token.
+// here: the store keeps a PBKDF2-HMAC-SHA256 digest of the secret (#37 — it
+// was bcrypt before that migration) and a SHA-256 hash of the token.
 func (m *AppManager) RegisterDCRApp(ctx context.Context, tenantID string, opts RegisterAppOptions) (*Application, string, error) {
 	return m.registerApp(ctx, tenantID, opts, true)
 }

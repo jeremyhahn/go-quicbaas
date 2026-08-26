@@ -21,8 +21,6 @@ import (
 	"net/url"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
@@ -435,19 +433,108 @@ func generateClientSecret() (string, string, error) {
 	// Encode as base64
 	plaintext := "sk_" + base64.RawURLEncoding.EncodeToString(b)
 
-	// Hash with bcrypt
-	hashed, err := bcrypt.GenerateFromPassword([]byte(plaintext), bcrypt.DefaultCost)
+	// Store the secret as a PBKDF2-HMAC-SHA256 digest (#37). bcrypt's Blowfish
+	// core is not FIPS-approved, and x/crypto/bcrypt never enters crypto/* so
+	// the fips140=only gate cannot catch it; deriveSecretHash is the KDF the
+	// rest of IAM already uses.
+	hashed, err := deriveSecretHash(plaintext)
 	if err != nil {
 		return "", "", err
 	}
 
-	return plaintext, string(hashed), nil
+	return plaintext, hashed, nil
 }
 
-// validateClientSecret validates a client secret against a hash using constant-time comparison.
-func validateClientSecret(plaintext, hashed string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(hashed), []byte(plaintext))
-	return err == nil
+// verifyClientSecret checks a plaintext client secret against its stored hash.
+//
+// Only the current PBKDF2-HMAC-SHA256 digest is verified. Anything else --
+// the pre-#37 bcrypt form, or any value that does not parse as a digest this
+// package wrote -- is refused outright, in every mode, and reported as
+// ErrSecretRotationRequired rather than as a mismatch (owner-ruled
+// 2026-08-25). The predicate is orchestrator_auth.go's isLegacySecretHash,
+// the same "does not parse" test service-account secrets already use, so an
+// unrecognized digest is never fed to a comparison that cannot understand it.
+//
+// Refusing rather than accepting is the safer half of the migration, for three
+// reasons. bcrypt cannot run under GODEBUG=fips140=only at all -- its Blowfish
+// core is unapproved and x/crypto/bcrypt never enters crypto/*, so the module
+// cannot intercept it -- which would make legacy acceptance dead code in
+// exactly the regulated deployments #37 exists to serve. Honouring a stored
+// digest's own embedded cost would also let a tampered record dictate how long
+// an authentication worker is occupied; secret_kdf.go already refuses that for
+// PBKDF2, calling a single accepted work factor "a security property rather
+// than a simplification", and accepting arbitrary bcrypt costs would
+// contradict it. And refusal removes the cost-pinning denial-of-service class
+// outright instead of capping it.
+//
+// The remedy for a legacy record is rotation, which is why the error is
+// distinguishable from bad credentials: an operator reading it should see
+// "rotate me", not "authentication is broken". Callers on the wire must still
+// not echo it -- see the AuthenticateClient path, which maps every failure to
+// one opaque response.
+func verifyClientSecret(stored, plaintext string) (bool, error) {
+	// Every path performs exactly one derivation, at the accepted work factor.
+	// A record with no usable digest is compared against timingEqualizerDigest
+	// and the result discarded: returning early instead would make an obsolete
+	// or malformed record answer in microseconds while a current one costs
+	// pbkdf2Iterations, so response latency would tell an unauthenticated
+	// caller which client IDs exist and how their secrets are stored. That is
+	// the enumeration channel secret_kdf.go refuses for the work factor, and
+	// collapsing the error text alone does not close it (Codex review of #118).
+	if isLegacySecretHash(stored) {
+		_ = verifySecret(timingEqualizerDigest, plaintext)
+		return false, &SecretRotationRequiredError{}
+	}
+	return verifySecret(stored, plaintext), nil
+}
+
+// StorageOption configures an IAM storage implementation. It is variadic on
+// the constructors so adding one never breaks an existing caller.
+type StorageOption func(*storageOptions)
+
+type storageOptions struct {
+	logger storageLogger
+}
+
+// storageLogger is the smallest logger a storage needs: one leveled formatter.
+// Narrowing it to this rather than interfaces.Logger is what lets the server
+// pass its concrete *logger.Logger directly -- that type satisfies Warnf but
+// not the full interface, whose WithError returns a different logger type.
+type storageLogger interface {
+	Warnf(format string, args ...interface{})
+}
+
+// WithStorageLogger gives a storage a logger for operator-facing events.
+// Without one those events are silently dropped, which is the pre-existing
+// behavior and is why this is an option rather than a required argument.
+func WithStorageLogger(l storageLogger) StorageOption {
+	return func(o *storageOptions) { o.logger = l }
+}
+
+func applyStorageOptions(opts []StorageOption) storageOptions {
+	var o storageOptions
+	for _, fn := range opts {
+		if fn != nil {
+			fn(&o)
+		}
+	}
+	return o
+}
+
+// warnRotationRequired records that a stored client secret predates the
+// current KDF and the application must be rotated.
+//
+// Without it the refusal is invisible: ErrSecretRotationRequired is collapsed
+// into the same opaque response as any other authentication failure before it
+// reaches the caller, so an operator upgrading a deployment that still holds
+// legacy records would see a wave of invalid_client with nothing anywhere
+// naming rotation as the remedy. This mirrors what AuthenticateServiceAccount
+// already does for service accounts (#118 F6).
+func warnRotationRequired(l storageLogger, clientID string) {
+	if l == nil {
+		return
+	}
+	l.Warnf("oauth2 application holds a pre-KDF client secret; rotation required (see AppManager.RotateSecret or iam.HashClientSecret): client_id=%s", clientID)
 }
 
 // constantTimeCompare performs constant-time string comparison.

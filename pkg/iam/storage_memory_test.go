@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
-
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
@@ -373,16 +371,14 @@ func TestMemoryStorage_AppOperations(t *testing.T) {
 	tenant := &Tenant{ID: "app-tenant", Name: "App Test", Created: time.Now(), Updated: time.Now()}
 	storage.CreateTenant(ctx, tenant)
 
-	// Create bcrypt hash of the secret for storage
+	// Seed the current PBKDF2 credential form (#37); this test's subject is
+	// the app CRUD path, not the legacy digest.
 	plaintextSecret := "secret123"
-	hashedSecret, err := bcrypt.GenerateFromPassword([]byte(plaintextSecret), bcrypt.DefaultCost)
-	if err != nil {
-		t.Fatalf("failed to hash secret: %v", err)
-	}
+	hashedSecret := currentSecretHash(t, plaintextSecret)
 
 	app := &Application{
 		ClientID:      "client123",
-		ClientSecret:  string(hashedSecret),
+		ClientSecret:  hashedSecret,
 		Name:          "Test App",
 		TenantID:      tenant.ID,
 		RedirectURIs:  []string{"https://example.com/callback"},
@@ -393,7 +389,7 @@ func TestMemoryStorage_AppOperations(t *testing.T) {
 	}
 
 	// Test CreateApp
-	err = storage.CreateApp(ctx, app)
+	err := storage.CreateApp(ctx, app)
 	if err != nil {
 		t.Fatalf("CreateApp failed: %v", err)
 	}

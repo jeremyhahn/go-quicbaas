@@ -12,7 +12,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/bcrypt"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -2263,19 +2262,18 @@ func TestBackendStorage_ValidateClientSecret(t *testing.T) {
 	kv := newMockKVStore91()
 	storage := NewBackendStorage(kv)
 
-	// Hash the secret with bcrypt before storing
+	// Seed the current PBKDF2 credential form (#37). This test's subject is
+	// that ValidateClientSecret accepts the right secret and rejects the wrong
+	// one, not which digest predates the migration.
 	plainSecret := "correct-secret"
-	hashedSecret, err := bcrypt.GenerateFromPassword([]byte(plainSecret), bcrypt.DefaultCost)
-	if err != nil {
-		t.Fatalf("bcrypt.GenerateFromPassword failed: %v", err)
-	}
+	hashedSecret := currentSecretHash(t, plainSecret)
 
 	// Create an app with the hashed secret
 	app := &Application{
 		ClientID:     "validate-secret-client",
 		TenantID:     "validate-tenant",
 		Name:         "Validate Secret Test",
-		ClientSecret: string(hashedSecret), // Store the bcrypt hash
+		ClientSecret: hashedSecret,
 		RedirectURIs: []string{"https://example.com/callback"},
 		GrantTypes:   []string{"authorization_code"},
 		Created:      time.Now(),

@@ -22,8 +22,6 @@ import (
 
 	"crypto/rsa"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/dpop"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
@@ -49,13 +47,10 @@ func registerClientCredentialsApp(t *testing.T, appStorage *mockAppStorage) (str
 	t.Helper()
 	const clientID = "svc-client"
 	const secret = "super-secret"
-	hash, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
-	if err != nil {
-		t.Fatalf("hash secret: %v", err)
-	}
+	hash := currentSecretHash(t, secret)
 	app := &Application{
 		ClientID:     clientID,
-		ClientSecret: string(hash),
+		ClientSecret: hash,
 		Name:         "Service Client",
 		TenantID:     "tenant-1",
 		GrantTypes:   []string{GrantTypeClientCredentials},

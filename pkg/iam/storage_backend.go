@@ -17,10 +17,9 @@ package iam
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
-
-	"golang.org/x/crypto/bcrypt"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -77,13 +76,18 @@ const (
 // users through the routed UserStorage (DefaultTenantManager.DeleteTenant).
 type BackendStorage struct {
 	kv interfaces.KVStore
+
+	// logger receives operator-facing events; nil means they are dropped.
+	logger storageLogger
 }
 
 // NewBackendStorage creates a new IAM storage backed by a KVStore.
 // The KVStore abstracts the underlying storage (memory, PebbleDB, Raft).
-func NewBackendStorage(kv interfaces.KVStore) *BackendStorage {
+func NewBackendStorage(kv interfaces.KVStore, opts ...StorageOption) *BackendStorage {
+	o := applyStorageOptions(opts)
 	return &BackendStorage{
-		kv: kv,
+		kv:     kv,
+		logger: o.logger,
 	}
 }
 
@@ -944,15 +948,55 @@ func (s *BackendStorage) ListApps(ctx context.Context, tenantID string, opts Lis
 	return apps, nil
 }
 
-// ValidateClientSecret validates a client secret using bcrypt.
+// ValidateClientSecret validates a client secret against the stored digest.
+//
+// Only the current PBKDF2-HMAC-SHA256 form is verified; a pre-#37 bcrypt
+// record is refused with ErrSecretRotationRequired (owner-ruled 2026-08-25).
+//
+// This path does not rehash, and with the legacy form refused there is nothing
+// left to rehash from -- a stored digest changes only when the secret is
+// rotated. The previous note about deferring an online upgrade to #119 no
+// longer applies and has been removed rather than left to mislead: it
+// described a rehash-on-auth this function never performed.
 func (s *BackendStorage) ValidateClientSecret(ctx context.Context, clientID, clientSecret string) (bool, error) {
-	app, err := s.GetApp(ctx, clientID)
-	if err != nil {
+	// Cancellation is checked before any work: the derivation below is not
+	// cancellable, so a caller that has already gone away must not buy one.
+	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(app.ClientSecret), []byte(clientSecret))
-	return err == nil, nil
+	if clientSecret == "" {
+		return false, ErrSecretEmpty
+	}
+
+	app, err := s.GetApp(ctx, clientID)
+	if err != nil {
+		// ONLY a genuine not-found is equalized. A lookup miss that answered
+		// without deriving would leak which client IDs exist, so that one pays
+		// the same cost as a real verification.
+		//
+		// Every other GetApp error -- cancellation, deadline, a backend
+		// outage -- is propagated immediately and unequalized. Deriving for
+		// those would burn 600,000 uncancellable iterations for a caller that
+		// has already left, and during a storage incident it would add that
+		// cost to every failing authentication, amplifying the outage it is
+		// reacting to. Nor is there anything to hide: a backend failure is not
+		// a per-client signal, so answering fast reveals nothing about which
+		// client IDs exist (Codex review of #118).
+		if dberrors.IsNotFound(err) {
+			_ = verifySecret(timingEqualizerDigest, clientSecret)
+		}
+		return false, err
+	}
+
+	ok, err := verifyClientSecret(app.ClientSecret, clientSecret)
+	if err != nil {
+		if errors.Is(err, ErrSecretRotationRequired) {
+			warnRotationRequired(s.logger, clientID)
+		}
+		return false, err
+	}
+	return ok, nil
 }
 
 // -----------------------------------------------------------------------------

@@ -36,9 +36,9 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // introspectMemKV is a minimal in-memory KVStore for the introspection tests.
@@ -169,11 +169,17 @@ func setupIntrospectHandler(t *testing.T) (*IAMHandler, *iam.OIDCProvider, iam.A
 	})
 	require.NoError(t, err)
 
-	hashed, err := bcrypt.GenerateFromPassword([]byte(introspectSecret), bcrypt.DefaultCost)
+	// The stored form is the PBKDF2 digest since the #37 migration; a bcrypt
+	// digest here fails closed under GODEBUG=fips140=only, which this package
+	// is gated on.
+	introspectSec, err := secure.NewSecret([]byte(introspectSecret))
+	require.NoError(t, err)
+	hashed, err := iam.HashClientSecret(introspectSec)
+	introspectSec.Destroy()
 	require.NoError(t, err)
 	require.NoError(t, backend.CreateApp(context.Background(), &iam.Application{
 		ClientID:     introspectClientID,
-		ClientSecret: string(hashed),
+		ClientSecret: hashed,
 		TenantID:     introspectTenant,
 		GrantTypes:   []string{iam.GrantTypeClientCredentials},
 	}))

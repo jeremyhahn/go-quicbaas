@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // Mock AppStorage for testing
@@ -84,12 +84,32 @@ func (m *mockAppStorage) ListApps(ctx context.Context, tenantID string, opts Lis
 }
 
 func (m *mockAppStorage) ValidateClientSecret(ctx context.Context, clientID, clientSecret string) (bool, error) {
+	// This double must carry the properties under review, not just the happy
+	// path. It previously returned early on an unknown client without
+	// deriving, and swallowed verifyClientSecret's error -- so the OIDC tests
+	// that use it ran against a fake lacking the very equalization and typed
+	// refusal the real storages implement, and its comment additionally
+	// claimed it accepted legacy bcrypt, which production now refuses (#118).
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if clientSecret == "" {
+		return false, ErrSecretEmpty
+	}
+
 	app, ok := m.apps[clientID]
 	if !ok {
-		return false, nil
+		// Equalize the miss exactly as the real storages do, so an unknown
+		// client costs what a known one does.
+		_ = verifySecret(timingEqualizerDigest, clientSecret)
+		return false, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "mock.app.validate"}
 	}
-	err := bcrypt.CompareHashAndPassword([]byte(app.ClientSecret), []byte(clientSecret))
-	return err == nil, nil
+
+	valid, err := verifyClientSecret(app.ClientSecret, clientSecret)
+	if err != nil {
+		return false, err
+	}
+	return valid, nil
 }
 
 func createTestAppManager(t *testing.T) *AppManager {
@@ -488,13 +508,18 @@ func TestGenerateClientSecret(t *testing.T) {
 		t.Errorf("plaintext format is incorrect: %s", plaintext1)
 	}
 
-	// Should be able to verify plaintext against hash
-	if !validateClientSecret(plaintext1, hashed1) {
-		t.Error("validateClientSecret() failed for valid secret")
+	// New secrets must be stored as PBKDF2 digests, never bcrypt (#37).
+	if !strings.HasPrefix(hashed1, "$pbkdf2-sha256$") {
+		t.Errorf("hash is not a PBKDF2 digest: %s", hashed1)
 	}
 
-	if validateClientSecret(plaintext2, hashed1) {
-		t.Error("validateClientSecret() should fail for wrong secret")
+	// Should be able to verify plaintext against hash
+	if ok, _ := verifyClientSecret(hashed1, plaintext1); !ok {
+		t.Error("verifyClientSecret() failed for valid secret")
+	}
+
+	if ok, _ := verifyClientSecret(hashed1, plaintext2); ok {
+		t.Error("verifyClientSecret() should fail for wrong secret")
 	}
 }
 
@@ -532,8 +557,8 @@ func TestValidateClientSecret(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := validateClientSecret(tt.plaintext, tt.hashed); got != tt.want {
-				t.Errorf("validateClientSecret() = %v, want %v", got, tt.want)
+			if got, _ := verifyClientSecret(tt.hashed, tt.plaintext); got != tt.want {
+				t.Errorf("verifyClientSecret() = %v, want %v", got, tt.want)
 			}
 		})
 	}

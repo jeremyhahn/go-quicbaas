@@ -15,10 +15,9 @@ package iam
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
-
-	"golang.org/x/crypto/bcrypt"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
@@ -27,6 +26,9 @@ import (
 // This implementation is thread-safe and suitable for testing.
 type MemoryStorage struct {
 	mu sync.RWMutex
+
+	// logger receives operator-facing events; nil means they are dropped.
+	logger storageLogger
 
 	// Tenant storage
 	tenants        map[string]*Tenant
@@ -64,8 +66,10 @@ type MemoryStorage struct {
 }
 
 // NewMemoryStorage creates a new in-memory storage instance.
-func NewMemoryStorage() *MemoryStorage {
+func NewMemoryStorage(opts ...StorageOption) *MemoryStorage {
+	o := applyStorageOptions(opts)
 	return &MemoryStorage{
+		logger:               o.logger,
 		tenants:              make(map[string]*Tenant),
 		tenantSettings:       make(map[string]*TenantSettings),
 		tenantQuotas:         make(map[string]*TenantQuota),
@@ -913,17 +917,51 @@ func (m *MemoryStorage) ListApps(ctx context.Context, tenantID string, opts List
 }
 
 func (m *MemoryStorage) ValidateClientSecret(ctx context.Context, clientID, clientSecret string) (bool, error) {
+	// Same reason as BackendStorage: the derivations below are not cancellable,
+	// so a departed caller must not buy one. There is no equivalent
+	// classification to make here -- this store's miss is a map lookup, so a
+	// miss really is not-found and nothing else can fail.
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+
 	m.mu.RLock()
 	app, exists := m.apps[clientID]
+	stored := ""
+	if exists {
+		stored = app.ClientSecret
+	}
 	m.mu.RUnlock()
 
+	// An empty credential is a malformed request rather than a guess, and both
+	// this check and the one it mirrors in BackendStorage are independent of
+	// stored state, so neither can probe for a client ID.
+	if clientSecret == "" {
+		return false, ErrSecretEmpty
+	}
+
 	if !exists {
+		// Pay a derivation before answering: an unknown client ID that returned
+		// immediately would be distinguishable from a known one by latency, which
+		// is the same enumeration channel verifyClientSecret closes for records
+		// with no usable digest.
+		_ = verifySecret(timingEqualizerDigest, clientSecret)
 		return false, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.app.validate"}
 	}
 
-	// Compare plaintext secret against bcrypt hash
-	err := bcrypt.CompareHashAndPassword([]byte(app.ClientSecret), []byte(clientSecret))
-	return err == nil, nil
+	// Only the current PBKDF2 form is verified. A pre-#37 bcrypt record is
+	// refused with ErrSecretRotationRequired rather than migrated: since the
+	// legacy path no longer authenticates anything, there is no successful
+	// login left to rehash on, and the record is cleared by rotation instead
+	// (owner-ruled 2026-08-25).
+	ok, err := verifyClientSecret(stored, clientSecret)
+	if err != nil {
+		if errors.Is(err, ErrSecretRotationRequired) {
+			warnRotationRequired(m.logger, clientID)
+		}
+		return false, err
+	}
+	return ok, nil
 }
 
 // TokenStorage implementation

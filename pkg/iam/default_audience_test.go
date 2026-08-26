@@ -18,8 +18,6 @@ import (
 	"errors"
 	"testing"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
@@ -119,12 +117,12 @@ func TestTokenIssuance_DefaultAudience(t *testing.T) {
 	provider, privateKey, appStorage, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 
-	hashedSecret, _ := bcrypt.GenerateFromPassword([]byte("test-secret"), bcrypt.DefaultCost)
+	hashedSecret := currentSecretHash(t, "test-secret")
 
 	// App WITH a default audience configured.
 	if err := appStorage.CreateApp(ctx, &Application{
 		ClientID:        "svc-with-default",
-		ClientSecret:    string(hashedSecret),
+		ClientSecret:    hashedSecret,
 		TenantID:        "tenant-1",
 		GrantTypes:      []string{GrantTypeClientCredentials},
 		DefaultAudience: "api://orchestrator",
@@ -135,7 +133,7 @@ func TestTokenIssuance_DefaultAudience(t *testing.T) {
 	// App WITHOUT a default audience (current behavior must be unchanged).
 	if err := appStorage.CreateApp(ctx, &Application{
 		ClientID:     "svc-no-default",
-		ClientSecret: string(hashedSecret),
+		ClientSecret: hashedSecret,
 		TenantID:     "tenant-1",
 		GrantTypes:   []string{GrantTypeClientCredentials},
 	}); err != nil {
@@ -146,7 +144,7 @@ func TestTokenIssuance_DefaultAudience(t *testing.T) {
 	// it and fall back to today's behavior rather than fail.
 	if err := appStorage.CreateApp(ctx, &Application{
 		ClientID:        "svc-bad-default",
-		ClientSecret:    string(hashedSecret),
+		ClientSecret:    hashedSecret,
 		TenantID:        "tenant-1",
 		GrantTypes:      []string{GrantTypeClientCredentials},
 		DefaultAudience: "not-a-uri",

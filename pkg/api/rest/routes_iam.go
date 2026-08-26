@@ -64,6 +64,24 @@ func iamRoute(method func(*IAMHandler) http.HandlerFunc) func(*Server) http.Hand
 	}
 }
 
+// oauth2ClientAuthRateLimited wraps a RouteSpec handler factory in the shared
+// per-source-IP limiter for the OAuth2 client-authenticating endpoints
+// (middleware.go RateLimitOAuth2ClientAuth).
+//
+// It binds at the spec rather than in the consumer so that any consumer of this
+// table serves those endpoints metered. Today the only one that binds
+// GroupOAuth2Core is apimodule.RegisterHTTP (via ModuleRoutes and
+// Server.BindRoute) for the unified server — Server.registerRoutes binds only
+// GroupAPI, GroupAPIUpload and the wire groups, and the legacy listener instead
+// gets them from IAMHandler.RegisterRoutes, which wraps them there. Wrapping
+// here is the placement where adding a second table consumer cannot silently
+// reintroduce an unbounded path to the KDF.
+func oauth2ClientAuthRateLimited(next func(*Server) http.HandlerFunc) func(*Server) http.HandlerFunc {
+	return func(s *Server) http.HandlerFunc {
+		return RateLimitOAuth2ClientAuth(next(s))
+	}
+}
+
 // iamManagedRouteSpecs returns the root-mounted, permission-gated IAM
 // management surface: tenant/user/group/role/policy/provider administration,
 // per-tenant barrier lifecycle, GDPR, session/audit/PEP utility endpoints,
@@ -285,11 +303,22 @@ func oidcDiscoveryRouteSpecs() []RouteSpec {
 func oauth2CoreRouteSpecs() []RouteSpec {
 	return []RouteSpec{
 		{Method: "GET", Pattern: "/oauth2/authorize", Group: GroupOAuth2Core, Auth: RouteAuthPublic, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.Authorize })},
-		{Method: "POST", Pattern: "/oauth2/token", Group: GroupOAuth2Core, Auth: RouteAuthPublic, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.Token })},
+		// Token, revoke and introspect are rate limited (#118 F1): each is
+		// RouteAuthPublic and each authenticates its caller through
+		// ValidateClientSecret, so every attempt spends a PBKDF2 derivation
+		// whether or not the client exists and an unbounded path is a
+		// CPU-exhaustion amplifier. One shared bucket per source across the
+		// three — the capped resource is total KDF CPU per source.
+		//
+		// token-mtls and userinfo are NOT limited and are not omissions:
+		// token-mtls authenticates by client certificate on the TLS handshake
+		// (RFC 8705) and userinfo by bearer token, so neither lets an anonymous
+		// caller reach the KDF.
+		{Method: "POST", Pattern: "/oauth2/token", Group: GroupOAuth2Core, Auth: RouteAuthPublic, Handler: oauth2ClientAuthRateLimited(iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.Token }))},
 		{Method: "POST", Pattern: "/oauth2/token-mtls", Group: GroupOAuth2Core, Auth: RouteAuthPublic, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.TokenMTLS })},
 		{Method: "GET", Pattern: "/oauth2/userinfo", Group: GroupOAuth2Core, Auth: RouteAuthPublic, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.UserInfo })},
-		{Method: "POST", Pattern: "/oauth2/revoke", Group: GroupOAuth2Core, Auth: RouteAuthPublic, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.Revoke })},
-		{Method: "POST", Pattern: "/oauth2/introspect", Group: GroupOAuth2Core, Auth: RouteAuthPublic, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.Introspect })},
+		{Method: "POST", Pattern: "/oauth2/revoke", Group: GroupOAuth2Core, Auth: RouteAuthPublic, Handler: oauth2ClientAuthRateLimited(iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.Revoke }))},
+		{Method: "POST", Pattern: "/oauth2/introspect", Group: GroupOAuth2Core, Auth: RouteAuthPublic, Handler: oauth2ClientAuthRateLimited(iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.Introspect }))},
 	}
 }
 

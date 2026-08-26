@@ -75,11 +75,25 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 
 	// OAuth2/OIDC endpoints (public)
 	router.Get("/oauth2/authorize", h.Authorize)
-	router.Post("/oauth2/token", h.Token)
+	// Token, Revoke and Introspect are rate-limited: each authenticates its
+	// caller through ValidateClientSecret, so every unauthenticated attempt
+	// costs a PBKDF2 derivation (#118 F1). They share one per-source-IP bucket
+	// (middleware.go oauth2ClientAuthLimiter) because the capped resource is
+	// total KDF CPU per source, not per-route fairness.
+	//
+	// These hand-written registrations are what the legacy in-process listener
+	// serves, and Server.registerRoutes never binds GroupOAuth2Core, so the
+	// spec-level wrappers (routes_iam.go) do not reach here — this path carries
+	// its own. No request passes through both wrappers.
+	//
+	// token-mtls and userinfo are deliberately NOT limited: the former
+	// authenticates by client certificate on the TLS handshake and the latter by
+	// bearer token, so neither reaches the KDF as an anonymous caller.
+	router.Post("/oauth2/token", RateLimitOAuth2ClientAuth(h.Token))
 	router.Post("/oauth2/token-mtls", h.TokenMTLS) // RFC 8705 §5 mTLS alias
 	router.Get("/oauth2/userinfo", h.UserInfo)
-	router.Post("/oauth2/revoke", h.Revoke)
-	router.Post("/oauth2/introspect", h.Introspect) // RFC 7662 token introspection
+	router.Post("/oauth2/revoke", RateLimitOAuth2ClientAuth(h.Revoke))
+	router.Post("/oauth2/introspect", RateLimitOAuth2ClientAuth(h.Introspect)) // RFC 7662 token introspection
 
 	// Dynamic Client Registration (RFC 7591) + its management protocol
 	// (RFC 7592). Registered as a group on the ROOT router of the legacy

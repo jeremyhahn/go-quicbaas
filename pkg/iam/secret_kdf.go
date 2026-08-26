@@ -42,19 +42,35 @@ const (
 	pbkdf2Scheme = "pbkdf2-sha256"
 
 	// pbkdf2Iterations is the one work factor this package will verify at.
-	// 600,000 is OWASP's current guidance for PBKDF2-HMAC-SHA256 and measures
-	// at ~57ms here, which is what bcrypt at DefaultCost cost before it.
+	// 600,000 is OWASP's current guidance for PBKDF2-HMAC-SHA256.
+	//
+	// MEASURE IT BEFORE QUOTING IT. This comment previously said "~57ms here";
+	// measured 2026-08-25 on a 32-core host, one verification costs ~308ms —
+	// roughly 5x the stated figure, and the stale number was repeated as fact
+	// in a review of the very cost it describes. At ~3 verifications per second
+	// per core, an endpoint that derives once per attempt saturates a 32-core
+	// host at roughly 100 requests per second, so any UNAUTHENTICATED path
+	// reaching this KDF needs a rate limit ahead of it (#118 F1).
 	//
 	// It is a single accepted value rather than a per-digest one, and that is
 	// a security property rather than a simplification. Authentication is
-	// required to be non-enumerating: every attempt, against a real account or
-	// an unknown client ID, must cost the same. An ineligible account is
-	// checked against timingEqualizerDigest, which is fixed at this count — so
-	// if a stored digest could carry some other count, an account holding a
-	// cheaper one would answer measurably faster than an unknown client ID and
-	// its existence would leak, however identical the returned error. A dearer
-	// one leaks the same way and doubles as a denial of service, since the
-	// stored value would be dictating how long a request worker is occupied.
+	// required to be non-enumerating: every attempt that REACHES verification,
+	// against a real account or an unknown client ID, must cost the same. An
+	// ineligible account is checked against timingEqualizerDigest, which is
+	// fixed at this count — so if a stored digest could carry some other count,
+	// an account holding a cheaper one would answer measurably faster than an
+	// unknown client ID and its existence would leak, however identical the
+	// returned error. A dearer one leaks the same way and doubles as a denial
+	// of service, since the stored value would be dictating how long a request
+	// worker is occupied.
+	//
+	// The qualifier "that reaches verification" is load-bearing and was added
+	// after this comment was found asserting more than the code delivers.
+	// AuthenticateServiceAccount does equalize every outcome. The OAuth2
+	// application path does NOT yet: AppManager.ValidateClient looks the app up
+	// first and returns on a miss without deriving, so an unknown client ID
+	// answers in microseconds while a known one with a wrong secret pays the
+	// full cost. That gap is #150 and is NOT claimed fixed here.
 	//
 	// The cost of this is that raising the work factor does not migrate
 	// existing secrets: digests at the old count stop parsing, so they are
@@ -86,7 +102,35 @@ var (
 	// ErrSecretHashMalformed indicates a stored value is not a digest this
 	// package wrote.
 	ErrSecretHashMalformed = errors.New("iam: client secret hash is malformed")
+
+	// ErrSecretRotationRequired indicates the stored value is a pre-#37 bcrypt
+	// digest. Authentication against it is refused rather than attempted, so
+	// this is deliberately distinguishable from "wrong secret": the credential
+	// is not bad, the record is obsolete, and the operator's action is to
+	// rotate it rather than to debug a broken login.
+	ErrSecretRotationRequired = errors.New("iam: stored client secret predates the current KDF and must be rotated")
+
+	// ErrSecretEmpty indicates an empty client secret was offered for hashing.
+	// An empty secret carries no entropy, so a digest of one is a credential
+	// that authenticates anybody who presents nothing.
+	ErrSecretEmpty = errors.New("iam: client secret must not be empty")
 )
+
+// SecretRotationRequiredError reports that a stored client secret is in the
+// pre-#37 bcrypt form, which this package no longer verifies. It carries no
+// part of the stored value and no client identifier: it says what must happen,
+// not to whom.
+type SecretRotationRequiredError struct{}
+
+// Error implements the error interface.
+func (e *SecretRotationRequiredError) Error() string {
+	return ErrSecretRotationRequired.Error()
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *SecretRotationRequiredError) Unwrap() error {
+	return ErrSecretRotationRequired
+}
 
 // SecretHashMalformedError reports that a stored value could not be parsed as
 // a PBKDF2 digest. Reason names the specific defect for logs; it never carries
@@ -142,6 +186,60 @@ func deriveSecretHash(secret string) (string, error) {
 		salt:       salt,
 		key:        key.Bytes(),
 	}), nil
+}
+
+// HashClientSecret returns the stored form of a client secret the caller
+// already holds, taking that secret in protected memory.
+//
+// An application registered through AppManager is given a generated secret and
+// never needs this. It exists for the caller that must provision an
+// application with a specific secret -- importing an existing client, or a
+// test fixture that authenticates with a known value. Before the #37 migration
+// such a caller produced the stored form itself with bcrypt; the PBKDF2 digest
+// this package now stores cannot be constructed outside it, so without this
+// the migration would leave that caller with no supported option.
+//
+// It takes *secure.Secret rather than a string so that no PUBLIC entry point
+// of this package invites a credential to be held in immutable, unwipeable,
+// garbage-collected memory (Codex review of #118, protected-memory mandate).
+// The caller keeps the secret protected right up to this boundary and owns
+// destroying it afterwards.
+//
+// HONEST LIMIT, do not read this as full protected-memory compliance: the
+// FIPS-approved KDF this package is required to use, crypto/pbkdf2.Key, takes
+// its password as a `string`. Deriving therefore materialises the secret as an
+// immutable Go string for the duration of the call, and that copy cannot be
+// wiped. This narrows the plaintext window from the caller's whole lifetime to
+// one call and keeps the public surface protected-first; it does not eliminate
+// the window, and it cannot while the derivation stays inside the Go
+// Cryptographic Module. Every existing internal derivation path has the same
+// window. The conflict between the protected-memory mandate and the FIPS
+// mandate at this line is recorded for a ruling rather than papered over.
+//
+// The digest is salted, so two calls with the same secret return different
+// values and neither may be compared for equality; verification goes through
+// the storage layer's ValidateClientSecret.
+func HashClientSecret(secret *secure.Secret) (string, error) {
+	if secret == nil {
+		return "", ErrSecretEmpty
+	}
+
+	buf, err := secret.Open()
+	if err != nil {
+		return "", &SecretHashError{Err: err}
+	}
+	defer buf.Destroy()
+
+	plaintext := buf.Bytes()
+	// Refused at the provisioning boundary rather than at authentication.
+	// deriveSecretHash("") is a perfectly well-formed digest, so without this
+	// an application could be provisioned with an empty secret and would then
+	// authenticate anyone presenting nothing (Codex review of #118).
+	if len(plaintext) == 0 {
+		return "", ErrSecretEmpty
+	}
+
+	return deriveSecretHash(string(plaintext))
 }
 
 // deriveKey runs the KDF and hands the result back in protected memory.

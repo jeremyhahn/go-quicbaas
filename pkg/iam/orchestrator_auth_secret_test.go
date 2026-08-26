@@ -339,7 +339,7 @@ func TestCreateServiceAccount_StoresKDFDigest(t *testing.T) {
 		t.Fatal("stored hash must not be a recoverable form of the client secret")
 	}
 	if isLegacySecretHash(account.SecretHash) {
-		t.Fatal("stored hash must be a bcrypt digest")
+		t.Fatal("stored hash must parse as a PBKDF2 digest this package wrote")
 	}
 	if !verifySecret(account.SecretHash, creds.ClientSecret) {
 		t.Error("stored digest must verify against the issued secret")
@@ -533,7 +533,7 @@ func TestInvalidateLegacySecretHashes_ClearsOnlyLegacyRecords(t *testing.T) {
 		t.Fatalf("GetServiceAccount: %v", err)
 	}
 	if !verifySecret(untouched.SecretHash, currentCreds.ClientSecret) {
-		t.Error("a current bcrypt digest must be left untouched")
+		t.Error("a current PBKDF2 digest must be left untouched")
 	}
 
 	// The invalidated credential stays unusable until it is rotated, and the
