@@ -450,9 +450,20 @@ jobs:
       # the job log; the SARIF upload below only exists on github.com, and
       # without that flag a Gitea failure exited 1 with the findings buried in
       # a file nobody could see (ci-template v1.1).
+      #
+      # Pinned, per devops.md §9, for the same reason golangci-lint is above:
+      # an unpinned scanner turns the gate red with no commit behind it. gosec
+      # self-updated mid-day on 2026-08-26 (v2.28.0 -> v2.29.0, published
+      # 08:34Z) and reddened another repo in the portfolio on a file nobody had
+      # touched since April. This tree was unaffected, and that is measured
+      # rather than assumed: running v2.28.0 and v2.29.0 over the same commit
+      # with G703 removed from GOSEC_EXCLUDE produced identical findings (the
+      # same two sites), so nothing here depended on the version -- but the
+      # exposure was real and arrived on a timer, not on a change. Bump this
+      # deliberately, together with the rest of the portfolio.
       - name: Run gosec Security Scanner
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
           make gosec
 
       - name: Upload gosec results to GitHub Security
@@ -462,9 +473,19 @@ jobs:
           sarif_file: build/gosec.sarif
           category: gosec
 
+      # Pinned for the same reason, and v1.7.0 is what the last green runs
+      # already resolved -- this records the version in use, it does not change
+      # it.
+      #
+      # This pins the TOOL, not the vulnerability DATABASE. govulncheck fetches
+      # its data from the Go vulnerability database at every run, so the scan
+      # stays as current as it was before: a CVE published an hour ago is still
+      # caught. What the pin removes is the analyzer changing underneath the
+      # gate without a commit -- the failure mode above, not the freshness the
+      # job exists for.
       - name: Run govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           make vuln
 
   # trivy fs -- dependency CVEs and leaked secrets in the tree (devops.md §8).
