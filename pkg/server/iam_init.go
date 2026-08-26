@@ -230,6 +230,30 @@ func (r *serverPermissionResolver) RBACClient() qrdbtransport.RBACClient {
 	return node.RBAC()
 }
 
+// newIAMBackendStorage builds the persistent IAM storage the server runs on.
+//
+// It exists as a named seam rather than an inline call so the wiring can be
+// regression-tested: the logger argument is the only thing making a pre-KDF
+// client secret announce itself, and dropping it changes no behaviour any
+// functional test observes. ValidateClientSecret still refuses the record and
+// the refusal is still collapsed into an opaque invalid_client before it
+// reaches the caller — the ONLY difference is that the operator loses the one
+// signal naming rotation as the remedy, exactly when they need it during an
+// upgrade over legacy records (#118 F6, #166).
+//
+// Pinned by TestNewIAMBackendStorage_WarnsOnPreKDFSecret.
+func newIAMBackendStorage(kv interfaces.KVStore, log iamStorageLogger) *iam.BackendStorage {
+	return iam.NewBackendStorage(kv, iam.WithStorageLogger(log))
+}
+
+// iamStorageLogger is the logging surface IAM storage actually needs -- one
+// leveled formatter, mirroring iam.WithStorageLogger's own parameter. Naming
+// it here rather than taking *logger.Logger keeps the seam honest about its
+// requirement and lets a test supply a capturing logger.
+type iamStorageLogger interface {
+	Warnf(format string, args ...interface{})
+}
+
 func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// Check if qrdb client is available before attempting IAM init.
 	// In standalone/embedded mode, the qrdb client may not be initialized
@@ -261,11 +285,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// Create the persistent IAM storage. The store satisfies TenantStorage,
 	// UserStorage, GroupStorage, RoleStorage, PolicyStorage, AppStorage, and
 	// TokenStorage so every IAM mutation survives daemon restarts.
-	// The logger is wired so a pre-KDF client secret announces itself: the
-	// refusal is collapsed into an opaque invalid_client before it reaches the
-	// caller, so without this an upgrade over legacy records would look like a
-	// broken token endpoint rather than a rotation the operator has to perform.
-	backendStorage := iam.NewBackendStorage(iamKV, iam.WithStorageLogger(s.logger))
+	backendStorage := newIAMBackendStorage(iamKV, s.logger)
 
 	// Create tenant manager backed by the persistent IAM storage
 	tenantManager := iam.NewDefaultTenantManager(backendStorage)
