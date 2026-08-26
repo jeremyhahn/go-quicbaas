@@ -104,8 +104,24 @@ jobs:
         timeout-minutes: 90
         run: make integration-test
 
+      # The service logs are the only evidence of WHY a run failed, and they
+      # used to be unobtainable: the compose stack runs the servers in
+      # containers, so their stdout never reaches the job log, and
+      # `make integration-test` tears the stack down itself — by the time any
+      # step here runs, the containers are gone. `make integration-test` now
+      # dumps them to integration-compose.log before teardown (Makefile), and
+      # tails 200 lines into the job log so the common case needs no artifact
+      # at all. This step preserves the full copy.
+      #
+      # The github.com condition was removed rather than kept: this workflow
+      # runs on Gitea, where `github.server_url` is never 'https://github.com',
+      # so the step could not fire on the one forge it actually executes on —
+      # an artifact step shaped like coverage that collected nothing. That is
+      # how a suite stayed red across three main commits with no evidence of
+      # the cause (#164). upload-artifact is a no-op elsewhere if unsupported;
+      # a step that never runs is strictly worse than one that might.
       - name: Upload integration test results
-        if: always() && github.server_url == 'https://github.com'
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: integration-test-results

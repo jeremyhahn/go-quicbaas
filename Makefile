@@ -1874,6 +1874,13 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	done; \
 	DOCKER_RESULT=$${PIPESTATUS[0]}; \
 	echo ""; \
+	if [ $$DOCKER_RESULT -ne 0 ]; then \
+		echo "$(YELLOW)Integration tests failed — capturing service logs before teardown$(NC)"; \
+		docker compose -f $$COMPOSE_FILE logs --no-color --timestamps > integration-compose.log 2>&1 || true; \
+		echo "$(YELLOW)---- service logs (tail 200; full copy in integration-compose.log) ----$(NC)"; \
+		tail -n 200 integration-compose.log || true; \
+		echo "$(YELLOW)---- end service logs ----$(NC)"; \
+	fi; \
 	echo "$(BLUE)Stopping integration test cluster...$(NC)"; \
 	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
 	TORN_DOWN=1; \
