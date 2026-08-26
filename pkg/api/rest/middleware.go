@@ -788,16 +788,37 @@ func getClientIP(r *http.Request) string {
 // /oauth2/introspect. All three are RouteAuthPublic, and on all three the
 // caller's "client authentication" IS a call to ValidateClientSecret, so since
 // #37 every attempt costs one PBKDF2 derivation whether or not the client
-// exists — measured at ~308ms on a 32-core host, so roughly 100 req/s saturates
-// every core. Without a bound, one unauthenticated sender is a CPU-exhaustion
+// exists. Without a bound, one unauthenticated sender is a CPU-exhaustion
 // amplifier on any of them; the enumeration oracle that derivation closes would
 // have been traded for a denial of service (#118 F1).
 //
-// 10/s caps a single source at ~3.1 core-seconds per second — about 3 of 32
-// cores — so saturating the host now takes ~11 distinct sources rather than
-// one. It is orders of magnitude above legitimate traffic: client_credentials
-// fetches are periodic, governed by token TTL, so even a thousand clients
-// behind one NAT gateway refreshing on a 15-minute TTL is ~1.1 req/s.
+// The arithmetic below states its hardware, because the derivation cost spans
+// roughly 5x across machines (pkg/iam/secret_kdf.go pbkdf2Iterations records
+// the measurements). It is based on the SLOWEST figure, because that is the
+// conservative direction for a DoS bound:
+//
+//	slow, ~308 ms   10 req/s = ~3.1 cores per source -> ~10 sources saturate 32
+//	mid,  ~131.6 ms 10 req/s = ~1.3 cores per source -> ~18 sources saturate 24
+//	fast, ~57.7 ms  10 req/s = ~0.6 cores per source -> ~42 sources saturate 24
+//
+// Note which way that runs, because it is easy to get backwards and this
+// comment previously did: at a FIXED request rate, slower hardware spends more
+// CPU per derivation, so the same limit protects a slow host LESS. A bound
+// chosen against fast hardware does not carry to a slow deployment. The fast
+// figure is the conservative one for a different question entirely — how much
+// an attacker's own hardware buys them when cracking a stored digest — and
+// carrying that intuition across to server-side capacity inverts it.
+//
+// So 10/s is set against the slow end, where ~10 sources can still saturate a
+// 32-core host. That is a real residual: the bound makes exhaustion cost an
+// attacker many distinct addresses instead of one, it does not make it
+// impossible. A deployment on hardware slower than the figures above should
+// re-derive this rather than inherit it.
+//
+// It remains orders of magnitude above legitimate traffic either way:
+// client_credentials fetches are periodic, governed by token TTL, so even a
+// thousand clients behind one NAT gateway refreshing on a 15-minute TTL is
+// ~1.1 req/s.
 const oauth2ClientAuthRateLimit = 10
 
 // oauth2ClientAuthLimiter is the single limiter shared by all three endpoints

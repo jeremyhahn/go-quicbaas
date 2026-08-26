@@ -44,13 +44,44 @@ const (
 	// pbkdf2Iterations is the one work factor this package will verify at.
 	// 600,000 is OWASP's current guidance for PBKDF2-HMAC-SHA256.
 	//
-	// MEASURE IT BEFORE QUOTING IT. This comment previously said "~57ms here";
-	// measured 2026-08-25 on a 32-core host, one verification costs ~308ms —
-	// roughly 5x the stated figure, and the stale number was repeated as fact
-	// in a review of the very cost it describes. At ~3 verifications per second
-	// per core, an endpoint that derives once per attempt saturates a 32-core
-	// host at roughly 100 requests per second, so any UNAUTHENTICATED path
-	// reaching this KDF needs a rate limit ahead of it (#118 F1).
+	// MEASURE IT BEFORE QUOTING IT, and say on WHAT. The cost of one
+	// verification is hardware-dependent across roughly a 5x range, so a bare
+	// figure is not a fact about this code — it is a fact about one machine:
+	//
+	//	~57.7 ms   Intel Core Ultra 9 285K, Go 1.26, SHA extensions available
+	//	~131.6 ms  same host and build, GODEBUG=cpu.sha=off
+	//	~308 ms    recorded 2026-08-25 on a 32-core host whose CPU model was
+	//	           not captured — carried forward as evidence that slower
+	//	           deployments exist, NOT as a reproducible data point. Anyone
+	//	           relying on it should re-measure and record the model.
+	//
+	// (The first two are medians of 7 runs at these exact parameters,
+	// measured 2026-08-26.)
+	//
+	// An earlier revision called the ~57 ms figure stale and replaced it with
+	// ~308 ms. It was not stale — it is what this hardware actually does. Nor
+	// is the gap explained by SHA acceleration alone: disabling the SHA
+	// extensions here costs ~2.3x, not 5x, so the rest is the difference
+	// between machines. Both numbers are real; neither supersedes the other.
+	//
+	// Which end to reason from depends on the question, and the two answers
+	// point OPPOSITE ways — carrying one across to the other inverts it:
+	//
+	//   - The WORK FACTOR is justified at the FAST end. An attacker brings
+	//     good hardware, so 600,000 iterations has to be defensible at
+	//     ~57.7 ms. Reading the slow figure as "the" cost makes the factor
+	//     look 5x more expensive than it is and argues for lowering it on a
+	//     credential path, which is the wrong direction.
+	//   - SERVER CAPACITY, and any rate limit protecting it, is reasoned at
+	//     the SLOW end. At a fixed request rate a slower host spends more CPU
+	//     per derivation, so the same limit protects it LESS: 10 req/s costs
+	//     ~0.6 of a core at ~57.7 ms but ~3.1 cores at ~308 ms. A bound
+	//     justified on fast hardware does not carry to a slow deployment.
+	//
+	// Either way an UNAUTHENTICATED path reaching this KDF needs a rate limit
+	// ahead of it: even at ~57.7 ms a single core serves only ~17
+	// verifications per second, so a handful of sources saturates a host
+	// (#118 F1, #167).
 	//
 	// It is a single accepted value rather than a per-digest one, and that is
 	// a security property rather than a simplification. Authentication is
