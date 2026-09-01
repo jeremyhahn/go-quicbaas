@@ -329,16 +329,16 @@ func TestNewIAMServiceAdapter(t *testing.T) {
 	assert.NotNil(t, adapter)
 }
 
-func TestIAMServiceAdapter_CreateTenant_NilInput(t *testing.T) {
+func TestIAMServiceAdapter_CreateTenant_MissingName(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	result, err := adapter.CreateTenant(ctx, nil)
+	result, err := adapter.CreateTenant(ctx, iam.CreateTenantOptions{})
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "tenant cannot be nil")
+	assert.Contains(t, err.Error(), "name cannot be nil")
 }
 
 func TestIAMServiceAdapter_UpdateTenant_NilInput(t *testing.T) {
@@ -899,8 +899,7 @@ func TestAdapter91_CreateTenant_Success(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
-	tenant := &iam.Tenant{ID: "test-tenant-1", Name: "Test Tenant"}
-	result, err := adapter.CreateTenant(ctx, tenant)
+	result, err := adapter.CreateTenant(ctx, iam.CreateTenantOptions{ID: "test-tenant-1", Name: "Test Tenant"})
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, "test-tenant-1", result.ID)
@@ -917,7 +916,7 @@ func TestAdapter91_CreateTenant_Error(t *testing.T) {
 	}
 	adapter := NewIAMServiceAdapter(tenantMgr, nil, nil, nil, nil, nil)
 
-	result, err := adapter.CreateTenant(ctx, &iam.Tenant{ID: "x", Name: "X"})
+	result, err := adapter.CreateTenant(ctx, iam.CreateTenantOptions{ID: "x", Name: "X"})
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Equal(t, mockErr, err)

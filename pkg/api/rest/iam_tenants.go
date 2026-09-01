@@ -16,6 +16,7 @@
 package rest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -27,6 +28,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 )
 
 // ListTenants handles GET /api/v1/tenants - List all tenants.
@@ -105,17 +107,55 @@ func (h *IAMHandler) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	// Parse request
+	// IsolationType, EngineQuotas and EngineEntitlements are engine-side
+	// provisioning knobs that can only be chosen while the tenant is being
+	// created — the engine binds isolation at creation, and applying quotas
+	// in the same call avoids a window where a new tenant runs on defaults.
+	// All three are optional; omitting them defers to the engine's defaults.
+	//
+	// The two engine objects are held as raw JSON and decoded strictly below.
+	// Their ABSENCE means "keep the engine's configured defaults", so a
+	// mistyped key would otherwise decode to an empty override and quietly
+	// replace those defaults with an all-defaults, all-denied set.
 	var req struct {
-		ID       string              `json:"id,omitempty"`
-		Name     string              `json:"name"`
-		Settings *iam.TenantSettings `json:"settings,omitempty"`
-		Quotas   *iam.TenantQuotas   `json:"quotas,omitempty"`
+		ID                 string                      `json:"id,omitempty"`
+		Name               string                      `json:"name"`
+		Settings           *iam.TenantSettings         `json:"settings,omitempty"`
+		Quotas             *iam.TenantQuotas           `json:"quotas,omitempty"`
+		IsolationType      qrdbsdk.TenantIsolationType `json:"isolation_type,omitempty"`
+		EngineQuotas       json.RawMessage             `json:"engine_quotas,omitempty"`
+		EngineEntitlements json.RawMessage             `json:"engine_entitlements,omitempty"`
 	}
 
 	if err := json.Unmarshal(body, &req); err != nil {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "invalid JSON body"))
 		return
+	}
+
+	// Decoded into the SDK's limits-only view, so the engine-owned current_*
+	// counters are rejected as unknown fields: the gRPC create request models
+	// limits only, and accepting them here would give the same request a
+	// different meaning per transport.
+	var engineQuotas *qrdbsdk.Quotas
+	if jsonObjectPresent(req.EngineQuotas) {
+		limits := &iamsdk.EngineQuotas{}
+		if err := decodeStrictJSON(req.EngineQuotas, limits); err != nil {
+			RespondIAMError(w, r, http.StatusBadRequest,
+				NewIAMAPIError(ErrBadRequest, "invalid engine_quotas: "+err.Error()))
+			return
+		}
+		engineQuotas = limits.Quotas()
+	}
+
+	var engineEntitlements *qrdbsdk.Entitlements
+	if jsonObjectPresent(req.EngineEntitlements) {
+		engineEntitlements = &qrdbsdk.Entitlements{}
+		if err := decodeStrictJSON(req.EngineEntitlements, engineEntitlements); err != nil {
+			RespondIAMError(w, r, http.StatusBadRequest,
+				NewIAMAPIError(ErrBadRequest, "invalid engine_entitlements: "+err.Error()))
+			return
+		}
 	}
 
 	// Validate required fields
@@ -153,10 +193,13 @@ func (h *IAMHandler) CreateTenant(w http.ResponseWriter, r *http.Request) {
 
 	// Create tenant
 	opts := iam.CreateTenantOptions{
-		ID:       req.ID,
-		Name:     req.Name,
-		Settings: req.Settings,
-		Quotas:   req.Quotas,
+		ID:                 req.ID,
+		Name:               req.Name,
+		Settings:           req.Settings,
+		Quotas:             req.Quotas,
+		IsolationType:      req.IsolationType,
+		EngineQuotas:       engineQuotas,
+		EngineEntitlements: engineEntitlements,
 	}
 
 	tenant, err := mgr.CreateTenant(ctx, opts)
@@ -435,4 +478,25 @@ func (h *IAMHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondNoContent(w, r)
+}
+
+// jsonObjectPresent reports whether raw carries an actual object. A literal
+// JSON null is the caller spelling "not supplied": decoding it would produce a
+// non-nil zero override and cross the nil-vs-empty boundary, turning "keep the
+// engine's configured defaults" into "apply an all-defaults, all-denied
+// override".
+func jsonObjectPresent(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && string(trimmed) != "null"
+}
+
+// decodeStrictJSON decodes raw into dst rejecting unknown fields. It is used
+// for the engine provisioning objects, where an unrecognized key must be an
+// error rather than a silently empty override — the distinction between "no
+// object" (keep engine defaults) and "empty object" (apply an all-defaults,
+// all-denied override) is load-bearing, so a typo must not cross it.
+func decodeStrictJSON(raw json.RawMessage, dst interface{}) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(dst)
 }

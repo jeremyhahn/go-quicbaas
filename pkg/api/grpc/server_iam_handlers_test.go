@@ -37,8 +37,8 @@ type mockIAMService struct {
 	mock.Mock
 }
 
-func (m *mockIAMService) CreateTenant(ctx context.Context, tenant *iam.Tenant) (*iam.Tenant, error) {
-	args := m.Called(ctx, tenant)
+func (m *mockIAMService) CreateTenant(ctx context.Context, opts iam.CreateTenantOptions) (*iam.Tenant, error) {
+	args := m.Called(ctx, opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -452,7 +452,7 @@ func TestIAMServer_CreateTenant_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 	ctx := context.Background()
 
-	svc.On("CreateTenant", ctx, mock.AnythingOfType("*iam.Tenant")).
+	svc.On("CreateTenant", ctx, mock.AnythingOfType("iam.CreateTenantOptions")).
 		Return(&iam.Tenant{ID: "t1", Name: "Tenant One"}, nil)
 
 	resp, err := srv.CreateTenant(ctx, &iampb.CreateTenantRequest{

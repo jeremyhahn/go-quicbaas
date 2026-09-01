@@ -22,6 +22,8 @@ import (
 	"google.golang.org/grpc/status"
 	"gopkg.in/yaml.v3"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -39,7 +41,13 @@ type IAMServer struct {
 // This will be implemented by the service layer.
 type IAMService interface {
 	// Tenant operations
-	CreateTenant(ctx context.Context, tenant *iam.Tenant) (*iam.Tenant, error)
+	//
+	// CreateTenant takes the full CreateTenantOptions rather than an
+	// *iam.Tenant because a tenant's engine-side provisioning knobs
+	// (isolation strategy, engine quotas, engine entitlements) are creation
+	// inputs that have no home on the persisted Tenant record — passing a
+	// Tenant would silently drop them.
+	CreateTenant(ctx context.Context, opts iam.CreateTenantOptions) (*iam.Tenant, error)
 	GetTenant(ctx context.Context, id string) (*iam.Tenant, error)
 	UpdateTenant(ctx context.Context, tenant *iam.Tenant) (*iam.Tenant, error)
 	DeleteTenant(ctx context.Context, id string) error
@@ -139,24 +147,28 @@ func (s *IAMServer) CreateTenant(ctx context.Context, req *iampb.CreateTenantReq
 		return nil, status.Error(codes.InvalidArgument, "tenant name is required")
 	}
 
-	tenant := &iam.Tenant{
-		ID:   req.Id,
-		Name: req.Name,
+	opts := iam.CreateTenantOptions{
+		ID:                 req.Id,
+		Name:               req.Name,
+		IsolationType:      qrdbsdk.TenantIsolationType(req.IsolationType),
+		EngineQuotas:       engineQuotasFromProto(req.EngineQuotas),
+		EngineEntitlements: engineEntitlementsFromProto(req.EngineEntitlements),
 	}
 
 	if req.Settings != nil {
-		tenant.Settings = iam.TenantSettings{
+		settings := iam.TenantSettings{
 			MaxUsers:      int(req.Settings.MaxUsers),
 			MFARequired:   req.Settings.MfaRequired,
 			NamedNetworks: make(map[string][]string),
 		}
 
 		for name, cidr := range req.Settings.NamedNetworks {
-			tenant.Settings.NamedNetworks[name] = []string{cidr}
+			settings.NamedNetworks[name] = []string{cidr}
 		}
+		opts.Settings = &settings
 	}
 
-	created, err := s.iamService.CreateTenant(ctx, tenant)
+	created, err := s.iamService.CreateTenant(ctx, opts)
 	if err != nil {
 		return nil, convertIAMError(err)
 	}

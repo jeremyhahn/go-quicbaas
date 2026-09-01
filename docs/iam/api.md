@@ -350,9 +350,59 @@ Content-Type: application/json
   "settings": {
     "max_users": 1000,
     "mfa_required": true
+  },
+  "isolation_type": "barrier",
+  "engine_quotas": {
+    "max_databases": 20,
+    "max_storage_bytes": 107374182400,
+    "system_barrier_quota": 0
+  },
+  "engine_entitlements": {
+    "allowed_isolation_modes": ["prefix", "barrier"],
+    "allow_dedicated_raft": true
   }
 }
 ```
+
+`isolation_type`, `engine_quotas` and `engine_entitlements` are the engine-side
+provisioning knobs. All three are optional and omitting them defers to the
+engine's configured defaults, so a client that predates them is unaffected.
+
+- `isolation_type` — `prefix` (default), `barrier`, `volume` or `raft`. The
+  engine binds a tenant's isolation at creation, so this is **create-only**:
+  there is no update path, because moving an existing tenant between isolation
+  strategies would mean moving its data. The reserved system tenant must stay
+  `prefix`.
+- `engine_quotas` — the engine's numeric limits (`max_databases`, `max_keys`,
+  `max_storage_bytes`, `system_barrier_quota`, ...). `-1` means unlimited and
+  `0` means "use the system default"; an omitted object means "leave the
+  engine's configured defaults alone", which is *not* the same as sending an
+  empty object. Applied immediately after the tenant exists, so a provisioning
+  caller never races a new tenant running on defaults.
+- `engine_entitlements` — the engine's feature grants
+  (`allowed_isolation_modes`, `allow_dedicated_raft`, `allow_volume_storage`,
+  `allow_system_managed_barrier`, `allow_dedicated_wal`,
+  `allowed_barrier_modes`).
+
+A malformed `engine_quotas` or `engine_entitlements` object is rejected with
+`400`; it is never silently zeroed, because a zeroed quota set is a real
+instruction with different meaning. Both objects are decoded strictly, so an
+unrecognized key (`max_databasses`) is a `400` rather than an empty override
+that would quietly replace the engine's configured defaults. A literal `null`
+means "not supplied" and leaves the defaults in place.
+
+`engine_quotas` accepts the configured **limits only**. The `current_*` usage
+counters are engine-owned outputs and are rejected with `400` on every
+transport, whatever their value — the gRPC create request models limits only,
+so accepting them here would give the same request a different meaning per
+transport. Correct a counter through
+`PATCH /api/v1/tenants/{tenant_id}/quotas`, never tenant create.
+
+The same three fields travel on every transport: `isolation_type` /
+`engine_quotas` / `engine_entitlements` on the gRPC `CreateTenantRequest`
+(and therefore Unix), the same JSON keys over REST and QUIC, the same argument
+names on the `quicbaas_iam_tenant_create` MCP tool, and the corresponding
+fields on the SDK's `iam.CreateTenantRequest` for the embedded transport.
 
 **Get Tenant**
 ```

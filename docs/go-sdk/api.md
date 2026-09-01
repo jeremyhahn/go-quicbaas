@@ -1698,9 +1698,65 @@ func Create(ctx context.Context, req *CreateTenantRequest) (*Tenant, error)
 
 | Field | Type | Description |
 |-------|------|-------------|
+| ID | string | Tenant identifier (optional; generated when empty) |
 | Name | string | Tenant name |
-| Domain | string | Tenant domain (optional) |
+| DisplayName | string | Human-readable display name (optional) |
+| Description | string | Free-form description (optional) |
+| Settings | map[string]string | Tenant settings |
 | Metadata | map[string]string | Custom metadata |
+| IsolationType | TenantIsolationType | Engine isolation strategy. **Create-only** |
+| EngineQuotas | *EngineQuotas | Engine-level resource limits applied at creation |
+| EngineEntitlements | *EngineEntitlements | Engine-level feature entitlements applied at creation |
+
+The last three are the engine-side provisioning knobs. They are optional and
+default to the engine's configured behavior, so existing callers are
+unaffected; they travel identically on every transport (embedded, gRPC, Unix,
+REST, QUIC, MCP).
+
+`IsolationType` is create-only because the engine binds a tenant's isolation
+when the tenant is created — there is no update path, since changing strategy
+would mean relocating the tenant's data. `TenantIsolationPrefix` is the
+default; `TenantIsolationBarrier`, `TenantIsolationVolume` and
+`TenantIsolationRaft` give successively stronger separation.
+
+A nil `EngineQuotas`/`EngineEntitlements` means "leave the engine's configured
+defaults alone". That is deliberately distinct from a non-nil empty struct,
+which sets every limit to the system default and denies every feature.
+
+`EngineQuotas` is a **limits-only** view of the engine's `Quotas`, not an alias
+of it. The engine's struct also carries the `Current*` usage counters it
+maintains as consumption changes; those are outputs, and the gRPC create
+request models limits only. Naming just the limits makes the accepted
+create-time field set identical on every transport by construction: a Go caller
+cannot set a counter, and strict decoding rejects `current_*` on the wire.
+`(*EngineQuotas).Quotas()` widens it to the engine struct with the counters at
+zero. Correct a counter with `UpdateQuotas`, never with tenant create.
+
+`EngineEntitlements` stays a direct alias of the engine's `Entitlements`: every
+field on it is a grant, so there is nothing output-only to exclude.
+
+```go
+tenant, err := client.IAM().Tenant().Create(ctx, &iam.CreateTenantRequest{
+    ID:            "acme-corp",
+    Name:          "Acme Corporation",
+    IsolationType: iam.TenantIsolationBarrier,
+    EngineQuotas: &iam.EngineQuotas{
+        MaxDatabases:    20,
+        MaxStorageBytes: 100 << 30,
+    },
+    EngineEntitlements: &iam.EngineEntitlements{
+        AllowedIsolationModes: []string{"prefix", "barrier"},
+        AllowDedicatedRaft:    true,
+    },
+})
+```
+
+All three names are exported by `sdk/go/client/iam`, so a consumer that may
+only import `quicbaas/sdk/go/*` can name them. `TenantIsolationType` and
+`EngineEntitlements` are aliases of the engine's own types and are therefore
+assignable to and from them; `EngineQuotas` is a distinct limits-only struct
+(see above) — convert with `(*EngineQuotas).Quotas()` when an engine `Quotas`
+value is needed.
 
 #### Get
 

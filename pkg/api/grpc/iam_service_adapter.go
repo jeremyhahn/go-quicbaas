@@ -121,16 +121,13 @@ func NewIAMServiceAdapter(
 // Tenant Operations
 // =============================================================================
 
-// CreateTenant creates a new tenant.
-func (a *IAMServiceAdapter) CreateTenant(ctx context.Context, tenant *iam.Tenant) (*iam.Tenant, error) {
-	if tenant == nil {
-		return nil, api.NewNilInputError("iam.grpc.CreateTenant", "tenant")
-	}
-
-	opts := iam.CreateTenantOptions{
-		ID:       tenant.ID,
-		Name:     tenant.Name,
-		Settings: &tenant.Settings,
+// CreateTenant creates a new tenant. It forwards the caller's
+// CreateTenantOptions untouched, so the engine-side provisioning knobs
+// (isolation strategy, engine quotas, engine entitlements) reach the tenant
+// manager exactly as the gRPC caller sent them.
+func (a *IAMServiceAdapter) CreateTenant(ctx context.Context, opts iam.CreateTenantOptions) (*iam.Tenant, error) {
+	if opts.Name == "" {
+		return nil, api.NewNilInputError("iam.grpc.CreateTenant", "name")
 	}
 
 	return a.tenantManager.CreateTenant(ctx, opts)

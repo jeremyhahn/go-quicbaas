@@ -61,6 +61,28 @@ per-tenant key scoping and cross-tenant access checks; an ordinary tenant ID
 (including one that merely resembles "system", e.g. `"System"` or
 `"system-2"`) is still fully isolated.
 
+### Asking the question from outside quicbaas
+
+An embedding host may be forbidden from importing go-qrdb directly (the
+go-trusted-platform layer guard is machine-enforced), so the SDK re-exports
+the same symbols under `github.com/jeremyhahn/go-quicbaas/sdk/go`:
+
+| SDK symbol | Meaning |
+|------------|---------|
+| `quicbaas.SystemTenantID` | The reserved system tenant id |
+| `quicbaas.IsSystemTenant(tenantID string) bool` | The canonical predicate — true for the system id **and** the empty string |
+| `quicbaas.AuthIdentity` | The authenticated principal carried on a request context |
+| `quicbaas.IdentityIsSystemTenant(*AuthIdentity) bool` | Same question for an identity; a nil identity is system-scoped (internal boot pipeline) |
+
+These are pure aliases of the engine's own symbols, so the host gets exactly
+the answer the engine gives itself. Use the predicates rather than comparing
+against `SystemTenantID`: a bare string comparison misses the empty-tenant
+case and silently under-privileges internal callers.
+
+`AuthIdentity` is named apart from the SDK's existing `Identity` — that one is
+the entity resolved by a login ceremony's `FinishLoginResponse`, a different
+type; collapsing the two would be a silent widening.
+
 ## Service Coverage
 
 | Service | Tenant Helper File | Storage Prefix | Scoped Entity |

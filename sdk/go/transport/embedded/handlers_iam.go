@@ -95,6 +95,38 @@ func iamRequestField(req interface{}, name string) (string, bool) {
 	return f.String(), true
 }
 
+// iamRequestPayload extracts the *T an SDK sub-client wraps inside its
+// transport request. Several of those wrapper structs are unexported (e.g.
+// iam.createAdminAssignmentRequest), so the embedded transport cannot name
+// their type — but their fields are exported, so reflection reaches the
+// payload without the SDK having to widen its API surface. name is the field
+// (or embedded type) holding the payload; a request that is already a *T is
+// returned as-is, which is the shape the tenant handlers receive.
+func iamRequestPayload[T any](req interface{}, name string) (*T, bool) {
+	if typed, ok := req.(*T); ok {
+		return typed, typed != nil
+	}
+	v := reflect.ValueOf(req)
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return nil, false
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil, false
+	}
+	f := v.FieldByName(name)
+	if !f.IsValid() || !f.CanInterface() {
+		return nil, false
+	}
+	typed, ok := f.Interface().(*T)
+	if !ok || typed == nil {
+		return nil, false
+	}
+	return typed, true
+}
+
 // =============================================================================
 // Tenant handlers (quicbaas.IAM.Tenant/*)
 // =============================================================================
@@ -109,9 +141,15 @@ func handleIAMTenantCreate(ctx context.Context, svc service.QuicBaaS, req interf
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Tenant", "Create",
 			"*iam.CreateTenantRequest", reflect.TypeOf(req).String())
 	}
+	// EngineQuotas is the limits-only create-time view; Quotas() widens it to
+	// the engine struct with every usage counter left at zero, which is what
+	// the tenant manager expects.
 	t, err := mgr.CreateTenant(ctx, iam.CreateTenantOptions{
-		ID:   r.ID,
-		Name: r.Name,
+		ID:                 r.ID,
+		Name:               r.Name,
+		IsolationType:      r.IsolationType,
+		EngineQuotas:       r.EngineQuotas.Quotas(),
+		EngineEntitlements: r.EngineEntitlements,
 	})
 	if err != nil {
 		return nil, err

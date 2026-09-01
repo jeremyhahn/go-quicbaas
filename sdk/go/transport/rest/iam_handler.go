@@ -1815,6 +1815,20 @@ func mapTenantCreateRequest(req map[string]interface{}) map[string]interface{} {
 		}
 	}
 
+	// Engine provisioning knobs. They pass through verbatim under the keys the
+	// SDK request marshals to and the REST server parses, so the body shape
+	// matches what the embedded and gRPC transports send. Each is omitted when
+	// unset, leaving an existing caller's body exactly as it was.
+	if isolation := getString(req, "isolation_type"); isolation != "" {
+		body["isolation_type"] = isolation
+	}
+	if quotas, ok := req["engine_quotas"]; ok && quotas != nil {
+		body["engine_quotas"] = quotas
+	}
+	if entitlements, ok := req["engine_entitlements"]; ok && entitlements != nil {
+		body["engine_entitlements"] = entitlements
+	}
+
 	return body
 }
 

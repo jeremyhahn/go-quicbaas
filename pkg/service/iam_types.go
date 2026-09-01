@@ -20,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -44,6 +46,19 @@ type CreateTenantRequest struct {
 
 	// Quotas defines resource limits for this tenant
 	Quotas *iam.TenantQuotas `json:"quotas,omitempty"`
+
+	// IsolationType selects the engine isolation strategy for the tenant's
+	// data. The engine binds isolation at creation, so this cannot be changed
+	// later; empty defers to the engine default (prefix).
+	IsolationType qrdbsdk.TenantIsolationType `json:"isolation_type,omitempty"`
+
+	// EngineQuotas overrides the engine-level resource limits applied to the
+	// tenant. Nil leaves the engine's configured defaults in place.
+	EngineQuotas *qrdbsdk.Quotas `json:"engine_quotas,omitempty"`
+
+	// EngineEntitlements overrides the engine-level feature entitlements for
+	// the tenant. Nil leaves the engine's configured defaults in place.
+	EngineEntitlements *qrdbsdk.Entitlements `json:"engine_entitlements,omitempty"`
 }
 
 // CreateTenantResponse returns the created tenant.

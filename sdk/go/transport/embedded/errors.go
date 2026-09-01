@@ -113,3 +113,28 @@ func NewStreamNotSupportedError(service, method string) *StreamNotSupportedError
 		Method:  method,
 	}
 }
+
+// PermissionDeniedError indicates the authenticated subject on the request
+// context is not permitted to act on the named resource. It exists so the
+// embedded transport can refuse a cross-subject operation with the same
+// outcome the REST handlers produce (HTTP 403) rather than silently serving
+// another principal's data.
+type PermissionDeniedError struct {
+	Service string
+	Method  string
+	Reason  string
+}
+
+// Error implements the error interface.
+func (e *PermissionDeniedError) Error() string {
+	return "PERMISSION_DENIED: embedded: " + e.Service + "/" + e.Method + ": " + e.Reason
+}
+
+// NewPermissionDeniedError creates a new PermissionDeniedError.
+func NewPermissionDeniedError(service, method, reason string) *PermissionDeniedError {
+	return &PermissionDeniedError{
+		Service: service,
+		Method:  method,
+		Reason:  reason,
+	}
+}

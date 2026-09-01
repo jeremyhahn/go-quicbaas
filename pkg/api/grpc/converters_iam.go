@@ -19,6 +19,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gopkg.in/yaml.v3"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -94,6 +96,53 @@ func convertTenantToProto(t *iam.Tenant) *iampb.Tenant {
 	pb.UpdatedAt = timestamppb.New(t.Updated)
 
 	return pb
+}
+
+// engineQuotasFromProto converts the tenant-create engine quota message to the
+// engine's own Quotas struct. A nil message yields nil, which is what tells the
+// tenant manager to leave the engine's configured defaults alone — an empty
+// struct would instead write zeros and be read as "use the system default" for
+// every limit, so the distinction is load-bearing.
+func engineQuotasFromProto(pb *iampb.TenantEngineQuotas) *qrdbsdk.Quotas {
+	if pb == nil {
+		return nil
+	}
+	return &qrdbsdk.Quotas{
+		MaxDatabases:          pb.GetMaxDatabases(),
+		MaxRaftGroups:         pb.GetMaxRaftGroups(),
+		MaxReplicasPerGroup:   pb.GetMaxReplicasPerGroup(),
+		MaxTotalReplicas:      pb.GetMaxTotalReplicas(),
+		MaxCollections:        pb.GetMaxCollections(),
+		MaxKeys:               pb.GetMaxKeys(),
+		MaxStorageBytes:       pb.GetMaxStorageBytes(),
+		MaxDatabaseSizeBytes:  pb.GetMaxDatabaseSizeBytes(),
+		MaxUsers:              pb.GetMaxUsers(),
+		MaxRoles:              pb.GetMaxRoles(),
+		MaxCertificates:       pb.GetMaxCertificates(),
+		MaxBackups:            pb.GetMaxBackups(),
+		MaxVectorDims:         pb.GetMaxVectorDims(),
+		MaxTSMetrics:          pb.GetMaxTsMetrics(),
+		MaxDedicatedWALGroups: pb.GetMaxDedicatedWalGroups(),
+		SystemBarrierQuota:    pb.GetSystemBarrierQuota(),
+	}
+}
+
+// engineEntitlementsFromProto converts the tenant-create engine entitlement
+// message to the engine's own Entitlements struct. A nil message yields nil so
+// the engine keeps its configured defaults rather than being handed an
+// all-denied entitlement set.
+func engineEntitlementsFromProto(pb *iampb.TenantEngineEntitlements) *qrdbsdk.Entitlements {
+	if pb == nil {
+		return nil
+	}
+	return &qrdbsdk.Entitlements{
+		AllowedIsolationModes:     pb.GetAllowedIsolationModes(),
+		AllowDedicatedRaft:        pb.GetAllowDedicatedRaft(),
+		AllowVolumeStorage:        pb.GetAllowVolumeStorage(),
+		AllowSystemManagedBarrier: pb.GetAllowSystemManagedBarrier(),
+		AllowDedicatedWAL:         pb.GetAllowDedicatedWal(),
+		AllowedBarrierModes:       pb.GetAllowedBarrierModes(),
+	}
 }
 
 // =============================================================================

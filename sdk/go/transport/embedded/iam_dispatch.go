@@ -75,6 +75,32 @@ var iamUnaryHandlers = map[string]handlerFunc{
 	"quicbaas.IAM.App/List":     handleIAMAppList,
 	"quicbaas.IAM.App/Delete":   handleIAMAppDelete,
 
+	// Session. RevokeOther is the spelling the gRPC transport also accepts.
+	// Touch is deliberately absent: no other transport carries it either, and
+	// service.SessionManager has no activity-update operation to implement it
+	// against — an "unknown method" here matches gRPC's Unimplemented.
+	"quicbaas.IAM.Session/Get":          handleIAMSessionGet,
+	"quicbaas.IAM.Session/List":         handleIAMSessionList,
+	"quicbaas.IAM.Session/Revoke":       handleIAMSessionRevoke,
+	"quicbaas.IAM.Session/RevokeAll":    handleIAMSessionRevokeAll,
+	"quicbaas.IAM.Session/RevokeOthers": handleIAMSessionRevokeOthers,
+	"quicbaas.IAM.Session/RevokeOther":  handleIAMSessionRevokeOthers,
+
+	// Admin (delegated administration). GetActiveImpersonations is the name
+	// the gRPC transport accepts alongside ListActiveImpersonations; both are
+	// registered so a caller's method name resolves identically on either
+	// transport.
+	"quicbaas.IAM.Admin/CreateAssignment":         handleIAMAdminCreateAssignment,
+	"quicbaas.IAM.Admin/GetAssignment":            handleIAMAdminGetAssignment,
+	"quicbaas.IAM.Admin/UpdateAssignment":         handleIAMAdminUpdateAssignment,
+	"quicbaas.IAM.Admin/DeleteAssignment":         handleIAMAdminDeleteAssignment,
+	"quicbaas.IAM.Admin/ListAssignments":          handleIAMAdminListAssignments,
+	"quicbaas.IAM.Admin/CheckPermission":          handleIAMAdminCheckPermission,
+	"quicbaas.IAM.Admin/StartImpersonation":       handleIAMAdminStartImpersonation,
+	"quicbaas.IAM.Admin/EndImpersonation":         handleIAMAdminEndImpersonation,
+	"quicbaas.IAM.Admin/ListActiveImpersonations": handleIAMAdminListActiveImpersonations,
+	"quicbaas.IAM.Admin/GetActiveImpersonations":  handleIAMAdminListActiveImpersonations,
+
 	// PEP
 	"quicbaas.IAM.PEP/Check": handleIAMPEPCheck,
 }

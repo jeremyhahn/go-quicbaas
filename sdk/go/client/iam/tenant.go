@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
@@ -25,6 +27,131 @@ import (
 const (
 	tenantServiceName = "quicbaas.IAM.Tenant"
 )
+
+// Tenant provisioning types. A tenant's isolation mode and its engine-level
+// limits are decided at creation time and cannot be inferred afterwards, so
+// the create request has to be able to name them. They are aliases of the
+// engine's own types rather than parallel definitions: a divergent copy here
+// would drift from what the engine actually enforces.
+
+// TenantIsolationType identifies a tenant's engine-side isolation mode.
+type TenantIsolationType = qrdbsdk.TenantIsolationType
+
+// Engine isolation modes, ordered from weakest to strongest separation. The
+// zero value defers to the engine default (prefix), which is why every
+// existing caller that omits IsolationType keeps its current behavior.
+const (
+	// TenantIsolationPrefix shares the system barrier and separates tenant
+	// data by logical key prefixing.
+	TenantIsolationPrefix = qrdbsdk.TenantIsolationPrefix
+
+	// TenantIsolationBarrier gives the tenant its own DEK and a dedicated
+	// namespace under the system data root.
+	TenantIsolationBarrier = qrdbsdk.TenantIsolationBarrier
+
+	// TenantIsolationVolume gives the tenant a dedicated filesystem DataRoot.
+	TenantIsolationVolume = qrdbsdk.TenantIsolationVolume
+
+	// TenantIsolationRaft gives the tenant a dedicated Raft group per database.
+	TenantIsolationRaft = qrdbsdk.TenantIsolationRaft
+)
+
+// EngineQuotas are the engine-level numeric resource limits applied to a
+// tenant at creation. They are distinct from the BaaS-layer IAM quotas carried
+// in Settings.
+//
+// This is a limits-only view of the engine's Quotas rather than an alias of
+// it. The engine's struct also carries the Current* usage counters it
+// maintains as consumption changes; those are outputs, and the gRPC
+// CreateTenantRequest models limits only. Aliasing the full struct would make
+// a counter part of the accepted create-time shape on the JSON transports
+// while gRPC silently dropped it — the same request meaning different things
+// per transport. Naming only the limits makes the accepted field set identical
+// everywhere by construction: a Go caller cannot set a counter, and strict
+// decoding rejects one on the wire. Use UpdateQuotas to correct a counter.
+//
+// A value of -1 means unlimited; 0 means use the engine's system default.
+type EngineQuotas struct {
+	// MaxDatabases caps the number of databases the tenant may create.
+	MaxDatabases int64 `json:"max_databases"`
+
+	// MaxRaftGroups caps the number of dedicated Raft consensus groups.
+	MaxRaftGroups int64 `json:"max_raft_groups"`
+
+	// MaxReplicasPerGroup caps the replication factor of any single group.
+	MaxReplicasPerGroup int64 `json:"max_replicas_per_group"`
+
+	// MaxTotalReplicas caps total replicas across all dedicated-raft groups.
+	MaxTotalReplicas int64 `json:"max_total_replicas"`
+
+	// MaxCollections caps the number of vector/time-series collections.
+	MaxCollections int64 `json:"max_collections"`
+
+	// MaxKeys caps the total number of keys across all databases.
+	MaxKeys int64 `json:"max_keys"`
+
+	// MaxStorageBytes caps total on-disk storage consumption in bytes.
+	MaxStorageBytes int64 `json:"max_storage_bytes"`
+
+	// MaxDatabaseSizeBytes caps the on-disk size of any single database.
+	MaxDatabaseSizeBytes int64 `json:"max_database_size_bytes"`
+
+	// MaxUsers caps the number of IAM users the tenant may create.
+	MaxUsers int64 `json:"max_users"`
+
+	// MaxRoles caps the number of IAM roles the tenant may create.
+	MaxRoles int64 `json:"max_roles"`
+
+	// MaxCertificates caps the number of TLS certificates the tenant may hold.
+	MaxCertificates int64 `json:"max_certificates"`
+
+	// MaxBackups caps the number of database backups the tenant may retain.
+	MaxBackups int64 `json:"max_backups"`
+
+	// MaxVectorDims caps the maximum vector dimensionality the tenant may use.
+	MaxVectorDims int64 `json:"max_vector_dims"`
+
+	// MaxTSMetrics caps the number of time-series metrics the tenant may track.
+	MaxTSMetrics int64 `json:"max_ts_metrics"`
+
+	// MaxDedicatedWALGroups caps dedicated-raft groups with a per-tenant WAL.
+	MaxDedicatedWALGroups int64 `json:"max_dedicated_wal_groups"`
+
+	// SystemBarrierQuota governs the tenant's use of the shared system barrier
+	// (bytes): 0 = unavailable, -1 = unlimited, >0 = capped at that many bytes.
+	SystemBarrierQuota int64 `json:"system_barrier_quota"`
+}
+
+// Quotas converts the create-time limits into the engine's own Quotas struct,
+// leaving every usage counter at zero — the engine owns those and fills them
+// in as consumption changes.
+func (q *EngineQuotas) Quotas() *qrdbsdk.Quotas {
+	if q == nil {
+		return nil
+	}
+	return &qrdbsdk.Quotas{
+		MaxDatabases:          q.MaxDatabases,
+		MaxRaftGroups:         q.MaxRaftGroups,
+		MaxReplicasPerGroup:   q.MaxReplicasPerGroup,
+		MaxTotalReplicas:      q.MaxTotalReplicas,
+		MaxCollections:        q.MaxCollections,
+		MaxKeys:               q.MaxKeys,
+		MaxStorageBytes:       q.MaxStorageBytes,
+		MaxDatabaseSizeBytes:  q.MaxDatabaseSizeBytes,
+		MaxUsers:              q.MaxUsers,
+		MaxRoles:              q.MaxRoles,
+		MaxCertificates:       q.MaxCertificates,
+		MaxBackups:            q.MaxBackups,
+		MaxVectorDims:         q.MaxVectorDims,
+		MaxTSMetrics:          q.MaxTSMetrics,
+		MaxDedicatedWALGroups: q.MaxDedicatedWALGroups,
+		SystemBarrierQuota:    q.SystemBarrierQuota,
+	}
+}
+
+// EngineEntitlements are the engine-level feature entitlements (isolation
+// tiers, dedicated-storage, WAL features) granted to a tenant.
+type EngineEntitlements = qrdbsdk.Entitlements
 
 // TenantClient provides tenant management operations.
 type TenantClient interface {
@@ -63,6 +190,25 @@ type CreateTenantRequest struct {
 
 	// Metadata contains additional metadata.
 	Metadata map[string]string `json:"metadata,omitempty"`
+
+	// IsolationType selects the engine isolation strategy for the tenant's
+	// data. It is only settable here: the engine binds a tenant's isolation
+	// at creation and a later update cannot move data between strategies.
+	// Empty defers to the engine default (prefix), so callers that never set
+	// it are unaffected. The reserved system tenant must remain prefix.
+	IsolationType TenantIsolationType `json:"isolation_type,omitempty"`
+
+	// EngineQuotas overrides the engine-level resource limits applied to the
+	// tenant at creation. Nil leaves the engine's configured defaults in
+	// place; a non-nil value is applied immediately after the tenant exists,
+	// so a provisioning caller does not race a newly created tenant against
+	// a follow-up quota update.
+	EngineQuotas *EngineQuotas `json:"engine_quotas,omitempty"`
+
+	// EngineEntitlements overrides the engine-level feature entitlements for
+	// the tenant at creation. Nil leaves the engine's configured defaults in
+	// place.
+	EngineEntitlements *EngineEntitlements `json:"engine_entitlements,omitempty"`
 }
 
 // UpdateTenantRequest is a request to update a tenant.

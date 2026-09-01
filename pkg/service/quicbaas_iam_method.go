@@ -69,9 +69,12 @@ func (w *iamServiceWrapper) CreateTenant(ctx context.Context, req *CreateTenantR
 	}
 
 	opts := iam.CreateTenantOptions{
-		Name:     req.Name,
-		Settings: req.Settings,
-		Quotas:   req.Quotas,
+		Name:               req.Name,
+		Settings:           req.Settings,
+		Quotas:             req.Quotas,
+		IsolationType:      req.IsolationType,
+		EngineQuotas:       req.EngineQuotas,
+		EngineEntitlements: req.EngineEntitlements,
 	}
 	if req.ID != "" {
 		opts.ID = req.ID

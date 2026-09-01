@@ -16,13 +16,18 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"strconv"
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 
 	"gopkg.in/yaml.v3"
 )
@@ -95,6 +100,18 @@ func (r *ToolRegistry) registerTenantTools() {
 				"quotas": map[string]interface{}{
 					"type":        "object",
 					"description": "Resource limits for this tenant",
+				},
+				"isolation_type": map[string]interface{}{
+					"type":        "string",
+					"description": "Engine isolation strategy: prefix (default), barrier, volume, or raft. Only settable at creation.",
+				},
+				"engine_quotas": map[string]interface{}{
+					"type":        "object",
+					"description": "Engine-level resource limits (max_databases, max_keys, max_storage_bytes, ...) applied at creation",
+				},
+				"engine_entitlements": map[string]interface{}{
+					"type":        "object",
+					"description": "Engine-level feature entitlements (isolation tiers, dedicated storage, WAL features) applied at creation",
 				},
 			},
 			"required": []string{"name"},
@@ -1317,6 +1334,36 @@ func (r *ToolRegistry) executeIAMTenantCreate(ctx context.Context, args map[stri
 		if parseErr := parseJSONObject(quotasRaw, quotas); parseErr == nil {
 			req.Quotas = quotas
 		}
+	}
+	// Engine provisioning knobs. Isolation is bound by the engine at creation
+	// and the quotas/entitlements are applied in the same call, so this tool
+	// is the only MCP surface that can set them.
+	if raw, present := args["isolation_type"]; present && raw != nil {
+		isolation, ok := raw.(string)
+		if !ok {
+			return nil, &TenantEngineObjectError{Field: "isolation_type", Reason: "expected a string"}
+		}
+		req.IsolationType = qrdbsdk.TenantIsolationType(isolation)
+	}
+	// Decoded into the SDK's limits-only view, so the engine-owned current_*
+	// counters are rejected as unknown fields — the gRPC create request models
+	// limits only, and accepting them here would give the same request a
+	// different meaning per transport.
+	engineQuotas := &iamsdk.EngineQuotas{}
+	present, err := decodeTenantEngineObject(args, "engine_quotas", engineQuotas)
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		req.EngineQuotas = engineQuotas.Quotas()
+	}
+	entitlements := &qrdbsdk.Entitlements{}
+	present, err = decodeTenantEngineObject(args, "engine_entitlements", entitlements)
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		req.EngineEntitlements = entitlements
 	}
 	// max_users is an engine-level quota owned by qrdb TenantServicer; it is
 	// not settable via the BaaS IAM quota surface.
@@ -2746,4 +2793,60 @@ func (e *AuditEventGetError) Error() string {
 // Unwrap returns the underlying cause for errors.Is/As support.
 func (e *AuditEventGetError) Unwrap() error {
 	return e.Cause
+}
+
+// TenantEngineObjectError indicates a malformed engine provisioning object on
+// a tenant-create request. It is a distinct type because the alternative —
+// ignoring the field — turns an explicit override into engine defaults, and a
+// mistyped key into an all-defaults override, neither of which the caller
+// asked for.
+type TenantEngineObjectError struct {
+	Field  string
+	Reason string
+	Cause  error
+}
+
+// Error implements the error interface.
+func (e *TenantEngineObjectError) Error() string {
+	msg := "iam.tenant.create: " + e.Field + ": " + e.Reason
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns the underlying cause for errors.Is/As support.
+func (e *TenantEngineObjectError) Unwrap() error {
+	return e.Cause
+}
+
+// decodeTenantEngineObject strictly decodes one engine provisioning object out
+// of the tool arguments into dst, reporting whether the caller supplied it.
+//
+// Decoding is strict about unknown fields on purpose: these objects are
+// overrides whose ABSENCE means "keep the engine's configured defaults", so a
+// mistyped key (max_databasses) would otherwise decode to an empty override
+// and quietly replace the engine's defaults with an all-defaults, all-denied
+// set. Numeric strings are normalized first because a model frequently quotes
+// its numbers, and dropping those would zero every limit just as silently.
+func decodeTenantEngineObject(args map[string]interface{}, field string, dst interface{}) (bool, error) {
+	raw, present := args[field]
+	if !present || raw == nil {
+		return false, nil
+	}
+	obj, ok := raw.(map[string]interface{})
+	if !ok {
+		return false, &TenantEngineObjectError{Field: field, Reason: "expected a JSON object"}
+	}
+
+	data, err := json.Marshal(convertStringNumerics(obj))
+	if err != nil {
+		return false, &TenantEngineObjectError{Field: field, Reason: "is not encodable", Cause: err}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return false, &TenantEngineObjectError{Field: field, Reason: "does not match the expected shape", Cause: err}
+	}
+	return true, nil
 }

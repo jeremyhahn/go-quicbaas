@@ -45,9 +45,15 @@ import (
 // testTenantManager implements TenantManager interface wrapping MemoryStorage.
 type testTenantManager struct {
 	storage *iam.MemoryStorage
+
+	// lastCreateOpts records the options the handler built, so a test can
+	// assert on fields (the engine provisioning knobs) that the persisted
+	// Tenant record does not carry.
+	lastCreateOpts iam.CreateTenantOptions
 }
 
 func (m *testTenantManager) CreateTenant(ctx context.Context, opts iam.CreateTenantOptions) (*iam.Tenant, error) {
+	m.lastCreateOpts = opts
 	tenant := &iam.Tenant{
 		ID:      opts.ID,
 		Name:    opts.Name,

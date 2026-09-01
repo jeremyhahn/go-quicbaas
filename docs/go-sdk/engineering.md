@@ -137,6 +137,90 @@ client, err := quicbaas.NewClient("", quicbaas.WithEmbedded(svc))
 
 The address parameter is ignored when using `WithEmbedded()`. Pass an empty string or any placeholder.
 
+### IAM coverage
+
+The embedded dispatch table answers the IAM services an in-process host needs,
+including the ones a hosting product depends on most:
+
+| Service | Methods |
+|---------|---------|
+| `IAM.Tenant` | Create, Get, Update, Delete, List |
+| `IAM.User` | Create, Get, Update, Delete, List |
+| `IAM.Group` | Create, Get, Update, Delete, List |
+| `IAM.Role` | Create, Get, Update, Delete, List |
+| `IAM.Policy` | Create, Get, List, Delete |
+| `IAM.App` | Register, Get, List, Delete |
+| `IAM.Session` | Get, List, Revoke, RevokeAll, RevokeOthers (`RevokeOther` accepted) |
+| `IAM.Admin` | CreateAssignment, GetAssignment, UpdateAssignment, DeleteAssignment, ListAssignments, CheckPermission, StartImpersonation, EndImpersonation, ListActiveImpersonations (`GetActiveImpersonations` accepted) |
+| `IAM.PEP` | Check |
+
+`IAM.Session` and `IAM.Admin` dispatch against the same
+`service.SessionManager` and `*iam.AdminManager` the REST and gRPC handlers
+use, so every authorization and audit rule **those managers** enforce applies
+identically in-process — an impersonation the admin manager would refuse over
+gRPC is refused here too.
+
+Transport-level gating is a different question. A network transport's
+middleware authenticates the caller and puts a `Subject` on the context; the
+embedded transport has no middleware, because its caller is the host process
+itself. Two consequences:
+
+- **`IAM.Session` is self-scoped whenever a `Subject` is present.** The
+  handlers apply the REST ownership rule exactly (see
+  `pkg/api/rest/iam_sessions.go`): naming another user's session, or a
+  user/tenant that disagrees with the subject, returns a typed
+  `*embedded.PermissionDeniedError`. So putting the SDK behind an
+  authenticated surface — propagate the subject with
+  `auth.SubjectIntoContext` — does not turn the embedded transport into a way
+  to read or revoke a third party's sessions.
+- **`IAM.Admin` evaluates the route-equivalent permission when a `Subject` is
+  present.** Delegated administration is permission-gated over REST by the
+  frozen route table (`pkg/api/rest/routes_permissions_generated.go`), e.g.
+  `roles:assign` for `POST /api/v1/admin/assignments`. A subject-bound embedded
+  call evaluates the same `resource:action` against the policy engine before
+  touching the manager, and **fails closed** when no engine is wired.
+  Those grants are generic — `users:update` says the caller may update users,
+  not that a particular record is theirs — so the handlers additionally bind
+  the caller-supplied identifiers that decide *whose* records are touched. An
+  omitted value is filled from the subject; a mismatched one returns
+  `*embedded.PermissionDeniedError`:
+
+  | Operation | Bound to the subject | Bound for a tenant-scoped subject only |
+  |-----------|----------------------|----------------------------------------|
+  | `CreateAssignment` | `GrantedBy` (the audit actor) | the granted scope: omitted becomes the subject's tenant instead of a global grant, another tenant is refused |
+  | `ListAssignments` | — | the tenant filter |
+  | `CheckPermission` | — | the tenant the answer is computed in (`AdminID` stays free: naming the admin being inspected is the point) |
+  | `StartImpersonation` | `AdminUserID` | `TenantID` |
+  | `EndImpersonation` | — | the session must belong to the subject, in its tenant |
+  | `ListActiveImpersonations` | — | the admin id, and results are narrowed to the tenant |
+
+  The right-hand column is skipped for a **system-tenant** subject
+  (`qrdbsdk.IsSystemTenant`, which covers the empty tenant id): the system
+  scope is the platform itself, not a tenant named `system`, so pinning it to
+  its own "tenant" would make cross-tenant platform administration impossible.
+
+  `GetAssignment` / `UpdateAssignment` / `DeleteAssignment` are addressed by
+  assignment id and are gated on `roles:read` / `roles:assign` /
+  `roles:unassign` alone. An assignment's `TenantIDs` are its grant *scope* —
+  which tenants the admin may administer — not an ownership marker on the
+  record, so no per-record tenant check is inferred from them (the REST
+  handlers do not infer one either).
+- **A context with no `Subject` is unrestricted**, which is the pre-existing
+  contract for every embedded IAM handler (tenant, user, group, role, policy
+  all behave this way). The host process is the trust boundary. Do not expose
+  the embedded transport directly to an untrusted caller.
+
+A host that has not wired the corresponding manager gets a typed
+`*embedded.ServiceNotConfiguredError` naming the service, never a nil-pointer
+panic.
+
+`IAM.Session/Touch` is deliberately absent: no transport carries it, because
+`service.SessionManager` exposes no activity-update operation. Calling it
+yields "unknown method", which matches gRPC's `Unimplemented`.
+
+`IAM.Audit` and `IAM.GDPR` are not yet in the embedded table; use the gRPC,
+Unix, or REST transport for those.
+
 ## TLS Configuration
 
 ### Using Certificate Files

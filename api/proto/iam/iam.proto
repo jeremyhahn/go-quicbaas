@@ -274,6 +274,78 @@ message CreateTenantRequest {
   string id = 1;
   string name = 2;
   TenantSettings settings = 3;
+  // isolation_type selects the engine isolation strategy for the tenant's
+  // data ("prefix", "barrier", "volume", "raft"). The engine binds isolation
+  // at creation and it cannot be changed afterwards, which is why it lives on
+  // the create request and not on UpdateTenantRequest. Empty defers to the
+  // engine default (prefix), so pre-existing clients are unaffected.
+  string isolation_type = 4;
+  // engine_quotas overrides the engine-level resource limits applied to the
+  // tenant. Unset leaves the engine's configured defaults in place.
+  TenantEngineQuotas engine_quotas = 5;
+  // engine_entitlements overrides the engine-level feature entitlements for
+  // the tenant. Unset leaves the engine's configured defaults in place.
+  TenantEngineEntitlements engine_entitlements = 6;
+}
+
+// TenantEngineQuotas carries the engine-level numeric resource limits applied
+// to a tenant at creation. A value of -1 means unlimited; 0 means use the
+// system default. Mirrors pkg/quota.Quotas (limit fields only — the usage
+// counters on that struct are engine-owned outputs, never creation inputs).
+message TenantEngineQuotas {
+  // max_databases caps the number of databases the tenant may create.
+  int64 max_databases = 1;
+  // max_raft_groups caps the number of dedicated Raft consensus groups.
+  int64 max_raft_groups = 2;
+  // max_replicas_per_group caps the replication factor of any single group.
+  int64 max_replicas_per_group = 3;
+  // max_total_replicas caps total replicas across all dedicated-raft groups.
+  int64 max_total_replicas = 4;
+  // max_collections caps the number of vector/time-series collections.
+  int64 max_collections = 5;
+  // max_keys caps the total number of keys across all databases.
+  int64 max_keys = 6;
+  // max_storage_bytes caps total on-disk storage consumption in bytes.
+  int64 max_storage_bytes = 7;
+  // max_database_size_bytes caps the on-disk size of any single database.
+  int64 max_database_size_bytes = 8;
+  // max_users caps the number of IAM users the tenant may create.
+  int64 max_users = 9;
+  // max_roles caps the number of IAM roles the tenant may create.
+  int64 max_roles = 10;
+  // max_certificates caps the number of TLS certificates the tenant may hold.
+  int64 max_certificates = 11;
+  // max_backups caps the number of database backups the tenant may retain.
+  int64 max_backups = 12;
+  // max_vector_dims caps the maximum vector dimensionality the tenant may use.
+  int64 max_vector_dims = 13;
+  // max_ts_metrics caps the number of time-series metrics the tenant may track.
+  int64 max_ts_metrics = 14;
+  // max_dedicated_wal_groups caps dedicated-raft groups with a per-tenant WAL.
+  int64 max_dedicated_wal_groups = 15;
+  // system_barrier_quota governs the tenant's use of the shared system barrier
+  // (bytes): 0 = unavailable, -1 = unlimited, >0 = capped at that many bytes.
+  int64 system_barrier_quota = 16;
+}
+
+// TenantEngineEntitlements carries the engine-level feature entitlements
+// granted to a tenant at creation. Mirrors pkg/quota.Entitlements.
+message TenantEngineEntitlements {
+  // allowed_isolation_modes lists the isolation modes the tenant may use
+  // (e.g. "prefix", "barrier", "volume", "raft"). Empty = system defaults.
+  repeated string allowed_isolation_modes = 1;
+  // allow_dedicated_raft permits provisioning dedicated Raft-backed databases.
+  bool allow_dedicated_raft = 2;
+  // allow_volume_storage permits provisioning databases on a dedicated volume.
+  bool allow_volume_storage = 3;
+  // allow_system_managed_barrier permits opting into system-managed auto-unseal
+  // key management for the tenant's dedicated barrier.
+  bool allow_system_managed_barrier = 4;
+  // allow_dedicated_wal permits dedicated-raft databases with a per-tenant WAL.
+  bool allow_dedicated_wal = 5;
+  // allowed_barrier_modes lists the dedicated-barrier sealing strategies the
+  // tenant may select. Empty = software defaults (none/passphrase/shamir).
+  repeated string allowed_barrier_modes = 6;
 }
 
 message GetTenantRequest {

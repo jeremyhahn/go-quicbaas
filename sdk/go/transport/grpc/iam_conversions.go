@@ -296,10 +296,23 @@ func (h *iamHandler) handleCreateTenant(ctx context.Context, client iampb.IAMSer
 	id, _ := getString(reqMap, "id")
 	name, _ := getString(reqMap, "name")
 	settings, _ := getStringMap(reqMap, "settings")
+	isolationType, _ := getString(reqMap, "isolation_type")
+
+	engineQuotas, err := engineQuotasToProto(reqMap["engine_quotas"])
+	if err != nil {
+		return nil, err
+	}
+	engineEntitlements, err := engineEntitlementsToProto(reqMap["engine_entitlements"])
+	if err != nil {
+		return nil, err
+	}
 
 	pbReq := &iampb.CreateTenantRequest{
-		Id:   id,
-		Name: name,
+		Id:                 id,
+		Name:               name,
+		IsolationType:      isolationType,
+		EngineQuotas:       engineQuotas,
+		EngineEntitlements: engineEntitlements,
 	}
 
 	if len(settings) > 0 {
