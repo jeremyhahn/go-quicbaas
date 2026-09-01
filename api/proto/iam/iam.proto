@@ -1321,7 +1321,9 @@ service AuditService {
   // platform composing this IAM plane) records an event synchronously
   // (async=false, event_id returned) or fire-and-forget (async=true,
   // event_id empty). The event lands in the CALLER's own authenticated
-  // tenant unless the caller holds cross-tenant (system-tenant) scope.
+  // tenant, and ONLY there: a tenant_id naming any other tenant fails
+  // PermissionDenied regardless of who the caller is — the system-tenant
+  // principal included (go-quicbaas#356, no operator lift).
   rpc RecordAuditEvent(RecordAuditEventRequest) returns (RecordAuditEventResponse);
 }
 
@@ -1369,9 +1371,9 @@ message GetAuditEventRequest {
 
 message RecordAuditEventRequest {
   // tenant_id is the target tenant. Empty means "the caller's own
-  // authenticated tenant". A value other than the caller's own tenant is
-  // honored only when the caller holds cross-tenant (system-tenant) scope;
-  // otherwise the RPC fails PermissionDenied.
+  // authenticated tenant". Any value other than the caller's own tenant
+  // fails PermissionDenied, no matter who the caller is — the
+  // system-tenant principal included (go-quicbaas#356, no operator lift).
   string tenant_id = 1;
 
   // event is the event to record. id and timestamp are assigned by the

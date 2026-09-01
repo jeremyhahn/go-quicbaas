@@ -26,6 +26,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -211,16 +213,17 @@ func TestAuditServer_QueryAuditEvents(t *testing.T) {
 			},
 		},
 		{
-			// An empty tenant_id no longer errors: it defaults to the
-			// caller's own authenticated tenant (iam.ResolveRequestTenant)
-			// — empty in this unauthenticated test context — and the
-			// query proceeds with that (empty) tenant.
+			// An empty tenant_id defaults to the caller's own
+			// authenticated tenant (iam.ResolveRequestTenant) — unbound
+			// in this test context, which canonicalizes to the system
+			// tenant so an empty tenant never reaches storage as an
+			// unscoped filter (#356).
 			name: "missing_tenant_id_defaults_to_caller_tenant",
 			request: &iampb.QueryAuditEventsRequest{
 				TenantId: "",
 			},
 			mockSetup: func(m *mockAuditService) {
-				m.On("QueryAuditEvents", mock.Anything, "", mock.AnythingOfType("*iam.AuditFilter")).
+				m.On("QueryAuditEvents", mock.Anything, qrdbsdk.SystemTenantID, mock.AnythingOfType("*iam.AuditFilter")).
 					Return([]*iam.AuditEvent{}, 0, nil).Once()
 			},
 			expectError: false,
@@ -247,7 +250,18 @@ func TestAuditServer_QueryAuditEvents(t *testing.T) {
 			srv, mockSvc := createTestAuditServer(t)
 			tt.mockSetup(mockSvc)
 
-			resp, err := srv.QueryAuditEvents(context.Background(), tt.request)
+			// Bind the caller's authenticated tenant to match the
+			// requested tenant_id — with the #356 operator lift removed,
+			// ResolveRequestTenant confines every caller to its own
+			// tenant, so an unbound caller tenant would PermissionDenied
+			// before the stage each case means to exercise. The
+			// empty-tenant_id case keeps an unbound context to prove the
+			// default-to-caller-tenant path.
+			ctx := context.Background()
+			if tt.request.TenantId != "" {
+				ctx = iam.ContextWithTenant(ctx, tt.request.TenantId)
+			}
+			resp, err := srv.QueryAuditEvents(ctx, tt.request)
 			if tt.expectError {
 				require.Error(t, err)
 				if tt.errorCode != 0 {
@@ -334,16 +348,17 @@ func TestAuditServer_GetAuditEvent(t *testing.T) {
 			},
 		},
 		{
-			// An empty tenant_id no longer errors: it defaults to the
-			// caller's own authenticated tenant — empty here — and the
-			// lookup proceeds with that tenant.
+			// An empty tenant_id defaults to the caller's own
+			// authenticated tenant — unbound here, canonicalized to the
+			// system tenant (#356) — and the lookup proceeds with that
+			// tenant.
 			name: "missing_tenant_id_defaults_to_caller_tenant",
 			request: &iampb.GetAuditEventRequest{
 				TenantId: "",
 				EventId:  "event-123",
 			},
 			mockSetup: func(m *mockAuditService) {
-				m.On("GetAuditEvent", mock.Anything, "", "event-123").
+				m.On("GetAuditEvent", mock.Anything, qrdbsdk.SystemTenantID, "event-123").
 					Return(&iam.AuditEvent{ID: "event-123"}, nil).Once()
 			},
 			expectError: false,
@@ -381,7 +396,13 @@ func TestAuditServer_GetAuditEvent(t *testing.T) {
 			srv, mockSvc := createTestAuditServer(t)
 			tt.mockSetup(mockSvc)
 
-			resp, err := srv.GetAuditEvent(context.Background(), tt.request)
+			// Same caller-tenant binding as the QueryAuditEvents runner
+			// above (#356: no operator lift).
+			ctx := context.Background()
+			if tt.request.TenantId != "" {
+				ctx = iam.ContextWithTenant(ctx, tt.request.TenantId)
+			}
+			resp, err := srv.GetAuditEvent(ctx, tt.request)
 			if tt.expectError {
 				require.Error(t, err)
 				if tt.errorCode != 0 {

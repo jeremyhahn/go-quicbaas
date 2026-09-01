@@ -10519,9 +10519,9 @@ func (x *GetAuditEventRequest) GetEventId() string {
 type RecordAuditEventRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// tenant_id is the target tenant. Empty means "the caller's own
-	// authenticated tenant". A value other than the caller's own tenant is
-	// honored only when the caller holds cross-tenant (system-tenant) scope;
-	// otherwise the RPC fails PermissionDenied.
+	// authenticated tenant". Any value other than the caller's own tenant
+	// fails PermissionDenied, no matter who the caller is — the
+	// system-tenant principal included (go-quicbaas#356, no operator lift).
 	TenantId string `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	// event is the event to record. id and timestamp are assigned by the
 	// chain if left unset.

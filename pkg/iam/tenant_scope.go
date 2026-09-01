@@ -20,8 +20,7 @@ import (
 )
 
 // TenantScopeMismatchError is returned when a caller requests access to a
-// tenant_id other than its own authenticated tenant without holding
-// cross-tenant (system-tenant) scope.
+// tenant_id other than its own authenticated tenant.
 type TenantScopeMismatchError struct {
 	// CallerTenant is the caller's own authenticated tenant.
 	CallerTenant string
@@ -36,22 +35,51 @@ func (e *TenantScopeMismatchError) Error() string {
 
 // ResolveRequestTenant enforces the single tenant-scoping contract every
 // audit surface (Query/Get/Delete/Record — REST and gRPC alike) applies to
-// a caller-supplied tenant_id: the caller reads/writes its own
+// a caller-supplied tenant_id: the caller reads/writes ONLY its own
 // authenticated tenant (TenantFromContext, bound by the REST/gRPC auth
-// middleware from the verified identity — never client-supplied) unless
-// requestedTenant is empty (defaults to the caller's own tenant) or the
-// caller holds cross-tenant scope (the system-tenant rule already used
-// throughout this stack: qrdbsdk.IsSystemTenant(callerTenant)).
+// middleware from the verified identity — never client-supplied). An empty
+// requestedTenant defaults to it; any other value must equal it.
 //
-// This is the ONE place that rule is stated; pkg/api/grpc and pkg/api/rest
+// There is deliberately NO system-tenant lift here. qrdb's permission
+// scope model is authoritative (go-qrdb pkg/permission: ScopeSelf /
+// ScopeCross / ScopeTenantOnly): a system-tenant principal reaches another
+// tenant's data only through a surface gated on a permission explicitly
+// registered ScopeCross (e.g. qrdb's audit:read:cross), and no surface
+// routed through this helper is gated on one — the REST PEP maps the
+// audit routes onto the self-scoped audit:query / audit:read /
+// audit_events:record (plus the handler-level audit:delete check), and
+// the gRPC AuditService methods are unmapped, which is default-deny under
+// RequireAuthz. A tenant's audit chain is tenant data, and the platform
+// operator holds no implicit right to it — the same operator-isolation
+// ruling qrdb's ScopeTenantOnly states as "the platform operator must not
+// hold tenant key material". pkg/api/rest's requireTenantSubject applies
+// this same rule to the session surface: a system-tenant principal never
+// gains implicit reach into a tenant's namespace.
+//
+// An UNBOUND caller tenant is canonicalized to the system tenant before
+// any comparison: qrdb's IsSystemTenant treats an empty TenantID as the
+// system principal's shape, and an empty tenant must never reach storage
+// as the resolved target — the node-backed audit logger applies no tenant
+// equality of its own to an empty filter, so passing "" through would
+// turn "default to the caller's tenant" into an unscoped read of every
+// chain. Canonicalizing confines that caller to the concrete system
+// chain instead.
+//
+// This is the ONE place the rule is stated; pkg/api/grpc and pkg/api/rest
 // both call it rather than carrying their own copies, so the read path
-// (Query/Get/Delete) and the write path (Record) can never drift apart.
+// (Query/Get/Delete) and the write path (Record) can never drift apart. A
+// future genuinely cross-tenant surface must be gated on its own
+// ScopeCross permission and resolve its target tenant deliberately under
+// that gate — never by re-adding a caller-identity lift here.
 func ResolveRequestTenant(ctx context.Context, requestedTenant string) (string, error) {
 	callerTenant := TenantFromContext(ctx)
+	if callerTenant == "" {
+		callerTenant = qrdbsdk.SystemTenantID
+	}
 	if requestedTenant == "" {
 		return callerTenant, nil
 	}
-	if requestedTenant == callerTenant || qrdbsdk.IsSystemTenant(callerTenant) {
+	if requestedTenant == callerTenant {
 		return requestedTenant, nil
 	}
 	return "", &TenantScopeMismatchError{CallerTenant: callerTenant, RequestedTenant: requestedTenant}

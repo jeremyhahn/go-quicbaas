@@ -54,11 +54,11 @@ func NewAuditServer(auditService AuditService, log *logger.Logger) *AuditServer 
 }
 
 // QueryAuditEvents queries audit events with filters. The caller reads its
-// own authenticated tenant's chain: an empty tenant_id defaults to it, and
-// a different tenant_id is honored only when the caller holds cross-tenant
-// (system-tenant) scope (iam.ResolveRequestTenant) — otherwise the request
-// is rejected PermissionDenied before ever reaching storage, so a rejected
-// query leaks no events.
+// own authenticated tenant's chain, and ONLY that chain: an empty
+// tenant_id defaults to it, and any different tenant_id — from a
+// system-tenant principal included — is rejected PermissionDenied before
+// ever reaching storage, so a rejected query leaks no events
+// (iam.ResolveRequestTenant states the full rule).
 func (s *AuditServer) QueryAuditEvents(ctx context.Context, req *iampb.QueryAuditEventsRequest) (*iampb.QueryAuditEventsResponse, error) {
 	tenantID, err := iam.ResolveRequestTenant(ctx, req.TenantId)
 	if err != nil {
@@ -105,8 +105,8 @@ func (s *AuditServer) QueryAuditEvents(ctx context.Context, req *iampb.QueryAudi
 }
 
 // GetAuditEvent retrieves a specific audit event. Tenant scoping mirrors
-// QueryAuditEvents (iam.ResolveRequestTenant): the caller's own tenant, or
-// any tenant when the caller holds cross-tenant (system-tenant) scope.
+// QueryAuditEvents (iam.ResolveRequestTenant): the caller's own tenant
+// only — no caller identity lifts it.
 func (s *AuditServer) GetAuditEvent(ctx context.Context, req *iampb.GetAuditEventRequest) (*iampb.AuditEvent, error) {
 	if req.EventId == "" {
 		return nil, status.Error(codes.InvalidArgument, "event_id is required")
@@ -131,7 +131,8 @@ func (s *AuditServer) GetAuditEvent(ctx context.Context, req *iampb.GetAuditEven
 // chain — the remote-write counterpart to QueryAuditEvents/GetAuditEvent.
 // Tenant scoping is the SAME rule the read path applies
 // (iam.ResolveRequestTenant): the event lands in the caller's own
-// authenticated tenant unless the caller holds cross-tenant scope.
+// authenticated tenant, and a tenant_id naming any other tenant is
+// rejected regardless of who the caller is.
 func (s *AuditServer) RecordAuditEvent(ctx context.Context, req *iampb.RecordAuditEventRequest) (*iampb.RecordAuditEventResponse, error) {
 	if req.Event == nil {
 		return nil, status.Error(codes.InvalidArgument, "event is required")

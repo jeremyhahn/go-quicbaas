@@ -50,6 +50,7 @@ func TestListAuditEvents(t *testing.T) {
 		defer cleanup()
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit?tenant_id=tenant-123", nil)
+		req = req.WithContext(ctxWithCallerTenant(req.Context(), "tenant-123"))
 		w := httptest.NewRecorder()
 
 		handler.ListAuditEvents(w, req)
@@ -63,6 +64,7 @@ func TestListAuditEvents(t *testing.T) {
 		defer cleanup()
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit?tenant_id=tenant-123&event_type=login&category=authentication&outcome=success&actor_id=user-123&resource_id=session-123&start_time=2024-01-01T00:00:00Z&end_time=2024-12-31T23:59:59Z&limit=50&offset=10", nil)
+		req = req.WithContext(ctxWithCallerTenant(req.Context(), "tenant-123"))
 		w := httptest.NewRecorder()
 
 		handler.ListAuditEvents(w, req)
@@ -76,6 +78,7 @@ func TestListAuditEvents(t *testing.T) {
 		defer cleanup()
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit?tenant_id=tenant-123&start_time=invalid", nil)
+		req = req.WithContext(ctxWithCallerTenant(req.Context(), "tenant-123"))
 		w := httptest.NewRecorder()
 
 		handler.ListAuditEvents(w, req)
@@ -90,6 +93,7 @@ func TestListAuditEvents(t *testing.T) {
 		defer cleanup()
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit?tenant_id=tenant-123&limit=invalid", nil)
+		req = req.WithContext(ctxWithCallerTenant(req.Context(), "tenant-123"))
 		w := httptest.NewRecorder()
 
 		handler.ListAuditEvents(w, req)
@@ -145,6 +149,7 @@ func TestGetAuditEvent(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit/event-123?tenant_id=tenant-123", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(ctxWithCallerTenant(req.Context(), "tenant-123"))
 		w := httptest.NewRecorder()
 
 		handler.GetAuditEvent(w, req)
@@ -180,6 +185,7 @@ func TestDeleteOldAuditEvents(t *testing.T) {
 		defer cleanup()
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=tenant-123", nil)
+		req = req.WithContext(ctxWithCallerTenant(req.Context(), "tenant-123"))
 		w := httptest.NewRecorder()
 
 		handler.DeleteOldAuditEvents(w, req)
@@ -193,6 +199,7 @@ func TestDeleteOldAuditEvents(t *testing.T) {
 		defer cleanup()
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=tenant-123&before=invalid", nil)
+		req = req.WithContext(ctxWithCallerTenant(req.Context(), "tenant-123"))
 		w := httptest.NewRecorder()
 
 		handler.DeleteOldAuditEvents(w, req)
@@ -206,6 +213,7 @@ func TestDeleteOldAuditEvents(t *testing.T) {
 		defer cleanup()
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=tenant-123&before=2024-01-01T00:00:00Z", nil)
+		req = req.WithContext(ctxWithCallerTenant(req.Context(), "tenant-123"))
 		w := httptest.NewRecorder()
 
 		handler.DeleteOldAuditEvents(w, req)
@@ -221,6 +229,7 @@ func TestDeleteOldAuditEvents(t *testing.T) {
 		// Inject the authenticated principal the way the authz middleware does.
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=tenant-123&before=2024-01-01T00:00:00Z", nil)
 		req = req.WithContext(ctxWithTestSubject(req.Context(), "user-123", "tenant-123"))
+		req = req.WithContext(ctxWithCallerTenant(req.Context(), "tenant-123"))
 		w := httptest.NewRecorder()
 
 		handler.DeleteOldAuditEvents(w, req)

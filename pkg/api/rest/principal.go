@@ -55,7 +55,11 @@ func requireTenantSubject(w http.ResponseWriter, r *http.Request) (interfaces.Su
 	// the structurally privileged platform scope, not an isolated tenant
 	// named "system" — so it fails the same "tenant ID is required" gate as
 	// an empty TenantID rather than being silently scoped into a
-	// tenant/system/ namespace.
+	// tenant/system/ namespace. This is one face of the platform-wide
+	// operator-isolation rule stated in iam.ResolveRequestTenant: a
+	// system-tenant principal never gains implicit reach into a tenant's
+	// data — cross-tenant access exists only behind permissions qrdb
+	// registers ScopeCross.
 	if qrdbsdk.IsSystemTenant(subject.TenantID) {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))

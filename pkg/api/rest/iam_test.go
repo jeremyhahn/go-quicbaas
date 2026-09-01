@@ -1717,6 +1717,7 @@ func TestDeep_GetAuditEvent_NilLogger(t *testing.T) {
 	defer cl()
 	r := httptest.NewRequest(http.MethodGet, "/audit/ev1?tenant_id=t1", nil)
 	r = withChiParams(r, map[string]string{"id": "ev1"})
+	r = r.WithContext(iam.ContextWithTenant(r.Context(), "t1"))
 	w := httptest.NewRecorder()
 	h.GetAuditEvent(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -1727,6 +1728,7 @@ func TestDeep_GetAuditEvent_LoggerError(t *testing.T) {
 	defer cl()
 	r := httptest.NewRequest(http.MethodGet, "/audit/ev1?tenant_id=t1", nil)
 	r = withChiParams(r, map[string]string{"id": "ev1"})
+	r = r.WithContext(iam.ContextWithTenant(r.Context(), "t1"))
 	w := httptest.NewRecorder()
 	h.GetAuditEvent(w, r)
 	assert.NotEqual(t, http.StatusOK, w.Code)
@@ -1736,7 +1738,7 @@ func TestDeep_DeleteOldAuditEvents_NilLogger(t *testing.T) {
 	h, cl := setupDeepHandler(t, &mockServiceWithAudit{QuicBaaS: testutil.NewMockQuicBaaS()})
 	defer cl()
 	r := httptest.NewRequest(http.MethodDelete, "/audit?tenant_id=t1&before=2024-01-01T00:00:00Z", nil)
-
+	r = r.WithContext(iam.ContextWithTenant(r.Context(), "t1"))
 	w := httptest.NewRecorder()
 	h.DeleteOldAuditEvents(w, r)
 	assert.NotEqual(t, http.StatusOK, w.Code)
@@ -1746,7 +1748,7 @@ func TestDeep_DeleteOldAuditEvents_LoggerError(t *testing.T) {
 	h, cl := setupDeepHandler(t, &mockServiceWithAudit{QuicBaaS: testutil.NewMockQuicBaaS(), loggerErr: errDeepFail})
 	defer cl()
 	r := httptest.NewRequest(http.MethodDelete, "/audit?tenant_id=t1&before=2024-01-01T00:00:00Z", nil)
-
+	r = r.WithContext(iam.ContextWithTenant(r.Context(), "t1"))
 	w := httptest.NewRecorder()
 	h.DeleteOldAuditEvents(w, r)
 	assert.NotEqual(t, http.StatusOK, w.Code)

@@ -820,12 +820,13 @@ GET /api/v1/iam/audit
 Authorization: Bearer <admin_token>
 ```
 
-**Required Permission**: `audit:read`
+**Required Permission**: `audit:query` (the single-event
+`GET /api/v1/iam/audit/{id}` requires `audit:read`)
 
 Query Parameters:
 | Parameter | Description |
 |-----------|-------------|
-| `tenant_id` | Tenant ID (required) |
+| `tenant_id` | Target tenant (optional). Defaults to the caller's own authenticated tenant and must equal it — any other value is rejected 403, the system-tenant principal included (go-quicbaas#356) |
 | `event_type` | Filter by event type (e.g., "user.login", "policy.created") |
 | `category` | Filter by category ("authentication", "authorization", "management") |
 | `outcome` | Filter by outcome ("success", "failure") |

@@ -123,7 +123,9 @@ GET /api/v1/iam/audit?tenant_id=tenant-123&event_type=authentication&limit=50
 ```
 
 Query Parameters:
-- `tenant_id` (required): Tenant identifier
+- `tenant_id` (optional): Target tenant. Defaults to the caller's own
+  authenticated tenant and must equal it — any other value is rejected 403
+  (see Access Control below)
 - `event_type`: Filter by event type
 - `category`: Filter by category
 - `outcome`: Filter by outcome (success, failure, denied)
@@ -383,11 +385,22 @@ When limit is reached, oldest events are automatically evicted (FIFO).
 
 ### Access Control
 
-- Query operations require `audit:read` permission and are tenant-scoped
+- REST list/query requires `audit:query`; the single-event read requires
+  `audit:read` (both self-scoped, mapped by the REST PEP). The gRPC
+  `AuditService` methods carry no PEP mapping and are default-deny under
+  `RequireAuthz`
 - Export operations require `audit:export` permission
 - Deletion operations require `audit:delete` permission (super_admin only by default)
 - Audit events are immutable after creation
 - Sensitive data should not be logged in details
+- Every audit surface (Query/Get/Delete/Record, REST and gRPC alike) confines
+  the caller to its own authenticated tenant: a `tenant_id` naming any other
+  tenant is rejected before reaching storage, regardless of who the caller
+  is — the system-tenant principal included (go-quicbaas#356). A tenant's
+  audit chain is tenant data; the platform operator holds no implicit right
+  to it. Cross-tenant audit reads would require a dedicated surface gated on
+  an explicitly cross-scoped permission (qrdb's `audit:read:cross`), which
+  does not currently ship.
 
 ### Compliance
 

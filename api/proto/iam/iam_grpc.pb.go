@@ -3691,7 +3691,9 @@ type AuditServiceClient interface {
 	// platform composing this IAM plane) records an event synchronously
 	// (async=false, event_id returned) or fire-and-forget (async=true,
 	// event_id empty). The event lands in the CALLER's own authenticated
-	// tenant unless the caller holds cross-tenant (system-tenant) scope.
+	// tenant, and ONLY there: a tenant_id naming any other tenant fails
+	// PermissionDenied regardless of who the caller is — the system-tenant
+	// principal included (go-quicbaas#356, no operator lift).
 	RecordAuditEvent(ctx context.Context, in *RecordAuditEventRequest, opts ...grpc.CallOption) (*RecordAuditEventResponse, error)
 }
 
@@ -3748,7 +3750,9 @@ type AuditServiceServer interface {
 	// platform composing this IAM plane) records an event synchronously
 	// (async=false, event_id returned) or fire-and-forget (async=true,
 	// event_id empty). The event lands in the CALLER's own authenticated
-	// tenant unless the caller holds cross-tenant (system-tenant) scope.
+	// tenant, and ONLY there: a tenant_id naming any other tenant fails
+	// PermissionDenied regardless of who the caller is — the system-tenant
+	// principal included (go-quicbaas#356, no operator lift).
 	RecordAuditEvent(context.Context, *RecordAuditEventRequest) (*RecordAuditEventResponse, error)
 }
 

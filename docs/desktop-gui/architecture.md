@@ -1682,7 +1682,7 @@ tenantStore → derived authHeaders store → all API client calls
 
 When tenant changes, all data stores are invalidated and refetched. The data does not "bleed" between tenants - stale data from the previous tenant is cleared before the new tenant's data arrives, showing skeleton loaders during the transition.
 
-Super-admin users who can see all tenants have an additional "Global View" option in the tenant selector that shows cross-tenant audit logs and administrative functions. This global view is visually distinguished with an amber `badge badge-warning` "GLOBAL" indicator in the header to prevent confusion about scope.
+Super-admin users who can see all tenants have an additional "Global View" option in the tenant selector for administrative functions. This global view is visually distinguished with an amber `badge badge-warning` "GLOBAL" indicator in the header to prevent confusion about scope. Note that Global View does NOT include tenant audit logs: a tenant's audit chain is tenant data, and the platform operator cannot read it (go-quicbaas#356 — cross-tenant audit reads exist only behind a surface gated on an explicitly cross-scoped permission such as qrdb's `audit:read:cross`, and no such surface currently ships).
 
 ---
 

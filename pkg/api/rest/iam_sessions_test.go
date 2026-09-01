@@ -2219,6 +2219,7 @@ func TestIAM91_ListAuditEvents_ServiceNotAvailable(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit?tenant_id=t1", nil)
+	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.ListAuditEvents(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2230,6 +2231,7 @@ func TestIAM91_ListAuditEvents_WithFilters(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit?tenant_id=t1&event_type=login&category=auth&outcome=success&actor_id=a1&resource_id=r1&start_time=2025-01-01T00:00:00Z&end_time=2025-12-31T23:59:59Z&limit=50&offset=10", nil)
+	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.ListAuditEvents(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2269,6 +2271,7 @@ func TestIAM91_GetAuditEvent_ServiceNotAvailable(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit/ev1?tenant_id=t1", nil)
 	req = withChiParams(req, map[string]string{"id": "ev1"})
+	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.GetAuditEvent(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2289,6 +2292,7 @@ func TestIAM91_DeleteOldAuditEvents_MissingBefore(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=t1", nil)
+	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.DeleteOldAuditEvents(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2300,6 +2304,7 @@ func TestIAM91_DeleteOldAuditEvents_InvalidTimestamp(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=t1&before=not-a-date", nil)
+	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.DeleteOldAuditEvents(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2311,6 +2316,7 @@ func TestIAM91_DeleteOldAuditEvents_MissingUser(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=t1&before=2025-01-01T00:00:00Z", nil)
+	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.DeleteOldAuditEvents(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -3775,6 +3781,7 @@ func TestIAM91_ListAuditEvents_NilLogger(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/audit?tenant_id=t1", nil)
+	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.ListAuditEvents(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -3788,6 +3795,7 @@ func TestIAM91_ListAuditEvents_Success(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/audit?tenant_id=t1", nil)
+	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.ListAuditEvents(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -3801,6 +3809,7 @@ func TestIAM91_GetAuditEvent_Success(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/audit/e1?tenant_id=t1", nil)
 	req = withChiParams(req, map[string]string{"id": "e1"})
+	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.GetAuditEvent(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -3814,6 +3823,7 @@ func TestIAM91_GetAuditEvent_NotFound(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/audit/missing?tenant_id=t1", nil)
 	req = withChiParams(req, map[string]string{"id": "missing"})
+	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.GetAuditEvent(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)

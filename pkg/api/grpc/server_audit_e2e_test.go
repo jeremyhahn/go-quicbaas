@@ -112,7 +112,9 @@ func TestAuditService_GRPC_RoundTrip_NodeBackedChain(t *testing.T) {
 	}
 	require.NoError(t, logger.Log(context.Background(), event))
 
-	client, cleanup := newAuditServiceBufconn(t, logger, "")
+	// Authenticate as the tenant whose chain is being read: with the #356
+	// operator lift removed, only tenant-e2e itself may read tenant-e2e.
+	client, cleanup := newAuditServiceBufconn(t, logger, "tenant-e2e")
 	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -299,8 +301,8 @@ func TestAuditService_GRPC_RecordThenQuery_RoundTrip(t *testing.T) {
 
 // TestAuditService_GRPC_RecordAuditEvent_TenantScoping is the authz guard:
 // a caller may record into its OWN authenticated tenant (or leave tenant_id
-// empty, defaulting to it) but may NOT record into a DIFFERENT tenant
-// unless it holds cross-tenant (system-tenant) scope.
+// empty, defaulting to it) but may NOT record into a DIFFERENT tenant —
+// no caller identity lifts that, the system tenant included (#356).
 func TestAuditService_GRPC_RecordAuditEvent_TenantScoping(t *testing.T) {
 	newEvent := func(action string) *iampb.AuditEvent {
 		return &iampb.AuditEvent{EventType: "authentication", Category: "authentication", Action: action, Outcome: "success"}
@@ -353,33 +355,45 @@ func TestAuditService_GRPC_RecordAuditEvent_TenantScoping(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))
 
-		// tenant-a itself may not even query tenant-b's chain now that
-		// Query enforces the same tenant-scoping rule (P5.2's closing
-		// gap): a second bufconn, bound to the SAME underlying sink but
-		// authenticated as the system tenant, is used purely to verify
-		// the event never landed — the system-tenant caller is the one
-		// legitimate way to inspect another tenant's chain at all.
-		sysClient, sysCleanup := newAuditServiceBufconn(t, logger, qrdbsdk.SystemTenantID)
-		defer sysCleanup()
+		// A second bufconn, bound to the SAME underlying sink but
+		// authenticated as tenant-b itself, verifies the event never
+		// landed — reading a tenant's chain requires being that tenant,
+		// now with no system-tenant exception (#356).
+		bClient, bCleanup := newAuditServiceBufconn(t, logger, "tenant-b")
+		defer bCleanup()
 
-		queryResp, qerr := sysClient.QueryAuditEvents(context.Background(), &iampb.QueryAuditEventsRequest{TenantId: "tenant-b"})
+		queryResp, qerr := bClient.QueryAuditEvents(context.Background(), &iampb.QueryAuditEventsRequest{TenantId: "tenant-b"})
 		require.NoError(t, qerr)
 		for _, e := range queryResp.Events {
 			assert.NotEqual(t, "cross-tenant-attempt", e.Action, "a rejected cross-tenant record must never land on the target tenant's chain")
 		}
 	})
 
-	t.Run("cross-tenant tenant_id from the system tenant is honored", func(t *testing.T) {
+	t.Run("cross-tenant tenant_id from the system tenant is rejected (no operator lift, #356)", func(t *testing.T) {
+		sink := qrdbsdk.NewAuditRingBuffer(1000)
+		logger := &grpcTestNodeBackedAuditLogger{sink: sink}
+		client, cleanup := newAuditServiceBufconn(t, logger, qrdbsdk.SystemTenantID)
+		defer cleanup()
+
+		_, err := client.RecordAuditEvent(context.Background(), &iampb.RecordAuditEventRequest{
+			TenantId: "tenant-c",
+			Event:    newEvent("system-cross-tenant"),
+		})
+		require.Error(t, err, "a system-tenant caller must not be able to record into another tenant's chain")
+		assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	})
+
+	t.Run("system tenant may still record into its own chain", func(t *testing.T) {
 		sink := qrdbsdk.NewAuditRingBuffer(1000)
 		logger := &grpcTestNodeBackedAuditLogger{sink: sink}
 		client, cleanup := newAuditServiceBufconn(t, logger, qrdbsdk.SystemTenantID)
 		defer cleanup()
 
 		resp, err := client.RecordAuditEvent(context.Background(), &iampb.RecordAuditEventRequest{
-			TenantId: "tenant-c",
-			Event:    newEvent("system-cross-tenant"),
+			TenantId: qrdbsdk.SystemTenantID,
+			Event:    newEvent("system-own-chain"),
 		})
-		require.NoError(t, err, "a system-tenant caller must be able to record into another tenant")
+		require.NoError(t, err)
 		assert.NotEmpty(t, resp.EventId)
 	})
 }
@@ -387,13 +401,14 @@ func TestAuditService_GRPC_RecordAuditEvent_TenantScoping(t *testing.T) {
 // TestAuditService_GRPC_QueryGetAuditEvent_TenantScoping is the P5.2
 // closing-gap guard: QueryAuditEvents and GetAuditEvent enforce the SAME
 // tenant-scoping rule as RecordAuditEvent (iam.ResolveRequestTenant) — the
-// caller reads its own authenticated tenant's chain; a cross-tenant
-// request from a non-system caller is rejected PermissionDenied BEFORE
-// ever reaching storage (so a rejected query leaks no events), and a
-// system-tenant caller may read any tenant.
+// caller reads its own authenticated tenant's chain and ONLY that chain; a
+// cross-tenant request from ANY caller — the system tenant included
+// (#356) — is rejected PermissionDenied BEFORE ever reaching storage, so a
+// rejected query leaks no events.
 func TestAuditService_GRPC_QueryGetAuditEvent_TenantScoping(t *testing.T) {
 	// Seed tenant-a and tenant-b with distinguishable events on a shared
-	// sink, authenticated as the system tenant (which may record anywhere).
+	// sink. Each tenant records into its own chain — with the #356 lift
+	// removed there is no identity that may record into another tenant.
 	sink := qrdbsdk.NewAuditRingBuffer(1000)
 	logger := &grpcTestNodeBackedAuditLogger{sink: sink}
 	sysClient, sysCleanup := newAuditServiceBufconn(t, logger, qrdbsdk.SystemTenantID)
@@ -401,7 +416,9 @@ func TestAuditService_GRPC_QueryGetAuditEvent_TenantScoping(t *testing.T) {
 
 	seedEvent := func(tenantID, action string) string {
 		t.Helper()
-		resp, err := sysClient.RecordAuditEvent(context.Background(), &iampb.RecordAuditEventRequest{
+		client, cleanup := newAuditServiceBufconn(t, logger, tenantID)
+		defer cleanup()
+		resp, err := client.RecordAuditEvent(context.Background(), &iampb.RecordAuditEventRequest{
 			TenantId: tenantID,
 			Event:    &iampb.AuditEvent{EventType: "authentication", Category: "authentication", Action: action, Outcome: "success"},
 		})
@@ -463,19 +480,13 @@ func TestAuditService_GRPC_QueryGetAuditEvent_TenantScoping(t *testing.T) {
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))
 	})
 
-	t.Run("system-tenant caller reads across tenants", func(t *testing.T) {
-		queryResp, err := sysClient.QueryAuditEvents(context.Background(), &iampb.QueryAuditEventsRequest{TenantId: "tenant-b"})
-		require.NoError(t, err)
-		var found bool
-		for _, e := range queryResp.Events {
-			if e.Action == "tenant-b-secret" {
-				found = true
-			}
-		}
-		assert.True(t, found, "a system-tenant caller must be able to read another tenant's chain")
+	t.Run("system-tenant caller is denied another tenant's chain (no operator lift, #356)", func(t *testing.T) {
+		_, err := sysClient.QueryAuditEvents(context.Background(), &iampb.QueryAuditEventsRequest{TenantId: "tenant-b"})
+		require.Error(t, err, "the system tenant must not be able to query another tenant's chain")
+		assert.Equal(t, codes.PermissionDenied, status.Code(err))
 
-		got, err := sysClient.GetAuditEvent(context.Background(), &iampb.GetAuditEventRequest{TenantId: "tenant-b", EventId: tenantBSecretID})
-		require.NoError(t, err)
-		assert.Equal(t, "tenant-b-secret", got.Action)
+		_, err = sysClient.GetAuditEvent(context.Background(), &iampb.GetAuditEventRequest{TenantId: "tenant-b", EventId: tenantBSecretID})
+		require.Error(t, err, "the system tenant must not be able to fetch another tenant's event by ID")
+		assert.Equal(t, codes.PermissionDenied, status.Code(err))
 	})
 }

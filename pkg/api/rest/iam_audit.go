@@ -33,11 +33,11 @@ func (h *IAMHandler) ListAuditEvents(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Tenant scoping: the caller reads its own authenticated tenant's
-	// chain. An empty tenant_id query parameter defaults to it; a
-	// different tenant_id is honored only when the caller holds
-	// cross-tenant (system-tenant) scope — otherwise the request is
-	// rejected before ever reaching storage, so a rejected query leaks no
-	// events.
+	// chain, and ONLY that chain. An empty tenant_id query parameter
+	// defaults to it; any different tenant_id — from a system-tenant
+	// principal included — is rejected before ever reaching storage, so a
+	// rejected query leaks no events (iam.ResolveRequestTenant states the
+	// full rule).
 	tenantID, err := iam.ResolveRequestTenant(ctx, r.URL.Query().Get("tenant_id"))
 	if err != nil {
 		RespondIAMError(w, r, http.StatusForbidden,
@@ -158,8 +158,7 @@ func (h *IAMHandler) GetAuditEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Tenant scoping mirrors ListAuditEvents (iam.ResolveRequestTenant):
-	// the caller's own tenant, or any tenant when the caller holds
-	// cross-tenant (system-tenant) scope.
+	// the caller's own tenant only — no caller identity lifts it.
 	tenantID, err := iam.ResolveRequestTenant(ctx, r.URL.Query().Get("tenant_id"))
 	if err != nil {
 		RespondIAMError(w, r, http.StatusForbidden,
@@ -208,11 +207,10 @@ func (h *IAMHandler) DeleteOldAuditEvents(w http.ResponseWriter, r *http.Request
 	ctx := r.Context()
 
 	// Tenant scoping mirrors ListAuditEvents/GetAuditEvent
-	// (iam.ResolveRequestTenant): the caller's own tenant, or any tenant
-	// when the caller holds cross-tenant (system-tenant) scope. This runs
-	// BEFORE the audit:delete permission check below so a caller outside
-	// its own tenant (and without system-tenant scope) never reaches
-	// storage, exactly like the read path.
+	// (iam.ResolveRequestTenant): the caller's own tenant only — no
+	// caller identity lifts it. This runs BEFORE the audit:delete
+	// permission check below so a caller targeting another tenant never
+	// reaches storage, exactly like the read path.
 	tenantID, err := iam.ResolveRequestTenant(ctx, r.URL.Query().Get("tenant_id"))
 	if err != nil {
 		RespondIAMError(w, r, http.StatusForbidden,
