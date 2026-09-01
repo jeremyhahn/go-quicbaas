@@ -460,6 +460,146 @@ Resolution order inside `buildQRDBConfig`:
    single-node dev/test fallback. **Not suitable for multi-node clusters.**
 3. Literal `1` — last-resort non-zero fallback.
 
+## Host module seam — mounting a downstream host's own ServiceModule
+
+A `ServiceModule` is go-qrdb's capability seam: one registration is exposed
+across the node's transports under the node's single authorizer. Every node
+go-quicbaas builds already carries two — go-quicbaas's own broker plane
+(`quicbaas`) and go-xkms's (`xkms`), both assembled in
+`unifiedModuleServerOptions` ([`pkg/server/qrdb_node.go`](../../pkg/server/qrdb_node.go)).
+
+A **downstream host** — go-trusted-platform mounting its device / attestation /
+SDN plane — mounts a third one the same way.
+
+### Canonical shape: `quicbaas.WithModule` on `quicbaas.NewServer`
+
+```go
+srv, err := quicbaas.NewServer(cfg, quicbaas.WithModule(myModule))
+```
+
+**This is the only supported shape.** go-quicbaas does *not* re-export a qrdb
+server constructor, and a host must not reach for one:
+
+- go-qrdb's SDK publishes the server **options** (`ServerOption`,
+  `WithModule`, `WithServerTLS`, …) and deliberately **no `NewServer`**.
+  Constructing the node is the composer's job — ownership doc 00 L7,
+  "composition happens in one place".
+- go-quicbaas **is** that composer. Building the node means assembling the ONE
+  audit sink, the module shard router, the late-binding REST and MCP
+  resolvers, go-xkms's module with its four host options, and the unified TLS
+  config — all of which read unexported `pkg/server.Server` state. A host
+  handed a raw `NewServer` would have to rebuild that composition root, which
+  is exactly what the layer boundary forbids.
+
+Threading the host's modules *into* go-quicbaas's composition keeps one node,
+one authorizer, one audit plane, and one place where modules are registered.
+
+### Mount order and the collision guards
+
+`unifiedModuleServerOptions` registers `quicbaas`, then `xkms`, then each host
+module in the order it was declared. Two guards apply, both **fail
+construction** rather than degrading silently:
+
+| Guard | When | Error |
+|-------|------|-------|
+| Module name is nil / empty / duplicates `quicbaas`, `xkms`, or an earlier host module | `NewServer` | `NilHostModuleError`, `UnnamedHostModuleError`, `HostModuleNameConflictError` |
+| A host module claims a REST route another mounted module already owns | qrdb node construction | `HostModuleRouteConflictError`, naming **both** owners and both spellings |
+| A host module registers a route straight onto the registrar's embedded `chi.Router` | qrdb node construction | `HostModuleUnregisteredRouteError` |
+| A host module registers something chi refuses — bad pattern, unsupported method, router middleware | qrdb node construction | `HostModuleInvalidRouteError` |
+| A host module claims a route under `/v1` or one of go-qrdb's top-level planes | qrdb node construction | `HostModuleReservedRouteError` |
+| A module's router cannot be enumerated | qrdb node construction | `HostModuleRouterInspectionError` (fails closed) |
+
+go-qrdb enforces both itself — `WithModule` panics on a duplicate name and
+`RESTRouteRegistry.assertNotRegistered` panics on a duplicate route — but only
+once the node is deep into construction. go-quicbaas replays the
+registrations through a capture registrar first (only when a host module is
+present, so the default composition is unchanged) and reports a typed error at
+the host's own composition site instead.
+
+The route guard reports **only** conflicts a host module is party to. Overlap
+*between* the two already-mounted modules predates this seam, stays go-qrdb's
+to enforce, and is nothing a downstream host can act on — reporting it here
+would newly fail a composition that boots today. (There is one such known
+overlap: `GET`/`POST /api/v1/tenants/`, tracked as issue #361.)
+
+Every module route must be registered through the registrar's
+`Handle` (declaring its `resource:action` permission) or `HandlePublic`
+(genuine first-contact surfaces only). A route registered straight onto the
+embedded `chi.Router` skips the permission registry — and because chi silently
+*replaces* the handler for a pattern it already holds, such a route can quietly
+take over one another module serves while the registry still names that other
+module, which the default-deny assertion cannot detect. The guard therefore
+walks each host module's router after the dry run and rejects any registration
+that did not go through `Handle`/`HandlePublic`.
+
+Route comparison runs each pattern through a shadow `chi.Mux` — the same matcher
+the live router uses — instead of comparing pattern text. chi matches a path
+parameter by position, so `/devices/{id}` and `/devices/{deviceID}` are one
+route and the later registration silently replaces the earlier one; a regex
+constraint *is* part of the match, so `{id:[0-9]+}` and `{name}` coexist.
+Delegating the decision to chi means the guard cannot drift from chi's actual
+rules the way a hand-rolled pattern model would. go-qrdb's own registry keys on
+raw pattern text and misses the renamed-parameter case entirely. A pattern chi
+refuses outright fails the mount with `HostModuleInvalidRouteError` rather than
+panicking the process — and because a host module mounts after `quicbaas` and
+`xkms`, the shared router already holds routes, so chi rejects router-level
+middleware (`r.Use`) from a host module. The dry run reproduces that state and
+reports it as the same typed error instead of letting the panic surface during
+real registration.
+
+**`RegisterHTTP` must be repeatable.** Validating a module's REST surface means
+asking it for that surface, so the guard calls `RegisterHTTP` once against a
+throwaway router and go-qrdb calls it again against the live one. A module that
+mutates state, counts calls or refuses a second registration will not survive
+that; nor would one that stashed the live `chi.Router` and added routes from
+`Start` be described by what was checked. go-qrdb's `ServiceModule` interface
+does not itself demand repeatability — mounting through `WithModule` does, and
+`TestUnifiedModuleServerOptions_MountedModulesAreRepeatable` pins it for the
+two modules quicbaas mounts. Lifting the requirement needs a registration-time
+introspection hook from go-qrdb, filed as part of go-qrdb#194, whose stronger
+remedy is to stop embedding the live router in the registrar at all.
+
+**go-qrdb's built-in REST routes are guarded by a snapshot, not by the table.**
+Modules register before built-ins and a built-in yields silently to a module
+that already claimed its path (go-qrdb `pkg/api/rest` `routeIf`), so a host
+module claiming e.g. `GET /kv` or `POST /v1/databases` would take over a core
+endpoint under its own authorization contract. The mount therefore refuses a
+host route inside `qrdbReservedRouteSegments` with
+`HostModuleReservedRouteError`.
+
+`/v1` is reserved **wholesale** rather than by enumerating go-qrdb's
+sub-namespaces there: it needs no list to keep in sync and it covers every
+future `/v1` route. It costs a host nothing, because the check applies to HOST
+modules only — quicbaas's own `/v1/barrier/*`, `/v1/ceremony/*` and
+`/v1/init/*` are never subjected to it — and the documented host shape is
+`/api/v1/<module>/...`, which `/api` keeps clear.
+`TestQRDBReservedRouteSegments_LeaveTheDocumentedHostPrefixOpen` pins that the
+reserved set never grows into that prefix.
+
+One limit remains from this being a snapshot rather than the live table: a
+plane go-qrdb adds under a *new* top-level segment is not covered. go-qrdb#194
+asks for the built-in table (and covers the parameter-name and registrar-bypass
+gaps in qrdb's own registry).
+
+### Transport coverage — the two gaps a host must plan around
+
+The module seam reaches **gRPC, unix, REST and MCP**. It does **not** reach:
+
+- **QUIC.** go-qrdb's QUIC transport is a bespoke frame protocol with
+  method-keyed dispatch, not HTTP-over-chi, so `RegisterHTTP` never reaches it
+  ([go-qrdb `pkg/apimodule/module.go:73-79`](https://github.com/jeremyhahn/go-qrdb)).
+  A module needing QUIC parity must serve it itself until go-qrdb grows a
+  `RegisterQUIC` hook.
+- **The embedded (in-process) transport.** That surface is each capability
+  owner's own SDK, independent of this seam. A host calls its module's Go API
+  directly in-process rather than routing through the node.
+
+Both are upstream go-qrdb gaps, not go-quicbaas omissions; a host that needs
+either files the gap against go-qrdb rather than working around it locally.
+
+See [../go-sdk/api.md](../go-sdk/api.md) § *Mounting a host ServiceModule* for
+the exact call sequence and the SDK types a host implements against.
+
 ## See also
 
 - `docs/architecture/embedded-mode.md` — how the

@@ -101,6 +101,13 @@ type serverOptions struct {
 	// verification is anchored against. When empty, only the per-request
 	// anchors supplied in the verify options apply.
 	attestationTrustAnchors []*x509.Certificate
+
+	// hostModules are capability modules a downstream host (e.g.
+	// go-trusted-platform) mounts via WithModule. They are appended to the
+	// unified qrdb node's module set after quicbaas's own module and
+	// go-xkms's, so one node serves all three across gRPC, unix, REST and
+	// MCP under a single authorizer. See module_host.go.
+	hostModules []qrdbsdk.ServiceModule
 }
 
 // ServerOption configures optional behavior on the Server during construction.
@@ -543,6 +550,18 @@ func NewServer(cfg *config.Config, opts ...ServerOption) (*Server, error) {
 	var options serverOptions
 	for _, opt := range opts {
 		opt(&options)
+	}
+
+	// Validate host-supplied capability modules (WithModule) before anything
+	// starts. go-qrdb's own WithModule panics on a duplicate module name from
+	// deep inside node construction; catching the mistake here instead lets a
+	// downstream host see a typed error at its own composition site.
+	if err := validateHostModules(options.hostModules); err != nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "server.NewServer",
+			Err:  err,
+		}
 	}
 
 	// Initialize logger from config

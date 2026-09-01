@@ -714,6 +714,30 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 	}
 	serverOpts = append(serverOpts, qrdbsdk.WithModule(xkmsModule))
 
+	// Host-supplied capability modules (WithModule, module_host.go) mount
+	// LAST, on the SAME node, so a downstream host such as go-trusted-platform
+	// serves its own plane over the node's transports under the node's single
+	// authorizer and audit sink instead of standing up a parallel stack. Their
+	// names were validated at NewServer; their REST routes are checked against
+	// quicbaas's and xkms's here, where all three module instances first exist
+	// together, so a collision fails node construction with a typed error
+	// naming both owners rather than panicking inside go-qrdb's route
+	// registry during REST server construction. Only conflicts a host module
+	// is party to are reported — overlap between quicbaas's own module and
+	// xkms's predates this seam and stays go-qrdb's to enforce. The check is
+	// skipped entirely when no host module is registered, leaving the default
+	// composition byte-for-byte as it was.
+	if len(s.opts.hostModules) > 0 {
+		mounted := []qrdbsdk.ServiceModule{module, xkmsModule}
+		if err := assertNoHostModuleRouteConflicts(mounted, s.opts.hostModules); err != nil {
+			return nil, &QRDBNodeError{Stage: "mount host modules", Cause: err}
+		}
+		for _, hostModule := range s.opts.hostModules {
+			s.logger.Info("qrdb node: mounting host capability module", "module", hostModule.Name())
+			serverOpts = append(serverOpts, qrdbsdk.WithModule(hostModule))
+		}
+	}
+
 	// Unified API server TLS: qrdb's transports are TLS-only and take their
 	// material from the WithServerTLS option, not from the daemon config.
 	if s.config.NetworkServing() {

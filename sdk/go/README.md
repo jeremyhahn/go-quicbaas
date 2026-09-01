@@ -194,6 +194,30 @@ for event := range watcher.Events() {
 }
 ```
 
+### Mounting your own ServiceModule
+
+A host that embeds a QuicBaaS node can mount its own capability plane on that
+node — served over gRPC, unix, REST and MCP under the node's single authorizer,
+alongside the `quicbaas` and `xkms` modules:
+
+```go
+type deviceModule struct{ quicbaas.BaseHostModule }
+
+func (m *deviceModule) Name() string { return "trusted-platform" }
+
+func (m *deviceModule) RegisterHTTP(r *quicbaas.ModuleHTTPRegistrar) {
+    r.Handle(http.MethodGet, "/api/v1/devices", quicbaas.Permission("device:read"), m.list)
+}
+
+srv, err := quicbaas.NewServer(cfg, quicbaas.WithModule(&deviceModule{}))
+```
+
+`quicbaas.WithModule` is the only supported shape — the SDK exposes no qrdb
+server constructor, because composing the node is go-quicbaas's job. Note that
+modules do **not** reach QUIC or the embedded in-process transport. See
+[docs/go-sdk/api.md](../../docs/go-sdk/api.md) § *Mounting a host
+ServiceModule*.
+
 ## More Information
 
 For detailed documentation, examples, and the server implementation, visit the main repository:
