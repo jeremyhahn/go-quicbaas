@@ -94,6 +94,16 @@ func containsString(slice []string, val string) bool {
 	return false
 }
 
+// allowAllTargetResolver resolves every (tenant, user) pair. Tests that
+// exercise impersonation mechanics unrelated to target verification use
+// it; the verification itself is tested with a strict resolver in
+// admin_tenant_scope_test.go (#357).
+type allowAllTargetResolver struct{}
+
+func (allowAllTargetResolver) GetUser(ctx context.Context, tenantID, userID string) (*User, error) {
+	return &User{ID: userID, TenantID: tenantID}, nil
+}
+
 // createTestAdminManager creates a new AdminManager for testing.
 func createTestAdminManager(t *testing.T) (*AdminManager, *mockAuditLogger) {
 	adminStorage := NewMemoryAdminStorage()
@@ -104,6 +114,7 @@ func createTestAdminManager(t *testing.T) (*AdminManager, *mockAuditLogger) {
 		AdminStorage:         adminStorage,
 		ImpersonationStorage: impersonationStorage,
 		AuditLogger:          auditLogger,
+		TargetResolver:       allowAllTargetResolver{},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, manager)
@@ -806,19 +817,16 @@ func TestAdminManager_ListAssignments(t *testing.T) {
 			opts: ListAdminAssignmentsOptions{
 				TenantID: "tenant1",
 			},
-			expectedCount: 5, // user1 (global), user2 (has tenant1), user3,4,5 (global)
+			// Only the assignment explicitly naming tenant1 matches: empty
+			// TenantIDs is system-tenant scope, not all-tenants, so the
+			// system-scope assignments no longer appear under a tenant
+			// filter (#357).
+			expectedCount: 1,
 			validateResult: func(t *testing.T, assignments []*AdminAssignment) {
-				// At least one assignment should explicitly have tenant1
-				foundExplicit := false
 				for _, a := range assignments {
-					if len(a.TenantIDs) > 0 {
-						if containsString(a.TenantIDs, "tenant1") {
-							foundExplicit = true
-							break
-						}
-					}
+					assert.True(t, containsString(a.TenantIDs, "tenant1"),
+						"every listed assignment must explicitly name tenant1")
 				}
-				assert.True(t, foundExplicit, "Expected at least one assignment with explicit tenant1")
 			},
 		},
 		{
@@ -2131,9 +2139,10 @@ func TestMemoryAdminStorage_ListAssignments(t *testing.T) {
 			opts: ListAdminAssignmentsOptions{
 				TenantID: "tenant1",
 			},
-			// Includes: assignments with tenant1 + global assignments (empty TenantIDs)
-			// user1 (super admin, no tenant scope), user2 (tenant1), user4 (no tenant scope)
-			expectedCount: 3,
+			// Only user2's assignment names tenant1. Empty TenantIDs is
+			// system-tenant scope, not all-tenants, so the unscoped
+			// assignments no longer appear under a tenant filter (#357).
+			expectedCount: 1,
 		},
 		{
 			name: "Filter active only",

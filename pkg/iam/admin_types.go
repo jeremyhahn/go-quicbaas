@@ -15,13 +15,40 @@ package iam
 
 import (
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
+
+// assignmentMatchesTenant reports whether an assignment applies to the
+// given tenant filter under the #357 contract, stated once for every
+// consumer (CheckPermission and both ListAssignments storages): an empty
+// filter matches every assignment; explicit TenantIDs must name the
+// tenant; empty TenantIDs is system-tenant scope alone, so it matches
+// only a system-tenant filter — never another tenant's.
+func assignmentMatchesTenant(assignment *AdminAssignment, tenantID string) bool {
+	if tenantID == "" {
+		return true
+	}
+	if len(assignment.TenantIDs) > 0 {
+		for _, tid := range assignment.TenantIDs {
+			if tid == tenantID {
+				return true
+			}
+		}
+		return false
+	}
+	return qrdbsdk.IsSystemTenant(tenantID)
+}
 
 // AdminRole represents a delegated administration role type.
 type AdminRole string
 
 const (
-	// AdminRoleSuperAdmin has full access to all tenants and system operations.
+	// AdminRoleSuperAdmin holds the full administrative permission set.
+	// The role grants permissions only — tenant REACH is decided by the
+	// assignment's TenantIDs (#357): a super_admin acts in the tenants its
+	// assignment names, or system-tenant scope alone when TenantIDs is
+	// empty. No role reaches every tenant implicitly.
 	AdminRoleSuperAdmin AdminRole = "super_admin"
 
 	// AdminRoleTenantAdmin has full access within their assigned tenant(s).
@@ -129,8 +156,15 @@ type AdminAssignment struct {
 	// AdminRole is the type of administrative role.
 	AdminRole AdminRole `json:"admin_role" yaml:"admin_role"`
 
-	// TenantIDs are the tenants this assignment applies to.
-	// Empty means global/system-level for super admins.
+	// TenantIDs are the tenants this assignment applies to, named
+	// explicitly. Empty means the assignment is scoped to the SYSTEM
+	// tenant alone (the firstboot super_admin's shape): it matches an
+	// unscoped permission check or a system-tenant target, and never any
+	// other tenant. Empty must NOT be read as "every tenant" — that
+	// reading let the platform operator pass tenant-scoped checks,
+	// impersonation included, for any tenant on the platform (#357).
+	// There is no all-tenants sentinel; reach into a tenant requires
+	// naming that tenant here.
 	TenantIDs []string `json:"tenant_ids,omitempty" yaml:"tenant_ids,omitempty"`
 
 	// Permissions are explicit permissions granted (overrides role defaults).

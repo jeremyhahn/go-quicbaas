@@ -546,6 +546,10 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		AdminStorage:         iam.NewBackendAdminStorage(iamKV),
 		ImpersonationStorage: iam.NewBackendImpersonationStorage(iamKV),
 		AuditLogger:          auditLogger,
+		// The identity store verifies that an impersonation target really
+		// is a user of the target tenant before a session is minted; the
+		// manager fails closed without it (#357).
+		TargetResolver: identityStore,
 	})
 	if err != nil {
 		return nil, &IAMComponentInitError{Component: "admin manager", Cause: err}
@@ -845,11 +849,17 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	}
 
 	// Grant the user a super_admin assignment so they can manage the system
-	// after collecting their certificate.
+	// after collecting their certificate. Nil TenantIDs scopes the
+	// assignment to the SYSTEM tenant alone (iam.AdminAssignment.TenantIDs,
+	// #357): it passes unscoped and system-tenant permission checks —
+	// everything platform management needs — but never a check targeting a
+	// customer tenant, so this admin cannot, for example, impersonate a
+	// tenant's users. Cross-tenant administrative reach requires a separate
+	// assignment naming the tenant explicitly.
 	_, err = c.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
 		UserID:    user.ID,
 		AdminRole: iam.AdminRoleSuperAdmin,
-		TenantIDs: nil, // global / system-level
+		TenantIDs: nil, // system-tenant scope only (#357)
 		GrantedBy: "system:first-boot",
 	})
 	if err != nil {

@@ -254,7 +254,7 @@ QuicBaaS provides the following predefined admin roles:
 
 | Role | Description |
 |------|-------------|
-| `super_admin` | Full access to all tenants and system operations |
+| `super_admin` | Full administrative permission set. Tenant reach is decided by the assignment's `tenant_ids`, not the role: the assignment acts in the tenants it names, or system-tenant scope alone when `tenant_ids` is empty (go-quicbaas#357) |
 | `tenant_admin` | Full access within assigned tenant(s) |
 | `user_admin` | Can manage users within assigned tenant(s) |
 | `group_admin` | Can manage groups within assigned tenant(s) |
@@ -357,7 +357,7 @@ quicbaas iam admin assignment create \
 |-------|-------------|
 | `user_id` | User receiving admin privileges |
 | `admin_role` | Predefined admin role |
-| `tenant_ids` | Tenants this assignment applies to (empty = global) |
+| `tenant_ids` | Tenants this assignment applies to, named explicitly. Empty scopes the assignment to the SYSTEM tenant alone (unscoped and system-tenant checks only) — it does NOT mean every tenant, and there is no all-tenants sentinel (go-quicbaas#357) |
 | `permissions` | Additional permissions beyond role defaults |
 | `denied_permissions` | Explicitly denied permissions |
 | `resource_scopes` | Limit access to specific resources |
@@ -464,7 +464,15 @@ quicbaas iam admin impersonate start \
 #### Requirements
 
 - Admin must have `user:impersonate` permission
-- Admin must have access to the target user's tenant
+- Admin's assignment must name the target user's tenant explicitly in
+  `tenant_ids` (an empty-`tenant_ids` assignment — the firstboot
+  super_admin's shape — reaches only system-tenant users; a system-tenant
+  principal is therefore denied impersonation of tenant users by default,
+  and the one break-glass path is an assignment explicitly scoped to that
+  tenant — go-quicbaas#357)
+- The target must resolve as a real user of the target tenant through the
+  identity store before any session is minted; a deployment without a
+  target resolver wired cannot impersonate at all (fails closed)
 - A reason is required for audit purposes
 - Duration defaults to 1 hour if not specified
 

@@ -154,17 +154,12 @@ func (s *BackendAdminStorage) ListAssignments(ctx context.Context, opts ListAdmi
 		if opts.AdminRole != "" && a.AdminRole != opts.AdminRole {
 			continue
 		}
-		if opts.TenantID != "" && len(a.TenantIDs) > 0 {
-			match := false
-			for _, tid := range a.TenantIDs {
-				if tid == opts.TenantID {
-					match = true
-					break
-				}
-			}
-			if !match {
-				continue
-			}
+		// Same tenant rule as CheckPermission (assignmentMatchesTenant,
+		// #357): a tenant filter matches only assignments that name that
+		// tenant; empty TenantIDs is system-tenant scope, so a
+		// tenant-filtered listing must not surface system-scope grants.
+		if !assignmentMatchesTenant(a, opts.TenantID) {
+			continue
 		}
 		if opts.ActiveOnly {
 			if !a.Active {

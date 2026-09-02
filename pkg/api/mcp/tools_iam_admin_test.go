@@ -38,6 +38,15 @@ func (m *adminMockQuicBaaS) GetAdminManager(_ context.Context) (*iam.AdminManage
 	return m.adminMgr, nil
 }
 
+// mcpAllowAllTargetResolver resolves every (tenant, user) pair so tool
+// tests can exercise impersonation mechanics; target verification itself
+// is pinned in pkg/iam's tenant-scope suite (#357).
+type mcpAllowAllTargetResolver struct{}
+
+func (mcpAllowAllTargetResolver) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {
+	return &iam.User{ID: userID, TenantID: tenantID}, nil
+}
+
 // newAdminMockWithManager creates a mock service with a real AdminManager
 // backed by in-memory storage.
 func newAdminMockWithManager(t *testing.T) *adminMockQuicBaaS {
@@ -45,6 +54,7 @@ func newAdminMockWithManager(t *testing.T) *adminMockQuicBaaS {
 	mgr, err := iam.NewAdminManager(iam.AdminManagerOptions{
 		AdminStorage:         iam.NewMemoryAdminStorage(),
 		ImpersonationStorage: iam.NewMemoryImpersonationStorage(),
+		TargetResolver:       mcpAllowAllTargetResolver{},
 	})
 	require.NoError(t, err)
 	return &adminMockQuicBaaS{adminMgr: mgr}
@@ -426,10 +436,13 @@ func TestExecuteIAMImpersonationStart_Success(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Create an admin assignment first (required for impersonation)
+	// The assignment names the target tenant explicitly — empty tenant_ids
+	// no longer matches a tenant-scoped impersonation check (#357).
 	_, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
 		"user_id":    "admin-user",
 		"admin_role": "super_admin",
 		"granted_by": "system",
+		"tenant_ids": []interface{}{"t1"},
 	})
 	require.NoError(t, err)
 
@@ -454,10 +467,13 @@ func TestExecuteIAMImpersonationStart_DefaultDuration(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Create admin assignment
+	// The assignment names the target tenant explicitly — empty tenant_ids
+	// no longer matches a tenant-scoped impersonation check (#357).
 	_, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
 		"user_id":    "admin-user",
 		"admin_role": "super_admin",
 		"granted_by": "system",
+		"tenant_ids": []interface{}{"t1"},
 	})
 	require.NoError(t, err)
 
@@ -486,10 +502,13 @@ func TestExecuteIAMImpersonationEnd_Success(t *testing.T) {
 	reg := &ToolRegistry{service: mock, logger: log}
 
 	// Create admin assignment and start impersonation
+	// The assignment names the target tenant explicitly — empty tenant_ids
+	// no longer matches a tenant-scoped impersonation check (#357).
 	_, err := reg.executeIAMAdminAssignmentCreate(context.Background(), map[string]interface{}{
 		"user_id":    "admin-user",
 		"admin_role": "super_admin",
 		"granted_by": "system",
+		"tenant_ids": []interface{}{"t1"},
 	})
 	require.NoError(t, err)
 

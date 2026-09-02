@@ -42,6 +42,15 @@ func (m *mockQuicBaaSWithAdmin) GetAdminManager(_ context.Context) (*iam.AdminMa
 	return m.adminManager, nil
 }
 
+// restAllowAllTargetResolver resolves every (tenant, user) pair so handler
+// tests can exercise impersonation mechanics; target verification itself
+// is pinned in pkg/iam's tenant-scope suite (#357).
+type restAllowAllTargetResolver struct{}
+
+func (restAllowAllTargetResolver) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {
+	return &iam.User{ID: userID, TenantID: tenantID}, nil
+}
+
 // newTestAdminManager creates an AdminManager with in-memory storage for testing.
 func newTestAdminManager(t *testing.T) *iam.AdminManager {
 	t.Helper()
@@ -51,6 +60,7 @@ func newTestAdminManager(t *testing.T) *iam.AdminManager {
 	mgr, err := iam.NewAdminManager(iam.AdminManagerOptions{
 		AdminStorage:         adminStorage,
 		ImpersonationStorage: impersonationStorage,
+		TargetResolver:       restAllowAllTargetResolver{},
 	})
 	require.NoError(t, err)
 	return mgr

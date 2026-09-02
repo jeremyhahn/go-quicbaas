@@ -87,6 +87,7 @@ type AdminManager struct {
 	adminStorage         AdminStorage
 	impersonationStorage ImpersonationStorage
 	auditLogger          AuditLogger // Optional audit logger (defined in audit.go)
+	targetResolver       ImpersonationTargetResolver
 }
 
 // AdminManagerOptions contains options for creating an AdminManager.
@@ -94,6 +95,21 @@ type AdminManagerOptions struct {
 	AdminStorage         AdminStorage
 	ImpersonationStorage ImpersonationStorage
 	AuditLogger          AuditLogger
+
+	// TargetResolver verifies that an impersonation target exists in the
+	// target tenant before a session is minted. *IdentityStore satisfies
+	// it. StartImpersonation fails closed when it is absent — a manager
+	// without a resolver cannot impersonate at all — so any deployment
+	// that serves impersonation must wire one.
+	TargetResolver ImpersonationTargetResolver
+}
+
+// ImpersonationTargetResolver resolves a user within a tenant. It is the
+// identity-store seam StartImpersonation uses to verify the impersonation
+// target really is a user of the target tenant before minting a session
+// (*IdentityStore implements it via GetUser).
+type ImpersonationTargetResolver interface {
+	GetUser(ctx context.Context, tenantID, userID string) (*User, error)
 }
 
 // NewAdminManager creates a new admin manager with the provided storage backends.
@@ -109,6 +125,7 @@ func NewAdminManager(opts AdminManagerOptions) (*AdminManager, error) {
 		adminStorage:         opts.AdminStorage,
 		impersonationStorage: opts.ImpersonationStorage,
 		auditLogger:          opts.AuditLogger,
+		targetResolver:       opts.TargetResolver,
 	}, nil
 }
 
@@ -391,18 +408,21 @@ func (m *AdminManager) CheckPermission(ctx context.Context, req *AdminCheckReque
 			continue
 		}
 
-		// Check tenant scope if specified
-		if req.TenantID != "" && len(assignment.TenantIDs) > 0 {
-			tenantMatch := false
-			for _, tid := range assignment.TenantIDs {
-				if tid == req.TenantID {
-					tenantMatch = true
-					break
-				}
-			}
-			if !tenantMatch {
-				continue
-			}
+		// Check tenant scope on a tenant-scoped request
+		// (assignmentMatchesTenant, the single statement of the rule): an
+		// assignment lists the tenants it applies to explicitly; one with
+		// EMPTY TenantIDs is scoped to the system tenant alone (the
+		// firstboot super_admin's shape — see AdminAssignment.TenantIDs),
+		// so it matches an unscoped check or a system-tenant target and
+		// NOTHING else. Empty must never mean "every tenant": that read
+		// let the platform operator pass tenant-scoped checks —
+		// impersonation included — for any tenant on the platform (#357),
+		// and this path never reaches the qrdb authorizer, so its scope
+		// model cannot catch it. There is deliberately no all-tenants
+		// sentinel; reach into a tenant requires naming that tenant in
+		// the grant.
+		if !assignmentMatchesTenant(assignment, req.TenantID) {
+			continue
 		}
 
 		// Check resource scope if specified
@@ -480,7 +500,25 @@ func (m *AdminManager) CheckPermission(ctx context.Context, req *AdminCheckReque
 	}, nil
 }
 
-// StartImpersonation starts an impersonation session.
+// StartImpersonation starts an impersonation session. It is gated on
+// PermUserImpersonate checked IN THE TARGET TENANT (opts.TenantID), and
+// CheckPermission's tenant rule makes that an explicit-grant requirement:
+// an assignment matches a tenant-scoped check only by naming the tenant in
+// TenantIDs (empty means system-tenant scope, never all tenants — #357).
+// A system-tenant principal — the firstboot super_admin included — is
+// therefore denied impersonation of any tenant's users by default; the
+// one retained break-glass path is an assignment explicitly scoped to
+// that tenant (an auditable grant: the assignment records GrantedBy, and
+// the session itself is audit-logged below).
+//
+// The target must really be a user of the target tenant: after the
+// permission check, the configured ImpersonationTargetResolver (the
+// identity store) must resolve TargetUserID within opts.TenantID, or no
+// session is minted (ErrImpersonationTargetNotFound). A manager with no
+// resolver wired fails CLOSED (ErrImpersonationTargetResolverRequired)
+// rather than minting sessions for unverified principals. The minted
+// session's authority is additionally bounded by ITS TenantID — every
+// consumer acts as TargetUserID strictly within session.TenantID.
 func (m *AdminManager) StartImpersonation(ctx context.Context, opts *StartImpersonationOptions) (*ImpersonationSession, error) {
 	// Validate options before checking permission (no lock needed yet)
 	if opts == nil {
@@ -511,6 +549,23 @@ func (m *AdminManager) StartImpersonation(ctx context.Context, opts *StartImpers
 	}
 	if !checkResp.Allowed {
 		return nil, ErrImpersonationNotAllowed
+	}
+
+	// Verify the target exists in the target tenant before minting
+	// anything. Fail closed when no resolver is wired: a session for an
+	// unverified principal must never come into existence. Only a genuine
+	// not-found becomes ErrImpersonationTargetNotFound — any other
+	// resolver failure (sealed store, invalid input, cancellation) is a
+	// lookup that could not be performed, and masking it as "not found"
+	// would hide operational faults from the caller.
+	if m.targetResolver == nil {
+		return nil, ErrImpersonationTargetResolverRequired
+	}
+	if _, err := m.targetResolver.GetUser(ctx, opts.TenantID, opts.TargetUserID); err != nil {
+		if dberrors.IsNotFound(err) {
+			return nil, ErrImpersonationTargetNotFound
+		}
+		return nil, api.NewOperationFailedError("resolve impersonation target", err)
 	}
 
 	// Now acquire the write lock for session creation

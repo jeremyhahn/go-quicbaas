@@ -171,17 +171,12 @@ func (m *MemoryAdminStorage) ListAssignments(ctx context.Context, opts ListAdmin
 			continue
 		}
 
-		if opts.TenantID != "" && len(assignment.TenantIDs) > 0 {
-			tenantMatch := false
-			for _, tid := range assignment.TenantIDs {
-				if tid == opts.TenantID {
-					tenantMatch = true
-					break
-				}
-			}
-			if !tenantMatch {
-				continue
-			}
+		// Same tenant rule as CheckPermission (assignmentMatchesTenant,
+		// #357): a tenant filter matches only assignments that name that
+		// tenant; empty TenantIDs is system-tenant scope, so a
+		// tenant-filtered listing must not surface system-scope grants.
+		if !assignmentMatchesTenant(assignment, opts.TenantID) {
+			continue
 		}
 
 		if opts.ActiveOnly {

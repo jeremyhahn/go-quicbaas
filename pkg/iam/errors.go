@@ -498,6 +498,25 @@ var (
 		Err:  &IAMMessageError{Message: "impersonation not allowed"},
 	}
 
+	// ErrImpersonationTargetNotFound is returned when the impersonation
+	// target cannot be resolved as a user of the target tenant — no
+	// session is minted for an unverified principal (#357).
+	ErrImpersonationTargetNotFound = &dberrors.QBError{
+		Code: dberrors.ErrNotFound,
+		Op:   "iam.admin.impersonate",
+		Err:  &IAMMessageError{Message: "impersonation target not found in target tenant"},
+	}
+
+	// ErrImpersonationTargetResolverRequired is returned when
+	// StartImpersonation is invoked on a manager with no
+	// ImpersonationTargetResolver wired: without a way to verify the
+	// target, impersonation fails closed (#357).
+	ErrImpersonationTargetResolverRequired = &dberrors.QBError{
+		Code: dberrors.ErrInternal,
+		Op:   "iam.admin.impersonate",
+		Err:  &IAMMessageError{Message: "impersonation target resolver not configured"},
+	}
+
 	// ErrImpersonationSessionNotFound is returned when an impersonation session is not found.
 	ErrImpersonationSessionNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,

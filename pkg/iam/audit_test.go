@@ -1529,10 +1529,13 @@ func TestAdminManager_EndImpersonation_CoverageEdgeCases(t *testing.T) {
 	})
 
 	t.Run("end already ended session", func(t *testing.T) {
-		// Create an assignment with impersonation permission
+		// Create an assignment with impersonation permission, explicitly
+		// scoped to the target tenant — empty TenantIDs no longer matches
+		// a tenant-scoped impersonation check (#357).
 		assignmentOpts := CreateAdminAssignmentOptions{
 			UserID:      "admin-user-cov",
 			AdminRole:   AdminRoleSuperAdmin,
+			TenantIDs:   []string{"tenant-1"},
 			GrantedBy:   "system",
 			Permissions: []AdminPermission{PermUserImpersonate},
 		}
