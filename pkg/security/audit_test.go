@@ -2446,6 +2446,86 @@ func TestRotateIfNeeded_FileExceedsMaxSize(t *testing.T) {
 	require.NoError(t, rotErr)
 }
 
+// TestRotateIfNeeded_AfterCloseStartsNothing pins the guarantee that makes
+// Close's rotateWG.Wait sound.
+//
+// Wait only orders correctly if a positive Add on a zero counter
+// happens-before it. The rotation loop commits to rotating the moment it
+// selects ticker.C, and closing al.shutdown after that does not call it back --
+// so without a barrier Close could Wait on a zero counter, return, and only
+// then have rotateIfNeeded spawn the compression it was meant to wait for.
+//
+// The barrier is the closing flag, set by Close under mu and read here under
+// mu. This asserts its observable consequence directly: once Close has
+// returned, a rotation that would otherwise have fired starts no background
+// work and creates no files. That is deterministic, unlike the interleaving
+// itself.
+func TestRotateIfNeeded_AfterCloseStartsNothing(t *testing.T) {
+	tmpDir := t.TempDir()
+	logFile := filepath.Join(tmpDir, "audit.log")
+
+	cfg := &AuditConfig{
+		Enabled:    true,
+		File:       logFile,
+		MaxSize:    1, // 1 MB
+		MaxBackups: 3,
+		SignLogs:   false,
+		Compress:   true,
+	}
+
+	log := createTestLogger(t)
+	al, err := NewAuditLogger(cfg, log)
+	require.NoError(t, err)
+
+	// Past MaxSize, so rotateIfNeeded would rotate if it were allowed to.
+	ctx := context.Background()
+	bigData := make([]byte, 1024)
+	for i := range bigData {
+		bigData[i] = byte('A' + (i % 26))
+	}
+	for i := 0; i < 1200; i++ {
+		require.NoError(t, al.Log(ctx, &AuditEvent{
+			Username: "test",
+			Action:   ActionWrite,
+			Resource: string(bigData),
+			Result:   ResultSuccess,
+		}))
+	}
+
+	require.NoError(t, al.Close())
+
+	// Hand the logger an OPEN file again before attempting the rotation.
+	//
+	// This is what makes the assertion mean something. In the interleaving
+	// being guarded against, the rotation runs while the file is still open --
+	// Close does not close it until after the Wait -- so it rotates
+	// successfully and spawns its goroutines. Calling rotateIfNeeded on the
+	// closed handle instead would fail early at Stat, and the test would pass
+	// whether or not the closing flag existed: right answer, wrong reason.
+	reopened, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	al.mu.Lock()
+	al.file = reopened
+	al.mu.Unlock()
+	t.Cleanup(func() { _ = reopened.Close() })
+
+	before, err := os.ReadDir(tmpDir)
+	require.NoError(t, err)
+
+	// The call the ticker goroutine would have made after Close returned. The
+	// file is over MaxSize and open, so the closing flag is now the only thing
+	// standing between this and a rename plus two background goroutines.
+	al.mu.Lock()
+	rotErr := al.rotateIfNeeded()
+	al.mu.Unlock()
+	require.NoError(t, rotErr, "a rotation after Close must be a no-op, not an error")
+
+	after, err := os.ReadDir(tmpDir)
+	require.NoError(t, err)
+	assert.Equal(t, len(before), len(after),
+		"rotation after Close must create no files: it would mean background work started with nobody waiting for it")
+}
+
 func TestRotateIfNeeded_NilFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	logFile := filepath.Join(tmpDir, "audit.log")

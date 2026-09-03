@@ -109,59 +109,112 @@ func TestRetryContextCancellation(t *testing.T) {
 	assert.Less(t, callCount, config.MaxAttempts)
 }
 
+// recordWaits returns a RetryConfig.wait that captures the backoff it is asked
+// for and returns immediately, so a schedule can be asserted exactly instead of
+// measured.
+func recordWaits(delays *[]time.Duration) func(context.Context, time.Duration) error {
+	return func(_ context.Context, d time.Duration) error {
+		*delays = append(*delays, d)
+		return nil
+	}
+}
+
+// TestRetryExponentialBackoff asserts the schedule RetryWithBackoff computes:
+// each wait is the previous one times Multiplier.
+//
+// It used to measure elapsed wall-clock between calls and require the first gap
+// to be under 50ms and the second under 100ms. Those upper bounds are the
+// flake: a delay can only ever come back LONGER than asked for, so any
+// scheduling hiccup above the allowance failed a correct implementation. Seen
+// in CI on PR #410, whose diff does not touch this package (go-quicbaas#423).
+//
+// Lower bounds would have been safe -- overshooting cannot violate them -- but
+// on their own they cannot tell 20ms from 20 minutes, so the schedule is read
+// from the seam instead and pinned exactly. Real waiting is covered by
+// TestRetryWithBackoffWaitsForReal.
 func TestRetryExponentialBackoff(t *testing.T) {
+	var delays []time.Duration
 	config := RetryConfig{
 		MaxAttempts:    3,
 		InitialBackoff: 10 * time.Millisecond,
 		MaxBackoff:     1 * time.Second,
 		Multiplier:     2.0,
+		wait:           recordWaits(&delays),
 	}
-	ctx := context.Background()
 
-	callTimes := []time.Time{}
-	err := RetryWithBackoff(ctx, config, func() error {
-		callTimes = append(callTimes, time.Now())
+	callCount := 0
+	err := RetryWithBackoff(context.Background(), config, func() error {
+		callCount++
 		return errors.New("error")
 	})
 
 	require.Error(t, err)
-	require.Len(t, callTimes, 3)
+	require.Equal(t, 3, callCount)
 
-	// Check backoff intervals
-	// First retry: ~10ms
-	// Second retry: ~20ms
-	interval1 := callTimes[1].Sub(callTimes[0])
-	interval2 := callTimes[2].Sub(callTimes[1])
-
-	assert.GreaterOrEqual(t, interval1, 10*time.Millisecond)
-	assert.GreaterOrEqual(t, interval2, 20*time.Millisecond)
-	assert.Less(t, interval1, 50*time.Millisecond) // Allow some variance
-	assert.Less(t, interval2, 100*time.Millisecond)
+	// Three attempts means two waits, and the second is the first doubled.
+	assert.Equal(t, []time.Duration{10 * time.Millisecond, 20 * time.Millisecond}, delays)
 }
 
+// TestRetryWithBackoffWaitsForReal covers what the seam cannot: that the
+// computed delay is actually spent when no wait is injected. Without this, a
+// regression that stopped calling wait at all would leave every schedule
+// assertion above still passing.
+//
+// It asserts a LOWER bound only, which load cannot break -- a slow machine
+// makes the elapsed time larger, never smaller.
+func TestRetryWithBackoffWaitsForReal(t *testing.T) {
+	config := RetryConfig{
+		MaxAttempts:    2,
+		InitialBackoff: 20 * time.Millisecond,
+		MaxBackoff:     time.Second,
+		Multiplier:     2.0,
+	}
+
+	start := time.Now()
+	err := RetryWithBackoff(context.Background(), config, func() error {
+		return errors.New("error")
+	})
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.GreaterOrEqual(t, elapsed, 20*time.Millisecond,
+		"the single backoff between two attempts must actually be waited out")
+}
+
+// TestRetryMaxBackoffCap asserts MaxBackoff caps the schedule even when the
+// multiplier would blow past it.
+//
+// The version this replaces measured elapsed time and allowed each gap up to
+// 200ms against a 150ms cap, so it failed whenever the scheduler added 50ms --
+// and it could not have detected the cap being applied as 190ms either, since
+// that was inside the allowance. Reading the computed waits pins both.
 func TestRetryMaxBackoffCap(t *testing.T) {
+	var delays []time.Duration
 	config := RetryConfig{
 		MaxAttempts:    5,
 		InitialBackoff: 100 * time.Millisecond,
 		MaxBackoff:     150 * time.Millisecond,
 		Multiplier:     10.0, // Large multiplier
+		wait:           recordWaits(&delays),
 	}
-	ctx := context.Background()
 
-	callTimes := []time.Time{}
-	err := RetryWithBackoff(ctx, config, func() error {
-		callTimes = append(callTimes, time.Now())
+	callCount := 0
+	err := RetryWithBackoff(context.Background(), config, func() error {
+		callCount++
 		return errors.New("error")
 	})
 
 	require.Error(t, err)
-	require.Len(t, callTimes, 5)
+	require.Equal(t, 5, callCount)
 
-	// All intervals should be capped at MaxBackoff
-	for i := 1; i < len(callTimes); i++ {
-		interval := callTimes[i].Sub(callTimes[i-1])
-		assert.LessOrEqual(t, interval, 200*time.Millisecond) // Allow some variance
-	}
+	// The first wait is InitialBackoff; every later one is pinned to the cap,
+	// because 100ms * 10 already exceeds it.
+	assert.Equal(t, []time.Duration{
+		100 * time.Millisecond,
+		150 * time.Millisecond,
+		150 * time.Millisecond,
+		150 * time.Millisecond,
+	}, delays)
 }
 
 func TestRetryNonRetryableError(t *testing.T) {

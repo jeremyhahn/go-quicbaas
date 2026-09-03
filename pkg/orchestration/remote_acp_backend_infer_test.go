@@ -224,6 +224,31 @@ func TestRemoteACPBackend_Infer_RPCError(t *testing.T) {
 
 // TestRemoteACPBackend_Infer_ContextCancel verifies that context cancellation
 // terminates the goroutine cleanly without a panic or goroutine leak.
+// inferHangTimeout is a deadlock detector, not a budget. It separates "this
+// channel never closes" from "this machine is slow", which is the only
+// distinction the assertions below still need, so it is set far above any
+// plausible scheduling delay rather than tuned.
+const inferHangTimeout = 30 * time.Second
+
+// TestRemoteACPBackend_Infer_ContextCancel asserts that cancelling the caller's
+// context closes the chunk channel instead of leaving the caller blocked.
+//
+// The version this replaces gave that context a 150ms timeout and let it do two
+// jobs at once: it was both the deadline for gRPC to get the connection ready
+// and the cancellation being tested. Under load the first job lost, and Infer
+// returned before the stream ever started:
+//
+//	unexpected error starting Infer: op=Infer.Start: rpc error:
+//	code = DeadlineExceeded desc = context deadline exceeded while
+//	waiting for connections to become ready
+//
+// so the test failed without once exercising the behaviour it names. Seen in CI
+// on PR #412, whose diff is 22 lines in an unrelated IAM test (go-quicbaas#423).
+//
+// The two jobs are now separate. Connection setup has no deadline at all, and
+// cancellation is triggered explicitly after the first frame proves the stream
+// is live -- the fake sends one frame and then blocks, so nothing but the
+// cancel can end it.
 func TestRemoteACPBackend_Infer_ContextCancel(t *testing.T) {
 	t.Parallel()
 
@@ -236,7 +261,7 @@ func TestRemoteACPBackend_Infer_ContextCancel(t *testing.T) {
 	dialer := startInferBufconnDaemon(t, svc)
 	backend := newInferBackend(t, dialer)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	ch, err := backend.Infer(ctx, &InferRequest{Backend: "ollama", Prompt: "slow"})
@@ -244,8 +269,28 @@ func TestRemoteACPBackend_Infer_ContextCancel(t *testing.T) {
 		t.Fatalf("unexpected error starting Infer: %v", err)
 	}
 
-	// Drain channel — it must close after context deadline, not block.
-	for range ch {
+	select {
+	case _, ok := <-ch:
+		if !ok {
+			t.Fatal("stream closed before delivering the first frame")
+		}
+	case <-time.After(inferHangTimeout):
+		t.Fatal("the first frame never arrived, so the cancel below would not have tested anything")
+	}
+
+	cancel()
+
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for range ch {
+		}
+	}()
+
+	select {
+	case <-drained:
+	case <-time.After(inferHangTimeout):
+		t.Fatal("the chunk channel did not close after the context was cancelled")
 	}
 }
 

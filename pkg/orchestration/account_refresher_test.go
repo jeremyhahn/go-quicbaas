@@ -16,6 +16,7 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -41,6 +42,58 @@ func (r *countingRefresher) Refresh(_ context.Context, cred *AccountCredential) 
 	renewed.ExpiresAt = time.Now().Add(time.Hour)
 	_ = n
 	return &renewed, nil
+}
+
+// barrierRefresher blocks every Refresh until `want` of them are in flight at
+// once, then releases them all.
+//
+// It turns concurrency from something a test INFERS from elapsed time into
+// something the test cannot finish without: if the manager serialized two
+// accounts, the first call would sit here waiting for a second that cannot
+// start, and the wait would end at the context deadline with a message saying
+// exactly that. There is no threshold to tune and nothing that a slow machine
+// can push past.
+type barrierRefresher struct {
+	calls atomic.Int64
+
+	mu      sync.Mutex
+	arrived int
+	want    int
+	release chan struct{}
+}
+
+func newBarrierRefresher(want int) *barrierRefresher {
+	return &barrierRefresher{want: want, release: make(chan struct{})}
+}
+
+func (r *barrierRefresher) Refresh(ctx context.Context, cred *AccountCredential) (*AccountCredential, error) {
+	r.calls.Add(1)
+
+	r.mu.Lock()
+	r.arrived++
+	if r.arrived == r.want {
+		close(r.release)
+	}
+	r.mu.Unlock()
+
+	select {
+	case <-r.release:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("refresh waited for %d concurrent calls and saw %d before the context ended: %w",
+			r.want, r.currentArrived(), ctx.Err())
+	}
+
+	renewed := *cred
+	renewed.AccessToken = "renewed-token"
+	renewed.RefreshToken = "renewed-refresh"
+	renewed.ExpiresAt = time.Now().Add(time.Hour)
+	return &renewed, nil
+}
+
+func (r *barrierRefresher) currentArrived() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.arrived
 }
 
 type failingRefresher struct{ err error }
@@ -163,10 +216,26 @@ func TestAccountTokenManager_SingleFlight_PerAccount(t *testing.T) {
 
 // TestAccountTokenManager_SingleFlight_DifferentAccounts proves two DIFFERENT
 // accounts refresh in parallel rather than serializing behind one lock.
+// TestAccountTokenManager_SingleFlight_DifferentAccounts asserts that
+// single-flight is keyed PER ACCOUNT: two different accounts refresh
+// concurrently rather than queueing behind one another.
+//
+// It used to time the pair -- each refresh slept 30ms, and the test required
+// the whole thing to finish in under 60ms. That is a performance threshold
+// wearing a correctness hat: a loaded machine blows past 60ms while the code is
+// behaving perfectly, which is how it reddened CI on PRs that do not touch this
+// package (go-quicbaas#423).
+//
+// The barrier below asserts the same property without a clock. Both refreshes
+// must be in flight at the same moment before either is allowed to return, so
+// serialization cannot complete the test at all -- it can only time out, with a
+// message naming how many calls arrived. The 10s context is a deadlock
+// detector, not a budget: it distinguishes "never" from "eventually", which is
+// the only thing left to distinguish.
 func TestAccountTokenManager_SingleFlight_DifferentAccounts(t *testing.T) {
 	mgr, store, secretStore := setupTokenManager(t)
 	ctx := context.Background()
-	refresher := &countingRefresher{delay: 30 * time.Millisecond}
+	refresher := newBarrierRefresher(2)
 	mgr.RegisterRefresher(AccountProviderClaude, refresher)
 
 	for _, id := range []string{"acct-1", "acct-2"} {
@@ -181,27 +250,24 @@ func TestAccountTokenManager_SingleFlight_DifferentAccounts(t *testing.T) {
 		}
 	}
 
-	start := time.Now()
+	resolveCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	var wg sync.WaitGroup
 	for _, id := range []string{"acct-1", "acct-2"} {
 		wg.Add(1)
 		go func(accountID string) {
 			defer wg.Done()
-			account, _ := store.Get(ctx, "tenant-a", accountID)
-			if _, err := mgr.Resolve(ctx, account); err != nil {
-				t.Errorf("Resolve(%s) error = %v", accountID, err)
+			account, _ := store.Get(resolveCtx, "tenant-a", accountID)
+			if _, err := mgr.Resolve(resolveCtx, account); err != nil {
+				t.Errorf("Resolve(%s) error = %v — different accounts appear to have serialized", accountID, err)
 			}
 		}(id)
 	}
 	wg.Wait()
-	elapsed := time.Since(start)
 
 	if refresher.calls.Load() != 2 {
 		t.Fatalf("refresher called %d times for 2 distinct accounts, want 2", refresher.calls.Load())
-	}
-	// Serialized, this would take >= 2*delay; parallel should be close to 1*delay.
-	if elapsed >= 2*refresher.delay {
-		t.Fatalf("elapsed = %v, want well under %v — different accounts appear to have serialized", elapsed, 2*refresher.delay)
 	}
 }
 

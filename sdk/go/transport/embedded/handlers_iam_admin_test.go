@@ -75,15 +75,35 @@ type embeddedListImpersonationsEnvelope struct {
 	AdminUserID string
 }
 
-func newAdminTestService(t *testing.T) (*mockQuicBaaSWithAdmin, *iam.AdminManager) {
+// embeddedAllowAllTargetResolver resolves every (tenant, user) pair so handler
+// tests can exercise impersonation mechanics; target verification itself
+// is pinned in pkg/iam's tenant-scope suite (#357).
+type embeddedAllowAllTargetResolver struct{}
+
+func (embeddedAllowAllTargetResolver) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {
+	return &iam.User{ID: userID, TenantID: tenantID}, nil
+}
+
+// newAdminTestManager builds an AdminManager over in-memory storage. The
+// target resolver is not optional: StartImpersonation fails closed without
+// one (ErrImpersonationTargetResolverRequired, #357), exactly as the
+// production manager built in pkg/server/iam_init.go does.
+func newAdminTestManager(t *testing.T) *iam.AdminManager {
 	t.Helper()
 	mgr, err := iam.NewAdminManager(iam.AdminManagerOptions{
 		AdminStorage:         iam.NewMemoryAdminStorage(),
 		ImpersonationStorage: iam.NewMemoryImpersonationStorage(),
+		TargetResolver:       embeddedAllowAllTargetResolver{},
 	})
 	if err != nil {
 		t.Fatalf("NewAdminManager failed: %v", err)
 	}
+	return mgr
+}
+
+func newAdminTestService(t *testing.T) (*mockQuicBaaSWithAdmin, *iam.AdminManager) {
+	t.Helper()
+	mgr := newAdminTestManager(t)
 	return &mockQuicBaaSWithAdmin{admin: mgr}, mgr
 }
 
@@ -968,15 +988,8 @@ func (m *mockQuicBaaSWithAuthorizedAdmin) GetPolicyEngine(_ context.Context) (*i
 
 func newAuthorizedAdminTestService(t *testing.T) *mockQuicBaaSWithAuthorizedAdmin {
 	t.Helper()
-	mgr, err := iam.NewAdminManager(iam.AdminManagerOptions{
-		AdminStorage:         iam.NewMemoryAdminStorage(),
-		ImpersonationStorage: iam.NewMemoryImpersonationStorage(),
-	})
-	if err != nil {
-		t.Fatalf("NewAdminManager failed: %v", err)
-	}
 	return &mockQuicBaaSWithAuthorizedAdmin{
-		admin:  mgr,
+		admin:  newAdminTestManager(t),
 		policy: iam.NewPolicyEngine(iam.PolicyEngineOptions{RBACAuthorizer: allowAllAuthorizer{}}),
 	}
 }

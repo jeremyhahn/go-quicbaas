@@ -29,6 +29,28 @@ type RetryConfig struct {
 	MaxBackoff     time.Duration
 	Multiplier     float64
 	EnableJitter   bool
+
+	// wait blocks for d, or returns ctx.Err() if the context is cancelled
+	// first. A nil wait means real time, which is what every caller gets.
+	//
+	// It exists so a test can observe the backoff this package COMPUTES
+	// without spending it. The schedule -- doubling, and the MaxBackoff cap --
+	// is arithmetic, and asserting it by measuring elapsed wall-clock made the
+	// tests fail whenever the scheduler was slower than the bound they allowed
+	// (go-quicbaas#423). Unexported, so it is not part of the API and no
+	// caller can set it.
+	wait func(ctx context.Context, d time.Duration) error
+}
+
+// waitRealTime is the default RetryConfig.wait: sleep for d unless the context
+// ends first.
+func waitRealTime(ctx context.Context, d time.Duration) error {
+	select {
+	case <-time.After(d):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // DefaultRetryConfig returns default retry configuration.
@@ -61,15 +83,18 @@ func RetryWithBackoff(ctx context.Context, config RetryConfig, fn func() error) 
 				delay = time.Duration(jitter)
 			}
 
-			select {
-			case <-time.After(delay):
-				// Calculate next backoff
-				backoff = time.Duration(float64(backoff) * config.Multiplier)
-				if backoff > config.MaxBackoff {
-					backoff = config.MaxBackoff
-				}
-			case <-ctx.Done():
-				return ctx.Err()
+			wait := config.wait
+			if wait == nil {
+				wait = waitRealTime
+			}
+			if err := wait(ctx, delay); err != nil {
+				return err
+			}
+
+			// Calculate next backoff
+			backoff = time.Duration(float64(backoff) * config.Multiplier)
+			if backoff > config.MaxBackoff {
+				backoff = config.MaxBackoff
 			}
 		}
 

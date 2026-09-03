@@ -1215,6 +1215,24 @@ func TestZeroMemory_OnExpiration(t *testing.T) {
 }
 
 // TestDefaultTTL_UsedWhenZero tests default TTL is used when Put with zero TTL.
+// TestDefaultTTL_UsedWhenZero asserts the contract in its name -- Put with a
+// zero TTL stores the entry with KeyCacheOptions.DefaultTTL -- by reading the
+// deadline Put computed, instead of sleeping towards it.
+//
+// The version this replaces slept 50ms against a 100ms TTL and then asserted
+// the key was still there, so a 50ms scheduling delay made a correct cache look
+// broken. It is not hypothetical: under CPU saturation (72 spinners on 24
+// cores) it failed with "key should be accessible before default TTL" within 40
+// iterations. Sleeping PAST a deadline and asserting expiry is safe, because
+// load only makes that more true; sleeping and asserting liveness BEFORE a
+// deadline is the direction load breaks.
+//
+// It was also weak: any default above ~50ms satisfied it, so a default applied
+// as 80ms would have passed. Bracketing Put with two clock reads bounds the
+// instant it stored, which pins the deadline to the width of the call.
+//
+// Expiry itself is not re-tested here -- TestCoverage_KeyCache_Get_Expired and
+// TestTTL_KeyExpires own that -- so this covers the default, and only that.
 func TestDefaultTTL_UsedWhenZero(t *testing.T) {
 	defaultTTL := 100 * time.Millisecond
 	cache := NewKeyCache(&KeyCacheOptions{
@@ -1222,19 +1240,35 @@ func TestDefaultTTL_UsedWhenZero(t *testing.T) {
 	})
 	defer cache.Close()
 
-	// Put with zero TTL should use default
-	cache.Put("key1", []byte("value1"), 0)
+	before := time.Now()
+	if err := cache.Put("key1", []byte("value1"), 0); err != nil {
+		t.Fatalf("Put with zero TTL: %v", err)
+	}
+	after := time.Now()
 
-	// Should be accessible before default TTL
-	time.Sleep(50 * time.Millisecond)
-	if _, found := cache.Get("key1"); !found {
-		t.Error("key should be accessible before default TTL")
+	cache.mu.RLock()
+	entry, exists := cache.entries["key1"]
+	var expiresAt time.Time
+	if exists {
+		expiresAt = entry.expiresAt
+	}
+	cache.mu.RUnlock()
+
+	if !exists {
+		t.Fatal("Put with zero TTL stored no entry")
 	}
 
-	// Should expire after default TTL
-	time.Sleep(60 * time.Millisecond)
-	if _, found := cache.Get("key1"); found {
-		t.Error("key should expire after default TTL")
+	// Put computed now.Add(defaultTTL) at some instant within [before, after],
+	// so the deadline it stored is within that window shifted by the default.
+	earliest, latest := before.Add(defaultTTL), after.Add(defaultTTL)
+	if expiresAt.Before(earliest) || expiresAt.After(latest) {
+		t.Errorf("zero TTL did not use the default: expiresAt %v, want within [%v, %v] (default %v)",
+			expiresAt, earliest, latest, defaultTTL)
+	}
+
+	// The entry is live, which needs no waiting to observe.
+	if _, found := cache.Get("key1"); !found {
+		t.Error("key stored with the default TTL should be readable immediately")
 	}
 }
 
