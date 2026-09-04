@@ -517,10 +517,22 @@ present, so the default composition is unchanged) and reports a typed error at
 the host's own composition site instead.
 
 The route guard reports **only** conflicts a host module is party to. Overlap
-*between* the two already-mounted modules predates this seam, stays go-qrdb's
-to enforce, and is nothing a downstream host can act on — reporting it here
-would newly fail a composition that boots today. (There is one such known
-overlap: `GET`/`POST /api/v1/tenants/`, tracked as issue #361.)
+*between* the two already-mounted modules predates this seam and is nothing a
+downstream host can act on — reporting it here would newly fail a composition
+that boots today. (There is one such known overlap: `GET`/`POST
+/api/v1/tenants/`, tracked as issue #361.)
+
+**Not reporting an overlap is not the same as it being resolved.** Which of two
+overlapping surfaces serves a request must be a **stated precedence rule**,
+pinned by a test — not whichever module happened to register first. Registration
+order is invisible at the call site, it changes when a module is added, and chi
+resolves the overlap by replacing the handler while the permission registry
+still names the displaced owner: the route then answers under one module's
+authorization contract while the default-deny assertion believes it belongs to
+another. Every remaining inter-module overlap is therefore a **defect to
+resolve**, and the precedence between built-in routes, `quicbaas`, `xkms` and a
+host module is to be written here rather than left to the mount sequence in
+`unifiedModuleServerOptions`.
 
 Every module route must be registered through the registrar's
 `Handle` (declaring its `resource:action` permission) or `HandlePublic`

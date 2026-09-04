@@ -22,7 +22,22 @@ What QuicBaaS adds on top of the qrdb user:
 - **Multi-protocol transports** — REST / gRPC / QUIC / MCP / Unix surfacing the qrdb barrier/ceremony/credentials and the auth model.
 - **ABAC policy engine + PEP** — evaluated over the qrdb user's `Attributes`.
 
-QuicBaaS's identity store implements qrdb's `CertBinder` and user-store seams; admin/tenant-admin certs are bound by the qrdb SPKI thumbprint (the old `SOCertSPKIThumbprint` fork was deleted). Admin enrollment is cert-based (CSR-sign or generate-and-distribute) — no invite tokens. The system admin provisions a tenant minimally (control plane); the tenant admin self-bootstraps their own barrier and data plane.
+QuicBaaS's identity store implements qrdb's `CertBinder` and user-store seams; admin/tenant-admin certs are bound by the qrdb SPKI thumbprint (the old `SOCertSPKIThumbprint` fork was deleted). The system admin provisions a tenant minimally (control plane); the tenant admin self-bootstraps their own barrier and data plane.
+
+**Enrollment mechanisms, by scope.** System-level enrollment — the system admin
+at first boot, and every Security Officer or custodian in a Shamir ceremony —
+is **certificate-based, always, with no invite tokens**: those identities guard
+barrier material. Three cert paths exist, selected by which inputs first-boot
+receives: CSR-sign (the admin keeps the private key), generate-and-distribute
+(the CA emits the bundle), and **adopt-presented** (the admin presents a
+certificate they already hold, typically on a PIV card, validated against a
+configured pool — nothing is issued).
+
+The **initial tenant admin** may enrol by either the certificate paths above or
+a single-use invitation whose redemption binds their first auth factor. Both
+end in a tenant-scoped admin identity the system admin cannot use. Ordinary
+users always enrol by invitation, because a brand-new user holds no credential
+to authenticate with while enrolling their first one.
 
 
 ## System Overview

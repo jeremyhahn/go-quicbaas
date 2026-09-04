@@ -413,6 +413,37 @@ _, err = quicbaas.NewClient("localhost:50051",
 // Returns: ConfigurationError
 ```
 
+### Matching an error from go-qrdb: use `errors.As`, not `errors.Is`
+
+`errors.Is(err, someQrdbSentinel)` does **not** compare against that sentinel.
+go-qrdb's error type implements `Is` by comparing **codes**: if the target is
+also a qrdb error, the answer is `e.Code == target.Code`. Codes are coarse
+(`ErrNotFound`, `ErrInvalidInput`, `ErrConflict`), so every qrdb sentinel
+sharing a code matches every other one — a check written for "invite not found"
+also fires on "user not found" and "tenant not found".
+
+Nothing about that is visible at the call site. It compiles, it reads correctly,
+and it over-matches at runtime, so a handler recovers from a condition it never
+meant to handle.
+
+```go
+// WRONG — matches every qrdb error carrying the same code as the sentinel,
+// not just the condition the sentinel names.
+if errors.Is(err, someCodedSentinel) { ... }
+
+// RIGHT — one concrete typed error per condition you branch on.
+var target *SomeSpecificError
+if errors.As(err, &target) { ... }
+```
+
+The rules:
+
+- Branch on a **concrete typed error** with `errors.As`. Where a code really is
+  the distinguishing fact, read it *after* the type assertion.
+- Never introduce a sentinel of a coded type expecting `errors.Is` to separate
+  it from its siblings. A sentinel of a coded type is a code with a name.
+- Wrapping with `%w` is unaffected; `errors.As` walks the chain normally.
+
 ## Option Reference
 
 | Option | Parameters | Description |
