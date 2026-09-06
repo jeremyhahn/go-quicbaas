@@ -12,6 +12,7 @@ package ca
 
 import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	xkmsacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 )
 
 // Type aliases
@@ -52,6 +53,12 @@ type (
 	// BackendForStoreFunc resolves an xkms backend per (CN, StoreType) so a
 	// TPM2/PKCS#11-bound CA signing key lands in the configured backend. Pure
 	// type aliases re-exported from go-xkms.
+	// CAIAKCertificateReader returns the Initial Attestation Key certificate
+	// the CA issued for a device, addressed by (model, serial). The IAK is
+	// stored under its own common name (CAIAKCommonName) so the IDevID record
+	// for the same device no longer overwrites it (go-xkms#371).
+	CAIAKCertificateReader = xkmsacme.CAIAKCertificateReader
+
 	CAKeystoresConfig        = xkmssdk.TrustedCAKeystoresConfig
 	CAKeystoreSoftwareConfig = xkmssdk.TrustedCAKeystoreSoftwareConfig
 	CAKeystoreTPM2Config     = xkmssdk.TrustedCAKeystoreTPM2Config
@@ -64,9 +71,45 @@ var (
 	NewCA                        = xkmssdk.NewCA
 	DefaultMultiIdentityCAConfig = xkmssdk.DefaultMultiIdentityCAConfig
 
+	// CAIAKCommonName returns the subject common name ("iak-<model>-<serial>")
+	// an Initial Attestation Key certificate is issued and stored under.
+	CAIAKCommonName = xkmsacme.CAIAKCommonName
+
 	// OIDTPNetworkZone identifies the network zone extension
 	// (1.3.6.1.4.1.29377.101.21).
 	OIDTPNetworkZone = xkmssdk.OIDTPNetworkZone
+
+	// TCG certificate-policy OIDs (TCG TPM 2.0 Keys for Device Identity and
+	// Attestation v1 r12 §8.2). A relying party MUST check
+	// tcg-cap-verifiedTPMRestricted on an IAK/LAK certificate before trusting
+	// an attestation; the platform is that relying party and reaches the arc
+	// only through this package. These are the go-xkms values, not copies:
+	// go-xkms/pkg/ca owns the constants and its SDK re-exports them.
+
+	// OIDTCGKpAIKCertificate is tcg-kp-AIKCertificate (2.23.133.8.3), the
+	// extended key usage stamped on attestation-key certificates.
+	OIDTCGKpAIKCertificate = xkmssdk.OIDTCGKpAIKCertificate
+
+	// OIDTCGVerifiedTPMResidency is tcg-cap-verifiedTPMResidency
+	// (2.23.133.11.1.1): the CA verified the key resides in a TPM.
+	OIDTCGVerifiedTPMResidency = xkmssdk.OIDTCGVerifiedTPMResidency
+
+	// OIDTCGVerifiedTPMFixed is tcg-cap-verifiedTPMFixed (2.23.133.11.1.2):
+	// the CA verified the key is non-migratable (fixedTPM).
+	OIDTCGVerifiedTPMFixed = xkmssdk.OIDTCGVerifiedTPMFixed
+
+	// OIDTCGVerifiedTPMRestricted is tcg-cap-verifiedTPMRestricted
+	// (2.23.133.11.1.3): the CA verified the key is a restricted signing key,
+	// which is what makes its quotes attestations rather than signatures.
+	OIDTCGVerifiedTPMRestricted = xkmssdk.OIDTCGVerifiedTPMRestricted
+
+	// TCGVerifiedTPMResidencyPolicy, TCGVerifiedTPMFixedPolicy and
+	// TCGVerifiedTPMRestrictedPolicy are the same three arcs as x509.OID
+	// values, the form x509.Certificate.Policies carries (Go 1.24+ no longer
+	// marshals PolicyIdentifiers by default).
+	TCGVerifiedTPMResidencyPolicy  = xkmssdk.TCGVerifiedTPMResidencyPolicy
+	TCGVerifiedTPMFixedPolicy      = xkmssdk.TCGVerifiedTPMFixedPolicy
+	TCGVerifiedTPMRestrictedPolicy = xkmssdk.TCGVerifiedTPMRestrictedPolicy
 
 	// CreateNetworkZoneExtension creates a network zone X.509 extension.
 	CreateNetworkZoneExtension = xkmssdk.CreateNetworkZoneExtension

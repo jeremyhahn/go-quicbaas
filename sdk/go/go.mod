@@ -12,8 +12,8 @@ require (
 	github.com/jeremyhahn/go-qrdb v0.16.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.16.0-alpha
 	github.com/jeremyhahn/go-quicbaas v0.6.0-alpha
-	github.com/jeremyhahn/go-xkms v0.9.2-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.9.2-alpha
+	github.com/jeremyhahn/go-xkms v0.9.4-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.9.4-alpha
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/quic-go/quic-go v0.61.0
 	github.com/stretchr/testify v1.11.1
@@ -155,7 +155,7 @@ require (
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.9.0-alpha // indirect
-	github.com/jeremyhahn/go-truststrap v0.2.0-alpha // indirect
+	github.com/jeremyhahn/go-truststrap v0.4.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

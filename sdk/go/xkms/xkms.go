@@ -491,3 +491,71 @@ var (
 	New         = xkmssdk.New
 	NewEmbedded = xkmssdk.NewEmbedded
 )
+
+// Attested-peer verification primitive (go-xkms#273): a TPM quote from a
+// peer becomes a Verdict — channel-bound to the TLS session, fresh against
+// the verifier's clock (never the TPM's), with typed failure classes that
+// separate "the claim was absent" from "the claim was false". Pure aliases
+// of the go-xkms SDK surface; the platform's remote-attestation path is the
+// consumer.
+type (
+	// PeerAttestationVerifier turns Evidence plus Policy into a Verdict.
+	PeerAttestationVerifier = xkmssdk.PeerAttestationVerifier
+
+	// PeerVerifierOption configures NewPeerAttestationVerifier.
+	PeerVerifierOption = xkmssdk.PeerVerifierOption
+
+	// PeerEvidence is what a peer presents: its AK certificate chain, the
+	// quote, the signature and the PCR values it claims.
+	PeerEvidence = xkmssdk.PeerEvidence
+
+	// PeerPolicy is what the relying party requires of the evidence.
+	PeerPolicy = xkmssdk.PeerPolicy
+
+	// PeerVerdict is the outcome: pass/fail, the individual Checks, the
+	// failure class and the PCRs actually observed.
+	PeerVerdict = xkmssdk.PeerVerdict
+
+	// PeerChecks records each individual verification step.
+	PeerChecks = xkmssdk.PeerChecks
+
+	// PeerClockInfo carries the quote's TPM clock fields for the record.
+	PeerClockInfo = xkmssdk.PeerClockInfo
+
+	// PeerFailureClass distinguishes a claim that was absent from one that
+	// was cryptographically false.
+	PeerFailureClass = xkmssdk.PeerFailureClass
+
+	// PeerPolicyError, PeerContextError and PeerChannelBindingError are the
+	// typed failures a verification can end in.
+	PeerPolicyError         = xkmssdk.PeerPolicyError
+	PeerContextError        = xkmssdk.PeerContextError
+	PeerChannelBindingError = xkmssdk.PeerChannelBindingError
+)
+
+const (
+	// PeerFailureNone, PeerFailureAbsence and PeerFailureCryptographic are
+	// the PeerFailureClass values.
+	PeerFailureNone          = xkmssdk.PeerFailureNone
+	PeerFailureAbsence       = xkmssdk.PeerFailureAbsence
+	PeerFailureCryptographic = xkmssdk.PeerFailureCryptographic
+
+	// PeerChannelBindingExporterLabel is the TLS exporter label the channel
+	// binding is derived under; PeerChannelBindingLength is its byte length.
+	PeerChannelBindingExporterLabel = xkmssdk.PeerChannelBindingExporterLabel
+	PeerChannelBindingLength        = xkmssdk.PeerChannelBindingLength
+)
+
+var (
+	// NewPeerAttestationVerifier constructs the verifier.
+	NewPeerAttestationVerifier = xkmssdk.NewPeerAttestationVerifier
+
+	// WithPeerVerifierClock injects the freshness clock (tests, skewed hosts).
+	WithPeerVerifierClock = xkmssdk.WithPeerVerifierClock
+
+	// PeerChannelBinding derives the channel binding from a TLS connection
+	// state; PeerQualifyingData combines it with the nonce into the quote's
+	// qualifying data.
+	PeerChannelBinding = xkmssdk.PeerChannelBinding
+	PeerQualifyingData = xkmssdk.PeerQualifyingData
+)
