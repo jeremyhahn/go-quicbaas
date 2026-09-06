@@ -20,6 +20,41 @@ on:
   # Gitea has no API to re-run a finished run (ci-template v1.3).
   workflow_dispatch:
 
+# Cancel superseded runs. A push to a branch that already has a run in flight
+# supersedes it: the older run's result has no consumer, and on a `capacity: 3`
+# pool it is holding a slot a live head needs.
+#
+# This is a deliberate divergence from ci-template v1.8, whose note says Gitea
+# does not honour `concurrency:`. That note was written from #88, which used
+# `group: task-worker-${{ github.repository }}` with `cancel-in-progress: false`
+# at JOB level on the label-triggered task-worker workflow -- a key with no ref
+# component, so every task worker in the portfolio shared one group and
+# saturated it. It says nothing about a ref-keyed group with cancellation on.
+#
+# Measured on this Gitea (1.27.1) on 2026-09-06: the OLDER run is cancelled and
+# the newest survives -- go-netmon run 12242, go-recountly 12261,
+# go-truststrap 12133 and 12232 all carry conclusion `cancelled`. The same block
+# is on main in go-truststrap, go-trusted-platform, go-qrdb, go-xkms, go-netmon,
+# go-sysmon and go-recountly. The narrower #90 finding still holds and is why
+# this is the only available mechanism: Gitea 1.27.1 exposes no `cancel` REST
+# route (a human can still cancel through the session-authenticated web route,
+# software/scripts/gitea-cancel-run.sh).
+#
+# `cancel-in-progress` is NOT expression-evaluated on 1.27.1 -- any non-empty
+# value is truthy -- so it is written as the literal `true`.
+#
+# The group leads with ${{ github.workflow }}, so this `CI` group cannot reach
+# the separate `Code Review` workflow that gates the merge. A cancelled run
+# writes `failure` to its contexts, but only ever against the superseded SHA,
+# which is not the head a merge is evaluated on.
+#
+# Adoption boundary, expect it once: Gitea groups a run by the workflow file OF
+# THAT RUN, so a run created before this block landed is in no group and the
+# first push after it cannot supersede that run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # GOPROXY / GOSUMDB are deliberately absent (ci-template v1.1). GOPRIVATE is
 # injected by the runners (dependency-resolution.md §6) and already exempts
 # github.com/jeremyhahn/* from both the proxy and the checksum database, which
