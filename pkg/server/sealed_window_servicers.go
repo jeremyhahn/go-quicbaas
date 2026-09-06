@@ -92,6 +92,22 @@ func (p *sealedKVServicerProxy) PutIfAbsent(ctx context.Context, key string, val
 	return svc.PutIfAbsent(ctx, key, value)
 }
 
+func (p *sealedKVServicerProxy) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	svc, err := p.resolve()
+	if err != nil {
+		return false, err
+	}
+	return svc.CompareAndDelete(ctx, key, expected)
+}
+
+func (p *sealedKVServicerProxy) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	svc, err := p.resolve()
+	if err != nil {
+		return false, err
+	}
+	return svc.CompareAndSwap(ctx, key, expected, next)
+}
+
 func (p *sealedKVServicerProxy) Get(ctx context.Context, key string) ([]byte, error) {
 	svc, err := p.resolve()
 	if err != nil {

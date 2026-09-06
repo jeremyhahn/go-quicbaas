@@ -29,7 +29,7 @@ import (
 // party must agree with the issuer/banner host and port.
 func TestWebauthnFactoryConfigFromOperator_DerivesFromIssuer(t *testing.T) {
 	got := webauthnFactoryConfigFromOperator(
-		config.IAMWebAuthnConfig{}, "localhost", "https://localhost:18080")
+		config.IAMWebAuthnConfig{}, "localhost", "https://localhost:18080", true)
 	if got.RPID != "localhost" {
 		t.Fatalf("expected derived RPID=localhost, got %q", got.RPID)
 	}
@@ -58,7 +58,7 @@ func TestWebauthnFactoryConfigFromOperator_PreservesOperatorValues(t *testing.T)
 		AuthenticatorAttachment: "platform",
 		Debug:                   true,
 	}
-	got := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080")
+	got := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080", true)
 	if got.RPID != "example.com" {
 		t.Fatalf("RPID not preserved: %q", got.RPID)
 	}
@@ -89,7 +89,7 @@ func TestWebauthnFactoryConfigFromOperator_InvalidTimeoutIgnored(t *testing.T) {
 		RPOrigins:     []string{"https://example.com"},
 		Timeout:       "not-a-duration",
 	}
-	got := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080")
+	got := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080", true)
 	if got.Timeout != 0 {
 		t.Fatalf("expected zero Timeout on parse failure, got %v", got.Timeout)
 	}
@@ -106,7 +106,7 @@ func TestWebauthnFactoryConfigFromOperator_OriginSliceIsCopied(t *testing.T) {
 		RPDisplayName: "Example",
 		RPOrigins:     origins,
 	}
-	got := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080")
+	got := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080", true)
 
 	// Mutate the operator slice; the factory copy must not change.
 	origins[0] = "https://attacker.example.com"
@@ -263,7 +263,7 @@ func TestWebauthnConfig_ThreeValuesAgree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("derivation failed for stock issuer %q: %v", issuer, err)
 	}
-	wa := webauthnFactoryConfigFromOperator(cfg.IAM.WebAuthn, rpID, rpOrigin)
+	wa := webauthnFactoryConfigFromOperator(cfg.IAM.WebAuthn, rpID, rpOrigin, true)
 
 	// Banner host must equal RP ID (begin-options rp.id).
 	wantHost := "localhost"

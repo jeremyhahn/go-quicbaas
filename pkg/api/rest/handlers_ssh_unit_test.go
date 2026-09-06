@@ -37,7 +37,7 @@ func TestSSHRemoveKnownHost(t *testing.T) {
 	server, _, cleanup := newSSHTestServer(t)
 	defer cleanup()
 
-	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"SHA256:abc"}`
+	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + sshTestFingerprint("bastion") + `"}`
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/known-hosts", strings.NewReader(addBody))
 	addReq.Header.Set("Content-Type", "application/json")
 	server.HandleAddKnownHost(httptest.NewRecorder(), addReq)
@@ -117,7 +117,7 @@ func TestSSHVerifyAuthorized_NotFound(t *testing.T) {
 	server, _, cleanup := newSSHTestServer(t)
 	defer cleanup()
 
-	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"SHA256:does-not-exist"}`
+	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"` + sshTestFingerprint("does-not-exist") + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/authorized/verify", strings.NewReader(verifyBody))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

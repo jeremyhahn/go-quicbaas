@@ -324,7 +324,7 @@ func TestQRDBUserStorage_GetUser_ProfileError(t *testing.T) {
 	if err := idmap.Link(context.Background(), "acme", "u1", 1001); err != nil {
 		t.Fatalf("seed Link: %v", err)
 	}
-	if _, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme"}); err != nil {
+	if _, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme", WithoutEmailLoginKey: true}); err != nil {
 		t.Fatalf("seed core: %v", err)
 	}
 	// Point the idmap at the actual qrdb id the fake just minted.
@@ -371,7 +371,7 @@ func TestQRDBUserStorage_PIV_SPKIHit_IDMapMissing(t *testing.T) {
 	// The qrdb core resolves by SPKI, but no IDMap entry exists (the user was
 	// never persisted through this store), so ToBroker reports not-found.
 	svc := newFakeUserServicer()
-	if _, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme"}); err != nil {
+	if _, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme", WithoutEmailLoginKey: true}); err != nil {
 		t.Fatalf("seed core: %v", err)
 	}
 	for _, u := range svc.users {
@@ -389,7 +389,7 @@ func TestQRDBUserStorage_PIV_SPKIHit_ProfileError(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	idmap := NewBackendIDMap(kv)
-	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme"})
+	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme", WithoutEmailLoginKey: true})
 	if err != nil {
 		t.Fatalf("seed core: %v", err)
 	}
@@ -432,7 +432,7 @@ func TestQRDBUserStorage_GetUserByUsername_ResolverError(t *testing.T) {
 func TestQRDBUserStorage_GetUserByUsername_IDMapMissing(t *testing.T) {
 	// qrdb resolves the user by username, but no IDMap entry exists.
 	svc := newFakeUserServicer()
-	if _, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme"}); err != nil {
+	if _, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme", WithoutEmailLoginKey: true}); err != nil {
 		t.Fatalf("seed core: %v", err)
 	}
 	store, _ := newTestUserStorage(t, svc, "acme")
@@ -446,7 +446,7 @@ func TestQRDBUserStorage_GetUserByUsername_ProfileError(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	idmap := NewBackendIDMap(kv)
-	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme"})
+	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme", WithoutEmailLoginKey: true})
 	if err != nil {
 		t.Fatalf("seed core: %v", err)
 	}
@@ -489,7 +489,7 @@ func TestQRDBUserStorage_UpdateUser_PriorProfileError(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	idmap := NewBackendIDMap(kv)
-	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme"})
+	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme", WithoutEmailLoginKey: true})
 	if err != nil {
 		t.Fatalf("seed core: %v", err)
 	}
@@ -509,7 +509,7 @@ func TestQRDBUserStorage_UpdateUser_CoreError(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	idmap := NewBackendIDMap(kv)
-	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme"})
+	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme", WithoutEmailLoginKey: true})
 	if err != nil {
 		t.Fatalf("seed core: %v", err)
 	}
@@ -529,7 +529,7 @@ func TestQRDBUserStorage_UpdateUser_ProfileSaveError(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	idmap := NewBackendIDMap(kv)
-	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme"})
+	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme", WithoutEmailLoginKey: true})
 	if err != nil {
 		t.Fatalf("seed core: %v", err)
 	}
@@ -579,7 +579,7 @@ func TestQRDBUserStorage_DeleteUser_PriorProfileError(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	idmap := NewBackendIDMap(kv)
-	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme"})
+	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme", WithoutEmailLoginKey: true})
 	if err != nil {
 		t.Fatalf("seed core: %v", err)
 	}
@@ -597,7 +597,7 @@ func TestQRDBUserStorage_DeleteUser_CoreError(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	idmap := NewBackendIDMap(kv)
-	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme"})
+	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme", WithoutEmailLoginKey: true})
 	if err != nil {
 		t.Fatalf("seed core: %v", err)
 	}
@@ -616,7 +616,7 @@ func TestQRDBUserStorage_DeleteUser_ProfileDeleteError(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	idmap := NewBackendIDMap(kv)
-	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme"})
+	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme", WithoutEmailLoginKey: true})
 	if err != nil {
 		t.Fatalf("seed core: %v", err)
 	}
@@ -792,11 +792,11 @@ func TestQRDBUserStorage_ListUsers_SkipsNilAndUnmappedUsers(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	idmap := NewBackendIDMap(kv)
-	mapped, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme"})
+	mapped, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme", WithoutEmailLoginKey: true})
 	if err != nil {
 		t.Fatalf("seed mapped: %v", err)
 	}
-	if _, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "bob", TenantID: "acme"}); err != nil {
+	if _, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "bob", TenantID: "acme", WithoutEmailLoginKey: true}); err != nil {
 		t.Fatalf("seed unmapped: %v", err)
 	}
 	// Inject a nil entry into the returned slice via a wrapper servicer.
@@ -831,7 +831,7 @@ func (s *nilEntryListServicer) ListUsers(ctx context.Context, req *qrdbsdk.ListU
 func TestQRDBUserStorage_ListUsers_IDMapError(t *testing.T) {
 	// A non-not-found idmap error must abort the listing.
 	svc := newFakeUserServicer()
-	if _, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme"}); err != nil {
+	if _, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme", WithoutEmailLoginKey: true}); err != nil {
 		t.Fatalf("seed core: %v", err)
 	}
 	base := newRoutingTestKV()
@@ -848,7 +848,7 @@ func TestQRDBUserStorage_ListUsers_ProfileError(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	idmap := NewBackendIDMap(kv)
-	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme"})
+	created, err := svc.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "alice", TenantID: "acme", WithoutEmailLoginKey: true})
 	if err != nil {
 		t.Fatalf("seed core: %v", err)
 	}

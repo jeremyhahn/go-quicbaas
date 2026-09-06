@@ -291,11 +291,38 @@ func TestTenantRoutingKVStore_ResolverErrorAllVerbs(t *testing.T) {
 	}
 }
 
-// tenantRoutedKVStore returns a usable store. With a node that exposes no
-// StoreResolver (seal disabled), it falls back to the shared platform shard.
+// tenantRoutedKVStore returns a usable store. Since go-qrdb v0.10.0 (#41)
+// every node exposes a StoreResolver — a seal-disabled node routes IAM
+// through a confined "{tenant}/" keyspace too — so a memory standalone node
+// yields the routing store, and IAMKVStore is that same store.
+func TestIamTenantKVStore_SealDisabledNodeRoutes(t *testing.T) {
+	node := buildMemoryStandaloneNode(t)
+	t.Cleanup(func() { _ = node.Close() })
+
+	s := &Server{
+		logger:     buildTestLogger(t),
+		qrdbNode:   node,
+		qrdbClient: newNodeBackedShardedClient(node),
+	}
+
+	if node.Services().StoreResolver == nil {
+		t.Fatal("a seal-disabled qrdb node must expose a StoreResolver (go-qrdb #41)")
+	}
+	kv := s.tenantRoutedKVStore()
+	if _, ok := kv.(*tenantRoutingKVStore); !ok {
+		t.Fatalf("tenantRoutedKVStore = %T, want the tenant routing store", kv)
+	}
+	if _, ok := s.IAMKVStore().(*tenantRoutingKVStore); !ok {
+		t.Fatalf("IAMKVStore = %T, want the tenant routing store", s.IAMKVStore())
+	}
+}
+
+// tenantRoutedKVStore falls back to the shared platform shard when the node
+// exposes no StoreResolver.
 func TestIamTenantKVStore_NodeNoResolver(t *testing.T) {
 	node := buildMemoryStandaloneNode(t)
 	t.Cleanup(func() { _ = node.Close() })
+	node.Services().StoreResolver = nil
 
 	s := &Server{
 		logger:     buildTestLogger(t),
@@ -307,12 +334,32 @@ func TestIamTenantKVStore_NodeNoResolver(t *testing.T) {
 	if kv == nil {
 		t.Fatal("tenantRoutedKVStore must return a store")
 	}
+	if _, ok := kv.(*tenantRoutingKVStore); ok {
+		t.Fatal("tenantRoutedKVStore must not route without a StoreResolver")
+	}
+}
+
+// iamTenantScopeStore is built over the resolver every node now exposes.
+func TestIamTenantScopeStore_SealDisabledNodeBuilds(t *testing.T) {
+	node := buildMemoryStandaloneNode(t)
+	t.Cleanup(func() { _ = node.Close() })
+
+	s := &Server{
+		logger:     buildTestLogger(t),
+		qrdbNode:   node,
+		qrdbClient: newNodeBackedShardedClient(node),
+	}
+
+	if s.iamTenantScopeStore() == nil {
+		t.Fatal("iamTenantScopeStore must be built when the node exposes a StoreResolver")
+	}
 }
 
 // iamTenantScopeStore returns nil when the node exposes no StoreResolver.
 func TestIamTenantScopeStore_NodeNoResolver(t *testing.T) {
 	node := buildMemoryStandaloneNode(t)
 	t.Cleanup(func() { _ = node.Close() })
+	node.Services().StoreResolver = nil
 
 	s := &Server{
 		logger:     buildTestLogger(t),

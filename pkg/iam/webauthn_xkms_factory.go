@@ -39,6 +39,20 @@ type WebAuthnFactoryConfig struct {
 	ResidentKeyRequirement  string
 	AuthenticatorAttachment string
 	Debug                   bool
+
+	// AllowPublicRegistration lets a registration ceremony CREATE an account
+	// for an email the store has never seen. It carries the operator's
+	// iam.self_service_registration.enabled decision, because that is the
+	// surface that registers an unknown email
+	// (pkg/api/rest/iam_register_self.go: BeginRegistration is called for an
+	// email the identity store only creates at the FINISH step).
+	//
+	// go-xkms v0.9.2-alpha made this closed by default — v0.9.1 created the
+	// account implicitly. Leaving it unmapped would silently disable
+	// self-service registration on a node that has it switched on. An account
+	// that already exists still enrols its first passkey through the same
+	// entry point either way; only implicit creation is withheld.
+	AllowPublicRegistration bool
 }
 
 // WebAuthnFactoryParams contains the dependencies required to build a
@@ -285,6 +299,27 @@ func (f *WebAuthnServiceFactory) resolveConfig(ctx context.Context, tenantID str
 	return cfg, nil
 }
 
+// xkmsWebAuthnConfig projects the resolved per-tenant factory config onto the
+// go-xkms relying-party config. It is the one place the projection happens,
+// kept separate from buildService so the field-for-field mapping — including
+// AllowPublicRegistration, which go-xkms reads as closed when left nil — can
+// be asserted without a live qrdb transport.
+func xkmsWebAuthnConfig(resolved WebAuthnFactoryConfig) *xkmssdk.WebAuthnConfig {
+	allowPublicRegistration := resolved.AllowPublicRegistration
+	return &xkmssdk.WebAuthnConfig{
+		RPID:                    resolved.RPID,
+		RPDisplayName:           resolved.RPDisplayName,
+		RPOrigins:               resolved.RPOrigins,
+		Timeout:                 resolved.Timeout,
+		UserVerification:        resolved.UserVerification,
+		AttestationPreference:   resolved.AttestationPreference,
+		ResidentKeyRequirement:  resolved.ResidentKeyRequirement,
+		AuthenticatorAttachment: resolved.AuthenticatorAttachment,
+		Debug:                   resolved.Debug,
+		AllowPublicRegistration: &allowPublicRegistration,
+	}
+}
+
 // buildService constructs a single per-tenant xkms webauthn service.
 // The user and credential stores are wired through xkms's
 // QRDBUserStoreAdapter (Phase 4), keyed by tenant id. The session
@@ -304,17 +339,7 @@ func (f *WebAuthnServiceFactory) buildService(ctx context.Context, tenantID stri
 	if err != nil {
 		return nil, err
 	}
-	cfg := &xkmssdk.WebAuthnConfig{
-		RPID:                    resolved.RPID,
-		RPDisplayName:           resolved.RPDisplayName,
-		RPOrigins:               resolved.RPOrigins,
-		Timeout:                 resolved.Timeout,
-		UserVerification:        resolved.UserVerification,
-		AttestationPreference:   resolved.AttestationPreference,
-		ResidentKeyRequirement:  resolved.ResidentKeyRequirement,
-		AuthenticatorAttachment: resolved.AuthenticatorAttachment,
-		Debug:                   resolved.Debug,
-	}
+	cfg := xkmsWebAuthnConfig(resolved)
 	users, creds, err := xkmssdk.NewWebAuthnQRDBUserStoreAdapter(xkmssdk.WebAuthnQRDBUserStoreOptions{
 		Users:    f.params.QRDB.Users(),
 		KV:       f.params.QRDB.KV(),

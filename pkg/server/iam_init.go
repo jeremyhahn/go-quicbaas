@@ -505,7 +505,14 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 				return nil, &IAMComponentInitError{Component: "WebAuthn relying-party defaults", Cause: derErr}
 			}
 			factoryParams := iam.WebAuthnFactoryParams{
-				Config:   webauthnFactoryConfigFromOperator(s.config.IAM.WebAuthn, issuerRPID, issuerRPOrigin),
+				// Whether a ceremony may CREATE an account for an unknown
+				// email is the operator's self-service registration
+				// decision: that is the surface that registers one
+				// (iam_register_self.go). go-xkms v0.9.2-alpha closed this
+				// by default, so it has to be mapped rather than left to
+				// the library's default.
+				Config: webauthnFactoryConfigFromOperator(s.config.IAM.WebAuthn, issuerRPID, issuerRPOrigin,
+					s.config.IAM.SelfServiceRegistration.Enabled),
 				QRDB:     platformQRDB,
 				Settings: iam.NewTenantManagerWebAuthnSettings(tenantManager),
 			}
@@ -927,12 +934,18 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 // enrolls through the PIV path or a later ceremony.
 func (s *Server) firstBootDependencies(c *iamComponents) (*qrdbsdk.FirstBootDependencies, *qrdbadapter.UserAdapter, []byte, error) {
 	users := qrdbadapter.WrapUser(c.identityStore)
+	roles := qrdbadapter.WrapRole(c.identityStore)
 	deps := &qrdbsdk.FirstBootDependencies{
 		Tenants: qrdbadapter.WrapTenant(c.tenantManager),
-		Roles:   qrdbadapter.WrapRole(c.identityStore),
-		Users:   users,
-		Binder:  users,
-		Logger:  slog.Default(),
+		Roles:   roles,
+		// The same adapter resolves a built-in role by name so a re-run
+		// against an already-seeded store binds the admin grant to the
+		// persisted role ID instead of refusing (go-qrdb firstboot
+		// UnresolvableSystemRoleError).
+		RoleResolver: roles,
+		Users:        users,
+		Binder:       users,
+		Logger:       slog.Default(),
 		// Strict (least-privilege) RBAC under FIPS 140-3: the bootstrap admin
 		// keeps only the canonical Admin@system grant and the all-permission
 		// Owner role is never seeded.

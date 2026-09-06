@@ -18,7 +18,7 @@ on:
 # have no registry credentials on Gitea and skip every push -- so on that server
 # REGISTRY only prefixes the local tag the Trivy gate scans.
 env:
-  GO_VERSION: '1.26.6'
+  GO_VERSION: '1.26.7'
   REGISTRY: ${{ github.server_url == 'https://github.com' && 'ghcr.io' || '198.51.100.91:3001' }}
   IMAGE_NAME_DAEMON: jeremyhahn/quicbaasd
   IMAGE_NAME_CLI: jeremyhahn/quicbaas

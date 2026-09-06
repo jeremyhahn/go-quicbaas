@@ -27,6 +27,7 @@
 package factors
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -130,6 +131,36 @@ func (m *memKV) Delete(_ context.Context, key string) error {
 	defer m.mu.Unlock()
 	delete(m.store, key)
 	return nil
+}
+
+// CompareAndDelete removes key only while it still holds expected — the
+// guarded release half of PutIfAbsent. A mismatch or an absent key is a
+// refused delete (false, nil), never an error, exactly as the qrdb contract
+// requires.
+func (m *memKV) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur, exists := m.store[key]
+	if !exists || !bytes.Equal(cur, expected) {
+		return false, nil
+	}
+	delete(m.store, key)
+	return true, nil
+}
+
+// CompareAndSwap replaces key's value with next only while it still holds
+// expected. An absent key is not created: a refused swap is (false, nil).
+func (m *memKV) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur, exists := m.store[key]
+	if !exists || !bytes.Equal(cur, expected) {
+		return false, nil
+	}
+	cp := make([]byte, len(next))
+	copy(cp, next)
+	m.store[key] = cp
+	return true, nil
 }
 
 // List returns every key matching the prefix in unspecified order.

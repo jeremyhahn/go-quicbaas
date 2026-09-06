@@ -102,6 +102,15 @@ func (p *qrdbUserServicerProxy) GetUserByUsername(ctx context.Context, tenantID,
 	return svc.GetUserByUsername(ctx, tenantID, username)
 }
 
+// GetUserByEmail delegates to the node user service.
+func (p *qrdbUserServicerProxy) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbsdk.User, error) {
+	svc, err := p.servicer()
+	if err != nil {
+		return nil, err
+	}
+	return svc.GetUserByEmail(ctx, tenantID, email)
+}
+
 // UserByCertThumbprint delegates to the node user service.
 func (p *qrdbUserServicerProxy) UserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbsdk.User, error) {
 	svc, err := p.servicer()

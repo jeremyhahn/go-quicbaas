@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-quicbaas
 
-go 1.26.6
+go 1.26.7
 
 // Exclude old genproto monorepo to avoid conflicts with split packages
 exclude google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1
@@ -22,11 +22,11 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-libsignal v0.2.0-alpha
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha
-	github.com/jeremyhahn/go-qrdb v0.9.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.9.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.16.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.16.0-alpha
 	github.com/jeremyhahn/go-quicbaas/sdk/go v0.6.0-alpha
-	github.com/jeremyhahn/go-xkms v0.7.7-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.7.7-alpha
+	github.com/jeremyhahn/go-xkms v0.9.2-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.9.2-alpha
 	github.com/klauspost/compress v1.18.4
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
@@ -97,9 +97,9 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
-	github.com/jeremyhahn/go-quicraft v0.8.0-alpha // indirect
+	github.com/jeremyhahn/go-quicraft v0.9.0-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.2.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.7.7-alpha // indirect
+	github.com/jeremyhahn/go-xkms/xkey v0.9.2-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect

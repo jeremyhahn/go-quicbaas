@@ -82,7 +82,7 @@ var _ qrdbsdk.CeremonyDistributor = (*captureDistributor)(nil)
 type captureDistributor struct {
 	mu       sync.Mutex
 	splitter qrdbsdk.ShareSplitter
-	shares   []string
+	shares   [][]byte
 }
 
 // newCaptureDistributor returns a captureDistributor backed by the real
@@ -92,16 +92,24 @@ func newCaptureDistributor() *captureDistributor {
 }
 
 // SealAndDistribute splits secret into total shares with the given
-// threshold, records them, and returns the share count.
+// threshold, records each share's value (the base64 payload
+// UnsealWithShare accepts), and returns the share count. The protected
+// shares are destroyed once copied: each one is an mlock'd allocation, and
+// the copy is test material the barrier under test will consume.
 func (c *captureDistributor) SealAndDistribute(_ context.Context, secret []byte, threshold, total int) (int, error) {
-	shares, err := c.splitter.Split(secret, threshold, total)
+	shares, err := c.splitter.SplitProtected(secret, threshold, total)
 	if err != nil {
 		return 0, err
 	}
+	values := make([][]byte, len(shares))
+	for i, share := range shares {
+		values[i] = append([]byte(nil), share.Value()...)
+		share.Destroy()
+	}
 	c.mu.Lock()
-	c.shares = shares
+	c.shares = values
 	c.mu.Unlock()
-	return len(shares), nil
+	return len(values), nil
 }
 
 // RekeyAndDistribute destroys the prior round's shares and records fresh
@@ -120,7 +128,7 @@ func (c *captureDistributor) ShareBytes() [][]byte {
 	defer c.mu.Unlock()
 	out := make([][]byte, len(c.shares))
 	for i, s := range c.shares {
-		out[i] = []byte(s)
+		out[i] = append([]byte(nil), s...)
 	}
 	return out
 }

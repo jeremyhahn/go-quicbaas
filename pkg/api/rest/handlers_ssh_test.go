@@ -17,6 +17,7 @@ package rest
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -38,6 +39,16 @@ import (
 // client backed by an in-memory storage backend. This gives handler
 // tests an end-to-end round-trip through xkms's actual business logic
 // without writing to disk or speaking REST to a second process.
+// sshTestFingerprint derives a well-formed OpenSSH SHA256 host-key
+// fingerprint from seed. The go-xkms known-hosts store (v0.9.x) validates
+// the fingerprint it is handed — "SHA256:" plus an unpadded base64 body that
+// decodes to exactly 32 bytes — so a placeholder such as "SHA256:abc" is
+// rejected at the door and never reaches the pin comparison.
+func sshTestFingerprint(seed string) string {
+	digest := sha256.Sum256([]byte(seed))
+	return "SHA256:" + base64.RawStdEncoding.EncodeToString(digest[:])
+}
+
 func newSSHTestServer(t *testing.T) (*Server, xkmsssh.Client, func()) {
 	t.Helper()
 
@@ -226,7 +237,7 @@ func TestSSHAddAndListKnownHosts(t *testing.T) {
 	server, _, cleanup := newSSHTestServer(t)
 	defer cleanup()
 
-	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"SHA256:abc","algorithm":"ssh-ed25519"}`
+	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + sshTestFingerprint("bastion") + `","algorithm":"ssh-ed25519"}`
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/known-hosts", strings.NewReader(addBody))
 	addReq.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -249,12 +260,13 @@ func TestSSHVerifyKnownHost_Match(t *testing.T) {
 	server, _, cleanup := newSSHTestServer(t)
 	defer cleanup()
 
-	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"SHA256:abc"}`
+	fingerprint := sshTestFingerprint("bastion")
+	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + fingerprint + `"}`
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/known-hosts", strings.NewReader(addBody))
 	addReq.Header.Set("Content-Type", "application/json")
 	server.HandleAddKnownHost(httptest.NewRecorder(), addReq)
 
-	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"SHA256:abc"}`
+	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"` + fingerprint + `"}`
 	verifyReq := httptest.NewRequest(http.MethodPost,
 		"/api/v1/ssh/known-hosts/bastion.example.com/verify",
 		strings.NewReader(verifyBody))
@@ -272,12 +284,14 @@ func TestSSHVerifyKnownHost_Mismatch(t *testing.T) {
 	server, _, cleanup := newSSHTestServer(t)
 	defer cleanup()
 
-	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"SHA256:expected"}`
+	expected := sshTestFingerprint("expected")
+	received := sshTestFingerprint("different")
+	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + expected + `"}`
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/known-hosts", strings.NewReader(addBody))
 	addReq.Header.Set("Content-Type", "application/json")
 	server.HandleAddKnownHost(httptest.NewRecorder(), addReq)
 
-	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"SHA256:different"}`
+	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"` + received + `"}`
 	verifyReq := httptest.NewRequest(http.MethodPost,
 		"/api/v1/ssh/known-hosts/bastion.example.com/verify",
 		strings.NewReader(verifyBody))
@@ -290,8 +304,8 @@ func TestSSHVerifyKnownHost_Mismatch(t *testing.T) {
 	var resp sshMismatchResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	require.Equal(t, "bastion.example.com", resp.Host)
-	require.Equal(t, "SHA256:expected", resp.Expected)
-	require.Equal(t, "SHA256:different", resp.Received)
+	require.Equal(t, expected, resp.Expected)
+	require.Equal(t, received, resp.Received)
 }
 
 // TestSSHEmitAuthorized round-trips a public key through the emit

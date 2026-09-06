@@ -36,6 +36,11 @@ func (r *recordingUserServicer) GetUserByUsername(_ context.Context, tenantID, u
 	return r.user, nil
 }
 
+func (r *recordingUserServicer) GetUserByEmail(_ context.Context, tenantID, email string) (*qrdbsdk.User, error) {
+	r.calls = append(r.calls, "GetUserByEmail:"+tenantID+":"+email)
+	return r.user, nil
+}
+
 func (r *recordingUserServicer) GetUser(_ context.Context, id uint64) (*qrdbsdk.User, error) {
 	r.calls = append(r.calls, "GetUser")
 	return r.user, nil
@@ -112,6 +117,9 @@ func TestQRDBUserServicerProxy_UnavailableFailsClosed(t *testing.T) {
 	if _, err := p.GetUser(ctx, 1); !errors.As(err, &unavailable) {
 		t.Fatalf("GetUser: expected unavailability error, got %v", err)
 	}
+	if _, err := p.GetUserByEmail(ctx, "system", "admin@example.com"); !errors.As(err, &unavailable) {
+		t.Fatalf("GetUserByEmail: expected unavailability error, got %v", err)
+	}
 	if _, err := p.CreateUser(ctx, &qrdbsdk.CreateUserRequest{}); !errors.As(err, &unavailable) {
 		t.Fatalf("CreateUser: expected unavailability error, got %v", err)
 	}
@@ -174,6 +182,14 @@ func TestQRDBUserServicerProxy_ResolvesPerCall(t *testing.T) {
 	}
 	if len(live.calls) != 1 || live.calls[0] != "GetUserByUsername:system:admin" {
 		t.Fatalf("expected delegated call with passthrough args, got %v", live.calls)
+	}
+
+	// The email login key resolves through the same live delegate.
+	if _, err := p.GetUserByEmail(ctx, "system", "admin@example.com"); err != nil {
+		t.Fatalf("post-unseal email lookup failed: %v", err)
+	}
+	if len(live.calls) != 2 || live.calls[1] != "GetUserByEmail:system:admin@example.com" {
+		t.Fatalf("expected delegated email lookup with passthrough args, got %v", live.calls)
 	}
 }
 

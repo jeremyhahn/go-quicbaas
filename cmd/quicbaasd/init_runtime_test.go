@@ -39,7 +39,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/initmarker"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
-	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
 
 // TestRunInlineInit_NoneStrategy_WorksWithoutPINs verifies that
@@ -248,7 +247,10 @@ func TestRunInlineInit_PersistenceRoundTrip(t *testing.T) {
 	// the in-memory iamComponents because the contract under test is the
 	// on-disk one: any future change that breaks persistence (e.g.
 	// switching back to MemoryAdminStorage) MUST fail this assertion.
-	adminStorage := iam.NewBackendAdminStorage(srv.GetKVStore(qbshards.PlatformShardID))
+	// IAM records live under the system tenant's confined keyspace (go-qrdb
+	// #41), so the read goes through the same tenant-routed store the
+	// bootstrap wrote through; the raw platform shard would miss them.
+	adminStorage := iam.NewBackendAdminStorage(srv.IAMKVStore())
 	assignments, err := adminStorage.ListAssignments(context.Background(), iam.ListAdminAssignmentsOptions{
 		ActiveOnly: true,
 		Limit:      10,

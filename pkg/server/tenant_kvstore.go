@@ -44,6 +44,19 @@ func (s *Server) tenantRoutedKVStore() interfaces.KVStore {
 	return s.GetKVStore(qbshards.PlatformShardID)
 }
 
+// IAMKVStore returns the store IAM records live in: the tenant-routed store
+// when the embedded node exposes a StoreResolver — which, since go-qrdb
+// v0.10.0 (#41), it does on every node, seal enabled or not — and the shared
+// platform shard otherwise. The resolver confines each tenant, the system
+// tenant included, to its own "{tenant}/" keyspace, so a caller that reads
+// IAM records straight off GetKVStore(PlatformShardID) reads past the
+// namespace they were written under and finds nothing. Anything that inspects
+// IAM state from outside the IAM components (operator tooling, tests that
+// verify the on-disk contract) goes through this accessor.
+func (s *Server) IAMKVStore() interfaces.KVStore {
+	return s.tenantRoutedKVStore()
+}
+
 // tenantRoutingStore returns the per-tenant routing store, or nil when the
 // embedded node exposes no StoreResolver.
 func (s *Server) tenantRoutingStore() interfaces.KVStore {

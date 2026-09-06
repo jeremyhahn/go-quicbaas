@@ -18,7 +18,7 @@ ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp h
 # ============================================================================
 # Stage 1: Build the node and CLI binaries.
 # ============================================================================
-FROM golang:1.26.6-alpine AS builder
+FROM golang:1.26.7-alpine AS builder
 
 ARG BUILD_TAGS
 # COVER: when set to "1", build the daemon with Go coverage instrumentation

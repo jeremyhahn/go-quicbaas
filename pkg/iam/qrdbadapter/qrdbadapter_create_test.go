@@ -238,3 +238,52 @@ func TestConvertPermissions_Empty(t *testing.T) {
 		t.Fatalf("convertPermissions(empty) = %v, want nil", got)
 	}
 }
+
+// TestRoleAdapter_GetRoleByName_ResolvesPersistedID proves the adapter answers
+// first-boot's name lookup with the identifier the role is actually stored
+// under, marked System for a built-in name — the binding a grant must use on
+// a re-run against an already-seeded store.
+func TestRoleAdapter_GetRoleByName_ResolvesPersistedID(t *testing.T) {
+	a := WrapRole(newStore())
+	ctx := context.Background()
+	if _, err := a.CreateRole(ctx, &qrdbsdk.CreateRoleRequest{
+		ID: "legacy-admin-id", Name: "admin", TenantID: "system",
+		Permissions: []qrdbsdk.Permission{qrdbsdk.Permission("read:users")},
+	}); err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+
+	got, err := a.GetRoleByName(ctx, "system", "admin")
+	if err != nil {
+		t.Fatalf("GetRoleByName: %v", err)
+	}
+	if got.ID != "legacy-admin-id" || got.TenantID != "system" || got.Name != "admin" {
+		t.Fatalf("GetRoleByName = %+v, want the persisted identifier", got)
+	}
+	if !got.System {
+		t.Fatal("a built-in role name must resolve as System")
+	}
+	if len(got.Permissions) != 1 || string(got.Permissions[0]) != "read:users" {
+		t.Fatalf("Permissions = %v, want the stored permission round-tripped", got.Permissions)
+	}
+}
+
+// TestRoleAdapter_GetRoleByName_NotFound proves a name nobody holds in the
+// tenant is qrdbsdk.RoleNotFoundError, never a guessed role.
+func TestRoleAdapter_GetRoleByName_NotFound(t *testing.T) {
+	a := WrapRole(newStore())
+	_, err := a.GetRoleByName(context.Background(), "system", "no-such-role")
+	var notFound *qrdbsdk.RoleNotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("GetRoleByName error = %v, want RoleNotFoundError", err)
+	}
+}
+
+// TestRoleAdapter_GetRoleByName_NilStore proves a nil store is refused before
+// any lookup.
+func TestRoleAdapter_GetRoleByName_NilStore(t *testing.T) {
+	a := &RoleAdapter{}
+	if _, err := a.GetRoleByName(context.Background(), "system", "admin"); err == nil {
+		t.Fatal("expected NilDependencyError")
+	}
+}

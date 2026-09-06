@@ -1,18 +1,19 @@
 module github.com/jeremyhahn/go-quicbaas/sdk/go
 
-go 1.26.6
+go 1.26.7
 
 // Pin armon/go-metrics to v0.4.1 - newer versions declare as hashicorp/go-metrics
 replace github.com/armon/go-metrics => github.com/armon/go-metrics v0.4.1
 
 require (
+	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/jeremyhahn/go-qrdb v0.9.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.9.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.16.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.16.0-alpha
 	github.com/jeremyhahn/go-quicbaas v0.6.0-alpha
-	github.com/jeremyhahn/go-xkms v0.7.7-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.7.7-alpha
+	github.com/jeremyhahn/go-xkms v0.9.2-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.9.2-alpha
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/quic-go/quic-go v0.61.0
 	github.com/stretchr/testify v1.11.1
@@ -111,7 +112,6 @@ require (
 	github.com/getsentry/sentry-go v0.43.0 // indirect
 	github.com/gin-contrib/sse v1.1.1 // indirect
 	github.com/gin-gonic/gin v1.12.0 // indirect
-	github.com/go-chi/chi/v5 v5.3.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
@@ -154,7 +154,7 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-quicraft v0.8.0-alpha // indirect
+	github.com/jeremyhahn/go-quicraft v0.9.0-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.2.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect

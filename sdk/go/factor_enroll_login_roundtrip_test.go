@@ -14,6 +14,7 @@
 package quicbaas
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -97,6 +98,28 @@ func (k *memKV) Delete(_ context.Context, key string) error {
 	return nil
 }
 
+func (k *memKV) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	cur, ok := k.m[key]
+	if !ok || !bytes.Equal(cur, expected) {
+		return false, nil
+	}
+	delete(k.m, key)
+	return true, nil
+}
+
+func (k *memKV) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	cur, ok := k.m[key]
+	if !ok || !bytes.Equal(cur, expected) {
+		return false, nil
+	}
+	k.m[key] = append([]byte(nil), next...)
+	return true, nil
+}
+
 // testUser is one directory entry keyed by (tenant, username) -> id.
 type testUser struct {
 	id       uint64
@@ -152,6 +175,13 @@ func (d *directoryUserServicer) GetUserByUsername(_ context.Context, tenantID, u
 		return nil, stubErr
 	}
 	return d.toSDK(u), nil
+}
+
+// GetUserByEmail is not a lookup this directory answers: entries are keyed by
+// username only, so an email lookup fails loudly like every other unused
+// method rather than resolving a user by a key it never indexed.
+func (d *directoryUserServicer) GetUserByEmail(context.Context, string, string) (*qrdbsdk.User, error) {
+	return nil, stubErr
 }
 
 func (d *directoryUserServicer) UserByCertThumbprint(context.Context, string) (*qrdbsdk.User, error) {

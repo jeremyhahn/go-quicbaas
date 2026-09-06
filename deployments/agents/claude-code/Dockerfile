@@ -4,7 +4,7 @@
 # Non-root agent user, workspace at /workspace
 
 # Build gopls binary in an isolated Go stage
-FROM golang:1.26.6-alpine AS gopls-builder
+FROM golang:1.26.7-alpine AS gopls-builder
 RUN go install golang.org/x/tools/gopls@latest
 
 FROM alpine:3.21 AS base

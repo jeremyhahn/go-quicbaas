@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
@@ -35,6 +36,14 @@ const gitTokenEnvVar = "QUICBAAS_GIT_TOKEN" //nolint:gosec // G101: an environme
 
 // gitUsernameEnvVar carries the username paired with the HTTPS token.
 const gitUsernameEnvVar = "QUICBAAS_GIT_USERNAME"
+
+// gitSSHShutdownBound bounds the SSH agent teardown after a clone. git has
+// exited by then, but a signing request it left parked in Signer.Sign on a
+// hardware key awaiting touch cannot be interrupted by closing the agent's
+// connection; without a bound the clone would never return. Past it the
+// session is torn down anyway and the abandoned count is logged. Same bound
+// the xkey CLI and GUI use for the same teardown.
+const gitSSHShutdownBound = 5 * time.Second
 
 // defaultGitTokenUsername is the username sent alongside an HTTPS token when
 // the caller supplies none. Token-authenticated forges (GitHub, GitLab,
@@ -354,15 +363,39 @@ func (p *GitProvisioner) sshAuth(ctx context.Context, req *GitCloneRequest) ([]s
 
 	env := append(append([]string(nil), session.Env...),
 		"GIT_SSH_COMMAND="+buildGitSSHCommand(session.KnownHostsFile()))
-	stop := func() {
-		// Pin any first-contact host key the clone accepted, then stop the
-		// agent and remove its temp artifacts. Sync failures only lose the
-		// pin (the next clone re-pins); they cannot fail a finished clone.
-		if _, syncErr := session.SyncAndStop(); syncErr != nil && p.Logger != nil {
-			p.Logger.Warnf("git ssh host-key pin sync failed: %v", syncErr)
-		}
-	}
+	stop := func() { p.stopSSHSession(session) }
 	return env, stop, nil
+}
+
+// sshSessionStopper is the teardown half of *xkmsssh.ConnectSession.
+type sshSessionStopper interface {
+	SyncAndStop(ctx context.Context) (int, xkmsssh.AgentShutdownReport, error)
+}
+
+// stopSSHSession pins any first-contact host key the clone accepted, then
+// stops the agent and removes its temp artifacts. Nothing here can fail a
+// finished clone: a sync failure only loses the pin (the next clone re-pins),
+// and a signing operation still running when the bound elapses is abandoned
+// and logged. The teardown gets its own bound rather than the clone's context
+// because that context may already be cancelled — the clone failed on it —
+// and a spent context would drop the pins ssh just accepted and skip the
+// agent stop, leaving the signing socket alive.
+func (p *GitProvisioner) stopSSHSession(session sshSessionStopper) {
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), gitSSHShutdownBound)
+	defer cancelStop()
+
+	added, report, syncErr := session.SyncAndStop(stopCtx)
+	if p.Logger == nil {
+		return
+	}
+	if syncErr != nil {
+		p.Logger.Warnf("git ssh host-key pin sync failed: %v", syncErr)
+	} else if added > 0 {
+		p.Logger.Infof("git ssh pinned %d new host key(s)", added)
+	}
+	if !report.Clean() {
+		p.Logger.Warnf("git ssh agent shutdown abandoned %d in-flight signing operation(s)", report.Abandoned)
+	}
 }
 
 // runGit executes one git command with the prepared environment.

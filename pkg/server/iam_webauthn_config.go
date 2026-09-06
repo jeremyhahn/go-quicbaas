@@ -125,7 +125,14 @@ func webauthnDefaultsFromIssuer(issuerURL string) (rpID, rpOrigin string, err er
 // class of failures. Explicit iam.webauthn.rp_id / rp_origins values
 // remain authoritative and pass through unchanged. The display name defaults
 // to "QuicBaaS" when unset.
-func webauthnFactoryConfigFromOperator(c config.IAMWebAuthnConfig, issuerRPID, issuerRPOrigin string) iam.WebAuthnFactoryConfig {
+//
+// allowPublicRegistration is the operator's iam.self_service_registration
+// .enabled decision. It is a parameter rather than read from the WebAuthn
+// section because it is not a WebAuthn setting: it is the one switch that
+// authorises a ceremony to create an account for an unknown email, and the
+// composed go-xkms module's relying party (quicbaasWebAuthnConfigToXKMS)
+// must be handed exactly the same answer.
+func webauthnFactoryConfigFromOperator(c config.IAMWebAuthnConfig, issuerRPID, issuerRPOrigin string, allowPublicRegistration bool) iam.WebAuthnFactoryConfig {
 	out := iam.WebAuthnFactoryConfig{
 		RPID:                    c.RPID,
 		RPDisplayName:           c.RPDisplayName,
@@ -135,6 +142,7 @@ func webauthnFactoryConfigFromOperator(c config.IAMWebAuthnConfig, issuerRPID, i
 		ResidentKeyRequirement:  c.ResidentKeyRequirement,
 		AuthenticatorAttachment: c.AuthenticatorAttachment,
 		Debug:                   c.Debug,
+		AllowPublicRegistration: allowPublicRegistration,
 	}
 	if out.RPID == "" {
 		out.RPID = issuerRPID

@@ -199,3 +199,32 @@ func TestXKMSWebAuthnManager_SetAAGUIDAllowlist(t *testing.T) {
 		t.Fatalf("SetAAGUIDAllowlist(nil) did not clear, got %v", got)
 	}
 }
+
+// TestXKMSWebAuthnConfig_CarriesPublicRegistration proves the per-tenant
+// relying party is handed the operator's self-service registration decision
+// as an explicit value in both directions. go-xkms v0.9.2-alpha reads a nil
+// AllowPublicRegistration as closed, so a projection that dropped the field
+// would silently refuse every unknown-email registration on a node that has
+// self-service switched on.
+func TestXKMSWebAuthnConfig_CarriesPublicRegistration(t *testing.T) {
+	for _, allow := range []bool{true, false} {
+		cfg := xkmsWebAuthnConfig(WebAuthnFactoryConfig{
+			RPID:                    "example.com",
+			RPDisplayName:           "Example",
+			RPOrigins:               []string{"https://example.com"},
+			AllowPublicRegistration: allow,
+		})
+		if cfg.AllowPublicRegistration == nil {
+			t.Fatalf("AllowPublicRegistration is nil for allow=%v; go-xkms would read it as closed", allow)
+		}
+		if *cfg.AllowPublicRegistration != allow {
+			t.Errorf("AllowPublicRegistration = %v, want %v", *cfg.AllowPublicRegistration, allow)
+		}
+		if cfg.PublicRegistrationAllowed() != allow {
+			t.Errorf("PublicRegistrationAllowed() = %v, want %v", cfg.PublicRegistrationAllowed(), allow)
+		}
+		if cfg.RPID != "example.com" || len(cfg.RPOrigins) != 1 {
+			t.Errorf("relying-party identity was not carried: %+v", cfg)
+		}
+	}
+}

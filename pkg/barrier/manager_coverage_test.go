@@ -56,6 +56,10 @@ func (b *deleteFaultBackend) PutIfAbsent(ctx context.Context, key string, data [
 	return b.inner.PutIfAbsent(ctx, key, data)
 }
 
+func (b *deleteFaultBackend) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return b.inner.CompareAndDelete(ctx, key, expected)
+}
+
 func (b *deleteFaultBackend) Delete(ctx context.Context, key string) error {
 	if b.deleteErr != nil {
 		return b.deleteErr

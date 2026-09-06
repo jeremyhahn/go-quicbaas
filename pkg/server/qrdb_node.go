@@ -702,7 +702,8 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 		// (pkg/api/rest NewHostServer) around the resolved XKMSService when
 		// these options are supplied instead.
 		xkmssdk.WithServiceModuleQRDBClient(func() *qrdbsdk.Client { return s.GetQRDBNodeClient() }),
-		xkmssdk.WithServiceModuleWebAuthn(quicbaasWebAuthnConfigToXKMS(s.config.IAM.WebAuthn)),
+		xkmssdk.WithServiceModuleWebAuthn(quicbaasWebAuthnConfigToXKMS(
+			s.config.IAM.WebAuthn, s.config.IAM.SelfServiceRegistration.Enabled)),
 		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
 		xkmssdk.WithServiceModulePIVLogin(&xkmssdk.ServiceModulePIVLoginOptions{
 			Enabled:        s.config.IAM.PIVLogin.Enabled,
@@ -755,9 +756,16 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 // unconditionally, there is no separate disable flag on that type), so an
 // unconfigured host leaves the xkms module's WebAuthn routes unmounted
 // exactly as WithServiceModuleWebAuthn's doc comment describes.
-func quicbaasWebAuthnConfigToXKMS(c config.IAMWebAuthnConfig) *xkmssdk.ServiceModuleWebAuthnConfig {
+func quicbaasWebAuthnConfigToXKMS(c config.IAMWebAuthnConfig, allowPublicRegistration bool) *xkmssdk.ServiceModuleWebAuthnConfig {
 	return &xkmssdk.ServiceModuleWebAuthnConfig{
-		Enabled:                 c.RPID != "",
+		Enabled: c.RPID != "",
+		// ONE decision drives both relying parties. go-xkms v0.9.2-alpha
+		// reads an unset value as closed, so without this the module's
+		// ceremony routes would refuse an unknown email on a node whose
+		// operator has switched self-service registration on, while
+		// quicbaas's own surface accepted it — the two registration lanes
+		// disagreeing.
+		AllowPublicRegistration: &allowPublicRegistration,
 		RPID:                    c.RPID,
 		RPOrigins:               c.RPOrigins,
 		RPDisplayName:           c.RPDisplayName,

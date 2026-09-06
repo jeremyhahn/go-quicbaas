@@ -3024,8 +3024,12 @@ so a barrier-isolated tenant's orchestration records live inside that tenant's
 own barrier with its own DEK and namespace. A sealed barrier tenant **fails
 closed** — the operation errors and never falls back to the shared store.
 
-Without a resolver (seal disabled, storage-less boot) the store is the shared
-platform shard, where the tenant-first key layout still keeps records separated.
+Every qrdb node exposes a resolver since go-qrdb v0.10.0 (#41) — a
+seal-disabled node routes through a confined `"{tenant}/"` view of the shared
+store rather than a barrier — so the fallback to the raw platform shard is
+reached only on a storage-less boot, where the tenant-first key layout still
+keeps records separated. Anything reading IAM records from outside the IAM
+components goes through `Server.IAMKVStore()`, which is the same seam.
 
 The routing store reads the request tenant from either the IAM or the
 orchestration context key, because the two packages deliberately keep separate

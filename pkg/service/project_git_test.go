@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // runGitCmd runs one git command inside dir and fails the test on error.
@@ -386,4 +388,70 @@ func TestGitCloneArgs(t *testing.T) {
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("gitCloneArgs with branch = %v, want %v", got, want)
 	}
+}
+
+// fakeSSHSession stands in for the xkms ConnectSession's teardown half: it
+// records whether the context it was handed is bounded and returns whatever
+// the test scripted.
+type fakeSSHSession struct {
+	added    int
+	report   xkmsssh.AgentShutdownReport
+	err      error
+	stopped  bool
+	deadline bool
+}
+
+func (f *fakeSSHSession) SyncAndStop(ctx context.Context) (int, xkmsssh.AgentShutdownReport, error) {
+	f.stopped = true
+	_, f.deadline = ctx.Deadline()
+	return f.added, f.report, f.err
+}
+
+func TestGitProvisioner_StopSSHSession(t *testing.T) {
+	t.Parallel()
+
+	t.Run("clean shutdown logs nothing at warn", func(t *testing.T) {
+		t.Parallel()
+		logger := newAEADTestLogger()
+		sess := &fakeSSHSession{added: 2, report: xkmsssh.AgentShutdownReport{Joined: true}}
+		(&GitProvisioner{Logger: logger}).stopSSHSession(sess)
+		if !sess.stopped {
+			t.Fatal("SyncAndStop was not called")
+		}
+		if !sess.deadline {
+			t.Error("teardown context carries no deadline; a wedged signer would hang the clone forever")
+		}
+		if len(logger.warnings) != 0 {
+			t.Errorf("warnings = %q, want none", logger.warnings)
+		}
+	})
+
+	t.Run("sync failure is logged and does not panic", func(t *testing.T) {
+		t.Parallel()
+		logger := newAEADTestLogger()
+		sess := &fakeSSHSession{err: errors.New("store unavailable"), report: xkmsssh.AgentShutdownReport{Joined: true}}
+		(&GitProvisioner{Logger: logger}).stopSSHSession(sess)
+		if len(logger.warnings) != 1 || !strings.Contains(logger.warnings[0], "host-key pin sync failed") {
+			t.Errorf("warnings = %q, want one host-key sync warning", logger.warnings)
+		}
+	})
+
+	t.Run("abandoned signing operations are logged", func(t *testing.T) {
+		t.Parallel()
+		logger := newAEADTestLogger()
+		sess := &fakeSSHSession{report: xkmsssh.AgentShutdownReport{Joined: false, Abandoned: 1}}
+		(&GitProvisioner{Logger: logger}).stopSSHSession(sess)
+		if len(logger.warnings) != 1 || !strings.Contains(logger.warnings[0], "abandoned") {
+			t.Errorf("warnings = %q, want one abandoned-signing warning", logger.warnings)
+		}
+	})
+
+	t.Run("nil logger still stops the session", func(t *testing.T) {
+		t.Parallel()
+		sess := &fakeSSHSession{err: errors.New("store unavailable"), report: xkmsssh.AgentShutdownReport{Abandoned: 3}}
+		(&GitProvisioner{}).stopSSHSession(sess)
+		if !sess.stopped {
+			t.Fatal("SyncAndStop was not called")
+		}
+	})
 }

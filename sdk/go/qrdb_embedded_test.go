@@ -52,6 +52,12 @@ func (stubKVService) Delete(context.Context, string) error        { return stubE
 func (stubKVService) PutIfAbsent(context.Context, string, []byte) (bool, error) {
 	return false, stubErr
 }
+func (stubKVService) CompareAndDelete(context.Context, string, []byte) (bool, error) {
+	return false, stubErr
+}
+func (stubKVService) CompareAndSwap(context.Context, string, []byte, []byte) (bool, error) {
+	return false, stubErr
+}
 func (stubKVService) List(context.Context, string) ([]string, error) {
 	return nil, stubErr
 }

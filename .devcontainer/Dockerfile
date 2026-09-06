@@ -82,7 +82,7 @@ RUN git clone https://github.com/opendnssec/SoftHSMv2.git && \
 # ============================================================================
 # Final stage: the development container
 # ============================================================================
-FROM golang:1.26.6-alpine
+FROM golang:1.26.7-alpine
 
 LABEL maintainer="QuicBaaS Team"
 LABEL description="QuicBaaS development container with all dependencies"

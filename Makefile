@@ -12,7 +12,7 @@ APP_NAME := quicbaas
 VERSION := $(shell cat VERSION 2>/dev/null | tr -d '\n' || git describe --tags --always --dirty 2>/dev/null || echo "0.1.0-dev")
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-GO_VERSION := 1.26.6
+GO_VERSION := 1.26.7
 
 # Directories
 BIN_DIR := bin

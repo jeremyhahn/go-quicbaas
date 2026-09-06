@@ -53,8 +53,8 @@ type UserServicerResolver interface {
 //     qrdb's internal uint64 id.
 //   - BrokerProfileStore persists the broker-only fields (Email/Name/Groups/
 //     AuthMethods/State/MFA/Invite/LastAuth) keyed by the qrdb uint64 id.
-//   - A broker-side email index resolves GetUserByEmail (qrdb has no email
-//     lookup).
+//   - A broker-side email index resolves GetUserByEmail across tenants (the
+//     global fallback qrdb's tenant-scoped GetUserByEmail cannot answer).
 //   - A broker-side legacy-PIV index resolves the legacy hex-digest PIV
 //     thumbprint (which is NOT an SPKI thumbprint, so qrdb's
 //     UserByCertThumbprint cannot resolve it directly) for no-qrdb-index
@@ -153,8 +153,15 @@ func (s *QRDBUserStorage) CreateUser(ctx context.Context, u *iam.User) error {
 	core, _, _ := FromIAMUser(u, 0)
 	created, err := svc.CreateUser(ctx, &qrdbsdk.CreateUserRequest{
 		Username: core.Username,
-		TenantID: core.TenantID,
-		RoleIDs:  core.RoleIDs,
+		// Email is qrdb's canonical tenant-unique login key (go-qrdb #191),
+		// so the broker's email travels with the core record. A user that
+		// has none — a certificate-only identity — is declared as such:
+		// qrdb refuses an undeclared omission rather than defaulting it.
+		Email:                u.Email,
+		WithoutEmailLoginKey: u.Email == "",
+		Name:                 u.Name,
+		TenantID:             core.TenantID,
+		RoleIDs:              core.RoleIDs,
 	})
 	if err != nil {
 		return mapQRDBUserError("create", err)
@@ -212,10 +219,11 @@ func (s *QRDBUserStorage) GetUser(ctx context.Context, tenantID, userID string) 
 }
 
 // GetUserByEmail resolves the user via the broker-side email index, then
-// delegates to GetUser. qrdb has no email lookup, so the index is broker-owned.
-// It reads the tenant-scoped key when a tenant is in context and falls back to
-// the global key otherwise (the first-boot admin read-back queries by a globally
-// unique email before any tenant is bound).
+// delegates to GetUser. qrdb's own GetUserByEmail is tenant-scoped by design;
+// the broker index is what answers the global fallback. It reads the
+// tenant-scoped key when a tenant is in context and falls back to the global
+// key otherwise (the first-boot admin read-back queries by a globally unique
+// email before any tenant is bound).
 func (s *QRDBUserStorage) GetUserByEmail(ctx context.Context, email string) (*iam.User, error) {
 	owningTenant, uuid, err := s.resolveIndex(ctx, userEmailIndexKey, userEmailGlobalKey, email)
 	if err != nil {
@@ -635,6 +643,10 @@ func mapQRDBUserError(op string, err error) error {
 	var exists *qrdbsdk.UsernameExistsError
 	if errors.As(err, &exists) {
 		return iam.ErrAlreadyExists
+	}
+	var emailExists *qrdbsdk.EmailExistsError
+	if errors.As(err, &emailExists) {
+		return iam.ErrEmailAlreadyExists
 	}
 	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,

@@ -37,6 +37,7 @@ import (
 type mcpMockUserServicer struct {
 	getFn           func(ctx context.Context, id uint64) (*qrdbsdk.User, error)
 	getByUsernameFn func(ctx context.Context, tenantID, username string) (*qrdbsdk.User, error)
+	getByEmailFn    func(ctx context.Context, tenantID, email string) (*qrdbsdk.User, error)
 	byThumbprintFn  func(ctx context.Context, thumbprint string) (*qrdbsdk.User, error)
 }
 
@@ -64,6 +65,12 @@ func (m *mcpMockUserServicer) GetUser(ctx context.Context, id uint64) (*qrdbsdk.
 func (m *mcpMockUserServicer) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbsdk.User, error) {
 	if m.getByUsernameFn != nil {
 		return m.getByUsernameFn(ctx, tenantID, username)
+	}
+	return mcpTestUser(), nil
+}
+func (m *mcpMockUserServicer) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbsdk.User, error) {
+	if m.getByEmailFn != nil {
+		return m.getByEmailFn(ctx, tenantID, email)
 	}
 	return mcpTestUser(), nil
 }

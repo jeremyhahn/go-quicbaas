@@ -22,7 +22,7 @@ ARG BUILD_TAGS="local quic raft rest rag timeseries vector qrdb_vector iam mcp h
 # ============================================================================
 # Stage 1: Build the server binary
 # ============================================================================
-FROM golang:1.26.6-alpine AS builder
+FROM golang:1.26.7-alpine AS builder
 
 ARG BUILD_TAGS
 
@@ -62,7 +62,7 @@ RUN CGO_ENABLED=0 GOOS=linux \
 # ============================================================================
 # Stage 2: Test runtime — full Go toolchain plus the built server binary
 # ============================================================================
-FROM golang:1.26.6-alpine
+FROM golang:1.26.7-alpine
 
 ARG BUILD_TAGS
 

@@ -46,15 +46,23 @@ func (f *fakeUserServicer) CreateUser(_ context.Context, req *qrdbsdk.CreateUser
 	if f.forceErr != nil {
 		return nil, f.forceErr
 	}
+	email := qrdbsdk.NormalizeEmail(req.Email)
+	if email == "" && !req.WithoutEmailLoginKey {
+		return nil, &qrdbsdk.UserValidationError{Field: "email", Reason: "must not be empty; set WithoutEmailLoginKey to create a user without one"}
+	}
 	for _, u := range f.users {
 		if u.TenantID == req.TenantID && u.Username == req.Username {
 			return nil, &qrdbsdk.UsernameExistsError{Username: req.Username, TenantID: req.TenantID}
+		}
+		if email != "" && u.TenantID == req.TenantID && u.Email == email {
+			return nil, &qrdbsdk.EmailExistsError{Email: email, TenantID: req.TenantID}
 		}
 	}
 	f.nextID++
 	u := &qrdbsdk.User{
 		ID:       f.nextID,
 		Username: req.Username,
+		Email:    email,
 		TenantID: req.TenantID,
 		RoleIDs:  append([]string(nil), req.RoleIDs...),
 		Enabled:  true,
@@ -84,6 +92,24 @@ func (f *fakeUserServicer) GetUserByUsername(_ context.Context, tenantID, userna
 		}
 	}
 	return nil, &qrdbsdk.UserNotFoundError{Lookup: tenantID + "/" + username}
+}
+
+// GetUserByEmail mirrors the qrdb store: the email is normalized and required,
+// the tenant scopes the lookup, and a miss is UserNotFoundError.
+func (f *fakeUserServicer) GetUserByEmail(_ context.Context, tenantID, email string) (*qrdbsdk.User, error) {
+	if f.forceErr != nil {
+		return nil, f.forceErr
+	}
+	normalized := qrdbsdk.NormalizeEmail(email)
+	if normalized == "" {
+		return nil, &qrdbsdk.UserValidationError{Field: "email", Reason: "must not be empty"}
+	}
+	for _, u := range f.users {
+		if u.TenantID == tenantID && u.Email == normalized {
+			return cloneUser(u), nil
+		}
+	}
+	return nil, &qrdbsdk.UserNotFoundError{Lookup: tenantID + "/" + normalized}
 }
 
 func (f *fakeUserServicer) UserByCertThumbprint(_ context.Context, thumbprint string) (*qrdbsdk.User, error) {
@@ -652,5 +678,36 @@ func TestQRDBUserStorage_CreateUserFailsWhenDurableStoreUnavailable(t *testing.T
 	kv.sealed["acme"] = false
 	if _, getErr := store.GetUser(ctx, "acme", "uuid-sealed"); getErr == nil {
 		t.Fatal("a user whose durable write failed must not be readable")
+	}
+}
+
+// TestQRDBUserStorage_CreateUserForwardsEmailLoginKey proves the broker's email
+// reaches qrdb as the canonical login key (go-qrdb #191), and that a user with
+// no email is declared certificate-only rather than refused.
+func TestQRDBUserStorage_CreateUserForwardsEmailLoginKey(t *testing.T) {
+	svc := newFakeUserServicer()
+	store, _ := newTestUserStorage(t, svc, "acme")
+	ctx := context.Background()
+
+	withEmail := &iam.User{ID: "u-1", TenantID: "acme", Name: "alice", Email: "Alice@Example.com"}
+	if err := store.CreateUser(ctx, withEmail); err != nil {
+		t.Fatalf("CreateUser(with email): %v", err)
+	}
+	core, err := svc.GetUserByEmail(ctx, "acme", "alice@example.com")
+	if err != nil {
+		t.Fatalf("qrdb core must resolve the normalized email login key: %v", err)
+	}
+	if core.Username != withEmail.Name {
+		t.Fatalf("resolved core %+v, want the user just created", core)
+	}
+
+	certOnly := &iam.User{ID: "u-2", TenantID: "acme", Name: "machine"}
+	if err := store.CreateUser(ctx, certOnly); err != nil {
+		t.Fatalf("CreateUser(cert-only) must declare WithoutEmailLoginKey, got %v", err)
+	}
+
+	dup := &iam.User{ID: "u-3", TenantID: "acme", Name: "alice2", Email: "alice@example.com"}
+	if err := store.CreateUser(ctx, dup); !errors.Is(err, iam.ErrEmailAlreadyExists) {
+		t.Fatalf("duplicate email = %v, want iam.ErrEmailAlreadyExists", err)
 	}
 }

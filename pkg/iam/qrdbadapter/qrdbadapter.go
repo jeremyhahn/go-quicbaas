@@ -153,6 +153,47 @@ func (a *RoleAdapter) CreateRole(ctx context.Context, req *qrdbsdk.CreateRoleReq
 	}, nil
 }
 
+// GetRoleByName satisfies qrdbsdk.RoleNameResolver: it answers "which role is
+// named N in tenant T" from the quicbaas role store so first-boot's grants
+// bind to the identifier a system role is actually persisted under. On a
+// re-run against a store seeded earlier — the retry after a partial first
+// boot — the built-in roles already exist and first-boot refuses to derive
+// their identifiers (UnresolvableSystemRoleError) unless it can resolve them
+// by name here. A miss is qrdbsdk.RoleNotFoundError so first-boot's own
+// not-found handling applies.
+func (a *RoleAdapter) GetRoleByName(ctx context.Context, tenantID, name string) (*qrdbsdk.Role, error) {
+	if a == nil || a.store == nil {
+		return nil, &NilDependencyError{Name: "IdentityStore"}
+	}
+	// Limit 0 lists every role in the broker-backed stores and the first
+	// default page (100) in the qrdb-backed one. Both cover this lookup: it
+	// runs during first-boot against the system tenant, whose roles are the
+	// built-in set seeded moments earlier.
+	roles, err := a.store.ListRoles(ctx, tenantID, iam.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range roles {
+		if r.Name != name {
+			continue
+		}
+		return &qrdbsdk.Role{
+			ID:          r.ID,
+			Name:        r.Name,
+			TenantID:    r.TenantID,
+			Permissions: parsePermissions(r.Permissions),
+			System:      qrdbsdk.IsSystemRoleName(r.Name),
+		}, nil
+	}
+	return nil, &qrdbsdk.RoleNotFoundError{ID: tenantID + "/" + name}
+}
+
+// Compile-time proof that the adapter satisfies both first-boot role seams.
+var (
+	_ qrdbsdk.FirstBootRoleCreator = (*RoleAdapter)(nil)
+	_ qrdbsdk.RoleNameResolver     = (*RoleAdapter)(nil)
+)
+
 // =============================================================================
 // User adapter
 // =============================================================================
