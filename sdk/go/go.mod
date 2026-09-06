@@ -11,7 +11,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jeremyhahn/go-qrdb v0.16.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.16.0-alpha
-	github.com/jeremyhahn/go-quicbaas v0.6.0-alpha
+	github.com/jeremyhahn/go-quicbaas v0.7.0-alpha
 	github.com/jeremyhahn/go-xkms v0.9.4-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.9.4-alpha
 	github.com/mark3labs/mcp-go v0.45.0
