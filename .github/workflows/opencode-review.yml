@@ -1,4 +1,4 @@
-# code-review-template: v23 — automated peer review on EVERY pull request.
+# code-review-template: v24 — automated peer review on EVERY pull request.
 # v2 gated the job on a `code-review` label and could skip itself green;
 # see the note on the job below. v4 added a guard step and a concurrency
 # change; v5 keeps the guard and reverts the concurrency — measured, below.
@@ -470,6 +470,24 @@ jobs:
           ROUTED_AGENT: ${{ contains(github.event.pull_request.labels.*.name, 'agent:codex') && 'codex' || contains(github.event.pull_request.labels.*.name, 'agent:claude') && 'claude' || contains(github.event.pull_request.labels.*.name, 'agent:opencode') && 'opencode' || contains(github.event.pull_request.labels.*.name, 'model:codex') && 'codex' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:codex:') && 'codex' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:gpt-') && 'codex' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:o3') && 'codex' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:o4') && 'codex' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:opus') && 'claude' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:sonnet') && 'claude' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:haiku') && 'claude' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:fable') && 'claude' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:claude-') && 'claude' || 'opencode' }}
         run: |
           set -euo pipefail
+
+          # A PULL REQUEST WITH NO LABELS AT ALL YIELDS `null`, NOT `[]`.
+          #
+          # `toJSON(github.event.pull_request.labels.*.name)` renders an empty
+          # label set as the literal `null`, and every read below pipes $LABELS
+          # into jq. `jq -r '.[]'` over null is a hard error ("Cannot iterate
+          # over null"), which under `set -euo pipefail` kills the whole review
+          # job seconds in -- so a PR carrying no labels was never reviewed, and
+          # the failure looked like a reviewer verdict rather than a crash.
+          #
+          # No-labels is a SUPPORTED configuration, documented right below as
+          # "agent:opencode + review-q8", so this is a defect and not an
+          # unsupported input. Observed on go-quicbaas#836, the only open PR at
+          # the time with zero labels.
+          #
+          # Normalise once, here, rather than guarding each of the six readers:
+          # a guard that has to be repeated is a guard someone will forget.
+          LABELS=$(printf '%s' "$LABELS" | jq -c 'if . == null then [] else . end')
 
           # AGENT AND MODEL ARE SEPARATE AXES. Owner correction 2026-09-09: "codex is the
           # openai codex agent, its its own thing, just like claude code and opencode have
