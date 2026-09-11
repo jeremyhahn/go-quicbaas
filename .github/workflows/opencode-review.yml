@@ -1,4 +1,4 @@
-# code-review-template: v24 — automated peer review on EVERY pull request.
+# code-review-template: v25 — automated peer review on EVERY pull request.
 # v2 gated the job on a `code-review` label and could skip itself green;
 # see the note on the job below. v4 added a guard step and a concurrency
 # change; v5 keeps the guard and reverts the concurrency — measured, below.
@@ -341,11 +341,26 @@ jobs:
             # version marker that does not move when the file does is worse than
             # no marker.
             labeled:agent:*|labeled:model:*|labeled:effort:*)
+              # SKIP DEDUPLICATION, NOT THE REJECTION CHECK.
+              #
+              # This arm used to `exit 0` here, which left the run BEFORE the
+              # standing-REQUEST_CHANGES check below -- the very check whose own
+              # comment says it exists so that "relabel a PR carrying a standing
+              # opencode REQUEST_CHANGES to agent:codex, and codex ... could
+              # approve it into a mergeable state" cannot happen. The protection
+              # was written, documented, and then ordered out of reach: adding
+              # any agent:*/model:*/effort: label to a rejected head ran a fresh
+              # reviewer whose approval overwrote the block.
+              #
+              # Record the intent and let control fall through, so a rejection
+              # still stands and only the duplicate-verdict test is bypassed.
               echo "A ${EVENT_LABEL} label was just added. Re-reviewing $EVENT_SHA"
               echo "under the reviewer it selects, which is what \`labeled\` is for."
-              exit 0
+              relabel_rerun=yes
               ;;
           esac
+
+          relabel_rerun=${relabel_rerun:-no}
 
           # A REJECTION IS NOT ORDER-DEPENDENT. The previous version took the
           # `last` review on this head and switched on it, which meant a COMMENT
@@ -389,6 +404,14 @@ jobs:
             echo "Failing so that verdict stands: a duplicate must not overwrite"
             echo "a rejection with a pass, and a later comment does not retract one."
             exit 1
+          fi
+
+          # The relabel bypass resumes HERE, after the rejection check and before
+          # the dedup test -- which is the whole of what `labeled` is meant to
+          # bypass.
+          if [ "$relabel_rerun" = yes ]; then
+            echo "Re-reviewing $EVENT_SHA under the newly selected reviewer."
+            exit 0
           fi
 
           case "$state" in
@@ -876,9 +899,27 @@ jobs:
           # rule survives in the prompt, because reconstructing the file list
           # with git merge-base cost ~7 minutes of a 19-minute review and landed
           # on the same list Gitea already reports.
-          files_json=$(curl -sS -H "Authorization: token $GITEA_TOKEN" \
-                       "$GITEA_API/repos/jeremyhahn/$REPO/pulls/$PR_NUM/files?limit=100" 2>/dev/null || true)
-          n_files=$(printf '%s' "$files_json" | jq -r 'if type=="array" then length else 0 end' 2>/dev/null || echo 0)
+          # PAGE IT. A single `?limit=100` returns a capped page with no
+          # indication that it was capped, so a pull request touching more than
+          # 100 files reported exactly 100 and the assertion below passed on a
+          # truncated view of the change. Page until a short page arrives; a
+          # page that comes back exactly full is not evidence that the listing
+          # ended.
+          n_files=0
+          files_page=1
+          while [ "$files_page" -le 50 ]; do
+            page_json=$(curl -sS -H "Authorization: token $GITEA_TOKEN" \
+                        "$GITEA_API/repos/jeremyhahn/$REPO/pulls/$PR_NUM/files?limit=100&page=$files_page" 2>/dev/null || true)
+            page_n=$(printf '%s' "$page_json" | jq -r 'if type=="array" then length else 0 end' 2>/dev/null || echo 0)
+            n_files=$((n_files + page_n))
+            [ "$page_n" -eq 100 ] || break
+            files_page=$((files_page + 1))
+          done
+          if [ "$files_page" -gt 50 ]; then
+            echo "::error::PR $PR_NUM file listing did not end after 50 pages."
+            echo "::error::Refusing to review against a listing that may be truncated."
+            exit 1
+          fi
           if [ "${n_files:-0}" -eq 0 ]; then
             echo "::error::PR $PR_NUM reports no changed files from $GITEA_API/repos/jeremyhahn/$REPO/pulls/$PR_NUM/files."
             echo "::error::Refusing to run a review with nothing to review."
