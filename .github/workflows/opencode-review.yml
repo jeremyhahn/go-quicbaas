@@ -1,4 +1,4 @@
-# code-review-template: v22 — automated peer review on EVERY pull request.
+# code-review-template: v23 — automated peer review on EVERY pull request.
 # v2 gated the job on a `code-review` label and could skip itself green;
 # see the note on the job below. v4 added a guard step and a concurrency
 # change; v5 keeps the guard and reverts the concurrency — measured, below.
@@ -275,7 +275,8 @@ jobs:
           # output. Found by codex on a live review; see automatethethings#127 and
           # software/scripts/check-workflow-outputs.py, which now checks
           # mechanically that every steps.X.outputs.Y read has a write in step X.
-          echo "is_draft=$(printf '%s' "$pr" | jq -r '.draft // false')" >> "$GITHUB_OUTPUT"
+          is_draft=$(printf '%s' "$pr" | jq -r '.draft // false')
+          echo "is_draft=$is_draft" >> "$GITHUB_OUTPUT"
 
           if [ "$merged" = "true" ] || [ "$pr_state" != "open" ]; then
             echo "PR $PR_NUM is state=$pr_state merged=$merged -- a review"
@@ -380,6 +381,8 @@ jobs:
           state=$(printf '%s' "$reviews" | jq -r --arg u "$BOT_USER" --arg s "$EVENT_SHA" '
               [ .[] | select(.user.login == $u and .commit_id == $s)
                     | select(.state == "APPROVED" or .state == "COMMENT") ] | last | .state // ""')
+          n_comments=$(printf '%s' "$reviews" | jq -r --arg u "$BOT_USER" --arg s "$EVENT_SHA" '
+              [ .[] | select(.user.login == $u and .commit_id == $s and .state == "COMMENT") ] | length')
 
           if [ "$n_rejected" != "0" ]; then
             echo "::error::${rejected_by:-a reviewer} has REQUEST_CHANGES standing on $EVENT_SHA."
@@ -392,7 +395,48 @@ jobs:
             "")
               echo "No $BOT_USER verdict on $EVENT_SHA yet. Reviewing."
               ;;
-            APPROVED|COMMENT)
+            COMMENT)
+              # A COMMENT IS ONLY A VERDICT WHILE THE PULL REQUEST IS A DRAFT.
+              #
+              # An approval on a draft is refused below by design, so COMMENT is
+              # the only verdict a draft can carry -- and recording it here as
+              # "already reviewed" consumed the head's verdict slot FOR EVER.
+              # Once the author marked the PR ready, every later run exited
+              # `skip=reviewed` with every step after this one skipped, the
+              # required check kept the draft-era comment, and no approval could
+              # ever be recorded on that commit. Re-running did not help, and
+              # neither did `agent:*` relabelling on a repo still carrying a
+              # pre-v21 file, whose BOT_USER is hardcoded.
+              #
+              # Observed on go-quicbaas#829: a thorough review that found no
+              # blocking defects, posted as a COMMENT because the PR was a draft
+              # at the time, left the PR green-but-ungated with no route to an
+              # approval short of pushing a new commit to move the head.
+              #
+              # So: dedup while the PR is still a draft (the verdict stands, and
+              # re-reviewing spends a GPU to say the same thing), and review
+              # again once it is ready, where APPROVED is finally available.
+              #
+              # Bounded, so this cannot loop: a second COMMENT by the same bot on
+              # the same head dedups unconditionally. A reviewer that genuinely
+              # means to comment rather than judge says so once, and the head
+              # settles.
+              if [ "$is_draft" = "true" ]; then
+                echo "$BOT_USER commented on $EVENT_SHA and the PR is still a draft."
+                echo "That is the verdict a draft can carry. Not reviewing it twice."
+                echo "skip=reviewed" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              if [ "${n_comments:-0}" -ge 2 ]; then
+                echo "$BOT_USER has commented twice on $EVENT_SHA. Taking that as"
+                echo "deliberate and stopping, rather than reviewing a third time."
+                echo "skip=reviewed" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "$BOT_USER commented on $EVENT_SHA while it was a draft, and the"
+              echo "PR is ready now. Reviewing, so an approval becomes reachable."
+              ;;
+            APPROVED)
               # A COMMENT is a recorded verdict, not a rejection. It used to fall
               # through to the rejection arm, so every re-run of an
               # already-commented head exited 1 and the head carried a permanently
