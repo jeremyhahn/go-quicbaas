@@ -1,4 +1,4 @@
-# code-review-template: v25 — automated peer review on EVERY pull request.
+# code-review-template: v26 — automated peer review on EVERY pull request.
 # v2 gated the job on a `code-review` label and could skip itself green;
 # see the note on the job below. v4 added a guard step and a concurrency
 # change; v5 keeps the guard and reverts the concurrency — measured, below.
@@ -1210,8 +1210,36 @@ jobs:
           state=$(printf '%s\n' "$verdict" | sed -n 1p)
           body_state=$(printf '%s\n' "$verdict" | sed -n 2p)
 
+          # A REJECTION MUST MAKE THE CHECK RED.
+          #
+          # This case used to accept APPROVED, REQUEST_CHANGES and COMMENT
+          # alike as "a verdict was recorded" and exit 0 -- so the required
+          # `Code Review` status went GREEN on the very run that filed a
+          # rejection. Gitea's auto-merge then fired on a PR the reviewer had
+          # just refused.
+          #
+          # Observed on go-quicbaas#853: REQUEST_CHANGES filed 05:10:28,
+          # auto-merged 05:13:56, and the merged head carried a regression the
+          # reviewer had named. The guard at the top of this job already exits
+          # 1 on a STANDING rejection, so a re-run was red -- but the run that
+          # posts the rejection was green, and that is the one auto-merge sees.
+          # The invariant the file claims was therefore false as deployed.
+          #
+          # A rejection is a refusal to merge. It has to be expressed in the
+          # one signal the merge gate reads.
+          if [ "$state" = "REQUEST_CHANGES" ]; then
+            if [ "$body_state" != "NONEMPTY" ]; then
+              echo "::error::$BOT_USER recorded REQUEST_CHANGES on $EVENT_SHA with an EMPTY body."
+              exit 1
+            fi
+            echo "::error::$BOT_USER has REQUEST_CHANGES on $EVENT_SHA."
+            echo "::error::Failing this check so the rejection blocks the merge."
+            echo "::error::Push a new head addressing it; a new commit clears the verdict."
+            exit 1
+          fi
+
           case "$state" in
-            APPROVED|REQUEST_CHANGES|COMMENT)
+            APPROVED|COMMENT)
               # A VERDICT MUST SAY SOMETHING. Gitea refuses REQUEST_CHANGES with
               # an empty body (422 "review event REQUEST_CHANGES requires a
               # body") but ACCEPTS an empty APPROVED -- so emptiness survives
