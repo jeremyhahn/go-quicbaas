@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -28,40 +27,34 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/netport"
 )
 
-var (
-	issuedPortsMu sync.Mutex
-	issuedPorts   = map[int]bool{}
-)
-
-// getFreePort returns a free TCP port on 127.0.0.1.
-//
-// Binding to :0 and releasing is inherently time-of-check-to-time-of-use: the
-// port is free when probed but can be taken before the caller binds it. Within
-// this test binary (pkg/server runs its tests in one process, many in parallel)
-// the dominant race is getFreePort handing the SAME port to two callers — one
-// closes its probe listener, a later probe is reassigned that now-free port, and
-// both servers then try to bind it (EADDRINUSE, #127/#128). Guard against that by
-// never returning a port already issued in this process; a probe that lands on an
-// already-issued port is retried. Cross-process reuse (another package's test
-// binary) is left to the wide ephemeral range and is not addressed here.
+// getFreePort returns a single port reserved for this test binary.
 func getFreePort(t *testing.T) int {
 	t.Helper()
-	issuedPortsMu.Lock()
-	defer issuedPortsMu.Unlock()
-	for attempt := 0; attempt < 100; attempt++ {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		require.NoError(t, err)
-		port := listener.Addr().(*net.TCPAddr).Port
-		require.NoError(t, listener.Close())
-		if !issuedPorts[port] {
-			issuedPorts[port] = true
-			return port
-		}
-	}
-	t.Fatal("getFreePort: could not find an unissued free port in 100 attempts")
-	return 0
+	return netport.MustReserveOne(t)
+}
+
+// getFreePorts returns n DISTINCT ports reserved for this test binary.
+//
+// Reserved, not merely observed free. netport takes a host-wide lock on each
+// port and draws only from outside the kernel's ephemeral range, so nothing
+// between this call and the server's eventual bind can be handed the same
+// number.
+//
+// The helper this replaced listened on 127.0.0.1:0, recorded the kernel's
+// choice and CLOSED the listener before returning. Holding all n probe
+// listeners until the last was drawn fixed the collision within a single call
+// — three ports coming back equal — but could not touch the wider one: from
+// the close until initStandaloneQRDBNode binds, the port is genuinely free and
+// anything on the host may take it. This package boots roughly seventy-five
+// standalone qrdb nodes in parallel and several worktrees gate at once, so
+// that interval was crossed often enough to fail tests whose diff had nothing
+// to do with it (go-quicbaas#706, and go#497 before it).
+func getFreePorts(t *testing.T, n int) []int {
+	t.Helper()
+	return netport.MustReserve(t, n)
 }
 
 // createTestConfig creates a test configuration with security features disabled.
@@ -72,10 +65,10 @@ func createTestConfig(t *testing.T) *config.Config {
 	// the mutated path.
 	tempDir := t.TempDir()
 
-	// Get free ports for testing to avoid conflicts
-	httpPort := getFreePort(t)
-	grpcPort := getFreePort(t)
-	raftPort := getFreePort(t)
+	// Get free ports for testing to avoid conflicts. Drawn in ONE call so the
+	// three are distinct — see getFreePorts.
+	ports := getFreePorts(t, 3)
+	httpPort, grpcPort, raftPort := ports[0], ports[1], ports[2]
 
 	cfg := config.Default()
 	cfg.Storage.Backend = config.StorageBackendPebble

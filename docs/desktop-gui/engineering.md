@@ -91,6 +91,35 @@ cmd/quicbaas/frontend/
 
 `user.md` walks the views; `wails.json` carries the Wails build configuration.
 
+## Counters say what they count
+
+A `StatCard`'s label and its value have to agree. A tile labelled "Active
+Sessions" over `sessions.length` told an operator 54 when one session was live
+and 54 were closed (go-quicbaas#850), and they read system state off it for days.
+
+- A card claiming live state — active, open, pending, running — counts live
+  records. `lib/sessions.ts` holds the one definition of a live session
+  (terminal = `closed`, `error`).
+- **The lifecycle field's name depends on the transport, not the store.** REST
+  sends `state` (`orchestration.SessionInfo`, written out verbatim); the Wails
+  binding renames it to `status`. Both stores fill from the same call, so a
+  counter naming one field is dead on the other platform — two of them were, each
+  reading 0 while sessions ran (go-quicbaas#864). `countLiveSessions` reads the
+  value; do not reintroduce a way to name the field. go-quicbaas#856 normalises
+  this at the SDK seam, and `sdk/typescript/test/listSessions.test.ts` pins what
+  the transport returns today so that change announces itself.
+- **A store double is not evidence about the wire.** Both counter defects shipped
+  green because the tests handed the view a record shaped the way the code
+  expected. Fixtures carry the shape the TRANSPORT produces, and the shape itself
+  is asserted in the SDK's own suite.
+- A card showing a total says total, and the other number goes in the
+  qualifying `description` line: `value={live}` with
+  `description="{all.length} total"`. That pattern is already on Active Jobs,
+  Pending Tasks and Total Jobs; use it rather than a new one.
+- The fetches stay unfiltered. The list views legitimately show closed
+  sessions and finished jobs, so the filtering belongs in the count, not in the
+  request — narrowing a shared store's fetch to fix a counter breaks its list.
+
 ## Test strategy
 
 - **Playwright end-to-end tests** live in `frontend/test/e2e/`. They are the

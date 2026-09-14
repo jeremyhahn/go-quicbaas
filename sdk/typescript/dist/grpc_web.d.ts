@@ -51,6 +51,7 @@ export declare class GrpcWebClient implements Client {
     readonly messaging: any;
     readonly scheduler: any;
     readonly projects: any;
+    readonly sdlc: any;
     readonly accounts: any;
     readonly iam: any;
     readonly kms: any;

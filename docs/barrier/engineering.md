@@ -467,6 +467,11 @@ The alias surface is exhaustively listed in
 `scripts/verify-naming.sh`. Any new code path that introduces a
 `Seal*` identifier outside that list fails CI.
 
+That script carries a second, unrelated rule: the retired product-area word
+must appear in no tracked file — see
+[../software-factory/sdlc.md](../software-factory/sdlc.md#naming). Both rules run under
+`make lint`.
+
 ### SDK migration
 
 Go SDK:

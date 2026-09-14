@@ -26,8 +26,18 @@
 //   - NodeAffinity == nodeID  -> affine to this node, fires here
 //   - NodeAffinity != nodeID  -> skipped (belongs to another node)
 //
-// See docs/scheduler-clustering.md for the full behavior matrix and
-// design rationale. Constructors:
+// The dispatch gate alone is not sufficient. During Raft leader churn a
+// deposed leader has not yet learned it lost leadership while its
+// successor has already been elected, so both nodes answer IsLeader
+// truthfully-as-they-see-it for the same tick and both dispatch the same
+// job. Every due job is therefore also gated on a FiringClaim: a
+// compare-and-swap the storage layer performs on the (job ID, scheduled
+// firing time) identity. The claim, not the leader check, is what makes a
+// firing execute at most once cluster-wide, and it fails closed — a claim
+// the store cannot decide suppresses execution rather than permitting it.
+//
+// See docs/scheduler/architecture.md for the full behavior matrix,
+// the firing-claim design and its rationale. Constructors:
 //
 //   - New(config, storage)                  -- single-node / test mode
 //   - NewWithClustering(config, storage,
@@ -141,6 +151,25 @@ type JobResult struct {
 	Success bool   `json:"success"`
 	Message string `json:"message,omitempty"`
 	Output  []byte `json:"output,omitempty"`
+}
+
+// FiringClaim is the cluster-wide exclusive right to execute one firing of one
+// job. Its identity — JobID plus FiringTime — is the whole point: FiringTime is
+// the job record's own NextRun, replicated to every node, so two nodes racing
+// on the same due job derive byte-identical claim identities without consulting
+// their local clocks. A claim is granted by the storage layer with a
+// compare-and-swap on that identity, which is what makes the decision survive
+// Raft leader churn: leadership is an opinion each node holds separately, while
+// the claim record is a single replicated fact.
+//
+// Owner and ClaimedAt are diagnostic. They record which node won and when, and
+// no decision reads them.
+type FiringClaim struct {
+	JobID      uint64    `json:"job_id"`
+	TenantID   string    `json:"tenant_id,omitempty"`
+	FiringTime time.Time `json:"firing_time"`
+	Owner      string    `json:"owner,omitempty"`
+	ClaimedAt  time.Time `json:"claimed_at"`
 }
 
 // JobQuery defines filters for listing jobs.

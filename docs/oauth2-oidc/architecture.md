@@ -46,6 +46,62 @@ Okta-`integrated` tenant **simultaneously**. "Shared" is a hosting *mode*, not a
 the **system tenant stays control-plane-only** and per-tenant config falls back to the
 **global/server default**, never to "the system tenant as a tenant" (see §6).
 
+## 2a. Client records are tenant-homed (the register/token invariant)
+
+The IAM KVStore routes **every** read and write by the tenant bound to the
+operation's **context** (`pkg/server/tenant_kvstore.go`, `tenantFromAnyContext`),
+and a `barrier` tenant's records live in that tenant's own store. The tenant
+segment inside a key — `__iam:app:{tenant}:{client_id}` — is a label; it is not
+what selects the store.
+
+So an OAuth2 client record has to be addressed under **its own** tenant on both
+sides. Two invariants follow, and both are enforced in `pkg/iam`:
+
+1. **Writes are scoped to the record's tenant, not the caller's.**
+   `BackendStorage.CreateApp` / `UpdateApp` / `DeleteApp` / `ListApps` bind the
+   context to the application's `TenantID` (`appTenantContext`). The record's
+   tenant is authoritative; a caller allowed to name another tenant was admitted
+   by the management surface (`AppManager.GetAppInTenant` and friends) before
+   reaching the store.
+
+2. **The client identifier names its tenant, unambiguously.**
+   `generateClientID` mints `app_<tenant>_<suffix>` with a **base32** suffix, and
+   `iam.TenantFromClientID` recovers the tenant by splitting on the last
+   separator. base32's alphabet (`A-Z2-7`) cannot contain the `_` separator, so
+   the split is exact for any tenant id and any suffix. Every token endpoint
+   scopes its storage context with that value before resolving the client
+   (`pkg/api/rest` `tenantFromOAuthClientID` delegates to the same parser —
+   there is one implementation of the grammar).
+
+Violating either one produces the same symptom: `POST /api/v1/agents/register`
+succeeds, and the credential it just issued is refused by `POST /oauth2/token`
+with `401 invalid_client`, forever, because the write and the read resolved to
+different namespaces (go-quicbaas#644; the same defect class as #535 for pooled
+accounts and #634 for projects).
+
+### Agent enrollment is idempotent
+
+`AppManager.RegisterAgentApp` keys the daemon's client on the agent identity the
+request already authenticated — tenant plus certificate Common Name — via
+`iam.AgentClientID`, a digest-derived identifier rather than a random one. A
+daemon that enrolls again gets **the client it already has**, with a rotated
+secret it can use. The secret is rotated rather than returned because it is
+stored as a PBKDF2 digest and cannot be recovered; the caller is the register
+endpoint, which verified the daemon's mTLS certificate for that exact identity.
+The `self_signed_tls_client_auth` client minted alongside it is re-pinned to the
+certificate presented on **this** registration, so a renewed certificate does not
+lock the daemon out of `/oauth2/token-mtls`.
+
+### Refusals are diagnosable without being enumerable
+
+A refused client authentication logs which check refused it — unknown client id,
+tenant mismatch, `client_secret` mismatch, unusable stored digest — server side
+only (`BackendStorage.warnClientAuthFailed`). No secret, presented or stored, is
+ever an argument. The OAuth2 **response** stays one opaque `invalid_client` for
+every reason, and every refusal still performs exactly one key derivation, so
+neither the answer nor its latency distinguishes a client that exists from one
+that does not.
+
 ## 3. Five-layer zero-trust model mapped to the stack
 
 Each layer's owner in our stack:
@@ -88,6 +144,31 @@ QuicBaaS issues this; downstream services validate it.
 - **DPoP (RFC 9449):** broker holds the DPoP key, signs a proof per call; validators check
   `htm`/`htu`/`iat`/`jti`-replay and that `SHA-256(jwk) == cnf.jkt`. Forward path: RFC 8705
   cert-bound tokens (`cnf.x5t#S256`) once Okta-for-Gov supports it.
+
+### Where `scp` comes from (user vs service principal)
+
+`scp` is the subject's **server-resolved effective permissions**, in qrdb's canonical
+`resource:action` vocabulary. It is never the scope a client asked for. Two subject
+kinds resolve it two ways:
+
+- **A user** has a qrdb user record, so the issuer resolves `scp` from that user's
+  qrdb roles (`TokenService.resolveEffectivePermissions` → qrdb `RBAC().ListPermissions`).
+- **A service principal** (`client_credentials`, no user record by construction) has no
+  roles to resolve. Its authority is the **grant on its OAuth2 application record**
+  (`Application.Scopes`). The token endpoint issues the requested scope narrowed to that
+  grant, or the whole grant when the client requests none (RFC 6749 §3.3); a requested
+  permission the grant does not cover is refused `invalid_scope`. An application with no
+  grant therefore receives no permissions, whatever it names (go-quicbaas#653).
+
+A grant is conferred only by a server-side path that speaks for a grantor —
+agent enrollment (`iam.AgentRuntimeGrant`), the orchestrator dispatch-client bootstrap —
+via `AppManager.GrantScopes`. No client-facing registration or update surface carries a
+scope field, because one would turn "register my app" into "grant my app anything".
+
+OIDC protocol scopes (`openid`, `profile`, `email`, `offline_access`) pass through
+ungranted: they select claims, confer no authority, and never reach `scp`. The two
+vocabularies are told apart by the colon that makes a qrdb permission
+`resource:action`.
 
 ### Single trust anchor vs per-tenant issuer
 

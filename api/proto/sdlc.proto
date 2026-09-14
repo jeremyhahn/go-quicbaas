@@ -1,0 +1,362 @@
+// QuicBaaS SDLC Protocol Buffer Definitions v1
+// The SDLC module of the Software Factory: a project's forge binding and a
+// task's delivery. Tasks, jobs and sessions are the Orchestrator service's.
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.sdlc.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+
+// =============================================================================
+// SDLCService — forge bindings and deliveries
+// =============================================================================
+
+service SDLCService {
+    // BindProject attaches a forge binding to an orchestration project,
+    // replacing any earlier binding.
+    rpc BindProject(BindProjectRequest) returns (BindProjectResponse) {
+        option (qrdb.v1.permission) = "sdlc:bind";
+    }
+    // UnbindProject detaches a project's binding.
+    rpc UnbindProject(UnbindProjectRequest) returns (UnbindProjectResponse) {
+        option (qrdb.v1.permission) = "sdlc:unbind";
+    }
+    // GetBinding reads a project's binding.
+    rpc GetBinding(GetBindingRequest) returns (GetBindingResponse) {
+        option (qrdb.v1.permission) = "sdlc:read";
+    }
+    // GetDelivery reads what a task's attempt published.
+    rpc GetDelivery(GetDeliveryRequest) returns (GetDeliveryResponse) {
+        option (qrdb.v1.permission) = "sdlc:read";
+    }
+    // ListForges returns the forge adapters this build carries, so a caller
+    // can show an unavailable platform disabled rather than hide it. Build
+    // capability, not tenant data, which is why the request is empty; gated
+    // on the same sdlc:read the REST route GET /api/v1/sdlc/forges is gated
+    // on.
+    rpc ListForges(ListForgesRequest) returns (ListForgesResponse) {
+        option (qrdb.v1.permission) = "sdlc:read";
+    }
+    // Onboard provisions the bound repository's forge configuration — its
+    // webhook and its label vocabulary — idempotently, and returns what it
+    // did plus the conformance that follows. It is the EXPLICIT REPAIR for
+    // a conformance finding; GetConformance never repairs, which is why the
+    // two are separate verbs under separate permissions.
+    rpc Onboard(OnboardRequest) returns (OnboardResponse) {
+        option (qrdb.v1.permission) = "sdlc:bind";
+    }
+    // GetConformance reports whether the project is correctly onboarded and
+    // what is wrong if it is not. Read-only.
+    rpc GetConformance(GetConformanceRequest) returns (GetConformanceResponse) {
+        option (qrdb.v1.permission) = "sdlc:read";
+    }
+}
+
+// =============================================================================
+// Messages
+// =============================================================================
+
+// ForgeConfig names the repository a project delivers to.
+message ForgeConfig {
+    string type               = 1;
+    string base_url           = 2;
+    string owner              = 3;
+    string repo               = 4;
+    map<string, string> labels = 5;
+    string trigger_label      = 6;
+    string webhook_secret_ref = 7;
+    string token_secret_ref   = 8;
+    // ssh_host_key pins the forge's SSH host public key: one OpenSSH
+    // public-key line. Required when the project is cloned over ssh.
+    string ssh_host_key       = 9;
+}
+
+// ReviewPolicy decides when a pull request may land.
+message ReviewPolicy {
+    int32 required_approvals            = 1;
+    bool  require_independent_reviewer  = 2;
+    bool  require_green_checks          = 3;
+    // checks_settle_window_ns is a duration in nanoseconds; zero takes the default.
+    int64 checks_settle_window_ns       = 4;
+    map<string, string> reviewers       = 5;
+}
+
+// ReviewerConfig names the agent that reviews this project's pull requests.
+//
+// EMPTY backend means the project is not self-reviewed, which is a legitimate
+// configuration: a project reviewed by people, or by automation outside this
+// module, binds no reviewer and the review runner is never dispatched for it.
+// It must be carried on the wire all the same — without it no transport but
+// REST could configure a reviewer, and a rebind through this service would
+// silently erase one that was already set.
+message ReviewerConfig {
+    string backend           = 1;
+    string model             = 2;
+    string image             = 3;
+    // login is the forge account the reviewer's token authenticates as.
+    // Required when a backend is named.
+    string login             = 4;
+    // token_secret_ref names the tenant secret holding the REVIEWER's forge
+    // token, deliberately separate from ForgeConfig.token_secret_ref.
+    string token_secret_ref  = 5;
+    // status_context is the commit status the verdict is published under;
+    // empty takes the module default.
+    string status_context    = 6;
+}
+
+// WorkerConfig names the agent that writes the code for this project.
+message WorkerConfig {
+    string backend = 1;
+    string model   = 2;
+    // image is the container image the worker session runs in; naming one
+    // requires the sandbox for this project's workers.
+    string image   = 3;
+}
+
+// RankingPolicy is a project's contribution to task ordering.
+message RankingPolicy {
+    int32  default_priority           = 1;
+    string analyzer_name              = 2;
+    repeated string declared_dependents = 3;
+}
+
+// OnboardingConfig declares what provisioning writes to the forge and what
+// conformance checks for one bound repository. Every field defaults.
+message OnboardingConfig {
+    repeated string webhook_events           = 1;
+    string          protected_branch         = 2;
+    repeated string required_status_contexts = 3;
+    repeated string forbidden_paths          = 4;
+    string          forbidden_paths_ref      = 5;
+    // label_colors overrides the fill a label is CREATED with, keyed by the
+    // module's label key. An existing label's colour is never changed.
+    map<string, string> label_colors         = 6;
+}
+
+// ProjectBinding attaches a forge repository and its delivery policy to a
+// project.
+message ProjectBinding {
+    string        project_id   = 1;
+    ForgeConfig   forge        = 2;
+    // strategy names the registered SDLC the project follows.
+    string        strategy     = 3;
+    WorkerConfig  worker       = 4;
+    // verification are the commands that must pass before review, in order.
+    repeated string verification = 5;
+    ReviewPolicy  review       = 6;
+    // max_review_rounds bounds the review rounds; zero takes the default.
+    int32         max_review_rounds = 7;
+    RankingPolicy ranking      = 8;
+    int64         created_at_unix = 9;
+    int64         updated_at_unix = 10;
+    OnboardingConfig onboarding   = 11;
+    // reviewer names the agent that reviews this project's pull requests.
+    ReviewerConfig reviewer      = 12;
+    // discovery selects which discovery paths this project runs
+    // ("both" | "poll" | "webhook"); empty takes the default.
+    string discovery             = 13;
+}
+
+// PullRequest is the pull request an attempt opened.
+message PullRequest {
+    int32  number = 1;
+    string url    = 2;
+    string state  = 3;
+    string title  = 4;
+    string base   = 5;
+}
+
+// ReviewRecord is one reviewer's verdict on one head.
+message ReviewRecord {
+    string reviewer          = 1;
+    string model_family      = 2;
+    string verdict           = 3;
+    string head_sha          = 4;
+    string external_id       = 5;
+    int32  round             = 6;
+    string findings          = 7;
+    int64  submitted_at_unix = 8;
+}
+
+// CheckRecord is the latest state of one check context on one head.
+message CheckRecord {
+    string name             = 1;
+    string head_sha         = 2;
+    string status           = 3;
+    string forge_run_id     = 4;
+    int64  finished_at_unix = 5;
+}
+
+// SupersessionRecord is one CI run the delivery's head moved past.
+//
+// Head pinning already stops the engine acting on a displaced result, so a
+// superseded run is waste rather than incorrectness -- but it is still visible
+// on the forge, and on a platform that keys a re-run to the workflow rather
+// than to the commit, re-running it cancels the run on the real head. The
+// record is what lets a reader tell the two apart.
+message SupersessionRecord {
+    string name              = 1;
+    string forge_run_id      = 2;
+    // head_sha is the head the run was started for, superseded_by the head that
+    // displaced it. The pair is the whole fact.
+    string head_sha          = 3;
+    string superseded_by     = 4;
+    string status            = 5;
+    // disposition is finished, cancelled or orphaned.
+    string disposition       = 6;
+    // detail says why the disposition is what it is, for an orphan especially.
+    string detail            = 7;
+    int64  observed_at_unix  = 8;
+}
+
+// Delivery records the git side of one attempt at a task.
+message Delivery {
+    string      task_id      = 1;
+    string      project_id   = 2;
+    int32       attempt      = 3;
+    string      branch       = 4;
+    string      base         = 5;
+    string      head_sha     = 6;
+    string      work_dir     = 7;
+    PullRequest pull_request = 8;
+    repeated ReviewRecord reviews = 9;
+    repeated CheckRecord  checks  = 10;
+    int64       version      = 11;
+    int64       created_at_unix = 12;
+    int64       updated_at_unix = 13;
+    // target is the ref the branch lands on; base is the ref it was cut from.
+    string      target       = 14;
+    bool        requires_pull_request = 15;
+    bool        delete_after_merge    = 16;
+    repeated SupersessionRecord superseded_runs = 17;
+}
+
+message BindProjectRequest {
+    string         tenant_id = 1;
+    ProjectBinding binding   = 2;
+}
+
+message BindProjectResponse {
+    ProjectBinding binding = 1;
+}
+
+message UnbindProjectRequest {
+    string tenant_id  = 1;
+    string project_id = 2;
+}
+
+message UnbindProjectResponse {
+    bool unbound = 1;
+}
+
+message GetBindingRequest {
+    string tenant_id  = 1;
+    string project_id = 2;
+}
+
+message GetBindingResponse {
+    ProjectBinding binding = 1;
+}
+
+message GetDeliveryRequest {
+    string tenant_id = 1;
+    string task_id   = 2;
+}
+
+message GetDeliveryResponse {
+    Delivery delivery = 1;
+}
+
+// ListForgesRequest is empty: the registered forge adapters are the same for
+// every caller on a given build.
+message ListForgesRequest {}
+
+message ListForgesResponse {
+    // forges are the registered platform types, sorted so two reads
+    // serialize identically.
+    repeated string forges = 1;
+
+    // count is len(forges).
+    int32 count = 2;
+}
+
+message OnboardRequest {
+    string tenant_id  = 1;
+    string project_id = 2;
+}
+
+message OnboardResponse {
+    OnboardingReport report = 1;
+}
+
+message GetConformanceRequest {
+    string tenant_id  = 1;
+    string project_id = 2;
+}
+
+message GetConformanceResponse {
+    ConformanceReport report = 1;
+}
+
+// OnboardingReport is what a provisioning pass did, plus the conformance the
+// repository is in afterwards. The two are different claims: provisioning can
+// succeed while a stale workflow it is not allowed to delete remains.
+message OnboardingReport {
+    string          project_id      = 1;
+    string          tenant_id       = 2;
+    string          repo            = 3;
+    // webhook_url is the delivery this node provisioned, empty for a
+    // poll-only project.
+    string          webhook_url     = 4;
+    bool            webhook_ensured = 5;
+    // labels_created is empty on a repeat run: the idempotency evidence an
+    // operator sees.
+    repeated string labels_created  = 6;
+    ConformanceReport conformance   = 7;
+}
+
+// ConformanceFinding is one thing that is wrong, and what to do about it.
+message ConformanceFinding {
+    // class is the failure mode: binding_invalid, webhook_missing,
+    // webhook_inactive, webhook_misdirected, webhook_events_missing,
+    // label_missing, stale_workflow, protection_missing,
+    // protection_context_missing, check_unsupported, check_failed.
+    string class   = 1;
+    string check   = 2;
+    string subject = 3;
+    string detail  = 4;
+    // remedy is present on every finding: the repairs differ, and a report
+    // that said only what was wrong would make the reader guess at it.
+    string remedy  = 5;
+}
+
+// ConformanceCheckResult is one check's outcome, so a caller can render
+// "webhook ok, labels ok, protection unsupported" rather than only failures.
+message ConformanceCheckResult {
+    string name = 1;
+    // status is pass, fail, unsupported, not_applicable or error.
+    string status   = 2;
+    int32  findings = 3;
+}
+
+// ConformanceReport answers "is this project correctly onboarded, and if not,
+// what is wrong".
+message ConformanceReport {
+    string project_id = 1;
+    string tenant_id  = 2;
+    string repo       = 3;
+    // conformant is true only when every check that RAN passed. A check that
+    // errored makes the report non-conformant; one the platform does not
+    // support, or the binding does not ask for, does not.
+    bool   conformant  = 4;
+    string webhook_url = 5;
+    repeated ConformanceCheckResult checks   = 6;
+    repeated ConformanceFinding     findings = 7;
+    int64  checked_at_unix = 8;
+}

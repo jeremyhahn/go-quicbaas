@@ -85,7 +85,8 @@ func newSCPTestService(t *testing.T, resolver PermissionResolver) (*TokenService
 	return svc, privateKey
 }
 
-func baseSCPClaims(roles []string) *Claims {
+func baseSCPClaims(t *testing.T, roles []string) *Claims {
+	t.Helper()
 	now := time.Now()
 	return &Claims{
 		Issuer:    "https://test.example.com",
@@ -94,7 +95,7 @@ func baseSCPClaims(roles []string) *Claims {
 		ExpiresAt: NewUnixTime(now.Add(time.Hour)),
 		IssuedAt:  NewUnixTime(now),
 		NotBefore: NewUnixTime(now),
-		JTI:       generateJTI(),
+		JTI:       mustGenerateJTI(t),
 		TenantID:  "tenant-1",
 		Roles:     roles,
 		Scope:     "openid profile email offline_access",
@@ -146,7 +147,7 @@ func TestGenerateAccessToken_SCPIsResolvedColonPerms(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("admin carries admin perms in colon grammar", func(t *testing.T) {
-		token, err := svc.GenerateAccessToken(ctx, baseSCPClaims([]string{"admin"}))
+		token, err := svc.GenerateAccessToken(ctx, baseSCPClaims(t, []string{"admin"}))
 		if err != nil {
 			t.Fatalf("GenerateAccessToken: %v", err)
 		}
@@ -167,7 +168,7 @@ func TestGenerateAccessToken_SCPIsResolvedColonPerms(t *testing.T) {
 	})
 
 	t.Run("limited user carries only its perms", func(t *testing.T) {
-		token, err := svc.GenerateAccessToken(ctx, baseSCPClaims([]string{"reader"}))
+		token, err := svc.GenerateAccessToken(ctx, baseSCPClaims(t, []string{"reader"}))
 		if err != nil {
 			t.Fatalf("GenerateAccessToken: %v", err)
 		}
@@ -181,7 +182,7 @@ func TestGenerateAccessToken_SCPIsResolvedColonPerms(t *testing.T) {
 	})
 
 	t.Run("scope claim keeps OIDC scopes", func(t *testing.T) {
-		token, err := svc.GenerateAccessToken(ctx, baseSCPClaims([]string{"admin"}))
+		token, err := svc.GenerateAccessToken(ctx, baseSCPClaims(t, []string{"admin"}))
 		if err != nil {
 			t.Fatalf("GenerateAccessToken: %v", err)
 		}
@@ -203,7 +204,7 @@ func TestGenerateAccessToken_SCPFallsBackToScope(t *testing.T) {
 
 	t.Run("nil resolver falls back to scope", func(t *testing.T) {
 		svc, key := newSCPTestService(t, nil)
-		token, err := svc.GenerateAccessToken(ctx, baseSCPClaims([]string{"admin"}))
+		token, err := svc.GenerateAccessToken(ctx, baseSCPClaims(t, []string{"admin"}))
 		if err != nil {
 			t.Fatalf("GenerateAccessToken: %v", err)
 		}
@@ -215,7 +216,7 @@ func TestGenerateAccessToken_SCPFallsBackToScope(t *testing.T) {
 
 	t.Run("nil RBAC client falls back to scope", func(t *testing.T) {
 		svc, key := newSCPTestService(t, &fakePermissionResolver{client: nil})
-		token, err := svc.GenerateAccessToken(ctx, baseSCPClaims([]string{"admin"}))
+		token, err := svc.GenerateAccessToken(ctx, baseSCPClaims(t, []string{"admin"}))
 		if err != nil {
 			t.Fatalf("GenerateAccessToken: %v", err)
 		}
@@ -228,7 +229,7 @@ func TestGenerateAccessToken_SCPFallsBackToScope(t *testing.T) {
 	t.Run("pre-populated SCP wins over resolver", func(t *testing.T) {
 		rbac := &fakeRBACClient{permsByRole: map[string][]string{"admin": {"keys:get"}}}
 		svc, key := newSCPTestService(t, &fakePermissionResolver{client: rbac})
-		claims := baseSCPClaims([]string{"admin"})
+		claims := baseSCPClaims(t, []string{"admin"})
 		claims.SCP = []string{"explicit:perm"}
 		token, err := svc.GenerateAccessToken(ctx, claims)
 		if err != nil {
@@ -251,7 +252,7 @@ func TestGenerateAccessToken_SCPDedupAndSkipEmpty(t *testing.T) {
 		"b": {"kv:get", "kv:put"},
 	}}
 	svc, key := newSCPTestService(t, &fakePermissionResolver{client: rbac})
-	token, err := svc.GenerateAccessToken(context.Background(), baseSCPClaims([]string{"a", "b"}))
+	token, err := svc.GenerateAccessToken(context.Background(), baseSCPClaims(t, []string{"a", "b"}))
 	if err != nil {
 		t.Fatalf("GenerateAccessToken: %v", err)
 	}
@@ -278,7 +279,7 @@ func TestGenerateAccessToken_SCPDedupAndSkipEmpty(t *testing.T) {
 func TestGenerateAccessToken_SCPResolverError(t *testing.T) {
 	rbac := &fakeRBACClient{err: errors.New("qrdb unavailable")}
 	svc, _ := newSCPTestService(t, &fakePermissionResolver{client: rbac})
-	_, err := svc.GenerateAccessToken(context.Background(), baseSCPClaims([]string{"admin"}))
+	_, err := svc.GenerateAccessToken(context.Background(), baseSCPClaims(t, []string{"admin"}))
 	if err == nil {
 		t.Fatal("expected issuance to fail when RBAC resolution errors")
 	}
@@ -347,6 +348,9 @@ func TestIssueHardwareTokens_AdminCarriesRolesAndCanonicalSubject(t *testing.T) 
 		},
 		AMR: []string{"webauthn", "hwk"},
 		ACR: ACRHardwareAttested,
+		// The hardware ACR now requires proof: IssueHardwareTokens refuses to
+		// mint it from a caller's assertion alone.
+		Attestation: testHardwareAttestation("cb69481e"),
 	})
 	if err != nil {
 		t.Fatalf("IssueHardwareTokens: %v", err)

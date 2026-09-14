@@ -81,7 +81,6 @@ Examples:
 
 	// Add persistent flags
 	cmd.PersistentFlags().StringVar(&restAddress, "rest", "http://localhost:8080", "REST API address")
-	cmd.PersistentFlags().DurationVar(&timeout, "timeout", 30*time.Second, "Request timeout")
 	cmd.PersistentFlags().BoolVar(&restTLS, "tls", false, "Use HTTPS")
 
 	// Add subcommands
@@ -415,7 +414,7 @@ func runTxnExecuteCommand(cmd *cobra.Command, args []string) error {
 	// Create HTTP client. QuicBaaS bans insecure TLS — when HTTPS is in use,
 	// trust the CA via --tls-ca.
 	client := &http.Client{
-		Timeout: timeout,
+		Timeout: globalTimeout,
 	}
 	if tlsCfg, tlsErr := buildTLSConfig(); tlsErr != nil {
 		return errors.Wrapf(tlsErr, errors.ErrConfiguration, "txn execute", "failed to build TLS config")
@@ -425,7 +424,7 @@ func runTxnExecuteCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create request
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))

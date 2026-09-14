@@ -11,7 +11,15 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package auth provides authentication and authorization utilities.
+// Package auth carries the authenticated Subject across a request.
+//
+// It holds the context plumbing only. Identity itself — the user record, the
+// authentication factors bound to it, and the tokens minted for it — belongs to
+// go-qrdb and is reached through pkg/iam (IdentityStore for the record,
+// iam.OIDCProvider for session tokens). This package deliberately has NO user
+// type and NO user store: a second user struct here would be a second
+// identifier space, which the locked architecture forbids. See go-quicbaas
+// issue #905, which deleted the dead parallel model that used to live here.
 package auth
 
 import (

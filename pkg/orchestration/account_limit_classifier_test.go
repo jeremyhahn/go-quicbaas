@@ -288,3 +288,144 @@ func TestAccountLimitedError_UnwrapsToSentinel(t *testing.T) {
 		}
 	}
 }
+
+// TestAccountLimitClassifier_A429InsideATokenIsNotAStatusCode is the regression
+// test for #500.
+//
+// `matchHTTPStatusLimit` tested `strings.Contains(lowered, "429")` — an
+// unanchored substring — plus any context word anywhere in the same buffer. So
+// digits belonging to a credential, a byte offset or a token count classified a
+// non-limit failure as a provider rate limit, which is not a mislabel: a limit
+// classification selects a different failure response, so the real error is
+// backed off and retried behind a plausible-looking limit.
+//
+// THE PAIRS ARE THE TEST. Each rejection below is matched by an acceptance that
+// a too-aggressive anchor would break, because the failure mode of this fix is
+// a genuine provider limit that stops being recognised — silent, and worse than
+// what it replaces.
+func TestAccountLimitClassifier_A429InsideATokenIsNotAStatusCode(t *testing.T) {
+	classifier := NewAccountLimitClassifier()
+
+	// Every case carries a context word ("limit", "rate", "status", …), so the
+	// context check cannot be what decides them. The anchor is.
+	rejected := []struct{ name, stderr string }{
+		{
+			// The case #500 was filed for. #191 measured that agent stderr
+			// carries the injected credential verbatim, so this is the
+			// ordinary content of a failed spawn, not a contrived string.
+			name:   "a credential whose body contains 429",
+			stderr: "fatal: auth failed using key sk-ant-api03-x429yzqq (check your limit settings)",
+		},
+		{
+			// 4294967296 is 2^32 — the single likeliest large number to appear
+			// in a buffer offset, and it contains 429.
+			name:   "a byte offset that contains 429",
+			stderr: "read failed at offset 4294967296: limit exceeded on buffer",
+		},
+		{
+			name:   "a token count that contains 429",
+			stderr: "prompt used 4291 tokens, over the configured limit",
+		},
+		{
+			// The exact string the doc comment on httpStatusLimitPattern cites
+			// as the reason it is not written with \b. A character class of
+			// [^a-z0-9] accepts "-" as a delimiter just as \b does, so the
+			// pattern refuted its own stated rationale (#530).
+			name:   "a hyphen-segmented provider key, the shape the comment names",
+			stderr: "fatal: auth failed using key sk-ant-429-xyzq (check your limit settings)",
+		},
+		{
+			name:   "a hyphen-segmented trace identifier",
+			stderr: "trace error-429-foo recorded; see the status page",
+		},
+		{
+			name:   "an underscore-segmented request identifier",
+			stderr: "request req_429_7f failed: rate unavailable",
+		},
+		{
+			// The false positive with no separator at all on one side, kept
+			// beside the segmented cases so a fix that only handles "-" is
+			// still caught.
+			name:   "a version string whose minor component is 429",
+			stderr: "gateway build v1.429-rc2 rejected the request; check status",
+		},
+	}
+	for _, tc := range rejected {
+		t.Run("rejected: "+tc.name, func(t *testing.T) {
+			// Asserted, not assumed: without a context word these would be
+			// refused by httpStatusLimitContext and the anchor would never be
+			// consulted, so the rejection would prove nothing about it.
+			lowered := strings.ToLower(tc.stderr)
+			if !limitPhrasePresent(lowered, httpStatusLimitContext) {
+				t.Fatalf("fixture carries no context word, so it is refused before the anchor is reached: %q", tc.stderr)
+			}
+
+			_, ok := classifier.Classify(AccountProviderClaude,
+				&OneShotExecutionError{Command: "claude", Stderr: tc.stderr})
+			if ok {
+				t.Errorf("Classify() = true; digits inside a longer token are not a status code: %q", tc.stderr)
+			}
+		})
+	}
+
+	// The other direction. A status code appears beside every kind of
+	// separator, and an anchor that demanded whitespace — or that required the
+	// context word to sit near the number — would reject these.
+	//
+	// NONE OF THESE MAY CARRY A STRONG PHRASE, and the subtest asserts it
+	// rather than trusting the wording. Classify reaches the status path only
+	// when no provider phrase has already matched, so a case containing one
+	// would pass however the anchor behaved — a green assertion proving
+	// nothing. The first draft of this test had exactly that: two of four
+	// accepted cases matched a strong phrase, and the over-tightening mutation
+	// below failed only one subtest instead of all four.
+	accepted := []struct{ name, stderr string }{
+		{
+			name:   "whitespace-delimited, the ordinary shape",
+			stderr: "http 429 returned by the upstream gateway",
+		},
+		{
+			name:   "structured, delimited by : and ,",
+			stderr: `{"status_code":429,"message":"slow down"}`,
+		},
+		{
+			name:   "status and its explanation on different lines",
+			stderr: "http/1.1 429\nretry-after: 30\nthe account rate was reached",
+		},
+		{
+			name:   "parenthesised",
+			stderr: "upstream returned (429) — retry later",
+		},
+		{
+			// The ^ arm of the alternation: nothing precedes the digits.
+			name:   "at the very start of the buffer",
+			stderr: "429 status returned by the upstream gateway",
+		},
+		{
+			// The $ arm: nothing follows them.
+			name:   "at the very end of the buffer",
+			stderr: "upstream gateway http status 429",
+		},
+		{
+			// Space on both sides, the plainest delimiter there is, asserted
+			// explicitly so a class tightened past usefulness fails here first.
+			name:   "space on both sides",
+			stderr: "the gateway http code 429 came back again",
+		},
+	}
+	for _, tc := range accepted {
+		t.Run("accepted: "+tc.name, func(t *testing.T) {
+			lowered := strings.ToLower(tc.stderr)
+			if limitPhrasePresent(lowered, sharedLimitRules.strong) ||
+				limitPhrasePresent(lowered, providerLimitRules[AccountProviderClaude].strong) {
+				t.Fatalf("fixture carries a strong provider phrase, so it would classify without the anchor and asserts nothing: %q", tc.stderr)
+			}
+
+			_, ok := classifier.Classify(AccountProviderClaude,
+				&OneShotExecutionError{Command: "claude", Stderr: tc.stderr})
+			if !ok {
+				t.Errorf("Classify() = false; a genuine provider limit stopped being recognised: %q", tc.stderr)
+			}
+		})
+	}
+}

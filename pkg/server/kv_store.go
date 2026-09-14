@@ -59,15 +59,52 @@ type sdkKVStore struct {
 }
 
 func newSDKKVStore(client *qrdbsdk.Client, shardID uint64) interfaces.KVStore {
-	return &sdkKVStore{
+	base := sdkKVStore{
 		client:  client,
 		shardID: shardID,
 	}
+	if g, ok := client.KV().(guardedKVClient); ok {
+		return &guardedSDKKVStore{sdkKVStore: base, guarded: g}
+	}
+	return &base
 }
 
 // Put stores a key-value pair through the SDK client.
 func (s *sdkKVStore) Put(ctx context.Context, key string, value []byte) error {
 	return s.client.KV().Put(ctx, key, value)
+}
+
+// guardedKVClient is the guarded-verb surface a qrdb transport MAY offer.
+// transport.KVClient does not carry these at v0.10.0-alpha (the verbs live
+// on service.KVServicer); when a transport grows them, the assertion in
+// newSDKKVStore lights the capability up with no further wiring.
+type guardedKVClient interface {
+	PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error)
+	CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error)
+}
+
+// guardedSDKKVStore carries the guarded verbs as EXPLICIT FORWARDS
+// (go-quicbaas#120): qrdb evaluates their condition inside the storage
+// engine — across every process sharing the store — which is exactly the
+// arbitration capability consumers (the secrets backend among them)
+// discover by type assertion. The split at construction is deliberate: a
+// wrapper must never PROMOTE a capability its transport does not truly
+// carry, and must never emulate one over the base verbs — so the methods
+// exist only on the type returned when the transport really has them.
+type guardedSDKKVStore struct {
+	sdkKVStore
+	guarded guardedKVClient
+}
+
+// PutIfAbsent stores value only when key is absent, arbitrated in the store.
+func (s *guardedSDKKVStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	return s.guarded.PutIfAbsent(ctx, key, value)
+}
+
+// CompareAndDelete removes key only while it still holds expected,
+// arbitrated in the store.
+func (s *guardedSDKKVStore) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return s.guarded.CompareAndDelete(ctx, key, expected)
 }
 
 // Get retrieves a value by key through the SDK client. The SDK returns

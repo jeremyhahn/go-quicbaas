@@ -248,6 +248,16 @@ type User struct {
 	// Status is the current status of the user.
 	Status UserStatus `json:"status"`
 
+	// Lifecycle is the canonical account state: pending, active, suspended,
+	// locked, disabled or deleting. It is the value the store actually holds;
+	// Status is this SDK's own coarser enum and is not populated by every
+	// transport.
+	Lifecycle string `json:"lifecycle,omitempty"`
+
+	// AuthMethods lists the authentication methods this account is permitted to
+	// present ("webauthn", "piv"). Empty states no restriction.
+	AuthMethods []string `json:"auth_methods,omitempty"`
+
 	// Roles are the role IDs assigned to the user.
 	Roles []string `json:"roles,omitempty"`
 
@@ -259,9 +269,6 @@ type User struct {
 
 	// Metadata contains additional user metadata.
 	Metadata map[string]string `json:"metadata,omitempty"`
-
-	// MFAEnabled indicates if MFA is enabled.
-	MFAEnabled bool `json:"mfa_enabled"`
 
 	// EmailVerified indicates if the email is verified.
 	EmailVerified bool `json:"email_verified"`
@@ -355,6 +362,13 @@ type Role struct {
 
 	// Permissions are the permissions granted by this role.
 	Permissions []string `json:"permissions"`
+
+	// RetiredPermissions lists the members of Permissions the server's build
+	// no longer defines. Derived on read from the live permission registry and
+	// never stored, so it names the drift between what the tenant was seeded
+	// with and what the server now grants — visible on an ordinary listing,
+	// before Reconcile repairs it.
+	RetiredPermissions []string `json:"retired_permissions,omitempty"`
 
 	// IsSystem indicates if this is a system-defined role.
 	IsSystem bool `json:"is_system"`

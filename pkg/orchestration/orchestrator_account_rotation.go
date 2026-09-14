@@ -98,6 +98,10 @@ type RotateSessionAccountResult struct {
 	// Strategy names the policy that selected the replacement.
 	Strategy string `json:"strategy,omitempty"`
 
+	// CredentialLeaseID is the DELIVERY GRANT the replacement credential was
+	// handed over under, empty when the deployment wired no leaser.
+	CredentialLeaseID string `json:"credential_lease_id,omitempty"`
+
 	// Mode reports which mechanism was used.
 	Mode AccountRotationMode `json:"mode"`
 }
@@ -144,6 +148,31 @@ func RotationServiceFrom(svc AgentService, transport string) (SessionAccountRota
 // rediscover the same limit for itself.
 func (s *agentServiceImpl) SetAccountStore(store AccountStore) {
 	s.accountStore = store
+}
+
+// AccountStore returns the pooled account metadata store, or nil when none is
+// wired.
+//
+// It is the read half SpendLedgerAccessor needs: an allowance lives on the
+// account record (see AccountSpendPolicy), so a report that cannot reach the
+// store reports every account's policy as UNKNOWN rather than as absent.
+func (s *agentServiceImpl) AccountStore() AccountStore {
+	return s.accountStore
+}
+
+// SetAccountCredentialLeaser wires the authority that withdraws a pooled
+// credential's DELIVERY GRANT (see account_lease.go).
+//
+// With it wired, session conclusion becomes a SECURITY CONTROL rather than only
+// hygiene: the same transition that tears down the process and releases the
+// materialized credential directory also revokes the grant, so the host that
+// held that copy cannot obtain another one under it. Nil is ignored, which
+// leaves a deployment with no lease manager concluding sessions exactly as it
+// did before.
+func (s *agentServiceImpl) SetAccountCredentialLeaser(leases AccountCredentialLeaser) {
+	if leases != nil {
+		s.accountLeases = leases
+	}
 }
 
 // SetAccountLimitClassifier replaces the heuristic provider-limit classifier.
@@ -327,9 +356,10 @@ func (s *agentServiceImpl) rotateInPlace(
 		return nil, err
 	}
 	return &RotateSessionAccountResult{
-		AccountID: rotated.AccountID,
-		Strategy:  rotated.Strategy,
-		Mode:      AccountRotationModeInPlace,
+		AccountID:         rotated.AccountID,
+		Strategy:          rotated.Strategy,
+		CredentialLeaseID: rotated.CredentialLeaseID,
+		Mode:              AccountRotationModeInPlace,
 	}, nil
 }
 
@@ -400,9 +430,10 @@ func (s *agentServiceImpl) rotateByResume(
 		})
 	}
 	return &RotateSessionAccountResult{
-		AccountID: resumed.Session.AccountID,
-		Strategy:  resumed.Session.AccountStrategy,
-		Mode:      AccountRotationModeResume,
+		AccountID:         resumed.Session.AccountID,
+		Strategy:          resumed.Session.AccountStrategy,
+		CredentialLeaseID: resumed.Session.CredentialLeaseID,
+		Mode:              AccountRotationModeResume,
 	}, nil
 }
 
@@ -464,6 +495,18 @@ func (s *agentServiceImpl) commitRotation(
 ) {
 	now := time.Now()
 
+	// THE SUPERSEDED GRANT IS WITHDRAWN AND THE REPLACEMENT IS RECORDED, in
+	// that order and before the record is written.
+	//
+	// A rotation hands the session a second live provider credential, and the
+	// outgoing one's materialized directory is already gone (the backend
+	// released it). Leaving its grant alive would leave a revocable handle to a
+	// credential nobody is using — and, on the remote path, would let the host
+	// materialize that account again. Recording the replacement in the same
+	// step is what keeps the record's grant list complete, so a later
+	// conclusion withdraws every grant the session ever held.
+	s.supersedeCredentialLease(ctx, mem, record, result.CredentialLeaseID)
+
 	record.OpenAccountSegment(result.AccountID, result.Strategy, reason, now.UnixNano())
 	record.Status = SessionStateActive
 	record.ResumeError = ""
@@ -499,4 +542,43 @@ func (s *agentServiceImpl) commitRotation(
 			Code:    "account_rotated",
 		},
 	})
+}
+
+// supersedeCredentialLease records the replacement delivery grant and withdraws
+// every grant the session held before it.
+//
+// The withdrawal is reported on the log rather than returned: the rotation has
+// already happened — the replacement credential is in force and the outgoing
+// one's material is gone — so refusing the rotation now would leave the session
+// in a state no caller asked for. The grant it could not withdraw is still
+// bounded by its TTL and still named on the record, so the session's eventual
+// conclusion retries the withdrawal.
+func (s *agentServiceImpl) supersedeCredentialLease(
+	ctx context.Context,
+	mem *sessionRecord,
+	record *SessionRecord,
+	replacement string,
+) {
+	if s.accountLeases == nil {
+		return
+	}
+
+	superseded := make([]string, 0, len(record.CredentialLeaseIDs))
+	for _, id := range record.CredentialLeaseIDs {
+		if id != "" && id != replacement {
+			superseded = append(superseded, id)
+		}
+	}
+
+	record.AddCredentialLease(replacement)
+	if mem != nil {
+		mem.AddCredentialLease(replacement)
+	}
+
+	for _, id := range superseded {
+		if err := s.accountLeases.Revoke(ctx, id); err != nil {
+			s.logger.Warnf("orchestration: session %s: failed to revoke superseded credential delivery lease %s: %s",
+				record.SessionID, id, err.Error())
+		}
+	}
 }

@@ -52,6 +52,11 @@ Net deletion drops to ~3,260 LOC (still meaningfully net-negative).
 
 - `pkg/config/config.go` — `IAMWebAuthnConfig` struct and `Validate` method
   (Decision 3). Required fields: `rp_id`, `rp_display_name`, `rp_origins`.
+  *(Superseded: that requirement was never enforced — `Validate` had no caller
+  — and it contradicted the derive-from-issuer path added later. The type and
+  its two validators now live in `pkg/config/iam_webauthn_config.go`; see
+  [docs/iam/engineering.md](../iam/engineering.md) for the current
+  required-versus-derived contract.)*
 - `pkg/iam/webauthn_xkms_factory.go` — `WebAuthnServiceFactory` builds
   per-tenant `xkmswebauthn.Service` instances, lazily cached in a
   `sync.Map` keyed by tenant id (Option A from the plan).
@@ -67,6 +72,12 @@ Net deletion drops to ~3,260 LOC (still meaningfully net-negative).
 - `pkg/api/rest/iam_xkms_webauthn_mount.go` — `MountXKMSWebAuthnRoutes`
   registers xkms's native HTTP handlers under
   `/api/v1/iam/{tenant_id}/webauthn` (Plan step 3 / 5).
+  *(Superseded: `MountXKMSWebAuthnRoutes` is DELETED. It was a second
+  registration of the same five paths, on a router the unified-API-server
+  architecture never serves, and it returned early and silently when the
+  xkms-backed manager was not yet resolvable. The module route table
+  (`routes_iam.go`) is now the single owner, dispatching through
+  `moduleWebAuthnHandler`; go-quicbaas#529.)*
 
 ### Modified
 

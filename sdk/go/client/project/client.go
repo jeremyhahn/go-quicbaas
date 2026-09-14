@@ -79,6 +79,35 @@ type ProjectWorkspace struct {
 	Path string `json:"path,omitempty"`
 }
 
+// GitAuthor is the identity recorded on commits made from the workspace.
+type GitAuthor struct {
+	// Name is the author name.
+	Name string `json:"name,omitempty"`
+	// Email is the author email.
+	Email string `json:"email,omitempty"`
+}
+
+// KMSKeyRef names a KMS-held key by (name, scope, owner). Never material.
+type KMSKeyRef struct {
+	// Name identifies the key within (Scope, Owner).
+	Name string `json:"name,omitempty"`
+	// Scope is the key store scope ("user", "tenant", "service").
+	Scope string `json:"scope,omitempty"`
+	// Owner is the scope-specific owner.
+	Owner string `json:"owner,omitempty"`
+}
+
+// CommitSigning decides whether and how commits from the workspace are
+// signed. The zero value signs nothing.
+type CommitSigning struct {
+	// Enabled turns signing on; an enabled policy names a Key.
+	Enabled bool `json:"enabled,omitempty"`
+	// Algorithm is the KMS key algorithm (ED25519 default, ECDSA-P256 FIPS).
+	Algorithm string `json:"algorithm,omitempty"`
+	// Key identifies the KMS-held signing key.
+	Key KMSKeyRef `json:"key,omitzero"`
+}
+
 // ProjectGit describes the git repository linked to a project.
 type ProjectGit struct {
 	// RepoURL is the remote git repository URL.
@@ -87,6 +116,13 @@ type ProjectGit struct {
 	DefaultBranch string `json:"default_branch,omitempty"`
 	// CurrentSHA is the commit SHA last recorded by an agent job run.
 	CurrentSHA string `json:"current_sha,omitempty"`
+	// Author is the identity recorded on commits made from the workspace.
+	Author GitAuthor `json:"author,omitzero"`
+	// Signing decides whether and how commits are signed.
+	Signing CommitSigning `json:"signing,omitzero"`
+	// SSHKey is the KMS key an ssh:// RepoURL is reached with; empty means
+	// the signing key is used.
+	SSHKey KMSKeyRef `json:"ssh_key,omitzero"`
 }
 
 // ProjectPermissions defines agent-level access roles for a project.
@@ -105,6 +141,18 @@ type ProjectQuotas struct {
 	MaxConcurrency int `json:"max_concurrency,omitempty"`
 }
 
+// ContextRepo names one repository the worker clones beside the project
+// checkout. The daemon never clones it.
+type ContextRepo struct {
+	// Name is the directory the repository is cloned into, beside the
+	// project checkout. One path segment.
+	Name string `json:"name"`
+	// RepoURL is the remote the worker clones from.
+	RepoURL string `json:"repo_url"`
+	// Ref is the branch, tag or commit the worker checks out.
+	Ref string `json:"ref"`
+}
+
 // ProjectInfo contains information about a project.
 //
 // The JSON tags are the canonical project wire shape. Every transport that
@@ -119,6 +167,9 @@ type ProjectInfo struct {
 	Workspace        ProjectWorkspace   `json:"workspace"`
 	HostAffinity     string             `json:"host_affinity,omitempty"`
 	DefaultLeadAgent string             `json:"default_lead_agent,omitempty"`
+	DefaultWorkflow  string             `json:"default_workflow,omitempty"`
+	Autonomous       bool               `json:"autonomous,omitempty"`
+	ContextRepos     []ContextRepo      `json:"context_repos,omitempty"`
 	Git              ProjectGit         `json:"git"`
 	Permissions      ProjectPermissions `json:"permissions"`
 	Quotas           ProjectQuotas      `json:"quotas"`
@@ -155,6 +206,36 @@ type CreateProjectRequest struct {
 	MaxConcurrency int `json:"max_concurrency,omitempty"`
 	// Metadata is an arbitrary key-value map for caller-defined annotations.
 	Metadata map[string]string `json:"metadata,omitempty"`
+
+	// DefaultWorkflow names the tenant-scoped workflow a Task auto-spawns
+	// into; it must be registered in the tenant.
+	DefaultWorkflow string `json:"default_workflow,omitempty"`
+
+	// Autonomous turns autonomous development on for the new project.
+	Autonomous bool `json:"autonomous,omitempty"`
+
+	// ContextRepos are cloned by the worker beside the project checkout.
+	ContextRepos []ContextRepo `json:"context_repos,omitempty"`
+
+	// GitAuthorName / GitAuthorEmail are the commit identity of the
+	// workspace. Both or neither.
+	GitAuthorName  string `json:"git_author_name,omitempty"`
+	GitAuthorEmail string `json:"git_author_email,omitempty"`
+
+	// GitSigningEnabled turns commit signing on; an enabled policy names
+	// GitSigningKeyName. GitSigningAlgorithm is ED25519 (default) or
+	// ECDSA-P256 (FIPS).
+	GitSigningEnabled   bool   `json:"git_signing_enabled,omitempty"`
+	GitSigningAlgorithm string `json:"git_signing_algorithm,omitempty"`
+	GitSigningKeyName   string `json:"git_signing_key_name,omitempty"`
+	GitSigningKeyScope  string `json:"git_signing_key_scope,omitempty"`
+	GitSigningKeyOwner  string `json:"git_signing_key_owner,omitempty"`
+
+	// GitSSHKeyName / GitSSHKeyScope / GitSSHKeyOwner reference the KMS key
+	// an ssh:// GitRepoURL is reached with. Empty means the signing key.
+	GitSSHKeyName  string `json:"git_ssh_key_name,omitempty"`
+	GitSSHKeyScope string `json:"git_ssh_key_scope,omitempty"`
+	GitSSHKeyOwner string `json:"git_ssh_key_owner,omitempty"`
 }
 
 // UpdateProjectRequest is a request to update an existing project.
@@ -187,14 +268,54 @@ type UpdateProjectRequest struct {
 	GitCurrentSHA string `json:"git_current_sha,omitempty"`
 	// AgentRoles replaces the agent role map when non-nil.
 	AgentRoles map[string]ProjectRole `json:"agent_roles,omitempty"`
-	// TokenBudget updates the LLM token budget (0 = no change).
-	TokenBudget int64 `json:"token_budget,omitempty"`
-	// GPUMinutes updates the GPU compute budget (0 = no change).
-	GPUMinutes int64 `json:"gpu_minutes,omitempty"`
-	// MaxConcurrency updates the max concurrent workflow runs (0 = no change).
-	MaxConcurrency int `json:"max_concurrency,omitempty"`
+	// The quotas are POINTERS so zero is expressible. Zero means UNLIMITED
+	// on the project record, so nil ("leave it alone") and zero ("lift the
+	// cap") are different instructions. As plain ints they could only say
+	// the first: an operator lifting a cap watched the save succeed and
+	// stayed capped, while the UI and the docs both called zero unlimited.
+	//
+	// TokenBudget updates the LLM token budget; zero means unlimited.
+	TokenBudget *int64 `json:"token_budget,omitempty"`
+	// GPUMinutes updates the GPU compute budget; zero means unlimited.
+	GPUMinutes *int64 `json:"gpu_minutes,omitempty"`
+	// MaxConcurrency updates the concurrent-run cap; zero means unlimited.
+	MaxConcurrency *int `json:"max_concurrency,omitempty"`
 	// Metadata merges additional key-value annotations.
 	Metadata map[string]string `json:"metadata,omitempty"`
+
+	// DefaultWorkflow sets the auto-spawn workflow when non-empty;
+	// ClearDefaultWorkflow removes it.
+	DefaultWorkflow      string `json:"default_workflow,omitempty"`
+	ClearDefaultWorkflow bool   `json:"clear_default_workflow,omitempty"`
+
+	// Autonomous updates the autonomous-development switch when non-nil, so
+	// "unchanged" and "off" stay distinct.
+	Autonomous *bool `json:"autonomous,omitempty"`
+
+	// ContextRepos replaces the whole list when non-nil; ClearContextRepos
+	// empties it.
+	ContextRepos      []ContextRepo `json:"context_repos,omitempty"`
+	ClearContextRepos bool          `json:"clear_context_repos,omitempty"`
+
+	// GitAuthorName / GitAuthorEmail update the commit identity when
+	// non-empty.
+	GitAuthorName  string `json:"git_author_name,omitempty"`
+	GitAuthorEmail string `json:"git_author_email,omitempty"`
+
+	// GitSigningEnabled updates the signing switch when non-nil (so
+	// "unchanged" and "off" are distinct); the other signing fields update
+	// when non-empty.
+	GitSigningEnabled   *bool  `json:"git_signing_enabled,omitempty"`
+	GitSigningAlgorithm string `json:"git_signing_algorithm,omitempty"`
+	GitSigningKeyName   string `json:"git_signing_key_name,omitempty"`
+	GitSigningKeyScope  string `json:"git_signing_key_scope,omitempty"`
+	GitSigningKeyOwner  string `json:"git_signing_key_owner,omitempty"`
+
+	// GitSSHKeyName / GitSSHKeyScope / GitSSHKeyOwner update the access key
+	// reference when non-empty.
+	GitSSHKeyName  string `json:"git_ssh_key_name,omitempty"`
+	GitSSHKeyScope string `json:"git_ssh_key_scope,omitempty"`
+	GitSSHKeyOwner string `json:"git_ssh_key_owner,omitempty"`
 }
 
 // ListProjectsResponse is the response from listing projects.

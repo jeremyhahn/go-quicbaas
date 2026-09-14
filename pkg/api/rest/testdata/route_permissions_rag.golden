@@ -1,0 +1,6 @@
+DELETE /api/v1/rag/documents/{id} permission rag:delete_document
+GET /api/v1/rag/documents permission rag:list_documents
+GET /api/v1/rag/documents/{id} permission rag:list_documents
+POST /api/v1/rag/context permission rag:query
+POST /api/v1/rag/documents/{id}/reindex permission rag:ingest
+POST /api/v1/rag/query permission rag:query

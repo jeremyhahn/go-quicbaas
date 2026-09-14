@@ -194,6 +194,41 @@ var providerLimitRules = map[AccountProvider]limitRules{
 // number would be indefensible.
 var httpStatusLimitContext = []string{"status", "http", "code", "rate", "limit", "quota", "retry"}
 
+// httpStatusLimitPattern requires the 429 to STAND ALONE AS A NUMBER rather
+// than merely occur somewhere in the buffer.
+//
+// THE CONTEXT WORDS ABOVE WERE NEVER ENOUGH ON THEIR OWN, and the comment on
+// them says what they were meant to exclude — token counts, byte offsets, file
+// paths. A substring test cannot exclude any of those, because the digits it
+// looks for are inside a longer number every time: measured on the unanchored
+// version, "4294967296" and "4291" both matched, as did an API key with 429 in
+// its body (#500). The guard stated an intent the implementation did not have.
+//
+// A 429 INSIDE A TOKEN IS NOT A STATUS CODE NO MATTER WHAT IS NEAR IT, which is
+// why this is a boundary rather than a proximity window. Requiring the context
+// word to sit within N characters would still accept a credential whose body
+// happens to contain 429 as long as an error sentence mentioned a limit — and
+// it would start REJECTING genuine cases where the status and its explanation
+// are on different lines, which is the ordinary shape of an HTTP error dump.
+//
+// Written as explicit delimiters rather than \b because \b treats "-" as a
+// boundary: sk-ant-429-xyz would satisfy \b429\b, and hyphens are exactly how
+// provider keys are segmented. Underscores segment the other half of the same
+// space — request ids, trace ids, and the snake_case field names in a JSON
+// error body — so the class excludes both. "-" AND "_" ARE IDENTIFIER
+// CHARACTERS HERE, NOT SEPARATORS: the first version of this class was
+// [^a-z0-9], which readmitted every token the paragraph above rules out and
+// left the comment stating an intent the pattern did not have (#530).
+//
+// Every separator a status code legitimately appears beside — space, colon,
+// comma, quote, "=", "/", ".", newline, parenthesis — still qualifies, and
+// every character that would make the digits part of a longer identifier does
+// not.
+//
+// Operates on the same lowered text the rest of the rules use, so the class
+// needs no upper-case half; see the caller.
+var httpStatusLimitPattern = regexp.MustCompile(`(?:^|[^a-z0-9_-])429(?:[^a-z0-9_-]|$)`)
+
 // =============================================================================
 // Classifier
 // =============================================================================
@@ -267,10 +302,17 @@ func limitPhrasePresent(lowered string, phrases []string) bool {
 	return false
 }
 
-// matchHTTPStatusLimit reports a bare 429 that appears alongside at least one
-// word placing it in an HTTP/limit context. See httpStatusLimitContext.
+// matchHTTPStatusLimit reports a standalone 429 that appears alongside at least
+// one word placing it in an HTTP/limit context. See httpStatusLimitContext and
+// httpStatusLimitPattern.
+//
+// BOTH NARROWINGS ARE REQUIRED AND NEITHER SUBSUMES THE OTHER. The pattern says
+// the digits are a number rather than part of an identifier; the context words
+// say the number is a status code rather than a count. A file path ending
+// ":429:" satisfies the first and can still satisfy the second, so this is not
+// the whole of the problem the context words were written for — see #500.
 func matchHTTPStatusLimit(lowered string) bool {
-	if !strings.Contains(lowered, "429") {
+	if !httpStatusLimitPattern.MatchString(lowered) {
 		return false
 	}
 	for _, word := range httpStatusLimitContext {
@@ -304,6 +346,15 @@ func limitFailureText(err error) string {
 	var exited *StreamJSONProcessExitedError
 	if errors.As(err, &exited) && exited.Stderr != "" {
 		return exited.Stderr
+	}
+	// The peer's JSON-RPC message, asked for BY NAME. Its Error() withholds the
+	// text (review 1330), and this classifier is precisely the caller the field
+	// is kept for — a provider limit reported through JSON-RPC rather than
+	// through stderr would otherwise stop being classifiable the moment the
+	// text stopped being rendered.
+	var peer *PeerRPCError
+	if errors.As(err, &peer) && peer.Message != "" {
+		return peer.Message
 	}
 	return err.Error()
 }

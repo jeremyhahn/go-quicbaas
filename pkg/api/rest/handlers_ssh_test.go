@@ -33,6 +33,7 @@ import (
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest/secureio"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/sshfixture"
 )
 
 // newSSHTestServer wires a mock QuicBaaS with a real embedded SSH
@@ -230,6 +231,18 @@ func TestSSHSignDigest_MissingDigest(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// Known-host fingerprint fixtures. Each is the OpenSSH SHA256 fingerprint
+// of a real deterministic ed25519 key from sshfixture, so a test asserting
+// "this host presents this fingerprint" is asserting something a production
+// verify path could disagree with. (go-xkms known_hosts.ValidateFingerprint
+// also rejects anything whose base64 body is not a 32-byte SHA-256 digest,
+// so a bare placeholder such as "SHA256:abc" never reaches the handler.)
+const (
+	testKnownHostFingerprint          = sshfixture.HostFingerprint
+	testKnownHostFingerprintExpected  = sshfixture.HostFingerprint
+	testKnownHostFingerprintDifferent = sshfixture.HostAltFingerprint
+)
+
 // TestSSHAddAndListKnownHosts exercises the known-hosts add + list
 // round-trip.
 func TestSSHAddAndListKnownHosts(t *testing.T) {
@@ -237,7 +250,7 @@ func TestSSHAddAndListKnownHosts(t *testing.T) {
 	server, _, cleanup := newSSHTestServer(t)
 	defer cleanup()
 
-	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + sshTestFingerprint("bastion") + `","algorithm":"ssh-ed25519"}`
+	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + testKnownHostFingerprint + `","algorithm":"ssh-ed25519"}`
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/known-hosts", strings.NewReader(addBody))
 	addReq.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -260,13 +273,12 @@ func TestSSHVerifyKnownHost_Match(t *testing.T) {
 	server, _, cleanup := newSSHTestServer(t)
 	defer cleanup()
 
-	fingerprint := sshTestFingerprint("bastion")
-	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + fingerprint + `"}`
+	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + testKnownHostFingerprint + `"}`
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/known-hosts", strings.NewReader(addBody))
 	addReq.Header.Set("Content-Type", "application/json")
 	server.HandleAddKnownHost(httptest.NewRecorder(), addReq)
 
-	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"` + fingerprint + `"}`
+	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"` + testKnownHostFingerprint + `"}`
 	verifyReq := httptest.NewRequest(http.MethodPost,
 		"/api/v1/ssh/known-hosts/bastion.example.com/verify",
 		strings.NewReader(verifyBody))
@@ -284,14 +296,12 @@ func TestSSHVerifyKnownHost_Mismatch(t *testing.T) {
 	server, _, cleanup := newSSHTestServer(t)
 	defer cleanup()
 
-	expected := sshTestFingerprint("expected")
-	received := sshTestFingerprint("different")
-	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + expected + `"}`
+	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + testKnownHostFingerprintExpected + `"}`
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/known-hosts", strings.NewReader(addBody))
 	addReq.Header.Set("Content-Type", "application/json")
 	server.HandleAddKnownHost(httptest.NewRecorder(), addReq)
 
-	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"` + received + `"}`
+	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"` + testKnownHostFingerprintDifferent + `"}`
 	verifyReq := httptest.NewRequest(http.MethodPost,
 		"/api/v1/ssh/known-hosts/bastion.example.com/verify",
 		strings.NewReader(verifyBody))
@@ -304,8 +314,8 @@ func TestSSHVerifyKnownHost_Mismatch(t *testing.T) {
 	var resp sshMismatchResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	require.Equal(t, "bastion.example.com", resp.Host)
-	require.Equal(t, expected, resp.Expected)
-	require.Equal(t, received, resp.Received)
+	require.Equal(t, testKnownHostFingerprintExpected, resp.Expected)
+	require.Equal(t, testKnownHostFingerprintDifferent, resp.Received)
 }
 
 // TestSSHEmitAuthorized round-trips a public key through the emit

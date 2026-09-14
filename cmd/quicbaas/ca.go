@@ -179,7 +179,7 @@ func runCAInfo(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.CAInfo(ctx, &certclient.CAInfoRequest{})
@@ -211,7 +211,7 @@ func runCABundle(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.GetCABundle(ctx, &certclient.GetCABundleRequest{})
@@ -264,7 +264,7 @@ func runCAList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.ListCertificates(ctx, &certclient.ListCertificatesRequest{
@@ -317,7 +317,7 @@ func runCAIssue(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &certclient.IssueCertificateRequest{
@@ -368,7 +368,7 @@ func runCARevoke(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.RevokeCertificate(ctx, &certclient.RevokeCertificateRequest{
@@ -420,7 +420,7 @@ func runCAExportBundle(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.GetCABundle(ctx, &certclient.GetCABundleRequest{})

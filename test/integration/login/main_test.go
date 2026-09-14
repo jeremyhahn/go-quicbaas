@@ -52,19 +52,16 @@ package login
 import (
 	"context"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
-	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -75,6 +72,7 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/certfixture"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
@@ -88,15 +86,14 @@ import (
 // correctly.
 const systemTenantID = "system"
 
-// adminCertEnv / adminKeyEnv / caCertEnv / caKeyEnv override the default
-// in-container cert locations. The integration compose mounts ./certs (which
-// gen-certs populated) read-only at /etc/quicbaas/certs on every node AND the
-// test runner, so the defaults work out of the box inside the devcontainer.
+// The default in-container fixture locations, overridable by environment. The
+// integration compose mounts the fixture directory the QuicBaaS CA issued into
+// at /etc/quicbaas/certs on every node and on the test runner, so the defaults
+// work out of the box inside the devcontainer.
 const (
 	adminCertPath = "/etc/quicbaas/certs/admin.crt"
 	adminKeyPath  = "/etc/quicbaas/certs/admin.key"
 	caCertPath    = "/etc/quicbaas/certs/ca.crt"
-	caKeyPath     = "/etc/quicbaas/certs/ca.key"
 )
 
 // =============================================================================
@@ -162,17 +159,6 @@ func adminCertPaths() (cert, key, ca string) {
 	return cert, key, ca
 }
 
-// caKeyFile resolves the cluster CA private key path. The integration compose
-// mounts the whole certs dir (including ca.key) read-only, so the test can
-// mint piv leaf certificates that chain to the cluster CA — exactly what the
-// server-side PIVHardwareFactorVerifier requires for chain validation.
-func caKeyFile() string {
-	if v := os.Getenv("QUICBAAS_TEST_CA_KEY"); v != "" {
-		return v
-	}
-	return caKeyPath
-}
-
 // loadClientCert loads the admin client certificate keypair for mTLS.
 func loadClientCert(t *testing.T) tls.Certificate {
 	t.Helper()
@@ -212,49 +198,14 @@ func certSHA256(cert *x509.Certificate) []byte {
 	return sum[:]
 }
 
-// loadCA reads and parses the cluster CA certificate + private key from the
-// mounted certs dir so the suite can sign piv leaf certificates that chain to
-// it. The CA key is mounted read-only alongside the public certs.
-func loadCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey) {
-	t.Helper()
-	_, _, caPath := adminCertPaths()
-
-	caPEM, err := os.ReadFile(caPath) // #nosec G304 — path is test config
-	if err != nil {
-		t.Fatalf("%v", &CertLoadError{Path: caPath, Cause: err})
-	}
-	caBlock, _ := pem.Decode(caPEM)
-	if caBlock == nil {
-		t.Fatalf("%v", &CertLoadError{Path: caPath, Cause: fmt.Errorf("no CA PEM block")})
-	}
-	caCert, err := x509.ParseCertificate(caBlock.Bytes)
-	if err != nil {
-		t.Fatalf("%v", &CertLoadError{Path: caPath, Cause: err})
-	}
-
-	keyPath := caKeyFile()
-	keyPEM, err := os.ReadFile(keyPath) // #nosec G304 — path is test config
-	if err != nil {
-		t.Fatalf("%v", &CertLoadError{Path: keyPath, Cause: err})
-	}
-	keyBlock, _ := pem.Decode(keyPEM)
-	if keyBlock == nil {
-		t.Fatalf("%v", &CertLoadError{Path: keyPath, Cause: fmt.Errorf("no CA key PEM block")})
-	}
-	caKey, err := x509.ParseECPrivateKey(keyBlock.Bytes)
-	if err != nil {
-		t.Fatalf("%v", &CertLoadError{Path: keyPath, Cause: err})
-	}
-	return caCert, caKey
-}
-
-// softwarePIVCredential is a software stand-in for a PIV slot: a freshly
-// generated P-256 key and a leaf certificate chained to the cluster CA. The
-// in-container integration image has no PC/SC reader or SoftHSM PIV applet, so
-// the suite uses a software credential whose verification path is byte-for-byte
-// identical to a hardware slot's (the server's PIVHardwareFactorVerifier only
-// sees the certificate + an ECDSA signature over SHA-256(nonce); it cannot tell
-// software from hardware). The crypto is REAL — no verification is mocked.
+// softwarePIVCredential is a software stand-in for a PIV slot: a client
+// certificate issued by the cluster's own CA and the P-256 key that certificate
+// names. The in-container integration image has no PC/SC reader or SoftHSM PIV
+// applet, so the suite uses a software credential whose verification path is
+// byte-for-byte identical to a hardware slot's (the server's
+// PIVHardwareFactorVerifier only sees the certificate plus an ECDSA signature
+// over SHA-256(nonce); it cannot tell software from hardware). The crypto is
+// REAL — no verification is mocked.
 type softwarePIVCredential struct {
 	key      *ecdsa.PrivateKey
 	leaf     *x509.Certificate
@@ -262,51 +213,49 @@ type softwarePIVCredential struct {
 	leafHash []byte // SHA-256(leaf.Raw) — the piv factor lookup key
 }
 
-// newSoftwarePIVCredential mints a P-256 key + a leaf cert signed by the
-// cluster CA. The leaf carries ClientAuth EKU and the supplied CN so it looks
-// like a real PIV slot certificate.
+// newSoftwarePIVCredential asks the cluster's CA to ISSUE the leaf, through the
+// same adapter the daemon serves certificate operations through
+// (helpers.FixtureAuthority -> pkg/server.NewCAService). The leaf carries
+// ClientAuth extended key usage, the supplied CN, and the tenant-scoped SPIFFE
+// SAN a real login credential carries, so it looks like what the product hands
+// a PIV enrollee.
+//
+// Before go-quicbaas#943 this function read the CA's PRIVATE KEY off the mounted
+// volume and called x509.CreateCertificate itself. The whole point of this suite
+// is that PIV verification accepts what the product issues and rejects what it
+// does not; signing the test's own material defeated that, because a divergence
+// between the fixture and the real issuance path would have been invisible here.
 func newSoftwarePIVCredential(t *testing.T, commonName string) *softwarePIVCredential {
 	t.Helper()
-	caCert, caKey := loadCA(t)
 
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ctx := context.Background()
+	authority, err := helpers.FixtureAuthority(ctx)
 	if err != nil {
-		t.Fatalf("%v", &CASignError{Op: "generate P-256 key", Cause: err})
-	}
-
-	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serial, err := rand.Int(rand.Reader, serialLimit)
-	if err != nil {
-		t.Fatalf("%v", &CASignError{Op: "serial", Cause: err})
+		t.Fatalf("%v", &CASignError{Op: "open fixture CA", Cause: err})
 	}
 
-	now := time.Now()
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject: pkix.Name{
-			Organization: []string{"QuicBaaS Integration Tests"},
-			CommonName:   commonName,
-		},
-		NotBefore:   now.Add(-time.Minute),
-		NotAfter:    now.AddDate(0, 0, 30),
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
+	issued, err := authority.IssueClient(ctx, certfixture.ClientFixture{
+		CommonName:   commonName,
+		TenantID:     systemTenantID,
+		ValidityDays: 30,
+	})
 	if err != nil {
-		t.Fatalf("%v", &CASignError{Op: "create leaf", Cause: err})
+		t.Fatalf("%v", &CASignError{Op: "issue leaf", Cause: err})
 	}
-	leaf, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatalf("%v", &CASignError{Op: "parse leaf", Cause: err})
-	}
-	leafPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-	sum := sha256.Sum256(der)
 
+	key, ok := issued.Signer.(*ecdsa.PrivateKey)
+	if !ok {
+		t.Fatalf("%v", &CASignError{
+			Op:    "issue leaf",
+			Cause: fmt.Errorf("signer is %T, want *ecdsa.PrivateKey", issued.Signer),
+		})
+	}
+
+	sum := sha256.Sum256(issued.Certificate.Raw)
 	return &softwarePIVCredential{
 		key:      key,
-		leaf:     leaf,
-		leafPEM:  leafPEM,
+		leaf:     issued.Certificate,
+		leafPEM:  string(issued.CertificatePEM),
 		leafHash: sum[:],
 	}
 }

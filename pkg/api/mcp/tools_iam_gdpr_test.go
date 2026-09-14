@@ -59,7 +59,12 @@ func (m *mockUserStorage) GetUser(_ context.Context, tenantID, userID string) (*
 	return u, nil
 }
 
-func (m *mockUserStorage) GetUserByEmail(_ context.Context, _ string) (*iam.User, error) {
+// MarkUserDeleting is unused by the GDPR tests; it satisfies iam.UserStorage.
+func (m *mockUserStorage) MarkUserDeleting(_ context.Context, _, _ string) error {
+	return iam.ErrUserNotFound
+}
+
+func (m *mockUserStorage) GetUserByEmail(_ context.Context, _, _ string) (*iam.User, error) {
 	return nil, iam.ErrUserNotFound
 }
 

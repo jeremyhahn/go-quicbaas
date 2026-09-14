@@ -15,6 +15,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -861,7 +862,7 @@ func TestSubmitTaskArtifacts_Success(t *testing.T) {
 		TenantID: "t1",
 		TaskID:   "task-1",
 		Artifacts: []*TaskArtifact{
-			{Name: "output.txt", ContentType: "text/plain", Data: []byte("hello")},
+			{Kind: "inline", Name: "output.txt", MIMEType: "text/plain", Content: []byte("hello")},
 		},
 	})
 	require.NoError(t, err)
@@ -905,9 +906,10 @@ func TestGetTaskArtifact_Success(t *testing.T) {
 		requestFn: func(_ context.Context, _, method string, req interface{}) (interface{}, error) {
 			assert.Equal(t, "GetTaskArtifact", method)
 			return &TaskArtifact{
-				Name:        "output.txt",
-				ContentType: "text/plain",
-				Data:        []byte("result"),
+				Kind:     "inline",
+				Name:     "output.txt",
+				MIMEType: "text/plain",
+				Content:  []byte("result"),
 			}, nil
 		},
 	}
@@ -919,7 +921,7 @@ func TestGetTaskArtifact_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "output.txt", artifact.Name)
-	assert.Equal(t, []byte("result"), artifact.Data)
+	assert.Equal(t, []byte("result"), artifact.Content)
 }
 
 func TestGetTaskArtifact_MissingName(t *testing.T) {
@@ -1024,4 +1026,59 @@ func TestStartJob_ForwardsLeadAgentID(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, captured)
 	assert.Equal(t, "agent-lead-1", captured.LeadAgentID)
+}
+
+// TestTaskArtifact_DecodesTheServerShape is the regression test for an SDK type
+// that disagreed with the server in five of its seven fields.
+//
+// THE PAYLOAD BELOW IS VERBATIM from the burn-in node (2026-09-14), the
+// outcome_comment artifact the SDLC module writes on every issue it touches:
+//
+//	GET /api/v1/orchestrator/tasks/<id>?tenant_id=<t>
+//
+// Against the old type this failed outright with "cannot unmarshal object into
+// Go struct field TaskArtifact.output_artifacts.ref of type string", so
+// `quicbaas orchestrator task get` could not read ANY task that had ever
+// commented on an issue — which is every task that has ever run. `ref` is an
+// object, `mime_type` was spelled `content_type`, `content` was spelled
+// `data`, and `kind` and `metadata` had nowhere to go at all.
+func TestTaskArtifact_DecodesTheServerShape(t *testing.T) {
+	const payload = `{
+	  "kind": "url",
+	  "name": "outcome_comment",
+	  "ref": {"path": "http://forge.invalid/jeremyhahn/go-luks2/issues/128"},
+	  "metadata": {"comment_id": "62663", "issue": "jeremyhahn/go-luks2#128", "outcome": "readmitted"}
+	}`
+
+	var artifact TaskArtifact
+	require.NoError(t, json.Unmarshal([]byte(payload), &artifact),
+		"the SDK type must decode what the server actually sends")
+
+	assert.Equal(t, "url", artifact.Kind)
+	assert.Equal(t, "outcome_comment", artifact.Name)
+	require.NotNil(t, artifact.Ref, "ref is an object on the wire, not a string")
+	assert.Equal(t, "http://forge.invalid/jeremyhahn/go-luks2/issues/128", artifact.Ref.Path)
+	assert.Equal(t, "readmitted", artifact.Metadata["outcome"])
+	assert.Equal(t, "jeremyhahn/go-luks2#128", artifact.Metadata["issue"])
+}
+
+// TestTaskArtifact_DecodesInlineAndAbsentRef covers the other two shapes a real
+// artifact arrives in: inline content with no ref at all, and a ref carrying
+// the commit fields rather than a path.
+func TestTaskArtifact_DecodesInlineAndAbsentRef(t *testing.T) {
+	var inline TaskArtifact
+	require.NoError(t, json.Unmarshal([]byte(
+		`{"kind":"inline","name":"log.txt","mime_type":"text/plain","content":"aGVsbG8=","size":5}`), &inline))
+	assert.Equal(t, []byte("hello"), inline.Content)
+	assert.Equal(t, "text/plain", inline.MIMEType)
+	assert.Equal(t, int64(5), inline.Size)
+	assert.Nil(t, inline.Ref, "an inline artifact carries no ref")
+
+	var commit TaskArtifact
+	require.NoError(t, json.Unmarshal([]byte(
+		`{"kind":"commit","name":"head","ref":{"sha":"deadbeef","branch":"issue/128-x"}}`), &commit))
+	require.NotNil(t, commit.Ref)
+	assert.Equal(t, "deadbeef", commit.Ref.SHA)
+	assert.Equal(t, "issue/128-x", commit.Ref.Branch)
+	assert.Empty(t, commit.Ref.Path)
 }

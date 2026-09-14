@@ -41,6 +41,7 @@ func newDurableSessionRecord(
 	record := &SessionRecord{
 		TenantID:        tenantID,
 		ProjectID:       req.ProjectID,
+		JobID:           req.JobID,
 		Backend:         req.Backend,
 		Model:           model,
 		SystemPrompt:    req.SystemPrompt,
@@ -110,6 +111,11 @@ func spawnRequestFromRecord(record *SessionRecord) *SpawnRequest {
 		ExtraMounts:    append([]ContainerMount(nil), record.ExtraMounts...),
 		AccountID:      record.AccountID,
 		AccountAllow:   append([]string(nil), record.AccountAllow...),
+		// The job is replayed so a resumed session's credential delivery grant
+		// carries the same scope the original spawn's did; without it a resume
+		// would take out a job-less grant that the job's own revocation sweep
+		// could not find.
+		JobID: record.JobID,
 	}
 }
 
@@ -163,65 +169,88 @@ func rotationSpawnRequestFromRecord(record *SessionRecord, excludeAccountID stri
 // resumable: their process belongs to another host, which this daemon's
 // restart did not touch.
 func (s *agentServiceImpl) LoadPersistedSessions(ctx context.Context) error {
-	records, err := s.store.ListAllSessions(ctx)
-	if err != nil {
-		return &AgentServiceError{
-			Sentinel: ErrAgentServiceUnavailable,
-			Message:  "failed to load persisted sessions: " + err.Error(),
-		}
-	}
-
 	var restored, resumable int
-	for _, record := range records {
+	// EVERY TENANT, NOT EVERY KEY. The durable store routes by the context's
+	// tenant, and this pass carries none, so a single cross-tenant scan sees
+	// only the system tenant's records — every other tenant's session would be
+	// neither restored nor reconciled. eachSessionRecord names the tenants and
+	// hands each record a context scoped to its owner.
+	err := s.eachSessionRecord(ctx, func(tenantCtx context.Context, record *SessionRecord) {
 		if record.Status == SessionStateClosed {
-			continue
+			return
 		}
 
+		// A REMOTE SESSION IS NOT THIS DAEMON'S TO CONCLUDE, and it is asked
+		// about FIRST because the local backend table cannot answer anything
+		// about it. Its process belongs to another host, which this restart did
+		// not touch (SessionRecord.Resumable says the same: a remote session is
+		// re-addressed, not resumed), and it is reached through the remote
+		// resolver rather than through the local map — so reading "absent from
+		// my backends" as "gone" would mark a still-running remote worker
+		// closed and destroy the addressability an operator needs to reach it.
+		// That is #792's false terminal state, inverted.
+		//
+		// So the question is put to the things that can answer it, and only
+		// POSITIVE evidence of the daemon's departure concludes the session.
+		if !record.BackendLocal {
+			if host, gone := s.remoteSessionGone(tenantCtx, record); gone {
+				s.concludeStartupSession(tenantCtx, record, ConcludedByAgentGone,
+					"the daemon the session ran on ("+host+") is no longer in the fleet, "+
+						"so nothing here can reach the process it holds")
+				return
+			}
+			s.restorePersistedSession(tenantCtx, record, &restored, &resumable)
+			return
+		}
+
+		// From here the session ran on THIS daemon's local backend, so its
+		// process died with the previous one.
+		//
 		// A session whose backend is no longer registered cannot be addressed,
-		// let alone reconstituted. Leave the record in place — the backend may
-		// be registered by a later boot — but keep it out of the registry.
+		// let alone reconstituted — so the record is CONCLUDED rather than
+		// skipped. Leaving it in place against a boot that might register the
+		// backend later is what produced the stranded list: the hope was
+		// unfalsifiable, the record stayed ACTIVE for days, and every listing
+		// counted a session nothing could reach. A record concluded here is
+		// still readable; a session an operator genuinely wants back is
+		// spawned again.
 		if _, backendErr := s.lookupBackend(record.Backend); backendErr != nil {
-			s.logger.Warnf("orchestration: skipping persisted session %s: backend %s not available",
-				record.SessionID, record.Backend)
-			continue
+			s.concludeStartupSession(tenantCtx, record, ConcludedByNodeRestart,
+				"backend "+record.Backend+" is not registered on this node, so the session cannot be re-attached")
+			return
 		}
 
 		// A non-persistent session ran a fresh process per prompt: there is no
 		// process to miss and no context to restore, so it did not survive the
 		// restart. Record that plainly instead of leaving it look resumable.
 		if !record.Persistent {
-			if closeErr := s.store.UpdateSessionStatus(ctx, record.TenantID, record.SessionID, SessionStateClosed); closeErr != nil {
-				s.logger.Warnf("orchestration: failed to close non-persistent session %s on restart: %s",
-					record.SessionID, closeErr.Error())
-			}
-			continue
+			s.concludeStartupSession(tenantCtx, record, ConcludedByNodeRestart,
+				"the session is not persistent, so its process did not survive the restart")
+			return
 		}
 
-		mem := &sessionRecord{
-			Backend:      record.Backend,
-			ProjectID:    record.ProjectID,
-			Model:        record.Model,
-			TenantID:     record.TenantID,
-			ContainerID:  record.ContainerID,
-			CreatedAt:    record.CreatedAt,
-			HostAffinity: record.HostAffinity,
-			BackendLocal: record.BackendLocal,
-			Persistent:   record.Persistent,
+		// A SESSION THAT ALREADY FAILED TO RESUME IS LEFT WHERE IT IS, durable
+		// and unrestored. It is NOT concluded — concluding would overwrite the
+		// error and the cause with a tombstone, and the whole reason
+		// recordResumeFailure wrote them is that an operator has to be able to
+		// see why. And it is not restored either: a live entry that is not
+		// resumable sends SessionStatus and PromptSession past the resumable
+		// short-circuit and on to a backend holding no process for it, so the
+		// operator gets "session not found" instead of the recorded failure.
+		// With no live entry both paths read the durable record and report the
+		// error, which is the answer that exists.
+		if record.Status == SessionStateError {
+			s.logger.Infof("orchestration: session %s is left unrestored: a previous resume "+
+				"failed (%s)", record.SessionID, record.ResumeError)
+			return
 		}
-		mem.SetAccountID(record.AccountID)
-		if record.Resumable() {
-			mem.resumable.Store(true)
-			resumable++
-		}
-		s.sessions.Store(record.SessionID, mem)
-		restored++
 
-		if record.Resumable() && record.Status != SessionStateIdle {
-			if statusErr := s.store.UpdateSessionStatus(ctx, record.TenantID, record.SessionID, SessionStateResumable); statusErr != nil {
-				s.logger.Warnf("orchestration: failed to mark session %s resumable: %s",
-					record.SessionID, statusErr.Error())
-			}
-			s.setSessionMetaStatus(ctx, record.TenantID, record.SessionID, SessionStateResumable)
+		s.restorePersistedSession(tenantCtx, record, &restored, &resumable)
+	})
+	if err != nil {
+		return &AgentServiceError{
+			Sentinel: ErrAgentServiceUnavailable,
+			Message:  "failed to load persisted sessions: " + err.Error(),
 		}
 	}
 
@@ -230,6 +259,48 @@ func (s *agentServiceImpl) LoadPersistedSessions(ctx context.Context) error {
 			restored, resumable)
 	}
 	return nil
+}
+
+// restorePersistedSession puts one record back into the registry.
+//
+// A LOCAL persistent session comes back RESUMABLE: its process died with the
+// previous daemon and is recreated by the first prompt that needs it. A REMOTE
+// one comes back LIVE, because the process it names is still running on
+// another host — Resumable() is false for it, so neither the resumable flag
+// nor the durable status is touched.
+func (s *agentServiceImpl) restorePersistedSession(
+	ctx context.Context, record *SessionRecord, restored, resumable *int) {
+	mem := &sessionRecord{
+		Backend:      record.Backend,
+		ProjectID:    record.ProjectID,
+		Model:        record.Model,
+		TenantID:     record.TenantID,
+		ContainerID:  record.ContainerID,
+		CreatedAt:    record.CreatedAt,
+		JobID:        record.JobID,
+		HostAffinity: record.HostAffinity,
+		BackendLocal: record.BackendLocal,
+		Persistent:   record.Persistent,
+	}
+	mem.SetAccountID(record.AccountID)
+	// A restored session must be able to withdraw the grants it was handed
+	// before the restart: without this a close after a restart tears down
+	// everything except the authority over the credential.
+	mem.SetCredentialLeaseIDs(record.CredentialLeaseIDs)
+	if record.Resumable() {
+		mem.resumable.Store(true)
+		*resumable++
+	}
+	s.sessions.Store(record.SessionID, mem)
+	*restored++
+
+	if record.Resumable() && record.Status != SessionStateIdle {
+		if statusErr := s.store.UpdateSessionStatus(ctx, record.TenantID, record.SessionID, SessionStateResumable); statusErr != nil {
+			s.logger.Warnf("orchestration: failed to mark session %s resumable: %s",
+				record.SessionID, statusErr.Error())
+		}
+		s.setSessionMetaStatus(ctx, record.TenantID, record.SessionID, SessionStateResumable)
+	}
 }
 
 // =============================================================================

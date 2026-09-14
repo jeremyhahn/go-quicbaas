@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
 	"time"
 
@@ -38,10 +39,20 @@ import (
 
 // mockAgentService implements orchestration.AgentService for testing.
 type mockAgentService struct {
+	// listJobs is what ListJobs answers with; listJobsFilter records the
+	// narrowing it was asked for, so a transport that drops the caller's
+	// filter is caught rather than silently listing the whole tenant.
+	listJobs       []*orchestration.JobStatus
+	listJobsFilter *orchestration.JobFilter
+
+	blockTaskFunc        func(ctx context.Context, tenantID, taskID string, kind orchestration.TaskBlockKind, reason string) error
+	readmitTaskFunc      func(ctx context.Context, tenantID, taskID string) error
+	deleteTaskFunc       func(ctx context.Context, tenantID, taskID string) error
 	discoverProjectsFunc func(ctx context.Context, req *orchestration.DiscoverProjectsRequest) (*orchestration.DiscoverProjectsResponse, error)
 	registerProjectFunc  func(ctx context.Context, req *orchestration.RegisterProjectRequest) (*orchestration.RegisterProjectResponse, error)
 	listProjectsFunc     func(ctx context.Context, req *orchestration.ListProjectsRequest) (*orchestration.ListProjectsResponse, error)
 	spawnSessionFunc     func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error)
+	agentHeartbeatFunc   func(ctx context.Context, tenantID, agentID string, observed *orchestration.AgentObservation) error
 	promptSessionFunc    func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error)
 	promptAsyncFunc      func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error)
 	sessionStatusFunc    func(ctx context.Context, req *orchestration.SessionStatusRequest) (*orchestration.SessionStatusResponse, error)
@@ -208,6 +219,27 @@ func (m *mockAgentService) ClaimTask(ctx context.Context, tenantID, taskID, agen
 	return nil
 }
 
+func (m *mockAgentService) BlockTask(ctx context.Context, tenantID, taskID string, kind orchestration.TaskBlockKind, reason string) error {
+	if m.blockTaskFunc != nil {
+		return m.blockTaskFunc(ctx, tenantID, taskID, kind, reason)
+	}
+	return nil
+}
+
+func (m *mockAgentService) ReadmitTask(ctx context.Context, tenantID, taskID string) error {
+	if m.readmitTaskFunc != nil {
+		return m.readmitTaskFunc(ctx, tenantID, taskID)
+	}
+	return nil
+}
+
+func (m *mockAgentService) DeleteTask(ctx context.Context, tenantID, taskID string) error {
+	if m.deleteTaskFunc != nil {
+		return m.deleteTaskFunc(ctx, tenantID, taskID)
+	}
+	return nil
+}
+
 func (m *mockAgentService) CompleteTask(ctx context.Context, tenantID, taskID string, result *orchestration.TaskResult) error {
 	if m.completeTaskFunc != nil {
 		return m.completeTaskFunc(ctx, tenantID, taskID, result)
@@ -215,7 +247,10 @@ func (m *mockAgentService) CompleteTask(ctx context.Context, tenantID, taskID st
 	return nil
 }
 
-func (m *mockAgentService) AgentHeartbeat(ctx context.Context, tenantID, agentID string) error {
+func (m *mockAgentService) AgentHeartbeat(ctx context.Context, tenantID, agentID string, observed *orchestration.AgentObservation) error {
+	if m.agentHeartbeatFunc != nil {
+		return m.agentHeartbeatFunc(ctx, tenantID, agentID, observed)
+	}
 	return nil
 }
 
@@ -243,8 +278,9 @@ func (m *mockAgentService) GetJobStatus(ctx context.Context, tenantID, jobID str
 	return &orchestration.JobStatus{}, nil
 }
 
-func (m *mockAgentService) ListJobs(ctx context.Context, tenantID string) ([]*orchestration.JobStatus, error) {
-	return nil, nil
+func (m *mockAgentService) ListJobs(ctx context.Context, tenantID string, filter *orchestration.JobFilter) ([]*orchestration.JobStatus, error) {
+	m.listJobsFilter = filter
+	return m.listJobs, nil
 }
 
 func (m *mockAgentService) CancelJob(ctx context.Context, tenantID, jobID string) error {
@@ -959,6 +995,98 @@ func TestOrchestratorListBackends_Success(t *testing.T) {
 	server.HandleOrchestratorListBackends(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+// =============================================================================
+// List Runners Tests
+// =============================================================================
+
+// TestOrchestratorListRunners_ReportsRegisteredRunners proves the endpoint
+// serves the registry rather than a copy of it: the engine's own "workflow"
+// runner is present with the states it declares, in the order it declares
+// them, and session-backed states are marked as such. This is what the job
+// detail stepper reads instead of hardcoding the engine's thirteen states.
+func TestOrchestratorListRunners_ReportsRegisteredRunners(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/runners", nil)
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorListRunners(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var got OrchestratorListRunnersResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, len(got.Runners), got.Count)
+	require.NotEmpty(t, got.Runners)
+
+	byName := make(map[string]OrchestratorJobRunnerResponse, len(got.Runners))
+	for _, runner := range got.Runners {
+		byName[runner.Name] = runner
+	}
+	workflow, ok := byName[orchestration.JobRunnerWorkflow]
+	require.True(t, ok, "the engine's own runner must be registered: %v", byName)
+
+	// The response mirrors what the runner itself declares — state, label and
+	// session-backed flag, in declaration order.
+	declared, found := orchestration.LookupJobRunner(orchestration.JobRunnerWorkflow)
+	require.True(t, found)
+	specs := declared.States()
+	require.Len(t, workflow.States, len(specs))
+	for i, spec := range specs {
+		assert.Equal(t, string(spec.State), workflow.States[i].State)
+		assert.Equal(t, spec.Label, workflow.States[i].Label)
+		assert.Equal(t, spec.SessionBacked, workflow.States[i].SessionBacked)
+	}
+	assert.True(t, sort.SliceIsSorted(got.Runners, func(i, j int) bool {
+		return got.Runners[i].Name < got.Runners[j].Name
+	}), "runners must be ordered by name so two reads serialize identically")
+}
+
+// TestOrchestratorListRunners_SessionBackedIsAlwaysSerialized proves the
+// flag is on the wire even when false. A consumer deciding whether a state
+// has a session to address must not have to infer the default from a key
+// that omitempty dropped.
+func TestOrchestratorListRunners_SessionBackedIsAlwaysSerialized(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/runners", nil)
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorListRunners(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var raw struct {
+		Runners []struct {
+			States []map[string]any `json:"states"`
+		} `json:"runners"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
+	require.NotEmpty(t, raw.Runners)
+	for _, runner := range raw.Runners {
+		require.NotEmpty(t, runner.States)
+		for _, state := range runner.States {
+			assert.Contains(t, state, "session_backed")
+			assert.Contains(t, state, "state")
+			assert.Contains(t, state, "label")
+		}
+	}
+}
+
+// TestOrchestratorListRunners_WithoutOrchestratorAnswers503 proves a node
+// running no orchestrator does not claim to drive runners. The registry is
+// package-level and would answer regardless, which is exactly why the gate
+// is explicit.
+func TestOrchestratorListRunners_WithoutOrchestratorAnswers503(t *testing.T) {
+	server, _, cleanup := setupMockServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/runners", nil)
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorListRunners(rec, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
 
 // =============================================================================

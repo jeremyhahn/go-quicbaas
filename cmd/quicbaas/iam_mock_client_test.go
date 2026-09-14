@@ -307,11 +307,12 @@ func (m *testMockGroupClient) ListMembers(ctx context.Context, tenantID, groupID
 
 // testMockRoleClient implements iam.RoleClient for testing.
 type testMockRoleClient struct {
-	CreateFunc func(ctx context.Context, tenantID string, req *iam.CreateRoleRequest) (*iam.Role, error)
-	GetFunc    func(ctx context.Context, tenantID, roleID string) (*iam.Role, error)
-	UpdateFunc func(ctx context.Context, tenantID, roleID string, req *iam.UpdateRoleRequest) (*iam.Role, error)
-	DeleteFunc func(ctx context.Context, tenantID, roleID string) error
-	ListFunc   func(ctx context.Context, tenantID string, req *iam.ListRolesRequest) (*iam.ListRolesResponse, error)
+	CreateFunc    func(ctx context.Context, tenantID string, req *iam.CreateRoleRequest) (*iam.Role, error)
+	GetFunc       func(ctx context.Context, tenantID, roleID string) (*iam.Role, error)
+	UpdateFunc    func(ctx context.Context, tenantID, roleID string, req *iam.UpdateRoleRequest) (*iam.Role, error)
+	DeleteFunc    func(ctx context.Context, tenantID, roleID string) error
+	ListFunc      func(ctx context.Context, tenantID string, req *iam.ListRolesRequest) (*iam.ListRolesResponse, error)
+	ReconcileFunc func(ctx context.Context, tenantID string) (*iam.ReconcileRolesResponse, error)
 }
 
 func (m *testMockRoleClient) Create(ctx context.Context, tenantID string, req *iam.CreateRoleRequest) (*iam.Role, error) {
@@ -349,6 +350,19 @@ func (m *testMockRoleClient) List(ctx context.Context, tenantID string, req *iam
 	return &iam.ListRolesResponse{
 		Roles:      []iam.Role{{ID: "role_001", Name: "admin", DisplayName: "Admin", TenantID: tenantID, Permissions: []string{"all"}, CreatedAt: time.Now()}},
 		Pagination: iam.PaginationInfo{TotalCount: 1, HasMore: false},
+	}, nil
+}
+
+func (m *testMockRoleClient) Reconcile(ctx context.Context, tenantID string) (*iam.ReconcileRolesResponse, error) {
+	if m.ReconcileFunc != nil {
+		return m.ReconcileFunc(ctx, tenantID)
+	}
+	return &iam.ReconcileRolesResponse{
+		TenantID: tenantID,
+		Roles: []iam.RoleReconcileResult{
+			{RoleID: "role_001", Name: "admin", Added: []string{"kv:write"}, Removed: []string{"kv:put"}},
+		},
+		Changed: true,
 	}, nil
 }
 
@@ -942,6 +956,11 @@ type testMockIAMClient struct {
 	DisableMFAFunc            func(ctx context.Context, tenantID, userID string) error
 	GetBackupCodeStatusFunc   func(ctx context.Context, tenantID, userID string) (*cli.BackupCodeStatus, error)
 	GenerateBackupCodesFunc   func(ctx context.Context, tenantID, userID string) ([]string, error)
+
+	// WebAuthn credential administration methods
+	ListWebAuthnCredentialsFunc   func(ctx context.Context, tenantID, userID string) ([]*cli.WebAuthnCredential, error)
+	DeleteWebAuthnCredentialFunc  func(ctx context.Context, tenantID, userID, credentialID string) error
+	DeleteWebAuthnCredentialsFunc func(ctx context.Context, tenantID, userID string) (int, error)
 }
 
 func (m *testMockIAMClient) Tenant() iam.TenantClient   { return m.tenantClient }
@@ -1033,6 +1052,27 @@ func (m *testMockIAMClient) CompleteMFAEnrollment(ctx context.Context, enrollmen
 		return m.CompleteMFAEnrollmentFunc(ctx, enrollmentID, code)
 	}
 	return nil
+}
+
+func (m *testMockIAMClient) ListWebAuthnCredentials(ctx context.Context, tenantID, userID string) ([]*cli.WebAuthnCredential, error) {
+	if m.ListWebAuthnCredentialsFunc != nil {
+		return m.ListWebAuthnCredentialsFunc(ctx, tenantID, userID)
+	}
+	return nil, nil
+}
+
+func (m *testMockIAMClient) DeleteWebAuthnCredential(ctx context.Context, tenantID, userID, credentialID string) error {
+	if m.DeleteWebAuthnCredentialFunc != nil {
+		return m.DeleteWebAuthnCredentialFunc(ctx, tenantID, userID, credentialID)
+	}
+	return nil
+}
+
+func (m *testMockIAMClient) DeleteWebAuthnCredentials(ctx context.Context, tenantID, userID string) (int, error) {
+	if m.DeleteWebAuthnCredentialsFunc != nil {
+		return m.DeleteWebAuthnCredentialsFunc(ctx, tenantID, userID)
+	}
+	return 0, nil
 }
 
 func (m *testMockIAMClient) DisableMFA(ctx context.Context, tenantID, userID string) error {

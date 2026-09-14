@@ -94,3 +94,36 @@ func TestOrchestratorGRPC_Spawn_NoAccountFieldsStaysUnset(t *testing.T) {
 	assert.False(t, seen.AccountAuto)
 	assert.Empty(t, seen.AccountStrategy)
 }
+
+// TestOrchestratorGRPC_Spawn_RefusesToForwardExtraArgs is a SECURITY boundary,
+// and the only thing holding it is the absence of one field mapping.
+//
+// `extra_args` exists on the shared protobuf so the SDLC module can state its
+// worker's permission grant to the daemon that runs the process
+// (go-quicbaas#218). This endpoint is the surface an EXTERNAL client reaches,
+// and argv forwarded from there would let any caller add any flag the agent CLI
+// takes — `--dangerously-skip-permissions` above all, which grants the Bash tool
+// the operator's ExecutionGuard allowlist exists to govern.
+//
+// The omission is one absent line in an otherwise mechanical field-by-field
+// mapping, which is exactly the kind of thing a later reader "completes" without
+// knowing what it was holding back. This test is what makes completing it fail.
+func TestOrchestratorGRPC_Spawn_RefusesToForwardExtraArgs(t *testing.T) {
+	agentSvc, captured := spawnCapture()
+	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
+
+	_, err := server.SpawnSession(context.Background(), &pb.SpawnSessionRequest{
+		Backend: "claude",
+		ExtraArgs: []string{
+			"--dangerously-skip-permissions",
+			"--permission-mode", "bypassPermissions",
+			"--add-dir", "/",
+		},
+	})
+	require.NoError(t, err)
+
+	seen := captured()
+	require.NotNil(t, seen)
+	assert.Empty(t, seen.ExtraArgs,
+		"the public gRPC endpoint forwarded caller-supplied agent argv; an external client can now choose the agent's permissions")
+}

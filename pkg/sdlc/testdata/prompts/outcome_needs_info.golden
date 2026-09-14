@@ -1,0 +1,18 @@
+### The agent has a question
+
+**Outcome:** `needs_info` — the run stopped on something only a human can settle, and is waiting.
+
+> the worker asked which router to use
+
+**Unblocks when:** the owner must rule on the question recorded with this task
+**Cleared by:** the owner
+**Attempt:** 1 of 3
+**Task:** `task-1`
+**Attempt history:** `job-1`
+**Pull request:** http://forge.test/acme/api/pulls/7
+**Review rounds:** 2
+**Labels:** `task:ready` → `factory:needs-info`
+
+**To resume:** answer or resolve what is stated above here, then readmit the task through the Software Factory (`quicbaas orchestrator task readmit task-1`). The next attempt reads this discussion.
+
+<!-- quicbaas-sdlc:blocked task=task-1 attempt=1 kind=needs_info -->

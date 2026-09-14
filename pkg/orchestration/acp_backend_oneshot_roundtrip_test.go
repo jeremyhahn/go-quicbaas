@@ -14,6 +14,7 @@
 package orchestration
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -211,17 +212,27 @@ func TestACPBackend_Diagnostics_CreateKeyAndLookupMiss(t *testing.T) {
 }
 
 // TestACPBackend_SessionMode_Labels covers the sessionMode label helper for all
-// three storage shapes so the diagnostic logs name the mode correctly.
+// four storage shapes so the diagnostic logs name the mode correctly.
+//
+// The persistent shapes carry PIPES, not merely a cmd: the stdio pair is what
+// makes a session speak stream-json, and a containerized one has no *exec.Cmd
+// at all (acpSession.streamJSON).
 func TestACPBackend_SessionMode_Labels(t *testing.T) {
 	b := NewACPBackend(ACPBackendConfig{Command: "claude"})
+	pipes := func(s *acpSession) *acpSession {
+		s.stdin = discardWriteCloser{}
+		s.stdout = bufio.NewScanner(strings.NewReader(""))
+		return s
+	}
 	cases := []struct {
 		name string
 		sess *acpSession
 		want string
 	}{
 		{"oneshot", &acpSession{id: "a"}, "cli-oneshot"},
-		{"persistent", &acpSession{id: "b", cmd: &exec.Cmd{}}, "cli-persistent"},
+		{"persistent", pipes(&acpSession{id: "b", cmd: &exec.Cmd{}}), "cli-persistent"},
 		{"jsonrpc", &acpSession{id: "c", transport: &StdioTransport{}}, "jsonrpc"},
+		{"container", pipes(&acpSession{id: "d", containerID: "ctr-1"}), "cli-container"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -231,3 +242,10 @@ func TestACPBackend_SessionMode_Labels(t *testing.T) {
 		})
 	}
 }
+
+// discardWriteCloser is a stand-in for an agent's stdin pipe in tests that only
+// need the session to LOOK like it has one.
+type discardWriteCloser struct{}
+
+func (discardWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (discardWriteCloser) Close() error                { return nil }

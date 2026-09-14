@@ -28,9 +28,6 @@ import (
 	"fmt"
 	"sync"
 
-	"google.golang.org/grpc/metadata"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -164,91 +161,6 @@ func (m *mockStorage) Close() error {
 	return nil
 }
 
-// mockAuthManager mocks auth.AuthManager for testing.
-type mockAuthManager struct {
-	authorizeFn     func(ctx context.Context, token, resource, action string) error
-	revokeTokenFn   func(ctx context.Context, token string) error
-	refreshTokenFn  func(ctx context.Context, refreshToken string) (*auth.Token, error)
-	validateTokenFn func(ctx context.Context, token string) (*auth.TokenValidationResult, error)
-	createUserFn    func(username string, roles []string) (*auth.User, error)
-	deleteUserFn    func(username string) error
-	listUsersFn     func() ([]*auth.User, error)
-	assignRoleFn    func(username, roleName string) error
-	revokeRoleFn    func(username, roleName string) error
-	userStoreReturn interfaces.UserStore
-}
-
-func (m *mockAuthManager) IssueTokenForUser(ctx context.Context, user interfaces.UserInfo) (interface{}, error) {
-	return nil, nil
-}
-
-func (m *mockAuthManager) Authorize(ctx context.Context, token, resource, action string) error {
-	if m.authorizeFn != nil {
-		return m.authorizeFn(ctx, token, resource, action)
-	}
-	return nil
-}
-
-func (m *mockAuthManager) RevokeToken(ctx context.Context, token string) error {
-	if m.revokeTokenFn != nil {
-		return m.revokeTokenFn(ctx, token)
-	}
-	return nil
-}
-
-func (m *mockAuthManager) RefreshToken(ctx context.Context, refreshToken string) (interface{}, error) {
-	if m.refreshTokenFn != nil {
-		return m.refreshTokenFn(ctx, refreshToken)
-	}
-	return nil, stderrors.New("not implemented")
-}
-
-func (m *mockAuthManager) ValidateToken(ctx context.Context, token string) (interface{}, error) {
-	if m.validateTokenFn != nil {
-		return m.validateTokenFn(ctx, token)
-	}
-	return nil, stderrors.New("not implemented")
-}
-
-func (m *mockAuthManager) CreateUser(username string, roles []string) (interface{}, error) {
-	if m.createUserFn != nil {
-		return m.createUserFn(username, roles)
-	}
-	return nil, stderrors.New("not implemented")
-}
-
-func (m *mockAuthManager) DeleteUser(username string) error {
-	if m.deleteUserFn != nil {
-		return m.deleteUserFn(username)
-	}
-	return nil
-}
-
-func (m *mockAuthManager) ListUsers() ([]*auth.User, error) {
-	if m.listUsersFn != nil {
-		return m.listUsersFn()
-	}
-	return nil, stderrors.New("not implemented")
-}
-
-func (m *mockAuthManager) AssignRole(username, roleName string) error {
-	if m.assignRoleFn != nil {
-		return m.assignRoleFn(username, roleName)
-	}
-	return nil
-}
-
-func (m *mockAuthManager) RevokeRole(username, roleName string) error {
-	if m.revokeRoleFn != nil {
-		return m.revokeRoleFn(username, roleName)
-	}
-	return nil
-}
-
-func (m *mockAuthManager) GetUserStore() interfaces.UserStore {
-	return m.userStoreReturn
-}
-
 type mockBackupManager struct {
 	createBackupFn  func(ctx context.Context, backupType interface{}) (interface{}, error)
 	listBackupsFn   func(ctx context.Context, limit int) (interface{}, error)
@@ -374,12 +286,6 @@ func withMockStorage(storage interfaces.Storage) func(*serviceBuilder) {
 func withEnableMetrics() func(*serviceBuilder) {
 	return func(b *serviceBuilder) {
 		b.config.EnableMetrics = true
-	}
-}
-
-func withAuthManager(authMgr *mockAuthManager) func(*serviceBuilder) {
-	return func(b *serviceBuilder) {
-		b.authManager = authMgr
 	}
 }
 
@@ -1468,33 +1374,6 @@ func TestAuthService_Login_ReturnsNotImplemented(t *testing.T) {
 // RBAC Service Tests
 // =============================================================================
 
-func TestRBACService_CreateUser_Success(t *testing.T) {
-	mockAuth := &mockAuthManager{
-		createUserFn: func(username string, roles []string) (*auth.User, error) {
-			return &auth.User{
-				ID:       "user-123",
-				Username: username,
-				Roles:    roles,
-				Created:  time.Now(),
-			}, nil
-		},
-	}
-
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth))
-	defer svc.Close()
-
-	req := &AuthCreateUserRequest{
-		Username: "newuser",
-		Roles:    []string{"viewer"},
-	}
-
-	resp, err := svc.CreateUser(context.Background(), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, "user-123", resp.UserID)
-}
-
 // =============================================================================
 // Additional Coverage Tests
 // =============================================================================
@@ -2117,30 +1996,6 @@ func TestWatch_SuccessPath_CreatedResponse(t *testing.T) {
 	}
 }
 
-func TestGet_AuthFailure_WithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("unauthorized")
-		},
-	}
-
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth), withEnableMetrics())
-	defer svc.Close()
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{"authorization": "Bearer bad-token"})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	resp, err := svc.Get(ctx, &GetRequest{
-		EntityType: "user",
-		ID:         1,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 func TestPut_BuildKeyError_WithMetrics(t *testing.T) {
 	log := createTestLogger(t)
 	raftNode := &mockRaftNode{}
@@ -2477,26 +2332,6 @@ func TestTimeSeriesQuery_WithMetrics_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestDeleteUser_NilTypedUserStore(t *testing.T) {
-	var nilUS *auth.UserStore
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		authManager: &mockAuthManager{
-			userStoreReturn: nilUS,
-		},
-	}
-	svc.rbacService = &rbacService{svc: svc}
-
-	resp, err := svc.rbacService.DeleteUser(context.Background(), &AuthDeleteUserRequest{
-		Username: "testuser",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
 func TestUpdateCacheConfig_NonCacheManagerType(t *testing.T) {
 	log := createTestLogger(t)
 	svc := &quicBaaS{
@@ -2618,20 +2453,6 @@ func Test81_NewQuicBaaS_InvalidCacheManagerType(t *testing.T) {
 	assert.Contains(t, err.Error(), "cache manager must be interfaces.CacheManager")
 }
 
-func Test81_NewQuicBaaS_InvalidAuthManagerType(t *testing.T) {
-	builder := &serviceBuilder{
-		raftNode:    &mockRaftNode{},
-		config:      &ServiceConfig{NodeID: 1},
-		logger:      createTestLogger(t),
-		authManager: "invalid-string-type", // Wrong type
-	}
-
-	svc, err := newQuicBaaS(builder)
-	require.Error(t, err)
-	assert.Nil(t, svc)
-	assert.Contains(t, err.Error(), "auth manager must be interfaces.AuthManager")
-}
-
 func Test81_NewQuicBaaS_InvalidBackupManagerType(t *testing.T) {
 	builder := &serviceBuilder{
 		raftNode:      &mockRaftNode{},
@@ -2714,25 +2535,17 @@ func Test81_NewQuicBaaS_NilConfig(t *testing.T) {
 
 // TestOIDCAuthorize_RejectsPasswordGrant verifies that the authService.Login
 // stub always returns not-implemented since password login is removed.
+// TestOIDCAuthorize_RejectsPasswordGrant pins that password login is not a
+// capability of this server: authService.Login always fails. Use the unified
+// login ceremony (WebAuthn / PIV / mTLS) instead.
 func TestOIDCAuthorize_RejectsPasswordGrant(t *testing.T) {
 	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, authManager: nil}
+	svc := &quicBaaS{logger: log}
 	authSvc := &authService{svc: svc}
 
 	_, err := authSvc.Login(context.Background(), &LoginRequest{Username: "user"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "password-based login")
-}
-
-func Test81_AuthService_Login_AlwaysReturnsNotImplemented(t *testing.T) {
-	// Login() always returns ErrNotImplemented regardless of auth manager state.
-	// Use WebAuthn FinishLogin or POST /api/v1/auth/login/piv instead.
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, authManager: &boost81MockAuthManager{}}
-	authSvc := &authService{svc: svc}
-
-	_, err := authSvc.Login(context.Background(), &LoginRequest{Username: "user"})
-	require.Error(t, err)
 }
 
 func Test81_ClusterService_RebalanceCluster_NilRequestPath(t *testing.T) {
@@ -2980,31 +2793,6 @@ func Test82_QuicBaaS_Close_WithLoggerAndCacheError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cache manager")
 	assert.True(t, db.closed)
-}
-
-func Test82_QuicBaaS_CheckAuth_AuthDisabled(t *testing.T) {
-	db := &quicBaaS{
-		config: &ServiceConfig{
-			EnableAuth: false,
-		},
-	}
-
-	err := db.checkAuth(context.Background(), "read")
-	require.NoError(t, err)
-}
-
-func Test82_QuicBaaS_CheckAuth_NoTokenInContext(t *testing.T) {
-	db := &quicBaaS{
-		config: &ServiceConfig{
-			EnableAuth: true,
-		},
-	}
-
-	err := db.checkAuth(context.Background(), "read")
-	require.Error(t, err)
-	var dErr *errors.QBError
-	require.ErrorAs(t, err, &dErr)
-	assert.Equal(t, errors.ErrUnauthorized, dErr.Code)
 }
 
 func Test82_QuicBaaS_SetIAMProvider_NilComponents(t *testing.T) {
@@ -3838,92 +3626,6 @@ func TestList_EmptyValueIncluded(t *testing.T) {
 	}
 	// Both keys should be included (even with nil value)
 	assert.Equal(t, 2, len(entities))
-}
-
-func TestListUsers_NilAuthManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, authManager: nil}
-	rbacSvc := &rbacService{svc: svc}
-
-	_, err := rbacSvc.ListUsers(context.Background(), &AuthListUsersRequest{})
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
-}
-
-func TestListUsers_NilUserStore(t *testing.T) {
-	log := createTestLogger(t)
-	authMgr := &svcBoostAuthManager{userStoreReturn: nil}
-	svc := &quicBaaS{logger: log, authManager: authMgr}
-	rbacSvc := &rbacService{svc: svc}
-
-	_, err := rbacSvc.ListUsers(context.Background(), &AuthListUsersRequest{})
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestListUsers_Success(t *testing.T) {
-	log := createTestLogger(t)
-	now := time.Now()
-
-	users := []interfaces.UserInfo{
-		&svcBoostUser{id: "1", username: "alice", roles: []string{"admin"}, created: now, lastAuth: now},
-		&svcBoostUser{id: "2", username: "bob", roles: []string{"user"}, created: now, lastAuth: now},
-	}
-
-	userStore := &svcBoostUserStore{users: users}
-	authMgr := &svcBoostAuthManager{userStoreReturn: userStore}
-	svc := &quicBaaS{logger: log, authManager: authMgr}
-	rbacSvc := &rbacService{svc: svc}
-
-	resp, err := rbacSvc.ListUsers(context.Background(), &AuthListUsersRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, uint64(2), resp.TotalCount)
-	assert.Len(t, resp.Users, 2)
-	assert.Equal(t, "alice", resp.Users[0].Username)
-	assert.Equal(t, "bob", resp.Users[1].Username)
-}
-
-func TestListUsers_Pagination(t *testing.T) {
-	log := createTestLogger(t)
-	now := time.Now()
-
-	users := []interfaces.UserInfo{
-		&svcBoostUser{id: "1", username: "user1", created: now, lastAuth: now},
-		&svcBoostUser{id: "2", username: "user2", created: now, lastAuth: now},
-		&svcBoostUser{id: "3", username: "user3", created: now, lastAuth: now},
-		&svcBoostUser{id: "4", username: "user4", created: now, lastAuth: now},
-	}
-
-	userStore := &svcBoostUserStore{users: users}
-	authMgr := &svcBoostAuthManager{userStoreReturn: userStore}
-	svc := &quicBaaS{logger: log, authManager: authMgr}
-	rbacSvc := &rbacService{svc: svc}
-
-	// Test with limit
-	resp, err := rbacSvc.ListUsers(context.Background(), &AuthListUsersRequest{Limit: 2, Offset: 0})
-	require.NoError(t, err)
-	assert.Equal(t, uint64(4), resp.TotalCount)
-	assert.Len(t, resp.Users, 2)
-	assert.Equal(t, "user1", resp.Users[0].Username)
-
-	// Test with offset
-	resp, err = rbacSvc.ListUsers(context.Background(), &AuthListUsersRequest{Limit: 2, Offset: 2})
-	require.NoError(t, err)
-	assert.Equal(t, uint64(4), resp.TotalCount)
-	assert.Len(t, resp.Users, 2)
-	assert.Equal(t, "user3", resp.Users[0].Username)
-
-	// Test offset beyond total
-	resp, err = rbacSvc.ListUsers(context.Background(), &AuthListUsersRequest{Limit: 2, Offset: 10})
-	require.NoError(t, err)
-	assert.Equal(t, uint64(4), resp.TotalCount)
-	assert.Len(t, resp.Users, 0)
 }
 
 // AssignRole/RevokeRole now route through the qrdb-backed IdentityStore (C1-E);
@@ -6241,66 +5943,6 @@ func TestBackupService_CreateBackup_Error(t *testing.T) {
 	resp, err := svc.CreateBackup(context.Background(), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
-}
-
-func TestListUsers_Coverage(t *testing.T) {
-	log := createTestLogger(t)
-
-	t.Run("success", func(t *testing.T) {
-		userStore := &mockUserStore2{
-			users: []interfaces.UserInfo{
-				&mockUser2{id: "1", username: "alice"},
-			},
-		}
-
-		svc := &quicBaaS{
-			logger:      log,
-			authManager: &mockAuthManager{userStoreReturn: userStore},
-		}
-		rbacSvc := &rbacService{svc: svc}
-
-		resp, err := rbacSvc.ListUsers(context.Background(), &ListUsersRequest{})
-		require.NoError(t, err)
-		assert.Len(t, resp.Users, 1)
-	})
-
-	t.Run("error - no auth manager", func(t *testing.T) {
-		svc := &quicBaaS{logger: log, authManager: nil}
-		rbacSvc := &rbacService{svc: svc}
-
-		_, err := rbacSvc.ListUsers(context.Background(), &ListUsersRequest{})
-		require.Error(t, err)
-	})
-}
-
-func TestDeleteUser_Coverage(t *testing.T) {
-	log := createTestLogger(t)
-
-	t.Run("success", func(t *testing.T) {
-		userStore := auth.NewUserStore()
-		userStore.AddUser(&auth.User{ID: "1", Username: "alice", Created: time.Now()})
-
-		svc := &quicBaaS{
-			logger:      log,
-			authManager: &mockAuthManager{userStoreReturn: userStore},
-		}
-		rbacSvc := &rbacService{svc: svc}
-
-		resp, err := rbacSvc.DeleteUser(context.Background(), &DeleteUserRequest{Username: "alice"})
-		require.NoError(t, err)
-		assert.True(t, resp.Success)
-	})
-
-	t.Run("error - empty username", func(t *testing.T) {
-		svc := &quicBaaS{
-			logger:      log,
-			authManager: &mockAuthManager{},
-		}
-		rbacSvc := &rbacService{svc: svc}
-
-		_, err := rbacSvc.DeleteUser(context.Background(), &DeleteUserRequest{Username: ""})
-		require.Error(t, err)
-	})
 }
 
 func TestTimeSeriesQuery_Coverage(t *testing.T) {

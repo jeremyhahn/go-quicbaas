@@ -24,6 +24,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	sshclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/sshfixture"
 )
 
 // TestIsSSHService pins the routing predicate.
@@ -90,11 +91,13 @@ func TestSSHKeyFromProto(t *testing.T) {
 	key, err := sshKeyFromProto("op", &pb.SSHKeyInfo{
 		Scope: "user", Owner: "alice", Name: "laptop",
 		Algorithm: "ed25519", PublicKey: "ssh-ed25519 AAAA",
-		Fingerprint: "SHA256:abc", CreatedAtUnix: 1700000000,
+		Fingerprint: sshfixture.UserFingerprint, CreatedAtUnix: 1700000000,
 		Comment: "work", Backend: "tpm2", BackendKeyId: "ssh-user-laptop",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "laptop", key.Name)
+	assert.Equal(t, sshfixture.UserFingerprint, key.Fingerprint,
+		"the fingerprint must survive the proto boundary byte for byte")
 	assert.Equal(t, "tpm2", key.Backend)
 	assert.Equal(t, "ssh-user-laptop", key.BackendKeyID)
 	assert.Equal(t, int64(1700000000), key.CreatedAt.Unix())

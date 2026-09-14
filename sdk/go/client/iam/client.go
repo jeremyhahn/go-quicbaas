@@ -113,6 +113,20 @@ type Client interface {
 	// ListUserIdentities lists all linked identities for a user.
 	ListUserIdentities(ctx context.Context, tenantID, userID string) ([]*cli.FederatedIdentity, error)
 
+	// WebAuthn credential administration methods
+
+	// ListWebAuthnCredentials returns the WebAuthn authenticators
+	// registered to a user.
+	ListWebAuthnCredentials(ctx context.Context, tenantID, userID string) ([]*cli.WebAuthnCredential, error)
+
+	// DeleteWebAuthnCredential removes one of a user's registered
+	// authenticators by its base64url credential id.
+	DeleteWebAuthnCredential(ctx context.Context, tenantID, userID, credentialID string) error
+
+	// DeleteWebAuthnCredentials removes every authenticator registered to a
+	// user and reports how many were removed.
+	DeleteWebAuthnCredentials(ctx context.Context, tenantID, userID string) (int, error)
+
 	// MFA methods
 
 	// GetMFAStatus retrieves the MFA status for a user.

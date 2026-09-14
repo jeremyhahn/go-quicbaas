@@ -39,7 +39,7 @@
     CreatePolicyRequest,
     UpdatePolicyRequest,
   } from '@quicbaas/sdk';
-  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft } from 'lucide-svelte';
+  import { ShieldCheck, UserPlus, Pencil, Trash2, UserCheck, ToggleLeft, RefreshCw } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import { routerStore, routeIAMTab } from '../../stores/router.svelte.ts';
   import { formatDateTime } from '../../lib/time.ts';
@@ -196,6 +196,12 @@
 
   let roleToDelete: IAMRole | null = $state(null);
   let deletingRole = $state(false);
+
+  // ---------------------------------------------------------------------------
+  // Reconcile roles state
+  // ---------------------------------------------------------------------------
+
+  let reconcilingRoles = $state(false);
 
   // ---------------------------------------------------------------------------
   // Create Policy dialog state
@@ -616,6 +622,35 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Reconcile roles
+  //
+  // Built-in roles are seeded once when a tenant is created, so a permission
+  // rename in a later server build leaves every existing tenant carrying the
+  // old verbs. Reconcile converges this tenant's built-in roles onto the
+  // definitions the running build carries; custom roles are left alone.
+  // ---------------------------------------------------------------------------
+
+  async function submitReconcileRoles(): Promise<void> {
+    reconcilingRoles = true;
+    try {
+      const client = await getSDKClient();
+      const resp = await client.iam.reconcileRoles(selectedTenantID);
+      const changedCount = resp.roles?.length ?? 0;
+      showToast({
+        message: resp.changed
+          ? `Reconciled ${changedCount} role${changedCount === 1 ? '' : 's'} in "${selectedTenantID}"`
+          : `Roles in "${selectedTenantID}" are already up to date`,
+        type: 'success',
+      });
+      void loadRoles();
+    } catch (e) {
+      showToast({ message: e instanceof Error ? e.message : 'Reconcile failed', type: 'error' });
+    } finally {
+      reconcilingRoles = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Create policy
   // ---------------------------------------------------------------------------
 
@@ -739,6 +774,20 @@
         + Create Tenant
       </button>
     {:else if activeTab === 'roles'}
+      <button
+        class="btn btn-ghost btn-sm"
+        onclick={() => { void submitReconcileRoles(); }}
+        disabled={reconcilingRoles}
+        aria-label="Reconcile roles"
+        title="Converge this tenant's built-in roles onto the role definitions this server build carries — adds the verbs it now grants, removes the ones it no longer defines. Custom roles are untouched."
+      >
+        {#if reconcilingRoles}
+          <span class="loading loading-spinner loading-xs"></span>
+        {:else}
+          <RefreshCw class="h-3 w-3" />
+        {/if}
+        Reconcile Roles
+      </button>
       <button
         class="btn btn-primary btn-sm"
         onclick={() => { showCreateRole = true; }}
@@ -962,6 +1011,14 @@
                       {#if (role.permissions ?? []).length > 4}
                         <span class="badge badge-xs badge-ghost">+{(role.permissions ?? []).length - 4}</span>
                       {/if}
+                      <!-- Drift: permissions this role still carries that the running
+                           server build no longer defines. Reconcile Roles repairs it. -->
+                      {#each role.retired_permissions ?? [] as retired}
+                        <span
+                          class="badge badge-xs badge-warning badge-outline"
+                          title={`Retired: this server build no longer defines "${retired}". Run Reconcile Roles to converge this role onto the current definitions.`}
+                        >{retired}</span>
+                      {/each}
                     </div>
                   </td>
                   <td class="text-xs text-base-content/50">{formatDateTime(role.created_at)}</td>

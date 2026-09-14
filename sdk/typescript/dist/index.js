@@ -12,8 +12,12 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 // Factory, transport detection, and environment helpers.
 export { createClient, getClient, isDesktop, isWailsRuntime, createBarrierClient, createCeremonyClient, createBootstrapClient, } from './factory.js';
+export { parseJSONPreservingLargeIntegers, quoteUnrepresentableIntegers, } from './json.js';
 // SandboxMode const object (not a type — must be a named export, not type-only).
 export { SandboxMode } from './types.js';
+// SPEND_UNATTRIBUTED is a value, not a type: a caller drilling into a spend
+// report's unattributed row supplies it as that level's scope.
+export { SPEND_UNATTRIBUTED } from './types.js';
 // Typed errors.
 export { QuicBaaSError, ConnectionError, NotConnectedError, APIError, DeployNotSupportedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
 // SSH REST client classes — exported so callers can construct them directly

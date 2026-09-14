@@ -149,6 +149,12 @@ type TurnCompletedPayload struct {
 
 	// DurationMS is the wall-clock time the turn took, in milliseconds.
 	DurationMS int64 `json:"duration_ms,omitempty"`
+
+	// Usage is the turn's token accounting as the backend reported it, or nil
+	// when the backend reported none. It is carried on the transcript as well
+	// as in the cost ledger because an operator reading a conversation needs
+	// to see what each answer cost without joining against a second store.
+	Usage *TokenUsage `json:"usage,omitempty"`
 }
 
 // TurnFailedPayload is the payload for KindTurnFailed.
@@ -252,6 +258,11 @@ type PromptSubmittedPayload struct {
 
 	// SystemPrompt is an optional system message applied to this prompt.
 	SystemPrompt string `json:"system_prompt,omitempty"`
+
+	// TruncatedBytes is non-zero when Prompt or SystemPrompt exceeded
+	// MaxSessionEventTextBytes and was clipped on the way into the log. The
+	// stored text ends in a visible truncation marker.
+	TruncatedBytes int64 `json:"truncated_bytes,omitempty"`
 }
 
 // AssistantChunkPayload carries one fragment of assistant output.
@@ -267,11 +278,25 @@ type AssistantChunkPayload struct {
 
 	// Model is the model that produced this chunk.
 	Model string `json:"model,omitempty"`
+
+	// Usage is the turn's token accounting as the backend reported it, set
+	// only on the aggregate chunk a non-streaming turn produces. A streaming
+	// turn reports its usage on the TurnCompletedPayload that closes it,
+	// because the count is not known until the last fragment has been sent.
+	Usage *TokenUsage `json:"usage,omitempty"`
+
+	// TruncatedBytes is non-zero when Text exceeded MaxSessionEventTextBytes
+	// and was clipped on the way into the log.
+	TruncatedBytes int64 `json:"truncated_bytes,omitempty"`
 }
 
 // AgentThoughtPayload carries one fragment of agent reasoning.
 type AgentThoughtPayload struct {
 	Text string `json:"text"`
+
+	// TruncatedBytes is non-zero when Text exceeded MaxSessionEventTextBytes
+	// and was clipped on the way into the log.
+	TruncatedBytes int64 `json:"truncated_bytes,omitempty"`
 }
 
 // ToolInvocationPayload describes a tool call the agent made.
@@ -284,8 +309,13 @@ type ToolInvocationPayload struct {
 	Name string `json:"name"`
 
 	// Args is the tool's input as JSON. Rendered collapsed in the UI; click
-	// to expand. Large args (>1 MB) are truncated with a marker.
+	// to expand. Args larger than MaxSessionEventArgsBytes are REPLACED with
+	// a marker object — structured input cannot be clipped mid-value and stay
+	// parseable — and TruncatedBytes records the original size.
 	Args json.RawMessage `json:"args,omitempty"`
+
+	// TruncatedBytes is non-zero when Args was replaced for size.
+	TruncatedBytes int64 `json:"truncated_bytes,omitempty"`
 }
 
 // ToolResultPayload carries the result of a prior ToolInvocation.
@@ -400,6 +430,18 @@ type SessionMeta struct {
 	LatestSequence uint64            `json:"latest_sequence"`
 	EventCount     uint64            `json:"event_count"`
 	Labels         map[string]string `json:"labels,omitempty"`
+
+	// OldestSequence is the lowest sequence still stored. It is 0 until the
+	// first prune and equal to the first retained turn's opening sequence
+	// afterwards, so a reader knows where the surviving transcript starts
+	// rather than inferring it from a scan that finds nothing.
+	OldestSequence uint64 `json:"oldest_sequence,omitempty"`
+
+	// TurnStarts holds the sequence each retained turn opened at, oldest
+	// first. It is the index the retention prune works from: dropping the
+	// oldest turn is "delete every event below TurnStarts[1]", which needs no
+	// scan and no second store. Bounded by the tenant's retention setting.
+	TurnStarts []uint64 `json:"turn_starts,omitempty"`
 }
 
 // SessionFilter narrows a ListSessions query.
@@ -431,6 +473,15 @@ type SessionFilter struct {
 // number. The caller has either a misbehaving daemon or a bug upstream;
 // either way we refuse the append so downstream replay stays gapless.
 var ErrSessionLogGap = errors.New("orchestration session log: sequence gap")
+
+// ErrSessionLogConcluded reports an append to a session that has already ended.
+//
+// KindSessionClosed is the last event a session has, and this is what makes
+// that mechanical rather than documentary. It is returned by
+// AppendNextSessionEvent, so every writer meets it on the one path they share
+// — a caller that prompts a dead session gets a refusal instead of a write that
+// silently lands after the ending, or on top of it.
+var ErrSessionLogConcluded = errors.New("orchestration session log: session already concluded")
 
 // ErrSessionLogNotFound indicates a lookup for a session that has no events
 // or metadata on record. Distinct from a session whose log is empty mid-lifetime.

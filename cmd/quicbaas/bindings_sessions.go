@@ -216,6 +216,34 @@ func (b *SessionBinding) GetHistory(req *orchestratorSDK.GetSessionHistoryReques
 	return resp, nil
 }
 
+// GetConversation pages through a session's CONVERSATION — who said what,
+// which tools ran, and what each answer cost. The request struct is forwarded
+// verbatim to the SDK, matching the TypeScript Wails client which passes the
+// GetSessionConversationRequest object directly over IPC.
+//
+// It is GetHistory's coarser sibling: that one pages the raw event log for a
+// client following one turn, this one returns the conversation an operator
+// reads. Both come from the same durable transcript.
+func (b *SessionBinding) GetConversation(req *orchestratorSDK.GetSessionConversationRequest) (*orchestratorSDK.GetSessionConversationResponse, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("SessionBinding.GetConversation")
+	}
+	if req.SessionID == "" {
+		return nil, NewGUISessionIDRequiredError("SessionBinding.GetConversation")
+	}
+
+	client, err := b.conn.loadClient()
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Orchestrator().GetSessionConversation(b.ctx, req)
+	if err != nil {
+		return nil, NewGUITransportError("SessionBinding.GetConversation", err)
+	}
+	return resp, nil
+}
+
 // Subscribe opens a live subscription for the given session. Any historical
 // events with sequence >= fromSeq are replayed as part of the stream. Each
 // event is emitted to the Wails event bus under topic

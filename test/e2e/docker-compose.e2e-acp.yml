@@ -3,7 +3,7 @@
 # Layered on docker-compose.e2e.yml to run the chromium-acp session_lifecycle
 # suite with the open-source opencode agent backed by a remote ollama GPU host:
 #
-#   make test-e2e-acp-docker GPU_HOST=198.51.100.91
+#   make test-e2e-acp-docker GPU_HOST=gpu-host.internal
 #
 # Adds opencode to the image (WITH_OPENCODE=1) and mounts the host Docker socket
 # so the orchestrator's container-sandbox spawn path can launch sibling

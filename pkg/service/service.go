@@ -220,6 +220,15 @@ type QuicBaaS interface {
 	// This is called during initialization when orchestration is configured.
 	SetAgentService(agent orchestration.AgentService)
 
+	// SDLC returns the SDLC module's project service (returns nil when the
+	// module is not running on this node). Projects are registered, listed
+	// and removed through it; the engines that work them are the server's.
+	SDLC() *SDLCService
+
+	// SetSDLCService attaches the SDLC module's service. Called by the server
+	// once the module has started, the way SetAgentService is.
+	SetSDLCService(svc *SDLCService)
+
 	// SetDatabaseService sets the Database lifecycle management service.
 	// This is called after the database manager is initialized.
 	SetDatabaseService(ds DatabaseService)
@@ -227,6 +236,17 @@ type QuicBaaS interface {
 	// SetQRDBClient sets the qrdb SDK client provider for core KV operations.
 	// This is called after the ShardedClient is initialized.
 	SetQRDBClient(provider QRDBClientProvider)
+
+	// SetDynamicSecretsService wires the Dynamic Secrets service into the
+	// facade at runtime.
+	//
+	// It is a setter rather than a builder option for the same reason
+	// SetSealService is: the service is composed during server bring-up, over
+	// the durable qrdb-backed KV and the credential generator registry, which
+	// is strictly later than the service container that owns the facade.
+	// Until it is called, Security().DynamicSecrets() reports the capability
+	// as unconfigured rather than panicking.
+	SetDynamicSecretsService(svc DynamicSecretsService)
 
 	// SetSealService wires the SealService into the facade at runtime.
 	// This is called by the server after the seal manager has been initialized
@@ -581,35 +601,14 @@ type AuthService interface {
 // RBAC Service - User and Role Management
 // =============================================================================
 
-// RBACService defines role-based access control operations.
+// RBACService defines role-based access control operations over roles and role
+// bindings. It has no user verbs: users belong to go-qrdb and are administered
+// through the IAM surface (IAMService below, Identity().IAM().User() on the
+// SDK). The CreateUser/DeleteUser/ListUsers trio that used to sit here was
+// backed by a local auth manager production never wired, so every call failed
+// with "authentication manager not configured"; issue #905 deleted it with the
+// rest of the parallel identity model.
 type RBACService interface {
-	// CreateUser creates a new user with initial roles.
-	// Parameters:
-	//   - ctx: Request context with timeout and metadata
-	//   - req: Create user request with username, password, roles
-	// Returns:
-	//   - AuthCreateUserResponse: Contains user ID and creation timestamp
-	//   - error: ErrAlreadyExists, ErrUnauthorized, ErrTimeout
-	CreateUser(ctx context.Context, req *AuthCreateUserRequest) (*AuthCreateUserResponse, error)
-
-	// DeleteUser removes a user from the system.
-	// Parameters:
-	//   - ctx: Request context with timeout and metadata
-	//   - req: Delete user request with username
-	// Returns:
-	//   - AuthDeleteUserResponse: Contains deletion status
-	//   - error: ErrNotFound, ErrUnauthorized, ErrTimeout
-	DeleteUser(ctx context.Context, req *AuthDeleteUserRequest) (*AuthDeleteUserResponse, error)
-
-	// ListUsers returns all users with optional filtering.
-	// Parameters:
-	//   - ctx: Request context with timeout and metadata
-	//   - req: List users request with optional filters
-	// Returns:
-	//   - AuthListUsersResponse: Contains user list
-	//   - error: ErrUnauthorized, ErrTimeout
-	ListUsers(ctx context.Context, req *AuthListUsersRequest) (*AuthListUsersResponse, error)
-
 	// CreateAuthRole creates a new RBAC role with permissions.
 	// Parameters:
 	//   - ctx: Request context with timeout and metadata
@@ -1669,6 +1668,12 @@ type ServiceBuilder interface {
 	// WithKVStoreProvider sets the KVStore provider for DAO factory
 	WithKVStoreProvider(provider func(shardID uint64) interface{}) ServiceBuilder
 
+	// WithSchedulerClustering supplies the leader checker and claim arbiter a
+	// clustered scheduler needs. Supplied only on a clustered boot; a
+	// standalone boot leaves it unset and gets the single-node scheduler. An
+	// incomplete value fails service construction rather than degrading.
+	WithSchedulerClustering(clustering *SchedulerClustering) ServiceBuilder
+
 	// WithOrchestrationKVStore sets the store that backs durable orchestration
 	// state — projects, agent registrations and tasks. The server passes its
 	// tenant-routed store so a barrier-isolated tenant's orchestration records
@@ -1758,7 +1763,6 @@ type serviceBuilder struct {
 	storage                   interface{}
 	indexManager              interface{}
 	cacheManager              interface{}
-	authManager               interface{}
 	backupManager             interface{}
 	logger                    interface{}
 	config                    *ServiceConfig
@@ -1768,6 +1772,7 @@ type serviceBuilder struct {
 	cryptoService             interface{}
 	cryptoManager             interfaces.CryptoManager
 	kvStoreProvider           func(shardID uint64) interface{}
+	schedulerClustering       *SchedulerClustering
 	orchestrationKVStore      interfaces.KVStore
 	orchestrationAuditor      orchestration.StoreAuditor
 	caService                 interface{}
@@ -1848,6 +1853,11 @@ func (b *serviceBuilder) WithCryptoManager(cryptoManager interfaces.CryptoManage
 
 func (b *serviceBuilder) WithKVStoreProvider(provider func(shardID uint64) interface{}) ServiceBuilder {
 	b.kvStoreProvider = provider
+	return b
+}
+
+func (b *serviceBuilder) WithSchedulerClustering(clustering *SchedulerClustering) ServiceBuilder {
+	b.schedulerClustering = clustering
 	return b
 }
 

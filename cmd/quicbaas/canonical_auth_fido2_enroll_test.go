@@ -108,7 +108,7 @@ func TestEnrollCanonicalFIDO2_Success(t *testing.T) {
 
 	// BeginRegistration carried the username/display name.
 	require.NotNil(t, fido2.beginReq)
-	assert.Equal(t, "alice", fido2.beginReq.Username)
+	assert.Equal(t, "alice", fido2.beginReq.Email)
 	assert.Equal(t, "yubikey-5", fido2.beginReq.DisplayName)
 
 	// The create seam received the server options + the device/origin flags.

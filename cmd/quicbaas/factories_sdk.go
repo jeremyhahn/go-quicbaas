@@ -808,6 +808,21 @@ func (c *sdkOrchestratorClient) ClaimTask(ctx context.Context, req *orchestrator
 	return c.sdk.Orchestrator().ClaimTask(ctx, req)
 }
 
+// BlockTask parks a task until a person readmits it.
+func (c *sdkOrchestratorClient) BlockTask(ctx context.Context, req *orchestratorSDK.BlockTaskRequest) (*orchestratorSDK.BlockTaskResponse, error) {
+	return c.sdk.Orchestrator().BlockTask(ctx, req)
+}
+
+// ReadmitTask returns a blocked task to the pending queue.
+func (c *sdkOrchestratorClient) ReadmitTask(ctx context.Context, req *orchestratorSDK.ReadmitTaskRequest) (*orchestratorSDK.ReadmitTaskResponse, error) {
+	return c.sdk.Orchestrator().ReadmitTask(ctx, req)
+}
+
+// DeleteTask removes a task and releases its source reservation.
+func (c *sdkOrchestratorClient) DeleteTask(ctx context.Context, req *orchestratorSDK.DeleteTaskRequest) (*orchestratorSDK.DeleteTaskResponse, error) {
+	return c.sdk.Orchestrator().DeleteTask(ctx, req)
+}
+
 // CompleteTask marks a task as completed.
 func (c *sdkOrchestratorClient) CompleteTask(ctx context.Context, req *orchestratorSDK.CompleteTaskRequest) (*orchestratorSDK.CompleteTaskResponse, error) {
 	return c.sdk.Orchestrator().CompleteTask(ctx, req)

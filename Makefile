@@ -45,7 +45,28 @@ GOLINT := $(shell go env GOPATH)/bin/golangci-lint
 # Pinned per devops.md §9 and company task #122. $(GOBIN) is shared across
 # checkouts on the build hosts, so an unpinned install in one tree silently
 # changes every other tree's lint verdict.
+#
+# THESE THREE ARE THE REPOSITORY'S ONLY COPY OF THE VERIFICATION TOOLCHAIN'S
+# VERSIONS. `make install-tools` installs them, CI installs them by reading
+# these variables (`make print-GOLANGCI_VERSION`, .github/workflows/ci.yml),
+# and `make build-worker-image` passes them into the Software Factory worker
+# image as build arguments. A worker that linted with a different version than
+# CI would produce review verdicts a merge then contradicts (go-quicbaas#772),
+# so there is one place to change and three consumers that read it.
 GOLANGCI_VERSION := v2.12.2
+# Pinned by the fleet ruling of 2026-08-26: an unpinned gosec self-updated
+# mid-day and turned unrelated branches red, so nobody could say which commit
+# owned the new findings.
+GOSEC_VERSION := v2.29.0
+# Pins the TOOL, not the vulnerability DATABASE -- govulncheck fetches that at
+# run time, which is the point of running it.
+GOVULNCHECK_VERSION := v1.7.0
+# Serena is the semantic code-retrieval MCP server the Software Factory's agents
+# search this codebase with, and gopls is the Go language server it drives. Both
+# are pinned for the same reason as the tools above: an agent whose search
+# behaviour changes under an image rebuild is a change nobody authored.
+SERENA_VERSION := v1.7.0
+GOPLS_VERSION := v0.23.0
 
 # Benchmark configuration
 BENCHTIME ?= 100ms
@@ -391,7 +412,7 @@ proto-gen: ## Generate protobuf code from .proto files
 		--go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 		--go-grpc_opt=require_unimplemented_servers=false \
-		$(PROTO_DIR)/*.proto
+		$(PROTO_DIR)/*.proto $(PROTO_DIR)/iam/*.proto
 	@echo "$(GREEN)Protobuf code generated successfully$(NC)"
 
 .PHONY: proto-lint
@@ -399,7 +420,7 @@ proto-lint: ## Lint proto files
 	@echo "$(BLUE)Linting proto files...$(NC)"
 	@if ! command -v buf > /dev/null; then \
 		echo "$(YELLOW)buf not installed, using protoc lint...$(NC)"; \
-		$(PROTOC) --descriptor_set_out=/dev/null $(PROTO_DIR)/*.proto; \
+		$(PROTOC) --descriptor_set_out=/dev/null $(PROTO_DIR)/*.proto $(PROTO_DIR)/iam/*.proto; \
 	else \
 		$(BUF) lint; \
 	fi
@@ -503,8 +524,7 @@ vet: ## Run go vet across every tag pass (untagged vet skips tag-gated packages)
 	$(GOCMD) vet -tags '$(MINIMAL_TEST_TAGS)' ./...
 	@echo "$(BLUE)Running go vet (desktop GUI tags)...$(NC)"
 	$(GOCMD) vet -tags '$(DESKTOP_TEST_TAGS)' ./...
-	@echo "$(BLUE)Running go vet (integration tree)...$(NC)"
-	$(GOCMD) vet -tags 'integration $(strip $(INTEGRATION_BUILD_TAGS)) $(TEST_EXTRA_TAGS)' ./test/...
+	@$(MAKE) --no-print-directory vet-integration
 
 ##@ Build
 
@@ -528,9 +548,10 @@ FE_BUILD_DIR ?= /tmp/fe-build-$(shell whoami)
 # Frontend build prerequisites (only when WITH_GUI=1)
 .PHONY: _build-sdk-typescript _build-frontend
 
+# npm ci, not npm install — see build-sdk-typescript below.
 _build-sdk-typescript:
 	@echo "$(BLUE)Building TypeScript SDK...$(NC)"
-	@cd sdk/typescript && npm install --silent && node ./node_modules/typescript/bin/tsc
+	@cd sdk/typescript && npm ci --silent && node ./node_modules/typescript/bin/tsc
 	@echo "$(GREEN)TypeScript SDK built$(NC)"
 
 _build-frontend: _build-sdk-typescript
@@ -557,10 +578,16 @@ _build-frontend: _build-sdk-typescript
 	@cp -r $(FE_BUILD_DIR)/dist cmd/quicbaas/frontend/dist
 	@echo "$(GREEN)Frontend built$(NC)"
 
+# npm ci, NOT npm install: install FROM sdk/typescript/package-lock.json
+# without rewriting it. npm install re-resolves the tree and drops the optional
+# platform-native entries that do not apply to the builder's host, so every
+# build left a dirty tree, and committing that narrowed the lock to whichever
+# platform built last. A lock npm ci refuses is stale: regenerate it on purpose,
+# in its own commit.
 .PHONY: build-sdk-typescript
 build-sdk-typescript: ## Build TypeScript SDK (direct compilation)
 	@echo "$(BLUE)Building TypeScript SDK...$(NC)"
-	@cd sdk/typescript && npm install --silent && node ./node_modules/typescript/bin/tsc
+	@cd sdk/typescript && npm ci --silent && node ./node_modules/typescript/bin/tsc
 	@echo "$(GREEN)TypeScript SDK built$(NC)"
 
 .PHONY: build-frontend
@@ -847,14 +874,37 @@ install: build ## Install the binary
 # Test tag matrix
 # ==============================================================================
 # Go compiles a file only when its //go:build constraint is satisfied, so a
-# package sitting behind a tag that no test pass supplies is skipped in silence:
-# `go test` prints "no test files" and the target still goes green. Every tag
-# used anywhere under pkg/ or cmd/ must therefore appear in one of the passes
-# below, or be listed in TAG_GATE_EXEMPT with the reason it cannot run.
-# `make check-build-tags` enforces that and is a prerequisite of `make test`.
+# file behind a constraint no test pass satisfies is skipped in silence:
+# `go test` prints "no test files" and the target still goes green. Every
+# CONSTRAINT under pkg/ or cmd/ must therefore evaluate TRUE under one of the
+# passes below, or rest on a tag listed in TAG_GATE_EXEMPT with the reason it
+# cannot run. `make check-build-tags` enforces that and is a prerequisite of
+# `make test`.
+#
+# THE UNIT OF THE CHECK IS THE CONSTRAINT, NOT THE TAG, and the difference is
+# the whole point (go#305). The gate used to ask whether every tag NAME
+# appeared in some pass, which a `tr`-and-grep pipeline can answer and which is
+# the wrong question: satisfiability is a property of the EXPRESSION.
+# `rag_stub.go` is `rest && !rag`; both names appear in the maximal pass, so
+# the old check passed, while the maximal pass sets both tags and the minimal
+# pass sets neither, so nothing compiled the file. That is how the REST route
+# goldens froze a surface the shipped build does not serve (go#299), and how
+# `rest && !timeseries` survived after it. The inverse — turning a tag OFF in a
+# pass with no `!tag` file behind it — cost pkg/sdlc every test in the minimal
+# pass (go#304).
+#
+# scripts/buildtagcover parses each constraint with go/build/constraint, the
+# same package the toolchain uses, and evaluates it against every pass, so
+# `||`, `&&`, `!` and parentheses mean here exactly what they mean to the
+# compiler. Platform tags and TAG_GATE_EXEMPT entries are treated as free
+# variables: a constraint mentioning one is covered when SOME assignment of
+# them satisfies it, which is honest, because such a tag is genuinely free to
+# be either value depending on where the build runs.
 #
 #   TEST_TAGS          maximal pass: every default-on feature compiled in.
-#   MINIMAL_TEST_TAGS  minimal pass: every optional feature OFF, so the
+#   MINIMAL_TEST_TAGS  minimal pass: every tag WITH A DISABLED SIDE off -- not
+#                      every optional tag, which is a different and wrong set
+#                      (it took the codecs with it, go#304). So the
 #                      !rest / !quic / !mcp / !rag / !timeseries / !vector /
 #                      !raft / !otel / !l2_redis / !desktop stub and no-op
 #                      files -- and the tests asserting their behaviour --
@@ -883,8 +933,142 @@ TEST_EXTRA_TAGS := canary otel l2_redis rest quic mcp rag
 # The leading !integration is documentation: `integration` is simply absent
 # from the list, which is what actually excludes the integration-tagged files.
 TEST_TAGS := !integration $(strip $(BUILD_TAGS)) $(TEST_EXTRA_TAGS)
-MINIMAL_TEST_TAGS := !integration hashicorpmetrics local
+
+# MINIMAL_TEST_TAGS: the pass that compiles the DISABLED-FEATURE side of the
+# tree -- the !rest / !quic / !mcp / !rag / !vector / !timeseries / !raft /
+# !otel / !l2_redis / !desktop / !quicbaas_{mqtt,amqp,stomp} stub and no-op
+# files, and the tests written to assert their behaviour. Nothing else
+# compiles them: a tag and its negation are mutually exclusive within one
+# `go test` invocation, so the maximal pass can never reach them.
+#
+# THE CRITERION, stated so the next person extending this knows it rather than
+# guessing: A TAG BELONGS IN THE OFF-SET IF AND ONLY IF SOME FILE IN THE TREE
+# IS GATED ON ITS NEGATION. Not "is it optional", not "does a WITH_* flag
+# exist" — does something carry `!tag`. And it is MEASURED, not asserted:
+# scripts/buildtagcover -list-negated computes the set from the constraints
+# themselves, so it stays true as files are added.
+#
+# Two worked cases from getting it wrong, because the criterion is easier to
+# apply than to derive:
+#
+#   codec_json  NO file is gated !codec_json, so it does not belong. Turning
+#               it off bought no stub coverage and broke pkg/sdlc's DAO with
+#               `codec "json" is not supported in this build` — go#304.
+#   quicbaas_*  TWO files each are gated on their negations, so they DO
+#               belong. An earlier attempt at this fix derived the set from
+#               `make build-minimal` instead, which leaves the messaging
+#               subprotocols ON, and would have deleted the only compilation
+#               those three stub pairs get. Caught in review; the measurement
+#               settled it.
+#
+# Both directions of getting it wrong are SILENT, which is why it is not a
+# literal list. Omit a tag and its stubs are compiled by nothing while the
+# pass still goes green -- go#299, and precisely what a hand list does the day
+# someone adds a new `!tag` file. Include a tag with no off side and the pass
+# turns off working code for no coverage: that was go#304, where the codec
+# tags were disabled, nothing was gained, and pkg/sdlc's DAO failed every test
+# with `codec "json" is not supported in this build`.
+#
+# The first version of this fix WAS a literal list, and review found it
+# already false under valid overrides: `make test-minimal WITH_L2_REDIS=1`
+# keeps l2_redis in BUILD_TAGS (see WITH_L2_REDIS above) and WITH_GUI=1 keeps
+# desktop, so their stubs went uncompiled while this target claimed otherwise.
+# Deriving the set is what makes the claim true for every override rather than
+# for the default one someone happened to test.
+#
+# Note what the derivation does NOT remove: qrdb_ts survives, because no file
+# is gated `!qrdb_ts`. It has no disabled side, so turning it off would be the
+# go#304 mistake again.
+#
+# It adds NO TEST_EXTRA_TAGS: `otel` and `l2_redis` swap implementations, and
+# compiling their !tag stubs is the point of this pass.
+#
+# $(shell) at parse time costs one `go run` (~0.2s warm). The $(if) guard is
+# not decoration: a silent failure here would yield an EMPTY off-set, which
+# subtracts nothing and quietly turns the minimal pass into the maximal one.
+#
+# BOTH ARE DEFERRED (`=`, not `:=`) SO ONLY THE TARGETS THAT NEED THEM PAY.
+# An immediate assignment runs the helper during Makefile PARSING, which makes
+# every target -- `make help` included -- depend on a working Go toolchain and
+# a writable build cache. Review caught that as a real failure, not a
+# hypothetical: in a sandbox with a read-only /tmp, plain `make -n help` died
+# on `go: creating work dir ... read-only file system` before any recipe ran.
+# A build-tag helper has no business breaking `make help`.
+#
+# The guard rides inside the expansion via $(or), which short-circuits: when
+# the helper prints tags, $(error) is never expanded. It catches an EMPTY
+# result, which is the failure mode this helper actually has -- it prints its
+# one line at the end or not at all. $(shell) captures stdout and not exit
+# status, so a command that printed a partial list AND THEN failed would slip
+# through; that is not a shape this tool can produce, and the alternative
+# (.SHELLSTATUS through a deferred expansion) buys less than it costs here.
+MINIMAL_OFF_TAGS = $(or $(shell $(GOCMD) run ./scripts/buildtagcover -list-negated -dir pkg -dir cmd),$(error buildtagcover -list-negated produced no tags; refusing to build a minimal pass that turns nothing off))
+MINIMAL_TEST_TAGS = !integration $(filter-out $(MINIMAL_OFF_TAGS),$(strip $(BUILD_TAGS)))
+
+# STANDARD_TEST_TAGS: the `make build-standard` FEATURE SET -- REST on, the AI
+# features off (WITH_VECTOR=0 WITH_RAG=0 WITH_MCP=0) -- carrying the same
+# test-only gates every other pass carries.
+#
+# It is composed by exactly TEST_TAGS's rule with the AI features subtracted:
+#
+#   TEST_TAGS          = !integration + BUILD_TAGS + TEST_EXTRA_TAGS
+#   STANDARD_TEST_TAGS = !integration + (the same, minus STANDARD_OFF_TAGS)
+#
+# so it cannot drift from TEST_TAGS in composition, only in feature set. It is
+# NOT byte-identical to what `make build-standard` links: like TEST_TAGS, it
+# adds the test-only gates (canary/otel/l2_redis), which swap in assertion and
+# tracing variants that no shipped binary carries. That is the same liberty
+# every pass here takes, and it is stated rather than implied.
+#
+# THE MAXIMAL AND MINIMAL PASSES CANNOT REACH THIS FEATURE SET, and go#299 is
+# what that cost. A file gated on a CONJUNCTION of an enabled and a disabled
+# tag compiles in neither: rag_stub.go is `rest && !rag`, so the maximal pass
+# (rest AND rag) skips it and the minimal pass (neither) skips it too. The
+# route goldens therefore froze the rag-enabled surface and were wrong by six
+# routes for a binary this Makefile actually ships -- invisibly, because
+# nothing compiled that combination.
+#
+# check-build-tags cannot catch this class on its own: it verifies every tag
+# NAME appears in some pass, and both `rest` and `rag` do. Combinations need a
+# pass, so this is one.
+#
+# KNOWN REMAINING HOLE: `rest && !timeseries` is still compiled by no pass
+# (timeseries_handlers_noop.go and its test). This pass keeps timeseries
+# because build-standard does; widening it would make this set correspond to
+# no shipped configuration, which is the mistake go#299 was about. Tracked as
+# go-quicbaas#305, together with the general point that check-build-tags
+# checks tag NAMES and cannot see COMBINATIONS at all.
+STANDARD_OFF_TAGS := vector qrdb_vector rag mcp
+STANDARD_TEST_TAGS := !integration \
+	$(filter-out $(STANDARD_OFF_TAGS),$(strip $(BUILD_TAGS)) $(TEST_EXTRA_TAGS))
 DESKTOP_TEST_TAGS := !integration $(strip $(BUILD_TAGS)) $(TEST_EXTRA_TAGS) desktop webkit2_41
+
+# LEAN_TEST_TAGS: the transports ON with the optional data-model features and
+# the test-only gates OFF.
+#
+# NAMED FOR WHAT IT IS RATHER THAN FOR A BUILD TARGET, deliberately: unlike
+# test-standard and test-minimal there is no `make build-lean`, and claiming
+# otherwise is the go#299 mistake. The WITH_* combination is legal and
+# supported (WITH_TIMESERIES=0 WITH_VECTOR=0 WITH_RAG=0 with REST/QUIC/MCP on),
+# it simply has no named recipe.
+#
+# It exists because three constraints in the tree are satisfied by no other
+# pass, and `make check-build-tags` can now prove it:
+#
+#	mcp && !rag		pkg/api/mcp/rag_mcp_stub.go, rag_index_tools_stub.go
+#	rest && !otel		pkg/api/rest/tracing_noop.go
+#	rest && !timeseries	pkg/api/rest/timeseries_handlers_noop.go + its test
+#
+# Each needs one feature ON and another OFF, which the maximal pass (all on)
+# and the minimal pass (all off) both miss by construction. `rest && !otel` is
+# the sharpest of the three: `otel` is a TEST-ONLY tag, so the no-op tracing
+# path it guards is what EVERY shipped binary runs and no test compiled it.
+#
+# It arrived red, which is the argument for it: TestSDKToolNameContract failed
+# immediately, because with mcp on and rag off the RAG tools are correctly
+# unregistered while the SDK still advertises the verbs (go#305).
+LEAN_OFF_TAGS := vector qrdb_vector rag timeseries qrdb_ts
+LEAN_TEST_TAGS := !integration $(filter-out $(LEAN_OFF_TAGS),$(strip $(BUILD_TAGS)))
 
 # Tag lists for tools that reject the decorative !integration entry.
 LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
@@ -921,14 +1105,27 @@ TAG_GATE_EXEMPT := linux darwin windows unix ignore integration coverage product
 # test/coverage/bench targets continue to reference a stable variable name.
 IAM_TEST_TAGS := $(TEST_TAGS)
 
+# The -timeout below is CONTENTION HEADROOM, not an expectation that any
+# package needs ten minutes alone. The cap is a per-BINARY wall clock, so it has
+# to survive `-p 2` plus whatever else shares the host, and this repo's runs land
+# beside other agents' suites routinely. Measured 2026-08-20: pkg/server takes
+# 58s alone under the full tag set and still hit the old 5m cap twice inside
+# `make test` on a shared box -- a timeout with zero assertion failures, which
+# reads exactly like a real red and costs an investigation to disprove. A false
+# red is worse than a slow one. Ten minutes is the failure bound; a package that
+# genuinely takes minutes alone is a defect to fix, not a budget to raise again.
+#
+# Keep prose OUT of the recipe: these lines sit inside a `\`-continued shell
+# command, where a `@#` line is handed to bash as a COMMAND and fails with
+# exit 127. That is exactly how this comment broke `make test` in CI run 4119.
 .PHONY: test
-test: check-insecure-tls check-build-tags ## Run unit tests (excludes integration tests)
+test: check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen ## Run unit tests (excludes integration tests)
 	@echo "$(BLUE)Running unit tests (excludes integration tests)...$(NC)"
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(TEST_TAGS)$(NC)"
 endif
 	@START_TIME=$$(date +%s); \
-	$(GOTEST) -v -p 2 -tags '$(TEST_TAGS)' -timeout=5m ./pkg/... ./cmd/...; \
+	$(GOTEST) -v -p 2 -tags '$(TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/... ./scripts/...; \
 	TEST_RESULT=$$?; \
 	END_TIME=$$(date +%s); \
 	ELAPSED=$$((END_TIME - START_TIME)); \
@@ -942,44 +1139,108 @@ endif
 	fi; \
 	exit $$TEST_RESULT
 
+.PHONY: check-local-keygen
+# go-xkms owns keys and certificates for the whole stack; go-quicbaas composes
+# it (repo-root CLAUDE.md, Layer Ownership). A key pair created in this process
+# cannot be protected by the TPM or the HSM that is the entire point of go-xkms,
+# and a certificate signed here bypasses the CA's profiles, serial policy,
+# SPIFFE synthesis and certificate store.
+#
+# go-quicbaas#910 found six local ecdsa/rsa/ed25519.GenerateKey calls across
+# three packages -- one of them in an adapter whose own sibling file documents
+# go-xkms as the canonical issuer -- and nothing in the build objected. The
+# refactor is worth no more than this gate: without it the next one lands the
+# same way and waits for an owner to notice.
+#
+# Scope is pkg, cmd, sdk AND test. test/ used to be excluded outright on the
+# grounds that it is test fixtures all the way down; go-quicbaas#943 found what
+# grew in that blind spot -- a 444-line parallel certificate authority the whole
+# integration suite depended on, which meant the suite proved the system worked
+# against certificates no part of the product issues. The fixtures now come from
+# the product's CA (test/integration/certfixture) and the tree is in scope, so
+# the next one cannot grow the same way.
+#
+# _test.go files are still excluded, uniformly across every tree: a unit test
+# minting a throwaway self-signed certificate that chains to nothing is not a
+# key-custody decision. `-include-tests` reports them anyway for an audit. A
+# site that genuinely has no alternative waives itself in place with
+# `// local-keygen-ok: <reason>`, so the justification lives next to the code;
+# pkg/signal carries the only two.
+check-local-keygen: ## Fail if any non-test site creates a key pair or signs a certificate itself
+	@echo "$(BLUE)Checking for local key/certificate generation outside go-xkms...$(NC)"
+	@$(GOCMD) run ./scripts/localkeygen -dir pkg -dir cmd -dir sdk -dir test
+
+.PHONY: check-coded-sentinels
+# A qrdb-coded sentinel is a *pkg/errors.QBError, which is a type alias for
+# go-qrdb's *QRDBError, and QRDBError.Is compares the error CODE alone. So
+# `errors.Is(err, iam.ErrInviteExpired)` is true for every Forbidden error that
+# reaches it -- a spent invite, a rejected PIV certificate, a suspended tenant.
+# The call site reads like sentinel matching and is not; it over-matches, and it
+# does so silently. go-quicbaas#434 found a 422 branch that could never run, an
+# authentication route that described why a proof failed, and a token-liveness
+# rule that admitted a token because the store answered not-found.
+#
+# A site that really does mean the whole code class waives itself in place with
+# a `// coded-sentinel-ok: <reason>` comment, so the justification lives next to
+# the code rather than in a list somewhere else. An empty reason is not a
+# waiver.
+check-coded-sentinels: ## Fail if errors.Is targets a qrdb-coded sentinel without a stated reason
+	@echo "$(BLUE)Checking errors.Is targets against qrdb-coded sentinels...$(NC)"
+	@$(GOCMD) run ./scripts/codedsentinel -dir pkg -dir cmd -dir sdk
+
 .PHONY: check-build-tags
-check-build-tags: ## Fail if any //go:build tag is absent from every test pass
-	@echo "$(BLUE)Checking build-tag coverage of the test gate...$(NC)"
-	@mkdir -p $(BUILD_DIR)
-	@printf '%s\n' $(TEST_TAGS) $(MINIMAL_TEST_TAGS) $(DESKTOP_TEST_TAGS) $(TAG_GATE_EXEMPT) \
-		| sed 's/^!//' | sort -u > $(BUILD_DIR)/tag-gate-covered.txt
-	@grep -rh --include='*.go' '^//go:build' pkg cmd \
-		| sed 's|^//go:build||' \
-		| tr ' ()!' '\n\n\n\n' \
-		| grep -E '^[A-Za-z_][A-Za-z0-9_.]*$$' \
-		| grep -Ev '^go1\.' \
-		| sort -u > $(BUILD_DIR)/tag-gate-found.txt
-	@missing=$$(grep -vxF -f $(BUILD_DIR)/tag-gate-covered.txt $(BUILD_DIR)/tag-gate-found.txt || true); \
-	if [ -n "$$missing" ]; then \
-		echo "$(RED)These //go:build tags gate code that NO test pass compiles:$(NC)"; \
-		printf '  %s\n' $$missing; \
-		echo "$(YELLOW)Tests behind them are invisible to the gate: go test reports$(NC)"; \
-		echo "$(YELLOW)'no test files' and the target passes green.$(NC)"; \
-		echo "$(YELLOW)Fix by adding each tag to TEST_TAGS, MINIMAL_TEST_TAGS or$(NC)"; \
-		echo "$(YELLOW)DESKTOP_TEST_TAGS, or to TAG_GATE_EXEMPT with the reason.$(NC)"; \
-		exit 1; \
-	fi
-	@echo "$(GREEN)Build-tag gate coverage OK ($$(wc -l < $(BUILD_DIR)/tag-gate-found.txt) tags)$(NC)"
+# The -pass / -localpass split is not cosmetic: -pass means CI RUNS IT, and a
+# constraint reachable only from a -localpass is reported as a note rather than
+# counted, because "a make target covers it" and "the pipeline compiles it" are
+# different claims. Conflating them would rebuild this gate's own blind spot
+# one level up.
+#
+#   minimal  a -pass as of this change, which is the commit that wires
+#            `make test-minimal` into the workflow. It was a -localpass while
+#            that step did not exist; leaving it one afterwards would have the
+#            gate report eight constraints as reaching no CI job when the job
+#            had just been added — a false claim in the direction that hides
+#            work already done.
+#   desktop  needs webkit2gtk, which the runners do not have. `make test` must
+#            stay runnable with no GUI toolchain, so this one stays a note
+#            until that is a decision someone makes deliberately.
+check-build-tags: ## Fail if any //go:build CONSTRAINT is satisfied by no test pass
+	@echo "$(BLUE)Checking build-constraint coverage of the test gate...$(NC)"
+	@$(GOCMD) run ./scripts/buildtagcover \
+		-dir pkg -dir cmd \
+		-free '$(TAG_GATE_EXEMPT)' \
+		-pass 'maximal:$(TEST_TAGS)' \
+		-pass 'standard:$(STANDARD_TEST_TAGS)' \
+		-pass 'lean:$(LEAN_TEST_TAGS)' \
+		-pass 'minimal:$(MINIMAL_TEST_TAGS)' \
+		-localpass 'desktop:$(DESKTOP_TEST_TAGS)'
 
 .PHONY: test-minimal
-test-minimal: check-insecure-tls check-build-tags ## Run unit tests with every optional feature OFF (covers the !tag stub/no-op paths)
-	@echo "$(BLUE)Running unit tests with all optional features disabled...$(NC)"
+test-minimal: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests with every tag that has a !tag side off (compiles the stub/no-op paths)
+	@echo "$(BLUE)Running unit tests with every disabled-side tag off...$(NC)"
 	@echo "$(YELLOW)Build tags: $(MINIMAL_TEST_TAGS)$(NC)"
 	$(GOTEST) -p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
 
+.PHONY: test-standard
+test-standard: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests in the build-standard configuration (REST on, AI features off)
+	@echo "$(BLUE)Running unit tests in the build-standard configuration...$(NC)"
+	@echo "$(YELLOW)Build tags: $(STANDARD_TEST_TAGS)$(NC)"
+	$(GOTEST) -p 2 -tags '$(STANDARD_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
+
+.PHONY: test-lean
+test-lean: check-insecure-tls check-build-tags check-local-keygen ## Run unit tests with the transports on and the optional data-model features off
+	@echo "$(BLUE)Running unit tests with the transports on, data-model extras off...$(NC)"
+	@echo "$(YELLOW)Build tags: $(LEAN_TEST_TAGS)$(NC)"
+	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
+
 .PHONY: test-desktop
-test-desktop: check-insecure-tls check-build-tags ## Run the Wails desktop binding tests (needs webkit2gtk dev libraries)
+test-desktop: check-insecure-tls check-build-tags check-local-keygen ## Run the Wails desktop binding tests (needs webkit2gtk dev libraries)
 	@echo "$(BLUE)Running desktop GUI binding tests...$(NC)"
 	@echo "$(YELLOW)Build tags: $(DESKTOP_TEST_TAGS)$(NC)"
 	$(GOTEST) -p 2 -tags '$(DESKTOP_TEST_TAGS)' -timeout=10m ./cmd/...
 
 .PHONY: test-all-tags
-test-all-tags: test test-minimal test-desktop ## Run every test pass in the tag matrix
+test-all-tags: test test-minimal test-standard test-lean test-desktop ## Run every test pass in the tag matrix
 	@echo "$(GREEN)All tag passes completed successfully$(NC)"
 
 .PHONY: test-fips
@@ -1143,6 +1404,28 @@ integration-test-sdk: integration-test-sdk-go integration-test-sdk-js ## Run ALL
 # ==============================================================================
 
 .PHONY: integration-test-session-attach
+# The live forge suite. Named per the integration-test-$PACKAGE convention so it
+# is discoverable rather than reachable only by remembering a `go test -tags`
+# incantation.
+#
+# It is NOT part of the blanket `integration-test` aggregate, deliberately: it
+# needs credentials for a live Gitea, and a gate that silently requires secrets
+# fails for everyone who does not have them, which teaches people to ignore it.
+# Wiring it into a gate is an infrastructure decision about where those
+# credentials live, not a Makefile one.
+#
+# The convention's "mock external API calls to 3rd party endpoints" does not
+# apply here: Gitea is our own internal service, and the entire purpose of this
+# suite is the server semantics a mock cannot know. Three real bugs were found
+# exactly this way -- snake_case merge fields, drafts having no API field, and
+# webhook event expansion -- each of which a mock reproduced happily.
+.PHONY: integration-test-forge-gitea
+integration-test-forge-gitea: ## Run the live Gitea forge suite (needs GITEA_ITEST_* env)
+	@echo "$(BLUE)Running live Gitea forge integration tests...$(NC)"
+	@echo "$(YELLOW)Requires GITEA_ITEST_BASE_URL, _TOKEN, _OWNER, _REPO against a SCRATCH repo$(NC)"
+	$(GOTEST) -tags integration -count=1 -v -timeout=10m -run 'TestLive_' ./pkg/sdlc/
+	@echo "$(GREEN)✓ Live Gitea forge tests passed$(NC)"
+
 integration-test-session-attach: build-daemon ## Run session attach integration tests (wire-level SSE smoke against live daemon)
 	@echo "$(BLUE)Running session attach integration tests...$(NC)"
 	@$(MAKE) stop-local >/dev/null 2>&1 || true
@@ -1370,13 +1653,8 @@ integration-test-tenantbarrier: ## Run per-tenant barrier integration tests agai
 		exit 1; \
 	fi
 	@COMPOSE_FILE="test/integration/docker-compose.seal.yml"; \
-	if [ ! -f test/integration/certs/ca.key ]; then \
-		echo "$(YELLOW)Generating integration mTLS/PIV certificates...$(NC)"; \
-		rm -rf test/integration/certs; \
-		go run test/integration/gen-certs/main.go test/integration/certs; \
-	else \
-		echo "$(YELLOW)Reusing existing test/integration/certs (delete to regenerate)$(NC)"; \
-	fi; \
+	echo "$(YELLOW)Issuing integration mTLS/PIV fixtures through the QuicBaaS CA...$(NC)"; \
+	$(GOCMD) run ./test/integration/certfixture/cmd test/integration/certs; \
 	echo "$(YELLOW)Cleaning up any previous tenantbarrier containers...$(NC)"; \
 	docker compose -p tenantbarrier -f $$COMPOSE_FILE down --volumes --remove-orphans 2>/dev/null || true; \
 	echo "$(YELLOW)Building tenantbarrier images (seal-enabled quicbaasd node + test runner)...$(NC)"; \
@@ -2254,6 +2532,41 @@ test-e2e-acp: build-ui build-daemon ## Run Playwright session lifecycle tests �
 		$(MAKE) stop-local >/dev/null 2>&1 || true; \
 		exit $$TEST_RESULT
 
+# E2E_SPEC optionally narrows test-e2e-live to one spec, e.g.
+#   make test-e2e-live E2E_SPEC=test/e2e/projects.spec.ts
+E2E_SPEC ?=
+
+.PHONY: test-e2e-live
+test-e2e-live: ## Run Playwright E2E against an ALREADY-RUNNING node as an existing tenant user
+	@echo "$(BLUE)Running Playwright E2E against a live node...$(NC)"
+	@missing=""; \
+	for v in QUICBAAS_UI_URL QUICBAAS_E2E_TENANT QUICBAAS_E2E_USER_EMAIL \
+	         QUICBAAS_E2E_ADMIN_CERT QUICBAAS_E2E_ADMIN_KEY QUICBAAS_E2E_CA; do \
+		if [ -z "$$(printenv $$v)" ]; then missing="$$missing $$v"; fi; \
+	done; \
+	if [ -n "$$missing" ]; then \
+		echo "$(RED)Error: test-e2e-live needs these in the environment:$$missing$(NC)"; \
+		echo "  QUICBAAS_UI_URL         https://<host>:<port>/ui/ of the running node"; \
+		echo "  QUICBAAS_E2E_TENANT     tenant the user belongs to"; \
+		echo "  QUICBAAS_E2E_USER_EMAIL the existing user to sign in as"; \
+		echo "  QUICBAAS_E2E_ADMIN_CERT admin client cert (enrols the user's passkey)"; \
+		echo "  QUICBAAS_E2E_ADMIN_KEY  its private key"; \
+		echo "  QUICBAAS_E2E_CA         CA the node's serving certificate chains to"; \
+		exit 1; \
+	fi; \
+	base=$$(echo "$$QUICBAAS_UI_URL" | sed -E 's#/ui/?$$##'); \
+	code=$$(curl -s --cacert "$$QUICBAAS_E2E_CA" -o /dev/null -w '%{http_code}' \
+		"$$base/api/v1/health/ready" 2>/dev/null || true); \
+	if [ "$$code" != "200" ]; then \
+		echo "$(RED)Error: $$base/api/v1/health/ready answered '$$code' with CA $$QUICBAAS_E2E_CA.$(NC)"; \
+		echo "$(RED)This target does not start a node — bring one up first.$(NC)"; \
+		exit 1; \
+	fi; \
+	echo "$(GREEN)live node ready at $$base$(NC)"; \
+	cd cmd/quicbaas/frontend && \
+		NODE_EXTRA_CA_CERTS="$$QUICBAAS_E2E_CA" \
+		npx playwright test --project=chromium-no-backend $(E2E_SPEC)
+
 .PHONY: test-e2e-docker
 test-e2e-docker: ## Run the Playwright e2e suite fully in Docker (host needs only Docker)
 	@echo "$(BLUE)Running dockerized Playwright e2e (chromium-no-backend)...$(NC)"
@@ -2330,8 +2643,57 @@ benchmark-fips: ## Run benchmarks in FIPS mode
 
 ##@ Code Quality
 
+INTEGRATION_VET_TAGS := integration $(strip $(INTEGRATION_BUILD_TAGS)) $(TEST_EXTRA_TAGS)
+
+# The scan that finds every package carrying an integration-tagged file. It is
+# a text scan of the tracked files (milliseconds, no build, no network), the
+# same instrument verify-naming uses, and it is DERIVED rather than listed
+# because a listed scope is exactly what went stale: this target vetted
+# `./test/...` alone while the daemon e2e suite in cmd/quicbaasd sat behind the
+# same tag, vetted by nothing in Lint or anywhere else (go-quicbaas#686).
+#
+# `./...` under the integration tags is NOT the answer. It typechecks the
+# unit-only packages in a configuration they never ship in -- every
+# `//go:build !integration` helper has vanished -- and reports phantom errors
+# (undefined buildMemoryStandaloneNode in pkg/server, undefined mockKVStoreForKMS
+# in pkg/service), the same failure mode the tag-gated packages have under a
+# bare `go vet ./...`.
+INTEGRATION_VET_SCAN = git grep -lE '^//go:build integration([ &]|$$)' -- '*.go'
+
+# Packages whose integration-tagged files do not compile today. They are
+# excluded so this gate reports the rot a change introduces instead of a wall
+# of rot that predates it; tracked by go-quicbaas#690, and a name leaves this
+# list with its fix, at which point this gate holds it.
+INTEGRATION_VET_ROT := pkg/backup pkg/sdlc pkg/server pkg/storage/file
+
+.PHONY: vet-integration
+vet-integration: ## Typecheck every integration-tagged package (the tag no unit gate compiles)
+	@echo "$(BLUE)Running go vet (integration tree)...$(NC)"
+	$(GOCMD) vet -tags '$(INTEGRATION_VET_TAGS)' ./test/...
+	@echo "$(BLUE)Running go vet (integration-tagged packages outside ./test)...$(NC)"
+	@pkgs=$$($(INTEGRATION_VET_SCAN) | xargs -n1 dirname | sort -u | grep -v '^test/' | grep -v '^sdk/'); \
+	for rot in $(INTEGRATION_VET_ROT); do pkgs=$$(printf '%s\n' "$$pkgs" | grep -vx "$$rot"); done; \
+	test -n "$$pkgs" || { echo "$(RED)vet-integration: the build-tag scan matched no package -- it has rotted$(NC)"; exit 1; }; \
+	scope=$$(printf '%s\n' "$$pkgs" | sed 's|^|./|; s|$$|/...|' | tr '\n' ' '); \
+	echo "  $$scope"; \
+	$(GOCMD) vet -tags '$(INTEGRATION_VET_TAGS)' $$scope
+	@echo "$(BLUE)Running go vet (Go SDK integration tree)...$(NC)"
+	@# sdk/go is its own module, so its integration tree needs its own pass:
+	@# the main module's `./...` cannot name it, and `make test-sdk-go` runs
+	@# `go list ./... | grep -v /test/`, which drops it too.
+	cd sdk/go && $(GOCMD) vet -tags integration ./test/...
+
 .PHONY: lint
-lint: ## Run linters
+# vet-integration first: `make test` never compiles test/integration (it runs
+# ./pkg/... ./cmd/... ./scripts/... without the tag), so a call site there that
+# an API change broke surfaced only in CI's `make vet` (go-quicbaas#572, the
+# stage-4 validator registry). A lane that runs `make lint` now typechecks it.
+#
+# verify-naming after it: the gate is a text scan of the tracked files
+# (milliseconds, no build, no network), so a naming regression reports before
+# the 20-minute golangci-lint pass rather than after it. This is why CI's Lint
+# job needs no separate step for the gate.
+lint: vet-integration verify-naming ## Run linters (naming gate + golangci-lint)
 	@echo "$(BLUE)Running linters...$(NC)"
 	@test -x $(GOLINT) || (echo "$(RED)golangci-lint not installed. Run: make install-tools$(NC)" && exit 1)
 	# 20m, not the template's 5m. This module is ~526k lines across ~1300 files
@@ -2585,7 +2947,13 @@ race: ## Run tests with race detector
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"
 endif
-	CGO_ENABLED=1 $(GOCMD) test -race -p 2 $(BUILD_TAGS_ARG) -timeout=10m ./pkg/... ./cmd/... || \
+	# 30m, not 10m. -timeout is PER PACKAGE, and pkg/iam alone measured 570.9s
+	# cache-cold on an idle host on 2026-09-08 -- under 30 seconds of headroom
+	# in a 10m budget, and 655s on a loaded one, where the deadline panicked
+	# the package and took the whole target red. A budget exists to catch a
+	# hang, so it belongs well above the honest worst case rather than beside
+	# it. Do not buy headroom by trimming the package set: every package races.
+	CGO_ENABLED=1 $(GOCMD) test -race -p 2 $(BUILD_TAGS_ARG) -timeout=30m ./pkg/... ./cmd/... || \
 		(echo "$(RED)Race detector found issues$(NC)" && exit 1)
 	@echo "$(GREEN)Race detector tests passed$(NC)"
 
@@ -2643,6 +3011,154 @@ endif
 	$(DOCKER) buildx build --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" -f test/integration/Dockerfile -t $(DOCKER_IMAGE)-integration-test:latest .
 	$(DOCKER) buildx build --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" -f test/integration/Dockerfile.node -t $(DOCKER_IMAGE)-integration-node:latest .
 	@echo "$(GREEN)Integration test images built$(NC)"
+
+# ==============================================================================
+# The Software Factory worker image
+# ==============================================================================
+#
+# The image a project binding's `worker.image` names: where an sdlc job's one
+# worker session runs, and where the runner's checkout, verification and
+# publish commands are exec'd. See deployments/agents/software-factory-worker/
+# Dockerfile for what is in it and why, and docs/sdlc/configuration.md for how
+# a binding names it.
+#
+# IT IS BUILT FOR THE UID THAT WILL RUN IT. The ACP spawn runs a sandboxed
+# session as the daemon's own uid:gid, and musl resolves users from
+# /etc/passwd alone — an image with no entry for that uid cannot sign a commit,
+# because ssh-keygen refuses to start. So the build passes the building user's
+# ids; an operator building for a daemon that runs as someone else overrides
+# WORKER_IMAGE_UID / WORKER_IMAGE_GID.
+#
+# IT IS BUILT WITH THIS REPOSITORY'S TOOL PINS. The binding's verification
+# commands are the project's own `make lint`, `make check` and `make security`,
+# which need golangci-lint, gosec and govulncheck; the build passes
+# GOLANGCI_VERSION / GOSEC_VERSION / GOVULNCHECK_VERSION so the worker reaches
+# the same verdict as CI rather than a differently-versioned one (#772).
+WORKER_IMAGE_DIR := deployments/agents/software-factory-worker
+WORKER_IMAGE_UID ?= $(shell id -u)
+WORKER_IMAGE_GID ?= $(shell id -g)
+
+.PHONY: build-worker-image
+build-worker-image: ## Build the Software Factory worker image (quicbaas-software-factory-worker:$(VERSION))
+	@echo "$(BLUE)Building the Software Factory worker image ($(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG))...$(NC)"
+	$(DOCKER) build \
+		--build-arg GO_VERSION=$(GO_VERSION) \
+		--build-arg GOLANGCI_VERSION=$(GOLANGCI_VERSION) \
+		--build-arg GOSEC_VERSION=$(GOSEC_VERSION) \
+		--build-arg GOVULNCHECK_VERSION=$(GOVULNCHECK_VERSION) \
+		--build-arg GOPLS_VERSION=$(GOPLS_VERSION) \
+		--build-arg SERENA_VERSION=$(SERENA_VERSION) \
+		--build-arg AGENT_UID=$(WORKER_IMAGE_UID) \
+		--build-arg AGENT_GID=$(WORKER_IMAGE_GID) \
+		-f $(WORKER_IMAGE_DIR)/Dockerfile \
+		-t $(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
+		$(WORKER_IMAGE_DIR)
+	@echo "$(GREEN)✓ $(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG)$(NC)"
+
+.PHONY: test-worker-image
+test-worker-image: build-worker-image ## Build the worker image and check it carries every tool the sdlc runner needs
+	@echo "$(BLUE)Checking the worker image as the uid the spawn runs it with...$(NC)"
+	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp \
+		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
+		sh -euc 'git --version; ssh -V; go version; make --version | head -1; \
+			claude --version; codex --version; \
+			ssh-keygen -t ed25519 -N "" -f /tmp/signing-key -q; \
+			git init -q /tmp/probe; cd /tmp/probe; \
+			git -c user.name=worker -c user.email=worker@invalid \
+				-c gpg.format=ssh -c user.signingkey=/tmp/signing-key -c commit.gpgsign=true \
+				commit -q --allow-empty -m "the image can sign"; \
+			git config gpg.ssh.allowedSignersFile /tmp/allowed; \
+			printf "worker@invalid %s" "$$(cat /tmp/signing-key.pub)" > /tmp/allowed; \
+			git verify-commit HEAD'
+	@echo "$(GREEN)✓ the image carries git, ssh, ssh signing, make, the Go toolchain and both agents$(NC)"
+	@# SERENA IS A TOOL THE RUNNER DEPENDS ON, so the image gate proves it runs
+	@# rather than merely that a package was installed. The charters tell every
+	@# role to search with serena; an image that carries the binary but cannot
+	@# start the server leaves an agent calling a tool that is not there, which
+	@# looks to the agent like the codebase being unreadable.
+	@#
+	@# THE PROBE IS AN MCP HANDSHAKE, not `--version`. psutil is compiled from
+	@# source here (no musl wheel), so the failure mode worth catching is a
+	@# native extension that builds and then will not import -- which a version
+	@# string does not exercise and an initialize request does.
+	@#
+	@# THE PROJECT ROOT IS A DIRECTORY HOLDING REPOSITORIES, not a repository,
+	@# because that is what a real spawn gives it: the project and its context
+	@# repos are cloned side by side under the checkout root. `--project` is
+	@# proved to accept such a root here; which root it is handed in production
+	@# comes from one Go constant (TestSerenaMCPConfig_*).
+	@#
+	@# --network none because a spawned agent's egress is the operator's to
+	@# decide: serena must come up without reaching the internet.
+	@echo "$(BLUE)Checking the worker image can start serena and register it...$(NC)"
+	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp --network none \
+		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
+		sh -euc 'serena --version; gopls version | head -1; \
+			gopls version | grep -q "$(GOPLS_VERSION)" \
+				|| { echo "gopls is not the pinned $(GOPLS_VERSION); serena cannot read Go at the version CI lints"; exit 1; }; \
+			mkdir -p /tmp/wsroot/a-repo /tmp/wsroot/a-context-repo; \
+			printf "%s\\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"probe\",\"version\":\"0\"}}}" \
+				| timeout 120 serena start-mcp-server --transport stdio --context claude-code --project /tmp/wsroot 2>/dev/null \
+				| head -c 2000 | grep -q "\"name\":\"Serena\"" \
+				|| { echo "serena did not answer an MCP initialize request"; exit 1; }'
+	@echo "$(GREEN)✓ the worker image starts serena (MCP initialize answered) with gopls $(GOPLS_VERSION)$(NC)"
+	@# The verification half (#772). A worker that cannot run `make lint` fails
+	@# every review round on a clean tree, so the tools are checked the way a
+	@# project's Makefile finds them -- at $$(go env GOPATH)/bin, not merely on
+	@# the PATH -- and at the version this repository pins, because a worker
+	@# that lints with a different version than CI produces a verdict the merge
+	@# then contradicts. --network none proves the lint needs no network: a
+	@# sandboxed worker's network policy is the operator's to decide.
+	@echo "$(BLUE)Checking the worker image can lint and scan a Go module...$(NC)"
+	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp --network none \
+		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
+		sh -euc 'golangci-lint --version; gosec -version; govulncheck -version; \
+			test -x "$$(go env GOPATH)/bin/golangci-lint" \
+				|| { echo "golangci-lint is not where a project Makefile looks for it"; exit 1; }; \
+			golangci-lint --version | grep -q "version $(GOLANGCI_VERSION:v%=%) " \
+				|| { echo "golangci-lint is not the pinned $(GOLANGCI_VERSION)"; exit 1; }; \
+			mkdir -p /tmp/lintprobe; cd /tmp/lintprobe; \
+			printf "%s\n" "module lintprobe" "" "go 1.26" > go.mod; \
+			printf "%s\n" "version: \"2\"" "linters:" "  enable:" "    - misspell" "    - gocritic" > .golangci.yml; \
+			printf "%s\n" "// Package lintprobe proves this image can lint a Go module." "package lintprobe" "" "// Sum returns a plus b." "func Sum(a, b int) int { return a + b }" > sum.go; \
+			golangci-lint run ./...; \
+			printf "%s\n" "package lintprobe" "" "func unusedHelper() int { return 0 }" > unused.go; \
+			if golangci-lint run ./... >/dev/null 2>&1; then \
+				echo "golangci-lint passed a package with an unused function -- it is not linting"; exit 1; \
+			fi'
+	@echo "$(GREEN)✓ the worker image lints ($(GOLANGCI_VERSION)) and carries gosec + govulncheck$(NC)"
+	@# THE CONTAINER IS THE BOUNDARY, so the worker has full control inside it
+	@# (#927). A worker that cannot install a package cannot finish a task whose
+	@# toolchain the image does not carry, and it does not fail usefully -- it
+	@# narrates a plan and spends an attempt. Proved as the uid the spawn runs
+	@# as, because sudo resolves the invoking user through getpwuid and refuses
+	@# outright for a uid with no /etc/passwd entry.
+	@echo "$(BLUE)Checking the worker has full control of its container...$(NC)"
+	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp \
+		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
+		sh -euc 'sudo -n true; \
+			test "$$(sudo -n id -u)" = "0" \
+				|| { echo "sudo did not reach root"; exit 1; }; \
+			sudo -n apk add --no-cache jq; jq --version; \
+			sudo -n sh -c "echo arbitrary > /etc/quicbaas-full-control-probe"; \
+			test -f /etc/quicbaas-full-control-probe'
+	@echo "$(GREEN)✓ the worker can escalate, install a package and run an arbitrary command$(NC)"
+	@# And the cost of that privilege is NOT paid on the host. The spawn runs as
+	@# the daemon's uid rather than root precisely so a write through a bind
+	@# mount lands owned by the daemon; a root-owned tree left in the workspace
+	@# root is one the daemon can neither clean up nor re-clone into. The
+	@# ephemeral storage tier narrows this by moving the checkout to a tmpfs, but
+	@# the tier is per project, so the property is asserted for the bind mount.
+	@echo "$(BLUE)Checking a bind-mounted write stays owned by the spawning uid...$(NC)"
+	@probe="$$(mktemp -d)"; \
+	$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp \
+		-v "$$probe:/workspace" $(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
+		sh -euc 'echo work > /workspace/written-by-the-agent; sudo -n true' >/dev/null; \
+	owner="$$(stat -c %u "$$probe/written-by-the-agent")"; \
+	rm -rf "$$probe"; \
+	test "$$owner" = "$(WORKER_IMAGE_UID)" \
+		|| { echo "a bind-mounted write landed owned by uid $$owner, not $(WORKER_IMAGE_UID)"; exit 1; }
+	@echo "$(GREEN)✓ nothing the worker writes to a bind mount becomes root-owned on the host$(NC)"
 
 .PHONY: docker-run
 docker-run: ## Run Docker container
@@ -2773,20 +3289,20 @@ deploy-prod: ## Deploy to production environment
 ##@ Tools
 
 .PHONY: install-gosec
-install-gosec: ## Install gosec security scanner
-	@echo "$(BLUE)Installing gosec...$(NC)"
+install-gosec: ## Install gosec security scanner (pinned -- see GOSEC_VERSION)
+	@echo "$(BLUE)Installing gosec $(GOSEC_VERSION)...$(NC)"
 	@if ! command -v gosec >/dev/null 2>&1; then \
-		go install github.com/securego/gosec/v2/cmd/gosec@latest; \
+		go install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION); \
 		echo "$(GREEN)gosec installed$(NC)"; \
 	else \
 		echo "$(GREEN)gosec already installed$(NC)"; \
 	fi
 
 .PHONY: install-govulncheck
-install-govulncheck: ## Install govulncheck vulnerability scanner
-	@echo "$(BLUE)Installing govulncheck...$(NC)"
+install-govulncheck: ## Install govulncheck vulnerability scanner (pinned -- see GOVULNCHECK_VERSION)
+	@echo "$(BLUE)Installing govulncheck $(GOVULNCHECK_VERSION)...$(NC)"
 	@if ! command -v govulncheck >/dev/null 2>&1; then \
-		go install golang.org/x/vuln/cmd/govulncheck@latest; \
+		go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION); \
 		echo "$(GREEN)govulncheck installed$(NC)"; \
 	else \
 		echo "$(GREEN)govulncheck already installed$(NC)"; \
@@ -2805,6 +3321,11 @@ install-trivy: ## Install Trivy vulnerability scanner
 .PHONY: install-golangci-lint
 install-golangci-lint: ## Install golangci-lint (pinned -- see GOLANGCI_VERSION)
 	@echo "$(BLUE)Installing golangci-lint $(GOLANGCI_VERSION)...$(NC)"
+	@# PINNED, devops.md §9: v2.13.x over-reports and panics under Go 1.26,
+	@# so @latest turns a green branch red for reasons unrelated to the
+	@# branch — and ~/go/bin is SHARED across lanes, so one lane's @latest
+	@# install drifts every other lane's local lint. Matches ci.yml's pin;
+	@# unpin tracker: go-qrdb#42.
 	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
 	@echo "$(GREEN)golangci-lint $(GOLANGCI_VERSION) installed$(NC)"
 
@@ -2891,8 +3412,9 @@ clean: ## Clean build artifacts and test data
 # This is every image identity the repository creates under a name it writes
 # literally: the `-t` of its own `docker build`s, the destination of its own
 # `docker tag`s, and the explicit `image:` of a Compose service that builds.
-# scripts/docker-image-inventory.sh re-derives all of that from those commands
-# and files; `make verify-clean-docker` fails when this list has drifted from
+# scripts/internal/dockerinv re-derives all of that from those commands and
+# files -- `make verify-clean-docker` links it, and `go run ./scripts/dockerinventory`
+# prints it -- so `make verify-clean-docker` fails when this list has drifted from
 # it in either direction, so a new image-producing target cannot quietly escape
 # cleanup and a tag no producer here names cannot be reached.
 #
@@ -2921,8 +3443,8 @@ DOCKER_LOCAL_IMAGES := \
 	$(DOCKER_IMAGE)-devcontainer:latest \
 	$(DOCKER_IMAGE)-integration-test:latest \
 	$(DOCKER_IMAGE)-integration-node:latest \
-	$(DOCKER_IMAGE)-claude-code-agent:latest \
 	$(DOCKER_IMAGE)-e2e-sandbox-agent:latest \
+	$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
 	$(DOCKER_IMAGE)/swtpm:latest \
 	signalbridge:latest \
 	$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG) \
@@ -3028,11 +3550,11 @@ watch: ## Watch for changes and rebuild
 ##@ CI/CD
 
 .PHONY: ci
-ci: deps fmt-check vet lint security build test test-minimal race check-coverage ## Run CI pipeline locally (matches GitHub CI)
+ci: deps fmt-check vet lint security build test test-minimal test-standard test-lean race check-coverage ## Run CI pipeline locally (matches GitHub CI)
 	@echo "$(GREEN)CI pipeline completed successfully$(NC)"
 
 .PHONY: ci-full
-ci-full: deps fmt-check vet lint security build test test-minimal test-desktop race coverage integration-test ## Run full CI pipeline with integration tests
+ci-full: deps fmt-check vet lint security build test test-minimal test-standard test-lean test-desktop race coverage integration-test ## Run full CI pipeline with integration tests
 	@echo "$(GREEN)Full CI pipeline completed successfully$(NC)"
 
 .PHONY: pre-commit
@@ -3242,6 +3764,12 @@ integration-test-factors: ## Run cross-vendor hardware factor integration tests 
 	@echo "$(BLUE)Running cross-vendor factor integration tests...$(NC)"
 	@go test -v -tags integration -timeout 60s ./test/integration/factors/...
 
+.PHONY: integration-test-agent-enrollment
+integration-test-agent-enrollment: ## Run the agent enrollment E2E (register -> heartbeat with peer cert + bearer -> listed -> dispatch)
+	@echo "$(BLUE)Running agent enrollment E2E...$(NC)"
+	@go test -v -count=1 -timeout 5m -tags 'integration $(strip $(INTEGRATION_BUILD_TAGS)) rest' ./test/integration/agent_enrollment/...
+	@echo "$(GREEN)Agent enrollment E2E passed$(NC)"
+
 .PHONY: integration-test-init
 integration-test-init: build-daemon ## Run canonical init/start/transport matrix (15 software-only cells + negative)
 	@echo "$(BLUE)Running canonical init matrix integration tests...$(NC)"
@@ -3308,6 +3836,73 @@ integration-test-agent-runtime: ## Run agent daemon integration tests in Docker 
 	fi; \
 	echo "$(GREEN)Agent runtime integration tests passed$(NC)"
 
+# =============================================================================
+# Embedding Provider Tests
+#
+# pkg/embedding's real Provider interface sits behind `vector && qrdb_vector`.
+# Without both tags, stub.go supplies a stub whose RegisterProvider returns
+# ErrVectorNotEnabled -- so the NPU provider only exists in vector builds and
+# these targets must set the tags explicitly.
+# =============================================================================
+
+EMBEDDING_TEST_TAGS := $(strip $(BUILD_TAGS)) vector qrdb_vector
+
+.PHONY: test-embedding
+test-embedding: ## Run embedding provider unit tests (pkg/embedding, vector build)
+	@echo "$(BLUE)Running embedding unit tests...$(NC)"
+	@$(GOTEST) -race -count=1 -tags '$(EMBEDDING_TEST_TAGS)' ./pkg/embedding/...
+	@echo "$(GREEN)✓ Embedding unit tests passed$(NC)"
+
+.PHONY: coverage-embedding
+coverage-embedding: ## Generate embedding provider coverage report
+	@echo "$(BLUE)Running embedding tests with coverage...$(NC)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GOTEST) -race -count=1 -tags '$(EMBEDDING_TEST_TAGS)' \
+		-coverprofile=$(COVERAGE_DIR)/coverage-embedding.out -covermode=atomic ./pkg/embedding/...
+	@$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-embedding.out -o $(COVERAGE_DIR)/coverage-embedding.html
+	@$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-embedding.out | grep -E "^(github|total)"
+
+.PHONY: bench-embedding
+bench-embedding: ## Run embedding provider benchmarks
+	@echo "$(BLUE)Running embedding benchmarks...$(NC)"
+	@$(GOTEST) -run '^$$' -bench=. -benchmem -benchtime=$(BENCHTIME) \
+		-tags '$(EMBEDDING_TEST_TAGS)' ./pkg/embedding/...
+
+# =============================================================================
+# NPU Embedding Sidecar (Python)
+#
+# The sidecar owns tokenisation, shape bucketing, padding, masked mean pooling,
+# the compiled-shape cache and CPU fallback. Its pure layers need only numpy and
+# fastapi; OpenVINO is confined to engine.py and is exercised by the separate
+# device tier below. That tier is a distinct suite, not a skipped part of the
+# first, so nothing is ever silently not run.
+# =============================================================================
+
+NPU_SIDECAR_DIR := sidecar/npu-embedding
+PYTHON ?= python3
+
+.PHONY: test-npu-sidecar
+test-npu-sidecar: ## Run NPU embedding sidecar tests (no device required)
+	@echo "$(BLUE)Running NPU embedding sidecar tests...$(NC)"
+	@cd $(NPU_SIDECAR_DIR) && PYTHONPATH="$$PWD:$$PWD/tests" \
+		$(PYTHON) -m pytest tests/ -q -p no:warnings
+	@echo "$(GREEN)✓ NPU sidecar tests passed$(NC)"
+
+.PHONY: coverage-npu-sidecar
+coverage-npu-sidecar: ## Generate NPU embedding sidecar coverage report
+	@echo "$(BLUE)Running NPU sidecar tests with coverage...$(NC)"
+	@cd $(NPU_SIDECAR_DIR) && PYTHONPATH="$$PWD:$$PWD/tests" \
+		$(PYTHON) -m pytest tests/ -q -p no:warnings \
+		--cov=npu_embedding --cov-report=term-missing
+
+.PHONY: test-npu-sidecar-device
+test-npu-sidecar-device: ## Run NPU sidecar tests against real OpenVINO (needs the `device` extra)
+	@echo "$(BLUE)Running NPU sidecar device tests (real OpenVINO)...$(NC)"
+	@echo "$(YELLOW)Set NPU_EMBEDDING_TEST_DEVICE=NPU on the NPU host to exercise the device.$(NC)"
+	@cd $(NPU_SIDECAR_DIR) && PYTHONPATH="$$PWD:$$PWD/tests_device" \
+		$(PYTHON) -m pytest tests_device/ -q -p no:warnings
+	@echo "$(GREEN)✓ NPU sidecar device tests passed$(NC)"
+
 .PHONY: integration-test-embedding
 integration-test-embedding: ## Run embedding integration tests in Docker (Ollama via local CPU container; pass GPU_HOST=<host> for a remote GPU)
 	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/embedding/..." OLLAMA_CPU=$${OLLAMA_CPU:-1}
@@ -3319,10 +3914,6 @@ integration-test-orchestration: ## Run orchestrator E2E integration tests in Doc
 .PHONY: integration-test-orchestrator
 integration-test-orchestrator: ## Run multi-protocol CLI orchestrator inference tests (Ollama via local CPU container; pass GPU_HOST=<host> for a remote GPU)
 	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="-run TestOrchestratorInference ./test/integration/cli/..." OLLAMA_CPU=$${OLLAMA_CPU:-1}
-
-.PHONY: e2e-remote-agent
-e2e-remote-agent: ## Run E2E remote agent test (deploys Claude Code to remote host via SSH)
-	@./scripts/e2e-remote-agent.sh
 
 .PHONY: integration-test-agents
 integration-test-agents: ## Run full E2E agent orchestration tests with real agents (requires Docker + host OIDC credentials)
@@ -3360,6 +3951,26 @@ integration-test-agents: ## Run full E2E agent orchestration tests with real age
 		echo "$(RED)✗ E2E agent orchestration tests FAILED$(NC)"; \
 	fi; \
 	exit $$TEST_EXIT
+
+# =============================================================================
+# UI wire contract (pkg/uicontract)
+# =============================================================================
+#
+# Compares the TypeScript SDK's hand-written response types against the Go
+# structs the server serialises. Untagged on purpose: a contract test some
+# build pass omits is a contract nothing checks.
+
+.PHONY: test-uicontract
+test-uicontract: ## Run the TypeScript/Go wire contract test
+	@echo "$(BLUE)Running UI wire contract test...$(NC)"
+	$(GOTEST) -v -count=1 ./pkg/uicontract/...
+
+.PHONY: coverage-uicontract
+coverage-uicontract: ## Generate coverage report for the uicontract package
+	@mkdir -p $(COVERAGE_DIR)
+	$(GOTEST) -v -count=1 -coverprofile=$(COVERAGE_DIR)/coverage-uicontract.out -covermode=atomic ./pkg/uicontract/...
+	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-uicontract.out -o $(COVERAGE_DIR)/coverage-uicontract.html
+	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-uicontract.out | grep total
 
 .PHONY: coverage-orchestration
 coverage-orchestration: ## Generate coverage report for orchestration package
@@ -3497,6 +4108,42 @@ coverage-secrets-resolver-html: coverage-secrets-resolver ## Generate HTML cover
 bench-secrets-resolver: ## Run secrets resolver benchmarks
 	@echo "$(BLUE)Running secrets resolver benchmarks...$(NC)"
 	@$(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) ./pkg/config/secrets/...
+
+# ==============================================================================
+# Dynamic Secrets / Credential Lease Targets
+# ==============================================================================
+#
+# The capability Security().DynamicSecrets() exposes: the lease manager whose
+# state lives in the embedded qrdb node (pkg/lease), the credential generator SPI
+# (pkg/credentials), the service handler, and the pooled-credential DELIVERY
+# grants built over the same lease manager (go-quicbaas#902).
+
+DYNSECRETS_PKGS = ./pkg/lease/... ./pkg/credentials/...
+
+.PHONY: test-dynamic-secrets
+test-dynamic-secrets: ## Run dynamic secrets + credential lease unit tests
+	@echo "$(BLUE)Running dynamic secrets and credential lease tests...$(NC)"
+	@$(GOTEST) -v -race -count=1 -tags '$(TEST_TAGS)' $(DYNSECRETS_PKGS)
+	@echo "$(BLUE)Running the service handler and the delivery-grant surface...$(NC)"
+	@$(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
+		-run 'DynamicSecret|Lease|Grant|Materialize' \
+		./pkg/service/... ./pkg/server/... ./pkg/orchestration/... ./pkg/agent/...
+	@echo "$(GREEN)✓ Dynamic secrets tests passed$(NC)"
+
+.PHONY: coverage-dynamic-secrets
+coverage-dynamic-secrets: ## Generate coverage report for the dynamic secrets subsystem
+	@echo "$(BLUE)Running dynamic secrets tests with coverage...$(NC)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GOTEST) -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/dynamic-secrets.out -covermode=atomic $(DYNSECRETS_PKGS)
+	@echo ""
+	@echo "$(GREEN)Coverage Summary:$(NC)"
+	@go tool cover -func=$(COVERAGE_DIR)/dynamic-secrets.out | grep -E "^(github|total)"
+	@echo ""
+
+.PHONY: bench-dynamic-secrets
+bench-dynamic-secrets: ## Run lease manager benchmarks
+	@echo "$(BLUE)Running lease manager benchmarks...$(NC)"
+	@$(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) -tags '$(TEST_TAGS)' ./pkg/lease/...
 
 # =============================================================================
 # File Storage Targets
@@ -3769,33 +4416,40 @@ coverage-vector: ## Run all vector package coverage
 # ==============================================================================
 
 .PHONY: verify-naming
-verify-naming: ## Fail if non-deprecated Seal* code paths still ship outside the documented alias surface
-	@echo "$(BLUE)verify-naming: scanning for non-aliased Seal* code paths...$(NC)"
-	@scripts/verify-naming.sh
+verify-naming: ## Fail if the retired product word is back, or Seal* ships outside the documented alias surface
+	@echo "$(BLUE)verify-naming: scanning for the retired product word and non-aliased Seal* code paths...$(NC)"
+	@$(GOCMD) run ./scripts/verifynaming
+
+.PHONY: check-reciprocal-pins
+check-reciprocal-pins: ## Fail when this repo's modules pin each other, or a shared first-party dep, inconsistently
+	@echo "$(BLUE)check-reciprocal-pins: comparing module pins across go.mod files...$(NC)"
+	@scripts/check-reciprocal-pins.sh
 
 .PHONY: verify-cli-flags
-verify-cli-flags: ## Diff init/barrier/bootstrap flag sets across qrdbctl, xkmsctl, and quicbaas
-	@echo "$(BLUE)verify-cli-flags: comparing CLI flag surfaces across qrdbctl/xkmsctl/quicbaas...$(NC)"
-	@scripts/verify-cli-flags.sh
+verify-cli-flags: ## Diff the init flag set of xkmsctl against quicbaas (STRICT=1 to fail on drift)
+	@echo "$(BLUE)verify-cli-flags: comparing the xkmsctl and quicbaas init flag surfaces...$(NC)"
+	@$(GOCMD) run ./scripts/verifycliflags $(if $(filter 1,$(STRICT)),-strict,)
 
 .PHONY: verify-api-shapes
 verify-api-shapes: ## Diff QuicBaaS Barrier*/Ceremony*/Bootstrap* TS types against go-qrdb canonical Go types
 	@echo "$(BLUE)verify-api-shapes: comparing TypeScript types against go-qrdb canonical Go types...$(NC)"
-	@scripts/verify-api-shapes.sh
+	@$(GOCMD) run ./scripts/verifyapishapes
 
-# Read a Makefile variable from a script: `make print-DOCKER_LOCAL_IMAGES`.
+# Read a Makefile variable from a gate: `make print-DOCKER_LOCAL_IMAGES`. The
+# gates under scripts/ ask make for the variables a producer may name, because
+# make is the authority on what $(DOCKER_IMAGE) expands to.
 print-%:
 	@echo "$($*)"
 
 .PHONY: verify-clean-docker
 verify-clean-docker: ## Fail if clean-docker reaches beyond this project's image tags or hides a failure
 	@echo "$(BLUE)verify-clean-docker: checking cleanup scope and failure propagation...$(NC)"
-	@bash scripts/verify-clean-docker.sh
+	@$(GOCMD) run ./scripts/verifycleandocker
 
 .PHONY: verify-integration-teardown
 verify-integration-teardown: ## Fail if the integration stack can outlive a run that left early
 	@echo "$(BLUE)verify-integration-teardown: checking the stack comes down on the early-exit path...$(NC)"
-	@bash scripts/verify-integration-teardown.sh
+	@$(GOCMD) run ./scripts/verifyteardown
 
 .PHONY: verify
 verify: verify-naming verify-cli-flags verify-api-shapes verify-clean-docker verify-integration-teardown ## Run all cross-project verifications
@@ -3898,3 +4552,51 @@ deps-latest:
 	  V=$$(go list -m -versions "$$m" 2>/dev/null | tr " " "\n" | tail -1); \
 	  if [ -n "$$V" ] && [ "$$V" != "$$m" ]; then go get "$$m@$$V" || exit 1; fi; \
 	done; go mod tidy'
+
+# =============================================================================
+# Issue triage (pkg/sdlc triage runner)
+# =============================================================================
+#
+# Triage is the front half of the factory loop: which issues are ready to be
+# worked. Its tests live beside the rest of the sdlc module, so test-sdlc is
+# the whole module and test-triage is the narrow pass a lane working on the
+# runner iterates with.
+
+.PHONY: test-sdlc
+test-sdlc: ## Run SDLC module unit tests (bindings, delivery, runner, triage)
+	@echo "$(BLUE)Running SDLC module tests...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/sdlc/...
+	@echo "$(GREEN)SDLC module unit tests passed$(NC)"
+
+.PHONY: test-triage
+test-triage: ## Run issue-triage unit tests (verdict, prompt, runner, scheduler)
+	@echo "$(BLUE)Running issue triage tests...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
+		-run 'Triage|TriageRunner|TriageScheduler|TriageSweep|WebhookIngest_Wakes' ./pkg/sdlc/...
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
+		-run 'Triage' ./pkg/server/...
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
+		-run 'ProjectCapacity|CountLiveJobLeases|JobLeasePolicy' ./pkg/orchestration/...
+	@echo "$(GREEN)Issue triage unit tests passed$(NC)"
+
+.PHONY: coverage-sdlc
+coverage-sdlc: ## Generate coverage report for the SDLC module
+	@mkdir -p $(COVERAGE_DIR)
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
+		-coverprofile=$(COVERAGE_DIR)/coverage-sdlc.out -covermode=atomic ./pkg/sdlc/...
+	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-sdlc.out -o $(COVERAGE_DIR)/coverage-sdlc.html
+	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-sdlc.out | grep total
+
+.PHONY: coverage-triage
+coverage-triage: ## Report coverage of the issue-triage sources specifically
+	@mkdir -p $(COVERAGE_DIR)
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
+		-coverprofile=$(COVERAGE_DIR)/coverage-triage.out -covermode=atomic ./pkg/sdlc/...
+	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-triage.out | grep -E 'triage_|^total'
+
+.PHONY: bench-sdlc
+bench-sdlc: ## Run SDLC module benchmarks
+	@echo "$(BLUE)Running SDLC module benchmarks...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) \
+		-run=^$$ -tags '$(TEST_TAGS)' ./pkg/sdlc/...
+	@echo "$(GREEN)SDLC module benchmarks completed$(NC)"

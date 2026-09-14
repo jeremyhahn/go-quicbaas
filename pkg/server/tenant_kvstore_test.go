@@ -20,6 +20,7 @@ import (
 
 	qrdbkvstore "github.com/jeremyhahn/go-qrdb/pkg/kvstore"
 	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -294,7 +295,7 @@ func TestTenantRoutingKVStore_ResolverErrorAllVerbs(t *testing.T) {
 // tenantRoutedKVStore returns a usable store. Since go-qrdb v0.10.0 (#41)
 // every node exposes a StoreResolver — a seal-disabled node routes IAM
 // through a confined "{tenant}/" keyspace too — so a memory standalone node
-// yields the routing store, and IAMKVStore is that same store.
+// yields the routing store, and TenantRoutedKVStore is that same store.
 func TestIamTenantKVStore_SealDisabledNodeRoutes(t *testing.T) {
 	node := buildMemoryStandaloneNode(t)
 	t.Cleanup(func() { _ = node.Close() })
@@ -312,8 +313,8 @@ func TestIamTenantKVStore_SealDisabledNodeRoutes(t *testing.T) {
 	if _, ok := kv.(*tenantRoutingKVStore); !ok {
 		t.Fatalf("tenantRoutedKVStore = %T, want the tenant routing store", kv)
 	}
-	if _, ok := s.IAMKVStore().(*tenantRoutingKVStore); !ok {
-		t.Fatalf("IAMKVStore = %T, want the tenant routing store", s.IAMKVStore())
+	if _, ok := s.TenantRoutedKVStore().(*tenantRoutingKVStore); !ok {
+		t.Fatalf("TenantRoutedKVStore = %T, want the tenant routing store", s.TenantRoutedKVStore())
 	}
 }
 
@@ -355,11 +356,22 @@ func TestIamTenantScopeStore_SealDisabledNodeBuilds(t *testing.T) {
 	}
 }
 
-// iamTenantScopeStore returns nil when the node exposes no StoreResolver.
-func TestIamTenantScopeStore_NodeNoResolver(t *testing.T) {
+// iamTenantScopeStore returns a real resolver on a seal-disabled node.
+//
+// This test asserted the opposite until go-qrdb v0.10.0-alpha, and the
+// inversion is the point rather than an accident. Upstream go-qrdb#41 closed a
+// hole in which the seal-disabled boot path installed no StoreResolver, so IAM
+// ran unrouted and every tenant's identity records shared one keyspace — "no
+// seal, no isolation". The resolver is now installed on that path too, so a
+// standalone memory node exposes one and per-tenant permission scopes work
+// where they previously degraded silently.
+//
+// Asserting non-nil here is what stops that hole reopening: a future upgrade
+// that dropped the resolver from the seal-disabled path would restore the old
+// behaviour, and the old test would have called that a pass.
+func TestIamTenantScopeStore_NodeProvidesResolver(t *testing.T) {
 	node := buildMemoryStandaloneNode(t)
 	t.Cleanup(func() { _ = node.Close() })
-	node.Services().StoreResolver = nil
 
 	s := &Server{
 		logger:     buildTestLogger(t),
@@ -367,8 +379,12 @@ func TestIamTenantScopeStore_NodeNoResolver(t *testing.T) {
 		qrdbClient: newNodeBackedShardedClient(node),
 	}
 
-	if s.iamTenantScopeStore() != nil {
-		t.Fatal("iamTenantScopeStore must be nil without a StoreResolver")
+	svcs := node.Services()
+	if svcs == nil || svcs.StoreResolver == nil {
+		t.Fatal("a standalone memory node must expose a StoreResolver; without one IAM runs unrouted (go-qrdb#41)")
+	}
+	if s.iamTenantScopeStore() == nil {
+		t.Fatal("iamTenantScopeStore must build a scope store when the node exposes a StoreResolver")
 	}
 }
 
@@ -525,5 +541,179 @@ func TestTenantFromAnyContext(t *testing.T) {
 				t.Fatalf("tenantFromAnyContext = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// =============================================================================
+// Guarded-write forwarding
+// =============================================================================
+
+// TestTenantRoutingKVStore_ForwardsGuardedWrites proves the router carries the
+// guarded verbs through to the tenant's own store, so a caller that needs a
+// decision under concurrency gets the tenant store's decision rather than the
+// router's approximation of one.
+func TestTenantRoutingKVStore_ForwardsGuardedWrites(t *testing.T) {
+	resolver := newFakeStoreResolver(qrdbsdk.NewMemoryKVStore())
+	kv := newTenantRoutingKVStore(resolver)
+	ctx := context.Background()
+
+	stored, err := kv.PutIfAbsent(ctx, "k", []byte("first"))
+	if err != nil {
+		t.Fatalf("PutIfAbsent: %v", err)
+	}
+	if !stored {
+		t.Fatal("the first guarded create on an empty key was refused")
+	}
+
+	// The second must LOSE rather than overwrite: that is the whole guarantee.
+	stored, err = kv.PutIfAbsent(ctx, "k", []byte("second"))
+	if err != nil {
+		t.Fatalf("second PutIfAbsent: %v", err)
+	}
+	if stored {
+		t.Fatal("a guarded create overwrote an existing key")
+	}
+	got, err := kv.Get(ctx, "k")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if string(got) != "first" {
+		t.Fatalf("the losing create changed the value to %q", got)
+	}
+
+	// The release half: a stale expectation must not delete the live value.
+	deleted, err := kv.CompareAndDelete(ctx, "k", []byte("second"))
+	if err != nil {
+		t.Fatalf("CompareAndDelete: %v", err)
+	}
+	if deleted {
+		t.Fatal("a guarded delete removed a key holding a different value")
+	}
+	if deleted, err = kv.CompareAndDelete(ctx, "k", []byte("first")); err != nil || !deleted {
+		t.Fatalf("CompareAndDelete on the held value = (%v, %v), want (true, nil)", deleted, err)
+	}
+}
+
+// TestTenantRoutingKVStore_GuardedWritesRefuseANonAtomicStore proves the router
+// FAILS CLOSED when the resolved tenant store cannot decide a contested write.
+//
+// The refusal must be an error, never a plausible-looking false. A caller
+// reading deleted=false concludes "the key holds something else, my claim was
+// replaced" and stops trying to release it — so reporting that when the store
+// could not be asked at all would make a live claim be abandoned. "I cannot
+// answer" and "the answer is no" are different facts.
+func TestTenantRoutingKVStore_GuardedWritesRefuseANonAtomicStore(t *testing.T) {
+	// kvstore.NewMemory wraps a raw storage engine with no conditional write,
+	// which is exactly the store this must refuse.
+	kv := newTenantRoutingKVStore(newFakeStoreResolver(kvstore.NewMemory()))
+	ctx := context.Background()
+
+	stored, err := kv.PutIfAbsent(ctx, "k", []byte("v"))
+	if !errors.Is(err, ErrTenantStoreNotAtomic) {
+		t.Fatalf("PutIfAbsent err = %T: %v, want ErrTenantStoreNotAtomic", err, err)
+	}
+	if stored {
+		t.Error("a refused guarded create reported stored")
+	}
+
+	deleted, err := kv.CompareAndDelete(ctx, "k", []byte("v"))
+	if !errors.Is(err, ErrTenantStoreNotAtomic) {
+		t.Fatalf("CompareAndDelete err = %T: %v, want ErrTenantStoreNotAtomic", err, err)
+	}
+	if deleted {
+		t.Error("a refused guarded delete reported deleted")
+	}
+
+	// And nothing was written by the refusal.
+	if exists, existsErr := kv.Exists(ctx, "k"); existsErr != nil || exists {
+		t.Errorf("a refused guarded create left a key behind (exists=%v, err=%v)", exists, existsErr)
+	}
+}
+
+// TestTenantRoutingKVStore_GuardedWritesFailClosedOnResolverError proves a
+// resolver failure — a sealed barrier tenant, most importantly — refuses the
+// guarded verbs exactly as it refuses the six plain ones, rather than falling
+// back to the shared store.
+func TestTenantRoutingKVStore_GuardedWritesFailClosedOnResolverError(t *testing.T) {
+	want := errors.New("resolver down")
+	kv := newTenantRoutingKVStore(errResolver{err: want})
+	ctx := context.Background()
+
+	if _, err := kv.PutIfAbsent(ctx, "k", nil); !errors.Is(err, want) {
+		t.Fatalf("PutIfAbsent err = %v, want the resolver error", err)
+	}
+	if _, err := kv.CompareAndDelete(ctx, "k", nil); !errors.Is(err, want) {
+		t.Fatalf("CompareAndDelete err = %v, want the resolver error", err)
+	}
+}
+
+// =============================================================================
+// The assumption pkg/iam's refresh-token value index depends on (#274).
+//
+// iam.tokenValueIndexContext clears the IAM tenant so the index is written to,
+// and read from, one store regardless of which tenant issued the credential.
+// That works because a cleared IAM tenant resolves to the shared store — but
+// tenantFromAnyContext falls through to the ORCHESTRATION tenant key when the
+// IAM one is empty, and pkg/iam cannot clear a key it must not depend on.
+//
+// The pair below pins both halves. If the fall-through is ever reordered, or an
+// orchestration tenant is ever stamped on a token-storage context, the second
+// test is the one that says so — loudly, here, rather than as an unredeemable
+// refresh credential in production.
+// =============================================================================
+
+// A cleared IAM tenant routes to the shared store, which is what makes the
+// value index resolvable from the untenanted public refresh endpoint.
+func TestTenantRoutingKVStore_ClearedIAMTenantRoutesToSharedStore(t *testing.T) {
+	shared := kvstore.NewMemory()
+	resolver := newFakeStoreResolver(shared)
+	tenantStore := resolver.barrierTenant("burnin")
+
+	kv := newTenantRoutingKVStore(resolver)
+	const key = "__iam:tokenval:deadbeef"
+
+	// Written from inside a tenant's login context, with the tenant cleared.
+	issueCtx := iam.ContextWithTenant(context.Background(), "burnin")
+	if err := kv.Put(iam.ContextWithTenant(issueCtx, ""), key, []byte("burnin:jti-1")); err != nil {
+		t.Fatalf("Put with cleared tenant: %v", err)
+	}
+
+	// Read back with no tenant at all — the public refresh endpoint's context.
+	got, err := kv.Get(context.Background(), key)
+	if err != nil {
+		t.Fatalf("untenanted Get: %v (the #274 401)", err)
+	}
+	if string(got) != "burnin:jti-1" {
+		t.Fatalf("value = %q, want %q", got, "burnin:jti-1")
+	}
+	if _, err := tenantStore.Get(context.Background(), key); err == nil {
+		t.Fatal("the index landed in the tenant's own store, where an untenanted read cannot reach it")
+	}
+}
+
+// An ORCHESTRATION tenant overrides a cleared IAM tenant. This is the documented
+// hazard, not a desired behaviour: it is safe today only because token issuance
+// and refresh are IAM request paths and the orchestration key is stamped solely
+// by the orchestrator handlers. A change that lets the two meet must revisit
+// iam.tokenValueIndexContext, and this test is the tripwire.
+func TestTenantRoutingKVStore_OrchestrationTenantOverridesClearedIAMTenant(t *testing.T) {
+	shared := kvstore.NewMemory()
+	resolver := newFakeStoreResolver(shared)
+	orchStore := resolver.barrierTenant("burnin")
+
+	kv := newTenantRoutingKVStore(resolver)
+	const key = "__iam:tokenval:deadbeef"
+
+	ctx := orchestration.ContextWithTenant(context.Background(), "burnin")
+	if err := kv.Put(iam.ContextWithTenant(ctx, ""), key, []byte("burnin:jti-1")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if _, err := orchStore.Get(context.Background(), key); err != nil {
+		t.Fatalf("expected the orchestration tenant to win the routing decision: %v", err)
+	}
+	if _, err := shared.Get(context.Background(), key); err == nil {
+		t.Fatal("a cleared IAM tenant reached the shared store despite an orchestration tenant; " +
+			"the fall-through changed and iam.tokenValueIndexContext must be revisited")
 	}
 }

@@ -18,7 +18,10 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"sync"
 	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
@@ -32,13 +35,44 @@ import (
 // failure. Every other method of the qrdb UserAuthFactorClient surface is
 // unreachable from the write-through and fails loudly if that changes.
 type fakeUserAuthFactorClient struct {
-	added   []*qrdbtransport.AuthFactorAddRequest
-	addErr  error
-	addResp *qrdbtransport.AuthFactorAddResponse
+	// mu guards added and attested. The write-through is driven from several
+	// goroutines by the concurrent-save tests, and the recorder path reaches
+	// this fake directly (recorderOf), not through the serializing client
+	// wrapper, so the fake itself must be safe to record into concurrently.
+	mu       sync.Mutex
+	added    []*qrdbtransport.AuthFactorAddRequest
+	attested []qrdbsdk.VerifiedAttestation
+	addErr   error
+	addResp  *qrdbtransport.AuthFactorAddResponse
+}
+
+// addedRequests returns a snapshot of every AddAuthFactor request recorded.
+func (f *fakeUserAuthFactorClient) addedRequests() []*qrdbtransport.AuthFactorAddRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*qrdbtransport.AuthFactorAddRequest(nil), f.added...)
+}
+
+// attestedRecords returns a snapshot of every attestation recorded.
+func (f *fakeUserAuthFactorClient) attestedRecords() []qrdbsdk.VerifiedAttestation {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]qrdbsdk.VerifiedAttestation(nil), f.attested...)
+}
+
+// recordAttested appends one attestation under the lock. It is the one
+// write path for attested, shared with fakes that embed this one and route
+// their recorder through their own AddAuthFactor.
+func (f *fakeUserAuthFactorClient) recordAttested(attestation qrdbsdk.VerifiedAttestation) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.attested = append(f.attested, attestation)
 }
 
 func (f *fakeUserAuthFactorClient) AddAuthFactor(_ context.Context, req *qrdbtransport.AuthFactorAddRequest) (*qrdbtransport.AuthFactorAddResponse, error) {
+	f.mu.Lock()
 	f.added = append(f.added, req)
+	f.mu.Unlock()
 	if f.addErr != nil {
 		return nil, f.addErr
 	}
@@ -48,6 +82,58 @@ func (f *fakeUserAuthFactorClient) AddAuthFactor(_ context.Context, req *qrdbtra
 	return &qrdbtransport.AuthFactorAddResponse{
 		Factor: qrdbtransport.AuthFactorRecord{ID: "factor-1", Type: req.Type},
 	}, nil
+}
+
+// attestedAddRequest renders an AddAttested call as the AuthFactorAddRequest
+// the production service would have persisted: the factor plus the reserved
+// attest_* keys written by the store from what the ceremony proved. Fakes
+// that override AddAuthFactor call this and then their own AddAuthFactor, so
+// assertions on what they stored read exactly what qrdb would have kept.
+func attestedAddRequest(userID uint64, factor *qrdbsdk.AuthFactor, attestation qrdbsdk.VerifiedAttestation) *qrdbtransport.AuthFactorAddRequest {
+	meta := make(map[string]string, len(factor.Metadata)+2)
+	for k, v := range factor.Metadata {
+		meta[k] = v
+	}
+	meta[qrdbsdk.MetadataAttestLevel] = string(attestation.Level)
+	if attestation.AAGUID != "" {
+		meta[qrdbsdk.MetadataAttestAAGUID] = attestation.AAGUID
+	}
+	return &qrdbtransport.AuthFactorAddRequest{
+		UserID:     userID,
+		Type:       string(factor.Type),
+		Label:      factor.Label,
+		Credential: factor.Credential,
+		Metadata:   meta,
+		CreatedBy:  factor.CreatedBy,
+	}
+}
+
+// AddAttested is the recorder half of the fake.
+func (f *fakeUserAuthFactorClient) AddAttested(ctx context.Context, userID uint64, factor *qrdbsdk.AuthFactor, attestation qrdbsdk.VerifiedAttestation) error {
+	if !attestation.Level.Valid() {
+		return &qrdbsdk.InvalidAttestationError{Level: attestation.Level}
+	}
+	f.recordAttested(attestation)
+	_, err := f.AddAuthFactor(ctx, attestedAddRequest(userID, factor, attestation))
+	return err
+}
+
+// RotateAttested is AddAttested's rotation counterpart; the write-through
+// never rotates, so reaching it is a test failure.
+func (f *fakeUserAuthFactorClient) RotateAttested(context.Context, string, *qrdbsdk.AuthFactor, qrdbsdk.VerifiedAttestation) error {
+	return errors.New("RotateAttested not expected")
+}
+
+// recorderOf resolves the attestation recorder a test injects: the same fake
+// the write-through's client is, when it records, so one object sees both
+// the factor and its proof. A client that cannot record yields a resolver
+// that answers nil, which is the production fail-closed path.
+func recorderOf(factors qrdbtransport.UserAuthFactorClient) AttestationRecorderResolver {
+	recorder, ok := factors.(qrdbsdk.AttestationRecorder)
+	if !ok {
+		return func() qrdbsdk.AttestationRecorder { return nil }
+	}
+	return func() qrdbsdk.AttestationRecorder { return recorder }
 }
 
 func (f *fakeUserAuthFactorClient) ListAuthFactors(context.Context, *qrdbtransport.AuthFactorListRequest) (*qrdbtransport.AuthFactorListResponse, error) {
@@ -164,7 +250,7 @@ func newTestWriteThrough(t *testing.T, factors qrdbtransport.UserAuthFactorClien
 	t.Helper()
 	users := xkmswebauthn.NewMemoryUserStore()
 	creds := xkmswebauthn.NewMemoryCredentialStore()
-	wt, err := newWebAuthnFactorWriteThrough(creds, users, factors, testWriteThroughTenant, nil)
+	wt, err := newWebAuthnFactorWriteThrough(creds, users, factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {
 		t.Fatalf("newWebAuthnFactorWriteThrough: %v", err)
 	}
@@ -222,8 +308,11 @@ func TestWriteThroughSave_EnrollsLoginResolvableFactor(t *testing.T) {
 	if req.Metadata["tenant_id"] != testWriteThroughTenant {
 		t.Errorf("factor metadata tenant_id = %q, want %q", req.Metadata["tenant_id"], testWriteThroughTenant)
 	}
-	if req.Metadata["aaguid"] != "aabbccdd" {
-		t.Errorf("factor metadata aaguid = %q, want the hex AAGUID", req.Metadata["aaguid"])
+	// The ceremony records the model under the RESERVED key, so a direct-write
+	// caller cannot produce a field indistinguishable from a proven one.
+	if req.Metadata[AuthFactorMetadataAttestAAGUID] != "aabbccdd" {
+		t.Errorf("factor metadata %s = %q, want the hex AAGUID",
+			AuthFactorMetadataAttestAAGUID, req.Metadata[AuthFactorMetadataAttestAAGUID])
 	}
 	if req.Metadata["attestation_type"] != "none" {
 		t.Errorf("factor metadata attestation_type = %q, want %q", req.Metadata["attestation_type"], "none")
@@ -258,11 +347,19 @@ func TestWriteThroughSave_LabelFallsBackToEmail(t *testing.T) {
 // best-effort: a user the WebAuthn store cannot resolve must NOT block the
 // enrollment, because the factor binding comes from the credential's handle,
 // not from the profile read.
+//
+// The credential presented is manufacturer-attested, because an unresolvable
+// profile now means an UNIDENTIFIABLE registrant, and the assurance gate holds
+// those to hardware (see TestWriteThroughSave_UnresolvableRegistrantIsHeldToHardware).
+// That is a separate control from the one under test here: this test asserts
+// that a failed profile read costs the factor its LABEL and nothing else.
 func TestWriteThroughSave_UnknownUserStillEnrolls(t *testing.T) {
 	factors := &fakeUserAuthFactorClient{}
-	wt, _, _ := newTestWriteThrough(t, factors)
+	gate := NewWebAuthnAttestationGate(WebAuthnAssuranceHardware, hardwareAllowlist(), nil)
+	wt, _, _ := newGatedWriteThrough(t, gate, factors)
 
-	if err := wt.Save(context.Background(), testCredential(99, []byte{4, 4})); err != nil {
+	cred := attestedCredential(99, []byte{4, 4}, "basic_full", yubiKey5AAGUID)
+	if err := wt.Save(verifiedChainContext(yubiKey5AAGUID), cred); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	if len(factors.added) != 1 {
@@ -341,7 +438,7 @@ func TestWriteThroughSave_CompensatesOnEnrollFailure(t *testing.T) {
 
 	users := xkmswebauthn.NewMemoryUserStore()
 	inner := newStubCredentialStore()
-	wt, err := newWebAuthnFactorWriteThrough(inner, users, factors, testWriteThroughTenant, nil)
+	wt, err := newWebAuthnFactorWriteThrough(inner, users, factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {
 		t.Fatalf("newWebAuthnFactorWriteThrough: %v", err)
 	}
@@ -380,7 +477,7 @@ func TestWriteThroughSave_DoesNotCompensateAPreExistingCredential(t *testing.T) 
 	factors := &fakeUserAuthFactorClient{}
 	users := xkmswebauthn.NewMemoryUserStore()
 	inner := newStubCredentialStore()
-	wt, err := newWebAuthnFactorWriteThrough(inner, users, factors, testWriteThroughTenant, nil)
+	wt, err := newWebAuthnFactorWriteThrough(inner, users, factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {
 		t.Fatalf("newWebAuthnFactorWriteThrough: %v", err)
 	}
@@ -419,9 +516,13 @@ func TestWriteThroughSave_DoesNotCompensateAPreExistingCredential(t *testing.T) 
 func TestWriteThroughSave_ReportsFailedCompensation(t *testing.T) {
 	factors := &fakeUserAuthFactorClient{addErr: errors.New("qrdb unavailable")}
 	users := xkmswebauthn.NewMemoryUserStore()
+	// The registrant is seeded because the assurance gate holds an
+	// UNIDENTIFIABLE registrant to hardware; this test is about compensation
+	// ordering, not about identity, so it uses a resolvable one.
+	seedUser(t, users, 42, "alice@example.com", "alice")
 	inner := newStubCredentialStore()
 	inner.deleteErr = errors.New("kv delete failed")
-	wt, err := newWebAuthnFactorWriteThrough(inner, users, factors, testWriteThroughTenant, nil)
+	wt, err := newWebAuthnFactorWriteThrough(inner, users, factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {
 		t.Fatalf("newWebAuthnFactorWriteThrough: %v", err)
 	}
@@ -445,10 +546,11 @@ func TestWriteThroughSave_ReportsFailedCompensation(t *testing.T) {
 func TestWriteThroughSave_InnerSaveFailureSkipsEnrollment(t *testing.T) {
 	factors := &fakeUserAuthFactorClient{}
 	users := xkmswebauthn.NewMemoryUserStore()
+	seedUser(t, users, 42, "alice@example.com", "alice")
 	storeErr := errors.New("kv put failed")
 	inner := newStubCredentialStore()
 	inner.saveErr = storeErr
-	wt, err := newWebAuthnFactorWriteThrough(inner, users, factors, testWriteThroughTenant, nil)
+	wt, err := newWebAuthnFactorWriteThrough(inner, users, factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {
 		t.Fatalf("newWebAuthnFactorWriteThrough: %v", err)
 	}
@@ -515,7 +617,7 @@ func TestWriteThroughSave_EmptyCredentialIDDelegates(t *testing.T) {
 	factors := &fakeUserAuthFactorClient{}
 	inner := newStubCredentialStore()
 	wt, err := newWebAuthnFactorWriteThrough(
-		inner, xkmswebauthn.NewMemoryUserStore(), factors, testWriteThroughTenant, nil)
+		inner, xkmswebauthn.NewMemoryUserStore(), factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {
 		t.Fatalf("newWebAuthnFactorWriteThrough: %v", err)
 	}
@@ -556,7 +658,7 @@ func TestNewWebAuthnFactorWriteThrough_RequiresEveryDependency(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := newWebAuthnFactorWriteThrough(tt.inner, tt.users, tt.factors, tt.tenantID, nil)
+			_, err := newWebAuthnFactorWriteThrough(tt.inner, tt.users, tt.factors, recorderOf(tt.factors), tt.tenantID, permissiveTestGate(), nil)
 			var typed *WebAuthnFactorStoreConfigError
 			if !errors.As(err, &typed) {
 				t.Fatalf("error = %v, want *WebAuthnFactorStoreConfigError", err)
@@ -575,7 +677,9 @@ func TestNewWebAuthnFactorWriteThrough_DefaultsLogger(t *testing.T) {
 		xkmswebauthn.NewMemoryCredentialStore(),
 		xkmswebauthn.NewMemoryUserStore(),
 		&fakeUserAuthFactorClient{},
+		recorderOf(&fakeUserAuthFactorClient{}),
 		testWriteThroughTenant,
+		permissiveTestGate(),
 		nil)
 	if err != nil {
 		t.Fatalf("newWebAuthnFactorWriteThrough: %v", err)

@@ -49,7 +49,16 @@ func TestNewModule_RegistersRoleGrants(t *testing.T) {
 	// AccountService) and go-qrdb v0.5.1-alpha places it on NO built-in
 	// role: a genuine gap the module must fill for Admin/Owner so its own
 	// AccountService is reachable by the built-in administrator.
-	for _, perm := range []qrdbsdk.Permission{"credentials:store", "credentials:retrieve"} {
+	//
+	// credentials:retrieve is deliberately NOT in this list any more. The
+	// account surface's metadata reads moved to QuicBaaS's own tenant-scoped
+	// agent_accounts:* family (go-quicbaas#734) because credentials:* is
+	// registered ScopeCross — system tenant only — and therefore denied every
+	// tenant identity, including the enrolled agent daemon that must select
+	// over the pool. No proto in this module declares credentials:retrieve now,
+	// so the gap fill has nothing to fill, and asserting the grant would pin a
+	// permission the module no longer references.
+	for _, perm := range []qrdbsdk.Permission{"credentials:store"} {
 		assert.True(t, qrdbsdk.IsPermissionRegistered(perm), "%s must be registered", perm)
 		assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perm),
 			"admin must hold %s (unclaimed gap fill)", perm)

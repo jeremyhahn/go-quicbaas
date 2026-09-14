@@ -15,7 +15,10 @@ package orchestration
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
+	"strings"
+	"time"
 )
 
 // Sentinel errors for the acp package.
@@ -49,6 +52,16 @@ var (
 
 	// ErrOneShotExecution indicates a one-shot CLI execution failure.
 	ErrOneShotExecution = errors.New("acp: one-shot execution failed")
+
+	// ErrOneShotNoOutput indicates a one-shot CLI exited successfully having
+	// written nothing at all.
+	//
+	// ITS OWN SENTINEL, because "produced nothing" is a different diagnosis
+	// from "produced something the SDLC module could not use", and before #241 the
+	// first was reported as a completed turn holding the empty string —
+	// indistinguishable from a CLI that reported {"result":""}. A caller that
+	// needs to tell a silent exit from an empty answer matches on this.
+	ErrOneShotNoOutput = errors.New("acp: one-shot command produced no output")
 
 	// ErrStreamJSON indicates a stream-json protocol error from Claude Code.
 	ErrStreamJSON = errors.New("acp: stream-json error")
@@ -113,11 +126,59 @@ func (e *TransportError) Unwrap() []error {
 	return []error{ErrTransportFailed, e.Cause}
 }
 
-// ProtocolError indicates an ACP protocol violation.
+// ProtocolError indicates an ACP protocol violation THIS PACKAGE diagnosed.
+//
+// Message is authored here — "failed to parse session result" and its
+// siblings — so it is rendered. Peer-supplied text does NOT belong on this
+// type: see PeerRPCError, which exists so that the two cannot share a field.
 type ProtocolError struct {
 	Message string
 	Cause   error
 }
+
+// PeerRPCError is a JSON-RPC error object the ACP peer returned.
+//
+// SEPARATE FROM ProtocolError SO THE SAFETY PROPERTY IS STRUCTURAL. Both are
+// protocol failures, but one carries sentences this package wrote and the
+// other carries text the agent subprocess wrote, and a single type holding
+// both would need a branch in Error() to decide which is safe to render — a
+// branch a future caller gets wrong by setting the wrong field. Two types
+// cannot be confused that way (review 1330; the same choice CommandError made
+// when its two authored sites moved off it).
+type PeerRPCError struct {
+	// Code is the JSON-RPC code, and it IS rendered. It is the structural
+	// signal an operator actually needs — -32601 method not found, -32602
+	// invalid params — and an integer cannot carry a credential.
+	Code int
+
+	// Message is the peer's own error text.
+	//
+	// IT IS NEVER RENDERED BY Error(). This is the same agent CLI whose stderr
+	// #187 protected, reporting through a different channel; if we accepted
+	// the diagnostic loss for its stderr we cannot decline it for its JSON-RPC
+	// errors on the grounds that this channel looks tidier. It runs with
+	// credential material in its environment — pooled provider accounts, MCP
+	// client certificates, forge tokens — and since go-quicbaas#198 one of the
+	// places an error string reaches is a COMMENT ON A FORGE ISSUE.
+	//
+	// The text stays on the field for callers with somewhere safe to put it.
+	Message string
+}
+
+// Error implements the error interface.
+//
+// The code and the withheld size, never the peer's text — see the fields.
+func (e *PeerRPCError) Error() string {
+	msg := ErrProtocolViolation.Error() + ": peer returned JSON-RPC error " + strconv.Itoa(e.Code)
+	if n := len(e.Message); n > 0 {
+		msg += " (" + strconv.Itoa(n) + " bytes of peer message withheld)"
+	}
+	return msg
+}
+
+// Unwrap returns the sentinel, so callers matching ErrProtocolViolation keep
+// matching whichever side of the split produced the failure.
+func (e *PeerRPCError) Unwrap() error { return ErrProtocolViolation }
 
 // Error implements the error interface.
 func (e *ProtocolError) Error() string {
@@ -218,15 +279,37 @@ func (e *InputValidationError) Unwrap() error {
 // one-shot mode (e.g., claude --print).
 type OneShotExecutionError struct {
 	Command string
-	Stderr  string
-	Cause   error
+
+	// Stderr is the agent's captured diagnostic output.
+	//
+	// IT IS NEVER RENDERED BY Error(). See StreamJSONProcessExitedError.Stderr
+	// for the whole argument; the short version is that an agent runs with
+	// credential material in its environment, an error string reaches every
+	// log through %v, and a field that is only unused today is a field
+	// somebody logs tomorrow. Read it deliberately, by name.
+	Stderr string
+
+	// TurnFailureEvidence is the CLI's own structured account of the failure,
+	// when it produced a parseable result object. Its reason class IS
+	// rendered; see the type.
+	TurnFailureEvidence
+
+	Cause error
 }
 
 // Error implements the error interface.
+//
+// METADATA ONLY, PLUS THE REASON CLASS. The stderr tail is deliberately absent
+// — see the field. The CLI's own terminal reason is not part of that payload:
+// it is a closed-enum label, and withholding it is what left #235's operator
+// reading "34 bytes withheld" for an authentication failure.
 func (e *OneShotExecutionError) Error() string {
 	msg := ErrOneShotExecution.Error() + ": " + e.Command
-	if e.Stderr != "" {
-		msg += ": " + e.Stderr
+	if class := e.ReasonClass(); class != "" {
+		msg += " terminal_reason=" + class
+	}
+	if n := len(e.Stderr); n > 0 {
+		msg += " (" + strconv.Itoa(n) + " bytes of stderr withheld)"
 	}
 	return msg
 }
@@ -242,15 +325,54 @@ func (e *OneShotExecutionError) Unwrap() []error {
 // StreamJSONError indicates the Claude Code stream-json protocol returned
 // an error result.
 type StreamJSONError struct {
+	// Command is the configured binary, which is operator-supplied and
+	// rendered.
 	Command string
-	Result  string
+
+	// Result is the AGENT'S OWN result text from the failing turn.
+	//
+	// IT IS NEVER RENDERED BY Error(), for the reason
+	// StreamJSONProcessExitedError.Stderr is not — this is the same subprocess
+	// and the same hazard, reached through the protocol rather than through
+	// stderr. Found by the review-1330 audit: the stderr tail had been
+	// protected at the type and this field, one struct away, had not, which is
+	// precisely the "fixed one path, the next path still leaks" shape that
+	// motivated putting the rule on the field in the first place.
+	//
+	// An agent's free-form result text on a FAILING turn is the most likely
+	// place in this package for a credential to appear: it is whatever the
+	// model wrote about what went wrong, and what went wrong is often a
+	// command it ran with a token in it.
+	//
+	// The text stays on the field for callers with somewhere safe to put it.
+	Result string
+
+	// TurnFailureEvidence is the CLI's own structured account of the failing
+	// turn — the terminal reason, the turn count, the token accounting. Its
+	// reason class IS rendered; see the type.
+	TurnFailureEvidence
 }
 
 // Error implements the error interface.
+//
+// METADATA ONLY, PLUS THE REASON CLASS. The agent's result text is deliberately
+// absent — see the field.
+//
+// THE TERMINAL REASON IS NOT PART OF THAT PAYLOAD, and #235 is the measurement
+// that says withholding it was a mistake rather than a precaution. The burn-in
+// surfaced "acp: stream-json error: claude (34 bytes of result withheld)" onto
+// a forge issue; the one fact a human needed — that the CLI had died on
+// `api_error` before its first turn, i.e. that this was the SDLC module's
+// credentials and not the work item — was in a closed-enum field beside the
+// withheld text, and was thrown away with it. Redaction is for secrets. A
+// reason code is not one, and it is shape-checked before it is rendered.
 func (e *StreamJSONError) Error() string {
 	msg := ErrStreamJSON.Error() + ": " + e.Command
-	if e.Result != "" {
-		msg += ": " + e.Result
+	if class := e.ReasonClass(); class != "" {
+		msg += " terminal_reason=" + class
+	}
+	if n := len(e.Result); n > 0 {
+		msg += " (" + strconv.Itoa(n) + " bytes of result withheld)"
 	}
 	return msg
 }
@@ -268,17 +390,39 @@ func (e *StreamJSONError) Unwrap() error {
 type StreamJSONProcessExitedError struct {
 	Command  string
 	ExitCode int
-	Stderr   string
+
+	// Stderr is the bounded tail of the agent's own diagnostic output.
+	//
+	// IT IS NEVER RENDERED BY Error(), AND THAT IS THE POINT OF PUTTING THE
+	// RULE HERE RATHER THAN AT A LOG SITE. An agent CLI runs with credential
+	// material in its environment — pooled provider accounts, MCP client
+	// certificates, forge tokens — and a diagnostic it prints while dying can
+	// carry any of it. An error's string reaches every %v, %s, structured
+	// logger field and wrapped-error chain in the process, so a redaction
+	// applied at one call site is a redaction that the next call site does not
+	// have. Measured: the supervisor's log line was fixed for this, and the
+	// SDLC stage observer then rendered the same error type through a different
+	// path (#187 review).
+	//
+	// The tail stays HERE, on the field, for callers that have somewhere safe
+	// to put it and ask for it by name — accountLimitClassifier reads it to
+	// classify a provider limit, and an operator surface behind authorization
+	// can show it. Nothing gets it by accident.
+	Stderr string
 }
 
 // Error implements the error interface.
+//
+// METADATA ONLY: the command, the exit code, and how much stderr was withheld.
+// The byte count is deliberate — it tells an operator there IS evidence and
+// roughly how much, without being the evidence.
 func (e *StreamJSONProcessExitedError) Error() string {
 	msg := ErrStreamJSONProcessExited.Error() + ": " + e.Command
 	if e.ExitCode != 0 {
 		msg += " exited code " + strconv.Itoa(e.ExitCode)
 	}
-	if e.Stderr != "" {
-		msg += ": " + e.Stderr
+	if n := len(e.Stderr); n > 0 {
+		msg += " (" + strconv.Itoa(n) + " bytes of stderr withheld)"
 	}
 	return msg
 }
@@ -766,3 +910,174 @@ func (e *ParentJobNotFoundError) Error() string {
 
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *ParentJobNotFoundError) Unwrap() error { return ErrParentJobNotFound }
+
+// =============================================================================
+// Closed store
+// =============================================================================
+
+var (
+	// ErrStoreClosed indicates an operation reached the store after the
+	// daemon closed it.
+	ErrStoreClosed = errors.New("orchestration: store closed")
+)
+
+// storeClosedMarkers are the closed-store conditions a job can meet on the
+// way out while the node is shutting down.
+//
+// THEY ARE MATCHED BY TEXT ON PURPOSE. The engine under go-qrdb reports an
+// already-closed store by PANICKING rather than by returning an error, and
+// the value it panics with crosses the SDK boundary as an opaque one: there
+// is no exported type or sentinel on this side of the boundary to match it
+// against. The markers are the stable prefixes those values carry.
+var storeClosedMarkers = []string{
+	"pebble: closed",   // the storage engine under go-qrdb
+	"backend: closed",  // go-qrdb's local backend
+	"client is closed", // go-qrdb's SDK client
+	"store is closed",
+	"database is closed",
+}
+
+// StoreClosedError reports work that could not be recorded because the store
+// had already been closed — the daemon is shutting down under a job that is
+// still writing. It is not a failure of the job: the job's record is simply
+// the one it had before the store went away, and a restart resumes it from
+// there.
+type StoreClosedError struct {
+	// JobID is the job whose write met the closed store, empty when the
+	// write did not belong to one.
+	JobID string
+
+	// Op names the operation that met it, for the log line.
+	Op string
+
+	// Value is how the store reported being closed.
+	Value string
+}
+
+// Error implements the error interface.
+func (e *StoreClosedError) Error() string {
+	msg := ErrStoreClosed.Error() + ": op=" + e.Op
+	if e.JobID != "" {
+		msg += " job=" + e.JobID
+	}
+	if e.Value != "" {
+		msg += ": " + e.Value
+	}
+	return msg
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *StoreClosedError) Unwrap() error { return ErrStoreClosed }
+
+// IsStoreClosed reports whether v is the store refusing an operation because
+// it has been closed. v is either an error or a value recovered from a panic,
+// because the store reports the condition both ways.
+func IsStoreClosed(v any) bool {
+	switch value := v.(type) {
+	case nil:
+		return false
+	case error:
+		if errors.Is(value, ErrStoreClosed) {
+			return true
+		}
+		return matchesStoreClosed(value.Error())
+	case string:
+		return matchesStoreClosed(value)
+	default:
+		return false
+	}
+}
+
+// matchesStoreClosed reports whether text names a closed store.
+func matchesStoreClosed(text string) bool {
+	lowered := strings.ToLower(text)
+	for _, marker := range storeClosedMarkers {
+		if strings.Contains(lowered, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// guardStoreClosed runs fn and returns a StoreClosedError when fn met a
+// closed store, nil when it did not.
+//
+// EVERY OTHER PANIC IS RE-RAISED. A panic that is not the store going away
+// is a bug, and a guard that swallowed it would hide the bug and leave the
+// daemon running on state nothing checked. Only the one condition the daemon
+// creates for itself by closing storage under its own running work is
+// converted into an error.
+func guardStoreClosed(op, jobID string, fn func()) (closed *StoreClosedError) {
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+		if !IsStoreClosed(recovered) {
+			panic(recovered)
+		}
+		closed = &StoreClosedError{JobID: jobID, Op: op, Value: fmt.Sprint(recovered)}
+	}()
+	fn()
+	return nil
+}
+
+// =============================================================================
+// Shutdown drain
+// =============================================================================
+
+var (
+	// ErrDrainTimeout indicates the shutdown drain gave up waiting for work
+	// that was still running.
+	ErrDrainTimeout = errors.New("orchestration: drain timed out")
+
+	// ErrServiceShuttingDown indicates the service refused an operation
+	// because it is draining for shutdown.
+	ErrServiceShuttingDown = errors.New("orchestration: service is shutting down")
+)
+
+// DrainTimeoutError reports a shutdown drain that reached its bound with work
+// still in flight. It is not a failure of that work: what it names keeps its
+// non-terminal record and is resumed by RecoverJobs on the next start.
+type DrainTimeoutError struct {
+	// Phase is the drain phase that gave up, DrainPhaseJobs or
+	// DrainPhaseTurns.
+	Phase string
+
+	// Waited is how long that phase waited before giving up.
+	Waited time.Duration
+
+	// Running names what was still in flight, keyed as tenant/job for a
+	// job. Empty when the phase cannot enumerate its work.
+	Running []string
+}
+
+// Error implements the error interface.
+func (e *DrainTimeoutError) Error() string {
+	msg := ErrDrainTimeout.Error() + ": phase=" + e.Phase + " waited=" + e.Waited.String()
+	if len(e.Running) > 0 {
+		msg += " running=" + strings.Join(e.Running, ",")
+	}
+	return msg
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *DrainTimeoutError) Unwrap() error { return ErrDrainTimeout }
+
+// ServiceShuttingDownError is returned when an operation is refused because
+// the service has begun draining for shutdown.
+type ServiceShuttingDownError struct {
+	// Operation names what was refused.
+	Operation string
+}
+
+// Error implements the error interface.
+func (e *ServiceShuttingDownError) Error() string {
+	if e.Operation == "" {
+		return ErrServiceShuttingDown.Error()
+	}
+	return ErrServiceShuttingDown.Error() + ": " + e.Operation
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *ServiceShuttingDownError) Unwrap() error { return ErrServiceShuttingDown }

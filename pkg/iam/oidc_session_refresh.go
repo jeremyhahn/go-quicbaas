@@ -21,6 +21,8 @@ import (
 	"encoding/hex"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/dpop"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
@@ -149,15 +151,22 @@ func (p *OIDCProvider) IssueRefreshForSessionBearer(ctx context.Context, bearer 
 	}
 
 	session := TokenSessionContext{
-		Roles:       claims.Roles,
-		Groups:      claims.Groups,
-		Audience:    claims.Audience,
-		Email:       claims.Email,
-		Name:        claims.Name,
-		AuthMethod:  claims.AuthMethod,
-		MFAVerified: claims.MFAVerified,
-		AMR:         claims.AMR,
-		ACR:         claims.ACR,
+		// Read back off the bearer this provider just minted, so the refresh
+		// record names the same login the access token does.
+		SessionID:     claims.SessionID,
+		UserID:        claims.UserID,
+		PrincipalType: claims.PrincipalType,
+		Roles:         claims.Roles,
+		Groups:        claims.Groups,
+		Audience:      claims.Audience,
+		Email:         claims.Email,
+		Name:          claims.Name,
+		AuthMethod:    claims.AuthMethod,
+		MFAVerified:   claims.MFAVerified,
+		AMR:           claims.AMR,
+		ACR:           claims.ACR,
+		AttestLevel:   claims.AttestLevel,
+		AttestAAGUID:  claims.AttestAAGUID,
 	}
 	if claims.Confirmation != nil {
 		session.Jkt = claims.Confirmation.Jkt
@@ -207,6 +216,22 @@ func (p *OIDCProvider) RefreshSession(ctx context.Context, req SessionRefreshReq
 		session = *stored.Session
 	}
 
+	// A refresh renews a session; it must not outlive the principal's right to
+	// hold one. The renewed access token replays the session's FROZEN roles, so
+	// without this gate disabling an account would leave its holder able to mint
+	// a fresh, fully-privileged bearer every fifteen minutes for the whole
+	// refresh window — the access-token liveness check alone cannot stop that,
+	// because each renewal is a brand-new token. The session's frozen UserID is
+	// the immutable handle, so a rename between login and renewal changes
+	// nothing here.
+	live, err := p.principalLive(withTokenTenant(ctx, stored.TenantID), stored.TenantID, stored.Subject, session.UserID, session.PrincipalType)
+	if err != nil {
+		return nil, &SessionRefreshRejectedError{Reason: "principal liveness could not be established"}
+	}
+	if !live {
+		return nil, &SessionRefreshRejectedError{Reason: "principal is not enabled"}
+	}
+
 	// RFC 9449: a sender-constrained session may only be renewed by the holder
 	// of the bound key. An unbound session is never upgraded from a presented
 	// proof — the binding is established at login, not at renewal.
@@ -223,25 +248,45 @@ func (p *OIDCProvider) RefreshSession(ctx context.Context, req SessionRefreshReq
 
 	now := time.Now()
 	expiresAt := now.Add(p.config.AccessTokenTTL)
+	jti, err := generateJTI()
+	if err != nil {
+		return nil, err
+	}
+
 	claims := &Claims{
-		Issuer:       p.config.Issuer,
-		Subject:      stored.Subject,
-		Audience:     sessionRefreshAudience(session, p.config.Issuer),
-		ExpiresAt:    NewUnixTime(expiresAt),
-		IssuedAt:     NewUnixTime(now),
-		NotBefore:    NewUnixTime(now),
-		JTI:          generateJTI(),
-		TenantID:     stored.TenantID,
-		Roles:        session.Roles,
-		Groups:       session.Groups,
-		Email:        session.Email,
-		Name:         session.Name,
-		ClientID:     stored.ClientID,
-		Scope:        joinScopes(stored.Scopes),
-		AuthMethod:   session.AuthMethod,
-		MFAVerified:  session.MFAVerified,
-		AMR:          session.AMR,
-		ACR:          session.ACR,
+		Issuer:    p.config.Issuer,
+		Subject:   stored.Subject,
+		Audience:  sessionRefreshAudience(session, p.config.Issuer),
+		ExpiresAt: NewUnixTime(expiresAt),
+		IssuedAt:  NewUnixTime(now),
+		NotBefore: NewUnixTime(now),
+		JTI:       jti,
+		// A renewal is the SAME session: it replays the identifier its login
+		// established rather than minting one, which is what lets a client tell
+		// this apart from a second login by the same principal into the same
+		// tenant. A session frozen before the claim existed carries none and
+		// GenerateAccessToken mints a fresh one, so an old session degrades to
+		// "every renewal looks new" rather than to two logins looking alike.
+		SessionID:     session.SessionID,
+		TenantID:      stored.TenantID,
+		UserID:        session.UserID,
+		PrincipalType: session.PrincipalType,
+		Roles:         session.Roles,
+		Groups:        session.Groups,
+		Email:         session.Email,
+		Name:          session.Name,
+		ClientID:      stored.ClientID,
+		Scope:         joinScopes(stored.Scopes),
+		AuthMethod:    session.AuthMethod,
+		MFAVerified:   session.MFAVerified,
+		AMR:           session.AMR,
+		ACR:           session.ACR,
+		// Replayed, never re-derived: a refresh does not re-run the ceremony,
+		// so the renewed bearer asserts exactly what the login proved. A
+		// session that proved nothing carries nothing here and renews the same
+		// way.
+		AttestLevel:  session.AttestLevel,
+		AttestAAGUID: session.AttestAAGUID,
 		Confirmation: cnf,
 	}
 	accessToken, err := p.tokenService.GenerateAccessToken(ctx, claims)
@@ -319,9 +364,14 @@ func (s *TokenService) issueRefreshCredential(ctx context.Context, opts SessionR
 		expires = now.Add(s.config.RefreshTokenTTL)
 	}
 
+	jti, err := generateJTI()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+
 	session := opts.Session
 	record := &Token{
-		JTI:       generateJTI(),
+		JTI:       jti,
 		Subject:   opts.Subject,
 		TenantID:  opts.TenantID,
 		ClientID:  opts.ClientID,
@@ -340,9 +390,30 @@ func (s *TokenService) issueRefreshCredential(ctx context.Context, opts SessionR
 
 // withTokenTenant scopes a context to the token's tenant so the tenant-scoped
 // token index is addressed. An empty tenant leaves the context untouched.
+//
+// This binds QUICBAAS's tenant key, which quicbaas's own storage reads. It is
+// NOT the binding go-qrdb resolves its stores from — see withQRDBTenant, which
+// is the one to reach for before any call that crosses into the qrdb SDK.
 func withTokenTenant(ctx context.Context, tenantID string) context.Context {
 	if tenantID == "" {
 		return ctx
 	}
 	return ContextWithTenant(ctx, tenantID)
+}
+
+// withQRDBTenant scopes a context to a tenant for a call that crosses into the
+// go-qrdb SDK, whose store resolvers read qrdb's own tenant binding rather than
+// quicbaas's. An empty tenant leaves the context untouched, which qrdb reads as
+// the system tenant.
+//
+// The two bindings are separate context keys and neither reads the other, so a
+// call that crosses the SDK boundary carrying only withTokenTenant runs against
+// the SYSTEM tenant's stores while looking correctly scoped. That is exactly
+// how #529 presented: a verified login for a tenant user failed permission
+// resolution because the role lookup ran in the wrong tenant's store.
+func withQRDBTenant(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" {
+		return ctx
+	}
+	return qrdbsdk.ContextWithTenant(ctx, tenantID)
 }

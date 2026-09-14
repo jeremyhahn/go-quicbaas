@@ -81,13 +81,31 @@ func (s *MemoryInviteStore) Create(
 	return token, record, nil
 }
 
-// Lookup resolves a token within a tenant without consuming it.
+// Lookup resolves a token within a tenant without consuming it, and REFUSES a
+// token that is spent or expired.
+//
+// Refusing rather than returning the record is what qrdb does: its
+// DAOStore.Lookup runs checkUsable and answers ErrAlreadyRedeemed / ErrExpired,
+// which translateInviteError maps onto iam.ErrInviteUsed / iam.ErrInviteExpired.
+// This double used to return the spent record with Used=true and a nil error
+// instead. That divergence was not cosmetic: it meant every handler test
+// exercised the `if record.Used` branch, which the real store can never reach,
+// while production took the error path and rendered a Forbidden QBError as
+// "access denied: invite has already been used" — the confusing message in
+// #272. A double that is wrong about which branch runs makes the tests agree
+// with each other and disagree with the deployment.
 func (s *MemoryInviteStore) Lookup(_ context.Context, tenantID, token string) (*iam.InviteRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.byTenant[tenantID][token]
 	if !ok {
 		return nil, iam.ErrInviteNotFound
+	}
+	if record.Used {
+		return nil, iam.ErrInviteUsed
+	}
+	if time.Now().UTC().After(record.ExpiresAt) {
+		return nil, iam.ErrInviteExpired
 	}
 	copied := *record
 	return &copied, nil
@@ -105,6 +123,11 @@ func (s *MemoryInviteStore) Redeem(_ context.Context, tenantID, token string) (*
 	}
 	if record.Used {
 		return nil, iam.ErrInviteUsed
+	}
+	// qrdb's Redeem runs the same usability check as its Lookup, so an
+	// expired token is refused here too rather than being consumable.
+	if time.Now().UTC().After(record.ExpiresAt) {
+		return nil, iam.ErrInviteExpired
 	}
 	record.Used = true
 	copied := *record

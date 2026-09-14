@@ -21,6 +21,7 @@ import (
 
 	transportTypes "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -75,13 +76,21 @@ func (s *Server) xkmsFIDO2Service() (service.FIDO2Service, error) {
 
 // respondXKMSFIDO2Error maps FIDO2 service failures onto the xkms error
 // envelope: configuration gaps are 503, tenant/nil-request problems are 400,
-// and ceremony failures are 500 for registration but a generic 401 for
-// authentication (a failed proof must not describe why it failed).
+// a classified failure gets the status its error code names, and anything
+// unclassified is 500 for registration but a generic 401 for authentication
+// (a failed proof must not describe why it failed).
 func respondXKMSFIDO2Error(w http.ResponseWriter, op string, err error, authentication bool) {
+	// These two cases are the EXCEPTIONS to the opaque-401 rule below, so the
+	// set they match has to be exactly the conditions named -- not their error
+	// codes. errors.Is against these sentinels matched the CODE (QBError is
+	// go-qrdb's QRDBError, whose Is compares Code and nothing else), so every
+	// invalid-input failure a ceremony could raise took the 400 branch and was
+	// rendered verbatim on an authentication route, describing a failed proof
+	// the rule above says must stay opaque (go-quicbaas#434).
 	switch {
-	case errors.Is(err, service.ErrFIDO2NotConfigured):
+	case service.IsFIDO2ServiceUnavailable(err):
 		respondXKMSError(w, http.StatusServiceUnavailable, err)
-	case errors.Is(err, service.ErrFIDO2TenantRequired), errors.Is(err, service.ErrFIDO2NilRequest):
+	case service.IsFIDO2RequestInvalid(err):
 		respondXKMSError(w, http.StatusBadRequest, err)
 	default:
 		var tenantRequired *XKMSFIDO2TenantRequiredError
@@ -93,6 +102,29 @@ func respondXKMSFIDO2Error(w http.ResponseWriter, op string, err error, authenti
 			respondXKMSError(w, http.StatusUnauthorized, &XKMSOperationError{
 				Op:     op,
 				Detail: "authentication failed",
+			})
+			return
+		}
+		// A classified failure has already said what it is, and this bridge
+		// must not overrule it. Registration can now be REFUSED — a software
+		// authenticator under the hardware assurance policy, an attestation
+		// chain no trusted root vouches for, an authenticator model outside
+		// the allowlist — and every one of those arrives carrying a QBError
+		// code that the canonical mounts already route by. Reporting them as
+		// 500 told automation the server had failed and invited a retry that
+		// can only fail the same way forever.
+		//
+		// Reading the code rather than matching on error types is what keeps
+		// this correct for the next refusal added upstream, without it having
+		// to know this handler exists.
+		//
+		// Authentication is excluded above deliberately: a failed proof stays
+		// opaque, whatever it carries.
+		var qbErr *dberrors.QBError
+		if errors.As(err, &qbErr) {
+			respondXKMSError(w, qbErr.Code.HTTPStatus(), &XKMSOperationError{
+				Op:     op,
+				Detail: err.Error(),
 			})
 			return
 		}

@@ -469,28 +469,18 @@ func handleIAMAdminStartImpersonation(ctx context.Context, svc service.QuicBaaS,
 			"*iam.ImpersonationRequest", reflect.TypeOf(req).String())
 	}
 
-	// The manager checks the permissions of the NAMED admin IN THE NAMED
-	// TENANT. The admin is always the caller — otherwise an authenticated
-	// principal could borrow another admin's user:impersonate grant — while
-	// the tenant is pinned only for a tenant-scoped subject, since a
-	// system-scope admin impersonating into a tenant is the legitimate
-	// cross-tenant case. An omitted value is filled from the subject; a
-	// mismatched one is refused.
-	adminUserID := r.AdminUserID
-	if subject, bound := auth.SubjectFromContext(ctx); bound {
-		if adminUserID != "" && adminUserID != subject.ID {
-			return nil, NewPermissionDeniedError("quicbaas.IAM.Admin", "StartImpersonation",
-				"admin_user_id does not match the authenticated subject")
-		}
-		adminUserID = subject.ID
-	}
+	// The acting admin is the AUTHENTICATED caller, resolved inside
+	// StartImpersonation from the context (go-quicbaas#383) — never a
+	// request-supplied value, so no actor id travels on the wire. The tenant
+	// is pinned only for a tenant-scoped subject, since a system-scope admin
+	// impersonating into a tenant is the legitimate cross-tenant case; an
+	// unauthenticated caller is refused with ErrImpersonationActorRequired.
 	tenantID, err := requireSubjectTenant(ctx, "StartImpersonation", r.TenantID)
 	if err != nil {
 		return nil, err
 	}
 
 	session, err := mgr.StartImpersonation(ctx, &iam.StartImpersonationOptions{
-		AdminUserID:  adminUserID,
 		TargetUserID: r.TargetUserID,
 		TenantID:     tenantID,
 		Reason:       r.Reason,

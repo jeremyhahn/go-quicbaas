@@ -56,6 +56,12 @@ type AccountResolveRequest struct {
 	// eligible, which is the pre-existing behavior.
 	AllowedAccountIDs []string
 
+	// JobID names the orchestration job the spawn works for, empty when the
+	// caller is not running one. It is not a selection input: it is the SCOPE
+	// of the delivery grant this resolution takes out (see account_lease.go),
+	// so a job's credential deliveries can be listed and revoked as a set.
+	JobID string
+
 	// ExcludeAccountIDs removes accounts from consideration for this one
 	// resolution. Rotation uses it to guarantee forward progress: the account
 	// that just hit a limit is already marked limited durably, but excluding it
@@ -75,6 +81,21 @@ type ResolvedAccountCredential struct {
 	Strategy    string
 	Env         map[string]string
 	Files       map[string][]byte
+
+	// LeaseID is the delivery grant this resolution took out over the
+	// credential material in Env / Files, empty when the deployment wired no
+	// leaser (see account_lease.go).
+	//
+	// The caller's obligation is to RECORD it somewhere the session's ending
+	// can find — SpawnRequest -> Session -> SessionRecord.CredentialLeaseIDs —
+	// so the reaper that tears the session down also withdraws the grant. A
+	// lease nobody recorded is a lease nobody revokes.
+	LeaseID string
+
+	// LeaseExpiresAt is when the delivery grant stops being authorised without
+	// renewal. It is NOT the credential's own expiry, which the OAuth
+	// refresher owns; see account_lease.go.
+	LeaseExpiresAt time.Time
 }
 
 // pinnedAccountStrategyName is the strategy label recorded when the caller
@@ -99,6 +120,16 @@ type accountResolver struct {
 	strategies *AccountStrategyRegistry
 	auditor    StoreAuditor
 	logger     interfaces.Logger
+
+	// grantor supplies the delivery grant that makes this resolution's
+	// credential revocable. Nil leaves releases unleased; see
+	// WithAccountDeliveryGrantor.
+	grantor AccountDeliveryGrantor
+
+	// spend is the cap this resolution is checked against before any
+	// credential is produced. Nil leaves the release guarded only by the
+	// account's lifecycle state; see WithSpendAuthority.
+	spend SpendAuthority
 }
 
 // Compile-time interface satisfaction check.
@@ -113,6 +144,8 @@ func NewAccountResolver(store AccountStore, tokens *AccountTokenManager, strateg
 		strategies: strategies,
 		auditor:    cfg.auditor,
 		logger:     cfg.logger,
+		grantor:    cfg.grantor,
+		spend:      cfg.spend,
 	}
 }
 
@@ -165,6 +198,18 @@ func (r *accountResolver) Resolve(ctx context.Context, req AccountResolveRequest
 		return nil, err
 	}
 
+	// THE CAP IS CHECKED BEFORE THE CREDENTIAL EXISTS, not after. Everything
+	// above this line asks whether the PROVIDER has refused the account;
+	// this asks whether our own ledger says the operator's allowance is
+	// already spent. It runs before tokens.Resolve deliberately: resolving
+	// first would renew an oauth account — a provider round trip, and a
+	// rotation of live secret material — on behalf of a spawn that is about
+	// to be refused anyway.
+	if err := r.authorizeSpend(ctx, account); err != nil {
+		r.audit(ctx, req.TenantID, account.ID, err)
+		return nil, err
+	}
+
 	cred, err := r.tokens.Resolve(ctx, account)
 	if err != nil {
 		r.audit(ctx, req.TenantID, account.ID, err)
@@ -192,6 +237,17 @@ func (r *accountResolver) Resolve(ctx context.Context, req AccountResolveRequest
 	}
 	r.audit(ctx, req.TenantID, account.ID, nil)
 
+	// THE DELIVERY IS LEASED BEFORE THE MATERIAL LEAVES THIS FUNCTION, and a
+	// failure to lease it fails the resolution. Handing the credential over
+	// and then noticing the grant did not land would produce exactly what the
+	// lease exists to prevent: a live provider login on a worker host that
+	// nothing can withdraw.
+	delivery, leaseErr := r.leaseDelivery(ctx, req, account)
+	if leaseErr != nil {
+		r.audit(ctx, req.TenantID, account.ID, leaseErr)
+		return nil, leaseErr
+	}
+
 	env := make(map[string]string, len(cred.Env)+1)
 	for k, v := range cred.Env {
 		env[k] = v
@@ -200,13 +256,51 @@ func (r *accountResolver) Resolve(ctx context.Context, req AccountResolveRequest
 		env[cred.AccessTokenEnvKey] = cred.AccessToken
 	}
 
-	return &ResolvedAccountCredential{
+	resolved := &ResolvedAccountCredential{
 		AccountID:   account.ID,
 		DisplayName: account.DisplayName,
 		Strategy:    strategyName,
 		Env:         env,
 		Files:       cred.Files,
-	}, nil
+	}
+	if delivery != nil {
+		resolved.LeaseID = delivery.LeaseID
+		resolved.LeaseExpiresAt = delivery.ExpiresAt
+	}
+	return resolved, nil
+}
+
+// leaseDelivery takes out the grant covering this resolution's hand-over.
+// A deployment with no grantor wired resolves unleased, which is the behaviour
+// every caller had before delivery grants existed.
+func (r *accountResolver) leaseDelivery(
+	ctx context.Context,
+	req AccountResolveRequest,
+	account *Account,
+) (*AccountCredentialLease, error) {
+	if r.grantor == nil {
+		return nil, nil
+	}
+	return r.grantor.GrantDelivery(ctx, AccountLeaseScope{
+		TenantID:  req.TenantID,
+		AccountID: account.ID,
+		Provider:  account.Provider,
+		ProjectID: req.ProjectID,
+		JobID:     req.JobID,
+	})
+}
+
+// authorizeSpend asks the spend authority whether account may serve more
+// work. A deployment with no authority wired is unmetered and admits.
+func (r *accountResolver) authorizeSpend(ctx context.Context, account *Account) error {
+	if r.spend == nil {
+		return nil
+	}
+	// Zero estimates: a spawn knows how much a session may cost no better
+	// than anyone else, so the question it can honestly ask is whether the
+	// account is ALREADY over. Inventing a per-session estimate would refuse
+	// accounts on a figure nobody measured.
+	return r.spend.Authorize(ctx, SpendAuthorizeRequest{Account: account}, time.Now().UTC())
 }
 
 // selectAccount resolves req to exactly one Account, either by pinned ID or
@@ -235,6 +329,10 @@ func (r *accountResolver) selectAccount(ctx context.Context, req AccountResolveR
 
 	eligible := newAccountEligibility(req)
 	now := time.Now().UTC()
+
+	// considered is the candidate list the final answer was drawn from, kept so
+	// that "nothing was eligible" can say WHY — see coolingDown below.
+	considered := candidates
 	active := eligible.filter(candidates, now, nil)
 	if len(active) == 0 {
 		// Project-scoped pool empty: fall back to the tenant-wide pool for
@@ -242,12 +340,47 @@ func (r *accountResolver) selectAccount(ctx context.Context, req AccountResolveR
 		// every account explicitly.
 		if req.ProjectID != "" {
 			tenantWide, twErr := r.store.ListByTenant(ctx, req.TenantID, req.Provider, "")
-			if twErr == nil {
-				active = eligible.filter(tenantWide, now, func(c *Account) bool { return c.ProjectID == "" })
+			if twErr != nil {
+				// A STORE THAT COULD NOT ANSWER IS NOT AN ANSWER, and swallowing
+				// this used to make it one. The fallback read was best-effort
+				// while "no account available" meant only "try again later";
+				// go-quicbaas#235 gave that error a consequence — the SDLC
+				// module now reads it as a proven configuration fault and parks
+				// the work item for a human. So a transient store failure
+				// stranded work behind a person even when an eligible
+				// tenant-wide account was sitting right there, unread.
+				//
+				// Returned instead, so it stays what it is: a backend failure,
+				// charged and retried like any other, and distinguishable by
+				// every caller from the pool genuinely being empty.
+				return nil, twErr
+			}
+			unscoped := func(c *Account) bool { return c.ProjectID == "" }
+			active = eligible.filter(tenantWide, now, unscoped)
+			if len(active) == 0 {
+				considered = append(append([]*Account{}, candidates...),
+					filterAccounts(tenantWide, unscoped)...)
 			}
 		}
 	}
 	if len(active) == 0 {
+		// AN EMPTY POOL AND A COOLING-DOWN POOL ARE DIFFERENT ANSWERS, and
+		// they used to be the same one. The first is a misconfiguration that
+		// nothing but an operator will fix; the second is the rotation working
+		// as designed, and it clears itself at AvailableAt. The SDLC module
+		// parks a work item for a human on the first and must not on the
+		// second, or it strands work that would have been dispatchable minutes
+		// later. See AccountsCoolingDownError.
+		// held > 0 means: nothing is available NOW (active is empty) and at
+		// least one permitted candidate returns at a stated time. That is
+		// enough to wait on, even in a pool that also holds accounts needing a
+		// human — the one that returns is what makes progress possible.
+		if held, earliest := coolingDown(considered, eligible, now); held > 0 {
+			return nil, &AccountsCoolingDownError{
+				TenantID: req.TenantID, ProjectID: req.ProjectID, Provider: req.Provider,
+				Candidates: held, AvailableAt: earliest,
+			}
+		}
 		return nil, &NoAccountAvailableError{TenantID: req.TenantID, ProjectID: req.ProjectID, Provider: req.Provider, Strategy: req.StrategyName}
 	}
 
@@ -288,6 +421,69 @@ func (r *accountResolver) persistCooldownExpiry(ctx context.Context, account *Ac
 	}); err != nil {
 		r.logTouchFailure(account.TenantID, account.ID, err)
 	}
+}
+
+// filterAccounts returns the candidates matching keep. A plain helper, used to
+// assemble the list a failed resolution reports on.
+func filterAccounts(candidates []*Account, keep func(*Account) bool) []*Account {
+	out := make([]*Account, 0, len(candidates))
+	for _, c := range candidates {
+		if keep == nil || keep(c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// coolingDown reports how many of the considered candidates will RETURN ON
+// THEIR OWN AT A KNOWN TIME, and when the first of them does.
+//
+// TWO TESTS, AND EACH RULES OUT A DIFFERENT WAY OF STRANDING WORK.
+//
+// The first is "held out ONLY by the hold". An account excluded by the
+// caller's allow-list, or revoked, or errored, is not coming back by itself and
+// must not make a misconfigured pool look like a busy one — the caller treats a
+// cooldown as a reason to wait rather than to tell a human, so a pool that will
+// never recover must not qualify.
+//
+// The second is "and the hold NAMES ITS EXPIRY", which review of #235 caught
+// and which the first test alone does not cover. Account.LimitHoldActive treats
+// a zero AvailableAt as held INDEFINITELY: nothing promised when it would come
+// back, which is precisely what "self-clearing" cannot mean. Counting one would
+// tell the SDLC module to requeue and try again forever against a pool that has no
+// return date — a livelock, cheap per iteration and endless.
+//
+// So an indefinite hold is treated like a revoked account: it does not count,
+// and a pool of nothing but indefinite holds is reported as no-account-available
+// and parks for a human. A pool with one indefinite hold and one that expires
+// at T still returns at T, so it IS a cooldown and T is the answer.
+//
+// The consequence worth stating: when this reports a cooldown, the time is
+// never zero. A caller can rely on being told when.
+func coolingDown(considered []*Account, eligible accountEligibility, now time.Time) (int, time.Time) {
+	var (
+		returning int
+		earliest  time.Time
+	)
+	for _, c := range considered {
+		if c == nil || c.Status != AccountStatusLimited || !c.LimitHoldActive(now) {
+			continue
+		}
+		// The rotation policy still applies: an account this request excluded
+		// is not one it is waiting for.
+		if !eligible.permitted(c) {
+			continue
+		}
+		// Held with no stated expiry: not coming back on its own.
+		if c.AvailableAt.IsZero() {
+			continue
+		}
+		returning++
+		if earliest.IsZero() || c.AvailableAt.Before(earliest) {
+			earliest = c.AvailableAt
+		}
+	}
+	return returning, earliest
 }
 
 // =============================================================================
@@ -338,11 +534,13 @@ func (e accountEligibility) filter(candidates []*Account, now time.Time, extra f
 	return out
 }
 
-// eligible reports whether one candidate may be selected at now.
-func (e accountEligibility) eligible(c *Account, now time.Time) bool {
-	if !c.Selectable(now) {
-		return false
-	}
+// permitted reports whether this request's ROTATION POLICY admits c, ignoring
+// whether the account is selectable right now.
+//
+// Split out from eligible so a failed resolution can ask "would this candidate
+// have been allowed, if it were not on hold" — the question that separates a
+// pool which is busy from one which is misconfigured.
+func (e accountEligibility) permitted(c *Account) bool {
 	if e.allowed != nil {
 		if _, ok := e.allowed[c.ID]; !ok {
 			return false
@@ -354,6 +552,14 @@ func (e accountEligibility) eligible(c *Account, now time.Time) bool {
 		}
 	}
 	return true
+}
+
+// eligible reports whether one candidate may be selected at now.
+func (e accountEligibility) eligible(c *Account, now time.Time) bool {
+	if !c.Selectable(now) {
+		return false
+	}
+	return e.permitted(c)
 }
 
 func (r *accountResolver) audit(ctx context.Context, tenantID, accountID string, err error) {

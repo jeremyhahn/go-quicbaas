@@ -57,7 +57,7 @@ sign locally". That asymmetry is the whole design.
   `/api/v1/ssh` (`sshRESTBasePath`, `:28`), the same mount the go-xkms REST SSH
   client alias targets, so the SDK and that client observe one server surface
   rather than two that drift.
-- **`../agent-orchestration/`** — the largest consumer. `quicbaas agent deploy
+- **`../software-factory/`** — the largest consumer. `quicbaas agent deploy
   --ssh-key-name` names a key held here; the private half stays here for the
   whole deployment.
 

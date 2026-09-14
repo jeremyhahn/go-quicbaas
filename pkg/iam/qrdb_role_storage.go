@@ -56,6 +56,11 @@ type QRDBRoleStorage struct {
 // Compile-time interface check: QRDBRoleStorage is a RoleStorage.
 var _ RoleStorage = (*QRDBRoleStorage)(nil)
 
+// Compile-time interface check: QRDBRoleStorage reconciles built-in roles.
+// qrdb owns the built-in role definitions, so this is the one role storage in
+// the process that can honour the contract.
+var _ BuiltInRoleReconciler = (*QRDBRoleStorage)(nil)
+
 // NewQRDBRoleStorage builds a qrdb-backed RoleStorage. The resolver must be
 // non-nil; a nil resolver yields a storage that fails every call with a typed
 // configuration error rather than panicking.
@@ -119,6 +124,41 @@ func (s *QRDBRoleStorage) GetRole(ctx context.Context, tenantID, roleID string) 
 	return transportRoleToIAM(tr), nil
 }
 
+// GetRoleByName retrieves a role by its tenant-scoped name from qrdb's OWN name
+// index, which is the whole point of routing the lookup here: qrdb answers it
+// with an index read, so it neither pages nor scans, and the answer is the
+// canonical store's — the same record the policy decision point resolves.
+//
+// An absent role arrives as qrdb's RoleNotFoundError and leaves as
+// ErrRoleNotFound (mapQRDBRoleError), so a caller branching on
+// IsRoleNotFound tells "no such role" apart from "could not ask".
+func (s *QRDBRoleStorage) GetRoleByName(ctx context.Context, tenantID, name string) (*Role, error) {
+	rc, err := s.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tr, err := rc.GetRoleByName(ctx, &qrdbtransport.GetRoleByNameRequest{
+		TenantID: tenantID,
+		Name:     name,
+	})
+	if err != nil {
+		return nil, mapQRDBRoleError("get_by_name", err)
+	}
+	if tr == nil {
+		// Neither a role nor an error breaks the RoleServicer contract.
+		// Refusing it beats dereferencing nil, and beats reading it as an
+		// absence: qrdb's ResolveSystemRoleID falls back to a DERIVED
+		// identifier on not-found, so a silent nil here would bind a grant to
+		// an identifier that may name no role at all.
+		return nil, &dberrors.QBError{
+			Code: dberrors.ErrInternal,
+			Op:   "iam.role.qrdb.get_by_name",
+			Err:  &IAMMessageError{Message: "qrdb returned no role and no error for name " + name},
+		}
+	}
+	return transportRoleToIAM(tr), nil
+}
+
 // UpdateRole applies a full replacement of name + permissions to the qrdb role
 // identified by r.ID. qrdb's UpdateRole is partial (empty fields are skipped),
 // but the IdentityStore always passes the fully-merged role, so sending both
@@ -176,6 +216,57 @@ func (s *QRDBRoleStorage) ListRoles(ctx context.Context, tenantID string, opts L
 	return out, nil
 }
 
+// ReconcileBuiltInRoles converges tenantID's stored built-in roles onto the
+// definitions the running build carries, through qrdb's reconcile seam.
+//
+// This is the ONLY write path that may re-permission a built-in role: qrdb
+// refuses UpdateRole on a system role by design (SystemRoleImmutableError, and
+// mapQRDBRoleError keeps surfacing that refusal to every hand edit), so a
+// tenant seeded before a permission rename could otherwise never gain the new
+// verbs. Reconciliation is the one caller whose target is not arbitrary — it
+// IS the build's built-in definition — which is why qrdb exempts it and
+// nothing else.
+//
+// qrdb resolves those definitions through the permission registry at call
+// time, so a caller that contributes its own permissions must have registered
+// them first or every tenant converges onto a set missing its verbs.
+func (s *QRDBRoleStorage) ReconcileBuiltInRoles(ctx context.Context, tenantID string) (*RoleReconcileReport, error) {
+	rc, err := s.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := rc.ReconcileBuiltInRoles(ctx, &qrdbtransport.ReconcileRolesRequest{TenantID: tenantID})
+	if err != nil {
+		return nil, mapQRDBRoleError("reconcile", err)
+	}
+	return transportReconcileToIAM(tenantID, resp), nil
+}
+
+// transportReconcileToIAM projects qrdb's reconcile response onto the broker
+// report. The response's TenantID is preferred when set; the requested tenant
+// is the fallback, so a report always names the tenant it describes even when
+// the caller addressed its own effective tenant with an empty string.
+func transportReconcileToIAM(tenantID string, resp *qrdbtransport.ReconcileRolesResponse) *RoleReconcileReport {
+	report := &RoleReconcileReport{TenantID: tenantID}
+	if resp == nil {
+		return report
+	}
+	if resp.TenantID != "" {
+		report.TenantID = resp.TenantID
+	}
+	report.Roles = make([]RoleReconcileResult, 0, len(resp.Roles))
+	for _, r := range resp.Roles {
+		report.Roles = append(report.Roles, RoleReconcileResult{
+			RoleID:  r.RoleID,
+			Name:    r.Name,
+			Created: r.Created,
+			Added:   append([]string(nil), r.Added...),
+			Removed: append([]string(nil), r.Removed...),
+		})
+	}
+	return report
+}
+
 // pageFromOffset converts a (offset, limit) pair into qrdb's 1-based page
 // number. With a zero limit there is no paging, so page 1 is returned; with a
 // limit and an offset that is an exact multiple, the corresponding page is
@@ -199,11 +290,18 @@ func transportRoleToIAM(tr *qrdbtransport.Role) *Role {
 	}
 	perms := make([]string, len(tr.Permissions))
 	copy(perms, tr.Permissions)
+	// RetiredPermissions is derived by qrdb on every read from the live
+	// permission registry and never stored, so carrying it through is what
+	// puts the drift in front of an operator on an ordinary listing instead
+	// of only after a reconcile run.
+	retired := make([]string, len(tr.RetiredPermissions))
+	copy(retired, tr.RetiredPermissions)
 	return &Role{
-		ID:          tr.ID,
-		Name:        tr.Name,
-		TenantID:    tr.TenantID,
-		Permissions: perms,
+		ID:                 tr.ID,
+		Name:               tr.Name,
+		TenantID:           tr.TenantID,
+		Permissions:        perms,
+		RetiredPermissions: retired,
 	}
 }
 
@@ -225,6 +323,26 @@ func mapQRDBRoleError(op string, err error) error {
 	var nameExists *qrdbsdk.RoleNameExistsError
 	if errors.As(err, &nameExists) {
 		return ErrRoleAlreadyExists
+	}
+	// A caller-supplied role id that is already taken. Without this branch the
+	// conflict fell through to ErrInternal and every transport reported a
+	// server fault for an ordinary client error (#287) — the same defect the
+	// user store fixed for duplicate emails.
+	var idExists *qrdbsdk.RoleIDExistsError
+	if errors.As(err, &idExists) {
+		return ErrRoleIDAlreadyExists
+	}
+	// Renaming, re-permissioning or deleting a built-in role. Refused for
+	// everyone, always, so it is forbidden rather than a conflict to resolve.
+	var systemImmutable *qrdbsdk.SystemRoleImmutableError
+	if errors.As(err, &systemImmutable) {
+		return ErrSystemRoleImmutable
+	}
+	// A create that would take a system role's name. Refused by policy rather
+	// than by an existing row, so it is invalid input rather than a conflict.
+	var reservedName *qrdbsdk.ReservedRoleNameError
+	if errors.As(err, &reservedName) {
+		return ErrReservedRoleName
 	}
 	var invalidPerm *qrdbsdk.RoleInvalidPermissionError
 	if errors.As(err, &invalidPerm) {

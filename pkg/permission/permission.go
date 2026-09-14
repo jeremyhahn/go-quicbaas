@@ -114,6 +114,73 @@ const (
 	// (e.g. a downstream platform composing this IAM plane) needs to record
 	// an event via RecordAuditEvent (api/proto/iam/iam.proto).
 	AuditRecord qrdbsdk.Permission = "audit_events:record"
+
+	// The SDLC module's verbs. A binding attaches a forge repository and
+	// its review policy to an orchestration Project; the module then holds
+	// forge credentials and drives autonomous work against that repository,
+	// so binding and unbinding are administrative configuration changes —
+	// Admin only. Reading a binding or a task's delivery is a read verb
+	// Operator holds too, mirroring the read/write split every other family
+	// here takes. Readmitting or blocking a task is orchestrator:*.
+	SDLCRead   qrdbsdk.Permission = "sdlc:read"
+	SDLCBind   qrdbsdk.Permission = "sdlc:bind"
+	SDLCUnbind qrdbsdk.Permission = "sdlc:unbind"
+
+	// AgentAccountMaterialize ("agent_accounts:materialize") authorizes
+	// RELEASING one pooled provider account's credential envelope to the
+	// caller — the single verb in this stack whose response body is secret
+	// material. An enrolled agent daemon holds it so it can resolve a pooled
+	// account on the worker host that actually runs the agent, which is where
+	// the credential has to be (go-quicbaas#734).
+	//
+	// It is deliberately NOT an action on go-qrdb's "orchestrator" or
+	// "credentials" families, for two separate reasons:
+	//
+	//   - go-qrdb owns both families outright, and
+	//     TestAll_DoesNotShadowAQRDBPermission forbids QuicBaaS from adding an
+	//     action to a family qrdb already owns (the single-PDP, no-forked-
+	//     vocabulary rule). "audit_events:record" lives in its own family for
+	//     exactly this reason; so does this.
+	//   - credentials:* is registered ScopeCross — system tenant only — because
+	//     it guards qrdb's un-namespaced named-credential store. A daemon is a
+	//     TENANT identity, so a credentials:* grant would be denied by the RBAC
+	//     cross-scope rule on every call. This permission takes qrdb's default
+	//     ScopeSelf, which is the daemon's own tenant and nothing else.
+	//
+	// It is a separate verb from the rest of the account surface, not a reuse
+	// of the read verb: an identity that may LIST the pool (metadata) must not
+	// thereby be able to extract every login in it.
+	AgentAccountMaterialize qrdbsdk.Permission = "agent_accounts:materialize"
+
+	// AgentAccountRead ("agent_accounts:read") and AgentAccountList
+	// ("agent_accounts:list") authorize the METADATA half of the pooled
+	// provider account surface: one account's non-secret record, its usage
+	// report, and the tenant's pool listing. No response they guard carries
+	// credential material.
+	//
+	// They exist because the reads they replaced were unreachable by the
+	// identity that needs them most. The pooled-account surface was mapped onto
+	// go-qrdb's credentials:* family, which is registered ScopeCross — SYSTEM
+	// TENANT ONLY — because qrdb's named-credential store has no tenant
+	// namespacing at all (go-qrdb pkg/permission credentialPermissions). Pooled
+	// accounts are the opposite: every record is written into the requesting
+	// tenant's own orchestration keyspace. So the RBAC cross-scope rule denied
+	// every tenant identity a surface that is tenant data, and an enrolled
+	// agent daemon — a tenant principal by construction — could not list the
+	// pool it was supposed to draw from (go-quicbaas#734).
+	//
+	// This is the same correction go-quicbaas#534 made for /api/v1/secrets, for
+	// the same reason and with the same shape: a tenant-scoped surface takes a
+	// tenant-scoped permission family rather than borrowing a system-scoped
+	// one. See docs/agent-orchestration/accounts.md.
+	//
+	// The WRITE verbs of the same surface (create / update / delete / rotate /
+	// revoke / set-default) deliberately still take credentials:*, and so are
+	// still system-tenant operations. Widening who may mint or rotate a pooled
+	// login is a policy change in its own right; it is filed separately rather
+	// than smuggled in behind a read fix.
+	AgentAccountRead qrdbsdk.Permission = "agent_accounts:read"
+	AgentAccountList qrdbsdk.Permission = "agent_accounts:list"
 )
 
 // duty states which of FIPS 140-3 AS10.03's separated duties a contributed
@@ -282,6 +349,51 @@ var contributions = []contribution{
 		// equivalent of AttestationVerify's read-strength "outside the
 		// Security Officer's duties" classification.
 		duty: dutyOutsideSecurityOfficer,
+	},
+	// SDLC bindings. Reads to Admin and Operator; bind and unbind to Admin
+	// alone — a change to a project that holds forge credentials and drives
+	// autonomous work is administrative, the same reasoning that keeps
+	// attestation:attest off Operator. None of it touches key material or
+	// module governance, so all three fall outside the Security Officer's
+	// duties.
+	{permission: SDLCRead, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer},
+	{permission: SDLCBind, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer},
+	{permission: SDLCUnbind, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer},
+	{
+		// agent_accounts:materialize releases a pooled login's plaintext
+		// credential envelope. Admin alone among the built-ins, by the same
+		// reasoning that keeps attestation:attest and sdlc:bind off Operator:
+		// this is the strongest verb of its family, and Operator already holds
+		// every read it needs (the metadata surface) without it.
+		//
+		// The identity that actually exercises it in production is not a
+		// built-in role at all — it is the tenant-scoped "agent-runtime" role
+		// an enrolled daemon holds (iam.AgentRuntimeGrant), which names this
+		// permission explicitly. Built-in placement therefore only decides
+		// which HUMAN role may release a credential by hand.
+		//
+		// Neither governance nor cryptographic use: releasing a stored envelope
+		// deconfigures no module state and performs no primitive with the
+		// module's own key material, so it falls outside the Security Officer's
+		// duties exactly as audit_events:record does.
+		permission: AgentAccountMaterialize,
+		roles:      []string{qrdbsdk.PermissionRoleAdmin},
+		duty:       dutyOutsideSecurityOfficer,
+	},
+	// The metadata reads follow the read/write split every family here takes:
+	// Admin and Operator both hold them, because listing the pool and reading
+	// an account's health is the day-to-day operational question, and neither
+	// answer carries credential material. The Security Officer holds neither —
+	// a pool listing is operational data, not module governance.
+	{
+		permission: AgentAccountRead,
+		roles:      []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator},
+		duty:       dutyOutsideSecurityOfficer,
+	},
+	{
+		permission: AgentAccountList,
+		roles:      []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator},
+		duty:       dutyOutsideSecurityOfficer,
 	},
 }
 

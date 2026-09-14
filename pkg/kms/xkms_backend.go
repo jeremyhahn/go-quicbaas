@@ -252,17 +252,22 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 	// Build key attributes for the imported key
 	attrs := kb.algorithmToKeyAttributes(keyID, algorithm)
 
-	// For symmetric keys, use the xkms import functionality
-	if kb.isSymmetricAlgorithm(algorithm) {
-		// Import the symmetric key material
-		err := xkms.ImportSymmetricKey(ctx, string(kb.backendType), attrs, material)
-		if err != nil {
-			return nil, api.NewKeyImportError("XKMSBackend.ImportKey", "symmetric", err)
-		}
-	} else {
-		// For asymmetric keys, we'd need to parse and import the key material
-		// This is more complex and depends on the key format (PEM, DER, etc.)
-		return nil, ErrAsymmetricImportUnsupported
+	// Symmetric and asymmetric import are ONE operation. The algorithm rides on
+	// attrs, and go-xkms interprets the material accordingly: raw bytes for a
+	// symmetric key, PKCS#8 DER for an asymmetric one, which the backend parses
+	// and checks against attrs before storing.
+	//
+	// Asymmetric material was refused here, under a comment claiming the parsing
+	// would have to be written. It was already written one layer down, so the
+	// refusal withheld a capability we owned — and the CLI's asymmetric import
+	// path terminated against it.
+	kind := "symmetric"
+	if !kb.isSymmetricAlgorithm(algorithm) {
+		kind = "asymmetric"
+	}
+
+	if err := xkms.ImportKeyMaterial(ctx, string(kb.backendType), attrs, material); err != nil {
+		return nil, api.NewKeyImportError("XKMSBackend.ImportKey", kind, err)
 	}
 
 	// Build metadata
@@ -843,6 +848,14 @@ func (kb *XKMSBackend) Sign(ctx context.Context, keyID string, digest []byte, al
 	// Map algorithm to hash for SignerOpts
 	hash := kb.algorithmToHash(algorithm)
 
+	// Ed25519 signs the message itself, and crypto/ed25519 REFUSES any
+	// SignerOpts whose hash is not crypto.Hash(0). The key decides this, not
+	// the caller's requested digest algorithm — which is why it is read from
+	// the key's own metadata rather than from the algorithm argument.
+	if kb.isEd25519Algorithm(meta.Algorithm) {
+		hash = crypto.Hash(0)
+	}
+
 	// Pass the pre-hashed digest directly to the signer.
 	// The signer.Sign() interface expects a digest (pre-hashed data), not raw data.
 	sig, err := signer.Sign(rand.Reader, digest, hash)
@@ -1027,6 +1040,14 @@ func (kb *XKMSBackend) algorithmToKeyAttributes(keyID, algorithm string) *kctype
 	}
 
 	return attrs
+}
+
+// isEd25519Algorithm reports whether the algorithm names an Ed25519 key.
+//
+// Ed25519 is the only algorithm here that signs a message rather than a
+// digest, so it is the only one that needs identifying by name at signing time.
+func (kb *XKMSBackend) isEd25519Algorithm(algorithm string) bool {
+	return strings.Contains(strings.ToUpper(algorithm), "ED25519")
 }
 
 // isSymmetricAlgorithm checks if the algorithm is for symmetric encryption.

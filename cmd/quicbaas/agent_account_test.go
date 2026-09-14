@@ -113,6 +113,18 @@ func (m *mockAccountClient) Usage(ctx context.Context, tenantID, accountID strin
 	return &accountSDK.UsageReport{}, nil
 }
 
+// Materialize satisfies the client interface. The CLI has no release verb —
+// materializing a credential is what an enrolled agent daemon does on a worker
+// host, not what an operator does at a terminal — so the double answers with an
+// EMPTY envelope rather than a plausible-looking token: a CLI test that somehow
+// reached this must not accidentally assert that a credential was printed.
+func (m *mockAccountClient) Materialize(_ context.Context, req *accountSDK.MaterializeCredentialRequest) (*accountSDK.MaterializedCredential, error) {
+	return &accountSDK.MaterializedCredential{
+		AccountID:  req.AccountID,
+		Credential: &accountSDK.ReleasedCredential{},
+	}, nil
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================

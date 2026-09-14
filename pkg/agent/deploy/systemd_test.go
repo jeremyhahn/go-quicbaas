@@ -197,3 +197,48 @@ func TestStageFor(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderUnit_RestartPolicyCannotSpin pins the supervisor half of the
+// enrollment-loop fix (issue #643). The daemon now waits out a server that
+// is merely unreachable, so a process that still exits is reporting a
+// condition restarting cannot fix. The unit must therefore escalate its
+// restart delay and give up into "failed", where monitoring sees it,
+// instead of sitting in "activating (auto-restart)" forever.
+func TestRenderUnit_RestartPolicyCannotSpin(t *testing.T) {
+	spec := &Spec{
+		Server:     "https://c.example.com:8443",
+		Tenant:     "acme",
+		AgentBind:  "0.0.0.0:9091",
+		Backends:   []string{"acp"},
+		InstallDir: "bin",
+		DataDir:    "state",
+	}
+	unit := RenderUnit(spec)
+	for _, want := range []string{
+		"RestartSec=5",
+		"RestartSteps=5",
+		"RestartMaxDelaySec=120",
+		"StartLimitIntervalSec=300",
+		"StartLimitBurst=5",
+	} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("unit missing %q:\n%s", want, unit)
+		}
+	}
+
+	// The start-rate limit is a [Unit] property; systemd silently ignores
+	// it in [Service], which is how the original unit ended up with no
+	// effective limit at all.
+	unitSection, serviceSection, ok := strings.Cut(unit, "[Service]")
+	if !ok {
+		t.Fatalf("unit has no [Service] section:\n%s", unit)
+	}
+	for _, key := range []string{"StartLimitIntervalSec=", "StartLimitBurst="} {
+		if !strings.Contains(unitSection, key) {
+			t.Errorf("%s must live in [Unit]:\n%s", key, unit)
+		}
+		if strings.Contains(serviceSection, key) {
+			t.Errorf("%s must not be repeated in [Service]:\n%s", key, unit)
+		}
+	}
+}

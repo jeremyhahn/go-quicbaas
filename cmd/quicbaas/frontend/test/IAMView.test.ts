@@ -7,9 +7,10 @@
  *   - Opens the Invite User dialog when the button is clicked.
  *   - Calls sdk.iam.createUser with the correct shape.
  *   - Shows an error message when the API call fails.
+ *   - Flags retired permissions on the Roles tab and reconciles built-in roles.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import type { IAMUser, IAMTenant, IAMRole, IAMPolicy } from '@quicbaas/sdk';
 
@@ -59,6 +60,8 @@ const mockRoles: IAMRole[] = [
     name: 'admin',
     description: 'Full access',
     permissions: ['read', 'write', 'delete'],
+    // Drift: the tenant was seeded with 'kv:put' but this build renamed it.
+    retired_permissions: ['kv:put'],
     created_at: '2025-01-01T00:00:00Z',
     updated_at: '2025-01-01T00:00:00Z',
   },
@@ -88,9 +91,11 @@ const mockPolicies: IAMPolicy[] = [
 // Hoisted mocks (safe to reference inside vi.mock factories)
 // ---------------------------------------------------------------------------
 
-const { mockCreateUser, mockGetSDKClient } = vi.hoisted(() => ({
+const { mockCreateUser, mockGetSDKClient, mockReconcileRoles, mockShowToast } = vi.hoisted(() => ({
   mockCreateUser: vi.fn(),
   mockGetSDKClient: vi.fn(),
+  mockReconcileRoles: vi.fn(),
+  mockShowToast: vi.fn(),
 }));
 
 vi.mock('../src/stores/sdkClient.ts', () => ({
@@ -98,11 +103,12 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
 }));
 
 vi.mock('../src/stores/toast.svelte.ts', () => ({
-  showToast: vi.fn(),
+  showToast: mockShowToast,
 }));
 
 import IAMView from '../src/views/security/IAMView.svelte';
 import { getSDKClient } from '../src/stores/sdkClient.ts';
+import { routerStore, routeIAMTab } from '../src/stores/router.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -112,6 +118,7 @@ describe('IAMView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCreateUser.mockResolvedValue({ user: mockUsers[0] });
+    mockReconcileRoles.mockResolvedValue({ tenant_id: 'system', changed: true, roles: [{ role_id: 'role-1', name: 'admin', added: ['kv:write'], removed: ['kv:put'] }] });
     mockGetSDKClient.mockResolvedValue({
       iam: {
         listUsers: vi.fn().mockResolvedValue({ users: mockUsers, count: 2 }),
@@ -121,6 +128,7 @@ describe('IAMView', () => {
         createUser: mockCreateUser,
         deleteUser: vi.fn().mockResolvedValue(undefined),
         createTenant: vi.fn().mockResolvedValue({ tenant: mockTenants[0] }),
+        reconcileRoles: mockReconcileRoles,
       },
     });
   });
@@ -276,6 +284,76 @@ describe('IAMView', () => {
       // Raw UUIDs must NOT be visible to operators.
       expect(screen.queryByText('role-1')).not.toBeInTheDocument();
       expect(screen.queryByText('role-2')).not.toBeInTheDocument();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Issue #573: built-in roles are seeded once and never reconciled, so a
+  // permission rename in the server build strands every existing tenant. The
+  // Roles tab must surface that drift and offer the repair.
+  //
+  // Selecting a tab pushes it into the location hash, so this block restores
+  // the Users tab afterwards — the sibling tests above render the Users table.
+  // -------------------------------------------------------------------------
+
+  describe('Roles tab — drift and reconcile', () => {
+    afterEach(async () => {
+      routeIAMTab('users');
+      await waitFor(() => {
+        expect(routerStore.params['tab']).toBe('users');
+      });
+    });
+
+    async function openRolesTab(): Promise<void> {
+      render(IAMView);
+      await waitFor(() => screen.getByRole('tab', { name: /Roles/i }));
+      await fireEvent.click(screen.getByRole('tab', { name: /Roles/i }));
+      await waitFor(() => screen.getByRole('button', { name: /Reconcile roles/i }));
+    }
+
+    it('renders retired permissions as warning badges', async () => {
+      await openRolesTab();
+      const retired = await screen.findByTitle(/no longer defines "kv:put"/i);
+      expect(retired).toBeInTheDocument();
+      expect(retired.textContent).toBe('kv:put');
+      expect(retired.className).toContain('badge-warning');
+    });
+
+    it('calls iam.reconcileRoles for the selected tenant and reports the change count', async () => {
+      await openRolesTab();
+      await fireEvent.click(screen.getByRole('button', { name: /Reconcile roles/i }));
+
+      await waitFor(() => {
+        // IAMView defaults selectedTenantID to qrdb's canonical 'system' tenant.
+        expect(mockReconcileRoles).toHaveBeenCalledWith('system');
+        expect(mockShowToast).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'success', message: expect.stringContaining('Reconciled 1 role') }),
+        );
+      });
+    });
+
+    it('reports "already up to date" when reconcile changed nothing', async () => {
+      mockReconcileRoles.mockResolvedValue({ tenant_id: 'system', changed: false, roles: [] });
+      await openRolesTab();
+      await fireEvent.click(screen.getByRole('button', { name: /Reconcile roles/i }));
+
+      await waitFor(() => {
+        expect(mockShowToast).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'success', message: expect.stringContaining('already up to date') }),
+        );
+      });
+    });
+
+    it('surfaces an error toast when reconcile fails', async () => {
+      mockReconcileRoles.mockRejectedValue(new Error('permission denied'));
+      await openRolesTab();
+      await fireEvent.click(screen.getByRole('button', { name: /Reconcile roles/i }));
+
+      await waitFor(() => {
+        expect(mockShowToast).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'error', message: 'permission denied' }),
+        );
+      });
     });
   });
 

@@ -49,6 +49,14 @@ type HeartbeatStatus struct {
 	HasContainerRT bool
 	SequenceNumber uint64
 
+	// MaxConcurrentJobs is how many orchestration jobs this host declares it
+	// can run at once (Config.MaxConcurrentJobs). Sent on every heartbeat so
+	// the control plane's fleet capacity tracks a host being drained or added
+	// with nothing to keep in step by hand; zero reports nothing, which is not
+	// the same as reporting no slots. See
+	// orchestration.AgentRegistration.MaxConcurrentJobs.
+	MaxConcurrentJobs int
+
 	// BindAddr is the daemon's reachable spawn-server address
 	// ("host:port"). Sent on every heartbeat so the control plane can repair
 	// the registry's Host column after a restart-driven recovery — the
@@ -174,7 +182,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		d.logger.Infof("agent daemon enrolling with server=%s tenant=%s",
 			d.cfg.ServerAddr, d.cfg.TenantID)
 
-		identity, err := d.enroller.Enroll(ctx, d.cfg)
+		identity, err := d.enrollWithRetry(ctx)
 		if err != nil {
 			d.state.Store(int32(stateFailed))
 			d.recordRunErr(&OpError{Op: "enrollment", Cause: err})
@@ -182,6 +190,24 @@ func (d *Daemon) Start(ctx context.Context) error {
 			return
 		}
 		d.identity.Store(identity)
+
+		// BEFORE THE SPAWN SERVER ACCEPTS ANYTHING. A sweep claims containers
+		// by this daemon's owner label, and once this daemon has spawned one
+		// of its own the two are indistinguishable — so the one safe moment
+		// is while it holds none. A sweep that cannot be completed is a
+		// startup failure for the reason go-quicbaas#676 gives: an orphan
+		// that survives its sweep accumulates without bound.
+		sweep, sweepErr := d.runtime.SweepOrphanContainers(ctx)
+		if sweepErr != nil {
+			d.state.Store(int32(stateFailed))
+			d.recordRunErr(&OpError{Op: "container sweep", Cause: sweepErr})
+			startErr = sweepErr
+			return
+		}
+		if len(sweep.Removed) > 0 {
+			d.logger.Infof("agent daemon: swept %d orphaned worker container(s) left by a previous run",
+				len(sweep.Removed))
+		}
 
 		if err := d.spawnServer.Start(ctx); err != nil {
 			d.state.Store(int32(stateFailed))
@@ -206,6 +232,68 @@ func (d *Daemon) Start(ctx context.Context) error {
 		}
 	})
 	return startErr
+}
+
+// enrollWithRetry drives the enrollment attempt loop.
+//
+// A TRANSIENT failure means the control plane is not reachable yet, which
+// is routine when an agent host boots ahead of its server or the server is
+// restarting. The daemon waits it out with capped exponential backoff for
+// as long as ctx lives, logging every wait so the journal shows a daemon
+// that is waiting rather than one that is wedged. There is deliberately no
+// attempt budget: a daemon that gave up would only be restarted by its
+// supervisor straight back into the same wait, with the backoff reset.
+//
+// A TERMINAL failure returns immediately so the process exits and the unit
+// lands in failed, where monitoring can see it. See enroll_retry.go for
+// which failures fall in which class and why.
+func (d *Daemon) enrollWithRetry(ctx context.Context) (*orchestration.AgentIdentity, error) {
+	backoff := enrollBackoff{
+		base: d.cfg.EffectiveEnrollRetryBase(),
+		max:  d.cfg.EffectiveEnrollRetryMax(),
+	}
+	for attempt := 1; ; attempt++ {
+		identity, err := d.enroller.Enroll(ctx, d.cfg)
+		if err == nil {
+			if attempt > 1 {
+				d.logger.Infof("agent daemon enrolled on attempt %d", attempt)
+			}
+			return identity, nil
+		}
+
+		class, reason := classifyEnrollment(err)
+		if class != EnrollmentTransient {
+			return nil, &EnrollmentTerminalError{Reason: reason, Cause: err}
+		}
+
+		// Check cancellation before arming the timer so an already-dead
+		// context ends the loop deterministically rather than racing a
+		// short backoff window in the select below.
+		select {
+		case <-ctx.Done():
+			return nil, &EnrollmentAbandonedError{Attempts: attempt, Cause: ctx.Err(), Last: err}
+		default:
+		}
+
+		wait, jitterErr := backoff.delay(attempt)
+		if jitterErr != nil {
+			// The schedule still caps and still makes progress; it has
+			// only lost the jitter that keeps a whole fleet from
+			// retrying in lockstep. Report it and wait the full window.
+			d.logger.Warnf("agent daemon enrollment backoff: %v; waiting the full window", jitterErr)
+		}
+		d.logger.Infof(
+			"agent daemon enrollment attempt %d failed, class=%s (%s); retrying in %s: %v",
+			attempt, class, reason, wait, err)
+
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, &EnrollmentAbandonedError{Attempts: attempt, Cause: ctx.Err(), Last: err}
+		case <-timer.C:
+		}
+	}
 }
 
 // Stop drains in-flight work and tears down background loops. Safe to
@@ -290,11 +378,12 @@ func (d *Daemon) sendHeartbeat(ctx context.Context) {
 		return
 	}
 	status := HeartbeatStatus{
-		SandboxPolicy:  d.runtime.SandboxResolver().Policy(),
-		Backends:       d.runtime.Backends(),
-		HasContainerRT: d.runtime.SandboxResolver().HasContainerRuntime(),
-		SequenceNumber: d.hbSeq.Add(1),
-		BindAddr:       d.spawnServer.Addr(),
+		SandboxPolicy:     d.runtime.SandboxResolver().Policy(),
+		Backends:          d.runtime.Backends(),
+		HasContainerRT:    d.runtime.SandboxResolver().HasContainerRuntime(),
+		MaxConcurrentJobs: d.cfg.MaxConcurrentJobs,
+		SequenceNumber:    d.hbSeq.Add(1),
+		BindAddr:          d.spawnServer.Addr(),
 	}
 	if err := d.heartbeat.SendHeartbeat(ctx, identity, status); err != nil {
 		d.logger.Warnf("agent daemon heartbeat (seq=%d): %v", status.SequenceNumber, err)

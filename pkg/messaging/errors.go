@@ -79,6 +79,10 @@ var (
 	// ErrChannelExists indicates the channel already exists.
 	ErrChannelExists = stderrors.New("channel already exists")
 
+	// ErrHubStopped indicates the hub's loop is not running, so a queued
+	// request can never be answered.
+	ErrHubStopped = stderrors.New("hub stopped")
+
 	// ErrClientNotRegistered indicates the client is not registered with the hub.
 	ErrClientNotRegistered = stderrors.New("client not registered")
 
@@ -459,210 +463,102 @@ func NewClientNotRegisteredError(op, clientID string) *errors.QBError {
 	}
 }
 
-// IsChannelNotFound returns true if the error is a channel not found error.
-func IsChannelNotFound(err error) bool {
+// isPushError reports whether err belongs to one push error family.
+//
+// A FAMILY HAS THREE INDEPENDENT SIGNATURES AND ANY ONE OF THEM IS ENOUGH: the
+// concrete type T, a QBError carrying the family's code, or the family's
+// sentinel anywhere in the chain. They are independent because the package
+// produces all three — NewChannelNotFoundError builds the typed form, the hub's
+// handlers build a QBError with a GENERIC code (errors.ErrNotFound) wrapping
+// the sentinel, and some call sites return the bare sentinel.
+//
+// NO SIGNATURE IS TERMINAL, WHICH IS THE WHOLE POINT (#695). Each predicate
+// used to return de.Code == code from inside the QBError branch, so a
+// non-matching code answered false and never reached the sentinel check below
+// it — and the hub's own channel-not-found error is exactly that shape.
+// IsChannelNotFound therefore denied the errors handleDeleteChannel and
+// handleUnsubscribe produce, and every caller branching on the public predicate
+// mis-handled a hub-originated miss.
+//
+// ONE DEFINITION FOR THE WHOLE FAMILY, because thirteen copies of a
+// classification rule is thirteen places for the next such defect to hide, and
+// #695 was found in one of them after being written into all thirteen.
+func isPushError[T error](err error, code errors.ErrorCode, sentinel error) bool {
 	if err == nil {
 		return false
 	}
-	var cnf *ChannelNotFoundError
-	if stderrors.As(err, &cnf) {
+	var typed T
+	if stderrors.As(err, &typed) {
 		return true
 	}
-	var de *errors.QBError
-	if stderrors.As(err, &de) {
-		return de.Code == ErrCodePushChannelNotFound
+	var qb *errors.QBError
+	if stderrors.As(err, &qb) && qb.Code == code {
+		return true
 	}
-	return stderrors.Is(err, ErrChannelNotFound)
+	return stderrors.Is(err, sentinel)
+}
+
+// IsChannelNotFound returns true if the error is a channel not found error.
+func IsChannelNotFound(err error) bool {
+	return isPushError[*ChannelNotFoundError](err, ErrCodePushChannelNotFound, ErrChannelNotFound)
 }
 
 // IsChannelExists returns true if the error is a channel exists error.
 func IsChannelExists(err error) bool {
-	if err == nil {
-		return false
-	}
-	var ce *ChannelExistsError
-	if stderrors.As(err, &ce) {
-		return true
-	}
-	var de *errors.QBError
-	if stderrors.As(err, &de) {
-		return de.Code == ErrCodePushChannelExists
-	}
-	return stderrors.Is(err, ErrChannelExists)
+	return isPushError[*ChannelExistsError](err, ErrCodePushChannelExists, ErrChannelExists)
 }
 
 // IsHubBufferFull returns true if the error is a hub buffer full error.
 func IsHubBufferFull(err error) bool {
-	if err == nil {
-		return false
-	}
-	var hbf *HubBufferFullError
-	if stderrors.As(err, &hbf) {
-		return true
-	}
-	var de *errors.QBError
-	if stderrors.As(err, &de) {
-		return de.Code == ErrCodePushHubBufferFull
-	}
-	return stderrors.Is(err, ErrHubOverloaded)
+	return isPushError[*HubBufferFullError](err, ErrCodePushHubBufferFull, ErrHubOverloaded)
 }
 
 // IsClientDisconnected returns true if the error is a client disconnected error.
 func IsClientDisconnected(err error) bool {
-	if err == nil {
-		return false
-	}
-	var cd *ClientDisconnectedError
-	if stderrors.As(err, &cd) {
-		return true
-	}
-	var de *errors.QBError
-	if stderrors.As(err, &de) {
-		return de.Code == ErrCodePushClientDisconnected
-	}
-	return stderrors.Is(err, ErrClientDisconnected)
+	return isPushError[*ClientDisconnectedError](err, ErrCodePushClientDisconnected, ErrClientDisconnected)
 }
 
 // IsClientSlow returns true if the error is a client slow error.
 func IsClientSlow(err error) bool {
-	if err == nil {
-		return false
-	}
-	var cs *ClientSlowError
-	if stderrors.As(err, &cs) {
-		return true
-	}
-	var de *errors.QBError
-	if stderrors.As(err, &de) {
-		return de.Code == ErrCodePushClientSlow
-	}
-	return stderrors.Is(err, ErrSlowConsumer)
+	return isPushError[*ClientSlowError](err, ErrCodePushClientSlow, ErrSlowConsumer)
 }
 
 // IsInvalidCodec returns true if the error is an invalid codec error.
 func IsInvalidCodec(err error) bool {
-	if err == nil {
-		return false
-	}
-	var ic *InvalidCodecError
-	if stderrors.As(err, &ic) {
-		return true
-	}
-	var de *errors.QBError
-	if stderrors.As(err, &de) {
-		return de.Code == ErrCodePushInvalidCodec
-	}
-	return stderrors.Is(err, ErrInvalidCodec)
+	return isPushError[*InvalidCodecError](err, ErrCodePushInvalidCodec, ErrInvalidCodec)
 }
 
 // IsSubscriptionNotFound returns true if the error is a subscription not found error.
 func IsSubscriptionNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	var snf *SubscriptionNotFoundError
-	if stderrors.As(err, &snf) {
-		return true
-	}
-	var de *errors.QBError
-	if stderrors.As(err, &de) {
-		return de.Code == ErrCodePushSubscriptionNotFound
-	}
-	return stderrors.Is(err, ErrSubscriptionNotFound)
+	return isPushError[*SubscriptionNotFoundError](err, ErrCodePushSubscriptionNotFound, ErrSubscriptionNotFound)
 }
 
 // IsDedupKeyExists returns true if the error is a dedup key exists error.
 func IsDedupKeyExists(err error) bool {
-	if err == nil {
-		return false
-	}
-	var dke *DedupKeyExistsError
-	if stderrors.As(err, &dke) {
-		return true
-	}
-	var de *errors.QBError
-	if stderrors.As(err, &de) {
-		return de.Code == ErrCodePushDedupKeyExists
-	}
-	return stderrors.Is(err, ErrDedupKeyExists)
+	return isPushError[*DedupKeyExistsError](err, ErrCodePushDedupKeyExists, ErrDedupKeyExists)
 }
 
 // IsServiceNotRunning returns true if the error is a service not running error.
 func IsServiceNotRunning(err error) bool {
-	if err == nil {
-		return false
-	}
-	var snr *ServiceNotRunningError
-	if stderrors.As(err, &snr) {
-		return true
-	}
-	var de *errors.QBError
-	if stderrors.As(err, &de) {
-		return de.Code == ErrCodePushServiceNotRunning
-	}
-	return stderrors.Is(err, ErrServiceNotRunning)
+	return isPushError[*ServiceNotRunningError](err, ErrCodePushServiceNotRunning, ErrServiceNotRunning)
 }
 
 // IsInvalidChannelName returns true if the error is an invalid channel name error.
 func IsInvalidChannelName(err error) bool {
-	if err == nil {
-		return false
-	}
-	var icn *InvalidChannelNameError
-	if stderrors.As(err, &icn) {
-		return true
-	}
-	var de *errors.QBError
-	if stderrors.As(err, &de) {
-		return de.Code == ErrCodePushInvalidChannelName
-	}
-	return stderrors.Is(err, ErrInvalidChannelName)
+	return isPushError[*InvalidChannelNameError](err, ErrCodePushInvalidChannelName, ErrInvalidChannelName)
 }
 
 // IsInvalidMessageID returns true if the error is an invalid message ID error.
 func IsInvalidMessageID(err error) bool {
-	if err == nil {
-		return false
-	}
-	var imi *InvalidMessageIDError
-	if stderrors.As(err, &imi) {
-		return true
-	}
-	var de *errors.QBError
-	if stderrors.As(err, &de) {
-		return de.Code == ErrCodePushInvalidMessageID
-	}
-	return stderrors.Is(err, ErrInvalidMessageID)
+	return isPushError[*InvalidMessageIDError](err, ErrCodePushInvalidMessageID, ErrInvalidMessageID)
 }
 
 // IsMaxSubscriptionsReached returns true if the error is a max subscriptions reached error.
 func IsMaxSubscriptionsReached(err error) bool {
-	if err == nil {
-		return false
-	}
-	var msr *MaxSubscriptionsReachedError
-	if stderrors.As(err, &msr) {
-		return true
-	}
-	var de *errors.QBError
-	if stderrors.As(err, &de) {
-		return de.Code == ErrCodePushMaxSubscriptionsReached
-	}
-	return stderrors.Is(err, ErrMaxSubscriptionsReached)
+	return isPushError[*MaxSubscriptionsReachedError](err, ErrCodePushMaxSubscriptionsReached, ErrMaxSubscriptionsReached)
 }
 
 // IsClientNotRegistered returns true if the error is a client not registered error.
 func IsClientNotRegistered(err error) bool {
-	if err == nil {
-		return false
-	}
-	var cnr *ClientNotRegisteredError
-	if stderrors.As(err, &cnr) {
-		return true
-	}
-	var de *errors.QBError
-	if stderrors.As(err, &de) {
-		return de.Code == ErrCodePushClientNotRegistered
-	}
-	return stderrors.Is(err, ErrClientNotRegistered)
+	return isPushError[*ClientNotRegisteredError](err, ErrCodePushClientNotRegistered, ErrClientNotRegistered)
 }

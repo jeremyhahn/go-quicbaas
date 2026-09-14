@@ -16,6 +16,7 @@ package orchestration
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -45,10 +46,57 @@ import (
 // deliberately: it addresses SecretsManager, not the plain orchestration KV.
 const accountSecretPathPrefix = "orchestration/agent-accounts/"
 
-// accountSecretDataKey is the single data-map key under which the JSON-
+// AccountSecretDataKey is the single data-map key under which the JSON-
 // encoded AccountCredential is stored. SecretsManager.Store takes a
 // map[string][]byte; one key keeps the envelope atomic (no partial reads).
-const accountSecretDataKey = "credential"
+//
+// It is exported because a SecretsManager written specifically to back an
+// AccountSecretStore — the agent daemon's read-through materializing store
+// (pkg/agent, go-quicbaas#734) — has to answer with the same key this store
+// asks for. Restating the literal there would make a rename silently return
+// "envelope present but empty" on the worker host.
+const AccountSecretDataKey = "credential"
+
+// AccountSecretPath returns the SecretsManager path an account's credential
+// envelope is stored at.
+//
+// It is exported alongside ParseAccountSecretPath so a SecretsManager written
+// to serve this store can invert the addressing rather than hardcode it. The
+// pair is the ONE definition of the scheme; TestAccountSecretPath_RoundTrips
+// pins them against each other.
+func AccountSecretPath(tenantID, accountID string) (string, error) {
+	if err := validateKeySegment("tenant_id", tenantID); err != nil {
+		return "", accountKeyError(err)
+	}
+	if err := validateKeySegment("account_id", accountID); err != nil {
+		return "", accountKeyError(err)
+	}
+	return accountSecretPathPrefix + tenantID + keySeparator + accountID, nil
+}
+
+// ParseAccountSecretPath inverts AccountSecretPath, reporting false for any
+// path that is not one this package addresses.
+//
+// A path outside the namespace, or one carrying an empty segment, is refused
+// rather than being split into whatever it happens to contain: a caller acting
+// on a misparsed path would be reading one account's credential under another
+// account's name.
+func ParseAccountSecretPath(path string) (tenantID, accountID string, ok bool) {
+	rest, found := strings.CutPrefix(path, accountSecretPathPrefix)
+	if !found {
+		return "", "", false
+	}
+	tenantID, accountID, found = strings.Cut(rest, keySeparator)
+	if !found || tenantID == "" || accountID == "" {
+		return "", "", false
+	}
+	// A third segment means the path addresses something else in the
+	// namespace; refusing keeps the inverse total rather than lossy.
+	if strings.Contains(accountID, keySeparator) {
+		return "", "", false
+	}
+	return tenantID, accountID, true
+}
 
 // AccountSecretStore stores and retrieves AccountCredential envelopes.
 type AccountSecretStore struct {
@@ -69,13 +117,7 @@ func (s *AccountSecretStore) ready() error {
 }
 
 func (s *AccountSecretStore) path(tenantID, accountID string) (string, error) {
-	if err := validateKeySegment("tenant_id", tenantID); err != nil {
-		return "", accountKeyError(err)
-	}
-	if err := validateKeySegment("account_id", accountID); err != nil {
-		return "", accountKeyError(err)
-	}
-	return accountSecretPathPrefix + tenantID + keySeparator + accountID, nil
+	return AccountSecretPath(tenantID, accountID)
 }
 
 // Put stores or overwrites cred for tenantID/accountID, encrypted under a
@@ -99,10 +141,10 @@ func (s *AccountSecretStore) Put(ctx context.Context, tenantID, accountID string
 	// cred itself — so the SecretsManager's own audit/versioning surface
 	// (which may log metadata) can never leak credential content.
 	metadata := map[string]string{"kind": "agent_account_credential"}
-	storeErr := s.mgr.StoreWithOptions(ctx, path, map[string][]byte{accountSecretDataKey: body}, metadata,
+	storeErr := s.mgr.StoreWithOptions(ctx, path, map[string][]byte{AccountSecretDataKey: body}, metadata,
 		&interfaces.StoreOptions{TenantID: tenantID})
 	if storeErr != nil {
-		return &AccountStoreError{Message: "failed to store account credential: " + storeErr.Error()}
+		return &AccountStoreError{Message: "failed to store account credential: " + storeErr.Error(), Cause: storeErr}
 	}
 	return nil
 }
@@ -118,9 +160,28 @@ func (s *AccountSecretStore) Get(ctx context.Context, tenantID, accountID string
 	}
 	data, _, getErr := s.mgr.Get(ctx, path)
 	if getErr != nil {
-		return nil, &AccountCredentialNotFoundError{TenantID: tenantID, AccountID: accountID}
+		// A MISS AND AN OUTAGE ARE DIFFERENT ANSWERS, and flattening them
+		// into "not found" was safe only while nothing branched on it.
+		// go-quicbaas#235 made the SDLC module branch on it: a missing credential
+		// is a configuration fault that PARKS the work item and refunds its
+		// attempt, because no operator action short of re-importing the
+		// credential will help. A secrets backend that timed out or failed is
+		// the opposite — it fixes itself, and parking on it takes an item out
+		// of the queue for a condition nobody has to act on.
+		//
+		// So the sentinel now means what its name says. Everything else is a
+		// store error, which no fault class claims.
+		if qerrors.IsNotFound(getErr) {
+			return nil, &AccountCredentialNotFoundError{TenantID: tenantID, AccountID: accountID}
+		}
+		return nil, &AccountStoreError{
+			Message: "failed to read account credential: " + getErr.Error(),
+			Cause:   getErr,
+		}
 	}
-	body, ok := data[accountSecretDataKey]
+	// An envelope that exists with no body in it is a genuine miss: the
+	// metadata says the account has a credential and there is nothing there.
+	body, ok := data[AccountSecretDataKey]
 	if !ok || len(body) == 0 {
 		return nil, &AccountCredentialNotFoundError{TenantID: tenantID, AccountID: accountID}
 	}
@@ -146,7 +207,7 @@ func (s *AccountSecretStore) Delete(ctx context.Context, tenantID, accountID str
 		if qerrors.IsNotFound(destroyErr) {
 			return nil
 		}
-		return &AccountStoreError{Message: "failed to destroy account credential: " + destroyErr.Error()}
+		return &AccountStoreError{Message: "failed to destroy account credential: " + destroyErr.Error(), Cause: destroyErr}
 	}
 	return nil
 }

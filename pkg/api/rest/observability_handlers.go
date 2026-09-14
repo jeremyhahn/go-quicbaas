@@ -23,7 +23,6 @@ import (
 	"strconv"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 )
@@ -31,19 +30,16 @@ import (
 // Phase4Handler provides REST API handlers for Phase 4 features.
 type Phase4Handler struct {
 	backupMgr *backup.BackupManager
-	authMgr   *auth.AuthManager
 	cacheMgr  *cache.CacheManager
 }
 
 // NewPhase4Handler creates a new Phase 4 handler.
 func NewPhase4Handler(
 	backupMgr *backup.BackupManager,
-	authMgr *auth.AuthManager,
 	cacheMgr *cache.CacheManager,
 ) *Phase4Handler {
 	return &Phase4Handler{
 		backupMgr: backupMgr,
-		authMgr:   authMgr,
 		cacheMgr:  cacheMgr,
 	}
 }
@@ -209,133 +205,17 @@ func (h *Phase4Handler) HandleDeleteBackup(w http.ResponseWriter, r *http.Reques
 }
 
 // =============================================================================
-// Authentication Operations
-// (Password-based login is intentionally not exposed. Use the unified login
-// ceremony under /api/v1/auth/login/{begin,finish} (mtls / fido2 / piv) or
-// /api/v1/auth/login/piv to obtain access tokens.)
+// Authentication and user operations
+//
+// There are none here. Session lifecycle (logout / refresh / validate) is
+// served by the IAM handlers, which route to iam.OIDCProvider — the authority
+// that minted the bearer — and user administration is served by IAMHandler
+// under /api/v1/iam, the single user surface. The four handlers that used to
+// sit here (HandleLogout, HandleRefreshToken, HandleCreateUser,
+// HandleListUsers) drove an auth.AuthManager that carried its own user store,
+// were never registered on any router, and were deleted with the parallel
+// identity model in issue #905.
 // =============================================================================
-
-// HandleLogout revokes user tokens
-// POST /api/v1/auth/logout.
-func (h *Phase4Handler) HandleLogout(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req pb.LogoutRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	err := h.authMgr.RevokeToken(r.Context(), req.AccessToken)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	resp := &pb.LogoutResponse{
-		Success: true,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp) // Best effort encoding
-}
-
-// HandleRefreshToken generates a new access token
-// POST /api/v1/auth/refresh.
-func (h *Phase4Handler) HandleRefreshToken(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req pb.RefreshTokenRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	token, err := h.authMgr.RefreshToken(r.Context(), req.RefreshToken)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-
-	resp := &pb.RefreshTokenResponse{
-		AccessToken: token.AccessToken,
-		ExpiresAt:   token.ExpiresAt.UnixNano(),
-		TokenType:   token.TokenType,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp) // Best effort encoding
-}
-
-// =============================================================================
-// User Management
-// =============================================================================
-
-// HandleCreateUser creates a new user
-// POST /api/v1/users.
-func (h *Phase4Handler) HandleCreateUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req pb.CreateUserRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	user, err := h.authMgr.CreateUser(req.Username, req.Roles)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	resp := &pb.CreateUserResponse{
-		UserId:   user.ID,
-		Username: user.Username,
-		Created:  user.Created.UnixNano(),
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(resp) // Best effort encoding
-}
-
-// HandleListUsers lists all users
-// GET /api/v1/users.
-func (h *Phase4Handler) HandleListUsers(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	users := h.authMgr.GetUserStore().ListUsers()
-
-	userInfos := make([]*pb.UserInfo, 0, len(users))
-	for _, user := range users {
-		userInfos = append(userInfos, &pb.UserInfo{
-			UserId:   user.GetID(),
-			Username: user.GetUsername(),
-			Roles:    user.GetRoles(),
-			Created:  user.GetCreated().UnixNano(),
-			LastAuth: user.GetLastAuth().UnixNano(),
-		})
-	}
-
-	resp := &pb.ListUsersResponse{
-		Users: userInfos,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp) // Best effort encoding
-}
 
 // =============================================================================
 // Cache Management

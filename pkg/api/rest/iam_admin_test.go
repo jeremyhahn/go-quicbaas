@@ -401,9 +401,9 @@ func TestStartImpersonation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Create impersonation request
+	// Create impersonation request. The request carries no admin_user_id —
+	// the acting admin is the authenticated caller (go-quicbaas#383).
 	impReq := startImpersonationRequest{
-		AdminUserID:  "admin_user",
 		TargetUserID: "target_user",
 		TenantID:     "tenant_1",
 		Reason:       "Support request #12345",
@@ -412,9 +412,10 @@ func TestStartImpersonation(t *testing.T) {
 	body, err := json.Marshal(impReq)
 	require.NoError(t, err)
 
-	// Create HTTP request
+	// Create HTTP request authenticated as admin_user.
 	req := httptest.NewRequest("POST", "/api/v1/admin/impersonate", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(ctxWithTestSubject(req.Context(), "admin_user", "tenant_1"))
 
 	rr := httptest.NewRecorder()
 
@@ -432,6 +433,52 @@ func TestStartImpersonation(t *testing.T) {
 	assert.Equal(t, "admin_user", session.AdminUserID)
 	assert.Equal(t, "target_user", session.TargetUserID)
 	assert.Equal(t, "Support request #12345", session.Reason)
+}
+
+// TestStartImpersonation_ActorIsAuthenticatedCaller is the go-quicbaas#383
+// regression: the actor is the authenticated caller, never a request
+// value. A non-privileged caller is refused even when the body smuggles a
+// privileged admin_user_id (an inert, unknown field now), and a privileged
+// caller's session names the caller — not any supplied value.
+func TestStartImpersonation_ActorIsAuthenticatedCaller(t *testing.T) {
+	handler, mockSvc := newTestIAMHandler(t)
+	ctx := context.Background()
+
+	// admin_user holds PermUserImpersonate in tenant_1; attacker does not.
+	_, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
+		UserID:      "admin_user",
+		AdminRole:   iam.AdminRoleSuperAdmin,
+		TenantIDs:   []string{"tenant_1"},
+		Permissions: []iam.AdminPermission{iam.PermUserImpersonate},
+		GrantedBy:   "system",
+	})
+	require.NoError(t, err)
+
+	// A non-privileged caller smuggles admin_user's id in the body.
+	body := []byte(`{"admin_user_id":"admin_user","target_user_id":"target_user","tenant_id":"tenant_1","reason":"escalation attempt","duration":"1h"}`)
+	req := httptest.NewRequest("POST", "/api/v1/admin/impersonate", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(ctxWithTestSubject(req.Context(), "attacker", "tenant_1"))
+	rr := httptest.NewRecorder()
+
+	handler.StartImpersonation(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code,
+		"a non-privileged caller must be refused even when naming a privileged admin_user_id; body: %s", rr.Body.String())
+
+	// The privileged caller's own session names the caller as the actor,
+	// regardless of any body value.
+	req = httptest.NewRequest("POST", "/api/v1/admin/impersonate", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(ctxWithTestSubject(req.Context(), "admin_user", "tenant_1"))
+	rr = httptest.NewRecorder()
+
+	handler.StartImpersonation(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var session iam.ImpersonationSession
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &session))
+	assert.Equal(t, "admin_user", session.AdminUserID)
 }
 
 // TestEndImpersonation tests the EndImpersonation handler.
@@ -453,13 +500,14 @@ func TestEndImpersonation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	session, err := mockSvc.adminManager.StartImpersonation(ctx, &iam.StartImpersonationOptions{
-		AdminUserID:  "admin_user",
-		TargetUserID: "target_user",
-		TenantID:     "tenant_1",
-		Reason:       "Testing",
-		Duration:     time.Hour,
-	})
+	session, err := mockSvc.adminManager.StartImpersonation(
+		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
+		&iam.StartImpersonationOptions{
+			TargetUserID: "target_user",
+			TenantID:     "tenant_1",
+			Reason:       "Testing",
+			Duration:     time.Hour,
+		})
 	require.NoError(t, err)
 
 	// Create HTTP request
@@ -495,22 +543,24 @@ func TestListActiveImpersonations(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = mockSvc.adminManager.StartImpersonation(ctx, &iam.StartImpersonationOptions{
-		AdminUserID:  "admin_user",
-		TargetUserID: "user_1",
-		TenantID:     "tenant_1",
-		Reason:       "Support",
-		Duration:     time.Hour,
-	})
+	_, err = mockSvc.adminManager.StartImpersonation(
+		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
+		&iam.StartImpersonationOptions{
+			TargetUserID: "user_1",
+			TenantID:     "tenant_1",
+			Reason:       "Support",
+			Duration:     time.Hour,
+		})
 	require.NoError(t, err)
 
-	_, err = mockSvc.adminManager.StartImpersonation(ctx, &iam.StartImpersonationOptions{
-		AdminUserID:  "admin_user",
-		TargetUserID: "user_2",
-		TenantID:     "tenant_2",
-		Reason:       "Debug",
-		Duration:     time.Hour,
-	})
+	_, err = mockSvc.adminManager.StartImpersonation(
+		ctxWithTestSubject(ctx, "admin_user", "tenant_2"),
+		&iam.StartImpersonationOptions{
+			TargetUserID: "user_2",
+			TenantID:     "tenant_2",
+			Reason:       "Debug",
+			Duration:     time.Hour,
+		})
 	require.NoError(t, err)
 
 	// Create HTTP request
@@ -554,13 +604,14 @@ func TestListImpersonations(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = mockSvc.adminManager.StartImpersonation(ctx, &iam.StartImpersonationOptions{
-		AdminUserID:  "admin_user",
-		TargetUserID: "user_1",
-		TenantID:     "tenant_1",
-		Reason:       "Support",
-		Duration:     time.Hour,
-	})
+	_, err = mockSvc.adminManager.StartImpersonation(
+		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
+		&iam.StartImpersonationOptions{
+			TargetUserID: "user_1",
+			TenantID:     "tenant_1",
+			Reason:       "Support",
+			Duration:     time.Hour,
+		})
 	require.NoError(t, err)
 
 	// Create HTTP request
@@ -599,13 +650,14 @@ func TestListImpersonations_WithFilters(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = mockSvc.adminManager.StartImpersonation(ctx, &iam.StartImpersonationOptions{
-		AdminUserID:  "admin_user",
-		TargetUserID: "user_1",
-		TenantID:     "tenant_1",
-		Reason:       "Support",
-		Duration:     time.Hour,
-	})
+	_, err = mockSvc.adminManager.StartImpersonation(
+		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
+		&iam.StartImpersonationOptions{
+			TargetUserID: "user_1",
+			TenantID:     "tenant_1",
+			Reason:       "Support",
+			Duration:     time.Hour,
+		})
 	require.NoError(t, err)
 
 	// Create HTTP request with filters

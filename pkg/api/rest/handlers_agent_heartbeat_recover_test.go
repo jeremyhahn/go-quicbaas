@@ -92,7 +92,7 @@ type recoveryAgentService struct {
 	failsRemaining atomic.Int32
 }
 
-func (m *recoveryAgentService) AgentHeartbeat(_ context.Context, tenantID, agentID string) error {
+func (m *recoveryAgentService) AgentHeartbeat(_ context.Context, tenantID, agentID string, _ *orchestration.AgentObservation) error {
 	if m.failsRemaining.Add(-1) >= 0 {
 		return &orchestration.AgentNotFoundError{TenantID: tenantID, AgentID: agentID}
 	}

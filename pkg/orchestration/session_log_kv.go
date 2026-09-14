@@ -57,6 +57,12 @@ type KVSessionEventLog struct {
 	// against racing writers. Keyed by tenant\x00session.
 	appendMu  sync.Mutex
 	appendMus map[string]*sync.Mutex
+
+	// retention bounds each session's transcript; see SessionRetention.
+	retention SessionRetention
+
+	// onRetentionError reports a prune that could not complete.
+	onRetentionError func(error)
 }
 
 // Compile-time interface check.
@@ -70,6 +76,15 @@ type KVSessionEventLogConfig struct {
 	// KeyPrefix overrides the default "sessions" namespace. Rarely needed;
 	// useful for tests that want isolated key spaces on a shared store.
 	KeyPrefix string
+
+	// Retention bounds each session's transcript. The zero value keeps
+	// DefaultSessionRetentionTurns turns per session.
+	Retention SessionRetention
+
+	// OnRetentionError receives a prune failure. Nil discards it: the append
+	// that triggered the prune already succeeded, so a transcript one turn
+	// over its bound is worth reporting and not worth failing a turn for.
+	OnRetentionError func(error)
 }
 
 // NewKVSessionEventLog constructs a KV-backed event log.
@@ -82,10 +97,12 @@ func NewKVSessionEventLog(cfg KVSessionEventLogConfig) (*KVSessionEventLog, erro
 		prefix = "sessions"
 	}
 	return &KVSessionEventLog{
-		kv:        cfg.KVStore,
-		fanout:    newSessionLogFanout(),
-		keyPrefix: prefix,
-		appendMus: map[string]*sync.Mutex{},
+		kv:               cfg.KVStore,
+		fanout:           newSessionLogFanout(),
+		keyPrefix:        prefix,
+		appendMus:        map[string]*sync.Mutex{},
+		retention:        cfg.Retention,
+		onRetentionError: cfg.OnRetentionError,
 	}, nil
 }
 
@@ -121,11 +138,17 @@ func (l *KVSessionEventLog) Append(ctx context.Context, event *SessionEvent) err
 		return &SessionLogAppendError{SessionID: event.SessionID, Sequence: event.Sequence, Cause: err}
 	}
 
-	// Update meta's rolling fields if the session has meta registered.
+	// Update meta's rolling fields if the session has meta registered, and
+	// prune the transcript to the tenant's retention bound in the same pass:
+	// the bookkeeping the prune needs (which sequence each retained turn began
+	// at) lives on the metadata record this block is already rewriting, so
+	// doing it anywhere else would mean a second read-modify-write of the same
+	// key under the same lock.
 	if meta, metaErr := l.GetMeta(ctx, event.TenantID, event.SessionID); metaErr == nil {
 		meta.LatestSequence = event.Sequence
 		meta.EventCount = event.Sequence // monotonic = dense, so count == latest
 		meta.LastActivity = event.Timestamp
+		l.applyRetention(ctx, meta, event)
 		_ = l.PutMeta(ctx, meta) // non-fatal on write failure; append itself succeeded
 	}
 
@@ -249,7 +272,7 @@ func (l *KVSessionEventLog) GetMeta(ctx context.Context, tenantID, sessionID str
 
 // ListSessions implements SessionEventLog.
 func (l *KVSessionEventLog) ListSessions(ctx context.Context, tenantID string, filter *SessionFilter, limit int) ([]*SessionMeta, error) {
-	prefix := l.keyPrefix + "/" + tenantID + "/"
+	prefix := l.keyPrefix + "/" + logTenant(tenantID) + "/"
 	var metas []*SessionMeta
 	err := l.kv.Scan(ctx, prefix, func(key string, value []byte) error {
 		// Only meta keys end in /meta; skip event keys.
@@ -287,17 +310,17 @@ func (l *KVSessionEventLog) ListSessions(ctx context.Context, tenantID string, f
 // eventKey builds the KV key for a single event. The sequence is zero-padded
 // to 20 digits so lexical order == numeric order.
 func (l *KVSessionEventLog) eventKey(tenantID, sessionID string, seq uint64) string {
-	return fmt.Sprintf("%s/%s/%s/events/%020d", l.keyPrefix, tenantID, sessionID, seq)
+	return fmt.Sprintf("%s/%s/%s/events/%020d", l.keyPrefix, logTenant(tenantID), sessionID, seq)
 }
 
 // eventsPrefix is the common prefix for all events of one session.
 func (l *KVSessionEventLog) eventsPrefix(tenantID, sessionID string) string {
-	return fmt.Sprintf("%s/%s/%s/events/", l.keyPrefix, tenantID, sessionID)
+	return fmt.Sprintf("%s/%s/%s/events/", l.keyPrefix, logTenant(tenantID), sessionID)
 }
 
 // metaKey is the KV key for the session's metadata record.
 func (l *KVSessionEventLog) metaKey(tenantID, sessionID string) string {
-	return fmt.Sprintf("%s/%s/%s/meta", l.keyPrefix, tenantID, sessionID)
+	return fmt.Sprintf("%s/%s/%s/meta", l.keyPrefix, logTenant(tenantID), sessionID)
 }
 
 // lockFor returns a per-session mutex. Callers Lock before appending so that
@@ -353,4 +376,106 @@ func sinceDuration(t time.Time) time.Duration {
 		return 0
 	}
 	return time.Since(t)
+}
+
+// applyRetention records the turn boundary this event may have opened and
+// drops whole turns that have fallen outside the tenant's retention bound.
+//
+// IT PRUNES BY WHOLE TURNS, never by event count, because half a turn is worse
+// than none of it: an operator scrolling to the top of a transcript that had
+// been cut mid-turn would see an agent's answer with no question above it, and
+// a tool result with no invocation. TurnStarts on the metadata record makes
+// that exact — the first retained turn's opening sequence IS the cutoff, so the
+// delete is bounded and needs no scan.
+//
+// The caller holds the per-session append lock and writes the metadata record
+// afterwards; this mutates meta in place and never writes it itself.
+func (l *KVSessionEventLog) applyRetention(ctx context.Context, meta *SessionMeta, event *SessionEvent) {
+	if event.Kind != KindPromptSubmitted {
+		return
+	}
+	meta.TurnStarts = append(meta.TurnStarts, event.Sequence)
+	if meta.OldestSequence == 0 {
+		meta.OldestSequence = meta.TurnStarts[0]
+	}
+
+	maxTurns := l.retention.TurnsFor(meta.TenantID)
+	if maxTurns <= 0 || len(meta.TurnStarts) <= maxTurns {
+		return
+	}
+
+	// Everything below the first turn we intend to keep goes. Deleting from
+	// OldestSequence rather than from 1 keeps a second prune from re-walking
+	// keys the first one already removed.
+	drop := len(meta.TurnStarts) - maxTurns
+	cutoff := meta.TurnStarts[drop]
+	from := meta.OldestSequence
+	if from == 0 {
+		from = 1
+	}
+	for seq := from; seq < cutoff; seq++ {
+		if err := l.kv.Delete(ctx, l.eventKey(meta.TenantID, meta.SessionID, seq)); err != nil {
+			// A KEY THAT WOULD NOT DELETE STOPS THE PRUNE WHERE IT STANDS.
+			// Continuing past it would advance OldestSequence over a key that
+			// is still there, and no later prune would ever revisit it: the
+			// transcript would keep a permanently orphaned prefix that no
+			// reader expects and no pass reclaims. Stopping leaves the bound
+			// exceeded, which the next append retries from the same place.
+			l.reportRetention(&SessionRetentionError{
+				TenantID:  meta.TenantID,
+				SessionID: meta.SessionID,
+				Sequence:  seq,
+				Cause:     err,
+			})
+			meta.OldestSequence = seq
+			return
+		}
+	}
+	meta.OldestSequence = cutoff
+	meta.TurnStarts = append(meta.TurnStarts[:0], meta.TurnStarts[drop:]...)
+}
+
+// reportRetention surfaces a prune failure when a sink is configured.
+func (l *KVSessionEventLog) reportRetention(err error) {
+	if err != nil && l.onRetentionError != nil {
+		l.onRetentionError(err)
+	}
+}
+
+// DeleteSession implements SessionEventLog.
+func (l *KVSessionEventLog) DeleteSession(ctx context.Context, tenantID, sessionID string) error {
+	if sessionID == "" {
+		return &SessionLogError{Op: "delete session: session_id required"}
+	}
+
+	// Under the append lock so a turn landing concurrently cannot write an
+	// event between the scan and the delete and leave it stranded under a
+	// metadata record that is already gone.
+	mu := l.lockFor(tenantID, sessionID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	var keys []string
+	if err := l.kv.Scan(ctx, l.eventsPrefix(tenantID, sessionID), func(key string, _ []byte) error {
+		keys = append(keys, key)
+		return nil
+	}); err != nil {
+		return &SessionTranscriptDeleteError{
+			TenantID: tenantID, SessionID: sessionID,
+			Key: l.eventsPrefix(tenantID, sessionID), Cause: err,
+		}
+	}
+	// The metadata record goes LAST. It is what LatestSequence derives a new
+	// event's sequence from, so removing it first would let a concurrent
+	// append restart at sequence 1 and land on top of events this call has not
+	// deleted yet.
+	keys = append(keys, l.metaKey(tenantID, sessionID))
+	for _, key := range keys {
+		if err := l.kv.Delete(ctx, key); err != nil && !qerrors.IsNotFound(err) {
+			return &SessionTranscriptDeleteError{
+				TenantID: tenantID, SessionID: sessionID, Key: key, Cause: err,
+			}
+		}
+	}
+	return nil
 }

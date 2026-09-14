@@ -283,7 +283,7 @@ func TestPIVLogin_LogSuccessAudit(t *testing.T) {
 	req.Header.Set("X-Request-ID", "req-success-456")
 
 	h.logPIVLoginAudit(context.Background(), "tenant-1", "user-1", "user@example.com",
-		"thumbprint-xyz", "CN=User", "CN=Issuer CA", "smartcard", req)
+		"thumbprint-xyz", "CN=User", "CN=Issuer CA", "smartcard", "hardware", req)
 
 	require.Len(t, capture.events, 1)
 	ev := capture.events[0]

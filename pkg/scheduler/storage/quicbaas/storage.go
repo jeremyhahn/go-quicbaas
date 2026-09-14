@@ -22,26 +22,34 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/cas"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 )
 
+// systemNamespace is go-qrdb's reserved internal prefix
+// (service.InternalKeyPrefixSystem). Records under it are excluded from
+// user-facing List and Scan and refused by MVCC restore, so platform-owned
+// scheduler state is not enumerable by an ordinary tenant sweep. Bare "sys:"
+// bought none of that, which was docs/18 V24.
+const systemNamespace = "__sys:"
+
 // Key prefixes for storage partitioning.
 const (
 	// SystemJobsPrefix stores system-owned jobs.
-	SystemJobsPrefix = "sys:scheduler/jobs/"
+	SystemJobsPrefix = "__sys:scheduler/jobs/"
 
 	// TenantJobsPrefixFmt is the format for tenant job keys: t:{tenantID}:scheduler/jobs/.
 	TenantJobsPrefixFmt = "t:%s:scheduler/jobs/"
 
 	// ExecutionsPrefix stores job execution history.
-	ExecutionsPrefix = "sys:scheduler/executions/"
+	ExecutionsPrefix = "__sys:scheduler/executions/"
 
 	// TenantExecutionsPrefixFmt is the format for tenant execution keys: t:{tenantID}:scheduler/executions/.
 	TenantExecutionsPrefixFmt = "t:%s:scheduler/executions/"
 
 	// JobIDCounterKey stores the atomic job ID counter for persistence.
-	JobIDCounterKey = "sys:scheduler/meta/job_id_counter"
+	JobIDCounterKey = "__sys:scheduler/meta/job_id_counter"
 )
 
 // Storage implements scheduler.JobStorage using QuicBaaS's KVStore interface.
@@ -50,14 +58,79 @@ type Storage struct {
 	nextID atomic.Uint64
 }
 
-// Verify Storage implements JobStorage interface.
-var _ scheduler.JobStorage = (*Storage)(nil)
+// ClusteredStorage is a job store for a clustered deployment: a Storage that
+// can also arbitrate firings.
+//
+// It is a DISTINCT TYPE rather than a flag on Storage so the scheduler's
+// fail-closed construction actually holds. scheduler.NewWithClustering
+// type-asserts scheduler.FiringClaimer; if ClaimFiring lived on Storage, every
+// single-node store would satisfy that assertion and the guard would pass at
+// boot only to fail at the first contended firing — the exact "fails at first
+// claim, not at startup" defect this design exists to avoid. With the method on
+// this type alone, a store built without a claim arbiter cannot be mistaken for
+// one that has it, and the compiler enforces it.
+type ClusteredStorage struct {
+	*Storage
 
-// NewStorage creates a new QuicBaaS-backed job storage.
+	// writer performs the guarded write that decides a firing. The
+	// create/read/decide/swap sequence lives in pkg/cas, shared with
+	// pkg/sdlc's coordination leases: it was written twice before it was
+	// written once, and two spellings of one rule drift silently because both
+	// keep passing their own tests.
+	writer *cas.Writer
+
+	// marks reads a job's current claim mark for the advance guard, and
+	// deletes it when the job goes away.
+	marks ClaimReader
+
+	// strandedFirings counts firings the monotonic mark has made
+	// unclaimable. See ClusteredStorage.noteIfStranded.
+	strandedFirings atomic.Uint64
+}
+
+// Verify the storage types implement their interfaces.
+var (
+	_ scheduler.JobStorage    = (*Storage)(nil)
+	_ scheduler.JobStorage    = (*ClusteredStorage)(nil)
+	_ scheduler.FiringClaimer = (*ClusteredStorage)(nil)
+)
+
+// NewStorage creates a single-node QuicBaaS-backed job storage.
+//
+// It carries no firing-claim path, and deliberately does not implement
+// scheduler.FiringClaimer. Claims arbitrate between nodes, and a single-node
+// deployment has no peer to race, so there is nothing to decide — a different
+// topology, not a disabled safeguard.
 func NewStorage(kv interfaces.KVStore) *Storage {
 	return &Storage{
 		kv: kv,
 	}
+}
+
+// NewClusteredStorage creates a job storage for a clustered deployment.
+//
+// claims is go-qrdb's transaction client, which decides every firing, and marks
+// reads the current mark for its guard. Both are
+// required: without them there is nothing to arbitrate a contended firing, and a
+// cluster running without claims looks perfectly healthy right up to the first
+// leadership change. Refusing here means a misconfigured clustered node fails
+// to start rather than silently double-firing.
+func NewClusteredStorage(kv interfaces.KVStore, claims ClaimTransactor, marks ClaimReader) (*ClusteredStorage, error) {
+	if claims == nil || marks == nil {
+		return nil, scheduler.ClaimUnsupportedError{Backend: typeName(kv)}
+	}
+	writer, err := cas.NewWriter(claims, marks, func(op string, cause error) error {
+		return &scheduler.ErrStorageError{Op: "ClaimFiring." + op, Cause: cause}
+	})
+	if err != nil {
+		return nil, scheduler.ClaimUnsupportedError{Backend: typeName(kv)}
+	}
+	return &ClusteredStorage{Storage: NewStorage(kv), writer: writer, marks: marks}, nil
+}
+
+// typeName renders a value's dynamic type for error attribution.
+func typeName(v any) string {
+	return fmt.Sprintf("%T", v)
 }
 
 // keyForJob returns the storage key for a job based on ownership.
@@ -72,12 +145,50 @@ func keyForJob(job *scheduler.Job) string {
 	}
 }
 
+// scopeToken returns the discriminator that makes a job ID unique.
+//
+// A job ID is only unique WITHIN a scope: the system namespace and each tenant
+// number their jobs independently, so ID 7 names a system job and a job in
+// every tenant. Anything keyed by job must carry this discriminator or it will
+// conflate those jobs. The claim mark was first written with a hand-copied
+// version of this rule that omitted the scope entirely, so deleting a tenant's
+// job 7 erased the system job 7's claim and re-opened a decided firing.
+//
+// This answers "which scope owns this ID", and is embedded INSIDE a compound
+// key. It is deliberately distinct from recordNamespace, which answers a
+// different question — see there.
+func scopeToken(tenantID string) string {
+	if tenantID == "" {
+		return "sys:"
+	}
+	return "t:" + tenantID + ":"
+}
+
+// recordNamespace returns the LEADING namespace a top-level scheduler record
+// lives under.
+//
+// Distinct from scopeToken because it answers a different question — "where
+// does this record live" rather than "which scope owns this ID" — and the two
+// answers genuinely differ for system records. A platform-owned record lives in
+// go-qrdb's reserved "__sys:" namespace, which is excluded from user-facing
+// List and Scan and refused by MVCC restore; a tenant's record lives in that
+// tenant's own namespace, where the tenant is entitled to enumerate it.
+//
+// Collapsing the two into one function is what a first pass at this rename
+// would do, and it produces "__sys:scheduler/claims/__sys:7" — the namespace
+// nested inside itself as a discriminator. Two questions, two functions; the
+// V4 rule is against two spellings of ONE rule, not against distinguishing
+// rules that differ.
+func recordNamespace(tenantID string) string {
+	if tenantID == "" {
+		return systemNamespace
+	}
+	return "t:" + tenantID + ":"
+}
+
 // keyForJobByID returns the storage key for a job ID with tenant context.
 func keyForJobByID(id uint64, tenantID string) string {
-	if tenantID == "" {
-		return fmt.Sprintf("%s%d", SystemJobsPrefix, id)
-	}
-	return fmt.Sprintf(TenantJobsPrefixFmt+"%d", tenantID, id)
+	return fmt.Sprintf("%sscheduler/jobs/%d", recordNamespace(tenantID), id)
 }
 
 // keyForExecution returns the storage key for an execution record.

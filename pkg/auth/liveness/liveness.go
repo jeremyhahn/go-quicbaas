@@ -30,10 +30,16 @@ import (
 // package needs no dependency on pkg/iam.
 type Source interface {
 	// TokenLiveness reports whether an already-signature-verified token is still
-	// live: its jti has not been revoked and its subject is an enabled user (or a
-	// service/non-user subject). It is fail-closed: a store error yields a
-	// non-live, error result.
-	TokenLiveness(ctx context.Context, tenantID, subject, jti string) (bool, error)
+	// live: its jti has not been revoked and the principal it names may still
+	// hold a session. userID is the issuer's immutable handle on a user
+	// principal and principalType is the positive marker for a non-user one;
+	// both are empty on tokens minted before those claims existed, which the
+	// authority resolves from the subject instead. It is fail-closed: a store
+	// error yields a non-live, error result.
+	//
+	// The parameters are primitives rather than a shared struct so this package
+	// keeps needing no dependency on pkg/iam.
+	TokenLiveness(ctx context.Context, tenantID, subject, userID, principalType, jti string) (bool, error)
 }
 
 // Checker adapts an in-process Source to the SDK platformtoken.LivenessChecker
@@ -53,9 +59,11 @@ func NewChecker(src Source) *Checker {
 
 // CheckLiveness satisfies platformtoken.LivenessChecker. It maps the validated
 // token's claims onto the in-process Source: claims.TenantID -> tenant,
-// claims.Subject -> subject, claims.ID -> jti. The raw token is unused because
-// the in-process authority decides from the already-verified claims; both the
-// liveness verdict and any (fail-closed) error pass straight through.
+// claims.Subject -> subject, claims.UserID -> the immutable user handle,
+// claims.PrincipalType -> the positive service marker, claims.ID -> jti. The raw
+// token is unused because the in-process authority decides from the
+// already-verified claims; both the liveness verdict and any (fail-closed)
+// error pass straight through.
 func (c *Checker) CheckLiveness(ctx context.Context, token string, claims *platformtoken.Claims) (bool, error) {
-	return c.src.TokenLiveness(ctx, claims.TenantID, claims.Subject, claims.ID)
+	return c.src.TokenLiveness(ctx, claims.TenantID, claims.Subject, claims.UserID, claims.PrincipalType, claims.ID)
 }

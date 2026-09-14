@@ -57,6 +57,7 @@ All role commands require the --tenant flag to specify the tenant context.`,
 	cmd.AddCommand(newIAMRoleListCommand())
 	cmd.AddCommand(newIAMRoleAssignCommand())
 	cmd.AddCommand(newIAMRoleRevokeCommand())
+	cmd.AddCommand(newIAMRoleReconcileCommand())
 
 	return cmd
 }
@@ -104,7 +105,7 @@ func runIAMRoleCreateCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Create role using SDK sub-client
@@ -181,7 +182,7 @@ func runIAMRoleGetCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Get role using SDK sub-client
@@ -209,6 +210,11 @@ func runIAMRoleGetCommand(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Name: %s\n", role.DisplayName)
 		fmt.Printf("  Tenant: %s\n", role.TenantID)
 		fmt.Printf("  Description: %s\n", role.Description)
+		if len(role.RetiredPermissions) > 0 {
+			// Permissions this role still carries that the server build no
+			// longer defines. 'iam role reconcile' clears them.
+			fmt.Printf("  Retired Permissions: %s\n", strings.Join(role.RetiredPermissions, ", "))
+		}
 		fmt.Printf("  Created: %s\n", role.CreatedAt.Format("2006-01-02 15:04:05"))
 		fmt.Printf("  Updated: %s\n", role.UpdatedAt.Format("2006-01-02 15:04:05"))
 	}
@@ -262,7 +268,7 @@ func runIAMRoleUpdateCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Build update request
@@ -340,7 +346,7 @@ func runIAMRoleDeleteCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Delete role using SDK sub-client
@@ -386,7 +392,7 @@ func runIAMRoleListCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// List roles using SDK sub-client
@@ -430,6 +436,95 @@ func runIAMRoleListCommand(cmd *cobra.Command, args []string) error {
 				role.CreatedAt.Format("2006-01-02 15:04"))
 		}
 		fmt.Printf("\nTotal: %d roles\n", len(roles))
+	}
+
+	return nil
+}
+
+// newIAMRoleReconcileCommand creates the role reconcile command.
+func newIAMRoleReconcileCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "reconcile",
+		Short: "Reconcile built-in roles onto this build's definitions",
+		Long: `Converge this tenant's built-in roles (admin, operator, ...) onto the
+definitions this build carries.
+
+Built-in roles are seeded when the tenant is created, so a tenant provisioned
+by an older build keeps the permissions that build granted. Reconcile adds the
+verbs the build now grants, removes the verbs it no longer grants, and leaves
+custom roles alone. It is idempotent: reconciling a tenant that already agrees
+with the build reports no changes.
+
+Examples:
+  # Reconcile built-in roles
+  quicbaas iam role reconcile --tenant acme-corp
+
+  # Reconcile and inspect the per-role diff as JSON
+  quicbaas iam role reconcile --tenant acme-corp --output json`,
+		Args: cobra.NoArgs,
+		RunE: runIAMRoleReconcileCommand,
+	}
+
+	return cmd
+}
+
+// runIAMRoleReconcileCommand executes the role reconcile command.
+func runIAMRoleReconcileCommand(cmd *cobra.Command, args []string) error {
+	// Validate required flags
+	if globalTenantID == "" {
+		return errors.Newf(errors.ErrInvalidInput, "iam.role.reconcile", "--tenant flag is required")
+	}
+
+	// Create IAM client
+	iamClient, err := createIAMClient()
+	if err != nil {
+		return err
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
+	defer cancel()
+
+	// Reconcile built-in roles using SDK sub-client
+	log.Infof("Reconciling built-in roles in tenant: %s", globalTenantID)
+	resp, err := iamClient.Role().Reconcile(ctx, globalTenantID)
+	if err != nil {
+		return formatError(err)
+	}
+
+	// Format output
+	format, err := cli.ParseOutputFormat(iamOutputFormat)
+	if err != nil {
+		return err
+	}
+
+	switch format {
+	case cli.OutputFormatJSON:
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(resp)
+
+	default:
+		if !resp.Changed {
+			fmt.Printf("Tenant '%s': no changes; roles already match this build\n", resp.TenantID)
+			return nil
+		}
+
+		fmt.Printf("Reconciled built-in roles in tenant '%s':\n", resp.TenantID)
+		for _, result := range resp.Roles {
+			fmt.Printf("  %s", result.Name)
+			if result.Created {
+				fmt.Print(" (created)")
+			}
+			if len(result.Added) > 0 {
+				fmt.Printf(" +[%s]", strings.Join(result.Added, ", "))
+			}
+			if len(result.Removed) > 0 {
+				fmt.Printf(" -[%s]", strings.Join(result.Removed, ", "))
+			}
+			fmt.Println()
+		}
+		fmt.Printf("\nTotal: %d roles changed\n", len(resp.Roles))
 	}
 
 	return nil
@@ -490,7 +585,7 @@ func runIAMRoleAssignCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Assign role using SDK sub-client
@@ -558,7 +653,7 @@ func runIAMRoleRevokeCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Revoke role using SDK sub-client

@@ -52,6 +52,22 @@ type fakeDaemonServer struct {
 	spawnReqMu   sync.Mutex
 	lastSpawnReq *proto.SpawnSessionRequest
 
+	// The other three requests are captured for the same reason and read
+	// through the accessors below: the backend name a session is served under
+	// is a per-RPC field, so proving it is the requested one means reading it
+	// off every RPC rather than only the first (go-quicbaas#937).
+	reqMu             sync.Mutex
+	lastPromptReq     *proto.PromptSessionRequest
+	lastListModelsReq *proto.ListModelsRequest
+	lastInferReq      *proto.InferRequest
+
+	// inferFrames are the frames Infer streams back; nil sends one final
+	// empty-delta frame so a caller that only inspects the request still
+	// completes.
+	inferFrames []*proto.InferResponse
+	inferErr    error
+	inferCalls  atomic.Int32
+
 	spawnResp      *proto.SpawnSessionResponse
 	spawnErr       error
 	promptResp     *proto.PromptSessionResponse
@@ -85,6 +101,9 @@ func (f *fakeDaemonServer) Spawn(ctx context.Context, req *proto.SpawnSessionReq
 
 func (f *fakeDaemonServer) Prompt(req *proto.PromptSessionRequest, stream grpc.ServerStreamingServer[proto.PromptSessionResponse]) error {
 	f.promptCalls.Add(1)
+	f.reqMu.Lock()
+	f.lastPromptReq = req
+	f.reqMu.Unlock()
 	if f.promptErr != nil {
 		return f.promptErr
 	}
@@ -134,6 +153,9 @@ func (f *fakeDaemonServer) Close(ctx context.Context, req *proto.CloseSessionReq
 
 func (f *fakeDaemonServer) ListModels(ctx context.Context, req *proto.ListModelsRequest) (*proto.ListModelsResponse, error) {
 	f.listModelsCalls.Add(1)
+	f.reqMu.Lock()
+	f.lastListModelsReq = req
+	f.reqMu.Unlock()
 	if f.listModelsErr != nil {
 		return nil, f.listModelsErr
 	}
@@ -144,6 +166,54 @@ func (f *fakeDaemonServer) ListModels(ctx context.Context, req *proto.ListModels
 		Backend: req.GetBackend(),
 		Models:  []string{"default-model:latest"},
 	}, nil
+}
+
+func (f *fakeDaemonServer) Infer(req *proto.InferRequest, stream grpc.ServerStreamingServer[proto.InferResponse]) error {
+	f.inferCalls.Add(1)
+	f.reqMu.Lock()
+	f.lastInferReq = req
+	f.reqMu.Unlock()
+	if f.inferErr != nil {
+		return f.inferErr
+	}
+	frames := f.inferFrames
+	if frames == nil {
+		frames = []*proto.InferResponse{{Model: req.GetModel(), Final: true}}
+	}
+	for _, frame := range frames {
+		if err := stream.Send(frame); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// spawnRequest returns the last SpawnSessionRequest the daemon received.
+func (f *fakeDaemonServer) spawnRequest() *proto.SpawnSessionRequest {
+	f.spawnReqMu.Lock()
+	defer f.spawnReqMu.Unlock()
+	return f.lastSpawnReq
+}
+
+// promptRequest returns the last PromptSessionRequest the daemon received.
+func (f *fakeDaemonServer) promptRequest() *proto.PromptSessionRequest {
+	f.reqMu.Lock()
+	defer f.reqMu.Unlock()
+	return f.lastPromptReq
+}
+
+// listModelsRequest returns the last ListModelsRequest the daemon received.
+func (f *fakeDaemonServer) listModelsRequest() *proto.ListModelsRequest {
+	f.reqMu.Lock()
+	defer f.reqMu.Unlock()
+	return f.lastListModelsReq
+}
+
+// inferRequest returns the last InferRequest the daemon received.
+func (f *fakeDaemonServer) inferRequest() *proto.InferRequest {
+	f.reqMu.Lock()
+	defer f.reqMu.Unlock()
+	return f.lastInferReq
 }
 
 // bufconnDaemon wires a bufconn listener + grpc.Server + fakeDaemonServer
@@ -207,7 +277,7 @@ func TestNewRemoteACPBackend_RequiresRegistration(t *testing.T) {
 
 func TestNewRemoteACPBackend_RequiresLogger(t *testing.T) {
 	t.Parallel()
-	_, err := NewRemoteACPBackend(RemoteACPBackendDeps{Registration: newDaemonRegistration()})
+	_, err := NewRemoteACPBackend(RemoteACPBackendDeps{Registration: newDaemonRegistration(), Backend: "acp"})
 	if !errors.Is(err, ErrRemoteBackendNoLogger) {
 		t.Fatalf("expected ErrRemoteBackendNoLogger, got %v", err)
 	}
@@ -219,6 +289,7 @@ func TestNewRemoteACPBackend_RequiresHost(t *testing.T) {
 	reg.Host = ""
 	_, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: reg,
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 	})
 	if !errors.Is(err, ErrRemoteBackendNoHost) {
@@ -232,6 +303,7 @@ func TestNewRemoteACPBackend_RejectsNonDaemonKind(t *testing.T) {
 	reg.Kind = AgentKindContainerScript
 	_, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: reg,
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 	})
 	if !errors.Is(err, ErrRemoteBackendNotDaemon) {
@@ -245,6 +317,7 @@ func TestNewRemoteACPBackend_AcceptsEmbeddedKind(t *testing.T) {
 	reg.Kind = AgentKindEmbedded
 	_, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: reg,
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 	})
 	if err != nil {
@@ -261,6 +334,7 @@ func TestRemoteACPBackend_SpawnRoundTrip(t *testing.T) {
 	daemon := startBufconnDaemon(t, nil)
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -296,6 +370,7 @@ func TestRemoteACPBackend_SpawnCarriesPersistentTrue(t *testing.T) {
 	daemon := startBufconnDaemon(t, nil)
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -323,6 +398,83 @@ func TestRemoteACPBackend_SpawnCarriesPersistentTrue(t *testing.T) {
 	}
 }
 
+// TestRemoteACPBackend_SpawnCarriesExtraArgs is the SENDER side of the remote
+// permission grant (go-quicbaas#218).
+//
+// The receiving server's own test starts from an already-populated protobuf
+// request, so it cannot notice this mapping being deleted: the daemon would
+// keep honouring an ExtraArgs nobody was sending. Asserting on what the fake
+// daemon RECEIVES after a real Spawn is what pins the wire hop, and the wire
+// hop is precisely where the grant used to be lost — a local worker getting
+// --permission-mode acceptEdits while a remote one was spawned exactly the way
+// the burn-in measured it.
+func TestRemoteACPBackend_SpawnCarriesExtraArgs(t *testing.T) {
+	t.Parallel()
+	daemon := startBufconnDaemon(t, nil)
+	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
+		Registration: newDaemonRegistration(),
+		Backend:      "acp",
+		Logger:       &agentTestLogger{},
+		ConnDialer:   daemon.dialer(),
+	})
+	if err != nil {
+		t.Fatalf("NewRemoteACPBackend: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.CloseAll() })
+
+	if _, err := backend.Spawn(context.Background(), &SpawnRequest{
+		ProjectID: "proj-1",
+		WorkDir:   "/workspace",
+		ExtraArgs: []string{"--permission-mode", "acceptEdits"},
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	daemon.svc.spawnReqMu.Lock()
+	got := daemon.svc.lastSpawnReq
+	daemon.svc.spawnReqMu.Unlock()
+	if got == nil {
+		t.Fatal("daemon did not capture a spawn request")
+	}
+	args := got.GetExtraArgs()
+	if len(args) != 2 || args[0] != "--permission-mode" || args[1] != "acceptEdits" {
+		t.Fatalf("proto SpawnSessionRequest.ExtraArgs = %v, want the grant the caller stated", args)
+	}
+}
+
+// TestRemoteACPBackend_SpawnWithNoExtraArgsSendsNone is the negative control:
+// a caller that states no argv must not acquire one on the wire.
+func TestRemoteACPBackend_SpawnWithNoExtraArgsSendsNone(t *testing.T) {
+	t.Parallel()
+	daemon := startBufconnDaemon(t, nil)
+	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
+		Registration: newDaemonRegistration(),
+		Backend:      "acp",
+		Logger:       &agentTestLogger{},
+		ConnDialer:   daemon.dialer(),
+	})
+	if err != nil {
+		t.Fatalf("NewRemoteACPBackend: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.CloseAll() })
+
+	if _, err := backend.Spawn(context.Background(), &SpawnRequest{
+		ProjectID: "proj-1", WorkDir: "/workspace",
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	daemon.svc.spawnReqMu.Lock()
+	got := daemon.svc.lastSpawnReq
+	daemon.svc.spawnReqMu.Unlock()
+	if got == nil {
+		t.Fatal("daemon did not capture a spawn request")
+	}
+	if len(got.GetExtraArgs()) != 0 {
+		t.Errorf("proto SpawnSessionRequest.ExtraArgs = %v, want none", got.GetExtraArgs())
+	}
+}
+
 // TestRemoteACPBackend_SpawnCarriesPersistentFalse is the negative control: a
 // SpawnRequest.Persistent=false must NOT set the wire flag, preserving the
 // one-shot path for callers (e.g. the autonomous control loop spawning a
@@ -332,6 +484,7 @@ func TestRemoteACPBackend_SpawnCarriesPersistentFalse(t *testing.T) {
 	daemon := startBufconnDaemon(t, nil)
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -371,6 +524,7 @@ func TestRemoteACPBackend_PromptAccumulatesStream(t *testing.T) {
 	})
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -414,6 +568,7 @@ func TestRemoteACPBackend_PromptEmptyStreamFails(t *testing.T) {
 
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer: func(ctx context.Context, target string) (*grpc.ClientConn, error) {
 			return grpc.NewClient(
@@ -451,6 +606,7 @@ func TestRemoteACPBackend_StatusRoundTrip(t *testing.T) {
 	daemon := startBufconnDaemon(t, nil)
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -476,6 +632,7 @@ func TestRemoteACPBackend_CloseRoundTrip(t *testing.T) {
 	daemon := startBufconnDaemon(t, nil)
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -508,6 +665,7 @@ func TestRemoteACPBackend_ReusesConnectionAcrossCalls(t *testing.T) {
 
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   reuseDialer,
 	})
@@ -535,6 +693,7 @@ func TestRemoteACPBackend_HandlesDaemonDisconnect(t *testing.T) {
 	daemon := startBufconnDaemon(t, nil)
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -574,6 +733,7 @@ func TestRemoteACPBackend_SpawnNilRequest(t *testing.T) {
 	daemon := startBufconnDaemon(t, nil)
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -594,6 +754,7 @@ func TestRemoteACPBackend_PromptNilRequest(t *testing.T) {
 	daemon := startBufconnDaemon(t, nil)
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -618,6 +779,7 @@ func TestRemoteACPBackend_CapabilitiesAndType(t *testing.T) {
 	daemon := startBufconnDaemon(t, nil)
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -664,6 +826,7 @@ func TestRemoteACPBackend_ListModels_ProxiesToDaemon(t *testing.T) {
 	reg.Backend = "ollama"
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: reg,
+		Backend:      "ollama",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -703,6 +866,7 @@ func TestRemoteACPBackend_ListModels_DaemonError(t *testing.T) {
 	reg.Backend = "ollama"
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: reg,
+		Backend:      "ollama",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -721,5 +885,78 @@ func TestRemoteACPBackend_ListModels_DaemonError(t *testing.T) {
 	var rpcErr *RemoteBackendRPCError
 	if !errors.As(err, &rpcErr) {
 		t.Errorf("expected RemoteBackendRPCError, got %T: %v", err, err)
+	}
+}
+
+// =============================================================================
+// A daemon that no longer holds the session (#774)
+// =============================================================================
+
+// TestRemoteACPBackend_StatusTranslatesNotFoundToSessionNotFound is the
+// regression for #774: the daemon answers codes.NotFound for a session whose
+// worker container is gone, and the stall detector type-asserts for
+// *SessionNotFoundError to tell "gone" from "unreachable". Wrapping the status
+// in RemoteBackendRPCError made every dead remote worker permanently
+// unreadable, so the job kept its lease and its slot.
+func TestRemoteACPBackend_StatusTranslatesNotFoundToSessionNotFound(t *testing.T) {
+	t.Parallel()
+	daemon := startBufconnDaemon(t, &fakeDaemonServer{
+		statusErr: status.Error(codes.NotFound, `orchestration: session not found: sess-dead`),
+	})
+	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
+		Registration: newDaemonRegistration(),
+		Backend:      "acp",
+		Logger:       &agentTestLogger{},
+		ConnDialer:   daemon.dialer(),
+	})
+	if err != nil {
+		t.Fatalf("NewRemoteACPBackend: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.CloseAll() })
+
+	st, statusErr := backend.Status(context.Background(), "sess-dead")
+	if st != nil {
+		t.Fatalf("a vanished session has no status, got %+v", st)
+	}
+	var missing *SessionNotFoundError
+	if !errors.As(statusErr, &missing) || missing.SessionID != "sess-dead" {
+		t.Fatalf("expected SessionNotFoundError for sess-dead, got %v", statusErr)
+	}
+	if !errors.Is(statusErr, ErrSessionNotFound) {
+		t.Fatal("the translated error must unwrap to the package sentinel")
+	}
+}
+
+// TestRemoteACPBackend_StatusKeepsEveryOtherFailureAsAnRPCError is the
+// bad-input half: only NotFound is an answer. Anything else is a failure to
+// reach the daemon and must stay an RPC error, or the detector would read a
+// broken link as a dead agent and end live work.
+func TestRemoteACPBackend_StatusKeepsEveryOtherFailureAsAnRPCError(t *testing.T) {
+	t.Parallel()
+	daemon := startBufconnDaemon(t, &fakeDaemonServer{
+		statusErr: status.Error(codes.Unavailable, "daemon restarting"),
+	})
+	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
+		Registration: newDaemonRegistration(),
+		Backend:      "acp",
+		Logger:       &agentTestLogger{},
+		ConnDialer:   daemon.dialer(),
+	})
+	if err != nil {
+		t.Fatalf("NewRemoteACPBackend: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.CloseAll() })
+
+	st, statusErr := backend.Status(context.Background(), "sess-1")
+	if st != nil {
+		t.Fatalf("an unreachable daemon has no status, got %+v", st)
+	}
+	var missing *SessionNotFoundError
+	if errors.As(statusErr, &missing) {
+		t.Fatal("an unavailable daemon must not be reported as a vanished session")
+	}
+	var rpcErr *RemoteBackendRPCError
+	if !errors.As(statusErr, &rpcErr) || rpcErr.Op != "Status" {
+		t.Fatalf("expected RemoteBackendRPCError{Op: Status}, got %v", statusErr)
 	}
 }

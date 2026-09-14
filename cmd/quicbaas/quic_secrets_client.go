@@ -138,7 +138,7 @@ func newQUICRESTClient(component string) (*rest.RESTClient, error) {
 
 	httpClient := &http.Client{
 		Transport: &http3.Transport{TLSClientConfig: tlsCfg},
-		Timeout:   timeout,
+		Timeout:   globalTimeout,
 	}
 
 	restClient, err := rest.NewRESTClient(quicBaseURL(address), log, rest.WithHTTPClient(httpClient))

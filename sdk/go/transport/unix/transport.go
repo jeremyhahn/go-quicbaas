@@ -174,3 +174,7 @@ type Factory struct{}
 func (f *Factory) Create(cfg *transport.Config) (transport.Transport, error) {
 	return New(cfg)
 }
+
+// SupportsSDLC declares the SDLC service on the Unix transport: every
+// request delegates to the gRPC transport verbatim, which carries it.
+func (t *Transport) SupportsSDLC() bool { return true }

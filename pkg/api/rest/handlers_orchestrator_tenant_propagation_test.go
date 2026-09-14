@@ -23,6 +23,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -307,4 +308,76 @@ func TestOrchestratorSessionHandlers_TenantPropagatesToRealGuard(t *testing.T) {
 				"handler %s must derive a tenant; body=%s", tc.name, rec.Body.String())
 		})
 	}
+}
+
+// TestOrchestratorJobHandlers_DeriveTheTenantLikeEveryOtherHandler closes the
+// last two handlers that read the tenant straight off the query string.
+//
+// `GET /orchestrator/jobs` and `GET /orchestrator/jobs/{id}` were the only
+// orchestrator routes that did not go through resolveOrchestratorTenant: they
+// took `?tenant_id=` verbatim, so a caller that omitted it was refused with
+// "tenant ID required" rather than being served its OWN tenant, and the
+// system-tenant fallback every sibling applies did not apply to them. Raised
+// in review on go-quicbaas#822.
+func TestOrchestratorJobHandlers_DeriveTheTenantLikeEveryOtherHandler(t *testing.T) {
+	cases := []struct {
+		name   string
+		path   string
+		invoke func(s *Server, w http.ResponseWriter, r *http.Request)
+	}{
+		{
+			name: "list jobs",
+			path: "/api/v1/orchestrator/jobs",
+			invoke: func(s *Server, w http.ResponseWriter, r *http.Request) {
+				s.HandleOrchestratorListJobs(w, r)
+			},
+		},
+		{
+			name: "get job status",
+			path: "/api/v1/orchestrator/jobs/job-1",
+			invoke: func(s *Server, w http.ResponseWriter, r *http.Request) {
+				s.HandleOrchestratorGetJobStatus(w, r)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name+" — token claim, no query param", func(t *testing.T) {
+			server, _, cleanup := newRealAgentSpawnServer(t)
+			defer cleanup()
+
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req = req.WithContext(authorizedContextIntoContext(req.Context(),
+				&platformtoken.AuthorizedContext{TenantID: "tenant-from-token"}))
+			req = withJobIDParam(req, "job-1")
+
+			rec := httptest.NewRecorder()
+			tc.invoke(server, rec, req)
+
+			assert.NotContains(t, rec.Body.String(), "tenant ID required",
+				"handler %s must derive the tenant from the token; body=%s", tc.name, rec.Body.String())
+		})
+
+		t.Run(tc.name+" — no tenant anywhere falls back to system", func(t *testing.T) {
+			server, _, cleanup := newRealAgentSpawnServer(t)
+			defer cleanup()
+
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req = withJobIDParam(req, "job-1")
+
+			rec := httptest.NewRecorder()
+			tc.invoke(server, rec, req)
+
+			assert.NotContains(t, rec.Body.String(), "tenant ID required",
+				"handler %s must fall back to the system tenant; body=%s", tc.name, rec.Body.String())
+		})
+	}
+}
+
+// withJobIDParam attaches the {jobID} route parameter the job handlers read,
+// which httptest.NewRequest alone does not populate.
+func withJobIDParam(r *http.Request, jobID string) *http.Request {
+	routeCtx := chi.NewRouteContext()
+	routeCtx.URLParams.Add("jobID", jobID)
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, routeCtx))
 }

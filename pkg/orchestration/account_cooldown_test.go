@@ -19,8 +19,6 @@ import (
 	"errors"
 	"testing"
 	"time"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 )
 
 // =============================================================================
@@ -293,7 +291,7 @@ func TestAccountStore_ListNormalizesLapsedHolds(t *testing.T) {
 }
 
 func TestAccountStore_DerivedHealthIsNotPersisted(t *testing.T) {
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	store := NewAccountStore(kv)
 	ctx := context.Background()
 	account := &Account{

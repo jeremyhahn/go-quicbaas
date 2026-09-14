@@ -71,13 +71,20 @@ func deleteAssignment(t *testing.T, runner *TestRunner, assignmentID string) {
 
 // startImpersonationJSON starts an impersonation session with --output json and
 // returns the parsed JSON map. The caller is responsible for cleanup.
-func startImpersonationJSON(t *testing.T, runner *TestRunner, adminUserID, targetUserID, tenantID, reason string) map[string]interface{} {
+//
+// There is deliberately NO admin_user_id argument: the acting admin is the
+// AUTHENTICATED caller behind the runner's credential, resolved server-side
+// (go-quicbaas#383). The runner authenticates as the integration cluster's
+// firstboot super_admin (the admin.crt identity), which already holds
+// user:impersonate, so no test-created assignment is needed — and none
+// could name a different actor if it tried.
+func startImpersonationJSON(t *testing.T, runner *TestRunner, targetUserID, tenantID, reason string) map[string]interface{} {
 	t.Helper()
 	cmd := CommandDef{
-		Name: fmt.Sprintf("iam admin impersonate start %s as %s json", adminUserID, targetUserID),
+		Name: fmt.Sprintf("iam admin impersonate start as %s json", targetUserID),
 		Args: []string{
 			"iam", "admin", "impersonate", "start",
-			"--admin-user-id", adminUserID, "--target-user-id", targetUserID,
+			"--target-user-id", targetUserID,
 			"--tenant-id", tenantID, "--reason", reason, "--output", "json",
 		},
 		ExpectSuccess:  true,
@@ -671,23 +678,29 @@ func TestIAMAdminImpersonateStart(t *testing.T) {
 			return
 		}
 
-		adminUserID := UniqueKey("impersonate-admin")
 		targetUserID := UniqueKey("impersonate-target")
 		tenantID := UniqueKey("impersonate-tenant")
 		reason := "integration test impersonation"
 
-		// Create super_admin assignment so the admin user has impersonation permission
-		assignResult := createAssignmentJSON(t, runner, adminUserID, "super_admin", "test-system")
-		assignID := extractAssignmentID(t, assignResult)
-		defer deleteAssignment(t, runner, assignID)
-
-		result := startImpersonationJSON(t, runner, adminUserID, targetUserID, tenantID, reason)
+		// No test-created admin assignment: the authenticated caller (the
+		// runner's firstboot super_admin credential) already holds
+		// user:impersonate, and the actor can no longer be named by the
+		// request (go-quicbaas#383).
+		result := startImpersonationJSON(t, runner, targetUserID, tenantID, reason)
 		sessionID := extractSessionID(t, result)
 		defer endImpersonation(t, runner, sessionID)
 
 		assert.NotEmpty(t, sessionID, "impersonation session should have a session ID")
 		assert.Equal(t, targetUserID, result["target_user_id"],
 			"response should contain the target user ID")
+
+		// The recorded actor is the AUTHENTICATED caller, resolved
+		// server-side — never a client-chosen value, and never the target.
+		// The CLI serializes the session's acting admin as "user_id"
+		// (ImpersonationSession.AdminID json:"user_id").
+		actor, _ := result["user_id"].(string)
+		assert.NotEmpty(t, actor, "session must record the authenticated caller as the acting admin")
+		assert.NotEqual(t, targetUserID, actor, "the acting admin must not be the impersonation target")
 	})
 }
 
@@ -699,17 +712,12 @@ func TestIAMAdminImpersonateEnd(t *testing.T) {
 			return
 		}
 
-		adminUserID := UniqueKey("end-impersonate-admin")
 		targetUserID := UniqueKey("end-impersonate-target")
 		tenantID := UniqueKey("end-impersonate-tenant")
 		reason := "integration test end impersonation"
 
-		// Create super_admin assignment so the admin user has impersonation permission
-		assignResult := createAssignmentJSON(t, runner, adminUserID, "super_admin", "test-system")
-		assignID := extractAssignmentID(t, assignResult)
-		defer deleteAssignment(t, runner, assignID)
-
-		result := startImpersonationJSON(t, runner, adminUserID, targetUserID, tenantID, reason)
+		// The authenticated caller is already privileged (#383).
+		result := startImpersonationJSON(t, runner, targetUserID, tenantID, reason)
 		sessionID := extractSessionID(t, result)
 
 		// End the impersonation session
@@ -728,23 +736,24 @@ func TestIAMAdminImpersonateList(t *testing.T) {
 			return
 		}
 
-		adminUserID := UniqueKey("list-impersonate-admin")
 		targetUserID := UniqueKey("list-impersonate-target")
 		tenantID := UniqueKey("list-impersonate-tenant")
 		reason := "integration test list impersonations"
 
-		// Create super_admin assignment so the admin user has impersonation permission
-		assignResult := createAssignmentJSON(t, runner, adminUserID, "super_admin", "test-system")
-		assignID := extractAssignmentID(t, assignResult)
-		defer deleteAssignment(t, runner, assignID)
-
-		// Start a session so the list has something to return
-		result := startImpersonationJSON(t, runner, adminUserID, targetUserID, tenantID, reason)
+		// Start a session so the list has something to return. The actor
+		// is the authenticated caller (#383), so list by the id the
+		// session actually recorded rather than a client-chosen one.
+		result := startImpersonationJSON(t, runner, targetUserID, tenantID, reason)
 		sessionID := extractSessionID(t, result)
 		defer endImpersonation(t, runner, sessionID)
 
-		// List impersonation sessions for the admin user
-		listCmd := IAMAdminImpersonateListCommand(adminUserID)
+		// The CLI serializes the acting admin as "user_id"
+		// (ImpersonationSession.AdminID json:"user_id").
+		actorID, _ := result["user_id"].(string)
+		require.NotEmpty(t, actorID, "session must record the authenticated caller as the acting admin")
+
+		// List impersonation sessions for the acting admin (the caller).
+		listCmd := IAMAdminImpersonateListCommand(actorID)
 		stdout, _, err := runner.Run(listCmd)
 		require.NoError(t, err, "list impersonations should succeed")
 		assert.Contains(t, stdout, sessionID, "list output should contain the active session ID")

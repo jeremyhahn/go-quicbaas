@@ -645,25 +645,47 @@ func (eb *EncryptedBackend) decryptEntry(ctx context.Context, entry *encryptedEn
 		return nil, &SecretsSentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}
 	}
 
-	// Deserialize the secret data
+	// Deserialize the secret data, WIPING the decrypted serialization buffer
+	// either way (review 979): json.Unmarshal copies every value into fresh
+	// allocations, so after it returns the plaintext buffer is a dangling
+	// reversible copy of the whole record — exactly what the guarded-use
+	// wipe upstream cannot reach.
 	var data map[string][]byte
-	if err := json.Unmarshal(plaintext, &data); err != nil {
+	err = unmarshalWiped(plaintext, &data)
+	if err != nil {
 		return nil, ErrDeserializationFailed
 	}
 
 	return data, nil
 }
 
+// unmarshalWiped decodes buf into dst and zeroes buf before returning,
+// success or failure: the buffer is a this-call plaintext copy, and decoding
+// duplicates whatever dst needs, so nothing may keep reading it afterwards.
+func unmarshalWiped(buf []byte, dst any) error {
+	defer func() {
+		for i := range buf {
+			buf[i] = 0
+		}
+	}()
+	return json.Unmarshal(buf, dst)
+}
+
 // loadVersions loads all versions of a secret from storage.
 func (eb *EncryptedBackend) loadVersions(ctx context.Context, path string) (*secretVersions, error) {
 	data, err := eb.store.Get(ctx, secretKey(path))
 	if err != nil {
-		// Check if it's a not found error
+		// ABSENCE AND OUTAGE STAY DISTINCT. The KVStore contract reports a
+		// missing key as a QBError with ErrNotFound; only that is absence.
+		// Every other failure — a Raft election, an I/O error, a timeout —
+		// says nothing about whether the secret exists, and reporting it as
+		// ErrSecretNotFound made every consumer that treats absence as
+		// ordinary (the documented contract) fail open under an outage.
 		var qbErr *dberrors.QBError
 		if ok := dberrors.As(err, &qbErr); ok && qbErr.Code == dberrors.ErrNotFound {
 			return nil, ErrSecretNotFound
 		}
-		return nil, ErrSecretNotFound
+		return nil, &SecretsSentinelCauseError{Sentinel: ErrBackendUnavailable, Cause: err}
 	}
 
 	var versions secretVersions

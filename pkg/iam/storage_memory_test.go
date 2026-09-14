@@ -161,7 +161,7 @@ func TestMemoryStorage_UserOperations(t *testing.T) {
 	storage.CreateTenant(ctx, tenant)
 
 	user := &User{
-		ID:       "user1",
+		ID:       "11",
 		TenantID: tenant.ID,
 		Email:    "user1@example.com",
 		Name:     "User One",
@@ -192,7 +192,7 @@ func TestMemoryStorage_UserOperations(t *testing.T) {
 	}
 
 	// Test GetUserByEmail
-	retrieved, err = storage.GetUserByEmail(ctx, user.Email)
+	retrieved, err = storage.GetUserByEmail(ctx, user.TenantID, user.Email)
 	if err != nil {
 		t.Fatalf("GetUserByEmail failed: %v", err)
 	}
@@ -561,14 +561,16 @@ func TestMemoryStorage_Concurrency(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func(id int) {
 			user := &User{
-				ID:       fmt.Sprintf("user%d", id),
+				ID:       FormatUserID(uint64(id) + 1),
 				TenantID: tenant.ID,
 				Email:    fmt.Sprintf("user%d@example.com", id),
 				Name:     fmt.Sprintf("User %d", id),
 				Created:  time.Now(),
 				Updated:  time.Now(),
 			}
-			storage.CreateUser(ctx, user)
+			if err := storage.CreateUser(ctx, user); err != nil {
+				t.Errorf("CreateUser failed: %v", err)
+			}
 			done <- true
 		}(i)
 	}
@@ -1247,7 +1249,7 @@ func TestMemoryStorage_UpdateUser_EmailChange(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	user := &User{ID: "u1", TenantID: "t1", Email: "old@test.com", Name: "Test User"}
+	user := &User{ID: "1", TenantID: "t1", Email: "old@test.com", Name: "Test User"}
 	if err := storage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
@@ -1257,7 +1259,7 @@ func TestMemoryStorage_UpdateUser_EmailChange(t *testing.T) {
 		t.Fatalf("UpdateUser failed: %v", err)
 	}
 
-	found, err := storage.GetUserByEmail(ctx, "new@test.com")
+	found, err := storage.GetUserByEmail(ctx, "t1", "new@test.com")
 	if err != nil {
 		t.Fatalf("GetUserByEmail with new email failed: %v", err)
 	}
@@ -1279,7 +1281,7 @@ func TestMemoryStorage_UpdateUser_PIVThumbprintIndex(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	user := &User{ID: "u1", TenantID: "t1", Email: "admin@test.com", Name: "Admin"}
+	user := &User{ID: "1", TenantID: "t1", Email: "admin@test.com", Name: "Admin"}
 	if err := storage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
@@ -1293,8 +1295,8 @@ func TestMemoryStorage_UpdateUser_PIVThumbprintIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserByPIVThumbprint after bind failed: %v", err)
 	}
-	if found.ID != "u1" {
-		t.Fatalf("expected user u1, got %s", found.ID)
+	if found.ID != "1" {
+		t.Fatalf("expected user 1, got %s", found.ID)
 	}
 
 	// Rotate thumbprint; the old binding must be removed.
@@ -1309,8 +1311,8 @@ func TestMemoryStorage_UpdateUser_PIVThumbprintIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserByPIVThumbprint after rotate failed: %v", err)
 	}
-	if found.ID != "u1" {
-		t.Fatalf("expected user u1 after rotate, got %s", found.ID)
+	if found.ID != "1" {
+		t.Fatalf("expected user 1 after rotate, got %s", found.ID)
 	}
 
 	// Clear the thumbprint; lookup must fail.
@@ -1332,12 +1334,12 @@ func TestMemoryStorage_DeleteUser_PIVThumbprintCleanup(t *testing.T) {
 	if err := storage.CreateTenant(ctx, &Tenant{ID: "t1", Name: "Test"}); err != nil {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
-	user := &User{ID: "u1", TenantID: "t1", Email: "a@test.com"}
+	user := &User{ID: "1", TenantID: "t1", Email: "a@test.com"}
 	user.SetPIVThumbprint("thumb-1")
 	if err := storage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
-	if err := storage.DeleteUser(ctx, "t1", "u1"); err != nil {
+	if err := storage.DeleteUser(ctx, "t1", "1"); err != nil {
 		t.Fatalf("DeleteUser failed: %v", err)
 	}
 	if _, err := storage.GetUserByPIVThumbprint(ctx, "thumb-1"); err == nil {
@@ -2087,6 +2089,82 @@ func TestDefaultTenantManager_ListTenants_Success(t *testing.T) {
 
 	if len(tenants) != 3 {
 		t.Errorf("expected 3 tenants, got %d", len(tenants))
+	}
+}
+
+// TestMemoryStorage_CreateUser_RejectsAMalformedSeededID pins the fix for a
+// silent-corruption defect: CreateUser used to try ParseUserID on a
+// caller-supplied id and, when it failed, IGNORE the error and store the record
+// under the string it was handed.
+//
+// A user id is a qrdb Snowflake in decimal, and everything downstream of the
+// record assumes it — QRDBID, the auth-factor binding, the session join. So the
+// create reported success and produced an account that every one of those
+// operations then refused, with no error naming the create that caused it. It
+// must fail at the write instead, and leave nothing behind: a partially stored
+// user would be reachable by email or PIV thumbprint while its id named nobody.
+func TestMemoryStorage_CreateUser_RejectsAMalformedSeededID(t *testing.T) {
+	ctx := context.Background()
+	storage := NewMemoryStorage()
+
+	if err := storage.CreateTenant(ctx, &Tenant{ID: "t1", Name: "Test"}); err != nil {
+		t.Fatalf("CreateTenant failed: %v", err)
+	}
+
+	for _, id := range []string{
+		"user-1",               // not a number at all
+		"007",                  // a leading zero: one user, two spellings
+		"0",                    // the store's invalid sentinel
+		"-1",                   // negative
+		"1 ",                   // trailing space
+		"0x10",                 // not decimal
+		"18446744073709551616", // one past the top of uint64
+	} {
+		t.Run(id, func(t *testing.T) {
+			user := &User{ID: id, TenantID: "t1", Email: "seed@test.com", Name: "Seeded"}
+			user.SetPIVThumbprint("thumb-seed")
+
+			err := storage.CreateUser(ctx, user)
+			if !errors.Is(err, ErrInvalidUserID) {
+				t.Fatalf("CreateUser(%q) error = %v, want ErrInvalidUserID", id, err)
+			}
+
+			// Nothing stored: not under the id, not in either index.
+			if _, err := storage.GetUser(ctx, "t1", id); err == nil {
+				t.Fatalf("GetUser(%q) resolved a user the create refused", id)
+			}
+			if _, err := storage.GetUserByEmail(ctx, "t1", "seed@test.com"); err == nil {
+				t.Fatal("the refused user is still reachable by email")
+			}
+			if _, err := storage.GetUserByPIVThumbprint(ctx, "thumb-seed"); err == nil {
+				t.Fatal("the refused user is still reachable by PIV thumbprint")
+			}
+		})
+	}
+}
+
+// TestMemoryStorage_CreateUser_MintsWhenNoIDIsSupplied is the other half of the
+// rule above: an absent id is not an error, it is the normal path. The store
+// assigns the Snowflake, and the assigned id must itself be canonical — the
+// same value ParseUserID accepts — or the record would be as unusable as the
+// malformed one the create refuses.
+func TestMemoryStorage_CreateUser_MintsWhenNoIDIsSupplied(t *testing.T) {
+	ctx := context.Background()
+	storage := NewMemoryStorage()
+
+	if err := storage.CreateTenant(ctx, &Tenant{ID: "t1", Name: "Test"}); err != nil {
+		t.Fatalf("CreateTenant failed: %v", err)
+	}
+
+	user := &User{TenantID: "t1", Email: "minted@test.com", Name: "Minted"}
+	if err := storage.CreateUser(ctx, user); err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+	if _, err := ParseUserID(user.ID); err != nil {
+		t.Fatalf("minted id %q is not canonical: %v", user.ID, err)
+	}
+	if _, err := storage.GetUser(ctx, "t1", user.ID); err != nil {
+		t.Fatalf("GetUser on the minted id failed: %v", err)
 	}
 }
 

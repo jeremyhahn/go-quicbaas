@@ -15,7 +15,10 @@ package orchestration
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // JobMemory accumulates context across iterations so agents don't repeat mistakes.
@@ -110,46 +113,47 @@ func (m *JobMemory) Serialize() string {
 
 	var b strings.Builder
 
-	b.WriteString("## Previous Attempts Context\n")
+	b.WriteString(workflowPrompts.MustRender("memory_header", nil))
+	b.WriteString("\n")
 
-	if len(m.SuccessfulApproaches) > 0 {
-		b.WriteString("\n### What worked:\n")
-		for _, a := range m.SuccessfulApproaches {
-			b.WriteString("- ")
-			b.WriteString(a)
-			b.WriteString("\n")
-		}
-	}
+	writeMemorySection(&b, "memory_worked", m.SuccessfulApproaches)
 
 	if len(m.FailedApproaches) > 0 {
-		b.WriteString("\n### What failed (do NOT repeat these):\n")
+		b.WriteString("\n")
+		b.WriteString(workflowPrompts.MustRender("memory_failed", nil))
+		b.WriteString("\n")
 		for _, f := range m.FailedApproaches {
-			b.WriteString(fmt.Sprintf(
-				"- %q: %s - FAILED because: %s (iteration %d)\n",
-				f.WorkItemTitle, f.Approach, f.Reason, f.Iteration,
-			))
-		}
-	}
-
-	if len(m.Constraints) > 0 {
-		b.WriteString("\n### Discovered constraints:\n")
-		for _, c := range m.Constraints {
-			b.WriteString("- ")
-			b.WriteString(c)
+			b.WriteString(workflowPrompts.MustRender("memory_failed_item", prompts.Vars{
+				"title":     strconv.Quote(f.WorkItemTitle),
+				"approach":  f.Approach,
+				"reason":    f.Reason,
+				"iteration": strconv.Itoa(f.Iteration),
+			}))
 			b.WriteString("\n")
 		}
 	}
 
-	if len(m.ReviewFeedback) > 0 {
-		b.WriteString("\n### Reviewer feedback:\n")
-		for _, f := range m.ReviewFeedback {
-			b.WriteString("- ")
-			b.WriteString(f)
-			b.WriteString("\n")
-		}
-	}
+	writeMemorySection(&b, "memory_constraints", m.Constraints)
+	writeMemorySection(&b, "memory_feedback", m.ReviewFeedback)
 
 	return b.String()
+}
+
+// writeMemorySection writes one bulleted section, or nothing when the
+// section has nothing in it. The bullet is punctuation rather than
+// instruction, so it stays here; the heading is a prompt.
+func writeMemorySection(b *strings.Builder, heading string, items []string) {
+	if len(items) == 0 {
+		return
+	}
+	b.WriteString("\n")
+	b.WriteString(workflowPrompts.MustRender(heading, nil))
+	b.WriteString("\n")
+	for _, item := range items {
+		b.WriteString("- ")
+		b.WriteString(item)
+		b.WriteString("\n")
+	}
 }
 
 // IsEmpty returns true if no context has been accumulated.

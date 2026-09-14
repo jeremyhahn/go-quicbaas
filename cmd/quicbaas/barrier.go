@@ -20,22 +20,30 @@
 //
 //	barrier status                                       (read-only)
 //	barrier init           --barrier-strategy <none|passphrase|shamir>
-//	                       [--passphrase <passphrase>]  (required for passphrase/shamir)
+//	                       [--passphrase-stdin]         (required for passphrase/shamir)
+//	                       [--passphrase <passphrase>]
 //	                       [--so-pin <pin>]
 //	                       [--user-pin <pin>]           (requires --so-pin)
-//	barrier init-shamir    --passphrase <passphrase>
+//	barrier init-shamir    --passphrase-stdin | --passphrase <passphrase>
 //	                       --threshold N
 //	                       --total M
 //	                       [--so-pin] [--user-pin]
-//	barrier unseal         --passphrase <passphrase>    (strategy passphrase replay)
+//	barrier unseal         --passphrase-stdin | --passphrase <passphrase>
+//	                                                    (strategy passphrase replay)
 //	barrier unseal-shares  --share <s1> [--share <s2> ...]   (repeatable)
 //	                       | --shares-file <path>       ('-' = stdin)
 //	barrier seal           [--so-pin <pin>] [-y|--assume-yes]
-//	barrier rekey          --passphrase <new-passphrase>
-//	                       [--so-pin <pin>]
+//	barrier rekey          [--so-pin <pin>]
 //	                       [--threshold N --total M]    (paired; for Shamir rekey)
 //	barrier recovery generate   --threshold N --total M [--so-pin <pin>]
-//	barrier recovery recover    --share <s1> [--share <s2> ...]
+//	barrier recovery recover    --share <s1> [--share <s2> ...]   (repeatable)
+//	                            | --shares-file <path>       ('-' = stdin)
+//
+// Every verb that takes a passphrase reads it from stdin (--passphrase-stdin,
+// preferred), the QUICBAAS_BARRIER_PASSPHRASE environment variable, or
+// --passphrase, in that precedence order; see passphrase.go. --passphrase is
+// kept for compatibility and its help text warns that argv is world-readable
+// through /proc for the life of the call.
 //
 // All commands route through the SDK BarrierClient
 // (sdk/go.Client.Security().Barrier()), which speaks to the
@@ -91,9 +99,14 @@ var (
 	barrierSOPin          string
 	barrierUserPin        string
 	barrierRecoveryShares []string
-	barrierTenantID       string
-	barrierMechanism      string
-	barrierAvailability   string
+	// barrierRecoverySharesFile is separate from barrierSharesFile on purpose:
+	// `barrier recovery recover` collects a different quorum from
+	// `unseal-shares` / `root-token`, and one shared variable would let a
+	// future verb read a path another verb parsed.
+	barrierRecoverySharesFile string
+	barrierTenantID           string
+	barrierMechanism          string
+	barrierAvailability       string
 )
 
 // =============================================================================
@@ -165,12 +178,18 @@ func createSDKBarrierClient() (BarrierClient, error) {
 // BarrierSharesFileError is returned when --shares-file cannot be read.
 type BarrierSharesFileError struct {
 	Path string
-	Err  error
+	// Op names the verb the operator invoked, for the same reason
+	// BarrierShareInputError carries one: three verbs now read a share file
+	// through readSharesFile, and a hard-coded name sends an operator who ran
+	// `barrier root-token` or `barrier recovery recover` off to debug
+	// `barrier unseal-shares`.
+	Op  string
+	Err error
 }
 
 // Error returns a human-readable description.
 func (e *BarrierSharesFileError) Error() string {
-	return "barrier unseal-shares: failed to read --shares-file " + e.Path + ": " + e.Err.Error()
+	return sharesFileOp(e.Op) + ": failed to read --shares-file " + e.Path + ": " + e.Err.Error()
 }
 
 // Unwrap returns the wrapped error.
@@ -180,11 +199,22 @@ func (e *BarrierSharesFileError) Unwrap() error { return e.Err }
 // no non-empty lines.
 type BarrierSharesFileEmptyError struct {
 	Path string
+	// Op names the invoking verb; see BarrierSharesFileError.Op.
+	Op string
 }
 
 // Error returns a human-readable description.
 func (e *BarrierSharesFileEmptyError) Error() string {
-	return "barrier unseal-shares: --shares-file " + e.Path + " contains no shares"
+	return sharesFileOp(e.Op) + ": --shares-file " + e.Path + " contains no shares"
+}
+
+// sharesFileOp supplies the historical verb name when a caller left Op unset,
+// so an error value built without it still reads as a sentence.
+func sharesFileOp(op string) string {
+	if op == "" {
+		return "barrier unseal-shares"
+	}
+	return op
 }
 
 // PINsNotAllowedError is returned when SO/User PINs are supplied to a
@@ -292,7 +322,7 @@ func runBarrierStatusCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.BarrierStatus(ctx)
@@ -319,13 +349,15 @@ Strategies:
   passphrase  Single passphrase-derived master key (default).
   shamir      Single-secret Shamir seed; use 'barrier init-shamir' for M-of-N.
 
---passphrase is required when --barrier-strategy is passphrase or shamir. PINs
-are optional; when --so-pin is supplied --user-pin must also be supplied
+A passphrase is required when --barrier-strategy is passphrase or shamir.
+PINs are optional; when --so-pin is supplied --user-pin must also be supplied
 so the resulting PIN pair satisfies FIPS 140-3 / PCI-DSS v4 dual-control.
 PINs are rejected entirely when --barrier-strategy=none.
 
+` + passphraseInputHelp + `
+
 Examples:
-  quicbaas barrier init --barrier-strategy passphrase --passphrase '<passphrase>'
+  printf '%s' "$PP" | quicbaas barrier init --barrier-strategy passphrase --passphrase-stdin
   quicbaas barrier init --barrier-strategy none
   quicbaas barrier init --barrier-strategy passphrase --passphrase '<pp>' \
                         --so-pin SO123 --user-pin USR123`,
@@ -333,7 +365,7 @@ Examples:
 	}
 	cmd.Flags().StringVar(&barrierStrategy, "barrier-strategy", "passphrase",
 		"Barrier strategy: none | passphrase | shamir")
-	cmd.Flags().StringVar(&barrierSecret, "passphrase", "",
+	addPassphraseFlags(cmd, &barrierSecret,
 		"Master passphrase (required for passphrase and shamir)")
 	cmd.Flags().StringVar(&barrierSOPin, "so-pin", "",
 		"Security Officer PIN (optional; requires --user-pin)")
@@ -343,18 +375,30 @@ Examples:
 }
 
 // runBarrierInitCommand executes 'barrier init'.
-func runBarrierInitCommand(_ *cobra.Command, _ []string) error {
+func runBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 	if _, ok := barrierStrategyInit[barrierStrategy]; !ok {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.init",
 			"--barrier-strategy must be one of none, passphrase, shamir")
 	}
-	if barrierStrategy != "none" && barrierSecret == "" {
-		return errors.Newf(errors.ErrInvalidInput, "barrier.init",
-			"--passphrase is required when --barrier-strategy=%s", barrierStrategy)
-	}
-	if barrierStrategy == "none" && barrierSecret != "" {
+	// The "not allowed" case keys off what the operator typed, not off the
+	// resolved value: an exported QUICBAAS_BARRIER_PASSPHRASE left over from
+	// an unseal must not make --barrier-strategy=none fail.
+	if barrierStrategy == "none" && passphraseRequested(cmd) {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.init",
 			"--passphrase is not allowed when --barrier-strategy=none")
+	}
+	secret, err := resolvePassphrase(cmd, "barrier.init", barrierSecret)
+	if err != nil {
+		return formatError(err)
+	}
+	defer secret.Destroy()
+	if barrierStrategy == "none" {
+		secret.Destroy()
+	}
+	if barrierStrategy != "none" && secret.Size() == 0 {
+		return errors.Newf(errors.ErrInvalidInput, "barrier.init",
+			"--passphrase is required when --barrier-strategy=%s%s",
+			barrierStrategy, passphraseSourcesHint)
 	}
 	if barrierStrategy == "none" && (barrierSOPin != "" || barrierUserPin != "") {
 		return formatError(&PINsNotAllowedError{Strategy: "none", Op: "init"})
@@ -373,11 +417,11 @@ func runBarrierInitCommand(_ *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	if err := client.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{
-		Secret:          barrierSecret,
+		Secret:          passphraseString(secret),
 		BarrierStrategy: barrierStrategy,
 		SOPin:           barrierSOPin,
 		UserPin:         barrierUserPin,
@@ -406,12 +450,14 @@ rule -- supplying --so-pin requires --user-pin.
 The generated shares are printed once; distribute them to custodians
 immediately and out-of-band.
 
+` + passphraseInputHelp + `
+
 Example:
-  quicbaas barrier init-shamir --passphrase '<seed>' --threshold 3 --total 5`,
+  printf '%s' "$SEED" | quicbaas barrier init-shamir --passphrase-stdin \
+                                                     --threshold 3 --total 5`,
 		RunE: runBarrierInitShamirCommand,
 	}
-	cmd.Flags().StringVar(&barrierSecret, "passphrase", "",
-		"Master passphrase (required)")
+	addPassphraseFlags(cmd, &barrierSecret, "Master passphrase")
 	cmd.Flags().IntVar(&barrierThreshold, "threshold", 0,
 		"Minimum shares required to unseal (M)")
 	cmd.Flags().IntVar(&barrierTotalShares, "total", 0,
@@ -425,8 +471,14 @@ Example:
 
 // runBarrierInitShamirCommand executes 'barrier init-shamir'.
 func runBarrierInitShamirCommand(cmd *cobra.Command, _ []string) error {
-	if barrierSecret == "" {
-		return errors.Newf(errors.ErrInvalidInput, "barrier.init-shamir", "--passphrase is required")
+	secret, err := resolvePassphrase(cmd, "barrier.init-shamir", barrierSecret)
+	if err != nil {
+		return formatError(err)
+	}
+	defer secret.Destroy()
+	if secret.Size() == 0 {
+		return errors.Newf(errors.ErrInvalidInput, "barrier.init-shamir",
+			"--passphrase is required"+passphraseSourcesHint)
 	}
 	if barrierThreshold <= 0 {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.init-shamir", "--threshold must be > 0")
@@ -451,11 +503,11 @@ func runBarrierInitShamirCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{
-		Secret:      barrierSecret,
+		Secret:      passphraseString(secret),
 		Threshold:   barrierThreshold,
 		TotalShares: barrierTotalShares,
 		SOPin:       barrierSOPin,
@@ -486,19 +538,33 @@ This verb is reserved for the passphrase / single-secret strategy. For
 Shamir M-of-N unseal use 'barrier unseal-shares' with --share or
 --shares-file.
 
-Example:
+` + passphraseInputHelp + `
+
+Examples:
+  # Preferred
+  printf '%s' "$PP" | quicbaas barrier unseal --passphrase-stdin
+
+  # Environment
+  QUICBAAS_BARRIER_PASSPHRASE="$PP" quicbaas barrier unseal
+
+  # Explicit flag (development)
   quicbaas barrier unseal --passphrase '<passphrase>'`,
 		RunE: runBarrierUnsealCommand,
 	}
-	cmd.Flags().StringVar(&barrierSecret, "passphrase", "",
-		"Master passphrase (required)")
+	addPassphraseFlags(cmd, &barrierSecret, "Master passphrase")
 	return cmd
 }
 
 // runBarrierUnsealCommand executes 'barrier unseal'.
-func runBarrierUnsealCommand(_ *cobra.Command, _ []string) error {
-	if barrierSecret == "" {
-		return errors.Newf(errors.ErrInvalidInput, "barrier.unseal", "--passphrase is required")
+func runBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
+	secret, err := resolvePassphrase(cmd, "barrier.unseal", barrierSecret)
+	if err != nil {
+		return formatError(err)
+	}
+	defer secret.Destroy()
+	if secret.Size() == 0 {
+		return errors.Newf(errors.ErrInvalidInput, "barrier.unseal",
+			"--passphrase is required"+passphraseSourcesHint)
 	}
 
 	client, err := barrierClientFactory()
@@ -506,11 +572,11 @@ func runBarrierUnsealCommand(_ *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	return formatError(client.BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{
-		Secret: barrierSecret,
+		Secret: passphraseString(secret),
 	}))
 }
 
@@ -561,7 +627,7 @@ func runBarrierUnsealSharesCommand(_ *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	return formatError(client.BarrierUnsealWithShares(ctx, &qrdbtransport.BarrierUnsealSharesRequest{
@@ -590,19 +656,20 @@ func resolveUnsealShares(shares []string, sharesFile, op string) ([]string, erro
 	if hasFlag {
 		return shares, nil
 	}
-	return readSharesFile(sharesFile)
+	return readSharesFile(sharesFile, op)
 }
 
 // readSharesFile reads one share per line from path. Blank lines and
-// '#' comments are skipped. The literal path "-" reads from stdin.
-func readSharesFile(path string) ([]string, error) {
+// '#' comments are skipped. The literal path "-" reads from stdin. op names
+// the invoking verb and rides on the returned errors.
+func readSharesFile(path, op string) ([]string, error) {
 	var src io.Reader
 	if path == "-" {
 		src = os.Stdin
 	} else {
 		f, err := os.Open(path)
 		if err != nil {
-			return nil, &BarrierSharesFileError{Path: path, Err: err}
+			return nil, &BarrierSharesFileError{Path: path, Op: op, Err: err}
 		}
 		defer func() { _ = f.Close() }()
 		src = f
@@ -618,10 +685,10 @@ func readSharesFile(path string) ([]string, error) {
 		shares = append(shares, line)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, &BarrierSharesFileError{Path: path, Err: err}
+		return nil, &BarrierSharesFileError{Path: path, Op: op, Err: err}
 	}
 	if len(shares) == 0 {
-		return nil, &BarrierSharesFileEmptyError{Path: path}
+		return nil, &BarrierSharesFileEmptyError{Path: path, Op: op}
 	}
 	return shares, nil
 }
@@ -639,6 +706,19 @@ func readSharesFile(path string) ([]string, error) {
 // is accepted unconditionally to keep the four-CLI surface lock-step,
 // and the value is forwarded once the SDK Barrier() interface exposes
 // a request-bearing BarrierSeal.
+//
+// Until then the help does NOT ask the operator to supply one (#491).
+// Parity in the FLAG SURFACE is what the lock-step above buys; it does not
+// require a help string instructing operators to put a Security Officer PIN
+// into /proc/<pid>/cmdline — readable by every local process, and captured by
+// shell history and process accounting — for a value this verb discards.
+// The instruction was the harm, not the flag.
+//
+// TestBarrierSeal_HelpAndBehaviourAgreeOnTheSOPin holds the two halves
+// together in both directions: it fails if the help solicits a PIN that
+// BarrierSeal has nowhere to carry, AND it fails once BarrierSeal gains a
+// request bearing SOPin while the help still says nothing. Whoever finishes
+// the plumbing will be told to restore the instruction.
 func newBarrierSealCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "seal",
@@ -649,15 +729,19 @@ All cryptographic operations are blocked until the barrier is unsealed
 again. By default the command prompts for confirmation; pass
 --assume-yes to skip the prompt (e.g. in scripted runbooks).
 
-Operators with a PINBackend configured MUST supply --so-pin.
+--so-pin is accepted for parity with the rest of the barrier surface, but
+this verb does not transmit it: the SDK's BarrierSeal takes no request, so
+there is nowhere to put it. Passing it therefore changes nothing and places
+a Security Officer PIN in the process list, so leave it off. Seal-time PIN
+authorization rides on the SDK auth context in the meantime.
 
 Examples:
   quicbaas barrier seal -y
-  quicbaas barrier seal --so-pin SO123 --assume-yes`,
+  quicbaas barrier seal --assume-yes`,
 		RunE: runBarrierSealCommand,
 	}
 	cmd.Flags().StringVar(&barrierSOPin, "so-pin", "",
-		"Security Officer PIN (required when a PINBackend is configured)")
+		"Security Officer PIN (accepted for surface parity; this verb does not transmit it — leave it off)")
 	cmd.Flags().BoolVarP(&barrierAssumeYes, "assume-yes", "y", false,
 		"Skip the interactive confirmation prompt")
 	return cmd
@@ -680,7 +764,8 @@ func runBarrierSealCommand(cmd *cobra.Command, _ []string) error {
 	}
 
 	// --so-pin is parsed for surface parity; propagation is wired once
-	// the SDK BarrierSeal exposes a request-bearing form.
+	// the SDK BarrierSeal exposes a request-bearing form. The help no longer
+	// asks for it while that is true (#491).
 	_ = barrierSOPin
 
 	client, err := barrierClientFactory()
@@ -688,7 +773,7 @@ func runBarrierSealCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	if err := client.BarrierSeal(ctx); err != nil {
@@ -752,7 +837,7 @@ func runBarrierRekeyCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.BarrierRekey(ctx, &qrdbtransport.BarrierRekeyRequest{
@@ -827,7 +912,7 @@ func runBarrierRecoveryGenerateCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.BarrierGenerateRecoveryKeys(ctx, &qrdbtransport.BarrierGenerateRecoveryKeysRequest{
@@ -849,22 +934,34 @@ func newBarrierRecoveryRecoverCommand() *cobra.Command {
 		Short: "Recover the barrier using recovery keys",
 		Long: `Recover the barrier by submitting M-of-N recovery keys.
 
---share is repeatable: pass each recovery key as its own --share flag.
+Two input modes are supported. Exactly one must be supplied:
 
-Example:
-  quicbaas barrier recovery recover --share key-a --share key-b --share key-c`,
+  --share <value>           Repeatable. Supply one or more keys as flags.
+  --shares-file <path>      Newline-delimited file of keys. Use '-' for stdin.
+
+A recovery key on argv is readable by every process on the host through
+/proc/<pid>/cmdline for the life of the call. Prefer --shares-file, and
+--shares-file - to keep the quorum off the filesystem as well.
+
+Examples:
+  quicbaas barrier recovery recover --share key-a --share key-b --share key-c
+  quicbaas barrier recovery recover --shares-file /etc/quicbaas/recovery.txt
+  cat recovery.txt | quicbaas barrier recovery recover --shares-file -`,
 		RunE: runBarrierRecoveryRecoverCommand,
 	}
 	cmd.Flags().StringSliceVar(&barrierRecoveryShares, "share", nil,
 		"Recovery key (repeatable: --share a --share b ...)")
+	cmd.Flags().StringVar(&barrierRecoverySharesFile, "shares-file", "",
+		"Path to a newline-delimited recovery-key file; '-' for stdin")
 	return cmd
 }
 
 // runBarrierRecoveryRecoverCommand executes 'barrier recovery recover'.
 func runBarrierRecoveryRecoverCommand(_ *cobra.Command, _ []string) error {
-	if len(barrierRecoveryShares) == 0 {
-		return errors.Newf(errors.ErrInvalidInput, "barrier.recovery.recover",
-			"--share is required (at least one)")
+	keys, err := resolveUnsealShares(barrierRecoveryShares, barrierRecoverySharesFile,
+		"barrier recovery recover")
+	if err != nil {
+		return formatError(err)
 	}
 
 	client, err := barrierClientFactory()
@@ -872,11 +969,11 @@ func runBarrierRecoveryRecoverCommand(_ *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	return formatError(client.BarrierRecoverWithKeys(ctx, &qrdbtransport.BarrierRecoverWithKeysRequest{
-		Keys: barrierRecoveryShares,
+		Keys: keys,
 	}))
 }
 
@@ -1065,7 +1162,7 @@ func runBarrierRootTokenCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.BarrierGenerateRootToken(ctx, &qrdbtransport.BarrierGenerateRootTokenRequest{
@@ -1130,8 +1227,11 @@ with --tenant, or omit it to migrate the system barrier.
 A tenant on a SHARED barrier cannot be migrated independently — the
 server rejects that as an entitlement violation, not an auth failure.
 
+` + passphraseInputHelp + `
+
 Example:
-  quicbaas barrier enable-encryption --strategy passphrase --passphrase "$PP"
+  printf '%s' "$PP" | quicbaas barrier enable-encryption \
+      --strategy passphrase --passphrase-stdin
   quicbaas barrier enable-encryption --tenant acme --strategy shamir \
       --threshold 2 --total 3`,
 		RunE: runBarrierEnableEncryptionCommand,
@@ -1144,7 +1244,7 @@ Example:
 		"Backend-specific mechanism (hardware strategies)")
 	cmd.Flags().StringVar(&barrierAvailability, "availability", "",
 		"Backend availability hint (hardware strategies)")
-	cmd.Flags().StringVar(&barrierSecret, "passphrase", "",
+	addPassphraseFlags(cmd, &barrierSecret,
 		"Passphrase (required for --strategy=passphrase)")
 	cmd.Flags().IntVar(&barrierThreshold, "threshold", 0,
 		"Shamir M-of-N threshold (required for --strategy=shamir)")
@@ -1159,11 +1259,17 @@ func runBarrierEnableEncryptionCommand(cmd *cobra.Command, _ []string) error {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.enable-encryption",
 			"--strategy is required")
 	}
+	secret, err := resolvePassphrase(cmd, "barrier.enable-encryption", barrierSecret)
+	if err != nil {
+		return formatError(err)
+	}
+	defer secret.Destroy()
+	secret = passphraseForStrategy(cmd, barrierStrategy, secret)
 	// Fail locally on a combination the server would reject anyway, so the
 	// operator learns before a migration is attempted against live data.
-	if isPassphraseStrategyName(barrierStrategy) && barrierSecret == "" {
+	if isPassphraseStrategyName(barrierStrategy) && secret.Size() == 0 {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.enable-encryption",
-			"--passphrase is required when --strategy=passphrase")
+			"--passphrase is required when --strategy=passphrase"+passphraseSourcesHint)
 	}
 	if barrierStrategy == "shamir" {
 		if barrierThreshold < 2 {
@@ -1181,7 +1287,7 @@ func runBarrierEnableEncryptionCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.BarrierEnableEncryption(ctx, &qrdbtransport.BarrierEnableEncryptionRequest{
@@ -1189,7 +1295,7 @@ func runBarrierEnableEncryptionCommand(cmd *cobra.Command, _ []string) error {
 		Strategy:        barrierStrategy,
 		Mechanism:       barrierMechanism,
 		Availability:    barrierAvailability,
-		Passphrase:      barrierSecret,
+		Passphrase:      passphraseString(secret),
 		ShamirThreshold: barrierThreshold,
 		ShamirTotal:     barrierTotalShares,
 	})

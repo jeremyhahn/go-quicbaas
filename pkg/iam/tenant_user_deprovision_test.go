@@ -46,7 +46,9 @@ func seedTenantUsers(t *testing.T, store UserStorage, tenantID string, n int) []
 	ctx := context.Background()
 	ids := make([]string, 0, n)
 	for i := 0; i < n; i++ {
-		id := fmt.Sprintf("user-%03d", i)
+		// A user id is a canonical qrdb Snowflake — the decimal rendering of a
+		// non-zero uint64 — so the fixtures are numbered from 1.
+		id := FormatUserID(uint64(i) + 1)
 		u := &User{
 			ID:       id,
 			TenantID: tenantID,
@@ -119,7 +121,7 @@ func TestDeleteTenant_UserDeprovisionFailureAborts(t *testing.T) {
 	sentinel := errors.New("simulated delete failure")
 	store := &deleteFailUserStorage{
 		MemoryStorage: mem,
-		failUserID:    "user-001",
+		failUserID:    "2",
 		failErr:       sentinel,
 	}
 

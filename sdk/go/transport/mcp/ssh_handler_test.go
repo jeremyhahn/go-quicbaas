@@ -22,6 +22,7 @@ import (
 
 	sshclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/sshfixture"
 )
 
 // TestIsMCPSSHService pins the routing predicate.
@@ -95,11 +96,13 @@ func TestSSHMCPHandler_SignUsesBase64Argument(t *testing.T) {
 func TestSSHMCPHandler_GenericRequestUsesJSONTags(t *testing.T) {
 	h := newSSHMCPHandler()
 	args, err := h.transformRequest(sshclient.MethodAddKnownHost, &sshclient.AddKnownHostRequest{
-		Scope: "user", Owner: "alice", Host: "git.example.com", Fingerprint: "SHA256:abc",
+		Scope: "user", Owner: "alice", Host: "git.example.com",
+		Fingerprint: sshfixture.HostFingerprint,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "git.example.com", args["host"])
-	assert.Equal(t, "SHA256:abc", args["fingerprint"])
+	assert.Equal(t, sshfixture.HostFingerprint, args["fingerprint"],
+		"the pinned fingerprint must reach the tool arguments unaltered")
 }
 
 func TestSSHMCPHandler_NilRequestYieldsEmptyArguments(t *testing.T) {

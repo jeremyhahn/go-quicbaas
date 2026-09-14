@@ -15,7 +15,9 @@
 
 // lifecycle_client_ca_test.go covers the TLS client-CA wiring in initializeCA.
 // The MCP transport authenticates agents by their mTLS client certificate
-// (OU=agents) signed by the platform xkms CA — see pkg/api/mcp/authz_agent_cert.go.
+// (OU=agents) signed by the platform xkms CA, and go-qrdb resolves that
+// principal's roles from the record its Subject CommonName names — see
+// mcp_preset_resolver.go and iam.EnrollAgentSessionIdentity.
 // For r.TLS.VerifiedChains to be populated the listener's ClientCAs pool must
 // trust the platform CA in BOTH TLS postures: the opportunistic-mTLS default
 // (TLSClientAuth=false) AND full/operator mTLS (TLSClientAuth=true). These tests

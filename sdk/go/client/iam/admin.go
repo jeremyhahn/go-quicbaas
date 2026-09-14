@@ -414,10 +414,12 @@ type AdminCheckResponse struct {
 }
 
 // ImpersonationRequest contains parameters for starting impersonation.
+//
+// It carries no acting-admin identity: the actor is the authenticated
+// caller, resolved server-side from the verified principal, never named by
+// the request (go-quicbaas#383). A client cannot choose the admin it acts
+// as.
 type ImpersonationRequest struct {
-	// AdminUserID is the admin user performing the impersonation.
-	AdminUserID string `json:"admin_user_id"`
-
 	// TargetUserID is the user to impersonate.
 	TargetUserID string `json:"target_user_id"`
 
@@ -492,6 +494,28 @@ type ImpersonationSession struct {
 
 	// Active indicates if the session is active.
 	Active bool `json:"active"`
+}
+
+// UnmarshalJSON accepts the acting admin under either JSON key. The gRPC
+// path maps the actor onto AdminID programmatically, but the REST and MCP
+// transports return the server's domain iam.ImpersonationSession, which
+// serializes the actor as "admin_user_id" rather than the SDK field's
+// "user_id" tag. Without this alias the actor would be dropped on those
+// transports, so the acting admin (the authenticated caller resolved by
+// go-quicbaas#383) is populated consistently on every transport.
+func (s *ImpersonationSession) UnmarshalJSON(data []byte) error {
+	type alias ImpersonationSession
+	aux := &struct {
+		AdminUserIDAlias string `json:"admin_user_id"`
+		*alias
+	}{alias: (*alias)(s)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	if s.AdminID == "" && aux.AdminUserIDAlias != "" {
+		s.AdminID = aux.AdminUserIDAlias
+	}
+	return nil
 }
 
 // ListImpersonationsResponse contains the list of impersonation sessions.

@@ -29,7 +29,15 @@ var errOrch = errors.New("orchestrator: boom")
 // true every method returns errOrch; otherwise each returns a non-nil
 // zero-value response so the handlers reach their conversion code.
 type fakeAgentService struct {
-	fail bool
+	fail         bool
+	blockCalls   []blockCall
+	readmitCalls []blockCall
+	deleteCalls  []blockCall
+
+	// listJobsFilter records the narrowing the last ListJobs carried, so a
+	// transport that drops the caller's filter is caught rather than
+	// silently listing the whole tenant.
+	listJobsFilter *orchestration.JobFilter
 }
 
 func (f *fakeAgentService) err() error {
@@ -163,7 +171,7 @@ func (f *fakeAgentService) RemoveAgent(ctx context.Context, tenantID, agentID st
 	return f.err()
 }
 
-func (f *fakeAgentService) AgentHeartbeat(ctx context.Context, tenantID, agentID string) error {
+func (f *fakeAgentService) AgentHeartbeat(ctx context.Context, tenantID, agentID string, _ *orchestration.AgentObservation) error {
 	return f.err()
 }
 
@@ -199,6 +207,38 @@ func (f *fakeAgentService) CompleteTask(ctx context.Context, tenantID, taskID st
 	return f.err()
 }
 
+func (f *fakeAgentService) BlockTask(ctx context.Context, tenantID, taskID string, kind orchestration.TaskBlockKind, reason string) error {
+	if err := f.err(); err != nil {
+		return err
+	}
+	f.blockCalls = append(f.blockCalls, blockCall{TenantID: tenantID, TaskID: taskID, Kind: kind, Reason: reason})
+	return nil
+}
+
+func (f *fakeAgentService) ReadmitTask(ctx context.Context, tenantID, taskID string) error {
+	if err := f.err(); err != nil {
+		return err
+	}
+	f.readmitCalls = append(f.readmitCalls, blockCall{TenantID: tenantID, TaskID: taskID})
+	return nil
+}
+
+func (f *fakeAgentService) DeleteTask(ctx context.Context, tenantID, taskID string) error {
+	if err := f.err(); err != nil {
+		return err
+	}
+	f.deleteCalls = append(f.deleteCalls, blockCall{TenantID: tenantID, TaskID: taskID})
+	return nil
+}
+
+// blockCall records one BlockTask / ReadmitTask / DeleteTask invocation.
+type blockCall struct {
+	TenantID string
+	TaskID   string
+	Kind     orchestration.TaskBlockKind
+	Reason   string
+}
+
 func (f *fakeAgentService) StartJob(ctx context.Context, req *orchestration.StartJobRequest) (*orchestration.StartJobResponse, error) {
 	if err := f.err(); err != nil {
 		return nil, err
@@ -213,10 +253,11 @@ func (f *fakeAgentService) GetJobStatus(ctx context.Context, tenantID, jobID str
 	return &orchestration.JobStatus{JobID: jobID}, nil
 }
 
-func (f *fakeAgentService) ListJobs(ctx context.Context, tenantID string) ([]*orchestration.JobStatus, error) {
+func (f *fakeAgentService) ListJobs(ctx context.Context, tenantID string, filter *orchestration.JobFilter) ([]*orchestration.JobStatus, error) {
 	if err := f.err(); err != nil {
 		return nil, err
 	}
+	f.listJobsFilter = filter
 	return []*orchestration.JobStatus{{JobID: "j1"}}, nil
 }
 

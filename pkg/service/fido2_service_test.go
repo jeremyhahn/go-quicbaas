@@ -43,8 +43,8 @@ func (f *fakeLegacyWebAuthnManager) BeginRegistration(_ context.Context, _, _ st
 	return nil, nil
 }
 
-func (f *fakeLegacyWebAuthnManager) FinishRegistration(_ context.Context, _, _ string, _ map[string]interface{}) error {
-	return nil
+func (f *fakeLegacyWebAuthnManager) FinishRegistration(_ context.Context, _, _ string, _ map[string]interface{}) (*iam.AttestationResult, error) {
+	return nil, nil
 }
 
 func (f *fakeLegacyWebAuthnManager) BeginLogin(_ context.Context, _, _ string) (map[string]interface{}, error) {
@@ -89,13 +89,13 @@ func TestFIDO2Service_TenantRequired(t *testing.T) {
 	svc := NewFIDO2Service(&fakeWebAuthnManagerGetter{})
 	ctx := context.Background()
 
-	if _, err := svc.BeginRegistration(ctx, "", &xkmstransport.BeginRegistrationRequest{Username: "u"}); !stderrors.Is(err, ErrFIDO2TenantRequired) {
+	if _, err := svc.BeginRegistration(ctx, "", &xkmstransport.BeginRegistrationRequest{Email: "u"}); !stderrors.Is(err, ErrFIDO2TenantRequired) {
 		t.Errorf("BeginRegistration empty tenant = %v, want ErrFIDO2TenantRequired", err)
 	}
 	if _, err := svc.FinishRegistration(ctx, "", &xkmstransport.FinishRegistrationRequest{SessionID: "s"}); !stderrors.Is(err, ErrFIDO2TenantRequired) {
 		t.Errorf("FinishRegistration empty tenant = %v, want ErrFIDO2TenantRequired", err)
 	}
-	if _, err := svc.BeginAuthentication(ctx, "", &xkmstransport.BeginAuthenticationRequest{Username: "u"}); !stderrors.Is(err, ErrFIDO2TenantRequired) {
+	if _, err := svc.BeginAuthentication(ctx, "", &xkmstransport.BeginAuthenticationRequest{Email: "u"}); !stderrors.Is(err, ErrFIDO2TenantRequired) {
 		t.Errorf("BeginAuthentication empty tenant = %v, want ErrFIDO2TenantRequired", err)
 	}
 	if _, err := svc.FinishAuthentication(ctx, "", &xkmstransport.FinishAuthenticationRequest{SessionID: "s"}); !stderrors.Is(err, ErrFIDO2TenantRequired) {
@@ -108,7 +108,7 @@ func TestFIDO2Service_TenantRequired(t *testing.T) {
 // is not the xkms-backed multi-tenant implementation.
 func TestFIDO2Service_NotConfigured(t *testing.T) {
 	ctx := context.Background()
-	req := &xkmstransport.BeginRegistrationRequest{Username: "u"}
+	req := &xkmstransport.BeginRegistrationRequest{Email: "u"}
 
 	cases := []struct {
 		name string
@@ -134,13 +134,13 @@ func TestFIDO2Service_ManagerErrorPropagates(t *testing.T) {
 	svc := NewFIDO2Service(&fakeWebAuthnManagerGetter{err: boom})
 	ctx := context.Background()
 
-	if _, err := svc.BeginRegistration(ctx, "tenant-a", &xkmstransport.BeginRegistrationRequest{Username: "u"}); !stderrors.Is(err, boom) {
+	if _, err := svc.BeginRegistration(ctx, "tenant-a", &xkmstransport.BeginRegistrationRequest{Email: "u"}); !stderrors.Is(err, boom) {
 		t.Errorf("BeginRegistration = %v, want propagated manager error", err)
 	}
 	if _, err := svc.FinishRegistration(ctx, "tenant-a", &xkmstransport.FinishRegistrationRequest{SessionID: "s"}); !stderrors.Is(err, boom) {
 		t.Errorf("FinishRegistration = %v, want propagated manager error", err)
 	}
-	if _, err := svc.BeginAuthentication(ctx, "tenant-a", &xkmstransport.BeginAuthenticationRequest{Username: "u"}); !stderrors.Is(err, boom) {
+	if _, err := svc.BeginAuthentication(ctx, "tenant-a", &xkmstransport.BeginAuthenticationRequest{Email: "u"}); !stderrors.Is(err, boom) {
 		t.Errorf("BeginAuthentication = %v, want propagated manager error", err)
 	}
 	if _, err := svc.FinishAuthentication(ctx, "tenant-a", &xkmstransport.FinishAuthenticationRequest{SessionID: "s"}); !stderrors.Is(err, boom) {

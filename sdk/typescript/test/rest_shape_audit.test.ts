@@ -287,6 +287,14 @@ describe('RestIAMClient.listRoles shape fix', () => {
     expect(result.roles).toEqual([]);
     expect(result.count).toBe(0);
   });
+
+  it('passes retired_permissions through so the GUI can flag role drift', async () => {
+    const roles = [{ id: 'r1', name: 'admin', tenant_id: 'default', permissions: ['kv:write'], retired_permissions: ['kv:put'] }];
+    fetchMock.mockResolvedValue(makeResponse({ limit: 100, offset: 0, roles }));
+    const client = new RestClient('http://localhost');
+    const result = await client.iam.listRoles('default');
+    expect(result.roles[0].retired_permissions).toEqual(['kv:put']);
+  });
 });
 
 // =============================================================================

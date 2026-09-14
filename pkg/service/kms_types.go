@@ -839,7 +839,11 @@ type StoreSecretRequest struct {
 	// ExpiresAt optionally sets version expiration
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 
-	// TenantID specifies a tenant-specific DEK to use for encryption
+	// TenantID names the tenant that owns this secret. It selects the
+	// tenant-keyed DEK AND the storage namespace — the two are the same
+	// tenant by construction. It must be the caller's own tenant or the
+	// request is refused with ErrCrossTenantAccess; leave it empty to mean
+	// "my own tenant" (pkg/service/secrets_tenant.go secretsScopedTenant).
 	TenantID string `json:"tenant_id,omitempty"`
 
 	// KeyID specifies a custom key identifier to use for encryption
@@ -886,9 +890,11 @@ type EnsureSecretRequest struct {
 	// "base64", "hex", "numeric", "raw". Required.
 	Encoding string `json:"encoding"`
 
-	// TenantID optionally scopes the secret to a tenant for
-	// tenant-keyed DEK selection. Defaults to the context tenant
-	// when empty.
+	// TenantID names the tenant that owns this secret, selecting both
+	// the tenant-keyed DEK and the storage namespace. It must be the
+	// caller's own tenant or the request is refused with
+	// ErrCrossTenantAccess; it defaults to the context tenant when empty
+	// (pkg/service/secrets_tenant.go secretsScopedTenant).
 	TenantID string `json:"tenant_id,omitempty"`
 }
 
@@ -1153,6 +1159,24 @@ const (
 	// SecretStatusDeleted indicates the secret is marked for deletion.
 	SecretStatusDeleted SecretStatus = "deleted"
 )
+
+// IsValid reports whether s is one of the defined statuses.
+//
+// It lives here, beside the values, rather than as a check restated in each
+// transport: a status the model does not define must be refused at whichever
+// edge it arrives at, and a second copy of the list is a second thing to forget
+// when the list changes. The empty string is NOT valid — it is the zero value a
+// request that omitted the field decodes to, and forwarding it would ask the
+// service for a status that does not exist while telling the caller the update
+// happened.
+func (s SecretStatus) IsValid() bool {
+	switch s {
+	case SecretStatusEnabled, SecretStatusDisabled, SecretStatusDeleted:
+		return true
+	default:
+		return false
+	}
+}
 
 // UpdateSecretStatusRequest changes a secret's status.
 type UpdateSecretStatusRequest struct {

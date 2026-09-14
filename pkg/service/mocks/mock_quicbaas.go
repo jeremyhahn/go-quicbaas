@@ -32,6 +32,7 @@ import (
 // All methods delegate to configurable function fields, enabling flexible test scenarios.
 // If a function field is nil, the method returns default empty values.
 type MockQuicBaaS struct {
+	sdlcService  *service.SDLCService
 	loginService service.LoginServicer
 	// KV Service function fields
 	PutFunc             func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
@@ -76,9 +77,6 @@ type MockQuicBaaS struct {
 	ValidateTokenFunc func(ctx context.Context, req *service.ValidateTokenRequest) (*service.ValidateTokenResponse, error)
 
 	// RBAC Service function fields
-	CreateUserFunc     func(ctx context.Context, req *service.AuthCreateUserRequest) (*service.AuthCreateUserResponse, error)
-	DeleteUserFunc     func(ctx context.Context, req *service.AuthDeleteUserRequest) (*service.AuthDeleteUserResponse, error)
-	ListUsersFunc      func(ctx context.Context, req *service.AuthListUsersRequest) (*service.AuthListUsersResponse, error)
 	CreateAuthRoleFunc func(ctx context.Context, req *service.AuthCreateRoleRequest) (*service.AuthCreateRoleResponse, error)
 	DeleteAuthRoleFunc func(ctx context.Context, req *service.AuthDeleteRoleRequest) (*service.AuthDeleteRoleResponse, error)
 	ListAuthRolesFunc  func(ctx context.Context, req *service.AuthListRolesRequest) (*service.AuthListRolesResponse, error)
@@ -142,9 +140,10 @@ type MockQuicBaaS struct {
 	WatchManagerFunc              func() *watch.Manager
 
 	// Lifecycle function fields
-	SetIAMProviderFunc      func(provider service.IAMComponents)
-	SetMessagingServiceFunc func(ms messaging.Service)
-	CloseFunc               func() error
+	SetIAMProviderFunc           func(provider service.IAMComponents)
+	SetMessagingServiceFunc      func(ms messaging.Service)
+	SetDynamicSecretsServiceFunc func(svc service.DynamicSecretsService)
+	CloseFunc                    func() error
 
 	// Mock sub-services (can be injected for convenience)
 	MockKMSService                *MockKMSService
@@ -401,27 +400,6 @@ func (m *MockQuicBaaS) ValidateToken(ctx context.Context, req *service.ValidateT
 // =============================================================================
 // RBAC Service Methods
 // =============================================================================
-
-func (m *MockQuicBaaS) CreateUser(ctx context.Context, req *service.AuthCreateUserRequest) (*service.AuthCreateUserResponse, error) {
-	if m.CreateUserFunc != nil {
-		return m.CreateUserFunc(ctx, req)
-	}
-	return &service.AuthCreateUserResponse{}, nil
-}
-
-func (m *MockQuicBaaS) DeleteUser(ctx context.Context, req *service.AuthDeleteUserRequest) (*service.AuthDeleteUserResponse, error) {
-	if m.DeleteUserFunc != nil {
-		return m.DeleteUserFunc(ctx, req)
-	}
-	return &service.AuthDeleteUserResponse{}, nil
-}
-
-func (m *MockQuicBaaS) ListUsers(ctx context.Context, req *service.AuthListUsersRequest) (*service.AuthListUsersResponse, error) {
-	if m.ListUsersFunc != nil {
-		return m.ListUsersFunc(ctx, req)
-	}
-	return &service.AuthListUsersResponse{}, nil
-}
 
 func (m *MockQuicBaaS) CreateAuthRole(ctx context.Context, req *service.AuthCreateRoleRequest) (*service.AuthCreateRoleResponse, error) {
 	if m.CreateAuthRoleFunc != nil {
@@ -937,8 +915,25 @@ func (m *MockQuicBaaS) SetMessagingService(ms messaging.Service) {
 	}
 }
 
+// SetDynamicSecretsService records the dynamic secrets service wiring.
+func (m *MockQuicBaaS) SetDynamicSecretsService(svc service.DynamicSecretsService) {
+	if m.SetDynamicSecretsServiceFunc != nil {
+		m.SetDynamicSecretsServiceFunc(svc)
+	}
+}
+
 func (m *MockQuicBaaS) SetAgentService(agent orchestration.AgentService) {
 	// No-op in mock - agent service is not used in unit tests
+}
+
+// SDLC returns the mock's SDLC service, nil unless set.
+func (m *MockQuicBaaS) SDLC() *service.SDLCService {
+	return m.sdlcService
+}
+
+// SetSDLCService records the SDLC service.
+func (m *MockQuicBaaS) SetSDLCService(svc *service.SDLCService) {
+	m.sdlcService = svc
 }
 
 func (m *MockQuicBaaS) Database() service.DatabaseService {

@@ -16,6 +16,7 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -352,7 +353,7 @@ func (cl *ControlLoop) SetFileLocking(svc FileLockService) {
 
 // SetCostTracker sets the cost tracker for token budget enforcement.
 func (cl *ControlLoop) SetCostTracker(tracker CostTracker) {
-	cl.costTracker = tracker
+	cl.job.CostTracker = tracker
 }
 
 // SetReindexFn sets a callback function that triggers re-indexing of the
@@ -377,7 +378,7 @@ func (cl *ControlLoop) SetPeerDeliverFn(fn func(context.Context, string, *PeerMe
 // cost tracker and workflow settings. Returns nil, nil when no cost tracker
 // or workflow is configured.
 func (cl *ControlLoop) checkBudget(ctx context.Context) (*BudgetCheckResult, error) {
-	if cl.costTracker == nil {
+	if cl.job.CostTracker == nil {
 		return nil, nil
 	}
 
@@ -386,7 +387,7 @@ func (cl *ControlLoop) checkBudget(ctx context.Context) (*BudgetCheckResult, err
 		settings = cl.workflow.Settings.CostControls
 	}
 
-	return HookCheckBudget(ctx, cl.costTracker, settings, cl.config.TenantID, cl.jobID, cl.logger)
+	return HookCheckBudget(ctx, cl.job.CostTracker, settings, cl.job.Config.TenantID, cl.job.JobID, cl.job.Logger)
 }
 
 // startPeerDelivery starts peer message delivery for agents in the given wave
@@ -411,7 +412,7 @@ func (cl *ControlLoop) startPeerDelivery(ctx context.Context, waveItems []*WorkI
 		if role == "" {
 			role = "worker"
 		}
-		agentID := "agent-" + role + "-" + cl.jobID
+		agentID := "agent-" + role + "-" + cl.job.JobID
 		if _, exists := seen[agentID]; !exists {
 			seen[agentID] = struct{}{}
 			agentIDs = append(agentIDs, agentID)
@@ -423,15 +424,119 @@ func (cl *ControlLoop) startPeerDelivery(ctx context.Context, waveItems []*WorkI
 	}
 
 	if cl.peerDeliverFn == nil {
-		cl.logger.Warnf("control loop: peer delivery function not configured, skipping delivery")
+		cl.job.Logger.Warnf("control loop: peer delivery function not configured, skipping delivery")
 		return
 	}
 
-	cancels, err := HookStartPeerDelivery(ctx, cl.peerMessaging, cl.config.TenantID, agentIDs, cl.peerDeliverFn)
+	cancels, err := HookStartPeerDelivery(ctx, cl.peerMessaging, cl.job.Config.TenantID, agentIDs, cl.peerDeliverFn)
 	if err != nil {
-		cl.logger.Warnf("control loop: failed to start peer delivery: %s", err.Error())
+		cl.job.Logger.Warnf("control loop: failed to start peer delivery: %s", err.Error())
 		return
 	}
 
 	cl.peerDeliveryCancels = append(cl.peerDeliveryCancels, cancels...)
+}
+
+// =============================================================================
+// Lifecycle seams: the loop's view of the envelope
+// =============================================================================
+//
+// The five lifecycle moments (job_hooks.go) live on the JobRun now: SetState
+// fires the state-keyed moment and the envelope fires Discard. What is left
+// here is the loop's view of them — the hook set the workflow selected, the
+// operator's policy, and the JobContext refreshed with the loop's own
+// recoverable state before a hook or a validator reads it.
+
+// lifecyclePolicy returns the operator policy the run resolved.
+func (cl *ControlLoop) lifecyclePolicy() *JobLifecyclePolicy {
+	return cl.job.Policy()
+}
+
+// validators returns the registry criteria are judged through.
+func (cl *ControlLoop) validators() *ValidatorRegistry {
+	return cl.job.Validators()
+}
+
+// jobContext returns the job's context refreshed with the loop's own
+// recoverable state — the workflow definition it is running — on top of the
+// envelope's.
+func (cl *ControlLoop) jobContext() *JobContext {
+	cl.job.Workflow = cl.workflow
+	return cl.job.Context()
+}
+
+// enterStage runs the lifecycle moment that belongs to the state the loop is
+// about to run.
+func (cl *ControlLoop) enterStage(ctx context.Context, state JobState) error {
+	cl.jobContext()
+	return cl.job.enterStage(ctx, state)
+}
+
+// discard runs Discard once the job is over.
+func (cl *ControlLoop) discard(ctx context.Context, completed bool) error {
+	cl.jobContext()
+	return cl.job.discard(ctx, completed)
+}
+
+// failFromHook fails the job on a hook error: the failure class is set so
+// the task's attempt accounting can tell a hook failure from a failure of
+// the work, sessions are released, and the typed error is returned.
+func (cl *ControlLoop) failFromHook(ctx context.Context, err error) error {
+	cl.cleanupAllSessions(ctx)
+	return err
+}
+
+// recordItemResult records one work item's output by completing the Task the
+// job created for that item.
+func (cl *ControlLoop) recordItemResult(ctx context.Context, index int, output string) {
+	result := &TaskResult{Output: output}
+	if err := cl.job.Agents.CompleteTask(ctx, cl.job.Config.TenantID, cl.taskIDs[index], result); err != nil {
+		cl.job.Logger.Warnf("control loop: failed to complete task %s: %s", cl.taskIDs[index], err.Error())
+	}
+}
+
+// reviewTasks returns the Tasks the review prompt describes: the ones this
+// job created for its work items.
+func (cl *ControlLoop) reviewTasks(ctx context.Context) ([]*Task, error) {
+	tasks, err := cl.job.Agents.ListTasks(ctx, cl.job.Config.TenantID, nil)
+	if err != nil {
+		return nil, err
+	}
+	return cl.filterJobTasks(tasks), nil
+}
+
+// reviewByCriteria judges the published work through the reviewing-phase
+// criteria and turns their verdict into the review response the rest of the
+// loop already understands: approved when every required criterion passed,
+// otherwise the failures as feedback.
+func (cl *ControlLoop) reviewByCriteria(ctx context.Context, criteria []ReviewCriterion) (*ReviewResponse, error) {
+	job := cl.jobContext()
+	job.Artifacts = cl.collectTaskResults(ctx)
+	results, allPassed, err := cl.validators().RunPipeline(ctx, job, criteria)
+	if err != nil {
+		return nil, err
+	}
+	cl.reviewResults = results
+	cl.audit("orchestration:review_criteria", "criteria="+itoa(len(cl.reviewResults))+" passed="+boolStr(allPassed))
+	if allPassed {
+		return &ReviewResponse{Approved: true, Feedback: "all review criteria passed"}, nil
+	}
+	var feedback strings.Builder
+	for _, r := range results {
+		if r.Passed {
+			continue
+		}
+		if feedback.Len() > 0 {
+			feedback.WriteString("; ")
+		}
+		feedback.WriteString(r.Name)
+		feedback.WriteString(": ")
+		feedback.WriteString(r.Message)
+		if r.Details != "" {
+			feedback.WriteString(" (")
+			feedback.WriteString(r.Details)
+			feedback.WriteString(")")
+		}
+	}
+	return &ReviewResponse{Approved: false, Feedback: feedback.String()}, nil
 }

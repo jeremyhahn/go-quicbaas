@@ -16,6 +16,7 @@ package deploy
 import (
 	"context"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -44,8 +45,16 @@ const (
 
 // RenderUnit produces the systemd --user unit content for the given
 // spec. The unit is intentionally minimal: a single ExecStart line and
-// a Restart=on-failure policy. Keeping the body small makes it easy
-// for operators to audit after the deploy finishes.
+// a bounded Restart=on-failure policy. Keeping the body small makes it
+// easy for operators to audit after the deploy finishes.
+//
+// The restart policy is deliberately not a flat retry. The daemon itself
+// waits out a control plane that is merely unreachable (see the
+// enrollment classifier in pkg/agent), so a process that still exits is
+// reporting something restarting cannot fix. Escalating the delay and
+// capping the start rate turns that into a unit that lands in "failed",
+// where monitoring can see it, instead of one that sits in
+// "activating (auto-restart)" forever and reads as almost healthy.
 func RenderUnit(spec *Spec) string {
 	// systemd --user unit files use %h for the user's home directory.
 	args := agentServeArgs(spec, "%h")
@@ -57,6 +66,14 @@ func RenderUnit(spec *Spec) string {
 	b.WriteString("Description=QuicBaaS Agent Runtime\n")
 	b.WriteString("After=network-online.target\n")
 	b.WriteString("Wants=network-online.target\n")
+	// StartLimit* are [Unit] properties; systemd ignores them in
+	// [Service], so placing them here is what actually bounds the loop.
+	b.WriteString("StartLimitIntervalSec=")
+	b.WriteString(strconv.Itoa(startLimitIntervalSeconds))
+	b.WriteString("\n")
+	b.WriteString("StartLimitBurst=")
+	b.WriteString(strconv.Itoa(startLimitBurst))
+	b.WriteString("\n")
 	b.WriteString("\n")
 	b.WriteString("[Service]\n")
 	b.WriteString("Type=simple\n")
@@ -64,7 +81,18 @@ func RenderUnit(spec *Spec) string {
 	b.WriteString(exec)
 	b.WriteString("\n")
 	b.WriteString("Restart=on-failure\n")
-	b.WriteString("RestartSec=5\n")
+	b.WriteString("RestartSec=")
+	b.WriteString(strconv.Itoa(restartBaseSeconds))
+	b.WriteString("\n")
+	// RestartSteps / RestartMaxDelaySec need systemd >= 254. Older
+	// versions log "Unknown key name" and fall back to the flat
+	// RestartSec above, which the StartLimit* pair still bounds.
+	b.WriteString("RestartSteps=")
+	b.WriteString(strconv.Itoa(restartSteps))
+	b.WriteString("\n")
+	b.WriteString("RestartMaxDelaySec=")
+	b.WriteString(strconv.Itoa(restartMaxDelaySeconds))
+	b.WriteString("\n")
 	b.WriteString("WorkingDirectory=%h/")
 	b.WriteString(spec.ResolvedDataDir())
 	b.WriteString("\n")
@@ -73,6 +101,21 @@ func RenderUnit(spec *Spec) string {
 	b.WriteString("WantedBy=default.target\n")
 	return b.String()
 }
+
+// Restart policy constants for the rendered unit.
+//
+// The schedule escalates from 5s to 120s over 5 steps, and the start-rate
+// limit gives up after 5 starts inside 5 minutes — roughly a minute and a
+// half of escalating retries. That is long enough to ride out a host-local
+// hiccup and short enough that a genuinely misconfigured agent shows up as
+// a failed unit while the operator is still watching the deploy.
+const (
+	restartBaseSeconds        = 5
+	restartSteps              = 5
+	restartMaxDelaySeconds    = 120
+	startLimitIntervalSeconds = 300
+	startLimitBurst           = 5
+)
 
 // InstallAndStart writes the rendered unit content to the remote
 // host under ~/.config/systemd/user/<unitName>, then reloads the

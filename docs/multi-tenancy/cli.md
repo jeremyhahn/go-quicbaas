@@ -67,11 +67,18 @@ argument, and an administrative call typically sets neither to the other.
 
 ```bash
 quicbaas iam tenant barrier status --tenant acme-corp
-quicbaas iam tenant barrier init --tenant acme-corp
-quicbaas iam tenant barrier unseal --tenant acme-corp
+printf '%s' "$PP" | quicbaas iam tenant barrier init --tenant acme-corp \
+    --strategy passphrase --passphrase-stdin
+printf '%s' "$PP" | quicbaas iam tenant barrier unseal --tenant acme-corp --passphrase-stdin
 quicbaas iam tenant barrier unseal-share --tenant acme-corp
 quicbaas iam tenant barrier officer status --tenant acme-corp
 ```
+
+`init` and `unseal` take the tenant passphrase on stdin
+(`--passphrase-stdin`, preferred), in `QUICBAAS_BARRIER_PASSPHRASE`, or on
+argv as `--passphrase`, in that precedence order. Prefer stdin: an argv
+passphrase is readable by every process on the host for the life of the
+call. See [barrier/cli.md §3a](../barrier/cli.md).
 
 ### Two behaviours worth knowing before you need them
 

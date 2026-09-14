@@ -39,21 +39,21 @@ test.use({ ignoreHTTPSErrors: true });
 // unique within the sidebar (no more three "Dashboard" buttons). The
 // breadcrumb still reads "Dashboard" as the leaf segment because the
 // rendered surface in each case is a dashboard view; it's the parent
-// breadcrumb segment (Overview / Orchestration / Cluster) that
+// breadcrumb segment (Overview / Software Factory / Cluster) that
 // differentiates them.
 const sidebarItems = [
   // OVERVIEW section
   { section: 'OVERVIEW',       label: 'Overview',      hash: '#/dashboard',     breadcrumb: 'Dashboard',      buttonIndex: 0 },
-  // ORCHESTRATION section
-  { section: 'ORCHESTRATION',  label: 'Orchestration', hash: '#/orchestration', breadcrumb: 'Dashboard',      buttonIndex: 0 },
-  { section: 'ORCHESTRATION',  label: 'Jobs',          hash: '#/jobs',          breadcrumb: 'Jobs',           buttonIndex: 0 },
-  { section: 'ORCHESTRATION',  label: 'Agent Fleet',   hash: '#/fleet',         breadcrumb: 'Agent Fleet',    buttonIndex: 0 },
-  { section: 'ORCHESTRATION',  label: 'Sessions',      hash: '#/sessions',      breadcrumb: 'Sessions',       buttonIndex: 0 },
-  { section: 'ORCHESTRATION',  label: 'Tasks',         hash: '#/tasks',         breadcrumb: 'Tasks',          buttonIndex: 0 },
-  { section: 'ORCHESTRATION',  label: 'Workflows',     hash: '#/workflows',     breadcrumb: 'Workflows',      buttonIndex: 0 },
-  { section: 'ORCHESTRATION',  label: 'Projects',      hash: '#/projects',      breadcrumb: 'Projects',       buttonIndex: 0 },
-  { section: 'ORCHESTRATION',  label: 'Live Events',   hash: '#/events',        breadcrumb: 'Live Events',    buttonIndex: 0 },
-  { section: 'ORCHESTRATION',  label: 'Cost Tracking', hash: '#/cost',          breadcrumb: 'Cost Tracking',  buttonIndex: 0 },
+  // SOFTWARE FACTORY section
+  { section: 'SOFTWARE FACTORY', label: 'Software Factory', hash: '#/orchestration', breadcrumb: 'Dashboard', buttonIndex: 0 },
+  { section: 'SOFTWARE FACTORY', label: 'Jobs',          hash: '#/jobs',          breadcrumb: 'Jobs',           buttonIndex: 0 },
+  { section: 'SOFTWARE FACTORY', label: 'Agent Fleet',   hash: '#/fleet',         breadcrumb: 'Agent Fleet',    buttonIndex: 0 },
+  { section: 'SOFTWARE FACTORY', label: 'Sessions',      hash: '#/sessions',      breadcrumb: 'Sessions',       buttonIndex: 0 },
+  { section: 'SOFTWARE FACTORY', label: 'Tasks',         hash: '#/tasks',         breadcrumb: 'Tasks',          buttonIndex: 0 },
+  { section: 'SOFTWARE FACTORY', label: 'Workflows',     hash: '#/workflows',     breadcrumb: 'Workflows',      buttonIndex: 0 },
+  { section: 'SOFTWARE FACTORY', label: 'Projects',      hash: '#/projects',      breadcrumb: 'Projects',       buttonIndex: 0 },
+  { section: 'SOFTWARE FACTORY', label: 'Live Events',   hash: '#/events',        breadcrumb: 'Live Events',    buttonIndex: 0 },
+  { section: 'SOFTWARE FACTORY', label: 'Cost Tracking', hash: '#/cost',          breadcrumb: 'Cost Tracking',  buttonIndex: 0 },
 ] as const;
 
 test.describe('Sidebar navigation — hash routing', () => {

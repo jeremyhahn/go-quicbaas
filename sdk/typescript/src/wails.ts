@@ -23,6 +23,7 @@ import type {
 } from './interfaces.js';
 import type {
   AgentBackendInfo,
+  JobRunnerInfo,
   DeployAgentResult,
   DeployAgentSpec,
   InferenceRequest,
@@ -38,6 +39,8 @@ import type {
   CreateTaskResponse,
   ClaimTaskRequest,
   CompleteTaskRequest,
+  DeleteTaskRequest,
+  DeleteTaskResponse,
   CreateWorkflowRequest,
   CreateWorkflowResponse,
   DecomposeTaskRequest,
@@ -45,6 +48,10 @@ import type {
   GetAgentRequest,
   GetJobStatusRequest,
   GetSessionHistoryRequest,
+  GetSessionConversationRequest,
+  GetSessionConversationResponse,
+  GetSpendReportRequest,
+  GetSpendReportResponse,
   GetSessionHistoryResponse,
   GetTaskRequest,
   HealthCheckReport,
@@ -268,8 +275,8 @@ class WailsConnectionClient implements ConnectionClient {
 // request object here so the interface contract is unchanged while the
 // wire shape matches what Go expects.
 class WailsOrchestratorClient implements OrchestratorClient {
-  async listJobs(tenantID: string): Promise<JobStatus[]> {
-    const req: ListJobsRequest = { tenant_id: tenantID };
+  async listJobs(tenantID: string, taskID?: string): Promise<JobStatus[]> {
+    const req: ListJobsRequest = { tenant_id: tenantID, task_id: taskID };
     const resp = (await orchestratorBinding().ListJobs(req)) as ListJobsResponse | JobStatus[];
     // The Go binding returns the projected job array; older shims may
     // have returned a ListJobsResponse. Normalise to JobStatus[].
@@ -320,6 +327,10 @@ class WailsOrchestratorClient implements OrchestratorClient {
 
   async listBackends(): Promise<AgentBackendInfo[]> {
     return orchestratorBinding().ListBackends() as Promise<AgentBackendInfo[]>;
+  }
+
+  async listRunners(): Promise<JobRunnerInfo[]> {
+    return orchestratorBinding().ListRunners() as Promise<JobRunnerInfo[]>;
   }
 
   async listBackendModels(agentID: string, backendName: string): Promise<string[]> {
@@ -399,6 +410,20 @@ class WailsOrchestratorClient implements OrchestratorClient {
     return sessionBinding().GetHistory(req) as Promise<GetSessionHistoryResponse>;
   }
 
+  // getSessionConversation fetches a page of a session's conversation.
+  // The Go binding forwards the request struct verbatim to the SDK.
+  async getSessionConversation(req: GetSessionConversationRequest): Promise<GetSessionConversationResponse> {
+    return sessionBinding().GetConversation(req) as Promise<GetSessionConversationResponse>;
+  }
+
+  // getSpendReport delegates to OrchestratorBinding.GetSpendReport. The Go
+  // binding forwards the request struct verbatim and returns the SDK type
+  // unreshaped, so cost_measured — the flag that says whether cost_micros is
+  // a measured figure — survives the IPC hop.
+  async getSpendReport(req: GetSpendReportRequest): Promise<GetSpendReportResponse> {
+    return orchestratorBinding().GetSpendReport(req) as Promise<GetSpendReportResponse>;
+  }
+
   // createWorkflow delegates to OrchestratorBinding.CreateWorkflow if available.
   async createWorkflow(req: CreateWorkflowRequest): Promise<CreateWorkflowResponse> {
     const b = orchestratorBinding();
@@ -469,6 +494,28 @@ class WailsOrchestratorClient implements OrchestratorClient {
       throw new Error('wails: CompleteTask not implemented');
     }
     await b.CompleteTask(req);
+  }
+
+  // readmitTask delegates to OrchestratorBinding.ReadmitTask.
+  //
+  // The binding takes the SDK request struct, like every other task verb on
+  // it; passing the two ids positionally reached a Go method that does not
+  // exist in that shape and threw on every click in desktop mode.
+  async readmitTask(tenantID: string, taskID: string): Promise<void> {
+    const b = orchestratorBinding();
+    if (typeof b.ReadmitTask !== 'function') {
+      throw new Error('wails: ReadmitTask not implemented');
+    }
+    await b.ReadmitTask({ tenant_id: tenantID, task_id: taskID });
+  }
+
+  // deleteTask delegates to OrchestratorBinding.DeleteTask.
+  async deleteTask(req: DeleteTaskRequest): Promise<DeleteTaskResponse> {
+    const b = orchestratorBinding();
+    if (typeof b.DeleteTask !== 'function') {
+      throw new Error('wails: DeleteTask not implemented');
+    }
+    return b.DeleteTask(req) as Promise<DeleteTaskResponse>;
   }
 
   // decomposeTask delegates to OrchestratorBinding.DecomposeTask.
@@ -674,6 +721,7 @@ export class WailsClient implements Client {
   readonly scheduler: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly projects: any = null;
+  readonly sdlc: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly accounts: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

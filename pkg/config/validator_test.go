@@ -1265,3 +1265,55 @@ func BenchmarkValidateWithErrors(b *testing.B) {
 		_ = Validate(cfg)
 	}
 }
+
+// TestValidateSDLC_RefusesTheZerosThatMeanNever: with the module enabled, the
+// defaults validate and each setting's fail-open value is refused by name.
+//
+// Mutation evidence: dropping any one refusal fails its sub-test (the
+// sub-test asserts the field appears in the error).
+func TestValidateSDLC_RefusesTheZerosThatMeanNever(t *testing.T) {
+	base := func() *Config {
+		cfg := DefaultConfig()
+		tmp := t.TempDir()
+		cfg.Storage.DataDir = tmp
+		cfg.Storage.WALDir = filepath.Join(tmp, "wal")
+		cfg.SDLC.Enabled = true
+		// Enabling the module now requires the node to say where it lives;
+		// onboarding provisions forge webhooks pointing at it.
+		cfg.SDLC.Webhook.PublicURL = "https://factory.test"
+		return cfg
+	}
+	require.NoError(t, Validate(base()), "the enabled defaults must validate")
+
+	disabled := base()
+	disabled.SDLC.Enabled = false
+	disabled.SDLC.MergeAttempts = 0
+	require.NoError(t, Validate(disabled), "a disabled module is not validated")
+
+	for name, tc := range map[string]struct {
+		mutate func(*SDLCConfig)
+		field  string
+	}{
+		"page limit":           {func(c *SDLCConfig) { c.IssuePageLimit = 0 }, "sdlc.issue_page_limit"},
+		"merge attempts":       {func(c *SDLCConfig) { c.MergeAttempts = 0 }, "sdlc.merge_attempts"},
+		"webhook body":         {func(c *SDLCConfig) { c.Webhook.MaxBody = 0 }, "sdlc.webhook.max_body"},
+		"empty command":        {func(c *SDLCConfig) { c.VerificationCommands = []string{"make test", " "} }, "sdlc.verification_commands[1]"},
+		"empty host":           {func(c *SDLCConfig) { c.RepoHosts = []string{""} }, "sdlc.repo_hosts[0]"},
+		"negative retries":     {func(c *SDLCConfig) { c.Surfacing.RetryAttempts = -1 }, "sdlc.surfacing.retry_attempts"},
+		"negative interval":    {func(c *SDLCConfig) { c.Surfacing.RetryInterval = -1 }, "sdlc.surfacing.retry_interval"},
+		"negative post":        {func(c *SDLCConfig) { c.Surfacing.PostTimeout = -1 }, "sdlc.surfacing.post_timeout"},
+		"post below the floor": {func(c *SDLCConfig) { c.Surfacing.PostTimeout = SDLCSurfacingMinPostTimeout / 2 }, "sdlc.surfacing.post_timeout"},
+		"post above the ceiling": {
+			func(c *SDLCConfig) { c.Surfacing.PostTimeout = SDLCSurfacingMaxPostTimeout + 1 },
+			"sdlc.surfacing.post_timeout",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := base()
+			tc.mutate(&cfg.SDLC)
+			err := Validate(cfg)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.field)
+		})
+	}
+}

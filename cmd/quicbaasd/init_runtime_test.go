@@ -247,10 +247,16 @@ func TestRunInlineInit_PersistenceRoundTrip(t *testing.T) {
 	// the in-memory iamComponents because the contract under test is the
 	// on-disk one: any future change that breaks persistence (e.g.
 	// switching back to MemoryAdminStorage) MUST fail this assertion.
-	// IAM records live under the system tenant's confined keyspace (go-qrdb
-	// #41), so the read goes through the same tenant-routed store the
-	// bootstrap wrote through; the raw platform shard would miss them.
-	adminStorage := iam.NewBackendAdminStorage(srv.IAMKVStore())
+	//
+	// The store must be the TENANT-ROUTED one, which is what IAM writes
+	// through. Reading the platform shard raw was equivalent only while
+	// seal-disabled boots installed no StoreResolver; since go-qrdb
+	// v0.10.0-alpha one is always installed, so the bootstrap admin lives
+	// under the system tenant's namespace and a raw shard read returns an
+	// empty list — indistinguishable from a genuine persistence failure.
+	// This is still the durable store resolved fresh from the restarted
+	// server, not a cached component, so the on-disk contract is intact.
+	adminStorage := iam.NewBackendAdminStorage(srv.TenantRoutedKVStore())
 	assignments, err := adminStorage.ListAssignments(context.Background(), iam.ListAdminAssignmentsOptions{
 		ActiveOnly: true,
 		Limit:      10,

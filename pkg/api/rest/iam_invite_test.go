@@ -51,7 +51,7 @@ func setupIAMHandlerWithInvite(t *testing.T) (*IAMHandler, string, string, strin
 	mockSvc.InviteStoreOverride = store
 
 	tenantID := inviteTenant
-	userID := "user-invite-1"
+	userID := "72"
 
 	// Seed the invite through the store; the token is minted there.
 	token, record, err := store.Create(context.Background(), tenantID, userID, time.Hour)
@@ -102,14 +102,17 @@ func TestGetInvite_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// TestGetInvite_Expired verifies that an expired invite returns 410 Gone.
+// TestGetInvite_Expired verifies that an expired invite gets the opaque
+// not-found answer rather than a distinguishable "expired" one. The route is
+// unauthenticated, so expired, spent and absent are deliberately
+// indistinguishable — see respondInviteUnusable.
 func TestGetInvite_Expired(t *testing.T) {
 	handler, _, _, _, store, cleanup := setupIAMHandlerWithInvite(t)
 	defer cleanup()
 
-	// Seed in the SAME tenant the request targets. Under tenant-scoped
-	// invitations a token created elsewhere is simply absent, which would make
-	// this assert 404-not-found rather than the 410-expired it is about.
+	// Seed in the SAME tenant the request targets, so the handler reaches its
+	// expiry path rather than the tenant-scoping one. Both now answer alike,
+	// but the test should still exercise the case it names.
 	expToken, _, err := store.Create(context.Background(), inviteTenant, "user-exp", -time.Minute)
 	require.NoError(t, err)
 
@@ -123,7 +126,7 @@ func TestGetInvite_Expired(t *testing.T) {
 
 	handler.GetInvite(w, req)
 
-	assert.Equal(t, http.StatusGone, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // TestActivateFIDO2Begin_InviteNotFound verifies 404 for unknown invite token.

@@ -77,7 +77,7 @@ func TestStartJob_LoadsWorkflowFromFile(t *testing.T) {
 		t.Fatal("expected non-empty job ID")
 	}
 	// The workflow file's lead role derives the lead backend/model.
-	got, err := svc.GetWorkflow(context.Background(), "file-workflow")
+	got, err := svc.GetWorkflow(ContextWithTenant(context.Background(), "tenant-1"), "file-workflow")
 	if err != nil {
 		t.Fatalf("workflow should be registered from file: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestStartJob_AutoMatchesWorkflowByLeadBackend(t *testing.T) {
 			{Role: "worker", Backend: "mock", Model: "mock-model"},
 		},
 	}
-	if err := loader.Register(def); err != nil {
+	if err := loader.Register("tenant-1", def); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 

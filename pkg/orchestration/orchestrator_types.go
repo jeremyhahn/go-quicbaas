@@ -216,8 +216,10 @@ type AgentService interface {
 	// Requires permission: agent:admin
 	RemoveAgent(ctx context.Context, tenantID, agentID string) error
 
-	// AgentHeartbeat updates an agent's last seen timestamp.
-	AgentHeartbeat(ctx context.Context, tenantID, agentID string) error
+	// AgentHeartbeat updates an agent's last seen timestamp and reconciles
+	// the agent's backend axis against observed, what the daemon reports it
+	// is serving right now. A nil observation reconciles nothing.
+	AgentHeartbeat(ctx context.Context, tenantID, agentID string, observed *AgentObservation) error
 
 	// CreateTask creates a new orchestration task.
 	// Requires permission: agent:task
@@ -273,6 +275,42 @@ type AgentService interface {
 	//   - error: ErrTaskNotFound, ErrTaskInvalidState
 	CompleteTask(ctx context.Context, tenantID, taskID string, result *TaskResult) error
 
+	// BlockTask parks a pending, claimed or in-progress task with a kind and
+	// a reason so it is not dispatched until a person readmits it.
+	// Requires permission: orchestrator:task_block
+	// Parameters:
+	//   - ctx: Request context with timeout and tenant metadata
+	//   - tenantID: The tenant namespace
+	//   - taskID: The task identifier
+	//   - kind: Why the task is parked (needs_info, blocked, escalated)
+	//   - reason: Human-readable reason, surfaced to the person it waits for
+	// Returns:
+	//   - error: ErrTaskNotFound, ErrTaskInvalidState, ErrTaskStoreInvalidInput
+	BlockTask(ctx context.Context, tenantID, taskID string, kind TaskBlockKind, reason string) error
+
+	// DeleteTask removes a task, its artifact payloads, its claim mark and
+	// its source reservation, so the task's source can be adopted again.
+	// Requires permission: orchestrator:task_create — deleting a task record
+	// is the inverse of writing one, and the vocabulary go-qrdb owns has no
+	// separate delete verb for the family.
+	// Parameters:
+	//   - ctx: Request context with timeout and tenant metadata
+	//   - tenantID: The tenant namespace
+	//   - taskID: The task identifier
+	// Returns:
+	//   - error: ErrTaskNotFound, ErrTaskLeased, ErrTaskStoreInvalidInput
+	DeleteTask(ctx context.Context, tenantID, taskID string) error
+
+	// ReadmitTask returns a blocked task to the pending queue.
+	// Requires permission: orchestrator:task_readmit
+	// Parameters:
+	//   - ctx: Request context with timeout and tenant metadata
+	//   - tenantID: The tenant namespace
+	//   - taskID: The task identifier
+	// Returns:
+	//   - error: ErrTaskNotFound, ErrTaskInvalidState
+	ReadmitTask(ctx context.Context, tenantID, taskID string) error
+
 	// StartJob starts an autonomous orchestration control loop.
 	// Requires permission: agent:job
 	// Parameters:
@@ -294,15 +332,17 @@ type AgentService interface {
 	//   - error: ErrJobNotFound, ErrTenantIDRequired
 	GetJobStatus(ctx context.Context, tenantID, jobID string) (*JobStatus, error)
 
-	// ListJobs returns all jobs for a tenant, sorted by start time descending.
+	// ListJobs returns the tenant's jobs matching filter, sorted by start
+	// time descending.
 	// Requires permission: agent:job
 	// Parameters:
 	//   - ctx: Request context with timeout and metadata
 	//   - tenantID: The tenant namespace
+	//   - filter: Narrows the listing; nil lists every job
 	// Returns:
-	//   - []*JobStatus: All jobs for the tenant
+	//   - []*JobStatus: The tenant's matching jobs
 	//   - error: ErrTenantIDRequired
-	ListJobs(ctx context.Context, tenantID string) ([]*JobStatus, error)
+	ListJobs(ctx context.Context, tenantID string, filter *JobFilter) ([]*JobStatus, error)
 
 	// CancelJob cancels a running orchestration job.
 	// Requires permission: agent:job
@@ -412,6 +452,13 @@ var (
 	// ErrSessionIDRequired indicates a session ID is required.
 	ErrSessionIDRequired = errors.New("agent: session ID is required")
 
+	// ErrSessionConclusionInProgress indicates somebody else is concluding the
+	// session and this caller could not wait long enough to learn the outcome.
+	// It is deliberately NOT a success: an operator-facing close reports what
+	// actually happened to the session, and "another conclusion is running" is
+	// not the same fact as "the session is closed".
+	ErrSessionConclusionInProgress = errors.New("agent: session conclusion already in progress")
+
 	// ErrBackendNilRequired indicates a non-nil backend is required.
 	ErrBackendNilRequired = errors.New("agent: backend must not be nil")
 
@@ -452,8 +499,28 @@ var (
 	// ErrTaskIDRequired indicates a task ID is required.
 	ErrTaskIDRequired = errors.New("agent: task ID is required")
 
+	// ErrJobIDRequired indicates a job ID is required.
+	ErrJobIDRequired = errors.New("agent: job ID is required")
+
+	// ErrSessionStateUnknown indicates a listing filter named a session state
+	// this daemon does not use.
+	ErrSessionStateUnknown = errors.New("agent: unknown session state")
+
+	// ErrSessionConclusionReasonRequired indicates a session conclusion named
+	// no known reason. A conclusion without an attribution is the state the
+	// reason exists to remove, so it is refused rather than defaulted.
+	ErrSessionConclusionReasonRequired = errors.New("agent: session conclusion reason is required")
+
 	// ErrAgentIDRequired indicates an agent ID is required.
 	ErrAgentIDRequired = errors.New("agent: agent ID is required")
+
+	// ErrJobLeaseStoreRequired indicates an operation that must reason about
+	// which jobs are running has no lease store to read.
+	ErrJobLeaseStoreRequired = errors.New("agent: job lease store is required")
+
+	// ErrTaskLeased indicates an operation was refused because a job holds a
+	// live lease on the task.
+	ErrTaskLeased = errors.New("agent: task is leased by a running job")
 
 	// ErrContainerRuntimeRequired indicates a container runtime is required for sandboxed sessions.
 	ErrContainerRuntimeRequired = errors.New("agent: container runtime is required for sandboxed sessions")
@@ -483,6 +550,30 @@ func (e *AgentServiceError) Error() string {
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *AgentServiceError) Unwrap() error {
 	return e.Sentinel
+}
+
+// TaskLeasedError refuses an operation on a task a job is currently running.
+// It names the holder so the caller learns what to wait for rather than only
+// that it was refused.
+type TaskLeasedError struct {
+	TenantID string
+	TaskID   string
+	JobID    string
+	Node     string
+}
+
+// Error implements the error interface.
+func (e *TaskLeasedError) Error() string {
+	msg := ErrTaskLeased.Error() + ": task " + e.TaskID + " is held by job " + e.JobID
+	if e.Node != "" {
+		msg += " on node " + e.Node
+	}
+	return msg
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *TaskLeasedError) Unwrap() error {
+	return ErrTaskLeased
 }
 
 // ProjectNotFoundError indicates a project was not found by ID.
@@ -621,6 +712,7 @@ type RegisteredProject struct {
 type SpawnSessionRequest struct {
 	Backend         string            `json:"backend"`
 	ProjectID       string            `json:"project_id"`
+	JobID           string            `json:"job_id,omitempty"` // job the session works for, recorded on its durable record
 	Model           string            `json:"model,omitempty"`
 	SystemPrompt    string            `json:"system_prompt,omitempty"`
 	MCPServers      []MCPServerConfig `json:"mcp_servers,omitempty"`
@@ -719,11 +811,21 @@ func (r *SpawnSessionRequest) EffectiveSandboxMode() SandboxMode {
 
 // SpawnSessionResponse contains the result of spawning a session.
 type SpawnSessionResponse struct {
-	SessionID   string `json:"session_id"`
-	Backend     string `json:"backend"`
-	Model       string `json:"model,omitempty"`
-	ContainerID string `json:"container_id,omitempty"` // set when sandboxed
-	Timestamp   int64  `json:"timestamp"`
+	SessionID string `json:"session_id"`
+	Backend   string `json:"backend"`
+	Model     string `json:"model,omitempty"`
+	// ContainerID names the container the session runs in, whether the
+	// orchestrator launched it or the backend did. Empty for a session that
+	// runs as a host process.
+	ContainerID string `json:"container_id,omitempty"`
+
+	// AgentID is the fleet agent the spawn was dispatched to. Empty when the
+	// session runs on this daemon's own in-process backend rather than on a
+	// registered agent. A job records it so its page can name — and link —
+	// the daemon that did the work (go-quicbaas#796).
+	AgentID string `json:"agent_id,omitempty"`
+
+	Timestamp int64 `json:"timestamp"`
 }
 
 // PromptSessionRequest contains parameters for prompting an agent session.
@@ -792,11 +894,14 @@ type SessionStatusRequest struct {
 
 // SessionStatusResponse contains session status information.
 type SessionStatusResponse struct {
-	SessionID    string       `json:"session_id"`
-	State        SessionState `json:"state"`
-	LastActivity int64        `json:"last_activity"`
-	Uptime       int64        `json:"uptime"`
-	Timestamp    int64        `json:"timestamp"`
+	SessionID string       `json:"session_id"`
+	State     SessionState `json:"state"`
+
+	// LastActivity and Timestamp are UNIX NANOSECONDS; Uptime is a duration
+	// in milliseconds. See the unit contract in backend.go.
+	LastActivity int64 `json:"last_activity"`
+	Uptime       int64 `json:"uptime"`
+	Timestamp    int64 `json:"timestamp"`
 }
 
 // CloseSessionRequest contains parameters for closing a session.
@@ -810,9 +915,22 @@ type CloseSessionResponse struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
-// ListSessionsRequest contains parameters for listing active sessions.
+// ListSessionsRequest contains parameters for listing sessions.
 type ListSessionsRequest struct {
 	Backend string `json:"backend,omitempty"`
+
+	// Status narrows the listing to one lifecycle state. Empty means every
+	// state, which is what every caller that predates the filter sends.
+	//
+	// IT IS LOAD-BEARING NOW THAT THE LISTING MERGES DURABLE RECORDS. While
+	// the service effectively listed live sessions the filter's absence was
+	// invisible; once reconciliation began writing terminal records, a caller
+	// asking for ACTIVE sessions was handed CLOSED ones back. An unrecognised
+	// value is REFUSED rather than matched against nothing: a filter the
+	// caller set and the engine silently misapplied reads as "there are no
+	// such sessions", which is the wrong answer to a question that was never
+	// understood.
+	Status SessionState `json:"status,omitempty"`
 }
 
 // ListSessionsResponse contains the result of listing sessions.
@@ -823,13 +941,18 @@ type ListSessionsResponse struct {
 
 // SessionInfo contains summary information about an active session.
 type SessionInfo struct {
-	SessionID    string       `json:"session_id"`
-	ProjectID    string       `json:"project_id"`
-	Backend      string       `json:"backend"`
-	Model        string       `json:"model,omitempty"`
-	State        SessionState `json:"state"`
-	CreatedAt    int64        `json:"created_at"`
-	LastActivity int64        `json:"last_activity"`
+	SessionID string       `json:"session_id"`
+	ProjectID string       `json:"project_id"`
+	Backend   string       `json:"backend"`
+	Model     string       `json:"model,omitempty"`
+	State     SessionState `json:"state"`
+
+	// CreatedAt and LastActivity are UNIX NANOSECONDS, both of them. See the
+	// unit contract in backend.go: they reached one reader in two different
+	// units, and a client that guesses which is a bug that comes back
+	// (go-quicbaas#855).
+	CreatedAt    int64 `json:"created_at"`
+	LastActivity int64 `json:"last_activity"`
 }
 
 // DecomposeTaskRequest contains parameters for decomposing a task.
@@ -927,6 +1050,42 @@ type CreateTaskRequest struct {
 	// Backend field matches this value are considered. Empty means any backend.
 	// Ignored when AutoSpawn is false.
 	Backend string `json:"backend,omitempty"`
+
+	// Source records where the task came from. When set, the store refuses a
+	// second task for the same (Kind, Ref) within the tenant and project.
+	Source *TaskSourceRef `json:"source,omitempty"`
+
+	// Priority orders the task for dispatch; higher is dispatched first.
+	Priority int `json:"priority,omitempty"`
+
+	// AttemptBudget bounds the jobs dispatched for the task. Zero means the
+	// engine default applies.
+	AttemptBudget int `json:"attempt_budget,omitempty"`
+
+	// Runner names the JobRunner that drives attempts at this task. Empty
+	// resolves to the engine's own "workflow" runner — a lead agent
+	// decomposing the task into work items. A name nothing registered is
+	// refused with UnknownJobRunnerError.
+	Runner string `json:"runner,omitempty"`
+
+	// Park, when set, creates the task ALREADY BLOCKED rather than pending,
+	// and suppresses the auto-spawn that AutoSpawn would otherwise trigger.
+	//
+	// ONE WRITE, WHICH IS THE WHOLE REASON IT IS HERE. A caller that knows the
+	// work cannot start — a forge issue waiting on another repository's release
+	// — would otherwise create the task and then block it, and in the window
+	// between those two writes the task is pending with AutoSpawn set and a
+	// sweep may start exactly the job the park exists to prevent. One write has
+	// no window.
+	//
+	// The AutoSpawn bit SURVIVES the park, deliberately: it is what makes
+	// readmission dispatch the task when its condition clears, so clearing it
+	// here would park the work permanently.
+	//
+	// The reason must be non-empty and the kind must be a member of the closed
+	// TaskBlockKind enum — a park that cannot say why it happened cannot be
+	// acted on by the person it waits for.
+	Park *BlockReason `json:"park,omitempty"`
 }
 
 // =============================================================================
@@ -988,11 +1147,57 @@ type JobConfig struct {
 	MaxIterations int           `json:"max_iterations,omitempty"`
 	WorkflowName  string        `json:"workflow_name,omitempty"`
 
+	// Runner names the JobRunner that drives this job's states
+	// (job_runner.go). Empty means the engine's own "workflow" runner: a
+	// lead agent decomposing the description into a DAG of work items.
+	Runner string `json:"runner,omitempty"`
+
 	// LeadAgentID is the registered fleet agent ID that leads this job.
 	// Set when the job is started via SpawnChildJob or when an agent
 	// authenticates via SpawnChildJob on behalf of a parent. Used to
 	// authorize SpawnChildJob calls: only the lead may fan out children.
 	LeadAgentID string `json:"lead_agent_id,omitempty"`
+
+	// TaskID names the task this job is an attempt at. Empty for a job that
+	// was started directly rather than for a task.
+	TaskID string `json:"task_id,omitempty"`
+
+	// Attempt is the 1-based ordinal of this job among the task's attempts.
+	// Zero when TaskID is empty.
+	Attempt int `json:"attempt,omitempty"`
+
+	// Params is the RUNNER's own configuration for this job: the subject it
+	// is about, in the vocabulary of whichever runner drives it.
+	//
+	// IT IS THE MISSING HALF OF THE JobRunner SEAM. The seam already lets a
+	// module own a job's SHAPE, but every field above describes the engine's
+	// own shape — a description for a lead to decompose, a task to attempt —
+	// and a runner whose job is about something else had nowhere to be told
+	// what. The sdlc runner got away with TaskID because a delivery IS an
+	// attempt at a task; a review of a pull request is not, and encoding
+	// "pull request 41" into Description for a runner to parse back out
+	// would make the job's subject a matter of string handling.
+	//
+	// OPAQUE TO THE ENGINE, which never reads a key and never defaults one.
+	// The runner that declared the keys is the only thing that interprets
+	// them, and it validates them in Validate before any goroutine or lease
+	// exists. Keys are namespaced by their runner so two runners in one
+	// build cannot collide.
+	//
+	// NOT A CREDENTIAL CHANNEL. A JobConfig is persisted with the job's
+	// status, returned by GetJobStatus and rendered in the UI; anything put
+	// here is visible everywhere those are. Secrets stay in the
+	// SecretsService and travel as references.
+	Params map[string]string `json:"params,omitempty"`
+}
+
+// Param returns the runner parameter under key, and whether it was set.
+func (c *JobConfig) Param(key string) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	value, ok := c.Params[key]
+	return value, ok
 }
 
 // JobAuditEvent records a single event in the job's complete audit trail.
@@ -1024,13 +1229,192 @@ type JobStatus struct {
 	Memory       *JobMemory  `json:"memory,omitempty"`
 	WorkflowName string      `json:"workflow_name,omitempty"`
 
+	// Runner names the JobRunner that drove this job. Empty on a record
+	// written before runners existed, which is a workflow job.
+	Runner string `json:"runner,omitempty"`
+
 	// Sub-job fan-out. ParentJobID is empty for root jobs.
 	// ChildJobIDs is appended atomically as child jobs are spawned.
 	ParentJobID string   `json:"parent_job_id,omitempty"`
 	ChildJobIDs []string `json:"child_job_ids,omitempty"`
 	SpawnedBy   string   `json:"spawned_by,omitempty"` // agent_id that spawned this child
 	SpawnedAt   int64    `json:"spawned_at,omitempty"` // Unix nanos
+
+	// TaskID and Attempt bind the job to the task it is an attempt at; both
+	// are copied from Config so a listing can show them without the config.
+	TaskID  string `json:"task_id,omitempty"`
+	Attempt int    `json:"attempt,omitempty"`
+
+	// Node names the daemon running the job's control loop.
+	Node string `json:"node,omitempty"`
+
+	// HeartbeatAt is the Unix-nanosecond instant the running loop last
+	// proved it was alive.
+	HeartbeatAt int64 `json:"heartbeat_at,omitempty"`
+
+	// FailureClass classifies a failed job's cause so the task's attempt
+	// accounting can tell an environment fault from a failure of the work.
+	FailureClass string `json:"failure_class,omitempty"`
+
+	// Park is the runner's own judgement that the task must stop and wait
+	// for a person, nil when it made none. See JobRun.Park.
+	//
+	// IT IS ON THE PERSISTED RECORD BECAUSE THE JUDGEMENT MUST OUTLIVE THE
+	// PROCESS THAT MADE IT. A park held only on the live JobRun is lost the
+	// moment the daemon dies between writing this status and applying the
+	// task conclusion: the lease reaper then rebuilds the conclusion from
+	// this record alone, stamps it `abandoned`, and the task is requeued —
+	// which re-creates the budget-burning loop go-quicbaas#787 exists to
+	// remove, across a crash instead of within one run.
+	Park *BlockReason `json:"park,omitempty"`
+
+	// Satisfied is the runner's judgement that the task's work was ALREADY
+	// DONE before the attempt began. It travels on the status for the same
+	// reason Park does: the conclusion is derived from this record, and a
+	// judgement left only in the running process is lost to a crash.
+	//
+	// A satisfied attempt COMPLETES the task — it is not a failure and not a
+	// park — but concludes it `already_satisfied` rather than `completed`, so
+	// the issue is told it is stale instead of being closed in silence.
+	Satisfied bool `json:"satisfied,omitempty"`
+
+	// LeadSessionID is the session of the lead agent, empty until spawned.
+	LeadSessionID string `json:"lead_session_id,omitempty"`
+
+	// SessionIDs lists every session the job has spawned and not yet closed:
+	// the lead, the reviewer and each worker role, in stable order.
+	SessionIDs []string `json:"session_ids,omitempty"`
+
+	// Stage is the last lifecycle moment the job passed through (prepare,
+	// reviewable, complete, discard, blocked); empty until the first moment
+	// runs or when the workflow runs no hooks.
+	Stage string `json:"stage,omitempty"`
+
+	// Stages is every lifecycle moment the job entered, in order, with the
+	// instant each was entered. Stage is the last of them. See
+	// job_provenance.go.
+	Stages []JobStageRecord `json:"stages,omitempty"`
+
+	// AgentID is the FLEET agent the job's work was dispatched to — the
+	// daemon whose runtime spawned the session, which is not necessarily
+	// Node, the daemon whose control loop drove the job. Empty when the work
+	// ran on this daemon's own in-process backend, where Node names it.
+	AgentID string `json:"agent_id,omitempty"`
+
+	// --- Derived from the task when the status is read -------------------
+	//
+	// These are the TASK's facts, not the run's: they are filled in on read
+	// (GetJobStatus) rather than persisted, because a copy taken when the
+	// job last wrote its status would be stale for every attempt after it.
+	// All are absent for a job that is not an attempt at a task.
+
+	// Attempts is every attempt at the job's task, oldest first, with the
+	// one this status belongs to marked Current.
+	Attempts []JobAttemptRecord `json:"attempts,omitempty"`
+
+	// AttemptBudget is the number of charged attempts the task allows.
+	AttemptBudget int `json:"attempt_budget,omitempty"`
+
+	// TerminalReason is the typed reason the task stopped, from the closed
+	// vocabulary in task_conclusion.go. Empty while the task is still
+	// running or requeued.
+	TerminalReason TaskConclusionReason `json:"terminal_reason,omitempty"`
+
+	// ReadmitAllowed says whether a person may return the task to the queue.
+	// A parked task may be readmitted; a failed one is terminal.
+	ReadmitAllowed bool `json:"readmit_allowed,omitempty"`
+
+	// Delivery is the git side of the attempt — branch, head, pull request
+	// and review rounds — read off the artifacts the runner published on the
+	// task. Nil for a runner that publishes none.
+	Delivery *JobDelivery `json:"delivery,omitempty"`
+
+	// Verification is the outcome of the last validator pipeline the job ran
+	// — the build, the tests, whatever the project's criteria named. It is
+	// recorded by JobRun.Verify and persists with the status, so a failed
+	// job still says which command refused it.
+	Verification []ValidationResult `json:"verification,omitempty"`
 }
+
+// JobFilter narrows a job listing.
+//
+// A NARROWING THE SERVER PERFORMS, not one the caller is trusted to apply.
+// Every transport accepts a task_id, and before go-quicbaas#822 every
+// transport also ignored it: the service listed the whole tenant and each
+// client re-filtered whatever arrived. A caller that trusted the query — the
+// CLI, an MCP tool, any SDK consumer — was handed another task's attempts and
+// had no way to tell. The filter belongs here, once, where every transport
+// shares it.
+//
+// A nil filter, and a filter with no field set, both list every job the
+// tenant owns: "no narrowing asked for" must never read as "narrow to
+// nothing".
+type JobFilter struct {
+	// TaskID restricts the listing to attempts at one task.
+	TaskID string `json:"task_id,omitempty"`
+}
+
+// Matches reports whether status satisfies the filter.
+//
+// THE TWO NIL ARMS ARE DELIBERATELY NOT SYMMETRIC, which the name alone will
+// not tell you, so it is written down here rather than rediscovered:
+//
+//   - A NIL FILTER matches every non-nil status. "No narrowing asked for"
+//     means list everything; ListJobs relies on exactly this to serve an
+//     unfiltered request through the same code path as a filtered one.
+//   - A NIL STATUS matches nothing, filter or no filter. There is no record
+//     to answer for, and reporting a match would put a nil into the caller's
+//     result set.
+//
+// So the first is "the question is unrestricted" and the second is "there is
+// nothing to ask about". Collapsing them — making a nil filter match a nil
+// status, say — would look tidier and would hand ListJobs a nil entry the
+// moment a record failed to decode.
+func (f *JobFilter) Matches(status *JobStatus) bool {
+	if status == nil {
+		return false
+	}
+	if f == nil {
+		return true
+	}
+	if f.TaskID != "" && jobStatusTaskID(status) != f.TaskID {
+		return false
+	}
+	return true
+}
+
+// Empty reports whether the filter narrows nothing.
+func (f *JobFilter) Empty() bool {
+	return f == nil || f.TaskID == ""
+}
+
+// jobStatusTaskID is the task a job is an attempt at.
+//
+// The binding is recorded twice — on the status and on the config it was
+// launched from — and the two can disagree: a status persisted before the
+// binding was promoted onto JobStatus carries it only in the config. Reading
+// the status first and the config second means a filter answers for both
+// shapes rather than silently dropping the older one.
+func jobStatusTaskID(status *JobStatus) string {
+	if status == nil {
+		return ""
+	}
+	if status.TaskID != "" {
+		return status.TaskID
+	}
+	if status.Config != nil {
+		return status.Config.TaskID
+	}
+	return ""
+}
+
+// JobEventTypeStateChange is the JobEvent.Type of an event the control loop
+// emits as it moves between states.
+const JobEventTypeStateChange = "state_change"
+
+// JobEventTypeStage is the JobEvent.Type of an event the control loop emits
+// as a job enters a lifecycle moment; Metadata carries the stage name.
+const JobEventTypeStage = "stage"
 
 // JobEvent represents a real-time event from a running orchestration job.
 type JobEvent struct {
@@ -1055,6 +1439,20 @@ type StartJobRequest struct {
 	PollInterval  string `json:"poll_interval,omitempty"`
 	WorkflowName  string `json:"workflow_name,omitempty"`
 	WorkflowFile  string `json:"workflow_file,omitempty"`
+
+	// Runner names the JobRunner that drives the job. Empty selects the
+	// engine's own "workflow" runner.
+	Runner string `json:"runner,omitempty"`
+
+	// TaskID binds the job to the task it is an attempt at; Attempt is the
+	// 1-based ordinal of that attempt. Both are copied onto JobConfig.
+	TaskID  string `json:"task_id,omitempty"`
+	Attempt int    `json:"attempt,omitempty"`
+
+	// Params is the runner's own configuration for this job, copied onto
+	// JobConfig verbatim. See JobConfig.Params — in particular that it is
+	// persisted and displayed, so it carries no secret.
+	Params map[string]string `json:"params,omitempty"`
 }
 
 // StartJobResponse contains the result of starting an orchestration job.
@@ -1142,6 +1540,21 @@ type SpawnChildJobResponse struct {
 }
 
 // jobPersistenceKey builds the KV store key for a persisted job status.
+//
+// The tenant segment is normalised the same way every other durable
+// orchestration record normalises it (StorageTenant): a caller that reached
+// the orchestrator without a tenant files under the system tenant rather than
+// under an empty segment, so its record is addressable by a reader that asks
+// for "system" instead of sitting at a key no listing can name.
 func jobPersistenceKey(tenantID, jobID string) string {
-	return "job:" + tenantID + ":" + jobID
+	return jobPersistencePrefix(tenantID) + jobID
+}
+
+// jobPersistencePrefix is the prefix covering every persisted job record owned
+// by tenantID. A scan bounded by it cannot observe another tenant.
+func jobPersistencePrefix(tenantID string) string {
+	if tenantID == "" {
+		tenantID = SystemTenantID
+	}
+	return "job:" + tenantID + ":"
 }

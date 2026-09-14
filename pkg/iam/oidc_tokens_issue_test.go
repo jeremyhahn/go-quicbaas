@@ -39,11 +39,10 @@ func TestTokenService_IssueHardwareTokens(t *testing.T) {
 			Roles:    []string{"admin"},
 			Groups:   []string{"devs"},
 		},
-		AMR:          []string{"webauthn", "hwk"},
-		ACR:          "phr",
-		AttestAAGUID: "aaguid-1",
-		AttestLevel:  "fips-140-3",
-		ClientID:     "client-1",
+		AMR:         []string{"webauthn", "hwk"},
+		ACR:         "phr",
+		Attestation: testHardwareAttestation("aaguid-1"),
+		ClientID:    "client-1",
 	})
 	if err != nil {
 		t.Fatalf("IssueHardwareTokens: %v", err)

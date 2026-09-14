@@ -82,7 +82,7 @@ func main() {
 
 	// Step 1: Create a tenant
 	fmt.Println("Step 1: Creating a tenant...")
-	tenant, err := client.IAM().Tenant().Create(ctx, &iam.CreateTenantRequest{
+	tenant, err := client.Identity().IAM().Tenant().Create(ctx, &iam.CreateTenantRequest{
 		Name:        "acme-corp",
 		DisplayName: "ACME Corporation",
 		Description: "Example tenant for ACME Corporation",
@@ -110,7 +110,7 @@ func main() {
 	fmt.Println("\nStep 2: Creating roles...")
 
 	// Admin role with full permissions
-	adminRole, err := client.IAM().Role().Create(ctx, tenantID, &iam.CreateRoleRequest{
+	adminRole, err := client.Identity().IAM().Role().Create(ctx, tenantID, &iam.CreateRoleRequest{
 		Name:        "admin",
 		DisplayName: "Administrator",
 		Description: "Full administrative access",
@@ -132,7 +132,7 @@ func main() {
 	fmt.Printf("  Created role: %s (ID: %s)\n", adminRole.Name, adminRole.ID)
 
 	// Developer role with limited permissions
-	devRole, err := client.IAM().Role().Create(ctx, tenantID, &iam.CreateRoleRequest{
+	devRole, err := client.Identity().IAM().Role().Create(ctx, tenantID, &iam.CreateRoleRequest{
 		Name:        "developer",
 		DisplayName: "Developer",
 		Description: "Read/write access to development resources",
@@ -149,7 +149,7 @@ func main() {
 	fmt.Printf("  Created role: %s (ID: %s)\n", devRole.Name, devRole.ID)
 
 	// Viewer role with read-only permissions
-	viewerRole, err := client.IAM().Role().Create(ctx, tenantID, &iam.CreateRoleRequest{
+	viewerRole, err := client.Identity().IAM().Role().Create(ctx, tenantID, &iam.CreateRoleRequest{
 		Name:        "viewer",
 		DisplayName: "Viewer",
 		Description: "Read-only access",
@@ -165,7 +165,7 @@ func main() {
 	// Step 3: Create groups
 	fmt.Println("\nStep 3: Creating groups...")
 
-	engineeringGroup, err := client.IAM().Group().Create(ctx, tenantID, &iam.CreateGroupRequest{
+	engineeringGroup, err := client.Identity().IAM().Group().Create(ctx, tenantID, &iam.CreateGroupRequest{
 		Name:        "engineering",
 		DisplayName: "Engineering Team",
 		Description: "Software engineering department",
@@ -176,7 +176,7 @@ func main() {
 	}
 	fmt.Printf("  Created group: %s (ID: %s)\n", engineeringGroup.Name, engineeringGroup.ID)
 
-	opsGroup, err := client.IAM().Group().Create(ctx, tenantID, &iam.CreateGroupRequest{
+	opsGroup, err := client.Identity().IAM().Group().Create(ctx, tenantID, &iam.CreateGroupRequest{
 		Name:        "operations",
 		DisplayName: "Operations Team",
 		Description: "DevOps and SRE department",
@@ -191,7 +191,7 @@ func main() {
 	fmt.Println("\nStep 4: Creating users...")
 
 	// Admin user
-	adminUser, err := client.IAM().User().Create(ctx, tenantID, &iam.CreateUserRequest{
+	adminUser, err := client.Identity().IAM().User().Create(ctx, tenantID, &iam.CreateUserRequest{
 		Username:    "admin.user",
 		Email:       "admin@acme-corp.com",
 		DisplayName: "Admin User",
@@ -207,7 +207,7 @@ func main() {
 	fmt.Printf("  Created user: %s (ID: %s)\n", adminUser.Username, adminUser.ID)
 
 	// Developer user (added to engineering group)
-	devUser, err := client.IAM().User().Create(ctx, tenantID, &iam.CreateUserRequest{
+	devUser, err := client.Identity().IAM().User().Create(ctx, tenantID, &iam.CreateUserRequest{
 		Username:    "dev.user",
 		Email:       "developer@acme-corp.com",
 		DisplayName: "Developer User",
@@ -223,7 +223,7 @@ func main() {
 	fmt.Printf("  Created user: %s (ID: %s)\n", devUser.Username, devUser.ID)
 
 	// Viewer user
-	viewerUser, err := client.IAM().User().Create(ctx, tenantID, &iam.CreateUserRequest{
+	viewerUser, err := client.Identity().IAM().User().Create(ctx, tenantID, &iam.CreateUserRequest{
 		Username:    "viewer.user",
 		Email:       "viewer@acme-corp.com",
 		DisplayName: "Viewer User",
@@ -240,7 +240,7 @@ func main() {
 
 	// Step 5: List all users in tenant
 	fmt.Println("\nStep 5: Listing all users...")
-	usersResp, err := client.IAM().User().List(ctx, tenantID, nil)
+	usersResp, err := client.Identity().IAM().User().List(ctx, tenantID, nil)
 	if err != nil {
 		log.Fatalf("Failed to list users: %v", err)
 	}
@@ -251,7 +251,7 @@ func main() {
 
 	// Step 6: Get user details
 	fmt.Println("\nStep 6: Getting user details...")
-	userDetails, err := client.IAM().User().Get(ctx, tenantID, devUser.ID)
+	userDetails, err := client.Identity().IAM().User().Get(ctx, tenantID, devUser.ID)
 	if err != nil {
 		log.Fatalf("Failed to get user: %v", err)
 	}
@@ -265,47 +265,47 @@ func main() {
 
 	// Step 7: Assign additional role to user
 	fmt.Println("\nStep 7: Assigning viewer role to developer user...")
-	if err := client.IAM().User().AssignRole(ctx, tenantID, devUser.ID, viewerRole.ID); err != nil {
+	if err := client.Identity().IAM().User().AssignRole(ctx, tenantID, devUser.ID, viewerRole.ID); err != nil {
 		log.Fatalf("Failed to assign role: %v", err)
 	}
 	fmt.Printf("  Assigned role '%s' to user '%s'\n", viewerRole.Name, devUser.Username)
 
 	// Verify the assignment
-	userDetails, _ = client.IAM().User().Get(ctx, tenantID, devUser.ID)
+	userDetails, _ = client.Identity().IAM().User().Get(ctx, tenantID, devUser.ID)
 	fmt.Printf("  User now has roles: %v\n", userDetails.Roles)
 
 	// Step 8: Add user to group
 	fmt.Println("\nStep 8: Adding viewer user to engineering group...")
-	if err := client.IAM().User().AddToGroup(ctx, tenantID, viewerUser.ID, engineeringGroup.ID); err != nil {
+	if err := client.Identity().IAM().User().AddToGroup(ctx, tenantID, viewerUser.ID, engineeringGroup.ID); err != nil {
 		log.Fatalf("Failed to add user to group: %v", err)
 	}
 	fmt.Printf("  Added user '%s' to group '%s'\n", viewerUser.Username, engineeringGroup.Name)
 
 	// Step 9: Suspend a user
 	fmt.Println("\nStep 9: Suspending viewer user...")
-	if err := client.IAM().User().Suspend(ctx, tenantID, viewerUser.ID); err != nil {
+	if err := client.Identity().IAM().User().Suspend(ctx, tenantID, viewerUser.ID); err != nil {
 		log.Fatalf("Failed to suspend user: %v", err)
 	}
 	fmt.Printf("  Suspended user: %s\n", viewerUser.Username)
 
 	// Verify suspension
-	userDetails, _ = client.IAM().User().Get(ctx, tenantID, viewerUser.ID)
+	userDetails, _ = client.Identity().IAM().User().Get(ctx, tenantID, viewerUser.ID)
 	fmt.Printf("  User status: %s\n", userDetails.Status)
 
 	// Step 10: Unsuspend the user
 	fmt.Println("\nStep 10: Unsuspending viewer user...")
-	if err := client.IAM().User().Unsuspend(ctx, tenantID, viewerUser.ID); err != nil {
+	if err := client.Identity().IAM().User().Unsuspend(ctx, tenantID, viewerUser.ID); err != nil {
 		log.Fatalf("Failed to unsuspend user: %v", err)
 	}
 	fmt.Printf("  Unsuspended user: %s\n", viewerUser.Username)
 
 	// Verify unsuspension
-	userDetails, _ = client.IAM().User().Get(ctx, tenantID, viewerUser.ID)
+	userDetails, _ = client.Identity().IAM().User().Get(ctx, tenantID, viewerUser.ID)
 	fmt.Printf("  User status: %s\n", userDetails.Status)
 
 	// Step 11: List all roles
 	fmt.Println("\nStep 11: Listing all roles...")
-	rolesResp, err := client.IAM().Role().List(ctx, tenantID, nil)
+	rolesResp, err := client.Identity().IAM().Role().List(ctx, tenantID, nil)
 	if err != nil {
 		log.Fatalf("Failed to list roles: %v", err)
 	}
@@ -316,7 +316,7 @@ func main() {
 
 	// Step 12: Update tenant settings
 	fmt.Println("\nStep 12: Updating tenant settings...")
-	updatedTenant, err := client.IAM().Tenant().Update(ctx, tenantID, &iam.UpdateTenantRequest{
+	updatedTenant, err := client.Identity().IAM().Tenant().Update(ctx, tenantID, &iam.UpdateTenantRequest{
 		Description: "ACME Corporation - Updated description",
 		Settings: map[string]string{
 			"mfa_required":    "true",
@@ -342,7 +342,7 @@ func main() {
 		{devUser.ID, devUser.Username},
 		{viewerUser.ID, viewerUser.Username},
 	} {
-		if err := client.IAM().User().Delete(ctx, tenantID, u.id); err != nil {
+		if err := client.Identity().IAM().User().Delete(ctx, tenantID, u.id); err != nil {
 			log.Printf("  Warning: Failed to delete user %s: %v", u.name, err)
 		} else {
 			fmt.Printf("  Deleted user: %s\n", u.name)
@@ -357,7 +357,7 @@ func main() {
 		{engineeringGroup.ID, engineeringGroup.Name},
 		{opsGroup.ID, opsGroup.Name},
 	} {
-		if err := client.IAM().Group().Delete(ctx, tenantID, g.id); err != nil {
+		if err := client.Identity().IAM().Group().Delete(ctx, tenantID, g.id); err != nil {
 			log.Printf("  Warning: Failed to delete group %s: %v", g.name, err)
 		} else {
 			fmt.Printf("  Deleted group: %s\n", g.name)
@@ -373,7 +373,7 @@ func main() {
 		{devRole.ID, devRole.Name},
 		{viewerRole.ID, viewerRole.Name},
 	} {
-		if err := client.IAM().Role().Delete(ctx, tenantID, r.id); err != nil {
+		if err := client.Identity().IAM().Role().Delete(ctx, tenantID, r.id); err != nil {
 			log.Printf("  Warning: Failed to delete role %s: %v", r.name, err)
 		} else {
 			fmt.Printf("  Deleted role: %s\n", r.name)
@@ -381,7 +381,7 @@ func main() {
 	}
 
 	// Delete tenant
-	if err := client.IAM().Tenant().Delete(ctx, tenantID); err != nil {
+	if err := client.Identity().IAM().Tenant().Delete(ctx, tenantID); err != nil {
 		log.Printf("  Warning: Failed to delete tenant: %v", err)
 	} else {
 		fmt.Printf("  Deleted tenant: %s\n", tenant.Name)

@@ -34,10 +34,19 @@ import (
 )
 
 // workflowKeyPrefix is the KV key prefix under which all workflow
-// definitions live. Names are appended after the prefix to form full keys.
-// The leading "_" pushes this namespace below user-visible entity types in
-// any prefix listing.
+// definitions live. Keys are
+//
+//	_orchestration/workflows/<tenant>/<name>
+//
+// so a scan of one tenant's prefix can never observe another tenant's
+// definitions, and two tenants may register the same name. The leading "_"
+// pushes this namespace below user-visible entity types in any prefix listing.
 const workflowKeyPrefix = "_orchestration/workflows/"
+
+// workflowKeySeparator separates the tenant from the name inside a key. An
+// identifier containing it is refused rather than encoded, because a crafted
+// name could otherwise escape its tenant's subtree.
+const workflowKeySeparator = "/"
 
 // kvWorkflowPersistor stores workflow definitions in the QuicBaaS internal
 // KV store via the qrdb SDK. All workflows for the cluster live on the
@@ -52,53 +61,101 @@ func newKVWorkflowPersistor(client *qrdbsdk.Client, shardID uint64) *kvWorkflowP
 	return &kvWorkflowPersistor{client: client, shardID: shardID}
 }
 
-func (p *kvWorkflowPersistor) keyFor(name string) string {
-	return workflowKeyPrefix + name
+// workflowSegment refuses an identifier that cannot be a key segment.
+func workflowSegment(field, value string) error {
+	if value == "" {
+		return &ServerMessageError{Message: "kvWorkflowPersistor: workflow " + field + " is required"}
+	}
+	if strings.Contains(value, workflowKeySeparator) {
+		return &ServerMessageError{Message: "kvWorkflowPersistor: workflow " + field + " must not contain " + workflowKeySeparator}
+	}
+	return nil
 }
 
-// Save serializes the definition as JSON and writes it under the
-// canonical workflow key. JSON is used (not YAML) because the rest of the
-// orchestration layer already round-trips definitions as JSON over REST/gRPC.
+// tenantPrefix returns the scan prefix covering one tenant's workflows.
+func (p *kvWorkflowPersistor) tenantPrefix(tenantID string) (string, error) {
+	if err := workflowSegment("tenant", tenantID); err != nil {
+		return "", err
+	}
+	return workflowKeyPrefix + tenantID + workflowKeySeparator, nil
+}
+
+// keyFor returns the key holding one tenant's workflow.
+func (p *kvWorkflowPersistor) keyFor(tenantID, name string) (string, error) {
+	prefix, err := p.tenantPrefix(tenantID)
+	if err != nil {
+		return "", err
+	}
+	if err := workflowSegment("name", name); err != nil {
+		return "", err
+	}
+	return prefix + name, nil
+}
+
+// Save serializes the definition as JSON and writes it under the tenant's
+// workflow key. JSON is used (not YAML) because the rest of the orchestration
+// layer already round-trips definitions as JSON over REST/gRPC.
 func (p *kvWorkflowPersistor) Save(ctx context.Context, def *orchestration.WorkflowDefinition) error {
-	if def == nil || def.Name == "" {
+	if def == nil {
 		return &ServerMessageError{Message: "kvWorkflowPersistor: workflow name is required"}
+	}
+	key, err := p.keyFor(def.TenantID, def.Name)
+	if err != nil {
+		return err
 	}
 	data, err := json.Marshal(def)
 	if err != nil {
 		return &ServerCauseError{Message: fmt.Sprintf("kvWorkflowPersistor: marshal %q", def.Name), Cause: err}
 	}
-	if err := p.client.KV().Put(ctx, p.keyFor(def.Name), data); err != nil {
+	if err := p.client.KV().Put(ctx, key, data); err != nil {
 		return &ServerCauseError{Message: fmt.Sprintf("kvWorkflowPersistor: put %q", def.Name), Cause: err}
 	}
 	return nil
 }
 
-// Remove deletes the workflow's KV entry. Idempotent — a missing key is not
-// treated as an error since the loader has already validated that the
+// Remove deletes the tenant's workflow entry. Idempotent — a missing key is
+// not treated as an error since the loader has already validated that the
 // in-memory entry existed.
-func (p *kvWorkflowPersistor) Remove(ctx context.Context, name string) error {
-	if name == "" {
-		return &ServerMessageError{Message: "kvWorkflowPersistor: workflow name is required"}
+func (p *kvWorkflowPersistor) Remove(ctx context.Context, tenantID, name string) error {
+	key, err := p.keyFor(tenantID, name)
+	if err != nil {
+		return err
 	}
-	if err := p.client.KV().Delete(ctx, p.keyFor(name)); err != nil {
-		// Treat any "not found" as success so the operation stays idempotent.
-		// The qrdb SDK does not currently expose a typed NotFound error here,
-		// so callers retrying a Remove after a partial failure see success.
+	if err := p.client.KV().Delete(ctx, key); err != nil {
 		return &ServerCauseError{Message: fmt.Sprintf("kvWorkflowPersistor: delete %q", name), Cause: err}
 	}
 	return nil
 }
 
+// Load scans the tenant's prefix and decodes each value back into a
+// WorkflowDefinition.
+func (p *kvWorkflowPersistor) Load(ctx context.Context, tenantID string) ([]*orchestration.WorkflowDefinition, error) {
+	prefix, err := p.tenantPrefix(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return p.scan(ctx, prefix)
+}
+
 // LoadAll scans every key under workflowKeyPrefix and decodes each value
-// back into a WorkflowDefinition. Called once at startup by Rehydrate.
+// back into a WorkflowDefinition. Called once at startup by RehydrateAll.
 func (p *kvWorkflowPersistor) LoadAll(ctx context.Context) ([]*orchestration.WorkflowDefinition, error) {
-	results, err := p.client.KV().Scan(ctx, workflowKeyPrefix)
+	return p.scan(ctx, workflowKeyPrefix)
+}
+
+// scan decodes every workflow under prefix. The tenant and name are taken
+// from the KEY, which is authoritative: a stored body that disagrees with
+// where it is filed would otherwise let one tenant's record surface under
+// another tenant's cache.
+func (p *kvWorkflowPersistor) scan(ctx context.Context, prefix string) ([]*orchestration.WorkflowDefinition, error) {
+	results, err := p.client.KV().Scan(ctx, prefix)
 	if err != nil {
 		return nil, &ServerCauseError{Message: "kvWorkflowPersistor: scan", Cause: err}
 	}
 	defs := make([]*orchestration.WorkflowDefinition, 0, len(results))
 	for k, v := range results {
-		if !strings.HasPrefix(k, workflowKeyPrefix) {
+		tenantID, name, ok := splitWorkflowKey(k)
+		if !ok {
 			continue
 		}
 		def := &orchestration.WorkflowDefinition{}
@@ -108,10 +165,24 @@ func (p *kvWorkflowPersistor) LoadAll(ctx context.Context) ([]*orchestration.Wor
 			// operator fixes or removes it via the API.
 			continue
 		}
-		if def.Name == "" {
+		if def.Name == "" || def.Name != name {
 			continue
 		}
+		def.TenantID = tenantID
 		defs = append(defs, def)
 	}
 	return defs, nil
+}
+
+// splitWorkflowKey returns the tenant and name a workflow key addresses.
+func splitWorkflowKey(key string) (tenantID, name string, ok bool) {
+	rest, found := strings.CutPrefix(key, workflowKeyPrefix)
+	if !found {
+		return "", "", false
+	}
+	tenantID, name, found = strings.Cut(rest, workflowKeySeparator)
+	if !found || tenantID == "" || name == "" || strings.Contains(name, workflowKeySeparator) {
+		return "", "", false
+	}
+	return tenantID, name, true
 }

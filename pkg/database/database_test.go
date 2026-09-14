@@ -52,7 +52,7 @@ func TestTenantDatabaseName_Empty(t *testing.T) {
 
 func TestRecordKey(t *testing.T) {
 	got := RecordKey("my_app")
-	want := "sys:db:my_app"
+	want := "__sys:db:my_app"
 	if got != want {
 		t.Errorf("RecordKey() = %q, want %q", got, want)
 	}
@@ -60,7 +60,7 @@ func TestRecordKey(t *testing.T) {
 
 func TestRecordKey_Empty(t *testing.T) {
 	got := RecordKey("")
-	want := "sys:db:"
+	want := "__sys:db:"
 	if got != want {
 		t.Errorf("RecordKey(\"\") = %q, want %q", got, want)
 	}
@@ -215,8 +215,8 @@ func TestConstants(t *testing.T) {
 }
 
 func TestConstants_Prefixes(t *testing.T) {
-	if RecordKeyPrefix != "sys:db:" {
-		t.Errorf("RecordKeyPrefix = %q, want %q", RecordKeyPrefix, "sys:db:")
+	if RecordKeyPrefix != "__sys:db:" {
+		t.Errorf("RecordKeyPrefix = %q, want %q", RecordKeyPrefix, "__sys:db:")
 	}
 	if PlatformTenantKeyPrefix != "platform:tenant:" {
 		t.Errorf("PlatformTenantKeyPrefix = %q, want %q", PlatformTenantKeyPrefix, "platform:tenant:")

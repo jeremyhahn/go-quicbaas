@@ -25,24 +25,38 @@ import (
 
 // mintAccessToken issues a signed access token through the provider's token
 // service and returns the token string and the JTI it was minted with.
-func mintIntrospectToken(t *testing.T, provider *OIDCProvider, tenant, subject string, ttl time.Duration) (string, string) {
+// mintIntrospectToken mints a token for introspection tests.
+//
+// userID names the principal: a non-empty one becomes the uid claim, and an
+// empty one makes the token a SERVICE principal through ptyp. One or the other
+// is required, because liveness resolves the principal from those two claims
+// and nothing else — a token carrying neither predates the contract and is
+// denied (#390). These fixtures used to carry neither and passed only because
+// an unresolvable subject was inferred to be a service principal.
+func mintIntrospectToken(t *testing.T, provider *OIDCProvider, tenant, subject, userID string, ttl time.Duration) (string, string) {
 	t.Helper()
 	now := time.Now()
 	jti := "introspect-jti-" + subject + "-" + tenant
+	principalType := ""
+	if userID == "" {
+		principalType = PrincipalTypeService
+	}
 	claims := &Claims{
-		Issuer:    provider.config.Issuer,
-		Subject:   subject,
-		Audience:  []string{"https://rs.example.com"},
-		ExpiresAt: NewUnixTime(now.Add(ttl)),
-		IssuedAt:  NewUnixTime(now),
-		NotBefore: NewUnixTime(now),
-		JTI:       jti,
-		TenantID:  tenant,
-		Roles:     []string{"admin"},
-		Scope:     "openid profile agent:runtime:spawn",
-		SCP:       []string{"openid", "profile", "agent:runtime:spawn"},
-		ClientID:  "app_" + tenant + "_rs",
-		Name:      "Test Subject",
+		UserID:        userID,
+		PrincipalType: principalType,
+		Issuer:        provider.config.Issuer,
+		Subject:       subject,
+		Audience:      []string{"https://rs.example.com"},
+		ExpiresAt:     NewUnixTime(now.Add(ttl)),
+		IssuedAt:      NewUnixTime(now),
+		NotBefore:     NewUnixTime(now),
+		JTI:           jti,
+		TenantID:      tenant,
+		Roles:         []string{"admin"},
+		Scope:         "openid profile agent:runtime:spawn",
+		SCP:           []string{"openid", "profile", "agent:runtime:spawn"},
+		ClientID:      "app_" + tenant + "_rs",
+		Name:          "Test Subject",
 	}
 	token, err := provider.tokenService.GenerateAccessToken(context.Background(), claims)
 	if err != nil {
@@ -57,7 +71,7 @@ func TestOIDCIntrospect_ActiveToken(t *testing.T) {
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 
-	token, jti := mintIntrospectToken(t, provider, "tenant-a", "user-1", time.Hour)
+	token, jti := mintIntrospectToken(t, provider, "tenant-a", "user-1", "", time.Hour)
 
 	resp, err := provider.Introspect(ctx, &IntrospectRequest{Token: token})
 	if err != nil {
@@ -120,7 +134,7 @@ func TestOIDCIntrospect_ExpiredToken(t *testing.T) {
 	ctx := context.Background()
 
 	// Negative TTL -> already expired.
-	token, _ := mintIntrospectToken(t, provider, "tenant-a", "user-exp", -time.Minute)
+	token, _ := mintIntrospectToken(t, provider, "tenant-a", "user-exp", "", -time.Minute)
 
 	resp, err := provider.Introspect(ctx, &IntrospectRequest{Token: token})
 	if err != nil {
@@ -140,7 +154,7 @@ func TestOIDCIntrospect_RevokedToken(t *testing.T) {
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 
-	token, _ := mintIntrospectToken(t, provider, "tenant-a", "user-rev", time.Hour)
+	token, _ := mintIntrospectToken(t, provider, "tenant-a", "user-rev", "", time.Hour)
 
 	// Confirm active before revocation.
 	resp, err := provider.Introspect(ctx, &IntrospectRequest{Token: token})
@@ -168,7 +182,7 @@ func TestOIDCIntrospect_RevokedToken(t *testing.T) {
 func TestOIDCIntrospect_TenantFromClaim(t *testing.T) {
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 
-	token, _ := mintIntrospectToken(t, provider, "tenant-b", "user-2", time.Hour)
+	token, _ := mintIntrospectToken(t, provider, "tenant-b", "user-2", "", time.Hour)
 
 	// Context tenant deliberately differs from the token's tenant claim.
 	ctx := ContextWithTenant(context.Background(), "tenant-wrong")

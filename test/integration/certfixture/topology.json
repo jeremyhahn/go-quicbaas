@@ -1,0 +1,85 @@
+{
+  "ca_common_name": "QuicBaaS Integration CA",
+  "organization": "QuicBaaS Integration Tests",
+  "spiffe_trust_domain": "quicbaas.integration",
+  "nodes": [
+    {
+      "file": "node1",
+      "common_name": "test-node1",
+      "dns_names": [
+        "localhost",
+        "test-node1",
+        "node1",
+        "quicbaas-node1"
+      ],
+      "ip_addresses": [
+        "127.0.0.1",
+        "::1"
+      ]
+    },
+    {
+      "file": "node2",
+      "common_name": "test-node2",
+      "dns_names": [
+        "localhost",
+        "test-node2",
+        "node2",
+        "quicbaas-node2"
+      ],
+      "ip_addresses": [
+        "127.0.0.1",
+        "::1"
+      ]
+    },
+    {
+      "file": "node3",
+      "common_name": "test-node3",
+      "dns_names": [
+        "localhost",
+        "test-node3",
+        "node3",
+        "quicbaas-node3"
+      ],
+      "ip_addresses": [
+        "127.0.0.1",
+        "::1"
+      ]
+    },
+    {
+      "file": "node4",
+      "common_name": "test-node4",
+      "dns_names": [
+        "localhost",
+        "test-node4",
+        "node4",
+        "quicbaas-node4"
+      ],
+      "ip_addresses": [
+        "127.0.0.1",
+        "::1"
+      ]
+    },
+    {
+      "file": "node5",
+      "common_name": "test-node5",
+      "dns_names": [
+        "localhost",
+        "test-node5",
+        "node5",
+        "quicbaas-node5"
+      ],
+      "ip_addresses": [
+        "127.0.0.1",
+        "::1"
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "file": "admin",
+      "common_name": "admin@integration.test",
+      "email": "admin@integration.test",
+      "tenant_id": "system"
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+Review the following artifacts against criterion: tests pass. Config: go test ./.... Artifacts:
+
+Respond with ONLY valid JSON: {"passed": bool, "message": "string"}

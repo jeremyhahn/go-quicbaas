@@ -205,6 +205,7 @@ func resetBarrierFlags() {
 	barrierSecret = ""
 	barrierShares = nil
 	barrierSharesFile = ""
+	barrierRecoverySharesFile = ""
 	barrierThreshold = 0
 	barrierTotalShares = 0
 	barrierOutputFmt = "table"
@@ -684,6 +685,13 @@ func TestBarrierSeal_AssumeYes(t *testing.T) {
 
 // TestBarrierSeal_AcceptsSOPin verifies the canonical --so-pin flag is
 // accepted (parsed for surface parity).
+//
+// This is the half of the design #491 deliberately did NOT change: it chose
+// option A (soften the help that demanded a PIN the verb discards) over
+// option C (drop the flag). Removing the flag would give up the four-CLI
+// lock-step newBarrierSealCommand's doc comment buys, and would have to be
+// undone when the SDK gains a request-bearing BarrierSeal. If this test is
+// ever deleted, that is option C being taken by accident.
 func TestBarrierSeal_AcceptsSOPin(t *testing.T) {
 	defer resetBarrierFlags()
 	fc := &fakeBarrierClient{}
@@ -858,7 +866,9 @@ func TestBarrierRecoveryGenerate_Success(t *testing.T) {
 // recovery recover
 // =============================================================================
 
-// TestBarrierRecoveryRecover_RequiresShare rejects empty input.
+// TestBarrierRecoveryRecover_RequiresShare rejects empty input. The verb
+// shares resolveUnsealShares with its siblings now, so it reports the same
+// typed error and names both input modes rather than only --share (#227).
 func TestBarrierRecoveryRecover_RequiresShare(t *testing.T) {
 	defer resetBarrierFlags()
 	cmd := newBarrierRecoveryRecoverCommand()
@@ -869,7 +879,11 @@ func TestBarrierRecoveryRecover_RequiresShare(t *testing.T) {
 
 	err := cmd.Execute()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--share is required")
+	var typed *BarrierShareInputError
+	require.ErrorAs(t, err, &typed)
+	assert.Contains(t, typed.Error(), "one of --share")
+	assert.Contains(t, typed.Error(), "--shares-file")
+	assert.Contains(t, typed.Error(), "barrier recovery recover")
 }
 
 // TestBarrierRecoveryRecover_Success forwards repeatable shares.
@@ -887,6 +901,108 @@ func TestBarrierRecoveryRecover_Success(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastRecoverReq)
 	assert.Equal(t, []string{"k1", "k2"}, fc.lastRecoverReq.Keys)
+}
+
+// TestBarrierRecoveryRecover_ReadsSharesFile is the fix for #227: a recovery
+// quorum can be supplied off argv.
+//
+// The assertion is the KEYS THAT REACHED THE SDK, not that the command ran.
+// A test that only checked for a nil error would pass against a build where
+// --shares-file parses and is then ignored, which is the failure mode worth
+// guarding: the flag existing is not the same as the flag being read.
+func TestBarrierRecoveryRecover_ReadsSharesFile(t *testing.T) {
+	defer resetBarrierFlags()
+	fc := &fakeBarrierClient{}
+	defer withFakeBarrier(fc)()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "recovery.txt")
+	body := "key-a\n\n# an officer's note\nkey-b\n   key-c   \n"
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	cmd := newBarrierRecoveryRecoverCommand()
+	cmd.SetArgs([]string{"--shares-file", path})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	require.NoError(t, cmd.Execute())
+	require.NotNil(t, fc.lastRecoverReq)
+	assert.Equal(t, []string{"key-a", "key-b", "key-c"}, fc.lastRecoverReq.Keys,
+		"--shares-file was accepted but its keys did not reach the SDK")
+}
+
+// TestBarrierRecoveryRecover_MutuallyExclusive rejects --share + --shares-file,
+// matching unseal-shares and root-token.
+func TestBarrierRecoveryRecover_MutuallyExclusive(t *testing.T) {
+	defer resetBarrierFlags()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "recovery.txt")
+	require.NoError(t, os.WriteFile(path, []byte("key-a\n"), 0o600))
+
+	cmd := newBarrierRecoveryRecoverCommand()
+	cmd.SetArgs([]string{"--share", "key-a", "--shares-file", path})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	var typed *BarrierShareInputError
+	require.ErrorAs(t, err, &typed)
+	assert.Contains(t, typed.Error(), "exactly one")
+}
+
+// TestBarrierRecoveryRecover_UsesItsOwnSharesFileVariable proves the two
+// quorum verbs do not share flag state. barrierSharesFile belongs to
+// unseal-shares and root-token; a recovery recover that read it would take a
+// path the operator supplied to a different verb.
+func TestBarrierRecoveryRecover_UsesItsOwnSharesFileVariable(t *testing.T) {
+	defer resetBarrierFlags()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "recovery.txt")
+	require.NoError(t, os.WriteFile(path, []byte("key-a\n"), 0o600))
+
+	cmd := newBarrierRecoveryRecoverCommand()
+	require.NoError(t, cmd.Flags().Parse([]string{"--shares-file", path}))
+
+	assert.Equal(t, path, barrierRecoverySharesFile)
+	assert.Empty(t, barrierSharesFile,
+		"recovery recover wrote the unseal-shares/root-token variable")
+}
+
+// TestSharesFileErrorsNameTheInvokingVerb covers the attribution defect the
+// #227 work surfaced. readSharesFile is reached by three verbs, and both of
+// its error types hard-coded "barrier unseal-shares" — so an operator whose
+// `barrier root-token --shares-file` pointed at a bad path was sent off to
+// debug a verb they had not run. BarrierShareInputError already carried an Op
+// field for exactly this reason; these two did not.
+func TestSharesFileErrorsNameTheInvokingVerb(t *testing.T) {
+	dir := t.TempDir()
+	empty := filepath.Join(dir, "empty.txt")
+	require.NoError(t, os.WriteFile(empty, []byte("# only comments\n"), 0o600))
+
+	for _, op := range []string{
+		"barrier unseal-shares",
+		"barrier root-token",
+		"barrier recovery recover",
+	} {
+		t.Run(op, func(t *testing.T) {
+			_, err := readSharesFile("/nonexistent/shares.txt", op)
+			require.Error(t, err)
+			var missing *BarrierSharesFileError
+			require.ErrorAs(t, err, &missing)
+			assert.True(t, strings.HasPrefix(missing.Error(), op+": "),
+				"unreadable-file error names the wrong verb: %q", missing.Error())
+
+			_, err = readSharesFile(empty, op)
+			require.Error(t, err)
+			var blank *BarrierSharesFileEmptyError
+			require.ErrorAs(t, err, &blank)
+			assert.True(t, strings.HasPrefix(blank.Error(), op+": "),
+				"empty-file error names the wrong verb: %q", blank.Error())
+		})
+	}
 }
 
 // =============================================================================

@@ -20,18 +20,47 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
-	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 )
 
 // =============================================================================
 // Test doubles
 // =============================================================================
 
+// forwardPutIfAbsent delegates a guarded create to the wrapped store.
+//
+// EMBEDDING interfaces.KVStore DOES NOT CARRY THIS VERB. Embedding an interface
+// promotes exactly that interface's method set, and the guarded verbs are a
+// separate capability discovered by type assertion — so a wrapper is silently
+// NOT a guardedCreator however atomic the store inside it is, and every create
+// through it would be refused. Each wrapper below therefore forwards
+// explicitly. This is the cost of capability-by-assertion, and it is worth
+// naming: the alternative is a wrapper that quietly loses a guarantee its
+// inner store provides.
+func forwardPutIfAbsent(ctx context.Context, inner interfaces.KVStore, key string, value []byte) (bool, error) {
+	creator, ok := inner.(guardedCreator)
+	if !ok {
+		return false, errors.New("test wrapper: inner store cannot guard a create")
+	}
+	return creator.PutIfAbsent(ctx, key, value)
+}
+
+// forwardCompareAndDelete delegates a guarded delete to the wrapped store, for
+// the same reason forwardPutIfAbsent exists.
+func forwardCompareAndDelete(ctx context.Context, inner interfaces.KVStore, key string, expected []byte) (bool, error) {
+	deleter, ok := inner.(guardedDeleter)
+	if !ok {
+		return false, errors.New("test wrapper: inner store cannot guard a delete")
+	}
+	return deleter.CompareAndDelete(ctx, key, expected)
+}
+
 // taskFaultKV injects a failure into one KV verb while delegating every other
 // verb to the real store. It embeds interfaces.KVStore so a new verb added to
-// the contract keeps compiling here and keeps behaving like the real store.
+// the contract keeps compiling here and keeps behaving like the real store —
+// but see forwardPutIfAbsent for the capability that embedding cannot carry.
 type taskFaultKV struct {
 	interfaces.KVStore
 
@@ -49,7 +78,16 @@ type taskFaultKV struct {
 }
 
 func newTaskFaultKV() *taskFaultKV {
-	return &taskFaultKV{KVStore: kvstore.NewMemory()}
+	return &taskFaultKV{KVStore: NewMemoryTaskKV()}
+}
+
+// PutIfAbsent forwards the guarded create, honouring the injected write
+// failure: a create is a write, so a store failing writes must fail creates.
+func (k *taskFaultKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if k.putErr != nil {
+		return false, k.putErr
+	}
+	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
 }
 
 func (k *taskFaultKV) Put(ctx context.Context, key string, value []byte) error {
@@ -78,6 +116,11 @@ func (k *taskFaultKV) Delete(ctx context.Context, key string) error {
 type taskCancelScanKV struct {
 	interfaces.KVStore
 	cancel context.CancelFunc
+}
+
+// PutIfAbsent forwards the guarded create; this wrapper only alters Scan.
+func (k *taskCancelScanKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
 }
 
 func (k *taskCancelScanKV) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
@@ -155,7 +198,7 @@ func TestNewInMemoryTaskStore(t *testing.T) {
 func TestNewTaskStore_NilKV(t *testing.T) {
 	t.Parallel()
 
-	store := NewTaskStore(nil)
+	store := NewTaskStore(nil, NewProcessClaimArbiter())
 	err := store.CreateTask(context.Background(), &Task{ID: "t1", TenantID: "ten"})
 	if !errors.Is(err, ErrTaskStoreInvalidInput) {
 		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
@@ -167,7 +210,7 @@ func TestNewTaskStore_NilKV(t *testing.T) {
 func TestNewInMemoryTaskStoreWithKV_DefaultInlineLimit(t *testing.T) {
 	t.Parallel()
 
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	store := NewInMemoryTaskStoreWithKV(kv, 0)
 	seedTask(t, store, "ten", "task-limit")
 
@@ -198,7 +241,7 @@ func TestTaskStore_CRUDRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := NewTaskStore(kvstore.NewMemory())
+	store := NewTaskStore(NewMemoryTaskKV(), NewProcessClaimArbiter())
 
 	created := &Task{
 		ID:          "task-crud",
@@ -273,10 +316,10 @@ func TestTaskStore_RestartSeesEverything(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	large := strings.Repeat("L", 64)
 
-	original := NewTaskStore(kv, WithInlineArtifactLimit(16))
+	original := NewTaskStore(kv, NewProcessClaimArbiter(), WithInlineArtifactLimit(16))
 	seedTask(t, original, "ten", "task-a")
 	seedTask(t, original, "ten", "task-b")
 
@@ -292,7 +335,7 @@ func TestTaskStore_RestartSeesEverything(t *testing.T) {
 	}
 
 	// A brand new store over the same KV, sharing nothing with the first.
-	restarted := NewTaskStore(kv, WithInlineArtifactLimit(16))
+	restarted := NewTaskStore(kv, NewProcessClaimArbiter(), WithInlineArtifactLimit(16))
 
 	listed, err := restarted.ListTasks(ctx, "ten", nil)
 	if err != nil {
@@ -337,8 +380,8 @@ func TestTaskStore_TenantIsolation(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
-	store := NewTaskStore(kv, WithInlineArtifactLimit(8))
+	kv := NewMemoryTaskKV()
+	store := NewTaskStore(kv, NewProcessClaimArbiter(), WithInlineArtifactLimit(8))
 
 	seedTask(t, store, "tenant-a", "a-task")
 	victim := seedTask(t, store, "tenant-b", "b-task")
@@ -421,7 +464,7 @@ func TestTaskStore_TenantIsolation_PrefixNeighbours(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := NewTaskStore(kvstore.NewMemory(), WithInlineArtifactLimit(4))
+	store := NewTaskStore(NewMemoryTaskKV(), NewProcessClaimArbiter(), WithInlineArtifactLimit(4))
 
 	seedTask(t, store, "t1", "shared-id")
 	seedTask(t, store, "t10", "shared-id")
@@ -469,8 +512,8 @@ func TestTaskStore_ForeignRecordUnderTenantKeyIsHidden(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
-	store := NewTaskStore(kv)
+	kv := NewMemoryTaskKV()
+	store := NewTaskStore(kv, NewProcessClaimArbiter())
 
 	planted, err := json.Marshal(&Task{ID: "planted", TenantID: "tenant-b", Subject: "not yours"})
 	if err != nil {
@@ -498,8 +541,8 @@ func TestTaskStore_ListTasksSkipsCorruptRecord(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
-	store := NewTaskStore(kv)
+	kv := NewMemoryTaskKV()
+	store := NewTaskStore(kv, NewProcessClaimArbiter())
 
 	seedTask(t, store, "ten", "good")
 	if err := kv.Put(ctx, "orch/task/ten/corrupt", []byte("{not json")); err != nil {
@@ -593,8 +636,8 @@ func TestTaskStore_ArtifactNameIsEncodedNotRejected(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
-	store := NewTaskStore(kv, WithInlineArtifactLimit(4))
+	kv := NewMemoryTaskKV()
+	store := NewTaskStore(kv, NewProcessClaimArbiter(), WithInlineArtifactLimit(4))
 	seedTask(t, store, "ten", "task-names")
 
 	payload := strings.Repeat("p", 32)
@@ -766,8 +809,8 @@ func TestTaskStore_ArtifactOffload(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
-	store := NewTaskStore(kv, WithInlineArtifactLimit(8))
+	kv := NewMemoryTaskKV()
+	store := NewTaskStore(kv, NewProcessClaimArbiter(), WithInlineArtifactLimit(8))
 	seedTask(t, store, "ten", "task-offload")
 
 	payload := strings.Repeat("x", 64)
@@ -854,8 +897,8 @@ func TestTaskStore_ForeignArtifactRefIsNotDereferenced(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
-	store := NewTaskStore(kv)
+	kv := NewMemoryTaskKV()
+	store := NewTaskStore(kv, NewProcessClaimArbiter())
 	seedTask(t, store, "tenant-a", "victim")
 	seedTask(t, store, "tenant-b", "attacker")
 
@@ -881,8 +924,8 @@ func TestTaskStore_MissingArtifactPayload(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
-	store := NewTaskStore(kv, WithInlineArtifactLimit(4))
+	kv := NewMemoryTaskKV()
+	store := NewTaskStore(kv, NewProcessClaimArbiter(), WithInlineArtifactLimit(4))
 	seedTask(t, store, "ten", "task-orphan")
 
 	err := store.SubmitTaskArtifacts(ctx, "ten", "task-orphan", []Artifact{
@@ -918,7 +961,7 @@ func TestTaskStore_AuditTrail(t *testing.T) {
 
 	ctx := context.Background()
 	recorder := &taskAuditRecorder{}
-	store := NewTaskStore(kvstore.NewMemory(), WithStoreAuditor(recorder))
+	store := NewTaskStore(NewMemoryTaskKV(), NewProcessClaimArbiter(), WithStoreAuditor(recorder))
 
 	mutations := []struct {
 		name   string
@@ -1028,7 +1071,7 @@ func TestTaskStore_AuditTrail(t *testing.T) {
 	})
 
 	t.Run("cascade delete records one event per task", func(t *testing.T) {
-		cascade := NewTaskStore(kvstore.NewMemory(), WithStoreAuditor(recorder))
+		cascade := NewTaskStore(NewMemoryTaskKV(), NewProcessClaimArbiter(), WithStoreAuditor(recorder))
 		seedTask(t, cascade, "bulk", "one")
 		seedTask(t, cascade, "bulk", "two")
 		recorder.drain()
@@ -1067,7 +1110,7 @@ func TestTaskStore_BackendFailures(t *testing.T) {
 	newStore := func(t *testing.T, arm func(*taskFaultKV)) TaskStore {
 		t.Helper()
 		kv := newTaskFaultKV()
-		store := NewTaskStore(kv, WithInlineArtifactLimit(4))
+		store := NewTaskStore(kv, NewProcessClaimArbiter(), WithInlineArtifactLimit(4))
 		seedTask(t, store, "ten", "task-1")
 		if err := store.ClaimTask(ctx, "ten", "task-1", "agent-1"); err != nil {
 			t.Fatalf("seed claim: %v", err)
@@ -1086,10 +1129,11 @@ func TestTaskStore_BackendFailures(t *testing.T) {
 		arm  func(*taskFaultKV)
 		call func(TaskStore) error
 	}{
-		{"CreateTask probe", func(k *taskFaultKV) { k.existsErr = outage }, func(s TaskStore) error {
-			return s.CreateTask(ctx, &Task{ID: "task-2", TenantID: "ten"})
-		}},
-		{"CreateTask write", func(k *taskFaultKV) { k.putErr = outage }, func(s TaskStore) error {
+		// There is no "CreateTask probe" case any more, and its absence is the
+		// point: the guarded create issues ONE operation, so there is no probe
+		// left to fail independently of the write. The case below covers the
+		// whole create path.
+		{"CreateTask guarded write", func(k *taskFaultKV) { k.putErr = outage }, func(s TaskStore) error {
 			return s.CreateTask(ctx, &Task{ID: "task-2", TenantID: "ten"})
 		}},
 		{"GetTask", func(k *taskFaultKV) { k.getErr = outage }, func(s TaskStore) error {
@@ -1210,8 +1254,8 @@ func TestTaskStore_ScanCancellation(t *testing.T) {
 	t.Parallel()
 
 	seedCtx := context.Background()
-	base := kvstore.NewMemory()
-	seedStore := NewTaskStore(base)
+	base := NewMemoryTaskKV()
+	seedStore := NewTaskStore(base, NewProcessClaimArbiter())
 	seedTask(t, seedStore, "ten", "task-1")
 
 	for _, tc := range []struct {
@@ -1230,7 +1274,7 @@ func TestTaskStore_ScanCancellation(t *testing.T) {
 			ctx, cancel := context.WithCancel(seedCtx)
 			defer cancel()
 
-			store := NewTaskStore(&taskCancelScanKV{KVStore: base, cancel: cancel})
+			store := NewTaskStore(&taskCancelScanKV{KVStore: base, cancel: cancel}, NewProcessClaimArbiter())
 			if err := tc.call(ctx, store); !errors.Is(err, context.Canceled) {
 				t.Fatalf("expected context.Canceled, got %v", err)
 			}
@@ -1245,8 +1289,8 @@ func TestTaskStore_CascadeSkipsMalformedKey(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
-	store := NewTaskStore(kv)
+	kv := NewMemoryTaskKV()
+	store := NewTaskStore(kv, NewProcessClaimArbiter())
 	seedTask(t, store, "ten", "task-1")
 
 	if err := kv.Put(ctx, "orch/task/ten/", []byte("{}")); err != nil {
@@ -2762,5 +2806,1247 @@ func TestListTasks_FilterByCreatedBy(t *testing.T) {
 		if r.CreatedBy != "user-1" {
 			t.Errorf("expected created_by user-1, got %q", r.CreatedBy)
 		}
+	}
+}
+
+// =============================================================================
+// Blocked lifecycle, filters and the guarded source index
+// =============================================================================
+
+// seedTaskInStatus creates a task and drives it to the requested status
+// through the store's own verbs, so every test below starts from a state the
+// store itself produced.
+func seedTaskInStatus(t *testing.T, store TaskStore, tenantID, taskID string, status TaskStatus) *Task {
+	t.Helper()
+	ctx := context.Background()
+	task := &Task{ID: taskID, TenantID: tenantID, Subject: "seed " + string(status)}
+	if err := store.CreateTask(ctx, task); err != nil {
+		t.Fatalf("seed create: %v", err)
+	}
+	switch status {
+	case TaskStatusPending:
+	case TaskStatusClaimed:
+		if err := store.ClaimTask(ctx, tenantID, taskID, "agent-seed"); err != nil {
+			t.Fatalf("seed claim: %v", err)
+		}
+	case TaskStatusInProgress:
+		if err := store.ClaimTask(ctx, tenantID, taskID, "agent-seed"); err != nil {
+			t.Fatalf("seed claim: %v", err)
+		}
+		current, err := store.GetTask(ctx, tenantID, taskID)
+		if err != nil {
+			t.Fatalf("seed get: %v", err)
+		}
+		current.Status = TaskStatusInProgress
+		if err := store.UpdateTask(ctx, current); err != nil {
+			t.Fatalf("seed in_progress: %v", err)
+		}
+	case TaskStatusCompleted:
+		if err := store.ClaimTask(ctx, tenantID, taskID, "agent-seed"); err != nil {
+			t.Fatalf("seed claim: %v", err)
+		}
+		if err := store.CompleteTask(ctx, tenantID, taskID, &TaskResult{Output: "done"}); err != nil {
+			t.Fatalf("seed complete: %v", err)
+		}
+	case TaskStatusFailed:
+		if err := store.ClaimTask(ctx, tenantID, taskID, "agent-seed"); err != nil {
+			t.Fatalf("seed claim: %v", err)
+		}
+		if err := store.FailTask(ctx, tenantID, taskID, "broken"); err != nil {
+			t.Fatalf("seed fail: %v", err)
+		}
+	case TaskStatusCancelled:
+		current, err := store.GetTask(ctx, tenantID, taskID)
+		if err != nil {
+			t.Fatalf("seed get: %v", err)
+		}
+		current.Status = TaskStatusCancelled
+		if err := store.UpdateTask(ctx, current); err != nil {
+			t.Fatalf("seed cancelled: %v", err)
+		}
+	case TaskStatusBlocked:
+		if err := store.BlockTask(ctx, tenantID, taskID, TaskBlockKindNeedsInfo, "seed block"); err != nil {
+			t.Fatalf("seed block: %v", err)
+		}
+	default:
+		t.Fatalf("seedTaskInStatus: unsupported status %q", status)
+	}
+	got, err := store.GetTask(ctx, tenantID, taskID)
+	if err != nil {
+		t.Fatalf("seed verify: %v", err)
+	}
+	if got.Status != status {
+		t.Fatalf("seed produced status %q, want %q", got.Status, status)
+	}
+	return got
+}
+
+func TestTaskTransitionAllowed_Table(t *testing.T) {
+	t.Parallel()
+
+	all := []TaskStatus{
+		TaskStatusPending, TaskStatusClaimed, TaskStatusInProgress,
+		TaskStatusCompleted, TaskStatusFailed, TaskStatusCancelled, TaskStatusBlocked,
+	}
+	allowed := map[TaskStatus][]TaskStatus{
+		TaskStatusPending:    {TaskStatusClaimed, TaskStatusBlocked},
+		TaskStatusClaimed:    {TaskStatusInProgress, TaskStatusCompleted, TaskStatusFailed, TaskStatusBlocked},
+		TaskStatusInProgress: {TaskStatusCompleted, TaskStatusFailed, TaskStatusBlocked},
+		TaskStatusBlocked:    {TaskStatusPending, TaskStatusFailed},
+		// failed -> pending is the readmission edge (go-quicbaas#945). It was
+		// absent, which made `failed` a sink no recovery verb could move and
+		// killed nine tasks permanently on a deploy-window fault.
+		TaskStatusFailed: {TaskStatusPending},
+	}
+	for _, from := range all {
+		for _, to := range all {
+			want := false
+			for _, ok := range allowed[from] {
+				if ok == to {
+					want = true
+				}
+			}
+			if got := taskTransitionAllowed(from, to); got != want {
+				t.Errorf("%s -> %s: got %v, want %v", from, to, got, want)
+			}
+		}
+	}
+}
+
+func TestBlockTask_FromEveryStatus(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		from    TaskStatus
+		allowed bool
+	}{
+		{TaskStatusPending, true},
+		{TaskStatusClaimed, true},
+		{TaskStatusInProgress, true},
+		{TaskStatusCompleted, false},
+		{TaskStatusFailed, false},
+		{TaskStatusCancelled, false},
+		{TaskStatusBlocked, false},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.from), func(t *testing.T) {
+			t.Parallel()
+			store := NewInMemoryTaskStore()
+			before := seedTaskInStatus(t, store, "tenant-a", "task-1", tc.from)
+
+			err := store.BlockTask(context.Background(), "tenant-a", "task-1", TaskBlockKindEscalated, "operator must decide")
+			if !tc.allowed {
+				var invalid *TaskInvalidStateError
+				if !errors.As(err, &invalid) {
+					t.Fatalf("expected TaskInvalidStateError, got %v", err)
+				}
+				if invalid.CurrentState != tc.from || invalid.TargetState != TaskStatusBlocked {
+					t.Fatalf("error names %s -> %s, want %s -> blocked", invalid.CurrentState, invalid.TargetState, tc.from)
+				}
+				after, getErr := store.GetTask(context.Background(), "tenant-a", "task-1")
+				if getErr != nil {
+					t.Fatalf("get: %v", getErr)
+				}
+				if after.Version != before.Version {
+					t.Fatalf("a refused transition must not write: version %d -> %d", before.Version, after.Version)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected block from %s to succeed, got %v", tc.from, err)
+			}
+			after, getErr := store.GetTask(context.Background(), "tenant-a", "task-1")
+			if getErr != nil {
+				t.Fatalf("get: %v", getErr)
+			}
+			if after.Status != TaskStatusBlocked {
+				t.Errorf("status = %s, want blocked", after.Status)
+			}
+			if after.BlockKind != TaskBlockKindEscalated || after.BlockedReason != "operator must decide" {
+				t.Errorf("block kind/reason = %s/%q", after.BlockKind, after.BlockedReason)
+			}
+			if after.StatusChangedAt <= before.StatusChangedAt {
+				t.Errorf("StatusChangedAt must advance: %d -> %d", before.StatusChangedAt, after.StatusChangedAt)
+			}
+			if after.Version != before.Version+1 {
+				t.Errorf("version = %d, want %d", after.Version, before.Version+1)
+			}
+		})
+	}
+}
+
+func TestBlockTask_InvalidInput(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryTaskStore()
+	seedTaskInStatus(t, store, "tenant-a", "task-1", TaskStatusPending)
+	ctx := context.Background()
+
+	err := store.BlockTask(ctx, "tenant-a", "task-1", TaskBlockKind("paused"), "why")
+	var badKind *InvalidTaskBlockKindError
+	if !errors.As(err, &badKind) || badKind.Kind != "paused" {
+		t.Fatalf("expected InvalidTaskBlockKindError for unknown kind, got %v", err)
+	}
+	if !errors.Is(err, ErrTaskStoreInvalidInput) {
+		t.Fatalf("unknown kind must unwrap to ErrTaskStoreInvalidInput, got %v", err)
+	}
+
+	err = store.BlockTask(ctx, "tenant-a", "task-1", TaskBlockKindBlocked, "")
+	if !errors.Is(err, ErrTaskStoreInvalidInput) {
+		t.Fatalf("expected ErrTaskStoreInvalidInput for empty reason, got %v", err)
+	}
+
+	err = store.BlockTask(ctx, "tenant-a", "missing", TaskBlockKindBlocked, "why")
+	if !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("expected ErrTaskNotFound, got %v", err)
+	}
+
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := store.BlockTask(cancelled, "tenant-a", "task-1", TaskBlockKindBlocked, "why"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+
+	got, getErr := store.GetTask(ctx, "tenant-a", "task-1")
+	if getErr != nil {
+		t.Fatalf("get: %v", getErr)
+	}
+	if got.Status != TaskStatusPending {
+		t.Fatalf("invalid input must not transition the task, status = %s", got.Status)
+	}
+}
+
+func TestReadmitTask_FromEveryStatus(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		from    TaskStatus
+		allowed bool
+	}{
+		{TaskStatusBlocked, true},
+		{TaskStatusPending, false},
+		{TaskStatusClaimed, false},
+		{TaskStatusInProgress, false},
+		{TaskStatusCompleted, false},
+		// READMISSIBLE as of go-quicbaas#945: a task the fleet broke is not a
+		// task that failed on its merits, and an operator must be able to say
+		// so. completed and cancelled stay terminal.
+		{TaskStatusFailed, true},
+		{TaskStatusCancelled, false},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.from), func(t *testing.T) {
+			t.Parallel()
+			store := NewInMemoryTaskStore()
+			seedTaskInStatus(t, store, "tenant-a", "task-1", tc.from)
+
+			err := store.ReadmitTask(context.Background(), "tenant-a", "task-1")
+			if !tc.allowed {
+				var invalid *TaskInvalidStateError
+				if !errors.As(err, &invalid) {
+					t.Fatalf("expected TaskInvalidStateError, got %v", err)
+				}
+				if invalid.TargetState != TaskStatusPending {
+					t.Fatalf("target = %s, want pending", invalid.TargetState)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected readmit to succeed, got %v", err)
+			}
+		})
+	}
+}
+
+func TestReadmitTask_ClearsBlockClaimAndRetryHold(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryTaskStore()
+	ctx := context.Background()
+	seedTaskInStatus(t, store, "tenant-a", "task-1", TaskStatusClaimed)
+
+	// A retry hold set by attempt accounting must not survive readmission.
+	held, err := store.GetTask(ctx, "tenant-a", "task-1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	held.RetryNotBefore = 1 << 60
+	if err := store.UpdateTask(ctx, held); err != nil {
+		t.Fatalf("set retry hold: %v", err)
+	}
+	if err := store.BlockTask(ctx, "tenant-a", "task-1", TaskBlockKindNeedsInfo, "which branch?"); err != nil {
+		t.Fatalf("block: %v", err)
+	}
+	blocked, err := store.GetTask(ctx, "tenant-a", "task-1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	if err := store.ReadmitTask(ctx, "tenant-a", "task-1"); err != nil {
+		t.Fatalf("readmit: %v", err)
+	}
+	got, err := store.GetTask(ctx, "tenant-a", "task-1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Status != TaskStatusPending {
+		t.Errorf("status = %s, want pending", got.Status)
+	}
+	if got.BlockKind != "" || got.BlockedReason != "" {
+		t.Errorf("block must be cleared, got %s/%q", got.BlockKind, got.BlockedReason)
+	}
+	if got.AssignedTo != "" || got.ClaimedAt != 0 {
+		t.Errorf("claim must be cleared, got %q/%d", got.AssignedTo, got.ClaimedAt)
+	}
+	if got.RetryNotBefore != 0 {
+		t.Errorf("retry hold must be cleared, got %d", got.RetryNotBefore)
+	}
+	if got.StatusChangedAt <= blocked.StatusChangedAt {
+		t.Errorf("StatusChangedAt must advance on readmit")
+	}
+
+	// And the readmitted task is claimable again.
+	if err := store.ClaimTask(ctx, "tenant-a", "task-1", "agent-2"); err != nil {
+		t.Fatalf("claim after readmit: %v", err)
+	}
+}
+
+func TestReadmitTask_NotFoundAndCancelled(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryTaskStore()
+	if err := store.ReadmitTask(context.Background(), "tenant-a", "missing"); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("expected ErrTaskNotFound, got %v", err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := store.ReadmitTask(cancelled, "tenant-a", "any"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestBlockedTask_FailsButDoesNotCompleteOrClaim(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	t.Run("fail retires a blocked task", func(t *testing.T) {
+		t.Parallel()
+		store := NewInMemoryTaskStore()
+		seedTaskInStatus(t, store, "tenant-a", "task-1", TaskStatusBlocked)
+		if err := store.FailTask(ctx, "tenant-a", "task-1", "abandoned"); err != nil {
+			t.Fatalf("fail from blocked: %v", err)
+		}
+		got, err := store.GetTask(ctx, "tenant-a", "task-1")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if got.Status != TaskStatusFailed || got.Result == nil || got.Result.Output != "abandoned" {
+			t.Fatalf("unexpected record after fail: %+v", got)
+		}
+	})
+
+	t.Run("complete is refused", func(t *testing.T) {
+		t.Parallel()
+		store := NewInMemoryTaskStore()
+		seedTaskInStatus(t, store, "tenant-a", "task-1", TaskStatusBlocked)
+		err := store.CompleteTask(ctx, "tenant-a", "task-1", &TaskResult{Output: "no"})
+		if !errors.Is(err, ErrTaskInvalidState) {
+			t.Fatalf("expected ErrTaskInvalidState, got %v", err)
+		}
+	})
+
+	t.Run("claim is refused", func(t *testing.T) {
+		t.Parallel()
+		store := NewInMemoryTaskStore()
+		seedTaskInStatus(t, store, "tenant-a", "task-1", TaskStatusBlocked)
+		err := store.ClaimTask(ctx, "tenant-a", "task-1", "agent-1")
+		if !errors.Is(err, ErrTaskInvalidState) {
+			t.Fatalf("expected ErrTaskInvalidState, got %v", err)
+		}
+	})
+}
+
+func TestTaskStore_StatusChangedAt(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryTaskStore()
+	ctx := context.Background()
+	created := seedTaskInStatus(t, store, "tenant-a", "task-1", TaskStatusPending)
+	if created.StatusChangedAt == 0 || created.StatusChangedAt != created.CreatedAt {
+		t.Fatalf("create must stamp StatusChangedAt = CreatedAt, got %d / %d", created.StatusChangedAt, created.CreatedAt)
+	}
+
+	// A raw edit that does not change the status keeps the stamp.
+	created.Priority = 5
+	if err := store.UpdateTask(ctx, created); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	same, err := store.GetTask(ctx, "tenant-a", "task-1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if same.StatusChangedAt != created.StatusChangedAt {
+		t.Errorf("non-status edit moved StatusChangedAt: %d -> %d", created.StatusChangedAt, same.StatusChangedAt)
+	}
+
+	// A claim moves it.
+	if err := store.ClaimTask(ctx, "tenant-a", "task-1", "agent-1"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	claimed, err := store.GetTask(ctx, "tenant-a", "task-1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if claimed.StatusChangedAt <= same.StatusChangedAt {
+		t.Errorf("claim must advance StatusChangedAt")
+	}
+
+	// A raw edit that changes the status moves it too. The stamp is compared
+	// against the value read before the edit, since UpdateTask writes through
+	// the caller's own record.
+	claimedAt := claimed.StatusChangedAt
+	claimed.Status = TaskStatusInProgress
+	if err := store.UpdateTask(ctx, claimed); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	inProgress, err := store.GetTask(ctx, "tenant-a", "task-1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if inProgress.StatusChangedAt <= claimedAt {
+		t.Errorf("status edit via UpdateTask must advance StatusChangedAt")
+	}
+}
+
+func TestTaskMatchesFilter_ProjectIDAndStatuses(t *testing.T) {
+	t.Parallel()
+
+	task := &Task{Status: TaskStatusBlocked, ProjectID: "proj-1", TeamName: "core"}
+	cases := []struct {
+		name   string
+		filter *TaskFilter
+		want   bool
+	}{
+		{"nil filter", nil, true},
+		{"project matches", &TaskFilter{ProjectID: "proj-1"}, true},
+		{"project differs", &TaskFilter{ProjectID: "proj-2"}, false},
+		{"statuses contains", &TaskFilter{Statuses: []TaskStatus{TaskStatusPending, TaskStatusBlocked}}, true},
+		{"statuses excludes", &TaskFilter{Statuses: []TaskStatus{TaskStatusPending, TaskStatusClaimed}}, false},
+		{"status and statuses both hold", &TaskFilter{Status: TaskStatusBlocked, Statuses: []TaskStatus{TaskStatusBlocked}}, true},
+		{"status contradicts statuses", &TaskFilter{Status: TaskStatusPending, Statuses: []TaskStatus{TaskStatusBlocked}}, false},
+		{"project and statuses", &TaskFilter{ProjectID: "proj-1", Statuses: []TaskStatus{TaskStatusBlocked}}, true},
+		{"project holds, statuses fail", &TaskFilter{ProjectID: "proj-1", Statuses: []TaskStatus{TaskStatusFailed}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := taskMatchesFilter(task, tc.filter); got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestListTasks_ProjectIDAndStatusesFilters(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryTaskStore()
+	ctx := context.Background()
+	seed := []struct {
+		id      string
+		project string
+		status  TaskStatus
+	}{
+		{"p1-pending", "proj-1", TaskStatusPending},
+		{"p1-blocked", "proj-1", TaskStatusBlocked},
+		{"p2-blocked", "proj-2", TaskStatusBlocked},
+		{"none-failed", "", TaskStatusFailed},
+	}
+	for _, s := range seed {
+		task := &Task{ID: s.id, TenantID: "tenant-a", Subject: s.id, ProjectID: s.project}
+		if err := store.CreateTask(ctx, task); err != nil {
+			t.Fatalf("create %s: %v", s.id, err)
+		}
+		switch s.status {
+		case TaskStatusBlocked:
+			if err := store.BlockTask(ctx, "tenant-a", s.id, TaskBlockKindBlocked, "waiting"); err != nil {
+				t.Fatalf("block %s: %v", s.id, err)
+			}
+		case TaskStatusFailed:
+			if err := store.ClaimTask(ctx, "tenant-a", s.id, "agent"); err != nil {
+				t.Fatalf("claim %s: %v", s.id, err)
+			}
+			if err := store.FailTask(ctx, "tenant-a", s.id, "x"); err != nil {
+				t.Fatalf("fail %s: %v", s.id, err)
+			}
+		}
+	}
+
+	ids := func(tasks []*Task) map[string]bool {
+		out := make(map[string]bool, len(tasks))
+		for _, task := range tasks {
+			out[task.ID] = true
+		}
+		return out
+	}
+
+	byProject, err := store.ListTasks(ctx, "tenant-a", &TaskFilter{ProjectID: "proj-1"})
+	if err != nil {
+		t.Fatalf("list by project: %v", err)
+	}
+	if got := ids(byProject); len(got) != 2 || !got["p1-pending"] || !got["p1-blocked"] {
+		t.Errorf("project filter returned %v", got)
+	}
+
+	byStatuses, err := store.ListTasks(ctx, "tenant-a", &TaskFilter{Statuses: []TaskStatus{TaskStatusBlocked, TaskStatusFailed}})
+	if err != nil {
+		t.Fatalf("list by statuses: %v", err)
+	}
+	if got := ids(byStatuses); len(got) != 3 || got["p1-pending"] {
+		t.Errorf("statuses filter returned %v", got)
+	}
+
+	both, err := store.ListTasks(ctx, "tenant-a", &TaskFilter{ProjectID: "proj-2", Statuses: []TaskStatus{TaskStatusBlocked}})
+	if err != nil {
+		t.Fatalf("list by both: %v", err)
+	}
+	if got := ids(both); len(got) != 1 || !got["p2-blocked"] {
+		t.Errorf("combined filter returned %v", got)
+	}
+
+	none, err := store.ListTasks(ctx, "tenant-a", &TaskFilter{ProjectID: "proj-9"})
+	if err != nil {
+		t.Fatalf("list by unknown project: %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("unknown project returned %d tasks", len(none))
+	}
+}
+
+func TestTaskSourceKind_Validate(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []TaskSourceKind{TaskSourceKindScheduler, TaskSourceKindOperator, TaskSourceKindJob} {
+		if err := kind.Validate(); err != nil {
+			t.Errorf("%s: unexpected error %v", kind, err)
+		}
+	}
+	for _, kind := range []TaskSourceKind{"", "cron", "OPERATOR"} {
+		err := kind.Validate()
+		var invalid *InvalidTaskSourceKindError
+		if !errors.As(err, &invalid) || invalid.Kind != kind {
+			t.Errorf("%q: expected InvalidTaskSourceKindError, got %v", kind, err)
+		}
+		if !errors.Is(err, ErrTaskStoreInvalidInput) {
+			t.Errorf("%q: must unwrap to ErrTaskStoreInvalidInput", kind)
+		}
+		if err.Error() == "" {
+			t.Errorf("%q: empty error message", kind)
+		}
+	}
+}
+
+func TestTaskBlockKind_Validate(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []TaskBlockKind{TaskBlockKindNeedsInfo, TaskBlockKindBlocked, TaskBlockKindEscalated} {
+		if err := kind.Validate(); err != nil {
+			t.Errorf("%s: unexpected error %v", kind, err)
+		}
+	}
+	for _, kind := range []TaskBlockKind{"", "paused", "NEEDS_INFO"} {
+		err := kind.Validate()
+		var invalid *InvalidTaskBlockKindError
+		if !errors.As(err, &invalid) || invalid.Kind != kind {
+			t.Errorf("%q: expected InvalidTaskBlockKindError, got %v", kind, err)
+		}
+		if err.Error() == "" {
+			t.Errorf("%q: empty error message", kind)
+		}
+	}
+}
+
+func TestTaskSource_Validate(t *testing.T) {
+	t.Parallel()
+
+	var nilSource *TaskSourceRef
+	if err := nilSource.Validate(); err != nil {
+		t.Errorf("nil source must be valid, got %v", err)
+	}
+	if err := (&TaskSourceRef{Kind: TaskSourceKindOperator, Ref: "alice"}).Validate(); err != nil {
+		t.Errorf("valid source rejected: %v", err)
+	}
+	if err := (&TaskSourceRef{Kind: "nope", Ref: "x"}).Validate(); !errors.Is(err, ErrTaskStoreInvalidInput) {
+		t.Errorf("unknown kind: expected ErrTaskStoreInvalidInput, got %v", err)
+	}
+	if err := (&TaskSourceRef{Kind: TaskSourceKindScheduler}).Validate(); !errors.Is(err, ErrTaskStoreInvalidInput) {
+		t.Errorf("empty ref: expected ErrTaskStoreInvalidInput, got %v", err)
+	}
+}
+
+func TestCreateTask_SourceIndex_RefusesSecondAdoption(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryTaskStore()
+	ctx := context.Background()
+	source := &TaskSourceRef{Kind: TaskSourceKindOperator, Ref: "owner/repo#12", URL: "https://example.invalid/12"}
+
+	first := &Task{ID: "task-1", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "first", Source: source}
+	if err := store.CreateTask(ctx, first); err != nil {
+		t.Fatalf("first adoption: %v", err)
+	}
+
+	second := &Task{ID: "task-2", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "second", Source: source}
+	err := store.CreateTask(ctx, second)
+	var adopted *TaskSourceAlreadyAdoptedError
+	if !errors.As(err, &adopted) {
+		t.Fatalf("expected TaskSourceAlreadyAdoptedError, got %v", err)
+	}
+	if adopted.TaskID != "task-1" || adopted.ProjectID != "proj-1" || adopted.Kind != TaskSourceKindOperator || adopted.Ref != "owner/repo#12" {
+		t.Fatalf("error does not name the holder: %+v", adopted)
+	}
+	if !errors.Is(err, ErrTaskSourceAlreadyAdopted) {
+		t.Fatalf("must unwrap to ErrTaskSourceAlreadyAdopted")
+	}
+	if !strings.Contains(err.Error(), "task-1") {
+		t.Fatalf("message must name the holder: %s", err.Error())
+	}
+	if _, getErr := store.GetTask(ctx, "tenant-a", "task-2"); !errors.Is(getErr, ErrTaskNotFound) {
+		t.Fatalf("refused task must not be written, got %v", getErr)
+	}
+
+	// The same source under another project, another tenant, or another
+	// kind is a different origin.
+	for _, variant := range []*Task{
+		{ID: "task-3", TenantID: "tenant-a", ProjectID: "proj-2", Subject: "other project", Source: source},
+		{ID: "task-4", TenantID: "tenant-b", ProjectID: "proj-1", Subject: "other tenant", Source: source},
+		{ID: "task-5", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "other kind", Source: &TaskSourceRef{Kind: TaskSourceKindScheduler, Ref: "owner/repo#12"}},
+		{ID: "task-6", TenantID: "tenant-a", Subject: "unscoped", Source: source},
+	} {
+		if err := store.CreateTask(ctx, variant); err != nil {
+			t.Errorf("%s: %v", variant.Subject, err)
+		}
+	}
+
+	// And a second unscoped adoption is refused like a scoped one.
+	err = store.CreateTask(ctx, &Task{ID: "task-7", TenantID: "tenant-a", Subject: "unscoped again", Source: source})
+	if !errors.As(err, &adopted) || adopted.TaskID != "task-6" {
+		t.Fatalf("unscoped second adoption: expected holder task-6, got %v", err)
+	}
+}
+
+func TestCreateTask_SourceIndex_ReleasedOnDelete(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryTaskStore()
+	ctx := context.Background()
+	source := &TaskSourceRef{Kind: TaskSourceKindScheduler, Ref: "nightly"}
+
+	if err := store.CreateTask(ctx, &Task{ID: "task-1", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "a", Source: source}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := store.DeleteTask(ctx, "tenant-a", "task-1"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	next := &Task{ID: "task-2", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "b", Source: source}
+	if err := store.CreateTask(ctx, next); err != nil {
+		t.Fatalf("re-adoption after delete must succeed, got %v", err)
+	}
+	// The delete gave the reservation back, so the new task took nothing
+	// over: a predecessor here would mean the entry had outlived the record.
+	if next.PredecessorTaskID() != "" {
+		t.Fatalf("a deleted task leaves nothing to supersede, got %q", next.PredecessorTaskID())
+	}
+}
+
+func TestCreateTask_SourceIndex_ReleasedOnDuplicateID(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryTaskStore()
+	ctx := context.Background()
+	source := &TaskSourceRef{Kind: TaskSourceKindJob, Ref: "job-9"}
+
+	if err := store.CreateTask(ctx, &Task{ID: "task-1", TenantID: "tenant-a", Subject: "a"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Same ID, now with a source: the record create is refused, and the
+	// reservation taken for it must be given back.
+	err := store.CreateTask(ctx, &Task{ID: "task-1", TenantID: "tenant-a", Subject: "dup", Source: source})
+	if !errors.Is(err, ErrTaskAlreadyExists) {
+		t.Fatalf("expected ErrTaskAlreadyExists, got %v", err)
+	}
+	if err := store.CreateTask(ctx, &Task{ID: "task-2", TenantID: "tenant-a", Subject: "b", Source: source}); err != nil {
+		t.Fatalf("source must not stay reserved after a refused create, got %v", err)
+	}
+}
+
+func TestCreateTask_SourceIndex_TenantCascade(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryTaskStore()
+	ctx := context.Background()
+	source := &TaskSourceRef{Kind: TaskSourceKindOperator, Ref: "alice"}
+
+	if err := store.CreateTask(ctx, &Task{ID: "task-1", TenantID: "tenant-a", Subject: "a", Source: source}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := store.DeleteTenantTasks(ctx, "tenant-a"); err != nil {
+		t.Fatalf("cascade: %v", err)
+	}
+	if err := store.CreateTask(ctx, &Task{ID: "task-2", TenantID: "tenant-a", Subject: "b", Source: source}); err != nil {
+		t.Fatalf("re-adoption after tenant cascade must succeed, got %v", err)
+	}
+}
+
+func TestCreateTask_SourceInvalidRefused(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryTaskStore()
+	ctx := context.Background()
+
+	err := store.CreateTask(ctx, &Task{ID: "task-1", TenantID: "tenant-a", Subject: "a", Source: &TaskSourceRef{Kind: "bogus", Ref: "x"}})
+	if !errors.Is(err, ErrTaskStoreInvalidInput) {
+		t.Fatalf("expected ErrTaskStoreInvalidInput for unknown kind, got %v", err)
+	}
+	err = store.CreateTask(ctx, &Task{ID: "task-1", TenantID: "tenant-a", Subject: "a", Source: &TaskSourceRef{Kind: TaskSourceKindOperator}})
+	if !errors.Is(err, ErrTaskStoreInvalidInput) {
+		t.Fatalf("expected ErrTaskStoreInvalidInput for empty ref, got %v", err)
+	}
+	if _, getErr := store.GetTask(ctx, "tenant-a", "task-1"); !errors.Is(getErr, ErrTaskNotFound) {
+		t.Fatalf("invalid source must not be written, got %v", getErr)
+	}
+}
+
+func TestCreateTask_SourceIndex_WithoutReleaserRefuses(t *testing.T) {
+	t.Parallel()
+
+	// A store whose KV can guard a create but not a delete cannot give a
+	// reservation back, so it must refuse a sourced create up front rather
+	// than write a reservation it could never release.
+	store := NewTaskStore(&createOnlyKV{KVStore: NewMemoryTaskKV()}, NewProcessClaimArbiter())
+	err := store.CreateTask(context.Background(), &Task{
+		ID: "task-1", TenantID: "tenant-a", Subject: "a",
+		Source: &TaskSourceRef{Kind: TaskSourceKindOperator, Ref: "alice"},
+	})
+	if !errors.Is(err, ErrTaskStoreInvalidInput) {
+		t.Fatalf("expected ErrTaskStoreInvalidInput, got %v", err)
+	}
+	// An unsourced create on the same store is unaffected.
+	if err := store.CreateTask(context.Background(), &Task{ID: "task-2", TenantID: "tenant-a", Subject: "b"}); err != nil {
+		t.Fatalf("unsourced create: %v", err)
+	}
+}
+
+// createOnlyKV forwards a guarded create and hides the guarded delete.
+type createOnlyKV struct {
+	interfaces.KVStore
+}
+
+func (k *createOnlyKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
+}
+
+func TestTaskSourceIndexKey_Shape(t *testing.T) {
+	t.Parallel()
+
+	key, err := taskSourceIndexKey("tenant-a", "proj-1", &TaskSourceRef{Kind: TaskSourceKindOperator, Ref: "owner/repo#12"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(key, "orch/task-source/tenant-a/proj-1/operator/") {
+		t.Errorf("unexpected key shape: %s", key)
+	}
+	if strings.Contains(strings.TrimPrefix(key, "orch/task-source/tenant-a/proj-1/operator/"), "/") {
+		t.Errorf("ref must be encoded onto one segment: %s", key)
+	}
+
+	unscoped, err := taskSourceIndexKey("tenant-a", "", &TaskSourceRef{Kind: TaskSourceKindOperator, Ref: "alice"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(unscoped, "orch/task-source/tenant-a/"+taskSourceUnscopedProject+"/operator/") {
+		t.Errorf("unexpected unscoped key: %s", unscoped)
+	}
+
+	if _, err := taskSourceIndexKey("", "proj-1", &TaskSourceRef{Kind: TaskSourceKindOperator, Ref: "alice"}); !errors.Is(err, ErrTaskStoreInvalidInput) {
+		t.Errorf("empty tenant: expected ErrTaskStoreInvalidInput, got %v", err)
+	}
+	if _, err := taskSourceIndexKey("tenant-a", "a/b", &TaskSourceRef{Kind: TaskSourceKindOperator, Ref: "alice"}); !errors.Is(err, ErrTaskStoreInvalidInput) {
+		t.Errorf("separator in project: expected ErrTaskStoreInvalidInput, got %v", err)
+	}
+	if _, err := taskSourceIndexKey("tenant-a", "proj-1", &TaskSourceRef{Kind: "nope", Ref: "x"}); !errors.Is(err, ErrTaskStoreInvalidInput) {
+		t.Errorf("bad kind: expected ErrTaskStoreInvalidInput, got %v", err)
+	}
+}
+
+func TestTaskSourceAlreadyAdoptedError_Message(t *testing.T) {
+	t.Parallel()
+
+	err := &TaskSourceAlreadyAdoptedError{
+		TenantID: "t", ProjectID: "p", Kind: TaskSourceKindJob, Ref: "r",
+		TaskID: "task-9", HolderStatus: TaskStatusInProgress,
+	}
+	for _, want := range []string{"tenant=t", "project=p", "kind=job", "ref=r", "task=task-9", "holder_status=in_progress"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("message %q lacks %q", err.Error(), want)
+		}
+	}
+	if !errors.Is(err, ErrTaskSourceAlreadyAdopted) {
+		t.Error("must unwrap to ErrTaskSourceAlreadyAdopted")
+	}
+
+	// A holder whose state could not be read says so by omission rather than
+	// by claiming a state it does not have.
+	unknown := &TaskSourceAlreadyAdoptedError{TenantID: "t", ProjectID: "p", Kind: TaskSourceKindJob, Ref: "r", TaskID: "task-9"}
+	if strings.Contains(unknown.Error(), "holder_status=") {
+		t.Errorf("an unknown holder state must not be reported: %s", unknown.Error())
+	}
+}
+
+// =============================================================================
+// A reservation binds only while its holder can still work the source (#652)
+// =============================================================================
+
+// sourceTakeoverFaultKV guards a create and a delete like the real store, and
+// breaks the guarded delete of a source reservation — the half of a take-over
+// that clears a terminal holder. deleteErr fails it outright; swallowDelete
+// makes it report that it removed nothing, which is what losing a race to
+// another adopter looks like.
+type sourceTakeoverFaultKV struct {
+	interfaces.KVStore
+
+	deleteErr     error
+	swallowDelete bool
+}
+
+func (k *sourceTakeoverFaultKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
+}
+
+func (k *sourceTakeoverFaultKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	if strings.HasPrefix(key, taskSourceKeyspace) {
+		if k.deleteErr != nil {
+			return false, k.deleteErr
+		}
+		if k.swallowDelete {
+			return false, nil
+		}
+	}
+	return forwardCompareAndDelete(ctx, k.KVStore, key, expected)
+}
+
+// spendTheAttemptBudget drives a task to the terminal failure a spent attempt
+// budget produces, through the same derivation a concluded job goes through.
+func spendTheAttemptBudget(t *testing.T, store TaskStore, task *Task) {
+	t.Helper()
+
+	task.Attempts = task.EffectiveAttemptBudget()
+	applyConclusion(task, attemptConclusion{
+		status: &JobStatus{JobID: "job-1", State: JobStateFailed, Error: "the work failed"},
+	}, time.Now().UTC())
+	if task.Status != TaskStatusFailed || task.Result.Metadata["reason"] != budgetExhaustedReason {
+		t.Fatalf("the budget must be spent, got status=%s result=%+v", task.Status, task.Result)
+	}
+	if err := store.UpdateTask(context.Background(), task); err != nil {
+		t.Fatalf("write the terminal task: %v", err)
+	}
+}
+
+// TestCreateTask_SourceIndex_SupersedesAHolderThatSpentItsBudget is the live
+// failure from #652: a task burned every attempt, so re-labelling the issue
+// must adopt it again instead of finding a reservation nothing can release.
+// The terminal task stays for history and the new task names it.
+func TestCreateTask_SourceIndex_SupersedesAHolderThatSpentItsBudget(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryTaskStore()
+	ctx := context.Background()
+	source := &TaskSourceRef{Kind: TaskSourceKindOperator, Ref: "owner/repo#53"}
+
+	spent := &Task{ID: "task-1", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "first run", Source: source, AttemptBudget: 3}
+	if err := store.CreateTask(ctx, spent); err != nil {
+		t.Fatalf("first adoption: %v", err)
+	}
+	spendTheAttemptBudget(t, store, spent)
+
+	fresh := &Task{ID: "task-2", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "re-labelled", Source: source}
+	if err := store.CreateTask(ctx, fresh); err != nil {
+		t.Fatalf("re-adoption after a spent budget must succeed, got %v", err)
+	}
+	if fresh.PredecessorTaskID() != "task-1" {
+		t.Fatalf("the new task must name its predecessor, got %q", fresh.PredecessorTaskID())
+	}
+
+	stored, err := store.GetTask(ctx, "tenant-a", "task-2")
+	if err != nil {
+		t.Fatalf("read the new task: %v", err)
+	}
+	if stored.PredecessorTaskID() != "task-1" {
+		t.Fatalf("the predecessor must be on the record, got %q", stored.PredecessorTaskID())
+	}
+	history, err := store.GetTask(ctx, "tenant-a", "task-1")
+	if err != nil {
+		t.Fatalf("the terminal task is kept for history: %v", err)
+	}
+	if history.Status != TaskStatusFailed {
+		t.Fatalf("the terminal task must be untouched, got status %s", history.Status)
+	}
+
+	// And the new task now holds the reservation itself.
+	third := &Task{ID: "task-3", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "third", Source: source}
+	var adopted *TaskSourceAlreadyAdoptedError
+	if err := store.CreateTask(ctx, third); !errors.As(err, &adopted) || adopted.TaskID != "task-2" {
+		t.Fatalf("expected the new task to hold the source, got %v", err)
+	}
+}
+
+// TestCreateTask_SourceIndex_HolderStillWorkingItKeepsIt: every status a task
+// can still leave holds its origin, and the refusal names the holder and the
+// state it is in — the two facts a sweep had no way to report (#652).
+func TestCreateTask_SourceIndex_HolderStillWorkingItKeepsIt(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		status TaskStatus
+	}{
+		{name: "pending", status: TaskStatusPending},
+		{name: "claimed", status: TaskStatusClaimed},
+		{name: "in progress", status: TaskStatusInProgress},
+		{name: "blocked", status: TaskStatusBlocked},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := NewInMemoryTaskStore()
+			ctx := context.Background()
+			source := &TaskSourceRef{Kind: TaskSourceKindOperator, Ref: "owner/repo#" + tc.name}
+
+			holder := &Task{ID: "holder", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "live", Source: source}
+			if err := store.CreateTask(ctx, holder); err != nil {
+				t.Fatalf("first adoption: %v", err)
+			}
+			holder.Status = tc.status
+			if err := store.UpdateTask(ctx, holder); err != nil {
+				t.Fatalf("set status %s: %v", tc.status, err)
+			}
+
+			second := &Task{ID: "second", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "second", Source: source}
+			err := store.CreateTask(ctx, second)
+			var adopted *TaskSourceAlreadyAdoptedError
+			if !errors.As(err, &adopted) {
+				t.Fatalf("expected TaskSourceAlreadyAdoptedError, got %v", err)
+			}
+			if adopted.TaskID != "holder" || adopted.HolderStatus != tc.status {
+				t.Fatalf("the refusal must name the holder and its state, got %+v", adopted)
+			}
+			if second.PredecessorTaskID() != "" {
+				t.Fatalf("a refused adoption supersedes nothing, got %q", second.PredecessorTaskID())
+			}
+		})
+	}
+}
+
+// TestCreateTask_SourceIndex_CompletedHolderReleasesIt: completed is terminal
+// exactly as failed is, so an origin whose work finished is adoptable again
+// when a person asks for it. Cancelled behaves the same way.
+func TestCreateTask_SourceIndex_CompletedHolderReleasesIt(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []TaskStatus{TaskStatusCompleted, TaskStatusCancelled} {
+		t.Run(string(status), func(t *testing.T) {
+			t.Parallel()
+
+			store := NewInMemoryTaskStore()
+			ctx := context.Background()
+			source := &TaskSourceRef{Kind: TaskSourceKindScheduler, Ref: "nightly-" + string(status)}
+
+			holder := &Task{ID: "holder", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "done", Source: source}
+			if err := store.CreateTask(ctx, holder); err != nil {
+				t.Fatalf("first adoption: %v", err)
+			}
+			holder.Status = status
+			if err := store.UpdateTask(ctx, holder); err != nil {
+				t.Fatalf("set status %s: %v", status, err)
+			}
+
+			next := &Task{ID: "next", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "again", Source: source}
+			if err := store.CreateTask(ctx, next); err != nil {
+				t.Fatalf("re-adoption after %s must succeed, got %v", status, err)
+			}
+			if next.PredecessorTaskID() != "holder" {
+				t.Fatalf("the new task must name its predecessor, got %q", next.PredecessorTaskID())
+			}
+		})
+	}
+}
+
+// TestCreateTask_SourceIndex_SupersedesAHolderBlockedOnEnvironmentFault is the
+// live failure from #739: go-truststrap#54 concluded blocked on
+// no_account_resolver, and after the deployment fault was fixed re-labelling
+// the issue must adopt it again. A block on a classified environment fault is
+// a transient hold, not an operator hold, so the re-adoption supersedes it,
+// names it, and records the class it was held on. The blocked task stays for
+// history.
+func TestCreateTask_SourceIndex_SupersedesAHolderBlockedOnEnvironmentFault(t *testing.T) {
+	t.Parallel()
+
+	for _, class := range []string{FaultNoAccountResolver, FaultNoProviderAccount} {
+		t.Run(class, func(t *testing.T) {
+			t.Parallel()
+
+			store := NewInMemoryTaskStore()
+			ctx := context.Background()
+			source := &TaskSourceRef{Kind: TaskSourceKindOperator, Ref: "owner/repo#" + class}
+
+			blocked := &Task{ID: "task-1", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "first run", Source: source, AttemptBudget: 3}
+			if err := store.CreateTask(ctx, blocked); err != nil {
+				t.Fatalf("first adoption: %v", err)
+			}
+			blocked.Status = TaskStatusBlocked
+			blocked.BlockKind = TaskBlockKindBlocked
+			blocked.BlockedReason = "the pool had no resolver"
+			blocked.BlockFaultClass = class
+			if err := store.UpdateTask(ctx, blocked); err != nil {
+				t.Fatalf("block on the environment fault: %v", err)
+			}
+
+			fresh := &Task{ID: "task-2", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "re-labelled", Source: source}
+			if err := store.CreateTask(ctx, fresh); err != nil {
+				t.Fatalf("re-adoption after an environment-fault block must succeed, got %v", err)
+			}
+			if fresh.PredecessorTaskID() != "task-1" {
+				t.Fatalf("the new task must name its predecessor, got %q", fresh.PredecessorTaskID())
+			}
+			if fresh.PredecessorBlockReason() != class {
+				t.Fatalf("the new task must record the block class it re-armed, got %q", fresh.PredecessorBlockReason())
+			}
+
+			stored, err := store.GetTask(ctx, "tenant-a", "task-2")
+			if err != nil {
+				t.Fatalf("read the new task: %v", err)
+			}
+			if stored.PredecessorTaskID() != "task-1" || stored.PredecessorBlockReason() != class {
+				t.Fatalf("the predecessor and its block reason must be on the record, got %+v", stored.Metadata)
+			}
+			history, err := store.GetTask(ctx, "tenant-a", "task-1")
+			if err != nil {
+				t.Fatalf("the blocked task is kept for history: %v", err)
+			}
+			if history.Status != TaskStatusBlocked || history.BlockFaultClass != class {
+				t.Fatalf("the blocked task must be untouched, got status=%s class=%s", history.Status, history.BlockFaultClass)
+			}
+		})
+	}
+}
+
+// TestCreateTask_SourceIndex_HolderBlockedOnNonEnvironmentReasonKeepsIt: a
+// block that no environment fault produced is a deliberate operator hold —
+// a policy or verification hold — and binds its source. Re-labelling must not
+// supersede it; the refusal names the holder and its blocked state (#739).
+func TestCreateTask_SourceIndex_HolderBlockedOnNonEnvironmentReasonKeepsIt(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryTaskStore()
+	ctx := context.Background()
+	source := &TaskSourceRef{Kind: TaskSourceKindOperator, Ref: "owner/repo#hold"}
+
+	holder := &Task{ID: "holder", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "held", Source: source}
+	if err := store.CreateTask(ctx, holder); err != nil {
+		t.Fatalf("first adoption: %v", err)
+	}
+	// A deliberate operator hold: blocked, with a reason but no fault class.
+	if err := store.BlockTask(ctx, "tenant-a", "holder", TaskBlockKindBlocked, "waiting on a policy decision"); err != nil {
+		t.Fatalf("operator block: %v", err)
+	}
+
+	second := &Task{ID: "second", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "second", Source: source}
+	err := store.CreateTask(ctx, second)
+	var adopted *TaskSourceAlreadyAdoptedError
+	if !errors.As(err, &adopted) {
+		t.Fatalf("a deliberate operator hold must keep its source, got %v", err)
+	}
+	if adopted.TaskID != "holder" || adopted.HolderStatus != TaskStatusBlocked {
+		t.Fatalf("the refusal must name the held holder, got %+v", adopted)
+	}
+	if adopted.HolderBlockFaultClass != "" {
+		t.Fatalf("an operator hold carries no fault class, got %q", adopted.HolderBlockFaultClass)
+	}
+	if second.PredecessorTaskID() != "" {
+		t.Fatalf("a refused adoption supersedes nothing, got %q", second.PredecessorTaskID())
+	}
+}
+
+// TestCreateTask_SourceIndex_OrphanedReservationIsAdoptable: a reservation
+// that outlived the task that made it — residue a delete could not finish —
+// holds nothing back.
+func TestCreateTask_SourceIndex_OrphanedReservationIsAdoptable(t *testing.T) {
+	t.Parallel()
+
+	kv := NewMemoryTaskKV()
+	store := NewTaskStore(kv, NewProcessClaimArbiter())
+	ctx := context.Background()
+	source := &TaskSourceRef{Kind: TaskSourceKindJob, Ref: "job-orphan"}
+
+	if err := store.CreateTask(ctx, &Task{ID: "task-1", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "a", Source: source}); err != nil {
+		t.Fatalf("first adoption: %v", err)
+	}
+	recordKey, err := taskRecordKey("tenant-a", "task-1")
+	if err != nil {
+		t.Fatalf("task record key: %v", err)
+	}
+	// Remove the record behind the store's back, leaving the reservation.
+	if err := kv.Delete(ctx, recordKey); err != nil {
+		t.Fatalf("orphan the reservation: %v", err)
+	}
+
+	next := &Task{ID: "task-2", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "b", Source: source}
+	if err := store.CreateTask(ctx, next); err != nil {
+		t.Fatalf("an orphaned reservation must not hold the source, got %v", err)
+	}
+	if next.PredecessorTaskID() != "task-1" {
+		t.Fatalf("the new task must still name what it took over from, got %q", next.PredecessorTaskID())
+	}
+}
+
+// TestCreateTask_SourceIndex_TakeoverFailureIsReported: a take-over whose
+// guarded delete fails reports the backend failure rather than writing a task
+// that does not hold its origin.
+func TestCreateTask_SourceIndex_TakeoverFailureIsReported(t *testing.T) {
+	t.Parallel()
+
+	kv := &sourceTakeoverFaultKV{KVStore: NewMemoryTaskKV()}
+	store := NewTaskStore(kv, NewProcessClaimArbiter())
+	ctx := context.Background()
+	source := &TaskSourceRef{Kind: TaskSourceKindJob, Ref: "job-fault"}
+
+	spent := &Task{ID: "task-1", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "a", Source: source, AttemptBudget: 1}
+	if err := store.CreateTask(ctx, spent); err != nil {
+		t.Fatalf("first adoption: %v", err)
+	}
+	spendTheAttemptBudget(t, store, spent)
+
+	kv.deleteErr = errors.New("kv unavailable")
+	err := store.CreateTask(ctx, &Task{ID: "task-2", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "b", Source: source})
+	if !errors.Is(err, ErrTaskStoreBackend) {
+		t.Fatalf("expected a backend failure, got %v", err)
+	}
+	if _, getErr := store.GetTask(ctx, "tenant-a", "task-2"); !errors.Is(getErr, ErrTaskNotFound) {
+		t.Fatalf("a task whose take-over failed must not be written, got %v", getErr)
+	}
+}
+
+// TestCreateTask_SourceIndex_TakeoverLostIsRefused: a take-over that never
+// wins the entry — another adopter changed it under every look — refuses the
+// create, naming the holder it last saw, instead of writing a second task for
+// one origin.
+func TestCreateTask_SourceIndex_TakeoverLostIsRefused(t *testing.T) {
+	t.Parallel()
+
+	kv := &sourceTakeoverFaultKV{KVStore: NewMemoryTaskKV()}
+	store := NewTaskStore(kv, NewProcessClaimArbiter())
+	ctx := context.Background()
+	source := &TaskSourceRef{Kind: TaskSourceKindJob, Ref: "job-lost"}
+
+	spent := &Task{ID: "task-1", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "a", Source: source, AttemptBudget: 1}
+	if err := store.CreateTask(ctx, spent); err != nil {
+		t.Fatalf("first adoption: %v", err)
+	}
+	spendTheAttemptBudget(t, store, spent)
+
+	kv.swallowDelete = true
+	err := store.CreateTask(ctx, &Task{ID: "task-2", TenantID: "tenant-a", ProjectID: "proj-1", Subject: "b", Source: source})
+	var adopted *TaskSourceAlreadyAdoptedError
+	if !errors.As(err, &adopted) {
+		t.Fatalf("expected TaskSourceAlreadyAdoptedError, got %v", err)
+	}
+	if adopted.TaskID != "task-1" || adopted.HolderStatus != TaskStatusFailed {
+		t.Fatalf("the refusal must name the holder it last saw: %+v", adopted)
+	}
+}
+
+// TestTaskSourceReleasable covers the predicate the whole take-over turns on:
+// a status a task can never leave releases its origin, every status it can
+// still leave holds it, and a blocked holder releases only when its block is a
+// transient environment fault (#739).
+func TestTaskSourceReleasable(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []TaskStatus{TaskStatusCompleted, TaskStatusFailed, TaskStatusCancelled, ""} {
+		if !taskSourceReleasable(status, "") {
+			t.Errorf("status %q is terminal and must release its source", status)
+		}
+	}
+	for _, status := range []TaskStatus{TaskStatusPending, TaskStatusClaimed, TaskStatusInProgress, "nonsense"} {
+		if taskSourceReleasable(status, "") {
+			t.Errorf("status %q must keep its source", status)
+		}
+	}
+
+	// A block with no fault class is a deliberate operator hold and binds.
+	if taskSourceReleasable(TaskStatusBlocked, "") {
+		t.Error("an operator hold with no fault class must keep its source")
+	}
+	// A block a non-environment reason produced never has a known fault class,
+	// so it stays held.
+	if taskSourceReleasable(TaskStatusBlocked, "policy_violation") {
+		t.Error("a non-environment block must keep its source")
+	}
+	// A block a classified environment fault produced releases: the condition
+	// is resolved out of band and a re-label re-arms it.
+	for _, class := range []string{
+		FaultNoAccountResolver,
+		FaultNoProviderAccount,
+		FaultAccountCredentialMissing,
+	} {
+		if !taskSourceReleasable(TaskStatusBlocked, class) {
+			t.Errorf("a block on environment fault %q must release its source", class)
+		}
+	}
+	for _, class := range EnvironmentalTerminalReasons() {
+		if !taskSourceReleasable(TaskStatusBlocked, class) {
+			t.Errorf("a block on environmental terminal reason %q must release its source", class)
+		}
+	}
+}
+
+// TestRecordSourcePredecessor covers what it writes and what it must not
+// touch: the metadata map handed in may be the one a TaskSource offered its
+// spec with, and is not the store's to mutate.
+func TestRecordSourcePredecessor(t *testing.T) {
+	t.Parallel()
+
+	offered := map[string]string{"label": "ready"}
+	task := &Task{ID: "task-2", Metadata: offered}
+	recordSourcePredecessor(task, "task-1", FaultNoAccountResolver)
+	if task.PredecessorTaskID() != "task-1" {
+		t.Fatalf("predecessor not recorded: %+v", task.Metadata)
+	}
+	if task.PredecessorBlockReason() != FaultNoAccountResolver {
+		t.Fatalf("predecessor block reason not recorded: %+v", task.Metadata)
+	}
+	if task.Metadata["label"] != "ready" {
+		t.Fatalf("the offered metadata must be kept: %+v", task.Metadata)
+	}
+	if _, mutated := offered[taskSourcePredecessorKey]; mutated {
+		t.Fatalf("the caller's map must not be written through: %+v", offered)
+	}
+
+	bare := &Task{ID: "task-3"}
+	if bare.PredecessorTaskID() != "" {
+		t.Fatalf("a task with no metadata has no predecessor, got %q", bare.PredecessorTaskID())
+	}
+	if bare.PredecessorBlockReason() != "" {
+		t.Fatalf("a task with no metadata has no predecessor block reason, got %q", bare.PredecessorBlockReason())
+	}
+	// A terminal predecessor names no block reason, and none is written.
+	recordSourcePredecessor(bare, "task-1", "")
+	if bare.PredecessorTaskID() != "task-1" {
+		t.Fatalf("predecessor not recorded on a task with no metadata: %+v", bare.Metadata)
+	}
+	if bare.PredecessorBlockReason() != "" {
+		t.Fatalf("a terminal predecessor must name no block reason, got %q", bare.PredecessorBlockReason())
 	}
 }

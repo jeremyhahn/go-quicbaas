@@ -153,8 +153,8 @@ func createSchedulerRESTClientFactory() (SchedulerClient, error) {
 	var opts []rest.ClientOption
 
 	// Set timeout
-	if timeout > 0 {
-		opts = append(opts, rest.WithTimeout(timeout))
+	if globalTimeout > 0 {
+		opts = append(opts, rest.WithTimeout(globalTimeout))
 	}
 
 	// Configure TLS — apply whenever the address is HTTPS or the operator

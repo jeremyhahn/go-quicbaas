@@ -63,6 +63,19 @@ Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes regis
 | `RevokeSession` | `DELETE /api/v1/auth/sessions/{id}` | **no** | yes | yes | MISSING | — |
 | `ValidateToken` | `POST /api/v1/auth/validate` | **no** | yes | yes | yes | — |
 
+> **Composed-node caveat for the three token-lifecycle verbs.** `Served?` above
+> is read against the FULL route table, which includes the legacy in-process
+> listener's hand-mount. On a **composed** node — the only kind the unified API
+> server binds a listener for — the `/api/v1/auth/*` session plane belongs to
+> the xkms module, and quicbaas serves its own verbs from the IAM namespace
+> instead: `POST /api/v1/iam/{refresh,validate,logout}`
+> (`pkg/api/rest/routes_iam.go`). `sdk/go/transport/rest` still sends all three
+> to the `/api/v1/auth` paths in the rows above, so against a composed node
+> `RefreshToken` and `ValidateToken` fail and `Logout` silently revokes nothing
+> — it reaches xkms's handler, which redeems against a different token store.
+> That is the live SDK-to-server mismatch tracked in #259; the SPA and the
+> TypeScript SDK were moved onto the IAM-namespaced verbs in #221 and #256.
+
 
 ### IAM is fifteen sub-services, not one
 
@@ -537,6 +550,55 @@ Content-Type: application/json
   "id": "team-lead",
   "name": "Team Lead",
   "description": "Can manage team resources"
+}
+```
+
+**Reconcile Built-in Roles**
+```
+POST /api/v1/tenants/{tenant_id}/roles/reconcile
+```
+
+Converges the tenant's built-in roles (`admin`, `operator`, `so`, `user`,
+`auditor`, `custodian`) onto the definitions the running build carries: verbs
+the build now grants are added, verbs it no longer grants are removed, and
+custom roles are left untouched. It is the ONLY path that can re-permission a
+built-in role — every ordinary update refuses one — and it is idempotent, so a
+converged tenant reports no changed roles and nothing is written.
+
+Authorization is the role-CREATE grant, deliberately: a dedicated
+`roles:reconcile` verb would be absent from every role seeded before it existed,
+so nobody would hold the grant needed to repair that exact absence.
+
+The daemon runs this for every tenant at startup, after the modules have
+contributed their permissions, so an operator normally never has to call it.
+
+Response:
+```json
+{
+  "tenant_id": "acme",
+  "changed": true,
+  "roles": [
+    {
+      "role_id": "5aee453e-e14b-8818-8b0d-9268c33a0232",
+      "name": "admin",
+      "added": ["sdlc:bind", "sdlc:unbind"],
+      "removed": ["sdlc:register", "sdlc:update", "sdlc:deregister"]
+    }
+  ]
+}
+```
+
+**Drift on read.** Every role read (`GET .../roles` and `GET .../roles/{role_id}`)
+carries `retired_permissions`: the members of `permissions` the running build no
+longer defines. It is derived from the live permission registry on each read and
+never stored, so it shows the disagreement BEFORE reconciliation repairs it.
+
+```json
+{
+  "id": "5aee453e-e14b-8818-8b0d-9268c33a0232",
+  "name": "admin",
+  "permissions": ["sdlc:read", "sdlc:register"],
+  "retired_permissions": ["sdlc:register"]
 }
 ```
 

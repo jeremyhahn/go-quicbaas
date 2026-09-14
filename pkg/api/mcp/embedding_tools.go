@@ -33,7 +33,7 @@ var (
 				},
 				"provider": {
 					Type:        "string",
-					Description: "Optional provider name (voyage, openai, ollama, lmstudio). Uses default if not specified",
+					Description: "Optional provider name (voyage, openai, ollama, lmstudio, npu). Uses default if not specified",
 				},
 				"input_type": {
 					Type:        "string",
@@ -70,7 +70,7 @@ var (
 				},
 				"provider": {
 					Type:        "string",
-					Description: "Optional provider name (voyage, openai, ollama, lmstudio). Uses default if not specified",
+					Description: "Optional provider name (voyage, openai, ollama, lmstudio, npu). Uses default if not specified",
 				},
 				"cache_bypass": {
 					Type:        "string",
@@ -106,7 +106,7 @@ var (
 			Properties: map[string]Property{
 				"provider": {
 					Type:        "string",
-					Description: "Provider name to get information for (voyage, openai, ollama, lmstudio)",
+					Description: "Provider name to get information for (voyage, openai, ollama, lmstudio, npu)",
 				},
 			},
 			Required: []string{"provider"},
@@ -122,7 +122,7 @@ var (
 			Properties: map[string]Property{
 				"provider": {
 					Type:        "string",
-					Description: "Provider name to set as default (voyage, openai, ollama, lmstudio)",
+					Description: "Provider name to set as default (voyage, openai, ollama, lmstudio, npu)",
 				},
 			},
 			Required: []string{"provider"},

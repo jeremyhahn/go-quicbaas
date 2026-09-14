@@ -38,7 +38,6 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -49,7 +48,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	schedulerhandlers "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/handlers"
-	schedulerstorage "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/storage/quicbaas"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
@@ -131,7 +129,6 @@ type quicBaaS struct {
 	raftNode     interfaces.RaftNode
 	storage      interfaces.Storage
 	cacheManager interfaces.CacheManager
-	authManager  interfaces.AuthManager
 	backupMgr    interfaces.BackupManager
 	logger       interfaces.Logger
 
@@ -173,6 +170,7 @@ type quicBaaS struct {
 	attestationService        AttestationService
 	pivService                PIVService
 	fido2Service              FIDO2Service
+	webauthnCredentialService WebAuthnCredentialService
 	acmeService               ACMEServicer
 	dynamicSecretsService     DynamicSecretsService
 	objectStorageService      ObjectStorageService
@@ -184,6 +182,7 @@ type quicBaaS struct {
 	accountService            AccountService
 	agentAdminService         AgentAdminService
 	agentService              orchestration.AgentService
+	sdlcService               *SDLCService
 	messagingService          messaging.Service
 	databaseService           DatabaseService
 	schedulerEngine           interfaces.SchedulerEngine
@@ -333,19 +332,6 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		}
 	}
 
-	var authManager interfaces.AuthManager
-	if b.authManager != nil {
-		var ok bool
-		authManager, ok = b.authManager.(interfaces.AuthManager)
-		if !ok {
-			return nil, &errors.QBError{
-				Code: errors.ErrInvalidInput,
-				Op:   "service.newQuicBaaS",
-				Err:  &api.InvalidTypeError{Field: "auth manager", Expected: "interfaces.AuthManager"},
-			}
-		}
-	}
-
 	var backupMgr interfaces.BackupManager
 	if b.backupManager != nil {
 		var ok bool
@@ -392,7 +378,6 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		raftNode:         raftNode,
 		storage:          storage,
 		cacheManager:     cacheManager,
-		authManager:      authManager,
 		backupMgr:        backupMgr,
 		logger:           logger,
 		keyspaceResolver: NewKeyspaceResolver(),
@@ -501,10 +486,18 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 		// Use shard 1 for scheduler data
 		kvStore := svc.kvStoreProvider(1)
 		if kvStore != nil {
-			schedulerStorage := schedulerstorage.NewStorage(kvStore)
-
-			// Create scheduler engine
-			svc.schedulerEngine = scheduler.New(schedulerConfig, schedulerStorage)
+			// A clustered boot MUST get the clustered scheduler. Falling back
+			// to the single-node engine here is what docs/18 V4 records: a
+			// nil LeaderChecker makes shouldExecute answer true on every node,
+			// so every node fires every cluster-wide job on every tick. A
+			// clustered boot that cannot build the clustered scheduler
+			// therefore refuses to start rather than running wrong.
+			schedulerEngine, schedulerErr := buildSchedulerEngine(
+				schedulerConfig, kvStore, b.config.Mode, b.schedulerClustering)
+			if schedulerErr != nil {
+				return nil, schedulerErr
+			}
+			svc.schedulerEngine = schedulerEngine
 
 			// Create scheduler adapter for the SchedulerService interface
 			schedulerAdapter := NewSchedulerAdapter(svc.schedulerEngine)
@@ -614,6 +607,10 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// until that manager is wired.
 	svc.pivService = NewPIVService()
 	svc.fido2Service = NewFIDO2Service(svc)
+	// User-addressed WebAuthn credential administration. Like FIDO2 it
+	// resolves at call time, so it is wired unconditionally and reports
+	// ErrWebAuthnCredentialNotConfigured until IAM is up.
+	svc.webauthnCredentialService = NewWebAuthnCredentialService(svc, svc)
 
 	// Wire the composed ACME (RFC 8555) servicer when pkg/server built one.
 	// ACME composition (CA + qrdb-backed storage + base URL) lives in
@@ -736,6 +733,19 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	}
 	svc.accountService = NewAccountService(orchestration.NewAccountStore(orchKV, orchOpts...), accountSecrets)
 
+	// The credential-release verb records one audit event per attempt, on the
+	// SAME sink the account store's own mutations land on, so a release and
+	// the rotation that preceded it sit on one trail. Wired here rather than
+	// taken as a constructor argument for the same reason the usage tracker
+	// is: the service container is the one place that already holds both.
+	if releaseWirer, wirerOK := svc.accountService.(interface {
+		SetAuditor(orchestration.StoreAuditor)
+		SetLogger(interfaces.Logger)
+	}); wirerOK {
+		releaseWirer.SetAuditor(b.orchestrationAuditor)
+		releaseWirer.SetLogger(logger)
+	}
+
 	if svc.logger != nil {
 		svc.logger.WithFields(map[string]interface{}{
 			"node_id":        b.config.NodeID,
@@ -813,16 +823,6 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 			k.svc.metrics.requestsTotal.With("Put", "invalid").Inc()
 		}
 		return nil, err
-	}
-
-	// Check authentication if enabled
-	if k.svc.config.EnableAuth && k.svc.authManager != nil {
-		if err := k.svc.checkAuth(ctx, "write"); err != nil {
-			if k.svc.metrics != nil {
-				k.svc.metrics.requestsTotal.With("Put", "unauthorized").Inc()
-			}
-			return nil, err
-		}
 	}
 
 	// Track consistency level
@@ -907,16 +907,6 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 			k.svc.metrics.requestsTotal.With("Get", "invalid").Inc()
 		}
 		return nil, err
-	}
-
-	// Check authentication if enabled
-	if k.svc.config.EnableAuth && k.svc.authManager != nil {
-		if err := k.svc.checkAuth(ctx, "read"); err != nil {
-			if k.svc.metrics != nil {
-				k.svc.metrics.requestsTotal.With("Get", "unauthorized").Inc()
-			}
-			return nil, err
-		}
 	}
 
 	// Track consistency level
@@ -1066,16 +1056,6 @@ func (k *kvService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResp
 		return nil, err
 	}
 
-	// Check authentication if enabled
-	if k.svc.config.EnableAuth && k.svc.authManager != nil {
-		if err := k.svc.checkAuth(ctx, "write"); err != nil {
-			if k.svc.metrics != nil {
-				k.svc.metrics.requestsTotal.With("Delete", "unauthorized").Inc()
-			}
-			return nil, err
-		}
-	}
-
 	// Determine shard ID
 	shardID := req.ShardID
 	if shardID == 0 {
@@ -1150,16 +1130,6 @@ func (k *kvService) List(ctx context.Context, req *ListRequest, stream chan<- *L
 			k.svc.metrics.requestsTotal.With("List", "invalid").Inc()
 		}
 		return err
-	}
-
-	// Check authentication if enabled
-	if k.svc.config.EnableAuth && k.svc.authManager != nil {
-		if err := k.svc.checkAuth(ctx, "read"); err != nil {
-			if k.svc.metrics != nil {
-				k.svc.metrics.requestsTotal.With("List", "unauthorized").Inc()
-			}
-			return err
-		}
 	}
 
 	// Determine shard ID
@@ -1443,16 +1413,6 @@ func (k *kvService) ListEntityTypes(ctx context.Context, req *ListEntityTypesReq
 		req.PageSize = 100
 	}
 
-	// Check authentication if enabled
-	if k.svc.config.EnableAuth && k.svc.authManager != nil {
-		if err := k.svc.checkAuth(ctx, "read"); err != nil {
-			if k.svc.metrics != nil {
-				k.svc.metrics.requestsTotal.With("ListEntityTypes", "unauthorized").Inc()
-			}
-			return nil, err
-		}
-	}
-
 	// Determine shard ID
 	shardID := req.ShardID
 	if shardID == 0 {
@@ -1643,16 +1603,6 @@ func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*Bat
 		}
 	}
 
-	// Check authentication if enabled
-	if b.svc.config.EnableAuth && b.svc.authManager != nil {
-		if err := b.svc.checkAuth(ctx, "write"); err != nil {
-			if b.svc.metrics != nil {
-				b.svc.metrics.requestsTotal.With("BatchPut", "unauthorized").Inc()
-			}
-			return nil, err
-		}
-	}
-
 	// Build per-shard atomic batch operations, grouped by per-request
 	// ShardID for correct shard routing. Input order is preserved within
 	// each shard group.
@@ -1749,16 +1699,6 @@ func (b *batchService) BatchGet(ctx context.Context, req *BatchGetRequest) (*Bat
 		}
 	}
 
-	// Check authentication if enabled
-	if b.svc.config.EnableAuth && b.svc.authManager != nil {
-		if err := b.svc.checkAuth(ctx, "read"); err != nil {
-			if b.svc.metrics != nil {
-				b.svc.metrics.requestsTotal.With("BatchGet", "unauthorized").Inc()
-			}
-			return nil, err
-		}
-	}
-
 	// Process each get request
 	responses := make([]*GetResponse, 0, len(req.Requests))
 	for _, getReq := range req.Requests {
@@ -1815,16 +1755,6 @@ func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest)
 			Code: errors.ErrInvalidInput,
 			Op:   "service.BatchDelete",
 			Err:  &api.EmptyCollectionError{Field: "batch"},
-		}
-	}
-
-	// Check authentication if enabled
-	if b.svc.config.EnableAuth && b.svc.authManager != nil {
-		if err := b.svc.checkAuth(ctx, "write"); err != nil {
-			if b.svc.metrics != nil {
-				b.svc.metrics.requestsTotal.With("BatchDelete", "unauthorized").Inc()
-			}
-			return nil, err
 		}
 	}
 
@@ -1913,16 +1843,6 @@ func (t *transactionService) Transaction(ctx context.Context, req *TransactionRe
 			t.svc.metrics.requestsTotal.With("Transaction", "invalid").Inc()
 		}
 		return nil, err
-	}
-
-	// Check authentication if enabled
-	if t.svc.config.EnableAuth && t.svc.authManager != nil {
-		if err := t.svc.checkAuth(ctx, "write"); err != nil {
-			if t.svc.metrics != nil {
-				t.svc.metrics.requestsTotal.With("Transaction", "unauthorized").Inc()
-			}
-			return nil, err
-		}
 	}
 
 	// Determine shard ID
@@ -2196,16 +2116,6 @@ func (q *queryService) Query(ctx context.Context, req *QueryRequest, stream chan
 			Code: errors.ErrInvalidInput,
 			Op:   "service.Query",
 			Err:  &api.RequiredFieldError{Field: "entity_type"},
-		}
-	}
-
-	// Check authentication if enabled
-	if q.svc.config.EnableAuth && q.svc.authManager != nil {
-		if err := q.svc.checkAuth(ctx, "read"); err != nil {
-			if q.svc.metrics != nil {
-				q.svc.metrics.requestsTotal.With("Query", "unauthorized").Inc()
-			}
-			return err
 		}
 	}
 
@@ -2970,162 +2880,14 @@ func (a *authService) ValidateToken(ctx context.Context, req *ValidateTokenReque
 	}, nil
 }
 
+// rbacService serves the role half of the RBAC surface. Its verbs all operate
+// on the qrdb-backed IdentityStore and live in rbac_role_store.go: there is no
+// user half, because users are qrdb's and are reached through the IAM surface
+// (Identity().IAM().User() on the SDK, quicbaas_iam_user_* on MCP). The
+// CreateUser/DeleteUser/ListUsers trio that used to live here routed through a
+// local auth manager that production never wired, so every call failed; it was
+// deleted with the parallel identity model in issue #905.
 type rbacService struct{ svc *quicBaaS }
-
-func (r *rbacService) CreateUser(ctx context.Context, req *AuthCreateUserRequest) (*AuthCreateUserResponse, error) {
-	// Check if authManager is available
-	if r.svc.authManager == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrConfiguration,
-			Op:   "service.CreateUser",
-			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
-		}
-	}
-
-	// Validate request
-	if req.Username == "" {
-		return nil, &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "service.CreateUser",
-			Err:  &api.InvalidInputError{Message: "username is required"},
-		}
-	}
-
-	// Create user through AuthManager
-	userRaw, err := r.svc.authManager.CreateUser(req.Username, req.Roles)
-	if err != nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.CreateUser",
-			Err:  err,
-		}
-	}
-
-	user, ok := userRaw.(*auth.User)
-	if !ok {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.CreateUser",
-			Err:  &api.InvalidTypeError{Field: "user", Expected: "*auth.User"},
-		}
-	}
-
-	return &AuthCreateUserResponse{
-		UserID:    user.ID,
-		Timestamp: time.Now().UnixNano(),
-	}, nil
-}
-
-func (r *rbacService) DeleteUser(ctx context.Context, req *AuthDeleteUserRequest) (*AuthDeleteUserResponse, error) {
-	// Check if authManager is available
-	if r.svc.authManager == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrConfiguration,
-			Op:   "service.DeleteUser",
-			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
-		}
-	}
-
-	// Validate request
-	if req.Username == "" {
-		return nil, &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "service.DeleteUser",
-			Err:  &api.RequiredFieldError{Field: "username"},
-		}
-	}
-
-	// Get user store
-	userStoreRaw := r.svc.authManager.GetUserStore()
-	userStore, ok := userStoreRaw.(*auth.UserStore)
-	if !ok {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.RBAC",
-			Err:  &api.InvalidTypeError{Field: "user store", Expected: "*auth.UserStore"},
-		}
-	}
-	if userStore == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.DeleteUser",
-			Err:  &api.ServiceNotConfiguredError{Service: "user store"},
-		}
-	}
-
-	// Find user by username
-	user := userStore.GetByUsername(req.Username)
-	if user == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrNotFound,
-			Op:   "service.DeleteUser",
-			Err:  &api.NotFoundError{Resource: "user", ID: req.Username},
-		}
-	}
-
-	// Delete user
-	userStore.DeleteUser(user.GetID())
-
-	return &AuthDeleteUserResponse{
-		Success: true,
-		Message: fmt.Sprintf("User %s deleted successfully", req.Username),
-	}, nil
-}
-
-func (r *rbacService) ListUsers(ctx context.Context, req *AuthListUsersRequest) (*AuthListUsersResponse, error) {
-	// Check if authManager is available
-	if r.svc.authManager == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrConfiguration,
-			Op:   "service.ListUsers",
-			Err:  &api.ServiceNotConfiguredError{Service: "authentication manager"},
-		}
-	}
-
-	// Get user store (returns interfaces.UserStore)
-	userStore := r.svc.authManager.GetUserStore()
-	if userStore == nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "service.ListUsers",
-			Err:  &api.ServiceNotConfiguredError{Service: "user store"},
-		}
-	}
-
-	// Get all users
-	users := userStore.ListUsers()
-
-	// Convert to UserInfo
-	userInfos := make([]*UserInfo, 0, len(users))
-	for _, user := range users {
-		userInfos = append(userInfos, &UserInfo{
-			UserID:      user.GetID(),
-			Username:    user.GetUsername(),
-			Roles:       user.GetRoles(),
-			CreatedAt:   user.GetCreated().UnixNano(),
-			LastLoginAt: user.GetLastAuth().UnixNano(),
-		})
-	}
-
-	// Apply pagination if requested
-	totalCount := uint64(len(userInfos))
-	if req.Limit > 0 {
-		start := req.Offset
-		if start > totalCount {
-			start = totalCount
-		}
-		end := start + req.Limit
-		if end > totalCount {
-			end = totalCount
-		}
-		userInfos = userInfos[start:end]
-	}
-
-	return &AuthListUsersResponse{
-		Users:      userInfos,
-		TotalCount: totalCount,
-	}, nil
-}
 
 // CreateRole, DeleteRole and ListRoles operate on the qrdb-backed
 // IdentityStore and live in rbac_role_store.go. See authz-unification
@@ -4741,18 +4503,6 @@ func (s *quicBaaS) ValidateToken(ctx context.Context, req *ValidateTokenRequest)
 	return s.authService.ValidateToken(ctx, req)
 }
 
-func (s *quicBaaS) CreateUser(ctx context.Context, req *AuthCreateUserRequest) (*AuthCreateUserResponse, error) {
-	return s.rbacService.CreateUser(ctx, req)
-}
-
-func (s *quicBaaS) DeleteUser(ctx context.Context, req *AuthDeleteUserRequest) (*AuthDeleteUserResponse, error) {
-	return s.rbacService.DeleteUser(ctx, req)
-}
-
-func (s *quicBaaS) ListUsers(ctx context.Context, req *AuthListUsersRequest) (*AuthListUsersResponse, error) {
-	return s.rbacService.ListUsers(ctx, req)
-}
-
 func (s *quicBaaS) CreateAuthRole(ctx context.Context, req *AuthCreateRoleRequest) (*AuthCreateRoleResponse, error) {
 	return s.rbacService.CreateRole(ctx, req)
 }
@@ -4936,6 +4686,15 @@ func (s *quicBaaS) FIDO2() FIDO2Service {
 	return s.fido2Service
 }
 
+// WebAuthnCredentials returns the user-scoped WebAuthn credential
+// administration service — the surface that lists and removes a user's
+// registered authenticators. It is always non-nil and reports
+// ErrWebAuthnCredentialNotConfigured until the xkms-backed WebAuthn manager
+// is wired, so every transport can resolve it the same way.
+func (s *quicBaaS) WebAuthnCredentials() WebAuthnCredentialService {
+	return s.webauthnCredentialService
+}
+
 // ACME returns the ACME (RFC 8555) composition service (returns nil if not
 // configured). It exposes the server-side challenge-registration and
 // issuance verbs surfaced under Security().ACME().Server(), backed by the
@@ -4945,8 +4704,11 @@ func (s *quicBaaS) ACME() ACMEServicer {
 	return s.acmeService
 }
 
-// DynamicSecrets returns the Dynamic Secrets service (returns nil if not configured).
+// DynamicSecrets returns the Dynamic Secrets service (returns nil until
+// SetDynamicSecretsService wires it).
 func (s *quicBaaS) DynamicSecrets() DynamicSecretsService {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.dynamicSecretsService
 }
 
@@ -5037,6 +4799,17 @@ func (s *quicBaaS) SetAgentService(agent orchestration.AgentService) {
 	s.agentService = agent
 }
 
+// SDLC returns the SDLC module's project service (nil when the module is not
+// running on this node).
+func (s *quicBaaS) SDLC() *SDLCService {
+	return s.sdlcService
+}
+
+// SetSDLCService attaches the SDLC module's service.
+func (s *quicBaaS) SetSDLCService(svc *SDLCService) {
+	s.sdlcService = svc
+}
+
 // Messaging returns the Messaging notification service (returns nil if not configured).
 // Messaging provides real-time push notifications and event streaming.
 func (s *quicBaaS) Messaging() messaging.Service {
@@ -5047,6 +4820,22 @@ func (s *quicBaaS) Messaging() messaging.Service {
 // This is called after the messaging service is initialized externally.
 func (s *quicBaaS) SetMessagingService(ms messaging.Service) {
 	s.messagingService = ms
+}
+
+// SetDynamicSecretsService wires the Dynamic Secrets service into the facade
+// at runtime. Called by the server once the lease manager, the credential
+// generator registry and the durable store behind them exist.
+//
+// A nil service is ignored: a deployment that could not compose the capability
+// keeps the unconfigured accessor rather than having a working one replaced by
+// a nil interface that every transport would then dereference.
+func (s *quicBaaS) SetDynamicSecretsService(svc DynamicSecretsService) {
+	if svc == nil {
+		return
+	}
+	s.mu.Lock()
+	s.dynamicSecretsService = svc
+	s.mu.Unlock()
 }
 
 // SetSealService wires the SealService into the facade at runtime.
@@ -5405,38 +5194,6 @@ func (s *quicBaaS) getLeaderIDFromSDK(ctx context.Context, shardID uint64) uint6
 		return 0
 	}
 	return state.LeaderID
-}
-
-func (s *quicBaaS) checkAuth(ctx context.Context, permission string) error {
-	// Skip auth check if authentication is disabled
-	if !s.config.EnableAuth {
-		return nil
-	}
-
-	// Extract token from context metadata
-	token, err := auth.ExtractTokenFromContext(ctx)
-	if err != nil {
-		return &errors.QBError{
-			Code: errors.ErrUnauthorized,
-			Op:   "service.checkAuth",
-			Err:  &api.OperationFailedError{Operation: "extract token", Cause: err},
-		}
-	}
-
-	// If no token found and auth is required, return unauthorized
-	if token == "" {
-		return &errors.QBError{
-			Code: errors.ErrUnauthorized,
-			Op:   "service.checkAuth",
-			Err:  &api.InvalidInputError{Message: "authentication required"},
-		}
-	}
-
-	// Token presence is verified above. The authorization DECISION for
-	// service-layer key operations is enforced at the transport interceptors
-	// against qrdb's policy decision point; checkAuth no longer holds a local
-	// auth manager to authorize against.
-	return nil
 }
 
 func (k *kvService) convertConsistency(level ConsistencyLevel) qrdbtransport.ConsistencyLevel {

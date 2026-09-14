@@ -61,7 +61,7 @@ connection.
 Examples:
   quicbaas orchestrator inference \
     --backend ollama \
-    --host-affinity gpu-host \
+    --host-affinity agent-01 \
     --model qwen3:1.7b \
     --prompt "write a haiku about mTLS"
 
@@ -77,7 +77,7 @@ Examples:
 	cmd.Flags().StringVar(&inferModel, "model", "", "Model to use (default: backend's default model)")
 	cmd.Flags().StringVar(&inferPrompt, "prompt", "", "Prompt text to send to the backend. Required.")
 	cmd.Flags().StringVar(&inferSystemPrompt, "system-prompt", "", "Optional system prompt prepended to the conversation")
-	cmd.Flags().StringVar(&inferHostAffinity, "host-affinity", "", "Pin the call to a specific daemon by Name or Host (e.g., 'gpu-host')")
+	cmd.Flags().StringVar(&inferHostAffinity, "host-affinity", "", "Pin the call to a specific daemon by Name or Host (e.g., 'agent-01')")
 	cmd.Flags().BoolVar(&inferStream, "stream", false, "Stream response deltas as they arrive instead of waiting for the full response")
 	cmd.Flags().StringVar(&inferOutputFmt, "output", "text", "Output format: text (default) or json")
 

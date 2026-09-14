@@ -31,7 +31,12 @@ export class NotConnectedError extends QuicBaaSError {
         this.name = 'NotConnectedError';
     }
 }
-// APIError indicates a non-2xx HTTP response from the REST API.
+// APIError indicates the REST API did not give a usable answer: a non-2xx
+// response, or a 2xx whose body violates the endpoint's contract. `status`
+// carries the HTTP status either way, so a 2xx APIError means the request
+// reached something that answered successfully without answering the question
+// — see RestAuthClient.authValidate, where an uninterpretable body must not be
+// read as an affirmative session.
 export class APIError extends QuicBaaSError {
     status;
     constructor(status, message) {

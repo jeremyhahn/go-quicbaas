@@ -51,9 +51,15 @@ func (r *erroringRegistry) UpdateAgent(_ context.Context, _ *orchestration.Agent
 	return nil
 }
 
+func (r *erroringRegistry) RefreshAgent(_ context.Context, _ *orchestration.AgentRegistration) error {
+	return nil
+}
+
 func (r *erroringRegistry) RemoveAgent(_ context.Context, _, _ string) error { return nil }
 
-func (r *erroringRegistry) Heartbeat(_ context.Context, _, _ string) error { return nil }
+func (r *erroringRegistry) Heartbeat(_ context.Context, _, _ string, _ *orchestration.AgentObservation) error {
+	return nil
+}
 
 func (r *erroringRegistry) DeleteTenantAgents(_ context.Context, _ string) error { return nil }
 

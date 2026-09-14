@@ -21,14 +21,19 @@ import (
 // TestIssueSessionToken_RoundTrip proves a ceremony-minted session token
 // validates back to the same principal claims (Subject/TenantID/Roles/Groups/
 // AuthMethod) and carries a future expiry.
+//
+// Roles and groups come from the IAM user record, not from the identity the
+// ceremony supplied, so the identity here deliberately carries a STALE set the
+// record no longer grants: the record must win.
 func TestIssueSessionToken_RoundTrip(t *testing.T) {
-	provider, _, _, _, _ := createTestOIDCProvider(t)
+	provider, _, _, _, memStorage := createTestOIDCProvider(t)
+	user := seedCeremonyUser(t, memStorage, "tenant-a", "user-42", []string{"admin", "operator"})
 
 	identity := SessionIdentity{
-		Subject:     "user-42",
-		TenantID:    "tenant-a",
-		Roles:       []string{"admin", "operator"},
-		Groups:      []string{"platform"},
+		Subject:     user.Name,
+		TenantID:    user.TenantID,
+		Roles:       []string{"revoked-role"},
+		Groups:      []string{"revoked-group"},
 		AuthMethod:  "piv",
 		MFAVerified: true,
 	}
@@ -55,10 +60,13 @@ func TestIssueSessionToken_RoundTrip(t *testing.T) {
 		t.Errorf("TenantID = %q, want %q", claims.TenantID, identity.TenantID)
 	}
 	if len(claims.Roles) != 2 || claims.Roles[0] != "admin" {
-		t.Errorf("Roles = %v, want [admin operator]", claims.Roles)
+		t.Errorf("Roles = %v, want the record's [admin operator]", claims.Roles)
 	}
-	if len(claims.Groups) != 1 || claims.Groups[0] != "platform" {
-		t.Errorf("Groups = %v, want [platform]", claims.Groups)
+	if contains(claims.Roles, "revoked-role") {
+		t.Error("the ceremony's stale role survived into the bearer; the user record is authoritative")
+	}
+	if len(claims.Groups) != len(user.Groups) || claims.Groups[0] != user.Groups[0] {
+		t.Errorf("Groups = %v, want the record's %v", claims.Groups, user.Groups)
 	}
 	if claims.AuthMethod != "piv" {
 		t.Errorf("AuthMethod = %q, want piv", claims.AuthMethod)
@@ -71,12 +79,12 @@ func TestIssueSessionToken_RoundTrip(t *testing.T) {
 // TestRevokeSessionToken invalidates a minted bearer so subsequent validation
 // fails — the logout path for ceremony-issued session tokens.
 func TestRevokeSessionToken(t *testing.T) {
-	provider, _, _, _, _ := createTestOIDCProvider(t)
+	provider, _, _, _, memStorage := createTestOIDCProvider(t)
+	seedCeremonyUser(t, memStorage, "tenant-a", "user-1", []string{"viewer"})
 
 	token, _, err := provider.IssueSessionToken(t.Context(), SessionIdentity{
 		Subject:  "user-1",
 		TenantID: "tenant-a",
-		Roles:    []string{"viewer"},
 	})
 	if err != nil {
 		t.Fatalf("IssueSessionToken: %v", err)

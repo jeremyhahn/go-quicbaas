@@ -138,7 +138,7 @@ func runIAMPolicyApplyCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Build the policy request from YAML data, include raw YAML for server-side parsing
@@ -251,7 +251,7 @@ func runIAMPolicyGetCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Get policy using SDK sub-client
@@ -349,7 +349,7 @@ func runIAMPolicyDeleteCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Delete policy using SDK sub-client
@@ -395,7 +395,7 @@ func runIAMPolicyListCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// List policies using SDK sub-client
@@ -496,7 +496,7 @@ func runIAMPolicyValidateCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Build policy for validation with raw YAML spec
@@ -600,7 +600,7 @@ func runIAMPolicyTestCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Simulate policy using SDK sub-client

@@ -825,3 +825,80 @@ func TestIsErrorCheckers_BareQBErrorCodePath(t *testing.T) {
 		})
 	}
 }
+
+// TestIsErrorCheckers_QBErrorCodeMismatchFallsThroughToSentinel is the
+// regression test for #695.
+//
+// A QBError CARRYING A GENERIC CODE IS THE HOUSE SHAPE, not an exotic one. The
+// hub's handlers build their refusals as
+// &QBError{Code: errors.ErrNotFound, Op: ..., Err: ErrChannelNotFound} — a
+// generic transport-level code wrapping the family's sentinel — so every
+// predicate has to look past the code it did not find and ask the sentinel.
+// Each one used to return from inside the QBError branch instead, answering
+// false for the very errors this package produces.
+//
+// Mutation evidence: restore the early return (make the QBError branch
+// `return qb.Code == code`) and all thirteen rows fail on the first
+// sub-assertion.
+func TestIsErrorCheckers_QBErrorCodeMismatchFallsThroughToSentinel(t *testing.T) {
+	t.Parallel()
+
+	// unrelated is a sentinel that belongs to no family, wrapped the same way,
+	// so the negative row proves the fall-through discriminates rather than
+	// simply saying yes to anything a QBError wraps.
+	unrelated := &dberrors.QBError{
+		Code: dberrors.ErrNotFound,
+		Op:   "test.unrelated",
+		Err:  ErrHashPoolInvalidType,
+	}
+
+	tests := []struct {
+		name     string
+		checker  func(error) bool
+		sentinel error
+	}{
+		{"IsChannelNotFound", IsChannelNotFound, ErrChannelNotFound},
+		{"IsChannelExists", IsChannelExists, ErrChannelExists},
+		{"IsHubBufferFull", IsHubBufferFull, ErrHubOverloaded},
+		{"IsClientDisconnected", IsClientDisconnected, ErrClientDisconnected},
+		{"IsClientSlow", IsClientSlow, ErrSlowConsumer},
+		{"IsInvalidCodec", IsInvalidCodec, ErrInvalidCodec},
+		{"IsSubscriptionNotFound", IsSubscriptionNotFound, ErrSubscriptionNotFound},
+		{"IsDedupKeyExists", IsDedupKeyExists, ErrDedupKeyExists},
+		{"IsServiceNotRunning", IsServiceNotRunning, ErrServiceNotRunning},
+		{"IsInvalidChannelName", IsInvalidChannelName, ErrInvalidChannelName},
+		{"IsInvalidMessageID", IsInvalidMessageID, ErrInvalidMessageID},
+		{"IsMaxSubscriptionsReached", IsMaxSubscriptionsReached, ErrMaxSubscriptionsReached},
+		{"IsClientNotRegistered", IsClientNotRegistered, ErrClientNotRegistered},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			wrapped := &dberrors.QBError{
+				Code: dberrors.ErrNotFound,
+				Op:   "push.handleSomething",
+				Err:  tc.sentinel,
+			}
+			if !tc.checker(wrapped) {
+				t.Errorf("%s(QBError{Code: ErrNotFound, Err: %v}) = false, want true; "+
+					"a code the predicate does not recognise must not end the classification",
+					tc.name, tc.sentinel)
+			}
+
+			if !tc.checker(tc.sentinel) {
+				t.Errorf("%s(%v) = false, want true for the bare sentinel", tc.name, tc.sentinel)
+			}
+
+			if tc.checker(unrelated) {
+				t.Errorf("%s(%v) = true, want false; the fall-through must still discriminate",
+					tc.name, unrelated)
+			}
+
+			if tc.checker(nil) {
+				t.Errorf("%s(nil) = true, want false", tc.name)
+			}
+		})
+	}
+}

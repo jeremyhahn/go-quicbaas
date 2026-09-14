@@ -547,7 +547,7 @@ func TestSDK_FIDO2_BeginRegistration_HappyPath(t *testing.T) {
 		&quicbaas.FIDO2BeginRegistrationResponse{SessionID: "go"}, nil)
 
 	out, err := c.Security().Auth().FIDO2().BeginRegistration(context.Background(),
-		&quicbaas.FIDO2BeginRegistrationRequest{Username: "alice"})
+		&quicbaas.FIDO2BeginRegistrationRequest{Email: "alice"})
 	if err != nil {
 		t.Fatalf("BeginRegistration: %v", err)
 	}
@@ -567,7 +567,7 @@ func TestSDK_FIDO2_FinishAuthentication_HappyPath(t *testing.T) {
 		context.Background(),
 		&quicbaas.FIDO2FinishAuthenticationRequest{
 			SessionID:     "sess",
-			Username:      "alice",
+			Email:         "alice",
 			AssertionJSON: `{"id":"cred"}`,
 		},
 	)

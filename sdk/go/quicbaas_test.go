@@ -921,6 +921,15 @@ func (m *mockIAMClientForCoverage) CompleteMFAEnrollment(ctx context.Context, en
 func (m *mockIAMClientForCoverage) DisableMFA(ctx context.Context, tenantID, userID string) error {
 	return nil
 }
+func (m *mockIAMClientForCoverage) ListWebAuthnCredentials(ctx context.Context, tenantID, userID string) ([]*cli.WebAuthnCredential, error) {
+	return nil, nil
+}
+func (m *mockIAMClientForCoverage) DeleteWebAuthnCredential(ctx context.Context, tenantID, userID, credentialID string) error {
+	return nil
+}
+func (m *mockIAMClientForCoverage) DeleteWebAuthnCredentials(ctx context.Context, tenantID, userID string) (int, error) {
+	return 0, nil
+}
 func (m *mockIAMClientForCoverage) GetBackupCodeStatus(ctx context.Context, tenantID, userID string) (*cli.BackupCodeStatus, error) {
 	return nil, nil
 }
@@ -1057,7 +1066,7 @@ func TestClient_Accessors_RLockPath(t *testing.T) {
 	t.Run("IAM_RLockPath", func(t *testing.T) {
 		mock := &mockIAMClientForCoverage{}
 		c := &client{transport: mockT, opts: defaultOptions(), iamClient: mock}
-		result := c.IAM()
+		result := c.iam()
 		if result != IAMClient(mock) {
 			t.Error("expected pre-populated IAM client to be returned via RLock path")
 		}
@@ -1103,15 +1112,6 @@ func (m *mockOperationsClientForCoverage) GetUpgradeStatus(ctx context.Context, 
 
 type mockRBACClientForCoverage struct{}
 
-func (m *mockRBACClientForCoverage) CreateUser(ctx context.Context, req *rbac.CreateUserRequest) (*rbac.CreateUserResponse, error) {
-	return nil, nil
-}
-func (m *mockRBACClientForCoverage) DeleteUser(ctx context.Context, req *rbac.DeleteUserRequest) (*rbac.DeleteUserResponse, error) {
-	return nil, nil
-}
-func (m *mockRBACClientForCoverage) ListUsers(ctx context.Context, req *rbac.ListUsersRequest) (*rbac.ListUsersResponse, error) {
-	return nil, nil
-}
 func (m *mockRBACClientForCoverage) CreateRole(ctx context.Context, req *rbac.CreateRoleRequest) (*rbac.CreateRoleResponse, error) {
 	return nil, nil
 }
@@ -1440,11 +1440,11 @@ func TestClient_ExtendedAccessors_WriteLockPath(t *testing.T) {
 
 	t.Run("IAM_WriteLockPath", func(t *testing.T) {
 		c := &client{transport: mockT, opts: defaultOptions()}
-		result := c.IAM()
+		result := c.iam()
 		if result == nil {
 			t.Error("expected non-nil IAM client after write lock initialization")
 		}
-		result2 := c.IAM()
+		result2 := c.iam()
 		if result != result2 {
 			t.Error("expected same IAM client instance on repeated calls")
 		}

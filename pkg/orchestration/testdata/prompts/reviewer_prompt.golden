@@ -1,0 +1,11 @@
+The following tasks were completed for: ship the health endpoint
+
+Task 1: write the handler
+Status: completed
+Result: handler.go written
+
+Task 2: wire the route
+Status: failed
+
+Do the results meet the original requirements?
+Respond with JSON: {"approved": true/false, "feedback": "...", "new_work_items": [...]}

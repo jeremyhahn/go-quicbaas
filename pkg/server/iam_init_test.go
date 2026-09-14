@@ -57,8 +57,6 @@ func TestIAMComponents_GettersReturnNil(t *testing.T) {
 		assert.Nil(t, c.GetGDPRManager())
 		assert.Nil(t, c.GetSessionStorage())
 		assert.Nil(t, c.GetSessionManager())
-		assert.Nil(t, c.GetAuthManager())
-		assert.Nil(t, c.GetInternalAuthManager())
 	})
 }
 

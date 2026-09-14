@@ -19,6 +19,10 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -68,8 +72,9 @@ func buildLiveWebAuthnFactoryWithSettings(t *testing.T, settings iam.TenantWebAu
 			RPOrigins:     []string{"https://global.example.com"},
 			Timeout:       60 * time.Second,
 		},
-		QRDB:     client,
-		Settings: settings,
+		QRDB:                client,
+		AttestationRecorder: func() qrdbsdk.AttestationRecorder { return testutil.NewMemoryUserAuthFactors() },
+		Settings:            settings,
 	})
 	require.NoError(t, err)
 	return factory

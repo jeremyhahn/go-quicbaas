@@ -276,13 +276,19 @@ func (bm *BatchManager) importUser(ctx context.Context, tenantID string, user *U
 	}
 
 	// Check if user exists
-	existing, err := bm.identityStore.GetUserByEmail(ctx, user.Email)
+	existing, err := bm.identityStore.GetUserByEmail(ctx, tenantID, user.Email)
 	if err == nil && existing != nil {
 		if opts.UpdateExisting {
 			// Update existing user
 			updateOpts := UpdateUserOptions{}
 			if user.Name != "" {
 				updateOpts.Name = &user.Name
+			}
+			// The handle round-trips too. It is a field of its own now, so an
+			// import that did not carry it back left the account answering to
+			// whatever username it already had while the export said otherwise.
+			if user.Username != "" {
+				updateOpts.Username = &user.Username
 			}
 			if user.Attributes != nil {
 				updateOpts.Attributes = &user.Attributes
@@ -293,7 +299,20 @@ func (bm *BatchManager) importUser(ctx context.Context, tenantID string, user *U
 			if user.Groups != nil {
 				updateOpts.Groups = &user.Groups
 			}
-			updateOpts.Enabled = &user.Enabled
+			// Only when the import states it. This used to be
+			// `&user.Enabled` over a plain bool, which is never nil — so an
+			// import record that said nothing about Enabled carried an
+			// explicit false and SUSPENDED the existing user it was meant to
+			// refresh.
+			updateOpts.Enabled = user.Enabled
+			// An exact state wins over the Enabled shorthand here for the same
+			// reason it does on create: Enabled is one bool over six states, so
+			// letting it overrule a named lifecycle turns a re-imported PENDING
+			// account into a disabled one.
+			if user.Lifecycle != "" {
+				state := user.Lifecycle
+				updateOpts.Lifecycle = &state
+			}
 
 			_, err = bm.identityStore.UpdateUser(ctx, tenantID, existing.ID, updateOpts)
 			return err
@@ -302,13 +321,44 @@ func (bm *BatchManager) importUser(ctx context.Context, tenantID string, user *U
 	}
 
 	// Create new user
+	// The import's own ID is deliberately NOT forwarded. The identity is the
+	// Snowflake qrdb assigns, so an id carried in an import file names a record
+	// in whatever system produced it, not one here; honouring it would be
+	// inventing a second identifier space for exactly as long as it took
+	// somebody to import a file twice.
 	createOpts := CreateUserOptions{
-		ID:         user.ID,
 		Email:      user.Email,
 		Username:   user.Username,
 		Name:       user.Name,
 		Attributes: user.Attributes,
-		Enabled:    user.Enabled,
+		// Forwarded, now that UserImport.Enabled is a pointer and can express
+		// "the import did not say". While it was a plain bool this could not
+		// be forwarded safely — false was indistinguishable from unset, so
+		// honouring it would have suspended every user an import did not
+		// explicitly enable. Dropping it was not safe either, only
+		// differently unsafe: an export of a disabled account re-imported as
+		// enabled, which is the fail-open direction.
+		Enabled: user.Enabled,
+	}
+	// An explicit state wins over the Enabled shorthand, which cannot express
+	// the difference the state carries.
+	//
+	// Only pending, active and disabled are creatable: suspended and locked
+	// describe something that HAPPENED to an account that already existed, and
+	// the transition table can only reach them FROM active. An import therefore
+	// cannot reconstruct either one — the only route runs through a state in
+	// which the account can authenticate, which for a record the import
+	// explicitly said was suspended is precisely the window that must not exist.
+	//
+	// So they land on DISABLED: also non-authenticating, reachable directly, and
+	// honest about what an import can assert. The original state is still in the
+	// export file for anyone reconciling by hand.
+	switch user.Lifecycle {
+	case "":
+	case LifecyclePending, LifecycleActive, LifecycleDisabled:
+		createOpts.Lifecycle = user.Lifecycle
+	default:
+		createOpts.Lifecycle = LifecycleDisabled
 	}
 
 	createdUser, err := bm.identityStore.CreateUser(ctx, tenantID, createOpts)

@@ -315,7 +315,7 @@ func TestE2E_FleetHeartbeat(t *testing.T) {
 	require.NoError(t, err)
 	initialLastSeen := initial.LastSeen
 
-	err = svc.AgentHeartbeat(ctx, tenantID, resp.Agent.ID)
+	err = svc.AgentHeartbeat(ctx, tenantID, resp.Agent.ID, nil)
 	require.NoError(t, err, "AgentHeartbeat should succeed")
 
 	updated, err := svc.GetAgent(ctx, tenantID, resp.Agent.ID)
@@ -334,7 +334,7 @@ func TestE2E_FleetHeartbeat_NotFound(t *testing.T) {
 	tenantID := "fleet-heartbeat-not-found"
 	ctx := orchestration.ContextWithTenant(context.Background(), tenantID)
 
-	err := svc.AgentHeartbeat(ctx, tenantID, "nonexistent-agent-id")
+	err := svc.AgentHeartbeat(ctx, tenantID, "nonexistent-agent-id", nil)
 	require.Error(t, err, "AgentHeartbeat for nonexistent agent should fail")
 }
 
@@ -363,7 +363,7 @@ func TestE2E_FleetLifecycle(t *testing.T) {
 	assert.Len(t, agents, 1, "list after register should return 1 agent")
 
 	// Step 3: Send heartbeat.
-	err = svc.AgentHeartbeat(ctx, tenantID, agentID)
+	err = svc.AgentHeartbeat(ctx, tenantID, agentID, nil)
 	require.NoError(t, err, "heartbeat should succeed")
 
 	// Step 4: Get agent and verify status is running.

@@ -27,18 +27,20 @@ SDK accessor: [`Client.Security().Barrier()`](../ssh/engineering.md).
 ```
 quicbaas barrier status
 quicbaas barrier init           --barrier-strategy <none|passphrase|shamir>
-                                [--passphrase <pp>]               (required for passphrase/shamir; rejected for none)
+                                [--passphrase-stdin]          (required for passphrase/shamir; rejected for none)
+                                [--passphrase <pp>]           (same, on argv — see §3a)
                                 [--so-pin <pin>]              (optional; rejected when --barrier-strategy=none)
                                 [--user-pin <pin>]            (optional; requires --so-pin)
-quicbaas barrier init-shamir    --passphrase <pp>
+quicbaas barrier init-shamir    --passphrase-stdin | --passphrase <pp>
                                 --threshold N
                                 --total M
                                 [--so-pin <pin>]
                                 [--user-pin <pin>]            (requires --so-pin)
-quicbaas barrier unseal         --passphrase <pp>                 (passphrase / single-secret only)
+quicbaas barrier unseal         --passphrase-stdin | --passphrase <pp>
+                                                              (passphrase / single-secret only)
 quicbaas barrier unseal-shares  --share <s1> [--share <s2> ...]
                                 | --shares-file <path>        ('-' = stdin)
-quicbaas barrier seal           [--so-pin <pin>]
+quicbaas barrier seal           [--so-pin <pin>]               (accepted for parity; NOT transmitted -- #491)
                                 [-y | --assume-yes]
 quicbaas barrier rekey          [--so-pin <pin>]              (NO --user-pin on rekey)
                                 [--threshold N --total M]     (paired; Shamir share regeneration;
@@ -48,17 +50,36 @@ quicbaas barrier recovery generate
                                 [--so-pin <pin>]
 quicbaas barrier recovery recover
                                 --share <s1> [--share <s2> ...]
+                                | --shares-file <path>        ('-' = stdin)
 ```
 
-> **Enable-encryption is API-only (no CLI verb yet).** Migrating an
-> unencrypted barrier to a keyed strategy after the fact is exposed over the
-> REST/gRPC/QUIC/MCP transports (system route `POST /api/v1/barrier/enable-encryption`
-> and per-tenant route `POST /api/v1/tenants/{tenant_id}/barrier/enable-encryption`),
-> driven server-side via the embedded qrdb node. It is **not** wired as a
-> `quicbaas barrier` CLI verb — the barrier CLI uses the qrdb `BarrierClient`
-> transport, whose enable-encryption method is intentionally stubbed (the
-> operation runs on the node, not through that transport). See the API/barrier
-> docs for the request shape.
+> **Enable-encryption.** Migrating an unencrypted barrier to a keyed strategy
+> after the fact is exposed over the REST/gRPC/QUIC/MCP transports (system
+> route `POST /api/v1/barrier/enable-encryption` and per-tenant route
+> `POST /api/v1/tenants/{tenant_id}/barrier/enable-encryption`), driven
+> server-side via the embedded qrdb node. It **is** wired as a
+> `quicbaas barrier enable-encryption` CLI verb
+> ([`cmd/quicbaas/barrier.go`](../../cmd/quicbaas/barrier.go),
+> `newBarrierEnableEncryptionCommand`) — an earlier revision of this page said
+> it was API-only, which is no longer true. Like every Security verb it is
+> **guaranteed on all six transports** (see below); see the API/barrier docs
+> for the request shape.
+
+### Transport parity is guaranteed, not conditional
+
+Every verb on this page works over **REST, gRPC, QUIC, MCP, Unix and the
+in-process embedded transport** — the locked architecture requires it
+([`CLAUDE.md` §Multi-Protocol Parity](../../CLAUDE.md),
+[`cmd/quicbaas/CLAUDE.md`](../../cmd/quicbaas/CLAUDE.md),
+[multiprotocol-api/architecture.md](../multiprotocol-api/architecture.md)).
+Pick a transport with `--transport` and the barrier surface is identical.
+
+This is a guarantee, not a caveat to check before scripting. A transport that
+returns `BaasTransportNotSupportedError` or `not yet supported by SDK` for a
+barrier verb is a **blocking release regression** and must be fixed before the
+change ships — file it as a defect rather than routing around it. The
+integration suite at `test/integration/cli/` exercises every CLI command over
+every transport for exactly this reason.
 
 ### Root persistent flag
 
@@ -136,7 +157,7 @@ for the full architectural rationale. In quicbaas concretely:
 | Flag | Concern | Server-side path |
 |------|---------|-----------------|
 | `--passphrase` | Strategy wrapping passphrase. `passphrase` Argon2id-derives the wrapping key, `shamir` uses it as the strategy seal, `none` ignores it. | qrdb `pkg/seal` strategy registry |
-| `--so-pin`, `--user-pin` | Two-PIN compliance-gating material (FIPS 140-3 / PCI-DSS v4). Gates rekey / seal / recovery-generate. | qrdb `pkg/pin.PINBackend` (composed in via `WithPINBackend`) |
+| `--so-pin`, `--user-pin` | Two-PIN compliance-gating material (FIPS 140-3 / PCI-DSS v4). Gates rekey / recovery-generate. **Not `seal`:** the SDK's `BarrierSeal` takes no request, so `barrier seal --so-pin` is parsed for surface parity and discarded — leave it off rather than putting a PIN in the process list for nothing ([#491](https://github.com/jeremyhahn/go-quicbaas/issues/491)). | qrdb `pkg/pin.PINBackend` (composed in via `WithPINBackend`) |
 
 CLI-side validation lives in `runBarrierInitCmd` / `runBarrierInitShamirCmd`
 / `runBarrierRekeyCmd` ([`cmd/quicbaas/barrier.go`](../../cmd/quicbaas/barrier.go)):
@@ -150,10 +171,90 @@ CLI-side validation lives in `runBarrierInitCmd` / `runBarrierInitShamirCmd`
 | `--user-pin` without `--so-pin` (or vice versa) | `init`, `init-shamir` | `errors.ErrInvalidInput` |
 | `--threshold` / `--total` not paired | `init-shamir`, `rekey`, `recovery generate` | `errors.ErrInvalidInput` |
 | `--threshold < 2` or `--total < --threshold` | `init-shamir`, `rekey`, `recovery generate` | `errors.ErrInvalidInput` |
-| One of `--share` / `--shares-file` not supplied | `unseal-shares` | `BarrierShareInputError` |
-| Both `--share` and `--shares-file` supplied | `unseal-shares` | `BarrierShareInputError` |
-| `--shares-file` unreadable | `unseal-shares` | `BarrierSharesFileError` |
-| `--shares-file` empty | `unseal-shares` | `BarrierSharesFileEmptyError` |
+| One of `--share` / `--shares-file` not supplied | `unseal-shares`, `root-token`, `recovery recover` | `BarrierShareInputError` |
+| Both `--share` and `--shares-file` supplied | `unseal-shares`, `root-token`, `recovery recover` | `BarrierShareInputError` |
+| `--shares-file` unreadable | `unseal-shares`, `root-token`, `recovery recover` | `BarrierSharesFileError` |
+| `--shares-file` empty | `unseal-shares`, `root-token`, `recovery recover` | `BarrierSharesFileEmptyError` |
+
+All four carry an `Op` naming the verb the operator actually ran. The three
+quorum verbs share `resolveUnsealShares` / `readSharesFile`, so an error that
+hard-coded one verb's name would send an operator off to debug a command they
+had not invoked ([#227](https://github.com/jeremyhahn/go-quicbaas/issues/227)).
+
+---
+
+## 3a. How the passphrase gets in
+
+A passphrase passed as `--passphrase` sits in `/proc/<pid>/cmdline` for the
+life of the call, where **every process of every user on the host can read
+it**, and it lands in the shell history besides. So the CLI takes it three
+ways, in precedence order — the same surface, and the same precedence, as
+xkey's `unlock --pin-stdin` / `XKEY_PIN` / `--pin`:
+
+| Order | Source | Notes |
+|-------|--------|-------|
+| 1 | `--passphrase-stdin` | **Preferred.** Reads one line — up to the first newline, or EOF, or the 4 KiB cap — and strips exactly one trailing newline (and a `\r` before it). `printf '%s'`, `echo`, and typing at a prompt and pressing Enter all work; nothing past the newline is consumed. Bounded by a timeout (30 s by default). |
+| 2 | `QUICBAAS_BARRIER_PASSPHRASE` | Environment variable. Readable from `/proc/<pid>/environ` by the same UID, so it is second, not first. |
+| 3 | `--passphrase` | Kept for compatibility. Its `--help` warns that it is *visible in the process list*. |
+
+```bash
+# Preferred
+printf '%s' "$PP" | quicbaas barrier unseal --passphrase-stdin
+
+# Environment
+QUICBAAS_BARRIER_PASSPHRASE="$PP" quicbaas barrier unseal
+
+# Explicit flag (development only)
+quicbaas barrier unseal --passphrase '<passphrase>'
+```
+
+The precedence is absolute, not a fallback chain: when `--passphrase-stdin`
+is given, an empty stdin is a missing passphrase, not a cue to read the
+environment. Verbs carrying the full three-way surface are `barrier init`,
+`barrier init-shamir`, `barrier unseal`, `barrier enable-encryption`,
+`tenant barrier init` and `tenant barrier unseal` — every verb in the CLI
+that takes a passphrase. Implementation and the resolution order live in
+[`cmd/quicbaas/passphrase.go`](../../cmd/quicbaas/passphrase.go).
+
+`--barrier-strategy=none` still rejects a passphrase, but only when the
+operator asked for one on that invocation (`--passphrase` or
+`--passphrase-stdin`): an exported `QUICBAAS_BARRIER_PASSPHRASE` left over
+from an unseal is ignored rather than turned into an error.
+
+**The stdin read is always bounded, or refused.** It cannot hang: it ends at
+`--timeout` — 30 seconds by default — and it completes as soon as you press
+Enter rather than waiting for EOF. Raising `--timeout` raises the stdin
+deadline with it; until
+[#246](https://github.com/jeremyhahn/go-quicbaas/issues/246) the flag
+did not reach the barrier verbs at all and the bound was always 30s. On a
+platform where the read cannot be bounded at all —
+today that means Windows, where the descriptor takes neither a deadline nor a
+`poll(2)` wait — `--passphrase-stdin` is **refused up front** with an error
+naming the platform and pointing at `QUICBAAS_BARRIER_PASSPHRASE` and
+`--passphrase`. A command that fails immediately beats one that hangs with no
+explanation. Piping into a Go-created pipe still works everywhere, since a
+pipe accepts a deadline directly.
+
+**In protected memory.** A passphrase read this way is held in an mlocked,
+guard-paged buffer that is wiped when the command finishes, per
+`conventions/security-review.md` §6 — it is never a plain Go string inside
+the CLI. Two residues are inherent to the *sources* and are the reason
+stdin is listed first: argv and the environment block both hand Go an
+immutable string that cannot be wiped. A third is inherent to the wire —
+qrdb's barrier request types field these secrets as `string`
+([go-qrdb#184](https://github.com/jeremyhahn/go-qrdb/issues/184)),
+so one unwipeable copy exists for the duration of the call.
+
+**Still on argv.** `--so-pin`, `--user-pin` and `--share` remain
+argv-only and carry the same exposure, and are still held as plain Go
+strings ([#237](https://github.com/jeremyhahn/go-quicbaas/issues/237)).
+All three verbs that collect a share **quorum** — `barrier unseal-shares`,
+`barrier root-token` and `barrier recovery recover` — offer `--shares-file -`
+as the way off argv; `recovery recover` was the odd one out until
+[#227](https://github.com/jeremyhahn/go-quicbaas/issues/227). The PIN
+flags have no stdin path yet
+([#226](https://github.com/jeremyhahn/go-quicbaas/issues/226)), and
+`tenant barrier unseal-share` submits a single share and is still argv-only.
 
 ---
 
@@ -162,22 +263,22 @@ CLI-side validation lives in `runBarrierInitCmd` / `runBarrierInitShamirCmd`
 ### Passphrase strategy with PIN-gated administration
 
 ```bash
-quicbaas barrier init \
+printf '%s' "$PP" | quicbaas barrier init \
   --barrier-strategy passphrase \
-  --passphrase '<wrapping-passphrase>' \
+  --passphrase-stdin \
   --so-pin SO12345 \
   --user-pin USR12345
 
 quicbaas barrier status --output json
-quicbaas barrier seal --so-pin SO12345 -y
-quicbaas barrier unseal --passphrase '<wrapping-passphrase>'
+quicbaas barrier seal -y
+printf '%s' "$PP" | quicbaas barrier unseal --passphrase-stdin
 ```
 
 ### Shamir M-of-N strategy
 
 ```bash
-quicbaas barrier init-shamir \
-  --passphrase '<seed>' \
+printf '%s' "$SEED" | quicbaas barrier init-shamir \
+  --passphrase-stdin \
   --threshold 3 \
   --total 5
 
@@ -220,13 +321,25 @@ quicbaas barrier rekey --threshold 3 --total 5
 ```bash
 quicbaas barrier recovery generate --threshold 3 --total 5 --so-pin SO12345
 quicbaas barrier recovery recover --share key-a --share key-b --share key-c
+# or, keeping the quorum off argv:
+quicbaas barrier recovery recover --shares-file /etc/quicbaas/recovery.txt
+cat recovery.txt | quicbaas barrier recovery recover --shares-file -
 ```
 
-### Enable-encryption (API-only)
+### Enable-encryption
 
-Transitioning a cleartext (`none`) barrier to an encrypted one after the fact is
-exposed over the transports, not the CLI (see the note in §1). The request field
-is `target_strategy`; `mechanism` and `availability` default to `swap` / `online`.
+Transitioning a cleartext (`none`) barrier to an encrypted one after the fact
+is available both as the `quicbaas barrier enable-encryption` CLI verb — over
+every transport, like all Security verbs (see §1) — and directly over the API.
+The request field is `target_strategy`; `mechanism` and `availability` default
+to `swap` / `online`.
+
+```bash
+printf '%s' "$PP" | quicbaas barrier enable-encryption \
+  --strategy passphrase --passphrase-stdin
+```
+
+The raw API form, for callers not going through the CLI:
 
 ```bash
 # System barrier — passphrase

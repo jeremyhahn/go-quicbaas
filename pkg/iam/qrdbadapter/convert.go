@@ -19,120 +19,125 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
-// This file implements the bidirectional, lossless conversion between the
-// broker's rich iam.User / iam.Role model and qrdb's canonical sdk.User /
-// sdk.Role core, splitting the broker-only fields into a BrokerProfile
-// side-record and recording the string-UUID <-> uint64 correlation as an
-// IDMapEntry. It is the seam that the later identity-unification sub-phases wire
-// into the live IdentityStore; nothing here is on the production path yet.
+// This file projects between iam.User and qrdb's canonical sdk.User. It is a
+// PROJECTION, not a split: every iam.User field is stored by qrdb, so there is
+// no side-record to write and no second identifier space to reconcile.
 //
-// Field-gap policy (locked architecture):
-//   - qrdb owns the user CORE: Username, TenantID, RoleIDs, ABAC Attributes,
-//     Enabled, System, timestamps.
-//   - The broker owns everything qrdb's sdk.User cannot model: Email, Name,
-//     Groups (qrdb has no Group type), AuthMethods, the State/Suspended/Locked
-//     lifecycle, all MFA bookkeeping, the invite flow, LastAuth, and the PIV
-//     thumbprint. Those live in the BrokerProfile, NEVER in qrdb Attributes.
-//   - The external string UUID (iam.User.ID) stays the API identity forever; the
-//     qrdb uint64 is the internal id. Their correlation is the IDMapEntry.
+// What used to live here — a BrokerProfile carrying fourteen fields qrdb could
+// not model, and an IDMapEntry correlating a broker UUID with qrdb's uint64 —
+// is gone. qrdb owns Email, Name, GroupIDs, AuthMethods, Lifecycle and LastAuth
+// natively now, and the identity is qrdb's Snowflake rendered in decimal, so the
+// correlation is strconv rather than a table that can fail to resolve.
+//
+// The two field groups qrdb still does not model are NOT carried here either,
+// because each already has an owner in this repository: MFA state belongs to
+// MFAStorage (which DefaultMFAManager.GetMFAStatus reads and the user record
+// never did), and invitations belong to iam.InviteStore, which delegates to
+// qrdb's TenantInviteStore. Mirroring either onto the identity record is what
+// this change removes.
 
-// IDMapEntry is the string-UUID <-> uint64 correlation produced by FromIAMUser.
-// At conversion time of a NOT-yet-persisted broker user the qrdb id is unknown
-// (qrdb assigns it server-side), so QRDBUserID is zero until the caller persists
-// the qrdb user and then records the binding via IDMap.Link. For an existing
-// user the caller pre-resolves the uint64 and the entry carries both ids.
-type IDMapEntry struct {
-	// TenantID scopes the correlation.
-	TenantID string
+// ParseUserID and FormatUserID are the canonical id conversions, owned by
+// pkg/iam because the rendering is a property of iam.User rather than of this
+// adapter. They are aliased here so the projection reads in one place.
+var (
+	// ParseUserID converts the external decimal user id into qrdb's uint64.
+	ParseUserID = iam.ParseUserID
 
-	// UUID is the broker's external string identifier (iam.User.ID).
-	UUID string
+	// FormatUserID renders a qrdb Snowflake as the external user id.
+	FormatUserID = iam.FormatUserID
+)
 
-	// QRDBUserID is the qrdb Snowflake id, or zero when not yet assigned.
-	QRDBUserID uint64
+// ErrInvalidUserID reports a user id that is not a qrdb Snowflake.
+var ErrInvalidUserID = iam.ErrInvalidUserID
+
+// ToIAMUser projects qrdb's canonical user onto iam.User. It is total: every
+// field comes from the record, so there is no partially-composed user and no
+// "the side-record was missing" case.
+func ToIAMUser(core qrdbsdk.User) *iam.User {
+	return &iam.User{
+		ID:    FormatUserID(core.ID),
+		Email: core.Email,
+		// qrdb's Username has a home on iam.User now, so the projection is
+		// round-trip faithful: it used to be read only as a display-name
+		// fallback and was otherwise dropped, while the write side fabricated
+		// a Username out of the display name.
+		Username:     core.Username,
+		Name:         displayName(core),
+		TenantID:     core.TenantID,
+		Roles:        cloneStrings(core.RoleIDs),
+		Groups:       cloneStrings(core.GroupIDs),
+		AuthMethods:  cloneStrings(core.AuthMethods),
+		Lifecycle:    core.Lifecycle,
+		LastAuth:     core.LastAuth,
+		Attributes:   cloneAttributes(core.Attributes),
+		CertBindings: cloneCertBindings(core.CertBindings),
+		Created:      core.CreatedAt,
+		Updated:      core.UpdatedAt,
+	}
 }
 
-// ToIAMUser composes a broker iam.User from qrdb's canonical core, the broker
-// side-record, and the external UUID resolved from the IDMap. A nil profile
-// yields a user carrying only the qrdb-core fields (the broker-only fields stay
-// zero), which keeps the conversion total for users that have no side-record
-// yet. The Attributes map is copied (qrdb's string values are boxed into the
-// broker's interface{} map) so the two models never alias the same backing map.
-func ToIAMUser(core qrdbsdk.User, profile *iam.BrokerProfile, uuid string) *iam.User {
-	u := &iam.User{
-		ID:         uuid,
-		TenantID:   core.TenantID,
-		Name:       core.Username, // sensible default; profile.Name overrides below
-		Roles:      cloneStrings(core.RoleIDs),
-		Attributes: attributesToBroker(core.Attributes),
-		Created:    core.CreatedAt,
-		Updated:    core.UpdatedAt,
+// FromIAMUser projects an iam.User onto qrdb's canonical user. The returned
+// core carries the parsed Snowflake, or zero for a user that has not been
+// created yet (qrdb assigns the id server-side), which is why an empty ID is
+// accepted here while a malformed one is refused.
+func FromIAMUser(u *iam.User) (qrdbsdk.User, error) {
+	if u == nil {
+		return qrdbsdk.User{}, ErrInvalidUserID
 	}
-	if profile != nil {
-		u.Email = profile.Email
-		if profile.Name != "" {
-			u.Name = profile.Name
+	var id uint64
+	if u.ID != "" {
+		parsed, err := ParseUserID(u.ID)
+		if err != nil {
+			return qrdbsdk.User{}, err
 		}
-		u.Groups = cloneStrings(profile.Groups)
-		u.AuthMethods = cloneStrings(profile.AuthMethods)
-		u.State = profile.State
-		u.Suspended = profile.Suspended
-		u.Locked = profile.Locked
-		u.MFAEnabled = profile.MFAEnabled
-		u.MFAMethod = profile.MFAMethod
-		u.MFAEnrolledAt = profile.MFAEnrolledAt
-		u.MFAVerified = profile.MFAVerified //nolint:staticcheck // SA1019: the legacy field is still mirrored across the wire and the storage adapter for older clients.
-		u.MFATimestamp = profile.MFATimestamp
-		u.LastAuth = profile.LastAuth
-		u.CertBindings = cloneCertBindings(profile.CertBindings)
-		u.InviteToken = profile.InviteToken
-		u.InviteExpiresAt = profile.InviteExpiresAt
+		id = parsed
 	}
-	return u
+	// Normalization is qrdb's, not a local copy of it: a consumer that
+	// de-duplicates or case-folds these sets differently would disagree with the
+	// store about what the user belongs to and what it may present.
+	groupIDs, err := qrdbsdk.NormalizeGroupIDs(u.Groups)
+	if err != nil {
+		return qrdbsdk.User{}, err
+	}
+	authMethods, err := qrdbsdk.NormalizeAuthMethods(u.AuthMethods)
+	if err != nil {
+		return qrdbsdk.User{}, err
+	}
+	return qrdbsdk.User{
+		ID:           id,
+		Username:     CoreUsername(u),
+		Email:        qrdbsdk.NormalizeEmail(u.Email),
+		Name:         u.Name,
+		TenantID:     u.TenantID,
+		RoleIDs:      cloneStrings(u.Roles),
+		GroupIDs:     groupIDs,
+		AuthMethods:  authMethods,
+		Lifecycle:    u.Lifecycle,
+		LastAuth:     u.LastAuth,
+		Attributes:   cloneAttributes(u.Attributes),
+		CertBindings: cloneCertBindings(u.CertBindings),
+		CreatedAt:    u.Created,
+		UpdatedAt:    u.Updated,
+	}, nil
 }
 
-// FromIAMUser splits a broker iam.User into qrdb's canonical core, the broker
-// side-record, and the id correlation entry. The returned core carries no ID
-// (qrdb assigns the uint64 server-side); the BrokerProfile carries every
-// broker-only field keyed by the qrdb uint64 once known. qrdbID is the
-// already-resolved Snowflake id, or zero for a not-yet-persisted user — it is
-// stamped onto both the profile and the entry so the caller can persist the
-// profile and Link the correlation after qrdb returns the id.
-func FromIAMUser(u *iam.User, qrdbID uint64) (qrdbsdk.User, *iam.BrokerProfile, IDMapEntry) {
-	core := qrdbsdk.User{
-		ID:         qrdbID,
-		Username:   userCoreName(u),
-		TenantID:   u.TenantID,
-		RoleIDs:    cloneStrings(u.Roles),
-		Attributes: attributesToQRDB(u.Attributes),
-		Enabled:    !u.Suspended && !u.Locked && u.State != iam.UserStateDisabled,
-		CreatedAt:  u.Created,
-		UpdatedAt:  u.Updated,
+// CoreUsername returns the qrdb Username for a broker user — the account's
+// tenant-unique handle, which is what an administrator addresses it by. The
+// rule belongs to iam.User.LoginName so both UserStorage implementations share
+// it; this is the name the projection writes into the qrdb record.
+func CoreUsername(u *iam.User) string {
+	return u.LoginName()
+}
+
+// displayName returns the presentation name for a qrdb record. qrdb's Name is
+// authoritative when set; a record written before Name existed (or a system
+// user, which carries a username and no display name) falls back to Username so
+// the projection never surfaces a nameless principal.
+func displayName(core qrdbsdk.User) string {
+	if core.Name != "" {
+		return core.Name
 	}
-	profile := &iam.BrokerProfile{
-		QRDBUserID:      qrdbID,
-		TenantID:        u.TenantID,
-		Email:           u.Email,
-		Name:            u.Name,
-		Groups:          cloneStrings(u.Groups),
-		AuthMethods:     cloneStrings(u.AuthMethods),
-		State:           u.State,
-		Suspended:       u.Suspended,
-		Locked:          u.Locked,
-		MFAEnabled:      u.MFAEnabled,
-		MFAMethod:       u.MFAMethod,
-		MFAEnrolledAt:   u.MFAEnrolledAt,
-		MFAVerified:     u.MFAVerified, //nolint:staticcheck // SA1019: the legacy field is still mirrored across the wire and the storage adapter for older clients.
-		MFATimestamp:    u.MFATimestamp,
-		LastAuth:        u.LastAuth,
-		CertBindings:    cloneCertBindings(u.CertBindings),
-		InviteToken:     u.InviteToken,
-		InviteExpiresAt: u.InviteExpiresAt,
-		Created:         u.Created,
-		Updated:         u.Updated,
-	}
-	entry := IDMapEntry{TenantID: u.TenantID, UUID: u.ID, QRDBUserID: qrdbID}
-	return core, profile, entry
+	return core.Username
 }
 
 // ToIAMRole composes a broker iam.Role from qrdb's canonical role core. qrdb has
@@ -145,14 +150,21 @@ func ToIAMRole(core qrdbsdk.Role) *iam.Role {
 		Name:        core.Name,
 		TenantID:    core.TenantID,
 		Permissions: convertPermissions(core.Permissions),
-		Created:     core.CreatedAt,
-		Updated:     core.UpdatedAt,
+		// Derived by qrdb on read from the live permission registry, never
+		// stored. Carrying it keeps this converter faithful to the one in
+		// pkg/iam (transportRoleToIAM): both project the same drift signal.
+		RetiredPermissions: convertPermissions(core.RetiredPermissions),
+		Created:            core.CreatedAt,
+		Updated:            core.UpdatedAt,
 	}
 }
 
 // FromIAMRole splits a broker iam.Role into qrdb's canonical role core. The
 // broker Description has no qrdb home and is intentionally dropped (see
 // ToIAMRole); permission strings are parsed back into typed qrdb permissions.
+// RetiredPermissions is deliberately NOT carried back: qrdb derives it on read
+// and clears it on every write, so sending one would be sending a value the
+// store is guaranteed to discard.
 // Any string that does not parse as "resource:action" is skipped so a single
 // malformed entry cannot corrupt the whole role.
 func FromIAMRole(r *iam.Role) qrdbsdk.Role {
@@ -164,13 +176,6 @@ func FromIAMRole(r *iam.Role) qrdbsdk.Role {
 		CreatedAt:   r.Created,
 		UpdatedAt:   r.Updated,
 	}
-}
-
-// userCoreName returns the qrdb Username for a broker user. iam.User has no
-// dedicated Username field; the broker uses Name as the human login name, so it
-// is the canonical source for qrdb's Username.
-func userCoreName(u *iam.User) string {
-	return u.Name
 }
 
 // parsePermissions maps the broker's permission strings to qrdb's typed
@@ -193,35 +198,16 @@ func parsePermissions(in []string) []qrdbsdk.Permission {
 	return out
 }
 
-// attributesToBroker boxes qrdb's map[string]string ABAC attributes into the
-// broker's map[string]interface{}. A nil/empty input yields nil so an empty
-// round-trip stays nil-equal.
-func attributesToBroker(in map[string]string) map[string]interface{} {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]interface{}, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-// attributesToQRDB unboxes the broker's map[string]interface{} into qrdb's
-// map[string]string. Non-string values are stringified via a best-effort cast;
-// values that are not strings are dropped so qrdb's typed map stays clean.
-func attributesToQRDB(in map[string]interface{}) map[string]string {
+// cloneAttributes copies the ABAC attribute map so the projection and the store
+// record never alias one backing map. A nil/empty input yields nil to keep an
+// empty round-trip nil-equal.
+func cloneAttributes(in map[string]string) map[string]string {
 	if len(in) == 0 {
 		return nil
 	}
 	out := make(map[string]string, len(in))
 	for k, v := range in {
-		if s, ok := v.(string); ok {
-			out[k] = s
-		}
-	}
-	if len(out) == 0 {
-		return nil
+		out[k] = v
 	}
 	return out
 }
@@ -240,8 +226,8 @@ func cloneStrings(in []string) []string {
 // legacyPIVThumbprintsFromBindings returns the legacy (hex SHA-256 of the cert
 // DER) PIV-attested thumbprints from a binding slice — the subset the broker
 // keeps in its own legacy-PIV index because qrdb's SPKI index cannot resolve
-// them. It mirrors iam.User.LegacyPIVThumbprints for use on a BrokerProfile's
-// detached binding slice (e.g. reconciling indexes on update/delete).
+// them. It mirrors iam.User.LegacyPIVThumbprints for use on a detached binding
+// slice (e.g. reconciling indexes on update/delete).
 func legacyPIVThumbprintsFromBindings(in []qrdbsdk.CertBinding) []string {
 	out := make([]string, 0, len(in))
 	for i := range in {
@@ -269,10 +255,10 @@ func isLegacyHexThumbprint(s string) bool {
 	return true
 }
 
-// cloneCertBindings returns a copy of in so the broker iam.User and the
-// BrokerProfile never share a backing slice. CertBinding is a value type, so a
-// shallow element copy is a deep copy. A nil/empty input yields nil to keep
-// empty round-trips nil-equal.
+// cloneCertBindings returns a copy of in so the projection and the store record
+// never share a backing slice. CertBinding is a value type, so a shallow element
+// copy is a deep copy. A nil/empty input yields nil to keep empty round-trips
+// nil-equal.
 func cloneCertBindings(in []qrdbsdk.CertBinding) []qrdbsdk.CertBinding {
 	if len(in) == 0 {
 		return nil

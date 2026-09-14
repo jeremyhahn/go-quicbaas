@@ -37,6 +37,65 @@ import (
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
+// recvStream is the receive half of a transport stream. Declared locally so the
+// helper below needs no import that the tests would shadow with their own
+// `transport` variable.
+type recvStream interface {
+	Recv() (interface{}, error)
+}
+
+// maxStreamDrainAttempts bounds the drain in requireStreamInvalidRequestType so
+// a stream that never terminates fails the test instead of hanging it.
+const maxStreamDrainAttempts = 16
+
+// requireStreamInvalidRequestType drains s to completion and requires that an
+// *InvalidRequestTypeError was delivered, whichever channel carried it.
+//
+// A single Recv cannot decide this. The transport delivers a handler error as a
+// VALUE on the receive channel and then calls Close, which cancels the stream
+// context and closes that channel in the same call. A receiver already blocked
+// inside Recv therefore has the buffered value and ctx.Done ready at the same
+// moment and may observe either, so one Recv can report context.Canceled while
+// the error it was looking for is still sitting in the buffer. Draining settles
+// it: a closed channel still hands out its buffered values, so a later call
+// recovers the error. io.EOF and ErrRecvOnClosedStream are reported only once
+// the buffer is drained, which makes them genuine terminals.
+//
+// The assertion is deliberately outside every branch. However the stream
+// behaves, this fails unless an *InvalidRequestTypeError was actually observed,
+// so the subtest cannot pass by taking a path that checks nothing.
+func requireStreamInvalidRequestType(t *testing.T, s recvStream) {
+	t.Helper()
+
+	var invalidReqErr *InvalidRequestTypeError
+	found := false
+
+	for attempt := 0; attempt < maxStreamDrainAttempts && !found; attempt++ {
+		resp, recvErr := s.Recv()
+
+		if recvErr != nil {
+			if errors.As(recvErr, &invalidReqErr) {
+				found = true
+				break
+			}
+			if errors.Is(recvErr, io.EOF) || errors.Is(recvErr, ErrRecvOnClosedStream) {
+				// Terminal: the buffer is drained, nothing more is coming.
+				break
+			}
+			// A cancellation racing a buffered value. Retry: the value is
+			// still recoverable from the closed channel.
+			continue
+		}
+
+		if respErr, ok := resp.(error); ok && errors.As(respErr, &invalidReqErr) {
+			found = true
+		}
+	}
+
+	require.True(t, found,
+		"stream did not deliver an *InvalidRequestTypeError for a wrong-typed request")
+}
+
 // =============================================================================
 // Mock Service
 // =============================================================================
@@ -264,17 +323,6 @@ func (m *mockQuicBaaS) ValidateToken(ctx context.Context, req *service.ValidateT
 }
 
 // RBAC operations
-func (m *mockQuicBaaS) CreateUser(ctx context.Context, req *service.AuthCreateUserRequest) (*service.AuthCreateUserResponse, error) {
-	return &service.AuthCreateUserResponse{}, nil
-}
-
-func (m *mockQuicBaaS) DeleteUser(ctx context.Context, req *service.AuthDeleteUserRequest) (*service.AuthDeleteUserResponse, error) {
-	return &service.AuthDeleteUserResponse{}, nil
-}
-
-func (m *mockQuicBaaS) ListUsers(ctx context.Context, req *service.AuthListUsersRequest) (*service.AuthListUsersResponse, error) {
-	return &service.AuthListUsersResponse{}, nil
-}
 
 func (m *mockQuicBaaS) CreateAuthRole(ctx context.Context, req *service.AuthCreateRoleRequest) (*service.AuthCreateRoleResponse, error) {
 	return &service.AuthCreateRoleResponse{}, nil
@@ -425,7 +473,10 @@ func (m *mockQuicBaaS) SSHClient() xkmsssh.Client                               
 func (m *mockQuicBaaS) SetIAMProvider(provider service.IAMComponents)                {}
 func (m *mockQuicBaaS) Messaging() messaging.Service                                 { return nil }
 func (m *mockQuicBaaS) SetMessagingService(ms messaging.Service)                     {}
+func (m *mockQuicBaaS) SetDynamicSecretsService(svc service.DynamicSecretsService)   {}
 func (m *mockQuicBaaS) SetAgentService(agent orchestration.AgentService)             {}
+func (m *mockQuicBaaS) SDLC() *service.SDLCService                                   { return nil }
+func (m *mockQuicBaaS) SetSDLCService(*service.SDLCService)                          {}
 func (m *mockQuicBaaS) WatchManager() *watch.Manager                                 { return nil }
 func (m *mockQuicBaaS) SetQRDBClient(provider service.QRDBClientProvider)            {}
 func (m *mockQuicBaaS) Database() service.DatabaseService                            { return nil }
@@ -1030,17 +1081,7 @@ func TestTransport_RequestStream(t *testing.T) {
 		require.NoError(t, err)
 		defer stream.Close()
 
-		// The error is delivered through the stream
-		resp, recvErr := stream.Recv()
-		if recvErr != nil && recvErr != io.EOF {
-			var invalidReqErr *InvalidRequestTypeError
-			assert.True(t, errors.As(recvErr, &invalidReqErr))
-		} else if resp != nil {
-			if err, ok := resp.(error); ok {
-				var invalidReqErr *InvalidRequestTypeError
-				assert.True(t, errors.As(err, &invalidReqErr))
-			}
-		}
+		requireStreamInvalidRequestType(t, stream)
 	})
 
 	t.Run("Watch stream with wrong type", func(t *testing.T) {
@@ -1048,17 +1089,7 @@ func TestTransport_RequestStream(t *testing.T) {
 		require.NoError(t, err)
 		defer stream.Close()
 
-		// The error is delivered through the stream
-		resp, recvErr := stream.Recv()
-		if recvErr != nil && recvErr != io.EOF {
-			var invalidReqErr *InvalidRequestTypeError
-			assert.True(t, errors.As(recvErr, &invalidReqErr))
-		} else if resp != nil {
-			if err, ok := resp.(error); ok {
-				var invalidReqErr *InvalidRequestTypeError
-				assert.True(t, errors.As(err, &invalidReqErr))
-			}
-		}
+		requireStreamInvalidRequestType(t, stream)
 	})
 
 	t.Run("Query stream with wrong type", func(t *testing.T) {
@@ -1066,17 +1097,7 @@ func TestTransport_RequestStream(t *testing.T) {
 		require.NoError(t, err)
 		defer stream.Close()
 
-		// The error is delivered through the stream
-		resp, recvErr := stream.Recv()
-		if recvErr != nil && recvErr != io.EOF {
-			var invalidReqErr *InvalidRequestTypeError
-			assert.True(t, errors.As(recvErr, &invalidReqErr))
-		} else if resp != nil {
-			if err, ok := resp.(error); ok {
-				var invalidReqErr *InvalidRequestTypeError
-				assert.True(t, errors.As(err, &invalidReqErr))
-			}
-		}
+		requireStreamInvalidRequestType(t, stream)
 	})
 
 	t.Run("ScanIndex stream with wrong type", func(t *testing.T) {
@@ -1084,17 +1105,7 @@ func TestTransport_RequestStream(t *testing.T) {
 		require.NoError(t, err)
 		defer stream.Close()
 
-		// The error is delivered through the stream
-		resp, recvErr := stream.Recv()
-		if recvErr != nil && recvErr != io.EOF {
-			var invalidReqErr *InvalidRequestTypeError
-			assert.True(t, errors.As(recvErr, &invalidReqErr))
-		} else if resp != nil {
-			if err, ok := resp.(error); ok {
-				var invalidReqErr *InvalidRequestTypeError
-				assert.True(t, errors.As(err, &invalidReqErr))
-			}
-		}
+		requireStreamInvalidRequestType(t, stream)
 	})
 
 	t.Run("TimeSeries Query stream with wrong type", func(t *testing.T) {
@@ -1102,17 +1113,7 @@ func TestTransport_RequestStream(t *testing.T) {
 		require.NoError(t, err)
 		defer stream.Close()
 
-		// The error is delivered through the stream
-		resp, recvErr := stream.Recv()
-		if recvErr != nil && recvErr != io.EOF {
-			var invalidReqErr *InvalidRequestTypeError
-			assert.True(t, errors.As(recvErr, &invalidReqErr))
-		} else if resp != nil {
-			if err, ok := resp.(error); ok {
-				var invalidReqErr *InvalidRequestTypeError
-				assert.True(t, errors.As(err, &invalidReqErr))
-			}
-		}
+		requireStreamInvalidRequestType(t, stream)
 	})
 }
 
@@ -2272,47 +2273,16 @@ func TestTransport_AllRBACOperations(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("CreateUser", func(t *testing.T) {
-		req := &service.AuthCreateUserRequest{}
-		resp, err := transport.Request(ctx, "quicbaas.RBAC", "CreateUser", req)
-		require.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("CreateUser with wrong type", func(t *testing.T) {
-		_, err := transport.Request(ctx, "quicbaas.RBAC", "CreateUser", "invalid")
-		require.Error(t, err)
-		var invalidReqErr *InvalidRequestTypeError
-		assert.True(t, errors.As(err, &invalidReqErr))
-	})
-
-	t.Run("DeleteUser", func(t *testing.T) {
-		req := &service.AuthDeleteUserRequest{}
-		resp, err := transport.Request(ctx, "quicbaas.RBAC", "DeleteUser", req)
-		require.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("DeleteUser with wrong type", func(t *testing.T) {
-		_, err := transport.Request(ctx, "quicbaas.RBAC", "DeleteUser", "invalid")
-		require.Error(t, err)
-		var invalidReqErr *InvalidRequestTypeError
-		assert.True(t, errors.As(err, &invalidReqErr))
-	})
-
-	t.Run("ListUsers", func(t *testing.T) {
-		req := &service.AuthListUsersRequest{}
-		resp, err := transport.Request(ctx, "quicbaas.RBAC", "ListUsers", req)
-		require.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("ListUsers with wrong type", func(t *testing.T) {
-		_, err := transport.Request(ctx, "quicbaas.RBAC", "ListUsers", "invalid")
-		require.Error(t, err)
-		var invalidReqErr *InvalidRequestTypeError
-		assert.True(t, errors.As(err, &invalidReqErr))
-	})
+	// Roles only. quicbaas.RBAC has no user verbs: they routed to a
+	// service-layer auth manager production never wired, and were deleted with
+	// the parallel identity model in issue #905. Users are administered over
+	// quicbaas.IAM.
+	for _, method := range []string{"CreateUser", "DeleteUser", "ListUsers"} {
+		t.Run(method+" is not routed", func(t *testing.T) {
+			_, err := transport.Request(ctx, "quicbaas.RBAC", method, nil)
+			require.Error(t, err)
+		})
+	}
 
 	t.Run("CreateRole", func(t *testing.T) {
 		req := &service.AuthCreateRoleRequest{}

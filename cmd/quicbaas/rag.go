@@ -21,7 +21,6 @@ import (
 	stdlog "log"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -80,7 +79,6 @@ vector similarity search, and context building for use with language models.
 RAG operations are supported on all transports (gRPC, REST, QUIC, Unix socket, MCP).`,
 	}
 
-	cmd.PersistentFlags().DurationVar(&timeout, "timeout", 30*time.Second, "Request timeout")
 	cmd.PersistentFlags().StringVar(&outputFormat, "output", "table", "Output format (json, yaml, table)")
 
 	cmd.PersistentFlags().BoolVar(&tlsEnabled, "tls", false, "Enable TLS")
@@ -155,7 +153,7 @@ func runRAGQueryCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &rag.QueryRequest{
@@ -265,7 +263,7 @@ func runRAGContextCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &rag.BuildContextRequest{

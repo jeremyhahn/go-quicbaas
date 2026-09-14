@@ -119,6 +119,29 @@ func (h *NotificationHub) sendToClient(client *Client, msg *Message) {
 }
 ```
 
+**Request Admission and Loop Lifecycle:**
+
+Every request the hub accepts — including the asynchronous `register` and
+`unregister` hand-offs — passes through `admit`, which under the hub's
+lifecycle lock either queues the request for a live loop or refuses it. When a
+loop leaves it closes admission and then drains every queue, answering the
+synchronous requests with `ErrHubStopped` and discarding the asynchronous ones;
+`Run` drains again on the way in, so nothing a previous loop accepted is
+performed by the next one.
+
+The two rules that follow from this:
+
+- A register issued while no loop is running is refused, not deferred. It will
+  never be delivered to a later loop, so a client cannot be resurrected into a
+  registry that never knew it.
+- An unregister that is refused or discarded still closes its client. Closing
+  is the half of an unregister that needs no registry, and it is what the caller
+  was promised.
+
+`RegisterClient` and `UnregisterClient` return nothing, so a refusal is logged
+rather than reported. Callers that need the registration to have happened use
+`RegisterAndSubscribe`, which is synchronous and returns an error.
+
 ### Client
 
 **Location:** `pkg/messaging/hub.go` (Client struct)
@@ -205,6 +228,21 @@ type Service interface {
     Stop(ctx context.Context) error
 }
 ```
+
+**Shutdown Semantics:**
+
+`Stop` cancels the service context, stops the hub, and waits for the hub's loop
+to leave. The caller's context bounds that **wait**, not the teardown: if the
+context is cancelled or the deadline passes while `Stop` is waiting, `Stop`
+still releases every subscription client and clears its running flag, then
+returns the context error. A `Stop` that reports a timeout is therefore still a
+`Stop` — `IsRunning()` is false afterwards and the service can be started
+again.
+
+The running flag falls last, after the subscription sweep. `GetChannel` and
+`ListChannels` use it to distinguish "the service was started" from "the hub
+can answer", so a service that is taking itself apart keeps reporting running
+until the teardown is complete.
 
 ### DeltaComputer
 
@@ -442,6 +480,16 @@ type QRDBError struct {
 | HubBufferFullError | 1002 | Hub buffer full (retryable) |
 | ClientSlowError | 1004 | Client consuming too slowly |
 | SubscriptionNotFoundError | 1006 | Subscription not found |
+
+**Classification predicates:**
+
+The exported `Is*` predicates (`IsChannelNotFound`, `IsChannelExists`, and the
+rest of the family) recognise three independent signatures, any one of which is
+sufficient: the concrete error type, a `QRDBError` carrying the family's push
+error code, or the family's sentinel anywhere in the wrapped chain. None of the
+three is terminal — the hub's own handlers report a miss as a `QRDBError` with
+a generic `ErrNotFound` code wrapping the sentinel, so a code that does not
+match must not end the classification.
 
 ## Configuration
 

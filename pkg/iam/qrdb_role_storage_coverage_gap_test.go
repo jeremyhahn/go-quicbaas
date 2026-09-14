@@ -48,12 +48,18 @@ type fakeRoleClient struct {
 	deleteErr  error
 	listResp   *qrdbtransport.ListRolesResponse
 	listErr    error
+	byNameResp *qrdbtransport.Role
+	byNameErr  error
+	recResp    *qrdbtransport.ReconcileRolesResponse
+	recErr     error
 
 	gotCreate *qrdbtransport.CreateRoleRequest
 	gotUpdate *qrdbtransport.UpdateRoleRequest
 	gotDelete string
 	gotGet    string
 	gotList   *qrdbtransport.ListRolesRequest
+	gotRec    *qrdbtransport.ReconcileRolesRequest
+	gotByName *qrdbtransport.GetRoleByNameRequest
 }
 
 func (f *fakeRoleClient) CreateRole(_ context.Context, req *qrdbtransport.CreateRoleRequest) (*qrdbtransport.Role, error) {
@@ -81,10 +87,17 @@ func (f *fakeRoleClient) ListRoles(_ context.Context, req *qrdbtransport.ListRol
 	return f.listResp, f.listErr
 }
 
-// Inert stubs to satisfy the RoleClient interface.
-func (f *fakeRoleClient) GetRoleByName(context.Context, *qrdbtransport.GetRoleByNameRequest) (*qrdbtransport.Role, error) {
-	return nil, nil
+func (f *fakeRoleClient) ReconcileBuiltInRoles(_ context.Context, req *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
+	f.gotRec = req
+	return f.recResp, f.recErr
 }
+
+func (f *fakeRoleClient) GetRoleByName(_ context.Context, req *qrdbtransport.GetRoleByNameRequest) (*qrdbtransport.Role, error) {
+	f.gotByName = req
+	return f.byNameResp, f.byNameErr
+}
+
+// Inert stubs to satisfy the RoleClient interface.
 func (f *fakeRoleClient) AssignRole(context.Context, uint64, string) error   { return nil }
 func (f *fakeRoleClient) UnassignRole(context.Context, uint64, string) error { return nil }
 func (f *fakeRoleClient) ListPermissions(context.Context) (*qrdbtransport.ListPermissionsResponse, error) {
@@ -146,10 +159,33 @@ func TestQRDBRoleStorage_CreateRole(t *testing.T) {
 	assert.Equal(t, []string{"kv:get"}, fc.gotCreate.Permissions)
 
 	// Name collision maps to the broker's ErrRoleAlreadyExists sentinel.
+	//
+	// ASSERTED ON THE ERROR'S FIELDS, BECAUSE errors.Is CANNOT TELL THESE APART.
+	// Every sentinel in this package carrying dberrors.ErrAlreadyExists matches
+	// every other one — QBError.Is compares the CODE alone — so
+	// errors.Is(err, ErrRoleAlreadyExists) is equally true for a group
+	// conflict, a user conflict, or a duplicate role ID. That is what this
+	// assertion used to be, and it could not fail for the reason it named:
+	// mapping a name collision to ErrGroupAlreadyExists left it green (#449).
+	//
+	// Op separates role from group and user; the condition message separates a
+	// duplicate NAME from a duplicate ID, which share both Code and Op. Neither
+	// is a substitute for making the sentinels matchable — that is #449's own
+	// scope and an owner call, since it changes how every consumer tests for
+	// "already exists" — but a test standing in for the guarantee must not be
+	// blind to it in the meantime.
 	fc = &fakeRoleClient{createErr: &qrdbrole.RoleNameExistsError{Name: "admin", TenantID: "t1"}}
 	s = NewQRDBRoleStorage(&fakeRoleResolver{client: fc})
 	err := s.CreateRole(ctx, &Role{ID: "r1", Name: "admin", TenantID: "t1"})
-	assert.True(t, errors.Is(err, ErrRoleAlreadyExists), "want ErrRoleAlreadyExists, got %v", err)
+
+	var createErr *dberrors.QBError
+	require.ErrorAs(t, err, &createErr)
+	assert.Equal(t, dberrors.ErrAlreadyExists, createErr.Code)
+	assert.Equal(t, "iam.role", createErr.Op,
+		"a group or user conflict carries a different Op and would otherwise pass here")
+	require.NotNil(t, createErr.Err)
+	assert.EqualError(t, createErr.Err, "role already exists",
+		"a duplicate ID shares this Code and Op; only the condition distinguishes them")
 }
 
 func TestQRDBRoleStorage_GetRole(t *testing.T) {

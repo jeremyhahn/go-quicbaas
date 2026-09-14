@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -215,14 +216,18 @@ func TestAccountCredentialFromArgs_MissingCredential(t *testing.T) {
 func TestAccountToolsHaveQRDBPermissionMapping(t *testing.T) {
 	want := map[string][2]string{
 		"quicbaas_agent_account_create":      {"credentials", "store"},
-		"quicbaas_agent_account_get":         {"credentials", "retrieve"},
-		"quicbaas_agent_account_list":        {"credentials", "list"},
+		"quicbaas_agent_account_get":         {"agent_accounts", "read"},
+		"quicbaas_agent_account_list":        {"agent_accounts", "list"},
 		"quicbaas_agent_account_update":      {"credentials", "store"},
 		"quicbaas_agent_account_delete":      {"credentials", "delete"},
 		"quicbaas_agent_account_rotate":      {"credentials", "rotate"},
 		"quicbaas_agent_account_revoke":      {"credentials", "delete"},
 		"quicbaas_agent_account_set_default": {"credentials", "store"},
-		"quicbaas_agent_account_usage":       {"credentials", "retrieve"},
+		"quicbaas_agent_account_usage":       {"agent_accounts", "read"},
+		// The release verb is deliberately NOT a credentials:* grant: that
+		// family is registered ScopeCross (system tenant only) and would deny
+		// the tenant-scoped agent daemon the tool exists for.
+		"quicbaas_agent_account_materialize": {"agent_accounts", "materialize"},
 	}
 	for name := range accountToolHandlers {
 		expected, declared := want[name]
@@ -351,5 +356,85 @@ func TestMCPSpawn_CarriesAccountAuto(t *testing.T) {
 	}
 	if seen == nil || !seen.AccountAuto || seen.AccountStrategy != "least_usage" {
 		t.Fatalf("MCP spawn dropped account_auto/account_strategy: %+v", seen)
+	}
+}
+
+// =============================================================================
+// Credential release (go-quicbaas#734)
+//
+// The MCP tool is the one account tool whose result is secret material. Its
+// distinguishing property is that TENANCY IS NOT AN ARGUMENT: it comes from the
+// authenticated request context, so an MCP client cannot ask for another
+// tenant's pool by editing a field.
+// =============================================================================
+
+// TestAccountMCP_MaterializeBindsTenancyToTheCaller is the happy path plus the
+// property that makes the tool safe.
+func TestAccountMCP_MaterializeBindsTenancyToTheCaller(t *testing.T) {
+	var captured *service.MaterializeAccountCredentialRequest
+	reg := newAccountRegistry(t, &mocks.MockAccountService{
+		MaterializeAccountCredentialFunc: func(
+			_ context.Context, req *service.MaterializeAccountCredentialRequest,
+		) (*service.MaterializeAccountCredentialResponse, error) {
+			captured = req
+			return &service.MaterializeAccountCredentialResponse{
+				AccountID: req.AccountID,
+				Provider:  orchestration.AccountProviderClaude,
+				Credential: &orchestration.AccountCredential{
+					AccessToken:       "RELEASED",
+					AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN",
+				},
+			}, nil
+		},
+	})
+
+	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	// A tenant_id argument is deliberately supplied AND deliberately ignored:
+	// the tool must take tenancy from the caller, not the arguments.
+	result, err := reg.executeAccountTool(ctx, "quicbaas_agent_account_materialize", map[string]interface{}{
+		"tenant_id":  "tenant-2",
+		"account_id": "acct-1",
+		"project_id": "project-x",
+	})
+	if err != nil {
+		t.Fatalf("materialize tool error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("materialize tool returned no result")
+	}
+	if captured == nil {
+		t.Fatal("the service was not called")
+	}
+	if captured.TenantID != "tenant-1" {
+		t.Errorf("tool asked for tenant %q, want the caller's tenant-1", captured.TenantID)
+	}
+	if captured.AccountID != "acct-1" || captured.ProjectID != "project-x" {
+		t.Errorf("tool asked for %q/%q, want acct-1/project-x", captured.AccountID, captured.ProjectID)
+	}
+}
+
+// TestAccountMCP_MaterializeRefusesATenantlessCaller covers the bad-input path:
+// an unauthenticated (or tenant-less) call is refused rather than defaulted.
+func TestAccountMCP_MaterializeRefusesATenantlessCaller(t *testing.T) {
+	var called bool
+	reg := newAccountRegistry(t, &mocks.MockAccountService{
+		MaterializeAccountCredentialFunc: func(
+			_ context.Context, _ *service.MaterializeAccountCredentialRequest,
+		) (*service.MaterializeAccountCredentialResponse, error) {
+			called = true
+			return &service.MaterializeAccountCredentialResponse{}, nil
+		},
+	})
+
+	_, err := reg.executeAccountTool(context.Background(), "quicbaas_agent_account_materialize",
+		map[string]interface{}{"account_id": "acct-1"})
+	if err == nil {
+		t.Fatal("a tenant-less call released a credential")
+	}
+	if called {
+		t.Fatal("a tenant-less call reached the service")
+	}
+	if !strings.Contains(err.Error(), "tenant") {
+		t.Errorf("refusal %q does not name the missing binding", err.Error())
 	}
 }

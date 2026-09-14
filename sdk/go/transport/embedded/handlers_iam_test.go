@@ -86,7 +86,7 @@ func TestHandleIAMUserCreate_ForwardsRolesGroupsAndMetadata(t *testing.T) {
 		t.Fatal("expected a user response")
 	}
 
-	stored, err := store.GetUserByEmail(ctx, "embedded@example.com")
+	stored, err := store.GetUserByEmail(ctx, "t-1", "embedded@example.com")
 	if err != nil {
 		t.Fatalf("GetUserByEmail failed: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestHandleIAMUserCreate_UnknownGroup_NoUserCreated(t *testing.T) {
 		t.Fatal("Expected error for unknown group reference")
 	}
 
-	if _, err := store.GetUserByEmail(ctx, "phantom@example.com"); err == nil {
+	if _, err := store.GetUserByEmail(ctx, "t-1", "phantom@example.com"); err == nil {
 		t.Error("Expected no user to be created after failed group validation")
 	}
 }

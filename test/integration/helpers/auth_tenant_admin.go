@@ -19,24 +19,17 @@ package helpers
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
-	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/certfixture"
 )
 
 // tenantAdminAuthCache memoises (baseURL, tenantID) → bearer so each test
@@ -46,27 +39,20 @@ var tenantAdminAuthCache = struct {
 	tokens map[string]pivCachedToken
 }{tokens: make(map[string]pivCachedToken)}
 
-// integrationCAKeyPath resolves the integration CA private key on disk.
-// The key is required at runtime to sign the per-tenant client certificate.
-// Override via QUICBAAS_TEST_CA_KEY if the mount point differs.
-func integrationCAKeyPath() string {
-	if v := os.Getenv("QUICBAAS_TEST_CA_KEY"); v != "" {
-		return v
-	}
-	return "/etc/quicbaas/certs/ca.key"
-}
-
 // AuthTenantAdmin obtains (and caches) a bearer token for a tenant-admin
 // identity scoped to tenantID. It is the integration-harness counterpart of
 // AuthPIV for tenant-scoped identities.
 //
 // Mechanism:
-//  1. An ephemeral ECDSA P-256 client certificate is minted in-process,
-//     signed by the integration CA (whose key is at
-//     /etc/quicbaas/certs/ca.key or QUICBAAS_TEST_CA_KEY). The certificate
-//     carries a tenant-scoped SPIFFE URI SAN
-//     spiffe://quicbaas.integration/tenant/<tenantID>/user/tenant-admin so
-//     the broker's PIV-login deriveLoginTenant resolves the correct tenant.
+//  1. An ephemeral client certificate is ISSUED BY THE FIXTURE CA through the
+//     product's own CA adapter (helpers.FixtureAuthority ->
+//     pkg/server.NewCAService). The CA stamps the tenant-scoped SPIFFE URI SAN
+//     spiffe://quicbaas.integration/tenant/<tenantID>/user/<cn> itself, which is
+//     what the broker's PIV-login deriveLoginTenant resolves the tenant from.
+//     Nothing here signs a certificate: before go-quicbaas#943 this helper read
+//     the CA's private key off the mounted volume and called
+//     x509.CreateCertificate, so the suite logged in with material the product
+//     had never issued.
 //  2. A new user is created under tenantID via the system-admin REST API
 //     (POST /api/v1/tenants/{id}/users). The response body includes the
 //     one-time invite_token (cleared at activation time).
@@ -113,15 +99,11 @@ func authTenantAdmin(ctx context.Context, baseURL, tenantID, adminBearer string)
 	}
 	tenantAdminAuthCache.Unlock()
 
-	// Step 1: generate ephemeral tenant-scoped client cert signed by the
-	// integration CA.
-	certDER, keyDER, err := mintTenantClientCert(tenantID)
+	// Step 1: have the fixture CA issue an ephemeral tenant-scoped client cert.
+	certPEM, keyPEM, err := issueTenantClientCert(ctx, tenantID)
 	if err != nil {
-		return "", fmt.Errorf("authTenantAdmin: mint cert for %q: %w", tenantID, err)
+		return "", &TenantAdminCertError{TenantID: tenantID, Cause: err}
 	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
 	// Step 2: create user under the tenant (as system admin). The response
 	// contains the one-time invite_token.
@@ -158,95 +140,57 @@ func authTenantAdmin(ctx context.Context, baseURL, tenantID, adminBearer string)
 	return bearer, nil
 }
 
-// mintTenantClientCert generates an ephemeral ECDSA P-256 client certificate
-// for a tenant-admin identity, signed by the integration CA. The certificate
-// embeds a tenant-scoped SPIFFE URI SAN of the form:
+// TenantAdminCertError reports a failure obtaining the tenant-admin client
+// certificate for a tenant.
+type TenantAdminCertError struct {
+	// TenantID is the tenant the credential was for.
+	TenantID string
+
+	// Cause is the underlying failure.
+	Cause error
+}
+
+func (e *TenantAdminCertError) Error() string {
+	return "authTenantAdmin: tenant-admin certificate for " + e.TenantID + ": " + e.Cause.Error()
+}
+
+func (e *TenantAdminCertError) Unwrap() error { return e.Cause }
+
+// issueTenantClientCert asks the fixture CA for a tenant-admin client
+// credential scoped to tenantID, and returns the certificate and private key as
+// PEM.
 //
-//	spiffe://quicbaas.integration/tenant/<tenantID>/user/tenant-admin
+// The certificate is issued under the go-xkms "client" profile, so it carries
+// ClientAuth extended key usage and — because the profile maps to the SPIFFE
+// "user" kind (pkg/service.SPIFFEKindForProfile) — a tenant-scoped SPIFFE URI
+// SAN under the fixture trust domain. That SAN is what PIV login derives the
+// tenant from, so a credential minted any other way cannot log in.
 //
-// Returns the DER-encoded cert and the DER-encoded private key.
-func mintTenantClientCert(tenantID string) (certDER, keyDER []byte, err error) {
-	// Verify the integration CA is loadable before continuing (fail fast if the
-	// container mount is missing).
+// The tenant segment is the sanitized tenant id, matching the email local part
+// built for the same identity, so the SAN and the user record agree.
+func issueTenantClientCert(ctx context.Context, tenantID string) (certPEM, keyPEM []byte, err error) {
+	// Verify the fixture trust anchor is loadable before continuing, so a
+	// missing container mount fails here rather than at TLS handshake time.
 	if _, err := IntegrationCertPool(); err != nil {
-		return nil, nil, fmt.Errorf("load CA pool: %w", err)
+		return nil, nil, err
 	}
 
-	// Load the CA private key so we can sign the tenant client cert.
-	caKeyPath := integrationCAKeyPath()
-	caKeyBytes, err := os.ReadFile(caKeyPath) //nolint:gosec // path from test config
+	authority, err := FixtureAuthority(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read CA key %s: %w", caKeyPath, err)
+		return nil, nil, err
 	}
 
-	caKeyBlock, _ := pem.Decode(caKeyBytes)
-	if caKeyBlock == nil {
-		return nil, nil, fmt.Errorf("decode CA key PEM: no PEM block in %s", caKeyPath)
-	}
-	caPrivKey, err := x509.ParseECPrivateKey(caKeyBlock.Bytes)
+	sanitized := sanitizeTenantID(tenantID)
+	issued, err := authority.IssueClient(ctx, certfixture.ClientFixture{
+		CommonName:   "tenant-admin@" + tenantID,
+		Email:        fmt.Sprintf("tenant-admin-%s@integration.test", sanitized),
+		TenantID:     sanitized,
+		ValidityDays: 1,
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse CA private key: %w", err)
+		return nil, nil, err
 	}
-
-	// Load the CA certificate to use as the issuer template.
-	caCertPEM, err := os.ReadFile(pivCAFile()) //nolint:gosec // path from test config
-	if err != nil {
-		return nil, nil, fmt.Errorf("read CA cert %s: %w", pivCAFile(), err)
-	}
-	caCertBlock, _ := pem.Decode(caCertPEM)
-	if caCertBlock == nil {
-		return nil, nil, fmt.Errorf("decode CA cert PEM: no PEM block")
-	}
-	caCert, err := x509.ParseCertificate(caCertBlock.Bytes)
-	if err != nil {
-		return nil, nil, fmt.Errorf("parse CA cert: %w", err)
-	}
-
-	// Generate an ephemeral client key.
-	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, fmt.Errorf("generate client key: %w", err)
-	}
-
-	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serial, err := rand.Int(rand.Reader, serialLimit)
-	if err != nil {
-		return nil, nil, fmt.Errorf("generate serial: %w", err)
-	}
-
-	now := time.Now()
-	spiffeURI := &url.URL{
-		Scheme: "spiffe",
-		Host:   "quicbaas.integration",
-		Path:   "/tenant/" + sanitizeTenantID(tenantID) + "/user/tenant-admin",
-	}
-	template := &x509.Certificate{
-		SerialNumber: serial,
-		Subject: pkix.Name{
-			Organization: []string{"QuicBaaS Integration Tests"},
-			CommonName:   "tenant-admin@" + tenantID,
-		},
-		NotBefore:   now,
-		NotAfter:    now.Add(24 * time.Hour),
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		EmailAddresses: []string{
-			fmt.Sprintf("tenant-admin-%s@integration.test", sanitizeTenantID(tenantID)),
-		},
-		URIs: []*url.URL{spiffeURI},
-	}
-
-	certDER, err = x509.CreateCertificate(rand.Reader, template, caCert, &clientKey.PublicKey, caPrivKey)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create client cert: %w", err)
-	}
-
-	keyDER, err = x509.MarshalECPrivateKey(clientKey)
-	if err != nil {
-		return nil, nil, fmt.Errorf("marshal client key: %w", err)
-	}
-
-	return certDER, keyDER, nil
+	return issued.CertificatePEM, issued.PrivateKeyPEM, nil
 }
 
 // createTenantAdminUser creates a pending user under tenantID using the

@@ -19,7 +19,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/metadata"
 )
 
 // =============================================================================
@@ -74,88 +73,6 @@ func TestQuicBaaS_Close_NilLoggerDoesNotPanic(t *testing.T) {
 	err := db.Close()
 	require.NoError(t, err)
 	assert.True(t, db.closed)
-}
-
-// =============================================================================
-// checkAuth Deep Path Tests
-// =============================================================================
-
-func TestQuicBaaS_CheckAuth_AuthDisabledAlwaysPasses(t *testing.T) {
-	svc := createTestService(t)
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = false
-
-	err := db.checkAuth(context.Background(), "read")
-	require.NoError(t, err)
-}
-
-func TestQuicBaaS_CheckAuth_AuthEnabled_EmptyTokenUnauthorized(t *testing.T) {
-	svc := createTestService(t)
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	// Context without any metadata - ExtractTokenFromContext returns "", nil
-	// checkAuth treats "" token as unauthorized
-	err := db.checkAuth(context.Background(), "read")
-	require.Error(t, err)
-}
-
-func TestQuicBaaS_CheckAuth_AuthEnabled_ValidTokenAuthorized(t *testing.T) {
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return nil // Authorized
-		},
-	}
-
-	svc := createTestService(t, withAuthManager(mockAuth))
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	// Add token via gRPC incoming metadata
-	md := metadata.New(map[string]string{
-		"authorization": "Bearer valid-token-123",
-	})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	err := db.checkAuth(ctx, "read")
-	require.NoError(t, err)
-}
-
-func TestQuicBaaS_CheckAuth_AuthEnabled_NoAuthManagerPassesWithToken(t *testing.T) {
-	svc := createTestService(t)
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-	db.authManager = nil
-
-	md := metadata.New(map[string]string{
-		"authorization": "Bearer some-token",
-	})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	// With token but no auth manager, checkAuth should pass (no manager to validate)
-	err := db.checkAuth(ctx, "read")
-	require.NoError(t, err)
-}
-
-func TestQuicBaaS_CheckAuth_AuthEnabled_XAuthTokenHeader(t *testing.T) {
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return nil
-		},
-	}
-
-	svc := createTestService(t, withAuthManager(mockAuth))
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	// Use x-auth-token header instead of authorization
-	md := metadata.New(map[string]string{
-		"x-auth-token": "my-api-key",
-	})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	err := db.checkAuth(ctx, "read")
-	require.NoError(t, err)
 }
 
 // =============================================================================

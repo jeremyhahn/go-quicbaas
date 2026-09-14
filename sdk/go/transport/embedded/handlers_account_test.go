@@ -81,7 +81,7 @@ func newAccountTransport(t *testing.T, accountSvc service.AccountService) *Trans
 func TestAccountHandlersAreRegistered(t *testing.T) {
 	for _, method := range []string{
 		"Create", "Get", "List", "Update", "Delete",
-		"RotateCredential", "Revoke", "SetDefault", "Usage",
+		"RotateCredential", "Revoke", "SetDefault", "Usage", "Materialize",
 	} {
 		if _, ok := unaryHandlers[accountServiceName+"/"+method]; !ok {
 			t.Errorf("quicbaas.Account/%s is not registered in the embedded transport", method)
@@ -322,5 +322,108 @@ func TestAccountEmbeddedResponsesCarryNoCredential(t *testing.T) {
 				t.Errorf("response %d leaked credential marker %q: %s", i, marker, encoded)
 			}
 		}
+	}
+}
+
+// =============================================================================
+// Credential release (go-quicbaas#734)
+//
+// The embedded transport has no wire and no separate principal — the caller IS
+// the process holding the pool — so what these tests pin is the CONVERSION:
+// the release hands back the short-lived half of the credential and drops the
+// refresh grant, exactly as the wire transports do.
+// =============================================================================
+
+// TestAccountEmbedded_MaterializeReleasesTheEnvelope covers the happy path.
+func TestAccountEmbedded_MaterializeReleasesTheEnvelope(t *testing.T) {
+	var captured *service.MaterializeAccountCredentialRequest
+	svc := &mocks.MockAccountService{
+		MaterializeAccountCredentialFunc: func(
+			_ context.Context, req *service.MaterializeAccountCredentialRequest,
+		) (*service.MaterializeAccountCredentialResponse, error) {
+			captured = req
+			return &service.MaterializeAccountCredentialResponse{
+				AccountID: req.AccountID,
+				Provider:  orchestration.AccountProviderClaude,
+				Credential: &orchestration.AccountCredential{
+					AccessToken:       "RELEASED",
+					AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN",
+					RefreshToken:      "MUST-NOT-TRAVEL",
+					TokenEndpoint:     "https://example.invalid/token",
+					ClientID:          "MUST-NOT-TRAVEL",
+				},
+			}, nil
+		},
+	}
+	tr := newAccountTransport(t, svc)
+
+	resp, err := tr.Request(context.Background(), accountServiceName, "Materialize",
+		&accountSDK.MaterializeCredentialRequest{
+			TenantID: "tenant-1", AccountID: "acct-1", ProjectID: "project-x",
+		})
+	if err != nil {
+		t.Fatalf("Materialize error = %v", err)
+	}
+	released, ok := resp.(*accountSDK.MaterializedCredential)
+	if !ok {
+		t.Fatalf("response is %T, want *account.MaterializedCredential", resp)
+	}
+	if released.Credential == nil || released.Credential.AccessToken == "" {
+		t.Fatal("release carried no envelope")
+	}
+	if released.Credential.AccessTokenEnvKey != "CLAUDE_CODE_OAUTH_TOKEN" {
+		t.Error("release lost the environment variable a spawn projects into")
+	}
+	if captured == nil || captured.ProjectID != "project-x" {
+		t.Error("the project scope did not reach the service")
+	}
+
+	encoded, err := json.Marshal(released)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), "MUST-NOT-TRAVEL") {
+		t.Error("release carried the refresh grant")
+	}
+}
+
+// TestAccountEmbedded_MaterializeRejectsTheWrongRequestType covers the
+// dispatcher's bad-input path.
+func TestAccountEmbedded_MaterializeRejectsTheWrongRequestType(t *testing.T) {
+	tr := newAccountTransport(t, &mocks.MockAccountService{})
+
+	_, err := tr.Request(context.Background(), accountServiceName, "Materialize",
+		&accountSDK.GetAccountRequest{TenantID: "tenant-1", AccountID: "acct-1"})
+	if err == nil {
+		t.Fatal("expected an error for a mismatched request type")
+	}
+}
+
+// TestReleasedCredentialFromOrchestration_DropsTheRefreshGrant is the
+// unit-level guard on the converter itself.
+func TestReleasedCredentialFromOrchestration_DropsTheRefreshGrant(t *testing.T) {
+	out := releasedCredentialFromOrchestration(&orchestration.AccountCredential{
+		AccessToken:       "RELEASED",
+		RefreshToken:      "MUST-NOT-TRAVEL",
+		TokenEndpoint:     "https://example.invalid/token",
+		ClientID:          "MUST-NOT-TRAVEL",
+		AccessTokenEnvKey: "K",
+		Env:               map[string]string{"A": "b"},
+	})
+	if out == nil {
+		t.Fatal("converter returned nil for a populated envelope")
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), "MUST-NOT-TRAVEL") {
+		t.Error("converted envelope carries the refresh grant")
+	}
+	if out.AccessToken == "" || out.AccessTokenEnvKey != "K" || out.Env["A"] != "b" {
+		t.Error("converted envelope dropped the material a spawn needs")
+	}
+	if releasedCredentialFromOrchestration(nil) != nil {
+		t.Error("converter fabricated an envelope from nil")
 	}
 }

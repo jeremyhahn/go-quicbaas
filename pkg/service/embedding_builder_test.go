@@ -192,8 +192,7 @@ func TestQuicBaaS_Embedding_ServiceIsUsable(t *testing.T) {
 
 	// Test that the service works
 	req := &GenerateEmbeddingRequest{
-		Text:     "Test embedding",
-		Provider: "openai",
+		Text: "Test embedding",
 	}
 
 	resp, err := embeddingSvc.GenerateEmbedding(context.Background(), req)

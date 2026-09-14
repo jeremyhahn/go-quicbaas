@@ -54,7 +54,12 @@ func (s *Server) BeginRegistration(ctx context.Context, req *pb.FIDO2BeginRegist
 	}
 
 	resp, err := fido2Service.BeginRegistration(ctx, req.TenantId, &xkmstransport.BeginRegistrationRequest{
-		Username:    req.Username,
+		// xkms v0.12 renamed this field to Email and made it the canonical
+		// tenant-unique login key: the service resolves the account with
+		// GetByEmail, and a username is a different identifier it does not
+		// accept. The proto field keeps its name for wire compatibility, so
+		// this is the one place the two spellings meet.
+		Email:       req.Username,
 		DisplayName: req.DisplayName,
 	})
 	if err != nil {
@@ -107,7 +112,7 @@ func (s *Server) BeginAuthentication(ctx context.Context, req *pb.FIDO2BeginAuth
 	}
 
 	resp, err := fido2Service.BeginAuthentication(ctx, req.TenantId, &xkmstransport.BeginAuthenticationRequest{
-		Username: req.Username,
+		Email: req.Username,
 	})
 	if err != nil {
 		return nil, toProtoError(err)
@@ -133,7 +138,7 @@ func (s *Server) FinishAuthentication(ctx context.Context, req *pb.FIDO2FinishAu
 
 	resp, err := fido2Service.FinishAuthentication(ctx, req.TenantId, &xkmstransport.FinishAuthenticationRequest{
 		SessionID:     req.SessionId,
-		Username:      req.Username,
+		Email:         req.Username,
 		AssertionJSON: req.AssertionJson,
 	})
 	if err != nil {

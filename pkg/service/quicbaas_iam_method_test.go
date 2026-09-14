@@ -18,7 +18,6 @@ import (
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 func (m *mockIAMComponents) GetTenantManager() iam.TenantManager { return m.tenantManager }
@@ -50,12 +49,6 @@ func (m *mockIAMComponents) GetPIVActivator() *iam.PIVActivator { return m.pivAc
 func (m *mockIAMComponents) GetAdminManager() *iam.AdminManager { return m.adminManager }
 
 func (m *mockIAMComponents) GetGDPRManager() *iam.GDPRManager { return m.gdprManager }
-
-func (m *mockIAMComponents) GetAuthManager() AuthManagerInterface { return m.authManager }
-
-func (m *mockIAMComponents) GetInternalAuthManager() interfaces.AuthManager {
-	return m.internalAuthManager
-}
 
 func (m *mockIAMComponents) GetAppStorage() iam.AppStorage { return nil }
 
@@ -843,7 +836,7 @@ func TestIAMServiceWrapper_CreateUser_UnknownRole_NoUserCreated(t *testing.T) {
 	assert.True(t, dberrors.IsNotFound(err), "expected typed not-found, got %T: %v", err, err)
 
 	// Zero side effects: the user must NOT exist.
-	_, err = store.GetUserByEmail(ctx, "phantom@example.com")
+	_, err = store.GetUserByEmail(ctx, "t-1", "phantom@example.com")
 	require.Error(t, err, "no user must be created after failed role validation")
 }
 
@@ -909,7 +902,7 @@ func TestIAMServiceWrapper_CreateUser_UnknownGroup_NoUserCreated(t *testing.T) {
 	assert.True(t, dberrors.IsNotFound(err), "expected typed not-found, got %T: %v", err, err)
 
 	// Zero side effects: the user must NOT exist.
-	_, err = store.GetUserByEmail(ctx, "phantomgroup@example.com")
+	_, err = store.GetUserByEmail(ctx, "t-1", "phantomgroup@example.com")
 	require.Error(t, err, "no user must be created after failed group validation")
 }
 
@@ -922,7 +915,7 @@ func TestIAMServiceWrapper_CreateUser_ForwardsAttributes(t *testing.T) {
 
 	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
 
-	attrs := map[string]interface{}{"department": "engineering", "cost_center": "cc-42"}
+	attrs := map[string]string{"department": "engineering", "cost_center": "cc-42"}
 	resp, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
 		TenantID:   "t-1",
 		Email:      "attrs@example.com",
@@ -939,4 +932,259 @@ func TestIAMServiceWrapper_CreateUser_ForwardsAttributes(t *testing.T) {
 	stored, err := store.GetUser(ctx, "t-1", resp.User.ID)
 	require.NoError(t, err)
 	assert.Equal(t, attrs, stored.Attributes)
+}
+
+// =============================================================================
+// UpdateUser attribute + role + group forwarding (MCP/QUIC converge here)
+// =============================================================================
+
+// TestIAMServiceWrapper_UpdateUser_ForwardsAttributes pins the fix for a
+// silent-success defect: the wrapper accepted IAMUpdateUserRequest.Attributes
+// and never copied it into iam.UpdateUserOptions, so the update returned 200
+// and the OLD attributes stayed in the store.
+//
+// These attributes are what ABAC evaluates. An operator who tightens one is
+// told the tightening took effect while the old value is still the one policy
+// is decided on, which is a fail-open contract breach rather than a missing
+// convenience — and nothing in the response says otherwise, because the store
+// returns the record it did not change.
+func TestIAMServiceWrapper_UpdateUser_ForwardsAttributes(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	ctx := context.Background()
+
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+
+	created, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
+		TenantID:   "t-1",
+		Email:      "abac@example.com",
+		Name:       "ABAC User",
+		Attributes: map[string]string{"clearance": "secret"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, created.User)
+
+	tightened := map[string]string{"clearance": "public"}
+	resp, err := wrapper.UpdateUser(ctx, &IAMUpdateUserRequest{
+		TenantID:   "t-1",
+		UserID:     created.User.ID,
+		Attributes: &tightened,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.User)
+	assert.Equal(t, tightened, resp.User.Attributes,
+		"the response reported attributes the update did not apply")
+
+	// The persisted record is the one ABAC reads, so it is the one that has to
+	// carry the change.
+	stored, err := store.GetUser(ctx, "t-1", created.User.ID)
+	require.NoError(t, err)
+	assert.Equal(t, tightened, stored.Attributes)
+}
+
+// TestIAMServiceWrapper_UpdateUser_ForwardsRolesAndGroups covers the two
+// sibling fields found by auditing the rest of IAMUpdateUserRequest after the
+// attribute defect: Roles and Groups were dropped by the same wrapper, in the
+// same way, and they feed RBAC rather than ABAC. REST forwards all three
+// through this identity store, so dropping them here also made one SDK verb
+// mean two different things depending on the transport underneath it.
+func TestIAMServiceWrapper_UpdateUser_ForwardsRolesAndGroups(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	ctx := context.Background()
+
+	role, err := store.CreateRole(ctx, "t-1", iam.CreateRoleOptions{Name: "auditor"})
+	require.NoError(t, err)
+	group, err := store.CreateGroup(ctx, "t-1", iam.CreateGroupOptions{Name: "analysts"})
+	require.NoError(t, err)
+
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+
+	created, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
+		TenantID: "t-1",
+		Email:    "rbac@example.com",
+		Name:     "RBAC User",
+	})
+	require.NoError(t, err)
+
+	roles := []string{role.ID}
+	groups := []string{group.ID}
+	resp, err := wrapper.UpdateUser(ctx, &IAMUpdateUserRequest{
+		TenantID: "t-1",
+		UserID:   created.User.ID,
+		Roles:    &roles,
+		Groups:   &groups,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.User)
+	assert.Equal(t, roles, resp.User.Roles)
+	assert.Equal(t, groups, resp.User.Groups)
+
+	stored, err := store.GetUser(ctx, "t-1", created.User.ID)
+	require.NoError(t, err)
+	assert.Equal(t, roles, stored.Roles, "the role grant was reported and not stored")
+	assert.Equal(t, groups, stored.Groups, "the group membership was reported and not stored")
+}
+
+// TestIAMServiceWrapper_UpdateUser_OmittedFieldsAreLeftAlone is the other half
+// of the rule: forwarding must be driven by PRESENCE, not by value. A request
+// that names only one field must not blank the others — the whole reason these
+// are pointers — so this guards the fix from being written as an unconditional
+// copy.
+func TestIAMServiceWrapper_UpdateUser_OmittedFieldsAreLeftAlone(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	ctx := context.Background()
+
+	role, err := store.CreateRole(ctx, "t-1", iam.CreateRoleOptions{Name: "auditor"})
+	require.NoError(t, err)
+
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+
+	created, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
+		TenantID:   "t-1",
+		Email:      "partial@example.com",
+		Name:       "Partial User",
+		Roles:      []string{role.ID},
+		Attributes: map[string]string{"clearance": "secret"},
+	})
+	require.NoError(t, err)
+
+	newName := "Renamed User"
+	_, err = wrapper.UpdateUser(ctx, &IAMUpdateUserRequest{
+		TenantID: "t-1",
+		UserID:   created.User.ID,
+		Name:     &newName,
+	})
+	require.NoError(t, err)
+
+	stored, err := store.GetUser(ctx, "t-1", created.User.ID)
+	require.NoError(t, err)
+	assert.Equal(t, newName, stored.Name)
+	assert.Equal(t, []string{role.ID}, stored.Roles, "a rename revoked the user's roles")
+	assert.Equal(t, map[string]string{"clearance": "secret"}, stored.Attributes,
+		"a rename cleared the user's ABAC attributes")
+}
+
+// TestIAMServiceWrapper_UpdateGroup_ForwardsMembers is the sibling defect the
+// UpdateUser audit turned up: UpdateGroupRequest.Members was accepted by the
+// request type, populated by the MCP tool, honoured by the store — and never
+// copied into iam.UpdateGroupOptions by this wrapper. The call answered
+// success and the membership did not change.
+//
+// Membership is an authorization input, since permissions resolve through the
+// groups a user belongs to. An administrator who removes someone from a group
+// and is told it worked has been handed a revocation that never happened.
+func TestIAMServiceWrapper_UpdateGroup_ForwardsMembers(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	ctx := context.Background()
+
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+
+	group, err := store.CreateGroup(ctx, "t-1", iam.CreateGroupOptions{Name: "analysts"})
+	require.NoError(t, err)
+
+	// Real users: a membership names an account, and the store now refuses one
+	// that names nothing rather than writing an unresolvable id where
+	// authorization looks.
+	first, err := store.CreateUser(ctx, "t-1", iam.CreateUserOptions{
+		Email: "ana@t1.test", Username: "ana", Name: "Ana",
+	})
+	require.NoError(t, err)
+	second, err := store.CreateUser(ctx, "t-1", iam.CreateUserOptions{
+		Email: "bo@t1.test", Username: "bobby", Name: "Bo",
+	})
+	require.NoError(t, err)
+
+	members := []string{first.ID, second.ID}
+	resp, err := wrapper.UpdateGroup(ctx, &UpdateGroupRequest{
+		TenantID: "t-1",
+		GroupID:  group.ID,
+		Members:  &members,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.Group)
+	assert.Equal(t, members, resp.Group.Members)
+
+	stored, err := store.GetGroup(ctx, "t-1", group.ID)
+	require.NoError(t, err)
+	assert.Equal(t, members, stored.Members, "the membership change was reported and not stored")
+
+	// A later update that names only the description must not empty the
+	// membership: presence, not value, drives the copy.
+	desc := "analysts group"
+	_, err = wrapper.UpdateGroup(ctx, &UpdateGroupRequest{
+		TenantID:    "t-1",
+		GroupID:     group.ID,
+		Description: &desc,
+	})
+	require.NoError(t, err)
+
+	stored, err = store.GetGroup(ctx, "t-1", group.ID)
+	require.NoError(t, err)
+	assert.Equal(t, members, stored.Members, "a description edit emptied the group")
+}
+
+// TestIAMServiceWrapper_UpdateUser_RefusesTheTerminalDeletingState covers the
+// MCP/QUIC side of the same guard. Both transports converge on this wrapper,
+// which forwards Lifecycle straight to the identity store, so the state that
+// claims a record for deletion was assertable as an ordinary field update on
+// every one of them — the claim without the cascade that gives it meaning.
+func TestIAMServiceWrapper_UpdateUser_RefusesTheTerminalDeletingState(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	ctx := context.Background()
+
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+
+	created, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
+		TenantID:  "t-1",
+		Email:     "terminal@example.com",
+		Username:  "terminal",
+		Name:      "Terminal User",
+		Lifecycle: iam.LifecycleActive,
+	})
+	require.NoError(t, err)
+
+	deleting := iam.LifecycleDeleting
+	resp, err := wrapper.UpdateUser(ctx, &IAMUpdateUserRequest{
+		TenantID:  "t-1",
+		UserID:    created.User.ID,
+		Lifecycle: &deleting,
+	})
+	require.Error(t, err, "a deletion claim was accepted as an ordinary update")
+	assert.Nil(t, resp)
+
+	stored, err := store.GetUser(ctx, "t-1", created.User.ID)
+	require.NoError(t, err)
+	assert.Equal(t, iam.LifecycleActive, stored.Lifecycle,
+		"the refused update stranded the account in a terminal state")
+	assert.True(t, stored.CanAuthenticate())
+}
+
+// TestIAMServiceWrapper_UpdateUser_StillSuspends is the counterweight: the
+// administrative states this surface exists to set must keep working. A guard
+// that refused every lifecycle change would satisfy the test above and disable
+// account administration on two transports.
+func TestIAMServiceWrapper_UpdateUser_StillSuspends(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	ctx := context.Background()
+
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+
+	created, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
+		TenantID:  "t-1",
+		Email:     "hold@example.com",
+		Username:  "hold",
+		Name:      "Hold User",
+		Lifecycle: iam.LifecycleActive,
+	})
+	require.NoError(t, err)
+
+	suspended := iam.LifecycleSuspended
+	resp, err := wrapper.UpdateUser(ctx, &IAMUpdateUserRequest{
+		TenantID:  "t-1",
+		UserID:    created.User.ID,
+		Lifecycle: &suspended,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.User)
+	assert.Equal(t, iam.LifecycleSuspended, resp.User.Lifecycle)
+	assert.False(t, resp.User.CanAuthenticate())
 }

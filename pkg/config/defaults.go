@@ -164,6 +164,62 @@ func DefaultConfig() *Config {
 		Orchestration: OrchestrationConfig{
 			Enabled:          true,
 			HeartbeatTimeout: 90 * time.Second,
+			ReapLeaseTTL:     DefaultOrchestrationReapLeaseTTL,
+			SweepInterval:    DefaultOrchestrationSweepInterval,
+			// The standard verification shapes and nothing else: a workflow
+			// criterion may run exactly these on the daemon host until the
+			// operator names more.
+			VerificationCommands: []string{"make test", "make build", "make lint", "make security"},
+			// The per-moment bounds on a job's lifecycle hooks. Stated here
+			// rather than left to the engine's own defaults layer so an
+			// operator reading the shipped configuration can SEE what each
+			// moment is held to — the values match
+			// orchestration.DefaultStageTimeouts, and a config test pins
+			// them to it so the two cannot drift.
+			StageTimeouts: OrchestrationStageTimeouts{
+				Prepare:    10 * time.Minute,
+				Reviewable: 10 * time.Minute,
+				Complete:   10 * time.Minute,
+				Cleanup:    2 * time.Minute,
+				Blocked:    1 * time.Minute,
+			},
+		},
+		// Disabled by default: the module opens an unauthenticated ingress and
+		// holds forge credentials, so it is opted into rather than acquired by
+		// upgrading into a build that contains it. Every other value here is a
+		// working configuration, so enabling it is one flag rather than five.
+		SDLC: SDLCConfig{
+			Enabled:        false,
+			IssuePageLimit: 50,
+			MergeAttempts:  6,
+			// Where the worker's container finds its checkouts. The daemon
+			// clones nothing; this is the path the runner's clone commands
+			// name inside the container, and it matches
+			// orchestration.WorkspaceCheckoutRoot.
+			CheckoutRoot: "/workspace",
+			// The retry behind a parked task's comment on its issue. Stated
+			// here so an operator reading the shipped configuration can see
+			// how hard a refusing forge is pressed; the values match
+			// sdlc.DefaultSurfacePolicy and a drift test pins the two.
+			Surfacing: SDLCSurfacing{
+				RetryAttempts: 5,
+				RetryInterval: 2 * time.Minute,
+				PostTimeout:   30 * time.Second,
+			},
+			// The repair sweep that converges forge labels onto the
+			// engine's record. Stated here so an operator reading the
+			// shipped configuration can see how often the forge is
+			// re-read; the values match sdlc's own defaults and a drift
+			// test pins the pairs.
+			LabelReconcile: SDLCLabelReconcile{
+				Interval:      5 * time.Minute,
+				ForgeInterval: 200 * time.Millisecond,
+			},
+			Webhook: SDLCWebhook{MaxBody: 1 << 20},
+			// What the canonical workflow runs before publishing. Repo hosts
+			// default EMPTY: naming a forge host is the operator's explicit
+			// act.
+			VerificationCommands: []string{"make build", "make test", "make lint"},
 		},
 		Seal:      DefaultSealConfig(),
 		CA:        DefaultCAConfig(),

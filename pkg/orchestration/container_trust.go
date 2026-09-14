@@ -358,6 +358,13 @@ func (s *ContainerSpec) EffectiveMeasurementBank() string {
 // that same sorted order, so the measured spec and the launched container
 // cannot disagree.
 //
+// RESOURCE LIMITS ARE MEASURED for the same reason privilege is. A container
+// whose memory limit was removed, or whose tmpfs workspace was resized, is not
+// the workload an operator approved: an unbounded tmpfs can consume the host's
+// memory, and a limit lifted off a measured configuration is a denial-of-
+// service dimension that a digest ignoring MemoryBytes would certify as
+// unchanged. See ContainerSpec.MemoryBytes and ContainerMount.TmpfsSizeBytes.
+//
 // Determinism is the whole point: this digest is extended into a PCR at
 // measured launch, so two launches of the same approved configuration MUST
 // produce the same value. Every map is therefore serialized in sorted key
@@ -394,6 +401,7 @@ func ContainerConfigDigest(spec *ContainerSpec) (string, error) {
 	w.flag("auto_remove", spec.AutoRemove)
 	w.flag("gpu_enabled", spec.GPUEnabled)
 	w.flag("privileged", spec.Privileged)
+	w.number("memory_bytes", spec.MemoryBytes)
 	w.sortedSlice("cap_add", spec.CapAdd)
 	w.sortedSlice("cap_drop", spec.CapDrop)
 	w.slice("entrypoint", spec.Entrypoint)
@@ -411,6 +419,7 @@ func ContainerConfigDigest(spec *ContainerSpec) (string, error) {
 		w.field("mount.target", m.Target)
 		w.field("mount.type", m.Type)
 		w.flag("mount.readonly", m.ReadOnly)
+		w.number("mount.tmpfs_size", m.TmpfsSizeBytes)
 	}
 
 	return digestPrefixSHA256 + hex.EncodeToString(h.Sum(nil)), nil
@@ -448,6 +457,17 @@ func (w *canonicalWriter) flag(key string, value bool) {
 		return
 	}
 	w.write([]byte{0})
+}
+
+// number emits a named 64-bit integer value in fixed-width big-endian form,
+// so a resource limit is measured as a number rather than as its decimal
+// spelling: 0 and a limit that was never set cannot be told apart by the
+// caller, and both must measure the same.
+func (w *canonicalWriter) number(key string, value int64) {
+	w.write([]byte(key))
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], uint64(value))
+	w.write(buf[:])
 }
 
 // count emits a named element count, so a sequence's length is bound into

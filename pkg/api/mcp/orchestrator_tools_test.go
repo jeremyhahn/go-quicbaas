@@ -192,6 +192,16 @@ func TestExecuteAgentTool_MissingRequiredFields(t *testing.T) {
 
 // mockAgentService implements orchestration.AgentService for testing.
 type mockAgentService struct {
+	// listJobs is what ListJobs answers with; listJobsFilter records the
+	// narrowing it was asked for, so a transport that drops the caller's
+	// filter is caught rather than silently listing the whole tenant.
+	listJobs       []*orchestration.JobStatus
+	listJobsFilter *orchestration.JobFilter
+
+	blockTaskFn       func(ctx context.Context, tenantID, taskID string, kind orchestration.TaskBlockKind, reason string) error
+	getJobStatusFn    func(ctx context.Context, tenantID, jobID string) (*orchestration.JobStatus, error)
+	readmitTaskFn     func(ctx context.Context, tenantID, taskID string) error
+	deleteTaskFn      func(ctx context.Context, tenantID, taskID string) error
 	discoverFn        func(ctx context.Context, req *orchestration.DiscoverProjectsRequest) (*orchestration.DiscoverProjectsResponse, error)
 	registerFn        func(ctx context.Context, req *orchestration.RegisterProjectRequest) (*orchestration.RegisterProjectResponse, error)
 	listProjectsFn    func(ctx context.Context, req *orchestration.ListProjectsRequest) (*orchestration.ListProjectsResponse, error)
@@ -312,9 +322,30 @@ func (m *mockAgentService) CompleteTask(ctx context.Context, tenantID, taskID st
 	return nil
 }
 
+func (m *mockAgentService) BlockTask(ctx context.Context, tenantID, taskID string, kind orchestration.TaskBlockKind, reason string) error {
+	if m.blockTaskFn != nil {
+		return m.blockTaskFn(ctx, tenantID, taskID, kind, reason)
+	}
+	return nil
+}
+
+func (m *mockAgentService) ReadmitTask(ctx context.Context, tenantID, taskID string) error {
+	if m.readmitTaskFn != nil {
+		return m.readmitTaskFn(ctx, tenantID, taskID)
+	}
+	return nil
+}
+
+func (m *mockAgentService) DeleteTask(ctx context.Context, tenantID, taskID string) error {
+	if m.deleteTaskFn != nil {
+		return m.deleteTaskFn(ctx, tenantID, taskID)
+	}
+	return nil
+}
+
 func (m *mockAgentService) SetTenantGuard(guard *orchestration.TenantGuard) {}
 
-func (m *mockAgentService) AgentHeartbeat(ctx context.Context, tenantID, agentID string) error {
+func (m *mockAgentService) AgentHeartbeat(ctx context.Context, tenantID, agentID string, _ *orchestration.AgentObservation) error {
 	return nil
 }
 
@@ -339,11 +370,15 @@ func (m *mockAgentService) StartJob(ctx context.Context, req *orchestration.Star
 }
 
 func (m *mockAgentService) GetJobStatus(ctx context.Context, tenantID, jobID string) (*orchestration.JobStatus, error) {
+	if m.getJobStatusFn != nil {
+		return m.getJobStatusFn(ctx, tenantID, jobID)
+	}
 	return &orchestration.JobStatus{}, nil
 }
 
-func (m *mockAgentService) ListJobs(ctx context.Context, tenantID string) ([]*orchestration.JobStatus, error) {
-	return nil, nil
+func (m *mockAgentService) ListJobs(ctx context.Context, tenantID string, filter *orchestration.JobFilter) ([]*orchestration.JobStatus, error) {
+	m.listJobsFilter = filter
+	return m.listJobs, nil
 }
 
 func (m *mockAgentService) CancelJob(ctx context.Context, tenantID, jobID string) error {

@@ -16,6 +16,7 @@ package iam
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -56,6 +57,12 @@ const (
 
 	// Session keys (scoped by tenant).
 	KeyPrefixSession = ":session:"
+
+	// Tenant-scoped secondary indexes. The segment deliberately sits OUTSIDE
+	// the record prefixes above (`:idx:` rather than under `:role:`) so a
+	// record listing — ListRoles scans `__iam:tenant:<id>:role:` — never sweeps
+	// up index entries and tries to decode one as a record.
+	KeyPrefixRoleNameIndex = ":idx:rolename:"
 
 	// Global indexes. The username, email, and PIV-thumbprint lookup indexes
 	// moved to qrdb with the user record (phase C1-F); only the app index
@@ -131,6 +138,13 @@ func roleKey(tenantID, roleID string) string {
 	return KeyPrefixTenant + tenantID + KeyPrefixRole + roleID
 }
 
+// roleNameIndexKey returns the key of the tenant-scoped role-name index entry.
+// The value stored under it is the role ID, mirroring the tenant->app index
+// (appTenantKey), whose value is likewise the record's own identifier.
+func roleNameIndexKey(tenantID, name string) string {
+	return KeyPrefixTenant + tenantID + KeyPrefixRoleNameIndex + name
+}
+
 // policyKey returns the key for a policy record.
 func policyKey(tenantID, policyName string) string {
 	return KeyPrefixTenant + tenantID + KeyPrefixPolicy + policyName
@@ -148,22 +162,32 @@ func legacyAppKey(clientID string) string {
 	return KeyPrefixIAM + "app:" + clientID
 }
 
-// tenantFromClientID extracts the tenant ID from an OAuth2 clientID minted in
-// the format app_<tenant>_<suffix> (see generateClientID). It returns an empty
-// string when the clientID does not match that shape, so callers can fall back
-// to the legacy global key.
-func tenantFromClientID(clientID string) string {
-	const prefix = "app_"
-	if !strings.HasPrefix(clientID, prefix) {
-		return ""
+// appTenantContext scopes ctx to the tenant an application record names.
+//
+// The IAM KVStore routes every read and write by the tenant bound to the
+// CONTEXT, never by the tenant segment in the key
+// (pkg/server/tenant_kvstore.go tenantFromAnyContext), and a barrier-isolated
+// tenant's records live in that tenant's own store. An application therefore
+// has to be addressed under its OWN tenant on both sides, or the write and the
+// read pick different namespaces.
+//
+// That divergence is go-quicbaas#644: POST /api/v1/agents/register is a public
+// route, so it carries no identity and its context named no tenant, while POST
+// /oauth2/token scopes its context to the tenant encoded in the client id. The
+// record was written into the shared store and looked for in the tenant's, so
+// every credential the register endpoint issued was refused with
+// invalid_client on its first use. The same shape was fixed for pooled
+// accounts in #535 and for projects in #634.
+//
+// The record's tenant overrides whatever the context carried: the record is the
+// authority, and a caller allowed to name another tenant was admitted by the
+// management surface (AppManager.GetAppInTenant / UpdateAppInTenant /
+// DeleteAppInTenant) before reaching this store.
+func appTenantContext(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" {
+		return ctx
 	}
-	rest := clientID[len(prefix):]
-	// rest is <tenant>_<suffix>; the tenant is everything up to the LAST "_".
-	idx := strings.LastIndex(rest, "_")
-	if idx <= 0 {
-		return ""
-	}
-	return rest[:idx]
+	return ContextWithTenant(ctx, tenantID)
 }
 
 // appTenantKey returns the key for app lookup by tenant.
@@ -186,6 +210,44 @@ func legacyTokenKey(jti string) string {
 // tokenValueKey returns the key for token lookup by value.
 func tokenValueKey(tokenValue string) string {
 	return KeyPrefixIAM + "tokenval:" + tokenValue
+}
+
+// tokenValueIndexContext strips the ambient tenant so the refresh-token value
+// index is written to, and read from, the SHARED store on both sides.
+//
+// The index is the ONLY handle a refresh carries. A client presents an opaque
+// secret and nothing else, so POST /api/v1/iam/refresh runs with no bearer and
+// therefore no tenant in context — while issuance runs inside the login's
+// tenant-scoped context. Since the IAM KVStore routes by that context, writing
+// the index under the issuing tenant buried it in that tenant's own keyspace
+// (its barrier for a dedicated tenant, its namespace within the shared store
+// for a prefix tenant), where the untenanted redemption read can never reach
+// it: every non-system-tenant session was unrenewable and its first refresh
+// 401'd (go-quicbaas #274).
+//
+// The empty tenant is SAFE to write under, and is not a new keyspace: qrdb's
+// store resolver treats "" and the system tenant id as the same tenant and
+// canonicalizes both to one namespace (tenant.IdentityNamespace), so this
+// reaches exactly the store the system tenant already used on both sides —
+// which is why the defect stayed invisible until the first tenant login, and
+// why system-tenant credentials issued before this fix keep resolving.
+//
+// Only this POINTER is global. Its value is "<tenantID>:<jti>" and
+// GetTokenByValue re-scopes the context from it before reading the token
+// record, so the record itself — subject, scopes, frozen session context —
+// stays inside the tenant's own store. The index key is the SHA-256 of a
+// 256-bit secret, so resolving an entry requires already holding the
+// credential, and a sealed barrier tenant still fails closed on the record read
+// that follows.
+//
+// This assumes no ORCHESTRATION tenant is bound to a token-storage context:
+// the routing store reads the orchestration context key when the IAM one is
+// empty (pkg/server tenantFromAnyContext), and pkg/iam cannot clear a key it
+// must not depend on. Token issuance and refresh are IAM request paths, and
+// the orchestration key is stamped only by the orchestrator handlers, so the
+// two never meet — a future path that stamps both would have to re-check this.
+func tokenValueIndexContext(ctx context.Context) context.Context {
+	return ContextWithTenant(ctx, "")
 }
 
 // authCodeKey returns the key for an authorization code.
@@ -252,6 +314,8 @@ func (s *BackendStorage) deleteByPrefix(ctx context.Context, prefix string) erro
 func (s *BackendStorage) deleteAppsWithIndexes(ctx context.Context, appPrefix string) error {
 	// The tenant is encoded in the index prefix: __iam:tenant:<tenantID>:app:
 	tenantID := strings.TrimSuffix(strings.TrimPrefix(appPrefix, KeyPrefixTenant), KeyPrefixApp)
+	// The tenant's own store holds both the index entries and the records.
+	ctx = appTenantContext(ctx, tenantID)
 
 	// Collect all client IDs from tenant-scoped app index entries
 	var clientIDs []string
@@ -269,8 +333,8 @@ func (s *BackendStorage) deleteAppsWithIndexes(ctx context.Context, appPrefix st
 	// Delete app records and indexes for each app (tenant-scoped + legacy).
 	for _, clientID := range clientIDs {
 		_ = s.delete(ctx, appKey(tenantID, clientID))
-		if tid := tenantFromClientID(clientID); tid != "" && tid != tenantID {
-			_ = s.delete(ctx, appKey(tid, clientID))
+		if tid := TenantFromClientID(clientID); tid != "" && tid != tenantID {
+			_ = s.delete(appTenantContext(ctx, tid), appKey(tid, clientID))
 		}
 		_ = s.delete(ctx, legacyAppKey(clientID))
 		// Delete app index: __iam:idx:app:<clientID>
@@ -363,12 +427,20 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 		}
 	}
 
-	// 2. Delete roles
+	// 2. Delete roles, and the name index that points at them — an index entry
+	// left behind would make a recreated tenant's role name look taken.
 	rolePrefix := tenantPrefix + KeyPrefixRole
 	if err := s.deleteByPrefix(ctx, rolePrefix); err != nil {
 		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
 			Op:   "iam.tenant.delete.roles",
+			Err:  err,
+		}
+	}
+	if err := s.deleteByPrefix(ctx, tenantPrefix+KeyPrefixRoleNameIndex); err != nil {
+		return &dberrors.QBError{
+			Code: dberrors.ErrInternal,
+			Op:   "iam.tenant.delete.role_name_index",
 			Err:  err,
 		}
 	}
@@ -659,6 +731,116 @@ func (s *BackendStorage) UpdateGroup(ctx context.Context, group *Group) error {
 	return s.put(ctx, key, data)
 }
 
+// atomicKVStore is the guarded-write half of the backing store: the one
+// operation a member-list edit needs and the six-verb KVStore does not offer.
+//
+// It is discovered by type assertion, which is go-qrdb's own pattern for this
+// (sdk.AtomicKVStore) and the reason the assertion can be written at all
+// without importing qrdb's kvstore package here. A store that does not provide
+// it fails closed — see ErrAtomicMembershipUnsupported.
+type atomicKVStore interface {
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
+}
+
+// membershipSwapAttempts bounds the compare-and-swap retry loop.
+//
+// Each lost swap means another writer committed a membership change to the SAME
+// group between this read and this write, so the loop only spins under real
+// contention on one group — and every lost attempt is another writer making
+// progress, so the system advances even when one caller does not. The bound is
+// generous rather than tight because an unlucky writer can lose to each of its
+// contenders in turn: a bulk import adding a hundred users to one group is the
+// shape that produces the fan-in, and refusing it would turn a fixed race into a
+// spurious failure. Exhausting it is reported as a retryable conflict rather
+// than silently dropping the edit.
+const membershipSwapAttempts = 64
+
+// AddGroupMember adds userID to the group's member list with a compare-and-swap
+// on the stored record, so a concurrent membership change cannot be erased.
+// Adding an existing member is a no-op.
+func (s *BackendStorage) AddGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
+	return s.swapGroupMembers(ctx, tenantID, groupID, "iam.group.member.add",
+		func(members []string) ([]string, bool) {
+			for _, memberID := range members {
+				if memberID == userID {
+					return nil, false
+				}
+			}
+			return append(append([]string(nil), members...), userID), true
+		})
+}
+
+// RemoveGroupMember removes userID from the group's member list with the same
+// guarded write. Removing a user that is not a member is a no-op.
+func (s *BackendStorage) RemoveGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
+	return s.swapGroupMembers(ctx, tenantID, groupID, "iam.group.member.remove",
+		func(members []string) ([]string, bool) {
+			next := make([]string, 0, len(members))
+			for _, memberID := range members {
+				if memberID != userID {
+					next = append(next, memberID)
+				}
+			}
+			if len(next) == len(members) {
+				return nil, false
+			}
+			return next, true
+		})
+}
+
+// swapGroupMembers applies mutate to the group's member list and commits it
+// with CompareAndSwap against the exact bytes it read, retrying when another
+// writer got there first. mutate reports changed=false when the record already
+// says what the caller wants, which is committed as a no-op rather than as a
+// write that could lose a concurrent edit for no reason.
+func (s *BackendStorage) swapGroupMembers(
+	ctx context.Context,
+	tenantID, groupID, op string,
+	mutate func(members []string) (next []string, changed bool),
+) error {
+	atomic, ok := s.kv.(atomicKVStore)
+	if !ok {
+		return ErrAtomicMembershipUnsupported
+	}
+
+	key := groupKey(tenantID, groupID)
+	for attempt := 0; attempt < membershipSwapAttempts; attempt++ {
+		current, err := s.get(ctx, key)
+		if err != nil {
+			return err
+		}
+
+		var group Group
+		if err := json.Unmarshal(current, &group); err != nil {
+			return &dberrors.QBError{Code: dberrors.ErrInternal, Op: op, Err: err}
+		}
+
+		members, changed := mutate(group.Members)
+		if !changed {
+			return nil
+		}
+		group.Members = members
+		group.Updated = time.Now().UTC()
+
+		next, err := json.Marshal(&group)
+		if err != nil {
+			return &dberrors.QBError{Code: dberrors.ErrInternal, Op: op, Err: err}
+		}
+
+		swapped, err := atomic.CompareAndSwap(ctx, key, current, next)
+		if err != nil {
+			return err
+		}
+		if swapped {
+			return nil
+		}
+		// Lost the race: another writer changed this group between the read and
+		// the swap. Re-read and re-apply, so this edit composes with theirs
+		// instead of overwriting it.
+	}
+	return ErrGroupMembershipContended
+}
+
 // DeleteGroup removes a group.
 func (s *BackendStorage) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
 	_, err := s.get(ctx, groupKey(tenantID, groupID))
@@ -703,7 +885,15 @@ func (s *BackendStorage) ListGroups(ctx context.Context, tenantID string, opts L
 // RoleStorage implementation
 // -----------------------------------------------------------------------------
 
-// CreateRole stores a new role.
+// CreateRole stores a new role and its tenant-scoped name index entry.
+//
+// A role whose NAME is already taken in the tenant is refused with
+// ErrAlreadyExists, not just one whose ID is. That matches the canonical qrdb
+// role store (name-unique per tenant, RoleNameExistsError) and the in-memory
+// double, and it is what makes the name index answerable: an index maps one
+// name to one role, so a second role wearing the name would either overwrite
+// the entry or be invisible to GetRoleByName. Uniqueness is the invariant the
+// index encodes, so the store has to hold it.
 func (s *BackendStorage) CreateRole(ctx context.Context, role *Role) error {
 	key := roleKey(role.TenantID, role.ID)
 
@@ -712,12 +902,19 @@ func (s *BackendStorage) CreateRole(ctx context.Context, role *Role) error {
 		return ErrAlreadyExists
 	}
 
+	if err := s.roleNameAvailable(ctx, role.TenantID, role.Name, role.ID); err != nil {
+		return err
+	}
+
 	data, err := json.Marshal(role)
 	if err != nil {
 		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.role.create", Err: err}
 	}
 
-	return s.put(ctx, key, data)
+	if err := s.put(ctx, key, data); err != nil {
+		return err
+	}
+	return s.putRoleNameIndex(ctx, role.TenantID, role.Name, role.ID)
 }
 
 // GetRole retrieves a role by ID.
@@ -735,13 +932,59 @@ func (s *BackendStorage) GetRole(ctx context.Context, tenantID, roleID string) (
 	return &role, nil
 }
 
-// UpdateRole updates an existing role.
+// GetRoleByName retrieves a role by its tenant-scoped name through the name
+// index — one index read plus one record read, independent of how many roles
+// the tenant holds.
+//
+// An index entry that names a missing record surfaces the record read's error
+// rather than being reported as "no such role". A dangling pointer is a store
+// inconsistency, and answering it as an ordinary absence would let a caller
+// that keys idempotency off not-found take the create path against a store
+// that still holds the name. This is the same choice GetTokenByValue makes for
+// its own value index.
+func (s *BackendStorage) GetRoleByName(ctx context.Context, tenantID, name string) (*Role, error) {
+	if name == "" {
+		return nil, ErrRoleNotFound
+	}
+
+	roleID, err := s.get(ctx, roleNameIndexKey(tenantID, name))
+	if err != nil {
+		if dberrors.IsNotFound(err) {
+			// The SENTINEL, matching GetRole on the in-memory store:
+			// IsRoleNotFound — and qrdb's role.NameResolver contract, which
+			// distinguishes "no such role" from "could not ask" — read the
+			// typed inner error, which a bare not-found code does not carry.
+			return nil, ErrRoleNotFound
+		}
+		// A store failure is NOT an absent role. Reporting it as one would let
+		// first-boot bind a grant to a derived identifier while the tenant
+		// holds the role under another, so it fails closed instead.
+		return nil, err
+	}
+	return s.GetRole(ctx, tenantID, string(roleID))
+}
+
+// UpdateRole updates an existing role, moving the name index entry when the
+// update RENAMES the role: the old name stops resolving and the new one starts,
+// in that order, so no two names ever point at this role at once.
+//
+// A rename onto a name another role already holds is refused, for the reason
+// CreateRole states — the index cannot represent two roles of one name, and
+// silently overwriting the entry would make the displaced role unresolvable by
+// its own name.
 func (s *BackendStorage) UpdateRole(ctx context.Context, role *Role) error {
 	key := roleKey(role.TenantID, role.ID)
 
-	_, err := s.get(ctx, key)
+	existing, err := s.GetRole(ctx, role.TenantID, role.ID)
 	if err != nil {
 		return err
+	}
+
+	renamed := existing.Name != role.Name
+	if renamed {
+		if err := s.roleNameAvailable(ctx, role.TenantID, role.Name, role.ID); err != nil {
+			return err
+		}
 	}
 
 	data, err := json.Marshal(role)
@@ -749,16 +992,72 @@ func (s *BackendStorage) UpdateRole(ctx context.Context, role *Role) error {
 		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.role.update", Err: err}
 	}
 
-	return s.put(ctx, key, data)
+	if err := s.put(ctx, key, data); err != nil {
+		return err
+	}
+	// Written unconditionally: on a rename it establishes the new name, and on
+	// an ordinary update it RE-ASSERTS the entry, so a record left unindexed by
+	// an earlier partial write is repaired by the next update.
+	if err := s.putRoleNameIndex(ctx, role.TenantID, role.Name, role.ID); err != nil {
+		return err
+	}
+	if !renamed {
+		return nil
+	}
+	return s.deleteRoleNameIndex(ctx, role.TenantID, existing.Name)
 }
 
-// DeleteRole removes a role.
+// DeleteRole removes a role and its name index entry, so the name is free for
+// a later create and cannot resolve to a record that is gone.
 func (s *BackendStorage) DeleteRole(ctx context.Context, tenantID, roleID string) error {
-	_, err := s.get(ctx, roleKey(tenantID, roleID))
+	role, err := s.GetRole(ctx, tenantID, roleID)
 	if err != nil {
 		return err
 	}
-	return s.delete(ctx, roleKey(tenantID, roleID))
+	if err := s.delete(ctx, roleKey(tenantID, roleID)); err != nil {
+		return err
+	}
+	return s.deleteRoleNameIndex(ctx, tenantID, role.Name)
+}
+
+// roleNameAvailable reports ErrAlreadyExists when a role OTHER than selfID
+// already holds name in the tenant. An empty name indexes nothing, so it
+// cannot collide.
+func (s *BackendStorage) roleNameAvailable(ctx context.Context, tenantID, name, selfID string) error {
+	if name == "" {
+		return nil
+	}
+	holder, err := s.get(ctx, roleNameIndexKey(tenantID, name))
+	if err != nil {
+		if dberrors.IsNotFound(err) {
+			return nil
+		}
+		// A store failure must not be read as "the name is free": that would
+		// admit the duplicate the index cannot represent.
+		return err
+	}
+	if string(holder) == selfID {
+		return nil
+	}
+	return ErrAlreadyExists
+}
+
+// putRoleNameIndex writes the name -> role ID entry. An empty name is not
+// addressable and gets no entry.
+func (s *BackendStorage) putRoleNameIndex(ctx context.Context, tenantID, name, roleID string) error {
+	if name == "" {
+		return nil
+	}
+	return s.put(ctx, roleNameIndexKey(tenantID, name), []byte(roleID))
+}
+
+// deleteRoleNameIndex removes the entry for name. A name that was never
+// indexed has nothing to remove.
+func (s *BackendStorage) deleteRoleNameIndex(ctx context.Context, tenantID, name string) error {
+	if name == "" {
+		return nil
+	}
+	return s.delete(ctx, roleNameIndexKey(tenantID, name))
 }
 
 // ListRoles retrieves roles for a tenant.
@@ -798,8 +1097,11 @@ func (s *BackendStorage) ListRoles(ctx context.Context, tenantID string, opts Li
 
 // CreateApp stores a new OAuth2 application.
 func (s *BackendStorage) CreateApp(ctx context.Context, app *Application) error {
-	// The tenant is authoritative from the app record; the clientID also
-	// encodes it (app_<tenant>_<suffix>) for read-path resolution.
+	// The tenant on the record is authoritative for BOTH the key and the store
+	// the key is written to (appTenantContext, go-quicbaas#644). The clientID
+	// encodes the same tenant when it was minted by generateClientID, which is
+	// how the read path resolves it when no tenant is on the context.
+	ctx = appTenantContext(ctx, app.TenantID)
 	key := appKey(app.TenantID, app.ClientID)
 
 	_, err := s.get(ctx, key)
@@ -830,14 +1132,21 @@ func (s *BackendStorage) CreateApp(ctx context.Context, app *Application) error 
 
 // GetApp retrieves an application by client ID.
 func (s *BackendStorage) GetApp(ctx context.Context, clientID string) (*Application, error) {
-	// Resolve via the tenant-scoped key. The tenant is parsed from the
-	// clientID (format app_<tenant>_<suffix>); when the clientID does not
-	// encode a tenant, the context tenant is used. Both fall back to the
-	// legacy global key (dual-read shim) for deployments predating scoping.
+	// Resolve the owning tenant, then read from THAT tenant's store — the key
+	// segment alone is not enough, because the KVStore routes by the context
+	// (appTenantContext, go-quicbaas#644). The tenant is parsed from the
+	// clientID (format app_<tenant>_<suffix>) first; when the clientID encodes
+	// no tenant, the context tenant is used. Both fall back to the legacy
+	// global key (dual-read shim) for deployments predating scoping.
+	//
+	// This seam is deliberately NOT an authorization boundary: it answers "who
+	// owns this client id", and callers holding a tenant must go through
+	// GetAppByTenant (AppManager.GetAppInTenant) so a client id from one tenant
+	// cannot address a client in another.
 	var data []byte
 	var err error = &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.app.get"}
-	if tid := tenantFromClientID(clientID); tid != "" {
-		data, err = s.get(ctx, appKey(tid, clientID))
+	if tid := TenantFromClientID(clientID); tid != "" {
+		data, err = s.get(appTenantContext(ctx, tid), appKey(tid, clientID))
 	}
 	if err != nil {
 		if tid := TenantFromContext(ctx); tid != "" {
@@ -859,9 +1168,13 @@ func (s *BackendStorage) GetApp(ctx context.Context, clientID string) (*Applicat
 	return &app, nil
 }
 
-// GetAppByTenant retrieves an application by tenant and client ID.
+// GetAppByTenant retrieves an application by tenant and client ID. The named
+// tenant is authoritative: the read is scoped to that tenant's store, and a
+// record whose own TenantID disagrees is reported as not found. This is the
+// seam every management surface uses, so a client id minted for one tenant can
+// never address a client in another.
 func (s *BackendStorage) GetAppByTenant(ctx context.Context, tenantID, clientID string) (*Application, error) {
-	app, err := s.GetApp(ctx, clientID)
+	app, err := s.GetApp(appTenantContext(ctx, tenantID), clientID)
 	if err != nil {
 		return nil, err
 	}
@@ -873,6 +1186,7 @@ func (s *BackendStorage) GetAppByTenant(ctx context.Context, tenantID, clientID 
 
 // UpdateApp updates an existing application.
 func (s *BackendStorage) UpdateApp(ctx context.Context, app *Application) error {
+	ctx = appTenantContext(ctx, app.TenantID)
 	key := appKey(app.TenantID, app.ClientID)
 
 	_, err := s.get(ctx, key)
@@ -898,6 +1212,7 @@ func (s *BackendStorage) DeleteApp(ctx context.Context, clientID string) error {
 	if err != nil {
 		return err
 	}
+	ctx = appTenantContext(ctx, app.TenantID)
 
 	if err := s.delete(ctx, appKey(app.TenantID, clientID)); err != nil {
 		return err
@@ -915,16 +1230,16 @@ func (s *BackendStorage) DeleteApp(ctx context.Context, clientID string) error {
 
 // ListApps retrieves applications for a tenant.
 func (s *BackendStorage) ListApps(ctx context.Context, tenantID string, opts ListOptions) ([]*Application, error) {
+	// The listed tenant owns both the index and the records, so the scan and
+	// every resolution run against that tenant's store (go-quicbaas#644).
+	appCtx := appTenantContext(ctx, tenantID)
+
 	// Get app IDs from tenant index
 	prefix := KeyPrefixTenant + tenantID + KeyPrefixApp
-	values, err := s.list(ctx, prefix)
+	values, err := s.list(appCtx, prefix)
 	if err != nil {
 		return nil, err
 	}
-
-	// Resolve each app under the listing tenant so the tenant-scoped GetApp
-	// key is selected even for clientIDs that do not encode a tenant.
-	appCtx := ContextWithTenant(ctx, tenantID)
 	apps := make([]*Application, 0, len(values))
 	for _, clientIDBytes := range values {
 		app, err := s.GetApp(appCtx, string(clientIDBytes))
@@ -966,6 +1281,8 @@ func (s *BackendStorage) ValidateClientSecret(ctx context.Context, clientID, cli
 	}
 
 	if clientSecret == "" {
+		// Independent of stored state, so it probes nothing and costs nothing.
+		s.warnClientAuthFailed(clientID, TenantFromContext(ctx), clientAuthReasonEmptySecret)
 		return false, ErrSecretEmpty
 	}
 
@@ -985,18 +1302,84 @@ func (s *BackendStorage) ValidateClientSecret(ctx context.Context, clientID, cli
 		// client IDs exist (Codex review of #118).
 		if dberrors.IsNotFound(err) {
 			_ = verifySecret(timingEqualizerDigest, clientSecret)
+			s.warnClientAuthFailed(clientID, TenantFromContext(ctx), clientAuthReasonUnknownClient)
 		}
 		return false, err
 	}
 
+	// A record resolved out of a different tenant than the request was scoped
+	// to is reported, not refused: enforcement belongs to the tenant-named read
+	// seam (GetAppByTenant, which every management surface goes through), and
+	// the token endpoints derive their scope from the credential itself, so a
+	// mismatch here means the deployment holds a record whose namespace and
+	// tenant field disagree. That is the state go-quicbaas#644 created, and an
+	// operator who sees this line knows to re-enroll rather than to hunt for a
+	// broken token endpoint.
+	if ctxTenant := TenantFromContext(ctx); ctxTenant != "" && app.TenantID != "" && app.TenantID != ctxTenant {
+		s.warnClientAuthTenantMismatch(clientID, ctxTenant, app.TenantID)
+	}
+
 	ok, err := verifyClientSecret(app.ClientSecret, clientSecret)
 	if err != nil {
+		// A pre-KDF digest already names itself, and names the remedy; a
+		// second, vaguer line would only bury it.
 		if errors.Is(err, ErrSecretRotationRequired) {
 			warnRotationRequired(s.logger, clientID)
+		} else {
+			s.warnClientAuthFailed(clientID, app.TenantID, clientAuthReasonSecretUnusable)
 		}
 		return false, err
 	}
+	if !ok {
+		s.warnClientAuthFailed(clientID, app.TenantID, clientAuthReasonSecretMismatch)
+	}
 	return ok, nil
+}
+
+// Reasons a client authentication was refused. They name the check that
+// refused, never the material presented, and they are written to the operator
+// log only -- the OAuth2 response stays the single opaque invalid_client for
+// every one of them.
+const (
+	clientAuthReasonEmptySecret    = "empty client_secret"
+	clientAuthReasonUnknownClient  = "unknown client_id"
+	clientAuthReasonSecretMismatch = "client_secret mismatch"
+	clientAuthReasonSecretUnusable = "stored client_secret unusable"
+	clientAuthReasonTenantMismatch = "tenant mismatch"
+)
+
+// warnClientAuthFailed records which check refused a client authentication.
+//
+// Before this, POST /oauth2/token answered 401 invalid_client with NO server
+// log line at all, and the grant handler collapsed the lookup error and the
+// verdict into one condition -- so an unknown client, a wrong secret and a
+// record the store could not reach were indistinguishable to an operator and
+// in the code alike (go-quicbaas#644). Diagnosing a fleet-wide enrollment
+// outage needed a hand-built reproduction against a live node.
+//
+// This does NOT weaken the non-enumeration guarantees the response side keeps:
+// the OAuth2 error body and status are identical for every reason, and every
+// refusal still performs exactly one key derivation, so neither the answer nor
+// the time it took distinguishes a client that exists from one that does not.
+// The reason exists only in the operator's log, which an unauthenticated caller
+// cannot read. No secret, presented or stored, is ever an argument here.
+func (s *BackendStorage) warnClientAuthFailed(clientID, tenantID, reason string) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.Warnf("oauth2 client authentication failed: client_id=%s tenant=%s reason=%s",
+		clientID, tenantID, reason)
+}
+
+// warnClientAuthTenantMismatch records a record whose stored tenant disagrees
+// with the tenant the request was scoped to. See warnClientAuthFailed for why
+// the reason never reaches the caller.
+func (s *BackendStorage) warnClientAuthTenantMismatch(clientID, ctxTenant, appTenant string) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.Warnf("oauth2 client authentication resolved a mis-homed record: client_id=%s tenant=%s app_tenant=%s reason=%s",
+		clientID, ctxTenant, appTenant, clientAuthReasonTenantMismatch)
 }
 
 // -----------------------------------------------------------------------------
@@ -1053,8 +1436,22 @@ func (s *BackendStorage) StoreToken(ctx context.Context, token *Token) error {
 	// unresolvable and silently broke every refresh grant.) The stored value
 	// carries the token's tenant so GetTokenByValue can resolve the
 	// tenant-scoped token key without an ambient tenant in context:
-	// value = "<tenantID>:<jti>".
+	// value = "<tenantID>:<jti>". It is written untenanted for the same
+	// reason — see tokenValueIndexContext.
+	//
+	// A failed index write is FATAL, unlike the legacy dual-write above. The
+	// index is the credential's only resolution path, so swallowing the error
+	// hands the client a refresh token that is already dead and defers the
+	// failure to a 401 fifteen minutes later.
 	if token.TokenType == TokenTypeRefresh && token.ValueHash != "" {
+		if err := s.put(tokenValueIndexContext(ctx), tokenValueKey(token.ValueHash), []byte(token.TenantID+":"+token.JTI)); err != nil {
+			return err
+		}
+		// Dual-write the tenant-scoped entry for the migration window, so a
+		// ROLLBACK to the tenant-routed reader still resolves credentials
+		// minted while this version was deployed. Best-effort, unlike the
+		// shared write above: this copy is only insurance for a downgrade, and
+		// the shared entry is what every reader on this version uses.
 		_ = s.put(ctx, tokenValueKey(token.ValueHash), []byte(token.TenantID+":"+token.JTI))
 	}
 
@@ -1087,10 +1484,34 @@ func (s *BackendStorage) GetToken(ctx context.Context, jti string) (*Token, erro
 
 // GetTokenByValue retrieves a token by its opaque string value. The presented
 // secret is hashed to derive the index key (see StoreToken).
+//
+// The index is a POINTER, and a pointer is a claim, not a proof. The record it
+// names is therefore re-checked against the presented secret before it is
+// returned: the resolved Token.ValueHash must equal the hash of what the caller
+// actually holds. Without that check, anything able to write the (now shared)
+// index — a corrupted entry, a stale one left by an earlier scheme, a writer
+// with shared-store access — could point an attacker-known secret hash at a
+// victim's refresh JTI and have RefreshSession redeem that session. The
+// comparison is constant-time and the mismatch is reported as not-found, so a
+// probe cannot distinguish a bad pointer from an unknown secret.
 func (s *BackendStorage) GetTokenByValue(ctx context.Context, tokenValue string) (*Token, error) {
-	jtiData, err := s.get(ctx, tokenValueKey(HashTokenValue(tokenValue)))
+	wantHash := HashTokenValue(tokenValue)
+
+	jtiData, err := s.get(tokenValueIndexContext(ctx), tokenValueKey(wantHash))
 	if err != nil {
-		return nil, err
+		// Dual-read for the migration window: entries written before the index
+		// moved to the shared store live in the ISSUING tenant's keyspace, and
+		// a tenant-scoped caller (the OAuth2 token endpoint scopes itself from
+		// the client id) is the only one that can still reach them. Without
+		// this, upgrading would strand every non-system-tenant OAuth refresh
+		// token that worked before it.
+		if TenantFromContext(ctx) == "" {
+			return nil, err
+		}
+		jtiData, err = s.get(ctx, tokenValueKey(wantHash))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// The value index stores "<tenantID>:<jti>" for tenant-scoped resolution.
@@ -1101,7 +1522,14 @@ func (s *BackendStorage) GetTokenByValue(ctx context.Context, tokenValue string)
 		ctx = ContextWithTenant(ctx, raw[:idx])
 		jti = raw[idx+1:]
 	}
-	return s.GetToken(ctx, jti)
+	token, err := s.GetToken(ctx, jti)
+	if err != nil {
+		return nil, err
+	}
+	if subtle.ConstantTimeCompare([]byte(token.ValueHash), []byte(wantHash)) != 1 {
+		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.token.get_by_value"}
+	}
+	return token, nil
 }
 
 // RevokeToken marks a token as revoked.
@@ -1160,9 +1588,16 @@ func (s *BackendStorage) DeleteExpiredTokens(ctx context.Context) error {
 		if token.Expires.Before(now) {
 			_ = s.delete(ctx, tokenKey(token.TenantID, token.JTI))
 			_ = s.delete(ctx, legacyTokenKey(token.JTI))
-			// Also clean up the value index for refresh tokens
-			if token.TokenType == TokenTypeRefresh {
-				_ = s.delete(ctx, tokenValueKey(token.JTI))
+			// Also clean up the value index for refresh tokens. It is keyed by
+			// the token's ValueHash — deleting tokenValueKey(JTI), as this once
+			// did, matched nothing and leaked an entry per expired token. BOTH
+			// copies StoreToken writes are removed: the shared one every reader
+			// on this version uses, and the tenant-scoped rollback copy. Leaving
+			// the second behind would reintroduce the same leak one store over.
+			if token.TokenType == TokenTypeRefresh && token.ValueHash != "" {
+				indexKey := tokenValueKey(token.ValueHash)
+				_ = s.delete(tokenValueIndexContext(ctx), indexKey)
+				_ = s.delete(withTokenTenant(ctx, token.TenantID), indexKey)
 			}
 		}
 	}

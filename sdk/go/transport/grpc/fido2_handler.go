@@ -85,8 +85,11 @@ func (h *fido2Handler) handleBeginRegistration(ctx context.Context, client pb.FI
 	}
 
 	pbResp, err := client.BeginRegistration(ctx, &pb.FIDO2BeginRegistrationRequest{
-		TenantId:    tenantID,
-		Username:    sdkReq.Username,
+		TenantId: tenantID,
+		// The PROTO field keeps the name; the SDK request's was renamed to
+		// Email in xkms v0.12, where it is the canonical tenant-unique login
+		// key the service resolves with GetByEmail.
+		Username:    sdkReq.Email,
 		DisplayName: sdkReq.DisplayName,
 	})
 	if err != nil {
@@ -132,7 +135,7 @@ func (h *fido2Handler) handleBeginAuthentication(ctx context.Context, client pb.
 
 	pbResp, err := client.BeginAuthentication(ctx, &pb.FIDO2BeginAuthenticationRequest{
 		TenantId: tenantID,
-		Username: sdkReq.Username,
+		Username: sdkReq.Email,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, "fido2Handler.handleBeginAuthentication")
@@ -154,7 +157,7 @@ func (h *fido2Handler) handleFinishAuthentication(ctx context.Context, client pb
 	pbResp, err := client.FinishAuthentication(ctx, &pb.FIDO2FinishAuthenticationRequest{
 		TenantId:      tenantID,
 		SessionId:     sdkReq.SessionID,
-		Username:      sdkReq.Username,
+		Username:      sdkReq.Email,
 		AssertionJson: sdkReq.AssertionJSON,
 	})
 	if err != nil {

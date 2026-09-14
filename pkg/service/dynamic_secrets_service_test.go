@@ -26,174 +26,99 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/credentials"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	quicbaasErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/lease"
-	"github.com/jeremyhahn/go-quicbaas/pkg/storage"
 )
 
-// Mock implementations with unique names to avoid conflicts.
-type mockDSStorage struct {
-	data map[string][]byte
+// faultDSStore is a FAULT INJECTOR over the real memory engine, not a second
+// storage implementation: every verb delegates, and only the operation a test
+// has explicitly armed fails. One injector replaces the three hand-written
+// storage.Storage doubles this package carried, each of which had to restate
+// the whole interface to fail one method.
+type faultDSStore struct {
+	inner interfaces.KVStore
+
+	// putErr, when set, decides whether a write to key fails.
+	putErr func(key string) error
+
+	getErr    error
+	deleteErr error
+	scanErr   error
 }
 
-func newMockDSStorage() *mockDSStorage {
-	return &mockDSStorage{data: make(map[string][]byte)}
+// newFaultDSStore returns an injector over a fresh qrdb memory engine.
+func newFaultDSStore() *faultDSStore {
+	return &faultDSStore{inner: kvstore.NewMemory()}
 }
 
-func (m *mockDSStorage) Set(key, value []byte) error {
-	m.data[string(key)] = value
-	return nil
+// failAllWrites arms every write with err.
+func (f *faultDSStore) failAllWrites(err error) *faultDSStore {
+	f.putErr = func(string) error { return err }
+	return f
 }
 
-func (m *mockDSStorage) Get(key []byte) ([]byte, error) {
-	if val, ok := m.data[string(key)]; ok {
-		return val, nil
-	}
-	return nil, &quicbaasErrors.QBError{
-		Code: quicbaasErrors.ErrNotFound,
-		Op:   "mockDSStorage.Get",
-		Err:  stderrors.New("key not found"),
-	}
-}
-
-func (m *mockDSStorage) Delete(key []byte) error {
-	delete(m.data, string(key))
-	return nil
-}
-
-func (m *mockDSStorage) Batch() storage.Batch {
-	return &mockDSBatch{storage: m}
-}
-
-func (m *mockDSStorage) NewIterator(opts *storage.IteratorOptions) storage.Iterator {
-	return &mockDSIterator{data: m.data, opts: opts, index: -1}
-}
-
-func (m *mockDSStorage) Snapshot() (storage.Snapshot, error) { return nil, nil }
-func (m *mockDSStorage) Close() error                        { return nil }
-
-func (m *mockDSStorage) Exists(key []byte) (bool, error) {
-	_, ok := m.data[string(key)]
-	return ok, nil
-}
-
-func (m *mockDSStorage) List(prefix []byte) ([][]byte, error) {
-	var keys [][]byte
-	pfx := string(prefix)
-	for k := range m.data {
-		if len(pfx) == 0 || strings.HasPrefix(k, pfx) {
-			keys = append(keys, []byte(k))
+// failWritesUnder arms writes to keys beginning with prefix.
+func (f *faultDSStore) failWritesUnder(prefix string, err error) *faultDSStore {
+	f.putErr = func(key string) error {
+		if strings.HasPrefix(key, prefix) {
+			return err
 		}
-	}
-	return keys, nil
-}
-
-type mockDSBatch struct {
-	storage *mockDSStorage
-}
-
-func (b *mockDSBatch) Set(key, value []byte) error { return b.storage.Set(key, value) }
-func (b *mockDSBatch) Delete(key []byte) error     { return b.storage.Delete(key) }
-func (b *mockDSBatch) Commit() error               { return nil }
-func (b *mockDSBatch) Rollback() error             { return nil }
-func (b *mockDSBatch) Close() error                { return nil }
-
-type mockDSIterator struct {
-	data  map[string][]byte
-	opts  *storage.IteratorOptions
-	keys  []string
-	index int
-}
-
-func (m *mockDSIterator) buildKeys() {
-	lowerBound := string(m.opts.LowerBound)
-	upperBound := string(m.opts.UpperBound)
-	m.keys = make([]string, 0)
-	for key := range m.data {
-		if key >= lowerBound && key < upperBound {
-			m.keys = append(m.keys, key)
-		}
-	}
-}
-
-func (m *mockDSIterator) SeekToFirst() bool {
-	if len(m.keys) == 0 {
-		m.buildKeys()
-	}
-	if len(m.keys) > 0 {
-		m.index = 0
-		return true
-	}
-	return false
-}
-
-func (m *mockDSIterator) SeekToLast() bool {
-	if len(m.keys) == 0 {
-		m.buildKeys()
-	}
-	if len(m.keys) > 0 {
-		m.index = len(m.keys) - 1
-		return true
-	}
-	return false
-}
-
-func (m *mockDSIterator) Seek(target []byte) bool {
-	if len(m.keys) == 0 {
-		m.buildKeys()
-	}
-	targetStr := string(target)
-	for i, key := range m.keys {
-		if key >= targetStr {
-			m.index = i
-			return true
-		}
-	}
-	return false
-}
-
-func (m *mockDSIterator) Next() bool {
-	if m.index == -1 {
-		m.buildKeys()
-		if len(m.keys) > 0 {
-			m.index = 0
-			return true
-		}
-		return false
-	}
-	m.index++
-	return m.index < len(m.keys)
-}
-
-func (m *mockDSIterator) Prev() bool {
-	if m.index <= 0 {
-		return false
-	}
-	m.index--
-	return true
-}
-
-func (m *mockDSIterator) Valid() bool {
-	return m.index >= 0 && m.index < len(m.keys)
-}
-
-func (m *mockDSIterator) Key() []byte {
-	if !m.Valid() {
 		return nil
 	}
-	return []byte(m.keys[m.index])
+	return f
 }
 
-func (m *mockDSIterator) Value() []byte {
-	if !m.Valid() {
-		return nil
+var _ interfaces.KVStore = (*faultDSStore)(nil)
+
+func (f *faultDSStore) Put(ctx context.Context, key string, value []byte) error {
+	if f.putErr != nil {
+		if err := f.putErr(key); err != nil {
+			return err
+		}
 	}
-	return m.data[m.keys[m.index]]
+	return f.inner.Put(ctx, key, value)
 }
 
-func (m *mockDSIterator) Error() error { return nil }
-func (m *mockDSIterator) Close() error { return nil }
+func (f *faultDSStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	return f.inner.Get(ctx, key)
+}
+
+func (f *faultDSStore) Delete(ctx context.Context, key string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	return f.inner.Delete(ctx, key)
+}
+
+func (f *faultDSStore) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	if f.scanErr != nil {
+		return f.scanErr
+	}
+	return f.inner.Scan(ctx, prefix, fn)
+}
+
+func (f *faultDSStore) List(ctx context.Context, prefix string) ([]string, error) {
+	return f.inner.List(ctx, prefix)
+}
+
+func (f *faultDSStore) Exists(ctx context.Context, key string) (bool, error) {
+	return f.inner.Exists(ctx, key)
+}
+
+// newDSStore returns the durable store a handler under test persists through:
+// qrdb's own in-memory engine via the SDK re-export (pkg/kvstore). It is the
+// SAME interfaces.KVStore implementation family production uses, so a test
+// exercises real scan ordering and real not-found semantics instead of a
+// hand-written map that has to be kept in sync with the contract.
+func newDSStore() interfaces.KVStore {
+	return kvstore.NewMemory()
+}
 
 type mockDSLeaseManager struct {
 	leases        map[string]*lease.Lease
@@ -276,6 +201,22 @@ func (m *mockDSLeaseManager) ListLeases(ctx context.Context, prefix string) ([]*
 	return result, nil
 }
 
+func (m *mockDSLeaseManager) Validate(ctx context.Context, leaseID string) (*lease.Lease, error) {
+	l, exists := m.leases[leaseID]
+	if !exists {
+		return nil, lease.NewLeaseNotFoundError("mockDSLeaseManager.Validate", leaseID)
+	}
+	if l.RevokedAt != nil {
+		return nil, lease.NewLeaseRevokedError("mockDSLeaseManager.Validate", leaseID, *l.RevokedAt)
+	}
+	if l.State() == lease.LeaseStateExpired {
+		return nil, lease.NewLeaseExpiredError("mockDSLeaseManager.Validate", leaseID, l.ExpiresAt)
+	}
+	return l, nil
+}
+
+func (m *mockDSLeaseManager) ReapExpired(ctx context.Context) (int, int, error) { return 0, 0, nil }
+
 func (m *mockDSLeaseManager) StartExpirationLoop(ctx context.Context) error { return nil }
 func (m *mockDSLeaseManager) Close() error                                  { return nil }
 
@@ -283,6 +224,15 @@ type mockDSGenerator struct {
 	genType    string
 	validateFn func(config map[string]string) error
 	generateFn func(ctx context.Context, role *credentials.Role) (*credentials.Credential, error)
+
+	// revokeErr, when set, is what Revoke answers with: live backing material
+	// the generator could not tear down.
+	revokeErr error
+
+	// revoked records every credential Revoke was asked to destroy, so a test
+	// can assert the SPI verb was actually reached rather than that the lease
+	// record changed.
+	revoked []string
 }
 
 func newMockDSGenerator(genType string) *mockDSGenerator {
@@ -312,6 +262,10 @@ func (m *mockDSGenerator) Generate(ctx context.Context, role *credentials.Role) 
 }
 
 func (m *mockDSGenerator) Revoke(ctx context.Context, credential *credentials.Credential) error {
+	if m.revokeErr != nil {
+		return m.revokeErr
+	}
+	m.revoked = append(m.revoked, credential.CredentialID)
 	return nil
 }
 
@@ -342,7 +296,7 @@ func (l *mockDSLogger) WithFields(fields map[string]interface{}) interfaces.Logg
 func (l *mockDSLogger) WithError(err error) interfaces.Logger                      { return l }
 
 func TestNewDynamicSecretsHandler_Success(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseMgr := newMockDSLeaseManager()
 	registry := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
@@ -351,14 +305,14 @@ func TestNewDynamicSecretsHandler_Success(t *testing.T) {
 		Store: store, LeaseManager: leaseMgr, GeneratorRegistry: registry, Logger: logger,
 	}
 
-	svc, err := NewDynamicSecretsHandler(config)
+	svc, err := NewDynamicSecretsHandler(context.Background(), config)
 
 	require.NoError(t, err)
 	assert.NotNil(t, svc)
 }
 
 func TestNewDynamicSecretsHandler_NilConfig(t *testing.T) {
-	svc, err := NewDynamicSecretsHandler(nil)
+	svc, err := NewDynamicSecretsHandler(context.Background(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, svc)
@@ -374,7 +328,7 @@ func TestNewDynamicSecretsHandler_NilStore(t *testing.T) {
 		Store: nil, LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
 	}
 
-	svc, err := NewDynamicSecretsHandler(config)
+	svc, err := NewDynamicSecretsHandler(context.Background(), config)
 
 	require.Error(t, err)
 	assert.Nil(t, svc)
@@ -383,10 +337,10 @@ func TestNewDynamicSecretsHandler_NilStore(t *testing.T) {
 
 func TestNewDynamicSecretsHandler_NilLeaseManager(t *testing.T) {
 	config := &DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: nil, GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
+		Store: newDSStore(), LeaseManager: nil, GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
 	}
 
-	svc, err := NewDynamicSecretsHandler(config)
+	svc, err := NewDynamicSecretsHandler(context.Background(), config)
 
 	require.Error(t, err)
 	assert.Nil(t, svc)
@@ -395,10 +349,10 @@ func TestNewDynamicSecretsHandler_NilLeaseManager(t *testing.T) {
 
 func TestNewDynamicSecretsHandler_NilRegistry(t *testing.T) {
 	config := &DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: nil, Logger: newMockDSLogger(),
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: nil, Logger: newMockDSLogger(),
 	}
 
-	svc, err := NewDynamicSecretsHandler(config)
+	svc, err := NewDynamicSecretsHandler(context.Background(), config)
 
 	require.Error(t, err)
 	assert.Nil(t, svc)
@@ -407,10 +361,10 @@ func TestNewDynamicSecretsHandler_NilRegistry(t *testing.T) {
 
 func TestNewDynamicSecretsHandler_NilLogger(t *testing.T) {
 	config := &DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: nil,
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: nil,
 	}
 
-	svc, err := NewDynamicSecretsHandler(config)
+	svc, err := NewDynamicSecretsHandler(context.Background(), config)
 
 	require.Error(t, err)
 	assert.Nil(t, svc)
@@ -418,7 +372,7 @@ func TestNewDynamicSecretsHandler_NilLogger(t *testing.T) {
 }
 
 func TestDynamicSecretsService_CreateRole_Success(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseMgr := newMockDSLeaseManager()
 	registry := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
@@ -427,7 +381,7 @@ func TestDynamicSecretsService_CreateRole_Success(t *testing.T) {
 	require.NoError(t, registry.Register(gen))
 
 	config := &DynamicSecretsConfig{Store: store, LeaseManager: leaseMgr, GeneratorRegistry: registry, Logger: logger}
-	svc, err := NewDynamicSecretsHandler(config)
+	svc, err := NewDynamicSecretsHandler(context.Background(), config)
 	require.NoError(t, err)
 
 	req := &CreateRoleRequest{
@@ -444,8 +398,8 @@ func TestDynamicSecretsService_CreateRole_Success(t *testing.T) {
 }
 
 func TestDynamicSecretsService_CreateRole_NilRequest(t *testing.T) {
-	svc, _ := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
+	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
 	})
 
 	resp, err := svc.CreateRole(context.Background(), nil)
@@ -456,8 +410,8 @@ func TestDynamicSecretsService_CreateRole_NilRequest(t *testing.T) {
 }
 
 func TestDynamicSecretsService_CreateRole_EmptyName(t *testing.T) {
-	svc, _ := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
+	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
 	})
 
 	req := &CreateRoleRequest{Name: "", GeneratorType: "postgres", DefaultTTL: 1 * time.Hour, MaxTTL: 24 * time.Hour}
@@ -473,8 +427,8 @@ func TestDynamicSecretsService_CreateRole_InvalidTTL_TooShort(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, _ := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
+	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
 	})
 
 	req := &CreateRoleRequest{Name: "db-role", GeneratorType: "postgres", Config: map[string]string{}, DefaultTTL: 30 * time.Second, MaxTTL: 24 * time.Hour}
@@ -490,8 +444,8 @@ func TestDynamicSecretsService_CreateRole_DuplicateRole(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, _ := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
+	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
 	})
 
 	req := &CreateRoleRequest{Name: "db-readonly", GeneratorType: "postgres", Config: map[string]string{}, DefaultTTL: 1 * time.Hour, MaxTTL: 24 * time.Hour}
@@ -510,8 +464,8 @@ func TestDynamicSecretsService_GetRole_Success(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, _ := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
+	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
 	})
 
 	createReq := &CreateRoleRequest{Name: "db-readonly", GeneratorType: "postgres", Config: map[string]string{}, DefaultTTL: 1 * time.Hour, MaxTTL: 24 * time.Hour}
@@ -526,8 +480,8 @@ func TestDynamicSecretsService_GetRole_Success(t *testing.T) {
 }
 
 func TestDynamicSecretsService_GetRole_NotFound(t *testing.T) {
-	svc, _ := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
+	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
 	})
 
 	resp, err := svc.GetRole(context.Background(), &GetRoleRequest{Name: "nonexistent"})
@@ -542,8 +496,8 @@ func TestDynamicSecretsService_ListRoles_Success(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, _ := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
+	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
 	})
 
 	for _, name := range []string{"db-readonly", "db-admin"} {
@@ -562,8 +516,8 @@ func TestDynamicSecretsService_DeleteRole_Success(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, _ := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
+	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
 	})
 
 	_, err := svc.CreateRole(context.Background(), &CreateRoleRequest{Name: "db-readonly", GeneratorType: "postgres", Config: map[string]string{}, DefaultTTL: 1 * time.Hour, MaxTTL: 24 * time.Hour})
@@ -580,8 +534,8 @@ func TestDynamicSecretsService_GenerateCredential_Success(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, _ := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
+	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
 	})
 
 	_, err := svc.CreateRole(context.Background(), &CreateRoleRequest{Name: "db-readonly", GeneratorType: "postgres", Config: map[string]string{}, DefaultTTL: 1 * time.Hour, MaxTTL: 24 * time.Hour})
@@ -596,8 +550,8 @@ func TestDynamicSecretsService_GenerateCredential_Success(t *testing.T) {
 }
 
 func TestDynamicSecretsService_GenerateCredential_RoleNotFound(t *testing.T) {
-	svc, _ := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
+	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
 	})
 
 	resp, err := svc.GenerateCredential(context.Background(), &GenerateCredentialRequest{RoleName: "nonexistent"})
@@ -612,8 +566,8 @@ func TestDynamicSecretsService_RenewLease_Success(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, _ := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
+	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
 	})
 
 	_, err := svc.CreateRole(context.Background(), &CreateRoleRequest{Name: "db-readonly", GeneratorType: "postgres", Config: map[string]string{}, DefaultTTL: 1 * time.Hour, MaxTTL: 24 * time.Hour})
@@ -634,8 +588,8 @@ func TestDynamicSecretsService_RevokeLease_Success(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, _ := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
+	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
 	})
 
 	_, err := svc.CreateRole(context.Background(), &CreateRoleRequest{Name: "db-readonly", GeneratorType: "postgres", Config: map[string]string{}, DefaultTTL: 1 * time.Hour, MaxTTL: 24 * time.Hour})
@@ -655,8 +609,8 @@ func TestDynamicSecretsService_ListLeases_Success(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, _ := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store: newMockDSStorage(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
+	svc, _ := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: newDSStore(), LeaseManager: newMockDSLeaseManager(), GeneratorRegistry: registry, Logger: newMockDSLogger(),
 	})
 
 	_, err := svc.CreateRole(context.Background(), &CreateRoleRequest{Name: "db-readonly", GeneratorType: "postgres", Config: map[string]string{}, DefaultTTL: 1 * time.Hour, MaxTTL: 24 * time.Hour})
@@ -678,12 +632,13 @@ func TestDynamicSecretsService_GenerateCredential_StoreCredentialError(t *testin
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	store := &failingDSCredStorage{
-		mockDSStorage: *newMockDSStorage(),
-		failOnCred:    true,
-	}
+	store := newFaultDSStore().failWritesUnder(CredentialPrefix, &dberrors.QBError{
+		Code: dberrors.ErrInternal,
+		Op:   "faultDSStore.Put",
+		Err:  stderrors.New("credential storage write failure"),
+	})
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      newMockDSLeaseManager(),
 		GeneratorRegistry: registry,
@@ -714,8 +669,8 @@ func TestDynamicSecretsService_GenerateCredential_DefaultTTL(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store:             newMockDSStorage(),
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store:             newDSStore(),
 		LeaseManager:      newMockDSLeaseManager(),
 		GeneratorRegistry: registry,
 		Logger:            newMockDSLogger(),
@@ -741,13 +696,13 @@ func TestDynamicSecretsService_GenerateCredential_DefaultTTL(t *testing.T) {
 }
 
 func TestDynamicSecretsService_CreateRole_ContextCanceled(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	generatorReg.Register(newMockDSGenerator("mock"))
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -773,13 +728,13 @@ func TestDynamicSecretsService_CreateRole_ContextCanceled(t *testing.T) {
 }
 
 func TestDynamicSecretsService_GetRole_ContextCanceled(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	generatorReg.Register(newMockDSGenerator("mock"))
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -807,12 +762,12 @@ func TestDynamicSecretsService_GetRole_ContextCanceled(t *testing.T) {
 }
 
 func TestDynamicSecretsService_ListRoles_ContextCanceled(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -831,12 +786,12 @@ func TestDynamicSecretsService_ListRoles_ContextCanceled(t *testing.T) {
 }
 
 func TestDynamicSecretsService_DeleteRole_ContextCanceled(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -855,13 +810,13 @@ func TestDynamicSecretsService_DeleteRole_ContextCanceled(t *testing.T) {
 }
 
 func TestDynamicSecretsService_GenerateCredential_TTLExceedsMax(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	generatorReg.Register(newMockDSGenerator("mock"))
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -890,7 +845,7 @@ func TestDynamicSecretsService_GenerateCredential_TTLExceedsMax(t *testing.T) {
 }
 
 func TestDynamicSecretsService_GenerateCredential_GeneratorFailure(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 
@@ -903,7 +858,7 @@ func TestDynamicSecretsService_GenerateCredential_GeneratorFailure(t *testing.T)
 
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -930,7 +885,7 @@ func TestDynamicSecretsService_GenerateCredential_GeneratorFailure(t *testing.T)
 }
 
 func TestDynamicSecretsService_GenerateCredential_LeaseFailure(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	leaseManager.createLeaseFn = func(ctx context.Context, path string, ttl time.Duration, opts *lease.LeaseOptions) (*lease.Lease, error) {
 		return nil, stderrors.New("lease creation failed")
@@ -940,7 +895,7 @@ func TestDynamicSecretsService_GenerateCredential_LeaseFailure(t *testing.T) {
 	generatorReg.Register(newMockDSGenerator("mock"))
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -967,7 +922,7 @@ func TestDynamicSecretsService_GenerateCredential_LeaseFailure(t *testing.T) {
 }
 
 func TestDynamicSecretsService_RenewLease_Failure(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	leaseManager.renewLeaseFn = func(ctx context.Context, leaseID string, increment time.Duration) (*lease.Lease, error) {
 		return nil, stderrors.New("renew failed")
@@ -976,7 +931,7 @@ func TestDynamicSecretsService_RenewLease_Failure(t *testing.T) {
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -992,7 +947,7 @@ func TestDynamicSecretsService_RenewLease_Failure(t *testing.T) {
 }
 
 func TestDynamicSecretsService_RevokeLease_Failure(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	leaseManager.revokeLeaseFn = func(ctx context.Context, leaseID string) error {
 		return stderrors.New("revoke failed")
@@ -1001,7 +956,7 @@ func TestDynamicSecretsService_RevokeLease_Failure(t *testing.T) {
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1016,12 +971,12 @@ func TestDynamicSecretsService_RevokeLease_Failure(t *testing.T) {
 }
 
 func TestDynamicSecretsService_ListLeases_ContextCanceled(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1040,7 +995,7 @@ func TestDynamicSecretsService_ListLeases_ContextCanceled(t *testing.T) {
 }
 
 func TestDynamicSecretsService_ListLeases_Failure(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	leaseManager.listLeasesFn = func(ctx context.Context, prefix string) ([]*lease.Lease, error) {
 		return nil, stderrors.New("list failed")
@@ -1049,7 +1004,7 @@ func TestDynamicSecretsService_ListLeases_Failure(t *testing.T) {
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1062,7 +1017,7 @@ func TestDynamicSecretsService_ListLeases_Failure(t *testing.T) {
 }
 
 func TestDynamicSecretsService_LoadRoles_WithData(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	generatorReg.Register(newMockDSGenerator("mock"))
@@ -1070,10 +1025,10 @@ func TestDynamicSecretsService_LoadRoles_WithData(t *testing.T) {
 
 	// Pre-populate with role data
 	roleJSON := `{"name":"preloaded","generator_type":"mock","default_ttl":3600000000000,"max_ttl":7200000000000}`
-	err := store.Set([]byte(RolePrefix+"preloaded"), []byte(roleJSON))
+	err := store.Put(context.Background(), RolePrefix+"preloaded", []byte(roleJSON))
 	require.NoError(t, err)
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1089,16 +1044,16 @@ func TestDynamicSecretsService_LoadRoles_WithData(t *testing.T) {
 }
 
 func TestDynamicSecretsService_LoadRoles_SkipInvalidJSON(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
 	// Pre-populate with invalid JSON
-	err := store.Set([]byte(RolePrefix+"invalid"), []byte("not json"))
+	err := store.Put(context.Background(), RolePrefix+"invalid", []byte("not json"))
 	require.NoError(t, err)
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1114,12 +1069,12 @@ func TestDynamicSecretsService_LoadRoles_SkipInvalidJSON(t *testing.T) {
 }
 
 func TestDynamicSecretsService_CreateRole_GeneratorNotFound(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1141,12 +1096,12 @@ func TestDynamicSecretsService_CreateRole_GeneratorNotFound(t *testing.T) {
 
 // TestNewDynamicSecretsHandler_InitMetricsSuccess tests metrics initialization during service creation.
 func TestNewDynamicSecretsHandler_InitMetricsSuccess(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1162,12 +1117,12 @@ func TestNewDynamicSecretsHandler_InitMetricsSuccess(t *testing.T) {
 
 // TestDynamicSecretsService_CreateRole_EmptyGeneratorType tests validation.
 func TestDynamicSecretsService_CreateRole_EmptyGeneratorType(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1190,13 +1145,13 @@ func TestDynamicSecretsService_CreateRole_EmptyGeneratorType(t *testing.T) {
 
 // TestDynamicSecretsService_CreateRole_TTLBoundaries tests TTL validation boundaries.
 func TestDynamicSecretsService_CreateRole_TTLBoundaries(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	generatorReg.Register(newMockDSGenerator("mock"))
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1225,12 +1180,12 @@ func TestDynamicSecretsService_CreateRole_TTLBoundaries(t *testing.T) {
 
 // TestDynamicSecretsService_GetRole_NilRequest tests nil request handling.
 func TestDynamicSecretsService_GetRole_NilRequest(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1244,12 +1199,12 @@ func TestDynamicSecretsService_GetRole_NilRequest(t *testing.T) {
 
 // TestDynamicSecretsService_DeleteRole_NilRequest tests nil request handling.
 func TestDynamicSecretsService_DeleteRole_NilRequest(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1263,12 +1218,12 @@ func TestDynamicSecretsService_DeleteRole_NilRequest(t *testing.T) {
 
 // TestDynamicSecretsService_RenewLease_ContextCanceled tests context handling.
 func TestDynamicSecretsService_RenewLease_ContextCanceled(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1288,12 +1243,12 @@ func TestDynamicSecretsService_RenewLease_ContextCanceled(t *testing.T) {
 
 // TestDynamicSecretsService_RevokeLease_ContextCanceled tests context handling.
 func TestDynamicSecretsService_RevokeLease_ContextCanceled(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1310,12 +1265,12 @@ func TestDynamicSecretsService_RevokeLease_ContextCanceled(t *testing.T) {
 
 // TestDynamicSecretsService_GenerateCredential_NilRequest tests nil request.
 func TestDynamicSecretsService_GenerateCredential_NilRequest(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1329,12 +1284,12 @@ func TestDynamicSecretsService_GenerateCredential_NilRequest(t *testing.T) {
 
 // TestDynamicSecretsService_GenerateCredential_ContextCanceled tests context.
 func TestDynamicSecretsService_GenerateCredential_ContextCanceled(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1353,12 +1308,12 @@ func TestDynamicSecretsService_GenerateCredential_ContextCanceled(t *testing.T) 
 
 // TestDynamicSecretsService_RenewLease_NilRequest tests nil request.
 func TestDynamicSecretsService_RenewLease_NilRequest(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1372,12 +1327,12 @@ func TestDynamicSecretsService_RenewLease_NilRequest(t *testing.T) {
 
 // TestDynamicSecretsService_RevokeLease_NilRequest tests nil request.
 func TestDynamicSecretsService_RevokeLease_NilRequest(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1391,12 +1346,12 @@ func TestDynamicSecretsService_RevokeLease_NilRequest(t *testing.T) {
 
 // TestDynamicSecretsService_DeleteRole_NotFound tests deleting non-existent role.
 func TestDynamicSecretsService_DeleteRole_NotFound(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1415,12 +1370,12 @@ func TestDynamicSecretsService_DeleteRole_NotFound(t *testing.T) {
 
 // TestDynamicSecretsService_GetRole_EmptyName tests empty role name.
 func TestDynamicSecretsService_GetRole_EmptyName(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1434,12 +1389,12 @@ func TestDynamicSecretsService_GetRole_EmptyName(t *testing.T) {
 
 // TestDynamicSecretsService_DeleteRole_EmptyName tests empty role name.
 func TestDynamicSecretsService_DeleteRole_EmptyName(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1453,12 +1408,12 @@ func TestDynamicSecretsService_DeleteRole_EmptyName(t *testing.T) {
 
 // TestDynamicSecretsService_RenewLease_EmptyLeaseID tests empty lease ID.
 func TestDynamicSecretsService_RenewLease_EmptyLeaseID(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1472,12 +1427,12 @@ func TestDynamicSecretsService_RenewLease_EmptyLeaseID(t *testing.T) {
 
 // TestDynamicSecretsService_RevokeLease_EmptyLeaseID tests empty lease ID.
 func TestDynamicSecretsService_RevokeLease_EmptyLeaseID(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1491,12 +1446,12 @@ func TestDynamicSecretsService_RevokeLease_EmptyLeaseID(t *testing.T) {
 
 // TestDynamicSecretsService_ListLeases_NilRequest tests nil request with default behavior.
 func TestDynamicSecretsService_ListLeases_NilRequest(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1512,12 +1467,12 @@ func TestDynamicSecretsService_ListLeases_NilRequest(t *testing.T) {
 
 // TestDynamicSecretsService_GenerateCredential_EmptyRoleName tests empty role name.
 func TestDynamicSecretsService_GenerateCredential_EmptyRoleName(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1533,12 +1488,12 @@ func TestDynamicSecretsService_GenerateCredential_EmptyRoleName(t *testing.T) {
 
 // TestDynamicSecretsService_GenerateCredential_GetGeneratorError tests when getting generator fails.
 func TestDynamicSecretsService_GenerateCredential_GetGeneratorError(t *testing.T) {
-	store := newMockDSStorage()
+	store := newDSStore()
 	leaseManager := newMockDSLeaseManager()
 	generatorReg := credentials.NewGeneratorRegistry()
 	logger := newMockDSLogger()
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      leaseManager,
 		GeneratorRegistry: generatorReg,
@@ -1570,8 +1525,8 @@ func TestDynamicSecretsService_ListRoles_WithPrefix(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store:             newMockDSStorage(),
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store:             newDSStore(),
 		LeaseManager:      newMockDSLeaseManager(),
 		GeneratorRegistry: registry,
 		Logger:            newMockDSLogger(),
@@ -1604,8 +1559,8 @@ func TestDynamicSecretsService_ListRoles_EmptyResult(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store:             newMockDSStorage(),
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store:             newDSStore(),
 		LeaseManager:      newMockDSLeaseManager(),
 		GeneratorRegistry: registry,
 		Logger:            newMockDSLogger(),
@@ -1623,9 +1578,9 @@ func TestDynamicSecretsService_CreateRole_StorageError(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	store := &failingDSStorage{failOnSet: true}
+	store := newFaultDSStore().failAllWrites(stderrors.New("storage write error"))
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
 		LeaseManager:      newMockDSLeaseManager(),
 		GeneratorRegistry: registry,
@@ -1649,8 +1604,8 @@ func TestDynamicSecretsService_DeleteRole_NotFoundPath(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store:             newMockDSStorage(),
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store:             newDSStore(),
 		LeaseManager:      newMockDSLeaseManager(),
 		GeneratorRegistry: registry,
 		Logger:            newMockDSLogger(),
@@ -1667,8 +1622,8 @@ func TestDynamicSecretsService_GenerateCredential_WithCustomTTL(t *testing.T) {
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store:             newMockDSStorage(),
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store:             newDSStore(),
 		LeaseManager:      newMockDSLeaseManager(),
 		GeneratorRegistry: registry,
 		Logger:            newMockDSLogger(),
@@ -1698,8 +1653,8 @@ func TestDynamicSecretsService_GenerateCredential_TTLClampedToMax(t *testing.T) 
 	gen := newMockDSGenerator("postgres")
 	require.NoError(t, registry.Register(gen))
 
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store:             newMockDSStorage(),
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store:             newDSStore(),
 		LeaseManager:      newMockDSLeaseManager(),
 		GeneratorRegistry: registry,
 		Logger:            newMockDSLogger(),
@@ -1726,8 +1681,8 @@ func TestDynamicSecretsService_GenerateCredential_TTLClampedToMax(t *testing.T) 
 }
 
 func TestDynamicSecretsService_RevokeLease_NotFoundPath(t *testing.T) {
-	svc, err := NewDynamicSecretsHandler(&DynamicSecretsConfig{
-		Store:             newMockDSStorage(),
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store:             newDSStore(),
 		LeaseManager:      newMockDSLeaseManager(),
 		GeneratorRegistry: credentials.NewGeneratorRegistry(),
 		Logger:            newMockDSLogger(),
@@ -1742,7 +1697,7 @@ func TestDynamicSecretsService_RevokeLease_NotFoundPath(t *testing.T) {
 }
 
 func TestDynamicSecretsService_storeRole_SetError(t *testing.T) {
-	store := &errorReturningStorage{setError: true}
+	store := newFaultDSStore().failAllWrites(stderrors.New("storage write error"))
 	svc := &dynamicSecretsHandler{
 		store: store,
 	}
@@ -1752,13 +1707,13 @@ func TestDynamicSecretsService_storeRole_SetError(t *testing.T) {
 		GeneratorType: "postgres",
 	}
 
-	err := svc.storeRole(role)
+	err := svc.storeRole(context.Background(), role)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "store role failed")
 }
 
 func TestDynamicSecretsService_storeCredential_SetError(t *testing.T) {
-	store := &errorReturningStorage{setError: true}
+	store := newFaultDSStore().failAllWrites(stderrors.New("storage write error"))
 	svc := &dynamicSecretsHandler{
 		store: store,
 	}
@@ -1768,7 +1723,252 @@ func TestDynamicSecretsService_storeCredential_SetError(t *testing.T) {
 		Type:         "database",
 	}
 
-	err := svc.storeCredential(cred)
+	err := svc.storeCredential(context.Background(), cred)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "store credential failed")
+}
+
+// =============================================================================
+// REVOCATION REACHES THE THING THAT WAS LEASED
+//
+// RevokeLease used to mark the lease and stop. The database user, cloud role or
+// whatever else the generator had created stayed live and usable forever, and
+// credentials.CredentialGenerator.Revoke -- the SPI verb that exists precisely to
+// undo a Generate -- had no caller anywhere in the product. These tests pin the
+// property that makes revocation a control: the backing material goes too.
+// =============================================================================
+
+// newRealLeaseDynamicSecrets builds the handler over the PRODUCTION lease manager
+// so revocation is tested against tombstones rather than against a double that
+// deletes.
+func newRealLeaseDynamicSecrets(t *testing.T) (*dynamicSecretsHandler, *mockDSGenerator, lease.LeaseManager) {
+	t.Helper()
+	store := newDSStore()
+	log := newMockDSLogger()
+	leaseMgr, err := lease.NewManager(&lease.ManagerConfig{Store: store, Logger: log})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, leaseMgr.Close()) })
+
+	generator := newMockDSGenerator("postgres")
+	registry := credentials.NewGeneratorRegistry()
+	require.NoError(t, registry.Register(generator))
+
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: store, LeaseManager: leaseMgr, GeneratorRegistry: registry, Logger: log,
+	})
+	require.NoError(t, err)
+	return svc, generator, leaseMgr
+}
+
+// seedLeasedCredential creates a role and generates one credential from it,
+// returning the lease and the credential ID.
+func seedLeasedCredential(t *testing.T, svc *dynamicSecretsHandler) (string, string) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := svc.CreateRole(ctx, &CreateCredentialRoleRequest{
+		Name:          "app-db",
+		GeneratorType: "postgres",
+		Config:        map[string]string{"connection_url": "postgres://localhost/app"},
+		DefaultTTL:    time.Hour,
+		MaxTTL:        24 * time.Hour,
+	})
+	require.NoError(t, err)
+
+	generated, err := svc.GenerateCredential(ctx, &GenerateCredentialRequest{RoleName: "app-db"})
+	require.NoError(t, err)
+	require.NotEmpty(t, generated.Credential.LeaseID)
+	return generated.Credential.LeaseID, generated.Credential.CredentialID
+}
+
+// TestDynamicSecrets_RevokeLease_DestroysTheBackingCredential is the property the
+// issue asks for, at the generated-credential layer: after revocation the login
+// the generator created no longer exists, and neither does its record.
+func TestDynamicSecrets_RevokeLease_DestroysTheBackingCredential(t *testing.T) {
+	svc, generator, leaseMgr := newRealLeaseDynamicSecrets(t)
+	ctx := context.Background()
+	leaseID, credentialID := seedLeasedCredential(t, svc)
+
+	// The record exists before revocation, so its absence afterwards is this
+	// call's doing.
+	held, err := svc.loadCredential(ctx, credentialID)
+	require.NoError(t, err)
+	require.NotNil(t, held)
+
+	_, err = svc.RevokeLease(ctx, &RevokeLeaseRequest{LeaseID: leaseID})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{credentialID}, generator.revoked,
+		"the generator was never asked to destroy the credential it created")
+
+	gone, err := svc.loadCredential(ctx, credentialID)
+	require.NoError(t, err)
+	assert.Nil(t, gone, "the credential record outlived the login it describes")
+
+	// And the lease is a tombstone, so an operator can still see what became of
+	// it while Validate refuses it.
+	_, err = leaseMgr.Validate(ctx, leaseID)
+	assert.True(t, lease.IsLeaseRevoked(err), "Validate() error = %v, want a revoked refusal", err)
+}
+
+// TestDynamicSecrets_RevokeLease_KeepsTheLeaseWhenTheGeneratorRefuses is the
+// ordering proof. Marking the lease revoked first would leave a live database
+// login behind a record saying it is gone, and a revoked lease is terminal --
+// nothing would ever revisit it. So a generator failure leaves the lease ACTIVE
+// and the caller sees the refusal.
+func TestDynamicSecrets_RevokeLease_KeepsTheLeaseWhenTheGeneratorRefuses(t *testing.T) {
+	svc, generator, leaseMgr := newRealLeaseDynamicSecrets(t)
+	ctx := context.Background()
+	leaseID, credentialID := seedLeasedCredential(t, svc)
+
+	generator.revokeErr = stderrors.New("database refused the DROP ROLE")
+
+	_, err := svc.RevokeLease(ctx, &RevokeLeaseRequest{LeaseID: leaseID})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DROP ROLE")
+
+	// Still live, in both places, so the retry below has something to converge
+	// on.
+	_, validateErr := leaseMgr.Validate(ctx, leaseID)
+	require.NoError(t, validateErr, "the lease was revoked while its login was still standing")
+	stillThere, err := svc.loadCredential(ctx, credentialID)
+	require.NoError(t, err)
+	require.NotNil(t, stillThere)
+
+	// And the retry converges once the backend recovers.
+	generator.revokeErr = nil
+	_, err = svc.RevokeLease(ctx, &RevokeLeaseRequest{LeaseID: leaseID})
+	require.NoError(t, err)
+	_, validateErr = leaseMgr.Validate(ctx, leaseID)
+	assert.True(t, lease.IsLeaseRevoked(validateErr))
+}
+
+// TestDynamicSecrets_RevokeLease_ToleratesEveryAbsence covers the leases that
+// have no backing material, each for its own reason. None of them may fail a
+// revocation: an account delivery grant has nothing to destroy, a credential
+// already torn down is the desired end state, and a deployment that has dropped
+// a generator plugin must still be able to revoke the leases it left behind.
+func TestDynamicSecrets_RevokeLease_ToleratesEveryAbsence(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("lease carries no credential metadata", func(t *testing.T) {
+		svc, generator, leaseMgr := newRealLeaseDynamicSecrets(t)
+		// The shape of an account credential DELIVERY grant: a real lease with
+		// identifiers only and no generated material behind it.
+		held, err := leaseMgr.CreateLease(ctx, "accounts/delivery/t1/_none/_none/acct-1", time.Hour,
+			&lease.LeaseOptions{Renewable: true, Metadata: map[string]string{"kind": "delivery"}})
+		require.NoError(t, err)
+
+		_, err = svc.RevokeLease(ctx, &RevokeLeaseRequest{LeaseID: held.LeaseID})
+		require.NoError(t, err)
+		assert.Empty(t, generator.revoked)
+	})
+
+	t.Run("credential record already gone", func(t *testing.T) {
+		svc, generator, _ := newRealLeaseDynamicSecrets(t)
+		leaseID, credentialID := seedLeasedCredential(t, svc)
+		require.NoError(t, svc.store.Delete(ctx, CredentialPrefix+credentialID))
+
+		_, err := svc.RevokeLease(ctx, &RevokeLeaseRequest{LeaseID: leaseID})
+		require.NoError(t, err)
+		assert.Empty(t, generator.revoked, "a credential that is gone was asked to be destroyed again")
+	})
+
+	t.Run("generator no longer registered", func(t *testing.T) {
+		svc, _, leaseMgr := newRealLeaseDynamicSecrets(t)
+		leaseID, credentialID := seedLeasedCredential(t, svc)
+		require.NoError(t, svc.generatorReg.Unregister("postgres"))
+
+		_, err := svc.RevokeLease(ctx, &RevokeLeaseRequest{LeaseID: leaseID})
+		require.NoError(t, err, "a lease became unrevocable because a plugin was dropped")
+		_, validateErr := leaseMgr.Validate(ctx, leaseID)
+		assert.True(t, lease.IsLeaseRevoked(validateErr))
+		// The record is deliberately LEFT: nothing destroyed the login, so
+		// deleting the only description of it would strand it invisibly.
+		orphan, err := svc.loadCredential(ctx, credentialID)
+		require.NoError(t, err)
+		assert.NotNil(t, orphan)
+	})
+
+	t.Run("lease does not exist", func(t *testing.T) {
+		svc, _, _ := newRealLeaseDynamicSecrets(t)
+		// The lookup finds nothing; RevokeLease reports its own answer for an
+		// absent lease rather than failing inside the credential teardown.
+		require.NoError(t, svc.destroyLeasedCredential(ctx, "lease_never_existed"))
+	})
+}
+
+// TestDynamicSecrets_LoadCredential_BadInput proves the reader distinguishes
+// absent from unreadable: an absent record is nil with no error, an undecodable
+// one is a refusal, because silently treating corruption as absence would skip
+// the generator teardown and strand a live login.
+func TestDynamicSecrets_LoadCredential_BadInput(t *testing.T) {
+	svc, _, _ := newRealLeaseDynamicSecrets(t)
+	ctx := context.Background()
+
+	missing, err := svc.loadCredential(ctx, "cred-nope")
+	require.NoError(t, err)
+	assert.Nil(t, missing)
+
+	require.NoError(t, svc.store.Put(ctx, CredentialPrefix+"cred-bad", []byte("{not json")))
+	_, err = svc.loadCredential(ctx, "cred-bad")
+	require.Error(t, err)
+
+	require.NoError(t, svc.store.Put(ctx, CredentialPrefix+"cred-empty", []byte{}))
+	empty, err := svc.loadCredential(ctx, "cred-empty")
+	require.NoError(t, err)
+	assert.Nil(t, empty)
+}
+
+// TestDynamicSecrets_RevokeLease_StoreFaults proves the two store failures the
+// teardown can hit are REFUSALS rather than silent skips. A read that cannot
+// answer must not be mistaken for "no such credential" — that would skip the
+// generator teardown and strand a live login — and a record that cannot be
+// deleted leaves an inventory the operator must be told about.
+func TestDynamicSecrets_RevokeLease_StoreFaults(t *testing.T) {
+	ctx := context.Background()
+
+	newOnFaultStore := func(t *testing.T) (*dynamicSecretsHandler, *mockDSGenerator, *faultDSStore) {
+		t.Helper()
+		store := newFaultDSStore()
+		log := newMockDSLogger()
+		leaseMgr, err := lease.NewManager(&lease.ManagerConfig{Store: store, Logger: log})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, leaseMgr.Close()) })
+
+		generator := newMockDSGenerator("postgres")
+		registry := credentials.NewGeneratorRegistry()
+		require.NoError(t, registry.Register(generator))
+
+		svc, err := NewDynamicSecretsHandler(ctx, &DynamicSecretsConfig{
+			Store: store, LeaseManager: leaseMgr, GeneratorRegistry: registry, Logger: log,
+		})
+		require.NoError(t, err)
+		return svc, generator, store
+	}
+
+	t.Run("the credential record cannot be read", func(t *testing.T) {
+		svc, generator, store := newOnFaultStore(t)
+		leaseID, _ := seedLeasedCredential(t, svc)
+
+		// Armed only now: the lease lookup and the credential read share this
+		// store, so the refusal lands on whichever the teardown reaches first.
+		store.getErr = stderrors.New("kv read unavailable")
+
+		_, err := svc.RevokeLease(ctx, &RevokeLeaseRequest{LeaseID: leaseID})
+		require.Error(t, err)
+		assert.Empty(t, generator.revoked)
+	})
+
+	t.Run("the credential record cannot be deleted", func(t *testing.T) {
+		svc, generator, store := newOnFaultStore(t)
+		leaseID, credentialID := seedLeasedCredential(t, svc)
+		store.deleteErr = stderrors.New("kv delete unavailable")
+
+		_, err := svc.RevokeLease(ctx, &RevokeLeaseRequest{LeaseID: leaseID})
+		require.Error(t, err)
+		// The login IS gone — the generator succeeded — so the retry has only
+		// the record left to clean up, and the lease is still active for it to
+		// find.
+		assert.Equal(t, []string{credentialID}, generator.revoked)
+	})
 }

@@ -9,19 +9,21 @@
     orchestratorStore,
     selectJob,
     refresh,
+    isTerminalJobState,
     type JobStatus,
     type JobState,
   } from '../../stores/orchestrator.svelte.ts';
-  import { navigate } from '../../stores/navigation.svelte.ts';
   import { routeJobDetail } from '../../stores/router.svelte.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import StatusBadge from '../../components/core/StatusBadge.svelte';
+  import { statusToVariant } from '../../components/core/statusVariant.ts';
   import StartJobDialog from '../../components/orchestrator/StartJobDialog.svelte';
   import { Plus, Briefcase } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import { formatDateTime } from '../../lib/time.ts';
+  import { issueRef, type IssueRef } from '../../lib/tasks.ts';
 
   type StateFilter = 'all' | 'active' | 'completed' | 'failed';
 
@@ -37,7 +39,7 @@
     let result = Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : [];
 
     if (stateFilter === 'active') {
-      result = result.filter((j) => j.state !== 'completed' && j.state !== 'failed');
+      result = result.filter((j) => !isTerminalJobState(j.state));
     } else if (stateFilter === 'completed') {
       result = result.filter((j) => j.state === 'completed');
     } else if (stateFilter === 'failed') {
@@ -56,12 +58,17 @@
     return result;
   });
 
-  function stateVariant(state: JobState): 'success' | 'error' | 'warning' | 'info' | 'primary' | 'ghost' {
-    if (state === 'completed') return 'success';
-    if (state === 'failed') return 'error';
-    if (state === 'escalating' || state === 're-delegating') return 'warning';
-    if (state === 'executing' || state === 'assigning') return 'primary';
-    return 'info';
+  /**
+   * jobIssueRef is the forge issue behind a job, read from the Task the job is
+   * an attempt at — by the job's own binding, or from the other end when the
+   * server does not yet carry one. A lead-driven job has neither, and no chip.
+   */
+  function jobIssueRef(job: JobStatus): IssueRef | null {
+    const tasks = Array.isArray(orchestratorStore.tasks) ? orchestratorStore.tasks : [];
+    const task = job.task_id
+      ? tasks.find((t) => t.id === job.task_id)
+      : tasks.find((t) => t.spawned_job_id === job.job_id);
+    return task ? issueRef(task) : null;
   }
 
   function isCancellable(state: JobState): boolean {
@@ -150,7 +157,7 @@
 {/if}
 
 <div class="p-6 space-y-6">
-  <PageHeader title="Jobs" subtitle="Orchestration job queue and history" icon={Briefcase}>
+  <PageHeader title="Jobs" subtitle="Software Factory job queue and history" icon={Briefcase}>
     {#snippet children()}
       <button
         class="btn btn-sm btn-primary gap-1"
@@ -224,6 +231,7 @@
           </tr>
         {:else}
           {#each filteredJobs as job (job.job_id)}
+            {@const ref = jobIssueRef(job)}
             <tr
               class="cursor-pointer hover:bg-base-300/40 transition-colors"
               onclick={() => handleRowClick(job)}
@@ -233,9 +241,27 @@
                   {truncateID(job.job_id)}
                 </span>
               </td>
-              <td class="max-w-xs truncate">{job.description || '—'}</td>
+              <td class="max-w-xs">
+                <div class="flex items-center gap-2 min-w-0">
+                  {#if ref !== null}
+                    {#if ref.href !== ''}
+                      <a
+                        class="badge badge-sm badge-outline font-mono shrink-0"
+                        href={ref.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onclick={(e) => e.stopPropagation()}
+                        title="Open issue {ref.label} on the forge"
+                      >{ref.label}</a>
+                    {:else}
+                      <span class="badge badge-sm badge-outline font-mono shrink-0" title="Forge issue {ref.label}">{ref.label}</span>
+                    {/if}
+                  {/if}
+                  <span class="truncate">{job.description || '—'}</span>
+                </div>
+              </td>
               <td>
-                <StatusBadge text={job.state} variant={stateVariant(job.state)} pulse={job.state === 'executing'} />
+                <StatusBadge text={job.state} variant={statusToVariant(job.state)} pulse={job.state === 'executing'} />
               </td>
               <td class="text-center">{job.iteration}</td>
               <td>

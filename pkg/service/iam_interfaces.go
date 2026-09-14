@@ -16,9 +16,7 @@ package service
 import (
 	"context"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 // IAM interfaces for service layer - these match the interfaces expected by pkg/api/rest.
@@ -96,7 +94,21 @@ type OIDCProvider interface {
 // WebAuthnManager interface defines WebAuthn operations.
 type WebAuthnManager interface {
 	BeginRegistration(ctx context.Context, tenantID, userID string) (map[string]interface{}, error)
-	FinishRegistration(ctx context.Context, tenantID, userID string, credential map[string]interface{}) error
+
+	// FinishRegistration completes the ceremony and returns what the assurance
+	// gate PROVED about the authenticator.
+	//
+	// The result exists so a caller that mints a session for the credential it
+	// just enrolled — self-service registration — can describe it accurately
+	// rather than falling back to "unattested" for a credential that just
+	// cleared the hardware bar. It is an *iam.AttestationResult, whose fields
+	// are unexported and which only verifiers in pkg/iam can produce, so
+	// returning it cannot become a way to assert an attestation.
+	//
+	// A nil result with a nil error means the ceremony completed and nothing
+	// about the key's storage was established; the caller must not claim
+	// hardware.
+	FinishRegistration(ctx context.Context, tenantID, userID string, credential map[string]interface{}) (*iam.AttestationResult, error)
 	BeginLogin(ctx context.Context, tenantID, email string) (map[string]interface{}, error)
 	FinishLogin(ctx context.Context, tenantID string, credential map[string]interface{}) (*iam.User, error)
 }
@@ -141,24 +153,6 @@ type SessionManager interface {
 	RevokeAllExcept(ctx context.Context, userID, tenantID, exceptSessionID string) error
 }
 
-// AuthManagerInterface defines token-management and user-record operations
-// backed by the auth manager. Identity is established by an IAM authentication
-// factor (mTLS, PIV, FIDO2/WebAuthn, OIDC); this interface issues, validates,
-// refreshes, and revokes the JWTs for the verified user.
-type AuthManagerInterface interface {
-	// ValidateToken validates a token and returns validation information.
-	ValidateToken(ctx context.Context, token string) (*auth.TokenValidationResult, error)
-
-	// RefreshToken generates a new access token from a refresh token.
-	RefreshToken(ctx context.Context, refreshToken string) (*auth.Token, error)
-
-	// RevokeToken revokes an authentication token.
-	RevokeToken(ctx context.Context, token string) error
-
-	// CreateUser creates a new user record with specified roles.
-	CreateUser(username string, roles []string) (*auth.User, error)
-}
-
 // IAMComponents aggregates all IAM component interfaces for the service layer.
 // This interface is implemented by the server package to provide IAM functionality.
 type IAMComponents interface {
@@ -199,14 +193,6 @@ type IAMComponents interface {
 	GetAdminManager() *iam.AdminManager
 	// GetGDPRManager returns the GDPR compliance manager.
 	GetGDPRManager() *iam.GDPRManager
-	// GetAuthManager returns the authentication manager for password-based login.
-	// Returns nil if password authentication is not configured.
-	GetAuthManager() AuthManagerInterface
-	// GetInternalAuthManager returns the interfaces.AuthManager for internal service use.
-	// This is used to wire up the auth manager in the QuicBaaS service for MCP transport
-	// and other internal operations that require the full interfaces.AuthManager interface.
-	// Returns nil if password authentication is not configured.
-	GetInternalAuthManager() interfaces.AuthManager
 }
 
 // IAMServiceProvider provides access to IAM components through the service layer.
@@ -244,6 +230,4 @@ type IAMServiceProvider interface {
 	GetAdminManager(ctx context.Context) (*iam.AdminManager, error)
 	// GetGDPRManager returns the GDPR manager.
 	GetGDPRManager(ctx context.Context) (*iam.GDPRManager, error)
-	// GetAuthManager returns the authentication manager.
-	GetAuthManager(ctx context.Context) (AuthManagerInterface, error)
 }

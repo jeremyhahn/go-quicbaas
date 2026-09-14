@@ -40,7 +40,7 @@ func TestHandleCallback_EmailNotVerifiedRejected(t *testing.T) {
 	if !errors.Is(err, ErrEmailNotVerified) {
 		t.Errorf("error = %v, want ErrEmailNotVerified", err)
 	}
-	if _, uerr := h.identityStore.GetUserByEmail(h.ctx, "alice@acme.com"); uerr == nil {
+	if _, uerr := h.identityStore.GetUserByEmail(h.ctx, h.provider.TenantID, "alice@acme.com"); uerr == nil {
 		t.Fatal("unverified-email login must not provision a user")
 	}
 }
@@ -85,7 +85,7 @@ func TestHandleCallback_AllowedEmailDomains(t *testing.T) {
 		if !errors.Is(err, ErrEmailDomainNotAllowed) {
 			t.Errorf("error = %v, want ErrEmailDomainNotAllowed", err)
 		}
-		if _, uerr := h.identityStore.GetUserByEmail(h.ctx, "alice@acme.com"); uerr == nil {
+		if _, uerr := h.identityStore.GetUserByEmail(h.ctx, h.provider.TenantID, "alice@acme.com"); uerr == nil {
 			t.Fatal("disallowed-domain login must not provision a user")
 		}
 	})
@@ -163,7 +163,7 @@ func TestHandleCallback_RequireExplicitRoleMapping(t *testing.T) {
 		if !errors.Is(err, ErrNoRolesResolvable) {
 			t.Errorf("error = %v, want ErrNoRolesResolvable", err)
 		}
-		if _, uerr := h.identityStore.GetUserByEmail(h.ctx, "alice@acme.com"); uerr == nil {
+		if _, uerr := h.identityStore.GetUserByEmail(h.ctx, h.provider.TenantID, "alice@acme.com"); uerr == nil {
 			t.Fatal("no zero-role user may be provisioned")
 		}
 	})

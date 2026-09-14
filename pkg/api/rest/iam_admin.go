@@ -439,8 +439,11 @@ func (h *IAMHandler) CheckAdminPermission(w http.ResponseWriter, r *http.Request
 }
 
 // startImpersonationRequest is the REST request for starting impersonation.
+//
+// It carries NO admin_user_id: the acting admin is the authenticated
+// caller, resolved server-side from the verified principal, never named by
+// the request (go-quicbaas#383).
 type startImpersonationRequest struct {
-	AdminUserID  string `json:"admin_user_id"`
 	TargetUserID string `json:"target_user_id"`
 	TenantID     string `json:"tenant_id"`
 	Reason       string `json:"reason"`
@@ -479,9 +482,10 @@ func (h *IAMHandler) StartImpersonation(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// Convert to IAM options
+	// Convert to IAM options. The acting admin is NOT taken from the
+	// request — AdminManager.StartImpersonation resolves it from the
+	// authenticated principal in context (go-quicbaas#383).
 	opts := iam.StartImpersonationOptions{
-		AdminUserID:  req.AdminUserID,
 		TargetUserID: req.TargetUserID,
 		TenantID:     req.TenantID,
 		Reason:       req.Reason,
@@ -524,9 +528,11 @@ func (h *IAMHandler) StartImpersonation(w http.ResponseWriter, r *http.Request) 
 		iam.AuditOutcomeSuccess,
 		&iam.AuditResource{Type: "impersonation_session", ID: session.ID},
 		map[string]interface{}{
-			"admin_user_id":  opts.AdminUserID,
-			"target_user_id": opts.TargetUserID,
-			"reason":         opts.Reason,
+			// The authenticated actor the manager resolved and recorded on
+			// the session — never a caller-supplied value (go-quicbaas#383).
+			"admin_user_id":  session.AdminUserID,
+			"target_user_id": session.TargetUserID,
+			"reason":         session.Reason,
 		},
 	)
 

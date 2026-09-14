@@ -45,12 +45,45 @@ import (
 // sdkSealedEnvelope is qrdb's documented REST sealed-window deny body.
 const sdkSealedEnvelope = `{"error":"barrier sealed","code":"SEALED"}`
 
-// sdkWaitFor polls fn every 100ms until it reports true. Like the in-package
-// awaitCond helper it is bounded by the test binary's own deadline rather
-// than by a fixed wall clock, so a busy machine cannot fail a boot that is
-// merely slow; this file is in the external server_test package and so cannot
-// reuse that helper directly.
-func sdkWaitFor(t *testing.T, what string, fn func() bool) {
+// sdkWaitFor polls fn every 100ms until it reports true, bounded by
+// t.Deadline(). (This file is in the external server_test package and so
+// cannot reuse the in-package awaitCond helper directly.)
+//
+// BE PRECISE ABOUT WHAT THAT BOUND IS, because the comment this replaces was
+// wrong about it: it claimed the deadline anchor meant "a busy machine cannot
+// fail a boot that is merely slow". It does not. t.Deadline() is the test
+// BINARY's deadline -- `go test -timeout`, 10m for `make test` -- so the
+// budget this wait gets is that timeout MINUS everything every preceding test
+// in pkg/server already spent. A busy machine slows those too, which shrinks
+// this test's budget by the very mechanism the old comment offered as
+// protection. Anchoring to t.Deadline() did not remove the fixed-wall-clock
+// flake; it made the budget depend on unrelated tests.
+//
+// It is still the right anchor -- a wait that outlives the harness's own
+// timeout reports nothing useful, because the harness panics the process
+// first -- but it buys a graceful report, NOT immunity from slowness. Do not
+// reintroduce a guarantee here that the code does not have.
+//
+// (Worth recording so the next reader does not re-derive it: in the go#497
+// occurrence of 2026-09-04, job 45519, the budget was NOT the binding
+// constraint. The test began 71.6s into a 600s timeout with 88% of it still
+// unspent, and the boot then emitted nothing at all for 525s. It had failed,
+// not slowed -- which is what the startErr case below exists to say out loud.)
+//
+// It also watches startErr, the channel carrying srv.Start's return value, and
+// that is not belt-and-braces: every predicate here is a property the boot
+// establishes, so a boot that has ALREADY FAILED makes fn unsatisfiable
+// forever. Without this case the wait polls a dead server until the deadline
+// and then reports "timed out waiting for X" -- naming a slow boot when what
+// actually happened was an immediate, fully-explained failure sitting unread
+// in a channel. That is go#497: a bind conflict on the post-unseal listener
+// was reported 1601 SECONDS later as a timeout, because the only read of
+// startErr was placed after the wait it would have explained.
+//
+// The deadline bound is the test BINARY's, not this test's, so an
+// unsatisfiable predicate burns every second the rest of the package had
+// left. Failing on startErr is what keeps that cost off the runner.
+func sdkWaitFor(t *testing.T, startErr <-chan error, what string, fn func() bool) {
 	t.Helper()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -68,6 +101,8 @@ func sdkWaitFor(t *testing.T, what string, fn func() bool) {
 			if fn() {
 				return
 			}
+		case bootErr := <-startErr:
+			t.Fatalf("Start returned while waiting for %s: %v", what, bootErr)
 		case <-deadline:
 			t.Fatalf("timed out waiting for %s", what)
 		}
@@ -102,10 +137,8 @@ func TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon(t *testing.T) {
 	srv, err := server.NewServer(cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		// Shutdown runs the full teardown; the Start goroutine stays parked
-		// on the shutdown channel (Shutdown and TriggerShutdown share one
-		// sync.Once by design — the daemon closes the channel from its
-		// signal handler), which is harmless for the test binary.
+		// Shutdown signals the shutdown channel first (releasing the Start
+		// goroutine) and then runs the full teardown (#139).
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
@@ -117,7 +150,7 @@ func TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon(t *testing.T) {
 	// Phase 1: the sealed-window REST listener comes up and serves the
 	// barrier status verb.
 	var baseURL string
-	sdkWaitFor(t, "the sealed-window REST listener to serve barrier status", func() bool {
+	sdkWaitFor(t, startErr, "the sealed-window REST listener to serve barrier status", func() bool {
 		addr := srv.RESTAddr()
 		if addr == nil {
 			return false
@@ -179,7 +212,7 @@ func TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon(t *testing.T) {
 	// verified at the node level (GetQRDBNodeClient), since the post-unseal
 	// REST surface is TLS-only and unreachable under this TLS-disabled
 	// config (see the doc comment above).
-	sdkWaitFor(t, "the full node boot to complete after unseal", func() bool {
+	sdkWaitFor(t, startErr, "the full node boot to complete after unseal", func() bool {
 		return srv.GetQRDBNodeClient() != nil
 	})
 	assert.False(t, srv.GetQRDBNodeClient() == nil, "node SDK client must be online after unseal completes the boot")

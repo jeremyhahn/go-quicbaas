@@ -143,6 +143,12 @@ type ProductionEnrollerDeps struct {
 
 	// TokenMTLSPath overrides defaultTokenMTLSPath. Leave empty in production.
 	TokenMTLSPath string
+
+	// ServedBackends reports the backend names the daemon actually serves,
+	// so the register payload advertises what a task can route to rather
+	// than the transport kinds the --backends flag named. Production wires
+	// Runtime.Backends here; see the field on ProductionEnroller.
+	ServedBackends func() []string
 }
 
 // ProductionEnroller implements Enroller using the existing OAuth2 Client
@@ -156,6 +162,22 @@ type ProductionEnroller struct {
 	registerPath  string
 	tokenPath     string
 	tokenMTLSPath string
+
+	// servedBackends reports the backend names the daemon actually serves.
+	//
+	// A DAEMON MUST ADVERTISE WHAT IT SERVES, NOT HOW IT SERVES IT. The
+	// --backends flag names transport kinds ("acp", "ollama"); one "acp"
+	// kind constructs the claude, codex and opencode backends, and those
+	// three names are what a task routes on. Registering "acp" left every
+	// dispatcher that filters by backend name unable to see the daemon, so
+	// an sdlc task routed on "claude" fell through to an in-process spawn
+	// the runner then refused for having no container (go-quicbaas#681).
+	//
+	// Nil when the caller has no runtime to ask, in which case the payload
+	// advertises the configured kinds, which is all that is known. A source
+	// that IS wired is authoritative even when it reports nothing: see
+	// advertisedBackends.
+	servedBackends func() []string
 
 	// cfg is the validated daemon Config the enroller binds at SetConfig
 	// time. Used by Reregister so the heartbeat sender can drive
@@ -187,12 +209,13 @@ func NewProductionEnroller(deps ProductionEnrollerDeps) *ProductionEnroller {
 		tokenMTLSPath = defaultTokenMTLSPath
 	}
 	return &ProductionEnroller{
-		httpClient:    deps.HTTPClient, // may be nil — built lazily per-call
-		logger:        deps.Logger,
-		now:           now,
-		registerPath:  registerPath,
-		tokenPath:     tokenPath,
-		tokenMTLSPath: tokenMTLSPath,
+		httpClient:     deps.HTTPClient, // may be nil — built lazily per-call
+		logger:         deps.Logger,
+		servedBackends: deps.ServedBackends,
+		now:            now,
+		registerPath:   registerPath,
+		tokenPath:      tokenPath,
+		tokenMTLSPath:  tokenMTLSPath,
 	}
 }
 
@@ -317,6 +340,31 @@ func (e *ProductionEnroller) resolveHTTPClient(cfg *Config) (*http.Client, error
 	return buildMTLSHTTPClient(cfg)
 }
 
+// advertisedBackends returns the backend names the register payload declares
+// this daemon can run.
+//
+// A WIRED RUNTIME IS THE ANSWER, INCLUDING WHEN THE ANSWER IS NONE. When the
+// caller supplied a served-backend source, its reply is advertised verbatim —
+// an empty reply advertises nothing. A daemon whose backend construction
+// produced nothing serves nothing, and substituting the configured transport
+// kinds there would mint exactly the phantom "acp" record this derivation
+// exists to remove (go-quicbaas#681), on the one daemon least able to honour
+// it. The register handler and the operator see the fault instead.
+//
+// The configured kinds are reachable only when no source was wired at all —
+// an enroller built without a runtime, which has nothing better to say.
+func (e *ProductionEnroller) advertisedBackends(cfg *Config) []string {
+	if e.servedBackends != nil {
+		return append([]string(nil), e.servedBackends()...)
+	}
+	kinds := cfg.EffectiveBackends()
+	names := make([]string, 0, len(kinds))
+	for _, b := range kinds {
+		names = append(names, string(b))
+	}
+	return names
+}
+
 // bootstrap performs the POST /api/v1/agents/register exchange. Any
 // non-2xx response becomes ErrEnrollmentRejected; transport errors are
 // wrapped with the same sentinel so callers can distinguish via errors.Is.
@@ -327,10 +375,7 @@ func (e *ProductionEnroller) bootstrap(ctx context.Context, cfg *Config, client 
 	}
 
 	hostname, _ := os.Hostname()
-	backendNames := make([]string, 0, len(cfg.EffectiveBackends()))
-	for _, b := range cfg.EffectiveBackends() {
-		backendNames = append(backendNames, string(b))
-	}
+	backendNames := e.advertisedBackends(cfg)
 	// Advertise GPU capability so the control plane scheduler can filter to
 	// GPU-capable daemons when a task or inference request sets GpuRequired.
 	if DetectGPU() {
@@ -497,12 +542,17 @@ func (e *ProductionEnroller) exchangeTokenMTLS(ctx context.Context, cfg *Config,
 		return nil, &EnrollmentTokenExchangeError{Op: "build token-mtls url", Cause: err}
 	}
 
+	// No scope parameter: the daemon does not name its own authority. A
+	// client_credentials token carries the grant on the application record,
+	// so a scope list can only narrow it -- and the list a daemon has on disk
+	// is whatever the build that enrolled it advertised. A daemon enrolled
+	// before the control-plane permissions were granted would narrow every
+	// token to a set that cannot heartbeat, and stay there: it re-enrolls on
+	// 401 and 404, never on the resulting 403 (go-quicbaas#653). Asking for
+	// nothing takes the whole current grant on the next refresh.
 	form := url.Values{}
 	form.Set("grant_type", "client_credentials")
 	form.Set("client_id", creds.MTLSClientID)
-	if len(creds.Scopes) > 0 {
-		form.Set("scope", strings.Join(creds.Scopes, " "))
-	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -544,11 +594,9 @@ func (e *ProductionEnroller) exchangeToken(ctx context.Context, cfg *Config, cre
 		return nil, &EnrollmentTokenExchangeError{Op: "build token url", Cause: err}
 	}
 
+	// No scope parameter, for the reason exchangeTokenMTLS documents.
 	form := url.Values{}
 	form.Set("grant_type", "client_credentials")
-	if len(creds.Scopes) > 0 {
-		form.Set("scope", strings.Join(creds.Scopes, " "))
-	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -585,10 +633,14 @@ func (e *ProductionEnroller) exchangeToken(ctx context.Context, cfg *Config, cre
 }
 
 // buildIdentity assembles the AgentIdentity returned to the Daemon.
-// Scopes come from the token response when present (authoritative),
-// falling back to the registration-time scopes so the identity always
-// has a non-empty scope set even if the provider omits them in the
-// token body.
+//
+// Scopes come from the token response, which is authoritative: the daemon
+// requests none, so what comes back is the grant the control plane resolved
+// from the application record. That is how a daemon whose credentials file
+// predates a grant change converges on the current one without re-enrolling.
+// A provider that omits the scope leaves the identity on its
+// registration-time set, so the daemon's own spawn server can still admit the
+// central's dispatch rather than refusing every RPC for want of a scope.
 func (e *ProductionEnroller) buildIdentity(cfg *Config, creds *persistedCredentials, tok *tokenResponse) *orchestration.AgentIdentity {
 	scopes := creds.Scopes
 	if trimmed := strings.TrimSpace(tok.Scope); trimmed != "" {
@@ -785,8 +837,16 @@ func (e *EnrollmentRejectedError) Error() string {
 	return sb.String()
 }
 
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *EnrollmentRejectedError) Unwrap() error { return ErrEnrollmentRejected }
+// Unwrap returns the sentinel error plus the underlying cause. Exposing
+// the cause is what lets the daemon's enrollment classifier see the
+// transport failure (connection refused, DNS, TLS) underneath a rejection
+// that never got an HTTP status.
+func (e *EnrollmentRejectedError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrEnrollmentRejected}
+	}
+	return []error{ErrEnrollmentRejected, e.Cause}
+}
 
 // EnrollmentRequestError wraps a client-side failure while constructing
 // the registration HTTP request (bad URL, JSON encoding bug). It unwraps
@@ -803,8 +863,14 @@ func (e *EnrollmentRequestError) Error() string {
 	return fmt.Sprintf("%s: %s: %v", ErrEnrollmentRejected.Error(), e.Op, e.Cause)
 }
 
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *EnrollmentRequestError) Unwrap() error { return ErrEnrollmentRejected }
+// Unwrap returns the sentinel error plus the underlying cause so the
+// enrollment classifier can reach the transport failure beneath it.
+func (e *EnrollmentRequestError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrEnrollmentRejected}
+	}
+	return []error{ErrEnrollmentRejected, e.Cause}
+}
 
 // EnrollmentCredentialsReadError wraps a failure to load the persisted
 // credentials file (corrupt JSON, permission denied, partial write, etc.).
@@ -863,8 +929,14 @@ func (e *EnrollmentTokenExchangeError) Error() string {
 	return sb.String()
 }
 
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *EnrollmentTokenExchangeError) Unwrap() error { return ErrEnrollmentTokenExchange }
+// Unwrap returns the sentinel error plus the underlying cause so the
+// enrollment classifier can reach the transport failure beneath it.
+func (e *EnrollmentTokenExchangeError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrEnrollmentTokenExchange}
+	}
+	return []error{ErrEnrollmentTokenExchange, e.Cause}
+}
 
 // EnrollmentTLSError wraps a failure to construct the mTLS HTTP client
 // (missing/corrupt cert, bad server CA, etc.).

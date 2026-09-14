@@ -17,36 +17,19 @@ import (
 	"context"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 // SetIAMProvider sets the IAM components provider for REST handlers.
 // This is called by the server after IAM components are initialized.
-// It also wires up the auth manager from IAM components to enable
-// authentication operations via MCP and other transports.
 func (s *quicBaaS) SetIAMProvider(provider IAMComponents) {
 	if provider != nil {
 		s.iamProvider = &iamServiceAdapter{components: provider}
-
-		// Wire up the auth manager from IAM components for MCP transport and other
-		// internal operations that require the full interfaces.AuthManager interface.
-		// This enables Login/Logout/RefreshToken/ValidateToken operations via MCP.
-		if authMgr := provider.GetInternalAuthManager(); authMgr != nil {
-			s.authManager = authMgr
-		}
 	}
 }
 
 // getIAMProvider returns the IAM service provider.
 func (s *quicBaaS) getIAMProvider() IAMServiceProvider {
 	return s.iamProvider
-}
-
-// GetInternalAuthManager returns the internal auth manager for MCP and other
-// internal operations that require the full interfaces.AuthManager interface.
-// This method enables the MCP server to validate tokens for authenticated operations.
-func (s *quicBaaS) GetInternalAuthManager() interfaces.AuthManager {
-	return s.authManager
 }
 
 // GetTenantManager returns the tenant manager from IAM components.

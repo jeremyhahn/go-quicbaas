@@ -10,6 +10,15 @@
 //
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
+// SPEND_UNATTRIBUTED addresses the subtree of entries that have NO value at a
+// chain level — a job that belongs to no task, a turn charged to no project.
+//
+// Supply it as a scope level to open the row a report marks `unattributed`,
+// and map it back to "no project" / "no task" when rendering a scope. It is
+// unambiguous because the server refuses it as an entity id at the write: no
+// real project, task, job or session can bear this identifier.
+// Mirrors orchestration.SpendUnattributed.
+export const SPEND_UNATTRIBUTED = '-';
 // =============================================================================
 // Session Spawn Types (Phase 1 additions)
 // Mirrors sdk/go/client/orchestrator/client.go SpawnSessionRequest

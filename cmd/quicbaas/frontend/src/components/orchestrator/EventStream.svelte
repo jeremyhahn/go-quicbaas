@@ -286,6 +286,19 @@
       Loading session history…
     </div>
 
+  <!-- Unreadable state: the transcript could not be fetched. Gated AHEAD of
+       the ready state because the two used to render identically — a blank
+       timeline — so an operator could not tell a conversation that is missing
+       from one that is merely unreachable (go-quicbaas#793). -->
+  {:else if sessionStore.historyError && allEvents.length === 0}
+    <div
+      class="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-error"
+      data-testid="history-error"
+    >
+      <span>This session's history could not be loaded.</span>
+      <span class="text-xs text-base-content/50">{sessionStore.historyError}</span>
+    </div>
+
   <!-- Ready state: history has been checked and there is genuinely nothing
        yet — a brand-new chat. -->
   {:else if allEvents.length === 0}

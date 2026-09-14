@@ -15,7 +15,6 @@ package iam
 
 import (
 	"context"
-	"crypto/elliptic"
 	"errors"
 	"strings"
 	"testing"
@@ -58,28 +57,6 @@ func TestIDTokenErrorTypes_MessagesAndUnwrap(t *testing.T) {
 				t.Fatalf("errors.Is did not match wrapped cause")
 			}
 		})
-	}
-}
-
-// ecCurveForName resolves the supported curves and rejects unknown ones.
-func TestECCurveForName(t *testing.T) {
-	for crv, want := range map[string]elliptic.Curve{
-		"P-256": elliptic.P256(),
-		"P-384": elliptic.P384(),
-		"P-521": elliptic.P521(),
-	} {
-		got, err := ecCurveForName(crv)
-		if err != nil || got != want {
-			t.Fatalf("ecCurveForName(%q) = %v, %v", crv, got, err)
-		}
-	}
-	if _, err := ecCurveForName("P-999"); err == nil {
-		t.Fatal("ecCurveForName(unknown) want error")
-	} else {
-		var jwksErr *IDTokenJWKSError
-		if !errors.As(err, &jwksErr) {
-			t.Fatalf("want IDTokenJWKSError, got %T", err)
-		}
 	}
 }
 

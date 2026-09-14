@@ -15,6 +15,7 @@ package iam
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -156,5 +157,100 @@ func TestAAGUIDAllowlist_Policy(t *testing.T) {
 	strict := NewAAGUIDAllowlist(nil, AAGUIDPolicyStrict)
 	if strict.Policy() != AAGUIDPolicyStrict {
 		t.Errorf("expected AAGUIDPolicyStrict, got %v", strict.Policy())
+	}
+}
+
+// =============================================================================
+// Zero-value and nil-gate contract (go-quicbaas#381)
+// =============================================================================
+
+// TestAAGUIDPolicy_ZeroValueIsStrict is the defaults inversion. Permissive used
+// to be iota, so an AAGUIDPolicy nobody set accepted every authenticator — the
+// safe configuration was the one an operator had to remember to ask for.
+func TestAAGUIDPolicy_ZeroValueIsStrict(t *testing.T) {
+	var policy AAGUIDPolicy
+	if policy != AAGUIDPolicyStrict {
+		t.Fatalf("the zero-value AAGUIDPolicy is %v, want AAGUIDPolicyStrict", policy)
+	}
+
+	// A struct literal that omits the policy inherits the strict one.
+	list := &AAGUIDAllowlist{allowed: map[string]struct{}{}}
+	if err := list.Check([]byte{0xaa, 0xbb, 0xcc, 0xdd}); err == nil {
+		t.Fatal("an allowlist built without an explicit policy accepted an unknown authenticator")
+	}
+}
+
+// TestAAGUIDPolicy_String keeps log lines and errors naming the policy rather
+// than printing an integer.
+func TestAAGUIDPolicy_String(t *testing.T) {
+	for policy, want := range map[AAGUIDPolicy]string{
+		AAGUIDPolicyStrict:     "strict",
+		AAGUIDPolicyPermissive: "permissive",
+		AAGUIDPolicy(99):       "unknown",
+	} {
+		if got := policy.String(); got != want {
+			t.Errorf("AAGUIDPolicy(%d).String() = %q, want %q", policy, got, want)
+		}
+	}
+}
+
+// TestAAGUIDAllowlist_NilDenies is the regression #381 asks for by name: a nil
+// allowlist must DENY rather than allow.
+//
+// The decision lives on the type so every caller inherits it. The old shape was
+// `if allowlist != nil { allowlist.Check(...) }` at each call site, which made
+// an unconfigured deployment strictly worse than a permissive one — no gate at
+// all, and the absence invisible.
+func TestAAGUIDAllowlist_NilDenies(t *testing.T) {
+	var list *AAGUIDAllowlist
+
+	err := list.Check([]byte{0xaa, 0xbb, 0xcc, 0xdd})
+	if err == nil {
+		t.Fatal("a nil allowlist accepted an authenticator; an absent gate must deny")
+	}
+	var unconfigured *ErrAAGUIDGateUnconfiguredError
+	if !errors.As(err, &unconfigured) {
+		t.Fatalf("want *ErrAAGUIDGateUnconfiguredError, got %T: %v", err, err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "iam.aaguid.allowlist_file") {
+		t.Errorf("the refusal must name the missing setting: %q", msg)
+	}
+}
+
+// TestAAGUIDAllowlist_NilAccessorsAreSafe proves the remaining methods do not
+// panic on a nil receiver, and that Policy reports the behaviour Check actually
+// implements rather than the permissive one an integer zero value suggests.
+func TestAAGUIDAllowlist_NilAccessorsAreSafe(t *testing.T) {
+	var list *AAGUIDAllowlist
+
+	if list.Len() != 0 {
+		t.Errorf("nil Len() = %d, want 0", list.Len())
+	}
+	if list.Contains([]byte{0xaa}) {
+		t.Error("nil Contains() = true")
+	}
+	if list.Policy() != AAGUIDPolicyStrict {
+		t.Errorf("nil Policy() = %v, want strict — an absent gate denies", list.Policy())
+	}
+}
+
+// TestAAGUIDAllowlist_StrictRefusesEmptyAAGUID is the vacuity guard. An
+// authenticator that conveyed no attestation reports an EMPTY AAGUID, so an
+// empty value is the absence of an identifier rather than an identifier that
+// happens to be zero. Admitting it would make the allowlist pass exactly the
+// authenticators it exists to refuse.
+func TestAAGUIDAllowlist_StrictRefusesEmptyAAGUID(t *testing.T) {
+	list := NewAAGUIDAllowlist([]string{"aabbccdd"}, AAGUIDPolicyStrict)
+
+	for _, aaguid := range [][]byte{nil, {}} {
+		if err := list.Check(aaguid); err == nil {
+			t.Fatalf("a strict allowlist accepted an empty AAGUID (%v)", aaguid)
+		}
+	}
+
+	// An explicitly all-zero AAGUID — what a CDP virtual authenticator reports
+	// — is not the empty case, but it is equally not allowlisted.
+	if err := list.Check(make([]byte, 16)); err == nil {
+		t.Fatal("a strict allowlist accepted the all-zero virtual-authenticator AAGUID")
 	}
 }

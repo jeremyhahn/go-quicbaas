@@ -22,21 +22,25 @@ import (
 // The operator's iam.self_service_registration.enabled decision is what
 // authorises a WebAuthn ceremony to CREATE an account for an unknown email.
 // go-xkms v0.9.2-alpha closed that by default (v0.9.1 created the account
-// implicitly), so quicbaas must map the decision explicitly. Leaving it
-// unmapped disables self-service registration on a node that has it switched
-// on — silently, because the failure is a 403 from the ceremony rather than a
+// implicitly and its own config test asserted "a nil Config must read as
+// open"), so quicbaas must map the decision explicitly. Leaving it unmapped
+// disables self-service registration on a node that has it switched on —
+// silently, because the failure is a 403 from the ceremony rather than a
 // startup error.
 //
 // Both relying parties on a composed node are covered, because a node that
 // opened one lane and closed the other would put the two registration
-// surfaces into disagreement.
+// surfaces back into disagreement.
 
 // TestWebAuthnFactoryConfig_CarriesTheSelfServiceDecision covers quicbaas's
 // own per-tenant relying party.
 func TestWebAuthnFactoryConfig_CarriesTheSelfServiceDecision(t *testing.T) {
 	for _, allow := range []bool{true, false} {
-		got := webauthnFactoryConfigFromOperator(
+		got, err := webauthnFactoryConfigFromOperator(
 			config.IAMWebAuthnConfig{}, "localhost", "https://localhost:18443", allow)
+		if err != nil {
+			t.Fatalf("resolve operator config (allow=%v): %v", allow, err)
+		}
 		if got.AllowPublicRegistration != allow {
 			t.Errorf("AllowPublicRegistration = %v, want %v", got.AllowPublicRegistration, allow)
 		}
@@ -67,7 +71,10 @@ func TestModuleWebAuthnConfig_CarriesTheSelfServiceDecision(t *testing.T) {
 func TestBothRelyingPartiesAgreeOnPublicRegistration(t *testing.T) {
 	operator := config.IAMWebAuthnConfig{RPID: "localhost", RPOrigins: []string{"https://localhost:18443"}}
 	for _, allow := range []bool{true, false} {
-		own := webauthnFactoryConfigFromOperator(operator, "localhost", "https://localhost:18443", allow)
+		own, err := webauthnFactoryConfigFromOperator(operator, "localhost", "https://localhost:18443", allow)
+		if err != nil {
+			t.Fatalf("resolve operator config (allow=%v): %v", allow, err)
+		}
 		module := quicbaasWebAuthnConfigToXKMS(operator, allow)
 		if module.AllowPublicRegistration == nil {
 			t.Fatalf("module relying party discarded the decision (allow=%v)", allow)

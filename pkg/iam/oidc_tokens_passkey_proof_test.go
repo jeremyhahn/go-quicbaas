@@ -89,6 +89,9 @@ func TestPasskeyLogin_AdminTokenAuthorizesOrchestrator(t *testing.T) {
 		},
 		AMR: []string{"webauthn", "hwk"},
 		ACR: ACRHardwareAttested,
+		// The hardware ACR now requires proof: IssueHardwareTokens refuses to
+		// mint it from a caller's assertion alone.
+		Attestation: testHardwareAttestation("cb69481e"),
 	})
 	if err != nil {
 		t.Fatalf("IssueHardwareTokens: %v", err)

@@ -32,10 +32,9 @@ func TestSignalHandlers(t *testing.T) {
 		srv, err := NewServer(cfg)
 		require.NoError(t, err)
 
-		shutdownChan := make(chan struct{})
-
-		// Setup signal handlers
-		setupSignalHandlers(shutdownChan, srv.logger)
+		// Wire the real trigger, exactly as Start does (#139: the handler
+		// routes through TriggerShutdown; the channel has one close site).
+		setupSignalHandlers(srv.TriggerShutdown, srv.logger)
 
 		// Send SIGTERM to ourselves. setupSignalHandlers registers its
 		// signal.Notify channel synchronously, so the signal cannot be
@@ -44,7 +43,7 @@ func TestSignalHandlers(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, proc.Signal(syscall.SIGTERM))
 
-		awaitSignal(t, shutdownChan, "the SIGTERM handler closing the shutdown channel")
+		awaitSignal(t, srv.shutdownChan, "the SIGTERM handler closing the shutdown channel")
 	})
 
 	t.Run("SIGINT", func(t *testing.T) {
@@ -54,10 +53,9 @@ func TestSignalHandlers(t *testing.T) {
 		srv, err := NewServer(cfg)
 		require.NoError(t, err)
 
-		shutdownChan := make(chan struct{})
-
-		// Setup signal handlers
-		setupSignalHandlers(shutdownChan, srv.logger)
+		// Wire the real trigger, exactly as Start does (#139: the handler
+		// routes through TriggerShutdown; the channel has one close site).
+		setupSignalHandlers(srv.TriggerShutdown, srv.logger)
 
 		// Send SIGINT to ourselves. setupSignalHandlers registers its
 		// signal.Notify channel synchronously, so the signal cannot be
@@ -66,7 +64,7 @@ func TestSignalHandlers(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, proc.Signal(syscall.SIGINT))
 
-		awaitSignal(t, shutdownChan, "the SIGINT handler closing the shutdown channel")
+		awaitSignal(t, srv.shutdownChan, "the SIGINT handler closing the shutdown channel")
 	})
 
 	t.Run("MultipleSignals", func(t *testing.T) {
@@ -76,10 +74,9 @@ func TestSignalHandlers(t *testing.T) {
 		srv, err := NewServer(cfg)
 		require.NoError(t, err)
 
-		shutdownChan := make(chan struct{})
-
-		// Setup signal handlers
-		setupSignalHandlers(shutdownChan, srv.logger)
+		// Wire the real trigger, exactly as Start does (#139: the handler
+		// routes through TriggerShutdown; the channel has one close site).
+		setupSignalHandlers(srv.TriggerShutdown, srv.logger)
 
 		// Send multiple signals (only the first should close the channel).
 		proc, err := os.FindProcess(os.Getpid())
@@ -87,13 +84,13 @@ func TestSignalHandlers(t *testing.T) {
 		require.NoError(t, proc.Signal(syscall.SIGTERM))
 
 		// Wait for the first shutdown signal, then re-deliver: the
-		// once-guarded close must not panic on the second delivery.
-		awaitSignal(t, shutdownChan, "the first SIGTERM closing the shutdown channel")
+		// trigger's Once must absorb the second delivery without panic.
+		awaitSignal(t, srv.shutdownChan, "the first SIGTERM closing the shutdown channel")
 		require.NoError(t, proc.Signal(syscall.SIGTERM))
 
 		// Channel should already be closed
 		select {
-		case <-shutdownChan:
+		case <-srv.shutdownChan:
 			// Expected - channel is closed
 		default:
 			t.Fatal("Shutdown channel should be closed")
@@ -110,7 +107,7 @@ func TestSignalHandlerIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		// Start signal handlers manually (normally done in Start())
-		setupSignalHandlers(srv.shutdownChan, srv.logger)
+		setupSignalHandlers(srv.TriggerShutdown, srv.logger)
 
 		// Verify shutdown is triggered
 		srv.TriggerShutdown()

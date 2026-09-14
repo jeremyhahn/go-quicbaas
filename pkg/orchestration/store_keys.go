@@ -60,6 +60,10 @@ const (
 	// taskKeyspace holds Task records.
 	taskKeyspace = "orch/task/"
 
+	// taskSourceKeyspace holds the tenant+project+source -> taskID index that
+	// keeps one task source from being adopted twice.
+	taskSourceKeyspace = "orch/task-source/"
+
 	// taskArtifactKeyspace holds task artifact payloads offloaded from the
 	// task record because they exceed the inline limit.
 	taskArtifactKeyspace = "orch/taskartifact/"
@@ -155,13 +159,42 @@ func idFromKey(key, prefix string) string {
 
 // keyedMutex serializes read-modify-write sequences per key.
 //
-// interfaces.KVStore exposes no compare-and-swap primitive, so a store that
-// needs an atomic update reads the current record, validates it, and writes
-// the successor. Holding a per-key lock across that sequence makes the update
-// atomic against other writers in this process, and the record's own version
-// counter detects a writer that raced from another process or node. This
-// mirrors how KVSessionEventLog guards sequence monotonicity
-// (pkg/orchestration/session_log_kv.go).
+// interfaces.KVStore exposes no guarded-swap verb — go-qrdb's KV surface
+// re-exports PutIfAbsent and CompareAndDelete, a guarded create and a guarded
+// delete, and no swap of a value — so a store that needs an atomic update reads
+// the current record, validates it, and writes the successor. Holding a per-key
+// lock across that sequence makes the update atomic against other writers in
+// this process, and the record's own version counter detects a writer that
+// raced from another process or node. This mirrors how KVSessionEventLog guards
+// sequence monotonicity (pkg/orchestration/session_log_kv.go).
+//
+// DETECTION IS NOT ARBITRATION, and nothing here decides a contest. A record
+// whose contenders must produce ONE WINNER rather than one survivor is decided
+// before it reaches this lock, on go-qrdb's transaction plane where a compare
+// and a write are a single Raft proposal — see task_claim_arbiter.go. Reaching
+// for this mutex to make a claim exclusive is the defect that put nine workers
+// on go-frost#6.
+//
+// THIS WAS A HABIT, NOT AN INCIDENT, AND THAT IS WHY THE WARNING LIVES HERE
+// RATHER THAN AT ANY ONE CALL SITE. Four separate stores independently wrote a
+// comment asserting that holding this lock across a probe and a write made the
+// pair atomic, and each was true in one process and false across a fleet:
+//
+//   - task_store.go create — "the existence probe and the write are one atomic
+//     sequence, so two concurrent creates of the same ID cannot both observe an
+//     empty key"
+//   - agent_registry.go Register — "presence is checked under the key lock
+//     rather than by a blind Put"
+//   - task_store.go claim — the version counter described as preventing a
+//     cross-node overwrite when it only DETECTS one
+//   - project_store.go and account_store.go — the same construction, for name
+//     uniqueness and for a scope's default pointer
+//
+// Nobody questioned the sentence the first three times, because each instance
+// read as a local observation about a local lock. The pattern is only visible
+// from the primitive they all reached for. If you are about to write "under the
+// lock, so this is atomic", the lock is this one, and the sentence is wrong the
+// moment a second process exists.
 type keyedMutex struct {
 	mu     sync.Mutex
 	locks  map[string]*sync.Mutex
@@ -202,6 +235,14 @@ const (
 
 	// AuditActionDelete records the removal of a record.
 	AuditActionDelete = "delete"
+
+	// AuditActionReregister records that an already-registered agent
+	// registered again and had its record converged onto what it reported
+	// (RefreshAgent). Distinct from AuditActionUpdate because the actor is
+	// the agent itself rather than an operator, and because its refusals --
+	// a principal that does not own the record, an agent an operator
+	// disabled -- are the identity-takeover trail an auditor reviews.
+	AuditActionReregister = "reregister"
 
 	// AuditActionUse records that a record's credential material was handed
 	// to a spawn (Account selection/resolution). Distinct from
@@ -279,6 +320,8 @@ type storeConfig struct {
 	auditor     StoreAuditor
 	logger      interfaces.Logger
 	inlineLimit int64
+	spend       SpendAuthority
+	grantor     AccountDeliveryGrantor
 }
 
 // StoreOption configures a durable orchestration store.
@@ -295,6 +338,30 @@ func WithStoreAuditor(auditor StoreAuditor) StoreOption {
 // default, discards those reports.
 func WithStoreLogger(logger interfaces.Logger) StoreOption {
 	return func(c *storeConfig) { c.logger = logger }
+}
+
+// WithSpendAuthority installs the gate a credential release is checked
+// against (see account_spend_authority.go). Nil, the default, leaves the
+// release guarded only by the account's lifecycle state — which is what a
+// deployment with no ledger wired has, and is why the server always wires one.
+func WithSpendAuthority(spend SpendAuthority) StoreOption {
+	return func(c *storeConfig) { c.spend = spend }
+}
+
+// WithAccountDeliveryGrantor installs the authority that supplies the grant
+// covering each DELIVERY of a pooled provider credential (see account_lease.go).
+// Nil, the default, leaves a credential release unleased — which is what a
+// deployment with no lease manager has, and is why the server always wires one.
+//
+// It takes the one-verb AccountDeliveryGrantor rather than the full leaser
+// because a resolution only ever needs a grant supplied: the control plane
+// passes its issuing leaser, and a worker daemon passes the reporter that names
+// the grant the control plane already issued for its release.
+//
+// With a grantor installed, a release that cannot obtain a grant FAILS: a
+// credential nothing can revoke is the state the mechanism exists to remove.
+func WithAccountDeliveryGrantor(grantor AccountDeliveryGrantor) StoreOption {
+	return func(c *storeConfig) { c.grantor = grantor }
 }
 
 // WithInlineArtifactLimit sets the maximum artifact size, in bytes, embedded

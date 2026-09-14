@@ -19,6 +19,8 @@ import (
 	"context"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -30,6 +32,12 @@ import (
 // none of which carries an orchestration.AccountCredential. Credential
 // material is accepted inbound on agent_account_create and
 // agent_account_rotate only.
+//
+// ONE TOOL IS THE DELIBERATE EXCEPTION: agent_account_materialize RELEASES an
+// envelope, because a pooled credential has to reach the worker host that runs
+// the agent (go-quicbaas#734). It carries its own permission rather than the
+// credentials:* grant the rest of this family takes, and it binds tenancy to
+// the AUTHENTICATED CALLER rather than to a tenant_id argument.
 // =============================================================================
 
 // registerAccountTools registers the pooled provider account MCP tools.
@@ -134,6 +142,22 @@ func (r *ToolRegistry) registerAccountTools() {
 				"credential": credentialSchema,
 			},
 			"required": []string{"tenant_id", "account_id", "credential"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name: "quicbaas_agent_account_materialize",
+		Description: "Release one pooled provider account's credential envelope to the caller, for the caller's own tenant. " +
+			"The result carries live secret material; it is the only account tool that does.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"account_id": map[string]interface{}{"type": "string", "description": "Account ID to release"},
+				"project_id": map[string]interface{}{"type": "string", "description": "Project the requesting spawn belongs to; an account fenced to a project is released only to a request naming it"},
+				"job_id":     map[string]interface{}{"type": "string", "description": "Job the requesting spawn works for; it scopes the delivery grant this release takes out"},
+				"lease_id":   map[string]interface{}{"type": "string", "description": "Delivery grant the caller already holds. Empty asks for a first release; set it to refresh a copy already held, and expect a refusal once the grant has been revoked"},
+			},
+			"required": []string{"account_id"},
 		},
 	})
 
@@ -259,6 +283,42 @@ func (r *ToolRegistry) executeAccountRotate(ctx context.Context, args map[string
 	})
 }
 
+// executeAccountMaterialize releases one account's credential envelope.
+//
+// Tenancy is the CALLER'S OWN and is deliberately NOT read from a tenant_id
+// argument the way every other tool in this file reads it: this result is
+// secret material, so the tenant must come from the identity the transport
+// authenticated. An unauthenticated (or tenant-less) caller is refused rather
+// than defaulted.
+func (r *ToolRegistry) executeAccountMaterialize(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	accountSvc, err := r.getAccountService()
+	if err != nil {
+		return nil, err
+	}
+	tenantID := iam.TenantFromContext(ctx)
+	if tenantID == "" {
+		return nil, api.NewValidationError("tenant_id", "the caller carries no tenant binding")
+	}
+	return accountSvc.MaterializeAccountCredential(ctx, &service.MaterializeAccountCredentialRequest{
+		TenantID:  tenantID,
+		AccountID: getString(args, "account_id"),
+		ProjectID: getString(args, "project_id"),
+		JobID:     getString(args, "job_id"),
+		LeaseID:   getString(args, "lease_id"),
+		AgentID:   mcpAccountReleaseSubject(ctx),
+	})
+}
+
+// mcpAccountReleaseSubject names the principal a release is audited against.
+// An MCP caller with no resolvable subject is recorded as unattributed by the
+// service layer rather than being silently attributed to the tenant.
+func mcpAccountReleaseSubject(ctx context.Context) string {
+	if subject, ok := auth.SubjectFromContext(ctx); ok && subject.Authenticated {
+		return subject.ID
+	}
+	return ""
+}
+
 func (r *ToolRegistry) executeAccountRevoke(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	accountSvc, err := r.getAccountService()
 	if err != nil {
@@ -336,6 +396,7 @@ var accountToolHandlers = map[string]func(*ToolRegistry, context.Context, map[st
 	"quicbaas_agent_account_update":      (*ToolRegistry).executeAccountUpdate,
 	"quicbaas_agent_account_delete":      (*ToolRegistry).executeAccountDelete,
 	"quicbaas_agent_account_rotate":      (*ToolRegistry).executeAccountRotate,
+	"quicbaas_agent_account_materialize": (*ToolRegistry).executeAccountMaterialize,
 	"quicbaas_agent_account_revoke":      (*ToolRegistry).executeAccountRevoke,
 	"quicbaas_agent_account_set_default": (*ToolRegistry).executeAccountSetDefault,
 	"quicbaas_agent_account_usage":       (*ToolRegistry).executeAccountUsage,

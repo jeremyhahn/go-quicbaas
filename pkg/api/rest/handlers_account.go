@@ -24,6 +24,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/lease"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -600,15 +601,217 @@ func handleAccountError(w http.ResponseWriter, r *http.Request, err error) {
 	var notFound *service.AccountNotFoundError
 	var invalid *service.AccountInvalidError
 	var noTracker *service.AccountUsageTrackerNotConfiguredError
+	var notReleasable *service.AccountNotReleasableError
+	var projectScope *service.AccountProjectScopeError
+	var noTokens *service.AccountTokenManagerNotConfiguredError
+	var leaseRevoked *lease.LeaseRevokedError
 
 	switch {
 	case errors.As(err, &notFound):
 		RespondError(w, r, http.StatusNotFound, err)
+	case errors.As(err, &leaseRevoked):
+		// 409, for the same reason AccountNotReleasableError is: the caller is
+		// entitled to this account and the account exists — it is the LEASE's
+		// state that refuses, and that state is one the caller can leave by
+		// taking a new delivery grant.
+		//
+		// It used to fall through to 500, which is what made this unrecoverable
+		// in practice: a routine session teardown revokes its delivery lease,
+		// the daemon kept presenting that id, and an opaque server error gave it
+		// nothing to act on. Every spawn then failed until the process was
+		// restarted. A distinguishable status is what lets the daemon drop the
+		// stale grant and ask for a fresh one (pkg/agent account_secrets.go).
+		RespondError(w, r, http.StatusConflict, err)
 	case errors.As(err, &invalid):
 		RespondError(w, r, http.StatusBadRequest, err)
-	case errors.As(err, &noTracker):
+	case errors.As(err, &notReleasable):
+		// 409, not 403: the caller is entitled to this account, and the
+		// account exists — it is the account's STATE that refuses, and that
+		// state changes on its own for a limit hold. A 403 would tell a
+		// daemon its identity was wrong and send an operator after the grant.
+		RespondError(w, r, http.StatusConflict, err)
+	case errors.As(err, &projectScope):
+		// 403: the account is fenced to another project and no retry, wait, or
+		// differently-shaped request by this caller will release it.
+		RespondError(w, r, http.StatusForbidden, err)
+	case errors.As(err, &noTracker), errors.As(err, &noTokens):
 		RespondError(w, r, http.StatusServiceUnavailable, err)
 	default:
 		RespondError(w, r, http.StatusInternalServerError, err)
+	}
+}
+
+// =============================================================================
+// Credential materialization (POST /api/v1/agent-accounts/{id}/materialize)
+//
+// THE ONE ACCOUNT ROUTE WHOSE RESPONSE BODY IS SECRET MATERIAL. Everything
+// above this line returns metadata, and the structural leak guards enumerate
+// those shapes; this route is the deliberate, separately-permissioned
+// exception that lets a pooled credential reach the worker host running the
+// agent (go-quicbaas#734).
+//
+// Tenancy is the CALLER'S OWN and is never taken from the request. The
+// tenant_id query parameter the rest of this surface requires is refused here
+// when it names anything but the authenticated principal's tenant, and a
+// system-tenant principal — which carries no tenant binding at all — is
+// refused outright: a credential release must name the tenant that owns the
+// pool.
+// =============================================================================
+
+// MaterializeAccountCredentialRESTRequest is the JSON body for
+// POST /api/v1/agent-accounts/{id}/materialize. Every field is optional; an
+// absent body materializes a tenant-wide account for no particular project.
+type MaterializeAccountCredentialRESTRequest struct {
+	// ProjectID is the project the requesting spawn belongs to. An account
+	// restricted to a project is released only to a request naming it.
+	ProjectID string `json:"project_id,omitempty"`
+
+	// JobID names the job the requesting spawn works for. It scopes the
+	// delivery grant this release takes out.
+	JobID string `json:"job_id,omitempty"`
+
+	// LeaseID presents the delivery grant a caller already holds, and is what
+	// makes a REFRESH of a copy distinguishable from a request for a new one.
+	// A grant that has been revoked — because the session that held the copy
+	// ended — is refused, so the caller cannot replace what it holds.
+	LeaseID string `json:"lease_id,omitempty"`
+}
+
+// AccountCredentialRESTEnvelope is the released credential envelope. It is
+// the OUTBOUND credential shape and is deliberately a distinct type from
+// AccountCredentialRESTRequest so the inbound-only invariant that type carries
+// stays literally true and the leak guards keep meaning what they say.
+type AccountCredentialRESTEnvelope struct {
+	Env               map[string]string `json:"env,omitempty"`
+	Files             map[string][]byte `json:"files,omitempty"`
+	AccessToken       string            `json:"access_token,omitempty"`
+	ExpiresAt         time.Time         `json:"expires_at,omitempty"`
+	Scopes            []string          `json:"scopes,omitempty"`
+	AccessTokenEnvKey string            `json:"access_token_env_key,omitempty"`
+}
+
+// MaterializeAccountCredentialRESTResponse carries one released envelope plus
+// the non-secret metadata a caching caller needs.
+type MaterializeAccountCredentialRESTResponse struct {
+	AccountID     string `json:"account_id"`
+	Provider      string `json:"provider"`
+	DisplayName   string `json:"display_name,omitempty"`
+	ProjectID     string `json:"project_id,omitempty"`
+	RefreshPolicy string `json:"refresh_policy,omitempty"`
+
+	// Credential is the released envelope.
+	Credential *AccountCredentialRESTEnvelope `json:"credential"`
+
+	// ExpiresAt bounds how long a caller may cache the envelope.
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+
+	// UpdatedAt is diagnostics: it moves on any write to the record, including
+	// the usage stamp the release itself makes.
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+
+	// LastRefreshedAt is when the envelope was last replaced, and is the
+	// cache-invalidation signal: a caller that later reads a newer value knows
+	// its copy is superseded without asking for the secret again.
+	LastRefreshedAt time.Time `json:"last_refreshed_at,omitempty"`
+
+	// LeaseID is the delivery grant this release is authorised by. A caller
+	// that caches the envelope MUST present it on every refresh of that copy:
+	// it is what lets the control plane refuse the refresh once the grant has
+	// been revoked.
+	LeaseID string `json:"lease_id,omitempty"`
+
+	// LeaseExpiresAt is when the delivery grant stops being authorised without
+	// renewal. It is NOT the credential's expiry (see ExpiresAt) — the two are
+	// deliberately independent.
+	LeaseExpiresAt time.Time `json:"lease_expires_at,omitempty"`
+
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// HandleMaterializeAccountCredential handles
+// POST /api/v1/agent-accounts/{id}/materialize.
+func (s *Server) HandleMaterializeAccountCredential(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	accountID := chi.URLParam(r, "id")
+	if accountID == "" {
+		RespondBadRequest(w, r, "account id is required")
+		return
+	}
+
+	// The tenant is the principal's, not the request's. A tenant_id query is
+	// tolerated (the rest of this surface requires one) but only when it
+	// agrees with the caller.
+	subject, ok := requireTenantSubject(w, r)
+	if !ok {
+		return
+	}
+	if !queryIdentityMatches(w, r, subject) {
+		return
+	}
+
+	var req MaterializeAccountCredentialRESTRequest
+	if !decodeAccountBody(w, r, &req) {
+		return
+	}
+
+	accountSvc, ok := s.accountService(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := accountSvc.MaterializeAccountCredential(ctx, &service.MaterializeAccountCredentialRequest{
+		TenantID:  subject.TenantID,
+		AccountID: accountID,
+		ProjectID: req.ProjectID,
+		JobID:     req.JobID,
+		LeaseID:   req.LeaseID,
+		AgentID:   subject.ID,
+	})
+	if err != nil {
+		handleAccountError(w, r, err)
+		return
+	}
+
+	// Materialized credentials must never sit in a shared cache: the response
+	// body is a live provider login.
+	w.Header().Set("Cache-Control", "no-store")
+
+	RespondJSON(w, r, http.StatusOK, &MaterializeAccountCredentialRESTResponse{
+		AccountID:       resp.AccountID,
+		Provider:        string(resp.Provider),
+		DisplayName:     resp.DisplayName,
+		ProjectID:       resp.ProjectID,
+		RefreshPolicy:   string(resp.RefreshPolicy),
+		Credential:      accountCredentialToREST(resp.Credential),
+		ExpiresAt:       resp.ExpiresAt,
+		UpdatedAt:       resp.UpdatedAt,
+		LastRefreshedAt: resp.LastRefreshedAt,
+		LeaseID:         resp.LeaseID,
+		LeaseExpiresAt:  resp.LeaseExpiresAt,
+		Timestamp:       resp.Timestamp,
+	})
+}
+
+// accountCredentialToREST converts a released envelope to its REST form.
+//
+// The refresh token is DELIBERATELY NOT PROJECTED. Renewal is the central's
+// job — it already happened, inside the service call that produced this
+// envelope — so a daemon has no use for one, and shipping it would put the
+// long-lived half of the credential on a worker host that only ever needs the
+// short-lived half. Same reasoning for TokenEndpoint / ClientID: they are
+// refresh-grant configuration, and a party that must not refresh must not
+// receive them.
+func accountCredentialToREST(c *orchestration.AccountCredential) *AccountCredentialRESTEnvelope {
+	if c == nil {
+		return nil
+	}
+	return &AccountCredentialRESTEnvelope{
+		Env:               c.Env,
+		Files:             c.Files,
+		AccessToken:       c.AccessToken,
+		ExpiresAt:         c.ExpiresAt,
+		Scopes:            c.Scopes,
+		AccessTokenEnvKey: c.AccessTokenEnvKey,
 	}
 }

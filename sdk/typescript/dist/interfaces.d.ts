@@ -3,13 +3,14 @@ import type { EmbeddingsClient } from './embedding_sdk.js';
 import type { MessagingClient } from './messaging_sdk.js';
 import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
+import type { SdlcClient } from './sdlc.js';
 import type { AccountsClient } from './accounts.js';
 import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
 import type { DEKClient } from './dek.js';
 import type { DynamicSecretsClient } from './dynamicsecrets.js';
-import type { AgentBackendInfo, AuthTokenResponse, DeployAgentResult, DeployAgentSpec, InferenceRequest, InferenceResponse, InferenceChunk, PublicKeyCredentialJSON, WebAuthnLoginChallenge, SSHKey, SSHScope, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, SSHPublicKey, SignRequest, SignResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse, AgentRegistration, CloseSessionRequest, CloseSessionResponse, CreateKeyRequest, CreateKeyResponse, CreateTenantRequest, CreateTenantResponse, CreateTaskRequest, CreateTaskResponse, CreateUserRequest, CreateUserResponse, CreateWorkflowRequest, CreateWorkflowResponse, DecomposeTaskRequest, DecomposeTaskResponse, GetAgentRequest, GetSecretResponse, GetSessionHistoryRequest, GetSessionHistoryResponse, HealthCheckReport, IAMRole, IAMPolicy, IAMTenant, IAMUser, JobEvent, JobStatus, KMSDecryptRequest, KMSDecryptResponse, KMSEncryptRequest, KMSEncryptResponse, ListAgentsRequest, ListAgentsResponse, ListKeysResponse, ListPoliciesResponse, ListRolesResponse, ListSecretsResponse, ListSessionsRequest, ListSessionsResponse, ListTenantsResponse, ListUsersResponse, ListWorkflowsResponse, PromptSessionRequest, PromptSessionResponse, RegisterAgentRequest, RegisterAgentResponse, RemoveAgentRequest, DisableAgentRequest, DisableAgentResponse, EnableAgentRequest, EnableAgentResponse, RekeyRequest, RekeyResponse, RotateKeyResponse, RotateRootKeyResponse, RotateSecretResponse, RotateSessionAccountRequest, RotateSessionAccountResponse, ListSecretVersionsResponse, SetDefaultKeyResponse, SealStatus, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierShamirSharesResponse, BarrierShamirDeleteShareRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareRequest, CeremonyClaimShareResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, SessionEventEnvelope, SessionInfo, SpawnSessionRequest, SpawnSessionResponse, ClaimTaskRequest, CompleteTaskRequest, StartJobRequest, StartJobResponse, StoreSecretRequest, SubscribeSessionEventsRequest, Task, UnsealRequest, UnsealResponse, WorkflowDefinition } from './types.js';
+import type { AgentBackendInfo, JobRunnerInfo, AuthTokenResponse, DeployAgentResult, DeployAgentSpec, InferenceRequest, InferenceResponse, InferenceChunk, PublicKeyCredentialJSON, WebAuthnLoginChallenge, SSHKey, SSHScope, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, SSHPublicKey, SignRequest, SignResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse, AgentRegistration, CloseSessionRequest, CloseSessionResponse, CreateKeyRequest, CreateKeyResponse, CreateTenantRequest, CreateTenantResponse, CreateTaskRequest, CreateTaskResponse, CreateUserRequest, CreateUserResponse, CreateWorkflowRequest, CreateWorkflowResponse, DecomposeTaskRequest, DecomposeTaskResponse, GetAgentRequest, GetSecretResponse, GetSessionHistoryRequest, GetSessionConversationRequest, GetSessionConversationResponse, GetSpendReportRequest, GetSpendReportResponse, GetSessionHistoryResponse, HealthCheckReport, IAMRole, IAMPolicy, IAMTenant, IAMUser, JobEvent, JobStatus, KMSDecryptRequest, KMSDecryptResponse, KMSEncryptRequest, KMSEncryptResponse, ListAgentsRequest, ListAgentsResponse, ListKeysResponse, ListPoliciesResponse, ListRolesResponse, ListSecretsResponse, ListSessionsRequest, ListSessionsResponse, ListTenantsResponse, ListUsersResponse, ListWorkflowsResponse, PromptSessionRequest, PromptSessionResponse, ReconcileRolesResponse, RegisterAgentRequest, RegisterAgentResponse, RemoveAgentRequest, DisableAgentRequest, DisableAgentResponse, EnableAgentRequest, EnableAgentResponse, RekeyRequest, RekeyResponse, RotateKeyResponse, RotateRootKeyResponse, RotateSecretResponse, RotateSessionAccountRequest, RotateSessionAccountResponse, ListSecretVersionsResponse, SetDefaultKeyResponse, SealStatus, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierShamirSharesResponse, BarrierShamirDeleteShareRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareRequest, CeremonyClaimShareResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, SessionEventEnvelope, SessionInfo, SpawnSessionRequest, SpawnSessionResponse, ClaimTaskRequest, CompleteTaskRequest, DeleteTaskRequest, DeleteTaskResponse, StartJobRequest, StartJobResponse, StoreSecretRequest, SubscribeSessionEventsRequest, Task, UnsealRequest, UnsealResponse, WorkflowDefinition } from './types.js';
 export interface ConnectionClient {
     connect(address: string, transport?: string, tenantID?: string): Promise<void>;
     disconnect(): Promise<void>;
@@ -18,7 +19,7 @@ export interface ConnectionClient {
     getTransport(): string;
 }
 export interface OrchestratorClient {
-    listJobs(tenantID: string): Promise<JobStatus[]>;
+    listJobs(tenantID: string, taskID?: string): Promise<JobStatus[]>;
     getJobStatus(tenantID: string, jobID: string): Promise<JobStatus>;
     startJob(req: StartJobRequest): Promise<StartJobResponse>;
     cancelJob(tenantID: string, jobID: string): Promise<void>;
@@ -28,6 +29,7 @@ export interface OrchestratorClient {
     listTasks(tenantID: string): Promise<Task[]>;
     getTask(tenantID: string, taskID: string): Promise<Task>;
     listBackends(): Promise<AgentBackendInfo[]>;
+    listRunners(): Promise<JobRunnerInfo[]>;
     listBackendModels(agentID: string, backendName: string): Promise<string[]>;
     healthCheck(): Promise<HealthCheckReport>;
     subscribeJobEvents(tenantID: string, jobID: string, onEvent: (event: JobEvent) => void): () => void;
@@ -36,6 +38,8 @@ export interface OrchestratorClient {
     closeSession(req: CloseSessionRequest): Promise<CloseSessionResponse>;
     rotateSessionAccount(req: RotateSessionAccountRequest): Promise<RotateSessionAccountResponse>;
     getSessionHistory(req: GetSessionHistoryRequest): Promise<GetSessionHistoryResponse>;
+    getSessionConversation(req: GetSessionConversationRequest): Promise<GetSessionConversationResponse>;
+    getSpendReport(req: GetSpendReportRequest): Promise<GetSpendReportResponse>;
     subscribeSession(req: SubscribeSessionEventsRequest): AsyncIterable<SessionEventEnvelope>;
     createWorkflow(req: CreateWorkflowRequest): Promise<CreateWorkflowResponse>;
     listWorkflows(tenantID: string): Promise<ListWorkflowsResponse>;
@@ -45,6 +49,8 @@ export interface OrchestratorClient {
     createTask(req: CreateTaskRequest): Promise<CreateTaskResponse>;
     claimTask(req: ClaimTaskRequest): Promise<void>;
     completeTask(req: CompleteTaskRequest): Promise<void>;
+    readmitTask(tenantID: string, taskID: string): Promise<void>;
+    deleteTask(req: DeleteTaskRequest): Promise<DeleteTaskResponse>;
     decomposeTask(req: DecomposeTaskRequest): Promise<DecomposeTaskResponse>;
     registerAgent(req: RegisterAgentRequest): Promise<RegisterAgentResponse>;
     removeAgent(req: RemoveAgentRequest): Promise<void>;
@@ -212,14 +218,15 @@ export interface IAMClient {
     createRole(tenantID: string, req: CreateRoleRequest): Promise<IAMRole>;
     updateRole(tenantID: string, roleID: string, req: UpdateRoleRequest): Promise<IAMRole>;
     deleteRole(tenantID: string, roleID: string): Promise<void>;
+    reconcileRoles(tenantID: string): Promise<ReconcileRolesResponse>;
     listPolicies(tenantID: string): Promise<ListPoliciesResponse>;
     createPolicy(tenantID: string, req: CreatePolicyRequest): Promise<IAMPolicy>;
     updatePolicy(tenantID: string, policyName: string, req: UpdatePolicyRequest): Promise<IAMPolicy>;
     deletePolicy(tenantID: string, policyName: string): Promise<void>;
-    getInvite(token: string): Promise<import('./types.js').InviteMetadata>;
-    activateFIDO2Begin(token: string): Promise<Record<string, unknown>>;
-    activateFIDO2Finish(token: string, credential: Record<string, unknown>): Promise<import('./types.js').ActivationResponse>;
-    activatePIV(token: string, certPEM: string): Promise<import('./types.js').ActivationResponse>;
+    getInvite(tenantID: string, token: string): Promise<import('./types.js').InviteMetadata>;
+    activateFIDO2Begin(tenantID: string, token: string): Promise<Record<string, unknown>>;
+    activateFIDO2Finish(tenantID: string, token: string, credential: Record<string, unknown>): Promise<import('./types.js').ActivationResponse>;
+    activatePIV(tenantID: string, token: string, certPEM: string): Promise<import('./types.js').ActivationResponse>;
 }
 export interface KMSClient {
     listKeys(limit?: number): Promise<ListKeysResponse>;
@@ -351,6 +358,11 @@ export interface Client {
     readonly messaging: MessagingClient;
     readonly scheduler: SchedulerClient;
     readonly projects: ProjectsClient;
+    /**
+     * sdlc is the SDLC module of the Software Factory: a project's forge
+     * binding and a task's delivery.
+     */
+    readonly sdlc: SdlcClient;
     /**
      * accounts manages the pooled provider account pool (Anthropic/Claude,
      * OpenAI/Codex, OpenCode) an agent session can be spawned against.

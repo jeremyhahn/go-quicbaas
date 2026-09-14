@@ -24,17 +24,16 @@ const (
 	serviceName = "quicbaas.RBAC"
 )
 
-// Client provides RBAC (Role-Based Access Control) operations.
+// Client provides RBAC (Role-Based Access Control) operations over roles and
+// role bindings.
+//
+// It has no user verbs. Users belong to go-qrdb and are administered through
+// the single IAM surface, Client.Identity().IAM().User(). The
+// CreateUser/DeleteUser/ListUsers trio that used to sit here carried a Password
+// field for a password login this server does not implement, and dispatched to
+// a service-layer auth manager production never wired, so every call failed;
+// issue #905 removed it with the rest of the parallel identity model.
 type Client interface {
-	// CreateUser creates a new user with initial roles.
-	CreateUser(ctx context.Context, req *CreateUserRequest) (*CreateUserResponse, error)
-
-	// DeleteUser removes a user from the system.
-	DeleteUser(ctx context.Context, req *DeleteUserRequest) (*DeleteUserResponse, error)
-
-	// ListUsers returns all users with optional pagination.
-	ListUsers(ctx context.Context, req *ListUsersRequest) (*ListUsersResponse, error)
-
 	// CreateRole creates a new RBAC role with permissions.
 	CreateRole(ctx context.Context, req *CreateRoleRequest) (*CreateRoleResponse, error)
 
@@ -49,82 +48,6 @@ type Client interface {
 
 	// RevokeRole removes a role from a user.
 	RevokeRole(ctx context.Context, req *RevokeRoleRequest) (*RevokeRoleResponse, error)
-}
-
-// =============================================================================
-// User Types
-// =============================================================================
-
-// CreateUserRequest is a request to create a new RBAC user.
-type CreateUserRequest struct {
-	// Username is the unique username for the new user.
-	Username string
-
-	// Password is the user's password.
-	Password string
-
-	// Roles is the initial list of roles to assign to the user.
-	Roles []string
-}
-
-// CreateUserResponse is the response after creating an RBAC user.
-type CreateUserResponse struct {
-	// UserID is the unique identifier for the created user.
-	UserID string
-
-	// Timestamp is the creation timestamp (Unix nanoseconds).
-	Timestamp int64
-}
-
-// DeleteUserRequest is a request to delete an RBAC user.
-type DeleteUserRequest struct {
-	// Username is the username of the user to delete.
-	Username string
-}
-
-// DeleteUserResponse is the response after deleting an RBAC user.
-type DeleteUserResponse struct {
-	// Success indicates whether the deletion was successful.
-	Success bool
-
-	// Message contains additional information about the operation.
-	Message string
-}
-
-// ListUsersRequest is a request to list RBAC users.
-type ListUsersRequest struct {
-	// Limit is the maximum number of users to return.
-	Limit uint64
-
-	// Offset is the number of users to skip.
-	Offset uint64
-}
-
-// ListUsersResponse is the response containing a list of RBAC users.
-type ListUsersResponse struct {
-	// Users is the list of users.
-	Users []*UserInfo
-
-	// TotalCount is the total number of users available.
-	TotalCount uint64
-}
-
-// UserInfo contains information about an RBAC user.
-type UserInfo struct {
-	// UserID is the unique identifier for the user.
-	UserID string
-
-	// Username is the user's username.
-	Username string
-
-	// Roles is the list of roles assigned to the user.
-	Roles []string
-
-	// CreatedAt is the timestamp when the user was created (Unix nanoseconds).
-	CreatedAt int64
-
-	// LastLoginAt is the timestamp of the user's last login (Unix nanoseconds).
-	LastLoginAt int64
 }
 
 // =============================================================================
@@ -256,75 +179,6 @@ func NewClient(t transport.Transport) Client {
 	}
 }
 
-// CreateUser creates a new user with initial roles.
-func (c *client) CreateUser(ctx context.Context, req *CreateUserRequest) (*CreateUserResponse, error) {
-	if err := validateCreateUserRequest(req); err != nil {
-		return nil, err
-	}
-
-	resp, err := c.transport.Request(ctx, serviceName, "CreateUser", req)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp == nil {
-		return nil, errors.NewInternal("rbac.CreateUser", "nil response from server")
-	}
-
-	createResp, ok := resp.(*CreateUserResponse)
-	if !ok {
-		return nil, errors.NewInternal("rbac.CreateUser", "invalid response type")
-	}
-
-	return createResp, nil
-}
-
-// DeleteUser removes a user from the system.
-func (c *client) DeleteUser(ctx context.Context, req *DeleteUserRequest) (*DeleteUserResponse, error) {
-	if err := validateDeleteUserRequest(req); err != nil {
-		return nil, err
-	}
-
-	resp, err := c.transport.Request(ctx, serviceName, "DeleteUser", req)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp == nil {
-		return nil, errors.NewInternal("rbac.DeleteUser", "nil response from server")
-	}
-
-	deleteResp, ok := resp.(*DeleteUserResponse)
-	if !ok {
-		return nil, errors.NewInternal("rbac.DeleteUser", "invalid response type")
-	}
-
-	return deleteResp, nil
-}
-
-// ListUsers returns all users with optional pagination.
-func (c *client) ListUsers(ctx context.Context, req *ListUsersRequest) (*ListUsersResponse, error) {
-	if err := validateListUsersRequest(req); err != nil {
-		return nil, err
-	}
-
-	resp, err := c.transport.Request(ctx, serviceName, "ListUsers", req)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp == nil {
-		return &ListUsersResponse{Users: []*UserInfo{}}, nil
-	}
-
-	listResp, ok := resp.(*ListUsersResponse)
-	if !ok {
-		return nil, errors.NewInternal("rbac.ListUsers", "invalid response type")
-	}
-
-	return listResp, nil
-}
-
 // CreateRole creates a new RBAC role with permissions.
 func (c *client) CreateRole(ctx context.Context, req *CreateRoleRequest) (*CreateRoleResponse, error) {
 	if err := validateCreateRoleRequest(req); err != nil {
@@ -443,36 +297,6 @@ func (c *client) RevokeRole(ctx context.Context, req *RevokeRoleRequest) (*Revok
 // =============================================================================
 // Validation Functions
 // =============================================================================
-
-func validateCreateUserRequest(req *CreateUserRequest) error {
-	if req == nil {
-		return errors.NewInvalidInput("rbac.CreateUser", "request is required")
-	}
-	if req.Username == "" {
-		return errors.NewInvalidInput("rbac.CreateUser", "username is required")
-	}
-	if req.Password == "" {
-		return errors.NewInvalidInput("rbac.CreateUser", "password is required")
-	}
-	return nil
-}
-
-func validateDeleteUserRequest(req *DeleteUserRequest) error {
-	if req == nil {
-		return errors.NewInvalidInput("rbac.DeleteUser", "request is required")
-	}
-	if req.Username == "" {
-		return errors.NewInvalidInput("rbac.DeleteUser", "username is required")
-	}
-	return nil
-}
-
-func validateListUsersRequest(req *ListUsersRequest) error {
-	if req == nil {
-		return errors.NewInvalidInput("rbac.ListUsers", "request is required")
-	}
-	return nil
-}
 
 func validateCreateRoleRequest(req *CreateRoleRequest) error {
 	if req == nil {

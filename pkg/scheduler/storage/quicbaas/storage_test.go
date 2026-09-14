@@ -977,13 +977,13 @@ func TestKeyForJob_AllOwnerTypes(t *testing.T) {
 			name:      "system job",
 			ownerType: scheduler.OwnerTypeSystem,
 			ownerID:   "",
-			expected:  "sys:scheduler/jobs/1",
+			expected:  "__sys:scheduler/jobs/1",
 		},
 		{
 			name:      "delegated job",
 			ownerType: scheduler.OwnerTypeDelegated,
 			ownerID:   "",
-			expected:  "sys:scheduler/jobs/1",
+			expected:  "__sys:scheduler/jobs/1",
 		},
 		{
 			name:      "tenant job",
@@ -995,7 +995,7 @@ func TestKeyForJob_AllOwnerTypes(t *testing.T) {
 			name:      "unknown owner type",
 			ownerType: "unknown",
 			ownerID:   "",
-			expected:  "sys:scheduler/jobs/1",
+			expected:  "__sys:scheduler/jobs/1",
 		},
 	}
 
@@ -1026,7 +1026,7 @@ func TestKeyForJobByID(t *testing.T) {
 			name:     "system job",
 			id:       42,
 			tenantID: "",
-			expected: "sys:scheduler/jobs/42",
+			expected: "__sys:scheduler/jobs/42",
 		},
 		{
 			name:     "tenant job",
@@ -1059,7 +1059,7 @@ func TestKeyForExecution(t *testing.T) {
 			jobID:    1,
 			execID:   100,
 			tenantID: "",
-			expected: "sys:scheduler/executions/1/100",
+			expected: "__sys:scheduler/executions/1/100",
 		},
 		{
 			name:     "tenant execution",
@@ -1130,7 +1130,7 @@ func TestListJobs_MalformedData(t *testing.T) {
 	storage := NewStorage(kv)
 
 	// Store malformed JSON
-	kv.Put(ctx, "sys:scheduler/jobs/999", []byte("not valid json"))
+	kv.Put(ctx, "__sys:scheduler/jobs/999", []byte("not valid json"))
 
 	// Create a valid job
 	job := createTestJob("valid-job", scheduler.OwnerTypeSystem, "")

@@ -236,6 +236,9 @@ func TestServer_StartOrchestration_TT_FullWiring(t *testing.T) {
 	require.NotNil(t, srv.qrdbClient, "qrdb client must be available for the workflow persistor branch")
 
 	require.NoError(t, srv.startOrchestration(), "orchestration startup must succeed")
+	// Registered after the node's cleanup so it runs first: the task-source
+	// poller and the job sweep read the stores the node owns.
+	t.Cleanup(func() { srv.stopTaskSourcePoller(); srv.stopTaskDispatcher(); srv.stopOrchestrationSweeps() })
 }
 
 // TestServer_InitClusteredQRDBNode_TT_BadMembers covers the buildClusterMembers
@@ -304,6 +307,7 @@ func TestServer_StartOrchestration_TT_OllamaBackend(t *testing.T) {
 
 	require.NoError(t, srv.startOrchestration(),
 		"orchestration startup with an Ollama backend must succeed")
+	t.Cleanup(func() { srv.stopTaskSourcePoller(); srv.stopTaskDispatcher(); srv.stopOrchestrationSweeps() })
 }
 
 // ttNoopCloser is an io.Closer that records whether Close was invoked. It backs

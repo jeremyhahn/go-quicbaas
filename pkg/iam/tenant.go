@@ -66,6 +66,24 @@ type QRDBTenantProvisioner interface {
 	UpdateEntitlements(ctx context.Context, id string, entitlements qrdbsdk.Entitlements) error
 }
 
+// TenantRoleSeeder materializes qrdb's canonical built-in roles inside a
+// tenant. Every tenant needs them: a role grant is the only way a user is
+// created with any authority, and the role names a token carries are resolved
+// to permissions against the same store. First-boot seeds them for the system
+// tenant; CreateTenant seeds them for every tenant after it, through this seam.
+//
+// Implementations must be idempotent — a role that already exists is success,
+// not a conflict — so a re-run over a partly seeded tenant converges. They
+// must also leave the SYSTEM tenant alone: first-boot creates it through this
+// same manager and then seeds its roles itself, and it decides how to resolve
+// the platform admin's role grant from whether it found those roles already
+// present. Seeding them here would break the admin's creation on a fresh
+// install.
+type TenantRoleSeeder interface {
+	// SeedBuiltInRoles creates the built-in roles in tenantID.
+	SeedBuiltInRoles(ctx context.Context, tenantID string) error
+}
+
 // Tenant ID validation constraints.
 const (
 	TenantIDMinLength = 3
@@ -95,12 +113,27 @@ type DefaultTenantManager struct {
 	dekProvisioner  TenantDEKProvisioner
 	qrdbProvisioner QRDBTenantProvisioner
 
+	// roleSeeder, when wired, materializes the built-in roles inside each
+	// newly created tenant. Wired at server init via SetRoleSeeder. Nil
+	// leaves CreateTenant's role-seed step a no-op, which yields a tenant
+	// that cannot hold a user until an operator recreates the roles by hand.
+	roleSeeder TenantRoleSeeder
+
 	// userStorage, when wired, is the routed (qrdb-backed) user store used by
 	// DeleteTenant to deprovision the tenant's users — purging the broker
 	// profile, IDMap, and email/legacy-PIV index records that the legacy
 	// BackendStorage cascade no longer reaches. Wired at server init via
 	// SetUserStorage. Nil leaves DeleteTenant's user-deprovision step a no-op.
 	userStorage UserStorage
+
+	// webauthnCredentials, when wired, revokes each user's WebAuthn
+	// credentials as the tenant is torn down. Tenant deletion deprovisions
+	// users through userStorage directly rather than through
+	// IdentityStore.DeleteUser, so without this the tenant's credentials would
+	// survive the tenant — filed under (tenant, email) keys whose users no
+	// longer exist, and ready to block those addresses if the tenant id is
+	// ever reused. Wired at server init via SetWebAuthnCredentialReaper.
+	webauthnCredentials WebAuthnCredentialReaper
 
 	// settingsObservers are notified after UpdateTenant persists a change so
 	// per-tenant caches can invalidate. The slice is append-only at wiring
@@ -256,6 +289,29 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 		}
 	}
 
+	// Seed the built-in roles. A tenant with no roles cannot hold a user:
+	// every CreateUser that asks for authority names a role, and a name that
+	// resolves to nothing fails the create. Seeding is therefore part of
+	// creating the tenant, not a follow-up the operator is expected to know
+	// about, and a seeding failure fails the whole creation rather than
+	// leaving behind a tenant nothing can be provisioned into.
+	if m.roleSeeder != nil {
+		if err := m.roleSeeder.SeedBuiltInRoles(ctx, tenantID); err != nil {
+			// Roll back every step taken above, innermost first.
+			if m.dekProvisioner != nil {
+				_ = m.dekProvisioner.DeprovisionDEK(ctx, tenantID)
+			}
+			if m.provisioner != nil {
+				_ = m.provisioner.DeprovisionTenant(ctx, tenantID)
+			}
+			_ = m.storage.DeleteTenant(ctx, tenantID)
+			if m.qrdbProvisioner != nil {
+				_ = m.qrdbProvisioner.DeleteTenant(ctx, tenantID)
+			}
+			return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.CreateTenant", "failed to seed tenant built-in roles")
+		}
+	}
+
 	return tenant, nil
 }
 
@@ -350,6 +406,15 @@ func (m *DefaultTenantManager) DeleteTenant(ctx context.Context, id string) erro
 				break
 			}
 			for _, u := range users {
+				// Revoke the user's WebAuthn credentials first, for the same
+				// reason IdentityStore.DeleteUser does: the credential store
+				// is keyed by (tenant, email), so once the user record is
+				// gone the address that names its credentials is gone too.
+				if m.webauthnCredentials != nil && u.Email != "" {
+					if _, rErr := m.webauthnCredentials.DeleteCredentials(ctx, id, u.Email); rErr != nil {
+						return dberrors.Wrapf(rErr, dberrors.ErrStorage, "iam.DeleteTenant", "failed to revoke tenant user webauthn credentials")
+					}
+				}
 				if delErr := m.userStorage.DeleteUser(ctx, id, u.ID); delErr != nil {
 					return dberrors.Wrapf(delErr, dberrors.ErrStorage, "iam.DeleteTenant", "failed to deprovision tenant user")
 				}

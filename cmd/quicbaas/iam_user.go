@@ -112,7 +112,7 @@ func runIAMUserRoleAssignCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Assign role using SDK sub-client
@@ -159,7 +159,7 @@ func runIAMUserRoleRevokeCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Revoke role using SDK sub-client
@@ -228,7 +228,7 @@ func runIAMUserCreateCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Create user using SDK sub-client
@@ -314,7 +314,7 @@ func runIAMUserGetCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Get user using SDK sub-client
@@ -397,7 +397,7 @@ func runIAMUserUpdateCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Build update request
@@ -476,7 +476,7 @@ func runIAMUserDeleteCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Delete user using SDK sub-client
@@ -533,7 +533,7 @@ func runIAMUserListCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// List users using SDK sub-client
@@ -616,7 +616,7 @@ func runIAMUserApproveCommand(_ *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Infof("Approving user %s in tenant %s", userID, globalTenantID)
@@ -662,7 +662,7 @@ func runIAMUserRejectCommand(_ *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Infof("Rejecting user %s in tenant %s", userID, globalTenantID)

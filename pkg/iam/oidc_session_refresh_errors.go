@@ -82,6 +82,40 @@ func (e *SessionRefreshEntropyError) Error() string {
 
 func (e *SessionRefreshEntropyError) Unwrap() error { return e.Cause }
 
+// SessionIDEntropyError reports that the CSPRNG failed while minting the
+// per-login session identifier (the sid claim), so no access token was issued.
+//
+// It is a hard failure rather than a degraded value on purpose: sid's whole job
+// is to say whether two credentials belong to the same login, and there is no
+// weaker identifier that answers that safely.
+type SessionIDEntropyError struct {
+	Cause error
+}
+
+func (e *SessionIDEntropyError) Error() string {
+	return "iam: failed to generate session identifier entropy: " + e.Cause.Error()
+}
+
+func (e *SessionIDEntropyError) Unwrap() error { return e.Cause }
+
+// TokenIDEntropyError reports that the CSPRNG failed while minting the
+// identifier of an issued token (the jti claim), so no token was issued.
+//
+// It is a hard failure rather than a degraded value for the same reason
+// SessionIDEntropyError is (#372): jti is the revocation handle this provider
+// resolves logout and RevokeToken by, and an identifier derived from the clock
+// is one an attacker can guess. Issuance that cannot name the token it issues
+// does not happen.
+type TokenIDEntropyError struct {
+	Cause error
+}
+
+func (e *TokenIDEntropyError) Error() string {
+	return "iam: failed to generate token identifier entropy: " + e.Cause.Error()
+}
+
+func (e *TokenIDEntropyError) Unwrap() error { return e.Cause }
+
 // SessionRefreshStorageError reports that a refresh credential could not be
 // persisted.
 type SessionRefreshStorageError struct {

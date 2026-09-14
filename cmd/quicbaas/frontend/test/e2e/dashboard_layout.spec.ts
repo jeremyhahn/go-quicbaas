@@ -1,12 +1,12 @@
 /**
  * dashboard_layout.spec.ts
  *
- * Verifies the two-dashboard layout introduced by the OVERVIEW / ORCHESTRATION
+ * Verifies the two-dashboard layout introduced by the OVERVIEW / SOFTWARE FACTORY
  * dashboard split:
  *
  *   #/            → System Dashboard: "System Status" heading
  *   #/dashboard   → System Dashboard: "System Status" heading
- *   #/orchestration → Orchestration Dashboard: "Orchestration Dashboard" heading
+ *   #/orchestration → Software Factory dashboard: "Software Factory" heading
  *                     with Active Jobs / Agents / Sessions / Pending Tasks cards
  *
  * To run (requires a running quicbaasd at QUICBAAS_UI_URL):
@@ -35,11 +35,11 @@ test.describe('Dashboard layout split', () => {
     await expect(heading).toBeVisible();
   });
 
-  test('#/orchestration renders Orchestration Dashboard with stat cards', async ({ page }) => {
+  test('#/orchestration renders the Software Factory dashboard with stat cards', async ({ page }) => {
     await page.goto('/ui/#/orchestration', { waitUntil: 'networkidle' });
 
     // Main heading.
-    const heading = page.locator('h1', { hasText: 'Orchestration Dashboard' });
+    const heading = page.locator('h1', { hasText: 'Software Factory' });
     await expect(heading).toBeVisible();
 
     // Stat card labels — scoped to .stat-title to avoid sidebar/breadcrumb matches.
@@ -60,15 +60,15 @@ test.describe('Dashboard layout split', () => {
     await expect(heading).toBeVisible();
   });
 
-  test('ORCHESTRATION sidebar "Orchestration" navigates to #/orchestration', async ({ page }) => {
-    // The ORCHESTRATION item is now labelled "Orchestration" — disambiguates
-    // the OVERVIEW > Overview, ORCHESTRATION > Orchestration, CLUSTER > Cluster
+  test('SOFTWARE FACTORY sidebar "Software Factory" navigates to #/orchestration', async ({ page }) => {
+    // The SOFTWARE FACTORY item is labelled "Software Factory" — disambiguates
+    // the OVERVIEW > Overview, SOFTWARE FACTORY > Software Factory, CLUSTER > Cluster
     // sidebar entries that all rendered as "Dashboard" before the fix.
-    const btn = page.locator('aside nav button', { hasText: 'Orchestration' }).first();
+    const btn = page.locator('aside nav button', { hasText: 'Software Factory' }).first();
     await btn.click();
 
     await expect(page).toHaveURL(/#\/orchestration/);
-    const heading = page.locator('h1', { hasText: 'Orchestration Dashboard' });
+    const heading = page.locator('h1', { hasText: 'Software Factory' });
     await expect(heading).toBeVisible();
   });
 

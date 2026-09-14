@@ -31,11 +31,12 @@
     orchestratorStore,
     setActiveTenant,
     selectJob,
-    refresh,
     startOrchestratorPolling,
     loadJobs,
+    loadSelectedJob,
   } from '../stores/orchestrator.svelte.ts';
-  import { untrack } from 'svelte';
+  import { syncActiveJobStreams, stopAllJobStreams } from '../stores/job-events.svelte.ts';
+  import { onDestroy, untrack } from 'svelte';
   import { showToast } from '../stores/toast.svelte.ts';
 
   // Views
@@ -45,6 +46,7 @@
   import JobDetailView from './orchestrator/JobDetailView.svelte';
   import AgentDetailView from './orchestrator/AgentDetailView.svelte';
   import TasksView from './orchestrator/TasksView.svelte';
+  import TaskDetailView from './orchestrator/TaskDetailView.svelte';
   import WorkflowsView from './orchestrator/WorkflowsView.svelte';
   import EventStreamView from './orchestrator/EventStreamView.svelte';
   import CostView from './orchestrator/CostView.svelte';
@@ -179,21 +181,28 @@
     items: NavItem[];
   }
 
+  // FACTORY_CRUMB is the parent breadcrumb every Software Factory route
+  // shares. The section is renamed on the user-facing surface only: the
+  // 'orchestration' ViewID, the #/orchestration hash and the orchestrator
+  // store keep their identifiers.
+  const FACTORY_CRUMB = 'Software Factory';
+
   const navSections: NavSection[] = [
     {
       title: 'OVERVIEW',
       items: [
-        // Renamed from "Dashboard" so the sidebar exposes three distinct
-        // labels — OVERVIEW > Overview, ORCHESTRATION > Orchestration,
-        // CLUSTER > Cluster — and a sighted user can disambiguate the
-        // three dashboard entries at a glance.
+        // Three sections each own a landing page: OVERVIEW > Overview,
+        // SOFTWARE FACTORY > Dashboard, CLUSTER > Cluster. The section
+        // heading carries the context, so the item says what the page is
+        // (owner ruling 2026-09-11); an item repeating its own section read
+        // as a second product name rather than a page.
         { id: 'dashboard', label: 'Overview', icon: LayoutDashboard, implemented: true },
       ],
     },
     {
-      title: 'ORCHESTRATION',
+      title: 'SOFTWARE FACTORY',
       items: [
-        { id: 'orchestration', label: 'Orchestration', icon: Workflow,      implemented: true },
+        { id: 'orchestration', label: 'Dashboard',        icon: Workflow,  implemented: true },
         { id: 'jobs',          label: 'Jobs',         icon: Cpu,           implemented: true },
         { id: 'agents',        label: 'Agent Fleet',  icon: Bot,           implemented: true },
         { id: 'sessions',      label: 'Sessions',     icon: Terminal,      implemented: true },
@@ -287,6 +296,21 @@
     };
   });
 
+  // Live job events. The poller above refreshes the job list; this effect
+  // keeps one event stream open per running job in that list, so Live Events
+  // and the dashboard fill in between polls rather than every 30 s. It is
+  // deliberately a second effect: reading the job list inside the poller's
+  // effect would tear down and restart the poller on every list change.
+  //
+  // The reconciliation is incremental, so it must NOT be undone on each re-run
+  // — a cleanup here would close and reopen every stream whenever a poll
+  // returned. Release happens once, when the shell itself goes away.
+  $effect(() => {
+    syncActiveJobStreams(orchestratorStore.activeTenantID, orchestratorStore.jobs);
+  });
+
+  onDestroy(() => { stopAllJobStreams(); });
+
   // ---------------------------------------------------------------------------
   // Active-tenant switcher options. This is a POST-auth control, so it reads the
   // AUTHORIZED tenant listing (client.iam.listTenants -> GET /api/v1/tenants),
@@ -294,25 +318,53 @@
   // /api/v1/iam/tenants/public endpoint — was deleted: it disclosed every
   // tenant's namespace to unauthenticated callers.
   //
-  // A caller without tenants:list simply keeps the single active-tenant entry.
-  // The server, not this component, decides which tenants a principal may see.
+  // listTenants only ever ADDS entries. It is a discovery call for principals
+  // permitted to see other tenants, not the definition of the list: a
+  // tenant-scoped operator is (correctly) refused it, and letting that refusal
+  // decide the options is what left them looking at somebody else's tenant with
+  // no way back to their own (go-quicbaas#309). The session's own tenant is
+  // therefore always present and always selectable, whatever the call answers.
   // ---------------------------------------------------------------------------
-  let tenantOptions = $state<Array<{ id: string; name: string }>>([
-    { id: orchestratorStore.activeTenantID, name: orchestratorStore.activeTenantID },
-  ]);
+  let discoveredTenants = $state<Array<{ id: string; name: string }>>([]);
+
+  const tenantOptions = $derived.by(() => {
+    const options = [...discoveredTenants];
+    // Both the active tenant and the session tenant must appear, or the
+    // <select> renders a value it has no option for and the control shows
+    // blank. Prepended, so the session's own tenant heads the list.
+    for (const id of [orchestratorStore.activeTenantID, authStore.tenantID]) {
+      if (id !== '' && !options.some((t) => t.id === id)) {
+        options.unshift({ id, name: id });
+      }
+    }
+    return options;
+  });
 
   $effect(() => {
+    // Read synchronously so the effect re-runs when the session changes: the
+    // tenants a principal may enumerate are a property of who is signed in, not
+    // of this component's lifetime. (Reading it after an await would register no
+    // dependency and the list would stay whatever the first session saw.)
+    const forSession = authStore.sessionKey;
+    // Clear first. An answer for the OUTGOING principal must never be what a new
+    // one sees while their own request is still in flight.
+    discoveredTenants = [];
     void (async () => {
       try {
         const client = await getSDKClient();
         const resp = await client.iam.listTenants();
-        const list = resp?.tenants ?? [];
-        if (list.length > 0) {
-          tenantOptions = list.map((t) => ({ id: t.id, name: t.name || t.id }));
-        }
+        // A slow answer for a session that has since been replaced would put a
+        // departed admin's tenant list in front of whoever signed in after
+        // them. The listing belongs to the principal it was asked for.
+        if (forSession !== authStore.sessionKey) return;
+        discoveredTenants = (resp?.tenants ?? []).map((t) => ({
+          id: t.id,
+          name: t.name || t.id,
+        }));
       } catch {
-        // Not authorized to enumerate tenants (or the call failed): keep the
-        // active-tenant entry already in tenantOptions so the control works.
+        // Not authorized to enumerate tenants (or the call failed). The server,
+        // not this component, decides which tenants a principal may see; the
+        // session's own tenant stays in the list either way.
       }
     })();
   });
@@ -449,23 +501,33 @@
   });
 
   // When the job-detail route is active, sync the selectedJob in the store.
-  // On a fresh page load (or browser refresh) at #/jobs/:id, orchestratorStore.jobs
-  // may not be populated yet because the orchestrator poller fetches asynchronously.
-  // The effect re-fires once the jobs list arrives, so the find() resolves on the
-  // second tick. Until then, render guards in JobDetailView show "No job selected"
-  // — kick off an immediate refresh so the wait is bounded by network latency
-  // rather than the 30s poll cadence.
+  //
+  // TWO READS, and the second is the one that matters. The list record
+  // (ListJobs) is the placeholder: it paints the page immediately and, on a
+  // fresh load at #/jobs/:id where the poller has not answered yet, may not
+  // exist at all. The AUTHORITATIVE record is GetJobStatus, because only that
+  // path lays the task's provenance over the status — attempts, budget,
+  // terminal reason, readmit state, delivery and review rounds. A detail page
+  // populated from the list alone renders every one of those panels empty,
+  // which is the whole of go-quicbaas#796 still broken.
+  //
+  // The effect depends on the ROUTE, not on the selection it writes:
+  // depending on selectedJob would re-run on its own write, forever.
   $effect(() => {
-    if (routerStore.name === 'job-detail') {
-      const id = routerStore.params['id'] ?? '';
+    if (routerStore.name !== 'job-detail') return;
+    const id = routerStore.params['id'] ?? '';
+    if (id === '') return;
+    untrack(() => {
       const found = orchestratorStore.jobs.find((j) => j.job_id === id) ?? null;
       if (found !== null) {
         selectJob(found);
       } else {
-        // Trigger an out-of-band refresh; the effect re-runs when jobs updates.
-        untrack(() => { void loadJobs(); });
+        // Nothing to paint yet; refresh the list so the row exists for the
+        // back navigation, bounded by network latency not the poll cadence.
+        void loadJobs();
       }
-    }
+      void loadSelectedJob(id);
+    });
   });
 
 
@@ -473,7 +535,7 @@
 
 <!-- Invite activation is a standalone public page — render it without the app shell. -->
 {#if routerStore.name === 'invite-activate'}
-  <InviteActivateView token={routerStore.params['token'] ?? ''} />
+  <InviteActivateView tenant={routerStore.params["tenant"] ?? ""} token={routerStore.params["token"] ?? ""} />
 {:else if !showAppShell}
   <!--
     MINIMAL SHELL — no sidebar, no nav items, no tenant/user menu, no feature
@@ -546,43 +608,47 @@
               <li class="text-base-content/40">Overview</li>
               <li class="font-medium">Dashboard</li>
             {:else if routerStore.name === 'orchestration'}
-              <li class="text-base-content/40">Orchestration</li>
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Dashboard</li>
             {:else if routerStore.name === 'jobs'}
-              <li class="text-base-content/40">Orchestration</li>
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Jobs</li>
             {:else if routerStore.name === 'job-detail'}
-              <li class="text-base-content/40">Orchestration</li>
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li><a href="#/jobs" class="text-base-content/60">Jobs</a></li>
               <li class="font-medium font-mono text-xs">{(routerStore.params['id'] ?? '').slice(0, 12)}…</li>
             {:else if routerStore.name === 'fleet'}
-              <li class="text-base-content/40">Orchestration</li>
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Agent Fleet</li>
             {:else if routerStore.name === 'agent-detail'}
-              <li class="text-base-content/40">Orchestration</li>
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li><a href="#/fleet" class="text-base-content/60">Fleet</a></li>
               <li class="font-medium font-mono text-xs">{(routerStore.params['id'] ?? '').slice(0, 12)}…</li>
             {:else if routerStore.name === 'sessions'}
-              <li class="text-base-content/40">Orchestration</li>
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Sessions</li>
             {:else if routerStore.name === 'session-detail'}
-              <li class="text-base-content/40">Orchestration</li>
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li><a href="#/sessions" class="text-base-content/60">Sessions</a></li>
               <li class="font-medium font-mono text-xs">{(routerStore.params['id'] ?? '').slice(0, 14)}…</li>
             {:else if routerStore.name === 'tasks'}
-              <li class="text-base-content/40">Orchestration</li>
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Tasks</li>
+            {:else if routerStore.name === 'task-detail'}
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
+              <li><a href="#/tasks" class="text-base-content/60">Tasks</a></li>
+              <li class="font-medium font-mono text-xs">{(routerStore.params['id'] ?? '').slice(0, 12)}…</li>
             {:else if routerStore.name === 'workflows'}
-              <li class="text-base-content/40">Orchestration</li>
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Workflows</li>
             {:else if routerStore.name === 'events'}
-              <li class="text-base-content/40">Orchestration</li>
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Live Events</li>
             {:else if routerStore.name === 'cost'}
-              <li class="text-base-content/40">Orchestration</li>
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Cost Tracking</li>
             {:else if routerStore.name === 'inference'}
-              <li class="text-base-content/40">Orchestration</li>
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Inference</li>
             {:else if routerStore.name === 'kv'}
               <li class="text-base-content/40">Data</li>
@@ -648,10 +714,10 @@
               <li class="text-base-content/40">Security</li>
               <li class="font-medium">SSH Keys</li>
             {:else if routerStore.name === 'projects'}
-              <li class="text-base-content/40">Orchestration</li>
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Projects</li>
             {:else if routerStore.name === 'accounts'}
-              <li class="text-base-content/40">Orchestration</li>
+              <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Accounts</li>
             {:else if routerStore.name === 'cluster'}
               <li class="text-base-content/40">Cluster</li>
@@ -679,9 +745,11 @@
             value={orchestratorStore.activeTenantID}
             aria-label="Active tenant"
             onchange={(e) => {
-              const val = (e.target as HTMLSelectElement).value;
-              setActiveTenant(val);
-              void refresh();
+              // One call. setActiveTenant announces the scope change, and every
+              // store holding tenant-scoped data releases and refetches itself —
+              // including agentStore and sessionStore, which this handler used to
+              // leave blank until the 30-second auxiliary poll caught up.
+              setActiveTenant((e.target as HTMLSelectElement).value);
             }}
           >
             {#each tenantOptions as t (t.id)}
@@ -847,6 +915,11 @@
       {:else if routerStore.name === 'tasks'}
         <div class="flex-1 overflow-y-auto">
           <TasksView />
+        </div>
+
+      {:else if routerStore.name === 'task-detail'}
+        <div class="flex-1 overflow-y-auto">
+          <TaskDetailView />
         </div>
 
       {:else if routerStore.name === 'workflows'}

@@ -105,12 +105,3 @@ func TestQuicBaaS_SetLoginService_SetsServiceForCeremony(t *testing.T) {
 // IAM provider accessors — return nil / no error when no IAM provider is wired.
 // Additional IAM provider accessors are covered in accessor_methods_iam_test.go.
 // =============================================================================
-
-func TestQuicBaaS_GetInternalAuthManager_NilWhenNotConfigured(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	impl, ok := svc.(*quicBaaS)
-	require.True(t, ok)
-	assert.Nil(t, impl.GetInternalAuthManager())
-}

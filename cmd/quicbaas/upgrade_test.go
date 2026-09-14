@@ -57,7 +57,8 @@ func TestNewUpgradeStartCommand(t *testing.T) {
 
 		// Check flags
 		assert.NotNil(t, cmd.Flags().Lookup("server"))
-		assert.NotNil(t, cmd.Flags().Lookup("timeout"))
+		assert.Nil(t, cmd.Flags().Lookup("timeout"),
+			"--timeout is the root persistent flag now; the upgrade verbs must not shadow it with a second variable (#246)")
 		assert.NotNil(t, cmd.Flags().Lookup("node-id"))
 		assert.NotNil(t, cmd.Flags().Lookup("max-unavailable"))
 		assert.NotNil(t, cmd.Flags().Lookup("wait-time"))
@@ -94,7 +95,8 @@ func TestNewUpgradeStatusCommand(t *testing.T) {
 		assert.Equal(t, "status", cmd.Use)
 
 		assert.NotNil(t, cmd.Flags().Lookup("server"))
-		assert.NotNil(t, cmd.Flags().Lookup("timeout"))
+		assert.Nil(t, cmd.Flags().Lookup("timeout"),
+			"--timeout is the root persistent flag now; the upgrade verbs must not shadow it with a second variable (#246)")
 		assert.NotNil(t, cmd.Flags().Lookup("operation"))
 		assert.NotNil(t, cmd.Flags().Lookup("output"))
 	})

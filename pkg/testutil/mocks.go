@@ -44,6 +44,7 @@ import (
 // For sub-services with conflicting methods (Embedding, Ollama, Certificate),
 // dedicated fields are provided so a separate mock can be injected.
 type MockQuicBaaS struct {
+	sdlcService  *service.SDLCService
 	loginService service.LoginServicer
 	mock.Mock
 
@@ -81,6 +82,12 @@ type MockQuicBaaS struct {
 	// set this to the same store instance they seed so the activation flow and
 	// the first-boot/REST creation paths exercise ONE store, not a fork.
 	InviteStoreOverride iam.InviteStore
+
+	// AgentServiceOverride is returned by Agent. Left nil by default, so a
+	// mock reports no orchestration service; tests that exercise the
+	// orchestration seams — the shutdown drain above all — set this to a
+	// real service.
+	AgentServiceOverride orchestration.AgentService
 }
 
 // Ensure MockQuicBaaS implements service.QuicBaaS at compile time.
@@ -294,24 +301,6 @@ func (m *MockQuicBaaS) ValidateToken(ctx context.Context, req *service.ValidateT
 // =============================================================================
 // RBAC Service Methods (part of service.QuicBaaS)
 // =============================================================================
-
-func (m *MockQuicBaaS) CreateUser(ctx context.Context, req *service.AuthCreateUserRequest) (*service.AuthCreateUserResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.AuthCreateUserResponse)
-	return resp, args.Error(1)
-}
-
-func (m *MockQuicBaaS) DeleteUser(ctx context.Context, req *service.AuthDeleteUserRequest) (*service.AuthDeleteUserResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.AuthDeleteUserResponse)
-	return resp, args.Error(1)
-}
-
-func (m *MockQuicBaaS) ListUsers(ctx context.Context, req *service.AuthListUsersRequest) (*service.AuthListUsersResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.AuthListUsersResponse)
-	return resp, args.Error(1)
-}
 
 func (m *MockQuicBaaS) CreateAuthRole(ctx context.Context, req *service.AuthCreateRoleRequest) (*service.AuthCreateRoleResponse, error) {
 	args := m.Called(ctx, req)
@@ -618,9 +607,9 @@ func (m *MockQuicBaaS) SSHClient() xkmsssh.Client {
 	return m.SSHClientOverride
 }
 
-// Agent returns nil for the mock.
+// Agent returns the configured orchestration service, nil when unset.
 func (m *MockQuicBaaS) Agent() orchestration.AgentService {
-	return nil
+	return m.AgentServiceOverride
 }
 
 // Project returns a new in-memory project service for the mock.
@@ -679,9 +668,24 @@ func (m *MockQuicBaaS) SetMessagingService(ms messaging.Service) {
 	m.Called(ms)
 }
 
+// SetDynamicSecretsService is a no-op for the mock.
+func (m *MockQuicBaaS) SetDynamicSecretsService(svc service.DynamicSecretsService) {
+	// No-op for mock
+}
+
 // SetAgentService is a no-op for the mock.
 func (m *MockQuicBaaS) SetAgentService(agent orchestration.AgentService) {
 	// No-op for mock
+}
+
+// SDLC returns the mock's SDLC service, nil unless set.
+func (m *MockQuicBaaS) SDLC() *service.SDLCService {
+	return m.sdlcService
+}
+
+// SetSDLCService records the SDLC service.
+func (m *MockQuicBaaS) SetSDLCService(svc *service.SDLCService) {
+	m.sdlcService = svc
 }
 
 // Database returns nil for the mock.

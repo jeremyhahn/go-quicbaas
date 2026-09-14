@@ -34,6 +34,19 @@ import (
 
 // grpcTestAgentService implements orchestration.AgentService for gRPC testing.
 type grpcTestAgentService struct {
+	// listJobs is what ListJobs answers with; listJobsFilter records the
+	// narrowing it was asked for, so a transport that drops the caller's
+	// filter is caught rather than silently listing the whole tenant.
+	listJobs       []*orchestration.JobStatus
+	listJobsFilter *orchestration.JobFilter
+
+	createTaskFunc    func(ctx context.Context, req *orchestration.CreateTaskRequest) (*orchestration.Task, error)
+	startJobFunc      func(ctx context.Context, req *orchestration.StartJobRequest) (*orchestration.StartJobResponse, error)
+	blockTaskFunc     func(ctx context.Context, tenantID, taskID string, kind orchestration.TaskBlockKind, reason string) error
+	readmitTaskFunc   func(ctx context.Context, tenantID, taskID string) error
+	deleteTaskFunc    func(ctx context.Context, tenantID, taskID string) error
+	listTasksFunc     func(ctx context.Context, tenantID string, filter *orchestration.TaskFilter) ([]*orchestration.Task, error)
+	getJobStatusFunc  func(ctx context.Context, tenantID, jobID string) (*orchestration.JobStatus, error)
 	spawnSessionFunc  func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error)
 	promptSessionFunc func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error)
 	sessionStatusFunc func(ctx context.Context, req *orchestration.SessionStatusRequest) (*orchestration.SessionStatusResponse, error)
@@ -137,6 +150,9 @@ func (m *grpcTestAgentService) HealthCheck(ctx context.Context) (*orchestration.
 }
 
 func (m *grpcTestAgentService) CreateTask(ctx context.Context, req *orchestration.CreateTaskRequest) (*orchestration.Task, error) {
+	if m.createTaskFunc != nil {
+		return m.createTaskFunc(ctx, req)
+	}
 	return &orchestration.Task{}, nil
 }
 
@@ -145,6 +161,9 @@ func (m *grpcTestAgentService) GetTask(ctx context.Context, tenantID, taskID str
 }
 
 func (m *grpcTestAgentService) ListTasks(ctx context.Context, tenantID string, filter *orchestration.TaskFilter) ([]*orchestration.Task, error) {
+	if m.listTasksFunc != nil {
+		return m.listTasksFunc(ctx, tenantID, filter)
+	}
 	return nil, nil
 }
 
@@ -153,6 +172,27 @@ func (m *grpcTestAgentService) ClaimTask(ctx context.Context, tenantID, taskID, 
 }
 
 func (m *grpcTestAgentService) CompleteTask(ctx context.Context, tenantID, taskID string, result *orchestration.TaskResult) error {
+	return nil
+}
+
+func (m *grpcTestAgentService) BlockTask(ctx context.Context, tenantID, taskID string, kind orchestration.TaskBlockKind, reason string) error {
+	if m.blockTaskFunc != nil {
+		return m.blockTaskFunc(ctx, tenantID, taskID, kind, reason)
+	}
+	return nil
+}
+
+func (m *grpcTestAgentService) ReadmitTask(ctx context.Context, tenantID, taskID string) error {
+	if m.readmitTaskFunc != nil {
+		return m.readmitTaskFunc(ctx, tenantID, taskID)
+	}
+	return nil
+}
+
+func (m *grpcTestAgentService) DeleteTask(ctx context.Context, tenantID, taskID string) error {
+	if m.deleteTaskFunc != nil {
+		return m.deleteTaskFunc(ctx, tenantID, taskID)
+	}
 	return nil
 }
 
@@ -183,20 +223,27 @@ func (m *grpcTestAgentService) RemoveAgent(ctx context.Context, tenantID, agentI
 	return nil
 }
 
-func (m *grpcTestAgentService) AgentHeartbeat(ctx context.Context, tenantID, agentID string) error {
+func (m *grpcTestAgentService) AgentHeartbeat(ctx context.Context, tenantID, agentID string, _ *orchestration.AgentObservation) error {
 	return nil
 }
 
 func (m *grpcTestAgentService) StartJob(ctx context.Context, req *orchestration.StartJobRequest) (*orchestration.StartJobResponse, error) {
+	if m.startJobFunc != nil {
+		return m.startJobFunc(ctx, req)
+	}
 	return &orchestration.StartJobResponse{JobID: "test-job"}, nil
 }
 
 func (m *grpcTestAgentService) GetJobStatus(ctx context.Context, tenantID, jobID string) (*orchestration.JobStatus, error) {
+	if m.getJobStatusFunc != nil {
+		return m.getJobStatusFunc(ctx, tenantID, jobID)
+	}
 	return &orchestration.JobStatus{JobID: jobID, State: "completed"}, nil
 }
 
-func (m *grpcTestAgentService) ListJobs(ctx context.Context, tenantID string) ([]*orchestration.JobStatus, error) {
-	return nil, nil
+func (m *grpcTestAgentService) ListJobs(ctx context.Context, tenantID string, filter *orchestration.JobFilter) ([]*orchestration.JobStatus, error) {
+	m.listJobsFilter = filter
+	return m.listJobs, nil
 }
 
 func (m *grpcTestAgentService) CancelJob(ctx context.Context, tenantID, jobID string) error {
@@ -711,4 +758,27 @@ func (m *grpcTestAgentService) PromptSessionAsync(ctx context.Context, req *orch
 		Status:    orchestration.TurnStatusAccepted,
 		Sequence:  1,
 	}, nil
+}
+
+// TestTaskToProto_CarriesQuestionAttempts keeps a refund counter from being
+// invented on the server and then dropped on the wire.
+//
+// THAT EXACT GAP COST A DAY: ProjectBinding.Reviewer and TaskArtifact.Ref both
+// existed in the domain and had no wire representation, so the CLI reported a
+// reviewer that was configured as absent and could not decode a single task.
+// A counter the operator cannot see is a counter that will be disbelieved.
+func TestTaskToProto_CarriesQuestionAttempts(t *testing.T) {
+	task := &orchestration.Task{
+		ID: "t1", Attempts: 9, EnvironmentFaults: 2, QuestionAttempts: 5,
+	}
+	pb := serviceTaskToProto(task)
+	if pb.QuestionAttempts != 5 {
+		t.Fatalf("question_attempts = %d, want 5", pb.QuestionAttempts)
+	}
+	if pb.EnvironmentFaults != 2 {
+		t.Fatalf("environment_faults = %d, want 2; the two must stay distinct", pb.EnvironmentFaults)
+	}
+	if pb.Attempts != 9 {
+		t.Fatalf("attempts = %d, want 9", pb.Attempts)
+	}
 }

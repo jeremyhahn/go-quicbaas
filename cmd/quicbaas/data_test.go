@@ -158,6 +158,7 @@ func (m *mockSDKClient) Close() error {
 }
 
 func (m *mockSDKClient) Project() quicbaas.ProjectClient { return nil }
+func (m *mockSDKClient) SDLC() quicbaas.SDLCClient       { return nil }
 func (m *mockSDKClient) Account() quicbaas.AccountClient { return nil }
 
 func (m *mockSDKClient) Orchestrator() quicbaas.OrchestratorClient { return nil }
@@ -192,8 +193,13 @@ func TestDataCommandFlags(t *testing.T) {
 	// Note: --address flag is now global (defined in main.go on rootCmd)
 	// and is not available on the data command's local persistent flags
 
-	timeoutFlag := flags.Lookup("timeout")
-	require.NotNil(t, timeoutFlag)
+	// --timeout is global too (#246). The group used to re-register it bound
+	// to a SECOND variable, which is what made the operator's value vanish on
+	// every verb outside the seven groups that did so.
+	assert.Nil(t, flags.Lookup("timeout"),
+		"the data group must not shadow the root --timeout")
+	require.NotNil(t, rootCmd.PersistentFlags().Lookup("timeout"),
+		"timeout flag should be on root command")
 
 	outputFlag := flags.Lookup("output")
 	require.NotNil(t, outputFlag)

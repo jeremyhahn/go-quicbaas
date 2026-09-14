@@ -16,6 +16,7 @@
 package server
 
 import (
+	"context"
 	"time"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -37,6 +38,22 @@ func (s *Server) startEmbedding() error {
 
 	s.logger.Info("Initializing embedding manager...")
 
+	// Preflight the provider name. go-qrdb's validateManagerConfig accepts only
+	// its four built-in providers as a manager's *configured default*, so a
+	// provider outside that set makes NewManager fail -- and the generic
+	// warning below would report it as if the backend were merely unavailable,
+	// sending an operator to debug a sidecar that is running fine. Name the
+	// real cause instead.
+	if _, ok := qrdbManagerDefaultProviders[embeddingCfg.Provider]; !ok {
+		s.logger.WithFields(map[string]interface{}{
+			"provider":          embeddingCfg.Provider,
+			"accepted_defaults": "openai, ollama, lmstudio, voyage",
+		}).Error("Embedding provider cannot be the configured default, so embedding support is disabled. " +
+			"Set rag.embedding.provider to an accepted provider and select this one per request " +
+			"or through SetDefaultProvider. Tracked by go-qrdb#528.")
+		return nil
+	}
+
 	// Create embedding manager
 	mgr, err := embedding.NewManager(*embeddingCfg)
 	if err != nil {
@@ -50,6 +67,10 @@ func (s *Server) startEmbedding() error {
 			"Fix configuration and restart server to enable embedding features.")
 		return nil
 	}
+
+	// Register the extra providers first, so that one failing does not stop the
+	// configured default from registering.
+	s.registerAdditionalEmbeddingProviders(mgr)
 
 	// Register providers based on configuration
 	if err := s.registerEmbeddingProviders(mgr, embeddingCfg); err != nil {
@@ -168,82 +189,231 @@ func (s *Server) buildEmbeddingConfig() *embedding.Config {
 	}
 }
 
-// registerEmbeddingProviders registers available embedding providers with the manager.
-func (s *Server) registerEmbeddingProviders(mgr *embedding.Manager, cfg *embedding.Config) error {
-	var lastErr error
+// qrdbManagerDefaultProviders mirrors go-qrdb's validateManagerConfig allowlist
+// (go-qrdb pkg/embedding/manager.go:83): the provider names it accepts as an
+// embedding manager's *configured default*.
+//
+// RegisterProvider itself applies no such allowlist, so a provider outside this
+// set -- the NPU sidecar, for one -- registers and can be selected per request
+// or via SetDefaultProvider. Only naming it in configuration is blocked.
+// go-qrdb#528 asks for this to be validated against the registry instead.
+var qrdbManagerDefaultProviders = map[string]struct{}{
+	"openai":   {},
+	"ollama":   {},
+	"lmstudio": {},
+	"voyage":   {},
+}
 
-	switch cfg.Provider {
-	case "ollama":
-		ollamaCfg := embedding.OllamaConfig{
-			BaseURL:      cfg.APIURL,
-			Model:        cfg.Model,
-			Dimensions:   cfg.Dimensions,
-			Timeout:      time.Duration(cfg.Timeout) * time.Second,
-			MaxRetries:   cfg.MaxRetries,
-			RetryBackoff: time.Duration(cfg.RetryBackoffMS) * time.Millisecond,
-		}
-		provider, err := embedding.NewOllamaProvider(ollamaCfg)
-		if err != nil {
-			lastErr = &api.OperationFailedError{Operation: "create ollama provider", Cause: err}
+// embeddingProviderFactory builds an embedding provider from the resolved
+// embedding configuration.
+type embeddingProviderFactory func(ctx context.Context, cfg *embedding.Config) (embedding.Provider, error)
+
+// embeddingProviderFactories maps a configured provider name to its constructor.
+//
+// Map-based dispatch rather than a switch: lookup is O(1) and adding a provider
+// is a single entry plus a constructor, with no shared error-handling code to
+// duplicate per arm.
+var embeddingProviderFactories = map[string]embeddingProviderFactory{
+	"ollama":                  newOllamaEmbeddingProvider,
+	"voyage":                  newVoyageEmbeddingProvider,
+	"openai":                  newOpenAIEmbeddingProvider,
+	"lmstudio":                newLMStudioEmbeddingProvider,
+	embedding.NPUProviderName: newNPUEmbeddingProvider,
+}
+
+// fallbackEmbeddingDimensions is the vector width given to an additional
+// provider entry that states none and whose provider has no fixed width of its
+// own. It suits the text providers, where the width follows whichever model the
+// operator names and 768 is the common case.
+const fallbackEmbeddingDimensions = 768
+
+// embeddingProviderNativeDimensions records the providers whose vector width is
+// a property of the provider rather than a choice the operator makes, so an
+// entry that omits `dimensions` gets a width that can actually work.
+//
+// Only the NPU qualifies today: it serves one exported model,
+// all-MiniLM-L6-v2, and cross-checks the width the sidecar declares against its
+// own configured width, rejecting every response that disagrees. Handing it the
+// generic 768 therefore does not produce a merely suboptimal provider, it
+// produces one that fails closed on every request.
+var embeddingProviderNativeDimensions = map[string]int{
+	embedding.NPUProviderName: embedding.DefaultNPUDimensions,
+}
+
+// defaultEmbeddingDimensionsFor returns the width to apply to an entry that
+// omits one. An explicitly configured width always wins; this only fills a gap.
+func defaultEmbeddingDimensionsFor(provider string) int {
+	if dimensions, ok := embeddingProviderNativeDimensions[provider]; ok {
+		return dimensions
+	}
+	return fallbackEmbeddingDimensions
+}
+
+// newOllamaEmbeddingProvider builds the Ollama provider, which remains the
+// default embedding backend.
+func newOllamaEmbeddingProvider(_ context.Context, cfg *embedding.Config) (embedding.Provider, error) {
+	return embedding.NewOllamaProvider(embedding.OllamaConfig{
+		BaseURL:      cfg.APIURL,
+		Model:        cfg.Model,
+		Dimensions:   cfg.Dimensions,
+		Timeout:      time.Duration(cfg.Timeout) * time.Second,
+		MaxRetries:   cfg.MaxRetries,
+		RetryBackoff: time.Duration(cfg.RetryBackoffMS) * time.Millisecond,
+	})
+}
+
+// newVoyageEmbeddingProvider builds the Voyage AI provider.
+func newVoyageEmbeddingProvider(_ context.Context, cfg *embedding.Config) (embedding.Provider, error) {
+	return embedding.NewVoyageProvider(*cfg)
+}
+
+// newOpenAIEmbeddingProvider builds the OpenAI provider.
+func newOpenAIEmbeddingProvider(_ context.Context, cfg *embedding.Config) (embedding.Provider, error) {
+	return embedding.NewOpenAIProvider(*cfg)
+}
+
+// newLMStudioEmbeddingProvider builds the LM Studio provider.
+func newLMStudioEmbeddingProvider(_ context.Context, cfg *embedding.Config) (embedding.Provider, error) {
+	return embedding.NewLMStudioProvider(embedding.LMStudioConfig{
+		BaseURL:        cfg.APIURL,
+		Model:          cfg.Model,
+		Dimensions:     cfg.Dimensions,
+		Timeout:        cfg.Timeout,
+		MaxRetries:     cfg.MaxRetries,
+		RetryBackoffMS: cfg.RetryBackoffMS,
+	})
+}
+
+// newNPUEmbeddingProvider builds the NPU provider, which reaches an OpenVINO
+// sidecar over HTTP.
+//
+// The sidecar owns the device, so nothing here links a vendor runtime and the
+// NPU may live on a different host from the daemon. APIURL is the sidecar
+// endpoint; when it is empty the provider's own default applies.
+func newNPUEmbeddingProvider(ctx context.Context, cfg *embedding.Config) (embedding.Provider, error) {
+	npuCfg := embedding.DefaultNPUConfig()
+	if cfg.APIURL != "" {
+		npuCfg.BaseURL = cfg.APIURL
+	}
+	if cfg.Model != "" {
+		npuCfg.Model = cfg.Model
+	}
+	if cfg.Dimensions > 0 {
+		npuCfg.Dimensions = cfg.Dimensions
+	}
+	if cfg.Timeout > 0 {
+		npuCfg.Timeout = time.Duration(cfg.Timeout) * time.Second
+	}
+	if cfg.MaxBatchSize > 0 {
+		npuCfg.MaxBatchSize = cfg.MaxBatchSize
+	}
+	// A plain key in configuration is supported for parity with the other
+	// providers; an inference.SecretRef is the preferred path and is set by
+	// callers constructing the provider directly.
+	npuCfg.APIKey = cfg.APIKey
+
+	return embedding.NewNPUProvider(ctx, npuCfg)
+}
+
+// registerAdditionalEmbeddingProviders registers every provider listed under
+// rag.embedding.additional.
+//
+// This is the path by which a provider go-qrdb will not accept as a manager
+// default -- "npu", served by the OpenVINO sidecar -- becomes registered and
+// therefore selectable per request or promotable to the service default. Without
+// it the provider would exist in the binary and be unreachable at runtime.
+//
+// A failure here is logged and skipped rather than fatal: an unreachable extra
+// provider must not take down the embedding subsystem that the default provider
+// is serving perfectly well.
+func (s *Server) registerAdditionalEmbeddingProviders(mgr *embedding.Manager) {
+	for _, extra := range s.buildAdditionalEmbeddingConfigs() {
+		if err := s.registerEmbeddingProviders(mgr, extra); err != nil {
 			s.logger.WithFields(map[string]interface{}{
-				"error": err.Error(),
-			}).Warn("Failed to register ollama embedding provider")
-		} else {
-			if err := mgr.RegisterProvider("ollama", provider); err != nil {
-				lastErr = &api.OperationFailedError{Operation: "register ollama provider", Cause: err}
-			}
+				"error":    err.Error(),
+				"provider": extra.Provider,
+			}).Warn("Failed to register an additional embedding provider - continuing without it")
+			continue
 		}
+		s.logger.WithFields(map[string]interface{}{
+			"provider": extra.Provider,
+			"api_url":  extra.APIURL,
+		}).Info("Registered an additional embedding provider")
+	}
+}
 
-	case "voyage":
-		provider, err := embedding.NewVoyageProvider(*cfg)
-		if err != nil {
-			lastErr = &api.OperationFailedError{Operation: "create voyage provider", Cause: err}
-			s.logger.WithFields(map[string]interface{}{
-				"error": err.Error(),
-			}).Warn("Failed to register voyage embedding provider")
-		} else {
-			if err := mgr.RegisterProvider("voyage", provider); err != nil {
-				lastErr = &api.OperationFailedError{Operation: "register voyage provider", Cause: err}
-			}
-		}
-
-	case "openai":
-		provider, err := embedding.NewOpenAIProvider(*cfg)
-		if err != nil {
-			lastErr = &api.OperationFailedError{Operation: "create openai provider", Cause: err}
-			s.logger.WithFields(map[string]interface{}{
-				"error": err.Error(),
-			}).Warn("Failed to register openai embedding provider")
-		} else {
-			if err := mgr.RegisterProvider("openai", provider); err != nil {
-				lastErr = &api.OperationFailedError{Operation: "register openai provider", Cause: err}
-			}
-		}
-
-	case "lmstudio":
-		lmstudioCfg := embedding.LMStudioConfig{
-			BaseURL:        cfg.APIURL,
-			Model:          cfg.Model,
-			Dimensions:     cfg.Dimensions,
-			Timeout:        cfg.Timeout,
-			MaxRetries:     cfg.MaxRetries,
-			RetryBackoffMS: cfg.RetryBackoffMS,
-		}
-		provider, err := embedding.NewLMStudioProvider(lmstudioCfg)
-		if err != nil {
-			lastErr = &api.OperationFailedError{Operation: "create lmstudio provider", Cause: err}
-			s.logger.WithFields(map[string]interface{}{
-				"error": err.Error(),
-			}).Warn("Failed to register lmstudio embedding provider")
-		} else {
-			if err := mgr.RegisterProvider("lmstudio", provider); err != nil {
-				lastErr = &api.OperationFailedError{Operation: "register lmstudio provider", Cause: err}
-			}
-		}
-
-	default:
-		lastErr = &api.UnknownProviderError{Provider: cfg.Provider}
+// buildAdditionalEmbeddingConfigs maps rag.embedding.additional onto the
+// embedding package's config type, filling in defaults so an entry only has to
+// name what differs. The vector width defaults per provider rather than
+// globally -- see embeddingProviderNativeDimensions.
+func (s *Server) buildAdditionalEmbeddingConfigs() []*embedding.Config {
+	if !s.config.RAG.Enabled || len(s.config.RAG.Embedding.Additional) == 0 {
+		return nil
 	}
 
-	return lastErr
+	out := make([]*embedding.Config, 0, len(s.config.RAG.Embedding.Additional))
+	for _, extra := range s.config.RAG.Embedding.Additional {
+		if extra.Provider == "" {
+			s.logger.Warn("Skipping an embedding.additional entry with no provider name")
+			continue
+		}
+
+		timeout := extra.Timeout
+		if timeout <= 0 {
+			timeout = 120
+		}
+		dimensions := extra.Dimensions
+		if dimensions <= 0 {
+			dimensions = defaultEmbeddingDimensionsFor(extra.Provider)
+		}
+
+		out = append(out, &embedding.Config{
+			Provider:       extra.Provider,
+			APIURL:         extra.APIURL,
+			APIKey:         extra.APIKey,
+			Model:          extra.Model,
+			Dimensions:     dimensions,
+			Timeout:        timeout,
+			MaxBatchSize:   128,
+			CacheEnabled:   true,
+			CacheSize:      10000,
+			CacheTTL:       3600,
+			CacheCompress:  true,
+			MaxRetries:     3,
+			RetryBackoffMS: 1000,
+		})
+	}
+	return out
+}
+
+// registerEmbeddingProviders registers the configured embedding provider with
+// the manager.
+func (s *Server) registerEmbeddingProviders(mgr *embedding.Manager, cfg *embedding.Config) error {
+	factory, ok := embeddingProviderFactories[cfg.Provider]
+	if !ok {
+		return &api.UnknownProviderError{Provider: cfg.Provider}
+	}
+
+	// Only credential resolution consults the context, and no resolver is wired
+	// at server start, so a background context is sufficient here.
+	provider, err := factory(context.Background(), cfg)
+	if err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"error":    err.Error(),
+			"provider": cfg.Provider,
+		}).Warn("Failed to create embedding provider")
+		return &api.OperationFailedError{
+			Operation: "create " + cfg.Provider + " provider",
+			Cause:     err,
+		}
+	}
+
+	if err := mgr.RegisterProvider(cfg.Provider, provider); err != nil {
+		return &api.OperationFailedError{
+			Operation: "register " + cfg.Provider + " provider",
+			Cause:     err,
+		}
+	}
+
+	return nil
 }

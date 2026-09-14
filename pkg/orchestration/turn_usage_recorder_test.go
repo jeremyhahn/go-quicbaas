@@ -146,20 +146,32 @@ func TestWithTurnAttribution_RoundTrips(t *testing.T) {
 	}
 }
 
-// TestWithTurnAttribution_RejectsIncomplete asserts a half-populated
-// attribution is dropped. The ledger's job dimension is per-agent-within-job,
-// so recording a job total with no agent breakdown would leave a total that
-// cannot be explained by any agent.
-func TestWithTurnAttribution_RejectsIncomplete(t *testing.T) {
+// TestWithTurnAttribution_RequiresAJob asserts what the context will and will
+// not carry.
+//
+// THE AGENT USED TO BE REQUIRED AND IS NOT ANY MORE, because two consumers
+// want different things from one attribution. The advisory counters' job
+// dimension is per-agent-within-job and still refuses a job with no agent —
+// asserted below in TestRecordTurnUsage_JobWithoutAnAgentLeavesTheCountersAlone
+// — while the CONSUMPTION LEDGER's chain has no agent level at all and a
+// runner that prompts one session directly has a job and no agent. Dropping
+// those here took that whole population out of the spend authority's record.
+func TestWithTurnAttribution_RequiresAJob(t *testing.T) {
+	t.Run("a job without an agent is carried", func(t *testing.T) {
+		ctx := WithTurnAttribution(context.Background(), TurnAttribution{JobID: "job-1", TaskID: "task-1"})
+		got := TurnAttributionFromContext(ctx)
+		if got.JobID != "job-1" || got.TaskID != "task-1" {
+			t.Fatalf("TurnAttributionFromContext() = %+v, want job-1/task-1", got)
+		}
+	})
 	for name, attribution := range map[string]TurnAttribution{
-		"no agent": {JobID: "job-1"},
-		"no job":   {AgentID: "agent-1"},
-		"neither":  {},
+		"no job":  {AgentID: "agent-1"},
+		"neither": {},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := WithTurnAttribution(context.Background(), attribution)
 			if got := TurnAttributionFromContext(ctx); got != (TurnAttribution{}) {
-				t.Fatalf("TurnAttributionFromContext() = %+v, want the zero value for an incomplete attribution", got)
+				t.Fatalf("TurnAttributionFromContext() = %+v, want the zero value; there is nothing to attribute to", got)
 			}
 		})
 	}

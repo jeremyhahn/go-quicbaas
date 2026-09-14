@@ -18,6 +18,8 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // =============================================================================
@@ -241,11 +243,9 @@ func boundReplayTurns(turns []ReplayTurn, budget int) ([]ReplayTurn, int) {
 // =============================================================================
 
 // replayPrimingHeader introduces the replayed transcript to the agent.
-const replayPrimingHeader = "You are resuming an earlier session that was interrupted when its host " +
-	"process restarted. You have no memory of it. The conversation so far is " +
-	"reproduced below so you can continue it coherently. Read it, then reply " +
-	"with READY and nothing else — do not act on the earlier turns, they are " +
-	"already done."
+func replayPrimingHeader() string {
+	return workflowPrompts.MustRender("resume_priming", nil)
+}
 
 // PrimingMessage renders the transcript as the single message a fresh agent
 // process is primed with.
@@ -260,7 +260,7 @@ func (t *ReplayTranscript) PrimingMessage() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(replayPrimingHeader)
+	b.WriteString(replayPrimingHeader())
 	if t.SystemPrompt != "" {
 		b.WriteString("\n\n--- session instructions ---\n")
 		b.WriteString(t.SystemPrompt)
@@ -269,9 +269,10 @@ func (t *ReplayTranscript) PrimingMessage() string {
 	b.WriteString(t.SessionID)
 	b.WriteString(" ---\n")
 	if t.Omitted > 0 {
-		b.WriteString("[")
-		b.WriteString(strconv.Itoa(t.Omitted))
-		b.WriteString(" earlier turn(s) omitted: they exceeded the replay budget and are NOT available to you]\n")
+		b.WriteString(workflowPrompts.MustRender("resume_priming_omitted", prompts.Vars{
+			"count": strconv.Itoa(t.Omitted),
+		}))
+		b.WriteString("\n")
 	}
 	for _, turn := range t.Turns {
 		b.WriteString("\n[")

@@ -21,6 +21,7 @@ import (
 	"io"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -142,12 +143,12 @@ func (r *ExecContainerRuntime) Run(ctx context.Context, spec *ContainerSpec) (st
 			strings.Contains(stderrStr, "manifest unknown") {
 			return "", &ContainerImagePullError{
 				Image: spec.Image,
-				Cause: &CommandError{Output: stderrStr},
+				Cause: &CommandError{Command: r.command, Op: "run", Output: stderrStr},
 			}
 		}
 		return "", &ContainerStartError{
 			Image: spec.Image,
-			Cause: &CommandError{Output: stderrStr},
+			Cause: &CommandError{Command: r.command, Op: "run", Output: stderrStr},
 		}
 	}
 
@@ -297,7 +298,7 @@ func (r *ExecContainerRuntime) Stop(ctx context.Context, containerID string) err
 		}
 		return &ContainerStopError{
 			ContainerID: containerID,
-			Cause:       &CommandError{Output: stderrStr},
+			Cause:       &CommandError{Command: r.command, Op: "stop", Output: stderrStr},
 		}
 	}
 	return nil
@@ -322,7 +323,7 @@ func (r *ExecContainerRuntime) Remove(ctx context.Context, containerID string) e
 		}
 		return &ContainerStopError{
 			ContainerID: containerID,
-			Cause:       &CommandError{Output: stderrStr},
+			Cause:       &CommandError{Command: r.command, Op: "rm", Output: stderrStr},
 		}
 	}
 	return nil
@@ -350,7 +351,7 @@ func (r *ExecContainerRuntime) Logs(ctx context.Context, containerID string) (io
 		}
 		return nil, &TransportError{
 			Operation: "logs",
-			Cause:     &CommandError{Output: stderrStr},
+			Cause:     &CommandError{Command: r.command, Op: "logs", Output: stderrStr},
 		}
 	}
 
@@ -376,7 +377,7 @@ func (r *ExecContainerRuntime) IsRunning(ctx context.Context, containerID string
 		}
 		return false, &TransportError{
 			Operation: "inspect",
-			Cause:     &CommandError{Output: stderrStr},
+			Cause:     &CommandError{Command: r.command, Op: "inspect", Output: stderrStr},
 		}
 	}
 
@@ -405,7 +406,7 @@ func (r *ExecContainerRuntime) Pull(ctx context.Context, image string) error {
 	if err := cmd.Run(); err != nil {
 		return &ContainerImagePullError{
 			Image: image,
-			Cause: &CommandError{Output: strings.TrimSpace(stderr.String())},
+			Cause: &CommandError{Command: r.command, Op: "pull", Output: strings.TrimSpace(stderr.String())},
 		}
 	}
 
@@ -464,6 +465,10 @@ func (r *ExecContainerRuntime) appendCommonRunArgs(args []string, spec *Containe
 
 	if spec.WorkDir != "" {
 		args = append(args, "--workdir", spec.WorkDir)
+	}
+
+	if spec.MemoryBytes > 0 {
+		args = append(args, "--memory", strconv.FormatInt(spec.MemoryBytes, 10))
 	}
 
 	// Privilege is emitted here so the launched container matches the spec
@@ -579,14 +584,51 @@ func truncateID(id string) string {
 	return id
 }
 
-// CommandError wraps the stderr output from a failed exec.Command.
+// CommandError is a container runtime invocation that failed, and the bytes it
+// printed while failing.
 type CommandError struct {
+	// Command and Op name the invocation — the runtime binary and its
+	// subcommand, "docker" and "run". They ARE rendered: an operator reading a
+	// failure needs to know which command produced it, and neither is
+	// process-authored text.
+	Command string
+	Op      string
+
+	// Output is the process's captured stderr.
+	//
+	// IT IS NEVER RENDERED BY Error(), and the rule lives on the field rather
+	// than at the call sites for the reason StreamJSONProcessExitedError gives
+	// at length (errors.go): an error's string reaches every %v, %s, structured
+	// logger field and wrapped-error chain in the process, so a redaction
+	// applied at one call site is a redaction the next call site does not have.
+	// This type was the second instance of that — measured 2026-08-27 (review
+	// 1330): Error() returned this field verbatim, and go-quicbaas#198's
+	// surfacing path then published a parked item's failure text as a COMMENT
+	// ON A FORGE ISSUE. A container command prints whatever it prints, and a
+	// build or verification step that echoes a token before dying puts that
+	// token here.
+	//
+	// The bytes stay ON THE FIELD for callers with somewhere safe to put them
+	// and the sense to ask by name — a classifier, or an operator surface
+	// behind authorization. Nothing gets them by accident.
 	Output string
 }
 
 // Error implements the error interface.
+//
+// It names the invocation and the SIZE of the withheld output, never the
+// output. The count is what tells an operator there is evidence and roughly
+// how much, without being the evidence.
 func (e *CommandError) Error() string {
-	return e.Output
+	invocation := strings.TrimSpace(e.Command + " " + e.Op)
+	if invocation == "" {
+		invocation = "container runtime command"
+	}
+	msg := invocation + " failed"
+	if n := len(e.Output); n > 0 {
+		msg += " (" + strconv.Itoa(n) + " bytes of output withheld)"
+	}
+	return msg
 }
 
 // cmdReadCloser wraps an exec.Cmd stdout pipe so the caller can read logs

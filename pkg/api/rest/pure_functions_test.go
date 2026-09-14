@@ -1096,10 +1096,14 @@ func TestGetClientIPExhaustive(t *testing.T) {
 			expectedIP:    "192.168.1.1",
 		},
 		{
-			name:          "X-Forwarded-For with only comma returns trimmed comma",
+			// A lone comma names no client, so the header contributes nothing
+			// and the peer stands. The previous implementation returned ","
+			// itself -- a value that is not an address, which then became a
+			// rate-limit key and an audit record's IPAddress.
+			name:          "X-Forwarded-For of only a comma falls through to the peer",
 			xForwardedFor: ",",
 			remoteAddr:    "127.0.0.1:8080",
-			expectedIP:    ",", // Index returns 0, condition idx > 0 false, returns TrimSpace(",") = ","
+			expectedIP:    "127.0.0.1",
 		},
 		{
 			name:          "X-Forwarded-For with multiple commas",
@@ -1142,7 +1146,9 @@ func TestGetClientIPExhaustive(t *testing.T) {
 			}
 			req.RemoteAddr = tt.remoteAddr
 
-			result := getClientIP(req)
+			// See resolvedViaOwnPeer: this table covers header parsing, which is
+			// only reached from a peer the operator trusts.
+			result := resolvedViaOwnPeer(t, req)
 			assert.Equal(t, tt.expectedIP, result)
 		})
 	}

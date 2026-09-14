@@ -48,6 +48,21 @@ var (
 	projectGitRepoURL       string
 	projectGitBranch        string
 	projectGitCurrentSHA    string
+	projectDefaultWorkflow  string
+	projectClearDefaultWF   bool
+	projectAutonomous       bool
+	projectContextRepos     []string
+	projectClearContextRepo bool
+	projectGitAuthorName    string
+	projectGitAuthorEmail   string
+	projectGitSigningOn     bool
+	projectGitSigningAlg    string
+	projectGitSigningKey    string
+	projectGitSigningScope  string
+	projectGitSigningOwner  string
+	projectGitSSHKey        string
+	projectGitSSHKeyScope   string
+	projectGitSSHKeyOwner   string
 	projectTokenBudget      int64
 	projectGPUMinutes       int64
 	projectMaxConcurrency   int
@@ -68,6 +83,72 @@ type InvalidProjectRoleError struct {
 // Error implements the error interface.
 func (e *InvalidProjectRoleError) Error() string {
 	return "invalid project role: " + e.Role + " (valid: " + strings.Join(projectRoleNames(), ", ") + ")"
+}
+
+// InvalidContextRepoFlagError indicates a --context-repo value the CLI could
+// not read as name=<n>,url=<u>,ref=<r>.
+type InvalidContextRepoFlagError struct {
+	// Value is the flag value as the operator typed it.
+	Value string
+
+	// Reason says what was wrong with it.
+	Reason string
+}
+
+// Error implements the error interface.
+func (e *InvalidContextRepoFlagError) Error() string {
+	return "invalid --context-repo " + e.Value + ": " + e.Reason +
+		" (expected name=<name>,url=<repo-url>,ref=<branch|tag|sha>)"
+}
+
+// contextRepoFlagKeys maps a --context-repo key to the field it fills, giving
+// O(1) dispatch and one place to name the accepted vocabulary.
+var contextRepoFlagKeys = map[string]func(*projectSDK.ContextRepo, string){
+	"name": func(r *projectSDK.ContextRepo, v string) { r.Name = v },
+	"url":  func(r *projectSDK.ContextRepo, v string) { r.RepoURL = v },
+	"ref":  func(r *projectSDK.ContextRepo, v string) { r.Ref = v },
+}
+
+// parseContextRepoFlag reads one --context-repo value.
+func parseContextRepoFlag(value string) (projectSDK.ContextRepo, error) {
+	var repo projectSDK.ContextRepo
+	for _, field := range strings.Split(value, ",") {
+		key, val, found := strings.Cut(strings.TrimSpace(field), "=")
+		if !found {
+			return repo, &InvalidContextRepoFlagError{Value: value, Reason: field + " is not key=value"}
+		}
+		apply, known := contextRepoFlagKeys[strings.ToLower(strings.TrimSpace(key))]
+		if !known {
+			return repo, &InvalidContextRepoFlagError{Value: value, Reason: "unknown key " + key}
+		}
+		apply(&repo, strings.TrimSpace(val))
+	}
+	switch {
+	case repo.Name == "":
+		return repo, &InvalidContextRepoFlagError{Value: value, Reason: "name is required"}
+	case repo.RepoURL == "":
+		return repo, &InvalidContextRepoFlagError{Value: value, Reason: "url is required"}
+	case repo.Ref == "":
+		return repo, &InvalidContextRepoFlagError{Value: value, Reason: "ref is required"}
+	}
+	return repo, nil
+}
+
+// parseContextRepoFlags reads every --context-repo value. It returns nil when
+// the operator passed none, so an update leaves the list alone.
+func parseContextRepoFlags(values []string) ([]projectSDK.ContextRepo, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	repos := make([]projectSDK.ContextRepo, 0, len(values))
+	for _, value := range values {
+		repo, err := parseContextRepoFlag(value)
+		if err != nil {
+			return nil, err
+		}
+		repos = append(repos, repo)
+	}
+	return repos, nil
 }
 
 // ProjectSelectorRequiredError indicates neither a project ID argument nor
@@ -157,6 +238,19 @@ func addProjectMutationFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&projectDefaultLeadAgent, "default-lead-agent", "", "Default lead agent ID for workflow runs")
 	cmd.Flags().StringVar(&projectGitRepoURL, "git-repo", "", "Remote git repository URL")
 	cmd.Flags().StringVar(&projectGitBranch, "git-branch", "", "Default git branch (e.g. main)")
+	cmd.Flags().StringVar(&projectDefaultWorkflow, "default-workflow", "", "Tenant-scoped workflow a Task auto-spawns into (must be registered)")
+	cmd.Flags().BoolVar(&projectAutonomous, "autonomous", false, "Turn autonomous development on: the poller adopts work and the dispatcher starts jobs for this project")
+	cmd.Flags().StringArrayVar(&projectContextRepos, "context-repo", nil, "Repository the worker clones beside the checkout, as name=<name>,url=<repo-url>,ref=<branch|tag|sha> (repeatable)")
+	cmd.Flags().StringVar(&projectGitAuthorName, "git-author-name", "", "Author name recorded on commits made from the workspace")
+	cmd.Flags().StringVar(&projectGitAuthorEmail, "git-author-email", "", "Author email recorded on commits made from the workspace")
+	cmd.Flags().BoolVar(&projectGitSigningOn, "git-signing", false, "Sign commits with the KMS-held signing key (requires --git-signing-key)")
+	cmd.Flags().StringVar(&projectGitSigningAlg, "git-signing-algorithm", "", "Signing key algorithm: ED25519 (default) or ECDSA-P256 (FIPS)")
+	cmd.Flags().StringVar(&projectGitSigningKey, "git-signing-key", "", "KMS signing key name")
+	cmd.Flags().StringVar(&projectGitSigningScope, "git-signing-key-scope", "", "KMS signing key scope (user, tenant, service)")
+	cmd.Flags().StringVar(&projectGitSigningOwner, "git-signing-key-owner", "", "KMS signing key owner")
+	cmd.Flags().StringVar(&projectGitSSHKey, "git-ssh-key", "", "KMS SSH key an ssh:// repository is reached with (defaults to the signing key)")
+	cmd.Flags().StringVar(&projectGitSSHKeyScope, "git-ssh-key-scope", "", "KMS SSH key scope (user, tenant, service)")
+	cmd.Flags().StringVar(&projectGitSSHKeyOwner, "git-ssh-key-owner", "", "KMS SSH key owner")
 	cmd.Flags().Int64Var(&projectTokenBudget, "token-budget", 0, "Maximum LLM token budget (0 = unlimited)")
 	cmd.Flags().Int64Var(&projectGPUMinutes, "gpu-minutes", 0, "Maximum GPU compute budget in minutes (0 = unlimited)")
 	cmd.Flags().IntVar(&projectMaxConcurrency, "max-concurrency", 0, "Maximum concurrent workflow runs (0 = unlimited)")
@@ -201,6 +295,11 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 		return formatError(err)
 	}
 
+	contextRepos, err := parseContextRepoFlags(projectContextRepos)
+	if err != nil {
+		return formatError(err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
@@ -218,6 +317,20 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 		GPUMinutes:       projectGPUMinutes,
 		MaxConcurrency:   projectMaxConcurrency,
 		Metadata:         projectMetadata,
+
+		DefaultWorkflow:     projectDefaultWorkflow,
+		Autonomous:          projectAutonomous,
+		ContextRepos:        contextRepos,
+		GitAuthorName:       projectGitAuthorName,
+		GitAuthorEmail:      projectGitAuthorEmail,
+		GitSigningEnabled:   projectGitSigningOn,
+		GitSigningAlgorithm: projectGitSigningAlg,
+		GitSigningKeyName:   projectGitSigningKey,
+		GitSigningKeyScope:  projectGitSigningScope,
+		GitSigningKeyOwner:  projectGitSigningOwner,
+		GitSSHKeyName:       projectGitSSHKey,
+		GitSSHKeyScope:      projectGitSSHKeyScope,
+		GitSSHKeyOwner:      projectGitSSHKeyOwner,
 	})
 	if err != nil {
 		return formatError(err)
@@ -341,14 +454,65 @@ Examples:
 	cmd.Flags().StringVar(&projectName, "name", "", "New project name")
 	cmd.Flags().BoolVar(&projectClearDescription, "clear-description", false, "Remove the project description")
 	cmd.Flags().StringVar(&projectGitCurrentSHA, "git-sha", "", "Record the latest observed commit SHA")
+	cmd.Flags().BoolVar(&projectClearDefaultWF, "clear-default-workflow", false, "Remove the default workflow so Tasks are never auto-spawned")
+	cmd.Flags().BoolVar(&projectClearContextRepo, "clear-context-repos", false, "Remove every context repository from the project")
 	addProjectMutationFlags(cmd)
 
 	return cmd
 }
 
+// gitSigningFlag reports the --git-signing value only when the operator
+// passed it, so an update leaves signing unchanged unless told otherwise.
+func gitSigningFlag(cmd *cobra.Command) *bool {
+	if cmd == nil || !cmd.Flags().Changed("git-signing") {
+		return nil
+	}
+	enabled := projectGitSigningOn
+	return &enabled
+}
+
+// autonomousFlag reports the --autonomous value only when the operator passed
+// it, so an update leaves autonomous development unchanged unless told
+// otherwise.
+func autonomousFlag(cmd *cobra.Command) *bool {
+	if cmd == nil || !cmd.Flags().Changed("autonomous") {
+		return nil
+	}
+	enabled := projectAutonomous
+	return &enabled
+}
+
+// quotaFlagInt64 reports a numeric quota only when the operator passed the
+// flag, so an update leaves it unchanged unless told otherwise.
+//
+// PRESENCE, NOT NON-ZERO, because zero is a real value here: a quota of zero
+// means UNLIMITED. Reading the variable alone could not tell "--token-budget
+// 0" from "flag not given", so lifting a cap was unexpressible.
+func quotaFlagInt64(cmd *cobra.Command, name string, value int64) *int64 {
+	if cmd == nil || !cmd.Flags().Changed(name) {
+		return nil
+	}
+	v := value
+	return &v
+}
+
+// quotaFlagInt is quotaFlagInt64 for the one quota the record keeps as int.
+func quotaFlagInt(cmd *cobra.Command, name string, value int) *int {
+	if cmd == nil || !cmd.Flags().Changed(name) {
+		return nil
+	}
+	v := value
+	return &v
+}
+
 // runProjectUpdate executes the project update command.
 func runProjectUpdate(cmd *cobra.Command, args []string) error {
 	client, err := projectClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+
+	contextRepos, err := parseContextRepoFlags(projectContextRepos)
 	if err != nil {
 		return formatError(err)
 	}
@@ -369,10 +533,26 @@ func runProjectUpdate(cmd *cobra.Command, args []string) error {
 		GitRepoURL:       projectGitRepoURL,
 		GitDefaultBranch: projectGitBranch,
 		GitCurrentSHA:    projectGitCurrentSHA,
-		TokenBudget:      projectTokenBudget,
-		GPUMinutes:       projectGPUMinutes,
-		MaxConcurrency:   projectMaxConcurrency,
+		TokenBudget:      quotaFlagInt64(cmd, "token-budget", projectTokenBudget),
+		GPUMinutes:       quotaFlagInt64(cmd, "gpu-minutes", projectGPUMinutes),
+		MaxConcurrency:   quotaFlagInt(cmd, "max-concurrency", projectMaxConcurrency),
 		Metadata:         projectMetadata,
+
+		DefaultWorkflow:      projectDefaultWorkflow,
+		ClearDefaultWorkflow: projectClearDefaultWF,
+		Autonomous:           autonomousFlag(cmd),
+		ContextRepos:         contextRepos,
+		ClearContextRepos:    projectClearContextRepo,
+		GitAuthorName:        projectGitAuthorName,
+		GitAuthorEmail:       projectGitAuthorEmail,
+		GitSigningEnabled:    gitSigningFlag(cmd),
+		GitSigningAlgorithm:  projectGitSigningAlg,
+		GitSigningKeyName:    projectGitSigningKey,
+		GitSigningKeyScope:   projectGitSigningScope,
+		GitSigningKeyOwner:   projectGitSigningOwner,
+		GitSSHKeyName:        projectGitSSHKey,
+		GitSSHKeyScope:       projectGitSSHKeyScope,
+		GitSSHKeyOwner:       projectGitSSHKeyOwner,
 	})
 	if err != nil {
 		return formatError(err)
@@ -570,6 +750,19 @@ func formatProjectDetail(info *projectSDK.ProjectInfo, format string, w io.Write
 		if info.Git.CurrentSHA != "" {
 			fmt.Fprintf(tw, "Git SHA:\t%s\n", info.Git.CurrentSHA)
 		}
+		if info.DefaultWorkflow != "" {
+			fmt.Fprintf(tw, "Default Workflow:\t%s\n", info.DefaultWorkflow)
+		}
+		fmt.Fprintf(tw, "Autonomous:\t%v\n", info.Autonomous)
+		if info.Git.Author.Name != "" || info.Git.Author.Email != "" {
+			fmt.Fprintf(tw, "Git Author:\t%s <%s>\n", info.Git.Author.Name, info.Git.Author.Email)
+		}
+		if info.Git.Signing.Enabled {
+			fmt.Fprintf(tw, "Git Signing:\t%s (%s)\n", info.Git.Signing.Key.Name, orDash(info.Git.Signing.Algorithm))
+		}
+		if info.Git.SSHKey.Name != "" {
+			fmt.Fprintf(tw, "Git SSH Key:\t%s\n", info.Git.SSHKey.Name)
+		}
 		fmt.Fprintf(tw, "Token Budget:\t%s\n", formatProjectQuota(info.Quotas.TokenBudget))
 		fmt.Fprintf(tw, "GPU Minutes:\t%s\n", formatProjectQuota(info.Quotas.GPUMinutes))
 		fmt.Fprintf(tw, "Max Concurrency:\t%s\n", formatProjectQuota(int64(info.Quotas.MaxConcurrency)))
@@ -583,6 +776,12 @@ func formatProjectDetail(info *projectSDK.ProjectInfo, format string, w io.Write
 			fmt.Fprintf(tw, "\nAgent Roles:\n")
 			for _, agentID := range sortedAgentIDs(info.Permissions.AgentRoles) {
 				fmt.Fprintf(tw, "  %s:\t%s\n", agentID, info.Permissions.AgentRoles[agentID])
+			}
+		}
+		if len(info.ContextRepos) > 0 {
+			fmt.Fprintf(tw, "\nContext Repos:\n")
+			for _, repo := range info.ContextRepos {
+				fmt.Fprintf(tw, "  %s:\t%s@%s\n", repo.Name, repo.RepoURL, repo.Ref)
 			}
 		}
 		if len(info.Metadata) > 0 {

@@ -18,7 +18,6 @@ package rest
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -57,12 +56,9 @@ func TestRouteSurfaceParity(t *testing.T) {
 	}
 	sort.Strings(got)
 
-	raw, err := os.ReadFile("testdata/route_surface.golden")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	sort.Strings(want)
+	// Base plus whatever the build's feature tags contribute; see
+	// readGoldenLines (routes_golden_test.go) for why this is not one file.
+	want := readGoldenLines(t, "route_surface")
 
 	// expand canonicalizes chi's two representations of a collection route.
 	// The historical registration nested Get("/") inside Route("/parent"),

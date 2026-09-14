@@ -56,8 +56,27 @@ type mockJobStorage struct {
 	executions []*JobExecution
 	nextID     uint64
 
+	// firingClaims is the store-side claim ledger: one record per
+	// (job, scheduled firing time), written only when absent.
+	firingClaims map[firingClaimKey]*FiringClaim
+
+	// claimBarrier, when set, holds arriving claims until the configured
+	// number of nodes have arrived so the leader-churn tests can force a
+	// genuine race without a sleep.
+	claimBarrier *claimBarrier
+
+	// dueBarrier, when set, holds each node inside GetJobsDueForExecution
+	// until every node has read the due list. Without it the churn tests are
+	// decided by which goroutine happens to run first: a node that ticks
+	// after the winner already completed a recurring job sees NextRun pushed
+	// into the future and finds nothing due, so the test would pass even with
+	// the claim removed. Holding both nodes at the read makes the claim the
+	// only thing that separates them.
+	dueBarrier *claimBarrier
+
 	// Error injection for testing error paths
 	createJobErr              error
+	claimErr                  error
 	getJobErr                 error
 	updateJobErr              error
 	deleteJobErr              error
@@ -75,12 +94,14 @@ type mockJobStorage struct {
 	getJobsDueForExecutionCount atomic.Int32
 	saveExecutionCount          atomic.Int32
 	getExecutionsCount          atomic.Int32
+	claimCount                  atomic.Int32
 }
 
 func newMockJobStorage() *mockJobStorage {
 	return &mockJobStorage{
-		jobs:   make(map[uint64]*Job),
-		nextID: 1,
+		jobs:         make(map[uint64]*Job),
+		firingClaims: make(map[firingClaimKey]*FiringClaim),
+		nextID:       1,
 	}
 }
 
@@ -201,6 +222,10 @@ func (m *mockJobStorage) GetJobsDueForExecution(ctx context.Context, before time
 	m.errMu.RUnlock()
 	if getJobsDueForExecutionErr != nil {
 		return nil, getJobsDueForExecutionErr
+	}
+
+	if m.dueBarrier != nil {
+		m.dueBarrier.wait()
 	}
 
 	m.mu.RLock()
@@ -4227,6 +4252,20 @@ func TestTriggerJobContextCancellation(t *testing.T) {
 			ID:     1,
 			Name:   "test-job",
 			Status: JobStatusPending,
+			// NOT due, so the scheduler's own tick leaves it alone.
+			//
+			// The mock's GetJobsDueForExecution selects on
+			// `Status == Pending && !NextRun.After(before)`, and a zero NextRun
+			// is not after now — so a job written with no NextRun is DUE
+			// IMMEDIATELY. New(nil, storage) ticks every second (types.go
+			// DefaultConfig), so a runner that stalls this goroutine past one
+			// tick lets the scheduler execute job 1 on its own, move it off
+			// JobStatusPending, and TriggerJob's status gate then returns
+			// InvalidJobError — the same failure the filler ids below caused by
+			// a faster route. Only TriggerJob is under test here and it does
+			// not consult NextRun, so putting the job beyond the tick's reach
+			// costs the test nothing.
+			NextRun: time.Now().Add(time.Hour),
 		}
 		storage.mu.Unlock()
 
@@ -4234,17 +4273,35 @@ func TestTriggerJobContextCancellation(t *testing.T) {
 		cancelledCtx, cancel := context.WithCancel(ctx)
 		cancel()
 
-		// Fill up the trigger channel to force select to wait
+		// Pressure the trigger channel with ids that CANNOT be the job under
+		// test.
+		//
+		// This loop used to start at 0, so it enqueued a trigger for job 1 —
+		// the job this test then triggers. The scheduler is running and drains
+		// the channel concurrently, so it would execute job 1 and move it off
+		// JobStatusPending; TriggerJob's status gate then refused with
+		// InvalidJobError, which is neither outcome asserted below. On an idle
+		// machine the test's own TriggerJob usually won that race, so it passed;
+		// on a loaded runner the drain won and the job reddened lanes whose
+		// diffs never touched the scheduler (#308). Measured under load before
+		// the fix, InvalidJobError appeared in roughly 1 run in 60.
+		const fillerBase = 1000 // above any id this test registers
 		for i := 0; i < 100; i++ {
 			select {
-			case scheduler.triggerCh <- uint64(i):
+			case scheduler.triggerCh <- triggerRequest{jobID: uint64(fillerBase + i)}:
 			default:
 			}
 		}
 
 		err = scheduler.TriggerJob(cancelledCtx, 1, "")
-		// Should either succeed (buffer not full) or return context error
-		// Either is acceptable behavior
+
+		// Both outcomes are legitimate, and NOT because the buffer may or may
+		// not be full: TriggerJob selects over the send, ctx.Done() and a
+		// default. With an already-cancelled context ctx.Done() is always
+		// ready, so the default arm is unreachable here and the queue-full
+		// refusal cannot occur. When the buffer also has room, two arms are
+		// ready at once and Go picks between them UNIFORMLY AT RANDOM — that
+		// randomness, not timing, is why this accepts either answer.
 		if err != nil {
 			assert.Equal(t, context.Canceled, err)
 		}
@@ -4825,7 +4882,7 @@ func TestExecuteJobSkipsTerminalOrPausedJob(t *testing.T) {
 				Status:    JobStatusPending,
 				OwnerType: OwnerTypeSystem,
 			}
-			engine.executeJob(ctx, stale)
+			engine.executeJob(ctx, stale, time.Time{})
 
 			select {
 			case <-handlerCalled:
@@ -4864,7 +4921,7 @@ func TestExecuteJobSkipsDeletedJob(t *testing.T) {
 		Status:    JobStatusPending,
 		OwnerType: OwnerTypeSystem,
 	}
-	engine.executeJob(ctx, stale)
+	engine.executeJob(ctx, stale, time.Time{})
 
 	select {
 	case <-handlerCalled:
@@ -4985,7 +5042,7 @@ func TestJobTenantID(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, jobTenantID(tc.job))
+			assert.Equal(t, tc.want, JobTenantID(tc.job))
 		})
 	}
 }
@@ -4998,4 +5055,104 @@ func TestIsJobNotFound(t *testing.T) {
 	assert.True(t, isJobNotFound(ErrStorageError{Op: "GetJob", Cause: JobNotFoundError{JobID: 1}}))
 	assert.False(t, isJobNotFound(nil))
 	assert.False(t, isJobNotFound(errors.New("boom")))
+}
+
+// TestTriggerQueueFull_IsAnErrorNotASilentDrop (Codex 879 #2 on
+// go-quicbaas#83): a full trigger queue used to return nil — "the next tick
+// will pick it up", which is true only of a DUE job. A paused job, or a
+// stranded firing at or below its claim mark, is never picked up by the tick,
+// so the dropped trigger was a repair reported done that never happened.
+// Driven internally: the queue is filled to capacity so the refusal branch is
+// deterministic rather than a race against the drain.
+//
+// Mutation evidence: restoring `return nil` on the default branch fails all
+// three assertions.
+func TestTriggerQueueFull_IsAnErrorNotASilentDrop(t *testing.T) {
+	storage := newMockJobStorage()
+	engine := New(DefaultConfig(), storage)
+	engine.running.Store(true) // queue semantics only; nothing drains
+	job := seedRunningJob(t, storage, runningRecoveryJob())
+	job.Status = JobStatusPending
+	if err := storage.UpdateJob(context.Background(), job); err != nil {
+		t.Fatalf("UpdateJob: %v", err)
+	}
+
+	for i := 0; i < cap(engine.triggerCh); i++ {
+		engine.triggerCh <- triggerRequest{jobID: 999, scope: ""}
+	}
+
+	var full TriggerQueueFullError
+	if err := engine.TriggerJob(context.Background(), job.ID, JobTenantID(job)); !errors.As(err, &full) {
+		t.Fatalf("TriggerJob on a full queue = %v, want TriggerQueueFullError", err)
+	}
+	if full.JobID != job.ID {
+		t.Fatalf("the refusal names job %d, want %d", full.JobID, job.ID)
+	}
+	if err := engine.RetriggerStrandedFiring(context.Background(), job.ID, JobTenantID(job), job.NextRun); !errors.As(err, &full) {
+		t.Fatalf("RetriggerStrandedFiring on a full queue = %v, want TriggerQueueFullError", err)
+	}
+}
+
+// TestExecuteGate_BindsDispatchToFiringAndRefusesRunning drives the DRAIN
+// directly (triggerJobByID), past every queue-time precheck, because the
+// prechecks race the execution window and the executeJob gate is the
+// authoritative one (Codex 879 #1): a dispatch accepted while the job was
+// Pending must still decline if the job began running — or moved to another
+// firing — before the drain reached it.
+//
+// Mutation evidence: passing a zero firing through the drain (unbinding the
+// repair) runs the handler in the moved-firing case; removing executeJob's
+// Running refusal runs it beside the live execution. Both fail here.
+func TestExecuteGate_BindsDispatchToFiringAndRefusesRunning(t *testing.T) {
+	firing := time.Now().Add(24 * time.Hour)
+	newFixture := func(t *testing.T, status JobStatus, nextRun time.Time) (*SchedulerEngine, *mockJobStorage, *Job, *atomic.Int32) {
+		t.Helper()
+		storage := newMockJobStorage()
+		engine := New(DefaultConfig(), storage)
+		var runs atomic.Int32
+		if err := engine.RegisterHandler("gate-handler", func(context.Context, *Job) (*JobResult, error) {
+			runs.Add(1)
+			return &JobResult{}, nil
+		}); err != nil {
+			t.Fatalf("RegisterHandler: %v", err)
+		}
+		job := seedRunningJob(t, storage, &Job{
+			Name: "gated", Type: JobTypeRecurring, Schedule: "*/5 * * * *", Handler: "gate-handler",
+			Status: status, NextRun: nextRun, UpdatedAt: nextRun, OwnerType: OwnerTypeSystem,
+		})
+		return engine, storage, job, &runs
+	}
+
+	t.Run("a bound dispatch declines a job that began running", func(t *testing.T) {
+		engine, _, job, runs := newFixture(t, JobStatusRunning, firing)
+		engine.triggerJobByID(context.Background(), triggerRequest{jobID: job.ID, firing: firing})
+		engine.wg.Wait()
+		if runs.Load() != 0 {
+			t.Fatal("the repair ran the handler beside the live execution")
+		}
+	})
+	t.Run("a MANUAL dispatch declines a job that began running", func(t *testing.T) {
+		engine, _, job, runs := newFixture(t, JobStatusRunning, firing)
+		engine.triggerJobByID(context.Background(), triggerRequest{jobID: job.ID})
+		engine.wg.Wait()
+		if runs.Load() != 0 {
+			t.Fatal("a manual trigger ran the handler beside the live execution")
+		}
+	})
+	t.Run("a bound dispatch declines a firing that moved on", func(t *testing.T) {
+		engine, _, job, runs := newFixture(t, JobStatusPending, firing.Add(time.Hour))
+		engine.triggerJobByID(context.Background(), triggerRequest{jobID: job.ID, firing: firing})
+		engine.wg.Wait()
+		if runs.Load() != 0 {
+			t.Fatal("the repair ran a firing the job had already moved past")
+		}
+	})
+	t.Run("a bound dispatch on the observed firing runs once", func(t *testing.T) {
+		engine, _, job, runs := newFixture(t, JobStatusPending, firing)
+		engine.triggerJobByID(context.Background(), triggerRequest{jobID: job.ID, firing: firing})
+		engine.wg.Wait()
+		if got := runs.Load(); got != 1 {
+			t.Fatalf("the honest repair ran %d time(s), want 1", got)
+		}
+	})
 }

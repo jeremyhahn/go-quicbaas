@@ -133,7 +133,7 @@ part of the job's identity, not a label you adjust afterwards.
 
 - **It does not execute arbitrary commands.** Jobs invoke registered Go
   handlers. There is no shell, no container, and no remote exec here — that is
-  the orchestrator's job (`../agent-orchestration/`).
+  the orchestrator's job (`../software-factory/`).
 - **It is not a workflow engine.** There is no dependency graph between jobs, no
   fan-out/fan-in, and no retry policy expressed at the schedule level. Chaining
   belongs in the handler or in an orchestration workflow.

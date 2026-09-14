@@ -2705,7 +2705,6 @@ func TestProcessAuthentication_ExistingLink(t *testing.T) {
 		Email:    "existing@example.com",
 		Username: "existing-user",
 		Name:     "Existing User",
-		Enabled:  true,
 	})
 	require.NoError(t, err)
 
@@ -2752,7 +2751,6 @@ func TestProcessAuthentication_LinkByEmail(t *testing.T) {
 		Email:    "linkable@example.com",
 		Username: "linkable-user",
 		Name:     "Linkable User",
-		Enabled:  true,
 	})
 	require.NoError(t, err)
 
@@ -2955,7 +2953,6 @@ func TestGenerateTokenResult_WithoutOIDCProvider(t *testing.T) {
 		Email:    "tokenuser@example.com",
 		Username: "tokenuser",
 		Name:     "Token User",
-		Enabled:  true,
 	})
 	require.NoError(t, err)
 
@@ -2983,7 +2980,6 @@ func TestGenerateTokenResult_Provisioned(t *testing.T) {
 		Email:    "provuser@example.com",
 		Username: "provuser",
 		Name:     "Provisioned User",
-		Enabled:  true,
 	})
 	require.NoError(t, err)
 
@@ -3061,7 +3057,7 @@ func TestMarkExportFailed_Success(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant-mark-export"
-	userID := "user-mark-export"
+	userID := "41"
 
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 
@@ -3093,7 +3089,7 @@ func TestMarkDeletionFailed_Success(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant-mark-deletion"
-	userID := "user-mark-deletion"
+	userID := "42"
 
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 

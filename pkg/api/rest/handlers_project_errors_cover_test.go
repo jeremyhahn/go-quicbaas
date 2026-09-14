@@ -37,6 +37,9 @@ func TestHandleProjectError_Dispatch(t *testing.T) {
 		{"already_exists", &service.ProjectAlreadyExistsError{TenantID: "t", Name: "n"}, http.StatusConflict},
 		{"invalid", &service.ProjectInvalidError{Field: "name", Message: "bad"}, http.StatusBadRequest},
 		{"access_denied", &service.ProjectAccessDeniedError{ProjectID: "p", AgentID: "a"}, http.StatusForbidden},
+		// A project the authorizer could not read is a refusal, not a server
+		// fault: it could not read the rule, so it refuses (go-quicbaas#634).
+		{"unresolved", &service.ProjectUnresolvedError{TenantID: "t", ProjectID: "p", AgentID: "a"}, http.StatusForbidden},
 		{"role_invalid", &service.ProjectRoleInvalidError{Role: "x"}, http.StatusBadRequest},
 		{"internal", stderrors.New("boom"), http.StatusInternalServerError},
 	}

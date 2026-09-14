@@ -175,6 +175,7 @@ func TestEmbeddingHandler_HandleGetProviderInfo_UnknownProvider(t *testing.T) {
 			embedding.ProviderOpenAI,
 			embedding.ProviderOllama,
 			embedding.ProviderLMStudio,
+			embedding.ProviderNPU,
 		}
 		for _, provider := range knownProviders {
 			pbProvider := sdkProviderToProto(provider)
@@ -261,6 +262,7 @@ func TestEmbeddingHandler_HandleSetDefaultProvider_UnknownProvider(t *testing.T)
 			embedding.ProviderOpenAI,
 			embedding.ProviderOllama,
 			embedding.ProviderLMStudio,
+			embedding.ProviderNPU,
 		}
 		for _, provider := range knownProviders {
 			pbProvider := sdkProviderToProto(provider)
@@ -465,5 +467,32 @@ func TestProtoProviderInfoToSDK_NilInfo(t *testing.T) {
 	result := protoProviderInfoToSDK(nil)
 	if result != nil {
 		t.Error("protoProviderInfoToSDK(nil) should return nil")
+	}
+}
+
+// TestSDKProviderRoundTripsEveryProvider guards both SDK conversion tables.
+//
+// handleGetProviderInfo and handleSetDefaultProvider reject any non-empty
+// provider that maps to UNSPECIFIED, so a provider missing from
+// sdkProviderToProto is not merely mistranslated -- it is unreachable through
+// the SDK entirely, before the request ever leaves the client.
+func TestSDKProviderRoundTripsEveryProvider(t *testing.T) {
+	providers := []embedding.Provider{
+		embedding.ProviderVoyage,
+		embedding.ProviderOpenAI,
+		embedding.ProviderOllama,
+		embedding.ProviderLMStudio,
+		embedding.ProviderNPU,
+	}
+
+	for _, provider := range providers {
+		encoded := sdkProviderToProto(provider)
+		if encoded == pb.EmbeddingProvider_EMBEDDING_PROVIDER_UNSPECIFIED {
+			t.Errorf("provider %q has no proto enum value, so the SDK would reject it as unknown", provider)
+			continue
+		}
+		if decoded := protoProviderToSDK(encoded); decoded != provider {
+			t.Errorf("provider %q round-tripped to %q", provider, decoded)
+		}
 	}
 }

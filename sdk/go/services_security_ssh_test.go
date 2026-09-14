@@ -27,6 +27,7 @@ import (
 
 	sshclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/sshfixture"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -132,7 +133,8 @@ func TestSSHServiceRoutesEveryVerb(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, sshclient.MethodExportPublicKey, tr.last().method)
 
-	require.NoError(t, ssh.KnownHosts().Add(ctx, sshclient.AddKnownHostRequest{Host: "h", Fingerprint: "f"}))
+	require.NoError(t, ssh.KnownHosts().Add(ctx,
+		sshclient.AddKnownHostRequest{Host: "h", Fingerprint: sshfixture.HostFingerprint}))
 	assert.Equal(t, sshclient.MethodAddKnownHost, tr.last().method)
 
 	_, err = ssh.KnownHosts().List(ctx, sshclient.ListKnownHostsRequest{})
@@ -245,34 +247,30 @@ func TestSSHSignerRejectsEmptyDigest(t *testing.T) {
 // =============================================================================
 
 func TestSSHKnownHostsVerify(t *testing.T) {
-	pub, _, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-	sshPub, err := gossh.NewPublicKey(pub)
-	require.NoError(t, err)
-	fingerprint := gossh.FingerprintSHA256(sshPub)
+	// The pin carries the checked-in golden constant while Verify is handed
+	// the fixture's public key. They agree only because Verify re-derives
+	// the fingerprint with the production function, so a change there turns
+	// this match into a mismatch.
+	host, other := sshfixture.Host(t), sshfixture.HostAlt(t)
 
 	tr := &sshRecordingTransport{responses: map[string]interface{}{
 		sshclient.MethodListKnownHosts: &sshclient.ListKnownHostsResponse{
-			Items: []*sshclient.Pin{{Host: "git.example.com", Fingerprint: fingerprint}},
+			Items: []*sshclient.Pin{{Host: "git.example.com", Fingerprint: sshfixture.HostFingerprint}},
 		},
 	}}
 	ssh := newSSHTestClient(tr)
 	ctx := context.Background()
 
-	require.NoError(t, ssh.KnownHosts().Verify(ctx, "user", "alice", "git.example.com", sshPub))
+	require.NoError(t, ssh.KnownHosts().Verify(ctx, "user", "alice", "git.example.com", host.Public))
 
 	// A different key for the same host is a mismatch, not a miss.
-	other, _, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-	otherPub, err := gossh.NewPublicKey(other)
-	require.NoError(t, err)
-	err = ssh.KnownHosts().Verify(ctx, "user", "alice", "git.example.com", otherPub)
+	err := ssh.KnownHosts().Verify(ctx, "user", "alice", "git.example.com", other.Public)
 	require.Error(t, err)
 	var mismatch *sshclient.HostKeyMismatchError
 	assert.ErrorAs(t, err, &mismatch)
 
 	// An unpinned host is not found.
-	err = ssh.KnownHosts().Verify(ctx, "user", "alice", "other.example.com", sshPub)
+	err = ssh.KnownHosts().Verify(ctx, "user", "alice", "other.example.com", host.Public)
 	require.Error(t, err)
 	assert.Equal(t, sdkerrors.CodeNotFound, sdkerrors.Code(err))
 
@@ -283,15 +281,11 @@ func TestSSHKnownHostsVerify(t *testing.T) {
 }
 
 func TestSSHAuthorizedKeysGetAndVerify(t *testing.T) {
-	pub, _, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-	sshPub, err := gossh.NewPublicKey(pub)
-	require.NoError(t, err)
-	line := string(gossh.MarshalAuthorizedKey(sshPub))
+	user := sshfixture.User(t)
 
 	tr := &sshRecordingTransport{responses: map[string]interface{}{
 		sshclient.MethodListAuthorizedKeys: &sshclient.ListAuthorizedKeysResponse{
-			Items: []*sshclient.AuthorizedEntry{{Name: "deploy", Line: line}},
+			Items: []*sshclient.AuthorizedEntry{{Name: "deploy", Line: user.AuthorizedLine}},
 		},
 	}}
 	ssh := newSSHTestClient(tr)
@@ -305,9 +299,16 @@ func TestSSHAuthorizedKeysGetAndVerify(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, sdkerrors.CodeNotFound, sdkerrors.Code(err))
 
-	matched, err := ssh.AuthorizedKeys().Verify(ctx, "user", "alice", sshPub)
+	matched, err := ssh.AuthorizedKeys().Verify(ctx, "user", "alice", user.Public)
 	require.NoError(t, err)
 	assert.Equal(t, "deploy", matched.Name)
+	assert.Equal(t, sshfixture.UserFingerprint, gossh.FingerprintSHA256(user.Public),
+		"the key Verify matched must fingerprint to the golden constant")
+
+	// An unrelated key must not match the stored entry.
+	_, err = ssh.AuthorizedKeys().Verify(ctx, "user", "alice", sshfixture.Host(t).Public)
+	require.Error(t, err)
+	assert.Equal(t, sdkerrors.CodeNotFound, sdkerrors.Code(err))
 
 	_, err = ssh.AuthorizedKeys().Verify(ctx, "user", "alice", nil)
 	require.Error(t, err)
@@ -338,7 +339,8 @@ func TestSSHClientValidatesRequests(t *testing.T) {
 	assert.Equal(t, sdkerrors.CodeInvalidInput, sdkerrors.Code(err))
 
 	assert.Equal(t, sdkerrors.CodeInvalidInput,
-		sdkerrors.Code(ssh.KnownHosts().Add(ctx, sshclient.AddKnownHostRequest{Fingerprint: "f"})), "host is required")
+		sdkerrors.Code(ssh.KnownHosts().Add(ctx,
+			sshclient.AddKnownHostRequest{Fingerprint: sshfixture.HostFingerprint})), "host is required")
 	assert.Equal(t, sdkerrors.CodeInvalidInput,
 		sdkerrors.Code(ssh.KnownHosts().Add(ctx, sshclient.AddKnownHostRequest{Host: "h"})), "fingerprint is required")
 	assert.Equal(t, sdkerrors.CodeInvalidInput,

@@ -167,70 +167,82 @@ service KeyManagement {
 
 // SecretsManagement handles secret storage with versioning and rotation.
 // Secrets are encrypted at rest and support automatic rotation policies.
+//
+// Every RPC below is authorized with go-qrdb's secrets:read / secrets:write /
+// secrets:delete / secrets:list family (pkg/permission/broker_scope.go), NOT
+// credentials:*. The two guard different stores: credentials:* is qrdb's
+// named-credential store, which has no tenant namespacing and is therefore
+// registered ScopeCross (system tenant only), while this service is the
+// broker's tenant secret vault, whose every record is written under the
+// caller's tenant. The permission that describes it is the ScopeTenantOnly
+// secrets:* family qrdb declares for exactly this consumer. The annotations
+// here and pkg/api/grpc/authz_mapping.go are the two gRPC enforcement points
+// and are pinned to each other by
+// TestGRPCPermissions_ProtoOptionMatchesAuthzMapping (go-quicbaas#682).
 service SecretsManagement {
   // StoreSecret stores a secret with optional metadata and encryption.
   rpc StoreSecret(StoreSecretRequest) returns (StoreSecretResponse) {
-      option (qrdb.v1.permission) = "credentials:store";
+      option (qrdb.v1.permission) = "secrets:write";
   }
 
   // GetSecret retrieves the latest version of a secret.
   rpc GetSecret(GetSecretRequest) returns (GetSecretResponse) {
-      option (qrdb.v1.permission) = "credentials:retrieve";
+      option (qrdb.v1.permission) = "secrets:read";
   }
 
   // ListSecrets returns all secrets accessible to the authenticated user.
   rpc ListSecrets(ListSecretsRequest) returns (ListSecretsResponse) {
-      option (qrdb.v1.permission) = "credentials:list";
+      option (qrdb.v1.permission) = "secrets:list";
   }
 
   // DeleteSecret permanently removes a secret and all its versions.
   rpc DeleteSecret(DeleteSecretRequest) returns (DeleteSecretResponse) {
-      option (qrdb.v1.permission) = "credentials:delete";
+      option (qrdb.v1.permission) = "secrets:delete";
   }
 
   // GetSecretVersion retrieves a specific version of a secret.
   rpc GetSecretVersion(GetSecretVersionRequest) returns (GetSecretVersionResponse) {
-      option (qrdb.v1.permission) = "credentials:retrieve_version";
+      option (qrdb.v1.permission) = "secrets:read";
   }
 
   // ListSecretVersions returns all versions of a secret.
   rpc ListSecretVersions(ListSecretVersionsRequest) returns (ListSecretVersionsResponse) {
-      option (qrdb.v1.permission) = "credentials:list_versions";
+      option (qrdb.v1.permission) = "secrets:read";
   }
 
   // RollbackSecret rolls back to a previous version of a secret.
   rpc RollbackSecret(RollbackSecretRequest) returns (RollbackSecretResponse) {
-      option (qrdb.v1.permission) = "credentials:submit";
+      option (qrdb.v1.permission) = "secrets:write";
   }
 
   // RotateSecret manually rotates a secret to a new value.
   rpc RotateSecret(RotateSecretRequest) returns (RotateSecretResponse) {
-      option (qrdb.v1.permission) = "credentials:rotate";
+      option (qrdb.v1.permission) = "secrets:write";
   }
 
   // UpdateSecretStatus enables or disables a secret.
   rpc UpdateSecretStatus(UpdateSecretStatusRequest) returns (UpdateSecretStatusResponse) {
-      option (qrdb.v1.permission) = "credentials:submit";
+      option (qrdb.v1.permission) = "secrets:write";
   }
 
   // SetRotationPolicy sets or updates the automatic rotation policy.
   rpc SetRotationPolicy(SetRotationPolicyRequest) returns (SetRotationPolicyResponse) {
-      option (qrdb.v1.permission) = "credentials:strategy";
+      option (qrdb.v1.permission) = "secrets:write";
   }
 
   // GetRotationPolicy retrieves the current rotation policy for a secret.
   rpc GetRotationPolicy(GetRotationPolicyRequest) returns (GetRotationPolicyResponse) {
-      option (qrdb.v1.permission) = "credentials:list";
+      option (qrdb.v1.permission) = "secrets:read";
   }
 
   // GetSecretsByPrefix retrieves all secrets matching a path prefix.
   rpc GetSecretsByPrefix(GetSecretsByPrefixRequest) returns (GetSecretsByPrefixResponse) {
-      option (qrdb.v1.permission) = "credentials:list";
+      option (qrdb.v1.permission) = "secrets:read";
   }
 
   // WatchSecretsByPrefix streams secret changes for a prefix.
   rpc WatchSecretsByPrefix(WatchSecretsRequest) returns (stream SecretChange) {
-      option (qrdb.v1.permission) = "credentials:list";
+      option (qrdb.v1.permission) = "secrets:read";
   }
 
   // EnsureSecret implements the Vault-style generate-on-first-access primitive.
@@ -238,7 +250,7 @@ service SecretsManagement {
   // If it does not exist a fresh random value is generated, stored, and returned.
   // Exactly one concurrent caller across the cluster receives generated=true.
   rpc EnsureSecret(EnsureSecretRequest) returns (EnsureSecretResponse) {
-      option (qrdb.v1.permission) = "credentials:store";
+      option (qrdb.v1.permission) = "secrets:write";
   }
 }
 

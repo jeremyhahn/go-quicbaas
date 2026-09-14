@@ -12,14 +12,17 @@ on:
 # third-party module around proxy.golang.org with sumdb verification off,
 # resolving them from mutable VCS refs. §1 says not to add them.
 #
-# REGISTRY follows the server: ghcr.io does not exist on Gitea and a Gitea token
-# cannot authenticate to it, so it resolves to Gitea's own registry at the web
-# host and port (lessons.md). Nothing is pushed there -- the build-docker* jobs
-# have no registry credentials on Gitea and skip every push -- so on that server
-# REGISTRY only prefixes the local tag the Trivy gate scans.
+# REGISTRY defaults to ghcr.io and is overridden per forge by the repository
+# variable of the same name: ghcr.io does not exist on a self-hosted Gitea and a
+# Gitea token cannot authenticate to it, so such a forge sets `vars.REGISTRY` to
+# its own registry host (lessons.md). No forge address is written down here --
+# go-quicbaas#944 removed the one that was, because this file ships publicly.
+# Nothing is pushed on Gitea anyway -- the build-docker* jobs have no registry
+# credentials there and skip every push -- so off github.com REGISTRY only
+# prefixes the local tag the Trivy gate scans.
 env:
   GO_VERSION: '1.26.7'
-  REGISTRY: ${{ github.server_url == 'https://github.com' && 'ghcr.io' || '198.51.100.91:3001' }}
+  REGISTRY: ${{ vars.REGISTRY || 'ghcr.io' }}
   IMAGE_NAME_DAEMON: jeremyhahn/quicbaasd
   IMAGE_NAME_CLI: jeremyhahn/quicbaas
 
@@ -438,8 +441,8 @@ jobs:
 
       - name: Log in to GitHub Container Registry
         # No credentials to push with on Gitea, and REGISTRY there resolves
-        # to the plain-HTTP internal registry (198.51.100.91:3001), which
-        # docker/login-action always contacts over HTTPS -- unguarded this
+        # to that forge's own registry, which is plain HTTP while
+        # docker/login-action always contacts it over HTTPS -- unguarded this
         # fails every run with "http: server gave HTTP response to HTTPS
         # client" (tasks 3612/3613/3614) before a single build step runs.
         # Matches ci.yml's Docker job login guard.
@@ -557,8 +560,8 @@ jobs:
 
       - name: Log in to GitHub Container Registry
         # No credentials to push with on Gitea, and REGISTRY there resolves
-        # to the plain-HTTP internal registry (198.51.100.91:3001), which
-        # docker/login-action always contacts over HTTPS -- unguarded this
+        # to that forge's own registry, which is plain HTTP while
+        # docker/login-action always contacts it over HTTPS -- unguarded this
         # fails every run with "http: server gave HTTP response to HTTPS
         # client" (tasks 3612/3613/3614) before a single build step runs.
         # Matches ci.yml's Docker job login guard.
@@ -665,8 +668,8 @@ jobs:
 
       - name: Log in to GitHub Container Registry
         # No credentials to push with on Gitea, and REGISTRY there resolves
-        # to the plain-HTTP internal registry (198.51.100.91:3001), which
-        # docker/login-action always contacts over HTTPS -- unguarded this
+        # to that forge's own registry, which is plain HTTP while
+        # docker/login-action always contacts it over HTTPS -- unguarded this
         # fails every run with "http: server gave HTTP response to HTTPS
         # client" (tasks 3612/3613/3614) before a single build step runs.
         # Matches ci.yml's Docker job login guard.

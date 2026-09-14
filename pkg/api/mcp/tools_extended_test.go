@@ -281,27 +281,39 @@ func TestExecuteScanIndex_Error(t *testing.T) {
 }
 
 // =============================================================================
-// executeUserCreate Tests
+// Removed user tools
 // =============================================================================
 
-type userCreateErrorMock struct {
-	mockService
-}
-
-func (m *userCreateErrorMock) CreateUser(_ context.Context, _ *service.CreateUserRequest) (*service.CreateUserResponse, error) {
-	return nil, errors.New("user create failed")
-}
-
-func TestExecuteUserCreate_Error(t *testing.T) {
-	svc := &userCreateErrorMock{}
+// TestQRDBUserMutationToolsAreGone pins the issue #905 removal: the three
+// qrdb_user_* mutation tools must not be registered and must not dispatch.
+// They used to route to a service-layer auth manager production never wired, so
+// every call failed; quicbaas_iam_user_* is the one user surface.
+func TestQRDBUserMutationToolsAreGone(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	reg := NewToolRegistry(svc, log)
+	reg := NewToolRegistry(&mockService{}, log)
 
-	_, err := reg.ExecuteTool(context.Background(), "qrdb_user_create", map[string]interface{}{
-		"username": "testuser",
-		"password": "password123",
-	})
-	require.Error(t, err)
+	registered := make(map[string]struct{})
+	for _, tool := range reg.ListTools() {
+		registered[tool.Name] = struct{}{}
+	}
+
+	for _, name := range []string{"qrdb_user_create", "qrdb_user_delete", "qrdb_user_list"} {
+		_, ok := registered[name]
+		require.Falsef(t, ok, "tool %q must not be registered", name)
+
+		_, _, mapped := getToolQRDBPermission(name)
+		require.Falsef(t, mapped, "tool %q must not carry a permission mapping", name)
+
+		_, err := reg.ExecuteTool(context.Background(), name, map[string]interface{}{})
+		require.Errorf(t, err, "tool %q must not dispatch", name)
+	}
+
+	// The read-only qrdb-native user passthrough survives, and so does the
+	// canonical IAM user surface.
+	_, ok := registered["qrdb_user_get_by_username"]
+	require.True(t, ok, "read-only qrdb_user_get_by_username must survive")
+	_, ok = registered["quicbaas_iam_user_create"]
+	require.True(t, ok, "canonical quicbaas_iam_user_create must survive")
 }
 
 // =============================================================================

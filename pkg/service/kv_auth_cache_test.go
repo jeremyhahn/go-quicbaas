@@ -20,7 +20,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/metadata"
 )
 
 // =============================================================================
@@ -152,34 +151,6 @@ func TestKVService_Put_RaftError_WithMetrics(t *testing.T) {
 // =============================================================================
 // Get - Auth Check Rejects Unauthorized
 // =============================================================================
-
-func TestKVService_Get_AuthEnabled_Unauthorized(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-
-	mockAuth := &mockAuthManager{
-		authorizeFn: func(ctx context.Context, token, resource, permission string) error {
-			return stderrors.New("unauthorized")
-		},
-	}
-
-	svc := createTestService(t, withMockRaftNode(mockRaft), withAuthManager(mockAuth))
-	db := svc.(*quicBaaS)
-	db.config.EnableAuth = true
-
-	md := metadata.New(map[string]string{
-		"authorization": "Bearer invalid-token",
-	})
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-
-	req := &GetRequest{
-		EntityType: "user",
-		ID:         1,
-	}
-
-	resp, err := svc.Get(ctx, req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
 
 // =============================================================================
 // Get - Cache Hit Path (Eventual Consistency)

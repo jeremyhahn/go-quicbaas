@@ -58,10 +58,15 @@ func TestResolveResumeState_AllStates(t *testing.T) {
 }
 
 // =============================================================================
-// RunFromState Tests
+// Resumed launch tests
+//
+// A resumed job re-enters the state machine where the runner says an
+// interrupted job restarts, carrying the ID and the recoverable state of the
+// status it continues. These drive that through the envelope, as
+// agentServiceImpl.resumeJob does.
 // =============================================================================
 
-func TestRunFromState_StartsFromDecomposing(t *testing.T) {
+func TestResumedRun_RestartsFromDecomposing(t *testing.T) {
 	logger := &controlLoopMockLogger{}
 
 	// Track decompose call count to return different responses:
@@ -94,16 +99,22 @@ func TestRunFromState_StartsFromDecomposing(t *testing.T) {
 		},
 	}
 
-	cl := NewControlLoop(mockSvc, logger)
-	config := newTestConfig()
-
-	// RunFromState with a specific job ID and starting from decomposing.
-	err := cl.RunFromState(context.Background(), config, "resumed-job-123", JobStateDecomposing)
-	if err != nil {
-		t.Fatalf("RunFromState returned error: %v", err)
+	// A job interrupted while executing restarts from decomposing: its
+	// sessions are dead, so the lead re-decomposes and re-spawns.
+	resumed := &JobStatus{JobID: "resumed-job-123", State: JobStateExecuting}
+	launch := jobLaunch{
+		Config: newTestConfig(), Agents: mockSvc, Logger: logger,
+		JobID: resumed.JobID, Resumed: resumed,
+	}
+	run := launch.newRun(t)
+	if run.StartState != JobStateDecomposing {
+		t.Fatalf("start state = %q, want %q", run.StartState, JobStateDecomposing)
+	}
+	if err := run.execute(context.Background(), workflowRunner{}); err != nil {
+		t.Fatalf("resumed run returned error: %v", err)
 	}
 
-	status := cl.Status()
+	status := run.Status()
 	if status == nil {
 		t.Fatal("expected non-nil status")
 	}
@@ -115,20 +126,22 @@ func TestRunFromState_StartsFromDecomposing(t *testing.T) {
 	}
 }
 
-func TestRunFromState_StartsFromCompleting(t *testing.T) {
+func TestResumedRun_RestartsFromCompleting(t *testing.T) {
 	logger := &controlLoopMockLogger{}
 	mockSvc := &controlLoopMockService{}
 
-	cl := NewControlLoop(mockSvc, logger)
-	config := newTestConfig()
-
-	// Start from completing should go through cleanup to completed.
-	err := cl.RunFromState(context.Background(), config, "almost-done-job", JobStateCompleting)
+	// A job interrupted in cleanup was almost done: it restarts from
+	// completing and goes through cleanup to completed.
+	resumed := &JobStatus{JobID: "almost-done-job", State: JobStateCleanup}
+	run, err := jobLaunch{
+		Config: newTestConfig(), Agents: mockSvc, Logger: logger,
+		JobID: resumed.JobID, Resumed: resumed,
+	}.run(context.Background(), t)
 	if err != nil {
-		t.Fatalf("RunFromState returned error: %v", err)
+		t.Fatalf("resumed run returned error: %v", err)
 	}
 
-	status := cl.Status()
+	status := run.Status()
 	if status == nil {
 		t.Fatal("expected non-nil status")
 	}
@@ -137,14 +150,17 @@ func TestRunFromState_StartsFromCompleting(t *testing.T) {
 	}
 }
 
-func TestRunFromState_InvalidState(t *testing.T) {
+// TestResumedRun_UnknownStateIsRefused: a run entered at a state the loop
+// has no handler for — what a runner naming a state the lead-driven machine
+// does not implement would produce — fails typed rather than hanging.
+func TestResumedRun_UnknownStateIsRefused(t *testing.T) {
 	logger := &controlLoopMockLogger{}
 	mockSvc := &controlLoopMockService{}
 
-	cl := NewControlLoop(mockSvc, logger)
-	config := newTestConfig()
-
-	err := cl.RunFromState(context.Background(), config, "bad-state-job", JobState("nonexistent"))
+	_, err := jobLaunch{
+		Config: newTestConfig(), Agents: mockSvc, Logger: logger,
+		JobID: "bad-state-job", StartState: JobState("nonexistent"),
+	}.run(context.Background(), t)
 	if err == nil {
 		t.Fatal("expected error for unknown state")
 	}
@@ -155,38 +171,42 @@ func TestRunFromState_InvalidState(t *testing.T) {
 	}
 }
 
-func TestRunFromState_ContextCancelled(t *testing.T) {
+func TestResumedRun_ContextCancelled(t *testing.T) {
 	logger := &controlLoopMockLogger{}
 	mockSvc := &controlLoopMockService{
 		decomposeErr: context.Canceled,
 	}
 
-	cl := NewControlLoop(mockSvc, logger)
-	config := newTestConfig()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately.
 
-	err := cl.RunFromState(ctx, config, "cancelled-job", JobStateInitializing)
+	resumed := &JobStatus{JobID: "cancelled-job", State: JobStateInitializing}
+	_, err := jobLaunch{
+		Config: newTestConfig(), Agents: mockSvc, Logger: logger,
+		JobID: resumed.JobID, Resumed: resumed,
+	}.run(ctx, t)
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
 }
 
-func TestRunFromState_PreservesIteration(t *testing.T) {
+// TestResumedRun_PreservesIteration: the review round the interrupted job
+// had reached is restored from its persisted status, so a resumed job does
+// not get its iteration budget back.
+func TestResumedRun_PreservesIteration(t *testing.T) {
 	logger := &controlLoopMockLogger{}
 	mockSvc := &controlLoopMockService{}
 
-	cl := NewControlLoop(mockSvc, logger)
-	cl.iteration = 3 // Set from prior recovery.
-	config := newTestConfig()
-
-	err := cl.RunFromState(context.Background(), config, "iter-job", JobStateCompleting)
+	resumed := &JobStatus{JobID: "iter-job", State: JobStateCompleting, Iteration: 3}
+	run, err := jobLaunch{
+		Config: newTestConfig(), Agents: mockSvc, Logger: logger,
+		JobID: resumed.JobID, Resumed: resumed,
+	}.run(context.Background(), t)
 	if err != nil {
-		t.Fatalf("RunFromState error: %v", err)
+		t.Fatalf("resumed run error: %v", err)
 	}
 
-	status := cl.Status()
+	status := run.Status()
 	if status.Iteration != 3 {
 		t.Errorf("iteration = %d, want 3", status.Iteration)
 	}
@@ -285,14 +305,14 @@ func TestResumeJob_TerminalResolvedState(t *testing.T) {
 
 	// Verify info log about terminal state.
 	found := false
-	for _, msg := range logger.infoMessages {
+	for _, msg := range logger.infoLines() {
 		if strings.Contains(msg, "resolved to terminal state") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected terminal state log, got: %v", logger.infoMessages)
+		t.Errorf("expected terminal state log, got: %v", logger.infoLines())
 	}
 }
 
@@ -343,14 +363,14 @@ func TestResumeJob_Success_LaunchesGoroutine(t *testing.T) {
 
 	// Verify the resume log.
 	found := false
-	for _, msg := range logger.infoMessages {
+	for _, msg := range logger.infoLines() {
 		if strings.Contains(msg, "resumed job") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected resume log, got: %v", logger.infoMessages)
+		t.Errorf("expected resume log, got: %v", logger.infoLines())
 	}
 }
 
@@ -371,7 +391,7 @@ func TestResumeJob_WithWorkflowLoader(t *testing.T) {
 			{Role: "worker", Backend: "ollama", Model: "test-model"},
 		},
 	}
-	if regErr := wl.Register(wfDef); regErr != nil {
+	if regErr := wl.Register("test-tenant", wfDef); regErr != nil {
 		t.Fatalf("register workflow failed: %v", regErr)
 	}
 
@@ -438,14 +458,14 @@ func TestResumeJob_MissingWorkflow_Warns(t *testing.T) {
 
 	// Should have a warning about the missing workflow.
 	found := false
-	for _, msg := range logger.warnMessages {
+	for _, msg := range logger.warnLines() {
 		if strings.Contains(msg, "could not reload workflow") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected warning about missing workflow, got: %v", logger.warnMessages)
+		t.Errorf("expected warning about missing workflow, got: %v", logger.warnLines())
 	}
 
 	// Clean up.
@@ -534,14 +554,14 @@ func TestRecoverJobs_ResumesJobWithConfig(t *testing.T) {
 
 	// Verify recovery count log.
 	found := false
-	for _, msg := range logger.infoMessages {
+	for _, msg := range logger.infoLines() {
 		if strings.Contains(msg, "resumed") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected resume log, got: %v", logger.infoMessages)
+		t.Errorf("expected resume log, got: %v", logger.infoLines())
 	}
 }
 
@@ -609,13 +629,13 @@ func TestControlLoop_UpdateStatus_IncludesRecoverableState(t *testing.T) {
 	logger := &controlLoopMockLogger{}
 	mockSvc := &controlLoopMockService{}
 	cl := NewControlLoop(mockSvc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "job-recoverable"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "job-recoverable"
 	cl.workItems = []*WorkItem{
 		{ID: "w1", Title: "task-1"},
 	}
-	cl.jobMemory = NewJobMemory()
-	cl.jobMemory.AddSuccess("prior approach")
+	cl.job.memory = NewJobMemory()
+	cl.job.memory.AddSuccess("prior approach")
 
 	cl.updateStatus(JobStateExecuting)
 
@@ -638,8 +658,8 @@ func TestControlLoop_UpdateStatus_WorkflowName(t *testing.T) {
 	logger := &controlLoopMockLogger{}
 	mockSvc := &controlLoopMockService{}
 	cl := NewControlLoop(mockSvc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "job-wf-name"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "job-wf-name"
 	cl.workflow = &WorkflowDefinition{
 		Name: "my-workflow",
 		Mode: WorkflowModeAutonomous,
@@ -657,12 +677,12 @@ func TestControlLoop_UpdateStatus_PersistIncludesRecoverableState(t *testing.T) 
 	logger := &controlLoopMockLogger{}
 	mockSvc := &controlLoopMockService{}
 	cl := NewControlLoop(mockSvc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "job-persist-recoverable"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "job-persist-recoverable"
 	cl.workItems = []*WorkItem{{ID: "w1", Title: "t1"}}
 
 	var persisted *JobStatus
-	cl.persistFn = func(status *JobStatus) {
+	cl.job.persistFn = func(status *JobStatus) {
 		copied := *status
 		persisted = &copied
 	}
@@ -685,12 +705,10 @@ func TestControlLoop_UpdateStatus_PersistIncludesRecoverableState(t *testing.T) 
 // =============================================================================
 
 func TestControlLoop_WorkflowName_FromWorkflow(t *testing.T) {
-	cl := &ControlLoop{
-		config: newTestConfig(),
-		workflow: &WorkflowDefinition{
-			Name: "wf-from-def",
-			Mode: WorkflowModeAutonomous,
-		},
+	cl := newTestLoop(newTestConfig())
+	cl.workflow = &WorkflowDefinition{
+		Name: "wf-from-def",
+		Mode: WorkflowModeAutonomous,
 	}
 	if got := cl.workflowName(); got != "wf-from-def" {
 		t.Errorf("workflowName() = %q, want %q", got, "wf-from-def")
@@ -700,16 +718,14 @@ func TestControlLoop_WorkflowName_FromWorkflow(t *testing.T) {
 func TestControlLoop_WorkflowName_FromConfig(t *testing.T) {
 	config := newTestConfig()
 	config.WorkflowName = "wf-from-config"
-	cl := &ControlLoop{
-		config: config,
-	}
+	cl := newTestLoop(config)
 	if got := cl.workflowName(); got != "wf-from-config" {
 		t.Errorf("workflowName() = %q, want %q", got, "wf-from-config")
 	}
 }
 
 func TestControlLoop_WorkflowName_NilWorkflowAndConfig(t *testing.T) {
-	cl := &ControlLoop{}
+	cl := newTestLoop(&JobConfig{})
 	if got := cl.workflowName(); got != "" {
 		t.Errorf("workflowName() = %q, want empty", got)
 	}
@@ -718,12 +734,10 @@ func TestControlLoop_WorkflowName_NilWorkflowAndConfig(t *testing.T) {
 func TestControlLoop_WorkflowName_WorkflowPriority(t *testing.T) {
 	config := newTestConfig()
 	config.WorkflowName = "config-wf"
-	cl := &ControlLoop{
-		config: config,
-		workflow: &WorkflowDefinition{
-			Name: "def-wf",
-			Mode: WorkflowModeAutonomous,
-		},
+	cl := newTestLoop(config)
+	cl.workflow = &WorkflowDefinition{
+		Name: "def-wf",
+		Mode: WorkflowModeAutonomous,
 	}
 	// Workflow definition name takes priority over config.
 	if got := cl.workflowName(); got != "def-wf" {

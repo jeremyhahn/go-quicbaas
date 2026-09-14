@@ -126,6 +126,13 @@ type (
 	// SchedulerService handles job scheduling and execution.
 	SchedulerService = pkgservice.SchedulerService
 
+	// SDLCService is the SDLC module's binding service.
+	SDLCService = pkgservice.SDLCService
+
+	// ProjectWriter persists a project record. Binding a project to the
+	// SDLC module turns it autonomous, and that has to be written back.
+	ProjectWriter = pkgservice.ProjectWriter
+
 	// FIDO2Service provides the tenant-scoped FIDO2/WebAuthn ceremony surface.
 	FIDO2Service = pkgservice.FIDO2Service
 
@@ -884,6 +891,9 @@ const (
 	EmbeddingProviderOpenAI   = pkgservice.EmbeddingProviderOpenAI
 	EmbeddingProviderOllama   = pkgservice.EmbeddingProviderOllama
 	EmbeddingProviderLMStudio = pkgservice.EmbeddingProviderLMStudio
+
+	// EmbeddingProviderNPU selects the Intel NPU via the OpenVINO sidecar.
+	EmbeddingProviderNPU = pkgservice.EmbeddingProviderNPU
 )
 
 // EmbeddingInputType constants.
@@ -1010,6 +1020,12 @@ type (
 
 	// ServiceBuilder builds a QuicBaaS instance.
 	ServiceBuilder = pkgservice.ServiceBuilder
+
+	// SchedulerClustering carries the handles the scheduler needs to arbitrate
+	// firings across nodes: the leader check and the two go-qrdb planes its
+	// claim rides. It is reachable from ServiceBuilder, so an SDK consumer
+	// building a clustered service cannot construct one without this alias.
+	SchedulerClustering = pkgservice.SchedulerClustering
 
 	// StreamWriter is a helper interface for streaming responses.
 	StreamWriter = pkgservice.StreamWriter
@@ -1189,10 +1205,18 @@ type (
 	RevokeAccountResponse           = pkgservice.RevokeAccountResponse
 	RotateAccountCredentialRequest  = pkgservice.RotateAccountCredentialRequest
 	RotateAccountCredentialResponse = pkgservice.RotateAccountCredentialResponse
-	SetDefaultAccountRequest        = pkgservice.SetDefaultAccountRequest
-	SetDefaultAccountResponse       = pkgservice.SetDefaultAccountResponse
-	UpdateAccountRequest            = pkgservice.UpdateAccountRequest
-	UpdateAccountResponse           = pkgservice.UpdateAccountResponse
+
+	// MaterializeAccountCredentialRequest / ...Response are the pooled-account
+	// credential RELEASE shapes. The response is the only account shape in the
+	// service vocabulary that carries an AccountCredential, deliberately: it
+	// exists so a pooled credential can reach the worker host running the
+	// agent (go-quicbaas#734).
+	MaterializeAccountCredentialRequest  = pkgservice.MaterializeAccountCredentialRequest
+	MaterializeAccountCredentialResponse = pkgservice.MaterializeAccountCredentialResponse
+	SetDefaultAccountRequest             = pkgservice.SetDefaultAccountRequest
+	SetDefaultAccountResponse            = pkgservice.SetDefaultAccountResponse
+	UpdateAccountRequest                 = pkgservice.UpdateAccountRequest
+	UpdateAccountResponse                = pkgservice.UpdateAccountResponse
 )
 
 // =============================================================================
@@ -1332,9 +1356,8 @@ type (
 // =============================================================================
 
 type (
-	AuthManagerInterface = pkgservice.AuthManagerInterface
-	MFAManager           = pkgservice.MFAManager
-	WebAuthnManager      = pkgservice.WebAuthnManager
+	MFAManager      = pkgservice.MFAManager
+	WebAuthnManager = pkgservice.WebAuthnManager
 )
 
 // =============================================================================
@@ -1490,20 +1513,13 @@ type (
 	AuthAssignRoleResponse = pkgservice.AuthAssignRoleResponse
 	AuthCreateRoleRequest  = pkgservice.AuthCreateRoleRequest
 	AuthCreateRoleResponse = pkgservice.AuthCreateRoleResponse
-	AuthCreateUserRequest  = pkgservice.AuthCreateUserRequest
-	AuthCreateUserResponse = pkgservice.AuthCreateUserResponse
 	AuthDeleteRoleRequest  = pkgservice.AuthDeleteRoleRequest
 	AuthDeleteRoleResponse = pkgservice.AuthDeleteRoleResponse
-	AuthDeleteUserRequest  = pkgservice.AuthDeleteUserRequest
-	AuthDeleteUserResponse = pkgservice.AuthDeleteUserResponse
 	AuthListRolesRequest   = pkgservice.AuthListRolesRequest
 	AuthListRolesResponse  = pkgservice.AuthListRolesResponse
-	AuthListUsersRequest   = pkgservice.AuthListUsersRequest
-	AuthListUsersResponse  = pkgservice.AuthListUsersResponse
 	AuthRevokeRoleRequest  = pkgservice.AuthRevokeRoleRequest
 	AuthRevokeRoleResponse = pkgservice.AuthRevokeRoleResponse
 	RoleInfo               = pkgservice.RoleInfo
-	UserInfo               = pkgservice.UserInfo
 )
 
 // =============================================================================

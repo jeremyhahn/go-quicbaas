@@ -641,6 +641,14 @@ This document provides a comprehensive overview of all CLI commands in QuicBaaS,
 | `iam role list` | Y | Y | Y | - | Y | B | Complete |
 | `iam role assign` | Y | Y | Y | - | Y | B | Complete |
 | `iam role revoke` | Y | Y | Y | - | Y | B | Complete |
+| `iam role reconcile` | Y | Y | Y | Y | Y | B | Complete |
+
+The Unix column reads `Y` for `reconcile` and `-` for its siblings because
+`reconcile` was verified over every transport when it was added
+(go-quicbaas#573). The Unix transport is the gRPC transport over a socket
+(`sdk/go/transport/unix`), so the sibling verbs are very likely reachable there
+too and their `-` is stale — but that is an unverified claim, and this table
+records what has been exercised, not what ought to work.
 
 #### IAM Session
 

@@ -90,9 +90,57 @@ func TestOrchestratorBinding_GetJobStatus_HappyPath(t *testing.T) {
 
 	result, err := binding.GetJobStatus(&orchestratorSDK.GetJobStatusRequest{TenantID: "acme", JobID: "job-1"})
 	require.NoError(t, err)
-	assert.Equal(t, "job-1", result["job_id"])
-	assert.Equal(t, "running", result["state"])
-	assert.Equal(t, 3, result["iteration"])
+	assert.Equal(t, "job-1", result.JobID)
+	assert.Equal(t, "running", result.State)
+	assert.Equal(t, 3, result.Iteration)
+}
+
+// TestOrchestratorBinding_GetJobStatus_CarriesProvenance: the binding used to
+// hand-build a ten-key map, so every field the job page was built for —
+// runner, task id, agent, stages, attempts, terminal reason, readmit state,
+// delivery, verification — was dropped on the way to the desktop UI. It
+// returns the SDK status now, so the projection cannot go stale again.
+func TestOrchestratorBinding_GetJobStatus_CarriesProvenance(t *testing.T) {
+	full := &orchestratorSDK.JobStatus{
+		JobID:          "job-3",
+		State:          "failed",
+		Runner:         "sdlc",
+		TaskID:         "task-26",
+		Attempt:        3,
+		AgentID:        "agent-worker-04",
+		Stages:         []orchestratorSDK.JobStageRecord{{Stage: "prepare", EnteredAt: 1}},
+		Attempts:       []orchestratorSDK.JobAttemptRecord{{Attempt: 3, JobID: "job-3", Current: true}},
+		AttemptBudget:  3,
+		TerminalReason: "budget_exhausted",
+		ReadmitAllowed: true,
+		Delivery: &orchestratorSDK.JobDelivery{
+			Branch:            "issue/26",
+			PullRequestNumber: 57,
+			Reviews:           []orchestratorSDK.JobReviewRound{{Round: 1, Verdict: "approve"}},
+		},
+		Verification: []orchestratorSDK.JobVerificationResult{{Name: "make test", Passed: false}},
+	}
+	mock := &mockOrchestratorClient{
+		getJobStatusFn: func(context.Context, *orchestratorSDK.GetJobStatusRequest) (*orchestratorSDK.JobStatus, error) {
+			return full, nil
+		},
+	}
+	binding := newTestOrchestratorBinding(t, mock)
+
+	result, err := binding.GetJobStatus(&orchestratorSDK.GetJobStatusRequest{TenantID: "acme", JobID: "job-3"})
+	require.NoError(t, err)
+	assert.Equal(t, "sdlc", result.Runner)
+	assert.Equal(t, "task-26", result.TaskID)
+	assert.Equal(t, "agent-worker-04", result.AgentID)
+	assert.Len(t, result.Stages, 1)
+	assert.Len(t, result.Attempts, 1)
+	assert.Equal(t, 3, result.AttemptBudget)
+	assert.Equal(t, "budget_exhausted", result.TerminalReason)
+	assert.True(t, result.ReadmitAllowed)
+	require.NotNil(t, result.Delivery)
+	assert.Equal(t, 57, result.Delivery.PullRequestNumber)
+	assert.Len(t, result.Delivery.Reviews, 1)
+	assert.Len(t, result.Verification, 1)
 }
 
 func TestOrchestratorBinding_GetJobStatus_NilRequest(t *testing.T) {
@@ -188,6 +236,57 @@ func TestOrchestratorBinding_CancelJob_NilRequest(t *testing.T) {
 
 	var typed *GUIRequestRequiredError
 	assert.ErrorAs(t, err, &typed)
+}
+
+// -----------------------------------------------------------------------------
+// ReadmitTask — the job page's Readmit action in desktop mode.
+//
+// The TypeScript side called `OrchestratorBinding.ReadmitTask` before this
+// method existed, so every click threw "ReadmitTask not implemented"
+// (go-quicbaas#796 review). Like every other task verb here it takes the SDK
+// request struct, which is the Wails wire format.
+// -----------------------------------------------------------------------------
+
+func TestOrchestratorBinding_ReadmitTask_HappyPath(t *testing.T) {
+	mock := &mockOrchestratorClient{
+		readmitTaskFn: func(_ context.Context, req *orchestratorSDK.ReadmitTaskRequest) (*orchestratorSDK.ReadmitTaskResponse, error) {
+			assert.Equal(t, "acme", req.TenantID)
+			assert.Equal(t, "task-26", req.TaskID)
+			return &orchestratorSDK.ReadmitTaskResponse{TaskID: req.TaskID, Readmitted: true}, nil
+		},
+	}
+	binding := newTestOrchestratorBinding(t, mock)
+
+	err := binding.ReadmitTask(&orchestratorSDK.ReadmitTaskRequest{TenantID: "acme", TaskID: "task-26"})
+	require.NoError(t, err)
+}
+
+func TestOrchestratorBinding_ReadmitTask_NilRequest(t *testing.T) {
+	binding := newTestOrchestratorBinding(t, &mockOrchestratorClient{})
+
+	err := binding.ReadmitTask(nil)
+	require.Error(t, err)
+
+	var typed *GUIRequestRequiredError
+	assert.ErrorAs(t, err, &typed)
+}
+
+func TestOrchestratorBinding_ReadmitTask_TransportError(t *testing.T) {
+	sentinel := errors.New("the task is failed, not parked")
+	mock := &mockOrchestratorClient{
+		readmitTaskFn: func(context.Context, *orchestratorSDK.ReadmitTaskRequest) (*orchestratorSDK.ReadmitTaskResponse, error) {
+			return nil, sentinel
+		},
+	}
+	binding := newTestOrchestratorBinding(t, mock)
+
+	err := binding.ReadmitTask(&orchestratorSDK.ReadmitTaskRequest{TenantID: "acme", TaskID: "task-26"})
+	require.Error(t, err)
+
+	var qberr *qberrors.QBError
+	require.ErrorAs(t, err, &qberr)
+	assert.Equal(t, "OrchestratorBinding.ReadmitTask", qberr.Op)
+	assert.ErrorIs(t, err, sentinel)
 }
 
 // -----------------------------------------------------------------------------
@@ -414,6 +513,56 @@ func TestOrchestratorBinding_ListBackends_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	assert.Equal(t, "claude", result[0]["name"])
+}
+
+// -----------------------------------------------------------------------------
+// ListRunners
+// -----------------------------------------------------------------------------
+
+func TestOrchestratorBinding_ListRunners_HappyPath(t *testing.T) {
+	mock := &mockOrchestratorClient{
+		listRunnersFn: func(ctx context.Context) (*orchestratorSDK.ListJobRunnersResponse, error) {
+			return &orchestratorSDK.ListJobRunnersResponse{
+				Runners: []*orchestratorSDK.JobRunnerInfo{
+					{
+						Name: "workflow",
+						States: []orchestratorSDK.JobStateSpec{
+							{State: "initializing", Label: "Initializing"},
+							{State: "executing", Label: "Executing", SessionBacked: true},
+						},
+					},
+				},
+				Count: 1,
+			}, nil
+		},
+	}
+	binding := newTestOrchestratorBinding(t, mock)
+
+	result, err := binding.ListRunners()
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	assert.Equal(t, "workflow", result[0]["name"])
+
+	states, ok := result[0]["states"].([]map[string]interface{})
+	require.True(t, ok, "states marshal as a list of objects for the GUI")
+	require.Len(t, states, 2)
+	assert.Equal(t, "initializing", states[0]["state"])
+	assert.Equal(t, "Initializing", states[0]["label"])
+	assert.Equal(t, false, states[0]["session_backed"])
+	assert.Equal(t, true, states[1]["session_backed"])
+}
+
+func TestOrchestratorBinding_ListRunners_TransportError(t *testing.T) {
+	mock := &mockOrchestratorClient{
+		listRunnersFn: func(ctx context.Context) (*orchestratorSDK.ListJobRunnersResponse, error) {
+			return nil, errors.New("orchestrator unreachable")
+		},
+	}
+	binding := newTestOrchestratorBinding(t, mock)
+
+	result, err := binding.ListRunners()
+	require.Error(t, err)
+	assert.Nil(t, result)
 }
 
 // -----------------------------------------------------------------------------

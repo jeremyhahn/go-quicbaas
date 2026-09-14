@@ -315,6 +315,42 @@ func TestDo_MaxAttemptsExceeded(t *testing.T) {
 	assert.True(t, dberrors.Is(err, dberrors.ErrTimeout))
 }
 
+// assertStoppedOnContext asserts that Do stopped because the context ended
+// rather than because the operation ran out of attempts.
+//
+// THE OBVIOUS ASSERTION DOES NOT WORK, and this exists so nobody writes it and
+// believes it. Do wraps its context exits as
+// errors.Wrap(lastErr, ErrCanceled, "retry.Do"), but Wrap keeps the code of the
+// error it wraps when that error is already a QRDB error — so
+// dberrors.Is(err, dberrors.ErrCanceled) is FALSE and the error still reports
+// whatever the operation failed with. Measured against the dependency, not
+// assumed.
+//
+// What the wrap does change is the Op: a context exit reports Do's OWN name
+// (currently "retry.Do"), while exhausting the attempts returns the operation's
+// error untouched and so keeps the operation's Op. Asserting that the Op is no
+// longer the operation's is the observable form of "Do reported this stop as
+// its own", and it survives an upstream rename of that string.
+//
+// callCount is required because the bare-context case is only legitimate
+// BEFORE the first attempt: Do returns a raw ctx.Err() only when no operation
+// error exists yet. Accepting it unconditionally would let a loop that ignored
+// cancellation during backoff, and noticed the context only at the next
+// attempt boundary, pass for the wrong reason.
+func assertStoppedOnContext(t *testing.T, err error, callCount int, opName string) {
+	t.Helper()
+	require.Error(t, err)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		assert.Zero(t, callCount,
+			"Do returned a bare context error after running the operation; it only does that before the first attempt")
+		return
+	}
+	var qberr *dberrors.QBError
+	require.ErrorAs(t, err, &qberr)
+	assert.NotEqual(t, opName, qberr.Op,
+		"Do returned the operation's own error, which is what exhausting the attempts looks like; got %v", err)
+}
+
 func TestDo_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cfg := &Config{
@@ -339,12 +375,39 @@ func TestDo_ContextCancellation(t *testing.T) {
 	}
 
 	err := Do(ctx, cfg, op)
-	assert.Error(t, err)
-	assert.LessOrEqual(t, callCount, 2, "should stop retrying after context cancellation")
-	// The error could be either ErrCanceled or ErrTimeout depending on timing
-	// Just verify we get an error and stopped retrying
+	require.Error(t, err)
+	// The same contract as TestDo_ContextTimeout, asserted the same way. This
+	// one is not known to flake — it cancels 10ms into a 100ms backoff, so it
+	// has ten times the slack — but its old `<= 2` was equally silent about
+	// WHY the loop stopped, and would have passed a loop that ignored
+	// cancellation and merely happened to be slow.
+	assert.Less(t, callCount, cfg.MaxAttempts,
+		"should stop retrying once the context was cancelled, not run out of attempts")
+	assertStoppedOnContext(t, err, callCount, "test.op")
 }
 
+// TestDo_ContextTimeout asserts the CONTRACT — the loop stops because the
+// context expired — and deliberately does not assert HOW MANY attempts fit
+// inside the deadline (#211).
+//
+// THE OLD BOUND WAS UNFIXABLE BY WIDENING IT. It read `callCount <= 2`, from a
+// 30ms deadline against a 20ms backoff, and failed on CI with 3. Reaching a
+// third attempt requires ctx.Done() to still be open at ~40ms when the deadline
+// was 30ms — that is, the context's deadline timer delivered LATE RELATIVE TO
+// the backoff timer. Those are two independent timers, and under starvation Go
+// promises nothing about their relative delivery order. So the assertion did
+// not have too little margin; it depended on an ordering the runtime does not
+// offer, and a bigger number would only have made the failure rarer. It was
+// observed passing and failing IN THE SAME CI JOB — the plain pass green, the
+// coverage-instrumented pass red at more than twice the duration.
+//
+// What is asserted instead does not name a precise attempt count: the loop
+// stopped SHORT of its ten attempts, and the error says the context is why. The
+// remaining timing dependence is only that at least one of the ten attempts is
+// skipped, which has the whole backoff budget as slack instead of 10ms. A retry
+// loop that ignored cancellation — the defect this test exists to catch — fails
+// both, because it would run all ten attempts and return the operation's own
+// error.
 func TestDo_ContextTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
@@ -364,9 +427,10 @@ func TestDo_ContextTimeout(t *testing.T) {
 	}
 
 	err := Do(ctx, cfg, op)
-	assert.Error(t, err)
-	// Should fail after 1-2 attempts due to timeout
-	assert.LessOrEqual(t, callCount, 2, "should stop retrying after timeout")
+	require.Error(t, err)
+	assert.Less(t, callCount, cfg.MaxAttempts,
+		"should stop retrying once the context expired, not run out of attempts")
+	assertStoppedOnContext(t, err, callCount, "test.op")
 }
 
 func TestDo_OnRetryCallback(t *testing.T) {

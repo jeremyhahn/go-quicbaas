@@ -1,0 +1,12 @@
+### This task has been readmitted
+
+**Outcome:** `readmitted` — the park was cleared and the task is back in the queue for another attempt.
+
+**Attempt:** 1 of 3
+**Task:** `task-1`
+**Attempt history:** `job-1`
+**Labels:** `task:ready` removed
+
+**Nothing is required of you.** The task is back in the queue and the next attempt reads this discussion.
+
+<!-- quicbaas-sdlc:blocked task=task-1 attempt=1 kind=readmitted -->

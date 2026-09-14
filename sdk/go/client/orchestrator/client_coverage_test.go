@@ -524,6 +524,58 @@ func TestListBackends_TypeMismatch(t *testing.T) {
 }
 
 // =============================================================================
+// ListRunners
+// =============================================================================
+
+func TestListRunners_HappyPath(t *testing.T) {
+	want := &ListJobRunnersResponse{
+		Runners: []*JobRunnerInfo{{
+			Name: "workflow",
+			States: []JobStateSpec{
+				{State: "initializing", Label: "Initializing"},
+				{State: "executing", Label: "Executing", SessionBacked: true},
+			},
+		}},
+		Count: 1,
+	}
+	c := NewClient(okTransport(t, "ListRunners", want))
+	resp, err := c.ListRunners(context.Background())
+	require.NoError(t, err)
+	require.Len(t, resp.Runners, 1)
+	assert.Equal(t, "workflow", resp.Runners[0].Name)
+	assert.Equal(t, "initializing", resp.Runners[0].States[0].State)
+	assert.True(t, resp.Runners[0].States[1].SessionBacked)
+	assert.Equal(t, 1, resp.Count)
+}
+
+func TestListRunners_NilContext(t *testing.T) {
+	c := NewClient(okTransport(t, "ListRunners", &ListJobRunnersResponse{}))
+	//nolint:staticcheck // intentionally nil
+	_, err := c.ListRunners(nil)
+	require.Error(t, err)
+}
+
+func TestListRunners_TransportError(t *testing.T) {
+	c := NewClient(failTransport())
+	_, err := c.ListRunners(context.Background())
+	require.Error(t, err)
+}
+
+func TestListRunners_NilResponseReturnsEmpty(t *testing.T) {
+	c := NewClient(nilTransport())
+	resp, err := c.ListRunners(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, resp.Count)
+	assert.NotNil(t, resp.Runners)
+}
+
+func TestListRunners_TypeMismatch(t *testing.T) {
+	c := NewClient(mismatchTransport())
+	_, err := c.ListRunners(context.Background())
+	require.Error(t, err)
+}
+
+// =============================================================================
 // Health
 // =============================================================================
 

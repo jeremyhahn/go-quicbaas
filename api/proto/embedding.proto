@@ -63,6 +63,10 @@ enum EmbeddingProvider {
 
   // EMBEDDING_PROVIDER_LMSTUDIO uses local LM Studio embedding models.
   EMBEDDING_PROVIDER_LMSTUDIO = 4;
+
+  // EMBEDDING_PROVIDER_NPU uses an Intel NPU through the OpenVINO embedding
+  // sidecar. See docs/embeddings/npu.md.
+  EMBEDDING_PROVIDER_NPU = 5;
 }
 
 // EmbeddingInputType specifies the type of text being embedded.

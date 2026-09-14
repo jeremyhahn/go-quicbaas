@@ -65,8 +65,11 @@ func TestTimeSeriesCommandFlags(t *testing.T) {
 	// Test that persistent flags are available
 	flags := cmd.PersistentFlags()
 
-	timeoutFlag := flags.Lookup("timeout")
-	require.NotNil(t, timeoutFlag)
+	// --timeout lives on the root command and is inherited (#246).
+	assert.Nil(t, flags.Lookup("timeout"),
+		"the timeseries group must not shadow the root --timeout")
+	require.NotNil(t, rootCmd.PersistentFlags().Lookup("timeout"),
+		"timeout flag should be on root command")
 
 	outputFlag := flags.Lookup("output")
 	require.NotNil(t, outputFlag)

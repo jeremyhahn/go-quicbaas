@@ -61,6 +61,30 @@ export function toMillis(ts: number | string | null | undefined): number | null 
   return ts / 1_000_000;                      // ns → ms
 }
 
+/**
+ * hasInstant reports whether a wire timestamp names a real point in time.
+ *
+ * Go's zero `time.Time` reaches the browser as a date, not as an absent field:
+ * `encoding/json`'s `omitempty` does not apply to structs, so a `time.Time`
+ * that was never set is written verbatim as "0001-01-01T00:00:00Z", and the
+ * formatters above render it, faithfully, as "12/31/1". Measured on the
+ * burn-in node: a task with no deferral showed "Retry not before 12/31/1",
+ * which reads as a fact about the task and is not one.
+ *
+ * Matching on the year is exact for the value the server actually sends and
+ * cannot mistake a real timestamp for it: nothing this system records
+ * happened in year one.
+ *
+ * Numeric timestamps (Go int64 UnixNano fields such as `retry_not_before`)
+ * carry their absence as 0, which `omitempty` drops entirely; either way the
+ * field names no instant.
+ */
+export function hasInstant(ts: number | string | null | undefined): boolean {
+  if (ts === null || ts === undefined || ts === '') return false;
+  if (typeof ts === 'number') return Number.isFinite(ts) && ts > 0;
+  return !ts.startsWith('0001-01-01');
+}
+
 /** Render a timestamp as "5/5/2026, 5:46:49 PM" or em-dash if missing/invalid. */
 export function formatDateTime(ts: number | string | null | undefined): string {
   const ms = toMillis(ts);

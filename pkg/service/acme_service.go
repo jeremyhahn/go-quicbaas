@@ -557,6 +557,10 @@ func (s *acmeService) Renew(ctx context.Context, req *ACMERenewRequest) (*ACMERe
 	serialHex := serialFromCertURL(req.CertURL)
 	certPEM, err := s.certResolver.CertificateBySerial(serialHex)
 	if err != nil {
+		// coded-sentinel-ok: the CLASS is the intent. The resolver is an
+		// interface; any not-found it reports means this serial names no
+		// certificate, which is the answer ACME owes the client. Everything
+		// else becomes Internal below.
 		if stderrors.Is(err, ErrACMECertNotFound) {
 			return nil, ErrACMECertNotFound
 		}

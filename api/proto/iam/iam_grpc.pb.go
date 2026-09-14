@@ -19,63 +19,67 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	IAMService_CreateTenant_FullMethodName            = "/quicbaas.iam.v1.IAMService/CreateTenant"
-	IAMService_GetTenant_FullMethodName               = "/quicbaas.iam.v1.IAMService/GetTenant"
-	IAMService_UpdateTenant_FullMethodName            = "/quicbaas.iam.v1.IAMService/UpdateTenant"
-	IAMService_DeleteTenant_FullMethodName            = "/quicbaas.iam.v1.IAMService/DeleteTenant"
-	IAMService_ListTenants_FullMethodName             = "/quicbaas.iam.v1.IAMService/ListTenants"
-	IAMService_CreateUser_FullMethodName              = "/quicbaas.iam.v1.IAMService/CreateUser"
-	IAMService_GetUser_FullMethodName                 = "/quicbaas.iam.v1.IAMService/GetUser"
-	IAMService_UpdateUser_FullMethodName              = "/quicbaas.iam.v1.IAMService/UpdateUser"
-	IAMService_DeleteUser_FullMethodName              = "/quicbaas.iam.v1.IAMService/DeleteUser"
-	IAMService_ListUsers_FullMethodName               = "/quicbaas.iam.v1.IAMService/ListUsers"
-	IAMService_CreateGroup_FullMethodName             = "/quicbaas.iam.v1.IAMService/CreateGroup"
-	IAMService_GetGroup_FullMethodName                = "/quicbaas.iam.v1.IAMService/GetGroup"
-	IAMService_UpdateGroup_FullMethodName             = "/quicbaas.iam.v1.IAMService/UpdateGroup"
-	IAMService_DeleteGroup_FullMethodName             = "/quicbaas.iam.v1.IAMService/DeleteGroup"
-	IAMService_ListGroups_FullMethodName              = "/quicbaas.iam.v1.IAMService/ListGroups"
-	IAMService_AddUserToGroup_FullMethodName          = "/quicbaas.iam.v1.IAMService/AddUserToGroup"
-	IAMService_RemoveUserFromGroup_FullMethodName     = "/quicbaas.iam.v1.IAMService/RemoveUserFromGroup"
-	IAMService_CreateRole_FullMethodName              = "/quicbaas.iam.v1.IAMService/CreateRole"
-	IAMService_GetRole_FullMethodName                 = "/quicbaas.iam.v1.IAMService/GetRole"
-	IAMService_UpdateRole_FullMethodName              = "/quicbaas.iam.v1.IAMService/UpdateRole"
-	IAMService_DeleteRole_FullMethodName              = "/quicbaas.iam.v1.IAMService/DeleteRole"
-	IAMService_ListRoles_FullMethodName               = "/quicbaas.iam.v1.IAMService/ListRoles"
-	IAMService_AssignRole_FullMethodName              = "/quicbaas.iam.v1.IAMService/AssignRole"
-	IAMService_RevokeRole_FullMethodName              = "/quicbaas.iam.v1.IAMService/RevokeRole"
-	IAMService_RegisterApp_FullMethodName             = "/quicbaas.iam.v1.IAMService/RegisterApp"
-	IAMService_GetApp_FullMethodName                  = "/quicbaas.iam.v1.IAMService/GetApp"
-	IAMService_UpdateApp_FullMethodName               = "/quicbaas.iam.v1.IAMService/UpdateApp"
-	IAMService_DeleteApp_FullMethodName               = "/quicbaas.iam.v1.IAMService/DeleteApp"
-	IAMService_ListApps_FullMethodName                = "/quicbaas.iam.v1.IAMService/ListApps"
-	IAMService_RotateAppSecret_FullMethodName         = "/quicbaas.iam.v1.IAMService/RotateAppSecret"
-	IAMService_CreatePolicy_FullMethodName            = "/quicbaas.iam.v1.IAMService/CreatePolicy"
-	IAMService_GetPolicy_FullMethodName               = "/quicbaas.iam.v1.IAMService/GetPolicy"
-	IAMService_UpdatePolicy_FullMethodName            = "/quicbaas.iam.v1.IAMService/UpdatePolicy"
-	IAMService_DeletePolicy_FullMethodName            = "/quicbaas.iam.v1.IAMService/DeletePolicy"
-	IAMService_ListPolicies_FullMethodName            = "/quicbaas.iam.v1.IAMService/ListPolicies"
-	IAMService_ValidatePolicy_FullMethodName          = "/quicbaas.iam.v1.IAMService/ValidatePolicy"
-	IAMService_TestPolicy_FullMethodName              = "/quicbaas.iam.v1.IAMService/TestPolicy"
-	IAMService_CreateAdminAssignment_FullMethodName   = "/quicbaas.iam.v1.IAMService/CreateAdminAssignment"
-	IAMService_GetAdminAssignment_FullMethodName      = "/quicbaas.iam.v1.IAMService/GetAdminAssignment"
-	IAMService_UpdateAdminAssignment_FullMethodName   = "/quicbaas.iam.v1.IAMService/UpdateAdminAssignment"
-	IAMService_DeleteAdminAssignment_FullMethodName   = "/quicbaas.iam.v1.IAMService/DeleteAdminAssignment"
-	IAMService_ListAdminAssignments_FullMethodName    = "/quicbaas.iam.v1.IAMService/ListAdminAssignments"
-	IAMService_CheckAdminPermission_FullMethodName    = "/quicbaas.iam.v1.IAMService/CheckAdminPermission"
-	IAMService_StartImpersonation_FullMethodName      = "/quicbaas.iam.v1.IAMService/StartImpersonation"
-	IAMService_EndImpersonation_FullMethodName        = "/quicbaas.iam.v1.IAMService/EndImpersonation"
-	IAMService_GetActiveImpersonations_FullMethodName = "/quicbaas.iam.v1.IAMService/GetActiveImpersonations"
-	IAMService_GrantConsent_FullMethodName            = "/quicbaas.iam.v1.IAMService/GrantConsent"
-	IAMService_WithdrawConsent_FullMethodName         = "/quicbaas.iam.v1.IAMService/WithdrawConsent"
-	IAMService_GetConsent_FullMethodName              = "/quicbaas.iam.v1.IAMService/GetConsent"
-	IAMService_ListUserConsents_FullMethodName        = "/quicbaas.iam.v1.IAMService/ListUserConsents"
-	IAMService_RequestExport_FullMethodName           = "/quicbaas.iam.v1.IAMService/RequestExport"
-	IAMService_GetExportStatus_FullMethodName         = "/quicbaas.iam.v1.IAMService/GetExportStatus"
-	IAMService_GenerateExport_FullMethodName          = "/quicbaas.iam.v1.IAMService/GenerateExport"
-	IAMService_RequestDeletion_FullMethodName         = "/quicbaas.iam.v1.IAMService/RequestDeletion"
-	IAMService_CancelDeletion_FullMethodName          = "/quicbaas.iam.v1.IAMService/CancelDeletion"
-	IAMService_ProcessDeletion_FullMethodName         = "/quicbaas.iam.v1.IAMService/ProcessDeletion"
-	IAMService_GetDeletionStatus_FullMethodName       = "/quicbaas.iam.v1.IAMService/GetDeletionStatus"
+	IAMService_CreateTenant_FullMethodName              = "/quicbaas.iam.v1.IAMService/CreateTenant"
+	IAMService_GetTenant_FullMethodName                 = "/quicbaas.iam.v1.IAMService/GetTenant"
+	IAMService_UpdateTenant_FullMethodName              = "/quicbaas.iam.v1.IAMService/UpdateTenant"
+	IAMService_DeleteTenant_FullMethodName              = "/quicbaas.iam.v1.IAMService/DeleteTenant"
+	IAMService_ListTenants_FullMethodName               = "/quicbaas.iam.v1.IAMService/ListTenants"
+	IAMService_CreateUser_FullMethodName                = "/quicbaas.iam.v1.IAMService/CreateUser"
+	IAMService_GetUser_FullMethodName                   = "/quicbaas.iam.v1.IAMService/GetUser"
+	IAMService_UpdateUser_FullMethodName                = "/quicbaas.iam.v1.IAMService/UpdateUser"
+	IAMService_DeleteUser_FullMethodName                = "/quicbaas.iam.v1.IAMService/DeleteUser"
+	IAMService_ListUsers_FullMethodName                 = "/quicbaas.iam.v1.IAMService/ListUsers"
+	IAMService_ListWebAuthnCredentials_FullMethodName   = "/quicbaas.iam.v1.IAMService/ListWebAuthnCredentials"
+	IAMService_DeleteWebAuthnCredential_FullMethodName  = "/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential"
+	IAMService_DeleteWebAuthnCredentials_FullMethodName = "/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredentials"
+	IAMService_CreateGroup_FullMethodName               = "/quicbaas.iam.v1.IAMService/CreateGroup"
+	IAMService_GetGroup_FullMethodName                  = "/quicbaas.iam.v1.IAMService/GetGroup"
+	IAMService_UpdateGroup_FullMethodName               = "/quicbaas.iam.v1.IAMService/UpdateGroup"
+	IAMService_DeleteGroup_FullMethodName               = "/quicbaas.iam.v1.IAMService/DeleteGroup"
+	IAMService_ListGroups_FullMethodName                = "/quicbaas.iam.v1.IAMService/ListGroups"
+	IAMService_AddUserToGroup_FullMethodName            = "/quicbaas.iam.v1.IAMService/AddUserToGroup"
+	IAMService_RemoveUserFromGroup_FullMethodName       = "/quicbaas.iam.v1.IAMService/RemoveUserFromGroup"
+	IAMService_CreateRole_FullMethodName                = "/quicbaas.iam.v1.IAMService/CreateRole"
+	IAMService_GetRole_FullMethodName                   = "/quicbaas.iam.v1.IAMService/GetRole"
+	IAMService_UpdateRole_FullMethodName                = "/quicbaas.iam.v1.IAMService/UpdateRole"
+	IAMService_DeleteRole_FullMethodName                = "/quicbaas.iam.v1.IAMService/DeleteRole"
+	IAMService_ListRoles_FullMethodName                 = "/quicbaas.iam.v1.IAMService/ListRoles"
+	IAMService_AssignRole_FullMethodName                = "/quicbaas.iam.v1.IAMService/AssignRole"
+	IAMService_RevokeRole_FullMethodName                = "/quicbaas.iam.v1.IAMService/RevokeRole"
+	IAMService_ReconcileRoles_FullMethodName            = "/quicbaas.iam.v1.IAMService/ReconcileRoles"
+	IAMService_RegisterApp_FullMethodName               = "/quicbaas.iam.v1.IAMService/RegisterApp"
+	IAMService_GetApp_FullMethodName                    = "/quicbaas.iam.v1.IAMService/GetApp"
+	IAMService_UpdateApp_FullMethodName                 = "/quicbaas.iam.v1.IAMService/UpdateApp"
+	IAMService_DeleteApp_FullMethodName                 = "/quicbaas.iam.v1.IAMService/DeleteApp"
+	IAMService_ListApps_FullMethodName                  = "/quicbaas.iam.v1.IAMService/ListApps"
+	IAMService_RotateAppSecret_FullMethodName           = "/quicbaas.iam.v1.IAMService/RotateAppSecret"
+	IAMService_CreatePolicy_FullMethodName              = "/quicbaas.iam.v1.IAMService/CreatePolicy"
+	IAMService_GetPolicy_FullMethodName                 = "/quicbaas.iam.v1.IAMService/GetPolicy"
+	IAMService_UpdatePolicy_FullMethodName              = "/quicbaas.iam.v1.IAMService/UpdatePolicy"
+	IAMService_DeletePolicy_FullMethodName              = "/quicbaas.iam.v1.IAMService/DeletePolicy"
+	IAMService_ListPolicies_FullMethodName              = "/quicbaas.iam.v1.IAMService/ListPolicies"
+	IAMService_ValidatePolicy_FullMethodName            = "/quicbaas.iam.v1.IAMService/ValidatePolicy"
+	IAMService_TestPolicy_FullMethodName                = "/quicbaas.iam.v1.IAMService/TestPolicy"
+	IAMService_CreateAdminAssignment_FullMethodName     = "/quicbaas.iam.v1.IAMService/CreateAdminAssignment"
+	IAMService_GetAdminAssignment_FullMethodName        = "/quicbaas.iam.v1.IAMService/GetAdminAssignment"
+	IAMService_UpdateAdminAssignment_FullMethodName     = "/quicbaas.iam.v1.IAMService/UpdateAdminAssignment"
+	IAMService_DeleteAdminAssignment_FullMethodName     = "/quicbaas.iam.v1.IAMService/DeleteAdminAssignment"
+	IAMService_ListAdminAssignments_FullMethodName      = "/quicbaas.iam.v1.IAMService/ListAdminAssignments"
+	IAMService_CheckAdminPermission_FullMethodName      = "/quicbaas.iam.v1.IAMService/CheckAdminPermission"
+	IAMService_StartImpersonation_FullMethodName        = "/quicbaas.iam.v1.IAMService/StartImpersonation"
+	IAMService_EndImpersonation_FullMethodName          = "/quicbaas.iam.v1.IAMService/EndImpersonation"
+	IAMService_GetActiveImpersonations_FullMethodName   = "/quicbaas.iam.v1.IAMService/GetActiveImpersonations"
+	IAMService_GrantConsent_FullMethodName              = "/quicbaas.iam.v1.IAMService/GrantConsent"
+	IAMService_WithdrawConsent_FullMethodName           = "/quicbaas.iam.v1.IAMService/WithdrawConsent"
+	IAMService_GetConsent_FullMethodName                = "/quicbaas.iam.v1.IAMService/GetConsent"
+	IAMService_ListUserConsents_FullMethodName          = "/quicbaas.iam.v1.IAMService/ListUserConsents"
+	IAMService_RequestExport_FullMethodName             = "/quicbaas.iam.v1.IAMService/RequestExport"
+	IAMService_GetExportStatus_FullMethodName           = "/quicbaas.iam.v1.IAMService/GetExportStatus"
+	IAMService_GenerateExport_FullMethodName            = "/quicbaas.iam.v1.IAMService/GenerateExport"
+	IAMService_RequestDeletion_FullMethodName           = "/quicbaas.iam.v1.IAMService/RequestDeletion"
+	IAMService_CancelDeletion_FullMethodName            = "/quicbaas.iam.v1.IAMService/CancelDeletion"
+	IAMService_ProcessDeletion_FullMethodName           = "/quicbaas.iam.v1.IAMService/ProcessDeletion"
+	IAMService_GetDeletionStatus_FullMethodName         = "/quicbaas.iam.v1.IAMService/GetDeletionStatus"
 )
 
 // IAMServiceClient is the client API for IAMService service.
@@ -96,6 +100,18 @@ type IAMServiceClient interface {
 	UpdateUser(ctx context.Context, in *UpdateUserRequest, opts ...grpc.CallOption) (*User, error)
 	DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*DeleteUserResponse, error)
 	ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error)
+	// WebAuthn credential administration (user-scoped). The verbs are
+	// addressed by IAM user id like every other user-nested admin verb; the
+	// translation to the (tenant, email) key the credential store uses happens
+	// server-side so no transport can address a different account.
+	// The permission annotations are what the unified server enforces; the Go
+	// mapping in pkg/api/grpc/authz_mapping.go mirrors them for the legacy gate.
+	// Both carry the qrdb user-admin families the same verbs require on the MCP
+	// plane, so a caller needs exactly the rights it would need to delete the
+	// user outright.
+	ListWebAuthnCredentials(ctx context.Context, in *ListWebAuthnCredentialsRequest, opts ...grpc.CallOption) (*ListWebAuthnCredentialsResponse, error)
+	DeleteWebAuthnCredential(ctx context.Context, in *DeleteWebAuthnCredentialRequest, opts ...grpc.CallOption) (*DeleteWebAuthnCredentialResponse, error)
+	DeleteWebAuthnCredentials(ctx context.Context, in *DeleteWebAuthnCredentialsRequest, opts ...grpc.CallOption) (*DeleteWebAuthnCredentialsResponse, error)
 	// Group management
 	CreateGroup(ctx context.Context, in *CreateGroupRequest, opts ...grpc.CallOption) (*Group, error)
 	GetGroup(ctx context.Context, in *GetGroupRequest, opts ...grpc.CallOption) (*Group, error)
@@ -112,6 +128,15 @@ type IAMServiceClient interface {
 	ListRoles(ctx context.Context, in *ListRolesRequest, opts ...grpc.CallOption) (*ListRolesResponse, error)
 	AssignRole(ctx context.Context, in *AssignRoleRequest, opts ...grpc.CallOption) (*AssignRoleResponse, error)
 	RevokeRole(ctx context.Context, in *RevokeRoleRequest, opts ...grpc.CallOption) (*RevokeRoleResponse, error)
+	// ReconcileRoles converges a tenant's stored built-in roles onto the
+	// definitions the running build carries. It takes the role-create family
+	// rather than a verb of its own: a dedicated roles:reconcile would be absent
+	// from every role seeded before it existed, so nobody would hold the grant
+	// needed to repair that exact absence. The annotation is what the unified
+	// server enforces; pkg/api/grpc/authz_mapping.go mirrors it for the legacy
+	// gate, and the two are pinned to each other by
+	// TestGRPCPermissions_ProtoOptionMatchesAuthzMapping.
+	ReconcileRoles(ctx context.Context, in *ReconcileRolesRequest, opts ...grpc.CallOption) (*ReconcileRolesResponse, error)
 	// Application (OAuth client) management
 	RegisterApp(ctx context.Context, in *RegisterAppRequest, opts ...grpc.CallOption) (*Application, error)
 	GetApp(ctx context.Context, in *GetAppRequest, opts ...grpc.CallOption) (*Application, error)
@@ -261,6 +286,36 @@ func (c *iAMServiceClient) ListUsers(ctx context.Context, in *ListUsersRequest, 
 	return out, nil
 }
 
+func (c *iAMServiceClient) ListWebAuthnCredentials(ctx context.Context, in *ListWebAuthnCredentialsRequest, opts ...grpc.CallOption) (*ListWebAuthnCredentialsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListWebAuthnCredentialsResponse)
+	err := c.cc.Invoke(ctx, IAMService_ListWebAuthnCredentials_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *iAMServiceClient) DeleteWebAuthnCredential(ctx context.Context, in *DeleteWebAuthnCredentialRequest, opts ...grpc.CallOption) (*DeleteWebAuthnCredentialResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteWebAuthnCredentialResponse)
+	err := c.cc.Invoke(ctx, IAMService_DeleteWebAuthnCredential_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *iAMServiceClient) DeleteWebAuthnCredentials(ctx context.Context, in *DeleteWebAuthnCredentialsRequest, opts ...grpc.CallOption) (*DeleteWebAuthnCredentialsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteWebAuthnCredentialsResponse)
+	err := c.cc.Invoke(ctx, IAMService_DeleteWebAuthnCredentials_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *iAMServiceClient) CreateGroup(ctx context.Context, in *CreateGroupRequest, opts ...grpc.CallOption) (*Group, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Group)
@@ -395,6 +450,16 @@ func (c *iAMServiceClient) RevokeRole(ctx context.Context, in *RevokeRoleRequest
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RevokeRoleResponse)
 	err := c.cc.Invoke(ctx, IAMService_RevokeRole_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *iAMServiceClient) ReconcileRoles(ctx context.Context, in *ReconcileRolesRequest, opts ...grpc.CallOption) (*ReconcileRolesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReconcileRolesResponse)
+	err := c.cc.Invoke(ctx, IAMService_ReconcileRoles_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -749,6 +814,18 @@ type IAMServiceServer interface {
 	UpdateUser(context.Context, *UpdateUserRequest) (*User, error)
 	DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error)
 	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
+	// WebAuthn credential administration (user-scoped). The verbs are
+	// addressed by IAM user id like every other user-nested admin verb; the
+	// translation to the (tenant, email) key the credential store uses happens
+	// server-side so no transport can address a different account.
+	// The permission annotations are what the unified server enforces; the Go
+	// mapping in pkg/api/grpc/authz_mapping.go mirrors them for the legacy gate.
+	// Both carry the qrdb user-admin families the same verbs require on the MCP
+	// plane, so a caller needs exactly the rights it would need to delete the
+	// user outright.
+	ListWebAuthnCredentials(context.Context, *ListWebAuthnCredentialsRequest) (*ListWebAuthnCredentialsResponse, error)
+	DeleteWebAuthnCredential(context.Context, *DeleteWebAuthnCredentialRequest) (*DeleteWebAuthnCredentialResponse, error)
+	DeleteWebAuthnCredentials(context.Context, *DeleteWebAuthnCredentialsRequest) (*DeleteWebAuthnCredentialsResponse, error)
 	// Group management
 	CreateGroup(context.Context, *CreateGroupRequest) (*Group, error)
 	GetGroup(context.Context, *GetGroupRequest) (*Group, error)
@@ -765,6 +842,15 @@ type IAMServiceServer interface {
 	ListRoles(context.Context, *ListRolesRequest) (*ListRolesResponse, error)
 	AssignRole(context.Context, *AssignRoleRequest) (*AssignRoleResponse, error)
 	RevokeRole(context.Context, *RevokeRoleRequest) (*RevokeRoleResponse, error)
+	// ReconcileRoles converges a tenant's stored built-in roles onto the
+	// definitions the running build carries. It takes the role-create family
+	// rather than a verb of its own: a dedicated roles:reconcile would be absent
+	// from every role seeded before it existed, so nobody would hold the grant
+	// needed to repair that exact absence. The annotation is what the unified
+	// server enforces; pkg/api/grpc/authz_mapping.go mirrors it for the legacy
+	// gate, and the two are pinned to each other by
+	// TestGRPCPermissions_ProtoOptionMatchesAuthzMapping.
+	ReconcileRoles(context.Context, *ReconcileRolesRequest) (*ReconcileRolesResponse, error)
 	// Application (OAuth client) management
 	RegisterApp(context.Context, *RegisterAppRequest) (*Application, error)
 	GetApp(context.Context, *GetAppRequest) (*Application, error)
@@ -843,6 +929,15 @@ func (UnimplementedIAMServiceServer) DeleteUser(context.Context, *DeleteUserRequ
 func (UnimplementedIAMServiceServer) ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListUsers not implemented")
 }
+func (UnimplementedIAMServiceServer) ListWebAuthnCredentials(context.Context, *ListWebAuthnCredentialsRequest) (*ListWebAuthnCredentialsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListWebAuthnCredentials not implemented")
+}
+func (UnimplementedIAMServiceServer) DeleteWebAuthnCredential(context.Context, *DeleteWebAuthnCredentialRequest) (*DeleteWebAuthnCredentialResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteWebAuthnCredential not implemented")
+}
+func (UnimplementedIAMServiceServer) DeleteWebAuthnCredentials(context.Context, *DeleteWebAuthnCredentialsRequest) (*DeleteWebAuthnCredentialsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteWebAuthnCredentials not implemented")
+}
 func (UnimplementedIAMServiceServer) CreateGroup(context.Context, *CreateGroupRequest) (*Group, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateGroup not implemented")
 }
@@ -884,6 +979,9 @@ func (UnimplementedIAMServiceServer) AssignRole(context.Context, *AssignRoleRequ
 }
 func (UnimplementedIAMServiceServer) RevokeRole(context.Context, *RevokeRoleRequest) (*RevokeRoleResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevokeRole not implemented")
+}
+func (UnimplementedIAMServiceServer) ReconcileRoles(context.Context, *ReconcileRolesRequest) (*ReconcileRolesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReconcileRoles not implemented")
 }
 func (UnimplementedIAMServiceServer) RegisterApp(context.Context, *RegisterAppRequest) (*Application, error) {
 	return nil, status.Error(codes.Unimplemented, "method RegisterApp not implemented")
@@ -1184,6 +1282,60 @@ func _IAMService_ListUsers_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _IAMService_ListWebAuthnCredentials_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListWebAuthnCredentialsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IAMServiceServer).ListWebAuthnCredentials(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IAMService_ListWebAuthnCredentials_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IAMServiceServer).ListWebAuthnCredentials(ctx, req.(*ListWebAuthnCredentialsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _IAMService_DeleteWebAuthnCredential_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteWebAuthnCredentialRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IAMServiceServer).DeleteWebAuthnCredential(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IAMService_DeleteWebAuthnCredential_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IAMServiceServer).DeleteWebAuthnCredential(ctx, req.(*DeleteWebAuthnCredentialRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _IAMService_DeleteWebAuthnCredentials_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteWebAuthnCredentialsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IAMServiceServer).DeleteWebAuthnCredentials(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IAMService_DeleteWebAuthnCredentials_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IAMServiceServer).DeleteWebAuthnCredentials(ctx, req.(*DeleteWebAuthnCredentialsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _IAMService_CreateGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CreateGroupRequest)
 	if err := dec(in); err != nil {
@@ -1432,6 +1584,24 @@ func _IAMService_RevokeRole_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(IAMServiceServer).RevokeRole(ctx, req.(*RevokeRoleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _IAMService_ReconcileRoles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReconcileRolesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IAMServiceServer).ReconcileRoles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IAMService_ReconcileRoles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IAMServiceServer).ReconcileRoles(ctx, req.(*ReconcileRolesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2078,6 +2248,18 @@ var IAMService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _IAMService_ListUsers_Handler,
 		},
 		{
+			MethodName: "ListWebAuthnCredentials",
+			Handler:    _IAMService_ListWebAuthnCredentials_Handler,
+		},
+		{
+			MethodName: "DeleteWebAuthnCredential",
+			Handler:    _IAMService_DeleteWebAuthnCredential_Handler,
+		},
+		{
+			MethodName: "DeleteWebAuthnCredentials",
+			Handler:    _IAMService_DeleteWebAuthnCredentials_Handler,
+		},
+		{
 			MethodName: "CreateGroup",
 			Handler:    _IAMService_CreateGroup_Handler,
 		},
@@ -2132,6 +2314,10 @@ var IAMService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RevokeRole",
 			Handler:    _IAMService_RevokeRole_Handler,
+		},
+		{
+			MethodName: "ReconcileRoles",
+			Handler:    _IAMService_ReconcileRoles_Handler,
 		},
 		{
 			MethodName: "RegisterApp",

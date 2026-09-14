@@ -1200,28 +1200,28 @@ func TestGetSymmetricKey_BackendNotSupported(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// ImportSymmetricKey Tests
+// ImportKeyMaterial Tests
 // -----------------------------------------------------------------------------
 
-func TestImportSymmetricKey_NotInitialized(t *testing.T) {
+func TestImportKeyMaterial_NotInitialized(t *testing.T) {
 	Reset()
 
-	err := ImportSymmetricKey(context.Background(), "software", &xkmssdk.KeyAttributes{}, []byte("key"))
+	err := ImportKeyMaterial(context.Background(), "software", &xkmssdk.KeyAttributes{}, []byte("key"))
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
-func TestImportSymmetricKey_InvalidBackend(t *testing.T) {
+func TestImportKeyMaterial_InvalidBackend(t *testing.T) {
 	setupFullTestXKMS(t)
 
 	attrs := &xkmssdk.KeyAttributes{
 		CN: "import-test",
 	}
 
-	err := ImportSymmetricKey(context.Background(), "non-existent", attrs, []byte("key-material"))
+	err := ImportKeyMaterial(context.Background(), "non-existent", attrs, []byte("key-material"))
 	require.Error(t, err)
 }
 
-func TestImportSymmetricKey_BackendNotSupported(t *testing.T) {
+func TestImportKeyMaterial_BackendNotSupported(t *testing.T) {
 	setupFullTestXKMS(t)
 
 	attrs := &xkmssdk.KeyAttributes{
@@ -1231,7 +1231,7 @@ func TestImportSymmetricKey_BackendNotSupported(t *testing.T) {
 	}
 
 	// PKCS8 backend does not support symmetric operations
-	err := ImportSymmetricKey(context.Background(), "software", attrs, []byte("key-material-32-bytes-for-aes!"))
+	err := ImportKeyMaterial(context.Background(), "software", attrs, []byte("key-material-32-bytes-for-aes!"))
 	require.Error(t, err)
 }
 

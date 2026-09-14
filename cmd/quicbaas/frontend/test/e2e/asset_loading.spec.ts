@@ -10,9 +10,17 @@
  *    Svelte app never mounts.
  *
  * 2. Wrong endpoint / method bug (Bug #4): before the SDK migration the app
- *    called legacy paths (/v1/tenants/…, /health) and called
- *    /api/v1/auth/validate via GET instead of POST. Those paths either 404
- *    or 405 — this block asserts zero such responses appear after mount.
+ *    called legacy paths (/v1/tenants/…, /health) and called the session
+ *    validate verb via GET instead of POST. Those paths either 404 or 405 —
+ *    this block asserts zero such responses appear after mount.
+ *
+ * 3. The session-verb collision + refresh storm (go-quicbaas#256): the SPA
+ *    must call quicbaas's OWN IAM-namespaced session verbs and must never
+ *    touch /api/v1/auth/{validate,logout}, which a composed node's xkms
+ *    module owns. Hitting the abandoned path returned 401 no_peer_cert for a
+ *    bearer the daemon had just minted, and the fetch interceptor answered
+ *    that by renewing forever — >1000 requests in about a minute. This block
+ *    asserts both halves: the right path, and a bounded number of calls.
  *
  * To run (requires a running quicbaasd):
  *   cd frontend && npx playwright test test/e2e/asset_loading.spec.ts
@@ -72,8 +80,10 @@ test.describe('Asset loading regression — base path', () => {
         legacyViolations.push(`${status} ${url}`);
       }
 
-      // Method check: /api/v1/auth/validate must be POST (405 = wrong method).
-      if (/\/api\/v1\/auth\/validate/.test(url) && status === 405) {
+      // Method check: the session validate verb must be POST (405 = wrong
+      // method). Matched on the IAM-namespaced path the SPA actually calls;
+      // the abandoned /api/v1/auth/validate is caught by its own check below.
+      if (/\/api\/v1\/iam\/validate/.test(url) && status === 405) {
         methodViolations.push(`405 (wrong method) ${url}`);
       }
     });
@@ -89,10 +99,53 @@ test.describe('Asset loading regression — base path', () => {
 
     if (methodViolations.length > 0) {
       throw new Error(
-        '/api/v1/auth/validate returned 405 — must be called via POST, not GET:\n' +
+        'the session validate verb returned 405 — must be called via POST, not GET:\n' +
           methodViolations.map((r) => `  ${r}`).join('\n'),
       );
     }
+  });
+
+  // go-quicbaas#256. Two independent failures produced one symptom, so this
+  // asserts both: the SPA reaching the xkms-owned path at all, and the
+  // interceptor answering a refused-fresh-bearer with unbounded renewal.
+  test('session verbs are IAM-namespaced and renewal does not storm (#256 regression)', async ({
+    page,
+  }) => {
+    const abandoned: string[] = [];
+    let sessionVerbCalls = 0;
+
+    page.on('request', (request) => {
+      const pathname = new URL(request.url()).pathname;
+      // The xkms module owns /api/v1/auth/* on a composed node. A POST here
+      // matches no route, so go-qrdb's router-wide auth middleware has no
+      // module fallback to consult and answers 401 no_peer_cert.
+      if (pathname === '/api/v1/auth/validate' || pathname === '/api/v1/auth/logout') {
+        abandoned.push(`${request.method()} ${pathname}`);
+      }
+      if (/^\/api\/v1\/iam\/(validate|refresh|logout)$/.test(pathname)) {
+        sessionVerbCalls++;
+      }
+    });
+
+    await page.goto('/ui/', { waitUntil: 'networkidle' });
+    // Give a storm, if one exists, room to become obvious. A loop ran at
+    // request rate, so a few seconds of idle is thousands of calls.
+    await page.waitForTimeout(3000);
+
+    if (abandoned.length > 0) {
+      throw new Error(
+        'SPA called an xkms-owned session path — these 401 no_peer_cert on a composed node:\n' +
+          abandoned.map((r) => `  ${r}`).join('\n'),
+      );
+    }
+
+    // A cold load legitimately validates once and may renew once. Anything
+    // near the storm's rate is the bug back, and the bound is deliberately
+    // loose so this fails on the pathology, not on ordinary retries.
+    expect(
+      sessionVerbCalls,
+      `session verbs called ${sessionVerbCalls} times on one page load — renewal is looping`,
+    ).toBeLessThan(10);
   });
 
   test('every GET /api/v1/orchestrator/sessions request includes tenant_id (Bug #5 regression)', async ({ page }) => {

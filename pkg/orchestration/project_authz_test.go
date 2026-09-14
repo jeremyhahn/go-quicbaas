@@ -120,15 +120,29 @@ func TestProjectAuthz_LegacyUnscopedProjectAllowsAll(t *testing.T) {
 	}
 }
 
-func TestProjectAuthz_MissingProjectAllowsAll(t *testing.T) {
+// TestProjectAuthz_MissingProjectRefused pins the fail-closed half of the
+// contract: a project-scoped check whose project the store cannot produce is a
+// refusal. Answering "allowed" there is what silently disabled the whole
+// boundary once projects moved into a tenant-routed store (go-quicbaas#634).
+func TestProjectAuthz_MissingProjectRefused(t *testing.T) {
 	ctx := context.Background()
 	store := orchestration.NewInMemoryProjectStore()
 	authz := orchestration.NewProjectAuthz(store)
 
-	// Project doesn't exist — should fall through to legacy behaviour.
 	err := authz.AuthorizeAgentForTenant(ctx, "tenant-1", "no-such-project", "agent-A", orchestration.ProjectRoleWorker)
-	if err != nil {
-		t.Fatalf("missing project should allow all agents: %v", err)
+	if err == nil {
+		t.Fatal("expected a refusal for a project the store cannot produce, got nil")
+	}
+	if !errors.Is(err, orchestration.ErrProjectUnresolved) {
+		t.Fatalf("expected ErrProjectUnresolved, got %T: %v", err, err)
+	}
+	var unresolved *orchestration.ProjectUnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("expected *ProjectUnresolvedError, got %T", err)
+	}
+	if unresolved.TenantID != "tenant-1" || unresolved.ProjectID != "no-such-project" || unresolved.AgentID != "agent-A" {
+		t.Errorf("refusal names tenant=%q project=%q agent=%q, want tenant-1/no-such-project/agent-A",
+			unresolved.TenantID, unresolved.ProjectID, unresolved.AgentID)
 	}
 }
 

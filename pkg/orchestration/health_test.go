@@ -110,6 +110,18 @@ func (m *healthMockAgentService) CompleteTask(_ context.Context, _, _ string, _ 
 	return nil
 }
 
+func (m *healthMockAgentService) BlockTask(_ context.Context, _, _ string, _ TaskBlockKind, _ string) error {
+	return nil
+}
+
+func (m *healthMockAgentService) ReadmitTask(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *healthMockAgentService) DeleteTask(_ context.Context, _, _ string) error {
+	return nil
+}
+
 func (m *healthMockAgentService) RegisterAgent(_ context.Context, _ *RegisterAgentRequest) (*RegisterAgentResponse, error) {
 	return &RegisterAgentResponse{}, nil
 }
@@ -126,7 +138,7 @@ func (m *healthMockAgentService) RemoveAgent(_ context.Context, _, _ string) err
 	return nil
 }
 
-func (m *healthMockAgentService) AgentHeartbeat(_ context.Context, _, _ string) error {
+func (m *healthMockAgentService) AgentHeartbeat(_ context.Context, _, _ string, _ *AgentObservation) error {
 	return nil
 }
 
@@ -143,7 +155,7 @@ func (m *healthMockAgentService) GetJobStatus(_ context.Context, _, _ string) (*
 	return nil, nil
 }
 
-func (m *healthMockAgentService) ListJobs(_ context.Context, _ string) ([]*JobStatus, error) {
+func (m *healthMockAgentService) ListJobs(_ context.Context, _ string, _ *JobFilter) ([]*JobStatus, error) {
 	return nil, nil
 }
 

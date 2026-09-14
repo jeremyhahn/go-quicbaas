@@ -32,7 +32,7 @@ type Provider interface {
 }
 ```
 
-Four implementations satisfy it, each asserted at compile time with the
+Five implementations satisfy it, each asserted at compile time with the
 `var _ Provider = (*T)(nil)` idiom:
 
 | Provider | File | Shape |
@@ -41,11 +41,26 @@ Four implementations satisfy it, each asserted at compile time with the
 | `OpenAIProvider` | `pkg/embedding/openai.go:28` | hosted API, key required |
 | `VoyageProvider` | `pkg/embedding/voyage.go:28` | hosted API, key required |
 | `LMStudioProvider` | `pkg/embedding/lmstudio.go:46` | local LM Studio server |
+| `NPUProvider` | `pkg/embedding/npu.go:169` | Intel NPU via an OpenVINO sidecar |
+
+The first four delegate to a go-qrdb provider; `NPUProvider` is implemented
+locally because go-qrdb has no NPU counterpart to delegate to, and it reaches its
+OpenVINO sidecar over HTTP for the same reason `OllamaProvider` does — the device
+may be on a different host, and the daemon must not link a vendor runtime. See
+[`npu.md`](npu.md), which also records why bucketing arbitrary text into the
+NPU's mandatory static shapes costs no accuracy.
 
 `Manager` (`pkg/embedding/manager.go:38`) holds the registry:
 `RegisterProvider` adds one under a name, `GetProvider` resolves one, and the
 manager's own `Embed` / `EmbedBatch` delegate to the configured default. Every
 consumer talks to the `Manager`, never to a concrete provider.
+
+One asymmetry is worth knowing: `RegisterProvider` accepts any name, but go-qrdb's
+`validateManagerConfig` (`pkg/embedding/manager.go:83` in go-qrdb) allowlists only
+`openai`, `ollama`, `lmstudio` and `voyage` for the *configured default*. A
+provider outside that list can therefore be registered and resolved by name, but
+cannot yet be named as the default in configuration — go-qrdb#528 tracks
+validating against the registry instead of a literal list.
 
 ### Alternatives rejected
 

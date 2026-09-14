@@ -17,9 +17,6 @@ package observability
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"fmt"
 	"testing"
 	"time"
@@ -32,28 +29,14 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/metadata"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/api"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/metrics"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tracing"
 )
 
-// issueTokenForUser is a helper function that issues a token for a user by username.
-// It retrieves the user from the store and calls IssueTokenForUser.
-func issueTokenForUser(ctx context.Context, authManager *auth.InMemoryAuthManager, username string) (*auth.Token, error) {
-	userInfo := authManager.GetUserStore().GetByUsername(username)
-	if userInfo == nil {
-		return nil, fmt.Errorf("user not found: %s", username)
-	}
-	return authManager.IssueTokenForUser(ctx, userInfo)
-}
-
-// TestCompleteFlow tests the complete request flow with observability, metrics, and auth features enabled
 func TestCompleteFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -84,32 +67,11 @@ func TestCompleteFlow(t *testing.T) {
 	require.NoError(t, err)
 	defer tracer.Shutdown(ctx)
 
-	// 3. Initialize Auth
-	signingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	authCfg := &auth.AuthConfig{
-		Enabled:         true,
-		JWTSigningKeyID: "test-observability-signing-key",
-		TokenTTL:        1 * time.Hour,
-		MaxTokens:       10,
-	}
-	auth.SetAsymmetricSigning(authCfg, signingKey)
-
-	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
-	require.NoError(t, err)
-
-	// Create test user
-	user, err := authManager.CreateUser("testuser", []string{"admin"})
-	require.NoError(t, err)
-	require.NotNil(t, user)
-
-	// Issue token for user (password-based auth is deprecated)
-	token, err := issueTokenForUser(ctx, authManager, "testuser")
-	require.NoError(t, err)
-	require.NotEmpty(t, token.AccessToken)
-
-	// 4. Initialize Cache
+	// 3. Initialize Cache. There is no step for minting a bearer: the caller is
+	// authenticated by the integration TLS client certificate on the connection,
+	// and the authz gate resolves against qrdb's policy decision point. The
+	// in-process token manager this test used to build was deleted with the
+	// parallel identity model (issue #905); the server never consulted it.
 	cacheManager, err := cache.NewManager(cache.Config{
 		L1Size:          100,
 		L1TTL:           5 * time.Minute,
@@ -144,8 +106,6 @@ func TestCompleteFlow(t *testing.T) {
 
 	// Test 1: Write with authentication (will be added in metadata)
 	t.Run("WriteWithAuth", func(t *testing.T) {
-		ctx := metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token.AccessToken)
-
 		testKey := uint64(time.Now().UnixNano())
 		testValue := []byte("test-data")
 
@@ -169,8 +129,6 @@ func TestCompleteFlow(t *testing.T) {
 
 	// Test 2: Read with cache check
 	t.Run("ReadWithCache", func(t *testing.T) {
-		ctx := metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token.AccessToken)
-
 		testKey := uint64(time.Now().UnixNano())
 		testValue := []byte("cached-test-data")
 
@@ -202,8 +160,6 @@ func TestCompleteFlow(t *testing.T) {
 
 	// Test 3: Transaction with metrics
 	t.Run("TransactionWithMetrics", func(t *testing.T) {
-		ctx := metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token.AccessToken)
-
 		txStart := time.Now()
 
 		// Simulate transaction operations
@@ -227,28 +183,6 @@ func TestCompleteFlow(t *testing.T) {
 		m.RecordTransactionSize(float64(len(keys)))
 
 		t.Logf("Transaction completed: %d operations in %.3fs", len(keys), txDuration)
-	})
-
-	// Test 4: Authorization fail-closed contract
-	t.Run("AuthorizationEnforcement", func(t *testing.T) {
-		// The in-process auth manager carries no authorization authority of
-		// its own: the RBAC decision belongs to qrdb's PDP, reached through
-		// the SDK platform-token validator at the transport layer
-		// (pkg/api/grpc/authz_interceptor.go and its REST/QUIC/MCP siblings).
-		// Authorize therefore fails closed with AuthorizerNotConfiguredError
-		// for EVERY token — valid or invalid — instead of making a local
-		// decision. Both calls must be denied.
-		var notConfigured *api.AuthorizerNotConfiguredError
-
-		err := authManager.Authorize(ctx, token.AccessToken, "test", "write")
-		require.Error(t, err, "valid token must still be denied without a configured decision point")
-		assert.ErrorAs(t, err, &notConfigured)
-
-		err = authManager.Authorize(ctx, "invalid-token", "test", "write")
-		require.Error(t, err, "invalid token must be denied without a configured decision point")
-		assert.ErrorAs(t, err, &notConfigured)
-
-		t.Logf("Authorization fails closed without a configured decision point")
 	})
 
 	// Test 5: Trace propagation

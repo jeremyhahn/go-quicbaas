@@ -34,6 +34,12 @@ describe('statusToVariant — canonical status → variant mapping', () => {
     ['queued', 'warning'],
     ['paused', 'warning'],
     ['degraded', 'warning'],
+    // task lifecycle: held but not worked, or parked on a person
+    ['claimed', 'warning'],
+    ['blocked', 'warning'],
+
+    // primary — work actively happening
+    ['in_progress', 'primary'],
 
     // error
     ['error', 'error'],

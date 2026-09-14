@@ -115,7 +115,7 @@ func runIAMAppRegisterCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Register application using SDK sub-client
@@ -193,7 +193,7 @@ func runIAMAppGetCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Get application using SDK sub-client
@@ -284,7 +284,7 @@ func runIAMAppUpdateCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Update application using SDK sub-client
@@ -357,7 +357,7 @@ func runIAMAppDeleteCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Delete application using SDK sub-client
@@ -403,7 +403,7 @@ func runIAMAppListCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// List applications using SDK sub-client
@@ -477,7 +477,7 @@ func runIAMAppRotateSecretCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Rotate secret using SDK sub-client

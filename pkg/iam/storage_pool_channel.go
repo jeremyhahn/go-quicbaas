@@ -596,6 +596,27 @@ drain:
 }
 
 // closableKVStore wraps a KVStore with a Close method.
+//
+// EMBEDDING DOES NOT CARRY THE GUARDED VERBS. Embedding interfaces.KVStore
+// promotes exactly that interface's six plain verbs. The guarded writes —
+// PutIfAbsent and CompareAndDelete — are a CAPABILITY discovered by type
+// assertion on the concrete store, so a wrapper is silently not a guarded
+// writer however atomic the store inside it. Any caller asserting for those
+// verbs sees the assertion fail and refuses the write, and the refusal names
+// the store rather than this wrapper, so the cause is nowhere near the symptom.
+//
+// This is latent here, not live: nothing in pkg/iam asserts atomic capability
+// today, so nothing is currently refused. It is recorded because the hazard is
+// invisible at the point where it would be introduced — the day an IAM path
+// needs a guarded create (a uniqueness invariant, a claim), it will fail
+// through this wrapper for reasons that have nothing to do with the code being
+// written. If that day comes, forward the two verbs explicitly; do not emulate
+// them with a read followed by a write, which is the defect the guarded verbs
+// exist to remove.
+//
+// The same trap was measured in pkg/orchestration, where five test wrappers
+// needed explicit forwards (WP6-PREREQUISITE-2). See
+// docs/sdlc/testing-notes.md.
 type closableKVStore struct {
 	interfaces.KVStore
 	closeFunc func() error

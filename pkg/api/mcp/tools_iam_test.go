@@ -52,7 +52,7 @@ func TestIAMToolsRegistration(t *testing.T) {
 	}
 
 	// We should have all IAM tools registered
-	expectedCount := 49 // 5 tenant + 7 user + 8 group + 5 role + 6 policy + 6 app + 10 mfa + 2 pep
+	expectedCount := 50 // 5 tenant + 7 user + 8 group + 6 role + 6 policy + 6 app + 10 mfa + 2 pep
 	if iamToolCount != expectedCount {
 		t.Errorf("Expected %d IAM tools, got %d", expectedCount, iamToolCount)
 	}
@@ -641,6 +641,7 @@ type mockIAMService struct {
 	updateRoleFunc    func(ctx context.Context, req *service.IAMUpdateRoleRequest) (*service.IAMUpdateRoleResponse, error)
 	deleteRoleFunc    func(ctx context.Context, req *service.IAMDeleteRoleRequest) (*service.IAMDeleteRoleResponse, error)
 	listRolesFunc     func(ctx context.Context, req *service.IAMListRolesRequest) (*service.IAMListRolesResponse, error)
+	reconcileRolesFn  func(ctx context.Context, req *service.IAMReconcileRolesRequest) (*service.IAMReconcileRolesResponse, error)
 	createPolicyFunc  func(ctx context.Context, req *service.CreatePolicyRequest) (*service.CreatePolicyResponse, error)
 	getPolicyFunc     func(ctx context.Context, req *service.GetPolicyRequest) (*service.GetPolicyResponse, error)
 	updatePolicyFunc  func(ctx context.Context, req *service.UpdatePolicyRequest) (*service.UpdatePolicyResponse, error)
@@ -822,6 +823,20 @@ func (m *mockIAMService) ListRoles(ctx context.Context, req *service.IAMListRole
 		return m.listRolesFunc(ctx, req)
 	}
 	return &service.IAMListRolesResponse{Roles: []*iam.Role{{ID: "r1"}}, TotalCount: 1, Timestamp: time.Now()}, nil
+}
+
+func (m *mockIAMService) ReconcileBuiltInRoles(ctx context.Context, req *service.IAMReconcileRolesRequest) (*service.IAMReconcileRolesResponse, error) {
+	if m.reconcileRolesFn != nil {
+		return m.reconcileRolesFn(ctx, req)
+	}
+	return &service.IAMReconcileRolesResponse{
+		TenantID: req.TenantID,
+		Roles: []iam.RoleReconcileResult{
+			{RoleID: "r1", Name: "admin", Added: []string{"roles:create"}},
+		},
+		Changed:   true,
+		Timestamp: time.Now(),
+	}, nil
 }
 
 func (m *mockIAMService) CreatePolicy(ctx context.Context, req *service.CreatePolicyRequest) (*service.CreatePolicyResponse, error) {
@@ -2544,4 +2559,68 @@ func TestExecuteIAMUserCreate_UnknownGroupError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.True(t, dberrors.IsNotFound(err), "expected typed not-found, got %T: %v", err, err)
+}
+
+// TestExecuteIAMUserUpdate_AttributesReachTheServiceInTheStoreShape pins the
+// tool half of the dropped-attribute defect.
+//
+// The tool used to call stringAttributes only to CHECK the argument and then
+// forward the raw map[string]interface{} it had just rejected values from. The
+// service layer could not write that shape and dropped it, so an attribute
+// change was accepted, answered with success, and never stored — while the
+// validation that ran gave every appearance of the value having been handled.
+// Forwarding the CONVERTED map is what makes the check and the payload the same
+// value.
+func TestExecuteIAMUserUpdate_AttributesReachTheServiceInTheStoreShape(t *testing.T) {
+	var captured *service.IAMUpdateUserRequest
+	mock := &mockIAMService{
+		updateUserFunc: func(_ context.Context, req *service.IAMUpdateUserRequest) (*service.IAMUpdateUserResponse, error) {
+			captured = req
+			return &service.IAMUpdateUserResponse{
+				User:      &iam.User{ID: req.UserID, TenantID: req.TenantID},
+				Timestamp: time.Now(),
+			}, nil
+		},
+	}
+	reg := newIAMTestRegistry(mock)
+
+	args := map[string]interface{}{
+		"tenant_id":  "t1",
+		"user_id":    "1",
+		"attributes": map[string]interface{}{"clearance": "public"},
+	}
+
+	result, err := reg.executeIAMUserUpdate(context.Background(), args)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.NotNil(t, captured)
+	require.NotNil(t, captured.Attributes, "the tool validated the attributes and then sent nothing")
+	assert.Equal(t, map[string]string{"clearance": "public"}, *captured.Attributes)
+}
+
+// TestExecuteIAMUserUpdate_NonStringAttributeIsRefused keeps the refusal that
+// the conversion carries: an attribute value the store cannot hold fails the
+// call rather than being dropped from it. Persisting less than the request
+// asked for is silent data loss on an authorization input.
+func TestExecuteIAMUserUpdate_NonStringAttributeIsRefused(t *testing.T) {
+	var called bool
+	mock := &mockIAMService{
+		updateUserFunc: func(_ context.Context, req *service.IAMUpdateUserRequest) (*service.IAMUpdateUserResponse, error) {
+			called = true
+			return &service.IAMUpdateUserResponse{User: &iam.User{ID: req.UserID}, Timestamp: time.Now()}, nil
+		},
+	}
+	reg := newIAMTestRegistry(mock)
+
+	result, err := reg.executeIAMUserUpdate(context.Background(), map[string]interface{}{
+		"tenant_id":  "t1",
+		"user_id":    "1",
+		"attributes": map[string]interface{}{"clearance": 5},
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "attributes.clearance must be a string")
+	assert.False(t, called, "the update was dispatched with an attribute the store cannot hold")
 }

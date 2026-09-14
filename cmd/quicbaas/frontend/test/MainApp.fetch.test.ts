@@ -160,8 +160,10 @@ describe('MainApp — no direct fetch() calls', () => {
       expect(mockListJobs).toHaveBeenCalled();
     }, { timeout: 2000 });
 
-    // The default activeTenantID in orchestratorStore is 'system' (qrdb's
-    // canonical control-plane tenant; the legacy 'default' tenant was retired).
+    // No session is stored in this case, so the store falls back to 'system',
+    // qrdb's canonical control-plane tenant. When a session IS present the
+    // tenant comes from its tenant_id claim instead — see
+    // orchestratorSessionTenant.test.ts.
     expect(mockListJobs).toHaveBeenCalledWith('system');
   });
 
@@ -184,7 +186,7 @@ describe('MainApp — no direct fetch() calls', () => {
       expect(mockListSessions).toHaveBeenCalled();
     }, { timeout: 2000 });
 
-    // The default activeTenantID in orchestratorStore is 'system'.
+    // Signed out, so the 'system' fallback applies (see above).
     expect(mockListSessions).toHaveBeenCalledWith(
       expect.objectContaining({ tenantID: 'system' }),
     );

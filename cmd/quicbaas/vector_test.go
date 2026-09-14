@@ -1322,6 +1322,7 @@ func (m *testSDKClientForVector) CustodianGroup() (quicbaas.QRDBCustodianGroupCl
 }
 func (m *testSDKClientForVector) Share() (quicbaas.QRDBShareClient, error) { return nil, nil }
 func (m *testSDKClientForVector) Project() quicbaas.ProjectClient          { return nil }
+func (m *testSDKClientForVector) SDLC() quicbaas.SDLCClient                { return nil }
 func (m *testSDKClientForVector) Account() quicbaas.AccountClient          { return nil }
 
 func (m *testSDKClientForVector) Orchestrator() quicbaas.OrchestratorClient { return nil }

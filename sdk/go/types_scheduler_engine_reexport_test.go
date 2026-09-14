@@ -98,18 +98,19 @@ func TestEveryEngineMethodTypeIsReachableThroughTheSDK(t *testing.T) {
 	// alias. Built from the aliases themselves, so adding an alias admits its
 	// type and removing one withdraws it.
 	reachable := map[reflect.Type]string{
-		reflect.TypeOf(SchedulerEngine{}):       "SchedulerEngine",
-		reflect.TypeOf(Job{}):                   "Job",
-		reflect.TypeOf(JobQuery{}):              "JobQuery",
-		reflect.TypeOf(JobResult{}):             "JobResult",
-		reflect.TypeOf(JobUpdateParams{}):       "JobUpdateParams",
-		reflect.TypeOf(JobExecution{}):          "JobExecution",
-		reflect.TypeOf(SchedulerEngineStats{}):  "SchedulerEngineStats",
-		reflect.TypeOf(SchedulerEngineConfig{}): "SchedulerEngineConfig",
-		reflect.TypeOf(JobType("")):             "JobType",
-		reflect.TypeOf(JobStatus("")):           "JobStatus",
-		reflect.TypeOf(OwnerType("")):           "OwnerType",
-		reflect.TypeOf(JobHandler(nil)):         "JobHandler",
+		reflect.TypeOf(SchedulerEngine{}):         "SchedulerEngine",
+		reflect.TypeOf(Job{}):                     "Job",
+		reflect.TypeOf(JobQuery{}):                "JobQuery",
+		reflect.TypeOf(JobResult{}):               "JobResult",
+		reflect.TypeOf(JobUpdateParams{}):         "JobUpdateParams",
+		reflect.TypeOf(JobExecution{}):            "JobExecution",
+		reflect.TypeOf(SchedulerEngineStats{}):    "SchedulerEngineStats",
+		reflect.TypeOf(SchedulerEngineConfig{}):   "SchedulerEngineConfig",
+		reflect.TypeOf(JobType("")):               "JobType",
+		reflect.TypeOf(JobStatus("")):             "JobStatus",
+		reflect.TypeOf(OwnerType("")):             "OwnerType",
+		reflect.TypeOf(JobHandler(nil)):           "JobHandler",
+		reflect.TypeOf(AbandonedRunAttestation{}): "AbandonedRunAttestation",
 	}
 
 	enginePkg := reflect.TypeOf(SchedulerEngine{}).PkgPath()

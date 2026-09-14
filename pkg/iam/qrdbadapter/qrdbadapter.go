@@ -111,7 +111,7 @@ func (a *TenantAdapter) CreateTenant(ctx context.Context, id, displayName string
 // =============================================================================
 
 // RoleAdapter exposes quicbaas IdentityStore role operations as a qrdb
-// RoleCreator. Use WrapRole to construct.
+// RoleCreator and role name resolver. Use WrapRole to construct.
 type RoleAdapter struct {
 	store *iam.IdentityStore
 }
@@ -119,6 +119,46 @@ type RoleAdapter struct {
 // WrapRole adapts a quicbaas IdentityStore to the qrdb RoleCreator
 // surface qrdbfirstboot.Initialize consumes.
 func WrapRole(store *iam.IdentityStore) *RoleAdapter { return &RoleAdapter{store: store} }
+
+// Compile-time assertion: the role adapter answers "which role is named N in
+// tenant T", so it can be wired as qrdbfirstboot's Dependencies.RoleResolver.
+// Without a resolver, first-boot re-run against an already-seeded store cannot
+// tell which identifier the system roles are persisted under and refuses to
+// guess (UnresolvableSystemRoleError).
+var (
+	_ qrdbsdk.RoleNameResolver     = (*RoleAdapter)(nil)
+	_ qrdbsdk.FirstBootRoleCreator = (*RoleAdapter)(nil)
+)
+
+// GetRoleByName satisfies qrdb's role.NameResolver: it answers which role
+// carries name in tenantID, reading the store's name index rather than paging
+// a listing.
+//
+// The absence of a role is reported as qrdb's own *RoleNotFoundError, and that
+// exact type is load-bearing: ResolveSystemRoleID matches it with errors.As to
+// decide "the cluster holds no role of this name yet, use the derived
+// identifier", and treats every OTHER error as a failure to resolve. A
+// broker-shaped not-found would therefore be read as an outage, and any error
+// reported as an absence would bind a grant to an identifier the store may not
+// use.
+func (a *RoleAdapter) GetRoleByName(ctx context.Context, tenantID, name string) (*qrdbsdk.Role, error) {
+	if a == nil || a.store == nil {
+		return nil, &NilDependencyError{Name: "IdentityStore"}
+	}
+	role, err := a.store.GetRoleByName(ctx, tenantID, name)
+	if err != nil {
+		if iam.IsRoleNotFound(err) {
+			return nil, &qrdbsdk.RoleNotFoundError{ID: name}
+		}
+		return nil, err
+	}
+	core := FromIAMRole(role)
+	// A built-in role name resolves as System so first-boot's resolver can
+	// tell a canonical role from a tenant-defined one of the same name
+	// (mirrors qrdbsdk's own projection — go-qrdb firstboot).
+	core.System = qrdbsdk.IsSystemRoleName(core.Name)
+	return &core, nil
+}
 
 // CreateRole satisfies qrdbfirstboot.RoleCreator. Permissions are
 // converted from qrdb's strongly-typed qrdbsdk.Permission slice to
@@ -153,46 +193,164 @@ func (a *RoleAdapter) CreateRole(ctx context.Context, req *qrdbsdk.CreateRoleReq
 	}, nil
 }
 
-// GetRoleByName satisfies qrdbsdk.RoleNameResolver: it answers "which role is
-// named N in tenant T" from the quicbaas role store so first-boot's grants
-// bind to the identifier a system role is actually persisted under. On a
-// re-run against a store seeded earlier — the retry after a partial first
-// boot — the built-in roles already exist and first-boot refuses to derive
-// their identifiers (UnresolvableSystemRoleError) unless it can resolve them
-// by name here. A miss is qrdbsdk.RoleNotFoundError so first-boot's own
-// not-found handling applies.
-func (a *RoleAdapter) GetRoleByName(ctx context.Context, tenantID, name string) (*qrdbsdk.Role, error) {
+// Compile-time assertion: the role adapter is the seam iam.CreateTenant seeds
+// a new tenant's built-in roles through.
+var _ iam.TenantRoleSeeder = (*RoleAdapter)(nil)
+
+// SeedBuiltInRoles materializes qrdb's canonical built-in roles inside
+// tenantID, mirroring what qrdbfirstboot.Initialize does for the system
+// tenant — same qrdbsdk.BuiltInRoles projection, same CreateRole path, same
+// deterministic role IDs — so a tenant created at runtime is seeded exactly
+// as the one created at bootstrap.
+//
+// Permission sets are read from the registry at call time, not at package
+// init, so every permission a higher layer contributed (pkg/permission's
+// Register, called from server.NewServer) is present in the seeded roles.
+//
+// A role that already exists is skipped: seeding is idempotent, so a re-run
+// over a tenant seeded by an earlier version converges instead of failing.
+// qrdb's Owner role is deliberately not seeded here — it is the non-strict
+// bootstrap admin's convenience superuser, seeded only by first-boot.
+//
+// The SYSTEM tenant is excluded, and the exclusion is load-bearing rather than
+// a tidy-up. first-boot creates the system tenant through this very manager
+// and only then registers the built-in roles itself, using whether they
+// already existed to decide how to resolve the admin's role ID: roles it
+// seeded in that run are addressable by their derived identifier, roles it
+// found are not, and with no role.NameResolver wired it refuses to guess
+// (UnresolvableSystemRoleError). Seeding the system tenant here would make
+// first-boot find its own roles preexisting and fail the platform admin's
+// creation — bootstrap would break on a fresh install. First-boot owns the
+// system tenant's roles; this seam owns every tenant created after it.
+func (a *RoleAdapter) SeedBuiltInRoles(ctx context.Context, tenantID string) error {
 	if a == nil || a.store == nil {
-		return nil, &NilDependencyError{Name: "IdentityStore"}
+		return &NilDependencyError{Name: "IdentityStore"}
 	}
-	// Limit 0 lists every role in the broker-backed stores and the first
-	// default page (100) in the qrdb-backed one. Both cover this lookup: it
-	// runs during first-boot against the system tenant, whose roles are the
-	// built-in set seeded moments earlier.
-	roles, err := a.store.ListRoles(ctx, tenantID, iam.ListOptions{})
-	if err != nil {
-		return nil, err
+	if tenantID == "" || tenantID == qrdbsdk.SystemTenantID {
+		return nil
 	}
-	for _, r := range roles {
-		if r.Name != name {
-			continue
-		}
-		return &qrdbsdk.Role{
+	// Roles written by THIS run, so a failure part-way can undo them. qrdb's
+	// tenant deletion drops tenant metadata and barrier state but does not
+	// purge role records, and CreateTenant's rollback removes the tenant
+	// rather than the roles — so without this, a seed that failed half-way
+	// would leave exactly the orphans the name check below has to refuse.
+	var created []string
+
+	for _, r := range qrdbsdk.BuiltInRoles(tenantID) {
+		_, err := a.CreateRole(ctx, &qrdbsdk.CreateRoleRequest{
 			ID:          r.ID,
 			Name:        r.Name,
 			TenantID:    r.TenantID,
-			Permissions: parsePermissions(r.Permissions),
-			System:      qrdbsdk.IsSystemRoleName(r.Name),
-		}, nil
+			Permissions: r.Permissions,
+		})
+		if err == nil {
+			created = append(created, r.ID)
+			continue
+		}
+
+		var nameExists *qrdbsdk.RoleNameExistsError
+		if errors.As(err, &nameExists) {
+			// A role of this name is already here. Idempotency means "the
+			// canonical role is already present", NOT "something wearing the
+			// name is present": qrdb does not purge roles when a tenant is
+			// deleted, so recreating a tenant can meet a leftover `admin`
+			// from its previous life — with a hand-edited permission set, or
+			// an identifier this seeding never chose. Accepting it would hand
+			// every future `--roles admin` user those stale grants under a
+			// name that promises the canonical ones.
+			//
+			// So verify before trusting, and fail closed on a mismatch. An
+			// operator resolving a genuine conflict is a deliberate act; a
+			// silent one is how the wrong permissions become permanent.
+			if verifyErr := a.verifyCanonicalRole(ctx, tenantID, r); verifyErr != nil {
+				a.deleteRoles(ctx, tenantID, created)
+				return verifyErr
+			}
+			continue
+		}
+
+		a.deleteRoles(ctx, tenantID, created)
+		return &RoleSeedError{Role: r.Name, TenantID: tenantID, Cause: err}
 	}
-	return nil, &qrdbsdk.RoleNotFoundError{ID: tenantID + "/" + name}
+	return nil
 }
 
-// Compile-time proof that the adapter satisfies both first-boot role seams.
-var (
-	_ qrdbsdk.FirstBootRoleCreator = (*RoleAdapter)(nil)
-	_ qrdbsdk.RoleNameResolver     = (*RoleAdapter)(nil)
-)
+// verifyCanonicalRole reports whether the role already carrying want's name in
+// tenantID IS want — same deterministic identifier, same permission set.
+//
+// It asks the store by NAME. The earlier form listed the tenant's roles and
+// scanned the page, which the qrdb-backed store caps at its default page size:
+// a tenant holding more roles than one page could report the name as taken and
+// then not show the role, sending this into the "reported as existing but not
+// listed" refusal for a role that is present and canonical.
+func (a *RoleAdapter) verifyCanonicalRole(ctx context.Context, tenantID string, want *qrdbsdk.Role) error {
+	found, err := a.store.GetRoleByName(ctx, tenantID, want.Name)
+	if err != nil {
+		if iam.IsRoleNotFound(err) {
+			// The store reported the name as taken and then did not resolve
+			// it. That is a store inconsistency, not an idempotent re-run, and
+			// it must not be read as "the canonical role is present".
+			return &RoleConflictError{Role: want.Name, TenantID: tenantID, Reason: "reported as existing but not resolvable by name"}
+		}
+		return &RoleSeedError{Role: want.Name, TenantID: tenantID, Cause: err}
+	}
+	if found == nil {
+		return &RoleConflictError{Role: want.Name, TenantID: tenantID, Reason: "reported as existing but not resolvable by name"}
+	}
+	if found.ID != want.ID {
+		return &RoleConflictError{
+			Role:     want.Name,
+			TenantID: tenantID,
+			Reason:   "existing role has id " + found.ID + ", not the canonical " + want.ID,
+		}
+	}
+	if !samePermissions(found.Permissions, convertPermissions(want.Permissions)) {
+		return &RoleConflictError{
+			Role:     want.Name,
+			TenantID: tenantID,
+			Reason:   "existing role's permissions differ from the canonical set",
+		}
+	}
+	return nil
+}
+
+// deleteRoles removes roles this seeding run created, best-effort, so a failed
+// seed does not leave partial state behind for the next attempt to trip over.
+// Errors are deliberately dropped: the caller is already failing, and a
+// cleanup failure must not mask the reason.
+func (a *RoleAdapter) deleteRoles(ctx context.Context, tenantID string, ids []string) {
+	for _, id := range ids {
+		_ = a.store.DeleteRole(ctx, tenantID, id)
+	}
+}
+
+// samePermissions reports whether two permission lists hold the same set,
+// independent of order and duplicates.
+//
+// Both sides are reduced to sets first. Consuming one side against the other
+// as it walks would make a repeated entry on either side read as a mismatch,
+// which would refuse a role whose grants are in fact canonical — a false
+// conflict that no operator could resolve, since the two sets ARE equal.
+func samePermissions(a, b []string) bool {
+	setOf := func(in []string) map[string]struct{} {
+		out := make(map[string]struct{}, len(in))
+		for _, p := range in {
+			out[p] = struct{}{}
+		}
+		return out
+	}
+
+	left, right := setOf(a), setOf(b)
+	if len(left) != len(right) {
+		return false
+	}
+	for p := range left {
+		if _, ok := right[p]; !ok {
+			return false
+		}
+	}
+	return true
+}
 
 // =============================================================================
 // User adapter
@@ -255,22 +413,36 @@ func (a *UserAdapter) CreateUser(ctx context.Context, req *qrdbsdk.CreateUserReq
 	if tenantID == "" {
 		tenantID = qrdbsdk.SystemTenantID
 	}
+	// State is stated rather than defaulted. The default describes an account
+	// awaiting an invite, and the bootstrap admin is not one: enrollment here
+	// is CERT-BASED — first-boot issues the certificate and binds its SPKI
+	// thumbprint, and there is no invite token in the flow at all. Leaving the
+	// default would mark the one account that is already enrolled as pending
+	// activation.
 	opts := iam.CreateUserOptions{
-		Username: req.Username,
-		Email:    syntheticEmail(req.Username, tenantID),
-		Name:     req.Username,
-		Roles:    req.RoleIDs,
+		Username:  req.Username,
+		Email:     syntheticEmail(req.Username, tenantID),
+		Name:      req.Username,
+		Roles:     req.RoleIDs,
+		Lifecycle: iam.LifecycleActive,
 	}
 	u, err := a.store.CreateUser(ctx, tenantID, opts)
 	if err != nil {
-		if isAlreadyExists(err) || isEmailDuplicate(err) {
+		// isAlreadyExists alone. It matches the ErrAlreadyExists CODE, and
+		// iam.ErrEmailAlreadyExists — the duplicate-synthetic-email answer this
+		// path also has to treat as "already exists" — carries that code, so it
+		// is already covered. The second predicate this line used to call read
+		// as a narrower sentinel check but was errors.Is against a QBError,
+		// which compares codes: it matched exactly the same set and could never
+		// add a case (go-quicbaas#434).
+		if isAlreadyExists(err) {
 			return nil, &qrdbsdk.UsernameExistsError{Username: req.Username, TenantID: tenantID}
 		}
 		return nil, err
 	}
 	a.created = u
 	return &qrdbsdk.User{
-		Username: u.Name,
+		Username: u.Username,
 		TenantID: u.TenantID,
 		RoleIDs:  u.Roles,
 		Enabled:  true,
@@ -369,6 +541,44 @@ func (e *NilDependencyError) Error() string {
 	return "qrdbadapter: nil " + e.Name
 }
 
+// RoleConflictError reports that a role already carrying a built-in name in
+// this tenant is NOT the canonical one — a different identifier, or a
+// different permission set.
+//
+// Seeding fails closed on it rather than adopting the impostor: the name
+// promises qrdb's canonical grants, and a role that merely wears the name
+// would confer whatever it happens to hold to every user granted it.
+type RoleConflictError struct {
+	Role     string
+	TenantID string
+	Reason   string
+}
+
+// Error implements the error interface.
+func (e *RoleConflictError) Error() string {
+	return "qrdbadapter: role " + e.Role + " in tenant " + e.TenantID +
+		" is not the canonical built-in: " + e.Reason
+}
+
+// RoleSeedError reports which built-in role failed to seed, and in which
+// tenant. Naming the role matters: seeding walks the whole built-in set, so
+// the bare cause alone leaves the failing role ambiguous.
+type RoleSeedError struct {
+	Role     string
+	TenantID string
+	Cause    error
+}
+
+// Error implements the error interface.
+func (e *RoleSeedError) Error() string {
+	return "qrdbadapter: seed built-in role " + e.Role + " in tenant " + e.TenantID + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause for errors.Is and errors.As support.
+func (e *RoleSeedError) Unwrap() error {
+	return e.Cause
+}
+
 // isAlreadyExists reports whether err is (or wraps) a quicbaas
 // ErrAlreadyExists code. Used to translate quicbaas duplicate errors
 // into the specific qrdb sentinel types qrdbfirstboot checks via
@@ -382,14 +592,6 @@ func isAlreadyExists(err error) bool {
 		return qb.Code == dberrors.ErrAlreadyExists
 	}
 	return false
-}
-
-// isEmailDuplicate reports whether err is iam.ErrEmailAlreadyExists.
-// CreateUser surfaces this when the synthesized email conflicts with
-// an existing user — for the admin re-create path that's the
-// "already exists" signal.
-func isEmailDuplicate(err error) bool {
-	return errors.Is(err, iam.ErrEmailAlreadyExists)
 }
 
 // syntheticEmail returns "<username>@<tenant>.qrdb.local" — a

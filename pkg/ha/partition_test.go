@@ -641,6 +641,24 @@ func TestPartitionDetector_GetPeerStates(t *testing.T) {
 // TestPartitionDetector_CheckPeerReachability tests peer connectivity checks
 // using real HTTP health servers. Node 2 serves 200 (reachable); node 3 uses
 // an address that refuses connections (unreachable).
+// TestPartitionDetector_CheckPeerReachability checks a mixed peer set: one
+// backed by a live TLS health server, one at an address nothing is listening on.
+//
+// HealthCheckTimeout is a DEADLOCK DETECTOR here, not a budget, and the two
+// assertions below are load-sensitive in opposite directions:
+//
+//   - node 3 (unreachable) cannot fail from slowness. A slow machine only makes
+//     it more unreachable, and it does not wait for this deadline at all:
+//     127.0.0.1:1 is connection-refused, measured at 43-648us with a 30s dial
+//     timeout available. So a larger value costs this test nothing.
+//   - node 2 (healthy) is bounded by it. A real TLS handshake plus request has
+//     to finish inside the deadline, so a scheduling delay past it reports a
+//     healthy peer as unreachable -- the code is right and the test is wrong.
+//
+// At 500ms that was the whole flake (go-quicbaas#425): a value chosen to keep
+// the unreachable case fast, imposed on the reachable case that actually needs
+// time. The unreachable case never needed it, so the deadline is now set where
+// only a genuine hang can reach it.
 func TestPartitionDetector_CheckPeerReachability(t *testing.T) {
 	srv := newHealthServer(t, http.StatusOK)
 
@@ -652,7 +670,7 @@ func TestPartitionDetector_CheckPeerReachability(t *testing.T) {
 			2: serverHostPort(srv),
 			3: unreachableAddr,
 		},
-		HealthCheckTimeout: 500 * time.Millisecond,
+		HealthCheckTimeout: 30 * time.Second,
 		ClusterCA:          caPoolFromServer(srv),
 	}
 

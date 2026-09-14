@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -105,6 +106,18 @@ type RuntimeConfig struct {
 	// this nil is deny-by-default, not permissive: a sandboxed spawn naming
 	// any work directory is refused.
 	MountPolicy *orchestration.MountPolicy
+
+	// AccountResolver turns a spawn's AccountID / AccountAuto request into
+	// concrete credential material for a pooled provider account. It is the
+	// SAME orchestration.AccountResolver the control plane composes, over
+	// API-backed stores (see NewAccountPool), so a remote spawn resolves an
+	// account by the same rules a local one does.
+	//
+	// Leaving it nil is not a degraded mode: an ACP backend with no resolver
+	// fails a pooled spawn closed with AccountResolverNotConfiguredError, which
+	// is the defect go-quicbaas#734 recorded. It is nil only on a daemon with
+	// no control plane to draw a pool from.
+	AccountResolver orchestration.AccountResolver
 }
 
 // NewRuntime constructs a Runtime. Returns ErrRuntimeNoBackends if the
@@ -117,18 +130,62 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 		return nil, ErrRuntimeNoLogger
 	}
 	hasRT := cfg.ContainerRuntime != nil && cfg.ContainerRuntime.IsAvailable()
+
+	// A daemon under SandboxPolicyRequired that holds no usable container
+	// runtime can satisfy no spawn at all: every request resolves to
+	// SandboxModeRequired and ResolveSandboxMode refuses it for want of a
+	// runtime. That is a misconfiguration of the host, and it belongs in the
+	// boot log where the operator is watching, not in the first dispatched
+	// task's error (go-quicbaas#732). Both the `agent serve` daemon and the
+	// embedded agent construct their runtime here, so the rule is enforced
+	// once for both.
+	if cfg.SandboxPolicy == orchestration.SandboxPolicyRequired && !hasRT {
+		return nil, ErrRuntimeSandboxRequiredNoRuntime
+	}
+
 	backends := cloneBackends(cfg.Backends)
 
 	// Give every ACP backend access to the container runtime so its
-	// SandboxModeRequired path (spawnContainerJSONRPC) can launch an
-	// interactive agent container. Without this the backend's containerRuntime
-	// stays nil and a Required spawn fails with SandboxModeViolationError. This
-	// mirrors the orchestrator-side wiring in
-	// pkg/server/lifecycle_orchestration.go.
+	// SandboxModeRequired paths — spawnContainerCLI for a CLI-mode backend,
+	// spawnContainerJSONRPC for an ACP one — can launch an interactive agent
+	// container. Without this the backend's containerRuntime stays nil and a
+	// Required spawn fails with SandboxModeViolationError. This mirrors the
+	// orchestrator-side wiring in pkg/server/lifecycle_orchestration.go.
 	if hasRT {
 		for _, b := range backends {
 			if acp, ok := b.(*orchestration.ACPBackend); ok {
 				acp.SetContainerRuntime(cfg.ContainerRuntime)
+			}
+		}
+	}
+
+	// Stamp every sandbox container with the daemon that owns it, so a daemon
+	// that restarts can recognise the containers its predecessor left running
+	// and remove those and only those (SweepOrphanContainers, #750). The work
+	// directory is the name: it is this daemon's own state, it survives a
+	// restart, and two daemons never share one.
+	owner := strings.TrimSpace(cfg.WorkDir)
+	if hasRT && owner != "" {
+		for _, b := range backends {
+			if acp, ok := b.(*orchestration.ACPBackend); ok {
+				acp.SetSandboxOwner(owner)
+			}
+		}
+	}
+
+	// Give every ACP backend the pooled-account resolver so a spawn naming
+	// AccountID / AccountAuto resolves against the tenant's central pool
+	// instead of failing with AccountResolverNotConfiguredError. This mirrors
+	// the orchestrator-side wiring in pkg/server/lifecycle_orchestration.go —
+	// which attaches by backend name — but attaches to EVERY ACP backend the
+	// daemon serves: the daemon's own backend set is already the operator's
+	// choice, and a name list here would silently exclude a backend the
+	// control plane pools (the "claude-code" alias problem that wiring
+	// documents).
+	if cfg.AccountResolver != nil {
+		for _, b := range backends {
+			if acp, ok := b.(*orchestration.ACPBackend); ok {
+				acp.SetAccountResolver(cfg.AccountResolver)
 			}
 		}
 	}
@@ -156,6 +213,32 @@ func (r *Runtime) SetEventForwarder(f *EventForwarder) {
 	r.mu.Lock()
 	r.eventForwarder = f
 	r.mu.Unlock()
+}
+
+// SetAccountResolver installs (or replaces) the pooled provider account
+// resolver on every ACP backend this runtime serves.
+//
+// It exists for the same reason SetEventForwarder does: the resolver's
+// dependencies are the daemon's control-plane HTTP client and token source,
+// which are built alongside the enroller — after the runtime, because the
+// enroller needs the runtime's served-backend list. Wiring it here rather than
+// reordering that bring-up keeps one construction order for both late-bound
+// dependencies.
+//
+// A nil resolver is ignored rather than clearing the backends' existing one:
+// "no resolver configured" is a fail-closed state for every pooled spawn, and
+// reaching it by accident is not a thing a setter should make easy.
+func (r *Runtime) SetAccountResolver(resolver orchestration.AccountResolver) {
+	if resolver == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, b := range r.backends {
+		if acp, ok := b.(*orchestration.ACPBackend); ok {
+			acp.SetAccountResolver(resolver)
+		}
+	}
 }
 
 // rememberBackendForSession records which backend owns a session so that
@@ -223,6 +306,13 @@ func (r *Runtime) Spawn(ctx context.Context, tenantID string, tenantOverride *or
 
 	r.logger.Debugf("agent runtime spawn: tenant=%s backend=%s mode=%s image=%s",
 		tenantID, backendName, effective.String(), req.ContainerImage)
+
+	// Bind the tenant onto the context the backend spawns under. The pooled
+	// account resolver reads tenancy from there and from nowhere else
+	// (ACPBackend.resolveAccount -> TenantFromContext), so without this a
+	// remote spawn would ask the tenant's pool for tenant "" and be refused —
+	// the daemon knows the tenant, but only as an argument.
+	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 
 	sess, spawnErr := backend.Spawn(ctx, req)
 	if spawnErr != nil {
@@ -447,11 +537,18 @@ func (r *Runtime) Close(ctx context.Context, backendName, sessionID string) erro
 	if !ok {
 		return &SentinelDetailError{Sentinel: ErrRuntimeUnknownBackend, Detail: fmt.Sprintf("%q", backendName)}
 	}
+	// THE DAEMON STOPS TRACKING THE SESSION EITHER WAY. Both the in-memory
+	// backend mapping and the durable record say "this daemon holds this
+	// session", so a close that dropped one and kept the other would leave a
+	// record naming a session nothing can answer for — which is exactly the
+	// residue go-quicbaas#750 reports piling up under <workDir>/sessions.
+	// Whether the backend's own teardown succeeded is still the caller's
+	// answer, reported below.
 	r.forgetSessionBackend(sessionID)
+	r.removePersistedSession(sessionID)
 	if err := backend.Close(ctx, sessionID); err != nil {
 		return err
 	}
-	r.removePersistedSession(sessionID)
 
 	// Use the recorded tenant so the gauge decrement hits the same label
 	// series Spawn incremented. Missing entries are quietly ignored — an
@@ -480,14 +577,27 @@ func (r *Runtime) ImageFor(backendName string) (string, bool) {
 	return r.imageFor(backendName)
 }
 
-// Backends returns the set of registered backend names.
+// Backends returns the names of the backends this runtime actually serves,
+// sorted.
+//
+// THIS IS THE DAEMON'S SERVED TRUTH, and it is deliberately not the same
+// vocabulary as the --backends flag. The flag names TRANSPORT KINDS ("acp",
+// "ollama"); a single "acp" kind constructs the claude, codex and opencode
+// backends, and those three names are what a task routes on. Everything that
+// tells the control plane what this daemon can run reads it here — the ready
+// log, the heartbeat status, and the enrollment register payload — so the
+// fleet registry records the names dispatch will ask for (go-quicbaas#681).
+//
+// Sorted because the underlying set is a map: a payload an operator diffs and
+// a log line an operator greps must not reorder between restarts.
 func (r *Runtime) Backends() []string {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
 	names := make([]string, 0, len(r.backends))
 	for k := range r.backends {
 		names = append(names, k)
 	}
+	r.mu.RUnlock()
+	sort.Strings(names)
 	return names
 }
 
@@ -547,6 +657,28 @@ func (r *Runtime) PrepareImages(ctx context.Context, autoPull bool) error {
 		ImagePullsTotal.WithLabelValues("ok").Inc()
 	}
 	return nil
+}
+
+// SweepOrphanContainers removes the sandbox containers a previous run of THIS
+// daemon left behind, and reports what it removed.
+//
+// It belongs at startup and nowhere else: a running daemon's own containers
+// carry the same owner label as its predecessor's, so the only moment the two
+// sets cannot be confused is before this daemon has spawned anything. See
+// orchestration/container_sweep.go for what makes the claim exact.
+//
+// A daemon with no container runtime, or one whose runtime cannot enumerate
+// its own containers, has nothing to sweep and says so with an empty report
+// rather than an error — it never created a container to leak.
+func (r *Runtime) SweepOrphanContainers(ctx context.Context) (orchestration.ContainerSweep, error) {
+	if r.containerRuntime == nil || r.workDir == "" {
+		return orchestration.ContainerSweep{}, nil
+	}
+	sweeper, ok := r.containerRuntime.(orchestration.ContainerOwnerSweeper)
+	if !ok {
+		return orchestration.ContainerSweep{}, nil
+	}
+	return sweeper.SweepOwned(ctx, r.workDir)
 }
 
 // LoadPersistedSessions reads every session record under <workDir>/sessions
@@ -749,6 +881,12 @@ var (
 	ErrRuntimeNoLogger       = errors.New("agent: runtime requires a logger")
 	ErrRuntimeUnknownBackend = errors.New("agent: unknown backend")
 	ErrRuntimeNoImage        = errors.New("agent: no container image mapped for backend")
+
+	// ErrRuntimeSandboxRequiredNoRuntime reports a daemon configured to
+	// require a sandbox on a host where no container runtime is usable.
+	// Starting would produce a daemon that enrolls, heartbeats and refuses
+	// every spawn it is dispatched, so it is refused at construction instead.
+	ErrRuntimeSandboxRequiredNoRuntime = errors.New("agent: sandbox policy \"required\" but no container runtime is available on this host")
 )
 
 // PersistSessionIOError wraps a filesystem failure during persistence.

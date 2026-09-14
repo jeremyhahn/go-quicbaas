@@ -108,17 +108,6 @@ func MTLSSPKICredentialKey(cert *x509.Certificate) []byte {
 	return sum[:]
 }
 
-// QRDBUserIDResolver resolves the broker's external string user id (iam.User.ID,
-// the value OIDC subjects, sessions and cert bindings key on) to qrdb's internal
-// numeric user id — the id an auth factor binds to and the login resolver
-// resolves a principal from. It is satisfied by the qrdb-backed UserStorage,
-// which owns the correlation.
-type QRDBUserIDResolver interface {
-	// QRDBUserID returns the qrdb numeric id correlated with the broker user
-	// id within tenantID.
-	QRDBUserID(ctx context.Context, tenantID, userID string) (uint64, error)
-}
-
 // CertLoginFactorConfigError reports a missing dependency for certificate
 // factor enrollment. It is returned at construction time so a misconfiguration
 // surfaces at wiring time rather than mid-bootstrap.

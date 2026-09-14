@@ -21,7 +21,6 @@ import (
 
 	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
-	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 )
 
 // =============================================================================
@@ -144,6 +143,16 @@ type projectStore struct {
 	kv      interfaces.KVStore
 	auditor StoreAuditor
 
+	// creator and deleter are kv's guarded-write capabilities, asserted once at
+	// construction. Nil when the backing store cannot decide a contested write,
+	// in which case CreateProject refuses rather than probing and hoping.
+	//
+	// Both halves are needed. A name reservation is claimed with a guarded
+	// create and released with a guarded delete, and an unguarded release can
+	// remove a reservation another node legitimately took (go-qrdb#41).
+	creator guardedCreator
+	deleter guardedDeleter
+
 	// recordMu serializes the read-modify-write sequence on one project
 	// record. Writes to different projects proceed in parallel.
 	recordMu keyedMutex
@@ -165,7 +174,16 @@ var _ ProjectStore = (*projectStore)(nil)
 // one. There is no second implementation to keep in sync.
 func NewProjectStore(kv interfaces.KVStore, opts ...StoreOption) ProjectStore {
 	cfg := newStoreConfig(opts...)
-	return &projectStore{kv: kv, auditor: cfg.auditor}
+	store := &projectStore{kv: kv, auditor: cfg.auditor}
+	// Asserted once: the capabilities are static properties of the injected
+	// store, so probing them per call would ask the same question forever.
+	if creator, ok := kv.(guardedCreator); ok {
+		store.creator = creator
+	}
+	if deleter, ok := kv.(guardedDeleter); ok {
+		store.deleter = deleter
+	}
+	return store
 }
 
 // NewInMemoryProjectStore returns a memory-backed binding of the store returned
@@ -173,7 +191,44 @@ func NewProjectStore(kv interfaces.KVStore, opts ...StoreOption) ProjectStore {
 // NewProjectStore(kvstore.NewMemory()) and exists for tests and embedded use
 // that need no durability.
 func NewInMemoryProjectStore() ProjectStore {
-	return NewProjectStore(kvstore.NewMemory())
+	// go-qrdb's memory KVStore rather than kvstore.NewMemory(): a name
+	// reservation is a guarded create, and that adapter wraps a raw storage
+	// engine with no conditional write to delegate to.
+	return NewProjectStore(NewMemoryTaskKV())
+}
+
+// projectTenantContext stamps tenantID onto ctx when it names no tenant.
+//
+// THE SIXTH INSTANCE OF THE SAME DEFECT, and taskTenantContext's own comment
+// predicted it: "doing it in the store rather than at each caller is what stops
+// there being a sixth: a reader that forgets to stamp is invisible until it
+// destroys something." Projects were counted as fixed in #634 — but that fix
+// landed in pkg/service (projectStoreContext), so every caller that reaches the
+// store WITHOUT going through the service was still unguarded.
+//
+// The caller that did: job recovery at daemon start. recoverOrchestrationJobs
+// builds its context from context.Background(), resumeJob passes it straight
+// down, and launchJob reads the project through loadJobProject THIRTY-FIVE LINES
+// before it stamps the tenant on anything. The tenant-routed KV resolved the
+// shared store, the project was not there, loadJobProject swallowed the
+// not-found at Debug and returned nil, and the resumed SDLC job died on
+// requireProject:
+//
+//	job <id> completed with error: sdlc: invalid project: the job carries no
+//	project record; the worker's checkout is described from it
+//
+// Two jobs on the burn-in node, both resumed after a restart, both charged
+// against their task's attempt budget for a fault that was entirely ours.
+//
+// A context that already names a tenant is left exactly as it is: which tenant a
+// caller may act as is an admission decision made above this layer, and this
+// helper must never redirect a read or a write into a tenant the caller was not
+// admitted to.
+func projectTenantContext(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" || TenantFromContext(ctx) != "" {
+		return ctx
+	}
+	return ContextWithTenant(ctx, tenantID)
 }
 
 // ready reports whether the store was constructed with a backing KV.
@@ -200,6 +255,9 @@ func (s *projectStore) Create(ctx context.Context, project *Project) error {
 }
 
 func (s *projectStore) create(ctx context.Context, project *Project) error {
+	if project != nil {
+		ctx = projectTenantContext(ctx, project.TenantID)
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -223,26 +281,14 @@ func (s *projectStore) create(ctx context.Context, project *Project) error {
 		return err
 	}
 
+	if err := s.guarded(); err != nil {
+		return err
+	}
+
 	unlockRecord := s.recordMu.lock(recordKey)
 	defer unlockRecord()
 	unlockName := s.nameMu.lock(nameScope)
 	defer unlockName()
-
-	exists, err := s.kv.Exists(ctx, recordKey)
-	if err != nil {
-		return &ProjectStoreError{Message: "failed to probe project: " + err.Error()}
-	}
-	if exists {
-		return &ProjectAlreadyExistsError{TenantID: project.TenantID, Name: project.Name}
-	}
-
-	owner, err := s.nameOwner(ctx, nameKey)
-	if err != nil {
-		return err
-	}
-	if owner != "" {
-		return &ProjectAlreadyExistsError{TenantID: project.TenantID, Name: project.Name}
-	}
 
 	now := time.Now().UTC()
 	if project.CreatedAt.IsZero() {
@@ -250,32 +296,214 @@ func (s *projectStore) create(ctx context.Context, project *Project) error {
 	}
 	project.UpdatedAt = now
 
-	// Marshal before touching the KV so an unencodable project cannot leave a
-	// name reserved.
+	// Marshal before touching the KV so an unencodable project cannot leave
+	// half a create behind.
 	data, marshalErr := marshalProject(project)
 	if marshalErr != nil {
 		return marshalErr
 	}
 
-	// Reserve the name before the record so a crash between the two writes
-	// leaves an orphaned reservation rather than an unreachable project.
-	if err := s.kv.Put(ctx, nameKey, []byte(project.ID)); err != nil {
-		return &ProjectStoreError{Message: "failed to reserve project name: " + err.Error()}
+	// STEP 1 — THE RECORD FIRST, guarded: two projects must not share an ID.
+	//
+	// The order of these two writes is the whole correctness argument, so it is
+	// stated here rather than left to be re-derived:
+	//
+	//	A NAME RESERVATION IS PUBLISHED ONLY AFTER ITS PROJECT'S RECORD EXISTS.
+	//
+	// Every writer upholds it — create by this ordering, rename because the
+	// record it re-points already exists — and reserveName depends on it to
+	// tell an abandoned reservation from a live one. See reserveName.
+	stored, err := s.creator.PutIfAbsent(ctx, recordKey, data)
+	if err != nil {
+		return &ProjectStoreError{Message: "failed to write project: " + err.Error()}
 	}
-	if putErr := s.putRecord(ctx, recordKey, data); putErr != nil {
-		return s.rollbackNameReservation(ctx, nameKey, putErr)
+	if !stored {
+		// The ID collided, not the name. Nothing to undo: the record under that
+		// key belongs to the project that got there first, and this create
+		// never reached the name. Reported with the same typed error the
+		// earlier shapes used, so callers matching on it are unaffected.
+		return &ProjectAlreadyExistsError{TenantID: project.TenantID, Name: project.Name}
 	}
 
+	// STEP 2 — the name is the uniqueness decision, and the store makes it.
+	reserved, err := s.reserveName(ctx, nameKey, project)
+	if err != nil {
+		return s.discardRecord(ctx, recordKey, err)
+	}
+	if !reserved {
+		return s.discardRecord(ctx, recordKey,
+			&ProjectAlreadyExistsError{TenantID: project.TenantID, Name: project.Name})
+	}
+
+	// No confirmation read follows, and none is needed. Winning step 2 is
+	// final because the only predicate that can take this reservation away is
+	// "the holder has no record", and step 1 already wrote ours.
 	return nil
 }
 
-// rollbackNameReservation removes a name reservation whose record write failed
-// so the name does not stay claimed by a project that was never stored. The
-// original failure is reported either way.
-func (s *projectStore) rollbackNameReservation(ctx context.Context, nameKey string, cause *ProjectStoreError) error {
-	if err := s.kv.Delete(ctx, nameKey); err != nil {
+// discardRecord removes the record this create wrote after the create lost the
+// name, and returns cause.
+//
+// UNGUARDED, unlike releaseNameReservation, and for the opposite reason: a
+// record key is won by exactly one create — the PutIfAbsent in step 1 decided
+// that — so there is no second writer whose value this could remove. Nothing
+// references the record either, because the name never named it.
+func (s *projectStore) discardRecord(ctx context.Context, recordKey string, cause error) error {
+	if err := s.kv.Delete(ctx, recordKey); err != nil {
 		return &ProjectStoreError{
-			Message: cause.Message + " (name index rollback failed: " + err.Error() + ")",
+			Message: cause.Error() + " (record discard failed: " + err.Error() + ")",
+		}
+	}
+	return cause
+}
+
+// guarded reports whether the backing store can decide a contested write.
+//
+// Checked by every path that claims or releases a name — create and rename
+// both do — so a store without the capability refuses up front instead of
+// dereferencing a nil capability partway through a two-key sequence.
+func (s *projectStore) guarded() error {
+	if s.creator == nil || s.deleter == nil {
+		return &ProjectStoreError{
+			Message: "name uniqueness needs a store that can decide it; this one cannot guard a write",
+		}
+	}
+	return nil
+}
+
+// reserveName claims a tenant-scoped project name, healing a reservation whose
+// project no longer exists.
+//
+// HEALING FIRES ON ONE CONDITION ONLY: the reservation names a project whose
+// RECORD IS ABSENT. THAT PREDICATE IS DECIDABLE ONLY BECAUSE OF THE WRITE
+// ORDER create USES. A reservation is published after its project's record, so
+// a live holder — whether it has returned or is still mid-create — always has
+// a record. A holder with no record therefore cannot be live, and the single
+// writer that produces that state is Delete, between removing the record and
+// removing the name. Healing it hands back a name whose project is gone.
+//
+// THE ORDER IS LOAD-BEARING, NOT INCIDENTAL. Reserving first was the obvious
+// shape — it makes a crash leave a healable reservation rather than an
+// unreachable project — but it also opens a window in which a creator that has
+// merely not written its record yet is INDISTINGUISHABLE from a crashed one,
+// and this heal takes its name. Both nodes then write their own, uncontested
+// record keys, and two projects answer to one name. No confirmation read
+// closes that: a post-write re-read of the owner is not atomic with the healer,
+// so the healer can land after it and steal a name a create has already
+// returned success on. The window is removed rather than narrowed, and the
+// invariant it leaves is exact:
+//
+//	A CREATOR THAT HAS NOT CRASHED CANNOT HAVE ITS RESERVATION TAKEN.
+//
+// What that costs, stated because it is real: a crash between the record write
+// and the reservation leaves an ORPHAN RECORD — a project reachable by ID and
+// by ListByTenant, absent from the name index, whose name some later create is
+// free to take. That residue is inert. It refuses nobody a name, it cannot be
+// reached by GetByName, and it is visible to an operator, where the orphan
+// reservation it replaces was a correctness defect. The create path already
+// leaked exactly this record when a crash landed mid-rollback, so this widens
+// a residue the store already tolerated rather than introducing a new kind.
+// Reaping it belongs with the rename residue below, and for the same reason: a
+// create between its two writes has the same key state, so only liveness
+// evidence separates them.
+//
+// IT DELIBERATELY DOES NOT HEAL A NAME-MISMATCH. A reservation N naming a live
+// project P whose current name is M != N has exactly two causes, and they are
+// INDISTINGUISHABLE: a rename toward N in flight (reservation written, record
+// not yet updated) and a rename away from N that crashed before releasing the
+// old reservation. In both, N names P, P.Name is M, and M's reservation also
+// names P — byte-identical states, so no read sequence separates them. Healing
+// on that predicate would kill a live rename about half the time it fired.
+//
+// The residue is therefore a crashed rename squatting its old name until
+// something with independent LIVENESS EVIDENCE clears it. That is the same
+// deferral the scheduler's firing mark already makes ("no prune horizon closes
+// that without a liveness signal proving no contender is still in flight"), and
+// it belongs to WP10's run-is-authority reaper: A RESERVATION WHOSE PROJECT IS
+// LIVE UNDER A DIFFERENT NAME, WITH NO CREATE OR RENAME IN FLIGHT, IS AN
+// INVARIANT VIOLATION AND IS WP10'S TO REAP. Stated here so WP10's implementer
+// finds the case from the code rather than from the plan.
+//
+// The cost, stated because it is real: one name per crashed rename is refused
+// until reaped. Bounded, visible — the caller gets a typed conflict naming the
+// squatter — and it errs toward refusing a name rather than handing one
+// project's name to another, which is the direction this whole family is chosen
+// for. A guarded swap would dissolve it by letting the reservation carry
+// pending/committed state (go-qrdb#56).
+func (s *projectStore) reserveName(ctx context.Context, nameKey string, project *Project) (bool, error) {
+	claimed, err := s.creator.PutIfAbsent(ctx, nameKey, []byte(project.ID))
+	if err != nil {
+		return false, &ProjectStoreError{Message: "failed to reserve project name: " + err.Error()}
+	}
+	if claimed {
+		return true, nil
+	}
+
+	holder, err := s.nameOwner(ctx, nameKey)
+	if err != nil {
+		return false, err
+	}
+	if holder == "" || holder == project.ID {
+		return holder == project.ID, nil
+	}
+
+	abandoned, err := s.reservationAbandoned(ctx, project.TenantID, holder)
+	if err != nil {
+		return false, err
+	}
+	if !abandoned {
+		return false, nil
+	}
+
+	// Both halves guarded: the delete removes only the exact reservation this
+	// caller observed, and the re-claim cannot overwrite whatever replaced it.
+	removed, err := s.deleter.CompareAndDelete(ctx, nameKey, []byte(holder))
+	if err != nil {
+		return false, &ProjectStoreError{Message: "failed to clear an abandoned project name: " + err.Error()}
+	}
+	if !removed {
+		return false, nil
+	}
+	claimed, err = s.creator.PutIfAbsent(ctx, nameKey, []byte(project.ID))
+	if err != nil {
+		return false, &ProjectStoreError{Message: "failed to reserve project name: " + err.Error()}
+	}
+	return claimed, nil
+}
+
+// reservationAbandoned reports whether a reservation names a project with no
+// record.
+//
+// Under create's record-before-name ordering that is decidable evidence, not a
+// guess: every live holder has a record by the time its reservation exists, so
+// a holder without one is a project that has been deleted. See reserveName.
+func (s *projectStore) reservationAbandoned(ctx context.Context, tenantID, holderID string) (bool, error) {
+	holderKey, keyErr := projectRecordKey(tenantID, holderID)
+	if keyErr != nil {
+		// The reservation holds a value that is not even a legal key segment,
+		// so nothing it names can be loaded.
+		return true, nil
+	}
+	exists, err := s.kv.Exists(ctx, holderKey)
+	if err != nil {
+		return false, &ProjectStoreError{Message: "failed to probe a project name holder: " + err.Error()}
+	}
+	return !exists, nil
+}
+
+// releaseNameReservation gives back a reservation this caller made, and returns
+// cause.
+//
+// GUARDED, because a read followed by a delete is half a primitive. An
+// unguarded release can remove a reservation another node legitimately took in
+// the interim, handing that node's name away while it believes it holds one
+// (go-qrdb#41). CompareAndDelete releases only while the name still names this
+// project; a release that arrives late does nothing, which is exactly when it
+// must do nothing.
+func (s *projectStore) releaseNameReservation(ctx context.Context, nameKey, projectID string, cause error) error {
+	if _, err := s.deleter.CompareAndDelete(ctx, nameKey, []byte(projectID)); err != nil {
+		return &ProjectStoreError{
+			Message: cause.Error() + " (name reservation release failed: " + err.Error() + ")",
 		}
 	}
 	return cause
@@ -287,6 +515,7 @@ func (s *projectStore) rollbackNameReservation(ctx context.Context, nameKey stri
 
 // Get retrieves a project by its ID within the given tenant.
 func (s *projectStore) Get(ctx context.Context, tenantID, projectID string) (*Project, error) {
+	ctx = projectTenantContext(ctx, tenantID)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -302,6 +531,7 @@ func (s *projectStore) Get(ctx context.Context, tenantID, projectID string) (*Pr
 
 // GetByName retrieves a project by its name within the given tenant.
 func (s *projectStore) GetByName(ctx context.Context, tenantID, name string) (*Project, error) {
+	ctx = projectTenantContext(ctx, tenantID)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -396,6 +626,9 @@ func (s *projectStore) Update(ctx context.Context, project *Project) error {
 }
 
 func (s *projectStore) update(ctx context.Context, project *Project) error {
+	if project != nil {
+		ctx = projectTenantContext(ctx, project.TenantID)
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -451,22 +684,22 @@ func (s *projectStore) rename(ctx context.Context, recordKey, oldName string, pr
 		return err
 	}
 
+	if err := s.guarded(); err != nil {
+		return err
+	}
+
 	unlockName := s.nameMu.lock(nameScope)
 	defer unlockName()
 
-	owner, err := s.nameOwner(ctx, newNameKey)
-	if err != nil {
-		return err
+	reserved, reserveErr := s.reserveName(ctx, newNameKey, project)
+	if reserveErr != nil {
+		return reserveErr
 	}
-	if owner != "" && owner != project.ID {
+	if !reserved {
 		return &ProjectAlreadyExistsError{TenantID: project.TenantID, Name: project.Name}
 	}
-
-	if err := s.kv.Put(ctx, newNameKey, []byte(project.ID)); err != nil {
-		return &ProjectStoreError{Message: "failed to reserve project name: " + err.Error()}
-	}
 	if err := s.writeRecord(ctx, recordKey, project); err != nil {
-		return s.rollbackNameReservation(ctx, newNameKey, err)
+		return s.releaseNameReservation(ctx, newNameKey, project.ID, err)
 	}
 
 	// The old reservation is only removed once the rename is durable, so a
@@ -477,7 +710,16 @@ func (s *projectStore) rename(ctx context.Context, recordKey, oldName string, pr
 		// entry, so there is nothing to remove.
 		return nil
 	}
-	if err := s.kv.Delete(ctx, oldNameKey); err != nil {
+	// GUARDED, for the reason releaseNameReservation gives: an unguarded delete
+	// here releases whatever holds the old name, which after a slow rename may
+	// be a DIFFERENT project that legitimately claimed it. CompareAndDelete
+	// releases only this project's own hold.
+	//
+	// A crash between the record write above and this release leaves the old
+	// name reserved for a project that no longer answers to it. That residue is
+	// deliberately NOT auto-healed — see reserveName for why it cannot be, and
+	// whose job it is.
+	if _, err := s.deleter.CompareAndDelete(ctx, oldNameKey, []byte(project.ID)); err != nil {
 		return &ProjectStoreError{Message: "failed to release previous project name: " + err.Error()}
 	}
 	return nil
@@ -485,7 +727,7 @@ func (s *projectStore) rename(ctx context.Context, recordKey, oldName string, pr
 
 // writeRecord marshals and stores a project record. It returns the concrete
 // error type so callers can hand the failure straight to
-// rollbackNameReservation; callers must nil-check before returning it as an
+// releaseNameReservation; callers must nil-check before returning it as an
 // error interface.
 func (s *projectStore) writeRecord(ctx context.Context, recordKey string, project *Project) *ProjectStoreError {
 	data, err := marshalProject(project)
@@ -524,6 +766,7 @@ func (s *projectStore) Delete(ctx context.Context, tenantID, projectID string) e
 }
 
 func (s *projectStore) remove(ctx context.Context, tenantID, projectID string) error {
+	ctx = projectTenantContext(ctx, tenantID)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -577,6 +820,7 @@ func (s *projectStore) remove(ctx context.Context, tenantID, projectID string) e
 
 // ListByTenant returns every project owned by tenantID, in key order.
 func (s *projectStore) ListByTenant(ctx context.Context, tenantID string) ([]*Project, error) {
+	ctx = projectTenantContext(ctx, tenantID)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

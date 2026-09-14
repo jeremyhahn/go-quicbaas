@@ -19,31 +19,30 @@
 //
 // The tests exercise the production qrdb pkg/auth + pkg/service types
 // directly (no Docker, no cluster, no real hardware). Hardware is faked
-// via the descope/virtualwebauthn library for FIDO2 and via ECDSA
-// self-signed X.509 certificates for PIV and mTLS. Distinct "vendors"
-// are differentiated by AAGUID (FIDO2) and by metadata fields
-// (PIV/mTLS) so the resolver's User <-> Factor mapping can be verified
-// across heterogeneous credential sources.
+// via the descope/virtualwebauthn library for FIDO2 and, for PIV and
+// mTLS, via X.509 client certificates ISSUED BY QuicBaaS's own
+// certificate authority (test/integration/certfixture) rather than
+// self-signed in this file. Distinct "vendors" are differentiated by
+// AAGUID (FIDO2) and by metadata fields (PIV/mTLS) so the resolver's
+// User <-> Factor mapping can be verified across heterogeneous
+// credential sources.
 package factors
 
 import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"errors"
-	"math/big"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/descope/virtualwebauthn"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/certfixture"
 )
 
 // testAdminUserID is the synthetic admin user that owns every factor
@@ -54,6 +53,16 @@ const testAdminUserID uint64 = 1
 // testAdminUsername is the human-readable login name returned by the
 // userLookupStub for testAdminUserID.
 const testAdminUsername = "admin"
+
+// factorsTrustDomain and factorsTenantID scope the SPIFFE identity the fixture
+// CA stamps on a credential it issues here. They are local to these tests: the
+// package runs no cluster, so nothing pins them — they exist because a client
+// certificate the product issues always carries a tenant, and issuing one
+// without a tenant would model a credential the product does not produce.
+const (
+	factorsTrustDomain = "factors.integration"
+	factorsTenantID    = "system"
+)
 
 // ---------------------------------------------------------------------------
 // In-memory KVServicer
@@ -110,6 +119,51 @@ func (m *memKV) PutIfAbsent(_ context.Context, key string, val []byte) (bool, er
 	return true, nil
 }
 
+// CompareAndDelete mirrors PutIfAbsent's guard on the release side: it
+// removes key only when the stored value still equals expected, reporting
+// whether this call removed it. Implemented with real guard semantics rather
+// than as a zero-value no-op because it is the release half of PutIfAbsent
+// (which this fake also implements for real): an unguarded release would
+// un-decide what the guarded create decided, defeating the single-winner
+// property callers use the pair for.
+func (m *memKV) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.store[key]
+	if !ok {
+		return false, nil
+	}
+	if !bytes.Equal(current, expected) {
+		return false, nil
+	}
+	delete(m.store, key)
+	return true, nil
+}
+
+// CompareAndSwap is the edit half of the guarded set PutIfAbsent and
+// CompareAndDelete began: it replaces key's value only when the stored value
+// still equals expected, reporting whether this call replaced it.
+//
+// A swap is not a create — an absent key stays absent — so the two honest
+// answers are "I replaced it" and "the stored value was not what you expected".
+// It is implemented with real guard semantics for the same reason its siblings
+// are: a fake that always succeeds would let a test pass over a lost update.
+func (m *memKV) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.store[key]
+	if !ok {
+		return false, nil
+	}
+	if !bytes.Equal(current, expected) {
+		return false, nil
+	}
+	cp := make([]byte, len(next))
+	copy(cp, next)
+	m.store[key] = cp
+	return true, nil
+}
+
 // Get returns the value at key or a KeyNotFoundError when absent.
 func (m *memKV) Get(_ context.Context, key string) ([]byte, error) {
 	m.mu.RLock()
@@ -131,36 +185,6 @@ func (m *memKV) Delete(_ context.Context, key string) error {
 	defer m.mu.Unlock()
 	delete(m.store, key)
 	return nil
-}
-
-// CompareAndDelete removes key only while it still holds expected — the
-// guarded release half of PutIfAbsent. A mismatch or an absent key is a
-// refused delete (false, nil), never an error, exactly as the qrdb contract
-// requires.
-func (m *memKV) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	cur, exists := m.store[key]
-	if !exists || !bytes.Equal(cur, expected) {
-		return false, nil
-	}
-	delete(m.store, key)
-	return true, nil
-}
-
-// CompareAndSwap replaces key's value with next only while it still holds
-// expected. An absent key is not created: a refused swap is (false, nil).
-func (m *memKV) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	cur, exists := m.store[key]
-	if !exists || !bytes.Equal(cur, expected) {
-		return false, nil
-	}
-	cp := make([]byte, len(next))
-	copy(cp, next)
-	m.store[key] = cp
-	return true, nil
 }
 
 // List returns every key matching the prefix in unspecified order.
@@ -433,7 +457,7 @@ type pivVendor struct {
 func newPIVVendorCard(t *testing.T, vendor, slot string) *pivVendor {
 	t.Helper()
 	cn := vendor + "-piv-" + slot
-	cert, key := newSelfSignedECDSACert(t, cn)
+	cert, key := newClientCredential(t, cn)
 	cardSerial := hexEncode(cert.SerialNumber.Bytes())
 	factor := &qrdbsdk.AuthFactor{
 		UserID:     testAdminUserID,
@@ -463,7 +487,7 @@ type mtlsClient struct {
 // canonical lookup key is auth.CredentialKey(cert.Raw).
 func newMTLSClientCert(t *testing.T, cn string) *mtlsClient {
 	t.Helper()
-	cert, key := newSelfSignedECDSACert(t, cn)
+	cert, key := newClientCredential(t, cn)
 	factor := &qrdbsdk.AuthFactor{
 		UserID:     testAdminUserID,
 		Type:       qrdbsdk.AuthFactorMTLS,
@@ -482,37 +506,47 @@ func newMTLSClientCert(t *testing.T, cn string) *mtlsClient {
 // Low-level certificate / encoding helpers
 // ---------------------------------------------------------------------------
 
-// newSelfSignedECDSACert mints a fresh P-256 ECDSA self-signed
-// certificate suitable for use as a fake mTLS client cert or PIV slot
-// cert. The returned cert.Raw is the DER encoding that production code
-// hashes to produce the canonical credential lookup key.
-func newSelfSignedECDSACert(t *testing.T, cn string) (*x509.Certificate, *ecdsa.PrivateKey) {
+// newClientCredential issues a client-authentication certificate and its
+// private key through QuicBaaS's own certificate authority, for use as a fake
+// mTLS client cert or PIV slot cert. The returned cert.Raw is the DER encoding
+// production code hashes to produce the canonical credential lookup key.
+//
+// Each credential gets its own CA under the test's temp directory, which models
+// what it stands for — one authenticator from one vendor, trusted on its own
+// terms — and keeps the helper hermetic with nothing left behind.
+//
+// It replaced a local ecdsa.GenerateKey + x509.CreateCertificate pair
+// (go-quicbaas#943). That mattered here for the same reason it mattered for the
+// cluster fixtures: a self-signed lookalike cannot show a divergence between
+// what the resolver accepts and what the product's CA actually stamps, and
+// these tests exist to assert exactly that resolution.
+func newClientCredential(t *testing.T, cn string) (*x509.Certificate, *ecdsa.PrivateKey) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+
+	ctx := context.Background()
+	authority, err := certfixture.Open(ctx, certfixture.Config{
+		Dir:               t.TempDir(),
+		CommonName:        "factors fixture CA for " + cn,
+		SPIFFETrustDomain: factorsTrustDomain,
+	})
 	if err != nil {
-		t.Fatalf("ecdsa.GenerateKey: %v", err)
+		t.Fatalf("certfixture.Open(%q): %v", cn, err)
 	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 127))
+
+	issued, err := authority.IssueClient(ctx, certfixture.ClientFixture{
+		CommonName:   cn,
+		TenantID:     factorsTenantID,
+		ValidityDays: 1,
+	})
 	if err != nil {
-		t.Fatalf("rand serial: %v", err)
+		t.Fatalf("issue client credential %q: %v", cn, err)
 	}
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: cn},
-		NotBefore:    time.Now().Add(-time.Hour).UTC(),
-		NotAfter:     time.Now().Add(24 * time.Hour).UTC(),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+
+	key, ok := issued.Signer.(*ecdsa.PrivateKey)
+	if !ok {
+		t.Fatalf("issue client credential %q: signer is %T, want *ecdsa.PrivateKey", cn, issued.Signer)
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		t.Fatalf("x509.CreateCertificate: %v", err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatalf("x509.ParseCertificate: %v", err)
-	}
-	return cert, key
+	return issued.Certificate, key
 }
 
 // hexEncode renders a byte slice as lowercase hex. Used for the

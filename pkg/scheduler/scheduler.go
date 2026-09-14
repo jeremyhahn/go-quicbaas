@@ -18,7 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,6 +40,27 @@ type JobStorage interface {
 	GetExecutions(ctx context.Context, jobID uint64, tenantID string, limit int) ([]*JobExecution, error)
 }
 
+// FiringClaimer arbitrates which node executes a given firing.
+//
+// It is separate from JobStorage because it is required only in a clustered
+// deployment. The double-fire it prevents needs two nodes disagreeing about
+// leadership, so a single-node scheduler has no race to guard and is not asked
+// for a claim at all — that is a different topology, not a disabled safeguard.
+// A clustered scheduler, by contrast, cannot be constructed without one.
+type FiringClaimer interface {
+	// ClaimFiring atomically claims the exclusive right to execute the
+	// firing identified by claim, returning true only for the caller that
+	// won it. The comparison and the write must be one indivisible
+	// operation in the store — an Exists check followed by a Put is the bug
+	// this method exists to remove, because the two nodes racing here are
+	// on different hosts and no in-process lock separates them.
+	//
+	// A claim that is already held is reported as (false, nil): losing is a
+	// verdict, not a failure. Only an undecidable claim returns an error,
+	// and the engine treats that as "do not execute".
+	ClaimFiring(ctx context.Context, claim *FiringClaim) (bool, error)
+}
+
 // SchedulerEngine manages job scheduling and execution.
 // It implements the Scheduler interface with lock-free operations.
 type SchedulerEngine struct {
@@ -55,6 +78,11 @@ type SchedulerEngine struct {
 	// when non-nil, cluster-wide jobs (Job.NodeAffinity == "") only
 	// execute when IsLeader() returns true.
 	leader LeaderChecker
+
+	// claims arbitrates firings across nodes. Non-nil exactly when this
+	// engine was built for a cluster; a single-node engine has no race to
+	// arbitrate and never consults it.
+	claims FiringClaimer
 
 	// Map-based dispatch for O(1) handler lookup
 	handlers   map[string]JobHandler
@@ -86,7 +114,7 @@ type SchedulerEngine struct {
 	ticker *time.Ticker
 
 	// Trigger channel for immediate job execution
-	triggerCh chan uint64
+	triggerCh chan triggerRequest
 
 	// Semaphore for limiting concurrent jobs
 	semaphore chan struct{}
@@ -100,6 +128,19 @@ type SchedulerEngine struct {
 
 	// Storage error counter for monitoring
 	storageErrors atomic.Uint64
+
+	// Firing-claim counters. They are kept apart from storageErrors
+	// because they answer a different operational question: a rising
+	// claimsLost is healthy churn arbitration, while a rising claimErrors
+	// means firings are being suppressed and the cluster is silently
+	// under-executing.
+	claimsWon   atomic.Uint64
+	claimsLost  atomic.Uint64
+	claimErrors atomic.Uint64
+
+	// staleDispatches counts dispatches abandoned because the job moved to a
+	// different firing between the claim and the execution.
+	staleDispatches atomic.Uint64
 
 	// jobLocks stripes serialize read-modify-write status transitions
 	// per job (cancel/pause/resume/update/delete vs. asynchronous
@@ -121,10 +162,26 @@ func (s *SchedulerEngine) jobLock(jobID uint64) *sync.Mutex {
 	return &s.jobLocks[jobID&(jobLockStripes-1)]
 }
 
-// jobTenantID returns the tenant scope used for storage lookups of
-// job. System and delegated jobs live in the system namespace (empty
-// tenant ID); only tenant-owned jobs are tenant-scoped.
-func jobTenantID(job *Job) string {
+// JobTenantID returns the tenant scope used for storage lookups of job. System
+// and delegated jobs live in the system namespace (empty tenant ID); only
+// tenant-owned jobs are tenant-scoped. job must not be nil.
+//
+// EXPORTED BECAUSE THE SCOPE IS PART OF A JOB'S IDENTITY, NOT A STORAGE
+// DETAIL, and anything outside this package that addresses a job by id needs
+// this exact rule rather than a copy of it. A job id is unique only WITHIN a
+// scope: id 7 names a system job and a job in every tenant, so an id carried
+// without its scope names several records and resolves to whichever the caller
+// happens to reach.
+//
+// The cost of a copy that drifts is not a wrong answer somewhere visible. It is
+// silent and total, and it has already happened once here: the firing-claim
+// mark was first keyed with a hand-copied version of this rule, and deleting a
+// tenant's job 7 erased the SYSTEM job 7's claim mark — un-deciding a firing
+// that had been decided (see storage/quicbaas/firing_claim.go, keyForClaim).
+// The remedy then was to share this function rather than re-derive it, and the
+// same remedy is why callers outside the package get it rather than four lines
+// they are invited to reimplement.
+func JobTenantID(job *Job) string {
 	if job.OwnerType == OwnerTypeTenant {
 		return job.OwnerID
 	}
@@ -143,12 +200,16 @@ func isJobNotFound(err error) bool {
 	return errors.As(err, &p)
 }
 
-// New creates a new scheduler engine with the given configuration.
-// Single-node behavior (nil LeaderChecker, empty NodeID) is preserved
-// for backward compatibility. Cluster callers use NewWithClustering
-// to inject Raft leader gating and node affinity.
+// New creates a single-node scheduler engine.
+//
+// A single-node engine takes no firing claims. The double-fire claims prevent
+// requires two nodes disagreeing about Raft leadership, which cannot happen
+// here: there is one scheduler, its dispatch is already serialized by the tick
+// loop, and there is no peer to race. Cluster deployments use
+// NewWithClustering, which requires a claim arbiter and refuses to build
+// without one.
 func New(config *SchedulerConfig, storage JobStorage) *SchedulerEngine {
-	return NewWithClustering(config, storage, "", nil)
+	return newEngine(config, storage, "", nil, nil)
 }
 
 // NewWithClustering creates a scheduler engine wired for Raft-cluster
@@ -165,9 +226,24 @@ func New(config *SchedulerConfig, storage JobStorage) *SchedulerEngine {
 //	| ""     | non-nil    | fires only when leader.IsLeader()       | always fires (affinity ignored)
 //	| "N"    | non-nil    | fires only when leader.IsLeader()       | fires only when X == N
 //
-// Pass empty nodeID + nil leader for single-node / test mode. Pass
-// both for clustered production deployments.
-func NewWithClustering(config *SchedulerConfig, storage JobStorage, nodeID string, leader LeaderChecker) *SchedulerEngine {
+// The table above describes which node is ELIGIBLE to fire. Eligibility is not
+// exclusivity: during leader churn two nodes are eligible for the same
+// cluster-wide job at the same time. Every due job is therefore also arbitrated
+// by a FiringClaim, which storage must supply — so storage MUST implement
+// FiringClaimer, and construction fails with ClaimUnsupportedError when it does
+// not. Refusing at startup is the point: a cluster that silently ran without
+// claims would look healthy until the first leadership change, which is exactly
+// when a duplicate certificate gets issued.
+func NewWithClustering(config *SchedulerConfig, storage JobStorage, nodeID string, leader LeaderChecker) (*SchedulerEngine, error) {
+	claimer, ok := storage.(FiringClaimer)
+	if !ok {
+		return nil, ClaimUnsupportedError{Backend: fmt.Sprintf("%T", storage)}
+	}
+	return newEngine(config, storage, nodeID, leader, claimer), nil
+}
+
+// newEngine is the shared constructor behind New and NewWithClustering.
+func newEngine(config *SchedulerConfig, storage JobStorage, nodeID string, leader LeaderChecker, claims FiringClaimer) *SchedulerEngine {
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -177,8 +253,9 @@ func NewWithClustering(config *SchedulerConfig, storage JobStorage, nodeID strin
 		storage:    storage,
 		nodeID:     nodeID,
 		leader:     leader,
+		claims:     claims,
 		handlers:   make(map[string]JobHandler),
-		triggerCh:  make(chan uint64, 100),
+		triggerCh:  make(chan triggerRequest, 100),
 		semaphore:  make(chan struct{}, config.MaxConcurrentJobs),
 		startedCh:  make(chan struct{}),
 		cronParser: cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
@@ -475,16 +552,95 @@ func (s *SchedulerEngine) TriggerJob(ctx context.Context, jobID uint64, tenantID
 		}
 	}
 
-	// Send to trigger channel (non-blocking with buffer)
+	// Send to trigger channel (non-blocking with buffer).
+	//
+	// THE SCOPE TRAVELS WITH THE ID, derived by the scheduler's own rule
+	// (JobTenantID) from the job just loaded — never the caller's raw
+	// argument, and never dropped. A job id is unique only WITHIN a scope:
+	// id 7 names a system job and a job in every tenant. This queue used to
+	// carry the bare id and the drain reloaded with the system scope, so a
+	// tenant job's trigger either found nothing or — the silent and total
+	// case — executed the SYSTEM job that happened to share its id. That is
+	// the same keyForClaim lesson JobTenantID exists to prevent, one channel
+	// over.
 	select {
-	case s.triggerCh <- jobID:
+	case s.triggerCh <- triggerRequest{jobID: jobID, scope: JobTenantID(job)}:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		// Channel full, job will be picked up in next tick
-		return nil
+		// A FULL QUEUE IS A REFUSAL, NOT A SUCCESS. This used to return nil
+		// on the strength of "the next tick will pick it up" — which is true
+		// only of a job that is DUE. A paused job, or a stranded firing at or
+		// below its monotonic claim mark, is never picked up by the tick, so
+		// the dropped trigger was a repair reported done that never happened.
+		// The caller decides whether to retry; this reports the truth.
+		return TriggerQueueFullError{JobID: jobID}
 	}
+}
+
+// RetriggerStrandedFiring dispatches a job whose firing the claim mark has
+// made unclaimable, BOUND to the firing that was observed stranded.
+//
+// The binding is the difference from TriggerJob, and it is the double-fire
+// guard: between the caller's liveness observation ("no run is executing
+// this firing") and the dispatch actually running, the original claim winner
+// can begin executing after all, or the job can complete and move to a new
+// firing. An unbound manual trigger would then run the handler CONCURRENTLY
+// with the legitimate execution — for the non-idempotent handlers the claim
+// exists to protect, the exact outcome the whole mechanism prevents. Carrying
+// the observed firing makes executeJob re-verify, under the stripe lock that
+// guards the running-status write, that the job is still Pending at exactly
+// that firing; anything else declines as a stale dispatch.
+func (s *SchedulerEngine) RetriggerStrandedFiring(ctx context.Context, jobID uint64, tenantID string, firing time.Time) error {
+	if !s.running.Load() {
+		return SchedulerStoppedError{}
+	}
+	if firing.IsZero() {
+		return InvalidJobError{
+			Field:   "firing",
+			Message: "a stranded-firing repair binds to the firing that was observed stranded; zero binds to none",
+		}
+	}
+
+	job, err := s.storage.GetJob(ctx, jobID, tenantID)
+	if err != nil {
+		return ErrStorageError{Op: "GetJob", Cause: err}
+	}
+	if job == nil {
+		return JobNotFoundError{JobID: jobID}
+	}
+	if job.Status != JobStatusPending || !job.NextRun.Equal(firing) {
+		// The observation is already stale: the firing moved, or the job is
+		// not sitting Pending on it. Refusing here is cheap; the binding in
+		// executeJob remains the authoritative check.
+		return InvalidJobError{
+			Field:   "firing",
+			Message: "the job is no longer pending on the observed firing; the repair's observation is stale",
+		}
+	}
+
+	select {
+	case s.triggerCh <- triggerRequest{jobID: jobID, scope: JobTenantID(job), firing: firing}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return TriggerQueueFullError{JobID: jobID}
+	}
+}
+
+// TriggerQueueFullError reports a manual trigger or repair the engine could
+// not accept because its trigger queue is full. Nothing was dispatched and
+// nothing will retry it; the caller owns the decision.
+type TriggerQueueFullError struct {
+	JobID uint64
+}
+
+// Error implements the error interface.
+func (e TriggerQueueFullError) Error() string {
+	return "scheduler: the trigger queue is full; job " + strconv.FormatUint(e.JobID, 10) +
+		" was NOT dispatched and the tick path will not retry a manual trigger"
 }
 
 // PauseJob pauses a scheduled job.
@@ -846,6 +1002,34 @@ func (s *SchedulerEngine) IsRunning() bool {
 	return s.running.Load()
 }
 
+// FiringClaimsWon returns how many scheduled firings this node has claimed and
+// therefore executed.
+func (s *SchedulerEngine) FiringClaimsWon() uint64 {
+	return s.claimsWon.Load()
+}
+
+// FiringClaimsLost returns how many scheduled firings this node stood down from
+// because another node already held the claim. A non-zero value is the expected
+// signature of leader churn, not a fault.
+func (s *SchedulerEngine) FiringClaimsLost() uint64 {
+	return s.claimsLost.Load()
+}
+
+// FiringClaimErrors returns how many firings this node suppressed because the
+// store could not decide the claim. Unlike a lost claim this means the firing
+// may not have run anywhere, so it is the counter to alert on.
+func (s *SchedulerEngine) FiringClaimErrors() uint64 {
+	return s.claimErrors.Load()
+}
+
+// StaleDispatches returns how many dispatches were abandoned because the job
+// had moved to a different firing between the claim and the execution. A
+// non-zero value is correct behaviour, not a fault: it is the count of
+// double-fires this check prevented.
+func (s *SchedulerEngine) StaleDispatches() uint64 {
+	return s.staleDispatches.Load()
+}
+
 // StorageErrorCount returns the number of storage errors encountered.
 func (s *SchedulerEngine) StorageErrorCount() uint64 {
 	return s.storageErrors.Load()
@@ -864,8 +1048,8 @@ func (s *SchedulerEngine) run() {
 			s.lastTickTime.Store(&t)
 			s.processDueJobs(s.ctx)
 
-		case jobID := <-s.triggerCh:
-			s.triggerJobByID(s.ctx, jobID)
+		case req := <-s.triggerCh:
+			s.triggerJobByID(s.ctx, req)
 		}
 	}
 }
@@ -899,21 +1083,93 @@ func (s *SchedulerEngine) processDueJobs(ctx context.Context) {
 		if !s.shouldExecute(job) {
 			continue
 		}
-		// Check if we can acquire semaphore
+
+		// Take the concurrency slot before claiming. A claim is a
+		// one-shot right to fire, so claiming a job this tick cannot
+		// dispatch would retire the firing without ever running it.
 		select {
 		case s.semaphore <- struct{}{}:
-			s.logDebug("Executing job %d: %s", job.ID, job.Name)
-			s.wg.Add(1)
-			go func(j *Job) {
-				defer s.wg.Done()
-				defer func() { <-s.semaphore }()
-				s.executeJob(ctx, j)
-			}(job)
 		default:
 			// Semaphore full, skip this job for now
 			s.logWarn("Semaphore full, skipping job %d for now", job.ID)
 			continue
 		}
+
+		// The leader gate above is advisory — during leader churn more
+		// than one node passes it for the same job. The claim is
+		// authoritative.
+		//
+		// KNOWN ACCEPTED WINDOW (docs/18 V4): a won claim is never
+		// released, and the job only moves to "running" later inside
+		// executeJob. A winner that dies in between — or whose
+		// running-transition write fails — strands that firing instead of
+		// retrying next tick. Releasing on decline would reopen the
+		// double-fire, so the fix needs a liveness signal: the SDLC
+		// module's WP10 stall detection and lease reaping, which also
+		// covers the pre-existing stranding of jobs stuck in "running".
+		// Interim recovery is TriggerJob, which bypasses the claim.
+		if !s.claimFiring(storageCtx, job) {
+			<-s.semaphore
+			continue
+		}
+
+		s.logDebug("Executing job %d: %s", job.ID, job.Name)
+		s.wg.Add(1)
+		go func(j *Job) {
+			defer s.wg.Done()
+			defer func() { <-s.semaphore }()
+			s.executeJob(ctx, j, j.NextRun)
+		}(job)
+	}
+}
+
+// claimFiring asks the claim arbiter for the exclusive right to execute job's
+// currently scheduled firing, and reports whether this node may proceed.
+//
+// The claim identity is the job's own NextRun, read from the replicated job
+// record rather than from this node's clock, so every node contending for the
+// same firing presents the same identity to the store. The store decides.
+//
+// Three outcomes, two of which stop the dispatch:
+//
+//   - won: this node executes the firing.
+//   - already held: another node owns it. Normal churn arbitration, counted
+//     but not logged as a failure.
+//   - undecidable: the store could not answer. Execution is suppressed. This
+//     is deliberately fail-closed — the handlers this gate exists to protect
+//     are the non-idempotent ones (certificate issuance, platform
+//     automation), where a duplicate firing costs more than a missed cycle.
+//     The job record is left untouched, so the firing is recoverable by
+//     operator action once the store is reachable again.
+func (s *SchedulerEngine) claimFiring(ctx context.Context, job *Job) bool {
+	// Single-node engines have no peer to race and take no claims.
+	if s.claims == nil {
+		return true
+	}
+
+	claim := &FiringClaim{
+		JobID:      job.ID,
+		TenantID:   JobTenantID(job),
+		FiringTime: job.NextRun,
+		Owner:      s.nodeID,
+		ClaimedAt:  time.Now(),
+	}
+
+	won, err := s.claims.ClaimFiring(ctx, claim)
+	switch {
+	case err != nil:
+		s.claimErrors.Add(1)
+		s.logError("Skipping job %d (%s): firing claim for %s undecided: %v",
+			job.ID, job.Name, job.NextRun, err)
+		return false
+	case !won:
+		s.claimsLost.Add(1)
+		s.logDebug("Skipping job %d (%s): firing %s already claimed by another node",
+			job.ID, job.Name, job.NextRun)
+		return false
+	default:
+		s.claimsWon.Add(1)
+		return true
 	}
 }
 
@@ -963,13 +1219,29 @@ func (s *SchedulerEngine) shouldExecute(job *Job) bool {
 	return true
 }
 
-// triggerJobByID immediately executes a specific job by ID.
-func (s *SchedulerEngine) triggerJobByID(ctx context.Context, jobID uint64) {
+// triggerRequest is one queued manual trigger: the job, the scope it was
+// resolved in, and — for a stranded-firing repair — the firing it is bound
+// to. See TriggerJob for the scope and RetriggerStrandedFiring for the
+// binding.
+type triggerRequest struct {
+	jobID uint64
+	scope string
+
+	// firing, when non-zero, binds the dispatch to ONE observed firing:
+	// executeJob re-verifies, under the stripe lock, that the job is still
+	// Pending at exactly this NextRun before the handler runs. Zero is an
+	// operator's "run now", bound to no particular firing.
+	firing time.Time
+}
+
+// triggerJobByID immediately executes a specific job by ID, reloading it in
+// the scope the trigger resolved it under.
+func (s *SchedulerEngine) triggerJobByID(ctx context.Context, req triggerRequest) {
 	// Create a context with timeout for storage operations
 	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
 	defer cancel()
 
-	job, err := s.storage.GetJob(storageCtx, jobID, "")
+	job, err := s.storage.GetJob(storageCtx, req.jobID, req.scope)
 	if err != nil {
 		s.storageErrors.Add(1)
 		return
@@ -977,6 +1249,7 @@ func (s *SchedulerEngine) triggerJobByID(ctx context.Context, jobID uint64) {
 	if job == nil {
 		return
 	}
+	firing := req.firing
 
 	// Acquire semaphore
 	select {
@@ -985,7 +1258,9 @@ func (s *SchedulerEngine) triggerJobByID(ctx context.Context, jobID uint64) {
 		go func() {
 			defer s.wg.Done()
 			defer func() { <-s.semaphore }()
-			s.executeJob(ctx, job)
+			// A repair carries the firing it was bound to; an operator's
+			// "run now" carries zero and is bound to no particular firing.
+			s.executeJob(ctx, job, firing)
 		}()
 	case <-ctx.Done():
 		return
@@ -993,7 +1268,12 @@ func (s *SchedulerEngine) triggerJobByID(ctx context.Context, jobID uint64) {
 }
 
 // executeJob executes a job with timeout, error handling, and retries.
-func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job) {
+// executeJob runs one job.
+//
+// claimedFiring is the scheduled firing this dispatch was authorised for — the
+// NextRun the job carried when it was read from the due list and claimed. A
+// zero value means "no particular firing", which is what a manual trigger is.
+func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFiring time.Time) {
 	s.runningJobs.Add(1)
 	defer s.runningJobs.Add(^uint64(0)) // Atomic decrement
 
@@ -1014,7 +1294,7 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job) {
 	// same lock so it cannot clobber a concurrent transition.
 	lock := s.jobLock(job.ID)
 	lock.Lock()
-	current, err := s.storage.GetJob(storageCtx, job.ID, jobTenantID(job))
+	current, err := s.storage.GetJob(storageCtx, job.ID, JobTenantID(job))
 	if err != nil || current == nil {
 		lock.Unlock()
 		if err != nil && !isJobNotFound(err) {
@@ -1027,6 +1307,40 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job) {
 		s.logDebug("Skipping job %d (%s): status is %s", current.ID, current.Name, current.Status)
 		return
 	}
+	// A RUNNING JOB IS NEVER DOUBLE-RUN, whatever dispatched us. Claimed
+	// dispatches already require Pending below; this closes the manual and
+	// repair paths, whose TriggerJob-time precheck races the execution that
+	// can begin in between. Without it, a zero-firing dispatch would write
+	// Running over Running and invoke the handler concurrently with the
+	// live execution.
+	if current.Status == JobStatusRunning {
+		lock.Unlock()
+		s.staleDispatches.Add(1)
+		s.logDebug("Skipping job %d (%s): already running", current.ID, current.Name)
+		return
+	}
+
+	// The claim authorised ONE firing. Between the due-list read and here the
+	// job may have moved on — completed and rescheduled, retried onto a new
+	// backoff time, or been updated — and the record now in front of us is a
+	// DIFFERENT firing that another node may already have claimed and be
+	// running. Executing it would double-fire through the back door: the claim
+	// was won honestly, for a firing that no longer exists.
+	//
+	// So the firing identity is re-checked here, under the same lock that
+	// guards the running-status write, and a mismatch declines. Found by
+	// review; the claim alone is not sufficient because claiming and executing
+	// are separated by a goroutine hop.
+	if !claimedFiring.IsZero() {
+		if current.Status != JobStatusPending || !current.NextRun.Equal(claimedFiring) {
+			lock.Unlock()
+			s.staleDispatches.Add(1)
+			s.logDebug("Skipping job %d (%s): claimed firing %s, record now %s at %s",
+				current.ID, current.Name, claimedFiring, current.Status, current.NextRun)
+			return
+		}
+	}
+
 	job = current
 
 	// Update job status to running
@@ -1144,7 +1458,7 @@ func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	current, getErr := s.storage.GetJob(ctx, job.ID, jobTenantID(job))
+	current, getErr := s.storage.GetJob(ctx, job.ID, JobTenantID(job))
 	switch {
 	case isJobNotFound(getErr), getErr == nil && current == nil:
 		// Job was deleted concurrently; do not resurrect it.
@@ -1160,17 +1474,24 @@ func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) {
 }
 
 // handleJobError processes a job execution error with retry logic.
-func (s *SchedulerEngine) handleJobError(ctx context.Context, job *Job, exec *JobExecution, err error) {
-	now := time.Now()
-	exec.EndedAt = now
-	exec.Duration = exec.EndedAt.Sub(exec.StartedAt)
-	exec.Status = JobStatusFailed
-	exec.Error = err.Error()
-
+// applyRunFailure records one failed run on job and decides whether it retries.
+//
+// It mutates job and writes nothing: the caller owns persistence, because the
+// two callers persist differently — handleJobError goes through
+// persistJobOutcome, which takes the job's stripe lock itself, while
+// RecoverAbandonedRun is ALREADY holding that lock and writes directly.
+//
+// SHARED RATHER THAN COPIED, and that is the point of it existing. The retry
+// budget and the backoff schedule are policy, and a second copy of a policy is
+// a policy that will differ from the first one eventually — silently, since
+// both would keep working. A job abandoned by a dead node and a job whose
+// handler returned an error are the same event as far as the retry budget is
+// concerned: a run that did not produce a result.
+func (s *SchedulerEngine) applyRunFailure(job *Job, reason string, now time.Time) {
 	job.LastRun = now
 	job.RunCount++
 	job.FailCount++
-	job.LastError = err.Error()
+	job.LastError = reason
 	job.UpdatedAt = now
 
 	// Determine max retries with safe bounds check.
@@ -1204,6 +1525,16 @@ func (s *SchedulerEngine) handleJobError(ctx context.Context, job *Job, exec *Jo
 	} else {
 		job.Status = JobStatusFailed
 	}
+}
+
+func (s *SchedulerEngine) handleJobError(ctx context.Context, job *Job, exec *JobExecution, err error) {
+	now := time.Now()
+	exec.EndedAt = now
+	exec.Duration = exec.EndedAt.Sub(exec.StartedAt)
+	exec.Status = JobStatusFailed
+	exec.Error = err.Error()
+
+	s.applyRunFailure(job, err.Error(), now)
 
 	// Create timeout context for storage operations (required for Raft-based storage)
 	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)

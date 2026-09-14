@@ -150,7 +150,7 @@ func runAuthLogoutCommand(cmd *cobra.Command, args []string) error {
 		fmt.Println("Server unreachable, removing local token only")
 	} else {
 		// Revoke token on server using SDK auth client
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 		defer cancel()
 
 		if err := authClient.Logout(ctx, token.AccessToken); err != nil {

@@ -22,7 +22,8 @@ import (
 	"strings"
 	"testing"
 
-	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // runGitCmd runs one git command inside dir and fails the test on error.
@@ -145,10 +146,12 @@ func TestGitProvisioner_Clone_InvalidRequests(t *testing.T) {
 		{"missing dir", &GitCloneRequest{RepoURL: "https://example.com/r.git"}},
 		{"relative dir", &GitCloneRequest{RepoURL: "https://example.com/r.git", Dir: "rel"}},
 		{"conflicting credentials", &GitCloneRequest{
-			RepoURL:        "https://example.com/r.git",
-			Dir:            "/abs",
-			TokenSecretRef: "sec-1",
-			SSHKey:         SSHKeyRef{Name: "key-1"},
+			RepoURL: "https://example.com/r.git",
+			Dir:     "/abs",
+			GitCredentials: GitCredentials{
+				TokenSecretRef: "sec-1",
+				SSHKey:         SSHKeyRef{Name: "key-1"},
+			},
 		}},
 	}
 	for _, tt := range tests {
@@ -170,9 +173,11 @@ func TestGitProvisioner_Clone_TokenErrors(t *testing.T) {
 		t.Parallel()
 		p := &GitProvisioner{}
 		_, err := p.Clone(context.Background(), &GitCloneRequest{
-			RepoURL:        "http://example.com/r.git",
-			Dir:            t.TempDir(),
-			TokenSecretRef: "sec-1",
+			RepoURL: "http://example.com/r.git",
+			Dir:     t.TempDir(),
+			GitCredentials: GitCredentials{
+				TokenSecretRef: "sec-1",
+			},
 		})
 		var urlErr *GitRepoURLError
 		if !errors.As(err, &urlErr) {
@@ -184,9 +189,11 @@ func TestGitProvisioner_Clone_TokenErrors(t *testing.T) {
 		t.Parallel()
 		p := &GitProvisioner{}
 		_, err := p.Clone(context.Background(), &GitCloneRequest{
-			RepoURL:        "https://example.com/r.git",
-			Dir:            t.TempDir(),
-			TokenSecretRef: "sec-1",
+			RepoURL: "https://example.com/r.git",
+			Dir:     t.TempDir(),
+			GitCredentials: GitCredentials{
+				TokenSecretRef: "sec-1",
+			},
 		})
 		var credErr *GitCredentialError
 		if !errors.As(err, &credErr) {
@@ -203,9 +210,11 @@ func TestGitProvisioner_Clone_TokenErrors(t *testing.T) {
 			},
 		}}
 		_, err := p.Clone(context.Background(), &GitCloneRequest{
-			RepoURL:        "https://example.com/r.git",
-			Dir:            t.TempDir(),
-			TokenSecretRef: "sec-1",
+			RepoURL: "https://example.com/r.git",
+			Dir:     t.TempDir(),
+			GitCredentials: GitCredentials{
+				TokenSecretRef: "sec-1",
+			},
 		})
 		var credErr *GitCredentialError
 		if !errors.As(err, &credErr) {
@@ -224,9 +233,11 @@ func TestGitProvisioner_Clone_TokenErrors(t *testing.T) {
 			},
 		}}
 		_, err := p.Clone(context.Background(), &GitCloneRequest{
-			RepoURL:        "https://example.com/r.git",
-			Dir:            t.TempDir(),
-			TokenSecretRef: "sec-1",
+			RepoURL: "https://example.com/r.git",
+			Dir:     t.TempDir(),
+			GitCredentials: GitCredentials{
+				TokenSecretRef: "sec-1",
+			},
 		})
 		var credErr *GitCredentialError
 		if !errors.As(err, &credErr) {
@@ -244,11 +255,8 @@ func TestGitProvisioner_TokenAuth_TokenNeverInArgs(t *testing.T) {
 			return &GetSecretResponse{Data: []byte(token)}, nil
 		},
 	}}
-	env, args, err := p.tokenAuth(context.Background(), &GitCloneRequest{
-		RepoURL:        "https://example.com/r.git",
-		Dir:            "/abs",
-		TokenSecretRef: "sec-1",
-	})
+	env, args, err := p.tokenAuth(context.Background(), "https://example.com/r.git",
+		GitCredentials{TokenSecretRef: "sec-1"})
 	if err != nil {
 		t.Fatalf("tokenAuth error: %v", err)
 	}
@@ -278,10 +286,12 @@ func TestGitProvisioner_Clone_SSHErrors(t *testing.T) {
 		t.Parallel()
 		p := &GitProvisioner{}
 		_, err := p.Clone(context.Background(), &GitCloneRequest{
-			RepoURL:  "git@github.com:org/repo.git",
-			Dir:      t.TempDir(),
-			TenantID: "tenant-a",
-			SSHKey:   SSHKeyRef{Name: "deploy-key"},
+			RepoURL: "git@github.com:org/repo.git",
+			Dir:     t.TempDir(),
+			GitCredentials: GitCredentials{
+				TenantID: "tenant-a",
+				SSHKey:   SSHKeyRef{Name: "deploy-key"},
+			},
 		})
 		var credErr *GitCredentialError
 		if !errors.As(err, &credErr) {
@@ -295,7 +305,9 @@ func TestGitProvisioner_Clone_SSHErrors(t *testing.T) {
 		_, err := p.Clone(context.Background(), &GitCloneRequest{
 			RepoURL: "https://example.com/r.git",
 			Dir:     t.TempDir(),
-			SSHKey:  SSHKeyRef{Name: "deploy-key"},
+			GitCredentials: GitCredentials{
+				SSHKey: SSHKeyRef{Name: "deploy-key"},
+			},
 		})
 		var urlErr *GitRepoURLError
 		if !errors.As(err, &urlErr) {
@@ -390,68 +402,248 @@ func TestGitCloneArgs(t *testing.T) {
 	}
 }
 
-// fakeSSHSession stands in for the xkms ConnectSession's teardown half: it
-// records whether the context it was handed is bounded and returns whatever
-// the test scripted.
-type fakeSSHSession struct {
-	added    int
-	report   xkmsssh.AgentShutdownReport
-	err      error
-	stopped  bool
-	deadline bool
+// =============================================================================
+// The write path
+// =============================================================================
+//
+// Against a REAL git repository in a temp dir, not a double. The behaviour
+// under test is what the git binary does with the arguments this code builds,
+// and a fake would only confirm the arguments we chose to build — which is the
+// fixture blindness that let two wrong Gitea field names ship earlier in this
+// initiative. Nothing here touches a network: the "remote" is a bare repo on
+// disk, so push is exercised without credentials.
+
+// initGitRepo creates a repository with one commit and returns its directory.
+func initGitRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	runTestGit(t, dir, "init", "--initial-branch=main")
+	runTestGit(t, dir, "config", "user.name", "fixture")
+	runTestGit(t, dir, "config", "user.email", "fixture@example.com")
+	// The host's GLOBAL config sets commit.gpgsign on a developer machine, and
+	// this fixture inherits it: the seed commit then tries to sign with
+	// whoever's key that config names and fails. The code under test decides
+	// signing explicitly for exactly this reason; the fixture has to do the
+	// same to stand in for a clean workspace.
+	runTestGit(t, dir, "config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed\n"), 0o600); err != nil {
+		t.Fatalf("seeding the repo: %v", err)
+	}
+	runTestGit(t, dir, "add", "seed.txt")
+	runTestGit(t, dir, "commit", "-m", "seed")
+	return dir
 }
 
-func (f *fakeSSHSession) SyncAndStop(ctx context.Context) (int, xkmsssh.AgentShutdownReport, error) {
-	f.stopped = true
-	_, f.deadline = ctx.Deadline()
-	return f.added, f.report, f.err
+// runTestGit runs a git command in dir, failing the test on error.
+func runTestGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	full := append([]string{"-C", dir}, args...)
+	out, err := exec.CommandContext(context.Background(), "git", full...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
 }
 
-func TestGitProvisioner_StopSSHSession(t *testing.T) {
-	t.Parallel()
+// TestBranch_CutsAndChecksOutLocally covers the branch step.
+func TestBranch_CutsAndChecksOutLocally(t *testing.T) {
+	dir := initGitRepo(t)
+	p := &GitProvisioner{}
 
-	t.Run("clean shutdown logs nothing at warn", func(t *testing.T) {
-		t.Parallel()
-		logger := newAEADTestLogger()
-		sess := &fakeSSHSession{added: 2, report: xkmsssh.AgentShutdownReport{Joined: true}}
-		(&GitProvisioner{Logger: logger}).stopSSHSession(sess)
-		if !sess.stopped {
-			t.Fatal("SyncAndStop was not called")
-		}
-		if !sess.deadline {
-			t.Error("teardown context carries no deadline; a wedged signer would hang the clone forever")
-		}
-		if len(logger.warnings) != 0 {
-			t.Errorf("warnings = %q, want none", logger.warnings)
-		}
-	})
+	if err := p.Branch(context.Background(), &GitBranchRequest{Dir: dir, Name: "issue/32-slug"}); err != nil {
+		t.Fatalf("Branch: %v", err)
+	}
+	if got := runTestGit(t, dir, "rev-parse", "--abbrev-ref", "HEAD"); got != "issue/32-slug" {
+		t.Errorf("checked out %q, want issue/32-slug", got)
+	}
+}
 
-	t.Run("sync failure is logged and does not panic", func(t *testing.T) {
-		t.Parallel()
-		logger := newAEADTestLogger()
-		sess := &fakeSSHSession{err: errors.New("store unavailable"), report: xkmsssh.AgentShutdownReport{Joined: true}}
-		(&GitProvisioner{Logger: logger}).stopSSHSession(sess)
-		if len(logger.warnings) != 1 || !strings.Contains(logger.warnings[0], "host-key pin sync failed") {
-			t.Errorf("warnings = %q, want one host-key sync warning", logger.warnings)
-		}
-	})
+// TestCommit_StagesOnlyWhatItWasToldTo is the property that keeps build output
+// out of history.
+//
+// A worker's workspace accumulates caches, binaries and editor droppings while
+// tools run in it. Defaulting to "stage everything" means those land in a
+// commit and are found at review time, so naming nothing stages nothing and a
+// caller that means everything says so.
+func TestCommit_StagesOnlyWhatItWasToldTo(t *testing.T) {
+	dir := initGitRepo(t)
+	p := &GitProvisioner{}
+	ctx := context.Background()
 
-	t.Run("abandoned signing operations are logged", func(t *testing.T) {
-		t.Parallel()
-		logger := newAEADTestLogger()
-		sess := &fakeSSHSession{report: xkmsssh.AgentShutdownReport{Joined: false, Abandoned: 1}}
-		(&GitProvisioner{Logger: logger}).stopSSHSession(sess)
-		if len(logger.warnings) != 1 || !strings.Contains(logger.warnings[0], "abandoned") {
-			t.Errorf("warnings = %q, want one abandoned-signing warning", logger.warnings)
+	for _, name := range []string{"wanted.txt", "build-output.bin"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
 		}
-	})
+	}
 
-	t.Run("nil logger still stops the session", func(t *testing.T) {
-		t.Parallel()
-		sess := &fakeSSHSession{err: errors.New("store unavailable"), report: xkmsssh.AgentShutdownReport{Abandoned: 3}}
-		(&GitProvisioner{}).stopSSHSession(sess)
-		if !sess.stopped {
-			t.Fatal("SyncAndStop was not called")
-		}
+	// Staging nothing is refused rather than silently meaning everything.
+	_, err := p.Commit(ctx, &GitCommitRequest{
+		Dir: dir, Message: "m", Author: orchestration.GitAuthor{Name: "a", Email: "a@b.c"},
 	})
+	if err == nil {
+		t.Fatal("a commit naming no paths was accepted; it would have swept up build output")
+	}
+
+	sha, err := p.Commit(ctx, &GitCommitRequest{
+		Dir:     dir,
+		Message: "only the wanted file",
+		Author:  orchestration.GitAuthor{Name: "agent", Email: "agent@example.com"},
+		Paths:   []string{"wanted.txt"},
+	})
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if sha == "" {
+		t.Fatal("Commit returned no SHA")
+	}
+
+	files := runTestGit(t, dir, "show", "--name-only", "--format=", "HEAD")
+	if !strings.Contains(files, "wanted.txt") {
+		t.Errorf("commit does not contain wanted.txt: %q", files)
+	}
+	if strings.Contains(files, "build-output.bin") {
+		t.Error("the commit swept up a file nobody asked to stage")
+	}
+}
+
+// TestCommit_RecordsTheIdentityItWasGiven proves attribution does not come
+// from the host's global git config.
+//
+// A worker runs on a shared host where global config belongs to whoever set it
+// up last, and a commit attributed to the wrong identity is a provenance
+// failure that survives in history.
+func TestCommit_RecordsTheIdentityItWasGiven(t *testing.T) {
+	dir := initGitRepo(t)
+	p := &GitProvisioner{}
+
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	if _, err := p.Commit(context.Background(), &GitCommitRequest{
+		Dir:     dir,
+		Message: "attributed",
+		Author:  orchestration.GitAuthor{Name: "agent-go-quicbaas", Email: "agent@example.internal"},
+		Paths:   []string{"f.txt"},
+	}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	if got := runTestGit(t, dir, "log", "-1", "--format=%an <%ae>"); got != "agent-go-quicbaas <agent@example.internal>" {
+		t.Errorf("author = %q, want the identity passed to Commit", got)
+	}
+	// The workspace's own config must be untouched, so concurrent workers in
+	// sibling worktrees cannot read each other's identity.
+	if got := runTestGit(t, dir, "config", "user.name"); got != "fixture" {
+		t.Errorf("workspace config user.name = %q; Commit wrote into the workspace", got)
+	}
+}
+
+// TestCommit_RefusesAnEmptyCommitByDefault keeps a worker that produced
+// nothing from recording that it did.
+func TestCommit_RefusesAnEmptyCommitByDefault(t *testing.T) {
+	dir := initGitRepo(t)
+	p := &GitProvisioner{}
+
+	_, err := p.Commit(context.Background(), &GitCommitRequest{
+		Dir: dir, Message: "nothing changed",
+		Author:     orchestration.GitAuthor{Name: "a", Email: "a@b.c"},
+		AllChanges: true,
+	})
+	if err == nil {
+		t.Fatal("an empty commit was recorded, hiding that the work produced nothing")
+	}
+}
+
+// TestCommit_RefusesAnUnattributedCommit covers the identity validation.
+func TestCommit_RefusesAnUnattributedCommit(t *testing.T) {
+	dir := initGitRepo(t)
+	p := &GitProvisioner{}
+	ctx := context.Background()
+
+	cases := map[string]orchestration.GitAuthor{
+		"no name":  {Email: "a@b.c"},
+		"no email": {Name: "a"},
+	}
+	for name, identity := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := p.Commit(ctx, &GitCommitRequest{
+				Dir: dir, Message: "m", Author: identity, AllChanges: true,
+			}); err == nil {
+				t.Error("an unattributed commit was accepted")
+			}
+		})
+	}
+}
+
+// TestPush_PublishesToTheRemote covers the push against a bare repository on
+// disk, which needs no credentials and so isolates the git mechanics from the
+// credential path.
+func TestPush_PublishesToTheRemote(t *testing.T) {
+	remote := t.TempDir()
+	runTestGit(t, remote, "init", "--bare", "--initial-branch=main")
+
+	work := initGitRepo(t)
+	runTestGit(t, work, "remote", "add", "origin", remote)
+	runTestGit(t, work, "push", "origin", "main")
+
+	p := &GitProvisioner{}
+	ctx := context.Background()
+	if err := p.Branch(ctx, &GitBranchRequest{Dir: work, Name: "issue/32-slug"}); err != nil {
+		t.Fatalf("Branch: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "new.txt"), []byte("new\n"), 0o600); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	sha, err := p.Commit(ctx, &GitCommitRequest{
+		Dir: work, Message: "work", Author: orchestration.GitAuthor{Name: "a", Email: "a@b.c"},
+		Paths: []string{"new.txt"},
+	})
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	if err := p.Push(ctx, &GitPushRequest{
+		Dir: work, RepoURL: remote, Branch: "issue/32-slug", SetUpstream: true,
+	}); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+
+	// The remote's own view is the read-back: an exit code says the command
+	// ran, not that the branch arrived.
+	if got := runTestGit(t, remote, "rev-parse", "issue/32-slug"); got != sha {
+		t.Errorf("remote branch is at %q, want the commit that was pushed (%q)", got, sha)
+	}
+}
+
+// TestPush_RefusesConflictingCredentials proves the write path validates the
+// same credential combination the clone path does, through the same check.
+func TestPush_RefusesConflictingCredentials(t *testing.T) {
+	err := (&GitProvisioner{}).Push(context.Background(), &GitPushRequest{
+		Dir: "/abs", RepoURL: "https://example.com/r.git", Branch: "b",
+		GitCredentials: GitCredentials{
+			TokenSecretRef: "sec-1",
+			SSHKey:         SSHKeyRef{Name: "key-1"},
+		},
+	})
+	if err == nil {
+		t.Fatal("a push carrying both credential kinds was accepted")
+	}
+}
+
+// =============================================================================
+// Signing algorithm drift
+// =============================================================================
+
+// TestSigningAlgorithmsMatchKMS pins the orchestration signing-algorithm
+// literals to the KMS algorithm names. The orchestration package spells them
+// as literals because the standalone agent binary must not import pkg/kms; a
+// drift here would let a project select an algorithm the KMS does not serve.
+func TestSigningAlgorithmsMatchKMS(t *testing.T) {
+	if orchestration.SigningAlgorithmEd25519 != kms.AlgEd25519 {
+		t.Errorf("orchestration ed25519 literal %q != kms %q", orchestration.SigningAlgorithmEd25519, kms.AlgEd25519)
+	}
+	if orchestration.SigningAlgorithmECDSAP256 != kms.AlgECDSAP256 {
+		t.Errorf("orchestration ECDSA-P256 literal %q != kms %q", orchestration.SigningAlgorithmECDSAP256, kms.AlgECDSAP256)
+	}
 }

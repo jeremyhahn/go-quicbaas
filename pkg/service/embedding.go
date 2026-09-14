@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -36,6 +37,22 @@ type embeddingService struct {
 	logger            interfaces.Logger
 	metrics           *embeddingMetrics
 	disabledProviders sync.Map // tracks provider name (string) → true when disabled
+
+	// disabledCount is the number of entries in disabledProviders. sync.Map has
+	// no length, and the disabled set is empty in the overwhelmingly common
+	// case, so this lets the embed path skip resolving the manager's default
+	// name entirely rather than paying a GetStats call per request.
+	disabledCount atomic.Int64
+
+	// defaultProvider overrides the manager's configured default when set by
+	// SetDefaultProvider. Held atomically because it is read on every embed
+	// call and written rarely. Nil or empty means "use the manager's default".
+	//
+	// This exists because the manager's own default is fixed at construction
+	// from configuration, and go-qrdb validates that name against a closed
+	// allowlist -- so a provider registered afterwards could otherwise never
+	// become the effective default. See go-qrdb#528.
+	defaultProvider atomic.Pointer[EmbeddingProvider]
 }
 
 // embeddingMetrics holds Prometheus metrics for embedding operations.
@@ -174,8 +191,8 @@ func (s *embeddingService) GenerateEmbedding(ctx context.Context, req *GenerateE
 	statsBefore := s.manager.GetStats()
 	cacheHitsBefore := statsBefore.CacheHits
 
-	// Generate embedding through manager (handles caching internally)
-	embeddingVec, err := s.manager.Embed(ctx, req.Text)
+	// Generate the embedding, honouring an explicitly requested provider.
+	embeddingVec, routedDimensions, err := s.embedOne(ctx, req.Provider, req.Text)
 	if err != nil {
 		return nil, s.handleEmbeddingError(err, "generate", providerName)
 	}
@@ -184,8 +201,12 @@ func (s *embeddingService) GenerateEmbedding(ctx context.Context, req *GenerateE
 	statsAfter := s.manager.GetStats()
 	cacheHit := statsAfter.CacheHits > cacheHitsBefore
 
-	// Get dimensions for metadata
-	dimensions, _ := s.manager.Dimensions()
+	// Get dimensions for metadata. A routed request reports the dimensions of
+	// the provider that actually served it, not the default provider's.
+	dimensions := routedDimensions
+	if dimensions <= 0 {
+		dimensions, _ = s.manager.Dimensions()
+	}
 
 	// Increment metrics
 	if s.metrics != nil {
@@ -271,14 +292,18 @@ func (s *embeddingService) BatchGenerateEmbeddings(ctx context.Context, req *Bat
 		texts[i] = item.Text
 	}
 
-	// Generate embeddings through manager (handles batching and caching)
-	embeddings, err := s.manager.EmbedBatch(ctx, texts)
+	// Generate the embeddings, honouring an explicitly requested provider.
+	embeddings, routedDimensions, err := s.embedMany(ctx, req.Provider, texts)
 	if err != nil {
 		return nil, s.handleEmbeddingError(err, "batch_generate", providerName)
 	}
 
-	// Get dimensions for metadata
-	dimensions, _ := s.manager.Dimensions()
+	// Get dimensions for metadata. A routed request reports the dimensions of
+	// the provider that actually served it, not the default provider's.
+	dimensions := routedDimensions
+	if dimensions <= 0 {
+		dimensions, _ = s.manager.Dimensions()
+	}
 
 	// Build results
 	results := make([]*BatchEmbeddingResult, len(req.Items))
@@ -396,7 +421,7 @@ func (s *embeddingService) ListProviders(ctx context.Context, req *ListProviders
 
 	return &ListProvidersResponse{
 		Providers:       providers,
-		DefaultProvider: stats.DefaultProvider,
+		DefaultProvider: s.reportedDefaultProvider(stats.DefaultProvider),
 		Timestamp:       time.Now(),
 	}, nil
 }
@@ -497,18 +522,50 @@ func (s *embeddingService) SetDefaultProvider(ctx context.Context, req *SetDefau
 		return nil, api.NewNotFoundWithCauseError("embeddings.SetDefaultProvider", "provider", err)
 	}
 
+	// Refuse to make a disabled provider the default; it would be excluded from
+	// routing the moment it was selected.
+	if s.providerDisabled(string(req.Provider)) {
+		if s.metrics != nil {
+			s.metrics.operationErrors.With("set_default_provider", "disabled").Inc()
+		}
+		return nil, &ProviderDisabledError{Provider: string(req.Provider)}
+	}
+
+	// Record the change. Previously this returned success without mutating
+	// anything, so the endpoint reported a switch that never happened.
+	previous := s.effectiveDefaultProvider()
+	selected := req.Provider
+	s.defaultProvider.Store(&selected)
+
 	// Log success
 	if s.logger != nil {
 		s.logger.WithFields(map[string]interface{}{
 			"provider": req.Provider,
+			"previous": string(previous),
 		}).Info("Default provider set successfully")
+	}
+
+	if previous == "" {
+		// No override was in force, so the manager's configured default was
+		// serving. "default" is the established sentinel for that; naming it
+		// would mean an extra manager round-trip on a write path.
+		previous = "default"
 	}
 
 	return &SetDefaultProviderResponse{
 		Provider:         req.Provider,
-		PreviousProvider: "default",
+		PreviousProvider: previous,
 		Timestamp:        time.Now(),
 	}, nil
+}
+
+// reportedDefaultProvider returns the default a caller should be told about:
+// the service-level override when one is in force, else the manager's own.
+func (s *embeddingService) reportedDefaultProvider(managerDefault string) string {
+	if override := s.effectiveDefaultProvider(); override != "" {
+		return string(override)
+	}
+	return managerDefault
 }
 
 // GetCacheStats returns statistics about the embedding cache.
@@ -686,6 +743,169 @@ func (s *embeddingService) validateSetDefaultProviderRequest(req *SetDefaultProv
 // =============================================================================
 
 // handleEmbeddingError converts embedding package errors to QBErrors.
+// ProviderDisabledError indicates a request named a provider that an operator
+// has disabled through SetProviderStatus.
+//
+// It unwraps to embedding.ErrProviderUnavailable so that callers matching the
+// general embedding error contract, and handleEmbeddingError's mapping to
+// ErrUnavailable, both keep working.
+type ProviderDisabledError struct {
+	// Provider is the disabled provider that was requested.
+	Provider string
+}
+
+// Error implements the error interface.
+func (e *ProviderDisabledError) Error() string {
+	return "embeddings: provider is disabled: " + e.Provider
+}
+
+// Unwrap returns the shared unavailable sentinel for errors.Is support.
+func (e *ProviderDisabledError) Unwrap() error {
+	return embedding.ErrProviderUnavailable
+}
+
+// providerDisabled reports whether an operator has disabled the named provider.
+//
+// SetProviderStatus records the disabled set, and the service contract says
+// disabled providers are "excluded from request routing and fallback chains" --
+// so this is consulted before a request is routed. Without it, disabling a
+// provider whose backend is down would silently do nothing, which is the first
+// thing an operator reaches for during an outage.
+func (s *embeddingService) providerDisabled(name string) bool {
+	_, disabled := s.disabledProviders.Load(name)
+	return disabled
+}
+
+// managerDefaultDisabled reports whether the manager's own configured default
+// has been disabled.
+//
+// An unnamed request routes through the manager's cached default path, which
+// never names a provider -- so without this check, disabling the default
+// provider would record the intent and change nothing, and default traffic would
+// keep hitting the backend an operator was trying to take out of service during
+// an outage. That is the failure mode the disabled set exists to prevent.
+//
+// The disabled set is empty in the common case, so the counter short-circuits
+// before any manager round-trip.
+func (s *embeddingService) managerDefaultDisabled() (string, bool) {
+	if s.disabledCount.Load() == 0 {
+		return "", false
+	}
+
+	name := s.manager.GetStats().DefaultProvider
+	if name == "" {
+		// The manager does not report a default name, so there is nothing to
+		// match against the disabled set.
+		return "", false
+	}
+	return name, s.providerDisabled(name)
+}
+
+// resolveProvider returns the provider a request should run against: the one it
+// named, else the service-level default set by SetDefaultProvider, else empty
+// to mean the manager's configured default.
+func (s *embeddingService) resolveProvider(requested EmbeddingProvider) EmbeddingProvider {
+	if requested != "" {
+		return requested
+	}
+	return s.effectiveDefaultProvider()
+}
+
+// effectiveDefaultProvider returns the service-level default override, or the
+// empty string when none has been set.
+func (s *embeddingService) effectiveDefaultProvider() EmbeddingProvider {
+	if p := s.defaultProvider.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+// embedOne generates a single embedding, routing to an explicitly requested
+// provider when the request names one.
+//
+// GenerateEmbeddingRequest.Provider is a documented part of the public API --
+// "optionally specifies which provider to use (uses default if empty)" -- and
+// was previously recorded for metrics but never acted on, so every request ran
+// the manager's configured default. That made any registered non-default
+// provider unreachable through this service.
+//
+// The returned dimension count is the serving provider's, so metadata cannot
+// claim the default provider's width for a vector produced by another.
+// It is zero when the manager's default served the request, in which case the
+// caller falls back to the manager's own reported dimensions.
+//
+// Routing directly to a provider bypasses the manager's cache, because the
+// cache belongs to the manager and is keyed for its default provider. A routed
+// request is therefore always a cache miss, which the reported metadata
+// reflects honestly.
+func (s *embeddingService) embedOne(
+	ctx context.Context,
+	provider EmbeddingProvider,
+	text string,
+) ([]float32, int, error) {
+	provider = s.resolveProvider(provider)
+	if provider == "" {
+		if name, disabled := s.managerDefaultDisabled(); disabled {
+			return nil, 0, &ProviderDisabledError{Provider: name}
+		}
+		vec, err := s.manager.Embed(ctx, text)
+		return vec, 0, err
+	}
+
+	if s.providerDisabled(string(provider)) {
+		return nil, 0, &ProviderDisabledError{Provider: string(provider)}
+	}
+
+	target, err := s.manager.GetProvider(string(provider))
+	if err != nil {
+		return nil, 0, err
+	}
+	if target == nil {
+		return nil, 0, embedding.ErrProviderNotFound
+	}
+
+	vec, err := target.Embed(ctx, text)
+	if err != nil {
+		return nil, 0, err
+	}
+	return vec, target.Dimensions(), nil
+}
+
+// embedMany is the batch counterpart of embedOne and follows the same routing
+// and cache rules.
+func (s *embeddingService) embedMany(
+	ctx context.Context,
+	provider EmbeddingProvider,
+	texts []string,
+) ([][]float32, int, error) {
+	provider = s.resolveProvider(provider)
+	if provider == "" {
+		if name, disabled := s.managerDefaultDisabled(); disabled {
+			return nil, 0, &ProviderDisabledError{Provider: name}
+		}
+		vecs, err := s.manager.EmbedBatch(ctx, texts)
+		return vecs, 0, err
+	}
+
+	if s.providerDisabled(string(provider)) {
+		return nil, 0, &ProviderDisabledError{Provider: string(provider)}
+	}
+
+	target, err := s.manager.GetProvider(string(provider))
+	if err != nil {
+		return nil, 0, err
+	}
+	if target == nil {
+		return nil, 0, embedding.ErrProviderNotFound
+	}
+
+	vecs, err := target.EmbedBatch(ctx, texts)
+	if err != nil {
+		return nil, 0, err
+	}
+	return vecs, target.Dimensions(), nil
+}
+
 func (s *embeddingService) handleEmbeddingError(err error, operation, provider string) error {
 	if s.metrics != nil {
 		s.metrics.operationErrors.With(operation, "embedding_error").Inc()
@@ -739,9 +959,13 @@ func (s *embeddingService) SetProviderStatus(ctx context.Context, req *SetProvid
 	}
 
 	if req.Enabled {
-		s.disabledProviders.Delete(req.Name)
+		if _, existed := s.disabledProviders.LoadAndDelete(req.Name); existed {
+			s.disabledCount.Add(-1)
+		}
 	} else {
-		s.disabledProviders.Store(req.Name, true)
+		if _, existed := s.disabledProviders.LoadOrStore(req.Name, true); !existed {
+			s.disabledCount.Add(1)
+		}
 	}
 
 	if s.logger != nil {

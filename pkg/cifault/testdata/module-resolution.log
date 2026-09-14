@@ -1,0 +1,45 @@
+2026-09-12T17:58:37.8241186Z go: downloading github.com/rogpeppe/go-internal v1.14.1
+2026-09-12T17:58:37.8242136Z go: downloading github.com/kr/text v0.2.0
+2026-09-12T17:58:37.8246426Z go: downloading google.golang.org/genproto/googleapis/api v0.0.0-20260810153831-ec0a7760b754
+2026-09-12T17:58:40.5536932Z go: github.com/jeremyhahn/go-auth@v0.2.0-alpha: reading github.com/jeremyhahn/go-auth/go.mod at revision v0.2.0-alpha: unknown revision v0.2.0-alpha
+2026-09-12T17:58:40.5647708Z make: *** [Makefile:516: vet] Error 1
+2026-09-12T17:58:40.5953535Z ##[error]Process completed with exit code 2.
+2026-09-12T17:58:40.7891034Z Run Post Checkout code
+2026-09-12T17:58:40.8454853Z docker exec cmd=[node /var/run/act/actions/637d35d91d82f1d3b75173f11076308c1ab4bc2167fb475860e9bee81f3b520c/dist/index.js] user= workdir=
+2026-09-12T17:58:40.9916384Z [command]/usr/bin/git version
+2026-09-12T17:58:40.9974098Z git version 2.54.0
+2026-09-12T17:58:40.9992766Z ***
+2026-09-12T17:58:41.0010610Z Temporarily overriding HOME='/tmp/3e5fcf5d-1a44-486e-8cf3-b9fc62cf6832' before making global git config changes
+2026-09-12T17:58:41.0011880Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-12T17:58:41.0012390Z [command]/usr/bin/git config --global --add safe.directory /workspace/jeremyhahn/go-quicbaas
+2026-09-12T17:58:41.0070991Z Removing SSH command configuration
+2026-09-12T17:58:41.0073402Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-12T17:58:41.0131211Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-12T17:58:41.0773591Z Removing HTTP extra header
+2026-09-12T17:58:41.0783843Z [command]/usr/bin/git config --local --name-only --get-regexp http\.http\:\/\/forge\.internal\:3001\/\.extraheader
+2026-09-12T17:58:41.0862853Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.http\:\/\/forge\.internal\:3001\/\.extraheader' && git config --local --unset-all 'http.http://forge.internal:3001/.extraheader' || :"
+2026-09-12T17:58:41.1466198Z Removing includeIf entries pointing to credentials config files
+2026-09-12T17:58:41.1481282Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-12T17:58:41.1538717Z includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git.path
+2026-09-12T17:58:41.1539355Z includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git/worktrees/*.path
+2026-09-12T17:58:41.1539695Z includeif.gitdir:/github/workspace/.git.path
+2026-09-12T17:58:41.1540009Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-12T17:58:41.1559432Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git.path
+2026-09-12T17:58:41.1613408Z /tmp/git-credentials-be0fdca6-86d1-4a79-ac48-8c2490c464fe.config
+2026-09-12T17:58:41.1633919Z [command]/usr/bin/git config --local --unset includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git.path /tmp/git-credentials-be0fdca6-86d1-4a79-ac48-8c2490c464fe.config
+2026-09-12T17:58:41.1707424Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git/worktrees/*.path
+2026-09-12T17:58:41.1758189Z /tmp/git-credentials-be0fdca6-86d1-4a79-ac48-8c2490c464fe.config
+2026-09-12T17:58:41.1771178Z [command]/usr/bin/git config --local --unset includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git/worktrees/*.path /tmp/git-credentials-be0fdca6-86d1-4a79-ac48-8c2490c464fe.config
+2026-09-12T17:58:41.1838137Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-09-12T17:58:41.1887179Z /github/runner_temp/git-credentials-be0fdca6-86d1-4a79-ac48-8c2490c464fe.config
+2026-09-12T17:58:41.1897977Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-be0fdca6-86d1-4a79-ac48-8c2490c464fe.config
+2026-09-12T17:58:41.1967874Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-12T17:58:41.2017741Z /github/runner_temp/git-credentials-be0fdca6-86d1-4a79-ac48-8c2490c464fe.config
+2026-09-12T17:58:41.2030227Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-be0fdca6-86d1-4a79-ac48-8c2490c464fe.config
+2026-09-12T17:58:41.2109854Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-12T17:58:41.2754182Z Removing credentials config '/tmp/git-credentials-be0fdca6-86d1-4a79-ac48-8c2490c464fe.config'
+2026-09-12T17:58:41.2973562Z Success - Post Checkout code
+2026-09-12T17:58:41.3745939Z Cleaning up container for job Lint
+2026-09-12T17:58:45.5625218Z Cleaning up network for job Lint, and network name is: GITEA-ACTIONS-TASK-67430-WORKFLOW-CI-JOB-Lint-594afa4cd263ca1cdfad39823a8f60ecdfcc53fc0b1f7734f9c6c349a60a5c93-lint-network
+2026-09-12T17:58:45.7240808Z Job failed
+2026-09-12T17:58:45.7384318Z Job 'Lint' failed

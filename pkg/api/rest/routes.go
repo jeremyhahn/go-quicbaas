@@ -241,18 +241,27 @@ type frozenPermission struct {
 // Resource/Action directly.
 //
 // A route present in rawRouteSpecs but absent from the generated table means
-// the freeze is stale (a route was added/renamed without running
-// `go generate ./pkg/api/rest`); this fails LOUDLY (panic, caught
-// immediately by every test that calls Routes()) rather than silently
-// defaulting to identity-gated, which would be a fail-open drift on a
-// security-relevant table.
+// the freeze is stale (a route was added or renamed without extending the
+// table); this fails LOUDLY (panic, caught immediately by every test that
+// calls Routes()) rather than silently defaulting to identity-gated, which
+// would be a fail-open drift on a security-relevant table.
+//
+// THE TABLE IS MAINTAINED BY HAND. scripts/genroutepermissions was deleted
+// with the PEP mapper it derived from at the authz cutover; the instruction to
+// run it outlived it, in the panic text below, and pointed at least one author
+// at a command that no longer exists at the moment they were extending a
+// security-relevant table (#299).
 func applyFrozenPermissions(specs []RouteSpec) []RouteSpec {
 	for i := range specs {
 		key := specs[i].Method + " " + specs[i].Pattern
 		fp, ok := frozenRoutePermissions[key]
 		if !ok {
 			panic("rest: route " + key + " has no frozen permission entry; " +
-				"run `go generate ./pkg/api/rest` to regenerate routes_permissions_generated.go")
+				"add one by hand to routes_permissions_generated.go following the " +
+				"\"resource:action\" vocabulary of the neighbouring entries, then update " +
+				"pkg/api/rest/testdata/route_permissions.golden and route_surface.golden — " +
+				"or, if the route is behind a feature tag, their _<tag>.golden fragments " +
+				"(e.g. route_permissions_rag.golden). There is no generator")
 		}
 		specs[i].Auth = fp.auth
 		specs[i].Resource = fp.resource
@@ -284,6 +293,7 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "GET", Pattern: "/api/v1/agent-accounts/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetAccount }},
 		{Method: "PUT", Pattern: "/api/v1/agent-accounts/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleUpdateAccount }},
 		{Method: "POST", Pattern: "/api/v1/agent-accounts/{id}/default", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleSetDefaultAccount }},
+		{Method: "POST", Pattern: "/api/v1/agent-accounts/{id}/materialize", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleMaterializeAccountCredential }},
 		{Method: "POST", Pattern: "/api/v1/agent-accounts/{id}/revoke", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRevokeAccount }},
 		{Method: "POST", Pattern: "/api/v1/agent-accounts/{id}/rotate", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRotateAccountCredential }},
 		{Method: "GET", Pattern: "/api/v1/agent-accounts/{id}/usage", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetAccountUsage }},
@@ -450,6 +460,7 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "POST", Pattern: "/api/v1/orchestrator/agents/{agentID}/enable", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleEnableAgent }},
 		{Method: "POST", Pattern: "/api/v1/orchestrator/agents/{agentID}/heartbeat", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorAgentHeartbeat }},
 		{Method: "GET", Pattern: "/api/v1/orchestrator/backends", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorListBackends }},
+		{Method: "GET", Pattern: "/api/v1/orchestrator/cost", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorCost }},
 		{Method: "POST", Pattern: "/api/v1/orchestrator/discover", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorDiscover }},
 		{Method: "GET", Pattern: "/api/v1/orchestrator/health", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorHealth }},
 		{Method: "POST", Pattern: "/api/v1/orchestrator/hooks", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorHookEvent }},
@@ -460,22 +471,27 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "GET", Pattern: "/api/v1/orchestrator/jobs/{jobID}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorGetJobStatus }},
 		{Method: "POST", Pattern: "/api/v1/orchestrator/jobs/{jobID}/children", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorSpawnChildJob }},
 		{Method: "GET", Pattern: "/api/v1/orchestrator/jobs/{jobID}/events", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorSubscribeJobEvents }},
+		{Method: "GET", Pattern: "/api/v1/orchestrator/runners", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorListRunners }},
 		{Method: "GET", Pattern: "/api/v1/orchestrator/sessions", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorListSessions }},
 		{Method: "POST", Pattern: "/api/v1/orchestrator/sessions", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorSpawn }},
 		{Method: "DELETE", Pattern: "/api/v1/orchestrator/sessions/{sessionID}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorCloseSession }},
 		{Method: "GET", Pattern: "/api/v1/orchestrator/sessions/{sessionID}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorSessionStatus }},
 		{Method: "GET", Pattern: "/api/v1/orchestrator/sessions/{sessionID}/events", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorSessionEvents }},
+		{Method: "GET", Pattern: "/api/v1/orchestrator/sessions/{sessionID}/history", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorSessionHistory }},
 		{Method: "POST", Pattern: "/api/v1/orchestrator/sessions/{sessionID}/prompt", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorPrompt }},
 		{Method: "POST", Pattern: "/api/v1/orchestrator/sessions/{sessionID}/rotate-account", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorRotateSessionAccount }},
 		{Method: "GET", Pattern: "/api/v1/orchestrator/tasks", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorListTasks }},
 		{Method: "POST", Pattern: "/api/v1/orchestrator/tasks", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorCreateTask }},
 		{Method: "POST", Pattern: "/api/v1/orchestrator/tasks/decompose", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorDecomposeTask }},
 		{Method: "GET", Pattern: "/api/v1/orchestrator/tasks/{taskID}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorGetTask }},
+		{Method: "DELETE", Pattern: "/api/v1/orchestrator/tasks/{taskID}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorDeleteTask }},
 		{Method: "GET", Pattern: "/api/v1/orchestrator/tasks/{taskID}/artifacts", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorListArtifacts }},
 		{Method: "POST", Pattern: "/api/v1/orchestrator/tasks/{taskID}/artifacts", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorSubmitArtifacts }},
 		{Method: "GET", Pattern: "/api/v1/orchestrator/tasks/{taskID}/artifacts/{name}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorGetArtifact }},
 		{Method: "POST", Pattern: "/api/v1/orchestrator/tasks/{taskID}/claim", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorClaimTask }},
 		{Method: "POST", Pattern: "/api/v1/orchestrator/tasks/{taskID}/complete", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorCompleteTask }},
+		{Method: "POST", Pattern: "/api/v1/orchestrator/tasks/{taskID}/block", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorBlockTask }},
+		{Method: "POST", Pattern: "/api/v1/orchestrator/tasks/{taskID}/readmit", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorReadmitTask }},
 		{Method: "GET", Pattern: "/api/v1/orchestrator/workflows", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorListWorkflows }},
 		{Method: "POST", Pattern: "/api/v1/orchestrator/workflows", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorCreateWorkflow }},
 		{Method: "DELETE", Pattern: "/api/v1/orchestrator/workflows/{name}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOrchestratorDeleteWorkflow }},
@@ -509,6 +525,22 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "POST", Pattern: "/api/v1/scheduler/jobs/{id}/resume", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleResumeSchedulerJob }},
 		{Method: "POST", Pattern: "/api/v1/scheduler/jobs/{id}/trigger", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleTriggerSchedulerJob }},
 		{Method: "GET", Pattern: "/api/v1/scheduler/status", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetSchedulerStatus }},
+		// The forge webhook ingress. PUBLIC at the PEP layer by necessity and
+		// by design: a forge holds no platform identity and can present none,
+		// so demanding one would make the endpoint unreachable rather than
+		// secure. Its authentication is the HMAC signature over the body,
+		// verified fail-closed inside the handler — a missing secret refuses.
+		{Method: "POST", Pattern: "/api/v1/sdlc/webhook/{projectID}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleSDLCWebhook }},
+		// The SDLC module's surface: a project's forge binding and a task's
+		// delivery. Permission-gated in the caller's own tenant; see
+		// handlers_sdlc.go. Tasks, jobs and sessions are the orchestrator's.
+		{Method: "GET", Pattern: "/api/v1/sdlc/forges", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleListSDLCForges }},
+		{Method: "GET", Pattern: "/api/v1/sdlc/projects/{projectID}/binding", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetSDLCBinding }},
+		{Method: "PUT", Pattern: "/api/v1/sdlc/projects/{projectID}/binding", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBindSDLCProject }},
+		{Method: "DELETE", Pattern: "/api/v1/sdlc/projects/{projectID}/binding", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleUnbindSDLCProject }},
+		{Method: "POST", Pattern: "/api/v1/sdlc/projects/{projectID}/onboarding", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOnboardSDLCProject }},
+		{Method: "GET", Pattern: "/api/v1/sdlc/projects/{projectID}/conformance", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetSDLCConformance }},
+		{Method: "GET", Pattern: "/api/v1/sdlc/tasks/{taskID}/delivery", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetSDLCDelivery }},
 		{Method: "POST", Pattern: "/api/v1/seal/init", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleSealInit }},
 		{Method: "DELETE", Pattern: "/api/v1/seal/recovery", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleDeleteRecoveryKey }},
 		{Method: "POST", Pattern: "/api/v1/seal/recovery/generate", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGenerateRecoveryKey }},
@@ -525,6 +557,7 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "DELETE", Pattern: "/api/v1/secrets/*", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleDeleteSecret }},
 		{Method: "GET", Pattern: "/api/v1/secrets/*", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetSecretOrVersions }},
 		{Method: "POST", Pattern: "/api/v1/secrets/*", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.handleSecretsPostAction }},
+		{Method: "PUT", Pattern: "/api/v1/secrets/*", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.handleSecretsPutAction }},
 		{Method: "POST", Pattern: "/api/v1/secrets/dynamic/credentials/{role}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGenerateDynamicCredential }},
 		{Method: "GET", Pattern: "/api/v1/secrets/dynamic/leases", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleListDynamicSecretLeases }},
 		{Method: "DELETE", Pattern: "/api/v1/secrets/dynamic/leases/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRevokeDynamicSecretLease }},
@@ -784,26 +817,37 @@ func Routes() []RouteSpec {
 }
 
 // moduleExcludedPathPrefixes lists the Routes() patterns that must NOT be
-// registered on the unified-API-server ServiceModule surface, even though
-// the legacy in-process listener keeps serving them. /api/v1/barrier/* and
-// /api/v1/init/* are the standalone sealed-window boot path
-// (pkg/server/sealed_window_rest.go): on a composed node the qrdb node
-// itself (native barrier/init planes) or the xkms ServiceModule already owns
-// that surface, so registering quicbaas's own copies here would either
-// route-collide at module-construction time or shadow the node's real
-// barrier/init state with quicbaas's own (pre-unseal, node-less) handlers.
+// registered on the unified-API-server ServiceModule surface.
+//
+// /api/v1/init/* is the ceremony plane. On a composed node the co-hosted
+// go-xkms ServiceModule registers its own /api/v1/init/* ceremony routes
+// (enable-gated on its init handlers), so quicbaas's copies would
+// route-collide at module-construction time. Which module owns the composed
+// node's init plane is an open decision (go-quicbaas#405); until it is made,
+// quicbaas's copies stay off the module surface.
+//
+// /api/v1/barrier/* is deliberately NOT excluded any more. It used to be, on
+// the premise that "the legacy in-process listener keeps serving them" — but
+// startRESTServer no longer binds a listener (see lifecycle_rest.go: REST
+// network serving runs exclusively on the unified server), so the exclusion
+// left the canonical barrier surface owned by the xkms module, whose
+// same-path handlers operate xkms's OWN, host-inert barrier and answered
+// `503 rest: barrier not configured` on a node whose barrier was configured
+// and unsealed (go-quicbaas#405). The composer now drops the xkms module's
+// barrier registrations instead (pkg/apimodule route_precedence.go), so
+// quicbaas's handlers — which delegate to the go-qrdb SDK BarrierClient every
+// other transport already serves — own the path.
 var moduleExcludedPathPrefixes = []string{
-	"/api/v1/barrier/",
 	"/api/v1/init/",
 }
 
 // ModuleRoutes returns the subset of Routes() safe to register on the
 // unified-API-server ServiceModule surface (pkg/apimodule module_http.go
 // RegisterHTTP): every entry EXCEPT the moduleExcludedPathPrefixes routes.
-// The legacy in-process listener continues to consume Routes() directly
-// (registerRoutes, this file) and iam.go's independent hand-mounts, so it is
-// unaffected by this filter — barrier/init remain fully served there for the
-// standalone sealed-window boot path.
+// The standalone sealed-window REST listener
+// (pkg/server/sealed_window_rest.go) consumes Routes() directly, so it is
+// unaffected by this filter — barrier and init remain fully served there for
+// the sealed-window boot path.
 func ModuleRoutes() []RouteSpec {
 	all := Routes()
 	out := make([]RouteSpec, 0, len(all))

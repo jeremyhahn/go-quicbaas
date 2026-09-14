@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	sshSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/sshfixture"
 )
 
 // =============================================================================
@@ -143,20 +144,22 @@ func TestPrintSSHKey_FullKey(t *testing.T) {
 	cmd := &cobra.Command{Use: "t"}
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
+	user := sshfixture.User(t)
 	k := &sshSDK.Key{
 		Scope:       "user",
 		Owner:       "alice",
 		Name:        "k1",
 		Algorithm:   "ed25519",
-		Fingerprint: "SHA256:abc",
-		PublicKey:   "ssh-ed25519 AAAA",
+		Fingerprint: user.Fingerprint,
+		PublicKey:   user.AuthorizedLine,
 		Comment:     "hello",
 	}
 	printSSHKey(cmd, k)
 	got := buf.String()
 	assert.Contains(t, got, "user/alice/k1")
 	assert.Contains(t, got, "ed25519")
-	assert.Contains(t, got, "SHA256:abc")
+	assert.Contains(t, got, user.Fingerprint,
+		"the printed fingerprint must be the key's own, not a truncation of it")
 	assert.Contains(t, got, "hello")
 	assert.Contains(t, got, "ssh-ed25519")
 }
@@ -167,11 +170,12 @@ func TestPrintSSHKey_NoCommentNoPublic(t *testing.T) {
 	cmd.SetOut(&buf)
 	k := &sshSDK.Key{
 		Scope: "user", Owner: "alice", Name: "k1",
-		Algorithm: "rsa", Fingerprint: "SHA256:def",
+		Algorithm: "rsa", Fingerprint: sshfixture.HostAltFingerprint,
 	}
 	printSSHKey(cmd, k)
 	got := buf.String()
 	assert.Contains(t, got, "rsa")
+	assert.Contains(t, got, sshfixture.HostAltFingerprint)
 	assert.NotContains(t, got, "Comment:")
 	assert.NotContains(t, got, "Public:")
 }

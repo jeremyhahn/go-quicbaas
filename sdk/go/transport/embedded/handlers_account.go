@@ -26,8 +26,15 @@ import (
 // Pooled provider accounts — in-process handlers.
 //
 // SECURITY INVARIANT: the converters below read only orchestration.Account
-// metadata. accountCredentialToOrchestration is the sole credential converter
-// and it runs in the inbound direction only; there is deliberately no reverse.
+// metadata. accountCredentialToOrchestration is the sole INBOUND credential
+// converter.
+//
+// There is exactly one outbound counterpart, releasedCredentialFromOrchestration,
+// and it serves exactly one handler: Materialize, which releases a pooled
+// credential to the caller so it can reach the worker host that runs the agent
+// (go-quicbaas#734). It deliberately drops the refresh grant, so even the
+// in-process caller cannot obtain the long-lived half of a credential through
+// this verb.
 // =============================================================================
 
 // accountServiceName is the transport service key for account handlers.
@@ -298,5 +305,64 @@ func accountInfoFromOrchestration(a *orchestration.Account) *accountSDK.AccountI
 		LastUsedAt:          a.LastUsedAt,
 		LastRefreshedAt:     a.LastRefreshedAt,
 		LastError:           a.LastError,
+	}
+}
+
+// handleAccountMaterialize releases one account's credential envelope
+// in-process.
+//
+// The embedded transport has no wire and no separate principal: the caller IS
+// the process holding the pool. Tenancy therefore comes from the request, as
+// it does for every other embedded handler, and the release rules the service
+// layer enforces (revoked / errored / limit-held refused, project fence
+// honoured, one audit event) are what make the verb narrow here too.
+func handleAccountMaterialize(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*accountSDK.MaterializeCredentialRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError(accountServiceName, "Materialize",
+			"*account.MaterializeCredentialRequest", reflect.TypeOf(req).String())
+	}
+	accountSvc, err := accountService(svc, "Materialize")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := accountSvc.MaterializeAccountCredential(ctx, &service.MaterializeAccountCredentialRequest{
+		TenantID:  r.TenantID,
+		AccountID: r.AccountID,
+		ProjectID: r.ProjectID,
+		JobID:     r.JobID,
+		LeaseID:   r.LeaseID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &accountSDK.MaterializedCredential{
+		AccountID:       resp.AccountID,
+		Provider:        accountSDK.Provider(resp.Provider),
+		DisplayName:     resp.DisplayName,
+		ProjectID:       resp.ProjectID,
+		RefreshPolicy:   accountSDK.RefreshPolicy(resp.RefreshPolicy),
+		Credential:      releasedCredentialFromOrchestration(resp.Credential),
+		ExpiresAt:       resp.ExpiresAt,
+		UpdatedAt:       resp.UpdatedAt,
+		LastRefreshedAt: resp.LastRefreshedAt,
+		LeaseID:         resp.LeaseID,
+		LeaseExpiresAt:  resp.LeaseExpiresAt,
+	}, nil
+}
+
+// releasedCredentialFromOrchestration converts a released envelope to the SDK
+// type, dropping the refresh grant (refresh token, token endpoint, client id).
+func releasedCredentialFromOrchestration(c *orchestration.AccountCredential) *accountSDK.ReleasedCredential {
+	if c == nil {
+		return nil
+	}
+	return &accountSDK.ReleasedCredential{
+		Env:               c.Env,
+		Files:             c.Files,
+		AccessToken:       c.AccessToken,
+		ExpiresAt:         c.ExpiresAt,
+		Scopes:            c.Scopes,
+		AccessTokenEnvKey: c.AccessTokenEnvKey,
 	}
 }

@@ -16,6 +16,7 @@ package service
 import (
 	"context"
 	"crypto/x509"
+	"sync/atomic"
 	"time"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -199,6 +200,13 @@ type LoginServicer interface {
 type LoginService struct {
 	client        qrdbtransport.LoginClient
 	refreshIssuer SessionRefreshIssuer
+
+	// auditor receives the server-side account of every REFUSED ceremony.
+	// It is late-bound (the audit plane is composed after the node) and read
+	// on every rejection, so it is held in an atomic pointer rather than
+	// behind a mutex: reporting a rejection must never contend with the
+	// request path it is reporting on.
+	auditor atomic.Pointer[LoginCeremonyAuditor]
 }
 
 var _ LoginServicer = (*LoginService)(nil)
@@ -223,18 +231,51 @@ func (s *LoginService) SetSessionRefreshIssuer(issuer SessionRefreshIssuer) {
 	s.refreshIssuer = issuer
 }
 
+// SetCeremonyAuditor installs (or replaces) the sink that receives the
+// server-side account of a refused login. Called by the server when it wires
+// the facade. Until it is set a rejection is reported nowhere — which is
+// precisely the state go-quicbaas#484 was diagnosed in, so the wiring site
+// installs it in the same statement that constructs the facade.
+func (s *LoginService) SetCeremonyAuditor(auditor LoginCeremonyAuditor) {
+	if auditor == nil {
+		s.auditor.Store(nil)
+		return
+	}
+	s.auditor.Store(&auditor)
+}
+
+// reportRejection hands a refused ceremony to the auditor. It is a no-op when
+// no auditor is wired and never returns an error: the report is an
+// observation of the outcome, not part of it.
+func (s *LoginService) reportRejection(ctx context.Context, rejection LoginRejection) {
+	auditor := s.auditor.Load()
+	if auditor == nil || *auditor == nil {
+		return
+	}
+	(*auditor).RecordLoginRejection(ctx, rejection)
+}
+
 // BeginLogin forwards the begin step to the node LoginClient. BeginLogin needs
 // no peer-cert handling: it only issues a challenge. For an mtls factor there
 // is no separate hardware step, but BeginLogin still scopes the attempt and
 // returns an expiry the client echoes on FinishLogin.
 func (s *LoginService) BeginLogin(ctx context.Context, req *qrdbtransport.BeginLoginRequest) (*qrdbtransport.BeginLoginResponse, error) {
 	if req == nil {
-		return nil, &LoginRequestNilError{Op: "BeginLogin"}
+		err := &LoginRequestNilError{Op: "BeginLogin"}
+		s.reportRejection(ctx, describeBeginRejection(nil, err))
+		return nil, err
 	}
 	if s.client == nil {
-		return nil, &LoginCeremonyUnavailableError{}
+		err := &LoginCeremonyUnavailableError{}
+		s.reportRejection(ctx, describeBeginRejection(req, err))
+		return nil, err
 	}
-	return s.client.BeginLogin(ctx, *req)
+	resp, err := s.client.BeginLogin(ctx, *req)
+	if err != nil {
+		s.reportRejection(ctx, describeBeginRejection(req, err))
+		return nil, err
+	}
+	return resp, nil
 }
 
 // FinishLogin forwards the finish step to the node LoginClient after enforcing
@@ -242,17 +283,32 @@ func (s *LoginService) BeginLogin(ctx context.Context, req *qrdbtransport.BeginL
 // See the package-level SECURITY MODEL comment.
 func (s *LoginService) FinishLogin(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*FinishLoginResult, error) {
 	if req == nil {
-		return nil, &LoginRequestNilError{Op: "FinishLogin"}
+		err := &LoginRequestNilError{Op: "FinishLogin"}
+		s.reportRejection(ctx, describeFinishRejection(nil, err))
+		return nil, err
 	}
 	if s.client == nil {
-		return nil, &LoginCeremonyUnavailableError{}
+		err := &LoginCeremonyUnavailableError{}
+		s.reportRejection(ctx, describeFinishRejection(req, err))
+		return nil, err
 	}
 
 	resp, err := s.finishCeremony(ctx, req)
 	if err != nil {
+		s.reportRejection(ctx, describeFinishRejection(req, err))
 		return nil, err
 	}
-	return s.withSessionRefresh(ctx, resp)
+	// A refresh-issuance failure rejects the login (see withSessionRefresh),
+	// so it is a rejection like any other and is reported like one. Without
+	// this the one failure mode that happens AFTER a valid proof would be
+	// the only silent one left — and it is also the only one whose record
+	// can name the authenticated subject, because the proof already passed.
+	result, err := s.withSessionRefresh(ctx, resp)
+	if err != nil {
+		s.reportRejection(ctx, describeVerifiedFinishRejection(req, resp, err))
+		return nil, err
+	}
+	return result, nil
 }
 
 // finishCeremony runs the qrdb half of the finish step, enforcing the mTLS

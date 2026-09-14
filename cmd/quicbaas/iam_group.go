@@ -105,7 +105,7 @@ func runIAMGroupCreateCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Create group using SDK sub-client
@@ -181,7 +181,7 @@ func runIAMGroupGetCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Get group using SDK sub-client
@@ -263,7 +263,7 @@ func runIAMGroupUpdateCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Build update request
@@ -340,7 +340,7 @@ func runIAMGroupDeleteCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Delete group using SDK sub-client
@@ -386,7 +386,7 @@ func runIAMGroupListCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// List groups using SDK sub-client
@@ -493,7 +493,7 @@ func runIAMGroupAddMemberCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Add member using SDK sub-client
@@ -563,7 +563,7 @@ func runIAMGroupRemoveMemberCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Remove member using SDK sub-client
@@ -612,7 +612,7 @@ func runIAMGroupMembersCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// List members using SDK sub-client

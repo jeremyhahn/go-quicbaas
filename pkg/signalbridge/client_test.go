@@ -35,7 +35,10 @@ type fakeServerTransport struct {
 	sendCalls      int
 	preKeyCount    int
 	failSend       atomic.Bool
-	sendAttempts   atomic.Int32
+	// failSendAttempts fails the first N send attempts and then succeeds,
+	// without the caller having to intervene mid-flight.
+	failSendAttempts atomic.Int32
+	sendAttempts     atomic.Int32
 }
 
 func (f *fakeServerTransport) CreateVerificationSession(ctx context.Context, number string) (string, error) {
@@ -88,7 +91,15 @@ func (f *fakeServerTransport) FetchPreKeyBundle(ctx context.Context, account Sig
 }
 
 func (f *fakeServerTransport) SendEnvelope(ctx context.Context, account SignalAccount, env OutboundEnvelope) (SendResult, error) {
-	f.sendAttempts.Add(1)
+	attempt := f.sendAttempts.Add(1)
+	// failSendAttempts fails a FIXED number of leading attempts and then
+	// succeeds on its own. A test that instead flips failSend from the outside
+	// after observing an attempt is racing the sender: on a loaded machine the
+	// sender can exhaust its retry budget between the observation and the flip,
+	// and the send fails for a reason the test never intended to exercise.
+	if n := f.failSendAttempts.Load(); n > 0 && attempt <= n {
+		return SendResult{}, &Error{Op: "fake", Kind: ErrKindRateLimited, Msg: "forced"}
+	}
 	if f.failSend.Load() {
 		return SendResult{}, &Error{Op: "fake", Kind: ErrKindRateLimited, Msg: "forced"}
 	}
@@ -250,15 +261,16 @@ func TestSignalClient_Send_RateLimitedRetry(t *testing.T) {
 	c.cfg.BackoffBase = 1 * time.Millisecond
 	c.cfg.BackoffMax = 2 * time.Millisecond
 	c.account = SignalAccount{ACI: "aci", DeviceID: 1, Password: "pw"}
-	ft.failSend.Store(true)
-	// Launch send in goroutine; flip failSend off after first attempt.
+	// The transport fails its first attempt and then succeeds BY ITSELF. The
+	// test used to start the send, wait for one attempt, and flip the flag off
+	// from outside — a race the sender wins whenever it exhausts its retry
+	// budget (BackoffBase is 1ms here) before the flip lands, which is what a
+	// loaded CI machine reliably produces.
+	ft.failSendAttempts.Store(1)
 	doneCh := make(chan error, 1)
 	go func() {
 		doneCh <- c.Send(context.Background(), OutboundMessage{ConversationID: "peer", Body: "hi"})
 	}()
-	// Wait for at least one attempt.
-	waitFor(t, func() bool { return ft.sendAttempts.Load() >= 1 })
-	ft.failSend.Store(false)
 	select {
 	case err := <-doneCh:
 		if err != nil {

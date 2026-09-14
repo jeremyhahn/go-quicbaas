@@ -81,7 +81,7 @@ func (f *fakeFIDO2Service) FinishAuthentication(ctx context.Context, tenantID st
 	return &xkmstransport.FinishAuthenticationResponse{
 		Success:  true,
 		Token:    "tok-2",
-		Username: req.Username,
+		Username: req.Email,
 	}, nil
 }
 
@@ -105,7 +105,7 @@ func TestTransport_FIDO2BeginRegistration(t *testing.T) {
 	tr := newFIDO2Transport(t, fake)
 	ctx := transport.ContextWithTenant(context.Background(), "tenant-a")
 	resp, err := tr.Request(ctx, "quicbaas.FIDO2", "BeginRegistration",
-		&xkmstransport.BeginRegistrationRequest{Username: "alice@example.com", DisplayName: "Alice"})
+		&xkmstransport.BeginRegistrationRequest{Email: "alice@example.com", DisplayName: "Alice"})
 	require.NoError(t, err)
 	typed, ok := resp.(*xkmstransport.BeginRegistrationResponse)
 	require.True(t, ok)
@@ -132,7 +132,7 @@ func TestTransport_FIDO2BeginAuthentication(t *testing.T) {
 	tr := newFIDO2Transport(t, fake)
 	ctx := transport.ContextWithTenant(context.Background(), "tenant-b")
 	resp, err := tr.Request(ctx, "quicbaas.FIDO2", "BeginAuthentication",
-		&xkmstransport.BeginAuthenticationRequest{Username: "alice@example.com"})
+		&xkmstransport.BeginAuthenticationRequest{Email: "alice@example.com"})
 	require.NoError(t, err)
 	typed, ok := resp.(*xkmstransport.BeginAuthenticationResponse)
 	require.True(t, ok)
@@ -146,7 +146,7 @@ func TestTransport_FIDO2FinishAuthentication(t *testing.T) {
 	ctx := transport.ContextWithTenant(context.Background(), "tenant-b")
 	resp, err := tr.Request(ctx, "quicbaas.FIDO2", "FinishAuthentication",
 		&xkmstransport.FinishAuthenticationRequest{
-			SessionID: "sess-2", Username: "alice@example.com", AssertionJSON: "{}",
+			SessionID: "sess-2", Email: "alice@example.com", AssertionJSON: "{}",
 		})
 	require.NoError(t, err)
 	typed, ok := resp.(*xkmstransport.FinishAuthenticationResponse)
@@ -163,7 +163,7 @@ func TestTransport_FIDO2_NoTenantInContext(t *testing.T) {
 	fake := &fakeFIDO2Service{}
 	tr := newFIDO2Transport(t, fake)
 	_, err := tr.Request(context.Background(), "quicbaas.FIDO2", "BeginRegistration",
-		&xkmstransport.BeginRegistrationRequest{Username: "alice@example.com"})
+		&xkmstransport.BeginRegistrationRequest{Email: "alice@example.com"})
 	require.NoError(t, err)
 	assert.Equal(t, "", fake.lastTenant)
 }

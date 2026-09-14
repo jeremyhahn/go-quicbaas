@@ -50,7 +50,7 @@ func sampleUser() *iampb.User {
 		Id: "u1", TenantId: "t1", Email: "a@b.c", Name: "alice",
 		Roles: []string{"admin"}, Groups: []string{"g1"},
 		Attributes: map[string]string{"k": "v"},
-		CreatedAt:  iamTime(), UpdatedAt: iamTime(), LastAuth: iamTime(), MfaVerified: true,
+		CreatedAt:  iamTime(), UpdatedAt: iamTime(), LastAuth: iamTime(),
 	}
 }
 
@@ -72,7 +72,8 @@ func sampleGroup() *iampb.Group {
 func sampleRole() *iampb.Role {
 	return &iampb.Role{
 		Id: "r1", TenantId: "t1", Name: "role", Description: "d",
-		Permissions: []string{"p1"}, CreatedAt: iamTime(), UpdatedAt: iamTime(),
+		Permissions: []string{"p1", "p0"}, RetiredPermissions: []string{"p0"},
+		CreatedAt: iamTime(), UpdatedAt: iamTime(),
 	}
 }
 
@@ -244,6 +245,19 @@ func (f *fakeIAMServer) ListRoles(context.Context, *iampb.ListRolesRequest) (*ia
 	return &iampb.ListRolesResponse{Roles: []*iampb.Role{sampleRole()}, Total: 1}, nil
 }
 
+func (f *fakeIAMServer) ReconcileRoles(_ context.Context, req *iampb.ReconcileRolesRequest) (*iampb.ReconcileRolesResponse, error) {
+	if err := f.err(); err != nil {
+		return nil, err
+	}
+	return &iampb.ReconcileRolesResponse{
+		TenantId: req.TenantId,
+		Roles: []*iampb.RoleReconcileResult{
+			{RoleId: "r1", Name: "role", Created: true, Added: []string{"p1"}, Removed: []string{"p0"}},
+		},
+		Changed: true,
+	}, nil
+}
+
 // Admin methods.
 func (f *fakeIAMServer) CreateAdminAssignment(context.Context, *iampb.CreateAdminAssignmentRequest) (*iampb.AdminAssignment, error) {
 	if err := f.err(); err != nil {
@@ -347,6 +361,7 @@ var iamServiceCases = []iamCase{
 	{"UpdateRole", "quicbaas.IAM.Role", "Update", map[string]interface{}{"tenant_id": "t1", "role_id": "r1", "request": map[string]interface{}{"name": "role"}}},
 	{"DeleteRole", "quicbaas.IAM.Role", "Delete", map[string]interface{}{"tenant_id": "t1", "role_id": "r1"}},
 	{"ListRoles", "quicbaas.IAM.Role", "List", map[string]interface{}{"tenant_id": "t1", "request": map[string]interface{}{"page_size": 10}}},
+	{"ReconcileRoles", "quicbaas.IAM.Role", "Reconcile", map[string]interface{}{"tenant_id": "t1"}},
 	// Admin service.
 	{"CreateAssignment", "quicbaas.IAM.Admin", "CreateAssignment", map[string]interface{}{"user_id": "u1", "admin_role": 1, "tenant_ids": []string{"t1"}}},
 	{"GetAssignment", "quicbaas.IAM.Admin", "GetAssignment", map[string]interface{}{"id": "a1"}},

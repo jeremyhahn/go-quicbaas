@@ -195,14 +195,19 @@ curl -X POST http://127.0.0.1:8888/mcp \
 
 - `quicbaas_login` - Authenticate and obtain tokens
 - `quicbaas_logout` - Invalidate session
-- `quicbaas_user_create` - Create user
-- `quicbaas_user_delete` - Delete user
-- `quicbaas_user_list` - List users
-- `quicbaas_role_create` - Create role
-- `quicbaas_role_delete` - Delete role
-- `quicbaas_role_list` - List roles
-- `quicbaas_role_assign` - Assign role to user
+- `qrdb_role_create` - Create role
+- `qrdb_role_delete` - Delete role
+- `qrdb_role_list` - List roles
+- `qrdb_role_assign` - Assign role to user
 - `quicbaas_role_revoke` - Revoke role from user
+
+There are no user tools in this family. User administration is the single
+`quicbaas_iam_user_*` family (see IAM Operations); read-only qrdb-native user
+lookups are `qrdb_user_get`, `qrdb_user_get_by_username` and
+`qrdb_user_get_by_cert_thumbprint`. The `quicbaas_user_*` names this section
+used to list were never registered as tools, and `qrdb_user_create` /
+`qrdb_user_delete` / `qrdb_user_list` dispatched to an auth manager production
+never wired, so they always failed; issue #905 removed all of them.
 
 ### Operations Management
 

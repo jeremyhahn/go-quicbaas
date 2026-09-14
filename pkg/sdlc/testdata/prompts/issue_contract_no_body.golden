@@ -1,0 +1,19 @@
+Repository: acme/api
+Issue: #42
+
+## Serve /healthz
+
+## Discussion
+
+### Comment 1 — @owner, 2026-09-12T08:30:00Z
+
+the store answers in under a millisecond
+
+### Comment 2 — @reviewer
+
+use the existing router
+
+### Comment 3 — 2026-09-12T09:30:00Z
+
+and keep the handler in its own file
+

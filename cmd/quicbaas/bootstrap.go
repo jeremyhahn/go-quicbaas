@@ -211,7 +211,7 @@ func runBootstrapAutoCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.BootstrapAuto(ctx, &BootstrapAutoRequest{

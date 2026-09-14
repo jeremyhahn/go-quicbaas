@@ -48,6 +48,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rag"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rbac"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/seal"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/secrets"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
@@ -103,9 +104,9 @@ type Client interface {
 	// Security().DEK(). There is exactly one canonical entry point per
 	// capability (the locked-architecture rule); the flat Client.X()
 	// shortcuts were removed.
-
-	// IAM operations (backward compatible)
-	IAM() IAMClient
+	//
+	// IAM follows the same rule: Identity().IAM() is the only entry point.
+	// The flat Client.IAM() shortcut was removed in issue #905.
 
 	// Specialized data operations (backward compatible)
 	Vector() VectorClient
@@ -129,6 +130,9 @@ type Client interface {
 
 	// Project operations (agentic project management)
 	Project() ProjectClient
+
+	// SDLC operations (the SDLC module: forge bindings and deliveries)
+	SDLC() SDLCClient
 
 	// Account operations (pooled provider accounts — the per-tenant pool of
 	// Anthropic/Claude, Codex, and OpenCode logins an agent session can be
@@ -816,20 +820,6 @@ type RBACClient = rbac.Client
 
 // RBAC request/response type aliases
 type (
-	// RBACCreateUserRequest is an alias for rbac.CreateUserRequest.
-	RBACCreateUserRequest = rbac.CreateUserRequest
-	// RBACCreateUserResponse is an alias for rbac.CreateUserResponse.
-	RBACCreateUserResponse = rbac.CreateUserResponse
-	// RBACDeleteUserRequest is an alias for rbac.DeleteUserRequest.
-	RBACDeleteUserRequest = rbac.DeleteUserRequest
-	// RBACDeleteUserResponse is an alias for rbac.DeleteUserResponse.
-	RBACDeleteUserResponse = rbac.DeleteUserResponse
-	// RBACListUsersRequest is an alias for rbac.ListUsersRequest.
-	RBACListUsersRequest = rbac.ListUsersRequest
-	// RBACListUsersResponse is an alias for rbac.ListUsersResponse.
-	RBACListUsersResponse = rbac.ListUsersResponse
-	// RBACUserInfo is an alias for rbac.UserInfo.
-	RBACUserInfo = rbac.UserInfo
 	// RBACCreateRoleRequest is an alias for rbac.CreateRoleRequest.
 	RBACCreateRoleRequest = rbac.CreateRoleRequest
 	// RBACCreateRoleResponse is an alias for rbac.CreateRoleResponse.
@@ -1382,6 +1372,9 @@ const (
 	EmbeddingProviderOpenAI   = embedding.ProviderOpenAI
 	EmbeddingProviderOllama   = embedding.ProviderOllama
 	EmbeddingProviderLMStudio = embedding.ProviderLMStudio
+
+	// EmbeddingProviderNPU selects the Intel NPU via the OpenVINO sidecar.
+	EmbeddingProviderNPU = embedding.ProviderNPU
 )
 
 // EmbeddingInputType is an alias for embedding.InputType.
@@ -1479,6 +1472,9 @@ type OrchestratorClient = orchestrator.Client
 // ProjectClient is an alias for the project.Client interface.
 type ProjectClient = project.Client
 
+// SDLCClient is an alias for the sdlc.Client interface.
+type SDLCClient = sdlc.Client
+
 // =============================================================================
 // Account Client Type Aliases (pooled provider accounts)
 // =============================================================================
@@ -1524,6 +1520,20 @@ type (
 
 	// AccountUsageReport is an alias for account.UsageReport.
 	AccountUsageReport = account.UsageReport
+
+	// MaterializeAccountCredentialRequest is an alias for
+	// account.MaterializeCredentialRequest.
+	MaterializeAccountCredentialRequest = account.MaterializeCredentialRequest
+
+	// MaterializedAccountCredential is an alias for
+	// account.MaterializedCredential — the RELEASED credential envelope plus
+	// the metadata a caching caller needs. It is the only account response
+	// shape in this SDK that carries secret material.
+	MaterializedAccountCredential = account.MaterializedCredential
+
+	// ReleasedAccountCredential is an alias for account.ReleasedCredential:
+	// the short-lived half of a pooled credential, with no refresh grant.
+	ReleasedAccountCredential = account.ReleasedCredential
 )
 
 const (
@@ -1634,6 +1644,7 @@ type client struct {
 	ragClient                RAGClient
 	orchestratorClient       OrchestratorClient
 	projectClient            ProjectClient
+	sdlcClient               SDLCClient
 	accountClient            AccountClient
 	qrdb                     qrdbState
 	address                  string
@@ -1820,6 +1831,11 @@ func createRESTTransport(address string, opts *clientOptions) (Transport, error)
 	var restOpts []rest.Option
 	if opts.authToken != "" {
 		restOpts = append(restOpts, rest.WithAuthToken(opts.authToken))
+	}
+	// The per-tenant routes (the WebAuthn ceremony among them) read the tenant
+	// from the transport when the request itself does not carry one.
+	if opts.tenantID != "" {
+		restOpts = append(restOpts, rest.WithDefaultTenant(opts.tenantID))
 	}
 
 	return rest.New(cfg, restOpts...)
@@ -2187,8 +2203,9 @@ func (c *client) Backup() BackupClient {
 	return c.backupClient
 }
 
-// IAM returns the IAM client for identity and access management.
-func (c *client) IAM() IAMClient {
+// iam returns the IAM client for identity and access management. Reachable via
+// Identity().IAM().
+func (c *client) iam() IAMClient {
 	c.mu.RLock()
 	if c.iamClient != nil {
 		c.mu.RUnlock()
@@ -2511,6 +2528,24 @@ func (c *client) Project() ProjectClient {
 	return c.projectClient
 }
 
+// SDLC returns the client for the SDLC module: forge bindings and deliveries.
+func (c *client) SDLC() SDLCClient {
+	c.mu.RLock()
+	if c.sdlcClient != nil {
+		c.mu.RUnlock()
+		return c.sdlcClient
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.sdlcClient == nil {
+		c.sdlcClient = newSDLCClient(c.transport)
+	}
+	return c.sdlcClient
+}
+
 // Account returns the Account client for managing pooled provider accounts.
 func (c *client) Account() AccountClient {
 	c.mu.RLock()
@@ -2564,4 +2599,5 @@ func newOllamaClient(t Transport) OllamaClient                 { return ollama.N
 func newRAGClient(t Transport) RAGClient                       { return rag.NewClient(t) }
 func newOrchestratorClient(t Transport) OrchestratorClient     { return orchestrator.NewClient(t) }
 func newProjectClient(t Transport) ProjectClient               { return project.NewClient(t) }
+func newSDLCClient(t Transport) SDLCClient                     { return sdlc.NewClient(t) }
 func newAccountClient(t Transport) AccountClient               { return account.NewClient(t) }

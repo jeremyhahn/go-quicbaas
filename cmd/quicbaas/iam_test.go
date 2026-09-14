@@ -42,7 +42,7 @@ func TestNewIAMCommand(t *testing.T) {
 
 	// Verify subcommands are registered
 	subcommands := cmd.Commands()
-	expectedSubcommands := []string{"tenant", "user", "group", "role", "app", "policy", "mfa", "session", "pep", "audit", "admin", "gdpr", "provider", "identity"}
+	expectedSubcommands := []string{"tenant", "user", "group", "role", "app", "policy", "mfa", "webauthn", "session", "pep", "audit", "admin", "gdpr", "provider", "identity"}
 
 	assert.Len(t, subcommands, len(expectedSubcommands))
 
@@ -2951,7 +2951,9 @@ func TestNewIAMAdminAssignmentListCommand_Flags(t *testing.T) {
 func TestNewIAMAdminImpersonateStartCommand_Flags(t *testing.T) {
 	cmd := newIAMAdminImpersonateStartCommand()
 	require.NotNil(t, cmd)
-	assert.NotNil(t, cmd.Flags().Lookup("admin-user-id"))
+	// No --admin-user-id: the acting admin is the authenticated caller,
+	// never named on the command line (go-quicbaas#383).
+	assert.Nil(t, cmd.Flags().Lookup("admin-user-id"))
 	assert.NotNil(t, cmd.Flags().Lookup("target-user-id"))
 	assert.NotNil(t, cmd.Flags().Lookup("tenant-id"))
 	assert.NotNil(t, cmd.Flags().Lookup("reason"))

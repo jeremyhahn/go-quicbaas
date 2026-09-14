@@ -606,22 +606,31 @@ func containsCredentialType(rt, target reflect.Type, seen map[reflect.Type]bool)
 // =============================================================================
 
 // TestAccountRoutesResolveToRegisteredPermissions pins each account route to
-// the qrdb-registered credentials:* permission the production gate enforces.
-// The route-tree guard (TestPEPMappingCoversEveryMountedRoute) only proves a
-// mapping EXISTS; this proves it is the intended one.
+// the registered permission the production gate enforces. The route-tree guard
+// (TestPEPMappingCoversEveryMountedRoute) only proves a mapping EXISTS; this
+// proves it is the intended one.
+//
+// THE SPLIT IS DELIBERATE AND LOAD-BEARING. The metadata READS and the
+// credential release take QuicBaaS's own tenant-scoped agent_accounts:* family;
+// the WRITES still take go-qrdb's credentials:*, which is registered
+// ScopeCross — system tenant only. The reads had to move because every agent
+// daemon is a tenant identity and could therefore never satisfy credentials:*,
+// which left it unable to list the pool it draws from (go-quicbaas#734). The
+// write half is go-quicbaas#737.
 func TestAccountRoutesResolveToRegisteredPermissions(t *testing.T) {
 	cases := []struct {
 		method, path, resource, action string
 	}{
 		{http.MethodPost, "/api/v1/agent-accounts", "credentials", "store"},
-		{http.MethodGet, "/api/v1/agent-accounts", "credentials", "list"},
-		{http.MethodGet, "/api/v1/agent-accounts/a1", "credentials", "retrieve"},
+		{http.MethodGet, "/api/v1/agent-accounts", "agent_accounts", "list"},
+		{http.MethodGet, "/api/v1/agent-accounts/a1", "agent_accounts", "read"},
 		{http.MethodPut, "/api/v1/agent-accounts/a1", "credentials", "store"},
 		{http.MethodDelete, "/api/v1/agent-accounts/a1", "credentials", "delete"},
 		{http.MethodPost, "/api/v1/agent-accounts/a1/rotate", "credentials", "rotate"},
 		{http.MethodPost, "/api/v1/agent-accounts/a1/revoke", "credentials", "delete"},
 		{http.MethodPost, "/api/v1/agent-accounts/a1/default", "credentials", "store"},
-		{http.MethodGet, "/api/v1/agent-accounts/a1/usage", "credentials", "retrieve"},
+		{http.MethodGet, "/api/v1/agent-accounts/a1/usage", "agent_accounts", "read"},
+		{http.MethodPost, "/api/v1/agent-accounts/a1/materialize", "agent_accounts", "materialize"},
 	}
 	for _, tc := range cases {
 		resource, action, ok := routePermissionForPath(tc.path, tc.method)

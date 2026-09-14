@@ -56,13 +56,18 @@ func (e *WorkflowValidationError) Unwrap() error {
 	return ErrWorkflowValidation
 }
 
-// WorkflowNotFoundError indicates the requested workflow was not found by name.
+// WorkflowNotFoundError indicates the requested workflow was not found by name
+// within the tenant.
 type WorkflowNotFoundError struct {
-	Name string
+	TenantID string
+	Name     string
 }
 
 // Error implements the error interface.
 func (e *WorkflowNotFoundError) Error() string {
+	if e.TenantID != "" {
+		return ErrWorkflowNotFound.Error() + ": " + e.Name + " (tenant " + e.TenantID + ")"
+	}
 	return ErrWorkflowNotFound.Error() + ": " + e.Name
 }
 
@@ -71,13 +76,18 @@ func (e *WorkflowNotFoundError) Unwrap() error {
 	return ErrWorkflowNotFound
 }
 
-// WorkflowAlreadyExistsError indicates a workflow with the same name already exists.
+// WorkflowAlreadyExistsError indicates a workflow with the same name already
+// exists within the tenant.
 type WorkflowAlreadyExistsError struct {
-	Name string
+	TenantID string
+	Name     string
 }
 
 // Error implements the error interface.
 func (e *WorkflowAlreadyExistsError) Error() string {
+	if e.TenantID != "" {
+		return ErrWorkflowAlreadyExists.Error() + ": " + e.Name + " (tenant " + e.TenantID + ")"
+	}
 	return ErrWorkflowAlreadyExists.Error() + ": " + e.Name
 }
 

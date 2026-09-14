@@ -178,15 +178,31 @@ func RandInt(max *big.Int) (*big.Int, error) {
 }
 
 // Reader returns an io.Reader that generates random bytes from the configured RNG.
-// This can be used as a drop-in replacement for rand.Reader in crypto operations.
+// This can be used as a drop-in replacement for rand.Reader in crypto operations
+// that still honour their rand argument.
+//
+// CAVEAT, and it invalidates the obvious use: since Go 1.26 both
+// ecdsa.GenerateKey and rsa.GenerateKey IGNORE the io.Reader they are handed and
+// use Go's own FIPS 140-3 DRBG ("the Reader is ignored unless
+// GODEBUG=cryptocustomrand=1 is set. This setting will be removed in a future Go
+// release"). Passing this reader to either one is a no-op. x509.Certificate
+// signing likewise draws from the signer, not from this reader, for every key
+// type the stack uses. ed25519.GenerateKey does still consume a non-nil reader.
+//
+// So do not reach for this expecting hardware entropy behind a stdlib key
+// generator. Where it is genuinely useful is code that reads bytes itself:
+// nonces, salts, serial numbers, share material.
 //
 // Example usage:
 //
-//	// Use with ecdsa.GenerateKey
-//	key, err := ecdsa.GenerateKey(elliptic.P256(), xkms.Reader())
+//	// Use where the bytes are consumed directly
+//	nonce, err := xkms.Rand(12)
 //
-//	// Use with x509.CreateCertificate
-//	cert, err := x509.CreateCertificate(xkms.Reader(), template, parent, pub, priv)
+//	// Use with ed25519.GenerateKey, which still honours its reader
+//	pub, priv, err := ed25519.GenerateKey(xkms.Reader())
+//
+// Key pairs for QuicBaaS-issued credentials go through
+// GenerateRequesterKey, not through this reader directly.
 func Reader() io.Reader {
 	return &rngReader{}
 }

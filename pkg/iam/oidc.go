@@ -17,7 +17,6 @@ import (
 	"context"
 	"crypto"
 	"encoding/json"
-	"errors"
 	"strings"
 	"time"
 
@@ -195,7 +194,7 @@ func (p *OIDCProvider) GetConfiguration() map[string]interface{} {
 		"claims_supported": []string{
 			"sub", "iss", "aud", "exp", "iat", "email", "name",
 			"tenant_id", "roles", "groups", "mfa_verified",
-			"cnf", "amr", "attest_method",
+			"cnf", "amr", "attest_method", "uid", "ptyp", "sid",
 		},
 		"code_challenge_methods_supported": []string{CodeChallengeMethodS256}, // OAuth 2.1 mandates S256 only
 	}
@@ -450,12 +449,22 @@ func (p *OIDCProvider) TokenMTLS(ctx context.Context, req *MTLSTokenRequest) (*T
 		return nil, NewOAuthError(ErrOAuthUnauthorizedClient, "client_credentials grant not allowed for this client")
 	}
 
+	// Same grant resolution as the secret-authenticated client_credentials
+	// path: mTLS proves WHICH principal is asking, never WHAT it may do
+	// (go-quicbaas#653).
+	grantedScopes, err := ResolveGrantedScopes(req.ClientID, app.Scopes, strings.Fields(req.Scope))
+	if err != nil {
+		return nil, NewOAuthError(ErrOAuthInvalidScope, err.Error())
+	}
+	grantedScope := strings.Join(grantedScopes, " ")
+
 	amr := ServiceAccountAMR(req.AttestMethod)
 
 	opts := ServiceAccountTokenOptions{
 		ClientID:           req.ClientID,
 		TenantID:           app.TenantID,
-		Scope:              req.Scope,
+		Scope:              grantedScope,
+		SCP:                PermissionScopes(grantedScopes),
 		CertThumbprintS256: req.CertThumbprintS256,
 		AttestMethod:       req.AttestMethod,
 		AMR:                amr,
@@ -470,7 +479,7 @@ func (p *OIDCProvider) TokenMTLS(ctx context.Context, req *MTLSTokenRequest) (*T
 		AccessToken: tokenSet.AccessToken,
 		TokenType:   tokenSet.TokenType,
 		ExpiresIn:   tokenSet.ExpiresIn,
-		Scope:       req.Scope,
+		Scope:       grantedScope,
 	}, nil
 }
 
@@ -540,7 +549,7 @@ func (p *OIDCProvider) Introspect(ctx context.Context, req *IntrospectRequest) (
 	// no global token table; the tenant_id claim is the authoritative routing
 	// key). It is fail-closed: any store error yields a non-live result, so a
 	// revocation-store outage reports active=false rather than leaking claims.
-	live, err := p.TokenLiveness(ctx, claims.TenantID, claims.Subject, claims.JTI)
+	live, err := p.TokenLiveness(ctx, claims.TenantID, claims.Subject, claims.UserID, claims.PrincipalType, claims.JTI)
 	if err != nil || !live {
 		return &IntrospectionResponse{Active: false}, nil
 	}
@@ -589,16 +598,33 @@ func (p *OIDCProvider) Introspect(ctx context.Context, req *IntrospectRequest) (
 //     store. The tenant is scoped from tenantID (the authoritative routing key;
 //     there is no global token table). Any store error returns (false, err) so
 //     a revocation-store outage denies rather than admits.
-//  2. Subject enablement. The subject is looked up as a user. A subject that is
-//     not a user (ErrUserNotFound) is a service/non-user token (e.g. a
-//     client_credentials "app_*" subject); revocation already passed, so it is
-//     live. Any other GetUser error returns (false, err) (fail-closed). A real
-//     user is live only when none of the three disable signals are set:
-//     live == !Suspended && !Locked && State != UserStateDisabled. Explicit
-//     negative states deny; active/pending/unset states are live, so legacy
-//     users whose State was never persisted are not spuriously denied while all
-//     three disable signals are still honored.
-func (p *OIDCProvider) TokenLiveness(ctx context.Context, tenantID, subject, jti string) (bool, error) {
+//
+//  2. Principal enablement, decided from what the token SAYS it is rather than
+//     from what a lookup fails to find:
+//
+//     - uid present (a user token): the account is resolved by that immutable
+//     id and must be enabled. An unresolvable uid DENIES — the principal the
+//     token names is gone, which is not a licence to keep using it.
+//     - ptyp == service (a positive service marker): a service principal has
+//     no user record by construction, so revocation is the whole test.
+//     - neither claim: DENIED. The guessing path that used to resolve such a
+//     token from its subject string is gone; principalLive states what it did
+//     and why nothing needs it back, and this bullet deliberately says no more
+//     than that — see the note on duplication at the UserInfo call site.
+//
+//     A resolved user is live only when its LIFECYCLE is `active`, which is the
+//     only state qrdb permits authentication in. Pending, suspended, locked,
+//     disabled and deleting all deny, and a state this build does not recognise
+//     denies too. Any store error other than not-found returns (false, err),
+//     fail-closed.
+//
+// This is the fail-closed rule applied to identity: service-principal status is
+// never INFERRED from a lookup coming up empty. Inferring it was a live
+// authorization bypass — a ceremony bearer's username subject never resolved,
+// was read as a service token, and reported live forever, so disabling an
+// account did not end its session; and even after resolving usernames, renaming
+// the account made the subject miss again and restored the bypass.
+func (p *OIDCProvider) TokenLiveness(ctx context.Context, tenantID, subject, userID, principalType, jti string) (bool, error) {
 	if tenantID != "" {
 		ctx = ContextWithTenant(ctx, tenantID)
 	}
@@ -611,19 +637,83 @@ func (p *OIDCProvider) TokenLiveness(ctx context.Context, tenantID, subject, jti
 		return false, nil
 	}
 
-	user, err := p.identityStore.GetUser(ctx, tenantID, subject)
-	if err != nil {
-		// A subject with no backing user is a service/non-user token; it passed
-		// revocation, so it is live. This is what keeps client_credentials
-		// service tokens authorized.
-		if errors.Is(err, ErrUserNotFound) {
-			return true, nil
+	return p.principalLive(ctx, tenantID, subject, userID, principalType)
+}
+
+// principalLive reports whether the principal a token names may still hold a
+// live session. See TokenLiveness for the decision order.
+func (p *OIDCProvider) principalLive(ctx context.Context, tenantID, subject, userID, principalType string) (bool, error) {
+	// A user token carries an immutable handle on its account. Renaming the
+	// account cannot detach the session from it, and deleting the account ends
+	// the session rather than promoting it to a service principal.
+	if userID != "" {
+		user, err := p.identityStore.GetUser(ctx, tenantID, userID)
+		if err != nil {
+			// IsUserNotFound names the one condition that means "the account
+			// this token points at is gone". errors.Is would have compared the
+			// QBError CODE, so any not-found the lookup could raise -- an
+			// absent tenant, a store answering 404 -- was reported as a
+			// deleted account rather than as the store failure it is
+			// (go-quicbaas#434). Both answers deny; only one is true.
+			if IsUserNotFound(err) {
+				return false, nil
+			}
+			return false, err
 		}
-		return false, err
+		return userEnabled(user), nil
 	}
 
-	live := !user.Suspended && !user.Locked && user.State != UserStateDisabled
-	return live, nil
+	// A service principal says so. Nothing else may claim the exemption.
+	if principalType == PrincipalTypeService {
+		return true, nil
+	}
+
+	// Neither claim: the token predates the uid/ptyp contract, and under the
+	// pre-release policy there is no such population to carry. It is DENIED
+	// rather than resolved from the subject string.
+	//
+	// What the deleted path did, and why nothing current needs it: it resolved
+	// the subject under both naming conventions and required every record either
+	// lookup found to be enabled, because nothing keeps the id and username
+	// namespaces apart. It also carried two weaknesses it could not fix — a
+	// subject resolving to nobody was read as a service principal, and a service
+	// token colliding with a disabled user's name was over-denied — and argued
+	// they were acceptable because the tokens age out. Once the tokens are not
+	// carried, a guessing path with known holes is strictly worse than a denial.
+	//
+	// Every current mint sets one of the two claims: the authorization-code and
+	// hardware paths set uid (oidc_tokens.go, oidc.go), the ceremony session
+	// path sets uid (oidc_session.go), client_credentials sets ptyp=service
+	// (oidc.go), and refresh copies whichever the stored session held. So a
+	// token reaching here today is one this build did not mint.
+	return false, nil
+}
+
+// userInfoSubject resolves the principal a userinfo request is about.
+//
+// It REQUIRES the uid claim. The claim names the record directly and cannot be
+// confused with anybody else's name or address, and every current mint sets it
+// for a user token.
+//
+// The subject-string fallback is gone, and deleting it closed more than the
+// legacy population it was written for. It resolved a non-email subject by user
+// id and then by USERNAME, and the only subject that reaches it today is a
+// SERVICE token's client id — so a user could take the username "app_<tenant>_
+// <suffix>" matching a registered client and have this endpoint answer that
+// client's userinfo request with their own profile: email, roles, groups and
+// attributes, under the token's own sub. The UUID guard that used to sit here
+// closed one shape of that collision (a pre-#359 user subject) and left the
+// rest open, which is why removing the guard without removing the fallback
+// would have been the wrong half to delete.
+//
+// A token carrying no uid is either pre-contract — a population the pre-release
+// policy does not carry — or a service principal, which has no user profile by
+// construction. Both answer "no user", which is what this now returns.
+func (p *OIDCProvider) userInfoSubject(ctx context.Context, claims *Claims) (*User, error) {
+	if claims.UserID == "" {
+		return nil, ErrUserNotFound
+	}
+	return p.identityStore.GetUser(ctx, claims.TenantID, claims.UserID)
 }
 
 // TenantAuthzMode returns the per-tenant authorization-mode override stored in
@@ -688,6 +778,23 @@ func (p *OIDCProvider) AuthenticateClient(ctx context.Context, clientID, clientS
 	return nil
 }
 
+// userEnabled reports whether a user's LIFECYCLE permits a live session. It is
+// the single definition of "this principal may hold one", shared by session
+// issuance (mint time) and TokenLiveness (request time) so the two gates cannot
+// disagree.
+//
+// `active` is the ONLY state that passes. It defers to qrdb's rule rather than
+// restating it, so a state written by a newer node fails closed here exactly as
+// it does in the store, and this layer cannot grant what the store would refuse.
+//
+// It used to read three separate signals — Suspended, Locked and a State that
+// excluded only `disabled` — which meant PENDING passed. An account waiting for
+// its owner to activate could hold a session, and one waiting on email
+// verification could log in without verifying (#334). Both close here.
+func userEnabled(user *User) bool {
+	return user.CanAuthenticate()
+}
+
 // UserInfo returns user information for the given access token.
 func (p *OIDCProvider) UserInfo(ctx context.Context, accessToken string) (*UserInfoResponse, error) {
 	// Validate access token
@@ -696,21 +803,38 @@ func (p *OIDCProvider) UserInfo(ctx context.Context, accessToken string) (*UserI
 		return nil, NewOAuthError(ErrOAuthInvalidGrant, "invalid access token")
 	}
 
-	// Resolve the user. OAuth2 flows mint sub = the broker user ID, while the
-	// unified login ceremony mints sub = the qrdb username (token subjects are
-	// qrdb users). Resolve by ID first and fall back to the tenant-scoped
-	// username so ceremony-issued bearers validate against userinfo too.
-	user, err := p.identityStore.GetUser(ctx, claims.TenantID, claims.Subject)
+	// Resolve the user by the IMMUTABLE uid claim, which userInfoSubject
+	// REQUIRES — there is no fallback to the subject string, and a token
+	// carrying no uid resolves to nobody. See that function for why the
+	// fallback was removed rather than guarded.
+	//
+	// THE ARGUMENT LIVES THERE AND NOT ALSO HERE. This comment used to restate
+	// it, and when the fallback was deleted (#390) the copy on the function was
+	// updated and this one was not — so for a time the call site described a
+	// username fallback, and described it as safe because of a disjoint-shape
+	// rule, neither of which existed. A stale comment about behaviour costs a
+	// reader some confusion; one that describes a GUARD costs them their
+	// conclusion, and the next person to touch this would have reasoned from it
+	// (#278). One statement, one place.
+	user, err := p.userInfoSubject(ctx, claims)
 	if err != nil {
-		user, err = p.identityStore.GetUserByUsername(ctx, claims.TenantID, claims.Subject)
-		if err != nil {
-			return nil, NewOAuthError(ErrOAuthServerError, "failed to get user info")
-		}
+		return nil, NewOAuthError(ErrOAuthServerError, "failed to get user info")
 	}
 
-	// OIDC Core 5.3.2: the userinfo sub MUST match the token sub. On the ID
-	// path user.ID == claims.Subject, so this is equivalent; on the username
-	// fallback it preserves the ceremony bearer's subject.
+	// A token outliving its subject's right to use it is exactly what the
+	// lifecycle exists to catch, and userinfo is a read of that subject's
+	// profile. Checking here keeps a disabled, suspended, locked or deleting
+	// account from continuing to describe itself over an unexpired bearer —
+	// revocation cannot retroactively un-issue one.
+	if !userEnabled(user) {
+		return nil, NewOAuthError(ErrOAuthInvalidGrant, "user is not enabled")
+	}
+
+	// OIDC Core 5.3.2: the userinfo sub MUST match the token sub, so it is
+	// ECHOED FROM THE CLAIMS AND NEVER DERIVED FROM THE RESOLVED RECORD. The
+	// record was found by uid, and a ceremony-minted token's subject is not its
+	// id — answering with user.ID would return a sub the caller never presented
+	// and break the match this line exists to satisfy.
 	return &UserInfoResponse{
 		Sub:           claims.Subject,
 		Name:          user.Name,
@@ -952,9 +1076,21 @@ func (p *OIDCProvider) handleAuthorizationCodeGrant(ctx context.Context, req *To
 }
 
 func (p *OIDCProvider) handleClientCredentialsGrant(ctx context.Context, req *TokenRequest) (*TokenResponse, error) {
-	// Validate client
+	// Validate client.
+	//
+	// The two failures are kept apart HERE even though they answer the same
+	// thing: `err != nil || !valid` made a lookup that never reached the record
+	// and a secret that simply did not match indistinguishable in the code, so
+	// a fleet-wide enrollment outage read as "every agent is sending the wrong
+	// password" (go-quicbaas#644). The storage layer names the failing check in
+	// the operator log (BackendStorage.warnClientAuthFailed); this branch keeps
+	// the RESPONSE identical for both, because a caller that could tell an
+	// unknown client from a wrong secret could enumerate the client ids.
 	valid, err := p.appStorage.ValidateClientSecret(ctx, req.ClientID, req.ClientSecret)
-	if err != nil || !valid {
+	if err != nil {
+		return nil, NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
+	}
+	if !valid {
 		return nil, NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
 	}
 
@@ -967,6 +1103,18 @@ func (p *OIDCProvider) handleClientCredentialsGrant(ctx context.Context, req *To
 	// Check if grant type is allowed
 	if !contains(app.GrantTypes, GrantTypeClientCredentials) {
 		return nil, NewOAuthError(ErrOAuthUnauthorizedClient, "client_credentials grant not allowed")
+	}
+
+	// Resolve the scope the token may carry from the GRANT on the application
+	// record, not from the client's request. A client_credentials principal
+	// has no qrdb user and therefore no store-resolved roles, so scp is the
+	// whole of its authority; copying the request into it let any client mint
+	// itself any permission it could name (go-quicbaas#653). A request for a
+	// scope outside the grant is refused rather than trimmed, so the caller
+	// learns which entitlement it lacks.
+	grantedScopes, err := ResolveGrantedScopes(req.ClientID, app.Scopes, req.Scope)
+	if err != nil {
+		return nil, NewOAuthError(ErrOAuthInvalidScope, err.Error())
 	}
 
 	// Build audience with resource indicator (RFC 8707). When the client sends
@@ -982,17 +1130,32 @@ func (p *OIDCProvider) handleClientCredentialsGrant(ctx context.Context, req *To
 
 	// Create service account claims
 	now := time.Now()
+	jti, err := generateJTI()
+	if err != nil {
+		return nil, err
+	}
+
 	claims := &Claims{
-		Issuer:       p.config.Issuer,
-		Subject:      req.ClientID,
-		Audience:     audience,
-		ExpiresAt:    NewUnixTime(now.Add(p.config.AccessTokenTTL)),
-		IssuedAt:     NewUnixTime(now),
-		NotBefore:    NewUnixTime(now),
-		JTI:          generateJTI(),
-		TenantID:     app.TenantID,
-		ClientID:     req.ClientID,
-		Scope:        joinScopes(req.Scope),
+		Issuer:    p.config.Issuer,
+		Subject:   req.ClientID,
+		Audience:  audience,
+		ExpiresAt: NewUnixTime(now.Add(p.config.AccessTokenTTL)),
+		IssuedAt:  NewUnixTime(now),
+		NotBefore: NewUnixTime(now),
+		JTI:       jti,
+		TenantID:  app.TenantID,
+		// A client_credentials grant has no user by construction; say so
+		// positively rather than leaving liveness to infer it from a miss.
+		PrincipalType: PrincipalTypeService,
+		ClientID:      req.ClientID,
+		Scope:         joinScopes(grantedScopes),
+		// SCP is stamped explicitly so GenerateAccessToken emits the resolved
+		// grant verbatim instead of re-deriving it: a service principal has no
+		// user record, so the role resolver would answer empty and fall back to
+		// the OIDC scope string. This is the "caller already computed the perm
+		// set" precedence branch, which is exactly this case. Only the
+		// permission-shaped scopes belong here — scp is the authority claim.
+		SCP:          PermissionScopes(grantedScopes),
 		Confirmation: cnf,
 	}
 
@@ -1006,7 +1169,7 @@ func (p *OIDCProvider) handleClientCredentialsGrant(ctx context.Context, req *To
 		AccessToken: accessToken,
 		TokenType:   tokenTypeForConfirmation(cnf),
 		ExpiresIn:   int64(p.config.AccessTokenTTL.Seconds()),
-		Scope:       joinScopes(req.Scope),
+		Scope:       joinScopes(grantedScopes),
 	}, nil
 }
 
@@ -1042,6 +1205,15 @@ func (p *OIDCProvider) handleRefreshTokenGrant(ctx context.Context, req *TokenRe
 	if err != nil {
 		return nil, NewOAuthError(ErrOAuthServerError, "failed to get user")
 	}
+	// A renewal must not outlive the principal's right to hold a session. The
+	// OAuth subject is the user id, so the record fetched above is the whole
+	// answer — no second lookup needed. Without this the grant keeps handing a
+	// suspended account fresh credentials; they are denied at request time by
+	// TokenLiveness, but issuing them at all is the wrong answer and leaves the
+	// two refresh paths disagreeing about what a disabled account may do.
+	if !userEnabled(user) {
+		return nil, NewOAuthError(ErrOAuthInvalidGrant, "invalid refresh token")
+	}
 
 	// Generate new tokens
 	scopes := req.Scope
@@ -1062,8 +1234,34 @@ func (p *OIDCProvider) handleRefreshTokenGrant(ctx context.Context, req *TokenRe
 		return nil, NewOAuthError(ErrOAuthServerError, "failed to rotate refresh token")
 	}
 
-	// Refresh tokens inherit audience from original token (no resource param)
-	return p.generateTokenResponse(ctx, user, token.ClientID, scopes, "", "", cnf)
+	// Refresh tokens inherit audience from original token (no resource param),
+	// and the SESSION IDENTIFIER the login established: a rotation renews a
+	// session, it does not start one, so the renewed bearer must carry the sid
+	// its login handed out. A session recorded before the claim existed carries
+	// none, and the renewed token gets a fresh one — which reads to a client as
+	// a new session rather than as the same one, the safe direction.
+	return p.generateTokenResponseForSession(ctx, user, token.ClientID, scopes, "", "", cnf,
+		grantSession{ID: refreshedSessionID(token), Renewal: true})
+}
+
+// sessionEstablishedID returns the identifier to freeze into a grant's refresh
+// record: what a renewal was given, or what a fresh login just minted. See
+// grantSession for why a renewal must not adopt a minted value.
+func sessionEstablishedID(session grantSession, minted string) string {
+	if session.Renewal {
+		return session.ID
+	}
+	return minted
+}
+
+// refreshedSessionID returns the session identifier frozen into a refresh
+// token's record, or "" when the record predates the claim (or carries no
+// session context at all, as a token stored by an older writer may not).
+func refreshedSessionID(token *Token) string {
+	if token == nil || token.Session == nil {
+		return ""
+	}
+	return token.Session.SessionID
 }
 
 // defaultAudienceForClient resolves the configured default service audience for
@@ -1097,7 +1295,44 @@ func (p *OIDCProvider) validDefaultAudience(app *Application) string {
 	return app.DefaultAudience
 }
 
+// grantSession names the login an OAuth grant's tokens belong to.
+//
+// Renewal is not decoration: it decides what the ROTATED refresh record freezes
+// when ID is empty, and the two cases want opposite things. A fresh login
+// freezes the identifier its access token was minted with, because the login is
+// where that identifier is established. A renewal freezes what it was GIVEN —
+// including nothing at all, for a session recorded before the claim existed.
+// Promoting the identifier minted for one of those would make a value invented
+// at a rotation indistinguishable from one a login established, and every later
+// renewal would replay it as though the session's identity had been recovered.
+// It was not, and it is unrecoverable: a claim that says "this is the login"
+// must not be answered by a guess. This is the same rule RefreshSession follows
+// by carrying its stored session context forward untouched, stated explicitly
+// here because this path rebuilds the context from the user record.
+type grantSession struct {
+	// ID is the session identifier the login established, or "" when this is a
+	// fresh login (one is minted) or a session that predates the claim.
+	ID string
+
+	// Renewal marks a grant that RENEWS an existing session rather than
+	// establishing one.
+	Renewal bool
+}
+
+// generateTokenResponse mints the credential set for a FRESH login: the access
+// token carries a newly minted session identifier (sid), so this grant is a
+// different session from every other. A renewal must not go through here — see
+// generateTokenResponseForSession.
 func (p *OIDCProvider) generateTokenResponse(ctx context.Context, user *User, clientID string, scopes []string, nonce string, resource string, cnf *ConfirmationClaim) (*TokenResponse, error) {
+	return p.generateTokenResponseForSession(ctx, user, clientID, scopes, nonce, resource, cnf, grantSession{})
+}
+
+// generateTokenResponseForSession is generateTokenResponse with the grant's
+// session stated: a fresh login mints an identifier and freezes it, and a
+// renewal replays and re-freezes the one it was given. It exists as the named
+// variant rather than an eighth positional parameter on the common path so the
+// two intents are stated at the call site instead of encoded in a bare string.
+func (p *OIDCProvider) generateTokenResponseForSession(ctx context.Context, user *User, clientID string, scopes []string, nonce string, resource string, cnf *ConfirmationClaim, session grantSession) (*TokenResponse, error) {
 	now := time.Now()
 
 	// Build audience with resource indicator (RFC 8707). When the request
@@ -1107,6 +1342,11 @@ func (p *OIDCProvider) generateTokenResponse(ctx context.Context, user *User, cl
 	audience := BuildAudienceWithDefault(p.config.Issuer, resource, p.defaultAudienceForClient(ctx, clientID))
 
 	// Generate access token
+	accessJTI, err := generateJTI()
+	if err != nil {
+		return nil, err
+	}
+
 	accessClaims := &Claims{
 		Issuer:       p.config.Issuer,
 		Subject:      user.ID,
@@ -1114,8 +1354,10 @@ func (p *OIDCProvider) generateTokenResponse(ctx context.Context, user *User, cl
 		ExpiresAt:    NewUnixTime(now.Add(p.config.AccessTokenTTL)),
 		IssuedAt:     NewUnixTime(now),
 		NotBefore:    NewUnixTime(now),
-		JTI:          generateJTI(),
+		JTI:          accessJTI,
+		SessionID:    session.ID,
 		TenantID:     user.TenantID,
+		UserID:       user.ID,
 		Roles:        user.Roles,
 		Groups:       user.Groups,
 		Email:        user.Email,
@@ -1133,12 +1375,34 @@ func (p *OIDCProvider) generateTokenResponse(ctx context.Context, user *User, cl
 	// Generate refresh token. The session context is frozen here so a renewal
 	// mints an access token with the same audience, roles, and (when the grant
 	// was sender-constrained) the same cnf.jkt binding.
+	//
+	// UserID is frozen for the same reason the access token above carries it:
+	// refresh credentials from either issuance path live in ONE store, so this
+	// one can be redeemed through the session-refresh endpoint too. Without the
+	// immutable handle here that renewal would mint a token carrying no uid —
+	// and a token with neither uid nor a service marker is DENIED outright by
+	// principalLive, so the renewed session is dead at its next liveness check.
+	//
+	// THIS LINE IS LOAD-BEARING, NOT BELT-AND-BRACES. The comment here used to
+	// say such a token landed on a lenient "legacy subject rule" that would
+	// drain as old tokens aged out. That rule was deleted with the guessing
+	// path (#390) and nothing drains; the consequence is refusal, not
+	// degradation. Anyone tidying this on the strength of the old wording would
+	// have caused silent session death rather than a soft landing (#278).
 	refreshSession := TokenSessionContext{
-		Roles:    user.Roles,
-		Groups:   user.Groups,
-		Audience: audience,
-		Email:    user.Email,
-		Name:     user.Name,
+		// What this session was ESTABLISHED with, which is not always what the
+		// bearer above carries. A fresh login establishes it here, so the minted
+		// value is frozen and every later rotation replays it. A renewal
+		// establishes nothing: it freezes what it was given, and a session that
+		// predates the claim therefore stays without one rather than adopting
+		// the identifier this rotation had to mint. See grantSession.
+		SessionID: sessionEstablishedID(session, accessClaims.SessionID),
+		UserID:    user.ID,
+		Roles:     user.Roles,
+		Groups:    user.Groups,
+		Audience:  audience,
+		Email:     user.Email,
+		Name:      user.Name,
 	}
 	if cnf != nil {
 		refreshSession.Jkt = cnf.Jkt
@@ -1178,7 +1442,12 @@ func (p *OIDCProvider) generateTokenResponse(ctx context.Context, user *User, cl
 			TenantID:      user.TenantID,
 			Roles:         user.Roles,
 			Groups:        user.Groups,
-			MFAVerified:   user.MFAVerified,
+			// MFAVerified is deliberately not set. It asserts that MFA was
+			// verified in THIS session, and this authorization-code exchange
+			// verified none. It used to be copied off the user record, where a
+			// field of the same name recorded something else entirely and was
+			// never cleared — so a user who once passed MFA carried a true
+			// claim into every session afterwards.
 		}
 
 		idToken, err := p.tokenService.GenerateIDToken(ctx, idTokenClaims)

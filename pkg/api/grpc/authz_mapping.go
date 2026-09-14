@@ -58,6 +58,7 @@ var brokerServiceDescs = []grpc.ServiceDesc{
 	pb.ObjectStorageAdmin_ServiceDesc,
 	pb.ObjectTransferService_ServiceDesc,
 	pb.OrchestratorService_ServiceDesc,
+	pb.SDLCService_ServiceDesc,
 	pb.MessagingService_ServiceDesc,
 	pb.SchedulerService_ServiceDesc,
 	pb.ParameterStore_ServiceDesc,
@@ -218,6 +219,42 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.v1.QuicBaaS/AssignRole": {"roles", "assign"},
 	"/quicbaas.v1.QuicBaaS/RevokeRole": {"roles", "unassign"},
 
+	// ---- quicbaas.iam.v1.IAMService: WebAuthn credential administration ----
+	//
+	// These three are the ONLY IAMService methods mapped here, and that needs
+	// saying out loud: the rest of quicbaas.iam.v1.IAMService is absent from
+	// brokerServiceDescs and unmapped, so under RequireAuthz it is denied
+	// wholesale. Mapping these three does not carve an exception into that
+	// posture — it is the minimum needed for the surface to exist at all.
+	// They are the operator's ONLY recovery path for a WebAuthn credential
+	// stranded by a deleted user (go-quicbaas#273): the credential blocks its
+	// email from ever registering an authenticator again, and every other way
+	// of clearing it was removed with the ceremony-only surface. Left unmapped
+	// the verbs would reach the server and be denied at the gate — wiring that
+	// looks present and is dead, which is worse than not shipping it.
+	//
+	// The grants are the qrdb user-admin families the same verbs already
+	// require on the MCP plane (pkg/api/mcp/authz_qrdb.go): read to see what
+	// is stored, delete to remove it. Nothing new is granted — a caller needs
+	// exactly the user-admin rights it would need to delete the user outright.
+	//
+	// Mapping the REST of IAMService is an authorization-policy decision for
+	// the owner, not a wiring change; it is tracked separately.
+	"/quicbaas.iam.v1.IAMService/ListWebAuthnCredentials":   {"users", "read"},
+	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential":  {"users", "delete"},
+	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredentials": {"users", "delete"},
+
+	// ---- quicbaas.iam.v1.IAMService: built-in role reconciliation ----
+	//
+	// ReconcileRoles takes the role-create family rather than a verb of its
+	// own. A dedicated roles:reconcile would be absent from every role seeded
+	// before it existed, so nobody would hold the grant needed to repair that
+	// exact absence — the drift the verb exists to fix would lock out its own
+	// remedy (go-qrdb's stated guidance on go-quicbaas#573). Reusing
+	// roles:create grants nothing new: a caller able to define a role is
+	// already able to set the permission sets this converges.
+	"/quicbaas.iam.v1.IAMService/ReconcileRoles": {"roles", "create"},
+
 	// ---- quicbaas.v1.QuicBaaS: auth (token lifecycle) ----
 	"/quicbaas.v1.QuicBaaS/Logout":        {"user_authfactors", "login"},
 	"/quicbaas.v1.QuicBaaS/RefreshToken":  {"user_authfactors", "login"},
@@ -298,21 +335,47 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.kms.v1.DEKManagement/StartReencryption":       {"keys", "rotate"},
 	"/quicbaas.kms.v1.DEKManagement/GetReencryptionProgress": {"keys", "get"},
 
-	// ---- quicbaas.kms.v1.SecretsManagement (named credentials) ----
-	"/quicbaas.kms.v1.SecretsManagement/StoreSecret":          {"credentials", "store"},
-	"/quicbaas.kms.v1.SecretsManagement/GetSecret":            {"credentials", "retrieve"},
-	"/quicbaas.kms.v1.SecretsManagement/ListSecrets":          {"credentials", "list"},
-	"/quicbaas.kms.v1.SecretsManagement/DeleteSecret":         {"credentials", "delete"},
-	"/quicbaas.kms.v1.SecretsManagement/RotateSecret":         {"credentials", "rotate"},
-	"/quicbaas.kms.v1.SecretsManagement/ListSecretVersions":   {"credentials", "list_versions"},
-	"/quicbaas.kms.v1.SecretsManagement/GetSecretVersion":     {"credentials", "retrieve_version"},
-	"/quicbaas.kms.v1.SecretsManagement/RollbackSecret":       {"credentials", "submit"},
-	"/quicbaas.kms.v1.SecretsManagement/SetRotationPolicy":    {"credentials", "strategy"},
-	"/quicbaas.kms.v1.SecretsManagement/GetRotationPolicy":    {"credentials", "list"},
-	"/quicbaas.kms.v1.SecretsManagement/GetSecretsByPrefix":   {"credentials", "list"},
-	"/quicbaas.kms.v1.SecretsManagement/UpdateSecretStatus":   {"credentials", "submit"},
-	"/quicbaas.kms.v1.SecretsManagement/WatchSecretsByPrefix": {"credentials", "list"},
-	"/quicbaas.kms.v1.SecretsManagement/EnsureSecret":         {"credentials", "store"},
+	// ---- quicbaas.kms.v1.SecretsManagement (the tenant secret vault) ----
+	//
+	// This surface carries qrdb's secrets:read / secrets:write / secrets:delete
+	// / secrets:list family (go-qrdb/pkg/permission/broker_scope.go), NOT
+	// credentials:*. The two families guard different stores: credentials:* is
+	// qrdb's named-credential store, which has no tenant namespacing at all and
+	// is therefore registered ScopeCross — system tenant only — while every RPC
+	// below reads or writes under the CALLER's tenant
+	// (pkg/service/secrets_tenant.go secretsTenantScopedID). Under credentials:*
+	// qrdb's RBAC cross-scope rule denied every tenant identity, so the whole
+	// tenant-facing vault was unreachable over gRPC and the Unix socket while
+	// the grant sat unusable on the tenant Admin role (go-quicbaas#534).
+	//
+	// The action split matches the REST route table entry for entry
+	// (pkg/api/rest/routes_permissions_generated.go, the eight /api/v1/secrets
+	// routes) so one operation needs one grant whichever transport carries it:
+	// list is the names-only enumeration, read is anything that returns secret
+	// material or its metadata (including a version listing and a prefix or
+	// watch fetch, which return values), write is every mutation — store,
+	// generate-on-first-access, rotate, rollback, status, rotation policy — and
+	// delete is removal. The rotation-policy verbs have no REST route of their
+	// own; they take read/write of the policy sub-resource on the same family.
+	//
+	// pkg/api/mcp/authz_qrdb.go maps the MCP twin of every verb below and
+	// TestSecretsVaultGRPCPermissions pins this block; the proto annotations in
+	// api/proto/kms.proto are the second gRPC enforcement point and are pinned
+	// to this table by TestGRPCPermissions_ProtoOptionMatchesAuthzMapping.
+	"/quicbaas.kms.v1.SecretsManagement/StoreSecret":          {"secrets", "write"},
+	"/quicbaas.kms.v1.SecretsManagement/GetSecret":            {"secrets", "read"},
+	"/quicbaas.kms.v1.SecretsManagement/ListSecrets":          {"secrets", "list"},
+	"/quicbaas.kms.v1.SecretsManagement/DeleteSecret":         {"secrets", "delete"},
+	"/quicbaas.kms.v1.SecretsManagement/RotateSecret":         {"secrets", "write"},
+	"/quicbaas.kms.v1.SecretsManagement/ListSecretVersions":   {"secrets", "read"},
+	"/quicbaas.kms.v1.SecretsManagement/GetSecretVersion":     {"secrets", "read"},
+	"/quicbaas.kms.v1.SecretsManagement/RollbackSecret":       {"secrets", "write"},
+	"/quicbaas.kms.v1.SecretsManagement/SetRotationPolicy":    {"secrets", "write"},
+	"/quicbaas.kms.v1.SecretsManagement/GetRotationPolicy":    {"secrets", "read"},
+	"/quicbaas.kms.v1.SecretsManagement/GetSecretsByPrefix":   {"secrets", "read"},
+	"/quicbaas.kms.v1.SecretsManagement/UpdateSecretStatus":   {"secrets", "write"},
+	"/quicbaas.kms.v1.SecretsManagement/WatchSecretsByPrefix": {"secrets", "read"},
+	"/quicbaas.kms.v1.SecretsManagement/EnsureSecret":         {"secrets", "write"},
 
 	// ---- quicbaas.certificate.v1.CertificateService ----
 	"/quicbaas.certificate.v1.CertificateService/IssueCertificate":  {"certs", "generate"},
@@ -530,11 +593,16 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// and MCP (quicbaas_orchestrator_rotate_account).
 	"/quicbaas.orchestrator.v1.OrchestratorService/RotateSessionAccount":   {"orchestrator", "spawn"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/SubscribeSessionEvents": {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetSessionConversation": {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetSpendReport":         {"orchestrator", "status"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/CreateTask":             {"orchestrator", "task_create"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/GetTask":                {"orchestrator", "task_read"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/ListTasks":              {"orchestrator", "task_list"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/ClaimTask":              {"orchestrator", "task_claim"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/CompleteTask":           {"orchestrator", "task_complete"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/BlockTask":              {"orchestrator", "task_block"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ReadmitTask":            {"orchestrator", "task_readmit"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/DeleteTask":             {"orchestrator", "task_create"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/DecomposeTask":          {"orchestrator", "task_decompose"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/SubmitTaskArtifacts":    {"orchestrator", "artifact_submit"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/GetTaskArtifact":        {"orchestrator", "artifact_read"},
@@ -545,6 +613,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.orchestrator.v1.OrchestratorService/CancelJob":              {"orchestrator", "job_cancel"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/SubscribeJobEvents":     {"orchestrator", "job_read"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/ListBackends":           {"orchestrator", "backend_list"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListRunners":            {"orchestrator", "status"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/Health":                 {"orchestrator", "health"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/Inference":              {"orchestrator", "inference"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/InferenceStream":        {"orchestrator", "inference"},
@@ -603,6 +672,23 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.dynamicsecrets.v1.DynamicSecretsService/RevokeLease":        {"dynamic_secrets", "lease_revoke"},
 	"/quicbaas.dynamicsecrets.v1.DynamicSecretsService/ListLeases":         {"dynamic_secrets", "lease_list"},
 
+	// ---- quicbaas.sdlc.v1.SDLCService ----
+	// The SDLC module's verbs, mirroring the REST rules for the binding,
+	// delivery and forges routes and the MCP sdlc_* tools. ListForges is
+	// gated sdlc:read because GET /api/v1/sdlc/forges is.
+	"/quicbaas.sdlc.v1.SDLCService/BindProject":   {"sdlc", "bind"},
+	"/quicbaas.sdlc.v1.SDLCService/UnbindProject": {"sdlc", "unbind"},
+	"/quicbaas.sdlc.v1.SDLCService/GetBinding":    {"sdlc", "read"},
+	"/quicbaas.sdlc.v1.SDLCService/GetDelivery":   {"sdlc", "read"},
+	"/quicbaas.sdlc.v1.SDLCService/ListForges":    {"sdlc", "read"},
+	// Onboard WRITES to the forge, so it is gated with the bind permission
+	// that PUT .../binding is; GetConformance only reads, and is gated with
+	// the read permission GET .../conformance is. The split is the point:
+	// a reader may ask what state a repository is in without being able to
+	// change it.
+	"/quicbaas.sdlc.v1.SDLCService/Onboard":        {"sdlc", "bind"},
+	"/quicbaas.sdlc.v1.SDLCService/GetConformance": {"sdlc", "read"},
+
 	// ---- quicbaas.project.v1.ProjectService ----
 	"/quicbaas.project.v1.ProjectService/CreateProject":    {"project", "create"},
 	"/quicbaas.project.v1.ProjectService/GetProject":       {"project", "read"},
@@ -622,13 +708,21 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// REST surfaces use (pkg/api/rest/authz_pep_mapping.go). qrdb registers
 	// no account:* family; when one is added these mappings should move to it.
 	//
-	// Reads use credentials:retrieve (the item-read verb) even though no
-	// account response carries secret material: over-restricting a read is
-	// the safe direction, and it keeps a single "who may see this account at
-	// all" grant rather than splitting metadata reads from secret reads.
+	// The METADATA READS take QuicBaaS's own tenant-scoped agent_accounts:*
+	// family rather than credentials:*, and that is a correction rather than a
+	// split for its own sake: credentials:* is registered ScopeCross — system
+	// tenant only — because qrdb's named-credential store has no tenant
+	// namespacing, while a pooled account is written into the requesting
+	// tenant's own keyspace. Under credentials:* the RBAC cross-scope rule
+	// denied every tenant identity a surface that is tenant data, including the
+	// enrolled agent daemon that has to select over it (go-quicbaas#734). Same
+	// correction as go-quicbaas#534 made for /api/v1/secrets.
+	//
+	// The WRITE verbs deliberately still take credentials:*, so minting or
+	// rotating a pooled login remains a system-tenant operation.
 	"/quicbaas.account.v1.AccountService/CreateAccount":           {"credentials", "store"},
-	"/quicbaas.account.v1.AccountService/GetAccount":              {"credentials", "retrieve"},
-	"/quicbaas.account.v1.AccountService/ListAccounts":            {"credentials", "list"},
+	"/quicbaas.account.v1.AccountService/GetAccount":              {"agent_accounts", "read"},
+	"/quicbaas.account.v1.AccountService/ListAccounts":            {"agent_accounts", "list"},
 	"/quicbaas.account.v1.AccountService/UpdateAccount":           {"credentials", "store"},
 	"/quicbaas.account.v1.AccountService/DeleteAccount":           {"credentials", "delete"},
 	"/quicbaas.account.v1.AccountService/RotateAccountCredential": {"credentials", "rotate"},
@@ -636,7 +730,15 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// destructive lifecycle transition, so it takes the delete-grade verb.
 	"/quicbaas.account.v1.AccountService/RevokeAccount":     {"credentials", "delete"},
 	"/quicbaas.account.v1.AccountService/SetDefaultAccount": {"credentials", "store"},
-	"/quicbaas.account.v1.AccountService/GetAccountUsage":   {"credentials", "retrieve"},
+	"/quicbaas.account.v1.AccountService/GetAccountUsage":   {"agent_accounts", "read"},
+	// Materializing RELEASES the credential envelope, so it is the ONE verb
+	// here that does not take a credentials:* grant. It carries QuicBaaS's own
+	// agent_accounts:materialize (pkg/permission), for two reasons the
+	// paragraph above could not anticipate: credentials:* is registered
+	// ScopeCross — system tenant only — and would deny the tenant-scoped agent
+	// daemon this verb exists for; and an identity that may READ the pool's
+	// metadata must not thereby be able to extract every login in it.
+	"/quicbaas.account.v1.AccountService/MaterializeAccountCredential": {"agent_accounts", "materialize"},
 
 	// ---- quicbaas.ssh.v1.SSHService ----
 	// SSH assets are cryptographic keys, so they authorize with the qrdb

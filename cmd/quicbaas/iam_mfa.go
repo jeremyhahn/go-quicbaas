@@ -95,7 +95,7 @@ func runMFAStatusCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer iamClient.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Getting MFA status for user: %s in tenant: %s", mfaUserID, globalTenantID)
@@ -175,7 +175,7 @@ func runMFAEnrollCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer iamClient.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Beginning MFA enrollment for user: %s in tenant: %s", mfaUserID, globalTenantID)
@@ -245,7 +245,7 @@ func runMFAVerifyCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer iamClient.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Completing MFA enrollment: %s", enrollmentID)
@@ -307,7 +307,7 @@ func runMFADisableCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer iamClient.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Disabling MFA for user: %s in tenant: %s", mfaUserID, globalTenantID)
@@ -367,7 +367,7 @@ func runMFABackupCodesStatusCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer iamClient.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Getting backup code status for user: %s in tenant: %s", mfaUserID, globalTenantID)
@@ -452,7 +452,7 @@ func runMFABackupCodesGenerateCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer iamClient.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Generating backup codes for user: %s in tenant: %s", mfaUserID, globalTenantID)

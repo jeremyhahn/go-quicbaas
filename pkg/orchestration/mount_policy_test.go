@@ -15,6 +15,7 @@ package orchestration
 
 import (
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -275,5 +276,147 @@ func TestMountNotAllowedError_Message(t *testing.T) {
 	bare := &MountNotAllowedError{Source: "rel", Reason: "nope"}
 	if got, want := bare.Error(), `mount not allowed: "rel": nope`; got != want {
 		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
+// =============================================================================
+// The daemon's sockets root
+// =============================================================================
+
+// socketsRootFixture builds a sockets root holding one live session
+// directory with a real unix socket in it, which is the only shape the policy
+// admits under that root.
+type socketsRootFixture struct {
+	policy  *MountPolicy
+	root    string
+	session string
+	socket  string
+}
+
+func newSocketsRootFixture(t *testing.T) socketsRootFixture {
+	t.Helper()
+	base := newMountPolicyFixture(t)
+	root := filepath.Join(t.TempDir(), "s")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	session := filepath.Join(root, "0123456789ab")
+	if err := os.Mkdir(session, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(session, WorkspaceSigningAgentSocketFile)
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("bind the session socket: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	base.policy.SocketsRoot = root
+	return socketsRootFixture{policy: base.policy, root: root, session: session, socket: socket}
+}
+
+// TestMountPolicy_AdmitsTheSigningSocketUnderTheSocketsRoot: the daemon binds
+// each attempt's signing socket under its own sockets root because a unix
+// socket address does not fit under a managed workspace, so the policy admits
+// that socket WITHOUT the operator having allowlisted anything — and it
+// admits it for a tenant that has no projects-root grant at all, because the
+// socket is the daemon's, not the tenant's.
+func TestMountPolicy_AdmitsTheSigningSocketUnderTheSocketsRoot(t *testing.T) {
+	f := newSocketsRootFixture(t)
+	mount := ContainerMount{Source: f.socket, Target: WorkspaceSigningAgentSocket, ReadOnly: true}
+	if err := f.policy.Authorize("tenant-a", MountFieldExtraMounts, []ContainerMount{mount}); err != nil {
+		t.Fatalf("the signing socket was denied: %v", err)
+	}
+	if err := f.policy.Authorize("", MountFieldExtraMounts, []ContainerMount{mount}); err != nil {
+		t.Errorf("the socket is the daemon's, not a tenant's, yet an untenanted spawn was denied: %v", err)
+	}
+	// The mount the runner actually builds is the one that has to pass.
+	req := &SpawnSessionRequest{}
+	ApplyWorkspaceSpec(req, MaterializedWorkspace{}, f.socket)
+	if err := f.policy.Authorize("tenant-a", MountFieldExtraMounts, req.ExtraMounts); err != nil {
+		t.Errorf("the mount ApplyWorkspaceSpec builds was denied: %v", err)
+	}
+}
+
+// TestMountPolicy_TheSocketsRootGrantIsOnlyTheSocket: the root is shared by
+// every tenant, so what is admitted is the socket file itself, one level
+// down, read-only, and actually a socket. Everything beside it — the root,
+// the session directory, a sibling file, a deeper path, a regular file
+// wearing the socket's name — stays denied, which is also what stops a caller
+// mounting the root to read the session names inside it.
+func TestMountPolicy_TheSocketsRootGrantIsOnlyTheSocket(t *testing.T) {
+	f := newSocketsRootFixture(t)
+
+	sibling := filepath.Join(f.session, "other")
+	if err := os.WriteFile(sibling, []byte("beside the socket"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	impostorDir := filepath.Join(f.root, "ffffffffffff")
+	if err := os.Mkdir(impostorDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	impostor := filepath.Join(impostorDir, WorkspaceSigningAgentSocketFile)
+	if err := os.WriteFile(impostor, []byte("not a socket"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deepDir := filepath.Join(f.session, "deeper")
+	if err := os.Mkdir(deepDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deep := filepath.Join(deepDir, WorkspaceSigningAgentSocketFile)
+	if err := os.WriteFile(deep, []byte("two levels down"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, mount := range map[string]ContainerMount{
+		"the root itself":                    {Source: f.root, ReadOnly: true},
+		"the session directory":              {Source: f.session, ReadOnly: true},
+		"a file beside the socket":           {Source: sibling, ReadOnly: true},
+		"a regular file named like a socket": {Source: impostor, ReadOnly: true},
+		"a socket name two levels down":      {Source: deep, ReadOnly: true},
+		"the socket, writable":               {Source: f.socket, ReadOnly: false},
+	} {
+		err := f.policy.Authorize("tenant-a", MountFieldExtraMounts, []ContainerMount{mount})
+		var denied *MountNotAllowedError
+		if !errors.As(err, &denied) {
+			t.Errorf("%s: err = %v, want *MountNotAllowedError", name, err)
+		}
+	}
+
+	// AuthorizeSource is the work-directory door and cannot express
+	// read-only, so it never opens the sockets root either.
+	if err := f.policy.AuthorizeSource("tenant-a", MountFieldWorkDir, f.socket); err == nil {
+		t.Error("the signing socket was admitted as a work directory")
+	}
+
+	// An unset sockets root grants nothing, which is what an unwired daemon
+	// must do.
+	f.policy.SocketsRoot = ""
+	if err := f.policy.Authorize("tenant-a", MountFieldExtraMounts,
+		[]ContainerMount{{Source: f.socket, ReadOnly: true}}); err == nil {
+		t.Error("a policy with no sockets root admitted a socket anyway")
+	}
+	f.policy.SocketsRoot = "relative/sockets"
+	if err := f.policy.Authorize("tenant-a", MountFieldExtraMounts,
+		[]ContainerMount{{Source: f.socket, ReadOnly: true}}); err == nil {
+		t.Error("a relative sockets root admitted a socket anyway")
+	}
+}
+
+// TestMountPolicy_SymlinkedSocketsRootStillMatches: a deployment whose
+// runtime or data directory is reached through a symlinked parent resolves
+// its own socket to a path under the resolved root, and denying that would
+// deny every signing agent it starts.
+func TestMountPolicy_SymlinkedSocketsRootStillMatches(t *testing.T) {
+	f := newSocketsRootFixture(t)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(f.root, link); err != nil {
+		t.Fatal(err)
+	}
+	f.policy.SocketsRoot = link
+	linked := filepath.Join(link, filepath.Base(f.session), WorkspaceSigningAgentSocketFile)
+	if err := f.policy.Authorize("tenant-a", MountFieldExtraMounts,
+		[]ContainerMount{{Source: linked, ReadOnly: true}}); err != nil {
+		t.Fatalf("a socket under a symlinked sockets root was denied: %v", err)
 	}
 }

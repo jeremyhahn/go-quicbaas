@@ -52,6 +52,19 @@ const STATUS_TO_VARIANT: Readonly<Record<string, StatusVariant>> = {
   degraded: 'warning',
   inactive: 'warning',
   truncated: 'warning',
+  // a claimed task is held but not yet worked; a blocked one waits on a person
+  claimed: 'warning',
+  blocked: 'warning',
+  // a job sending work back, or asking for a person, needs attention but has
+  // not failed
+  're-delegating': 'warning',
+  escalating: 'warning',
+
+  // primary — work is actively happening
+  in_progress: 'primary',
+  // orchestration job states where the job is doing the work
+  assigning: 'primary',
+  executing: 'primary',
 
   // error — failure modes
   error: 'error',

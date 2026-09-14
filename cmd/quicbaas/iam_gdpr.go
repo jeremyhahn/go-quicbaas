@@ -167,7 +167,7 @@ func runIAMGDPRConsentGrantCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Granting consent for user %s, purpose: %s", gdprUserID, gdprPurpose)
@@ -278,7 +278,7 @@ func runIAMGDPRConsentWithdrawCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Withdrawing consent for user %s, purpose: %s", gdprUserID, gdprPurpose)
@@ -326,7 +326,7 @@ func runIAMGDPRConsentGetCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Getting consent for user %s, purpose: %s", gdprUserID, gdprPurpose)
@@ -399,7 +399,7 @@ func runIAMGDPRConsentListCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Listing consents for user: %s", gdprUserID)
@@ -521,7 +521,7 @@ func runIAMGDPRExportRequestCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Requesting data export for user: %s, format: %s", gdprUserID, gdprExportFormat)
@@ -602,7 +602,7 @@ func runIAMGDPRExportStatusCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Getting export status: %s", gdprExportID)
@@ -728,7 +728,7 @@ func runIAMGDPRDeletionRequestCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Requesting data deletion for user: %s", gdprUserID)
@@ -807,7 +807,7 @@ func runIAMGDPRDeletionCancelCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Cancelling deletion request: %s", gdprDeletionID)
@@ -853,7 +853,7 @@ func runIAMGDPRDeletionStatusCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Getting deletion status: %s", gdprDeletionID)

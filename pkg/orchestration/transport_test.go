@@ -347,6 +347,64 @@ func TestStdioTransport_Notify(t *testing.T) {
 	}
 }
 
+// TestStdioTransport_NotifyAfterPeerEOF is the control for
+// TestStdioTransport_Notify: the same call, the opposite precondition, the
+// opposite required outcome.
+//
+// TestStdioTransport_Notify keeps the peer's stdout open and requires success.
+// Here the peer's stdout is closed and the test waits for readLoop to observe
+// the EOF, so the session is provably over before Notify is called, and
+// ErrSessionClosed is then the only correct answer.
+//
+// Pairing the two is what makes either meaningful. The flake this replaces
+// (#207, and #79 before it) closed the peer's stdout and then asserted
+// success: it stood in this test's precondition while demanding the other
+// test's outcome, so which one it got was a coin toss between readLoop's
+// compare-and-swap and Notify's closed check. If a future change makes
+// readLoop stop ending the session on EOF, this test fails while
+// TestStdioTransport_Notify still passes -- the asymmetry is the point.
+func TestStdioTransport_NotifyAfterPeerEOF(t *testing.T) {
+	serverRead, clientWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverRead.Close()
+	// Closed here rather than left to transport.Close(): readLoop wins the
+	// closed compare-and-swap in this test by construction, so Close() returns
+	// through its early exit and never closes stdin. Without this the test
+	// leaks both descriptors on every iteration, which a -count=200 loop
+	// notices. LIFO puts these after transport.Close(), so nothing the
+	// transport still uses is closed out from under it.
+	defer clientWrite.Close()
+
+	clientRead, serverWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientRead.Close()
+
+	transport := newStdioTransportFromPipes(clientWrite, clientRead)
+	defer transport.Close()
+
+	// End the peer's stdout, then wait for readLoop to exit. readLoop closes
+	// readDone in a defer that runs after its closed compare-and-swap, so this
+	// wait -- not a sleep or a retry -- is what establishes "session closed".
+	serverWrite.Close()
+	<-transport.readDone
+
+	if !transport.closed.Load() {
+		t.Fatal("readLoop exited without marking the session closed")
+	}
+
+	err = transport.Notify("test/notify", map[string]string{"key": "value"})
+	if err == nil {
+		t.Fatal("Notify() on a session ended by peer EOF should return an error")
+	}
+	if !errors.Is(err, ErrSessionClosed) {
+		t.Errorf("Notify() error = %v, want ErrSessionClosed", err)
+	}
+}
+
 func TestStdioTransport_PID(t *testing.T) {
 	t.Run("NilCmd", func(t *testing.T) {
 		transport := &StdioTransport{}

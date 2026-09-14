@@ -14,7 +14,6 @@
 package iam
 
 import (
-	"crypto/elliptic"
 	"fmt"
 )
 
@@ -152,18 +151,4 @@ type NoRolesResolvableError struct {
 
 func (e *NoRolesResolvableError) Error() string {
 	return "iam: federated login denied: no roles resolvable and explicit role mapping is required"
-}
-
-// ecCurveForName returns the elliptic curve for a JWK `crv` value.
-func ecCurveForName(crv string) (elliptic.Curve, error) {
-	switch crv {
-	case "P-256":
-		return elliptic.P256(), nil
-	case "P-384":
-		return elliptic.P384(), nil
-	case "P-521":
-		return elliptic.P521(), nil
-	default:
-		return nil, &IDTokenJWKSError{Reason: "unsupported EC curve: " + crv}
-	}
 }

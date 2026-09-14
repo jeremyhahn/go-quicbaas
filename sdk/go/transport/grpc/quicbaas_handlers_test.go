@@ -212,11 +212,6 @@ func TestRBACHandler_AllMethods_Success(t *testing.T) {
 		method string
 		req    interface{}
 	}{
-		{"CreateUser", "CreateUser", map[string]interface{}{"Username": "alice", "Roles": []string{"admin"}}},
-		{"DeleteUser", "DeleteUser", map[string]interface{}{"Username": "alice"}},
-		{"ListUsers", "ListUsers", map[string]interface{}{}},
-		{"GetUser", "GetUser", map[string]interface{}{"Username": "alice"}},
-		{"UpdateUser", "UpdateUser", map[string]interface{}{"Username": "alice", "Roles": []string{"viewer"}}},
 		{"CreateRole", "CreateRole", map[string]interface{}{"RoleName": "admin", "Permissions": []string{"kv"}}},
 		{"DeleteRole", "DeleteRole", map[string]interface{}{"RoleName": "admin"}},
 		{"ListRoles", "ListRoles", map[string]interface{}{}},
@@ -239,11 +234,6 @@ func TestRBACHandler_ServerError(t *testing.T) {
 		method string
 		req    interface{}
 	}{
-		{"CreateUser", map[string]interface{}{"Username": "a"}},
-		{"DeleteUser", map[string]interface{}{"Username": "a"}},
-		{"ListUsers", map[string]interface{}{}},
-		{"GetUser", map[string]interface{}{"Username": "a"}},
-		{"UpdateUser", map[string]interface{}{"Username": "a"}},
 		{"CreateRole", map[string]interface{}{"RoleName": "r"}},
 		{"DeleteRole", map[string]interface{}{"RoleName": "r"}},
 		{"ListRoles", map[string]interface{}{}},
@@ -259,17 +249,15 @@ func TestRBACHandler_ServerError(t *testing.T) {
 	}
 }
 
-func TestRBACHandler_GetUser_NotFound(t *testing.T) {
+// TestRBACHandler_UserMethodsAreGone pins the issue #905 removal: quicbaas.RBAC
+// carries no user verbs over gRPC. Users are administered over
+// quicbaas.iam.v1.IAMService (Identity().IAM().User() on the SDK).
+func TestRBACHandler_UserMethodsAreGone(t *testing.T) {
 	h := newRBACHandler(newQuicBaaSConn(t, false))
-	if _, err := h.handleRequest(context.Background(), "quicbaas.RBAC", "GetUser", map[string]interface{}{"Username": "ghost"}); err == nil {
-		t.Fatal("expected not-found error for missing user")
-	}
-}
-
-func TestRBACHandler_UpdateUser_NotFound(t *testing.T) {
-	h := newRBACHandler(newQuicBaaSConn(t, false))
-	if _, err := h.handleRequest(context.Background(), "quicbaas.RBAC", "UpdateUser", map[string]interface{}{"Username": "ghost", "Roles": []string{"x"}}); err == nil {
-		t.Fatal("expected not-found error for missing user")
+	for _, m := range []string{"CreateUser", "DeleteUser", "ListUsers", "GetUser", "UpdateUser"} {
+		if _, err := h.handleRequest(context.Background(), "quicbaas.RBAC", m, map[string]interface{}{}); err == nil {
+			t.Errorf("%s: expected unknown-method error", m)
+		}
 	}
 }
 
@@ -282,7 +270,7 @@ func TestRBACHandler_UnknownMethod(t *testing.T) {
 
 func TestRBACHandler_InvalidRequestTypes(t *testing.T) {
 	h := newRBACHandler(nil)
-	for _, m := range []string{"CreateUser", "DeleteUser", "GetUser", "UpdateUser", "CreateRole", "DeleteRole", "AssignRole", "RevokeRole"} {
+	for _, m := range []string{"CreateRole", "DeleteRole", "AssignRole", "RevokeRole"} {
 		if _, err := h.handleRequest(context.Background(), "quicbaas.RBAC", m, 12345); err == nil {
 			t.Errorf("%s: expected invalid-request-type error", m)
 		}

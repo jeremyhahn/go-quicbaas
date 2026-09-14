@@ -19,53 +19,9 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
-// =============================================================================
-// RBAC User Types
-// =============================================================================
-
-// AuthCreateUserRequest is a request to create a new RBAC user.
-type AuthCreateUserRequest struct {
-	Username string
-	Roles    []string
-}
-
-// AuthCreateUserResponse is the response after creating an RBAC user.
-type AuthCreateUserResponse struct {
-	UserID    string
-	Timestamp int64
-}
-
-// AuthDeleteUserRequest is a request to delete an RBAC user.
-type AuthDeleteUserRequest struct {
-	Username string
-}
-
-// AuthDeleteUserResponse is the response after deleting an RBAC user.
-type AuthDeleteUserResponse struct {
-	Success bool
-	Message string
-}
-
-// AuthListUsersRequest is a request to list RBAC users.
-type AuthListUsersRequest struct {
-	Limit  uint64
-	Offset uint64
-}
-
-// AuthListUsersResponse is the response containing a list of RBAC users.
-type AuthListUsersResponse struct {
-	Users      []*UserInfo
-	TotalCount uint64
-}
-
-// UserInfo contains information about an RBAC user.
-type UserInfo struct {
-	UserID      string
-	Username    string
-	Roles       []string
-	CreatedAt   int64
-	LastLoginAt int64
-}
+// RBAC has no user types. A user record is qrdb's and is carried by iam.User
+// across the IAM surface; a second user struct here would be a second
+// identifier space. See issue #905.
 
 // =============================================================================
 // RBAC Role Types
@@ -173,14 +129,6 @@ func (f *daoFactory) GetKVStore(shardID uint64) interfaces.KVStore {
 // =============================================================================
 // Type Aliases for Backwards Compatibility
 // =============================================================================
-
-// User request/response type aliases.
-type CreateUserRequest = AuthCreateUserRequest
-type CreateUserResponse = AuthCreateUserResponse
-type DeleteUserRequest = AuthDeleteUserRequest
-type DeleteUserResponse = AuthDeleteUserResponse
-type ListUsersRequest = AuthListUsersRequest
-type ListUsersResponse = AuthListUsersResponse
 
 // Role request/response type aliases.
 type AssignRoleRequest = AuthAssignRoleRequest

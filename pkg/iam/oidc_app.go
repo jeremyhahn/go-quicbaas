@@ -16,11 +16,14 @@ package iam
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/base32"
 	"encoding/base64"
-	"fmt"
+	"errors"
 	"net/url"
+	"slices"
 	"time"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
@@ -47,6 +50,90 @@ func (m *AppManager) RegisterApp(ctx context.Context, tenantID string, opts Regi
 	return app, err
 }
 
+// RegisterAgentApp registers the OAuth2 client an agent daemon authenticates
+// with, keyed on the agent's identity (tenant + certificate Common Name) so the
+// call is IDEMPOTENT: a daemon that enrolls again -- after a restart, a dropped
+// response, or a supervisor retry loop -- gets the client it already has, with
+// a freshly rotated secret it can actually use.
+//
+// Re-registration used to mint a new random client every time while the mTLS
+// client and the fleet registry both answered already_exists, so a looping
+// daemon left a trail of orphan OAuth2 records and never converged on a working
+// credential (go-quicbaas#644). The secret is rotated rather than returned,
+// because it is stored as a digest and cannot be recovered; the caller is the
+// register endpoint, which authenticated the daemon's mTLS certificate for this
+// exact identity before calling, so it is entitled to a new one.
+//
+// The returned application carries the PLAINTEXT secret. It is the only time
+// the value exists outside the daemon.
+func (m *AppManager) RegisterAgentApp(ctx context.Context, tenantID, commonName string, opts RegisterAppOptions) (*Application, error) {
+	if tenantID == "" {
+		return nil, &IAMMessageError{Message: "tenant ID is required"}
+	}
+	if commonName == "" {
+		return nil, &IAMMessageError{Message: "certificate common name is required"}
+	}
+
+	clientID := AgentClientID(tenantID, commonName)
+	if _, err := m.storage.GetAppByTenant(ctx, tenantID, clientID); err == nil {
+		return m.rotateAgentCredential(ctx, clientID, opts.Scopes)
+	} else if !dberrors.IsNotFound(err) {
+		return nil, &IAMContextError{Message: "failed to resolve agent application", Cause: err}
+	}
+
+	app, _, err := m.registerAppWithClientID(ctx, tenantID, clientID, opts, false)
+	if err == nil {
+		return app, nil
+	}
+	// A concurrent enrollment of the same identity won the create; converge on
+	// it rather than failing the daemon that lost the race.
+	//
+	// coded-sentinel-ok: the whole already-exists class is the intent. The
+	// client id is derived from the identity this call was given, so anything
+	// the store reports as already present under it is that same agent's
+	// record, whichever layer raised it -- and the response to all of them is
+	// the same: adopt the existing client rather than mint a second one.
+	if errors.Is(err, ErrAlreadyExists) {
+		return m.rotateAgentCredential(ctx, clientID, opts.Scopes)
+	}
+	return nil, err
+}
+
+// rotateAgentCredential is RotateSecret for a re-enrolling agent: it rotates
+// the secret AND converges the application's grant onto the set enrollment is
+// conferring, in the same storage write.
+//
+// The convergence is what makes the grant a live entitlement rather than a
+// one-shot stamped at first enrollment. An application registered by an older
+// build carries no grant at all, so without this a daemon that has already
+// enrolled once could rotate its secret forever and still be refused on every
+// heartbeat (go-quicbaas#653); and a build that narrows the agent grant would
+// leave every existing daemon holding the wider one.
+func (m *AppManager) rotateAgentCredential(ctx context.Context, clientID string, scopes []string) (*Application, error) {
+	app, err := m.storage.GetApp(ctx, clientID)
+	if err != nil {
+		return nil, err
+	}
+
+	clientSecret, hashedSecret, err := generateClientSecret()
+	if err != nil {
+		return nil, &IAMContextError{Message: "failed to generate client secret", Cause: err}
+	}
+
+	app.ClientSecret = hashedSecret
+	app.Scopes = scopes
+	app.Updated = time.Now()
+
+	if err := m.storage.UpdateApp(ctx, app); err != nil {
+		return nil, &IAMContextError{Message: "failed to update application", Cause: err}
+	}
+
+	result := *app
+	result.ClientSecret = clientSecret
+	result.RegistrationTokenHash = ""
+	return &result, nil
+}
+
 // registerApp is the single creation path for OAuth2 applications. When
 // withRegistrationToken is set it also mints an RFC 7592 registration access
 // token, persists only its hash on the application record, and returns the
@@ -55,6 +142,17 @@ func (m *AppManager) RegisterApp(ctx context.Context, tenantID string, opts Regi
 // write as the application, so a registered DCR client can never exist without
 // its management credential.
 func (m *AppManager) registerApp(ctx context.Context, tenantID string, opts RegisterAppOptions, withRegistrationToken bool) (*Application, string, error) {
+	return m.registerAppWithClientID(ctx, tenantID, "", opts, withRegistrationToken)
+}
+
+// registerAppWithClientID is registerApp with the client identifier supplied by
+// the caller. An empty clientID mints a random one, which is the path every
+// public registration verb takes; a non-empty one is a DERIVED identifier the
+// manager itself computed (AgentClientID), which is what makes an enrollment
+// idempotent. It is deliberately unexported and absent from
+// RegisterAppOptions: a transport that could name its own client id could
+// squat another tenant's identifier space.
+func (m *AppManager) registerAppWithClientID(ctx context.Context, tenantID, clientID string, opts RegisterAppOptions, withRegistrationToken bool) (*Application, string, error) {
 	// Validate inputs
 	if err := m.validateRegisterOptions(opts); err != nil {
 		return nil, "", err
@@ -68,9 +166,12 @@ func (m *AppManager) registerApp(ctx context.Context, tenantID string, opts Regi
 	}
 
 	// Generate client ID and secret
-	clientID, err := generateClientID(tenantID, opts.Name)
-	if err != nil {
-		return nil, "", &IAMContextError{Message: "failed to generate client ID", Cause: err}
+	var err error
+	if clientID == "" {
+		clientID, err = generateClientID(tenantID)
+		if err != nil {
+			return nil, "", &IAMContextError{Message: "failed to generate client ID", Cause: err}
+		}
 	}
 
 	clientSecret, hashedSecret, err := generateClientSecret()
@@ -97,6 +198,7 @@ func (m *AppManager) registerApp(ctx context.Context, tenantID string, opts Regi
 		TenantID:              tenantID,
 		RedirectURIs:          opts.RedirectURIs,
 		ResourcePrefix:        opts.ResourcePrefix,
+		Scopes:                opts.Scopes,
 		DefaultAudience:       opts.DefaultAudience,
 		GrantTypes:            opts.GrantTypes,
 		ResponseTypes:         opts.ResponseTypes,
@@ -168,6 +270,33 @@ func redactAppSecrets(app *Application) *Application {
 	app.ClientSecret = ""
 	app.RegistrationTokenHash = ""
 	return app
+}
+
+// GrantScopes converges an application's granted permission set onto scopes and
+// returns the updated record. It is idempotent: an application that already
+// agrees writes nothing.
+//
+// This is deliberately its OWN verb rather than a field on UpdateAppOptions.
+// Every public application-management transport passes UpdateAppOptions
+// straight through from its caller, so a scope field there would turn "update
+// my app" into "grant my app any permission I can name". A grant is conferred
+// by a server-side path that speaks for a grantor -- agent enrollment, the
+// central's dispatch-client bootstrap -- and by nothing else.
+func (m *AppManager) GrantScopes(ctx context.Context, tenantID, clientID string, scopes []string) (*Application, error) {
+	app, err := m.resolveApp(ctx, tenantID, clientID)
+	if err != nil {
+		return nil, err
+	}
+	if slices.Equal(app.Scopes, scopes) {
+		return redactAppSecrets(app), nil
+	}
+
+	app.Scopes = scopes
+	app.Updated = time.Now()
+	if err := m.storage.UpdateApp(ctx, app); err != nil {
+		return nil, &IAMContextError{Message: "failed to update application", Cause: err}
+	}
+	return redactAppSecrets(app), nil
 }
 
 // UpdateApp updates an existing application. The lookup is NOT tenant scoped;
@@ -408,17 +537,31 @@ func isValidGrantType(grantType string) bool {
 
 // Helper functions
 
-// generateClientID generates a unique client ID for an application.
-func generateClientID(tenantID, appName string) (string, error) {
+// clientIDSuffixEncoding encodes the random segment of a client identifier.
+//
+// It is base32 (RFC 4648, unpadded) rather than base64url deliberately: the
+// identifier is tenant + ClientIDSeparator + suffix, and TenantFromClientID
+// recovers the tenant by splitting on the LAST separator. base64url's alphabet
+// contains "_", so roughly one suffix in six carried the separator and the
+// split cut the identifier in the wrong place — the client was then looked up
+// under a tenant that does not exist and could never authenticate
+// (go-quicbaas#644). base32's alphabet is A-Z2-7, which is disjoint from the
+// separator, so the split is unambiguous for every suffix the generator can
+// produce, whatever the tenant id contains.
+var clientIDSuffixEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
+
+// generateClientID generates a unique client ID for an application. The tenant
+// segment is recoverable with TenantFromClientID, which is how every token
+// endpoint scopes its storage context before resolving the client.
+func generateClientID(tenantID string) (string, error) {
 	// Generate random suffix
 	b, err := xkms.Rand(8)
 	if err != nil {
 		return "", err
 	}
-	suffix := base64.RawURLEncoding.EncodeToString(b)
+	suffix := clientIDSuffixEncoding.EncodeToString(b)
 
-	// Create client ID in format: app_<tenant>_<suffix>
-	return fmt.Sprintf("app_%s_%s", tenantID, suffix), nil
+	return ClientIDPrefix + tenantID + ClientIDSeparator + suffix, nil
 }
 
 // generateClientSecret generates a secure client secret and its hash.

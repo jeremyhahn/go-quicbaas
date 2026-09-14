@@ -344,6 +344,8 @@ func protoToServiceProvider(p pb.EmbeddingProvider) service.EmbeddingProvider {
 		return service.EmbeddingProviderOllama
 	case pb.EmbeddingProvider_EMBEDDING_PROVIDER_LMSTUDIO:
 		return service.EmbeddingProviderLMStudio
+	case pb.EmbeddingProvider_EMBEDDING_PROVIDER_NPU:
+		return service.EmbeddingProviderNPU
 	default:
 		return ""
 	}
@@ -360,6 +362,8 @@ func serviceToProtoProvider(p service.EmbeddingProvider) pb.EmbeddingProvider {
 		return pb.EmbeddingProvider_EMBEDDING_PROVIDER_OLLAMA
 	case service.EmbeddingProviderLMStudio:
 		return pb.EmbeddingProvider_EMBEDDING_PROVIDER_LMSTUDIO
+	case service.EmbeddingProviderNPU:
+		return pb.EmbeddingProvider_EMBEDDING_PROVIDER_NPU
 	default:
 		return pb.EmbeddingProvider_EMBEDDING_PROVIDER_UNSPECIFIED
 	}

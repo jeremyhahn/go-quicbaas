@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -181,7 +182,7 @@ func (m *controlLoopMockService) RemoveAgent(_ context.Context, _, _ string) err
 	return nil
 }
 
-func (m *controlLoopMockService) AgentHeartbeat(_ context.Context, _, _ string) error {
+func (m *controlLoopMockService) AgentHeartbeat(_ context.Context, _, _ string, _ *AgentObservation) error {
 	return nil
 }
 
@@ -197,6 +198,7 @@ func (m *controlLoopMockService) CreateTask(_ context.Context, req *CreateTaskRe
 		Description: req.Description,
 		Status:      TaskStatusPending,
 		AssignedTo:  req.AssignedTo,
+		ProjectID:   req.ProjectID,
 		CreatedAt:   time.Now().UnixNano(),
 	}
 	m.createdTasks = append(m.createdTasks, task)
@@ -225,6 +227,18 @@ func (m *controlLoopMockService) CompleteTask(_ context.Context, _, _ string, _ 
 	return m.completeErr
 }
 
+func (m *controlLoopMockService) BlockTask(_ context.Context, _, _ string, _ TaskBlockKind, _ string) error {
+	return nil
+}
+
+func (m *controlLoopMockService) ReadmitTask(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *controlLoopMockService) DeleteTask(_ context.Context, _, _ string) error {
+	return nil
+}
+
 func (m *controlLoopMockService) StartJob(_ context.Context, _ *StartJobRequest) (*StartJobResponse, error) {
 	return &StartJobResponse{}, nil
 }
@@ -233,7 +247,7 @@ func (m *controlLoopMockService) GetJobStatus(_ context.Context, _, _ string) (*
 	return nil, nil
 }
 
-func (m *controlLoopMockService) ListJobs(_ context.Context, _ string) ([]*JobStatus, error) {
+func (m *controlLoopMockService) ListJobs(_ context.Context, _ string, _ *JobFilter) ([]*JobStatus, error) {
 	return nil, nil
 }
 
@@ -303,7 +317,27 @@ var _ AgentService = (*controlLoopMockService)(nil)
 // Mock Logger
 // =============================================================================
 
+// controlLoopMockLogger records the format strings passed to it so tests can
+// assert on what was logged.
+//
+// IT IS WRITTEN FROM GOROUTINES THE TEST NEVER JOINS, and that is a property of
+// the code under test rather than of this mock. resumeJob spawns a background
+// goroutine and logs from it (orchestrator.go), so the moment a test reads a
+// message slice directly it races the production code it is exercising. That
+// was a REAL data race, not a theoretical one (#308) — and because the detector
+// fires on whichever test happens to be running when it trips, it reddened the
+// Race Detector job on lanes whose diffs did not touch this package at all.
+//
+// So the slices are private to the mutex and assertions read through the
+// accessors below, which return copies. A copy rather than the slice itself:
+// handing back the live slice would let a caller range over it while the
+// goroutine appends, which is the same race one step removed.
+//
+// Every other stateful mock logger in this package (captureLogger,
+// recordingLogger, hookTestLogger) already took a mutex. This one was the
+// outlier, which is why it was the one that broke.
 type controlLoopMockLogger struct {
+	mu            sync.Mutex
 	debugMessages []string
 	warnMessages  []string
 	infoMessages  []string
@@ -312,19 +346,43 @@ type controlLoopMockLogger struct {
 
 func (l *controlLoopMockLogger) Debug(_ string, _ ...any) {}
 func (l *controlLoopMockLogger) Debugf(format string, _ ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.debugMessages = append(l.debugMessages, format)
 }
 func (l *controlLoopMockLogger) Info(_ string, _ ...any) {}
 func (l *controlLoopMockLogger) Infof(format string, _ ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.infoMessages = append(l.infoMessages, format)
 }
 func (l *controlLoopMockLogger) Warn(_ string, _ ...any) {}
 func (l *controlLoopMockLogger) Warnf(format string, _ ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.warnMessages = append(l.warnMessages, format)
 }
 func (l *controlLoopMockLogger) Error(_ string, _ ...any) {}
 func (l *controlLoopMockLogger) Errorf(format string, _ ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.errorMessages = append(l.errorMessages, format)
+}
+
+// debugLines, infoLines, warnLines and errorLines return copies of what has
+// been recorded so far. Assertions go through these, never through the fields.
+func (l *controlLoopMockLogger) debugLines() []string { return l.linesOf(&l.debugMessages) }
+func (l *controlLoopMockLogger) infoLines() []string  { return l.linesOf(&l.infoMessages) }
+func (l *controlLoopMockLogger) warnLines() []string  { return l.linesOf(&l.warnMessages) }
+func (l *controlLoopMockLogger) errorLines() []string { return l.linesOf(&l.errorMessages) }
+
+// linesOf copies one slice under the lock. It takes a POINTER to the field:
+// passing the slice by value would read the header before the lock is held,
+// which is the race this type exists to close.
+func (l *controlLoopMockLogger) linesOf(field *[]string) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), (*field)...)
 }
 func (l *controlLoopMockLogger) Fatal(_ string)                                        {}
 func (l *controlLoopMockLogger) Fatalf(_ string, _ ...interface{})                     {}
@@ -348,6 +406,142 @@ func newTestConfig() *JobConfig {
 	}
 }
 
+// newTestLoop creates a control loop over a standalone run carrying config,
+// for a test that drives the state machine directly rather than through the
+// envelope.
+func newTestLoop(config *JobConfig) *ControlLoop {
+	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
+	cl.job.Config = config
+	if config != nil {
+		cl.job.TenantID = config.TenantID
+	}
+	return cl
+}
+
+// =============================================================================
+// Driving a job the way the daemon does
+// =============================================================================
+
+// jobLaunch describes a job the way agentServiceImpl.launchJob assembles
+// one, so a test can drive the production entry path without a daemon
+// around it: the envelope (JobRun.execute) owns the lease, the heartbeat,
+// the terminal status and the discard, and hands the run to the runner,
+// which is what builds the control loop.
+//
+// The zero value launches a fresh workflow job over the control-loop mocks.
+type jobLaunch struct {
+	// Config is what the job is started with; nil takes newTestConfig.
+	Config *JobConfig
+
+	// Agents is the service the loop drives; nil takes a bare
+	// controlLoopMockService. Logger defaults to the control-loop mock.
+	Agents AgentService
+	Logger interfaces.Logger
+
+	// Workflow is the definition a workflow job runs. Hooks and Policy are
+	// what the envelope installs on the run: the hook set it resolved from
+	// the workflow, and the operator's policy. A launch that must prove the
+	// resolution itself goes through agentServiceImpl.launchJob, which is
+	// where production does it.
+	Workflow *WorkflowDefinition
+	Hooks    JobLifecycleHooks
+	Policy   *JobLifecyclePolicy
+
+	// Leases, Node and LeaseTTL give the run its lease store, the node it
+	// runs on and the lease TTL. A nil store leaves the job unleased.
+	Leases   JobLeaseStore
+	Node     string
+	LeaseTTL time.Duration
+
+	// JobID is the persisted ID a resumed job keeps; empty is minted, as
+	// the envelope mints one for a fresh job.
+	JobID string
+
+	// Resumed is the persisted status an interrupted job continues. It
+	// decides the state the run enters, through the runner's own
+	// JobResumer answer, exactly as agentServiceImpl.resumeJob does.
+	Resumed *JobStatus
+
+	// StartState overrides the state the envelope computes. It exists for
+	// the one test that proves the loop refuses a state it has no handler
+	// for; every other launch leaves it empty.
+	StartState JobState
+}
+
+// newRun builds the run the envelope would build for the launch: the minted
+// or persisted ID, the poll-interval default, the hook set the workflow
+// names, and the state the runner enters for a fresh or a resumed job.
+func (l jobLaunch) newRun(t *testing.T) *JobRun {
+	t.Helper()
+
+	config := l.Config
+	if config == nil {
+		config = newTestConfig()
+	}
+	if config.PollInterval == 0 {
+		config.PollInterval = defaultPollInterval
+	}
+
+	jobID := l.JobID
+	if jobID == "" {
+		minted, err := generateJobID()
+		if err != nil {
+			t.Fatalf("generateJobID: %v", err)
+		}
+		jobID = minted
+	}
+
+	agents := l.Agents
+	if agents == nil {
+		agents = &controlLoopMockService{}
+	}
+	logger := l.Logger
+	if logger == nil {
+		logger = &controlLoopMockLogger{}
+	}
+
+	run := newJobRun(JobRunConfig{
+		JobID:    jobID,
+		Runner:   JobRunnerWorkflow,
+		Config:   config,
+		Workflow: l.Workflow,
+		Resumed:  l.Resumed,
+		Agents:   agents,
+		Logger:   logger,
+		Leases:   l.Leases,
+		Node:     l.Node,
+		LeaseTTL: l.LeaseTTL,
+		Hooks:    l.Hooks,
+		Policy:   l.Policy,
+	})
+
+	run.StartState = entryStateFor(workflowRunner{})
+	if l.Resumed != nil {
+		run.StartState = resumeStateFor(workflowRunner{}, l.Resumed.State)
+		run.restore(l.Resumed)
+	}
+	if l.StartState != "" {
+		run.StartState = l.StartState
+	}
+	return run
+}
+
+// run drives the launch through the runner the daemon resolves for it,
+// exactly as the goroutine launchJob starts does. It returns the run so a
+// test can read the lease, the status and the events off it.
+func (l jobLaunch) run(ctx context.Context, t *testing.T) (*JobRun, error) {
+	t.Helper()
+	run := l.newRun(t)
+	return run, run.execute(ctx, workflowRunner{})
+}
+
+// runJob drives a fresh workflow job over svc to completion through the
+// production entry path. It is the shape most control-loop tests need.
+func runJob(ctx context.Context, t *testing.T, svc AgentService, logger interfaces.Logger, config *JobConfig) (*JobRun, error) {
+	t.Helper()
+	return jobLaunch{Config: config, Agents: svc, Logger: logger}.run(ctx, t)
+}
+
 // newTestBackends creates a basic backend list with a stateless backend.
 func newTestBackends() []*AgentBackendInfo {
 	return []*AgentBackendInfo{
@@ -364,6 +558,16 @@ func newTestBackends() []*AgentBackendInfo {
 // newTestBackendsWithPersistent creates backends including one with persistent sessions.
 func newTestBackendsWithPersistent() []*AgentBackendInfo {
 	return []*AgentBackendInfo{
+		{
+			// codex is what REVIEWS: claude reviews nothing in this fleet, so a
+			// workflow with a Claude Code lead configures its reviewer here.
+			Name: "codex",
+			Type: "codex",
+			Capabilities: BackendCapabilities{
+				PersistentSessions: true,
+				ToolUse:            true,
+			},
+		},
 		{
 			Name: "ollama",
 			Type: "ollama",
@@ -456,13 +660,13 @@ func TestNewControlLoop_CreatesValidInstance(t *testing.T) {
 	if cl == nil {
 		t.Fatal("expected non-nil ControlLoop")
 	}
-	if cl.agentService != svc {
+	if cl.job.Agents != svc {
 		t.Fatal("expected agentService to be set")
 	}
-	if cl.logger == nil {
+	if cl.job.Logger == nil {
 		t.Fatal("expected logger to be set")
 	}
-	if cl.events == nil {
+	if cl.job.events == nil {
 		t.Fatal("expected events channel to be initialized")
 	}
 	if cl.workerSessions == nil {
@@ -588,18 +792,17 @@ func TestRun_HappyPath_StatelessApproved(t *testing.T) {
 	}
 
 	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
 	config := newTestConfig()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := cl.Run(ctx, config)
+	run, err := runJob(ctx, t, svc, logger, config)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	status := cl.Status()
+	status := run.Status()
 	if status == nil {
 		t.Fatal("expected non-nil status")
 	}
@@ -622,13 +825,11 @@ func TestRun_ContextCancelled_DuringInitialize(t *testing.T) {
 		backends: newTestBackends(),
 	}
 	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately.
 
-	err := cl.Run(ctx, newTestConfig())
-	if err == nil {
+	if _, err := runJob(ctx, t, svc, logger, newTestConfig()); err == nil {
 		t.Fatal("expected error from cancelled context")
 	}
 }
@@ -649,13 +850,11 @@ func TestRun_ContextCancelled_DuringExecute(t *testing.T) {
 	}
 
 	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	err := cl.Run(ctx, newTestConfig())
-	if err == nil {
+	if _, err := runJob(ctx, t, svc, logger, newTestConfig()); err == nil {
 		t.Fatal("expected error from context timeout")
 	}
 }
@@ -675,10 +874,8 @@ func TestRun_EmptyDecomposition(t *testing.T) {
 	}
 
 	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
 
-	ctx := context.Background()
-	err := cl.Run(ctx, newTestConfig())
+	_, err := runJob(context.Background(), t, svc, logger, newTestConfig())
 	if err == nil {
 		t.Fatal("expected error for empty decomposition")
 	}
@@ -700,10 +897,8 @@ func TestRun_DecomposeError(t *testing.T) {
 	}
 
 	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
 
-	err := cl.Run(context.Background(), newTestConfig())
-	if err == nil {
+	if _, err := runJob(context.Background(), t, svc, logger, newTestConfig()); err == nil {
 		t.Fatal("expected error from decompose failure")
 	}
 }
@@ -726,9 +921,8 @@ func TestRun_NoAgentsAvailable(t *testing.T) {
 	}
 
 	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
 
-	err := cl.Run(context.Background(), newTestConfig())
+	_, err := runJob(context.Background(), t, svc, logger, newTestConfig())
 	if err == nil {
 		t.Fatal("expected error for no agents")
 	}
@@ -785,7 +979,6 @@ func TestRun_MaxIterationsExceeded_Escalation(t *testing.T) {
 	}
 
 	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
 
 	config := newTestConfig()
 	config.MaxIterations = 1 // Will escalate after first rejection.
@@ -793,7 +986,7 @@ func TestRun_MaxIterationsExceeded_Escalation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := cl.Run(ctx, config)
+	_, err := runJob(ctx, t, svc, logger, config)
 	if err == nil {
 		t.Fatal("expected error from escalation")
 	}
@@ -814,8 +1007,8 @@ func TestHandleInitialize_Success(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 
 	nextState, err := cl.handleInitialize(context.Background())
 	if err != nil {
@@ -830,11 +1023,11 @@ func TestHandleInitialize_Success(t *testing.T) {
 	if !strings.HasPrefix(cl.correlationID, "corr-") {
 		t.Fatalf("expected correlation ID to start with 'corr-', got %q", cl.correlationID)
 	}
-	if cl.jobMemory == nil {
+	if cl.job.memory == nil {
 		t.Fatal("expected job memory to be initialized")
 	}
-	if cl.validatorRegistry == nil {
-		t.Fatal("expected validator registry to be initialized")
+	if cl.validators() == nil {
+		t.Fatal("expected a validator registry to judge criteria through")
 	}
 }
 
@@ -844,8 +1037,8 @@ func TestHandleInitialize_CancelledContext(t *testing.T) {
 	svc := &controlLoopMockService{backends: newTestBackends()}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -876,9 +1069,9 @@ func TestHandleDecompose_Success(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
 
 	nextState, err := cl.handleDecompose(context.Background())
 	if err != nil {
@@ -910,10 +1103,10 @@ func TestHandleDecompose_WithAccumulatedContext(t *testing.T) {
 
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
-	cl.jobMemory = NewJobMemory()
-	cl.jobMemory.AddFeedback("review feedback from iteration 1")
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
+	cl.job.memory.AddFeedback("review feedback from iteration 1")
 
 	nextState, err := cl.handleDecompose(context.Background())
 	if err != nil {
@@ -935,9 +1128,9 @@ func TestHandleDecompose_EmptyResult(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
 
 	nextState, err := cl.handleDecompose(context.Background())
 	if err == nil {
@@ -959,9 +1152,9 @@ func TestHandleDecompose_ServiceError(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
 
 	nextState, err := cl.handleDecompose(context.Background())
 	if err == nil {
@@ -982,8 +1175,8 @@ func TestHandleSchedule_Success(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.workItems = []*WorkItem{
 		{ID: "w1", Title: "Task 1"},
 		{ID: "w2", Title: "Task 2", Dependencies: []string{"w1"}},
@@ -1013,8 +1206,8 @@ func TestHandleSchedule_WithWorkflowParallelism(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.workflow = &WorkflowDefinition{
 		Name: "test",
 		Mode: WorkflowModeConstrained,
@@ -1046,8 +1239,8 @@ func TestHandleSchedule_CyclicDependency(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.workItems = []*WorkItem{
 		{ID: "w1", Title: "Task 1", Dependencies: []string{"w2"}},
 		{ID: "w2", Title: "Task 2", Dependencies: []string{"w1"}},
@@ -1071,8 +1264,8 @@ func TestHandleSchedule_CancelledContext(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.workItems = []*WorkItem{{ID: "w1", Title: "T1"}}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1100,8 +1293,8 @@ func TestHandleAssign_Success(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.workItems = []*WorkItem{
 		{ID: "w1", Title: "Task 1"},
 	}
@@ -1133,8 +1326,8 @@ func TestHandleAssign_NoAgents(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.workItems = []*WorkItem{{ID: "w1", Title: "Task 1"}}
 	cl.executionPlan = &ExecutionPlan{
 		Waves: [][]*WorkItem{cl.workItems},
@@ -1162,8 +1355,8 @@ func TestHandleAssign_CreateTaskError(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.workItems = []*WorkItem{{ID: "w1", Title: "Task 1"}}
 	cl.executionPlan = &ExecutionPlan{
 		Waves: [][]*WorkItem{cl.workItems},
@@ -1195,8 +1388,8 @@ func TestHandleAssign_WithPersistentBackend_SpawnsSession(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.workItems = []*WorkItem{
 		{ID: "w1", Title: "Task 1", Backend: "claude"},
 	}
@@ -1232,8 +1425,8 @@ func TestHandleExecute_AllTasksComplete(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.taskIDs = []string{"task-1"}
 	cl.workItems = []*WorkItem{{ID: "w1", Title: "Task 1"}}
 
@@ -1256,8 +1449,8 @@ func TestHandleExecute_AdvancesWave(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.taskIDs = []string{"task-1"}
 	cl.workItems = []*WorkItem{
 		{ID: "w1", Title: "Task 1"},
@@ -1295,8 +1488,8 @@ func TestHandleExecute_ContextCancelled(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.taskIDs = []string{"task-1"}
 	cl.workItems = []*WorkItem{{ID: "w1", Title: "Task 1"}}
 
@@ -1326,8 +1519,8 @@ func TestHandleValidate_NoCriteria(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.taskIDs = []string{"task-1"}
 
 	nextState, err := cl.handleValidate(context.Background())
@@ -1352,8 +1545,8 @@ func TestHandleValidate_WithCriteria_AllPass(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.taskIDs = []string{"task-1"}
 	cl.workflow = &WorkflowDefinition{
 		Name: "test",
@@ -1364,8 +1557,10 @@ func TestHandleValidate_WithCriteria_AllPass(t *testing.T) {
 			},
 		},
 	}
-	cl.validatorRegistry = NewValidatorRegistry()
-	cl.validatorRegistry.Register("policy", NewPolicyValidator())
+	cl.job.validatorRegistry = NewValidatorRegistry()
+	if err := cl.job.validatorRegistry.Register("policy", ArtifactValidator(NewPolicyValidator())); err != nil {
+		t.Fatalf("register policy validator: %v", err)
+	}
 
 	nextState, err := cl.handleValidate(context.Background())
 	if err != nil {
@@ -1388,8 +1583,8 @@ func TestHandleValidate_CancelledContext(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -1422,8 +1617,8 @@ func TestHandleReview_Approved_Stateless(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.taskIDs = []string{"task-1"}
 
 	nextState, err := cl.handleReview(context.Background())
@@ -1456,8 +1651,8 @@ func TestHandleReview_Rejected_Stateless(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.taskIDs = []string{"task-1"}
 
 	nextState, err := cl.handleReview(context.Background())
@@ -1490,8 +1685,8 @@ func TestHandleReview_Approved_PersistentSession(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.taskIDs = []string{"task-1"}
 	cl.leadSessionID = "lead-session-1" // Simulates a persistent lead session.
 
@@ -1519,8 +1714,8 @@ func TestHandleReview_ParseError(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.taskIDs = []string{"task-1"}
 
 	nextState, err := cl.handleReview(context.Background())
@@ -1545,8 +1740,8 @@ func TestHandleComplete_TransitionsToCleanup(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 
 	nextState, err := cl.handleComplete(context.Background())
 	if err != nil {
@@ -1563,8 +1758,8 @@ func TestHandleComplete_CancelledContext(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -1588,8 +1783,8 @@ func TestHandleCleanup_ClosesAllSessions(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.leadSessionID = "lead-session-1"
 	cl.workerSessions = map[string]string{
 		"worker/ollama": "worker-session-1",
@@ -1623,8 +1818,8 @@ func TestHandleCleanup_HandlesCloseErrors(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.leadSessionID = "lead-session-1"
 	cl.workerSessions = map[string]string{
 		"worker/ollama": "worker-session-1",
@@ -1654,11 +1849,11 @@ func TestHandleRedelegate_WithinLimit(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.config.MaxIterations = 5
-	cl.jobID = "test-job"
-	cl.iteration = 0
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.Config.MaxIterations = 5
+	cl.job.JobID = "test-job"
+	cl.job.iteration = 0
+	cl.job.memory = NewJobMemory()
 	cl.reviewResponse = &ReviewResponse{
 		Approved: false,
 		Feedback: "needs improvement",
@@ -1674,14 +1869,14 @@ func TestHandleRedelegate_WithinLimit(t *testing.T) {
 	if nextState != JobStateDecomposing {
 		t.Fatalf("expected decomposing state, got %q", nextState)
 	}
-	if cl.iteration != 1 {
-		t.Fatalf("expected iteration=1, got %d", cl.iteration)
+	if cl.job.iteration != 1 {
+		t.Fatalf("expected iteration=1, got %d", cl.job.iteration)
 	}
-	if len(cl.jobMemory.ReviewFeedback) != 1 {
-		t.Fatalf("expected 1 review feedback, got %d", len(cl.jobMemory.ReviewFeedback))
+	if len(cl.job.memory.ReviewFeedback) != 1 {
+		t.Fatalf("expected 1 review feedback, got %d", len(cl.job.memory.ReviewFeedback))
 	}
-	if len(cl.jobMemory.FailedApproaches) != 1 {
-		t.Fatalf("expected 1 failed approach, got %d", len(cl.jobMemory.FailedApproaches))
+	if len(cl.job.memory.FailedApproaches) != 1 {
+		t.Fatalf("expected 1 failed approach, got %d", len(cl.job.memory.FailedApproaches))
 	}
 }
 
@@ -1691,11 +1886,11 @@ func TestHandleRedelegate_ExceedsLimit(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.config.MaxIterations = 2
-	cl.jobID = "test-job"
-	cl.iteration = 1 // Will become 2 after increment, matching limit.
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.Config.MaxIterations = 2
+	cl.job.JobID = "test-job"
+	cl.job.iteration = 1 // Will become 2 after increment, matching limit.
+	cl.job.memory = NewJobMemory()
 	cl.reviewResponse = &ReviewResponse{
 		Approved: false,
 		Feedback: "still bad",
@@ -1716,11 +1911,11 @@ func TestHandleRedelegate_UsesWorkflowSettings(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.config.MaxIterations = 100 // High limit.
-	cl.jobID = "test-job"
-	cl.iteration = 0
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.Config.MaxIterations = 100 // High limit.
+	cl.job.JobID = "test-job"
+	cl.job.iteration = 0
+	cl.job.memory = NewJobMemory()
 	cl.reviewResponse = &ReviewResponse{Feedback: "bad"}
 	cl.workflow = &WorkflowDefinition{
 		Name: "test",
@@ -1749,9 +1944,9 @@ func TestHandleEscalate_ReturnsFailed(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
-	cl.iteration = 5
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.iteration = 5
 	cl.leadSessionID = "lead-1"
 	cl.workerSessions = map[string]string{"w/o": "ws-1"}
 
@@ -2131,7 +2326,7 @@ func TestResolveBackendForItem_ExplicitBackend(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.config = newTestConfig()
+	cl.job.Config = newTestConfig()
 
 	item := &WorkItem{Backend: "custom-backend"}
 	result := cl.resolveBackendForItem(item)
@@ -2144,7 +2339,7 @@ func TestResolveBackendForItem_WorkflowRole(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.config = newTestConfig()
+	cl.job.Config = newTestConfig()
 	cl.workflow = &WorkflowDefinition{
 		Name: "test",
 		Agents: []AgentRoleSpec{
@@ -2163,7 +2358,7 @@ func TestResolveBackendForItem_FallsBackToLeadBackend(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.config = newTestConfig()
+	cl.job.Config = newTestConfig()
 
 	item := &WorkItem{Title: "no backend specified"}
 	result := cl.resolveBackendForItem(item)
@@ -2176,7 +2371,7 @@ func TestResolveModelForRole_Found(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.config = newTestConfig()
+	cl.job.Config = newTestConfig()
 	cl.workflow = &WorkflowDefinition{
 		Agents: []AgentRoleSpec{
 			{Role: "worker", Model: "gpt-4"},
@@ -2193,7 +2388,7 @@ func TestResolveModelForRole_FallsBack(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.config = newTestConfig()
+	cl.job.Config = newTestConfig()
 
 	model := cl.resolveModelForRole("unknown")
 	if model != "test-model" { // From newTestConfig.LeadModel
@@ -2444,7 +2639,7 @@ func TestResolveBackendForMode_ConstrainedMode_UsesWorkflowRole(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.config = newTestConfig()
+	cl.job.Config = newTestConfig()
 	cl.workflow = &WorkflowDefinition{
 		Name: "test",
 		Mode: WorkflowModeConstrained,
@@ -2467,7 +2662,7 @@ func TestResolveBackendForMode_ConstrainedMode_FallsBackToLead(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.config = newTestConfig()
+	cl.job.Config = newTestConfig()
 	cl.workflow = &WorkflowDefinition{
 		Name: "test",
 		Mode: WorkflowModeConstrained,
@@ -2488,7 +2683,7 @@ func TestResolveBackendForMode_CannedMode_UsesWorkflowRole(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.config = newTestConfig()
+	cl.job.Config = newTestConfig()
 	cl.workflow = &WorkflowDefinition{
 		Name: "test",
 		Mode: WorkflowModeCanned,
@@ -2508,7 +2703,7 @@ func TestResolveBackendForMode_AutonomousMode_UsesItemBackend(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.config = newTestConfig()
+	cl.job.Config = newTestConfig()
 	cl.workflow = &WorkflowDefinition{
 		Name: "test",
 		Mode: WorkflowModeAutonomous,
@@ -2531,7 +2726,7 @@ func TestResolveBackendForMode_AutonomousMode_UnknownBackendFallsBack(t *testing
 
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(&controlLoopMockService{}, logger)
-	cl.config = newTestConfig()
+	cl.job.Config = newTestConfig()
 	cl.workflow = &WorkflowDefinition{
 		Name: "test",
 		Mode: WorkflowModeAutonomous,
@@ -2555,7 +2750,7 @@ func TestResolveBackendForMode_NilWorkflow(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.config = newTestConfig()
+	cl.job.Config = newTestConfig()
 	cl.workflow = nil
 
 	item := &WorkItem{Backend: "custom"}
@@ -2656,7 +2851,7 @@ func TestExtractConstraints_WithConstraints(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.jobMemory = NewJobMemory()
+	cl.job.memory = NewJobMemory()
 
 	items := []*WorkItem{
 		{Title: "Task 1", Description: "Do something\nconstraint: Must use Go 1.21+\nMore details"},
@@ -2665,14 +2860,14 @@ func TestExtractConstraints_WithConstraints(t *testing.T) {
 
 	cl.extractConstraints(items)
 
-	if len(cl.jobMemory.Constraints) != 2 {
-		t.Fatalf("expected 2 constraints, got %d", len(cl.jobMemory.Constraints))
+	if len(cl.job.memory.Constraints) != 2 {
+		t.Fatalf("expected 2 constraints, got %d", len(cl.job.memory.Constraints))
 	}
-	if cl.jobMemory.Constraints[0] != "Must use Go 1.21+" {
-		t.Fatalf("unexpected first constraint: %q", cl.jobMemory.Constraints[0])
+	if cl.job.memory.Constraints[0] != "Must use Go 1.21+" {
+		t.Fatalf("unexpected first constraint: %q", cl.job.memory.Constraints[0])
 	}
-	if cl.jobMemory.Constraints[1] != "No external dependencies" {
-		t.Fatalf("unexpected second constraint: %q", cl.jobMemory.Constraints[1])
+	if cl.job.memory.Constraints[1] != "No external dependencies" {
+		t.Fatalf("unexpected second constraint: %q", cl.job.memory.Constraints[1])
 	}
 }
 
@@ -2680,7 +2875,7 @@ func TestExtractConstraints_NoConstraints(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.jobMemory = NewJobMemory()
+	cl.job.memory = NewJobMemory()
 
 	items := []*WorkItem{
 		{Title: "Task 1", Description: "Just a regular description"},
@@ -2688,8 +2883,8 @@ func TestExtractConstraints_NoConstraints(t *testing.T) {
 
 	cl.extractConstraints(items)
 
-	if len(cl.jobMemory.Constraints) != 0 {
-		t.Fatalf("expected 0 constraints, got %d", len(cl.jobMemory.Constraints))
+	if len(cl.job.memory.Constraints) != 0 {
+		t.Fatalf("expected 0 constraints, got %d", len(cl.job.memory.Constraints))
 	}
 }
 
@@ -2697,7 +2892,7 @@ func TestExtractConstraints_NilJobMemory(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.jobMemory = nil
+	cl.job.memory = nil
 
 	// Should not panic.
 	cl.extractConstraints([]*WorkItem{{Title: "T", Description: "constraint: test"}})
@@ -2707,7 +2902,7 @@ func TestExtractConstraints_DuplicateConstraints(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.jobMemory = NewJobMemory()
+	cl.job.memory = NewJobMemory()
 
 	items := []*WorkItem{
 		{Title: "Task 1", Description: "constraint: Must use TLS"},
@@ -2716,8 +2911,8 @@ func TestExtractConstraints_DuplicateConstraints(t *testing.T) {
 
 	cl.extractConstraints(items)
 
-	if len(cl.jobMemory.Constraints) != 1 {
-		t.Fatalf("expected 1 unique constraint, got %d", len(cl.jobMemory.Constraints))
+	if len(cl.job.memory.Constraints) != 1 {
+		t.Fatalf("expected 1 unique constraint, got %d", len(cl.job.memory.Constraints))
 	}
 }
 
@@ -2729,8 +2924,8 @@ func TestAdvanceOrValidate_MoreWaves(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.executionPlan = &ExecutionPlan{
 		Waves: [][]*WorkItem{
 			{{ID: "w1", Title: "Wave 1"}},
@@ -2756,8 +2951,8 @@ func TestAdvanceOrValidate_LastWave(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.executionPlan = &ExecutionPlan{
 		Waves: [][]*WorkItem{
 			{{ID: "w1", Title: "Wave 1"}},
@@ -2788,8 +2983,8 @@ func TestHandleAssign_PopulatesAgentIdentities(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job-123"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job-123"
 	cl.workflow = &WorkflowDefinition{
 		Name: "test",
 		Mode: WorkflowModeConstrained,
@@ -2841,8 +3036,8 @@ func TestHandleAssign_DoesNotDuplicateIdentities(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.workItems = []*WorkItem{
 		{ID: "w1", Title: "Task 1"},
 		{ID: "w2", Title: "Task 2"},
@@ -2878,8 +3073,8 @@ func TestHandleAssign_ConstrainedMode_UsesWorkflowAgents(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.workflow = &WorkflowDefinition{
 		Name: "test",
 		Mode: WorkflowModeConstrained,
@@ -2924,9 +3119,9 @@ func TestHandleExecute_ConcurrentPersistentSessions(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
 	cl.taskIDs = []string{"task-1", "task-2"}
 	cl.workItems = []*WorkItem{
 		{ID: "w1", Title: "Task 1", Description: "Do task 1", Backend: "claude"},
@@ -2948,8 +3143,8 @@ func TestHandleExecute_ConcurrentPersistentSessions(t *testing.T) {
 	}
 
 	// Verify job memory recorded successes.
-	if len(cl.jobMemory.SuccessfulApproaches) != 2 {
-		t.Fatalf("expected 2 successful approaches, got %d", len(cl.jobMemory.SuccessfulApproaches))
+	if len(cl.job.memory.SuccessfulApproaches) != 2 {
+		t.Fatalf("expected 2 successful approaches, got %d", len(cl.job.memory.SuccessfulApproaches))
 	}
 }
 
@@ -2964,9 +3159,9 @@ func TestHandleExecute_ConcurrentWorkerFailure(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
 	cl.taskIDs = []string{"task-1"}
 	cl.workItems = []*WorkItem{
 		{ID: "w1", Title: "Failing Task", Description: "Will fail", Backend: "claude"},
@@ -2987,11 +3182,11 @@ func TestHandleExecute_ConcurrentWorkerFailure(t *testing.T) {
 	}
 
 	// Verify job memory recorded the failure.
-	if len(cl.jobMemory.FailedApproaches) != 1 {
-		t.Fatalf("expected 1 failed approach, got %d", len(cl.jobMemory.FailedApproaches))
+	if len(cl.job.memory.FailedApproaches) != 1 {
+		t.Fatalf("expected 1 failed approach, got %d", len(cl.job.memory.FailedApproaches))
 	}
-	if cl.jobMemory.FailedApproaches[0].WorkItemTitle != "Failing Task" {
-		t.Fatalf("expected failed approach title 'Failing Task', got %q", cl.jobMemory.FailedApproaches[0].WorkItemTitle)
+	if cl.job.memory.FailedApproaches[0].WorkItemTitle != "Failing Task" {
+		t.Fatalf("expected failed approach title 'Failing Task', got %q", cl.job.memory.FailedApproaches[0].WorkItemTitle)
 	}
 }
 
@@ -3027,9 +3222,9 @@ func TestHandleExecute_SameSessionItemsRunSequentially(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
 	cl.taskIDs = []string{"task-1", "task-2", "task-3"}
 	cl.workItems = []*WorkItem{
 		{ID: "w1", Title: "Task 1", Description: "Do task 1", Backend: "claude"},
@@ -3101,9 +3296,9 @@ func TestHandleExecute_DifferentSessionsRunConcurrently(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
 	cl.taskIDs = []string{"task-1", "task-2"}
 	cl.workItems = []*WorkItem{
 		{ID: "w1", Title: "Task 1", Description: "Do task 1", RequiredRole: "coder", Backend: "codex"},
@@ -3161,8 +3356,8 @@ func TestHandleExecute_DifferentSessionsRunConcurrently(t *testing.T) {
 	}
 
 	// Verify both items were handled.
-	if len(cl.jobMemory.SuccessfulApproaches) != 2 {
-		t.Fatalf("expected 2 successful approaches, got %d", len(cl.jobMemory.SuccessfulApproaches))
+	if len(cl.job.memory.SuccessfulApproaches) != 2 {
+		t.Fatalf("expected 2 successful approaches, got %d", len(cl.job.memory.SuccessfulApproaches))
 	}
 }
 
@@ -3192,9 +3387,9 @@ func TestHandleExecute_MixedSessionsSerializeCorrectly(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
 	cl.taskIDs = []string{"task-1", "task-2", "task-3"}
 	cl.workItems = []*WorkItem{
 		{ID: "w1", Title: "Task A1", Description: "First on session A", RequiredRole: "coder", Backend: "codex"},
@@ -3218,8 +3413,8 @@ func TestHandleExecute_MixedSessionsSerializeCorrectly(t *testing.T) {
 	}
 
 	// All 3 items should have been executed.
-	if len(cl.jobMemory.SuccessfulApproaches) != 3 {
-		t.Fatalf("expected 3 successful approaches, got %d", len(cl.jobMemory.SuccessfulApproaches))
+	if len(cl.job.memory.SuccessfulApproaches) != 3 {
+		t.Fatalf("expected 3 successful approaches, got %d", len(cl.job.memory.SuccessfulApproaches))
 	}
 
 	// Drain the channel into a slice (safe now, all goroutines are done).
@@ -3275,9 +3470,9 @@ func TestHandleExecute_SessionSerializationWithFailure(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
 	cl.taskIDs = []string{"task-1", "task-2"}
 	cl.workItems = []*WorkItem{
 		{ID: "w1", Title: "Failing Task", Description: "Will fail", Backend: "claude"},
@@ -3304,11 +3499,11 @@ func TestHandleExecute_SessionSerializationWithFailure(t *testing.T) {
 		t.Fatalf("expected 2 prompt calls (one failed, one succeeded), got %d", totalCalls)
 	}
 
-	if len(cl.jobMemory.FailedApproaches) != 1 {
-		t.Fatalf("expected 1 failed approach, got %d", len(cl.jobMemory.FailedApproaches))
+	if len(cl.job.memory.FailedApproaches) != 1 {
+		t.Fatalf("expected 1 failed approach, got %d", len(cl.job.memory.FailedApproaches))
 	}
-	if len(cl.jobMemory.SuccessfulApproaches) != 1 {
-		t.Fatalf("expected 1 successful approach, got %d", len(cl.jobMemory.SuccessfulApproaches))
+	if len(cl.job.memory.SuccessfulApproaches) != 1 {
+		t.Fatalf("expected 1 successful approach, got %d", len(cl.job.memory.SuccessfulApproaches))
 	}
 }
 
@@ -3316,7 +3511,7 @@ func TestResolveWorkerSession_ReturnsSessionID(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.config = newTestConfig()
+	cl.job.Config = newTestConfig()
 	cl.workerSessions = map[string]string{
 		"worker/claude": "session-abc",
 		"coder/codex":   "session-xyz",
@@ -3341,7 +3536,7 @@ func TestResolveWorkerSession_ReturnsEmptyForNoSession(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.config = newTestConfig()
+	cl.job.Config = newTestConfig()
 	cl.workerSessions = map[string]string{}
 
 	item := &WorkItem{Backend: "ollama"}
@@ -3369,8 +3564,8 @@ func TestHandleReview_ConsultsCommunicationPolicy(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.taskIDs = []string{"task-1"}
 
 	nextState, err := cl.handleReview(context.Background())
@@ -3383,7 +3578,7 @@ func TestHandleReview_ConsultsCommunicationPolicy(t *testing.T) {
 
 	// Verify the debug log about communication policy was emitted.
 	found := false
-	for _, msg := range logger.debugMessages {
+	for _, msg := range logger.debugLines() {
 		if strings.Contains(msg, "review phase using") {
 			found = true
 			break
@@ -3410,12 +3605,12 @@ func TestHandleDecompose_EmitsAuditEvent(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
 
 	var auditEvents []string
-	cl.auditFn = func(eventType, details string) {
+	cl.job.auditFn = func(eventType, details string) {
 		auditEvents = append(auditEvents, eventType+":"+details)
 	}
 
@@ -3449,14 +3644,14 @@ func TestHandleSchedule_EmitsAuditEvent(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 	cl.workItems = []*WorkItem{
 		{ID: "w1", Title: "Task 1"},
 	}
 
 	var auditEvents []string
-	cl.auditFn = func(eventType, details string) {
+	cl.job.auditFn = func(eventType, details string) {
 		auditEvents = append(auditEvents, eventType+":"+details)
 	}
 
@@ -3486,11 +3681,11 @@ func TestHandleComplete_EmitsAuditEvent(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
 
 	var auditEvents []string
-	cl.auditFn = func(eventType, details string) {
+	cl.job.auditFn = func(eventType, details string) {
 		auditEvents = append(auditEvents, eventType+":"+details)
 	}
 
@@ -3520,15 +3715,15 @@ func TestHandleRedelegate_EmitsAuditEvent(t *testing.T) {
 	svc := &controlLoopMockService{}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.config.MaxIterations = 10
-	cl.jobID = "test-job"
-	cl.iteration = 0
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.Config.MaxIterations = 10
+	cl.job.JobID = "test-job"
+	cl.job.iteration = 0
+	cl.job.memory = NewJobMemory()
 	cl.reviewResponse = &ReviewResponse{Feedback: "try again"}
 
 	var auditEvents []string
-	cl.auditFn = func(eventType, details string) {
+	cl.job.auditFn = func(eventType, details string) {
 		auditEvents = append(auditEvents, eventType+":"+details)
 	}
 
@@ -3564,9 +3759,9 @@ func TestHandleDecompose_ExtractsConstraints(t *testing.T) {
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "test-job"
-	cl.jobMemory = NewJobMemory()
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
 
 	nextState, err := cl.handleDecompose(context.Background())
 	if err != nil {
@@ -3575,11 +3770,11 @@ func TestHandleDecompose_ExtractsConstraints(t *testing.T) {
 	if nextState != JobStateScheduling {
 		t.Fatalf("expected scheduling state, got %q", nextState)
 	}
-	if len(cl.jobMemory.Constraints) != 1 {
-		t.Fatalf("expected 1 constraint, got %d", len(cl.jobMemory.Constraints))
+	if len(cl.job.memory.Constraints) != 1 {
+		t.Fatalf("expected 1 constraint, got %d", len(cl.job.memory.Constraints))
 	}
-	if cl.jobMemory.Constraints[0] != "No external deps" {
-		t.Fatalf("expected constraint 'No external deps', got %q", cl.jobMemory.Constraints[0])
+	if cl.job.memory.Constraints[0] != "No external deps" {
+		t.Fatalf("expected constraint 'No external deps', got %q", cl.job.memory.Constraints[0])
 	}
 }
 
@@ -3802,4 +3997,223 @@ func (m *controlLoopMockService) PromptSessionAsync(ctx context.Context, req *Pr
 		Status:    TurnStatusAccepted,
 		Sequence:  1,
 	}, nil
+}
+
+// =============================================================================
+// A decomposed work item belongs to the job's project (#613)
+// =============================================================================
+
+// TestHandleDecompose_WorkItemsCarryTheJobsProject proves the lead's answer is
+// scoped before it is used.
+//
+// The lead is given the project as decomposition CONTEXT (DecomposeTaskRequest
+// .ProjectIDs) and its answer comes back as free-form work items, so nothing
+// in the reply is bound to the project the job runs under. WorkItem.ProjectID
+// existed and no production path ever set it (#613): every item the engine
+// decomposed was unscoped, and the prompt built from it named no project.
+func TestHandleDecompose_WorkItemsCarryTheJobsProject(t *testing.T) {
+	t.Parallel()
+
+	const projectID = "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+	svc := &controlLoopMockService{
+		decomposeResponse: &DecomposeTaskResponse{
+			WorkItems: []*WorkItem{
+				{ID: "w1", Title: "Task 1"},
+				// A lead that echoed some other project must not be believed:
+				// the job's project is the authority, not the reply's.
+				{ID: "w2", Title: "Task 2", ProjectID: "some-other-project"},
+			},
+		},
+	}
+	cl := NewControlLoop(svc, &controlLoopMockLogger{})
+	cl.job.Config = newTestConfig()
+	cl.job.Config.ProjectID = projectID
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
+
+	if _, err := cl.handleDecompose(context.Background()); err != nil {
+		t.Fatalf("handleDecompose: %v", err)
+	}
+	for _, item := range cl.workItems {
+		if item.ProjectID != projectID {
+			t.Errorf("work item %s project = %q, want the job's %q", item.ID, item.ProjectID, projectID)
+		}
+	}
+}
+
+// TestHandleDecompose_AnUnscopedJobLeavesWorkItemsUnscoped is the other half:
+// a job with no project must not have one invented for it, because an empty
+// project is a real state (an unscoped job) and a made-up one would be keyed,
+// leased and prompted as though it were real.
+func TestHandleDecompose_AnUnscopedJobLeavesWorkItemsUnscoped(t *testing.T) {
+	t.Parallel()
+
+	svc := &controlLoopMockService{
+		decomposeResponse: &DecomposeTaskResponse{
+			WorkItems: []*WorkItem{{ID: "w1", Title: "Task 1", ProjectID: "stale"}},
+		},
+	}
+	cl := NewControlLoop(svc, &controlLoopMockLogger{})
+	cl.job.Config = newTestConfig()
+	cl.job.Config.ProjectID = ""
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
+
+	if _, err := cl.handleDecompose(context.Background()); err != nil {
+		t.Fatalf("handleDecompose: %v", err)
+	}
+	if got := cl.workItems[0].ProjectID; got != "" {
+		t.Fatalf("an unscoped job's work item project = %q, want empty", got)
+	}
+}
+
+// TestHandleAssign_TaskCarriesTheWorkItemsProject proves the scope survives
+// the step that persists it. CreateTaskRequest was built without a ProjectID
+// at all (#613), so every task the engine decomposed a job into was created
+// unscoped: invisible to a project listing, uncounted by the project's
+// concurrency quota, and leased under the unscoped segment.
+func TestHandleAssign_TaskCarriesTheWorkItemsProject(t *testing.T) {
+	t.Parallel()
+
+	const projectID = "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+	svc := &controlLoopMockService{
+		backends: newTestBackends(),
+		agents:   newTestAgents(),
+	}
+	cl := NewControlLoop(svc, &controlLoopMockLogger{})
+	cl.job.Config = newTestConfig()
+	cl.job.Config.ProjectID = projectID
+	cl.job.JobID = "test-job"
+	cl.workItems = []*WorkItem{{ID: "w1", Title: "Task 1", ProjectID: projectID}}
+	cl.executionPlan = &ExecutionPlan{Waves: [][]*WorkItem{cl.workItems}}
+	cl.currentWave = 0
+
+	if _, err := cl.handleAssign(context.Background()); err != nil {
+		t.Fatalf("handleAssign: %v", err)
+	}
+	if len(svc.createdTasks) != 1 {
+		t.Fatalf("created %d tasks, want 1", len(svc.createdTasks))
+	}
+	if got := svc.createdTasks[0].ProjectID; got != projectID {
+		t.Fatalf("task project = %q, want %q", got, projectID)
+	}
+}
+
+// =============================================================================
+// Tests: handleExecute — the post-turn publication
+// =============================================================================
+
+// TestHandleExecute_PublishesEveryProductiveTurn proves the engine's trigger is
+// on the path a worker's answer takes: a turn that produced a reply is a turn
+// that may have changed the checkout, and on an ephemeral workspace that work
+// exists only until the container goes.
+func TestHandleExecute_PublishesEveryProductiveTurn(t *testing.T) {
+	t.Parallel()
+
+	svc := &controlLoopMockService{
+		promptResponse: &PromptSessionResponse{
+			Content: []ContentBlock{{Type: "text", Text: "done"}},
+		},
+		tasks: []*Task{
+			{ID: "task-1", Status: TaskStatusCompleted, Result: &TaskResult{Output: "done"}},
+			{ID: "task-2", Status: TaskStatusCompleted, Result: &TaskResult{Output: "done"}},
+		},
+	}
+	cl := NewControlLoop(svc, &controlLoopMockLogger{})
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
+	cl.taskIDs = []string{"task-1", "task-2"}
+	cl.workItems = []*WorkItem{
+		{ID: "w1", Title: "Task 1", Description: "Do task 1", Backend: "claude"},
+		{ID: "w2", Title: "Task 2", Description: "Do task 2", Backend: "claude"},
+	}
+	cl.workerSessions = map[string]string{"worker/claude": "session-1"}
+
+	pusher := &fakeTurnPusher{}
+	cl.job.SetTurnPusher(pusher)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	nextState, err := cl.handleExecute(ctx)
+	if err != nil {
+		t.Fatalf("handleExecute: %v", err)
+	}
+	if nextState != JobStateValidating {
+		t.Fatalf("next state = %q, want validating", nextState)
+	}
+	if got := pusher.calls.Load(); got != 2 {
+		t.Fatalf("the work was published %d time(s), want one publication per productive turn", got)
+	}
+}
+
+// TestHandleExecute_APublicationFailureFailsTheJob is the fail-loud half: under
+// an ephemeral workspace a push that could not happen is work that will not
+// exist after the next restart, so the loop must stop rather than carry on
+// building on it.
+func TestHandleExecute_APublicationFailureFailsTheJob(t *testing.T) {
+	t.Parallel()
+
+	svc := &controlLoopMockService{
+		promptResponse: &PromptSessionResponse{
+			Content: []ContentBlock{{Type: "text", Text: "done"}},
+		},
+		tasks: []*Task{{ID: "task-1", Status: TaskStatusCompleted, Result: &TaskResult{Output: "done"}}},
+	}
+	cl := NewControlLoop(svc, &controlLoopMockLogger{})
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
+	cl.taskIDs = []string{"task-1"}
+	cl.workItems = []*WorkItem{{ID: "w1", Title: "Task 1", Description: "Do task 1", Backend: "claude"}}
+	cl.workerSessions = map[string]string{"worker/claude": "session-1"}
+	cl.job.SetTurnPusher(&fakeTurnPusher{err: errors.New("remote rejected: non-fast-forward")})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	nextState, err := cl.handleExecute(ctx)
+	var pushErr *TurnPushError
+	if !errors.As(err, &pushErr) {
+		t.Fatalf("handleExecute() = %T %v, want a TurnPushError", err, err)
+	}
+	if nextState != JobStateFailed {
+		t.Fatalf("next state = %q, want failed", nextState)
+	}
+}
+
+// TestHandleExecute_ARunWithNoPusherIsUnchanged is the inertness guard: every
+// lead-driven job today installs no pusher, and the loop must behave exactly as
+// it did before the seam existed.
+func TestHandleExecute_ARunWithNoPusherIsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	svc := &controlLoopMockService{
+		promptResponse: &PromptSessionResponse{
+			Content: []ContentBlock{{Type: "text", Text: "done"}},
+		},
+		tasks: []*Task{{ID: "task-1", Status: TaskStatusCompleted, Result: &TaskResult{Output: "done"}}},
+	}
+	cl := NewControlLoop(svc, &controlLoopMockLogger{})
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "test-job"
+	cl.job.memory = NewJobMemory()
+	cl.taskIDs = []string{"task-1"}
+	cl.workItems = []*WorkItem{{ID: "w1", Title: "Task 1", Description: "Do task 1", Backend: "claude"}}
+	cl.workerSessions = map[string]string{"worker/claude": "session-1"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	nextState, err := cl.handleExecute(ctx)
+	if err != nil {
+		t.Fatalf("handleExecute: %v", err)
+	}
+	if nextState != JobStateValidating {
+		t.Fatalf("next state = %q, want validating", nextState)
+	}
+	if len(cl.job.memory.SuccessfulApproaches) != 1 {
+		t.Fatalf("successes = %d, want 1", len(cl.job.memory.SuccessfulApproaches))
+	}
 }

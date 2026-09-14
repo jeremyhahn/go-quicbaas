@@ -1,0 +1,3 @@
+## Available Agent Capabilities
+- Role: lead, Backend: claude, Capabilities: persistent_sessions, tool_use
+- Role: worker, Backend: ollama

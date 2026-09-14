@@ -35,10 +35,10 @@ import "strings"
 //
 // The surfaces below are mapped onto the SAME qrdb permission their REST and
 // gRPC siblings require, so one grant authorizes the same operation identically
-// on every transport (KMS / crypto / DEK -> keys:* + backends:read, secrets ->
-// credentials:*, messaging -> messaging:*, embedding -> embedding:*, RAG ->
-// rag:*, the go-xkms compatibility tools -> the xkmsOps families, and the IAM
-// sub-surfaces that have a REST rule).
+// on every transport (KMS / crypto / DEK -> keys:* + backends:read, the tenant
+// secret vault -> secrets:*, messaging -> messaging:*, embedding ->
+// embedding:*, RAG -> rag:*, the go-xkms compatibility tools -> the xkmsOps
+// families, and the IAM sub-surfaces that have a REST rule).
 //
 // Surfaces the qrdb permission registry still does NOT define a resource family
 // for, and which therefore have no sibling rule to copy, remain intentionally
@@ -62,17 +62,18 @@ type qrdbToolResource struct {
 // qrdbToolExactMapping maps exact MCP tool names to the qrdb permission they
 // require. Every value is a registered qrdb permission.
 var qrdbToolExactMapping = map[string]qrdbToolResource{
-	// KV (quicbaas + qrdb mirror)
-	"quicbaas_get":          {"kv", "get"},
-	"quicbaas_list":         {"kv", "list"},
+	// KV. The quicbaas_ names here are the ones the registry actually
+	// registers; the quicbaas_get / quicbaas_put / quicbaas_set /
+	// quicbaas_scan / quicbaas_list / quicbaas_delete aliases that used to sit
+	// beside them named no registered tool and no dispatch case, so they were
+	// pure dead entries — the same defect as the eight user/role entries below,
+	// and removed with them in issue #905.
+	// TestMCPPermissions_EveryMappedToolIsRegistered now makes that class of
+	// entry impossible to add back.
 	"quicbaas_query":        {"kv", "range"},
-	"quicbaas_scan":         {"kv", "range"},
 	"quicbaas_scan_index":   {"index", "scan"},
 	"quicbaas_batch_get":    {"batch", "execute"},
-	"quicbaas_put":          {"kv", "put"},
 	"quicbaas_batch_put":    {"batch", "execute"},
-	"quicbaas_set":          {"kv", "put"},
-	"quicbaas_delete":       {"kv", "delete"},
 	"quicbaas_batch_delete": {"batch", "execute"},
 	"qrdb_get":              {"kv", "get"},
 	"qrdb_list":             {"kv", "list"},
@@ -102,22 +103,18 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_backup_delete":  {"backup", "delete"},
 	"quicbaas_backup_verify":  {"backup", "verify"},
 
-	// User / role management (quicbaas + qrdb mirror)
-	"quicbaas_user_create": {"users", "create"},
-	"quicbaas_user_delete": {"users", "delete"},
-	"quicbaas_user_list":   {"users", "list"},
-	"quicbaas_role_create": {"roles", "create"},
-	"quicbaas_role_delete": {"roles", "delete"},
-	"quicbaas_role_list":   {"roles", "list"},
-	"quicbaas_role_assign": {"roles", "assign"},
-	"quicbaas_role_revoke": {"roles", "unassign"},
-	"qrdb_user_create":     {"users", "create"},
-	"qrdb_user_delete":     {"users", "delete"},
-	"qrdb_user_list":       {"users", "list"},
+	// Role management. ROLES ONLY: user administration is the quicbaas_iam_user_*
+	// family further down, which is the single user surface. The eight entries
+	// removed here in issue #905 were either mapped to tools that were never
+	// registered (quicbaas_user_* and quicbaas_role_create/delete/list/assign) or
+	// mapped to the qrdb_user_create/delete/list tools that routed through an
+	// auth manager production never wired, so they could not succeed. The four
+	// that remain back live tools (pkg/service/rbac_role_store.go).
 	"qrdb_role_create":     {"roles", "create"},
 	"qrdb_role_delete":     {"roles", "delete"},
 	"qrdb_role_list":       {"roles", "list"},
 	"qrdb_role_assign":     {"roles", "assign"},
+	"quicbaas_role_revoke": {"roles", "unassign"},
 
 	// qrdb user lookup + user-login factor surface (qrdb mirror; see
 	// tools_qrdb_users.go). Lookups map to the users:* read family; factor
@@ -208,11 +205,13 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_object_admin_compact_backend":    {"objstore", "admin"},
 
 	// Orchestrator -> orchestrator
-	"quicbaas_orchestrator_spawn":           {"orchestrator", "spawn"},
-	"quicbaas_orchestrator_prompt":          {"orchestrator", "prompt"},
-	"quicbaas_orchestrator_status":          {"orchestrator", "status"},
-	"quicbaas_orchestrator_session_history": {"orchestrator", "status"},
-	"quicbaas_orchestrator_close":           {"orchestrator", "close"},
+	"quicbaas_orchestrator_spawn":                {"orchestrator", "spawn"},
+	"quicbaas_orchestrator_prompt":               {"orchestrator", "prompt"},
+	"quicbaas_orchestrator_status":               {"orchestrator", "status"},
+	"quicbaas_orchestrator_session_history":      {"orchestrator", "status"},
+	"quicbaas_orchestrator_session_conversation": {"orchestrator", "status"},
+	"quicbaas_orchestrator_cost":                 {"orchestrator", "status"},
+	"quicbaas_orchestrator_close":                {"orchestrator", "close"},
 	// Rotation closes the session's agent process and reconstitutes it against
 	// a newly selected pooled credential — a spawn's authority, not a close's.
 	// Mirrors the gRPC canon (RotateSessionAccount), the REST PEP rule
@@ -221,12 +220,16 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_orchestrator_list":           {"orchestrator", "list"},
 	"quicbaas_orchestrator_list_sessions":  {"orchestrator", "list"},
 	"quicbaas_orchestrator_task_create":    {"orchestrator", "task_create"},
+	"quicbaas_orchestrator_task_block":     {"orchestrator", "task_block"},
+	"quicbaas_orchestrator_task_readmit":   {"orchestrator", "task_readmit"},
+	"quicbaas_orchestrator_task_delete":    {"orchestrator", "task_create"},
 	"quicbaas_orchestrator_decompose":      {"orchestrator", "task_decompose"},
 	"quicbaas_orchestrator_start_job":      {"orchestrator", "job_start"},
 	"quicbaas_orchestrator_get_job_status": {"orchestrator", "job_read"},
 	"quicbaas_orchestrator_list_jobs":      {"orchestrator", "job_list"},
 	"quicbaas_orchestrator_cancel_job":     {"orchestrator", "job_cancel"},
 	"quicbaas_orchestrator_list_backends":  {"orchestrator", "backend_list"},
+	"quicbaas_orchestrator_list_runners":   {"orchestrator", "status"},
 	"quicbaas_orchestrator_discover":       {"orchestrator", "discover"},
 	"quicbaas_orchestrator_health":         {"orchestrator", "health"},
 	"quicbaas_orchestrator_inference":      {"orchestrator", "inference"},
@@ -310,21 +313,41 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"project_grant_agent":  {"project", "grant"},
 	"project_revoke_agent": {"project", "revoke"},
 
+	// SDLC module -> sdlc (tools are registered without a quicbaas_ prefix).
+	// Mirrors the REST rules for /api/v1/sdlc/projects/{projectID}/binding,
+	// /api/v1/sdlc/tasks/{taskID}/delivery and /api/v1/sdlc/forges.
+	"sdlc_bind":     {"sdlc", "bind"},
+	"sdlc_unbind":   {"sdlc", "unbind"},
+	"sdlc_binding":  {"sdlc", "read"},
+	"sdlc_delivery": {"sdlc", "read"},
+	"sdlc_forges":   {"sdlc", "read"},
+	// sdlc_onboard WRITES to the forge, so it carries the same bind
+	// permission as PUT .../binding; sdlc_conformance only reads. The split
+	// is the point: a reader may ask what state a repository is in without
+	// being able to change it.
+	"sdlc_onboard":     {"sdlc", "bind"},
+	"sdlc_conformance": {"sdlc", "read"},
+
 	// Pooled provider accounts -> credentials. An account custodies credential
 	// material (an Anthropic / Codex / OpenCode login), so it authorizes with
 	// the qrdb credentials:* family — matching the REST PEP mapping
 	// (pkg/api/rest/authz_pep_mapping.go) and the gRPC mapping
 	// (pkg/api/grpc/authz_mapping.go) exactly. qrdb registers no account:*
 	// family; when one is added these entries should move to it.
-	"quicbaas_agent_account_create":      {"credentials", "store"},
-	"quicbaas_agent_account_get":         {"credentials", "retrieve"},
-	"quicbaas_agent_account_list":        {"credentials", "list"},
-	"quicbaas_agent_account_update":      {"credentials", "store"},
-	"quicbaas_agent_account_delete":      {"credentials", "delete"},
-	"quicbaas_agent_account_rotate":      {"credentials", "rotate"},
+	"quicbaas_agent_account_create": {"credentials", "store"},
+	"quicbaas_agent_account_get":    {"agent_accounts", "read"},
+	"quicbaas_agent_account_list":   {"agent_accounts", "list"},
+	"quicbaas_agent_account_update": {"credentials", "store"},
+	"quicbaas_agent_account_delete": {"credentials", "delete"},
+	"quicbaas_agent_account_rotate": {"credentials", "rotate"},
+	// Materializing RELEASES the envelope, so it takes QuicBaaS's own
+	// agent_accounts:materialize rather than a credentials:* grant — which is
+	// registered ScopeCross (system tenant only) and would deny the
+	// tenant-scoped agent daemon this verb exists for.
+	"quicbaas_agent_account_materialize": {"agent_accounts", "materialize"},
 	"quicbaas_agent_account_revoke":      {"credentials", "delete"},
 	"quicbaas_agent_account_set_default": {"credentials", "store"},
-	"quicbaas_agent_account_usage":       {"credentials", "retrieve"},
+	"quicbaas_agent_account_usage":       {"agent_accounts", "read"},
 
 	// Certificate extensions -> ca / certs. The mapping MUST match the gRPC
 	// mapping (pkg/api/grpc/authz_mapping.go), the REST PEP mapping
@@ -496,25 +519,37 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_dek_start_reencryption":        {"keys", "rotate"},
 	"quicbaas_dek_delete":                    {"keys", "delete"},
 
-	// Named secrets -> credentials, taken from the
-	// quicbaas.kms.v1.SecretsManagement gRPC block verbatim and agreeing with
-	// the REST "/api/v1/secrets" family. qrdb also registers a coarse
-	// secrets:* family, but both sibling transports authorize this surface
-	// with credentials:*, so MCP does too rather than inventing a third
-	// vocabulary for the same verbs.
-	"quicbaas_secrets_store":               {"credentials", "store"},
-	"quicbaas_secrets_ensure":              {"credentials", "store"},
-	"quicbaas_secrets_get":                 {"credentials", "retrieve"},
-	"quicbaas_secrets_list":                {"credentials", "list"},
-	"quicbaas_secrets_get_prefix":          {"credentials", "list"},
-	"quicbaas_secrets_watch":               {"credentials", "list"},
-	"quicbaas_secrets_get_rotation_policy": {"credentials", "list"},
-	"quicbaas_secrets_versions":            {"credentials", "list_versions"},
-	"quicbaas_secrets_rotate":              {"credentials", "rotate"},
-	"quicbaas_secrets_set_rotation_policy": {"credentials", "strategy"},
-	"quicbaas_secrets_rollback":            {"credentials", "submit"},
-	"quicbaas_secrets_update_status":       {"credentials", "submit"},
-	"quicbaas_secrets_delete":              {"credentials", "delete"},
+	// The tenant secret vault -> secrets, taken from the
+	// quicbaas.kms.v1.SecretsManagement gRPC block verbatim
+	// (pkg/api/grpc/authz_mapping.go) and agreeing with the eight REST
+	// "/api/v1/secrets" routes.
+	//
+	// NOT credentials:*. That family guards qrdb's named-credential store,
+	// which has no tenant namespacing and is therefore registered ScopeCross —
+	// system tenant only — while every tool below reads or writes under the
+	// CALLER's tenant (pkg/service/secrets_tenant.go secretsTenantScopedID).
+	// Mapped to credentials:* the vault was unreachable for every tenant
+	// identity on this transport (go-quicbaas#534, #682); the family that
+	// describes it is the ScopeTenantOnly secrets:* family qrdb declares for
+	// exactly this consumer (go-qrdb/pkg/permission/broker_scope.go).
+	//
+	// The action split is the sibling transports' split: list enumerates names,
+	// read returns secret material or its metadata (a version listing and the
+	// prefix / watch fetches return values), write is every mutation, delete is
+	// removal. TestSecretsVaultMCPPermissions pins it.
+	"quicbaas_secrets_store":               {"secrets", "write"},
+	"quicbaas_secrets_ensure":              {"secrets", "write"},
+	"quicbaas_secrets_get":                 {"secrets", "read"},
+	"quicbaas_secrets_list":                {"secrets", "list"},
+	"quicbaas_secrets_get_prefix":          {"secrets", "read"},
+	"quicbaas_secrets_watch":               {"secrets", "read"},
+	"quicbaas_secrets_get_rotation_policy": {"secrets", "read"},
+	"quicbaas_secrets_versions":            {"secrets", "read"},
+	"quicbaas_secrets_rotate":              {"secrets", "write"},
+	"quicbaas_secrets_set_rotation_policy": {"secrets", "write"},
+	"quicbaas_secrets_rollback":            {"secrets", "write"},
+	"quicbaas_secrets_update_status":       {"secrets", "write"},
+	"quicbaas_secrets_delete":              {"secrets", "delete"},
 
 	// Messaging -> messaging, taken from the
 	// quicbaas.messaging.v1.MessagingService gRPC block verbatim.
@@ -591,11 +626,27 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_iam_user_assign_role": {"roles", "assign"},
 	"quicbaas_iam_user_revoke_role": {"roles", "unassign"},
 
+	// WebAuthn credential administration. These are admin verbs over
+	// another user's authenticators, so they carry the same user-admin
+	// grants the neighbouring user verbs do — read to see what is stored,
+	// delete to remove it — rather than a WebAuthn-ceremony permission,
+	// which belongs to the self-service enrollment path.
+	"quicbaas_iam_webauthn_credentials_list":       {"users", "read"},
+	"quicbaas_iam_webauthn_credential_delete":      {"users", "delete"},
+	"quicbaas_iam_webauthn_credentials_delete_all": {"users", "delete"},
+
 	"quicbaas_iam_role_create": {"roles", "create"},
 	"quicbaas_iam_role_get":    {"roles", "read"},
 	"quicbaas_iam_role_list":   {"roles", "list"},
 	"quicbaas_iam_role_update": {"roles", "update"},
 	"quicbaas_iam_role_delete": {"roles", "delete"},
+
+	// Built-in role reconciliation carries the role-CREATE grant rather than a
+	// verb of its own. A dedicated "roles:reconcile" would be absent from every
+	// role seeded before it existed, so nobody would hold the grant needed to
+	// repair that exact absence — go-qrdb's guidance on issue #573. Whoever may
+	// author a role may converge the built-in ones.
+	"quicbaas_iam_role_reconcile": {"roles", "create"},
 
 	"quicbaas_iam_tenant_create": {"tenants", "create"},
 	"quicbaas_iam_tenant_get":    {"tenants", "read"},

@@ -22,6 +22,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ggrpc "google.golang.org/grpc"
@@ -42,11 +43,14 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/credentials"
 	"github.com/jeremyhahn/go-quicbaas/pkg/embedding"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/fips"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
+	"github.com/jeremyhahn/go-quicbaas/pkg/lease"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -260,6 +264,63 @@ type Server struct {
 	// registrations immediately.
 	agentRegistry orchestration.AgentRegistry
 
+	// orchTaskStore is the orchestration task store startOrchestration built
+	// and handed to the agent service.
+	orchTaskStore orchestration.TaskStore
+
+	// orchJobLeaseStore is the job lease store startOrchestration built, and
+	// orchLeaseTTL the TTL it was built with. The task-source poller and the
+	// task dispatcher read them to count how many jobs a project is running.
+	orchJobLeaseStore orchestration.JobLeaseStore
+	orchLeaseTTL      time.Duration
+
+	// orchFleetCapacity answers admission's fleet axis: how many worker slots
+	// the deployment has. Built once in startOrchestration and shared by BOTH
+	// enforcement points — the sweeps' admission plan and the lease store's
+	// last-ditch refusal — so the two cannot bound the fleet by different
+	// numbers. See orchestration/fleet_capacity.go.
+	orchFleetCapacity orchestration.FleetCapacityReader
+
+	// orchPoolHeadroom answers admission's provider axis: whether a project's
+	// pooled provider accounts can serve another session. Built beside the
+	// account store and the quota authority in startOrchestration, and nil in
+	// a deployment that pools no accounts — in which case admission simply
+	// leaves that axis out (see orchestration.AdmissionControllerConfig).
+	orchPoolHeadroom orchestration.PoolHeadroomReader
+
+	// taskSourcePollerStop ends the task-source poller startOrchestration
+	// started; taskSourcePollerDone closes when it has returned. Both are
+	// nil when no poller runs (orchestration disabled, or no facade to
+	// create tasks through).
+	taskSourcePoller     *orchestration.TaskSourcePoller
+	taskSourcePollerStop context.CancelFunc
+	taskSourcePollerDone chan struct{}
+
+	// taskDispatcher starts jobs for the pending tasks of every autonomous
+	// project. It runs beside the poller, at the same cadence, and stops
+	// with it.
+	taskDispatcher     *orchestration.TaskDispatcher
+	taskDispatcherStop context.CancelFunc
+	taskDispatcherDone chan struct{}
+
+	// orchSweeps is the job reaper and stall detector's sweep goroutine,
+	// started by startOrchestration and stopped at shutdown.
+	orchSweeps *orchestrationSweeps
+
+	// sdlcLabelSweeps is the SDLC module's forge-label reconciliation
+	// goroutine, started by startSDLC and stopped before the module detaches.
+	sdlcLabelSweeps *sdlcLabelSweeps
+
+	// sdlcBackstops is the goroutine driving the SDLC module's two
+	// missed-delivery backstops — the triage pass and the review floor; see
+	// lifecycle_sdlc_backstop.go.
+	sdlcBackstops *sdlcBackstops
+
+	// gitProvisioner is the managed-workspace git path wireProjectWorkspaces
+	// composed (secrets-store tokens, xkms-held SSH keys and host-key pins).
+	// The SDLC module's workspace reuses it rather than composing a second.
+	gitProvisioner *service.GitProvisioner
+
 	// iamComponents holds the initialized IAM subsystem components.
 	// Set by lifecycle.go after initializeIAMComponents succeeds and used by
 	// wireIAMMTLSAuthenticators to obtain the AppStorage without a runtime
@@ -284,6 +345,17 @@ type Server struct {
 	// always delegated to the xkms verifiers; these shells only resolve
 	// dependencies and enforce tenant isolation.
 	loginFactorVerifiers []qrdbembedded.FactorVerifier
+
+	// webauthnFactory is the per-tenant WebAuthn relying-party factory,
+	// published for consumers that are composed BEFORE IAM initialisation
+	// runs and can therefore only reach it late. The composed go-xkms
+	// ServiceModule's credential-store decorator is one: it is handed to
+	// go-xkms while the qrdb node is still being constructed, and resolves
+	// the factory on the first registration it serves
+	// (pkg/iam NewWebAuthnModuleCredentialStoreDecorator). Nil until
+	// bindXKMSModuleWebAuthnFactory stores one; every consumer fails closed
+	// while it is.
+	webauthnFactory atomic.Pointer[iam.WebAuthnServiceFactory]
 
 	// orchestratorDaemonClient holds the OAuth2 credentials the central uses
 	// to authenticate its outbound calls to remote agent daemons. Populated
@@ -462,6 +534,22 @@ type Server struct {
 	// Service facade - used by all API servers
 	quicBaaSService service.QuicBaaS
 
+	// leaseManager is the single lease authority in the process: the dynamic
+	// secrets service issues credential leases through it, and the agent
+	// account credential lifecycle leases its provider-credential DELIVERIES
+	// through the same one, so both are visible to the same ListLeases and
+	// revocable by the same RevokeLease. Nil until startDynamicSecrets runs.
+	leaseManager lease.LeaseManager
+
+	// generatorRegistry holds the dynamic secrets credential generators.
+	// Nil until startDynamicSecrets runs.
+	generatorRegistry *credentials.GeneratorRegistry
+
+	// sdlc is the SDLC module's runtime, nil when the module is disabled or
+	// has not been started. One value rather than loose fields: its parts are
+	// meaningless apart, so a single nil check decides availability.
+	sdlc *sdlcRuntime
+
 	// API servers
 	grpcServer       *ggrpc.Server
 	grpcListener     net.Listener
@@ -505,6 +593,15 @@ type Server struct {
 	// Shutdown coordination
 	shutdownChan chan struct{}
 	shutdownOnce sync.Once
+
+	// triggerOnce guards the shutdownChan close SEPARATELY from the
+	// teardown in Shutdown. The two used to share shutdownOnce, which
+	// deadlocked a signal-driven stop during the sealed window (#139):
+	// Shutdown consumed the once with the teardown body and then blocked in
+	// initWG.Wait() for initialize() to return, while initialize() sat in
+	// awaitUnseal() selecting on a shutdownChan that the consumed once
+	// guaranteed nobody would ever close.
+	triggerOnce sync.Once
 
 	// State tracking
 	mu      sync.RWMutex
@@ -632,7 +729,7 @@ func (s *Server) Start() error {
 	}
 
 	// Setup signal handlers
-	setupSignalHandlers(s.shutdownChan, s.logger)
+	setupSignalHandlers(s.TriggerShutdown, s.logger)
 
 	// Block until shutdown signal
 	<-s.shutdownChan
@@ -736,8 +833,13 @@ func (s *Server) initialize() error {
 	//   NewClusteredNode. The node owns barrier, Raft host, at-rest
 	//   encryptor, and all services. initBarrier/initDataPlaneEncryptor/
 	//   standaloneRaftNode are NOT called — the node owns all of those.
-	switch s.getEffectiveMode() {
-	case config.ServerModeCluster:
+	// One predicate decides multi-node, shared with config validation and the
+	// scheduler wiring. devcluster previously fell through to the standalone
+	// node while validation and the scheduler both treated it as clustered —
+	// so it booted a node with no Raft transaction plane and every firing
+	// claim failed against it. A mode is clustered everywhere or nowhere.
+	switch {
+	case config.IsClusterLikeMode(s.getEffectiveMode()):
 		// Cluster mode: build the real qrdb clustered node. The node owns
 		// the Raft host, seal barrier, at-rest encryptor, and all services.
 		// s.raftNode is left nil — the service builder and backup manager
@@ -843,17 +945,23 @@ func (s *Server) initialize() error {
 		return err
 	}
 
-	// Upgrade the secrets backend to the persistent KV backend now that the
-	// qrdb SDK client is available. startSecrets() earlier used in-memory as
-	// qrdbClient was not yet set; this call replaces it with the durable store.
-	if s.getQRDBNode() != nil && s.qrdbClient != nil {
-		if err := s.startSecrets(); err != nil {
-			return err
-		}
-	}
+	// The secrets backend upgrade to the persistent KV store happens INSIDE
+	// startService, after the qrdb client is created and before the facade
+	// captures the manager (issue #138). Upgrading here — after the facade
+	// is built — reached no client-facing consumer: the facade kept serving
+	// the boot-window in-memory manager, secrets died with the process, and
+	// the SDLC module refused webhooks whose secrets REST read back fine.
 
 	// Initialize database management subsystem (requires service facade)
 	if err := s.startDatabases(); err != nil {
+		return err
+	}
+
+	// Compose dynamic secrets over the durable qrdb-backed KV. AFTER the
+	// facade (it is attached to it) and BEFORE orchestration, which leases the
+	// agent pool's provider-credential deliveries through the same lease
+	// manager this creates.
+	if err := s.startDynamicSecrets(); err != nil {
 		return err
 	}
 
@@ -864,11 +972,46 @@ func (s *Server) initialize() error {
 		}
 	}
 
+	// A module's SEAMS are registered before the engine starts, and its
+	// RUNTIME after it.
+	//
+	// The order matters in one direction only, and it is this one: the stall
+	// detector's idle thresholds are validated against the states every
+	// registered runner declares, and startOrchestration is where they are
+	// set. A module that registered its runner afterwards would declare
+	// states the operator could not have configured a threshold for — the
+	// configuration would be refused as naming an unknown state, or accepted
+	// and silently ignored. Registration is static and needs no runtime, so
+	// it happens first; the runtime the runner drives with is attached by
+	// startSDLC below.
+	if s.config.SDLC.Enabled {
+		if err := registerSDLCModule(); err != nil {
+			return err
+		}
+	}
+
 	// Initialize agent orchestration service if enabled
 	if s.config.Orchestration.Enabled {
 		if err := s.startOrchestration(); err != nil {
 			return err
 		}
+	}
+
+	// Attach the SDLC module's runtime. After orchestration, because the
+	// binding service, the hooks and the runner are all built over the
+	// engine's services; before the API servers, so the webhook route is
+	// backed by a live module the moment it is reachable.
+	if s.config.SDLC.Enabled {
+		if err := s.startSDLC(); err != nil {
+			return err
+		}
+	}
+
+	// Resume the jobs this node owned when it last stopped, now that every
+	// module's hooks are registered; a job resumed earlier would run its
+	// prepare hook against a module that has not started.
+	if s.config.Orchestration.Enabled {
+		s.recoverOrchestrationJobs()
 	}
 
 	// Initialize embedded agent runtime if enabled. Must start after
@@ -905,7 +1048,11 @@ func (s *Server) initialize() error {
 }
 
 // Shutdown gracefully shuts down all server components in reverse order:
-// Workers -> Backend -> Catalog -> Backup -> Embedding -> RAG -> WatchBridge -> Messaging -> MCP -> REST -> gRPC -> Indexes -> Service (pollers) -> RaftNode -> BootstrapClient -> ShardedClient -> QRDBNode -> DevCluster -> TimeSeriesStorage.
+// SDLC -> Pollers -> Sweeps -> Job drain -> Workers -> Backend -> Catalog -> Backup -> Embedding -> RAG -> WatchBridge -> Messaging -> MCP -> REST -> gRPC -> Indexes -> Service (pollers) -> RaftNode -> BootstrapClient -> ShardedClient -> QRDBNode -> DevCluster -> TimeSeriesStorage.
+//
+// The orchestration job drain MUST come after everything that starts jobs
+// and before everything that closes a store: a control loop still writing
+// when its store closes meets a panicking engine, not an error.
 //
 // The QuicBaaS service facade MUST close before the sharded qrdb client
 // and the embedded qrdb node: the facade owns background pollers (the
@@ -915,6 +1062,14 @@ func (s *Server) initialize() error {
 // is still open, preventing a poll-after-close error storm.
 func (s *Server) Shutdown(ctx context.Context) error {
 	var shutdownErr error
+
+	// Signal FIRST, tear down second. The initWG.Wait below blocks until a
+	// still-running initialize() returns — and during the sealed window
+	// initialize() is itself blocked in awaitUnseal() waiting on
+	// shutdownChan. Without this signal that pair is a deadlock, measured
+	// as SIGTERM/SIGINT being ignored while sealed (#139): the daemon could
+	// only be killed.
+	s.TriggerShutdown()
 
 	s.shutdownOnce.Do(func() {
 		s.mu.Lock()
@@ -938,6 +1093,26 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 		// Create error collector
 		var errs []error
+
+		// Stop the SDLC module first, so its registered seams answer
+		// unavailable before the stores beneath them go away.
+		s.stopSDLC()
+
+		// The task-source poller creates tasks through the facade and the
+		// dispatcher starts jobs through it; stop both before the facade and
+		// the stores beneath them go away.
+		s.stopTaskSourcePoller()
+		s.stopTaskDispatcher()
+
+		// Stop the job sweep before the stores it reads leases and tasks
+		// from go away.
+		s.stopOrchestrationSweeps()
+
+		// Nothing starts new jobs from here on, so the running ones can be
+		// drained: they get a bounded window to conclude while the stores
+		// they write to are still open. What does not fit is left running
+		// and resumed on the next start; see drainOrchestrationJobs.
+		s.drainOrchestrationJobs()
 
 		// Shutdown background workers first (before catalog manager)
 		if s.workerManager != nil {
@@ -1074,6 +1249,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			s.logger.Info("Shutting down gRPC server...")
 			s.stopGRPCServer()
 			s.logger.Info("gRPC server shutdown complete")
+		}
+
+		// Stop the lease reaper. The leases themselves are durable and stay:
+		// a credential delivered before a restart must still be governed
+		// after it.
+		if err := s.stopDynamicSecrets(); err != nil {
+			errs = append(errs, err)
+			s.logger.WithError(err).Error("Failed to shutdown dynamic secrets subsystem")
 		}
 
 		// Shutdown indexes
@@ -1238,10 +1421,18 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return shutdownErr
 }
 
-// TriggerShutdown triggers a graceful shutdown.
+// TriggerShutdown signals shutdown to everything waiting on it: Start's
+// post-boot wait and the sealed window's awaitUnseal both select on
+// shutdownChan. Idempotent; it performs no teardown itself — that is
+// Shutdown's job, and Shutdown calls this first.
 func (s *Server) TriggerShutdown() {
-	s.shutdownOnce.Do(func() {
-		close(s.shutdownChan)
+	s.triggerOnce.Do(func() {
+		// Nil only on a hand-assembled Server (white-box tests); NewServer
+		// always allocates the channel. Nothing can be waiting on a channel
+		// that never existed, so there is nothing to signal.
+		if s.shutdownChan != nil {
+			close(s.shutdownChan)
+		}
 	})
 }
 

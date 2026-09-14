@@ -284,7 +284,6 @@ func TestIAMServer_StartImpersonation_WithDuration_ServiceError(t *testing.T) {
 		Return(nil, &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "test"})
 
 	_, err := srv.StartImpersonation(context.Background(), &iampb.StartImpersonationRequest{
-		AdminUserId:  "admin-1",
 		TargetUserId: "user-1",
 		TenantId:     "t-1",
 		Reason:       "support request",

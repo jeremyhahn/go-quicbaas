@@ -17,6 +17,7 @@ package devcluster
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -274,7 +275,11 @@ func TestNodeConfigGeneration(t *testing.T) {
 		assert.Equal(t, "./dev-data/node-1", nodes[0].DataDir)
 		assert.Equal(t, "/tmp/quicbaas-node-1.sock", nodes[0].UnixSocket)
 		assert.True(t, nodes[0].Config.Raft.EnableBootstrap)
-		assert.Len(t, nodes[0].Config.Raft.JoinAddresses, 2)
+		// The roster names all three members, this node included. It used to
+		// assert 2 — the roster with self removed — which is the shape that
+		// left every node bootstrapping alone; see
+		// TestGenerateNodeConfig_NodesFormOneCluster.
+		assert.Len(t, nodes[0].Config.Raft.JoinAddresses, 3)
 
 		// Verify node 2.
 		assert.Equal(t, uint64(2), nodes[1].NodeID)
@@ -325,17 +330,20 @@ func TestNodeConfigGeneration(t *testing.T) {
 
 		nodes := mgr.Nodes()
 
-		// Node 1 should have join addresses for nodes 2 and 3.
-		assert.Contains(t, nodes[0].Config.Raft.JoinAddresses, "localhost:63002")
-		assert.Contains(t, nodes[0].Config.Raft.JoinAddresses, "localhost:63003")
-
-		// Node 2 should have join addresses for nodes 1 and 3.
-		assert.Contains(t, nodes[1].Config.Raft.JoinAddresses, "localhost:63001")
-		assert.Contains(t, nodes[1].Config.Raft.JoinAddresses, "localhost:63003")
-
-		// Node 3 should have join addresses for nodes 1 and 2.
-		assert.Contains(t, nodes[2].Config.Raft.JoinAddresses, "localhost:63001")
-		assert.Contains(t, nodes[2].Config.Raft.JoinAddresses, "localhost:63002")
+		// Every node carries the SAME full roster, in "id=addr" form.
+		//
+		// This used to assert the opposite on both counts — raw "host:port"
+		// entries, each node's roster missing itself — and both were the
+		// defect rather than the contract. buildClusterMembers keeps only
+		// entries containing "=", so raw addresses left it falling back to a
+		// single-member map; and the roster is the cluster's MEMBERSHIP, not
+		// a list of peers to dial, so omitting self describes a cluster the
+		// node is not in. Three nodes, three clusters of one.
+		roster := []string{"1=localhost:63001", "2=localhost:63002", "3=localhost:63003"}
+		for i, node := range nodes {
+			assert.Equal(t, roster, node.Config.Raft.JoinAddresses,
+				"node %d does not carry the full cluster roster", i+1)
+		}
 	})
 
 	t.Run("SingleNodeCluster", func(t *testing.T) {
@@ -362,9 +370,14 @@ func TestNodeConfigGeneration(t *testing.T) {
 		nodes := mgr.Nodes()
 		require.Len(t, nodes, 1)
 
-		// Single node should be bootstrap node with no join addresses.
+		// A one-node cluster still states its membership: the roster names
+		// every member, and here that is just this node. It used to be empty
+		// — a consequence of building the roster as "everyone but me" — which
+		// happened to work only because buildClusterMembers falls back to a
+		// single-member map when it finds no usable entries. Saying it
+		// outright does not lean on that fallback.
 		assert.True(t, nodes[0].Config.Raft.EnableBootstrap)
-		assert.Empty(t, nodes[0].Config.Raft.JoinAddresses)
+		assert.Equal(t, []string{"1=localhost:63001"}, nodes[0].Config.Raft.JoinAddresses)
 	})
 
 	t.Run("FiveNodeCluster", func(t *testing.T) {
@@ -391,14 +404,18 @@ func TestNodeConfigGeneration(t *testing.T) {
 		nodes := mgr.Nodes()
 		require.Len(t, nodes, 5)
 
-		// Each node should have 4 join addresses (all other nodes).
+		// Each node carries the full 5-member roster, itself included — not
+		// "all other nodes", which is the shape that isolated every node.
 		for i, node := range nodes {
 			if i == 0 {
 				assert.True(t, node.Config.Raft.EnableBootstrap)
 			} else {
 				assert.False(t, node.Config.Raft.EnableBootstrap)
 			}
-			assert.Len(t, node.Config.Raft.JoinAddresses, 4)
+			assert.Len(t, node.Config.Raft.JoinAddresses, 5)
+			assert.Contains(t, node.Config.Raft.JoinAddresses,
+				fmt.Sprintf("%d=%s", node.NodeID, node.Config.Raft.RaftAddress),
+				"node %d is missing from its own roster", node.NodeID)
 		}
 	})
 }
@@ -618,4 +635,60 @@ func TestDevClusterConfig(t *testing.T) {
 	assert.Equal(t, devClusterCfg, returnedCfg)
 	assert.Equal(t, 5, returnedCfg.NodeCount)
 	assert.Equal(t, "/custom/path", returnedCfg.DataDir)
+}
+
+// TestGenerateNodeConfig_NodesFormOneCluster is the regression for a devcluster
+// whose nodes each bootstrapped alone.
+//
+// Routing devcluster through the real clustered qrdb node exposed that the
+// generated configs never described a cluster: the join addresses were raw
+// "host:port" strings, and `buildClusterMembers` keeps only entries carrying an
+// "id=" prefix — finding none, it fell back to a single-member map. With no
+// shared DeploymentID either, every node also derived a different deployment
+// identity from its own NodeID. Three nodes, three clusters of one.
+//
+// The assertions are on the two properties that make the roster a cluster:
+// every node sees the SAME full membership, and every node agrees on WHICH
+// cluster it is.
+func TestGenerateNodeConfig_NodesFormOneCluster(t *testing.T) {
+	mgr, err := NewManager(&ManagerConfig{
+		DevCluster: config.DefaultDevClusterConfig(),
+		BaseConfig: createTestBaseConfig(),
+		Logger:     createTestLogger(t),
+	})
+	require.NoError(t, err)
+
+	nodeCount := mgr.cfg.NodeCount
+	require.Greater(t, nodeCount, 1, "a devcluster of one proves nothing here")
+
+	var rosters [][]string
+	var deployments []uint64
+	for i := 0; i < nodeCount; i++ {
+		cfg := mgr.generateNodeConfig(i)
+		rosters = append(rosters, cfg.Raft.JoinAddresses)
+		deployments = append(deployments, cfg.Raft.DeploymentID)
+
+		require.Len(t, cfg.Raft.JoinAddresses, nodeCount,
+			"node %d's roster omits members; the membership must name every node, itself included", i+1)
+
+		// Self must be present: the list is consumed as the cluster's
+		// membership, not as a list of peers to dial.
+		self := fmt.Sprintf("%d=%s", cfg.Raft.NodeID, cfg.Raft.RaftAddress)
+		assert.Contains(t, cfg.Raft.JoinAddresses, self,
+			"node %d is missing from its own roster", i+1)
+
+		for _, addr := range cfg.Raft.JoinAddresses {
+			assert.Contains(t, addr, "=",
+				"roster entry %q carries no replica ID, so buildClusterMembers discards it and the node bootstraps alone", addr)
+		}
+	}
+
+	for i := 1; i < nodeCount; i++ {
+		assert.Equal(t, rosters[0], rosters[i],
+			"node %d disagrees with node 1 about the cluster's membership", i+1)
+		assert.Equal(t, deployments[0], deployments[i],
+			"node %d runs under a different deployment identity, so it isolates itself", i+1)
+	}
+	assert.NotZero(t, deployments[0],
+		"a zero DeploymentID makes each node derive its own from NodeID — the isolation this test exists to prevent")
 }

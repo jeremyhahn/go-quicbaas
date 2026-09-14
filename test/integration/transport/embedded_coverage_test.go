@@ -230,7 +230,7 @@ func TestEmbeddedCoverage_OrchestratorMethods(t *testing.T) {
 		_, err := client.Orchestrator().SubmitTaskArtifacts(ctx, &orchestratorSDK.SubmitTaskArtifactsRequest{
 			TenantID: tenantID, TaskID: "missing",
 			Artifacts: []*orchestratorSDK.TaskArtifact{
-				{Name: "x", Data: []byte("y")},
+				{Kind: "inline", Name: "x", Content: []byte("y")},
 			},
 		})
 		assertNotUnknownMethod(t, err, "Orchestrator.SubmitTaskArtifacts")

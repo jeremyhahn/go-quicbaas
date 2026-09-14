@@ -45,6 +45,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/agent"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/ollama"
@@ -215,7 +216,7 @@ func (s *Server) startEmbeddedAgent() error {
 
 	// Wire a container runtime when sandboxed sessions are reachable under the
 	// policy (preferred/required) or an explicit sandbox image is configured.
-	// The runtime lets the ACP backend's spawnContainerJSONRPC path launch an
+	// The runtime lets the ACP backend's sandboxed spawn paths launch an
 	// interactive agent container; without it a Required spawn fails closed.
 	imageMap := buildEmbeddedAgentImageMap(cfg)
 	var containerRuntime orchestration.ContainerRuntime
@@ -235,6 +236,15 @@ func (s *Server) startEmbeddedAgent() error {
 		}
 	}
 
+	// The mount policy admits this daemon's OWN sockets root, which is
+	// derived per-daemon; a failure to derive it is a startup failure rather
+	// than a policy with an empty root, which would deny every signing-socket
+	// mount the sdlc runner asks for.
+	socketsRoot, socketsErr := s.socketsRoot()
+	if socketsErr != nil {
+		return &ServerCauseError{Message: "embedded agent: sockets root", Cause: socketsErr}
+	}
+
 	// Construct agent Runtime.
 	runtime, rtErr := agent.NewRuntime(agent.RuntimeConfig{
 		Backends:         backends,
@@ -252,10 +262,25 @@ func (s *Server) startEmbeddedAgent() error {
 		MountPolicy: &orchestration.MountPolicy{
 			ProjectsRoot: s.config.Orchestration.EffectiveProjectsRoot(s.config.Storage.DataDir),
 			AllowedRoots: s.config.Orchestration.Sandbox.AllowedMountRoots,
+			SocketsRoot:  socketsRoot,
 		},
 	})
 	if rtErr != nil {
 		return &ServerCauseError{Message: "embedded agent: construct runtime", Cause: rtErr}
+	}
+
+	// Sweep the worker containers a previous run of THIS daemon left behind,
+	// before anything can spawn one of its own — see
+	// orchestration/container_sweep.go and go-quicbaas#750. A sweep that
+	// cannot be completed is a startup failure for the reason the
+	// signing-socket sweep gives (#676): an orphan that survives its sweep
+	// accumulates without bound.
+	sweep, sweepErr := runtime.SweepOrphanContainers(context.Background())
+	if sweepErr != nil {
+		return &ServerCauseError{Message: "embedded agent: sweep orphaned worker containers", Cause: sweepErr}
+	}
+	if len(sweep.Removed) > 0 {
+		log.Infof("Embedded agent: swept %d orphaned worker container(s) left by a previous run", len(sweep.Removed))
 	}
 
 	// Construct bufconn listener. The spawn server will serve on this;
@@ -406,9 +431,10 @@ func (s *Server) installEmbeddedBackendDialer(agentID string, reg *orchestration
 
 // buildEmbeddedAgentMCPResolver constructs the QuicBaaS MCP preset resolver for
 // the embedded agent, or returns nil when MCP resolution is not available (MCP
-// disabled in config, or the CA is down so no cert can be issued). The resolver
-// reuses the platform CA via the agent cert issuer so the per-spawn certs chain
-// to the same root the MCP listener trusts for client auth.
+// disabled in config, the CA is down so no cert can be issued, or no SPIFFE
+// trust domain is configured so no cert could be bound to its tenant). The
+// resolver reuses the platform CA via the agent cert issuer so the per-spawn
+// certs chain to the same root the MCP listener trusts for client auth.
 //
 // The endpoint URL targets the local MCP listener: the embedded agent runs on
 // the same host, so a wildcard/empty bind host is normalized to loopback (the
@@ -439,13 +465,58 @@ func (s *Server) buildEmbeddedAgentMCPResolver(hostname string, log interfaces.L
 		log.Warnf("Embedded agent: MCP preset resolver disabled (cert issuer init failed): %v", err)
 		return nil
 	}
-	resolver, err := NewAgentMCPPresetResolver(issuer, endpoint, hostname, embeddedAgentTenantID, log)
+	resolver, err := NewAgentMCPPresetResolver(AgentMCPPresetResolverConfig{
+		Issuer:            issuer,
+		Identities:        s.agentSessionIdentityStore,
+		EndpointURL:       endpoint,
+		Hostname:          hostname,
+		DefaultTenant:     embeddedAgentTenantID,
+		SPIFFETrustDomain: s.config.IAM.SPIFFETrustDomain,
+		Logger:            log,
+	})
 	if err != nil {
+		// A resolver that cannot enroll is worse than none: it would hand every
+		// spawned agent a certificate that authenticates and then holds no
+		// authority, which is the defect go-quicbaas#901 recorded. Say why, and
+		// forward the preset unresolved.
 		log.Warnf("Embedded agent: MCP preset resolver disabled: %v", err)
 		return nil
 	}
 	log.Infof("Embedded agent: quicbaas MCP preset resolver wired; endpoint=%s", endpoint)
 	return resolver
+}
+
+// identityStoreAccessor is the narrow service-layer surface that yields the IAM
+// identity store. Its user and role persistence is routed to go-qrdb's
+// canonical UserServicer / RoleClient (iam_init.go) — the same records go-qrdb's
+// own authorization resolves an mTLS principal's roles from.
+type identityStoreAccessor interface {
+	GetIdentityStore(ctx context.Context) (*iam.IdentityStore, error)
+}
+
+// agentSessionIdentityStore resolves the identity store a spawned session's
+// certificate principal is enrolled into. It reads the store per spawn rather
+// than capturing it, because the resolver is built during startup and the IAM
+// provider comes up after it.
+//
+// The store's users and roles ARE go-qrdb's (iam_init.go routes both to the
+// embedded node), so this enrolls into qrdb's identity layer and nowhere else.
+func (s *Server) agentSessionIdentityStore(ctx context.Context) (AgentSessionIdentityStore, error) {
+	// The same narrow accessor every IAM handler resolves the store through.
+	// service.QuicBaaS does not declare it, so it is asserted here exactly as
+	// pkg/api/rest does (agentIdentityStoreAccessor).
+	accessor, ok := s.quicBaaSService.(identityStoreAccessor)
+	if !ok {
+		return nil, ErrMCPPresetResolverNoIdentityStore
+	}
+	store, err := accessor.GetIdentityStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if store == nil {
+		return nil, ErrMCPPresetResolverNoIdentityStore
+	}
+	return store, nil
 }
 
 // buildEmbeddedAgentBackends constructs the backend map from the configured

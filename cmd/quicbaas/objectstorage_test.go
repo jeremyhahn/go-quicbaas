@@ -1994,7 +1994,7 @@ func saveAndRestoreObjectGlobals(t *testing.T) func() {
 	t.Helper()
 	origFactory := objectStorageClientFactory
 	origOutputFormat := objectOutputFormat
-	origTimeout := objectTimeout
+	origTimeout := globalTimeout
 	origTLSEnabled := objectTLSEnabled
 	origTLSCert := objectTLSCert
 	origTLSKey := objectTLSKey
@@ -2028,7 +2028,7 @@ func saveAndRestoreObjectGlobals(t *testing.T) func() {
 	return func() {
 		objectStorageClientFactory = origFactory
 		objectOutputFormat = origOutputFormat
-		objectTimeout = origTimeout
+		globalTimeout = origTimeout
 		objectTLSEnabled = origTLSEnabled
 		objectTLSCert = origTLSCert
 		objectTLSKey = origTLSKey
@@ -2091,7 +2091,7 @@ func TestObjectStorage91_PutCommand_RPCFailure(t *testing.T) {
 	objectContentType = "text/plain"
 	globalTenantID = "tenant-1"
 	objectTags = map[string]string{"env": "test"}
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err = runObjectPutCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err, "RPC call to dead server should fail")
@@ -2114,7 +2114,7 @@ func TestObjectStorage91_PutCommand_MetadataWithExistingTags(t *testing.T) {
 	objectFile = tmpFile
 	objectMetadata = `{"key1":"val1"}`
 	objectTags = map[string]string{"existing": "tag"}
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err = runObjectPutCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err)
@@ -2138,7 +2138,7 @@ func TestObjectStorage91_PutCommand_MetadataWithoutTags(t *testing.T) {
 	objectFile = tmpFile
 	objectMetadata = `{"key1":"val1"}`
 	objectTags = nil
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err = runObjectPutCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err)
@@ -2160,7 +2160,7 @@ func TestObjectStorage91_PutCommand_InvalidMetadataJSON(t *testing.T) {
 	objectFile = tmpFile
 	objectMetadata = `{invalid-json}`
 	objectTags = nil
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err = runObjectPutCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err, "invalid metadata JSON should return error")
@@ -2172,7 +2172,7 @@ func TestObjectStorage91_PutCommand_NoData(t *testing.T) {
 
 	cmd := newObjectPutCommand()
 	objectFile = ""
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	// No file and stdin is a terminal => should error with "no data provided"
 	err := runObjectPutCommand(cmd, []string{"bucket/key"})
@@ -2191,7 +2191,7 @@ func TestObjectStorage91_GetCommand_RPCFailure(t *testing.T) {
 	cmd := newObjectGetCommand()
 	globalTenantID = "tenant-1"
 	objectIncludeMeta = true
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectGetCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err, "RPC call to dead server should fail")
@@ -2209,7 +2209,7 @@ func TestObjectStorage91_DeleteCommand_RPCFailure(t *testing.T) {
 	cmd := newObjectDeleteCommand()
 	globalTenantID = "tenant-1"
 	objectDeleteSource = true
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectDeleteCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err)
@@ -2226,7 +2226,7 @@ func TestObjectStorage91_HeadCommand_RPCFailure(t *testing.T) {
 
 	cmd := newObjectHeadCommand()
 	globalTenantID = "tenant-1"
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectHeadCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err)
@@ -2247,7 +2247,7 @@ func TestObjectStorage91_ListCommand_RPCFailure(t *testing.T) {
 	objectLimit = 50
 	objectCursor = "cursor-abc"
 	objectIncludeMeta = true
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectListCommand(cmd, []string{"mybucket"})
 	assert.Error(t, err)
@@ -2267,7 +2267,7 @@ func TestObjectStorage91_ListByTagCommand_RPCFailure(t *testing.T) {
 	globalTenantID = "tenant-1"
 	objectLimit = 50
 	objectCursor = ""
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectListByTagCommand(cmd, []string{})
 	assert.Error(t, err)
@@ -2279,7 +2279,7 @@ func TestObjectStorage91_ListByTagCommand_InvalidTagFormat(t *testing.T) {
 
 	cmd := newObjectListByTagCommand()
 	objectTagFilter = "invalidnoequals"
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectListByTagCommand(cmd, []string{})
 	assert.Error(t, err, "tag without = separator should return error")
@@ -2299,7 +2299,7 @@ func TestObjectStorage91_ListByTenantCommand_RPCFailure(t *testing.T) {
 	objectLimit = 100
 	objectCursor = ""
 	objectIncludeMeta = true
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectListByTenantCommand(cmd, []string{})
 	assert.Error(t, err)
@@ -2317,7 +2317,7 @@ func TestObjectStorage91_CopyCommand_RPCFailure(t *testing.T) {
 	cmd := newObjectCopyCommand()
 	objectCopyTags = true
 	globalTenantID = "tenant-1"
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectCopyCommand(cmd, []string{"src/key", "dst/key"})
 	assert.Error(t, err)
@@ -2336,7 +2336,7 @@ func TestObjectStorage91_ArchiveCommand_RPCFailure(t *testing.T) {
 	objectTargetStore = "cold-store"
 	objectDeleteFromPrimary = true
 	objectCompressionLevel = 6
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectArchiveCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err)
@@ -2355,7 +2355,7 @@ func TestObjectStorage91_RestoreCommand_RPCFailure_HotTier(t *testing.T) {
 	objectDestBackend = "hot-backend"
 	objectRestoreDays = 14
 	objectRestoreTier = "hot"
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err)
@@ -2372,7 +2372,7 @@ func TestObjectStorage91_RestoreCommand_RPCFailure_WarmTier(t *testing.T) {
 
 	cmd := newObjectRestoreCommand()
 	objectRestoreTier = "warm"
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err)
@@ -2389,7 +2389,7 @@ func TestObjectStorage91_RestoreCommand_RPCFailure_DefaultTier(t *testing.T) {
 
 	cmd := newObjectRestoreCommand()
 	objectRestoreTier = ""
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err)
@@ -2407,7 +2407,7 @@ func TestObjectStorage91_VerifyCommand_RPCFailure(t *testing.T) {
 	cmd := newObjectVerifyCommand()
 	objectCheckAll = true
 	objectRepair = true
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectVerifyCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err)
@@ -2425,7 +2425,7 @@ func TestObjectStorage91_ReplicateCommand_RPCFailure(t *testing.T) {
 	cmd := newObjectReplicateCommand()
 	objectDestBackend = "store-a, store-b"
 	objectSync = true
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectReplicateCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err)
@@ -2443,7 +2443,7 @@ func TestObjectStorage91_MigrateCommand_RPCFailure(t *testing.T) {
 	cmd := newObjectMigrateCommand()
 	objectDestBackend = "archive-backend"
 	objectDeleteSource = true
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectMigrateCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err)
@@ -2459,7 +2459,7 @@ func TestObjectStorage91_MetadataGetCommand_RPCFailure(t *testing.T) {
 	}
 
 	cmd := newObjectMetadataGetCommand()
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectMetadataGetCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err)
@@ -2478,7 +2478,7 @@ func TestObjectStorage91_MetadataUpdateCommand_RPCFailure(t *testing.T) {
 	cmd := newObjectMetadataUpdateCommand()
 	// Set globals after command creation.
 	objectMetadata = `{"replication":{"enabled":true,"min_replicas":3}}`
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectMetadataUpdateCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err)
@@ -2490,7 +2490,7 @@ func TestObjectStorage91_MetadataUpdateCommand_InvalidJSON(t *testing.T) {
 
 	cmd := newObjectMetadataUpdateCommand()
 	objectMetadata = `{not valid json}`
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectMetadataUpdateCommand(cmd, []string{"bucket/key"})
 	assert.Error(t, err, "invalid metadata JSON should return error")
@@ -2506,7 +2506,7 @@ func TestObjectStorage91_StatsCommand_RPCFailure(t *testing.T) {
 	}
 
 	cmd := newObjectStatsCommand()
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectStatsCommand(cmd, []string{})
 	assert.Error(t, err)
@@ -2525,7 +2525,7 @@ func TestObjectStorage91_LifecycleSetCommand_RPCFailure(t *testing.T) {
 	cmd := newObjectLifecycleSetCommand()
 	// Set globals after command creation.
 	objectPolicyJSON = `{"archive":{"enabled":true,"archive_after_days":30}}`
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectLifecycleSetCommand(cmd, []string{"mybucket"})
 	assert.Error(t, err)
@@ -2537,7 +2537,7 @@ func TestObjectStorage91_LifecycleSetCommand_InvalidJSON(t *testing.T) {
 
 	cmd := newObjectLifecycleSetCommand()
 	objectPolicyJSON = `{not valid}`
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectLifecycleSetCommand(cmd, []string{"mybucket"})
 	assert.Error(t, err, "invalid policy JSON should return error")
@@ -2553,7 +2553,7 @@ func TestObjectStorage91_LifecycleGetCommand_RPCFailure(t *testing.T) {
 	}
 
 	cmd := newObjectLifecycleGetCommand()
-	objectTimeout = 500 * time.Millisecond
+	globalTimeout = 500 * time.Millisecond
 
 	err := runObjectLifecycleGetCommand(cmd, []string{"mybucket"})
 	assert.Error(t, err)
@@ -2566,20 +2566,20 @@ func TestObjectStorage91_LifecycleGetCommand_RPCFailure(t *testing.T) {
 func TestObjectStorage91_CreateGRPCClient_TLSRequired(t *testing.T) {
 	origTLSEnabled := objectTLSEnabled
 	origAddress := address
-	origTimeout := objectTimeout
+	origTimeout := globalTimeout
 	origMaxRetries := objectMaxRetries
 	origRetryBackoff := objectRetryBackoff
 	defer func() {
 		objectTLSEnabled = origTLSEnabled
 		address = origAddress
-		objectTimeout = origTimeout
+		globalTimeout = origTimeout
 		objectMaxRetries = origMaxRetries
 		objectRetryBackoff = origRetryBackoff
 	}()
 
 	objectTLSEnabled = false
 	address = "127.0.0.1:1"
-	objectTimeout = 100 * time.Millisecond
+	globalTimeout = 100 * time.Millisecond
 	objectMaxRetries = 0
 	objectRetryBackoff = 10 * time.Millisecond
 

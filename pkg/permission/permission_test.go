@@ -435,3 +435,37 @@ func recoverFrom(t *testing.T, fn func()) (recovered any) {
 	fn()
 	return nil
 }
+
+// TestSDLC_PermissionsAreRegisteredWithTheRightRolePlacement pins the SDLC
+// module's verbs (go-quicbaas#569): three permissions, the read to Admin and
+// Operator, bind and unbind to Admin alone, all outside the Security
+// Officer's duties.
+func TestSDLC_PermissionsAreRegisteredWithTheRightRolePlacement(t *testing.T) {
+	contributed := make(map[qrdbsdk.Permission]contribution)
+	for _, c := range contributions {
+		contributed[c.permission] = c
+	}
+	reads := []qrdbsdk.Permission{SDLCRead}
+	writes := []qrdbsdk.Permission{SDLCBind, SDLCUnbind}
+
+	for _, perm := range append(append([]qrdbsdk.Permission{}, reads...), writes...) {
+		c, ok := contributed[perm]
+		require.Truef(t, ok, "%s is not contributed", perm)
+		assert.Equalf(t, dutyOutsideSecurityOfficer, c.duty, "%s carries a governance or crypto duty", perm)
+		assert.NotContainsf(t, c.roles, qrdbsdk.PermissionRoleSO, "%s granted to the Security Officer", perm)
+	}
+	for _, perm := range reads {
+		assert.Contains(t, contributed[perm].roles, qrdbsdk.PermissionRoleAdmin, perm)
+		assert.Contains(t, contributed[perm].roles, qrdbsdk.PermissionRoleOperator, perm)
+	}
+	for _, perm := range writes {
+		assert.Contains(t, contributed[perm].roles, qrdbsdk.PermissionRoleAdmin, perm)
+		assert.NotContainsf(t, contributed[perm].roles, qrdbsdk.PermissionRoleOperator,
+			"%s is a configuration write and must not be Operator's", perm)
+	}
+	// The registration-era verbs are gone: a stale grant must not resolve.
+	for _, gone := range []qrdbsdk.Permission{"sdlc:list", "sdlc:register", "sdlc:update", "sdlc:deregister"} {
+		_, ok := contributed[gone]
+		assert.Falsef(t, ok, "%s is still contributed", gone)
+	}
+}

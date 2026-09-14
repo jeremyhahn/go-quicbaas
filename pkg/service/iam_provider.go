@@ -158,15 +158,6 @@ func (p *iamServiceAdapter) GetGDPRManager(_ context.Context) (*iam.GDPRManager,
 	return p.components.GetGDPRManager(), nil
 }
 
-// GetAuthManager returns the authentication manager from IAM components.
-// Returns nil if password authentication is not enabled.
-func (p *iamServiceAdapter) GetAuthManager(_ context.Context) (AuthManagerInterface, error) {
-	if p.components == nil {
-		return nil, nil
-	}
-	return p.components.GetAuthManager(), nil
-}
-
 // initializeIAMProvider initializes the IAM provider for REST handlers.
 // This is the iam version that returns nil because IAM components
 // are initialized separately by the server and provided via SetIAMProvider().

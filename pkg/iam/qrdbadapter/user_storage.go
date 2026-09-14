@@ -25,11 +25,10 @@ import (
 )
 
 // UserServicerResolver returns the in-process qrdb UserServicer that owns the
-// canonical user CORE (Username, TenantID, RoleIDs, RoleBindings, ABAC
-// Attributes, CertBindings, Factors, Enabled, System, timestamps). QuicBaaS
-// routes every user mutation through this servicer so the broker and the qrdb
-// policy decision point share ONE user record: the user the broker creates is
-// the same object login and the PDP resolve against.
+// canonical user record. QuicBaaS routes every user read and mutation through
+// this servicer so the broker and the qrdb policy decision point share ONE user
+// record: the user the broker creates is the same object login and the PDP
+// resolve against.
 //
 // The resolver indirection lets the wiring layer (server.iam_init) hand the
 // embedded node's UserServicer to the IdentityStore without the iam package
@@ -40,72 +39,39 @@ type UserServicerResolver interface {
 	UserServicer(ctx context.Context) (qrdbsdk.UserServicer, error)
 }
 
-// QRDBUserStorage is a UserStorage that keeps qrdb as the canonical store for
-// the user CORE while persisting the broker-only fields in a side-record.
+// QRDBUserStorage is a UserStorage backed entirely by qrdb's canonical user
+// record. There is no side-record and no identifier correlation: iam.User is a
+// projection of the qrdb user (see convert.go), and the external user id is the
+// qrdb Snowflake in decimal.
 //
-// The composition is:
-//   - qrdb UserServicer (via the resolver) owns the core. CreateUser/GetUser/
-//     UpdateUser/DeleteUser/ListUsers/GetUserByUsername/UserByCertThumbprint
-//     are routed to it. The conversion is strictly via FromIAMUser/ToIAMUser
-//     (convert.go) so there is exactly one model-translation path.
-//   - IDMap correlates the broker's external string UUID (iam.User.ID — the
-//     value the OIDC subject, PEP, sessions and SPKI bindings key on) with
-//     qrdb's internal uint64 id.
-//   - BrokerProfileStore persists the broker-only fields (Email/Name/Groups/
-//     AuthMethods/State/MFA/Invite/LastAuth) keyed by the qrdb uint64 id.
-//   - A broker-side email index resolves GetUserByEmail across tenants (the
-//     global fallback qrdb's tenant-scoped GetUserByEmail cannot answer).
-//   - A broker-side legacy-PIV index resolves the legacy hex-digest PIV
-//     thumbprint (which is NOT an SPKI thumbprint, so qrdb's
-//     UserByCertThumbprint cannot resolve it directly) for no-qrdb-index
-//     deployments and the migration window.
-//
-// It mirrors QRDBRoleStorage's resolver-indirection + typed-error-mapping
-// shape and preserves the UserStorage contract exactly: the IdentityStore
-// needs no interface change beyond the new GetUserByUsername verb (which the
-// local stores also gain).
+// It keeps exactly ONE index of its own, and only because qrdb cannot serve it:
+// the LEGACY PIV thumbprint (hex SHA-256 over the certificate DER) is not an
+// SPKI thumbprint, so qrdb's UserByCertThumbprint index does not resolve it.
+// Email is NOT indexed here — qrdb owns the canonical tenant-unique email index,
+// and the broker-owned copy that used to shadow it is what a verified login
+// could miss while the record it named existed all along.
 type QRDBUserStorage struct {
 	resolver UserServicerResolver
-	profiles iam.BrokerProfileStore
-	idmap    IDMap
 	kv       interfaces.KVStore
 }
 
 // Compile-time interface check: QRDBUserStorage is a UserStorage.
 var _ iam.UserStorage = (*QRDBUserStorage)(nil)
 
-// Compile-time interface check: the qrdb-backed storage owns the broker-UUID
-// <-> qrdb-uint64 correlation, so it is the canonical QRDBUserIDResolver.
-var _ iam.QRDBUserIDResolver = (*QRDBUserStorage)(nil)
-
-// NewQRDBUserStorage builds a qrdb-backed UserStorage. The resolver, profile
-// store and id map must be non-nil; a nil resolver yields a storage that fails
-// every core call with a typed configuration error rather than panicking. The
-// kv backs the broker-side email and legacy-PIV indexes.
-func NewQRDBUserStorage(resolver UserServicerResolver, profiles iam.BrokerProfileStore, idmap IDMap, kv interfaces.KVStore) *QRDBUserStorage {
-	return &QRDBUserStorage{resolver: resolver, profiles: profiles, idmap: idmap, kv: kv}
+// NewQRDBUserStorage builds a qrdb-backed UserStorage. A nil resolver yields a
+// storage that fails every call with a typed configuration error rather than
+// panicking. The kv backs the legacy-PIV index.
+func NewQRDBUserStorage(resolver UserServicerResolver, kv interfaces.KVStore) *QRDBUserStorage {
+	return &QRDBUserStorage{resolver: resolver, kv: kv}
 }
 
-// broker-side index keys. They live under the canonical __iam: namespace so
-// they are encrypted-at-rest in the owning tenant's barrier and a sealed
-// tenant fails closed via the routing KVStore. Each email/legacy-PIV index has
-// a tenant-scoped key AND a global (un-scoped) key, mirroring the local
-// BackendStorage dual-write/dual-read: the global key serves lookups made with
-// no tenant in context (e.g. the first-boot admin read-back, which queries by a
-// globally unique email before any tenant is bound). The index VALUE is
-// "tenantID:uuid" so a global hit still resolves the owning tenant for GetUser.
-const (
-	keyPrefixUserEmailIndex     = iam.KeyPrefixIAM + "qrdbuser:email:"
-	keyPrefixUserLegacyPIVIndex = iam.KeyPrefixIAM + "qrdbuser:legacypiv:"
-)
-
-func userEmailIndexKey(tenantID, email string) string {
-	return keyPrefixUserEmailIndex + tenantID + ":" + email
-}
-
-func userEmailGlobalKey(email string) string {
-	return keyPrefixUserEmailIndex + "_global:" + email
-}
+// legacy-PIV index keys. They live under the canonical __iam: namespace so they
+// are encrypted-at-rest in the owning tenant's barrier and a sealed tenant fails
+// closed via the routing KVStore. Each thumbprint has a tenant-scoped key AND a
+// global key: the global one serves a lookup made with no tenant in context. The
+// index VALUE is "tenantID:userID" so a global hit still resolves the owning
+// tenant for the follow-up read.
+const keyPrefixUserLegacyPIVIndex = iam.KeyPrefixIAM + "qrdbuser:legacypiv:"
 
 func userLegacyPIVIndexKey(tenantID, thumbprint string) string {
 	return keyPrefixUserLegacyPIVIndex + tenantID + ":" + thumbprint
@@ -140,96 +106,141 @@ func (s *QRDBUserStorage) servicer(ctx context.Context) (qrdbsdk.UserServicer, e
 	return svc, nil
 }
 
-// CreateUser writes the qrdb core (CreateUser then UpdateUser to apply the ABAC
-// attributes and cert bindings qrdb's CreateUserRequest cannot carry), records
-// the string-UUID <-> uint64 correlation in the IDMap, persists the broker
-// side-record, and writes the broker-side email/legacy-PIV indexes.
+// CreateUser writes the qrdb user and stamps the assigned Snowflake back onto u
+// as its external id.
+//
+// The Email is sent, and that is load-bearing rather than incidental: it is the
+// canonical tenant-unique login key, and qrdb refuses a create that omits it
+// unless the caller declares WithoutEmailLoginKey. A user without an email is a
+// legitimate identity (a bootstrap admin, an mTLS-only service account) but never
+// an accident, so the declaration is derived from the record itself rather than
+// from a flag a caller might forget.
 func (s *QRDBUserStorage) CreateUser(ctx context.Context, u *iam.User) error {
 	svc, err := s.servicer(ctx)
 	if err != nil {
 		return err
 	}
+	core, err := FromIAMUser(u)
+	if err != nil {
+		return err
+	}
 
-	core, _, _ := FromIAMUser(u, 0)
 	created, err := svc.CreateUser(ctx, &qrdbsdk.CreateUserRequest{
-		Username: core.Username,
-		// Email is qrdb's canonical tenant-unique login key (go-qrdb #191),
-		// so the broker's email travels with the core record. A user that
-		// has none — a certificate-only identity — is declared as such:
-		// qrdb refuses an undeclared omission rather than defaulting it.
-		Email:                u.Email,
-		WithoutEmailLoginKey: u.Email == "",
-		Name:                 u.Name,
+		Username:             core.Username,
+		Email:                core.Email,
+		WithoutEmailLoginKey: core.Email == "",
+		Name:                 core.Name,
 		TenantID:             core.TenantID,
 		RoleIDs:              core.RoleIDs,
+		GroupIDs:             core.GroupIDs,
+		AuthMethods:          core.AuthMethods,
+		Lifecycle:            core.Lifecycle,
 	})
 	if err != nil {
 		return mapQRDBUserError("create", err)
 	}
 
-	// Apply the fields CreateUserRequest cannot carry. The update routes on the
-	// context tenant, so bind it.
-	tctx := qrdbsdk.ContextWithTenant(ctx, u.TenantID)
-	if core.Attributes != nil || len(u.CertBindings) > 0 {
+	// Stamp the assigned id BEFORE anything else can fail: the record is already
+	// persisted at this point, and the compensation below needs to name it.
+	u.ID = FormatUserID(created.ID)
+
+	// Everything past this point COMPENSATES on failure. qrdb has committed the
+	// canonical record, so returning an error without undoing it would leave a
+	// half-initialised account that the caller was told did not exist — and a
+	// retry would then collide with its own email and username. The create has
+	// to be all or nothing from outside.
+	if err := s.finishCreate(ctx, svc, u, core, created.ID); err != nil {
+		s.compensateCreate(ctx, svc, tenantOf(u), created.ID, u)
+		u.ID = ""
+		return err
+	}
+	return nil
+}
+
+// finishCreate applies everything CreateUserRequest could not carry.
+func (s *QRDBUserStorage) finishCreate(
+	ctx context.Context,
+	svc qrdbsdk.UserServicer,
+	u *iam.User,
+	core qrdbsdk.User,
+	id uint64,
+) error {
+	if core.Attributes != nil || len(core.CertBindings) > 0 {
+		tctx := qrdbsdk.ContextWithTenant(ctx, u.TenantID)
 		if _, err := svc.UpdateUser(tctx, &qrdbsdk.UpdateUserRequest{
-			ID:           created.ID,
+			ID:           id,
 			Attributes:   core.Attributes,
-			CertBindings: cloneCertBindings(u.CertBindings),
+			CertBindings: core.CertBindings,
 		}); err != nil {
 			return mapQRDBUserError("create.update", err)
 		}
 	}
-
-	// Persist the broker side-record and id correlation keyed by the qrdb id.
-	_, profile, _ := FromIAMUser(u, created.ID)
-	if err := s.profiles.SaveProfile(ctx, profile); err != nil {
-		return err
-	}
-	if err := s.idmap.Link(ctx, u.TenantID, u.ID, created.ID); err != nil {
-		return err
-	}
-	return s.writeIndexes(ctx, u)
+	return s.writeLegacyPIVIndex(ctx, u)
 }
 
-// GetUser resolves the qrdb uint64 from the IDMap, reads the qrdb core (routed
-// on the context tenant) and the broker side-record, and composes the broker
-// iam.User via ToIAMUser.
+// compensateCreate undoes a create that could not be finished.
+//
+// Its own errors are deliberately dropped: the caller is already being told the
+// create failed, and a cleanup failure must not replace the reason it failed.
+// The index sweep runs first because it is keyed by the record this is about to
+// remove.
+func (s *QRDBUserStorage) compensateCreate(
+	ctx context.Context,
+	svc qrdbsdk.UserServicer,
+	tenantID string,
+	id uint64,
+	u *iam.User,
+) {
+	_ = s.deleteLegacyPIVIndex(ctx, tenantID, u)
+	tctx := qrdbsdk.ContextWithTenant(ctx, tenantID)
+	_ = svc.DeleteUser(tctx, id)
+}
+
+// tenantOf returns the tenant a user record belongs to.
+func tenantOf(u *iam.User) string {
+	if u == nil {
+		return ""
+	}
+	return u.TenantID
+}
+
+// GetUser reads the qrdb user addressed by its Snowflake, routed on tenantID.
 func (s *QRDBUserStorage) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {
 	svc, err := s.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
-	qid, err := s.idmap.ToQRDB(ctx, tenantID, userID)
+	id, err := ParseUserID(userID)
 	if err != nil {
-		if errors.Is(err, ErrIDMapNotFound) {
-			return nil, iam.ErrUserNotFound
-		}
-		return nil, err
+		return nil, iam.ErrUserNotFound
 	}
 	tctx := qrdbsdk.ContextWithTenant(ctx, tenantID)
-	core, err := svc.GetUser(tctx, qid)
+	core, err := svc.GetUser(tctx, id)
 	if err != nil {
 		return nil, mapQRDBUserError("get", err)
 	}
-	profile, err := s.profile(ctx, tenantID, qid)
-	if err != nil {
-		return nil, err
-	}
-	return ToIAMUser(*core, profile, userID), nil
+	return ToIAMUser(*core), nil
 }
 
-// GetUserByEmail resolves the user via the broker-side email index, then
-// delegates to GetUser. qrdb's own GetUserByEmail is tenant-scoped by design;
-// the broker index is what answers the global fallback. It reads the
-// tenant-scoped key when a tenant is in context and falls back to the global
-// key otherwise (the first-boot admin read-back queries by a globally unique
-// email before any tenant is bound).
-func (s *QRDBUserStorage) GetUserByEmail(ctx context.Context, email string) (*iam.User, error) {
-	owningTenant, uuid, err := s.resolveIndex(ctx, userEmailIndexKey, userEmailGlobalKey, email)
+// GetUserByEmail resolves a user through qrdb's canonical tenant-unique email
+// index — the same index the login ceremony's own record lives in, which is what
+// makes a verified factor and the record that says what it may do impossible to
+// separate.
+func (s *QRDBUserStorage) GetUserByEmail(ctx context.Context, tenantID, email string) (*iam.User, error) {
+	svc, err := s.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return s.GetUser(ctx, owningTenant, uuid)
+	normalized := qrdbsdk.NormalizeEmail(email)
+	if normalized == "" || tenantID == "" {
+		return nil, iam.ErrUserNotFound
+	}
+	tctx := qrdbsdk.ContextWithTenant(ctx, tenantID)
+	core, err := svc.GetUserByEmail(tctx, tenantID, normalized)
+	if err != nil {
+		return nil, mapQRDBUserError("get_by_email", err)
+	}
+	return ToIAMUser(*core), nil
 }
 
 // GetUserByPIVThumbprint resolves a user by a PIV-attested cert binding. It
@@ -246,31 +257,21 @@ func (s *QRDBUserStorage) GetUserByPIVThumbprint(ctx context.Context, thumbprint
 
 	// SPKI first.
 	if core, err := svc.UserByCertThumbprint(tctx, thumbprint); err == nil {
-		uuid, lerr := s.idmap.ToBroker(ctx, core.TenantID, core.ID)
-		if lerr != nil {
-			return nil, lerr
-		}
-		profile, perr := s.profile(ctx, core.TenantID, core.ID)
-		if perr != nil {
-			return nil, perr
-		}
-		return ToIAMUser(*core, profile, uuid), nil
+		return ToIAMUser(*core), nil
 	} else if !isQRDBUserNotFound(err) {
 		return nil, mapQRDBUserError("piv.spki", err)
 	}
 
-	// Legacy fallback: broker-side legacy-PIV index (tenant-scoped, then global).
-	owningTenant, uuid, err := s.resolveIndex(ctx, userLegacyPIVIndexKey, userLegacyPIVGlobalKey, thumbprint)
+	// Legacy fallback: the hex-digest index qrdb's SPKI index cannot serve.
+	owningTenant, userID, err := s.resolveLegacyPIV(ctx, thumbprint)
 	if err != nil {
 		return nil, err
 	}
-	return s.GetUser(ctx, owningTenant, uuid)
+	return s.GetUser(ctx, owningTenant, userID)
 }
 
 // GetUserByUsername resolves a user by tenant-scoped username via qrdb's native
-// lookup, then composes the broker iam.User. It is the seam the RBAC
-// AssignRole/RevokeRole redirect uses (the broker has no username->id index of
-// its own; qrdb owns it).
+// lookup. It is the seam the RBAC AssignRole/RevokeRole redirect uses.
 func (s *QRDBUserStorage) GetUserByUsername(ctx context.Context, tenantID, username string) (*iam.User, error) {
 	svc, err := s.servicer(ctx)
 	if err != nil {
@@ -280,95 +281,148 @@ func (s *QRDBUserStorage) GetUserByUsername(ctx context.Context, tenantID, usern
 	if err != nil {
 		return nil, mapQRDBUserError("get_by_username", err)
 	}
-	uuid, err := s.idmap.ToBroker(ctx, core.TenantID, core.ID)
-	if err != nil {
-		return nil, err
-	}
-	profile, err := s.profile(ctx, core.TenantID, core.ID)
-	if err != nil {
-		return nil, err
-	}
-	return ToIAMUser(*core, profile, uuid), nil
+	return ToIAMUser(*core), nil
 }
 
-// UpdateUser applies a full replacement of the qrdb core (RoleIDs, Attributes,
-// CertBindings, Username) for the resolved uint64 and overwrites the broker
-// side-record, keeping the email/legacy-PIV indexes consistent.
+// UpdateUser applies a full replacement of the qrdb user record.
+//
+// Lifecycle is sent as a TRANSITION, not a field write: qrdb checks the move
+// against its transition table, so an illegal one (anything out of deleting,
+// say) is refused by the store rather than quietly persisted. Setting the state
+// the record already holds is a no-op, which is what makes an ordinary update
+// that does not intend a state change safe to send unconditionally.
 func (s *QRDBUserStorage) UpdateUser(ctx context.Context, u *iam.User) error {
 	svc, err := s.servicer(ctx)
 	if err != nil {
 		return err
 	}
-	qid, err := s.idmap.ToQRDB(ctx, u.TenantID, u.ID)
+	core, err := FromIAMUser(u)
 	if err != nil {
-		if errors.Is(err, ErrIDMapNotFound) {
-			return iam.ErrUserNotFound
-		}
+		return err
+	}
+	if core.ID == 0 {
+		return iam.ErrUserNotFound
+	}
+
+	// Read the prior record to reconcile the legacy-PIV index.
+	// coded-sentinel-ok: the CLASS is the intent. Any not-found means there is
+	// no prior record whose index entries need reconciling.
+	prior, err := s.GetUser(ctx, u.TenantID, u.ID)
+	if err != nil && !errors.Is(err, iam.ErrUserNotFound) {
 		return err
 	}
 
-	// Read the prior profile to reconcile the email/legacy-PIV indexes.
-	prior, err := s.profile(ctx, u.TenantID, qid)
-	if err != nil && !errors.Is(err, iam.ErrBrokerProfileNotFound) {
+	// Drop stale index entries BEFORE the canonical write, not after.
+	//
+	// The two orderings fail in opposite directions and only one of them is
+	// survivable. Writing first and reconciling after means a failed reconcile
+	// returns an error with the binding already removed — and a retry re-reads
+	// the record, no longer sees the old thumbprint, and never removes its index
+	// entry, so a revoked certificate goes on resolving the user forever.
+	// Removing first fails the other way: the entry is gone while the binding is
+	// still valid, which costs a legacy-index lookup and nothing else. A
+	// credential that stops resolving too early is recoverable; one that never
+	// stops is not.
+	if err := s.deleteStaleLegacyPIVIndex(ctx, prior, u); err != nil {
 		return err
 	}
 
-	// CertBindings are a qrdb-canonical field, but the converter routes them into
-	// the broker profile for round-trip fidelity, leaving core.CertBindings nil.
-	// The qrdb core write therefore takes the bindings straight from the broker
-	// user so qrdb's UserByCertThumbprint index stays authoritative.
-	core, profile, _ := FromIAMUser(u, qid)
 	tctx := qrdbsdk.ContextWithTenant(ctx, u.TenantID)
-	if _, err := svc.UpdateUser(tctx, &qrdbsdk.UpdateUserRequest{
-		ID:           qid,
+	committed, err := svc.UpdateUser(tctx, &qrdbsdk.UpdateUserRequest{
+		ID:           core.ID,
 		Username:     core.Username,
+		Email:        core.Email,
+		Name:         core.Name,
 		RoleIDs:      orEmptySlice(core.RoleIDs),
+		GroupIDs:     orEmptySlice(core.GroupIDs),
+		AuthMethods:  orEmptySlice(core.AuthMethods),
 		Attributes:   orEmptyMap(core.Attributes),
-		CertBindings: orEmptyCertBindings(cloneCertBindings(u.CertBindings)),
-	}); err != nil {
+		CertBindings: orEmptyCertBindings(core.CertBindings),
+		Lifecycle:    core.Lifecycle,
+		LastAuth:     core.LastAuth,
+	})
+	if err != nil {
 		return mapQRDBUserError("update", err)
 	}
-	if err := s.profiles.SaveProfile(ctx, profile); err != nil {
-		return err
-	}
-	return s.reconcileIndexes(ctx, prior, u)
+
+	// Publish from what the store COMMITTED, not from the caller's in-memory
+	// copy. The two differ whenever another writer got there first, and an index
+	// built from the caller's copy would then advertise a binding the canonical
+	// record does not hold — a thumbprint resolving a user it is no longer bound
+	// to.
+	//
+	// This does not make concurrent updates to one user's bindings safe: two
+	// racing updates can still interleave so that the loser publishes last. That
+	// needs arbitration on the canonical record and is filed separately; the
+	// legacy index is a migration-window fallback for hex-digest thumbprints
+	// qrdb's SPKI index cannot resolve, and its SPKI-primary sibling is not
+	// affected.
+	return s.writeLegacyPIVIndex(ctx, ToIAMUser(*committed))
 }
 
-// DeleteUser removes the qrdb core, the broker side-record, the id correlation,
-// and the broker-side indexes.
+// MarkUserDeleting claims the record for deletion.
+//
+// The request carries the lifecycle and NOTHING else. That is not tidiness: the
+// store refuses any update to a terminal record except one that re-asserts the
+// state it already holds, so a request carrying the rest of the user would be
+// rejected the second time it ran — and the second time is precisely a retried
+// deletion, the case the terminal state exists to make resumable.
+func (s *QRDBUserStorage) MarkUserDeleting(ctx context.Context, tenantID, userID string) error {
+	svc, err := s.servicer(ctx)
+	if err != nil {
+		return err
+	}
+	id, err := ParseUserID(userID)
+	if err != nil {
+		return iam.ErrUserNotFound
+	}
+	tctx := qrdbsdk.ContextWithTenant(ctx, tenantID)
+	if _, err := svc.UpdateUser(tctx, &qrdbsdk.UpdateUserRequest{
+		ID:        id,
+		Lifecycle: iam.LifecycleDeleting,
+	}); err != nil {
+		return mapQRDBUserError("mark_deleting", err)
+	}
+	return nil
+}
+
+// DeleteUser removes the qrdb user and the legacy-PIV index entries it owned.
+//
+// It does NOT mark the record deleting itself: qrdb's own DeleteUser claims the
+// record as its first act, and IdentityStore.DeleteUser has already claimed it
+// before sweeping the credentials that outlive this call. A third marker here
+// would be a redundant round trip that changes nothing.
 func (s *QRDBUserStorage) DeleteUser(ctx context.Context, tenantID, userID string) error {
 	svc, err := s.servicer(ctx)
 	if err != nil {
 		return err
 	}
-	qid, err := s.idmap.ToQRDB(ctx, tenantID, userID)
+	id, err := ParseUserID(userID)
 	if err != nil {
-		if errors.Is(err, ErrIDMapNotFound) {
-			return iam.ErrUserNotFound
-		}
+		return iam.ErrUserNotFound
+	}
+	prior, err := s.GetUser(ctx, tenantID, userID)
+	if err != nil {
 		return err
 	}
-	prior, err := s.profile(ctx, tenantID, qid)
-	if err != nil && !errors.Is(err, iam.ErrBrokerProfileNotFound) {
+
+	// Sweep the index BEFORE removing the record, for the reason UpdateUser
+	// gives: once the canonical record is gone a retry cannot re-read the
+	// thumbprints it owned, so an entry that outlives this call outlives every
+	// chance to remove it and goes on resolving a user that no longer exists.
+	if err := s.deleteLegacyPIVIndex(ctx, tenantID, prior); err != nil {
 		return err
 	}
 	tctx := qrdbsdk.ContextWithTenant(ctx, tenantID)
-	if err := svc.DeleteUser(tctx, qid); err != nil {
+	if err := svc.DeleteUser(tctx, id); err != nil {
 		return mapQRDBUserError("delete", err)
 	}
-	if err := s.profiles.DeleteProfile(ctx, tenantID, qid); err != nil {
-		return err
-	}
-	if err := s.idmap.Unlink(ctx, tenantID, userID); err != nil {
-		return err
-	}
-	return s.deleteIndexes(ctx, tenantID, prior)
+	return nil
 }
 
-// ListUsers returns the tenant's qrdb users, composing each with its broker
-// side-record. The qrdb id is the IDMap reverse key, so a user missing an IDMap
-// entry (never persisted through this store) is skipped rather than failing the
-// whole listing.
+// ListUsers returns the tenant's qrdb users. Every record projects, so there is
+// no "skipped because it had no correlation entry" case: a user that exists in
+// the tenant is a user this listing returns.
 func (s *QRDBUserStorage) ListUsers(ctx context.Context, tenantID string, opts iam.ListOptions) ([]*iam.User, error) {
 	svc, err := s.servicer(ctx)
 	if err != nil {
@@ -387,81 +441,28 @@ func (s *QRDBUserStorage) ListUsers(ctx context.Context, tenantID string, opts i
 		if core == nil {
 			continue
 		}
-		uuid, lerr := s.idmap.ToBroker(ctx, tenantID, core.ID)
-		if lerr != nil {
-			if errors.Is(lerr, ErrIDMapNotFound) {
-				continue
-			}
-			return nil, lerr
-		}
-		profile, perr := s.profile(ctx, tenantID, core.ID)
-		if perr != nil {
-			return nil, perr
-		}
-		out = append(out, ToIAMUser(*core, profile, uuid))
+		out = append(out, ToIAMUser(*core))
 	}
 	return out, nil
 }
 
-// QRDBUserID resolves the qrdb numeric user id correlated with the broker's
-// external string user id within tenantID. It is the authoritative correlation
-// (the IDMap written by CreateUser), so callers that must address a user in
-// qrdb's own id space — auth-factor enrollment, whose factors bind to the
-// numeric id the login resolver resolves principals from — never have to
-// round-trip through a username. A user with no correlation yields
-// iam.ErrUserNotFound.
-func (s *QRDBUserStorage) QRDBUserID(ctx context.Context, tenantID, userID string) (uint64, error) {
-	if s == nil || s.idmap == nil {
-		return 0, &dberrors.QBError{
-			Code: dberrors.ErrConfiguration,
-			Op:   "iam.user.qrdb",
-			Err:  &iam.IAMMessageError{Message: "qrdb user id map not configured"},
-		}
-	}
-	qid, err := s.idmap.ToQRDB(ctx, tenantID, userID)
-	if err != nil {
-		if errors.Is(err, ErrIDMapNotFound) {
-			return 0, iam.ErrUserNotFound
-		}
-		return 0, err
-	}
-	return qid, nil
+// indexValue encodes the owning tenant and user id of an index entry so a global
+// (un-scoped) hit still resolves the owning tenant for the follow-up read.
+func indexValue(tenantID, userID string) []byte {
+	return []byte(tenantID + ":" + userID)
 }
 
-// profile reads the broker side-record, returning a nil profile (not an error)
-// when none exists so ToIAMUser falls back to the qrdb-core-only projection.
-func (s *QRDBUserStorage) profile(ctx context.Context, tenantID string, qid uint64) (*iam.BrokerProfile, error) {
-	p, err := s.profiles.GetProfile(ctx, tenantID, qid)
-	if err != nil {
-		if errors.Is(err, iam.ErrBrokerProfileNotFound) {
-			return nil, nil
-		}
-		return nil, err
+// writeLegacyPIVIndex writes the legacy-PIV index entries for u under a
+// tenant-scoped key AND a global key (both routed through the owning tenant's
+// store) so a lookup with no tenant in context still resolves.
+func (s *QRDBUserStorage) writeLegacyPIVIndex(ctx context.Context, u *iam.User) error {
+	thumbprints := u.LegacyPIVThumbprints()
+	if len(thumbprints) == 0 {
+		return nil
 	}
-	return p, nil
-}
-
-// indexValue encodes the owning tenant and broker UUID of an index entry so a
-// global (un-scoped) hit still resolves the owning tenant for GetUser.
-func indexValue(tenantID, uuid string) []byte {
-	return []byte(tenantID + ":" + uuid)
-}
-
-// writeIndexes writes the email and legacy-PIV broker-side indexes for u. Each
-// is written under a tenant-scoped key AND a global key (both routed through the
-// owning tenant's store) so a lookup with no tenant in context still resolves.
-func (s *QRDBUserStorage) writeIndexes(ctx context.Context, u *iam.User) error {
 	tctx := iam.ContextWithTenant(ctx, u.TenantID)
 	val := indexValue(u.TenantID, u.ID)
-	if u.Email != "" {
-		if err := s.kv.Put(tctx, userEmailIndexKey(u.TenantID, u.Email), val); err != nil {
-			return err
-		}
-		if err := s.kv.Put(tctx, userEmailGlobalKey(u.Email), val); err != nil {
-			return err
-		}
-	}
-	for _, tp := range u.LegacyPIVThumbprints() {
+	for _, tp := range thumbprints {
 		if err := s.kv.Put(tctx, userLegacyPIVIndexKey(u.TenantID, tp), val); err != nil {
 			return err
 		}
@@ -472,52 +473,39 @@ func (s *QRDBUserStorage) writeIndexes(ctx context.Context, u *iam.User) error {
 	return nil
 }
 
-// reconcileIndexes updates the broker-side indexes for an UpdateUser: it drops
-// index entries that no longer apply and (re)writes the current ones.
-func (s *QRDBUserStorage) reconcileIndexes(ctx context.Context, prior *iam.BrokerProfile, u *iam.User) error {
+// deleteStaleLegacyPIVIndex removes the index entries an update is about to
+// invalidate — the thumbprints the prior record carried and the new one does
+// not. It runs BEFORE the canonical write; see UpdateUser for why that ordering
+// is the survivable one.
+func (s *QRDBUserStorage) deleteStaleLegacyPIVIndex(ctx context.Context, prior *iam.User, u *iam.User) error {
+	if prior == nil {
+		return nil
+	}
 	tctx := iam.ContextWithTenant(ctx, u.TenantID)
-	if prior != nil {
-		if prior.Email != "" && prior.Email != u.Email {
-			if err := s.kv.Delete(tctx, userEmailIndexKey(u.TenantID, prior.Email)); err != nil {
-				return err
-			}
-			if err := s.kv.Delete(tctx, userEmailGlobalKey(prior.Email)); err != nil {
-				return err
-			}
+	current := make(map[string]struct{})
+	for _, tp := range u.LegacyPIVThumbprints() {
+		current[tp] = struct{}{}
+	}
+	for _, tp := range legacyPIVThumbprintsFromBindings(prior.CertBindings) {
+		if _, keep := current[tp]; keep {
+			continue
 		}
-		current := make(map[string]struct{})
-		for _, tp := range u.LegacyPIVThumbprints() {
-			current[tp] = struct{}{}
+		if err := s.kv.Delete(tctx, userLegacyPIVIndexKey(u.TenantID, tp)); err != nil {
+			return err
 		}
-		for _, tp := range legacyPIVThumbprintsFromBindings(prior.CertBindings) {
-			if _, keep := current[tp]; !keep {
-				if err := s.kv.Delete(tctx, userLegacyPIVIndexKey(u.TenantID, tp)); err != nil {
-					return err
-				}
-				if err := s.kv.Delete(tctx, userLegacyPIVGlobalKey(tp)); err != nil {
-					return err
-				}
-			}
+		if err := s.kv.Delete(tctx, userLegacyPIVGlobalKey(tp)); err != nil {
+			return err
 		}
 	}
-	return s.writeIndexes(ctx, u)
+	return nil
 }
 
-// deleteIndexes removes the broker-side indexes for a deleted user, using the
-// prior profile to recover the email and legacy-PIV thumbprints.
-func (s *QRDBUserStorage) deleteIndexes(ctx context.Context, tenantID string, prior *iam.BrokerProfile) error {
+// deleteLegacyPIVIndex removes the index entries a deleted user owned.
+func (s *QRDBUserStorage) deleteLegacyPIVIndex(ctx context.Context, tenantID string, prior *iam.User) error {
 	if prior == nil {
 		return nil
 	}
 	tctx := iam.ContextWithTenant(ctx, tenantID)
-	if prior.Email != "" {
-		if err := s.kv.Delete(tctx, userEmailIndexKey(tenantID, prior.Email)); err != nil {
-			return err
-		}
-		if err := s.kv.Delete(tctx, userEmailGlobalKey(prior.Email)); err != nil {
-			return err
-		}
-	}
 	for _, tp := range legacyPIVThumbprintsFromBindings(prior.CertBindings) {
 		if err := s.kv.Delete(tctx, userLegacyPIVIndexKey(tenantID, tp)); err != nil {
 			return err
@@ -529,34 +517,33 @@ func (s *QRDBUserStorage) deleteIndexes(ctx context.Context, tenantID string, pr
 	return nil
 }
 
-// resolveIndex reads a broker-side index, returning the owning tenant and broker
-// UUID. It tries the tenant-scoped key first when a tenant is in context, then
-// falls back to the global key (routed through the in-context tenant, which for a
-// prefix/system tenant or an empty context is the shared store). A not-found maps
-// to the canonical iam.ErrUserNotFound.
-func (s *QRDBUserStorage) resolveIndex(ctx context.Context, scopedKey func(tenantID, k string) string, globalKey func(k string) string, k string) (string, string, error) {
-	tenantID := iam.TenantFromContext(ctx)
-	if tenantID != "" {
-		if owning, uuid, ok, err := s.indexLookup(ctx, scopedKey(tenantID, k)); err != nil {
+// resolveLegacyPIV reads the legacy-PIV index, returning the owning tenant and
+// user id. It tries the tenant-scoped key first when a tenant is in context,
+// then falls back to the global key. A not-found maps to iam.ErrUserNotFound.
+func (s *QRDBUserStorage) resolveLegacyPIV(ctx context.Context, thumbprint string) (string, string, error) {
+	if tenantID := iam.TenantFromContext(ctx); tenantID != "" {
+		owning, userID, ok, err := s.indexLookup(ctx, userLegacyPIVIndexKey(tenantID, thumbprint))
+		if err != nil {
 			return "", "", err
-		} else if ok {
-			return owning, uuid, nil
+		}
+		if ok {
+			return owning, userID, nil
 		}
 	}
-	owning, uuid, ok, err := s.indexLookup(ctx, globalKey(k))
+	owning, userID, ok, err := s.indexLookup(ctx, userLegacyPIVGlobalKey(thumbprint))
 	if err != nil {
 		return "", "", err
 	}
 	if !ok {
 		return "", "", iam.ErrUserNotFound
 	}
-	return owning, uuid, nil
+	return owning, userID, nil
 }
 
-// indexLookup reads a single index key and splits its "tenantID:uuid" value. The
-// ok return distinguishes a clean miss from an error so resolveIndex can fall
+// indexLookup reads a single index key and splits its "tenantID:userID" value.
+// The ok return distinguishes a clean miss from an error so the caller can fall
 // through to the global key.
-func (s *QRDBUserStorage) indexLookup(ctx context.Context, key string) (tenantID, uuid string, ok bool, err error) {
+func (s *QRDBUserStorage) indexLookup(ctx context.Context, key string) (tenantID, userID string, ok bool, err error) {
 	data, gerr := s.kv.Get(ctx, key)
 	if gerr != nil {
 		if dberrors.IsNotFound(gerr) {
@@ -575,8 +562,9 @@ func (s *QRDBUserStorage) indexLookup(ctx context.Context, key string) (tenantID
 	return parts[0], parts[1], true, nil
 }
 
-// splitIndexValue splits a "tenantID:uuid" index value. A UUID never contains a
-// colon, and the tenant id is the first segment, so a single SplitN(2) is exact.
+// splitIndexValue splits a "tenantID:userID" index value. A decimal user id
+// never contains a colon, and the tenant id is the first segment, so splitting
+// at the first colon is exact.
 func splitIndexValue(v string) [2]string {
 	for i := 0; i < len(v); i++ {
 		if v[i] == ':' {
@@ -631,8 +619,8 @@ func isQRDBUserNotFound(err error) bool {
 
 // mapQRDBUserError translates qrdb's user errors into the broker's typed IAM
 // sentinels so callers that branch on errors.Is(err, ErrUserNotFound) /
-// ErrEmailAlreadyExists keep working unchanged. Unknown errors are wrapped
-// (never swallowed) with the originating op.
+// ErrAlreadyExists keep working unchanged. Unknown errors are wrapped (never
+// swallowed) with the originating op.
 func mapQRDBUserError(op string, err error) error {
 	if err == nil {
 		return nil
@@ -640,13 +628,18 @@ func mapQRDBUserError(op string, err error) error {
 	if isQRDBUserNotFound(err) {
 		return iam.ErrUserNotFound
 	}
-	var exists *qrdbsdk.UsernameExistsError
-	if errors.As(err, &exists) {
-		return iam.ErrAlreadyExists
-	}
+	// The email index is tenant-unique in the STORE, so a duplicate can arrive
+	// here even though IdentityStore checked first: two concurrent creates both
+	// pass that check, qrdb accepts one and refuses the other. Without this the
+	// loser is wrapped as an internal error and every transport reports a server
+	// failure for what is an ordinary, expected conflict.
 	var emailExists *qrdbsdk.EmailExistsError
 	if errors.As(err, &emailExists) {
 		return iam.ErrEmailAlreadyExists
+	}
+	var exists *qrdbsdk.UsernameExistsError
+	if errors.As(err, &exists) {
+		return iam.ErrAlreadyExists
 	}
 	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,

@@ -26,6 +26,7 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 // createTestSDKKVStore creates an sdkKVStore backed by a real qrdb
@@ -35,7 +36,7 @@ import (
 //
 // TODO Phase F: consolidate with the real-engine integration tests once the
 // Phase F test harness is in place.
-func createTestSDKKVStore(t *testing.T) *sdkKVStore {
+func createTestSDKKVStore(t *testing.T) interfaces.KVStore {
 	t.Helper()
 
 	ctx := context.Background()
@@ -49,8 +50,17 @@ func createTestSDKKVStore(t *testing.T) *sdkKVStore {
 	t.Cleanup(func() { _ = node.Close() })
 
 	client := node.Client()
-	store := newSDKKVStore(client, 1)
-	return store.(*sdkKVStore)
+
+	// Returned as the INTERFACE, not as *sdkKVStore. newSDKKVStore chooses its
+	// concrete type from what the transport carries: a transport offering the
+	// guarded verbs yields *guardedSDKKVStore, and asserting the base type
+	// panicked the moment qrdb's transport grew them — a test failing on a
+	// capability being ADDED, while every verb it exercises kept working.
+	//
+	// These tests are about the KVStore contract, so the contract is what they
+	// hold. A test that needs a specific concrete type should assert it itself
+	// and say why.
+	return newSDKKVStore(client, 1)
 }
 
 // ---------------------------------------------------------------------------

@@ -35,7 +35,7 @@ func createSDKIAMClient() (iam.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return client.IAM(), nil
+	return client.Identity().IAM(), nil
 }
 
 // resetIAMFactory resets the IAM factory to its default implementation.

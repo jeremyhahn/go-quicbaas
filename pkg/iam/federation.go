@@ -1205,7 +1205,7 @@ func (m *DefaultFederationManager) processAuthentication(ctx context.Context, pr
 
 	// No existing link - try to link by email if allowed
 	if provider.AllowLinking && email != "" {
-		user, err := m.identityStore.GetUserByEmail(ctx, email)
+		user, err := m.identityStore.GetUserByEmail(ctx, state.TenantID, email)
 		if err == nil && user != nil && user.TenantID == state.TenantID {
 			// Re-sync roles from the current IdP groups.
 			if err := m.syncUserRoles(ctx, state.TenantID, user.ID, resolution); err != nil {
@@ -1339,12 +1339,19 @@ func (m *DefaultFederationManager) provisionUser(ctx context.Context, provider *
 		username = username[:64]
 	}
 
-	// Prepare create options
+	// Prepare create options.
+	//
+	// State is stated rather than defaulted: this user has just been
+	// authenticated by their identity provider, so they are active. The
+	// default is LifecyclePending, which describes an account awaiting an
+	// invite — which a JIT-provisioned federated user never has.
+	enabled := true
 	opts := CreateUserOptions{
-		Email:    email,
-		Username: username,
-		Name:     name,
-		Enabled:  true,
+		Email:     email,
+		Username:  username,
+		Name:      name,
+		Enabled:   &enabled,
+		Lifecycle: LifecycleActive,
 	}
 
 	// Create user
@@ -1522,7 +1529,7 @@ func (m *DefaultFederationManager) logAuthEvent(ctx context.Context, tenantID st
 	if user != nil {
 		actor = &AuditActor{
 			UserID:   user.ID,
-			Username: user.Name,
+			Username: user.Username,
 			Email:    user.Email,
 		}
 	}
@@ -1564,7 +1571,7 @@ func (m *DefaultFederationManager) logLinkEvent(ctx context.Context, tenantID st
 	if user != nil {
 		actor = &AuditActor{
 			UserID:   user.ID,
-			Username: user.Name,
+			Username: user.Username,
 			Email:    user.Email,
 		}
 	}

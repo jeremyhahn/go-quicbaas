@@ -466,8 +466,15 @@ func (h *IAMHandler) GetBackupCodeStatus(w http.ResponseWriter, r *http.Request)
 
 	status, err := mfaMgr.GetBackupCodeStatus(ctx, userID, tenantID)
 	if err != nil {
-		// If user has no backup codes yet, return zeros instead of an error
-		if errors.Is(err, iam.ErrMFANotEnrolled) {
+		// If user has no backup codes yet, return zeros instead of an error.
+		//
+		// IsMFANotEnrolled, not errors.Is: errors.Is compares the QBError CODE,
+		// so ANY not-found the MFA store could raise -- an absent user, a
+		// backend that answered 404 -- was answered with a 200 reporting zero
+		// backup codes. A failure to READ the enrollment reported as its
+		// absence tells the operator the account has no recovery codes when
+		// nothing established that (go-quicbaas#434).
+		if iam.IsMFANotEnrolled(err) {
 			RespondJSON(w, r, http.StatusOK, BackupCodeStatusResponse{
 				TotalCodes:     0,
 				RemainingCodes: 0,

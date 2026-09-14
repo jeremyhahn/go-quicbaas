@@ -18,52 +18,76 @@
 /** ProjectRole defines the level of access an agent has within a project. */
 export type ProjectRole = 'lead' | 'worker' | 'observer' | 'denied';
 
-/** ProjectWorkspace describes the agent workspace associated with a project. */
-export interface ProjectWorkspace {
-  /** agent_id is the ID of the agent that owns the workspace. */
-  agent_id?: string;
-  /** path is the filesystem path to the workspace on the agent host. */
-  path?: string;
+/**
+ * ContextRepo names one repository the worker clones beside the project
+ * checkout. The daemon never clones it.
+ */
+export interface ContextRepo {
+  /** name is the directory the repository is cloned into (one path segment). */
+  name: string;
+  /** repo_url is the remote the worker clones from. */
+  repo_url: string;
+  /** ref is the branch, tag or commit the worker checks out. */
+  ref: string;
 }
 
-/** ProjectGit describes the git repository linked to a project. */
-export interface ProjectGit {
-  /** repo_url is the remote git repository URL. */
-  repo_url?: string;
-  /** default_branch is the default git branch (e.g. "main"). */
-  default_branch?: string;
-  /** current_sha is the commit SHA last recorded by an agent job run. */
-  current_sha?: string;
-}
-
-/** ProjectPermissions defines agent-level access roles for a project. */
-export interface ProjectPermissions {
+/**
+ * Project is the canonical project entity returned by the server.
+ *
+ * THE SHAPE IS FLAT, and it is flat because the server's is: every transport
+ * serializes `pkg/api/rest.ProjectRESTResponse`, whose git, workspace, quota
+ * and permission fields are all top-level `git_*` / `workspace_*` /
+ * `token_budget` / `agent_roles` keys. A nested mirror of it here read
+ * `project.git.repo_url` off a body that never carried one, so every existing
+ * project's Git settings edited as blank (go-quicbaas#797). One shape, and it
+ * is the one on the wire.
+ */
+export interface Project {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description?: string;
+  /** workspace_agent_id is the agent that owns the workspace. */
+  workspace_agent_id?: string;
+  /** workspace_path is the workspace path on the agent host. */
+  workspace_path?: string;
+  host_affinity?: string;
+  default_lead_agent?: string;
+  /** default_workflow is the tenant-scoped workflow a Task auto-spawns into. */
+  default_workflow?: string;
+  /** autonomous reports whether autonomous development is on for this project. */
+  autonomous?: boolean;
+  /** context_repos are cloned by the worker beside the project checkout. */
+  context_repos?: ContextRepo[];
+  /** git_repo_url is the remote git repository URL. */
+  git_repo_url?: string;
+  /** git_default_branch is the default git branch (e.g. "main"). */
+  git_default_branch?: string;
+  /** git_current_sha is the commit SHA last recorded by an agent job run. */
+  git_current_sha?: string;
+  /** git_author_name / git_author_email are the commit identity of the workspace. */
+  git_author_name?: string;
+  git_author_email?: string;
+  /** git_signing_enabled reports whether commits are signed; an enabled policy names a key. */
+  git_signing_enabled?: boolean;
+  /** git_signing_algorithm is ED25519 (default) or ECDSA-P256 (FIPS). */
+  git_signing_algorithm?: string;
+  /** git_signing_key_* name the KMS-held signing key. Never material. */
+  git_signing_key_name?: string;
+  git_signing_key_scope?: string;
+  git_signing_key_owner?: string;
+  /** git_ssh_key_* name the KMS key an ssh:// git_repo_url is reached with. */
+  git_ssh_key_name?: string;
+  git_ssh_key_scope?: string;
+  git_ssh_key_owner?: string;
   /** agent_roles maps agent IDs to their assigned role. */
   agent_roles?: Record<string, ProjectRole>;
-}
-
-/** ProjectQuotas defines resource limits for a project. */
-export interface ProjectQuotas {
   /** token_budget is the maximum LLM token budget (0 = unlimited). */
   token_budget?: number;
   /** gpu_minutes is the maximum GPU compute budget in minutes (0 = unlimited). */
   gpu_minutes?: number;
   /** max_concurrency is the maximum concurrent workflow runs (0 = unlimited). */
   max_concurrency?: number;
-}
-
-/** Project is the canonical project entity returned by the server. */
-export interface Project {
-  id: string;
-  tenant_id: string;
-  name: string;
-  description?: string;
-  workspace?: ProjectWorkspace;
-  host_affinity?: string;
-  default_lead_agent?: string;
-  git?: ProjectGit;
-  permissions?: ProjectPermissions;
-  quotas?: ProjectQuotas;
   metadata?: Record<string, string>;
   created_at: string;
   updated_at: string;
@@ -86,6 +110,26 @@ export interface CreateProjectRequest {
   gpu_minutes?: number;
   max_concurrency?: number;
   metadata?: Record<string, string>;
+  /** default_workflow names the tenant-scoped workflow a Task auto-spawns into; it must be registered in the tenant. */
+  default_workflow?: string;
+  /** autonomous turns autonomous development on for the new project. */
+  autonomous?: boolean;
+  /** context_repos are cloned by the worker beside the project checkout. */
+  context_repos?: ContextRepo[];
+  /** git_author_name / git_author_email are the commit identity of the workspace. Both or neither. */
+  git_author_name?: string;
+  git_author_email?: string;
+  /** git_signing_enabled turns commit signing on; an enabled policy names git_signing_key_name. */
+  git_signing_enabled?: boolean;
+  /** git_signing_algorithm is ED25519 (default) or ECDSA-P256 (FIPS). */
+  git_signing_algorithm?: string;
+  git_signing_key_name?: string;
+  git_signing_key_scope?: string;
+  git_signing_key_owner?: string;
+  /** git_ssh_key_* reference the KMS key an ssh:// git_repo_url is reached with. Empty means the signing key. */
+  git_ssh_key_name?: string;
+  git_ssh_key_scope?: string;
+  git_ssh_key_owner?: string;
 }
 
 /** CreateProjectResponse is the server response after project creation. */
@@ -121,6 +165,27 @@ export interface UpdateProjectRequest {
   gpu_minutes?: number;
   max_concurrency?: number;
   metadata?: Record<string, string>;
+  /** default_workflow sets the auto-spawn workflow when non-empty; clear_default_workflow removes it. */
+  default_workflow?: string;
+  clear_default_workflow?: boolean;
+  /** autonomous updates the autonomous-development switch when present (omit it to leave it unchanged). */
+  autonomous?: boolean;
+  /** context_repos replaces the whole list when present; clear_context_repos empties it. */
+  context_repos?: ContextRepo[];
+  clear_context_repos?: boolean;
+  /** git_author_name / git_author_email update the commit identity when non-empty. */
+  git_author_name?: string;
+  git_author_email?: string;
+  /** git_signing_enabled updates the signing switch when present (omit it to leave signing unchanged). */
+  git_signing_enabled?: boolean;
+  git_signing_algorithm?: string;
+  git_signing_key_name?: string;
+  git_signing_key_scope?: string;
+  git_signing_key_owner?: string;
+  /** git_ssh_key_* update the access key reference when non-empty. */
+  git_ssh_key_name?: string;
+  git_ssh_key_scope?: string;
+  git_ssh_key_owner?: string;
 }
 
 /** UpdateProjectResponse is the server response after a project update. */

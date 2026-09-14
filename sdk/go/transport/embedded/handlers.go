@@ -268,30 +268,6 @@ func handleValidateToken(ctx context.Context, svc service.QuicBaaS, req interfac
 // RBAC Handlers
 // =============================================================================
 
-func handleCreateUser(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.AuthCreateUserRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "CreateUser", "*service.AuthCreateUserRequest", reflect.TypeOf(req).String())
-	}
-	return svc.CreateUser(ctx, r)
-}
-
-func handleDeleteUser(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.AuthDeleteUserRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "DeleteUser", "*service.AuthDeleteUserRequest", reflect.TypeOf(req).String())
-	}
-	return svc.DeleteUser(ctx, r)
-}
-
-func handleListUsers(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.AuthListUsersRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "ListUsers", "*service.AuthListUsersRequest", reflect.TypeOf(req).String())
-	}
-	return svc.ListUsers(ctx, r)
-}
-
 func handleCreateAuthRole(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.AuthCreateRoleRequest)
 	if !ok {

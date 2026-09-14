@@ -1,0 +1,2 @@
+--- Artifact ${index} ---
+${output}

@@ -25,15 +25,23 @@ import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 // AccountService — pooled provider account lifecycle
 // =============================================================================
 
+// The METADATA READS and the credential RELEASE take QuicBaaS's own
+// tenant-scoped agent_accounts:* family; the WRITES take go-qrdb's
+// credentials:*. That split is deliberate: credentials:* is registered
+// ScopeCross — system tenant only, because qrdb's named-credential store has no
+// tenant namespacing — while a pooled account is written into the requesting
+// tenant's own keyspace, so every tenant identity (including an enrolled agent
+// daemon) was denied a surface that is tenant data. See go-quicbaas#734, and
+// go-quicbaas#737 for the write half.
 service AccountService {
     rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse) {
         option (qrdb.v1.permission) = "credentials:store";
     }
     rpc GetAccount(GetAccountRequest) returns (GetAccountResponse) {
-        option (qrdb.v1.permission) = "credentials:retrieve";
+        option (qrdb.v1.permission) = "agent_accounts:read";
     }
     rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse) {
-        option (qrdb.v1.permission) = "credentials:list";
+        option (qrdb.v1.permission) = "agent_accounts:list";
     }
     rpc UpdateAccount(UpdateAccountRequest) returns (UpdateAccountResponse) {
         option (qrdb.v1.permission) = "credentials:store";
@@ -51,7 +59,16 @@ service AccountService {
         option (qrdb.v1.permission) = "credentials:store";
     }
     rpc GetAccountUsage(GetAccountUsageRequest) returns (GetAccountUsageResponse) {
-        option (qrdb.v1.permission) = "credentials:retrieve";
+        option (qrdb.v1.permission) = "agent_accounts:read";
+    }
+    // MaterializeAccountCredential RELEASES one account's credential envelope
+    // to the caller. It is the single method in this service whose response
+    // carries secret material, which is why it carries its own permission
+    // rather than the read verb that lists the pool: an identity that may see
+    // the pool's metadata must not thereby be able to extract every login in
+    // it. See docs/agent-orchestration/accounts.md.
+    rpc MaterializeAccountCredential(MaterializeAccountCredentialRequest) returns (MaterializeAccountCredentialResponse) {
+        option (qrdb.v1.permission) = "agent_accounts:materialize";
     }
 }
 
@@ -92,7 +109,11 @@ message Account {
     string credential_health      = 17;
 }
 
-// AccountCredential is the secret envelope. REQUEST-ONLY — never returned.
+// AccountCredential is the secret envelope. REQUEST-ONLY — it appears in
+// CreateAccountRequest and RotateAccountCredentialRequest and in no response.
+// The one method that returns credential material uses
+// MaterializedAccountCredential instead, which deliberately carries no
+// refresh-grant fields.
 message AccountCredential {
     map<string, string> env                  = 1;
     map<string, bytes>  files                = 2;
@@ -216,4 +237,79 @@ message GetAccountUsageRequest {
 message GetAccountUsageResponse {
     AccountUsage usage     = 1;
     int64        timestamp = 2;
+}
+
+// MaterializedAccountCredential is the RELEASED envelope: the short-lived half
+// of a pooled credential, and nothing else.
+//
+// It deliberately omits refresh_token, token_endpoint and client_id. Renewal
+// is the central's job and already happened inside the call that produced this
+// message, so a recipient has no use for the refresh grant — and shipping it
+// would put the long-lived half of the credential on a worker host that only
+// ever needs the short-lived half.
+message MaterializedAccountCredential {
+    map<string, string> env                  = 1;
+    map<string, bytes>  files                = 2;
+    string              access_token         = 3;
+    int64               expires_at_unix      = 4;
+    repeated string     scopes               = 5;
+    string              access_token_env_key = 6;
+}
+
+message MaterializeAccountCredentialRequest {
+    string tenant_id  = 1;
+    string account_id = 2;
+    // project_id is the project the requesting spawn belongs to. An account
+    // restricted to a project is released only to a request naming it.
+    string project_id = 3;
+
+    // job_id names the job the requesting spawn works for. It scopes the
+    // DELIVERY GRANT this release takes out, so a job's releases can be listed
+    // and revoked as a set.
+    //
+    // An enrolled daemon leaves it EMPTY, deliberately: its credential cache is
+    // keyed by account, so one release serves every job running on that host and
+    // a grant naming one of them would be false. A caller that releases for a
+    // single job -- the control plane's own tooling -- names it and gets a
+    // job-scoped grant.
+    string job_id = 4;
+
+    // lease_id presents the delivery grant a caller already holds, and is what
+    // distinguishes a REFRESH of a copy from a request for a new one.
+    //
+    // Empty asks for a first release, which issues a grant. Non-empty says "I
+    // hold a copy under this grant and want a fresh one", and is the case the
+    // server ENFORCES on: a grant that has been revoked (the session that held
+    // the copy ended) or has lapsed is refused, so the caller cannot replace
+    // what it holds.
+    string lease_id = 5;
+}
+
+message MaterializeAccountCredentialResponse {
+    string                        account_id             = 1;
+    string                        provider               = 2;
+    string                        display_name           = 3;
+    string                        project_id             = 4;
+    string                        refresh_policy         = 5;
+    MaterializedAccountCredential credential             = 6;
+    int64                         expires_at_unix        = 7;
+    // updated_at_unix is diagnostics: it moves on any write to the record,
+    // including the usage stamp the release itself makes.
+    int64                         updated_at_unix        = 8;
+    // last_refreshed_at_unix is when the ENVELOPE was last replaced, and is the
+    // cache-invalidation signal: a caller that later reads a newer value knows
+    // its cached envelope is superseded without asking for the secret again.
+    int64                         last_refreshed_at_unix = 9;
+    int64                         timestamp              = 10;
+
+    // lease_id is the delivery grant this release is authorised by: the one the
+    // request presented, or the one this release issued. A caller that caches
+    // the envelope MUST present it on every refresh of that copy.
+    string lease_id = 11;
+
+    // lease_expires_at_unix is when the grant stops being authorised without
+    // renewal. It is NOT the credential's expiry (expires_at_unix, above) —
+    // that is the OAuth credential's own lifetime, which the control plane's
+    // refresher owns. The two are deliberately independent.
+    int64 lease_expires_at_unix = 12;
 }

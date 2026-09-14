@@ -22,20 +22,50 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
-// UserState represents the lifecycle state of a user account.
-type UserState string
+// Lifecycle is the canonical account state, owned by go-qrdb and re-exported
+// here so this package names it without redefining it.
+//
+// It replaces the State/Suspended/Locked triple this package used to carry.
+// That triple could describe a record as suspended and active at once, and it
+// was a second source of truth for a question qrdb already answers; qrdb's
+// transition table now owns which moves are legal, and Enabled survives only as
+// a derived projection (exactly Lifecycle == active).
+type Lifecycle = qrdbsdk.Lifecycle
 
-// UserState constants define the possible states of a user account.
+// Authentication method names carried in User.AuthMethods. QuicBaaS is
+// passwordless: these are the credential kinds an account may activate and
+// authenticate with.
 const (
-	// UserStatePending indicates the user has been created but has not yet activated
-	// their account via an invite flow.
-	UserStatePending UserState = "pending"
+	// AuthMethodWebAuthn is a FIDO2 / WebAuthn passkey.
+	AuthMethodWebAuthn = "webauthn"
 
-	// UserStateActive indicates the user has completed activation and may authenticate.
-	UserStateActive UserState = "active"
+	// AuthMethodPIV is a PIV smartcard certificate.
+	AuthMethodPIV = "piv"
+)
 
-	// UserStateDisabled indicates the user account has been administratively disabled.
-	UserStateDisabled UserState = "disabled"
+// Lifecycle states, re-exported from go-qrdb. A consumer must not define its
+// own vocabulary here: a state this package invented would not survive a write.
+const (
+	// LifecyclePending is an account created but not yet activated via an
+	// invite flow.
+	LifecyclePending = qrdbsdk.LifecyclePending
+
+	// LifecycleActive is the only state in which an account may authenticate.
+	LifecycleActive = qrdbsdk.LifecycleActive
+
+	// LifecycleSuspended is an administrative hold.
+	LifecycleSuspended = qrdbsdk.LifecycleSuspended
+
+	// LifecycleLocked is an automated lockout.
+	LifecycleLocked = qrdbsdk.LifecycleLocked
+
+	// LifecycleDisabled is an administratively deactivated account.
+	LifecycleDisabled = qrdbsdk.LifecycleDisabled
+
+	// LifecycleDeleting marks a deletion in progress. It is terminal, which is
+	// what lets a deletion close the account to credential ceremonies before it
+	// begins sweeping credentials: nothing can transition back out and race it.
+	LifecycleDeleting = qrdbsdk.LifecycleDeleting
 )
 
 // Tenant represents a logical isolation boundary in QuicBaaS IAM.
@@ -177,16 +207,42 @@ type TenantQuotas struct {
 	MaxApps int `json:"max_apps,omitempty" yaml:"max_apps,omitempty"`
 }
 
-// User represents an authenticated principal in the IAM system.
+// User is an authenticated principal, and it is a PROJECTION of the go-qrdb SDK
+// user rather than a model of its own. Every field below is stored by, and read
+// back from, qrdb's canonical user record: this package keeps no side-record and
+// no second identifier space.
+//
+// The identity is qrdb's Snowflake. ID carries it in decimal — the same
+// rendering qrdb's own transport type uses (`ID uint64 \`json:"id,string"\“) —
+// so the value an API client sees and the value the store holds are one value,
+// converted by strconv and never correlated through a table. The uuid<->uint64
+// IDMap that used to make that correlation is gone, along with the "id
+// correlation not found" failure that could sever a verified login from its
+// record.
 type User struct {
-	// ID is the unique user identifier
+	// ID is the qrdb Snowflake user id in decimal. Empty on a user that has not
+	// been created yet; qrdb assigns the id server-side.
 	ID string `json:"id" yaml:"id"`
 
-	// Email is the user's email address (unique within tenant)
+	// Email is the CANONICAL tenant-unique login key — what a login ceremony
+	// resolves a verified factor to, and what every layer above keys a user by.
 	Email string `json:"email" yaml:"email"`
 
-	// Name is the user's display name
+	// Name is the display name. Presentation only; never a lookup key.
 	Name string `json:"name" yaml:"name"`
+
+	// Username is the tenant-unique administrative handle — qrdb's Username,
+	// the name an administrator types to assign a role and the subject a
+	// ceremony login presents. It is constrained (3-64 of [A-Za-z0-9_-]) so it
+	// can carry a uniqueness constraint; Name cannot, which is why the two are
+	// separate fields here exactly as they are in qrdb.
+	//
+	// They used to be one. CreateUser required and validated a Username, stored
+	// the display Name over it, and the projection then wrote that display name
+	// into qrdb's unique Username — so a lookup by the handle the caller chose
+	// missed, and two people with the same display name collided on a
+	// uniqueness constraint neither of them had asked to share.
+	Username string `json:"username" yaml:"username"`
 
 	// TenantID is the owning tenant
 	TenantID string `json:"tenant_id" yaml:"tenant_id"`
@@ -194,11 +250,16 @@ type User struct {
 	// Roles is the list of role IDs assigned to this user
 	Roles []string `json:"roles,omitempty" yaml:"roles,omitempty"`
 
-	// Groups is the list of group IDs this user belongs to
+	// Groups is the list of group IDs this user belongs to. qrdb stores the
+	// membership edge as opaque identifiers and owns no Group entity; the Group
+	// record those ids name is this package's.
 	Groups []string `json:"groups,omitempty" yaml:"groups,omitempty"`
 
-	// Attributes contains custom user attributes for policy evaluation
-	Attributes map[string]interface{} `json:"attributes,omitempty" yaml:"attributes,omitempty"`
+	// Attributes contains custom user attributes for policy evaluation. It is
+	// map[string]string because that is qrdb's shape: a map[string]interface{}
+	// could hold values the store cannot persist, which is a field that silently
+	// loses data rather than refusing it.
+	Attributes map[string]string `json:"attributes,omitempty" yaml:"attributes,omitempty"`
 
 	// Created is the user creation timestamp
 	Created time.Time `json:"created" yaml:"created"`
@@ -206,36 +267,18 @@ type User struct {
 	// Updated is the last modification timestamp
 	Updated time.Time `json:"updated" yaml:"updated"`
 
-	// LastAuth is the last successful authentication timestamp
+	// LastAuth is the last successful authentication timestamp. qrdb commits it
+	// as a high-water mark, so a delayed or retried login cannot roll it back.
 	LastAuth *time.Time `json:"last_auth,omitempty" yaml:"last_auth,omitempty"`
 
-	// MFAEnabled indicates whether MFA is enabled for this user
-	MFAEnabled bool `json:"mfa_enabled" yaml:"mfa_enabled"`
+	// Lifecycle is the account state — pending, active, suspended, locked,
+	// disabled or deleting. It is the single source of truth for whether this
+	// account may authenticate; ask CanAuthenticate rather than comparing.
+	Lifecycle Lifecycle `json:"lifecycle,omitempty" yaml:"lifecycle,omitempty"`
 
-	// MFAMethod is the MFA method being used (totp, webauthn)
-	MFAMethod MFAMethod `json:"mfa_method,omitempty" yaml:"mfa_method,omitempty"`
-
-	// MFAEnrolledAt is when MFA was enrolled
-	MFAEnrolledAt *time.Time `json:"mfa_enrolled_at,omitempty" yaml:"mfa_enrolled_at,omitempty"`
-
-	// MFAVerified indicates whether MFA was verified in the current session.
-	//
-	// Deprecated: Use session-level MFA verification instead.
-	MFAVerified bool `json:"mfa_verified" yaml:"mfa_verified"`
-
-	// MFATimestamp is the last MFA verification time
-	MFATimestamp *time.Time `json:"mfa_timestamp,omitempty" yaml:"mfa_timestamp,omitempty"`
-
-	// Suspended indicates whether the user account is suspended
-	Suspended bool `json:"suspended,omitempty" yaml:"suspended,omitempty"`
-
-	// Locked indicates whether the user account is locked
-	Locked bool `json:"locked,omitempty" yaml:"locked,omitempty"`
-
-	// State is the lifecycle state of the user account (pending, active, disabled).
-	State UserState `json:"state,omitempty" yaml:"state,omitempty"`
-
-	// AuthMethods lists the allowed authentication methods for this user (e.g. "webauthn", "piv").
+	// AuthMethods lists the allowed authentication methods for this user (e.g.
+	// "webauthn", "piv"). A policy statement about what the account may present,
+	// distinct from what it has actually enrolled. Empty states no restriction.
 	AuthMethods []string `json:"auth_methods,omitempty" yaml:"auth_methods,omitempty"`
 
 	// CertBindings holds the qrdb-canonical mTLS certificate bindings for this
@@ -245,13 +288,24 @@ type User struct {
 	// (e.g. a renewed or additional PIV card). Empty unless the user has bound at
 	// least one certificate.
 	CertBindings []qrdbsdk.CertBinding `json:"cert_bindings,omitempty" yaml:"cert_bindings,omitempty"`
+}
 
-	// InviteToken holds the plaintext invite token shown once at creation time.
-	// It is cleared (set to empty string) after the user activates.
-	InviteToken string `json:"invite_token,omitempty" yaml:"invite_token,omitempty"`
-
-	// InviteExpiresAt is the expiry time of the invite token. Nil if no invite is pending.
-	InviteExpiresAt *time.Time `json:"invite_expires_at,omitempty" yaml:"invite_expires_at,omitempty"`
+// CanAuthenticate reports whether this account's state permits authentication.
+// It defers to qrdb's rule rather than restating it, so a state written by a
+// newer node fails closed here exactly as it does in the store.
+//
+// An ABSENT state DENIES, like every other non-active state. It briefly did the
+// opposite, mirroring qrdb's own fallback for records written before the field
+// existed — but that is a fail-open on an authentication gate, and its only
+// justification was protecting a population of legacy records that, under the
+// pre-release policy, we do not carry. A record from the store always has a
+// state; an empty one belongs to a value assembled by hand, and a value nobody
+// gave a state to is not evidence that it may authenticate.
+func (u *User) CanAuthenticate() bool {
+	if u == nil {
+		return false
+	}
+	return u.Lifecycle.CanAuthenticate()
 }
 
 // Group represents a collection of users for policy targeting.
@@ -295,11 +349,58 @@ type Role struct {
 	// Permissions is the list of permission strings
 	Permissions []string `json:"permissions,omitempty" yaml:"permissions,omitempty"`
 
+	// RetiredPermissions lists the members of Permissions the running build's
+	// permission registry no longer defines. It is derived on every read from
+	// the live registry and never stored, so it names the drift between the
+	// definition this tenant was seeded with and the one the build now grants
+	// — visible on an ordinary listing, before ReconcileBuiltInRoles repairs
+	// it. An empty slice means the role agrees with the build.
+	RetiredPermissions []string `json:"retired_permissions,omitempty" yaml:"retired_permissions,omitempty"`
+
 	// Created is the role creation timestamp
 	Created time.Time `json:"created" yaml:"created"`
 
 	// Updated is the last modification timestamp
 	Updated time.Time `json:"updated" yaml:"updated"`
+}
+
+// RoleReconcileResult records what reconciling one built-in role changed.
+// Only roles that changed are reported, so a zero-valued result never
+// appears in a report.
+type RoleReconcileResult struct {
+	// RoleID is the reconciled role's identifier.
+	RoleID string `json:"role_id" yaml:"role_id"`
+
+	// Name is the built-in role's name (admin, operator, ...).
+	Name string `json:"name" yaml:"name"`
+
+	// Created is true when the built-in was absent from the tenant and was
+	// seeded. Added then carries its whole permission set.
+	Created bool `json:"created,omitempty" yaml:"created,omitempty"`
+
+	// Added lists the permissions the build grants that the stored role did
+	// not carry, sorted.
+	Added []string `json:"added,omitempty" yaml:"added,omitempty"`
+
+	// Removed lists the permissions the stored role carried that the build no
+	// longer grants, sorted.
+	Removed []string `json:"removed,omitempty" yaml:"removed,omitempty"`
+}
+
+// RoleReconcileReport is one tenant's reconciliation outcome. An empty Roles
+// slice means the tenant already agreed with the build and nothing was
+// written.
+type RoleReconcileReport struct {
+	// TenantID is the reconciled tenant.
+	TenantID string `json:"tenant_id" yaml:"tenant_id"`
+
+	// Roles carries one entry per built-in role that changed.
+	Roles []RoleReconcileResult `json:"roles,omitempty" yaml:"roles,omitempty"`
+}
+
+// Changed reports whether reconciliation altered anything in the tenant.
+func (r *RoleReconcileReport) Changed() bool {
+	return r != nil && len(r.Roles) > 0
 }
 
 // Application represents an OAuth2/OIDC client application.
@@ -332,6 +433,20 @@ type Application struct {
 
 	// ResourcePrefix is the resource namespace for this application
 	ResourcePrefix string `json:"resource_prefix,omitempty" yaml:"resource_prefix,omitempty"`
+
+	// Scopes is the permission set GRANTED to this application, in qrdb's
+	// canonical "resource:action" vocabulary (e.g. "orchestrator:agent_heartbeat").
+	// It is the server-side grant a client_credentials token is issued
+	// against: the issued scope is the requested scope narrowed to this set,
+	// or the whole set when the client requests none (RFC 6749 §3.3). A client
+	// therefore cannot mint itself authority nobody granted it.
+	//
+	// Empty means the application holds no permissions and its tokens
+	// authorize nothing beyond what the subject's own qrdb roles resolve to.
+	// The field is set by the server-side registration paths that speak for a
+	// grantor (agent enrollment, orchestrator bootstrap); no client-facing
+	// registration surface populates it.
+	Scopes []string `json:"scopes,omitempty" yaml:"scopes,omitempty"`
 
 	// DefaultAudience is the per-app default service audience stamped into a
 	// token's `aud` claim when the client does NOT send an RFC 8707 `resource`
@@ -462,6 +577,28 @@ type Token struct {
 // lifetime (after which the request-time RBAC gate re-evaluates the subject)
 // and refresh-token revocation (which ends the session immediately).
 type TokenSessionContext struct {
+	// SessionID is the identifier of the login this session IS (Claims.SessionID
+	// / the sid claim), frozen here so every renewal replays the value its login
+	// established instead of minting a new one. That is what makes sid stable
+	// across a refresh and different for every login — the property a client
+	// needs to tell a renewal of its own session apart from somebody's second
+	// login as the same principal into the same tenant (go-quicbaas#326).
+	//
+	// Empty for sessions minted before the claim existed; a renewal of one of
+	// those mints a fresh sid per access token, which reads to a client as a new
+	// session — the safe direction.
+	SessionID string `json:"session_id,omitempty" yaml:"session_id,omitempty"`
+
+	// UserID is the IMMUTABLE IAM user id of the principal, frozen at login so
+	// a renewal identifies the same account even if the login's subject
+	// (a mutable username on the ceremony path) has since been renamed.
+	UserID string `json:"user_id,omitempty" yaml:"user_id,omitempty"`
+
+	// PrincipalType carries the session's positive principal marker (see
+	// Claims.PrincipalType) onto every renewed access token, so a renewal is
+	// classified the same way the original login was.
+	PrincipalType string `json:"principal_type,omitempty" yaml:"principal_type,omitempty"`
+
 	// Roles are the roles resolved at login.
 	Roles []string `json:"roles,omitempty" yaml:"roles,omitempty"`
 
@@ -485,6 +622,21 @@ type TokenSessionContext struct {
 	// authentication context class of the originating login.
 	AMR []string `json:"amr,omitempty" yaml:"amr,omitempty"`
 	ACR string   `json:"acr,omitempty" yaml:"acr,omitempty"`
+
+	// AttestLevel and AttestAAGUID are the provenance a verifier PROVED about
+	// the credential that performed the login (see Claims.AttestLevel).
+	//
+	// They are frozen here for the same reason acr/amr are: a renewal rebuilds
+	// the bearer from this record alone, so an attestation left out of it is
+	// gone the moment the session is first refreshed. A login that really did
+	// prove a hardware key would quietly degrade into one that proves nothing
+	// within a single access-token lifetime, and a hardware-only policy would
+	// start refusing a session that never lost its hardware.
+	//
+	// Empty means the login established nothing — a renewal must never invent
+	// an attestation the login did not make.
+	AttestLevel  string `json:"attest_level,omitempty" yaml:"attest_level,omitempty"`
+	AttestAAGUID string `json:"attest_aaguid,omitempty" yaml:"attest_aaguid,omitempty"`
 
 	// Jkt is the RFC 9449 DPoP key thumbprint the session bearer was bound to
 	// (cnf.jkt). When set, a refresh MUST present a DPoP proof over the same

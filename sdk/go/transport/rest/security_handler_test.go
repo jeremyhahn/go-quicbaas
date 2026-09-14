@@ -65,7 +65,7 @@ func TestSecurity_FIDO2_BeginRegistration_HitsIAMMount(t *testing.T) {
 	defer tr.Close()
 
 	result, err := tr.Request(context.Background(), securityServiceFIDO2, "BeginRegistration",
-		&xkmstransport.BeginRegistrationRequest{Username: "user@example.com", DisplayName: "User"})
+		&xkmstransport.BeginRegistrationRequest{Email: "user@example.com", DisplayName: "User"})
 	if err != nil {
 		t.Fatalf("BeginRegistration failed: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestSecurity_FIDO2_BeginAuthentication_HitsIAMMount(t *testing.T) {
 	defer tr.Close()
 
 	result, err := tr.Request(context.Background(), securityServiceFIDO2, "BeginAuthentication",
-		&xkmstransport.BeginAuthenticationRequest{Username: "user@example.com"})
+		&xkmstransport.BeginAuthenticationRequest{Email: "user@example.com"})
 	if err != nil {
 		t.Fatalf("BeginAuthentication failed: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestSecurity_FIDO2_FinishAuthentication_SendsSessionHeader(t *testing.T) {
 	result, err := tr.Request(context.Background(), securityServiceFIDO2, "FinishAuthentication",
 		&xkmstransport.FinishAuthenticationRequest{
 			SessionID:     "login-sess",
-			Username:      "user@example.com",
+			Email:         "user@example.com",
 			AssertionJSON: `{"id":"cred"}`,
 		})
 	if err != nil {
@@ -272,7 +272,7 @@ func TestSecurity_FIDO2_TenantFromContextOverridesDefault(t *testing.T) {
 
 	ctx := transport.ContextWithTenant(context.Background(), "explicit-tenant")
 	if _, err := tr.Request(ctx, securityServiceFIDO2, "BeginRegistration",
-		&xkmstransport.BeginRegistrationRequest{Username: "user@example.com"}); err != nil {
+		&xkmstransport.BeginRegistrationRequest{Email: "user@example.com"}); err != nil {
 		t.Fatalf("BeginRegistration failed: %v", err)
 	}
 	if gotPath != "/api/v1/iam/explicit-tenant/webauthn/registration/begin" {
@@ -291,7 +291,7 @@ func TestSecurity_FIDO2_MissingTenant_TypedError(t *testing.T) {
 	defer tr.Close()
 
 	_, err := tr.Request(context.Background(), securityServiceFIDO2, "BeginRegistration",
-		&xkmstransport.BeginRegistrationRequest{Username: "user@example.com"})
+		&xkmstransport.BeginRegistrationRequest{Email: "user@example.com"})
 	if err == nil {
 		t.Fatal("expected error when tenant is unresolved")
 	}

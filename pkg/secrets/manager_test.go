@@ -934,3 +934,118 @@ func (m *MockBackendWithOptions) StoreWithOptions(ctx context.Context, path stri
 	}
 	return nil
 }
+
+// TestManager_UseSecret covers the guarded-use read: the one way credential
+// bytes are meant to leave the secrets service without the caller ever owning
+// them (go-quicbaas#102 review 959; the wider custody move is #97).
+func TestManager_UseSecret(t *testing.T) {
+	newManager := func(t *testing.T) *Manager {
+		t.Helper()
+		manager, err := NewManager(&ManagerOptions{Backend: NewMemoryBackend()})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = manager.Close() })
+		return manager
+	}
+	ctx := context.Background()
+
+	t.Run("DeliversTheValueAndWipesEveryFetchedByte", func(t *testing.T) {
+		manager := newManager(t)
+		require.NoError(t, manager.Store(ctx, "app/token",
+			map[string][]byte{"token": []byte("live-credential"), "note": []byte("sibling")}, nil))
+
+		// The test deliberately violates fn's no-retain contract to OBSERVE
+		// the wipe: production callers must never do this.
+		var retained []byte
+		err := manager.UseSecret(ctx, "app/token", "token", func(value []byte) error {
+			assert.Equal(t, []byte("live-credential"), value,
+				"fn must see the stored value during the call")
+			retained = value
+			return nil
+		})
+		require.NoError(t, err)
+		require.NotNil(t, retained, "fn was never called")
+		for i, b := range retained {
+			if b != 0 {
+				t.Fatalf("byte %d of the delivered value survived UseSecret's return: "+
+					"the wipe-on-exit guarantee is the entire point of the guarded read", i)
+			}
+		}
+
+		// The wipe reaches this CALL's copies only: the stored secret is
+		// intact for the next reader.
+		data, _, err := manager.Get(ctx, "app/token")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("live-credential"), data["token"],
+			"UseSecret wiped the STORED secret, not its own fetched copy")
+	})
+
+	t.Run("FnErrorPropagatesAndTheWipeStillRuns", func(t *testing.T) {
+		manager := newManager(t)
+		require.NoError(t, manager.Store(ctx, "app/token",
+			map[string][]byte{"token": []byte("live-credential")}, nil))
+
+		sentinel := errors.New(errors.ErrInternal, "Manager.UseSecret.test", "verification refused")
+		var retained []byte
+		err := manager.UseSecret(ctx, "app/token", "token", func(value []byte) error {
+			retained = value
+			return sentinel
+		})
+		require.ErrorIs(t, err, sentinel, "fn's error must reach the caller unreplaced")
+		for i, b := range retained {
+			if b != 0 {
+				t.Fatalf("byte %d survived a failing fn: the wipe must not depend on success", i)
+			}
+		}
+	})
+
+	t.Run("AbsentKeyFailsClosedWithoutCallingFn", func(t *testing.T) {
+		manager := newManager(t)
+		require.NoError(t, manager.Store(ctx, "app/token",
+			map[string][]byte{"other": []byte("present")}, nil))
+
+		called := false
+		err := manager.UseSecret(ctx, "app/token", "token", func([]byte) error {
+			called = true
+			return nil
+		})
+		require.ErrorIs(t, err, ErrSecretKeyAbsent)
+		assert.False(t, called, "fn must never run over a record with no value under the key")
+	})
+
+	t.Run("EmptyValueIsAbsent", func(t *testing.T) {
+		manager := newManager(t)
+		require.NoError(t, manager.Store(ctx, "app/token",
+			map[string][]byte{"token": {}, "pad": []byte("x")}, nil))
+
+		err := manager.UseSecret(ctx, "app/token", "token", func([]byte) error {
+			t.Fatal("fn ran over an empty credential")
+			return nil
+		})
+		require.ErrorIs(t, err, ErrSecretKeyAbsent)
+	})
+
+	t.Run("AbsentPathReportsAsGetDoes", func(t *testing.T) {
+		manager := newManager(t)
+		err := manager.UseSecret(ctx, "app/absent", "token", func([]byte) error {
+			t.Fatal("fn ran over an absent path")
+			return nil
+		})
+		require.ErrorIs(t, err, ErrSecretNotFound)
+	})
+}
+
+// TestManager_UseSecret_NilCallback is review 982's guard: malformed input
+// on a credential surface is a typed refusal decided BEFORE the backend is
+// touched — never a fetch-wipe-panic.
+func TestManager_UseSecret_NilCallback(t *testing.T) {
+	backend := NewMemoryBackend()
+	manager, err := NewManager(&ManagerOptions{Backend: backend})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+
+	err = manager.UseSecret(context.Background(), "app/never-read", "token", nil)
+	require.ErrorIs(t, err, ErrNilCallback)
+	var qbErr *errors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+}

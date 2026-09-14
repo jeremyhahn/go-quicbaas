@@ -31,9 +31,13 @@
   // ---------------------------------------------------------------------------
 
   interface Props {
+    // The tenant the invite belongs to. Carried in the link because the invite
+    // API is tenant-scoped by design and a browser knows only what the link
+    // gives it.
+    tenant: string;
     token: string;
   }
-  const { token }: Props = $props();
+  const { tenant, token }: Props = $props();
 
   // ---------------------------------------------------------------------------
   // State
@@ -70,7 +74,7 @@
     }
     try {
       const client = await getSDKClient();
-      invite = await client.iam.getInvite(token);
+      invite = await client.iam.getInvite(tenant, token);
       // Default to first method offered by the server, if available.
       if (invite.auth_methods.length > 0) {
         const first = invite.auth_methods[0];
@@ -104,7 +108,7 @@
       // emits the go-webauthn `{ publicKey: { challenge, ... } }` envelope with
       // base64url-encoded binary members; the helper unwraps it and decodes the
       // challenge / user.id / excludeCredentials into ArrayBuffers.
-      const beginOptions = await client.iam.activateFIDO2Begin(token);
+      const beginOptions = await client.iam.activateFIDO2Begin(tenant, token);
       const publicKey = parseCreationOptions(beginOptions);
 
       // Ask the browser to create a new credential.
@@ -118,6 +122,7 @@
       const credential = encodeAttestationResponse(rawCredential as PublicKeyCredential);
 
       const result: ActivationResponse = await client.iam.activateFIDO2Finish(
+        tenant,
         token,
         credential as unknown as Record<string, unknown>,
       );
@@ -143,7 +148,7 @@
     phase = 'activating';
     try {
       const client = await getSDKClient();
-      const result: ActivationResponse = await client.iam.activatePIV(token, pivPEM.trim());
+      const result: ActivationResponse = await client.iam.activatePIV(tenant, token, pivPEM.trim());
       successMessage = result.message || 'Account activated successfully';
       phase = 'done';
     } catch (e) {

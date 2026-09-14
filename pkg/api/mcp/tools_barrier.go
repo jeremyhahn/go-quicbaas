@@ -973,6 +973,18 @@ func parseBarrierShareSlice(args map[string]interface{}, key string) []string {
 	return out
 }
 
+// barrierTimeFormat is the ONE rendering every barrier timestamp uses on
+// every transport. It is RFC3339Nano, not RFC3339, because go-qrdb's own
+// qrdb.v1 gRPC barrier surface — which quicbaas's unix and gRPC transports
+// reach through the platform-shard servicer adapter — already renders
+// InitializedAt at nanosecond precision. Rendering the same instant at
+// second precision here made `barrier status` answer
+// "2026-08-25T04:40:05Z" over REST/MCP and "2026-08-25T04:40:05.727835519Z"
+// over unix/gRPC for one barrier: not a contradiction, but not
+// byte-comparable either, and go-quicbaas#405 requires an operator
+// diffing two transports to get the same answer.
+const barrierTimeFormat = time.RFC3339Nano
+
 // barrierStatusToMap renders a BarrierStatusInfo as the JSON wire shape
 // shared with handlers_barrier.go.
 func barrierStatusToMap(info *service.BarrierStatusInfo) map[string]interface{} {
@@ -982,7 +994,7 @@ func barrierStatusToMap(info *service.BarrierStatusInfo) map[string]interface{} 
 		"hardware_backed": info.HardwareBacked,
 	}
 	if !info.InitializedAt.IsZero() {
-		resp["initialized_at"] = info.InitializedAt.UTC().Format(time.RFC3339)
+		resp["initialized_at"] = info.InitializedAt.UTC().Format(barrierTimeFormat)
 	}
 	return resp
 }
@@ -1026,7 +1038,7 @@ func rootTokenToMap(info *service.RootTokenInfo) map[string]interface{} {
 		"token": info.Token,
 	}
 	if !info.CreatedAt.IsZero() {
-		resp["created_at"] = info.CreatedAt.UTC().Format(time.RFC3339)
+		resp["created_at"] = info.CreatedAt.UTC().Format(barrierTimeFormat)
 	}
 	return resp
 }

@@ -189,6 +189,15 @@ func (f *fakeRoleServicer) ResolvePermissions(_ context.Context, roleIDs []strin
 	return out, nil
 }
 
+// GetRoleByName reports that this store holds no role of that name, which is
+// the answer for every fake used here: none of them seeds a system role. The
+// RBAC authorizer consults it through role.ResolveSystemRoleID whenever the
+// requested permission is on the SO deny-list, so a nil-embedded servicer
+// without it panics the moment a test authorizes a cryptographic verb.
+func (f *fakeRoleServicer) GetRoleByName(_ context.Context, tenantID, name string) (*role.Role, error) {
+	return nil, &role.RoleNotFoundError{ID: tenantID + "/" + name}
+}
+
 // fakeUserServicer implements user.UserServicer via a nil embed, overriding
 // only GetUserByUsername — the single method finalizeIdentity's
 // store-resolved-role enrichment calls.

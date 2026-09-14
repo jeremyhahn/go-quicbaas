@@ -95,12 +95,12 @@ func setupPIVTest(t *testing.T) (activator *PIVActivator, token string, userStor
 
 	// Create a pending user.
 	user := &User{
-		ID:       "user-piv-1",
-		TenantID: "tenant-1",
-		Email:    "piv@example.com",
-		State:    UserStatePending,
-		Created:  time.Now(),
-		Updated:  time.Now(),
+		ID:        "user-piv-1",
+		TenantID:  "tenant-1",
+		Email:     "piv@example.com",
+		Lifecycle: LifecyclePending,
+		Created:   time.Now(),
+		Updated:   time.Now(),
 	}
 	if err := userStorage.CreateUser(context.Background(), user); err != nil {
 		t.Fatalf("create user: %v", err)
@@ -143,12 +143,12 @@ func TestPIVActivator_Valid(t *testing.T) {
 	inviteStore := newFakeInviteStore()
 
 	user := &User{
-		ID:       "u1",
-		TenantID: "t1",
-		Email:    "piv@example.com",
-		State:    UserStatePending,
-		Created:  time.Now(),
-		Updated:  time.Now(),
+		ID:        "u1",
+		TenantID:  "t1",
+		Email:     "piv@example.com",
+		Lifecycle: LifecyclePending,
+		Created:   time.Now(),
+		Updated:   time.Now(),
 	}
 	_ = userStorage.CreateUser(ctx, user)
 
@@ -177,8 +177,8 @@ func TestPIVActivator_Valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
 	}
-	if updated.State != UserStateActive {
-		t.Errorf("expected state=active, got %q", updated.State)
+	if updated.Lifecycle != LifecycleActive {
+		t.Errorf("expected state=active, got %q", updated.Lifecycle)
 	}
 	if len(updated.PIVThumbprints()) == 0 {
 		t.Error("expected a PIV-attested cert binding to be set")
@@ -192,7 +192,7 @@ func TestPIVActivator_ExpiredInvite(t *testing.T) {
 	userStorage := newMockUserStorage()
 	inviteStore := newFakeInviteStore()
 
-	user := &User{ID: "u2", TenantID: "t1", Email: "e@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: "u2", TenantID: "t1", Email: "e@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
 	token, _, _ := inviteStore.Create(ctx, "t1", "u2", -time.Minute) // already expired
@@ -222,7 +222,7 @@ func TestPIVActivator_UntrustedCert(t *testing.T) {
 	userStorage := newMockUserStorage()
 	inviteStore := newFakeInviteStore()
 
-	user := &User{ID: "u3", TenantID: "t1", Email: "f@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: "u3", TenantID: "t1", Email: "f@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
 	token, _, _ := inviteStore.Create(ctx, "t1", "u3", time.Hour)
@@ -256,7 +256,7 @@ func TestPIVActivate_RejectsUntrustedIssuer(t *testing.T) {
 	userStorage := newMockUserStorage()
 	inviteStore := newFakeInviteStore()
 
-	user := &User{ID: "u5", TenantID: "t1", Email: "h@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: "u5", TenantID: "t1", Email: "h@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
 	token, _, _ := inviteStore.Create(ctx, "t1", "u5", time.Hour)
@@ -298,7 +298,7 @@ func TestPIVActivate_AcceptsTrustedIssuer(t *testing.T) {
 	userStorage := newMockUserStorage()
 	inviteStore := newFakeInviteStore()
 
-	user := &User{ID: "u6", TenantID: "t1", Email: "i@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: "u6", TenantID: "t1", Email: "i@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
 	token, _, _ := inviteStore.Create(ctx, "t1", "u6", time.Hour)
@@ -332,7 +332,7 @@ func TestPIVActivate_EmptyTrustedIssuers(t *testing.T) {
 	userStorage := newMockUserStorage()
 	inviteStore := newFakeInviteStore()
 
-	user := &User{ID: "u7", TenantID: "t1", Email: "j@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: "u7", TenantID: "t1", Email: "j@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
 	token, _, _ := inviteStore.Create(ctx, "t1", "u7", time.Hour)
@@ -408,7 +408,7 @@ func TestPIVActivator_AuditOnSuccess(t *testing.T) {
 	inviteStore := newFakeInviteStore()
 	audit := &mockAuditLogger{}
 
-	_ = userStorage.CreateUser(ctx, &User{ID: "ua", TenantID: "t1", Email: "a@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()})
+	_ = userStorage.CreateUser(ctx, &User{ID: "ua", TenantID: "t1", Email: "a@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()})
 	token, _, _ := inviteStore.Create(ctx, "t1", "ua", time.Hour)
 
 	ca, caKey := pivTestCA(t)
@@ -447,7 +447,7 @@ func TestPIVActivator_AuditOnRedeemFailure(t *testing.T) {
 	inviteStore := newFakeInviteStore()
 	audit := &mockAuditLogger{}
 
-	_ = userStorage.CreateUser(ctx, &User{ID: "ub", TenantID: "t1", Email: "b@x.com", State: UserStatePending, Created: time.Now(), Updated: time.Now()})
+	_ = userStorage.CreateUser(ctx, &User{ID: "ub", TenantID: "t1", Email: "b@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()})
 	token, _, _ := inviteStore.Create(ctx, "t1", "ub", time.Hour)
 
 	ca, caKey := pivTestCA(t)
@@ -481,8 +481,8 @@ func TestPIVActivator_AuditOnRedeemFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
 	}
-	if updated.State != UserStateActive {
-		t.Fatalf("expected user active, got %q", updated.State)
+	if updated.Lifecycle != LifecycleActive {
+		t.Fatalf("expected user active, got %q", updated.Lifecycle)
 	}
 }
 
@@ -493,7 +493,7 @@ func TestPIVActivator_UserNotPending(t *testing.T) {
 	userStorage := newMockUserStorage()
 	inviteStore := newFakeInviteStore()
 
-	user := &User{ID: "u4", TenantID: "t1", Email: "g@x.com", State: UserStateActive, Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: "u4", TenantID: "t1", Email: "g@x.com", Lifecycle: LifecycleActive, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
 	token, _, _ := inviteStore.Create(ctx, "t1", "u4", time.Hour)

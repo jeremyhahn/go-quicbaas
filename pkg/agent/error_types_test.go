@@ -81,8 +81,14 @@ func TestEnrollmentRequestError_ErrorAndUnwrap(t *testing.T) {
 	if !errors.Is(err, ErrEnrollmentRejected) {
 		t.Error("Unwrap should return ErrEnrollmentRejected")
 	}
-	if err.Unwrap() != ErrEnrollmentRejected {
-		t.Error("Unwrap() should return ErrEnrollmentRejected directly")
+	// Unwrap exposes the sentinel and the cause: the enrollment classifier
+	// triages on the transport failure underneath the rejection.
+	unwrapped := err.Unwrap()
+	if len(unwrapped) != 2 || unwrapped[0] != ErrEnrollmentRejected || unwrapped[1] != cause {
+		t.Errorf("Unwrap() = %v, want [ErrEnrollmentRejected, cause]", unwrapped)
+	}
+	if !errors.Is(err, cause) {
+		t.Error("errors.Is should reach the wrapped cause")
 	}
 }
 

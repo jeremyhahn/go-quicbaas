@@ -232,3 +232,83 @@ func TestRefreshTokenHandler_RejectsMissingCredential(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+// =============================================================================
+// Reachability of the renewal endpoint (go-quicbaas#221).
+//
+// Every test above calls handler.RefreshToken DIRECTLY. That is why the defect
+// #221 records was invisible for as long as it was: the handler was correct and
+// well covered, but no test ever asked whether the ROUTER exposes it. On a
+// composed node it did not — quicbaas dropped /api/v1/auth/refresh from its
+// module surface (P3.3, xkms owns that literal path) while keeping the login
+// ceremony at /api/v1/auth/login/{begin,finish}, so quicbaas kept minting
+// sessions whose refresh credential lives in ITS iam.OIDCProvider token store
+// and no route in the surface could redeem one. The operator was logged out
+// every 15 minutes.
+//
+// These tests observe the route TABLE rather than the handler, which is the
+// only channel that can see the failure.
+// =============================================================================
+
+// moduleRouteAuth reports the auth class of a method+pattern in the module
+// surface, and whether the route is present at all.
+func moduleRouteAuth(method, pattern string) (RouteAuth, bool) {
+	for _, spec := range ModuleRoutes() {
+		if spec.Method == method && spec.Pattern == pattern {
+			return spec.Auth, true
+		}
+	}
+	return 0, false
+}
+
+// TestModuleRoutes_SessionRenewalIsReachable pins the endpoint the SPA renews
+// against. It must be in the module surface (the only surface the unified API
+// server starts a listener for) and it must be public: the opaque refresh token
+// in the body IS the credential, and by definition no valid bearer exists at
+// renewal time — gating it behind one would make it unusable exactly when it is
+// needed.
+func TestModuleRoutes_SessionRenewalIsReachable(t *testing.T) {
+	auth, present := moduleRouteAuth(http.MethodPost, "/api/v1/iam/refresh")
+	require.True(t, present,
+		"POST /api/v1/iam/refresh is absent from the module surface: a session minted by "+
+			"the login ceremony cannot be renewed and dies at the access-token TTL (#221)")
+	assert.Equal(t, RouteAuthPublic, auth,
+		"the renewal route must be public; a bearer gate on it is unsatisfiable by a client "+
+			"whose bearer just expired")
+}
+
+// TestModuleRoutes_LoginCeremonyHasAMatchingRenewal states the invariant the
+// P3.3 de-collision broke, in the form that catches it coming back: a surface
+// that mints sessions must expose a way to renew them.
+//
+// The control is the first assertion. quicbaas's login ceremony really is still
+// in the module surface — it was NOT ceded to xkms with the rest of the session
+// plane — and that is precisely why dropping the renewal verb was not the
+// harmless simplification it was documented to be. If the ceremony ever does
+// move out, this test stops demanding a renewal route rather than failing for
+// the wrong reason.
+func TestModuleRoutes_LoginCeremonyHasAMatchingRenewal(t *testing.T) {
+	_, mints := moduleRouteAuth(http.MethodPost, "/api/v1/auth/login/finish")
+	if !mints {
+		t.Skip("the login ceremony no longer lives in quicbaas's module surface; " +
+			"renewal is whoever owns it now")
+	}
+
+	_, renews := moduleRouteAuth(http.MethodPost, "/api/v1/iam/refresh")
+	assert.True(t, renews,
+		"the module surface registers POST /api/v1/auth/login/finish, which mints a refresh "+
+			"credential in iam.OIDCProvider's token store (LoginService.withSessionRefresh), "+
+			"but registers no route that redeems one. A session authority that can mint but "+
+			"not renew logs its users out every access-token TTL (#221)")
+}
+
+// TestModuleRoutes_DoesNotClaimTheXKMSRefreshPath is the other half of the
+// de-collision, and the reason the renewal route is IAM-namespaced rather than
+// simply restored where it used to live. Re-registering /api/v1/auth/refresh
+// would collide with the xkms module that owns that path on a composed node.
+func TestModuleRoutes_DoesNotClaimTheXKMSRefreshPath(t *testing.T) {
+	_, present := moduleRouteAuth(http.MethodPost, "/api/v1/auth/refresh")
+	assert.False(t, present,
+		"/api/v1/auth/refresh belongs to the xkms module's session-login plane on a composed "+
+			"node; quicbaas renews at /api/v1/iam/refresh instead")
+}

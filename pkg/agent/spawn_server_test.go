@@ -18,6 +18,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -315,6 +316,125 @@ func TestGRPCSpawnServer_SpawnRoundTrip(t *testing.T) {
 	}
 }
 
+// TestGRPCSpawnServer_SpawnCarriesExtraArgsToTheBackend closes the remote half
+// of go-quicbaas#218.
+//
+// The SDLC module states its worker's permission grant on the spawn. The wire
+// message had no field for it, so the control plane's grant was dropped at the
+// daemon boundary: a LOCAL worker got it and a REMOTE one was spawned exactly
+// the way the fault was measured, with nothing to indicate the difference.
+func TestGRPCSpawnServer_SpawnCarriesExtraArgsToTheBackend(t *testing.T) {
+	t.Parallel()
+	var got []string
+	backend := &spawnBackend{
+		spawnFn: func(_ context.Context, req *orchestration.SpawnRequest) (*orchestration.Session, error) {
+			got = append([]string(nil), req.ExtraArgs...)
+			return &orchestration.Session{ID: "sess-1", Backend: "acp", Status: orchestration.SessionStateActive}, nil
+		},
+	}
+	_, client, cleanup := buildSpawnServer(t, backend, newTestIdentity())
+	defer cleanup()
+
+	if _, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
+		Backend:   "acp",
+		TenantId:  "tenant-a",
+		ProjectId: "proj-1",
+		ExtraArgs: []string{"--permission-mode", "acceptEdits"},
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	if len(got) != 2 || got[0] != "--permission-mode" || got[1] != "acceptEdits" {
+		t.Fatalf("backend received ExtraArgs %v, want the permission grant the caller stated", got)
+	}
+}
+
+// TestGRPCSpawnServer_SpawnCarriesTheAccountSelectionToTheBackend closes the
+// remote half of go-quicbaas#235, and it is the same failure shape as the one
+// above.
+//
+// The credential a worker runs on cannot cross the wire — it lives in this
+// daemon's own secret store — so what crosses is the REQUEST, and this daemon
+// resolves it. The wire message carried the fields and the daemon dropped them
+// when it rebuilt the SpawnRequest, which does not fail: the backend only
+// consults its AccountResolver when AccountID or AccountAuto is set, so a
+// remote worker started with whatever ambient identity the daemon had and
+// nothing said the caller's choice had been discarded.
+func TestGRPCSpawnServer_SpawnCarriesTheAccountSelectionToTheBackend(t *testing.T) {
+	t.Parallel()
+	var got *orchestration.SpawnRequest
+	backend := &spawnBackend{
+		spawnFn: func(_ context.Context, req *orchestration.SpawnRequest) (*orchestration.Session, error) {
+			copied := *req
+			got = &copied
+			return &orchestration.Session{ID: "sess-1", Backend: "acp", Status: orchestration.SessionStateActive}, nil
+		},
+	}
+	_, client, cleanup := buildSpawnServer(t, backend, newTestIdentity())
+	defer cleanup()
+
+	if _, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
+		Backend:         "acp",
+		TenantId:        "tenant-a",
+		ProjectId:       "proj-1",
+		AccountAuto:     true,
+		AccountStrategy: "least_usage",
+		AccountAllow:    []string{"acct-1", "acct-2"},
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	if got == nil {
+		t.Fatal("the backend was never spawned")
+	}
+	if !got.AccountAuto {
+		t.Error("the daemon dropped AccountAuto; the backend never consults the pool " +
+			"unless it is set, so the worker runs on whatever identity the daemon has")
+	}
+	if got.AccountStrategy != "least_usage" {
+		t.Errorf("backend received AccountStrategy %q, want least_usage", got.AccountStrategy)
+	}
+	if len(got.AccountAllow) != 2 {
+		t.Errorf("backend received AccountAllow %v, want the caller's rotation pool", got.AccountAllow)
+	}
+}
+
+// TestGRPCSpawnServer_SpawnCarriesAPinnedAccountToTheBackend is the pinned
+// counterpart: a caller that named one account must not have it silently
+// replaced by whatever the daemon would otherwise have used.
+func TestGRPCSpawnServer_SpawnCarriesAPinnedAccountToTheBackend(t *testing.T) {
+	t.Parallel()
+	var got *orchestration.SpawnRequest
+	backend := &spawnBackend{
+		spawnFn: func(_ context.Context, req *orchestration.SpawnRequest) (*orchestration.Session, error) {
+			copied := *req
+			got = &copied
+			return &orchestration.Session{ID: "sess-1", Backend: "acp", Status: orchestration.SessionStateActive}, nil
+		},
+	}
+	_, client, cleanup := buildSpawnServer(t, backend, newTestIdentity())
+	defer cleanup()
+
+	if _, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
+		Backend:   "acp",
+		TenantId:  "tenant-a",
+		ProjectId: "proj-1",
+		AccountId: "acct-pinned",
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	if got == nil {
+		t.Fatal("the backend was never spawned")
+	}
+	if got.AccountID != "acct-pinned" {
+		t.Errorf("backend received AccountID %q, want acct-pinned", got.AccountID)
+	}
+	if got.AccountAuto {
+		t.Error("a pinned spawn must not arrive asking for strategy-based selection")
+	}
+}
+
 func TestGRPCSpawnServer_PromptRoundTrip(t *testing.T) {
 	t.Parallel()
 	backend := &spawnBackend{
@@ -403,11 +523,14 @@ func TestGRPCSpawnServer_CloseRoundTrip(t *testing.T) {
 func TestGRPCSpawnServer_SandboxViolationMapsToFailedPrecondition(t *testing.T) {
 	t.Parallel()
 	backend := &spawnBackend{}
-	// Configure the runtime with SandboxPolicyRequired but no container
-	// runtime — any Spawn with SandboxModeRequired will violate.
+	// Configure the runtime with no container runtime under a policy that
+	// still admits an explicit SandboxModeRequired request — the spawn below
+	// then violates for want of an engine. (SandboxPolicyRequired cannot be
+	// used here: NewRuntime refuses to build a required-policy runtime with
+	// no engine at all, see TestNewRuntime_SandboxRequiredWithoutRuntime.)
 	rt, err := NewRuntime(RuntimeConfig{
 		Backends:      map[string]orchestration.AgentBackend{"acp": backend},
-		SandboxPolicy: orchestration.SandboxPolicyRequired,
+		SandboxPolicy: orchestration.SandboxPolicyOptIn,
 		Logger:        &testLogger{t: t},
 	})
 	if err != nil {
@@ -535,5 +658,197 @@ func TestGRPCSpawnServer_StopIsIdempotent(t *testing.T) {
 	}
 	if err := srv.Stop(ctx); err != nil {
 		t.Fatalf("second Stop: %v", err)
+	}
+}
+
+// TestGRPCSpawnServer_PromptCarriesTurnFailureEvidence closes the remote half
+// of go-quicbaas#235, over a real gRPC connection.
+//
+// The daemon that runs the agent process is the only party that sees the CLI's
+// result object. Until #235 it mapped a failed turn to a bare status and the
+// structured account went no further, so a REMOTE worker burned its attempt on
+// exactly the pre-model failure a local one is refunded for — the third time
+// the same boundary quietly dropped something the control plane had stated
+// (argv in #218, the account selection earlier in #235, this).
+//
+// Driven through bufconn rather than by calling the codec directly, because
+// what is in doubt is whether the detail survives a genuine marshal, transit
+// and unmarshal — a test that skipped that would agree with itself about a
+// wire format neither side ever used.
+func TestGRPCSpawnServer_PromptCarriesTurnFailureEvidence(t *testing.T) {
+	t.Parallel()
+	backend := &spawnBackend{
+		promptFn: func(context.Context, *orchestration.PromptRequest) (*orchestration.PromptResponse, error) {
+			return nil, &orchestration.PromptError{
+				SessionID: "sess-1",
+				Cause: &orchestration.StreamJSONError{
+					Command: "claude",
+					// The field a credential would be in. It must not travel.
+					Result: "auth failed for Bearer sk-ant-api03-0123456789abcdefghij",
+					TurnFailureEvidence: orchestration.TurnFailureEvidence{
+						TerminalReason: "api_error",
+						NumTurns:       1,
+						Usage:          &orchestration.TokenUsage{},
+					},
+				},
+			}
+		},
+	}
+	_, client, cleanup := buildSpawnServer(t, backend, newTestIdentity())
+	defer cleanup()
+
+	stream, err := client.Prompt(context.Background(), &proto.PromptSessionRequest{
+		Backend: "acp", TenantId: "tenant-a", SessionId: "sess-1", Prompt: "go",
+	})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	_, recvErr := stream.Recv()
+	if recvErr == nil {
+		t.Fatal("the failing turn was reported as a successful stream")
+	}
+
+	evidence, carried := orchestration.TurnFailureEvidenceFromStatus(recvErr)
+	if !carried {
+		t.Fatalf("the daemon attached no turn-failure evidence; a remote worker cannot "+
+			"tell a pre-model failure from a failed attempt (err %v)", recvErr)
+	}
+	if evidence.TerminalReason != "api_error" {
+		t.Errorf("terminal reason = %q, want api_error", evidence.TerminalReason)
+	}
+	if evidence.NumTurns != 1 {
+		t.Errorf("num turns = %d, want 1", evidence.NumTurns)
+	}
+	if evidence.Usage == nil {
+		t.Fatal("usage arrived nil; 'reported zero' and 'reported nothing' must stay " +
+			"distinguishable or a turn that measured nothing is refunded")
+	}
+	if !evidence.PreFirstTurn() {
+		t.Error("the round trip lost the verdict: this is a pre-first-turn failure")
+	}
+
+	// THE PAYLOAD STAYS BEHIND. Only the closed-enum reason and the counts
+	// travel; the CLI's own text is withheld on the daemon side and putting it
+	// on the wire to be logged at the other end would undo that.
+	if strings.Contains(recvErr.Error(), "sk-ant-api03") {
+		t.Errorf("the CLI's result text crossed the daemon boundary: %v", recvErr)
+	}
+}
+
+// TestGRPCSpawnServer_PromptWithoutEvidenceAttachesNoDetail is the
+// backward-compatible direction: an ordinary failure travels exactly as it did
+// before, so a control plane reading details finds none and classifies the
+// failure the way it always has.
+func TestGRPCSpawnServer_PromptWithoutEvidenceAttachesNoDetail(t *testing.T) {
+	t.Parallel()
+	backend := &spawnBackend{
+		promptFn: func(context.Context, *orchestration.PromptRequest) (*orchestration.PromptResponse, error) {
+			return nil, errors.New("the agent process exited")
+		},
+	}
+	_, client, cleanup := buildSpawnServer(t, backend, newTestIdentity())
+	defer cleanup()
+
+	stream, err := client.Prompt(context.Background(), &proto.PromptSessionRequest{
+		Backend: "acp", TenantId: "tenant-a", SessionId: "sess-1", Prompt: "go",
+	})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	_, recvErr := stream.Recv()
+	if recvErr == nil {
+		t.Fatal("the failing turn was reported as a successful stream")
+	}
+	if _, carried := orchestration.TurnFailureEvidenceFromStatus(recvErr); carried {
+		t.Error("a failure with no structured account arrived carrying evidence")
+	}
+	if _, ok := orchestration.PreFirstTurnFault(recvErr); ok {
+		t.Error("an ordinary failure classified as a pre-first-turn fault")
+	}
+}
+
+// TestGRPCSpawnServer_SpawnCarriesTheConfigurationFaultClass is #235's other
+// half across the same boundary.
+//
+// The pooled account is resolved BEFORE the process is started, so a tenant
+// with no eligible account produces no worker at all and the SDLC module parks the
+// item rather than charging it. That decision is made from the resolver's typed
+// error, which does not survive a gRPC status — so a remote daemon's "no
+// account for this tenant" arrived as a generic transport failure and the item
+// was charged for a worker that never existed.
+func TestGRPCSpawnServer_SpawnCarriesTheConfigurationFaultClass(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		err  error
+		want error
+	}{
+		{
+			name: "the pool has no eligible account",
+			err: &orchestration.NoAccountAvailableError{
+				TenantID: "acme", ProjectID: "proj-1",
+				Provider: orchestration.AccountProvider("claude"),
+			},
+			want: orchestration.ErrNoAccountAvailable,
+		},
+		{
+			name: "no pool was wired at all",
+			err:  &orchestration.AccountResolverNotConfiguredError{Backend: "acp"},
+			want: orchestration.ErrAccountResolverNotConfigured,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := &spawnBackend{
+				spawnFn: func(context.Context, *orchestration.SpawnRequest) (*orchestration.Session, error) {
+					return nil, tc.err
+				},
+			}
+			_, client, cleanup := buildSpawnServer(t, backend, newTestIdentity())
+			defer cleanup()
+
+			_, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
+				Backend: "acp", TenantId: "tenant-a", ProjectId: "proj-1", AccountAuto: true,
+			})
+			if err == nil {
+				t.Fatal("a spawn with no resolvable account was reported as successful")
+			}
+
+			// The control plane's own reconstruction, exercised as the client
+			// does it — the sentinel is what every downstream errors.Is asks
+			// about, so this is the property that matters rather than the
+			// wire encoding.
+			wrapped := orchestration.WrapRemoteSpawnFaultForTest("Spawn", err)
+			if !errors.Is(wrapped, tc.want) {
+				t.Errorf("the reconstructed error does not match %v; a remote dispatch "+
+					"with no account is charged for a worker that never existed (got %v)",
+					tc.want, wrapped)
+			}
+		})
+	}
+}
+
+// TestGRPCSpawnServer_SpawnWithAnOrdinaryFailureCarriesNoFaultClass is the
+// asymmetric counterpart: a real spawn failure must stay a real spawn failure,
+// or every failed dispatch would stop being charged.
+func TestGRPCSpawnServer_SpawnWithAnOrdinaryFailureCarriesNoFaultClass(t *testing.T) {
+	t.Parallel()
+	backend := &spawnBackend{
+		spawnFn: func(context.Context, *orchestration.SpawnRequest) (*orchestration.Session, error) {
+			return nil, errors.New("exec: \"claude\": executable file not found in $PATH")
+		},
+	}
+	_, client, cleanup := buildSpawnServer(t, backend, newTestIdentity())
+	defer cleanup()
+
+	_, err := client.Spawn(context.Background(), &proto.SpawnSessionRequest{
+		Backend: "acp", TenantId: "tenant-a", ProjectId: "proj-1", AccountAuto: true,
+	})
+	if err == nil {
+		t.Fatal("a failed spawn was reported as successful")
+	}
+	wrapped := orchestration.WrapRemoteSpawnFaultForTest("Spawn", err)
+	if errors.Is(wrapped, orchestration.ErrNoAccountAvailable) ||
+		errors.Is(wrapped, orchestration.ErrAccountResolverNotConfigured) {
+		t.Errorf("an ordinary spawn failure was reconstructed as a configuration fault: %v", wrapped)
 	}
 }

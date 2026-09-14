@@ -40,6 +40,10 @@ const (
 
 	// ProviderLMStudio uses local LM Studio embedding models.
 	ProviderLMStudio Provider = "lmstudio"
+
+	// ProviderNPU uses an Intel NPU through the OpenVINO embedding sidecar.
+	// See docs/embeddings/npu.md.
+	ProviderNPU Provider = "npu"
 )
 
 // InputType specifies the type of text being embedded.

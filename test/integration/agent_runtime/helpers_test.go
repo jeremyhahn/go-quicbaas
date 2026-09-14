@@ -18,6 +18,7 @@ package agent_runtime_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -217,7 +218,14 @@ func (r *stubContainerRuntime) RunInteractive(_ context.Context, _ *orchestratio
 	return nil, nil
 }
 
-func (r *stubContainerRuntime) Stop(_ context.Context, _ string) error   { return nil }
+func (r *stubContainerRuntime) Stop(_ context.Context, _ string) error { return nil }
+
+// Exec satisfies the runtime seam. Nothing in this test runs a command
+// inside a container; a call would be a test asserting behaviour it never
+// arranged, so it refuses rather than answering.
+func (r *stubContainerRuntime) Exec(context.Context, string, *orchestration.ExecSpec) (*orchestration.ExecResult, error) {
+	return nil, &orchestration.ContainerExecError{ContainerID: "fake", Cause: errNoExecInThisTest}
+}
 func (r *stubContainerRuntime) Remove(_ context.Context, _ string) error { return nil }
 func (r *stubContainerRuntime) Logs(_ context.Context, _ string) (io.ReadCloser, error) {
 	return nil, nil
@@ -459,3 +467,9 @@ func newTestDaemon(t *testing.T, cfg testDaemonConfig) (*agent.Daemon, *stubEnro
 
 	return d, enroller, hb, spawn
 }
+
+// errNoExecInThisTest is what a fake container runtime answers when a test
+// that arranged no container command is asked to run one. Answering an empty
+// success instead would let a caller's command silently do nothing and the
+// test pass on it.
+var errNoExecInThisTest = errors.New("this fake runs no container commands")

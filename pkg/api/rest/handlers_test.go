@@ -18,9 +18,6 @@ package rest
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
@@ -37,7 +34,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -939,7 +935,16 @@ func TestHandleServiceError(t *testing.T) {
 				var errResp ErrorResponse
 				err := json.NewDecoder(w.Body).Decode(&errResp)
 				require.NoError(t, err)
-				assert.Contains(t, errResp.Error, "leader not available")
+				// The wire carries the CODE and its retryability, not the
+				// wrapped cause: a leadership transition describes the server,
+				// so since #427 its text is stable and the detail goes to the
+				// log. What a client branches on is asserted here; what it must
+				// no longer see is asserted in
+				// handlers_service_error_disclosure_test.go.
+				assert.Equal(t, errors.ErrLeaderNotAvailable.String(), errResp.Code)
+				assert.True(t, errResp.Retryable,
+					"a leadership transition must stay retryable, or clients turn a transient failure into a hard one")
+				assert.Contains(t, errResp.Error, ErrMsgServerFailure)
 			},
 		},
 		{
@@ -2393,33 +2398,6 @@ func (l *cacheTestLogger) WithError(err error) interfaces.Logger {
 	return l
 }
 
-func newTestAuthManager(t *testing.T) *auth.AuthManager {
-	t.Helper()
-	log, err := logger.New(logger.LogConfig{
-		Level:  "error",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	signingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	cfg := &auth.AuthConfig{
-		Enabled:         true,
-		JWTSigningKeyID: "test-signing-key",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-		RefreshWindow:   5 * time.Minute,
-		MaxTokens:       10,
-	}
-	auth.SetAsymmetricSigning(cfg, signingKey)
-
-	mgr, err := auth.NewInMemoryAuthManager(cfg, log)
-	require.NoError(t, err)
-	return mgr
-}
-
 func newTestCacheManager(t *testing.T) *cache.CacheManager {
 	t.Helper()
 	log, err := logger.New(logger.LogConfig{
@@ -2435,171 +2413,11 @@ func newTestCacheManager(t *testing.T) *cache.CacheManager {
 	return mgr
 }
 
-func TestPhase4HandlerLogout_RevokeTokenSuccess(t *testing.T) {
-	authMgr := newTestAuthManager(t)
-	handler := NewPhase4Handler(nil, authMgr, nil)
-
-	// Create a user record and issue a token via the IAM-factor token path.
-	user, err := authMgr.CreateUser("logoutuser", []string{"user"})
-	require.NoError(t, err)
-
-	token, err := authMgr.IssueTokenForUser(context.Background(), user)
-	require.NoError(t, err)
-
-	body := fmt.Sprintf(`{"access_token":"%s"}`, token.AccessToken)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.HandleLogout(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp pb.LogoutResponse
-	err = json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.True(t, resp.Success)
-}
-
-func TestPhase4HandlerRefreshToken_Success(t *testing.T) {
-	authMgr := newTestAuthManager(t)
-	handler := NewPhase4Handler(nil, authMgr, nil)
-
-	// Create a user record and issue tokens via the IAM-factor token path.
-	user, err := authMgr.CreateUser("refreshuser", []string{"user"})
-	require.NoError(t, err)
-
-	token, err := authMgr.IssueTokenForUser(context.Background(), user)
-	require.NoError(t, err)
-
-	body := fmt.Sprintf(`{"refresh_token":"%s"}`, token.RefreshToken)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.HandleRefreshToken(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp pb.RefreshTokenResponse
-	err = json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp.AccessToken)
-	assert.Equal(t, "Bearer", resp.TokenType)
-}
-
-func TestPhase4HandlerRefreshToken_InvalidToken(t *testing.T) {
-	authMgr := newTestAuthManager(t)
-	handler := NewPhase4Handler(nil, authMgr, nil)
-
-	body := `{"refresh_token":"invalid-token"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.HandleRefreshToken(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestPhase4HandlerCreateUser_Success(t *testing.T) {
-	authMgr := newTestAuthManager(t)
-	handler := NewPhase4Handler(nil, authMgr, nil)
-
-	body := `{"username":"newuser","password":"securepass12","roles":["editor"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.HandleCreateUser(w, req)
-
-	assert.Equal(t, http.StatusCreated, w.Code)
-
-	var resp pb.CreateUserResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp.UserId)
-	assert.Equal(t, "newuser", resp.Username)
-	assert.NotZero(t, resp.Created)
-}
-
-func TestPhase4HandlerCreateUser_DuplicateUser(t *testing.T) {
-	authMgr := newTestAuthManager(t)
-	handler := NewPhase4Handler(nil, authMgr, nil)
-
-	_, err := authMgr.CreateUser("dupuser", []string{"user"})
-	require.NoError(t, err)
-
-	body := `{"username":"dupuser","password":"password45678","roles":["user"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.HandleCreateUser(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestPhase4HandlerCreateUser_EmptyUsername(t *testing.T) {
-	authMgr := newTestAuthManager(t)
-	handler := NewPhase4Handler(nil, authMgr, nil)
-
-	body := `{"username":"","password":"password12345","roles":["user"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	handler.HandleCreateUser(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestPhase4HandlerListUsers_Success(t *testing.T) {
-	authMgr := newTestAuthManager(t)
-	handler := NewPhase4Handler(nil, authMgr, nil)
-
-	// Create some users (passwords must be >= 12 characters)
-	_, err := authMgr.CreateUser("user1", []string{"admin"})
-	require.NoError(t, err)
-	_, err = authMgr.CreateUser("user2", []string{"reader"})
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-	w := httptest.NewRecorder()
-
-	handler.HandleListUsers(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Header().Get("Content-Type"), "application/json")
-
-	var resp pb.ListUsersResponse
-	err = json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(resp.Users), 2)
-}
-
-func TestPhase4HandlerListUsers_EmptyStore(t *testing.T) {
-	authMgr := newTestAuthManager(t)
-	handler := NewPhase4Handler(nil, authMgr, nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-	w := httptest.NewRecorder()
-
-	handler.HandleListUsers(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp pb.ListUsersResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Empty(t, resp.Users)
-}
-
 func TestPhase4HandlerGetCacheStats_WithData(t *testing.T) {
 	cacheMgr := newTestCacheManager(t)
 	defer cacheMgr.Close()
 
-	handler := NewPhase4Handler(nil, nil, cacheMgr)
+	handler := NewPhase4Handler(nil, cacheMgr)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/cache/stats", nil)
 	w := httptest.NewRecorder()
@@ -2619,7 +2437,7 @@ func TestPhase4HandlerClearCache_WithData(t *testing.T) {
 	cacheMgr := newTestCacheManager(t)
 	defer cacheMgr.Close()
 
-	handler := NewPhase4Handler(nil, nil, cacheMgr)
+	handler := NewPhase4Handler(nil, cacheMgr)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cache/clear", nil)
 	w := httptest.NewRecorder()
@@ -2980,42 +2798,6 @@ func TestPhase4HandlerMethodNotAllowed(t *testing.T) {
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 	})
 
-	t.Run("logout with GET method", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/logout", nil)
-		w := httptest.NewRecorder()
-
-		handler.HandleLogout(w, req)
-
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	})
-
-	t.Run("refresh token with GET method", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/refresh", nil)
-		w := httptest.NewRecorder()
-
-		handler.HandleRefreshToken(w, req)
-
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	})
-
-	t.Run("create user with GET method", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-		w := httptest.NewRecorder()
-
-		handler.HandleCreateUser(w, req)
-
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	})
-
-	t.Run("list users with POST method", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/users", nil)
-		w := httptest.NewRecorder()
-
-		handler.HandleListUsers(w, req)
-
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	})
-
 	t.Run("get cache stats with POST method", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/cache/stats", nil)
 		w := httptest.NewRecorder()
@@ -3054,36 +2836,6 @@ func TestPhase4HandlerInvalidJSON(t *testing.T) {
 		w := httptest.NewRecorder()
 
 		handler.HandleRestoreBackup(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("logout with invalid JSON", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", strings.NewReader("{invalid"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		handler.HandleLogout(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("refresh token with invalid JSON", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader("{invalid"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		handler.HandleRefreshToken(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("create user with invalid JSON", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader("{invalid"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		handler.HandleCreateUser(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
@@ -4807,8 +4559,9 @@ func TestGetClientIPFunction_EdgeCases(t *testing.T) {
 				tc.setupReq(req)
 			}
 
-			ip := getClientIP(req)
-			assert.Equal(t, tc.expectedIP, ip)
+			// Parsing is reached the only way a deployment reaches it: from a
+			// peer the operator trusts. See resolvedViaOwnPeer.
+			assert.Equal(t, tc.expectedIP, resolvedViaOwnPeer(t, req))
 		})
 	}
 }
@@ -8892,7 +8645,7 @@ func TestKVListMissingEntityType(t *testing.T) {
 }
 
 func TestObservabilityHandlers_MethodValidation(t *testing.T) {
-	handler := NewPhase4Handler(nil, nil, nil)
+	handler := NewPhase4Handler(nil, nil)
 
 	tests := []struct {
 		name          string
@@ -8917,30 +8670,6 @@ func TestObservabilityHandlers_MethodValidation(t *testing.T) {
 			handler:       handler.HandleDeleteBackup,
 			validMethod:   http.MethodDelete,
 			invalidMethod: http.MethodGet,
-		},
-		{
-			name:          "HandleLogout",
-			handler:       handler.HandleLogout,
-			validMethod:   http.MethodPost,
-			invalidMethod: http.MethodGet,
-		},
-		{
-			name:          "HandleRefreshToken",
-			handler:       handler.HandleRefreshToken,
-			validMethod:   http.MethodPost,
-			invalidMethod: http.MethodGet,
-		},
-		{
-			name:          "HandleCreateUser",
-			handler:       handler.HandleCreateUser,
-			validMethod:   http.MethodPost,
-			invalidMethod: http.MethodGet,
-		},
-		{
-			name:          "HandleListUsers",
-			handler:       handler.HandleListUsers,
-			validMethod:   http.MethodGet,
-			invalidMethod: http.MethodPost,
 		},
 		{
 			name:          "HandleGetCacheStats",
@@ -8969,7 +8698,7 @@ func TestObservabilityHandlers_MethodValidation(t *testing.T) {
 }
 
 func TestObservabilityHandlers_InvalidJSON(t *testing.T) {
-	handler := NewPhase4Handler(nil, nil, nil)
+	handler := NewPhase4Handler(nil, nil)
 
 	tests := []struct {
 		name    string
@@ -8979,21 +8708,6 @@ func TestObservabilityHandlers_InvalidJSON(t *testing.T) {
 		{
 			name:    "HandleCreateBackup",
 			handler: handler.HandleCreateBackup,
-			method:  http.MethodPost,
-		},
-		{
-			name:    "HandleLogout",
-			handler: handler.HandleLogout,
-			method:  http.MethodPost,
-		},
-		{
-			name:    "HandleRefreshToken",
-			handler: handler.HandleRefreshToken,
-			method:  http.MethodPost,
-		},
-		{
-			name:    "HandleCreateUser",
-			handler: handler.HandleCreateUser,
 			method:  http.MethodPost,
 		},
 	}
@@ -9011,7 +8725,7 @@ func TestObservabilityHandlers_InvalidJSON(t *testing.T) {
 }
 
 func TestCacheHandlers_NilManager(t *testing.T) {
-	handler := NewPhase4Handler(nil, nil, nil)
+	handler := NewPhase4Handler(nil, nil)
 
 	t.Run("GetCacheStats_NilManager", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/cache/stats", nil)
@@ -9088,10 +8802,9 @@ func TestExtractPathParam_QA90Coverage(t *testing.T) {
 }
 
 func TestNewPhase4Handler_QA90(t *testing.T) {
-	handler := NewPhase4Handler(nil, nil, nil)
+	handler := NewPhase4Handler(nil, nil)
 	require.NotNil(t, handler)
 	assert.Nil(t, handler.backupMgr)
-	assert.Nil(t, handler.authMgr)
 	assert.Nil(t, handler.cacheMgr)
 }
 

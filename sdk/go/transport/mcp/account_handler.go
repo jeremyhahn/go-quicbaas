@@ -41,6 +41,7 @@ var accountMethodTools = map[string]string{
 	"Revoke":           "quicbaas_agent_account_revoke",
 	"SetDefault":       "quicbaas_agent_account_set_default",
 	"Usage":            "quicbaas_agent_account_usage",
+	"Materialize":      "quicbaas_agent_account_materialize",
 }
 
 // accountMCPHandler converts MCP tool results back into the typed SDK account
@@ -48,7 +49,8 @@ var accountMethodTools = map[string]string{
 // the wire shapes below mirror service.*Response.
 //
 // SECURITY INVARIANT: no envelope here has a credential field, because no
-// service response type has one.
+// service response type has one — with EXACTLY ONE deliberate exception,
+// Materialize, whose whole purpose is to release one (go-quicbaas#734).
 type accountMCPHandler struct{}
 
 // newAccountMCPHandler creates a new account MCP response handler.
@@ -70,6 +72,7 @@ var accountMCPTransforms = map[string]accountMCPTransform{
 	"RotateCredential": decodeMCPAccountAck,
 	"SetDefault":       decodeMCPAccountAck,
 	"Usage":            decodeMCPAccountUsage,
+	"Materialize":      decodeMCPAccountMaterialize,
 }
 
 // transformResponse converts the raw MCP tool result to the SDK type for
@@ -155,4 +158,21 @@ func decodeMCPAccountUsage(raw []byte) (interface{}, error) {
 		return nil, errors.NewInternal("mcp.account", "tool returned no usage report")
 	}
 	return env.Usage, nil
+}
+
+// decodeMCPAccountMaterialize decodes a released credential envelope.
+//
+// The service response it mirrors carries no refresh grant, so neither does
+// this. A result with no envelope in it is a protocol fault rather than an
+// empty answer: the caller would otherwise spawn an agent with no credential.
+func decodeMCPAccountMaterialize(raw []byte) (interface{}, error) {
+	var env account.MaterializedCredential
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.account",
+			"failed to decode materialized credential result")
+	}
+	if env.Credential == nil {
+		return nil, errors.NewInternal("mcp.account", "tool released no credential envelope")
+	}
+	return &env, nil
 }

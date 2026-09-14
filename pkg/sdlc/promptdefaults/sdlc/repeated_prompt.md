@@ -1,0 +1,1 @@
+the previous attempt was handed this exact prompt and changed no file. Nothing has been added to the task since — no answer on the issue and no readmission note — so another worker would be asked the same question and would answer it the same way. Add what is missing to the issue, then readmit the task.

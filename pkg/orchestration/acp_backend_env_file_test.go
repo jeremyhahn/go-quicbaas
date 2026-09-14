@@ -73,7 +73,14 @@ func (r *envFileContainerRuntime) RunInteractive(ctx context.Context, spec *Cont
 func (r *envFileContainerRuntime) Run(context.Context, *ContainerSpec) (string, error) {
 	return "test-ctr", nil
 }
-func (r *envFileContainerRuntime) Stop(context.Context, string) error   { return nil }
+func (r *envFileContainerRuntime) Stop(context.Context, string) error { return nil }
+
+// Exec satisfies the runtime seam. Nothing in this test runs a command
+// inside a container; a call would be a test asserting behaviour it never
+// arranged, so it refuses rather than answering.
+func (r *envFileContainerRuntime) Exec(context.Context, string, *ExecSpec) (*ExecResult, error) {
+	return nil, &ContainerExecError{ContainerID: "fake", Cause: errNoExecInThisTest}
+}
 func (r *envFileContainerRuntime) Remove(context.Context, string) error { return nil }
 func (r *envFileContainerRuntime) Logs(context.Context, string) (io.ReadCloser, error) {
 	return nil, nil

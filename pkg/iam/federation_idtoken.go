@@ -19,12 +19,13 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
-	"math/big"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -233,13 +234,15 @@ func (v *IDTokenValidator) refreshJWKS(ctx context.Context) error {
 		return &IDTokenJWKSError{Reason: "failed to decode JWKS", Cause: err}
 	}
 
-	for i := range set.Keys {
-		key, err := set.Keys[i].toPublicKey()
+	for _, raw := range set.Keys {
+		key, kid, err := parseIDTokenJWK(raw)
 		if err != nil {
-			// Skip keys we cannot parse rather than failing the whole set.
+			// RFC 7517 section 5: ignore a key we cannot parse or use rather
+			// than discarding the rest of the set. An ignored key never enters
+			// the cache, so it can never verify a token.
 			continue
 		}
-		v.keyCache.set(set.Keys[i].Kid, key)
+		v.keyCache.set(kid, key)
 	}
 	return nil
 }
@@ -319,61 +322,37 @@ func classifyIDTokenError(err error) error {
 	}
 }
 
-// idTokenJWKS is a JSON Web Key Set.
+// idTokenJWKS is a JSON Web Key Set as published at a provider's jwks_uri.
+// Entries are held raw so a single unusable key does not discard the whole set
+// (RFC 7517 section 5).
 type idTokenJWKS struct {
-	Keys []idTokenJWK `json:"keys"`
+	Keys []json.RawMessage `json:"keys"`
 }
 
-// idTokenJWK is a single JSON Web Key (RSA or EC).
-type idTokenJWK struct {
-	Kty string `json:"kty"`
-	Kid string `json:"kid"`
-	Use string `json:"use"`
-	Alg string `json:"alg"`
-	N   string `json:"n"`
-	E   string `json:"e"`
-	Crv string `json:"crv"`
-	X   string `json:"x"`
-	Y   string `json:"y"`
-}
-
-// toPublicKey converts a JWK to an RSA or ECDSA public key.
-func (k *idTokenJWK) toPublicKey() (interface{}, error) {
-	switch k.Kty {
-	case "RSA":
-		nBytes, err := jwt.NewParser().DecodeSegment(k.N)
-		if err != nil {
-			return nil, &IDTokenJWKSError{Reason: "failed to decode RSA modulus", Cause: err}
-		}
-		eBytes, err := jwt.NewParser().DecodeSegment(k.E)
-		if err != nil {
-			return nil, &IDTokenJWKSError{Reason: "failed to decode RSA exponent", Cause: err}
-		}
-		e := 0
-		for _, b := range eBytes {
-			e = e<<8 + int(b)
-		}
-		return &rsa.PublicKey{N: new(big.Int).SetBytes(nBytes), E: e}, nil
-	case "EC":
-		xBytes, err := jwt.NewParser().DecodeSegment(k.X)
-		if err != nil {
-			return nil, &IDTokenJWKSError{Reason: "failed to decode EC x", Cause: err}
-		}
-		yBytes, err := jwt.NewParser().DecodeSegment(k.Y)
-		if err != nil {
-			return nil, &IDTokenJWKSError{Reason: "failed to decode EC y", Cause: err}
-		}
-		curve, err := ecCurveForName(k.Crv)
-		if err != nil {
-			return nil, err
-		}
-		return &ecdsa.PublicKey{
-			Curve: curve,
-			X:     new(big.Int).SetBytes(xBytes),
-			Y:     new(big.Int).SetBytes(yBytes),
-		}, nil
+// parseIDTokenJWK parses one JWKS entry into a verification key. Parsing is
+// delegated to go-jose, which validates the key material rather than trusting
+// it: for EC that includes checking the coordinates are the curve's field width
+// and that the point actually lies on the declared curve. Decoding coordinates
+// by hand into an ecdsa.PublicKey cannot detect an off-curve point, which would
+// let whoever answers the JWKS fetch install an invalid verification key.
+//
+// Only the public RSA and ECDSA key types the validator's permitted RS*/ES*
+// algorithms can actually use are accepted; every other key type fails closed.
+func parseIDTokenJWK(raw json.RawMessage) (interface{}, string, error) {
+	var jwk jose.JSONWebKey
+	if err := jwk.UnmarshalJSON(raw); err != nil {
+		return nil, "", &IDTokenJWKSError{Reason: "failed to parse JWK", Cause: err}
+	}
+	if !jwk.Valid() {
+		return nil, "", &IDTokenJWKSError{Reason: "JWK is missing required key parameters"}
+	}
+	switch jwk.Key.(type) {
+	case *rsa.PublicKey, *ecdsa.PublicKey:
+		return jwk.Key, jwk.KeyID, nil
 	default:
-		return nil, &IDTokenJWKSError{Reason: "unsupported key type: " + k.Kty}
+		return nil, "", &IDTokenJWKSError{
+			Reason: fmt.Sprintf("unsupported JWK key type %T for RS*/ES* verification", jwk.Key),
+		}
 	}
 }
 

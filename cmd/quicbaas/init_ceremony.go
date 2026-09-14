@@ -164,7 +164,7 @@ func runInitInitializeCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.CeremonyInitialize(ctx, &qrdbtransport.CeremonyInitializeRequest{
@@ -292,7 +292,7 @@ func runInitOfficerRegisterCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.OfficerRegister(ctx, &qrdbtransport.OfficerRegisterRequest{
@@ -337,7 +337,7 @@ func runInitOfficerListCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	officers, err := client.OfficerList(ctx)
@@ -370,7 +370,7 @@ func runInitOfficerStatusCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	officers, err := client.OfficerClaimStatus(ctx)

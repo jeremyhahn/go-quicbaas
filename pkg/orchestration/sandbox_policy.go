@@ -147,6 +147,22 @@ func (e *SandboxModeViolationError) Error() string {
 		e.Policy.String() + ": " + e.Reason
 }
 
+// Reasons a backend refuses a spawn that demands a sandbox. They are constants
+// rather than literals at the raise sites because they are ASSERTED ON: the
+// tests that pin the fail-closed guard (#741) check which refusal was given,
+// and a refusal whose wording drifts is a test that stops testing anything.
+const (
+	// sandboxReasonNoRuntime: the backend was never given a container runtime,
+	// so it has nothing to build a sandbox with.
+	sandboxReasonNoRuntime = "backend has no container runtime configured"
+
+	// sandboxReasonCLIMode: the backend drives its agent over a CLI process's
+	// stdio and the only process it can start is a host process. Refusing
+	// keeps `required` fail-closed instead of degrading to an unsandboxed exec
+	// on the daemon with the tenant's provider credential in its environment.
+	sandboxReasonCLIMode = "CLI-mode backend cannot run its agent in a container"
+)
+
 // ResolveSandboxMode resolves the effective sandbox mode for a request given
 // the server's policy, an optional tenant-level policy override, and whether
 // a container runtime is available on the target host.

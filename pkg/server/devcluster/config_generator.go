@@ -169,6 +169,10 @@ func (g *ConfigGenerator) generateYAMLContent(node *NodeInstance) string {
 			sb.WriteString(fmt.Sprintf("    - %s\n", addr))
 		}
 	}
+	// Emitted because a generated config is run on its own: without it the
+	// node derives a deployment identity from its own node_id and isolates
+	// itself from the cluster this file was generated for.
+	sb.WriteString(fmt.Sprintf("  deployment_id: %d\n", devclusterDeploymentID))
 	sb.WriteString(fmt.Sprintf("  enable_bootstrap: %t\n", node.Config != nil && node.Config.Raft.EnableBootstrap))
 	sb.WriteString(fmt.Sprintf("  min_nodes: %d\n", g.manager.cfg.NodeCount))
 	sb.WriteString("\n")

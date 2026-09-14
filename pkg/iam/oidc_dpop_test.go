@@ -206,7 +206,8 @@ func TestToken_DPoPReplayRejected(t *testing.T) {
 // TestIssueSessionToken_DPoPBindsCnfJkt verifies the login (session) path binds
 // cnf.jkt when a DPoP proof accompanies the login.
 func TestIssueSessionToken_DPoPBindsCnfJkt(t *testing.T) {
-	provider, signingKey, _, _, _ := createTestOIDCProvider(t)
+	provider, signingKey, _, _, memStorage := createTestOIDCProvider(t)
+	seedCeremonyUser(t, memStorage, "tenant-1", "user-1", []string{"admin"})
 
 	dpopKey := newDPoPKey(t)
 	jkt, err := dpop.Thumbprint(dpopKey.Public())
@@ -245,7 +246,8 @@ func TestIssueSessionToken_DPoPBindsCnfJkt(t *testing.T) {
 // TestIssueSessionToken_NoDPoPNoCnf verifies a login without a proof yields a
 // bearer session token.
 func TestIssueSessionToken_NoDPoPNoCnf(t *testing.T) {
-	provider, signingKey, _, _, _ := createTestOIDCProvider(t)
+	provider, signingKey, _, _, memStorage := createTestOIDCProvider(t)
+	seedCeremonyUser(t, memStorage, "tenant-1", "user-1", []string{"admin"})
 
 	token, _, err := provider.IssueSessionToken(context.Background(), SessionIdentity{
 		Subject:    "user-1",

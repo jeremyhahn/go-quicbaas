@@ -302,6 +302,8 @@ func sdkProviderToProto(p embedding.Provider) pb.EmbeddingProvider {
 		return pb.EmbeddingProvider_EMBEDDING_PROVIDER_OLLAMA
 	case embedding.ProviderLMStudio:
 		return pb.EmbeddingProvider_EMBEDDING_PROVIDER_LMSTUDIO
+	case embedding.ProviderNPU:
+		return pb.EmbeddingProvider_EMBEDDING_PROVIDER_NPU
 	default:
 		return pb.EmbeddingProvider_EMBEDDING_PROVIDER_UNSPECIFIED
 	}
@@ -318,6 +320,8 @@ func protoProviderToSDK(p pb.EmbeddingProvider) embedding.Provider {
 		return embedding.ProviderOllama
 	case pb.EmbeddingProvider_EMBEDDING_PROVIDER_LMSTUDIO:
 		return embedding.ProviderLMStudio
+	case pb.EmbeddingProvider_EMBEDDING_PROVIDER_NPU:
+		return embedding.ProviderNPU
 	default:
 		return ""
 	}

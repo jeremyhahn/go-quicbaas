@@ -234,3 +234,65 @@ func (p *ParsedAddress) FullURL() string {
 	}
 	return p.Original
 }
+
+// =============================================================================
+// HTTP endpoint construction
+//
+// REST and MCP (Streamable HTTP) clients need a scheme-qualified URL, not the
+// bare "host:port" every other transport dials. Building that URL used to be
+// duplicated per transport, and the go-qrdb sub-client (sdk/go qrdb.go) did
+// not build it at all: it handed "127.0.0.1:18443" straight to go-qrdb's REST
+// transport, which concatenates the path onto the address verbatim, so the
+// first request died in url.Parse with
+//
+//	parse "127.0.0.1:18443/v1/barrier/status": first path segment in URL cannot contain colon
+//
+// (go-quicbaas#405). These helpers are the ONE implementation every HTTP-ish
+// transport normalizes through.
+// =============================================================================
+
+// HTTPBaseURL returns the scheme-qualified origin ("scheme://host:port") an
+// HTTP client dials for address:
+//
+//   - a Unix socket yields a placeholder host, since the dialer is overridden;
+//     the scheme follows tlsConfigured;
+//   - an explicit http:// or https:// URL keeps its own scheme and host;
+//   - a bare "host:port" yields https. TLS is always required (see the repo's
+//     TLS posture): an address with no scheme is never downgraded to http.
+func HTTPBaseURL(address string, tlsConfigured bool) string {
+	parsed := ParseAddress(address)
+
+	if parsed.IsUnix() {
+		if tlsConfigured {
+			return "https://localhost"
+		}
+		return "http://localhost"
+	}
+	if parsed.IsHTTP() {
+		return parsed.Scheme + "://" + parsed.Address
+	}
+	return "https://" + parsed.Address
+}
+
+// HTTPPath returns the path component of an explicit http(s):// address, with
+// any trailing slash trimmed. Bare "host:port" and Unix socket addresses carry
+// no path and yield "".
+func HTTPPath(address string) string {
+	parsed := ParseAddress(address)
+	if !parsed.IsHTTP() {
+		return ""
+	}
+	return strings.TrimSuffix(parsed.Path, "/")
+}
+
+// HTTPEndpoint returns the full URL for an HTTP endpoint mounted at suffix
+// (e.g. "/mcp") on address: HTTPBaseURL joined with the address's own path and
+// suffix. A path that already ends in suffix is used as-is, so an address a
+// caller already spelled in full ("https://host:port/mcp") is not doubled.
+func HTTPEndpoint(address string, tlsConfigured bool, suffix string) string {
+	base := HTTPBaseURL(address, tlsConfigured) + HTTPPath(address)
+	if suffix == "" || strings.HasSuffix(base, suffix) {
+		return base
+	}
+	return base + suffix
+}

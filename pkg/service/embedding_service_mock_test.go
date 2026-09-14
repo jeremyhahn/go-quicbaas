@@ -81,7 +81,6 @@ func TestEmbeddingServiceMock_BatchGenerateEmbeddings_Success(t *testing.T) {
 			{ID: "1", Text: "alpha"},
 			{ID: "2", Text: "beta gamma delta"},
 		},
-		Provider: "openai",
 	}
 
 	resp, err := svc.BatchGenerateEmbeddings(context.Background(), req)
@@ -403,8 +402,7 @@ func TestEmbeddingServiceMock_GenerateEmbedding_Success(t *testing.T) {
 	svc := newMockServiceWithManager(mgr)
 
 	resp, err := svc.GenerateEmbedding(context.Background(), &GenerateEmbeddingRequest{
-		Text:     "hello world",
-		Provider: "openai",
+		Text: "hello world",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp)

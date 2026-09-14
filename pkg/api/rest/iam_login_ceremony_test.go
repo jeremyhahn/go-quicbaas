@@ -46,6 +46,7 @@ import (
 type ceremonyFakeLoginClient struct {
 	finishReq     qrdbtransport.FinishLoginRequest
 	finishResp    *qrdbtransport.FinishLoginResponse
+	finishErr     error
 	finishInvoked bool
 }
 
@@ -60,6 +61,9 @@ func (f *ceremonyFakeLoginClient) BeginLogin(_ context.Context, _ qrdbtransport.
 func (f *ceremonyFakeLoginClient) FinishLogin(_ context.Context, req qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error) {
 	f.finishInvoked = true
 	f.finishReq = req
+	if f.finishErr != nil {
+		return nil, f.finishErr
+	}
 	return f.finishResp, nil
 }
 

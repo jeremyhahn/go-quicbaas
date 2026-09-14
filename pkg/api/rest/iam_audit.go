@@ -190,6 +190,10 @@ func (h *IAMHandler) GetAuditEvent(w http.ResponseWriter, r *http.Request) {
 	// Get event
 	event, err := logger.GetEvent(ctx, tenantID, eventID)
 	if err != nil {
+		// coded-sentinel-ok: the CLASS is the intent. This bridge answers 404
+		// for any not-found the audit lookup raises, which is the right status
+		// whether the event, the tenant or the shard is the thing that is
+		// absent. Only the message names the event.
 		if errors.Is(err, iam.ErrAuditEventNotFound) {
 			RespondIAMError(w, r, http.StatusNotFound,
 				NewIAMAPIError(ErrNotFound, "audit event not found: "+eventID))

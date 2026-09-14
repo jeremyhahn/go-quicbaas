@@ -28,6 +28,15 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
 
+// devclusterDeploymentID is the shared quicraft deployment identity every
+// node of a local devcluster runs under.
+//
+// Any non-zero constant works; what matters is that all members agree, which
+// is exactly what deriving it per node from NodeID fails to do. It is fixed
+// rather than generated so a devcluster restarted against the same data
+// directory rejoins the cluster it left.
+const devclusterDeploymentID uint64 = 9001
+
 // Manager coordinates multiple local QuicBaaS nodes for development.
 type Manager struct {
 	cfg        *config.DevClusterConfig
@@ -214,12 +223,26 @@ func (m *Manager) generateNodeConfig(nodeIndex int) *config.Config {
 		)
 	}
 
-	// Build join addresses (all other nodes in the cluster).
-	joinAddrs := make([]string, 0, m.cfg.NodeCount-1)
+	// All nodes in the cluster share one deployment identity. Without it each
+	// node falls back to deriving DeploymentID from its own NodeID
+	// (buildQRDBConfig), so every node would isolate itself into a cluster of
+	// one — quicraft uses the value to separate co-located clusters, and a
+	// devcluster where each member disagrees about which cluster it is in
+	// never forms.
+	cfg.Raft.DeploymentID = devclusterDeploymentID
+
+	// The full member roster, in "id=addr" form, INCLUDING this node.
+	//
+	// Two things this must get right, both learned by getting them wrong. The
+	// entries carry the replica ID because buildClusterMembers keeps only
+	// entries containing "=" and falls back to a single-member map when it
+	// finds none — raw "host:port" addresses left every devcluster node
+	// bootstrapping alone. And self is included because the list is consumed
+	// as the cluster's MEMBERSHIP, not as a list of peers to dial: a roster
+	// missing the local node describes a cluster it is not a member of.
+	joinAddrs := make([]string, 0, m.cfg.NodeCount)
 	for j := 0; j < m.cfg.NodeCount; j++ {
-		if j != nodeIndex {
-			joinAddrs = append(joinAddrs, fmt.Sprintf("localhost:%d", m.cfg.BasePorts.Raft+j))
-		}
+		joinAddrs = append(joinAddrs, fmt.Sprintf("%d=localhost:%d", j+1, m.cfg.BasePorts.Raft+j))
 	}
 	cfg.Raft.JoinAddresses = joinAddrs
 

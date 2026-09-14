@@ -16,7 +16,6 @@ package orchestration
 import (
 	"errors"
 	"testing"
-	"time"
 )
 
 func TestAgentIdentity_Validate_Success(t *testing.T) {
@@ -219,126 +218,6 @@ func TestAgentIdentity_HasAnyScope(t *testing.T) {
 	}
 }
 
-func TestAgentSecurityContext_Validate_Success(t *testing.T) {
-	sc := &AgentSecurityContext{
-		Identity: &AgentIdentity{
-			AgentID:          "a",
-			ServiceAccountID: "sa",
-			TenantID:         "t",
-			Role:             "w",
-			Scopes:           []string{"kms:read"},
-			ClientID:         "c",
-		},
-		AccessToken:   "token-abc",
-		TokenExpiry:   time.Now().Add(time.Hour).Unix(),
-		CorrelationID: "corr-001",
-	}
-	if err := sc.Validate(); err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-}
-
-func TestAgentSecurityContext_Validate_MissingFields(t *testing.T) {
-	validIdentity := &AgentIdentity{
-		AgentID:          "a",
-		ServiceAccountID: "sa",
-		TenantID:         "t",
-		Role:             "w",
-		Scopes:           []string{"kms:read"},
-		ClientID:         "c",
-	}
-
-	tests := []struct {
-		name    string
-		ctx     *AgentSecurityContext
-		wantErr error
-		field   string
-	}{
-		{
-			name:    "nil identity",
-			ctx:     &AgentSecurityContext{AccessToken: "t", TokenExpiry: 1, CorrelationID: "c"},
-			wantErr: ErrAgentSecurityContextRequired,
-			field:   "identity",
-		},
-		{
-			name:    "missing access_token",
-			ctx:     &AgentSecurityContext{Identity: validIdentity, TokenExpiry: 1, CorrelationID: "c"},
-			wantErr: ErrAgentSecurityContextRequired,
-			field:   "access_token",
-		},
-		{
-			name:    "zero token_expiry",
-			ctx:     &AgentSecurityContext{Identity: validIdentity, AccessToken: "t", CorrelationID: "c"},
-			wantErr: ErrAgentSecurityContextRequired,
-			field:   "token_expiry",
-		},
-		{
-			name:    "missing correlation_id",
-			ctx:     &AgentSecurityContext{Identity: validIdentity, AccessToken: "t", TokenExpiry: 1},
-			wantErr: ErrAgentSecurityContextRequired,
-			field:   "correlation_id",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.ctx.Validate()
-			if err == nil {
-				t.Fatal("expected error, got nil")
-			}
-			if !errors.Is(err, tt.wantErr) {
-				t.Errorf("expected %v, got: %v", tt.wantErr, err)
-			}
-			var reqErr *AgentSecurityContextRequiredError
-			if errors.As(err, &reqErr) {
-				if reqErr.Field != tt.field {
-					t.Errorf("field = %q, want %q", reqErr.Field, tt.field)
-				}
-			}
-		})
-	}
-}
-
-func TestAgentSecurityContext_Validate_InvalidIdentity(t *testing.T) {
-	sc := &AgentSecurityContext{
-		Identity: &AgentIdentity{
-			// Missing AgentID
-			ServiceAccountID: "sa",
-			TenantID:         "t",
-			Role:             "w",
-			Scopes:           []string{"kms:read"},
-			ClientID:         "c",
-		},
-		AccessToken:   "token",
-		TokenExpiry:   time.Now().Add(time.Hour).Unix(),
-		CorrelationID: "corr-001",
-	}
-	err := sc.Validate()
-	if err == nil {
-		t.Fatal("expected error for invalid identity, got nil")
-	}
-	if !errors.Is(err, ErrAgentIdentityRequired) {
-		t.Errorf("expected ErrAgentIdentityRequired, got: %v", err)
-	}
-}
-
-func TestAgentSecurityContext_IsTokenExpired(t *testing.T) {
-	now := time.Now().Unix()
-
-	sc := &AgentSecurityContext{
-		TokenExpiry: now + 3600,
-	}
-	if sc.IsTokenExpired(now) {
-		t.Error("expected token to not be expired")
-	}
-	if !sc.IsTokenExpired(now + 3600) {
-		t.Error("expected token to be expired at exact expiry time")
-	}
-	if !sc.IsTokenExpired(now + 7200) {
-		t.Error("expected token to be expired after expiry time")
-	}
-}
-
 func TestIsValidScopeFormat(t *testing.T) {
 	tests := []struct {
 		scope string
@@ -382,17 +261,6 @@ func TestAgentIdentityRequiredError_ErrorMessage(t *testing.T) {
 	}
 	if !errors.Is(err, ErrAgentIdentityRequired) {
 		t.Error("expected errors.Is to match ErrAgentIdentityRequired")
-	}
-}
-
-func TestAgentSecurityContextRequiredError_ErrorMessage(t *testing.T) {
-	err := &AgentSecurityContextRequiredError{Field: "access_token"}
-	want := "orchestration: agent security context required field missing: access_token"
-	if err.Error() != want {
-		t.Errorf("Error() = %q, want %q", err.Error(), want)
-	}
-	if !errors.Is(err, ErrAgentSecurityContextRequired) {
-		t.Error("expected errors.Is to match ErrAgentSecurityContextRequired")
 	}
 }
 

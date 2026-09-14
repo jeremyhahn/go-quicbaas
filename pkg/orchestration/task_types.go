@@ -39,7 +39,114 @@ const (
 
 	// TaskStatusCancelled indicates a task has been cancelled.
 	TaskStatusCancelled TaskStatus = "cancelled"
+
+	// TaskStatusBlocked indicates a task is parked and will not be dispatched
+	// until it is readmitted. A task blocks because a person must answer
+	// something, because it is waiting on an external condition, or because
+	// the engine escalated it; BlockKind says which and BlockedReason says
+	// why. ReadmitTask returns it to pending; FailTask retires it.
+	TaskStatusBlocked TaskStatus = "blocked"
 )
+
+// TaskSourceKind names the place a task originated from. It is provenance,
+// not behaviour: the engine never branches on it beyond validating it and
+// using it as an index segment that keeps one origin from being adopted as
+// two tasks.
+//
+// THE SET IS OPEN. The engine declares only the kinds it produces itself
+// (scheduler, operator, job); every other kind is declared by the TaskSource
+// that emits it, at registration (RegisterTaskSource). A kind is therefore
+// something a source says about its own tasks, never something the engine
+// enumerates on a source's behalf.
+type TaskSourceKind string
+
+const (
+	// TaskSourceKindScheduler is a task raised by a schedule.
+	TaskSourceKindScheduler TaskSourceKind = "scheduler"
+
+	// TaskSourceKindOperator is a task created directly by a person.
+	TaskSourceKindOperator TaskSourceKind = "operator"
+
+	// TaskSourceKindJob is a task raised by another job.
+	TaskSourceKindJob TaskSourceKind = "job"
+)
+
+// builtinTaskSourceKinds are the kinds the engine itself emits.
+var builtinTaskSourceKinds = map[TaskSourceKind]struct{}{
+	TaskSourceKindScheduler: {},
+	TaskSourceKindOperator:  {},
+	TaskSourceKindJob:       {},
+}
+
+// Validate reports whether k is a built-in kind or one a registered
+// TaskSource declared.
+func (k TaskSourceKind) Validate() error {
+	if _, ok := builtinTaskSourceKinds[k]; ok {
+		return nil
+	}
+	if taskSources.kindRegistered(k) {
+		return nil
+	}
+	return &InvalidTaskSourceKindError{Kind: k}
+}
+
+// TaskSourceRef records where a task came from. Kind and Ref together
+// identify the origin uniquely within a tenant and project; the task store
+// refuses a second task for the same origin. URL is informational.
+type TaskSourceRef struct {
+	Kind TaskSourceKind `json:"kind"`
+	Ref  string         `json:"ref"`
+	URL  string         `json:"url,omitempty"`
+}
+
+// Validate checks that the source names a known kind and a non-empty
+// reference. A nil source is valid: it means the task has no recorded origin.
+func (src *TaskSourceRef) Validate() error {
+	if src == nil {
+		return nil
+	}
+	if err := src.Kind.Validate(); err != nil {
+		return err
+	}
+	if src.Ref == "" {
+		return &TaskStoreError{
+			Sentinel: ErrTaskStoreInvalidInput,
+			Message:  "task source ref must not be empty",
+		}
+	}
+	return nil
+}
+
+// TaskBlockKind classifies why a task is blocked.
+type TaskBlockKind string
+
+const (
+	// TaskBlockKindNeedsInfo means a person must supply something before the
+	// task can proceed.
+	TaskBlockKindNeedsInfo TaskBlockKind = "needs_info"
+
+	// TaskBlockKindBlocked means the task waits on an external condition.
+	TaskBlockKindBlocked TaskBlockKind = "blocked"
+
+	// TaskBlockKindEscalated means the engine gave up on the task and handed
+	// it to a person.
+	TaskBlockKindEscalated TaskBlockKind = "escalated"
+)
+
+// taskBlockKinds is the closed enum, used for O(1) validation.
+var taskBlockKinds = map[TaskBlockKind]struct{}{
+	TaskBlockKindNeedsInfo: {},
+	TaskBlockKindBlocked:   {},
+	TaskBlockKindEscalated: {},
+}
+
+// Validate reports whether k is a member of the closed enum.
+func (k TaskBlockKind) Validate() error {
+	if _, ok := taskBlockKinds[k]; !ok {
+		return &InvalidTaskBlockKindError{Kind: k}
+	}
+	return nil
+}
 
 // Task represents an orchestration work item managed by the task store.
 type Task struct {
@@ -89,6 +196,106 @@ type Task struct {
 	// SpawnedAt records when the auto-spawned job was dispatched.
 	// Zero when SpawnedJobID is empty.
 	SpawnedAt int64 `json:"spawned_at,omitempty"`
+
+	// Source records where the task came from. Nil means no recorded origin.
+	// When set, the store keeps a per-tenant, per-project index on
+	// (Kind, Ref) so the same origin is never adopted twice.
+	Source *TaskSourceRef `json:"source,omitempty"`
+
+	// Priority orders tasks for dispatch; a higher value is dispatched first.
+	Priority int `json:"priority,omitempty"`
+
+	// Attempts counts the jobs dispatched for this task so far.
+	Attempts int `json:"attempts,omitempty"`
+
+	// AttemptBudget bounds Attempts. Zero means the engine default applies.
+	AttemptBudget int `json:"attempt_budget,omitempty"`
+
+	// EnvironmentFaults counts attempts that ended because of the
+	// environment rather than the work; such attempts are refunded against
+	// the budget.
+	EnvironmentFaults int `json:"environment_faults,omitempty"`
+
+	// QuestionAttempts counts attempts that ended with the agent asking a
+	// person a question rather than judging the work; such attempts are
+	// refunded against the budget.
+	//
+	// SEPARATE FROM EnvironmentFaults BECAUSE THE OPERATOR IS TOLD WHICH IT
+	// WAS. The blocked-comment renderer prints "N of them environment
+	// faults, not charged", so folding questions into that counter would
+	// describe a worker that stopped to ask the owner a ruling as a broken
+	// deployment. Both are refunded; only one is the factory's fault.
+	QuestionAttempts int `json:"question_attempts,omitempty"`
+
+	// ConsecutiveEnvironmentFaults counts environment faults since the last
+	// attempt that got past the environment. It resets on any other outcome.
+	ConsecutiveEnvironmentFaults int `json:"consecutive_environment_faults,omitempty"`
+
+	// RetryNotBefore is a Unix-nanosecond instant before which the task must
+	// not be dispatched again. Zero means it may be dispatched now.
+	RetryNotBefore int64 `json:"retry_not_before,omitempty"`
+
+	// BlockedReason says why the task is blocked. Set with Status blocked.
+	BlockedReason string `json:"blocked_reason,omitempty"`
+
+	// BlockKind classifies the block. Set with Status blocked.
+	BlockKind TaskBlockKind `json:"block_kind,omitempty"`
+
+	// BlockFaultClass names the environment fault class a block came from —
+	// one of the classes classifyEnvironmentFault produces — and is empty for
+	// an operator hold or an engine escalation that no fault classified. Set
+	// with Status blocked and BlockKind blocked. It is what lets a re-adoption
+	// tell a transient environment hold, which a person resolves and re-arms
+	// by re-labelling, from a deliberate operator hold, which stays held.
+	BlockFaultClass string `json:"block_fault_class,omitempty"`
+
+	// StatusChangedAt is the Unix-nanosecond instant of the last Status
+	// transition.
+	StatusChangedAt int64 `json:"status_changed_at,omitempty"`
+
+	// Runner names the JobRunner that drives an attempt at this task. It is
+	// resolved when the task is created and never empty afterwards, so a
+	// task requeued after a failed attempt is re-dispatched by the same
+	// runner that first ran it.
+	Runner string `json:"runner,omitempty"`
+
+	// Routing are the placement hints a dispatch reads. They are kept on the
+	// record rather than only on the request that created it, so a requeue
+	// dispatches under the same constraints as the first attempt.
+	Routing TaskRouting `json:"routing,omitzero"`
+
+	// DispatchReason says why the last dispatch of this task produced no
+	// job. A successful dispatch clears it, so a non-empty value on a
+	// pending task is the reason it is still waiting.
+	DispatchReason string `json:"dispatch_reason,omitempty"`
+
+	// ConclusionReason is the typed reason the task stopped, from the closed
+	// vocabulary in task_conclusion.go. It is written by the same write that
+	// concluded the task and cleared by a requeue or a readmit, so a
+	// non-empty value always describes the record it is on.
+	//
+	// PERSISTED rather than re-derived: the reason is decided by
+	// applyConclusion from a job outcome that is gone by the time anything
+	// reads the task, and a reader guessing it back from the resting status
+	// would confuse an abandoned attempt with an operator's hold — the two
+	// differ only in what produced them. go-quicbaas#796.
+	ConclusionReason TaskConclusionReason `json:"conclusion_reason,omitempty"`
+}
+
+// TaskRouting are the placement hints a dispatch reads when it decides where
+// an attempt at a task runs: the backend that may run it, the host it is
+// pinned to, and whether it needs a GPU. The zero value constrains nothing.
+type TaskRouting struct {
+	// Backend restricts the attempt to agents running this backend. Empty
+	// means any backend.
+	Backend string `json:"backend,omitempty"`
+
+	// HostAffinity pins the attempt to an agent whose name or host matches.
+	// Empty means any host.
+	HostAffinity string `json:"host_affinity,omitempty"`
+
+	// GpuRequired restricts the attempt to agents advertising "gpu".
+	GpuRequired bool `json:"gpu_required,omitempty"`
 }
 
 // TaskResult contains the output of a completed task.
@@ -105,6 +312,13 @@ type TaskFilter struct {
 	AssignedTo string     `json:"assigned_to,omitempty"`
 	CreatedBy  string     `json:"created_by,omitempty"`
 	Limit      int        `json:"limit,omitempty"`
+
+	// ProjectID restricts the listing to tasks scoped to one project.
+	ProjectID string `json:"project_id,omitempty"`
+
+	// Statuses restricts the listing to tasks in any of the given statuses.
+	// It composes with Status: a task must satisfy both when both are set.
+	Statuses []TaskStatus `json:"statuses,omitempty"`
 }
 
 // TaskStore manages orchestration tasks backed by QuicBaaS KV store.
@@ -135,6 +349,15 @@ type TaskStore interface {
 
 	// FailTask marks a task as failed with a reason.
 	FailTask(ctx context.Context, tenantID, taskID, reason string) error
+
+	// BlockTask parks a pending, claimed or in-progress task with a kind and
+	// a reason. A blocked task is not dispatched until ReadmitTask returns it
+	// to pending; FailTask may retire it.
+	BlockTask(ctx context.Context, tenantID, taskID string, kind TaskBlockKind, reason string) error
+
+	// ReadmitTask returns a blocked task to pending, clearing its block,
+	// assignment and retry hold so it can be claimed again.
+	ReadmitTask(ctx context.Context, tenantID, taskID string) error
 
 	// SubmitTaskArtifacts appends output artifacts to a task. Artifacts
 	// larger than the configured InlineLimit are stored in the KV store and
@@ -182,6 +405,10 @@ var (
 
 	// ErrTaskStoreMarshal indicates a serialization or deserialization failure.
 	ErrTaskStoreMarshal = errors.New("task store: marshal error")
+
+	// ErrTaskSourceAlreadyAdopted indicates a task already exists for the
+	// same source within the tenant and project.
+	ErrTaskSourceAlreadyAdopted = errors.New("task store: source already adopted")
 )
 
 // =============================================================================
@@ -304,4 +531,73 @@ func (e *TaskStoreError) Error() string {
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *TaskStoreError) Unwrap() error {
 	return e.Sentinel
+}
+
+// TaskSourceAlreadyAdoptedError indicates a task already exists for the same
+// (Kind, Ref) source within the tenant and project. TaskID names the holder so
+// a caller can attach to the existing task instead of creating a second one,
+// and HolderStatus says what state that holder is in — without it a refused
+// adoption reads as a silent poller failure, which is what made #652
+// undiagnosable from the sweep log. HolderBlockFaultClass names the
+// environment fault a blocked holder is held on, so a reporter can tell a
+// transient hold a re-label supersedes from a deliberate operator hold that
+// binds the source.
+type TaskSourceAlreadyAdoptedError struct {
+	TenantID              string
+	ProjectID             string
+	Kind                  TaskSourceKind
+	Ref                   string
+	TaskID                string
+	HolderStatus          TaskStatus
+	HolderBlockFaultClass string
+}
+
+// Error implements the error interface.
+func (e *TaskSourceAlreadyAdoptedError) Error() string {
+	msg := ErrTaskSourceAlreadyAdopted.Error() + ": tenant=" + e.TenantID +
+		" project=" + e.ProjectID + " kind=" + string(e.Kind) + " ref=" + e.Ref +
+		" task=" + e.TaskID
+	if e.HolderStatus != "" {
+		msg += " holder_status=" + string(e.HolderStatus)
+	}
+	if e.HolderBlockFaultClass != "" {
+		msg += " holder_block_fault_class=" + e.HolderBlockFaultClass
+	}
+	return msg
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *TaskSourceAlreadyAdoptedError) Unwrap() error {
+	return ErrTaskSourceAlreadyAdopted
+}
+
+// InvalidTaskSourceKindError reports a TaskSourceKind that is neither built in
+// nor declared by a registered TaskSource.
+type InvalidTaskSourceKindError struct {
+	Kind TaskSourceKind
+}
+
+// Error implements the error interface.
+func (e *InvalidTaskSourceKindError) Error() string {
+	return ErrTaskStoreInvalidInput.Error() + ": unknown task source kind " + string(e.Kind)
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *InvalidTaskSourceKindError) Unwrap() error {
+	return ErrTaskStoreInvalidInput
+}
+
+// InvalidTaskBlockKindError reports a TaskBlockKind outside the closed enum.
+type InvalidTaskBlockKindError struct {
+	Kind TaskBlockKind
+}
+
+// Error implements the error interface.
+func (e *InvalidTaskBlockKindError) Error() string {
+	return ErrTaskStoreInvalidInput.Error() + ": unknown task block kind " + string(e.Kind)
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *InvalidTaskBlockKindError) Unwrap() error {
+	return ErrTaskStoreInvalidInput
 }

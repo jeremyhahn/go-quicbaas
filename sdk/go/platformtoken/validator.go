@@ -61,6 +61,15 @@ type Claims struct {
 	// Name is the human-facing display name / username claim. It is surfaced so a
 	// resource server can match principals by username in addition to subject id.
 	Name string `json:"name,omitempty"`
+	// UserID is the issuer's IMMUTABLE identifier for a user principal. It is
+	// the handle a liveness authority resolves the account by, because sub is
+	// not stable on every issuance path (a login-ceremony sub is a renameable
+	// username). Empty on service tokens and on tokens minted before the claim.
+	UserID string `json:"uid,omitempty"`
+	// PrincipalType positively marks a non-user principal ("service"). It is
+	// asked of the token rather than inferred from a user lookup coming up
+	// empty. Empty on user tokens and on tokens minted before the claim.
+	PrincipalType string `json:"ptyp,omitempty"`
 	// Confirmation is the cnf sender-constraint binding (DPoP jkt / mTLS x5t).
 	Confirmation *Confirmation `json:"cnf,omitempty"`
 }

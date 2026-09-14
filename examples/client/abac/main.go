@@ -149,7 +149,7 @@ func main() {
 	fmt.Println("Step 8: Cleaning up policies...")
 	policies := []string{policy.Name, timePolicy.Name, ipPolicy.Name}
 	for _, name := range policies {
-		if err := client.IAM().Policy().Delete(ctx, tenantID, name); err != nil {
+		if err := client.Identity().IAM().Policy().Delete(ctx, tenantID, name); err != nil {
 			fmt.Printf("  Warning: failed to delete policy %s: %v\n", name, err)
 		} else {
 			fmt.Printf("  Deleted policy: %s\n", name)
@@ -163,13 +163,13 @@ func main() {
 // ensureTenantExists creates the demo tenant if it doesn't exist.
 func ensureTenantExists(ctx context.Context, client quicbaas.Client) error {
 	// Try to get the tenant first
-	_, err := client.IAM().Tenant().Get(ctx, tenantID)
+	_, err := client.Identity().IAM().Tenant().Get(ctx, tenantID)
 	if err == nil {
 		return nil // Tenant exists
 	}
 
 	// Create the tenant
-	_, err = client.IAM().Tenant().Create(ctx, &iam.CreateTenantRequest{
+	_, err = client.Identity().IAM().Tenant().Create(ctx, &iam.CreateTenantRequest{
 		Name:        tenantID,
 		DisplayName: "Demo Tenant",
 		Description: "Tenant for ABAC examples",
@@ -179,7 +179,7 @@ func ensureTenantExists(ctx context.Context, client quicbaas.Client) error {
 
 // createDataAccessPolicy creates a comprehensive data access policy.
 func createDataAccessPolicy(ctx context.Context, client quicbaas.Client) (*iam.Policy, error) {
-	return client.IAM().Policy().Create(ctx, tenantID, &iam.CreatePolicyRequest{
+	return client.Identity().IAM().Policy().Create(ctx, tenantID, &iam.CreatePolicyRequest{
 		Name:        "data-access-policy",
 		Description: "Policy for controlling access to data resources",
 		Enabled:     true,
@@ -287,7 +287,7 @@ func createDataAccessPolicy(ctx context.Context, client quicbaas.Client) (*iam.P
 
 // validatePolicy validates a policy and reports any issues.
 func validatePolicy(ctx context.Context, client quicbaas.Client, policy *iam.Policy) error {
-	result, err := client.IAM().Policy().Validate(ctx, tenantID, policy)
+	result, err := client.Identity().IAM().Policy().Validate(ctx, tenantID, policy)
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "validation request failed", Cause: err}
 	}
@@ -313,7 +313,7 @@ func validatePolicy(ctx context.Context, client quicbaas.Client, policy *iam.Pol
 
 // testPolicyWithCases tests a policy with predefined test cases.
 func testPolicyWithCases(ctx context.Context, client quicbaas.Client, policyName string) error {
-	resp, err := client.IAM().Policy().Test(ctx, tenantID, &iam.TestPolicyRequest{
+	resp, err := client.Identity().IAM().Policy().Test(ctx, tenantID, &iam.TestPolicyRequest{
 		PolicyName: policyName,
 		TestCases: []iam.TestCase{
 			{
@@ -457,7 +457,7 @@ func simulateAuthorization(ctx context.Context, client quicbaas.Client) error {
 	}
 
 	for _, scenario := range scenarios {
-		resp, err := client.IAM().Policy().Simulate(ctx, tenantID, &iam.SimulateRequest{
+		resp, err := client.Identity().IAM().Policy().Simulate(ctx, tenantID, &iam.SimulateRequest{
 			Subject:      scenario.subject,
 			Action:       scenario.action,
 			Resource:     scenario.resource,
@@ -506,7 +506,7 @@ func getEffectivePermissions(ctx context.Context, client quicbaas.Client) error 
 	}
 
 	for _, subject := range subjects {
-		resp, err := client.IAM().Policy().GetEffectivePermissions(ctx, tenantID, &iam.EffectivePermissionsRequest{
+		resp, err := client.Identity().IAM().Policy().GetEffectivePermissions(ctx, tenantID, &iam.EffectivePermissionsRequest{
 			Subject:       subject,
 			ResourceType:  "data",
 			IncludeDenied: true,
@@ -532,7 +532,7 @@ func getEffectivePermissions(ctx context.Context, client quicbaas.Client) error 
 
 // createTimeBasedPolicy creates a policy with time-based conditions.
 func createTimeBasedPolicy(ctx context.Context, client quicbaas.Client) (*iam.Policy, error) {
-	return client.IAM().Policy().Create(ctx, tenantID, &iam.CreatePolicyRequest{
+	return client.Identity().IAM().Policy().Create(ctx, tenantID, &iam.CreatePolicyRequest{
 		Name:        "business-hours-policy",
 		Description: "Allow access only during business hours (9AM-5PM weekdays)",
 		Enabled:     true,
@@ -590,7 +590,7 @@ func createTimeBasedPolicy(ctx context.Context, client quicbaas.Client) (*iam.Po
 
 // createIPBasedPolicy creates a policy with IP-based conditions.
 func createIPBasedPolicy(ctx context.Context, client quicbaas.Client) (*iam.Policy, error) {
-	return client.IAM().Policy().Create(ctx, tenantID, &iam.CreatePolicyRequest{
+	return client.Identity().IAM().Policy().Create(ctx, tenantID, &iam.CreatePolicyRequest{
 		Name:        "network-access-policy",
 		Description: "Restrict access based on source IP address",
 		Enabled:     true,

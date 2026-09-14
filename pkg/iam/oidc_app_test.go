@@ -463,12 +463,12 @@ func TestAppManager_ValidateClient(t *testing.T) {
 }
 
 func TestGenerateClientID(t *testing.T) {
-	id1, err := generateClientID("tenant-1", "App 1")
+	id1, err := generateClientID("tenant-1")
 	if err != nil {
 		t.Fatalf("generateClientID() error = %v", err)
 	}
 
-	id2, err := generateClientID("tenant-1", "App 2")
+	id2, err := generateClientID("tenant-1")
 	if err != nil {
 		t.Fatalf("generateClientID() error = %v", err)
 	}

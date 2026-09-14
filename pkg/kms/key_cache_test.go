@@ -92,13 +92,13 @@ func TestNewKeyCache_CleanupGoroutineStarts(t *testing.T) {
 		t.Fatalf("Put failed: %v", err)
 	}
 
-	// Wait for cleanup to run
-	time.Sleep(20 * time.Millisecond)
-
-	// Key should be cleaned up
-	if cache.Size() != 0 {
-		t.Errorf("expected cache to be empty after cleanup, got size=%d", cache.Size())
-	}
+	// Size() is len(entries) and nothing in this test deletes anything, so the
+	// count only falls when the cleanup goroutine reaps — which is precisely
+	// what this test is named for. Waiting for that transition asserts the
+	// goroutine ran; the previous 20ms sleep asserted it had been SCHEDULED
+	// twice inside a wall-clock window, which is a fact about the runner.
+	waitFor(t, backgroundWorkDeadline, "the cleanup goroutine to reap the expired key",
+		func() bool { return cache.Size() == 0 })
 
 	cache.Close()
 }
@@ -340,6 +340,28 @@ func TestTTL_MaxTTLEnforced(t *testing.T) {
 // routinely does not.
 func waitForExpiry(t *testing.T, cache *KeyCache, keyID string, deadline time.Duration) {
 	t.Helper()
+	waitFor(t, deadline, "key "+keyID+" to expire", func() bool {
+		_, found := cache.Get(keyID)
+		return !found
+	})
+}
+
+// waitFor blocks until cond holds, failing the test with what if it does not
+// within deadline.
+//
+// It is the shape every assertion about a BACKGROUND goroutine needs. A sleep
+// sized just above the interval asserts that the goroutine was scheduled
+// inside a wall-clock window, which is a claim about the machine and not about
+// the code: on a loaded runner it fails while the cache is behaving perfectly
+// (#441). Polling for the transition instead means a slow machine makes the
+// test slower and never makes it wrong.
+//
+// The deadline is deliberately generous — orders of magnitude above the
+// intervals under test — because it exists to stop a HUNG test, not to time
+// one. Tightening it to "about how long this should take" reintroduces exactly
+// the coupling to machine speed this removes.
+func waitFor(t *testing.T, deadline time.Duration, what string, cond func() bool) {
+	t.Helper()
 
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
@@ -347,16 +369,21 @@ func waitForExpiry(t *testing.T, cache *KeyCache, keyID string, deadline time.Du
 	defer timer.Stop()
 
 	for {
-		if _, found := cache.Get(keyID); !found {
+		if cond() {
 			return
 		}
 		select {
 		case <-ticker.C:
 		case <-timer.C:
-			t.Fatalf("key %q did not expire within %s", keyID, deadline)
+			t.Fatalf("timed out after %s waiting for %s", deadline, what)
 		}
 	}
 }
+
+// backgroundWorkDeadline is the ceiling every wait in this package uses for
+// work a background goroutine performs. It bounds a hang; it is not an
+// expectation of how long the work takes.
+const backgroundWorkDeadline = 2 * time.Second
 
 // TestTTL_CustomPerKey tests custom TTL per key.
 func TestTTL_CustomPerKey(t *testing.T) {

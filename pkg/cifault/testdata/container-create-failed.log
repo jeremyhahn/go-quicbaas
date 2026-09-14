@@ -1,0 +1,23 @@
+2026-09-12T18:13:03.0629761Z ci-runner-01(version:v3.1.0)
+2026-09-12T18:13:03.0630977Z ::group::Runner Information
+2026-09-12T18:13:03.0631006Z Runner labels: ubuntu-latest, ubuntu-22.04
+2026-09-12T18:13:03.0631045Z Task: 67462
+2026-09-12T18:13:03.0631068Z Job: merge
+2026-09-12T18:13:03.0631090Z Repository: jeremyhahn/go-quicbaas
+2026-09-12T18:13:03.0631119Z Triggered by event: pull_request
+2026-09-12T18:13:03.0631146Z ::endgroup::
+2026-09-12T18:13:03.0631167Z ::group::Operating System
+2026-09-12T18:13:03.0631194Z Alpine Linux v3.24
+2026-09-12T18:13:03.0631216Z linux/amd64
+2026-09-12T18:13:03.0631237Z ::endgroup::
+2026-09-12T18:13:03.0647335Z workflow prepared
+2026-09-12T18:13:03.0816043Z ::group::Starting job container
+2026-09-12T18:13:03.0816695Z image: forge.internal:3001/jeremyhahn/ci-runner:latest
+2026-09-12T18:13:03.0816959Z name: GITEA-ACTIONS-TASK-67462-WORKFLOW-CI-JOB-Merge-Result-5d41c2b3d5c51c28f4e30e872c8121cdd9692ccc2c2810241b43fa63c6795d35
+2026-09-12T18:13:03.0817343Z network: host
+2026-09-12T18:13:03.0817894Z docker pull image=forge.internal:3001/jeremyhahn/ci-runner:latest platform= username= forcePull=true
+2026-09-12T18:13:03.5412983Z docker create image=forge.internal:3001/jeremyhahn/ci-runner:latest platform= entrypoint=["/bin/sleep" "10800"] cmd=[] network="host"
+2026-09-12T18:13:03.5626854Z --network and --net in the options will be ignored.
+2026-09-12T18:13:03.6146338Z docker run image=forge.internal:3001/jeremyhahn/ci-runner:latest platform= entrypoint=["/bin/sleep" "10800"] cmd=[] network="host"
+2026-09-12T18:13:03.7575548Z ::endgroup::
+2026-09-12T18:13:03.7885573Z failed to start container: Error response from daemon: failed to create task for container: failed to create shim task: OCI runtime create failed: runc create failed: unable to start container process: error during container init: error mounting "/var/lib/lxcfs/proc/diskstats" to rootfs at "/proc/diskstats": mount src=/var/lib/lxcfs/proc/diskstats, dst=/proc/diskstats, dstFd=/proc/thread-self/fd/11, flags=MS_BIND|MS_REC: not a directory: Are you trying to mount a directory onto a file (or vice-versa)? Check if the specified host path exists and is the expected type

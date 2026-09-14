@@ -133,7 +133,7 @@ func runCryptoEncryptCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.EncryptRequest{
@@ -209,7 +209,7 @@ func runCryptoDecryptCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.DecryptRequest{
@@ -264,7 +264,7 @@ func runCryptoRewrapCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.RewrapRequest{
@@ -315,7 +315,7 @@ func runCryptoSignCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.SignRequest{
@@ -374,7 +374,7 @@ func runCryptoVerifyCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.VerifyRequest{
@@ -424,7 +424,7 @@ func runCryptoHashCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.HashRequest{
@@ -477,7 +477,7 @@ func runCryptoRandomCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.GenerateRandomRequest{
@@ -538,7 +538,7 @@ func runCryptoDataKeyCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	// Build KeyAttributes for the data key

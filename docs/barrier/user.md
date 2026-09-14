@@ -49,11 +49,16 @@ submitted.
 
 ### Unseal after a restart
 
-Passphrase:
+Passphrase — pipe it in rather than typing it as a flag, because a
+`--passphrase` on the command line is readable by every process on the host
+while the call runs, and stays in your shell history afterwards:
 
 ```bash
-quicbaas barrier unseal
+printf '%s' "$PP" | quicbaas barrier unseal --passphrase-stdin
 ```
+
+`QUICBAAS_BARRIER_PASSPHRASE` works too, and `--passphrase` still works for
+local development. Precedence is stdin, then the environment, then the flag.
 
 Shamir — each officer contributes, and nothing happens until the threshold is
 met:

@@ -313,9 +313,13 @@ type ListAdminAssignmentsOptions struct {
 }
 
 // StartImpersonationOptions contains options for starting impersonation.
+//
+// It deliberately carries NO acting-admin identity: the actor is the
+// authenticated caller, resolved by AdminManager.StartImpersonation from
+// the verified principal in context (go-quicbaas#383). A caller cannot
+// name the admin it acts as — that is exactly the escalation this removal
+// closes.
 type StartImpersonationOptions struct {
-	AdminUserID    string        `json:"admin_user_id"`
-	AdminUsername  string        `json:"admin_username,omitempty"`
 	TargetUserID   string        `json:"target_user_id"`
 	TargetUsername string        `json:"target_username,omitempty"`
 	TenantID       string        `json:"tenant_id"`

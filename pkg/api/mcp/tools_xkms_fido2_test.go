@@ -75,7 +75,7 @@ func (f *fido2FakeService) FinishAuthentication(_ context.Context, tenantID stri
 	if f.failNext {
 		return nil, errMCPFIDO2
 	}
-	return &transport.FinishAuthenticationResponse{Success: true, Token: "tok", Username: req.Username}, nil
+	return &transport.FinishAuthenticationResponse{Success: true, Token: "tok", Username: req.Email}, nil
 }
 
 // newFIDO2Registry builds a ToolRegistry whose FIDO2() returns the supplied
@@ -104,7 +104,7 @@ func TestXKMSFIDO2BeginRegistration_HappyPath(t *testing.T) {
 
 	assert.Equal(t, "tenant-a", fake.lastTenant)
 	require.NotNil(t, fake.lastBeginReg)
-	assert.Equal(t, "alice@example.com", fake.lastBeginReg.Username)
+	assert.Equal(t, "alice@example.com", fake.lastBeginReg.Email)
 	assert.Equal(t, "Alice", fake.lastBeginReg.DisplayName)
 }
 
@@ -176,7 +176,7 @@ func TestXKMSFIDO2AuthenticationCeremony_HappyPath(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "sess-2", bm["session_id"])
 	require.NotNil(t, fake.lastBeginAuth)
-	assert.Equal(t, "bob@example.com", fake.lastBeginAuth.Username)
+	assert.Equal(t, "bob@example.com", fake.lastBeginAuth.Email)
 
 	finish, err := registry.handleXKMSFIDO2FinishAuthentication(context.Background(), map[string]interface{}{
 		"tenant_id":      "tenant-b",

@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // =============================================================================
@@ -76,6 +77,38 @@ func TestOrchestratorGRPC_ListJobs(t *testing.T) {
 	resp, err := srv.ListJobs(context.Background(), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
+}
+
+// TestOrchestratorGRPC_ListJobs_NarrowsToTask pins the narrowing this
+// transport was ignoring: task_id reaches the service, which is the only
+// place it can be applied honestly. go-quicbaas#822.
+func TestOrchestratorGRPC_ListJobs_NarrowsToTask(t *testing.T) {
+	svc := &grpcTestAgentService{listJobs: []*orchestration.JobStatus{
+		{JobID: "job-1", TaskID: "task-a", Attempt: 1},
+	}}
+	srv := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
+
+	resp, err := srv.ListJobs(context.Background(), &pb.OrchestratorListJobsRequest{
+		TenantId: "t1", TaskId: "task-a",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, svc.listJobsFilter, "the task_id on the request never reached the service")
+	assert.Equal(t, "task-a", svc.listJobsFilter.TaskID)
+	require.Len(t, resp.GetJobs(), 1)
+	assert.Equal(t, "task-a", resp.GetJobs()[0].GetTaskId())
+	assert.Equal(t, int64(1), resp.GetJobs()[0].GetAttempt())
+}
+
+// TestOrchestratorGRPC_ListJobs_WithoutTaskNarrowsNothing is the other half:
+// an absent task_id must list the tenant, not nothing.
+func TestOrchestratorGRPC_ListJobs_WithoutTaskNarrowsNothing(t *testing.T) {
+	svc := &grpcTestAgentService{}
+	srv := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
+
+	_, err := srv.ListJobs(context.Background(), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
+	require.NoError(t, err)
+	require.NotNil(t, svc.listJobsFilter)
+	assert.True(t, svc.listJobsFilter.Empty(), "an absent task_id must narrow nothing")
 }
 
 func TestOrchestratorGRPC_DecomposeTask(t *testing.T) {

@@ -1775,24 +1775,6 @@ func TestMCPCoverage91Extra_BackupRestore_NilResponse(t *testing.T) {
 }
 
 // =============================================================================
-// executeUserCreate error path (returns nil from mock)
-// =============================================================================
-
-func TestMCPCoverage91Extra_UserCreate_NilResponse(t *testing.T) {
-	svc := &mockService{} // CreateUser returns nil, nil
-	registry := newTestRegistryWithMockService(t, svc)
-	ctx := context.Background()
-
-	result, err := registry.executeUserCreate(ctx, map[string]interface{}{
-		"username": "testuser",
-		"password": "testpass",
-		"roles":    []interface{}{"admin"},
-	})
-	require.NoError(t, err)
-	assert.Nil(t, result)
-}
-
-// =============================================================================
 // executeRoleCreate error path (returns nil from mock)
 // =============================================================================
 

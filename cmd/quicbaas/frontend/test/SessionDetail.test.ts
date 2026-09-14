@@ -7,9 +7,11 @@
  * 3. Send Prompt button is absent when session is closed.
  * 4. Clicking "Close" opens the confirm dialog.
  * 5. Metadata panel renders tenant info.
+ * 6. Metadata panel links the orchestration job the session works for.
+ * 7. The body leads with the conversation and keeps the event log reachable.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 
 // ---------------------------------------------------------------------------
@@ -43,12 +45,24 @@ vi.mock('../src/stores/sessionStore.svelte.ts', () => ({
     activeSession: null,
     historyExhausted: false,
     historyLoading: false,
+    historyError: '',
     connectionStatus: 'connected',
     turnStatus: 'idle',
+    // The conversation half of the transcript. A double that omitted these
+    // would not be a smaller store, it would be a different one — the page
+    // renders the conversation first, so leaving them out makes every case
+    // in this file fail for a reason none of them is about.
+    conversation: [],
+    conversationLoading: false,
+    conversationError: '',
+    conversationErrorKind: '',
+    conversationHasMore: false,
+    conversationOldestSequence: 1,
   },
   openSession: vi.fn().mockResolvedValue(undefined),
   closeActiveSession: vi.fn(),
   loadMoreHistory: vi.fn().mockResolvedValue(undefined),
+  loadMoreConversation: vi.fn().mockResolvedValue(undefined),
   requestCloseSession: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -70,9 +84,11 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
   }),
 }));
 
-// Stub EventStream (uses IntersectionObserver, complex DOM).
-vi.mock('../src/components/orchestrator/EventStream.svelte', () => ({
-  default: vi.fn(),
+// Stub EventStream (uses IntersectionObserver, complex DOM). The stub is
+// identifiable in the DOM so a case can assert WHICH view of the transcript
+// the body is showing.
+vi.mock('../src/components/orchestrator/EventStream.svelte', async () => ({
+  default: (await import('./stubs/EventStreamStub.svelte')).default,
 }));
 
 // Stub PromptComposer.
@@ -85,7 +101,13 @@ vi.mock('../src/components/orchestrator/PresenceIndicator.svelte', () => ({
   default: vi.fn(),
 }));
 
+vi.mock('../src/stores/router.svelte.ts', () => ({
+  routeJobDetail: vi.fn(),
+}));
+
 import SessionDetail from '../src/components/orchestrator/SessionDetail.svelte';
+import { routeJobDetail } from '../src/stores/router.svelte.ts';
+import { sessionStore } from '../src/stores/sessionStore.svelte.ts';
 
 // Convenient local references derived after all mocks are set up.
 const activeSession = sessions.active;
@@ -360,5 +382,234 @@ describe('SessionDetail — rotate account', () => {
     await fireEvent.click(screen.getByRole('button', { name: /rotate session account/i }));
     expect(screen.queryByTestId('rotate-result')).toBeNull();
     expect(screen.getByLabelText(/rotation reason/i)).toHaveValue('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The job the session works for (go-quicbaas#580)
+// ---------------------------------------------------------------------------
+
+describe('SessionDetail — job binding', () => {
+  beforeEach(() => {
+    vi.mocked(routeJobDetail).mockClear();
+  });
+
+  it('links the metadata panel to the job the session works for', async () => {
+    render(SessionDetail, {
+      props: { session: { ...activeSession, job_id: 'job-abc-def-123' } },
+    });
+    const links = screen.getAllByRole('link', { name: /job-abc-def-123/ });
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) {
+      expect(link.getAttribute('href')).toBe('#/jobs/job-abc-def-123');
+    }
+    await fireEvent.click(links[0]);
+    expect(vi.mocked(routeJobDetail)).toHaveBeenCalledWith('job-abc-def-123');
+  });
+
+  it('shows no Job row for a session that belongs to no job', () => {
+    render(SessionDetail, { props: { session: activeSession } });
+    expect(screen.queryByText('Job')).toBeNull();
+    expect(screen.queryByRole('link', { name: /^job-/ })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Conversation vs event log (go-quicbaas#834)
+// ---------------------------------------------------------------------------
+
+/**
+ * The page's body used to be the raw event log and nothing else, so a session
+ * holding a four-turn conversation rendered as an empty timeline. These state
+ * what the body shows now: the conversation, without the operator having to
+ * find it, and the event log still one click away.
+ */
+describe('SessionDetail — transcript views', () => {
+  const turns = [
+    {
+      sequence: 1,
+      session_id: activeSession.session_id,
+      role: 'user' as const,
+      timestamp: '2026-09-07T12:00:00Z',
+      text: 'implement the thing',
+    },
+    {
+      sequence: 2,
+      session_id: activeSession.session_id,
+      role: 'assistant' as const,
+      timestamp: '2026-09-07T12:01:00Z',
+      text: 'Done — here is what changed.',
+    },
+  ];
+
+  // The double is a plain object, so a case sets what it wants to be true and
+  // puts it back afterwards rather than leaking into the next file.
+  beforeEach(() => {
+    (sessionStore as { conversation: unknown[] }).conversation = turns;
+  });
+
+  afterEach(() => {
+    (sessionStore as { conversation: unknown[] }).conversation = [];
+  });
+
+  it('shows the conversation without the operator selecting anything', () => {
+    render(SessionDetail, { props: { session: activeSession } });
+    expect(screen.getByTestId('session-conversation')).toBeInTheDocument();
+    expect(screen.getByText('implement the thing')).toBeInTheDocument();
+    expect(screen.getByText('Done — here is what changed.')).toBeInTheDocument();
+  });
+
+  it('marks the conversation tab as the selected one', () => {
+    render(SessionDetail, { props: { session: activeSession } });
+    expect(screen.getByRole('tab', { name: /Conversation/i })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+  });
+
+  it('keeps the raw event log one click away', async () => {
+    render(SessionDetail, { props: { session: activeSession } });
+
+    await fireEvent.click(screen.getByRole('tab', { name: /Event Log/i }));
+
+    expect(screen.queryByTestId('session-conversation')).toBeNull();
+    expect(screen.getByTestId('event-stream-stub')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /Event Log/i })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+  });
+
+  it('returns to the conversation when the operator comes back', async () => {
+    render(SessionDetail, { props: { session: activeSession } });
+
+    await fireEvent.click(screen.getByRole('tab', { name: /Event Log/i }));
+    await fireEvent.click(screen.getByRole('tab', { name: /Conversation/i }));
+
+    expect(screen.getByTestId('session-conversation')).toBeInTheDocument();
+  });
+
+  it('says a closed session with nothing in it closed without a conversation', () => {
+    (sessionStore as { conversation: unknown[] }).conversation = [];
+
+    render(SessionDetail, { props: { session: closedSession } });
+
+    expect(screen.getByTestId('conversation-empty')).toHaveTextContent(
+      /closed without a conversation/i,
+    );
+  });
+
+  it('counts the loaded turns in the metadata panel', () => {
+    render(SessionDetail, { props: { session: activeSession } });
+    expect(screen.getByText('Turns')).toBeInTheDocument();
+    expect(screen.getByText('2 loaded')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Last Active, from the payload the server actually sends (go-quicbaas#855)
+// ---------------------------------------------------------------------------
+//
+// These cases do NOT hand the component a hand-written fixture. Every other
+// case in this file does, and that is exactly why the defect survived: a
+// fixture written in the SDK's own field names asserts the component against
+// itself, and the component was right — the SDK was not.
+//
+// So the session here is built by the REAL SDK client from the REAL wire body
+// (orchestration.SessionInfo, which names the fields `state` and
+// `last_activity`), and the component renders whatever that produces. The
+// browser path and the desktop path now agree, which they did not: the Wails
+// binding renamed both fields and the REST client renamed neither, so the
+// identical component showed the time on the desktop and an em-dash in a tab.
+
+import { createClient } from '@quicbaas/sdk';
+import type { SessionStatusResponse } from '@quicbaas/sdk';
+
+/** One session, as the REST service writes it. Unix nanoseconds, both fields. */
+const WIRE_CREATED_AT = 1789185149_000000000;
+const WIRE_LAST_ACTIVITY = 1789185263_664211875;
+
+/**
+ * sessionFromServer asks the real SDK client for the tenant's sessions with a
+ * stubbed transport, and returns the one it produced. Whatever the SDK hands
+ * a caller is what the page gets.
+ */
+async function sessionFromServer(
+  overrides: Record<string, unknown> = {},
+): Promise<SessionStatusResponse> {
+  const body = {
+    sessions: [{
+      session_id: 'sess-bafb0b7d',
+      project_id: 'proj-1',
+      backend: 'claude',
+      model: 'claude-3-5-sonnet',
+      state: 'active',
+      created_at: WIRE_CREATED_AT,
+      last_activity: WIRE_LAST_ACTIVITY,
+      ...overrides,
+    }],
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  ) as unknown as typeof fetch;
+  try {
+    const client = await createClient({ transport: 'rest', baseURL: 'http://localhost' });
+    const resp = await client.orchestrator.listSessions({ tenantID: 'tenant-a' });
+    const session = resp.sessions[0];
+    if (session === undefined) throw new Error('the SDK returned no session');
+    return session;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+describe('SessionDetail — Last Active, from the server’s own payload', () => {
+  // THE MEASURED DEFECT: all 57 live sessions carried a last_activity and the
+  // panel showed an em-dash for every one of them.
+  it('renders the activity instant rather than an em-dash', async () => {
+    const session = await sessionFromServer();
+    render(SessionDetail, { props: { session } });
+    const cell = screen.getByTestId('session-last-active');
+    expect(cell).not.toHaveTextContent('—');
+    expect(cell.textContent?.trim()).not.toBe('');
+  });
+
+  // THE UNIT, which is the half that comes back if only the name is fixed.
+  // The two instants are 114 seconds apart on the wire. Rendered, they must
+  // land on the same day — a seconds value read as nanoseconds lands in 1970,
+  // and the two dates would be 56 years apart while the panel looked fine.
+  it('renders two instants of one session as the same moment, to the minute', async () => {
+    const session = await sessionFromServer();
+    render(SessionDetail, { props: { session } });
+    const created = screen.getByTestId('session-created').textContent ?? '';
+    const active = screen.getByTestId('session-last-active').textContent ?? '';
+
+    const createdMs = Date.parse(created);
+    const activeMs = Date.parse(active);
+    expect(Number.isFinite(createdMs)).toBe(true);
+    expect(Number.isFinite(activeMs)).toBe(true);
+    // 114 seconds on the wire; anything beyond ten minutes means the two
+    // fields were read in different units.
+    expect(Math.abs(activeMs - createdMs)).toBeLessThan(10 * 60 * 1000);
+  });
+
+  // A session that has never been active says so with an em-dash. "Not yet
+  // active" and "active at the epoch" are different claims.
+  it('renders an em-dash for a session with no activity instant', async () => {
+    const session = await sessionFromServer({ last_activity: 0 });
+    render(SessionDetail, { props: { session } });
+    expect(screen.getByTestId('session-last-active')).toHaveTextContent('—');
+  });
+
+  // The lifecycle field drifted the same way: the service names it `state`,
+  // every SDK exposes it as `status`, and this client renamed neither.
+  it('renders the lifecycle state the server reported', async () => {
+    const session = await sessionFromServer({ state: 'closed' });
+    render(SessionDetail, { props: { session } });
+    expect(screen.getByText('closed')).toBeInTheDocument();
   });
 });

@@ -1,0 +1,10 @@
+### This task is blocked
+
+**Outcome:** `blocked` — the task waits on an external condition, so nothing will retry it on its own.
+
+> the Software Factory parked this task and recorded no reason
+
+
+**To resume:** answer or resolve what is stated above here, then readmit the task through the Software Factory (`quicbaas orchestrator task readmit`). The next attempt reads this discussion.
+
+<!-- quicbaas-sdlc:blocked kind=blocked -->

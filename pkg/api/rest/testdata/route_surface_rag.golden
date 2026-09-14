@@ -1,0 +1,6 @@
+DELETE /api/v1/rag/documents/{id}
+GET /api/v1/rag/documents
+GET /api/v1/rag/documents/{id}
+POST /api/v1/rag/context
+POST /api/v1/rag/documents/{id}/reindex
+POST /api/v1/rag/query

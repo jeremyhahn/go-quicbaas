@@ -387,7 +387,7 @@ func TestOIDCAuthorize(t *testing.T) {
 				ClientID:            "test-client",
 				RedirectURI:         "https://example.com/callback",
 				ResponseType:        ResponseTypeCode,
-				UserID:              "user-123",
+				UserID:              "123",
 				TenantID:            "tenant-1",
 				State:               "state-abc",
 				CodeChallenge:       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
@@ -401,7 +401,7 @@ func TestOIDCAuthorize(t *testing.T) {
 				ClientID:     "test-client",
 				RedirectURI:  "https://example.com/callback",
 				ResponseType: ResponseTypeCode,
-				UserID:       "user-123",
+				UserID:       "123",
 				TenantID:     "tenant-1",
 				State:        "state-abc",
 			},
@@ -434,7 +434,7 @@ func TestOIDCAuthorize(t *testing.T) {
 				ClientID:            "test-client",
 				RedirectURI:         "https://example.com/callback",
 				ResponseType:        ResponseTypeCode,
-				UserID:              "user-123",
+				UserID:              "123",
 				TenantID:            "tenant-1",
 				CodeChallenge:       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
 				CodeChallengeMethod: CodeChallengeMethodS256,
@@ -447,7 +447,7 @@ func TestOIDCAuthorize(t *testing.T) {
 				ClientID:            "test-client",
 				RedirectURI:         "https://example.com/callback",
 				ResponseType:        ResponseTypeCode,
-				UserID:              "user-123",
+				UserID:              "123",
 				TenantID:            "tenant-1",
 				CodeChallenge:       "some-plain-challenge",
 				CodeChallengeMethod: CodeChallengeMethodPlain,
@@ -461,7 +461,7 @@ func TestOIDCAuthorize(t *testing.T) {
 				ClientID:            "test-client",
 				RedirectURI:         "https://example.com/callback",
 				ResponseType:        ResponseTypeCode,
-				UserID:              "user-123",
+				UserID:              "123",
 				TenantID:            "tenant-1",
 				CodeChallenge:       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
 				CodeChallengeMethod: "", // Should default to S256
@@ -523,19 +523,20 @@ func TestOIDCTokenAuthorizationCode(t *testing.T) {
 	appStorage.CreateApp(ctx, app)
 
 	user := &User{
-		ID:       "user-123",
-		TenantID: "tenant-1",
-		Email:    "test@example.com",
-		Name:     "Test User",
-		Roles:    []string{"user"},
-		Groups:   []string{"developers"},
+		ID:        "123",
+		TenantID:  "tenant-1",
+		Email:     "test@example.com",
+		Lifecycle: LifecycleActive,
+		Name:      "Test User",
+		Roles:     []string{"user"},
+		Groups:    []string{"developers"},
 	}
 	addUserToMemStorage(ctx, memStorage, user)
 
 	// Create authorization code
 	authCode := &AuthCodeData{
 		Code:        "test-code",
-		UserID:      "user-123",
+		UserID:      "123",
 		TenantID:    "tenant-1",
 		ClientID:    "test-client",
 		RedirectURI: "https://example.com/callback",
@@ -627,19 +628,20 @@ func TestOIDCRefresh(t *testing.T) {
 	appStorage.CreateApp(ctx, app)
 
 	user := &User{
-		ID:       "user-123",
-		TenantID: "tenant-1",
-		Email:    "test@example.com",
-		Name:     "Test User",
-		Roles:    []string{"user"},
-		Groups:   []string{"developers"},
+		ID:        "123",
+		TenantID:  "tenant-1",
+		Email:     "test@example.com",
+		Lifecycle: LifecycleActive,
+		Name:      "Test User",
+		Roles:     []string{"user"},
+		Groups:    []string{"developers"},
 	}
 	addUserToMemStorage(ctx, memStorage, user)
 
 	// Create refresh token
 	refreshToken := &Token{
 		JTI:       "refresh-token-123",
-		Subject:   "user-123",
+		Subject:   "123",
 		TenantID:  "tenant-1",
 		ClientID:  "test-client",
 		Scopes:    []string{"openid", "profile"},
@@ -737,7 +739,7 @@ func TestOIDCRevoke(t *testing.T) {
 	now := time.Now()
 	claims := &Claims{
 		Issuer:    provider.config.Issuer,
-		Subject:   "user-123",
+		Subject:   "123",
 		Audience:  []string{provider.config.Issuer},
 		ExpiresAt: NewUnixTime(now.Add(1 * time.Hour)),
 		IssuedAt:  NewUnixTime(now),
@@ -823,13 +825,14 @@ func TestOIDCUserInfo(t *testing.T) {
 
 	// Setup test user
 	user := &User{
-		ID:         "user-123",
+		ID:         "123",
 		TenantID:   "tenant-1",
 		Email:      "test@example.com",
+		Lifecycle:  LifecycleActive,
 		Name:       "Test User",
 		Roles:      []string{"admin", "user"},
 		Groups:     []string{"developers", "team-a"},
-		Attributes: map[string]interface{}{"department": "engineering"},
+		Attributes: map[string]string{"department": "engineering"},
 		Created:    now,
 		Updated:    now,
 	}
@@ -838,16 +841,21 @@ func TestOIDCUserInfo(t *testing.T) {
 	// Generate valid access token
 	claims := &Claims{
 		Issuer:    provider.config.Issuer,
-		Subject:   "user-123",
+		Subject:   "123",
 		Audience:  []string{provider.config.Issuer},
 		ExpiresAt: NewUnixTime(now.Add(1 * time.Hour)),
 		IssuedAt:  NewUnixTime(now),
 		NotBefore: NewUnixTime(now),
 		JTI:       "token-jti-456",
 		TenantID:  "tenant-1",
-		Roles:     []string{"admin", "user"},
-		Groups:    []string{"developers", "team-a"},
-		ClientID:  "test-client",
+		// The uid claim names the record. UserInfo requires it (#390): the
+		// subject-string fallback it used to fall back to resolved a non-email
+		// subject by id and then by USERNAME, which let a service token's client
+		// id match a user who had taken that string as their handle.
+		UserID:   "123",
+		Roles:    []string{"admin", "user"},
+		Groups:   []string{"developers", "team-a"},
+		ClientID: "test-client",
 	}
 	accessToken, _ := provider.tokenService.GenerateAccessToken(ctx, claims)
 
@@ -897,7 +905,7 @@ func TestOIDCUserInfo(t *testing.T) {
 				if userInfo == nil {
 					t.Fatal("UserInfo() returned nil response")
 				}
-				if userInfo.Sub != "user-123" {
+				if userInfo.Sub != "123" {
 					t.Errorf("UserInfo() sub = %s, want user-123", userInfo.Sub)
 				}
 				if userInfo.Email != "test@example.com" {
@@ -929,7 +937,7 @@ func TestOIDCValidateAccessToken(t *testing.T) {
 	now := time.Now()
 	claims := &Claims{
 		Issuer:    provider.config.Issuer,
-		Subject:   "user-123",
+		Subject:   "123",
 		Audience:  []string{provider.config.Issuer},
 		ExpiresAt: NewUnixTime(now.Add(1 * time.Hour)),
 		IssuedAt:  NewUnixTime(now),
@@ -1019,7 +1027,7 @@ func TestOIDCValidateIDToken(t *testing.T) {
 	now := time.Now()
 	idClaims := &IDTokenClaims{
 		Issuer:        provider.config.Issuer,
-		Subject:       "user-123",
+		Subject:       "123",
 		Audience:      []string{"test-client"},
 		ExpiresAt:     NewUnixTime(now.Add(1 * time.Hour)),
 		IssuedAt:      NewUnixTime(now),
@@ -1298,7 +1306,7 @@ func TestOIDCAuthorizeWithResourceIndicator(t *testing.T) {
 		ClientID:            "test-client",
 		RedirectURI:         "https://example.com/callback",
 		ResponseType:        ResponseTypeCode,
-		UserID:              "user-123",
+		UserID:              "123",
 		TenantID:            "tenant-1",
 		CodeChallenge:       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
 		CodeChallengeMethod: CodeChallengeMethodS256,
@@ -1343,12 +1351,13 @@ func TestOIDCTokenWithResourceIndicator(t *testing.T) {
 	appStorage.CreateApp(ctx, app)
 
 	user := &User{
-		ID:       "user-123",
-		TenantID: "tenant-1",
-		Email:    "test@example.com",
-		Name:     "Test User",
-		Roles:    []string{"user"},
-		Groups:   []string{"developers"},
+		ID:        "123",
+		TenantID:  "tenant-1",
+		Email:     "test@example.com",
+		Lifecycle: LifecycleActive,
+		Name:      "Test User",
+		Roles:     []string{"user"},
+		Groups:    []string{"developers"},
 	}
 	addUserToMemStorage(ctx, memStorage, user)
 
@@ -1401,7 +1410,7 @@ func TestOIDCTokenWithResourceIndicator(t *testing.T) {
 			// Create authorization code with resource
 			authCode := &AuthCodeData{
 				Code:        "test-code-" + tt.name,
-				UserID:      "user-123",
+				UserID:      "123",
 				TenantID:    "tenant-1",
 				ClientID:    "test-client",
 				RedirectURI: "https://example.com/callback",
@@ -1489,6 +1498,10 @@ func TestOIDCClientCredentialsWithResourceIndicator(t *testing.T) {
 		ClientSecret: hashedSecret,
 		TenantID:     "tenant-1",
 		GrantTypes:   []string{GrantTypeClientCredentials},
+		// The permission this fixture requests. A client_credentials token
+		// carries the grant on its application record, not the scope the
+		// client named (go-quicbaas#653).
+		Scopes: []string{"mcp:tools"},
 	}
 	appStorage.CreateApp(ctx, app)
 
@@ -1569,23 +1582,30 @@ func TestOIDCResourceIndicatorsSupportedInMetadata(t *testing.T) {
 	}
 }
 
-// TestOIDCUserInfo_CeremonyBearerUsernameFallback proves UserInfo resolves a
-// unified-login-ceremony bearer whose sub is the qrdb USERNAME (not the broker
-// user ID): the ID lookup misses, the tenant-scoped username fallback resolves
-// the user, and the returned sub preserves the token's sub (OIDC Core 5.3.2).
-func TestOIDCUserInfo_CeremonyBearerUsernameFallback(t *testing.T) {
+// TestOIDCUserInfo_CeremonyBearerWithoutUIDResolvesNobody replaces a test that
+// asserted the opposite: that a ceremony bearer whose sub is a USERNAME resolves
+// through the username index.
+//
+// That fallback is gone (#390). It resolved a non-email subject by id and then
+// by username, and the only subject that reaches it today belongs to a SERVICE
+// token — so a user who took the client id as their handle had this endpoint
+// answer that client's request with their own profile. Every current ceremony
+// bearer carries uid (oidc_session.go), so nothing legitimate depended on it.
+func TestOIDCUserInfo_CeremonyBearerWithoutUIDResolvesNobody(t *testing.T) {
 	provider, _, _, _, memStorage := createTestOIDCProvider(t)
 	ctx := context.Background()
 
 	now := time.Now()
 	user := &User{
-		ID:       "user-uuid-999",
-		TenantID: "system",
-		Email:    "admin@example.com",
-		Name:     "admin", // ceremony subject = qrdb username
-		Roles:    []string{"admin"},
-		Created:  now,
-		Updated:  now,
+		ID:        "999",
+		TenantID:  "system",
+		Email:     "admin@example.com",
+		Username:  "admin",
+		Name:      "Admin",
+		Lifecycle: LifecycleActive,
+		Roles:     []string{"admin"},
+		Created:   now,
+		Updated:   now,
 	}
 	if err := addUserToMemStorage(ctx, memStorage, user); err != nil {
 		t.Fatalf("seed user: %v", err)
@@ -1593,7 +1613,7 @@ func TestOIDCUserInfo_CeremonyBearerUsernameFallback(t *testing.T) {
 
 	claims := &Claims{
 		Issuer:    provider.config.Issuer,
-		Subject:   "admin", // username sub, as minted by IssueSessionToken
+		Subject:   "admin", // a username sub, with no uid — the pre-contract shape
 		Audience:  []string{provider.config.Issuer},
 		ExpiresAt: NewUnixTime(now.Add(time.Hour)),
 		IssuedAt:  NewUnixTime(now),
@@ -1607,18 +1627,8 @@ func TestOIDCUserInfo_CeremonyBearerUsernameFallback(t *testing.T) {
 		t.Fatalf("mint ceremony-style bearer: %v", err)
 	}
 
-	info, err := provider.UserInfo(ctx, accessToken)
-	if err != nil {
-		t.Fatalf("UserInfo() must resolve a username-subject bearer: %v", err)
-	}
-	if info.Sub != "admin" {
-		t.Fatalf("UserInfo() sub must preserve the token sub, got %q", info.Sub)
-	}
-	if info.Email != "admin@example.com" {
-		t.Fatalf("UserInfo() email = %q, want admin@example.com", info.Email)
-	}
-	if info.TenantID != "system" {
-		t.Fatalf("UserInfo() tenant = %q, want system", info.TenantID)
+	if _, err := provider.UserInfo(ctx, accessToken); err == nil {
+		t.Fatal("a bearer carrying no uid must not have a user guessed for it from its subject")
 	}
 }
 

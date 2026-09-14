@@ -52,14 +52,14 @@ func TestIsAccountServiceGRPC(t *testing.T) {
 func TestAccountMethodMapIsComplete(t *testing.T) {
 	for _, method := range []string{
 		"Create", "Get", "List", "Update", "Delete",
-		"RotateCredential", "Revoke", "SetDefault", "Usage",
+		"RotateCredential", "Revoke", "SetDefault", "Usage", "Materialize",
 	} {
 		if _, ok := accountMethodMap[method]; !ok {
 			t.Errorf("account method %q has no gRPC handler", method)
 		}
 	}
-	if len(accountMethodMap) != 9 {
-		t.Errorf("dispatch table has %d entries, want 9", len(accountMethodMap))
+	if len(accountMethodMap) != 10 {
+		t.Errorf("dispatch table has %d entries, want 10", len(accountMethodMap))
 	}
 }
 
@@ -225,4 +225,42 @@ func grpcReachesType(rt, target reflect.Type, seen map[reflect.Type]bool) bool {
 		}
 	}
 	return false
+}
+
+// TestReleasedCredentialFromProto covers the release converter, including its
+// nil path. The proto message has no refresh-grant fields, so the SDK type it
+// builds cannot carry one — this pins the material it DOES carry.
+func TestReleasedCredentialFromProto(t *testing.T) {
+	out := releasedCredentialFromProto(&pb.MaterializedAccountCredential{
+		AccessToken:       "RELEASED",
+		AccessTokenEnvKey: "K",
+		Scopes:            []string{"a"},
+		Env:               map[string]string{"E": "v"},
+		Files:             map[string][]byte{"f": []byte("bytes")},
+		ExpiresAtUnix:     1_800_000_000,
+	})
+	if out == nil {
+		t.Fatal("converter returned nil for a populated envelope")
+	}
+	if out.AccessToken == "" || out.AccessTokenEnvKey != "K" {
+		t.Error("converted envelope dropped the material a spawn needs")
+	}
+	if out.Env["E"] != "v" || string(out.Files["f"]) != "bytes" {
+		t.Error("converted envelope dropped its env/file material")
+	}
+	if out.ExpiresAt.IsZero() {
+		t.Error("converted envelope dropped its expiry; a cache has no TTL")
+	}
+	if releasedCredentialFromProto(nil) != nil {
+		t.Error("converter fabricated an envelope from nil")
+	}
+}
+
+// TestHandleAccountMaterializeRejectsTheWrongRequestType covers the handler's
+// bad-input path without needing a live connection.
+func TestHandleAccountMaterializeRejectsTheWrongRequestType(t *testing.T) {
+	if _, err := handleAccountMaterialize(context.Background(), nil,
+		&account.GetAccountRequest{TenantID: "t1", AccountID: "acct-1"}); err == nil {
+		t.Fatal("expected an error for a mismatched request type")
+	}
 }

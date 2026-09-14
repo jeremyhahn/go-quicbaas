@@ -77,6 +77,7 @@ type IAMService interface {
 	ListRoles(ctx context.Context, tenantID string, limit, offset int) ([]*iam.Role, int, error)
 	AssignRole(ctx context.Context, tenantID, userID, role string) error
 	RevokeRole(ctx context.Context, tenantID, userID, role string) error
+	ReconcileBuiltInRoles(ctx context.Context, tenantID string) (*iam.RoleReconcileReport, error)
 
 	// Application operations
 	RegisterApp(ctx context.Context, app *iam.Application) (*iam.Application, error)
@@ -286,15 +287,18 @@ func (s *IAMServer) CreateUser(ctx context.Context, req *iampb.CreateUserRequest
 	}
 
 	user := &iam.User{
-		TenantID: req.TenantId,
-		Email:    req.Email,
-		Name:     req.Name,
-		Roles:    req.Roles,
-		Groups:   req.Groups,
+		TenantID:    req.TenantId,
+		Email:       req.Email,
+		Username:    req.Username,
+		Name:        req.Name,
+		Roles:       req.Roles,
+		Groups:      req.Groups,
+		AuthMethods: req.AuthMethods,
+		Lifecycle:   iam.Lifecycle(req.Lifecycle),
 	}
 
 	if len(req.Attributes) > 0 {
-		user.Attributes = make(map[string]interface{}, len(req.Attributes))
+		user.Attributes = make(map[string]string, len(req.Attributes))
 		for k, v := range req.Attributes {
 			user.Attributes[k] = v
 		}
@@ -345,16 +349,28 @@ func (s *IAMServer) UpdateUser(ctx context.Context, req *iampb.UpdateUserRequest
 	}
 
 	user := &iam.User{
-		ID:       req.UserId,
-		TenantID: req.TenantId,
-		Email:    req.Email,
-		Name:     req.Name,
-		Roles:    req.Roles,
-		Groups:   req.Groups,
+		ID:        req.UserId,
+		TenantID:  req.TenantId,
+		Email:     req.Email,
+		Username:  req.Username,
+		Name:      req.Name,
+		Roles:     req.Roles,
+		Groups:    req.Groups,
+		Lifecycle: iam.Lifecycle(req.Lifecycle),
+	}
+	// PRESENCE of the wrapper is the instruction, and a nil vs empty-but-present
+	// slice is how it survives into the domain value — the same distinction the
+	// storage layer already uses to tell "leave alone" from "clear".
+	if req.AuthMethods != nil {
+		methods := req.AuthMethods.Values
+		if methods == nil {
+			methods = []string{}
+		}
+		user.AuthMethods = methods
 	}
 
 	if len(req.Attributes) > 0 {
-		user.Attributes = make(map[string]interface{}, len(req.Attributes))
+		user.Attributes = make(map[string]string, len(req.Attributes))
 		for k, v := range req.Attributes {
 			user.Attributes[k] = v
 		}
@@ -813,6 +829,27 @@ func (s *IAMServer) RevokeRole(ctx context.Context, req *iampb.RevokeRoleRequest
 	}
 
 	return &iampb.RevokeRoleResponse{Success: true}, nil
+}
+
+// ReconcileRoles converges a tenant's stored built-in roles onto the
+// definitions the running build carries and reports only what changed.
+//
+// It is idempotent: a tenant that already agrees with the build reports no
+// roles and writes nothing, so a caller may run it on every start as well as
+// on demand.
+func (s *IAMServer) ReconcileRoles(ctx context.Context, req *iampb.ReconcileRolesRequest) (*iampb.ReconcileRolesResponse, error) {
+	s.logger.WithField("tenant_id", req.TenantId).Info("Processing ReconcileRoles request")
+
+	if req.TenantId == "" {
+		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+
+	report, err := s.iamService.ReconcileBuiltInRoles(ctx, req.TenantId)
+	if err != nil {
+		return nil, convertIAMError(err)
+	}
+
+	return convertRoleReconcileReportToProto(report), nil
 }
 
 // =============================================================================
@@ -1481,17 +1518,16 @@ func (s *IAMServer) CheckAdminPermission(ctx context.Context, req *iampb.CheckAd
 	}, nil
 }
 
-// StartImpersonation starts an impersonation session.
+// StartImpersonation starts an impersonation session. The acting admin is
+// the authenticated caller, resolved by the service/manager from the
+// verified principal in context — never taken from the request, which no
+// longer carries an actor id (go-quicbaas#383).
 func (s *IAMServer) StartImpersonation(ctx context.Context, req *iampb.StartImpersonationRequest) (*iampb.ImpersonationSession, error) {
 	s.logger.WithFields(map[string]interface{}{
-		"admin_user_id":  req.AdminUserId,
 		"target_user_id": req.TargetUserId,
 		"tenant_id":      req.TenantId,
 	}).Info("Processing StartImpersonation request")
 
-	if req.AdminUserId == "" {
-		return nil, status.Error(codes.InvalidArgument, "admin_user_id is required")
-	}
 	if req.TargetUserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "target_user_id is required")
 	}
@@ -1508,7 +1544,6 @@ func (s *IAMServer) StartImpersonation(ctx context.Context, req *iampb.StartImpe
 	}
 
 	opts := &iam.StartImpersonationOptions{
-		AdminUserID:  req.AdminUserId,
 		TargetUserID: req.TargetUserId,
 		TenantID:     req.TenantId,
 		Reason:       req.Reason,

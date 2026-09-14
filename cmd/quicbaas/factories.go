@@ -245,6 +245,9 @@ type OrchestratorClient interface {
 	ListTasks(ctx context.Context, req *orchestratorSDK.ListTasksRequest) (*orchestratorSDK.ListTasksResponse, error)
 	ClaimTask(ctx context.Context, req *orchestratorSDK.ClaimTaskRequest) (*orchestratorSDK.ClaimTaskResponse, error)
 	CompleteTask(ctx context.Context, req *orchestratorSDK.CompleteTaskRequest) (*orchestratorSDK.CompleteTaskResponse, error)
+	BlockTask(ctx context.Context, req *orchestratorSDK.BlockTaskRequest) (*orchestratorSDK.BlockTaskResponse, error)
+	ReadmitTask(ctx context.Context, req *orchestratorSDK.ReadmitTaskRequest) (*orchestratorSDK.ReadmitTaskResponse, error)
+	DeleteTask(ctx context.Context, req *orchestratorSDK.DeleteTaskRequest) (*orchestratorSDK.DeleteTaskResponse, error)
 	RegisterAgent(ctx context.Context, req *orchestratorSDK.RegisterAgentRequest) (*orchestratorSDK.RegisterAgentResponse, error)
 	GetAgent(ctx context.Context, req *orchestratorSDK.GetAgentRequest) (*orchestratorSDK.AgentRegistration, error)
 	ListAgents(ctx context.Context, req *orchestratorSDK.ListAgentsRequest) (*orchestratorSDK.ListAgentsResponse, error)
@@ -338,7 +341,7 @@ type BackupVerifyRequest struct {
 // Otherwise, a default TLS configuration is used.
 func createGRPCClient() (*grpc.Client, error) {
 	opts := []grpc.ClientOption{
-		grpc.WithTimeout(timeout),
+		grpc.WithTimeout(globalTimeout),
 	}
 	opts = append(opts, grpcTLSOption()...)
 	return grpc.NewClient(address, opts...)

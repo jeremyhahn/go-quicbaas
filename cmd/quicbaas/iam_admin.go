@@ -84,8 +84,8 @@ Examples:
   quicbaas iam admin check-permission --user-id user_abc123 --permission user:create \
     --tenant-id tenant1
 
-  # Start impersonation session
-  quicbaas iam admin impersonate start --admin-user-id admin_xyz \
+  # Start impersonation session (the acting admin is the authenticated caller)
+  quicbaas iam admin impersonate start \
     --target-user-id user_abc123 --tenant-id tenant1 --reason "Customer support"`,
 	}
 
@@ -185,7 +185,7 @@ func runIAMAdminAssignmentCreateCommand(cmd *cobra.Command, args []string) error
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Creating admin assignment for user: %s with role: %s", adminUserID, adminRole)
@@ -263,7 +263,7 @@ func runIAMAdminAssignmentGetCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Getting admin assignment: %s", adminAssignmentID)
@@ -396,7 +396,7 @@ func runIAMAdminAssignmentUpdateCommand(cmd *cobra.Command, args []string) error
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Updating admin assignment: %s", adminAssignmentID)
@@ -468,7 +468,7 @@ func runIAMAdminAssignmentDeleteCommand(cmd *cobra.Command, args []string) error
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Deleting admin assignment: %s", adminAssignmentID)
@@ -518,7 +518,7 @@ func runIAMAdminAssignmentListCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Info("Listing admin assignments")
@@ -617,7 +617,7 @@ func runIAMAdminCheckPermissionCommand(cmd *cobra.Command, args []string) error 
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Checking permission '%s' for user: %s", adminCheckPermission, adminUserID)
@@ -689,28 +689,32 @@ func newIAMAdminImpersonateStartCommand() *cobra.Command {
 		Short: "Start an impersonation session",
 		Long: `Start an impersonation session to act as another user.
 
-Requires user:impersonate permission. All actions taken during impersonation
-are logged with both the admin and target user identifiers.
+Requires user:impersonate permission. The acting admin is the authenticated
+caller behind the client credential — never a value you supply — and both
+the authorization decision and the audit record name that caller. All
+actions taken during impersonation are logged with both the admin and
+target user identifiers.
 
 Examples:
   # Start impersonation with default duration (1 hour)
-  quicbaas iam admin impersonate start --admin-user-id admin_xyz \
+  quicbaas iam admin impersonate start \
     --target-user-id user_abc123 --tenant-id tenant1 --reason "Customer support"
 
   # Start impersonation with custom duration
-  quicbaas iam admin impersonate start --admin-user-id admin_xyz \
+  quicbaas iam admin impersonate start \
     --target-user-id user_abc123 --tenant-id tenant1 --reason "Debugging issue" \
     --duration 30m`,
 		RunE: runIAMAdminImpersonateStartCommand,
 	}
 
-	cmd.Flags().StringVar(&impersonateAdminUserID, "admin-user-id", "", "Admin user ID starting impersonation (required)")
+	// No --admin-user-id: the acting admin is the authenticated caller
+	// behind the client credential, resolved server-side, never named on
+	// the command line (go-quicbaas#383).
 	cmd.Flags().StringVar(&impersonateTargetUserID, "target-user-id", "", "User ID to impersonate (required)")
 	cmd.Flags().StringVar(&impersonateTenantID, "tenant-id", "", "Tenant context (required)")
 	cmd.Flags().StringVar(&impersonateReason, "reason", "", "Reason for impersonation (required)")
 	cmd.Flags().StringVar(&impersonateDuration, "duration", "1h", "Duration of impersonation session")
 
-	cmd.MarkFlagRequired("admin-user-id")
 	cmd.MarkFlagRequired("target-user-id")
 	cmd.MarkFlagRequired("tenant-id")
 	cmd.MarkFlagRequired("reason")
@@ -731,14 +735,14 @@ func runIAMAdminImpersonateStartCommand(cmd *cobra.Command, args []string) error
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	log.Debugf("Starting impersonation: admin %s impersonating %s", impersonateAdminUserID, impersonateTargetUserID)
+	log.Debugf("Starting impersonation of %s", impersonateTargetUserID)
 
-	// Start impersonation using SDK sub-client
+	// Start impersonation using SDK sub-client. The acting admin is the
+	// authenticated caller, resolved server-side (go-quicbaas#383).
 	session, err := iamClient.Admin().StartImpersonation(ctx, &iam.ImpersonationRequest{
-		AdminUserID:  impersonateAdminUserID,
 		TargetUserID: impersonateTargetUserID,
 		TenantID:     impersonateTenantID,
 		Reason:       impersonateReason,
@@ -800,7 +804,7 @@ func runIAMAdminImpersonateEndCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Ending impersonation session: %s", impersonateSessionID)
@@ -840,7 +844,7 @@ func runIAMAdminImpersonateListCommand(cmd *cobra.Command, args []string) error 
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	log.Debugf("Listing active impersonation sessions for: %s", impersonateAdminUserID)

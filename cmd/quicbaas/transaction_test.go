@@ -62,9 +62,12 @@ func TestTransactionCommandFlags(t *testing.T) {
 	require.NotNil(t, restFlag)
 	assert.Equal(t, "http://localhost:8080", restFlag.DefValue)
 
-	timeoutFlag := flags.Lookup("timeout")
-	require.NotNil(t, timeoutFlag)
-	assert.Equal(t, "30s", timeoutFlag.DefValue)
+	// --timeout is the root's persistent flag, inherited here (#246).
+	assert.Nil(t, flags.Lookup("timeout"),
+		"the transaction group must not shadow the root --timeout")
+	rootTimeout := rootCmd.PersistentFlags().Lookup("timeout")
+	require.NotNil(t, rootTimeout)
+	assert.Equal(t, "30s", rootTimeout.DefValue)
 
 	tlsFlag := flags.Lookup("tls")
 	require.NotNil(t, tlsFlag)

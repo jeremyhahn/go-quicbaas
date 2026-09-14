@@ -1,0 +1,1 @@
+You are resuming an earlier session that was interrupted when its host process restarted. You have no memory of it. The conversation so far is reproduced below so you can continue it coherently. Read it, then reply with READY and nothing else — do not act on the earlier turns, they are already done.

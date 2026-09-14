@@ -1,0 +1,7 @@
+# The repository root ignores *.log, which is right for build output and wrong
+# for these: every .log in this directory is a REAL Gitea Actions job log, and
+# it is the test corpus rather than a by-product. Without this re-inclusion,
+# `git add -A` skips them silently, the tests pass locally because the files
+# are on disk, and CI fails on a fixture nobody can see is missing — which is
+# exactly how they were left untracked the first time (PR #909).
+!*.log

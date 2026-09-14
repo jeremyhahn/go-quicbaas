@@ -883,8 +883,9 @@ func TestGetClientIPWithVariousHeaders(t *testing.T) {
 			}
 			req.RemoteAddr = tt.remoteAddr
 
-			result := getClientIP(req)
-			assert.Equal(t, tt.expected, result)
+			// See resolvedViaOwnPeer: this table is about header parsing, not
+			// about which peers are believed.
+			assert.Equal(t, tt.expected, resolvedViaOwnPeer(t, req))
 		})
 	}
 }
@@ -1007,7 +1008,7 @@ func TestTimeoutMiddleware_TimeoutFires503(t *testing.T) {
 // for the sealed-window contract: a middleware in the chain that returns 503
 // (e.g. SealedWindowMiddleware emitting `503 barrier sealed`) must reach the
 // wire intact when stacked with TimeoutMiddleware. This pins the canonical
-// envelope from /home/jhahn/.claude/plans/immutable-bouncing-catmull.md.
+// envelope agreed in the sealed-window review.
 func TestSealedWindowMiddleware_Returns503NotRewritten(t *testing.T) {
 	// Simulate a sealed-window middleware that short-circuits with 503.
 	sealedWindowMW := func(next http.Handler) http.Handler {
@@ -1222,38 +1223,44 @@ func TestTokenBucketConsumeViaRateLimiter(t *testing.T) {
 	})
 }
 
+// TestGetClientIP covers header parsing FROM A TRUSTED PROXY. The subtests
+// below used to call getClientIP on a request from an arbitrary peer and assert
+// the header won; that is the #156 defect, and it is now covered from the other
+// side in trusted_proxy_test.go. The parsing itself -- first of the chain,
+// X-Real-IP fallback, precedence between the two -- is still real logic, so it
+// is exercised the way a deployment reaches it: through a configured proxy.
 func TestGetClientIP(t *testing.T) {
 	t.Run("extracts from X-Forwarded-For", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.RemoteAddr = trustedPeer
 		req.Header.Set("X-Forwarded-For", "203.0.113.195")
 
-		ip := getClientIP(req)
-		assert.Equal(t, "203.0.113.195", ip)
+		assert.Equal(t, "203.0.113.195", resolvedVia(t, []string{trustedProxyCIDR}, req))
 	})
 
 	t.Run("extracts first IP from X-Forwarded-For chain", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.RemoteAddr = trustedPeer
 		req.Header.Set("X-Forwarded-For", "203.0.113.195, 70.41.3.18, 150.172.238.178")
 
-		ip := getClientIP(req)
-		assert.Equal(t, "203.0.113.195", ip)
+		assert.Equal(t, "203.0.113.195", resolvedVia(t, []string{trustedProxyCIDR}, req))
 	})
 
 	t.Run("extracts from X-Real-IP", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.RemoteAddr = trustedPeer
 		req.Header.Set("X-Real-IP", "192.168.1.100")
 
-		ip := getClientIP(req)
-		assert.Equal(t, "192.168.1.100", ip)
+		assert.Equal(t, "192.168.1.100", resolvedVia(t, []string{trustedProxyCIDR}, req))
 	})
 
 	t.Run("prefers X-Forwarded-For over X-Real-IP", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.RemoteAddr = trustedPeer
 		req.Header.Set("X-Forwarded-For", "10.0.0.1")
 		req.Header.Set("X-Real-IP", "10.0.0.2")
 
-		ip := getClientIP(req)
-		assert.Equal(t, "10.0.0.1", ip)
+		assert.Equal(t, "10.0.0.1", resolvedVia(t, []string{trustedProxyCIDR}, req))
 	})
 
 	t.Run("falls back to RemoteAddr", func(t *testing.T) {
@@ -1274,18 +1281,18 @@ func TestGetClientIP(t *testing.T) {
 
 	t.Run("trims whitespace from headers", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.RemoteAddr = trustedPeer
 		req.Header.Set("X-Forwarded-For", "  10.0.0.1  ")
 
-		ip := getClientIP(req)
-		assert.Equal(t, "10.0.0.1", ip)
+		assert.Equal(t, "10.0.0.1", resolvedVia(t, []string{trustedProxyCIDR}, req))
 	})
 
 	t.Run("trims whitespace from X-Real-IP", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.RemoteAddr = trustedPeer
 		req.Header.Set("X-Real-IP", "  192.168.1.1  ")
 
-		ip := getClientIP(req)
-		assert.Equal(t, "192.168.1.1", ip)
+		assert.Equal(t, "192.168.1.1", resolvedVia(t, []string{trustedProxyCIDR}, req))
 	})
 }
 
@@ -1462,25 +1469,26 @@ func TestRateLimitError_Error(t *testing.T) {
 	assert.Contains(t, errMsg, "1s")
 }
 
+// Header parsing, reached from a configured proxy — see TestGetClientIP.
 func TestGetClientIP_XForwardedFor(t *testing.T) {
 	// Test X-Forwarded-For with single IP
 	r := httptest.NewRequest(http.MethodGet, "/test", nil)
+	r.RemoteAddr = trustedPeer
 	r.Header.Set("X-Forwarded-For", "192.168.1.1")
-	ip := getClientIP(r)
-	assert.Equal(t, "192.168.1.1", ip)
+	assert.Equal(t, "192.168.1.1", resolvedVia(t, []string{trustedProxyCIDR}, r))
 
 	// Test X-Forwarded-For with multiple IPs
 	r = httptest.NewRequest(http.MethodGet, "/test", nil)
+	r.RemoteAddr = trustedPeer
 	r.Header.Set("X-Forwarded-For", "192.168.1.1, 10.0.0.1, 172.16.0.1")
-	ip = getClientIP(r)
-	assert.Equal(t, "192.168.1.1", ip)
+	assert.Equal(t, "192.168.1.1", resolvedVia(t, []string{trustedProxyCIDR}, r))
 }
 
 func TestGetClientIP_XRealIP(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/test", nil)
+	r.RemoteAddr = trustedPeer
 	r.Header.Set("X-Real-IP", "192.168.1.2")
-	ip := getClientIP(r)
-	assert.Equal(t, "192.168.1.2", ip)
+	assert.Equal(t, "192.168.1.2", resolvedVia(t, []string{trustedProxyCIDR}, r))
 }
 
 func TestGetClientIP_RemoteAddr(t *testing.T) {

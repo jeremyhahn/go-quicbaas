@@ -13,7 +13,10 @@
 
 package iam
 
-import "strings"
+import (
+	"crypto/sha256"
+	"strings"
+)
 
 // =============================================================================
 // Agent Application Name Derivation
@@ -66,4 +69,27 @@ func SanitizeAppName(cn string) string {
 // pre-computes an expected ID for wait-online polling.
 func AgentAppName(tenantID, commonName string) string {
 	return "agent-" + tenantID + "-" + SanitizeAppName(commonName)
+}
+
+// AgentClientID returns the canonical OAuth2 client identifier for the daemon
+// presenting a certificate with the supplied Common Name in the supplied
+// tenant.
+//
+// It is DERIVED from the agent's identity rather than randomly minted, which is
+// what makes enrollment idempotent: a daemon that retries registration -- after
+// a restart, a network failure, or a supervisor loop -- addresses the client it
+// already has instead of leaving a fresh one behind. Before this, every retry
+// minted a new random client while the mTLS client and the fleet registry both
+// answered already_exists, so a looping daemon accumulated orphan OAuth2
+// records (go-quicbaas#644).
+//
+// The tenant segment is in clear so TenantFromClientID can recover it: every
+// token endpoint scopes its storage context with that value before resolving
+// the client. The suffix is a digest of the agent app name, base32-encoded so
+// it cannot contain the separator; it identifies, and carries no secret --
+// the client SECRET is random, rotated on every registration, and returned to
+// the daemon exactly once.
+func AgentClientID(tenantID, commonName string) string {
+	sum := sha256.Sum256([]byte(AgentAppName(tenantID, commonName)))
+	return ClientIDPrefix + tenantID + ClientIDSeparator + clientIDSuffixEncoding.EncodeToString(sum[:10])
 }

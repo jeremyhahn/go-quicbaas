@@ -57,6 +57,24 @@ func (e *errKVStore) Put(ctx context.Context, key string, value []byte) error {
 	return e.inMemKV.Put(ctx, key, value)
 }
 
+// The guarded verbs honor the same injections: embedding *inMemKV PROMOTES
+// them (the wrapper-promotion trap, measured here — the backend's guarded
+// first publish silently bypassed the Put fault until these overrides), so
+// the fault seams must cover every verb the backend can take.
+func (e *errKVStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if e.putErr != nil && strings.Contains(key, e.putErrOn) {
+		return false, e.putErr
+	}
+	return e.inMemKV.PutIfAbsent(ctx, key, value)
+}
+
+func (e *errKVStore) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	if e.deleteErr != nil && strings.Contains(key, e.deleteErrOn) {
+		return false, e.deleteErr
+	}
+	return e.inMemKV.CompareAndDelete(ctx, key, expected)
+}
+
 func (e *errKVStore) Delete(ctx context.Context, key string) error {
 	if e.deleteErr != nil && strings.Contains(key, e.deleteErrOn) {
 		return e.deleteErr
@@ -214,9 +232,25 @@ func TestKVBackend_RollbackVersionTooHigh(t *testing.T) {
 	assert.ErrorIs(t, b.Rollback(ctx, "app/secret", 99), ErrVersionNotFound)
 }
 
-// TestKVBackend_RollbackMissingTargetVersion covers Rollback's branch
-// where the current pointer claims a version that has no readable entry.
+// TestKVBackend_RollbackMissingTargetVersion covers Rollback's branch where
+// the current pointer claims a version whose entry is ABSENT — and pins that
+// absence apart from failure. This test once injected a generic store error
+// and expected ErrVersionNotFound: the fail-open collapse (#110) written down
+// as the desired behavior.
 func TestKVBackend_RollbackMissingTargetVersion(t *testing.T) {
+	kv := newInMemKV()
+	b := NewKVBackend(kv)
+	ctx := context.Background()
+	require.NoError(t, b.Store(ctx, "app/secret", map[string][]byte{"k": []byte("v")}, nil))
+
+	// The version entry is genuinely GONE: absence.
+	require.NoError(t, kv.Delete(ctx, versionKey("app/secret", 1)))
+	assert.ErrorIs(t, b.Rollback(ctx, "app/secret", 1), ErrVersionNotFound)
+}
+
+// TestKVBackend_RollbackTargetOutageIsNotAbsence: a failing read of the
+// rollback target must surface the failure, not report the target missing.
+func TestKVBackend_RollbackTargetOutageIsNotAbsence(t *testing.T) {
 	kv := newErrKV()
 	b := NewKVBackend(kv)
 	ctx := context.Background()
@@ -224,7 +258,11 @@ func TestKVBackend_RollbackMissingTargetVersion(t *testing.T) {
 
 	kv.getErr = errInjected
 	kv.getErrOn = "/v/"
-	assert.ErrorIs(t, b.Rollback(ctx, "app/secret", 1), ErrVersionNotFound)
+	err := b.Rollback(ctx, "app/secret", 1)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrVersionNotFound,
+		"a store outage was reported as the rollback target not existing")
+	assert.ErrorIs(t, err, errInjected)
 }
 
 // TestKVBackend_RollbackCorruptTargetVersion covers Rollback's unmarshal

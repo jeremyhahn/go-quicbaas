@@ -32,6 +32,8 @@ const (
 	ErrCodeSchedulerStopped   = "SCHEDULER_STOPPED"
 	ErrCodeUnauthorized       = "SCHEDULER_UNAUTHORIZED"
 	ErrCodeStorageError       = "SCHEDULER_STORAGE_ERROR"
+	ErrCodeClaimUnsupported   = "SCHEDULER_CLAIM_UNSUPPORTED"
+	ErrCodeInvalidFiringClaim = "SCHEDULER_INVALID_FIRING_CLAIM"
 )
 
 // SchedulerError is the base error type for scheduler operations.
@@ -169,6 +171,32 @@ type UnauthorizedError struct {
 
 func (e UnauthorizedError) Error() string {
 	return fmt.Sprintf("unauthorized: tenant '%s' cannot %s job %d", e.TenantID, e.Op, e.JobID)
+}
+
+// ClaimUnsupportedError indicates a job store was constructed over a backing
+// store that cannot perform an atomic compare-and-swap. Without one there is no
+// way to decide a firing claim, and the scheduler would silently fall back to
+// the double-fire behavior the claim exists to prevent — so this is returned at
+// construction time, where it stops a node from starting, rather than at the
+// first firing.
+type ClaimUnsupportedError struct {
+	Backend string
+}
+
+func (e ClaimUnsupportedError) Error() string {
+	return fmt.Sprintf("job store backing %s cannot compare-and-swap; firing claims require an atomic store", e.Backend)
+}
+
+// InvalidFiringClaimError indicates a claim that cannot identify a firing.
+// Every field of the identity is load-bearing: a zero job ID or a zero firing
+// time would collapse distinct firings onto one claim key.
+type InvalidFiringClaimError struct {
+	Field   string
+	Message string
+}
+
+func (e InvalidFiringClaimError) Error() string {
+	return fmt.Sprintf("invalid firing claim: %s: %s", e.Field, e.Message)
 }
 
 // ErrStorageError indicates a storage operation failed.

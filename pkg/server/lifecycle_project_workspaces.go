@@ -65,6 +65,8 @@ func (s *Server) wireProjectWorkspaces(projectStore orchestration.ProjectStore, 
 		}
 	}
 
+	s.gitProvisioner = git
+
 	provisioner, err := service.NewProjectWorkspaceProvisioner(service.ProjectWorkspaceProvisionerConfig{
 		Workspaces: workspaces,
 		Git:        git,

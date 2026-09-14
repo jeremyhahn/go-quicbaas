@@ -50,6 +50,7 @@ func TestAccountMethodToolNames(t *testing.T) {
 		"Revoke":           "quicbaas_agent_account_revoke",
 		"SetDefault":       "quicbaas_agent_account_set_default",
 		"Usage":            "quicbaas_agent_account_usage",
+		"Materialize":      "quicbaas_agent_account_materialize",
 	}
 	for method, expected := range want {
 		if got := accountMethodTools[method]; got != expected {
@@ -212,5 +213,32 @@ func assertNoCredentialKeys(t *testing.T, encoded []byte) {
 				t.Errorf("serialized a credential-shaped key %q: %s", key, encoded)
 			}
 		}
+	}
+}
+
+// TestDecodeMCPAccountMaterialize covers the release decoder in both
+// directions: a well-formed release becomes the SDK type, and a result with no
+// envelope in it is a protocol fault rather than an empty answer (a caller
+// would otherwise spawn an agent with no credential).
+func TestDecodeMCPAccountMaterialize(t *testing.T) {
+	out, err := decodeMCPAccountMaterialize([]byte(
+		`{"account_id":"acct-1","provider":"claude",` +
+			`"credential":{"access_token":"RELEASED","access_token_env_key":"K"}}`))
+	if err != nil {
+		t.Fatalf("decodeMCPAccountMaterialize() error = %v", err)
+	}
+	released, ok := out.(*account.MaterializedCredential)
+	if !ok {
+		t.Fatalf("decoded %T, want *account.MaterializedCredential", out)
+	}
+	if released.Credential == nil || released.Credential.AccessTokenEnvKey != "K" {
+		t.Error("decode lost the material a spawn needs")
+	}
+
+	if _, err := decodeMCPAccountMaterialize([]byte(`{"account_id":"acct-1"}`)); err == nil {
+		t.Error("a result with no envelope decoded successfully")
+	}
+	if _, err := decodeMCPAccountMaterialize([]byte(`not json`)); err == nil {
+		t.Error("a malformed result decoded successfully")
 	}
 }

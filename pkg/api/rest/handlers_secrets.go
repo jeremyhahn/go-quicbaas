@@ -534,6 +534,68 @@ func (s *Server) HandleListVersions(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, r, http.StatusOK, resp)
 }
 
+// HandleUpdateSecretStatus handles PUT /api/v1/secrets/{path...}/status —
+// set a secret's status to any value the model defines.
+//
+// It is not a third spelling of enable/disable. Those two handlers hardcode one
+// status each, so REST could reach `enabled` and `disabled` and NOT `deleted`,
+// while gRPC (SecretsManagement/UpdateSecretStatus) and MCP
+// (quicbaas_secrets_update_status) carry the whole SecretStatus set. The verb
+// existed on three of the five transports and the REST client called a route
+// nobody served (#280).
+//
+// The id comes from the PATH and the status from the BODY. A secret id is a
+// hierarchical path, so it cannot be a body field the URL disagrees with: taking
+// it from the URL means the route the caller addressed is the record that
+// changes.
+func (s *Server) HandleUpdateSecretStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	path := chi.URLParam(r, "*")
+	if decodedPath, err := url.PathUnescape(path); err == nil {
+		path = decodedPath
+	}
+	path = strings.TrimSuffix(path, "/status")
+	if path == "" {
+		RespondBadRequest(w, r, "secret path is required")
+		return
+	}
+
+	var body struct {
+		Status service.SecretStatus `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		RespondBadRequest(w, r, "invalid JSON body")
+		return
+	}
+	// Refused rather than defaulted. The zero value is the empty string, and
+	// forwarding it would ask the service to set a status the model does not
+	// define — or, worse, be read downstream as "no change" while the caller was
+	// told the update happened.
+	if !body.Status.IsValid() {
+		RespondBadRequest(w, r, "status must be one of: enabled, disabled, deleted")
+		return
+	}
+
+	req := &service.UpdateSecretStatusRequest{
+		SecretID: path,
+		Status:   body.Status,
+	}
+
+	secretsService := s.getSecretsService(w, r)
+	if secretsService == nil {
+		return
+	}
+
+	resp, err := secretsService.UpdateSecretStatus(ctx, req)
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, resp)
+}
+
 // HandleEnableSecret handles POST /api/v1/secrets/{path...}/enable - Enable a secret.
 func (s *Server) HandleEnableSecret(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

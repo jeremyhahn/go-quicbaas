@@ -146,7 +146,7 @@ func TestUserAdapter_CreateUser_EmptyTenantDefaultsToSystem(t *testing.T) {
 // TestUserAdapter_CreateUser_DuplicateEmailMapped proves the second
 // create of the same admin (which collides on the synthesized email)
 // surfaces as qrdbsdk.UsernameExistsError so qrdbfirstboot's idempotent
-// re-run path triggers. This exercises isEmailDuplicate end-to-end.
+// re-run path triggers. This exercises isAlreadyExists end-to-end.
 func TestUserAdapter_CreateUser_DuplicateEmailMapped(t *testing.T) {
 	a := WrapUser(newStore())
 	req := &qrdbsdk.CreateUserRequest{Username: "admin", TenantID: "system"}
@@ -182,16 +182,25 @@ func TestUserAdapter_CreateUser_ValidationErrorPassthrough(t *testing.T) {
 	}
 }
 
-// TestIsEmailDuplicate covers the helper's true/false/nil branches.
-func TestIsEmailDuplicate(t *testing.T) {
-	if !isEmailDuplicate(iam.ErrEmailAlreadyExists) {
-		t.Fatal("isEmailDuplicate(ErrEmailAlreadyExists) = false, want true")
+// TestIsAlreadyExistsCoversTheDuplicateEmailAnswer covers the helper's
+// true/false/nil branches, and pins the reason CreateUser needs only this one
+// predicate: iam.ErrEmailAlreadyExists -- the duplicate-synthetic-email answer
+// -- carries the ErrAlreadyExists CODE, so the code check already recognises
+// it. CreateUser used to call a second, narrower-reading predicate alongside
+// this one; it was errors.Is against a QBError, which compares codes, so it
+// matched exactly this set and could never add a case (go-quicbaas#434).
+func TestIsAlreadyExistsCoversTheDuplicateEmailAnswer(t *testing.T) {
+	if !isAlreadyExists(iam.ErrEmailAlreadyExists) {
+		t.Fatal("isAlreadyExists(ErrEmailAlreadyExists) = false, want true")
 	}
-	if isEmailDuplicate(errors.New("other")) {
-		t.Fatal("isEmailDuplicate(other) = true, want false")
+	if !isAlreadyExists(iam.ErrUserAlreadyExists) {
+		t.Fatal("isAlreadyExists(ErrUserAlreadyExists) = false, want true")
 	}
-	if isEmailDuplicate(nil) {
-		t.Fatal("isEmailDuplicate(nil) = true, want false")
+	if isAlreadyExists(errors.New("other")) {
+		t.Fatal("isAlreadyExists(other) = true, want false")
+	}
+	if isAlreadyExists(nil) {
+		t.Fatal("isAlreadyExists(nil) = true, want false")
 	}
 }
 
@@ -265,17 +274,6 @@ func TestRoleAdapter_GetRoleByName_ResolvesPersistedID(t *testing.T) {
 	}
 	if len(got.Permissions) != 1 || string(got.Permissions[0]) != "read:users" {
 		t.Fatalf("Permissions = %v, want the stored permission round-tripped", got.Permissions)
-	}
-}
-
-// TestRoleAdapter_GetRoleByName_NotFound proves a name nobody holds in the
-// tenant is qrdbsdk.RoleNotFoundError, never a guessed role.
-func TestRoleAdapter_GetRoleByName_NotFound(t *testing.T) {
-	a := WrapRole(newStore())
-	_, err := a.GetRoleByName(context.Background(), "system", "no-such-role")
-	var notFound *qrdbsdk.RoleNotFoundError
-	if !errors.As(err, &notFound) {
-		t.Fatalf("GetRoleByName error = %v, want RoleNotFoundError", err)
 	}
 }
 

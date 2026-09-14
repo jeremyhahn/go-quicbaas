@@ -15,38 +15,15 @@ package benchmark
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"fmt"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/metrics"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tracing"
 )
-
-// newBenchAuthConfig returns an enabled AuthConfig backed by an ephemeral
-// ECDSA P-256 signing key so benchmarks mint and validate real ES256 tokens.
-// The same config validates the tokens it minted.
-func newBenchAuthConfig(b *testing.B) *auth.AuthConfig {
-	b.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		b.Fatalf("generate signing key: %v", err)
-	}
-	cfg := &auth.AuthConfig{
-		Enabled:         true,
-		JWTSigningKeyID: "benchmark-jwt-signing-key",
-		TokenTTL:        1 * time.Hour,
-		MaxTokens:       1000,
-	}
-	auth.SetAsymmetricSigning(cfg, key)
-	return cfg
-}
 
 // BenchmarkMetricsCollection benchmarks the overhead of metrics collection.
 func BenchmarkMetricsCollection(b *testing.B) {
@@ -407,67 +384,6 @@ func BenchmarkCacheValueSizes(b *testing.B) {
 	}
 }
 
-// BenchmarkAuthTokenValidation benchmarks JWT token validation.
-func BenchmarkAuthTokenValidation(b *testing.B) {
-	ctx := context.Background()
-	log, _ := logger.New(logger.LogConfig{
-		Level:  "error",
-		Format: "json",
-	})
-
-	authManager, _ := auth.NewInMemoryAuthManager(newBenchAuthConfig(b), log)
-
-	// Create test user and token
-	benchUser, _ := authManager.CreateUser("benchuser", []string{"admin"})
-	token, _ := authManager.IssueTokenForUser(ctx, benchUser)
-
-	b.Run("Authorize-Valid", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			authManager.Authorize(ctx, token.AccessToken, "resource", "read")
-		}
-	})
-
-	b.Run("Authorize-Invalid", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			authManager.Authorize(ctx, "invalid-token", "resource", "read")
-		}
-	})
-}
-
-// BenchmarkAuthConcurrent benchmarks concurrent authentication operations.
-func BenchmarkAuthConcurrent(b *testing.B) {
-	ctx := context.Background()
-	log, _ := logger.New(logger.LogConfig{
-		Level:  "error",
-		Format: "json",
-	})
-
-	authManager, _ := auth.NewInMemoryAuthManager(newBenchAuthConfig(b), log)
-
-	// Create multiple users
-	tokens := make([]*auth.Token, 100)
-	for i := 0; i < 100; i++ {
-		username := fmt.Sprintf("user%d", i)
-		concUser, _ := authManager.CreateUser(username, []string{"user"})
-		token, _ := authManager.IssueTokenForUser(ctx, concUser)
-		tokens[i] = token
-	}
-
-	b.Run("Parallel-Authorize", func(b *testing.B) {
-		b.ResetTimer()
-		b.RunParallel(func(pb *testing.PB) {
-			i := 0
-			for pb.Next() {
-				token := tokens[i%100]
-				authManager.Authorize(ctx, token.AccessToken, "resource", "read")
-				i++
-			}
-		})
-	})
-}
-
 // BenchmarkExtendedFullStack benchmarks full Phase 4 stack.
 func BenchmarkExtendedFullStack(b *testing.B) {
 	ctx := context.Background()
@@ -491,18 +407,12 @@ func BenchmarkExtendedFullStack(b *testing.B) {
 	})
 	defer tracer.Shutdown(ctx)
 
-	authManager, _ := auth.NewInMemoryAuthManager(newBenchAuthConfig(b), log)
-
 	cacheManager, _ := cache.NewManager(cache.Config{
 		L1Size:          1000,
 		L1TTL:           5 * time.Minute,
 		CleanupInterval: 1 * time.Minute,
 	}, newLoggerAdapter(log))
 	defer cacheManager.Close()
-
-	// Create test user
-	fullStackUser, _ := authManager.CreateUser("benchuser", []string{"admin"})
-	token, _ := authManager.IssueTokenForUser(ctx, fullStackUser)
 
 	b.Run("WithAllFeatures", func(b *testing.B) {
 		value := make([]byte, 1024)
@@ -515,9 +425,6 @@ func BenchmarkExtendedFullStack(b *testing.B) {
 			// Record metrics
 			m.IncrementConcurrentRequests()
 			start := time.Now()
-
-			// Authorize
-			authManager.Authorize(ctx, token.AccessToken, "resource", "write")
 
 			// Cache operation
 			key := fmt.Sprintf("key-%d", i)
@@ -569,23 +476,12 @@ func BenchmarkExtendedConcurrent(b *testing.B) {
 	})
 	defer tracer.Shutdown(ctx)
 
-	authManager, _ := auth.NewInMemoryAuthManager(newBenchAuthConfig(b), log)
-
 	cacheManager, _ := cache.NewManager(cache.Config{
 		L1Size:          10000,
 		L1TTL:           5 * time.Minute,
 		CleanupInterval: 1 * time.Minute,
 	}, newLoggerAdapter(log))
 	defer cacheManager.Close()
-
-	// Create test users
-	tokens := make([]*auth.Token, 10)
-	for i := 0; i < 10; i++ {
-		username := fmt.Sprintf("user%d", i)
-		parallelUser, _ := authManager.CreateUser(username, []string{"user"})
-		token, _ := authManager.IssueTokenForUser(ctx, parallelUser)
-		tokens[i] = token
-	}
 
 	b.Run("Parallel-FullStack", func(b *testing.B) {
 		value := make([]byte, 1024)
@@ -598,9 +494,6 @@ func BenchmarkExtendedConcurrent(b *testing.B) {
 
 				m.IncrementConcurrentRequests()
 				start := time.Now()
-
-				token := tokens[i%10]
-				authManager.Authorize(ctx, token.AccessToken, "resource", "write")
 
 				key := fmt.Sprintf("key-%d", i)
 				cacheManager.Set(ctx, key, value)
@@ -628,26 +521,21 @@ func BenchmarkComparison(b *testing.B) {
 		name          string
 		enableMetrics bool
 		enableTracing bool
-		enableAuth    bool
 		enableCache   bool
 	}{
-		{"Baseline-NoFeatures", false, false, false, false},
-		{"Metrics-Only", true, false, false, false},
-		{"Tracing-Only", false, true, false, false},
-		{"Auth-Only", false, false, true, false},
-		{"Cache-Only", false, false, false, true},
-		{"Metrics+Tracing", true, true, false, false},
-		{"Metrics+Auth", true, false, true, false},
-		{"All-Features", true, true, true, true},
+		{"Baseline-NoFeatures", false, false, false},
+		{"Metrics-Only", true, false, false},
+		{"Tracing-Only", false, true, false},
+		{"Cache-Only", false, false, true},
+		{"Metrics+Tracing", true, true, false},
+		{"All-Features", true, true, true},
 	}
 
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
 			var m *metrics.Metrics
 			var tracer *tracing.Tracer
-			var authManager *auth.AuthManager
 			var cacheManager *cache.CacheManager
-			var token *auth.Token
 
 			if tt.enableMetrics {
 				metrics.Reset()
@@ -666,12 +554,6 @@ func BenchmarkComparison(b *testing.B) {
 					ShutdownTimeout: 5 * time.Second,
 				})
 				defer tracer.Shutdown(ctx)
-			}
-
-			if tt.enableAuth {
-				authManager, _ = auth.NewInMemoryAuthManager(newBenchAuthConfig(b), log)
-				compUser, _ := authManager.CreateUser("benchuser", []string{"admin"})
-				token, _ = authManager.IssueTokenForUser(ctx, compUser)
 			}
 
 			if tt.enableCache {
@@ -703,10 +585,6 @@ func BenchmarkComparison(b *testing.B) {
 						m.RecordRequestDuration("put", "success", duration)
 						m.DecrementConcurrentRequests()
 					}()
-				}
-
-				if tt.enableAuth && authManager != nil && token != nil {
-					authManager.Authorize(operationCtx, token.AccessToken, "resource", "write")
 				}
 
 				if tt.enableCache && cacheManager != nil {

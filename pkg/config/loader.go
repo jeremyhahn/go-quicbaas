@@ -50,6 +50,9 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 	l.v.SetEnvPrefix("QUICBAAS")
 	l.v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	l.v.AutomaticEnv()
+	BindSDLCEnv(l.v)
+	BindSDLCSurfacingEnv(l.v)
+	BindSDLCLabelReconcileEnv(l.v)
 
 	// Handle empty path - return defaults
 	if configFile == "" {
@@ -64,7 +67,28 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 	} else {
 		// Check if file exists before trying to load
 		if _, err := os.Stat(configFile); os.IsNotExist(err) {
-			// File doesn't exist, return defaults
+			// FILE DOESN'T EXIST, SO THE FILE LAYER IS EMPTY — the ENVIRONMENT
+			// layer is not, and this path used to skip it.
+			//
+			// Every key that reaches the config through a viper binding
+			// (BindSDLCSurfacingEnv) is decoded by Unmarshal, which the early
+			// return below it never reached, while applyEnvironmentOverrides
+			// only covers the hand-maintained list of keys it names. So
+			// `Load("/missing")` silently returned defaults for every bound
+			// duration and the documented precedence — environment over
+			// defaults — was false on this one path.
+			//
+			// Measured: with QUICBAAS_SDLC_SURFACING_RETRY_INTERVAL=7m,
+			// Load("/missing") returned 2m while Load("") returned 7m.
+			if err := RefuseRemovedSDLCKeys(l.v); err != nil {
+				return nil, err
+			}
+			if err := l.v.Unmarshal(cfg); err != nil {
+				return nil, api.NewConfigUnmarshalError("config.Loader.Load", err)
+			}
+			// Same defence in depth as the loaded path: no decoding route may
+			// turn TLS off.
+			cfg.Security.TLSEnabled = true
 			l.applyEnvironmentOverrides(cfg)
 			return cfg, nil
 		}
@@ -73,6 +97,12 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 		if err := l.v.ReadInConfig(); err != nil {
 			return nil, api.NewConfigFileReadError("config.Loader.Load", err)
 		}
+	}
+
+	// An sdlc: key the module no longer reads is refused by name before the
+	// decode, so a setting that silently stopped applying cannot pass.
+	if err := RefuseRemovedSDLCKeys(l.v); err != nil {
+		return nil, err
 	}
 
 	// Unmarshal into config struct

@@ -1,0 +1,21 @@
+2026-09-12T17:56:43.9836007Z ci-runner-01(version:v3.1.0)
+2026-09-12T17:56:43.9836694Z ::group::Runner Information
+2026-09-12T17:56:43.9836712Z Runner labels: ubuntu-latest, ubuntu-22.04
+2026-09-12T17:56:43.9836735Z Task: 67425
+2026-09-12T17:56:43.9836746Z Job: base
+2026-09-12T17:56:43.9836760Z Repository: jeremyhahn/go-quicbaas
+2026-09-12T17:56:43.9836773Z Triggered by event: pull_request
+2026-09-12T17:56:43.9836788Z ::endgroup::
+2026-09-12T17:56:43.9836797Z ::group::Operating System
+2026-09-12T17:56:43.9836811Z Alpine Linux v3.24
+2026-09-12T17:56:43.9836824Z linux/amd64
+2026-09-12T17:56:43.9836837Z ::endgroup::
+2026-09-12T17:56:43.9846052Z workflow prepared
+2026-09-12T17:56:44.0014359Z ::group::Starting job container
+2026-09-12T17:56:44.0015182Z image: forge.internal:3001/jeremyhahn/ci-runner:latest
+2026-09-12T17:56:44.0015451Z name: GITEA-ACTIONS-TASK-67425-WORKFLOW-PR-Base-Guard-JOB-PR-Base-Gua-a090b615f95e7294219dab7d68abb4e778448ddcbfb47f6bb5cdea830b4976cd
+2026-09-12T17:56:44.0016016Z network: GITEA-ACTIONS-TASK-67425-WORKFLOW-PR-Base-Guard-JOB-PR-Base-Gua-a090b615f95e7294219dab7d68abb4e778448ddcbfb47f6bb5cdea830b4976cd-base-network
+2026-09-12T17:56:44.0016561Z docker pull image=forge.internal:3001/jeremyhahn/ci-runner:latest platform= username= forcePull=false
+2026-09-12T17:56:44.0151888Z ::endgroup::
+2026-09-12T17:56:44.0324158Z Cleaning up network for job PR Base Guard, and network name is: GITEA-ACTIONS-TASK-67425-WORKFLOW-PR-Base-Guard-JOB-PR-Base-Gua-a090b615f95e7294219dab7d68abb4e778448ddcbfb47f6bb5cdea830b4976cd-base-network
+2026-09-12T17:56:44.0337489Z failed to pull image 'forge.internal:3001/jeremyhahn/ci-runner:latest' (): Error response from daemon: failed to resolve reference "forge.internal:3001/jeremyhahn/ci-runner:latest": failed to do request: Head "https://forge.internal:3001/v2/jeremyhahn/ci-runner/manifests/latest": http: server gave HTTP response to HTTPS client

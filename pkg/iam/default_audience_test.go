@@ -126,6 +126,10 @@ func TestTokenIssuance_DefaultAudience(t *testing.T) {
 		TenantID:        "tenant-1",
 		GrantTypes:      []string{GrantTypeClientCredentials},
 		DefaultAudience: "api://orchestrator",
+		// The permission this fixture requests. A client_credentials token
+		// carries the grant on its application record, not the scope the
+		// client named (go-quicbaas#653).
+		Scopes: []string{"mcp:tools"},
 	}); err != nil {
 		t.Fatalf("CreateApp(with default): %v", err)
 	}
@@ -136,6 +140,10 @@ func TestTokenIssuance_DefaultAudience(t *testing.T) {
 		ClientSecret: hashedSecret,
 		TenantID:     "tenant-1",
 		GrantTypes:   []string{GrantTypeClientCredentials},
+		// The permission this fixture requests. A client_credentials token
+		// carries the grant on its application record, not the scope the
+		// client named (go-quicbaas#653).
+		Scopes: []string{"mcp:tools"},
 	}); err != nil {
 		t.Fatalf("CreateApp(no default): %v", err)
 	}
@@ -148,6 +156,10 @@ func TestTokenIssuance_DefaultAudience(t *testing.T) {
 		TenantID:        "tenant-1",
 		GrantTypes:      []string{GrantTypeClientCredentials},
 		DefaultAudience: "not-a-uri",
+		// The permission this fixture requests. A client_credentials token
+		// carries the grant on its application record, not the scope the
+		// client named (go-quicbaas#653).
+		Scopes: []string{"mcp:tools"},
 	}); err != nil {
 		t.Fatalf("CreateApp(bad default): %v", err)
 	}

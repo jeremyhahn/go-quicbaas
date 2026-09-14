@@ -17,11 +17,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 // =============================================================================
@@ -279,7 +280,7 @@ func TestAccountStore_Delete_NonDefaultLeavesDefaultIntact(t *testing.T) {
 // naming a record that is gone must not lock the scope out of ever getting a
 // default again.
 func TestAccountStore_Create_HealsDefaultPointerStrandedOnDeletedAccount(t *testing.T) {
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	store := NewAccountStore(kv)
 	ctx := context.Background()
 
@@ -491,7 +492,7 @@ func TestAccountStore_SetDefault_ConcurrentMutualDisplacement_DoesNotDeadlock(t 
 // and StaticAccountStrategy selects on this field, so a stale "true" silently
 // redirects an unpinned spawn, and its billing, to another provider login.
 func TestAccountStore_DefaultIsNotPersisted(t *testing.T) {
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	store := NewAccountStore(kv)
 	ctx := context.Background()
 
@@ -598,5 +599,846 @@ func TestAccount_MarshalJSON_EmitsDefault(t *testing.T) {
 		if got != isDefault {
 			t.Fatalf("wire default = %v, want %v", got, isDefault)
 		}
+	}
+}
+
+// =============================================================================
+// Multi-node account creation and the default election
+// =============================================================================
+
+// accountHoldBeforeRecord parks one node between claiming a scope's default
+// pointer and writing its own record — the window in which a slow creator's
+// claim can be healed away by another node that reasonably concludes the scope
+// is orphaned.
+//
+// The hold is keyed on the RECORD write specifically, so the pointer claim has
+// already happened when the node parks. That is the state the hazard needs.
+type accountHoldBeforeRecord struct {
+	interfaces.KVStore
+
+	recordKey string
+	parked    chan struct{}
+	release   chan struct{}
+	once      sync.Once
+}
+
+func newAccountHoldBeforeRecord(inner interfaces.KVStore, recordKey string) *accountHoldBeforeRecord {
+	return &accountHoldBeforeRecord{
+		KVStore:   inner,
+		recordKey: recordKey,
+		parked:    make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+}
+
+func (k *accountHoldBeforeRecord) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if key == k.recordKey {
+		k.once.Do(func() { close(k.parked) })
+		select {
+		case <-k.release:
+		case <-time.After(barrierWait):
+		}
+	}
+	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
+}
+
+func (k *accountHoldBeforeRecord) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	deleter, ok := k.KVStore.(guardedDeleter)
+	if !ok {
+		return false, errors.New("test wrapper: inner store cannot guard a delete")
+	}
+	return deleter.CompareAndDelete(ctx, key, expected)
+}
+
+// TestAccountStore_Create_SlowCreatorDoesNotClaimADefaultItLost is the
+// slow-creator hazard, and the reason a create's success is only confirmed
+// AFTER its record write.
+//
+// Node A claims the vacant scope and then stalls before writing its record.
+// Node B arrives, finds the pointer naming an account whose record does not
+// exist, correctly concludes the scope is orphaned, heals it and takes the
+// default. A then completes: its own record write succeeds, because its record
+// key is uncontested.
+//
+// Without the post-write re-read, A returns Default:true for a scope B owns —
+// two accounts each believing they are the default, and nothing detecting it.
+// The assertion is that A is told the truth, not that A fails: A's account is
+// perfectly good, it simply is not the default. Losing an election it was not
+// party to must not invalidate the record.
+func TestAccountStore_Create_SlowCreatorDoesNotClaimADefaultItLost(t *testing.T) {
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+
+	slowKey, err := accountRecordKey("tenant-a", "acct-slow")
+	if err != nil {
+		t.Fatalf("accountRecordKey() error = %v", err)
+	}
+	held := newAccountHoldBeforeRecord(shared, slowKey)
+
+	slowNode := NewAccountStore(held)
+	fastNode := NewAccountStore(shared)
+
+	var (
+		wg       sync.WaitGroup
+		slowAcct = newTestAccount("tenant-a", "acct-slow", AccountProviderClaude)
+		slowErr  error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		slowErr = slowNode.Create(ctx, slowAcct)
+	}()
+
+	select {
+	case <-held.parked:
+	case <-time.After(barrierWait):
+		t.Fatal("the slow node never reached its record write")
+	}
+
+	// The slow node holds the pointer but has no record, which is exactly what
+	// an orphaned scope looks like from outside.
+	fastAcct := newTestAccount("tenant-a", "acct-fast", AccountProviderClaude)
+	if err := fastNode.Create(ctx, fastAcct); err != nil {
+		t.Fatalf("fast node Create() error = %v", err)
+	}
+	if !fastAcct.Default {
+		t.Fatal("the fast node healed an orphaned scope but was not made its default")
+	}
+
+	close(held.release)
+	wg.Wait()
+
+	if slowErr != nil {
+		t.Fatalf("the slow node's create failed; losing the election must not invalidate the account: %v", slowErr)
+	}
+	if slowAcct.Default {
+		t.Fatal("the slow node was told it is the scope default, but the fast node holds it: " +
+			"two accounts each believe they are the default and nothing detects it")
+	}
+
+	// The stored pointer is the authority and must name exactly one of them.
+	defaultKey, err := accountDefaultKey("tenant-a", AccountProviderClaude, "")
+	if err != nil {
+		t.Fatalf("accountDefaultKey() error = %v", err)
+	}
+	pointer, err := shared.Get(ctx, defaultKey)
+	if err != nil {
+		t.Fatalf("Get(pointer) error = %v", err)
+	}
+	if string(pointer) != "acct-fast" {
+		t.Fatalf("default pointer = %q, want acct-fast", string(pointer))
+	}
+}
+
+// TestAccountStore_Create_NineNodesOneScopeElectOneDefault proves the scope
+// default is a single-winner election across the fleet.
+//
+// Nine DIFFERENT accounts in one scope, created at once. All nine must exist —
+// they are distinct accounts and none of them is in conflict — and the scope
+// must end with exactly one default.
+//
+// WHERE THE SINGLE WINNER IS READ, AND WHY NOT FROM THE RETURN VALUES (#244).
+// This test used to count how many of the nine *returned* Account structs came
+// back with Default set, and it flaked at 0.00s with "2 accounts claim the
+// scope default" — 99 times in 4000 concurrent rounds under -race (~2.5%), on
+// CI in PR #233's Unit leg.
+//
+// That count is not a property of the store. Default is DERIVED on every read
+// from the scope pointer (accountStore.deriveDefault) and is never persisted —
+// marshalAccount zeroes it before the record is written. So the value a
+// concurrent Create hands back is a snapshot of the pointer at the instant that
+// call re-read it, and the losing creates are still healing and re-claiming the
+// pointer around it: node A can re-read the pointer while it still names A, and
+// only afterwards does B's claim land, so both callers were told the truth at
+// the moment they asked and the two moments disagree. No implementation can
+// make nine snapshots taken at nine different instants agree on a value that is
+// by design only ever true "as of now" — the old assertion required an
+// impossible ordering, which is why it failed intermittently rather than
+// consistently.
+//
+// The durable state was never wrong: across those same 4000 rounds the pointer
+// was non-empty every time and a fresh read of all nine accounts reported
+// exactly one default every time — 0 violations. So the invariant is asserted
+// where it actually lives, against reads taken after the race has quiesced.
+func TestAccountStore_Create_NineNodesOneScopeElectOneDefault(t *testing.T) {
+	const nodes = 9
+
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+
+	var (
+		wg       sync.WaitGroup
+		start    = make(chan struct{})
+		accounts = make([]*Account, nodes)
+		errs     = make([]error, nodes)
+	)
+	for i := 0; i < nodes; i++ {
+		accounts[i] = newTestAccount("tenant-elect", "acct-"+strconv.Itoa(i), AccountProviderClaude)
+		wg.Add(1)
+		go func(node int) {
+			defer wg.Done()
+			store := NewAccountStore(shared)
+			<-start
+			errs[node] = store.Create(ctx, accounts[node])
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for node, err := range errs {
+		if err != nil {
+			t.Fatalf("node %d Create() error = %v; distinct accounts must all be created", node, err)
+		}
+	}
+
+	// Every read below happens after wg.Wait(), so nothing is still writing and
+	// these are stable facts rather than another snapshot of a live race.
+	reader := NewAccountStore(shared)
+
+	winners := make([]string, 0, nodes)
+	for i := 0; i < nodes; i++ {
+		id := "acct-" + strconv.Itoa(i)
+		got, err := reader.Get(ctx, "tenant-elect", id)
+		if err != nil {
+			t.Fatalf("Get(%s) error = %v; all nine distinct accounts must exist", id, err)
+		}
+		if got.Default {
+			winners = append(winners, id)
+		}
+	}
+	if len(winners) != 1 {
+		t.Fatalf("%d accounts read back as the scope default (%v), want exactly 1", len(winners), winners)
+	}
+
+	defaultKey, err := accountDefaultKey("tenant-elect", AccountProviderClaude, "")
+	if err != nil {
+		t.Fatalf("accountDefaultKey() error = %v", err)
+	}
+	pointer, err := shared.Get(ctx, defaultKey)
+	if err != nil {
+		t.Fatalf("Get(pointer) error = %v", err)
+	}
+	if string(pointer) != winners[0] {
+		t.Fatalf("default pointer = %q, but %q reads back as the default", string(pointer), winners[0])
+	}
+
+	// The winner's OWN create must have been told it won. This is assertable
+	// where the nine-way count is not: a node elects once, and a node that has
+	// been displaced never re-claims, so the account the pointer ends on is one
+	// that claimed the pointer and was never displaced after. Its re-derive runs
+	// after its own claim, so it necessarily read the pointer naming itself.
+	// Losers may also have been told they won -- that is the snapshot this test
+	// no longer counts -- but the eventual winner being told it lost would mean
+	// the caller that owns the scope was never informed of it.
+	for node, account := range accounts {
+		if account.ID != winners[0] {
+			continue
+		}
+		if !account.Default {
+			t.Errorf("node %d owns the scope (pointer = %q) but its Create() returned Default=false",
+				node, string(pointer))
+		}
+	}
+
+	// The election is only single-winner BECAUSE the flag lives in one place.
+	// If a future change persists Default on the record, the reads above would
+	// agree with themselves while the scope quietly gained a second default that
+	// no pointer arbitrates — so assert the record never carries it.
+	for i := 0; i < nodes; i++ {
+		id := "acct-" + strconv.Itoa(i)
+		recordKey, err := accountRecordKey("tenant-elect", id)
+		if err != nil {
+			t.Fatalf("accountRecordKey(%s) error = %v", id, err)
+		}
+		raw, err := shared.Get(ctx, recordKey)
+		if err != nil {
+			t.Fatalf("Get(record %s) error = %v", id, err)
+		}
+		var stored Account
+		if err := json.Unmarshal(raw, &stored); err != nil {
+			t.Fatalf("unmarshal record %s: %v", id, err)
+		}
+		if stored.Default {
+			t.Errorf("record %s persists Default=true; the scope pointer must be the only place the default is recorded", id)
+		}
+	}
+}
+
+// TestAccountStore_Create_NineNodesOneIDProduceOneAccount is the create-side
+// race: one ID, nine nodes, exactly one record.
+func TestAccountStore_Create_NineNodesOneIDProduceOneAccount(t *testing.T) {
+	const nodes = 9
+
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+
+	var (
+		wg    sync.WaitGroup
+		start = make(chan struct{})
+		errs  = make([]error, nodes)
+	)
+	for i := 0; i < nodes; i++ {
+		wg.Add(1)
+		go func(node int) {
+			defer wg.Done()
+			store := NewAccountStore(shared)
+			acct := newTestAccount("tenant-dup", "acct-contested", AccountProviderClaude)
+			<-start
+			errs[node] = store.Create(ctx, acct)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	winners := 0
+	for _, err := range errs {
+		if err == nil {
+			winners++
+			continue
+		}
+		var invalid *AccountInvalidError
+		if !errors.As(err, &invalid) {
+			t.Fatalf("a losing create returned %T: %v, want *AccountInvalidError", err, err)
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("%d nodes created one account ID, want exactly 1", winners)
+	}
+}
+
+// accountHoldBeforeHealDelete parks a healer between OBSERVING an orphaned
+// default pointer and DELETING it — the only window in which a guarded heal and
+// an unguarded one behave differently.
+//
+// Everywhere else the two are indistinguishable, which is why a test that only
+// proves the heal happens cannot tell them apart: it never constructs the case
+// the guard exists for.
+type accountHoldBeforeHealDelete struct {
+	interfaces.KVStore
+
+	defaultKey string
+	parked     chan struct{}
+	release    chan struct{}
+	once       sync.Once
+}
+
+func newAccountHoldBeforeHealDelete(inner interfaces.KVStore, defaultKey string) *accountHoldBeforeHealDelete {
+	return &accountHoldBeforeHealDelete{
+		KVStore:    inner,
+		defaultKey: defaultKey,
+		parked:     make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+}
+
+func (k *accountHoldBeforeHealDelete) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
+}
+
+// park holds this caller until the test releases it.
+func (k *accountHoldBeforeHealDelete) park() {
+	k.once.Do(func() { close(k.parked) })
+	select {
+	case <-k.release:
+	case <-time.After(barrierWait):
+	}
+}
+
+// CompareAndDelete parks before the delete, so the pointer can be moved
+// underneath this caller by a healer that got there first.
+func (k *accountHoldBeforeHealDelete) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	if key == k.defaultKey {
+		k.park()
+	}
+	return forwardCompareAndDelete(ctx, k.KVStore, key, expected)
+}
+
+// Delete parks at the SAME logical point, and this is not redundant: an
+// unguarded heal reaches the pointer through Delete rather than
+// CompareAndDelete, so a barrier hooked only to the guarded verb holds nothing
+// once the guard is removed. The test would then hang on its own timeout
+// instead of failing on the damage — a harness pinned to a hazard the mutation
+// deletes, which is the vacuous-pass shape this suite has hit before.
+func (k *accountHoldBeforeHealDelete) Delete(ctx context.Context, key string) error {
+	if key == k.defaultKey {
+		k.park()
+	}
+	return k.KVStore.Delete(ctx, key)
+}
+
+// TestAccountStore_Create_HealerDoesNotDeleteAPointerThatMoved proves the guard
+// on the heal, not merely that healing works.
+//
+// Two nodes find the same orphaned pointer — one naming an account whose record
+// is gone — and both decide to heal it. One completes: it clears the orphan and
+// takes the scope. The other is parked between its observation and its delete,
+// so by the time it acts, the pointer no longer names the orphan it saw. Its
+// CompareAndDelete must remove NOTHING.
+//
+// With an unguarded Delete the late healer removes the WINNER's pointer and then
+// claims the scope itself, so the winner is left believing it holds a default
+// that now names someone else — the erasure class again, inside the repair path
+// meant to prevent it. The assertion is therefore on the pointer, not on the
+// loser's verdict: a test checking only "the late healer lost" passes under both
+// implementations, because under the mutation it does not lose.
+func TestAccountStore_Create_HealerDoesNotDeleteAPointerThatMoved(t *testing.T) {
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+
+	// An orphaned scope: acct-dead held the default, then its record vanished.
+	seed := NewAccountStore(shared)
+	mustCreateAccount(t, seed, newTestAccount("tenant-heal", "acct-dead", AccountProviderClaude))
+	deadKey, err := accountRecordKey("tenant-heal", "acct-dead")
+	if err != nil {
+		t.Fatalf("accountRecordKey() error = %v", err)
+	}
+	if err := shared.Delete(ctx, deadKey); err != nil {
+		t.Fatalf("Delete(record) error = %v", err)
+	}
+
+	defaultKey, err := accountDefaultKey("tenant-heal", AccountProviderClaude, "")
+	if err != nil {
+		t.Fatalf("accountDefaultKey() error = %v", err)
+	}
+
+	held := newAccountHoldBeforeHealDelete(shared, defaultKey)
+	lateHealer := NewAccountStore(held)
+
+	var (
+		wg      sync.WaitGroup
+		lateAcc = newTestAccount("tenant-heal", "acct-late", AccountProviderClaude)
+		lateErr error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		lateErr = lateHealer.Create(ctx, lateAcc)
+	}()
+
+	select {
+	case <-held.parked:
+	case <-time.After(barrierWait):
+		t.Fatal("the late healer never reached its delete")
+	}
+
+	// The winner heals the orphan and takes the scope while the other is parked.
+	winner := newTestAccount("tenant-heal", "acct-winner", AccountProviderClaude)
+	if err := NewAccountStore(shared).Create(ctx, winner); err != nil {
+		t.Fatalf("winner Create() error = %v", err)
+	}
+	if !winner.Default {
+		t.Fatal("the winner healed the orphaned scope but was not made its default")
+	}
+
+	close(held.release)
+	wg.Wait()
+
+	if lateErr != nil {
+		t.Fatalf("the late healer's create failed; losing a heal race must not invalidate the account: %v", lateErr)
+	}
+
+	// THE ASSERTION THAT DISTINGUISHES GUARDED FROM UNGUARDED: the winner's
+	// pointer must survive. An unguarded delete removes it here.
+	pointer, err := shared.Get(ctx, defaultKey)
+	if err != nil {
+		t.Fatalf("Get(pointer) error = %v", err)
+	}
+	if string(pointer) != "acct-winner" {
+		t.Fatalf("default pointer = %q, want acct-winner: the late healer deleted a pointer that had "+
+			"already moved, and the winner now believes it holds a default naming someone else",
+			string(pointer))
+	}
+	if lateAcc.Default {
+		t.Error("the late healer claimed a scope whose orphan it never actually removed")
+	}
+}
+
+// =============================================================================
+// Moving between scopes
+// =============================================================================
+
+// moverBarrier gathers every mover at its FIRST touch of the destination
+// pointer, releasing them only once all have arrived.
+//
+// One barrier, one wrapper per node, because the counting must be per NODE and
+// each node touches the pointer more than once. It hooks BOTH routes — Get for
+// a probe-then-write implementation, PutIfAbsent for a guarded one — because
+// the two reach the pointer through different verbs, and a barrier hooked to
+// only one holds nothing against the other.
+//
+// This is not a precaution. Without it the nine movers interleave freely: the
+// first to write is usually seen by the rest, they decline, and an UNGUARDED
+// election passes the test. Measured, not assumed — the first version of this
+// test survived the probe-then-write mutation 10 runs out of 10.
+type moverBarrier struct {
+	nodes int
+
+	mu      sync.Mutex
+	arrived int
+	gate    chan struct{}
+}
+
+func newMoverBarrier(nodes int) *moverBarrier {
+	return &moverBarrier{nodes: nodes, gate: make(chan struct{})}
+}
+
+func (b *moverBarrier) arrive() {
+	b.mu.Lock()
+	b.arrived++
+	// Equality rather than >=, so a later arrival cannot close a closed gate.
+	if b.arrived == b.nodes {
+		close(b.gate)
+	}
+	b.mu.Unlock()
+
+	select {
+	case <-b.gate:
+	case <-time.After(barrierWait):
+	}
+}
+
+// moverBarrierKV is one node's view of the shared barrier.
+type moverBarrierKV struct {
+	interfaces.KVStore
+
+	key     string
+	barrier *moverBarrier
+	once    sync.Once
+}
+
+func (k *moverBarrierKV) arriveOnce() {
+	k.once.Do(k.barrier.arrive)
+}
+
+func (k *moverBarrierKV) Get(ctx context.Context, key string) ([]byte, error) {
+	if key == k.key {
+		k.arriveOnce()
+	}
+	return k.KVStore.Get(ctx, key)
+}
+
+func (k *moverBarrierKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if key == k.key {
+		k.arriveOnce()
+	}
+	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
+}
+
+func (k *moverBarrierKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return forwardCompareAndDelete(ctx, k.KVStore, key, expected)
+}
+
+// TestAccountStore_Update_NineMoversIntoOneScopeElectOneDefault proves the
+// destination of a move is a single-winner election, not a vacancy probe.
+//
+// This was the last read-then-write election in the store: nine accounts moving
+// into one empty scope could all observe it vacant and all claim it, because
+// the probe and the write are two operations with a process-local lock between
+// them.
+func TestAccountStore_Update_NineMoversIntoOneScopeElectOneDefault(t *testing.T) {
+	const movers = 9
+
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+	seed := NewAccountStore(shared)
+
+	// Each account starts in its own project scope, so none of them is moving
+	// out of a scope another one cares about.
+	accounts := make([]*Account, movers)
+	for i := range accounts {
+		acct := newTestAccount("tenant-move", "acct-"+strconv.Itoa(i), AccountProviderClaude)
+		acct.ProjectID = "origin-" + strconv.Itoa(i)
+		mustCreateAccount(t, seed, acct)
+		accounts[i] = acct
+	}
+
+	destKey, err := accountDefaultKey("tenant-move", AccountProviderClaude, "destination")
+	if err != nil {
+		t.Fatalf("accountDefaultKey() error = %v", err)
+	}
+	barrier := newMoverBarrier(movers)
+
+	var (
+		wg    sync.WaitGroup
+		start = make(chan struct{})
+		errs  = make([]error, movers)
+	)
+	for i := range accounts {
+		wg.Add(1)
+		go func(node int) {
+			defer wg.Done()
+			// One wrapper per node: the barrier counts NODES, and each node
+			// touches the destination pointer more than once.
+			store := NewAccountStore(&moverBarrierKV{KVStore: shared, key: destKey, barrier: barrier})
+			moved := *accounts[node]
+			moved.ProjectID = "destination"
+			<-start
+			errs[node] = store.Update(ctx, &moved)
+			accounts[node] = &moved
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	defaults := 0
+	winner := -1
+	for node, err := range errs {
+		if err != nil {
+			t.Fatalf("node %d Update() error = %v; a move into an occupied scope is not an error", node, err)
+		}
+		if accounts[node].Default {
+			defaults++
+			winner = node
+		}
+	}
+	if defaults != 1 {
+		t.Fatalf("%d movers claim the destination default, want exactly 1", defaults)
+	}
+
+	pointer, err := shared.Get(ctx, destKey)
+	if err != nil {
+		t.Fatalf("Get(pointer) error = %v", err)
+	}
+	if want := "acct-" + strconv.Itoa(winner); string(pointer) != want {
+		t.Fatalf("destination pointer = %q, but %q was told it won", string(pointer), want)
+	}
+}
+
+// TestAccountStore_Update_MoverIsToldTheTruthWhenAnOperatorTakesTheScope proves
+// the returned Default is derived from the pointer after the election, not from
+// the election's own verdict.
+//
+// SetDefault is a plain last-writer-wins Put — deliberately, because a plain Put
+// never exposes a vacant moment for a bystander to claim — so an operator can
+// legitimately take the scope immediately after a mover won it. The mover must
+// then be told it is not the default, because that is what every later read
+// will say.
+func TestAccountStore_Update_MoverIsToldTheTruthWhenAnOperatorTakesTheScope(t *testing.T) {
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+	store := NewAccountStore(shared)
+
+	// The operator's account already lives in the destination scope.
+	operatorAcct := newTestAccount("tenant-truth", "acct-operator", AccountProviderClaude)
+	operatorAcct.ProjectID = "destination"
+	mustCreateAccount(t, store, operatorAcct)
+
+	mover := newTestAccount("tenant-truth", "acct-mover", AccountProviderClaude)
+	mover.ProjectID = "origin"
+	mustCreateAccount(t, store, mover)
+
+	// The destination is occupied, so the mover must not become its default.
+	moved := *mover
+	moved.ProjectID = "destination"
+	if err := store.Update(ctx, &moved); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if moved.Default {
+		t.Fatal("a mover arriving in an OCCUPIED scope was told it is the default")
+	}
+
+	// And the operator still holds it.
+	defaultKey, err := accountDefaultKey("tenant-truth", AccountProviderClaude, "destination")
+	if err != nil {
+		t.Fatalf("accountDefaultKey() error = %v", err)
+	}
+	pointer, err := shared.Get(ctx, defaultKey)
+	if err != nil {
+		t.Fatalf("Get(pointer) error = %v", err)
+	}
+	if string(pointer) != "acct-operator" {
+		t.Fatalf("destination pointer = %q, want acct-operator: a move stole an occupied scope", string(pointer))
+	}
+}
+
+// TestAccountStore_Create_DoesNotHealAScopeAnAccountIsMovingInto is the
+// deliberate non-healing, mirroring the project store's rename-in-flight pin.
+//
+// A pointer naming a LIVE account whose record places it in a different scope is
+// ambiguous: either a move into this scope is in flight, or a move out of it
+// crashed. Those states are byte-identical, so healing on that condition would
+// steal the scope from a move about to complete.
+//
+// This pins the safe answer — the arriving account does NOT auto-claim. If
+// someone later widens defaultHolderMissing to cover "the holder is elsewhere",
+// this fails, which is the point.
+func TestAccountStore_Create_DoesNotHealAScopeAnAccountIsMovingInto(t *testing.T) {
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+	store := NewAccountStore(shared)
+
+	// A live account, in its own scope.
+	mover := newTestAccount("tenant-pin", "acct-mover", AccountProviderClaude)
+	mover.ProjectID = "elsewhere"
+	mustCreateAccount(t, store, mover)
+
+	// The state a move into "destination" has after its first pointer write:
+	// the destination names acct-mover, whose record still says "elsewhere".
+	defaultKey, err := accountDefaultKey("tenant-pin", AccountProviderClaude, "destination")
+	if err != nil {
+		t.Fatalf("accountDefaultKey() error = %v", err)
+	}
+	if err := shared.Put(ctx, defaultKey, []byte("acct-mover")); err != nil {
+		t.Fatalf("Put(pointer) error = %v", err)
+	}
+
+	arriving := newTestAccount("tenant-pin", "acct-arriving", AccountProviderClaude)
+	arriving.ProjectID = "destination"
+	if err := store.Create(ctx, arriving); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if arriving.Default {
+		t.Fatal("a create healed a scope pointer held by a LIVE account: that state is " +
+			"indistinguishable from a move in flight, and healing it steals the scope " +
+			"from a move about to complete")
+	}
+
+	pointer, err := shared.Get(ctx, defaultKey)
+	if err != nil {
+		t.Fatalf("Get(pointer) error = %v", err)
+	}
+	if string(pointer) != "acct-mover" {
+		t.Fatalf("pointer now names %q; the refused auto-claim must not have touched it", string(pointer))
+	}
+}
+
+// holdBetweenProbeAndClaim parks a mover once, AFTER it has looked at the
+// destination pointer and BEFORE it writes one.
+//
+// The two implementations reach that point by different routes, so the hook
+// covers both and a sync.Once keeps it to a single park per node: a
+// probe-then-write election parks after its Get and then writes freely, while a
+// guarded election parks before its PutIfAbsent. Either way the node has
+// decided nothing and written nothing when the test takes over.
+type holdBetweenProbeAndClaim struct {
+	interfaces.KVStore
+
+	key     string
+	parked  chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newHoldBetweenProbeAndClaim(inner interfaces.KVStore, key string) *holdBetweenProbeAndClaim {
+	return &holdBetweenProbeAndClaim{
+		KVStore: inner,
+		key:     key,
+		parked:  make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (k *holdBetweenProbeAndClaim) park() {
+	k.once.Do(func() {
+		close(k.parked)
+		select {
+		case <-k.release:
+		case <-time.After(barrierWait):
+		}
+	})
+}
+
+// Get parks AFTER the read, so a probing implementation has already seen the
+// scope as vacant when the test moves the pointer underneath it.
+func (k *holdBetweenProbeAndClaim) Get(ctx context.Context, key string) ([]byte, error) {
+	data, err := k.KVStore.Get(ctx, key)
+	if key == k.key {
+		k.park()
+	}
+	return data, err
+}
+
+// PutIfAbsent parks BEFORE the write, which is where a guarded implementation
+// reaches the same point.
+func (k *holdBetweenProbeAndClaim) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if key == k.key {
+		k.park()
+	}
+	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
+}
+
+func (k *holdBetweenProbeAndClaim) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return forwardCompareAndDelete(ctx, k.KVStore, key, expected)
+}
+
+// TestAccountStore_Update_MoverDoesNotOverwriteADefaultSetWhileItWasDeciding is
+// the test that actually distinguishes a guarded destination election from a
+// probe-then-write one.
+//
+// THE NINE-MOVER RACE ABOVE DOES NOT. Measured, not assumed: with the election
+// reverted to probe-then-write it passed 10 runs out of 10, because the
+// re-derive at the end of rescopeDefault reads the pointer back and only the
+// account matching it reports Default. Nine movers racing an empty scope all
+// write, last writer wins, and each then re-derives correctly — so the returned
+// flags look right even though the pointer was overwritten eight times. The
+// re-derive MASKS the defect in exactly the value that test inspects.
+//
+// The damage an unguarded election does is not to a race between equals. It is
+// to a decision made by someone OUTSIDE the race: a mover that probed a vacant
+// scope, and then wrote over the default that was legitimately claimed while it
+// was deciding. That is an authority transfer on a lost race — the thing this
+// whole family refuses to do — so it is asserted on the pointer, which is where
+// the authority lives.
+func TestAccountStore_Update_MoverDoesNotOverwriteADefaultSetWhileItWasDeciding(t *testing.T) {
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+
+	mover := newTestAccount("tenant-steal", "acct-mover", AccountProviderClaude)
+	mover.ProjectID = "origin"
+	mustCreateAccount(t, NewAccountStore(shared), mover)
+
+	destKey, err := accountDefaultKey("tenant-steal", AccountProviderClaude, "destination")
+	if err != nil {
+		t.Fatalf("accountDefaultKey() error = %v", err)
+	}
+	held := newHoldBetweenProbeAndClaim(shared, destKey)
+
+	var (
+		wg       sync.WaitGroup
+		moved    = *mover
+		movedErr error
+	)
+	moved.ProjectID = "destination"
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		movedErr = NewAccountStore(held).Update(ctx, &moved)
+	}()
+
+	select {
+	case <-held.parked:
+	case <-time.After(barrierWait):
+		t.Fatal("the mover never reached the destination pointer")
+	}
+
+	// While the mover is deciding, the scope is legitimately claimed by a new
+	// account created directly in it.
+	claimant := newTestAccount("tenant-steal", "acct-claimant", AccountProviderClaude)
+	claimant.ProjectID = "destination"
+	if err := NewAccountStore(shared).Create(ctx, claimant); err != nil {
+		t.Fatalf("claimant Create() error = %v", err)
+	}
+	if !claimant.Default {
+		t.Fatal("the claimant created into a vacant scope but was not made its default")
+	}
+
+	close(held.release)
+	wg.Wait()
+
+	if movedErr != nil {
+		t.Fatalf("the move failed; arriving in an occupied scope is not an error: %v", movedErr)
+	}
+
+	pointer, err := shared.Get(ctx, destKey)
+	if err != nil {
+		t.Fatalf("Get(pointer) error = %v", err)
+	}
+	if string(pointer) != "acct-claimant" {
+		t.Fatalf("destination pointer = %q, want acct-claimant: the mover overwrote a default "+
+			"claimed while it was deciding, transferring the scope away from the account that won it",
+			string(pointer))
+	}
+	if moved.Default {
+		t.Error("the mover was told it holds a scope it did not win")
 	}
 }

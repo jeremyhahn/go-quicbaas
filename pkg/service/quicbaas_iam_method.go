@@ -232,8 +232,10 @@ func (w *iamServiceWrapper) CreateUser(ctx context.Context, req *IAMCreateUserRe
 		// group stores by IdentityStore.CreateUser BEFORE the user record
 		// is written (validate-before-create), matching the gRPC/Unix
 		// adapter contract.
-		Roles:  req.Roles,
-		Groups: req.Groups,
+		AuthMethods: req.AuthMethods,
+		Lifecycle:   req.Lifecycle,
+		Roles:       req.Roles,
+		Groups:      req.Groups,
 	}
 
 	user, err := is.CreateUser(ctx, req.TenantID, opts)
@@ -282,6 +284,36 @@ func (w *iamServiceWrapper) UpdateUser(ctx context.Context, req *IAMUpdateUserRe
 	}
 	if req.Name != nil {
 		opts.Name = req.Name
+	}
+	// Applied independently of Name: the two used to share one field on the
+	// record, so a request carrying both silently dropped this one.
+	if req.Username != nil {
+		opts.Username = req.Username
+	}
+	if req.Lifecycle != nil {
+		opts.Lifecycle = req.Lifecycle
+	}
+	if req.AuthMethods != nil {
+		opts.AuthMethods = req.AuthMethods
+	}
+	// Attributes, Roles and Groups are forwarded for the same reason the
+	// fields above are: a field this request type ACCEPTS and this wrapper
+	// never copies is answered with success and changed nothing, and the
+	// caller cannot tell. That is not a missing convenience for any of the
+	// three — attributes feed ABAC evaluation and roles and groups feed RBAC,
+	// so an operator who tightens one is told the tightening took effect while
+	// the old grant is still what gets evaluated. REST already forwards all
+	// three through the same identity store, so dropping them here also made
+	// one verb mean two different things depending on the transport carrying
+	// it.
+	if req.Attributes != nil {
+		opts.Attributes = req.Attributes
+	}
+	if req.Roles != nil {
+		opts.Roles = req.Roles
+	}
+	if req.Groups != nil {
+		opts.Groups = req.Groups
 	}
 
 	user, err := is.UpdateUser(ctx, req.TenantID, req.UserID, opts)
@@ -406,6 +438,16 @@ func (w *iamServiceWrapper) UpdateGroup(ctx context.Context, req *UpdateGroupReq
 	}
 	if req.Description != nil {
 		opts.Description = req.Description
+	}
+	// Members is forwarded for the reason the user wrapper forwards Roles and
+	// Groups: found by auditing the sibling request types after the attribute
+	// defect, it was the same silent success. Group membership is an
+	// authorization input — permissions are resolved through the groups a user
+	// is in — so an administrator who removes someone from a group and is told
+	// it worked, while the store still lists them, has been given a revocation
+	// that did not happen.
+	if req.Members != nil {
+		opts.Members = req.Members
 	}
 
 	group, err := is.UpdateGroup(ctx, req.TenantID, req.GroupID, opts)
@@ -642,6 +684,34 @@ func (w *iamServiceWrapper) ListRoles(ctx context.Context, req *IAMListRolesRequ
 		Roles:      roles,
 		TotalCount: int64(len(roles)),
 		Timestamp:  time.Now(),
+	}, nil
+}
+
+// ReconcileBuiltInRoles converges the tenant's built-in roles onto the running
+// build's definitions through the identity store.
+func (w *iamServiceWrapper) ReconcileBuiltInRoles(ctx context.Context, req *IAMReconcileRolesRequest) (*IAMReconcileRolesResponse, error) {
+	if req == nil {
+		return nil, errors.New(errors.ErrInvalidInput, "iam.ReconcileBuiltInRoles", "request is required")
+	}
+
+	is, err := w.provider.GetIdentityStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if is == nil {
+		return nil, errors.New(errors.ErrUnavailable, "iam.ReconcileBuiltInRoles", "identity store not available")
+	}
+
+	report, err := is.ReconcileBuiltInRoles(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &IAMReconcileRolesResponse{
+		TenantID:  report.TenantID,
+		Roles:     report.Roles,
+		Changed:   report.Changed(),
+		Timestamp: time.Now(),
 	}, nil
 }
 

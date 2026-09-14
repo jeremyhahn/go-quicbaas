@@ -104,13 +104,25 @@ func mapBarrierError(err error) error {
 	return ToGRPCError(err)
 }
 
-// formatTime renders a time as RFC3339 (UTC) or returns the empty string
+// barrierTimeFormat is the ONE rendering every barrier timestamp uses on
+// every transport. It is RFC3339Nano, not RFC3339, because go-qrdb's own
+// qrdb.v1 gRPC barrier surface — which quicbaas's unix and gRPC transports
+// reach through the platform-shard servicer adapter — already renders
+// InitializedAt at nanosecond precision. Rendering the same instant at
+// second precision here made `barrier status` answer
+// "2026-08-25T04:40:05Z" over REST/MCP and "2026-08-25T04:40:05.727835519Z"
+// over unix/gRPC for one barrier: not a contradiction, but not
+// byte-comparable either, and go-quicbaas#405 requires an operator
+// diffing two transports to get the same answer.
+const barrierTimeFormat = time.RFC3339Nano
+
+// formatTime renders a time as RFC3339Nano (UTC) or returns the empty string
 // when the value is zero. The REST handler uses the same encoding.
 func formatTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.UTC().Format(time.RFC3339)
+	return t.UTC().Format(barrierTimeFormat)
 }
 
 // ---------------------------------------------------------------------------

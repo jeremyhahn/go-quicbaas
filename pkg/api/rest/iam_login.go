@@ -118,7 +118,11 @@ func (h *IAMHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, r, http.StatusOK, response)
 }
 
-// Logout handles POST /api/v1/auth/logout - Revoke access token.
+// Logout handles POST /api/v1/iam/logout - Revoke access token. Also served at
+// POST /api/v1/auth/logout by the legacy in-process listener's hand-mount
+// (RegisterRoutes); on a composed node the IAM-namespaced route is the one the
+// module surface registers, because xkms owns the /api/v1/auth plane
+// (go-quicbaas#256).
 func (h *IAMHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -168,7 +172,15 @@ func (h *IAMHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ValidateToken handles POST /api/v1/auth/validate - Validate access token.
+// ValidateToken handles POST /api/v1/iam/validate - Validate access token. Also
+// served at POST /api/v1/auth/validate by the legacy in-process listener's
+// hand-mount (RegisterRoutes); on a composed node the IAM-namespaced route is
+// the one the module surface registers, because xkms owns the /api/v1/auth
+// plane (go-quicbaas#256).
+//
+// Answers 200 with {"valid":false} for a token the session authority rejects —
+// a non-2xx here means the REQUEST was bad, not the token. Callers must read
+// the body, not just the status code.
 func (h *IAMHandler) ValidateToken(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

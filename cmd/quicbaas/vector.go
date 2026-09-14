@@ -57,6 +57,12 @@ var (
 	vectorAsync     bool
 	vectorNamespace string
 
+	// compactTimeout is the deliberate per-command override for `vector admin
+	// compact`, whose synchronous run is expected to outlast the root
+	// --timeout. It is the ONE command with its own timeout variable; every
+	// other verb reads globalTimeout, which the root --timeout binds (#246).
+	compactTimeout time.Duration
+
 	// Vector update metadata flags.
 	vectorMetadataJSON string
 	vectorMerge        bool
@@ -90,7 +96,6 @@ similarity searches. All commands connect to a running QuicBaaS server via gRPC.
 	}
 
 	// Add persistent flags for all vector commands
-	cmd.PersistentFlags().DurationVar(&timeout, "timeout", 30*time.Second, "Request timeout")
 	cmd.PersistentFlags().StringVar(&outputFormat, "output", "table", "Output format (json, yaml, table, raw)")
 
 	// TLS flags
@@ -208,7 +213,7 @@ func runVectorNamespaceCreateCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Create SDK request
@@ -256,7 +261,7 @@ func runVectorNamespaceDeleteCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.DeleteNamespaceRequest{
@@ -303,7 +308,7 @@ func runVectorNamespaceListCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.ListNamespacesRequest{
@@ -344,7 +349,7 @@ func runVectorNamespaceInfoCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.GetNamespaceInfoRequest{
@@ -411,7 +416,7 @@ func runVectorUpsertCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Create SDK request
@@ -495,7 +500,7 @@ func runVectorBatchUpsertCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Convert to SDK entities
@@ -563,7 +568,7 @@ func runVectorGetCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.GetRequest{
@@ -607,7 +612,7 @@ func runVectorDeleteCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.DeleteRequest{
@@ -670,7 +675,7 @@ func runVectorBatchDeleteCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.BatchDeleteRequest{
@@ -723,7 +728,7 @@ func runVectorListCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.ListVectorsRequest{
@@ -805,7 +810,7 @@ func runVectorUpdateMetadataCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.UpdateMetadataRequest{
@@ -891,7 +896,7 @@ func runVectorSearchSimilarCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.SearchSimilarRequest{
@@ -950,7 +955,7 @@ func runVectorSearchByIDCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.SearchByIDRequest{
@@ -1044,7 +1049,7 @@ func runVectorHybridSearchCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.HybridSearchRequest{
@@ -1134,7 +1139,7 @@ func runVectorSearchByMetadataCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.SearchByMetadataRequest{
@@ -1263,7 +1268,7 @@ func runVectorIndexRebuildCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.RebuildIndexRequest{
@@ -1311,7 +1316,7 @@ func runVectorIndexProgressCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.GetIndexProgressRequest{
@@ -1352,7 +1357,7 @@ func runVectorIndexStatsCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Use GetStats for detailed statistics
@@ -1932,7 +1937,7 @@ func runVectorExportCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.ExportRequest{
@@ -2019,7 +2024,7 @@ func runVectorImportCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Create import request
@@ -2077,7 +2082,7 @@ Examples:
 	}
 
 	cmd.Flags().BoolVar(&vectorAsync, "async", false, "Run compaction asynchronously")
-	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "Timeout for synchronous compaction")
+	cmd.Flags().DurationVar(&compactTimeout, "timeout", 5*time.Minute, "Timeout for synchronous compaction")
 
 	return cmd
 }
@@ -2091,7 +2096,7 @@ func runVectorCompactCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), compactTimeout)
 	defer cancel()
 
 	req := &vector.CompactRequest{
@@ -2158,7 +2163,7 @@ func runVectorCompactionProgressCommand(cmd *cobra.Command, args []string) error
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &vector.GetCompactionProgressRequest{

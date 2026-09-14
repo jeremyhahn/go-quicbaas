@@ -68,8 +68,12 @@ describe('getValidAccessToken — proactive refresh (bug #20)', () => {
 
     expect(token).toBe(fresh);
     expect(window.localStorage.getItem(TOKEN_KEY)).toBe(fresh);
-    // The refresh token is reused, not replaced.
-    expect(window.localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('refresh-keep');
+    // The response carried no replacement credential. The server rotates on
+    // every redemption, so 'refresh-keep' is revoked the moment it is spent:
+    // it is DROPPED, not reused. Keeping it (which this test used to assert)
+    // would replay a dead token at the next boundary and trip the server's
+    // stolen-token detection instead of ending the session cleanly.
+    expect(window.localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
     expect(fetchSpy).toHaveBeenCalledOnce();
     expect(authStore.status).toBe('authenticated');
   });

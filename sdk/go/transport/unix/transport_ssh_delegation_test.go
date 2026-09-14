@@ -20,6 +20,7 @@ import (
 	"time"
 
 	sshclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/sshfixture"
 )
 
 // TestTransport_SSH_Delegates proves the Unix transport routes the SSH
@@ -44,7 +45,8 @@ func TestTransport_SSH_Delegates(t *testing.T) {
 		{"delete", sshclient.MethodDeleteKey, &sshclient.DeleteKeyRequest{Scope: "user", Owner: "alice", Name: "laptop"}},
 		{"export", sshclient.MethodExportPublicKey, &sshclient.ExportRequest{Scope: "user", Owner: "alice", Name: "laptop"}},
 		{"sign", sshclient.MethodSignDigest, &sshclient.SignRequest{Name: "laptop", Digest: []byte("d")}},
-		{"known-host-add", sshclient.MethodAddKnownHost, &sshclient.AddKnownHostRequest{Host: "h", Fingerprint: "f"}},
+		{"known-host-add", sshclient.MethodAddKnownHost, &sshclient.AddKnownHostRequest{
+			Host: "h", Fingerprint: sshfixture.HostFingerprint}},
 		{"known-host-list", sshclient.MethodListKnownHosts, &sshclient.ListKnownHostsRequest{}},
 		{"known-host-remove", sshclient.MethodRemoveKnownHost, &sshclient.RemoveKnownHostRequest{Host: "h"}},
 		{"authorized-add", sshclient.MethodAddAuthorizedKey, &sshclient.AddAuthorizedKeyRequest{Name: "n", Line: "l"}},

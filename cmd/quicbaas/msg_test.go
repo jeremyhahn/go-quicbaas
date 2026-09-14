@@ -7051,16 +7051,16 @@ func validCacheConfig() config.EnhancedCacheConfig {
 func TestRemaining91_RunUpgradeStart_DefaultAddress(t *testing.T) {
 	origAddr := upgradeServerAddress
 	origGlobal := address
-	origTimeout := upgradeTimeout
+	origTimeout := globalTimeout
 	defer func() {
 		upgradeServerAddress = origAddr
 		address = origGlobal
-		upgradeTimeout = origTimeout
+		globalTimeout = origTimeout
 	}()
 
 	upgradeServerAddress = ""
 	address = ""
-	upgradeTimeout = 1 * time.Second
+	globalTimeout = 1 * time.Second
 
 	cmd := newUpgradeStartCommand()
 	err := runUpgradeStart(cmd, []string{"v2.0.0"})
@@ -7069,14 +7069,14 @@ func TestRemaining91_RunUpgradeStart_DefaultAddress(t *testing.T) {
 
 func TestRemaining91_RunUpgradeStart_CustomServerAddress(t *testing.T) {
 	origAddr := upgradeServerAddress
-	origTimeout := upgradeTimeout
+	origTimeout := globalTimeout
 	defer func() {
 		upgradeServerAddress = origAddr
-		upgradeTimeout = origTimeout
+		globalTimeout = origTimeout
 	}()
 
 	upgradeServerAddress = "localhost:19999"
-	upgradeTimeout = 1 * time.Second
+	globalTimeout = 1 * time.Second
 
 	cmd := newUpgradeStartCommand()
 	err := runUpgradeStart(cmd, []string{"v3.0.0"})
@@ -7086,16 +7086,16 @@ func TestRemaining91_RunUpgradeStart_CustomServerAddress(t *testing.T) {
 func TestRemaining91_RunUpgradeStart_FallbackToGlobalAddress(t *testing.T) {
 	origAddr := upgradeServerAddress
 	origGlobal := address
-	origTimeout := upgradeTimeout
+	origTimeout := globalTimeout
 	defer func() {
 		upgradeServerAddress = origAddr
 		address = origGlobal
-		upgradeTimeout = origTimeout
+		globalTimeout = origTimeout
 	}()
 
 	upgradeServerAddress = ""
 	address = "localhost:19998"
-	upgradeTimeout = 1 * time.Second
+	globalTimeout = 1 * time.Second
 
 	cmd := newUpgradeStartCommand()
 	err := runUpgradeStart(cmd, []string{"v2.1.0"})
@@ -7105,16 +7105,16 @@ func TestRemaining91_RunUpgradeStart_FallbackToGlobalAddress(t *testing.T) {
 func TestRemaining91_RunUpgradeStatus_DefaultAddress(t *testing.T) {
 	origAddr := upgradeServerAddress
 	origGlobal := address
-	origTimeout := upgradeTimeout
+	origTimeout := globalTimeout
 	defer func() {
 		upgradeServerAddress = origAddr
 		address = origGlobal
-		upgradeTimeout = origTimeout
+		globalTimeout = origTimeout
 	}()
 
 	upgradeServerAddress = ""
 	address = ""
-	upgradeTimeout = 1 * time.Second
+	globalTimeout = 1 * time.Second
 
 	cmd := newUpgradeStatusCommand()
 	err := runUpgradeStatus(cmd, []string{})
@@ -7123,14 +7123,14 @@ func TestRemaining91_RunUpgradeStatus_DefaultAddress(t *testing.T) {
 
 func TestRemaining91_RunUpgradeStatus_CustomAddress(t *testing.T) {
 	origAddr := upgradeServerAddress
-	origTimeout := upgradeTimeout
+	origTimeout := globalTimeout
 	defer func() {
 		upgradeServerAddress = origAddr
-		upgradeTimeout = origTimeout
+		globalTimeout = origTimeout
 	}()
 
 	upgradeServerAddress = "localhost:19997"
-	upgradeTimeout = 1 * time.Second
+	globalTimeout = 1 * time.Second
 
 	cmd := newUpgradeStatusCommand()
 	err := runUpgradeStatus(cmd, []string{})
@@ -7140,16 +7140,16 @@ func TestRemaining91_RunUpgradeStatus_CustomAddress(t *testing.T) {
 func TestRemaining91_RunUpgradeStatus_FallbackToGlobalAddress(t *testing.T) {
 	origAddr := upgradeServerAddress
 	origGlobal := address
-	origTimeout := upgradeTimeout
+	origTimeout := globalTimeout
 	defer func() {
 		upgradeServerAddress = origAddr
 		address = origGlobal
-		upgradeTimeout = origTimeout
+		globalTimeout = origTimeout
 	}()
 
 	upgradeServerAddress = ""
 	address = "localhost:19996"
-	upgradeTimeout = 1 * time.Second
+	globalTimeout = 1 * time.Second
 
 	cmd := newUpgradeStatusCommand()
 	err := runUpgradeStatus(cmd, []string{})
@@ -7995,11 +7995,21 @@ func TestRemaining91_CloseSDKClient_NilClient(t *testing.T) {
 }
 
 func TestRemaining91_BuildSDKClientOptions_ZeroTimeout(t *testing.T) {
-	origT := transport
-	origTimeout := globalTimeout
-	defer func() { transport = origT; globalTimeout = origTimeout }()
+	origT, origTimeout, origTenant := transport, globalTimeout, globalTenantID
+	origAddr, origCA, origDataDir := address, tlsCA, dataDir
+	defer func() {
+		transport, globalTimeout, globalTenantID = origT, origTimeout, origTenant
+		address, tlsCA, dataDir = origAddr, origCA, origDataDir
+	}()
 	transport = "grpc"
 	globalTimeout = 0
+	// Every input that contributes an option is pinned to its no-option value,
+	// so a failure here names the timeout rather than whatever global a
+	// neighbouring test happened to leave behind.
+	globalTenantID = ""
+	address = "localhost:9090"
+	tlsCA = ""
+	dataDir = t.TempDir()
 	opts, err := buildSDKClientOptions()
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(opts))
@@ -8019,11 +8029,11 @@ func TestRemaining91_CreateOllamaClient_UnsupportedTransport(t *testing.T) {
 func TestRemaining91_CreateOllamaClient_GRPCDefault(t *testing.T) {
 	origT := transport
 	origAddr := address
-	origTimeout := timeout
-	defer func() { transport = origT; address = origAddr; timeout = origTimeout }()
+	origTimeout := globalTimeout
+	defer func() { transport = origT; address = origAddr; globalTimeout = origTimeout }()
 	transport = ""
 	address = "localhost:19993"
-	timeout = 1 * time.Second
+	globalTimeout = 1 * time.Second
 	client, err := createOllamaClient()
 	if err == nil {
 		assert.NotNil(t, client)
@@ -8033,10 +8043,10 @@ func TestRemaining91_CreateOllamaClient_GRPCDefault(t *testing.T) {
 
 func TestRemaining91_CreateOllamaGRPCClient_Success(t *testing.T) {
 	origAddr := address
-	origTimeout := timeout
-	defer func() { address = origAddr; timeout = origTimeout }()
+	origTimeout := globalTimeout
+	defer func() { address = origAddr; globalTimeout = origTimeout }()
 	address = "localhost:19992"
-	timeout = 1 * time.Second
+	globalTimeout = 1 * time.Second
 	client, err := createOllamaGRPCClient()
 	if err == nil {
 		assert.NotNil(t, client)
@@ -8264,10 +8274,10 @@ func TestRemaining91_RunCryptoRandomCommand_FactoryError(t *testing.T) {
 
 func TestRemaining91_CreateGRPCBackupClient_ConnectionAttempt(t *testing.T) {
 	origAddr := address
-	origTimeout := timeout
-	defer func() { address = origAddr; timeout = origTimeout }()
+	origTimeout := globalTimeout
+	defer func() { address = origAddr; globalTimeout = origTimeout }()
 	address = "localhost:19991"
-	timeout = 1 * time.Second
+	globalTimeout = 1 * time.Second
 	client, err := createGRPCBackupClient()
 	if err == nil {
 		assert.NotNil(t, client)
@@ -8285,11 +8295,11 @@ func TestRemaining91_GetK8sServiceAccountToken_FileNotFound(t *testing.T) {
 
 func TestRemaining91_CreateSecretsGRPCClient_DefaultAuth(t *testing.T) {
 	origAddr := address
-	origTimeout := timeout
+	origTimeout := globalTimeout
 	origAuthMode := secretsAuthMode
-	defer func() { address = origAddr; timeout = origTimeout; secretsAuthMode = origAuthMode }()
+	defer func() { address = origAddr; globalTimeout = origTimeout; secretsAuthMode = origAuthMode }()
 	address = "localhost:19989"
-	timeout = 1 * time.Second
+	globalTimeout = 1 * time.Second
 	secretsAuthMode = "token"
 	client, err := createSecretsGRPCClient()
 	if err == nil {
@@ -8300,11 +8310,11 @@ func TestRemaining91_CreateSecretsGRPCClient_DefaultAuth(t *testing.T) {
 
 func TestRemaining91_CreateSecretsGRPCClient_UnsupportedAuthMode(t *testing.T) {
 	origAddr := address
-	origTimeout := timeout
+	origTimeout := globalTimeout
 	origAuthMode := secretsAuthMode
-	defer func() { address = origAddr; timeout = origTimeout; secretsAuthMode = origAuthMode }()
+	defer func() { address = origAddr; globalTimeout = origTimeout; secretsAuthMode = origAuthMode }()
 	address = "localhost:19988"
-	timeout = 1 * time.Second
+	globalTimeout = 1 * time.Second
 	secretsAuthMode = "oauth"
 	_, err := createSecretsGRPCClient()
 	require.Error(t, err)
@@ -8313,11 +8323,11 @@ func TestRemaining91_CreateSecretsGRPCClient_UnsupportedAuthMode(t *testing.T) {
 
 func TestRemaining91_CreateSecretsGRPCClient_K8sAuthNoToken(t *testing.T) {
 	origAddr := address
-	origTimeout := timeout
+	origTimeout := globalTimeout
 	origAuthMode := secretsAuthMode
-	defer func() { address = origAddr; timeout = origTimeout; secretsAuthMode = origAuthMode }()
+	defer func() { address = origAddr; globalTimeout = origTimeout; secretsAuthMode = origAuthMode }()
 	address = "localhost:19987"
-	timeout = 1 * time.Second
+	globalTimeout = 1 * time.Second
 	secretsAuthMode = "k8s"
 	_, err := createSecretsGRPCClient()
 	require.Error(t, err)

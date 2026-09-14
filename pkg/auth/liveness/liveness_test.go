@@ -34,7 +34,7 @@ type recordingSource struct {
 	retErr  error
 }
 
-func (r *recordingSource) TokenLiveness(_ context.Context, tenantID, subject, jti string) (bool, error) {
+func (r *recordingSource) TokenLiveness(_ context.Context, tenantID, subject, userID, principalType, jti string) (bool, error) {
 	r.gotTenant = tenantID
 	r.gotSubject = subject
 	r.gotJTI = jti

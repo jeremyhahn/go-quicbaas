@@ -231,7 +231,13 @@ describe('MainApp — app-shell auth gate (security regression)', () => {
   });
 
   it('shows the invite-activation page WITHOUT sidebar/nav landmarks', async () => {
-    await goto('/invite/deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
+    // BOTH SEGMENTS: the invite API is tenant-scoped, so a token issued for
+    // one tenant is absent from another's store and the link has to carry the
+    // tenant too (router.svelte.ts). This test asserted the tenant-less shape
+    // 1f95595c removed, so it had been resolving to not-found and failing.
+    await goto(
+      '/invite/automatethethings/deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+    );
 
     render(MainApp);
 

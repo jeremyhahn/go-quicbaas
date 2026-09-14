@@ -625,13 +625,23 @@ func TestProjectAuthz_AuthorizeAgent_EmptyArgsAndInvalidRole(t *testing.T) {
 	}
 }
 
-func TestProjectAuthz_AuthorizeAgent_MissingProjectUnscoped(t *testing.T) {
+func TestProjectAuthz_AuthorizeAgent_MissingProjectRefused(t *testing.T) {
 	ctx := context.Background()
 	authz := NewProjectAuthz(&idOnlyProjectStore{})
 
-	// Project not found → findProject returns (nil, nil) → legacy allow.
-	if err := authz.AuthorizeAgent(ctx, "no-such", "agent", ProjectRoleLead); err != nil {
-		t.Fatalf("missing project should fall through to legacy allow: %v", err)
+	// Project not found → findProject returns (nil, nil) → refusal. A check
+	// that could not read the role matrix must never answer "allowed".
+	err := authz.AuthorizeAgent(ctx, "no-such", "agent", ProjectRoleLead)
+	if err == nil {
+		t.Fatal("expected a refusal for a project the store cannot produce, got nil")
+	}
+	var unresolved *ProjectUnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("expected *ProjectUnresolvedError, got %T: %v", err, err)
+	}
+	if unresolved.ProjectID != "no-such" || unresolved.AgentID != "agent" {
+		t.Errorf("refusal names project=%q agent=%q, want project=%q agent=%q",
+			unresolved.ProjectID, unresolved.AgentID, "no-such", "agent")
 	}
 }
 
@@ -686,12 +696,25 @@ func (p *memWorkflowPersistor) Save(_ context.Context, def *WorkflowDefinition) 
 	return nil
 }
 
-func (p *memWorkflowPersistor) Remove(_ context.Context, name string) error {
+func (p *memWorkflowPersistor) Remove(_ context.Context, _ string, name string) error {
 	if p.removeErr != nil {
 		return p.removeErr
 	}
 	delete(p.saved, name)
 	return nil
+}
+
+func (p *memWorkflowPersistor) Load(_ context.Context, tenantID string) ([]*WorkflowDefinition, error) {
+	if p.loadErr != nil {
+		return nil, p.loadErr
+	}
+	out := make([]*WorkflowDefinition, 0, len(p.saved))
+	for _, d := range p.saved {
+		if d.TenantID == tenantID {
+			out = append(out, d)
+		}
+	}
+	return out, nil
 }
 
 func (p *memWorkflowPersistor) LoadAll(_ context.Context) ([]*WorkflowDefinition, error) {
@@ -707,7 +730,7 @@ func (p *memWorkflowPersistor) LoadAll(_ context.Context) ([]*WorkflowDefinition
 
 func TestWorkflowLoader_Rehydrate_NoPersistor(t *testing.T) {
 	loader := NewWorkflowLoader()
-	n, err := loader.Rehydrate(context.Background())
+	n, err := loader.Rehydrate(context.Background(), SystemTenantID)
 	if err != nil {
 		t.Fatalf("Rehydrate without persistor should be a no-op: %v", err)
 	}
@@ -723,25 +746,28 @@ func TestWorkflowLoader_Rehydrate_LoadsFromPersistor(t *testing.T) {
 	persistor.saved["b"] = newValidWorkflowDef("b")
 	// A junk entry that must be skipped during rehydrate.
 	persistor.saved["junk"] = &WorkflowDefinition{Name: ""}
+	for _, d := range persistor.saved {
+		d.TenantID = SystemTenantID
+	}
 
 	loader := NewWorkflowLoader()
 	// Pre-seed an in-memory entry that should be cleared by Rehydrate.
-	if err := loader.Register(newValidWorkflowDef("stale")); err != nil {
+	if err := loader.Register(SystemTenantID, newValidWorkflowDef("stale")); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	loader.SetPersistor(persistor)
 
-	n, err := loader.Rehydrate(ctx)
+	n, err := loader.Rehydrate(ctx, SystemTenantID)
 	if err != nil {
 		t.Fatalf("Rehydrate: %v", err)
 	}
 	if n != 3 {
 		t.Fatalf("expected 3 entries reported (raw count), got %d", n)
 	}
-	if _, err := loader.Get("a"); err != nil {
+	if _, err := loader.Get(SystemTenantID, "a"); err != nil {
 		t.Fatalf("expected 'a' loaded: %v", err)
 	}
-	if _, err := loader.Get("stale"); err == nil {
+	if _, err := loader.Get(SystemTenantID, "stale"); err == nil {
 		t.Fatal("expected pre-existing 'stale' entry to be cleared")
 	}
 }
@@ -753,7 +779,7 @@ func TestWorkflowLoader_Rehydrate_PersistorError(t *testing.T) {
 	loader := NewWorkflowLoader()
 	loader.SetPersistor(persistor)
 
-	if _, err := loader.Rehydrate(context.Background()); !errors.Is(err, persistor.loadErr) {
+	if _, err := loader.Rehydrate(context.Background(), SystemTenantID); !errors.Is(err, persistor.loadErr) {
 		t.Fatalf("expected load error, got %v", err)
 	}
 }
@@ -763,13 +789,13 @@ func TestWorkflowLoader_Update_WithPersistor(t *testing.T) {
 	loader := NewWorkflowLoader()
 	loader.SetPersistor(persistor)
 
-	if err := loader.Register(newValidWorkflowDef("wf")); err != nil {
+	if err := loader.Register(SystemTenantID, newValidWorkflowDef("wf")); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
 	updated := newValidWorkflowDef("wf")
 	updated.Settings.MaxIterations = 7
-	if err := loader.Update(updated); err != nil {
+	if err := loader.Update(SystemTenantID, updated); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	if persistor.saved["wf"].Settings.MaxIterations != 7 {
@@ -779,7 +805,7 @@ func TestWorkflowLoader_Update_WithPersistor(t *testing.T) {
 
 func TestWorkflowLoader_Update_NotFound(t *testing.T) {
 	loader := NewWorkflowLoader()
-	if err := loader.Update(newValidWorkflowDef("ghost")); !errors.Is(err, ErrWorkflowNotFound) {
+	if err := loader.Update(SystemTenantID, newValidWorkflowDef("ghost")); !errors.Is(err, ErrWorkflowNotFound) {
 		t.Fatalf("expected ErrWorkflowNotFound, got %v", err)
 	}
 }
@@ -790,7 +816,7 @@ func TestWorkflowLoader_Update_PersistorErrorRollsBack(t *testing.T) {
 
 	orig := newValidWorkflowDef("wf")
 	orig.Settings.MaxIterations = 1
-	if err := loader.Register(orig); err != nil {
+	if err := loader.Register(SystemTenantID, orig); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	loader.SetPersistor(persistor)
@@ -798,11 +824,11 @@ func TestWorkflowLoader_Update_PersistorErrorRollsBack(t *testing.T) {
 
 	updated := newValidWorkflowDef("wf")
 	updated.Settings.MaxIterations = 99
-	if err := loader.Update(updated); !errors.Is(err, persistor.saveErr) {
+	if err := loader.Update(SystemTenantID, updated); !errors.Is(err, persistor.saveErr) {
 		t.Fatalf("expected persistor save error, got %v", err)
 	}
 	// In-memory definition must be rolled back to the original.
-	got, err := loader.Get("wf")
+	got, err := loader.Get(SystemTenantID, "wf")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -816,10 +842,10 @@ func TestWorkflowLoader_Delete_WithPersistor(t *testing.T) {
 	loader := NewWorkflowLoader()
 	loader.SetPersistor(persistor)
 
-	if err := loader.Register(newValidWorkflowDef("wf")); err != nil {
+	if err := loader.Register(SystemTenantID, newValidWorkflowDef("wf")); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if err := loader.Delete("wf"); err != nil {
+	if err := loader.Delete(SystemTenantID, "wf"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, ok := persistor.saved["wf"]; ok {
@@ -829,7 +855,7 @@ func TestWorkflowLoader_Delete_WithPersistor(t *testing.T) {
 
 func TestWorkflowLoader_Delete_NotFound(t *testing.T) {
 	loader := NewWorkflowLoader()
-	if err := loader.Delete("ghost"); !errors.Is(err, ErrWorkflowNotFound) {
+	if err := loader.Delete(SystemTenantID, "ghost"); !errors.Is(err, ErrWorkflowNotFound) {
 		t.Fatalf("expected ErrWorkflowNotFound, got %v", err)
 	}
 }
@@ -837,17 +863,17 @@ func TestWorkflowLoader_Delete_NotFound(t *testing.T) {
 func TestWorkflowLoader_Delete_PersistorErrorRestores(t *testing.T) {
 	persistor := newMemWorkflowPersistor()
 	loader := NewWorkflowLoader()
-	if err := loader.Register(newValidWorkflowDef("wf")); err != nil {
+	if err := loader.Register(SystemTenantID, newValidWorkflowDef("wf")); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	loader.SetPersistor(persistor)
 	persistor.removeErr = errors.New("remove failed")
 
-	if err := loader.Delete("wf"); !errors.Is(err, persistor.removeErr) {
+	if err := loader.Delete(SystemTenantID, "wf"); !errors.Is(err, persistor.removeErr) {
 		t.Fatalf("expected persistor remove error, got %v", err)
 	}
 	// In-memory entry must be restored after the failed remove.
-	if _, err := loader.Get("wf"); err != nil {
+	if _, err := loader.Get(SystemTenantID, "wf"); err != nil {
 		t.Fatalf("expected definition restored after remove failure: %v", err)
 	}
 }

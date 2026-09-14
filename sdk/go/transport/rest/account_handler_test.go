@@ -50,7 +50,8 @@ func TestAccountHandlerRoutes(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		// One envelope satisfying every shape the handlers decode.
 		_, _ = w.Write([]byte(`{"account":{"id":"acct-1"},"accounts":[{"id":"acct-1"}],` +
-			`"total":1,"account_id":"acct-1","deleted":true,"usage":{"total_tokens":42}}`))
+			`"total":1,"account_id":"acct-1","deleted":true,"usage":{"total_tokens":42},` +
+			`"credential":{"access_token":"RELEASED","access_token_env_key":"K"}}`))
 	}))
 	defer server.Close()
 
@@ -97,6 +98,9 @@ func TestAccountHandlerRoutes(t *testing.T) {
 		{"Usage", "Usage",
 			&account.GetAccountUsageRequest{TenantID: "t1", AccountID: "acct-1"},
 			http.MethodGet, "/api/v1/agent-accounts/acct-1/usage", true},
+		{"Materialize", "Materialize",
+			&account.MaterializeCredentialRequest{TenantID: "t1", AccountID: "acct-1"},
+			http.MethodPost, "/api/v1/agent-accounts/acct-1/materialize", true},
 	}
 	handler := newAccountRESTHandler(tr)
 	for _, tc := range cases {
@@ -207,5 +211,51 @@ func TestAccountHandlerUsageRequiresAReport(t *testing.T) {
 	if _, err := handler.handleRequest(context.Background(), "Usage",
 		&account.GetAccountUsageRequest{TenantID: "t1", AccountID: "acct-1"}); err == nil {
 		t.Fatal("expected an error when the server returns no usage report")
+	}
+}
+
+// TestAccountHandlerMaterializeDecodesTheReleasedEnvelope proves the release
+// response reaches the caller intact — the one account response in this
+// transport that carries secret material.
+func TestAccountHandlerMaterializeDecodesTheReleasedEnvelope(t *testing.T) {
+	var gotBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"account_id":"acct-1","provider":"claude","refresh_policy":"none",` +
+			`"credential":{"access_token":"RELEASED","access_token_env_key":"CLAUDE_CODE_OAUTH_TOKEN"},` +
+			`"updated_at":"2026-09-09T12:00:00Z"}`))
+	}))
+	defer server.Close()
+
+	handler := newAccountRESTHandler(newTestTransport(t, server))
+	resp, err := handler.handleRequest(context.Background(), "Materialize",
+		&account.MaterializeCredentialRequest{TenantID: "t1", AccountID: "acct-1", ProjectID: "proj-1"})
+	if err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	released, ok := resp.(*account.MaterializedCredential)
+	if !ok {
+		t.Fatalf("response is %T, want *account.MaterializedCredential", resp)
+	}
+	if released.Credential == nil || released.Credential.AccessTokenEnvKey != "CLAUDE_CODE_OAUTH_TOKEN" {
+		t.Fatal("release lost the material a spawn needs")
+	}
+	if released.UpdatedAt.IsZero() {
+		t.Error("release lost the cache-invalidation signal")
+	}
+	if !strings.Contains(gotBody, "proj-1") {
+		t.Errorf("request body %q did not carry the project scope", gotBody)
+	}
+}
+
+// TestAccountHandlerMaterializeRejectsTheWrongRequestType covers the
+// dispatcher's bad-input path.
+func TestAccountHandlerMaterializeRejectsTheWrongRequestType(t *testing.T) {
+	handler := newAccountRESTHandler(nil)
+	if _, err := handler.handleRequest(context.Background(), "Materialize",
+		&account.GetAccountRequest{TenantID: "t1", AccountID: "acct-1"}); err == nil {
+		t.Fatal("expected an error for a mismatched request type")
 	}
 }

@@ -121,10 +121,7 @@ export type {
   ProjectsClient,
   Project,
   ProjectRole,
-  ProjectWorkspace,
-  ProjectGit,
-  ProjectPermissions,
-  ProjectQuotas,
+  ContextRepo,
   CreateProjectRequest,
   CreateProjectResponse,
   GetProjectResponse,
@@ -137,6 +134,23 @@ export type {
   RevokeAgentRoleRequest,
   RevokeAgentRoleResponse,
 } from './projects.js';
+export type {
+  SdlcClient,
+  ForgeConfig,
+  ReviewPolicy,
+  WorkerConfig,
+  RankingPolicy,
+  ProjectBinding,
+  DeliveryPullRequest,
+  ReviewRecord,
+  CheckRecord,
+  Delivery,
+  OnboardingConfig,
+  OnboardingReport,
+  ConformanceReport,
+  ConformanceFinding,
+  ConformanceCheckResult,
+} from './sdlc.js';
 export type {
   AccountsClient,
   Account,
@@ -160,6 +174,10 @@ export type {
   AccountUsage,
   GetAccountUsageResponse,
 } from './accounts.js';
+export {
+  parseJSONPreservingLargeIntegers,
+  quoteUnrepresentableIntegers,
+} from './json.js';
 export type {
   CAClient,
   CertificateUsage,
@@ -250,6 +268,10 @@ export type * from './types.js';
 
 // SandboxMode const object (not a type — must be a named export, not type-only).
 export { SandboxMode } from './types.js';
+
+// SPEND_UNATTRIBUTED is a value, not a type: a caller drilling into a spend
+// report's unattributed row supplies it as that level's scope.
+export { SPEND_UNATTRIBUTED } from './types.js';
 
 // Typed errors.
 export {

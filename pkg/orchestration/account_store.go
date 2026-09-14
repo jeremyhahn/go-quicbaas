@@ -21,7 +21,6 @@ import (
 
 	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
-	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 )
 
 // =============================================================================
@@ -94,6 +93,16 @@ type accountStore struct {
 	kv      interfaces.KVStore
 	auditor StoreAuditor
 
+	// creator and deleter are kv's guarded-write capabilities, asserted once at
+	// construction. Nil when the backing store cannot decide a contested write,
+	// in which case CreateAccount refuses rather than probing and hoping.
+	//
+	// This store needs BOTH halves, unlike the task store: it claims a scope's
+	// default pointer and it releases one, and an unguarded release can remove a
+	// pointer another account legitimately took (go-qrdb#41).
+	creator guardedCreator
+	deleter guardedDeleter
+
 	// recordMu serializes the read-modify-write sequence on one account
 	// record (Update, Touch, and the default-pointer swap in SetDefault).
 	recordMu keyedMutex
@@ -115,13 +124,26 @@ var _ AccountStore = (*accountStore)(nil)
 // NewAccountStore returns an AccountStore backed by kv.
 func NewAccountStore(kv interfaces.KVStore, opts ...StoreOption) AccountStore {
 	cfg := newStoreConfig(opts...)
-	return &accountStore{kv: kv, auditor: cfg.auditor}
+	store := &accountStore{kv: kv, auditor: cfg.auditor}
+	// Asserted once: the capabilities are static properties of the injected
+	// store, so probing them per call would ask the same question forever.
+	if creator, ok := kv.(guardedCreator); ok {
+		store.creator = creator
+	}
+	if deleter, ok := kv.(guardedDeleter); ok {
+		store.deleter = deleter
+	}
+	return store
 }
 
 // NewInMemoryAccountStore returns a memory-backed AccountStore for tests and
 // embedded use that need no durability.
 func NewInMemoryAccountStore() AccountStore {
-	return NewAccountStore(kvstore.NewMemory())
+	// go-qrdb's memory KVStore rather than kvstore.NewMemory(): creating an
+	// account is a guarded create and claiming a scope default is a guarded
+	// election, and that adapter wraps a raw storage engine with no conditional
+	// write to delegate to.
+	return NewAccountStore(NewMemoryTaskKV())
 }
 
 func (s *accountStore) ready() error {
@@ -129,6 +151,29 @@ func (s *accountStore) ready() error {
 		return &AccountStoreError{Message: "kv store must not be nil"}
 	}
 	return nil
+}
+
+// scopeCheck refuses a verb whose context is scoped to a tenant other than
+// the one the request names.
+//
+// The KV beneath this store routes by the CONTEXT's tenant, and a
+// prefix-isolation tenant's records live in that tenant's own namespace; the
+// tenant segment in the key is a label, not the router's input. A mismatch
+// therefore means the record would be read from, or written into, a namespace
+// its own tenant field disagrees with — exactly the state go-quicbaas#535
+// measured (a record tagged tenant=T sitting in the system namespace, listable
+// by the admin, invisible to T's spawn path). Refusing it up front is what
+// keeps that state from ever looking healthy again.
+//
+// An unscoped context is allowed through: in-process embedded callers and
+// unit tests carry none, and the service layer above scopes every API request
+// before it reaches here (service.accountTenantContext).
+func scopeCheck(ctx context.Context, tenantID string) error {
+	carried := TenantFromContext(ctx)
+	if carried == "" || carried == tenantID {
+		return nil
+	}
+	return &AccountTenantScopeError{ContextTenant: carried, TenantID: tenantID}
 }
 
 // =============================================================================
@@ -145,7 +190,7 @@ func (s *accountStore) Create(ctx context.Context, account *Account) error {
 	return err
 }
 
-func (s *accountStore) create(ctx context.Context, account *Account) error {
+func (s *accountStore) create(ctx context.Context, account *Account) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -164,22 +209,31 @@ func (s *accountStore) create(ctx context.Context, account *Account) error {
 	if account.Provider == "" {
 		return &AccountInvalidError{Field: "provider", Message: "must not be empty"}
 	}
+	// A SPEND POLICY IS REFUSED AT THE WRITE, NEVER AT THE SPAWN. A window
+	// that meters nothing, or a breaker threshold of zero, is only detectable
+	// as a defect here — by the time the gate reads it, the choice is between
+	// refusing an account the operator believes is capped and admitting one
+	// they believe is metered, and both are wrong.
+	if err := account.Spend.Validate(); err != nil {
+		return err
+	}
+	if err := scopeCheck(ctx, account.TenantID); err != nil {
+		return err
+	}
 
 	recordKey, err := accountRecordKey(account.TenantID, account.ID)
 	if err != nil {
 		return err
 	}
 
+	if s.creator == nil || s.deleter == nil {
+		return &AccountStoreError{
+			Message: "creates need a store that can decide them; this one cannot guard a write",
+		}
+	}
+
 	unlock := s.recordMu.lock(recordKey)
 	defer unlock()
-
-	exists, err := s.kv.Exists(ctx, recordKey)
-	if err != nil {
-		return &AccountStoreError{Message: "failed to probe account: " + err.Error()}
-	}
-	if exists {
-		return &AccountInvalidError{Field: "id", Message: "account already exists"}
-	}
 
 	now := time.Now().UTC()
 	if account.CreatedAt.IsZero() {
@@ -208,34 +262,269 @@ func (s *accountStore) create(ctx context.Context, account *Account) error {
 	unlockDefault := s.defaultMu.lock(defaultKey)
 	defer unlockDefault()
 
-	if !account.Default {
-		vacant, vacantErr := s.defaultVacantLocked(ctx, defaultKey, account.TenantID)
-		if vacantErr != nil {
-			return vacantErr
-		}
-		account.Default = vacant
-	}
+	// Whether to ATTEMPT the auto-claim. The answer to "is this scope vacant?"
+	// is not decided here any more — electDefaultLocked asks the store, which is
+	// the only place the answer survives contact with a second node.
+	vacancyClaimed := !account.Default
 
 	// The pointer is written BEFORE the record, and is the ONLY place the
 	// default is recorded — Account.Default is derived from it on every read, so
-	// there is no second copy to keep in step. A failure of the record write
-	// therefore leaves a pointer naming an account that does not exist, which
-	// defaultVacantLocked already treats as a vacant scope, so the next create
-	// heals it.
+	// there is no second copy to keep in step.
+	//
+	// TWO DIFFERENT WRITES, because they are two different intentions. A caller
+	// that ASKED for Default:true is naming a default, which is an operator
+	// update and is last-writer-wins exactly as SetDefault is. A caller that did
+	// not ask is auto-claiming a scope only if it is vacant, which is a contested
+	// election and must be decided by the store.
+	// claimedScope records that THIS call WROTE the scope pointer, which is the
+	// only pointer it is entitled to give back — see the defer below. Winning
+	// is not enough: a pointer that already named this account was written by
+	// someone else, and releasing it would take the scope from a live account.
+	claimedScope := false
 	if account.Default {
 		if err := s.writeDefaultPointerLocked(ctx, defaultKey, account.ID); err != nil {
 			return err
 		}
+	} else if vacancyClaimed {
+		won, claimed, electErr := s.electDefaultLocked(ctx, defaultKey, account.TenantID, account.ID)
+		if electErr != nil {
+			return electErr
+		}
+		account.Default = won
+		claimedScope = claimed
 	}
+
+	// A WON ELECTION IS A LOAN UNTIL THE RECORD EXISTS (#249).
+	//
+	// The pointer is claimed before the record is written, so every return
+	// between here and a successful PutIfAbsent used to leave the scope naming
+	// an account this call never created. That residue is DURABLE, not
+	// transient: electDefaultLocked heals only a pointer whose holder has no
+	// record (defaultHolderMissing), and the create that fails most often is a
+	// duplicate ID — whose record exists, in another scope. That is precisely
+	// the state the store deliberately refuses to heal, because it cannot be
+	// told apart from a move in flight. So nothing recovered the scope
+	// afterwards: every later create there reported Default=false and selection
+	// found no default at all.
+	//
+	// A DEFER RATHER THAN A RELEASE ON EACH PATH, because the defect IS a
+	// forgotten path and there were three of them. recordWritten is set at
+	// exactly one point — the moment the account exists and the claim stops
+	// being a loan — so a failure path added later is covered by construction
+	// instead of by whoever adds it remembering.
+	//
+	// IT RUNS UNDER defaultMu. Defers are LIFO and unlockDefault was registered
+	// above, so the release happens while this call still holds the scope lock,
+	// exactly as the claim did.
+	//
+	// GUARDED BY THIS CALL'S OWN ID, and only after a WON election. A create
+	// that lost never sets claimedScope, so it cannot release the winner's
+	// pointer; and CompareAndDelete removes the pointer only while it still
+	// names this account, so a release racing a legitimate SetDefault does
+	// nothing rather than stranding the new holder — the same reasoning
+	// releaseDefaultLocked carries (go-qrdb#41).
+	//
+	// THE OTHER BRANCH OF THE if ABOVE IS NOT COVERED HERE. A create that asked
+	// for Default:true writes the pointer with an unconditional Put, so a
+	// failure there leaves the scope naming a phantom AND has already destroyed
+	// whatever default it displaced. Releasing this call's ID would leave the
+	// scope vacant rather than restore the operator's choice — a different end
+	// state needing a different remedy, filed as #480 rather than decided here.
+	//
+	// THE ORDERING IS NOT CHANGED. Writing the record before claiming the
+	// pointer would also close this window, and would remove the concurrent
+	// pointer-steal behind #244, but it gives up the "pointer written BEFORE
+	// the record" property the surrounding comments rely on. That is an
+	// architecture decision and is the owner's, not this fix's (#249).
+	recordWritten := false
+	defer func() {
+		if !claimedScope || recordWritten {
+			return
+		}
+		// Joined, never substituted: the caller must still be able to see the
+		// reason its create failed. errors.Join keeps errors.As/Is working on
+		// the original, so an AccountInvalidError stays one.
+		if releaseErr := s.releaseClaimedDefaultLocked(ctx, defaultKey, account.ID); releaseErr != nil {
+			err = errors.Join(err, releaseErr)
+		}
+	}()
 
 	data, marshalErr := marshalAccount(account)
 	if marshalErr != nil {
 		return marshalErr
 	}
-	if err := s.kv.Put(ctx, recordKey, data); err != nil {
+	stored, err := s.creator.PutIfAbsent(ctx, recordKey, data)
+	if err != nil {
 		return &AccountStoreError{Message: "failed to write account: " + err.Error()}
 	}
+	if !stored {
+		return &AccountInvalidError{Field: "id", Message: "account already exists"}
+	}
+	recordWritten = true
+
+	// VERIFY AFTER THE RECORD WRITE, then RE-DERIVE rather than roll back.
+	//
+	// A node that claimed the pointer and was then SLOW — not crashed — can have
+	// its claim healed away by another create that observed its record absent and
+	// concluded the scope was vacant. Its own record write still succeeds
+	// afterwards, on its own uncontested key, so without this it would return
+	// Default:true for a scope another account now owns. Nothing else detects
+	// that.
+	//
+	// The remedy is a re-read, not a rollback, because of what is contested. The
+	// pointer is not part of the account's identity: losing the election leaves a
+	// perfectly good non-default account, and marshalAccount already zeroes the
+	// persisted field so no stored state disagrees. Only the value handed back to
+	// the caller can be stale, and re-deriving it makes that value agree with
+	// what any later read would report. Contrast the project name, which IS an
+	// identity — there a lost race invalidates the record and the create must
+	// fail.
+	holderID, holderErr := s.currentDefaultID(ctx, defaultKey)
+	if holderErr != nil {
+		return holderErr
+	}
+	account.Default = holderID == account.ID
 	return nil
+}
+
+// guarded reports whether the backing store can decide a contested write.
+//
+// Checked by every path that claims or releases a scope pointer, so a store
+// without the capability refuses up front instead of dereferencing a missing
+// capability partway through a multi-key sequence.
+func (s *accountStore) guarded() error {
+	if s.creator == nil || s.deleter == nil {
+		return &AccountStoreError{
+			Message: "scope defaults need a store that can decide them; this one cannot guard a write",
+		}
+	}
+	return nil
+}
+
+// electDefaultLocked claims a vacant scope's default pointer for accountID, and
+// reports whether it won.
+//
+// Losing is a verdict, not an error: a scope that already has a live default is
+// the ordinary case, and the account is created either way.
+//
+// An orphaned pointer — one naming an account whose record no longer exists — is
+// healed rather than obeyed, but BOTH steps are guarded. CompareAndDelete
+// removes only the exact orphan this caller observed, so a healer racing the
+// holder's own late write cannot delete a pointer that has since moved, and the
+// following PutIfAbsent cannot overwrite whatever took its place.
+//
+// WON AND CLAIMED ARE NOT THE SAME ANSWER, and conflating them lets a create
+// release a pointer it never took (#249). won says this account owns the scope,
+// which is what Account.Default is derived from. claimed says THIS CALL is what
+// put the pointer there, which is the only thing that entitles it to give the
+// pointer back. They differ in exactly one case: a pointer that already names
+// this account ID. That is ordinary — it is the residue of an earlier failed
+// create, which a successful record write here heals — and a create that then
+// fails must leave it exactly as it found it.
+func (s *accountStore) electDefaultLocked(ctx context.Context, defaultKey, tenantID, accountID string) (won, claimed bool, err error) {
+	won, err = s.creator.PutIfAbsent(ctx, defaultKey, []byte(accountID))
+	if err != nil {
+		return false, false, &AccountStoreError{Message: "failed to claim account default pointer: " + err.Error()}
+	}
+	if won {
+		return true, true, nil
+	}
+
+	holderID, err := s.currentDefaultID(ctx, defaultKey)
+	if err != nil {
+		return false, false, err
+	}
+	if holderID == "" || holderID == accountID {
+		// The pointer was taken and released, or already names this account.
+		// Either way there is nothing to heal and nothing to steal — and
+		// nothing this call may release, because it wrote none of it.
+		return holderID == accountID, false, nil
+	}
+	orphaned, err := s.defaultHolderMissing(ctx, tenantID, holderID)
+	if err != nil {
+		return false, false, err
+	}
+	if !orphaned {
+		return false, false, nil
+	}
+
+	removed, err := s.deleter.CompareAndDelete(ctx, defaultKey, []byte(holderID))
+	if err != nil {
+		return false, false, &AccountStoreError{Message: "failed to clear orphaned account default pointer: " + err.Error()}
+	}
+	if !removed {
+		// The pointer moved between the read and the delete, so the orphan this
+		// caller saw is already gone and someone else owns the scope.
+		return false, false, nil
+	}
+	won, err = s.creator.PutIfAbsent(ctx, defaultKey, []byte(accountID))
+	if err != nil {
+		return false, false, &AccountStoreError{Message: "failed to claim account default pointer: " + err.Error()}
+	}
+	return won, won, nil
+}
+
+// releaseClaimedDefaultLocked gives back a scope pointer that a create won and
+// then could not use, leaving the scope as the call found it: vacant.
+//
+// Distinct from releaseDefaultLocked, which retires the default of an account
+// being DELETED. This one undoes a claim whose account never came into
+// existence, and its caller must have WON the election — releasing on any other
+// path would remove a pointer belonging to someone else.
+//
+// removed=false is the ordinary outcome of a late release, not an error: it
+// means the pointer no longer names this account, so there is nothing of this
+// call's to give back.
+func (s *accountStore) releaseClaimedDefaultLocked(ctx context.Context, defaultKey, accountID string) error {
+	if s.deleter == nil {
+		return &AccountStoreError{
+			Message: "releasing a claimed default needs a store that can decide it; this one cannot guard a delete",
+		}
+	}
+	removed, err := s.deleter.CompareAndDelete(ctx, defaultKey, []byte(accountID))
+	if err != nil {
+		return &AccountStoreError{Message: "failed to release claimed account default pointer: " + err.Error()}
+	}
+	_ = removed
+	return nil
+}
+
+// defaultHolderMissing reports whether a pointer names an account with no
+// record — the only unambiguous evidence that a default is orphaned.
+//
+// THE NARROWNESS IS THE DESIGN, NOT AN OVERSIGHT, and it is the same proof the
+// project store's reserveName carries, transposed to scopes. A pointer naming a
+// LIVE account whose record places it in a DIFFERENT scope has exactly two
+// causes: a move INTO this scope in flight (pointer claimed, record not yet
+// updated) and a move OUT of this scope that crashed before releasing. Those
+// produce byte-identical key states — the pointer names the account, the
+// account's record names the other scope — so no read distinguishes them, and
+// healing on that condition would steal the scope from a move about to
+// complete.
+//
+// Record-absence cannot arise that way: a move never creates a record, so a
+// pointer naming nothing can only be a create that did not finish. That is why
+// this predicate asks only about existence.
+//
+// The residue is a scope blocked by a pointer naming an account that has left
+// it, and clearing it needs evidence this store cannot obtain — proof that no
+// move is in flight. It belongs to WP10's run-is-authority reaper, with the
+// same invariant the scheduler's firing mark already states: A POINTER NAMING
+// AN ACCOUNT THAT IS LIVE IN A DIFFERENT SCOPE, WITH NO MOVE IN FLIGHT, IS AN
+// INVARIANT VIOLATION AND IS WP10'S TO REAP. Recorded here so its implementer
+// finds the case from the code rather than from the plan.
+func (s *accountStore) defaultHolderMissing(ctx context.Context, tenantID, holderID string) (bool, error) {
+	holderKey, keyErr := accountRecordKey(tenantID, holderID)
+	if keyErr != nil {
+		// The pointer holds a value that is not even a legal key segment, so
+		// nothing it names can be loaded. The scope has no reachable default.
+		return true, nil
+	}
+	exists, err := s.kv.Exists(ctx, holderKey)
+	if err != nil {
+		return false, &AccountStoreError{Message: "failed to probe account default holder: " + err.Error()}
+	}
+	return !exists, nil
 }
 
 // =============================================================================
@@ -247,6 +536,9 @@ func (s *accountStore) Get(ctx context.Context, tenantID, accountID string) (*Ac
 		return nil, err
 	}
 	if err := s.ready(); err != nil {
+		return nil, err
+	}
+	if err := scopeCheck(ctx, tenantID); err != nil {
 		return nil, err
 	}
 	recordKey, err := accountRecordKey(tenantID, accountID)
@@ -340,6 +632,12 @@ func (s *accountStore) update(ctx context.Context, account *Account) error {
 	if account == nil {
 		return &AccountInvalidError{Message: "account must not be nil"}
 	}
+	if err := account.Spend.Validate(); err != nil {
+		return err
+	}
+	if err := scopeCheck(ctx, account.TenantID); err != nil {
+		return err
+	}
 
 	recordKey, err := accountRecordKey(account.TenantID, account.ID)
 	if err != nil {
@@ -363,7 +661,7 @@ func (s *accountStore) update(ctx context.Context, account *Account) error {
 		return err
 	}
 	if moved {
-		if err := s.rescopeDefault(ctx, current, account); err != nil {
+		if err := s.guarded(); err != nil {
 			return err
 		}
 	}
@@ -372,11 +670,42 @@ func (s *accountStore) update(ctx context.Context, account *Account) error {
 	if marshalErr != nil {
 		return marshalErr
 	}
+
+	// THE RECORD MOVES FIRST, THEN THE DESTINATION IS CLAIMED, THEN THE OLD
+	// SCOPE IS RELEASED. The order is chosen for what a crash leaves behind,
+	// and each residue was compared rather than assumed:
+	//
+	//   Claim-destination first (the previous order) left the destination
+	//   pointer naming an account whose record still said it was elsewhere.
+	//   That state is INDISTINGUISHABLE from a move OUT of the destination that
+	//   crashed — byte-identical, see reserveName in project_store.go for the
+	//   same proof — so nothing may heal it and the destination is blocked until
+	//   reaped.
+	//
+	//   Record first turns that into an unclaimed destination, which is an
+	//   ordinary vacant scope that the next claimant takes. One undecidable
+	//   residue becomes a benign one, and it costs nothing: Default is never
+	//   persisted (marshalAccount zeroes it), so claiming before or after the
+	//   record write changes no stored state.
+	//
+	// RELEASING THE OLD SCOPE FIRST WAS CONSIDERED AND REJECTED, and the reason
+	// is a principle rather than effort. It would make every residue benign —
+	// nothing left for a reaper at all — because a crash would leave the old
+	// scope merely vacant. But a vacant scope is claimable by ANY bystander, so
+	// a crashed move would permanently transfer an operator-established default
+	// to whoever arrived next. That is handing authority away on a crash. Every
+	// decision in this family errs the same direction: refuse a name rather than
+	// give one project's name to another, refuse to answer rather than answer
+	// plausibly, block a scope rather than reassign it. A squat inconveniences;
+	// a transfer decides. We keep the squat.
 	if err := s.kv.Put(ctx, recordKey, data); err != nil {
 		return &AccountStoreError{Message: "failed to write account: " + err.Error()}
 	}
 
 	if moved {
+		if err := s.rescopeDefault(ctx, current, account); err != nil {
+			return err
+		}
 		return s.releaseDefaultScope(ctx, current)
 	}
 	if account.Default && !current.Default {
@@ -423,17 +752,34 @@ func (s *accountStore) rescopeDefault(ctx context.Context, current, updated *Acc
 	unlockDefault := s.defaultMu.lock(defaultKey)
 	defer unlockDefault()
 
-	vacant, err := s.defaultVacantLocked(ctx, defaultKey, updated.TenantID)
+	// THE STORE DECIDES THE DESTINATION, not a vacancy probe followed by a
+	// hopeful write. This was the last read-then-write election in the store:
+	// two accounts moving into one vacant scope could both observe it vacant
+	// and both claim it, because the probe and the write are two operations
+	// and the lock between them is process-local.
+	//
+	// Same election as a create's auto-claim, so it is the same call. An
+	// account arriving in an occupied scope simply is not its default, which is
+	// a verdict rather than an error.
+	// The claim verdict is not consulted here: a rescope that fails after this
+	// point does not unwind, because the destination pointer is derived below
+	// from the store rather than from this election, and the account being moved
+	// exists either way. Only a create holds a claim it may have to give back
+	// (#249).
+	if _, _, err := s.electDefaultLocked(ctx, defaultKey, updated.TenantID, updated.ID); err != nil {
+		return err
+	}
+
+	// Derived from the pointer rather than from the election's own verdict, so
+	// the value handed back agrees with what any later read reports. An
+	// operator's SetDefault is a plain last-writer-wins Put and may land between
+	// the two; the pointer is the authority and this asks it.
+	holderID, err := s.currentDefaultID(ctx, defaultKey)
 	if err != nil {
 		return err
 	}
-	// The account's own record still names its OLD scope, so a vacancy probe of
-	// the destination cannot be answered by the account itself.
-	updated.Default = vacant
-	if !vacant {
-		return nil
-	}
-	return s.writeDefaultPointerLocked(ctx, defaultKey, updated.ID)
+	updated.Default = holderID == updated.ID
+	return nil
 }
 
 // releaseDefaultScope clears the pointer of the scope an account has left, when
@@ -462,6 +808,9 @@ func (s *accountStore) remove(ctx context.Context, tenantID, accountID string) e
 		return err
 	}
 	if err := s.ready(); err != nil {
+		return err
+	}
+	if err := scopeCheck(ctx, tenantID); err != nil {
 		return err
 	}
 
@@ -516,18 +865,29 @@ func (s *accountStore) releaseDefaultLocked(ctx context.Context, tenantID string
 	unlockDefault := s.defaultMu.lock(defaultKey)
 	defer unlockDefault()
 
-	currentID, err := s.currentDefaultID(ctx, defaultKey)
+	if s.deleter == nil {
+		return &AccountStoreError{
+			Message: "releasing a default needs a store that can decide it; this one cannot guard a delete",
+		}
+	}
+
+	// GUARDED, because a read followed by a delete is half a primitive. The
+	// previous shape read the pointer, compared it to this account, and then
+	// deleted unconditionally — and in the window between the two another
+	// account could legitimately take the scope, whose pointer this delete then
+	// removed. No amount of re-reading closes that, because the window IS
+	// between the read and the delete (go-qrdb#41).
+	//
+	// CompareAndDelete removes the pointer only while it still names this
+	// account, so a release that arrives late does nothing instead of stranding
+	// the new holder. deleted=false is the ordinary outcome, not an error: it
+	// means someone else owns the scope now, which is exactly when this must not
+	// act.
+	removed, err := s.deleter.CompareAndDelete(ctx, defaultKey, []byte(account.ID))
 	if err != nil {
-		return err
+		return &AccountStoreError{Message: "failed to clear account default pointer: " + err.Error()}
 	}
-	if currentID != account.ID {
-		// Another account took the default between this record's load and now.
-		// Clearing the pointer would strand that one instead of this one.
-		return nil
-	}
-	if delErr := s.kv.Delete(ctx, defaultKey); delErr != nil {
-		return &AccountStoreError{Message: "failed to clear account default pointer: " + delErr.Error()}
-	}
+	_ = removed
 	return nil
 }
 
@@ -540,6 +900,9 @@ func (s *accountStore) ListByTenant(ctx context.Context, tenantID string, provid
 		return nil, err
 	}
 	if err := s.ready(); err != nil {
+		return nil, err
+	}
+	if err := scopeCheck(ctx, tenantID); err != nil {
 		return nil, err
 	}
 	prefix, err := tenantPrefix(accountKeyspace, tenantID)
@@ -628,6 +991,9 @@ func (s *accountStore) setDefault(ctx context.Context, tenantID, accountID strin
 	if err := s.ready(); err != nil {
 		return err
 	}
+	if err := scopeCheck(ctx, tenantID); err != nil {
+		return err
+	}
 	recordKey, err := accountRecordKey(tenantID, accountID)
 	if err != nil {
 		return err
@@ -668,6 +1034,28 @@ func (s *accountStore) setDefaultLocked(ctx context.Context, tenantID string, pr
 // writeDefaultPointerLocked points defaultKey at accountID. The caller must
 // already hold defaultMu for defaultKey — keyedMutex is not reentrant, and
 // create must decide and act under one continuous hold.
+// writeDefaultPointerLocked names accountID the scope's default, unconditionally.
+//
+// A PLAIN Put, deliberately, and it is SAFER here than a guarded pair rather
+// than merely simpler. Naming a default is an operator UPDATE — SetDefault, or a
+// create that explicitly asked for it — so last-writer-wins is the correct
+// semantics for two operators racing. More importantly, a plain Put never leaves
+// the pointer ABSENT: a concurrent create's PutIfAbsent correctly loses to
+// whatever pointer exists before or after the re-point, and a healer's
+// CompareAndDelete can only remove the exact orphan value it observed. Expressing
+// this as CompareAndDelete-then-PutIfAbsent would MANUFACTURE a vacant moment,
+// and a create landing in it would take the default the operator was in the
+// middle of setting.
+//
+// A conditional re-point — "make me the default only if X still is" — is not
+// expressible on this plane today; it needs a guarded swap (go-qrdb#56). Until
+// then last-writer-wins is the design, not a compromise.
+//
+// Callers validate that the target account exists before reaching here:
+// setDefault loads the record first, and create has just written it. Pointing at
+// a never-existent ID is therefore not constructible from a typo. An account
+// deleted between that check and this write leaves an orphaned pointer, which
+// electDefaultLocked heals.
 func (s *accountStore) writeDefaultPointerLocked(ctx context.Context, defaultKey, accountID string) error {
 	if err := s.kv.Put(ctx, defaultKey, []byte(accountID)); err != nil {
 		return &AccountStoreError{Message: "failed to write account default pointer: " + err.Error()}
@@ -695,36 +1083,6 @@ func (s *accountStore) currentDefaultID(ctx context.Context, defaultKey string) 
 	return string(value), nil
 }
 
-// defaultVacantLocked reports whether the scope guarded by defaultKey currently
-// has no default account. The caller must already hold defaultMu for defaultKey.
-//
-// A scope is vacant when its pointer is unset, and also when the pointer names
-// an account that no longer exists: the record and the pointer are two separate
-// KV writes with no transaction spanning them, so a crash between them can
-// strand a pointer on a deleted account. Treating a stranded pointer as vacant
-// lets the next created account heal the scope instead of leaving it unable to
-// ever auto-claim a default again.
-func (s *accountStore) defaultVacantLocked(ctx context.Context, defaultKey, tenantID string) (bool, error) {
-	currentID, err := s.currentDefaultID(ctx, defaultKey)
-	if err != nil {
-		return false, err
-	}
-	if currentID == "" {
-		return true, nil
-	}
-	currentKey, keyErr := accountRecordKey(tenantID, currentID)
-	if keyErr != nil {
-		// The pointer holds a value that is not even a legal key segment, so
-		// nothing it names can be loaded. The scope has no reachable default.
-		return true, nil
-	}
-	exists, existsErr := s.kv.Exists(ctx, currentKey)
-	if existsErr != nil {
-		return false, &AccountStoreError{Message: "failed to probe account default holder: " + existsErr.Error()}
-	}
-	return !exists, nil
-}
-
 // =============================================================================
 // Touch
 // =============================================================================
@@ -744,6 +1102,9 @@ func (s *accountStore) touch(ctx context.Context, tenantID, accountID string, op
 		return err
 	}
 	if err := s.ready(); err != nil {
+		return err
+	}
+	if err := scopeCheck(ctx, tenantID); err != nil {
 		return err
 	}
 	recordKey, err := accountRecordKey(tenantID, accountID)

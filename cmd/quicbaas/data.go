@@ -33,7 +33,6 @@ import (
 
 var (
 	// Data command flags.
-	timeout      time.Duration
 	outputFormat string
 	consistency  string
 
@@ -76,7 +75,6 @@ All commands connect to a running QuicBaaS server using the configured transport
 
 	// Add persistent flags for all data commands
 	// Note: --address and --transport are global flags defined in main.go
-	cmd.PersistentFlags().DurationVar(&timeout, "timeout", 30*time.Second, "Request timeout")
 	cmd.PersistentFlags().StringVar(&outputFormat, "output", "table", "Output format (json, yaml, table, raw)")
 	cmd.PersistentFlags().StringVar(&consistency, "consistency", "linearizable", "Consistency level (strong, linearizable, eventual, local)")
 
@@ -171,7 +169,7 @@ func runPutCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Execute put request using SDK
@@ -252,7 +250,7 @@ func runGetCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Execute get request using SDK
@@ -351,7 +349,7 @@ func runDeleteCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Execute delete request using SDK
@@ -430,7 +428,7 @@ func runListCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Execute list request using SDK
@@ -518,7 +516,7 @@ func runQueryCommand(cmd *cobra.Command, args []string) error {
 	defer func() { _ = closeSDKClient() }()
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Execute query request using SDK query client

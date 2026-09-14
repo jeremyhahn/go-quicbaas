@@ -353,13 +353,13 @@ type ExportMetadata struct {
 
 // UserProfileExport contains exportable profile data.
 type UserProfileExport struct {
-	ID         string                 `json:"id" yaml:"id"`
-	Email      string                 `json:"email" yaml:"email"`
-	Name       string                 `json:"name" yaml:"name"`
-	Attributes map[string]interface{} `json:"attributes,omitempty" yaml:"attributes,omitempty"`
-	Created    time.Time              `json:"created" yaml:"created"`
-	Updated    time.Time              `json:"updated" yaml:"updated"`
-	LastAuth   *time.Time             `json:"last_auth,omitempty" yaml:"last_auth,omitempty"`
+	ID         string            `json:"id" yaml:"id"`
+	Email      string            `json:"email" yaml:"email"`
+	Name       string            `json:"name" yaml:"name"`
+	Attributes map[string]string `json:"attributes,omitempty" yaml:"attributes,omitempty"`
+	Created    time.Time         `json:"created" yaml:"created"`
+	Updated    time.Time         `json:"updated" yaml:"updated"`
+	LastAuth   *time.Time        `json:"last_auth,omitempty" yaml:"last_auth,omitempty"`
 }
 
 // SessionExport contains exportable session data.

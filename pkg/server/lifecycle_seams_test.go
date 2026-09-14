@@ -26,7 +26,6 @@ import (
 	ggrpc "google.golang.org/grpc"
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/embedding"
@@ -644,7 +643,6 @@ func TestFT2_IAMComponents_Getters(t *testing.T) {
 	assert.Nil(t, comp.GetGDPRManager())
 	assert.Nil(t, comp.GetSessionStorage())
 	assert.Nil(t, comp.GetSessionManager())
-	assert.Nil(t, comp.GetInternalAuthManager())
 }
 
 // =============================================================================
@@ -1082,29 +1080,6 @@ func TestFT2_Shutdown_FullComponentStack(t *testing.T) {
 }
 
 // =============================================================================
-// Initialize Auth Manager - Error Paths
-// =============================================================================
-
-func TestFT2_AuthManager_NoSigningKeyID(t *testing.T) {
-	saveAndRestoreSeams(t)
-
-	cfg := createFTConfig(t)
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	// Creating an enabled auth manager without a JWT signing key ID must fail.
-	authCfg := &auth.AuthConfig{
-		Enabled:         true,
-		JWTSigningKeyID: "",
-	}
-
-	authMgr, authErr := auth.NewInMemoryAuthManager(authCfg, srv.logger)
-	assert.Error(t, authErr)
-	assert.ErrorContains(t, authErr, "JWT signing key ID")
-	assert.Nil(t, authMgr)
-}
-
-// =============================================================================
 // kvShards utility function tests
 // =============================================================================
 
@@ -1191,9 +1166,6 @@ func TestFT2_InitializeIAMComponents_Full(t *testing.T) {
 		assert.NotNil(t, components.GetOIDCProvider())
 		assert.NotNil(t, components.GetSessionStorage())
 		assert.NotNil(t, components.GetSessionManager())
-		// The password-built internal auth manager has been removed; tokens are
-		// minted by the IAM factors via the token service, so this is nil.
-		assert.Nil(t, components.GetInternalAuthManager())
 	} else {
 		// Without qrdbClient, IAM init is skipped gracefully
 		assert.Nil(t, components)
@@ -1222,9 +1194,12 @@ func TestFT2_InitializeIAMComponents_NoPasswordAuth(t *testing.T) {
 	assert.NoError(t, iamErr)
 
 	if srv.qrdbClient != nil {
+		// There is no password-auth switch left to observe on the components:
+		// identity is qrdb's and tokens are minted by the IAM factors, so
+		// disabling password auth changes nothing about what gets built.
 		require.NotNil(t, components)
-		// Auth manager should be nil since password auth is disabled.
-		assert.Nil(t, components.GetInternalAuthManager())
+		assert.NotNil(t, components.GetIdentityStore())
+		assert.NotNil(t, components.GetOIDCProvider())
 	} else {
 		assert.Nil(t, components)
 	}

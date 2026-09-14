@@ -89,6 +89,10 @@ export interface JobConfig {
   poll_interval: number;
   max_iterations: number;
   workflow_name: string;
+  /** task_id names the task this job is an attempt at; empty for a job started directly. */
+  task_id?: string;
+  /** attempt is the 1-based ordinal of this job among the task's attempts. */
+  attempt?: number;
 }
 
 // JobStatus reports the current state of an orchestration job.
@@ -110,7 +114,111 @@ export interface JobStatus {
   config: JobConfig | null;
   memory: JobMemory | null;
   workflow_name: string;
+  /** task_id and attempt bind the job to the task it is an attempt at. */
+  task_id?: string;
+  attempt?: number;
+  /** lead_session_id is the lead agent's session; absent until it is spawned. */
+  lead_session_id?: string;
+  /** session_ids lists every session the job has spawned and not yet closed. */
+  session_ids?: string[];
+  /** failure_class classifies a failed job's cause: the environment or the work. */
+  failure_class?: string;
+  /** stage is the last lifecycle moment the job passed through (prepare, reviewable, complete, discard, blocked). */
+  stage?: string;
+  /** runner names the JobRunner that drove the job's states; absent means the "workflow" runner. */
+  runner?: string;
+  /** node names the daemon running the job's control loop. */
+  node?: string;
+  /** heartbeat_at is the nanosecond Unix instant the loop last proved alive. */
+  heartbeat_at?: number;
+
+  // --- Provenance: who ran the attempt, and what it left behind -----------
+  //
+  // Mirrors pkg/orchestration/job_provenance.go. The first two are recorded
+  // by the run; the rest are the task's facts, laid over the status when the
+  // server reads it.
+
+  /** agent_id is the fleet agent the work was dispatched to; absent when it ran in-process. */
+  agent_id?: string;
+  /** stages is every lifecycle moment the job entered, in order. */
+  stages?: JobStageRecord[];
+  /** attempts is every attempt at the job's task, oldest first. */
+  attempts?: JobAttemptRecord[];
+  /** attempt_budget is the number of charged attempts the task allows. */
+  attempt_budget?: number;
+  /** terminal_reason is the typed reason the task stopped. */
+  terminal_reason?: TaskConclusionReason;
+  /** readmit_allowed says whether a person may return the task to the queue. */
+  readmit_allowed?: boolean;
+  /** delivery is the git side of the attempt: branch, head, pull request, reviews. */
+  delivery?: JobDelivery | null;
+  /** verification is the last validator pipeline's results: the build, the tests. */
+  verification?: JobVerificationResult[];
 }
+
+/** JobVerificationResult is one verification command's outcome. */
+export interface JobVerificationResult {
+  name: string;
+  passed: boolean;
+  message?: string;
+  details?: string;
+}
+
+/** JobStageRecord is one lifecycle moment the job entered. */
+export interface JobStageRecord {
+  stage: string;
+  /** entered_at is the Unix-nanosecond instant the moment was entered. */
+  entered_at: number;
+}
+
+/** JobAttemptRecord is one attempt at the job's task. */
+export interface JobAttemptRecord {
+  attempt: number;
+  job_id: string;
+  /** current marks the attempt the status being read belongs to. */
+  current?: boolean;
+}
+
+/**
+ * TaskConclusionReason is the closed vocabulary naming why a task stopped.
+ * Mirrors pkg/orchestration/task_conclusion.go; a reason added there and not
+ * here is a compile error at every render site rather than a blank badge.
+ */
+export type TaskConclusionReason =
+  | 'completed'
+  | 'budget_exhausted'
+  | 'abandoned'
+  | 'fault_bounded'
+  | 'fault_held'
+  | 'parked_needs_info'
+  | 'parked_blocked'
+  | 'parked_escalated'
+  | 'readmitted';
+
+/** JobReviewRound is one reviewer's verdict on one head of the job's branch. */
+export interface JobReviewRound {
+  round: number;
+  reviewer: string;
+  /** verdict is the reviewing module's own vocabulary: approve, request_changes, error. */
+  verdict: string;
+  head_sha?: string;
+  findings?: string;
+  /** submitted_at is an RFC 3339 instant. */
+  submitted_at?: string;
+}
+
+/** JobDelivery is the git side of the job's attempt. */
+export interface JobDelivery {
+  branch?: string;
+  head_sha?: string;
+  pull_request_number?: number;
+  pull_request_url?: string;
+  pull_request_state?: string;
+  reviews?: JobReviewRound[];
+}
+
+// JobEventType names the events a running control loop emits.
+export type JobEventType = 'state_change';
 
 // JobEvent represents a real-time event from a running orchestration job.
 // Mirrors orchestration.JobEvent.
@@ -136,6 +244,8 @@ export interface StartJobRequest {
   max_iterations: number;
   poll_interval?: string;
   workflow_file?: string;
+  /** runner names the JobRunner that drives the job's states; omit for the "workflow" runner. */
+  runner?: string;
 }
 
 // StartJobResponse contains the result of starting an orchestration job.
@@ -152,10 +262,14 @@ export interface GetJobStatusRequest {
   job_id: string;
 }
 
-// ListJobsRequest lists all jobs for a tenant.
+// ListJobsRequest lists a tenant's jobs.
 // Mirrors orchestrator.ListJobsRequest.
 export interface ListJobsRequest {
   tenant_id: string;
+
+  // task_id narrows the listing to the attempts at one task. Omit to list
+  // every job the tenant owns. The SERVER applies it.
+  task_id?: string;
 }
 
 // ListJobsResponse is the response from listing jobs.
@@ -192,6 +306,10 @@ export interface ListTasksRequest {
   status?: string;
   team_name?: string;
   assigned_to?: string;
+  /** project_id restricts the listing to one project. */
+  project_id?: string;
+  /** statuses restricts the listing to tasks in any of these statuses; composes with status. */
+  statuses?: TaskStatus[];
 }
 
 // ListTasksResponse is the response from listing tasks.
@@ -296,7 +414,8 @@ export type TaskStatus =
   | 'in_progress'
   | 'completed'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'blocked';
 
 // TaskResult contains the output of a completed task.
 // Mirrors orchestration.TaskResult.
@@ -304,6 +423,51 @@ export interface TaskResult {
   output: string;
   files: string[];
   metadata: Record<string, string>;
+}
+
+// TaskSourceKind names the place a task originated from. The engine's own
+// kinds are listed; a registered task source declares any other kind it emits.
+// Mirrors orchestration.TaskSourceKind.
+export type TaskSourceKind = 'scheduler' | 'operator' | 'job' | (string & {});
+
+// TaskSource records the provenance of a task: the kind of origin, a
+// kind-specific reference (an issue number or `owner/repo#N` for a forge
+// issue), and, when the origin has one, its URL.
+// Mirrors orchestration.TaskSource.
+export interface TaskSource {
+  kind: TaskSourceKind;
+  ref: string;
+  url?: string;
+}
+
+// TaskBlockKind classifies why a task is parked on a person.
+// Mirrors orchestration.TaskBlockKind.
+export type TaskBlockKind = 'needs_info' | 'blocked' | 'escalated';
+
+// ArtifactKind classifies how an artifact's content is stored and referenced.
+// Mirrors orchestration.ArtifactKind.
+export type ArtifactKind = 'inline' | 'file' | 'commit' | 'kv_key' | 'url';
+
+// ArtifactRef locates an artifact that is not inline.
+// Mirrors orchestration.ArtifactRef.
+export interface ArtifactRef {
+  agent_id?: string;
+  path?: string;
+  sha?: string;
+  branch?: string;
+}
+
+// Artifact is a named input or output of a task.
+// Mirrors orchestration.Artifact.
+export interface Artifact {
+  kind: ArtifactKind | string;
+  name: string;
+  mime_type?: string;
+  size?: number;
+  /** content carries inline bytes, base64-encoded on the wire. */
+  content?: string;
+  ref?: ArtifactRef;
+  metadata?: Record<string, string>;
 }
 
 // Task represents an orchestration work item managed by the task store.
@@ -332,6 +496,49 @@ export interface Task {
   spawned_job_id?: string;
   /** spawned_at is a nanosecond Unix timestamp of when the job was dispatched. */
   spawned_at?: number;
+  /** project_id scopes the task to a Project; empty for unscoped tasks. */
+  project_id?: string;
+  /** output_artifacts are what the task produced (pull requests, commits, files). */
+  output_artifacts?: Artifact[];
+  /** input_artifacts are what the task was given to work from. */
+  input_artifacts?: Artifact[];
+  /** source records where the task came from; absent for hand-created tasks. */
+  source?: TaskSource;
+  /** priority orders dispatch; higher runs first. */
+  priority?: number;
+  /** attempts counts every job dispatched for this task, refunded or not. */
+  attempts?: number;
+  /** attempt_budget is the number of charged attempts allowed before the task blocks. */
+  attempt_budget?: number;
+  /** environment_faults counts attempts refunded because the environment, not the work, failed. */
+  environment_faults?: number;
+  /** consecutive_environment_faults is the current run of refunded attempts. */
+  consecutive_environment_faults?: number;
+  /** retry_not_before is a nanosecond Unix timestamp before which the task is not redispatched; 0 when not deferred. */
+  retry_not_before?: number;
+  /** blocked_reason says, in words, what a person must resolve. */
+  blocked_reason?: string;
+  /** block_kind classifies the block; absent when the task is not blocked. */
+  block_kind?: TaskBlockKind;
+  /** status_changed_at is a nanosecond Unix timestamp of the last status transition. */
+  status_changed_at?: number;
+  /** runner names the JobRunner that drives an attempt; absent means the lead-driven 'workflow' runner. */
+  runner?: string;
+  /** routing are the placement hints a dispatch reads, kept so a requeue keeps them. */
+  routing?: TaskRouting;
+  /** dispatch_reason says why the last dispatch produced no job; cleared when one does. */
+  dispatch_reason?: string;
+}
+
+// TaskRouting are the placement hints a dispatch reads when it decides where
+// an attempt at a task runs. Mirrors orchestration.TaskRouting.
+export interface TaskRouting {
+  /** backend restricts the attempt to agents running this backend. */
+  backend?: string;
+  /** host_affinity pins the attempt to an agent by name or host. */
+  host_affinity?: string;
+  /** gpu_required restricts the attempt to agents advertising "gpu". */
+  gpu_required?: boolean;
 }
 
 // =============================================================================
@@ -361,6 +568,32 @@ export interface AgentBackendInfo {
   type: string;
   capabilities: BackendCapabilities;
   default_model: string;
+}
+
+// =============================================================================
+// Job runner types
+// Mirrors pkg/orchestration/job_runner.go
+// =============================================================================
+
+// JobStateSpec declares one state a runner drives a job through.
+// Mirrors orchestration.JobStateSpec (IdleThreshold is the engine's and is
+// not published).
+export interface JobStateSpec {
+  /** state is the state itself, as it appears on JobStatus.state. */
+  state: JobState;
+  /** label is how a consumer names the state to a person. */
+  label: string;
+  /** session_backed says an agent session is doing the work in this state. */
+  session_backed: boolean;
+}
+
+// JobRunnerInfo is one registered runner and the ordered, non-terminal states
+// it drives a job through. Mirrors orchestration.JobRunner.
+export interface JobRunnerInfo {
+  /** name is what JobStatus.runner names the runner by. */
+  name: string;
+  /** states are the runner's non-terminal states in order. */
+  states: JobStateSpec[];
 }
 
 // =============================================================================
@@ -527,7 +760,13 @@ export interface ReviewCriterion {
   validator: string;
   config: string;
   required: boolean;
+  /** phase is the control-loop state the criterion is judged in: validating (default) or reviewing. */
+  phase?: CriterionPhase;
 }
+
+// CriterionPhase names the control-loop state a review criterion is judged in.
+// Mirrors orchestration.CriterionPhase.
+export type CriterionPhase = 'validating' | 'reviewing';
 
 // WorkflowSettings contains operational parameters for workflow execution.
 // Mirrors orchestration.WorkflowSettings.
@@ -547,6 +786,8 @@ export interface WorkflowSettings {
   recovery: RecoverySettings;
   verbosity: string;
   num_ctx: number;
+  /** hooks names the registered lifecycle hook set every job of the workflow runs; empty runs none. */
+  hooks?: string;
 }
 
 // WorkflowDefinition describes a complete orchestration workflow.
@@ -613,6 +854,219 @@ export interface GetSessionHistoryResponse {
   events: SessionEventEnvelope[];
   // next_seq is 0 when there are no more events (end of history).
   next_seq: number;
+}
+
+// =============================================================================
+// Spend reporting — the consumption ledger's read side
+// Mirrors pkg/orchestration/spend_report.go
+// =============================================================================
+
+// SpendLevel names one level of the ledger's attribution chain.
+export type SpendLevel = 'tenant' | 'project' | 'task' | 'job' | 'session' | 'round';
+
+// SPEND_UNATTRIBUTED addresses the subtree of entries that have NO value at a
+// chain level — a job that belongs to no task, a turn charged to no project.
+//
+// Supply it as a scope level to open the row a report marks `unattributed`,
+// and map it back to "no project" / "no task" when rendering a scope. It is
+// unambiguous because the server refuses it as an entity id at the write: no
+// real project, task, job or session can bear this identifier.
+// Mirrors orchestration.SpendUnattributed.
+export const SPEND_UNATTRIBUTED = '-';
+
+// SpendPolicyStatus is what the server could establish about one account's
+// allowance.
+//
+// THE THREE ARE DIFFERENT FACTS AND MUST NOT BE COLLAPSED. 'none' says the
+// account was read and meters nothing — the honest "no spend policy", not a
+// budget of zero. 'unknown' says nothing could read it, which a renderer must
+// say rather than implying the account is uncapped.
+export type SpendPolicyStatus = 'unknown' | 'none' | 'metered';
+
+// SpendWindowStatus is one sliding quota window and what has been drawn
+// against it.
+export interface SpendWindowStatus {
+  name: string;
+  // size is the window's length in NANOSECONDS, as Go's time.Duration is
+  // encoded by encoding/json.
+  size: number;
+  max_tokens: number;
+  used_tokens: number;
+  remaining_tokens: number;
+  exhausted: boolean;
+  // frees_at is RFC 3339, absent when the window holds nothing.
+  frees_at?: string;
+}
+
+// SpendBreakerVerdict is an account's derived circuit-breaker state and the
+// evidence it was derived from.
+export interface SpendBreakerVerdict {
+  state: 'closed' | 'open' | 'half_open';
+  failures: number;
+  successes: number;
+  last_failure_at?: string;
+  last_success_at?: string;
+  // open_until is when an open breaker becomes half-open.
+  open_until?: string;
+}
+
+// SpendAccount is one pooled account's contribution to a scope, and the
+// allowance it draws against.
+export interface SpendAccount {
+  account_id: string;
+  display_name?: string;
+  provider?: string;
+  total_tokens: number;
+  policy_status: SpendPolicyStatus;
+  windows?: SpendWindowStatus[];
+  // breaker is absent when the account carries no breaker rule, which is not
+  // the same as a closed breaker.
+  breaker?: SpendBreakerVerdict;
+}
+
+// SpendModel is one engine/model pair's share of a scope's tokens.
+export interface SpendModel {
+  engine: string;
+  model: string;
+  total_tokens: number;
+}
+
+// SpendChild is one drill-down row: the next chain level below the scope.
+export interface SpendChild {
+  // id is the child's identifier, absent when unattributed.
+  id?: string;
+  level: SpendLevel;
+  // unattributed marks the subtree the ledger files under its no-value
+  // sentinel — a job with no task. Real spend with no parent at this level,
+  // to be labelled rather than shown as an entity named '-'.
+  unattributed?: boolean;
+  total_tokens: number;
+}
+
+// GetSpendReportRequest addresses one scope of the attribution chain.
+//
+// The levels are a PATH: each may be set only if every level above it is. A
+// scope that skips one is refused by the server.
+export interface GetSpendReportRequest {
+  tenant_id?: string;
+  project_id?: string;
+  task_id?: string;
+  job_id?: string;
+  session_id?: string;
+  // round selects one round below the session, applied only when round_set is
+  // true so round 0 — a real level — is distinguishable from "every round".
+  round?: number;
+  round_set?: boolean;
+}
+
+// GetSpendReportResponse is one scope's consumption and its drill-down.
+export interface GetSpendReportResponse {
+  level: SpendLevel;
+  tenant_id: string;
+  project_id?: string;
+  task_id?: string;
+  job_id?: string;
+  session_id?: string;
+  round?: number;
+
+  entries: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+
+  // cost_micros is the summed charge in millionths of a currency unit, and
+  // cost_measured says whether ANY of it was priced.
+  //
+  // CONSULT cost_measured BEFORE RENDERING cost_micros. Nothing in the server
+  // prices a turn yet, so today the flag is false and the figure is
+  // UNMEASURED — not free. Render a dash. See go-quicbaas#791.
+  cost_micros: number;
+  cost_measured: boolean;
+
+  successes: number;
+  failures: number;
+
+  first_at?: string;
+  last_at?: string;
+
+  accounts?: SpendAccount[];
+  models?: SpendModel[];
+
+  // child_level names the level children are at, absent at the deepest level.
+  child_level?: SpendLevel;
+  children?: SpendChild[];
+}
+
+// SessionTurnRole names who produced a turn.
+// Mirrors orchestration.SessionTurnRole.
+export type SessionTurnRole = 'user' | 'assistant' | 'system';
+
+// SessionTokenUsage is a turn's token accounting as the backend reported it.
+// Mirrors orchestration.TokenUsage.
+export interface SessionTokenUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
+// SessionToolUse summarises one tool call inside an assistant turn. The
+// arguments and the output stay on the event stream: a conversation page
+// indexes the work rather than carrying it.
+// Mirrors orchestration.SessionToolUse.
+export interface SessionToolUse {
+  invocation_id?: string;
+  name: string;
+  is_error?: boolean;
+  result_bytes?: number;
+}
+
+// SessionTurn is one record in a session's conversation.
+// Mirrors orchestration.SessionTurn.
+export interface SessionTurn {
+  // sequence is the log sequence of the turn's first event, and the cursor
+  // that addresses it.
+  sequence: number;
+  session_id: string;
+  tenant_id?: string;
+  role: SessionTurnRole;
+  // timestamp is RFC 3339, as Go's encoding/json emits it.
+  timestamp: string;
+  text: string;
+  // truncated_bytes is how much text the server's storage cap removed.
+  // Non-zero means text is not the whole of what was said, and the stored
+  // text carries a visible marker where it was cut.
+  truncated_bytes?: number;
+  model?: string;
+  stop_reason?: string;
+  tools?: SessionToolUse[];
+  usage?: SessionTokenUsage;
+}
+
+// GetSessionConversationRequest pages through a session's conversation.
+// Mirrors orchestrator.GetSessionConversationRequest.
+export interface GetSessionConversationRequest {
+  tenant_id?: string;
+  session_id: string;
+  // cursor is a previous page's next_cursor. 0 or omitted starts at the
+  // beginning of the RETAINED conversation, which retention may have moved.
+  cursor?: number;
+  // limit is the maximum turns to return; 0 or omitted selects the server
+  // default (100), and the server caps it at 500.
+  limit?: number;
+}
+
+// GetSessionConversationResponse carries one page of a session's conversation.
+// Mirrors orchestrator.GetSessionConversationResponse.
+export interface GetSessionConversationResponse {
+  session_id: string;
+  tenant_id?: string;
+  turns: SessionTurn[];
+  // next_cursor is the cursor for the following page, 0 at the end.
+  next_cursor?: number;
+  // oldest_sequence is the lowest sequence the server still holds. Above 1
+  // means retention has dropped earlier turns.
+  oldest_sequence?: number;
 }
 
 // SubscribeSessionEventsRequest opens a live stream over a session's event log.
@@ -801,6 +1255,8 @@ export interface SessionStatusResponse {
   container_id?: string;
   created_at: number;
   last_active: number;
+  /** job_id names the orchestration job this session works for, if any. */
+  job_id?: string;
 }
 
 // ListSessionsResponse is the response from listing sessions.
@@ -898,6 +1354,12 @@ export interface CreateTaskRequest {
   // backend restricts agent selection during auto-spawn to agents whose
   // backend field matches this value. Ignored when auto_spawn is false.
   backend?: string;
+
+  // runner names the JobRunner that drives attempts at this task. Empty
+  // resolves to the engine's own "workflow" runner — a lead agent
+  // decomposing the task into work items. A name nothing registered is
+  // refused.
+  runner?: string;
 }
 
 // ListBackendModelsResponse is the response from listing models for a backend.
@@ -929,6 +1391,36 @@ export interface ClaimTaskRequest {
   tenant_id: string;
   task_id: string;
   agent_id: string;
+}
+
+// BlockTaskRequest parks a task until a person readmits it.
+// Maps to POST /api/v1/orchestrator/tasks/:taskID/block
+export interface BlockTaskRequest {
+  tenant_id: string;
+  task_id: string;
+  kind: TaskBlockKind;
+  reason: string;
+}
+
+// ReadmitTaskRequest returns a blocked task to the pending queue.
+// Maps to POST /api/v1/orchestrator/tasks/:taskID/readmit
+export interface ReadmitTaskRequest {
+  tenant_id: string;
+  task_id: string;
+}
+
+// DeleteTaskRequest removes a task and releases its source reservation, so
+// the issue or ticket the task was adopted from can be adopted again.
+// Maps to DELETE /api/v1/orchestrator/tasks/:taskID
+export interface DeleteTaskRequest {
+  tenant_id: string;
+  task_id: string;
+}
+
+// DeleteTaskResponse confirms the task was removed.
+export interface DeleteTaskResponse {
+  task_id: string;
+  deleted: boolean;
 }
 
 // CompleteTaskRequest marks a task as completed with an optional result.
@@ -1345,6 +1837,13 @@ export interface InviteMetadata {
 export interface ActivationResponse {
   user_id: string;
   message: string;
+  /**
+   * Non-fatal irregularity behind an otherwise successful activation —
+   * currently, an activation write that reported an error on a user the server
+   * then found active. The ceremony succeeded and the invite was consumed, so
+   * this is not a failure, but it should be surfaced rather than dropped.
+   */
+  warning?: string;
 }
 
 // IAMTenant represents a tenant in the IAM service.
@@ -1380,6 +1879,12 @@ export interface IAMRole {
   name: string;
   description: string;
   permissions: string[];
+  // retired_permissions are permissions the role still carries that the running
+  // server build no longer defines. Derived on read from the live permission
+  // registry and never stored: it names the drift between what the tenant was
+  // seeded with and what the server grants today. Reconciling the tenant's
+  // built-in roles clears it.
+  retired_permissions?: string[];
   created_at: string;
   updated_at: string;
 }
@@ -1388,6 +1893,23 @@ export interface IAMRole {
 export interface ListRolesResponse {
   roles: IAMRole[];
   count: number;
+}
+
+// RoleReconcileResult describes what reconciliation changed on a single role.
+export interface RoleReconcileResult {
+  role_id: string;
+  name: string;
+  created?: boolean;
+  added?: string[];
+  removed?: string[];
+}
+
+// ReconcileRolesResponse is the response from reconciling a tenant's built-in
+// roles onto the definitions the running server build carries.
+export interface ReconcileRolesResponse {
+  tenant_id: string;
+  roles?: RoleReconcileResult[];
+  changed: boolean;
 }
 
 // IAMPolicy represents an ABAC policy definition.

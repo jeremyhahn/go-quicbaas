@@ -150,13 +150,15 @@ func (p *ProjectWorkspaceProvisioner) StartClone(ctx context.Context, project *o
 	tenantID, projectID := project.TenantID, project.ID
 	workspace := project.Workspace.Path
 	cloneReq := &GitCloneRequest{
-		RepoURL:        spec.RepoURL,
-		Branch:         spec.Branch,
-		Dir:            workspace,
-		TenantID:       tenantID,
-		TokenSecretRef: spec.TokenSecretRef,
-		TokenUsername:  spec.TokenUsername,
-		SSHKey:         spec.SSHKey,
+		RepoURL: spec.RepoURL,
+		Branch:  spec.Branch,
+		Dir:     workspace,
+		GitCredentials: GitCredentials{
+			TenantID:       tenantID,
+			TokenSecretRef: spec.TokenSecretRef,
+			TokenUsername:  spec.TokenUsername,
+			SSHKey:         spec.SSHKey,
+		},
 	}
 
 	doneCh := p.registerDone(tenantID, projectID)

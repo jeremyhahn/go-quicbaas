@@ -16,10 +16,19 @@ package iam
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/protocol"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	// go-xkms/sdk/go re-exports the WebAuthn CredentialStore and Credential
+	// types but not UserStore, so the registrant lookup the factor label and
+	// the assurance gate depend on takes the same justified direct package
+	// import webauthn_factor_writethrough.go documents.
+	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -48,10 +57,11 @@ type WebAuthnFactoryConfig struct {
 	// email the identity store only creates at the FINISH step).
 	//
 	// go-xkms v0.9.2-alpha made this closed by default — v0.9.1 created the
-	// account implicitly. Leaving it unmapped would silently disable
-	// self-service registration on a node that has it switched on. An account
-	// that already exists still enrols its first passkey through the same
-	// entry point either way; only implicit creation is withheld.
+	// account implicitly, and its own config test asserted "a nil Config must
+	// read as open". Leaving it unmapped would therefore have silently
+	// disabled self-service registration on a node that has it switched on.
+	// An account that already exists still enrols its first passkey through
+	// the same entry point either way; only implicit creation is withheld.
 	AllowPublicRegistration bool
 }
 
@@ -67,6 +77,13 @@ type WebAuthnFactoryParams struct {
 	// Required.
 	QRDB *qrdbsdk.Client
 
+	// AttestationRecorder resolves the node's trusted-server attestation
+	// recorder for the fido2 write-through. Required: without it a completed
+	// ceremony cannot record what it proved, and the write-through fails the
+	// enrollment closed. The server derives it by type assertion on the node's
+	// auth-factor servicer (pkg/server); tests inject a fake.
+	AttestationRecorder AttestationRecorderResolver
+
 	// Logger is the slog logger passed to each xkms Service. Optional;
 	// defaults to slog.Default() when nil.
 	Logger *slog.Logger
@@ -76,6 +93,37 @@ type WebAuthnFactoryParams struct {
 	// falling back per-field to Config when the override is empty. Optional;
 	// when nil every tenant uses the global Config (today's behavior).
 	Settings TenantWebAuthnSettingsProvider
+
+	// Assurance is the minimum attestation level a NON-administrative
+	// registration must prove. Administrative registrations are always held to
+	// hardware regardless of this value.
+	//
+	// The zero value is WebAuthnAssuranceHardware, so a caller that does not
+	// set it gets the strict policy. This is deliberate: the field is the one
+	// an operator uses to LOOSEN the gate, never to tighten it.
+	Assurance WebAuthnAssurance
+
+	// AAGUIDAllowlist is the authenticator-model gate applied once the
+	// attestation statement has proven the AAGUID is meaningful. Optional in
+	// the sense that the factory constructs without it — but a nil allowlist
+	// DENIES any enrollment that must prove hardware, rather than being
+	// skipped. See AAGUIDAllowlist.Check.
+	AAGUIDAllowlist *AAGUIDAllowlist
+
+	// Admins resolves whether a registrant holds an administrative role, so a
+	// tenant-permissive deployment still holds its administrators to hardware.
+	// Optional; nil means the gate cannot tell, and it resolves an unknown
+	// account to administrative.
+	Admins WebAuthnAdminResolver
+
+	// AttestationRoots are the manufacturer attestation roots an authenticator's
+	// batch attestation certificate must chain to before it counts as hardware.
+	//
+	// Nil means no roots are configured, which REFUSES hardware enrollment
+	// rather than trusting any attestation certificate: go-webauthn assigns
+	// "basic_full" without walking the trust path, so an unverified chain is a
+	// claim rather than evidence. See webauthn_attestation_chain.go.
+	AttestationRoots *WebAuthnAttestationRoots
 }
 
 // TenantWebAuthnSettingsProvider resolves a tenant's WebAuthn relying-party
@@ -205,6 +253,9 @@ func NewWebAuthnServiceFactory(params WebAuthnFactoryParams) (*WebAuthnServiceFa
 	if params.QRDB == nil {
 		return nil, &WebAuthnFactoryConfigError{Field: "QRDB"}
 	}
+	if params.AttestationRecorder == nil {
+		return nil, &WebAuthnFactoryConfigError{Field: "AttestationRecorder"}
+	}
 	if params.Config.RPID == "" {
 		return nil, &WebAuthnFactoryConfigError{Field: "Config.RPID"}
 	}
@@ -333,24 +384,31 @@ func xkmsWebAuthnConfig(resolved WebAuthnFactoryConfig) *xkmssdk.WebAuthnConfig 
 // against. This is the single choke point every registration entry point
 // converges on (xkms Service.FinishRegistration -> CredentialStore.Save);
 // see webauthn_factor_writethrough.go for the ordering and compensation
-// rationale.
+// rationale. The same decorator revokes that factor when the credential is
+// deleted, so the pair stays consistent whichever direction the mutation runs.
 func (f *WebAuthnServiceFactory) buildService(ctx context.Context, tenantID string) (*xkmssdk.WebAuthnService, error) {
 	resolved, err := f.resolveConfig(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	cfg := xkmsWebAuthnConfig(resolved)
-	users, creds, err := xkmssdk.NewWebAuthnQRDBUserStoreAdapter(xkmssdk.WebAuthnQRDBUserStoreOptions{
-		Users:    f.params.QRDB.Users(),
-		KV:       f.params.QRDB.KV(),
-		TenantID: tenantID,
-	})
+	cfg := &xkmssdk.WebAuthnConfig{
+		RPID:                    resolved.RPID,
+		RPDisplayName:           resolved.RPDisplayName,
+		RPOrigins:               resolved.RPOrigins,
+		Timeout:                 resolved.Timeout,
+		UserVerification:        resolved.UserVerification,
+		AttestationPreference:   f.attestationConveyance(resolved.AttestationPreference),
+		ResidentKeyRequirement:  resolved.ResidentKeyRequirement,
+		AuthenticatorAttachment: resolved.AuthenticatorAttachment,
+		Debug:                   resolved.Debug,
+		AllowPublicRegistration: &resolved.AllowPublicRegistration,
+	}
+	users, creds, err := f.tenantStores(tenantID)
 	if err != nil {
 		return nil, err
 	}
-	logger := f.logger.With("component", "iam.webauthn", "tenant_id", tenantID)
-	writeThrough, err := newWebAuthnFactorWriteThrough(
-		creds, users, f.params.QRDB.UserAuthFactors(), tenantID, logger)
+	logger := f.tenantLogger(tenantID)
+	writeThrough, err := f.newFactorWriteThrough(creds, users, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -362,6 +420,184 @@ func (f *WebAuthnServiceFactory) buildService(ctx context.Context, tenantID stri
 		CredentialStore: writeThrough,
 		Logger:          logger,
 	})
+}
+
+// tenantLogger returns the logger every per-tenant WebAuthn component in this
+// factory annotates its records with, so a relying party built here and one
+// built for the composed go-xkms module are attributable to the same tenant in
+// the log.
+func (f *WebAuthnServiceFactory) tenantLogger(tenantID string) *slog.Logger {
+	return f.logger.With("component", "iam.webauthn", "tenant_id", tenantID)
+}
+
+// tenantStores builds the qrdb-backed WebAuthn user and credential store pair
+// scoped to tenantID. It is the same adapter construction go-xkms performs for
+// its own relying party, so both surfaces read and write ONE store.
+func (f *WebAuthnServiceFactory) tenantStores(tenantID string) (xkmswebauthn.UserStore, xkmssdk.WebAuthnCredentialStore, error) {
+	if f == nil || f.params.QRDB == nil {
+		return nil, nil, &WebAuthnFactoryConfigError{Field: "QRDB"}
+	}
+	users, creds, err := xkmssdk.NewWebAuthnQRDBUserStoreAdapter(xkmssdk.WebAuthnQRDBUserStoreOptions{
+		Users:    f.params.QRDB.Users(),
+		KV:       f.params.QRDB.KV(),
+		TenantID: tenantID,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return users, creds, nil
+}
+
+// newFactorWriteThrough is THE construction path for the qrdb fido2
+// write-through decorator. Both relying parties that persist passkeys on a
+// composed node go through it: the per-tenant service this factory builds
+// (buildService) and the composed go-xkms module's own service, which reaches
+// it through DecorateCredentialStore. Forking the construction is what
+// produced go-quicbaas#484 — a credential registered on one surface with no
+// login factor on the other — so there is deliberately only one.
+func (f *WebAuthnServiceFactory) newFactorWriteThrough(
+	inner xkmssdk.WebAuthnCredentialStore,
+	users xkmswebauthn.UserStore,
+	tenantID string,
+) (*webAuthnFactorWriteThrough, error) {
+	if f == nil || f.params.QRDB == nil {
+		return nil, &WebAuthnFactoryConfigError{Field: "QRDB"}
+	}
+	return newWebAuthnFactorWriteThrough(
+		inner, users, f.params.QRDB.UserAuthFactors(), f.params.AttestationRecorder, tenantID, f.gate(), f.tenantLogger(tenantID))
+}
+
+// DecorateCredentialStore wraps inner — a WebAuthn credential store built by a
+// relying party this factory did NOT construct — so a registration completed
+// there enrolls the same qrdb fido2 login factor a registration on quicbaas's
+// own surface does.
+//
+// The composed go-xkms module serves its own registration ceremony at
+// /api/v1/webauthn/sdk/registration/* (what `xkey auth register` posts to) over
+// the SAME qrdb-backed credential store, through a relying party it builds
+// itself. Without this decoration that surface persists a credential and no
+// login factor, and the unified login ceremony then refuses the resulting
+// assertion with "factor not found" — go-quicbaas#484.
+//
+// The user store is rebuilt here rather than taken from the caller because the
+// factor's label and the assurance gate's administrator check both read the
+// registrant through the store scoped to tenantID, and only this factory knows
+// how that adapter is constructed.
+func (f *WebAuthnServiceFactory) DecorateCredentialStore(
+	inner xkmssdk.WebAuthnCredentialStore,
+	tenantID string,
+) (xkmssdk.WebAuthnCredentialStore, error) {
+	if f == nil {
+		return nil, &WebAuthnFactoryConfigError{Field: "factory"}
+	}
+	if tenantID == "" {
+		return nil, &WebAuthnFactorStoreConfigError{Field: "tenantID"}
+	}
+	// Validated BEFORE the stores are derived: a doomed call must not first
+	// construct qrdb adapters it will throw away, and the refusal must not
+	// depend on how far into construction the failure happens to surface.
+	if inner == nil {
+		return nil, &WebAuthnFactorStoreConfigError{Field: "CredentialStore"}
+	}
+	// Only the user store is wanted: inner already IS the credential store
+	// the caller's relying party built over this tenant, so the adapter's own
+	// credential store would be a second handle on the same records.
+	users, _, err := f.tenantStores(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	writeThrough, err := f.newFactorWriteThrough(inner, users, tenantID)
+	if err != nil {
+		// Widened explicitly rather than returned through, so an error yields a
+		// genuinely nil interface. `return f.newFactorWriteThrough(...)` would
+		// hand back a nil *webAuthnFactorWriteThrough inside a NON-nil
+		// interface, which reads as a usable store to any caller that checks
+		// the value rather than the error — go-xkms's own decorator seam grew a
+		// typed-nil guard for exactly this shape. Today every reachable failure
+		// is refused above, so this is the guard that keeps that true when a new
+		// failure mode is added to newFactorWriteThrough.
+		return nil, err
+	}
+	return writeThrough, nil
+}
+
+// gate builds the enrollment assurance gate the per-tenant write-through
+// applies. It is constructed per service rather than stored once so a factory
+// Reset picks up a re-wired allowlist.
+func (f *WebAuthnServiceFactory) gate() *WebAuthnAttestationGate {
+	return NewWebAuthnAttestationGate(
+		f.params.Assurance,
+		f.params.AAGUIDAllowlist,
+		f.params.Admins,
+	)
+}
+
+// AttestationRoots returns the configured manufacturer attestation roots, or
+// nil when none are configured. Ceremony entry points read them through the
+// factory so the trust store and the gate that depends on it are wired from one
+// place.
+func (f *WebAuthnServiceFactory) AttestationRoots() *WebAuthnAttestationRoots {
+	if f == nil {
+		return nil
+	}
+	return f.params.AttestationRoots
+}
+
+// VerifyAttestationChain verifies a parsed registration's attestation trust
+// path and returns a context carrying the result for the assurance gate.
+//
+// It is the single helper every ceremony entry point calls, so the three
+// surfaces that can finish a registration — the manager, the tenant-scoped
+// route that dispatches into xkms, and the multi-protocol FIDO2 service — agree
+// on what was verified rather than each deciding for itself.
+//
+// A verification failure is NOT fatal here. Enrollment policy belongs to the
+// gate: a tenant-permissive deployment may legitimately enroll an authenticator
+// with no usable chain, and refusing at this point would apply the
+// administrator's rule to everyone. The context simply carries no verified
+// chain, which the gate reads as "not proven" and refuses only where hardware
+// is required. The reason is returned so the caller can log it.
+func (f *WebAuthnServiceFactory) VerifyAttestationChain(
+	ctx context.Context,
+	parsed *protocol.ParsedCredentialCreationData,
+) (context.Context, error) {
+	chain, err := f.AttestationRoots().VerifyChain(parsed)
+	if err != nil {
+		// Clear, do not pass through: a proof this server did not just produce
+		// must not survive a verification that failed.
+		return clearAttestationChain(ctx), err
+	}
+	return contextWithAttestationChain(ctx, chain), nil
+}
+
+// attestationConveyance resolves the attestation conveyance the relying party
+// asks the browser for.
+//
+// A deployment that requires hardware MUST request "direct": with the default
+// "none" conveyance the browser strips the attestation statement before the RP
+// ever sees it, so the authenticator reports no AAGUID and there is nothing to
+// verify. That is the defect that made the AAGUID allowlist vacuous even when
+// an operator configured it strictly — the gate was asked to test an
+// identifier the ceremony had already discarded.
+//
+// The override raises conveyance, never lowers it: an operator who configured
+// "enterprise" keeps it, and one who configured "none" while requiring
+// hardware gets "direct" rather than a gate that can only ever refuse.
+func (f *WebAuthnServiceFactory) attestationConveyance(configured string) string {
+	// Conveyance is raised whenever ANY registration on this node might have to
+	// prove hardware — which includes assurance "any", because administrators
+	// are held to hardware under that policy too. Raising it only for
+	// assurance=="hardware" left a deployment where admins could never enroll:
+	// the browser stripped the statement the gate then demanded.
+	if f.params.Assurance.AllowsSoftwareAdministrators() {
+		return configured
+	}
+	switch strings.ToLower(strings.TrimSpace(configured)) {
+	case "direct", "enterprise":
+		return configured
+	default:
+		return "direct"
+	}
 }
 
 // Reset clears all cached services. Tests use this to force fresh

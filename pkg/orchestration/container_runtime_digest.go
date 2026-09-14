@@ -16,6 +16,7 @@ package orchestration
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os/exec"
 	"strings"
 )
@@ -68,7 +69,7 @@ func (r *ExecContainerRuntime) ResolveImageDigest(ctx context.Context, image str
 	if digest == "" {
 		return "", &ImageDigestUnresolvedError{
 			Image: image,
-			Cause: &CommandError{Output: "image has no repository digest; pull it from a registry to obtain one"},
+			Cause: errImageNoRepoDigest,
 		}
 	}
 	if err := ValidateImageDigest(digest); err != nil {
@@ -141,7 +142,7 @@ func (r *ExecContainerRuntime) VerifyPinnedImage(ctx context.Context, spec *Cont
 	if expectedID == "" {
 		return &ImageDigestUnresolvedError{
 			Image: pinnedRef,
-			Cause: &CommandError{Output: "runtime returned no image id for the pinned reference"},
+			Cause: errImagePinnedIDMissing,
 		}
 	}
 
@@ -181,6 +182,28 @@ func (r *ExecContainerRuntime) runInspect(ctx context.Context, args ...string) (
 	return r.execInspect(ctx, args...)
 }
 
+// errImageNoRepoDigest and errImagePinnedIDMissing are AUTHORED diagnoses, and
+// that is why they are not CommandError.
+//
+// CommandError means "a process printed these bytes while failing", and its
+// Error() withholds them because a process prints whatever it prints. Neither
+// sentence below is that: both are this package's own conclusion about a
+// runtime response that was well-formed and simply lacked a field. No process
+// wrote them, so no process can have leaked a credential into them, and
+// withholding them would destroy real diagnostic value while protecting
+// nothing.
+//
+// Moved OFF CommandError rather than given a second mode on it (review 1330).
+// A type with a rendered mode and a withheld mode needs a branch in Error(),
+// and the safety property is strictly stronger without one: CommandError never
+// renders its payload, so no future caller can set the wrong field and get
+// plaintext out. These two were never stderr in the first place — the type's
+// own doc said it wraps the output of a failed command.
+var (
+	errImageNoRepoDigest    = errors.New("image has no repository digest; pull it from a registry to obtain one")
+	errImagePinnedIDMissing = errors.New("runtime returned no image id for the pinned reference")
+)
+
 // execInspect shells out to the container runtime and returns trimmed stdout.
 func (r *ExecContainerRuntime) execInspect(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, r.command, args...)
@@ -189,7 +212,11 @@ func (r *ExecContainerRuntime) execInspect(ctx context.Context, args ...string) 
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return "", &CommandError{Output: strings.TrimSpace(stderr.String())}
+		op := ""
+		if len(args) > 0 {
+			op = args[0]
+		}
+		return "", &CommandError{Command: r.command, Op: op, Output: strings.TrimSpace(stderr.String())}
 	}
 	return strings.TrimSpace(stdout.String()), nil
 }

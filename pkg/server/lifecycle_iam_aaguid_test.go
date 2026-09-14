@@ -38,12 +38,55 @@ func writeAAGUIDFile(t *testing.T, entries []aaguidEntry) string {
 	return f.Name()
 }
 
-// TestBuildAAGUIDAllowlist_NoConfig verifies that empty config returns nil (no-op).
+// TestBuildAAGUIDAllowlist_NoConfig verifies that an UNCONFIGURED deployment
+// gets a strict, empty allowlist rather than no allowlist at all.
+//
+// It used to assert the opposite — nil, which the caller then read as "skip
+// enforcement". That made a deployment nobody configured accept every
+// authenticator, including a virtual one, as an administrator credential. An
+// empty strict allowlist is the honest representation of "this deployment has
+// not said which authenticator models it trusts", and it refuses with a message
+// naming the setting to fill in.
 func TestBuildAAGUIDAllowlist_NoConfig(t *testing.T) {
 	cfg := config.IAMAAGUIDConfig{}
 	allowlist, err := buildAAGUIDAllowlist(cfg)
 	require.NoError(t, err)
-	assert.Nil(t, allowlist, "empty config should return nil allowlist")
+	require.NotNil(t, allowlist, "an unconfigured deployment must still get a gate")
+	assert.Equal(t, iam.AAGUIDPolicyStrict, allowlist.Policy(),
+		"the default policy must be strict, not permissive")
+	assert.Zero(t, allowlist.Len())
+	assert.Error(t, allowlist.Check([]byte{0xaa, 0xbb}),
+		"an unconfigured allowlist must refuse, not admit")
+}
+
+// TestBuildAAGUIDAllowlist_EnforceIsTheDefault pins the mode mapping: only the
+// explicit "log_only" opt-out yields a permissive gate. Any other value —
+// including empty and a typo — is strict, so a misspelled mode cannot silently
+// disable enforcement.
+func TestBuildAAGUIDAllowlist_EnforceIsTheDefault(t *testing.T) {
+	for _, mode := range []string{"", "enforce", "ENFORCE"} {
+		allowlist, err := buildAAGUIDAllowlist(config.IAMAAGUIDConfig{Mode: mode})
+		require.NoError(t, err)
+		require.NotNil(t, allowlist)
+		assert.Equal(t, iam.AAGUIDPolicyStrict, allowlist.Policy(),
+			"mode %q must be strict", mode)
+	}
+
+	// A typo is REFUSED, not silently treated as strict. Failing closed on a
+	// typo is safe but unkind: an operator who wrote "log-only" and got a node
+	// refusing every authenticator cannot tell that from a broken allowlist.
+	for _, mode := range []string{"log-only", "typo", "permissive"} {
+		_, err := buildAAGUIDAllowlist(config.IAMAAGUIDConfig{Mode: mode})
+		require.Error(t, err, "mode %q must be refused", mode)
+		var modeErr *AAGUIDModeError
+		require.ErrorAs(t, err, &modeErr)
+		assert.Contains(t, err.Error(), "log_only", "the refusal must name the accepted values")
+	}
+
+	permissive, err := buildAAGUIDAllowlist(config.IAMAAGUIDConfig{Mode: "log_only"})
+	require.NoError(t, err)
+	require.NotNil(t, permissive)
+	assert.Equal(t, iam.AAGUIDPolicyPermissive, permissive.Policy())
 }
 
 // TestBuildAAGUIDAllowlist_LogOnlyMode verifies that mode=log_only returns a permissive allowlist.

@@ -279,6 +279,13 @@ func TestSDKToolNameContract(t *testing.T) {
 		if _, exempt := sdkCallsWithoutMCPTool[call]; exempt {
 			continue
 		}
+		// Verbs whose tool exists only in some builds. The ledger above is
+		// unconditional because it records product DEBT, which does not
+		// depend on how the binary was compiled; this one records ABSENCE BY
+		// CONFIGURATION, which does. See featureGatedSDKCalls.
+		if _, gated := featureGatedSDKCalls[call]; gated {
+			continue
+		}
 		missing = append(missing, fmt.Sprintf("%s -> %q", call, toolName))
 	}
 
@@ -304,17 +311,25 @@ func TestSDKToolNameContract_NoStaleExemptions(t *testing.T) {
 		known[call] = struct{}{}
 	}
 
-	for call, reason := range sdkCallsWithoutMCPTool {
-		if reason == "" {
-			t.Errorf("exemption %s has no reason", call)
-		}
-		if _, ok := known[call]; !ok {
-			t.Errorf("stale exemption %s: no such SDK transport call - remove it", call)
-			continue
-		}
-		if _, ok := registered[sdkmcp.ToolName(call.Service, call.Method)]; ok {
-			t.Errorf("unnecessary exemption %s: tool %q is registered - remove it",
-				call, sdkmcp.ToolName(call.Service, call.Method))
+	// The feature-gated map is held to the SAME standard, and by the same
+	// loop: an exemption that outlives its reason is how a ledger stops being
+	// evidence and starts being noise. If a no-rag build ever registers the
+	// RAG tools, or the SDK drops the verb, this fails instead of quietly
+	// excusing something that no longer needs excusing.
+	ledgers := []map[sdkCall]string{sdkCallsWithoutMCPTool, featureGatedSDKCalls}
+	for _, ledger := range ledgers {
+		for call, reason := range ledger {
+			if reason == "" {
+				t.Errorf("exemption %s has no reason", call)
+			}
+			if _, ok := known[call]; !ok {
+				t.Errorf("stale exemption %s: no such SDK transport call - remove it", call)
+				continue
+			}
+			if _, ok := registered[sdkmcp.ToolName(call.Service, call.Method)]; ok {
+				t.Errorf("unnecessary exemption %s: tool %q is registered - remove it",
+					call, sdkmcp.ToolName(call.Service, call.Method))
+			}
 		}
 	}
 }

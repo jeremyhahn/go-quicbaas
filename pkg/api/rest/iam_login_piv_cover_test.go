@@ -74,7 +74,7 @@ func pivSpiffeLeaf(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, 
 	t.Helper()
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), cryptorand.Reader)
 	require.NoError(t, err)
-	spiffeURI, err := url.Parse("spiffe://" + pivTrustDomain + "/tenant/" + tenant + "/user/piv-user")
+	spiffeURI, err := url.Parse("spiffe://" + pivTrustDomain + "/tenant/" + tenant + "/user/78")
 	require.NoError(t, err)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(99),
@@ -108,7 +108,7 @@ func setupPIVFullHandler(t *testing.T, leaf *x509.Certificate, tenant string, re
 	if registerUser {
 		thumb := sha256.Sum256(leaf.Raw)
 		pivUser := &iam.User{
-			ID:       "piv-user",
+			ID:       "78",
 			TenantID: tenant,
 			// A decoy PIV binding precedes the matching one so the lookup
 			// exercises multi-binding resolution (C1-D): the user is bound to
@@ -177,11 +177,16 @@ func pivRequestWithSpiffe(leaf *x509.Certificate) *http.Request {
 func TestPIVLogin_Success(t *testing.T) {
 	ca, caKey := pivLoginTestCA(t, "PIV Root CA")
 	leaf := pivSpiffeLeaf(t, ca, caKey, "tenant-piv")
+	vendorCA, vendorKey := pivLoginTestCA(t, "Yubico PIV Attestation Root")
+	attestation := pivSlotAttestationFor(t, leaf, vendorCA, vendorKey)
 	handler, audit, cleanup := setupPIVFullHandler(t, leaf, "tenant-piv", true)
 	defer cleanup()
+	// The login certificate has to be VOUCHED FOR by a slot attestation the
+	// vendor anchor stands behind; it cannot attest itself.
+	trustPIVAttestationCA(t, handler, vendorCA)
 
 	w := httptest.NewRecorder()
-	handler.PIVLogin(w, pivRequestWithSpiffe(leaf))
+	handler.PIVLogin(w, pivRequestWithChain(leaf, attestation))
 
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var resp map[string]interface{}
@@ -200,11 +205,16 @@ func TestPIVLogin_Success(t *testing.T) {
 func TestPIVLogin_MultiBinding_ResolvesSecondBinding(t *testing.T) {
 	ca, caKey := pivLoginTestCA(t, "PIV Root CA")
 	leaf := pivSpiffeLeaf(t, ca, caKey, "tenant-piv")
+	vendorCA, vendorKey := pivLoginTestCA(t, "Yubico PIV Attestation Root")
+	attestation := pivSlotAttestationFor(t, leaf, vendorCA, vendorKey)
 	handler, audit, cleanup := setupPIVFullHandler(t, leaf, "tenant-piv", true)
 	defer cleanup()
+	// The login certificate has to be VOUCHED FOR by a slot attestation the
+	// vendor anchor stands behind; it cannot attest itself.
+	trustPIVAttestationCA(t, handler, vendorCA)
 
 	w := httptest.NewRecorder()
-	handler.PIVLogin(w, pivRequestWithSpiffe(leaf))
+	handler.PIVLogin(w, pivRequestWithChain(leaf, attestation))
 
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	require.NotEmpty(t, audit.events)
@@ -219,11 +229,16 @@ func TestPIVLogin_MultiBinding_ResolvesSecondBinding(t *testing.T) {
 func TestPIVLogin_SPKIBoundCertLogsIn(t *testing.T) {
 	ca, caKey := pivLoginTestCA(t, "PIV Root CA")
 	leaf := pivSpiffeLeaf(t, ca, caKey, "tenant-piv")
+	vendorCA, vendorKey := pivLoginTestCA(t, "Yubico PIV Attestation Root")
+	attestation := pivSlotAttestationFor(t, leaf, vendorCA, vendorKey)
 	handler, audit, cleanup := setupPIVFullHandlerSPKI(t, leaf, "tenant-piv")
 	defer cleanup()
+	// The login certificate has to be VOUCHED FOR by a slot attestation the
+	// vendor anchor stands behind; it cannot attest itself.
+	trustPIVAttestationCA(t, handler, vendorCA)
 
 	w := httptest.NewRecorder()
-	handler.PIVLogin(w, pivRequestWithSpiffe(leaf))
+	handler.PIVLogin(w, pivRequestWithChain(leaf, attestation))
 
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var resp map[string]interface{}
@@ -247,7 +262,7 @@ func setupPIVFullHandlerSPKI(t *testing.T, leaf *x509.Certificate, tenant string
 	})
 
 	pivUser := &iam.User{
-		ID:       "piv-user",
+		ID:       "78",
 		TenantID: tenant,
 		CertBindings: []qrdbsdk.CertBinding{
 			{Thumbprint: qrdbsdk.ComputeSPKIThumbprint(leaf), Kind: qrdbsdk.CertBindingPIVAttested},
@@ -363,14 +378,19 @@ func TestPIVLogin_IdentityStoreUnavailable(t *testing.T) {
 func TestPIVLogin_TrustedIssuerAllowed(t *testing.T) {
 	ca, caKey := pivLoginTestCA(t, "PIV Root CA")
 	leaf := pivSpiffeLeaf(t, ca, caKey, "tenant-piv")
+	vendorCA, vendorKey := pivLoginTestCA(t, "Yubico PIV Attestation Root")
+	attestation := pivSlotAttestationFor(t, leaf, vendorCA, vendorKey)
 	handler, _, cleanup := setupPIVFullHandler(t, leaf, "tenant-piv", true)
 	defer cleanup()
 
 	// The issuer DN x509 produces for CN "PIV Root CA" is "CN=PIV Root CA".
 	handler.server.config.PIVClientCert.TrustedIssuers = []string{leaf.Issuer.String()}
+	// The login certificate has to be VOUCHED FOR by a slot attestation the
+	// vendor anchor stands behind; it cannot attest itself.
+	trustPIVAttestationCA(t, handler, vendorCA)
 
 	w := httptest.NewRecorder()
-	handler.PIVLogin(w, pivRequestWithSpiffe(leaf))
+	handler.PIVLogin(w, pivRequestWithChain(leaf, attestation))
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 }
 
@@ -405,7 +425,7 @@ func TestPIVLogin_OIDCProviderUnavailable(t *testing.T) {
 		Tenants:      &testTenantManager{storage: memStorage},
 	})
 	thumb := sha256.Sum256(leaf.Raw)
-	pivUser := &iam.User{ID: "piv-user", TenantID: "tenant-piv", Email: "piv@example.com"}
+	pivUser := &iam.User{ID: "78", TenantID: "tenant-piv", Email: "piv@example.com"}
 	pivUser.SetPIVThumbprint(hex.EncodeToString(thumb[:]))
 	require.NoError(t, memStorage.CreateUser(context.Background(), pivUser))
 
@@ -438,7 +458,7 @@ func TestPIVLoginAudit_NoAuditLogger(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/x", nil)
 
 	// Should not panic and silently return (service has no GetAuditLogger).
-	h.logPIVLoginAudit(context.Background(), "t", "u", "e", "thumb", "subj", "iss", "smartcard", req)
+	h.logPIVLoginAudit(context.Background(), "t", "u", "e", "thumb", "subj", "iss", "smartcard", "hardware", req)
 	h.logPIVLoginFailureAudit(context.Background(), "t", "thumb", "err", "msg", req)
 }
 
@@ -479,7 +499,7 @@ func TestPIVLoginAudit_LookupErrorAndNilLogger(t *testing.T) {
 	t.Run("lookup error", func(t *testing.T) {
 		h := newPIVAuditErrHandler(t, nil, errors.New("audit down"))
 		assert.NotPanics(t, func() {
-			h.logPIVLoginAudit(ctx, "t", "u", "e", "thumb", "subj", "iss", "smartcard", req)
+			h.logPIVLoginAudit(ctx, "t", "u", "e", "thumb", "subj", "iss", "smartcard", "hardware", req)
 			h.logPIVLoginFailureAudit(ctx, "t", "thumb", "err", "msg", req)
 		})
 	})
@@ -487,7 +507,7 @@ func TestPIVLoginAudit_LookupErrorAndNilLogger(t *testing.T) {
 	t.Run("nil logger", func(t *testing.T) {
 		h := newPIVAuditErrHandler(t, nil, nil)
 		assert.NotPanics(t, func() {
-			h.logPIVLoginAudit(ctx, "t", "u", "e", "thumb", "subj", "iss", "smartcard", req)
+			h.logPIVLoginAudit(ctx, "t", "u", "e", "thumb", "subj", "iss", "smartcard", "hardware", req)
 			h.logPIVLoginFailureAudit(ctx, "t", "thumb", "err", "msg", req)
 		})
 	})
@@ -503,7 +523,7 @@ func TestPIVLoginAudit_CapturesRemoteIPAndUserAgent(t *testing.T) {
 	req.RemoteAddr = "198.51.100.9:44444"
 	req.Header.Set("User-Agent", "piv-agent/1.0")
 
-	h.logPIVLoginAudit(context.Background(), "t", "u", "e", "thumb", "subj", "iss", "smartcard", req)
+	h.logPIVLoginAudit(context.Background(), "t", "u", "e", "thumb", "subj", "iss", "smartcard", "hardware", req)
 
 	require.Len(t, capture.events, 1)
 	ev := capture.events[0]

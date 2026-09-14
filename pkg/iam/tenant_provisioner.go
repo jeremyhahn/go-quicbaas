@@ -53,7 +53,30 @@ func (m *DefaultTenantManager) SetUserStorage(s UserStorage) {
 	m.userStorage = s
 }
 
+// SetWebAuthnCredentialReaper wires the credential revocation DeleteTenant runs
+// as it deprovisions each of the tenant's users. Tenant teardown deletes users
+// through the user store directly rather than through IdentityStore.DeleteUser,
+// so without this the tenant's WebAuthn credentials would outlive the tenant.
+// When unset, the revocation step is a no-op.
+func (m *DefaultTenantManager) SetWebAuthnCredentialReaper(r WebAuthnCredentialReaper) {
+	m.webauthnCredentials = r
+}
+
 // UserStorage returns the configured user store, or nil.
 func (m *DefaultTenantManager) UserStorage() UserStorage {
 	return m.userStorage
+}
+
+// SetRoleSeeder wires the seeder that materializes qrdb's built-in roles in
+// each newly created tenant. When set, CreateTenant seeds the roles as its
+// last step and rolls the whole creation back if seeding fails, so a tenant
+// that exists is always a tenant a user can be created in. Call during server
+// init, before the manager is shared.
+func (m *DefaultTenantManager) SetRoleSeeder(s TenantRoleSeeder) {
+	m.roleSeeder = s
+}
+
+// RoleSeeder returns the configured built-in role seeder, or nil.
+func (m *DefaultTenantManager) RoleSeeder() TenantRoleSeeder {
+	return m.roleSeeder
 }

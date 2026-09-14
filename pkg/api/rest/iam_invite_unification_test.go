@@ -93,7 +93,7 @@ func newUnificationInviteHandler(t *testing.T, inviteStore iam.InviteStore) (*IA
 	t.Helper()
 
 	const tenantID = "tenant-unify"
-	const userID = "user-unify-1"
+	const userID = "74"
 	const email = "unify@example.com"
 
 	memStorage := iam.NewMemoryStorage()

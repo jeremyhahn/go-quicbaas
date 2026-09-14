@@ -1432,7 +1432,10 @@ func TestACPBackend_CLI_PromptClosedSession(t *testing.T) {
 	backend.sessions.Delete(sess.ID)
 	_ = internal.stdin.Close()
 	_ = internal.cmd.Process.Kill()
-	_ = internal.cmd.Wait()
+	// Through the session's own reaper, not cmd.Wait: the session's supervisor
+	// holds the single Wait the process is allowed, and a second one here is
+	// the concurrent call os/exec forbids.
+	_ = internal.reapProcess()
 }
 
 // =============================================================================
@@ -1450,8 +1453,18 @@ func TestOneShotExecutionError_Error(t *testing.T) {
 	if !strings.Contains(msg, "claude") {
 		t.Errorf("error message should contain command name, got: %s", msg)
 	}
-	if !strings.Contains(msg, "permission denied") {
-		t.Errorf("error message should contain stderr, got: %s", msg)
+	// THE STDERR TAIL IS WITHHELD FROM THE MESSAGE, on purpose: an error string
+	// reaches every %v in the process, and an agent's diagnostics can carry the
+	// credential material its environment holds. The count says evidence exists;
+	// the field carries it for a caller that asks by name.
+	if strings.Contains(msg, "permission denied") {
+		t.Errorf("error message rendered the stderr tail, which is a secret-to-log path: %s", msg)
+	}
+	if !strings.Contains(msg, "withheld") {
+		t.Errorf("error message should say evidence was withheld, got: %s", msg)
+	}
+	if err.Stderr != "permission denied" {
+		t.Errorf("the tail was dropped from the struct; a caller that asks by name gets nothing")
 	}
 }
 
@@ -1496,8 +1509,15 @@ func TestStreamJSONError_Error(t *testing.T) {
 	if !strings.Contains(msg, "claude") {
 		t.Errorf("error message should contain command name, got: %s", msg)
 	}
-	if !strings.Contains(msg, "rate limit exceeded") {
-		t.Errorf("error message should contain result, got: %s", msg)
+	// INVERTED (review 1330): the agent's own result text is the most likely
+	// place in this package for a credential to appear — it is whatever the
+	// model wrote about what went wrong, and what went wrong is often a command
+	// it ran with a token in it. Error() reports its SIZE, never its content.
+	if strings.Contains(msg, "rate limit exceeded") {
+		t.Errorf("error message must not contain the agent's result text, got: %s", msg)
+	}
+	if !strings.Contains(msg, "19 bytes of result withheld") {
+		t.Errorf("error message should report the withheld size, got: %s", msg)
 	}
 }
 

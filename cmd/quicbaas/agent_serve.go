@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -49,6 +50,7 @@ var (
 	serveBackendsCSV    string
 	serveSandboxPolicy  string
 	serveSandboxNetwork string
+	serveOllamaBaseURL  string
 	serveAllowedMounts  []string
 	serveContainerRT    string
 	serveImageMapCSV    string
@@ -61,6 +63,8 @@ var (
 	serveHeartbeatEvery time.Duration
 	serveShutdownGrace  time.Duration
 	serveMCPEndpoint    string
+	serveEnrollRetry    time.Duration
+	serveEnrollRetryMax time.Duration
 )
 
 // newAgentServeCommand builds the `quicbaas agent serve` subcommand.
@@ -81,7 +85,7 @@ registry.
 
 Examples:
   quicbaas agent serve \
-    --server https://198.51.100.51:8443 \
+    --server https://quicbaas.example.com:8443 \
     --tenant acme \
     --bind 127.0.0.1:9091 \
     --backends acp,ollama \
@@ -99,6 +103,7 @@ Examples:
 	cmd.Flags().StringVar(&serveSandboxPolicy, "sandbox-policy", "required", "Sandbox policy: required | preferred | opt-in")
 	cmd.Flags().StringVar(&serveSandboxNetwork, "sandbox-network", "", "Container network for sandboxed sessions: bridge (default) | none | host | <network name>. \"host\" removes network isolation and exposes this host's loopback services to the agent.")
 	cmd.Flags().StringVar(&serveContainerRT, "container-runtime", "auto", "OCI runtime: docker | podman | auto | none")
+	cmd.Flags().StringVar(&serveOllamaBaseURL, "ollama-url", "", "Base URL of the ollama server this daemon's local-model backends use, without /v1 (default http://127.0.0.1:11434). Point it at the GPU host to run the \"qwen\" reviewer backend against a remotely served model.")
 	cmd.Flags().StringVar(&serveImageMapCSV, "image-map", "", "Comma-separated backend=image mappings (e.g., claude-code=quicbaas/claude-code:v1)")
 	cmd.Flags().StringVar(&serveImageRegistry, "image-registry", "", "Registry prefix applied to unqualified image references")
 	cmd.Flags().BoolVar(&serveAutoPull, "auto-pull", false, "Pull missing container images at startup")
@@ -108,6 +113,8 @@ Examples:
 	cmd.Flags().StringVar(&serveServerCAFile, "server-ca", "", "Path to the PEM-encoded CA bundle the daemon trusts when dialing --server (required)")
 	cmd.Flags().DurationVar(&serveHeartbeatEvery, "heartbeat-interval", 30*time.Second, "How often to heartbeat into the fleet registry")
 	cmd.Flags().DurationVar(&serveShutdownGrace, "shutdown-grace", 30*time.Second, "How long to wait for in-flight sessions to drain on shutdown")
+	cmd.Flags().DurationVar(&serveEnrollRetry, "enroll-retry-base", time.Second, "First backoff wait before retrying an enrollment that failed because the server was unreachable. Doubles per attempt up to --enroll-retry-max. Rejections (bad credentials, untrusted certificate) are never retried.")
+	cmd.Flags().DurationVar(&serveEnrollRetryMax, "enroll-retry-max", time.Minute, "Upper bound on a single enrollment backoff wait")
 	cmd.Flags().StringSliceVar(&serveAllowedMounts, "allowed-mount-root", nil, "Absolute host directory a sandboxed spawn may bind-mount from; repeatable. Every requested work_dir and extra mount must resolve under one of these. Omitting the flag denies all host mounts.")
 	cmd.Flags().StringVar(&serveMCPEndpoint, "mcp-endpoint", "", "Fully-qualified https://host:port/mcp address spawned agents dial for the \"quicbaas\" MCP preset. Empty leaves the preset unresolved.")
 
@@ -147,18 +154,7 @@ func runAgentServe(cmd *cobra.Command, args []string) error {
 		return formatError(buildErr)
 	}
 
-	runtime, rtErr := agent.NewRuntime(agent.RuntimeConfig{
-		Backends:      backends,
-		SandboxPolicy: cfg.SandboxPolicy,
-		ImageMap:      cfg.ImageMap,
-		ImageRegistry: cfg.ImageRegistry,
-		Logger:        logger,
-		WorkDir:       cfg.WorkDir,
-		// Bind-mount allowlist. Empty denies every host mount a sandboxed
-		// spawn asks for, so a daemon started without --allowed-mount-root
-		// cannot be talked into mounting an operator's filesystem.
-		MountPolicy: cfg.MountPolicy(),
-	})
+	runtime, rtErr := buildAgentRuntime(cfg, backends, logger)
 	if rtErr != nil {
 		return formatError(rtErr)
 	}
@@ -170,6 +166,12 @@ func runAgentServe(cmd *cobra.Command, args []string) error {
 	enroller := agent.NewProductionEnroller(agent.ProductionEnrollerDeps{
 		Logger:     logger,
 		HTTPClient: httpClient,
+		// Register what this daemon SERVES, not the transport kinds --backends
+		// named: one "acp" kind constructs claude, codex and opencode, and
+		// those are the names a task routes on. Same call the ready log and
+		// the heartbeat status use, so the fleet record, the log and the
+		// heartbeat never disagree (go-quicbaas#681).
+		ServedBackends: runtime.Backends,
 	})
 	// Bind the validated config so the heartbeat sender can call
 	// Reregister() without re-threading cfg through every call site.
@@ -188,6 +190,28 @@ func runAgentServe(cmd *cobra.Command, args []string) error {
 		Reregisterer: enroller,
 		Logger:       logger,
 	}
+
+	// Pooled provider accounts. The pool itself lives on the control plane;
+	// this composes the SAME orchestration.AccountResolver the control plane
+	// composes, over API-backed stores, so a dispatched spawn naming
+	// account_id / account_auto resolves here instead of being refused
+	// "account: resolver not configured" (go-quicbaas#734). It shares the
+	// daemon's mTLS client and token source, so one enrollment serves the
+	// heartbeat, the event forwarder and the credential release alike — which
+	// is also why it is wired after the runtime rather than into it: those two
+	// dependencies are built alongside the enroller, exactly as the event
+	// forwarder's are.
+	accountPool, apErr := agent.NewAccountPool(agent.AccountPoolConfig{
+		ServerAddr: cfg.ServerAddr,
+		TenantID:   cfg.TenantID,
+		HTTPClient: httpClient,
+		Tokens:     tokens,
+		Logger:     logger,
+	})
+	if apErr != nil {
+		return formatError(apErr)
+	}
+	runtime.SetAccountResolver(accountPool.Resolver)
 
 	// Heartbeat sender: keeps the server fleet registry's last-seen
 	// timestamp fresh so the orchestrator dispatcher keeps routing work to
@@ -232,8 +256,25 @@ func runAgentServe(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if err := daemon.Start(ctx); err != nil {
-		return formatError(err)
+	// Enrollment can now block: an unreachable server is waited out with
+	// backoff rather than treated as fatal. Wire the shutdown signals into
+	// the startup context for that window so `systemctl stop` ends the wait
+	// instead of relying on SIGTERM's default disposition killing the
+	// process mid-backoff. The handler is released as soon as startup
+	// finishes; waitForSignalAndStop owns signals from then on.
+	enrollCtx, releaseEnrollSignals := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	startErr := daemon.Start(enrollCtx)
+	releaseEnrollSignals()
+	if startErr != nil {
+		// A shutdown requested while the daemon was still waiting for the
+		// server is an ordinary stop, not a failure: reporting it as one
+		// would make the supervisor restart a unit the operator just
+		// asked to stop.
+		if errors.Is(startErr, context.Canceled) {
+			logger.Infof("agent daemon shutdown requested during enrollment; exiting")
+			return nil
+		}
+		return formatError(startErr)
 	}
 	if id := daemon.Identity(); id != nil {
 		spawnServer.SetIdentity(id)
@@ -255,6 +296,35 @@ func runAgentServe(cmd *cobra.Command, args []string) error {
 		strings.Join(runtime.Backends(), ","))
 
 	return waitForSignalAndStop(daemon)
+}
+
+// buildAgentRuntime constructs the daemon's Runtime over the supplied
+// backends, resolving --container-runtime into the engine that will host
+// sandboxed sessions. Without that resolution the runtime holds no engine and
+// every sandboxed spawn is refused for want of one, no matter what the
+// operator selected (go-quicbaas#732).
+//
+// The daemon's own rules — chiefly that sandbox policy "required" needs a
+// usable engine — live in agent.NewRuntime, so this path and the embedded
+// agent enforce one rule rather than two.
+func buildAgentRuntime(cfg *agent.Config, backends map[string]orchestration.AgentBackend, logger interfaces.Logger) (*agent.Runtime, error) {
+	containerRuntime, rtErr := agent.ResolveContainerRuntime(cfg.EffectiveContainerRuntime(), logger)
+	if rtErr != nil {
+		return nil, rtErr
+	}
+	return agent.NewRuntime(agent.RuntimeConfig{
+		Backends:         backends,
+		ContainerRuntime: containerRuntime,
+		SandboxPolicy:    cfg.SandboxPolicy,
+		ImageMap:         cfg.ImageMap,
+		ImageRegistry:    cfg.ImageRegistry,
+		Logger:           logger,
+		WorkDir:          cfg.WorkDir,
+		// Bind-mount allowlist. Empty denies every host mount a sandboxed
+		// spawn asks for, so a daemon started without --allowed-mount-root
+		// cannot be talked into mounting an operator's filesystem.
+		MountPolicy: cfg.MountPolicy(),
+	})
 }
 
 // buildAgentBackends constructs the set of backends the daemon will expose,
@@ -282,10 +352,94 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 				SandboxNetwork:    sandboxNetwork,
 				MCPPresetResolver: mcpResolver,
 			})
+			// CODEX SPEAKS NO ACP. `codex --help` lists exec, review, login,
+			// mcp, app-server — nothing that speaks agent-client-protocol.
+			// This was constructed with no subcommand and no transport, so the
+			// daemon launched the INTERACTIVE CLI and sent it JSON-RPC; codex
+			// read nothing it understood on a piped stdin and exited, which
+			// arrived as `acp: transport failed: initialize` and read as a
+			// broken protocol. Every independent review failed this way until
+			// 2026-09-13.
+			//
+			// `codex exec --json` is the non-interactive mode: one turn per
+			// invocation, prompt on stdin, JSONL events on stdout.
+			// --sandbox danger-full-access because the CONTAINER is the
+			// sandbox and codex's own would otherwise block the commands a
+			// review runs. --skip-git-repo-check because a workspace root is
+			// not always a repository root.
 			backends["codex"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
-				Command:           "codex",
-				Args:              []string{},
-				DefaultModel:      "o4-mini",
+				Command:   "codex",
+				Transport: orchestration.ACPTransportExec,
+				// SerenaCodexConfigArgs registers serena, the semantic
+				// code-retrieval server the reviewer charter tells this agent to
+				// search with. codex has no --mcp-config flag — only
+				// `-c <dotted.key>=<TOML>` — so its registration is stated on
+				// argv. It is built in pkg/orchestration beside Claude Code's so
+				// both CLIs get the same server argv and the same checkout root.
+				ExecArgs: append([]string{
+					"exec", "--json",
+					"--sandbox", "danger-full-access",
+					"--skip-git-repo-check",
+				}, orchestration.SerenaCodexConfigArgs()...),
+				ExecModelFlag: "--model",
+				ExecStdinArg:  "-",
+				// codex finds its credential through CODEX_HOME, not $HOME.
+				CredentialDir: orchestration.CredentialDirSpec{
+					Rel:     ".codex",
+					Target:  "/home/agent/.codex",
+					HomeEnv: "CODEX_HOME",
+					// codex treats CODEX_HOME as its whole state directory and
+					// refuses to start without write access to it:
+					//   failed to initialize in-process app-server client:
+					//   Read-only file system (os error 30)
+					// The directory is a fresh per-spawn materialization of one
+					// account's files, so the write cannot reach another
+					// session's credential or the operator's own.
+					Writable: true,
+				},
+				DefaultModel:      "",
+				SandboxNetwork:    sandboxNetwork,
+				MCPPresetResolver: mcpResolver,
+			})
+			// THE LOCAL REVIEWER. Owner direction 2026-09-14: a peer review may
+			// run on the qwen model served from the GPU host, as an
+			// alternative to codex rather than a replacement for it.
+			//
+			// IT IS THE CODEX BINARY DRIVING A DIFFERENT PROVIDER, and reusing
+			// it is what makes this small. codex exec already mounts the
+			// checkout, already runs tools in the sandbox, and already emits
+			// the JSONL the review runner parses — none of which the Ollama
+			// backend can do (Capabilities().ToolUse is false; it is a model
+			// server, not an agent), and a reviewer that cannot read the tree
+			// cannot review the change.
+			//
+			// CONFIGURED ENTIRELY ON ARGV, so this backend needs no config
+			// file and — unlike codex-on-OpenAI — NO CREDENTIAL AT ALL: the
+			// model is local, requires_openai_auth is false, and there is no
+			// token to mint, mount or rotate. Verified against the burn-in GPU
+			// host: `codex exec --json -c model_providers.<name>.*` completed a
+			// turn on review-q4_K_M and returned the exact requested token.
+			//
+			// wire_api MUST be "responses". codex 0.154.0 removed support for
+			// "chat" ("`wire_api = \"chat\"` is no longer supported"), and
+			// this ollama build serves a genuine /v1/responses.
+			//
+			// The backend is NAMED "qwen" because that name is what the
+			// independence rule classifies on: the served models are tagged
+			// review-bf16 / review-q8 / review-q4_K_M, which carry no "qwen"
+			// for a prefix rule to find. See sdlc.backendFamilies.
+			backends["qwen"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
+				Command:   "codex",
+				Transport: orchestration.ACPTransportExec,
+				ExecArgs: append(append([]string{
+					"exec", "--json",
+					"--sandbox", "danger-full-access",
+					"--skip-git-repo-check",
+				}, orchestration.QwenProviderConfigArgs(cfg.EffectiveOllamaBaseURL())...),
+					orchestration.SerenaCodexConfigArgs()...),
+				ExecModelFlag:     "--model",
+				ExecStdinArg:      "-",
+				DefaultModel:      "",
 				SandboxNetwork:    sandboxNetwork,
 				MCPPresetResolver: mcpResolver,
 			})
@@ -295,10 +449,17 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 				DefaultModel:      "",
 				SandboxNetwork:    sandboxNetwork,
 				MCPPresetResolver: mcpResolver,
+				// Was hardcoded in the backend; stated here now so a second
+				// file-credential CLI needs no edit to the backend. Same paths,
+				// same read-only mount, same behaviour as before.
+				CredentialDir: orchestration.CredentialDirSpec{
+					Rel:    ".config/opencode",
+					Target: "/home/agent/.config/opencode",
+				},
 			})
 		case agent.BackendOllama:
 			client := ollama.NewClient(ollama.ClientConfig{
-				BaseURL:    "http://127.0.0.1:11434",
+				BaseURL:    cfg.EffectiveOllamaBaseURL(),
 				MaxRetries: 2,
 				Timeout:    10 * time.Minute,
 			})
@@ -507,6 +668,7 @@ func buildServeConfig() (*agent.Config, error) {
 		Backends:          backends,
 		SandboxPolicy:     policy,
 		SandboxNetwork:    serveSandboxNetwork,
+		OllamaBaseURL:     serveOllamaBaseURL,
 		AllowedMountRoots: serveAllowedMounts,
 		ContainerRuntime:  agent.ContainerRuntimeSelector(serveContainerRT),
 		ImageMap:          imageMap,
@@ -518,6 +680,8 @@ func buildServeConfig() (*agent.Config, error) {
 		ServerCAFile:      serveServerCAFile,
 		HeartbeatInterval: serveHeartbeatEvery,
 		ShutdownGrace:     serveShutdownGrace,
+		EnrollRetryBase:   serveEnrollRetry,
+		EnrollRetryMax:    serveEnrollRetryMax,
 		MCPEndpoint:       serveMCPEndpoint,
 	}
 	return cfg, nil

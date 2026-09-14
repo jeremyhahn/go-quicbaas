@@ -210,8 +210,10 @@ func TestIdentityService_DelegatesToClient(t *testing.T) {
 	svc := c.Identity()
 
 	t.Run("IAM", func(t *testing.T) {
-		if svc.IAM() != c.IAM() {
-			t.Error("Identity().IAM() should delegate to client.IAM()")
+		// Identity().IAM() is the ONLY entry point: there is no flat
+		// Client.IAM() to compare against (issue #905).
+		if svc.IAM() != c.iam() {
+			t.Error("Identity().IAM() should delegate to the client's IAM accessor")
 		}
 	})
 }
@@ -379,8 +381,8 @@ func TestBackwardCompatibility_DirectAccessors(t *testing.T) {
 	if c.Backup() == nil {
 		t.Error("Backup() should return non-nil client")
 	}
-	if c.IAM() == nil {
-		t.Error("IAM() should return non-nil client")
+	if c.Identity().IAM() == nil {
+		t.Error("Identity().IAM() should return non-nil client")
 	}
 	if c.Cache() == nil {
 		t.Error("Cache() should return non-nil client")

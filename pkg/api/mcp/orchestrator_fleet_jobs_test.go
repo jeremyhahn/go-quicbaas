@@ -66,7 +66,7 @@ func (m *fleetMockAgentService) RemoveAgent(ctx context.Context, tenantID, agent
 	return nil
 }
 
-func (m *fleetMockAgentService) AgentHeartbeat(ctx context.Context, tenantID, agentID string) error {
+func (m *fleetMockAgentService) AgentHeartbeat(ctx context.Context, tenantID, agentID string, _ *orchestration.AgentObservation) error {
 	if m.heartbeatFn != nil {
 		return m.heartbeatFn(ctx, tenantID, agentID)
 	}
@@ -123,6 +123,36 @@ func TestExecuteAgentTool_FleetAndJobs_HappyPaths(t *testing.T) {
 			require.NotNil(t, result)
 		})
 	}
+}
+
+// TestExecuteOrchestratorListJobs_NarrowsToTask pins the narrowing on this
+// transport: the MCP tool now declares task_id and the service is the one
+// that applies it. Before go-quicbaas#822 no transport did.
+func TestExecuteOrchestratorListJobs_NarrowsToTask(t *testing.T) {
+	svc := &fleetMockAgentService{}
+	svc.listJobs = []*orchestration.JobStatus{{JobID: "job-1", TaskID: "task-a", Attempt: 2}}
+	reg := newAgentRegistry(t, svc)
+	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+
+	result, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_list_jobs",
+		map[string]interface{}{"task_id": "task-a"})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, svc.listJobsFilter, "the tool's task_id never reached the service")
+	require.Equal(t, "task-a", svc.listJobsFilter.TaskID)
+}
+
+// TestExecuteOrchestratorListJobs_WithoutTaskNarrowsNothing is the other
+// half: an omitted task_id lists the tenant rather than nothing.
+func TestExecuteOrchestratorListJobs_WithoutTaskNarrowsNothing(t *testing.T) {
+	svc := &fleetMockAgentService{}
+	reg := newAgentRegistry(t, svc)
+	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+
+	_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_list_jobs", map[string]interface{}{})
+	require.NoError(t, err)
+	require.NotNil(t, svc.listJobsFilter)
+	require.True(t, svc.listJobsFilter.Empty(), "an omitted task_id must narrow nothing")
 }
 
 // =============================================================================

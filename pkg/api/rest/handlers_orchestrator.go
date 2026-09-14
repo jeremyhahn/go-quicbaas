@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	grpccodes "google.golang.org/grpc/codes"
@@ -367,6 +368,9 @@ func (s *Server) HandleOrchestratorListSessions(w http.ResponseWriter, r *http.R
 
 	resp, err := agentSvc.ListSessions(ctx, &orchestration.ListSessionsRequest{
 		Backend: backend,
+		// The SDK has sent ?status= since it gained the field; the handler
+		// dropped it, so the filter was accepted and ignored (#792).
+		Status: orchestration.SessionState(r.URL.Query().Get("status")),
 	})
 	if err != nil {
 		handleOrchestratorError(w, r, err)
@@ -449,6 +453,39 @@ func (s *Server) HandleOrchestratorGetTask(w http.ResponseWriter, r *http.Reques
 	RespondJSON(w, r, http.StatusOK, task)
 }
 
+// HandleOrchestratorDeleteTask handles DELETE /api/v1/orchestrator/tasks/{taskID} - Delete a task.
+//
+// Removing the record also releases the task's source reservation, so the
+// issue or ticket it was adopted from can be adopted again. A task a job holds
+// a live lease on is refused with 409.
+func (s *Server) HandleOrchestratorDeleteTask(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	agentSvc := s.getAgentService(w, r)
+	if agentSvc == nil {
+		return
+	}
+
+	taskID := chi.URLParam(r, "taskID")
+	if taskID == "" {
+		RespondBadRequest(w, r, "task ID is required")
+		return
+	}
+
+	tenantID := r.URL.Query().Get("tenant_id")
+	ctx = orchestration.ContextWithTenant(ctx, tenantID)
+
+	if err := agentSvc.DeleteTask(ctx, tenantID, taskID); err != nil {
+		handleOrchestratorError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
+		"task_id": taskID,
+		"deleted": true,
+	})
+}
+
 // HandleOrchestratorListTasks handles GET /api/v1/orchestrator/tasks - List tasks.
 func (s *Server) HandleOrchestratorListTasks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -465,6 +502,8 @@ func (s *Server) HandleOrchestratorListTasks(w http.ResponseWriter, r *http.Requ
 		TeamName:   r.URL.Query().Get("team_name"),
 		AssignedTo: r.URL.Query().Get("assigned_to"),
 		CreatedBy:  r.URL.Query().Get("created_by"),
+		ProjectID:  r.URL.Query().Get("project_id"),
+		Statuses:   parseTaskStatuses(r.URL.Query().Get("statuses")),
 	}
 
 	statusParam := r.URL.Query().Get("status")
@@ -533,6 +572,113 @@ func (s *Server) HandleOrchestratorClaimTask(w http.ResponseWriter, r *http.Requ
 		"task_id":  taskID,
 		"agent_id": req.AgentID,
 		"claimed":  true,
+	})
+}
+
+// parseTaskStatuses splits the comma-separated `statuses` query parameter
+// into task statuses, dropping empty segments. An empty parameter yields nil
+// so the filter stays unset.
+func parseTaskStatuses(raw string) []orchestration.TaskStatus {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	statuses := make([]orchestration.TaskStatus, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			statuses = append(statuses, orchestration.TaskStatus(trimmed))
+		}
+	}
+	if len(statuses) == 0 {
+		return nil
+	}
+	return statuses
+}
+
+// OrchestratorBlockTaskRequest is the request body for blocking a task.
+type OrchestratorBlockTaskRequest struct {
+	Kind   orchestration.TaskBlockKind `json:"kind"`
+	Reason string                      `json:"reason"`
+}
+
+// HandleOrchestratorBlockTask handles POST /api/v1/orchestrator/tasks/{taskID}/block - Park a task until a person readmits it.
+func (s *Server) HandleOrchestratorBlockTask(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	agentSvc := s.getAgentService(w, r)
+	if agentSvc == nil {
+		return
+	}
+
+	taskID := chi.URLParam(r, "taskID")
+	if taskID == "" {
+		RespondBadRequest(w, r, "task ID is required")
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		RespondBadRequest(w, r, "failed to read request body")
+		return
+	}
+	defer r.Body.Close()
+
+	var req OrchestratorBlockTaskRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		RespondBadRequest(w, r, "invalid JSON body")
+		return
+	}
+
+	if req.Kind == "" {
+		RespondBadRequest(w, r, "kind is required")
+		return
+	}
+	if req.Reason == "" {
+		RespondBadRequest(w, r, "reason is required")
+		return
+	}
+
+	tenantID := r.URL.Query().Get("tenant_id")
+	ctx = orchestration.ContextWithTenant(ctx, tenantID)
+
+	if err := agentSvc.BlockTask(ctx, tenantID, taskID, req.Kind, req.Reason); err != nil {
+		handleOrchestratorError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
+		"task_id": taskID,
+		"kind":    req.Kind,
+		"blocked": true,
+	})
+}
+
+// HandleOrchestratorReadmitTask handles POST /api/v1/orchestrator/tasks/{taskID}/readmit - Return a blocked task to the queue.
+func (s *Server) HandleOrchestratorReadmitTask(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	agentSvc := s.getAgentService(w, r)
+	if agentSvc == nil {
+		return
+	}
+
+	taskID := chi.URLParam(r, "taskID")
+	if taskID == "" {
+		RespondBadRequest(w, r, "task ID is required")
+		return
+	}
+
+	tenantID := r.URL.Query().Get("tenant_id")
+	ctx = orchestration.ContextWithTenant(ctx, tenantID)
+
+	if err := agentSvc.ReadmitTask(ctx, tenantID, taskID); err != nil {
+		handleOrchestratorError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
+		"task_id":    taskID,
+		"readmitted": true,
 	})
 }
 
@@ -645,7 +791,10 @@ func (s *Server) HandleOrchestratorStartJob(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if req.Description == "" {
+	// A job driven by a module runner takes its work from the task it is an
+	// attempt at, not from a description; only a job with neither has
+	// nothing to run. The runner refuses what it cannot drive.
+	if req.Description == "" && req.TaskID == "" {
 		RespondBadRequest(w, r, "description is required")
 		return
 	}
@@ -667,8 +816,6 @@ func (s *Server) HandleOrchestratorStartJob(w http.ResponseWriter, r *http.Reque
 
 // HandleOrchestratorGetJobStatus handles GET /api/v1/orchestrator/jobs/{jobID} - Get job status.
 func (s *Server) HandleOrchestratorGetJobStatus(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
 		return
@@ -680,8 +827,7 @@ func (s *Server) HandleOrchestratorGetJobStatus(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	tenantID := r.URL.Query().Get("tenant_id")
-	ctx = orchestration.ContextWithTenant(ctx, tenantID)
+	ctx, tenantID := resolveOrchestratorTenant(r)
 
 	jobStatus, err := agentSvc.GetJobStatus(ctx, tenantID, jobID)
 	if err != nil {
@@ -692,19 +838,23 @@ func (s *Server) HandleOrchestratorGetJobStatus(w http.ResponseWriter, r *http.R
 	RespondJSON(w, r, http.StatusOK, jobStatus)
 }
 
-// HandleOrchestratorListJobs handles GET /api/v1/orchestrator/jobs - List all jobs for a tenant.
+// HandleOrchestratorListJobs handles GET /api/v1/orchestrator/jobs - list the
+// tenant's jobs, narrowed to the attempts at one task when task_id is given.
 func (s *Server) HandleOrchestratorListJobs(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
 		return
 	}
 
-	tenantID := r.URL.Query().Get("tenant_id")
-	ctx = orchestration.ContextWithTenant(ctx, tenantID)
+	ctx, tenantID := resolveOrchestratorTenant(r)
 
-	jobs, err := agentSvc.ListJobs(ctx, tenantID)
+	// task_id is HONOURED, not decorative. It was accepted and ignored until
+	// go-quicbaas#822, so a task page asking for its own attempts was handed
+	// every job in the tenant and had to re-filter an answer it could not
+	// verify.
+	filter := &orchestration.JobFilter{TaskID: r.URL.Query().Get("task_id")}
+
+	jobs, err := agentSvc.ListJobs(ctx, tenantID, filter)
 	if err != nil {
 		handleOrchestratorError(w, r, err)
 		return
@@ -880,6 +1030,85 @@ func (s *Server) HandleOrchestratorListBackendModels(w http.ResponseWriter, r *h
 		"backend": backendName,
 		"models":  models,
 		"count":   len(models),
+	})
+}
+
+// =============================================================================
+// Job Runner Handlers
+// =============================================================================
+
+// OrchestratorJobStateSpecResponse is one state a runner drives a job
+// through, as a consumer sees it. IdleThreshold is deliberately absent: it is
+// the stall detector's tuning, not something a stepper renders.
+type OrchestratorJobStateSpecResponse struct {
+	// State is the state as it appears on JobStatus.
+	State string `json:"state"`
+
+	// Label is how the state is named to a person.
+	Label string `json:"label"`
+
+	// SessionBacked says an agent session is doing the work in this state.
+	// Always serialized so a consumer never has to guess the default.
+	SessionBacked bool `json:"session_backed"`
+}
+
+// OrchestratorJobRunnerResponse is one registered runner and the ordered,
+// non-terminal states it declares.
+type OrchestratorJobRunnerResponse struct {
+	// Name is what JobConfig.Runner selects the runner by.
+	Name string `json:"name"`
+
+	// States are the runner's states in the order it drives them.
+	States []OrchestratorJobStateSpecResponse `json:"states"`
+}
+
+// OrchestratorListRunnersResponse is the runners envelope, matching the
+// list convention the other orchestrator collections use.
+type OrchestratorListRunnersResponse struct {
+	// Runners is every registered runner, ordered by name.
+	Runners []OrchestratorJobRunnerResponse `json:"runners"`
+
+	// Count is len(Runners).
+	Count int `json:"count"`
+}
+
+// HandleOrchestratorListRunners handles GET /api/v1/orchestrator/runners —
+// every registered JobRunner and the states it declares.
+//
+// This is REGISTRY data, not tenant data: the runners a daemon can drive are
+// the same for every caller, so there is no tenant derivation here. It is
+// still gated on the orchestrator service being present, because a node that
+// runs no orchestrator drives no jobs and answering "these are the runners"
+// there would describe a capability the node does not have.
+//
+// Consumers that used to hardcode the engine's thirteen job states — the UI's
+// stepper above all — read them from here instead.
+func (s *Server) HandleOrchestratorListRunners(w http.ResponseWriter, r *http.Request) {
+	if agentSvc := s.getAgentService(w, r); agentSvc == nil {
+		return
+	}
+
+	registered := orchestration.JobRunners()
+	runners := make([]OrchestratorJobRunnerResponse, 0, len(registered))
+	for _, runner := range registered {
+		specs := runner.States()
+		states := make([]OrchestratorJobStateSpecResponse, 0, len(specs))
+		for _, spec := range specs {
+			states = append(states, OrchestratorJobStateSpecResponse{
+				State:         string(spec.State),
+				Label:         spec.Label,
+				SessionBacked: spec.SessionBacked,
+			})
+		}
+		runners = append(runners, OrchestratorJobRunnerResponse{
+			Name:   runner.Name(),
+			States: states,
+		})
+	}
+
+	RespondJSON(w, r, http.StatusOK, OrchestratorListRunnersResponse{
+		Runners: runners,
+		Count:   len(runners),
 	})
 }
 
@@ -1217,9 +1446,65 @@ func (s *Server) HandleOrchestratorListAgents(w http.ResponseWriter, r *http.Req
 	}
 
 	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
-		"agents": agents,
+		"agents": agentsResponse(agents),
 		"count":  len(agents),
 	})
+}
+
+// agentResponse is an AgentRegistration as the REST API renders it: every
+// field of the record, plus the "backends" the record does not itself carry.
+//
+// AN OPERATOR READING THE REGISTRY MUST SEE WHAT DISPATCH SEES. A daemon that
+// serves claude, codex and opencode is one record whose primary Backend names
+// only the first, and whose other two live in Capabilities beside traits like
+// "gpu". Reading "backend": "claude" off that record, an operator concludes a
+// task routed on "codex" cannot land there — and is wrong, because the
+// registry's backend filter and the remote backend resolver both match on the
+// whole list (agentServesBackend). "backends" is that list, so the answer the
+// API gives and the answer dispatch gives are the same one (go-quicbaas#681).
+//
+// Additive by construction: "backend" and "capabilities" are rendered
+// unchanged, because the TypeScript SDK's AgentRegistration and the Agent
+// Fleet UI read them.
+type agentResponse struct {
+	*orchestration.AgentRegistration
+
+	// Backends is every name this agent will be matched on: the primary
+	// backend first, then each capability. Never null for a registered
+	// agent, so an operator never has to guess whether an empty answer
+	// means "serves nothing" or "field absent".
+	Backends []string `json:"backends"`
+}
+
+// agentsResponse renders a fleet listing.
+func agentsResponse(agents []*orchestration.AgentRegistration) []agentResponse {
+	out := make([]agentResponse, 0, len(agents))
+	for _, agent := range agents {
+		out = append(out, newAgentResponse(agent))
+	}
+	return out
+}
+
+// newAgentResponse renders one registration, deduplicating the primary
+// backend against the capability list so a daemon that advertises its primary
+// in both places is not reported as serving it twice.
+func newAgentResponse(agent *orchestration.AgentRegistration) agentResponse {
+	if agent == nil {
+		return agentResponse{Backends: []string{}}
+	}
+	backends := make([]string, 0, len(agent.Capabilities)+1)
+	seen := make(map[string]struct{}, len(agent.Capabilities)+1)
+	for _, name := range append([]string{agent.Backend}, agent.Capabilities...) {
+		if name == "" {
+			continue
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		backends = append(backends, name)
+	}
+	return agentResponse{AgentRegistration: agent, Backends: backends}
 }
 
 // HandleOrchestratorGetAgent handles GET /api/v1/orchestrator/agents/{agentID} - Get an agent.
@@ -1246,7 +1531,7 @@ func (s *Server) HandleOrchestratorGetAgent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, agent)
+	RespondJSON(w, r, http.StatusOK, newAgentResponse(agent))
 }
 
 // HandleOrchestratorRemoveAgent handles DELETE /api/v1/orchestrator/agents/{agentID} - Remove an agent.
@@ -1322,13 +1607,21 @@ func (s *Server) HandleOrchestratorAgentHeartbeat(w http.ResponseWriter, r *http
 		}
 	}
 
-	err := agentSvc.AgentHeartbeat(ctx, tenantID, agentID)
+	// The served list the body carries is the daemon's running truth about
+	// itself, and passing it here is what lets the record be CORRECTED after
+	// registration: a daemon restarted with a different --backends, or
+	// upgraded in place from the pre-#681 transport vocabulary, converges on
+	// the next heartbeat instead of keeping the names it enrolled with
+	// forever (go-quicbaas#699).
+	observed := payload.observation()
+
+	err := agentSvc.AgentHeartbeat(ctx, tenantID, agentID, observed)
 	if err != nil && isOrchNotFoundError(err) {
 		// Try idempotent recovery — if the recoverer accepts the cert
 		// it has already re-published the agent, so the retry below
 		// hits the live entry and succeeds.
 		if recovered := s.tryRecoverAgentHeartbeat(ctx, r, tenantID, agentID, &payload); recovered {
-			err = agentSvc.AgentHeartbeat(ctx, tenantID, agentID)
+			err = agentSvc.AgentHeartbeat(ctx, tenantID, agentID, observed)
 		}
 	}
 	if err != nil {
@@ -1347,10 +1640,46 @@ func (s *Server) HandleOrchestratorAgentHeartbeat(w http.ResponseWriter, r *http
 // unknown fields are ignored so older / newer agents stay
 // interoperable.
 type heartbeatBody struct {
-	BindAddr       string   `json:"bind_addr,omitempty"`
-	Backends       []string `json:"backends,omitempty"`
-	SandboxPolicy  string   `json:"sandbox_policy,omitempty"`
-	HasContainerRT bool     `json:"has_container_runtime,omitempty"`
+	BindAddr string `json:"bind_addr,omitempty"`
+
+	// Backends is the set of backend names the daemon's runtime is serving,
+	// and it is a POINTER so that "the daemon reported none" is a different
+	// answer from "the daemon reported nothing". Both decode to a nil slice,
+	// and they mean opposite things: a body with no backends key is an older
+	// daemon or a transport that carries no served list, which reconciles
+	// nothing; a body carrying an empty list is a daemon that constructed no
+	// backend at all, which is a fault to surface (go-quicbaas#699).
+	Backends *[]string `json:"backends"`
+
+	// MaxConcurrentJobs is how many orchestration jobs the daemon declares its
+	// host can run at once — its contribution to the fleet's worker-slot
+	// capacity. Zero, or an absent key, reports nothing and reconciles nothing;
+	// see orchestration.AgentObservation.MaxConcurrentJobs for why that is not
+	// the same as reporting no slots.
+	MaxConcurrentJobs int `json:"max_concurrent_jobs,omitempty"`
+
+	SandboxPolicy  string `json:"sandbox_policy,omitempty"`
+	HasContainerRT bool   `json:"has_container_runtime,omitempty"`
+}
+
+// observation returns what the daemon reported about itself on this
+// heartbeat, or nil when it reported nothing at all. An empty served list is
+// carried through rather than dropped, because refusing it is the point: the
+// registry decides that, not the decoder.
+func (b *heartbeatBody) observation() *orchestration.AgentObservation {
+	if b == nil || b.Backends == nil {
+		return nil
+	}
+	// THE SLOT COUNT RIDES ON THE SERVED LIST rather than standing alone. An
+	// observation is refused outright when it reports no backend at all
+	// (AgentObservation.Validate), so a body carrying a capacity and no
+	// backends key would be rejected rather than reconciled — and there is no
+	// such body: pkg/agent writes both fields in one payload, and the
+	// transports that carry no served list carry no capacity either.
+	return &orchestration.AgentObservation{
+		Backends:          *b.Backends,
+		MaxConcurrentJobs: b.MaxConcurrentJobs,
+	}
 }
 
 // =============================================================================
@@ -1457,13 +1786,19 @@ func isGRPCNotFound(err error) bool {
 }
 
 // isOrchInvalidInputError checks if the error is an invalid input type.
+//
+// ErrSessionStateUnknown is classified here so a misspelled ?status= answers
+// 400 rather than falling through to the 500 default: the caller named a state
+// this daemon does not use, which is a bad request and not a server fault.
+//
 // NoMatchingAgentError is classified here (not as not-found) so strict
 // host_affinity offline failures surface as 400 no_matching_agent — the
 // resource (backend) exists, the operator just can't satisfy the
 // constraint set on this specific request.
 func isOrchInvalidInputError(err error) bool {
 	var noMatch *orchestration.NoMatchingAgentError
-	return stderrors.Is(err, orchestration.ErrBackendRequired) ||
+	return stderrors.Is(err, orchestration.ErrSessionStateUnknown) ||
+		stderrors.Is(err, orchestration.ErrBackendRequired) ||
 		stderrors.Is(err, orchestration.ErrPromptRequired) ||
 		stderrors.Is(err, orchestration.ErrSessionIDRequired) ||
 		stderrors.Is(err, orchestration.ErrRootPathRequired) ||
@@ -1491,7 +1826,20 @@ func isOrchConflictError(err error) bool {
 	// A session that may not rotate is a state conflict, not a bad request:
 	// the caller named a real session and only its policy stands in the way.
 	var notRotatable *orchestration.SessionNotRotatableError
-	return stderrors.Is(err, orchestration.ErrTaskAlreadyClaimed) ||
+	// A task a running job holds a lease on is a state conflict for the same
+	// reason: the caller named a real task and only the job in flight stands
+	// in the way, so the answer is "not now", not "never" or "no such task".
+	var leased *orchestration.TaskLeasedError
+	// A REFUSED STATE TRANSITION IS THE CALLER'S CONDITION, NOT THE SERVER'S.
+	// It fell through to RespondInternalError, so readmitting a task the
+	// transition table would not move answered a bare 500 naming neither state.
+	// That is how go-quicbaas#945 stayed invisible for five days: the one verb
+	// that recovers a task told the operator nothing about why it had not.
+	var invalidState *orchestration.TaskInvalidStateError
+	return stderrors.Is(err, orchestration.ErrTaskLeased) ||
+		stderrors.As(err, &leased) ||
+		stderrors.As(err, &invalidState) ||
+		stderrors.Is(err, orchestration.ErrTaskAlreadyClaimed) ||
 		stderrors.Is(err, orchestration.ErrTaskAlreadyExists) ||
 		stderrors.Is(err, orchestration.ErrTaskVersionConflict) ||
 		stderrors.Is(err, orchestration.ErrAgentRegistryAlreadyExists) ||
@@ -1513,15 +1861,12 @@ func isOrchConflictError(err error) bool {
 // HandleOrchestratorListWorkflows handles GET /api/v1/orchestrator/workflows
 // Returns all registered workflow definitions sorted by name.
 func (s *Server) HandleOrchestratorListWorkflows(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
 		return
 	}
 
-	tenantID := r.URL.Query().Get("tenant_id")
-	ctx = orchestration.ContextWithTenant(ctx, tenantID)
+	ctx, _ := resolveOrchestratorTenant(r)
 
 	wfs, err := agentSvc.ListWorkflows(ctx)
 	if err != nil {
@@ -1540,8 +1885,6 @@ func (s *Server) HandleOrchestratorListWorkflows(w http.ResponseWriter, r *http.
 // HandleOrchestratorGetWorkflow handles GET /api/v1/orchestrator/workflows/{name}
 // Returns a single workflow definition by name.
 func (s *Server) HandleOrchestratorGetWorkflow(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
 		return
@@ -1553,8 +1896,7 @@ func (s *Server) HandleOrchestratorGetWorkflow(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	tenantID := r.URL.Query().Get("tenant_id")
-	ctx = orchestration.ContextWithTenant(ctx, tenantID)
+	ctx, _ := resolveOrchestratorTenant(r)
 
 	wf, err := agentSvc.GetWorkflow(ctx, name)
 	if err != nil {
@@ -1570,8 +1912,6 @@ func (s *Server) HandleOrchestratorGetWorkflow(w http.ResponseWriter, r *http.Re
 // HandleOrchestratorUpdateWorkflow handles PUT /api/v1/orchestrator/workflows/{name}
 // Replaces an existing workflow definition. Returns 404 if the workflow does not exist.
 func (s *Server) HandleOrchestratorUpdateWorkflow(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
 		return
@@ -1599,8 +1939,7 @@ func (s *Server) HandleOrchestratorUpdateWorkflow(w http.ResponseWriter, r *http
 	// URL path name takes precedence over embedded name.
 	def.Name = name
 
-	tenantID := r.URL.Query().Get("tenant_id")
-	ctx = orchestration.ContextWithTenant(ctx, tenantID)
+	ctx, _ := resolveOrchestratorTenant(r)
 
 	if err := agentSvc.UpdateWorkflow(ctx, &def); err != nil {
 		handleOrchestratorError(w, r, err)
@@ -1615,8 +1954,6 @@ func (s *Server) HandleOrchestratorUpdateWorkflow(w http.ResponseWriter, r *http
 // HandleOrchestratorDeleteWorkflow handles DELETE /api/v1/orchestrator/workflows/{name}
 // Removes a workflow definition by name. Returns 404 if the workflow does not exist.
 func (s *Server) HandleOrchestratorDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
 		return
@@ -1628,8 +1965,7 @@ func (s *Server) HandleOrchestratorDeleteWorkflow(w http.ResponseWriter, r *http
 		return
 	}
 
-	tenantID := r.URL.Query().Get("tenant_id")
-	ctx = orchestration.ContextWithTenant(ctx, tenantID)
+	ctx, _ := resolveOrchestratorTenant(r)
 
 	if err := agentSvc.DeleteWorkflow(ctx, name); err != nil {
 		handleOrchestratorError(w, r, err)
@@ -1645,8 +1981,6 @@ func (s *Server) HandleOrchestratorDeleteWorkflow(w http.ResponseWriter, r *http
 // HandleOrchestratorCreateWorkflow handles POST /api/v1/orchestrator/workflows
 // Validates and registers a workflow definition supplied in the request body.
 func (s *Server) HandleOrchestratorCreateWorkflow(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
 		return
@@ -1680,7 +2014,12 @@ func (s *Server) HandleOrchestratorCreateWorkflow(w http.ResponseWriter, r *http
 	// Name in the URL body takes precedence over the embedded definition name.
 	req.Definition.Name = req.Name
 
-	ctx = orchestration.ContextWithTenant(ctx, req.TenantID)
+	// The body's tenant_id wins; otherwise derive the tenant exactly as every
+	// other orchestrator handler does (query, then token claim, then system).
+	ctx, _ := resolveOrchestratorTenant(r)
+	if req.TenantID != "" {
+		ctx = orchestration.ContextWithTenant(r.Context(), req.TenantID)
+	}
 
 	if err := agentSvc.RegisterWorkflow(ctx, req.Definition); err != nil {
 		handleOrchestratorError(w, r, err)

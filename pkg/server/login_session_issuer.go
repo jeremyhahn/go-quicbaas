@@ -19,6 +19,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -28,6 +29,17 @@ import (
 // authMethodMetadataKey is the identity-metadata key under which the unified
 // login ceremony records the factor used (mtls, fido2, piv).
 const authMethodMetadataKey = "factor_type"
+
+// factorIDMetadataKey is the identity-metadata key under which qrdb's default
+// identity hydrator records the STABLE id of the factor the login verified. It
+// is the handle this issuer replays the factor's enrolled attestation from.
+//
+// The hydrator is qrdb's (transport/embedded defaultIdentityHydrator) and the
+// node exposes no seam to replace it — WithSessionIssuer and
+// WithLoginFactorVerifier are the only login options — so the factor's own
+// metadata does not travel on the identity. The id does, which is enough: the
+// record it names is the authority.
+const factorIDMetadataKey = "factor_id"
 
 // oidcSessionIssuer adapts the quicbaas OIDC provider to qrdb's login
 // SessionIssuer. It is the bridge that makes a successful unified login
@@ -45,6 +57,20 @@ const authMethodMetadataKey = "factor_type"
 // called. An atomic pointer keeps SetProvider/load lock-free.
 type oidcSessionIssuer struct {
 	provider atomic.Pointer[iam.OIDCProvider]
+
+	// factors reads the stored auth-factor record so a login can REPLAY the
+	// attestation its factor recorded at enrollment. Late-bound for the same
+	// reason the provider is: the node is constructed before its own client
+	// exists. Nil until wired, and a nil reader simply means no attestation is
+	// replayed — see attestationFor.
+	factors atomic.Pointer[authFactorReader]
+}
+
+// authFactorReader is the narrow slice of qrdb's user-auth-factor client this
+// issuer needs: one lookup by id. Held as an interface value in a pointer so it
+// can be swapped atomically.
+type authFactorReader struct {
+	get func(ctx context.Context, req *qrdbtransport.AuthFactorGetRequest) (*qrdbtransport.AuthFactorGetResponse, error)
 }
 
 // newOIDCSessionIssuer creates an unbound issuer. Call SetProvider once the
@@ -56,6 +82,48 @@ func newOIDCSessionIssuer() *oidcSessionIssuer {
 // SetProvider attaches (or replaces) the OIDC provider backing this issuer.
 func (i *oidcSessionIssuer) SetProvider(p *iam.OIDCProvider) {
 	i.provider.Store(p)
+}
+
+// SetAuthFactorClient attaches the client this issuer replays enrolled
+// attestation through. Passing nil detaches it, which leaves logins issuing
+// sessions with no attestation — the behaviour before #394.
+func (i *oidcSessionIssuer) SetAuthFactorClient(c qrdbtransport.UserAuthFactorClient) {
+	if c == nil {
+		i.factors.Store(nil)
+		return
+	}
+	i.factors.Store(&authFactorReader{get: c.GetAuthFactor})
+}
+
+// attestationFor replays the attestation recorded on the factor this login
+// verified. It returns empty strings when there is nothing to replay.
+//
+// UNDERSTATING IS THE SAFE DIRECTION and is the only direction this can fail
+// in. A session that carries no attestation is treated as unattested by
+// everything downstream, so a missing reader, an absent factor id, a lookup
+// failure or a factor with no recorded level all produce a session that claims
+// LESS than the credential proved — never more. The alternative, failing the
+// login, would turn a transient factor-store blip into an outage for every
+// hardware user, to protect a claim whose absence already denies.
+//
+// It never DERIVES: the values come from the stored record and nothing else. A
+// login cannot manufacture assurance it did not prove, which is the invariant
+// #385 established for refresh.
+func (i *oidcSessionIssuer) attestationFor(ctx context.Context, identity *qrdbsdk.Identity) (level, aaguid string) {
+	reader := i.factors.Load()
+	if reader == nil || identity.Metadata == nil {
+		return "", ""
+	}
+	factorID := identity.Metadata[factorIDMetadataKey]
+	if factorID == "" {
+		return "", ""
+	}
+	resp, err := reader.get(ctx, &qrdbtransport.AuthFactorGetRequest{FactorID: factorID})
+	if err != nil || resp == nil || resp.Factor.Metadata == nil {
+		return "", ""
+	}
+	return resp.Factor.Metadata[iam.AuthFactorMetadataAttestLevel],
+		resp.Factor.Metadata[iam.AuthFactorMetadataAttestAAGUID]
 }
 
 // Compile-time check that oidcSessionIssuer satisfies the qrdb interface.
@@ -79,6 +147,12 @@ func (i *oidcSessionIssuer) Issue(ctx context.Context, identity *qrdbsdk.Identit
 	if identity.Metadata != nil {
 		session.AuthMethod = identity.Metadata[authMethodMetadataKey]
 	}
+	// Replay what this factor's enrollment proved. Before #394 a WebAuthn login
+	// issued a session carrying nothing, so the assurance a deployment had on
+	// the REGISTERING session it did not have on any subsequent login with the
+	// same key — while the evidence sat in the factor record, written and never
+	// read.
+	session.AttestLevel, session.AttestAAGUID = i.attestationFor(ctx, identity)
 	// A DPoP proof presented on the login-finish request (threaded on the context
 	// by the transport handler) sender-constrains the session bearer via cnf.jkt.
 	// qrdb passes the caller's context here unchanged, so no ceremony signature
@@ -156,6 +230,12 @@ func (s *Server) bindLoginCeremonyProvider(components service.IAMComponents) {
 	// roots) to the late-bound login factor verifiers so the node's login
 	// ceremony can verify PIV and WebAuthn proofs.
 	s.bindLoginFactorVerifiers(c)
+
+	// Publish the same WebAuthn factory to the composed go-xkms module's
+	// credential-store decorator, so a passkey registered through the
+	// module's own ceremony routes enrolls the login factor the ceremony
+	// above resolves.
+	s.bindXKMSModuleWebAuthnFactory(c)
 }
 
 // bindLoginSessionRefreshIssuer attaches the OIDC provider to the login

@@ -141,7 +141,7 @@ func (b *CodexExecBackend) Spawn(_ context.Context, req *SpawnRequest) (*Session
 		Model:     model,
 		Status:    SessionStateIdle,
 		WorkDir:   req.WorkDir,
-		CreatedAt: sess.created.Unix(),
+		CreatedAt: sess.created.UnixNano(),
 	}, nil
 }
 
@@ -202,9 +202,12 @@ func (b *CodexExecBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 	if sess.workDir != "" {
 		cmd.Dir = sess.workDir
 	}
-	if len(sess.env) > 0 {
-		cmd.Env = append(cmd.Env, sess.env...)
-	}
+	// The session's variables over this daemon's scrubbed environment. Both
+	// halves matter: appending to a nil cmd.Env, as this did, gave the codex
+	// process the session's variables and NOTHING ELSE — no PATH, no HOME —
+	// whenever a session carried any at all, and inheriting os.Environ()
+	// untouched gave it the operator's Claude Code session (go-quicbaas#218).
+	cmd.Env = agentProcessEnv(sess.env)
 	cmd.Stdin = strings.NewReader(full)
 
 	if req.EventCallback != nil {
@@ -265,8 +268,8 @@ func (b *CodexExecBackend) Status(_ context.Context, sessionID string) (*Session
 	return &SessionStatus{
 		SessionID:    sess.id,
 		State:        SessionStateIdle,
-		LastActivity: time.Now().Unix(),
-		Uptime:       time.Since(sess.created).Milliseconds(),
+		LastActivity: time.Now().UnixNano(),
+		Uptime:       int64(time.Since(sess.created).Seconds()),
 	}, nil
 }
 

@@ -24,6 +24,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -33,10 +34,12 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest/ui"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/clientip"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -85,6 +88,17 @@ type Config struct {
 
 	// RateLimit is the maximum requests per second (0 = disabled)
 	RateLimit int
+
+	// TrustedProxies lists the CIDRs (or bare addresses) whose
+	// X-Forwarded-For and X-Real-IP headers are believed.
+	//
+	// EMPTY MEANS TRUST NOTHING, which is the secure default and the right one
+	// for a listener reachable directly: without it, any caller chooses its own
+	// rate-limit bucket and its own audit trail by setting a header
+	// (go-quicbaas#156). A deployment behind a load balancer opts in by naming
+	// the balancer here; nothing is inferred from the request itself, because
+	// everything in the request is attacker-controlled.
+	TrustedProxies []string
 
 	// ExposeShardHeader controls X-QuicBaaS-Shard response header tagging.
 	ExposeShardHeader bool
@@ -173,7 +187,26 @@ type PIVClientCertConfig struct {
 	// TrustedIssuers is an optional list of issuer Subject DN strings that the
 	// certificate's issuing CA must match (case-insensitive per RFC 4514). When
 	// empty, any cert that validates against the CA pool is accepted.
+	//
+	// A DN comparison is not evidence of hardware — any certificate can assert
+	// any issuer name. Hardware is established by AttestationCAFile.
 	TrustedIssuers []string
+
+	// AttestationCAFile is the PEM bundle of PIV attestation CA certificates
+	// (e.g. the Yubico PIV Attestation root) a slot certificate must chain to
+	// before a login is treated as hardware-backed.
+	AttestationCAFile string
+
+	// AttestationIntermediatesFile is an optional PEM bundle of vendor sub-CA
+	// certificates used to complete an attestation chain.
+	AttestationIntermediatesFile string
+
+	// AllowUnattested permits PIV login for a certificate whose hardware
+	// provenance was not proven. The issued token then reports the level that
+	// was actually established and omits the hardware-attested ACR, so the
+	// downgrade is explicit rather than silent. Default false: an unconfigured
+	// deployment refuses.
+	AllowUnattested bool
 }
 
 // DefaultConfig returns default REST API configuration.
@@ -187,14 +220,22 @@ func DefaultConfig() *Config {
 		MaxBodySize:       DefaultMaxBodySize,
 		MaxUploadBodySize: DefaultMaxUploadBodySize,
 		RequestTimeout:    30 * time.Second,
-		RateLimit:         0, // No rate limiting by default
+		RateLimit:         0,   // No rate limiting by default
+		TrustedProxies:    nil, // Trust no proxy; attribute to the transport peer
 		ExposeShardHeader: true,
 	}
 }
 
 // Server represents the REST API server.
 type Server struct {
-	config  *Config
+	config *Config
+
+	// clientIP resolves which address a request is attributed to. Built once
+	// from Config.TrustedProxies so the trusted-proxy decision is made in one
+	// place; nil is impossible after NewServer, but a nil resolver is safe and
+	// trusts nothing.
+	clientIP *clientip.Resolver
+
 	router  *chi.Mux
 	server  *http.Server
 	service service.QuicBaaS
@@ -207,9 +248,34 @@ type Server struct {
 	// material; set via SetClusterSecretHandler before setupRouter.
 	clusterSecretHandler http.HandlerFunc
 
+	// sdlcWebhookHandler serves the forge webhook ingress. Nil until the SDLC
+	// module starts and injects it; the route is registered either way so a
+	// node with the module disabled answers 503 rather than 404. See
+	// HandleSDLCWebhook for why that distinction matters to a forge.
+	sdlcWebhookHandler http.HandlerFunc
+
+	// tenantWebAuthnWarned is the one-per-episode flag behind the tenant
+	// WebAuthn ceremony's unavailability warning. It lives on the server
+	// rather than in the handler closure because the module route table binds
+	// moduleWebAuthnHandler five times, once per ceremony path, and five
+	// closures would each warn about the same outage naming the same five
+	// routes. See warnTenantWebAuthnUnavailable.
+	tenantWebAuthnWarned atomic.Bool
+
 	// listener is the TCP listener backing the HTTP server.
 	// It is created in Start and may be wrapped by a limitListener.
 	listener net.Listener
+
+	// pivAttestation verifies that a PIV login certificate chains to an
+	// operator-configured smartcard attestation CA. It is built once from
+	// config on the first PIV login — the trust anchors cannot change without
+	// a restart, so re-reading the bundle per request would only add I/O.
+	// pivAttestationErr holds a construction failure so the refusal is
+	// reported identically on every subsequent request rather than being
+	// retried into a different answer.
+	pivAttestationOnce sync.Once
+	pivAttestation     *iam.PIVAttestationVerifier
+	pivAttestationErr  error
 
 	// moduleAuthorizer is the platform-token validator AuthenticateHTTP
 	// (auth_support.go) authenticates against: when go-qrdb's unified-server
@@ -334,8 +400,18 @@ func NewServer(svc service.QuicBaaS, config *Config, log *logger.Logger) (*Serve
 		config = DefaultConfig()
 	}
 
+	// Built before the router, and its error is fatal: a misspelled proxy entry
+	// silently dropped would leave the deployment trusting fewer proxies than
+	// the operator wrote, and the symptom -- every client attributed to the
+	// load balancer -- looks like a different bug entirely.
+	resolver, err := clientip.NewResolver(config.TrustedProxies)
+	if err != nil {
+		return nil, err
+	}
+
 	s := &Server{
 		config:    config,
+		clientIP:  resolver,
 		service:   svc,
 		logger:    log.WithField("component", "rest-api"),
 		startTime: time.Now(),
@@ -358,6 +434,12 @@ func (s *Server) setupRouter() {
 
 	// Apply global middleware
 	// Tracing (env-gated)
+	// FIRST, because everything below attributes a request to an address:
+	// TracingMiddleware records http.client_ip, LoggingMiddleware and the shard
+	// log record ip_address, RateLimitMiddleware keys its buckets on it, and
+	// the OIDC handlers write it into audit records. Resolving here means they
+	// all read one decision instead of each re-reading the headers.
+	r.Use(ClientIPMiddleware(s.clientIP))
 	r.Use(TracingMiddleware())
 	r.Use(RequestIDMiddleware())
 	r.Use(SecurityHeadersMiddleware())
@@ -643,6 +725,22 @@ func (s *Server) handleSecretsPostAction(w http.ResponseWriter, r *http.Request)
 	s.HandleSecretsAction(w, r)
 }
 
+// handleSecretsPutAction dispatches PUT /api/v1/secrets/* by suffix, mirroring
+// handleSecretsPostAction. A secret id is a hierarchical path, so the route has
+// to be a wildcard and the sub-resource has to be read off the end of it.
+//
+// Only /status is defined today; anything else is refused rather than falling
+// through to a default, so a caller mistyping the sub-resource is told so
+// instead of having some other secret operation performed on their behalf.
+func (s *Server) handleSecretsPutAction(w http.ResponseWriter, r *http.Request) {
+	path := chi.URLParam(r, "*")
+	if strings.HasSuffix(path, "/status") {
+		s.HandleUpdateSecretStatus(w, r)
+		return
+	}
+	RespondNotFound(w, r, "unknown secret sub-resource; PUT supports /status")
+}
+
 // SetShardRouter overrides the default shard router (for tests or custom routing).
 func (s *Server) SetShardRouter(r interface{ Route(string, uint64) uint64 }) {
 	s.mu.Lock()
@@ -657,6 +755,37 @@ func (s *Server) SetClusterSecretHandler(h http.HandlerFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.clusterSecretHandler = h
+}
+
+// SetSDLCWebhookHandler registers the forge webhook ingress handler.
+//
+// Injected by the SDLC module at boot rather than constructed here, because the
+// handler needs the module's stores and secret resolution — none of
+// which the REST layer knows about, and all of which would tie this package to
+// pkg/sdlc if it built them.
+func (s *Server) SetSDLCWebhookHandler(h http.HandlerFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sdlcWebhookHandler = h
+}
+
+// HandleSDLCWebhook serves the forge webhook ingress route.
+//
+// It answers 503 when the module is not running, NOT 404. The route exists in
+// every build, so 404 would claim the endpoint is absent when it is merely
+// disabled — and the difference is behavioural rather than cosmetic: a forge
+// RETRIES a 503 and gives up on a 404. Retrying is what we want while an
+// operator turns the module on, and giving up is what we want never.
+func (s *Server) HandleSDLCWebhook(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	handler := s.sdlcWebhookHandler
+	s.mu.RUnlock()
+
+	if handler == nil {
+		http.Error(w, "the sdlc module is not running on this node", http.StatusServiceUnavailable)
+		return
+	}
+	handler(w, r)
 }
 
 // SetHookTaskStore sets the task store used by Claude Code hook handlers.

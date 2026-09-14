@@ -1,0 +1,25 @@
+Decompose the following task into discrete work items.
+
+Task: ship the health endpoint
+
+Target projects: proj-7, proj-8
+
+Available backends:
+  - claude (type: acp, capabilities: persistent_sessions, tool_use, file_access, streaming, acp)
+  - ollama (type: http, capabilities: none)
+
+Assign each work item to the most appropriate backend. Use the "backend" field to specify the backend name. Use "required_capabilities" to list capabilities the work item needs.
+
+Respond with a JSON array of work items:
+[
+  {
+    "id": "unique-id",
+    "project_id": "target-project-id",
+    "title": "Short title",
+    "description": "Detailed description",
+    "priority": 1,
+    "dependencies": ["id-of-dependency"],
+    "backend": "backend-name",
+    "required_capabilities": ["persistent_sessions"]
+  }
+]

@@ -283,11 +283,11 @@ var netSplitHostPort = net.SplitHostPort
 // recovered registry row's Backends field matches what dispatch
 // expects to filter on.
 func backendsFromHeartbeat(payload *heartbeatBody) []string {
-	if payload == nil || len(payload.Backends) == 0 {
+	if payload == nil || payload.Backends == nil || len(*payload.Backends) == 0 {
 		return nil
 	}
-	out := make([]string, 0, len(payload.Backends))
-	for _, b := range payload.Backends {
+	out := make([]string, 0, len(*payload.Backends))
+	for _, b := range *payload.Backends {
 		if t := strings.TrimSpace(b); t != "" {
 			out = append(out, t)
 		}

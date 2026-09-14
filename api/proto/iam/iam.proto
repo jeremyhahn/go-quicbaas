@@ -6,6 +6,7 @@ option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto/iam;iam";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 
 // IAM Service for identity and access management
 service IAMService {
@@ -22,6 +23,25 @@ service IAMService {
   rpc UpdateUser(UpdateUserRequest) returns (User);
   rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
   rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+
+  // WebAuthn credential administration (user-scoped). The verbs are
+  // addressed by IAM user id like every other user-nested admin verb; the
+  // translation to the (tenant, email) key the credential store uses happens
+  // server-side so no transport can address a different account.
+  // The permission annotations are what the unified server enforces; the Go
+  // mapping in pkg/api/grpc/authz_mapping.go mirrors them for the legacy gate.
+  // Both carry the qrdb user-admin families the same verbs require on the MCP
+  // plane, so a caller needs exactly the rights it would need to delete the
+  // user outright.
+  rpc ListWebAuthnCredentials(ListWebAuthnCredentialsRequest) returns (ListWebAuthnCredentialsResponse) {
+      option (qrdb.v1.permission) = "users:read";
+  }
+  rpc DeleteWebAuthnCredential(DeleteWebAuthnCredentialRequest) returns (DeleteWebAuthnCredentialResponse) {
+      option (qrdb.v1.permission) = "users:delete";
+  }
+  rpc DeleteWebAuthnCredentials(DeleteWebAuthnCredentialsRequest) returns (DeleteWebAuthnCredentialsResponse) {
+      option (qrdb.v1.permission) = "users:delete";
+  }
 
   // Group management
   rpc CreateGroup(CreateGroupRequest) returns (Group);
@@ -40,6 +60,17 @@ service IAMService {
   rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
   rpc AssignRole(AssignRoleRequest) returns (AssignRoleResponse);
   rpc RevokeRole(RevokeRoleRequest) returns (RevokeRoleResponse);
+  // ReconcileRoles converges a tenant's stored built-in roles onto the
+  // definitions the running build carries. It takes the role-create family
+  // rather than a verb of its own: a dedicated roles:reconcile would be absent
+  // from every role seeded before it existed, so nobody would hold the grant
+  // needed to repair that exact absence. The annotation is what the unified
+  // server enforces; pkg/api/grpc/authz_mapping.go mirrors it for the legacy
+  // gate, and the two are pinned to each other by
+  // TestGRPCPermissions_ProtoOptionMatchesAuthzMapping.
+  rpc ReconcileRoles(ReconcileRolesRequest) returns (ReconcileRolesResponse) {
+      option (qrdb.v1.permission) = "roles:create";
+  }
 
   // Application (OAuth client) management
   rpc RegisterApp(RegisterAppRequest) returns (Application);
@@ -156,6 +187,12 @@ message TenantSettings {
 }
 
 message User {
+  // mfa_verified and mfa_timestamp were session facts carried on an identity
+  // record that never updated them, so a user who once passed MFA reported
+  // verified forever. MFA state is answered by the MFA service, which owns it.
+  reserved 11, 12;
+  reserved "mfa_verified", "mfa_timestamp";
+
   string id = 1;
   string tenant_id = 2;
   string email = 3;
@@ -166,8 +203,23 @@ message User {
   google.protobuf.Timestamp created_at = 8;
   google.protobuf.Timestamp updated_at = 9;
   google.protobuf.Timestamp last_auth = 10;
-  bool mfa_verified = 11;
-  google.protobuf.Timestamp mfa_timestamp = 12;
+
+  // lifecycle is the canonical account state: pending, active, suspended,
+  // locked, disabled or deleting. It replaces the state/suspended/locked triple,
+  // which could describe an account as suspended and active at the same time.
+  string lifecycle = 13;
+
+  // auth_methods lists the authentication methods this account is permitted to
+  // present ("webauthn", "piv"). Empty states no restriction.
+  repeated string auth_methods = 14;
+
+  // username is the tenant-unique handle — what an administrator types to
+  // address this account, and the key the store's username index is built on.
+  // It is a field of its own, not the display `name`: while it was derived
+  // from the display name, a lookup for the handle the caller asked for missed
+  // the record, and two accounts sharing a display name collided on an index
+  // neither had named.
+  string username = 15;
 }
 
 message Group {
@@ -188,6 +240,11 @@ message Role {
   repeated string permissions = 5;
   google.protobuf.Timestamp created_at = 6;
   google.protobuf.Timestamp updated_at = 7;
+  // retired_permissions is derived on read from the live permission registry
+  // and never stored: it names the drift between what the tenant was seeded
+  // with and what the build now grants. Empty means the role agrees with the
+  // build.
+  repeated string retired_permissions = 8;
 }
 
 message Application {
@@ -384,6 +441,21 @@ message CreateUserRequest {
   repeated string roles = 4;
   repeated string groups = 5;
   map<string, string> attributes = 6;
+
+  // lifecycle is the state to create in — pending, active or disabled only;
+  // suspended and locked are things that HAPPEN to an account, not states one
+  // is born in. Empty defaults to pending.
+  string lifecycle = 7;
+
+  // auth_methods lists the authentication methods this account is permitted to
+  // present ("webauthn", "piv"). Empty defaults to webauthn.
+  repeated string auth_methods = 8;
+
+  // username is the tenant-unique handle: 3-64 characters of [A-Za-z0-9_-],
+  // distinct from the display `name`. Empty derives one from the local part of
+  // the email, which is what this transport did unconditionally while there
+  // was nowhere to carry a requested handle.
+  string username = 9;
 }
 
 message GetUserRequest {
@@ -399,6 +471,37 @@ message UpdateUserRequest {
   repeated string roles = 5;
   repeated string groups = 6;
   map<string, string> attributes = 7;
+
+  // lifecycle, when non-empty, transitions the account: pending, active,
+  // suspended, locked or disabled. The move is checked against the store's
+  // transition table, so an illegal one is refused rather than written.
+  //
+  // `deleting` is REFUSED even though the transition table permits it. It is
+  // the deletion workflow's claim on the record, and asserting it here would
+  // strand the account in a terminal state with its credentials, group
+  // memberships and sessions still live — delete the user instead.
+  string lifecycle = 8;
+
+  // auth_methods, when PRESENT, replaces the permitted authentication methods.
+  //
+  // It is a message rather than a bare repeated field so the update can express
+  // an empty list, which the model defines as "no restriction". A repeated field
+  // has no presence in proto3, so an explicit clear and an unmentioned field are
+  // the same bytes — and an account restricted to ["piv"] could never be
+  // un-restricted.
+  AuthMethodsUpdate auth_methods = 9;
+
+  // username, when non-empty, changes the tenant-unique handle. It is applied
+  // independently of `name`: the two used to share one field, so a request
+  // carrying both silently dropped this one.
+  string username = 10;
+}
+
+// AuthMethodsUpdate carries a replacement set of permitted authentication
+// methods. Its presence is the instruction; an empty values list clears the
+// restriction.
+message AuthMethodsUpdate {
+  repeated string values = 1;
 }
 
 message DeleteUserRequest {
@@ -544,6 +647,30 @@ message RevokeRoleRequest {
 
 message RevokeRoleResponse {
   bool success = 1;
+}
+
+// ReconcileRolesRequest converges one tenant's stored built-in roles onto the
+// definitions the running build carries.
+message ReconcileRolesRequest {
+  string tenant_id = 1;
+}
+
+// RoleReconcileResult records what reconciling one built-in role changed.
+message RoleReconcileResult {
+  string role_id = 1;
+  string name = 2;
+  bool created = 3;
+  repeated string added = 4;
+  repeated string removed = 5;
+}
+
+// ReconcileRolesResponse reports only the roles that changed. An empty roles
+// list with changed=false means the tenant already agreed with the build and
+// nothing was written.
+message ReconcileRolesResponse {
+  string tenant_id = 1;
+  repeated RoleReconcileResult roles = 2;
+  bool changed = 3;
 }
 
 // Application CRUD messages
@@ -796,9 +923,16 @@ message ImpersonationSessionList {
   repeated ImpersonationSession sessions = 1;
 }
 
-// StartImpersonationRequest starts an impersonation session
+// StartImpersonationRequest starts an impersonation session.
+//
+// It carries NO admin_user_id: the acting admin is the authenticated
+// caller, resolved server-side from the verified principal, never named by
+// the request (go-quicbaas#383). Field numbers are preserved across the
+// removal (the old field 1 is retired) so the wire stays compatible for
+// the remaining fields.
 message StartImpersonationRequest {
-  string admin_user_id = 1;
+  reserved 1;
+  reserved "admin_user_id";
   string target_user_id = 2;
   string tenant_id = 3;
   string reason = 4;
@@ -1658,4 +1792,59 @@ message GetUserLinksRequest {
 // GetUserLinksResponse contains all linked identities for a user
 message GetUserLinksResponse {
   repeated FederatedIdentity identities = 1;
+}
+
+// WebAuthnCredential is one of a user's registered authenticators as the
+// administration surface reports it. It carries the credential's identity and
+// the non-secret authenticator context an operator needs to recognise a key,
+// and never the credential public key.
+message WebAuthnCredential {
+  // Base64url (unpadded) WebAuthn credential id — the handle the delete verb
+  // takes.
+  string id = 1;
+  // Hex-encoded authenticator model identifier.
+  string aaguid = 2;
+  // Attestation statement format ("none", "packed", ...).
+  string attestation_type = 3;
+  // Authenticator-reported transports ("usb", "nfc", "internal", ...).
+  repeated string transports = 4;
+  // Signature counter as of the last successful assertion.
+  uint32 sign_count = 5;
+  // Whether the credential may be backed up (a multi-device passkey).
+  bool backup_eligible = 6;
+  // Whether the credential is currently backed up.
+  bool backup_state = 7;
+  // The FIDO cloned-authenticator signal.
+  bool clone_warning = 8;
+}
+
+message ListWebAuthnCredentialsRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+}
+
+message ListWebAuthnCredentialsResponse {
+  repeated WebAuthnCredential credentials = 1;
+  int32 total = 2;
+}
+
+message DeleteWebAuthnCredentialRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+  // Base64url WebAuthn credential id, as reported by the list verb.
+  string credential_id = 3;
+}
+
+message DeleteWebAuthnCredentialResponse {
+  bool success = 1;
+}
+
+message DeleteWebAuthnCredentialsRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+}
+
+message DeleteWebAuthnCredentialsResponse {
+  // Number of credentials removed.
+  int32 deleted = 1;
 }

@@ -71,8 +71,6 @@ type mockService struct {
 	logoutFunc func(ctx context.Context, req *service.LogoutRequest) (*service.LogoutResponse, error)
 
 	// RBAC Operations
-	deleteUserFunc func(ctx context.Context, req *service.DeleteUserRequest) (*service.DeleteUserResponse, error)
-	listUsersFunc  func(ctx context.Context, req *service.ListUsersRequest) (*service.ListUsersResponse, error)
 	deleteRoleFunc func(ctx context.Context, req *service.AuthDeleteRoleRequest) (*service.AuthDeleteRoleResponse, error)
 	listRolesFunc  func(ctx context.Context, req *service.AuthListRolesRequest) (*service.AuthListRolesResponse, error)
 	assignRoleFunc func(ctx context.Context, req *service.AssignRoleRequest) (*service.AssignRoleResponse, error)
@@ -271,28 +269,6 @@ func (m *mockService) ValidateToken(ctx context.Context, req *service.ValidateTo
 }
 
 // RBAC Operations.
-func (m *mockService) CreateUser(ctx context.Context, req *service.CreateUserRequest) (*service.CreateUserResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) DeleteUser(ctx context.Context, req *service.DeleteUserRequest) (*service.DeleteUserResponse, error) {
-	if m.deleteUserFunc != nil {
-		return m.deleteUserFunc(ctx, req)
-	}
-	return &service.DeleteUserResponse{Success: true}, nil
-}
-
-func (m *mockService) ListUsers(ctx context.Context, req *service.ListUsersRequest) (*service.ListUsersResponse, error) {
-	if m.listUsersFunc != nil {
-		return m.listUsersFunc(ctx, req)
-	}
-	return &service.ListUsersResponse{
-		Users: []*service.UserInfo{
-			{UserID: "user-1", Username: "testuser"},
-		},
-	}, nil
-}
-
 func (m *mockService) CreateAuthRole(ctx context.Context, req *service.AuthCreateRoleRequest) (*service.AuthCreateRoleResponse, error) {
 	return nil, nil
 }
@@ -564,9 +540,14 @@ func (m *mockService) Messaging() messaging.Service {
 	return nil
 }
 
+func (m *mockService) SetDynamicSecretsService(svc service.DynamicSecretsService) {}
+
 func (m *mockService) SetMessagingService(ms messaging.Service) {
 	// No-op for mock
 }
+
+func (m *mockService) SDLC() *service.SDLCService          { return nil }
+func (m *mockService) SetSDLCService(*service.SDLCService) {}
 
 func (m *mockService) SetAgentService(agent orchestration.AgentService) {
 	// No-op for mock

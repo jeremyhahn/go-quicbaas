@@ -1419,7 +1419,7 @@ func TestGDPRManager_ProcessDeletion_EdgeCases(t *testing.T) {
 	t.Run("process deletion not in pending status", func(t *testing.T) {
 		// Create a user first
 		user := &User{
-			ID:       "user-to-delete",
+			ID:       "33",
 			TenantID: "tenant-1",
 			Email:    "delete@example.com",
 			Name:     "Delete User",
@@ -1452,7 +1452,7 @@ func TestGDPRManager_ProcessDeletion_EdgeCases(t *testing.T) {
 	t.Run("process deletion during grace period", func(t *testing.T) {
 		// Create a user
 		user := &User{
-			ID:       "user-grace-period",
+			ID:       "32",
 			TenantID: "tenant-1",
 			Email:    "grace@example.com",
 			Name:     "Grace User",
@@ -1543,8 +1543,7 @@ func TestAdminManager_EndImpersonation_CoverageEdgeCases(t *testing.T) {
 		require.NoError(t, err)
 
 		// Start impersonation
-		session, err := manager.StartImpersonation(ctx, &StartImpersonationOptions{
-			AdminUserID:  "admin-user-cov",
+		session, err := manager.StartImpersonation(ctxWithActor("admin-user-cov"), &StartImpersonationOptions{
 			TargetUserID: "target-user",
 			TenantID:     "tenant-1",
 			Reason:       "Testing",

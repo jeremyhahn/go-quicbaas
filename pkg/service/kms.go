@@ -2218,7 +2218,7 @@ func (k *kmsServiceImpl) getVersionStatus(ctx context.Context, keyID string, ver
 
 // versionStatusKey returns the KVStore key for a version status entry.
 func versionStatusKey(keyID string, version uint64) string {
-	return fmt.Sprintf("sys:kms/version_status/%s/%d", keyID, version)
+	return fmt.Sprintf("__sys:kms/version_status/%s/%d", keyID, version)
 }
 
 // persistedVersionStatus is the JSON-serializable form of versionStatusInfo.

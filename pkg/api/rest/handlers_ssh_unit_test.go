@@ -27,6 +27,8 @@ import (
 
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/sshfixture"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,7 +39,7 @@ func TestSSHRemoveKnownHost(t *testing.T) {
 	server, _, cleanup := newSSHTestServer(t)
 	defer cleanup()
 
-	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + sshTestFingerprint("bastion") + `"}`
+	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + testKnownHostFingerprint + `"}`
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/known-hosts", strings.NewReader(addBody))
 	addReq.Header.Set("Content-Type", "application/json")
 	server.HandleAddKnownHost(httptest.NewRecorder(), addReq)
@@ -136,4 +138,46 @@ func TestSSHVerifyAuthorized_ServiceUnavailable(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.HandleVerifyAuthorized(w, req)
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+// TestSSHVerifyAuthorized_GoldenFingerprint is the load-bearing check for
+// the whole migration away from placeholder fingerprints.
+//
+// The stored authorized_keys line and the fingerprint in the request come
+// from two independent places: the line is marshalled from the fixture's
+// ed25519 public key, while the fingerprint is the checked-in golden
+// constant. HandleVerifyAuthorized matches them only by re-deriving the
+// fingerprint from the parsed key with gossh.FingerprintSHA256. Change that
+// derivation and this test goes red — which a placeholder such as
+// "SHA256:abc" never could, because nothing computed it.
+func TestSSHVerifyAuthorized_GoldenFingerprint(t *testing.T) {
+	t.Parallel()
+	server, client, cleanup := newSSHTestServer(t)
+	defer cleanup()
+
+	user := sshfixture.User(t)
+	require.NoError(t, client.AuthorizedKeys().Add(context.Background(), xkmsssh.AddAuthorizedKeyRequest{
+		Scope: "user", Owner: "alice", Name: "golden", Line: user.AuthorizedLine,
+	}))
+
+	verify := func(fingerprint string) *httptest.ResponseRecorder {
+		body := `{"scope":"user","owner":"alice","fingerprint":"` + fingerprint + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/authorized/verify", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.HandleVerifyAuthorized(w, req)
+		return w
+	}
+
+	w := verify(sshfixture.UserFingerprint)
+	require.Equal(t, http.StatusOK, w.Code,
+		"the golden fingerprint must match the stored key's own, body=%s", w.Body.String())
+
+	var entry xkmsssh.AuthorizedEntry
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&entry))
+	require.Equal(t, "golden", entry.Name)
+
+	// A different key's fingerprint must not match the stored entry.
+	require.GreaterOrEqual(t, verify(sshfixture.HostFingerprint).Code, 400,
+		"an unrelated key's fingerprint must not authorize")
 }

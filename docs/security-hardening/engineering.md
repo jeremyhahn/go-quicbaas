@@ -449,6 +449,35 @@ predates the field and means SHA1).
 Newly issued secrets are 160 bits (RFC 4226 recommends at least 128); FIPS
 140-only mode additionally rejects HMAC keys shorter than 112 bits.
 
+### Where the TOTP Shared Secret Lives in Memory
+
+The shared secret is a long-lived key, so it reaches the OTP library through
+`otp.Config.SecretKey` — a memguard enclave, decrypted only for the moment a
+code is derived — and never through `otp.Config.Secret`, a Go string that
+cannot be wiped and that the underlying library re-decodes into a fresh
+plaintext key on every generate and verify. `otp.Config` rejects a
+configuration that sets both, so a call site cannot be half-migrated.
+
+This closes the derivation, not the whole path. The secret's route from
+persistence to code derivation is:
+
+| Segment | Protected? |
+|---|---|
+| At rest in the tenant barrier (encrypted with the tenant DEK) | yes, encrypted at rest |
+| `KVStore.Get` result — plaintext JSON bytes on the Go heap | no |
+| `MFASecret.Secret` / `MFAEnrollment.Secret` — a Go string from `json.Unmarshal` | no; a string cannot be wiped |
+| Decoded key in `otp.Config.SecretKey` | yes — sealed enclave |
+| Per-call decode inside `github.com/pquerna/otp` | eliminated; codes are derived from the enclave |
+
+The two unprotected segments are properties of the storage interface handing
+the secret back as a string, not of the MFA manager, and closing them requires
+the store — and the KV read below it — to return protected memory. Enrollment
+additionally renders the base32 form deliberately: the user has to scan or type
+it, so that copy is inherent to enrolling a shared secret.
+
+Each enclave is destroyed when the authenticator built from it is done, so the
+protection is released rather than held for the process lifetime.
+
 ---
 
 ## Authorization Hardening

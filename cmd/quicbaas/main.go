@@ -238,6 +238,9 @@ func init() {
 	// Add Project command for agentic project management
 	rootCmd.AddCommand(newProjectCommand())
 
+	// Add the SDLC module command group (forge bindings)
+	rootCmd.AddCommand(newSDLCCommand())
+
 	// Add MCP command group (stdio bridge, tool discovery, tool invocation)
 	rootCmd.AddCommand(newMCPCommand())
 

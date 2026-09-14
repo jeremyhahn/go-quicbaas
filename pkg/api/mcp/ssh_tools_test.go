@@ -32,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/sshfake"
 	sshclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/sshfixture"
 )
 
 // sshMockService exposes an SSH client to the tool registry.
@@ -164,9 +165,11 @@ func TestSSHTools_SignDecodesBase64Digest(t *testing.T) {
 func TestSSHTools_KnownHostsAndAuthorized(t *testing.T) {
 	registry := newSSHRegistry(t, sshfake.NewClient())
 	ctx := context.Background()
+	host := sshfixture.Host(t)
 
 	_, err := registry.executeSSHTool(ctx, "quicbaas_ssh_known_host_add", map[string]interface{}{
-		"scope": "user", "owner": "alice", "host": "git.example.com", "fingerprint": "SHA256:abc",
+		"scope": "user", "owner": "alice", "host": "git.example.com",
+		"fingerprint": host.Fingerprint,
 	})
 	require.NoError(t, err)
 
@@ -174,7 +177,10 @@ func TestSSHTools_KnownHostsAndAuthorized(t *testing.T) {
 		"scope": "user", "owner": "alice",
 	})
 	require.NoError(t, err)
-	require.Len(t, res.(*sshclient.ListKnownHostsResponse).Items, 1)
+	pins := res.(*sshclient.ListKnownHostsResponse).Items
+	require.Len(t, pins, 1)
+	assert.Equal(t, host.Fingerprint, pins[0].Fingerprint,
+		"the MCP tool must pin the fingerprint it was given, unaltered")
 
 	_, err = registry.executeSSHTool(ctx, "quicbaas_ssh_authorized_add", map[string]interface{}{
 		"scope": "user", "owner": "alice", "name": "deploy", "line": "ssh-ed25519 AAAA",
@@ -234,7 +240,7 @@ func TestSSHTools_NotConfigured(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			_, err := registry.executeSSHTool(context.Background(), name, map[string]interface{}{
 				"scope": "user", "owner": "alice", "name": "k", "host": "h",
-				"fingerprint": "f", "line": "l", "public_key": "p",
+				"fingerprint": sshfixture.HostFingerprint, "line": "l", "public_key": "p",
 			})
 			require.Error(t, err, "%s must fail closed when ssh is not configured", name)
 		})

@@ -8,6 +8,25 @@ import (
 	"time"
 )
 
+// boolPtr states an explicit true/false where nil would mean "unspecified".
+func boolPtr(b bool) *bool { return &b }
+
+// assertEnabledStated checks that an import record says something definite
+// about Enabled, and says the expected thing. The nil check is the load-bearing
+// half: a converter that stopped setting the field at all would leave every
+// user enabled on import, and an assertion that only dereferenced would panic
+// rather than report it.
+func assertEnabledStated(t *testing.T, got *bool, want bool, context string) {
+	t.Helper()
+	if got == nil {
+		t.Errorf("%s: Enabled is unspecified; the export must state it", context)
+		return
+	}
+	if *got != want {
+		t.Errorf("%s: Enabled = %v, want %v", context, *got, want)
+	}
+}
+
 func TestNewBatchManager(t *testing.T) {
 	t.Run("with default options", func(t *testing.T) {
 		bm := NewBatchManager(BatchManagerOptions{})
@@ -481,12 +500,12 @@ func TestUserImport(t *testing.T) {
 			Email:    "test@example.com",
 			Username: "testuser",
 			Name:     "Test User",
-			Attributes: map[string]interface{}{
+			Attributes: map[string]string{
 				"department": "engineering",
 			},
 			Groups:  []string{"g1", "g2"},
 			Roles:   []string{"r1"},
-			Enabled: true,
+			Enabled: boolPtr(true),
 		}
 
 		if user.ID != "u1" {
@@ -495,9 +514,7 @@ func TestUserImport(t *testing.T) {
 		if user.Email != "test@example.com" {
 			t.Errorf("expected email 'test@example.com', got '%s'", user.Email)
 		}
-		if !user.Enabled {
-			t.Error("expected user to be enabled")
-		}
+		assertEnabledStated(t, user.Enabled, true, "user")
 		if len(user.Groups) != 2 {
 			t.Errorf("expected 2 groups, got %d", len(user.Groups))
 		}
@@ -895,16 +912,14 @@ func TestBatchExportResultConvertToImportRequest(t *testing.T) {
 					Email:     "suspended@example.com",
 					Name:      "Suspended User",
 					TenantID:  "source-tenant",
-					Suspended: true,
+					Lifecycle: LifecycleSuspended,
 				},
 			},
 		}
 
 		importReq := exportResult.ConvertToImportRequest("target-tenant")
 
-		if importReq.Users[0].Enabled {
-			t.Error("expected user to be disabled (suspended)")
-		}
+		assertEnabledStated(t, importReq.Users[0].Enabled, false, "suspended user")
 	})
 
 	t.Run("handles locked user", func(t *testing.T) {
@@ -912,20 +927,18 @@ func TestBatchExportResultConvertToImportRequest(t *testing.T) {
 			TenantID: "source-tenant",
 			Users: []*User{
 				{
-					ID:       "u1",
-					Email:    "locked@example.com",
-					Name:     "Locked User",
-					TenantID: "source-tenant",
-					Locked:   true,
+					ID:        "u1",
+					Email:     "locked@example.com",
+					Name:      "Locked User",
+					TenantID:  "source-tenant",
+					Lifecycle: LifecycleLocked,
 				},
 			},
 		}
 
 		importReq := exportResult.ConvertToImportRequest("target-tenant")
 
-		if importReq.Users[0].Enabled {
-			t.Error("expected user to be disabled (locked)")
-		}
+		assertEnabledStated(t, importReq.Users[0].Enabled, false, "locked user")
 	})
 }
 

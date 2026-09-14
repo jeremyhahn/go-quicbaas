@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -115,48 +114,58 @@ func webauthnDefaultsFromIssuer(issuerURL string) (rpID, rpOrigin string, err er
 	return rpID, rpOrigin, nil
 }
 
-// webauthnFactoryConfigFromOperator translates the operator-supplied
-// quicbaas WebAuthn configuration into the factory-level shape consumed by
-// the per-tenant xkms WebAuthn services. When the operator leaves RPID or
-// RPOrigins empty they are derived from the canonical server issuer URL
-// (issuerRPID / issuerRPOrigin) so the WebAuthn relying party, the OIDC
-// issuer, and the first-boot activation banner always agree on host and
-// port — eliminating the "invalid domain" / "error validating origin"
-// class of failures. Explicit iam.webauthn.rp_id / rp_origins values
-// remain authoritative and pass through unchanged. The display name defaults
-// to "QuicBaaS" when unset.
+// webauthnFactoryConfigFromOperator resolves the operator-supplied quicbaas
+// WebAuthn configuration into the factory-level shape consumed by the
+// per-tenant xkms WebAuthn services, and validates the result.
 //
-// allowPublicRegistration is the operator's iam.self_service_registration
-// .enabled decision. It is a parameter rather than read from the WebAuthn
-// section because it is not a WebAuthn setting: it is the one switch that
-// authorises a ceremony to create an account for an unknown email, and the
-// composed go-xkms module's relying party (quicbaasWebAuthnConfigToXKMS)
-// must be handed exactly the same answer.
-func webauthnFactoryConfigFromOperator(c config.IAMWebAuthnConfig, issuerRPID, issuerRPOrigin string, allowPublicRegistration bool) iam.WebAuthnFactoryConfig {
+// Resolution: when the operator leaves RPID or RPOrigins empty they are
+// derived from the canonical server issuer URL (issuerRPID / issuerRPOrigin)
+// so the WebAuthn relying party, the OIDC issuer, and the first-boot
+// activation banner always agree on host and port — eliminating the "invalid
+// domain" / "error validating origin" class of failures. Explicit
+// iam.webauthn.rp_id / rp_origins values remain authoritative and pass through
+// unchanged. The display name defaults to "QuicBaaS" when unset.
+//
+// Validation: the RESOLVED value — not the operator's input — is what the
+// relying party is built from, so it is the one whose invariants matter, and
+// config.IAMWebAuthnConfig.ValidateResolved is applied to it here. This is the
+// fail-closed gate: derivation that yields no RP ID or no origin (an
+// IP-literal issuer host with only one half of the identity configured, say)
+// returns an error instead of mounting a relying party that rejects every
+// ceremony it is ever handed.
+func webauthnFactoryConfigFromOperator(c config.IAMWebAuthnConfig, issuerRPID, issuerRPOrigin string, allowPublicRegistration bool) (iam.WebAuthnFactoryConfig, error) {
+	// Resolve into a copy of the operator's own config type so exactly one
+	// validator describes the contract for both the input and the result.
+	resolved := c
+	resolved.RPOrigins = append([]string(nil), c.RPOrigins...)
+	if resolved.RPID == "" {
+		resolved.RPID = issuerRPID
+	}
+	if resolved.RPDisplayName == "" {
+		resolved.RPDisplayName = "QuicBaaS"
+	}
+	if len(resolved.RPOrigins) == 0 && issuerRPOrigin != "" {
+		resolved.RPOrigins = []string{issuerRPOrigin}
+	}
+	if err := resolved.ValidateResolved(); err != nil {
+		return iam.WebAuthnFactoryConfig{}, err
+	}
+
 	out := iam.WebAuthnFactoryConfig{
-		RPID:                    c.RPID,
-		RPDisplayName:           c.RPDisplayName,
-		RPOrigins:               append([]string(nil), c.RPOrigins...),
-		UserVerification:        c.UserVerification,
-		AttestationPreference:   c.AttestationPreference,
-		ResidentKeyRequirement:  c.ResidentKeyRequirement,
-		AuthenticatorAttachment: c.AuthenticatorAttachment,
-		Debug:                   c.Debug,
+		RPID:                    resolved.RPID,
+		RPDisplayName:           resolved.RPDisplayName,
+		RPOrigins:               resolved.RPOrigins,
+		UserVerification:        resolved.UserVerification,
+		AttestationPreference:   resolved.AttestationPreference,
+		ResidentKeyRequirement:  resolved.ResidentKeyRequirement,
+		AuthenticatorAttachment: resolved.AuthenticatorAttachment,
+		Debug:                   resolved.Debug,
 		AllowPublicRegistration: allowPublicRegistration,
 	}
-	if out.RPID == "" {
-		out.RPID = issuerRPID
+	timeout, err := resolved.CeremonyTimeout()
+	if err != nil {
+		return iam.WebAuthnFactoryConfig{}, err
 	}
-	if out.RPDisplayName == "" {
-		out.RPDisplayName = "QuicBaaS"
-	}
-	if len(out.RPOrigins) == 0 {
-		out.RPOrigins = []string{issuerRPOrigin}
-	}
-	if c.Timeout != "" {
-		if d, err := time.ParseDuration(c.Timeout); err == nil {
-			out.Timeout = d
-		}
-	}
-	return out
+	out.Timeout = timeout
+	return out, nil
 }

@@ -17,7 +17,10 @@ package embedding
 
 import (
 	"context"
+	"net/http"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/inference"
 )
 
 // OpenAI model constants.
@@ -249,3 +252,70 @@ func (v *VoyageProvider) Dimensions() int { return 0 }
 func (v *VoyageProvider) MaxTokens() int  { return 0 }
 func (v *VoyageProvider) Name() string    { return "voyage" }
 func (v *VoyageProvider) Close() error    { return nil }
+
+// NPUProvider stub. The real provider lives in npu.go behind the
+// vector && qrdb_vector build tags; without them there is no vector store to
+// index into, so construction fails fast rather than pretending to work.
+type NPUProvider struct{}
+
+// NPUProviderName is the registry name for the NPU embedding provider.
+const NPUProviderName = "npu"
+
+// NPUConfig holds configuration for the NPU provider stub.
+type NPUConfig struct {
+	BaseURL      string
+	Model        string
+	Dimensions   int
+	MaxTokens    int
+	Timeout      time.Duration
+	MaxBatchSize int
+	APIKey       string
+	APIKeyRef    inference.SecretRef
+	Secrets      SecretResolver
+	HTTPClient   *http.Client
+}
+
+// SecretResolver resolves an indirect credential reference to its value.
+type SecretResolver interface {
+	ResolveSecret(ctx context.Context, ref inference.SecretRef) (string, error)
+}
+
+// NPU provider defaults, mirrored from npu.go so that configuration code can
+// reference them in any build.
+const (
+	DefaultNPUURL          = "http://127.0.0.1:8077"
+	DefaultNPUModel        = "all-MiniLM-L6-v2"
+	DefaultNPUDimensions   = 384
+	DefaultNPUMaxTokens    = 512
+	DefaultNPUMaxBatchSize = 64
+)
+
+// DefaultNPUTimeout is the per-request HTTP timeout for sidecar calls.
+var DefaultNPUTimeout = 30 * time.Second
+
+// DefaultNPUConfig returns the default NPU configuration.
+func DefaultNPUConfig() NPUConfig {
+	return NPUConfig{
+		BaseURL:      DefaultNPUURL,
+		Model:        DefaultNPUModel,
+		Dimensions:   DefaultNPUDimensions,
+		MaxTokens:    DefaultNPUMaxTokens,
+		Timeout:      DefaultNPUTimeout,
+		MaxBatchSize: DefaultNPUMaxBatchSize,
+	}
+}
+
+func NewNPUProvider(_ context.Context, _ NPUConfig) (*NPUProvider, error) {
+	return nil, ErrVectorNotEnabled
+}
+func (p *NPUProvider) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, ErrVectorNotEnabled
+}
+func (p *NPUProvider) EmbedBatch(_ context.Context, _ []string) ([][]float32, error) {
+	return nil, ErrVectorNotEnabled
+}
+func (p *NPUProvider) Dimensions() int { return 0 }
+func (p *NPUProvider) MaxTokens() int  { return 0 }
+func (p *NPUProvider) Name() string    { return NPUProviderName }
+func (p *NPUProvider) BaseURL() string { return "" }
+func (p *NPUProvider) Close() error    { return nil }

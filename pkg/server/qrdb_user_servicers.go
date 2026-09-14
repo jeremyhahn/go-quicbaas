@@ -18,6 +18,8 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // =============================================================================
@@ -103,6 +105,11 @@ func (p *qrdbUserServicerProxy) GetUserByUsername(ctx context.Context, tenantID,
 }
 
 // GetUserByEmail delegates to the node user service.
+//
+// Email is qrdb's canonical tenant-unique login key (go-qrdb #191), so this is
+// the lookup a login ceremony resolves a verified factor through. It must go
+// to the SAME node servicer instance every other transport reads, which is
+// exactly what the per-call resolve gives it.
 func (p *qrdbUserServicerProxy) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbsdk.User, error) {
 	svc, err := p.servicer()
 	if err != nil {
@@ -201,12 +208,52 @@ func (p *qrdbUserAuthFactorServicerProxy) servicer() (qrdbsdk.UserAuthFactorServ
 }
 
 // Add delegates to the node auth-factor service.
+//
+// It first enforces the attestation-metadata contract. This proxy is the single
+// point the RAW auth-factor surfaces converge on — the gRPC UserAuthFactorService
+// and the MCP qrdb_user_authfactor_* tools both write through it — and neither
+// runs an enrollment ceremony. Without the check, a caller holding
+// user_authfactors:add could persist attest_level=hardware on a factor nothing
+// had verified, which login policy would then trust.
 func (p *qrdbUserAuthFactorServicerProxy) Add(ctx context.Context, userID uint64, factor *qrdbsdk.AuthFactor) error {
 	svc, err := p.servicer()
 	if err != nil {
 		return err
 	}
+	if err := p.refuseAssertedAttestation(factor); err != nil {
+		return err
+	}
 	return svc.Add(ctx, userID, factor)
+}
+
+// refuseAssertedAttestation refuses a caller-asserted attestation before the
+// node service is asked, with QuicBaaS's typed error. The service refuses the
+// same keys itself and stamps attest_level=none on every plain Add/Rotate
+// (go-qrdb v0.16.2-alpha), so nothing is stamped here any more. A nil factor
+// is left to the underlying service's own validation so the caller sees its
+// canonical error.
+func (p *qrdbUserAuthFactorServicerProxy) refuseAssertedAttestation(factor *qrdbsdk.AuthFactor) error {
+	if factor == nil {
+		return nil
+	}
+	return iam.ValidateAuthFactorMetadata(factor.Metadata)
+}
+
+// qrdbAttestationRecorder resolves the node's trusted-server attestation
+// recorder, or nil while the node is not up. qrdb keeps AttestationRecorder off
+// every transport and client — no wire can produce a VerifiedAttestation — so
+// the only way to it is a type assertion on the in-process servicer, exactly
+// as ActiveFactorChecker is reached.
+func (s *Server) qrdbAttestationRecorder() qrdbsdk.AttestationRecorder {
+	svc := s.GetQRDBUserAuthFactorServicer()
+	if svc == nil {
+		return nil
+	}
+	recorder, ok := svc.(qrdbsdk.AttestationRecorder)
+	if !ok {
+		return nil
+	}
+	return recorder
 }
 
 // List delegates to the node auth-factor service.
@@ -246,9 +293,16 @@ func (p *qrdbUserAuthFactorServicerProxy) Remove(ctx context.Context, factorID s
 }
 
 // Rotate delegates to the node auth-factor service.
+//
+// Rotate writes a NEW factor, so it carries exactly the same forged-attestation
+// risk as Add and enforces exactly the same contract. A rule applied on Add
+// alone would simply move the hole one verb along.
 func (p *qrdbUserAuthFactorServicerProxy) Rotate(ctx context.Context, oldID string, newFactor *qrdbsdk.AuthFactor) error {
 	svc, err := p.servicer()
 	if err != nil {
+		return err
+	}
+	if err := p.refuseAssertedAttestation(newFactor); err != nil {
 		return err
 	}
 	return svc.Rotate(ctx, oldID, newFactor)

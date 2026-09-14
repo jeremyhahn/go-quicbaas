@@ -281,6 +281,56 @@ func (m *Manager) Get(ctx context.Context, path string) (map[string][]byte, map[
 	return data, metadata, nil
 }
 
+// UseSecret exposes the value stored under key at path to fn for the duration
+// of the call, and wipes every byte this call fetched — the requested value
+// and its sibling fields alike — before returning, whether fn succeeds,
+// fails, or panics.
+//
+// This is the GUARDED-USE read for credential material: the caller never
+// receives the bytes, only a borrowed view whose lifetime is fn's call frame.
+// fn MUST NOT retain value or any slice aliasing it beyond its own return —
+// copy nothing out; after UseSecret returns, the backing array is zeroed.
+// The wipe is safe because every Backend returns caller-owned copies from Get
+// (deep-copied or freshly decoded), never live references to stored state.
+//
+// An absent path reports exactly as Get does (errors.Is ErrSecretNotFound); a
+// record present without a nonempty value under key fails closed with
+// ErrSecretKeyAbsent, and fn is never called. This wipes only this call's
+// copies: custody of secret material across the rest of its lifetime (mint
+// responses, transport headers) is the go-quicbaas#97 secure-buffer work.
+func (m *Manager) UseSecret(ctx context.Context, path, key string, fn func(value []byte) error) error {
+	// VALIDATED BEFORE THE BACKEND IS TOUCHED (review 982): a nil callback
+	// is malformed input on a credential-handling surface — a typed
+	// refusal, never a fetch-wipe-panic.
+	if fn == nil {
+		return &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "Manager.UseSecret",
+			Err:  ErrNilCallback,
+		}
+	}
+	data, _, err := m.Get(ctx, path)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		for _, v := range data {
+			for i := range v {
+				v[i] = 0
+			}
+		}
+	}()
+	value, ok := data[key]
+	if !ok || len(value) == 0 {
+		return &errors.QBError{
+			Code: errors.ErrNotFound,
+			Op:   "Manager.UseSecret",
+			Err:  ErrSecretKeyAbsent,
+		}
+	}
+	return fn(value)
+}
+
 // GetVersion retrieves a specific version of a secret.
 func (m *Manager) GetVersion(ctx context.Context, path string, version int) (map[string][]byte, map[string]string, error) {
 	if path == "" {

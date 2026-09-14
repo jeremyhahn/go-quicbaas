@@ -362,6 +362,31 @@ var ErrFirstBootBootstrap = errors.New("first-boot bootstrap failed")
 // required before admin authorization can resolve.
 var ErrAdminRoleMissing = errors.New("canonical admin role not found in system tenant")
 
+// ErrRoleReconcile is returned when boot-time built-in role reconciliation
+// fails. It is the sentinel RoleReconcileError unwraps to.
+var ErrRoleReconcile = errors.New("built-in role reconciliation failed")
+
+// RoleReconcileError names the tenant whose built-in role reconciliation
+// failed. An empty TenantID means the failure happened while enumerating the
+// tenants to reconcile, before any one of them was reached.
+type RoleReconcileError struct {
+	TenantID string
+	Cause    error
+}
+
+// Error implements the error interface.
+func (e *RoleReconcileError) Error() string {
+	if e.TenantID == "" {
+		return "built-in role reconciliation: enumerate tenants: " + e.Cause.Error()
+	}
+	return "built-in role reconciliation: tenant " + e.TenantID + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *RoleReconcileError) Unwrap() error {
+	return ErrRoleReconcile
+}
+
 // FirstBootBootstrapError captures the operation that failed during the
 // first-boot admin bootstrap flow.
 type FirstBootBootstrapError struct {

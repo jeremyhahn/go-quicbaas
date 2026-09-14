@@ -375,6 +375,8 @@ func (s *BackendSessionExtStorage) Delete(ctx context.Context, sessionID string)
 	ctx = withTenant(ctx, tenantID)
 	existing, err := s.getRouted(ctx, fullID)
 	if err != nil {
+		// coded-sentinel-ok: the CLASS is the intent. The delete is idempotent,
+		// and any not-found means there is no record left to remove.
 		if errors.Is(err, ErrSessionNotFound) {
 			return nil // Idempotent delete.
 		}
@@ -422,6 +424,9 @@ func (s *BackendSessionExtStorage) listByUser(ctx context.Context, tenantID, use
 		_, fullID := decodeTenantID(id)
 		session, err := s.getRouted(ctx, fullID)
 		if err != nil {
+			// coded-sentinel-ok: the CLASS is the intent. An index entry whose
+			// record the store cannot produce is skipped however it went
+			// missing; the listing is of the sessions that exist.
 			if errors.Is(err, ErrSessionNotFound) {
 				continue
 			}

@@ -15,10 +15,35 @@ package orchestration
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 )
+
+// failingSecretBackend answers every Get with one chosen error and embeds a
+// memory backend for everything else, so a test can say exactly what the
+// secrets layer reported without reimplementing it.
+type failingSecretBackend struct {
+	secrets.Backend
+	getErr error
+}
+
+func (b *failingSecretBackend) Get(ctx context.Context, path string) (map[string][]byte, map[string]string, error) {
+	return nil, nil, b.getErr
+}
+
+func newAccountSecretStoreWithBackendError(t *testing.T, getErr error) *AccountSecretStore {
+	t.Helper()
+	mgr, err := secrets.NewManager(&secrets.ManagerOptions{
+		Backend: &failingSecretBackend{Backend: secrets.NewMemoryBackend(), getErr: getErr},
+	})
+	if err != nil {
+		t.Fatalf("secrets.NewManager() error = %v", err)
+	}
+	return NewAccountSecretStore(mgr)
+}
 
 func newTestAccountSecretStore(t *testing.T) *AccountSecretStore {
 	t.Helper()
@@ -90,5 +115,67 @@ func TestAccountSecretStore_Delete_IsIdempotentAndRemoves(t *testing.T) {
 	// Idempotent: deleting again must not error.
 	if err := store.Delete(ctx, "tenant-a", "acct-1"); err != nil {
 		t.Fatalf("second Delete() error = %v, want nil (idempotent)", err)
+	}
+}
+
+// TestAccountSecretStore_Get_SeparatesAMissFromAnOutage is go-quicbaas#235's
+// requirement on this store.
+//
+// The two used to be one answer, which was harmless while nothing branched on
+// it. The SDLC module now does: a missing credential is a configuration fault that
+// PARKS the work item and refunds its attempt, because nothing short of
+// re-importing the credential will help. A secrets backend that timed out is
+// the opposite — it fixes itself, and parking on it takes an item out of the
+// queue for a condition nobody has to act on. Flattening them would have made
+// every backend blip a permanent park.
+func TestAccountSecretStore_Get_SeparatesAMissFromAnOutage(t *testing.T) {
+	tests := []struct {
+		name string
+		// backendErr is what the secrets backend answers with.
+		backendErr error
+		// wantMissing is whether Get should report the credential absent.
+		wantMissing bool
+	}{
+		{
+			name:        "a genuine miss",
+			backendErr:  secrets.ErrSecretNotFound,
+			wantMissing: true,
+		},
+		{
+			name:        "a deleted secret is also a miss",
+			backendErr:  secrets.ErrSecretDeleted,
+			wantMissing: true,
+		},
+		{
+			// THE ONE THAT MATTERS. Reported as absent, this parks the work
+			// item permanently on a backend that was briefly unreachable.
+			name:        "a backend failure",
+			backendErr:  errors.New("connection refused"),
+			wantMissing: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newAccountSecretStoreWithBackendError(t, tc.backendErr)
+
+			_, err := store.Get(context.Background(), "tenant-a", "acct-1")
+			if err == nil {
+				t.Fatal("Get succeeded against a backend that answered with an error")
+			}
+
+			gotMissing := errors.Is(err, ErrAccountCredentialNotFound)
+			if gotMissing != tc.wantMissing {
+				t.Errorf("reported credential-missing = %v, want %v (err %v)",
+					gotMissing, tc.wantMissing, err)
+			}
+			if !tc.wantMissing && !errors.Is(err, ErrAccountStore) {
+				t.Errorf("a backend failure must surface as a store error, got %v", err)
+			}
+			// Either way the credential itself is never in the message.
+			if strings.Contains(err.Error(), "acct-1-secret") {
+				t.Errorf("the error carried credential material: %v", err)
+			}
+		})
 	}
 }

@@ -415,6 +415,41 @@ func TestExecContainerRuntime_BuildRunArgs_WithNetwork(t *testing.T) {
 	})
 }
 
+// TestExecContainerRuntime_BuildRunArgs_WithMemory proves the tmpfs-budget
+// memory limit reaches the launched container: without --memory a tmpfs
+// workspace mount could grow to consume the whole host, which is exactly
+// what ValidateTmpfsBudget exists to prevent at spec-construction time.
+func TestExecContainerRuntime_BuildRunArgs_WithMemory(t *testing.T) {
+	t.Run("MemoryLimitSet", func(t *testing.T) {
+		rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t)}
+		spec := &ContainerSpec{
+			Image:       "alpine:latest",
+			MemoryBytes: 4 * 1024 * 1024 * 1024,
+		}
+
+		args := rt.buildRunArgs(spec, "")
+		joined := strings.Join(args, " ")
+
+		if !strings.Contains(joined, "--memory 4294967296") {
+			t.Errorf("expected '--memory 4294967296', got %q", joined)
+		}
+	})
+
+	t.Run("NoMemoryLimit", func(t *testing.T) {
+		rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t)}
+		spec := &ContainerSpec{
+			Image: "alpine:latest",
+		}
+
+		args := rt.buildRunArgs(spec, "")
+		joined := strings.Join(args, " ")
+
+		if strings.Contains(joined, "--memory") {
+			t.Errorf("expected no --memory flag, got %q", joined)
+		}
+	})
+}
+
 func TestExecContainerRuntime_BuildRunArgs_WithPorts(t *testing.T) {
 	t.Run("SinglePort", func(t *testing.T) {
 		rt := &ExecContainerRuntime{command: RuntimeDocker, logger: newContainerTestLogger(t)}
@@ -711,6 +746,25 @@ func TestContainerSpec_Validation(t *testing.T) {
 			t.Fatalf("expected no error, got %v", err)
 		}
 	})
+
+	t.Run("PositiveMemoryBytesIsValid", func(t *testing.T) {
+		spec := &ContainerSpec{Image: "alpine:latest", MemoryBytes: 1024}
+		if err := spec.Validate(); err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+	})
+
+	t.Run("NegativeMemoryBytesIsRejected", func(t *testing.T) {
+		spec := &ContainerSpec{Image: "alpine:latest", MemoryBytes: -1}
+		err := spec.Validate()
+		var validErr *InputValidationError
+		if !errors.As(err, &validErr) {
+			t.Fatalf("expected InputValidationError, got %T: %v", err, err)
+		}
+		if validErr.Field != "memory_bytes" {
+			t.Errorf("Field = %q, want memory_bytes", validErr.Field)
+		}
+	})
 }
 
 func TestContainerMount_Format(t *testing.T) {
@@ -809,6 +863,37 @@ func TestContainerMount_Validate(t *testing.T) {
 			t.Fatal("expected a bind mount without a source to be rejected")
 		}
 	})
+
+	t.Run("PositiveTmpfsSizeOnATmpfsMountIsAccepted", func(t *testing.T) {
+		m := &ContainerMount{Target: "/scratch", Type: MountTypeTmpfs, TmpfsSizeBytes: 4096}
+		if err := m.Validate(); err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+	})
+
+	t.Run("NegativeTmpfsSizeIsRejected", func(t *testing.T) {
+		m := &ContainerMount{Target: "/scratch", Type: MountTypeTmpfs, TmpfsSizeBytes: -1}
+		err := m.Validate()
+		var validErr *InputValidationError
+		if !errors.As(err, &validErr) {
+			t.Fatalf("expected InputValidationError, got %T: %v", err, err)
+		}
+		if validErr.Field != "tmpfs_size_bytes" {
+			t.Errorf("Field = %q, want tmpfs_size_bytes", validErr.Field)
+		}
+	})
+
+	t.Run("TmpfsSizeOnANonTmpfsMountIsRejected", func(t *testing.T) {
+		m := &ContainerMount{Source: "/a", Target: "/b", Type: MountTypeBind, TmpfsSizeBytes: 4096}
+		err := m.Validate()
+		var validErr *InputValidationError
+		if !errors.As(err, &validErr) {
+			t.Fatalf("expected InputValidationError, got %T: %v", err, err)
+		}
+		if validErr.Field != "tmpfs_size_bytes" {
+			t.Errorf("Field = %q, want tmpfs_size_bytes", validErr.Field)
+		}
+	})
 }
 
 func TestContainerMount_RunArgs(t *testing.T) {
@@ -847,6 +932,11 @@ func TestContainerMount_RunArgs(t *testing.T) {
 				name:  "TmpfsHasNoSource",
 				mount: ContainerMount{Target: "/scratch", Type: MountTypeTmpfs},
 				want:  []string{"--mount", "type=tmpfs,destination=/scratch"},
+			},
+			{
+				name:  "TmpfsWithSizeAddsTmpfsSize",
+				mount: ContainerMount{Target: "/scratch", Type: MountTypeTmpfs, TmpfsSizeBytes: 4294967296},
+				want:  []string{"--mount", "type=tmpfs,destination=/scratch,tmpfs-size=4294967296"},
 			},
 		}
 		for _, tc := range cases {
@@ -1014,16 +1104,23 @@ func TestIsNotFoundOutput(t *testing.T) {
 
 func TestCommandError(t *testing.T) {
 	t.Run("Error", func(t *testing.T) {
-		err := &CommandError{Output: "something went wrong"}
-		if err.Error() != "something went wrong" {
-			t.Errorf("Error() = %q, want %q", err.Error(), "something went wrong")
+		// INVERTED (review 1330): Error() renders the invocation and the SIZE
+		// of the withheld output, never the output.
+		err := &CommandError{Command: "docker", Op: "run", Output: "something went wrong"}
+		got := err.Error()
+		if strings.Contains(got, "something went wrong") {
+			t.Errorf("Error() = %q; the captured output must not be rendered", got)
+		}
+		if got != "docker run failed (20 bytes of output withheld)" {
+			t.Errorf("Error() = %q, want the invocation and the withheld size", got)
 		}
 	})
 
 	t.Run("Empty", func(t *testing.T) {
-		err := &CommandError{Output: ""}
-		if err.Error() != "" {
-			t.Errorf("Error() = %q, want empty", err.Error())
+		// No output captured: no size clause, and still an identifiable failure.
+		err := &CommandError{Command: "docker", Op: "rm", Output: ""}
+		if got := err.Error(); got != "docker rm failed" {
+			t.Errorf("Error() = %q, want exactly the bare invocation", got)
 		}
 	})
 }
@@ -1472,3 +1569,9 @@ func TestInteractiveProcess_Fields(t *testing.T) {
 		}
 	})
 }
+
+// errNoExecInThisTest is what a fake container runtime answers when a test
+// that arranged no container command is asked to run one. Answering an empty
+// success instead would let a caller's command silently do nothing and the
+// test pass on it.
+var errNoExecInThisTest = errors.New("this fake runs no container commands")

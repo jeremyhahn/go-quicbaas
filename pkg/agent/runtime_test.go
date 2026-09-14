@@ -44,7 +44,14 @@ func (f *fakeContainerRuntime) RunInteractive(_ context.Context, _ *orchestratio
 	return nil, nil
 }
 
-func (f *fakeContainerRuntime) Stop(_ context.Context, _ string) error   { return nil }
+func (f *fakeContainerRuntime) Stop(_ context.Context, _ string) error { return nil }
+
+// Exec satisfies the runtime seam. Nothing in this test runs a command
+// inside a container; a call would be a test asserting behaviour it never
+// arranged, so it refuses rather than answering.
+func (f *fakeContainerRuntime) Exec(context.Context, string, *orchestration.ExecSpec) (*orchestration.ExecResult, error) {
+	return nil, &orchestration.ContainerExecError{ContainerID: "fake", Cause: errNoExecInThisTest}
+}
 func (f *fakeContainerRuntime) Remove(_ context.Context, _ string) error { return nil }
 func (f *fakeContainerRuntime) Logs(_ context.Context, _ string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(nil)), nil
@@ -317,3 +324,125 @@ func (m *metricsBackend) Capabilities() orchestration.BackendCapabilities {
 }
 func (m *metricsBackend) Type() string         { return "acp" }
 func (m *metricsBackend) ToolGuidance() string { return "" }
+
+// errNoExecInThisTest is what a fake container runtime answers when a test
+// that arranged no container command is asked to run one. Answering an empty
+// success instead would let a caller's command silently do nothing and the
+// test pass on it.
+var errNoExecInThisTest = errors.New("this fake runs no container commands")
+
+// =============================================================================
+// Sandbox-required boot rule (go-quicbaas#732)
+// =============================================================================
+
+// TestNewRuntime_SandboxRequiredWithoutRuntime asserts that a daemon which must
+// sandbox, on a host where nothing can sandbox, is refused at construction. The
+// live failure this replaces was a daemon that enrolled, heartbeat and then
+// refused every dispatched spawn with "no container runtime available on target
+// host" — a boot-time misconfiguration surfacing one task at a time.
+func TestNewRuntime_SandboxRequiredWithoutRuntime(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name             string
+		containerRuntime orchestration.ContainerRuntime
+	}{
+		{name: "no runtime configured", containerRuntime: nil},
+		{name: "runtime configured but unusable", containerRuntime: &fakeContainerRuntime{available: false}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			rt, err := NewRuntime(RuntimeConfig{
+				Backends:         map[string]orchestration.AgentBackend{"acp": &mockBackend{}},
+				ContainerRuntime: tc.containerRuntime,
+				SandboxPolicy:    orchestration.SandboxPolicyRequired,
+				Logger:           &testLogger{t: t},
+			})
+			if rt != nil {
+				t.Fatal("expected no runtime when the sandbox policy cannot be satisfied")
+			}
+			if !errors.Is(err, ErrRuntimeSandboxRequiredNoRuntime) {
+				t.Fatalf("expected ErrRuntimeSandboxRequiredNoRuntime, got %v", err)
+			}
+		})
+	}
+}
+
+// TestNewRuntime_SandboxNotRequiredWithoutRuntimeStarts is the control: only
+// the "required" policy is impossible without an engine. A preferred or opt-in
+// daemon on the same host is serviceable and must still start.
+func TestNewRuntime_SandboxNotRequiredWithoutRuntimeStarts(t *testing.T) {
+	t.Parallel()
+
+	for _, policy := range []orchestration.SandboxPolicy{
+		orchestration.SandboxPolicyOptIn,
+		orchestration.SandboxPolicyPreferred,
+	} {
+		t.Run(policy.String(), func(t *testing.T) {
+			t.Parallel()
+
+			rt, err := NewRuntime(RuntimeConfig{
+				Backends:      map[string]orchestration.AgentBackend{"acp": &mockBackend{}},
+				SandboxPolicy: policy,
+				Logger:        &testLogger{t: t},
+			})
+			if err != nil {
+				t.Fatalf("NewRuntime(%s): %v", policy, err)
+			}
+			if rt.SandboxResolver().HasContainerRuntime() {
+				t.Fatal("resolver claims a container runtime the daemon does not have")
+			}
+		})
+	}
+}
+
+// TestRuntime_Spawn_ContainerRuntimeReachesResolver is the end of the wire the
+// serve path had cut: a runtime constructed WITH a container runtime resolves a
+// required spawn instead of refusing it, and the backend receives the
+// containerized request. Without the ContainerRuntime field this spawn fails
+// with a SandboxModeViolationError, which is exactly the reported defect.
+func TestRuntime_Spawn_ContainerRuntimeReachesResolver(t *testing.T) {
+	t.Parallel()
+
+	backend := &recordingBackend{}
+	rt, err := NewRuntime(RuntimeConfig{
+		Backends:         map[string]orchestration.AgentBackend{"acp": backend},
+		ContainerRuntime: &fakeContainerRuntime{available: true},
+		SandboxPolicy:    orchestration.SandboxPolicyRequired,
+		ImageMap:         map[string]string{"acp": "quicbaas/acp:test"},
+		Logger:           &testLogger{t: t},
+		MountPolicy:      &orchestration.MountPolicy{AllowedRoots: []string{t.TempDir()}},
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	if !rt.SandboxResolver().HasContainerRuntime() {
+		t.Fatal("the configured container runtime never reached the sandbox resolver")
+	}
+
+	sess, spawnErr := rt.Spawn(context.Background(), "tenant-a", nil, "acp", &orchestration.SpawnRequest{
+		SandboxMode: orchestration.SandboxModeRequired,
+	})
+	if spawnErr != nil {
+		t.Fatalf("Spawn: %v", spawnErr)
+	}
+	if sess == nil {
+		t.Fatal("Spawn returned no session")
+	}
+	if len(backend.spawns) != 1 {
+		t.Fatalf("backend spawns = %d, want 1", len(backend.spawns))
+	}
+	got := backend.spawns[0]
+	if got.SandboxMode != orchestration.SandboxModeRequired {
+		t.Fatalf("resolved sandbox mode = %v, want required", got.SandboxMode)
+	}
+	if !got.Sandboxed {
+		t.Fatal("spawn reached the backend unsandboxed under a required policy")
+	}
+	if got.ContainerImage != "quicbaas/acp:test" {
+		t.Fatalf("container image = %q, want %q", got.ContainerImage, "quicbaas/acp:test")
+	}
+}

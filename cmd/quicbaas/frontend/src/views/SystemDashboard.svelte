@@ -34,6 +34,7 @@
   import StatCard from '../components/core/StatCard.svelte';
   import PageHeader from '../components/core/PageHeader.svelte';
   import { formatDateTime } from '../lib/time.ts';
+  import { countLiveSessions } from '../lib/sessions.ts';
   import StatusBadge from '../components/core/StatusBadge.svelte';
   import StartJobDialog from '../components/orchestrator/StartJobDialog.svelte';
   import SpawnDialog from '../components/orchestrator/SpawnDialog.svelte';
@@ -54,6 +55,7 @@
     Play,
     Plus,
     Terminal,
+    Eye,
   } from 'lucide-svelte';
 
   // ---------------------------------------------------------------------------
@@ -62,7 +64,14 @@
 
   interface ServiceHealth {
     name: string;
-    status: 'ok' | 'degraded' | 'down' | 'unknown';
+    /**
+     * 'not-permitted' is deliberately distinct from 'down': the daemon
+     * answered, and the answer was that this caller may not see the
+     * subsystem. Folding the two together renders an authorization result as
+     * an outage (#219) — the operator reads a red tile and starts
+     * debugging a service that is running.
+     */
+    status: 'ok' | 'degraded' | 'down' | 'not-permitted' | 'unknown';
     detail?: string;
     /** Navigation ViewID to jump to this subsystem, if one exists. */
     viewID?: string;
@@ -76,7 +85,7 @@
   }
 
   let daemonHealth: ServiceHealth = $state({ name: 'Daemon', status: 'unknown' });
-  let orchestratorHealth: ServiceHealth = $state({ name: 'Orchestrator', status: 'unknown', viewID: 'orchestration' });
+  let orchestratorHealth: ServiceHealth = $state({ name: 'Software Factory', status: 'unknown', viewID: 'orchestration' });
   let storageHealth: ServiceHealth = $state({ name: 'Storage (PebbleDB)', status: 'unknown' });
   let kmsHealth: ServiceHealth = $state({ name: 'KMS', status: 'unknown', viewID: 'kms' });
   let schedulerHealth: ServiceHealth = $state({ name: 'Scheduler', status: 'unknown', viewID: 'scheduler' });
@@ -134,6 +143,59 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Probe failure classification
+  // ---------------------------------------------------------------------------
+
+  /**
+   * httpStatus returns the HTTP status code a failed SDK call carries, or
+   * undefined when the failure never reached an HTTP response (DNS failure,
+   * TLS failure, connection refused, abort — fetch rejects with a TypeError
+   * that has no status).
+   *
+   * The SDK rejects every non-2xx response with an APIError
+   * (sdk/typescript/src/errors.ts) whose `status` field is the response's
+   * numeric status. The code is read off the error object, never matched out
+   * of its message: the message is the server's prose — here go-qrdb's RBAC
+   * denial reason — and is free to change, while the status is the contract.
+   * The property is read structurally rather than through `instanceof
+   * APIError` so a probe rejected by a non-REST transport (or a test double)
+   * that carries the same field classifies identically.
+   *
+   * TRANSPORT SCOPE: today only the REST transport carries a status here. The
+   * Wails desktop transport cannot: cmd/quicbaas/errors_gui.go codes every
+   * binding failure ErrUnavailable regardless of cause, and Wails v2 delivers
+   * the error to JS as a bare string (no ErrorFormatter is configured), so a
+   * denial arrives with no status and no code and falls through to 'down' —
+   * the pre-fix behaviour, still live on the desktop build. Classifying it
+   * would mean matching the denial out of the message prose, which is exactly
+   * what this function exists to avoid, so the fix belongs where the code is
+   * destroyed rather than here. Filed as #236; that one needs a ruling on the
+   * binding error contract before it can be written.
+   */
+  function httpStatus(err: unknown): number | undefined {
+    const status = (err as { status?: unknown } | null | undefined)?.status;
+    return typeof status === 'number' ? status : undefined;
+  }
+
+  /**
+   * denialDetail returns a short reason when a probe failed because the caller
+   * is not permitted to make it, and undefined for every other failure. 401
+   * and 403 both prove the daemon is UP and answering — the subsystem's true
+   * state is simply not visible to this account — so they must never be
+   * reported as an outage.
+   */
+  function denialDetail(err: unknown): string | undefined {
+    switch (httpStatus(err)) {
+      case 401:
+        return 'authentication required';
+      case 403:
+        return 'permission denied';
+      default:
+        return undefined;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Aggregated fetch
   // ---------------------------------------------------------------------------
 
@@ -170,7 +232,7 @@
       const statusField = payload['status'] as string | undefined;
       const orchOk = !statusField || statusField === 'ok' || statusField === 'healthy';
       orchestratorHealth = {
-        name: 'Orchestrator',
+        name: 'Software Factory',
         status: orchOk ? 'ok' : 'degraded',
         viewID: 'orchestration',
       };
@@ -187,9 +249,29 @@
       } else {
         storageHealth = { name: 'Storage (PebbleDB)', status: orchOk ? 'ok' : 'degraded' };
       }
-    } catch {
-      orchestratorHealth = { name: 'Orchestrator', status: 'down', viewID: 'orchestration' };
-      storageHealth = { name: 'Storage (PebbleDB)', status: 'unknown' };
+    } catch (err: unknown) {
+      // A denial says nothing about the orchestrator's health, and the storage
+      // tile is derived from the same payload, so both report the denial
+      // rather than inventing a state neither probe observed.
+      //
+      // The denial that prompted this is go-qrdb's: it tags orchestrator:health
+      // ScopeTenantOnly, which its RBAC refuses to the system tenant outright,
+      // so the operator persona cannot read the node's own orchestrator state
+      // (jeremyhahn/go-qrdb#183). That scope is declared entirely inside the
+      // dependency and is not ours to change. Reporting it accurately is.
+      const denial = denialDetail(err);
+      if (denial) {
+        orchestratorHealth = {
+          name: 'Software Factory',
+          status: 'not-permitted',
+          detail: denial,
+          viewID: 'orchestration',
+        };
+        storageHealth = { name: 'Storage (PebbleDB)', status: 'not-permitted', detail: denial };
+      } else {
+        orchestratorHealth = { name: 'Software Factory', status: 'down', viewID: 'orchestration' };
+        storageHealth = { name: 'Storage (PebbleDB)', status: 'unknown' };
+      }
     }
 
     // --- 4. KMS health — probe by listing keys (lightweight, limit=1) ---------
@@ -198,7 +280,7 @@
       kmsHealth = { name: 'KMS', status: 'ok', viewID: 'kms' };
     } catch (err: unknown) {
       // A 401/403 means KMS is up but requires auth — treat as ok.
-      const status = (err as { status?: number })?.status;
+      const status = httpStatus(err);
       if (status === 401 || status === 403) {
         kmsHealth = { name: 'KMS', status: 'ok', viewID: 'kms' };
       } else {
@@ -211,7 +293,7 @@
       await client.scheduler.listJobs({ limit: 1 });
       schedulerHealth = { name: 'Scheduler', status: 'ok', viewID: 'scheduler' };
     } catch (err: unknown) {
-      const status = (err as { status?: number })?.status;
+      const status = httpStatus(err);
       if (status === 401 || status === 403) {
         schedulerHealth = { name: 'Scheduler', status: 'ok', viewID: 'scheduler' };
       } else {
@@ -250,7 +332,13 @@
     if (s === 'ok') return 'success';
     if (s === 'down') return 'error';
     if (s === 'degraded') return 'warning';
+    // 'not-permitted' and 'unknown' are both "no signal" — neutral, never red.
     return 'ghost';
+  }
+
+  /** statusLabel renders the internal status value as prose for the badge. */
+  function statusLabel(s: ServiceHealth['status']): string {
+    return s === 'not-permitted' ? 'not permitted' : s;
   }
 
   const services = $derived<ServiceHealth[]>([
@@ -261,11 +349,29 @@
     schedulerHealth,
   ]);
 
-  // Services whose status is meaningful (not unknown) for overall health eval.
-  const knownServices = $derived(services.filter((s) => s.status !== 'unknown'));
+  // Services whose status is meaningful for overall health eval. 'unknown'
+  // (not probed yet) and 'not-permitted' (probed, refused) both carry no
+  // observation of the subsystem's health, so neither may move the banner.
+  const knownServices = $derived(
+    services.filter((s) => s.status !== 'unknown' && s.status !== 'not-permitted'),
+  );
   const allOk = $derived(knownServices.length > 0 && knownServices.every((s) => s.status === 'ok'));
   const anyDown = $derived(services.some((s) => s.status === 'down'));
   const anyDegraded = $derived(services.some((s) => s.status === 'degraded'));
+
+  // Subsystems the account may not see. Reported separately from problemNames:
+  // they are not problems with the system, they are limits on this session.
+  const notPermitted = $derived(services.filter((s) => s.status === 'not-permitted'));
+  const anyNotPermitted = $derived(notPermitted.length > 0);
+  const notPermittedNames = $derived(notPermitted.map((s) => s.name).join(', '));
+
+  // "All systems operational" claims every subsystem was observed and was
+  // healthy. A subsystem the account may not see was not observed at all, and
+  // it could be failing behind the denial — so a denial withholds the green
+  // banner rather than being quietly excluded from it. That is the mirror of
+  // the bug this fixes: refusing to call a denial an outage must not turn into
+  // calling it health.
+  const allVisible = $derived(allOk && !anyNotPermitted);
 
   // Names of problem subsystems for the banner summary.
   const problemNames = $derived(
@@ -282,8 +388,18 @@
   const totalAgents = $derived((Array.isArray(agentStore.agents) ? agentStore.agents : []).length);
   const onlineAgents = $derived(agentStore.onlineAgents.length);
 
-  // Session count.
-  const sessionCount = $derived((Array.isArray(sessionStore.sessions) ? sessionStore.sessions : []).length);
+  // Session counts. The list holds every session the tenant has, closed ones
+  // included, because the Sessions view shows them and a closed session is
+  // still openable by id — so the tile that claims live state counts the live
+  // records and reports the total beside it rather than as it.
+  //
+  // This tile read 0 in the browser until go-quicbaas#864: it named `status`,
+  // which is what the Wails binding calls the lifecycle field, while the REST
+  // wire calls it `state`. countLiveSessions reads the value, not a name.
+  const allSessionRecords = $derived(
+    Array.isArray(sessionStore.sessions) ? sessionStore.sessions : [],
+  );
+  const liveSessionCount = $derived(countLiveSessions(allSessionRecords));
 
   // Job counts from orchestratorStore.
   const allJobs = $derived(Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : []);
@@ -408,7 +524,7 @@
   <!-- Overall health banner -->
   <div
     class="alert flex-wrap"
-    class:alert-success={allOk && connectionStore.connected}
+    class:alert-success={allVisible && connectionStore.connected}
     class:alert-error={anyDown || !connectionStore.connected}
     class:alert-warning={!allOk && !anyDown && anyDegraded && connectionStore.connected}
     role="status"
@@ -426,9 +542,20 @@
       <AlertTriangle class="h-5 w-5 shrink-0" />
       <span class="font-semibold">Partially degraded</span>
       <span class="text-sm opacity-75">{problemNames} reporting issues</span>
-    {:else if allOk}
+    {:else if allVisible}
       <CheckCircle class="h-5 w-5 shrink-0" />
       <span class="font-semibold">All systems operational</span>
+      {#if version !== '—'}
+        <span class="badge badge-sm badge-ghost ml-auto font-mono">v{version}</span>
+      {/if}
+    {:else if anyNotPermitted}
+      <!-- Nothing observed is failing, but not everything was observed.
+           Neutral, not green and not red — the honest third answer. -->
+      <Eye class="h-5 w-5 shrink-0" />
+      <span class="font-semibold">Partial visibility</span>
+      <span class="text-sm opacity-75"
+        >{notPermittedNames} not visible to this account — state unknown</span
+      >
       {#if version !== '—'}
         <span class="badge badge-sm badge-ghost ml-auto font-mono">v{version}</span>
       {/if}
@@ -467,10 +594,10 @@
     >
       <StatCard
         label="Active Sessions"
-        value={sessionCount}
-        description="open sessions"
+        value={liveSessionCount}
+        description="{allSessionRecords.length} total"
         icon={MessageSquare}
-        variant={sessionCount > 0 ? 'primary' : 'default'}
+        variant={liveSessionCount > 0 ? 'primary' : 'default'}
       />
     </button>
 
@@ -581,7 +708,7 @@
 
             <div class="flex items-center gap-2 shrink-0 ml-2">
               <StatusBadge
-                text={svc.status}
+                text={statusLabel(svc.status)}
                 variant={statusVariant(svc.status)}
                 pulse={svc.status === 'degraded'}
               />

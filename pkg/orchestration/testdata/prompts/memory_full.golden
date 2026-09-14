@@ -1,0 +1,13 @@
+## Previous Attempts Context
+
+### What worked:
+- used the store's own client
+
+### What failed (do NOT repeat these):
+- "wire the route": hand-rolled mux - FAILED because: the router is generated (iteration 2)
+
+### Discovered constraints:
+- no new dependencies
+
+### Reviewer feedback:
+- name the error type

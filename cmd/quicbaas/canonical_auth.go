@@ -399,6 +399,19 @@ func runCanonicalAuthFactorAdd(ctx context.Context, f *canonicalAuthFactorAddFla
 	if err := validateCanonicalEnrollFlags(f); err != nil {
 		return err
 	}
+	// THIS COMMAND'S --tenant SHADOWS THE GLOBAL ONE, and until now it scoped
+	// only the enrol request — not the client. The FIDO2 ceremony runs over the
+	// transport BEFORE that request exists, against per-tenant routes
+	// (/api/v1/iam/{tenant}/webauthn/...), so it used the global flag's default
+	// of "system" while the operator had named a tenant. The registrant is not
+	// in the system tenant, so the ceremony was refused with
+	// "registration_disabled" — an error that means "unknown email", which sent
+	// the reader looking for a policy switch rather than a wrong tenant.
+	//
+	// The flag the operator actually typed wins for both.
+	if f.tenant != "" {
+		globalTenantID = f.tenant
+	}
 	if f.factorType == canonicalFactorTypeFIDO2 {
 		credentialID, err := canonicalFIDO2EnrollFunc(ctx, f)
 		if err != nil {
@@ -780,7 +793,10 @@ func enrollCanonicalFIDO2(
 	register canonicalFIDO2Registerer,
 ) (string, error) {
 	beginResp, err := fido2.BeginRegistration(ctx, &quicbaas.FIDO2BeginRegistrationRequest{
-		Username:    f.user,
+		// The account's EMAIL is the login key xkms v0.12 resolves against
+		// (GetByEmail); a bare username is a different identifier and is not
+		// accepted. --user carries the email.
+		Email:       f.user,
 		DisplayName: f.label,
 	})
 	if err != nil {

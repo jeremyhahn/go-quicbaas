@@ -16,37 +16,30 @@ package server
 import (
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
 
 // setupSignalHandlers configures signal handling for graceful shutdown.
-func setupSignalHandlers(shutdown chan<- struct{}, log *logger.Logger) {
+//
+// The handler routes through the trigger callback (Server.TriggerShutdown)
+// rather than closing the shutdown channel itself: the channel has exactly
+// ONE close site, guarded by one sync.Once, so a signal racing a direct
+// Shutdown call — the daemon's main handles SIGTERM by calling Shutdown,
+// which triggers the same signal — cannot double-close the channel (#139).
+func setupSignalHandlers(trigger func(), log *logger.Logger) {
 	sigChan := make(chan os.Signal, 1)
 
 	// Register for SIGTERM and SIGINT (Ctrl+C)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
-
-	// Use sync.Once to ensure channel is closed only once
-	var once sync.Once
 
 	// Handle signals in background
 	go func() {
 		for sig := range sigChan {
 			log.Infof("Received signal: %v", sig)
 			log.Info("Initiating graceful shutdown...")
-
-			// Trigger shutdown only once using select to avoid panic on closed channel
-			once.Do(func() {
-				defer func() {
-					if r := recover(); r != nil {
-						log.Debugf("Shutdown channel already closed: %v", r)
-					}
-				}()
-				close(shutdown)
-			})
+			trigger()
 		}
 	}()
 

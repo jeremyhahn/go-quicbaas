@@ -13,7 +13,11 @@
 
 package quicbaas
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/cas"
+)
 
 // Sentinel errors for storage operations.
 var (
@@ -25,4 +29,23 @@ var (
 
 	// ErrLimitReached is an internal sentinel used to stop iteration.
 	ErrLimitReached = errors.New("limit reached")
+
+	// ErrNilClaim indicates a nil firing claim was passed to ClaimFiring.
+	ErrNilClaim = errors.New("firing claim cannot be nil")
+
+	// ErrNodeNeverLed indicates the test qrdb node never won its election.
+	ErrNodeNeverLed = errors.New("qrdb test node never became leader")
+
+	// ErrUnreadableClaimMark indicates a job's claim mark exists but its
+	// value could not be read back — either it reads as nothing, or it decodes
+	// to a mark that does not say where the job stands. The claim fails
+	// closed: without knowing where the mark stands there is no basis for
+	// claiming past it.
+	//
+	// It IS cas.ErrUnreadable rather than a second name for it. The guarded
+	// write raises that cause for the empty-value case and this package raises
+	// it for the meaningless-value case; two names for one condition is the
+	// drift the shared primitive exists to remove, and a caller matching on
+	// either would otherwise miss half the cases.
+	ErrUnreadableClaimMark = cas.ErrUnreadable
 )

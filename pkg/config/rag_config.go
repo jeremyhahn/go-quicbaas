@@ -34,12 +34,25 @@ type RAGConfig struct {
 
 // EmbeddingConfig holds embedding provider configuration.
 type EmbeddingConfig struct {
-	Provider   string `yaml:"provider" json:"provider" mapstructure:"provider"`       // "ollama", "openai", "voyage", "lmstudio"
+	Provider   string `yaml:"provider" json:"provider" mapstructure:"provider"`       // "ollama", "openai", "voyage", "lmstudio", "npu"
 	Model      string `yaml:"model" json:"model" mapstructure:"model"`                // Model name
 	APIURL     string `yaml:"api_url" json:"api_url" mapstructure:"api_url"`          // API endpoint URL
 	APIKey     string `yaml:"api_key" json:"api_key" mapstructure:"api_key"`          // API key (if required)
 	Dimensions int    `yaml:"dimensions" json:"dimensions" mapstructure:"dimensions"` // Embedding dimensions
 	Timeout    int    `yaml:"timeout" json:"timeout" mapstructure:"timeout"`          // Timeout in seconds
+
+	// Additional declares extra providers to register alongside the default
+	// named by Provider. Each is registered under its own name and can then be
+	// selected per request or promoted to the service default at runtime.
+	//
+	// This exists because go-qrdb validates the *configured default* against a
+	// closed allowlist of its four built-in providers, so a provider it does not
+	// know -- "npu", served by the OpenVINO sidecar -- cannot be named as
+	// Provider at all. Listing it here is how it gets registered and becomes
+	// usable. See docs/embeddings/npu.md and go-qrdb#528.
+	//
+	// Entries are flat: an Additional entry of its own is rejected by Validate.
+	Additional []EmbeddingConfig `yaml:"additional" json:"additional,omitempty" mapstructure:"additional"`
 }
 
 // RAGVectorConfig holds vector index configuration for RAG.
@@ -267,6 +280,21 @@ func (c *EmbeddingConfig) Validate() error {
 		}
 	default:
 		// Allow custom providers
+	}
+
+	// Validate the extra providers, one level deep. Nesting is rejected rather
+	// than silently ignored, so a mis-indented config fails loudly.
+	for i := range c.Additional {
+		extra := &c.Additional[i]
+		if len(extra.Additional) > 0 {
+			return api.NewValidationError(
+				"config.EmbeddingConfig.Validate",
+				"embedding.additional entries must not themselves declare additional providers",
+			)
+		}
+		if err := extra.Validate(); err != nil {
+			return err
+		}
 	}
 
 	return nil

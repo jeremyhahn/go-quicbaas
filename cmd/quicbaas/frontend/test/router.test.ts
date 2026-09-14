@@ -147,3 +147,66 @@ describe('router hash aliases', () => {
     expect(routerStore.name).toBe('not-found');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Software Factory stage 6b (#565): task detail route and generic query params.
+// ---------------------------------------------------------------------------
+
+describe('router — task detail and query params', () => {
+  beforeEach(() => {
+    window.location.hash = '#/dashboard';
+  });
+
+  it('#/tasks/:id resolves to task-detail with the id decoded', async () => {
+    const { routerStore } = await loadRouter();
+    setHashAndFire('#/tasks/task%2F42');
+    expect(routerStore.name).toBe('task-detail');
+    expect(routerStore.params['id']).toBe('task/42');
+  });
+
+  it('#/tasks/ alone is the task list, not a detail with an empty id', async () => {
+    const { routerStore } = await loadRouter();
+    setHashAndFire('#/tasks/');
+    expect(routerStore.name).toBe('tasks');
+    expect(routerStore.params['id']).toBeUndefined();
+  });
+
+  it('#/tasks?project=p1 resolves to tasks with the project query param', async () => {
+    const { routerStore } = await loadRouter();
+    setHashAndFire('#/tasks?project=p1');
+    expect(routerStore.name).toBe('tasks');
+    expect(routerStore.params['project']).toBe('p1');
+  });
+
+  it('query params are parsed for every route and decoded', async () => {
+    const { routerStore } = await loadRouter();
+    setHashAndFire('#/jobs?state=executing&q=a%20b');
+    expect(routerStore.name).toBe('jobs');
+    expect(routerStore.params['state']).toBe('executing');
+    expect(routerStore.params['q']).toBe('a b');
+  });
+
+  it('a path param wins over a query param of the same name', async () => {
+    const { routerStore } = await loadRouter();
+    setHashAndFire('#/tasks/task-1?id=other');
+    expect(routerStore.name).toBe('task-detail');
+    expect(routerStore.params['id']).toBe('task-1');
+  });
+
+  it('a route with no query has no stray params', async () => {
+    const { routerStore } = await loadRouter();
+    setHashAndFire('#/tasks');
+    expect(routerStore.name).toBe('tasks');
+    expect(Object.keys(routerStore.params)).toEqual([]);
+  });
+
+  it('routeTasks(projectId) and routeTaskDetail(id) build the encoded hashes', async () => {
+    const { routeTasks, routeTaskDetail } = await loadRouter();
+    routeTasks('proj 1');
+    expect(window.location.hash).toBe('#/tasks?project=proj%201');
+    routeTasks();
+    expect(window.location.hash).toBe('#/tasks');
+    routeTaskDetail('task/42');
+    expect(window.location.hash).toBe('#/tasks/task%2F42');
+  });
+});

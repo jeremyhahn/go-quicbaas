@@ -37,10 +37,10 @@ func TestTransport_FIDO2_Delegates(t *testing.T) {
 		method string
 		req    interface{}
 	}{
-		{"begin-registration", "BeginRegistration", &xkmstransport.BeginRegistrationRequest{Username: "alice@example.com"}},
+		{"begin-registration", "BeginRegistration", &xkmstransport.BeginRegistrationRequest{Email: "alice@example.com"}},
 		{"finish-registration", "FinishRegistration", &xkmstransport.FinishRegistrationRequest{SessionID: "s", AttestationJSON: "{}"}},
-		{"begin-authentication", "BeginAuthentication", &xkmstransport.BeginAuthenticationRequest{Username: "alice@example.com"}},
-		{"finish-authentication", "FinishAuthentication", &xkmstransport.FinishAuthenticationRequest{SessionID: "s", Username: "alice@example.com", AssertionJSON: "{}"}},
+		{"begin-authentication", "BeginAuthentication", &xkmstransport.BeginAuthenticationRequest{Email: "alice@example.com"}},
+		{"finish-authentication", "FinishAuthentication", &xkmstransport.FinishAuthenticationRequest{SessionID: "s", Email: "alice@example.com", AssertionJSON: "{}"}},
 	}
 
 	for _, tc := range cases {
@@ -122,7 +122,7 @@ func TestTransport_FIDO2PIV_ClosedTransport(t *testing.T) {
 	}
 
 	if _, err := tr.Request(context.Background(), "quicbaas.FIDO2", "BeginAuthentication",
-		&xkmstransport.BeginAuthenticationRequest{Username: "u"}); err == nil || !strings.Contains(err.Error(), "closed") {
+		&xkmstransport.BeginAuthenticationRequest{Email: "u"}); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("expected a closed-transport error, got: %v", err)
 	}
 	if _, err := tr.Request(context.Background(), "quicbaas.PIV", "ListPIVSlots",

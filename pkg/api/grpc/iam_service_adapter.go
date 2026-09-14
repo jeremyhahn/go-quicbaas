@@ -23,6 +23,7 @@ import (
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // MFAServiceAdapter wraps an MFAManager to implement the MFAService interface for gRPC.
@@ -96,6 +97,27 @@ type IAMServiceAdapter struct {
 	appManager    *iam.AppManager
 	adminManager  *iam.AdminManager
 	gdprManager   *iam.GDPRManager
+
+	// webauthnCredentials is the user-scoped WebAuthn credential
+	// administration service. Optional and set after construction
+	// (SetWebAuthnCredentials) because the WebAuthn manager is built later
+	// in the server lifecycle than the IAM components this adapter wraps;
+	// nil means the node reports the verbs as unavailable.
+	webauthnCredentials service.WebAuthnCredentialService
+}
+
+// SetWebAuthnCredentials wires the WebAuthn credential administration service
+// the gRPC IAM server exposes. It is a setter rather than a constructor
+// parameter so the adapter keeps its signature for callers that predate the
+// verbs, matching how the identity store late-binds its own credential cascade.
+func (a *IAMServiceAdapter) SetWebAuthnCredentials(svc service.WebAuthnCredentialService) {
+	a.webauthnCredentials = svc
+}
+
+// WebAuthnCredentials implements the optional capability the gRPC IAM server
+// probes for (server_iam_webauthn.go webAuthnCredentialProvider).
+func (a *IAMServiceAdapter) WebAuthnCredentials() service.WebAuthnCredentialService {
+	return a.webauthnCredentials
 }
 
 // NewIAMServiceAdapter creates a new IAM service adapter.
@@ -182,9 +204,17 @@ func (a *IAMServiceAdapter) CreateUser(ctx context.Context, user *iam.User) (*ia
 		return nil, api.NewNilInputError("iam.grpc.CreateUser", "user")
 	}
 
-	// Derive username from email (User struct doesn't have Username field)
-	var username string
-	if user.Email != "" {
+	// The record's own handle wins. It used to be derived from the email
+	// unconditionally, on the (then true) grounds that iam.User had no Username
+	// field; it has one now, and deriving over a handle the caller supplied
+	// would be this layer choosing a different name for the account than the
+	// one it was given.
+	//
+	// The derivation stays as the DEFAULT, because this transport's protobuf
+	// User carries no username field, so a gRPC caller has no way to send one
+	// and CreateUser requires it.
+	username := strings.TrimSpace(user.Username)
+	if username == "" && user.Email != "" {
 		// Use the part before @ as username
 		if idx := strings.Index(user.Email, "@"); idx > 0 {
 			username = user.Email[:idx]
@@ -194,10 +224,12 @@ func (a *IAMServiceAdapter) CreateUser(ctx context.Context, user *iam.User) (*ia
 	}
 
 	opts := iam.CreateUserOptions{
-		Email:      user.Email,
-		Username:   username,
-		Name:       user.Name,
-		Attributes: user.Attributes,
+		Email:       user.Email,
+		Username:    username,
+		Name:        user.Name,
+		Attributes:  user.Attributes,
+		AuthMethods: user.AuthMethods,
+		Lifecycle:   user.Lifecycle,
 	}
 
 	// Pre-validate requested role and group references BEFORE creating the
@@ -261,15 +293,12 @@ func (a *IAMServiceAdapter) CreateUser(ctx context.Context, user *iam.User) (*ia
 func (a *IAMServiceAdapter) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {
 	// Check if userID looks like an email address
 	if strings.Contains(userID, "@") {
-		// Try to look up by email first
-		user, err := a.identityStore.GetUserByEmail(ctx, userID)
+		// Try to look up by email first. The lookup is tenant-scoped, so a
+		// record in another tenant is never read — there is no cross-tenant hit
+		// left to detect and discard.
+		user, err := a.identityStore.GetUserByEmail(ctx, tenantID, userID)
 		if err == nil {
-			// Verify the user belongs to the expected tenant
-			if user.TenantID == tenantID {
-				return user, nil
-			}
-			// User exists but in a different tenant - return not found for security
-			return nil, api.NewNotFoundError("user", "tenant "+tenantID)
+			return user, nil
 		}
 		// Email lookup failed, fall through to ID lookup
 	}
@@ -292,8 +321,23 @@ func (a *IAMServiceAdapter) UpdateUser(ctx context.Context, user *iam.User) (*ia
 	if user.Name != "" {
 		opts.Name = &user.Name
 	}
+	// Forwarded now that the handle is its own field: it used to be written
+	// into Name by UpdateUser's precedence rule, so setting one changed the
+	// other.
+	if user.Username != "" {
+		opts.Username = &user.Username
+	}
 	if len(user.Attributes) > 0 {
 		opts.Attributes = &user.Attributes
+	}
+	// Presence, not length: an explicitly empty list clears the restriction,
+	// which the model defines as "no restriction" and which a length check
+	// silently discards.
+	if user.AuthMethods != nil {
+		opts.AuthMethods = &user.AuthMethods
+	}
+	if user.Lifecycle != "" {
+		opts.Lifecycle = &user.Lifecycle
 	}
 
 	updated, err := a.identityStore.UpdateUser(ctx, user.TenantID, user.ID, opts)
@@ -363,8 +407,8 @@ func (a *IAMServiceAdapter) DeleteUser(ctx context.Context, tenantID, userID str
 	// Check if userID looks like an email address
 	if strings.Contains(userID, "@") {
 		// Try to look up by email first to get the actual user ID
-		user, err := a.identityStore.GetUserByEmail(ctx, userID)
-		if err == nil && user.TenantID == tenantID {
+		user, err := a.identityStore.GetUserByEmail(ctx, tenantID, userID)
+		if err == nil {
 			// Use the actual user ID for deletion
 			userID = user.ID
 		}
@@ -537,6 +581,12 @@ func (a *IAMServiceAdapter) AssignRole(ctx context.Context, tenantID, userID, ro
 // RevokeRole revokes a role from a user.
 func (a *IAMServiceAdapter) RevokeRole(ctx context.Context, tenantID, userID, role string) error {
 	return a.identityStore.RevokeRole(ctx, tenantID, userID, role)
+}
+
+// ReconcileBuiltInRoles converges a tenant's stored built-in roles onto the
+// definitions the running build carries.
+func (a *IAMServiceAdapter) ReconcileBuiltInRoles(ctx context.Context, tenantID string) (*iam.RoleReconcileReport, error) {
+	return a.identityStore.ReconcileBuiltInRoles(ctx, tenantID)
 }
 
 // =============================================================================

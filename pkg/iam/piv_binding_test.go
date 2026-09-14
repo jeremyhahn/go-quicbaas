@@ -24,7 +24,7 @@ import (
 // TestUser_PIVBindingHelpers exercises the PIV cert-binding helpers on the user
 // model: setting, listing, single-value access, and the non-expired predicate.
 func TestUser_PIVBindingHelpers(t *testing.T) {
-	u := &User{ID: "u1", TenantID: "t1"}
+	u := &User{ID: "1", TenantID: "t1"}
 
 	// Empty user: every accessor reports no binding.
 	if got := u.PIVThumbprints(); len(got) != 0 {
@@ -74,7 +74,7 @@ func TestUser_PIVBindingHelpers(t *testing.T) {
 // TestUser_SetPIVThumbprint_PreservesNonPIVBindings verifies SetPIVThumbprint
 // only touches PIV-attested bindings and leaves other binding kinds intact.
 func TestUser_SetPIVThumbprint_PreservesNonPIVBindings(t *testing.T) {
-	u := &User{ID: "u1", TenantID: "t1"}
+	u := &User{ID: "1", TenantID: "t1"}
 	u.CertBindings = []qrdbsdk.CertBinding{
 		{Thumbprint: "spki-1", Kind: qrdbsdk.CertBindingSPKIThumbprint},
 		{Thumbprint: "old-piv", Kind: qrdbsdk.CertBindingPIVAttested},
@@ -106,7 +106,7 @@ func TestUser_SetPIVThumbprint_PreservesNonPIVBindings(t *testing.T) {
 // NotAfter is never resolved — a decommissioned credential must fail closed.
 func TestUser_HasPIVThumbprint_ExpiredRejected(t *testing.T) {
 	now := time.Now().UTC()
-	u := &User{ID: "u1", TenantID: "t1"}
+	u := &User{ID: "1", TenantID: "t1"}
 	u.CertBindings = []qrdbsdk.CertBinding{
 		{Thumbprint: "expired", Kind: qrdbsdk.CertBindingPIVAttested, NotAfter: now.Add(-time.Hour)},
 		{Thumbprint: "valid", Kind: qrdbsdk.CertBindingPIVAttested, NotAfter: now.Add(time.Hour)},
@@ -130,7 +130,7 @@ func TestMemoryStorage_PIV_MultiBindingLookup(t *testing.T) {
 		t.Fatalf("CreateTenant: %v", err)
 	}
 
-	user := &User{ID: "u1", TenantID: "t1", Email: "multi@test.com"}
+	user := &User{ID: "1", TenantID: "t1", Email: "multi@test.com"}
 	user.CertBindings = []qrdbsdk.CertBinding{
 		{Thumbprint: "card-a", Kind: qrdbsdk.CertBindingPIVAttested},
 		{Thumbprint: "card-b", Kind: qrdbsdk.CertBindingPIVAttested},
@@ -144,7 +144,7 @@ func TestMemoryStorage_PIV_MultiBindingLookup(t *testing.T) {
 		if err != nil {
 			t.Fatalf("lookup %q: %v", tp, err)
 		}
-		if got.ID != "u1" {
+		if got.ID != "1" {
 			t.Fatalf("lookup %q: expected u1, got %s", tp, got.ID)
 		}
 	}
@@ -172,7 +172,7 @@ func TestMemoryStorage_PIV_UnknownThumbprintFailsClosed(t *testing.T) {
 	if err := storage.CreateTenant(ctx, &Tenant{ID: "t1", Name: "Test"}); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
-	user := &User{ID: "u1", TenantID: "t1", Email: "a@test.com"}
+	user := &User{ID: "1", TenantID: "t1", Email: "a@test.com"}
 	user.SetPIVThumbprint("known")
 	if err := storage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("CreateUser: %v", err)

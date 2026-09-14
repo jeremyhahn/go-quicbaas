@@ -158,7 +158,7 @@ func TestFirstBootBootstrap_BindsCanonicalSPKIThumbprintAndMintsNoInvite(t *test
 	assert.Equal(t, want, banner.Thumbprint,
 		"first-boot must report the canonical SPKI thumbprint it bound")
 
-	admin, err := c.identityStore.GetUserByEmail(ctx, bootstrapAdminEmail)
+	admin, err := c.identityStore.GetUserByEmail(ctx, qrdbsdk.SystemTenantID, bootstrapAdminEmail)
 	require.NoError(t, err, "first-boot must have created the platform admin")
 	require.NotEmpty(t, admin.CertBindings,
 		"the admin must end first-boot with an mTLS cert binding")
@@ -179,9 +179,9 @@ func TestFirstBootBootstrap_BindsCanonicalSPKIThumbprintAndMintsNoInvite(t *test
 	// 3. No invite token was minted, stored, or stamped on the user.
 	assert.Zero(t, invites.creates,
 		"first-boot must not create an invite record; admin enrollment is cert-based")
-	assert.Empty(t, admin.InviteToken,
-		"first-boot must not stamp an invite token on the admin user")
-	assert.Nil(t, admin.InviteExpiresAt)
+	// There is no invite state on the user record to check any more: the invite
+	// store owns invitations, and asserting the store minted none (above) is the
+	// whole of the claim.
 }
 
 // TestFirstBootBootstrap_IssuedCertIsLoginResolvable asserts the certificate
@@ -241,7 +241,7 @@ func TestFirstBootBootstrap_CSRSignPathKeepsAdminKeyOffHost(t *testing.T) {
 	_, err := os.Stat(filepath.Join(srv.config.Storage.DataDir, adminBundleDirName, adminKeyFileName))
 	assert.True(t, os.IsNotExist(err), "no admin key file may exist on the CSR-sign path")
 
-	admin, err := c.identityStore.GetUserByEmail(ctx, bootstrapAdminEmail)
+	admin, err := c.identityStore.GetUserByEmail(ctx, qrdbsdk.SystemTenantID, bootstrapAdminEmail)
 	require.NoError(t, err)
 	assert.NotEmpty(t, admin.SPKIThumbprint(),
 		"the CSR-signed certificate must still be SPKI-bound to the admin")
@@ -304,7 +304,7 @@ func TestFirstBootBootstrap_NoCAStillCreatesAdmin(t *testing.T) {
 	require.NoError(t, srv.firstBootBootstrap(ctx, c))
 
 	assert.Empty(t, banner.CertPath, "no CA means no certificate is written")
-	_, err := c.identityStore.GetUserByEmail(ctx, bootstrapAdminEmail)
+	_, err := c.identityStore.GetUserByEmail(ctx, qrdbsdk.SystemTenantID, bootstrapAdminEmail)
 	require.NoError(t, err, "the admin user must exist even without a CA")
 
 	assignments, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{
@@ -625,7 +625,6 @@ func buildTestIAMComponentsWithFactors(t *testing.T) (*iamComponents, *testutil.
 		identityStore:    identityStore,
 		adminManager:     adminManager,
 		inviteStore:      iamtest.NewMemoryInviteStore(),
-		qrdbUserIDs:      testutil.NewAutoQRDBUserIDs(),
 		certLoginFactors: certLoginFactors,
 	}, certFactors
 }

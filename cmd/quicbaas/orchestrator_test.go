@@ -37,6 +37,7 @@ import (
 type mockOrchestratorClient struct {
 	healthFn             func(ctx context.Context) (*orchestratorSDK.HealthCheckReport, error)
 	listBackendsFn       func(ctx context.Context) (*orchestratorSDK.ListBackendsResponse, error)
+	listRunnersFn        func(ctx context.Context) (*orchestratorSDK.ListJobRunnersResponse, error)
 	listBackendModelsFn  func(ctx context.Context, req *orchestratorSDK.ListBackendModelsRequest) (*orchestratorSDK.ListBackendModelsResponse, error)
 	spawnSessionFn       func(ctx context.Context, req *orchestratorSDK.SpawnSessionRequest) (*orchestratorSDK.SpawnSessionResponse, error)
 	promptSessionFn      func(ctx context.Context, req *orchestratorSDK.PromptSessionRequest) (*orchestratorSDK.PromptSessionResponse, error)
@@ -48,6 +49,9 @@ type mockOrchestratorClient struct {
 	getTaskFn            func(ctx context.Context, req *orchestratorSDK.GetTaskRequest) (*orchestratorSDK.Task, error)
 	listTasksFn          func(ctx context.Context, req *orchestratorSDK.ListTasksRequest) (*orchestratorSDK.ListTasksResponse, error)
 	claimTaskFn          func(ctx context.Context, req *orchestratorSDK.ClaimTaskRequest) (*orchestratorSDK.ClaimTaskResponse, error)
+	blockTaskFn          func(ctx context.Context, req *orchestratorSDK.BlockTaskRequest) (*orchestratorSDK.BlockTaskResponse, error)
+	readmitTaskFn        func(ctx context.Context, req *orchestratorSDK.ReadmitTaskRequest) (*orchestratorSDK.ReadmitTaskResponse, error)
+	deleteTaskFn         func(ctx context.Context, req *orchestratorSDK.DeleteTaskRequest) (*orchestratorSDK.DeleteTaskResponse, error)
 	completeTaskFn       func(ctx context.Context, req *orchestratorSDK.CompleteTaskRequest) (*orchestratorSDK.CompleteTaskResponse, error)
 	registerAgentFn      func(ctx context.Context, req *orchestratorSDK.RegisterAgentRequest) (*orchestratorSDK.RegisterAgentResponse, error)
 	getAgentFn           func(ctx context.Context, req *orchestratorSDK.GetAgentRequest) (*orchestratorSDK.AgentRegistration, error)
@@ -76,6 +80,13 @@ func (m *mockOrchestratorClient) ListBackends(ctx context.Context) (*orchestrato
 		return m.listBackendsFn(ctx)
 	}
 	return &orchestratorSDK.ListBackendsResponse{Backends: []*orchestratorSDK.BackendInfo{}, Count: 0}, nil
+}
+
+func (m *mockOrchestratorClient) ListRunners(ctx context.Context) (*orchestratorSDK.ListJobRunnersResponse, error) {
+	if m.listRunnersFn != nil {
+		return m.listRunnersFn(ctx)
+	}
+	return &orchestratorSDK.ListJobRunnersResponse{Runners: []*orchestratorSDK.JobRunnerInfo{}, Count: 0}, nil
 }
 
 func (m *mockOrchestratorClient) ListBackendModels(ctx context.Context, req *orchestratorSDK.ListBackendModelsRequest) (*orchestratorSDK.ListBackendModelsResponse, error) {
@@ -143,6 +154,27 @@ func (m *mockOrchestratorClient) ListTasks(ctx context.Context, req *orchestrato
 		return m.listTasksFn(ctx, req)
 	}
 	return &orchestratorSDK.ListTasksResponse{Tasks: []*orchestratorSDK.Task{}, Count: 0}, nil
+}
+
+func (m *mockOrchestratorClient) BlockTask(ctx context.Context, req *orchestratorSDK.BlockTaskRequest) (*orchestratorSDK.BlockTaskResponse, error) {
+	if m.blockTaskFn != nil {
+		return m.blockTaskFn(ctx, req)
+	}
+	return &orchestratorSDK.BlockTaskResponse{TaskID: req.TaskID, Kind: req.Kind, Blocked: true}, nil
+}
+
+func (m *mockOrchestratorClient) ReadmitTask(ctx context.Context, req *orchestratorSDK.ReadmitTaskRequest) (*orchestratorSDK.ReadmitTaskResponse, error) {
+	if m.readmitTaskFn != nil {
+		return m.readmitTaskFn(ctx, req)
+	}
+	return &orchestratorSDK.ReadmitTaskResponse{TaskID: req.TaskID, Readmitted: true}, nil
+}
+
+func (m *mockOrchestratorClient) DeleteTask(ctx context.Context, req *orchestratorSDK.DeleteTaskRequest) (*orchestratorSDK.DeleteTaskResponse, error) {
+	if m.deleteTaskFn != nil {
+		return m.deleteTaskFn(ctx, req)
+	}
+	return &orchestratorSDK.DeleteTaskResponse{TaskID: req.TaskID, Deleted: true}, nil
 }
 
 func (m *mockOrchestratorClient) ClaimTask(ctx context.Context, req *orchestratorSDK.ClaimTaskRequest) (*orchestratorSDK.ClaimTaskResponse, error) {
@@ -334,7 +366,7 @@ func TestOrchestratorCommandStructure(t *testing.T) {
 
 	assert.NotNil(t, cmd)
 	assert.Equal(t, "orchestrator", cmd.Use)
-	assert.Equal(t, "AI agent orchestration commands", cmd.Short)
+	assert.Equal(t, "Software Factory (agent orchestration) commands", cmd.Short)
 	assert.Contains(t, cmd.Long, "Orchestrator commands")
 	assert.Greater(t, len(cmd.Commands()), 0, "Orchestrator command should have subcommands")
 
@@ -1707,7 +1739,7 @@ func TestLoadLocalWorkflows(t *testing.T) {
 		loader, err := loadLocalWorkflows()
 		require.NoError(t, err)
 		assert.NotNil(t, loader)
-		assert.Empty(t, loader.List())
+		assert.Empty(t, loader.List(orchestration.SystemTenantID))
 	})
 
 	t.Run("WithWorkflowsDir", func(t *testing.T) {
@@ -1727,10 +1759,10 @@ func TestLoadLocalWorkflows(t *testing.T) {
 		loader, err := loadLocalWorkflows()
 		require.NoError(t, err)
 		assert.NotNil(t, loader)
-		names := loader.List()
+		names := loader.List(orchestration.SystemTenantID)
 		assert.Contains(t, names, "test-wf")
 
-		def, getErr := loader.Get("test-wf")
+		def, getErr := loader.Get(orchestration.SystemTenantID, "test-wf")
 		require.NoError(t, getErr)
 		assert.Equal(t, "test-wf", def.Name)
 		assert.Equal(t, orchestration.WorkflowModeAutonomous, def.Mode)
@@ -1738,7 +1770,7 @@ func TestLoadLocalWorkflows(t *testing.T) {
 
 	t.Run("GetNonexistentWorkflow", func(t *testing.T) {
 		loader := orchestration.NewWorkflowLoader()
-		_, getErr := loader.Get("nonexistent")
+		_, getErr := loader.Get(orchestration.SystemTenantID, "nonexistent")
 		assert.Error(t, getErr)
 	})
 }

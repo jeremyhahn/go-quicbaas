@@ -436,16 +436,23 @@ func TestAccountGRPCResponsesSerializeNoCredential(t *testing.T) {
 // TestAccountGRPCMethodsAreMapped is the default-deny guard: an unmapped gRPC
 // method is denied under RequireAuthz, so a missing mapping ships a dead RPC.
 func TestAccountGRPCMethodsAreMapped(t *testing.T) {
+	// The READS take QuicBaaS's own tenant-scoped agent_accounts:* family; the
+	// WRITES still take go-qrdb's system-scoped credentials:*. That split is
+	// deliberate and load-bearing — credentials:* is ScopeCross, so a tenant
+	// identity (every agent daemon) can never satisfy it, which is why the
+	// reads had to move (go-quicbaas#734). See go-quicbaas#737 for the write
+	// half.
 	want := map[string][2]string{
-		"CreateAccount":           {"credentials", "store"},
-		"GetAccount":              {"credentials", "retrieve"},
-		"ListAccounts":            {"credentials", "list"},
-		"UpdateAccount":           {"credentials", "store"},
-		"DeleteAccount":           {"credentials", "delete"},
-		"RotateAccountCredential": {"credentials", "rotate"},
-		"RevokeAccount":           {"credentials", "delete"},
-		"SetDefaultAccount":       {"credentials", "store"},
-		"GetAccountUsage":         {"credentials", "retrieve"},
+		"CreateAccount":                {"credentials", "store"},
+		"GetAccount":                   {"agent_accounts", "read"},
+		"ListAccounts":                 {"agent_accounts", "list"},
+		"UpdateAccount":                {"credentials", "store"},
+		"DeleteAccount":                {"credentials", "delete"},
+		"RotateAccountCredential":      {"credentials", "rotate"},
+		"RevokeAccount":                {"credentials", "delete"},
+		"SetDefaultAccount":            {"credentials", "store"},
+		"GetAccountUsage":              {"agent_accounts", "read"},
+		"MaterializeAccountCredential": {"agent_accounts", "materialize"},
 	}
 	for _, method := range pb.AccountService_ServiceDesc.Methods {
 		full := "/" + pb.AccountService_ServiceDesc.ServiceName + "/" + method.MethodName

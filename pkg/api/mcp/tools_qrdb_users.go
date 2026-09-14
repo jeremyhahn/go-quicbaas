@@ -30,9 +30,9 @@
 // the proxy fails closed with a typed unavailable error.
 //
 // Scope mirrors the QUIC bridge (handler_qrdb_users.go): user LOOKUP only
-// (read-only resolution) plus the full user-login factor family. User
-// mutation tools (qrdb_user_create/delete/list) are owned by the IAM tool
-// surface in tools.go.
+// (read-only resolution) plus the full user-login factor family. This is the
+// sole read-only qrdb-native user passthrough; user MUTATION is the
+// quicbaas_iam_user_* family (tools_iam_exec.go), the one user surface.
 
 package mcp
 
@@ -245,9 +245,8 @@ func (r *ToolRegistry) registerQRDBUserTools() {
 
 // qrdbUserToolNames carries every qrdb user lookup and user auth-factor tool
 // name handled by executeQRDBUserTool. Membership is used by isQRDBUserTool
-// to route dispatch from the registry's default branch. The IAM-owned
-// qrdb_user_create / qrdb_user_delete / qrdb_user_list tools are NOT members;
-// they dispatch through the RBAC switch in tools.go.
+// to route dispatch from the registry's default branch. Every member is a
+// read: user mutation belongs to the quicbaas_iam_user_* family.
 var qrdbUserToolNames = map[string]struct{}{
 	"qrdb_user_get":                    {},
 	"qrdb_user_get_by_username":        {},

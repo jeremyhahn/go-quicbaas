@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -38,6 +39,10 @@ type shutdownOrderFakeService struct {
 	closeCalled       atomic.Bool
 	clientOpenAtClose atomic.Bool
 }
+
+// Agent reports no orchestration service, so Server.Shutdown's job drain
+// finds nothing to drain rather than dereferencing the embedded nil facade.
+func (f *shutdownOrderFakeService) Agent() orchestration.AgentService { return nil }
 
 // Close records the ordering observation and reports success.
 func (f *shutdownOrderFakeService) Close() error {
@@ -92,6 +97,9 @@ func TestServerShutdown_ServiceFacadeCloseErrorCollected(t *testing.T) {
 type shutdownOrderFailingService struct {
 	service.QuicBaaS
 }
+
+// Agent reports no orchestration service; see shutdownOrderFakeService.Agent.
+func (f *shutdownOrderFailingService) Agent() orchestration.AgentService { return nil }
 
 // Close returns a typed error for the aggregation test.
 func (f *shutdownOrderFailingService) Close() error {

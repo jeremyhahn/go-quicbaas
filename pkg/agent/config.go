@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,7 +56,7 @@ const (
 // called before use. Fields are JSON/YAML serializable for config-file use.
 type Config struct {
 	// ServerAddr is the HTTPS endpoint of the QuicBaaS server
-	// (e.g., "https://198.51.100.51:8443"). Required.
+	// (e.g., "https://quicbaas.example.com:8443"). Required.
 	ServerAddr string `json:"server_addr" yaml:"server_addr"`
 
 	// TenantID is the tenant this daemon serves. Required. Requests for
@@ -118,6 +119,39 @@ type Config struct {
 	// to drain before forcefully terminating. Zero means 30 seconds.
 	ShutdownGrace time.Duration `json:"shutdown_grace,omitempty" yaml:"shutdown_grace,omitempty"`
 
+	// MaxConcurrentJobs is how many orchestration jobs this host can run at
+	// once. It is reported on every heartbeat and summed across the live
+	// daemons to give admission the fleet's worker-slot capacity, which
+	// per-project quotas cannot supply: N projects each inside their own quota
+	// will otherwise oversubscribe the fleet (go-quicbaas#906).
+	//
+	// ZERO REPORTS NOTHING, AND THAT IS NOT ZERO SLOTS. A host that declares no
+	// count leaves the fleet's sum a lower bound rather than a bound, and
+	// admission then leaves the fleet axis out entirely instead of enforcing a
+	// number it knows is too small. Declaring the count on EVERY daemon is what
+	// turns the axis on; see orchestration.NewAgentFleetCapacity.
+	//
+	// IT IS A DECLARATION, NOT A LOCAL LIMITER. The daemon does not refuse a
+	// spawn past this number — admission does, which is the one authority for
+	// the bound. Set it to what the host can actually sustain: the number of
+	// concurrent agent containers its CPU, memory and disk can carry.
+	MaxConcurrentJobs int `json:"max_concurrent_jobs,omitempty" yaml:"max_concurrent_jobs,omitempty"`
+
+	// EnrollRetryBase is the first wait the daemon takes before retrying a
+	// TRANSIENT enrollment failure — the control plane is not listening
+	// yet, its name does not resolve yet, or it answered 5xx while still
+	// starting. Each subsequent wait doubles up to EnrollRetryMax. Zero
+	// means 1 second. Terminal failures (a rejected identity, a bad cert)
+	// are never retried regardless of this setting.
+	EnrollRetryBase time.Duration `json:"enroll_retry_base,omitempty" yaml:"enroll_retry_base,omitempty"`
+
+	// EnrollRetryMax caps a single enrollment backoff wait. Zero means 60
+	// seconds. It bounds journal noise while an agent host waits out a
+	// control plane that boots after it; it is not a total budget, because
+	// an agent that gives up would just be restarted into the same wait by
+	// its supervisor.
+	EnrollRetryMax time.Duration `json:"enroll_retry_max,omitempty" yaml:"enroll_retry_max,omitempty"`
+
 	// SandboxNetwork is the container network sandboxed sessions run in.
 	// Empty resolves to orchestration.SandboxNetworkDefault: an isolated
 	// namespace with egress, so an agent reaches its provider API but not the
@@ -125,6 +159,16 @@ type Config struct {
 	// operator decision that removes network isolation entirely; see
 	// orchestration.ParseSandboxNetwork.
 	SandboxNetwork string `json:"sandbox_network,omitempty" yaml:"sandbox_network,omitempty"`
+
+	// OllamaBaseURL is the OpenAI-compatible base URL of the ollama server
+	// this daemon's local-model backends talk to, WITHOUT the /v1 suffix.
+	// Empty takes DefaultOllamaBaseURL.
+	//
+	// IT IS CONFIGURABLE BECAUSE THE MODEL IS RARELY ON THIS BOX. It was
+	// hardcoded to loopback, which is right only for a daemon running on the
+	// GPU host itself; every other node in a fleet has to reach that host over
+	// the network, and had no way to say so.
+	OllamaBaseURL string `json:"ollama_base_url,omitempty" yaml:"ollama_base_url,omitempty"`
 
 	// AllowedMountRoots is the operator's allowlist of absolute host
 	// directories a spawn request may bind-mount into a sandbox container on
@@ -195,6 +239,28 @@ func (c *Config) Validate() error {
 			Detail:   fmt.Sprintf("%q", c.SandboxNetwork),
 		}
 	}
+	if c.EnrollRetryBase < 0 {
+		return &SentinelDetailError{
+			Sentinel: ErrConfigInvalidRetryWindow,
+			Detail:   "enroll_retry_base: " + c.EnrollRetryBase.String(),
+		}
+	}
+	if c.EnrollRetryMax < 0 {
+		return &SentinelDetailError{
+			Sentinel: ErrConfigInvalidRetryWindow,
+			Detail:   "enroll_retry_max: " + c.EnrollRetryMax.String(),
+		}
+	}
+	// A negative slot count cannot be a capacity. Refused at start-up rather
+	// than clamped to zero, because zero is the "reported nothing" reading and
+	// clamping would turn an operator's typo into a host that silently stopped
+	// counting towards the fleet.
+	if c.MaxConcurrentJobs < 0 {
+		return &SentinelDetailError{
+			Sentinel: ErrConfigNegativeCapacity,
+			Detail:   "max_concurrent_jobs: " + strconv.Itoa(c.MaxConcurrentJobs),
+		}
+	}
 	// Mount roots are compared against absolute container mount sources, so a
 	// relative entry could never match and would silently disable the grant
 	// the operator meant to configure. Reject it at startup instead.
@@ -227,6 +293,21 @@ func (c *Config) EffectiveSandboxNetwork() orchestration.SandboxNetwork {
 	return network
 }
 
+// DefaultOllamaBaseURL is the ollama server a daemon uses when none is
+// configured: the local one.
+const DefaultOllamaBaseURL = "http://127.0.0.1:11434"
+
+// EffectiveOllamaBaseURL returns the configured ollama base URL, or the
+// local default. The trailing slash is trimmed so callers can append a path
+// without producing a double slash.
+func (c *Config) EffectiveOllamaBaseURL() string {
+	url := strings.TrimRight(strings.TrimSpace(c.OllamaBaseURL), "/")
+	if url == "" {
+		return DefaultOllamaBaseURL
+	}
+	return url
+}
+
 // EffectiveBackends returns the backend list with defaults applied.
 func (c *Config) EffectiveBackends() []BackendKind {
 	if len(c.Backends) > 0 {
@@ -251,6 +332,38 @@ func (c *Config) EffectiveShutdownGrace() time.Duration {
 	return 30 * time.Second
 }
 
+// Enrollment retry defaults. One second is short enough that a control
+// plane which comes up moments after its agents is joined almost
+// immediately; one minute is long enough that a control plane which is
+// down for hours costs one journal line per minute instead of thousands.
+const (
+	defaultEnrollRetryBase = time.Second
+	defaultEnrollRetryMax  = time.Minute
+)
+
+// EffectiveEnrollRetryBase returns EnrollRetryBase with its 1s default.
+func (c *Config) EffectiveEnrollRetryBase() time.Duration {
+	if c.EnrollRetryBase > 0 {
+		return c.EnrollRetryBase
+	}
+	return defaultEnrollRetryBase
+}
+
+// EffectiveEnrollRetryMax returns EnrollRetryMax with its 60s default. A
+// cap configured below the base is raised to the base: a schedule that
+// shrank as it retried would be a surprise, not a policy.
+func (c *Config) EffectiveEnrollRetryMax() time.Duration {
+	base := c.EffectiveEnrollRetryBase()
+	max := c.EnrollRetryMax
+	if max <= 0 {
+		max = defaultEnrollRetryMax
+	}
+	if max < base {
+		return base
+	}
+	return max
+}
+
 // EffectiveContainerRuntime returns the runtime selector with "auto" default.
 func (c *Config) EffectiveContainerRuntime() ContainerRuntimeSelector {
 	if c.ContainerRuntime == "" {
@@ -267,9 +380,21 @@ var (
 	ErrConfigUnknownRuntime = errors.New("agent: unknown container runtime selector")
 	ErrConfigUnknownNetwork = errors.New("agent: invalid sandbox network")
 
+	// ErrConfigInvalidRetryWindow reports a negative enrollment backoff
+	// setting. A negative wait would make the retry loop the tight spin
+	// the backoff exists to prevent, so it is rejected at startup rather
+	// than silently clamped.
+	ErrConfigInvalidRetryWindow = errors.New("agent: enrollment retry window must not be negative")
+
 	// ErrConfigMountRootNotAbsolute reports an allowed_mount_roots entry that
 	// is not an absolute path. Such an entry can never match a container mount
 	// source, so accepting it would leave the operator believing they had
 	// granted a root they had not.
 	ErrConfigMountRootNotAbsolute = errors.New("agent: allowed mount root must be an absolute path")
+
+	// ErrConfigNegativeCapacity reports a negative max_concurrent_jobs. Zero is
+	// the legitimate "this host reports no count" value; a negative number is
+	// one somebody wrote on purpose and got wrong, and it cannot be told apart
+	// from the unreported case once summed.
+	ErrConfigNegativeCapacity = errors.New("agent: max concurrent jobs must not be negative")
 )

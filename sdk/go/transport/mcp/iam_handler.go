@@ -96,6 +96,12 @@ var iamToolMap = map[string]string{
 	"Role.Delete": "quicbaas_iam_role_delete",
 	"Role.List":   "quicbaas_iam_role_list",
 
+	// Built-in role reconciliation. The tool answers with the same
+	// {tenant_id, roles[], changed} report the other transports return, so the
+	// role client parses the MCP result with no reshaping — a transform here
+	// would be the one thing that could make MCP disagree with REST.
+	"Role.Reconcile": "quicbaas_iam_role_reconcile",
+
 	// Policy Operations
 	"Policy.Create":                  "quicbaas_iam_policy_create",
 	"Policy.Get":                     "quicbaas_iam_policy_get",
@@ -126,6 +132,11 @@ var iamToolMap = map[string]string{
 	"MFA.GenerateBackupCodes":   "quicbaas_mfa_backup_codes_generate",
 	"MFA.VerifyBackupCode":      "quicbaas_mfa_backup_codes_verify",
 	"MFA.GetBackupCodeStatus":   "quicbaas_mfa_backup_codes_status",
+
+	// WebAuthn Credential Administration
+	"WebAuthn.ListWebAuthnCredentials":   "quicbaas_iam_webauthn_credentials_list",
+	"WebAuthn.DeleteWebAuthnCredential":  "quicbaas_iam_webauthn_credential_delete",
+	"WebAuthn.DeleteWebAuthnCredentials": "quicbaas_iam_webauthn_credentials_delete_all",
 
 	// PEP Operations
 	"PEP.Check":      "quicbaas_pep_check",
@@ -609,11 +620,18 @@ func transformIAMToolArguments(toolName string, args map[string]interface{}) map
 		// Convert settings values from strings to typed values.
 		args = convertMCPSettingsValues(args)
 
-	// User create: the SDK CreateUserRequest serializes display_name and
-	// metadata, but the canonical create-user contract (REST body, QUIC
-	// wire, gRPC proto, and the MCP tool schema) uses name and attributes.
-	// Rename both so the MCP server tool receives the canonical keys.
-	case "quicbaas_iam_user_create":
+	// User create and update: the SDK request types serialize display_name and
+	// metadata, but the canonical user contract (REST body, QUIC wire, gRPC
+	// proto, and the MCP tool schema) uses name and attributes. Rename both so
+	// the MCP server tool receives the canonical keys.
+	//
+	// UPDATE is included for the same reason CREATE is, and it was missing: the
+	// tool never saw the fields, so an update of the display name or the
+	// attributes reported success and changed nothing. `username` needs no
+	// rename — it is spelled the same on both sides — which is exactly why the
+	// handle and the display name have to be separate fields rather than one
+	// that takes turns.
+	case "quicbaas_iam_user_create", "quicbaas_iam_user_update":
 		if dn, ok := args["display_name"]; ok {
 			if _, hasName := args["name"]; !hasName {
 				args["name"] = dn

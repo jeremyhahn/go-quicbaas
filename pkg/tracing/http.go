@@ -23,6 +23,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/clientip"
 )
 
 // HTTPMiddleware returns HTTP middleware that traces requests.
@@ -48,7 +50,7 @@ func (t *Tracer) HTTPMiddleware() func(http.Handler) http.Handler {
 					attribute.String("http.host", r.Host),
 					attribute.String("http.target", r.URL.Path),
 					attribute.String("http.user_agent", r.UserAgent()),
-					attribute.String("http.client_ip", getClientIP(r)),
+					attribute.String("http.client_ip", clientip.FromRequest(r)),
 					AttrNetworkProtocol.String("http"),
 				),
 			)
@@ -114,31 +116,4 @@ func (trw *tracedResponseWriter) Write(b []byte) (int, error) {
 	n, err := trw.ResponseWriter.Write(b)
 	trw.bytesWritten += n
 	return n, err
-}
-
-// getClientIP extracts the client IP from the request.
-func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header first (for proxies)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take the first IP in the list
-		for i := 0; i < len(xff); i++ {
-			if xff[i] == ',' {
-				return xff[:i]
-			}
-		}
-		return xff
-	}
-
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr
-	for i := len(r.RemoteAddr) - 1; i >= 0; i-- {
-		if r.RemoteAddr[i] == ':' {
-			return r.RemoteAddr[:i]
-		}
-	}
-	return r.RemoteAddr
 }

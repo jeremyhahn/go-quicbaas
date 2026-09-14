@@ -1207,6 +1207,18 @@ const (
 //
 // SecretsManagement handles secret storage with versioning and rotation.
 // Secrets are encrypted at rest and support automatic rotation policies.
+//
+// Every RPC below is authorized with go-qrdb's secrets:read / secrets:write /
+// secrets:delete / secrets:list family (pkg/permission/broker_scope.go), NOT
+// credentials:*. The two guard different stores: credentials:* is qrdb's
+// named-credential store, which has no tenant namespacing and is therefore
+// registered ScopeCross (system tenant only), while this service is the
+// broker's tenant secret vault, whose every record is written under the
+// caller's tenant. The permission that describes it is the ScopeTenantOnly
+// secrets:* family qrdb declares for exactly this consumer. The annotations
+// here and pkg/api/grpc/authz_mapping.go are the two gRPC enforcement points
+// and are pinned to each other by
+// TestGRPCPermissions_ProtoOptionMatchesAuthzMapping (go-quicbaas#682).
 type SecretsManagementClient interface {
 	// StoreSecret stores a secret with optional metadata and encryption.
 	StoreSecret(ctx context.Context, in *StoreSecretRequest, opts ...grpc.CallOption) (*StoreSecretResponse, error)
@@ -1404,6 +1416,18 @@ func (c *secretsManagementClient) EnsureSecret(ctx context.Context, in *EnsureSe
 //
 // SecretsManagement handles secret storage with versioning and rotation.
 // Secrets are encrypted at rest and support automatic rotation policies.
+//
+// Every RPC below is authorized with go-qrdb's secrets:read / secrets:write /
+// secrets:delete / secrets:list family (pkg/permission/broker_scope.go), NOT
+// credentials:*. The two guard different stores: credentials:* is qrdb's
+// named-credential store, which has no tenant namespacing and is therefore
+// registered ScopeCross (system tenant only), while this service is the
+// broker's tenant secret vault, whose every record is written under the
+// caller's tenant. The permission that describes it is the ScopeTenantOnly
+// secrets:* family qrdb declares for exactly this consumer. The annotations
+// here and pkg/api/grpc/authz_mapping.go are the two gRPC enforcement points
+// and are pinned to each other by
+// TestGRPCPermissions_ProtoOptionMatchesAuthzMapping (go-quicbaas#682).
 type SecretsManagementServer interface {
 	// StoreSecret stores a secret with optional metadata and encryption.
 	StoreSecret(context.Context, *StoreSecretRequest) (*StoreSecretResponse, error)

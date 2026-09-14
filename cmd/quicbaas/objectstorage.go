@@ -39,7 +39,6 @@ import (
 var (
 	// Common flags.
 	objectOutputFormat string
-	objectTimeout      time.Duration
 
 	// TLS flags.
 	objectTLSEnabled bool
@@ -112,7 +111,6 @@ All commands connect to a running QuicBaaS server via gRPC.`,
 	}
 
 	// Add persistent flags for all object commands.
-	cmd.PersistentFlags().DurationVar(&objectTimeout, "timeout", 30*time.Second, "Request timeout")
 	cmd.PersistentFlags().StringVar(&objectOutputFormat, "output", "table", "Output format (json, yaml, table, raw)")
 
 	// TLS flags.
@@ -243,7 +241,7 @@ func runObjectPutCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.PutObjectRequest{
@@ -298,7 +296,7 @@ func runObjectGetCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.GetObjectRequest{
@@ -360,7 +358,7 @@ func runObjectDeleteCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.DeleteObjectRequest{
@@ -406,7 +404,7 @@ func runObjectHeadCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.HeadObjectRequest{
@@ -464,7 +462,7 @@ func runObjectListCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.ListObjectsRequest{
@@ -524,7 +522,7 @@ func runObjectListByTagCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.ListByTagRequest{
@@ -571,7 +569,7 @@ func runObjectListByTenantCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.ListByTenantRequest{
@@ -629,7 +627,7 @@ func runObjectCopyCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.CopyObjectRequest{
@@ -679,7 +677,7 @@ func runObjectArchiveCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.ArchiveObjectRequest{
@@ -729,7 +727,7 @@ func runObjectRestoreCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	var tier pb.StorageTier
@@ -789,7 +787,7 @@ func runObjectVerifyCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.VerifyObjectRequest{
@@ -846,7 +844,7 @@ func runObjectReplicateCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.ReplicateObjectRequest{
@@ -899,7 +897,7 @@ func runObjectMigrateCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.MigrateObjectRequest{
@@ -949,7 +947,7 @@ func runObjectMetadataGetCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.GetObjectPolicyRequest{
@@ -1008,7 +1006,7 @@ func runObjectMetadataUpdateCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.SetObjectPolicyRequest{
@@ -1055,7 +1053,7 @@ func runObjectStatsCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.ListBackendsRequest{
@@ -1116,7 +1114,7 @@ func runObjectLifecycleSetCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Set policy on the bucket (namespace) level.
@@ -1162,7 +1160,7 @@ func runObjectLifecycleGetCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), objectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.GetObjectPolicyRequest{
@@ -1212,7 +1210,7 @@ func createObjectStorageGRPCClient() (*grpc.Client, error) {
 	// Build client options.
 	opts := []grpc.ClientOption{
 		grpc.WithLogger(log),
-		grpc.WithTimeout(objectTimeout),
+		grpc.WithTimeout(globalTimeout),
 		grpc.WithRetry(objectMaxRetries, objectRetryBackoff),
 		grpc.WithMaxRetryBackoff(5 * time.Second),
 	}

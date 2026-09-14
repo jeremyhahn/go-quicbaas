@@ -53,6 +53,14 @@ service ProjectService {
 // Messages
 // =============================================================================
 
+// ContextRepo names one repository the worker clones beside the project
+// checkout. The daemon never clones it; the name is one path segment.
+message ContextRepo {
+    string name     = 1;
+    string repo_url = 2;
+    string ref      = 3;
+}
+
 // Project represents a long-running agentic work unit.
 message Project {
     string id                  = 1;
@@ -74,6 +82,24 @@ message Project {
     map<string, string> metadata      = 16;
     int64 created_at_unix      = 17;
     int64 updated_at_unix      = 18;
+    // default_workflow is the tenant-scoped workflow a Task auto-spawns into.
+    string default_workflow    = 19;
+    // Commit identity, signing policy and access key of the git workspace.
+    string git_author_name       = 20;
+    string git_author_email      = 21;
+    bool   git_signing_enabled   = 22;
+    string git_signing_algorithm = 23;
+    string git_signing_key_name  = 24;
+    string git_signing_key_scope = 25;
+    string git_signing_key_owner = 26;
+    string git_ssh_key_name      = 27;
+    string git_ssh_key_scope     = 28;
+    string git_ssh_key_owner     = 29;
+    // autonomous turns autonomous development on: the task-source poller
+    // adopts work for the project and the dispatcher starts jobs for it.
+    bool   autonomous            = 30;
+    // context_repos are cloned by the worker beside the project checkout.
+    repeated ContextRepo context_repos = 31;
 }
 
 message CreateProjectRequest {
@@ -91,6 +117,23 @@ message CreateProjectRequest {
     int64 gpu_minutes          = 12;
     int32 max_concurrency      = 13;
     map<string, string> metadata    = 14;
+    // default_workflow must be registered in the tenant.
+    string default_workflow    = 15;
+    // Commit identity, signing policy and access key of the git workspace.
+    string git_author_name       = 16;
+    string git_author_email      = 17;
+    bool   git_signing_enabled   = 18;
+    string git_signing_algorithm = 19;
+    string git_signing_key_name  = 20;
+    string git_signing_key_scope = 21;
+    string git_signing_key_owner = 22;
+    string git_ssh_key_name      = 23;
+    string git_ssh_key_scope     = 24;
+    string git_ssh_key_owner     = 25;
+    // autonomous turns autonomous development on for the new project.
+    bool   autonomous            = 26;
+    // context_repos are cloned by the worker beside the project checkout.
+    repeated ContextRepo context_repos = 27;
 }
 
 message CreateProjectResponse {
@@ -127,10 +170,35 @@ message UpdateProjectRequest {
     string git_default_branch  = 11;
     string git_current_sha     = 12;
     map<string, string> agent_roles   = 13;
-    int64 token_budget         = 14;
-    int64 gpu_minutes          = 15;
-    int32 max_concurrency      = 16;
+    // The quotas are optional so zero is expressible: zero means UNLIMITED
+    // on the project record, so a plain scalar could not say "lift the cap"
+    // — the update applied only non-zero values and the old cap stayed.
+    optional int64 token_budget    = 14;
+    optional int64 gpu_minutes     = 15;
+    optional int32 max_concurrency = 16;
     map<string, string> metadata      = 17;
+    // default_workflow sets the auto-spawn workflow when non-empty;
+    // clear_default_workflow removes it.
+    string default_workflow       = 18;
+    bool   clear_default_workflow = 19;
+    // Commit identity, signing policy and access key of the git workspace.
+    // git_signing_enabled is optional so "unchanged" and "off" are distinct.
+    string git_author_name       = 20;
+    string git_author_email      = 21;
+    optional bool git_signing_enabled = 22;
+    string git_signing_algorithm = 23;
+    string git_signing_key_name  = 24;
+    string git_signing_key_scope = 25;
+    string git_signing_key_owner = 26;
+    string git_ssh_key_name      = 27;
+    string git_ssh_key_scope     = 28;
+    string git_ssh_key_owner     = 29;
+    // autonomous is optional so "unchanged" and "off" are distinct.
+    optional bool autonomous     = 30;
+    // context_repos replaces the whole list when non-empty;
+    // clear_context_repos empties it.
+    repeated ContextRepo context_repos = 31;
+    bool   clear_context_repos   = 32;
 }
 
 message UpdateProjectResponse {

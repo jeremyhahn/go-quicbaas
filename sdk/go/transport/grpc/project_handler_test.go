@@ -373,7 +373,9 @@ func TestProjectHandler_Update(t *testing.T) {
 			WorkspacePath:    "/srv/ws",
 			GitCurrentSHA:    "abc123",
 			AgentRoles:       map[string]project.ProjectRole{"agent-2": project.ProjectRoleWorker},
-			MaxConcurrency:   8,
+			// Presence-carrying: zero means unlimited, so the pointer is
+			// what keeps "lift the cap" distinct from "leave it alone".
+			MaxConcurrency: grpcPtrTo(8),
 		})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -385,7 +387,7 @@ func TestProjectHandler_Update(t *testing.T) {
 	if !got.ClearDescription || got.Name != "renamed" || got.WorkspacePath != "/srv/ws" {
 		t.Errorf("update fields lost: %+v", got)
 	}
-	if got.GitCurrentSha != "abc123" || got.MaxConcurrency != 8 {
+	if got.GitCurrentSha != "abc123" || got.GetMaxConcurrency() != 8 {
 		t.Errorf("update fields lost: %+v", got)
 	}
 	if got.AgentRoles["agent-2"] != "worker" {
@@ -689,3 +691,244 @@ func TestProjectRolesConversionRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestProjectHandler_DefaultWorkflowAndGitIdentityCrossTheWire pins every
+// new field on the outbound conversion (SDK -> proto) and the inbound one
+// (proto -> SDK), including the optional signing switch on update.
+func TestProjectHandler_DefaultWorkflowAndGitIdentityCrossTheWire(t *testing.T) {
+	h, fake := newProjectHandlerWithServer(t, false)
+	ctx := context.Background()
+
+	_, err := h.handleRequest(ctx, "quicbaas.Project", "Create", &project.CreateProjectRequest{
+		TenantID: "tenant-1", Name: "api",
+		DefaultWorkflow:     "sdlc",
+		GitAuthorName:       "agent-api",
+		GitAuthorEmail:      "agent-api@example.test",
+		GitSigningEnabled:   true,
+		GitSigningAlgorithm: "ECDSA-P256",
+		GitSigningKeyName:   "api-signing",
+		GitSigningKeyScope:  "tenant",
+		GitSigningKeyOwner:  "tenant-1",
+		GitSSHKeyName:       "api-access",
+		GitSSHKeyScope:      "service",
+		GitSSHKeyOwner:      "deploy",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got := fake.lastCreate
+	if got.DefaultWorkflow != "sdlc" || got.GitAuthorName != "agent-api" || got.GitAuthorEmail != "agent-api@example.test" ||
+		!got.GitSigningEnabled || got.GitSigningAlgorithm != "ECDSA-P256" || got.GitSigningKeyName != "api-signing" ||
+		got.GitSigningKeyScope != "tenant" || got.GitSigningKeyOwner != "tenant-1" ||
+		got.GitSshKeyName != "api-access" || got.GitSshKeyScope != "service" || got.GitSshKeyOwner != "deploy" {
+		t.Errorf("create fields lost on the wire: %+v", got)
+	}
+
+	off := false
+	_, err = h.handleRequest(ctx, "quicbaas.Project", "Update", &project.UpdateProjectRequest{
+		TenantID: "tenant-1", ProjectID: "proj-1",
+		DefaultWorkflow: "sdlc", ClearDefaultWorkflow: true,
+		GitAuthorName: "a", GitAuthorEmail: "a@b.c",
+		GitSigningEnabled: &off, GitSigningAlgorithm: "ED25519",
+		GitSigningKeyName: "k", GitSigningKeyScope: "s", GitSigningKeyOwner: "o",
+		GitSSHKeyName: "x", GitSSHKeyScope: "y", GitSSHKeyOwner: "z",
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	up := fake.lastUpdate
+	if up.DefaultWorkflow != "sdlc" || !up.ClearDefaultWorkflow || up.GitAuthorName != "a" || up.GitAuthorEmail != "a@b.c" ||
+		up.GitSigningEnabled == nil || *up.GitSigningEnabled || up.GitSigningAlgorithm != "ED25519" ||
+		up.GitSigningKeyName != "k" || up.GitSigningKeyScope != "s" || up.GitSigningKeyOwner != "o" ||
+		up.GitSshKeyName != "x" || up.GitSshKeyScope != "y" || up.GitSshKeyOwner != "z" {
+		t.Errorf("update fields lost on the wire: %+v", up)
+	}
+
+	_, err = h.handleRequest(ctx, "quicbaas.Project", "Update", &project.UpdateProjectRequest{TenantID: "tenant-1", ProjectID: "proj-1", Name: "renamed"})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if fake.lastUpdate.GitSigningEnabled != nil {
+		t.Error("an unset signing switch was sent as a value")
+	}
+
+	// Inbound: the proto record's new fields land on the nested SDK shape.
+	info := projectInfoFromProto(&pb.Project{
+		Id: "p", DefaultWorkflow: "sdlc",
+		GitAuthorName: "agent-api", GitAuthorEmail: "agent-api@example.test",
+		GitSigningEnabled: true, GitSigningAlgorithm: "ECDSA-P256",
+		GitSigningKeyName: "api-signing", GitSigningKeyScope: "tenant", GitSigningKeyOwner: "tenant-1",
+		GitSshKeyName: "api-access", GitSshKeyScope: "service", GitSshKeyOwner: "deploy",
+	})
+	wantGit := project.ProjectGit{
+		Author: project.GitAuthor{Name: "agent-api", Email: "agent-api@example.test"},
+		Signing: project.CommitSigning{
+			Enabled: true, Algorithm: "ECDSA-P256",
+			Key: project.KMSKeyRef{Name: "api-signing", Scope: "tenant", Owner: "tenant-1"},
+		},
+		SSHKey: project.KMSKeyRef{Name: "api-access", Scope: "service", Owner: "deploy"},
+	}
+	if info.DefaultWorkflow != "sdlc" || info.Git != wantGit {
+		t.Errorf("inbound conversion lost fields:\n got %+v\nwant %+v", info.Git, wantGit)
+	}
+}
+
+// =============================================================================
+// Autonomy + context repositories — create → get and update → get
+// =============================================================================
+
+// autonomyProjectServer is a stateful ProjectService backend: it applies the
+// create and update requests it receives to one stored record, so a Get after
+// a mutation proves the field survived both directions of the conversion.
+type autonomyProjectServer struct {
+	pb.UnimplementedProjectServiceServer
+	stored     *pb.Project
+	lastUpdate *pb.UpdateProjectRequest
+}
+
+func (f *autonomyProjectServer) CreateProject(_ context.Context, req *pb.CreateProjectRequest) (*pb.CreateProjectResponse, error) {
+	f.stored = &pb.Project{
+		Id:           "proj-1",
+		TenantId:     req.TenantId,
+		Name:         req.Name,
+		Autonomous:   req.Autonomous,
+		ContextRepos: req.ContextRepos,
+	}
+	return &pb.CreateProjectResponse{Project: f.stored, Timestamp: projectCreatedAt.Unix()}, nil
+}
+
+func (f *autonomyProjectServer) GetProject(_ context.Context, _ *pb.GetProjectRequest) (*pb.GetProjectResponse, error) {
+	return &pb.GetProjectResponse{Project: f.stored, Timestamp: projectCreatedAt.Unix()}, nil
+}
+
+func (f *autonomyProjectServer) UpdateProject(_ context.Context, req *pb.UpdateProjectRequest) (*pb.UpdateProjectResponse, error) {
+	f.lastUpdate = req
+	if req.Autonomous != nil {
+		f.stored.Autonomous = req.GetAutonomous()
+	}
+	switch {
+	case req.ClearContextRepos:
+		f.stored.ContextRepos = nil
+	case req.ContextRepos != nil:
+		f.stored.ContextRepos = req.ContextRepos
+	}
+	return &pb.UpdateProjectResponse{Project: f.stored, Timestamp: projectUpdatedAt.Unix()}, nil
+}
+
+// TestProjectHandler_AutonomyAndContextReposRoundTrip drives create → get and
+// update → get through the real gRPC stack.
+func TestProjectHandler_AutonomyAndContextReposRoundTrip(t *testing.T) {
+	fake := &autonomyProjectServer{}
+	srv := newHandlerServer(t, func(s *grpc.Server) {
+		pb.RegisterProjectServiceServer(s, fake)
+	})
+	h := newProjectHandler(srv.dial(t))
+	ctx := context.Background()
+
+	get := func() *project.ProjectInfo {
+		t.Helper()
+		resp, err := h.handleRequest(ctx, "quicbaas.Project", "Get",
+			&project.GetProjectRequest{TenantID: "tenant-1", ProjectID: "proj-1"})
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		info, ok := resp.(*project.ProjectInfo)
+		if !ok {
+			t.Fatalf("wrong response type: %T", resp)
+		}
+		return info
+	}
+
+	created, err := h.handleRequest(ctx, "quicbaas.Project", "Create", &project.CreateProjectRequest{
+		TenantID: "tenant-1", Name: "api",
+		Autonomous: true,
+		ContextRepos: []project.ContextRepo{
+			{Name: "handbook", RepoURL: "https://forge.example/org/handbook", Ref: "main"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	info, ok := created.(*project.ProjectInfo)
+	if !ok {
+		t.Fatalf("wrong response type: %T", created)
+	}
+	if !info.Autonomous {
+		t.Error("Autonomous lost on the create response")
+	}
+	if len(info.ContextRepos) != 1 || info.ContextRepos[0] !=
+		(project.ContextRepo{Name: "handbook", RepoURL: "https://forge.example/org/handbook", Ref: "main"}) {
+		t.Fatalf("ContextRepos lost on the create response: %+v", info.ContextRepos)
+	}
+
+	if info = get(); !info.Autonomous || len(info.ContextRepos) != 1 {
+		t.Fatalf("create did not survive a get: %+v", info)
+	}
+
+	// An unset switch is nil on the wire: unchanged, not off.
+	if _, err = h.handleRequest(ctx, "quicbaas.Project", "Update",
+		&project.UpdateProjectRequest{TenantID: "tenant-1", ProjectID: "proj-1", Name: "renamed"}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if fake.lastUpdate.Autonomous != nil {
+		t.Error("an unset autonomous was sent as a value")
+	}
+	if fake.lastUpdate.ContextRepos != nil {
+		t.Errorf("an unset context_repos was sent as %+v", fake.lastUpdate.ContextRepos)
+	}
+	if info = get(); !info.Autonomous || len(info.ContextRepos) != 1 {
+		t.Fatalf("an unrelated update changed the fields: %+v", info)
+	}
+
+	// An explicit false and a replacement list.
+	off := false
+	if _, err = h.handleRequest(ctx, "quicbaas.Project", "Update", &project.UpdateProjectRequest{
+		TenantID: "tenant-1", ProjectID: "proj-1",
+		Autonomous: &off,
+		ContextRepos: []project.ContextRepo{
+			{Name: "specs", RepoURL: "https://forge.example/org/specs", Ref: "v2"},
+		},
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	info = get()
+	if info.Autonomous {
+		t.Error("an explicit false did not turn autonomy off")
+	}
+	if len(info.ContextRepos) != 1 || info.ContextRepos[0].Name != "specs" {
+		t.Fatalf("ContextRepos = %+v, want exactly the specs repo", info.ContextRepos)
+	}
+
+	// And a clear empties the list.
+	if _, err = h.handleRequest(ctx, "quicbaas.Project", "Update", &project.UpdateProjectRequest{
+		TenantID: "tenant-1", ProjectID: "proj-1", ClearContextRepos: true,
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if !fake.lastUpdate.ClearContextRepos {
+		t.Error("clear_context_repos was not sent")
+	}
+	if info = get(); len(info.ContextRepos) != 0 {
+		t.Fatalf("ContextRepos = %+v after clear, want none", info.ContextRepos)
+	}
+}
+
+// TestContextRepoConverters_NilFidelity: nil survives both directions, so an
+// update can tell "unchanged" from "empty", and a nil element is dropped.
+func TestContextRepoConverters_NilFidelity(t *testing.T) {
+	if contextReposToProto(nil) != nil {
+		t.Error("nil SDK list did not convert to a nil proto list")
+	}
+	if contextReposFromProto(nil) != nil {
+		t.Error("nil proto list did not convert to a nil SDK list")
+	}
+	if got := contextReposToProto([]project.ContextRepo{}); len(got) != 0 {
+		t.Errorf("empty list converted to %+v", got)
+	}
+	if got := contextReposFromProto([]*pb.ContextRepo{nil}); len(got) != 0 {
+		t.Errorf("a nil element became %+v", got)
+	}
+}
+
+// grpcPtrTo is the presence-carrying form of a quota value.
+func grpcPtrTo[T any](v T) *T { return &v }

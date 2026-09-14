@@ -68,7 +68,7 @@ func TestTrustService_AutoImportAIA_CanceledContext(t *testing.T) {
 func TestACMEService_RestServicer(t *testing.T) {
 	svc := newTestACMEService(nil)
 	// No real RestService is wired by newTestACMEService, so the accessor must
-	// surface the zero value rather than fabricate one.
+	// surface the zero value rather than moduleate one.
 	assert.Nil(t, svc.RestServicer())
 }
 

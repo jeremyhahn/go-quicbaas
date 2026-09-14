@@ -302,9 +302,10 @@ func handleIAMUserCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 		// group stores by IdentityStore.CreateUser BEFORE the user record
 		// is written (validate-before-create), matching the gRPC/Unix
 		// adapter contract.
-		Roles:   sdkReq.Roles,
-		Groups:  sdkReq.Groups,
-		Enabled: true,
+		Roles:  sdkReq.Roles,
+		Groups: sdkReq.Groups,
+		// Enabled is left unset: nil means enabled, so saying so adds nothing.
+		Lifecycle: iam.Lifecycle(sdkReq.Lifecycle),
 	})
 	if err != nil {
 		return nil, err
@@ -312,14 +313,15 @@ func handleIAMUserCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 	return userToSDK(user), nil
 }
 
-// metadataToAttributes boxes the SDK's string metadata map into the identity
-// store's attribute map. A nil or empty input yields nil so a user created
-// without metadata matches one created without attributes.
-func metadataToAttributes(metadata map[string]string) map[string]interface{} {
+// metadataToAttributes copies the SDK's metadata map into the identity store's
+// attribute map. Both are map[string]string now, so this is a copy that cannot
+// drop a value it was unable to represent. A nil or empty input yields nil so a
+// user created without metadata matches one created without attributes.
+func metadataToAttributes(metadata map[string]string) map[string]string {
 	if len(metadata) == 0 {
 		return nil
 	}
-	attributes := make(map[string]interface{}, len(metadata))
+	attributes := make(map[string]string, len(metadata))
 	for k, v := range metadata {
 		attributes[k] = v
 	}
@@ -395,10 +397,12 @@ func userToSDK(u *iam.User) *iamsdk.User {
 		ID:          u.ID,
 		TenantID:    u.TenantID,
 		Email:       u.Email,
+		Username:    u.Username,
 		DisplayName: u.Name,
 		Roles:       u.Roles,
 		Groups:      u.Groups,
-		MFAEnabled:  u.MFAEnabled,
+		AuthMethods: u.AuthMethods,
+		Lifecycle:   string(u.Lifecycle),
 		CreatedAt:   u.Created,
 		UpdatedAt:   u.Updated,
 	}
@@ -582,6 +586,16 @@ func handleIAMUserUpdate(ctx context.Context, svc service.QuicBaaS, req interfac
 			n := sdkReq.DisplayName
 			opts.Name = &n
 		}
+		// Presence, not emptiness: an explicitly empty list clears the
+		// restriction, which is a different request from not mentioning it.
+		if sdkReq.AuthMethods != nil {
+			methods := append([]string(nil), *sdkReq.AuthMethods...)
+			opts.AuthMethods = &methods
+		}
+		if sdkReq.Lifecycle != "" {
+			state := iam.Lifecycle(sdkReq.Lifecycle)
+			opts.Lifecycle = &state
+		}
 	}
 	u, err := store.UpdateUser(ctx, tenantID, userID, opts)
 	if err != nil {
@@ -611,11 +625,14 @@ func handleIAMRoleList(ctx context.Context, svc service.QuicBaaS, req interface{
 	out := &iamsdk.ListRolesResponse{Roles: make([]iamsdk.Role, 0, len(roles))}
 	for _, r := range roles {
 		out.Roles = append(out.Roles, iamsdk.Role{
-			ID:        r.ID,
-			Name:      r.Name,
-			TenantID:  r.TenantID,
-			CreatedAt: r.Created,
-			UpdatedAt: r.Updated,
+			ID:                 r.ID,
+			Name:               r.Name,
+			TenantID:           r.TenantID,
+			Description:        r.Description,
+			Permissions:        r.Permissions,
+			RetiredPermissions: r.RetiredPermissions,
+			CreatedAt:          r.Created,
+			UpdatedAt:          r.Updated,
 		})
 	}
 	return out, nil
@@ -652,13 +669,14 @@ func handleIAMRoleCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 		return nil, err
 	}
 	return &iamsdk.Role{
-		ID:          r.ID,
-		Name:        r.Name,
-		TenantID:    r.TenantID,
-		Description: r.Description,
-		Permissions: r.Permissions,
-		CreatedAt:   r.Created,
-		UpdatedAt:   r.Updated,
+		ID:                 r.ID,
+		Name:               r.Name,
+		TenantID:           r.TenantID,
+		Description:        r.Description,
+		Permissions:        r.Permissions,
+		RetiredPermissions: r.RetiredPermissions,
+		CreatedAt:          r.Created,
+		UpdatedAt:          r.Updated,
 	}, nil
 }
 
@@ -695,13 +713,14 @@ func handleIAMRoleUpdate(ctx context.Context, svc service.QuicBaaS, req interfac
 		return nil, err
 	}
 	return &iamsdk.Role{
-		ID:          r.ID,
-		Name:        r.Name,
-		TenantID:    r.TenantID,
-		Description: r.Description,
-		Permissions: r.Permissions,
-		CreatedAt:   r.Created,
-		UpdatedAt:   r.Updated,
+		ID:                 r.ID,
+		Name:               r.Name,
+		TenantID:           r.TenantID,
+		Description:        r.Description,
+		Permissions:        r.Permissions,
+		RetiredPermissions: r.RetiredPermissions,
+		CreatedAt:          r.Created,
+		UpdatedAt:          r.Updated,
 	}, nil
 }
 
@@ -733,12 +752,47 @@ func handleIAMRoleGet(ctx context.Context, svc service.QuicBaaS, req interface{}
 		return nil, err
 	}
 	return &iamsdk.Role{
-		ID:        r.ID,
-		Name:      r.Name,
-		TenantID:  r.TenantID,
-		CreatedAt: r.Created,
-		UpdatedAt: r.Updated,
+		ID:                 r.ID,
+		Name:               r.Name,
+		TenantID:           r.TenantID,
+		Description:        r.Description,
+		Permissions:        r.Permissions,
+		RetiredPermissions: r.RetiredPermissions,
+		CreatedAt:          r.Created,
+		UpdatedAt:          r.Updated,
 	}, nil
+}
+
+// handleIAMRoleReconcile converges the tenant's built-in roles onto the
+// definitions the running build carries. It is the only path that can
+// re-permission a built-in role: UpdateRole refuses a system role, so a
+// tenant seeded by an older build stays on that build's permissions until
+// this runs.
+func handleIAMRoleReconcile(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	store, err := identityStoreFor(ctx, svc)
+	if err != nil {
+		return nil, err
+	}
+	tenantID, _ := iamRequestField(req, "TenantID")
+	report, err := store.ReconcileBuiltInRoles(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	out := &iamsdk.ReconcileRolesResponse{
+		TenantID: report.TenantID,
+		Roles:    make([]iamsdk.RoleReconcileResult, 0, len(report.Roles)),
+		Changed:  report.Changed(),
+	}
+	for _, r := range report.Roles {
+		out.Roles = append(out.Roles, iamsdk.RoleReconcileResult{
+			RoleID:  r.RoleID,
+			Name:    r.Name,
+			Created: r.Created,
+			Added:   r.Added,
+			Removed: r.Removed,
+		})
+	}
+	return out, nil
 }
 
 // =============================================================================
@@ -1128,4 +1182,102 @@ func handleIAMPEPCheck(ctx context.Context, svc service.QuicBaaS, req interface{
 	// PEP enforcement requires a fully wired policy engine; embedded path
 	// surfaces a "not configured" envelope rather than silently allowing.
 	return nil, NewServiceNotConfiguredError("IAM.PEP")
+}
+
+// =============================================================================
+// WebAuthn credential administration
+// =============================================================================
+
+// webAuthnCredentialsProvider is the structural accessor for the shared
+// user-scoped WebAuthn credential administration service. It is satisfied by
+// the concrete *quicBaaS, matching how the IAM accessors above reach the
+// identity store and tenant manager.
+type webAuthnCredentialsProvider interface {
+	WebAuthnCredentials() service.WebAuthnCredentialService
+}
+
+// webAuthnCredentialsFor resolves the credential administration service. The
+// embedded transport deliberately does NOT re-derive the user-id-to-email
+// translation the verbs need: that lives once in pkg/service so every
+// transport addresses the same account for the same request.
+func webAuthnCredentialsFor(svc service.QuicBaaS) (service.WebAuthnCredentialService, error) {
+	p, ok := svc.(webAuthnCredentialsProvider)
+	if !ok {
+		return nil, NewServiceNotConfiguredError("IAM.WebAuthn")
+	}
+	creds := p.WebAuthnCredentials()
+	if creds == nil {
+		return nil, NewServiceNotConfiguredError("IAM.WebAuthn")
+	}
+	return creds, nil
+}
+
+func handleIAMWebAuthnCredentialsList(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	creds, err := webAuthnCredentialsFor(svc)
+	if err != nil {
+		return nil, err
+	}
+	tenantID, _ := iamRequestField(req, "TenantID")
+	userID, _ := iamRequestField(req, "UserID")
+	list, err := creds.ListCredentials(ctx, tenantID, userID)
+	if err != nil {
+		return nil, err
+	}
+	// The SDK client decodes {"credentials": [...], "total": n}; return that
+	// shape so the embedded transport and REST agree on the wire contract.
+	out := make([]map[string]interface{}, 0, len(list))
+	for _, c := range list {
+		out = append(out, webAuthnCredentialToMap(c))
+	}
+	return map[string]interface{}{"credentials": out, "total": len(out)}, nil
+}
+
+func handleIAMWebAuthnCredentialDelete(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	creds, err := webAuthnCredentialsFor(svc)
+	if err != nil {
+		return nil, err
+	}
+	tenantID, _ := iamRequestField(req, "TenantID")
+	userID, _ := iamRequestField(req, "UserID")
+	credentialID, _ := iamRequestField(req, "CredentialID")
+	if err := creds.DeleteCredential(ctx, tenantID, userID, credentialID); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"success": true}, nil
+}
+
+func handleIAMWebAuthnCredentialsDeleteAll(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	creds, err := webAuthnCredentialsFor(svc)
+	if err != nil {
+		return nil, err
+	}
+	tenantID, _ := iamRequestField(req, "TenantID")
+	userID, _ := iamRequestField(req, "UserID")
+	deleted, err := creds.DeleteCredentials(ctx, tenantID, userID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"deleted": deleted}, nil
+}
+
+// webAuthnCredentialToMap projects a credential summary onto the JSON shape the
+// SDK client decodes. The field names are the summary type's own json tags.
+func webAuthnCredentialToMap(c iam.WebAuthnCredentialSummary) map[string]interface{} {
+	m := map[string]interface{}{
+		"id":              c.ID,
+		"sign_count":      c.SignCount,
+		"backup_eligible": c.BackupEligible,
+		"backup_state":    c.BackupState,
+		"clone_warning":   c.CloneWarning,
+	}
+	if c.AAGUID != "" {
+		m["aaguid"] = c.AAGUID
+	}
+	if c.AttestationType != "" {
+		m["attestation_type"] = c.AttestationType
+	}
+	if len(c.Transports) > 0 {
+		m["transports"] = c.Transports
+	}
+	return m
 }

@@ -50,6 +50,12 @@ type resolvedSpawnAccount struct {
 	// spawn request, sorted so the set is deterministic in logs and tests.
 	EnvKeys []string
 
+	// LeaseID is the DELIVERY GRANT the resolution took out over this
+	// account's credential material. Empty when the deployment wired no
+	// leaser. It is carried onto the Session and from there onto the durable
+	// record, because the session's ending is what withdraws it.
+	LeaseID string
+
 	// HomeDir is the materialized per-spawn credential directory, empty when
 	// the account carries no file-based material.
 	HomeDir string
@@ -87,6 +93,7 @@ func (b *ACPBackend) resolveAccount(ctx context.Context, req *SpawnRequest) (*re
 		TenantID:          TenantFromContext(ctx),
 		ProjectID:         req.ProjectID,
 		Provider:          b.accountProvider(),
+		JobID:             req.JobID,
 		AccountID:         req.AccountID,
 		Auto:              req.AccountAuto,
 		StrategyName:      req.AccountStrategy,
@@ -100,6 +107,7 @@ func (b *ACPBackend) resolveAccount(ctx context.Context, req *SpawnRequest) (*re
 	out := &resolvedSpawnAccount{
 		AccountID: resolved.AccountID,
 		Strategy:  resolved.Strategy,
+		LeaseID:   resolved.LeaseID,
 	}
 
 	if req.Env == nil {

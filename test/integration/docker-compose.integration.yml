@@ -117,8 +117,17 @@ services:
   # it. Named volumes are daemon-side objects, so this works identically on a
   # runner and on a laptop.
   #
-  # It runs the test-runner image, which already carries the source, so
-  # gen-certs is available without a second build definition diverging from it.
+  # It runs the test-runner image, which already carries the source, so the
+  # fixture command is available without a second build definition diverging
+  # from it.
+  #
+  # Every certificate is issued by QuicBaaS's OWN certificate authority
+  # (test/integration/certfixture -> pkg/server.NewCAService), not by a
+  # lookalike: go-quicbaas#943 replaced the 444-line parallel CA that used to
+  # live here. The CA's key and certificate stores persist in the
+  # ca-keystore/ subdirectory of the volume, because the suite also issues
+  # per-tenant client certificates at runtime and they must chain to the same
+  # trust anchor the nodes were started with.
   certs-init:
     build:
       context: ../..
@@ -128,7 +137,7 @@ services:
       secrets:
         - gomodauth
     working_dir: /workspace/go-quicbaas
-    command: ["go", "run", "./test/integration/gen-certs", "/etc/quicbaas/certs"]
+    command: ["go", "run", "./test/integration/certfixture/cmd", "/etc/quicbaas/certs"]
     volumes:
       - quicbaas-certs:/etc/quicbaas/certs
     networks:
@@ -248,7 +257,13 @@ services:
       - quicbaas-sockets:/var/run/quicbaas
       # mTLS / PIV cert bundle so helpers.AuthPIV can present the admin client
       # cert against the cluster's /api/v1/auth/login/piv endpoint.
-      - quicbaas-certs:/etc/quicbaas/certs:ro
+      #
+      # Writable, unlike the node mounts: the suite issues per-tenant client
+      # certificates through the fixture CA at runtime (helpers.AuthTenantAdmin,
+      # the login suite's software PIV credentials), and the CA records every
+      # certificate it signs in its certificate store under ca-keystore/. A
+      # read-only mount would fail the issuance, not the store write.
+      - quicbaas-certs:/etc/quicbaas/certs
     working_dir: /workspace/go-quicbaas
     networks:
       - integration-test-network
@@ -405,6 +420,11 @@ services:
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
       - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
+      # Fixtures use ordinary PKI client certificates, not smartcards, so no
+      # slot attestation exists to verify. The token then records
+      # attest_level=software and omits the hardware-attested ACR. Never set
+      # this in a deployment; configure attestation_ca_file instead.
+      - QUICBAAS_IAM_PIV_LOGIN_ALLOW_UNATTESTED=true
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
       # Enable Backup service
@@ -534,6 +554,11 @@ services:
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
       - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
+      # Fixtures use ordinary PKI client certificates, not smartcards, so no
+      # slot attestation exists to verify. The token then records
+      # attest_level=software and omits the hardware-attested ACR. Never set
+      # this in a deployment; configure attestation_ca_file instead.
+      - QUICBAAS_IAM_PIV_LOGIN_ALLOW_UNATTESTED=true
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
       # Enable Backup service
@@ -665,6 +690,11 @@ services:
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
       - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
+      # Fixtures use ordinary PKI client certificates, not smartcards, so no
+      # slot attestation exists to verify. The token then records
+      # attest_level=software and omits the hardware-attested ACR. Never set
+      # this in a deployment; configure attestation_ca_file instead.
+      - QUICBAAS_IAM_PIV_LOGIN_ALLOW_UNATTESTED=true
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
       # Enable Backup service
@@ -800,6 +830,11 @@ services:
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
       - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
+      # Fixtures use ordinary PKI client certificates, not smartcards, so no
+      # slot attestation exists to verify. The token then records
+      # attest_level=software and omits the hardware-attested ACR. Never set
+      # this in a deployment; configure attestation_ca_file instead.
+      - QUICBAAS_IAM_PIV_LOGIN_ALLOW_UNATTESTED=true
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
       # Enable Backup service
@@ -919,6 +954,11 @@ services:
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
       - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
       - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
+      # Fixtures use ordinary PKI client certificates, not smartcards, so no
+      # slot attestation exists to verify. The token then records
+      # attest_level=software and omits the hardware-attested ACR. Never set
+      # this in a deployment; configure attestation_ca_file instead.
+      - QUICBAAS_IAM_PIV_LOGIN_ALLOW_UNATTESTED=true
       - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
       - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
       # Enable Backup service

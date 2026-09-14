@@ -49,6 +49,8 @@ func orchCases() []orchCase {
 		{o, "ListTasks", &orchestratorSDK.ListTasksRequest{}},
 		{o, "ClaimTask", &orchestratorSDK.ClaimTaskRequest{}},
 		{o, "CompleteTask", &orchestratorSDK.CompleteTaskRequest{Result: &orchestratorSDK.TaskResult{}}},
+		{o, "BlockTask", &orchestratorSDK.BlockTaskRequest{Kind: "blocked", Reason: "r"}},
+		{o, "ReadmitTask", &orchestratorSDK.ReadmitTaskRequest{}},
 		{o, "SubmitTaskArtifacts", &orchestratorSDK.SubmitTaskArtifactsRequest{Artifacts: []*orchestratorSDK.TaskArtifact{{Name: "a"}}}},
 		{o, "GetTaskArtifact", &orchestratorSDK.GetTaskArtifactRequest{}},
 		{o, "ListTaskArtifacts", &orchestratorSDK.ListTaskArtifactsRequest{}},
@@ -172,6 +174,40 @@ func TestOrchestratorNoArgHandlers(t *testing.T) {
 			require.Error(t, err, m)
 			assert.Nil(t, resp, m)
 		}
+	})
+}
+
+// TestOrchestratorListRunners_AnswersFromTheRegistry proves ListRunners reads
+// the orchestration registry rather than a service — no tenant, no service
+// call — while still refusing on a node that runs no orchestrator, which is
+// the rule the REST and MCP surfaces apply too.
+func TestOrchestratorListRunners_AnswersFromTheRegistry(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("with a service", func(t *testing.T) {
+		tr := newOrchTransport(t, false)
+		resp, err := tr.Request(ctx, "quicbaas.Orchestrator", "ListRunners", struct{}{})
+		require.NoError(t, err)
+		runners, ok := resp.(*orchestratorSDK.ListJobRunnersResponse)
+		require.True(t, ok, "the handler answers with the SDK response type")
+		require.Equal(t, len(runners.Runners), runners.Count)
+		require.NotEmpty(t, runners.Runners, "the engine's own runner is always registered")
+		for _, runner := range runners.Runners {
+			assert.NotEmpty(t, runner.Name)
+			assert.NotEmpty(t, runner.States, "a registered runner declares at least one state")
+			for _, state := range runner.States {
+				assert.NotEmpty(t, state.State)
+				assert.NotEmpty(t, state.Label)
+			}
+		}
+	})
+
+	t.Run("with no orchestrator on the node", func(t *testing.T) {
+		tr, err := New(&mockQuicBaaS{})
+		require.NoError(t, err)
+		resp, err := tr.Request(ctx, "quicbaas.Orchestrator", "ListRunners", struct{}{})
+		require.Error(t, err, "a node that drives no jobs must not claim these runners")
+		assert.Nil(t, resp)
 	})
 }
 

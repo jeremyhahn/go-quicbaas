@@ -418,8 +418,7 @@ func TestEmbeddingService_BatchGenerateEmbeddings_Success(t *testing.T) {
 	}
 
 	req := &BatchGenerateEmbeddingsRequest{
-		Items:    items,
-		Provider: "test-provider",
+		Items: items,
 	}
 
 	resp, err := svc.BatchGenerateEmbeddings(context.Background(), req)
@@ -526,8 +525,7 @@ func TestEmbeddingService_BatchGenerateEmbeddings_ProviderError(t *testing.T) {
 	}
 
 	req := &BatchGenerateEmbeddingsRequest{
-		Items:    items,
-		Provider: "test-provider",
+		Items: items,
 	}
 
 	resp, err := svc.BatchGenerateEmbeddings(context.Background(), req)
@@ -554,8 +552,7 @@ func TestEmbeddingService_BatchGenerateEmbeddings_PartialFailure(t *testing.T) {
 	}
 
 	req := &BatchGenerateEmbeddingsRequest{
-		Items:    items,
-		Provider: "test-provider",
+		Items: items,
 	}
 
 	resp, err := svc.BatchGenerateEmbeddings(context.Background(), req)
@@ -1191,8 +1188,7 @@ func TestEmbeddingService_BatchGenerateEmbeddings_TokenCounting(t *testing.T) {
 	}
 
 	req := &BatchGenerateEmbeddingsRequest{
-		Items:    items,
-		Provider: "test-provider",
+		Items: items,
 	}
 
 	resp, err := svc.BatchGenerateEmbeddings(context.Background(), req)
@@ -1307,8 +1303,7 @@ func TestEmbeddingSvc_GenerateEmbedding_Success(t *testing.T) {
 	mockManager.On("Dimensions").Return(3, nil)
 
 	req := &GenerateEmbeddingRequest{
-		Text:     "test text",
-		Provider: EmbeddingProviderOllama,
+		Text: "test text",
 	}
 
 	resp, err := svc.GenerateEmbedding(ctx, req)
@@ -1354,8 +1349,7 @@ func TestEmbeddingSvc_GenerateEmbedding_ProviderError(t *testing.T) {
 	mockManager.On("Embed", ctx, "test text").Return(nil, embedding.ErrProviderNotFound)
 
 	req := &GenerateEmbeddingRequest{
-		Text:     "test text",
-		Provider: "nonexistent",
+		Text: "test text",
 	}
 
 	resp, err := svc.GenerateEmbedding(ctx, req)

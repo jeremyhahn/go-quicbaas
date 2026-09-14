@@ -21,7 +21,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -68,27 +67,16 @@ func NewStdioTransport(command string, args []string, workDir string, env []stri
 	if workDir != "" {
 		cmd.Dir = workDir
 	}
-	if len(env) > 0 {
-		// Build env by starting with os.Environ() then overriding with
-		// custom env. Keys in the custom env take precedence.
-		overrides := make(map[string]struct{})
-		for _, e := range env {
-			if idx := strings.IndexByte(e, '='); idx > 0 {
-				overrides[e[:idx]] = struct{}{}
-			}
-		}
-		var merged []string
-		for _, e := range os.Environ() {
-			if idx := strings.IndexByte(e, '='); idx > 0 {
-				if _, skip := overrides[e[:idx]]; skip {
-					continue
-				}
-			}
-			merged = append(merged, e)
-		}
-		merged = append(merged, env...)
-		cmd.Env = merged
-	}
+	// SET UNCONDITIONALLY. This used to build a merged environment only when
+	// the caller supplied one, and leave cmd.Env nil otherwise — which hands
+	// the child os.Environ() verbatim, including the CLAUDE_* variables that
+	// describe the interactive session this daemon may have been started from
+	// (go-quicbaas#218). The scrub is a REMOVAL, so there is no caller-supplied
+	// value that can express it and no request shape that can opt out of it.
+	// agentProcessEnv also subsumes the hand-rolled override pass this replaced:
+	// exec resolves duplicate names to the last occurrence, and the caller's
+	// variables are appended last.
+	cmd.Env = agentProcessEnv(env)
 	// Note: Setpgid was removed because it interfered with pipe inheritance
 	// on some systems. Process isolation is handled via HOME env isolation.
 

@@ -159,7 +159,7 @@ func runSecretsPutCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.StoreSecretRequest{
@@ -216,7 +216,7 @@ func runSecretsGetCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.GetSecretRequest{
@@ -265,7 +265,7 @@ func runSecretsListCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	filter := make(map[string]string)
@@ -319,7 +319,7 @@ func runSecretsDeleteCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.DeleteSecretRequest{
@@ -365,7 +365,7 @@ func runSecretsDestroyCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.DeleteSecretRequest{
@@ -411,7 +411,7 @@ func runSecretsVersionsCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.ListSecretVersionsRequest{
@@ -462,7 +462,7 @@ func runSecretsRollbackCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.RollbackSecretRequest{
@@ -528,7 +528,7 @@ func runSecretsRotateCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.RotateSecretRequest{
@@ -857,7 +857,7 @@ func runSecretsEnableCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.UpdateSecretStatusRequest{
@@ -901,7 +901,7 @@ func runSecretsDisableCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.UpdateSecretStatusRequest{
@@ -985,7 +985,7 @@ func runSecretsGetPrefixCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.GetSecretsByPrefixRequest{
@@ -1329,7 +1329,7 @@ func runSecretsFetchCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Execute fetch with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	result, err := fetcher.Fetch(ctx)
@@ -1402,7 +1402,7 @@ func createSecretsGRPCClient() (*grpc.Client, error) {
 	// Build client options
 	opts := []grpc.ClientOption{
 		grpc.WithLogger(log),
-		grpc.WithTimeout(timeout),
+		grpc.WithTimeout(globalTimeout),
 	}
 
 	// Handle authentication mode

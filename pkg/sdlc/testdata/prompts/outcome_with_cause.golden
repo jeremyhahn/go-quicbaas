@@ -1,0 +1,17 @@
+### This task is blocked
+
+**Outcome:** `blocked` — the task waits on an external condition, so nothing will retry it on its own.
+
+> the account pool is empty
+
+**Cause:** `no_account_resolver` — this deployment has no provider account pool wired at all
+**Unblocks when:** an operator must repair the fault recorded with this task
+**Cleared by:** an operator
+**Attempt:** 1 of 3
+**Task:** `task-1`
+**Attempt history:** `job-1`
+**Labels:** `task:ready` → `factory:blocked`
+
+**To resume:** answer or resolve what is stated above here, then readmit the task through the Software Factory (`quicbaas orchestrator task readmit task-1`). The next attempt reads this discussion.
+
+<!-- quicbaas-sdlc:blocked task=task-1 attempt=1 kind=blocked -->

@@ -1,0 +1,25 @@
+2026-09-12T17:45:56.9431483Z go: downloading github.com/google/s2a-go v0.1.9
+2026-09-12T17:45:57.0102678Z go: downloading google.golang.org/grpc v1.83.1
+2026-09-12T17:45:57.1521915Z go: downloading go.opentelemetry.io/otel/metric v1.45.0
+2026-09-12T17:45:57.3541480Z go: downloading google.golang.org/protobuf v1.36.12
+2026-09-12T17:45:57.3542055Z go: downloading github.com/felixge/httpsnoop v1.1.0
+2026-09-12T17:45:57.4049922Z go: downloading google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688
+2026-09-12T17:45:57.4341616Z go: downloading github.com/go-logr/logr v1.4.4
+2026-09-12T17:45:57.6473878Z go: downloading golang.org/x/text v0.41.0
+2026-09-12T17:45:57.6474716Z go: downloading github.com/cespare/xxhash/v2 v2.3.0
+2026-09-12T17:45:57.8095257Z go: downloading github.com/go-logr/stdr v1.2.2
+2026-09-12T17:45:57.8875719Z go: downloading go.opentelemetry.io/auto/sdk v1.2.1
+2026-09-12T17:45:58.3227014Z go: downloading golang.org/x/sys v0.47.0
+2026-09-12T17:45:58.5668232Z go: downloading golang.org/x/crypto v0.55.0
+2026-09-12T17:46:58.8671989Z Running security analysis with gosec...
+2026-09-12T17:46:58.9440732Z [gosec] 2026/09/12 17:46:58 Including rules: default
+2026-09-12T17:46:58.9441763Z [gosec] 2026/09/12 17:46:58 Excluding rules: G115,G117,G204,G304,G404,G703,G704
+2026-09-12T17:46:58.9442240Z [gosec] 2026/09/12 17:46:58 Including analyzers: default
+2026-09-12T17:46:58.9442545Z [gosec] 2026/09/12 17:46:58 Excluding analyzers: G115,G117,G204,G304,G404,G703,G704
+2026-09-12T17:46:58.9843849Z [gosec] 2026/09/12 17:46:58 Import directory: /workspace/jeremyhahn/go-quicbaas/examples/client/backup
+2026-09-12T17:46:58.9844832Z [gosec] 2026/09/12 17:46:58 Import directory: /workspace/jeremyhahn/go-quicbaas/examples/client/mcp
+2026-09-12T17:46:58.9845137Z [gosec] 2026/09/12 17:46:58 Import directory: /workspace/jeremyhahn/go-quicbaas/pkg/common/circuitbreaker
+2026-09-12T17:46:58.9849264Z [gosec] 2026/09/12 17:46:58 Import directory: /workspace/jeremyhahn/go-quicbaas/pkg/scheduler/storage/quicbaas
+2026-09-12T17:46:59.3871932Z [gosec] 2026/09/12 17:46:59 Checking package: main
+2026-09-12T17:46:59.3872769Z [gosec] 2026/09/12 17:46:59 Checking file: /workspace/jeremyhahn/go-quicbaas/examples/client/mcp/main.go
+2026-09-12T17:46:59.4184641Z [gosec] 2026/09/12 17:46:59 Import directory: /workspace/jeremyhahn/go-quicbaas/pkg/api/sealedwindow

@@ -288,24 +288,25 @@ func TestBackendRegistry_HealthChecks(t *testing.T) {
 	// Start health checks
 	registry.StartHealthChecks()
 
-	// Wait for initial check
-	time.Sleep(100 * time.Millisecond)
-
-	health, _ := registry.GetHealth("primary")
-	if health.Status != HealthStatusHealthy {
-		t.Errorf("Expected healthy status, got %s", health.Status)
-	}
+	// healthCheckWorker runs an initial check before entering its ticker loop,
+	// so the status transitions once the goroutine is scheduled. Waiting for
+	// the transition asserts the check RAN; sleeping asserted it had been
+	// scheduled inside 100ms, which is a claim about the runner (#441).
+	waitFor(t, backgroundWorkDeadline, "the initial health check to report healthy", func() bool {
+		health, _ := registry.GetHealth("primary")
+		return health.Status == HealthStatusHealthy
+	})
 
 	// Make backend unavailable
 	backend.SetAvailable(false)
 
-	// Wait for health checks to detect
-	time.Sleep(150 * time.Millisecond)
-
-	health, _ = registry.GetHealth("primary")
-	if health.Status == HealthStatusHealthy {
-		t.Error("Expected non-healthy status after failures")
-	}
+	// Detection needs a check AFTER the backend went away, and may need several
+	// before the failure threshold trips. The number of intervals that fit in a
+	// fixed sleep is a property of the machine, so wait for the state instead.
+	waitFor(t, backgroundWorkDeadline, "health checks to observe the unavailable backend", func() bool {
+		health, _ := registry.GetHealth("primary")
+		return health.Status != HealthStatusHealthy
+	})
 
 	// Stop health checks
 	registry.StopHealthChecks()
@@ -631,9 +632,15 @@ func TestBackendRegistry_HealthCheckWorker(t *testing.T) {
 	backend := newTestBackend(config.BackendType("test"), true, nil)
 	registry.Register("primary", backend, 1)
 
-	// Start and let run briefly
+	// The status has to be established BEFORE the worker is stopped, so the
+	// wait goes before StopHealthChecks rather than a sleep hoping the check
+	// landed first. Stopping a worker that had not yet run left the assertion
+	// below reading a status nothing had written.
 	registry.StartHealthChecks()
-	time.Sleep(100 * time.Millisecond)
+	waitFor(t, backgroundWorkDeadline, "a health check to run before the worker stops", func() bool {
+		health, _ := registry.GetHealth("primary")
+		return health.Status == HealthStatusHealthy
+	})
 	registry.StopHealthChecks()
 
 	health, _ := registry.GetHealth("primary")
@@ -1509,10 +1516,13 @@ func TestBackendRegistry_HealthWorker_RunsPeriodicChecks(t *testing.T) {
 	// Start health checks
 	registry.StartHealthChecks()
 
-	// Wait for multiple health checks
-	time.Sleep(150 * time.Millisecond)
+	// "Multiple" means the initial check plus at least one tick. How many ticks
+	// fit inside a fixed sleep depends on the machine; that the counter passes
+	// one does not.
+	waitFor(t, backgroundWorkDeadline, "more than one health check to complete", func() bool {
+		return registry.Stats().TotalHealthChecks > 1
+	})
 
-	// Should have multiple checks
 	stats := registry.Stats()
 	assert.Greater(t, stats.TotalHealthChecks, uint64(1))
 

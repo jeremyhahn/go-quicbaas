@@ -67,7 +67,7 @@ func TestResolve_ListAgentsError_FallsThrough(t *testing.T) {
 		registry:        &erroringRegistry{err: errors.New("registry unavailable")},
 		hostAffinityCfg: config.SchedulerHostAffinityConfig{Mode: config.HostAffinityModeSoft},
 		logger:          strictNoopLogger{},
-		entries:         map[string]*pooledBackend{},
+		entries:         map[string]*pooledDaemon{},
 	}
 
 	ctx := orchestration.ContextWithTenant(context.Background(), "tenant-a")

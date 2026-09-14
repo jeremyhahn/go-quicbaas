@@ -24,15 +24,34 @@ import (
 
 // benchmarkStorage is an optimized mock storage for benchmarks.
 type benchmarkStorage struct {
-	mu     sync.RWMutex
-	jobs   map[uint64]*Job
-	nextID atomic.Uint64
+	mu      sync.RWMutex
+	jobs    map[uint64]*Job
+	nextID  atomic.Uint64
+	claimMu sync.Mutex
+	claims  map[firingClaimKey]struct{}
 }
 
 func newBenchmarkStorage() *benchmarkStorage {
 	return &benchmarkStorage{
-		jobs: make(map[uint64]*Job),
+		jobs:   make(map[uint64]*Job),
+		claims: make(map[firingClaimKey]struct{}),
 	}
+}
+
+// ClaimFiring keeps benchmarkStorage a complete JobStorage. The dispatch path
+// takes a claim per firing, so a benchmark measuring dispatch must pay that
+// cost too — a mock that granted every claim for free would understate the
+// scheduler's real per-firing work.
+func (b *benchmarkStorage) ClaimFiring(_ context.Context, claim *FiringClaim) (bool, error) {
+	key := firingClaimKey{jobID: claim.JobID, firingNanos: claim.FiringTime.UnixNano()}
+
+	b.claimMu.Lock()
+	defer b.claimMu.Unlock()
+	if _, held := b.claims[key]; held {
+		return false, nil
+	}
+	b.claims[key] = struct{}{}
+	return true, nil
 }
 
 func (b *benchmarkStorage) CreateJob(ctx context.Context, job *Job) error {

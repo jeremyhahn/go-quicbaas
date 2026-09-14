@@ -69,6 +69,13 @@ type ActivationResponse struct {
 
 	// Message is a human-readable confirmation.
 	Message string `json:"message"`
+
+	// Warning records a non-fatal irregularity behind an otherwise successful
+	// activation — currently, an activation write that reported an error on a
+	// user the server then found active. The ceremony succeeded and the invite
+	// was consumed, so this is not a failure, but an operator should see it
+	// rather than have it swallowed by the client.
+	Warning string `json:"warning,omitempty"`
 }
 
 // InviteClient provides invite-based user activation operations.

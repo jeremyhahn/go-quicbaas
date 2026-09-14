@@ -100,7 +100,7 @@ func createSchedulerClient() (SchedulerClient, error) {
 // createSchedulerGRPCClient creates a gRPC client for scheduler operations.
 func createSchedulerGRPCClient() (SchedulerClient, error) {
 	opts := []grpc.ClientOption{
-		grpc.WithTimeout(timeout),
+		grpc.WithTimeout(globalTimeout),
 	}
 	opts = append(opts, grpcTLSOption()...)
 	return grpc.NewClient(address, opts...)
@@ -111,7 +111,7 @@ func createSchedulerUnixClient() (SchedulerClient, error) {
 	// For Unix socket transport, use the gRPC client with the Unix socket address.
 	// The address should be the Unix socket path (e.g., /tmp/quicbaas.sock).
 	opts := []grpc.ClientOption{
-		grpc.WithTimeout(timeout),
+		grpc.WithTimeout(globalTimeout),
 	}
 	opts = append(opts, grpcTLSOption()...)
 	return grpc.NewClient(address, opts...)
@@ -240,7 +240,7 @@ func runSchedulerCreateCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	// Parse timeout
@@ -338,7 +338,7 @@ func runSchedulerListCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.ListSchedulerJobsRequest{
@@ -399,7 +399,7 @@ func runSchedulerGetCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.GetSchedulerJobRequest{
@@ -451,7 +451,7 @@ func runSchedulerDeleteCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.DeleteSchedulerJobRequest{
@@ -501,7 +501,7 @@ func runSchedulerTriggerCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.TriggerSchedulerJobRequest{
@@ -550,7 +550,7 @@ func runSchedulerPauseCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.PauseSchedulerJobRequest{
@@ -599,7 +599,7 @@ func runSchedulerResumeCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.ResumeSchedulerJobRequest{
@@ -651,7 +651,7 @@ func runSchedulerCancelCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.CancelSchedulerJobRequest{
@@ -705,7 +705,7 @@ func runSchedulerHistoryCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.GetSchedulerJobHistoryRequest{
@@ -751,7 +751,7 @@ func runSchedulerStatusCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.SchedulerGetStatus(ctx)

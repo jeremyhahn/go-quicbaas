@@ -239,6 +239,21 @@ type IAMService interface {
 	//   - error: ErrUnauthorized, ErrTimeout
 	ListRoles(ctx context.Context, req *IAMListRolesRequest) (*IAMListRolesResponse, error)
 
+	// ReconcileBuiltInRoles converges a tenant's stored built-in roles onto
+	// the running build's definitions: verbs the build now grants are added,
+	// verbs it no longer grants are removed, and custom roles are untouched.
+	//
+	// It is the only supported repair for a tenant seeded before a permission
+	// rename — every ordinary write path refuses a built-in role — and it is
+	// idempotent, so a converged tenant reports no changed roles.
+	// Parameters:
+	//   - ctx: Request context with timeout and metadata
+	//   - req: Reconcile request naming the tenant
+	// Returns:
+	//   - IAMReconcileRolesResponse: Contains the changed roles and timestamp
+	//   - error: ErrInvalidInput, ErrUnauthorized, ErrUnavailable, ErrTimeout
+	ReconcileBuiltInRoles(ctx context.Context, req *IAMReconcileRolesRequest) (*IAMReconcileRolesResponse, error)
+
 	// AssignRole assigns a role to a user.
 	// Parameters:
 	//   - ctx: Request context with timeout and metadata

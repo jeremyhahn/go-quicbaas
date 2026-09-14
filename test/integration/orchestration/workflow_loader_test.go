@@ -31,10 +31,10 @@ func TestIntegration_WorkflowLoader_LoadFromDirectory(t *testing.T) {
 	workflowDir := findWorkflowDir(t)
 	loader := orchestration.NewWorkflowLoader()
 
-	err := loader.LoadFromDir(workflowDir)
+	err := loader.LoadFromDir(orchestration.SystemTenantID, workflowDir)
 	require.NoError(t, err, "loading workflows from directory should succeed")
 
-	names := loader.List()
+	names := loader.List(orchestration.SystemTenantID)
 	require.GreaterOrEqual(t, len(names), 3,
 		"directory should contain at least software-dev, code-review, and autonomous")
 
@@ -49,10 +49,10 @@ func TestIntegration_WorkflowLoader_SoftwareDevAgents(t *testing.T) {
 	workflowDir := findWorkflowDir(t)
 	loader := orchestration.NewWorkflowLoader()
 
-	err := loader.LoadFromDir(workflowDir)
+	err := loader.LoadFromDir(orchestration.SystemTenantID, workflowDir)
 	require.NoError(t, err)
 
-	def, err := loader.Get("software-dev")
+	def, err := loader.Get(orchestration.SystemTenantID, "software-dev")
 	require.NoError(t, err, "software-dev workflow should exist")
 	require.NotNil(t, def)
 
@@ -76,10 +76,10 @@ func TestIntegration_WorkflowLoader_SoftwareDevSettings(t *testing.T) {
 	workflowDir := findWorkflowDir(t)
 	loader := orchestration.NewWorkflowLoader()
 
-	err := loader.LoadFromDir(workflowDir)
+	err := loader.LoadFromDir(orchestration.SystemTenantID, workflowDir)
 	require.NoError(t, err)
 
-	def, err := loader.Get("software-dev")
+	def, err := loader.Get(orchestration.SystemTenantID, "software-dev")
 	require.NoError(t, err)
 
 	assert.Equal(t, orchestration.WorkflowModeConstrained, def.Mode,
@@ -100,10 +100,10 @@ func TestIntegration_WorkflowLoader_AutonomousSingleAgent(t *testing.T) {
 	workflowDir := findWorkflowDir(t)
 	loader := orchestration.NewWorkflowLoader()
 
-	err := loader.LoadFromDir(workflowDir)
+	err := loader.LoadFromDir(orchestration.SystemTenantID, workflowDir)
 	require.NoError(t, err)
 
-	def, err := loader.Get("autonomous")
+	def, err := loader.Get(orchestration.SystemTenantID, "autonomous")
 	require.NoError(t, err, "autonomous workflow should exist")
 	require.NotNil(t, def)
 
@@ -120,10 +120,10 @@ func TestIntegration_WorkflowLoader_CodeReviewAgents(t *testing.T) {
 	workflowDir := findWorkflowDir(t)
 	loader := orchestration.NewWorkflowLoader()
 
-	err := loader.LoadFromDir(workflowDir)
+	err := loader.LoadFromDir(orchestration.SystemTenantID, workflowDir)
 	require.NoError(t, err)
 
-	def, err := loader.Get("code-review")
+	def, err := loader.Get(orchestration.SystemTenantID, "code-review")
 	require.NoError(t, err, "code-review workflow should exist")
 	require.NotNil(t, def)
 
@@ -155,16 +155,16 @@ func TestIntegration_WorkflowLoader_Register(t *testing.T) {
 	}
 
 	t.Run("RegisterSucceeds", func(t *testing.T) {
-		err := loader.Register(def)
+		err := loader.Register(orchestration.SystemTenantID, def)
 		require.NoError(t, err, "Register should succeed for new workflow")
 
-		retrieved, err := loader.Get("test-workflow")
+		retrieved, err := loader.Get(orchestration.SystemTenantID, "test-workflow")
 		require.NoError(t, err)
 		assert.Equal(t, "test-workflow", retrieved.Name)
 	})
 
 	t.Run("DuplicateRegistrationFails", func(t *testing.T) {
-		err := loader.Register(def)
+		err := loader.Register(orchestration.SystemTenantID, def)
 		require.Error(t, err, "Register should fail for duplicate workflow name")
 	})
 }
@@ -182,7 +182,7 @@ func TestIntegration_WorkflowLoader_Register_InvalidDefinition(t *testing.T) {
 				{Role: "lead", Backend: "ollama", Model: "tinyllama"},
 			},
 		}
-		err := loader.Register(def)
+		err := loader.Register(orchestration.SystemTenantID, def)
 		require.Error(t, err, "Register with empty name should fail")
 	})
 
@@ -194,7 +194,7 @@ func TestIntegration_WorkflowLoader_Register_InvalidDefinition(t *testing.T) {
 				{Role: "lead", Backend: "ollama", Model: "tinyllama"},
 			},
 		}
-		err := loader.Register(def)
+		err := loader.Register(orchestration.SystemTenantID, def)
 		require.Error(t, err, "Register with invalid mode should fail")
 	})
 
@@ -204,7 +204,7 @@ func TestIntegration_WorkflowLoader_Register_InvalidDefinition(t *testing.T) {
 			Mode:   orchestration.WorkflowModeAutonomous,
 			Agents: nil,
 		}
-		err := loader.Register(def)
+		err := loader.Register(orchestration.SystemTenantID, def)
 		require.Error(t, err, "Register with no agents should fail")
 	})
 
@@ -216,7 +216,7 @@ func TestIntegration_WorkflowLoader_Register_InvalidDefinition(t *testing.T) {
 				{Role: "worker", Backend: "ollama", Model: "tinyllama"},
 			},
 		}
-		err := loader.Register(def)
+		err := loader.Register(orchestration.SystemTenantID, def)
 		require.Error(t, err, "Register constrained without lead should fail")
 	})
 }
@@ -227,10 +227,10 @@ func TestIntegration_WorkflowLoader_ListDefinitions(t *testing.T) {
 	workflowDir := findWorkflowDir(t)
 	loader := orchestration.NewWorkflowLoader()
 
-	err := loader.LoadFromDir(workflowDir)
+	err := loader.LoadFromDir(orchestration.SystemTenantID, workflowDir)
 	require.NoError(t, err)
 
-	defs := loader.ListDefinitions()
+	defs := loader.ListDefinitions(orchestration.SystemTenantID)
 	require.GreaterOrEqual(t, len(defs), 3)
 
 	// Verify sorted order.

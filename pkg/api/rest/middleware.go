@@ -32,6 +32,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/clientip"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 )
 
@@ -458,7 +459,19 @@ func RateLimitMiddleware(requestsPerSecond int) func(http.Handler) http.Handler 
 		}
 	}
 
-	limiter := newRateLimiter(requestsPerSecond)
+	// BOUNDED, now that the key is trustworthy. The precondition recorded on
+	// rateLimiter is that a cap must never be applied to a limiter whose key an
+	// attacker can forge, because the two combine into a denial of service
+	// neither has alone: the attacker fills the cap with minted keys, drains
+	// the shared overflow, and every legitimate source not already tracked is
+	// served from that empty bucket.
+	//
+	// ClientIPMiddleware removes the forgery, so that precondition is met here
+	// for the first time: the key is the transport peer (or a client vouched
+	// for by a configured proxy), collapsed to a /64 for IPv6 by limiterKey.
+	// The bound and the trustworthy keying land together, which is what the
+	// comment on rateLimiter says has to happen.
+	limiter := newBoundedRateLimiter(requestsPerSecond, maxRateLimiterBuckets)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -591,10 +604,10 @@ const maxRateLimiterBuckets = 100000
 //	                           that empty bucket. One peer throttles everyone.
 //
 // So bounding is safe only where the key is the transport peer. Today that is
-// oauth2ClientAuthLimiter (remoteAddrKey). RateLimitMiddleware keys on
-// getClientIP, which honours X-Forwarded-For with no trusted-proxy allowlist,
-// so it stays UNBOUNDED until #156 makes its key trustworthy — the bound and
-// the trustworthy keying have to land together, and #156 is where they do.
+// oauth2ClientAuthLimiter (remoteAddrKey) and, since #156, RateLimitMiddleware:
+// getClientIP no longer honours X-Forwarded-For from an arbitrary peer, so its
+// key is the transport peer or a client a configured proxy vouched for. The
+// bound and the trustworthy keying landed together, as they had to.
 type rateLimiter struct {
 	rate    int                     // requests per second
 	buckets map[string]*tokenBucket // client IP -> bucket
@@ -740,44 +753,41 @@ func (rl *rateLimiter) cleanupLoop() {
 }
 
 // getClientIP extracts the client IP from the request.
+// ClientIPMiddleware resolves the client address once per request and puts it
+// on the context for everything downstream -- the rate limiter's bucket key,
+// audit records, the shard log, trace attributes.
+//
+// Resolving ONCE is the point, beyond avoiding repeated work. The two
+// implementations this replaces had drifted apart in their edge cases (one
+// trimmed spaces, one did not; one mangled bare IPv6, the other did not), so
+// the same request could be attributed to two different addresses depending on
+// which consumer asked. A single decision cannot disagree with itself.
+//
+// A nil resolver trusts no proxy, which is what an unconfigured deployment
+// gets: headers ignored, transport peer used.
+func ClientIPMiddleware(resolver *clientip.Resolver) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip := resolver.ClientIP(r)
+			next.ServeHTTP(w, r.WithContext(clientip.NewContext(r.Context(), ip)))
+		})
+	}
+}
+
+// getClientIP returns the address this request is attributed to.
+//
+// It no longer reads headers itself. ClientIPMiddleware resolves the address
+// once, honouring X-Forwarded-For only from a configured trusted proxy, and
+// stores the result on the request context; this reads that. A request that
+// never passed through the middleware falls back to the transport peer.
+//
+// The previous implementation returned the first X-Forwarded-For value from
+// ANY peer, with no allowlist. Every caller of this function inherited that:
+// RateLimitMiddleware keyed its buckets on it, so a fresh header value bought
+// a fresh full bucket and the limit was not a limit; audit records and the
+// shard log attributed actions to whatever the caller typed (go-quicbaas#156).
 func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header first (for proxies)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take the first IP in the list
-		if idx := strings.Index(xff, ","); idx > 0 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
-	}
-
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
-	}
-
-	// Fall back to RemoteAddr.
-	//
-	// SplitHostPort, not a split on the last colon. net/http writes an IPv6
-	// peer as "[2001:db8::1]:1234", and the naive form returned
-	// "[2001:db8::1]" — brackets included, which no IP parser accepts — while
-	// a bare "2001:db8::1" was mangled into "2001:db8:" by splitting on its
-	// own last colon. Both values then flowed into the rate limiter as keys
-	// and into audit records as addresses, where a mangled address is worse
-	// than an absent one.
-	// The empty-host guard keeps degenerate inputs behaving as they did: ":"
-	// splits successfully into empty host and empty port, and turning that
-	// into "" rather than ":" would be a gratuitous change to a value that is
-	// meaningless either way.
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && host != "" {
-		return host
-	}
-
-	// No port to split, or nothing useful in it: return the address as it is.
-	// A bracket-less multi-colon value such as "::1:8080" is a valid IPv6
-	// address in its own right, so it is left whole rather than truncated at
-	// its last colon — net/http brackets a real IPv6 peer, so an unbracketed
-	// one is an address, not an address and a port.
-	return r.RemoteAddr
+	return clientip.FromRequest(r)
 }
 
 // oauth2ClientAuthRateLimit is the per-source-IP request rate allowed across
@@ -863,8 +873,10 @@ var oauth2ClientAuthLimiter = sync.OnceValue(func() *rateLimiter {
 // The cost is that behind a reverse proxy every request shares the proxy's
 // address and the limit becomes effectively global. That is the safe direction
 // to be wrong in: over-limiting is visible and diagnosable, under-limiting is
-// the vulnerability shipped. Restoring per-client granularity behind a proxy
-// needs a trusted-proxy configuration, tracked separately.
+// the vulnerability shipped. Since #156 a trusted-proxy configuration exists,
+// so this limiter COULD adopt it and regain per-client granularity behind a
+// proxy; that is a behaviour change to a working control and is tracked
+// separately rather than ridden in on the change that made it possible.
 func remoteAddrKey(r *http.Request) string {
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return limiterKey(host)

@@ -11,6 +11,13 @@
  *   - Submits the typed organization id verbatim to the SDK.
  *   - Passkey click shows email field; submitting calls the SDK begin/finish
  *     methods and then navigator.credentials.get with the decoded challenge.
+ *   - Renders the organization field on the PASSKEY step too, and submits what
+ *     was typed there (#575: the field existed only on the chooser, so a
+ *     first-time visitor signed in against the 'system' default with no way to
+ *     correct it).
+ *   - A challenge with no allowCredentials is reported instead of handed to
+ *     navigator.credentials.get, and an assertion that never settles is cut off
+ *     by the ceremony deadline. Both leave the form usable (#575).
  *   - Smartcard click calls the SDK PIV login method.
  *   - On a successful finish (200 with tokens), the tokens are persisted AND
  *     the shared auth status flips to 'authenticated' (so MainApp's route guard
@@ -26,6 +33,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
+import { tick } from 'svelte';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -35,6 +43,8 @@ const {
   mockRouteDashboard,
   mockSetConnected,
   mockSetAuthenticated,
+  mockClearSessionEndReason,
+  mockAuthStore,
   mockWebAuthnBeginLogin,
   mockWebAuthnFinishLogin,
   mockLoginPIV,
@@ -42,6 +52,11 @@ const {
   mockRouteDashboard: vi.fn(),
   mockSetConnected: vi.fn(),
   mockSetAuthenticated: vi.fn(),
+  mockClearSessionEndReason: vi.fn(),
+  // Mutable stand-in for the reactive auth store: a test sets endReason before
+  // render to stage "the operator was bounced here" and reads what the view
+  // does with it.
+  mockAuthStore: { status: 'unauthenticated', endReason: '' },
   mockWebAuthnBeginLogin: vi.fn(),
   mockWebAuthnFinishLogin: vi.fn(),
   mockLoginPIV: vi.fn(),
@@ -64,6 +79,8 @@ vi.mock('../src/stores/connection.svelte.ts', () => ({
 // MainApp route guard leaves the user on the dashboard.
 vi.mock('../src/stores/auth.svelte.ts', () => ({
   setAuthenticated: mockSetAuthenticated,
+  authStore: mockAuthStore,
+  clearSessionEndReason: mockClearSessionEndReason,
 }));
 
 // The SDK client is the sole transport. Begin/finish/PIV are the only methods
@@ -160,7 +177,31 @@ function makeChallengeEnvelope(): unknown {
   return {
     session_id: 'ceremony-1',
     rp_session_id: 'rp-1',
-    options: { publicKey: { challenge: 'abc123', timeout: 60000 } },
+    options: {
+      publicKey: {
+        challenge: 'abc123',
+        timeout: 60000,
+        // A login that names an account always carries that account's enrolled
+        // credentials; a challenge without them is the #575 failure case and
+        // has its own tests below.
+        allowCredentials: [{ id: 'Y3JlZC1pZC1zdHVi', type: 'public-key' }],
+      },
+    },
+  };
+}
+
+/** The same envelope with no credential to assert against (#575). */
+function makeEmptyCredentialChallenge(allowCredentials: unknown[] | undefined): unknown {
+  return {
+    session_id: 'ceremony-1',
+    rp_session_id: 'rp-1',
+    options: {
+      publicKey: {
+        challenge: 'abc123',
+        timeout: 60000,
+        ...(allowCredentials === undefined ? {} : { allowCredentials }),
+      },
+    },
   };
 }
 
@@ -185,6 +226,7 @@ describe('LoginView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStore = {};
+    mockAuthStore.endReason = '';
   });
 
   afterEach(() => {
@@ -573,5 +615,220 @@ describe('LoginView', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/enter your organization/i);
     });
     expect(mockWebAuthnBeginLogin).not.toHaveBeenCalled();
+  });
+
+  // --------------------------------------------------------------------------
+  // 18. A session that ended on its own explains itself here (#221).
+  //
+  // The operator was bounced to this page every 15 minutes of a supervised run
+  // with nothing on screen to say why, which is indistinguishable from the
+  // platform being broken. The notice is deliberately NOT an error alert: no
+  // sign-in attempt failed, and dressing it as one would send the operator
+  // hunting for a mistake they did not make.
+  // --------------------------------------------------------------------------
+
+  it('shows why the previous session ended', async () => {
+    mockAuthStore.endReason = 'Your session could not be renewed (HTTP 401).';
+    render(LoginView);
+
+    const notice = await screen.findByRole('status');
+    expect(notice).toHaveTextContent(/could not be renewed/i);
+    // A status, not an alert: the chooser is idle, nothing has failed yet.
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('shows no notice when the operator signed out deliberately', () => {
+    mockAuthStore.endReason = '';
+    render(LoginView);
+
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('drops the notice once a fresh sign-in begins', async () => {
+    mockAuthStore.endReason = 'Your session could not be renewed (HTTP 401).';
+    render(LoginView);
+    await screen.findByRole('status');
+
+    await fireEvent.click(screen.getByRole('button', { name: /sign in with passkey/i }));
+
+    // The view asks the store to forget it: anything shown from here on is
+    // about THIS attempt.
+    expect(mockClearSessionEndReason).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let the stale notice mask an error from the new attempt', async () => {
+    mockAuthStore.endReason = 'Your session could not be renewed (HTTP 401).';
+    mockWebAuthnBeginLogin.mockRejectedValue(new Error('begin failed'));
+    render(LoginView);
+
+    await submitPasskey();
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  // --------------------------------------------------------------------------
+  // 19. #575 — the organization is editable ON the passkey step.
+  //
+  // It used to live only on the chooser, so a visitor who went straight to the
+  // passkey button signed in against the remembered value ('system' on a fresh
+  // browser) with nowhere to correct it. The ceremony then came back with no
+  // credentials and the form wedged.
+  // --------------------------------------------------------------------------
+
+  it('renders the organization field on the passkey step, prefilled from localStorage', async () => {
+    localStore['quicbaas_login_tenant'] = 'acme-corp';
+
+    render(LoginView);
+    await fireEvent.click(screen.getByRole('button', { name: /sign in with passkey/i }));
+    await waitFor(() => screen.getByLabelText(/email address/i));
+
+    const org = screen.getByLabelText(/organization/i);
+    expect(org).toBeInTheDocument();
+    expect(org).toHaveValue('acme-corp');
+  });
+
+  it('sends the organization typed on the passkey step, not the remembered one', async () => {
+    localStore['quicbaas_login_tenant'] = 'acme-corp';
+    mockWebAuthnBeginLogin.mockResolvedValueOnce(makeChallengeEnvelope());
+    mockCredentialsGet.mockResolvedValueOnce(makeCredentialStub());
+    mockWebAuthnFinishLogin.mockResolvedValueOnce(makeFinishTokens());
+
+    render(LoginView);
+    // Straight to the passkey step WITHOUT touching the chooser field.
+    await fireEvent.click(screen.getByRole('button', { name: /sign in with passkey/i }));
+    await waitFor(() => screen.getByLabelText(/email address/i));
+
+    await fireEvent.input(screen.getByLabelText(/organization/i), {
+      target: { value: 'globex' },
+    });
+    await fireEvent.input(screen.getByLabelText(/email address/i), {
+      target: { value: 'alice@example.com' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /authenticate with passkey/i }));
+
+    await waitFor(() => {
+      expect(mockWebAuthnBeginLogin).toHaveBeenCalledWith('globex', 'alice@example.com');
+    });
+    // A completed sign-in from the passkey step still earns the prefill slot.
+    await waitFor(() => {
+      expect(localStore['quicbaas_login_tenant']).toBe('globex');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // 20. #575 — a challenge with no credential is reported, not handed to the
+  // browser. Passing an empty allowCredentials asks the authenticator for a
+  // DISCOVERABLE credential, which a key holding a non-resident one never
+  // answers: no prompt, no error, and busy stuck true until a reload.
+  // --------------------------------------------------------------------------
+
+  for (const [label, allow] of [
+    ['an empty allowCredentials list', [] as unknown[]],
+    ['no allowCredentials member at all', undefined],
+  ] as const) {
+    it(`reports ${label} instead of calling credentials.get, and leaves the form usable`, async () => {
+      mockWebAuthnBeginLogin.mockResolvedValueOnce(makeEmptyCredentialChallenge(allow));
+
+      render(LoginView);
+      await submitPasskey('alice@example.com', 'globex');
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(/no passkey is enrolled/i);
+      });
+      expect(mockCredentialsGet).not.toHaveBeenCalled();
+
+      // The button is enabled again: the operator can fix the organization and
+      // retry without reloading the page.
+      expect(screen.getByRole('button', { name: /authenticate with passkey/i })).toBeEnabled();
+
+      // Generic: it names neither the organization nor the email.
+      const text = screen.getByRole('alert').textContent ?? '';
+      expect(text).not.toMatch(/globex/i);
+      expect(text).not.toMatch(/alice@example\.com/i);
+
+      // Nothing was remembered and nothing was authenticated.
+      expect(localStore['quicbaas_login_tenant']).toBeUndefined();
+      expect(mockSetAuthenticated).not.toHaveBeenCalled();
+    });
+  }
+
+  // --------------------------------------------------------------------------
+  // 21. #575 — busy clears on the rejected ceremony, so the button comes back.
+  // --------------------------------------------------------------------------
+
+  it('re-enables the submit button after a rejected credentials.get', async () => {
+    mockWebAuthnBeginLogin.mockResolvedValueOnce(makeChallengeEnvelope());
+    mockCredentialsGet.mockRejectedValueOnce(
+      new DOMException('Operation not allowed', 'NotAllowedError'),
+    );
+
+    render(LoginView);
+    await submitPasskey('alice@example.com');
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/declined or canceled/i);
+    });
+    expect(screen.getByRole('button', { name: /authenticate with passkey/i })).toBeEnabled();
+  });
+
+  // --------------------------------------------------------------------------
+  // 22. #575 — a ceremony that never settles is cut off by the deadline.
+  //
+  // This is the measured wedge: the authenticator never receives a
+  // GetAssertion, credentials.get() stays pending forever, and without the
+  // deadline the form stays disabled with no message until a reload. Fake
+  // timers, so the test spends no real time waiting.
+  // --------------------------------------------------------------------------
+
+  it('times out a credentials.get that never settles and frees the form', async () => {
+    vi.useFakeTimers();
+    try {
+      mockWebAuthnBeginLogin.mockResolvedValueOnce(makeChallengeEnvelope());
+      mockCredentialsGet.mockReturnValueOnce(new Promise(() => {}));
+
+      render(LoginView);
+      await submitPasskey('alice@example.com');
+
+      // Mid-ceremony: still working, button disabled, nothing to report yet.
+      await tick();
+      expect(screen.getByRole('button', { name: /authenticate with passkey/i })).toBeDisabled();
+      expect(screen.queryByRole('alert')).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      await tick();
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/did not respond/i);
+      expect(screen.getByRole('button', { name: /authenticate with passkey/i })).toBeEnabled();
+      expect(mockWebAuthnFinishLogin).not.toHaveBeenCalled();
+      expect(mockSetAuthenticated).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('aborts the pending ceremony when the deadline fires', async () => {
+    vi.useFakeTimers();
+    try {
+      mockWebAuthnBeginLogin.mockResolvedValueOnce(makeChallengeEnvelope());
+      mockCredentialsGet.mockReturnValueOnce(new Promise(() => {}));
+
+      render(LoginView);
+      await submitPasskey('alice@example.com');
+      await tick();
+
+      const signal = (mockCredentialsGet.mock.calls[0][0] as { signal?: AbortSignal }).signal;
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal?.aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      // The browser is told to close its prompt, not just left running.
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -14,34 +14,11 @@ package service
 import (
 	"context"
 	"fmt"
-	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
-	"github.com/jeremyhahn/go-quicbaas/pkg/storage"
 )
-
-// errorReturningStorage implements storage.Storage
-func (s *errorReturningStorage) Get(key []byte) ([]byte, error) {
-	if s.getError {
-		return nil, fmt.Errorf("get error")
-	}
-	return nil, nil
-}
-func (s *errorReturningStorage) Set(key, value []byte) error {
-	if s.setError {
-		return fmt.Errorf("set error")
-	}
-	return nil
-}
-func (s *errorReturningStorage) Delete(_ []byte) error                                   { return nil }
-func (s *errorReturningStorage) List(_ []byte) ([][]byte, error)                         { return nil, nil }
-func (s *errorReturningStorage) Exists(_ []byte) (bool, error)                           { return false, nil }
-func (s *errorReturningStorage) Batch() storage.Batch                                    { return nil }
-func (s *errorReturningStorage) NewIterator(_ *storage.IteratorOptions) storage.Iterator { return nil }
-func (s *errorReturningStorage) Snapshot() (storage.Snapshot, error)                     { return nil, nil }
-func (s *errorReturningStorage) Close() error                                            { return nil }
 
 // coverageEmbeddingManager implements interfaces.EmbeddingManager
 func (m *coverageEmbeddingManager) Embed(ctx context.Context, text string) ([]float32, error) {
@@ -180,23 +157,6 @@ func (m *covNonCacheMgr) Set(_ context.Context, _ string, _ []byte) error { retu
 func (m *covNonCacheMgr) Delete(_ context.Context, _ string) error        { return nil }
 func (m *covNonCacheMgr) Close() error                                    { return nil }
 
-// mockUser2 implements interfaces.UserInfo
-func (u *mockUser2) GetID() string          { return u.id }
-func (u *mockUser2) GetUsername() string    { return u.username }
-func (u *mockUser2) GetRoles() []string     { return nil }
-func (u *mockUser2) GetCreated() time.Time  { return time.Time{} }
-func (u *mockUser2) GetLastAuth() time.Time { return time.Time{} }
-
-// mockUserStore2 implements interfaces.UserStore
-func (s *mockUserStore2) AddUser(_ interfaces.UserInfo)              {}
-func (s *mockUserStore2) GetByID(_ string) interfaces.UserInfo       { return nil }
-func (s *mockUserStore2) GetByUsername(_ string) interfaces.UserInfo { return nil }
-func (s *mockUserStore2) UpdateUser(_ interfaces.UserInfo)           {}
-func (s *mockUserStore2) DeleteUser(_ string)                        {}
-func (s *mockUserStore2) ListUsers() []interfaces.UserInfo           { return s.users }
-func (s *mockUserStore2) AssignRole(_, _ string) error               { return nil }
-func (s *mockUserStore2) RevokeRole(_, _ string) error               { return nil }
-
 // mockKMSScheduler implements KMSScheduler
 func (m *mockKMSScheduler) ScheduleJob(_ context.Context, _ *SchedulerJob) error { return nil }
 
@@ -207,26 +167,6 @@ func (s *rotateKeyTestScheduler) ScheduleJob(ctx context.Context, job *Scheduler
 		return s.scheduleJobFn(ctx, job)
 	}
 	return nil
-}
-
-// svcBoostAuthManager implements interfaces.AuthManager
-func (m *svcBoostAuthManager) IssueTokenForUser(_ context.Context, _ interfaces.UserInfo) (interface{}, error) {
-	return nil, nil
-}
-func (m *svcBoostAuthManager) Authorize(_ context.Context, _, _, _ string) error { return nil }
-func (m *svcBoostAuthManager) RefreshToken(_ context.Context, _ string) (interface{}, error) {
-	return nil, nil
-}
-func (m *svcBoostAuthManager) RevokeToken(_ context.Context, _ string) error { return nil }
-func (m *svcBoostAuthManager) ValidateToken(_ context.Context, _ string) (interface{}, error) {
-	return nil, nil
-}
-func (m *svcBoostAuthManager) CreateUser(_ string, _ []string) (interface{}, error) {
-	return nil, nil
-}
-func (m *svcBoostAuthManager) DeleteUser(_ string) error { return nil }
-func (m *svcBoostAuthManager) GetUserStore() interfaces.UserStore {
-	return m.userStoreReturn
 }
 
 // svcBoostRaftNode implements interfaces.RaftNode
@@ -277,18 +217,6 @@ func (n *svcBoostRaftNode) StartShard(_ map[uint64]string, _ bool, _ interfaces.
 }
 func (n *svcBoostRaftNode) StopShard(_ uint64) error { return nil }
 func (n *svcBoostRaftNode) Close() error             { return nil }
-
-// svcBoostUserStore - missing AssignRole, RevokeRole, DeleteUser, ListUsers
-func (s *svcBoostUserStore) AssignRole(_, _ string) error {
-	s.assignRoleCalled = true
-	return s.assignRoleErr
-}
-func (s *svcBoostUserStore) RevokeRole(_, _ string) error {
-	s.revokeRoleCalled = true
-	return s.revokeRoleErr
-}
-func (s *svcBoostUserStore) DeleteUser(_ string)              {}
-func (s *svcBoostUserStore) ListUsers() []interfaces.UserInfo { return s.users }
 
 // vecSDKProvider implements QRDBClientProvider
 func (p *vecSDKProvider) ForShard(shardID uint64) (*qrdbsdk.Client, error) {

@@ -29,11 +29,11 @@ import (
 )
 
 // sessionEventLogProvider is the optional interface the AgentService may
-// satisfy to expose its session event log. Kept narrow so the gRPC layer
-// doesn't take a hard dependency on the concrete agentServiceImpl.
-type sessionEventLogProvider interface {
-	SessionEventLog() orchestration.SessionEventLog
-}
+// satisfy to expose its session event log. It is orchestration's own
+// SessionLogAccessor under a local name: every transport reaches the log
+// through that one declaration, so a service that gains or loses a log
+// behaves identically on all of them.
+type sessionEventLogProvider = orchestration.SessionLogAccessor
 
 // PushEvents implements OrchestratorService.PushEvents. The daemon opens a
 // bidi stream and sends one PushEventRequest per session event it emits;
@@ -45,9 +45,12 @@ type sessionEventLogProvider interface {
 // skips) are rejected with a "gap" ack — the daemon must restart from
 // accepted_seq+1.
 //
-// Authorization: requires the caller's JWT to carry the agent:runtime:spawn
-// scope (the daemon's own identity scope). Tenant is extracted from the
-// per-request Context via TenantFromContext.
+// Authorization: orchestrator:hook, per the method's entry in
+// grpcMethodPermissions (authz_mapping.go) — the table the interceptor
+// actually reads. An enrolled daemon is granted that permission on its OAuth2
+// application so its event stream is admitted (iam.AgentRuntimeGrant,
+// go-quicbaas#653). Tenant is extracted from the per-request Context via
+// TenantFromContext.
 func (s *OrchestratorServer) PushEvents(stream pb.OrchestratorService_PushEventsServer) error {
 	log := s.sessionLog()
 	if log == nil {
@@ -275,4 +278,89 @@ func (s *OrchestratorServer) sessionLog() orchestration.SessionEventLog {
 		return nil
 	}
 	return p.SessionEventLog()
+}
+
+// GetSessionConversation implements OrchestratorService.GetSessionConversation:
+// one page of a session's CONVERSATION.
+//
+// It is deliberately unary while its sibling SubscribeSessionEvents is a
+// stream, because they answer different questions. The stream serves the raw
+// log to an attacher that wants every fragment as it happens; this serves the
+// folded conversation to a client that wants to render a page of scrollback
+// and then stop. Paging a stream by reading it until it closes — which is how
+// the SDK reached history before this RPC existed — cannot express a cursor,
+// so a client could not resume where a page ended.
+func (s *OrchestratorServer) GetSessionConversation(ctx context.Context, req *pb.GetSessionConversationRequest) (*pb.GetSessionConversationResponse, error) {
+	if req == nil || req.GetSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	log := s.sessionLog()
+	if log == nil {
+		return nil, status.Error(codes.Unavailable, "session event log not configured")
+	}
+
+	page, err := orchestration.ReadSessionHistory(ctx, log, &orchestration.SessionHistoryRequest{
+		TenantID:  req.GetTenantId(),
+		SessionID: req.GetSessionId(),
+		Cursor:    req.GetCursor(),
+		Limit:     int(req.GetLimit()),
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "session history: %v", err)
+	}
+
+	turns := make([]*pb.SessionTurn, 0, len(page.Turns))
+	for _, turn := range page.Turns {
+		wire, marshalErr := sessionTurnToProto(turn)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		turns = append(turns, wire)
+	}
+	return &pb.GetSessionConversationResponse{
+		SessionId:      page.SessionID,
+		TenantId:       page.TenantID,
+		Turns:          turns,
+		NextCursor:     page.NextCursor,
+		OldestSequence: page.OldestSequence,
+	}, nil
+}
+
+// sessionTurnToProto renders one turn onto the wire.
+//
+// Token usage crosses as JSON for the same reason a session event's payload
+// does: the accounting shape belongs to the orchestration package, and giving
+// it a second, protobuf-shaped definition would create two records of one
+// thing that drift the first time a dimension is added.
+func sessionTurnToProto(turn *orchestration.SessionTurn) (*pb.SessionTurn, error) {
+	tools := make([]*pb.SessionToolUse, 0, len(turn.Tools))
+	for _, tool := range turn.Tools {
+		tools = append(tools, &pb.SessionToolUse{
+			InvocationId: tool.InvocationID,
+			Name:         tool.Name,
+			IsError:      tool.IsError,
+			ResultBytes:  tool.ResultBytes,
+		})
+	}
+	var usageJSON []byte
+	if turn.Usage != nil {
+		encoded, err := json.Marshal(turn.Usage)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "marshal usage: %v", err)
+		}
+		usageJSON = encoded
+	}
+	return &pb.SessionTurn{
+		Sequence:       turn.Sequence,
+		SessionId:      turn.SessionID,
+		TenantId:       turn.TenantID,
+		Role:           string(turn.Role),
+		Timestamp:      timestamppb.New(turn.Timestamp),
+		Text:           turn.Text,
+		TruncatedBytes: turn.TruncatedBytes,
+		Model:          turn.Model,
+		StopReason:     turn.StopReason,
+		Tools:          tools,
+		UsageJson:      usageJSON,
+	}, nil
 }

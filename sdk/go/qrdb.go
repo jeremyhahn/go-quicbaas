@@ -31,6 +31,8 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	qbtransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
+	qbmcp "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 )
 
 // QRDBClient is a re-export of the go-qrdb SDK Client so consumers do not
@@ -552,27 +554,64 @@ func (c *client) buildQRDBClient() (*qrdbsdk.Client, error) {
 // the quicbaas-native unix transport already does. Only when no TLS config is
 // available (standalone/dev) do we fall back to go-qrdb's insecure unix
 // transport.
+//
+// The REST and MCP selections have a URL subtlety. Every other qrdb transport
+// dials a bare "host:port", but go-qrdb's REST transport concatenates its
+// request path straight onto the configured address and its MCP transport
+// hands the address to a Streamable HTTP client — both need a
+// scheme-qualified URL. Passing the quicbaas address through verbatim made
+// every qrdb REST call die in url.Parse before a request was sent
+// ("first path segment in URL cannot contain colon", go-quicbaas#405), and
+// left MCP dialing an unparseable endpoint. Both selections normalize through
+// the same helpers the quicbaas-native REST/MCP transports use, so one
+// address spelling works across every transport.
 func (c *client) buildQRDBTransport() (qrdbtransport.Transport, error) {
-	var opts []qrdbtransport.Option
-	opts = append(opts, qrdbtransport.WithAddress(c.address))
-	if c.opts.tlsEnabled && c.opts.tlsConfig != nil {
-		opts = append(opts, qrdbtransport.WithTLSConfig(c.opts.tlsConfig))
+	tlsConfigured := c.opts.tlsEnabled && c.opts.tlsConfig != nil
+
+	buildOpts := func(address string) []qrdbtransport.Option {
+		opts := []qrdbtransport.Option{qrdbtransport.WithAddress(address)}
+		if tlsConfigured {
+			opts = append(opts, qrdbtransport.WithTLSConfig(c.opts.tlsConfig))
+		}
+		if c.opts.timeout > 0 {
+			opts = append(opts, qrdbtransport.WithTimeout(c.opts.timeout))
+		}
+		return opts
 	}
-	if c.opts.timeout > 0 {
-		opts = append(opts, qrdbtransport.WithTimeout(c.opts.timeout))
-	}
+
+	address := qrdbSubClientAddress(c.opts.transportType, c.address, tlsConfigured)
 
 	switch c.opts.transportType {
 	case TransportREST:
-		return qrdbrest.New(opts...)
+		return qrdbrest.New(buildOpts(address)...)
 	case TransportQUIC:
-		return qrdbquic.New(opts...)
+		return qrdbquic.New(buildOpts(address)...)
 	case TransportUnix:
 		return c.buildQRDBUnixTransport()
 	case TransportMCP:
-		return qrdbmcp.New(opts...)
+		return qrdbmcp.New(buildOpts(address)...)
 	default:
-		return qrdbgrpc.New(opts...)
+		return qrdbgrpc.New(buildOpts(address)...)
+	}
+}
+
+// qrdbSubClientAddress returns the address the go-qrdb sub-client transport
+// dials for the active quicbaas transport selection.
+//
+// gRPC and QUIC dial a bare "host:port" and must not be handed a scheme.
+// REST needs a scheme-qualified origin because go-qrdb's REST transport
+// concatenates its request path onto the address; MCP needs the full
+// Streamable HTTP endpoint URL, path included. Unix is resolved separately by
+// buildQRDBUnixTransport, which chooses between the gRPC and unix transports
+// on TLS posture, so it keeps the socket path verbatim here.
+func qrdbSubClientAddress(transportType TransportType, address string, tlsConfigured bool) string {
+	switch transportType {
+	case TransportREST:
+		return qbtransport.HTTPBaseURL(address, tlsConfigured)
+	case TransportMCP:
+		return qbtransport.HTTPEndpoint(address, tlsConfigured, qbmcp.MCPEndpointPath)
+	default:
+		return address
 	}
 }
 

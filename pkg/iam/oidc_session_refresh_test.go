@@ -42,6 +42,25 @@ func newSessionRefreshProvider(t *testing.T, accessTTL, refreshTTL time.Duration
 		RoleStorage:  storage,
 	})
 
+	// The principal these sessions name. It has to EXIST: a refresh is redeemed
+	// only while its principal is live, and liveness resolves the uid claim.
+	//
+	// These tests used to seed nothing and pass, because a subject that resolved
+	// to nobody was inferred to be a service principal and service principals
+	// are live. That inference is gone (#390) — it also meant a renamed user's
+	// sessions were silently promoted — so a session that names no live
+	// principal is now correctly refused, and the fixture names one.
+	if err := storage.CreateUser(context.Background(), &User{
+		ID:        refreshUserID,
+		TenantID:  "acme",
+		Username:  "user-42",
+		Name:      "Refresh User",
+		Email:     "user42@example.com",
+		Lifecycle: LifecycleActive,
+	}); err != nil {
+		t.Fatalf("seed refresh principal: %v", err)
+	}
+
 	provider, err := NewOIDCProvider(&OIDCConfig{
 		Issuer:           "https://refresh.example.com",
 		SigningAlgorithm: "RS256",
@@ -63,12 +82,20 @@ func newSessionRefreshProvider(t *testing.T, accessTTL, refreshTTL time.Duration
 
 // loginSession is the options set a factor login would freeze into the refresh
 // credential.
+// refreshUserID is the id of the principal the refresh fixtures name. A user id
+// is a qrdb Snowflake in decimal, so it can only be a number.
+const refreshUserID = "71"
+
 func loginSession() SessionRefreshOptions {
 	return SessionRefreshOptions{
 		Subject:  "user-42",
 		TenantID: "acme",
 		Scopes:   []string{"openid", "profile"},
 		Session: TokenSessionContext{
+			// Carried exactly as IssueRefreshForSessionBearer carries it: read
+			// off the bearer, so the refresh record names the same account the
+			// access token does.
+			UserID:      refreshUserID,
 			Roles:       []string{"admin"},
 			Groups:      []string{"platform"},
 			Audience:    []string{"https://refresh.example.com"},
@@ -259,6 +286,8 @@ func TestRefreshSession_RejectsBadInput(t *testing.T) {
 	})
 
 	t.Run("access token presented as refresh credential", func(t *testing.T) {
+		// The principal is already seeded by newSessionRefreshProvider; seeding
+		// it again collides on the tenant-unique handle.
 		accessToken, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
 			Subject:  "user-42",
 			TenantID: "acme",
@@ -318,11 +347,11 @@ func TestRefreshSession_DPoPBoundSessionRequiresProof(t *testing.T) {
 func TestIssueRefreshForSessionBearer_MirrorsTheIssuedSession(t *testing.T) {
 	provider, storage := newSessionRefreshProvider(t, 15*time.Minute, 24*time.Hour)
 	ctx := context.Background()
+	seedCeremonyUser(t, storage, "system", "ceremony-user", []string{"operator"})
 
 	bearer, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
 		Subject:     "ceremony-user",
 		TenantID:    "system",
-		Roles:       []string{"operator"},
 		AuthMethod:  "piv",
 		MFAVerified: true,
 	})
@@ -396,5 +425,50 @@ func TestHashTokenValue(t *testing.T) {
 	}
 	if len(a) != 64 {
 		t.Fatalf("hash length = %d, want 64 hex chars", len(a))
+	}
+}
+
+// TestRefreshSession_RenewsAfterTheAccessTokenExpired is the condition the SPA
+// actually meets in production and that no other test in this file reproduces:
+// the bearer is ALREADY DEAD when the renewal is attempted. Every other case
+// here refreshes a session whose access token is still valid, so a renewal path
+// that quietly depended on a live bearer would pass them all.
+//
+// The access TTL is negative so the minted bearer is expired the instant it
+// exists — deterministic, and no sleep. The test first proves the bearer is
+// genuinely rejected (the control: without it, "the renewal worked" says
+// nothing about expiry) and only then asserts the refresh credential still
+// renews the session.
+func TestRefreshSession_RenewsAfterTheAccessTokenExpired(t *testing.T) {
+	provider, _ := newSessionRefreshProvider(t, -1*time.Second, 7*24*time.Hour)
+	ctx := context.Background()
+
+	value, _, err := provider.IssueSessionRefresh(ctx, loginSession())
+	if err != nil {
+		t.Fatalf("IssueSessionRefresh: %v", err)
+	}
+
+	// Control: mint a bearer for this session and confirm it is already dead.
+	// If this ever starts passing validation the rest of the test is vacuous.
+	expired, err := provider.RefreshSession(ctx, SessionRefreshRequest{RefreshToken: value})
+	if err != nil {
+		t.Fatalf("RefreshSession (to obtain an expired bearer): %v", err)
+	}
+	if _, err := provider.ValidateAccessToken(ctx, expired.AccessToken); err == nil {
+		t.Fatal("control failed: the access token minted with a negative TTL validated successfully")
+	}
+
+	// The session is past its access-token boundary. The rotated refresh
+	// credential must still renew it — that is the whole point of a
+	// short-lived bearer, and its absence logs the operator out every TTL.
+	renewed, err := provider.RefreshSession(ctx, SessionRefreshRequest{RefreshToken: expired.RefreshToken})
+	if err != nil {
+		t.Fatalf("renewal across the access-token boundary failed: %v", err)
+	}
+	if renewed.AccessToken == "" {
+		t.Fatal("renewal across the expiry boundary returned no access token")
+	}
+	if renewed.RefreshToken == "" || renewed.RefreshToken == expired.RefreshToken {
+		t.Fatal("renewal across the expiry boundary did not rotate the credential")
 	}
 }

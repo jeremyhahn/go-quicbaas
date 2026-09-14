@@ -23,9 +23,6 @@ var (
 	// ErrAgentIdentityRequired indicates a required field is missing from the agent identity.
 	ErrAgentIdentityRequired = errors.New("orchestration: agent identity required field missing")
 
-	// ErrAgentSecurityContextRequired indicates a required field is missing from the security context.
-	ErrAgentSecurityContextRequired = errors.New("orchestration: agent security context required field missing")
-
 	// ErrAgentIdentityInvalidScope indicates an invalid scope format in the agent identity.
 	ErrAgentIdentityInvalidScope = errors.New("orchestration: agent identity invalid scope format")
 )
@@ -100,6 +97,12 @@ const (
 // (OU=agents). Operators who need a broader or narrower agent surface manage
 // that through token-based identities; this set is the fixed floor for the
 // certificate path and must stay least-privilege.
+//
+// This is the DECLARATION. The copy that is actually written into a tenant's
+// agent-session role is iam.AgentSessionGrant, which restates the same literals
+// because pkg/iam must not depend on this package; pkg/server
+// TestAgentSessionGrant_MatchesTheOrchestrationDeclaration fails the build if
+// the two ever disagree. Change both or neither.
 func AgentMCPScopes() []string {
 	return []string{
 		AgentScopeMCPInference,
@@ -128,21 +131,6 @@ func (e *AgentIdentityRequiredError) Unwrap() error {
 	return ErrAgentIdentityRequired
 }
 
-// AgentSecurityContextRequiredError indicates a required field is missing from the security context.
-type AgentSecurityContextRequiredError struct {
-	Field string
-}
-
-// Error implements the error interface.
-func (e *AgentSecurityContextRequiredError) Error() string {
-	return ErrAgentSecurityContextRequired.Error() + ": " + e.Field
-}
-
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *AgentSecurityContextRequiredError) Unwrap() error {
-	return ErrAgentSecurityContextRequired
-}
-
 // AgentIdentityInvalidScopeError indicates an invalid scope format in the agent identity.
 type AgentIdentityInvalidScopeError struct {
 	Scope string
@@ -158,11 +146,22 @@ func (e *AgentIdentityInvalidScopeError) Unwrap() error {
 	return ErrAgentIdentityInvalidScope
 }
 
-// AgentIdentity binds an agent to an IAM service account. It carries the
-// agent's IAM principal information including scopes derived from the
-// workflow's AgentRoleSpec.MCPScopes. The actual provisioning (calling
-// OrchestratorAuthService.CreateServiceAccount) happens in the control
-// loop's handleInitialize and handleAssign states.
+// AgentIdentity is an agent DAEMON's enrollment result: the OAuth2 application
+// the control plane registered for a remote agent host, plus the grant that
+// application carries. pkg/agent ProductionEnroller builds it from the response
+// to POST /api/v1/agents/register and the token exchange that follows, and the
+// daemon's own gRPC spawn server authorizes the central's inbound dispatch
+// against its Scopes (GRPCSpawnServer.authorize). That is where it is a
+// security control, and the only place.
+//
+// In the control loop it is NOT one. The loop keeps a role-keyed AgentIdentity
+// per job purely so a turn's token spend can be attributed to a stable agent ID
+// (turnAttribution); the record it builds carries no ServiceAccountID, ClientID
+// or ClientSecret and no authorization check consults it. A SPAWNED SESSION's
+// authority does not live here at all -- it lives in the qrdb user record
+// iam.EnrollAgentSessionIdentity writes for the session's certificate, because
+// go-qrdb resolves a principal's roles from the store and never from the
+// credential or from anything the orchestrator holds in memory.
 type AgentIdentity struct {
 	// AgentID is the orchestrator-assigned agent identifier.
 	AgentID string
@@ -244,52 +243,6 @@ func (ai *AgentIdentity) HasAnyScope(scopes ...string) bool {
 		}
 	}
 	return false
-}
-
-// AgentSecurityContext carries security state for a running agent. It is
-// populated during the handleAssign control loop state after the agent's
-// service account is provisioned and a short-lived token is issued.
-type AgentSecurityContext struct {
-	// Identity is the agent's IAM identity binding.
-	Identity *AgentIdentity
-
-	// AccessToken is the current short-lived OIDC access token.
-	AccessToken string
-
-	// TokenExpiry is the Unix timestamp (seconds) when the access token expires.
-	TokenExpiry int64
-
-	// CorrelationID is the unique identifier linking all audit events for this agent's job.
-	CorrelationID string
-
-	// PolicyIDs are the IAM policy IDs created for this agent's session.
-	PolicyIDs []string
-}
-
-// Validate checks that all required fields are present in the security context.
-func (sc *AgentSecurityContext) Validate() error {
-	if sc.Identity == nil {
-		return &AgentSecurityContextRequiredError{Field: "identity"}
-	}
-	if err := sc.Identity.Validate(); err != nil {
-		return err
-	}
-	if sc.AccessToken == "" {
-		return &AgentSecurityContextRequiredError{Field: "access_token"}
-	}
-	if sc.TokenExpiry <= 0 {
-		return &AgentSecurityContextRequiredError{Field: "token_expiry"}
-	}
-	if sc.CorrelationID == "" {
-		return &AgentSecurityContextRequiredError{Field: "correlation_id"}
-	}
-	return nil
-}
-
-// IsTokenExpired returns true if the access token has expired based on the
-// given current Unix timestamp in seconds.
-func (sc *AgentSecurityContext) IsTokenExpired(nowUnix int64) bool {
-	return nowUnix >= sc.TokenExpiry
 }
 
 // IsValidScopeFormat validates that a scope string follows the resource:action

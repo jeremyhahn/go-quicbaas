@@ -17,11 +17,11 @@
 #
 # Build (done by the Makefile test-e2e-acp-docker target with QUICBAAS_E2E_SANDBOX=1):
 #   docker build -f test/e2e/Dockerfile.sandbox-agent \
-#     --build-arg OLLAMA_URL=http://198.51.100.91:11434 \
+#     --build-arg OLLAMA_URL=http://gpu-host.internal:11434 \
 #     --build-arg OPENCODE_MODEL=qwen3:1.7b \
 #     -t quicbaas-e2e-sandbox-agent:latest test/e2e
 #
-# --network host lets the sibling reach the LAN GPU host (198.51.100.91:11434)
+# --network host lets the sibling reach the LAN GPU host (gpu-host.internal:11434)
 # via the docker host's own network namespace.
 
 FROM node:22-bookworm-slim

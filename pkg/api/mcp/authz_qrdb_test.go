@@ -28,11 +28,16 @@ func TestGetToolQRDBPermission_Mapped(t *testing.T) {
 		resource string
 		action   string
 	}{
-		{"quicbaas_get", "kv", "get"},
-		{"quicbaas_put", "kv", "put"},
+		{"qrdb_get", "kv", "get"},
+		{"qrdb_put", "kv", "put"},
 		{"qrdb_delete", "kv", "delete"},
-		{"quicbaas_user_create", "users", "create"},
-		{"quicbaas_role_assign", "roles", "assign"},
+		{"quicbaas_batch_put", "batch", "execute"},
+		// User administration is the quicbaas_iam_user_* family; the
+		// quicbaas_user_* / quicbaas_role_* names that used to be pinned here
+		// were map entries for tools that were never registered (issue #905).
+		{"quicbaas_iam_user_create", "users", "create"},
+		{"qrdb_role_assign", "roles", "assign"},
+		{"quicbaas_role_revoke", "roles", "unassign"},
 		{"qrdb_ceremony_status", "ceremony", "status"},
 		{"qrdb_vector_search", "vector", "search_similar"},
 		{"qrdb_credential_list", "credentials", "list"},

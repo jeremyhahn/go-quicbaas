@@ -199,7 +199,7 @@ describe('SpawnDialog — QuicBaaS MCP endpoint preset', () => {
 describe('SpawnDialog — project selector', () => {
   const mockSpawn = vi.fn();
   const projects: Project[] = [
-    { id: 'proj-1', tenant_id: 'default', name: 'alpha', workspace: { path: '/work/alpha' } } as Project,
+    { id: 'proj-1', tenant_id: 'default', name: 'alpha', workspace_path: '/work/alpha' } as Project,
     { id: 'proj-2', tenant_id: 'default', name: 'beta' } as Project,
   ];
 

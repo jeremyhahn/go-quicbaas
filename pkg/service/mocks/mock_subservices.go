@@ -1824,6 +1824,8 @@ type MockAccountService struct {
 	DeleteAccountFunc           func(ctx context.Context, req *service.DeleteAccountRequest) (*service.DeleteAccountResponse, error)
 	SetDefaultAccountFunc       func(ctx context.Context, req *service.SetDefaultAccountRequest) (*service.SetDefaultAccountResponse, error)
 	GetAccountUsageFunc         func(ctx context.Context, req *service.GetAccountUsageRequest) (*service.GetAccountUsageResponse, error)
+
+	MaterializeAccountCredentialFunc func(ctx context.Context, req *service.MaterializeAccountCredentialRequest) (*service.MaterializeAccountCredentialResponse, error)
 }
 
 var _ service.AccountService = (*MockAccountService)(nil)
@@ -1898,6 +1900,22 @@ func (m *MockAccountService) GetAccountUsage(ctx context.Context, req *service.G
 		return m.GetAccountUsageFunc(ctx, req)
 	}
 	return &service.GetAccountUsageResponse{Usage: &orchestration.UsageReport{}}, nil
+}
+
+// MaterializeAccountCredential delegates to MaterializeAccountCredentialFunc
+// when set.
+//
+// The unconfigured default deliberately returns an EMPTY envelope rather than
+// a plausible-looking token: a transport test that forgot to set the func must
+// not accidentally assert that a credential reached the wire.
+func (m *MockAccountService) MaterializeAccountCredential(ctx context.Context, req *service.MaterializeAccountCredentialRequest) (*service.MaterializeAccountCredentialResponse, error) {
+	if m.MaterializeAccountCredentialFunc != nil {
+		return m.MaterializeAccountCredentialFunc(ctx, req)
+	}
+	return &service.MaterializeAccountCredentialResponse{
+		AccountID:  req.AccountID,
+		Credential: &orchestration.AccountCredential{},
+	}, nil
 }
 
 // =============================================================================

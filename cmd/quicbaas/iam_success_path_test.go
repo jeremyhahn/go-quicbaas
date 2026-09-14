@@ -27,15 +27,15 @@ import (
 func setupIAMMock(t *testing.T) (*testMockIAMClient, func()) {
 	t.Helper()
 	origFactory := iamClientFactory
-	origTimeout := timeout
+	origTimeout := globalTimeout
 	mockClient := newTestMockIAMClient()
 	iamClientFactory = func() (iam.Client, error) {
 		return mockClient, nil
 	}
-	timeout = 5 * time.Second
+	globalTimeout = 5 * time.Second
 	return mockClient, func() {
 		iamClientFactory = origFactory
-		timeout = origTimeout
+		globalTimeout = origTimeout
 	}
 }
 

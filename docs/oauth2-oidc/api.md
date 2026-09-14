@@ -53,6 +53,19 @@ Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes regis
 | `RevokeSession` | `DELETE /api/v1/auth/sessions/{id}` | **no** | yes | yes | MISSING | — |
 | `ValidateToken` | `POST /api/v1/auth/validate` | **no** | yes | yes | yes | — |
 
+> **Composed-node caveat for the three token-lifecycle verbs.** `Served?` above
+> is read against the FULL route table, which includes the legacy in-process
+> listener's hand-mount. On a **composed** node — the only kind the unified API
+> server binds a listener for — the `/api/v1/auth/*` session plane belongs to
+> the xkms module, and quicbaas serves its own verbs from the IAM namespace
+> instead: `POST /api/v1/iam/{refresh,validate,logout}`
+> (`pkg/api/rest/routes_iam.go`). `sdk/go/transport/rest` still sends all three
+> to the `/api/v1/auth` paths in the rows above, so against a composed node
+> `RefreshToken` and `ValidateToken` fail and `Logout` silently revokes nothing
+> — it reaches xkms's handler, which redeems against a different token store.
+> That is the live SDK-to-server mismatch tracked in #259; the SPA and the
+> TypeScript SDK were moved onto the IAM-namespaced verbs in #221 and #256.
+
 
 ## Overview
 

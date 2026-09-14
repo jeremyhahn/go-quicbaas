@@ -16,7 +16,10 @@
 // Code, Codex) via JSON-RPC over stdio, and stateless backends like Ollama.
 package orchestration
 
-import "context"
+import (
+	"context"
+	"sort"
+)
 
 // AgentBackend defines the interface for any agent backend.
 // Implementations include ACP-compatible agents (Claude Code, Codex) and Ollama.
@@ -126,6 +129,15 @@ type SpawnRequest struct {
 	// them to the container spec verbatim.
 	ExtraMounts []ContainerMount `json:"extra_mounts,omitempty"`
 
+	// Storage is the project's RESOLVED workspace storage tier — which
+	// filesystem the checkout is mounted on and how much memory the
+	// container gets. The orchestrator reads it from the durable project
+	// record before dispatching, exactly as it resolves the sandbox mode and
+	// the trust level; a backend applies it through ApplyWorkspaceStorage
+	// rather than interpreting it. Inert at its zero value, so a spawn for a
+	// project with no storage configuration builds the spec it always did.
+	Storage WorkspaceStoragePlan `json:"storage,omitempty"`
+
 	// Trust dimension (see container_trust.go and trust_policy.go). These
 	// mirror the ContainerSpec trust fields and are copied onto the spec by
 	// the sandbox spawn path. Every one is inert at its zero value, so a
@@ -178,6 +190,13 @@ type SpawnRequest struct {
 	// Rotation sets it to the account that just hit a limit so a replacement
 	// can never be the same account, independently of when its hold lapses.
 	AccountExclude []string `json:"account_exclude,omitempty"`
+
+	// JobID names the orchestration job this spawn works for, empty when the
+	// caller is running none. It is not a dispatch input: it is the SCOPE of
+	// the credential delivery grant the spawn's account resolution takes out
+	// (see account_lease.go), so a job's deliveries are listable and revocable
+	// as a set.
+	JobID string `json:"job_id,omitempty"`
 
 	// AccountHomeDir is set by ACPBackend.Spawn itself (never by a caller)
 	// when the resolved account carries file-based credentials (e.g.
@@ -242,7 +261,13 @@ type Session struct {
 	Status    SessionState `json:"status"`
 	PID       int          `json:"pid,omitempty"`
 	WorkDir   string       `json:"work_dir"`
-	CreatedAt int64        `json:"created_at"`
+
+	// CreatedAt is the spawn instant in UNIX NANOSECONDS, and every backend
+	// owes the same unit. See the unit contract below: this is the field a
+	// mixed-unit record starts from, because the orchestrator copies it onto
+	// the durable record verbatim while writing LastActivity from its own
+	// clock (orchestrator.go).
+	CreatedAt int64 `json:"created_at"`
 
 	// AccountID and AccountStrategy report which pooled provider account (if
 	// any) this session was spawned against and which AccountSelectionStrategy
@@ -253,6 +278,28 @@ type Session struct {
 	// it.
 	AccountID       string `json:"account_id,omitempty"`
 	AccountStrategy string `json:"account_strategy,omitempty"`
+
+	// CredentialLeaseID is the DELIVERY GRANT the spawn took out over the
+	// pooled account's credential material (see account_lease.go). Empty when
+	// the spawn used no pooled account, or when the deployment wired no leaser.
+	//
+	// A caller that persists a durable session record MUST copy it through:
+	// the session's ending revokes the grants named on the record, and a grant
+	// that reached no record is one no reaper can withdraw.
+	CredentialLeaseID string `json:"credential_lease_id,omitempty"`
+
+	// ContainerID names the container this session's agent runs in, when the
+	// BACKEND owns that container's lifecycle. It is empty for a session
+	// that runs as a host process, and empty on the orchestrator's own
+	// detached-container path, which knows the id without being told.
+	//
+	// It is reported because a container nobody can name is a container
+	// nothing can act in: the engine's publish path runs the delivery's
+	// commit and push inside this container (ExecSession), and a backend
+	// that started one and kept the id to itself would leave the daemon
+	// with no way to reach it. Callers persisting a durable session record
+	// copy it through so the id survives a resume.
+	ContainerID string `json:"container_id,omitempty"`
 }
 
 // SessionState represents the state of a session.
@@ -278,12 +325,87 @@ const (
 	SessionStateError SessionState = "error"
 )
 
+// sessionStates is every lifecycle state a session may report, keyed for O(1)
+// validation of a value that arrived from a caller.
+var sessionStates = map[SessionState]struct{}{
+	SessionStateActive:    {},
+	SessionStateIdle:      {},
+	SessionStateResumable: {},
+	SessionStateClosed:    {},
+	SessionStateError:     {},
+}
+
+// Valid reports whether s is a state this daemon uses. The empty value is NOT
+// valid: it is the absence of a state, and every caller that means "any" says
+// so by omitting the field rather than by naming nothing.
+func (s SessionState) Valid() bool {
+	_, ok := sessionStates[s]
+	return ok
+}
+
+// SessionStates lists every session state, sorted, so a transport or a
+// configuration validator can render the set rather than keep a copy of it
+// that drifts.
+func SessionStates() []string {
+	states := make([]string, 0, len(sessionStates))
+	for state := range sessionStates {
+		states = append(states, string(state))
+	}
+	sort.Strings(states)
+	return states
+}
+
+// =============================================================================
+// The unit every session instant is in
+// =============================================================================
+//
+// UNIX NANOSECONDS. Session.CreatedAt, SessionStatus.LastActivity,
+// SessionInfo's pair of both, and SessionRecord's pair of both are all
+// int64 nanoseconds since the epoch — the unit time.Time.UnixNano() produces
+// and time.Unix(0, n) reads back.
+//
+// It is written down because it was not obeyed. Two fields of ONE live
+// session record disagreed: created_at arrived in seconds from the
+// codex-exec backend, which reported sess.created.Unix(), while
+// last_activity arrived in nanoseconds from the orchestrator's own clock.
+// The browser's formatter guessed the unit by magnitude and so rendered both
+// plausibly, which is worse than rendering one of them wrongly — the guess
+// is invisible, and a reader believes a timestamp (go-quicbaas#855).
+//
+// A producer that has only seconds to offer must still multiply. A consumer
+// must never sniff magnitude to decide: there is one unit, and a value that
+// does not fit it is a defect in the producer.
+//
+// EVERY SPAWN PATH, NOT MOST OF THEM. The host ACP backend has five, and two
+// of them (spawnContainerJSONRPC, spawnOneShotCLI) already used UnixNano while
+// three (spawnJSONRPC — the dispatcher's default — spawnCLI, and
+// spawnContainerCLI) used Unix. Converting Prompt's lastActivity without them
+// was worse than leaving all four alone: it turned a record that was
+// consistently in the wrong unit into one whose two fields disagreed, which is
+// the defect itself rather than a step toward fixing it. Caught in review of
+// PR#859; the unit is now asserted per backend in
+// session_instant_unit_test.go.
+
 // SessionStatus contains health information about a session.
 type SessionStatus struct {
-	SessionID    string       `json:"session_id"`
-	State        SessionState `json:"state"`
-	LastActivity int64        `json:"last_activity"`
-	Uptime       int64        `json:"uptime"`
+	SessionID string       `json:"session_id"`
+	State     SessionState `json:"state"`
+
+	// LastActivity is the instant the session was last known to be doing
+	// something, in UNIX NANOSECONDS.
+	LastActivity int64 `json:"last_activity"`
+
+	// Uptime is a DURATION IN SECONDS, not an instant — the one field here
+	// that is neither nanoseconds nor a point in time.
+	//
+	// Seconds because two things downstream say so and one of them converts:
+	// the proto field is named `uptime_seconds` (api/proto/orchestrator.proto)
+	// and pkg/api/rest/handlers.go multiplies it by time.Second to render it.
+	// The codex-exec backend reported milliseconds into it, which is how this
+	// comment first claimed milliseconds — the contract was inferred from the
+	// one producer that disobeyed it instead of from the consumer that acts
+	// on it (go-quicbaas#855, review of PR#859).
+	Uptime int64 `json:"uptime"`
 }
 
 // ContentBlock represents a block of content in a response.

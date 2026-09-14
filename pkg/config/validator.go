@@ -16,10 +16,14 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	xkmsresolver "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/trust/resolver"
@@ -109,7 +113,9 @@ func (v *Validator) Validate(cfg *Config) error {
 	v.validateKMS(&cfg.KMS)
 	v.validateCrypto(&cfg.Crypto)
 	v.validateOrchestration(&cfg.Orchestration)
+	v.validateSDLC(&cfg.SDLC)
 	v.validateTrust(cfg.Trust)
+	v.validateIAM(&cfg.IAM)
 
 	// Return errors if any
 	if len(v.errors) > 0 {
@@ -210,7 +216,7 @@ func (v *Validator) validateRaft(cfg *RaftConfig, serverCfg *ServerConfig) {
 	}
 
 	// When server mode is cluster or devcluster, Raft configuration is required
-	if mode == ServerModeCluster || mode == ServerModeDevCluster {
+	if IsClusterLikeMode(mode) {
 		if cfg.NodeID == 0 {
 			v.addError("raft.node_id", "node ID must be greater than 0 when server.mode is 'cluster' or 'devcluster'")
 		}
@@ -546,6 +552,29 @@ func (v *Validator) validateTrust(cfg *xkmsresolver.Config) {
 	}
 }
 
+// validateIAM validates the IAM section. It is always run: the sub-sections it
+// covers have no "enabled" flag to gate on, because the IAM surface is mounted
+// whenever IAM is compiled in.
+//
+// The WebAuthn block is validated for shape only — an empty relying-party
+// identity is the supported derive-from-issuer deployment, not an error. See
+// IAMWebAuthnConfig.Validate for the required-versus-derived contract, and
+// IAMWebAuthnConfig.ValidateResolved for the check applied to the value the
+// relying party is actually built from.
+func (v *Validator) validateIAM(cfg *IAMConfig) {
+	if cfg == nil {
+		return
+	}
+	if err := cfg.WebAuthn.Validate(); err != nil {
+		var cve *ConfigValidationError
+		if errors.As(err, &cve) {
+			v.addError(cve.Field, cve.Message)
+		} else {
+			v.addError("iam.webauthn", err.Error())
+		}
+	}
+}
+
 // addError adds a validation error.
 // validateCrypto validates the process-wide crypto backend policy. It is
 // always run (the zero value is valid = software everywhere); an unknown
@@ -641,6 +670,13 @@ func (v *Validator) validateOrchestration(cfg *OrchestrationConfig) {
 		v.addError("orchestration.projects_root",
 			fmt.Sprintf("must be an absolute path: %q", cfg.ProjectsRoot))
 	}
+	// The sockets root is the parent of every per-session agent socket
+	// directory and is compared against mount sources the same way, so a
+	// relative entry could never match either.
+	if cfg.SocketsRoot != "" && !filepath.IsAbs(cfg.SocketsRoot) {
+		v.addError("orchestration.sockets_root",
+			fmt.Sprintf("must be an absolute path: %q", cfg.SocketsRoot))
+	}
 	for i, root := range cfg.Sandbox.AllowedMountRoots {
 		if root == "" || !filepath.IsAbs(root) {
 			v.addError(fmt.Sprintf("orchestration.sandbox.allowed_mount_roots[%d]", i),
@@ -658,7 +694,93 @@ func (v *Validator) validateOrchestration(cfg *OrchestrationConfig) {
 				cfg.TrustPolicy, strings.Join(OrchestrationTrustPolicies, ", ")))
 	}
 
+	// A negative lease TTL would make every holder stale on the read after
+	// it took the lease; zero is the documented "take the default".
+	if cfg.ReapLeaseTTL < 0 {
+		v.addError("orchestration.reap_lease_ttl",
+			fmt.Sprintf("must not be negative: %s", cfg.ReapLeaseTTL))
+	}
+
+	// A threshold on a state the detector does not watch would leave the
+	// operator believing a state is bounded that is not. Negative values are
+	// the documented off switch and are accepted.
+	for state := range cfg.IdleThresholds {
+		if !slices.Contains(OrchestrationWatchedJobStates, state) {
+			v.addError("orchestration.idle_thresholds."+state,
+				fmt.Sprintf("no job state is named %q (valid: %s)",
+					state, strings.Join(OrchestrationWatchedJobStates, ", ")))
+		}
+	}
+
 	v.validateAccountProviders(cfg.AccountProviders)
+
+	// The task-source poller's cadence. Zero means unset and takes the
+	// default (EffectiveSweepInterval); a negative interval is a value
+	// somebody wrote on purpose and got wrong, and is refused.
+	if cfg.SweepInterval < 0 {
+		v.addError("orchestration.sweep_interval", "must not be negative; zero takes the default")
+	}
+
+	// The deployment's worker-slot bound. Zero leaves the fleet axis
+	// undeclared, which is the default; a negative count is a number somebody
+	// wrote on purpose and got wrong, and a bound below zero cannot be
+	// distinguished downstream from the undeclared case.
+	if cfg.Fleet.MaxConcurrentJobs < 0 {
+		v.addError("orchestration.fleet.max_concurrent_jobs",
+			fmt.Sprintf("must not be negative: %d; zero leaves the fleet capacity undeclared",
+				cfg.Fleet.MaxConcurrentJobs))
+	}
+
+	// The command allowlist is matched exactly, so an empty entry would
+	// allow the empty command and hide a typo; the guard refuses it and so
+	// does the config.
+	for i, c := range cfg.VerificationCommands {
+		if strings.TrimSpace(c) == "" {
+			v.addError(fmt.Sprintf("orchestration.verification_commands[%d]", i),
+				"must not be empty; an empty allowlist entry would allow the empty command")
+		}
+	}
+
+	// The agent configuration directory is put on a session's environment
+	// verbatim, so a relative path would resolve against whatever the
+	// session's working directory is — a different directory per session.
+	if cfg.AgentConfigDir != "" && !filepath.IsAbs(cfg.AgentConfigDir) {
+		v.addError("orchestration.agent_config_dir",
+			fmt.Sprintf("must be an absolute path: %q", cfg.AgentConfigDir))
+	}
+
+	v.validateOrchestrationStageTimeouts(cfg.StageTimeouts)
+}
+
+// validateOrchestrationStageTimeouts refuses a per-moment bound a job cannot
+// be held to.
+//
+// NEGATIVE IS REFUSED, ZERO IS NOT. Zero means the operator did not set this
+// moment and takes the engine's defaults layer; a negative duration is a value
+// somebody wrote on purpose and got wrong, and it would expire the moment
+// before it began — every job failing at its first hook, reporting a timeout
+// nobody configured.
+func (v *Validator) validateOrchestrationStageTimeouts(cfg OrchestrationStageTimeouts) {
+	bounds := map[string]time.Duration{
+		"prepare":    cfg.Prepare,
+		"reviewable": cfg.Reviewable,
+		"complete":   cfg.Complete,
+		"cleanup":    cfg.Cleanup,
+		"blocked":    cfg.Blocked,
+	}
+	stages := make([]string, 0, len(bounds))
+	for stage := range bounds {
+		stages = append(stages, stage)
+	}
+	// Sorted so an operator with two bad bounds is told about them in the same
+	// order every time; the validator accumulates rather than failing fast.
+	sort.Strings(stages)
+	for _, stage := range stages {
+		if bounds[stage] < 0 {
+			v.addError("orchestration.stage_timeouts."+stage,
+				"must not be negative; a negative bound expires before the moment begins, and zero takes the default")
+		}
+	}
 }
 
 // isFIPSAvailable checks if FIPS mode is available on the host system.
@@ -681,4 +803,128 @@ func (v *Validator) isFIPSAvailable() bool {
 func Validate(cfg *Config) error {
 	validator := NewValidator()
 	return validator.Validate(cfg)
+}
+
+// validateSDLCPublicURL refuses a node that could onboard a project into the
+// void.
+//
+// Onboarding provisions a forge webhook pointing at this node's public
+// origin. An absent or malformed one is refused AT LOAD rather than at the
+// first onboarding, because the alternative is twenty-eight repositories
+// configured to deliver somewhere that does not answer, each reported
+// provisioned.
+func (v *Validator) validateSDLCPublicURL(public string) {
+	if err := ValidateSDLCWebhookPublicURL(public); err != nil {
+		v.addError("sdlc.webhook.public_url", err.Error())
+	}
+}
+
+// ValidateSDLCWebhookPublicURL reports whether a value is usable as this
+// node's public webhook origin. It is PURE — it reads no filesystem and no
+// environment — so the rule can be exercised on its own, which is what lets a
+// drift test pin it against the module's own refusal
+// (sdlc.NormalizeWebhookPublicURL). pkg/config cannot import pkg/sdlc, so the
+// rule is stated twice and the drift test is what keeps the two the same.
+func ValidateSDLCWebhookPublicURL(public string) error {
+	trimmed := strings.TrimSpace(public)
+	if trimmed == "" {
+		return &SDLCWebhookPublicURLError{
+			Reason: "required when the module is enabled; onboarding provisions forge webhooks pointing at this node, and it cannot guess the node's public origin",
+		}
+	}
+	parsed, err := url.Parse(trimmed)
+	switch {
+	case err != nil:
+		return &SDLCWebhookPublicURLError{Reason: "must be a URL: " + err.Error()}
+	case parsed.Scheme != "http" && parsed.Scheme != "https":
+		return &SDLCWebhookPublicURLError{Reason: "must be an absolute http or https URL; a forge delivers over neither scheme otherwise"}
+	case parsed.Host == "":
+		return &SDLCWebhookPublicURLError{Reason: "must name a host a forge can reach"}
+
+	// AN ORIGIN, NOT MERELY A URL. The module appends the webhook route to
+	// this value textually, so "https://factory.example?x=1" — which has a
+	// scheme and a host and passes every check above — yields a delivery URL
+	// whose path is "/" and whose query holds the route. A fragment swallows
+	// it the same way. Neither fails loudly: the delivery is provisioned,
+	// read-back verification compares the same malformed string and agrees,
+	// and conformance calls the repository healthy while nothing arrives. A
+	// PATH is allowed, for a node mounted behind a reverse proxy.
+	case parsed.RawQuery != "" || parsed.ForceQuery:
+		return &SDLCWebhookPublicURLError{Reason: "must carry no query string; the webhook route is appended to it, and a query swallows the route"}
+	case parsed.Fragment != "":
+		return &SDLCWebhookPublicURLError{Reason: "must carry no fragment; the webhook route is appended to it, and a fragment swallows the route"}
+	case parsed.User != nil:
+		return &SDLCWebhookPublicURLError{Reason: "must carry no userinfo; the forge stores and displays the delivery URL, so a credential in it is a credential published"}
+	}
+	return nil
+}
+
+// SDLCWebhookPublicURLError is a public webhook origin the node cannot
+// append its webhook route to.
+type SDLCWebhookPublicURLError struct {
+	// Reason says which property of an origin the value does not have.
+	Reason string
+}
+
+func (e *SDLCWebhookPublicURLError) Error() string { return e.Reason }
+
+// validateSDLC validates the SDLC module's settings when the module is
+// enabled. Every zero that would mean "never" or "unbounded" is refused.
+func (v *Validator) validateSDLC(cfg *SDLCConfig) {
+	if cfg == nil || !cfg.Enabled {
+		return
+	}
+	if cfg.IssuePageLimit <= 0 {
+		v.addError("sdlc.issue_page_limit", "must be positive; a sweep that lists no issues adopts nothing")
+	}
+	if cfg.MergeAttempts <= 0 {
+		v.addError("sdlc.merge_attempts", "must be positive; a merge must be attempted at least once")
+	}
+	if cfg.Webhook.MaxBody <= 0 {
+		v.addError("sdlc.webhook.max_body", "must be positive; verification buffers the whole body, so an unbounded one is an unauthenticated memory sink")
+	}
+	v.validateSDLCPublicURL(cfg.Webhook.PublicURL)
+	for i, command := range cfg.VerificationCommands {
+		if strings.TrimSpace(command) == "" {
+			v.addError("sdlc.verification_commands["+strconv.Itoa(i)+"]", "must not be empty; an empty criterion runs the empty command")
+		}
+	}
+	for i, host := range cfg.RepoHosts {
+		if strings.TrimSpace(host) == "" {
+			v.addError("sdlc.repo_hosts["+strconv.Itoa(i)+"]", "must not be empty; an empty entry matches no host and hides a typo")
+		}
+	}
+	// NEGATIVE IS REFUSED, ZERO IS NOT here too: zero takes the module's
+	// default cadence, while a negative interval would make a ticker the
+	// runtime panics on.
+	if cfg.LabelReconcile.Interval < 0 {
+		v.addError("sdlc.label_reconcile.interval",
+			"must not be negative; zero takes the default and a negative cadence runs no sweep at all")
+	}
+	if cfg.LabelReconcile.ForgeInterval < 0 {
+		v.addError("sdlc.label_reconcile.forge_interval",
+			"must not be negative; zero takes the default and a negative spacing paces nothing")
+	}
+	// NEGATIVE IS REFUSED, ZERO IS NOT: zero takes the module's defaults
+	// layer, while a negative value would abandon a parked task's question
+	// before its first post.
+	if cfg.Surfacing.RetryAttempts < 0 {
+		v.addError("sdlc.surfacing.retry_attempts",
+			"must not be negative; zero takes the default and a negative budget abandons every park before its first post")
+	}
+	if cfg.Surfacing.RetryInterval < 0 {
+		v.addError("sdlc.surfacing.retry_interval",
+			"must not be negative; zero takes the default and a negative interval paces nothing")
+	}
+	switch {
+	case cfg.Surfacing.PostTimeout < 0:
+		v.addError("sdlc.surfacing.post_timeout",
+			"must not be negative; zero takes the default and a negative deadline cancels every post before it is made")
+	case cfg.Surfacing.PostTimeout > 0 && cfg.Surfacing.PostTimeout < SDLCSurfacingMinPostTimeout:
+		v.addError("sdlc.surfacing.post_timeout",
+			"a deadline this short cannot carry a forge round trip; zero takes the default")
+	case cfg.Surfacing.PostTimeout > SDLCSurfacingMaxPostTimeout:
+		v.addError("sdlc.surfacing.post_timeout",
+			"a single post allowed more than a day is not a deadline; zero takes the default")
+	}
 }

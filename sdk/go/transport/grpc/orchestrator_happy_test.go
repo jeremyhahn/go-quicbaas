@@ -105,6 +105,24 @@ func (f *fakeOrchestratorServer) ClaimTask(context.Context, *pb.ClaimTaskRequest
 	}
 	return &pb.ClaimTaskResponse{TaskId: "t1", AgentId: "a1", Claimed: true}, nil
 }
+func (f *fakeOrchestratorServer) BlockTask(context.Context, *pb.BlockTaskRequest) (*pb.BlockTaskResponse, error) {
+	if err := f.e(); err != nil {
+		return nil, err
+	}
+	return &pb.BlockTaskResponse{TaskId: "t1", Blocked: true}, nil
+}
+func (f *fakeOrchestratorServer) DeleteTask(context.Context, *pb.DeleteTaskRequest) (*pb.DeleteTaskResponse, error) {
+	if err := f.e(); err != nil {
+		return nil, err
+	}
+	return &pb.DeleteTaskResponse{TaskId: "t1", Deleted: true}, nil
+}
+func (f *fakeOrchestratorServer) ReadmitTask(context.Context, *pb.ReadmitTaskRequest) (*pb.ReadmitTaskResponse, error) {
+	if err := f.e(); err != nil {
+		return nil, err
+	}
+	return &pb.ReadmitTaskResponse{TaskId: "t1", Readmitted: true}, nil
+}
 func (f *fakeOrchestratorServer) CompleteTask(context.Context, *pb.CompleteTaskRequest) (*pb.CompleteTaskResponse, error) {
 	if err := f.e(); err != nil {
 		return nil, err
@@ -232,6 +250,11 @@ var orchCases = []orchCase{
 	{"ListTasks", "ListTasks", &orchestrator.ListTasksRequest{TenantID: "t1", Status: "pending", TeamName: "team", AssignedTo: "a1"}},
 	{"ClaimTask", "ClaimTask", &orchestrator.ClaimTaskRequest{TenantID: "t1", TaskID: "t1", AgentID: "a1"}},
 	{"CompleteTask", "CompleteTask", &orchestrator.CompleteTaskRequest{TenantID: "t1", TaskID: "t1", Result: &orchestrator.TaskResult{Output: "o"}}},
+	{"BlockTask", "BlockTask", &orchestrator.BlockTaskRequest{TenantID: "t1", TaskID: "t1", Kind: "blocked", Reason: "r"}},
+	{"ReadmitTask", "ReadmitTask", &orchestrator.ReadmitTaskRequest{TenantID: "t1", TaskID: "t1"}},
+	{"DeleteTask", "DeleteTask", &orchestrator.DeleteTaskRequest{TenantID: "t1", TaskID: "t1"}},
+	{"ListTasksProjectStatuses", "ListTasks", &orchestrator.ListTasksRequest{TenantID: "t1", ProjectID: "p1", Statuses: []string{"blocked", "pending"}}},
+	{"CreateTaskWithSource", "CreateTask", &orchestrator.CreateTaskRequest{TenantID: "t1", Subject: "subj", Source: &orchestrator.TaskSource{Kind: "operator", Ref: "alice"}, Priority: 2, AttemptBudget: 3}},
 	{"RegisterAgent", "RegisterAgent", &orchestrator.RegisterAgentRequest{TenantID: "t1", Name: "agent"}},
 	{"GetAgent", "GetAgent", &orchestrator.GetAgentRequest{TenantID: "t1", AgentID: "a1"}},
 	{"ListAgents", "ListAgents", &orchestrator.ListAgentsRequest{TenantID: "t1", Host: "host", Status: "active", AgentType: "worker", Backend: "claude"}},

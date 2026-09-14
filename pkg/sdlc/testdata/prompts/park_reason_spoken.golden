@@ -1,0 +1,7 @@
+the owner must rule on the question recorded with this task: The worker stopped on a question it cannot answer from the repository. It made no change to the checkout, so the verification commands were not run and there is nothing to review.
+
+The worker said:
+
+I need to know which router to use.
+
+SDLC-STOP: question unblock[kind=owner_ruling]

@@ -29,7 +29,7 @@ type DatabaseRecord struct {
 }
 
 // RecordKeyPrefix is the key prefix for database records in the system DB.
-const RecordKeyPrefix = "sys:db:"
+const RecordKeyPrefix = "__sys:db:"
 
 // RecordKey returns the storage key for a database record.
 func RecordKey(dbName string) string {

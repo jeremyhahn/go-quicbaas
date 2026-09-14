@@ -63,7 +63,7 @@ actually needs and the one a bare `error` loses.
   to satisfy the `Provider` interface. Provider *selection* is that feature's.
 - **`pkg/rag/`** (`../rag/`) — reaches Ollama for generation through the RAG
   pipeline, not directly.
-- **`pkg/orchestration/`** (`../agent-orchestration/`) — the `ollama` inference
+- **`pkg/orchestration/`** (`../software-factory/`) — the `ollama` inference
   backend and the fleet-agent `--backend ollama` path.
 - **go-trusted-platform** — the platform layer can point `base_url` at an
   attested container rather than a plain host process. That is stated in the
@@ -129,7 +129,7 @@ reads. Most config blocks in this repository are file-only; this one is not.
 - **It does not manage models.** No pull, no delete, no quantisation. Model
   lifecycle is the operator's, through Ollama itself.
 - **It does not choose backends.** Selecting Ollama over another inference
-  backend is orchestration's decision (`../agent-orchestration/`).
+  backend is orchestration's decision (`../software-factory/`).
 - **It does not cache.** Response caching for embeddings lives in
   `../embeddings/`; this client issues the request it is given.
 - **It is not a chat product.** The chat surface exists to serve the

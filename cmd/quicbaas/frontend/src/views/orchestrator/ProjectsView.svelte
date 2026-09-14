@@ -18,6 +18,13 @@
   role permission matrix for each project.  Each project row can be expanded
   to show per-agent access levels.  Operators can grant or revoke (deny) roles
   with a single click.
+
+  The create and edit dialogs edit the whole project record — workspace, git
+  identity and signing, quotas, and the autonomous-development configuration.
+  The edit dialog additionally edits the project's SDLC binding in place,
+  through the SDLC module's own endpoints, and only where that module is
+  mounted: the binding probe distinguishes "the module is not running on this
+  node" from "the module is running and this project is not bound".
 -->
 <script lang="ts">
   import { getSDKClient } from '../../stores/sdkClient.ts';
@@ -28,8 +35,6 @@
     ProjectRole,
     GrantAgentRoleRequest,
     RevokeAgentRoleRequest,
-    CreateProjectRequest,
-    UpdateProjectRequest,
   } from '@quicbaas/sdk';
   import type { AgentRegistration } from '@quicbaas/sdk';
   import {
@@ -43,9 +48,35 @@
     ShieldOff,
     Shield,
     Users,
+    Bot,
   } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import ProjectFormFields from '../../components/orchestrator/ProjectFormFields.svelte';
+  import SdlcBindingFields from '../../components/orchestrator/SdlcBindingFields.svelte';
+  import SdlcConformancePanel from '../../components/orchestrator/SdlcConformancePanel.svelte';
+  import {
+    createProjectRequestFrom,
+    emptyProjectForm,
+    projectFormFrom,
+    updateProjectRequestFrom,
+    validateProjectForm,
+    type ProjectFormState,
+  } from '../../lib/projectForm.ts';
+  import {
+    bindingAvailabilityFor,
+    bindingFormFrom,
+    bindingFrom,
+    emptyBindingForm,
+    validateBindingForm,
+    type BindingAvailability,
+    type BindingFormState,
+  } from '../../lib/sdlcBinding.ts';
+  import {
+    conformanceAvailabilityFor,
+    type ConformanceState,
+  } from '../../lib/sdlcConformance.ts';
+  import type { ConformanceReport } from '@quicbaas/sdk';
 
   // ---------------------------------------------------------------------------
   // Project list state
@@ -90,74 +121,44 @@
     expanded = next;
   }
 
+  function errorMessage(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+  }
+
   // ---------------------------------------------------------------------------
   // Create project dialog
   // ---------------------------------------------------------------------------
 
   let showCreateDialog = $state(false);
-  let createName = $state('');
-  let createDescription = $state('');
-  let createWorkspacePath = $state('');
-  let createGitRepoUrl = $state('');
-  let createGitBranch = $state('');
-  let createHostAffinity = $state('');
-  let createTokenBudget = $state(0);
-  let createGpuMinutes = $state(0);
-  let createMaxConcurrency = $state(0);
+  let createForm = $state<ProjectFormState>(emptyProjectForm());
   let createError = $state('');
   let creating = $state(false);
 
-  /**
-   * numOrUndefined treats 0 (and any non-positive value) as "unlimited" —
-   * the field is omitted from the request entirely rather than sent as an
-   * explicit 0.
-   */
-  function numOrUndefined(v: number): number | undefined {
-    return v > 0 ? v : undefined;
-  }
-
   function openCreateDialog(): void {
-    showCreateDialog = true;
-    createName = '';
-    createDescription = '';
-    createWorkspacePath = '';
-    createGitRepoUrl = '';
-    createGitBranch = '';
-    createHostAffinity = '';
-    createTokenBudget = 0;
-    createGpuMinutes = 0;
-    createMaxConcurrency = 0;
+    createForm = emptyProjectForm();
     createError = '';
+    showCreateDialog = true;
   }
 
   async function submitCreate(): Promise<void> {
-    if (!createName.trim()) {
-      createError = 'Project name is required.';
+    const invalid = validateProjectForm(createForm, true);
+    if (invalid !== '') {
+      createError = invalid;
       return;
     }
     creating = true;
     createError = '';
+    const name = createForm.name.trim();
     try {
       const client = await getSDKClient();
-      const req: CreateProjectRequest = {
-        tenant_id: orchestratorStore.activeTenantID,
-        name: createName.trim(),
-        description: createDescription.trim() || undefined,
-        workspace_path: createWorkspacePath.trim() || undefined,
-        git_repo_url: createGitRepoUrl.trim() || undefined,
-        git_default_branch: createGitBranch.trim() || undefined,
-        host_affinity: createHostAffinity.trim() || undefined,
-        token_budget: numOrUndefined(createTokenBudget),
-        gpu_minutes: numOrUndefined(createGpuMinutes),
-        max_concurrency: numOrUndefined(createMaxConcurrency),
-      };
-      await client.projects.createProject(req);
-      showToast('success', `Project "${createName.trim()}" created`);
+      await client.projects.createProject(
+        createProjectRequestFrom(orchestratorStore.activeTenantID, createForm),
+      );
+      showToast('success', `Project "${name}" created`);
       showCreateDialog = false;
       await fetchAll();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      createError = `Create failed: ${msg}`;
+      createError = `Create failed: ${errorMessage(err)}`;
     } finally {
       creating = false;
     }
@@ -180,8 +181,7 @@
       deleteTarget = null;
       await fetchAll();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast('error', `Delete failed: ${msg}`);
+      showToast('error', `Delete failed: ${errorMessage(err)}`);
     } finally {
       deleting = false;
     }
@@ -192,98 +192,176 @@
   // ---------------------------------------------------------------------------
 
   let editTarget = $state<Project | null>(null);
-  let editDescription = $state('');
-  let editWorkspacePath = $state('');
-  let editGitRepoUrl = $state('');
-  let editGitBranch = $state('');
-  let editHostAffinity = $state('');
-  let editTokenBudget = $state(0);
-  let editGpuMinutes = $state(0);
-  let editMaxConcurrency = $state(0);
+  let editForm = $state<ProjectFormState>(emptyProjectForm());
   let editError = $state('');
   let editing = $state(false);
 
+  // The project's SDLC binding, probed when the dialog opens.
+  let bindingAvailability = $state<BindingAvailability>('absent');
+  let bindingProbeError = $state('');
+  let bindingForm = $state<BindingFormState>(emptyBindingForm());
+  let bindingEnabled = $state(false);
+  let wasBound = $state(false);
+  let availableForges = $state<string[]>([]);
+
+  // The project's ONBOARDING conformance: whether the forge is actually
+  // configured for QuicBaaS to drive this repository. Read-only — the repair
+  // is the separate `onboard` verb behind its own button.
+  let conformanceState = $state<ConformanceState>('absent');
+  let conformanceReport = $state<ConformanceReport | null>(null);
+  let conformanceError = $state('');
+
   function openEditDialog(project: Project): void {
     editTarget = project;
-    editDescription = project.description ?? '';
-    editWorkspacePath = project.workspace?.path ?? '';
-    editGitRepoUrl = project.git?.repo_url ?? '';
-    editGitBranch = project.git?.default_branch ?? '';
-    editHostAffinity = project.host_affinity ?? '';
-    editTokenBudget = project.quotas?.token_budget ?? 0;
-    editGpuMinutes = project.quotas?.gpu_minutes ?? 0;
-    editMaxConcurrency = project.quotas?.max_concurrency ?? 0;
+    editForm = projectFormFrom(project);
     editError = '';
+    bindingAvailability = 'absent';
+    bindingProbeError = '';
+    bindingForm = emptyBindingForm();
+    bindingEnabled = false;
+    wasBound = false;
+    availableForges = [];
+    conformanceState = 'absent';
+    conformanceReport = null;
+    conformanceError = '';
+    void probeBinding(project.id);
   }
 
   /**
-   * stringIfChanged returns the trimmed value when it is non-empty and
-   * differs from the original — matching UpdateProjectRequest's
-   * presence-based "set" semantics (there is no clear_* flag for these
-   * fields, so a cleared field simply isn't sent).
+   * probeBinding asks the SDLC module for this project's binding. The three
+   * answers are genuinely different: the module is not running on this node
+   * (503 — the section is hidden entirely), it is running and this project is
+   * not bound (404 — the section is shown, unbound), or it is bound (200).
    */
-  function stringIfChanged(next: string, original: string): string | undefined {
-    const trimmed = next.trim();
-    if (trimmed === '' || trimmed === original) return undefined;
-    return trimmed;
+  async function probeBinding(projectId: string): Promise<void> {
+    let client;
+    try {
+      client = await getSDKClient();
+    } catch {
+      bindingAvailability = 'absent';
+      return;
+    }
+    const sdlc = client.sdlc;
+    if (!sdlc) {
+      bindingAvailability = 'absent';
+      return;
+    }
+    try {
+      const binding = await sdlc.binding(orchestratorStore.activeTenantID, projectId);
+      bindingForm = bindingFormFrom(binding);
+      bindingAvailability = 'bound';
+      bindingEnabled = true;
+      wasBound = true;
+    } catch (err: unknown) {
+      bindingAvailability = bindingAvailabilityFor(err);
+      if (bindingAvailability === 'error') {
+        bindingProbeError = `Failed to read the SDLC binding: ${errorMessage(err)}`;
+      }
+    }
+    if (bindingAvailability === 'absent') return;
+    try {
+      availableForges = await sdlc.forges();
+    } catch {
+      // The module answered the binding probe but not the capability probe.
+      // Nothing is disabled in that case: the server still refuses a forge it
+      // has no adapter for, and greying out every option because we could not
+      // ask would be worse than letting that refusal happen.
+      availableForges = [];
+    }
+    if (bindingAvailability === 'bound') {
+      await loadConformance(projectId);
+    }
   }
 
-  /** numIfChanged mirrors stringIfChanged for the numeric quota fields. */
-  function numIfChanged(next: number, original: number | undefined): number | undefined {
-    const parsed = numOrUndefined(next);
-    if (parsed === undefined || parsed === original) return undefined;
-    return parsed;
+  /**
+   * loadConformance reads the project's onboarding conformance. Read-only on
+   * purpose: an operator must be able to ask what state a repository is in
+   * without changing it, which is why repair is a separate call.
+   */
+  async function loadConformance(projectId: string): Promise<void> {
+    conformanceState = 'loading';
+    conformanceError = '';
+    try {
+      const client = await getSDKClient();
+      if (!client.sdlc) {
+        conformanceState = 'absent';
+        return;
+      }
+      conformanceReport = await client.sdlc.conformance(orchestratorStore.activeTenantID, projectId);
+      conformanceState = 'ready';
+    } catch (err: unknown) {
+      conformanceState = conformanceAvailabilityFor(err);
+      if (conformanceState === 'error') {
+        conformanceError = `Failed to read onboarding conformance: ${errorMessage(err)}`;
+      }
+    }
   }
+
+  /**
+   * repairConformance provisions the repository and re-reads the report. It
+   * is a WRITE, behind its own button, so nothing about opening this dialog
+   * can change a repository's configuration.
+   */
+  async function repairConformance(projectId: string): Promise<void> {
+    conformanceState = 'loading';
+    conformanceError = '';
+    try {
+      const client = await getSDKClient();
+      if (!client.sdlc) {
+        conformanceState = 'absent';
+        return;
+      }
+      const result = await client.sdlc.onboard(orchestratorStore.activeTenantID, projectId);
+      conformanceReport = result.conformance ?? conformanceReport;
+      conformanceState = 'ready';
+      showToast('success', 'Repository provisioned');
+    } catch (err: unknown) {
+      conformanceState = 'error';
+      conformanceError = `Provisioning failed: ${errorMessage(err)}`;
+    }
+  }
+
+  /** bindingVisible says the SDLC module is mounted and has something to say. */
+  const bindingVisible = $derived(bindingAvailability !== 'absent');
 
   async function submitEdit(): Promise<void> {
-    if (!editTarget) return;
+    const project = editTarget;
+    if (!project) return;
+    const invalid = validateProjectForm(editForm, false);
+    if (invalid !== '') {
+      editError = invalid;
+      return;
+    }
+    if (bindingVisible && bindingEnabled) {
+      const bindingInvalid = validateBindingForm(bindingForm, availableForges);
+      if (bindingInvalid !== '') {
+        editError = bindingInvalid;
+        return;
+      }
+    }
     editing = true;
     editError = '';
     try {
       const client = await getSDKClient();
-      const req: UpdateProjectRequest = {
-        tenant_id: orchestratorStore.activeTenantID,
-        project_id: editTarget.id,
-      };
-
-      const trimmedDesc = editDescription.trim();
-      const originalDesc = editTarget.description ?? '';
-      if (trimmedDesc !== originalDesc) {
-        if (trimmedDesc === '') {
-          req.clear_description = true;
-        } else {
-          req.description = trimmedDesc;
+      await client.projects.updateProject(
+        updateProjectRequestFrom(orchestratorStore.activeTenantID, project, editForm),
+      );
+      if (bindingVisible && client.sdlc) {
+        if (bindingEnabled) {
+          await client.sdlc.bind(
+            orchestratorStore.activeTenantID,
+            project.id,
+            bindingFrom(project.id, bindingForm),
+          );
+        } else if (wasBound) {
+          await client.sdlc.unbind(orchestratorStore.activeTenantID, project.id);
         }
       }
-
-      const workspacePath = stringIfChanged(editWorkspacePath, editTarget.workspace?.path ?? '');
-      if (workspacePath !== undefined) req.workspace_path = workspacePath;
-
-      const gitRepoUrl = stringIfChanged(editGitRepoUrl, editTarget.git?.repo_url ?? '');
-      if (gitRepoUrl !== undefined) req.git_repo_url = gitRepoUrl;
-
-      const gitBranch = stringIfChanged(editGitBranch, editTarget.git?.default_branch ?? '');
-      if (gitBranch !== undefined) req.git_default_branch = gitBranch;
-
-      const hostAffinity = stringIfChanged(editHostAffinity, editTarget.host_affinity ?? '');
-      if (hostAffinity !== undefined) req.host_affinity = hostAffinity;
-
-      const tokenBudget = numIfChanged(editTokenBudget, editTarget.quotas?.token_budget);
-      if (tokenBudget !== undefined) req.token_budget = tokenBudget;
-
-      const gpuMinutes = numIfChanged(editGpuMinutes, editTarget.quotas?.gpu_minutes);
-      if (gpuMinutes !== undefined) req.gpu_minutes = gpuMinutes;
-
-      const maxConcurrency = numIfChanged(editMaxConcurrency, editTarget.quotas?.max_concurrency);
-      if (maxConcurrency !== undefined) req.max_concurrency = maxConcurrency;
-
-      await client.projects.updateProject(req);
-      showToast('success', `Project "${editTarget.name}" updated`);
+      showToast('success', `Project "${project.name}" updated`);
       editTarget = null;
       await fetchAll();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      editError = `Update failed: ${msg}`;
+      editError = `Update failed: ${errorMessage(err)}`;
     } finally {
       editing = false;
     }
@@ -317,8 +395,7 @@
       showToast('success', `Role updated to "${role}"`);
       await fetchAll();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast('error', `Role change failed: ${msg}`);
+      showToast('error', `Role change failed: ${errorMessage(err)}`);
     } finally {
       const after = new Set(roleChanging);
       after.delete(key);
@@ -342,8 +419,7 @@
       showToast('success', 'Agent access revoked (denied)');
       await fetchAll();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast('error', `Revoke failed: ${msg}`);
+      showToast('error', `Revoke failed: ${errorMessage(err)}`);
     } finally {
       const after = new Set(roleChanging);
       after.delete(key);
@@ -372,14 +448,9 @@
     return a?.name ?? agentId.slice(0, 12);
   }
 
-  /** Return the current role for an agent in a project, or null if unscoped. */
-  function currentRole(project: Project, agentId: string): ProjectRole | null {
-    return (project.permissions?.agent_roles?.[agentId] ?? null) as ProjectRole | null;
-  }
-
   /** True when no AgentRoles are set — project is in legacy unscoped mode. */
   function isUnscoped(project: Project): boolean {
-    const roles = project.permissions?.agent_roles;
+    const roles = project.agent_roles;
     return !roles || Object.keys(roles).length === 0;
   }
 </script>
@@ -393,134 +464,15 @@
     aria-label="Create project"
     onkeydown={(e) => { if (e.key === 'Escape') { showCreateDialog = false; } }}
   >
-    <div class="modal-box max-w-md">
+    <div class="modal-box max-w-md max-h-[85vh] overflow-y-auto">
       <h3 class="font-bold text-base">New Project</h3>
-      <div class="form-control mt-4 gap-3">
-        <div>
-          <label class="label py-1" for="proj-name">
-            <span class="label-text text-xs">Name <span class="text-error">*</span></span>
-          </label>
-          <input
-            id="proj-name"
-            type="text"
-            class="input input-bordered input-sm w-full"
-            placeholder="my-project"
-            bind:value={createName}
-          />
-        </div>
-        <div>
-          <label class="label py-1" for="proj-desc">
-            <span class="label-text text-xs">Description</span>
-          </label>
-          <input
-            id="proj-desc"
-            type="text"
-            class="input input-bordered input-sm w-full"
-            placeholder="Optional description"
-            bind:value={createDescription}
-          />
-        </div>
-        <div>
-          <label class="label py-1" for="proj-workspace-path">
-            <span class="label-text text-xs">Workspace Path</span>
-          </label>
-          <input
-            id="proj-workspace-path"
-            type="text"
-            class="input input-bordered input-sm w-full font-mono"
-            placeholder="/home/agent/workspace"
-            bind:value={createWorkspacePath}
-          />
-          <p class="text-xs text-base-content/40 mt-1">
-            Becomes the working directory for sessions spawned under this project.
-          </p>
-        </div>
-        <div>
-          <label class="label py-1" for="proj-git-url">
-            <span class="label-text text-xs">Git Repo URL</span>
-          </label>
-          <input
-            id="proj-git-url"
-            type="text"
-            class="input input-bordered input-sm w-full"
-            placeholder="https://github.com/org/repo.git"
-            bind:value={createGitRepoUrl}
-          />
-        </div>
-        <div>
-          <label class="label py-1" for="proj-git-branch">
-            <span class="label-text text-xs">Git Branch</span>
-          </label>
-          <input
-            id="proj-git-branch"
-            type="text"
-            class="input input-bordered input-sm w-full"
-            placeholder="main"
-            bind:value={createGitBranch}
-          />
-        </div>
 
-        <details class="collapse collapse-arrow bg-base-100 rounded-box">
-          <summary class="collapse-title text-xs font-semibold py-2 min-h-0">Advanced</summary>
-          <div class="collapse-content flex flex-col gap-3 pt-1">
-            <div>
-              <label class="label py-1" for="proj-host-affinity">
-                <span class="label-text text-xs">Host Affinity</span>
-              </label>
-              <input
-                id="proj-host-affinity"
-                type="text"
-                class="input input-bordered input-sm w-full"
-                placeholder="Optional daemon host/name"
-                bind:value={createHostAffinity}
-              />
-            </div>
-            <div>
-              <label class="label py-1" for="proj-token-budget">
-                <span class="label-text text-xs">Token Budget</span>
-              </label>
-              <input
-                id="proj-token-budget"
-                type="number"
-                min="0"
-                class="input input-bordered input-sm w-full"
-                placeholder="0 = unlimited"
-                bind:value={createTokenBudget}
-              />
-            </div>
-            <div>
-              <label class="label py-1" for="proj-gpu-minutes">
-                <span class="label-text text-xs">GPU Minutes</span>
-              </label>
-              <input
-                id="proj-gpu-minutes"
-                type="number"
-                min="0"
-                class="input input-bordered input-sm w-full"
-                placeholder="0 = unlimited"
-                bind:value={createGpuMinutes}
-              />
-            </div>
-            <div>
-              <label class="label py-1" for="proj-max-concurrency">
-                <span class="label-text text-xs">Max Concurrency</span>
-              </label>
-              <input
-                id="proj-max-concurrency"
-                type="number"
-                min="0"
-                class="input input-bordered input-sm w-full"
-                placeholder="0 = unlimited"
-                bind:value={createMaxConcurrency}
-              />
-            </div>
-          </div>
-        </details>
+      <ProjectFormFields idPrefix="proj" bind:form={createForm} nameEditable />
 
-        {#if createError}
-          <p class="text-xs text-error">{createError}</p>
-        {/if}
-      </div>
+      {#if createError}
+        <p class="text-xs text-error mt-3">{createError}</p>
+      {/if}
+
       <div class="modal-action">
         <button
           class="btn btn-sm btn-ghost"
@@ -595,122 +547,64 @@
     aria-label="Edit project"
     onkeydown={(e) => { if (e.key === 'Escape') { editTarget = null; } }}
   >
-    <div class="modal-box max-w-md">
+    <div class="modal-box max-w-md max-h-[85vh] overflow-y-auto">
       <h3 class="font-bold text-base">Edit Project — {editTarget.name}</h3>
-      <div class="form-control mt-4 gap-3">
-        <div>
-          <label class="label py-1" for="edit-proj-desc">
-            <span class="label-text text-xs">Description</span>
-          </label>
-          <input
-            id="edit-proj-desc"
-            type="text"
-            class="input input-bordered input-sm w-full"
-            placeholder="Optional description"
-            bind:value={editDescription}
-          />
-        </div>
-        <div>
-          <label class="label py-1" for="edit-proj-workspace-path">
-            <span class="label-text text-xs">Workspace Path</span>
-          </label>
-          <input
-            id="edit-proj-workspace-path"
-            type="text"
-            class="input input-bordered input-sm w-full font-mono"
-            placeholder="/home/agent/workspace"
-            bind:value={editWorkspacePath}
-          />
-          <p class="text-xs text-base-content/40 mt-1">
-            Becomes the working directory for sessions spawned under this project.
-          </p>
-        </div>
-        <div>
-          <label class="label py-1" for="edit-proj-git-url">
-            <span class="label-text text-xs">Git Repo URL</span>
-          </label>
-          <input
-            id="edit-proj-git-url"
-            type="text"
-            class="input input-bordered input-sm w-full"
-            placeholder="https://github.com/org/repo.git"
-            bind:value={editGitRepoUrl}
-          />
-        </div>
-        <div>
-          <label class="label py-1" for="edit-proj-git-branch">
-            <span class="label-text text-xs">Git Branch</span>
-          </label>
-          <input
-            id="edit-proj-git-branch"
-            type="text"
-            class="input input-bordered input-sm w-full"
-            placeholder="main"
-            bind:value={editGitBranch}
-          />
-        </div>
 
-        <details class="collapse collapse-arrow bg-base-100 rounded-box">
-          <summary class="collapse-title text-xs font-semibold py-2 min-h-0">Advanced</summary>
+      <ProjectFormFields idPrefix="edit-proj" bind:form={editForm} editing />
+
+      {#if bindingVisible}
+        <details class="collapse collapse-arrow bg-base-100 rounded-box mt-3" open={bindingEnabled}>
+          <summary class="collapse-title text-xs font-semibold py-2 min-h-0">
+            Issue-driven delivery (SDLC)
+          </summary>
           <div class="collapse-content flex flex-col gap-3 pt-1">
-            <div>
-              <label class="label py-1" for="edit-proj-host-affinity">
-                <span class="label-text text-xs">Host Affinity</span>
-              </label>
+            {#if bindingProbeError}
+              <p class="text-xs text-error">{bindingProbeError}</p>
+            {/if}
+
+            <label class="label cursor-pointer justify-start gap-3 py-1" for="edit-proj-sdlc-enabled">
               <input
-                id="edit-proj-host-affinity"
-                type="text"
-                class="input input-bordered input-sm w-full"
-                placeholder="Optional daemon host/name"
-                bind:value={editHostAffinity}
+                id="edit-proj-sdlc-enabled"
+                type="checkbox"
+                class="toggle toggle-sm toggle-primary"
+                bind:checked={bindingEnabled}
               />
-            </div>
-            <div>
-              <label class="label py-1" for="edit-proj-token-budget">
-                <span class="label-text text-xs">Token Budget</span>
-              </label>
-              <input
-                id="edit-proj-token-budget"
-                type="number"
-                min="0"
-                class="input input-bordered input-sm w-full"
-                placeholder="0 = unlimited"
-                bind:value={editTokenBudget}
+              <span class="label-text text-xs">
+                Bind this project to a forge repository and an SDLC
+              </span>
+            </label>
+            {#if wasBound && !bindingEnabled}
+              <p class="text-xs text-warning">
+                Saving now removes this project's binding. Its issues stop being adopted.
+              </p>
+            {/if}
+
+            {#if bindingEnabled}
+              <SdlcBindingFields
+                idPrefix="edit-proj"
+                bind:binding={bindingForm}
+                {availableForges}
               />
-            </div>
-            <div>
-              <label class="label py-1" for="edit-proj-gpu-minutes">
-                <span class="label-text text-xs">GPU Minutes</span>
-              </label>
-              <input
-                id="edit-proj-gpu-minutes"
-                type="number"
-                min="0"
-                class="input input-bordered input-sm w-full"
-                placeholder="0 = unlimited"
-                bind:value={editGpuMinutes}
+            {/if}
+
+            {#if conformanceState !== 'absent' && editTarget}
+              {@const target = editTarget}
+              <SdlcConformancePanel
+                report={conformanceReport}
+                busy={conformanceState === 'loading'}
+                error={conformanceError}
+                onRefresh={() => void loadConformance(target.id)}
+                onRepair={() => void repairConformance(target.id)}
               />
-            </div>
-            <div>
-              <label class="label py-1" for="edit-proj-max-concurrency">
-                <span class="label-text text-xs">Max Concurrency</span>
-              </label>
-              <input
-                id="edit-proj-max-concurrency"
-                type="number"
-                min="0"
-                class="input input-bordered input-sm w-full"
-                placeholder="0 = unlimited"
-                bind:value={editMaxConcurrency}
-              />
-            </div>
+            {/if}
           </div>
         </details>
+      {/if}
 
-        {#if editError}
-          <p class="text-xs text-error">{editError}</p>
-        {/if}
-      </div>
+      {#if editError}
+        <p class="text-xs text-error mt-3">{editError}</p>
+      {/if}
+
       <div class="modal-action">
         <button
           class="btn btn-sm btn-ghost"
@@ -797,7 +691,7 @@
     <div class="space-y-3">
       {#each projects as project (project.id)}
         {@const isOpen = expanded.has(project.id)}
-        {@const agentRoles = project.permissions?.agent_roles ?? {}}
+        {@const agentRoles = project.agent_roles ?? {}}
         {@const scopedAgentIds = Object.keys(agentRoles)}
 
         <div class="card bg-base-200 rounded-box overflow-hidden">
@@ -821,6 +715,15 @@
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
                 <span class="font-semibold text-sm truncate">{project.name}</span>
+                {#if project.autonomous}
+                  <span
+                    class="flex items-center gap-1 badge badge-xs badge-primary"
+                    title="Autonomous development is on — issues are adopted and pull requests submitted without a person"
+                  >
+                    <Bot class="h-2.5 w-2.5" />
+                    autonomous
+                  </span>
+                {/if}
                 {#if isUnscoped(project)}
                   <span class="badge badge-xs badge-ghost" title="No agent roles set — all agents have implicit access">unscoped</span>
                 {:else}
@@ -833,12 +736,12 @@
               {#if project.description}
                 <div class="text-xs text-base-content/40 truncate mt-0.5">{project.description}</div>
               {/if}
-              {#if project.workspace?.path}
+              {#if project.workspace_path}
                 <div
                   class="text-xs font-mono text-base-content/40 truncate mt-0.5"
-                  title={project.workspace.path}
+                  title={project.workspace_path}
                 >
-                  {project.workspace.path}
+                  {project.workspace_path}
                 </div>
               {/if}
             </div>

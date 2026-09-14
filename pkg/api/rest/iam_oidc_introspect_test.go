@@ -182,6 +182,11 @@ func setupIntrospectHandler(t *testing.T) (*IAMHandler, *iam.OIDCProvider, iam.A
 		ClientSecret: hashed,
 		TenantID:     introspectTenant,
 		GrantTypes:   []string{iam.GrantTypeClientCredentials},
+		// The grant this client holds. A client_credentials token carries the
+		// permissions its application record was granted, never the ones the
+		// client asked for (go-quicbaas#653), so a fixture that requests a
+		// permission must be granted it.
+		Scopes: iam.DefaultAgentRuntimeScopes(),
 	}))
 
 	auditLogger, err := iam.NewAuditLogger()
@@ -367,14 +372,22 @@ func TestIntrospect_DualIdentityAudit(t *testing.T) {
 }
 
 // TestIntrospect_AuditCarriesNetworkSource verifies the introspection audit
-// event records the client IP (proxy-aware via X-Forwarded-For) and the user
-// agent of the introspecting caller (AU-3 network source).
+// event records the network source of the introspecting caller (AU-3).
+//
+// The address is the TRANSPORT PEER, not X-Forwarded-For. This test used to
+// assert the opposite -- that the header won -- which is the defect #156 was
+// filed for: the caller chose what the audit trail said about it, and forged
+// provenance is worse than an absent field because the record looks
+// authoritative. A forwarded client is honoured only when the peer is a
+// configured trusted proxy, which is resolved by ClientIPMiddleware; this test
+// calls the handler directly, so no proxy is trusted and the header must lose.
 func TestIntrospect_AuditCarriesNetworkSource(t *testing.T) {
 	handler, provider, auditLogger, cleanup := setupIntrospectHandler(t)
 	defer cleanup()
 
 	token := mintToken(t, provider)
 	req := introspectRequest(token, true)
+	req.RemoteAddr = "203.0.113.9:44321"
 	req.Header.Set("X-Forwarded-For", "198.51.100.23, 10.0.0.1")
 	req.Header.Set("User-Agent", "quicbaas-rs/2.0")
 
@@ -387,12 +400,20 @@ func TestIntrospect_AuditCarriesNetworkSource(t *testing.T) {
 	require.Len(t, events, 1)
 
 	ev := events[0]
-	assert.Equal(t, "198.51.100.23", ev.IPAddress)
+	assert.Equal(t, "203.0.113.9", ev.IPAddress,
+		"the audit record must name the transport peer, not a header the caller chose")
+	assert.NotEqual(t, "198.51.100.23", ev.IPAddress,
+		"a forged X-Forwarded-For reached the audit trail")
 	assert.Equal(t, "quicbaas-rs/2.0", ev.UserAgent)
 }
 
 // TestToken_AuditCarriesNetworkSource verifies the token-endpoint dual-identity
-// audit event records the client IP (proxy-aware via X-Real-IP) and the user
+// audit event records the network source (AU-3) as the TRANSPORT PEER, not
+// X-Real-IP. See TestIntrospect_AuditCarriesNetworkSource: the header is
+// believed only from a configured trusted proxy, and this calls the handler
+// directly, so none is trusted. The old assertion encoded the #156 defect.
+//
+// It records the user
 // agent of the requesting client (AU-3 network source). It reuses the
 // introspect harness because that registers a real client_credentials client
 // against a real OIDC provider + audit logger.
@@ -407,6 +428,7 @@ func TestToken_AuditCarriesNetworkSource(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "203.0.113.9:44321"
 	req.Header.Set("X-Real-IP", "192.0.2.55")
 	req.Header.Set("User-Agent", "quicbaas-client/3.1")
 
@@ -420,6 +442,9 @@ func TestToken_AuditCarriesNetworkSource(t *testing.T) {
 
 	ev := events[0]
 	assert.Equal(t, "oauth2.token", ev.Action)
-	assert.Equal(t, "192.0.2.55", ev.IPAddress)
+	assert.Equal(t, "203.0.113.9", ev.IPAddress,
+		"the audit record must name the transport peer, not a header the caller chose")
+	assert.NotEqual(t, "192.0.2.55", ev.IPAddress,
+		"a forged X-Real-IP reached the audit trail")
 	assert.Equal(t, "quicbaas-client/3.1", ev.UserAgent)
 }

@@ -334,6 +334,13 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// The SDLC module's service: bindings and deliveries. Served here and,
+	// verbatim, on the Unix transport.
+	if isSDLCService(service) {
+		handler := newSDLCHandler(conn)
+		return handler.handleRequest(ctx, service, method, req)
+	}
+
 	// Check if this is a Certificate service request and route through the
 	// certificate handler. Certificate services use plain Go structs which
 	// don't implement proto.Message, so we need to convert them to the

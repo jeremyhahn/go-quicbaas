@@ -129,7 +129,7 @@ The unified client provides access to all QuicBaaS services:
 | Vector | `client.Vector()` | Vector similarity search |
 | TimeSeries | `client.TimeSeries()` | Time-series data storage |
 | Backup | `client.Backup()` | Backup and restore |
-| IAM | `client.IAM()` | Identity and access management |
+| IAM | `client.Identity().IAM()` | Identity and access management |
 | Messaging | `client.Messaging()` | Pub/sub and push notifications |
 
 ## KV Operations

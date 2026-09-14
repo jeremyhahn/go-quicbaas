@@ -68,4 +68,4 @@ over: the subprotocol is a no-op, and the server carrying it is not mounted.
 `Authenticator`. Because no caller constructs the server, nothing in this
 repository decides what that authenticator is. Any deployment that mounts this
 server must supply one — an unauthenticated WebSocket upgrade on a
-network-facing listener is an open channel into the messaging fabric.
+network-facing listener is an open channel into the messaging bus.

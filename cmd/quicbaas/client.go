@@ -108,6 +108,15 @@ func buildSDKClientOptions() ([]quicbaas.Option, error) {
 func buildSDKClientOptionsWithToken(authToken string) ([]quicbaas.Option, error) {
 	var opts []quicbaas.Option
 
+	// --tenant scopes the client, and some routes cannot work without it: the
+	// WebAuthn ceremony is mounted per tenant and its handler reads the tenant
+	// from the transport. Until this was wired, `auth factor add --tenant X`
+	// failed with "tenant is required; configure rest.WithDefaultTenant" — the
+	// flag was parsed and then had nowhere to go.
+	if globalTenantID != "" {
+		opts = append(opts, quicbaas.WithTenant(globalTenantID))
+	}
+
 	// Auto-detect Unix transport when address is a socket path.
 	if transport == "" || transport == "grpc" {
 		if strings.HasSuffix(address, ".sock") {

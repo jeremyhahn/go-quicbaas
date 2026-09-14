@@ -811,7 +811,7 @@ func TestFIDO2_BeginRegistration_Validation(t *testing.T) {
 	}{
 		{"nil req", nil, context.Background()},
 		{"empty username", &FIDO2BeginRegistrationRequest{}, context.Background()},
-		{"nil ctx", &FIDO2BeginRegistrationRequest{Username: "u"}, nil},
+		{"nil ctx", &FIDO2BeginRegistrationRequest{Email: "u"}, nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -823,7 +823,7 @@ func TestFIDO2_BeginRegistration_Validation(t *testing.T) {
 }
 
 func TestFIDO2_BeginRegistration_TransportAndType(t *testing.T) {
-	req := &FIDO2BeginRegistrationRequest{Username: "u"}
+	req := &FIDO2BeginRegistrationRequest{Email: "u"}
 	t.Run("transport error", func(t *testing.T) {
 		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
 			return nil, errBoom
@@ -855,7 +855,7 @@ func TestFIDO2_BeginRegistration_HappyPath(t *testing.T) {
 		gotService, gotMethod = service, method
 		return want, nil
 	}}}
-	got, err := c.BeginRegistration(context.Background(), &FIDO2BeginRegistrationRequest{Username: "u"})
+	got, err := c.BeginRegistration(context.Background(), &FIDO2BeginRegistrationRequest{Email: "u"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -937,7 +937,7 @@ func TestFIDO2_BeginAuthentication_Validation(t *testing.T) {
 	}{
 		{"nil req", nil, context.Background()},
 		{"empty username", &FIDO2BeginAuthenticationRequest{}, context.Background()},
-		{"nil ctx", &FIDO2BeginAuthenticationRequest{Username: "u"}, nil},
+		{"nil ctx", &FIDO2BeginAuthenticationRequest{Email: "u"}, nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -949,7 +949,7 @@ func TestFIDO2_BeginAuthentication_Validation(t *testing.T) {
 }
 
 func TestFIDO2_BeginAuthentication_TransportAndType(t *testing.T) {
-	req := &FIDO2BeginAuthenticationRequest{Username: "u"}
+	req := &FIDO2BeginAuthenticationRequest{Email: "u"}
 	t.Run("transport error", func(t *testing.T) {
 		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
 			return nil, errBoom
@@ -979,7 +979,7 @@ func TestFIDO2_BeginAuthentication_HappyPath(t *testing.T) {
 	c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
 		return want, nil
 	}}}
-	got, err := c.BeginAuthentication(context.Background(), &FIDO2BeginAuthenticationRequest{Username: "u"})
+	got, err := c.BeginAuthentication(context.Background(), &FIDO2BeginAuthenticationRequest{Email: "u"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

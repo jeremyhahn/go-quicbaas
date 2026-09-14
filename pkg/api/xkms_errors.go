@@ -592,3 +592,55 @@ func (e *CloseError) Error() string {
 func (e *CloseError) Unwrap() []error {
 	return e.Errors
 }
+
+// UnsupportedKeyAlgorithmError reports that a caller named an asymmetric key
+// algorithm QuicBaaS cannot create a requester credential under. The Algorithm
+// field carries the spelling the caller supplied, verbatim, so an operator can
+// see what they typed.
+type UnsupportedKeyAlgorithmError struct {
+	Algorithm string
+}
+
+// Error implements the error interface.
+func (e *UnsupportedKeyAlgorithmError) Error() string {
+	if e.Algorithm == "" {
+		return "unsupported key algorithm"
+	}
+	return "unsupported key algorithm: " + e.Algorithm
+}
+
+// Is supports errors.Is matching by type.
+func (e *UnsupportedKeyAlgorithmError) Is(target error) bool {
+	_, ok := target.(*UnsupportedKeyAlgorithmError)
+	return ok
+}
+
+// KeyGenerationError reports that generating a requester credential's key pair
+// failed. Cause carries the underlying crypto or RNG failure.
+type KeyGenerationError struct {
+	Algorithm string
+	Cause     error
+}
+
+// Error implements the error interface.
+func (e *KeyGenerationError) Error() string {
+	msg := "key generation failed"
+	if e.Algorithm != "" {
+		msg += " for " + e.Algorithm
+	}
+	if e.Cause != nil {
+		return msg + ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns the underlying cause for errors.Is and errors.As support.
+func (e *KeyGenerationError) Unwrap() error {
+	return e.Cause
+}
+
+// Is supports errors.Is matching by type.
+func (e *KeyGenerationError) Is(target error) bool {
+	_, ok := target.(*KeyGenerationError)
+	return ok
+}

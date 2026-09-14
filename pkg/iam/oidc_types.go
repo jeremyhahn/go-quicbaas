@@ -57,6 +57,14 @@ func NewUnixTime(t time.Time) UnixTime {
 	return UnixTime{Time: t}
 }
 
+// PrincipalTypeService is the ptyp claim value marking a token issued to a
+// service principal rather than a user — a client_credentials grant or an mTLS
+// service-account token, whose subject is a client id and which has no IAM user
+// record by design. It is the POSITIVE signal liveness requires before treating
+// a token as non-user; nothing is classified as a service token merely because
+// its subject failed to resolve.
+const PrincipalTypeService = "service"
+
 // OIDC grant types constants.
 const (
 	GrantTypeAuthorizationCode = "authorization_code"
@@ -325,7 +333,7 @@ type UserInfoResponse struct {
 	Groups []string `json:"groups,omitempty"`
 
 	// Attributes contains custom user attributes
-	Attributes map[string]interface{} `json:"attributes,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty"`
 }
 
 // ConfirmationClaim is the RFC 7800 cnf claim. For DPoP sender-constrained
@@ -349,6 +357,23 @@ type Claims struct {
 	// Subject is the user or service identifier
 	Subject string `json:"sub"`
 
+	// UserID is the IMMUTABLE IAM user id of the principal, when the token was
+	// issued for a user. It exists because sub is not a stable handle on every
+	// path: the unified login ceremony mints sub = the tenant-scoped qrdb
+	// username, and a username can be renamed out from under a live token
+	// (UpdateUser rewrites User.Name), after which the subject resolves to
+	// nobody. Liveness resolves a user session by THIS claim, so renaming an
+	// account cannot detach its live sessions from it.
+	UserID string `json:"uid,omitempty"`
+
+	// PrincipalType positively identifies a non-user principal. It is the
+	// answer to "is this a service token?" — asked of the token itself rather
+	// than inferred from a user lookup coming up empty, because absence of a
+	// user record is not evidence of service-principal-hood, and treating it as
+	// evidence is what let a renamed or deleted user's bearer be reclassified
+	// as a service token and stay live. Empty on user tokens.
+	PrincipalType string `json:"ptyp,omitempty"`
+
 	// Audience is the list of intended audiences
 	Audience []string `json:"aud"`
 
@@ -363,6 +388,25 @@ type Claims struct {
 
 	// JTI is the unique token identifier
 	JTI string `json:"jti"`
+
+	// SessionID identifies the LOGIN this token belongs to (the sid claim of
+	// OpenID Connect Front-Channel Logout §3, whose semantics — "a string
+	// identifier for a session, with distinct values identifying distinct
+	// sessions at the OP" — are exactly these).
+	//
+	// It is stable across every renewal of one login and different for every
+	// new login, which is the one question no other claim in the bearer can
+	// answer: a refresh and a second login by the SAME principal into the SAME
+	// tenant both mint new bytes with a new jti and a new exp, while uid and
+	// tenant_id are byte-identical across both. A client scoping cached data to
+	// "which session am I" therefore has nothing to key on, and treats the
+	// previous login's cache as in-scope under the new one (go-quicbaas#326).
+	//
+	// Minted by GenerateAccessToken when empty and frozen into the session's
+	// refresh record, so the value a renewal replays is the one its login
+	// established. An empty value on an inbound token means it predates this
+	// claim; a client MUST fail closed on that rather than assume sameness.
+	SessionID string `json:"sid,omitempty"`
 
 	// TenantID is the tenant context
 	TenantID string `json:"tenant_id,omitempty"`
@@ -406,6 +450,27 @@ type Claims struct {
 	// ACR is the Authentication Context Class Reference.
 	// For hardware-attested logins: "urn:quicbaas:auth:hardware-attested"
 	ACR string `json:"acr,omitempty"`
+
+	// AttestAAGUID is the hex-encoded FIDO2 authenticator model identifier of
+	// the credential that authenticated this session. It is empty for PIV
+	// smartcards, which have no AAGUID.
+	AttestAAGUID string `json:"attest_aaguid,omitempty"`
+
+	// AttestLevel is the provenance a verifier in this package actually PROVED
+	// about the key behind this session: "hardware", "software" or "none".
+	//
+	// It belongs on the ACCESS token and not only on the ID token because the
+	// two answer different questions. The ID token describes the login to the
+	// client that performed it; the access token is the credential a resource
+	// server is handed and authorizes from. A policy that admits an operation
+	// only for a hardware-backed credential reads the bearer it was given, so
+	// an attestation carried solely by the ID token is absent at precisely the
+	// point where it would be enforced — a proven YubiKey login would present
+	// a bearer indistinguishable from an unattested one.
+	//
+	// The claim is omitted when nothing was proven. Absence must read as "no
+	// evidence"; it must never be mistaken for hardware.
+	AttestLevel string `json:"attest_level,omitempty"`
 
 	// Confirmation is the RFC 7800 cnf claim binding the token to a
 	// proof-of-possession key (DPoP jkt or mTLS x5t#S256). When set, the token
@@ -556,6 +621,12 @@ type RegisterAppOptions struct {
 
 	// ResourcePrefix is the resource namespace for this app
 	ResourcePrefix string
+
+	// Scopes is the permission set granted to the application, in qrdb's
+	// canonical "resource:action" vocabulary. See Application.Scopes: it is
+	// the grant every client_credentials token this app receives is bounded
+	// by. Only server-side callers that speak for a grantor set it.
+	Scopes []string
 
 	// DefaultAudience is the per-app default service audience stamped into the
 	// token `aud` claim when the client sends no RFC 8707 `resource` indicator.

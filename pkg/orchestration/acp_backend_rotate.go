@@ -69,6 +69,14 @@ type RotateAccountResult struct {
 
 	// Strategy names the policy that selected it.
 	Strategy string
+
+	// CredentialLeaseID is the DELIVERY GRANT the replacement resolution took
+	// out. Empty when the deployment wired no leaser.
+	//
+	// It is reported rather than acted on here: the orchestrator records it on
+	// the session and withdraws the grant it supersedes, so every revocation
+	// decision stays in the one place that can also see the durable record.
+	CredentialLeaseID string
 }
 
 // SessionRotateUnsupportedError reports that a backend cannot move a session
@@ -174,5 +182,9 @@ func (b *ACPBackend) RotateAccount(ctx context.Context, req *RotateAccountReques
 		previous()
 	}
 
-	return &RotateAccountResult{AccountID: account.AccountID, Strategy: account.Strategy}, nil
+	return &RotateAccountResult{
+		AccountID:         account.AccountID,
+		Strategy:          account.Strategy,
+		CredentialLeaseID: account.LeaseID,
+	}, nil
 }

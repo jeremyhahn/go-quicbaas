@@ -104,98 +104,6 @@ func TestPhase4HandlerDeleteBackup(t *testing.T) {
 	})
 }
 
-// TestPhase4HandlerLogout tests the Phase4Handler.HandleLogout handler.
-func TestPhase4HandlerLogout(t *testing.T) {
-	t.Run("wrong method returns 405", func(t *testing.T) {
-		handler := &Phase4Handler{}
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/logout", nil)
-		w := httptest.NewRecorder()
-
-		handler.HandleLogout(w, req)
-
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	})
-
-	t.Run("invalid JSON body returns 400", func(t *testing.T) {
-		handler := &Phase4Handler{}
-
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", strings.NewReader("{invalid"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		handler.HandleLogout(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-}
-
-// TestPhase4HandlerRefreshToken tests the Phase4Handler.HandleRefreshToken handler.
-func TestPhase4HandlerRefreshToken(t *testing.T) {
-	t.Run("wrong method returns 405", func(t *testing.T) {
-		handler := &Phase4Handler{}
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/refresh", nil)
-		w := httptest.NewRecorder()
-
-		handler.HandleRefreshToken(w, req)
-
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	})
-
-	t.Run("invalid JSON body returns 400", func(t *testing.T) {
-		handler := &Phase4Handler{}
-
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader("{invalid"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		handler.HandleRefreshToken(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-}
-
-// TestPhase4HandlerCreateUser tests the Phase4Handler.HandleCreateUser handler.
-func TestPhase4HandlerCreateUser(t *testing.T) {
-	t.Run("wrong method returns 405", func(t *testing.T) {
-		handler := &Phase4Handler{}
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-		w := httptest.NewRecorder()
-
-		handler.HandleCreateUser(w, req)
-
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	})
-
-	t.Run("invalid JSON body returns 400", func(t *testing.T) {
-		handler := &Phase4Handler{}
-
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader("{invalid"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		handler.HandleCreateUser(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-}
-
-// TestPhase4HandlerListUsers tests the Phase4Handler.HandleListUsers handler.
-func TestPhase4HandlerListUsers(t *testing.T) {
-	t.Run("wrong method returns 405", func(t *testing.T) {
-		handler := &Phase4Handler{}
-
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/users", nil)
-		w := httptest.NewRecorder()
-
-		handler.HandleListUsers(w, req)
-
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	})
-}
-
 // TestPhase4HandlerGetCacheStats tests the Phase4Handler.HandleGetCacheStats handler.
 func TestPhase4HandlerGetCacheStats(t *testing.T) {
 	t.Run("wrong method returns 405", func(t *testing.T) {
@@ -282,10 +190,9 @@ func TestExtractPathParam(t *testing.T) {
 // TestNewPhase4Handler tests the Phase4Handler constructor.
 func TestNewPhase4Handler(t *testing.T) {
 	t.Run("creates handler with nil managers", func(t *testing.T) {
-		handler := NewPhase4Handler(nil, nil, nil)
+		handler := NewPhase4Handler(nil, nil)
 		assert.NotNil(t, handler)
 		assert.Nil(t, handler.backupMgr)
-		assert.Nil(t, handler.authMgr)
 		assert.Nil(t, handler.cacheMgr)
 	})
 }

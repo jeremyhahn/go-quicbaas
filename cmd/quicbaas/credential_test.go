@@ -153,8 +153,8 @@ func (f *fakeCredentialClient) CredentialRetrieve(ctx context.Context, name stri
 func withFakeCredentialFactory(fc *fakeCredentialClient) func() {
 	orig := credentialClientFactory
 	credentialClientFactory = func() (qrdbtransport.CredentialClient, error) { return fc, nil }
-	if timeout == 0 {
-		timeout = 5 * time.Second
+	if globalTimeout == 0 {
+		globalTimeout = 5 * time.Second
 	}
 	return func() { credentialClientFactory = orig }
 }
@@ -164,8 +164,8 @@ func withFakeCredentialFactory(fc *fakeCredentialClient) func() {
 func withFailingCredentialFactory(err error) func() {
 	orig := credentialClientFactory
 	credentialClientFactory = func() (qrdbtransport.CredentialClient, error) { return nil, err }
-	if timeout == 0 {
-		timeout = 5 * time.Second
+	if globalTimeout == 0 {
+		globalTimeout = 5 * time.Second
 	}
 	return func() { credentialClientFactory = orig }
 }

@@ -580,7 +580,7 @@ func TestOrchestrator_ListJobs_EmptyTenantID(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	_, err := impl.ListJobs(context.Background(), "")
+	_, err := impl.ListJobs(context.Background(), "", nil)
 	if err == nil {
 		t.Fatal("expected error for empty tenant ID")
 	}
@@ -593,7 +593,7 @@ func TestOrchestrator_ListJobs_EmptyResult(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	jobs, err := impl.ListJobs(context.Background(), "tenant-1")
+	jobs, err := impl.ListJobs(context.Background(), "tenant-1", nil)
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
 	}
@@ -902,7 +902,7 @@ func TestOrchestrator_AgentHeartbeat(t *testing.T) {
 		t.Fatalf("RegisterAgent: %v", err)
 	}
 
-	if err := impl.AgentHeartbeat(ctx, "tenant-1", resp.Agent.ID); err != nil {
+	if err := impl.AgentHeartbeat(ctx, "tenant-1", resp.Agent.ID, nil); err != nil {
 		t.Fatalf("AgentHeartbeat: %v", err)
 	}
 }
@@ -911,7 +911,7 @@ func TestOrchestrator_AgentHeartbeat_NoRegistry(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	err := impl.AgentHeartbeat(context.Background(), "t", "a")
+	err := impl.AgentHeartbeat(context.Background(), "t", "a", nil)
 	if err == nil {
 		t.Fatal("expected error when agent registry not configured")
 	}
@@ -1028,21 +1028,25 @@ func TestProtoSessionStateToRuntime(t *testing.T) {
 	}
 }
 
-func TestTimestampAsUnix(t *testing.T) {
+// NANOSECONDS, because that is the unit every session instant in this package
+// is in — see the contract on orchestration.Session. This test asserted
+// seconds, which is how the remote backend came to report a LastActivity a
+// reader decoded as an instant just after the epoch (go-quicbaas#855).
+func TestTimestampAsUnixNano(t *testing.T) {
 	t.Parallel()
 
 	t.Run("ValidTimestamp", func(t *testing.T) {
 		now := time.Now()
 		ts := timestamppb.New(now)
-		got := timestampAsUnix(ts)
-		if got != now.Unix() {
-			t.Errorf("expected %d, got %d", now.Unix(), got)
+		got := timestampAsUnixNano(ts)
+		if got != now.UnixNano() {
+			t.Errorf("expected %d, got %d", now.UnixNano(), got)
 		}
 	})
 
 	t.Run("ZeroTimestamp", func(t *testing.T) {
 		ts := timestamppb.New(time.Time{})
-		got := timestampAsUnix(ts)
+		got := timestampAsUnixNano(ts)
 		if got != 0 {
 			t.Errorf("expected 0 for zero time, got %d", got)
 		}
@@ -1059,6 +1063,7 @@ func TestRemoteACPBackend_CloseAfterCloseAll(t *testing.T) {
 	daemon := startBufconnDaemon(t, nil)
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -1126,11 +1131,11 @@ func newMinimalControlLoop(t *testing.T) *ControlLoop {
 	}
 	cl := NewControlLoop(svc, &agentTestLogger{})
 	// Populate the minimum config so budget/tenant checks don't nil-deref.
-	cl.config = &JobConfig{
+	cl.job.Config = &JobConfig{
 		TenantID:    "tenant-test",
 		Description: "test job",
 	}
-	cl.jobID = "job-test"
+	cl.job.JobID = "job-test"
 	return cl
 }
 
@@ -1146,6 +1151,7 @@ func TestRemoteACPBackend_AuthCtxNoToken(t *testing.T) {
 	// nil TokenSource — exercises the authCtx base path without token injection.
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 		TokenSource:  nil,
@@ -1174,6 +1180,7 @@ func TestRemoteACPBackend_DialFailure(t *testing.T) {
 
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   failDialer,
 	})
@@ -1292,7 +1299,7 @@ func TestControlLoop_CheckBudget_WithTracker(t *testing.T) {
 	t.Parallel()
 
 	cl := newMinimalControlLoop(t)
-	cl.costTracker = &hookMockCostTracker{status: BudgetOK}
+	cl.job.CostTracker = &hookMockCostTracker{status: BudgetOK}
 
 	result, err := cl.checkBudget(context.Background())
 	if err != nil {
@@ -1572,25 +1579,28 @@ func TestOrchestrator_ListJobs_WithRunningJob(t *testing.T) {
 	ctx := context.Background()
 
 	// Inject a fake running job directly into the sync.Map.
-	fakeLoop := NewControlLoop(impl, &agentTestLogger{})
-	fakeLoop.config = &JobConfig{
-		TenantID:    "tenant-1",
-		Description: "fake job",
-	}
-	fakeLoop.jobID = "job-fake-1"
-	// Initialise a status so loop.Status() returns non-nil.
-	fakeLoop.status.Store(&JobStatus{
+	fakeRun := newJobRun(JobRunConfig{
+		JobID: "job-fake-1",
+		Config: &JobConfig{
+			TenantID:    "tenant-1",
+			Description: "fake job",
+		},
+		Agents: impl,
+		Logger: &agentTestLogger{},
+	})
+	// Initialise a status so run.Status() returns non-nil.
+	fakeRun.status.Store(&JobStatus{
 		JobID:    "job-fake-1",
 		TenantID: "tenant-1",
 		State:    JobStateCompleted,
 	})
 
 	impl.jobs.Store("tenant-1/job-fake-1", &runningJob{
-		loop:   fakeLoop,
+		run:    fakeRun,
 		cancel: func() {},
 	})
 
-	jobs, err := impl.ListJobs(ctx, "tenant-1")
+	jobs, err := impl.ListJobs(ctx, "tenant-1", nil)
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
 	}
@@ -1615,6 +1625,7 @@ func TestRemoteACPBackend_PromptRPCError(t *testing.T) {
 	})
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -1641,6 +1652,7 @@ func TestRemoteACPBackend_StatusRPCError(t *testing.T) {
 	})
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -1667,6 +1679,7 @@ func TestRemoteACPBackend_SpawnRPCError(t *testing.T) {
 	})
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -1696,6 +1709,7 @@ func TestRemoteACPBackend_CloseRPCError(t *testing.T) {
 	})
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   daemon.dialer(),
 	})
@@ -1879,7 +1893,7 @@ func TestControlLoop_EmitEvent(t *testing.T) {
 		// The default event channel has a buffer. Emit into it.
 		cl.emitEvent(JobStateExecuting, "test event")
 		select {
-		case ev := <-cl.events:
+		case ev := <-cl.job.events:
 			if ev.State != JobStateExecuting {
 				t.Errorf("state = %q, want executing", ev.State)
 			}
@@ -1894,13 +1908,13 @@ func TestControlLoop_EmitEvent(t *testing.T) {
 	t.Run("DropsWhenFull", func(t *testing.T) {
 		// Fill the channel to capacity.
 		for i := 0; i < defaultEventBufferSize; i++ {
-			cl.events <- JobEvent{JobID: "filler"}
+			cl.job.events <- JobEvent{JobID: "filler"}
 		}
 		// emitEvent on a full channel should not block or panic.
 		cl.emitEvent(JobStateCompleted, "dropped event")
 		// Drain channel.
-		for len(cl.events) > 0 {
-			<-cl.events
+		for len(cl.job.events) > 0 {
+			<-cl.job.events
 		}
 	})
 }
@@ -2048,6 +2062,7 @@ func TestRemoteACPBackend_DefaultDialPath(t *testing.T) {
 	// No ConnDialer — forces the default grpc.NewClient path.
 	backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: newDaemonRegistration(),
+		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 		ConnDialer:   nil, // intentionally nil
 	})
@@ -2363,7 +2378,7 @@ func TestOrchestrator_ListJobs_WithKVStore(t *testing.T) {
 	impl := newTestService(t)
 
 	// No KV store set: only in-memory path executes.
-	jobs, err := impl.ListJobs(context.Background(), "tenant-kv")
+	jobs, err := impl.ListJobs(context.Background(), "tenant-kv", nil)
 	if err != nil {
 		t.Fatalf("ListJobs without KV: %v", err)
 	}
@@ -2926,7 +2941,7 @@ func TestAgentRegistry_Heartbeat_Success(t *testing.T) {
 		t.Fatalf("RegisterAgent: %v", err)
 	}
 
-	if err := reg.Heartbeat(ctx, "tenant-hb", "hb-1"); err != nil {
+	if err := reg.Heartbeat(ctx, "tenant-hb", "hb-1", nil); err != nil {
 		t.Fatalf("Heartbeat: %v", err)
 	}
 
@@ -2943,7 +2958,7 @@ func TestAgentRegistry_Heartbeat_NotFound(t *testing.T) {
 	t.Parallel()
 
 	reg := NewInMemoryAgentRegistry()
-	err := reg.Heartbeat(context.Background(), "tenant-hb", "no-such-agent")
+	err := reg.Heartbeat(context.Background(), "tenant-hb", "no-such-agent", nil)
 	if err == nil {
 		t.Fatal("expected error for missing agent")
 	}
@@ -3516,7 +3531,7 @@ func TestOrchestrator_AgentHeartbeat_NotFound(t *testing.T) {
 	reg := NewInMemoryAgentRegistry()
 	impl.SetAgentRegistry(reg)
 
-	err := impl.AgentHeartbeat(context.Background(), "tenant-hb2", "ghost-agent")
+	err := impl.AgentHeartbeat(context.Background(), "tenant-hb2", "ghost-agent", nil)
 	if err == nil {
 		t.Fatal("expected error for missing agent")
 	}
@@ -3865,7 +3880,7 @@ func TestOrchestrator_ListJobs_WithPersistedJob(t *testing.T) {
 		t.Fatalf("kv.Put: %v", err)
 	}
 
-	jobs, err := impl.ListJobs(ctx, "tenant-pj")
+	jobs, err := impl.ListJobs(ctx, "tenant-pj", nil)
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
 	}
@@ -4484,9 +4499,9 @@ func TestWorkflowLoader_GetList_WithWorkflow(t *testing.T) {
 			{Role: "lead", Backend: "acp"},
 		},
 	}
-	loader.Register(wf)
+	loader.Register(SystemTenantID, wf)
 
-	got, err := loader.Get("test-wf")
+	got, err := loader.Get(SystemTenantID, "test-wf")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -4494,12 +4509,12 @@ func TestWorkflowLoader_GetList_WithWorkflow(t *testing.T) {
 		t.Errorf("name = %q, want test-wf", got.Name)
 	}
 
-	list := loader.List()
+	list := loader.List(SystemTenantID)
 	if len(list) != 1 {
 		t.Errorf("expected 1 workflow, got %d", len(list))
 	}
 
-	definitions := loader.ListDefinitions()
+	definitions := loader.ListDefinitions(SystemTenantID)
 	if len(definitions) != 1 {
 		t.Errorf("expected 1 definition, got %d", len(definitions))
 	}
@@ -4875,7 +4890,7 @@ func TestAgentRegistry_Heartbeat_EmptyTenant(t *testing.T) {
 	t.Parallel()
 
 	reg := NewInMemoryAgentRegistry()
-	err := reg.Heartbeat(context.Background(), "", "agent-x")
+	err := reg.Heartbeat(context.Background(), "", "agent-x", nil)
 	if err == nil {
 		t.Fatal("expected error for empty tenantID")
 	}
@@ -4885,7 +4900,7 @@ func TestAgentRegistry_Heartbeat_EmptyAgent(t *testing.T) {
 	t.Parallel()
 
 	reg := NewInMemoryAgentRegistry()
-	err := reg.Heartbeat(context.Background(), "t-hb", "")
+	err := reg.Heartbeat(context.Background(), "t-hb", "", nil)
 	if err == nil {
 		t.Fatal("expected error for empty agentID")
 	}
@@ -5141,11 +5156,11 @@ func TestContainerRuntime_Logs_EmptyContainerID(t *testing.T) {
 // remote_acp_backend — timestampAsUnix nil, protoContentBlocksToRuntime empty
 // =============================================================================
 
-func TestTimestampAsUnix_Nil(t *testing.T) {
+func TestTimestampAsUnixNano_Nil(t *testing.T) {
 	t.Parallel()
 
-	// timestampAsUnix returns 0 for nil input.
-	result := timestampAsUnix((*timestamppb.Timestamp)(nil))
+	// timestampAsUnixNano returns 0 for nil input.
+	result := timestampAsUnixNano((*timestamppb.Timestamp)(nil))
 	if result != 0 {
 		t.Errorf("expected 0 for nil timestamp, got %d", result)
 	}
@@ -5265,11 +5280,11 @@ func TestWorkflowLoader_Register_And_Get(t *testing.T) {
 			{Role: "lead", Backend: "acp"},
 		},
 	}
-	if err := loader.Register(def); err != nil {
+	if err := loader.Register(SystemTenantID, def); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
-	got, err := loader.Get("test-wf")
+	got, err := loader.Get(SystemTenantID, "test-wf")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -5277,7 +5292,7 @@ func TestWorkflowLoader_Register_And_Get(t *testing.T) {
 		t.Errorf("expected test-wf, got %s", got.Name)
 	}
 
-	names := loader.List()
+	names := loader.List(SystemTenantID)
 	if len(names) != 1 || names[0] != "test-wf" {
 		t.Errorf("expected [test-wf], got %v", names)
 	}
@@ -5287,7 +5302,7 @@ func TestWorkflowLoader_ListDefinitions(t *testing.T) {
 	t.Parallel()
 
 	loader := NewWorkflowLoader()
-	if err := loader.Register(&WorkflowDefinition{
+	if err := loader.Register(SystemTenantID, &WorkflowDefinition{
 		Name:   "wf-def-1",
 		Mode:   WorkflowModeAutonomous,
 		Agents: []AgentRoleSpec{{Role: "lead", Backend: "acp"}},
@@ -5295,7 +5310,7 @@ func TestWorkflowLoader_ListDefinitions(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	defs := loader.ListDefinitions()
+	defs := loader.ListDefinitions(SystemTenantID)
 	if len(defs) != 1 {
 		t.Errorf("expected 1 definition, got %d", len(defs))
 	}
@@ -5380,11 +5395,11 @@ func TestControlLoop_CollectTaskResults_WithResult(t *testing.T) {
 	t.Parallel()
 
 	cl := newMinimalControlLoop(t)
-	cl.config = &JobConfig{TenantID: "t-ctr", Description: "collect results test"}
+	cl.job.Config = &JobConfig{TenantID: "t-ctr", Description: "collect results test"}
 
 	// Wire a task store into the underlying service.
 	ts := NewInMemoryTaskStore()
-	cl.agentService.(*agentServiceImpl).SetTaskStore(ts)
+	cl.job.Agents.(*agentServiceImpl).SetTaskStore(ts)
 
 	ctx := context.Background()
 	taskID := "ctr-task-1"
@@ -5413,10 +5428,10 @@ func TestControlLoop_PollTaskCompletion_Done(t *testing.T) {
 	t.Parallel()
 
 	cl := newMinimalControlLoop(t)
-	cl.config = &JobConfig{TenantID: "t-ptc", Description: "poll completion"}
+	cl.job.Config = &JobConfig{TenantID: "t-ptc", Description: "poll completion"}
 
 	ts := NewInMemoryTaskStore()
-	cl.agentService.(*agentServiceImpl).SetTaskStore(ts)
+	cl.job.Agents.(*agentServiceImpl).SetTaskStore(ts)
 
 	ctx := context.Background()
 	taskID := "ptc-task-1"
@@ -5443,10 +5458,10 @@ func TestControlLoop_PollTaskCompletion_NotDone(t *testing.T) {
 	t.Parallel()
 
 	cl := newMinimalControlLoop(t)
-	cl.config = &JobConfig{TenantID: "t-ptc2", Description: "poll not done"}
+	cl.job.Config = &JobConfig{TenantID: "t-ptc2", Description: "poll not done"}
 
 	ts := NewInMemoryTaskStore()
-	cl.agentService.(*agentServiceImpl).SetTaskStore(ts)
+	cl.job.Agents.(*agentServiceImpl).SetTaskStore(ts)
 
 	ctx := context.Background()
 	taskID := "ptc-task-2"
@@ -5550,7 +5565,7 @@ func TestAgentRegistry_Heartbeat_StatusTransition(t *testing.T) {
 		t.Fatalf("RegisterAgent: %v", err)
 	}
 
-	if err := reg.Heartbeat(ctx, "t-hb-trans", "hb-trans-1"); err != nil {
+	if err := reg.Heartbeat(ctx, "t-hb-trans", "hb-trans-1", nil); err != nil {
 		t.Fatalf("Heartbeat: %v", err)
 	}
 
@@ -5648,12 +5663,14 @@ func TestRemoteACPBackend_AuthCtx_WithToken(t *testing.T) {
 		TenantID: "auth-tenant",
 		Name:     "auth-agent",
 		Host:     "localhost:9999",
+		Backend:  "acp",
 		Kind:     AgentKindDaemon,
 	}
 
 	logger := &peerTestLogger{}
 	b, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: reg,
+		Backend:      "acp",
 		Logger:       logger,
 		TokenSource:  &fakeTokenSource{token: &oauth2.Token{AccessToken: "test-bearer-token"}},
 		ConnDialer: func(ctx context.Context, target string) (*grpc.ClientConn, error) {
@@ -5679,12 +5696,14 @@ func TestRemoteACPBackend_AuthCtx_NilToken(t *testing.T) {
 		TenantID: "auth-tenant-2",
 		Name:     "auth-agent-2",
 		Host:     "localhost:9998",
+		Backend:  "acp",
 		Kind:     AgentKindDaemon,
 	}
 
 	logger := &peerTestLogger{}
 	b, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: reg,
+		Backend:      "acp",
 		Logger:       logger,
 		// TokenSource returns nil token — should not panic.
 		TokenSource: &fakeTokenSource{token: nil, err: errors.New("no token")},
@@ -5869,7 +5888,7 @@ func TestOrchestrator_AgentHeartbeat_Success(t *testing.T) {
 		t.Fatalf("RegisterAgent: %v", err)
 	}
 
-	if err := impl.AgentHeartbeat(ctx, "tenant-hbs", resp.Agent.ID); err != nil {
+	if err := impl.AgentHeartbeat(ctx, "tenant-hbs", resp.Agent.ID, nil); err != nil {
 		t.Fatalf("AgentHeartbeat: %v", err)
 	}
 }
@@ -5972,8 +5991,9 @@ func TestPeerMessagingStore_DropOldest_NoMessages(t *testing.T) {
 	kvSvc := svc.(*kvPeerMessagingService)
 	ctx := context.Background()
 
-	// dropOldest on empty inbox should succeed silently.
-	err := kvSvc.dropOldest(ctx, "t-drop-empty", "agent-empty")
+	// dropOldest on empty inbox should succeed silently. No key is excluded
+	// because no delivery is in progress.
+	err := kvSvc.dropOldest(ctx, "t-drop-empty", "agent-empty", "")
 	if err != nil {
 		t.Fatalf("dropOldest on empty inbox: %v", err)
 	}
@@ -5987,7 +6007,7 @@ func TestControlLoop_CleanupAllSessions_NoSessions(t *testing.T) {
 	t.Parallel()
 
 	cl := newMinimalControlLoop(t)
-	cl.config = &JobConfig{TenantID: "t-cas", Description: "cleanup sessions test"}
+	cl.job.Config = &JobConfig{TenantID: "t-cas", Description: "cleanup sessions test"}
 
 	// cleanupAllSessions with no worker sessions should succeed silently.
 	cl.cleanupAllSessions(context.Background())
@@ -6002,12 +6022,12 @@ func TestWorkflowLoader_ListDefinitions_AfterRegister(t *testing.T) {
 
 	loader := NewWorkflowLoader()
 
-	defs := loader.ListDefinitions()
+	defs := loader.ListDefinitions(SystemTenantID)
 	if len(defs) != 0 {
 		t.Errorf("expected empty definitions, got %d", len(defs))
 	}
 
-	if err := loader.Register(&WorkflowDefinition{
+	if err := loader.Register(SystemTenantID, &WorkflowDefinition{
 		Name:   "wfl-def-2",
 		Mode:   WorkflowModeCanned,
 		Agents: []AgentRoleSpec{{Role: "lead", Backend: "acp"}},
@@ -6015,7 +6035,7 @@ func TestWorkflowLoader_ListDefinitions_AfterRegister(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	defs = loader.ListDefinitions()
+	defs = loader.ListDefinitions(SystemTenantID)
 	if len(defs) != 1 {
 		t.Errorf("expected 1 definition, got %d", len(defs))
 	}
@@ -6778,7 +6798,7 @@ func TestOrchestrator_AgentHeartbeat_EmptyTenantID(t *testing.T) {
 
 	impl := newTestService(t)
 	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
-	err := impl.AgentHeartbeat(context.Background(), "", "agent-x")
+	err := impl.AgentHeartbeat(context.Background(), "", "agent-x", nil)
 	if err == nil {
 		t.Fatal("expected error for empty tenantID")
 	}
@@ -6964,13 +6984,13 @@ func TestContainerMount_Format_ReadWrite(t *testing.T) {
 // remote_acp_backend — timestampAsUnix
 // =============================================================================
 
-func TestRemoteACPBackend_TimestampAsUnix(t *testing.T) {
+func TestRemoteACPBackend_TimestampAsUnixNano(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now()
-	result := timestampAsUnix(fakeTimestamper{t: now})
-	if result != now.Unix() {
-		t.Errorf("expected %d, got %d", now.Unix(), result)
+	result := timestampAsUnixNano(fakeTimestamper{t: now})
+	if result != now.UnixNano() {
+		t.Errorf("expected %d, got %d", now.UnixNano(), result)
 	}
 }
 
@@ -7173,7 +7193,7 @@ func TestControlLoop_TrySpawnLeadSession_WithPersistentSessions(t *testing.T) {
 	}
 
 	cl := NewControlLoop(impl, &peerTestLogger{})
-	cl.config = &JobConfig{LeadBackend: "acp", LeadModel: "claude"}
+	cl.job.Config = &JobConfig{LeadBackend: "acp", LeadModel: "claude"}
 	cl.SetWorkflow(&WorkflowDefinition{
 		Name: "with-ps",
 		Mode: WorkflowModeAutonomous,
@@ -7211,7 +7231,7 @@ func TestControlLoop_TrySpawnLeadSession_SpawnFails(t *testing.T) {
 	}
 
 	cl := NewControlLoop(impl, &peerTestLogger{})
-	cl.config = &JobConfig{LeadBackend: "acp", LeadModel: "claude"}
+	cl.job.Config = &JobConfig{LeadBackend: "acp", LeadModel: "claude"}
 	cl.SetWorkflow(&WorkflowDefinition{
 		Name: "spawn-fail",
 		Mode: WorkflowModeAutonomous,
@@ -7248,7 +7268,7 @@ func TestControlLoop_TrySpawnLeadSession_AgentSpecFields(t *testing.T) {
 	}
 
 	cl := NewControlLoop(impl, &peerTestLogger{})
-	cl.config = &JobConfig{LeadBackend: "acp", LeadModel: "claude"}
+	cl.job.Config = &JobConfig{LeadBackend: "acp", LeadModel: "claude"}
 	cl.SetWorkflow(&WorkflowDefinition{
 		Name: "with-spec",
 		Mode: WorkflowModeAutonomous,
@@ -7311,8 +7331,8 @@ func TestControlLoop_HandleAssign_NoAgents(t *testing.T) {
 	}
 
 	cl := NewControlLoop(impl, &peerTestLogger{})
-	cl.config = &JobConfig{LeadBackend: "acp", TenantID: "t-ha"}
-	cl.jobID = "job-ha-1"
+	cl.job.Config = &JobConfig{LeadBackend: "acp", TenantID: "t-ha"}
+	cl.job.JobID = "job-ha-1"
 	cl.correlationID = "corr-ha-1"
 	cl.workItems = []*WorkItem{{Title: "task-1"}}
 
@@ -7580,7 +7600,7 @@ func TestAgentRegistry_Heartbeat_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := reg.Heartbeat(ctx, "t1", "agent-1")
+	err := reg.Heartbeat(ctx, "t1", "agent-1", nil)
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -7754,30 +7774,6 @@ func TestContainerRuntime_Logs_EmptyContainerIDV2(t *testing.T) {
 }
 
 // =============================================================================
-// control_loop — generateCorrelationID via Run (error path via nil backend)
-// =============================================================================
-
-// TestControlLoop_Run_NilConfig exercises the Run error path when config is nil.
-func TestControlLoop_Run_NilConfig(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	cl := NewControlLoop(impl, &peerTestLogger{})
-
-	// Run with a real config but no backends (will fail quickly).
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	err := cl.Run(ctx, &JobConfig{
-		TenantID:      "t-run",
-		Description:   "test",
-		MaxIterations: 1,
-	})
-	// Error is acceptable — the point is to exercise Run's code paths.
-	_ = err
-}
-
-// =============================================================================
 // orchestrator.go — defaultBackendName uncovered path
 // =============================================================================
 
@@ -7854,7 +7850,7 @@ func TestOrchestrator_AgentHeartbeat_SuccessPath(t *testing.T) {
 		t.Fatalf("RegisterAgent: %v", err)
 	}
 
-	if err := impl.AgentHeartbeat(ctx, "t-hb-s", resp.Agent.ID); err != nil {
+	if err := impl.AgentHeartbeat(ctx, "t-hb-s", resp.Agent.ID, nil); err != nil {
 		t.Fatalf("AgentHeartbeat: %v", err)
 	}
 }
@@ -8202,7 +8198,7 @@ func TestControlLoop_CleanupAllSessions_WithCancelsAndEmptySession(t *testing.T)
 	}
 
 	cl := NewControlLoop(impl, &peerTestLogger{})
-	cl.config = &JobConfig{TenantID: "t-cleanup"}
+	cl.job.Config = &JobConfig{TenantID: "t-cleanup"}
 
 	// Add a cancel func to peerDeliveryCancels (covers line 932).
 	cancelled := false
@@ -8240,7 +8236,7 @@ func TestOrchestrator_ListJobs_KVBadJSON(t *testing.T) {
 	_ = kv.Put(context.Background(), "job:t-bad:", []byte("not-json"))
 
 	ctx := ContextWithTenant(context.Background(), "t-bad")
-	jobs, err := impl.ListJobs(ctx, "t-bad")
+	jobs, err := impl.ListJobs(ctx, "t-bad", nil)
 	// Should not return error — just logs warning.
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
@@ -8262,7 +8258,7 @@ func TestOrchestrator_ListJobs_KVScanError(t *testing.T) {
 	impl.kvStore = kv
 
 	ctx := ContextWithTenant(context.Background(), "t-scan-err")
-	jobs, err := impl.ListJobs(ctx, "t-scan-err")
+	jobs, err := impl.ListJobs(ctx, "t-scan-err", nil)
 	// Should not error — just logs warning.
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
@@ -8587,7 +8583,7 @@ func TestOrchestrator_AgentHeartbeat_ValidateTenantFail(t *testing.T) {
 	impl.SetTenantGuard(NewTenantGuard(&agentTestLogger{}))
 	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
 
-	err := impl.AgentHeartbeat(context.Background(), "t-vt", "agent-1")
+	err := impl.AgentHeartbeat(context.Background(), "t-vt", "agent-1", nil)
 	if err == nil {
 		t.Fatal("expected error when tenant guard set and no tenant in ctx")
 	}
@@ -8644,7 +8640,7 @@ func TestControlLoop_ResolveBackendForMode_DefaultCase(t *testing.T) {
 
 	backends, _ := impl.ListBackends(context.Background())
 	cl := NewControlLoop(impl, &peerTestLogger{})
-	cl.config = &JobConfig{LeadBackend: "acp"}
+	cl.job.Config = &JobConfig{LeadBackend: "acp"}
 
 	// Set workflow with an unrecognized mode (not canned/constrained/autonomous).
 	cl.workflow = &WorkflowDefinition{
@@ -8703,7 +8699,7 @@ func TestControlLoop_HandleInitialize_SpawnLeadFails(t *testing.T) {
 	}
 
 	cl := NewControlLoop(impl, &peerTestLogger{})
-	cl.config = &JobConfig{TenantID: "t-spawn-fail", LeadBackend: "acp"}
+	cl.job.Config = &JobConfig{TenantID: "t-spawn-fail", LeadBackend: "acp"}
 	cl.SetWorkflow(&WorkflowDefinition{
 		Name: "spawn-fail-wf",
 		Mode: WorkflowModeAutonomous,
@@ -8950,7 +8946,7 @@ func TestOrchestrator_GetJobStatus_ValidateTenantFail(t *testing.T) {
 func TestOrchestrator_ListJobs_ValidateTenantFail(t *testing.T) {
 	t.Parallel()
 	impl := newGuardedService(t)
-	_, err := impl.ListJobs(context.Background(), "t-lj")
+	_, err := impl.ListJobs(context.Background(), "t-lj", nil)
 	if err == nil {
 		t.Fatal("expected error from validateTenant")
 	}
@@ -9390,7 +9386,12 @@ func TestOrchestrator_ListBackendModels_ACPCodex(t *testing.T) {
 		t.Fatalf("ListBackendModels: %v", err)
 	}
 
-	expected := []string{"codex-mini-latest", "o4-mini", "o3"}
+	// The catalog tracks software/conventions/model-usage.md, where codex runs
+	// the latest GPT model. Asserted as the CURRENT pin rather than as a count,
+	// because a count check passes just as happily when the names inside it
+	// have gone stale — which is exactly how this entry came to list
+	// codex-mini-latest/o4-mini/o3 long after they were retired.
+	expected := []string{"gpt-5.5"}
 	if len(models) != len(expected) {
 		t.Fatalf("expected %d models, got %d: %v", len(expected), len(models), models)
 	}
@@ -9436,147 +9437,87 @@ func TestOrchestrator_ListBackendModels_NoLister(t *testing.T) {
 }
 
 // =============================================================================
-// CreateTask — host affinity and GPU required metadata enrichment
+// CreateTask — typed routing hints on the record
 // =============================================================================
 
-func TestOrchestrator_CreateTask_HostAffinityMetadata(t *testing.T) {
+// TestOrchestrator_CreateTask_RoutingHintsArePersistedTyped proves the
+// placement hints reach the record as Task.Routing, so a task requeued after
+// a failed attempt is re-dispatched under the same constraints. They are no
+// longer smuggled through Metadata: the caller's metadata is theirs alone.
+func TestOrchestrator_CreateTask_RoutingHintsArePersistedTyped(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
 	impl.SetTaskStore(NewInMemoryTaskStore())
 	ctx := context.Background()
 
-	req := &CreateTaskRequest{
-		TenantID:     "tenant-abc",
-		Subject:      "Run inference pipeline",
-		HostAffinity: "gpu-agent-01",
-	}
+	for name, tc := range map[string]struct {
+		req  *CreateTaskRequest
+		want TaskRouting
+	}{
+		"host affinity only": {
+			req:  &CreateTaskRequest{TenantID: "tenant-abc", Subject: "Run inference", HostAffinity: "gpu-agent-01"},
+			want: TaskRouting{HostAffinity: "gpu-agent-01"},
+		},
+		"gpu only": {
+			req:  &CreateTaskRequest{TenantID: "tenant-abc", Subject: "GPU benchmark", GpuRequired: true},
+			want: TaskRouting{GpuRequired: true},
+		},
+		"every hint": {
+			req: &CreateTaskRequest{TenantID: "tenant-abc", Subject: "High-priority GPU task",
+				HostAffinity: "ml-host-02", GpuRequired: true, Backend: "ollama"},
+			want: TaskRouting{HostAffinity: "ml-host-02", GpuRequired: true, Backend: "ollama"},
+		},
+		"no hint": {
+			req:  &CreateTaskRequest{TenantID: "tenant-abc", Subject: "Plain task"},
+			want: TaskRouting{},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			task, err := impl.CreateTask(ctx, tc.req)
+			if err != nil {
+				t.Fatalf("CreateTask: %v", err)
+			}
+			if task.Routing != tc.want {
+				t.Errorf("routing = %+v, want %+v", task.Routing, tc.want)
+			}
+			if task.Metadata != nil {
+				t.Errorf("a task given no metadata carries none, got %v", task.Metadata)
+			}
 
-	task, err := impl.CreateTask(ctx, req)
-	if err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	if task.Metadata == nil {
-		t.Fatal("expected task.Metadata to be non-nil")
-	}
-	if got := task.Metadata["host_affinity"]; got != "gpu-agent-01" {
-		t.Errorf("host_affinity = %q, want gpu-agent-01", got)
-	}
-	if _, ok := task.Metadata["gpu_required"]; ok {
-		t.Error("gpu_required should not be present when GpuRequired=false")
+			stored, err := impl.GetTask(ctx, tc.req.TenantID, task.ID)
+			if err != nil {
+				t.Fatalf("GetTask: %v", err)
+			}
+			if stored.Routing != tc.want {
+				t.Errorf("the hints must survive the store: %+v, want %+v", stored.Routing, tc.want)
+			}
+		})
 	}
 }
 
-func TestOrchestrator_CreateTask_GpuRequiredMetadata(t *testing.T) {
+// TestOrchestrator_CreateTask_MetadataIsTheCallersAlone proves the routing
+// hints never write into the caller's metadata map.
+func TestOrchestrator_CreateTask_MetadataIsTheCallersAlone(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
 	impl.SetTaskStore(NewInMemoryTaskStore())
-	ctx := context.Background()
 
-	req := &CreateTaskRequest{
-		TenantID:    "tenant-abc",
-		Subject:     "GPU benchmark task",
-		GpuRequired: true,
-	}
-
-	task, err := impl.CreateTask(ctx, req)
-	if err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	if task.Metadata == nil {
-		t.Fatal("expected task.Metadata to be non-nil")
-	}
-	if got := task.Metadata["gpu_required"]; got != "true" {
-		t.Errorf("gpu_required = %q, want true", got)
-	}
-	if _, ok := task.Metadata["host_affinity"]; ok {
-		t.Error("host_affinity should not be present when HostAffinity is empty")
-	}
-}
-
-func TestOrchestrator_CreateTask_BothAffinityAndGPU(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetTaskStore(NewInMemoryTaskStore())
-	ctx := context.Background()
-
-	req := &CreateTaskRequest{
-		TenantID:     "tenant-abc",
-		Subject:      "High-priority GPU task",
-		HostAffinity: "ml-host-02",
-		GpuRequired:  true,
-	}
-
-	task, err := impl.CreateTask(ctx, req)
-	if err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	if task.Metadata["host_affinity"] != "ml-host-02" {
-		t.Errorf("host_affinity = %q, want ml-host-02", task.Metadata["host_affinity"])
-	}
-	if task.Metadata["gpu_required"] != "true" {
-		t.Errorf("gpu_required = %q, want true", task.Metadata["gpu_required"])
-	}
-}
-
-func TestOrchestrator_CreateTask_ExistingMetadataPreserved(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetTaskStore(NewInMemoryTaskStore())
-	ctx := context.Background()
-
-	req := &CreateTaskRequest{
+	task, err := impl.CreateTask(context.Background(), &CreateTaskRequest{
 		TenantID:     "tenant-abc",
 		Subject:      "Task with existing metadata",
 		HostAffinity: "node-03",
 		GpuRequired:  true,
 		Metadata:     map[string]string{"priority": "high", "team": "ml"},
-	}
-
-	task, err := impl.CreateTask(ctx, req)
+	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	if task.Metadata["priority"] != "high" {
-		t.Errorf("priority = %q, want high", task.Metadata["priority"])
+	if len(task.Metadata) != 2 || task.Metadata["priority"] != "high" || task.Metadata["team"] != "ml" {
+		t.Errorf("metadata = %v, want exactly what the caller supplied", task.Metadata)
 	}
-	if task.Metadata["team"] != "ml" {
-		t.Errorf("team = %q, want ml", task.Metadata["team"])
-	}
-	if task.Metadata["host_affinity"] != "node-03" {
-		t.Errorf("host_affinity = %q, want node-03", task.Metadata["host_affinity"])
-	}
-	if task.Metadata["gpu_required"] != "true" {
-		t.Errorf("gpu_required = %q, want true", task.Metadata["gpu_required"])
-	}
-}
-
-func TestOrchestrator_CreateTask_NoAffinityNoMetadata(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetTaskStore(NewInMemoryTaskStore())
-	ctx := context.Background()
-
-	req := &CreateTaskRequest{
-		TenantID: "tenant-abc",
-		Subject:  "Plain task",
-	}
-
-	task, err := impl.CreateTask(ctx, req)
-	if err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	// With no affinity/GPU hint and no pre-existing metadata, the map stays nil.
-	if task.Metadata != nil {
-		if _, ok := task.Metadata["host_affinity"]; ok {
-			t.Error("host_affinity should not be set for plain task")
-		}
-		if _, ok := task.Metadata["gpu_required"]; ok {
-			t.Error("gpu_required should not be set for plain task")
-		}
+	if task.Routing != (TaskRouting{HostAffinity: "node-03", GpuRequired: true}) {
+		t.Errorf("routing = %+v", task.Routing)
 	}
 }

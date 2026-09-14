@@ -118,6 +118,7 @@ const routeToViewID: Partial<Record<RouteName, ViewID>> = {
   sessions:         'sessions',
   'session-detail': 'sessions',
   tasks:            'tasks',
+  'task-detail':    'tasks',
   workflows:        'workflows',
   events:           'events',
   cost:             'costs',

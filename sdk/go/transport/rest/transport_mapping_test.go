@@ -112,11 +112,6 @@ func TestMapToEndpointAllServices(t *testing.T) {
 		{"TimeSeries/alias", "TimeSeries", "Query", "/api/v1/timeseries/query", http.MethodPost},
 
 		// RBAC service
-		{"RBAC/CreateUser", "RBAC", "CreateUser", "/api/v1/rbac/users", http.MethodPost},
-		{"RBAC/GetUser", "RBAC", "GetUser", "/api/v1/rbac/users/{username}", http.MethodGet},
-		{"RBAC/UpdateUser", "RBAC", "UpdateUser", "/api/v1/rbac/users/{username}", http.MethodPut},
-		{"RBAC/DeleteUser", "RBAC", "DeleteUser", "/api/v1/rbac/users/{username}", http.MethodDelete},
-		{"RBAC/ListUsers", "RBAC", "ListUsers", "/api/v1/rbac/users", http.MethodGet},
 		{"RBAC/CreateRole", "RBAC", "CreateRole", "/api/v1/rbac/roles", http.MethodPost},
 		{"RBAC/GetRole", "RBAC", "GetRole", "/api/v1/rbac/roles/{name}", http.MethodGet},
 		{"RBAC/UpdateRole", "RBAC", "UpdateRole", "/api/v1/rbac/roles/{name}", http.MethodPut},

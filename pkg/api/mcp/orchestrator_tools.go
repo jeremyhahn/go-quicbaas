@@ -262,6 +262,75 @@ func (r *ToolRegistry) registerAgentTools() {
 	})
 
 	r.addTool(ToolDefinition{
+		Name: "quicbaas_orchestrator_session_conversation",
+		Description: "Read a page of a session's CONVERSATION: who said what, which tools ran, and what each answer cost. " +
+			"Coarser than quicbaas_orchestrator_session_history, which pages the raw event log — a streaming answer is many events " +
+			"and exactly one turn here, and a page boundary always falls between turns. Use this to read a session; use the event " +
+			"transcript to follow one asynchronous turn to its terminal event.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant the session belongs to. Required.",
+				},
+				"session_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Session whose conversation to read",
+				},
+				"cursor": map[string]interface{}{
+					"type":        "integer",
+					"description": "next_cursor from a previous page (optional, default: start of the retained conversation)",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum turns to return (optional, default: 100, capped at 500)",
+				},
+			},
+			"required": []string{"tenant_id", "session_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name: "quicbaas_orchestrator_cost",
+		Description: "Read one scope of the CONSUMPTION LEDGER: the tokens spent under it, the drill-down to the level below, " +
+			"and the spend policy of every pooled account that paid. The attribution chain is a PATH — " +
+			"tenant/project/task/job/session/round — so each level may be supplied only if every level above it is. " +
+			"cost_micros is accompanied by cost_measured, and while nothing prices a turn the flag is false and the figure " +
+			"is UNMEASURED, not free; report it as unavailable rather than as zero.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant whose spend to read. Required.",
+				},
+				"project_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Narrow to one project (optional)",
+				},
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Narrow to one task (optional; requires project_id)",
+				},
+				"job_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Narrow to one job (optional; requires task_id)",
+				},
+				"session_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Narrow to one session (optional; requires job_id)",
+				},
+				"round": map[string]interface{}{
+					"type":        "integer",
+					"description": "Narrow to one round (optional; requires session_id)",
+				},
+			},
+			"required": []string{"tenant_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
 		Name: "quicbaas_orchestrator_status",
 		Description: "Get the status of an active agent session including state, last activity, and uptime. " +
 			"MCP has no streaming channel, so poll this tool to observe session progress (see quicbaas_orchestrator_prompt for the turn result).",
@@ -334,8 +403,10 @@ func (r *ToolRegistry) registerAgentTools() {
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_orchestrator_list_sessions",
-		Description: "List all active agent sessions for a tenant, optionally filtered by backend",
+		Name: "quicbaas_orchestrator_list_sessions",
+		Description: "List a tenant's agent sessions, optionally filtered by backend and " +
+			"lifecycle state. The listing includes durable records, so an unfiltered " +
+			"call returns closed sessions too.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -347,6 +418,11 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "Filter sessions by backend name (optional)",
 				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"enum":        orchestration.SessionStates(),
+					"description": "Filter sessions by lifecycle state (optional). Empty means every state.",
+				},
 			},
 			"required": []string{"tenant_id"},
 		},
@@ -355,6 +431,15 @@ func (r *ToolRegistry) registerAgentTools() {
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_orchestrator_list_backends",
 		Description: "List all registered agent backends with their capabilities",
+		InputSchema: map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_list_runners",
+		Description: "List the registered job runners and the ordered states each drives a job through",
 		InputSchema: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -578,6 +663,10 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "integer",
 					"description": "Maximum number of orchestration iterations (optional, default: 10)",
 				},
+				"runner": map[string]interface{}{
+					"type":        "string",
+					"description": "Job runner that drives the job's states (optional, default: workflow)",
+				},
 			},
 			"required": []string{"description"},
 		},
@@ -615,10 +704,15 @@ func (r *ToolRegistry) registerAgentTools() {
 
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_orchestrator_list_jobs",
-		Description: "List all orchestration jobs for the current tenant, sorted by start time descending",
+		Description: "List the current tenant's orchestration jobs, sorted by start time descending, optionally narrowed to the attempts at one task",
 		InputSchema: map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
+			"type": "object",
+			"properties": map[string]interface{}{
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Narrow the listing to the attempts at one task. Optional; omit to list every job.",
+				},
+			},
 		},
 	})
 
@@ -656,8 +750,70 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "boolean",
 					"description": "Restrict auto-spawn to agents advertising GPU capability. Ignored when auto_spawn is false. Optional.",
 				},
+				"host_affinity": map[string]interface{}{
+					"type":        "string",
+					"description": "Pin auto-spawn to a specific agent daemon by Name or Host. Ignored when auto_spawn is false. Optional.",
+				},
+				"runner": map[string]interface{}{
+					"type":        "string",
+					"description": "JobRunner that drives an attempt at the task. Empty means the engine's lead-driven 'workflow' runner; an unregistered name is refused. Optional.",
+				},
 			},
 			"required": []string{"subject"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_task_block",
+		Description: "Park an orchestration task until a person readmits it. The kind says why (needs_info, blocked, escalated) and the reason is surfaced to whoever it waits for.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the task. Required.",
+				},
+				"kind": map[string]interface{}{
+					"type":        "string",
+					"description": "Why the task is parked: needs_info, blocked or escalated. Required.",
+					"enum":        []string{"needs_info", "blocked", "escalated"},
+				},
+				"reason": map[string]interface{}{
+					"type":        "string",
+					"description": "Human-readable reason. Required.",
+				},
+			},
+			"required": []string{"task_id", "kind", "reason"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_task_readmit",
+		Description: "Return a blocked orchestration task to the pending queue, clearing its block, assignment and retry hold.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the task. Required.",
+				},
+			},
+			"required": []string{"task_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_task_delete",
+		Description: "Delete an orchestration task, its artifacts, its claim mark and its source reservation, so the issue or ticket it was adopted from can be adopted again. Refused while a job holds a live lease on the task.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the task. Required.",
+				},
+			},
+			"required": []string{"task_id"},
 		},
 	})
 
@@ -1157,6 +1313,7 @@ func (r *ToolRegistry) executeAgentListSessions(ctx context.Context, args map[st
 
 	req := &orchestration.ListSessionsRequest{
 		Backend: getString(args, "backend"),
+		Status:  orchestration.SessionState(getString(args, "status")),
 	}
 
 	resp, err := agentSvc.ListSessions(ctx, req)
@@ -1184,6 +1341,40 @@ func (r *ToolRegistry) executeAgentListBackends(ctx context.Context, args map[st
 	return marshalResult(map[string]interface{}{
 		"backends":  backends,
 		"timestamp": time.Now().Format(time.RFC3339Nano),
+	})
+}
+
+// executeOrchestratorListRunners answers quicbaas_orchestrator_list_runners.
+//
+// The runner list is REGISTRY data — the same for every caller, so no tenant is
+// derived — but it is still gated on the agent service being present, matching
+// the REST and embedded handlers: a node that runs no orchestrator drives no
+// jobs, and answering "these are the runners" there would describe a capability
+// the node does not have.
+func (r *ToolRegistry) executeOrchestratorListRunners(_ context.Context, _ map[string]interface{}) (interface{}, error) {
+	if _, err := r.getAgentService(); err != nil {
+		return nil, err
+	}
+	registered := orchestration.JobRunners()
+	runners := make([]map[string]interface{}, 0, len(registered))
+	for _, runner := range registered {
+		specs := runner.States()
+		states := make([]map[string]interface{}, 0, len(specs))
+		for _, spec := range specs {
+			states = append(states, map[string]interface{}{
+				"state":          string(spec.State),
+				"label":          spec.Label,
+				"session_backed": spec.SessionBacked,
+			})
+		}
+		runners = append(runners, map[string]interface{}{
+			"name":   runner.Name(),
+			"states": states,
+		})
+	}
+	return marshalResult(map[string]interface{}{
+		"runners": runners,
+		"count":   len(runners),
 	})
 }
 
@@ -1459,7 +1650,9 @@ func (r *ToolRegistry) executeAgentFleetHeartbeat(ctx context.Context, args map[
 
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 
-	err = agentSvc.AgentHeartbeat(ctx, tenantID, agentID)
+	// The MCP heartbeat tool carries no served-backend list, so it observes
+	// nothing and reconciles nothing.
+	err = agentSvc.AgentHeartbeat(ctx, tenantID, agentID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1493,6 +1686,7 @@ func (r *ToolRegistry) executeOrchestratorStartJob(ctx context.Context, args map
 		LeadModel:     getString(args, "lead_model"),
 		ProjectID:     getString(args, "project_id"),
 		MaxIterations: getInt(args, "max_iterations"),
+		Runner:        getString(args, "runner"),
 	}
 
 	resp, err := agentSvc.StartJob(ctx, req)
@@ -1526,17 +1720,123 @@ func (r *ToolRegistry) executeOrchestratorGetJobStatus(ctx context.Context, args
 	}
 
 	return marshalResult(map[string]interface{}{
-		"job_id":      jobStatus.JobID,
-		"state":       string(jobStatus.State),
-		"iteration":   jobStatus.Iteration,
-		"task_count":  jobStatus.TaskCount,
-		"completed":   jobStatus.Completed,
-		"failed":      jobStatus.Failed,
-		"description": jobStatus.Description,
-		"started_at":  jobStatus.StartedAt,
-		"updated_at":  jobStatus.UpdatedAt,
-		"error":       jobStatus.Error,
-		"timestamp":   time.Now().Format(time.RFC3339Nano),
+		"job_id":          jobStatus.JobID,
+		"state":           string(jobStatus.State),
+		"iteration":       jobStatus.Iteration,
+		"task_count":      jobStatus.TaskCount,
+		"completed":       jobStatus.Completed,
+		"failed":          jobStatus.Failed,
+		"description":     jobStatus.Description,
+		"started_at":      jobStatus.StartedAt,
+		"updated_at":      jobStatus.UpdatedAt,
+		"error":           jobStatus.Error,
+		"task_id":         jobStatus.TaskID,
+		"attempt":         jobStatus.Attempt,
+		"node":            jobStatus.Node,
+		"heartbeat_at":    jobStatus.HeartbeatAt,
+		"failure_class":   jobStatus.FailureClass,
+		"lead_session_id": jobStatus.LeadSessionID,
+		"session_ids":     jobStatus.SessionIDs,
+		"stage":           jobStatus.Stage,
+		"runner":          jobStatus.Runner,
+
+		// Provenance: the same facts the REST and gRPC job shapes carry.
+		// The domain types serialize themselves — a hand-rolled map per
+		// nested shape is a second wire format waiting to drift.
+		"agent_id":        jobStatus.AgentID,
+		"stages":          jobStatus.Stages,
+		"attempts":        jobStatus.Attempts,
+		"attempt_budget":  jobStatus.AttemptBudget,
+		"terminal_reason": string(jobStatus.TerminalReason),
+		"readmit_allowed": jobStatus.ReadmitAllowed,
+		"delivery":        jobStatus.Delivery,
+		"verification":    jobStatus.Verification,
+
+		"timestamp": time.Now().Format(time.RFC3339Nano),
+	})
+}
+
+// executeOrchestratorTaskBlock handles the quicbaas_orchestrator_task_block tool.
+func (r *ToolRegistry) executeOrchestratorTaskBlock(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	taskID := getString(args, "task_id")
+	if taskID == "" {
+		return nil, api.NewRequiredFieldError("task_id")
+	}
+	kind := getString(args, "kind")
+	if kind == "" {
+		return nil, api.NewRequiredFieldError("kind")
+	}
+	reason := getString(args, "reason")
+	if reason == "" {
+		return nil, api.NewRequiredFieldError("reason")
+	}
+
+	tenantID := orchestration.TenantFromContext(ctx)
+
+	if err := agentSvc.BlockTask(ctx, tenantID, taskID, orchestration.TaskBlockKind(kind), reason); err != nil {
+		return nil, err
+	}
+
+	return marshalResult(map[string]interface{}{
+		"task_id":   taskID,
+		"kind":      kind,
+		"blocked":   true,
+		"timestamp": time.Now().Format(time.RFC3339Nano),
+	})
+}
+
+// executeOrchestratorTaskReadmit handles the quicbaas_orchestrator_task_readmit tool.
+func (r *ToolRegistry) executeOrchestratorTaskReadmit(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	taskID := getString(args, "task_id")
+	if taskID == "" {
+		return nil, api.NewRequiredFieldError("task_id")
+	}
+
+	tenantID := orchestration.TenantFromContext(ctx)
+
+	if err := agentSvc.ReadmitTask(ctx, tenantID, taskID); err != nil {
+		return nil, err
+	}
+
+	return marshalResult(map[string]interface{}{
+		"task_id":    taskID,
+		"readmitted": true,
+		"timestamp":  time.Now().Format(time.RFC3339Nano),
+	})
+}
+
+// executeOrchestratorTaskDelete handles the quicbaas_orchestrator_task_delete tool.
+func (r *ToolRegistry) executeOrchestratorTaskDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	taskID := getString(args, "task_id")
+	if taskID == "" {
+		return nil, api.NewRequiredFieldError("task_id")
+	}
+
+	tenantID := orchestration.TenantFromContext(ctx)
+
+	if err := agentSvc.DeleteTask(ctx, tenantID, taskID); err != nil {
+		return nil, err
+	}
+
+	return marshalResult(map[string]interface{}{
+		"task_id":   taskID,
+		"deleted":   true,
+		"timestamp": time.Now().Format(time.RFC3339Nano),
 	})
 }
 
@@ -1566,7 +1866,8 @@ func (r *ToolRegistry) executeOrchestratorCancelJob(ctx context.Context, args ma
 	})
 }
 
-// executeOrchestratorListJobs lists all orchestration jobs for a tenant.
+// executeOrchestratorListJobs lists the tenant's orchestration jobs, narrowed
+// to one task when the caller names one.
 func (r *ToolRegistry) executeOrchestratorListJobs(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	agentSvc, err := r.getAgentService()
 	if err != nil {
@@ -1575,7 +1876,7 @@ func (r *ToolRegistry) executeOrchestratorListJobs(ctx context.Context, args map
 
 	tenantID := orchestration.TenantFromContext(ctx)
 
-	jobs, err := agentSvc.ListJobs(ctx, tenantID)
+	jobs, err := agentSvc.ListJobs(ctx, tenantID, &orchestration.JobFilter{TaskID: getString(args, "task_id")})
 	if err != nil {
 		return nil, err
 	}
@@ -1594,6 +1895,8 @@ func (r *ToolRegistry) executeOrchestratorListJobs(ctx context.Context, args map
 			"updated_at":  j.UpdatedAt,
 			"error":       j.Error,
 			"event_count": len(j.Events),
+			"task_id":     j.TaskID,
+			"attempt":     j.Attempt,
 		}
 	}
 
@@ -1620,14 +1923,16 @@ func (r *ToolRegistry) executeOrchestratorTaskCreate(ctx context.Context, args m
 	tenantID := orchestration.TenantFromContext(ctx)
 
 	req := &orchestration.CreateTaskRequest{
-		TenantID:    tenantID,
-		Subject:     subject,
-		Description: getString(args, "description"),
-		TeamName:    getString(args, "team_name"),
-		AssignedTo:  getString(args, "assigned_to"),
-		AutoSpawn:   getBool(args, "auto_spawn"),
-		Backend:     getString(args, "backend"),
-		GpuRequired: getBool(args, "gpu_required"),
+		TenantID:     tenantID,
+		Subject:      subject,
+		Description:  getString(args, "description"),
+		TeamName:     getString(args, "team_name"),
+		AssignedTo:   getString(args, "assigned_to"),
+		AutoSpawn:    getBool(args, "auto_spawn"),
+		Backend:      getString(args, "backend"),
+		GpuRequired:  getBool(args, "gpu_required"),
+		HostAffinity: getString(args, "host_affinity"),
+		Runner:       getString(args, "runner"),
 	}
 
 	task, createErr := agentSvc.CreateTask(ctx, req)
@@ -1644,6 +1949,8 @@ func (r *ToolRegistry) executeOrchestratorTaskCreate(ctx context.Context, args m
 		result["task_id"] = task.ID
 		result["status"] = string(task.Status)
 		result["spawned_job_id"] = task.SpawnedJobID
+		result["runner"] = task.Runner
+		result["dispatch_reason"] = task.DispatchReason
 	}
 	if createErr != nil {
 		result["error"] = createErr.Error()
@@ -1819,6 +2126,92 @@ func (r *ToolRegistry) executeAgentSessionHistory(ctx context.Context, args map[
 	})
 }
 
+// executeAgentSessionConversation backs
+// quicbaas_orchestrator_session_conversation.
+//
+// It folds the same durable event log the transcript tool pages into the
+// conversation an operator reads. One store, two projections: the raw events
+// for a caller following a turn, the turns for a caller reading a session.
+func (r *ToolRegistry) executeAgentSessionConversation(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+	ctx, tenantID, err := sessionTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	sessionID := getString(args, "session_id")
+	if sessionID == "" {
+		return nil, api.NewRequiredFieldError("session_id")
+	}
+	accessor, ok := agentSvc.(sessionLogAccessor)
+	if !ok {
+		return nil, api.NewServiceUnavailableError("session event log")
+	}
+	log := accessor.SessionEventLog()
+	if log == nil {
+		return nil, api.NewServiceUnavailableError("session event log")
+	}
+
+	page, err := orchestration.ReadSessionHistory(ctx, log, &orchestration.SessionHistoryRequest{
+		TenantID:  tenantID,
+		SessionID: sessionID,
+		Cursor:    getUint64(args, "cursor"),
+		Limit:     getInt(args, "limit"),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(page)
+}
+
+// spendLedgerAccessor is the optional interface the agent service satisfies so
+// MCP can read the consumption ledger. Declared locally for the same reason
+// sessionLogAccessor is: this file takes no dependency on the concrete
+// orchestrator implementation.
+type spendLedgerAccessor = orchestration.SpendLedgerAccessor
+
+// executeAgentCost backs quicbaas_orchestrator_cost.
+//
+// It rolls up the same ledger every other transport reads, through the same
+// projection, so an agent asking what a job cost and an operator reading the
+// cost page get one answer rather than two.
+func (r *ToolRegistry) executeAgentCost(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+	ctx, tenantID, err := sessionTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	accessor, ok := agentSvc.(spendLedgerAccessor)
+	if !ok {
+		return nil, api.NewServiceUnavailableError("consumption ledger")
+	}
+
+	req := &orchestration.SpendReportRequest{
+		TenantID:  tenantID,
+		ProjectID: getString(args, "project_id"),
+		TaskID:    getString(args, "task_id"),
+		JobID:     getString(args, "job_id"),
+		SessionID: getString(args, "session_id"),
+	}
+	// Presence, not value: round 0 is a real level, and getInt alone cannot
+	// tell it from "every round".
+	if _, present := args["round"]; present {
+		req.Round = getInt(args, "round")
+		req.RoundSet = true
+	}
+
+	report, err := orchestration.ReadSpendReport(ctx, accessor.ConsumptionLedger(), accessor.AccountStore(), req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(report)
+}
+
 // getAgentService retrieves the AgentService from the QuicBaaS service.
 func (r *ToolRegistry) getAgentService() (orchestration.AgentService, error) {
 	agentSvc := r.service.Agent()
@@ -1838,10 +2231,13 @@ func isAgentTool(name string) bool {
 		"quicbaas_orchestrator_prompt",
 		"quicbaas_orchestrator_status",
 		"quicbaas_orchestrator_session_history",
+		"quicbaas_orchestrator_session_conversation",
+		"quicbaas_orchestrator_cost",
 		"quicbaas_orchestrator_close",
 		"quicbaas_orchestrator_rotate_account",
 		"quicbaas_orchestrator_list_sessions",
 		"quicbaas_orchestrator_list_backends",
+		"quicbaas_orchestrator_list_runners",
 		"quicbaas_orchestrator_decompose",
 		"quicbaas_orchestrator_health",
 		"quicbaas_orchestrator_broadcast",
@@ -1855,6 +2251,9 @@ func isAgentTool(name string) bool {
 		"quicbaas_orchestrator_cancel_job",
 		"quicbaas_orchestrator_list_jobs",
 		"quicbaas_orchestrator_task_create",
+		"quicbaas_orchestrator_task_block",
+		"quicbaas_orchestrator_task_readmit",
+		"quicbaas_orchestrator_task_delete",
 		"quicbaas_task_get_artifact",
 		"quicbaas_task_list_artifacts",
 		"quicbaas_orchestrator_inference":
@@ -1881,6 +2280,10 @@ func (r *ToolRegistry) executeAgentTool(ctx context.Context, name string, args m
 		return r.executeAgentStatus(ctx, args)
 	case "quicbaas_orchestrator_session_history":
 		return r.executeAgentSessionHistory(ctx, args)
+	case "quicbaas_orchestrator_session_conversation":
+		return r.executeAgentSessionConversation(ctx, args)
+	case "quicbaas_orchestrator_cost":
+		return r.executeAgentCost(ctx, args)
 	case "quicbaas_orchestrator_close":
 		return r.executeAgentClose(ctx, args)
 	case "quicbaas_orchestrator_rotate_account":
@@ -1889,6 +2292,8 @@ func (r *ToolRegistry) executeAgentTool(ctx context.Context, name string, args m
 		return r.executeAgentListSessions(ctx, args)
 	case "quicbaas_orchestrator_list_backends":
 		return r.executeAgentListBackends(ctx, args)
+	case "quicbaas_orchestrator_list_runners":
+		return r.executeOrchestratorListRunners(ctx, args)
 	case "quicbaas_orchestrator_decompose":
 		return r.executeAgentDecompose(ctx, args)
 	case "quicbaas_orchestrator_health":
@@ -1915,6 +2320,12 @@ func (r *ToolRegistry) executeAgentTool(ctx context.Context, name string, args m
 		return r.executeOrchestratorListJobs(ctx, args)
 	case "quicbaas_orchestrator_task_create":
 		return r.executeOrchestratorTaskCreate(ctx, args)
+	case "quicbaas_orchestrator_task_block":
+		return r.executeOrchestratorTaskBlock(ctx, args)
+	case "quicbaas_orchestrator_task_readmit":
+		return r.executeOrchestratorTaskReadmit(ctx, args)
+	case "quicbaas_orchestrator_task_delete":
+		return r.executeOrchestratorTaskDelete(ctx, args)
 	case "quicbaas_task_get_artifact":
 		return r.executeTaskGetArtifact(ctx, args)
 	case "quicbaas_task_list_artifacts":

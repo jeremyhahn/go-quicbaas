@@ -264,7 +264,7 @@ type UserImportItem struct {
 	Username string `json:"username,omitempty" yaml:"username,omitempty"`
 
 	// Attributes contains additional user attributes.
-	Attributes map[string]interface{} `json:"attributes,omitempty" yaml:"attributes,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty" yaml:"attributes,omitempty"`
 
 	// Roles is the list of roles to assign to the user.
 	Roles []string `json:"roles,omitempty" yaml:"roles,omitempty"`

@@ -217,7 +217,7 @@ test.describe('Cluster Dashboard', () => {
 
   test('Cluster > Cluster sidebar item has no "soon" badge', async ({ page }) => {
     // The CLUSTER section's dashboard entry was renamed from "Dashboard"
-    // to "Cluster" so the three section dashboards (Overview / Orchestration
+    // to "Cluster" so the three section dashboards (Overview / Software Factory
     // / Cluster) are uniquely addressable in the sidebar.
     await page.goto('/ui/', { waitUntil: 'networkidle' });
     const clusterBtn = page.locator('aside nav button', { hasText: 'Cluster' }).first();

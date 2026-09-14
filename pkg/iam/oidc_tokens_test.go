@@ -586,9 +586,28 @@ func TestTokenService_RevokeToken_ErrorHandling(t *testing.T) {
 	}
 }
 
+// mustGenerateJTI supplies a token identifier to a test that needs one for some
+// other reason. It fails the test at the point of the failure rather than
+// letting an empty identifier propagate into an assertion further down, where
+// the resulting failure would name something that is not the defect.
+func mustGenerateJTI(t *testing.T) string {
+	t.Helper()
+	jti, err := generateJTI()
+	if err != nil {
+		t.Fatalf("generateJTI() failed: %v", err)
+	}
+	return jti
+}
+
 func TestGenerateJTI(t *testing.T) {
-	jti1 := generateJTI()
-	jti2 := generateJTI()
+	jti1, err := generateJTI()
+	if err != nil {
+		t.Fatalf("generateJTI() error = %v", err)
+	}
+	jti2, err := generateJTI()
+	if err != nil {
+		t.Fatalf("generateJTI() error = %v", err)
+	}
 
 	if jti1 == "" {
 		t.Error("generateJTI() returned empty string")

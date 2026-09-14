@@ -97,6 +97,20 @@ func handleProjectCreate(ctx context.Context, conn *grpc.ClientConn, req interfa
 		GpuMinutes:       sdkReq.GPUMinutes,
 		MaxConcurrency:   int32(sdkReq.MaxConcurrency),
 		Metadata:         sdkReq.Metadata,
+
+		DefaultWorkflow:     sdkReq.DefaultWorkflow,
+		Autonomous:          sdkReq.Autonomous,
+		ContextRepos:        contextReposToProto(sdkReq.ContextRepos),
+		GitAuthorName:       sdkReq.GitAuthorName,
+		GitAuthorEmail:      sdkReq.GitAuthorEmail,
+		GitSigningEnabled:   sdkReq.GitSigningEnabled,
+		GitSigningAlgorithm: sdkReq.GitSigningAlgorithm,
+		GitSigningKeyName:   sdkReq.GitSigningKeyName,
+		GitSigningKeyScope:  sdkReq.GitSigningKeyScope,
+		GitSigningKeyOwner:  sdkReq.GitSigningKeyOwner,
+		GitSshKeyName:       sdkReq.GitSSHKeyName,
+		GitSshKeyScope:      sdkReq.GitSSHKeyScope,
+		GitSshKeyOwner:      sdkReq.GitSSHKeyOwner,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)
@@ -158,8 +172,24 @@ func handleProjectUpdate(ctx context.Context, conn *grpc.ClientConn, req interfa
 		AgentRoles:       projectRolesToProto(sdkReq.AgentRoles),
 		TokenBudget:      sdkReq.TokenBudget,
 		GpuMinutes:       sdkReq.GPUMinutes,
-		MaxConcurrency:   int32(sdkReq.MaxConcurrency),
+		MaxConcurrency:   int32PtrFromInt(sdkReq.MaxConcurrency),
 		Metadata:         sdkReq.Metadata,
+
+		DefaultWorkflow:      sdkReq.DefaultWorkflow,
+		ClearDefaultWorkflow: sdkReq.ClearDefaultWorkflow,
+		Autonomous:           sdkReq.Autonomous,
+		ContextRepos:         contextReposToProto(sdkReq.ContextRepos),
+		ClearContextRepos:    sdkReq.ClearContextRepos,
+		GitAuthorName:        sdkReq.GitAuthorName,
+		GitAuthorEmail:       sdkReq.GitAuthorEmail,
+		GitSigningEnabled:    sdkReq.GitSigningEnabled,
+		GitSigningAlgorithm:  sdkReq.GitSigningAlgorithm,
+		GitSigningKeyName:    sdkReq.GitSigningKeyName,
+		GitSigningKeyScope:   sdkReq.GitSigningKeyScope,
+		GitSigningKeyOwner:   sdkReq.GitSigningKeyOwner,
+		GitSshKeyName:        sdkReq.GitSSHKeyName,
+		GitSshKeyScope:       sdkReq.GitSSHKeyScope,
+		GitSshKeyOwner:       sdkReq.GitSSHKeyOwner,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)
@@ -283,6 +313,35 @@ func projectRolesFromProto(roles map[string]string) map[string]project.ProjectRo
 	return out
 }
 
+// contextReposToProto converts the SDK context repository list to proto,
+// preserving nil so an update can tell "unchanged" from "empty".
+func contextReposToProto(repos []project.ContextRepo) []*pb.ContextRepo {
+	if repos == nil {
+		return nil
+	}
+	out := make([]*pb.ContextRepo, 0, len(repos))
+	for _, repo := range repos {
+		out = append(out, &pb.ContextRepo{Name: repo.Name, RepoUrl: repo.RepoURL, Ref: repo.Ref})
+	}
+	return out
+}
+
+// contextReposFromProto lifts the proto context repository list back to the
+// SDK type, preserving nil.
+func contextReposFromProto(repos []*pb.ContextRepo) []project.ContextRepo {
+	if repos == nil {
+		return nil
+	}
+	out := make([]project.ContextRepo, 0, len(repos))
+	for _, repo := range repos {
+		if repo == nil {
+			continue
+		}
+		out = append(out, project.ContextRepo{Name: repo.Name, RepoURL: repo.RepoUrl, Ref: repo.Ref})
+	}
+	return out
+}
+
 // projectInfoFromProto converts the flat proto record to the nested SDK type.
 func projectInfoFromProto(p *pb.Project) *project.ProjectInfo {
 	if p == nil {
@@ -299,10 +358,20 @@ func projectInfoFromProto(p *pb.Project) *project.ProjectInfo {
 		},
 		HostAffinity:     p.HostAffinity,
 		DefaultLeadAgent: p.DefaultLeadAgent,
+		DefaultWorkflow:  p.DefaultWorkflow,
+		Autonomous:       p.Autonomous,
+		ContextRepos:     contextReposFromProto(p.ContextRepos),
 		Git: project.ProjectGit{
 			RepoURL:       p.GitRepoUrl,
 			DefaultBranch: p.GitDefaultBranch,
 			CurrentSHA:    p.GitCurrentSha,
+			Author:        project.GitAuthor{Name: p.GitAuthorName, Email: p.GitAuthorEmail},
+			Signing: project.CommitSigning{
+				Enabled:   p.GitSigningEnabled,
+				Algorithm: p.GitSigningAlgorithm,
+				Key:       project.KMSKeyRef{Name: p.GitSigningKeyName, Scope: p.GitSigningKeyScope, Owner: p.GitSigningKeyOwner},
+			},
+			SSHKey: project.KMSKeyRef{Name: p.GitSshKeyName, Scope: p.GitSshKeyScope, Owner: p.GitSshKeyOwner},
 		},
 		Permissions: project.ProjectPermissions{
 			AgentRoles: projectRolesFromProto(p.AgentRoles),
@@ -316,4 +385,15 @@ func projectInfoFromProto(p *pb.Project) *project.ProjectInfo {
 		CreatedAt: timeFromUnix(p.CreatedAtUnix),
 		UpdatedAt: timeFromUnix(p.UpdatedAtUnix),
 	}
+}
+
+// int32PtrFromInt widens the optional concurrency cap for the wire,
+// preserving absence: a quota of zero means UNLIMITED, so nil and zero are
+// different instructions and must stay different across the transport.
+func int32PtrFromInt(v *int) *int32 {
+	if v == nil {
+		return nil
+	}
+	n := int32(*v) //nolint:gosec // G115: a concurrency cap is small by construction
+	return &n
 }

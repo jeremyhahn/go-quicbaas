@@ -16,6 +16,7 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -54,6 +55,20 @@ type projectCountingKV struct {
 	puts    atomic.Int64
 	deletes atomic.Int64
 	scans   atomic.Int64
+}
+
+// PutIfAbsent counts as a put: a guarded create IS the write. Embedding
+// interfaces.KVStore does not carry this verb (see forwardPutIfAbsent), so
+// without this method every create through the wrapper is refused.
+func (k *projectCountingKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	k.puts.Add(1)
+	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
+}
+
+// CompareAndDelete counts as a delete, for the same reason.
+func (k *projectCountingKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	k.deletes.Add(1)
+	return forwardCompareAndDelete(ctx, k.KVStore, key, expected)
 }
 
 func (k *projectCountingKV) Get(ctx context.Context, key string) ([]byte, error) {
@@ -129,6 +144,23 @@ func (k *projectFailingKV) Get(ctx context.Context, key string) ([]byte, error) 
 		return nil, errProjectKVFailure
 	}
 	return k.KVStore.Get(ctx, key)
+}
+
+// PutIfAbsent honours an injected put failure: a guarded create is a write, so
+// a store failing writes must fail creates.
+func (k *projectFailingKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if k.shouldFail(projectVerbPut, key) {
+		return false, errProjectKVFailure
+	}
+	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
+}
+
+// CompareAndDelete honours an injected delete failure, likewise.
+func (k *projectFailingKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	if k.shouldFail(projectVerbDelete, key) {
+		return false, errProjectKVFailure
+	}
+	return forwardCompareAndDelete(ctx, k.KVStore, key, expected)
 }
 
 func (k *projectFailingKV) Put(ctx context.Context, key string, value []byte) error {
@@ -375,7 +407,7 @@ func TestProjectStore_Get_EmptyTenantID(t *testing.T) {
 // reported as a store failure rather than as a missing project, so operators
 // can tell corruption apart from absence.
 func TestProjectStore_Get_CorruptRecord(t *testing.T) {
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	store := NewProjectStore(kv)
 	ctx := context.Background()
 
@@ -441,7 +473,7 @@ func TestProjectStore_GetByName_EmptyName(t *testing.T) {
 // TestProjectStore_GetByName_DanglingIndex asserts a name reservation whose
 // record is gone reads as not-found rather than as an internal failure.
 func TestProjectStore_GetByName_DanglingIndex(t *testing.T) {
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	store := NewProjectStore(kv)
 	ctx := context.Background()
 
@@ -682,7 +714,7 @@ func TestProjectStore_ListByTenant_Empty(t *testing.T) {
 // TestProjectStore_ListByTenant_CorruptRecord asserts a record that cannot be
 // decoded fails the whole listing rather than silently shortening it.
 func TestProjectStore_ListByTenant_CorruptRecord(t *testing.T) {
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	store := NewProjectStore(kv)
 	ctx := context.Background()
 
@@ -720,10 +752,10 @@ type projectBackend struct {
 // counting binding additionally proves the store issues real KV reads.
 func projectBackends() []projectBackend {
 	return []projectBackend{
-		{name: "memory", kv: func() interfaces.KVStore { return kvstore.NewMemory() }},
+		{name: "memory", kv: func() interfaces.KVStore { return NewMemoryTaskKV() }},
 		{
 			name: "memory_counted",
-			kv:   func() interfaces.KVStore { return &projectCountingKV{KVStore: kvstore.NewMemory()} },
+			kv:   func() interfaces.KVStore { return &projectCountingKV{KVStore: NewMemoryTaskKV()} },
 		},
 	}
 }
@@ -854,7 +886,7 @@ func TestProjectStore_CRUDRoundTrip(t *testing.T) {
 // truth.
 func TestProjectStore_RestartDurability(t *testing.T) {
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 
 	seed := []*Project{
 		newTestProject("id-1", "tenant-1", "alpha"),
@@ -937,7 +969,7 @@ func TestProjectStore_TenantIsolation(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			store := NewProjectStore(kvstore.NewMemory())
+			store := NewProjectStore(NewMemoryTaskKV())
 
 			ownA := newTestProject("a-1", tc.tenantA, "shared-name")
 			ownB := newTestProject("b-1", tc.tenantB, "b-name")
@@ -1003,7 +1035,7 @@ func TestProjectStore_TenantIsolation(t *testing.T) {
 // absent instead of being handed to A.
 func TestProjectStore_ForeignRecordUnderTenantKey(t *testing.T) {
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	store := NewProjectStore(kv)
 
 	foreign := newTestProject("id-1", "tenant-b", "foreign")
@@ -1156,7 +1188,7 @@ func TestProjectStore_KeySegmentRejection(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			store := NewProjectStore(kvstore.NewMemory())
+			store := NewProjectStore(NewMemoryTaskKV())
 			// Seed a project the rename cases can find.
 			if err := store.Create(ctx, newTestProject("id-1", "tenant-a", "seed")); err != nil {
 				t.Fatalf("seed: %v", err)
@@ -1219,7 +1251,7 @@ func TestProjectKeyError_PassThrough(t *testing.T) {
 func TestProjectStore_Audit_Mutations(t *testing.T) {
 	ctx := context.Background()
 	auditor := &projectAuditRecorder{}
-	store := NewProjectStore(kvstore.NewMemory(), WithStoreAuditor(auditor))
+	store := NewProjectStore(NewMemoryTaskKV(), WithStoreAuditor(auditor))
 
 	p := newTestProject("id-1", "tenant-1", "audited")
 	if err := store.Create(ctx, p); err != nil {
@@ -1254,7 +1286,7 @@ func TestProjectStore_Audit_Mutations(t *testing.T) {
 func TestProjectStore_Audit_ReadsAndFailures(t *testing.T) {
 	ctx := context.Background()
 	auditor := &projectAuditRecorder{}
-	store := NewProjectStore(kvstore.NewMemory(), WithStoreAuditor(auditor))
+	store := NewProjectStore(NewMemoryTaskKV(), WithStoreAuditor(auditor))
 
 	if err := store.Create(ctx, newTestProject("id-1", "tenant-1", "audited")); err != nil {
 		t.Fatalf("create: %v", err)
@@ -1291,7 +1323,7 @@ func TestProjectStore_Audit_ReadsAndFailures(t *testing.T) {
 // TestProjectStore_Audit_NilAuditorIsInert asserts the default (unaudited)
 // construction stays usable.
 func TestProjectStore_Audit_NilAuditorIsInert(t *testing.T) {
-	store := NewProjectStore(kvstore.NewMemory(), WithStoreAuditor(nil))
+	store := NewProjectStore(NewMemoryTaskKV(), WithStoreAuditor(nil))
 	if err := store.Create(context.Background(), newTestProject("id-1", "tenant-1", "quiet")); err != nil {
 		t.Fatalf("create with nil auditor: %v", err)
 	}
@@ -1310,18 +1342,17 @@ func TestProjectStore_KVFailures(t *testing.T) {
 		keyPrefix string
 		call      func(ctx context.Context, store ProjectStore) error
 	}{
+		// No "create probe fails" case: the guarded create issues ONE operation,
+		// so there is no probe left to fail independently of the write. The put
+		// cases below cover the whole create path.
 		{
-			name: "create probe fails",
-			verb: projectVerbExists,
-			call: func(ctx context.Context, s ProjectStore) error {
-				return s.Create(ctx, newTestProject("id-2", "tenant-1", "new"))
-			},
-		},
-		{
+			// CONTESTED on purpose. The create path reads the name index only
+			// when its guarded claim loses, to learn who holds the name, so an
+			// uncontested create issues no Get for this failure to land on.
 			name: "create name index read fails",
 			verb: projectVerbGet,
 			call: func(ctx context.Context, s ProjectStore) error {
-				return s.Create(ctx, newTestProject("id-2", "tenant-1", "new"))
+				return s.Create(ctx, newTestProject("id-2", "tenant-1", "seed"))
 			},
 		},
 		{
@@ -1409,7 +1440,7 @@ func TestProjectStore_KVFailures(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			kv := kvstore.NewMemory()
+			kv := NewMemoryTaskKV()
 
 			// Seed through a healthy store so the failure is isolated to the
 			// call under test.
@@ -1430,9 +1461,14 @@ func TestProjectStore_KVFailures(t *testing.T) {
 
 // TestProjectStore_Create_RollsBackNameOnRecordFailure asserts a failed record
 // write leaves no reservation behind, so the name stays claimable.
+//
+// Under the record-before-name order the reservation is never written at all,
+// which is a stronger form of the same guarantee. The assertion is on the
+// observable outcome rather than on which write was skipped, so it holds
+// either way.
 func TestProjectStore_Create_RollsBackNameOnRecordFailure(t *testing.T) {
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 
 	failing := newProjectFailingKV(kv, projectVerbPut, projectKeyspace)
 	if err := NewProjectStore(failing).Create(ctx, newTestProject("id-1", "tenant-1", "doomed")); err == nil {
@@ -1516,16 +1552,21 @@ func TestProjectStore_CancelledContext(t *testing.T) {
 	}
 }
 
-// TestProjectStore_Create_RollbackFailureIsReported asserts that when the
-// rollback of a name reservation also fails, the caller learns about both
-// failures instead of only the first.
+// TestProjectStore_Create_RollbackFailureIsReported asserts that when a create
+// loses its name AND cannot discard the record it already wrote, the caller
+// learns about both failures instead of only the first.
+//
+// Create writes the record first, so the rollback it can fail at is the record
+// discard, not a reservation release. The reservation release still exists on
+// the rename path, which
+// TestProjectStore_Update_RenameRollbackFailureIsReported covers.
 func TestProjectStore_Create_RollbackFailureIsReported(t *testing.T) {
 	ctx := context.Background()
 	failing := &projectFailingKV{
-		KVStore: kvstore.NewMemory(),
+		KVStore: NewMemoryTaskKV(),
 		failures: []projectKVFailure{
-			{verb: projectVerbPut, keyPrefix: projectKeyspace},
-			{verb: projectVerbDelete, keyPrefix: projectNameKeyspace},
+			{verb: projectVerbPut, keyPrefix: projectNameKeyspace},
+			{verb: projectVerbDelete, keyPrefix: projectKeyspace},
 		},
 	}
 
@@ -1534,8 +1575,37 @@ func TestProjectStore_Create_RollbackFailureIsReported(t *testing.T) {
 	if !errors.As(err, &storeErr) {
 		t.Fatalf("want *ProjectStoreError, got %T: %v", err, err)
 	}
-	if !strings.Contains(storeErr.Message, "rollback failed") {
-		t.Errorf("message %q does not report the failed rollback", storeErr.Message)
+	if !strings.Contains(storeErr.Message, "record discard failed") {
+		t.Errorf("message %q does not report the failed discard", storeErr.Message)
+	}
+}
+
+// TestProjectStore_Update_RenameRollbackFailureIsReported asserts the same for
+// the one path that still rolls back a reservation: a rename that reserves the
+// new name, fails to write the record, and then cannot give the reservation
+// back.
+func TestProjectStore_Update_RenameRollbackFailureIsReported(t *testing.T) {
+	ctx := context.Background()
+	kv := NewMemoryTaskKV()
+	if err := NewProjectStore(kv).Create(ctx, newTestProject("id-1", "tenant-1", "seed")); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	failing := &projectFailingKV{
+		KVStore: kv,
+		failures: []projectKVFailure{
+			{verb: projectVerbPut, keyPrefix: projectKeyspace},
+			{verb: projectVerbDelete, keyPrefix: projectNameKeyspace},
+		},
+	}
+
+	err := NewProjectStore(failing).Update(ctx, newTestProject("id-1", "tenant-1", "renamed"))
+	var storeErr *ProjectStoreError
+	if !errors.As(err, &storeErr) {
+		t.Fatalf("want *ProjectStoreError, got %T: %v", err, err)
+	}
+	if !strings.Contains(storeErr.Message, "name reservation release failed") {
+		t.Errorf("message %q does not report the failed release", storeErr.Message)
 	}
 }
 
@@ -1549,14 +1619,14 @@ type projectNilValueKV struct {
 func (k *projectNilValueKV) Get(context.Context, string) ([]byte, error) { return nil, nil }
 
 func TestProjectStore_Get_NilValueIsMissing(t *testing.T) {
-	store := NewProjectStore(&projectNilValueKV{KVStore: kvstore.NewMemory()})
+	store := NewProjectStore(&projectNilValueKV{KVStore: NewMemoryTaskKV()})
 	if _, err := store.Get(context.Background(), "tenant-1", "id-1"); !errors.Is(err, ErrProjectNotFound) {
 		t.Fatalf("want ErrProjectNotFound for a nil value, got %T: %v", err, err)
 	}
 }
 
 func TestProjectStore_GetByName_NilValueIsMissing(t *testing.T) {
-	store := NewProjectStore(&projectNilValueKV{KVStore: kvstore.NewMemory()})
+	store := NewProjectStore(&projectNilValueKV{KVStore: NewMemoryTaskKV()})
 	if _, err := store.GetByName(context.Background(), "tenant-1", "name"); !errors.Is(err, ErrProjectNotFound) {
 		t.Fatalf("want ErrProjectNotFound for a nil value, got %T: %v", err, err)
 	}
@@ -1566,7 +1636,7 @@ func TestProjectStore_GetByName_NilValueIsMissing(t *testing.T) {
 // valid name reservation is reported as corruption, not as absence.
 func TestProjectStore_GetByName_CorruptRecord(t *testing.T) {
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	store := NewProjectStore(kv)
 
 	if err := store.Create(ctx, newTestProject("id-1", "tenant-1", "named")); err != nil {
@@ -1626,7 +1696,7 @@ func TestProjectStore_Update_RenameConflict(t *testing.T) {
 // name a project already holds is not treated as a conflict.
 func TestProjectStore_Update_ReclaimsOwnDanglingName(t *testing.T) {
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	store := NewProjectStore(kv)
 
 	if err := store.Create(ctx, newTestProject("id-1", "tenant-1", "alpha")); err != nil {
@@ -1662,7 +1732,7 @@ func TestProjectStore_UnindexableStoredName(t *testing.T) {
 
 	seed := func(t *testing.T) (interfaces.KVStore, ProjectStore) {
 		t.Helper()
-		kv := kvstore.NewMemory()
+		kv := NewMemoryTaskKV()
 		corrupt := newTestProject("id-1", "tenant-1", "bad/name")
 		data, err := marshalProject(corrupt)
 		if err != nil {
@@ -1708,7 +1778,7 @@ func TestProjectStore_UnindexableStoredName(t *testing.T) {
 // that could address another tenant's subtree.
 func TestProjectStore_GetByName_UnsafeIndexValue(t *testing.T) {
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	store := NewProjectStore(kv)
 
 	nameKey, err := projectNameIndexKey("tenant-a", "poisoned")
@@ -1729,7 +1799,7 @@ func TestProjectStore_GetByName_UnsafeIndexValue(t *testing.T) {
 // reachable under its original name.
 func TestProjectStore_Update_RenameRollsBackOnRecordFailure(t *testing.T) {
 	ctx := context.Background()
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 
 	if err := NewProjectStore(kv).Create(ctx, newTestProject("id-1", "tenant-1", "seed")); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -1826,5 +1896,550 @@ func TestProjectStore_ConcurrentCreate_SameName(t *testing.T) {
 	}
 	if len(projects) != 1 {
 		t.Fatalf("stored %d projects, want 1: %+v", len(projects), projects)
+	}
+}
+
+// =============================================================================
+// Multi-node name uniqueness
+// =============================================================================
+
+// projectHoldBeforeRecord parks one node on the threshold of its record write,
+// which under the record-before-name order is the first thing a create does.
+// A node held there has claimed nothing yet, so it is the slowest possible
+// loser of the name race.
+type projectHoldBeforeRecord struct {
+	interfaces.KVStore
+
+	recordKey string
+	parked    chan struct{}
+	release   chan struct{}
+	once      sync.Once
+}
+
+func newProjectHoldBeforeRecord(inner interfaces.KVStore, recordKey string) *projectHoldBeforeRecord {
+	return &projectHoldBeforeRecord{
+		KVStore:   inner,
+		recordKey: recordKey,
+		parked:    make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+}
+
+func (k *projectHoldBeforeRecord) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if key == k.recordKey {
+		k.once.Do(func() { close(k.parked) })
+		select {
+		case <-k.release:
+		case <-time.After(barrierWait):
+		}
+	}
+	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
+}
+
+func (k *projectHoldBeforeRecord) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return forwardCompareAndDelete(ctx, k.KVStore, key, expected)
+}
+
+// TestProjectStore_Create_NineNodesOneNameProduceOneProject proves the name is a
+// single-winner decision across the fleet, not a probe under a local lock.
+func TestProjectStore_Create_NineNodesOneNameProduceOneProject(t *testing.T) {
+	const nodes = 9
+
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+
+	var (
+		wg    sync.WaitGroup
+		start = make(chan struct{})
+		errs  = make([]error, nodes)
+	)
+	for i := 0; i < nodes; i++ {
+		wg.Add(1)
+		go func(node int) {
+			defer wg.Done()
+			store := NewProjectStore(shared)
+			<-start
+			errs[node] = store.Create(ctx, newTestProject("id-"+strconv.Itoa(node), "tenant-1", "contested"))
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	winners := 0
+	winner := -1
+	for node, err := range errs {
+		if err == nil {
+			winners++
+			winner = node
+			continue
+		}
+		if !errors.Is(err, ErrProjectAlreadyExists) {
+			t.Fatalf("node %d lost but got %T: %v, want ErrProjectAlreadyExists", node, err, err)
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("%d nodes created a project named %q, want exactly 1", winners, "contested")
+	}
+
+	// The reservation must name the winner. A name pointing at a loser means a
+	// reservation outlived the create that lost.
+	nameKey, err := projectNameIndexKey("tenant-1", "contested")
+	if err != nil {
+		t.Fatalf("projectNameIndexKey() error = %v", err)
+	}
+	owner, err := shared.Get(ctx, nameKey)
+	if err != nil {
+		t.Fatalf("Get(nameKey) error = %v", err)
+	}
+	if want := "id-" + strconv.Itoa(winner); string(owner) != want {
+		t.Fatalf("name reserved for %q, but %q won", string(owner), want)
+	}
+}
+
+// TestProjectStore_Create_SlowCreatorWithdrawsWhenItLosesTheName pins what the
+// LOSER of the name race owes: a typed conflict and no residue.
+//
+// Node A stalls before its first write while node B creates the same name end
+// to end. A then runs: it writes its record, finds the name taken by a project
+// whose record exists — so not abandoned, and not healable — and must discard
+// the record it just wrote. A record for a project that never got its name is
+// reachable by ID and invisible by name, so leaving one behind would be the
+// orphan this ordering is supposed to confine to a crash.
+func TestProjectStore_Create_SlowCreatorWithdrawsWhenItLosesTheName(t *testing.T) {
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+
+	slowRecordKey, err := projectRecordKey("tenant-1", "id-slow")
+	if err != nil {
+		t.Fatalf("projectRecordKey() error = %v", err)
+	}
+	held := newProjectHoldBeforeRecord(shared, slowRecordKey)
+
+	var (
+		wg      sync.WaitGroup
+		slowErr error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		slowErr = NewProjectStore(held).Create(ctx, newTestProject("id-slow", "tenant-1", "contested"))
+	}()
+
+	select {
+	case <-held.parked:
+	case <-time.After(barrierWait):
+		t.Fatal("the slow node never reached its record write")
+	}
+
+	if err := NewProjectStore(shared).Create(ctx, newTestProject("id-fast", "tenant-1", "contested")); err != nil {
+		t.Fatalf("the fast node could not create an uncontested name: %v", err)
+	}
+
+	close(held.release)
+	wg.Wait()
+
+	if !errors.Is(slowErr, ErrProjectAlreadyExists) {
+		t.Fatalf("the slow node kept a name the fast node holds: err = %T: %v, want ErrProjectAlreadyExists",
+			slowErr, slowErr)
+	}
+
+	// It must also leave nothing behind: a record for a project that lost its
+	// name is unreachable by name and owned by nobody.
+	//
+	// Absence is checked by VALUE, not by error. Both shapes exist in this tree
+	// — some stores report a missing key as a not-found error and go-qrdb's
+	// memory store reports (nil, nil) — so an error-only check passes vacuously
+	// against the store this test actually uses.
+	leftover, err := shared.Get(ctx, slowRecordKey)
+	if err == nil && len(leftover) > 0 {
+		t.Errorf("the withdrawing node left its record behind: %s", leftover)
+	}
+
+	nameKey, err := projectNameIndexKey("tenant-1", "contested")
+	if err != nil {
+		t.Fatalf("projectNameIndexKey() error = %v", err)
+	}
+	owner, err := shared.Get(ctx, nameKey)
+	if err != nil {
+		t.Fatalf("Get(nameKey) error = %v", err)
+	}
+	if string(owner) != "id-fast" {
+		t.Fatalf("name reserved for %q, want id-fast", string(owner))
+	}
+}
+
+// TestProjectStore_Create_ReclaimsAReservationWhoseProjectIsGone covers the one
+// state the heal still exists for, and the only writer that can produce it.
+//
+// Delete removes the record and then the name. A Delete that dies between the
+// two leaves a reservation naming a project that no longer exists — the
+// predicate reserveName heals on. It is decidable precisely because no creator
+// can be in that state: a reservation is published only after its record.
+//
+// The half-finished Delete is performed, not simulated by planting a key, so
+// the test would notice if Delete ever stopped producing it.
+func TestProjectStore_Create_ReclaimsAReservationWhoseProjectIsGone(t *testing.T) {
+	ctx := context.Background()
+	kv := NewMemoryTaskKV()
+	healthy := NewProjectStore(kv)
+
+	if err := healthy.Create(ctx, newTestProject("id-gone", "tenant-1", "taken")); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	// A Delete that cannot release the name: the record goes, the reservation
+	// stays.
+	crashing := NewProjectStore(newProjectFailingKV(kv, projectVerbDelete, projectNameKeyspace))
+	if err := crashing.Delete(ctx, "tenant-1", "id-gone"); err == nil {
+		t.Fatal("the name release was supposed to fail, leaving the reservation behind")
+	}
+
+	nameKey, err := projectNameIndexKey("tenant-1", "taken")
+	if err != nil {
+		t.Fatalf("projectNameIndexKey() error = %v", err)
+	}
+	stranded, err := kv.Get(ctx, nameKey)
+	if err != nil || string(stranded) != "id-gone" {
+		t.Fatalf("want the reservation still naming id-gone, got %q (err %v)", string(stranded), err)
+	}
+
+	if err := healthy.Create(ctx, newTestProject("id-new", "tenant-1", "taken")); err != nil {
+		t.Fatalf("a name whose project is gone must be reclaimable: %v", err)
+	}
+
+	reclaimed, err := healthy.GetByName(ctx, "tenant-1", "taken")
+	if err != nil {
+		t.Fatalf("GetByName() error = %v", err)
+	}
+	if reclaimed.ID != "id-new" {
+		t.Fatalf("name resolves to %q, want id-new", reclaimed.ID)
+	}
+}
+
+// projectHoldAfterReservation parks one node the instant its name reservation
+// lands, and holds it there until the test lets go.
+//
+// It parks AFTER the write rather than before it, because the state under test
+// is the one that only exists once the reservation is durable and its creator
+// has not yet returned. A hook that parked before the write would never
+// produce it.
+type projectHoldAfterReservation struct {
+	interfaces.KVStore
+
+	nameKey string
+	parked  chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newProjectHoldAfterReservation(inner interfaces.KVStore, nameKey string) *projectHoldAfterReservation {
+	return &projectHoldAfterReservation{
+		KVStore: inner,
+		nameKey: nameKey,
+		parked:  make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (k *projectHoldAfterReservation) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	stored, err := forwardPutIfAbsent(ctx, k.KVStore, key, value)
+	if key != k.nameKey || !stored || err != nil {
+		return stored, err
+	}
+	k.once.Do(func() { close(k.parked) })
+	select {
+	case <-k.release:
+	case <-time.After(barrierWait):
+	}
+	return stored, err
+}
+
+func (k *projectHoldAfterReservation) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return forwardCompareAndDelete(ctx, k.KVStore, key, expected)
+}
+
+// TestProjectStore_Create_LiveCreatorKeepsItsReservation is the invariant, and
+// it is driven rather than raced.
+//
+//	A CREATOR THAT HAS NOT CRASHED CANNOT HAVE ITS RESERVATION TAKEN.
+//
+// The holder is parked the instant its reservation lands and the rival then
+// runs its ENTIRE create — claim, heal probe, re-claim, record — against a
+// creator that is demonstrably alive and has not returned. That is the exact
+// interleaving that admitted two projects under one name: a healer that reads
+// "the holder has no record" as "the holder crashed" steals the name here, and
+// both creates then write their own uncontested record keys and both succeed.
+//
+// DETERMINISM IS THE POINT. The same defect was reachable only under load: it
+// survived 200 sequential runs, 100 under -race, and 4800 runs across twelve
+// contending GOMAXPROCS=1 workers, and appeared on a loaded CI runner. A
+// regression test that needs the scheduler to cooperate is not a regression
+// test, so this one removes the scheduler from the question — the rival cannot
+// run until the holder is parked, and the holder cannot resume until the rival
+// is done.
+//
+// It is scheduled against go-qrdb's own memory KVStore, whose PutIfAbsent and
+// CompareAndDelete are the real guarded primitives, not a double written to
+// agree with this store. Nothing here asks a consensus layer to arbitrate —
+// the interleaving is imposed, not discovered — so the heavier real-node
+// fixture would add seconds and answer a question this test is not asking.
+func TestProjectStore_Create_LiveCreatorKeepsItsReservation(t *testing.T) {
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+
+	nameKey, err := projectNameIndexKey("tenant-1", "contested")
+	if err != nil {
+		t.Fatalf("projectNameIndexKey() error = %v", err)
+	}
+	held := newProjectHoldAfterReservation(shared, nameKey)
+
+	var (
+		wg        sync.WaitGroup
+		holderErr error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		holderErr = NewProjectStore(held).Create(ctx, newTestProject("id-holder", "tenant-1", "contested"))
+	}()
+
+	select {
+	case <-held.parked:
+	case <-time.After(barrierWait):
+		t.Fatal("the holding node never published its reservation")
+	}
+
+	rivalErr := NewProjectStore(shared).Create(ctx, newTestProject("id-rival", "tenant-1", "contested"))
+
+	close(held.release)
+	wg.Wait()
+
+	if holderErr != nil {
+		t.Fatalf("a live creator lost the name it had already reserved: %T: %v; "+
+			"its reservation may only be taken if it crashed, and it did not", holderErr, holderErr)
+	}
+	if !errors.Is(rivalErr, ErrProjectAlreadyExists) {
+		t.Fatalf("the rival took a live creator's name: err = %T: %v, want ErrProjectAlreadyExists",
+			rivalErr, rivalErr)
+	}
+
+	owner, err := shared.Get(ctx, nameKey)
+	if err != nil {
+		t.Fatalf("Get(nameKey) error = %v", err)
+	}
+	if string(owner) != "id-holder" {
+		t.Fatalf("name reserved for %q, want id-holder", string(owner))
+	}
+
+	// The name deciding one winner is only half of it. The defect this pins
+	// admitted two RECORDS, so the tenant is checked for the second one.
+	projects, err := NewProjectStore(shared).ListByTenant(ctx, "tenant-1")
+	if err != nil {
+		t.Fatalf("ListByTenant() error = %v", err)
+	}
+	if len(projects) != 1 {
+		ids := make([]string, 0, len(projects))
+		for _, project := range projects {
+			ids = append(ids, project.ID)
+		}
+		t.Fatalf("tenant holds %d projects (%v), want exactly 1 named %q", len(projects), ids, "contested")
+	}
+	if projects[0].ID != "id-holder" {
+		t.Fatalf("the surviving project is %q, want id-holder", projects[0].ID)
+	}
+}
+
+// projectHoldAfterHealProbe parks one node immediately after it has asked
+// whether a name's holder still has a record — the read on which the heal
+// decision turns — and reports what the probe saw.
+type projectHoldAfterHealProbe struct {
+	interfaces.KVStore
+
+	parked  chan struct{}
+	release chan struct{}
+	once    sync.Once
+	saw     atomic.Bool
+}
+
+func newProjectHoldAfterHealProbe(inner interfaces.KVStore) *projectHoldAfterHealProbe {
+	return &projectHoldAfterHealProbe{
+		KVStore: inner,
+		parked:  make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (k *projectHoldAfterHealProbe) Exists(ctx context.Context, key string) (bool, error) {
+	exists, err := k.KVStore.Exists(ctx, key)
+	if err != nil {
+		return exists, err
+	}
+	k.saw.Store(exists)
+	k.once.Do(func() { close(k.parked) })
+	select {
+	case <-k.release:
+	case <-time.After(barrierWait):
+	}
+	return exists, err
+}
+
+func (k *projectHoldAfterHealProbe) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
+}
+
+func (k *projectHoldAfterHealProbe) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return forwardCompareAndDelete(ctx, k.KVStore, key, expected)
+}
+
+// TestProjectStore_Create_TwoNodesCannotBothWinOneName drives the interleaving
+// from the CI failure itself, step by step, with nothing left to the scheduler.
+//
+//	t1  the holder publishes its reservation and parks
+//	t2  the rival loses the claim, probes the holder's record, and parks
+//	t3  the holder runs to completion and reports SUCCESS
+//	t4  the rival resumes, acts on the probe it took at t2, and finishes
+//
+// At t2 the probe is the whole decision. Under the old reserve-then-record
+// order it answered "no record", which the heal read as "the creator crashed"
+// even though the creator was merely between its two writes; the rival then
+// cleared a LIVE reservation at t4, took the name, and wrote its own record
+// key, which no one contested. Both creates returned nil and the tenant held
+// two projects called "contested" — the exact observation that reddened
+// test-lean, and which the holder's own post-write re-read could not catch
+// because it had already run at t3.
+//
+// Writing the record first makes the t2 probe answer "record present", so the
+// heal does not fire at all. The assertion is on the outcome the defect
+// violated: ONE project, and the node that reserved the name is the one that
+// has it.
+func TestProjectStore_Create_TwoNodesCannotBothWinOneName(t *testing.T) {
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+
+	nameKey, err := projectNameIndexKey("tenant-1", "contested")
+	if err != nil {
+		t.Fatalf("projectNameIndexKey() error = %v", err)
+	}
+	holderKV := newProjectHoldAfterReservation(shared, nameKey)
+	rivalKV := newProjectHoldAfterHealProbe(shared)
+
+	var (
+		holderDone = make(chan struct{})
+		rivalDone  = make(chan struct{})
+		holderErr  error
+		rivalErr   error
+	)
+	go func() {
+		defer close(holderDone)
+		holderErr = NewProjectStore(holderKV).Create(ctx, newTestProject("id-holder", "tenant-1", "contested"))
+	}()
+
+	// t1.
+	select {
+	case <-holderKV.parked:
+	case <-time.After(barrierWait):
+		t.Fatal("the holding node never published its reservation")
+	}
+
+	go func() {
+		defer close(rivalDone)
+		rivalErr = NewProjectStore(rivalKV).Create(ctx, newTestProject("id-rival", "tenant-1", "contested"))
+	}()
+
+	// t2.
+	select {
+	case <-rivalKV.parked:
+	case <-time.After(barrierWait):
+		t.Fatal("the rival node never probed the reservation holder")
+	}
+
+	// t3 — the holder finishes while the rival still holds a stale probe.
+	close(holderKV.release)
+	select {
+	case <-holderDone:
+	case <-time.After(barrierWait):
+		t.Fatal("the holding node never completed")
+	}
+
+	// t4.
+	close(rivalKV.release)
+	select {
+	case <-rivalDone:
+	case <-time.After(barrierWait):
+		t.Fatal("the rival node never completed")
+	}
+
+	// The probe is the defect in one bit: a live holder must look live.
+	if !rivalKV.saw.Load() {
+		t.Error("the rival probed a LIVE holder and saw no record; a reservation is " +
+			"published only after its record, so that reads as a crash it can heal")
+	}
+
+	if holderErr != nil {
+		t.Fatalf("the holder lost a name it had reserved: %T: %v", holderErr, holderErr)
+	}
+	if !errors.Is(rivalErr, ErrProjectAlreadyExists) {
+		t.Fatalf("both nodes created %q: rival err = %T: %v, want ErrProjectAlreadyExists",
+			"contested", rivalErr, rivalErr)
+	}
+
+	projects, err := NewProjectStore(shared).ListByTenant(ctx, "tenant-1")
+	if err != nil {
+		t.Fatalf("ListByTenant() error = %v", err)
+	}
+	if len(projects) != 1 || projects[0].ID != "id-holder" {
+		ids := make([]string, 0, len(projects))
+		for _, project := range projects {
+			ids = append(ids, project.ID)
+		}
+		t.Fatalf("tenant holds %v, want exactly [id-holder]", ids)
+	}
+}
+
+// TestProjectStore_Create_DoesNotHealARenameInFlight is the deliberate
+// non-healing, and it guards a decision that is easy to "improve" into a bug.
+//
+// A reservation naming a LIVE project whose current name differs is ambiguous:
+// it is either a rename toward this name still in flight, or a rename away from
+// it that crashed. Those two produce byte-identical key states, so no read
+// distinguishes them. Healing on that predicate would kill live renames.
+//
+// This test pins the safe answer: the create is REFUSED. If someone later
+// extends the heal predicate to cover name mismatches, this fails — which is
+// the point.
+func TestProjectStore_Create_DoesNotHealARenameInFlight(t *testing.T) {
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+	store := NewProjectStore(shared)
+
+	// A live project under its current name.
+	if err := store.Create(ctx, newTestProject("id-1", "tenant-1", "old-name")); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	// The state a rename toward "new-name" has after its first write: the
+	// reservation exists, the record still says "old-name".
+	newNameKey, err := projectNameIndexKey("tenant-1", "new-name")
+	if err != nil {
+		t.Fatalf("projectNameIndexKey() error = %v", err)
+	}
+	if err := shared.Put(ctx, newNameKey, []byte("id-1")); err != nil {
+		t.Fatalf("Put(newNameKey) error = %v", err)
+	}
+
+	err = store.Create(ctx, newTestProject("id-2", "tenant-1", "new-name"))
+	if !errors.Is(err, ErrProjectAlreadyExists) {
+		t.Fatalf("a create healed a reservation held by a LIVE project: err = %T: %v; "+
+			"that state is indistinguishable from a rename in flight, and healing it "+
+			"steals the name from a rename about to complete", err, err)
+	}
+
+	// And the reservation is untouched.
+	owner, err := shared.Get(ctx, newNameKey)
+	if err != nil {
+		t.Fatalf("Get(newNameKey) error = %v", err)
+	}
+	if string(owner) != "id-1" {
+		t.Fatalf("reservation now names %q; the refused create must not have touched it", string(owner))
 	}
 }

@@ -1250,6 +1250,54 @@ func buildEntityKey(entityType string, entityID uint64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", entityType, entityID))
 }
 
+// ErrMsgServerFailure is the response text for any error that describes the
+// SERVER rather than the caller's request.
+//
+// One sentence for every such class, deliberately. Distinguishing "storage is
+// unavailable" from "the leader moved" from "a file could not be opened" tells
+// an unauthenticated caller about the deployment's state, and the three are
+// equally unactionable by that caller: the error code and the HTTP status
+// already carry everything a client can branch on. The detail goes to the log,
+// where an operator can act on it, keyed by the same request ID the response
+// carries.
+const ErrMsgServerFailure = "the request could not be completed"
+
+// sanitizedServerError builds the wire form of a server-state error: the code
+// and its retryability, and nothing that describes the deployment.
+//
+// Code and Retry are preserved because clients branch on them -- a leadership
+// transition must still read as retryable so callers back off rather than fail
+// -- while Op, the wrapped error and Context are dropped. Context matters as
+// much as the message: RespondError serializes it into the response's Details,
+// so a sanitised message with the original Context attached would leak through
+// the field nobody was looking at.
+func sanitizedServerError(qbErr *errors.QBError) *errors.QBError {
+	return &errors.QBError{
+		Code:  qbErr.Code,
+		Retry: qbErr.Retry,
+		Err:   stderrors.New(ErrMsgServerFailure),
+	}
+}
+
+// logServiceFailure records the cause the response no longer carries.
+//
+// Without this the sanitisation would not move the detail, it would destroy it:
+// handleServiceError logged nothing before, so the error text reaching the
+// caller was the ONLY copy. The request ID ties this line to the response the
+// caller received, which is what makes a support conversation possible without
+// putting the deployment's internals on the wire.
+func (s *Server) logServiceFailure(r *http.Request, err error) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.WithFields(map[string]interface{}{
+		"component":  "rest-service-error",
+		"request_id": GetRequestID(r.Context()),
+		"path":       r.URL.Path,
+		"error":      err.Error(),
+	}).Error("service error returned to caller as a sanitized response")
+}
+
 // handleServiceError handles service errors and responds appropriately.
 func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	var qbErr *errors.QBError
@@ -1281,7 +1329,13 @@ func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err 
 			RespondError(w, r, httpStatus, &ValidationError{
 				Message: errMsg,
 			})
-		case errors.ErrForbidden, errors.ErrNotAllowed:
+		case errors.ErrForbidden, errors.ErrNotAllowed, errors.ErrCrossTenantAccess:
+			// A cross-tenant refusal describes the REQUEST — the caller named
+			// a tenant that is not its own — so it belongs with the other
+			// forbidden classes: the reason is echoed and it is not logged as
+			// a server failure. Without this it fell to the default branch and
+			// a caller's own mistake was reported as an internal fault
+			// (go-quicbaas#534).
 			RespondError(w, r, httpStatus, &ForbiddenError{
 				Reason: errMsg,
 			})
@@ -1293,23 +1347,24 @@ func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err 
 			RespondError(w, r, httpStatus, &ConflictError{
 				Message: errMsg,
 			})
-		case errors.ErrLeaderNotAvailable, errors.ErrClusterNotReady, errors.ErrQuorumLost,
-			errors.ErrUnavailable, errors.ErrStorage, errors.ErrRaft:
-			// Pass the coded error through so RespondError serializes the
-			// error code and per-code retryability. Leadership transitions
-			// (leader not available, cluster not ready) are transient and
-			// retryable; clients should back off and retry.
-			RespondError(w, r, httpStatus, qbErr)
-		case errors.ErrInternal, errors.ErrUnknown:
-			RespondError(w, r, httpStatus, &InternalServerError{
-				Message: errMsg,
-			})
 		default:
-			// For any other error codes, include the actual error message
-			// to aid debugging while using the code's proper HTTP status
-			RespondError(w, r, httpStatus, &InternalServerError{
-				Message: errMsg,
-			})
+			// EVERY REMAINING CLASS DESCRIBES THE SERVER, NOT THE REQUEST, so
+			// the caller gets a stable sentence and the operator gets the
+			// cause (go-quicbaas#427). This covers the infrastructure codes
+			// (leader/quorum/storage/raft/unavailable), internal and unknown,
+			// and -- deliberately -- any code added later: a new error class
+			// is sanitised until someone decides it is safe to echo, rather
+			// than echoed until someone notices it is not.
+			//
+			// Measured before the change, on the public federated-login
+			// routes' helper: an inner error reading "open
+			// /etc/quicbaas/secrets/tenant-ca.key: permission denied" was
+			// returned verbatim in the response body for internal, unknown
+			// AND storage, with storage additionally naming the internal
+			// operation. Nothing was logged, so that text was reaching the
+			// caller and nobody else.
+			s.logServiceFailure(r, qbErr)
+			RespondError(w, r, httpStatus, sanitizedServerError(qbErr))
 		}
 		return
 	}

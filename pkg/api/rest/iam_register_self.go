@@ -117,6 +117,63 @@ func deriveTenantID(
 	return uuid.New().String(), nil
 }
 
+// emailShapeRegex matches the addresses iam.validateDisplayName refuses. It is
+// deliberately the same shape that validator uses rather than a stricter one:
+// this endpoint exists to refuse early exactly what the store would refuse
+// late, so a name this accepts and the store rejects would reintroduce the
+// failure it prevents.
+var emailShapeRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+
+// isEmailShaped reports whether s would be refused as a display name.
+func isEmailShaped(s string) bool {
+	return emailShapeRegex.MatchString(s)
+}
+
+// deriveHandle builds a tenant-unique login handle from an email address.
+//
+// The handle charset is [A-Za-z0-9_-], 3-64 characters, so an address cannot be
+// one: "@" is excluded, and so are the dots and plus-tags ordinary local parts
+// carry. The local part is kept, stripped to the charset and lowercased — the
+// form an administrator types, and stable across the case an address does not
+// distinguish.
+//
+// It does NOT loop on collision, and does not need to: this runs only on the
+// self-registration path, which creates a FRESH tenant (deriveTenantID appends
+// -2, -3, … until the id is unused) and makes the registrant its first user.
+// There is nothing in that tenant to collide with. A caller adding a second
+// user to an existing tenant must go through the ordinary create, which takes
+// an explicit handle and surfaces the store's uniqueness error.
+//
+// Short and empty local parts get a suffix rather than a rejection: "a.b@x.test"
+// sanitizes to two characters, which is legal as an email and not as a handle,
+// and refusing the registration over it would be a worse answer than naming the
+// account "ab-admin".
+func deriveHandle(email string) string {
+	local := email
+	if at := strings.Index(email, "@"); at > 0 {
+		local = email[:at]
+	}
+
+	var b strings.Builder
+	for _, r := range strings.ToLower(local) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		}
+	}
+	handle := b.String()
+
+	switch {
+	case handle == "":
+		handle = "admin"
+	case len(handle) < 3:
+		handle += "-admin"
+	}
+	if len(handle) > 64 {
+		handle = handle[:64]
+	}
+	return handle
+}
+
 // --------------------------------------------------------------------------
 // Registration session store (Option B: in-memory for Phase 2).
 // Phase 4 replaces this with the qrdb-backed persistent store.
@@ -128,6 +185,7 @@ type registrationSession struct {
 	tenantID      string
 	tenantName    string
 	email         string
+	displayName   string
 	isolationMode string
 	expiresAt     time.Time
 }
@@ -297,6 +355,17 @@ func (h *IAMHandler) RegisterSelfBegin(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "display_name is required"))
 		return
 	}
+	// Refused HERE rather than at the create, because the create happens after
+	// the tenant has already been written: a display name the store rejects
+	// would fail the ceremony at its last step and leave an orphan tenant with
+	// no members and no way in. The store refuses an email-shaped display name
+	// (iam.validateDisplayName), so this endpoint refuses it too, at the point
+	// where refusing costs nothing.
+	if isEmailShaped(strings.TrimSpace(req.DisplayName)) {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "display_name must not be an email address"))
+		return
+	}
 
 	// Resolve and validate isolation mode.
 	allowedModes := cfg.AllowedIsolationModes
@@ -367,6 +436,7 @@ func (h *IAMHandler) RegisterSelfBegin(w http.ResponseWriter, r *http.Request) {
 		tenantID:      tenantID,
 		tenantName:    req.TenantName,
 		email:         req.Email,
+		displayName:   strings.TrimSpace(req.DisplayName),
 		isolationMode: isolationMode,
 		expiresAt:     time.Now().Add(5 * time.Minute),
 	})
@@ -446,7 +516,14 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := mgr.FinishRegistration(ctx, sess.tenantID, sess.email, req.Credential); err != nil {
+	// The ceremony returns what it PROVED about this authenticator. It is
+	// carried down to token issuance rather than discarded: the registrant is
+	// about to be granted Admin on a brand-new tenant, the gate has just held
+	// them to the hardware bar, and a session that failed to say so would make
+	// a legitimate hardware login look unattested until the operator logged in
+	// a second time.
+	attestation, err := mgr.FinishRegistration(ctx, sess.tenantID, sess.email, req.Credential)
+	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
 	}
@@ -480,35 +557,44 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Determine initial user state.
-	userState := iam.UserStateActive
-	if cfg.RequireAdminApproval {
-		userState = iam.UserStatePending
+	// Determine the initial user state. BOTH gates land on pending, and the
+	// decision has to be made here rather than corrected afterwards: qrdb's
+	// transition table has no active -> pending edge, so an account created
+	// active and then "moved" to pending simply stays active — which, on the
+	// email-verification path, is an account that authenticates without ever
+	// verifying its address.
+	userState := iam.LifecycleActive
+	if cfg.RequireAdminApproval || cfg.RequireEmailVerification {
+		userState = iam.LifecyclePending
 	}
 
-	// Create the user in the new tenant.
+	// Create the user in the new tenant, IN the state decided above. It used to
+	// be computed here and applied only on the branch that needed a change, so
+	// the no-approval path created a user that defaulted to pending and then
+	// minted it a session — an account persisted as pending holding an active
+	// bearer. Passing it to the create is what makes the record and the session
+	// agree.
+	// The handle is DERIVED, not the email address. A username may not contain
+	// "@" (iam.validateUsername), so passing the address made every
+	// self-registration fail at this call — after the tenant had been created,
+	// leaving an orphan tenant nobody could enter. The display name is the one
+	// the registrant supplied at begin; the store refuses an email-shaped
+	// display name too, which is why begin now rejects one.
 	createdUser, err := identityStore.CreateUser(ctx, sess.tenantID, iam.CreateUserOptions{
 		Email:       sess.email,
-		Username:    sess.email,
-		Name:        sess.email,
+		Username:    deriveHandle(sess.email),
+		Name:        sess.displayName,
 		AuthMethods: []string{"webauthn"},
-		Attributes: map[string]interface{}{
+		Lifecycle:   userState,
+		Attributes: map[string]string{
 			"isolation_mode":    sess.isolationMode,
-			"self_registered":   true,
+			"self_registered":   "true",
 			"registration_time": time.Now().UTC().Format(time.RFC3339),
 		},
 	})
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
-	}
-
-	// Apply initial state when not active.
-	if userState != iam.UserStateActive {
-		st := userState
-		_, _ = identityStore.UpdateUser(ctx, sess.tenantID, createdUser.ID, iam.UpdateUserOptions{
-			State: &st,
-		})
 	}
 
 	// Grant roles: Admin@<their-tenant> always, plus the configured default_role.
@@ -532,10 +618,11 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if cfg.RequireEmailVerification {
-		unverified := iam.UserState("unverified")
-		_, _ = identityStore.UpdateUser(ctx, sess.tenantID, createdUser.ID, iam.UpdateUserOptions{
-			State: &unverified,
-		})
+		// The account was CREATED pending above; awaiting verification is that
+		// state, not a correction applied afterwards. It used to write an inline
+		// "unverified" that belonged to no vocabulary, and because the
+		// may-authenticate check excluded only "disabled", an account waiting on
+		// verification could log in anyway (#334).
 		RespondJSON(w, r, http.StatusOK, &SelfRegisterFinishResponse{
 			Status:   "verification_required",
 			TenantID: sess.tenantID,
@@ -561,11 +648,31 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The session token reports the authentication that actually happened —
+	// no more and no less.
+	//
+	// It used to be minted with amr=["webauthn","hwk"], acr=hardware-attested
+	// and attest_level=hardware UNCONDITIONALLY, for a registrant who had just
+	// been granted Admin on a brand-new tenant, with a credential nothing had
+	// examined. A headless-Chrome virtual authenticator produced the same token
+	// a YubiKey did.
+	//
+	// Now the claims follow the evidence the ceremony produced. When the gate
+	// proved hardware the session says so, so a first login is not spuriously
+	// weaker than the credential behind it; when it proved less, the ACR is
+	// omitted and a policy requiring hardware refuses the session rather than
+	// being fooled by a label this handler chose.
+	amr := []string{"webauthn"}
+	acr := ""
+	if attestation.IsHardware() {
+		amr = []string{"webauthn", "hwk"}
+		acr = iam.ACRHardwareAttested
+	}
 	tokens, err := oidcProvider.IssueHardwareTokens(ctx, iam.HardwareTokenOptions{
 		User:        createdUser,
-		AMR:         []string{"webauthn", "hwk"},
-		ACR:         iam.ACRHardwareAttested,
-		AttestLevel: "hardware",
+		AMR:         amr,
+		ACR:         acr,
+		Attestation: attestation,
 	})
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
@@ -610,9 +717,9 @@ func (h *IAMHandler) ApproveUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	active := iam.UserStateActive
+	active := iam.LifecycleActive
 	_, err = identityStore.UpdateUser(ctx, tenantID, userID, iam.UpdateUserOptions{
-		State: &active,
+		Lifecycle: &active,
 	})
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
@@ -658,9 +765,9 @@ func (h *IAMHandler) RejectUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	disabled := iam.UserStateDisabled
+	disabled := iam.LifecycleDisabled
 	_, err = identityStore.UpdateUser(ctx, tenantID, userID, iam.UpdateUserOptions{
-		State: &disabled,
+		Lifecycle: &disabled,
 	})
 	if err != nil {
 		h.server.handleServiceError(w, r, err)

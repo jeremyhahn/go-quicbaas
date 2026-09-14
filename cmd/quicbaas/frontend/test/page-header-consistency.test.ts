@@ -37,9 +37,10 @@ interface ViewEntry {
 // across the app.
 const views: ViewEntry[] = [
   { name: 'SystemDashboard',       path: 'src/views/SystemDashboard.svelte',                       title: 'System Status' },
-  { name: 'OrchestratorDashboard', path: 'src/views/orchestrator/OrchestratorDashboard.svelte',    title: 'Orchestration' },
+  { name: 'OrchestratorDashboard', path: 'src/views/orchestrator/OrchestratorDashboard.svelte',    title: 'Dashboard' },
   { name: 'JobsView',              path: 'src/views/orchestrator/JobsView.svelte',                 title: 'Jobs' },
   { name: 'TasksView',             path: 'src/views/orchestrator/TasksView.svelte',                title: 'Tasks' },
+  { name: 'TaskDetailView',        path: 'src/views/orchestrator/TaskDetailView.svelte',           title: 'Task' },
   { name: 'WorkflowsView',         path: 'src/views/orchestrator/WorkflowsView.svelte',            title: 'Workflows' },
   { name: 'EventStreamView',       path: 'src/views/orchestrator/EventStreamView.svelte',          title: 'Live Events' },
   { name: 'CostView',              path: 'src/views/orchestrator/CostView.svelte',                 title: 'Cost' },

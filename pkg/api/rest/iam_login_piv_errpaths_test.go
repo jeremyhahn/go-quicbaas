@@ -106,7 +106,7 @@ func TestPIVLogin_OIDCGetterUnavailable(t *testing.T) {
 		Tenants:      &testTenantManager{storage: memStorage},
 	})
 	thumb := sha256.Sum256(leaf.Raw)
-	pivUser := &iam.User{ID: "piv-user", TenantID: "tenant-piv", Email: "piv@example.com"}
+	pivUser := &iam.User{ID: "78", TenantID: "tenant-piv", Email: "piv@example.com"}
 	pivUser.SetPIVThumbprint(hex.EncodeToString(thumb[:]))
 	require.NoError(t, memStorage.CreateUser(context.Background(), pivUser))
 
@@ -152,6 +152,8 @@ func (s *pivFailingTokenStorage) StoreToken(_ context.Context, _ *iam.Token) err
 func TestPIVLogin_TokenIssuanceFailure(t *testing.T) {
 	ca, caKey := pivLoginTestCA(t, "PIV Root CA")
 	leaf := pivSpiffeLeaf(t, ca, caKey, "tenant-piv")
+	vendorCA, vendorKey := pivLoginTestCA(t, "Yubico PIV Attestation Root")
+	attestation := pivSlotAttestationFor(t, leaf, vendorCA, vendorKey)
 
 	memStorage := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
@@ -161,7 +163,7 @@ func TestPIVLogin_TokenIssuanceFailure(t *testing.T) {
 		Tenants:      &testTenantManager{storage: memStorage},
 	})
 	thumb := sha256.Sum256(leaf.Raw)
-	pivUser := &iam.User{ID: "piv-user", TenantID: "tenant-piv", Email: "piv@example.com"}
+	pivUser := &iam.User{ID: "78", TenantID: "tenant-piv", Email: "piv@example.com"}
 	pivUser.SetPIVThumbprint(hex.EncodeToString(thumb[:]))
 	require.NoError(t, memStorage.CreateUser(context.Background(), pivUser))
 
@@ -200,9 +202,14 @@ func TestPIVLogin_TokenIssuanceFailure(t *testing.T) {
 	server.service = mockSvc
 	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
 	defer server.Close()
+	// The certificate must clear the attestation gate — with a real slot
+	// attestation, since the login certificate is never its own evidence — so
+	// the failure under test is the token-store outage rather than an unproven
+	// credential.
+	trustPIVAttestationCA(t, handler, vendorCA)
 
 	w := httptest.NewRecorder()
-	handler.PIVLogin(w, pivRequestWithSpiffe(leaf))
+	handler.PIVLogin(w, pivRequestWithChain(leaf, attestation))
 
 	// A token-store write outage surfaces as a 503 (qrdb storage error maps to
 	// Service Unavailable); the contract is fail-closed, so assert a server

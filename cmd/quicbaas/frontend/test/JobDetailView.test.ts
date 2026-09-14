@@ -7,6 +7,11 @@
  * 3. Events panel renders when the "events" tab is active.
  * 4. Cancel button is shown for cancellable states.
  * 5. Raw JSON drawer toggles open/closed.
+ * 6. The overview reads the source Task for its link and its forge issue, and
+ *    the JOB's own delivery for the pull request — see
+ *    JobDetailView.runner.test.ts for why the two sources differ.
+ * 7. Sessions the job holds are chips that route to the session detail.
+ * 8. A running job holds an event stream open, and releases it on unmount.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -20,14 +25,16 @@ const { storeMock } = vi.hoisted(() => ({
   storeMock: {
     selectedJob: null as unknown,
     events: [] as unknown[],
-    activeTenantID: 'default',
+    activeTenantID: 'acme',
     jobs: [] as unknown[],
+    tasks: [] as unknown[],
   },
 }));
 
 vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
   orchestratorStore: storeMock,
   selectJob: vi.fn(),
+  isTerminalJobState: (state: string) => state === 'completed' || state === 'failed',
 }));
 
 vi.mock('../src/stores/navigation.svelte.ts', () => ({
@@ -36,9 +43,16 @@ vi.mock('../src/stores/navigation.svelte.ts', () => ({
 
 vi.mock('../src/stores/router.svelte.ts', () => ({
   routeJobs: vi.fn(),
+  routeSessionDetail: vi.fn(),
+  routeTaskDetail: vi.fn(),
   routerStore: {
     route: { name: 'job-detail', params: { id: 'job-abc-def-123' }, hash: '#/jobs/job-abc-def-123' },
   },
+}));
+
+vi.mock('../src/stores/job-events.svelte.ts', () => ({
+  startEventStream: vi.fn(),
+  stopEventStream: vi.fn(),
 }));
 
 vi.mock('../src/stores/toast.svelte.ts', () => ({
@@ -69,7 +83,8 @@ vi.mock('../src/components/orchestrator/BudgetGauge.svelte', () => ({
 }));
 
 import JobDetailView from '../src/views/orchestrator/JobDetailView.svelte';
-import { routeJobs } from '../src/stores/router.svelte.ts';
+import { routeJobs, routeSessionDetail, routeTaskDetail } from '../src/stores/router.svelte.ts';
+import { startEventStream, stopEventStream } from '../src/stores/job-events.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Shared mock job fixture
@@ -97,6 +112,46 @@ const mockJob = {
   events: [
     { timestamp: 1700000100, type: 'state_change', details: 'executing' },
   ],
+  task_id: 'task-77',
+  attempt: 2,
+  lead_session_id: 'sess-lead-000001',
+  session_ids: ['sess-lead-000001', 'sess-worker-00002'],
+  // What THIS attempt delivered. The server scopes it to the attempt; the
+  // page renders it rather than the task's all-attempt artifact list.
+  delivery: {
+    branch: 'issue/580-x',
+    head_sha: 'feed0123456789ab',
+    pull_request_number: 581,
+    pull_request_url: 'http://forge.example/jeremyhahn/go-quicbaas/pulls/581',
+    pull_request_state: 'open',
+  },
+};
+
+// The task the job is an attempt at: adopted from a forge issue, with one
+// pull request already delivered.
+const mockTask = {
+  id: 'task-77',
+  tenant_id: 'acme',
+  team_name: 'delivery',
+  subject: 'Wire the job event stream',
+  description: '',
+  status: 'in_progress',
+  created_at: 1700000000,
+  updated_at: 1700000500,
+  spawned_job_id: 'job-abc-def-123',
+  source: {
+    kind: 'forge_issue',
+    ref: 'jeremyhahn/go-quicbaas#580',
+    url: 'http://forge.example/jeremyhahn/go-quicbaas/issues/580',
+  },
+  output_artifacts: [
+    {
+      name: 'pull_request',
+      kind: 'url',
+      ref: { path: 'http://forge.example/jeremyhahn/go-quicbaas/pulls/581' },
+      metadata: { number: '581', state: 'open', branch: 'issue/580-x' },
+    },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -107,7 +162,12 @@ describe('JobDetailView', () => {
   beforeEach(() => {
     storeMock.selectedJob = { ...mockJob };
     storeMock.jobs = [mockJob];
+    storeMock.tasks = [mockTask];
     vi.mocked(routeJobs).mockClear();
+    vi.mocked(routeSessionDetail).mockClear();
+    vi.mocked(routeTaskDetail).mockClear();
+    vi.mocked(startEventStream).mockClear();
+    vi.mocked(stopEventStream).mockClear();
   });
 
   it('renders the back button with ChevronLeft icon (svg), not plain text arrow', () => {
@@ -152,10 +212,16 @@ describe('JobDetailView', () => {
     expect(screen.queryByRole('button', { name: /cancel job/i })).toBeNull();
   });
 
-  it('shows Retry button for failed state', () => {
-    storeMock.selectedJob = { ...mockJob, state: 'failed' as const };
+  it('offers Readmit for a failed job, enabled only when the server allows it', () => {
+    // go-quicbaas#796: the action used to key off `state === 'failed'` and was
+    // permanently disabled. Whether the work can run again is the task's
+    // answer — parked may be readmitted, failed is terminal — and only the
+    // server knows which.
+    storeMock.selectedJob = { ...mockJob, state: 'failed' as const, readmit_allowed: false };
     render(JobDetailView);
-    expect(screen.getByRole('button', { name: /retry job/i })).toBeInTheDocument();
+    const refused = screen.getByRole('button', { name: /readmit task/i });
+    expect(refused).toBeInTheDocument();
+    expect((refused as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('clicking back button calls routeJobs', async () => {
@@ -184,5 +250,132 @@ describe('JobDetailView', () => {
     storeMock.selectedJob = null;
     render(JobDetailView);
     expect(screen.getByText('No job selected')).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // The source Task: what the job is an attempt at, and what it delivered.
+  // -------------------------------------------------------------------------
+
+  it('links the overview to the Task named by task_id', async () => {
+    render(JobDetailView);
+    const link = screen.getByRole('link', { name: /Wire the job event stream/ });
+    expect(link.getAttribute('href')).toBe('#/tasks/task-77');
+    await fireEvent.click(link);
+    expect(vi.mocked(routeTaskDetail)).toHaveBeenCalledWith('task-77');
+  });
+
+  it('finds the Task from the other end when the job carries no task_id', () => {
+    storeMock.selectedJob = { ...mockJob, task_id: undefined };
+    render(JobDetailView);
+    // The task still names the job it spawned, so the binding is readable.
+    expect(screen.getByRole('link', { name: /Wire the job event stream/ })).toBeInTheDocument();
+  });
+
+  it('links the forge issue the Task was adopted from', () => {
+    render(JobDetailView);
+    const link = screen.getByRole('link', { name: /#580/ });
+    expect(link.getAttribute('href')).toBe('http://forge.example/jeremyhahn/go-quicbaas/issues/580');
+    expect(link.getAttribute('rel')).toContain('noopener');
+  });
+
+  it('links the delivered pull request and offers "Open PR"', () => {
+    render(JobDetailView);
+    const pr = screen.getByRole('link', { name: /#581/ });
+    expect(pr.getAttribute('href')).toBe('http://forge.example/jeremyhahn/go-quicbaas/pulls/581');
+    const open = screen.getByRole('link', { name: /Open PR/ });
+    expect(open.getAttribute('href')).toBe('http://forge.example/jeremyhahn/go-quicbaas/pulls/581');
+  });
+
+  it('renders no Task or Issue link for a job with no source task', () => {
+    storeMock.tasks = [];
+    storeMock.selectedJob = { ...mockJob, task_id: undefined };
+    render(JobDetailView);
+    expect(screen.queryByRole('link', { name: /Wire the job event stream/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /#580/ })).toBeNull();
+  });
+
+  it('renders no PR link for an attempt that delivered none', () => {
+    // The pull request row is the ATTEMPT's, so it goes empty when the
+    // attempt published nothing — even though the task it belongs to still
+    // carries an earlier attempt's pull_request artifact.
+    storeMock.selectedJob = { ...mockJob, delivery: undefined };
+    const { container } = render(JobDetailView);
+    expect(
+      container.querySelector('[data-testid="summary-pull-request"]')!.textContent,
+    ).toContain('—');
+    expect(screen.queryByRole('link', { name: /Open PR/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /581/ })).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // Review round
+  // -------------------------------------------------------------------------
+
+  it('shows the review round while the job is reviewing', () => {
+    storeMock.selectedJob = { ...mockJob, state: 'reviewing' as const, iteration: 2 };
+    render(JobDetailView);
+    expect(screen.getByText('Review round')).toBeInTheDocument();
+    expect(screen.getByText('2 / 10')).toBeInTheDocument();
+  });
+
+  it('shows the review round while the job is sending work back', () => {
+    storeMock.selectedJob = { ...mockJob, state: 're-delegating' as const, iteration: 3 };
+    render(JobDetailView);
+    expect(screen.getByText('3 / 10')).toBeInTheDocument();
+  });
+
+  it('hides the review round when the job is not in a review', () => {
+    render(JobDetailView); // executing
+    expect(screen.queryByText('Review round')).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // Sessions
+  // -------------------------------------------------------------------------
+
+  it('renders one chip per session, the lead marked, routing to the session', async () => {
+    render(JobDetailView);
+    const chips = screen.getByLabelText('Job sessions').querySelectorAll('a');
+    expect(chips.length).toBe(2);
+    expect(chips[0].textContent).toContain('lead');
+    expect(chips[0].getAttribute('href')).toBe('#/sessions/sess-lead-000001');
+    expect(chips[1].getAttribute('href')).toBe('#/sessions/sess-worker-00002');
+    await fireEvent.click(chips[1]);
+    expect(vi.mocked(routeSessionDetail)).toHaveBeenCalledWith('sess-worker-00002');
+  });
+
+  it('does not repeat the lead session when session_ids also carries it', () => {
+    storeMock.selectedJob = {
+      ...mockJob,
+      lead_session_id: 'sess-lead-000001',
+      session_ids: ['sess-lead-000001'],
+    };
+    render(JobDetailView);
+    expect(screen.getByLabelText('Job sessions').querySelectorAll('a').length).toBe(1);
+  });
+
+  it('says the job has no session rather than showing an empty chip row', () => {
+    storeMock.selectedJob = { ...mockJob, lead_session_id: undefined, session_ids: [] };
+    render(JobDetailView);
+    expect(screen.queryByLabelText('Job sessions')).toBeNull();
+    expect(screen.getByText(/no open session/i)).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // Live event stream
+  // -------------------------------------------------------------------------
+
+  it('opens the event stream for a running job and releases it on unmount', () => {
+    const { unmount } = render(JobDetailView);
+    expect(vi.mocked(startEventStream)).toHaveBeenCalledWith('acme', 'job-abc-def-123');
+    expect(vi.mocked(stopEventStream)).not.toHaveBeenCalled();
+    unmount();
+    expect(vi.mocked(stopEventStream)).toHaveBeenCalled();
+  });
+
+  it('opens no stream for a job that has already stopped', () => {
+    storeMock.selectedJob = { ...mockJob, state: 'completed' as const };
+    render(JobDetailView);
+    expect(vi.mocked(startEventStream)).not.toHaveBeenCalled();
   });
 });

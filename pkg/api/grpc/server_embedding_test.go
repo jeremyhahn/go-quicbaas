@@ -555,6 +555,7 @@ func TestProtoToServiceProvider(t *testing.T) {
 		{name: "openai", input: pb.EmbeddingProvider_EMBEDDING_PROVIDER_OPENAI, expected: service.EmbeddingProviderOpenAI},
 		{name: "ollama", input: pb.EmbeddingProvider_EMBEDDING_PROVIDER_OLLAMA, expected: service.EmbeddingProviderOllama},
 		{name: "lmstudio", input: pb.EmbeddingProvider_EMBEDDING_PROVIDER_LMSTUDIO, expected: service.EmbeddingProviderLMStudio},
+		{name: "npu", input: pb.EmbeddingProvider_EMBEDDING_PROVIDER_NPU, expected: service.EmbeddingProviderNPU},
 		{name: "unspecified", input: pb.EmbeddingProvider_EMBEDDING_PROVIDER_UNSPECIFIED, expected: ""},
 	}
 
@@ -576,6 +577,7 @@ func TestServiceToProtoProvider(t *testing.T) {
 		{name: "openai", input: service.EmbeddingProviderOpenAI, expected: pb.EmbeddingProvider_EMBEDDING_PROVIDER_OPENAI},
 		{name: "ollama", input: service.EmbeddingProviderOllama, expected: pb.EmbeddingProvider_EMBEDDING_PROVIDER_OLLAMA},
 		{name: "lmstudio", input: service.EmbeddingProviderLMStudio, expected: pb.EmbeddingProvider_EMBEDDING_PROVIDER_LMSTUDIO},
+		{name: "npu", input: service.EmbeddingProviderNPU, expected: pb.EmbeddingProvider_EMBEDDING_PROVIDER_NPU},
 		{name: "empty_default", input: "", expected: pb.EmbeddingProvider_EMBEDDING_PROVIDER_UNSPECIFIED},
 	}
 
@@ -767,4 +769,32 @@ func TestServiceProviderInfoToProto(t *testing.T) {
 		require.NotNil(t, result)
 		assert.Equal(t, pb.EmbeddingStatus_EMBEDDING_STATUS_UNAVAILABLE, result.Status)
 	})
+}
+
+// TestProviderEnumRoundTripsEveryProvider guards the pair of conversion tables
+// against a provider added to one and forgotten in the other.
+//
+// A gap here does not fail loudly: an unmapped provider becomes UNSPECIFIED,
+// which the service reads as "use the default". A caller asking for the NPU
+// would silently be served by Ollama -- exactly the kind of quiet wrong-provider
+// substitution that poisons a vector index.
+func TestProviderEnumRoundTripsEveryProvider(t *testing.T) {
+	providers := []service.EmbeddingProvider{
+		service.EmbeddingProviderVoyage,
+		service.EmbeddingProviderOpenAI,
+		service.EmbeddingProviderOllama,
+		service.EmbeddingProviderLMStudio,
+		service.EmbeddingProviderNPU,
+	}
+
+	for _, provider := range providers {
+		t.Run(string(provider), func(t *testing.T) {
+			encoded := serviceToProtoProvider(provider)
+			require.NotEqual(t, pb.EmbeddingProvider_EMBEDDING_PROVIDER_UNSPECIFIED, encoded,
+				"provider %q has no proto enum value, so a request for it would silently become the default", provider)
+
+			decoded := protoToServiceProvider(encoded)
+			assert.Equal(t, provider, decoded, "provider %q does not survive a round trip", provider)
+		})
+	}
 }

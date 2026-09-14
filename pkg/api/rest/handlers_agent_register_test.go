@@ -152,6 +152,16 @@ type agentRegisterTestService struct {
 	*testutil.MockQuicBaaS
 	appManager *iam.AppManager
 	appStorage iam.AppStorage
+
+	// identityStore backs the enrollment of the identity the agent's client
+	// certificate authenticates as (go-quicbaas#663). Registration fails
+	// closed without it, exactly as it does on a server whose IAM never came
+	// up, so every fixture wires one.
+	identityStore *iam.IdentityStore
+
+	// identityRecords is the storage identityStore writes through, so a test
+	// can read back the user and role the enrollment created.
+	identityRecords *iam.MemoryStorage
 }
 
 // Compile-time check that the wrapper satisfies the service contract.
@@ -167,6 +177,24 @@ func (s *agentRegisterTestService) GetAppManager(ctx context.Context) (*iam.AppM
 // interface the register handler type-asserts on for the mTLS registration path.
 func (s *agentRegisterTestService) GetAppStorage(ctx context.Context) (iam.AppStorage, error) {
 	return s.appStorage, nil
+}
+
+// GetIdentityStore satisfies the unexported agentIdentityStoreAccessor
+// interface the register handler type-asserts on to enroll the certificate
+// principal.
+func (s *agentRegisterTestService) GetIdentityStore(ctx context.Context) (*iam.IdentityStore, error) {
+	return s.identityStore, nil
+}
+
+// newAgentRegisterTestIdentityStore returns an identity store over in-memory
+// storage plus that storage, so a test can assert what enrollment wrote.
+func newAgentRegisterTestIdentityStore() (*iam.IdentityStore, *iam.MemoryStorage) {
+	records := iam.NewMemoryStorage()
+	return iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage:  records,
+		GroupStorage: records,
+		RoleStorage:  records,
+	}), records
 }
 
 // agentRegisterTestTenantManager is a minimal in-memory TenantManager
@@ -211,10 +239,13 @@ func newAgentRegisterTestServer(t *testing.T, eventIngestURL string) *Server {
 	appMgr := iam.NewAppManager(storage, tenantMgr)
 
 	mockSvc := testutil.NewMockQuicBaaS()
+	identityStore, identityRecords := newAgentRegisterTestIdentityStore()
 	wrapper := &agentRegisterTestService{
-		MockQuicBaaS: mockSvc,
-		appManager:   appMgr,
-		appStorage:   storage,
+		MockQuicBaaS:    mockSvc,
+		appManager:      appMgr,
+		appStorage:      storage,
+		identityStore:   identityStore,
+		identityRecords: identityRecords,
 	}
 
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json"})

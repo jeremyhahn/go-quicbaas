@@ -5,21 +5,21 @@
 
 This section provides comprehensive, step-by-step walkthroughs for every view in the QuicBaaS web UI and Wails desktop app. Each page covers layout, actions, a complete example workflow, and troubleshooting.
 
-## Orchestration
+## Software Factory
 
-The orchestration subsystem manages stateless inference, sessions, jobs, agents, workflows, and event streams.
+The Software Factory (the orchestration subsystem) manages stateless inference, sessions, jobs, agents, workflows, and event streams.
 
 | View | Purpose |
 |------|---------|
 | Dashboard | System health, uptime, service status, and resource counts |
-| Orchestrator → Jobs | Queue, monitor, and cancel orchestration jobs |
-| Orchestrator → Agent Fleet | Register, view, and decommission agent daemons |
-| Orchestrator → Sessions | Spawn, prompt, attach, and close persistent sessions |
-| Orchestrator → Tasks | Create, claim, complete, and decompose work items |
-| Orchestrator → Workflows | Define, list, edit, duplicate, and run workflows |
-| Orchestrator → Live Events | Stream job/session events in real time |
-| Orchestrator → Cost Tracking | Analyse per-job iteration usage and estimates |
-| Orchestrator → Inference | Submit stateless prompts to fleet-routed backends |
+| Software Factory → Jobs | Queue, monitor, and cancel orchestration jobs |
+| Software Factory → Agent Fleet | Register, view, and decommission agent daemons |
+| Software Factory → Sessions | Spawn, prompt, attach, and close persistent sessions |
+| Software Factory → Tasks | Create, claim, complete, and decompose work items |
+| Software Factory → Workflows | Define, list, edit, duplicate, and run workflows |
+| Software Factory → Live Events | Stream job/session events in real time |
+| Software Factory → Cost Tracking | Read the consumption ledger: tokens spent per project, task and job, and the account that paid |
+| Software Factory → Inference | Submit stateless prompts to fleet-routed backends |
 
 ## Data
 
@@ -73,8 +73,8 @@ New to QuicBaaS? Start here:
 
 ## Cross-Reference
 
-- See the [CLI Reference](../agent-orchestration/cli.md) for command-line equivalents of each GUI action
-- See [agents/inference.md](../agent-orchestration/user.md) for low-level architecture and API details
+- See the [CLI Reference](../software-factory/cli.md) for command-line equivalents of each GUI action
+- See [agents/inference.md](../software-factory/user.md) for low-level architecture and API details
 - See [security/](../security-hardening) for in-depth encryption, IAM, and KMS design docs
 
 
@@ -93,7 +93,7 @@ The Dashboard is structured as a full-width card layout with two main sections:
 **Top Section — Service Health**
 
 - **Daemon** — liveness check via `GET /api/v1/health/live`. Shows status badge (ok/degraded/down) and uptime in human-readable format (e.g., "2m 52s").
-- **Orchestrator** — health check via `GET /api/v1/orchestrator/health`. Clickable: navigates to `#/orchestration` on click.
+- **Software Factory** — health check via `GET /api/v1/orchestrator/health`. Clickable: navigates to `#/orchestration` on click.
 - **Storage (PebbleDB)** — data layer health. Clickable: navigates to KMS view if enabled.
 - **KMS** — key management service status. Clickable: navigates to `#/security/kms`.
 - **Scheduler** — background job scheduler health. Clickable: navigates to `#/scheduler`.
@@ -118,7 +118,7 @@ The Dashboard is read-only. All actions navigate to the relevant view:
 | Action | Navigate to | Endpoint |
 |--------|-------------|----------|
 | Click Daemon uptime | —  | `GET /api/v1/health/live` |
-| Click Orchestrator | Orchestration | `GET /api/v1/orchestrator/health` |
+| Click Software Factory | Software Factory | `GET /api/v1/orchestrator/health` |
 | Click Sessions count | Sessions list | `GET /api/v1/orchestrator/sessions` |
 | Click Agents count | Agent Fleet | `GET /api/v1/orchestrator/agents` |
 | Click Jobs count | Jobs list | `GET /api/v1/orchestrator/jobs` |
@@ -158,8 +158,8 @@ The Dashboard is read-only. All actions navigate to the relevant view:
 ### See also
 
 - CLI: quicbaas health — command-line health checks
-- Orchestrator → Sessions — detailed sessions walkthrough
-- Orchestrator → Agent Fleet — detailed agent registration walkthrough
+- Software Factory → Sessions — detailed sessions walkthrough
+- Software Factory → Agent Fleet — detailed agent registration walkthrough
 
 
 ---
@@ -3673,155 +3673,123 @@ This cannot be undone. Make sure you have a backup of the private key.
 
 - [CLI: quicbaas ssh](../ssh/cli.md) — manage SSH keys via CLI
 - [handlers_ssh.go](../../pkg/api/rest/handlers_ssh.go) — SSH key implementation
-- [agents/deploy.md](../agent-orchestration/cli.md) — SSH integration for agent deployment
+- [agents/deploy.md](../software-factory/cli.md) — SSH integration for agent deployment
 - security/authentication.md — authentication mechanisms
 
 
 ---
 
-## Orchestrator → Cost Tracking
+## Software Factory → Cost Tracking
 
 ### Purpose
 
-The Cost Tracking view displays per-job iteration usage and estimated costs based on backend billing. Use this view to analyze how many API calls or iterations each job consumed, which backends incurred the most cost, and to forecast spending over time. This is useful for budget tracking and optimization.
+Cost Tracking reports what the tenant has actually SPENT, read from the
+consumption ledger — one durable record per provider turn, written by the same
+path the spend cap is enforced from. Use it to see which projects, tasks and
+jobs consumed tokens, which pooled account paid, and how much of that
+account's configured cap is left.
+
+It is NOT an estimator. Every figure on the page is either a measurement the
+ledger holds or is shown as a dash and labelled; see "What the page will not
+claim" below.
 
 ### Layout
 
-The page is structured as a filterable table with two sections:
+**Header** — "Cost Tracking", with a breadcrumb showing where in the
+attribution chain the report is taken: `Tenant › project › task › job`.
 
-**Header** — "Cost Tracking" title with "Per-job iteration usage and estimates" subtitle. Controls:
+**Totals** — five cards for the current scope: Total tokens, Input, Output,
+Turns (`N ok · M failed`) and Cost.
 
-- **Date range selector** — pick start and end dates (defaults to last 7 days)
-- **Backend filter** — dropdown to filter by backend (all, claude, codex, ollama, etc.)
-- **Export** button — download data as CSV
+**By &lt;level&gt;** — the drill-down: one row per identifier at the next chain
+level below the scope, with that subtree's tokens. Clicking a row narrows the
+scope; clicking a breadcrumb widens it again. Spend that belongs to no entity
+at a level ("a job with no task") is its own row, labelled `No task`.
 
-**Summary Cards** (top of page):
+**Accounts that paid** — per pooled account: the tokens it was charged, its
+provider, its spend-policy status, each configured quota window with live
+usage against it, and the circuit-breaker verdict when one is configured.
 
-```
-Total Cost (7d)     Backend Breakdown    Avg Cost/Job    Highest Cost Job
-$47.32              Claude: $42.00       $8.24           Job abc123: $15.20
-                    Codex: $5.32
-                    Ollama: $0
-```
+**By model** — tokens per engine/model pair.
 
-**Cost Table** — Columns:
+### What the page will not claim
 
-- **Job ID** — truncated (e.g., `abc123…`)
-- **Description** — job description
-- **Backend** — backend name
-- **Status** — badge (completed, failed, cancelled)
-- **Start Time** — ISO 8601 timestamp
-- **Duration** — wall-clock time (e.g., "2m 34s")
-- **Iterations** — count of API calls or prompts
-- **Est. Cost** — estimated dollar amount (based on backend pricing)
-- **Cost per Iteration** — average cost per call (cost / iterations)
-
-**Empty State**:
-
-```
-No cost data for the selected date range.
-Try adjusting the date range or running some jobs.
-```
+| Figure | What you see, and why |
+|---|---|
+| Cost | A dash and "no price sheet — cost unmeasured". Nothing in this build prices a turn, so the ledger's cost field is UNMEASURED, not zero. A rendered `0.00` would claim the work was free (go-quicbaas#791). |
+| An account with no cap | "No spend policy" — a fact, not a budget of 0%. |
+| An account the server could not read | "Spend policy unknown" — a different fact, never collapsed into the reassuring one. |
+| Iteration budget | Absent. Only the `workflow` runner iterates, and its budget is on the job page, not here; it was never a cost. |
+| Nothing recorded at all | "This deployment is not recording provider consumption" — a deployment with no ledger wired says so instead of showing an empty report. |
 
 ### Lifecycle actions
 
-| Action | Icon | What it does | Backend endpoint |
-|--------|------|-------------|-----------------|
-| Select Date Range | Calendar | Filters costs by date; triggers table refresh | `GET /api/v1/orchestrator/jobs?start=X&end=Y` |
-| Filter by Backend | Sliders | Shows only jobs that used the selected backend | — (client-side filter) |
-| View Job Details | ChevronRight | Click a row to navigate to the job detail page | `GET /api/v1/orchestrator/jobs/{jobID}` |
-| Export to CSV | Download | Downloads table as CSV file for external analysis | — (client-side export) |
+| Action | What it does | Backend endpoint |
+|--------|-------------|-----------------|
+| Drill into a row | Narrows the scope to that project / task / job / session | `GET /api/v1/orchestrator/cost?project_id=…` |
+| Click a breadcrumb | Widens the scope back to that level | `GET /api/v1/orchestrator/cost` |
 
 ### Walkthrough
 
-#### Analyze costs for jobs from the past week
+#### Find what a factory job cost
 
-1. Open the Cost Tracking view (`#/orchestration/cost`).
-2. The page loads with a default date range of "last 7 days" and shows a summary:
-
-```
-Total Cost (7d): $47.32
-Backend Breakdown:
-  Claude: $42.00 (7 jobs)
-  Codex: $5.32 (2 jobs)
-```
-
-3. The table below lists all jobs with their costs:
+1. Open Cost Tracking (`#/cost`). It loads the tenant roll-up:
 
 ```
-Job ID      Description           Backend  Status     Start       Duration  Iterations  Est. Cost
-abc123…     Email campaign v1     Claude   completed  14:35:20    2m 34s    12          $8.20
-xyz789…     Code review task      Claude   completed  14:25:10    1m 15s    5           $3.80
-def456…     Ollama test           Ollama   completed  14:15:00    0m 42s    1           $0.00
-...
+Total tokens   Input    Output   Turns            Cost
+412,880        330,100  82,780   58 ok · 2 failed  —
+                                                   no price sheet — cost unmeasured
 ```
 
-4. To filter by a specific backend, click the **Backend** dropdown and select "Claude".
-
-**Expected outcome:**
-
-```
-✓ Table re-filters to show only Claude jobs
-✓ Summary cards update to show only Claude costs
-✓ "Total Cost" shows only costs from Claude
-```
-
-5. To view a longer date range, click the **Date Range** selector and choose "Last 30 days".
-
-**Expected outcome:**
+2. Under **By project**, click the project the job belongs to. The breadcrumb
+   becomes `Tenant › <project>` and the breakdown becomes **By task**.
+3. Click the task, then the job. The scope is now that single job, and the
+   **Accounts that paid** panel names the pooled account it drew on:
 
 ```
-✓ Table refreshes with more jobs
-✓ Summary cards update with larger totals
-✓ Est. Cost column may show higher numbers
+alice-work   claude   No spend policy                     5,200 tokens
+             No spend cap is configured for this account, so no budget can be shown.
 ```
 
-6. Click a job row to navigate to the full job details page and see:
+4. If the account HAS a cap, the same panel shows the live window instead:
 
 ```
-Job Details: abc123…
-
-Backend: Claude
-Duration: 2m 34s
-Iterations: 12
-Tokens Used: {input: 1024, output: 512}
-Est. Cost: $8.20
-Pricing Breakdown:
-  Input tokens: $0.003 × 1024 = $3.07
-  Output tokens: $0.015 × 512 = $7.68
-  API call: $0.01 × 1 = $0.01
-  Total: $8.20
+alice-work   claude   Metered                             5,200 tokens
+  five-hour                          5,200 / 1,000,000 tokens per 5h
+  [=                                                              ]
 ```
 
-7. To export all visible costs for external analysis, click the **Export** button.
+#### Read one job's spend from the job page
 
-**Expected outcome:**
-
-```
-✓ Browser downloads a file named "quicbaas-costs-2026-04-18-to-2026-04-25.csv"
-✓ CSV contains all visible rows with headers
-```
+1. Open a job (`#/jobs/{id}`) and select the **Cost** tab. It reads that job's
+   ledger entries: total, input, output, the accounts that paid, and the cost
+   as a dash while nothing prices a turn.
+2. A job driven by the `workflow` runner also shows its iteration gauge. A job
+   driven by any other runner says so in place — "The sdlc runner does not
+   iterate, so this job has no iteration budget." — rather than showing a
+   gauge at 0%. The **DAG** tab stays the workflow runner's; **Cost** is
+   offered for both, because every runner spends tokens.
 
 ### Troubleshooting
 
-| Error | Cause | Fix |
+| Message | Cause | Fix |
 |-------|-------|-----|
-| No cost data appears, but I can see jobs in the Jobs view | Cost tracking is not enabled in the daemon config | Enable cost tracking: `quicbaas config set orchestrator.cost-tracking true` |
-| All costs show $0.00 | Backend pricing is not configured | Set up backend pricing models in the config file |
-| Date range selector shows no jobs | Date range is too narrow or no jobs ran in that period | Expand the date range or run more jobs |
-| Export button shows "No data" | No rows are visible due to filters | Remove filters or adjust date range |
-| Cost estimates are inaccurate | Pricing model does not match the actual backend | Update pricing in the config to match the backend's current rates |
+| "This deployment is not recording provider consumption" | No consumption ledger is wired on the daemon | The ledger is built alongside the orchestration KV; check the daemon started its orchestrator |
+| "You do not have permission to view spend" | The account lacks `orchestrator:status` | Grant the orchestrator read family |
+| Cost is a dash on every row | Expected. Nothing prices a turn yet | Tokens are the measured axis; a currency figure arrives with the price sheet (go-quicbaas#791) |
+| A drill-down row says "No task" | Real spend that belongs to no task — a job started outside one | Click it to open that subtree |
+| A scope returns "cannot be scoped while a level above it is not" | The chain is a path; a task was named without its project | Drill down from the tenant rather than deep-linking a partial scope |
 
 ### See also
 
-- Orchestrator → Jobs — monitor and manage jobs
-- configuration/orchestrator.md — configure cost tracking and pricing
-- [CLI: quicbaas orchestrator jobs list](../agent-orchestration/cli.md#quicbaas-orchestrator-jobs-liststart) — jobs via CLI
+- Software Factory → Jobs — monitor and manage jobs
+- [Cost enforcement](../software-factory/cost-enforcement.md) — the ledger, the spend cap and the breaker
+- [CLI: quicbaas orchestrator jobs list](../software-factory/cli.md#orchestration-jobs) — jobs via CLI
 
 
 ---
 
-## Orchestrator → Live Events
+## Software Factory → Live Events
 
 ### Purpose
 
@@ -3956,15 +3924,15 @@ Agent: agent-01
 
 ### See also
 
-- Orchestrator → Jobs — monitor and manage jobs
-- Orchestrator → Sessions — attach to a specific session's event stream
+- Software Factory → Jobs — monitor and manage jobs
+- Software Factory → Sessions — attach to a specific session's event stream
 - [handlers_session_events.go](../../pkg/api/rest/handlers_session_events.go) — event stream implementation (REST endpoint: `GET /api/v1/orchestrator/sessions/{sessionID}/events`)
-- Orchestrator → Workflows — workflows generate events
+- Software Factory → Workflows — workflows generate events
 
 
 ---
 
-## Orchestrator → Agent Fleet
+## Software Factory → Agent Fleet
 
 ### Purpose
 
@@ -4080,15 +4048,15 @@ This agent will be unregistered from the fleet. Running jobs will be affected.
 
 ### See also
 
-- [CLI: quicbaas agent deploy](../agent-orchestration/cli.md) — full agent deployment walkthrough
-- [CLI: quicbaas orchestrator agents](../agent-orchestration/cli.md#quicbaas-orchestrator-agents-list) — list agents via CLI
-- Orchestrator → Inference — submit prompts to registered agents
-- [agents/deploy.md](../agent-orchestration/cli.md) — comprehensive agent bootstrapping guide
+- [CLI: quicbaas agent deploy](../software-factory/cli.md) — full agent deployment walkthrough
+- [CLI: quicbaas orchestrator agents](../software-factory/cli.md#quicbaas-orchestrator-agents-list) — list agents via CLI
+- Software Factory → Inference — submit prompts to registered agents
+- [agents/deploy.md](../software-factory/cli.md) — comprehensive agent bootstrapping guide
 
 
 ---
 
-## Orchestrator → Inference
+## Software Factory → Inference
 
 ### Purpose
 
@@ -4272,15 +4240,15 @@ QUIC is a modern transport protocol that...
 
 ### See also
 
-- [agents/inference.md](../agent-orchestration/user.md) — complete API and architecture reference
-- [CLI: quicbaas orchestrator inference](../agent-orchestration/cli.md#quicbaas-orchestrator-inference) — stateless inference via CLI
-- Orchestrator → Sessions — persistent session-based prompts (for Claude, Codex, etc.)
-- Orchestrator → Agent Fleet — register and manage agents
+- [agents/inference.md](../software-factory/user.md) — complete API and architecture reference
+- [CLI: quicbaas orchestrator inference](../software-factory/cli.md#quicbaas-orchestrator-inference) — stateless inference via CLI
+- Software Factory → Sessions — persistent session-based prompts (for Claude, Codex, etc.)
+- Software Factory → Agent Fleet — register and manage agents
 
 
 ---
 
-## Orchestrator → Jobs
+## Software Factory → Jobs
 
 ### Purpose
 
@@ -4290,7 +4258,7 @@ The Jobs view displays a filterable, searchable list of orchestration jobs queue
 
 The page is structured as a full-width table layout:
 
-**Header** — "Jobs" title with "Orchestration job queue and history" subtitle. Primary CTA is **+ Start Job** button (green).
+**Header** — "Jobs" title with "Software Factory job queue and history" subtitle. Primary CTA is **+ Start Job** button (green).
 
 **Filters and Search** — Above the table:
 
@@ -4379,14 +4347,14 @@ Job a1b2c3d4… will be terminated. This cannot be undone.
 
 ### See also
 
-- [CLI: quicbaas orchestrator jobs](../agent-orchestration/cli.md#quicbaas-orchestrator-jobs-liststart) — start and list jobs via command line
-- Orchestrator → Workflows — parameterized multi-step job execution
-- Orchestrator → Live Events — real-time job event streaming
+- [CLI: quicbaas orchestrator jobs](../software-factory/cli.md#orchestration-jobs) — start and list jobs via command line
+- Software Factory → Workflows — parameterized multi-step job execution
+- Software Factory → Live Events — real-time job event streaming
 
 
 ---
 
-## Orchestrator → Sessions
+## Software Factory → Sessions
 
 ### Purpose
 
@@ -4538,15 +4506,15 @@ This session will be terminated. You cannot send more prompts to it.
 
 ### See also
 
-- [CLI: quicbaas orchestrator session](../agent-orchestration/cli.md) — manage sessions via CLI
-- [agents/inference.md](../agent-orchestration/user.md) — session vs. sessionless inference distinction
-- Orchestrator → Inference — sessionless prompts (no state)
-- Orchestrator → Live Events — view session events in real-time
+- [CLI: quicbaas orchestrator session](../software-factory/cli.md) — manage sessions via CLI
+- [agents/inference.md](../software-factory/user.md) — session vs. sessionless inference distinction
+- Software Factory → Inference — sessionless prompts (no state)
+- Software Factory → Live Events — view session events in real-time
 
 
 ---
 
-## Orchestrator → Tasks
+## Software Factory → Tasks
 
 ### Purpose
 
@@ -4554,32 +4522,34 @@ The Tasks view displays work items created by orchestration jobs. Use this view 
 
 ### Layout
 
-The page displays a searchable, filterable list of tasks:
+The page lists every task in the active tenant — hand-created ones and the ones adopted from forge issues alike — and reads the generic Task model: where a task came from, how many attempts it has used, and whether it is waiting on a person.
 
-**Header** — "Tasks" title with "Work items and task queue" subtitle. Primary CTA is **+ Create Task** button.
-
-**Filters and Search** — Above the table:
-
-- **Status filter** — "All", "Pending", "Claimed", "Completed", "Failed". Defaults to "All".
-- **Search input** — client-side filter on task ID and description.
+**Header** — "Tasks" title with an "N tasks" subtitle. Controls: **All / Auto-spawned / Queued** filter, **+ New Task**, and a table/kanban layout toggle. When the list is narrowed to one project (`#/tasks?project=<id>`, reached from the **Tasks** button on a Projects row) a `Project: <name>` chip shows the filter, with an × to clear it.
 
 **Table** — Columns:
 
-- **Task ID** — truncated UUID (e.g., `tsk_abc123…`)
-- **Description** — user-provided description or empty
-- **Status** — badge: "pending" (gray), "claimed" (blue), "completed" (green), "failed" (red)
-- **Created** — ISO 8601 timestamp
-- **Claimed By** — agent name or "—" if not yet claimed
-- **Actions** — three-dot menu with: Claim, Complete, Decompose, Delete
+- **Subject** — the task subject; a task adopted from a forge issue carries a `#N` chip that opens the issue on the forge
+- **Project** — the project's name (its id when the project list cannot be read)
+- **Status** — badge; a `blocked` task also shows a warning marker with the recorded reason, or "No reason recorded." when there is none
+- **Attempts** — `charged / budget`, with `(N dispatched)` when refunded attempts make the two differ, and a muted `· N refunded` count
+- **Assigned** — assignee or "—"
+- **Job** — the spawned job, linking to `#/jobs/{id}`; "no agent matched" for an auto-spawn task nothing picked up
+- **Updated** — relative time (exact time in the tooltip)
+- **Actions** — Claim (pending), Complete (claimed / in progress), Decompose
 
-**Empty State**:
+Clicking a row opens the task's detail page. A field the server has not sent renders as "—", never as a made-up zero.
 
-```
-No tasks.
-Create a new task or run a workflow.
+**Empty State** — "No tasks tracked — New Task is how you start." or, under a project filter, "No tasks in <project>." A failed load replaces the table with the reason: a 403 names the permission the account lacks (`orchestrator:status`).
 
-[+ Create Task button]
-```
+### Task detail (`#/tasks/{id}`)
+
+- **Header** — "Task" with the subject; **Back** and **Reload** (refetches tasks and jobs). Below it: status badge, the `#N` issue link, a `Project:` chip that opens the project's task list, and the task id.
+- **Waiting on a person** — shown for `blocked` and `failed` tasks with the recorded reason ("No reason recorded." when none), the block kind, and whether the task will be retried on its own (it will not).
+- **State** — status, when it last changed, priority, assignee, source (kind + ref), creator, created/updated, tenant.
+- **Attempts** — charged / budget, dispatched, refunded (with the current run of refunds), and **Retry not before** ("not deferred" unless the server set a deferral).
+- **Jobs** — the current spawned job (state, iteration; opens the job) and every earlier attempt's job, found through the job's `config.task_id`.
+- **Pull requests** — output artifacts of kind `pull_request`, linked when they carry a URL; "No pull request recorded for this task." otherwise.
+- **Issue body** — the task description in a collapsible block; **Raw Task State** — the JSON the server sent.
 
 ### Lifecycle actions
 
@@ -4589,13 +4559,18 @@ Create a new task or run a workflow.
 | Claim Task | Check | Claim a pending task for this agent; shows a confirm modal | `POST /api/v1/orchestrator/tasks/{taskID}/claim` |
 | Complete Task | CheckDouble | Mark a claimed task as complete | `POST /api/v1/orchestrator/tasks/{taskID}/complete` |
 | Decompose Task | GitBranch | Break a task into subtasks; opens a modal with JSON editor | `POST /api/v1/orchestrator/tasks/decompose` |
-| Delete Task | Trash | Remove a task (pending tasks only) | `DELETE /api/v1/orchestrator/tasks/{taskID}` |
+
+Deleting a task has no button in this view yet. The verb reaches every
+transport and the CLI (`quicbaas orchestrator task delete <taskID>`,
+`DELETE /api/v1/orchestrator/tasks/{taskID}`); it removes the task's artifacts,
+claim mark and source reservation, and is refused while a job holds a live
+lease on the task.
 
 ### Walkthrough
 
 #### Create and complete your first task
 
-1. Open the Tasks view (`#/orchestration/tasks`).
+1. Open the Tasks view (`#/tasks`).
 2. Click **+ Create Task** button.
 3. A modal form appears:
 
@@ -4703,14 +4678,14 @@ Output:  [{"id": "tsk_xxx", "state": "pending"}]
 
 ### See also
 
-- [CLI: quicbaas orchestrator tasks](../agent-orchestration/cli.md) — manage tasks via CLI
-- Orchestrator → Jobs — jobs that generate tasks
-- Orchestrator → Workflows — workflows that create tasks automatically
+- [CLI: quicbaas orchestrator tasks](../software-factory/cli.md) — manage tasks via CLI
+- Software Factory → Jobs — jobs that generate tasks
+- Software Factory → Workflows — workflows that create tasks automatically
 
 
 ---
 
-## Orchestrator → Workflows
+## Software Factory → Workflows
 
 ### Purpose
 
@@ -4912,7 +4887,7 @@ recipient_email: [user@example.com_________]
 
 ### See also
 
-- [CLI: quicbaas orchestrator workflows](../agent-orchestration/cli.md#quicbaas-orchestrator-workflows-listrun) — manage workflows via CLI
-- Orchestrator → Jobs — monitor workflow execution as jobs
-- Orchestrator → Inference — single-step stateless prompts
-- [configuration/workflow-settings.md](../agent-orchestration/engineering.md) — advanced workflow configuration
+- [CLI: quicbaas orchestrator workflows](../software-factory/cli.md#workflow-management) — manage workflows via CLI
+- Software Factory → Jobs — monitor workflow execution as jobs
+- Software Factory → Inference — single-step stateless prompts
+- [configuration/workflow-settings.md](../software-factory/engineering.md) — advanced workflow configuration

@@ -187,7 +187,7 @@ var (
 	ErrUserNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.user",
-		Err:  &IAMMessageError{Message: "user not found"},
+		Err:  &UserNotFoundError{},
 	}
 
 	// ErrUserAlreadyExists is returned when attempting to create a user that already exists.
@@ -202,6 +202,28 @@ var (
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.user",
 		Err:  &IAMMessageError{Message: "email already exists"},
+	}
+
+	// ErrAtomicMembershipUnsupported reports a KVStore that cannot perform a
+	// guarded write, so a group's member list cannot be edited without a lost
+	// update. It FAILS CLOSED rather than falling back to read-append-write:
+	// the fallback is the defect, and a membership change that silently erases
+	// a concurrent one is worse than a membership change that refuses.
+	ErrAtomicMembershipUnsupported = &dberrors.QBError{
+		Code: dberrors.ErrUnavailable,
+		Op:   "iam.group.member",
+		Err: &IAMMessageError{Message: "backing store offers no compare-and-swap; " +
+			"group membership cannot be edited atomically"},
+	}
+
+	// ErrGroupMembershipContended reports a membership edit that lost its
+	// compare-and-swap on every attempt. It is retryable by the caller and says
+	// so, which a lost update never could.
+	ErrGroupMembershipContended = &dberrors.QBError{
+		Code: dberrors.ErrConflict,
+		Op:   "iam.group.member",
+		Err: &IAMMessageError{Message: "group membership changed concurrently on every " +
+			"attempt; retry the operation"},
 	}
 
 	// ErrGroupNotFound is returned when a group is not found.
@@ -225,6 +247,68 @@ var (
 		Err:  &IAMMessageError{Message: "role already exists"},
 	}
 
+	// ErrRoleIDAlreadyExists is returned when a create supplies a role ID that
+	// is already taken.
+	//
+	// It shares ErrAlreadyExists with the duplicate-NAME case because both are
+	// genuine conflicts and both belong at the same status, but it is a
+	// separate sentinel because the two are different conditions with different
+	// remedies: a duplicate name means choose another name, a duplicate id
+	// means the caller either collided with an existing role or is retrying a
+	// create it already made. Collapsing them would tell an operator "role
+	// already exists" when the name they chose is free.
+	//
+	// This mirrors how the user store already distinguishes
+	// ErrEmailAlreadyExists from ErrUserAlreadyExists — same code, distinct
+	// message — rather than inventing a status for it.
+	ErrRoleIDAlreadyExists = &dberrors.QBError{
+		Code: dberrors.ErrAlreadyExists,
+		Op:   "iam.role",
+		Err:  &IAMMessageError{Message: "role id already exists"},
+	}
+
+	// ErrSystemRoleImmutable is returned when an operation would rename,
+	// re-permission or delete a built-in system role.
+	//
+	// Forbidden rather than conflict: a conflict invites the caller to resolve
+	// it and retry, and there is nothing to resolve — no caller may perform
+	// this operation on this object at any time. Reporting it as a conflict
+	// would send an operator looking for the state to fix.
+	ErrSystemRoleImmutable = &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.role",
+		Err:  &IAMMessageError{Message: "system roles cannot be modified or deleted"},
+	}
+
+	// ErrReservedRoleName is returned when a create would take a name reserved
+	// for a built-in system role.
+	//
+	// Invalid input rather than already-exists: the name is refused by policy,
+	// not because a row currently holds it, and the caller's remedy is to
+	// choose a different name. It sits with the other value-level refusals
+	// (RoleValidationError, RoleInvalidPermissionError) that this package
+	// already maps to invalid input.
+	ErrReservedRoleName = &dberrors.QBError{
+		Code: dberrors.ErrInvalidInput,
+		Op:   "iam.role",
+		Err:  &IAMMessageError{Message: "role name is reserved for a system role"},
+	}
+
+	// ErrRoleReconcileUnsupported is returned when built-in role
+	// reconciliation is requested of a role storage that does not implement
+	// BuiltInRoleReconciler.
+	//
+	// Configuration rather than not-implemented: the capability exists and is
+	// wired in every deployment whose roles live in qrdb (the only canonical
+	// role store). Meeting a storage without it means the process was
+	// assembled with roles somewhere else, which an operator fixes in the
+	// wiring, not by waiting for a feature.
+	ErrRoleReconcileUnsupported = &dberrors.QBError{
+		Code: dberrors.ErrConfiguration,
+		Op:   "iam.role.reconcile",
+		Err:  &IAMMessageError{Message: "role storage does not support built-in role reconciliation"},
+	}
+
 	// ErrUserAlreadyInGroup is returned when adding a user to a group they're already in.
 	ErrUserAlreadyInGroup = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
@@ -243,7 +327,7 @@ var (
 	ErrRoleNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.role",
-		Err:  &IAMMessageError{Message: "role not found"},
+		Err:  &RoleNotFoundError{},
 	}
 
 	// ErrRoleAlreadyAssigned is returned when assigning a role that's already assigned.
@@ -322,7 +406,7 @@ var (
 	ErrMFANotEnrolled = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.mfa",
-		Err:  &IAMMessageError{Message: "MFA not enrolled"},
+		Err:  &MFANotEnrolledError{},
 	}
 
 	// ErrMFAAlreadyEnrolled is returned when MFA is already enrolled.
@@ -498,6 +582,17 @@ var (
 		Err:  &IAMMessageError{Message: "impersonation not allowed"},
 	}
 
+	// ErrImpersonationActorRequired is returned when StartImpersonation is
+	// invoked without an authenticated principal in context. The acting
+	// admin is always the authenticated caller (go-quicbaas#383); with no
+	// verified identity there is no actor to authorize, so the call fails
+	// closed rather than minting a session for an anonymous caller.
+	ErrImpersonationActorRequired = &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.admin.impersonate",
+		Err:  &IAMMessageError{Message: "impersonation requires an authenticated caller"},
+	}
+
 	// ErrImpersonationTargetNotFound is returned when the impersonation
 	// target cannot be resolved as a user of the target tenant — no
 	// session is minted for an unverified principal (#357).
@@ -630,21 +725,21 @@ var (
 	ErrInviteNotFound = &dberrors.QBError{
 		Code: dberrors.ErrNotFound,
 		Op:   "iam.invite",
-		Err:  &IAMMessageError{Message: "invite not found"},
+		Err:  &InviteUnusableError{Reason: InviteAbsent},
 	}
 
 	// ErrInviteExpired is returned when an invite token has passed its expiry time.
 	ErrInviteExpired = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.invite",
-		Err:  &IAMMessageError{Message: "invite has expired"},
+		Err:  &InviteUnusableError{Reason: InviteExpired},
 	}
 
 	// ErrInviteUsed is returned when an invite token has already been consumed.
 	ErrInviteUsed = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.invite",
-		Err:  &IAMMessageError{Message: "invite has already been used"},
+		Err:  &InviteUnusableError{Reason: InviteRedeemed},
 	}
 
 	// ErrUserNotPending is returned when an activation is attempted on a user that
@@ -652,7 +747,7 @@ var (
 	ErrUserNotPending = &dberrors.QBError{
 		Code: dberrors.ErrConflict,
 		Op:   "iam.invite.activate",
-		Err:  &IAMMessageError{Message: "user is not in pending state"},
+		Err:  &UserNotPendingError{},
 	}
 
 	// ErrPIVCertRejected is returned when the presented PIV certificate fails
@@ -660,7 +755,7 @@ var (
 	ErrPIVCertRejected = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.invite.activate.piv",
-		Err:  &IAMMessageError{Message: "PIV certificate rejected"},
+		Err:  &PIVCertRejectedError{},
 	}
 
 	// ErrAAGUIDNotAllowedSentinel is the base typed sentinel for AAGUID rejections.
@@ -1987,5 +2082,32 @@ func NewErrAAGUIDNotAllowed(aaguid, authenticatorName string) error {
 		Context: map[string]interface{}{
 			"aaguid": aaguid,
 		},
+	}
+}
+
+// ErrAAGUIDGateUnconfiguredError is returned when an AAGUID enforcement
+// decision was required and no allowlist is configured at all.
+//
+// It is a REFUSAL, not a pass-through. An absent allowlist used to mean "skip
+// the check", so a deployment that never configured the gate accepted every
+// authenticator — including a virtual one — as an administrator credential,
+// and did so silently. The refusal names the configuration that is missing so
+// the operator can fix it rather than guess.
+type ErrAAGUIDGateUnconfiguredError struct{}
+
+// Error implements the error interface.
+func (e *ErrAAGUIDGateUnconfiguredError) Error() string {
+	return "no FIDO2 AAGUID allowlist is configured, so this authenticator's model cannot be verified; " +
+		"set iam.aaguid.allowlist_file to the authenticator models this deployment trusts " +
+		"(an unconfigured gate denies rather than accepting any authenticator)"
+}
+
+// NewErrAAGUIDGateUnconfigured creates a QBError wrapping
+// ErrAAGUIDGateUnconfiguredError.
+func NewErrAAGUIDGateUnconfigured() error {
+	return &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "iam.webauthn.aaguid",
+		Err:  &ErrAAGUIDGateUnconfiguredError{},
 	}
 }

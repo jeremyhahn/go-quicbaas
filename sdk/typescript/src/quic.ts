@@ -33,6 +33,7 @@ import type {
 } from './interfaces.js';
 import type {
   AgentBackendInfo,
+  JobRunnerInfo,
   BarrierGenerateRecoveryKeysRequest,
   BarrierGenerateRootTokenRequest,
   BarrierHasRecoveryKeysResponse,
@@ -85,6 +86,10 @@ import type {
   DecomposeTaskResponse,
   GetAgentRequest,
   GetSessionHistoryRequest,
+  GetSessionConversationRequest,
+  GetSessionConversationResponse,
+  GetSpendReportRequest,
+  GetSpendReportResponse,
   GetSessionHistoryResponse,
   HealthCheckReport,
   JobEvent,
@@ -144,7 +149,7 @@ class QuicConnectionClient implements ConnectionClient {
 }
 
 class QuicOrchestratorClient implements OrchestratorClient {
-  async listJobs(_tenantID: string): Promise<JobStatus[]> { return notImpl('listJobs'); }
+  async listJobs(_tenantID: string, _taskID?: string): Promise<JobStatus[]> { return notImpl('listJobs'); }
   async getJobStatus(_tenantID: string, _jobID: string): Promise<JobStatus> { return notImpl('getJobStatus'); }
   async startJob(_req: StartJobRequest): Promise<StartJobResponse> { return notImpl('startJob'); }
   async cancelJob(_tenantID: string, _jobID: string): Promise<void> { return notImpl('cancelJob'); }
@@ -154,6 +159,8 @@ class QuicOrchestratorClient implements OrchestratorClient {
   async listTasks(_tenantID: string): Promise<Task[]> { return notImpl('listTasks'); }
   async getTask(_tenantID: string, _taskID: string): Promise<Task> { return notImpl('getTask'); }
   async listBackends(): Promise<AgentBackendInfo[]> { return notImpl('listBackends'); }
+
+  async listRunners(): Promise<JobRunnerInfo[]> { return notImpl('listRunners'); }
   async listBackendModels(_agentID: string, _backendName: string): Promise<string[]> { return notImpl('listBackendModels'); }
   async healthCheck(): Promise<HealthCheckReport> { return notImpl('healthCheck'); }
   subscribeJobEvents(_tenantID: string, _jobID: string, _onEvent: (event: JobEvent) => void): () => void { return notImpl('subscribeJobEvents'); }
@@ -162,6 +169,8 @@ class QuicOrchestratorClient implements OrchestratorClient {
   async closeSession(_req: CloseSessionRequest): Promise<CloseSessionResponse> { return notImpl('closeSession'); }
   async rotateSessionAccount(_req: RotateSessionAccountRequest): Promise<RotateSessionAccountResponse> { return notImpl('rotateSessionAccount'); }
   async getSessionHistory(_req: GetSessionHistoryRequest): Promise<GetSessionHistoryResponse> { return notImpl('getSessionHistory'); }
+  async getSessionConversation(_req: GetSessionConversationRequest): Promise<GetSessionConversationResponse> { return notImpl('getSessionConversation'); }
+  async getSpendReport(_req: GetSpendReportRequest): Promise<GetSpendReportResponse> { return notImpl('getSpendReport'); }
   // eslint-disable-next-line @typescript-eslint/require-await
   async *subscribeSession(_req: SubscribeSessionEventsRequest): AsyncIterable<SessionEventEnvelope> { return notImpl('subscribeSession'); }
   async deployAgent(_spec: DeployAgentSpec): Promise<DeployAgentResult> { throw new DeployNotSupportedError('quic'); }
@@ -176,6 +185,8 @@ class QuicOrchestratorClient implements OrchestratorClient {
   async createTask(_req: CreateTaskRequest): Promise<CreateTaskResponse> { return notImpl('createTask'); }
   async claimTask(_req: ClaimTaskRequest): Promise<void> { return notImpl('claimTask'); }
   async completeTask(_req: CompleteTaskRequest): Promise<void> { return notImpl('completeTask'); }
+  async readmitTask(_tenantID: string, _taskID: string): Promise<void> { return notImpl('readmitTask'); }
+  async deleteTask(_req: import('./types.js').DeleteTaskRequest): Promise<import('./types.js').DeleteTaskResponse> { return notImpl('deleteTask'); }
   async decomposeTask(_req: DecomposeTaskRequest): Promise<DecomposeTaskResponse> { return notImpl('decomposeTask'); }
   async registerAgent(_req: RegisterAgentRequest): Promise<RegisterAgentResponse> { return notImpl('registerAgent'); }
   async removeAgent(_req: RemoveAgentRequest): Promise<void> { return notImpl('removeAgent'); }
@@ -260,6 +271,7 @@ export class QuicClient implements Client {
   readonly scheduler: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly projects: any = null;
+  readonly sdlc: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly accounts: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -303,7 +315,7 @@ export class QuicClient implements Client {
     this.bootstrap = new QuicBootstrapClient();
   }
   async logout(_token?: string): Promise<void> {
-    // Non-REST transports don't manage bearer tokens via /api/v1/auth/logout.
+    // Non-REST transports don't manage bearer tokens via the REST logout verb.
     // The caller is responsible for clearing local credentials; this is a no-op
     // so the unified AuthClient surface compiles across every transport.
   }

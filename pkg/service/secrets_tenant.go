@@ -19,6 +19,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -84,4 +85,64 @@ func enforceSecretsTenantAccess(tenantID, secretID, operation string) error {
 			"secret does not belong to the requesting tenant")
 	}
 	return nil
+}
+
+// secretsScopedTenant resolves the tenant whose namespace a secrets request
+// addresses, reconciling the tenant bound to the CONTEXT with the tenant the
+// REQUEST names.
+//
+// StoreSecret and EnsureSecret — the only two secrets requests that carry a
+// tenant — and GetSecret, the read they have to agree with, all resolve their
+// namespace through this one function, so the read side and the write side
+// can never compute different namespaces for the same request. That divergence is go-quicbaas#534: StoreSecret scoped by the
+// context alone and used req.TenantID only to pick a DEK, while EnsureSecret
+// scoped by req.TenantID, so a value written through one path was invisible
+// to the other and a tenant could steer a write into a namespace it does not
+// own.
+//
+// The rule is that a request may name only its own tenant:
+//
+//   - an omitted tenant means "my own", the overwhelmingly common case;
+//   - a tenant equal to the context tenant is accepted and selects the same
+//     namespace and the same tenant-keyed DEK it always did;
+//   - any other tenant is refused, for EVERY identity including the system
+//     tenant.
+//
+// Refusing the mismatch outright — rather than following the request the way
+// pkg/iam's appTenantContext follows an application record's tenant — is what
+// keeps the fix safe. appTenantContext may trust the record because a
+// management surface authorized the caller for that tenant before the store
+// is reached. No such surface exists here: the secrets routes are authorized
+// with go-qrdb's secrets:read/write/delete/list, which are ScopeTenantOnly,
+// so the policy decision point has already established that the identity's
+// tenant equals the request's target tenant. A req.TenantID naming anything
+// else can therefore never have been authorized, and the service says so
+// instead of silently writing somewhere the caller did not intend.
+//
+// The two spellings of the system scope — "" (unbound) and SystemTenantID —
+// denote one namespace (qrdbsdk.IsSystemTenant), so naming one from the other
+// is not a mismatch. The context's spelling is the one returned, because that
+// is the value the rest of the service already scopes and logs by.
+func secretsScopedTenant(ctx context.Context, requestedTenantID, operation string) (string, error) {
+	ctxTenant, err := prepareTenantContext(ctx)
+	if err != nil {
+		return "", err
+	}
+	if requestedTenantID == "" {
+		return ctxTenant, nil
+	}
+	if err := validateTenantID(requestedTenantID); err != nil {
+		return "", err
+	}
+	if !secretsSameTenant(ctxTenant, requestedTenantID) {
+		return "", NewError(errors.ErrCrossTenantAccess, "secrets."+operation,
+			"request names tenant \""+requestedTenantID+"\", which is not the caller's tenant")
+	}
+	return ctxTenant, nil
+}
+
+// secretsSameTenant reports whether two tenant identifiers denote the same
+// namespace, folding the unbound and system spellings onto each other.
+func secretsSameTenant(a, b string) bool {
+	return qrdbsdk.NormalizeTenantID(a) == qrdbsdk.NormalizeTenantID(b)
 }

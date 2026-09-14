@@ -87,6 +87,7 @@ Examples:
 	cmd.AddCommand(newIAMAppCommand())
 	cmd.AddCommand(newIAMPolicyCommand())
 	cmd.AddCommand(newIAMMFACommand())
+	cmd.AddCommand(newIAMWebAuthnCommand())
 	cmd.AddCommand(newIAMSessionCommand())
 	cmd.AddCommand(newIAMPEPCommand())
 	cmd.AddCommand(newIAMAuditCommand())

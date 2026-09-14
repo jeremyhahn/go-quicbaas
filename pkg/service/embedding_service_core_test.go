@@ -142,7 +142,7 @@ func TestEmbeddingService_GenerateEmbedding(t *testing.T) {
 		mgr := newSvcEmbManager()
 		mgr.embedErr = embedding.ErrProviderUnavailable
 		svc := newSvcEmbeddingService(mgr)
-		_, err := svc.GenerateEmbedding(ctx, &GenerateEmbeddingRequest{Text: "x", Provider: EmbeddingProvider("openai")})
+		_, err := svc.GenerateEmbedding(ctx, &GenerateEmbeddingRequest{Text: "x"})
 		require.Error(t, err)
 	})
 }

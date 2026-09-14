@@ -15,8 +15,10 @@ package iam
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/dpop"
 )
 
@@ -38,6 +40,24 @@ type SessionIdentity struct {
 	AuthMethod string
 	// MFAVerified reports whether the login satisfied multi-factor assurance.
 	MFAVerified bool
+
+	// AttestLevel and AttestAAGUID REPLAY what the factor's enrollment proved
+	// about where its key lives — they are read off the stored factor record,
+	// never derived from the login.
+	//
+	// A login proves possession of a credential; it does not re-prove the
+	// credential's provenance, because the attestation statement is presented
+	// once, at registration. So the only honest source for these on a login is
+	// the record written then, and the only honest thing a login can do with
+	// them is copy them. That is the invariant #385 established for refresh and
+	// this extends to the third hardware path (#394): assurance is carried
+	// forward, never manufactured.
+	//
+	// Empty means the login established nothing about the authenticator, which
+	// is what every WebAuthn login used to say regardless of what its factor
+	// had proven.
+	AttestLevel  string
+	AttestAAGUID string
 	// DPoPProof, when non-empty, is an RFC 9449 DPoP proof JWT presented with
 	// the login. The session bearer is then bound to the proof key via cnf.jkt
 	// (sender-constrained). DPoPMethod and DPoPURI supply the proof htm/htu
@@ -51,7 +71,21 @@ type SessionIdentity struct {
 // identity. It is the issuance half of the SessionIssuer bridge used by the
 // unified login ceremony: a verified factor login yields a self-audienced
 // OIDC bearer carrying the principal's tenant, roles, and groups.
+//
+// The ceremony proves POSSESSION, not entitlement. qrdb resolves its principal
+// from the factor lookup — it knows which credential was proven, not what the
+// holder may do — so the identity handed here carries no authorization state.
+// The IAM user record is the authority on roles, and joining it is what makes
+// the minted bearer usable: without the join every claim below is faithfully
+// populated from an empty set, and the session authorizes nothing (go-quicbaas
+// #274 — masked for as long as the system tenant, which passes RBAC through
+// IsSystemTenant special-casing, was the only tenant anyone logged into).
 func (p *OIDCProvider) IssueSessionToken(ctx context.Context, identity SessionIdentity) (string, time.Time, error) {
+	user, err := p.resolveSessionPrincipal(ctx, identity)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+
 	// Bind a presented DPoP proof (RFC 9449) into cnf.jkt. A login with no proof
 	// yields a plain bearer (back-compat); a presented-but-invalid proof fails
 	// closed.
@@ -62,6 +96,15 @@ func (p *OIDCProvider) IssueSessionToken(ctx context.Context, identity SessionId
 
 	now := time.Now()
 	expiresAt := now.Add(p.config.AccessTokenTTL)
+	// The user record is authoritative for roles and groups, so it REPLACES
+	// what the ceremony supplied rather than merging with it: a role the record
+	// no longer grants must not survive into a bearer because a stale
+	// factor-side principal still mentioned it.
+	jti, err := generateJTI()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+
 	claims := &Claims{
 		Issuer:       p.config.Issuer,
 		Subject:      identity.Subject,
@@ -69,12 +112,17 @@ func (p *OIDCProvider) IssueSessionToken(ctx context.Context, identity SessionId
 		ExpiresAt:    NewUnixTime(expiresAt),
 		IssuedAt:     NewUnixTime(now),
 		NotBefore:    NewUnixTime(now),
-		JTI:          generateJTI(),
+		JTI:          jti,
 		TenantID:     identity.TenantID,
-		Roles:        identity.Roles,
-		Groups:       identity.Groups,
+		UserID:       user.ID,
+		Roles:        user.Roles,
+		Groups:       user.Groups,
+		Email:        user.Email,
+		Name:         user.Name,
 		AuthMethod:   identity.AuthMethod,
 		MFAVerified:  identity.MFAVerified,
+		AttestLevel:  identity.AttestLevel,
+		AttestAAGUID: identity.AttestAAGUID,
 		Confirmation: cnf,
 	}
 	token, err := p.tokenService.GenerateAccessToken(ctx, claims)
@@ -82,6 +130,133 @@ func (p *OIDCProvider) IssueSessionToken(ctx context.Context, identity SessionId
 		return "", time.Time{}, err
 	}
 	return token, expiresAt, nil
+}
+
+// resolveSessionPrincipal joins a verified login identity to its IAM user
+// record and returns the record the session's claims are minted from.
+//
+// The subject is resolved the way the CEREMONY KEYS IT, which is by email: the
+// WebAuthn/xkms credential is looked up by the email handle, so that is what
+// arrives here. Resolving by username alone locked out every user whose display
+// name is not their email — i.e. everyone created normally over REST, since the
+// broker's qrdb username derives from User.Name and the #289 split made Name and
+// Email genuinely different fields (go-quicbaas #296). The username lookup is
+// kept as a SECONDARY for a non-email-shaped subject, because a subject that is
+// not an email cannot be an email lookup and something has to resolve it.
+//
+// It never tries the subject as a user ID. That was an escalation: nothing
+// constrains the id and username namespaces apart — validateUserID accepts any
+// non-empty string and the username charset admits UUID-shaped names — so a
+// user who named themselves after another user's id would authenticate honestly
+// as themselves and be handed that user's roles.
+//
+// AMBIGUITY IS REFUSED, which is what keeps the second lookup from reopening
+// that hole in a new shape. If the subject resolves to two DIFFERENT records —
+// one user's email equal to another user's name — neither is authoritative and
+// the login is refused, so an email-shaped subject can never be resolved as
+// somebody else's username. Because no id lookup happens at all, the id side
+// stays closed by construction.
+//
+// The email index is GLOBAL (it resolves its own owning tenant), so a match is
+// accepted only when it lands in the tenant the ceremony authenticated into.
+// Without that check an email could mint a session in a tenant its owner does
+// not belong to.
+//
+// It FAILS CLOSED in every direction. A subject with no resolvable user record
+// is refused rather than issued a roles-less bearer: the ceremony verified a
+// factor, but there is no record to say what that factor's holder may do, and a
+// permissionless session is a login that appears to succeed and then denies
+// every request — the exact failure mode this join exists to remove. A record
+// that is suspended, locked, or disabled is refused too, at mint time, because
+// TokenLiveness cannot retroactively un-issue a bearer.
+func (p *OIDCProvider) resolveSessionPrincipal(ctx context.Context, identity SessionIdentity) (*User, error) {
+	if identity.Subject == "" || identity.TenantID == "" {
+		return nil, &SessionPrincipalUnresolvedError{
+			Subject:  identity.Subject,
+			TenantID: identity.TenantID,
+		}
+	}
+
+	user, err := p.resolveSubject(ctx, identity)
+	if err != nil {
+		return nil, &SessionPrincipalUnresolvedError{
+			Subject:  identity.Subject,
+			TenantID: identity.TenantID,
+			Cause:    err,
+		}
+	}
+	if user == nil {
+		return nil, &SessionPrincipalUnresolvedError{
+			Subject:  identity.Subject,
+			TenantID: identity.TenantID,
+		}
+	}
+	if !userEnabled(user) {
+		return nil, &SessionPrincipalDisabledError{
+			Subject:  identity.Subject,
+			TenantID: identity.TenantID,
+		}
+	}
+	return user, nil
+}
+
+// resolveSubject returns the single user record the ceremony's subject names,
+// or a nil user when nothing does. A store failure is returned as an error so
+// the caller fails closed rather than treating an outage as "no such user".
+//
+// The two lookups are now applied to DISJOINT subject shapes, which is what
+// makes the ambiguity this used to refuse impossible rather than merely caught.
+// An email-shaped subject is resolved by the email index and nothing else; a
+// subject that is not email-shaped cannot be in that index at all, so it is
+// resolved by username. Neither can produce a second, different record for one
+// subject, because a user that HAS an email has that email as its qrdb username
+// too (qrdbadapter.CoreUsername) and usernames are tenant-unique — the two
+// indexes name the same record whenever both would answer.
+//
+// Both are tenant-scoped. The email index used to be global, with the owning
+// tenant checked afterwards; scoping the lookup itself means a foreign-tenant
+// record is never read, rather than read and then discarded.
+func (p *OIDCProvider) resolveSubject(ctx context.Context, identity SessionIdentity) (*User, error) {
+	// Email: how the ceremony keys the login. A non-email-shaped subject is a
+	// shape mismatch rather than a lookup failure, so it falls through to the
+	// username index instead of contributing an absent candidate.
+	if validateEmail(identity.Subject) == nil {
+		byEmail, err := p.identityStore.GetUserByEmail(ctx, identity.TenantID, identity.Subject)
+		switch {
+		case err == nil:
+			return byEmail, nil
+		case isPrincipalLookupMiss(err):
+			return nil, nil
+		default:
+			return nil, err
+		}
+	}
+
+	// Not an email: a system or bootstrap identity, which authenticates by a
+	// username and carries no email login key.
+	byName, err := p.identityStore.GetUserByUsername(ctx, identity.TenantID, identity.Subject)
+	switch {
+	case err == nil:
+		return byName, nil
+	case isPrincipalLookupMiss(err):
+		return nil, nil
+	default:
+		return nil, err
+	}
+}
+
+// isPrincipalLookupMiss reports whether err means "this lookup has nothing to
+// say about that subject" — the record is absent, or the subject's shape does
+// not fit the index at all — as opposed to a store failure, which must deny.
+//
+// The CLASS is the intent here, so it asks dberrors.IsNotFound outright. It
+// used to OR that with errors.Is(err, ErrUserNotFound), which read as a
+// narrower sentinel check and was not one: errors.Is compares the QBError code,
+// so the term matched exactly the set IsNotFound already covers and could never
+// add a case (go-quicbaas#434).
+func isPrincipalLookupMiss(err error) bool {
+	var validation *ValidationError
+	return dberrors.IsNotFound(err) || errors.As(err, &validation)
 }
 
 // RevokeSessionToken revokes a session bearer previously issued by

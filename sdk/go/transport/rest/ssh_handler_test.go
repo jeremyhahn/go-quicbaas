@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	sshclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/sshfixture"
 )
 
 // TestIsSSHService pins the routing predicate, including the
@@ -49,7 +50,8 @@ func TestSSHHandlerRoutes(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		// One envelope satisfying every shape the handlers decode.
 		_, _ = w.Write([]byte(`{"name":"laptop","algorithm":"ed25519","line":"ssh-ed25519 AAAA",` +
-			`"fingerprint":"SHA256:abc","format":"ssh-ed25519","items":[{"name":"laptop"}]}`))
+			`"fingerprint":"` + sshfixture.UserFingerprint + `","format":"ssh-ed25519",` +
+			`"items":[{"name":"laptop"}]}`))
 	}))
 	defer server.Close()
 
@@ -101,7 +103,8 @@ func TestSSHHandlerRoutes(t *testing.T) {
 		},
 		{
 			name: "AddKnownHost", method: sshclient.MethodAddKnownHost,
-			req:        &sshclient.AddKnownHostRequest{Scope: "user", Owner: "alice", Host: "h", Fingerprint: "f"},
+			req: &sshclient.AddKnownHostRequest{Scope: "user", Owner: "alice", Host: "h",
+				Fingerprint: sshfixture.HostFingerprint},
 			wantMethod: http.MethodPost, wantPath: "/api/v1/ssh/known-hosts",
 		},
 		{
@@ -157,6 +160,33 @@ func TestSSHHandlerRoutes(t *testing.T) {
 				t.Errorf("%s: query = %q, want %q", tc.method, gotQuery, tc.wantQuery)
 			}
 		})
+	}
+}
+
+// TestSSHHandler_GetKeyDecodesFingerprint pins the fingerprint field name
+// on the wire. The server answers with the fingerprint of a real ed25519
+// key; a renamed or dropped JSON tag would leave it empty and every caller
+// pinning a host would silently pin nothing.
+func TestSSHHandler_GetKeyDecodesFingerprint(t *testing.T) {
+	user := sshfixture.User(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"laptop","fingerprint":"` + user.Fingerprint + `"}`))
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	resp, err := tr.sshHandler.handleRequest(context.Background(),
+		sshclient.MethodGetKey, &sshclient.GetKeyRequest{Scope: "user", Owner: "alice", Name: "laptop"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	key, ok := resp.(*sshclient.Key)
+	if !ok {
+		t.Fatalf("expected *ssh.Key, got %T", resp)
+	}
+	if key.Fingerprint != user.Fingerprint {
+		t.Fatalf("fingerprint = %q, want %q", key.Fingerprint, user.Fingerprint)
 	}
 }
 

@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "npu-embedding"
+version = "1.0.0"
+description = "OpenVINO-backed embedding sidecar for go-quicbaas, targeting the Intel NPU"
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-or-later OR LicenseRef-Commercial" }
+
+# The pure layers (bucket, pooling) need only numpy; the HTTP surface needs
+# fastapi. OpenVINO and transformers are deliberately NOT here: they are pulled
+# in by the `device` extra so that the logic and its tests install and run on a
+# host with no NPU, no driver, and no vendor runtime.
+dependencies = [
+    "numpy>=1.26",
+    "fastapi>=0.110",
+    "pydantic>=2.6",
+    "uvicorn>=0.27",
+]
+
+[project.optional-dependencies]
+# Installed on the host that actually owns the NPU. OpenVINO 2026.3.1 is what
+# the measurements were taken against; note that the 2026 line removed the
+# openvino.runtime submodule, so `import openvino as ov` is the only form.
+device = [
+    "openvino>=2026.3",
+    "optimum-intel>=1.20",
+    "transformers>=4.40",
+]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+npu-embedding = "npu_embedding.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["npu_embedding*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# -q keeps the Makefile output readable; no skip guards are permitted, so a
+# collection error is a failure rather than something to tolerate.
+addopts = "-q --strict-markers"

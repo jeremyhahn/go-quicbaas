@@ -152,8 +152,11 @@ func (s *secretsService) StoreSecret(ctx context.Context, req *StoreSecretReques
 		return nil, err
 	}
 
-	// Extract tenant context for multi-tenant isolation
-	tenantID, err := prepareTenantContext(ctx)
+	// Resolve the tenant namespace this write addresses. req.TenantID is
+	// reconciled with the context tenant here rather than being applied to
+	// the DEK alone, so the write lands in the namespace GetSecret reads
+	// and a request naming another tenant is refused (go-quicbaas#534).
+	tenantID, err := secretsScopedTenant(ctx, req.TenantID, "StoreSecret")
 	if err != nil {
 		return nil, err
 	}
@@ -288,8 +291,11 @@ func (s *secretsService) GetSecret(ctx context.Context, req *GetSecretRequest) (
 		return nil, err
 	}
 
-	// Extract tenant context for multi-tenant isolation
-	tenantID, err := prepareTenantContext(ctx)
+	// Resolve the tenant namespace this read addresses. GetSecretRequest
+	// carries no tenant of its own, so this is the context tenant — routed
+	// through the same resolver StoreSecret uses so the read and the write
+	// can never compute different namespaces (go-quicbaas#534).
+	tenantID, err := secretsScopedTenant(ctx, "", "GetSecret")
 	if err != nil {
 		return nil, err
 	}
@@ -1807,15 +1813,14 @@ func (s *secretsService) EnsureSecret(ctx context.Context, req *EnsureSecretRequ
 		}
 	}
 
-	// Extract tenant context for multi-tenant isolation — matches
-	// the same scoping the rest of the service uses so paths stored
-	// via EnsureSecret are discoverable via the normal Get path.
-	tenantID, err := prepareTenantContext(ctx)
+	// Resolve the tenant namespace — the same resolver StoreSecret and
+	// GetSecret use, so a generated secret lands where the tenant's other
+	// verbs look for it. req.TenantID used to be applied unchecked here,
+	// which let any caller steer a generate-and-store into another
+	// tenant's namespace (go-quicbaas#534).
+	tenantID, err := secretsScopedTenant(ctx, req.TenantID, "EnsureSecret")
 	if err != nil {
 		return nil, err
-	}
-	if req.TenantID != "" {
-		tenantID = req.TenantID
 	}
 	scopedPath := secretsTenantScopedID(tenantID, req.SecretID)
 

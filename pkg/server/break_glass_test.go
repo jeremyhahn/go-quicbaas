@@ -89,7 +89,7 @@ func TestBreakGlass_LocalFactorLoginWithFederationUnconfigured(t *testing.T) {
 	user, err := c.identityStore.GetUserByPIVThumbprint(ctx, thumbprint)
 	require.NoError(t, err, "admin must be resolvable by cert thumbprint (break-glass recognition)")
 	require.NotNil(t, user)
-	assert.Equal(t, iam.UserStateActive, user.State, "bound admin must be active")
+	assert.Equal(t, iam.LifecycleActive, user.Lifecycle, "bound admin must be active")
 	assert.Equal(t, qrdbsdk.SystemTenantID, user.TenantID,
 		"break-glass admin must live in the prefix-isolated system tenant")
 }
@@ -175,7 +175,7 @@ func TestBreakGlass_LocalFactorLoginWithIdPUnreachable(t *testing.T) {
 	user, err := c.identityStore.GetUserByPIVThumbprint(ctx, thumbprint)
 	require.NoError(t, err,
 		"admin must be resolvable by cert thumbprint even with the IdP down")
-	assert.Equal(t, iam.UserStateActive, user.State)
+	assert.Equal(t, iam.LifecycleActive, user.Lifecycle)
 
 	// Sanity: the configured federation manager really IS broken, proving the
 	// break-glass success above did not accidentally route through a healthy
@@ -211,7 +211,7 @@ func TestBreakGlass_CertLoginBeforeBarrierUnseal(t *testing.T) {
 
 	// And the canonical email lookup (used by the bootstrap path) is also
 	// available in the shared store pre-unseal.
-	byEmail, err := c.identityStore.GetUserByEmail(ctx, "admin@"+qrdbsdk.SystemTenantID+".qrdb.local")
+	byEmail, err := c.identityStore.GetUserByEmail(ctx, qrdbsdk.SystemTenantID, "admin@"+qrdbsdk.SystemTenantID+".qrdb.local")
 	require.NoError(t, err, "system-tenant admin email lookup must work pre-unseal")
 	assert.Equal(t, user.ID, byEmail.ID)
 }

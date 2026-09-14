@@ -681,6 +681,7 @@ curl --cacert /etc/quicbaas/certs/ca.crt \
 
 ## See Also
 
+- [Key Custody](key-custody.md) - who creates a private key, where it lives, and the build gate that enforces it
 - Raft mTLS - Detailed Raft cluster mTLS configuration
 - Authentication - JWT-based authentication
 - Security Overview - Security architecture overview

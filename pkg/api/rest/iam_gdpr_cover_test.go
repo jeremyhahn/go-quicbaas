@@ -33,7 +33,7 @@ import (
 
 const (
 	gdprTenant = "tenant-gdpr"
-	gdprUser   = "user-gdpr"
+	gdprUser   = "71"
 )
 
 // gdprMockService exposes a real GDPRManager to the IAM handlers.

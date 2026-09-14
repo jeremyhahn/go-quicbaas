@@ -5,17 +5,24 @@
   Layout:
   - Header: session ID + backend chip + status badge + Rotate-account +
     Close-confirm + Prompt-modal
-  - Right-side metadata panel: tenant, model, container_id, created_at, last_active
+  - Right-side metadata panel: tenant, model, container_id, job, created_at,
+    last_active
     (collapsible on narrow viewports via a toggle button)
-  - Event timeline: EventStream (virtualized, scroll-managed)
+  - Body: Conversation | Event Log tabs
+      Conversation — SessionConversation, the transcript folded into turns,
+      and what an operator opened the page to read. Selected by default.
+      Event Log    — EventStream (virtualized, scroll-managed), the raw log
+      every fragment of that transcript is made of.
   - "Send Prompt" inline composer pinned to bottom (disabled when closed)
 -->
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { SessionStatusResponse, RotateSessionAccountResponse } from '@quicbaas/sdk';
   import { sessionStore, openSession, closeActiveSession, requestCloseSession } from '../../stores/sessionStore.svelte.ts';
+  import { routeJobDetail } from '../../stores/router.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import EventStream from './EventStream.svelte';
+  import SessionConversation from './SessionConversation.svelte';
   import PromptComposer from './PromptComposer.svelte';
   import PresenceIndicator from './PresenceIndicator.svelte';
   import SessionActivityIndicator from './SessionActivityIndicator.svelte';
@@ -41,6 +48,16 @@
   let prompting = $state(false);
   let metadataOpen = $state(true); // collapsible on narrow viewports
 
+  // Which view of the transcript the body shows. The conversation leads:
+  // the raw event log was the page's only content for long enough that a
+  // session with four turns in it read as empty (go-quicbaas#834).
+  type BodyTab = 'conversation' | 'events';
+  let bodyTab: BodyTab = $state('conversation');
+  const BODY_TABS: { id: BodyTab; label: string }[] = [
+    { id: 'conversation', label: 'Conversation' },
+    { id: 'events', label: 'Event Log' },
+  ];
+
   // Rotate-account dialog state. The dialog IS the confirmation gate — opening
   // it only reveals the form; the API call fires only when the operator
   // clicks the dialog's own confirm button.
@@ -63,6 +80,14 @@
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
+
+  // Switching sessions returns to the conversation. The tab is a reading
+  // preference for the session in front of you, not a sticky mode that
+  // follows you into the next one.
+  $effect(() => {
+    void session.session_id;
+    bodyTab = 'conversation';
+  });
 
   // Run-once-per-session-id effect. The naive shape `$effect(() => openSession(session))`
   // re-fires whenever any reactive read inside `openSession` changes — including
@@ -461,12 +486,35 @@
     </div>
   {/if}
 
-  <!-- Body: event stream + metadata panel -->
+  <!-- Body: transcript (conversation | event log) + metadata panel -->
   <div class="flex flex-1 overflow-hidden">
 
-    <!-- Event stream (flex-1) -->
-    <div class="relative flex-1 overflow-hidden">
-      <EventStream />
+    <!-- Transcript (flex-1) -->
+    <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div role="tablist" class="tabs tabs-bordered shrink-0 px-2">
+        {#each BODY_TABS as tab (tab.id)}
+          <button
+            role="tab"
+            class="tab tab-sm"
+            class:tab-active={bodyTab === tab.id}
+            aria-selected={bodyTab === tab.id}
+            onclick={() => { bodyTab = tab.id; }}
+          >
+            {tab.label}
+            {#if tab.id === 'events' && sessionStore.events.length > 0}
+              <span class="badge badge-xs badge-ghost ml-1.5">{sessionStore.events.length}</span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+
+      <div class="relative flex-1 overflow-hidden">
+        {#if bodyTab === 'conversation'}
+          <SessionConversation sessionClosed={displayStatus === 'closed'} />
+        {:else}
+          <EventStream />
+        {/if}
+      </div>
     </div>
 
     <!-- Right-side metadata panel (collapsible on narrow) -->
@@ -494,13 +542,28 @@
               <div class="font-mono break-all">{session.container_id.slice(0, 12)}</div>
             </div>
           {/if}
+          {#if session.job_id}
+            <div>
+              <div class="text-base-content/40">Job</div>
+              <a
+                class="link link-primary font-mono break-all"
+                href="#/jobs/{session.job_id}"
+                onclick={(e) => { e.preventDefault(); routeJobDetail(session.job_id ?? ''); }}
+                title="Open job {session.job_id}"
+              >{session.job_id}</a>
+            </div>
+          {/if}
           <div>
             <div class="text-base-content/40">Created</div>
-            <div>{formatTime(session.created_at)}</div>
+            <div data-testid="session-created">{formatTime(session.created_at)}</div>
           </div>
           <div>
             <div class="text-base-content/40">Last Active</div>
-            <div>{formatTime(session.last_active)}</div>
+            <div data-testid="session-last-active">{formatTime(session.last_active)}</div>
+          </div>
+          <div>
+            <div class="text-base-content/40">Turns</div>
+            <div>{sessionStore.conversation.length} loaded</div>
           </div>
           <div>
             <div class="text-base-content/40">Events</div>
@@ -519,6 +582,9 @@
           {/if}
           {#if session.model}
             <span>Model: <span class="font-mono">{session.model}</span></span>
+          {/if}
+          {#if session.job_id}
+            <span>Job: <a class="link link-primary font-mono" href="#/jobs/{session.job_id}">{session.job_id}</a></span>
           {/if}
           <span>Created: {formatTime(session.created_at)}</span>
           <span>Last active: {formatTime(session.last_active)}</span>

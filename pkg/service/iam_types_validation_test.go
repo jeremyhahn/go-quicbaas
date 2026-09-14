@@ -61,7 +61,7 @@ func TestIAMCreateUserRequestValidate(t *testing.T) {
 				Username:   "testuser",
 				Roles:      []string{"admin"},
 				Groups:     []string{"engineering"},
-				Attributes: map[string]interface{}{"dept": "engineering"},
+				Attributes: map[string]string{"dept": "engineering"},
 			},
 			wantErr: false,
 		},

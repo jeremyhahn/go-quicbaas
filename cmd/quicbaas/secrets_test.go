@@ -1984,18 +1984,18 @@ func TestCreateSecretsGRPCClient_TLSRequired(t *testing.T) {
 	origTLSEnabled := secretsTLSEnabled
 	origAuthMode := secretsAuthMode
 	origAddress := address
-	origTimeout := timeout
+	origTimeout := globalTimeout
 	defer func() {
 		secretsTLSEnabled = origTLSEnabled
 		secretsAuthMode = origAuthMode
 		address = origAddress
-		timeout = origTimeout
+		globalTimeout = origTimeout
 	}()
 
 	secretsTLSEnabled = false
 	secretsAuthMode = "token"
 	address = "invalid-address-for-test:99999"
-	timeout = 100 * time.Millisecond
+	globalTimeout = 100 * time.Millisecond
 
 	// TLS is required for all gRPC connections
 	_, err := createSecretsGRPCClient()

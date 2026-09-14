@@ -267,7 +267,7 @@ func runInitStatusCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.CeremonyStatus(ctx)
@@ -334,7 +334,7 @@ func runInitClaimCertCommand(_ *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	begin, err := client.CeremonyClaimCertBegin(ctx, &qrdbtransport.ClaimCertBeginRequest{
@@ -492,7 +492,7 @@ func runInitClaimShareCommand(_ *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	begin, err := client.CeremonyBeginClaimShare(ctx, &qrdbtransport.BeginClaimShareRequest{
@@ -581,7 +581,7 @@ func runInitSignCSRCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.CeremonySignCSR(ctx, &qrdbtransport.SignCSRInitRequest{
@@ -678,7 +678,7 @@ func runInitEnrollExternalOfficerCommand(_ *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	if _, err := client.CeremonyEnrollExternalOfficer(ctx, req); err != nil {

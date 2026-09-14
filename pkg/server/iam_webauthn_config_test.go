@@ -28,8 +28,11 @@ import (
 // "invalid domain" / "error validating origin" bug: the WebAuthn relying
 // party must agree with the issuer/banner host and port.
 func TestWebauthnFactoryConfigFromOperator_DerivesFromIssuer(t *testing.T) {
-	got := webauthnFactoryConfigFromOperator(
+	got, err := webauthnFactoryConfigFromOperator(
 		config.IAMWebAuthnConfig{}, "localhost", "https://localhost:18080", true)
+	if err != nil {
+		t.Fatalf("an empty operator section derives its identity and must resolve: %v", err)
+	}
 	if got.RPID != "localhost" {
 		t.Fatalf("expected derived RPID=localhost, got %q", got.RPID)
 	}
@@ -58,7 +61,10 @@ func TestWebauthnFactoryConfigFromOperator_PreservesOperatorValues(t *testing.T)
 		AuthenticatorAttachment: "platform",
 		Debug:                   true,
 	}
-	got := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080", true)
+	got, err := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got.RPID != "example.com" {
 		t.Fatalf("RPID not preserved: %q", got.RPID)
 	}
@@ -79,19 +85,24 @@ func TestWebauthnFactoryConfigFromOperator_PreservesOperatorValues(t *testing.T)
 	}
 }
 
-// TestWebauthnFactoryConfigFromOperator_InvalidTimeoutIgnored verifies
-// that a malformed timeout string falls back to zero (the underlying
-// xkms library's default) rather than failing the conversion.
-func TestWebauthnFactoryConfigFromOperator_InvalidTimeoutIgnored(t *testing.T) {
+// TestWebauthnFactoryConfigFromOperator_InvalidTimeoutRejected verifies that
+// a malformed ceremony timeout is refused rather than silently discarded. The
+// resolution path used to swallow the parse error, so an operator typo
+// reverted to the library default with no signal anywhere.
+func TestWebauthnFactoryConfigFromOperator_InvalidTimeoutRejected(t *testing.T) {
 	op := config.IAMWebAuthnConfig{
 		RPID:          "example.com",
 		RPDisplayName: "Example",
 		RPOrigins:     []string{"https://example.com"},
 		Timeout:       "not-a-duration",
 	}
-	got := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080", true)
-	if got.Timeout != 0 {
-		t.Fatalf("expected zero Timeout on parse failure, got %v", got.Timeout)
+	_, err := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080", true)
+	var cve *config.ConfigValidationError
+	if !errors.As(err, &cve) {
+		t.Fatalf("expected *config.ConfigValidationError, got %T: %v", err, err)
+	}
+	if cve.Field != "iam.webauthn.timeout" {
+		t.Fatalf("expected field iam.webauthn.timeout, got %q", cve.Field)
 	}
 }
 
@@ -106,7 +117,10 @@ func TestWebauthnFactoryConfigFromOperator_OriginSliceIsCopied(t *testing.T) {
 		RPDisplayName: "Example",
 		RPOrigins:     origins,
 	}
-	got := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080", true)
+	got, err := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	// Mutate the operator slice; the factory copy must not change.
 	origins[0] = "https://attacker.example.com"
@@ -263,7 +277,10 @@ func TestWebauthnConfig_ThreeValuesAgree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("derivation failed for stock issuer %q: %v", issuer, err)
 	}
-	wa := webauthnFactoryConfigFromOperator(cfg.IAM.WebAuthn, rpID, rpOrigin, true)
+	wa, err := webauthnFactoryConfigFromOperator(cfg.IAM.WebAuthn, rpID, rpOrigin, true)
+	if err != nil {
+		t.Fatalf("resolving the stock dev config failed: %v", err)
+	}
 
 	// Banner host must equal RP ID (begin-options rp.id).
 	wantHost := "localhost"
@@ -285,5 +302,98 @@ func TestWebauthnConfig_ThreeValuesAgree(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("RP origins %v do not contain banner origin %q", wa.RPOrigins, wantOrigin)
+	}
+}
+
+// TestWebauthnFactoryConfigFromOperator_FailsClosedOnUnresolvableIdentity is
+// the regression guard for the live defect behind issue #344: on a node whose
+// issuer host is an IP literal, derivation yields nothing, and an operator who
+// supplied only one half of the relying-party identity used to get a relying
+// party built on the other half's zero value — an empty origin list, or an
+// empty origin string, which no browser Origin header can ever match. Every
+// ceremony failed, silently, forever. Resolution now fails closed instead.
+func TestWebauthnFactoryConfigFromOperator_FailsClosedOnUnresolvableIdentity(t *testing.T) {
+	cases := []struct {
+		name      string
+		op        config.IAMWebAuthnConfig
+		wantField string
+	}{
+		{
+			name:      "rp_id supplied, origin underivable",
+			op:        config.IAMWebAuthnConfig{RPID: "example.com"},
+			wantField: "iam.webauthn.rp_origins",
+		},
+		{
+			name:      "origins supplied, rp_id underivable",
+			op:        config.IAMWebAuthnConfig{RPOrigins: []string{"https://example.com"}},
+			wantField: "iam.webauthn.rp_id",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Empty issuer defaults are what webauthnDefaultsFromIssuer returns
+			// alongside a WebAuthnRPIDFromIPError.
+			_, err := webauthnFactoryConfigFromOperator(tc.op, "", "", true)
+			var cve *config.ConfigValidationError
+			if !errors.As(err, &cve) {
+				t.Fatalf("expected *config.ConfigValidationError, got %T: %v", err, err)
+			}
+			if cve.Field != tc.wantField {
+				t.Fatalf("expected field %q, got %q (msg=%q)", tc.wantField, cve.Field, cve.Message)
+			}
+		})
+	}
+}
+
+// TestWebauthnFactoryConfigFromOperator_RejectsMalformedOperatorOrigin
+// verifies that resolution validates operator-supplied values too, not only
+// the derived halves: an origin that can never match any ceremony — here a URL
+// origin with no host — is refused at startup rather than mounted.
+func TestWebauthnFactoryConfigFromOperator_RejectsMalformedOperatorOrigin(t *testing.T) {
+	op := config.IAMWebAuthnConfig{
+		RPID:          "example.com",
+		RPDisplayName: "Example",
+		RPOrigins:     []string{"https://app.example.com", "https://"},
+	}
+	_, err := webauthnFactoryConfigFromOperator(op, "localhost", "https://localhost:18080", true)
+	var cve *config.ConfigValidationError
+	if !errors.As(err, &cve) {
+		t.Fatalf("expected *config.ConfigValidationError, got %T: %v", err, err)
+	}
+	if cve.Field != "iam.webauthn.rp_origins" {
+		t.Fatalf("expected field iam.webauthn.rp_origins, got %q", cve.Field)
+	}
+	if !strings.Contains(cve.Message, "entry 1") {
+		t.Fatalf("expected the message to name the offending entry, got %q", cve.Message)
+	}
+}
+
+// TestWebauthnFactoryConfigFromOperator_ShippedIntegrationShapeResolves pins
+// the two deployment shapes that must keep resolving: the derive-everything
+// config every shipped file in this repository uses, and the explicit
+// relying-party block the integration fixture pins.
+func TestWebauthnFactoryConfigFromOperator_ShippedIntegrationShapeResolves(t *testing.T) {
+	explicit := config.IAMWebAuthnConfig{
+		RPID:          "localhost",
+		RPDisplayName: "QuicBaaS Integration Tests",
+		RPOrigins: []string{
+			"https://localhost:8080",
+			"https://localhost",
+			"http://localhost:8080",
+		},
+		AttestationPreference: "none",
+		UserVerification:      "discouraged",
+	}
+	if _, err := webauthnFactoryConfigFromOperator(explicit, "localhost", "https://localhost:8080", true); err != nil {
+		t.Fatalf("the integration fixture's WebAuthn block must resolve: %v", err)
+	}
+
+	derivedOnly, err := webauthnFactoryConfigFromOperator(
+		config.IAMWebAuthnConfig{}, "localhost", "https://localhost:8080", true)
+	if err != nil {
+		t.Fatalf("the derive-everything shape must resolve: %v", err)
+	}
+	if derivedOnly.RPID != "localhost" || len(derivedOnly.RPOrigins) != 1 {
+		t.Fatalf("derivation produced an unexpected relying party: %+v", derivedOnly)
 	}
 }

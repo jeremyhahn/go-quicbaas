@@ -63,6 +63,10 @@ var iamUnaryHandlers = map[string]handlerFunc{
 	"quicbaas.IAM.Role/Delete": handleIAMRoleDelete,
 	"quicbaas.IAM.Role/List":   handleIAMRoleList,
 
+	// Reconcile converges a tenant's built-in roles onto the running build's
+	// definitions; there is no ordinary update path for a system role.
+	"quicbaas.IAM.Role/Reconcile": handleIAMRoleReconcile,
+
 	// Policy
 	"quicbaas.IAM.Policy/Create": handleIAMPolicyCreate,
 	"quicbaas.IAM.Policy/Get":    handleIAMPolicyGet,
@@ -103,6 +107,14 @@ var iamUnaryHandlers = map[string]handlerFunc{
 
 	// PEP
 	"quicbaas.IAM.PEP/Check": handleIAMPEPCheck,
+
+	// WebAuthn credential administration. Registered under the same
+	// quicbaas.IAM.WebAuthn service the SDK client dispatches on, so the
+	// admin recovery verbs work on the embedded transport too rather than
+	// failing with unsupported-service.
+	"quicbaas.IAM.WebAuthn/ListWebAuthnCredentials":   handleIAMWebAuthnCredentialsList,
+	"quicbaas.IAM.WebAuthn/DeleteWebAuthnCredential":  handleIAMWebAuthnCredentialDelete,
+	"quicbaas.IAM.WebAuthn/DeleteWebAuthnCredentials": handleIAMWebAuthnCredentialsDeleteAll,
 }
 
 // _ keeps the context import live for handlers that take ctx parameters

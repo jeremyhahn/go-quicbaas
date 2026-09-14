@@ -14,6 +14,7 @@
 package orchestration
 
 import (
+	"os"
 	"path/filepath"
 	"strconv"
 )
@@ -97,6 +98,18 @@ type MountPolicy struct {
 	// Unlike the projects root these are not tenant-scoped: the operator
 	// named them explicitly and they are shared deployment-wide.
 	AllowedRoots []string
+
+	// SocketsRoot is the daemon's own per-session agent-socket root
+	// (orchestration.sockets_root, resolved). It is admitted BY
+	// CONSTRUCTION rather than by an operator allowlist entry: the daemon
+	// binds the signing agent's socket there because a unix socket address
+	// does not fit under a managed workspace, so a deployment that had to
+	// remember to allowlist it would be a deployment whose signing breaks on
+	// the first delivery.
+	//
+	// The grant is the narrowest one that admits that socket and nothing
+	// else — see socketsRootPermits. Empty disables it.
+	SocketsRoot string
 }
 
 // Authorize validates every requested mount for tenantID and returns the first
@@ -104,7 +117,7 @@ type MountPolicy struct {
 // is what an unwired orchestrator must do.
 func (p *MountPolicy) Authorize(tenantID, field string, mounts []ContainerMount) error {
 	for i := range mounts {
-		if err := p.AuthorizeSource(tenantID, field, mounts[i].Source); err != nil {
+		if err := p.authorizeMount(tenantID, field, mounts[i]); err != nil {
 			return err
 		}
 	}
@@ -115,6 +128,14 @@ func (p *MountPolicy) Authorize(tenantID, field string, mounts []ContainerMount)
 // single decision point for every path this package hands to a container
 // runtime as a bind-mount source.
 func (p *MountPolicy) AuthorizeSource(tenantID, field, source string) error {
+	return p.authorizeMount(tenantID, field, ContainerMount{Source: source})
+}
+
+// authorizeMount is the decision itself. It takes the whole mount rather than
+// just its source because one grant — the daemon's sockets root — is
+// conditioned on the mount being read-only.
+func (p *MountPolicy) authorizeMount(tenantID, field string, mount ContainerMount) error {
+	source := mount.Source
 	if p == nil {
 		return &MountNotAllowedError{
 			Field:  field,
@@ -138,7 +159,7 @@ func (p *MountPolicy) AuthorizeSource(tenantID, field, source string) error {
 	}
 
 	cleaned := filepath.Clean(source)
-	if !p.sourcePermitted(tenantID, cleaned) {
+	if !p.sourcePermitted(tenantID, cleaned, mount.ReadOnly) {
 		return &MountNotAllowedError{
 			Field:    field,
 			TenantID: tenantID,
@@ -161,7 +182,7 @@ func (p *MountPolicy) AuthorizeSource(tenantID, field, source string) error {
 			Reason:   "mount source cannot be resolved: " + err.Error(),
 		}
 	}
-	if resolved != cleaned && !p.sourcePermitted(tenantID, resolved) {
+	if resolved != cleaned && !p.sourcePermitted(tenantID, resolved, mount.ReadOnly) {
 		return &MountNotAllowedError{
 			Field:    field,
 			TenantID: tenantID,
@@ -174,9 +195,13 @@ func (p *MountPolicy) AuthorizeSource(tenantID, field, source string) error {
 }
 
 // sourcePermitted reports whether the cleaned absolute source lies under any
-// root this tenant may mount from.
-func (p *MountPolicy) sourcePermitted(tenantID, source string) bool {
+// root this tenant may mount from. readOnly is the mount's own flag; only the
+// sockets-root grant depends on it.
+func (p *MountPolicy) sourcePermitted(tenantID, source string, readOnly bool) bool {
 	if p.tenantRootPermits(tenantID, source) {
+		return true
+	}
+	if p.socketsRootPermits(source, readOnly) {
 		return true
 	}
 	for _, root := range p.AllowedRoots {
@@ -188,6 +213,55 @@ func (p *MountPolicy) sourcePermitted(tenantID, source string) bool {
 		}
 	}
 	return false
+}
+
+// socketsRootPermits reports whether source is a signing-agent socket the
+// daemon bound under SocketsRoot, and may therefore be mounted.
+//
+// THE GRANT IS THE SOCKET, NOT THE ROOT. A root-wide grant would be a
+// deployment-wide one — SocketsRoot is shared by every tenant, exactly as the
+// projects root is — so what is admitted is only:
+//
+//   - the socket file itself, one directory below the root
+//     (<sockets_root>/<session>/agent.sock) and nothing above or beside it,
+//     which is also what stops a caller mounting the root and reading the
+//     session names inside it;
+//   - that is actually a unix socket on disk, so a regular file planted at
+//     that shape is not a mount source;
+//   - mounted READ-ONLY, because that is all a container signing against the
+//     agent ever needs.
+//
+// What remains is a caller naming another live session's socket, which means
+// guessing that session's random directory name with one attempt per spawn.
+func (p *MountPolicy) socketsRootPermits(source string, readOnly bool) bool {
+	if !readOnly || p.SocketsRoot == "" || !filepath.IsAbs(p.SocketsRoot) {
+		return false
+	}
+	if filepath.Base(source) != WorkspaceSigningAgentSocketFile {
+		return false
+	}
+	sessionDir := filepath.Dir(source)
+	root := filepath.Clean(p.SocketsRoot)
+	if filepath.Dir(sessionDir) != root && !resolvedSocketsRootParent(root, sessionDir) {
+		return false
+	}
+	info, err := os.Lstat(source)
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeSocket != 0
+}
+
+// resolvedSocketsRootParent reports whether sessionDir sits directly under
+// the sockets root as that root resolves on disk. A deployment whose runtime
+// or data directory is reached through a symlinked parent would otherwise
+// have its own socket denied — the same reason rootPermits resolves its root.
+func resolvedSocketsRootParent(root, sessionDir string) bool {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil || resolvedRoot == root {
+		return false
+	}
+	return filepath.Dir(sessionDir) == resolvedRoot
 }
 
 // tenantRootPermits reports whether source lies under the requesting tenant's

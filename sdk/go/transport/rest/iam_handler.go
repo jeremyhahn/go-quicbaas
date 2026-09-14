@@ -45,6 +45,7 @@ const (
 	iamMFAServicePrefix        = "quicbaas.IAM.MFA"
 	iamFederationServicePrefix = "quicbaas.IAM.Federation"
 	iamIdentityServicePrefix   = "quicbaas.IAM.Identity"
+	iamWebAuthnServicePrefix   = "quicbaas.IAM.WebAuthn"
 )
 
 // isIAMService checks if the service name is an IAM service.
@@ -93,6 +94,8 @@ func (h *iamRESTHandler) handleRequest(ctx context.Context, service, method stri
 		return h.handleFederationRequest(ctx, method, req)
 	case strings.HasPrefix(service, iamIdentityServicePrefix):
 		return h.handleIdentityRequest(ctx, method, req)
+	case strings.HasPrefix(service, iamWebAuthnServicePrefix):
+		return h.handleWebAuthnRequest(ctx, method, req)
 	default:
 		return nil, errors.NewUnimplemented("iamRESTHandler.handleRequest",
 			"unsupported IAM service: "+service)
@@ -369,6 +372,10 @@ func (h *iamRESTHandler) handleRoleRequest(ctx context.Context, method string, r
 	case "List":
 		// GET /api/v1/tenants/{tenant_id}/roles
 		return h.doRequest(ctx, http.MethodGet, "/api/v1/tenants/"+tenantID+"/roles", nil)
+
+	case "Reconcile":
+		// POST /api/v1/tenants/{tenant_id}/roles/reconcile
+		return h.doRequest(ctx, http.MethodPost, "/api/v1/tenants/"+tenantID+"/roles/reconcile", nil)
 
 	default:
 		return nil, errors.NewUnimplemented("iamRESTHandler.handleRoleRequest", "unsupported method: "+method)
@@ -1376,7 +1383,7 @@ func (h *iamRESTHandler) doRequest(ctx context.Context, httpMethod, path string,
 
 // mapUserCreateRequest maps SDK CreateUserRequest fields to REST API fields.
 // SDK sends: username, email, display_name, auth_methods, roles, groups, metadata
-// REST expects: id, email, username, name, auth_methods, roles, groups, attributes, enabled
+// REST expects: email, username, name, auth_methods, lifecycle, roles, groups, attributes, enabled
 func mapUserCreateRequest(req map[string]interface{}) map[string]interface{} {
 	if req == nil {
 		return nil
@@ -1433,6 +1440,20 @@ func mapUserCreateRequest(req map[string]interface{}) map[string]interface{} {
 		body["enabled"] = true
 	}
 
+	// Map lifecycle. Dropping it does not merely lose a field — the server
+	// treats an omitted lifecycle as `pending` and mints an activation invite,
+	// so a caller asking for `disabled` over REST would get a pending account
+	// with a LIVE invite while the same call over gRPC or embedded created a
+	// disabled one. Account state cannot depend on which wire carried the call.
+	if lifecycle := getString(req, "lifecycle"); lifecycle != "" {
+		body["lifecycle"] = lifecycle
+	}
+
+	// Map auth_methods (the credential kinds the account may present).
+	if authMethods, ok := req["auth_methods"].([]interface{}); ok && len(authMethods) > 0 {
+		body["auth_methods"] = authMethods
+	}
+
 	return body
 }
 
@@ -1456,6 +1477,19 @@ func mapUserUpdateRequest(req map[string]interface{}) map[string]interface{} {
 	// Map enabled
 	if enabled, ok := req["enabled"].(bool); ok {
 		body["enabled"] = enabled
+	}
+
+	// Map lifecycle and auth_methods, for the reason the create mapper gives:
+	// an update that silently drops an account-state change answers 200 with
+	// nothing changed.
+	if lifecycle := getString(req, "lifecycle"); lifecycle != "" {
+		body["lifecycle"] = lifecycle
+	}
+	// PRESENCE, not length: an explicitly empty list clears the restriction,
+	// which the model defines as "no restriction". Dropping it on length made
+	// that clear unreachable — the request succeeded and the restriction stayed.
+	if authMethods, present := req["auth_methods"]; present && authMethods != nil {
+		body["auth_methods"] = authMethods
 	}
 
 	return body

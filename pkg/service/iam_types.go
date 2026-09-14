@@ -160,8 +160,10 @@ type IAMCreateUserRequest struct {
 	// Email is the user's email address (unique within tenant)
 	Email string `json:"email"`
 
-	// Username is the user's login username (unique within tenant)
-	// Optional: if not provided or invalid, it will be derived from the email address
+	// Username is the user's tenant-unique handle — 3-64 characters of
+	// [A-Za-z0-9_-], distinct from the display Name and stored as its own
+	// field. Optional: if not provided or invalid, it is derived from the local
+	// part of the email address.
 	Username string `json:"username"`
 
 	// Name is the user's display name
@@ -174,7 +176,15 @@ type IAMCreateUserRequest struct {
 	Groups []string `json:"groups,omitempty"`
 
 	// Attributes contains custom user attributes
-	Attributes map[string]interface{} `json:"attributes,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty"`
+
+	// AuthMethods lists the credential kinds this account may present
+	// ("webauthn", "piv"). Empty defaults to webauthn.
+	AuthMethods []string `json:"auth_methods,omitempty"`
+
+	// Lifecycle is the state to create in: pending, active or disabled. Empty
+	// defaults to pending.
+	Lifecycle iam.Lifecycle `json:"lifecycle,omitempty"`
 }
 
 // Validate validates the IAMCreateUserRequest.
@@ -241,20 +251,40 @@ type IAMUpdateUserRequest struct {
 	// Name is the user's display name (optional)
 	Name *string `json:"name,omitempty"`
 
+	// Username, when non-nil, changes the tenant-unique handle — the key
+	// GetUserByUsername resolves and an administrator addresses the account by.
+	// It is applied independently of Name; the two used to share one field, so
+	// a request carrying both silently dropped this one.
+	Username *string `json:"username,omitempty"`
+
 	// Roles is the list of role IDs (optional)
 	Roles *[]string `json:"roles,omitempty"`
 
 	// Groups is the list of group IDs (optional)
 	Groups *[]string `json:"groups,omitempty"`
 
-	// Attributes contains custom user attributes (optional)
-	Attributes *map[string]interface{} `json:"attributes,omitempty"`
+	// Attributes, when non-nil, REPLACES the account's custom attributes.
+	//
+	// It is map[string]string, the shape the store holds and ABAC evaluates,
+	// not map[string]interface{}. An untyped map lets a caller express values
+	// the record cannot hold, which leaves every consumer to invent its own
+	// stringification — and the one conversion that exists must then be
+	// duplicated in each of them. A transport converts once, at the edge where
+	// the untyped JSON arrives (see the MCP tool's stringAttributes, which
+	// REFUSES a non-string rather than dropping it); past that edge the shape
+	// is the store's.
+	Attributes *map[string]string `json:"attributes,omitempty"`
 
-	// Suspended indicates whether to suspend the user (optional)
-	Suspended *bool `json:"suspended,omitempty"`
+	// Lifecycle, when non-empty, transitions the account: pending, active,
+	// suspended, locked or disabled. `deleting` is the deletion workflow's own
+	// claim on the record and is refused here. It replaces the suspended/locked
+	// pair, which named a model this layer no longer has — and which no handler
+	// ever read, so a caller setting either was silently ignored.
+	Lifecycle *iam.Lifecycle `json:"lifecycle,omitempty"`
 
-	// Locked indicates whether to lock the user (optional)
-	Locked *bool `json:"locked,omitempty"`
+	// AuthMethods, when non-nil, replaces the credential kinds this account may
+	// present.
+	AuthMethods *[]string `json:"auth_methods,omitempty"`
 }
 
 // Validate validates the IAMUpdateUserRequest.
@@ -674,6 +704,30 @@ type IAMListRolesResponse struct {
 	TotalCount int64 `json:"total_count,omitempty"`
 
 	// Timestamp is when the list was generated
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// IAMReconcileRolesRequest requests built-in role reconciliation for a tenant.
+type IAMReconcileRolesRequest struct {
+	// TenantID is the tenant whose built-in roles are converged onto the
+	// running build's definitions.
+	TenantID string `json:"tenant_id"`
+}
+
+// IAMReconcileRolesResponse reports what reconciliation changed. An empty
+// Roles slice means the tenant already agreed with the build and nothing was
+// written.
+type IAMReconcileRolesResponse struct {
+	// TenantID is the reconciled tenant
+	TenantID string `json:"tenant_id"`
+
+	// Roles carries one entry per built-in role that changed
+	Roles []iam.RoleReconcileResult `json:"roles,omitempty"`
+
+	// Changed reports whether anything was written
+	Changed bool `json:"changed"`
+
+	// Timestamp is when reconciliation ran
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -1192,8 +1246,11 @@ type CheckAdminPermissionResponse struct {
 }
 
 // StartImpersonationRequest contains the request to start impersonation.
+//
+// It carries no acting-admin identity: the actor is the authenticated
+// caller, resolved server-side from the verified principal, never named by
+// the request (go-quicbaas#383).
 type StartImpersonationRequest struct {
-	AdminUserID  string
 	TargetUserID string
 	TenantID     string
 	Reason       string

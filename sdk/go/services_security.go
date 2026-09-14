@@ -36,6 +36,7 @@ import (
 	trustedca "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	pkgiam "github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	acmeclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/acme"
 	certclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
 	sshclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
@@ -1084,8 +1085,8 @@ func (c *fido2TransportClient) BeginRegistration(ctx context.Context, req *FIDO2
 	if req == nil {
 		return nil, sdkerrors.NewInvalidInput("fido2.BeginRegistration", "request is required")
 	}
-	if req.Username == "" {
-		return nil, sdkerrors.NewInvalidInput("fido2.BeginRegistration", "username is required")
+	if req.Email == "" {
+		return nil, sdkerrors.NewInvalidInput("fido2.BeginRegistration", "email is required")
 	}
 	resp, err := c.t.Request(ctx, fido2ServiceName, "BeginRegistration", req)
 	if err != nil {
@@ -1137,8 +1138,8 @@ func (c *fido2TransportClient) BeginAuthentication(ctx context.Context, req *FID
 	if req == nil {
 		return nil, sdkerrors.NewInvalidInput("fido2.BeginAuthentication", "request is required")
 	}
-	if req.Username == "" {
-		return nil, sdkerrors.NewInvalidInput("fido2.BeginAuthentication", "username is required")
+	if req.Email == "" {
+		return nil, sdkerrors.NewInvalidInput("fido2.BeginAuthentication", "email is required")
 	}
 	resp, err := c.t.Request(ctx, fido2ServiceName, "BeginAuthentication", req)
 	if err != nil {
@@ -1469,12 +1470,17 @@ func authFactorSPKICredentialFor(factorType string, req *AuthFactorEnrollRequest
 // kept narrow (in Credential); descriptive context (cert CN, serial, reader,
 // slot, AAGUID, device id) is retained in Metadata.
 func authFactorMetadata(req *AuthFactorEnrollRequest) map[string]string {
+	// A directly-enrolled factor ran no ceremony, so nothing was proven about
+	// where its key lives. The SERVER records that (attest_level=none on every
+	// plain Add/Rotate since go-qrdb v0.16.2-alpha); it is not written here,
+	// because the attest_* namespace is the server's and a caller that writes
+	// into it is refused — this SDK included.
 	if req == nil || req.MethodParams == nil {
 		return nil
 	}
 	out := make(map[string]string, len(req.MethodParams))
 	for k, v := range req.MethodParams {
-		if k == "credential_sha256" || k == "spki_sha256" || k == "credential_id" || k == "label" {
+		if authFactorReservedMethodParams[k] {
 			continue
 		}
 		if s, ok := v.(string); ok {
@@ -1485,6 +1491,51 @@ func authFactorMetadata(req *AuthFactorEnrollRequest) map[string]string {
 		return nil
 	}
 	return out
+}
+
+// authFactorReservedMethodParams are MethodParams keys that never travel into
+// factor metadata verbatim.
+//
+// The lookup-key parameters are consumed to derive the credential. The
+// ATTESTATION parameters are refused outright by validateAuthFactorMetadata:
+// they record what a ceremony proved, and a caller of this admin API proved
+// nothing. Letting one through would let anyone holding user_authfactors:add
+// mint a factor row that claims hardware — the same forged claim the token
+// path now refuses, one layer down.
+var authFactorReservedMethodParams = map[string]bool{
+	"credential_sha256":                   true,
+	"spki_sha256":                         true,
+	"credential_id":                       true,
+	"label":                               true,
+	pkgiam.AuthFactorMetadataAttestLevel:  true,
+	pkgiam.AuthFactorMetadataAttestAAGUID: true,
+}
+
+// validateAuthFactorMetadata refuses an enrollment that tries to set an
+// attestation field.
+//
+// The rule itself lives in pkg/iam so the SDK, the qrdb servicer proxy behind
+// the gRPC and MCP auth-factor tools, and any future surface cannot drift apart
+// on what "caller-supplied attestation" means. This wrapper adapts MethodParams
+// to it and re-types the refusal as an SDK input error.
+//
+// op names the CALLING operation. Both Add and Rotate enroll a factor and both
+// validate here, so a hardcoded name made a rotation report a failure in an
+// operation the caller never invoked — the error is the first thing read when
+// something breaks, and pointing at the wrong verb sends the reader to the
+// wrong call site.
+func validateAuthFactorMetadata(op string, req *AuthFactorEnrollRequest) error {
+	if req == nil || len(req.MethodParams) == 0 {
+		return nil
+	}
+	supplied := make(map[string]string, len(req.MethodParams))
+	for k := range req.MethodParams {
+		supplied[k] = ""
+	}
+	if err := pkgiam.ValidateAuthFactorMetadata(supplied); err != nil {
+		return sdkerrors.NewInvalidInput(op, err.Error())
+	}
+	return nil
 }
 
 // factorMetadataToAny widens a string metadata map to map[string]any for the
@@ -1547,6 +1598,13 @@ func (c *authFactorsImpl) Add(ctx context.Context, req *AuthFactorEnrollRequest)
 	}
 	if ctx == nil {
 		return nil, sdkerrors.NewInvalidInput("authfactors.Add", "context is required")
+	}
+
+	// Refuse a caller-asserted attestation before anything is derived or
+	// written: the attestation fields belong to the ceremony that verified
+	// them, never to a caller of this admin API.
+	if err := validateAuthFactorMetadata("authfactors.Add", req); err != nil {
+		return nil, err
 	}
 
 	credential, err := authFactorCredentialFor(req.FactorName, req)
@@ -1662,6 +1720,12 @@ func (c *authFactorsImpl) Rotate(ctx context.Context, oldID string, newFactor *A
 	}
 	if ctx == nil {
 		return nil, sdkerrors.NewInvalidInput("authfactors.Rotate", "context is required")
+	}
+	// Rotate writes a NEW factor, so it carries the same forged-attestation
+	// risk as Add and enforces the same contract. A rule applied to one verb
+	// only moves the hole along.
+	if err := validateAuthFactorMetadata("authfactors.Rotate", newFactor); err != nil {
+		return nil, err
 	}
 
 	credential, err := authFactorCredentialFor(newFactor.FactorName, newFactor)

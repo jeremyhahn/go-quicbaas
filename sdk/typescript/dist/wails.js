@@ -158,8 +158,8 @@ class WailsConnectionClient {
 // request object here so the interface contract is unchanged while the
 // wire shape matches what Go expects.
 class WailsOrchestratorClient {
-    async listJobs(tenantID) {
-        const req = { tenant_id: tenantID };
+    async listJobs(tenantID, taskID) {
+        const req = { tenant_id: tenantID, task_id: taskID };
         const resp = (await orchestratorBinding().ListJobs(req));
         // The Go binding returns the projected job array; older shims may
         // have returned a ListJobsResponse. Normalise to JobStatus[].
@@ -203,6 +203,9 @@ class WailsOrchestratorClient {
     }
     async listBackends() {
         return orchestratorBinding().ListBackends();
+    }
+    async listRunners() {
+        return orchestratorBinding().ListRunners();
     }
     async listBackendModels(agentID, backendName) {
         return orchestratorBinding().ListBackendModels({ agent_id: agentID, backend_name: backendName });
@@ -263,6 +266,18 @@ class WailsOrchestratorClient {
     // The Go binding forwards the request struct verbatim to the SDK.
     async getSessionHistory(req) {
         return sessionBinding().GetHistory(req);
+    }
+    // getSessionConversation fetches a page of a session's conversation.
+    // The Go binding forwards the request struct verbatim to the SDK.
+    async getSessionConversation(req) {
+        return sessionBinding().GetConversation(req);
+    }
+    // getSpendReport delegates to OrchestratorBinding.GetSpendReport. The Go
+    // binding forwards the request struct verbatim and returns the SDK type
+    // unreshaped, so cost_measured — the flag that says whether cost_micros is
+    // a measured figure — survives the IPC hop.
+    async getSpendReport(req) {
+        return orchestratorBinding().GetSpendReport(req);
     }
     // createWorkflow delegates to OrchestratorBinding.CreateWorkflow if available.
     async createWorkflow(req) {
@@ -327,6 +342,26 @@ class WailsOrchestratorClient {
             throw new Error('wails: CompleteTask not implemented');
         }
         await b.CompleteTask(req);
+    }
+    // readmitTask delegates to OrchestratorBinding.ReadmitTask.
+    //
+    // The binding takes the SDK request struct, like every other task verb on
+    // it; passing the two ids positionally reached a Go method that does not
+    // exist in that shape and threw on every click in desktop mode.
+    async readmitTask(tenantID, taskID) {
+        const b = orchestratorBinding();
+        if (typeof b.ReadmitTask !== 'function') {
+            throw new Error('wails: ReadmitTask not implemented');
+        }
+        await b.ReadmitTask({ tenant_id: tenantID, task_id: taskID });
+    }
+    // deleteTask delegates to OrchestratorBinding.DeleteTask.
+    async deleteTask(req) {
+        const b = orchestratorBinding();
+        if (typeof b.DeleteTask !== 'function') {
+            throw new Error('wails: DeleteTask not implemented');
+        }
+        return b.DeleteTask(req);
     }
     // decomposeTask delegates to OrchestratorBinding.DecomposeTask.
     async decomposeTask(req) {
@@ -509,6 +544,7 @@ export class WailsClient {
     scheduler = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     projects = null;
+    sdlc = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     accounts = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

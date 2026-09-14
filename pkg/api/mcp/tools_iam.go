@@ -61,6 +61,7 @@ func (r *ToolRegistry) registerIAMTools() {
 	r.registerPolicyTools()
 	r.registerAppTools()
 	r.registerMFATools()
+	r.registerIAMWebAuthnTools()
 	r.registerPEPTools()
 	// Register delegated administration and GDPR tools
 	r.registerAdminTools()
@@ -219,6 +220,10 @@ func (r *ToolRegistry) registerUserTools() {
 					"type":        "string",
 					"description": "User email address (unique within tenant)",
 				},
+				"username": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant-unique handle: 3-64 characters of letters, digits, dash or underscore. Distinct from the display name; derived from the email when omitted.",
+				},
 				"name": map[string]interface{}{
 					"type":        "string",
 					"description": "User display name",
@@ -238,8 +243,19 @@ func (r *ToolRegistry) registerUserTools() {
 					},
 				},
 				"attributes": map[string]interface{}{
-					"type":        "object",
-					"description": "Custom user attributes",
+					"type":                 "object",
+					"description":          "Custom user attributes. Values must be strings.",
+					"additionalProperties": map[string]interface{}{"type": "string"},
+				},
+				"auth_methods": map[string]interface{}{
+					"type":        "array",
+					"description": "Credential kinds the account may present. Defaults to [\"webauthn\"].",
+					"items":       map[string]interface{}{"type": "string", "enum": []string{"webauthn", "piv"}},
+				},
+				"lifecycle": map[string]interface{}{
+					"type":        "string",
+					"description": "State to create in. Suspended and locked describe something that HAPPENS to an account and cannot be asserted at creation.",
+					"enum":        []string{"pending", "active", "disabled"},
 				},
 			},
 			"required": []string{"tenant_id", "email", "name"},
@@ -283,6 +299,10 @@ func (r *ToolRegistry) registerUserTools() {
 					"type":        "string",
 					"description": "Updated email address",
 				},
+				"username": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated tenant-unique handle. Applied independently of the display name.",
+				},
 				"name": map[string]interface{}{
 					"type":        "string",
 					"description": "Updated display name",
@@ -296,15 +316,19 @@ func (r *ToolRegistry) registerUserTools() {
 					"items": map[string]interface{}{"type": "string"},
 				},
 				"attributes": map[string]interface{}{
-					"type": "object",
+					"type":                 "object",
+					"description":          "Custom user attributes. Values must be strings.",
+					"additionalProperties": map[string]interface{}{"type": "string"},
 				},
-				"suspended": map[string]interface{}{
-					"type":        "boolean",
-					"description": "Suspend user access",
+				"lifecycle": map[string]interface{}{
+					"type":        "string",
+					"description": "Account state: pending, active, suspended, locked or disabled. `deleting` is claimed by the deletion workflow and is refused here — delete the user instead.",
+					"enum":        []string{"pending", "active", "suspended", "locked", "disabled"},
 				},
-				"locked": map[string]interface{}{
-					"type":        "boolean",
-					"description": "Lock user account",
+				"auth_methods": map[string]interface{}{
+					"type":        "array",
+					"description": "Credential kinds the account may present.",
+					"items":       map[string]interface{}{"type": "string", "enum": []string{"webauthn", "piv"}},
 				},
 			},
 			"required": []string{"tenant_id", "user_id"},
@@ -700,6 +724,25 @@ func (r *ToolRegistry) registerRoleTools() {
 				},
 			},
 			"required": []string{"tenant_id", "role_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name: "quicbaas_iam_role_reconcile",
+		Description: "Converge a tenant's built-in roles onto the running build's definitions: " +
+			"adds the verbs the build now grants, removes the ones it no longer grants, and " +
+			"leaves custom roles alone. Idempotent — a converged tenant reports no changed " +
+			"roles. This is the only path that can re-permission a built-in role, because " +
+			"qrdb refuses an ordinary update on a system role.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant whose built-in roles are reconciled",
+				},
+			},
+			"required": []string{"tenant_id"},
 		},
 	})
 
@@ -1485,9 +1528,15 @@ func (r *ToolRegistry) executeIAMUserCreate(ctx context.Context, args map[string
 	}
 
 	req := &service.IAMCreateUserRequest{
-		TenantID: getString(args, "tenant_id"),
-		Email:    getString(args, "email"),
-		Name:     getString(args, "name"),
+		TenantID:  getString(args, "tenant_id"),
+		Email:     getString(args, "email"),
+		Username:  getString(args, "username"),
+		Name:      getString(args, "name"),
+		Lifecycle: iam.Lifecycle(getString(args, "lifecycle")),
+	}
+
+	if raw, ok := args["auth_methods"].([]interface{}); ok {
+		req.AuthMethods = stringSlice(raw)
 	}
 
 	if rolesRaw, ok := args["roles"].([]interface{}); ok {
@@ -1508,8 +1557,17 @@ func (r *ToolRegistry) executeIAMUserCreate(ctx context.Context, args map[string
 		}
 	}
 
+	// Attributes are string-valued in the store. A value that is not a string is
+	// REFUSED, not dropped: accepting the request and persisting less than it
+	// asked for is silent data loss at an API boundary, and these are
+	// authorization attributes — a policy evaluated over the subset that
+	// survived is not the policy the caller wrote.
 	if attrRaw, ok := args["attributes"].(map[string]interface{}); ok {
-		req.Attributes = attrRaw
+		attrs, err := stringAttributes(attrRaw)
+		if err != nil {
+			return nil, err
+		}
+		req.Attributes = attrs
 	}
 
 	resp, err := iamSvc.CreateUser(ctx, req)
@@ -1551,6 +1609,9 @@ func (r *ToolRegistry) executeIAMUserUpdate(ctx context.Context, args map[string
 	if email := getString(args, "email"); email != "" {
 		req.Email = &email
 	}
+	if username := getString(args, "username"); username != "" {
+		req.Username = &username
+	}
 	if name := getString(args, "name"); name != "" {
 		req.Name = &name
 	}
@@ -1572,14 +1633,26 @@ func (r *ToolRegistry) executeIAMUserUpdate(ctx context.Context, args map[string
 		}
 		req.Groups = &groups
 	}
+	// The CONVERTED map is what travels on, not the raw one. Validating the
+	// argument and then forwarding the untyped original left the service layer
+	// holding a shape the store cannot write, and it was dropped there — the
+	// update reported success and the old attributes stayed. Sending the
+	// converted value means the check and the payload cannot disagree.
 	if attrRaw, ok := args["attributes"].(map[string]interface{}); ok {
-		req.Attributes = &attrRaw
+		attrs, err := stringAttributes(attrRaw)
+		if err != nil {
+			return nil, err
+		}
+		req.Attributes = &attrs
 	}
-	if suspended, ok := args["suspended"].(bool); ok {
-		req.Suspended = &suspended
+	if lifecycle, ok := args["lifecycle"].(string); ok && lifecycle != "" {
+		state := iam.Lifecycle(lifecycle)
+		req.Lifecycle = &state
 	}
-	if locked, ok := args["locked"].(bool); ok {
-		req.Locked = &locked
+	// Presence, not length: an explicitly empty list clears the restriction.
+	if raw, ok := args["auth_methods"].([]interface{}); ok {
+		methods := stringSlice(raw)
+		req.AuthMethods = &methods
 	}
 
 	resp, err := iamSvc.UpdateUser(ctx, req)
@@ -1999,6 +2072,23 @@ func (r *ToolRegistry) executeIAMRoleList(ctx context.Context, args map[string]i
 	}
 
 	resp, err := iamSvc.ListRoles(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMRoleReconcile(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.IAMReconcileRolesRequest{
+		TenantID: getString(args, "tenant_id"),
+	}
+
+	resp, err := iamSvc.ReconcileBuiltInRoles(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -2793,6 +2883,39 @@ func (e *AuditEventGetError) Error() string {
 // Unwrap returns the underlying cause for errors.Is/As support.
 func (e *AuditEventGetError) Unwrap() error {
 	return e.Cause
+}
+
+// stringSlice keeps the string members of a JSON array, which is what every
+// enum-valued MCP array field carries.
+func stringSlice(in []interface{}) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if str, ok := v.(string); ok {
+			out = append(out, str)
+		}
+	}
+	return out
+}
+
+// stringAttributes converts an MCP attribute object into the store's
+// string-valued map, REFUSING any value that is not a string.
+//
+// The alternative — keeping the strings and discarding the rest — accepts a
+// request and persists less than it asked for. For authorization attributes
+// that is not a lossy convenience: a policy evaluated over the subset that
+// survived is a different policy from the one the caller wrote, and nothing in
+// the response says so.
+func stringAttributes(in map[string]interface{}) (map[string]string, error) {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		str, ok := v.(string)
+		if !ok {
+			return nil, api.NewInvalidInputError(
+				"attributes." + k + " must be a string; attribute values are stored as strings")
+		}
+		out[k] = str
+	}
+	return out, nil
 }
 
 // TenantEngineObjectError indicates a malformed engine provisioning object on

@@ -4,9 +4,16 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"time"
+
+	"github.com/spf13/viper"
 
 	xkmsresolver "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/trust/resolver"
 )
@@ -22,6 +29,19 @@ const (
 	// ServerModeDevCluster runs multiple local nodes for development testing.
 	ServerModeDevCluster = "devcluster"
 )
+
+// IsClusterLikeMode reports whether mode runs more than one node.
+//
+// This is the SINGLE source of truth for that question, and it exists because
+// the answer was previously spelled out at each call site. A mode added to the
+// set in one place and missed in another matches for config validation while
+// falling through everywhere else — which is exactly how devcluster came to be
+// validated as a Raft mode while the scheduler treated it as standalone and
+// gave every node its own unguarded dispatch. Callers ask here; nobody
+// re-derives it.
+func IsClusterLikeMode(mode string) bool {
+	return mode == ServerModeCluster || mode == ServerModeDevCluster
+}
 
 // DefaultSealedBindHost is the loopback listen host used by the sealed-window
 // (pre-unseal ceremony / unseal) listeners when Server.SealedBindHost is
@@ -135,21 +155,83 @@ type IAMPIVLoginConfig struct {
 	// TrustedIssuers is an optional list of Subject DN strings that the PIV cert
 	// issuer must match. When empty, any cert that chains to the configured CA pool
 	// is accepted; the deeper identity check occurs in the handler via thumbprint lookup.
+	//
+	// It is a NAME comparison and therefore not evidence of anything: a
+	// self-signed certificate can carry whatever issuer DN it likes. Hardware
+	// is established by AttestationCAFile below, not here.
 	TrustedIssuers []string `mapstructure:"trusted_issuers"`
+
+	// AttestationCAFile is the path to a PEM bundle of PIV attestation CA
+	// certificates — the VENDOR roots that sign a card's slot attestation
+	// certificates (e.g. the Yubico PIV Attestation root).
+	//
+	// Point it at the vendor root, never at the CA that issues login
+	// certificates. A login is hardware-backed only when the client presents a
+	// SEPARATE slot attestation certificate (`ykman piv keys attest <slot>`)
+	// that chains here, carries a PIV attestation profile extension, and
+	// covers the authenticating key. The login certificate is never its own
+	// evidence: if it were, pointing this setting at the login CA would make
+	// every software-held certificate report hardware.
+	//
+	// Required for hardware-attested PIV login. When it is empty the endpoint
+	// refuses rather than assuming: see AllowUnattested.
+	AttestationCAFile string `mapstructure:"attestation_ca_file"`
+
+	// AttestationIntermediatesFile is an optional PEM bundle of vendor
+	// sub-CA certificates used to complete an attestation chain. Card-specific
+	// intermediates (a YubiKey's slot-F9 certificate) travel with the
+	// credential and do not belong here.
+	AttestationIntermediatesFile string `mapstructure:"attestation_intermediates_file"`
+
+	// AllowUnattested permits PIV login for a certificate whose hardware
+	// provenance was NOT proven — because no attestation CA is configured, or
+	// because the certificate does not chain to one.
+	//
+	// It is an explicit, deliberately unattractive opt-in for development and
+	// for test environments driving a software smartcard. It does not make an
+	// unattested login look attested: the issued token carries the level that
+	// was actually proven and does NOT carry the hardware-attested ACR, so an
+	// authorization policy that requires hardware still refuses it.
+	//
+	// Default false: a deployment that configures nothing refuses PIV login
+	// rather than minting hardware claims it never verified.
+	AllowUnattested bool `mapstructure:"allow_unattested"`
 }
 
 // IAMAAGUIDConfig holds operator configuration for FIDO2 authenticator AAGUID enforcement.
 type IAMAAGUIDConfig struct {
 	// Mode controls how unknown AAGUIDs are handled during WebAuthn registration.
-	// "log_only" (default): unknown AAGUIDs are permitted; a warning is logged.
-	// "enforce": unknown AAGUIDs cause registration to be rejected with aaguid_not_allowed.
+	// "enforce" (DEFAULT, and what an EMPTY value selects): unknown AAGUIDs
+	// cause registration to be rejected with aaguid_not_allowed.
+	// "log_only": unknown AAGUIDs are permitted; a warning is logged. It is an
+	// explicit opt-out — only this exact value selects it.
+	//
+	// Any other non-empty value is REJECTED at startup with AAGUIDModeError.
+	// A typo does not quietly select the strict policy: an operator who wrote
+	// "log-only" meant to relax the gate, and a deployment that silently
+	// enforced instead would refuse every enrollment for a reason nothing
+	// stated. Both directions of misconfiguration are told to the operator
+	// rather than guessed at.
 	Mode string `mapstructure:"mode"`
 
-	// AllowlistFile is the path to a JSON file containing allowed AAGUID entries.
-	// Supports FIDO Alliance MDS3 format or a simple JSON array of
-	// {"aaguid": "...", "name": "...", "attestation_level": "..."} objects.
-	// When empty, the allowlist is loaded from built-in defaults (empty = permit all
-	// in log_only mode, deny all in enforce mode).
+	// AllowlistFile is the path to a JSON file naming the authenticator models
+	// this deployment admits. Two shapes are accepted:
+	//
+	//   - a JSON ARRAY an operator curates by hand:
+	//     [{"aaguid": "...", "name": "...", "attestation_level": "..."}]
+	//   - a decoded FIDO Metadata Service v3 document: a JSON OBJECT with an
+	//     "entries" array. Only entries[].aaguid, the metadata statement's
+	//     description and the certification history in entries[].statusReports
+	//     are read; entries the Alliance has REVOKED or reported compromised
+	//     are SKIPPED, so importing a blob wholesale cannot admit a withdrawn
+	//     authenticator. Entries with no AAGUID (the U2F and UAF models every
+	//     blob carries) are skipped too.
+	//
+	// When empty the allowlist is empty, which under the default enforce mode
+	// denies every authenticator with a message naming this setting. That is
+	// deliberate: an unconfigured deployment must refuse rather than accept any
+	// authenticator as an administrator credential. A file that cannot be read
+	// or parsed is a fatal startup error, not a silent fallback to permissive.
 	AllowlistFile string `mapstructure:"allowlist_file"`
 }
 
@@ -311,121 +393,6 @@ func (e *ConfigValidationError) Error() string {
 	return "config: " + e.Field + ": " + e.Message
 }
 
-// IAMWebAuthnConfig holds the relying-party configuration for the WebAuthn /
-// FIDO2 ceremony layer mounted from go-xkms. Production deployments must
-// supply an explicit RPID, RPDisplayName, and at least one origin; the
-// embedded webauthn library refuses to operate against the dev defaults
-// when the browser origin does not match.
-//
-// The fields mirror github.com/go-webauthn/webauthn/webauthn.Config so the
-// xkms factory can construct one directly without remapping.
-type IAMWebAuthnConfig struct {
-	// RPID is the Relying Party ID — a valid effective domain (e.g.
-	// "example.com"). Browsers require an exact match against the page
-	// origin's eTLD+1. Required.
-	RPID string `mapstructure:"rp_id"`
-
-	// RPDisplayName is the human-readable name shown by the authenticator
-	// during ceremonies. Required.
-	RPDisplayName string `mapstructure:"rp_display_name"`
-
-	// RPOrigins is the list of permitted origins. At least one entry
-	// required. Each entry must be a full origin including scheme
-	// (e.g. "https://app.example.com"). Required.
-	RPOrigins []string `mapstructure:"rp_origins"`
-
-	// Timeout is the ceremony timeout (e.g. "60s"). When empty the
-	// underlying library default applies.
-	Timeout string `mapstructure:"timeout"`
-
-	// UserVerification selects the user-verification policy:
-	// "preferred" (default), "required", or "discouraged".
-	UserVerification string `mapstructure:"user_verification"`
-
-	// AttestationPreference controls attestation conveyance:
-	// "none" (default), "indirect", or "direct".
-	AttestationPreference string `mapstructure:"attestation_preference"`
-
-	// ResidentKeyRequirement selects the resident-key policy:
-	// "discouraged", "preferred", or "required".
-	ResidentKeyRequirement string `mapstructure:"resident_key_requirement"`
-
-	// AuthenticatorAttachment optionally constrains the authenticator
-	// type: "platform", "cross-platform", or empty (no constraint).
-	AuthenticatorAttachment string `mapstructure:"authenticator_attachment"`
-
-	// Debug enables verbose webauthn logging in non-production builds.
-	Debug bool `mapstructure:"debug"`
-}
-
-// Validate ensures the WebAuthn relying-party configuration is fit for
-// production use. The required fields (RPID, RPDisplayName, RPOrigins)
-// are checked unconditionally — there is no "disabled" mode for
-// WebAuthn config because the WebAuthn surface is always wired when
-// IAM is compiled in. Operators that want to disable the surface
-// gate it at the IAMSelfServiceRegistrationConfig level instead.
-func (c *IAMWebAuthnConfig) Validate() error {
-	if c.RPID == "" {
-		return &ConfigValidationError{
-			Field:   "iam.webauthn.rp_id",
-			Message: "rp_id is required (the Relying Party effective domain)",
-		}
-	}
-	if c.RPDisplayName == "" {
-		return &ConfigValidationError{
-			Field:   "iam.webauthn.rp_display_name",
-			Message: "rp_display_name is required",
-		}
-	}
-	if len(c.RPOrigins) == 0 {
-		return &ConfigValidationError{
-			Field:   "iam.webauthn.rp_origins",
-			Message: "rp_origins must contain at least one origin",
-		}
-	}
-	for i, o := range c.RPOrigins {
-		if o == "" {
-			return &ConfigValidationError{
-				Field:   "iam.webauthn.rp_origins",
-				Message: "rp_origins entries must be non-empty (entry " + strconv.Itoa(i) + ")",
-			}
-		}
-	}
-	switch c.UserVerification {
-	case "", "preferred", "required", "discouraged":
-	default:
-		return &ConfigValidationError{
-			Field:   "iam.webauthn.user_verification",
-			Message: "must be one of preferred, required, discouraged",
-		}
-	}
-	switch c.AttestationPreference {
-	case "", "none", "indirect", "direct":
-	default:
-		return &ConfigValidationError{
-			Field:   "iam.webauthn.attestation_preference",
-			Message: "must be one of none, indirect, direct",
-		}
-	}
-	switch c.ResidentKeyRequirement {
-	case "", "discouraged", "preferred", "required":
-	default:
-		return &ConfigValidationError{
-			Field:   "iam.webauthn.resident_key_requirement",
-			Message: "must be one of discouraged, preferred, required",
-		}
-	}
-	switch c.AuthenticatorAttachment {
-	case "", "platform", "cross-platform":
-	default:
-		return &ConfigValidationError{
-			Field:   "iam.webauthn.authenticator_attachment",
-			Message: "must be one of platform, cross-platform, or empty",
-		}
-	}
-	return nil
-}
-
 // IAMConfig holds top-level IAM configuration including mTLS settings.
 type IAMConfig struct {
 	// MTLS holds operator-provided mTLS client authentication configuration.
@@ -482,6 +449,7 @@ type Config struct {
 	Scheduler     SchedulerConfig     `mapstructure:"scheduler"`
 	Messaging     MessagingConfig     `mapstructure:"messaging"`
 	Orchestration OrchestrationConfig `mapstructure:"orchestration"`
+	SDLC          SDLCConfig          `mapstructure:"sdlc"`
 	Seal          SealConfig          `mapstructure:"seal"`
 	CA            CAConfig            `mapstructure:"ca"`
 	QRDB          QRDBConfig          `mapstructure:"qrdb"`
@@ -843,6 +811,332 @@ type EmbeddedAgentConfig struct {
 	AutoPull bool `mapstructure:"auto_pull"`
 }
 
+// SDLCConfig configures the SDLC module of the Software Factory: which forge
+// hosts a bound project may live on, what a worker runs to verify its work,
+// and how a parked task's reason reaches its issue.
+//
+// The daemon does no clone, copy or worktree of its own: the worker's
+// container clones the project repository and the project's context
+// repositories itself, side by side, from the spec it is spawned with.
+//
+// The generic knobs of a job — the attempt budget, the lease TTL, the stage
+// timeouts, the idle thresholds, the sweep interval — belong to the engine
+// and live under orchestration:. They are refused here BY NAME
+// (RemovedSDLCKeys) rather than silently ignored, so a configuration that
+// still carries them fails to load with the key and its new home.
+type SDLCConfig struct {
+	// Enabled runs the SDLC module on this node.
+	//
+	// Default: false. The module registers an unauthenticated webhook route
+	// and holds forge credentials, so it is opt-in.
+	Enabled bool `mapstructure:"enabled"`
+
+	// IssuePageLimit bounds one project sweep's issue listing.
+	//
+	// Default: 50. A sweep that fills its page has probably not seen every
+	// triggered issue; the next sweep sees the rest once the first page has
+	// been adopted and labelled in progress.
+	IssuePageLimit int `mapstructure:"issue_page_limit"`
+
+	// VerificationCommands is DECLARED AND UNREAD — see go-quicbaas#625.
+	//
+	// It described the validating-phase criteria of a canonical sdlc
+	// workflow that no longer exists (deleted by #596, replaced by the sdlc
+	// runner in #607). What the runner runs is the BINDING's own
+	// verification list, and what admits a command is the operator
+	// allowlist orchestration.verification_commands. Nothing reads this
+	// field; setting it has no effect.
+	//
+	// Default: make build, make test, make lint.
+	VerificationCommands []string `mapstructure:"verification_commands"`
+
+	// CheckoutRoot is where the worker's container finds its checkouts: the
+	// project at <root>/<project name> and each context repository beside
+	// it. It is the path INSIDE the container — the daemon clones nothing —
+	// and it is what the runner's clone commands name there.
+	//
+	// Default: /workspace (orchestration.WorkspaceCheckoutRoot). An operator
+	// whose worker image lays its filesystem out differently names it here.
+	CheckoutRoot string `mapstructure:"checkout_root"`
+
+	// RepoHosts is the allowlist of forge hosts a bound project's repository
+	// may live on, matched by hostname or host:port. A project whose
+	// repository is elsewhere is refused at bind time.
+	//
+	// Default: empty — naming the forge host is the operator's explicit act.
+	RepoHosts []string `mapstructure:"repo_hosts"`
+
+	// AllowLocalRepos additionally admits file:// and bare-path repositories.
+	// For test rigs; never on a node that serves tenants.
+	//
+	// Default: false.
+	AllowLocalRepos bool `mapstructure:"allow_local_repos"`
+
+	// MergeAttempts bounds the retries when the forge reports a pull request
+	// not ready to merge yet.
+	//
+	// Default: 6. Must be positive.
+	MergeAttempts int `mapstructure:"merge_attempts"`
+
+	// Surfacing bounds the Blocked hook's delivery of a parked task's reason
+	// to its forge issue. Only the retry is configured here.
+	Surfacing SDLCSurfacing `mapstructure:"surfacing"`
+
+	// LabelReconcile paces the sweep that repairs forge labels an ordinary
+	// write never managed to make.
+	LabelReconcile SDLCLabelReconcile `mapstructure:"label_reconcile"`
+
+	// Webhook bounds the forge webhook ingress.
+	Webhook SDLCWebhook `mapstructure:"webhook"`
+
+	// TriageSweepInterval is how often the triage backstop pass visits every
+	// bound project. Triage is ordinarily woken by the forge webhook within
+	// a second of an issue being filed; this pass catches the deliveries
+	// that never arrived — an unprovisioned hook, a forge outage, a daemon
+	// restarting through the delivery.
+	//
+	// Default: sdlc.DefaultTriageSweepInterval (15m). Zero takes the
+	// default.
+	TriageSweepInterval time.Duration `mapstructure:"triage_sweep_interval"`
+
+	// ReviewSweepInterval is how often the review floor visits every bound
+	// project: the pass that finds an open pull request whose pipeline is
+	// green and which carries no review verdict, and reviews it. A review is
+	// ordinarily dispatched from the forge webhook within a second of the
+	// pipeline finishing; this pass is what makes the review reachable at all
+	// on a node whose delivery path is broken or was never provisioned — and
+	// the only thing that can recover a backlog, since a pipeline event for an
+	// already-green head is never redelivered (go-quicbaas#933).
+	//
+	// SHORTER THAN TriageSweepInterval BY DEFAULT because it is cheaper: this
+	// pass makes forge reads and starts work only for a pull request that is
+	// genuinely unjudged, where a triage pass starts a job per bound project.
+	//
+	// Default: sdlc.DefaultReviewSweepInterval (5m). Zero takes the default.
+	ReviewSweepInterval time.Duration `mapstructure:"review_sweep_interval"`
+}
+
+// SDLCWebhook bounds the forge webhook ingress.
+type SDLCWebhook struct {
+	// MaxBody caps an inbound delivery in bytes. Read before anything is
+	// parsed or verified, because the signature check cannot run until the
+	// body is in memory.
+	//
+	// Default: 1 MiB. Must be positive.
+	MaxBody int64 `mapstructure:"max_body"`
+
+	// PublicURL is THIS NODE's externally reachable base URL, the origin a
+	// forge delivers to: scheme and host, no path — e.g.
+	// "https://factory.example.com".
+	//
+	// REQUIRED WHEN THE MODULE IS ENABLED, and deliberately not defaulted.
+	// Onboarding a project provisions a webhook on the forge pointing at
+	// <public_url>/api/v1/sdlc/webhook/<projectID>, and "the webhook points
+	// at this node" is a property of the NODE rather than of any project.
+	// A guessed origin — the listen address, a loopback — would provision
+	// every managed repository to deliver into the void and report every one
+	// of them provisioned, which is the silent failure the whole onboarding
+	// surface exists to end.
+	PublicURL string `mapstructure:"public_url"`
+}
+
+// SDLCLabelReconcile paces the sweep that converges a bound project's forge
+// labels onto the engine's own record of its tasks. Zero fields take the
+// module's defaults.
+//
+// IT IS A REPAIR PASS, NOT A CONTROL LOOP. Nothing depends on it running: every
+// ordinary ending already writes to the forge as it happens. What it fixes is
+// the write that did not land — a forge outage, a node that died between
+// concluding a task and posting its outcome — which is why its cadence is
+// measured in minutes and its forge calls are deliberately paced.
+type SDLCLabelReconcile struct {
+	// Interval is how often the sweep runs. Zero takes the module's default
+	// (sdlc.DefaultLabelReconcileInterval).
+	Interval time.Duration `mapstructure:"interval"`
+
+	// ForgeInterval is the minimum wall time between the sweep's forge
+	// calls. Zero takes the module's default
+	// (sdlc.DefaultForgeCallInterval).
+	ForgeInterval time.Duration `mapstructure:"forge_interval"`
+}
+
+// SDLCSurfacing is the retry behind a parked task's comment on its issue.
+// Zero fields take the module's defaults (sdlc.DefaultSurfacePolicy).
+type SDLCSurfacing struct {
+	// RetryAttempts is how many posts are tried before the hook fails.
+	RetryAttempts int `mapstructure:"retry_attempts"`
+
+	// RetryInterval paces the retries.
+	RetryInterval time.Duration `mapstructure:"retry_interval"`
+
+	// PostTimeout bounds one post.
+	PostTimeout time.Duration `mapstructure:"post_timeout"`
+}
+
+// SDLCSurfacingMinPostTimeout and SDLCSurfacingMaxPostTimeout are the
+// accepted range of an explicit post_timeout. They mirror the module's own
+// bounds (sdlc.MinPostTimeout, sdlc.MaxPostTimeout); pkg/config cannot
+// import pkg/sdlc, and a drift test pins the pairs.
+const (
+	SDLCSurfacingMinPostTimeout = time.Millisecond
+	SDLCSurfacingMaxPostTimeout = 24 * time.Hour
+)
+
+// SDLCSurfacingKeys are the configuration keys the surfacing retry lives
+// under, bound to the environment by BindSDLCSurfacingEnv.
+var SDLCSurfacingKeys = []string{
+	"sdlc.surfacing.retry_attempts",
+	"sdlc.surfacing.retry_interval",
+	"sdlc.surfacing.post_timeout",
+}
+
+// BindSDLCSurfacingEnv binds the surfacing keys to their environment
+// variables (QUICBAAS_SDLC_SURFACING_*).
+func BindSDLCSurfacingEnv(v *viper.Viper) {
+	for _, key := range SDLCSurfacingKeys {
+		_ = v.BindEnv(key)
+	}
+}
+
+// SDLCKeys are the SDLC module's own configuration keys, bound to the
+// environment by BindSDLCEnv.
+//
+// `sdlc.enabled` IS THE ONE THAT MATTERS MOST. The module is opt-in, so an
+// unbound `enabled` means an environment-only deployment can set every other
+// SDLC variable, have each of them decoded, and still run with the module off —
+// the sweep this section paces would never start. That is a worse failure than a
+// dropped knob, because every other variable appears to work.
+//
+// THE SLICES ARE DELIBERATELY ABSENT. `verification_commands` and `repo_hosts`
+// are list configuration whose environment representation viper does not decode
+// into a []string reliably through Unmarshal, so binding them would advertise a
+// reachability that does not hold. They are file-only, said here rather than
+// discovered, and the drift gate skips them by type for the same reason.
+var SDLCKeys = []string{
+	"sdlc.enabled",
+	"sdlc.issue_page_limit",
+	"sdlc.checkout_root",
+	"sdlc.allow_local_repos",
+	"sdlc.merge_attempts",
+	"sdlc.triage_sweep_interval",
+	"sdlc.review_sweep_interval",
+	"sdlc.webhook.max_body",
+	"sdlc.webhook.public_url",
+}
+
+// BindSDLCEnv binds the module's own keys to their environment variables
+// (QUICBAAS_SDLC_*).
+func BindSDLCEnv(v *viper.Viper) {
+	for _, key := range SDLCKeys {
+		_ = v.BindEnv(key)
+	}
+}
+
+// SDLCLabelReconcileKeys are the configuration keys the label reconciliation
+// sweep lives under, bound to the environment by BindSDLCLabelReconcileEnv.
+//
+// EXPLICIT, BECAUSE AutomaticEnv IS NOT ENOUGH. Viper's Unmarshal decodes the
+// keys it knows about, and a key that appears in no config file is not one of
+// them however the environment is set -- so a knob left unbound is read from
+// the file and never from the environment. That is the shape of a setting an
+// operator sets and never gets, and it would bite hardest in exactly the forge
+// outage this sweep's pacing exists for.
+var SDLCLabelReconcileKeys = []string{
+	"sdlc.label_reconcile.interval",
+	"sdlc.label_reconcile.forge_interval",
+}
+
+// BindSDLCLabelReconcileEnv binds the label reconciliation keys to their
+// environment variables (QUICBAAS_SDLC_LABEL_RECONCILE_*).
+func BindSDLCLabelReconcileEnv(v *viper.Viper) {
+	for _, key := range SDLCLabelReconcileKeys {
+		_ = v.BindEnv(key)
+	}
+}
+
+// RemovedSDLCKeys are the sdlc: keys the module no longer reads, each
+// mapped to where the setting went. A configuration that sets one is
+// refused at load (RefuseRemovedSDLCKeys) — pre-v1, no migration: the key
+// is renamed by hand.
+var RemovedSDLCKeys = map[string]string{
+	"sdlc.attempt_budget":            "the engine's per-task budget (Task.AttemptBudget; default orchestration.DefaultAttemptBudget)",
+	"sdlc.reap_lease_ttl":            "orchestration.reap_lease_ttl",
+	"sdlc.stage_timeouts":            "orchestration.stage_timeouts",
+	"sdlc.idle_thresholds":           "orchestration.idle_thresholds",
+	"sdlc.dispatch_cap":              "the project's quotas.max_concurrency (live job leases per project)",
+	"sdlc.run_timeout":               "orchestration.idle_thresholds",
+	"sdlc.sweep_interval":            "orchestration.sweep_interval",
+	"sdlc.mirror_lease_ttl":          "nothing; adoption is decided by the task store's guarded source index",
+	"sdlc.queue_capacity":            "nothing; a verified webhook delivery nudges the task-source poller",
+	"sdlc.delivery_memory":           "nothing; re-polling is idempotent by construction",
+	"sdlc.max_webhook_body":          "sdlc.webhook.max_body",
+	"sdlc.stage_event_flush_timeout": "nothing; job events are the engine's own stream",
+	"sdlc.agent_config_dir":          "orchestration.agent_config_dir",
+	"sdlc.companions":                workerClonesItsOwnWorkspace,
+	"sdlc.worktree_root":             workerClonesItsOwnWorkspace,
+}
+
+// workerClonesItsOwnWorkspace is where the daemon-side workspace settings
+// went: nowhere. The worker's container clones the project repository and
+// the project's context_repos itself at start, side by side, so there is no
+// daemon-side worktree root and no companion copy to configure.
+const workerClonesItsOwnWorkspace = "nothing; the worker's container clones the project and the project's context_repos itself, so there is no daemon-side worktree or companion copy"
+
+// ErrRemovedSDLCKey indicates a configuration sets an sdlc: key the module
+// no longer reads.
+var ErrRemovedSDLCKey = errors.New("config: sdlc key no longer exists")
+
+// RemovedSDLCKeyError names the removed key and where its setting went.
+type RemovedSDLCKeyError struct {
+	Key         string
+	Replacement string
+}
+
+// Error implements the error interface.
+func (e *RemovedSDLCKeyError) Error() string {
+	return ErrRemovedSDLCKey.Error() + ": " + e.Key + " is no longer read; it moved to " + e.Replacement
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *RemovedSDLCKeyError) Unwrap() error { return ErrRemovedSDLCKey }
+
+// RefuseRemovedSDLCKeys returns a typed error for the first removed sdlc:
+// key the loaded configuration (file or environment) sets, in key order so
+// the refusal is deterministic.
+func RefuseRemovedSDLCKeys(v *viper.Viper) error {
+	keys := make([]string, 0, len(RemovedSDLCKeys))
+	for key := range RemovedSDLCKeys {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if v.IsSet(key) {
+			return &RemovedSDLCKeyError{Key: key, Replacement: RemovedSDLCKeys[key]}
+		}
+	}
+	return nil
+}
+
+// SessionHistoryConfig bounds the per-session conversation transcript the
+// orchestrator keeps.
+//
+// A transcript is append-only and a long-lived session has no other ceiling,
+// so without a bound one runaway agent loop grows a keyspace no operator ever
+// reads and no process ever reclaims. Retention is expressed in TURNS — a
+// prompt and everything the agent produced answering it — because that is the
+// unit an operator reads, and because pruning by event count would cut a turn
+// in half and show an answer with no question above it.
+type SessionHistoryConfig struct {
+	// MaxTurnsPerSession is the deployment-wide number of turns kept per
+	// session. Zero selects orchestration.DefaultSessionRetentionTurns (200).
+	MaxTurnsPerSession int `mapstructure:"max_turns_per_session"`
+
+	// PerTenantMaxTurns overrides MaxTurnsPerSession for named tenants. A
+	// value of zero or less for a tenant keeps its transcripts whole — the
+	// explicit setting for a tenant under a legal hold.
+	PerTenantMaxTurns map[string]int `mapstructure:"per_tenant_max_turns"`
+}
+
 // OrchestrationConfig configures the agent orchestration service.
 type OrchestrationConfig struct {
 	// Enabled enables the agent orchestration service.
@@ -888,6 +1182,24 @@ type OrchestrationConfig struct {
 	// Zero selects orchestration.DefaultReplayBudget (48 KiB).
 	TranscriptReplayBudget int `mapstructure:"transcript_replay_budget"`
 
+	// AccountDeliveryTTL is how long ONE hand-over of a pooled provider
+	// credential stays authorised without renewal.
+	//
+	// It bounds DELIVERY, not the credential: a subscription login's own
+	// lifetime is its OAuth expiry, which the refresher on the control plane
+	// owns, and this never shortens it. What it bounds is how long a host that
+	// was handed a copy may keep refreshing that copy without the grant being
+	// renewed — the backstop for a session whose conclusion never ran because
+	// its node was destroyed rather than shut down.
+	//
+	// Zero selects orchestration.DefaultAccountDeliveryTTL (1h). The ordinary
+	// bound is the session's conclusion, which revokes the grant outright.
+	AccountDeliveryTTL time.Duration `mapstructure:"account_delivery_ttl"`
+
+	// SessionHistory bounds how much of each session's conversation is kept.
+	// See SessionHistoryConfig.
+	SessionHistory SessionHistoryConfig `mapstructure:"session_history"`
+
 	// HostAffinity configures how strictly host_affinity hints on
 	// SpawnSession / Inference requests are enforced when the named host is
 	// offline. See SchedulerHostAffinityConfig.
@@ -899,6 +1211,24 @@ type OrchestrationConfig struct {
 	// permissions. When set it must be an absolute path. Empty derives
 	// "<storage.data_dir>/projects" — see EffectiveProjectsRoot.
 	ProjectsRoot string `mapstructure:"projects_root"`
+
+	// SocketsRoot is the root the daemon binds its per-session agent sockets
+	// under — today the ephemeral, KMS-backed SSH signing agent one sdlc
+	// attempt's container signs against.
+	//
+	// IT IS SEPARATE FROM ProjectsRoot BECAUSE A UNIX SOCKET ADDRESS IS A
+	// FIXED-SIZE KERNEL FIELD. sun_path holds 108 bytes, and a managed
+	// workspace is <projects_root>/<tenant_id>/<project_id>/workspace — 88
+	// bytes of tenant and project before a socket name is appended — so a
+	// socket placed there exceeds the kernel's limit on every realistic
+	// projects root. This root is short, dedicated and deployment-wide; a
+	// session's own directory under it is created 0700 by the agent and
+	// removed with it.
+	//
+	// When set it must be an absolute path. Empty derives
+	// "$XDG_RUNTIME_DIR/quicbaas" when XDG_RUNTIME_DIR is set, and
+	// "<storage.data_dir>/s" when it is not — see EffectiveSocketsRoot.
+	SocketsRoot string `mapstructure:"sockets_root"`
 
 	// Sandbox configures the sandbox mount policy applied to the host bind
 	// mounts requested on orchestrated agent sessions.
@@ -935,6 +1265,180 @@ type OrchestrationConfig struct {
 	// account's own credential always wins over both. See
 	// AccountProviderConfig and docs/orchestration/accounts.md.
 	AccountProviders []AccountProviderConfig `mapstructure:"account_providers"`
+
+	// ReapLeaseTTL is the heartbeat age at which a job's lease is stale: a
+	// node that has not proved a job alive for this long has lost it, and
+	// the reaper concludes the job on the next sweep. Running loops
+	// heartbeat at a third of this, and the reaper and stall detector sweep
+	// on the same cadence. Zero takes the default.
+	// Default: 90s
+	ReapLeaseTTL time.Duration `mapstructure:"reap_lease_ttl"`
+
+	// IdleThresholds bounds how long a job may sit in each state before the
+	// stall detector reports the wait, keyed by job state name (see
+	// OrchestrationWatchedJobStates). A state past its bound in a
+	// session-backed state with no addressable session is ended. Zero takes
+	// the engine default for that state; a NEGATIVE value stops watching
+	// the state. An unknown state name is refused.
+	IdleThresholds map[string]time.Duration `mapstructure:"idle_thresholds"`
+
+	// BackendConcurrency bounds how many jobs may run at once on each agent
+	// backend, by backend name.
+	//
+	// FOR A MODEL SERVER SEVERAL PROJECTS SHARE. A project quota bounds one
+	// project's work and the fleet quota bounds worker slots; neither can
+	// express "this GPU can serve two things at once", which is the only
+	// limit a locally hosted model has. It matters most for REVIEWS, which
+	// are off the project budget by construction so that a pull request never
+	// queues behind the work it unblocks — with the consequence that a
+	// project's every green, unjudged pull request is reviewed in the same
+	// pass. Measured on the burn-in fleet 2026-09-14: five such reviews
+	// landed on one 27B model at once, the GPU pinned at 99%, a two-second
+	// prompt took 115 seconds, and no review finished in 37 minutes.
+	//
+	// A backend that is absent, or mapped to zero or less, is unlimited — so
+	// a deployment that configures nothing behaves exactly as it did before.
+	//
+	// Example: qwen: 2
+	BackendConcurrency map[string]int `mapstructure:"backend_concurrency"`
+	// SweepInterval paces the task-source poller: how often every registered
+	// TaskSource is asked, per project with a DefaultWorkflow, whether it
+	// has new work. Re-polling is idempotent (the task store's guarded
+	// source index refuses a second adoption of one origin), so a shorter
+	// interval costs only source round-trips.
+	//
+	// Default: 30s. Zero means unset and takes the default
+	// (EffectiveSweepInterval); negative is refused.
+	SweepInterval time.Duration `mapstructure:"sweep_interval"`
+
+	// VerificationCommands is the operator allowlist of commands a
+	// workflow's command review criteria may run on the daemon host. A
+	// criterion's command is TENANT data run through the daemon's shell, so
+	// only a command spelled out HERE — the system plane, never
+	// tenant-writable — is accepted, matched exactly, and re-checked where
+	// it would execute.
+	//
+	// Default: the standard verification shapes (make test / make build /
+	// make lint / make security). An empty list configured explicitly
+	// refuses every command.
+	VerificationCommands []string `mapstructure:"verification_commands"`
+
+	// AgentConfigDir is the configuration directory every Claude Code
+	// session the engine spawns reads (CLAUDE_CONFIG_DIR). A directory the
+	// engine owns is a directory with no operator credential in it — the
+	// session's credential comes from the pooled account pool instead — so
+	// a worker's settings, and therefore its behaviour, are the engine's.
+	// When set it must be an absolute path. Empty leaves the backend's
+	// scrubbed environment as it is.
+	AgentConfigDir string `mapstructure:"agent_config_dir"`
+
+	// StageTimeouts bounds each lifecycle moment of a job individually. A
+	// job's context has no deadline of its own, so an unbounded hook that
+	// hangs would hold the job forever with nothing naming which moment was
+	// holding it. A zero field takes orchestration.DefaultStageTimeouts.
+	StageTimeouts OrchestrationStageTimeouts `mapstructure:"stage_timeouts"`
+
+	// Fleet bounds the whole deployment, across every tenant and project.
+	// See OrchestrationFleetConfig.
+	Fleet OrchestrationFleetConfig `mapstructure:"fleet"`
+}
+
+// OrchestrationFleetConfig is the deployment-wide bound on orchestrated work.
+//
+// IT IS THE INPUT PER-PROJECT QUOTAS CANNOT SUPPLY. Project.Quotas.MaxConcurrency
+// bounds one project; ten projects each permitted three concurrent jobs will run
+// thirty of them on a fleet with eight worker slots, and nothing below this
+// setting knows the fleet has eight. See pkg/orchestration/admission.go.
+type OrchestrationFleetConfig struct {
+	// MaxConcurrentJobs is how many orchestration jobs the whole deployment
+	// may run at once, counted against live job leases across every tenant.
+	//
+	// ZERO LEAVES THE FLEET AXIS UNDECLARED, and that is the shipped default
+	// rather than a guess. This tree cannot measure how many worker slots a
+	// deployment has — the number is a property of the CI hosts, the container
+	// runtime and the operator's intent — and a default that guessed low would
+	// refuse work the fleet would have served while looking like a safety
+	// bound. An operator who has counted their slots sets it here; see
+	// docs/software-factory/admission-and-readiness.md.
+	//
+	// Free slots are divided among the projects asking for them by max-min
+	// fairness, so raising this number never reduces any project's share and
+	// lowering it never starves one.
+	MaxConcurrentJobs int `mapstructure:"max_concurrent_jobs"`
+}
+
+// DefaultOrchestrationReapLeaseTTL is the lease TTL applied when
+// reap_lease_ttl is unset.
+const DefaultOrchestrationReapLeaseTTL = 90 * time.Second
+
+// OrchestrationWatchedJobStates lists the job state names an idle threshold
+// may be set on, for the early refusal in ValidateOrchestration.
+//
+// orchestration.WatchedJobStates IS THE AUTHORITY and derives this set from
+// the registered runners' JobStateSpecs (#621). This restatement survives
+// because pkg/config cannot read it: pkg/orchestration imports pkg/interfaces
+// which imports pkg/config, so the reverse edge is a production import cycle,
+// not merely a test one. Deriving here needs a seam that does not exist yet —
+// either the state vocabulary moves to a leaf package both import, or this
+// check moves to orchestration.JobIdleThresholdsFrom, which already refuses
+// an unknown name at wiring time.
+//
+// Until then the two are kept in step by
+// TestJobIdleThresholdsFrom_RefusesAnUnknownState in pkg/orchestration, which
+// compares this list against the derived one and fails the build on drift.
+var OrchestrationWatchedJobStates = []string{
+	"assigning", "cleanup", "completing", "decomposing", "escalating", "executing",
+	"initializing", "re-delegating", "reviewing", "scheduling", "validating",
+}
+
+// EffectiveReapLeaseTTL returns ReapLeaseTTL, or the default when unset.
+func (c OrchestrationConfig) EffectiveReapLeaseTTL() time.Duration {
+	if c.ReapLeaseTTL > 0 {
+		return c.ReapLeaseTTL
+	}
+	return DefaultOrchestrationReapLeaseTTL
+}
+
+// DefaultOrchestrationSweepInterval is the task-source poller cadence an
+// unset orchestration.sweep_interval takes.
+const DefaultOrchestrationSweepInterval = 30 * time.Second
+
+// EffectiveSweepInterval returns the configured sweep interval, or the
+// default when it is unset.
+func (c *OrchestrationConfig) EffectiveSweepInterval() time.Duration {
+	if c.SweepInterval <= 0 {
+		return DefaultOrchestrationSweepInterval
+	}
+	return c.SweepInterval
+}
+
+// OrchestrationStageTimeouts is the operator's per-moment bound on a job's
+// lifecycle hooks (see orchestration.JobLifecycleHooks).
+//
+// It mirrors orchestration.StageTimeouts field for field rather than reusing
+// that type, for the reason every other config struct in this file is its own
+// type: the configuration surface is a contract with the operator's YAML, and
+// binding it to an engine's internal struct would make a rename in the engine
+// a silent break in every deployed configuration file.
+//
+// A zero field means UNSET and takes the engine's defaults layer. Zero is not
+// read as "no bound": a bound of zero expires before its moment begins.
+type OrchestrationStageTimeouts struct {
+	// Prepare bounds the moment before any session spawns.
+	Prepare time.Duration `mapstructure:"prepare"`
+
+	// Reviewable bounds the moment the work is published for judgement.
+	Reviewable time.Duration `mapstructure:"reviewable"`
+
+	// Complete bounds the moment the accepted work is finalized.
+	Complete time.Duration `mapstructure:"complete"`
+
+	// Cleanup bounds the discard moment, which runs on a context detached
+	// from the job's own however the job ended.
+	Cleanup time.Duration `mapstructure:"cleanup"`
+
+	// Blocked bounds the moment the engine parks the task for a person.
+	Blocked time.Duration `mapstructure:"blocked"`
 }
 
 // OrchestrationSandboxConfig configures the sandbox mount policy for
@@ -971,6 +1475,110 @@ func (c OrchestrationConfig) EffectiveProjectsRoot(dataDir string) string {
 	}
 	return filepath.Join(dataDir, "projects")
 }
+
+// SocketsRootRuntimeDirName is the directory the derived sockets root takes
+// inside $XDG_RUNTIME_DIR. The runtime directory is per-user, tmpfs-backed
+// and 0700 already, which is exactly what an agent socket's parent must be.
+const SocketsRootRuntimeDirName = "quicbaas"
+
+// SocketsRootDataDirName is the directory the derived sockets root takes
+// under the data directory when there is no runtime directory. It is ONE
+// character because every byte of it is spent out of the socket's 107-byte
+// budget.
+const SocketsRootDataDirName = "s"
+
+// SocketsRootInstanceLen is the width of the per-daemon segment inside the
+// runtime directory: 12 lowercase hexadecimal characters.
+//
+// It is fixed so the worst-case socket path under a derived root is a
+// computation rather than a guess — the same reason the session directory a
+// signing agent mints is fixed-width — and it is truncated from a SHA-256
+// digest rather than taken whole because all 64 characters would spend the
+// socket budget the derivation exists to protect. 48 bits is collision
+// resistance against the handful of daemons one user runs, not against an
+// adversary: the segment names a directory in the user's own private,
+// 0700 runtime directory and authorises nothing.
+const SocketsRootInstanceLen = 12
+
+// SocketsRootInstanceSegment is the per-daemon directory name inside
+// $XDG_RUNTIME_DIR/quicbaas, derived from the absolute data directory.
+//
+// THE DATA DIRECTORY IS WHAT DISTINGUISHES TWO DAEMONS OF ONE USER. There is
+// no node identity to borrow — raft.node_id defaults to 1 for every
+// standalone daemon — and the data directory is the one setting two instances
+// on one host cannot share. Hashing rather than embedding it keeps the
+// segment fixed-width and free of separators; the digest is truncated, never
+// reversed, and the path it names is recomputed from the configuration on
+// every start rather than recorded anywhere.
+func SocketsRootInstanceSegment(dataDir string) string {
+	sum := sha256.Sum256([]byte(dataDir))
+	return hex.EncodeToString(sum[:])[:SocketsRootInstanceLen]
+}
+
+// EffectiveSocketsRoot returns SocketsRoot when set, deriving it otherwise:
+// "$XDG_RUNTIME_DIR/quicbaas/<instance>" when the runtime directory is named
+// in the environment, and "<dataDir>/s" when it is not. dataDir is the
+// top-level storage data directory (Storage.DataDir).
+//
+// The runtime directory is preferred because it is short, per-user and
+// already private, and because sockets are runtime state that must not
+// survive a reboot inside a data directory.
+//
+// IT IS PER-DAEMON, NOT PER-USER. $XDG_RUNTIME_DIR is a per-user directory,
+// so a root derived from it alone is reached by every quicbaasd the user
+// runs: two daemons with different data directories would bind their session
+// sockets under one root, and the startup sweep that removes the sessions a
+// killed daemon left would be walking a sibling's live ones
+// (go-quicbaas#687). The instance segment makes the roots disjoint, so each
+// daemon sweeps and binds only under its own. The data-directory derivation
+// needs no such segment: it is already inside the directory that
+// distinguishes the daemons, and adding one would spend budget for nothing.
+//
+// The identity is the ABSOLUTE data directory, so two daemons started from
+// different working directories with the same relative data_dir are still
+// distinguished. Resolving it is the only failure this has: a working
+// directory that cannot be read leaves the daemon with no identity to derive
+// from, and that is reported rather than collapsed onto a shared root.
+//
+// An empty data directory answers the empty root it always has — a daemon
+// that stores nothing on disk has nothing to be identified by, and the
+// caller's own refusal (sdlc.EnsureSigningSocketRoot) names the setting.
+func (c OrchestrationConfig) EffectiveSocketsRoot(dataDir string) (string, error) {
+	if c.SocketsRoot != "" {
+		return c.SocketsRoot, nil
+	}
+	if dataDir == "" {
+		return "", nil
+	}
+	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); filepath.IsAbs(runtimeDir) {
+		absolute, err := filepath.Abs(dataDir)
+		if err != nil {
+			return "", &SocketsRootIdentityError{DataDir: dataDir, Cause: err}
+		}
+		return filepath.Join(runtimeDir, SocketsRootRuntimeDirName,
+			SocketsRootInstanceSegment(filepath.Clean(absolute))), nil
+	}
+	return filepath.Join(dataDir, SocketsRootDataDirName), nil
+}
+
+// SocketsRootIdentityError reports that the daemon's own identity could not
+// be resolved, so no per-daemon sockets root could be derived for it.
+type SocketsRootIdentityError struct {
+	// DataDir is the configured storage.data_dir that could not be resolved.
+	DataDir string
+
+	// Cause is the resolution failure, which is a working directory that
+	// could not be read.
+	Cause error
+}
+
+func (e *SocketsRootIdentityError) Error() string {
+	return "config: orchestration.sockets_root: storage.data_dir " + strconv.Quote(e.DataDir) +
+		" could not be resolved to an absolute path, so no per-daemon sockets root could be derived: " +
+		e.Cause.Error()
+}
+
+func (e *SocketsRootIdentityError) Unwrap() error { return e.Cause }
 
 // SchedulerHostAffinityConfig controls operator policy for the host_affinity
 // hint applied to orchestrator and scheduler requests.
@@ -1163,6 +1771,19 @@ type ServerConfig struct {
 
 	Host              string `mapstructure:"host"`
 	ExposeShardHeader bool   `mapstructure:"expose_shard_header"`
+
+	// TrustedProxies lists CIDRs (or bare addresses) whose X-Forwarded-For and
+	// X-Real-IP headers are believed when attributing a request to a client.
+	//
+	// EMPTY MEANS TRUST NOTHING, and that is the default. Without it, any
+	// caller reaching the listener directly chooses its own rate-limit bucket
+	// and its own audit-record IP by setting a header (go-quicbaas#156). A
+	// deployment behind a load balancer names the balancer here; nothing is
+	// inferred from the request, because everything in the request is
+	// attacker-controlled.
+	//
+	// Example: ["10.0.0.0/8", "192.0.2.7"]
+	TrustedProxies []string `mapstructure:"trusted_proxies"`
 
 	// SealedBindHost is the listen host used by the sealed-window (pre-unseal
 	// ceremony / unseal) listeners on REST, gRPC, QUIC, and MCP. It is

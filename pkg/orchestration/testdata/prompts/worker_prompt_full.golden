@@ -1,0 +1,14 @@
+Execute the following task by using your tools to create and modify files.
+
+IMPORTANT: Do NOT just describe code in your response. Use the Write tool to create files, the Bash tool to run commands, and the Edit tool to modify existing files. Actually create the files on disk.
+
+Workspace directory: /workspace/proj-7
+All files MUST be written using absolute paths under this directory.
+
+Title: Add a health endpoint
+Description: Serve /healthz and return 200 when the store answers.
+Project: proj-7
+
+Create all necessary files using the Write tool. Run any setup commands using the Bash tool. Verify your work compiles/runs by using the Bash tool.
+
+Prefer the Bash tool for builds.

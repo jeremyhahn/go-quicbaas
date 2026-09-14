@@ -34,6 +34,8 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // AdminFactorPlanError reports an invalid --admin-factor selection.
@@ -174,13 +176,10 @@ func (s *Server) enrollAdminLoginFactors(
 		return nil
 	}
 
-	// Resolve the broker's external string user id to qrdb's uint64 id through
-	// the SAME canonical resolver the cert-login enrollment uses, so both
-	// factor kinds land on one identity rather than two.
-	if c == nil || c.qrdbUserIDs == nil {
-		return &AdminCertFactorUnavailableError{Component: "qrdb user id resolver"}
-	}
-	qrdbUserID, err := c.qrdbUserIDs.QRDBUserID(ctx, tenantID, userID)
+	// The user id IS qrdb's numeric id, rendered in decimal, so both factor
+	// kinds land on one identity by construction rather than by both consulting
+	// the same correlation table.
+	qrdbUserID, err := iam.ParseUserID(userID)
 	if err != nil {
 		return &AdminFactorEnrollError{Cause: err}
 	}

@@ -26,85 +26,16 @@ import (
 
 // =============================================================================
 // RBAC User Operations
+//
+// There are none. The QuicBaaS gRPC service still DECLARES CreateUser,
+// DeleteUser and ListUsers (api/proto/quicbaas.proto), but Server embeds
+// pb.UnimplementedQuicBaaSServer, so they now answer codes.Unimplemented
+// instead of routing to a service-layer auth manager production never wired —
+// which failed every call with "authentication manager not configured". Users
+// are qrdb's: administer them over quicbaas.iam.v1.IAMService (the same surface
+// REST serves at /api/v1/iam and the SDK exposes as Identity().IAM().User()).
+// See issue #905.
 // =============================================================================
-
-// CreateUser creates a new user with initial roles.
-func (s *Server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.CreateUserResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is nil")
-	}
-	if req.GetUsername() == "" {
-		return nil, status.Error(codes.InvalidArgument, "username is required")
-	}
-
-	serviceReq := &service.AuthCreateUserRequest{
-		Username: req.GetUsername(),
-		Roles:    req.GetRoles(),
-	}
-
-	serviceResp, err := s.service.CreateUser(ctx, serviceReq)
-	if err != nil {
-		return nil, toProtoError(err)
-	}
-
-	return &pb.CreateUserResponse{
-		UserId:   serviceResp.UserID,
-		Username: req.GetUsername(),
-		Created:  serviceResp.Timestamp,
-	}, nil
-}
-
-// DeleteUser removes a user from the system.
-func (s *Server) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*pb.DeleteUserResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is nil")
-	}
-	if req.GetUserId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "user_id is required")
-	}
-
-	serviceReq := &service.AuthDeleteUserRequest{
-		Username: req.GetUserId(),
-	}
-
-	serviceResp, err := s.service.DeleteUser(ctx, serviceReq)
-	if err != nil {
-		return nil, toProtoError(err)
-	}
-
-	return &pb.DeleteUserResponse{
-		Success: serviceResp.Success,
-	}, nil
-}
-
-// ListUsers returns all users in the system.
-func (s *Server) ListUsers(ctx context.Context, req *pb.ListUsersRequest) (*pb.ListUsersResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is nil")
-	}
-
-	serviceReq := &service.AuthListUsersRequest{}
-
-	serviceResp, err := s.service.ListUsers(ctx, serviceReq)
-	if err != nil {
-		return nil, toProtoError(err)
-	}
-
-	pbUsers := make([]*pb.UserInfo, 0, len(serviceResp.Users))
-	for _, u := range serviceResp.Users {
-		pbUsers = append(pbUsers, &pb.UserInfo{
-			UserId:   u.UserID,
-			Username: u.Username,
-			Roles:    u.Roles,
-			Created:  u.CreatedAt,
-			LastAuth: u.LastLoginAt,
-		})
-	}
-
-	return &pb.ListUsersResponse{
-		Users: pbUsers,
-	}, nil
-}
 
 // =============================================================================
 // RBAC Role Operations

@@ -306,6 +306,9 @@ func (s *BackendFederationStorage) GetLinksByUser(ctx context.Context, userID st
 		_, fullID := decodeTenantID(id)
 		l, err := s.getRouted(ctx, fullID)
 		if err != nil {
+			// coded-sentinel-ok: the CLASS is the intent. An index entry whose
+			// record the store cannot produce is skipped however it went
+			// missing; the listing is of the links that exist.
 			if errors.Is(err, ErrLinkNotFound) {
 				continue
 			}

@@ -311,10 +311,10 @@ func TestRunEmbeddingGenerateCommand_Success(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		embeddingProvider = ""
 		embeddingMetadata = ""
 		embeddingInputType = ""
@@ -323,7 +323,7 @@ func TestRunEmbeddingGenerateCommand_Success(t *testing.T) {
 		embeddingCacheBypass = false
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingGenerateCommand(cmd, []string{"Hello, world!"})
@@ -392,15 +392,15 @@ func TestRunEmbeddingBatchCommand_Success(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		embeddingProvider = ""
 		embeddingCacheBypass = false
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingBatchCommand(cmd, []string{`["text1", "text2", "text3"]`})
@@ -422,13 +422,13 @@ func TestRunEmbeddingBatchCommand_BatchItems(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingBatchCommand(cmd, []string{`[{"id":"doc1","text":"Hello"},{"id":"doc2","text":"World"}]`})
@@ -480,14 +480,14 @@ func TestRunEmbeddingProvidersCommand_Success(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		embeddingIncludeUnavailable = false
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingProvidersCommand(cmd, []string{})
@@ -524,13 +524,13 @@ func TestRunEmbeddingProviderInfoCommand_Success(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingProviderInfoCommand(cmd, []string{"voyage"})
@@ -567,13 +567,13 @@ func TestRunEmbeddingProviderSetDefaultCommand_Success(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingProviderSetDefaultCommand(cmd, []string{"openai"})
@@ -610,13 +610,13 @@ func TestRunEmbeddingCacheStatsCommand_Success(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingCacheStatsCommand(cmd, []string{})
@@ -653,14 +653,14 @@ func TestRunEmbeddingCacheClearCommand_Success(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		embeddingProvider = ""
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingCacheClearCommand(cmd, []string{})
@@ -682,14 +682,14 @@ func TestRunEmbeddingCacheClearCommand_WithProvider(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		embeddingProvider = ""
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 	embeddingProvider = "voyage"
 
 	cmd := &cobra.Command{}
@@ -1238,11 +1238,11 @@ func TestRunEmbeddingGenerateCommand_ServiceError(t *testing.T) {
 	}
 
 	// Reset globals
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingGenerateCommand(cmd, []string{"test text"})
@@ -1268,11 +1268,11 @@ func TestRunEmbeddingBatchCommand_ServiceError(t *testing.T) {
 	}
 
 	// Reset globals
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingBatchCommand(cmd, []string{`["text1", "text2"]`})
@@ -1298,11 +1298,11 @@ func TestRunEmbeddingProvidersCommand_ServiceError(t *testing.T) {
 	}
 
 	// Reset globals
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingProvidersCommand(cmd, []string{})
@@ -1328,11 +1328,11 @@ func TestRunEmbeddingProviderInfoCommand_ServiceError(t *testing.T) {
 	}
 
 	// Reset globals
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingProviderInfoCommand(cmd, []string{"unknown"})
@@ -1358,11 +1358,11 @@ func TestRunEmbeddingProviderSetDefaultCommand_ServiceError(t *testing.T) {
 	}
 
 	// Reset globals
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingProviderSetDefaultCommand(cmd, []string{"unknown"})
@@ -1388,11 +1388,11 @@ func TestRunEmbeddingCacheStatsCommand_ServiceError(t *testing.T) {
 	}
 
 	// Reset globals
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingCacheStatsCommand(cmd, []string{})
@@ -1418,11 +1418,11 @@ func TestRunEmbeddingCacheClearCommand_ServiceError(t *testing.T) {
 	}
 
 	// Reset globals
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingCacheClearCommand(cmd, []string{})
@@ -1486,14 +1486,14 @@ func TestRunEmbeddingGenerateCommand_WithMetadata(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		embeddingMetadata = ""
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 	embeddingMetadata = `{"doc_id":"123","type":"article"}`
 
 	cmd := &cobra.Command{}

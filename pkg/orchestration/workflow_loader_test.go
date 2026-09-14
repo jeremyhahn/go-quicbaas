@@ -14,6 +14,7 @@
 package orchestration
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -180,7 +181,7 @@ settings:
 	require.NoError(t, err)
 
 	loader := NewWorkflowLoader()
-	def, err := loader.LoadFromFile(path)
+	def, err := loader.LoadFromFile(SystemTenantID, path)
 	require.NoError(t, err)
 
 	// Verify all fields parsed correctly.
@@ -215,7 +216,7 @@ settings:
 	assert.True(t, def.Settings.ReviewCriteria[0].Required)
 
 	// Verify it was stored in the loader.
-	got, err := loader.Get("test-workflow")
+	got, err := loader.Get(SystemTenantID, "test-workflow")
 	require.NoError(t, err)
 	assert.Equal(t, def, got)
 }
@@ -228,14 +229,14 @@ func TestWorkflowLoader_LoadFromFile_InvalidYAML(t *testing.T) {
 	require.NoError(t, err)
 
 	loader := NewWorkflowLoader()
-	_, err = loader.LoadFromFile(path)
+	_, err = loader.LoadFromFile(SystemTenantID, path)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrWorkflowParse))
 }
 
 func TestWorkflowLoader_LoadFromFile_MissingFile(t *testing.T) {
 	loader := NewWorkflowLoader()
-	_, err := loader.LoadFromFile("/nonexistent/path/workflow.yaml")
+	_, err := loader.LoadFromFile(SystemTenantID, "/nonexistent/path/workflow.yaml")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrWorkflowLoad))
 }
@@ -254,7 +255,7 @@ agents:
 	require.NoError(t, err)
 
 	loader := NewWorkflowLoader()
-	_, err = loader.LoadFromFile(path)
+	_, err = loader.LoadFromFile(SystemTenantID, path)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrWorkflowValidation))
 }
@@ -294,16 +295,16 @@ agents:
 	require.NoError(t, err)
 
 	loader := NewWorkflowLoader()
-	err = loader.LoadFromDir(dir)
+	err = loader.LoadFromDir(SystemTenantID, dir)
 	require.NoError(t, err)
 
-	names := loader.List()
+	names := loader.List(SystemTenantID)
 	assert.Equal(t, []string{"alpha", "bravo"}, names)
 }
 
 func TestWorkflowLoader_LoadFromDir_NonexistentDir(t *testing.T) {
 	loader := NewWorkflowLoader()
-	err := loader.LoadFromDir("/nonexistent/directory")
+	err := loader.LoadFromDir(SystemTenantID, "/nonexistent/directory")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrWorkflowLoad))
 }
@@ -325,7 +326,7 @@ agents:
 	require.NoError(t, err)
 
 	loader := NewWorkflowLoader()
-	err = loader.LoadFromDir(dir)
+	err = loader.LoadFromDir(SystemTenantID, dir)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrWorkflowParse))
 }
@@ -349,10 +350,10 @@ func TestWorkflowLoader_Register_Get_RoundTrip(t *testing.T) {
 		},
 	}
 
-	err := loader.Register(def)
+	err := loader.Register(SystemTenantID, def)
 	require.NoError(t, err)
 
-	got, err := loader.Get("my-workflow")
+	got, err := loader.Get(SystemTenantID, "my-workflow")
 	require.NoError(t, err)
 	assert.Equal(t, def, got)
 }
@@ -368,10 +369,10 @@ func TestWorkflowLoader_Register_DuplicateName(t *testing.T) {
 		},
 	}
 
-	err := loader.Register(def)
+	err := loader.Register(SystemTenantID, def)
 	require.NoError(t, err)
 
-	err = loader.Register(def)
+	err = loader.Register(SystemTenantID, def)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrWorkflowAlreadyExists))
 }
@@ -387,7 +388,7 @@ func TestWorkflowLoader_Register_InvalidDefinition(t *testing.T) {
 		},
 	}
 
-	err := loader.Register(def)
+	err := loader.Register(SystemTenantID, def)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrWorkflowValidation))
 }
@@ -399,7 +400,7 @@ func TestWorkflowLoader_Register_InvalidDefinition(t *testing.T) {
 func TestWorkflowLoader_Get_NotFound(t *testing.T) {
 	loader := NewWorkflowLoader()
 
-	_, err := loader.Get("nonexistent")
+	_, err := loader.Get(SystemTenantID, "nonexistent")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrWorkflowNotFound))
 
@@ -414,7 +415,7 @@ func TestWorkflowLoader_Get_NotFound(t *testing.T) {
 
 func TestWorkflowLoader_List_Empty(t *testing.T) {
 	loader := NewWorkflowLoader()
-	names := loader.List()
+	names := loader.List(SystemTenantID)
 	assert.Empty(t, names)
 }
 
@@ -428,11 +429,11 @@ func TestWorkflowLoader_List_SortedAlphabetically(t *testing.T) {
 	}
 
 	for _, def := range defs {
-		err := loader.Register(def)
+		err := loader.Register(SystemTenantID, def)
 		require.NoError(t, err)
 	}
 
-	names := loader.List()
+	names := loader.List(SystemTenantID)
 	assert.Equal(t, []string{"alpha", "middle", "zebra"}, names)
 }
 
@@ -446,11 +447,11 @@ func TestWorkflowLoader_ListDefinitions_SortedByName(t *testing.T) {
 	}
 
 	for _, def := range defs {
-		err := loader.Register(def)
+		err := loader.Register(SystemTenantID, def)
 		require.NoError(t, err)
 	}
 
-	result := loader.ListDefinitions()
+	result := loader.ListDefinitions(SystemTenantID)
 	require.Len(t, result, 3)
 	assert.Equal(t, "alpha", result[0].Name)
 	assert.Equal(t, "middle", result[1].Name)
@@ -461,7 +462,7 @@ func TestWorkflowLoader_ListDefinitions_SortedByName(t *testing.T) {
 
 func TestWorkflowLoader_ListDefinitions_Empty(t *testing.T) {
 	loader := NewWorkflowLoader()
-	result := loader.ListDefinitions()
+	result := loader.ListDefinitions(SystemTenantID)
 	assert.Empty(t, result)
 }
 
@@ -558,13 +559,13 @@ settings:
 	require.NoError(t, err)
 
 	loader := NewWorkflowLoader()
-	err = loader.LoadFromDir(tmpDir)
+	err = loader.LoadFromDir(SystemTenantID, tmpDir)
 	require.NoError(t, err)
 
-	names := loader.List()
+	names := loader.List(SystemTenantID)
 	assert.Contains(t, names, "test-workflow")
 
-	wf, err := loader.Get("test-workflow")
+	wf, err := loader.Get(SystemTenantID, "test-workflow")
 	require.NoError(t, err)
 	assert.Equal(t, WorkflowModeConstrained, wf.Mode)
 	assert.Len(t, wf.Agents, 2)
@@ -576,9 +577,9 @@ settings:
 func TestWorkflowLoader_LoadFromDir_EmptyDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	loader := NewWorkflowLoader()
-	err := loader.LoadFromDir(tmpDir)
+	err := loader.LoadFromDir(SystemTenantID, tmpDir)
 	require.NoError(t, err)
-	assert.Empty(t, loader.List())
+	assert.Empty(t, loader.List(SystemTenantID))
 }
 
 // findProjectRoot locates the repository root by looking for go.mod.
@@ -597,4 +598,171 @@ func findProjectRoot(t *testing.T) string {
 		}
 		dir = parent
 	}
+}
+
+// =============================================================================
+// Tenant scoping
+// =============================================================================
+
+// TestWorkflowLoader_TenantsDoNotCollide is the isolation proof: two tenants
+// register the same workflow name, each sees only its own definition, and
+// deleting one leaves the other in place.
+func TestWorkflowLoader_TenantsDoNotCollide(t *testing.T) {
+	loader := NewWorkflowLoader()
+
+	alpha := newValidWorkflowDef("shared")
+	alpha.Description = "alpha's"
+	beta := newValidWorkflowDef("shared")
+	beta.Description = "beta's"
+
+	require.NoError(t, loader.Register("alpha", alpha))
+	require.NoError(t, loader.Register("beta", beta))
+
+	gotAlpha, err := loader.Get("alpha", "shared")
+	require.NoError(t, err)
+	assert.Equal(t, "alpha's", gotAlpha.Description)
+	assert.Equal(t, "alpha", gotAlpha.TenantID, "the loader stamps the owning tenant")
+
+	gotBeta, err := loader.Get("beta", "shared")
+	require.NoError(t, err)
+	assert.Equal(t, "beta's", gotBeta.Description)
+	assert.Equal(t, "beta", gotBeta.TenantID)
+
+	assert.Equal(t, []string{"shared"}, loader.List("alpha"))
+	assert.Equal(t, []string{"shared"}, loader.List("beta"))
+	assert.Empty(t, loader.List("gamma"), "a tenant with no workflows sees none of the others'")
+
+	require.NoError(t, loader.Delete("alpha", "shared"))
+	_, err = loader.Get("alpha", "shared")
+	assert.True(t, errors.Is(err, ErrWorkflowNotFound))
+	_, err = loader.Get("beta", "shared")
+	require.NoError(t, err, "deleting alpha's workflow must not touch beta's")
+
+	// Update is tenant-scoped too: beta's definition cannot be updated
+	// through alpha.
+	assert.True(t, errors.Is(loader.Update("alpha", beta), ErrWorkflowNotFound))
+}
+
+// TestWorkflowLoader_EmptyTenantIsRefused: every record key begins with its
+// owning tenant, so an empty tenant would collapse the keyspace.
+func TestWorkflowLoader_EmptyTenantIsRefused(t *testing.T) {
+	loader := NewWorkflowLoader()
+	def := newValidWorkflowDef("wf")
+
+	assert.True(t, errors.Is(loader.Register("", def), ErrWorkflowValidation))
+	assert.True(t, errors.Is(loader.Update("", def), ErrWorkflowValidation))
+	assert.True(t, errors.Is(loader.Delete("", "wf"), ErrWorkflowValidation))
+	_, err := loader.Get(" ", "wf")
+	assert.True(t, errors.Is(err, ErrWorkflowValidation))
+	_, err = loader.LoadFromFile("", "/nonexistent.yaml")
+	assert.True(t, errors.Is(err, ErrWorkflowValidation))
+	assert.True(t, errors.Is(loader.LoadFromDir("", t.TempDir()), ErrWorkflowValidation))
+	_, err = loader.Rehydrate(context.Background(), "")
+	assert.True(t, errors.Is(err, ErrWorkflowValidation))
+
+	var verr *WorkflowValidationError
+	require.True(t, errors.As(loader.Register("", def), &verr))
+	assert.Equal(t, "tenant_id", verr.Field)
+}
+
+// TestWorkflowLoader_NotFoundNamesTheTenant pins the error shape a transport
+// renders.
+func TestWorkflowLoader_NotFoundNamesTheTenant(t *testing.T) {
+	loader := NewWorkflowLoader()
+	_, err := loader.Get("acme", "ghost")
+	var nf *WorkflowNotFoundError
+	require.True(t, errors.As(err, &nf))
+	assert.Equal(t, "acme", nf.TenantID)
+	assert.Equal(t, "ghost", nf.Name)
+	assert.Contains(t, err.Error(), "acme")
+
+	require.NoError(t, loader.Register("acme", newValidWorkflowDef("dup")))
+	err = loader.Register("acme", newValidWorkflowDef("dup"))
+	var exists *WorkflowAlreadyExistsError
+	require.True(t, errors.As(err, &exists))
+	assert.Equal(t, "acme", exists.TenantID)
+	assert.Contains(t, err.Error(), "acme")
+}
+
+// TestWorkflowLoader_RehydrateIsPerTenant: rehydrating one tenant replaces
+// only that tenant's cache; RehydrateAll files every stored definition under
+// its own tenant.
+func TestWorkflowLoader_RehydrateIsPerTenant(t *testing.T) {
+	ctx := context.Background()
+	persistor := newMemWorkflowPersistor()
+	loader := NewWorkflowLoader()
+	loader.SetPersistor(persistor)
+
+	require.NoError(t, loader.Register("alpha", newValidWorkflowDef("a1")))
+	require.NoError(t, loader.Register("beta", newValidWorkflowDef("b1")))
+
+	// Something only in memory for beta, and something only in the
+	// persistor for alpha.
+	loader.store("beta", newValidWorkflowDef("b-memory-only"))
+	stored := newValidWorkflowDef("a-stored-only")
+	stored.TenantID = "alpha"
+	persistor.saved["a-stored-only"] = stored
+
+	n, err := loader.Rehydrate(ctx, "alpha")
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	assert.Equal(t, []string{"a-stored-only", "a1"}, loader.List("alpha"))
+	assert.Equal(t, []string{"b-memory-only", "b1"}, loader.List("beta"), "rehydrating alpha must not touch beta's cache")
+
+	n, err = loader.RehydrateAll(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 3, n)
+	assert.Equal(t, []string{"a-stored-only", "a1"}, loader.List("alpha"))
+	assert.Equal(t, []string{"b1"}, loader.List("beta"), "RehydrateAll replaces every tenant's cache with storage")
+}
+
+// TestWorkflowLoader_RehydrateAll_SkipsUnaddressableEntries: a stored entry
+// with no tenant or no name cannot be filed and must not abort the boot.
+func TestWorkflowLoader_RehydrateAll_SkipsUnaddressableEntries(t *testing.T) {
+	persistor := newMemWorkflowPersistor()
+	good := newValidWorkflowDef("good")
+	good.TenantID = "acme"
+	persistor.saved["good"] = good
+	persistor.saved["no-tenant"] = newValidWorkflowDef("no-tenant")
+	persistor.saved["no-name"] = &WorkflowDefinition{TenantID: "acme"}
+
+	loader := NewWorkflowLoader()
+	loader.SetPersistor(persistor)
+	n, err := loader.RehydrateAll(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 3, n, "the raw count is reported")
+	assert.Equal(t, []string{"good"}, loader.List("acme"))
+}
+
+// TestWorkflowLoader_RehydrateAll_NoPersistorOrError covers the boundaries.
+func TestWorkflowLoader_RehydrateAll_NoPersistorOrError(t *testing.T) {
+	loader := NewWorkflowLoader()
+	n, err := loader.RehydrateAll(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+
+	persistor := newMemWorkflowPersistor()
+	persistor.loadErr = errors.New("load failed")
+	loader.SetPersistor(persistor)
+	_, err = loader.RehydrateAll(context.Background())
+	assert.True(t, errors.Is(err, persistor.loadErr))
+}
+
+// TestWorkflowLoader_LoadFromFile_FilesUnderTheTenant: a YAML file carries no
+// tenant; the caller's tenant owns what it loads.
+func TestWorkflowLoader_LoadFromFile_FilesUnderTheTenant(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wf.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("name: filed\nmode: autonomous\nagents:\n  - role: lead\n    backend: mock\n"), 0o600))
+
+	loader := NewWorkflowLoader()
+	def, err := loader.LoadFromFile("acme", path)
+	require.NoError(t, err)
+	assert.Equal(t, "acme", def.TenantID)
+
+	_, err = loader.Get("other", "filed")
+	assert.True(t, errors.Is(err, ErrWorkflowNotFound))
+	got, err := loader.Get("acme", "filed")
+	require.NoError(t, err)
+	assert.Same(t, def, got)
 }

@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -424,13 +425,23 @@ func convertAccountError(err error) error {
 	var notFound *service.AccountNotFoundError
 	var invalid *service.AccountInvalidError
 	var noTracker *service.AccountUsageTrackerNotConfiguredError
+	var notReleasable *service.AccountNotReleasableError
+	var projectScope *service.AccountProjectScopeError
+	var noTokens *service.AccountTokenManagerNotConfiguredError
 
 	switch {
 	case stderrors.As(err, &notFound):
 		return status.Error(codes.NotFound, err.Error())
 	case stderrors.As(err, &invalid):
 		return status.Error(codes.InvalidArgument, err.Error())
-	case stderrors.As(err, &noTracker):
+	case stderrors.As(err, &notReleasable):
+		// FailedPrecondition, not PermissionDenied: the caller is entitled to
+		// this account and the account exists — it is the account's STATE that
+		// refuses, and for a limit hold that state clears on its own.
+		return status.Error(codes.FailedPrecondition, err.Error())
+	case stderrors.As(err, &projectScope):
+		return status.Error(codes.PermissionDenied, err.Error())
+	case stderrors.As(err, &noTracker), stderrors.As(err, &noTokens):
 		return status.Error(codes.Unavailable, err.Error())
 	default:
 		return status.Error(codes.Internal, err.Error())
@@ -439,3 +450,101 @@ func convertAccountError(err error) error {
 
 // Compile-time interface satisfaction check.
 var _ pb.AccountServiceServer = (*AccountServer)(nil)
+
+// =============================================================================
+// Credential materialization
+//
+// THE ONE RPC ON THIS SERVICE WHOSE RESPONSE CARRIES SECRET MATERIAL. The
+// invariant stated at the top of this file still holds for every other method;
+// this one is the deliberate, separately-permissioned exception that lets a
+// pooled credential reach the worker host running the agent
+// (go-quicbaas#734).
+// =============================================================================
+
+// MaterializeAccountCredential handles the MaterializeAccountCredential RPC.
+//
+// Tenancy is the CALLER'S OWN: the tenant is read off the authenticated
+// principal, never off the request, and a tenant_id naming anything else is
+// refused. That is what makes the release tenant-scoped in a deployment where
+// the caller is a daemon holding one narrow grant rather than an operator.
+func (s *AccountServer) MaterializeAccountCredential(
+	ctx context.Context,
+	req *pb.MaterializeAccountCredentialRequest,
+) (*pb.MaterializeAccountCredentialResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	if req.AccountId == "" {
+		return nil, status.Error(codes.InvalidArgument, "account_id is required")
+	}
+	s.logger.WithField("account_id", req.AccountId).Debug("Processing MaterializeAccountCredential request")
+
+	subject, ok := auth.SubjectFromContext(ctx)
+	if !ok || !subject.Authenticated || subject.ID == "" {
+		return nil, status.Error(codes.Unauthenticated, "caller is not authenticated")
+	}
+	if subject.TenantID == "" {
+		return nil, status.Error(codes.InvalidArgument, "tenant_id is required: the caller carries no tenant binding")
+	}
+	if req.TenantId != "" && req.TenantId != subject.TenantID {
+		return nil, status.Error(codes.PermissionDenied, "tenant_id must be the caller's own tenant")
+	}
+
+	resp, err := s.accountSvc.MaterializeAccountCredential(ctx, &service.MaterializeAccountCredentialRequest{
+		TenantID:  subject.TenantID,
+		AccountID: req.AccountId,
+		ProjectID: req.ProjectId,
+		JobID:     req.JobId,
+		LeaseID:   req.LeaseId,
+		AgentID:   subject.ID,
+	})
+	if err != nil {
+		return nil, convertAccountError(err)
+	}
+
+	return &pb.MaterializeAccountCredentialResponse{
+		AccountId:           resp.AccountID,
+		Provider:            string(resp.Provider),
+		DisplayName:         resp.DisplayName,
+		ProjectId:           resp.ProjectID,
+		RefreshPolicy:       string(resp.RefreshPolicy),
+		Credential:          materializedCredentialToProto(resp.Credential),
+		ExpiresAtUnix:       unixOrZero(resp.ExpiresAt),
+		UpdatedAtUnix:       unixOrZero(resp.UpdatedAt),
+		LastRefreshedAtUnix: unixOrZero(resp.LastRefreshedAt),
+		LeaseId:             resp.LeaseID,
+		LeaseExpiresAtUnix:  unixOrZero(resp.LeaseExpiresAt),
+		Timestamp:           resp.Timestamp.Unix(),
+	}, nil
+}
+
+// materializedCredentialToProto projects a released envelope onto the wire.
+//
+// The refresh grant (refresh_token / token_endpoint / client_id) is
+// DELIBERATELY ABSENT from the proto message this builds — renewal already
+// happened on the central, and a recipient that must not refresh must not
+// receive the means to.
+func materializedCredentialToProto(c *orchestration.AccountCredential) *pb.MaterializedAccountCredential {
+	if c == nil {
+		return nil
+	}
+	out := &pb.MaterializedAccountCredential{
+		AccessToken:       c.AccessToken,
+		ExpiresAtUnix:     unixOrZero(c.ExpiresAt),
+		Scopes:            c.Scopes,
+		AccessTokenEnvKey: c.AccessTokenEnvKey,
+	}
+	if len(c.Env) > 0 {
+		out.Env = make(map[string]string, len(c.Env))
+		for k, v := range c.Env {
+			out.Env[k] = v
+		}
+	}
+	if len(c.Files) > 0 {
+		out.Files = make(map[string][]byte, len(c.Files))
+		for k, v := range c.Files {
+			out.Files[k] = v
+		}
+	}
+	return out
+}

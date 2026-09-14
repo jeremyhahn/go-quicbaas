@@ -32,8 +32,10 @@ import (
 // attach a callback via setSessionHistoryFn / setSubscribeSessionEventsFn
 // and it is invoked from the method implementations below.
 type mockSessionOverrides struct {
-	history   func(ctx context.Context, req *orchestratorSDK.GetSessionHistoryRequest) (*orchestratorSDK.GetSessionHistoryResponse, error)
-	subscribe func(ctx context.Context, req *orchestratorSDK.SubscribeSessionEventsRequest) (<-chan *orchestratorSDK.SessionEventEnvelope, error)
+	history      func(ctx context.Context, req *orchestratorSDK.GetSessionHistoryRequest) (*orchestratorSDK.GetSessionHistoryResponse, error)
+	conversation func(ctx context.Context, req *orchestratorSDK.GetSessionConversationRequest) (*orchestratorSDK.GetSessionConversationResponse, error)
+	subscribe    func(ctx context.Context, req *orchestratorSDK.SubscribeSessionEventsRequest) (<-chan *orchestratorSDK.SessionEventEnvelope, error)
+	spend        func(ctx context.Context, req *orchestratorSDK.GetSpendReportRequest) (*orchestratorSDK.GetSpendReportResponse, error)
 }
 
 var mockSessionOverrideRegistry = map[*mockOrchestratorClient]*mockSessionOverrides{}
@@ -46,6 +48,26 @@ func setSessionHistoryFn(m *mockOrchestratorClient, fn func(ctx context.Context,
 		mockSessionOverrideRegistry[m] = o
 	}
 	o.history = fn
+}
+
+// setSessionConversationFn installs a conversation override for the given mock.
+func setSessionConversationFn(m *mockOrchestratorClient, fn func(ctx context.Context, req *orchestratorSDK.GetSessionConversationRequest) (*orchestratorSDK.GetSessionConversationResponse, error)) {
+	o, ok := mockSessionOverrideRegistry[m]
+	if !ok {
+		o = &mockSessionOverrides{}
+		mockSessionOverrideRegistry[m] = o
+	}
+	o.conversation = fn
+}
+
+// setSpendReportFn installs a spend-report override for the given mock.
+func setSpendReportFn(m *mockOrchestratorClient, fn func(ctx context.Context, req *orchestratorSDK.GetSpendReportRequest) (*orchestratorSDK.GetSpendReportResponse, error)) {
+	o, ok := mockSessionOverrideRegistry[m]
+	if !ok {
+		o = &mockSessionOverrides{}
+		mockSessionOverrideRegistry[m] = o
+	}
+	o.spend = fn
 }
 
 // setSubscribeSessionEventsFn installs a subscribe override for the given mock.
@@ -73,6 +95,30 @@ func (m *mockOrchestratorClient) GetSessionHistory(ctx context.Context, req *orc
 	return &orchestratorSDK.GetSessionHistoryResponse{
 		Events:  []*orchestratorSDK.SessionEventEnvelope{},
 		NextSeq: 0,
+	}, nil
+}
+
+// GetSessionConversation satisfies orchestratorSDK.Client. Returns an empty
+// page by default; tests install overrides via setSessionConversationFn.
+func (m *mockOrchestratorClient) GetSessionConversation(ctx context.Context, req *orchestratorSDK.GetSessionConversationRequest) (*orchestratorSDK.GetSessionConversationResponse, error) {
+	if o, ok := mockSessionOverrideRegistry[m]; ok && o.conversation != nil {
+		return o.conversation(ctx, req)
+	}
+	return &orchestratorSDK.GetSessionConversationResponse{
+		SessionID: req.SessionID,
+		Turns:     []*orchestratorSDK.SessionTurn{},
+	}, nil
+}
+
+// GetSpendReport satisfies orchestratorSDK.Client. Returns an empty tenant
+// report by default; tests install overrides via setSpendReportFn.
+func (m *mockOrchestratorClient) GetSpendReport(ctx context.Context, req *orchestratorSDK.GetSpendReportRequest) (*orchestratorSDK.GetSpendReportResponse, error) {
+	if o, ok := mockSessionOverrideRegistry[m]; ok && o.spend != nil {
+		return o.spend(ctx, req)
+	}
+	return &orchestratorSDK.GetSpendReportResponse{
+		Level:    orchestratorSDK.SpendLevelTenant,
+		TenantID: req.TenantID,
 	}, nil
 }
 

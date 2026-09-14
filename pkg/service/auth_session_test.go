@@ -43,6 +43,16 @@ import (
 // OIDC provider, plus the provider itself so tests can mint tokens directly.
 func newSessionAuthService(t *testing.T) (*authService, *iam.OIDCProvider) {
 	t.Helper()
+	svc, provider, _ := newSessionAuthServiceWithUsers(t)
+	return svc, provider
+}
+
+// newSessionAuthServiceWithUsers is newSessionAuthService with the user store
+// exposed. Session issuance joins the IAM user record for the principal's
+// roles and refuses a subject it cannot resolve (go-quicbaas #274), so a test
+// that mints a bearer must seed one.
+func newSessionAuthServiceWithUsers(t *testing.T) (*authService, *iam.OIDCProvider, *iam.MemoryStorage) {
+	t.Helper()
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -73,18 +83,19 @@ func newSessionAuthService(t *testing.T) (*authService, *iam.OIDCProvider) {
 		logger:      createTestLogger(t),
 		iamProvider: &iamServiceAdapter{components: &mockIAMComponents{oidcProvider: provider}},
 	}
-	return &authService{svc: svc}, provider
+	return &authService{svc: svc}, provider, storage
 }
 
-// issueSession mints an access token plus its refresh credential.
+// issueSession mints an access token plus its refresh credential for a seeded
+// principal. It returns the store so callers can build one; seedSessionUser
+// must have run for the subject first.
 func issueSession(t *testing.T, provider *iam.OIDCProvider) (accessToken, refreshToken string) {
 	t.Helper()
 	ctx := context.Background()
 
 	accessToken, _, err := provider.IssueSessionToken(ctx, iam.SessionIdentity{
-		Subject:     "user-1",
-		TenantID:    "acme",
-		Roles:       []string{"admin"},
+		Subject:     sessionSubject,
+		TenantID:    sessionTenant,
 		AuthMethod:  "fido2",
 		MFAVerified: true,
 	})
@@ -96,12 +107,34 @@ func issueSession(t *testing.T, provider *iam.OIDCProvider) (accessToken, refres
 	return accessToken, refreshToken
 }
 
+const (
+	sessionTenant  = "acme"
+	sessionSubject = "user-1"
+)
+
+// seedSessionUser writes the IAM user record the session subject resolves to.
+// The ceremony's subject is the tenant-scoped qrdb username, which the broker
+// mirrors as User.Name.
+func seedSessionUser(t *testing.T, storage *iam.MemoryStorage) {
+	t.Helper()
+	require.NoError(t, storage.CreateUser(context.Background(), &iam.User{
+		ID:        "2",
+		TenantID:  sessionTenant,
+		Username:  sessionSubject,
+		Name:      sessionSubject,
+		Email:     "user-1@example.test",
+		Roles:     []string{"admin"},
+		Lifecycle: iam.LifecycleActive,
+	}))
+}
+
 // =============================================================================
 // RefreshToken
 // =============================================================================
 
 func TestAuthService_RefreshTokenRenewsSession(t *testing.T) {
-	svc, provider := newSessionAuthService(t)
+	svc, provider, users := newSessionAuthServiceWithUsers(t)
+	seedSessionUser(t, users)
 	_, refreshToken := issueSession(t, provider)
 
 	resp, err := svc.RefreshToken(context.Background(), &RefreshTokenRequest{
@@ -128,7 +161,8 @@ func TestAuthService_RefreshTokenRenewsSession(t *testing.T) {
 }
 
 func TestAuthService_RefreshTokenRejectsBadInput(t *testing.T) {
-	svc, provider := newSessionAuthService(t)
+	svc, provider, users := newSessionAuthServiceWithUsers(t)
+	seedSessionUser(t, users)
 
 	t.Run("nil request", func(t *testing.T) {
 		_, err := svc.RefreshToken(context.Background(), nil)
@@ -181,7 +215,8 @@ func TestAuthService_RefreshTokenWithoutProvider(t *testing.T) {
 // =============================================================================
 
 func TestAuthService_ValidateTokenAcceptsIssuedBearer(t *testing.T) {
-	svc, provider := newSessionAuthService(t)
+	svc, provider, users := newSessionAuthServiceWithUsers(t)
+	seedSessionUser(t, users)
 	accessToken, _ := issueSession(t, provider)
 
 	resp, err := svc.ValidateToken(context.Background(), &ValidateTokenRequest{
@@ -213,7 +248,8 @@ func TestAuthService_ValidateTokenRejectsGarbage(t *testing.T) {
 // =============================================================================
 
 func TestAuthService_LogoutRevokesSession(t *testing.T) {
-	svc, provider := newSessionAuthService(t)
+	svc, provider, users := newSessionAuthServiceWithUsers(t)
+	seedSessionUser(t, users)
 	accessToken, _ := issueSession(t, provider)
 
 	resp, err := svc.Logout(context.Background(), &LogoutRequest{AccessToken: accessToken})

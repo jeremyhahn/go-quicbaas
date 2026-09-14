@@ -16,12 +16,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -31,20 +27,27 @@ import (
 	"os"
 	"path/filepath"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmssecure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // sdkAgentCertIssuer satisfies service.AgentCertIssuer by composing
 // the go-xkms CA REST surface that quicbaasd now mounts at
-// /api/v1/xkms/ca/*. The issuer generates the agent's keypair locally
-// (so the private key never leaves this process), builds a PKCS#10
-// CSR, and POSTs it to /api/v1/xkms/ca/sign-csr — where the
-// production-tested go-xkms HandleSignCSR handler verifies and signs
-// it. The response contains only public material (cert + chain); the
-// private key bytes are mlocked in a *secure.Buffer before the raw
-// PEM leaves our stack frame.
+// /api/v1/xkms/ca/*. Every cryptographic step is go-xkms's: the key
+// pair comes from the single audited generator in pkg/xkms (go-xkms
+// FIPS RNG), the PKCS#10 CSR from go-xkms CreateCSRWithKey, and the
+// signature from the production-tested go-xkms HandleSignCSR handler
+// this issuer POSTs to at /api/v1/xkms/ca/sign-csr.
+//
+// The key is created HERE and not asked of the server, deliberately:
+// it is the deployed agent's own credential, the CA sees only the CSR,
+// and the private key never crosses the network. The response contains
+// only public material (cert + chain); the private key bytes are
+// mlocked in a *secure.Buffer before the raw PEM leaves our stack
+// frame.
 type sdkAgentCertIssuer struct {
 	baseURL    string
 	httpClient *http.Client
@@ -151,8 +154,9 @@ type xkmsCABundleResponse struct {
 	BundlePEM []byte `json:"bundle_pem"`
 }
 
-// IssueAgentCertificate generates an ECDSA-P256 keypair locally, builds
-// a CSR with the agent's subject and SANs, and POSTs it to the CA for
+// IssueAgentCertificate creates an ECDSA-P256 keypair through the audited
+// go-quicbaas pkg/xkms generator, builds a CSR with the agent's subject
+// and SANs using the go-xkms CSR builder, and POSTs it to the CA for
 // signing. The server sees only the public key; the private key is
 // mlocked throughout.
 func (i *sdkAgentCertIssuer) IssueAgentCertificate(ctx context.Context, req *service.AgentCertificateRequest) (*service.IssuedAgentCertificate, error) {
@@ -188,25 +192,22 @@ func (i *sdkAgentCertIssuer) IssueAgentCertificate(ctx context.Context, req *ser
 	dnsNames = append(dnsNames, req.Hostname)
 	dnsNames = append(dnsNames, req.ExtraDNSNames...)
 
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	signer, keyAlgorithm, err := dbxkms.GenerateRequesterKey(dbxkms.KeyAlgorithmECDSAP256)
 	if err != nil {
 		return nil, &OpError{Op: "agent deploy: generate keypair", Cause: err}
 	}
 
-	csrTemplate := &x509.CertificateRequest{
-		Subject: pkix.Name{
+	csrPEM, err := xkmssdk.CreateCSRWithKey(&xkmssdk.TrustedCACertificateRequest{
+		Subject: xkmssdk.TrustedCASubject{
 			CommonName:         cn,
-			Organization:       []string{org},
-			OrganizationalUnit: []string{ou},
+			Organization:       org,
+			OrganizationalUnit: ou,
 		},
-		DNSNames:           dnsNames,
-		SignatureAlgorithm: x509.ECDSAWithSHA256,
-	}
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, csrTemplate, priv)
+		SANS: &xkmssdk.TrustedCASubjectAlternativeNames{DNS: dnsNames},
+	}, signer)
 	if err != nil {
 		return nil, &OpError{Op: "agent deploy: build CSR", Cause: err}
 	}
-	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
 
 	signedCert, chainPEM, err := i.signCSR(ctx, &xkmsSignCSRRequest{
 		CSRPEM:       csrPEM,
@@ -226,19 +227,16 @@ func (i *sdkAgentCertIssuer) IssueAgentCertificate(ctx context.Context, req *ser
 		}
 	}
 
-	privKeyDER, err := x509.MarshalECPrivateKey(priv)
+	privKeyPEM, err := xkmssdk.EncodePrivateKeyPEM(signer, keyAlgorithm, nil)
 	if err != nil {
-		return nil, &OpError{Op: "agent deploy: marshal private key", Cause: err}
+		return nil, &OpError{Op: "agent deploy: encode private key", Cause: err}
 	}
-	privKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privKeyDER})
 
+	// NewBufferFromBytes wipes the source slice, so the plaintext key bytes are
+	// unreachable from the heap the moment this returns.
 	keyBuf, err := xkmssecure.NewBufferFromBytes(privKeyPEM)
 	if err != nil {
 		return nil, &OpError{Op: "agent deploy: secure private key", Cause: err}
-	}
-	// Wipe the heap copy so plaintext key bytes are not reachable.
-	for j := range privKeyPEM {
-		privKeyPEM[j] = 0
 	}
 
 	parsed, err := x509.ParseCertificate(decodeFirstPEMBlock(signedCert))

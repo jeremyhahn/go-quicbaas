@@ -30,6 +30,8 @@
  *   #/sessions       → session list
  *   #/sessions/:id   → session detail
  *   #/tasks          → tasks view
+ *   #/tasks?project=:id → tasks view filtered to one project
+ *   #/tasks/:id      → task detail
  *   #/events         → live event stream
  *   #/live-events    → bookmark-friendly alias for /events
  *   #/cost           → cost tracking
@@ -71,6 +73,7 @@ export type RouteName =
   | 'sessions'
   | 'session-detail'
   | 'tasks'
+  | 'task-detail'
   | 'workflows'
   | 'events'
   | 'cost'
@@ -119,8 +122,33 @@ export interface Route {
 // Reactive state
 // ---------------------------------------------------------------------------
 
+/**
+ * parseQuery turns the part of a hash after `?` into a flat string map.
+ * Repeated keys keep the last value; a key with no `=` maps to ''.
+ */
+function parseQuery(query: string): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (const [key, value] of new URLSearchParams(query)) {
+    params[key] = value;
+  }
+  return params;
+}
+
+/**
+ * parseHash resolves a hash to a route. Query parameters (`#/tasks?project=p1`)
+ * are merged into `params` for every route; a path parameter of the same name
+ * wins, so `/tasks/:id?id=other` still names the task in the path.
+ */
 function parseHash(hash: string): Route {
-  const path = hash.replace(/^#/, '') || '/';
+  const full = hash.replace(/^#/, '') || '/';
+  const queryAt = full.indexOf('?');
+  const path = queryAt === -1 ? full : full.slice(0, queryAt);
+  const query = queryAt === -1 ? {} : parseQuery(full.slice(queryAt + 1));
+  const route = matchPath(path, hash);
+  return { ...route, params: { ...query, ...route.params } };
+}
+
+function matchPath(path: string, hash: string): Route {
 
   if (path === '/' || path === '') {
     return { name: 'dashboard', params: {}, hash };
@@ -168,7 +196,17 @@ function parseHash(hash: string): Route {
       hash,
     };
   }
-  if (path === '/tasks') {
+  // Parameterised: /tasks/:id. A bare trailing slash (`/tasks/`) names no
+  // task and resolves to the list, not to a detail with an empty id.
+  const taskDetailMatch = /^\/tasks\/([^/]+)/.exec(path);
+  if (taskDetailMatch !== null) {
+    return {
+      name: 'task-detail',
+      params: { id: decodeURIComponent(taskDetailMatch[1] ?? '') },
+      hash,
+    };
+  }
+  if (path === '/tasks' || path === '/tasks/') {
     return { name: 'tasks', params: {}, hash };
   }
   if (path === '/workflows') {
@@ -286,12 +324,22 @@ function parseHash(hash: string): Route {
     };
   }
 
-  // Parameterised: /invite/:token
-  const inviteMatch = /^\/invite\/([^/]+)/.exec(path);
+  // Parameterised: /invite/:tenant/:token
+  //
+  // THE TENANT IS PART OF THE LINK because the invite API is tenant-scoped by
+  // design: a token issued for one tenant is absent from another's store, so
+  // isolation is structural rather than a check. A browser opening an
+  // activation link knows nothing but what the link carries, so the link has to
+  // carry both. The tenant-less shape called routes that were never registered
+  // and the flow had never worked from a browser.
+  const inviteMatch = /^\/invite\/([^/]+)\/([^/]+)/.exec(path);
   if (inviteMatch !== null) {
     return {
       name: 'invite-activate',
-      params: { token: decodeURIComponent(inviteMatch[1] ?? '') },
+      params: {
+        tenant: decodeURIComponent(inviteMatch[1] ?? ''),
+        token: decodeURIComponent(inviteMatch[2] ?? ''),
+      },
       hash,
     };
   }
@@ -350,7 +398,17 @@ export function routeOrchestration(): void { navigateTo('/orchestration'); }
 export function routeJobs(): void { navigateTo('/jobs'); }
 export function routeSessions(): void { navigateTo('/sessions'); }
 export function routeFleet(): void { navigateTo('/fleet'); }
-export function routeTasks(): void { navigateTo('/tasks'); }
+/** routeTasks opens the task list, filtered to one project when an id is given. */
+export function routeTasks(projectId?: string): void {
+  if (projectId) {
+    navigateTo(`/tasks?project=${encodeURIComponent(projectId)}`);
+    return;
+  }
+  navigateTo('/tasks');
+}
+export function routeTaskDetail(id: string): void {
+  navigateTo(`/tasks/${encodeURIComponent(id)}`);
+}
 export function routeWorkflows(): void { navigateTo('/workflows'); }
 export function routeEvents(): void { navigateTo('/events'); }
 export function routeCost(): void { navigateTo('/cost'); }
@@ -396,6 +454,10 @@ export function routeJobDetail(id: string): void {
 export function routeAgentDetail(id: string): void {
   navigateTo(`/agents/${encodeURIComponent(id)}`);
 }
-export function routeInviteActivate(token: string): void {
-  navigateTo(`/invite/${encodeURIComponent(token)}`);
-}
+// routeInviteActivate is DELETED, not repaired (found while fixing #532's
+// gates). It built `/invite/{token}` — the tenant-less shape 1f95595c removed,
+// because the invite API is tenant-scoped and a browser knows only what the
+// link carries. The router has required `/invite/{tenant}/{token}` ever since,
+// so the helper produced a link that resolves to not-found. It had no callers,
+// and a broken affordance with no users is removed rather than left for the
+// next person to reach for. Build the link with navigateTo and both segments.

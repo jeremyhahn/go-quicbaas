@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"strings"
 	"sync/atomic"
@@ -24,6 +25,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -43,32 +45,38 @@ type orchestratorHandlerFunc func(ctx context.Context, conn *grpc.ClientConn, re
 
 // orchestratorMethodMap maps SDK method names to handler functions for O(1) dispatch.
 var orchestratorMethodMap = map[string]orchestratorHandlerFunc{
-	"Health":               handleOrchestratorHealth,
-	"ListBackends":         handleOrchestratorListBackends,
-	"SpawnSession":         handleOrchestratorSpawnSession,
-	"PromptSession":        handleOrchestratorPromptSession,
-	"SessionStatus":        handleOrchestratorSessionStatus,
-	"CloseSession":         handleOrchestratorCloseSession,
-	"RotateSessionAccount": handleOrchestratorRotateSessionAccount,
-	"ListSessions":         handleOrchestratorListSessions,
-	"CreateTask":           handleOrchestratorCreateTask,
-	"GetTask":              handleOrchestratorGetTask,
-	"ListTasks":            handleOrchestratorListTasks,
-	"ClaimTask":            handleOrchestratorClaimTask,
-	"CompleteTask":         handleOrchestratorCompleteTask,
-	"RegisterAgent":        handleOrchestratorRegisterAgent,
-	"GetAgent":             handleOrchestratorGetAgent,
-	"ListAgents":           handleOrchestratorListAgents,
-	"RemoveAgent":          handleOrchestratorRemoveAgent,
-	"AgentHeartbeat":       handleOrchestratorAgentHeartbeat,
-	"DecomposeTask":        handleOrchestratorDecomposeTask,
-	"SpawnChildJob":        handleOrchestratorSpawnChildJob,
-	"StartJob":             handleOrchestratorStartJob,
-	"GetJobStatus":         handleOrchestratorGetJobStatus,
-	"ListJobs":             handleOrchestratorListJobs,
-	"CancelJob":            handleOrchestratorCancelJob,
-	"GetSessionHistory":    handleOrchestratorGetSessionHistory,
-	"Inference":            handleOrchestratorInference,
+	"Health":                 handleOrchestratorHealth,
+	"ListBackends":           handleOrchestratorListBackends,
+	"ListRunners":            handleOrchestratorListRunners,
+	"SpawnSession":           handleOrchestratorSpawnSession,
+	"PromptSession":          handleOrchestratorPromptSession,
+	"SessionStatus":          handleOrchestratorSessionStatus,
+	"CloseSession":           handleOrchestratorCloseSession,
+	"RotateSessionAccount":   handleOrchestratorRotateSessionAccount,
+	"ListSessions":           handleOrchestratorListSessions,
+	"CreateTask":             handleOrchestratorCreateTask,
+	"GetTask":                handleOrchestratorGetTask,
+	"ListTasks":              handleOrchestratorListTasks,
+	"ClaimTask":              handleOrchestratorClaimTask,
+	"CompleteTask":           handleOrchestratorCompleteTask,
+	"BlockTask":              handleOrchestratorBlockTask,
+	"DeleteTask":             handleOrchestratorDeleteTask,
+	"ReadmitTask":            handleOrchestratorReadmitTask,
+	"RegisterAgent":          handleOrchestratorRegisterAgent,
+	"GetAgent":               handleOrchestratorGetAgent,
+	"ListAgents":             handleOrchestratorListAgents,
+	"RemoveAgent":            handleOrchestratorRemoveAgent,
+	"AgentHeartbeat":         handleOrchestratorAgentHeartbeat,
+	"DecomposeTask":          handleOrchestratorDecomposeTask,
+	"SpawnChildJob":          handleOrchestratorSpawnChildJob,
+	"StartJob":               handleOrchestratorStartJob,
+	"GetJobStatus":           handleOrchestratorGetJobStatus,
+	"ListJobs":               handleOrchestratorListJobs,
+	"CancelJob":              handleOrchestratorCancelJob,
+	"GetSessionHistory":      handleOrchestratorGetSessionHistory,
+	"GetSessionConversation": handleOrchestratorGetSessionConversation,
+	"GetSpendReport":         handleOrchestratorGetSpendReport,
+	"Inference":              handleOrchestratorInference,
 }
 
 // handleOrchestratorGetSessionHistory is the one-shot gRPC handler for a
@@ -178,6 +186,38 @@ func handleOrchestratorHealth(ctx context.Context, conn *grpc.ClientConn, req in
 }
 
 // =============================================================================
+// ListRunners
+// =============================================================================
+
+// handleOrchestratorListRunners invokes the ListRunners RPC: every registered
+// JobRunner and the states it declares.
+//
+// The request carries no tenant because the runner registry is the daemon's,
+// not a tenant's — the same reason the REST route derives none.
+func handleOrchestratorListRunners(ctx context.Context, conn *grpc.ClientConn, _ interface{}) (interface{}, error) {
+	protoResp := &pb.OrchestratorListRunnersResponse{}
+	if err := conn.Invoke(ctx, pb.OrchestratorService_ListRunners_FullMethodName,
+		&pb.OrchestratorListRunnersRequest{}, protoResp); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.ListRunners")
+	}
+
+	runners := make([]*orchestrator.JobRunnerInfo, 0, len(protoResp.GetRunners()))
+	for _, r := range protoResp.GetRunners() {
+		states := make([]orchestrator.JobStateSpec, 0, len(r.GetStates()))
+		for _, spec := range r.GetStates() {
+			states = append(states, orchestrator.JobStateSpec{
+				State:         spec.GetState(),
+				Label:         spec.GetLabel(),
+				SessionBacked: spec.GetSessionBacked(),
+			})
+		}
+		runners = append(runners, &orchestrator.JobRunnerInfo{Name: r.GetName(), States: states})
+	}
+
+	return &orchestrator.ListJobRunnersResponse{Runners: runners, Count: len(runners)}, nil
+}
+
+// =============================================================================
 // ListBackends
 // =============================================================================
 
@@ -214,6 +254,20 @@ func handleOrchestratorListBackends(ctx context.Context, conn *grpc.ClientConn, 
 // Session Operations
 // =============================================================================
 
+// persistentOrDefault resolves the SDK's optional Persistent flag.
+//
+// Nil is "the caller did not say", and the answer to that is a DURABLE
+// session: it is what the REST handler has always done with an omitted field,
+// and a transport that answered otherwise would hand gRPC and Unix callers
+// one-shot sessions for the identical request. Only an explicit false asks for
+// one-shot-per-prompt.
+func persistentOrDefault(persistent *bool) bool {
+	if persistent == nil {
+		return true
+	}
+	return *persistent
+}
+
 func handleOrchestratorSpawnSession(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
 	sdkReq, ok := req.(*orchestrator.SpawnSessionRequest)
 	if !ok {
@@ -233,6 +287,10 @@ func handleOrchestratorSpawnSession(ctx context.Context, conn *grpc.ClientConn, 
 		HostAffinity:       sdkReq.HostAffinity,
 		HostAffinityStrict: sdkReq.HostAffinityStrict,
 		TenantId:           tenantID,
+		// Unset means the deployment's default, which is a durable session --
+		// the same answer REST gives an omitted field. See
+		// orchestrator.SpawnSessionRequest.Persistent.
+		Persistent: persistentOrDefault(sdkReq.Persistent),
 
 		// Pooled provider account selection. AccountAuto is the only way to
 		// reach the dynamic (least-usage) strategy, so it must cross the wire.
@@ -323,11 +381,17 @@ func handleOrchestratorSessionStatus(ctx context.Context, conn *grpc.ClientConn,
 		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.SessionStatus")
 	}
 
+	// CreatedAt IS DELIBERATELY LEFT UNSET. SessionStatusResponse carries no
+	// created_at on the wire; the `timestamp` field it does carry is when the
+	// STATUS was produced, so filling CreatedAt from it reported "the session
+	// was created just now" on every call — which the CLI prints, verbatim, as
+	// the session's creation time. An absent value renders as absent; a
+	// confident wrong one does not. The list surface has a real created_at and
+	// fills it below.
 	return &orchestrator.SessionStatusResponse{
 		SessionID:  protoResp.GetSessionId(),
-		Status:     protoResp.GetState().String(),
-		CreatedAt:  timestampToUnix(protoResp.GetTimestamp()),
-		LastActive: timestampToUnix(protoResp.GetLastActivity()),
+		Status:     sessionStateName(protoResp.GetState()),
+		LastActive: timestampToUnixNano(protoResp.GetLastActivity()),
 	}, nil
 }
 
@@ -391,6 +455,36 @@ func handleOrchestratorRotateSessionAccount(ctx context.Context, conn *grpc.Clie
 	}, nil
 }
 
+// sessionStateNames maps the proto lifecycle enum back onto the lowercase
+// state vocabulary every other transport speaks.
+//
+// THE SDK HAS ONE SESSION-STATE VOCABULARY AND THE PROTO ENUM IS NOT IT.
+// The server converts "active" to SESSION_STATE_ACTIVE on the way out
+// (serviceSessionStateToProto); rendering that back with the generated
+// .String() returned "SESSION_STATE_ACTIVE" to the caller, so a gRPC or Unix
+// client that asked for Status "active" was handed rows whose Status could not
+// be compared to the value it had just sent, displayed beside a REST client's
+// rows, or fed back into the same filter. The states are sourced from
+// orchestration rather than spelled again here, so the set cannot drift from
+// the one the service validates against.
+var sessionStateNames = map[pb.SessionState]string{
+	pb.SessionState_SESSION_STATE_ACTIVE:    string(orchestration.SessionStateActive),
+	pb.SessionState_SESSION_STATE_IDLE:      string(orchestration.SessionStateIdle),
+	pb.SessionState_SESSION_STATE_CLOSED:    string(orchestration.SessionStateClosed),
+	pb.SessionState_SESSION_STATE_ERROR:     string(orchestration.SessionStateError),
+	pb.SessionState_SESSION_STATE_RESUMABLE: string(orchestration.SessionStateResumable),
+}
+
+// sessionStateName renders one proto state in the SDK's vocabulary.
+//
+// SESSION_STATE_UNSPECIFIED becomes the EMPTY STRING, which is what the other
+// transports send for a session whose state the service did not set. Returning
+// the enum name would put a value in the field that no filter accepts and that
+// SessionState.Valid rejects.
+func sessionStateName(state pb.SessionState) string {
+	return sessionStateNames[state]
+}
+
 // unixOrZero is the inverse of timeFromUnix (account_handler.go): the zero
 // time stays 0 on the wire so "unset" is not sent as 1970-01-01.
 func unixOrZero(t time.Time) int64 {
@@ -408,9 +502,15 @@ func handleOrchestratorListSessions(ctx context.Context, conn *grpc.ClientConn, 
 
 	tenantID := transport.TenantFromContext(ctx)
 
+	// Status is the lifecycle filter the proto declares and the server
+	// consumes. Dropping it here made every gRPC (and Unix, which delegates
+	// here) caller's filtered list arrive unfiltered, so closed and error
+	// records came back mixed in with the live ones -- the false liveness
+	// this filter exists to remove (go-quicbaas#792).
 	protoReq := &pb.ListSessionsRequest{
 		Backend:  sdkReq.Backend,
 		TenantId: tenantID,
+		Status:   sdkReq.Status,
 	}
 	protoResp := &pb.ListSessionsResponse{}
 
@@ -424,9 +524,9 @@ func handleOrchestratorListSessions(ctx context.Context, conn *grpc.ClientConn, 
 		sessions = append(sessions, &orchestrator.SessionStatusResponse{
 			SessionID:  s.GetSessionId(),
 			Backend:    s.GetBackend(),
-			Status:     s.GetState().String(),
-			CreatedAt:  timestampToUnix(s.GetCreatedAt()),
-			LastActive: timestampToUnix(s.GetLastActivity()),
+			Status:     sessionStateName(s.GetState()),
+			CreatedAt:  timestampToUnixNano(s.GetCreatedAt()),
+			LastActive: timestampToUnixNano(s.GetLastActivity()),
 		})
 	}
 
@@ -447,17 +547,22 @@ func handleOrchestratorCreateTask(ctx context.Context, conn *grpc.ClientConn, re
 	}
 
 	protoReq := &pb.CreateTaskRequest{
-		TenantId:     sdkReq.TenantID,
-		TeamName:     sdkReq.TeamName,
-		Subject:      sdkReq.Subject,
-		Description:  sdkReq.Description,
-		AssignedTo:   sdkReq.AssignedTo,
-		Dependencies: sdkReq.Dependencies,
-		Metadata:     sdkReq.Metadata,
-		ProjectId:    sdkReq.ProjectID,
-		AutoSpawn:    sdkReq.AutoSpawn,
-		Backend:      sdkReq.Backend,
-		GpuRequired:  sdkReq.GpuRequired,
+		TenantId:      sdkReq.TenantID,
+		TeamName:      sdkReq.TeamName,
+		Subject:       sdkReq.Subject,
+		Description:   sdkReq.Description,
+		AssignedTo:    sdkReq.AssignedTo,
+		Dependencies:  sdkReq.Dependencies,
+		Metadata:      sdkReq.Metadata,
+		ProjectId:     sdkReq.ProjectID,
+		AutoSpawn:     sdkReq.AutoSpawn,
+		Backend:       sdkReq.Backend,
+		GpuRequired:   sdkReq.GpuRequired,
+		HostAffinity:  sdkReq.HostAffinity,
+		Source:        taskSourceToProto(sdkReq.Source),
+		Priority:      int64(sdkReq.Priority),
+		AttemptBudget: int64(sdkReq.AttemptBudget),
+		Runner:        sdkReq.Runner,
 	}
 	protoResp := &pb.CreateTaskResponse{}
 
@@ -500,14 +605,20 @@ func handleOrchestratorListTasks(ctx context.Context, conn *grpc.ClientConn, req
 	}
 
 	// Build filter if any filter fields are set.
-	if sdkReq.Status != "" || sdkReq.TeamName != "" || sdkReq.AssignedTo != "" {
+	if sdkReq.Status != "" || sdkReq.TeamName != "" || sdkReq.AssignedTo != "" || sdkReq.ProjectID != "" || len(sdkReq.Statuses) > 0 {
 		filter := &pb.TaskFilter{
 			TeamName:   sdkReq.TeamName,
 			AssignedTo: sdkReq.AssignedTo,
+			ProjectId:  sdkReq.ProjectID,
 		}
 		if sdkReq.Status != "" {
 			if val, exists := pb.TaskStatus_value[taskStatusToProtoEnum(sdkReq.Status)]; exists {
 				filter.Status = pb.TaskStatus(val)
+			}
+		}
+		for _, status := range sdkReq.Statuses {
+			if val, exists := pb.TaskStatus_value[taskStatusToProtoEnum(status)]; exists {
+				filter.Statuses = append(filter.Statuses, pb.TaskStatus(val))
 			}
 		}
 		protoReq.Filter = filter
@@ -553,6 +664,78 @@ func handleOrchestratorClaimTask(ctx context.Context, conn *grpc.ClientConn, req
 		TaskID:  protoResp.GetTaskId(),
 		AgentID: protoResp.GetAgentId(),
 		Claimed: protoResp.GetClaimed(),
+	}, nil
+}
+
+func handleOrchestratorBlockTask(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.BlockTaskRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.BlockTask", "invalid request type")
+	}
+
+	protoReq := &pb.BlockTaskRequest{
+		TenantId: sdkReq.TenantID,
+		TaskId:   sdkReq.TaskID,
+		Kind:     sdkReq.Kind,
+		Reason:   sdkReq.Reason,
+	}
+	protoResp := &pb.BlockTaskResponse{}
+
+	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_BlockTask_FullMethodName, protoReq, protoResp)
+	if invokeErr != nil {
+		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.BlockTask")
+	}
+
+	return &orchestrator.BlockTaskResponse{
+		TaskID:  protoResp.GetTaskId(),
+		Kind:    sdkReq.Kind,
+		Blocked: protoResp.GetBlocked(),
+	}, nil
+}
+
+func handleOrchestratorDeleteTask(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.DeleteTaskRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.DeleteTask", "invalid request type")
+	}
+
+	protoReq := &pb.DeleteTaskRequest{
+		TenantId: sdkReq.TenantID,
+		TaskId:   sdkReq.TaskID,
+	}
+	protoResp := &pb.DeleteTaskResponse{}
+
+	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_DeleteTask_FullMethodName, protoReq, protoResp)
+	if invokeErr != nil {
+		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.DeleteTask")
+	}
+
+	return &orchestrator.DeleteTaskResponse{
+		TaskID:  protoResp.GetTaskId(),
+		Deleted: protoResp.GetDeleted(),
+	}, nil
+}
+
+func handleOrchestratorReadmitTask(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.ReadmitTaskRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.ReadmitTask", "invalid request type")
+	}
+
+	protoReq := &pb.ReadmitTaskRequest{
+		TenantId: sdkReq.TenantID,
+		TaskId:   sdkReq.TaskID,
+	}
+	protoResp := &pb.ReadmitTaskResponse{}
+
+	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_ReadmitTask_FullMethodName, protoReq, protoResp)
+	if invokeErr != nil {
+		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.ReadmitTask")
+	}
+
+	return &orchestrator.ReadmitTaskResponse{
+		TaskID:     protoResp.GetTaskId(),
+		Readmitted: protoResp.GetReadmitted(),
 	}, nil
 }
 
@@ -835,6 +1018,9 @@ func handleOrchestratorStartJob(ctx context.Context, conn *grpc.ClientConn, req 
 		PollInterval:  sdkReq.PollInterval,
 		WorkflowName:  sdkReq.WorkflowName,
 		WorkflowFile:  sdkReq.WorkflowFile,
+		Runner:        sdkReq.Runner,
+		TaskId:        sdkReq.TaskID,
+		Attempt:       int64(sdkReq.Attempt),
 	}
 	protoResp := &pb.OrchestratorStartJobResponse{}
 
@@ -896,7 +1082,107 @@ func handleOrchestratorGetJobStatus(ctx context.Context, conn *grpc.ClientConn, 
 		UpdatedAt:   protoResp.GetUpdatedAt(),
 		Error:       protoResp.GetError(),
 		Events:      events,
+
+		TaskID:        protoResp.GetTaskId(),
+		Attempt:       int(protoResp.GetAttempt()),
+		Node:          protoResp.GetNode(),
+		HeartbeatAt:   protoResp.GetHeartbeatAt(),
+		FailureClass:  protoResp.GetFailureClass(),
+		LeadSessionID: protoResp.GetLeadSessionId(),
+		SessionIDs:    protoResp.GetSessionIds(),
+		Stage:         protoResp.GetStage(),
+		Runner:        protoResp.GetRunner(),
+
+		// Provenance — the same facts the REST transport decodes straight
+		// off the JSON body. A converter that stops here hands the caller a
+		// job with no attempts, no delivery and no reason it stopped.
+		AgentID:        protoResp.GetAgentId(),
+		Stages:         jobStagesFromProto(protoResp.GetStages()),
+		Attempts:       jobAttemptsFromProto(protoResp.GetAttempts()),
+		AttemptBudget:  int(protoResp.GetAttemptBudget()),
+		TerminalReason: protoResp.GetTerminalReason(),
+		ReadmitAllowed: protoResp.GetReadmitAllowed(),
+		Delivery:       jobDeliveryFromProto(protoResp.GetDelivery()),
+		Verification:   jobVerificationFromProto(protoResp.GetVerification()),
 	}, nil
+}
+
+// jobStagesFromProto maps the lifecycle moments the job entered.
+func jobStagesFromProto(pb []*pb.OrchestratorJobStage) []orchestrator.JobStageRecord {
+	if len(pb) == 0 {
+		return nil
+	}
+	out := make([]orchestrator.JobStageRecord, len(pb))
+	for i, stage := range pb {
+		out[i] = orchestrator.JobStageRecord{
+			Stage:     stage.GetStage(),
+			EnteredAt: stage.GetEnteredAt(),
+		}
+	}
+	return out
+}
+
+// jobAttemptsFromProto maps the attempts at the job's task.
+func jobAttemptsFromProto(pb []*pb.OrchestratorJobAttempt) []orchestrator.JobAttemptRecord {
+	if len(pb) == 0 {
+		return nil
+	}
+	out := make([]orchestrator.JobAttemptRecord, len(pb))
+	for i, attempt := range pb {
+		out[i] = orchestrator.JobAttemptRecord{
+			Attempt: int(attempt.GetAttempt()),
+			JobID:   attempt.GetJobId(),
+			Current: attempt.GetCurrent(),
+		}
+	}
+	return out
+}
+
+// jobDeliveryFromProto maps the git side of the attempt, nil when the runner
+// published none.
+func jobDeliveryFromProto(pbDelivery *pb.OrchestratorJobDelivery) *orchestrator.JobDelivery {
+	if pbDelivery == nil {
+		return nil
+	}
+	var reviews []orchestrator.JobReviewRound
+	if rounds := pbDelivery.GetReviews(); len(rounds) > 0 {
+		reviews = make([]orchestrator.JobReviewRound, len(rounds))
+		for i, round := range rounds {
+			reviews[i] = orchestrator.JobReviewRound{
+				Round:       int(round.GetRound()),
+				Reviewer:    round.GetReviewer(),
+				Verdict:     round.GetVerdict(),
+				HeadSHA:     round.GetHeadSha(),
+				Findings:    round.GetFindings(),
+				SubmittedAt: round.GetSubmittedAt(),
+			}
+		}
+	}
+	return &orchestrator.JobDelivery{
+		Branch:            pbDelivery.GetBranch(),
+		HeadSHA:           pbDelivery.GetHeadSha(),
+		PullRequestNumber: int(pbDelivery.GetPullRequestNumber()),
+		PullRequestURL:    pbDelivery.GetPullRequestUrl(),
+		PullRequestState:  pbDelivery.GetPullRequestState(),
+		Reviews:           reviews,
+	}
+}
+
+// jobVerificationFromProto maps the last validator pipeline's results.
+func jobVerificationFromProto(pb []*pb.OrchestratorJobVerification) []orchestrator.JobVerificationResult {
+	if len(pb) == 0 {
+		return nil
+	}
+	out := make([]orchestrator.JobVerificationResult, len(pb))
+	for i, result := range pb {
+		out[i] = orchestrator.JobVerificationResult{
+			Name:    result.GetName(),
+			Passed:  result.GetPassed(),
+			Message: result.GetMessage(),
+			Details: result.GetDetails(),
+		}
+	}
+	return out
 }
 
 // handleOrchestratorListJobs converts an SDK ListJobsRequest to proto,
@@ -910,10 +1196,12 @@ func handleOrchestratorListJobs(ctx context.Context, conn *grpc.ClientConn, req 
 
 	tenantID := transport.TenantFromContext(ctx)
 
+	// The tenant comes from the context, the narrowing from the request:
+	// the caller cannot choose its tenant, but it does choose its filter.
 	protoReq := &pb.OrchestratorListJobsRequest{
 		TenantId: tenantID,
+		TaskId:   sdkReq.TaskID,
 	}
-	_ = sdkReq // tenantID comes from context
 
 	protoResp := &pb.OrchestratorListJobsResponse{}
 
@@ -936,6 +1224,8 @@ func handleOrchestratorListJobs(ctx context.Context, conn *grpc.ClientConn, req 
 			UpdatedAt:   j.GetUpdatedAt(),
 			Error:       j.GetError(),
 			EventCount:  int(j.GetEventCount()),
+			TaskID:      j.GetTaskId(),
+			Attempt:     int(j.GetAttempt()),
 		}
 	}
 
@@ -1006,7 +1296,44 @@ func taskFromProto(t *pb.Task) *orchestrator.Task {
 		}
 	}
 
+	sdkTask.AutoSpawn = t.GetAutoSpawn()
+	sdkTask.SpawnedJobID = t.GetSpawnedJobId()
+	if t.GetSpawnedAt() != nil {
+		sdkTask.SpawnedAt = t.GetSpawnedAt().AsTime().UnixNano()
+	}
+	sdkTask.ProjectID = t.GetProjectId()
+	if src := t.GetSource(); src != nil {
+		sdkTask.Source = &orchestrator.TaskSource{Kind: src.GetKind(), Ref: src.GetRef(), URL: src.GetUrl()}
+	}
+	sdkTask.Priority = int(t.GetPriority())
+	sdkTask.Attempts = int(t.GetAttempts())
+	sdkTask.AttemptBudget = int(t.GetAttemptBudget())
+	sdkTask.EnvironmentFaults = int(t.GetEnvironmentFaults())
+	sdkTask.QuestionAttempts = int(t.GetQuestionAttempts())
+	sdkTask.ConsecutiveEnvironmentFaults = int(t.GetConsecutiveEnvironmentFaults())
+	sdkTask.RetryNotBefore = t.GetRetryNotBefore()
+	sdkTask.BlockedReason = t.GetBlockedReason()
+	sdkTask.BlockKind = t.GetBlockKind()
+	sdkTask.StatusChangedAt = t.GetStatusChangedAt()
+	sdkTask.Runner = t.GetRunner()
+	if routing := t.GetRouting(); routing != nil {
+		sdkTask.Routing = orchestrator.TaskRouting{
+			Backend:      routing.GetBackend(),
+			HostAffinity: routing.GetHostAffinity(),
+			GpuRequired:  routing.GetGpuRequired(),
+		}
+	}
+	sdkTask.DispatchReason = t.GetDispatchReason()
+
 	return sdkTask
+}
+
+// taskSourceToProto converts a caller-supplied provenance; nil stays nil.
+func taskSourceToProto(src *orchestrator.TaskSource) *pb.TaskSource {
+	if src == nil {
+		return nil
+	}
+	return &pb.TaskSource{Kind: src.Kind, Ref: src.Ref, Url: src.URL}
 }
 
 // agentRegistrationFromProto converts a proto AgentRegistration to an SDK AgentRegistration.
@@ -1063,6 +1390,25 @@ func healthReportFromProto(r *pb.HealthCheckReport) *orchestrator.HealthCheckRep
 
 // timestampToUnix converts a protobuf Timestamp to Unix epoch seconds.
 // Returns 0 for nil timestamps.
+// timestampToUnixNano renders a protobuf timestamp as Unix NANOSECONDS.
+//
+// A SESSION'S INSTANTS ARE NANOSECONDS AND THE SECONDS CONVERTER IS NOT
+// INTERCHANGEABLE WITH THIS ONE. The server builds SessionInfo's times with
+// unixNanoTimestamp from nanosecond-domain values, and every SDK and CLI
+// consumer reads the fields back with time.Unix(0, v) -- so decoding them
+// with timestampToUnix handed back seconds, which read as nanoseconds put
+// every session's created and last-active time within two seconds of the
+// epoch. Sessions are not the only shape on this service: a task's instants
+// really are seconds on the wire (serviceTaskToProto builds them with
+// time.Unix(sec, 0)), which is why the seconds converter stays and this is a
+// second function rather than a change to it.
+func timestampToUnixNano(ts *timestamppb.Timestamp) int64 {
+	if ts == nil {
+		return 0
+	}
+	return ts.AsTime().UnixNano()
+}
+
 func timestampToUnix(ts *timestamppb.Timestamp) int64 {
 	if ts == nil {
 		return 0
@@ -1425,4 +1771,201 @@ func (s *orchestratorEventStream) Close() error {
 	}
 	s.transport.returnConn(s.conn)
 	return nil
+}
+
+// handleOrchestratorGetSessionConversation calls the unary
+// OrchestratorService.GetSessionConversation RPC and converts one page of
+// turns into the SDK shape.
+//
+// Unlike GetSessionHistory above — which pages the raw event log by reading a
+// non-following SubscribeSessionEvents stream to its end — this has a real
+// RPC behind it, so a caller can resume from a cursor instead of re-reading
+// from the beginning of the transcript every time.
+func handleOrchestratorGetSessionConversation(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.GetSessionConversationRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.GetSessionConversation", "invalid request type")
+	}
+	if sdkReq.TenantID == "" {
+		sdkReq.TenantID = transport.TenantFromContext(ctx)
+	}
+	client := pb.NewOrchestratorServiceClient(conn)
+	resp, err := client.GetSessionConversation(ctx, &pb.GetSessionConversationRequest{
+		TenantId:  sdkReq.TenantID,
+		SessionId: sdkReq.SessionID,
+		Cursor:    sdkReq.Cursor,
+		Limit:     uint32(sdkReq.Limit),
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.GetSessionConversation")
+	}
+
+	out := &orchestrator.GetSessionConversationResponse{
+		SessionID:      resp.GetSessionId(),
+		TenantID:       resp.GetTenantId(),
+		Turns:          make([]*orchestrator.SessionTurn, 0, len(resp.GetTurns())),
+		NextCursor:     resp.GetNextCursor(),
+		OldestSequence: resp.GetOldestSequence(),
+	}
+	for _, wire := range resp.GetTurns() {
+		turn, convErr := sessionTurnFromProto(wire)
+		if convErr != nil {
+			return nil, convErr
+		}
+		out.Turns = append(out.Turns, turn)
+	}
+	return out, nil
+}
+
+// sessionTurnFromProto converts one wire turn into the SDK type. Token usage
+// crosses as JSON — the accounting shape belongs to the server's orchestration
+// package and is not forked into a second protobuf definition — so an
+// unusable encoding is a decode failure here rather than a silently absent
+// cost on the turn.
+func sessionTurnFromProto(wire *pb.SessionTurn) (*orchestrator.SessionTurn, error) {
+	turn := &orchestrator.SessionTurn{
+		Sequence:       wire.GetSequence(),
+		SessionID:      wire.GetSessionId(),
+		TenantID:       wire.GetTenantId(),
+		Role:           orchestrator.SessionTurnRole(wire.GetRole()),
+		Text:           wire.GetText(),
+		TruncatedBytes: wire.GetTruncatedBytes(),
+		Model:          wire.GetModel(),
+		StopReason:     wire.GetStopReason(),
+	}
+	if ts := wire.GetTimestamp(); ts != nil {
+		turn.Timestamp = ts.AsTime()
+	}
+	for _, tool := range wire.GetTools() {
+		turn.Tools = append(turn.Tools, orchestrator.SessionToolUse{
+			InvocationID: tool.GetInvocationId(),
+			Name:         tool.GetName(),
+			IsError:      tool.GetIsError(),
+			ResultBytes:  tool.GetResultBytes(),
+		})
+	}
+	if raw := wire.GetUsageJson(); len(raw) > 0 {
+		var usage orchestrator.SessionTokenUsage
+		if err := json.Unmarshal(raw, &usage); err != nil {
+			return nil, errors.Wrap(err, errors.CodeInternal,
+				"grpc.orchestrator.GetSessionConversation", "failed to decode turn usage")
+		}
+		turn.Usage = &usage
+	}
+	return turn, nil
+}
+
+// handleOrchestratorGetSpendReport calls the unary
+// OrchestratorService.GetSpendReport RPC and converts one scope's roll-up
+// into the SDK shape.
+func handleOrchestratorGetSpendReport(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.GetSpendReportRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.GetSpendReport", "invalid request type")
+	}
+	if sdkReq.TenantID == "" {
+		sdkReq.TenantID = transport.TenantFromContext(ctx)
+	}
+	client := pb.NewOrchestratorServiceClient(conn)
+	resp, err := client.GetSpendReport(ctx, &pb.GetSpendReportRequest{
+		TenantId:  sdkReq.TenantID,
+		ProjectId: sdkReq.ProjectID,
+		TaskId:    sdkReq.TaskID,
+		JobId:     sdkReq.JobID,
+		SessionId: sdkReq.SessionID,
+		Round:     int32(sdkReq.Round),
+		RoundSet:  sdkReq.RoundSet,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.GetSpendReport")
+	}
+	return spendReportFromProto(resp), nil
+}
+
+// spendReportFromProto converts the wire report into the SDK type.
+func spendReportFromProto(resp *pb.GetSpendReportResponse) *orchestrator.GetSpendReportResponse {
+	out := &orchestrator.GetSpendReportResponse{
+		Level:        orchestrator.SpendLevel(resp.GetLevel()),
+		TenantID:     resp.GetTenantId(),
+		ProjectID:    resp.GetProjectId(),
+		TaskID:       resp.GetTaskId(),
+		JobID:        resp.GetJobId(),
+		SessionID:    resp.GetSessionId(),
+		Round:        int(resp.GetRound()),
+		Entries:      int(resp.GetEntries()),
+		InputTokens:  resp.GetInputTokens(),
+		OutputTokens: resp.GetOutputTokens(),
+		TotalTokens:  resp.GetTotalTokens(),
+		CostMicros:   resp.GetCostMicros(),
+		CostMeasured: resp.GetCostMeasured(),
+		Successes:    int(resp.GetSuccesses()),
+		Failures:     int(resp.GetFailures()),
+		FirstAt:      spendTimeFromProto(resp.GetFirstAt()),
+		LastAt:       spendTimeFromProto(resp.GetLastAt()),
+		ChildLevel:   orchestrator.SpendLevel(resp.GetChildLevel()),
+	}
+	for _, account := range resp.GetAccounts() {
+		out.Accounts = append(out.Accounts, spendAccountFromProto(account))
+	}
+	for _, model := range resp.GetModels() {
+		out.Models = append(out.Models, orchestrator.SpendModel{
+			Engine:      model.GetEngine(),
+			Model:       model.GetModel(),
+			TotalTokens: model.GetTotalTokens(),
+		})
+	}
+	for _, child := range resp.GetChildren() {
+		out.Children = append(out.Children, orchestrator.SpendChild{
+			ID:           child.GetId(),
+			Level:        orchestrator.SpendLevel(child.GetLevel()),
+			Unattributed: child.GetUnattributed(),
+			TotalTokens:  child.GetTotalTokens(),
+		})
+	}
+	return out
+}
+
+// spendAccountFromProto converts one account's contribution and allowance.
+func spendAccountFromProto(account *pb.SpendAccount) orchestrator.SpendAccount {
+	out := orchestrator.SpendAccount{
+		AccountID:    account.GetAccountId(),
+		DisplayName:  account.GetDisplayName(),
+		Provider:     account.GetProvider(),
+		TotalTokens:  account.GetTotalTokens(),
+		PolicyStatus: orchestrator.SpendPolicyStatus(account.GetPolicyStatus()),
+	}
+	for _, window := range account.GetWindows() {
+		out.Windows = append(out.Windows, orchestrator.SpendWindowStatus{
+			Name:            window.GetName(),
+			Size:            window.GetSizeNanos(),
+			MaxTokens:       window.GetMaxTokens(),
+			UsedTokens:      window.GetUsedTokens(),
+			RemainingTokens: window.GetRemainingTokens(),
+			Exhausted:       window.GetExhausted(),
+			FreesAt:         spendTimeFromProto(window.GetFreesAt()),
+		})
+	}
+	if breaker := account.GetBreaker(); breaker != nil {
+		out.Breaker = &orchestrator.SpendBreakerVerdict{
+			State:         breaker.GetState(),
+			Failures:      int(breaker.GetFailures()),
+			Successes:     int(breaker.GetSuccesses()),
+			LastFailureAt: spendTimeFromProto(breaker.GetLastFailureAt()),
+			LastSuccessAt: spendTimeFromProto(breaker.GetLastSuccessAt()),
+			OpenUntil:     spendTimeFromProto(breaker.GetOpenUntil()),
+		}
+	}
+	return out
+}
+
+// spendTimeFromProto converts an optional wire timestamp, leaving an absent
+// one NIL. An absent moment must not become the year 1, which a renderer would
+// show as a date — and because the SDK type is re-marshalled by the desktop
+// binding, nil is what keeps `omitempty` able to omit it.
+func spendTimeFromProto(ts *timestamppb.Timestamp) *time.Time {
+	if ts == nil {
+		return nil
+	}
+	at := ts.AsTime()
+	return &at
 }

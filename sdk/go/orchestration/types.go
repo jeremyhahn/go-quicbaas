@@ -260,6 +260,15 @@ type ContainerRuntime = pkgorch.ContainerRuntime
 // returned by ContainerRuntime.RunInteractive.
 type InteractiveProcess = pkgorch.InteractiveProcess
 
+// ExecSpec is one command run inside a container that is already running:
+// the argument vector, an environment added to the container's own, the
+// working directory inside the container, and stdin.
+type ExecSpec = pkgorch.ExecSpec
+
+// ExecResult is what one command did. A non-zero ExitCode is the command's
+// answer, not an error — an error from Exec means it could not be run.
+type ExecResult = pkgorch.ExecResult
+
 // ExecContainerRuntime is the default runtime; it shells out to docker or
 // podman and implements Tier 0.
 type ExecContainerRuntime = pkgorch.ExecContainerRuntime
@@ -353,6 +362,11 @@ var (
 	// ErrContainerInteractiveStart indicates a failure to start an
 	// interactive container.
 	ErrContainerInteractiveStart = pkgorch.ErrContainerInteractiveStart
+
+	// ErrContainerExec indicates a command could not be RUN inside a running
+	// container. A command that ran and exited non-zero is not this error;
+	// its status is on ExecResult.
+	ErrContainerExec = pkgorch.ErrContainerExec
 )
 
 // ErrInvalidInput is the sentinel wrapped by InputValidationError, which every
@@ -402,6 +416,11 @@ type PCRBankUnavailableError = pkgorch.PCRBankUnavailableError
 // ContainerQuoteError indicates the host TPM refused or failed to produce a
 // quote.
 type ContainerQuoteError = pkgorch.ContainerQuoteError
+
+// ContainerExecError indicates a command could not be run inside a running
+// container: the runtime refused, the container was unreachable, or the
+// context ended before the command answered.
+type ContainerExecError = pkgorch.ContainerExecError
 
 // ContainerRuntimeNotAvailableError indicates no docker or podman binary was
 // found.
@@ -462,6 +481,10 @@ var (
 	_ *pkgorch.ContainerAttestation     = (*ContainerAttestation)(nil)
 	_ *ContainerAttestation             = (*pkgorch.ContainerAttestation)(nil)
 	_ *pkgorch.InteractiveProcess       = (*InteractiveProcess)(nil)
+	_ *pkgorch.ExecSpec                 = (*ExecSpec)(nil)
+	_ *ExecSpec                         = (*pkgorch.ExecSpec)(nil)
+	_ *pkgorch.ExecResult               = (*ExecResult)(nil)
+	_ *ExecResult                       = (*pkgorch.ExecResult)(nil)
 	_ *pkgorch.TPMAttestingRuntime      = (*TPMAttestingRuntime)(nil)
 	_ *pkgorch.ExecContainerRuntime     = (*ExecContainerRuntime)(nil)
 	_ *pkgorch.TrustCapabilities        = (*TrustCapabilities)(nil)
@@ -495,6 +518,7 @@ var (
 // Errors alias in both directions, so errors.As with either spelling matches
 // the same concrete type.
 var (
+	_ error = (*ContainerExecError)(nil)
 	_ error = (*ImageNotPinnedError)(nil)
 	_ error = (*ImageDigestMismatchError)(nil)
 	_ error = (*ImageDigestUnresolvedError)(nil)

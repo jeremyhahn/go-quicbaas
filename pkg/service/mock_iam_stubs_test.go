@@ -65,6 +65,3 @@ func (p *mockIAMServiceProvider) GetAdminManager(_ context.Context) (*iam.AdminM
 func (p *mockIAMServiceProvider) GetGDPRManager(_ context.Context) (*iam.GDPRManager, error) {
 	return p.gdprMgr, p.gdprMgrErr
 }
-func (p *mockIAMServiceProvider) GetAuthManager(_ context.Context) (AuthManagerInterface, error) {
-	return p.authMgr, p.authMgrErr
-}

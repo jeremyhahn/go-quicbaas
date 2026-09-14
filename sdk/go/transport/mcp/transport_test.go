@@ -198,9 +198,10 @@ func TestTransport_MapToToolName(t *testing.T) {
 		{"quicbaas.Crypto", "Sign", "quicbaas_crypto_sign"},
 		{"quicbaas.Crypto", "Verify", "quicbaas_crypto_verify"},
 
-		// RBAC operations
-		{"quicbaas.RBAC", "CreateUser", "qrdb_user_create"},
+		// RBAC operations (roles only -- the user verbs were removed in #905).
+		{"quicbaas.RBAC", "CreateRole", "qrdb_role_create"},
 		{"quicbaas.RBAC", "AssignRole", "qrdb_role_assign"},
+		{"quicbaas.RBAC", "RevokeRole", "quicbaas_role_revoke"},
 
 		// Auth operations
 		{"quicbaas.Auth", "Login", "quicbaas_login"},

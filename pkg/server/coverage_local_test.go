@@ -29,6 +29,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -71,7 +72,8 @@ func TestSetupSignalHandlers_Local_ClosesShutdownOnSignal(t *testing.T) {
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
 	require.NoError(t, err)
 
-	setupSignalHandlers(shutdown, log)
+	var once sync.Once
+	setupSignalHandlers(func() { once.Do(func() { close(shutdown) }) }, log)
 
 	proc, err := os.FindProcess(os.Getpid())
 	require.NoError(t, err)

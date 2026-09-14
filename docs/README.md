@@ -21,8 +21,14 @@ indistinguishable from an unwritten one.
 
 ## Migration state
 
-**Complete.** 38 feature folders, 190 files, migrated 2026-08-19. Counting is
-derived, not maintained: `ls docs/*/architecture.md | wc -l`.
+**Complete.** 37 feature folders, 211 files, migrated 2026-08-19; last
+recounted 2026-09-10. Counting is derived, not maintained:
+`ls docs/*/architecture.md | wc -l` and `find docs -name '*.md' | wc -l`.
+
+| Date | Change |
+|---|---|
+| 2026-08-19 | The `docs/api/` + `docs/architecture/` + `docs/cli/` + `docs/security/` split, plus per-topic folders, became feature folders. |
+| 2026-09-10 | The three folders `agent-orchestration`, `sdlc` and `agentic-projects` became one, [software-factory/](software-factory/): the engine's ten pages became the base, sdlc's seven (architecture, binding, configuration, outcomes, README, api, runbook) and agentic-projects' five (architecture, engineering, cli, api, user) were absorbed into them, and the result is the five canonical files plus supplements `sdlc.md`, `projects.md`, `accounts.md`, `prompt-sets.md`, `job-runners.md`, `autonomy-and-dispatch.md`, `job-admission.md`, `sandbox.md` and `cost-enforcement.md`. The two folders that had no `cli.md`/`engineering.md`/`user.md` now do. The folder count had already drifted to 39 before this change; both figures above are recounted, not adjusted. |
 
 **This file is the migration record.** New features get a folder from day one;
 do not add a flat `.md` at the `docs/` root, and do not recreate the old
@@ -36,7 +42,7 @@ folders) into the folders below. Content was **moved and absorbed, not
 rewritten**; where a document contradicted the code, the document was corrected
 and the correction noted in place.
 
-Four directories are deliberately **not** feature folders and keep their
+Five directories are deliberately **not** feature folders and keep their
 existing shape:
 
 | Directory | Why it is not a feature folder |
@@ -45,6 +51,7 @@ existing shape:
 | `design/` | Working design documents and roadmaps for work that is planned, not built. A feature folder describes what exists. |
 | `identity-refactor/` | A cross-repo migration plan, still awaiting sign-off. |
 | `testing/` | Contributor guides for running the suites. |
+| `release/` | What must be true of the tree before it is published, and the gates that enforce it. |
 
 `ROADMAP.md` is stamped **ARCHIVE**: it predates the unified-API-server model
 and is kept as a record of decisions, not as a plan.
@@ -55,8 +62,7 @@ and is kept as a record of decisions, not as a plan.
 
 | Feature | What it is |
 |---|---|
-| [agent-orchestration/](agent-orchestration/) | Agent sessions, jobs, workflows, fleet, inference backends, container trust and sandboxing |
-| [agentic-projects/](agentic-projects/) | Agentic project management and pooled third-party provider accounts |
+| [software-factory/](software-factory/) | The Software Factory: the orchestration engine (agent sessions, the job envelope and its runners, workflows, tasks and autonomy, fleet, inference backends, container trust and sandboxing), agentic projects, pooled third-party provider accounts, and the SDLC module that turns a labelled forge issue into a branch, a pull request, a review and a merge |
 | [messaging/](messaging/) | Channels, pub/sub, delta publishing, deduplication |
 | [scheduler/](scheduler/) | Distributed job scheduling, cron and delayed jobs, leader-elected execution |
 | [cache/](cache/) | L1 in-memory LRU with optional L2 Redis, entity-aware |
@@ -98,6 +104,7 @@ and is kept as a record of decisions, not as a plan.
 | [security-hardening/](security-hardening/) | FIPS mode, TLS posture, ingress binding, the hardening baseline |
 | [signal-bridge/](signal-bridge/) | The go-signal bridge (build-tag gated) |
 | [websocket/](websocket/) | The WebSocket server package — **see the note below** |
+| [errors/](errors/) | Error conventions: qrdb-coded sentinels, why `errors.Is` over-matches them, and the guard |
 
 ## Three things a new reader should know before planning against these docs
 

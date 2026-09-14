@@ -34,6 +34,9 @@ type mockTaskStore struct {
 	listCalls     []mockTaskStoreCall
 	claimCalls    []mockTaskStoreCall
 	completeCalls []mockTaskStoreCall
+	blockCalls    []mockTaskStoreCall
+	readmitCalls  []mockTaskStoreCall
+	deleteCalls   []mockTaskStoreCall
 	mu            sync.Mutex
 
 	createErr   error
@@ -43,15 +46,20 @@ type mockTaskStore struct {
 	listErr     error
 	claimErr    error
 	completeErr error
+	blockErr    error
+	readmitErr  error
+	deleteErr   error
 }
 
 type mockTaskStoreCall struct {
-	TenantID string
-	TaskID   string
-	AgentID  string
-	Task     *Task
-	Result   *TaskResult
-	Filter   *TaskFilter
+	TenantID  string
+	TaskID    string
+	AgentID   string
+	Task      *Task
+	Result    *TaskResult
+	Filter    *TaskFilter
+	BlockKind TaskBlockKind
+	Reason    string
 }
 
 func (m *mockTaskStore) CreateTask(_ context.Context, task *Task) error {
@@ -82,8 +90,11 @@ func (m *mockTaskStore) UpdateTask(_ context.Context, task *Task) error {
 	return nil
 }
 
-func (m *mockTaskStore) DeleteTask(_ context.Context, _, _ string) error {
-	return nil
+func (m *mockTaskStore) DeleteTask(_ context.Context, tenantID, taskID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deleteCalls = append(m.deleteCalls, mockTaskStoreCall{TenantID: tenantID, TaskID: taskID})
+	return m.deleteErr
 }
 
 func (m *mockTaskStore) ListTasks(_ context.Context, tenantID string, filter *TaskFilter) ([]*Task, error) {
@@ -108,6 +119,20 @@ func (m *mockTaskStore) CompleteTask(_ context.Context, tenantID, taskID string,
 	defer m.mu.Unlock()
 	m.completeCalls = append(m.completeCalls, mockTaskStoreCall{TenantID: tenantID, TaskID: taskID, Result: result})
 	return m.completeErr
+}
+
+func (m *mockTaskStore) BlockTask(_ context.Context, tenantID, taskID string, kind TaskBlockKind, reason string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.blockCalls = append(m.blockCalls, mockTaskStoreCall{TenantID: tenantID, TaskID: taskID, BlockKind: kind, Reason: reason})
+	return m.blockErr
+}
+
+func (m *mockTaskStore) ReadmitTask(_ context.Context, tenantID, taskID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.readmitCalls = append(m.readmitCalls, mockTaskStoreCall{TenantID: tenantID, TaskID: taskID})
+	return m.readmitErr
 }
 
 func (m *mockTaskStore) FailTask(_ context.Context, _, _, _ string) error {
@@ -179,11 +204,21 @@ type mockContainerRuntime struct {
 	isRunErr           error
 	removeErr          error
 	pullErr            error
+	execCalls          []mockExecCall
+	execResult         *ExecResult
+	execErr            error
 }
 
 type mockContainerCall struct {
 	Spec        *ContainerSpec
 	ContainerID string
+}
+
+// mockExecCall records one Exec: which container, and the command it was
+// asked to run there.
+type mockExecCall struct {
+	ContainerID string
+	Spec        *ExecSpec
 }
 
 func (m *mockContainerRuntime) Run(_ context.Context, spec *ContainerSpec) (string, error) {
@@ -204,6 +239,22 @@ func (m *mockContainerRuntime) RunInteractive(_ context.Context, spec *Container
 		return nil, m.runInteractiveErr
 	}
 	return m.runInteractiveProc, nil
+}
+
+// Exec records the command and answers what the test scripted. The zero
+// value answers a clean exit with no output, which is what a caller that only
+// wanted the command to run sees.
+func (m *mockContainerRuntime) Exec(_ context.Context, containerID string, spec *ExecSpec) (*ExecResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.execCalls = append(m.execCalls, mockExecCall{ContainerID: containerID, Spec: spec})
+	if m.execErr != nil {
+		return nil, m.execErr
+	}
+	if m.execResult != nil {
+		return m.execResult, nil
+	}
+	return &ExecResult{}, nil
 }
 
 func (m *mockContainerRuntime) Stop(_ context.Context, containerID string) error {

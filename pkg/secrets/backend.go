@@ -113,6 +113,25 @@ var (
 	// ErrVersionNotFound indicates the requested version does not exist.
 	ErrVersionNotFound = errors.New("secrets: version not found")
 
+	// ErrVersionSpaceExhausted indicates version allocation reached the
+	// integer ceiling and refuses to wrap: a wrapped allocation would write
+	// a negative version key that every scan ignores, silently corrupting
+	// the path's history.
+	ErrVersionSpaceExhausted = errors.New("secrets: version space exhausted")
+
+	// ErrWriteConflict indicates a guarded (storage-arbitrated) write was
+	// refused because a concurrent writer moved the record first. The
+	// caller's observation is stale; re-read and re-derive.
+	ErrWriteConflict = errors.New("secrets: concurrent writer moved the record")
+
+	// ErrNilCallback indicates a guarded-use read was given no callback.
+	ErrNilCallback = errors.New("secrets: nil callback")
+
+	// ErrSecretKeyAbsent indicates the secret record exists but holds no
+	// (nonempty) value under the requested key. Distinct from
+	// ErrSecretNotFound: the path is present, the field is not.
+	ErrSecretKeyAbsent = errors.New("secrets: key absent or empty in secret record")
+
 	// ErrInvalidPath indicates the path is malformed or empty.
 	ErrInvalidPath = errors.New("secrets: invalid path")
 

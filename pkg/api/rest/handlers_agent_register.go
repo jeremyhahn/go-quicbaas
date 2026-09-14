@@ -28,6 +28,8 @@ import (
 	"strconv"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -42,6 +44,18 @@ type agentAppManagerAccessor interface {
 	// GetAppStorage returns the underlying AppStorage for direct access when
 	// registering mTLS applications that require fields not exposed by AppManager.
 	GetAppStorage(ctx context.Context) (iam.AppStorage, error)
+}
+
+// agentIdentityStoreAccessor is the narrow interface the register handler
+// needs from the service layer to enroll the identity the daemon's client
+// certificate authenticates as. It is the same accessor every other IAM
+// handler resolves the identity store through.
+type agentIdentityStoreAccessor interface {
+	// GetIdentityStore returns the IAM identity store, whose user and role
+	// persistence is routed to go-qrdb's canonical UserServicer / RoleClient
+	// (pkg/server iam_init.go) — the same records go-qrdb's own authorization
+	// resolves an mTLS principal's roles from.
+	GetIdentityStore(ctx context.Context) (*iam.IdentityStore, error)
 }
 
 // agentRegisterRequest is the JSON body accepted by
@@ -91,17 +105,6 @@ const defaultRegisterRequestMaxBytes int64 = 64 * 1024
 // value by default; anything else is rejected to stop a client cert
 // that was minted for a different purpose from authenticating here.
 const agentRegistrarOU = "agents"
-
-// defaultAgentRuntimeScopes returns the scopes granted to daemons
-// registered through the mTLS endpoint. Kept in sync with
-// pkg/orchestration/agent_identity.go.
-func defaultAgentRuntimeScopes() []string {
-	return []string{
-		"agent:runtime:spawn",
-		"agent:runtime:prompt",
-		"agent:runtime:status",
-	}
-}
 
 // registerAgentRegistrationPublicRoutes wires the mTLS-only register
 // route (POST /api/v1/agents/register) onto the root router. The
@@ -175,6 +178,27 @@ func (s *Server) HandleAgentRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The tenant go-qrdb will AUTHENTICATE this certificate into must be the
+	// tenant being registered, or the identity enrolled below is written where
+	// the authenticator never looks. qrdb derives it from the certificate's
+	// tenant-scoped SPIFFE SAN (pkg/auth MTLSAuthenticator.TenantFromCert), so
+	// that SAN — not the Organization claim cross-checked above — is the
+	// authority when both are present.
+	if err := assertCertAuthenticatesInto(peer, req.TenantID); err != nil {
+		// A certificate carrying NO tenant SPIFFE SAN is reported, not
+		// refused: it is a certificate this build's issuer would not mint, and
+		// turning it into a registration failure would lock out a fleet that
+		// enrolled with one. Its consequence is stated instead, because the
+		// enrollment below cannot help it.
+		var noTenantSAN *AgentCertNoSPIFFETenantError
+		if !errors.As(err, &noTenantSAN) {
+			respondAgentRegisterError(w, r, http.StatusForbidden, "tenant_mismatch", err.Error())
+			return
+		}
+		s.logger.Warnf("agent register: %v; re-issue the certificate with a tenant-scoped SPIFFE SAN or its"+
+			" control-plane calls will stay unauthorized", err)
+	}
+
 	accessor, ok := s.service.(agentAppManagerAccessor)
 	if !ok {
 		respondAgentRegisterError(w, r, http.StatusInternalServerError, "server_error", "agent registrar service not available")
@@ -194,15 +218,44 @@ func (s *Server) HandleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	// authenticated calls (heartbeat, event forwarding). The app lives
 	// in the claimed tenant; deletion of the tenant or app revokes the
 	// daemon cleanly.
+	//
+	// RegisterAgentApp is keyed on the agent identity this request already
+	// authenticated (tenant + certificate CN), so a daemon that retries
+	// enrollment converges on the client it has instead of leaving an orphan
+	// behind (go-quicbaas#644). Either way it leaves with a usable secret.
+	//
+	// Scopes is the GRANT, not a label: it is written onto the application
+	// record and bounds every token the daemon is subsequently issued. The
+	// register response advertised these entitlements long before anything
+	// conferred them, so an enrolled agent authenticated fine and was then
+	// refused 403 on every heartbeat (go-quicbaas#653).
 	commonName := peer.Subject.CommonName
 	appName := iam.AgentAppName(req.TenantID, commonName)
-	app, err := appManager.RegisterApp(ctx, req.TenantID, iam.RegisterAppOptions{
+	app, err := appManager.RegisterAgentApp(ctx, req.TenantID, commonName, iam.RegisterAppOptions{
 		Name:           appName,
 		GrantTypes:     []string{iam.GrantTypeClientCredentials},
 		ResponseTypes:  []string{},
 		ResourcePrefix: "agent-runtime",
+		Scopes:         iam.AgentRuntimeGrant(),
 	})
 	if err != nil {
+		respondAgentRegisterError(w, r, http.StatusInternalServerError, "server_error", err.Error())
+		return
+	}
+
+	// Confer the SAME grant on the identity the daemon's CERTIFICATE
+	// authenticates as. The application grant above bounds the daemon's bearer
+	// tokens, but go-qrdb authenticates any request carrying a client
+	// certificate as the certificate's subject and resolves that principal's
+	// authority from its user record — and the daemon presents its certificate
+	// on every call because it needs one for /oauth2/token-mtls. Without this
+	// the enrolled daemon authenticates as a principal holding no roles at all
+	// and is refused 403 on every heartbeat (go-quicbaas#663).
+	//
+	// Fatal, not best-effort: a registration that hands back credentials the
+	// control plane will refuse is not a registration, and the response below
+	// advertises this exact grant.
+	if err := enrollAgentCertIdentity(ctx, s.service, req.TenantID, peer); err != nil {
 		respondAgentRegisterError(w, r, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
@@ -241,8 +294,19 @@ func (s *Server) HandleAgentRegister(w http.ResponseWriter, r *http.Request) {
 			Kind:      "daemon",
 			Metadata:  regMeta,
 		}
+		// A daemon already in the registry is REFRESHED by this call rather
+		// than refused (pkg/server agentRegistrarAdapter), so the failures
+		// that reach here are either a refusal about WHO is registering --
+		// which the response must state, because the caller is being told it
+		// may not have this record -- or an operational fault, which stays
+		// non-fatal: the daemon leaves with credentials it can use and the
+		// heartbeat recovery path re-publishes it.
 		if regErr := registrar.RegisterAgent(ctx, regReq); regErr != nil {
-			s.logger.Warnf("agent register: registrar failed for agent_id=%s: %v (daemon will reconcile on heartbeat)", appName, regErr)
+			if status, code, refused := agentRegistrarRefusal(regErr); refused {
+				respondAgentRegisterError(w, r, status, code, regErr.Error())
+				return
+			}
+			s.logger.Warnf("agent register: registrar failed for agent_id=%s: %v (the heartbeat recovery path will re-publish it)", appName, regErr)
 		}
 	}
 
@@ -263,8 +327,8 @@ func (s *Server) HandleAgentRegister(w http.ResponseWriter, r *http.Request) {
 		ClientSecret:     app.ClientSecret, // plaintext — only returned here
 		AgentID:          appName,
 		ServiceAccountID: appName,
-		Role:             "agent-runtime",
-		Scopes:           defaultAgentRuntimeScopes(),
+		Role:             orchestration.AgentRuntimeRole,
+		Scopes:           iam.AgentRuntimeGrant(),
 		EventIngestAddr:  ingestAddr,
 		MTLSClientID:     mtlsClientID,
 	})
@@ -330,10 +394,18 @@ func sanitizeAppName(cn string) string {
 	return iam.SanitizeAppName(cn)
 }
 
-// backendsFromRegisterMetadata returns the daemon's declared backends
-// from the registration request metadata. Callers pass a comma-separated
-// list under the "backends" key; we return nil when absent so the
-// registry entry accepts the row and the first heartbeat can correct it.
+// backendsFromRegisterMetadata returns the daemon's declared backends from the
+// registration request metadata. Callers pass a comma-separated list under the
+// "backends" key.
+//
+// An absent or empty key yields nil, and the record is written naming no
+// backend. That is not a placeholder waiting to be filled in: the heartbeat
+// DOES reconcile a record's backend axis now (go-quicbaas#699,
+// orchestration.AgentObservation), but it refuses an observation that reports
+// no served backend, so a daemon that advertises nothing here stays
+// advertising nothing until it serves something. A daemon whose runtime
+// constructed no backend can honour no task, and the empty record is how that
+// fault stays visible (go-quicbaas#681).
 func backendsFromRegisterMetadata(meta map[string]string) []string {
 	if meta == nil {
 		return nil
@@ -353,6 +425,29 @@ func backendsFromRegisterMetadata(meta map[string]string) []string {
 	return out
 }
 
+// agentRegistrarRefusal classifies a fleet-registry failure that is a refusal
+// ABOUT THE CALLER rather than an operational fault, returning the status and
+// error code the registration must answer with.
+//
+// Both refusals are answers to "may this certificate have this record?", and
+// both must reach the daemon: an agent ID whose record belongs to a different
+// principal is an identity takeover -- the ID is a SANITISED derivation of the
+// certificate CommonName (iam.SanitizeAppName folds space, slash, colon and
+// backslash to "-"), so two distinct subjects can address one record -- and an
+// agent an operator disabled must not re-enroll its way back into service.
+//
+// Everything else is operational and stays non-fatal to the registration.
+func agentRegistrarRefusal(err error) (status int, code string, refused bool) {
+	switch {
+	case errors.Is(err, orchestration.ErrAgentPrincipalMismatch):
+		return http.StatusConflict, "agent_id_conflict", true
+	case errors.Is(err, orchestration.ErrAgentDisabled):
+		return http.StatusForbidden, "agent_disabled", true
+	default:
+		return 0, "", false
+	}
+}
+
 // mergeRegisterMetadata produces the registry metadata we stamp on the
 // registration record. Includes the daemon's sandbox policy and
 // certificate fingerprint so operators auditing the registry can trace
@@ -366,7 +461,19 @@ func mergeRegisterMetadata(req *agentRegisterRequest, cert *x509.Certificate) ma
 		out["cert_serial"] = cert.SerialNumber.Text(16)
 	}
 	if cert != nil && cert.Subject.CommonName != "" {
-		out["cert_cn"] = cert.Subject.CommonName
+		// The record's OWNER. A re-registration may refresh this record only
+		// when it presents the same principal, so this is load-bearing rather
+		// than decorative (orchestration.AgentPrincipalMetadataKey).
+		out[orchestration.AgentPrincipalMetadataKey] = cert.Subject.CommonName
+	}
+	if cert != nil {
+		// The KEY that principal presented, in the stack's one canonical mTLS
+		// identity algorithm -- the same thumbprint #674 binds onto the
+		// enrolled user record. Refreshed on every registration and never
+		// compared: a re-keyed renewal legitimately changes it, which is
+		// exactly why EnrollAgentCertIdentity re-pins the binding instead of
+		// checking it.
+		out[orchestration.AgentPrincipalKeyMetadataKey] = qrdbsdk.ComputeSPKIThumbprint(cert)
 	}
 	for k, v := range req.Metadata {
 		if _, exists := out[k]; !exists {
@@ -398,16 +505,142 @@ func registerMTLSApp(ctx context.Context, log interface {
 		GrantTypes:              []string{iam.GrantTypeClientCredentials},
 		ResponseTypes:           []string{},
 		ResourcePrefix:          "agent-runtime",
+		Scopes:                  iam.AgentRuntimeGrant(),
 		TokenEndpointAuthMethod: iam.AuthMethodSelfSignedTLSClientAuth,
 		MTLSCertThumbprint:      thumbprint,
 	}
-	if createErr := appStorage.CreateApp(ctx, mtlsApp); createErr != nil {
+	createErr := appStorage.CreateApp(ctx, mtlsApp)
+	if createErr == nil {
+		log.Infof("agent register: self_signed_tls_client_auth app registered: client_id=%s thumbprint=%s", mtlsAppName, thumbprint)
+		return mtlsAppName
+	}
+	// coded-sentinel-ok: the whole already-exists class is the intent. The mTLS
+	// client id is derived from the agent identity, so an already-present
+	// record under it is this agent's own from an earlier enrollment; every
+	// other failure class is the operational one this branch reports.
+	if !errors.Is(createErr, iam.ErrAlreadyExists) {
 		log.Warnf("agent register: failed to register self_signed_tls_client_auth app %s: %v", mtlsAppName, createErr)
 		return ""
 	}
-	log.Infof("agent register: self_signed_tls_client_auth app registered: client_id=%s thumbprint=%s", mtlsAppName, thumbprint)
+
+	// The client id is derived from the agent identity, so a repeat enrollment
+	// finds its own record. Re-pin it to the certificate the daemon is
+	// presenting NOW -- a renewed certificate has a different thumbprint, and
+	// leaving the old one pinned locks the daemon out of /oauth2/token-mtls --
+	// and hand the id back, so the response is not silently missing the mTLS
+	// credential on every registration after the first (go-quicbaas#644).
+	if updateErr := appStorage.UpdateApp(ctx, mtlsApp); updateErr != nil {
+		log.Warnf("agent register: failed to re-pin self_signed_tls_client_auth app %s: %v", mtlsAppName, updateErr)
+		return ""
+	}
+	log.Infof("agent register: self_signed_tls_client_auth app re-pinned: client_id=%s thumbprint=%s", mtlsAppName, thumbprint)
 	return mtlsAppName
 }
+
+// assertCertAuthenticatesInto verifies the certificate authenticates into
+// tenantID — the tenant whose IAM the enrolled identity is written to.
+//
+// go-qrdb derives an mTLS identity's tenant from the certificate's
+// tenant-scoped SPIFFE SAN, falling back to the first Organizational Unit when
+// there is none (pkg/auth MTLSAuthenticator.TenantFromCert). This endpoint
+// requires OU=agents, so that fallback can never name a tenant: a certificate
+// carrying no SPIFFE SAN authenticates into a tenant called "agents" and its
+// principal is unresolvable wherever this enrollment writes it. Both
+// conditions are reported rather than papered over.
+//
+// A malformed SAN fails closed, exactly as qrdb's authenticator does with it.
+func assertCertAuthenticatesInto(peer *x509.Certificate, tenantID string) error {
+	id, err := qrdbsdk.TenantFromCert(peer, "")
+	switch {
+	case err == nil:
+		if id.TenantID != tenantID {
+			return &AgentCertTenantMismatchError{Certificate: id.TenantID, Registering: tenantID}
+		}
+		return nil
+	case errors.Is(err, qrdbsdk.ErrSpiffeNoTenantID):
+		return &AgentCertNoSPIFFETenantError{CommonName: peer.Subject.CommonName}
+	default:
+		return &AgentCertSPIFFEInvalidError{Cause: err}
+	}
+}
+
+// enrollAgentCertIdentity confers the agent runtime grant on the identity the
+// daemon's client certificate authenticates as, through the identity store
+// whose users and roles ARE go-qrdb's (pkg/server iam_init.go routes both to
+// the embedded node). See iam.IdentityStore.EnrollAgentCertIdentity for why a
+// certificate principal can hold authority no other way.
+func enrollAgentCertIdentity(ctx context.Context, service interface{}, tenantID string, peer *x509.Certificate) error {
+	accessor, ok := service.(agentIdentityStoreAccessor)
+	if !ok {
+		return errAgentIdentityStoreUnavailable
+	}
+	store, err := accessor.GetIdentityStore(ctx)
+	if err != nil {
+		return err
+	}
+	if store == nil {
+		return errAgentIdentityStoreUnavailable
+	}
+	_, err = store.EnrollAgentCertIdentity(ctx, tenantID, iam.AgentCertIdentityOptions{
+		Certificate: peer,
+		DisplayName: peer.Subject.CommonName,
+		// The ONE definition of what an agent daemon may do, shared with the
+		// OAuth2 application grant: one daemon, one grant, whichever of its two
+		// credentials it presents.
+		Permissions: iam.AgentRuntimeGrant(),
+	})
+	return err
+}
+
+// AgentCertTenantMismatchError reports a client certificate whose SPIFFE SAN
+// authenticates into a different tenant than the one being registered.
+type AgentCertTenantMismatchError struct {
+	// Certificate is the tenant the certificate authenticates into.
+	Certificate string
+	// Registering is the tenant the registration names.
+	Registering string
+}
+
+// Error implements the error interface.
+func (e *AgentCertTenantMismatchError) Error() string {
+	return "agent register: certificate authenticates into tenant " + strconv.Quote(e.Certificate) +
+		", not the registering tenant " + strconv.Quote(e.Registering)
+}
+
+// AgentCertNoSPIFFETenantError reports a client certificate carrying no
+// tenant-scoped SPIFFE SAN. Such a certificate authenticates into a tenant
+// named by its OU — "agents" on this endpoint — so no enrollment in the
+// registering tenant could ever authorize it.
+type AgentCertNoSPIFFETenantError struct {
+	// CommonName is the certificate subject, for the operator's log.
+	CommonName string
+}
+
+// Error implements the error interface.
+func (e *AgentCertNoSPIFFETenantError) Error() string {
+	return "agent register: certificate for " + strconv.Quote(e.CommonName) +
+		" carries no tenant-scoped SPIFFE SAN, so it cannot authenticate into the registering tenant"
+}
+
+// AgentCertSPIFFEInvalidError reports a malformed SPIFFE SAN. Fails closed,
+// matching go-qrdb's authenticator.
+type AgentCertSPIFFEInvalidError struct {
+	// Cause is the SPIFFE parse failure.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *AgentCertSPIFFEInvalidError) Error() string {
+	return "agent register: certificate SPIFFE identity is invalid: " + e.Cause.Error()
+}
+
+// Unwrap exposes the parse failure to errors.Is / errors.As.
+func (e *AgentCertSPIFFEInvalidError) Unwrap() error { return e.Cause }
+
+// errAgentIdentityStoreUnavailable indicates the identity store the agent's
+// certificate principal must be enrolled in is not wired. Registration fails
+// closed rather than issuing credentials the control plane will refuse.
+var errAgentIdentityStoreUnavailable = errors.New("agent register: IAM identity store not available")
 
 // agentRegisterErrorBody is the JSON shape for registration error
 // responses. It mirrors the OAuth2 error envelope (RFC 6749 §5.2) so

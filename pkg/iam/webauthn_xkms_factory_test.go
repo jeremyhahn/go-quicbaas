@@ -36,7 +36,8 @@ func TestNewWebAuthnServiceFactory_RejectsMissingQRDB(t *testing.T) {
 			RPDisplayName: "Example",
 			RPOrigins:     []string{"https://example.com"},
 		},
-		QRDB: nil,
+		QRDB:                nil,
+		AttestationRecorder: recorderOf(&fakeUserAuthFactorClient{}),
 	})
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -77,8 +78,9 @@ func TestNewWebAuthnServiceFactory_RejectsRequiredFields(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
-				Config: tc.cfg,
-				QRDB:   dummyQRDBClient,
+				Config:              tc.cfg,
+				QRDB:                dummyQRDBClient,
+				AttestationRecorder: recorderOf(&fakeUserAuthFactorClient{}),
 			})
 			if err == nil {
 				t.Fatalf("expected error, got nil")
@@ -105,7 +107,8 @@ func TestNewWebAuthnServiceFactory_HappyPath(t *testing.T) {
 			RPDisplayName: "Example",
 			RPOrigins:     []string{"https://example.com"},
 		},
-		QRDB: dummyQRDBClient,
+		QRDB:                dummyQRDBClient,
+		AttestationRecorder: recorderOf(&fakeUserAuthFactorClient{}),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -124,7 +127,8 @@ func TestWebAuthnServiceFactory_ServiceFor_RejectsEmptyTenantID(t *testing.T) {
 			RPDisplayName: "Example",
 			RPOrigins:     []string{"https://example.com"},
 		},
-		QRDB: dummyQRDBClient,
+		QRDB:                dummyQRDBClient,
+		AttestationRecorder: recorderOf(&fakeUserAuthFactorClient{}),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -164,39 +168,107 @@ func TestNewXKMSWebAuthnManager_RequiresFactory(t *testing.T) {
 	}
 }
 
-// TestXKMSWebAuthnManager_SetAAGUIDAllowlist verifies the allowlist
-// setter is concurrency-safe and returns the most recent value via
-// the internal accessor.
-func TestXKMSWebAuthnManager_SetAAGUIDAllowlist(t *testing.T) {
+// TestWebAuthnServiceFactory_GateCarriesConfiguredPolicy verifies the factory
+// hands its assurance policy and AAGUID allowlist to the gate the per-tenant
+// credential store applies.
+//
+// The allowlist used to live on XKMSWebAuthnManager and be consulted only by
+// that type's FinishRegistration, which the live registration route does not
+// call. Asserting it on the factory is asserting it where every ceremony
+// reaches it.
+func TestWebAuthnServiceFactory_GateCarriesConfiguredPolicy(t *testing.T) {
+	allowlist := NewAAGUIDAllowlist([]string{"00000000000000000000000000000000"}, AAGUIDPolicyStrict)
 	f, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
 		Config: WebAuthnFactoryConfig{
 			RPID:          "example.com",
 			RPDisplayName: "Example",
 			RPOrigins:     []string{"https://example.com"},
 		},
-		QRDB: dummyQRDBClient,
+		QRDB:                dummyQRDBClient,
+		AttestationRecorder: recorderOf(&fakeUserAuthFactorClient{}),
+		Assurance:           WebAuthnAssuranceAny,
+		AAGUIDAllowlist:     allowlist,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	m, err := NewXKMSWebAuthnManager(f)
+
+	gate := f.gate()
+	if gate.Assurance() != WebAuthnAssuranceAny {
+		t.Fatalf("gate assurance = %v, want any", gate.Assurance())
+	}
+	if gate.allowlist != allowlist {
+		t.Fatal("the factory did not hand its allowlist to the gate")
+	}
+}
+
+// TestWebAuthnServiceFactory_GateDefaultsToHardware is the zero-value contract:
+// a factory built with no assurance and no allowlist produces a gate that
+// refuses, not one that waves everything through.
+func TestWebAuthnServiceFactory_GateDefaultsToHardware(t *testing.T) {
+	f, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
+		Config: WebAuthnFactoryConfig{
+			RPID:          "example.com",
+			RPDisplayName: "Example",
+			RPOrigins:     []string{"https://example.com"},
+		},
+		QRDB:                dummyQRDBClient,
+		AttestationRecorder: recorderOf(&fakeUserAuthFactorClient{}),
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if m.allowlist() != nil {
-		t.Fatalf("expected nil allowlist initially")
-	}
 
-	allowlist := NewAAGUIDAllowlist([]string{"00000000000000000000000000000000"}, AAGUIDPolicyStrict)
-	m.SetAAGUIDAllowlist(allowlist)
-	if got := m.allowlist(); got != allowlist {
-		t.Fatalf("SetAAGUIDAllowlist did not store the value")
+	gate := f.gate()
+	if gate.Assurance() != WebAuthnAssuranceHardware {
+		t.Fatalf("gate assurance = %v, want hardware", gate.Assurance())
 	}
+	if _, evalErr := gate.Evaluate(context.Background(), "t1", "op@example.com", "basic_full", make([]byte, 16)); evalErr == nil {
+		t.Fatal("a factory with no configured allowlist produced a gate that accepts")
+	}
+}
 
-	// Setting nil clears the allowlist.
-	m.SetAAGUIDAllowlist(nil)
-	if got := m.allowlist(); got != nil {
-		t.Fatalf("SetAAGUIDAllowlist(nil) did not clear, got %v", got)
+// TestWebAuthnServiceFactory_AttestationConveyance proves the relying party
+// asks for "direct" whenever it requires hardware. Requesting the default
+// "none" conveyance would strip the attestation statement in the browser, so a
+// hardware requirement could only ever refuse.
+func TestWebAuthnServiceFactory_AttestationConveyance(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		assurance  WebAuthnAssurance
+		configured string
+		want       string
+	}{
+		{"hardware raises none to direct", WebAuthnAssuranceHardware, "none", "direct"},
+		{"hardware raises empty to direct", WebAuthnAssuranceHardware, "", "direct"},
+		{"hardware raises indirect to direct", WebAuthnAssuranceHardware, "indirect", "direct"},
+		{"hardware keeps enterprise", WebAuthnAssuranceHardware, "enterprise", "enterprise"},
+		{"hardware keeps direct", WebAuthnAssuranceHardware, "direct", "direct"},
+		// "any" still holds ADMINISTRATORS to hardware, so it must request
+		// attestation too — otherwise the browser strips the statement the gate
+		// then demands and no administrator can ever enroll.
+		{"any still raises, because admins need hardware", WebAuthnAssuranceAny, "none", "direct"},
+		{"the insecure test policy leaves the operator value alone",
+			WebAuthnAssuranceInsecureAllowSoftwareAdministrators, "none", "none"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := NewWebAuthnServiceFactory(WebAuthnFactoryParams{
+				Config: WebAuthnFactoryConfig{
+					RPID:          "example.com",
+					RPDisplayName: "Example",
+					RPOrigins:     []string{"https://example.com"},
+				},
+				QRDB:                dummyQRDBClient,
+				AttestationRecorder: recorderOf(&fakeUserAuthFactorClient{}),
+				Assurance:           tc.assurance,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := f.attestationConveyance(tc.configured); got != tc.want {
+				t.Errorf("attestationConveyance(%q) = %q, want %q", tc.configured, got, tc.want)
+			}
+		})
 	}
 }
 

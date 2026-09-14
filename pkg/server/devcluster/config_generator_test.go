@@ -17,6 +17,7 @@ package devcluster
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -503,4 +504,31 @@ func TestUnixSocketPattern(t *testing.T) {
 		assert.Equal(t, "/tmp/quicbaas.sock", nodes[1].UnixSocket)
 		assert.Equal(t, "/tmp/quicbaas.sock", nodes[2].UnixSocket)
 	})
+}
+
+// TestGenerateNodeYAML_CarriesTheSharedDeploymentIdentity covers the generated
+// config files, which are run standalone.
+//
+// A generated file that omits deployment_id leaves the node deriving one from
+// its own node_id, which isolates it from the very cluster the file was
+// generated for — the same defect as the in-process path, reached by a
+// different route.
+func TestGenerateNodeYAML_CarriesTheSharedDeploymentIdentity(t *testing.T) {
+	mgr, err := NewManager(&ManagerConfig{
+		DevCluster: config.DefaultDevClusterConfig(),
+		BaseConfig: createTestBaseConfig(),
+		Logger:     createTestLogger(t),
+	})
+	require.NoError(t, err)
+	require.NoError(t, mgr.Start(context.Background()))
+
+	gen := NewConfigGenerator(mgr)
+	want := fmt.Sprintf("deployment_id: %d", devclusterDeploymentID)
+	for _, node := range mgr.Nodes() {
+		yaml := gen.generateYAMLContent(node)
+		assert.Contains(t, yaml, want,
+			"node %d's generated config omits the shared deployment identity", node.NodeID)
+		assert.Contains(t, yaml, fmt.Sprintf("%d=localhost:%d", node.NodeID, node.RaftPort),
+			"node %d's generated config omits it from its own roster", node.NodeID)
+	}
 }

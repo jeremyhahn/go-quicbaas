@@ -1193,10 +1193,15 @@ func TestEncryptedBackend_LoadVersions_ErrorPaths(t *testing.T) {
 
 		ctx := context.Background()
 
-		// Should return ErrSecretNotFound for generic errors
+		// A generic failure is an OUTAGE, not absence: reporting it as
+		// ErrSecretNotFound made fail-closed consumers fail open. This
+		// subtest once pinned that collapse as the expected behavior.
 		_, err = eb.loadVersions(ctx, "test/error")
 		assert.Error(t, err)
-		assert.ErrorIs(t, err, ErrSecretNotFound)
+		assert.False(t, errors.Is(err, ErrSecretNotFound),
+			"a storage outage was reported as an absent secret")
+		assert.ErrorIs(t, err, ErrBackendUnavailable)
+		assert.ErrorIs(t, err, genericError, "the cause must stay reachable")
 	})
 }
 
@@ -1376,5 +1381,84 @@ func TestEncryptedBackend_List_ErrorPaths(t *testing.T) {
 		paths, err := eb.List(ctx, "nonexistent/")
 		require.NoError(t, err)
 		assert.Len(t, paths, 0)
+	})
+}
+
+// TestEncryptedBackend_StorageOutageIsNotAbsence pins the classification
+// loadVersions owes every consumer: an ABSENT secret is ErrSecretNotFound, a
+// storage FAILURE is not. Collapsing both to ErrSecretNotFound made every
+// caller that treats absence as ordinary — the documented contract — fail
+// open under a transient outage: a Raft election or an I/O error read as
+// "the secret does not exist", and fail-closed guards built on the
+// distinction (SDLC token rotation's among them) proceeded into exactly the
+// states they exist to prevent.
+func TestEncryptedBackend_StorageOutageIsNotAbsence(t *testing.T) {
+	ctx := context.Background()
+
+	store := newTestMockKVStore()
+	eb, err := NewEncryptedBackend(&EncryptedBackendOptions{
+		Store:                store,
+		Encryptor:            newTestMockSecretsEncryptor(),
+		DefaultKeyIdentifier: string(DEKIDGlobal),
+		Logger:               newTestMockLogger(),
+	})
+	require.NoError(t, err)
+
+	// Absence FIRST, so the outage assertions below cannot pass vacuously
+	// against a backend that errors on everything.
+	_, notFoundErr := eb.ListVersions(ctx, "sdlc/absent")
+	require.ErrorIs(t, notFoundErr, ErrSecretNotFound,
+		"an absent path must still report absence")
+
+	outage := &dberrors.QBError{
+		Code: dberrors.ErrInternal,
+		Op:   "kv.Get",
+		Err:  errors.New("raft: leadership lost"),
+	}
+	store.getFn = func(context.Context, string) ([]byte, error) {
+		return nil, outage
+	}
+
+	_, err = eb.ListVersions(ctx, "sdlc/some-path")
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrSecretNotFound),
+		"a storage outage was reported as an absent secret")
+	assert.ErrorIs(t, err, ErrBackendUnavailable,
+		"the outage must be classified as the backend being unavailable")
+	assert.ErrorIs(t, err, outage, "the cause must stay reachable for operators")
+
+	// The same classification holds on the Get path, which shares loadVersions.
+	_, _, err = eb.Get(ctx, "sdlc/some-path")
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrSecretNotFound),
+		"Get reported a storage outage as an absent secret")
+	assert.ErrorIs(t, err, ErrBackendUnavailable)
+}
+
+// TestUnmarshalWiped covers review 979's third finding at its unit: the
+// decrypted serialization buffer is zeroed whether decoding succeeds or
+// fails — after decryptEntry returns, no reversible copy of the record may
+// survive in the buffer json.Unmarshal read from.
+func TestUnmarshalWiped(t *testing.T) {
+	t.Run("SuccessDecodesAndWipes", func(t *testing.T) {
+		buf := []byte(`{"token":"c2VjcmV0"}`)
+		var dst map[string][]byte
+		require.NoError(t, unmarshalWiped(buf, &dst))
+		require.Equal(t, []byte("secret"), dst["token"], "decoding must still deliver the values")
+		for i, b := range buf {
+			if b != 0 {
+				t.Fatalf("byte %d of the plaintext buffer survived a successful decode", i)
+			}
+		}
+	})
+	t.Run("FailureStillWipes", func(t *testing.T) {
+		buf := []byte(`{"token": not-json`)
+		var dst map[string][]byte
+		require.Error(t, unmarshalWiped(buf, &dst))
+		for i, b := range buf {
+			if b != 0 {
+				t.Fatalf("byte %d of the plaintext buffer survived a failed decode", i)
+			}
+		}
 	})
 }

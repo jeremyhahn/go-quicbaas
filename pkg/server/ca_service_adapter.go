@@ -15,12 +15,6 @@ package server
 
 import (
 	"context"
-	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -30,6 +24,7 @@ import (
 	"sync"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -157,18 +152,23 @@ func (a *caServiceAdapter) getCA() xkmssdk.TrustedCA {
 	return a.ca
 }
 
-// IssueCertificate issues a new certificate from the wrapped CA, generating a
-// fresh keypair in-process and returning the PEM-encoded private key alongside
-// the signed certificate.
+// IssueCertificate issues a new certificate from the wrapped CA and returns the
+// PEM-encoded private key alongside the signed certificate.
 //
-// The keypair is generated here rather than inside the TrustedCA keystore on
-// purpose: keys created through the keystore are wrapped as non-exportable
-// opaque signers (the composite backend never returns raw key material), so
-// the "ca issue" contract — hand the requester both the certificate and its
-// private key — can only be honoured by owning the key locally. The key is
-// used to build a CSR, the CSR is signed by the CA, and only the signed leaf
-// is persisted in the certificate store; the private key is returned to the
-// caller and never retained by the server.
+// Every cryptographic step belongs to go-xkms. The key pair comes from the
+// single audited generator in pkg/xkms, which draws from the go-xkms FIPS RNG
+// resolver; the CSR is built by go-xkms (CreateCSRWithKey); the certificate is
+// signed by the go-xkms CA (SignCSR, the one x509.CreateCertificate call in the
+// stack); and the private key is encoded by go-xkms (EncodePrivateKeyPEM).
+//
+// The key is NOT created inside the TrustedCA keystore, and that is the custody
+// rule rather than a shortcut: keystore-generated keys are non-exportable opaque
+// handles, so TrustedCA.IssueCertificate returns no private key at all, and the
+// "ca issue" contract — hand the requester both the certificate and its key —
+// names a credential the REQUESTER holds, not platform key material. go-xkms
+// applies the identical rule in pkg/init/firstboot_adapter.go. See
+// pkg/xkms/keygen.go. Only the signed leaf is persisted in the certificate
+// store; the private key is returned to the caller and never retained.
 func (a *caServiceAdapter) IssueCertificate(
 	ctx context.Context,
 	req *xkmstransport.IssueCertificateRequest,
@@ -177,8 +177,13 @@ func (a *caServiceAdapter) IssueCertificate(
 		return nil, ErrCAServiceAdapterNilRequest
 	}
 
-	signer, keyAlgorithm, err := generateLeafKey(req.Algorithm)
+	signer, keyAlgorithm, err := dbxkms.GenerateRequesterKey(req.Algorithm)
 	if err != nil {
+		// Preserve the adapter's own sentinel for an algorithm it cannot honour:
+		// it is part of this type's published error contract.
+		if errors.Is(err, dbxkms.ErrUnsupportedKeyAlgorithm) {
+			return nil, ErrCAServiceAdapterUnsupportedAlgorithm
+		}
 		return nil, err
 	}
 
@@ -224,55 +229,6 @@ func (a *caServiceAdapter) IssueCertificate(
 		resp.SerialNumber = cert.SerialNumber.Text(16)
 	}
 	return resp, nil
-}
-
-// generateLeafKey produces a fresh signer for a leaf certificate based on the
-// requested algorithm string. The accepted spellings mirror the documented
-// xkmstransport.IssueCertificateRequest.Algorithm values plus the CLI's
-// shorthand ("ecdsa", "rsa"). An empty algorithm defaults to ECDSA P-256,
-// matching the TrustedCA's own default. The returned x509.PublicKeyAlgorithm
-// drives PEM encoding of the private key.
-func generateLeafKey(algorithm string) (crypto.Signer, x509.PublicKeyAlgorithm, error) {
-	switch strings.ToLower(strings.TrimSpace(algorithm)) {
-	case "", "ecdsa", "ecdsa-p256", "ecdsap256", "p256":
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			return nil, x509.UnknownPublicKeyAlgorithm, err
-		}
-		return key, x509.ECDSA, nil
-	case "ecdsa-p384", "ecdsap384", "p384":
-		key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
-		if err != nil {
-			return nil, x509.UnknownPublicKeyAlgorithm, err
-		}
-		return key, x509.ECDSA, nil
-	case "rsa", "rsa2048", "rsa-2048":
-		key, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			return nil, x509.UnknownPublicKeyAlgorithm, err
-		}
-		return key, x509.RSA, nil
-	case "rsa3072", "rsa-3072":
-		key, err := rsa.GenerateKey(rand.Reader, 3072)
-		if err != nil {
-			return nil, x509.UnknownPublicKeyAlgorithm, err
-		}
-		return key, x509.RSA, nil
-	case "rsa4096", "rsa-4096":
-		key, err := rsa.GenerateKey(rand.Reader, 4096)
-		if err != nil {
-			return nil, x509.UnknownPublicKeyAlgorithm, err
-		}
-		return key, x509.RSA, nil
-	case "ed25519":
-		_, key, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			return nil, x509.UnknownPublicKeyAlgorithm, err
-		}
-		return key, x509.Ed25519, nil
-	default:
-		return nil, x509.UnknownPublicKeyAlgorithm, ErrCAServiceAdapterUnsupportedAlgorithm
-	}
 }
 
 // signOptionsWithSPIFFE builds the TrustedCASignOptions for a single signing

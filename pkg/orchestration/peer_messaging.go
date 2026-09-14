@@ -40,13 +40,19 @@ type PeerMessage struct {
 // =============================================================================
 
 // PeerMessagingService handles agent-to-agent message routing with KV-backed
-// persistence, backpressure via inbox policies, idempotent delivery via dedup
-// keys, and real-time subscriber notifications.
+// persistence, backpressure via inbox policies, exactly-once delivery decided
+// by a guarded claim, and real-time subscriber notifications.
 type PeerMessagingService interface {
-	// Send delivers a message to the recipient agent's inbox.
-	// Returns ErrDuplicateMessage if the message ID was already delivered,
-	// ErrInboxFull if the inbox is at capacity and policy is "reject",
-	// or ErrMessageTooLarge if the serialized message exceeds MaxMessageSize.
+	// Send delivers a message to the recipient agent's inbox EXACTLY ONCE.
+	//
+	// Delivery of one message ID is decided by a guarded claim rather than
+	// suppressed after the fact, so two attempts racing across two nodes
+	// produce one inbox entry and one winner. Returns ErrDuplicateMessage
+	// when this ID was already delivered, ErrDeliveryInFlight — retryable —
+	// when another attempt holds the claim and has not yet recorded a
+	// delivery, ErrInboxFull if the inbox is at capacity and policy is
+	// "reject", or ErrMessageTooLarge if the serialized message exceeds
+	// MaxMessageSize.
 	Send(ctx context.Context, msg *PeerMessage) error
 
 	// Poll returns messages in the recipient's inbox with timestamps >= since.
@@ -59,8 +65,9 @@ type PeerMessagingService interface {
 	// replace the previous subscription channel.
 	Subscribe(ctx context.Context, tenantID, agentID string) (<-chan *PeerMessage, error)
 
-	// Acknowledge removes a message from the agent's inbox. The dedup key is
-	// retained to prevent redelivery. Returns nil if the message does not exist.
+	// Acknowledge removes a message from the agent's inbox. The delivered
+	// marker is retained, so a re-send of an acknowledged message is still
+	// refused as a duplicate. Returns nil if the message does not exist.
 	Acknowledge(ctx context.Context, tenantID, agentID, msgID string) error
 
 	// InboxSize returns the number of messages currently in the agent's inbox.
@@ -74,6 +81,15 @@ type PeerMessagingService interface {
 // InboxPolicy controls backpressure behavior for peer messaging inboxes.
 type InboxPolicy struct {
 	// MaxMessages is the maximum number of messages allowed in an inbox.
+	//
+	// IT IS APPROXIMATE, AND SAYING SO IS THE HONEST CONTRACT. Delivery is
+	// serialized per message ID, not per inbox: two DIFFERENT messages hold
+	// two different claims and can therefore both observe the same last free
+	// slot and both take it. Ordering the check differently does not fix
+	// that — an exact limit needs a guarded counter for the inbox itself,
+	// which is a different mechanism than the one deciding delivery. An
+	// inbox may briefly sit over its limit; it does not grow without bound,
+	// because the next delivery sees the real size.
 	MaxMessages int
 
 	// MaxMessageSize is the maximum serialized size (bytes) of a single message.
@@ -97,6 +113,14 @@ var (
 
 	// ErrDuplicateMessage indicates the message ID was already delivered.
 	ErrDuplicateMessage = errors.New("peer messaging: duplicate message")
+
+	// ErrDeliveryInFlight indicates another attempt holds this message's
+	// delivery claim and has not recorded a delivery.
+	ErrDeliveryInFlight = errors.New("peer messaging: delivery claim held, no delivery recorded")
+
+	// ErrPeerInboxUnguarded indicates the backing store cannot decide a
+	// contested delivery.
+	ErrPeerInboxUnguarded = errors.New("peer messaging: store cannot decide a contested delivery")
 
 	// ErrPeerMessageValidation indicates a peer message failed validation.
 	ErrPeerMessageValidation = errors.New("peer messaging: validation failed")
@@ -149,6 +173,15 @@ func (e *MessageTooLargeError) Unwrap() error {
 
 // DuplicateMessageError indicates the message ID was already delivered to
 // the recipient's inbox.
+//
+// This is a statement about a DELIVERY THAT HAPPENED, not about a key that
+// happens to be present. It is returned only against the durable delivered
+// marker Send writes after the inbox write lands, so it survives both
+// Acknowledge — which removes the inbox entry and deliberately keeps the
+// marker — and a redelivery carrying a different timestamp. An attempt that
+// merely lost the claim to another in-flight attempt gets
+// DeliveryInFlightError instead, because those two states say different things
+// and only one of them means the message arrived.
 type DuplicateMessageError struct {
 	TenantID string
 	AgentID  string
@@ -163,6 +196,53 @@ func (e *DuplicateMessageError) Error() string {
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *DuplicateMessageError) Unwrap() error {
 	return ErrDuplicateMessage
+}
+
+// DeliveryInFlightError reports an attempt that lost this message's delivery
+// claim to a holder that has not recorded a delivery.
+//
+// IT IS RETRYABLE, AND IT IS DELIBERATELY NOT A DUPLICATE. Claim held with no
+// delivered marker has two causes — a holder still in flight, and a holder that
+// crashed between winning the claim and recording delivery — and they leave
+// byte-identical key states, so no read distinguishes them. Reporting a
+// duplicate here would tell a caller its message arrived when it may never
+// have, which is the one answer this design refuses to give. A holder that
+// crashed leaves the claim stalled until it is reaped (WP10, run-is-authority),
+// so the residue is a loud retry rather than a silent loss.
+type DeliveryInFlightError struct {
+	TenantID string
+	AgentID  string
+	MsgID    string
+}
+
+// Error implements the error interface.
+func (e *DeliveryInFlightError) Error() string {
+	return ErrDeliveryInFlight.Error() + ": id=" + e.MsgID
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *DeliveryInFlightError) Unwrap() error {
+	return ErrDeliveryInFlight
+}
+
+// PeerInboxUnguardedError reports a store that cannot decide a contested
+// delivery, and therefore cannot deliver at all.
+//
+// A store lacking the guarded verbs gets NO EMULATION. Probe-then-write is the
+// exact race exactly-once delivery exists to remove, so a store that cannot
+// decide a claim makes Send refuse rather than deliver on a hope.
+type PeerInboxUnguardedError struct {
+	Message string
+}
+
+// Error implements the error interface.
+func (e *PeerInboxUnguardedError) Error() string {
+	return ErrPeerInboxUnguarded.Error() + ": " + e.Message
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *PeerInboxUnguardedError) Unwrap() error {
+	return ErrPeerInboxUnguarded
 }
 
 // PeerMessageValidationError indicates a peer message failed field validation.

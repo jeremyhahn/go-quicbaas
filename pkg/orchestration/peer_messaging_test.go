@@ -14,6 +14,7 @@
 package orchestration
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sort"
@@ -122,6 +123,35 @@ func (m *peerTestKVStore) Exists(_ context.Context, key string) (bool, error) {
 	defer m.mu.RUnlock()
 	_, ok := m.data[key]
 	return ok, nil
+}
+
+// PutIfAbsent and CompareAndDelete are the guarded verbs peer delivery is
+// decided by. They are implemented HERE, under this fixture's own lock, rather
+// than emulated as Exists-then-Put by the caller: the emulation is the exact
+// race the guarded verbs exist to remove, so a fixture that faked it would test
+// nothing. A mutex is honest atomicity for a store whose consistency domain is
+// one process, which is all a test fixture ever is.
+func (m *peerTestKVStore) PutIfAbsent(_ context.Context, key string, value []byte) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.data[key]; exists {
+		return false, nil
+	}
+	cp := make([]byte, len(value))
+	copy(cp, value)
+	m.data[key] = cp
+	return true, nil
+}
+
+func (m *peerTestKVStore) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	held, exists := m.data[key]
+	if !exists || !bytes.Equal(held, expected) {
+		return false, nil
+	}
+	delete(m.data, key)
+	return true, nil
 }
 
 // =============================================================================

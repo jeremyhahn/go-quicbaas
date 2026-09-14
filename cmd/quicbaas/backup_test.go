@@ -1943,14 +1943,14 @@ func TestRunBackupStatusCommand_WithBackupID(t *testing.T) {
 	}
 
 	// Reset globals
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	oldFormat := backupOutputFormat
 	defer func() {
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		backupOutputFormat = oldFormat
 		backupStoragePath = ""
 	}()
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 	backupOutputFormat = "json"
 
 	cmd := &cobra.Command{}
@@ -1969,14 +1969,14 @@ func TestRunBackupStatusCommand_NoBackupID(t *testing.T) {
 	}
 
 	// Reset globals
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	oldFormat := backupOutputFormat
 	defer func() {
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		backupOutputFormat = oldFormat
 		backupStoragePath = ""
 	}()
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 	backupOutputFormat = "json"
 
 	cmd := &cobra.Command{}
@@ -2002,13 +2002,13 @@ func TestRunBackupStatusCommand_NoBackups(t *testing.T) {
 	}
 
 	// Reset globals
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	oldFormat := backupOutputFormat
 	defer func() {
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		backupOutputFormat = oldFormat
 	}()
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 	backupOutputFormat = "json"
 
 	cmd := &cobra.Command{}
@@ -2046,9 +2046,9 @@ func TestRunBackupStatusCommand_VerifyError(t *testing.T) {
 	}
 
 	// Reset globals
-	oldTimeout := timeout
-	defer func() { timeout = oldTimeout }()
-	timeout = 30 * time.Second
+	oldTimeout := globalTimeout
+	defer func() { globalTimeout = oldTimeout }()
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runBackupStatusCommand(cmd, []string{"nonexistent-backup"})
@@ -2071,9 +2071,9 @@ func TestRunBackupStatusCommand_ListError(t *testing.T) {
 	}
 
 	// Reset globals
-	oldTimeout := timeout
-	defer func() { timeout = oldTimeout }()
-	timeout = 30 * time.Second
+	oldTimeout := globalTimeout
+	defer func() { globalTimeout = oldTimeout }()
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runBackupStatusCommand(cmd, []string{})
@@ -2092,13 +2092,13 @@ func TestRunBackupStatusCommand_TableFormat(t *testing.T) {
 	}
 
 	// Reset globals
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	oldFormat := backupOutputFormat
 	defer func() {
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		backupOutputFormat = oldFormat
 	}()
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 	backupOutputFormat = "table"
 
 	cmd := &cobra.Command{}

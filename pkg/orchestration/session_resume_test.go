@@ -685,7 +685,9 @@ func TestPromptSessionAsync_ResumeFailureLandsOnTranscript(t *testing.T) {
 
 // TestLoadPersistedSessions_SkipsUnknownBackend asserts a session whose backend
 // is no longer registered stays out of the registry — it cannot be addressed,
-// so presenting it as resumable would be a lie.
+// so presenting it as resumable would be a lie — and that its record is
+// CONCLUDED rather than left saying active, which is the stranded state
+// go-quicbaas#792 was filed for.
 func TestLoadPersistedSessions_SkipsUnknownBackend(t *testing.T) {
 	t.Parallel()
 
@@ -709,6 +711,14 @@ func TestLoadPersistedSessions_SkipsUnknownBackend(t *testing.T) {
 	}
 	if _, ok := h.service.liveSessionRecord("sess-orphan"); ok {
 		t.Fatal("a session with an unregistered backend was restored into the registry")
+	}
+	record, err := store.GetSession(context.Background(), "tenant-a", "sess-orphan")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if record.Status != SessionStateClosed || record.ConclusionReason != ConcludedByNodeRestart {
+		t.Fatalf("status=%q reason=%q, want closed/%s; a record nothing can address must not keep "+
+			"reporting a process that is gone", record.Status, record.ConclusionReason, ConcludedByNodeRestart)
 	}
 }
 

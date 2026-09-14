@@ -58,7 +58,8 @@ func (b *OrchestratorBinding) shutdown(ctx context.Context) {
 	// No resources to release; the connection is managed by ConnectionBinding.
 }
 
-// ListJobs returns all orchestration jobs for the given tenant.
+// ListJobs returns the tenant's orchestration jobs, narrowed to the attempts
+// at one task when the request names one.
 func (b *OrchestratorBinding) ListJobs(req *orchestratorSDK.ListJobsRequest) ([]map[string]interface{}, error) {
 	if req == nil {
 		return nil, NewGUIRequestRequiredError("OrchestratorBinding.ListJobs")
@@ -87,6 +88,10 @@ func (b *OrchestratorBinding) ListJobs(req *orchestratorSDK.ListJobsRequest) ([]
 			"updated_at":  job.UpdatedAt,
 			"error":       job.Error,
 			"event_count": job.EventCount,
+			// The task binding, so the desktop task page can group the
+			// attempts it was given without a second call.
+			"task_id": job.TaskID,
+			"attempt": job.Attempt,
 		})
 	}
 
@@ -94,7 +99,18 @@ func (b *OrchestratorBinding) ListJobs(req *orchestratorSDK.ListJobsRequest) ([]
 }
 
 // GetJobStatus returns the status of a specific orchestration job.
-func (b *OrchestratorBinding) GetJobStatus(req *orchestratorSDK.GetJobStatusRequest) (map[string]interface{}, error) {
+// THE WHOLE STATUS, NOT A PROJECTION. This used to hand-build a ten-key map,
+// which silently dropped every field added since it was written — runner,
+// task_id, agent_id, stages, attempts, attempt_budget, terminal_reason,
+// readmit_allowed, delivery, verification. The desktop job page reloads
+// through GetJobStatus for precisely those, so an sdlc job rendered as a
+// workflow job with empty panels and a Readmit with no task to readmit.
+//
+// The SDK type is already the wire shape — its JSON tags are what every other
+// transport serializes — so returning it directly is both correct today and
+// incapable of going stale tomorrow. A projection is a second wire format
+// that nothing tests.
+func (b *OrchestratorBinding) GetJobStatus(req *orchestratorSDK.GetJobStatusRequest) (*orchestratorSDK.JobStatus, error) {
 	if req == nil {
 		return nil, NewGUIRequestRequiredError("OrchestratorBinding.GetJobStatus")
 	}
@@ -108,18 +124,7 @@ func (b *OrchestratorBinding) GetJobStatus(req *orchestratorSDK.GetJobStatusRequ
 		return nil, NewGUITransportError("OrchestratorBinding.GetJobStatus", err)
 	}
 
-	return map[string]interface{}{
-		"job_id":      status.JobID,
-		"state":       status.State,
-		"iteration":   status.Iteration,
-		"task_count":  status.TaskCount,
-		"completed":   status.Completed,
-		"failed":      status.Failed,
-		"description": status.Description,
-		"started_at":  status.StartedAt,
-		"updated_at":  status.UpdatedAt,
-		"error":       status.Error,
-	}, nil
+	return status, nil
 }
 
 // StartJob starts a new autonomous orchestration job.
@@ -156,6 +161,28 @@ func (b *OrchestratorBinding) CancelJob(req *orchestratorSDK.CancelJobRequest) e
 	_, err = client.Orchestrator().CancelJob(b.ctx, req)
 	if err != nil {
 		return NewGUITransportError("OrchestratorBinding.CancelJob", err)
+	}
+
+	return nil
+}
+
+// ReadmitTask returns a parked task to the pending queue for another attempt.
+//
+// It is the TASK verb behind the job page's Readmit action: a concluded job
+// is over, and what an operator retries is the work, on a fresh attempt. The
+// server decides whether the task may come back — a parked task may, a failed
+// one is terminal — so this binding carries the request and nothing else.
+func (b *OrchestratorBinding) ReadmitTask(req *orchestratorSDK.ReadmitTaskRequest) error {
+	if req == nil {
+		return NewGUIRequestRequiredError("OrchestratorBinding.ReadmitTask")
+	}
+	client, err := b.conn.loadClient()
+	if err != nil {
+		return err
+	}
+
+	if _, err = client.Orchestrator().ReadmitTask(b.ctx, req); err != nil {
+		return NewGUITransportError("OrchestratorBinding.ReadmitTask", err)
 	}
 
 	return nil
@@ -355,6 +382,43 @@ func (b *OrchestratorBinding) ListBackends() ([]map[string]interface{}, error) {
 	return result, nil
 }
 
+// ListRunners returns every registered job runner and the ordered states it
+// drives a job through, so the desktop Job detail view builds its stepper from
+// the runner that actually drove the job rather than from a copy of the
+// engine's states.
+//
+// The runner and state slices are always non-nil: a caller ranging over them
+// must not have to nil-check.
+func (b *OrchestratorBinding) ListRunners() ([]map[string]interface{}, error) {
+	client, err := b.conn.loadClient()
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Orchestrator().ListRunners(b.ctx)
+	if err != nil {
+		return nil, NewGUITransportError("OrchestratorBinding.ListRunners", err)
+	}
+
+	result := make([]map[string]interface{}, 0, len(resp.Runners))
+	for _, runner := range resp.Runners {
+		states := make([]map[string]interface{}, 0, len(runner.States))
+		for _, state := range runner.States {
+			states = append(states, map[string]interface{}{
+				"state":          state.State,
+				"label":          state.Label,
+				"session_backed": state.SessionBacked,
+			})
+		}
+		result = append(result, map[string]interface{}{
+			"name":   runner.Name,
+			"states": states,
+		})
+	}
+
+	return result, nil
+}
+
 // ListBackendModels returns the model names available on the named backend
 // as seen from the specified agent. The frontend uses this to populate the
 // model selector after a backend is chosen.
@@ -483,4 +547,31 @@ func (b *OrchestratorBinding) SubscribeJobEvents(req *orchestratorSDK.SubscribeJ
 	}()
 
 	return nil
+}
+
+// GetSpendReport returns one scope of the consumption ledger: the tokens spent
+// under it, the drill-down to the level below, and the allowance status of
+// every pooled account that paid.
+//
+// The request struct is forwarded verbatim to the SDK, matching the TypeScript
+// Wails client which passes the GetSpendReportRequest object directly over
+// IPC, and the response is returned as the SDK type rather than reshaped into
+// a map. THE TYPE IS LOAD-BEARING HERE: `cost_measured` is what tells the
+// desktop UI whether `cost_micros` is a measured figure or an unmeasured zero,
+// and a hand-built map is exactly where a field like that goes missing.
+func (b *OrchestratorBinding) GetSpendReport(req *orchestratorSDK.GetSpendReportRequest) (*orchestratorSDK.GetSpendReportResponse, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.GetSpendReport")
+	}
+
+	client, err := b.conn.loadClient()
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Orchestrator().GetSpendReport(b.ctx, req)
+	if err != nil {
+		return nil, NewGUITransportError("OrchestratorBinding.GetSpendReport", err)
+	}
+	return resp, nil
 }

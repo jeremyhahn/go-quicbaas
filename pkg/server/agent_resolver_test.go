@@ -28,7 +28,7 @@ import (
 // for unit testing pickDaemon directly without any network or storage.
 func newPool() *remoteBackendPool {
 	return &remoteBackendPool{
-		entries: map[string]*pooledBackend{},
+		entries: map[string]*pooledDaemon{},
 	}
 }
 

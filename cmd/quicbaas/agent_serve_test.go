@@ -19,6 +19,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -39,10 +40,10 @@ func TestStripURLScheme(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"https_url", "https://198.51.100.91:19090", "198.51.100.91:19090"},
-		{"http_url", "http://198.51.100.91:19090", "198.51.100.91:19090"},
+		{"https_url", "https://198.51.100.7:19090", "198.51.100.7:19090"},
+		{"http_url", "http://198.51.100.7:19090", "198.51.100.7:19090"},
 		{"url_with_trailing_slash", "https://daemon.example.com:19090/", "daemon.example.com:19090"},
-		{"already_host_port", "198.51.100.91:19090", "198.51.100.91:19090"},
+		{"already_host_port", "198.51.100.7:19090", "198.51.100.7:19090"},
 		{"empty", "", ""},
 		{"whitespace", "   ", ""},
 	}
@@ -288,3 +289,87 @@ func (s *serveStubBackend) ToolGuidance() string { return "" }
 // Compile-time assertion the stub satisfies the production interface
 // so a future contract drift surfaces here, not in a test runtime.
 var _ orchestration.AgentBackend = (*serveStubBackend)(nil)
+
+// =============================================================================
+// Container runtime wiring (go-quicbaas#732)
+// =============================================================================
+
+// serveRuntimeConfig returns the minimum agent.Config buildAgentRuntime needs,
+// with the container-runtime selector and sandbox policy under test.
+func serveRuntimeConfig(selector agent.ContainerRuntimeSelector, policy orchestration.SandboxPolicy, workDir string) *agent.Config {
+	return &agent.Config{
+		ServerAddr:       "https://control.invalid:8443",
+		TenantID:         "tenant-a",
+		BindAddr:         "127.0.0.1:0",
+		SandboxPolicy:    policy,
+		ContainerRuntime: selector,
+		WorkDir:          workDir,
+	}
+}
+
+// TestBuildAgentRuntime_SelectorReachesRuntime is the regression for the
+// reported defect: `agent serve` parsed --container-runtime and never handed it
+// to the runtime, so every sandboxed spawn was refused for want of an engine.
+// Selecting "none" is the host-independent proof that the selector is read at
+// all — under a required policy it must abort the daemon at boot.
+func TestBuildAgentRuntime_SelectorReachesRuntime(t *testing.T) {
+	t.Parallel()
+
+	backends := map[string]orchestration.AgentBackend{"stub": &serveStubBackend{}}
+
+	t.Run("none under required policy refuses to start", func(t *testing.T) {
+		t.Parallel()
+		logger := newCaptureLogger()
+		cfg := serveRuntimeConfig(agent.ContainerRuntimeNone, orchestration.SandboxPolicyRequired, t.TempDir())
+
+		rt, err := buildAgentRuntime(cfg, backends, logger)
+		if rt != nil {
+			t.Fatal("a required-policy daemon with no container runtime must not start")
+		}
+		if !errors.Is(err, agent.ErrRuntimeSandboxRequiredNoRuntime) {
+			t.Fatalf("expected ErrRuntimeSandboxRequiredNoRuntime, got %v", err)
+		}
+		if !loggedContains(logger, "container runtime: none") {
+			t.Fatalf("boot log must report the resolved runtime, got %v", *logger.infos.Load())
+		}
+	})
+
+	t.Run("none under opt-in policy starts without an engine", func(t *testing.T) {
+		t.Parallel()
+		logger := newCaptureLogger()
+		cfg := serveRuntimeConfig(agent.ContainerRuntimeNone, orchestration.SandboxPolicyOptIn, t.TempDir())
+
+		rt, err := buildAgentRuntime(cfg, backends, logger)
+		if err != nil {
+			t.Fatalf("buildAgentRuntime: %v", err)
+		}
+		if rt.SandboxResolver().HasContainerRuntime() {
+			t.Fatal("selector none must leave the daemon without a container runtime")
+		}
+	})
+
+	t.Run("unknown selector is a typed error", func(t *testing.T) {
+		t.Parallel()
+		logger := newCaptureLogger()
+		cfg := serveRuntimeConfig(agent.ContainerRuntimeSelector("runc"), orchestration.SandboxPolicyOptIn, t.TempDir())
+
+		rt, err := buildAgentRuntime(cfg, backends, logger)
+		if rt != nil {
+			t.Fatal("an unknown --container-runtime must not produce a runtime")
+		}
+		if !errors.Is(err, agent.ErrConfigUnknownRuntime) {
+			t.Fatalf("expected ErrConfigUnknownRuntime, got %v", err)
+		}
+	})
+}
+
+// loggedContains reports whether any INFO line the serve path emitted contains
+// substr.
+func loggedContains(logger *captureLogger, substr string) bool {
+	for _, line := range *logger.infos.Load() {
+		if strings.Contains(line, substr) {
+			return true
+		}
+	}
+	return false
+}

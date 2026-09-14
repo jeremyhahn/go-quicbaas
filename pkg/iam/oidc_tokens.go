@@ -19,7 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"fmt"
+	"strings"
 	"time"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -118,7 +118,26 @@ func (s *TokenService) signingMaterial(ctx context.Context, tenantID string) (cr
 }
 
 // GenerateAccessToken generates a new JWT access token.
+//
+// It mints claims.SessionID when the caller left it empty, and WRITES IT BACK
+// so the caller can freeze the same value into the session it is establishing
+// (see Claims.SessionID). Minting here rather than at each login site is what
+// makes the claim's guarantee structural: no issuance path can ship a token
+// without a sid, and no two logins can share one by omission. A renewal is the
+// one caller that supplies the value — it replays its session's — so the only
+// way to get sid wrong is to forget to replay it, which yields a NEW session
+// identifier and reads to a client as a new session. That is the safe
+// direction: the failure costs a client its cache, it does not let one login's
+// cache stay in scope under another's.
 func (s *TokenService) GenerateAccessToken(ctx context.Context, claims *Claims) (string, error) {
+	if claims.SessionID == "" {
+		sessionID, err := generateSessionID()
+		if err != nil {
+			return "", err
+		}
+		claims.SessionID = sessionID
+	}
+
 	// Build claims map for XKMS JWT signing
 	jwtClaims := xkms.JWTClaims{
 		"iss":          claims.Issuer,
@@ -128,6 +147,7 @@ func (s *TokenService) GenerateAccessToken(ctx context.Context, claims *Claims) 
 		"iat":          claims.IssuedAt.Unix(),
 		"nbf":          claims.NotBefore.Unix(),
 		"jti":          claims.JTI,
+		"sid":          claims.SessionID,
 		"tenant_id":    claims.TenantID,
 		"roles":        claims.Roles,
 		"groups":       claims.Groups,
@@ -137,6 +157,32 @@ func (s *TokenService) GenerateAccessToken(ctx context.Context, claims *Claims) 
 		"client_id":    claims.ClientID,
 		"mfa_verified": claims.MFAVerified,
 		"auth_method":  claims.AuthMethod,
+	}
+
+	// The principal-identity claims are emitted only when set, so a token never
+	// carries an empty uid or ptyp that a verifier could mistake for a present
+	// one. Their absence is what marks a token as pre-dating this contract.
+	if claims.UserID != "" {
+		jwtClaims["uid"] = claims.UserID
+	}
+	if claims.PrincipalType != "" {
+		jwtClaims["ptyp"] = claims.PrincipalType
+	}
+
+	// The attestation claims travel with the token that AUTHORIZES, not only
+	// with the ID token that describes the login. A resource server deciding
+	// whether to admit an operation reserved for hardware-backed credentials
+	// reads them off this bearer; see Claims.AttestLevel for why the ID token
+	// alone is the wrong place for them.
+	//
+	// Each is emitted only when the login actually established it, so an
+	// unattested session's token stays silent rather than carrying an empty
+	// value a verifier could mistake for an answer.
+	if claims.AttestLevel != "" {
+		jwtClaims["attest_level"] = claims.AttestLevel
+	}
+	if claims.AttestAAGUID != "" {
+		jwtClaims["attest_aaguid"] = claims.AttestAAGUID
 	}
 
 	// Emit scp (array-form scope) for the platform access-token contract. The
@@ -203,7 +249,15 @@ func (s *TokenService) GenerateAccessToken(ctx context.Context, claims *Claims) 
 		ClientID:  claims.ClientID,
 	}
 
-	if err := s.storage.StoreToken(ctx, tokenMeta); err != nil {
+	// Store under the TOKEN's tenant, not whatever tenant happens to be on the
+	// caller's context. The revocation reader is tenant-scoped — GetToken
+	// resolves tokenKey(TenantFromContext(ctx), jti) — and a missing record
+	// reads as "not revoked", so a write that lands in a different store than
+	// the read makes logout silently ineffective until the token expires. The
+	// ceremony is exactly that case: it issues from the login request's
+	// context, which carries no tenant, while the tenant's own store is where
+	// revocation later looks.
+	if err := s.storage.StoreToken(withTokenTenant(ctx, claims.TenantID), tokenMeta); err != nil {
 		return "", dberrors.Wrapf(err, dberrors.ErrStorage, "iam.TokenService.GenerateAccessToken", "failed to store token")
 	}
 
@@ -218,6 +272,28 @@ func (s *TokenService) GenerateAccessToken(ctx context.Context, claims *Claims) 
 // nil client (qrdb not yet wired), it returns (nil, nil) so the caller falls
 // back to the OIDC scope without failing issuance. A real RBAC error is
 // surfaced typed (the token must not ship with an unauthorized perm set).
+//
+// The resolve runs on a context scoped to the TOKEN's tenant, for the same
+// reason StoreToken does above — but through qrdb's OWN tenant binding, which
+// is a different context key from quicbaas's (withTokenTenant / iam's
+// tenantContextKey addresses quicbaas's token index; qrdbsdk.ContextWithTenant
+// addresses qrdb's store resolver). Getting that distinction wrong is silent:
+// the wrong key sets a value nothing downstream reads, and the resolve still
+// runs in the system tenant.
+//
+// It matters because qrdb resolves the role store from the CONTEXT, never from
+// Identity.TenantID — ListPermissions passes the identity's roles straight to
+// roleSvc.ResolvePermissions and consults its TenantID for nothing. The
+// unified login ceremony issues from the login request's context, and that
+// request is unauthenticated, so it carries no tenant at all. Every role id a
+// non-system tenant's user holds then misses in the system store,
+// ListPermissions answers "role: not found: <uuid>", and issuance fails: the
+// user authenticates with a verified factor and the ceremony answers 401
+// anyway. That is #529 — no user in a non-system tenant could log in.
+//
+// Scoping here rather than at each caller keeps every issuance path — unified
+// ceremony, PIV login, federated callback, refresh — resolving in the tenant
+// whose roles the claims actually name.
 func (s *TokenService) resolveEffectivePermissions(ctx context.Context, claims *Claims) ([]string, error) {
 	if s.permResolver == nil {
 		return nil, nil
@@ -231,7 +307,7 @@ func (s *TokenService) resolveEffectivePermissions(ctx context.Context, claims *
 		TenantID: claims.TenantID,
 		Roles:    claims.Roles,
 	}
-	infos, err := rbac.ListPermissions(ctx, identity)
+	infos, err := rbac.ListPermissions(withQRDBTenant(ctx, claims.TenantID), identity)
 	if err != nil {
 		return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.resolveEffectivePermissions", "failed to resolve effective permissions")
 	}
@@ -402,14 +478,73 @@ func (s *TokenService) RevokeToken(ctx context.Context, tokenValue string) error
 
 // Helper functions
 
-// generateJTI generates a unique JWT ID.
-func generateJTI() string {
-	b, err := xkms.Rand(16)
+// tokenIDEntropyBytes is the size of the token identifier (the jti claim). 128
+// bits makes a collision between two issued tokens unreachable, which is the
+// property revocation depends on.
+const tokenIDEntropyBytes = 16
+
+// tokenIDEntropy is the randomness generateJTI draws on.
+//
+// It is a variable for the same single reason sessionIDEntropy below is:
+// proving that issuance FAILS CLOSED when the CSPRNG does requires making the
+// CSPRNG fail, and xkms.Rand draws on process-global RNG state that a unit test
+// must not reach in and break for every other test in the package. Nothing
+// outside a test reassigns it.
+var tokenIDEntropy = xkms.Rand
+
+// generateJTI returns the identifier of one issued token (the jti claim), or an
+// error when the CSPRNG cannot supply one.
+//
+// It used to answer a CSPRNG failure with time.Now().UnixNano() and report
+// success (#372). jti is this provider's REVOCATION HANDLE — IsTokenRevoked
+// resolves by it, and logout and RevokeToken are keyed on it — so a
+// timestamp-derived jti is a revocation record an attacker can guess, shipped
+// with nothing in the response to say generation was degraded. An attacker
+// cannot mint a signed token from it, which makes this weaker than a
+// predictable session identifier; issuing a security-relevant identifier from a
+// clock while reporting success is the wrong shape regardless. There is no
+// degraded value worth issuing, so issuance fails and every caller propagates
+// it — the same answer the neighbouring refresh-secret and session-identifier
+// paths already give.
+func generateJTI() (string, error) {
+	b, err := tokenIDEntropy(tokenIDEntropyBytes)
 	if err != nil {
-		// Fallback to timestamp-based ID if random fails
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+		return "", &TokenIDEntropyError{Cause: err}
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
+}
+
+// sessionIDEntropyBytes is the size of the random session identifier. 128 bits
+// makes a collision between two logins unreachable, which is the only property
+// that matters here.
+const sessionIDEntropyBytes = 16
+
+// sessionIDEntropy is the randomness generateSessionID draws on.
+//
+// It is a variable for exactly one reason: proving that issuance FAILS CLOSED
+// when the CSPRNG does requires making the CSPRNG fail, and xkms.Rand draws on
+// process-global RNG state that a unit test must not reach in and break for
+// every other test in the package. Nothing outside a test reassigns it.
+var sessionIDEntropy = xkms.Rand
+
+// generateSessionID returns the identifier of one login session (the sid claim),
+// or an error when the CSPRNG cannot supply one.
+//
+// Kept separate from generateJTI, which it otherwise resembles, so that the two
+// identifiers draw on independent seams a test can fail one at a time. Both now
+// refuse rather than degrade: generateJTI did fall back to a timestamp until
+// #372, and this comment used to record that difference. sid's whole job is to
+// answer whether two credentials belong to the same login, and a predictable
+// value answers it wrongly in the one direction that matters — two logins
+// minted close enough together would share an identifier, and the first login's
+// cached data would stay in scope under the second. There is no degraded value
+// worth issuing, so issuance fails instead and the caller surfaces it.
+func generateSessionID() (string, error) {
+	b, err := sessionIDEntropy(sessionIDEntropyBytes)
+	if err != nil {
+		return "", &SessionIDEntropyError{Cause: err}
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // parseScopes converts a space-separated scope string to a slice.
@@ -457,12 +592,25 @@ type HardwareTokenOptions struct {
 	// E.g. ["webauthn","hwk"] or ["smartcard","mfa"].
 	AMR []string
 	// ACR is the authentication context class reference.
-	// Use ACRHardwareAttested for hardware-backed credentials.
+	// Use ACRHardwareAttested for hardware-backed credentials — and only when
+	// Attestation actually proves hardware; see below.
 	ACR string
-	// AttestAAGUID is the hex-encoded FIDO2 AAGUID (WebAuthn only; empty for PIV).
-	AttestAAGUID string
-	// AttestLevel is a human-readable attestation level.
-	AttestLevel string
+	// Attestation is the VERIFIED provenance of the credential that
+	// authenticated this login, produced by a verifier in this package
+	// (WebAuthnAttestationGate for FIDO2, PIVAttestationVerifier for
+	// smartcards). Its fields are unexported, so a handler cannot mint one:
+	// the only way to obtain a hardware result is to have proven hardware.
+	//
+	// The claims `attest_level`, `attest_aaguid` and `mfa_verified` are derived
+	// from it rather than supplied. They used to be caller-supplied strings, and both
+	// production call sites passed the literal "hardware" unconditionally —
+	// the PIV login handler for any TLS client certificate, and self-service
+	// registration for any WebAuthn credential including a virtual one. Tokens
+	// asserted hardware that nothing had ever checked.
+	//
+	// Nil is legal and means "this login proved nothing about storage": the
+	// claims are omitted and ACRHardwareAttested is refused.
+	Attestation *AttestationResult
 	// ClientID is the OAuth2 client on behalf of which tokens are issued.
 	// May be empty when no client_id is applicable (direct hardware login).
 	ClientID string
@@ -480,12 +628,49 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 		return nil, dberrors.New(dberrors.ErrInvalidInput, "iam.TokenService.IssueHardwareTokens", "user is required")
 	}
 
+	// A token may claim hardware only when a verifier in this package
+	// established it. Refusing here — rather than trusting the handler that set
+	// the claim — is what makes it mean something to every consumer
+	// downstream: an access token asserting hardware is now evidence, not a
+	// label.
+	//
+	// BOTH the ACR and the AMR are checked. The ACR is the obvious one, but
+	// RFC 8176 amr values carry the same assertion in a different field: "hwk"
+	// is proof-of-possession of a HARDWARE key and "sc" is a smart card. A
+	// caller that set only those would produce a token without the
+	// hardware-attested ACR that still tells every relying party it holds a
+	// hardware credential. This function is the issuance boundary, so the rule
+	// belongs here and not in the handlers that happen to derive it correctly
+	// today.
+	if err := requireProvenHardware(opts); err != nil {
+		return nil, err
+	}
+
+	// MFA assurance is DERIVED from the same evidence, never asserted by the
+	// caller. Proven hardware establishes possession of a key that cannot be
+	// copied off the authenticator, which is the second factor this login
+	// ceremony rests on. An unattested credential — the certificate an operator
+	// admits through iam.piv_login.allow_unattested — establishes possession of
+	// an ordinary software key and nothing else, so it proves ONE factor.
+	//
+	// This used to be the literal true, on every path. A software-held TLS key
+	// produced an ID token asserting mfa_verified, and the same literal was
+	// frozen into the refresh session, so every renewal for the whole refresh
+	// window repeated the assertion. A relying party enforcing an MFA policy
+	// admitted the weakest login this endpoint can issue.
+	mfaVerified := opts.Attestation.IsHardware()
+
 	now := time.Now()
 	scope := opts.Scope
 	if scope == "" {
 		scope = "openid profile email"
 	}
 	issuer := s.config.Issuer
+
+	accessJTI, err := generateJTI()
+	if err != nil {
+		return nil, err
+	}
 
 	accessClaims := &Claims{
 		Issuer:    issuer,
@@ -494,8 +679,9 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 		ExpiresAt: UnixTime{Time: now.Add(s.config.AccessTokenTTL)},
 		IssuedAt:  UnixTime{Time: now},
 		NotBefore: UnixTime{Time: now},
-		JTI:       generateJTI(),
+		JTI:       accessJTI,
 		TenantID:  opts.User.TenantID,
+		UserID:    opts.User.ID,
 		Roles:     opts.User.Roles,
 		Groups:    opts.User.Groups,
 		Email:     opts.User.Email,
@@ -504,6 +690,16 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 		ClientID:  opts.ClientID,
 		AMR:       opts.AMR,
 		ACR:       opts.ACR,
+		// Carried on the bearer and not only on the ID token: renewal replays
+		// it from the frozen session, so a bearer that omitted it would gain
+		// the claim at the first refresh and read as an UPGRADE in assurance
+		// that no ceremony granted.
+		MFAVerified: mfaVerified,
+		// Derived from the verified evidence, exactly as the ID token's are.
+		// The bearer is what policy is applied to, so it has to say what was
+		// proven or the whole verification above buys nothing downstream.
+		AttestLevel:  string(opts.Attestation.Level()),
+		AttestAAGUID: opts.Attestation.AAGUID(),
 	}
 
 	accessToken, err := s.GenerateAccessToken(ctx, accessClaims)
@@ -524,11 +720,11 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 		TenantID:      opts.User.TenantID,
 		Roles:         opts.User.Roles,
 		Groups:        opts.User.Groups,
-		MFAVerified:   true,
+		MFAVerified:   mfaVerified,
 		AMR:           opts.AMR,
 		ACR:           opts.ACR,
-		AttestAAGUID:  opts.AttestAAGUID,
-		AttestLevel:   opts.AttestLevel,
+		AttestAAGUID:  opts.Attestation.AAGUID(),
+		AttestLevel:   string(opts.Attestation.Level()),
 	}
 
 	idToken, err := s.GenerateIDToken(ctx, idClaims)
@@ -539,20 +735,47 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 	// The refresh credential freezes the hardware login's authentication
 	// context so a renewed access token keeps its amr/acr assurance instead of
 	// silently degrading to an unattested session.
+	//
+	// UserID is frozen alongside it for the same reason the access token above
+	// carries uid: renewal decides liveness from THIS session and re-mints from
+	// these fields, so omitting the immutable handle would mint a renewed token
+	// carrying neither uid nor a service marker — which principalLive DENIES,
+	// killing the hardware session at its next liveness check.
+	//
+	// THE BYPASS THIS ONCE DESCRIBED IS CLOSED, and describing it in the
+	// present tense read as a live hole. Before #390 a uid-less token was
+	// resolved from its subject string, a deleted account resolved to nobody,
+	// and that was read as a service principal — so a hardware session outlived
+	// its user for the whole refresh lifetime. That is the past-tense account of
+	// what TestHardwareSessionDoesNotOutliveADeletedUser guards; the guessing
+	// path is gone and refusal is what a uid-less renewal gets now (#278).
 	refreshToken, err := s.GenerateRefreshToken(ctx, SessionRefreshOptions{
 		Subject:  opts.User.ID,
 		TenantID: opts.User.TenantID,
 		ClientID: opts.ClientID,
 		Scopes:   parseScopes(scope),
 		Session: TokenSessionContext{
-			Roles:       opts.User.Roles,
-			Groups:      opts.User.Groups,
-			Audience:    []string{issuer},
-			Email:       opts.User.Email,
-			Name:        opts.User.Name,
-			MFAVerified: true,
+			// The sid GenerateAccessToken minted for the bearer above. Freezing
+			// it is what makes a renewal of THIS hardware login carry the same
+			// session identifier the login handed out.
+			SessionID: accessClaims.SessionID,
+			UserID:    opts.User.ID,
+			Roles:     opts.User.Roles,
+			Groups:    opts.User.Groups,
+			Audience:  []string{issuer},
+			Email:     opts.User.Email,
+			Name:      opts.User.Name,
+			// Frozen honestly: a renewal rebuilds the bearer entirely from this
+			// record, so a true here would resurrect the assertion the login
+			// never earned for the whole refresh lifetime.
+			MFAVerified: mfaVerified,
 			AMR:         opts.AMR,
 			ACR:         opts.ACR,
+			// Frozen from the same verified evidence the bearer above carries,
+			// so a renewal of this login asserts the provenance the login
+			// proved instead of dropping to an unattested session.
+			AttestLevel:  accessClaims.AttestLevel,
+			AttestAAGUID: accessClaims.AttestAAGUID,
 		},
 	})
 	if err != nil {
@@ -587,6 +810,13 @@ type ServiceAccountTokenOptions struct {
 	TenantID string
 	// Scope is the space-separated list of granted scopes.
 	Scope string
+	// SCP is the array-form authority claim: the granted PERMISSIONS, in
+	// qrdb's canonical "resource:action" vocabulary. It is what a resource
+	// server's authorizer reads, so it is stamped explicitly rather than left
+	// to the OIDC scope fallback -- this path signs its own claims and would
+	// otherwise ship an authority claim inferred from a protocol one, which is
+	// how "openid" ended up standing in for a permission set. Empty omits scp.
+	SCP []string
 	// CertThumbprintS256 is the base64url-encoded SHA-256 thumbprint of the
 	// client certificate used during authentication (RFC 8705 §3.1).
 	CertThumbprintS256 string
@@ -618,23 +848,47 @@ func (s *TokenService) IssueServiceAccountTokens(ctx context.Context, opts Servi
 	}
 	issuer := s.config.Issuer
 
+	// Minted before the claim map is built so a CSPRNG failure refuses the token
+	// rather than signing one with a missing or degraded session identifier.
+	serviceSessionID, err := generateSessionID()
+	if err != nil {
+		return nil, err
+	}
+
+	jti, err := generateJTI()
+	if err != nil {
+		return nil, err
+	}
+
 	jwtClaims := xkms.JWTClaims{
-		"iss":           issuer,
-		"sub":           opts.ClientID,
-		"aud":           []string{issuer},
-		"exp":           now.Add(s.config.AccessTokenTTL).Unix(),
-		"iat":           now.Unix(),
-		"nbf":           now.Unix(),
-		"jti":           generateJTI(),
+		"iss": issuer,
+		"sub": opts.ClientID,
+		"aud": []string{issuer},
+		"exp": now.Add(s.config.AccessTokenTTL).Unix(),
+		"iat": now.Unix(),
+		"nbf": now.Unix(),
+		"jti": jti,
+		// This path signs its own claims rather than going through
+		// GenerateAccessToken, so it carries sid explicitly: every access token
+		// this provider mints answers "which login is this" the same way, and a
+		// consumer never has to know which issuance path produced its bearer. An
+		// mTLS service login holds no renewable session, so each issuance is its
+		// own — which is what a fresh identifier per token says.
+		"sid":           serviceSessionID,
 		"tenant_id":     opts.TenantID,
 		"scope":         scope,
 		"client_id":     opts.ClientID,
 		"auth_method":   "mtls",
+		"ptyp":          PrincipalTypeService,
 		"attest_method": opts.AttestMethod,
 		"amr":           opts.AMR,
 		"cnf": map[string]interface{}{
 			"x5t#S256": opts.CertThumbprintS256,
 		},
+	}
+
+	if len(opts.SCP) > 0 {
+		jwtClaims["scp"] = opts.SCP
 	}
 
 	signer, alg, kid, err := s.signingMaterial(ctx, opts.TenantID)
@@ -646,7 +900,6 @@ func (s *TokenService) IssueServiceAccountTokens(ctx context.Context, opts Servi
 		return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.IssueServiceAccountTokens", "failed to sign service account token")
 	}
 
-	jti, _ := jwtClaims["jti"].(string)
 	tokenMeta := &Token{
 		JTI:       jti,
 		Subject:   opts.ClientID,
@@ -677,4 +930,48 @@ func validatePKCES256(verifier, challenge string) bool {
 
 	// Compare with challenge
 	return computed == challenge
+}
+
+// hardwareAMRValues are the RFC 8176 authentication method references that
+// assert a HARDWARE-held key. A token carrying one is telling a relying party
+// the same thing ACRHardwareAttested does, so it is held to the same evidence.
+//
+//   - "hwk": proof-of-possession of a hardware-secured key.
+//   - "sc":  a smart card.
+//
+// Values describing the CEREMONY rather than the key's storage — "webauthn",
+// "smartcard" as a method name, "mfa", "pwd" — are not listed: they say how the
+// user authenticated, not where the key lives.
+var hardwareAMRValues = map[string]struct{}{
+	"hwk": {},
+	"sc":  {},
+}
+
+// requireProvenHardware refuses a token that would assert hardware without
+// verified evidence, whether the assertion is made through the ACR or through
+// an AMR value.
+func requireProvenHardware(opts HardwareTokenOptions) error {
+	if opts.Attestation.IsHardware() {
+		return nil
+	}
+	claim := ""
+	if opts.ACR == ACRHardwareAttested {
+		claim = "acr=" + ACRHardwareAttested
+	} else {
+		for _, amr := range opts.AMR {
+			if _, ok := hardwareAMRValues[strings.ToLower(strings.TrimSpace(amr))]; ok {
+				claim = "amr=" + amr
+				break
+			}
+		}
+	}
+	if claim == "" {
+		return nil
+	}
+	return &AttestationRequiredError{
+		Operation: "token issuance claiming " + claim,
+		Required:  AttestLevelHardware,
+		Proven:    attestLevelOrNone(opts.Attestation),
+		Format:    opts.Attestation.Format(),
+	}
 }

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
@@ -500,7 +501,19 @@ func (m *AdminManager) CheckPermission(ctx context.Context, req *AdminCheckReque
 	}, nil
 }
 
-// StartImpersonation starts an impersonation session. It is gated on
+// StartImpersonation starts an impersonation session. The acting admin is
+// the AUTHENTICATED principal bound into ctx by the transport auth
+// middleware (auth.SubjectFromContext) — never a caller-supplied value.
+// This is the single authoritative choke point: the request shapes on
+// every transport (REST/gRPC/MCP/Unix/QUIC/embedded) no longer carry an
+// actor id, and this method would refuse a caller-named actor even if one
+// slipped through, because it never reads one. Authorizing on a
+// request-supplied admin_user_id let any caller obtain a session as any
+// privileged user and falsified the audit trail in the same request
+// (go-quicbaas#383); resolving the actor here fixes both, for all
+// transports at once.
+//
+// It is gated on
 // PermUserImpersonate checked IN THE TARGET TENANT (opts.TenantID), and
 // CheckPermission's tenant rule makes that an explicit-grant requirement:
 // an assignment matches a tenant-scoped check only by naming the tenant in
@@ -524,9 +537,6 @@ func (m *AdminManager) StartImpersonation(ctx context.Context, opts *StartImpers
 	if opts == nil {
 		return nil, api.NewRequiredFieldError("start impersonation options")
 	}
-	if opts.AdminUserID == "" {
-		return nil, api.NewRequiredFieldError("admin_user_id")
-	}
 	if opts.TargetUserID == "" {
 		return nil, api.NewRequiredFieldError("target_user_id")
 	}
@@ -537,10 +547,25 @@ func (m *AdminManager) StartImpersonation(ctx context.Context, opts *StartImpers
 		return nil, api.NewRequiredFieldError("reason")
 	}
 
+	// The acting admin is the authenticated caller, resolved from the
+	// verified identity the auth middleware bound into ctx — the same
+	// source the REST/gRPC hardened surfaces already trust for every other
+	// authorization decision. No authenticated principal means no actor to
+	// authorize, so fail closed rather than mint a session for an
+	// anonymous caller.
+	subject, ok := auth.SubjectFromContext(ctx)
+	if !ok || !subject.Authenticated || subject.ID == "" {
+		return nil, ErrImpersonationActorRequired
+	}
+	actorUserID := subject.ID
+	actorUsername := subject.Username
+
 	// Check permission BEFORE acquiring the write lock to avoid deadlock
-	// (CheckPermission acquires RLock internally)
+	// (CheckPermission acquires RLock internally). The decision is made
+	// about the AUTHENTICATED caller, not about whoever a request claimed
+	// to be.
 	checkResp, err := m.CheckPermission(ctx, &AdminCheckRequest{
-		UserID:     opts.AdminUserID,
+		UserID:     actorUserID,
 		Permission: PermUserImpersonate,
 		TenantID:   opts.TenantID,
 	})
@@ -586,11 +611,12 @@ func (m *AdminManager) StartImpersonation(ctx context.Context, opts *StartImpers
 		duration = time.Hour
 	}
 
-	// Create impersonation session
+	// Create impersonation session. The acting admin is the authenticated
+	// caller resolved above, never a request-supplied value.
 	session := &ImpersonationSession{
 		ID:             sessionID,
-		AdminUserID:    opts.AdminUserID,
-		AdminUsername:  opts.AdminUsername,
+		AdminUserID:    actorUserID,
+		AdminUsername:  actorUsername,
 		TargetUserID:   opts.TargetUserID,
 		TargetUsername: opts.TargetUsername,
 		TenantID:       opts.TenantID,
@@ -618,8 +644,8 @@ func (m *AdminManager) StartImpersonation(ctx context.Context, opts *StartImpers
 		ImpersonationSessionID: sessionID,
 		CorrelationID:          sessionID, // Use session ID as correlation for all related events
 		Actor: &AuditActor{
-			UserID:   opts.AdminUserID,
-			Username: opts.AdminUsername,
+			UserID:   actorUserID,
+			Username: actorUsername,
 		},
 		Resource: &AuditResource{
 			Type: "impersonation_session",

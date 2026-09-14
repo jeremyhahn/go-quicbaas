@@ -1,0 +1,13 @@
+Continuous integration is red on this pull request's current head (abc123). 3 required checks failed and stayed failed.
+
+Reproduce each failure named below locally with the project's own CI commands, fix the cause, and push to the same branch. The pull request merges when every check is green.
+
+FAILED: build (finished 2026-09-12T08:30:00Z)
+Last lines of its log:
+```
+undefined: Handler
+```
+
+FAILED: test (finished 2026-09-12T08:31:00Z)
+
+FAILED: vet

@@ -61,6 +61,17 @@ func setupOIDCTestXKMS(t *testing.T) {
 // issuing and validating session tokens.
 func newTestOIDCProvider(t *testing.T) *iam.OIDCProvider {
 	t.Helper()
+	provider, _ := newTestOIDCProviderWithUsers(t)
+	return provider
+}
+
+// newTestOIDCProviderWithUsers is newTestOIDCProvider with the user store
+// exposed, so a test can seed the IAM record a session bearer is minted from.
+// Session issuance JOINS that record for the principal's roles and refuses a
+// subject it cannot resolve (go-quicbaas #274), so any test that issues a
+// bearer must seed one.
+func newTestOIDCProviderWithUsers(t *testing.T) (*iam.OIDCProvider, *iam.MemoryStorage) {
+	t.Helper()
 	setupOIDCTestXKMS(t)
 
 	mgr, err := iam.NewSigningKeyManagerFromXKMS("oidc-session-issuer-test", "")
@@ -70,12 +81,13 @@ func newTestOIDCProvider(t *testing.T) *iam.OIDCProvider {
 
 	kv := kvstore.NewMemory()
 	backend := iam.NewBackendStorage(kv)
+	users := iam.NewMemoryStorage()
 	// User persistence moved to qrdb (C1-F); BackendStorage no longer satisfies
 	// UserStorage. This test's subject is OIDC token issue/resolve, not user
 	// persistence, so the user store is an in-memory double. Apps/tokens stay on
 	// the BackendStorage KVStore.
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  iam.NewMemoryStorage(),
+		UserStorage:  users,
 		GroupStorage: backend,
 		RoleStorage:  backend,
 	})
@@ -101,21 +113,46 @@ func newTestOIDCProvider(t *testing.T) *iam.OIDCProvider {
 	if err != nil {
 		t.Fatalf("NewOIDCProvider: %v", err)
 	}
-	return provider
+	return provider, users
+}
+
+// seedSessionUser writes the IAM user record a ceremony subject resolves to.
+// The ceremony's subject is the tenant-scoped qrdb username, which the broker
+// mirrors as User.Name.
+func seedSessionUser(t *testing.T, users *iam.MemoryStorage, tenantID, username string, roles []string) {
+	t.Helper()
+	// No ID: the identity is the Snowflake the store assigns. A hand-written
+	// one would have to be a canonical qrdb Snowflake, and synthesizing it from
+	// the tenant and username produced a string that is not one.
+	err := users.CreateUser(context.Background(), &iam.User{
+		TenantID: tenantID,
+		// The session subject is the tenant-scoped qrdb USERNAME, so the handle
+		// is the field the resolve runs through; Name is presentation only.
+		Username:  username,
+		Name:      username,
+		Email:     username + "@example.test",
+		Roles:     roles,
+		Lifecycle: iam.LifecycleActive,
+	})
+	if err != nil {
+		t.Fatalf("seed user %q: %v", username, err)
+	}
 }
 
 // Issue mints a real bearer for a bound provider, and Resolve round-trips it
 // back into an identity carrying the subject, tenant, roles, and factor type.
 func TestOIDCSessionIssuer_IssueResolveRoundTrip(t *testing.T) {
-	provider := newTestOIDCProvider(t)
+	provider, users := newTestOIDCProviderWithUsers(t)
+	seedSessionUser(t, users, "acme", "user-42", []string{"admin", "reader"})
 	issuer := newOIDCSessionIssuer()
 	issuer.SetProvider(provider)
 	ctx := context.Background()
 
+	// The roles reaching the bearer come from the seeded record, not from this
+	// identity: qrdb's factor-resolved principal carries none.
 	identity := &qrdbauth.Identity{
 		Subject:  "user-42",
 		TenantID: "acme",
-		Roles:    []string{"admin", "reader"},
 		Metadata: map[string]string{authMethodMetadataKey: "piv"},
 	}
 
@@ -148,7 +185,8 @@ func TestOIDCSessionIssuer_IssueResolveRoundTrip(t *testing.T) {
 // Issue with no auth-method metadata leaves the session AuthMethod empty and
 // still mints a valid bearer (the nil-metadata branch).
 func TestOIDCSessionIssuer_IssueWithoutMetadata(t *testing.T) {
-	provider := newTestOIDCProvider(t)
+	provider, users := newTestOIDCProviderWithUsers(t)
+	seedSessionUser(t, users, "system", "u", []string{"admin"})
 	issuer := newOIDCSessionIssuer()
 	issuer.SetProvider(provider)
 
@@ -164,7 +202,10 @@ func TestOIDCSessionIssuer_IssueWithoutMetadata(t *testing.T) {
 // A DPoP proof threaded on the login context is bound into the session bearer.
 // An invalid proof fails closed.
 func TestOIDCSessionIssuer_IssueWithDPoPFromContext(t *testing.T) {
-	provider := newTestOIDCProvider(t)
+	provider, users := newTestOIDCProviderWithUsers(t)
+	// Seeded so the failure below is the DPoP proof and not an unresolvable
+	// principal — the join runs first.
+	seedSessionUser(t, users, "t", "u", []string{"admin"})
 	issuer := newOIDCSessionIssuer()
 	issuer.SetProvider(provider)
 
@@ -181,7 +222,8 @@ func TestOIDCSessionIssuer_IssueWithDPoPFromContext(t *testing.T) {
 
 // Revoke invalidates a previously issued bearer.
 func TestOIDCSessionIssuer_Revoke(t *testing.T) {
-	provider := newTestOIDCProvider(t)
+	provider, users := newTestOIDCProviderWithUsers(t)
+	seedSessionUser(t, users, "system", "u", []string{"admin"})
 	issuer := newOIDCSessionIssuer()
 	issuer.SetProvider(provider)
 	ctx := context.Background()

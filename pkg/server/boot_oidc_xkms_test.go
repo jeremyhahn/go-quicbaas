@@ -62,7 +62,27 @@ func productionPostureConfig(t *testing.T, kmsEnabled bool) *config.Config {
 	cfg.Storage.DataDir = filepath.Join(tmpDir, "data")
 	cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
 	cfg.Raft.NodeID = 1
-	cfg.Server.REST.Port = 0
+
+	// Every listener the embedded node brings up gets a RESERVED port.
+	//
+	// This used to ask for REST port 0 and leave gRPC and MCP on
+	// DefaultConfig's 9443 and 11443. None of the three was collision-free.
+	// Port 0 is not "let the kernel pick" once it reaches the node: qrdb_node.go
+	// copies Server.REST.Port into qcfg.Server.AdminPort, and go-qrdb's node
+	// builder substitutes a literal for a zero port —
+	//
+	//     go-qrdb/sdk/go@v0.16.3-alpha node/node.go:2660
+	//     if serverCfg.Server.AdminPort == 0 {
+	//         serverCfg.Server.AdminPort = 63001
+	//     }
+	//
+	// — so "any port" arrived at the bind as the single most contended port in
+	// the tree, and the other two were fixed to begin with. Any second gate on
+	// the host took one of them and this test failed for a reason that had
+	// nothing to do with it (go-quicbaas#713, CI job 61720 on PR #707).
+	ports := getFreePorts(t, 3)
+	cfg.Server.REST.Port, cfg.Server.GRPC.Port, cfg.Server.MCP.Port = ports[0], ports[1], ports[2]
+
 	cfg.KMS.Enabled = kmsEnabled
 	cfg.Secrets.Enabled = false
 	cfg.Vector.Enabled = false

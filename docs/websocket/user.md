@@ -42,7 +42,7 @@ The pieces are all present and unit-tested:
 1. Construct the server with `websocket.NewServer(config, auth, log)`
    (`pkg/api/websocket/server.go:46`). **The `Authenticator` is not optional in
    practice** — an unauthenticated upgrade on a network-facing listener is an
-   open door into the messaging fabric.
+   open door into the messaging bus.
 2. Register the subprotocols you want with `RegisterSubprotocol` (`:62`). In a
    default build, `mqtt`, `amqp` and `stomp` resolve to no-op stubs; only `echo`
    is a real handler without a build tag. See `engineering.md`.

@@ -518,8 +518,8 @@ func TestIAMHandler_ListUsers_Success(t *testing.T) {
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
-	_ = memStorage.CreateUser(ctx, &iam.User{ID: "user1", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1"})
-	_ = memStorage.CreateUser(ctx, &iam.User{ID: "user2", TenantID: "tenant1", Email: "user2@example.com", Name: "User 2"})
+	_ = memStorage.CreateUser(ctx, &iam.User{ID: "11", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1"})
+	_ = memStorage.CreateUser(ctx, &iam.User{ID: "12", TenantID: "tenant1", Email: "user2@example.com", Name: "User 2"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant1/users", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
@@ -613,10 +613,10 @@ func TestIAMHandler_GetUser_Success(t *testing.T) {
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
-	_ = memStorage.CreateUser(ctx, &iam.User{ID: "user1", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1"})
+	_ = memStorage.CreateUser(ctx, &iam.User{ID: "11", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant1/users/user1", nil)
-	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "user1"})
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "11"})
 	w := httptest.NewRecorder()
 
 	handler.GetUser(w, req)
@@ -630,10 +630,10 @@ func TestIAMHandler_DeleteUser_Success(t *testing.T) {
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
-	_ = memStorage.CreateUser(ctx, &iam.User{ID: "user1", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1"})
+	_ = memStorage.CreateUser(ctx, &iam.User{ID: "11", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1"})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant1/users/user1", nil)
-	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "user1"})
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "11"})
 	w := httptest.NewRecorder()
 
 	handler.DeleteUser(w, req)
@@ -647,13 +647,13 @@ func TestIAMHandler_AssignRole_Success(t *testing.T) {
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
-	_ = memStorage.CreateUser(ctx, &iam.User{ID: "user1", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1"})
+	_ = memStorage.CreateUser(ctx, &iam.User{ID: "11", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1"})
 	_ = memStorage.CreateRole(ctx, &iam.Role{ID: "admin", TenantID: "tenant1", Name: "Admin"})
 
 	body := `{"role_id": "admin"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users/user1/roles", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
-	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "user1"})
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "11"})
 	w := httptest.NewRecorder()
 
 	handler.AssignRole(w, req)
@@ -667,11 +667,11 @@ func TestIAMHandler_RevokeRole_Success(t *testing.T) {
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
-	_ = memStorage.CreateUser(ctx, &iam.User{ID: "user1", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1", Roles: []string{"admin"}})
+	_ = memStorage.CreateUser(ctx, &iam.User{ID: "11", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1", Roles: []string{"admin"}})
 	_ = memStorage.CreateRole(ctx, &iam.Role{ID: "admin", TenantID: "tenant1", Name: "Admin"})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant1/users/user1/roles/admin", nil)
-	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "user1", "role": "admin"})
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "11", "role": "admin"})
 	w := httptest.NewRecorder()
 
 	handler.RevokeRole(w, req)
@@ -759,10 +759,10 @@ func TestIAMHandler_AddMember_Success(t *testing.T) {
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
-	_ = memStorage.CreateUser(ctx, &iam.User{ID: "user1", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1"})
+	_ = memStorage.CreateUser(ctx, &iam.User{ID: "11", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1"})
 	_ = memStorage.CreateGroup(ctx, &iam.Group{ID: "group1", TenantID: "tenant1", Name: "Group 1"})
 
-	body := `{"user_id": "user1"}`
+	body := `{"user_id": "11"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/groups/group1/members", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "group_id": "group1"})
@@ -779,11 +779,11 @@ func TestIAMHandler_RemoveMember_Success(t *testing.T) {
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
-	_ = memStorage.CreateUser(ctx, &iam.User{ID: "user1", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1", Groups: []string{"group1"}})
-	_ = memStorage.CreateGroup(ctx, &iam.Group{ID: "group1", TenantID: "tenant1", Name: "Group 1", Members: []string{"user1"}})
+	_ = memStorage.CreateUser(ctx, &iam.User{ID: "11", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1", Groups: []string{"group1"}})
+	_ = memStorage.CreateGroup(ctx, &iam.Group{ID: "group1", TenantID: "tenant1", Name: "Group 1", Members: []string{"11"}})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant1/groups/group1/members/user1", nil)
-	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "group_id": "group1", "user_id": "user1"})
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "group_id": "group1", "user_id": "11"})
 	w := httptest.NewRecorder()
 
 	handler.RemoveMember(w, req)
@@ -978,7 +978,7 @@ func TestIAMHandler_CreateUser_WithRoles(t *testing.T) {
 	assert.Equal(t, []interface{}{"role-auditor"}, resp["roles"], "response must carry the assigned roles")
 
 	// Persisted record carries the roles too.
-	stored, err := memStorage.GetUserByEmail(ctx, "withroles@example.com")
+	stored, err := memStorage.GetUserByEmail(ctx, "tenant1", "withroles@example.com")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"role-auditor"}, stored.Roles)
 }
@@ -1003,7 +1003,7 @@ func TestIAMHandler_CreateUser_UnknownRole_NotFoundNoUser(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code, "body: %s", w.Body.String())
 
 	// Zero side effects: the user must NOT exist.
-	_, err := memStorage.GetUserByEmail(ctx, "phantom@example.com")
+	_, err := memStorage.GetUserByEmail(ctx, "tenant1", "phantom@example.com")
 	require.Error(t, err, "no user must be created after failed role validation")
 }
 
@@ -1033,7 +1033,7 @@ func TestIAMHandler_CreateUser_WithGroups(t *testing.T) {
 	assert.Equal(t, []interface{}{"group-ops"}, resp["groups"], "response must carry the group memberships")
 
 	// Persisted record carries the groups too.
-	stored, err := memStorage.GetUserByEmail(ctx, "withgroups@example.com")
+	stored, err := memStorage.GetUserByEmail(ctx, "tenant1", "withgroups@example.com")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"group-ops"}, stored.Groups)
 
@@ -1063,6 +1063,6 @@ func TestIAMHandler_CreateUser_UnknownGroup_NotFoundNoUser(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code, "body: %s", w.Body.String())
 
 	// Zero side effects: the user must NOT exist.
-	_, err := memStorage.GetUserByEmail(ctx, "phantomgroup@example.com")
+	_, err := memStorage.GetUserByEmail(ctx, "tenant1", "phantomgroup@example.com")
 	require.Error(t, err, "no user must be created after failed group validation")
 }

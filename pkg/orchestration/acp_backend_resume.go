@@ -113,12 +113,10 @@ func (b *ACPBackend) Resume(ctx context.Context, req *ResumeRequest) (*ResumeRes
 //     is therefore preserved by construction: no two containers ever share a
 //     materialized directory.
 func (b *ACPBackend) resumeStarter(ctx context.Context, req *ResumeRequest) (func(spawnPlan) (*Session, error), error) {
-	if b.config.CLIMode {
-		return func(plan spawnPlan) (*Session, error) {
-			return b.spawnCLI(ctx, req.Spawn, plan)
-		}, nil
-	}
-
+	// SANDBOX FIRST, for the reason dispatchSpawn resolves it first: asking
+	// about CLI mode ahead of the sandbox is what let a required-mode session
+	// come back as a bare host process (#741). A resume reconstitutes the
+	// session's ORIGINAL isolation or it does not happen.
 	if req.Spawn.EffectiveSandboxMode() == SandboxModeRequired {
 		if b.containerRuntime == nil {
 			return nil, &SessionResumeUnsupportedError{
@@ -127,8 +125,19 @@ func (b *ACPBackend) resumeStarter(ctx context.Context, req *ResumeRequest) (fun
 				Reason:    "the session is sandboxed but the backend has no container runtime configured",
 			}
 		}
+		if b.config.isStreamJSON() {
+			return func(plan spawnPlan) (*Session, error) {
+				return b.spawnContainerCLI(ctx, req.Spawn, plan)
+			}, nil
+		}
 		return func(plan spawnPlan) (*Session, error) {
 			return b.spawnContainerJSONRPC(ctx, req.Spawn, plan)
+		}, nil
+	}
+
+	if b.config.isStreamJSON() {
+		return func(plan spawnPlan) (*Session, error) {
+			return b.spawnCLI(ctx, req.Spawn, plan)
 		}, nil
 	}
 
@@ -151,7 +160,7 @@ func (b *ACPBackend) planResume(req *ResumeRequest) (spawnPlan, *ResumeResult, e
 	// Native resume is the agent CLI's own "--resume <id>" flag. A container
 	// JSON-RPC agent has no equivalent and its on-disk session store died with
 	// the previous container, so a sandboxed session always replays.
-	if b.config.NativeSessionResume && b.config.CLIMode {
+	if b.config.NativeSessionResume && b.config.isStreamJSON() {
 		plan.resumeID = req.SessionID
 		return plan, &ResumeResult{Mode: ResumeModeNative}, nil
 	}

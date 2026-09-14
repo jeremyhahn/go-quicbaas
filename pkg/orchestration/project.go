@@ -13,7 +13,11 @@
 
 package orchestration
 
-import "time"
+import (
+	"errors"
+	"strings"
+	"time"
+)
 
 // =============================================================================
 // Project — First-class entity between Tenant and Workflow
@@ -39,6 +43,12 @@ type Project struct {
 	// Workspace describes where the project code lives.
 	Workspace ProjectWorkspace `json:"workspace" yaml:"workspace"`
 
+	// Storage is the storage tier the project's sandboxed checkouts are
+	// mounted on, and the sizes that tier needs. The zero value keeps the
+	// host bind mount every project has always had — see ProjectStorage and
+	// workspace_storage.go.
+	Storage ProjectStorage `json:"storage,omitempty" yaml:"storage,omitempty"`
+
 	// HostAffinity is the preferred agent host for project operations (optional).
 	HostAffinity string `json:"host_affinity,omitempty" yaml:"host_affinity,omitempty"`
 
@@ -46,8 +56,23 @@ type Project struct {
 	// under this project. Individual jobs may override this.
 	DefaultLeadAgent string `json:"default_lead_agent,omitempty" yaml:"default_lead_agent,omitempty"`
 
+	// DefaultWorkflow names the tenant-scoped workflow a Task created under
+	// this project is auto-spawned into. Empty means a Task is never
+	// auto-spawned. A set-but-unknown name is refused on create and update.
+	DefaultWorkflow string `json:"default_workflow,omitempty" yaml:"default_workflow,omitempty"`
+
+	// Autonomous turns autonomous development on for this project: the
+	// task-source poller adopts work for it and the dispatcher starts jobs
+	// for it, bounded by Quotas.MaxConcurrency. False leaves the project
+	// entirely operator-driven — tasks are created and started by hand.
+	Autonomous bool `json:"autonomous,omitempty" yaml:"autonomous,omitempty"`
+
 	// Git contains the repository metadata.
 	Git ProjectGit `json:"git" yaml:"git"`
+
+	// ContextRepos names the repositories the worker clones beside the
+	// project checkout. The daemon never clones them; see ContextRepo.
+	ContextRepos []ContextRepo `json:"context_repos,omitempty" yaml:"context_repos,omitempty"`
 
 	// Provisioning tracks server-managed workspace provisioning. The zero
 	// value describes a bring-your-own-path project the server never
@@ -89,6 +114,18 @@ type ProjectGit struct {
 
 	// CurrentSHA is updated by agents during job runs to track HEAD.
 	CurrentSHA string `json:"current_sha,omitempty" yaml:"current_sha,omitempty"`
+
+	// Author is the identity recorded on commits made from this workspace.
+	// Required only when the workspace commits; see GitAuthor.
+	Author GitAuthor `json:"author,omitzero" yaml:"author,omitempty"`
+
+	// Signing decides whether and how commits made from this workspace are
+	// signed. The zero value signs nothing, explicitly; see CommitSigning.
+	Signing CommitSigning `json:"signing,omitzero" yaml:"signing,omitempty"`
+
+	// SSHKey references the KMS-held key an ssh:// RepoURL is reached with.
+	// Empty means the signing key is used; see AccessKey.
+	SSHKey KMSKeyRef `json:"ssh_key,omitzero" yaml:"ssh_key,omitempty"`
 }
 
 // ProjectProvisioningState is the lifecycle state of a server-managed
@@ -199,3 +236,99 @@ type ProjectQuotas struct {
 	// MaxConcurrency is the maximum number of concurrent workflow runs (0 = unlimited).
 	MaxConcurrency int `json:"max_concurrency,omitempty" yaml:"max_concurrency,omitempty"`
 }
+
+// =============================================================================
+// Context repositories
+// =============================================================================
+//
+// A CONTEXT REPOSITORY IS CLONED BY THE WORKER, NEVER BY THE DAEMON. The
+// project record names what the worker needs beside the checkout — the
+// company handbook, a spec repo, a template collection — and the daemon hands
+// that list to the container at spawn as a spec. The container clones the
+// project and every context repository fresh, side by side, at start. Nothing
+// on this record is a path on the daemon's filesystem, because the daemon has
+// no copy to point at.
+
+// ContextRepo names one repository the worker clones beside the project.
+type ContextRepo struct {
+	// Name is the directory the repository is cloned into, beside the
+	// project checkout. One path segment: it is joined, never resolved.
+	Name string `json:"name" yaml:"name"`
+
+	// RepoURL is the remote the worker clones from.
+	RepoURL string `json:"repo_url" yaml:"repo_url"`
+
+	// Ref is the branch, tag or commit the worker checks out.
+	Ref string `json:"ref" yaml:"ref"`
+}
+
+// contextRepoForbiddenInName is what may not appear in a context repository's
+// directory name: the two path separators and the NUL byte.
+const contextRepoForbiddenInName = "/\\\x00"
+
+// Validate checks one context repository can be cloned into its own
+// directory beside the project.
+func (r ContextRepo) Validate() error {
+	switch {
+	case r.Name == "":
+		return &ContextRepoInvalidError{Field: "name", Message: "a context repository is cloned into a named directory"}
+	case r.Name == "." || r.Name == "..":
+		return &ContextRepoInvalidError{Name: r.Name, Field: "name", Message: "must name a directory, not a relative path"}
+	case strings.ContainsAny(r.Name, contextRepoForbiddenInName):
+		return &ContextRepoInvalidError{Name: r.Name, Field: "name", Message: "must be one path segment, with no separator"}
+	case r.RepoURL == "":
+		return &ContextRepoInvalidError{Name: r.Name, Field: "repo_url", Message: "names the remote the worker clones"}
+	case r.Ref == "":
+		return &ContextRepoInvalidError{Name: r.Name, Field: "ref", Message: "names the branch, tag or commit the worker checks out"}
+	}
+	return nil
+}
+
+// ValidateContextRepos checks every repository in the list and refuses two
+// that would occupy the same directory.
+func ValidateContextRepos(repos []ContextRepo) error {
+	seen := make(map[string]struct{}, len(repos))
+	for _, repo := range repos {
+		if err := repo.Validate(); err != nil {
+			return err
+		}
+		if _, duplicate := seen[repo.Name]; duplicate {
+			return &ContextRepoInvalidError{
+				Name:    repo.Name,
+				Field:   "name",
+				Message: "duplicates an earlier context repository; two cannot occupy one directory",
+			}
+		}
+		seen[repo.Name] = struct{}{}
+	}
+	return nil
+}
+
+// ErrContextRepoInvalid indicates a context repository the worker could not
+// clone beside the project.
+var ErrContextRepoInvalid = errors.New("project: invalid context repository")
+
+// ContextRepoInvalidError reports a context repository the project refused.
+type ContextRepoInvalidError struct {
+	// Name is the repository's directory name, empty when that is what is
+	// wrong.
+	Name string
+
+	// Field is the offending field.
+	Field string
+
+	// Message says what the field must be.
+	Message string
+}
+
+// Error implements the error interface.
+func (e *ContextRepoInvalidError) Error() string {
+	msg := ErrContextRepoInvalid.Error() + ": "
+	if e.Name != "" {
+		msg += e.Name + ": "
+	}
+	return msg + e.Field + " " + e.Message
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *ContextRepoInvalidError) Unwrap() error { return ErrContextRepoInvalid }

@@ -170,8 +170,8 @@ func TestPersistJobStatus_KVStoreNil(t *testing.T) {
 	})
 
 	// No error logged, no-op.
-	if len(logger.warnMessages) > 0 {
-		t.Errorf("expected no warnings, got: %v", logger.warnMessages)
+	if len(logger.warnLines()) > 0 {
+		t.Errorf("expected no warnings, got: %v", logger.warnLines())
 	}
 }
 
@@ -190,7 +190,7 @@ func TestPersistJobStatus_PutError(t *testing.T) {
 		State: JobStateExecuting,
 	})
 
-	if len(logger.warnMessages) == 0 {
+	if len(logger.warnLines()) == 0 {
 		t.Error("expected a warning to be logged for put failure")
 	}
 }
@@ -456,7 +456,7 @@ func TestRecoverJobs_CorruptDataSkipped(t *testing.T) {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
 
-	if len(logger.warnMessages) == 0 {
+	if len(logger.warnLines()) == 0 {
 		t.Error("expected warning for corrupt record")
 	}
 }
@@ -580,18 +580,21 @@ func TestCancelJob_PersistsFinalStatus(t *testing.T) {
 	}
 
 	// Create a mock running job.
-	mockLoop := NewControlLoop(svc, logger)
-	mockLoop.config = &JobConfig{
-		TenantID:    "tenant-cancel",
-		Description: "cancellable job",
-	}
-	mockLoop.jobID = "job-cancel"
-	mockLoop.updateStatus(JobStateExecuting)
+	mockRun := newJobRun(JobRunConfig{
+		JobID: "job-cancel",
+		Config: &JobConfig{
+			TenantID:    "tenant-cancel",
+			Description: "cancellable job",
+		},
+		Agents: svc,
+		Logger: logger,
+	})
+	mockRun.snapshot(JobStateExecuting)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	jobKey := "tenant-cancel/job-cancel"
 	svc.jobs.Store(jobKey, &runningJob{
-		loop:   mockLoop,
+		run:    mockRun,
 		cancel: cancel,
 	})
 
@@ -639,11 +642,11 @@ func TestControlLoop_PersistFn_CalledOnUpdateStatus(t *testing.T) {
 	logger := &controlLoopMockLogger{}
 	mockSvc := &controlLoopMockService{}
 	cl := NewControlLoop(mockSvc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "job-persist-test"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "job-persist-test"
 
 	var persistedStatuses []*JobStatus
-	cl.persistFn = func(status *JobStatus) {
+	cl.job.persistFn = func(status *JobStatus) {
 		copied := *status
 		persistedStatuses = append(persistedStatuses, &copied)
 	}
@@ -668,8 +671,8 @@ func TestControlLoop_PersistFn_NilDoesNotPanic(t *testing.T) {
 	logger := &controlLoopMockLogger{}
 	mockSvc := &controlLoopMockService{}
 	cl := NewControlLoop(mockSvc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "job-no-persist"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "job-no-persist"
 
 	// Should not panic when persistFn is nil.
 	cl.updateStatus(JobStateInitializing)
@@ -679,11 +682,11 @@ func TestControlLoop_AuditFn_CalledFromStateHandlers(t *testing.T) {
 	logger := &controlLoopMockLogger{}
 	mockSvc := &controlLoopMockService{}
 	cl := NewControlLoop(mockSvc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "job-audit-test"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "job-audit-test"
 
 	var auditEvents []string
-	cl.auditFn = func(eventType, details string) {
+	cl.job.auditFn = func(eventType, details string) {
 		auditEvents = append(auditEvents, eventType)
 	}
 
@@ -702,8 +705,8 @@ func TestControlLoop_AuditFn_NilDoesNotPanic(t *testing.T) {
 	logger := &controlLoopMockLogger{}
 	mockSvc := &controlLoopMockService{}
 	cl := NewControlLoop(mockSvc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "job-no-audit"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "job-no-audit"
 
 	// Should not panic when auditFn is nil.
 	cl.audit("orchestration:test", "test")
@@ -716,11 +719,11 @@ func TestControlLoop_AuditFn_InitializeEmitsJobStarted(t *testing.T) {
 		agents:   newTestAgents(),
 	}
 	cl := NewControlLoop(mockSvc, logger)
-	cl.config = newTestConfig()
-	cl.jobID = "job-audit-init"
+	cl.job.Config = newTestConfig()
+	cl.job.JobID = "job-audit-init"
 
 	var auditEvents []string
-	cl.auditFn = func(eventType, details string) {
+	cl.job.auditFn = func(eventType, details string) {
 		auditEvents = append(auditEvents, eventType)
 	}
 
@@ -869,9 +872,12 @@ func TestJobPersistenceKey(t *testing.T) {
 	}
 }
 
+// TestJobPersistenceKey_EmptyValues pins the normalisation an untenanted
+// caller gets: the system tenant, the same identifier every transport
+// substitutes, rather than an empty segment that no listing asks for.
 func TestJobPersistenceKey_EmptyValues(t *testing.T) {
 	key := jobPersistenceKey("", "")
-	expected := "job::"
+	expected := "job:system:"
 	if key != expected {
 		t.Errorf("key = %q, want %q", key, expected)
 	}

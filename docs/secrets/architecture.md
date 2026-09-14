@@ -126,6 +126,86 @@ secrets/app/config
 5. **Key Protection** - HSM or software key storage
 6. **Audit Logging** - All operations logged
 
+### Tenant Scoping and Authorization
+
+Every secret is stored under the tenant that owns it. `secretsTenantScopedID`
+(`pkg/service/secrets_tenant.go`) maps a secret path to
+`tenant/<tenantID>/<path>` for a tenant caller and leaves it unprefixed for
+the system tenant, whose scope is the platform itself rather than a namespace
+literally named `system`.
+
+**One resolver decides the namespace.** `secretsScopedTenant` reconciles the
+tenant bound to the request context with the tenant a request names in its
+`tenant_id` field. `StoreSecret` and `EnsureSecret` — the only two requests
+that carry a tenant — and `GetSecret`, the read they must agree with, all
+resolve their namespace through it, so a write and a read can never land in
+different namespaces for the same request. The rule is that a request may name
+only its own tenant:
+
+| caller | `tenant_id` | result |
+|---|---|---|
+| tenant T | omitted | stored under T |
+| tenant T | `T` | stored under T, encrypted with T's DEK |
+| tenant T | `U` | refused, `403 cross_tenant_access` |
+| system | omitted | stored in the platform namespace |
+| system | any tenant | refused, `403 cross_tenant_access` |
+
+`tenant_id` selects the tenant-keyed DEK **and** the storage namespace; the two
+are the same tenant by construction. It previously selected only the DEK, so a
+value could be encrypted for one tenant and stored in another's namespace, and
+`EnsureSecret` applied it to the path with no check at all — which let any
+caller steer a generate-and-store into another tenant's namespace.
+
+**Permissions.** Every transport is authorized with go-qrdb's
+`secrets:read` / `secrets:write` / `secrets:delete` / `secrets:list`
+(`pkg/permission/broker_scope.go`), which qrdb registers `ScopeTenantOnly` and
+already grants to the built-in Admin role. `ScopeTenantOnly` admits a request
+only when the identity is not in the system tenant and the identity's tenant
+equals the request's target tenant — so the policy decision point establishes
+the same invariant the service enforces, and the platform operator is
+deliberately not able to read or write a tenant's secrets through the API.
+
+These routes must **not** carry `credentials:*`. That family guards qrdb's
+named-credential store, which has no tenant namespacing and is therefore
+registered `ScopeCross` — system tenant only. Authorizing the tenant vault
+with it denied every tenant identity, making the tenant-facing secrets API
+unreachable (go-quicbaas#534).
+
+**One grant per operation, whichever transport carries it.** The vault is
+reachable on every transport and each has its own gate, so the same operation
+is mapped onto the same permission in each of the three tables:
+
+| operation | permission | REST | gRPC / Unix | MCP |
+|---|---|---|---|---|
+| enumerate names | `secrets:list` | `GET /api/v1/secrets/` | `ListSecrets` | `quicbaas_secrets_list` |
+| read a value, a version, a prefix or a watch | `secrets:read` | `GET /api/v1/secrets/*`, `secrets-prefix/*`, `secrets-versions/*`, `secrets-watch/*` | `GetSecret`, `GetSecretVersion`, `ListSecretVersions`, `GetSecretsByPrefix`, `WatchSecretsByPrefix`, `GetRotationPolicy` | `quicbaas_secrets_get`, `_get_prefix`, `_versions`, `_watch`, `_get_rotation_policy` |
+| any mutation | `secrets:write` | `POST /api/v1/secrets/*`, `PUT /api/v1/secrets/*` | `StoreSecret`, `EnsureSecret`, `RotateSecret`, `RollbackSecret`, `UpdateSecretStatus`, `SetRotationPolicy` | `quicbaas_secrets_store`, `_ensure`, `_rotate`, `_rollback`, `_update_status`, `_set_rotation_policy` |
+| removal | `secrets:delete` | `DELETE /api/v1/secrets/*` | `DeleteSecret` | `quicbaas_secrets_delete` |
+
+`list` is the names-only enumeration; anything that returns secret material or
+its metadata is `read`. The two rotation-policy verbs have no REST route of
+their own and take read / write of the policy sub-resource on the same family.
+
+The tables live in `pkg/api/rest/routes_permissions_generated.go`,
+`pkg/api/grpc/authz_mapping.go` (plus the `(qrdb.v1.permission)` annotations in
+`api/proto/kms.proto`, which qrdb's unified-server interceptor enforces) and
+`pkg/api/mcp/authz_qrdb.go`. The QUIC transport carries the REST routes over
+HTTP/3 and the Unix socket carries gRPC, so neither has a table of its own.
+None of the three is exported to the others, so each pins itself to the same
+literals in its own package — `TestRoutes_SecretsVaultCarriesTenantScopedPermissions`,
+`TestSecretsVaultGRPCPermissions` and `TestSecretsVaultMCPPermissions` — and the
+gRPC and MCP suites additionally drive qrdb's real RBAC authorizer to prove the
+three outcomes the family exists to produce: a tenant is admitted in its own
+vault, refused when it names another tenant, and the system tenant is denied
+(go-quicbaas#682).
+
+**The system tenant has no vault over the API today.** `ScopeTenantOnly`
+denies it by design — "a platform (system) operator must not exercise them on a
+tenant's behalf". Restoring a private system vault needs a new upstream scope
+and is tracked in go-quicbaas#689; a `credentials:*` fallback for system
+callers is not an option, because it would reopen the cross-tenant reach
+go-quicbaas#534 closed.
+
 ### Key Hierarchy
 
 ```

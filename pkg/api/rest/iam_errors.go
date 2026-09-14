@@ -113,6 +113,27 @@ const (
 	ErrAAGUIDNotAllowed      = "aaguid_not_allowed"
 )
 
+// Client-facing messages for failures whose internal detail must not travel.
+//
+// An attestation verifier's errors describe the SERVER — the configured
+// trust-bundle path, the parser's complaint about it, the subjects and issuers
+// in the trust store — and the surfaces that run one are reachable by anyone
+// who can open a connection. The detail belongs in the audit sink, where an
+// operator can act on it; the response gets a stable sentence and the same
+// error code, so a client's branching is unaffected while the free-text stops
+// describing the deployment.
+const (
+	// ErrMsgPIVAttestationFailed is the response text for any PIV attestation
+	// failure, whether the verifier could not be built or the presented chain
+	// did not verify. The two are deliberately indistinguishable on the wire:
+	// telling them apart is what lets a caller probe configuration.
+	ErrMsgPIVAttestationFailed = "PIV attestation verification failed"
+
+	// ErrMsgWebAuthnRegistrationRejected is the response text for a WebAuthn
+	// registration this server would not process.
+	ErrMsgWebAuthnRegistrationRejected = "the registration request could not be processed"
+)
+
 // Error implements the error interface.
 func (e *OAuthError) Error() string {
 	if e.ErrorDescription != "" {

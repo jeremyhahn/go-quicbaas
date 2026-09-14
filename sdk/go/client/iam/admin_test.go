@@ -15,6 +15,7 @@ package iam
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -1088,5 +1089,42 @@ func TestAdminAssignmentStatus_String(t *testing.T) {
 				t.Errorf("AdminAssignmentStatus.String() = %v, want %v", got, tt.expected)
 			}
 		})
+	}
+}
+
+// TestImpersonationSession_UnmarshalActorAlias verifies the acting admin is
+// populated from either JSON key: the gRPC path already sets AdminID
+// (serialized as "user_id"), while the REST/MCP transports return the
+// server's domain session keyed "admin_user_id". Both must land on AdminID
+// so the authenticated actor (go-quicbaas#383) is observable on every
+// transport.
+func TestImpersonationSession_UnmarshalActorAlias(t *testing.T) {
+	cases := map[string]string{
+		"user_id key (gRPC-shaped)":           `{"id":"s1","user_id":"admin-1","target_user_id":"u1"}`,
+		"admin_user_id key (REST/MCP-shaped)": `{"id":"s1","admin_user_id":"admin-1","target_user_id":"u1"}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			var s ImpersonationSession
+			if err := json.Unmarshal([]byte(body), &s); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if s.AdminID != "admin-1" {
+				t.Fatalf("AdminID = %q, want %q", s.AdminID, "admin-1")
+			}
+			if s.TargetUserID != "u1" {
+				t.Fatalf("TargetUserID = %q, want %q", s.TargetUserID, "u1")
+			}
+		})
+	}
+
+	// When both are present, the canonical user_id wins and admin_user_id
+	// does not overwrite it.
+	var s ImpersonationSession
+	if err := json.Unmarshal([]byte(`{"user_id":"canonical","admin_user_id":"alias"}`), &s); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if s.AdminID != "canonical" {
+		t.Fatalf("AdminID = %q, want canonical (user_id must win)", s.AdminID)
 	}
 }

@@ -22,8 +22,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
+
+// ctxWithActor binds an authenticated principal into ctx exactly as the
+// transport auth middleware does (auth.SubjectIntoContext). Impersonation
+// resolves its acting admin from this principal, never from the request
+// (go-quicbaas#383), so every manager-level StartImpersonation test must
+// authenticate the caller it means to act as.
+func ctxWithActor(userID string) context.Context {
+	return auth.SubjectIntoContext(context.Background(), interfaces.Subject{
+		ID:            userID,
+		Username:      userID,
+		Authenticated: true,
+	})
+}
 
 // Test fixtures and helpers
 
@@ -1150,16 +1165,19 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 	auditLogger.events = nil
 
 	tests := []struct {
-		name     string
+		name string
+		// actor is the AUTHENTICATED caller bound into context. Empty
+		// means an unauthenticated request (no subject in context).
+		actor    string
 		opts     *StartImpersonationOptions
 		wantErr  bool
 		errCheck func(t *testing.T, err error)
 		validate func(t *testing.T, session *ImpersonationSession)
 	}{
 		{
-			name: "Valid impersonation",
+			name:  "Valid impersonation",
+			actor: "admin_user",
 			opts: &StartImpersonationOptions{
-				AdminUserID:  "admin_user",
 				TargetUserID: "target_user",
 				TenantID:     "tenant1",
 				Reason:       "Support ticket #12345",
@@ -1167,6 +1185,8 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 			wantErr: false,
 			validate: func(t *testing.T, session *ImpersonationSession) {
 				assert.NotEmpty(t, session.ID)
+				// The actor is the authenticated caller, never a supplied
+				// value (go-quicbaas#383).
 				assert.Equal(t, "admin_user", session.AdminUserID)
 				assert.Equal(t, "target_user", session.TargetUserID)
 				assert.Equal(t, "tenant1", session.TenantID)
@@ -1176,9 +1196,9 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 			},
 		},
 		{
-			name: "Valid with custom duration",
+			name:  "Valid with custom duration",
+			actor: "admin_user",
 			opts: &StartImpersonationOptions{
-				AdminUserID:  "admin_user",
 				TargetUserID: "target_user",
 				TenantID:     "tenant1",
 				Reason:       "Emergency access",
@@ -1191,9 +1211,13 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 			},
 		},
 		{
-			name: "Permission denied",
+			// The #383 core: a non-privileged AUTHENTICATED caller is
+			// denied. There is no field to name a privileged admin — the
+			// decision is made about the caller, not a claim — so the
+			// escalation the issue describes is structurally impossible.
+			name:  "Permission denied for the authenticated caller",
+			actor: "non_admin_user",
 			opts: &StartImpersonationOptions{
-				AdminUserID:  "non_admin_user",
 				TargetUserID: "target_user",
 				TenantID:     "tenant1",
 				Reason:       "Test",
@@ -1204,15 +1228,10 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 			},
 		},
 		{
-			name:    "Nil options",
-			opts:    nil,
-			wantErr: true,
-			errCheck: func(t *testing.T, err error) {
-				assert.True(t, dberrors.IsInvalidInput(err))
-			},
-		},
-		{
-			name: "Missing admin_user_id",
+			// No authenticated principal in context: fail closed rather
+			// than mint a session for an anonymous caller (go-quicbaas#383).
+			name:  "No authenticated caller",
+			actor: "",
 			opts: &StartImpersonationOptions{
 				TargetUserID: "target_user",
 				TenantID:     "tenant1",
@@ -1220,15 +1239,24 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 			},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
+				assert.Equal(t, ErrImpersonationActorRequired, err)
+			},
+		},
+		{
+			name:    "Nil options",
+			actor:   "admin_user",
+			opts:    nil,
+			wantErr: true,
+			errCheck: func(t *testing.T, err error) {
 				assert.True(t, dberrors.IsInvalidInput(err))
 			},
 		},
 		{
-			name: "Missing target_user_id",
+			name:  "Missing target_user_id",
+			actor: "admin_user",
 			opts: &StartImpersonationOptions{
-				AdminUserID: "admin_user",
-				TenantID:    "tenant1",
-				Reason:      "Test",
+				TenantID: "tenant1",
+				Reason:   "Test",
 			},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
@@ -1236,9 +1264,9 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 			},
 		},
 		{
-			name: "Missing tenant_id",
+			name:  "Missing tenant_id",
+			actor: "admin_user",
 			opts: &StartImpersonationOptions{
-				AdminUserID:  "admin_user",
 				TargetUserID: "target_user",
 				Reason:       "Test",
 			},
@@ -1248,9 +1276,9 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 			},
 		},
 		{
-			name: "Missing reason",
+			name:  "Missing reason",
+			actor: "admin_user",
 			opts: &StartImpersonationOptions{
-				AdminUserID:  "admin_user",
 				TargetUserID: "target_user",
 				TenantID:     "tenant1",
 			},
@@ -1266,7 +1294,11 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 			// Clear audit log before each test
 			auditLogger.events = nil
 
-			session, err := manager.StartImpersonation(ctx, tt.opts)
+			callCtx := ctx
+			if tt.actor != "" {
+				callCtx = ctxWithActor(tt.actor)
+			}
+			session, err := manager.StartImpersonation(callCtx, tt.opts)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -1278,9 +1310,12 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 				assert.NoError(t, err)
 				require.NotNil(t, session)
 
-				// Verify audit log was created
+				// Verify audit log was created and names the authenticated
+				// caller as the actor (go-quicbaas#383).
 				assert.Len(t, auditLogger.events, 1)
 				assert.Equal(t, "admin.impersonation.start", auditLogger.events[0].Action)
+				require.NotNil(t, auditLogger.events[0].Actor)
+				assert.Equal(t, tt.actor, auditLogger.events[0].Actor.UserID)
 
 				if tt.validate != nil {
 					tt.validate(t, session)
@@ -1306,8 +1341,7 @@ func TestAdminManager_EndImpersonation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start a test session
-	session, err := manager.StartImpersonation(ctx, &StartImpersonationOptions{
-		AdminUserID:  "admin_user",
+	session, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
 		TargetUserID: "target_user",
 		TenantID:     "tenant1",
 		Reason:       "Test",
@@ -1328,8 +1362,7 @@ func TestAdminManager_EndImpersonation(t *testing.T) {
 			name: "End active session",
 			id:   session.ID,
 			setupFn: func() string {
-				s, err := manager.StartImpersonation(ctx, &StartImpersonationOptions{
-					AdminUserID:  "admin_user",
+				s, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
 					TargetUserID: "target_user",
 					TenantID:     "tenant1",
 					Reason:       "Test",
@@ -1342,8 +1375,7 @@ func TestAdminManager_EndImpersonation(t *testing.T) {
 		{
 			name: "End already ended session",
 			setupFn: func() string {
-				s, err := manager.StartImpersonation(ctx, &StartImpersonationOptions{
-					AdminUserID:  "admin_user",
+				s, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
 					TargetUserID: "target_user",
 					TenantID:     "tenant1",
 					Reason:       "Test",
@@ -1420,16 +1452,14 @@ func TestAdminManager_GetActiveImpersonations(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start multiple sessions
-	session1, err := manager.StartImpersonation(ctx, &StartImpersonationOptions{
-		AdminUserID:  "admin_user",
+	session1, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
 		TargetUserID: "target_user1",
 		TenantID:     "tenant1",
 		Reason:       "Test 1",
 	})
 	require.NoError(t, err)
 
-	session2, err := manager.StartImpersonation(ctx, &StartImpersonationOptions{
-		AdminUserID:  "admin_user",
+	session2, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
 		TargetUserID: "target_user2",
 		TenantID:     "tenant1",
 		Reason:       "Test 2",
@@ -2803,9 +2833,7 @@ func TestAdminManager_RecordImpersonatedOperation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start impersonation session
-	session, err := manager.StartImpersonation(ctx, &StartImpersonationOptions{
-		AdminUserID:    "admin_user",
-		AdminUsername:  "admin@example.com",
+	session, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
 		TargetUserID:   "target_user",
 		TargetUsername: "target@example.com",
 		TenantID:       "tenant1",
@@ -2898,8 +2926,11 @@ func TestAdminManager_RecordImpersonatedOperation(t *testing.T) {
 				require.NotNil(t, event.Actor)
 				assert.Equal(t, "target_user", event.Actor.UserID)
 				assert.Equal(t, "target@example.com", event.Actor.Username)
+				// The impersonating admin is the authenticated caller
+				// resolved from context (go-quicbaas#383); ctxWithActor
+				// binds username == id.
 				assert.Equal(t, "admin_user", event.Actor.ImpersonatingUserID)
-				assert.Equal(t, "admin@example.com", event.Actor.ImpersonatingUsername)
+				assert.Equal(t, "admin_user", event.Actor.ImpersonatingUsername)
 
 				// Verify details include operation number
 				require.NotNil(t, event.Details)
@@ -2926,8 +2957,7 @@ func TestAdminManager_RecordImpersonatedOperation_EndedSession(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start impersonation session
-	session, err := manager.StartImpersonation(ctx, &StartImpersonationOptions{
-		AdminUserID:  "admin_user",
+	session, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
 		TargetUserID: "target_user",
 		TenantID:     "tenant1",
 		Reason:       "test ended session",
@@ -2963,9 +2993,7 @@ func TestAdminManager_ImpersonationAuditLogging(t *testing.T) {
 	auditLogger.events = nil
 
 	// Start impersonation session
-	session, err := manager.StartImpersonation(ctx, &StartImpersonationOptions{
-		AdminUserID:    "admin_user",
-		AdminUsername:  "admin@example.com",
+	session, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
 		TargetUserID:   "target_user",
 		TargetUsername: "target@example.com",
 		TenantID:       "tenant1",

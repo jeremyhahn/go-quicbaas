@@ -1,0 +1,1 @@
+an operator must repair the fault recorded with this task: The worker stopped because its workspace or tooling made the work impossible. It made no change to the checkout, so the verification commands were not run and there is nothing to review. unblock[kind=operator_repair]

@@ -30,8 +30,11 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	stderrors "errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -498,12 +501,90 @@ func GetSymmetricKey(ctx context.Context, keyRef string) (xkmssdk.SymmetricKey, 
 	return key, nil
 }
 
-// ImportSymmetricKey imports raw symmetric key material into a backend.
-// This function uses the proper import token flow to securely import the key.
-// For production use with HSM backends, use the full ImportKey flow with wrapped material.
-func ImportSymmetricKey(ctx context.Context, backendName string, attrs *xkmssdk.KeyAttributes, material []byte) error {
+// Errors reporting material that does not match the algorithm it is offered
+// under. Storing a key beneath a false description is worse than refusing it:
+// the description is what every later operation reasons from.
+var (
+	// ErrKeyMaterialNotPKCS8 indicates asymmetric material that is not PKCS#8 DER.
+	ErrKeyMaterialNotPKCS8 = stderrors.New("xkms: asymmetric key material must be PKCS#8 DER")
+
+	// ErrKeyMaterialAlgorithmMismatch indicates material whose actual algorithm
+	// — INCLUDING its curve — contradicts the algorithm declared for it.
+	ErrKeyMaterialAlgorithmMismatch = stderrors.New("xkms: key material contradicts the declared algorithm")
+
+	// ErrUnsupportedAsymmetricKeyType indicates a parsed key of a type no
+	// backend here handles.
+	ErrUnsupportedAsymmetricKeyType = stderrors.New("xkms: unsupported asymmetric private key type")
+)
+
+// verifyMaterialMatchesAlgorithm refuses asymmetric material whose real
+// identity contradicts the attributes it would be stored under.
+//
+// THE CURVE IS PART OF THE IDENTITY, not a detail of it. Comparing only the
+// algorithm family accepts a P-384 key declared as P-256 — and since a caller
+// that names no curve is defaulted to P-256 downstream, that is the likely
+// shape of the mistake rather than an exotic one.
+//
+// go-xkms validates this pairing for RSA only; ECDSA and Ed25519 fall through
+// an empty default branch, which is exactly the two algorithms the signing
+// policy uses (upstream: go-xkms#53).
+func verifyMaterialMatchesAlgorithm(material []byte, attrs *xkmssdk.KeyAttributes) error {
+	key, err := x509.ParsePKCS8PrivateKey(material)
+	if err != nil {
+		return ErrKeyMaterialNotPKCS8
+	}
+
+	switch parsed := key.(type) {
+	case ed25519.PrivateKey:
+		return requireDeclaredAlgorithm(x509.Ed25519, attrs)
+	case *ed25519.PrivateKey:
+		return requireDeclaredAlgorithm(x509.Ed25519, attrs)
+	case *ecdsa.PrivateKey:
+		if err := requireDeclaredAlgorithm(x509.ECDSA, attrs); err != nil {
+			return err
+		}
+		if attrs.ECCAttributes != nil && attrs.ECCAttributes.Curve != nil &&
+			attrs.ECCAttributes.Curve != parsed.Curve {
+			return ErrKeyMaterialAlgorithmMismatch
+		}
+		return nil
+	case *rsa.PrivateKey:
+		return requireDeclaredAlgorithm(x509.RSA, attrs)
+	default:
+		return ErrUnsupportedAsymmetricKeyType
+	}
+}
+
+// requireDeclaredAlgorithm compares a parsed key's algorithm to the declared one.
+func requireDeclaredAlgorithm(actual x509.PublicKeyAlgorithm, attrs *xkmssdk.KeyAttributes) error {
+	if actual != attrs.KeyAlgorithm {
+		return ErrKeyMaterialAlgorithmMismatch
+	}
+	return nil
+}
+
+// ImportKeyMaterial imports raw key material into a backend using the import
+// token flow, which wraps the material in transit.
+//
+// The algorithm rides on attrs and is what decides how the backend interprets
+// material: raw bytes for a symmetric key, PKCS#8 DER for an asymmetric one.
+// Nothing in this function inspects the algorithm, so the two are one
+// operation rather than two — it was named for symmetric keys only because
+// that was the first caller.
+func ImportKeyMaterial(ctx context.Context, backendName string, attrs *xkmssdk.KeyAttributes, material []byte) error {
 	if err := checkInitialized(); err != nil {
 		return err
+	}
+
+	// ASYMMETRIC MATERIAL MUST DESCRIBE ITSELF TRUTHFULLY, and the check lives
+	// HERE because this is the chokepoint every caller passes through. It was
+	// first written a layer up in pkg/kms, which left this exported function
+	// reachable with no validation at all — one implementation beside the
+	// contract it interrogates, rather than a copy per caller.
+	if !attrs.IsSymmetric() {
+		if err := verifyMaterialMatchesAlgorithm(material, attrs); err != nil {
+			return err
+		}
 	}
 
 	// Get the keystore for this backend
@@ -511,7 +592,7 @@ func ImportSymmetricKey(ctx context.Context, backendName string, attrs *xkmssdk.
 	if err != nil {
 		return &dberrors.QBError{
 			Code: dberrors.ErrInternal,
-			Op:   "xkms.importSymmetricKey",
+			Op:   "xkms.importKeyMaterial",
 			Err:  &api.OperationFailedError{Operation: "get backend", Cause: err},
 		}
 	}
@@ -540,7 +621,7 @@ func ImportSymmetricKey(ctx context.Context, backendName string, attrs *xkmssdk.
 	if !ok {
 		return &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
-			Op:   "xkms.importSymmetricKey",
+			Op:   "xkms.importKeyMaterial",
 			Err:  &api.UnsupportedBackendOperationError{Backend: backendName, Operation: "key import"},
 		}
 	}

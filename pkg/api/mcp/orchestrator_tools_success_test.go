@@ -17,6 +17,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -450,6 +451,79 @@ func TestExecuteAgentListBackends_Error(t *testing.T) {
 	reg := newAgentRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_backends", map[string]interface{}{})
+	require.Error(t, err)
+}
+
+// =============================================================================
+// Orchestrator ListRunners Tests
+// =============================================================================
+
+// TestExecuteOrchestratorListRunners_ReportsTheRegisteredRunners proves the
+// tool answers from the orchestration registry rather than from a service:
+// the runners a build can drive are the same for every caller.
+func TestExecuteOrchestratorListRunners_ReportsTheRegisteredRunners(t *testing.T) {
+	reg := newAgentRegistry(t, &mockAgentService{})
+
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_runners", map[string]interface{}{})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// marshalResult normalizes the payload through JSON, so re-encoding it is
+	// how a test reads it back with the field names the wire carries.
+	payload, err := json.Marshal(result)
+	require.NoError(t, err)
+
+	var decoded struct {
+		Runners []struct {
+			Name   string `json:"name"`
+			States []struct {
+				State         string `json:"state"`
+				Label         string `json:"label"`
+				SessionBacked bool   `json:"session_backed"`
+			} `json:"states"`
+		} `json:"runners"`
+		Count int `json:"count"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &decoded))
+
+	require.Equal(t, len(decoded.Runners), decoded.Count)
+	require.NotEmpty(t, decoded.Runners, "the engine's own runner is always registered")
+
+	var workflow *struct {
+		Name   string `json:"name"`
+		States []struct {
+			State         string `json:"state"`
+			Label         string `json:"label"`
+			SessionBacked bool   `json:"session_backed"`
+		} `json:"states"`
+	}
+	for i := range decoded.Runners {
+		if decoded.Runners[i].Name == orchestration.JobRunnerWorkflow {
+			workflow = &decoded.Runners[i]
+		}
+	}
+	require.NotNil(t, workflow, "the workflow runner is registered by the engine's init")
+	require.NotEmpty(t, workflow.States)
+	assert.Equal(t, string(orchestration.JobStateInitializing), workflow.States[0].State)
+	assert.NotEmpty(t, workflow.States[0].Label, "every declared state names itself to a person")
+
+	var sessionBacked bool
+	for _, state := range workflow.States {
+		if state.SessionBacked {
+			sessionBacked = true
+		}
+	}
+	assert.True(t, sessionBacked, "the workflow runner declares at least one session-backed state")
+}
+
+// TestExecuteOrchestratorListRunners_RefusesWithoutAnOrchestrator pins the
+// same rule the REST and embedded surfaces apply: a node that runs no
+// orchestrator drives no jobs, so it must not answer with a runner list that
+// describes a capability it does not have.
+func TestExecuteOrchestratorListRunners_RefusesWithoutAnOrchestrator(t *testing.T) {
+	reg := newAgentRegistry(t, nil)
+
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_runners", map[string]interface{}{})
 	require.Error(t, err)
 }
 

@@ -23,9 +23,24 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
+
+// mcpCtxWithActor binds an authenticated principal into ctx the way the MCP
+// transport auth path does (auth.SubjectIntoContext). Impersonation
+// resolves its acting admin from this principal, never from the tool args
+// (go-quicbaas#383), so an impersonation-start tool test must authenticate
+// the caller it acts as.
+func mcpCtxWithActor(userID string) context.Context {
+	return auth.SubjectIntoContext(context.Background(), interfaces.Subject{
+		ID:            userID,
+		Username:      userID,
+		Authenticated: true,
+	})
+}
 
 // adminMockQuicBaaS embeds mockService and implements adminManagerAccessor.
 type adminMockQuicBaaS struct {
@@ -446,8 +461,7 @@ func TestExecuteIAMImpersonationStart_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := reg.executeIAMImpersonationStart(context.Background(), map[string]interface{}{
-		"admin_user_id":    "admin-user",
+	result, err := reg.executeIAMImpersonationStart(mcpCtxWithActor("admin-user"), map[string]interface{}{
 		"target_user_id":   "user-1",
 		"tenant_id":        "t1",
 		"reason":           "support investigation",
@@ -478,8 +492,7 @@ func TestExecuteIAMImpersonationStart_DefaultDuration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start without specifying duration (should default to 60 minutes)
-	result, err := reg.executeIAMImpersonationStart(context.Background(), map[string]interface{}{
-		"admin_user_id":  "admin-user",
+	result, err := reg.executeIAMImpersonationStart(mcpCtxWithActor("admin-user"), map[string]interface{}{
 		"target_user_id": "user-1",
 		"tenant_id":      "t1",
 		"reason":         "testing",
@@ -512,8 +525,7 @@ func TestExecuteIAMImpersonationEnd_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	startResult, err := reg.executeIAMImpersonationStart(context.Background(), map[string]interface{}{
-		"admin_user_id":  "admin-user",
+	startResult, err := reg.executeIAMImpersonationStart(mcpCtxWithActor("admin-user"), map[string]interface{}{
 		"target_user_id": "user-1",
 		"tenant_id":      "t1",
 		"reason":         "testing",

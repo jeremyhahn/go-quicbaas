@@ -157,6 +157,11 @@ func resetProjectFlags() {
 	projectMetadata = nil
 	projectAgentID = ""
 	projectRole = ""
+	projectDefaultWorkflow = ""
+	projectClearDefaultWF = false
+	projectAutonomous = false
+	projectContextRepos = nil
+	projectClearContextRepo = false
 }
 
 // =============================================================================
@@ -553,4 +558,267 @@ func TestFormatProjectList_TableAndJSON(t *testing.T) {
 	var jsonOut bytes.Buffer
 	require.NoError(t, formatProjectList(resp, "json", &jsonOut))
 	assert.Contains(t, jsonOut.String(), "ml-train")
+}
+
+// =============================================================================
+// DefaultWorkflow + git identity flags
+// =============================================================================
+
+func TestRunProjectCreate_ForwardsDefaultWorkflowAndGitIdentity(t *testing.T) {
+	var captured *projectSDK.CreateProjectRequest
+	mc := &mockProjectClient{
+		createFn: func(_ context.Context, req *projectSDK.CreateProjectRequest) (*projectSDK.ProjectInfo, error) {
+			captured = req
+			return &projectSDK.ProjectInfo{ID: "proj_1", Name: req.Name, TenantID: req.TenantID}, nil
+		},
+	}
+	withMockProject(t, mc)
+
+	cmd := newProjectCreateCommand()
+	require.NoError(t, cmd.Flags().Set("name", "api"))
+	require.NoError(t, cmd.Flags().Set("default-workflow", "sdlc"))
+	require.NoError(t, cmd.Flags().Set("git-author-name", "agent-api"))
+	require.NoError(t, cmd.Flags().Set("git-author-email", "agent-api@example.test"))
+	require.NoError(t, cmd.Flags().Set("git-signing", "true"))
+	require.NoError(t, cmd.Flags().Set("git-signing-algorithm", "ECDSA-P256"))
+	require.NoError(t, cmd.Flags().Set("git-signing-key", "api-signing"))
+	require.NoError(t, cmd.Flags().Set("git-signing-key-scope", "tenant"))
+	require.NoError(t, cmd.Flags().Set("git-signing-key-owner", "acme"))
+	require.NoError(t, cmd.Flags().Set("git-ssh-key", "api-access"))
+	require.NoError(t, cmd.Flags().Set("git-ssh-key-scope", "service"))
+	require.NoError(t, cmd.Flags().Set("git-ssh-key-owner", "deploy"))
+
+	require.NoError(t, runProjectCreate(cmd, nil))
+	require.NotNil(t, captured)
+	assert.Equal(t, "sdlc", captured.DefaultWorkflow)
+	assert.Equal(t, "agent-api", captured.GitAuthorName)
+	assert.Equal(t, "agent-api@example.test", captured.GitAuthorEmail)
+	assert.True(t, captured.GitSigningEnabled)
+	assert.Equal(t, "ECDSA-P256", captured.GitSigningAlgorithm)
+	assert.Equal(t, "api-signing", captured.GitSigningKeyName)
+	assert.Equal(t, "tenant", captured.GitSigningKeyScope)
+	assert.Equal(t, "acme", captured.GitSigningKeyOwner)
+	assert.Equal(t, "api-access", captured.GitSSHKeyName)
+	assert.Equal(t, "service", captured.GitSSHKeyScope)
+	assert.Equal(t, "deploy", captured.GitSSHKeyOwner)
+}
+
+// TestRunProjectUpdate_SigningFlagIsTriState: --git-signing not passed leaves
+// signing unchanged (nil); --git-signing=false turns it off.
+func TestRunProjectUpdate_SigningFlagIsTriState(t *testing.T) {
+	var captured *projectSDK.UpdateProjectRequest
+	mc := &mockProjectClient{
+		updateFn: func(_ context.Context, req *projectSDK.UpdateProjectRequest) (*projectSDK.ProjectInfo, error) {
+			captured = req
+			return &projectSDK.ProjectInfo{ID: req.ProjectID}, nil
+		},
+	}
+	withMockProject(t, mc)
+
+	cmd := newProjectUpdateCommand()
+	require.NoError(t, cmd.Flags().Set("default-workflow", "sdlc"))
+	require.NoError(t, cmd.Flags().Set("git-author-name", "agent"))
+	require.NoError(t, runProjectUpdate(cmd, []string{"proj_42"}))
+	require.NotNil(t, captured)
+	assert.Nil(t, captured.GitSigningEnabled, "--git-signing was not passed; signing must be left unchanged")
+	assert.Equal(t, "sdlc", captured.DefaultWorkflow)
+	assert.Equal(t, "agent", captured.GitAuthorName)
+	assert.False(t, captured.ClearDefaultWorkflow)
+
+	cmd = newProjectUpdateCommand()
+	require.NoError(t, cmd.Flags().Set("git-signing", "false"))
+	require.NoError(t, cmd.Flags().Set("clear-default-workflow", "true"))
+	require.NoError(t, cmd.Flags().Set("git-ssh-key", "rotated"))
+	require.NoError(t, runProjectUpdate(cmd, []string{"proj_42"}))
+	require.NotNil(t, captured.GitSigningEnabled)
+	assert.False(t, *captured.GitSigningEnabled)
+	assert.True(t, captured.ClearDefaultWorkflow)
+	assert.Equal(t, "rotated", captured.GitSSHKeyName)
+
+	assert.Nil(t, gitSigningFlag(nil), "no command means no flag")
+}
+
+func TestFormatProjectDetail_ShowsGitIdentity(t *testing.T) {
+	info := &projectSDK.ProjectInfo{
+		ID: "proj_1", Name: "api", TenantID: "acme", DefaultWorkflow: "sdlc",
+		Git: projectSDK.ProjectGit{
+			Author:  projectSDK.GitAuthor{Name: "agent-api", Email: "agent-api@example.test"},
+			Signing: projectSDK.CommitSigning{Enabled: true, Key: projectSDK.KMSKeyRef{Name: "api-signing"}},
+			SSHKey:  projectSDK.KMSKeyRef{Name: "api-access"},
+		},
+	}
+	var out bytes.Buffer
+	require.NoError(t, formatProjectDetail(info, "table", &out))
+	for _, want := range []string{"Default Workflow:", "sdlc", "agent-api <agent-api@example.test>", "api-signing", "api-access"} {
+		assert.Contains(t, out.String(), want)
+	}
+}
+
+// =============================================================================
+// --autonomous and --context-repo
+// =============================================================================
+
+// TestRunProjectCreate_ForwardsAutonomyAndContextRepos: both flags reach the
+// SDK request, and the created project renders them back in describe output.
+func TestRunProjectCreate_ForwardsAutonomyAndContextRepos(t *testing.T) {
+	var captured *projectSDK.CreateProjectRequest
+	mc := &mockProjectClient{
+		createFn: func(_ context.Context, req *projectSDK.CreateProjectRequest) (*projectSDK.ProjectInfo, error) {
+			captured = req
+			return &projectSDK.ProjectInfo{
+				ID: "proj_1", Name: req.Name, TenantID: req.TenantID,
+				Autonomous:   req.Autonomous,
+				ContextRepos: req.ContextRepos,
+			}, nil
+		},
+	}
+	withMockProject(t, mc)
+
+	cmd := newProjectCreateCommand()
+	require.NoError(t, cmd.Flags().Set("name", "api"))
+	require.NoError(t, cmd.Flags().Set("autonomous", "true"))
+	require.NoError(t, cmd.Flags().Set("context-repo",
+		"name=handbook,url=https://forge.example/org/handbook,ref=main"))
+	require.NoError(t, cmd.Flags().Set("context-repo",
+		"name=specs,url=https://forge.example/org/specs,ref=v2"))
+
+	require.NoError(t, runProjectCreate(cmd, nil))
+	require.NotNil(t, captured)
+	assert.True(t, captured.Autonomous)
+	require.Len(t, captured.ContextRepos, 2)
+	assert.Equal(t, projectSDK.ContextRepo{
+		Name: "handbook", RepoURL: "https://forge.example/org/handbook", Ref: "main",
+	}, captured.ContextRepos[0])
+	assert.Equal(t, projectSDK.ContextRepo{
+		Name: "specs", RepoURL: "https://forge.example/org/specs", Ref: "v2",
+	}, captured.ContextRepos[1])
+}
+
+// TestRunProjectUpdate_AutonomousFlagIsTriState: --autonomous not passed
+// leaves the switch unchanged (nil); --autonomous=false turns it off.
+func TestRunProjectUpdate_AutonomousFlagIsTriState(t *testing.T) {
+	var captured *projectSDK.UpdateProjectRequest
+	mc := &mockProjectClient{
+		updateFn: func(_ context.Context, req *projectSDK.UpdateProjectRequest) (*projectSDK.ProjectInfo, error) {
+			captured = req
+			return &projectSDK.ProjectInfo{ID: req.ProjectID}, nil
+		},
+	}
+	withMockProject(t, mc)
+
+	cmd := newProjectUpdateCommand()
+	require.NoError(t, cmd.Flags().Set("git-sha", "abc123"))
+	require.NoError(t, runProjectUpdate(cmd, []string{"proj_42"}))
+	require.NotNil(t, captured)
+	assert.Nil(t, captured.Autonomous, "--autonomous was not passed; it must be left unchanged")
+	assert.Nil(t, captured.ContextRepos, "no --context-repo means the list is left alone")
+	assert.False(t, captured.ClearContextRepos)
+
+	cmd = newProjectUpdateCommand()
+	require.NoError(t, cmd.Flags().Set("autonomous", "false"))
+	require.NoError(t, cmd.Flags().Set("context-repo",
+		"name=specs,url=https://forge.example/org/specs,ref=v2"))
+	require.NoError(t, runProjectUpdate(cmd, []string{"proj_42"}))
+	require.NotNil(t, captured.Autonomous)
+	assert.False(t, *captured.Autonomous)
+	require.Len(t, captured.ContextRepos, 1)
+	assert.Equal(t, "specs", captured.ContextRepos[0].Name)
+
+	cmd = newProjectUpdateCommand()
+	require.NoError(t, cmd.Flags().Set("autonomous", "true"))
+	require.NoError(t, cmd.Flags().Set("clear-context-repos", "true"))
+	require.NoError(t, runProjectUpdate(cmd, []string{"proj_42"}))
+	require.NotNil(t, captured.Autonomous)
+	assert.True(t, *captured.Autonomous)
+	assert.True(t, captured.ClearContextRepos)
+
+	assert.Nil(t, autonomousFlag(nil), "no command means no flag")
+}
+
+// TestRunProject_RejectsMalformedContextRepoFlag: a bad --context-repo is a
+// typed error and the client is never called.
+func TestRunProject_RejectsMalformedContextRepoFlag(t *testing.T) {
+	called := false
+	mc := &mockProjectClient{
+		createFn: func(context.Context, *projectSDK.CreateProjectRequest) (*projectSDK.ProjectInfo, error) {
+			called = true
+			return &projectSDK.ProjectInfo{}, nil
+		},
+		updateFn: func(context.Context, *projectSDK.UpdateProjectRequest) (*projectSDK.ProjectInfo, error) {
+			called = true
+			return &projectSDK.ProjectInfo{}, nil
+		},
+	}
+	withMockProject(t, mc)
+
+	cmd := newProjectCreateCommand()
+	require.NoError(t, cmd.Flags().Set("name", "api"))
+	require.NoError(t, cmd.Flags().Set("context-repo", "handbook"))
+	require.Error(t, runProjectCreate(cmd, nil))
+	assert.False(t, called, "a malformed flag must not reach the client")
+
+	resetProjectFlags()
+	cmd = newProjectUpdateCommand()
+	require.NoError(t, cmd.Flags().Set("context-repo", "name=handbook,url=https://forge.example/a"))
+	require.Error(t, runProjectUpdate(cmd, []string{"proj_42"}))
+	assert.False(t, called, "a malformed flag must not reach the client")
+}
+
+// TestParseContextRepoFlag_Table covers the accepted form and every rejection.
+func TestParseContextRepoFlag_Table(t *testing.T) {
+	repo, err := parseContextRepoFlag(" name=handbook , url=https://forge.example/a , ref=main ")
+	require.NoError(t, err)
+	assert.Equal(t, projectSDK.ContextRepo{
+		Name: "handbook", RepoURL: "https://forge.example/a", Ref: "main",
+	}, repo)
+
+	bad := []struct {
+		name  string
+		value string
+	}{
+		{"not key=value", "handbook"},
+		{"unknown key", "name=handbook,branch=main,url=https://forge.example/a,ref=main"},
+		{"missing name", "url=https://forge.example/a,ref=main"},
+		{"missing url", "name=handbook,ref=main"},
+		{"missing ref", "name=handbook,url=https://forge.example/a"},
+	}
+	for _, tc := range bad {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseContextRepoFlag(tc.value)
+			var typed *InvalidContextRepoFlagError
+			require.True(t, stderrors.As(err, &typed), "want *InvalidContextRepoFlagError, got %v", err)
+			assert.Contains(t, typed.Error(), tc.value)
+		})
+	}
+
+	// No flags means no list, so an update leaves the project's repos alone.
+	repos, err := parseContextRepoFlags(nil)
+	require.NoError(t, err)
+	assert.Nil(t, repos)
+}
+
+// TestFormatProjectDetail_ShowsAutonomyAndContextRepos pins the describe/get
+// output for both fields.
+func TestFormatProjectDetail_ShowsAutonomyAndContextRepos(t *testing.T) {
+	info := &projectSDK.ProjectInfo{
+		ID: "proj_1", Name: "api", TenantID: "acme",
+		Autonomous: true,
+		ContextRepos: []projectSDK.ContextRepo{
+			{Name: "handbook", RepoURL: "https://forge.example/org/handbook", Ref: "main"},
+		},
+	}
+	var out bytes.Buffer
+	require.NoError(t, formatProjectDetail(info, "table", &out))
+	for _, want := range []string{
+		"Autonomous:", "true",
+		"Context Repos:", "handbook", "https://forge.example/org/handbook@main",
+	} {
+		assert.Contains(t, out.String(), want)
+	}
+
+	// An operator-driven project says so rather than staying silent.
+	var quiet bytes.Buffer
+	require.NoError(t, formatProjectDetail(&projectSDK.ProjectInfo{ID: "p", Name: "n", TenantID: "t"}, "table", &quiet))
+	assert.Contains(t, quiet.String(), "Autonomous:")
+	assert.NotContains(t, quiet.String(), "Context Repos:")
 }

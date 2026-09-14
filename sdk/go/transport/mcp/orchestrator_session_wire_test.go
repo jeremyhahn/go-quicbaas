@@ -164,3 +164,86 @@ func TestMCPTransformSessionTools(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// ListRunners over MCP.
+//
+// quicbaas_orchestrator_list_runners serializes the same {runners, count}
+// envelope the REST endpoint does. Without a transform the SDK client's type
+// assertion would fail on the raw map, which is the defect the session tools
+// above were written from — so it is pinned here for the runners tool too.
+// =============================================================================
+
+func TestMCPTransformListRunners(t *testing.T) {
+	h := newOrchestratorMCPHandler()
+
+	t.Run("tool result becomes the typed runners response", func(t *testing.T) {
+		result := map[string]interface{}{
+			"runners": []interface{}{
+				map[string]interface{}{
+					"name": "workflow",
+					"states": []interface{}{
+						map[string]interface{}{
+							"state":          "initializing",
+							"label":          "Initializing",
+							"session_backed": false,
+						},
+						map[string]interface{}{
+							"state":          "executing",
+							"label":          "Executing",
+							"session_backed": true,
+						},
+					},
+				},
+			},
+			"count": 1,
+		}
+
+		out, err := h.transformResponse("ListRunners", result)
+		if err != nil {
+			t.Fatalf("transformResponse() error = %v", err)
+		}
+		resp, ok := out.(*orchestrator.ListJobRunnersResponse)
+		if !ok {
+			t.Fatalf("result type = %T, want *orchestrator.ListJobRunnersResponse", out)
+		}
+		if resp.Count != 1 || len(resp.Runners) != 1 {
+			t.Fatalf("runners = %d (count %d), want 1", len(resp.Runners), resp.Count)
+		}
+		if resp.Runners[0].Name != "workflow" {
+			t.Errorf("runner name = %q, want workflow", resp.Runners[0].Name)
+		}
+		if len(resp.Runners[0].States) != 2 {
+			t.Fatalf("states = %d, want 2", len(resp.Runners[0].States))
+		}
+		if resp.Runners[0].States[0].Label != "Initializing" {
+			t.Errorf("first label = %q, want Initializing", resp.Runners[0].States[0].Label)
+		}
+		if resp.Runners[0].States[0].SessionBacked {
+			t.Error("initializing must not be reported as session-backed")
+		}
+		if !resp.Runners[0].States[1].SessionBacked {
+			t.Error("executing must be reported as session-backed")
+		}
+	})
+
+	t.Run("an empty registry decodes to an empty slice, never nil", func(t *testing.T) {
+		out, err := h.transformResponse("ListRunners", map[string]interface{}{"count": 0})
+		if err != nil {
+			t.Fatalf("transformResponse() error = %v", err)
+		}
+		resp := out.(*orchestrator.ListJobRunnersResponse)
+		if resp.Runners == nil {
+			t.Fatal("Runners is nil; a caller ranging over it must not have to nil-check")
+		}
+		if len(resp.Runners) != 0 {
+			t.Fatalf("runners = %d, want 0", len(resp.Runners))
+		}
+	})
+
+	t.Run("a malformed tool result is an error, not an empty answer", func(t *testing.T) {
+		if _, err := h.transformResponse("ListRunners", "not json at all"); err == nil {
+			t.Error("transformResponse should reject an undecodable result")
+		}
+	})
+}

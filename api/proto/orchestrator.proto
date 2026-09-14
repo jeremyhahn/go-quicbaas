@@ -59,6 +59,19 @@ service OrchestratorService {
     rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse) {
         option (qrdb.v1.permission) = "orchestrator:task_complete";
     }
+    rpc BlockTask(BlockTaskRequest) returns (BlockTaskResponse) {
+        option (qrdb.v1.permission) = "orchestrator:task_block";
+    }
+    rpc ReadmitTask(ReadmitTaskRequest) returns (ReadmitTaskResponse) {
+        option (qrdb.v1.permission) = "orchestrator:task_readmit";
+    }
+    // DeleteTask removes a task and releases its source reservation.
+    // Authorized as the task-record write verb: deleting a task is the
+    // inverse of creating one, and the permission vocabulary go-qrdb owns
+    // carries no separate delete action for this family.
+    rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse) {
+        option (qrdb.v1.permission) = "orchestrator:task_create";
+    }
     rpc DecomposeTask(DecomposeTaskRequest) returns (DecomposeTaskResponse) {
         option (qrdb.v1.permission) = "orchestrator:task_decompose";
     }
@@ -85,6 +98,18 @@ service OrchestratorService {
     // Backend Operations
     rpc ListBackends(OrchestratorListBackendsRequest) returns (OrchestratorListBackendsResponse) {
         option (qrdb.v1.permission) = "orchestrator:backend_list";
+    }
+
+    // Runner Registry Operations
+
+    // ListRunners returns every registered JobRunner and the ordered,
+    // non-terminal states it declares. This is REGISTRY data, not tenant
+    // data: the runners a daemon can drive are the same for every caller,
+    // which is why the request carries no tenant. Gated on the same
+    // orchestrator:status the REST route GET /api/v1/orchestrator/runners
+    // is gated on.
+    rpc ListRunners(OrchestratorListRunnersRequest) returns (OrchestratorListRunnersResponse) {
+        option (qrdb.v1.permission) = "orchestrator:status";
     }
 
     // Health Operations
@@ -122,6 +147,42 @@ service OrchestratorService {
     // When from_sequence > 0 the stream begins with the historical replay
     // from that sequence, then transitions to live tail when follow is true.
     rpc SubscribeSessionEvents(SubscribeSessionRequest) returns (stream SessionEventEnvelope) {
+        option (qrdb.v1.permission) = "orchestrator:status";
+    }
+
+    // GetSessionConversation returns one page of a session's CONVERSATION:
+    // who said what, which tools ran, and what each answer cost. It is the
+    // coarser sibling of SubscribeSessionEvents, which serves the raw log —
+    // every fragment, thought and presence change — in the shape a live
+    // attacher needs. A streaming answer is many events and exactly one turn
+    // here, and the page boundary always falls between turns.
+    //
+    // NAMED FOR WHAT IT RETURNS, not for the route it is reached on. The SDK
+    // already has a GetSessionHistory that pages the raw EVENT log, and two
+    // verbs called history returning two different shapes would be worse than
+    // one verb whose name does not match its URL. Its REST route is
+    // GET /orchestrator/sessions/{id}/history, because that is the resource an
+    // operator reaches for.
+    rpc GetSessionConversation(GetSessionConversationRequest) returns (GetSessionConversationResponse) {
+        option (qrdb.v1.permission) = "orchestrator:status";
+    }
+
+    // GetSpendReport returns one scope of the CONSUMPTION LEDGER: the tokens
+    // spent under it, the drill-down to the level below, and the allowance
+    // status of every pooled account that paid.
+    //
+    // ONE VERB FOR EVERY LEVEL, because the ledger's attribution chain is a
+    // PATH — tenant/project/task/job/session/round — and "the project's
+    // spend" and "the job's spend" are the same prefix scan at two depths.
+    // Four RPCs over one scan would be four places for a drill-down's
+    // arithmetic to stop agreeing with itself.
+    //
+    // WHAT IT DOES NOT CLAIM. cost_micros is accompanied by cost_measured,
+    // and today nothing in the tree prices a turn, so the flag is false and
+    // a renderer must show a dash rather than the zero. Likewise
+    // policy_status distinguishes an account with no cap from one this
+    // deployment could not read. See go-quicbaas#791.
+    rpc GetSpendReport(GetSpendReportRequest) returns (GetSpendReportResponse) {
         option (qrdb.v1.permission) = "orchestrator:status";
     }
 
@@ -178,6 +239,7 @@ enum TaskStatus {
     TASK_STATUS_COMPLETED = 4;
     TASK_STATUS_FAILED = 5;
     TASK_STATUS_CANCELLED = 6;
+    TASK_STATUS_BLOCKED = 7;
 }
 
 enum AgentStatus {
@@ -214,6 +276,23 @@ enum SandboxMode {
     SANDBOX_MODE_NONE = 2;
 }
 
+// TrustLevel is the integrity tier a session is required to run at. It mirrors
+// orchestration.TrustLevel one-for-one, including the ordering, because the
+// mapping either way is a cast.
+//
+// THE ZERO VALUE IS "UNSTATED", NOT "NONE". A request that names no tier is
+// resolved against the receiving side's TrustPolicy; a request that names
+// TRUST_LEVEL_NONE has said, positively, that it wants no guarantee. Collapsing
+// the two would turn "the operator did not say" into "the operator opted out",
+// which is the wrong direction for a requirement.
+enum TrustLevel {
+    TRUST_LEVEL_DEFAULT = 0;
+    TRUST_LEVEL_NONE = 1;
+    TRUST_LEVEL_PINNED = 2;
+    TRUST_LEVEL_ATTESTED = 3;
+    TRUST_LEVEL_MEASURED = 4;
+}
+
 // =============================================================================
 // Core Types
 // =============================================================================
@@ -223,6 +302,35 @@ message MCPServerConfig {
     string name = 1;
     string url = 2;
     map<string, string> env = 3;
+
+    // args and command complete the shape orchestration.MCPServerConfig has
+    // always had. A stdio MCP server IS its command and argv; with only name,
+    // url and env on the wire, a remote spawn received a server it could not
+    // launch, and the pre-existing url->command mirroring on arrival hid the
+    // difference by filling Command with the URL. Both fields are optional and
+    // a sender that omits them leaves the old fallback in force.
+    repeated string args = 4;
+    string command = 5;
+}
+
+// ContainerMount is one policy-authorized bind/volume/tmpfs mount for a
+// sandbox container. It mirrors orchestration.ContainerMount.
+//
+// AUTHORIZED TWICE, ON PURPOSE. The control plane authorizes every mount
+// against its own MountPolicy before dispatching, and the daemon that will
+// actually create the container authorizes them again against its own
+// (pkg/agent Runtime.authorizeMounts). The second check is not a duplicate:
+// only the daemon knows which host it is, and it is the one binding the path.
+message ContainerMount {
+    string source = 1;
+    string target = 2;
+    bool read_only = 3;
+    string type = 4;      // "bind" | "volume" | "tmpfs"; empty keeps the untyped short form
+
+    // tmpfs_size_bytes bounds a "tmpfs" mount's size. Zero leaves it unbounded
+    // up to the container's whole memory cgroup, which is what every mount
+    // before this field meant, so it is inert at its zero value.
+    int64 tmpfs_size_bytes = 5;
 }
 
 // ContainerSpec defines a container configuration for sandboxed sessions.
@@ -275,6 +383,42 @@ message Task {
     bool auto_spawn = 18;
     string spawned_job_id = 19;
     google.protobuf.Timestamp spawned_at = 20;
+    string project_id = 21;
+    TaskSource source = 22;
+    int64 priority = 23;
+    int64 attempts = 24;
+    int64 attempt_budget = 25;
+    int64 environment_faults = 26;
+    int64 consecutive_environment_faults = 27;
+    int64 retry_not_before = 28;      // Unix nanoseconds; 0 = dispatchable now
+    string blocked_reason = 29;
+    string block_kind = 30;           // needs_info | blocked | escalated
+    int64 status_changed_at = 31;     // Unix nanoseconds
+    string runner = 32;               // JobRunner driving an attempt; empty = "workflow"
+    TaskRouting routing = 33;         // placement hints a dispatch reads
+    string dispatch_reason = 34;      // why the last dispatch produced no job
+    // question_attempts counts attempts that ended with the agent asking a
+    // person, refunded against the budget like environment_faults but reported
+    // separately: one means the factory is broken, the other means the worker
+    // did the right thing and is waiting.
+    int64 question_attempts = 35;
+}
+
+// TaskRouting are the placement hints a dispatch reads when it decides where
+// an attempt at a task runs. The zero value constrains nothing.
+message TaskRouting {
+    string backend = 1;
+    string host_affinity = 2;
+    bool gpu_required = 3;
+}
+
+// TaskSource records where a task came from. kind is an open set: the engine
+// emits scheduler | operator | job, and a registered task source declares any
+// other kind it emits. (kind, ref) is unique within a tenant and project.
+message TaskSource {
+    string kind = 1;
+    string ref = 2;
+    string url = 3;
 }
 
 // TaskResult contains the output of a completed task.
@@ -291,6 +435,8 @@ message TaskFilter {
     string assigned_to = 3;
     string created_by = 4;
     int32 limit = 5;
+    string project_id = 6;
+    repeated TaskStatus statuses = 7;
 }
 
 // OrchestratorWorkItem represents a decomposed unit of work.
@@ -406,6 +552,80 @@ message SpawnSessionRequest {
     // account_auto it is what authorizes rotation — a session with neither is
     // a deliberate pin and is never moved off its account.
     repeated string account_allow = 19;
+
+    // extra_args are additional command-line arguments for the agent program,
+    // forwarded verbatim by the daemon that spawns it.
+    //
+    // ON THE WIRE BECAUSE THE GRANT IS THE CALLER'S TO STATE. The SDLC module
+    // spawns its workers with an explicit permission grant
+    // (--permission-mode acceptEdits) so that a worker's ability to edit its
+    // worktree is a property of the SDLC module rather than of whichever operator's
+    // settings the executing daemon happened to inherit — go-quicbaas#218. A
+    // field absent here silently drops that grant for every REMOTE worker,
+    // leaving exactly the failure the local path just fixed.
+    repeated string extra_args = 20;
+
+    // THE CONTAINER AND TRUST DIMENSION, WHICH BOTH ENDS ALREADY IMPLEMENTED
+    // AND ONLY THE WIRE WAS MISSING. The orchestrator populates every one of
+    // these on the SpawnRequest it hands to the backend, and the ACPBackend the
+    // daemon runs consumes every one of them when it builds the container spec.
+    // Between the two, a remote spawn dropped them all.
+    //
+    // DROPPING THEM DID NOT FAIL, which is the whole reason they are called out
+    // here. Each is inert at its zero value, so a remote session simply ran
+    // without the mount its operator authorized and at whatever tier the daemon
+    // defaulted to, and no error anywhere said that the control plane had asked
+    // for anything else. trust_level is the dangerous direction of #248's class
+    // in its purest form: a REQUIREMENT whose absence reads as "nothing was
+    // required".
+    repeated ContainerMount extra_mounts = 21;
+    string image_digest = 22;
+    TrustLevel trust_level = 23;
+    string trust_label = 24;
+    map<uint32, bytes> expected_pcrs = 25;
+
+    // account_exclude is account_allow's other half and travels for the same
+    // reason. allow narrows the pool to a set; exclude removes one account from
+    // it — the account a session has just been rotated off. Carrying one and
+    // not the other lets a rotation land straight back on the account it was
+    // moving away from.
+    repeated string account_exclude = 26;
+
+    // THE STORAGE TIER, FOR THE SAME REASON THE TRUST TIER TRAVELS. The control
+    // plane holds the project record and resolves the tier from it; the daemon
+    // that creates the container is the only party that can apply it. Dropping
+    // it would not fail — it is inert at its zero value — it would silently run
+    // a remote worker's checkout on the disk its operator configured it off,
+    // and with no memory limit on the tmpfs the tier depends on.
+    WorkspaceStoragePlan storage = 27;
+
+    // job_id names the job this spawn works for.
+    //
+    // ON THE WIRE FOR THE SAME REASON account_allow IS: the scope is the
+    // control plane's to state, and the daemon cannot derive it. The daemon's
+    // account resolution carries it into the delivery grant's scope
+    // (pkg/orchestration/account_lease.go), so a remote session's grant records
+    // the job it served even though the daemon's own credential cache — and
+    // therefore the grant itself — is keyed by account rather than by job.
+    string job_id = 28;
+}
+
+// WorkspaceStoragePlan is the RESOLVED storage decision for one spawn: which
+// filesystem the checkout is mounted on and how much memory the container gets.
+// See docs/software-factory/storage-tiers.md.
+message WorkspaceStoragePlan {
+    // tier is "" (the host bind mount every project had before this existed),
+    // "persistent" (the same thing, stated) or "ephemeral" (a container-local
+    // tmpfs). An unrecognized tier is refused rather than rounded down.
+    string tier = 1;
+
+    // tmpfs_size_bytes sizes the ephemeral tier's tmpfs checkout; zero is
+    // unsized.
+    int64 tmpfs_size_bytes = 2;
+
+    // memory_bytes is the container's memory cgroup limit; zero leaves the
+    // runtime's own default.
+    int64 memory_bytes = 3;
 }
 
 message SpawnSessionResponse {
@@ -414,6 +634,34 @@ message SpawnSessionResponse {
     string model = 3;
     string container_id = 4;
     google.protobuf.Timestamp timestamp = 5;
+
+    // THE ACCOUNT THE DAEMON RESOLVED, WITHOUT WHICH NO REMOTE SESSION HAS ONE.
+    // Selection happens on the daemon — the credential lives in its secret
+    // store and never crosses the wire — so the daemon is the only party that
+    // knows which account the session is billing to. The control plane records
+    // Session.AccountID on the durable record and stamps it onto every turn's
+    // usage; with no field here it recorded the empty string for every session
+    // that ran remotely, and the cost of that session was attributable to
+    // nothing.
+    string account_id = 6;
+    string account_strategy = 7;
+
+    // THE DELIVERY GRANT THIS SESSION'S CREDENTIAL WAS RELEASED UNDER, without
+    // which no remote session's credential can ever be revoked.
+    //
+    // The grant is ISSUED by the control plane, when it released the credential
+    // to this daemon (MaterializeAccountCredential). But the release happens
+    // inside the daemon's account resolution, so the control plane cannot tell
+    // which session the grant it issued belongs to — only the daemon can, and
+    // this is where it says so (pkg/agent/account_grant.go). The control plane
+    // records it on the durable session record, and the session's conclusion —
+    // an operator's close, the job ending, a restart sweep — withdraws it once
+    // no other live session is still being served under it.
+    //
+    // With no field here a remote session's provider credential would be leased
+    // and then un-revocable, which is worse than not leasing it at all: the
+    // grant would expire on its own TTL while claiming to be governed.
+    string credential_lease_id = 8;
 }
 
 // PromptSession
@@ -508,6 +756,15 @@ message RotateSessionAccountResponse {
 message ListSessionsRequest {
     string backend = 1;
     string tenant_id = 2;
+
+    // status filters by session lifecycle state ("active", "idle",
+    // "resumable", "closed", "error"). Empty means every state, which is what
+    // every caller that predates the filter sends.
+    //
+    // It exists because the list MERGES durable records with live ones: a
+    // caller asking for active sessions was silently handed closed ones back
+    // once reconciliation started writing terminal records (go-quicbaas#792).
+    string status = 3;
 }
 
 message ListSessionsResponse {
@@ -532,6 +789,11 @@ message CreateTaskRequest {
     string backend = 9;
     bool gpu_required = 10;
     string project_id = 11;
+    TaskSource source = 12;
+    int64 priority = 13;
+    int64 attempt_budget = 14;
+    string runner = 15;         // JobRunner driving attempts; empty = "workflow"
+    string host_affinity = 16;  // routing hint: pin the attempt to this agent or host
 }
 
 message CreateTaskResponse {
@@ -574,6 +836,45 @@ message ClaimTaskResponse {
     string agent_id = 2;
     bool claimed = 3;
     google.protobuf.Timestamp timestamp = 4;
+}
+
+// BlockTask parks a task until a person readmits it.
+message BlockTaskRequest {
+    string tenant_id = 1;
+    string task_id = 2;
+    string kind = 3;    // needs_info | blocked | escalated
+    string reason = 4;
+}
+
+message BlockTaskResponse {
+    string task_id = 1;
+    bool blocked = 2;
+    google.protobuf.Timestamp timestamp = 3;
+}
+
+// ReadmitTask returns a blocked task to the pending queue.
+message ReadmitTaskRequest {
+    string tenant_id = 1;
+    string task_id = 2;
+}
+
+message ReadmitTaskResponse {
+    string task_id = 1;
+    bool readmitted = 2;
+    google.protobuf.Timestamp timestamp = 3;
+}
+
+// DeleteTask removes a task, its artifacts, its claim mark and its source
+// reservation. Refused while a job holds a live lease on the task.
+message DeleteTaskRequest {
+    string tenant_id = 1;
+    string task_id = 2;
+}
+
+message DeleteTaskResponse {
+    string task_id = 1;
+    bool deleted = 2;
+    google.protobuf.Timestamp timestamp = 3;
 }
 
 // CompleteTask
@@ -620,6 +921,9 @@ message OrchestratorStartJobRequest {
     string workflow_name = 8;
     string workflow_file = 9;
     string lead_agent_id = 10;
+    string task_id = 11;   // task this job is an attempt at
+    int64 attempt = 12;    // 1-based attempt ordinal
+    string runner = 13;    // JobRunner driving the job's states; empty = "workflow"
 }
 
 // OrchestratorStartJobResponse contains the result of starting an orchestration job.
@@ -648,6 +952,67 @@ message OrchestratorGetJobStatusResponse {
     string error = 10;
     google.protobuf.Timestamp timestamp = 11;
     repeated OrchestratorAuditEvent events = 12; // Complete audit trail
+    string task_id = 13;
+    int64 attempt = 14;
+    string node = 15;
+    int64 heartbeat_at = 16;
+    string failure_class = 17;
+    string lead_session_id = 18;
+    repeated string session_ids = 19;
+    string stage = 20; // last lifecycle moment the job passed through
+    string runner = 21; // JobRunner that drove the job's states
+
+    // Provenance: who ran the attempt, which attempt it was, and what it
+    // left behind. See pkg/orchestration/job_provenance.go.
+    string agent_id = 22;                          // fleet agent the work was dispatched to
+    repeated OrchestratorJobStage stages = 23;     // lifecycle moments entered, in order
+    repeated OrchestratorJobAttempt attempts = 24; // every attempt at the job's task
+    int32 attempt_budget = 25;                     // charged attempts the task allows
+    string terminal_reason = 26;                   // typed reason the task stopped
+    bool readmit_allowed = 27;                     // whether a person may requeue the task
+    OrchestratorJobDelivery delivery = 28;         // branch, head, pull request, reviews
+    repeated OrchestratorJobVerification verification = 29; // last validator pipeline's results
+}
+
+// OrchestratorJobVerification is one verification command's outcome.
+message OrchestratorJobVerification {
+    string name = 1;
+    bool passed = 2;
+    string message = 3;
+    string details = 4;
+}
+
+// OrchestratorJobStage is one lifecycle moment the job entered.
+message OrchestratorJobStage {
+    string stage = 1;
+    int64 entered_at = 2; // Unix nanoseconds
+}
+
+// OrchestratorJobAttempt is one attempt at the job's task.
+message OrchestratorJobAttempt {
+    int32 attempt = 1;
+    string job_id = 2;
+    bool current = 3;
+}
+
+// OrchestratorJobReviewRound is one reviewer's verdict on one head.
+message OrchestratorJobReviewRound {
+    int32 round = 1;
+    string reviewer = 2;
+    string verdict = 3;
+    string head_sha = 4;
+    string findings = 5;
+    string submitted_at = 6; // RFC 3339
+}
+
+// OrchestratorJobDelivery is the git side of the job's attempt.
+message OrchestratorJobDelivery {
+    string branch = 1;
+    string head_sha = 2;
+    int32 pull_request_number = 3;
+    string pull_request_url = 4;
+    string pull_request_state = 5;
+    repeated OrchestratorJobReviewRound reviews = 6;
 }
 
 // OrchestratorAuditEvent records a single event in the job's audit trail.
@@ -670,9 +1035,16 @@ message OrchestratorCancelJobResponse {
     google.protobuf.Timestamp timestamp = 3;
 }
 
-// OrchestratorListJobsRequest lists all jobs for a tenant.
+// OrchestratorListJobsRequest lists a tenant's jobs, optionally narrowed to
+// the attempts at one task.
 message OrchestratorListJobsRequest {
     string tenant_id = 1;
+
+    // task_id narrows the listing to the attempts at one task. Empty lists
+    // every job the tenant owns. The SERVER applies it: a client that has to
+    // re-filter the answer cannot tell a task with no attempts from a task
+    // whose attempts were not returned.
+    string task_id = 2;
 }
 
 // OrchestratorListJobsResponse contains the list of jobs for a tenant.
@@ -693,6 +1065,8 @@ message OrchestratorJobSummary {
     int64 updated_at = 9;
     string error = 10;
     int32 event_count = 11;
+    string task_id = 12;
+    int64 attempt = 13;
 }
 
 // SubscribeJobEventsRequest subscribes to real-time events from a job.
@@ -724,6 +1098,44 @@ message OrchestratorListBackendsRequest {
 message OrchestratorListBackendsResponse {
     repeated AgentBackendInfo backends = 1;
     google.protobuf.Timestamp timestamp = 2;
+}
+
+// =============================================================================
+// Runner Registry Requests and Responses
+// =============================================================================
+
+// OrchestratorJobStateSpec is one state a runner drives a job through. It
+// mirrors orchestration.JobStateSpec minus IdleThreshold, which is the stall
+// detector's tuning and is not part of the wire surface.
+message OrchestratorJobStateSpec {
+    // state is the state as it appears on JobStatus.
+    string state = 1;
+
+    // label is how the state is named to a person.
+    string label = 2;
+
+    // session_backed says an agent session is doing the work in this state.
+    bool session_backed = 3;
+}
+
+// OrchestratorJobRunner is one registered runner and the ordered,
+// non-terminal states it declares.
+message OrchestratorJobRunner {
+    // name is what JobConfig.Runner selects the runner by.
+    string name = 1;
+
+    // states are the runner's states in the order it drives them.
+    repeated OrchestratorJobStateSpec states = 2;
+}
+
+// ListRunners. The request is empty because the runner registry is the
+// DAEMON's rather than a tenant's; a tenant_id here would be accepted and
+// ignored, which is worse than absent.
+message OrchestratorListRunnersRequest {}
+
+message OrchestratorListRunnersResponse {
+    repeated OrchestratorJobRunner runners = 1;
+    int32 count = 2;
 }
 
 // =============================================================================
@@ -858,6 +1270,194 @@ message SessionEventEnvelope {
     bytes payload_json = 4;
     google.protobuf.Timestamp timestamp = 5;
     bool from_replay = 6; // true while draining history, false once tailing live
+}
+
+// GetSessionConversationRequest addresses one page of a session's conversation.
+message GetSessionConversationRequest {
+    string tenant_id = 1;
+    string session_id = 2;
+    // cursor is the next_cursor of a previous page. 0 starts at the
+    // beginning of the RETAINED transcript, which retention may have moved.
+    uint64 cursor = 3;
+    // limit is the maximum number of turns to return. 0 selects the server
+    // default (100); the server caps it at 500.
+    uint32 limit = 4;
+}
+
+// SessionToolUse summarises one tool call inside an assistant turn. The
+// arguments and output stay on the event stream: copying them here would make
+// every history page carry the weight of the transcript it indexes.
+message SessionToolUse {
+    string invocation_id = 1;
+    string name = 2;
+    bool is_error = 3;
+    int64 result_bytes = 4;
+}
+
+// SessionTurn is one record in a session's conversation.
+message SessionTurn {
+    // sequence is the log sequence of the turn's first event, and the cursor
+    // that addresses it.
+    uint64 sequence = 1;
+    string session_id = 2;
+    string tenant_id = 3;
+    // role is "user", "assistant" or "system".
+    string role = 4;
+    google.protobuf.Timestamp timestamp = 5;
+    string text = 6;
+    // truncated_bytes is how much text the storage cap removed. Non-zero
+    // means text is not the whole of what was said.
+    int64 truncated_bytes = 7;
+    string model = 8;
+    string stop_reason = 9;
+    repeated SessionToolUse tools = 10;
+    // usage_json is the turn's token accounting as the backend reported it,
+    // carried as JSON for the same reason payload_json is: the accounting
+    // shape is the orchestration package's and must not fork on the wire.
+    bytes usage_json = 11;
+}
+
+// GetSessionConversationResponse is one page of a session's conversation.
+message GetSessionConversationResponse {
+    string session_id = 1;
+    string tenant_id = 2;
+    repeated SessionTurn turns = 3;
+    // next_cursor is the cursor for the following page, or 0 at the end.
+    uint64 next_cursor = 4;
+    // oldest_sequence is the lowest sequence the log still holds. Above 1
+    // means retention has dropped earlier turns.
+    uint64 oldest_sequence = 5;
+}
+
+// =============================================================================
+// Spend reporting (the consumption ledger's read side)
+// =============================================================================
+
+// GetSpendReportRequest addresses one scope of the attribution chain.
+//
+// The levels are a PATH: each may be set only if every level above it is. A
+// scope that skips one is refused rather than answered by a scan of the
+// tenant's whole history.
+message GetSpendReportRequest {
+    string tenant_id = 1;
+    string project_id = 2;
+    string task_id = 3;
+    string job_id = 4;
+    string session_id = 5;
+    // round selects one round below the session, applied only when round_set
+    // is true so round 0 — a real level — is distinguishable from "every
+    // round".
+    int32 round = 6;
+    bool round_set = 7;
+}
+
+// SpendWindowStatus is one sliding quota window and what has been drawn
+// against it.
+message SpendWindowStatus {
+    string name = 1;
+    // size_nanos is the window's length. Nanoseconds rather than seconds
+    // because the policy field it mirrors is a Go time.Duration and a
+    // sub-second window would otherwise round to "no window at all".
+    int64 size_nanos = 2;
+    int64 max_tokens = 3;
+    int64 used_tokens = 4;
+    int64 remaining_tokens = 5;
+    bool exhausted = 6;
+    // frees_at is when the window's oldest entry ages out. Unset when the
+    // window holds nothing, because there is nothing to age out.
+    google.protobuf.Timestamp frees_at = 7;
+}
+
+// SpendBreakerVerdict is an account's derived circuit-breaker state and the
+// evidence it was derived from. A breaker that refuses without showing its
+// working is indistinguishable from one that is broken.
+message SpendBreakerVerdict {
+    // state is "closed", "open" or "half_open".
+    string state = 1;
+    int32 failures = 2;
+    int32 successes = 3;
+    google.protobuf.Timestamp last_failure_at = 4;
+    google.protobuf.Timestamp last_success_at = 5;
+    // open_until is when an open breaker becomes half-open; unset otherwise.
+    google.protobuf.Timestamp open_until = 6;
+}
+
+// SpendAccount is one pooled account's contribution to a scope, and the
+// allowance it draws against.
+message SpendAccount {
+    string account_id = 1;
+    string display_name = 2;
+    string provider = 3;
+    int64 total_tokens = 4;
+    // policy_status is "unknown", "none" or "metered". THE THREE ARE
+    // DIFFERENT FACTS: "none" says the account was read and meters nothing,
+    // "unknown" says nothing could read it. A client that collapses them
+    // reports an unwired deployment as a fleet of uncapped accounts.
+    string policy_status = 5;
+    repeated SpendWindowStatus windows = 6;
+    // breaker is unset when the account carries no breaker rule, which is
+    // not the same as a closed breaker.
+    SpendBreakerVerdict breaker = 7;
+}
+
+// SpendModel is one engine/model pair's share of a scope's tokens.
+message SpendModel {
+    string engine = 1;
+    string model = 2;
+    int64 total_tokens = 3;
+}
+
+// SpendChild is one drill-down row: the next chain level below the scope.
+message SpendChild {
+    // id is the child's identifier, empty when unattributed.
+    string id = 1;
+    // level names what id identifies: "project", "task", "job", "session" or
+    // "round".
+    string level = 2;
+    // unattributed marks the subtree the ledger files under its no-value
+    // sentinel — a job with no task. Real spend with no parent at this
+    // level, to be labelled rather than shown as an entity named "-".
+    bool unattributed = 3;
+    int64 total_tokens = 4;
+}
+
+// GetSpendReportResponse is one scope's consumption and its drill-down.
+message GetSpendReportResponse {
+    // level names the chain level the scope addresses.
+    string level = 1;
+    string tenant_id = 2;
+    string project_id = 3;
+    string task_id = 4;
+    string job_id = 5;
+    string session_id = 6;
+    int32 round = 7;
+
+    int32 entries = 8;
+    int64 input_tokens = 9;
+    int64 output_tokens = 10;
+    int64 total_tokens = 11;
+
+    // cost_micros is the summed charge in millionths of a currency unit, and
+    // cost_measured says whether ANY of it was priced. A CLIENT MUST CONSULT
+    // cost_measured BEFORE RENDERING cost_micros: nothing in this tree prices
+    // a turn, so today the flag is false and the figure is UNMEASURED, not
+    // free. See go-quicbaas#791.
+    int64 cost_micros = 12;
+    bool cost_measured = 13;
+
+    int32 successes = 14;
+    int32 failures = 15;
+
+    google.protobuf.Timestamp first_at = 16;
+    google.protobuf.Timestamp last_at = 17;
+
+    repeated SpendAccount accounts = 18;
+    repeated SpendModel models = 19;
+
+    // child_level names the level children are at, empty at the deepest
+    // level where there is nothing below to attribute to.
+    string child_level = 20;
+    repeated SpendChild children = 21;
 }
 
 // =============================================================================
@@ -1032,4 +1632,76 @@ message GetTaskArtifactRequest {
 message GetTaskArtifactResponse {
     Artifact artifact = 1;
     google.protobuf.Timestamp timestamp = 2;
+}
+
+// TurnFailureEvidence is an agent CLI's own structured account of a turn that
+// ended in error, carried from the daemon that ran the process back to the
+// control plane that dispatched it.
+//
+// IT TRAVELS AS A STATUS DETAIL ON A FAILED Prompt, not in the response
+// message, because the failure IS the RPC's error. Additive and optional in
+// both directions: a daemon that does not attach it and a client that does not
+// read it behave exactly as they did before (go-quicbaas#235).
+//
+// WHAT IS DELIBERATELY NOT HERE: the CLI's own result / stderr text. That is
+// the field most likely to carry a credential, it is withheld from every error
+// string on the daemon side already, and putting it on the wire would undo
+// that. Only the closed-enum reason and the counts travel. The reason is
+// re-checked against the control plane's own allowlist on arrival, so a daemon
+// cannot make the control plane render a string of its choosing.
+message TurnFailureEvidence {
+    // terminal_reason is the CLI's own name for why its query loop stopped.
+    string terminal_reason = 1;
+
+    // num_turns is the CLI's turn count. Diagnostic only.
+    int32 num_turns = 2;
+
+    // usage_reported distinguishes "the CLI reported no accounting" from "the
+    // CLI reported zero", which is the entire discriminator for whether a
+    // model turn ran. Without it the two are indistinguishable on the wire,
+    // and a turn that reported nothing would be refunded as though it had
+    // reported zero.
+    bool usage_reported = 3;
+
+    int64 input_tokens = 4;
+    int64 output_tokens = 5;
+    int64 cache_creation_input_tokens = 6;
+    int64 cache_read_input_tokens = 7;
+}
+
+// SpawnFaultEvidence names a spawn failure that is a CONFIGURATION fault rather
+// than a failed attempt at the work, carried from the daemon that tried the
+// spawn back to the control plane that asked for it.
+//
+// The companion of TurnFailureEvidence for the other half of go-quicbaas#235:
+// a dispatch whose pooled provider account cannot be resolved starts no process
+// at all, and the SDLC module parks the item and gives its attempt back. That
+// classification is made from the resolver's TYPED error, which does not
+// survive a gRPC status — so a remote daemon's "no account for this tenant"
+// arrived as a generic transport failure and the item was charged for a worker
+// that never existed.
+//
+// A CLOSED SET OF CLASS TOKENS, not a message. The control plane maps the class
+// back onto its own sentinel error and everything downstream is unchanged; a
+// class it does not recognise is ignored, so the failure is treated exactly as
+// it was before. Nothing free-form crosses.
+message SpawnFaultEvidence {
+    // fault_class is one of the tokens in orchestration's spawnFaultSentinels.
+    string fault_class = 1;
+
+    // available_at_unix is the earliest moment a cooling-down pool returns,
+    // in Unix seconds, or 0 when unknown. Carried only for the cooldown class.
+    //
+    // IT IS SCHEDULING, not only diagnosis. The control plane stores it on the
+    // work item as a not-before and passes the item over until it arrives —
+    // without which a thirty-second sweep would spend the retry bound on a
+    // ten-minute hold. A daemon that sends 0 leaves the item with no wait: it
+    // retries immediately and the bound stops it, which is the fail-closed
+    // direction for a version skew.
+    int64 available_at_unix = 2;
+
+    // candidates is how many accounts were held out, so the reason the control
+    // plane composes can say "all three are busy" rather than "all 0". A plain
+    // count; nothing identifying crosses.
+    int32 candidates = 3;
 }

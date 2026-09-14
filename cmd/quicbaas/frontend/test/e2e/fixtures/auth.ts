@@ -87,3 +87,72 @@ export function readAdminTokens(): AdminTokens {
   }
   return JSON.parse(readFileSync(ADMIN_TOKEN_FILE, 'utf8')) as AdminTokens;
 }
+
+// ---------------------------------------------------------------------------
+// Live-node tenant sign-in
+// ---------------------------------------------------------------------------
+
+/**
+ * Configuration for signing the suite in as an EXISTING TENANT USER on an
+ * ALREADY-RUNNING node, instead of walking a fresh daemon's first boot.
+ *
+ * The first-boot path above can only ever produce the system admin, and only
+ * once: the invite it consumes is single-use and gone from a long-lived node's
+ * log. A burn-in node, though, is exactly the thing worth driving a browser
+ * against, and the interesting principal on it is a tenant user. This config
+ * names that user and the admin client certificate used to enrol a passkey for
+ * them (see live_tenant.ts) — an operation only an administrator may perform.
+ */
+export interface LiveTenantConfig {
+  /** Tenant id the user belongs to, typed into the login Organization field. */
+  tenant: string;
+  /** The existing user's email — their username in the login ceremony. */
+  email: string;
+  /** PEM client certificate authorized for user_authfactors:add. */
+  adminCert: string;
+  /** PEM private key for adminCert. */
+  adminKey: string;
+  /** PEM CA bundle the node's serving certificate chains to. */
+  ca: string;
+}
+
+/** Env var carrying each LiveTenantConfig field. */
+const LIVE_TENANT_ENV: Readonly<Record<keyof LiveTenantConfig, string>> = {
+  tenant: 'QUICBAAS_E2E_TENANT',
+  email: 'QUICBAAS_E2E_USER_EMAIL',
+  adminCert: 'QUICBAAS_E2E_ADMIN_CERT',
+  adminKey: 'QUICBAAS_E2E_ADMIN_KEY',
+  ca: 'QUICBAAS_E2E_CA',
+};
+
+/**
+ * Read the live-node tenant configuration from the environment.
+ *
+ * Returns null when the run selected no live target at all, which is the signal
+ * to walk the first-boot admin path instead. A PARTIAL configuration throws:
+ * silently falling back would run the suite against the wrong node as the wrong
+ * principal, and a 401 on every page is a far worse diagnosis than a missing
+ * variable named here.
+ */
+export function readLiveTenantConfig(): LiveTenantConfig | null {
+  const names = Object.keys(LIVE_TENANT_ENV) as (keyof LiveTenantConfig)[];
+  const present = names.filter((n) => (process.env[LIVE_TENANT_ENV[n]] ?? '') !== '');
+  if (present.length === 0) return null;
+
+  const missing = names.filter((n) => !present.includes(n)).map((n) => LIVE_TENANT_ENV[n]);
+  if (missing.length > 0) {
+    throw new Error(
+      `readLiveTenantConfig: live-node sign-in is partially configured — ` +
+        `set ${missing.join(', ')} as well, or none of ${names.map((n) => LIVE_TENANT_ENV[n]).join(', ')}.`,
+    );
+  }
+
+  const value = (n: keyof LiveTenantConfig): string => process.env[LIVE_TENANT_ENV[n]] as string;
+  return {
+    tenant: value('tenant'),
+    email: value('email'),
+    adminCert: value('adminCert'),
+    adminKey: value('adminKey'),
+    ca: value('ca'),
+  };
+}

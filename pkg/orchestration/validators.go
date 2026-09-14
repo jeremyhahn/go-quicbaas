@@ -20,7 +20,11 @@ import (
 	"errors"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // =============================================================================
@@ -39,6 +43,12 @@ var (
 
 	// ErrValidatorNilInput indicates a nil input was provided to a validator.
 	ErrValidatorNilInput = errors.New("validator: nil input")
+
+	// ErrValidatorRegistration indicates a validator could not be registered.
+	ErrValidatorRegistration = errors.New("validator: registration refused")
+
+	// ErrValidatorAlreadyRegistered indicates a validator kind is taken.
+	ErrValidatorAlreadyRegistered = errors.New("validator: already registered")
 )
 
 // =============================================================================
@@ -92,6 +102,58 @@ func (e *ValidatorPipelineError) Unwrap() error {
 	return ErrValidatorPipeline
 }
 
+// ValidatorRegistrationError reports a registration the registry refused for
+// a reason other than a duplicate kind.
+type ValidatorRegistrationError struct {
+	Kind    string
+	Message string
+}
+
+// Error implements the error interface.
+func (e *ValidatorRegistrationError) Error() string {
+	if e.Kind == "" {
+		return ErrValidatorRegistration.Error() + ": " + e.Message
+	}
+	return ErrValidatorRegistration.Error() + ": " + e.Kind + ": " + e.Message
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *ValidatorRegistrationError) Unwrap() error {
+	return ErrValidatorRegistration
+}
+
+// ValidatorAlreadyRegisteredError reports a second registration under a kind
+// that is already taken.
+type ValidatorAlreadyRegisteredError struct {
+	Kind string
+}
+
+// Error implements the error interface.
+func (e *ValidatorAlreadyRegisteredError) Error() string {
+	return ErrValidatorAlreadyRegistered.Error() + ": " + e.Kind
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *ValidatorAlreadyRegisteredError) Unwrap() error {
+	return ErrValidatorAlreadyRegistered
+}
+
+// UnknownValidatorError reports a workflow criterion naming a validator kind
+// nothing registered. It is a workflow validation failure.
+type UnknownValidatorError struct {
+	Kind string
+}
+
+// Error implements the error interface.
+func (e *UnknownValidatorError) Error() string {
+	return ErrWorkflowValidation.Error() + ": review_criteria: no registered validator of kind " + e.Kind
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *UnknownValidatorError) Unwrap() error {
+	return ErrWorkflowValidation
+}
+
 // =============================================================================
 // Validator Interface and Result
 // =============================================================================
@@ -104,50 +166,107 @@ type ValidationResult struct {
 	Details string `json:"details,omitempty"`
 }
 
-// Validator checks work outputs against a review criterion.
+// Validator judges work outputs against a review criterion. It is the
+// artifact-scoped shape: a pure judgement over what the work produced, with
+// no view of the job. Register one through ArtifactValidator.
 type Validator interface {
 	// Validate evaluates artifacts against the given criterion and returns a result.
 	Validate(ctx context.Context, criterion ReviewCriterion, artifacts []*TaskResult) (ValidationResult, error)
 }
 
-// =============================================================================
-// Validator Registry
-// =============================================================================
+// ValidatorFunc is what the registry holds: a judgement over a running job.
+// It sees the job through JobContext — its artifacts, its prepared
+// directory, its configuration and the operator's command guard — and never
+// the loop. A module registers one per kind with RegisterValidator.
+type ValidatorFunc func(ctx context.Context, job *JobContext, criterion ReviewCriterion) (ValidationResult, error)
 
-// ValidatorRegistry holds registered validators by type name and provides
-// pipeline execution for running all criteria validators in sequence.
-type ValidatorRegistry struct {
-	validators map[string]Validator
-}
-
-// NewValidatorRegistry creates a new ValidatorRegistry with an empty validator map.
-func NewValidatorRegistry() *ValidatorRegistry {
-	return &ValidatorRegistry{
-		validators: make(map[string]Validator),
+// ArtifactValidator adapts an artifact-scoped Validator to the registry's
+// job-aware shape: the job's artifacts are what it judges.
+func ArtifactValidator(v Validator) ValidatorFunc {
+	return func(ctx context.Context, job *JobContext, criterion ReviewCriterion) (ValidationResult, error) {
+		if v == nil {
+			return ValidationResult{Name: criterion.Name, Passed: false}, &ValidatorExecutionError{
+				Validator: criterion.Validator,
+				Cause:     ErrValidatorNilInput,
+			}
+		}
+		var artifacts []*TaskResult
+		if job != nil {
+			artifacts = job.Artifacts
+		}
+		return v.Validate(ctx, criterion, artifacts)
 	}
 }
 
-// Register adds a validator to the registry under the given name.
-// If a validator with the same name already exists, it is replaced.
-func (r *ValidatorRegistry) Register(name string, v Validator) {
-	r.validators[name] = v
+// =============================================================================
+// Validator Registry
+// =============================================================================
+//
+// ReviewCriterion.Validator names a kind; the registry maps kinds to the code
+// that judges them. The engine registers its three built-ins at init and a
+// module registers its own the same way, so a workflow can name a criterion
+// the engine has never heard of and still be validated at registration:
+// an unknown kind is refused there, not discovered at review time.
+
+// ValidatorRegistry holds validators by kind and runs a criteria pipeline.
+type ValidatorRegistry struct {
+	mu         sync.RWMutex
+	validators map[string]ValidatorFunc
 }
 
-// Get retrieves a validator by name. Returns a ValidatorNotFoundError if the
-// validator type is not registered.
-func (r *ValidatorRegistry) Get(name string) (Validator, error) {
-	v, ok := r.validators[name]
+// NewValidatorRegistry creates an empty registry.
+func NewValidatorRegistry() *ValidatorRegistry {
+	return &ValidatorRegistry{validators: make(map[string]ValidatorFunc)}
+}
+
+// Register adds a validator under kind. Registration is append-only: a kind
+// registers once, and a second registration under the same kind is refused
+// so two modules cannot silently shadow each other.
+func (r *ValidatorRegistry) Register(kind string, fn ValidatorFunc) error {
+	if kind == "" {
+		return &ValidatorRegistrationError{Message: "kind must not be empty"}
+	}
+	if fn == nil {
+		return &ValidatorRegistrationError{Kind: kind, Message: "validator must not be nil"}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.validators[kind]; exists {
+		return &ValidatorAlreadyRegisteredError{Kind: kind}
+	}
+	r.validators[kind] = fn
+	return nil
+}
+
+// Get retrieves a validator by kind. Returns a ValidatorNotFoundError if the
+// kind is not registered.
+func (r *ValidatorRegistry) Get(kind string) (ValidatorFunc, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	v, ok := r.validators[kind]
 	if !ok {
-		return nil, &ValidatorNotFoundError{Name: name}
+		return nil, &ValidatorNotFoundError{Name: kind}
 	}
 	return v, nil
 }
 
-// RunPipeline executes all criteria validators in order. It returns the
-// individual validation results, a boolean indicating whether all required
-// criteria passed, and any execution error encountered. Optional criteria
-// that fail do not affect the overall pass/fail status.
-func (r *ValidatorRegistry) RunPipeline(ctx context.Context, criteria []ReviewCriterion, artifacts []*TaskResult) ([]ValidationResult, bool, error) {
+// Kinds returns every registered kind, sorted.
+func (r *ValidatorRegistry) Kinds() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	kinds := make([]string, 0, len(r.validators))
+	for kind := range r.validators {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	return kinds
+}
+
+// RunPipeline executes every criterion in order against the job. It returns
+// the individual results, whether all REQUIRED criteria passed, and any
+// execution error. Optional criteria that fail do not affect the overall
+// verdict.
+func (r *ValidatorRegistry) RunPipeline(ctx context.Context, job *JobContext, criteria []ReviewCriterion) ([]ValidationResult, bool, error) {
 	if len(criteria) == 0 {
 		return nil, true, nil
 	}
@@ -165,7 +284,7 @@ func (r *ValidatorRegistry) RunPipeline(ctx context.Context, criteria []ReviewCr
 			return results, false, vErr
 		}
 
-		result, execErr := v.Validate(ctx, criterion, artifacts)
+		result, execErr := v(ctx, job, criterion)
 		if execErr != nil {
 			return results, false, &ValidatorExecutionError{
 				Validator: criterion.Validator,
@@ -183,27 +302,60 @@ func (r *ValidatorRegistry) RunPipeline(ctx context.Context, criteria []ReviewCr
 	return results, allRequiredPassed, nil
 }
 
-// =============================================================================
-// AgentValidator
-// =============================================================================
+// Built-in validator kinds.
+const (
+	// ValidatorKindAgent prompts an agent to judge the artifacts.
+	ValidatorKindAgent = "agent"
 
-// AgentValidator prompts an agent session to review artifacts against a criterion.
-// It sends a structured review prompt to the lead agent and parses the JSON response.
-type AgentValidator struct {
-	agentService AgentService
-	backend      string
-	model        string
+	// ValidatorKindCommand runs an operator-allowlisted command in the job's
+	// prepared directory, ON THE DAEMON. It judges a job whose work is
+	// there — a lead-driven workflow's prepared directory. A job whose work
+	// happens inside a worker's container is judged where the work is,
+	// through JobContext.Container, by the kind the module that owns that
+	// job registers.
+	ValidatorKindCommand = "command"
+
+	// ValidatorKindPolicy scans the artifacts against a named policy.
+	ValidatorKindPolicy = "policy"
+)
+
+// validators is the engine's registry: the one a module registers into and
+// the one every control loop judges criteria through.
+var validators = newBuiltinValidatorRegistry()
+
+// newBuiltinValidatorRegistry builds a registry carrying the three built-in
+// kinds.
+func newBuiltinValidatorRegistry() *ValidatorRegistry {
+	return &ValidatorRegistry{validators: map[string]ValidatorFunc{
+		ValidatorKindAgent:   validateWithAgent,
+		ValidatorKindCommand: validateWithCommand,
+		ValidatorKindPolicy:  ArtifactValidator(NewPolicyValidator()),
+	}}
 }
 
-// NewAgentValidator creates an AgentValidator that uses the given AgentService
-// to prompt agents for review evaluations.
-func NewAgentValidator(agentService AgentService, backend, model string) *AgentValidator {
-	return &AgentValidator{
-		agentService: agentService,
-		backend:      backend,
-		model:        model,
+// RegisterValidator registers fn under kind in the engine's registry so a
+// workflow criterion may name it.
+func RegisterValidator(kind string, fn ValidatorFunc) error {
+	return validators.Register(kind, fn)
+}
+
+// ValidateValidatorKind checks that kind names a registered validator. It is
+// what workflow validation calls for every ReviewCriterion.
+func ValidateValidatorKind(kind string) error {
+	if _, err := validators.Get(kind); err != nil {
+		return &UnknownValidatorError{Kind: kind}
 	}
+	return nil
 }
+
+// DefaultValidatorRegistry returns the engine's registry.
+func DefaultValidatorRegistry() *ValidatorRegistry {
+	return validators
+}
+
+// =============================================================================
+// Agent validator
+// =============================================================================
 
 // agentReviewResponse is the expected JSON response from an agent review prompt.
 type agentReviewResponse struct {
@@ -211,35 +363,41 @@ type agentReviewResponse struct {
 	Message string `json:"message"`
 }
 
-// buildValidationPrompt constructs the prompt sent to the agent for evaluation.
+// buildValidationPrompt assembles what an agent validator is asked to judge:
+// the criterion, and every artifact the work produced.
 func buildValidationPrompt(criterion ReviewCriterion, artifacts []*TaskResult) string {
-	var sb strings.Builder
-	sb.WriteString("Review the following artifacts against criterion: ")
-	sb.WriteString(criterion.Name)
-	sb.WriteString(". Config: ")
-	sb.WriteString(criterion.Config)
-	sb.WriteString(". Artifacts:\n")
+	var rendered strings.Builder
 	for i, a := range artifacts {
 		if a == nil {
 			continue
 		}
-		sb.WriteString("--- Artifact ")
-		sb.WriteString(itoa(i + 1))
-		sb.WriteString(" ---\n")
-		sb.WriteString(a.Output)
-		sb.WriteString("\n")
+		rendered.WriteString(workflowPrompts.MustRender("validation_artifact", prompts.Vars{
+			"index":  itoa(i + 1),
+			"output": a.Output,
+		}))
+		rendered.WriteString("\n")
 	}
-	sb.WriteString("\nRespond with ONLY valid JSON: {\"passed\": bool, \"message\": \"string\"}")
-	return sb.String()
+	return workflowPrompts.MustRender("validation_prompt", prompts.Vars{
+		"criterion": criterion.Name,
+		"config":    criterion.Config,
+		"artifacts": rendered.String(),
+	})
 }
 
-// Validate prompts the configured agent to evaluate artifacts against the criterion.
-func (v *AgentValidator) Validate(ctx context.Context, criterion ReviewCriterion, artifacts []*TaskResult) (ValidationResult, error) {
-	prompt := buildValidationPrompt(criterion, artifacts)
+// validateWithAgent prompts the job's lead backend to evaluate the artifacts
+// against the criterion and parses the JSON verdict.
+func validateWithAgent(ctx context.Context, job *JobContext, criterion ReviewCriterion) (ValidationResult, error) {
+	if job == nil || job.Agents == nil || job.Config == nil {
+		return ValidationResult{Name: criterion.Name, Passed: false}, &ValidatorExecutionError{
+			Validator: ValidatorKindAgent,
+			Cause:     ErrValidatorNilInput,
+		}
+	}
+	prompt := buildValidationPrompt(criterion, job.Artifacts)
 
-	resp, err := v.agentService.PromptSession(ctx, &PromptSessionRequest{
-		Backend: v.backend,
-		Model:   v.model,
+	resp, err := job.Agents.PromptSession(ctx, &PromptSessionRequest{
+		Backend: job.Config.LeadBackend,
+		Model:   job.Config.LeadModel,
 		Prompt:  prompt,
 	})
 	if err != nil {
@@ -265,7 +423,7 @@ func (v *AgentValidator) Validate(ctx context.Context, criterion ReviewCriterion
 				Message: "failed to parse agent response",
 				Details: responseText.String(),
 			}, &ValidatorExecutionError{
-				Validator: "agent",
+				Validator: ValidatorKindAgent,
 				Cause:     jsonErr,
 			}
 	}
@@ -278,37 +436,45 @@ func (v *AgentValidator) Validate(ctx context.Context, criterion ReviewCriterion
 }
 
 // =============================================================================
-// CommandValidator
+// Command validator
 // =============================================================================
 
-// CommandValidator executes a shell command from the criterion config and
-// checks the exit code. Exit code 0 means passed; non-zero means failed
-// with stderr captured as the failure message.
-type CommandValidator struct{}
-
-// NewCommandValidator creates a new CommandValidator.
-func NewCommandValidator() *CommandValidator {
-	return &CommandValidator{}
-}
-
-// Validate runs the criterion config as a shell command using exec.CommandContext
-// for timeout support. Exit 0 indicates pass; non-zero indicates failure.
-func (v *CommandValidator) Validate(ctx context.Context, criterion ReviewCriterion, artifacts []*TaskResult) (ValidationResult, error) {
+// validateWithCommand runs the criterion config as a shell command in the
+// job's prepared directory, on the DAEMON, and checks the exit code.
+//
+// The command is tenant data bound for the host shell, so it is checked
+// against the operator's ExecutionGuard first and a command the allowlist
+// does not carry is refused with a typed error rather than run.
+func validateWithCommand(ctx context.Context, job *JobContext, criterion ReviewCriterion) (ValidationResult, error) {
+	if job == nil {
+		return ValidationResult{Name: criterion.Name, Passed: false}, &ValidatorExecutionError{
+			Validator: ValidatorKindCommand,
+			Cause:     ErrValidatorNilInput,
+		}
+	}
 	if criterion.Config == "" {
 		return ValidationResult{
 				Name:    criterion.Name,
 				Passed:  false,
 				Message: "no command configured",
 			}, &ValidatorExecutionError{
-				Validator: "command",
+				Validator: ValidatorKindCommand,
 				Cause:     &InputValidationError{Field: "config", Message: "command is required"},
 			}
+	}
+	if err := job.Guard.CheckCommand(criterion.Name, criterion.Config); err != nil {
+		return ValidationResult{
+			Name:    criterion.Name,
+			Passed:  false,
+			Message: err.Error(),
+		}, err
 	}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", criterion.Config)
+	cmd.Dir = job.WorkDir
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -328,7 +494,7 @@ func (v *CommandValidator) Validate(ctx context.Context, criterion ReviewCriteri
 				Name:   criterion.Name,
 				Passed: false,
 			}, &ValidatorExecutionError{
-				Validator: "command",
+				Validator: ValidatorKindCommand,
 				Cause:     err,
 			}
 	}
@@ -341,7 +507,7 @@ func (v *CommandValidator) Validate(ctx context.Context, criterion ReviewCriteri
 }
 
 // =============================================================================
-// PolicyValidator
+// Policy validator
 // =============================================================================
 
 // secretPatterns contains compiled regular expressions for detecting common
@@ -364,7 +530,8 @@ var policyHandlers = map[string]func(artifacts []*TaskResult) ValidationResult{
 }
 
 // PolicyValidator evaluates output artifacts against named security policies
-// using regex-based pattern scanning.
+// using regex-based pattern scanning. It is the artifact-scoped shape; the
+// registered "policy" kind is ArtifactValidator(NewPolicyValidator()).
 type PolicyValidator struct{}
 
 // NewPolicyValidator creates a new PolicyValidator.
@@ -372,11 +539,11 @@ func NewPolicyValidator() *PolicyValidator {
 	return &PolicyValidator{}
 }
 
-// Validate checks the artifacts against the policy specified in the criterion config.
-func (v *PolicyValidator) Validate(ctx context.Context, criterion ReviewCriterion, artifacts []*TaskResult) (ValidationResult, error) {
+// Validate checks the artifacts against the policy named in the criterion
+// config. An unknown policy falls back to the generic secret scan.
+func (v *PolicyValidator) Validate(_ context.Context, criterion ReviewCriterion, artifacts []*TaskResult) (ValidationResult, error) {
 	handler, ok := policyHandlers[criterion.Config]
 	if !ok {
-		// Fall back to generic secret scan for unknown policies.
 		result := checkNoSecrets(artifacts)
 		result.Name = criterion.Name
 		return result, nil

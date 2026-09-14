@@ -81,6 +81,43 @@ func (k *memKV) PutIfAbsent(_ context.Context, key string, val []byte) (bool, er
 	return true, nil
 }
 
+// CompareAndDelete removes the key only when its stored value is byte-identical
+// to expected, which is the contract KVServicer defines: deleted=false with a
+// nil error covers BOTH a missing key and a key holding something else, and the
+// store is unchanged in either case. The fake distinguishes nothing the real
+// store does not — a fake that deleted on mismatch, or reported success without
+// looking, would let a guarded release pass here and lose a live claim in
+// production.
+func (k *memKV) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	v, ok := k.m[key]
+	if !ok || !bytes.Equal(v, expected) {
+		return false, nil
+	}
+	delete(k.m, key)
+	return true, nil
+}
+
+// CompareAndSwap replaces the value only when the stored one is byte-identical
+// to expected — the edit half of the guarded set the two verbs above began. A
+// swap is not a create, so an absent key leaves the store unchanged and reports
+// false, exactly as the real servicer does. Implemented for real for the same
+// reason its siblings are: a fake that always succeeded would let a lost update
+// pass here and be found in production.
+func (k *memKV) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	v, ok := k.m[key]
+	if !ok || !bytes.Equal(v, expected) {
+		return false, nil
+	}
+	cp := make([]byte, len(next))
+	copy(cp, next)
+	k.m[key] = cp
+	return true, nil
+}
+
 func (k *memKV) Get(_ context.Context, key string) ([]byte, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -96,28 +133,6 @@ func (k *memKV) Delete(_ context.Context, key string) error {
 	defer k.mu.Unlock()
 	delete(k.m, key)
 	return nil
-}
-
-func (k *memKV) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	cur, ok := k.m[key]
-	if !ok || !bytes.Equal(cur, expected) {
-		return false, nil
-	}
-	delete(k.m, key)
-	return true, nil
-}
-
-func (k *memKV) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	cur, ok := k.m[key]
-	if !ok || !bytes.Equal(cur, expected) {
-		return false, nil
-	}
-	k.m[key] = append([]byte(nil), next...)
-	return true, nil
 }
 
 // testUser is one directory entry keyed by (tenant, username) -> id.
@@ -177,9 +192,10 @@ func (d *directoryUserServicer) GetUserByUsername(_ context.Context, tenantID, u
 	return d.toSDK(u), nil
 }
 
-// GetUserByEmail is not a lookup this directory answers: entries are keyed by
-// username only, so an email lookup fails loudly like every other unused
-// method rather than resolving a user by a key it never indexed.
+// GetUserByEmail fails loudly, like the other methods this double does not
+// implement: the paths under test here resolve by tenant-scoped USERNAME, and
+// the fixture's users carry no email. A double that answered anyway would be
+// inventing an index the test never set up.
 func (d *directoryUserServicer) GetUserByEmail(context.Context, string, string) (*qrdbsdk.User, error) {
 	return nil, stubErr
 }

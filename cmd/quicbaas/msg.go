@@ -143,7 +143,7 @@ func createMessagingClient() (MessagingClient, error) {
 // TLS configuration is always included since gRPC requires TLS for all connections.
 func createMessagingGRPCClient() (MessagingClient, error) {
 	opts := []grpc.ClientOption{
-		grpc.WithTimeout(timeout),
+		grpc.WithTimeout(globalTimeout),
 	}
 	opts = append(opts, grpcTLSOption()...)
 	return grpc.NewClient(address, opts...)
@@ -215,7 +215,7 @@ func runMsgCreateChannelCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	// Parse TTL
@@ -290,7 +290,7 @@ func runMsgDeleteChannelCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &grpc.MessagingDeleteChannelRequest{
@@ -340,7 +340,7 @@ func runMsgListChannelsCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	// Calculate cursor from offset for pagination
@@ -394,7 +394,7 @@ func runMsgChannelInfoCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	// Get channel info
@@ -591,7 +591,7 @@ func runMsgUnsubscribeCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &grpc.MessagingUnsubscribeRequest{
@@ -642,7 +642,7 @@ func runMsgListSubscriptionsCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	// If a channel is specified, get its info
@@ -728,7 +728,7 @@ func runMsgPublishCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	// Build metadata from priority
@@ -836,7 +836,7 @@ func runMsgPublishDeltaCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	// Build metadata from entity info
@@ -1025,7 +1025,7 @@ func runMsgDedupStatsCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &grpc.MessagingGetDedupStatsRequest{

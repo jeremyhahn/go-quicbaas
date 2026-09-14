@@ -1,0 +1,92 @@
+# systemd unit for the go-quicbaas NPU embedding sidecar.
+#
+# Install on the host that owns the NPU, not on the host running
+# quicbaasd:
+#
+#   sudo cp deploy/npu-embedding.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now npu-embedding
+#
+# Two settings below are the difference between using the NPU and silently
+# serving from the CPU. Both are easy to omit and neither produces an error:
+#
+#   ZE_ENABLE_ALT_DRIVERS  The level-zero loader does not auto-discover the
+#                          Intel NPU. Without this variable
+#                          Core().available_devices omits NPU entirely and the
+#                          sidecar falls back to the CPU while reporting itself
+#                          healthy. Check GET /v1/health -> npu_available.
+#
+#   SupplementaryGroups    /dev/accel/accel0 is owned by group `render`. Without
+#                          membership the device cannot be opened.
+#
+# YOU MUST SET NPU_EMBEDDING_TOKEN BELOW.
+#
+# This unit binds 0.0.0.0 because quicbaasd runs on another host. An embedding
+# endpoint is a compute amplifier -- anyone who can reach it can spend the NPU
+# and the CPU at will, which on this host means contending with the builds and
+# the peer review the accelerator exists to keep clear of. The service therefore
+# REFUSES TO START on a non-loopback address with no token, rather than quietly
+# exposing an open listener. That is deliberate: a loud failure at install time
+# beats an unauthenticated inference endpoint nobody noticed.
+
+[Unit]
+Description=go-quicbaas NPU embedding sidecar (OpenVINO)
+Documentation=https://github.com/jeremyhahn/go-quicbaas/blob/main/docs/embeddings/npu.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=quicbaas
+Group=quicbaas
+
+# Required for /dev/accel/accel0.
+SupplementaryGroups=render
+
+# Required for the NPU to be enumerated at all.
+Environment=ZE_ENABLE_ALT_DRIVERS=/usr/lib/x86_64-linux-gnu/libze_intel_npu.so.1
+
+Environment=NPU_EMBEDDING_MODEL_DIR=/var/lib/quicbaas/ov-models/all-MiniLM-L6-v2
+Environment=NPU_EMBEDDING_MODEL_NAME=all-MiniLM-L6-v2
+Environment=NPU_EMBEDDING_HOST=0.0.0.0
+Environment=NPU_EMBEDDING_PORT=8077
+Environment=NPU_EMBEDDING_DEVICE=NPU
+
+# REQUIRED for the 0.0.0.0 bind above. Generate one with
+# `openssl rand -hex 32` and give the same value to the Go provider through an
+# inference.SecretRef resolved from the secrets engine. Prefer an
+# EnvironmentFile with mode 0600 over an inline value, so the token does not sit
+# in a world-readable unit.
+#
+#   EnvironmentFile=/etc/quicbaas/npu-embedding.env
+#
+# Environment=NPU_EMBEDDING_TOKEN=
+
+# Alternatively bind loopback only and reach it over an SSH tunnel or a mesh
+# interface, in which case no token is required:
+#
+#   Environment=NPU_EMBEDDING_HOST=127.0.0.1
+#
+# Setting NPU_EMBEDDING_ALLOW_INSECURE_BIND=1 accepts an unauthenticated
+# off-box listener. Do not, unless the segment is genuinely trusted.
+
+# Adjust to wherever the sidecar's virtualenv lives.
+ExecStart=/opt/quicbaas/npu-embedding/bin/python -m npu_embedding
+
+# Startup precompiles the bucket set, measured at about 7.8s for the default
+# batch {1,8} x length {128,256,512}. Allow room beyond that.
+TimeoutStartSec=120
+
+Restart=on-failure
+RestartSec=5
+
+# The service needs the accelerator and the model directory; nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/var/lib/quicbaas/ov-models
+DeviceAllow=/dev/accel/accel0 rw
+
+[Install]
+WantedBy=multi-user.target

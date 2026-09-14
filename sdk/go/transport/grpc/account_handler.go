@@ -48,6 +48,7 @@ var accountMethodMap = map[string]accountHandlerFunc{
 	"Revoke":           handleAccountRevoke,
 	"SetDefault":       handleAccountSetDefault,
 	"Usage":            handleAccountUsage,
+	"Materialize":      handleAccountMaterialize,
 }
 
 // accountHandler adapts the SDK account surface to the generated
@@ -306,4 +307,67 @@ func timeFromUnix(seconds int64) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(seconds, 0).UTC()
+}
+
+// handleAccountMaterialize releases one account's credential envelope.
+//
+// It is the ONE handler in this file whose response carries secret material.
+// The proto message it decodes deliberately has no refresh-grant fields, so
+// the SDK type it builds cannot carry one either.
+func handleAccountMaterialize(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	const op = "grpc.account.Materialize"
+	sdkReq, ok := req.(*account.MaterializeCredentialRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput(op, "invalid request type")
+	}
+	resp, err := pb.NewAccountServiceClient(conn).MaterializeAccountCredential(ctx,
+		&pb.MaterializeAccountCredentialRequest{
+			TenantId:  sdkReq.TenantID,
+			AccountId: sdkReq.AccountID,
+			ProjectId: sdkReq.ProjectID,
+			JobId:     sdkReq.JobID,
+			LeaseId:   sdkReq.LeaseID,
+		})
+	if err != nil {
+		return nil, convertGRPCError(err, op)
+	}
+	return &account.MaterializedCredential{
+		AccountID:       resp.AccountId,
+		Provider:        account.Provider(resp.Provider),
+		DisplayName:     resp.DisplayName,
+		ProjectID:       resp.ProjectId,
+		RefreshPolicy:   account.RefreshPolicy(resp.RefreshPolicy),
+		Credential:      releasedCredentialFromProto(resp.Credential),
+		ExpiresAt:       timeFromUnix(resp.ExpiresAtUnix),
+		UpdatedAt:       timeFromUnix(resp.UpdatedAtUnix),
+		LastRefreshedAt: timeFromUnix(resp.LastRefreshedAtUnix),
+		LeaseID:         resp.LeaseId,
+		LeaseExpiresAt:  timeFromUnix(resp.LeaseExpiresAtUnix),
+	}, nil
+}
+
+// releasedCredentialFromProto converts a released envelope to the SDK type.
+func releasedCredentialFromProto(c *pb.MaterializedAccountCredential) *account.ReleasedCredential {
+	if c == nil {
+		return nil
+	}
+	out := &account.ReleasedCredential{
+		AccessToken:       c.AccessToken,
+		ExpiresAt:         timeFromUnix(c.ExpiresAtUnix),
+		Scopes:            c.Scopes,
+		AccessTokenEnvKey: c.AccessTokenEnvKey,
+	}
+	if len(c.Env) > 0 {
+		out.Env = make(map[string]string, len(c.Env))
+		for k, v := range c.Env {
+			out.Env[k] = v
+		}
+	}
+	if len(c.Files) > 0 {
+		out.Files = make(map[string][]byte, len(c.Files))
+		for k, v := range c.Files {
+			out.Files[k] = v
+		}
+	}
+	return out
 }

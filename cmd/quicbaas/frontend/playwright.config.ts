@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import { ADMIN_STORAGE_STATE } from './test/e2e/fixtures/auth.ts';
+import { chromiumLaunchOptions } from './test/e2e/fixtures/browser.ts';
 
 // Playwright configuration for the QuicBaaS embedded web UI.
 //
@@ -17,13 +18,17 @@ import { ADMIN_STORAGE_STATE } from './test/e2e/fixtures/auth.ts';
 //     QUICBAAS_E2E_BACKEND=acp set in the environment.
 //     Invoked by: make test-e2e-acp
 //
-// Override the base URL via QUICBAAS_UI_URL.
+// Override the base URL via QUICBAAS_UI_URL. Both projects also run unchanged
+// against an already-running node as an existing tenant user — see
+// test/e2e/global-setup.ts and `make test-e2e-live`.
 export default defineConfig({
   testDir: './test/e2e',
-  // global-setup mints a real admin session against the live daemon (first-boot
-  // invite → passkey activate → passkey login) and persists it to
-  // ADMIN_STORAGE_STATE + the admin-token file. Every authenticated project
-  // reuses that session; specs that exercise the logged-out flow opt out with
+  // global-setup mints a real session against the live daemon — first-boot
+  // invite → passkey activate → passkey login for a fresh daemon, or admin-mTLS
+  // passkey enrolment → passkey login for an existing tenant user on a running
+  // node — and persists it to ADMIN_STORAGE_STATE + the token file. Every
+  // authenticated project reuses that session; specs that exercise the
+  // logged-out flow opt out with
   // `test.use({ storageState: { cookies: [], origins: [] } })`.
   globalSetup: './test/e2e/global-setup.ts',
   fullyParallel: false,
@@ -38,13 +43,10 @@ export default defineConfig({
     ignoreHTTPSErrors: true,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    // In a container Chromium runs as root without its setuid sandbox;
-    // QUICBAAS_E2E_NO_SANDBOX=1 (set by the dockerized runner) drops it. On the
-    // host the sandbox stays enabled.
-    launchOptions:
-      process.env.QUICBAAS_E2E_NO_SANDBOX === '1'
-        ? { args: ['--no-sandbox', '--disable-setuid-sandbox'] }
-        : {},
+    // Sandbox drop in a container, plus the CA trust store when a live node was
+    // configured. Shared with global-setup so the setup browser and the spec
+    // browsers are launched identically — see test/e2e/fixtures/browser.ts.
+    launchOptions: chromiumLaunchOptions(),
   },
   projects: [
     {

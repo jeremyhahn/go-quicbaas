@@ -29,6 +29,7 @@ import (
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/sshfake"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/sshfixture"
 )
 
 // =============================================================================
@@ -111,14 +112,19 @@ func TestSSHService_KnownHostLifecycle(t *testing.T) {
 	svc := NewSSHService(fake)
 	ctx := context.Background()
 
+	host := sshfixture.Host(t)
+
 	require.NoError(t, svc.AddKnownHost(ctx, xkmsssh.AddKnownHostRequest{
-		Scope: "user", Owner: "alice", Host: "git.example.com", Fingerprint: "SHA256:abc",
+		Scope: "user", Owner: "alice", Host: "git.example.com",
+		Fingerprint: host.Fingerprint,
 	}))
 
 	pins, err := svc.ListKnownHosts(ctx, xkmsssh.ListKnownHostsRequest{Scope: "user", Owner: "alice"})
 	require.NoError(t, err)
 	require.Len(t, pins, 1)
 	assert.Equal(t, "git.example.com", pins[0].Host)
+	assert.Equal(t, host.Fingerprint, pins[0].Fingerprint,
+		"the service must pin the fingerprint of the key it was handed")
 
 	require.NoError(t, svc.RemoveKnownHost(ctx, xkmsssh.RemoveKnownHostRequest{
 		Scope: "user", Owner: "alice", Host: "git.example.com",
@@ -232,7 +238,8 @@ func TestSSHService_PropagatesBackendError(t *testing.T) {
 	_, err = svc.ListKeys(ctx, xkmsssh.ListKeysRequest{})
 	require.ErrorIs(t, err, backendErr)
 
-	require.ErrorIs(t, svc.AddKnownHost(ctx, xkmsssh.AddKnownHostRequest{Host: "h", Fingerprint: "f"}), backendErr)
+	require.ErrorIs(t, svc.AddKnownHost(ctx, xkmsssh.AddKnownHostRequest{
+		Host: "h", Fingerprint: sshfixture.HostFingerprint}), backendErr)
 	require.ErrorIs(t, svc.AddAuthorizedKey(ctx, xkmsssh.AddAuthorizedKeyRequest{Name: "n", Line: "l"}), backendErr)
 
 	_, err = svc.SignDigest(ctx, SSHSignRequest{Name: "k", Digest: []byte("d")})

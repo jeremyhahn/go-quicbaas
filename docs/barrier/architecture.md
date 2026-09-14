@@ -155,8 +155,12 @@ the operator-facing procedure.
 The repo ships three CI watchdogs that catch drift between QuicBaaS,
 go-qrdb, and go-xkms:
 
-- `make verify-naming` — fails if Seal* identifiers ship outside the
-  documented one-release alias surface.
+- `make verify-naming` — two rules. Rule 1: the retired product-area word
+  appears in no tracked file (the area is the **Software Factory**, the git
+  module is the **SDLC module**); there is no allowlist, and the gate fails
+  closed when it cannot establish a git work tree. Rule 2: Seal* identifiers
+  ship only on the documented one-release alias surface. It runs inside
+  `make lint`, before golangci-lint.
 - `make verify-api-shapes` — fails if a go-qrdb canonical
   Barrier/Ceremony/Bootstrap type is missing from the TypeScript SDK.
 - `make verify-cli-flags` — diffs the `init` flag set on

@@ -435,6 +435,80 @@ func TestSessionBinding_GetHistory_TransportError(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
+// GetConversation
+// -----------------------------------------------------------------------------
+
+func TestSessionBinding_GetConversation_HappyPath(t *testing.T) {
+	mock := &mockOrchestratorClient{}
+	setSessionConversationFn(mock, func(ctx context.Context, req *orchestratorSDK.GetSessionConversationRequest) (*orchestratorSDK.GetSessionConversationResponse, error) {
+		assert.Equal(t, "sess-1", req.SessionID)
+		assert.Equal(t, uint64(4), req.Cursor)
+		assert.Equal(t, 10, req.Limit)
+		return &orchestratorSDK.GetSessionConversationResponse{
+			SessionID: "sess-1",
+			Turns: []*orchestratorSDK.SessionTurn{
+				{Sequence: 4, Role: orchestratorSDK.SessionTurnRoleUser, Text: "hi"},
+				{Sequence: 5, Role: orchestratorSDK.SessionTurnRoleAssistant, Text: "hello",
+					Usage: &orchestratorSDK.SessionTokenUsage{OutputTokens: 8}},
+			},
+			NextCursor: 7,
+		}, nil
+	})
+
+	binding, _ := newTestSessionBinding(t, mock)
+
+	resp, err := binding.GetConversation(&orchestratorSDK.GetSessionConversationRequest{
+		SessionID: "sess-1",
+		Cursor:    4,
+		Limit:     10,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, uint64(7), resp.NextCursor)
+	require.Len(t, resp.Turns, 2)
+	assert.Equal(t, orchestratorSDK.SessionTurnRoleAssistant, resp.Turns[1].Role)
+	require.NotNil(t, resp.Turns[1].Usage)
+	assert.Equal(t, int64(8), resp.Turns[1].Usage.OutputTokens)
+}
+
+func TestSessionBinding_GetConversation_NilRequest(t *testing.T) {
+	binding, _ := newTestSessionBinding(t, &mockOrchestratorClient{})
+
+	resp, err := binding.GetConversation(nil)
+	require.Error(t, err)
+	assert.Nil(t, resp)
+
+	var typed *GUIRequestRequiredError
+	assert.ErrorAs(t, err, &typed)
+}
+
+func TestSessionBinding_GetConversation_EmptyID(t *testing.T) {
+	binding, _ := newTestSessionBinding(t, &mockOrchestratorClient{})
+
+	resp, err := binding.GetConversation(&orchestratorSDK.GetSessionConversationRequest{SessionID: ""})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+
+	var typed *GUISessionIDRequiredError
+	assert.ErrorAs(t, err, &typed)
+}
+
+func TestSessionBinding_GetConversation_TransportError(t *testing.T) {
+	sentinel := errors.New("conversation io fail")
+	mock := &mockOrchestratorClient{}
+	setSessionConversationFn(mock, func(ctx context.Context, req *orchestratorSDK.GetSessionConversationRequest) (*orchestratorSDK.GetSessionConversationResponse, error) {
+		return nil, sentinel
+	})
+
+	binding, _ := newTestSessionBinding(t, mock)
+
+	resp, err := binding.GetConversation(&orchestratorSDK.GetSessionConversationRequest{SessionID: "sess-1"})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.ErrorIs(t, err, sentinel)
+}
+
+// -----------------------------------------------------------------------------
 // Subscribe / Unsubscribe
 // -----------------------------------------------------------------------------
 

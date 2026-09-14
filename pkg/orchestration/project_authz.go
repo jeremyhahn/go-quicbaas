@@ -28,6 +28,10 @@ var ErrProjectAccessDenied = errors.New("project: access denied")
 // ErrProjectRoleInvalid is the sentinel error for an unrecognized role value.
 var ErrProjectRoleInvalid = errors.New("project: invalid role")
 
+// ErrProjectUnresolved is the sentinel error for a project-scoped
+// authorization whose project the store could not produce.
+var ErrProjectUnresolved = errors.New("project: unresolved")
+
 // ProjectAccessDeniedError is returned when an agent lacks the required role.
 type ProjectAccessDeniedError struct {
 	ProjectID    string
@@ -47,6 +51,34 @@ func (e *ProjectAccessDeniedError) Error() string {
 
 // Unwrap returns the sentinel for errors.Is support.
 func (e *ProjectAccessDeniedError) Unwrap() error { return ErrProjectAccessDenied }
+
+// ProjectUnresolvedError is returned when a project-scoped authorization names
+// a project the store cannot produce.
+//
+// IT IS A REFUSAL, NOT A PASS. The role matrix lives on the project record, so
+// a caller that cannot read the record cannot know what the project permits —
+// and a check that answers "allowed" when it could not read the rule is not a
+// check. The record is missing for exactly two reasons, and both must refuse:
+// the project was deleted (its tasks are orphans no agent should still be
+// dispatched or handed), or the store the authorizer reads is not the one the
+// project was written to, in which case every project looks unscoped and the
+// whole boundary silently disappears (go-quicbaas#634).
+type ProjectUnresolvedError struct {
+	TenantID  string
+	ProjectID string
+	AgentID   string
+}
+
+// Error implements the error interface.
+func (e *ProjectUnresolvedError) Error() string {
+	return ErrProjectUnresolved.Error() +
+		": tenant=" + e.TenantID +
+		" project=" + e.ProjectID +
+		" agent=" + e.AgentID
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *ProjectUnresolvedError) Unwrap() error { return ErrProjectUnresolved }
 
 // ProjectRoleInvalidError is returned when a role value is not recognized.
 type ProjectRoleInvalidError struct {
@@ -102,6 +134,8 @@ func NewProjectAuthz(store ProjectStore) *ProjectAuthz {
 //   - Project has a non-empty AgentRoles map and agentID is absent → denied.
 //   - Project has an empty AgentRoles map (legacy unscoped) → allowed.
 //   - Actual role weight < required role weight → denied.
+//   - Project cannot be read → ProjectUnresolvedError. A check that cannot
+//     read the rule refuses; it never passes.
 func (a *ProjectAuthz) AuthorizeAgent(ctx context.Context, projectID, agentID string, requiredRole ProjectRole) error {
 	if projectID == "" || agentID == "" {
 		return nil // unscoped call — legacy path
@@ -115,7 +149,7 @@ func (a *ProjectAuthz) AuthorizeAgent(ctx context.Context, projectID, agentID st
 		return err
 	}
 	if project == nil {
-		return nil // project not found → unscoped legacy behaviour
+		return &ProjectUnresolvedError{ProjectID: projectID, AgentID: agentID}
 	}
 
 	actual := a.resolveRole(project, agentID)
@@ -148,8 +182,8 @@ func (a *ProjectAuthz) resolveRole(project *Project, agentID string) ProjectRole
 // findProject looks up a project across all tenants by iterating.
 // In practice callers supply the tenantID; this helper accepts an empty
 // tenantID to enable a "find by project ID" path for task-claim interception
-// where only the projectID is available. Returns nil project (not an error)
-// when not found, so callers can fall through to legacy unscoped behaviour.
+// where only the projectID is available. Returns a nil project (not an error)
+// when the record is absent; the caller turns that into a refusal.
 func (a *ProjectAuthz) findProject(ctx context.Context, projectID string) (*Project, error) {
 	// Attempt a direct lookup. The store interface requires a tenantID; when
 	// we don't have it we use an empty string as a signal that the store may
@@ -166,7 +200,8 @@ func (a *ProjectAuthz) findProject(ctx context.Context, projectID string) (*Proj
 }
 
 // AuthorizeAgentForTenant is like AuthorizeAgent but uses a tenant-scoped
-// lookup which is more efficient when the tenantID is known.
+// lookup which is more efficient when the tenantID is known. A project the
+// store cannot produce refuses with ProjectUnresolvedError.
 func (a *ProjectAuthz) AuthorizeAgentForTenant(ctx context.Context, tenantID, projectID, agentID string, requiredRole ProjectRole) error {
 	if projectID == "" || agentID == "" {
 		return nil
@@ -179,7 +214,7 @@ func (a *ProjectAuthz) AuthorizeAgentForTenant(ctx context.Context, tenantID, pr
 	if err != nil {
 		var notFound *ProjectStoreNotFoundError
 		if errors.As(err, &notFound) {
-			return nil
+			return &ProjectUnresolvedError{TenantID: tenantID, ProjectID: projectID, AgentID: agentID}
 		}
 		return err
 	}

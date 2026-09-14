@@ -1553,6 +1553,99 @@ func TestAdapter91_RevokeRole_Error(t *testing.T) {
 	assert.Error(t, adapter.RevokeRole(ctx, "tenant-1", "nonexistent-user", "nonexistent-role"))
 }
 
+// adapter91ReconcilingRoleStorage is a role storage that also honours
+// iam.BuiltInRoleReconciler. The in-memory storage the other adapter tests use
+// deliberately does not, because built-in definitions belong to qrdb; this
+// double stands in for a qrdb-backed storage so the adapter's delegation can
+// be exercised on its success path.
+type adapter91ReconcilingRoleStorage struct {
+	*iam.MemoryStorage
+
+	report *iam.RoleReconcileReport
+	err    error
+}
+
+func (s *adapter91ReconcilingRoleStorage) ReconcileBuiltInRoles(_ context.Context, tenantID string) (*iam.RoleReconcileReport, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	report := s.report
+	if report == nil {
+		report = &iam.RoleReconcileReport{TenantID: tenantID}
+	}
+	return report, nil
+}
+
+func newAdapter91ReconcilingAdapter(t *testing.T, storage *adapter91ReconcilingRoleStorage) *IAMServiceAdapter {
+	t.Helper()
+
+	tenantMgr := &adapter91MockTenantManager{}
+	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage:  storage.MemoryStorage,
+		GroupStorage: storage.MemoryStorage,
+		RoleStorage:  storage,
+		Tenants:      tenantMgr,
+	})
+
+	return NewIAMServiceAdapter(tenantMgr, identityStore, nil, nil, nil, nil)
+}
+
+func TestAdapter91_ReconcileBuiltInRoles_Success(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	storage := &adapter91ReconcilingRoleStorage{
+		MemoryStorage: iam.NewMemoryStorage(),
+		report: &iam.RoleReconcileReport{
+			TenantID: "tenant-1",
+			Roles: []iam.RoleReconcileResult{
+				{RoleID: "r-admin", Name: "admin", Added: []string{"roles:create"}},
+			},
+		},
+	}
+	adapter := newAdapter91ReconcilingAdapter(t, storage)
+
+	report, err := adapter.ReconcileBuiltInRoles(ctx, "tenant-1")
+
+	require.NoError(t, err)
+	require.NotNil(t, report)
+	assert.Equal(t, "tenant-1", report.TenantID)
+	assert.True(t, report.Changed())
+	require.Len(t, report.Roles, 1)
+	assert.Equal(t, "admin", report.Roles[0].Name)
+}
+
+// TestAdapter91_ReconcileBuiltInRoles_Unsupported is the error path a storage
+// that cannot reach qrdb's built-in definitions must take: refuse, rather than
+// reconcile a tenant against a set this package invented.
+func TestAdapter91_ReconcileBuiltInRoles_Unsupported(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	adapter := createTestIAMAdapter91(t)
+
+	report, err := adapter.ReconcileBuiltInRoles(ctx, "tenant-1")
+
+	require.Error(t, err)
+	assert.Nil(t, report)
+	assert.ErrorIs(t, err, iam.ErrRoleReconcileUnsupported)
+}
+
+// TestAdapter91_ReconcileBuiltInRoles_EmptyTenantID guards the data-plane rule
+// that no tenant is assumed: an empty tenant is rejected, never defaulted.
+func TestAdapter91_ReconcileBuiltInRoles_EmptyTenantID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	adapter := newAdapter91ReconcilingAdapter(t, &adapter91ReconcilingRoleStorage{
+		MemoryStorage: iam.NewMemoryStorage(),
+	})
+
+	report, err := adapter.ReconcileBuiltInRoles(ctx, "")
+
+	require.Error(t, err)
+	assert.Nil(t, report)
+}
+
 // =============================================================================
 // Application Operations
 // =============================================================================
@@ -2020,7 +2113,7 @@ func TestAdapter91_StartImpersonation_ValidationError(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	result, err := adapter.StartImpersonation(ctx, &iam.StartImpersonationOptions{
-		AdminUserID: "admin-1", TargetUserID: "user-1", TenantID: "tenant-1", Reason: "support ticket",
+		TargetUserID: "user-1", TenantID: "tenant-1", Reason: "support ticket",
 	})
 	assert.Error(t, err)
 	assert.Nil(t, result)

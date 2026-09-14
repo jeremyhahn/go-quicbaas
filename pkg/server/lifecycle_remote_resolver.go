@@ -106,10 +106,13 @@ func (s *Server) centralTokenEndpoint() string {
 // remoteBackendPool
 // =============================================================================
 
-// remoteBackendPool caches RemoteACPBackend instances keyed by target daemon
-// host so we don't re-dial per spawn request. Cache entries are evicted when
-// the backing registration goes offline (via heartbeat expiry detected on
-// next resolve call).
+// remoteBackendPool caches RemoteACPBackend instances so we don't re-dial per
+// spawn request. The cache is two levels — daemon host, then the backend name
+// the caller asked for — because both axes vary independently: one daemon
+// serves several backends, and each backend name needs its own instance to
+// stamp on the wire (go-quicbaas#937). Cache entries are evicted when the
+// backing registration goes offline (via heartbeat expiry detected on next
+// resolve call) or is replaced by a new registration on the same host.
 type remoteBackendPool struct {
 	registry    orchestration.AgentRegistry
 	centralCred *OrchestratorDaemonClient
@@ -127,13 +130,22 @@ type remoteBackendPool struct {
 	// pool bypasses the TCP/TLS dial path entirely.
 	embeddedDialers *EmbeddedDialerRegistry
 
-	mu      sync.Mutex
-	entries map[string]*pooledBackend
+	mu sync.Mutex
+	// entries maps daemon host -> the backends constructed for it.
+	entries map[string]*pooledDaemon
 }
 
-type pooledBackend struct {
-	backend        *orchestration.RemoteACPBackend
+// pooledDaemon holds every backend instance constructed for one daemon host.
+//
+// THE HOST IS THE INVALIDATION UNIT, THE BACKEND NAME IS THE CACHE AXIS. A
+// daemon replaced at the same address (new registration id) invalidates all of
+// its backends at once, which a flat map keyed by host+backend could only do by
+// scanning; a lookup for a second backend on a live daemon adds an instance
+// beside the first rather than replacing it.
+type pooledDaemon struct {
 	registrationID string
+	// backends maps the REQUESTED backend name -> the instance that serves it.
+	backends map[string]*orchestration.RemoteACPBackend
 }
 
 func newRemoteBackendPool(
@@ -151,7 +163,7 @@ func newRemoteBackendPool(
 		caCertPath:      caCertPath,
 		hostAffinityCfg: hostAffinityCfg,
 		logger:          logger,
-		entries:         map[string]*pooledBackend{},
+		entries:         map[string]*pooledDaemon{},
 	}
 }
 
@@ -161,7 +173,9 @@ func newRemoteBackendPool(
 // the dispatcher fall through to local backends.
 //
 // Filtering rules applied in order:
-//  1. Backend filter: agent must serve the named backend (Backend field or Capabilities).
+//  1. Backend filter: agent must serve the named backend, primary or capability
+//     (orchestration.AgentServesBackend — the one predicate every backend
+//     filter in the stack shares).
 //  2. Host-affinity filter (when non-empty): Name, Host exact match, or Host prefix match.
 //  3. GPU filter (when GpuRequired): agent Capabilities must contain "gpu".
 //
@@ -215,7 +229,7 @@ func (p *remoteBackendPool) resolve(ctx context.Context, backend, projectID stri
 		p.logger.Warnf("remote resolver: %s tenant=%s strict=%v", noMatchErr.Error(), tenantID, strict)
 		return nil, false
 	}
-	return p.backendFor(ctx, reg)
+	return p.backendFor(ctx, reg, backend)
 }
 
 // pickDaemon filters a registration slice to the first daemon-kind agent
@@ -245,7 +259,7 @@ func (p *remoteBackendPool) pickDaemon(
 		if kind != orchestration.AgentKindDaemon && kind != orchestration.AgentKindEmbedded {
 			continue
 		}
-		if r.Backend != backend && !capabilityContains(r.Capabilities, backend) {
+		if !orchestration.AgentServesBackend(r, backend) {
 			continue
 		}
 		passedBackend = true
@@ -289,8 +303,9 @@ func buildNoMatchError(backend, hostAffinity string, gpuRequired bool, constrain
 }
 
 // capabilityContains reports whether the capabilities slice advertises the
-// named backend. Used when a daemon serves multiple backends from a single
-// registration record.
+// named trait. The backend axis is answered by
+// orchestration.AgentServesBackend; this is the trait axis — "gpu" — which a
+// registration carries beside its backends rather than as one of them.
 func capabilityContains(caps []string, backend string) bool {
 	for _, c := range caps {
 		if c == backend {
@@ -300,25 +315,33 @@ func capabilityContains(caps []string, backend string) bool {
 	return false
 }
 
-// backendFor returns a cached *RemoteACPBackend for the registration, or
-// constructs one on first use. Cache key is registration.Host since that is
-// the dialable target — multiple registrations for the same daemon (shouldn't
-// happen, but defensive) share one backend.
-func (p *remoteBackendPool) backendFor(ctx context.Context, reg *orchestration.AgentRegistration) (orchestration.AgentBackend, bool) {
-	key := reg.Host
-	p.mu.Lock()
-	if entry, ok := p.entries[key]; ok && entry.registrationID == reg.ID {
-		p.mu.Unlock()
-		return entry.backend, true
+// backendFor returns a cached *RemoteACPBackend for the (daemon, backend)
+// pair, or constructs one on first use.
+//
+// BOTH HALVES OF THE KEY ARE LOAD-BEARING. The host is the dialable target;
+// the backend is the name the instance stamps on every RPC. Keying on the host
+// alone handed a request for "codex" the instance built for "claude", which
+// then asked the daemon for claude — a working session running the wrong model
+// family, with the session record still saying codex (go-quicbaas#937).
+//
+// A registration that does not serve the requested backend is refused rather
+// than served by its primary: NewRemoteACPBackend returns a typed
+// NoMatchingAgentError, which is stashed on the context so the public API
+// surfaces the refusal instead of silently falling through to a local backend.
+func (p *remoteBackendPool) backendFor(
+	ctx context.Context,
+	reg *orchestration.AgentRegistration,
+	backend string,
+) (orchestration.AgentBackend, bool) {
+	if cached, ok := p.cachedBackend(reg, backend); ok {
+		return cached, true
 	}
-	// Drop stale cache entry for the same host (different reg id = daemon
-	// replaced) before constructing the replacement.
-	delete(p.entries, key)
-	p.mu.Unlock()
 
 	// For embedded agents, use the bufconn dialer so RPCs stay in-process.
 	// The dialer is keyed by Host, which is the logical agent name set at
-	// registration time (e.g. the hostname or host-affinity tag).
+	// registration time (e.g. the hostname or host-affinity tag) — the backend
+	// axis of the cache key above does not reach this lookup, so an embedded
+	// daemon serving several backends resolves the same dialer for each.
 	var connDialer func(ctx context.Context, target string) (*grpc.ClientConn, error)
 	isEmbedded := false
 	if p.embeddedDialers != nil {
@@ -339,21 +362,81 @@ func (p *remoteBackendPool) backendFor(ctx context.Context, reg *orchestration.A
 		tokenSource = newCentralOAuth2TokenSource(p.centralCred, p.tokenURL, p.caCertPath)
 	}
 
-	backend, err := orchestration.NewRemoteACPBackend(orchestration.RemoteACPBackendDeps{
+	built, err := orchestration.NewRemoteACPBackend(orchestration.RemoteACPBackendDeps{
 		Registration: reg,
+		Backend:      backend,
 		TokenSource:  tokenSource,
 		ConnDialer:   connDialer,
 		Logger:       p.logger,
 	})
 	if err != nil {
-		p.logger.Warnf("remote resolver: build RemoteACPBackend failed: host=%s err=%v", reg.Host, err)
+		p.logger.Warnf("remote resolver: build RemoteACPBackend failed: host=%s backend=%s err=%v",
+			reg.Host, backend, err)
+		// A refusal the caller can act on travels; a construction fault does
+		// not become a silent fall-through to some other backend.
+		var noMatch *orchestration.NoMatchingAgentError
+		if errors.As(err, &noMatch) {
+			orchestration.StashResolveError(ctx, noMatch)
+		}
 		return nil, false
 	}
+
+	stored := p.storeBackend(reg, backend, built)
+	p.logger.Infof("remote resolver: routed backend=%q tenant=%s → daemon=%s host=%s primary=%q",
+		backend, reg.TenantID, reg.Name, reg.Host, reg.Backend)
+	return stored, true
+}
+
+// cachedBackend returns the pooled instance for the (daemon, backend) pair.
+// A registration id that no longer matches means the daemon at this host was
+// replaced, so EVERY backend cached for the host is dropped — invalidation is
+// per daemon even though lookup is per backend.
+//
+// The dropped instances are not closed here: a session spawned before the
+// replacement still holds its instance and its conn, and closing the pool
+// underneath it would fail a live turn. They are released when the holder
+// calls CloseAll.
+func (p *remoteBackendPool) cachedBackend(
+	reg *orchestration.AgentRegistration,
+	backend string,
+) (*orchestration.RemoteACPBackend, bool) {
 	p.mu.Lock()
-	p.entries[key] = &pooledBackend{backend: backend, registrationID: reg.ID}
-	p.mu.Unlock()
-	p.logger.Infof("remote resolver: routed backend=%q tenant=%s → daemon=%s host=%s", reg.Backend, reg.TenantID, reg.Name, reg.Host)
-	return backend, true
+	defer p.mu.Unlock()
+	entry, ok := p.entries[reg.Host]
+	if !ok {
+		return nil, false
+	}
+	if entry.registrationID != reg.ID {
+		delete(p.entries, reg.Host)
+		return nil, false
+	}
+	cached, ok := entry.backends[backend]
+	return cached, ok
+}
+
+// storeBackend records a freshly constructed instance and returns the one the
+// pool now holds. A concurrent caller that constructed the same pair first
+// wins, so every caller for one (daemon, backend) shares a single conn pool.
+func (p *remoteBackendPool) storeBackend(
+	reg *orchestration.AgentRegistration,
+	backend string,
+	built *orchestration.RemoteACPBackend,
+) *orchestration.RemoteACPBackend {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	entry, ok := p.entries[reg.Host]
+	if !ok || entry.registrationID != reg.ID {
+		entry = &pooledDaemon{
+			registrationID: reg.ID,
+			backends:       map[string]*orchestration.RemoteACPBackend{},
+		}
+		p.entries[reg.Host] = entry
+	}
+	if existing, ok := entry.backends[backend]; ok {
+		return existing
+	}
+	entry.backends[backend] = built
+	return built
 }
 
 // =============================================================================

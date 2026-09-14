@@ -34,6 +34,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -281,11 +282,11 @@ func TestRemoteBackendPool_BackendFor_CachesBackend(t *testing.T) {
 		Kind:    orchestration.AgentKindDaemon,
 	}
 
-	b1, ok := pool.backendFor(context.Background(), reg)
+	b1, ok := pool.backendFor(context.Background(), reg, "claude")
 	require.True(t, ok)
 	require.NotNil(t, b1)
 
-	b2, ok := pool.backendFor(context.Background(), reg)
+	b2, ok := pool.backendFor(context.Background(), reg, "claude")
 	require.True(t, ok)
 	assert.Same(t, b1, b2, "cached backend must be reused on identical registration")
 }
@@ -408,7 +409,8 @@ func TestSetupSignalHandlers_HandlesSIGINT(t *testing.T) {
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
 	require.NoError(t, err)
 
-	setupSignalHandlers(shutdown, log)
+	var once sync.Once
+	setupSignalHandlers(func() { once.Do(func() { close(shutdown) }) }, log)
 
 	proc, err := os.FindProcess(os.Getpid())
 	require.NoError(t, err)

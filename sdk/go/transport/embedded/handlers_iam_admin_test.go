@@ -513,26 +513,13 @@ func TestHandleIAMAdminCheckPermission_BadRequest(t *testing.T) {
 }
 
 func TestHandleIAMAdminImpersonationLifecycle(t *testing.T) {
-	svc, _ := newAdminTestService(t)
+	svc := newAuthorizedAdminTestService(t)
 	ctx := context.Background()
-	createSuperAdmin(t, svc, "admin-1", "t-1")
 
-	out, err := handleIAMAdminStartImpersonation(ctx, svc, &embeddedStartImpersonationEnvelope{
-		Impersonation: &iamsdk.ImpersonationRequest{
-			AdminUserID:  "admin-1",
-			TargetUserID: "user-9",
-			TenantID:     "t-1",
-			Reason:       "support ticket OPS-1",
-			Duration:     30 * time.Minute,
-		},
-	})
-	if err != nil {
-		t.Fatalf("handleIAMAdminStartImpersonation failed: %v", err)
-	}
-	session, ok := out.(*iamsdk.ImpersonationSession)
-	if !ok {
-		t.Fatalf("expected *iam.ImpersonationSession, got %T", out)
-	}
+	// The acting admin is resolved from the authenticated subject
+	// (go-quicbaas#383); startImpersonationAs seeds admin-1's grant and binds
+	// it as the caller before opening the session.
+	session := startImpersonationAs(t, svc, "admin-1", "t-1", "user-9")
 	if session.AdminID != "admin-1" || session.TargetUserID != "user-9" {
 		t.Errorf("unexpected session principals: %+v", session)
 	}
@@ -576,13 +563,13 @@ func TestHandleIAMAdminStartImpersonation_Errors(t *testing.T) {
 		{
 			name: "admin without the impersonate permission",
 			req: &embeddedStartImpersonationEnvelope{Impersonation: &iamsdk.ImpersonationRequest{
-				AdminUserID: "nobody", TargetUserID: "user-9", TenantID: "t-1", Reason: "curiosity", Duration: time.Minute,
+				TargetUserID: "user-9", TenantID: "t-1", Reason: "curiosity", Duration: time.Minute,
 			}},
 		},
 		{
 			name: "missing reason",
 			req: &embeddedStartImpersonationEnvelope{Impersonation: &iamsdk.ImpersonationRequest{
-				AdminUserID: "admin-1", TargetUserID: "user-9", TenantID: "t-1", Duration: time.Minute,
+				TargetUserID: "user-9", TenantID: "t-1", Duration: time.Minute,
 			}},
 		},
 	}
@@ -820,9 +807,12 @@ func TestAdminAssignmentToSDK_ScopeFollowsTenants(t *testing.T) {
 func TestAdminHandlers_ManagerRulesApplyOnUnboundContext(t *testing.T) {
 	svc, _ := newAdminTestService(t)
 
+	// Unbound (in-process host) context: requireAdminPermission is skipped for
+	// a trusted host, but StartImpersonation resolves its acting admin from the
+	// subject (go-quicbaas#383) and there is none, so it still refuses — an
+	// in-process call is not a free pass.
 	_, err := handleIAMAdminStartImpersonation(context.Background(), svc, &embeddedStartImpersonationEnvelope{
 		Impersonation: &iamsdk.ImpersonationRequest{
-			AdminUserID:  "nobody",
 			TargetUserID: "user-9",
 			TenantID:     "t-1",
 			Reason:       "curiosity",
@@ -830,7 +820,7 @@ func TestAdminHandlers_ManagerRulesApplyOnUnboundContext(t *testing.T) {
 		},
 	})
 	if err == nil {
-		t.Fatal("the admin manager's impersonation permission check must still apply in-process")
+		t.Fatal("an unbound in-process call with no authenticated actor must still be refused")
 	}
 }
 
@@ -897,7 +887,7 @@ func TestAdminHandlers_SubjectBoundCallsRequireRoutePermission(t *testing.T) {
 			call: func() (interface{}, error) {
 				return handleIAMAdminStartImpersonation(ctx, svc, &embeddedStartImpersonationEnvelope{
 					Impersonation: &iamsdk.ImpersonationRequest{
-						AdminUserID: "caller", TargetUserID: "user-9", TenantID: "t-1",
+						TargetUserID: "user-9", TenantID: "t-1",
 						Reason: "support", Duration: time.Minute,
 					},
 				})
@@ -927,35 +917,6 @@ func TestAdminHandlers_SubjectBoundCallsRequireRoutePermission(t *testing.T) {
 				t.Errorf("expected *PermissionDeniedError (fail closed), got %T: %v", err, err)
 			}
 		})
-	}
-}
-
-// The manager checks the permissions of the NAMED admin, so a subject-bound
-// caller naming a different admin would borrow that admin's privilege.
-func TestHandleIAMAdminStartImpersonation_BindsAdminToSubject(t *testing.T) {
-	// An authorized service, so the call clears requireAdminPermission and
-	// actually reaches the admin-id binding this test is about.
-	svc := newAuthorizedAdminTestService(t)
-	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "caller", TenantID: "t-1"})
-
-	_, err := handleIAMAdminStartImpersonation(ctx, svc, &embeddedStartImpersonationEnvelope{
-		Impersonation: &iamsdk.ImpersonationRequest{
-			AdminUserID:  "someone-else",
-			TargetUserID: "user-9",
-			TenantID:     "t-1",
-			Reason:       "support",
-			Duration:     time.Minute,
-		},
-	})
-	if err == nil {
-		t.Fatal("expected impersonating as another admin to be refused")
-	}
-	denied, ok := err.(*PermissionDeniedError)
-	if !ok {
-		t.Fatalf("expected *PermissionDeniedError, got %T: %v", err, err)
-	}
-	if denied.Reason == "" {
-		t.Error("the denial must say why")
 	}
 }
 
@@ -1008,9 +969,12 @@ func startImpersonationAs(t *testing.T, svc service.QuicBaaS, adminID, tenantID,
 	}); err != nil {
 		t.Fatalf("seeding the admin assignment failed: %v", err)
 	}
-	out, err := handleIAMAdminStartImpersonation(ctx, svc, &embeddedStartImpersonationEnvelope{
+	// The acting admin is resolved from the authenticated subject, never from
+	// the request (go-quicbaas#383), so bind adminID as the caller.
+	actorCtx := auth.SubjectIntoContext(ctx, interfaces.Subject{ID: adminID, TenantID: tenantID, Authenticated: true})
+	out, err := handleIAMAdminStartImpersonation(actorCtx, svc, &embeddedStartImpersonationEnvelope{
 		Impersonation: &iamsdk.ImpersonationRequest{
-			AdminUserID: adminID, TargetUserID: targetID, TenantID: tenantID,
+			TargetUserID: targetID, TenantID: tenantID,
 			Reason: "support", Duration: time.Hour,
 		},
 	})
@@ -1158,7 +1122,7 @@ func TestHandleIAMAdminStartImpersonation_BindsTenantToSubject(t *testing.T) {
 
 	_, err := handleIAMAdminStartImpersonation(ctx, svc, &embeddedStartImpersonationEnvelope{
 		Impersonation: &iamsdk.ImpersonationRequest{
-			AdminUserID: "admin-1", TargetUserID: "user-9", TenantID: "t-2",
+			TargetUserID: "user-9", TenantID: "t-2",
 			Reason: "support", Duration: time.Minute,
 		},
 	})
@@ -1183,7 +1147,7 @@ func TestHandleIAMAdminStartImpersonation_FillsIdentityFromSubject(t *testing.T)
 		t.Fatalf("seeding the admin assignment failed: %v", err)
 	}
 
-	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-1", TenantID: "t-1"})
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-1", TenantID: "t-1", Authenticated: true})
 	out, err := handleIAMAdminStartImpersonation(ctx, svc, &embeddedStartImpersonationEnvelope{
 		Impersonation: &iamsdk.ImpersonationRequest{
 			TargetUserID: "user-9", Reason: "support", Duration: time.Minute,
@@ -1254,7 +1218,7 @@ func TestHandleIAMAdminListAssignments_SystemScopeSeesEveryTenant(t *testing.T) 
 	seedAssignmentIn(t, svc, "admin-there", "t-2")
 
 	ctx := auth.SubjectIntoContext(context.Background(),
-		interfaces.Subject{ID: "platform-admin", TenantID: qrdbsdk.SystemTenantID})
+		interfaces.Subject{ID: "platform-admin", TenantID: qrdbsdk.SystemTenantID, Authenticated: true})
 
 	out, err := handleIAMAdminListAssignments(ctx, svc, &embeddedListAssignmentsEnvelope{
 		Filter: &iamsdk.ListAdminAssignmentsRequest{},
@@ -1324,7 +1288,7 @@ func TestAdminHandlers_SystemScopeIsNotTenantPinned(t *testing.T) {
 func TestHandleIAMAdminStartImpersonation_SystemScopeMayCrossTenants(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
 	ctx := auth.SubjectIntoContext(context.Background(),
-		interfaces.Subject{ID: "platform-admin", TenantID: qrdbsdk.SystemTenantID})
+		interfaces.Subject{ID: "platform-admin", TenantID: qrdbsdk.SystemTenantID, Authenticated: true})
 
 	if _, err := handleIAMAdminCreateAssignment(ctx, svc, &embeddedCreateAssignmentEnvelope{
 		CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{

@@ -201,9 +201,19 @@ func (a *xkmsCAServicer) signOptionsWithSPIFFE(profile string, validityDays int,
 	return opts
 }
 
-// IssueCertificate generates a fresh keypair, signs the certificate, and
-// returns cert/chain/private-key PEM. Mirrors XKMSService.IssueCertificate
-// in go-xkms so REST clients see a consistent surface.
+// IssueCertificate asks the CA to generate a keypair and sign a certificate for
+// it. Mirrors XKMSService.IssueCertificate in go-xkms so REST clients see a
+// consistent surface — including the part that surprises people: the key is
+// generated INSIDE the CA's keystore as a non-exportable opaque handle, so
+// PrivateKeyPEM comes back EMPTY on every go-xkms backend. This route hands the
+// caller a certificate, not a credential.
+//
+// A caller that needs to hold the private key uses the CSR-sign route
+// (/api/v1/xkms/ca/sign-csr) with a key it generated itself, which is what
+// `quicbaas agent deploy` does, or the quicbaas certificate service
+// (Security().Certificate().IssueCertificate), which owns the
+// generate-and-distribute contract. See pkg/xkms/keygen.go for why the split
+// exists (go-quicbaas#910).
 func (a *xkmsCAServicer) IssueCertificate(ctx context.Context, req *xkmstransport.IssueCertificateRequest) (*xkmstransport.IssueCertificateResponse, error) {
 	if req == nil {
 		return nil, ErrXKMSCANilRequest

@@ -49,6 +49,18 @@ var (
 	// candidate account.
 	ErrNoAccountAvailable = errors.New("account: no account available")
 
+	// ErrAccountsCoolingDown indicates the pool is not empty — it holds
+	// accounts for this provider — but every one of them is on a limit hold
+	// that has not lapsed yet.
+	//
+	// A NARROWER CASE OF "no account available", AND IT IS THE OPPOSITE
+	// SITUATION. An empty pool is a misconfiguration: nothing changes until an
+	// operator registers an account. A pool that is entirely cooling down is
+	// working exactly as designed and fixes itself at AvailableAt. Answering
+	// them the same way strands work that would have been dispatchable minutes
+	// later behind a human — see AccountsCoolingDownError.
+	ErrAccountsCoolingDown = errors.New("account: all candidates are cooling down")
+
 	// ErrAccountResolverNotConfigured indicates a spawn requested account
 	// selection (AccountID or AccountAuto) but the backend was never wired
 	// with an AccountResolver. This fails closed rather than silently
@@ -80,7 +92,31 @@ var (
 	// not implement the rotation verb at all, as opposed to a particular
 	// session being ineligible for it.
 	ErrSessionRotationUnsupported = errors.New("account: session account rotation is not supported by this deployment")
+
+	// ErrAccountTenantScope indicates a request for one tenant's account was
+	// made under a context scoped to a DIFFERENT tenant. The durable KV routes
+	// by the context's tenant, so honouring the request would read or write
+	// the record in the wrong tenant's namespace — the mis-homing
+	// go-quicbaas#535 measured. Refused instead.
+	ErrAccountTenantScope = errors.New("account: context tenant does not match the account's tenant")
 )
+
+// AccountTenantScopeError reports a request for tenantID's account made under
+// a context already scoped to ContextTenant. A namespaced store cannot serve
+// it correctly: the key names one tenant and the context routes to another.
+type AccountTenantScopeError struct {
+	ContextTenant string
+	TenantID      string
+}
+
+// Error implements the error interface.
+func (e *AccountTenantScopeError) Error() string {
+	return "account: context is scoped to tenant " + e.ContextTenant +
+		" but the request names tenant " + e.TenantID
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *AccountTenantScopeError) Unwrap() error { return ErrAccountTenantScope }
 
 // AccountNotFoundError reports a lookup miss, scoped to the tenant.
 type AccountNotFoundError struct {
@@ -116,6 +152,16 @@ func (e *AccountInvalidError) Unwrap() error { return ErrAccountInvalid }
 // AccountStoreError indicates an internal store failure (marshal, corruption, etc).
 type AccountStoreError struct {
 	Message string
+
+	// Cause is the underlying failure, when the store had one to report.
+	//
+	// It exists because AccountSecretStore is a SEAM, not only a wrapper: a
+	// deployment can back it with something other than the platform vault (the
+	// agent daemon backs it with a read-through store over the control plane's
+	// release endpoint, go-quicbaas#734). Flattening that store's typed refusal
+	// into a message would leave every caller above it matching on substrings
+	// to tell "the credential is revoked" from "the secrets backend is down".
+	Cause error
 }
 
 // Error implements the error interface.
@@ -123,8 +169,15 @@ func (e *AccountStoreError) Error() string {
 	return ErrAccountStore.Error() + ": " + e.Message
 }
 
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *AccountStoreError) Unwrap() error { return ErrAccountStore }
+// Unwrap exposes both the sentinel — so errors.Is(err, ErrAccountStore) keeps
+// working — and the underlying failure, so a caller can errors.As its way to
+// the typed reason a pluggable store gave.
+func (e *AccountStoreError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrAccountStore}
+	}
+	return []error{ErrAccountStore, e.Cause}
+}
 
 // AccountRevokedError indicates a selection or resolution attempt targeted a
 // revoked account.
@@ -203,6 +256,57 @@ func (e *NoAccountAvailableError) Error() string {
 
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *NoAccountAvailableError) Unwrap() error { return ErrNoAccountAvailable }
+
+// AccountsCoolingDownError reports a pool whose every candidate is on a limit
+// hold that has not lapsed.
+//
+// IT UNWRAPS TO BOTH SENTINELS, deliberately. Every existing caller asks
+// errors.Is(err, ErrNoAccountAvailable) and is still right — there is, at this
+// instant, no account available. What the second sentinel adds is WHY, for the
+// one caller that must tell the two apart: the SDLC module decides on its
+// strength whether to park the work item for a human or leave it in the queue
+// for the next sweep. A caller that does not care goes on not caring.
+//
+// AvailableAt is the EARLIEST moment any candidate rejoins the pool, so a
+// caller with somewhere to put it can wait exactly that long. An account held
+// with no stated expiry is not counted at all — see coolingDown — because a
+// hold nobody promised to lift is not a condition to wait on, and a caller
+// told to wait forever is worse off than one told to fetch a human.
+type AccountsCoolingDownError struct {
+	TenantID  string
+	ProjectID string
+	Provider  AccountProvider
+
+	// Candidates is how many accounts were held out. It distinguishes "your
+	// one account is busy" from "all nine are", which are different problems.
+	Candidates int
+
+	// AvailableAt is the earliest moment one of them rejoins the pool.
+	//
+	// NEVER ZERO on an error this package raises: a hold with no stated expiry
+	// is not self-clearing at all and is excluded from the count, so an error
+	// that exists always names a time. Zero is reachable only on an error
+	// reconstructed from a wire message that carried none.
+	AvailableAt time.Time
+}
+
+// Error implements the error interface.
+func (e *AccountsCoolingDownError) Error() string {
+	msg := ErrAccountsCoolingDown.Error() + ": tenant=" + e.TenantID +
+		" project=" + e.ProjectID + " provider=" + string(e.Provider) +
+		" candidates=" + strconv.Itoa(e.Candidates)
+	if !e.AvailableAt.IsZero() {
+		msg += " available_at=" + e.AvailableAt.UTC().Format(time.RFC3339)
+	}
+	return msg
+}
+
+// Unwrap returns both sentinels: the general condition every caller already
+// tests for, and the specific one that distinguishes a cooldown from an empty
+// pool.
+func (e *AccountsCoolingDownError) Unwrap() []error {
+	return []error{ErrNoAccountAvailable, ErrAccountsCoolingDown}
+}
 
 // AccountResolverNotConfiguredError indicates account selection was
 // requested but no AccountResolver was wired into the backend.

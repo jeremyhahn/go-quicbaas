@@ -16,11 +16,15 @@ package main
 
 import (
 	stdcontext "context"
+	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"os"
@@ -28,12 +32,13 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
@@ -276,7 +281,7 @@ func runKMSKeyGenerateCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	keyAttrs, err := createKeyAttributes(keyName, kmsAlgorithm, kmsExportable)
@@ -337,7 +342,7 @@ func runKMSKeyGetCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.GetKeyRequest{
@@ -387,7 +392,7 @@ func runKMSKeyListCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.ListKeysRequest{
@@ -439,7 +444,7 @@ func runKMSKeyRotateCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.RotateKeyRequest{
@@ -495,7 +500,7 @@ func runKMSKeyDeleteCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	pendingDays := 30
@@ -538,6 +543,167 @@ Examples:
 	return cmd
 }
 
+// detectEncodedKeyMaterial names the encoded key format the bytes look like,
+// or "" when they look like raw key bytes.
+//
+// Detection is on the PEM/OpenSSH armour rather than on entropy or length: the
+// armour is unambiguous, and a symmetric key's raw bytes can legitimately be
+// anything. False positives are therefore near-impossible, and a false
+// negative just leaves today's behaviour.
+func detectEncodedKeyMaterial(material []byte) string {
+	text := strings.TrimSpace(string(material))
+	switch {
+	case strings.HasPrefix(text, "-----BEGIN OPENSSH PRIVATE KEY-----"):
+		return "an OpenSSH private key"
+	case strings.HasPrefix(text, "-----BEGIN") && strings.Contains(text, "PRIVATE KEY-----"):
+		return "a PEM private key"
+	case strings.HasPrefix(text, "-----BEGIN") && strings.Contains(text, "PUBLIC KEY-----"):
+		return "a PEM public key"
+	case strings.HasPrefix(text, "ssh-ed25519 "), strings.HasPrefix(text, "ssh-rsa "),
+		strings.HasPrefix(text, "ecdsa-sha2-nistp"):
+		return "an OpenSSH public key"
+	default:
+		return ""
+	}
+}
+
+// parsePrivateKeyMaterial parses armoured private-key material, returning both
+// the key and its public-key algorithm.
+//
+// The algorithm is derived from the KEY, never from a flag. The key is the
+// authority on what it is; a flag is a claim about it, and where the two
+// disagree the caller is told rather than one of them being silently believed.
+//
+// The parsed key is returned rather than discarded because the caller needs it:
+// the KMS stores PKCS#8 DER, so the key must be re-encoded before it is sent.
+func parsePrivateKeyMaterial(material []byte) (any, x509.PublicKeyAlgorithm, error) {
+	key, err := parsePrivateKey(material)
+	if err != nil {
+		return nil, x509.UnknownPublicKeyAlgorithm, err
+	}
+
+	algorithm, err := algorithmOfKey(key)
+	if err != nil {
+		return nil, x509.UnknownPublicKeyAlgorithm, err
+	}
+
+	return key, algorithm, nil
+}
+
+// parsePrivateKey decodes the private-key encodings callers actually hold.
+func parsePrivateKey(material []byte) (any, error) {
+	if key, err := ssh.ParseRawPrivateKey(material); err == nil {
+		return key, nil
+	}
+
+	block, _ := pem.Decode(material)
+	if block == nil {
+		return nil, errors.New(errors.ErrInvalidInput, "kms.key.import",
+			"material is not a parseable private key")
+	}
+	if key, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+	if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+	return nil, errors.New(errors.ErrInvalidInput, "kms.key.import",
+		"unsupported private key encoding")
+}
+
+// pkcs8Material re-encodes a parsed private key as PKCS#8 DER, the encoding the
+// KMS stores.
+//
+// The armour a caller supplies — OpenSSH, SEC1, PKCS#1 — is a transport
+// encoding of the key, not the key. Sending it verbatim is what made the
+// original import store text where a key belonged.
+func pkcs8Material(key any) ([]byte, error) {
+	// ssh.ParseRawPrivateKey yields *ed25519.PrivateKey, while
+	// x509.MarshalPKCS8PrivateKey accepts only the value type.
+	if pointer, ok := key.(*ed25519.PrivateKey); ok {
+		key = *pointer
+	}
+	return x509.MarshalPKCS8PrivateKey(key)
+}
+
+// algorithmOfKey maps a parsed key onto its public-key algorithm.
+func algorithmOfKey(key any) (x509.PublicKeyAlgorithm, error) {
+	switch key.(type) {
+	case ed25519.PrivateKey, *ed25519.PrivateKey:
+		return x509.Ed25519, nil
+	case *ecdsa.PrivateKey:
+		return x509.ECDSA, nil
+	case *rsa.PrivateKey:
+		return x509.RSA, nil
+	default:
+		return x509.UnknownPublicKeyAlgorithm, errors.New(errors.ErrInvalidInput, "kms.key.import",
+			"unsupported private key type")
+	}
+}
+
+// algorithmName renders an algorithm for an error a human reads.
+func algorithmName(a x509.PublicKeyAlgorithm) string {
+	switch a {
+	case x509.Ed25519:
+		return kms.AlgEd25519
+	case x509.ECDSA:
+		return "ECDSA"
+	case x509.RSA:
+		return "RSA"
+	default:
+		return "an unrecognised algorithm"
+	}
+}
+
+// ecdsaCurvesByName maps a curve-naming --algorithm value to the curve it names.
+//
+// A flag that names a curve is a claim about the curve, so it is compared
+// against the key's own — accepting "ECDSA-P256" for a P-384 key would store it
+// under a description that is false in exactly the dimension a caller was
+// trying to be specific about.
+var ecdsaCurvesByName = map[string]elliptic.Curve{
+	"ECDSA-P256":  elliptic.P256(),
+	"ECDSA-P-256": elliptic.P256(),
+	"ECDSA-P384":  elliptic.P384(),
+	"ECDSA-P-384": elliptic.P384(),
+	"ECDSA-P521":  elliptic.P521(),
+	"ECDSA-P-521": elliptic.P521(),
+}
+
+// algorithmMatches reports whether an explicit --algorithm names the same
+// algorithm the key actually is.
+//
+// Deliberately lenient about spelling and curve suffix (ECDSA-P256 matches an
+// ECDSA key) and strict about the algorithm family: the point is to catch a
+// caller who believes they are importing something else, not to police
+// notation.
+func algorithmMatches(flag string, key any, actual x509.PublicKeyAlgorithm) bool {
+	normalized := strings.ToUpper(strings.TrimSpace(flag))
+	switch actual {
+	case x509.Ed25519:
+		return normalized == "ED25519"
+	case x509.ECDSA:
+		if !strings.HasPrefix(normalized, "ECDSA") {
+			return false
+		}
+		ec, ok := key.(*ecdsa.PrivateKey)
+		if !ok {
+			return false
+		}
+		if named, namesACurve := ecdsaCurvesByName[normalized]; namesACurve {
+			return named == ec.Curve
+		}
+		return true
+	case x509.RSA:
+		return strings.HasPrefix(normalized, "RSA")
+	default:
+		return false
+	}
+}
+
 // runKMSKeyImportCommand executes the kms key import command.
 func runKMSKeyImportCommand(cmd *cobra.Command, args []string) error {
 	keyName := args[0]
@@ -575,12 +741,52 @@ func runKMSKeyImportCommand(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
-	keyAttrs := &kctypes.KeyAttributes{
-		CN:                 keyName,
-		SymmetricAlgorithm: parseSymmetricAlgorithm(kmsAlgorithm),
+	// Armoured material takes the ASYMMETRIC path. Routing on the material
+	// rather than on a flag is what makes the old trap unreachable: there is
+	// no longer a way to spell "store this private key as an AES key".
+	keyAttrs := &kctypes.KeyAttributes{CN: keyName}
+	usage := []service.KeyUsage{service.KeyUsageEncrypt, service.KeyUsageDecrypt}
+
+	if kind := detectEncodedKeyMaterial(keyMaterial); kind != "" {
+		key, algorithm, err := parsePrivateKeyMaterial(keyMaterial)
+		if err != nil {
+			return errors.Wrapf(err, errors.ErrInvalidInput, "kms.key.import",
+				"failed to parse "+kind)
+		}
+
+		// An explicit --algorithm that disagrees with the key REFUSES rather
+		// than reinterpreting. Silently preferring either side would store a
+		// key under a description of itself that is false, and every later
+		// operation would be reasoning from that description.
+		if cmd.Flags().Changed("algorithm") && !algorithmMatches(kmsAlgorithm, key, algorithm) {
+			return errors.New(errors.ErrInvalidInput, "kms.key.import",
+				"--algorithm "+kmsAlgorithm+" contradicts the supplied key, which is "+
+					algorithmName(algorithm)+"; refusing rather than reinterpreting it")
+		}
+
+		// Send the KEY, not the armour that carried it. The store requires
+		// PKCS#8 DER and refuses anything else, so shipping the original text
+		// would turn a correct derivation into a failed import.
+		keyMaterial, err = pkcs8Material(key)
+		if err != nil {
+			return errors.Wrapf(err, errors.ErrInvalidInput, "kms.key.import",
+				"failed to re-encode "+kind+" as PKCS#8")
+		}
+
+		keyAttrs.KeyAlgorithm = algorithm
+
+		// Send the CURVE too. Without it the service defaults ECDSA to P-256,
+		// so a P-384 key would be stored describing itself as P-256.
+		if ec, isECDSA := key.(*ecdsa.PrivateKey); isECDSA {
+			keyAttrs.ECCAttributes = &kctypes.ECCAttributes{Curve: ec.Curve}
+		}
+
+		usage = []service.KeyUsage{service.KeyUsageSign}
+	} else {
+		keyAttrs.SymmetricAlgorithm = parseSymmetricAlgorithm(kmsAlgorithm)
 	}
 
 	req := &service.ImportKeyRequest{
@@ -588,7 +794,7 @@ func runKMSKeyImportCommand(cmd *cobra.Command, args []string) error {
 		Name:          keyName,
 		Description:   kmsDescription,
 		KeyMaterial:   keyMaterial,
-		Usage:         []service.KeyUsage{service.KeyUsageEncrypt, service.KeyUsageDecrypt},
+		Usage:         usage,
 	}
 
 	resp, err := client.KMSImportKey(ctx, req)
@@ -628,7 +834,7 @@ func runKMSKeyEnableCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.UpdateKeyStatusRequest{
@@ -674,7 +880,7 @@ func runKMSKeyDisableCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.UpdateKeyStatusRequest{
@@ -720,7 +926,7 @@ func runKMSKeyVersionsCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.ListKeyVersionsRequest{
@@ -766,7 +972,7 @@ func runKMSKeyExportCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.ExportKeyRequest{
@@ -823,7 +1029,7 @@ func runKMSKeyUnwrapCommand(cmd *cobra.Command, args []string) error {
 		return errors.Wrapf(err, errors.ErrInvalidInput, "kms.key.unwrap", "invalid base64 material")
 	}
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.UnwrapKeyRequest{
@@ -871,7 +1077,7 @@ func runKMSKeySetSafetyCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.SetKeySafetyRequest{
@@ -962,7 +1168,7 @@ func runKMSEncryptCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.EncryptRequest{
@@ -1032,7 +1238,7 @@ func runKMSDecryptCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.DecryptRequest{
@@ -1091,7 +1297,7 @@ func runKMSBackendStatusCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.KMSBackendStatus(ctx)
@@ -1126,7 +1332,7 @@ func runKMSBackendTestCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.KMSBackendTest(ctx)
@@ -1183,7 +1389,7 @@ func runKMSSafetyCheckCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.SafetyCheckRequest{
@@ -1222,7 +1428,7 @@ func runKMSSafetyReportCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), timeout)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
 	defer cancel()
 
 	req := &service.SafetyReportRequest{

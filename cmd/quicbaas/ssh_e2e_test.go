@@ -23,8 +23,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/base64"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,6 +31,7 @@ import (
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
 	sshSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/sshfixture"
 )
 
 // withSSHHome points the CLI's SSH client factory at a fresh file-backed
@@ -194,7 +193,7 @@ func TestRunSSHKeysImport_MissingFile(t *testing.T) {
 func TestRunSSHKnownHostsAdd_MissingHost(t *testing.T) {
 	withSSHHome(t)
 	cmd := newSSHKnownHostsAddCmd()
-	require.NoError(t, cmd.Flags().Set("fingerprint", "SHA256:abc"))
+	require.NoError(t, cmd.Flags().Set("fingerprint", testKnownHostFingerprint))
 	err := runSSHKnownHostsAdd(cmd, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSSHMissingHost)
@@ -209,20 +208,19 @@ func TestRunSSHKnownHostsAdd_MissingFingerprint(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSSHMissingFingerprint)
 }
 
-// sshTestFingerprint derives a well-formed OpenSSH SHA256 fingerprint from
-// seed: the go-xkms known-hosts store (v0.9.x) validates that the body is
-// unpadded base64 of exactly 32 bytes, so a placeholder never gets pinned.
-func sshTestFingerprint(seed string) string {
-	digest := sha256.Sum256([]byte(seed))
-	return "SHA256:" + base64.RawStdEncoding.EncodeToString(digest[:])
-}
+// testKnownHostFingerprint is the OpenSSH SHA256 fingerprint of a real
+// deterministic ed25519 key, so the pin this CLI writes describes a key
+// that actually exists. (go-xkms known_hosts.ValidateFingerprint also
+// rejects anything whose base64 body is not a 32-byte digest, so a
+// placeholder such as "SHA256:abcdef0123" never reaches the store.)
+const testKnownHostFingerprint = sshfixture.HostFingerprint
 
 func TestRunSSHKnownHosts_RoundTrip(t *testing.T) {
 	withSSHHome(t)
 
 	add := newSSHKnownHostsAddCmd()
 	require.NoError(t, add.Flags().Set("host", "git.example.com:22"))
-	require.NoError(t, add.Flags().Set("fingerprint", sshTestFingerprint("git.example.com")))
+	require.NoError(t, add.Flags().Set("fingerprint", testKnownHostFingerprint))
 	require.NoError(t, add.Flags().Set("algorithm", "ssh-ed25519"))
 	require.NoError(t, add.Flags().Set("source", "manual"))
 	var aBuf bytes.Buffer

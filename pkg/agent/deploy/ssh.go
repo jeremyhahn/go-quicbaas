@@ -135,8 +135,51 @@ func (c *SSHClient) Close() error {
 	return err
 }
 
+// syncBuffer is a byte buffer that may be READ WHILE IT IS STILL BEING
+// WRITTEN, which is exactly what capturing a cancelled command's output
+// requires.
+//
+// ssh.Session copies the remote's stdout and stderr into these on goroutines
+// of its own. Those goroutines are started by Run and are not finished until
+// Run returns — so Exec's cancel path, which deliberately returns WITHOUT
+// waiting for Run, reads the buffers while the copiers are still appending to
+// them. With a plain bytes.Buffer that is a data race on every field of the
+// buffer at once, and it is a race whatever the captured bytes happen to look
+// like afterwards.
+//
+// LOCKING RATHER THAN WAITING, because the alternative spends the one thing
+// the cancel path exists to provide. Awaiting Run before reading would also
+// remove the race — Wait does not return until the copiers have — but it would
+// make a caller who has already given up wait on a remote command that may
+// never end, which is the hang the cancel branch was written to avoid. A
+// bounded wait only trades that for a new timeout to tune and a capture
+// discarded when it expires. A lock costs nothing on either path and makes the
+// PARTIAL capture — the honest answer for a command that was cancelled — safe
+// to read at any moment.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+// String returns what has been captured so far.
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // Exec runs cmd on the remote host and returns the captured stdout and
 // stderr. A non-zero exit is surfaced as a RemoteExecError.
+//
+// On cancellation the returned output is whatever had been captured by then,
+// which may be partial — see syncBuffer for why that is read under a lock
+// rather than after waiting for the command to finish.
 func (c *SSHClient) Exec(ctx context.Context, cmd string) (string, string, error) {
 	if c == nil || c.client == nil {
 		return "", "", &RemoteExecError{Command: cmd, Cause: &SSHDialError{Cause: errClosed}}
@@ -169,40 +212,6 @@ func (c *SSHClient) Exec(ctx context.Context, cmd string) (string, string, error
 		}
 		return stdout.String(), stderr.String(), nil
 	}
-}
-
-// syncBuffer is an output sink that may be read while the writer is still
-// running.
-//
-// ssh.Session streams a command's stdout and stderr from its own goroutines,
-// started by Session.Start and only joined by Session.Wait. Exec's
-// cancellation branch does not join them: Signal(SIGTERM) is best effort and
-// returns immediately, so the copiers are still writing when Exec reads what
-// they have produced so far. Against a bare bytes.Buffer that is a data race,
-// and the value returned is whatever the reader happened to observe mid-write.
-//
-// The mutex makes the partial output a consistent snapshot instead. It does
-// not make the output complete -- a cancelled command's output is legitimately
-// partial -- only well defined.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-// Write appends p to the buffer. It satisfies io.Writer, which is what
-// ssh.Session requires of Stdout and Stderr.
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-// String returns a snapshot of everything written so far. It is safe to call
-// while the writer is still running.
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
 }
 
 // WriteFile writes data to the remote path using cat > path; for

@@ -150,6 +150,31 @@ func iamManagedRouteSpecs() []RouteSpec {
 		{Method: "GET", Pattern: user + "/mfa/backup-codes", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.GetBackupCodeStatus })},
 		{Method: "POST", Pattern: user + "/mfa/backup-codes", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.GenerateBackupCodes })},
 
+		// ---- WebAuthn credential administration (user-nested) ----
+		//
+		// Admin verbs over another user's authenticators, not the
+		// self-service ceremony. They are gated users:read / users:delete —
+		// which is NOT what the user routes beside them carry (those are
+		// tenants:*), and that is deliberate.
+		//
+		// These three verbs are served on four transports. gRPC enforces the
+		// (qrdb.v1.permission) annotation on the RPC and MCP enforces its own
+		// tool mapping, and both name the qrdb users:* family. Had REST kept
+		// the tenants:* spelling its neighbours use, the SAME principal
+		// calling the SAME verb would be admitted on one transport and denied
+		// on another — an authorization decision that depends on the wire,
+		// which is not a decision anyone can reason about. One vocabulary
+		// across the transports wins over local consistency with a legacy
+		// spelling. TestWebAuthnCredentialPermissionsMatchOtherTransports
+		// (routes_iam_webauthn_test.go) is the guard.
+		//
+		// The wider REST/MCP divergence for the pre-existing user verbs is
+		// go-quicbaas#301; these routes are new, so they start canonical
+		// rather than inherit it.
+		{Method: "GET", Pattern: user + "/webauthn/credentials/", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.ListUserWebAuthnCredentials })},
+		{Method: "DELETE", Pattern: user + "/webauthn/credentials/", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.DeleteUserWebAuthnCredentials })},
+		{Method: "DELETE", Pattern: user + "/webauthn/credentials/{credential_id}", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.DeleteUserWebAuthnCredential })},
+
 		// ---- Federation identity links (user-nested) ----
 		{Method: "POST", Pattern: user + "/links/", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.LinkAccount })},
 		{Method: "GET", Pattern: user + "/links/", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.GetUserLinks })},
@@ -168,6 +193,7 @@ func iamManagedRouteSpecs() []RouteSpec {
 		// ---- Roles ----
 		{Method: "GET", Pattern: tenants + "/roles/", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.ListRoles })},
 		{Method: "POST", Pattern: tenants + "/roles/", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.CreateRole })},
+		{Method: "POST", Pattern: tenants + "/roles/reconcile", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.ReconcileRoles })},
 		{Method: "GET", Pattern: tenants + "/roles/{role_id}", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.GetRole })},
 		{Method: "PUT", Pattern: tenants + "/roles/{role_id}", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.UpdateRole })},
 		{Method: "DELETE", Pattern: tenants + "/roles/{role_id}", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.DeleteRole })},
@@ -233,6 +259,54 @@ func iamManagedRouteSpecs() []RouteSpec {
 		// no bearer token exists yet (frozen RouteAuthPublic,
 		// routes_permissions_generated.go).
 		{Method: "POST", Pattern: "/api/v1/iam/login/piv", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.PIVLogin })},
+
+		// ---- OIDC-session renewal (P3.3 de-collision) ----
+		// Moved from /api/v1/auth/refresh for exactly the reason PIVLogin was
+		// moved above, and it MUST move rather than be dropped: quicbaas still
+		// owns the login ceremony at /api/v1/auth/login/{begin,finish}, whose
+		// bearer and refresh credential are minted by iam.OIDCProvider and
+		// recorded in ITS token store (LoginService.withSessionRefresh ->
+		// IssueRefreshForSessionBearer). On a composed node xkms's module owns
+		// the literal /api/v1/auth/refresh path and redeems against its OWN
+		// refresh store, so a credential this ceremony issued is unknown there
+		// and every renewal answered 401 — the session died at the 15-minute
+		// access-token boundary with no renewal endpoint reachable at all
+		// (#221). A session authority that can mint but cannot renew is not a
+		// session authority; this route restores the other half.
+		// Public, same class as the login ceremony that issued the credential:
+		// the opaque refresh token in the body IS the credential and no valid
+		// bearer exists by definition at renewal time (frozen RouteAuthPublic,
+		// routes_permissions_generated.go).
+		{Method: "POST", Pattern: "/api/v1/iam/refresh", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.RefreshToken })},
+
+		// ---- OIDC-session validate + logout (P3.3 de-collision) ----
+		// The last two verbs of the same family, relocated for the same reason
+		// and on the same evidence as refresh above. #221 left them dropped on
+		// the reasoning that "the SPA validates by making an authenticated
+		// call". It does not: the SPA's session check is
+		// authStore.validateSession -> SDK authValidate, a literal
+		// POST to the validate verb (sdk/typescript/src/rest.ts), and
+		// MainApp.handleLogout calls the logout verb the same way.
+		//
+		// On a composed node xkms's module registers GET /api/v1/auth/validate
+		// and POST /api/v1/auth/logout on its own session plane. The SPA's POST
+		// to the validate path therefore matched NO route at all, and go-qrdb's
+		// auth middleware wraps the whole router: with no registered
+		// method+pattern there is no module auth fallback to consult, so mTLS
+		// authentication ran and failed, and the browser got
+		// 401 "qrdb/auth: no_peer_cert: no client certificate in TLS
+		// connection" for a bearer this very daemon had just minted (#256).
+		// Logout reached xkms's handler but redeemed against xkms's token
+		// store, so a quicbaas-minted session was never actually revoked.
+		//
+		// RouteAuthSession, not Public: both verbs act ON a bearer that already
+		// exists, so the identity gate belongs in the middleware, where an
+		// invalid token is answered 401 (frozen RouteAuthSession,
+		// routes_permissions_generated.go). Being non-public is what attaches
+		// the module's AuthenticateHTTP fallback (pkg/apimodule module_http.go),
+		// which is the seam that validates a quicbaas-minted bearer at all.
+		{Method: "POST", Pattern: "/api/v1/iam/validate", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.ValidateToken })},
+		{Method: "POST", Pattern: "/api/v1/iam/logout", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.Logout })},
 
 		// ---- xkms-native WebAuthn ceremony mount ----
 		// login/begin + login/finish derive Public via preAuthRouteTemplates
@@ -332,23 +406,38 @@ func oauth2CoreRouteSpecs() []RouteSpec {
 // registration), so Auth is set explicitly to Public.
 //
 // P3.3 de-collision: the token-lifecycle verbs (refresh/logout/validate) and
-// the OIDC-session PIV login (login/piv) are DELIBERATELY absent from this
-// module-surface table. On a composed node the xkms module owns the
-// session-login plane at these exact /api/v1/auth paths (identical
-// mtls/fido2/piv login endpoints on every node in the stack, per the DRY
-// requirement), so quicbaas's own registrations at those paths would
-// route-collide with xkms's module. All three token-lifecycle verbs share
-// ONE session authority with PIV login — RefreshToken/Logout/ValidateToken
-// all resolve through authService.sessionAuthority (pkg/service/quicbaas.go),
-// the exact iam.OIDCProvider that PIVLogin also mints sessions from
-// (pkg/api/rest/iam_login_piv.go) — so all four are the same superseded
-// family. PIVLogin itself is KEPT, but moved to the IAM namespace
-// (POST /api/v1/iam/login/piv, iamManagedRouteSpecs below) to avoid the
-// literal path collision on /api/v1/auth/login/piv while remaining
-// reachable; refresh/logout/validate remain reachable ONLY on the legacy
-// in-process listener's independent hand-mount (iam.go RegisterRoutes),
-// which this table does not feed — a standalone (non-composed) deployment
-// loses nothing.
+// the OIDC-session PIV login (login/piv) are absent from this module-surface
+// table at their /api/v1/auth paths. On a composed node the xkms module owns
+// the session-login plane at these exact paths (identical mtls/fido2/piv
+// login endpoints on every node in the stack, per the DRY requirement), so
+// quicbaas's own registrations at those paths would route-collide with
+// xkms's module. All three token-lifecycle verbs share ONE session authority
+// with PIV login — RefreshToken/Logout/ValidateToken all resolve through
+// authService.sessionAuthority (pkg/service/quicbaas.go), the exact
+// iam.OIDCProvider that PIVLogin also mints sessions from
+// (pkg/api/rest/iam_login_piv.go).
+//
+// All four are RELOCATED into the IAM namespace rather than dropped, and all
+// four remain reachable there: PIVLogin at POST /api/v1/iam/login/piv,
+// RefreshToken at POST /api/v1/iam/refresh, ValidateToken at
+// POST /api/v1/iam/validate and Logout at POST /api/v1/iam/logout
+// (iamManagedRouteSpecs below). Relocation is not optional for any of them.
+// The original P3.3 note reasoned that "a standalone (non-composed)
+// deployment loses nothing" because the dropped verbs stay on the legacy
+// in-process listener's hand-mount (iam.go RegisterRoutes), which this table
+// does not feed. That reasoning does not hold on a COMPOSED node, which is
+// the only kind the unified API server starts a listener for: quicbaas keeps
+// the login ceremony at /api/v1/auth/login/{begin,finish}, so it goes on
+// minting sessions whose bearer and refresh credential live in
+// iam.OIDCProvider's token store, while the only /api/v1/auth/refresh in the
+// router is xkms's, redeeming from a different store. Every renewal 401'd and
+// the SPA session died at the 15-minute access-token boundary (#221).
+//
+// #221 relocated refresh and left validate/logout dropped, on the reasoning
+// that "the SPA validates by making an authenticated call". It does not — it
+// calls the validate verb literally — so validate answered 401 no_peer_cert
+// for the daemon's own freshly minted bearer and UI login broke outright
+// (#256). Both are relocated here now; see their RouteSpecs above.
 func apiAuthPublicRouteSpecs() []RouteSpec {
 	return []RouteSpec{
 		{Method: "POST", Pattern: "/api/v1/auth/login/begin", Group: GroupAPIAuthPublic, Auth: RouteAuthPublic, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.CeremonyBeginLogin })},

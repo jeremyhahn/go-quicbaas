@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/certfixture"
 )
 
 const (
@@ -133,41 +134,37 @@ func fetchServerCA() ([]byte, error) {
 	return os.ReadFile(filepath.Join(certsFixtureDir, "ca.crt")) // #nosec G304 - path rooted at repo fixture dir
 }
 
-// fixtureCertFiles are the fixture files the suite and the server require:
-// the CA pair (client trust + serving chain), the bootstrap admin client
-// cert bundle, and the node1 serving pair quicbaas.yaml points the TLS
-// listener at.
-var fixtureCertFiles = []string{
-	"ca.crt", "ca.key",
-	"admin.crt", "admin.key",
-	"node1.crt", "node1.key",
-}
-
 // ensureFixtureCerts resolves the shared integration cert fixture directory
-// relative to the compose dir and generates the fixtures with
-// test/integration/gen-certs when any required file is missing — the same
-// generator the Makefile integration targets use, so both suites share one
-// CA.
+// relative to the compose dir and issues the fixtures through QuicBaaS's own
+// certificate authority when any declared file is missing.
+//
+// It is a Go call, not a subprocess. It used to shell out to
+// `go run ./test/integration/gen-certs`, which was a 444-line parallel
+// certificate authority built from crypto/ecdsa and crypto/x509
+// (go-quicbaas#943): the suite pinned that CA as its RootCAs and asserted
+// against a lookalike of the product's issuance path. certfixture.Ensure issues
+// the same set through pkg/server.NewCAService — the adapter the daemon serves
+// every certificate operation through — so the material this suite trusts is
+// the material the product produces.
+//
+// The declared file set comes from the topology, so a node or client added to
+// the declaration is automatically part of the completeness check rather than a
+// second list here that can fall behind.
 func ensureFixtureCerts(composeDir string) error {
 	repoRoot := filepath.Clean(filepath.Join(composeDir, "..", "..", "..", ".."))
 	certsFixtureDir = filepath.Join(repoRoot, "test", "integration", "certs")
 
-	missing := false
-	for _, f := range fixtureCertFiles {
-		if _, err := os.Stat(filepath.Join(certsFixtureDir, f)); err != nil {
-			missing = true
-			break
+	topology, err := certfixture.LoadTopology(
+		filepath.Join(repoRoot, "test", "integration", "certfixture", "topology.json"))
+	if err != nil {
+		return &qberrors.WrappedMessageError{
+			Message: "load integration cert fixture topology",
+			Cause:   err,
 		}
 	}
-	if !missing {
-		return nil
-	}
-
-	cmd := exec.Command("go", "run", "./test/integration/gen-certs", certsFixtureDir)
-	cmd.Dir = repoRoot
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if err := certfixture.Ensure(context.Background(), certsFixtureDir, topology); err != nil {
 		return &qberrors.WrappedMessageError{
-			Message: "generate integration cert fixtures: " + string(out),
+			Message: "issue integration cert fixtures",
 			Cause:   err,
 		}
 	}

@@ -61,7 +61,6 @@ Supported providers:
 	}
 
 	// Add persistent flags for all embedding commands
-	cmd.PersistentFlags().DurationVar(&timeout, "timeout", 30*time.Second, "Request timeout")
 	cmd.PersistentFlags().StringVar(&outputFormat, "output", "table", "Output format (json, yaml, table, raw)")
 
 	// TLS flags
@@ -167,7 +166,7 @@ func runEmbeddingGenerateCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Parse metadata if provided
@@ -282,7 +281,7 @@ func runBatchGenerate(items []*embedding.BatchEmbeddingItem) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &embedding.BatchGenerateEmbeddingsRequest{
@@ -333,7 +332,7 @@ func runEmbeddingProvidersCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &embedding.ListProvidersRequest{
@@ -376,7 +375,7 @@ func runEmbeddingProviderInfoCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &embedding.GetProviderInfoRequest{
@@ -418,7 +417,7 @@ func runEmbeddingProviderSetDefaultCommand(cmd *cobra.Command, args []string) er
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &embedding.SetDefaultProviderRequest{
@@ -461,7 +460,7 @@ func runEmbeddingCacheStatsCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &embedding.GetEmbeddingCacheStatsRequest{}
@@ -504,7 +503,7 @@ func runEmbeddingCacheClearCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &embedding.ClearEmbeddingCacheRequest{

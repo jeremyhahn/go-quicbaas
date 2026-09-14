@@ -214,11 +214,14 @@ func TestCreateProject_WorkspaceRequestValidation(t *testing.T) {
 			WorkspaceManaged:       true,
 			GitCredentialSecretRef: "sec-1",
 		}},
-		{"credentials without managed workspace", &CreateProjectRequest{
-			TenantID:      "tenant-a",
-			Name:          "p",
-			GitRepoURL:    "git@github.com:org/repo.git",
-			GitSSHKeyName: "key-1",
+		// A token secret is resolved only for a managed-workspace clone. An
+		// SSH key reference is different: it is a persisted property of the
+		// workspace (Project.Git.SSHKey) and is accepted without one.
+		{"token credential without managed workspace", &CreateProjectRequest{
+			TenantID:               "tenant-a",
+			Name:                   "p",
+			GitRepoURL:             "https://example.com/r.git",
+			GitCredentialSecretRef: "sec-1",
 		}},
 	}
 	for _, tt := range tests {

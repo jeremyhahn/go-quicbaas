@@ -1,6 +1,6 @@
 # Authorization — API
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-09-13
 > The capability on every transport, with permissions. Feature folder: `docs/authorization/`.
 
 > **Overview**: QuicBaaS provides a unified authorization system that protects all API protocols (REST, gRPC, QUIC, MCP) with configurable access control.
@@ -36,18 +36,24 @@ Every row below is derived from source, not from prose. The columns mean:
 
 ### `quicbaas.RBAC` — SDK package `sdk/go/client/rbac`
 
-Dedicated transport handlers: rest=no, grpc=yes, mcp=no; embedded routes registered: 8; MCP tools registered server-side: 0.
+Dedicated transport handlers: rest=no, grpc=yes, mcp=no; embedded routes registered: 5; MCP tools registered server-side: 5 (`qrdb_role_create`, `qrdb_role_delete`, `qrdb_role_list`, `qrdb_role_assign`, `quicbaas_role_revoke`).
+
+**Roles only.** This surface has no user verbs. Users belong to go-qrdb and are
+administered over the single IAM surface — `Identity().IAM().User()` on the SDK,
+`/api/v1/iam/users` on REST, `quicbaas.iam.v1.IAMService` on gRPC,
+`quicbaas_iam_user_*` on MCP (see [../iam/api.md](../iam/api.md)). The
+`CreateUser` / `DeleteUser` / `ListUsers` rows that used to sit in this table
+dispatched to an auth manager production never wired, so every call failed; they
+were deleted in go-quicbaas#905 together with the parallel identity model they
+belonged to.
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
-| `AssignRole` | `POST /api/v1/rbac/users/{username}/roles` | **no** | yes | MISSING | yes | — |
-| `CreateRole` | `POST /api/v1/rbac/roles` | **no** | yes | MISSING | yes | — |
-| `CreateUser` | `POST /api/v1/rbac/users` | **no** | yes | MISSING | yes | — |
-| `DeleteRole` | `DELETE /api/v1/rbac/roles/{name}` | **no** | yes | MISSING | yes | — |
-| `DeleteUser` | `DELETE /api/v1/rbac/users/{username}` | **no** | yes | MISSING | yes | — |
-| `ListRoles` | `GET /api/v1/rbac/roles` | **no** | yes | MISSING | yes | — |
-| `ListUsers` | `GET /api/v1/rbac/users` | **no** | yes | MISSING | yes | — |
-| `RevokeRole` | `DELETE /api/v1/rbac/users/{username}/roles/{role}` | **no** | yes | MISSING | yes | — |
+| `AssignRole` | `POST /api/v1/rbac/users/{username}/roles` | **no** | yes | `qrdb_role_assign` | yes | — |
+| `CreateRole` | `POST /api/v1/rbac/roles` | **no** | yes | `qrdb_role_create` | yes | — |
+| `DeleteRole` | `DELETE /api/v1/rbac/roles/{name}` | **no** | yes | `qrdb_role_delete` | yes | — |
+| `ListRoles` | `GET /api/v1/rbac/roles` | **no** | yes | `qrdb_role_list` | yes | — |
+| `RevokeRole` | `DELETE /api/v1/rbac/users/{username}/roles/{role}` | **no** | yes | `quicbaas_role_revoke` | yes | — |
 
 
 ## Authorization Providers

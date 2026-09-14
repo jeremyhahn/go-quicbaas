@@ -86,10 +86,38 @@ type CreateProjectRequest struct {
 	GitRepoURL       string
 	GitDefaultBranch string
 	AgentRoles       map[string]orchestration.ProjectRole
-	TokenBudget      int64
-	GPUMinutes       int64
-	MaxConcurrency   int
-	Metadata         map[string]string
+
+	// DefaultWorkflow names the tenant-scoped workflow a Task under this
+	// project auto-spawns into. Empty means never. A set name must be
+	// registered in the tenant, or the create is refused.
+	DefaultWorkflow string
+
+	// Autonomous turns autonomous development on for the new project: the
+	// task-source poller adopts work for it and the dispatcher starts jobs
+	// for it. False leaves the project operator-driven.
+	Autonomous bool
+
+	// ContextRepos names the repositories the worker clones beside the
+	// project checkout. Refused when two would occupy one directory.
+	ContextRepos []orchestration.ContextRepo
+
+	// GitAuthorName / GitAuthorEmail are the identity recorded on commits
+	// made from the workspace. Both or neither.
+	GitAuthorName  string
+	GitAuthorEmail string
+
+	// GitSigningEnabled turns commit signing on. An enabled policy must name
+	// a key (GitSigningKeyName) and may pin an algorithm
+	// (GitSigningAlgorithm: ED25519 default, ECDSA-P256 under FIPS).
+	GitSigningEnabled   bool
+	GitSigningAlgorithm string
+	GitSigningKeyName   string
+	GitSigningKeyScope  string
+	GitSigningKeyOwner  string
+	TokenBudget         int64
+	GPUMinutes          int64
+	MaxConcurrency      int
+	Metadata            map[string]string
 
 	// WorkspaceManaged requests a server-managed workspace: the server
 	// provisions <projects_root>/<tenant_id>/<project_id>/workspace (0700)
@@ -109,11 +137,13 @@ type CreateProjectRequest struct {
 	// token. Empty selects the provisioner default.
 	GitCredentialUsername string
 
-	// GitSSHKeyName / GitSSHKeyScope / GitSSHKeyOwner reference an xkms-held
-	// SSH key used for git-over-SSH auth, mirroring the deploy Spec's
-	// (name, scope, owner) triple. Requires WorkspaceManaged and an SSH
-	// GitRepoURL; mutually exclusive with GitCredentialSecretRef. Scope
-	// defaults to "tenant" and owner to the tenant ID.
+	// GitSSHKeyName / GitSSHKeyScope / GitSSHKeyOwner reference the
+	// xkms-held SSH key an ssh:// GitRepoURL is reached with, mirroring the
+	// deploy Spec's (name, scope, owner) triple. The reference (never the
+	// material) is persisted on the project as Git.SSHKey; when empty, the
+	// signing key doubles as the access key (Git.AccessKey). Mutually
+	// exclusive with GitCredentialSecretRef. Scope defaults to "tenant" and
+	// owner to the tenant ID.
 	GitSSHKeyName  string
 	GitSSHKeyScope string
 	GitSSHKeyOwner string
@@ -159,10 +189,50 @@ type UpdateProjectRequest struct {
 	GitDefaultBranch string
 	GitCurrentSHA    string
 	AgentRoles       map[string]orchestration.ProjectRole
-	TokenBudget      int64
-	GPUMinutes       int64
-	MaxConcurrency   int
 	Metadata         map[string]string
+
+	// The quotas are POINTERS so that zero is expressible. Zero is not "no
+	// value" here — ProjectQuotas defines it as UNLIMITED — so applying a
+	// quota only when it was non-zero meant an operator could lift a cap,
+	// watch the save succeed, and stay capped. Nil is "leave it alone",
+	// which is the same presence rule GitSigningEnabled already uses.
+	TokenBudget    *int64
+	GPUMinutes     *int64
+	MaxConcurrency *int
+
+	// DefaultWorkflow sets the auto-spawn workflow when non-empty; the name
+	// must be registered in the tenant. ClearDefaultWorkflow removes it.
+	DefaultWorkflow      string
+	ClearDefaultWorkflow bool
+
+	// Autonomous updates the autonomous-development switch when non-nil, so
+	// "unchanged" and "off" stay distinct.
+	Autonomous *bool
+
+	// ContextRepos replaces the whole context repository list when non-nil;
+	// ClearContextRepos empties it.
+	ContextRepos      []orchestration.ContextRepo
+	ClearContextRepos bool
+
+	// GitAuthorName / GitAuthorEmail update the commit identity when
+	// non-empty.
+	GitAuthorName  string
+	GitAuthorEmail string
+
+	// GitSigningEnabled updates the signing switch when non-nil; the other
+	// signing fields update when non-empty. The resulting policy must still
+	// validate (an enabled policy names a key).
+	GitSigningEnabled   *bool
+	GitSigningAlgorithm string
+	GitSigningKeyName   string
+	GitSigningKeyScope  string
+	GitSigningKeyOwner  string
+
+	// GitSSHKeyName / GitSSHKeyScope / GitSSHKeyOwner update the access key
+	// reference when non-empty.
+	GitSSHKeyName  string
+	GitSSHKeyScope string
+	GitSSHKeyOwner string
 }
 
 // UpdateProjectResponse wraps the updated project.
@@ -268,7 +338,14 @@ func (e *ProjectAlreadyExistsError) Error() string {
 type ProjectInvalidError struct {
 	Field   string
 	Message string
+
+	// Err is the domain error that refused the field, when one exists, so
+	// callers can still match it with errors.Is / errors.As.
+	Err error
 }
+
+// Unwrap returns the domain error the service converted, if any.
+func (e *ProjectInvalidError) Unwrap() error { return e.Err }
 
 // Error implements the error interface.
 func (e *ProjectInvalidError) Error() string {
@@ -294,6 +371,29 @@ func (e *ProjectAccessDeniedError) Error() string {
 		" actual=" + string(e.ActualRole)
 }
 
+// ProjectUnresolvedError is returned when a project-scoped authorization names
+// a project the store cannot produce. It is the service-layer face of
+// orchestration.ProjectUnresolvedError: a refusal, never a pass.
+type ProjectUnresolvedError struct {
+	TenantID  string
+	ProjectID string
+	AgentID   string
+
+	// Err is the orchestration error this converts, so callers can still
+	// match orchestration.ErrProjectUnresolved with errors.Is.
+	Err error
+}
+
+// Unwrap returns the orchestration error the service converted.
+func (e *ProjectUnresolvedError) Unwrap() error { return e.Err }
+
+// Error implements the error interface.
+func (e *ProjectUnresolvedError) Error() string {
+	return "project unresolved: tenant=" + e.TenantID +
+		" project=" + e.ProjectID +
+		" agent=" + e.AgentID
+}
+
 // ProjectRoleInvalidError is returned when a role string is not recognized.
 type ProjectRoleInvalidError struct {
 	Role string
@@ -308,11 +408,43 @@ func (e *ProjectRoleInvalidError) Error() string {
 // projectServiceImpl — concrete implementation
 // =============================================================================
 
+// WorkflowResolver answers whether a tenant has a workflow by name. The
+// orchestration WorkflowLoader satisfies it; the project service consults it
+// so a Project can never name a DefaultWorkflow the tenant does not have.
+type WorkflowResolver interface {
+	Get(tenantID, name string) (*orchestration.WorkflowDefinition, error)
+}
+
 // projectServiceImpl implements ProjectService using a ProjectStore.
 type projectServiceImpl struct {
 	store       orchestration.ProjectStore
 	authz       *orchestration.ProjectAuthz
 	provisioner *ProjectWorkspaceProvisioner
+	workflows   WorkflowResolver
+}
+
+// projectStoreContext binds the request's tenant to the context the project
+// store is addressed with.
+//
+// THE STORE THE SERVER INJECTS ROUTES BY CONTEXT. It sends every operation to
+// the backend of the tenant bound to the operation's context, so a project
+// written under a context that names no tenant lands in the shared store while
+// every tenant-stamped reader — the orchestrator's ClaimTask project PEP above
+// all — looks in that tenant's own namespace and finds nothing. The PEP then
+// sees a project it cannot resolve on every scoped task, which is how the
+// per-project role matrix stopped being enforced at all (go-quicbaas#634). A
+// record whose owning tenant the request states is therefore addressed under
+// that tenant.
+//
+// A context that already names a tenant is left exactly as it is. Which tenant
+// a caller may act as is an admission decision made above this layer, and this
+// helper must never be the thing that redirects a write into a tenant the
+// caller was not admitted to.
+func projectStoreContext(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" || orchestration.TenantFromContext(ctx) != "" {
+		return ctx
+	}
+	return orchestration.ContextWithTenant(ctx, tenantID)
 }
 
 // NewProjectService creates a new ProjectService backed by the given store.
@@ -343,6 +475,57 @@ func (s *projectServiceImpl) WorkspaceProvisioner() *ProjectWorkspaceProvisioner
 	return s.provisioner
 }
 
+// SetWorkflowResolver wires the tenant-scoped workflow registry a
+// DefaultWorkflow is verified against. The server binds it after the
+// orchestration workflow loader is built and rehydrated. Without it, a
+// request that names a DefaultWorkflow is refused rather than stored
+// unverified.
+func (s *projectServiceImpl) SetWorkflowResolver(r WorkflowResolver) {
+	s.workflows = r
+}
+
+// validateDefaultWorkflow refuses a DefaultWorkflow the tenant does not have.
+func (s *projectServiceImpl) validateDefaultWorkflow(tenantID, name string) error {
+	if name == "" {
+		return nil
+	}
+	if s.workflows == nil {
+		return &ProjectInvalidError{
+			Field:   "default_workflow",
+			Message: "no workflow registry is attached; a default workflow cannot be verified",
+		}
+	}
+	if _, err := s.workflows.Get(tenantID, name); err != nil {
+		return &ProjectInvalidError{
+			Field:   "default_workflow",
+			Message: "unknown workflow " + name + " in tenant " + tenantID,
+		}
+	}
+	return nil
+}
+
+// validateContextRepos refuses a context repository the worker could not
+// clone beside the project, carrying the domain error rather than restating
+// its message.
+func (s *projectServiceImpl) validateContextRepos(repos []orchestration.ContextRepo) error {
+	if err := orchestration.ValidateContextRepos(repos); err != nil {
+		return &ProjectInvalidError{
+			Field:   "context_repos",
+			Message: err.Error(),
+			Err:     err,
+		}
+	}
+	return nil
+}
+
+// validateGit refuses workspace git metadata the provisioner could not honour.
+func (s *projectServiceImpl) validateGit(git orchestration.ProjectGit) error {
+	if err := git.Validate(); err != nil {
+		return s.convertStoreError(err)
+	}
+	return nil
+}
+
 // CreateProject validates and persists a new project. A managed-workspace
 // request additionally provisions the workspace directory and, when a git
 // repository URL is present, starts the tracked background clone; the call
@@ -358,7 +541,30 @@ func (s *projectServiceImpl) CreateProject(ctx context.Context, req *CreateProje
 	if req.Name == "" {
 		return nil, &ProjectInvalidError{Field: "name", Message: "project name is required"}
 	}
+	ctx = projectStoreContext(ctx, req.TenantID)
+
 	if err := s.validateWorkspaceRequest(req); err != nil {
+		return nil, err
+	}
+	if err := s.validateDefaultWorkflow(req.TenantID, req.DefaultWorkflow); err != nil {
+		return nil, err
+	}
+	if err := s.validateContextRepos(req.ContextRepos); err != nil {
+		return nil, err
+	}
+
+	git := orchestration.ProjectGit{
+		RepoURL:       req.GitRepoURL,
+		DefaultBranch: req.GitDefaultBranch,
+		Author:        orchestration.GitAuthor{Name: req.GitAuthorName, Email: req.GitAuthorEmail},
+		Signing: orchestration.CommitSigning{
+			Enabled:   req.GitSigningEnabled,
+			Algorithm: req.GitSigningAlgorithm,
+			Key:       orchestration.KMSKeyRef{Name: req.GitSigningKeyName, Scope: req.GitSigningKeyScope, Owner: req.GitSigningKeyOwner},
+		},
+		SSHKey: orchestration.KMSKeyRef{Name: req.GitSSHKeyName, Scope: req.GitSSHKeyScope, Owner: req.GitSSHKeyOwner},
+	}
+	if err := s.validateGit(git); err != nil {
 		return nil, err
 	}
 
@@ -369,14 +575,14 @@ func (s *projectServiceImpl) CreateProject(ctx context.Context, req *CreateProje
 		Description:      req.Description,
 		HostAffinity:     req.HostAffinity,
 		DefaultLeadAgent: req.DefaultLeadAgent,
+		DefaultWorkflow:  req.DefaultWorkflow,
+		Autonomous:       req.Autonomous,
+		ContextRepos:     req.ContextRepos,
 		Workspace: orchestration.ProjectWorkspace{
 			AgentID: req.WorkspaceAgentID,
 			Path:    req.WorkspacePath,
 		},
-		Git: orchestration.ProjectGit{
-			RepoURL:       req.GitRepoURL,
-			DefaultBranch: req.GitDefaultBranch,
-		},
+		Git: git,
 		Quotas: orchestration.ProjectQuotas{
 			TokenBudget:    req.TokenBudget,
 			GPUMinutes:     req.GPUMinutes,
@@ -425,11 +631,7 @@ func (s *projectServiceImpl) CreateProject(ctx context.Context, req *CreateProje
 			Branch:         req.GitDefaultBranch,
 			TokenSecretRef: req.GitCredentialSecretRef,
 			TokenUsername:  req.GitCredentialUsername,
-			SSHKey: SSHKeyRef{
-				Name:  req.GitSSHKeyName,
-				Scope: req.GitSSHKeyScope,
-				Owner: req.GitSSHKeyOwner,
-			},
+			SSHKey:         sshKeyRefFrom(project.Git.AccessKey()),
 		}
 		if cloneErr := s.provisioner.StartClone(ctx, project, spec); cloneErr != nil {
 			return nil, cloneErr
@@ -466,10 +668,10 @@ func (s *projectServiceImpl) validateWorkspaceRequest(req *CreateProjectRequest)
 			Message: "git credentials require a git repository URL",
 		}
 	}
-	if (hasToken || hasSSHKey) && !req.WorkspaceManaged {
+	if hasToken && !req.WorkspaceManaged {
 		return &ProjectInvalidError{
 			Field:   "workspace_managed",
-			Message: "git credentials require a managed workspace",
+			Message: "a git credential secret is resolved only for a managed workspace clone",
 		}
 	}
 	if req.WorkspaceManaged {
@@ -495,7 +697,7 @@ func (s *projectServiceImpl) GetProject(ctx context.Context, req *GetProjectRequ
 		return nil, &ProjectInvalidError{Field: "project_id", Message: "project ID is required"}
 	}
 
-	project, err := s.store.Get(ctx, req.TenantID, req.ProjectID)
+	project, err := s.store.Get(projectStoreContext(ctx, req.TenantID), req.TenantID, req.ProjectID)
 	if err != nil {
 		return nil, s.convertStoreError(err)
 	}
@@ -518,7 +720,7 @@ func (s *projectServiceImpl) GetProjectByName(ctx context.Context, req *GetProje
 		return nil, &ProjectInvalidError{Field: "name", Message: "project name is required"}
 	}
 
-	project, err := s.store.GetByName(ctx, req.TenantID, req.Name)
+	project, err := s.store.GetByName(projectStoreContext(ctx, req.TenantID), req.TenantID, req.Name)
 	if err != nil {
 		return nil, s.convertStoreError(err)
 	}
@@ -540,6 +742,8 @@ func (s *projectServiceImpl) UpdateProject(ctx context.Context, req *UpdateProje
 	if req.ProjectID == "" {
 		return nil, &ProjectInvalidError{Field: "project_id", Message: "project ID is required"}
 	}
+
+	ctx = projectStoreContext(ctx, req.TenantID)
 
 	// Load the existing project.
 	existing, err := s.store.Get(ctx, req.TenantID, req.ProjectID)
@@ -577,17 +781,69 @@ func (s *projectServiceImpl) UpdateProject(ctx context.Context, req *UpdateProje
 	if req.GitCurrentSHA != "" {
 		existing.Git.CurrentSHA = req.GitCurrentSHA
 	}
+	if req.GitAuthorName != "" {
+		existing.Git.Author.Name = req.GitAuthorName
+	}
+	if req.GitAuthorEmail != "" {
+		existing.Git.Author.Email = req.GitAuthorEmail
+	}
+	if req.GitSigningEnabled != nil {
+		existing.Git.Signing.Enabled = *req.GitSigningEnabled
+	}
+	if req.GitSigningAlgorithm != "" {
+		existing.Git.Signing.Algorithm = req.GitSigningAlgorithm
+	}
+	if req.GitSigningKeyName != "" {
+		existing.Git.Signing.Key.Name = req.GitSigningKeyName
+	}
+	if req.GitSigningKeyScope != "" {
+		existing.Git.Signing.Key.Scope = req.GitSigningKeyScope
+	}
+	if req.GitSigningKeyOwner != "" {
+		existing.Git.Signing.Key.Owner = req.GitSigningKeyOwner
+	}
+	if req.GitSSHKeyName != "" {
+		existing.Git.SSHKey.Name = req.GitSSHKeyName
+	}
+	if req.GitSSHKeyScope != "" {
+		existing.Git.SSHKey.Scope = req.GitSSHKeyScope
+	}
+	if req.GitSSHKeyOwner != "" {
+		existing.Git.SSHKey.Owner = req.GitSSHKeyOwner
+	}
+	if err := s.validateGit(existing.Git); err != nil {
+		return nil, err
+	}
+	if req.ClearDefaultWorkflow {
+		existing.DefaultWorkflow = ""
+	} else if req.DefaultWorkflow != "" {
+		if err := s.validateDefaultWorkflow(req.TenantID, req.DefaultWorkflow); err != nil {
+			return nil, err
+		}
+		existing.DefaultWorkflow = req.DefaultWorkflow
+	}
+	if req.Autonomous != nil {
+		existing.Autonomous = *req.Autonomous
+	}
+	if req.ClearContextRepos {
+		existing.ContextRepos = nil
+	} else if req.ContextRepos != nil {
+		if err := s.validateContextRepos(req.ContextRepos); err != nil {
+			return nil, err
+		}
+		existing.ContextRepos = req.ContextRepos
+	}
 	if req.AgentRoles != nil {
 		existing.Permissions.AgentRoles = req.AgentRoles
 	}
-	if req.TokenBudget != 0 {
-		existing.Quotas.TokenBudget = req.TokenBudget
+	if req.TokenBudget != nil {
+		existing.Quotas.TokenBudget = *req.TokenBudget
 	}
-	if req.GPUMinutes != 0 {
-		existing.Quotas.GPUMinutes = req.GPUMinutes
+	if req.GPUMinutes != nil {
+		existing.Quotas.GPUMinutes = *req.GPUMinutes
 	}
-	if req.MaxConcurrency != 0 {
-		existing.Quotas.MaxConcurrency = req.MaxConcurrency
+	if req.MaxConcurrency != nil {
+		existing.Quotas.MaxConcurrency = *req.MaxConcurrency
 	}
 	if req.Metadata != nil {
 		existing.Metadata = req.Metadata
@@ -617,6 +873,8 @@ func (s *projectServiceImpl) DeleteProject(ctx context.Context, req *DeleteProje
 	if req.ProjectID == "" {
 		return nil, &ProjectInvalidError{Field: "project_id", Message: "project ID is required"}
 	}
+
+	ctx = projectStoreContext(ctx, req.TenantID)
 
 	project, err := s.store.Get(ctx, req.TenantID, req.ProjectID)
 	if err != nil {
@@ -654,7 +912,7 @@ func (s *projectServiceImpl) ListProjects(ctx context.Context, req *ListProjects
 		return nil, &ProjectInvalidError{Field: "tenant_id", Message: "tenant ID is required"}
 	}
 
-	projects, err := s.store.ListByTenant(ctx, req.TenantID)
+	projects, err := s.store.ListByTenant(projectStoreContext(ctx, req.TenantID), req.TenantID)
 	if err != nil {
 		return nil, s.convertStoreError(err)
 	}
@@ -716,11 +974,13 @@ func (s *projectServiceImpl) AuthorizeAgent(ctx context.Context, req *AuthorizeA
 		return nil // unscoped — legacy behaviour
 	}
 
-	err := s.authz.AuthorizeAgentForTenant(ctx, req.TenantID, req.ProjectID, req.AgentID, req.RequiredRole)
+	err := s.authz.AuthorizeAgentForTenant(
+		projectStoreContext(ctx, req.TenantID), req.TenantID, req.ProjectID, req.AgentID, req.RequiredRole)
 	if err != nil {
 		var (
 			denied      *orchestration.ProjectAccessDeniedError
 			roleInvalid *orchestration.ProjectRoleInvalidError
+			unresolved  *orchestration.ProjectUnresolvedError
 		)
 		switch {
 		case stderrors.As(err, &denied):
@@ -729,6 +989,13 @@ func (s *projectServiceImpl) AuthorizeAgent(ctx context.Context, req *AuthorizeA
 				AgentID:      denied.AgentID,
 				RequiredRole: denied.RequiredRole,
 				ActualRole:   denied.ActualRole,
+			}
+		case stderrors.As(err, &unresolved):
+			return &ProjectUnresolvedError{
+				TenantID:  unresolved.TenantID,
+				ProjectID: unresolved.ProjectID,
+				AgentID:   unresolved.AgentID,
+				Err:       err,
 			}
 		case stderrors.As(err, &roleInvalid):
 			return &ProjectRoleInvalidError{Role: roleInvalid.Role}
@@ -753,6 +1020,8 @@ func (s *projectServiceImpl) GrantAgentRole(ctx context.Context, req *GrantAgent
 	if req.AgentID == "" {
 		return nil, &ProjectInvalidError{Field: "agent_id", Message: "agent ID is required"}
 	}
+
+	ctx = projectStoreContext(ctx, req.TenantID)
 
 	project, err := s.store.Get(ctx, req.TenantID, req.ProjectID)
 	if err != nil {

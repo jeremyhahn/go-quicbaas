@@ -384,9 +384,11 @@ func TestHandleProjectUpdate_AllFieldsRoundTrip(t *testing.T) {
 			"agent-w1": projectSDK.ProjectRoleLead,
 			"agent-w2": projectSDK.ProjectRoleWorker,
 		},
-		TokenBudget:    200_000,
-		GPUMinutes:     120,
-		MaxConcurrency: 8,
+		// The quotas are presence-carrying pointers: zero means unlimited,
+		// so absent and zero must stay distinct across the transport.
+		TokenBudget:    ptrTo(int64(200_000)),
+		GPUMinutes:     ptrTo(int64(120)),
+		MaxConcurrency: ptrTo(8),
 		Metadata:       map[string]string{"phase": "pilot"},
 	}
 
@@ -549,4 +551,236 @@ func TestHandleOrchestratorStartJob_ThreadsLeadAgentID(t *testing.T) {
 	require.NotNil(t, agent.startJobReq, "StartJob was not invoked")
 	assert.Equal(t, "agent-lead-1", agent.startJobReq.LeadAgentID,
 		"LeadAgentID was dropped between SDK StartJobRequest and orchestration StartJobRequest")
+}
+
+// TestHandleProject_DefaultWorkflowAndGitIdentityRoundTrip drives the
+// embedded transport against the real project service: every new field on
+// the SDK request is persisted and projected back on the nested SDK shape,
+// and the update's signing switch is tri-state.
+func TestHandleProject_DefaultWorkflowAndGitIdentityRoundTrip(t *testing.T) {
+	svc := newProjectTestHarness()
+	ctx := context.Background()
+
+	created, err := handleProjectCreate(ctx, svc, &projectSDK.CreateProjectRequest{
+		TenantID: "tenant-a", Name: "api",
+		GitRepoURL:          "ssh://git@forge.example.test/acme/api.git",
+		GitAuthorName:       "agent-api",
+		GitAuthorEmail:      "agent-api@example.test",
+		GitSigningEnabled:   true,
+		GitSigningAlgorithm: "ECDSA-P256",
+		GitSigningKeyName:   "api-signing",
+		GitSigningKeyScope:  "tenant",
+		GitSigningKeyOwner:  "tenant-a",
+		GitSSHKeyName:       "api-access",
+		GitSSHKeyScope:      "service",
+		GitSSHKeyOwner:      "deploy",
+	})
+	require.NoError(t, err)
+	info, ok := created.(*projectSDK.ProjectInfo)
+	require.True(t, ok)
+	wantGit := projectSDK.ProjectGit{
+		RepoURL: "ssh://git@forge.example.test/acme/api.git",
+		Author:  projectSDK.GitAuthor{Name: "agent-api", Email: "agent-api@example.test"},
+		Signing: projectSDK.CommitSigning{
+			Enabled: true, Algorithm: "ECDSA-P256",
+			Key: projectSDK.KMSKeyRef{Name: "api-signing", Scope: "tenant", Owner: "tenant-a"},
+		},
+		SSHKey: projectSDK.KMSKeyRef{Name: "api-access", Scope: "service", Owner: "deploy"},
+	}
+	assert.Equal(t, wantGit, info.Git)
+	assert.Empty(t, info.DefaultWorkflow)
+
+	// An unknown default workflow is refused by the service through the
+	// embedded path exactly as through every other transport.
+	_, err = handleProjectCreate(ctx, svc, &projectSDK.CreateProjectRequest{TenantID: "tenant-a", Name: "other", DefaultWorkflow: "ghost"})
+	require.Error(t, err)
+
+	off := false
+	updated, err := handleProjectUpdate(ctx, svc, &projectSDK.UpdateProjectRequest{
+		TenantID: "tenant-a", ProjectID: info.ID,
+		GitSigningEnabled: &off,
+		GitAuthorEmail:    "agent-api@example.internal",
+		GitSSHKeyName:     "rotated",
+	})
+	require.NoError(t, err)
+	uinfo, ok := updated.(*projectSDK.ProjectInfo)
+	require.True(t, ok)
+	assert.False(t, uinfo.Git.Signing.Enabled)
+	assert.Equal(t, "api-signing", uinfo.Git.Signing.Key.Name, "turning signing off keeps the key reference")
+	assert.Equal(t, "agent-api@example.internal", uinfo.Git.Author.Email)
+	assert.Equal(t, "rotated", uinfo.Git.SSHKey.Name)
+	assert.Equal(t, "service", uinfo.Git.SSHKey.Scope, "an unset scope leaves the stored scope")
+
+	untouched, err := handleProjectUpdate(ctx, svc, &projectSDK.UpdateProjectRequest{TenantID: "tenant-a", ProjectID: info.ID, Description: "x"})
+	require.NoError(t, err)
+	assert.False(t, untouched.(*projectSDK.ProjectInfo).Git.Signing.Enabled, "an update silent on signing leaves it as it was")
+}
+
+// =============================================================================
+// Autonomy + context repositories — in-process create → get and update → get
+// =============================================================================
+
+// TestHandleProject_AutonomyAndContextReposRoundTrip drives the embedded
+// handlers against a real in-memory project service, so the assertions cover
+// the SDK → service conversion, the service's own semantics and the service →
+// SDK conversion at once.
+func TestHandleProject_AutonomyAndContextReposRoundTrip(t *testing.T) {
+	svc := newProjectTestHarness()
+	ctx := context.Background()
+
+	created, err := handleProjectCreate(ctx, svc, &projectSDK.CreateProjectRequest{
+		TenantID:   "tenant-c",
+		Name:       "gamma",
+		Autonomous: true,
+		ContextRepos: []projectSDK.ContextRepo{
+			{Name: "handbook", RepoURL: "https://forge.example/org/handbook", Ref: "main"},
+		},
+	})
+	require.NoError(t, err)
+	info, ok := created.(*projectSDK.ProjectInfo)
+	require.True(t, ok, "expected *projectSDK.ProjectInfo, got %T", created)
+	assert.True(t, info.Autonomous)
+	require.Len(t, info.ContextRepos, 1)
+	assert.Equal(t, projectSDK.ContextRepo{
+		Name: "handbook", RepoURL: "https://forge.example/org/handbook", Ref: "main",
+	}, info.ContextRepos[0])
+
+	get := func() *projectSDK.ProjectInfo {
+		t.Helper()
+		result, getErr := handleProjectGet(ctx, svc, &projectSDK.GetProjectRequest{
+			TenantID: "tenant-c", ProjectID: info.ID,
+		})
+		require.NoError(t, getErr)
+		got, isInfo := result.(*projectSDK.ProjectInfo)
+		require.True(t, isInfo, "expected *projectSDK.ProjectInfo, got %T", result)
+		return got
+	}
+
+	got := get()
+	assert.True(t, got.Autonomous)
+	require.Len(t, got.ContextRepos, 1)
+
+	// An unset switch leaves both fields alone.
+	_, err = handleProjectUpdate(ctx, svc, &projectSDK.UpdateProjectRequest{
+		TenantID: "tenant-c", ProjectID: info.ID, Name: "gamma-renamed",
+	})
+	require.NoError(t, err)
+	got = get()
+	assert.True(t, got.Autonomous, "an unrelated update turned autonomy off")
+	assert.Len(t, got.ContextRepos, 1, "an unrelated update changed the context repos")
+
+	// An explicit false turns it off; a list replaces the whole list.
+	off := false
+	_, err = handleProjectUpdate(ctx, svc, &projectSDK.UpdateProjectRequest{
+		TenantID: "tenant-c", ProjectID: info.ID,
+		Autonomous: &off,
+		ContextRepos: []projectSDK.ContextRepo{
+			{Name: "specs", RepoURL: "https://forge.example/org/specs", Ref: "v2"},
+		},
+	})
+	require.NoError(t, err)
+	got = get()
+	assert.False(t, got.Autonomous)
+	require.Len(t, got.ContextRepos, 1)
+	assert.Equal(t, "specs", got.ContextRepos[0].Name)
+
+	// And a clear empties it.
+	_, err = handleProjectUpdate(ctx, svc, &projectSDK.UpdateProjectRequest{
+		TenantID: "tenant-c", ProjectID: info.ID, ClearContextRepos: true,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, get().ContextRepos)
+}
+
+// TestHandleProjectCreate_RefusesInvalidContextRepos: the service's typed
+// refusal reaches the embedded caller instead of a half-written project.
+func TestHandleProjectCreate_RefusesInvalidContextRepos(t *testing.T) {
+	svc := newProjectTestHarness()
+	_, err := handleProjectCreate(context.Background(), svc, &projectSDK.CreateProjectRequest{
+		TenantID: "tenant-d", Name: "delta",
+		ContextRepos: []projectSDK.ContextRepo{
+			{Name: "handbook", RepoURL: "https://forge.example/a", Ref: "main"},
+			{Name: "handbook", RepoURL: "https://forge.example/b", Ref: "main"},
+		},
+	})
+	require.Error(t, err)
+	var invalid *service.ProjectInvalidError
+	require.True(t, errors.As(err, &invalid), "expected *service.ProjectInvalidError, got %T: %v", err, err)
+	assert.Equal(t, "context_repos", invalid.Field)
+	assert.True(t, errors.Is(err, orchestration.ErrContextRepoInvalid),
+		"the refusal must carry the domain sentinel: %v", err)
+}
+
+// TestContextRepoConverters_NilFidelity: nil survives both directions, so an
+// update can tell "unchanged" from "empty".
+func TestContextRepoConverters_NilFidelity(t *testing.T) {
+	assert.Nil(t, contextReposToOrchestration(nil))
+	assert.Nil(t, contextReposToSDK(nil))
+	assert.Empty(t, contextReposToOrchestration([]projectSDK.ContextRepo{}))
+	assert.Empty(t, contextReposToSDK([]orchestration.ContextRepo{}))
+}
+
+// ptrTo is the presence-carrying form of a quota value.
+func ptrTo[T any](v T) *T { return &v }
+
+// TestArtifactToSDK_CarriesEveryField is the parity guard for the embedded
+// transport's artifact conversion.
+//
+// THE EMBEDDED TRANSPORT USED TO ANSWER WITH A SMALLER ARTIFACT THAN REST
+// SERVED for the same task: three separate copies of the conversion each
+// flattened Ref to its Path and dropped Kind and Metadata. No test caught it
+// because each transport was checked against its own expectation rather than
+// against the other.
+func TestArtifactToSDK_CarriesEveryField(t *testing.T) {
+	in := orchestration.Artifact{
+		Kind:     orchestration.ArtifactKindURL,
+		Name:     "outcome_comment",
+		MIMEType: "text/markdown",
+		Size:     42,
+		Content:  []byte("body"),
+		Ref: orchestration.ArtifactRef{
+			AgentID: "agent-1", Path: "http://forge.invalid/issues/128",
+			SHA: "deadbeef", Branch: "issue/128-x",
+		},
+		Metadata: map[string]string{"outcome": "readmitted"},
+	}
+
+	withContent := artifactToSDK(in, true)
+	if withContent.Kind != "url" || withContent.MIMEType != "text/markdown" || withContent.Size != 42 {
+		t.Fatalf("scalar fields lost: %+v", withContent)
+	}
+	if withContent.Metadata["outcome"] != "readmitted" {
+		t.Fatalf("metadata lost: %+v", withContent.Metadata)
+	}
+	if string(withContent.Content) != "body" {
+		t.Fatalf("inline content requested but not carried: %q", withContent.Content)
+	}
+	ref := withContent.Ref
+	if ref == nil || ref.AgentID != "agent-1" || ref.Path != "http://forge.invalid/issues/128" ||
+		ref.SHA != "deadbeef" || ref.Branch != "issue/128-x" {
+		t.Fatalf("ref lost fields: %+v", ref)
+	}
+
+	// A listing is metadata plus a reference; the payload stays behind.
+	listed := artifactToSDK(in, false)
+	if len(listed.Content) != 0 {
+		t.Fatalf("a listing must not inline content, got %q", listed.Content)
+	}
+	if listed.Ref == nil || listed.Ref.Path != in.Ref.Path {
+		t.Fatalf("a listing still carries its ref: %+v", listed.Ref)
+	}
+}
+
+// TestArtifactToSDK_ZeroRefStaysNil keeps an inline artifact from acquiring an
+// empty ref object, which would make Kind and Ref disagree on the wire.
+func TestArtifactToSDK_ZeroRefStaysNil(t *testing.T) {
+	out := artifactToSDK(orchestration.Artifact{
+		Kind: orchestration.ArtifactKindInline, Name: "log.txt", Content: []byte("hi"),
+	}, true)
+	if out.Ref != nil {
+		t.Fatalf("an inline artifact must carry no ref, got %+v", out.Ref)
+	}
+	if artifactRefToDomain(nil) != (orchestration.ArtifactRef{}) {
+		t.Fatal("a nil ref must convert to the zero ref rather than panicking")
+	}
 }

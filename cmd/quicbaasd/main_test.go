@@ -460,25 +460,25 @@ func TestVersionCmd_ExecuteShort(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestInitConfig_ConfigFileParseFail creates a test to trigger config file
-// parsing error path in initConfig by creating a syntactically invalid YAML.
+// TestInitConfig_ConfigFileParseFail drives initConfig against syntactically
+// invalid YAML, in a subprocess because that path exits.
+//
+// The PARENT writes the file, in a directory testing removes. The subprocess
+// cannot own it: it never returns from initConfig, so a deferred os.Remove
+// there never runs, and the file it used to write into os.TempDir() survived
+// every run of this package (go-quicbaas#693).
 func TestInitConfig_ConfigFileParseFail(t *testing.T) {
 	if os.Getenv("TEST_SUBPROCESS") == "1" {
-		// Create a config file with invalid YAML syntax
-		tempDir := os.TempDir()
-		configPath := filepath.Join(tempDir, "invalid_config_test.yaml")
-		// Completely invalid YAML that will fail parsing
-		invalidContent := "{{{{invalid yaml syntax}}}}"
-		os.WriteFile(configPath, []byte(invalidContent), 0o644)
-		defer os.Remove(configPath)
-
-		cfgFile = configPath
+		cfgFile = os.Getenv("TEST_SUBPROCESS_CONFIG")
 		initConfig()
 		return
 	}
 
+	configPath := filepath.Join(t.TempDir(), "invalid_config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte("{{{{invalid yaml syntax}}}}"), 0o600))
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestInitConfig_ConfigFileParseFail")
-	cmd.Env = append(os.Environ(), "TEST_SUBPROCESS=1")
+	cmd.Env = append(os.Environ(), "TEST_SUBPROCESS=1", "TEST_SUBPROCESS_CONFIG="+configPath)
 	output, err := cmd.CombinedOutput()
 
 	// Expect exit code 1 and error message

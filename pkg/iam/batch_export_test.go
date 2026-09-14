@@ -2,6 +2,7 @@ package iam
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -132,8 +133,11 @@ func populateTestData(t *testing.T, storage *MemoryStorage, tenantID string) {
 	}
 }
 
+// generateTestUserID renders the canonical qrdb user id for fixture i. A user
+// id is the decimal rendering of a Snowflake, so the fixtures are numbered from
+// 1 — zero is the store's invalid sentinel and names no user.
 func generateTestUserID(i int) string {
-	return "user-" + string(rune('a'+i))
+	return FormatUserID(uint64(i) + 1)
 }
 
 func generateTestEmail(i int) string {
@@ -396,7 +400,7 @@ func TestExportAll(t *testing.T) {
 			IncludeRoles:    true,
 			IncludePolicies: true,
 			Filter: ExportFilter{
-				UserIDs:     []string{"user-a"},
+				UserIDs:     []string{"1"},
 				GroupIDs:    []string{"group-a"},
 				RoleIDs:     []string{"role-a"},
 				PolicyNames: []string{"policy-a"},
@@ -448,7 +452,7 @@ func TestExportUsersWithFilters(t *testing.T) {
 
 		ctx := context.Background()
 		filter := ExportFilter{
-			UserIDs: []string{"user-a", "user-c"},
+			UserIDs: []string{"1", "3"},
 		}
 
 		users, err := bm.ExportUsers(ctx, tenantID, filter)
@@ -1278,13 +1282,12 @@ func TestConvertToImportRequest(t *testing.T) {
 					Email:      "user1@example.com",
 					Name:       "User One",
 					TenantID:   "source-tenant",
+					Lifecycle:  LifecycleActive,
 					Groups:     []string{"g1"},
 					Roles:      []string{"r1"},
-					Attributes: map[string]interface{}{"dept": "engineering"},
+					Attributes: map[string]string{"dept": "engineering"},
 					Created:    now,
 					Updated:    now,
-					Suspended:  false,
-					Locked:     false,
 				},
 				{
 					ID:        "u2",
@@ -1293,7 +1296,7 @@ func TestConvertToImportRequest(t *testing.T) {
 					TenantID:  "source-tenant",
 					Created:   now,
 					Updated:   now,
-					Suspended: true, // Suspended user
+					Lifecycle: LifecycleSuspended,
 				},
 			},
 			Groups: []*Group{
@@ -1368,12 +1371,8 @@ func TestConvertToImportRequest(t *testing.T) {
 		if importReq.Users[0].Email != "user1@example.com" {
 			t.Errorf("expected email user1@example.com, got %s", importReq.Users[0].Email)
 		}
-		if !importReq.Users[0].Enabled {
-			t.Error("expected first user to be enabled")
-		}
-		if importReq.Users[1].Enabled {
-			t.Error("expected second user (suspended) to be disabled")
-		}
+		assertEnabledStated(t, importReq.Users[0].Enabled, true, "first user")
+		assertEnabledStated(t, importReq.Users[1].Enabled, false, "second user (suspended)")
 		if len(importReq.Users[0].Groups) != 1 {
 			t.Errorf("expected 1 group, got %d", len(importReq.Users[0].Groups))
 		}
@@ -1435,28 +1434,26 @@ func TestConvertToImportRequest(t *testing.T) {
 			TenantID: "source-tenant",
 			Users: []*User{
 				{
-					ID:       "u1",
-					Email:    "locked@example.com",
-					Name:     "Locked User",
-					TenantID: "source-tenant",
-					Locked:   true,
-					Created:  now,
-					Updated:  now,
+					ID:        "u1",
+					Email:     "locked@example.com",
+					Name:      "Locked User",
+					TenantID:  "source-tenant",
+					Lifecycle: LifecycleLocked,
+					Created:   now,
+					Updated:   now,
 				},
 			},
 		}
 
 		importReq := exportResult.ConvertToImportRequest("target-tenant")
 
-		if importReq.Users[0].Enabled {
-			t.Error("expected locked user to be disabled in import")
-		}
+		assertEnabledStated(t, importReq.Users[0].Enabled, false, "locked user")
 	})
 
 	t.Run("convert preserves user attributes", func(t *testing.T) {
-		attrs := map[string]interface{}{
+		attrs := map[string]string{
 			"department": "engineering",
-			"level":      3,
+			"level":      "3",
 		}
 		exportResult := &BatchExportResult{
 			TenantID: "source-tenant",
@@ -1643,7 +1640,7 @@ func TestBatchManager_ExportAll_AllIncludes(t *testing.T) {
 	}
 
 	// Create some data
-	user := &User{ID: "user-1", TenantID: tenantID, Email: "user1@test.com", Name: "User One", Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: "21", TenantID: tenantID, Email: "user1@test.com", Name: "User One", Created: time.Now(), Updated: time.Now()}
 	if err := storage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
@@ -1893,7 +1890,11 @@ func TestAdminManager_CreateAssignment_MissingGrantedBy(t *testing.T) {
 // AdminManager - StartImpersonation error paths
 // =============================================================================
 
-func TestAdminManager_StartImpersonation_MissingAdminUserID(t *testing.T) {
+// TestAdminManager_StartImpersonation_NoAuthenticatedCaller replaces the
+// former "missing admin_user_id" test: the actor is no longer a request
+// field but the authenticated principal in context (go-quicbaas#383), so
+// the failure mode is an unauthenticated caller, which fails closed.
+func TestAdminManager_StartImpersonation_NoAuthenticatedCaller(t *testing.T) {
 	adminStorage := NewMemoryAdminStorage()
 	impersonationStorage := NewMemoryImpersonationStorage()
 	auditLogger, err := NewAuditLogger(WithAuditStorage(NewMemoryAuditStorage()))
@@ -1910,16 +1911,16 @@ func TestAdminManager_StartImpersonation_MissingAdminUserID(t *testing.T) {
 		t.Fatalf("NewAdminManager failed: %v", err)
 	}
 
+	// No subject bound into ctx: an unauthenticated caller.
 	ctx := context.Background()
 
 	_, err = mgr.StartImpersonation(ctx, &StartImpersonationOptions{
-		AdminUserID:  "", // Missing
 		TargetUserID: "target-1",
 		TenantID:     "tenant-1",
 		Reason:       "Testing",
 	})
-	if err == nil {
-		t.Error("expected error for missing admin user ID")
+	if !errors.Is(err, ErrImpersonationActorRequired) {
+		t.Errorf("expected ErrImpersonationActorRequired for an unauthenticated caller, got %v", err)
 	}
 }
 
@@ -1940,10 +1941,7 @@ func TestAdminManager_StartImpersonation_MissingTargetUserID(t *testing.T) {
 		t.Fatalf("NewAdminManager failed: %v", err)
 	}
 
-	ctx := context.Background()
-
-	_, err = mgr.StartImpersonation(ctx, &StartImpersonationOptions{
-		AdminUserID:  "admin-1",
+	_, err = mgr.StartImpersonation(ctxWithActor("admin-1"), &StartImpersonationOptions{
 		TargetUserID: "", // Missing
 		TenantID:     "tenant-1",
 		Reason:       "Testing",
@@ -1970,10 +1968,7 @@ func TestAdminManager_StartImpersonation_MissingReason(t *testing.T) {
 		t.Fatalf("NewAdminManager failed: %v", err)
 	}
 
-	ctx := context.Background()
-
-	_, err = mgr.StartImpersonation(ctx, &StartImpersonationOptions{
-		AdminUserID:  "admin-1",
+	_, err = mgr.StartImpersonation(ctxWithActor("admin-1"), &StartImpersonationOptions{
 		TargetUserID: "target-1",
 		TenantID:     "tenant-1",
 		Reason:       "", // Missing

@@ -66,6 +66,21 @@ type Client interface {
 
 	// Usage reports cumulative token usage recorded against an account.
 	Usage(ctx context.Context, tenantID, accountID string) (*UsageReport, error)
+
+	// Materialize RELEASES one account's credential envelope to the caller.
+	//
+	// It is the only method on this client whose response carries secret
+	// material, and it exists so a pooled credential can reach the worker host
+	// that runs the agent rather than only the host that holds the pool
+	// (go-quicbaas#734). It carries its own permission
+	// (agent_accounts:materialize), it is scoped to the CALLER'S OWN tenant,
+	// and the server refuses an account that is revoked, errored, or under a
+	// live limit hold.
+	//
+	// The returned envelope must never be logged or written outside a
+	// caller-controlled secret store; ExpiresAt bounds how long it may be
+	// cached and UpdatedAt tells a cache when a central rotation superseded it.
+	Materialize(ctx context.Context, req *MaterializeCredentialRequest) (*MaterializedCredential, error)
 }
 
 // =============================================================================
@@ -295,6 +310,113 @@ type AccountAckResponse struct {
 	AccountID string `json:"account_id"`
 }
 
+// MaterializeCredentialRequest asks for one account's credential envelope.
+type MaterializeCredentialRequest struct {
+	// TenantID owns the account. Required, and it must be the caller's own
+	// tenant: the server binds tenancy from the authenticated principal and
+	// refuses a value naming anything else.
+	TenantID string `json:"tenant_id"`
+
+	// AccountID names the account to release. Required — this verb never
+	// selects.
+	AccountID string `json:"account_id"`
+
+	// ProjectID is the project the requesting spawn belongs to. An account
+	// fenced to a project is released only to a request naming it.
+	ProjectID string `json:"project_id,omitempty"`
+
+	// JobID names the job the requesting spawn works for. It scopes the
+	// DELIVERY GRANT this release takes out, so a job's releases can be listed
+	// and revoked as a set through Security().DynamicSecrets().
+	//
+	// Name it only when this release serves ONE job. An enrolled agent daemon
+	// leaves it empty because its credential cache is keyed by account, so one
+	// release serves every job on that host — and a later refresh presented
+	// against a job-scoped grant would then be refused its own copy.
+	JobID string `json:"job_id,omitempty"`
+
+	// LeaseID presents the delivery grant a caller already holds, and is what
+	// distinguishes a REFRESH of a copy from a request for a new one.
+	//
+	// Leave it empty for a first release. Set it — to the LeaseID the previous
+	// release returned — on every subsequent release of the SAME copy, and
+	// expect the call to be refused once that grant has been revoked: the
+	// session that held the copy has ended and the server will not replace it.
+	// A caller that has lost its grant may always ask for a first release again.
+	LeaseID string `json:"lease_id,omitempty"`
+}
+
+// ReleasedCredential is the RELEASED half of a pooled credential: what a
+// spawn needs to authenticate, and nothing else.
+//
+// It is deliberately a DISTINCT type from Credential rather than a reuse of
+// it. Credential is request-only and the SDK's structural leak guard asserts
+// no response reaches it; more importantly, this shape carries no refresh
+// grant (no refresh token, token endpoint or client id) because renewal is the
+// server's job and a recipient that must not refresh must not receive the
+// means to.
+type ReleasedCredential struct {
+	// Env holds static environment variables to inject into the spawned
+	// subprocess verbatim.
+	Env map[string]string `json:"env,omitempty"`
+
+	// Files holds provider config file bytes keyed by a path relative to the
+	// materialized per-session home directory.
+	Files map[string][]byte `json:"files,omitempty"`
+
+	// AccessToken is the bearer credential handed to the spawn.
+	AccessToken string `json:"access_token,omitempty"`
+
+	// ExpiresAt is when AccessToken stops working; zero means unknown.
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+
+	// Scopes records the scopes the access token was issued with.
+	Scopes []string `json:"scopes,omitempty"`
+
+	// AccessTokenEnvKey is the environment variable AccessToken is projected
+	// into at materialization time.
+	AccessTokenEnvKey string `json:"access_token_env_key,omitempty"`
+}
+
+// MaterializedCredential is one released envelope plus the non-secret metadata
+// a caching caller needs.
+type MaterializedCredential struct {
+	AccountID     string        `json:"account_id"`
+	Provider      Provider      `json:"provider"`
+	DisplayName   string        `json:"display_name,omitempty"`
+	ProjectID     string        `json:"project_id,omitempty"`
+	RefreshPolicy RefreshPolicy `json:"refresh_policy,omitempty"`
+
+	// Credential is the released envelope.
+	Credential *ReleasedCredential `json:"credential"`
+
+	// ExpiresAt bounds how long the envelope may be cached.
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+
+	// UpdatedAt is the account record's last write. Diagnostics only: it moves
+	// on any write, including the usage stamp the release itself makes.
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+
+	// LastRefreshedAt is when the ENVELOPE was last replaced, and is the
+	// cache-invalidation signal: a caller that later reads a newer value knows
+	// its cached envelope is superseded without asking for the secret again.
+	LastRefreshedAt time.Time `json:"last_refreshed_at,omitempty"`
+
+	// LeaseID is the delivery grant this release is authorised by. Empty when
+	// the deployment leases no deliveries.
+	//
+	// A caller that caches the envelope MUST present it on every refresh of
+	// that copy (MaterializeCredentialRequest.LeaseID).
+	LeaseID string `json:"lease_id,omitempty"`
+
+	// LeaseExpiresAt is when the delivery grant stops being authorised without
+	// renewal. It is NOT the credential's expiry — that is ExpiresAt, and the
+	// control plane's OAuth refresher owns it. The two are deliberately
+	// independent: a lapsing grant never shortens a token the refresher would
+	// have kept alive, and a refreshed token never extends a grant.
+	LeaseExpiresAt time.Time `json:"lease_expires_at,omitempty"`
+}
+
 // =============================================================================
 // Implementation
 // =============================================================================
@@ -469,6 +591,39 @@ func (c *client) Usage(ctx context.Context, tenantID, accountID string) (*UsageR
 		return nil, errors.NewInternal(op, "invalid response type")
 	}
 	return report, nil
+}
+
+// Materialize releases one account's credential envelope.
+func (c *client) Materialize(ctx context.Context, req *MaterializeCredentialRequest) (*MaterializedCredential, error) {
+	const op = "account.Materialize"
+	if err := requireContext(ctx, op); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, errors.NewInvalidInput(op, "request is required")
+	}
+	if err := requireIdentifiers(ctx, op, req.TenantID, req.AccountID); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "Materialize", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.NewInternal(op, "nil response from server")
+	}
+	out, ok := resp.(*MaterializedCredential)
+	if !ok {
+		return nil, errors.NewInternal(op, "invalid response type")
+	}
+	// A release that carried no envelope is a protocol fault, not an empty
+	// answer: the caller would otherwise spawn an agent with no credential and
+	// discover it as an unexplained provider rejection minutes later.
+	if out.Credential == nil {
+		return nil, errors.NewInternal(op, "server released no credential envelope")
+	}
+	return out, nil
 }
 
 // =============================================================================

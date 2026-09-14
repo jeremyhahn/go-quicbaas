@@ -190,6 +190,17 @@ func (s *signalService) RegisterAccount(ctx context.Context, req *RegisterReques
 	accountUUID := uuid.New().String()
 
 	// Generate a real Ed25519 identity key pair for the account.
+	//
+	// This is Signal-protocol X3DH identity material, not PKI. It is never
+	// certified by the go-xkms CA and never presented in a TLS handshake; it
+	// seeds a double ratchet, and the prekey below is signed by THIS key rather
+	// than by any certificate authority. Routing it through go-xkms key custody
+	// would make it a platform-held key, which is the opposite of what a
+	// per-account messaging identity is for. Whether this material belongs under
+	// go-xkms custody at all is a separate architecture question
+	// (go-quicbaas#910).
+	//
+	// local-keygen-ok: Signal-protocol identity key, not PKI — see above.
 	identityPub, identityPriv, identityErr := ed25519.GenerateKey(rand.Reader)
 	if identityErr != nil {
 		return nil, &KeyGenerationError{
@@ -199,6 +210,9 @@ func (s *signalService) RegisterAccount(ctx context.Context, req *RegisterReques
 	}
 
 	// Generate a real Ed25519 signed pre-key pair.
+	//
+	// local-keygen-ok: Signal-protocol signed prekey; same reasoning as the
+	// identity key above.
 	spkPub, _, spkErr := ed25519.GenerateKey(rand.Reader)
 	if spkErr != nil {
 		return nil, &KeyGenerationError{

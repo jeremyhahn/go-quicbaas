@@ -96,6 +96,7 @@ func (h *accountRESTHandler) handleRequest(ctx context.Context, method string, r
 		"Revoke":           h.handleRevoke,
 		"SetDefault":       h.handleSetDefault,
 		"Usage":            h.handleUsage,
+		"Materialize":      h.handleMaterialize,
 	}
 
 	handler, ok := handlers[method]
@@ -254,4 +255,53 @@ func (h *accountRESTHandler) handleUsage(ctx context.Context, req interface{}) (
 		return nil, errors.NewInternal("account.Usage", "server returned no usage report")
 	}
 	return env.Usage, nil
+}
+
+// materializeEnvelope is the credential-release response envelope. It is the
+// ONE account envelope in this file that carries secret material.
+type materializeEnvelope struct {
+	AccountID       string                      `json:"account_id"`
+	Provider        account.Provider            `json:"provider"`
+	DisplayName     string                      `json:"display_name,omitempty"`
+	ProjectID       string                      `json:"project_id,omitempty"`
+	RefreshPolicy   account.RefreshPolicy       `json:"refresh_policy,omitempty"`
+	Credential      *account.ReleasedCredential `json:"credential"`
+	ExpiresAt       time.Time                   `json:"expires_at,omitempty"`
+	UpdatedAt       time.Time                   `json:"updated_at,omitempty"`
+	LastRefreshedAt time.Time                   `json:"last_refreshed_at,omitempty"`
+	LeaseID         string                      `json:"lease_id,omitempty"`
+	LeaseExpiresAt  time.Time                   `json:"lease_expires_at,omitempty"`
+	Timestamp       time.Time                   `json:"timestamp"`
+}
+
+// handleMaterialize handles POST /api/v1/agent-accounts/{id}/materialize.
+func (h *accountRESTHandler) handleMaterialize(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*account.MaterializeCredentialRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("account.Materialize", "invalid request type")
+	}
+	body := struct {
+		ProjectID string `json:"project_id,omitempty"`
+		JobID     string `json:"job_id,omitempty"`
+		LeaseID   string `json:"lease_id,omitempty"`
+	}{ProjectID: sdkReq.ProjectID, JobID: sdkReq.JobID, LeaseID: sdkReq.LeaseID}
+
+	var env materializeEnvelope
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost,
+		accountItemPath(sdkReq.AccountID, sdkReq.TenantID, "/materialize"), &body, &env); err != nil {
+		return nil, err
+	}
+	return &account.MaterializedCredential{
+		AccountID:       env.AccountID,
+		Provider:        env.Provider,
+		DisplayName:     env.DisplayName,
+		ProjectID:       env.ProjectID,
+		RefreshPolicy:   env.RefreshPolicy,
+		Credential:      env.Credential,
+		ExpiresAt:       env.ExpiresAt,
+		UpdatedAt:       env.UpdatedAt,
+		LastRefreshedAt: env.LastRefreshedAt,
+		LeaseID:         env.LeaseID,
+		LeaseExpiresAt:  env.LeaseExpiresAt,
+	}, nil
 }

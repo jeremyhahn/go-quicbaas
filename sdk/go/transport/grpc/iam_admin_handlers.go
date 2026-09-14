@@ -317,7 +317,9 @@ func (h *iamHandler) handleStartImpersonation(ctx context.Context, client iampb.
 		reqMap = impMap
 	}
 
-	adminUserID, _ := getString(reqMap, "admin_user_id")
+	// No admin_user_id: the acting admin is the authenticated caller,
+	// resolved server-side from the verified principal, never forwarded
+	// from the request (go-quicbaas#383).
 	targetUserID, _ := getString(reqMap, "target_user_id")
 	tenantID, _ := getString(reqMap, "tenant_id")
 	reason, _ := getString(reqMap, "reason")
@@ -331,7 +333,6 @@ func (h *iamHandler) handleStartImpersonation(ctx context.Context, client iampb.
 	}
 
 	pbReq := &iampb.StartImpersonationRequest{
-		AdminUserId:  adminUserID,
 		TargetUserId: targetUserID,
 		TenantId:     tenantID,
 		Reason:       reason,

@@ -115,17 +115,16 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 		r.Delete("/{client_id}", h.DeleteDynamicClient)
 	})
 
-	// Token management endpoints (public). refresh/logout/validate and
-	// login/piv stay reachable HERE ONLY (the legacy in-process listener):
-	// P3.3 dropped their module-surface RouteSpecs (routes_iam.go
+	// Token management endpoints (public). P3.3 dropped the module-surface
+	// RouteSpecs for all four token-lifecycle verbs (routes_iam.go
 	// apiAuthPublicRouteSpecs) because on a composed node xkms's module owns
-	// the identical /api/v1/auth/{refresh,logout,validate,login/piv} paths
-	// as part of its own session-login plane; a standalone (non-composed)
-	// quicbaas deployment still needs all four, so this hand-mount is
-	// deliberately untouched for them. login/piv ALSO gets a second,
-	// permanent mount below at its new IAM-namespaced home
-	// (/api/v1/iam/login/piv) so the module surface and the legacy listener
-	// agree on where a composed node reaches it.
+	// the identical /api/v1/auth/{refresh,logout,validate,login/piv} paths as
+	// part of its own session-login plane; a standalone (non-composed)
+	// quicbaas deployment still needs them, so this hand-mount is
+	// deliberately untouched. All four ALSO get a second, permanent mount
+	// below at their IAM-namespaced homes (/api/v1/iam/{login/piv,refresh,
+	// validate,logout}) so the module surface and the legacy listener agree
+	// on where a composed node reaches them.
 	router.Route("/api/v1/auth", func(r chi.Router) {
 		r.Post("/refresh", h.RefreshToken)   // Refresh access token
 		r.Post("/logout", h.Logout)          // Revoke access token
@@ -147,6 +146,27 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 	// /api/v1/auth/login/piv, see the comment above and
 	// routes_iam.go iamManagedRouteSpecs for the module-surface twin.
 	router.Post("/api/v1/iam/login/piv", h.PIVLogin)
+
+	// OIDC-session renewal (go-quicbaas#221): the same de-collision, for the
+	// verb that renews what the login ceremony above minted. The module
+	// surface is the only one a running node serves (startRESTServer binds no
+	// listener of its own), so this mount is not what fixes #221 — the
+	// RouteSpec in routes_iam.go is. It exists so the two surfaces do not
+	// disagree about where renewal lives, exactly as login/piv does above: a
+	// client written against one must not 404 against the other.
+	router.Post("/api/v1/iam/refresh", h.RefreshToken)
+
+	// OIDC-session validate + logout (go-quicbaas#256): the same
+	// de-collision, for the two verbs #221 left behind. xkms's module
+	// registers GET (not POST) /api/v1/auth/validate, so the SPA's POST
+	// matched no route on a composed node and go-qrdb's router-wide auth
+	// middleware answered 401 no_peer_cert — the daemon rejecting a bearer it
+	// had just minted. Logout did reach xkms's handler but redeemed against
+	// xkms's token store, so a quicbaas-minted session was never revoked. As
+	// with refresh above, the RouteSpecs in routes_iam.go are what a running
+	// node serves; these mounts keep the two surfaces from disagreeing.
+	router.Post("/api/v1/iam/validate", h.ValidateToken)
+	router.Post("/api/v1/iam/logout", h.Logout)
 
 	// Federated authentication endpoints (public)
 	RegisterFederationAuthRoutes(router, h)
@@ -231,6 +251,15 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 				r.Post("/backup-codes", h.GenerateBackupCodes)
 			})
 
+			// WebAuthn credential administration (nested under user).
+			// Administrative verbs over another user's authenticators —
+			// the only surface that can see or remove a stored credential.
+			r.Route("/{user_id}/webauthn/credentials", func(r chi.Router) {
+				r.Get("/", h.ListUserWebAuthnCredentials)
+				r.Delete("/", h.DeleteUserWebAuthnCredentials)
+				r.Delete("/{credential_id}", h.DeleteUserWebAuthnCredential)
+			})
+
 			// Federation identity link routes (nested under user)
 			r.Route("/{user_id}/links", func(r chi.Router) {
 				r.Post("/", h.LinkAccount)
@@ -253,6 +282,9 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 		r.Route("/{tenant_id}/roles", func(r chi.Router) {
 			r.Get("/", h.ListRoles)
 			r.Post("/", h.CreateRole)
+			// Registered ahead of the {role_id} patterns: "reconcile" is a
+			// literal segment, never a role identifier.
+			r.Post("/reconcile", h.ReconcileRoles)
 			r.Get("/{role_id}", h.GetRole)
 			r.Put("/{role_id}", h.UpdateRole)
 			r.Delete("/{role_id}", h.DeleteRole)
@@ -350,15 +382,11 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 	// Register delegated admin routes
 	RegisterAdminRoutes(router, h)
 
-	// Mount xkms's native WebAuthn routes under /api/v1/iam/{tenant_id}/webauthn.
-	// This is the single tenant-scoped FIDO2 ceremony surface (the legacy
-	// /api/v1/tenants/{tenant_id}/webauthn mount was deleted; browser login
-	// rides the unified ceremony at /api/v1/auth/login). Use a bounded
-	// initialization context instead of context.Background() so the manager
-	// lookup respects a startup timeout.
-	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer initCancel()
-	h.MountXKMSWebAuthnRoutes(initCtx, router)
+	// /api/v1/iam/{tenant_id}/webauthn/* is registered ONCE, by the module
+	// route table (routes_iam.go iamManagedRouteSpecs), and served by
+	// moduleWebAuthnHandler. It is deliberately absent here: a second mount on
+	// this router would make a tenant-scoped security path answerable by two
+	// handlers chosen by initialization order (#529).
 }
 
 // Type aliases to iam package interfaces.

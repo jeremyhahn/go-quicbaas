@@ -56,6 +56,10 @@ var (
 	orchTaskStatus      string
 	orchTaskAgentID     string
 	orchTaskResult      string
+	orchTaskProjectID   string
+	orchTaskStatuses    []string
+	orchTaskBlockKind   string
+	orchTaskBlockReason string
 	orchTaskAutoSpawn   bool
 	orchTaskBackend     string
 	orchTaskGpuRequired bool
@@ -63,10 +67,12 @@ var (
 	// Job flags.
 	orchJobMaxIterations int
 	orchJobPollInterval  string
+	orchJobTaskID        string
 
 	// Workflow flags.
 	orchWorkflowName string
 	orchWorkflowFile string
+	orchJobRunner    string
 
 	// Pooled provider account flags.
 	orchAccountID       string
@@ -90,7 +96,7 @@ var (
 func newOrchestratorCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "orchestrator",
-		Short: "AI agent orchestration commands",
+		Short: "Software Factory (agent orchestration) commands",
 		Long: `Orchestrator commands for managing AI agent sessions, tasks, and backends.
 
 These commands interact with the QuicBaaS orchestrator SDK client to:
@@ -175,7 +181,7 @@ Examples:
 	cmd.Flags().StringVar(&orchSandbox, "sandbox", "default",
 		"Sandbox selector: default (server policy), required (force container), none (force raw exec)")
 	cmd.Flags().StringVar(&orchHostAffinity, "host-affinity", "",
-		"Pin the session to a specific agent daemon by Name or Host (e.g. 'gpu-host' or '198.51.100.91:9091'). Empty = any available daemon.")
+		"Pin the session to a specific agent daemon by Name or Host (e.g. 'agent-01' or 'agent-01.example.com:9091'). Empty = any available daemon.")
 	cmd.Flags().StringVar(&orchAccountID, "account-id", "",
 		"Pin the session to a specific pooled provider account. A bare pin is honored: the session is never rotated off it.")
 	cmd.Flags().BoolVar(&orchAccountAuto, "account-auto", false,
@@ -596,6 +602,9 @@ Examples:
 	cmd.AddCommand(newOrchTaskListCommand())
 	cmd.AddCommand(newOrchTaskClaimCommand())
 	cmd.AddCommand(newOrchTaskCompleteCommand())
+	cmd.AddCommand(newOrchTaskBlockCommand())
+	cmd.AddCommand(newOrchTaskReadmitCommand())
+	cmd.AddCommand(newOrchTaskDeleteCommand())
 
 	return cmd
 }
@@ -726,6 +735,8 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&orchTaskStatus, "status", "", "Filter by task status (pending, claimed, in_progress, completed, failed, cancelled)")
+	cmd.Flags().StringVar(&orchTaskProjectID, "project", "", "Filter by project ID")
+	cmd.Flags().StringSliceVar(&orchTaskStatuses, "statuses", nil, "Filter by any of these statuses (comma-separated, e.g. blocked,pending)")
 	cmd.Flags().StringVar(&orchTaskTeamName, "team", "", "Filter by team name")
 	cmd.Flags().StringVar(&orchTaskAssignedTo, "assigned-to", "", "Filter by assigned agent")
 
@@ -748,6 +759,8 @@ func runOrchTaskList(cmd *cobra.Command, args []string) error {
 		Status:     orchTaskStatus,
 		TeamName:   orchTaskTeamName,
 		AssignedTo: orchTaskAssignedTo,
+		ProjectID:  orchTaskProjectID,
+		Statuses:   orchTaskStatuses,
 	}
 
 	resp, err := client.ListTasks(ctx, req)
@@ -807,6 +820,246 @@ func runOrchTaskClaim(cmd *cobra.Command, args []string) error {
 	}
 
 	return formatOrchClaimResponse(resp, orchOutputFmt, os.Stdout)
+}
+
+// =============================================================================
+// Task Block / Readmit Commands
+// =============================================================================
+
+// newOrchTaskBlockCommand creates the task block subcommand.
+func newOrchTaskBlockCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "block <taskID>",
+		Short: "Park a task until a person readmits it",
+		Long: `Park a pending, claimed or in-progress task. The kind says why
+(needs_info, blocked, escalated) and the reason is surfaced to whoever the
+task waits for. A blocked task is not dispatched until it is readmitted.
+
+Examples:
+  quicbaas orchestrator task block task_abc123 --kind needs_info --reason "which branch?"
+  quicbaas orchestrator task block task_abc123 --kind escalated --reason "attempt budget exhausted"`,
+		Args: cobra.ExactArgs(1),
+		RunE: runOrchTaskBlock,
+	}
+
+	cmd.Flags().StringVar(&orchTaskBlockKind, "kind", "", "Why the task is parked: needs_info, blocked or escalated (required)")
+	cmd.Flags().StringVar(&orchTaskBlockReason, "reason", "", "Human-readable reason (required)")
+
+	for _, flag := range []string{"kind", "reason"} {
+		if err := cmd.MarkFlagRequired(flag); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to mark %s flag as required: %v\n", flag, err)
+		}
+	}
+
+	return cmd
+}
+
+// runOrchTaskBlock executes the task block command.
+func runOrchTaskBlock(cmd *cobra.Command, args []string) error {
+	taskID := args[0]
+
+	client, err := orchestratorClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+	defer client.Close()
+
+	ctx, cancel := orchContext()
+	defer cancel()
+
+	resp, err := client.BlockTask(ctx, &orchestratorSDK.BlockTaskRequest{
+		TenantID: globalTenantID,
+		TaskID:   taskID,
+		Kind:     orchTaskBlockKind,
+		Reason:   orchTaskBlockReason,
+	})
+	if err != nil {
+		return formatError(err)
+	}
+
+	return formatOrchBlockResponse(resp, orchOutputFmt, os.Stdout)
+}
+
+// newOrchTaskReadmitCommand creates the task readmit subcommand.
+func newOrchTaskReadmitCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "readmit <taskID>",
+		Short: "Return a blocked task to the queue",
+		Long: `Return a blocked task to pending, clearing its block, assignment and
+retry hold so it can be claimed again.
+
+Examples:
+  quicbaas orchestrator task readmit task_abc123`,
+		Args: cobra.ExactArgs(1),
+		RunE: runOrchTaskReadmit,
+	}
+}
+
+// runOrchTaskReadmit executes the task readmit command.
+func runOrchTaskReadmit(cmd *cobra.Command, args []string) error {
+	taskID := args[0]
+
+	client, err := orchestratorClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+	defer client.Close()
+
+	ctx, cancel := orchContext()
+	defer cancel()
+
+	resp, err := client.ReadmitTask(ctx, &orchestratorSDK.ReadmitTaskRequest{
+		TenantID: globalTenantID,
+		TaskID:   taskID,
+	})
+	if err != nil {
+		return formatError(err)
+	}
+
+	return formatOrchReadmitResponse(resp, orchOutputFmt, os.Stdout)
+}
+
+// formatOrchBlockResponse renders a BlockTaskResponse.
+func formatOrchBlockResponse(resp *orchestratorSDK.BlockTaskResponse, format string, w io.Writer) error {
+	outputFmt, err := cli.ParseOutputFormat(format)
+	if err != nil {
+		return err
+	}
+
+	switch outputFmt {
+	case cli.OutputFormatJSON:
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(resp)
+
+	case cli.OutputFormatYAML:
+		return yaml.NewEncoder(w).Encode(resp)
+
+	case cli.OutputFormatTable:
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(tw, "Task ID:\t%s\n", resp.TaskID)
+		fmt.Fprintf(tw, "Kind:\t%s\n", resp.Kind)
+		fmt.Fprintf(tw, "Blocked:\t%v\n", resp.Blocked)
+		return tw.Flush()
+
+	default:
+		if resp.Blocked {
+			fmt.Fprintf(w, "Task %s blocked (%s)\n", resp.TaskID, resp.Kind)
+		} else {
+			fmt.Fprintf(w, "Failed to block task %s\n", resp.TaskID)
+		}
+		return nil
+	}
+}
+
+// formatOrchReadmitResponse renders a ReadmitTaskResponse.
+func formatOrchReadmitResponse(resp *orchestratorSDK.ReadmitTaskResponse, format string, w io.Writer) error {
+	outputFmt, err := cli.ParseOutputFormat(format)
+	if err != nil {
+		return err
+	}
+
+	switch outputFmt {
+	case cli.OutputFormatJSON:
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(resp)
+
+	case cli.OutputFormatYAML:
+		return yaml.NewEncoder(w).Encode(resp)
+
+	case cli.OutputFormatTable:
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(tw, "Task ID:\t%s\n", resp.TaskID)
+		fmt.Fprintf(tw, "Readmitted:\t%v\n", resp.Readmitted)
+		return tw.Flush()
+
+	default:
+		if resp.Readmitted {
+			fmt.Fprintf(w, "Task %s readmitted\n", resp.TaskID)
+		} else {
+			fmt.Fprintf(w, "Failed to readmit task %s\n", resp.TaskID)
+		}
+		return nil
+	}
+}
+
+// =============================================================================
+// Task Delete Command
+// =============================================================================
+
+// newOrchTaskDeleteCommand creates the task delete subcommand.
+func newOrchTaskDeleteCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "delete <taskID>",
+		Short: "Delete a task and release its source reservation",
+		Long: `Delete a task, its artifacts, its claim mark and its source reservation,
+so the issue or ticket the task was adopted from can be adopted again.
+
+A task a job currently holds a lease on is refused: finish or cancel the job
+first.
+
+Examples:
+  quicbaas orchestrator task delete task_abc123`,
+		Args: cobra.ExactArgs(1),
+		RunE: runOrchTaskDelete,
+	}
+}
+
+// runOrchTaskDelete executes the task delete command.
+func runOrchTaskDelete(cmd *cobra.Command, args []string) error {
+	taskID := args[0]
+
+	client, err := orchestratorClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+	defer client.Close()
+
+	ctx, cancel := orchContext()
+	defer cancel()
+
+	resp, err := client.DeleteTask(ctx, &orchestratorSDK.DeleteTaskRequest{
+		TenantID: globalTenantID,
+		TaskID:   taskID,
+	})
+	if err != nil {
+		return formatError(err)
+	}
+
+	return formatOrchDeleteResponse(resp, orchOutputFmt, os.Stdout)
+}
+
+// formatOrchDeleteResponse renders a DeleteTaskResponse.
+func formatOrchDeleteResponse(resp *orchestratorSDK.DeleteTaskResponse, format string, w io.Writer) error {
+	outputFmt, err := cli.ParseOutputFormat(format)
+	if err != nil {
+		return err
+	}
+
+	switch outputFmt {
+	case cli.OutputFormatJSON:
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(resp)
+
+	case cli.OutputFormatYAML:
+		return yaml.NewEncoder(w).Encode(resp)
+
+	case cli.OutputFormatTable:
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(tw, "Task ID:\t%s\n", resp.TaskID)
+		fmt.Fprintf(tw, "Deleted:\t%v\n", resp.Deleted)
+		return tw.Flush()
+
+	default:
+		if resp.Deleted {
+			fmt.Fprintf(w, "Task %s deleted\n", resp.TaskID)
+		} else {
+			fmt.Fprintf(w, "Failed to delete task %s\n", resp.TaskID)
+		}
+		return nil
+	}
 }
 
 // =============================================================================
@@ -1479,6 +1732,7 @@ Examples:
 	cmd.Flags().StringVar(&orchJobPollInterval, "poll-interval", "5s", "Interval between status polls")
 	cmd.Flags().StringVar(&orchWorkflowName, "workflow", "", "Use a canned workflow by name (e.g. software-dev)")
 	cmd.Flags().StringVar(&orchWorkflowFile, "workflow-file", "", "Path to a custom workflow YAML file")
+	cmd.Flags().StringVar(&orchJobRunner, "runner", "", "Job runner driving the job's states (default: workflow)")
 	cmd.Flags().StringVar(&orchVerbosity, "verbosity", "info", "Display verbosity (info, verbose, debug)")
 
 	return cmd
@@ -1507,6 +1761,7 @@ func runOrchRun(cmd *cobra.Command, args []string) error {
 		PollInterval:  orchJobPollInterval,
 		WorkflowName:  orchWorkflowName,
 		WorkflowFile:  orchWorkflowFile,
+		Runner:        orchJobRunner,
 	}
 
 	resp, err := client.StartJob(ctx, req)
@@ -1653,18 +1908,25 @@ Examples:
 
 // newOrchJobListCommand creates the job list subcommand.
 func newOrchJobListCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List orchestration jobs",
-		Long: `List all orchestration jobs for the current tenant.
+		Long: `List the current tenant's orchestration jobs, newest first.
+
+With --task, the listing is narrowed to the attempts at one task: every job
+that ran it, including the ones that have already concluded. That is the
+task's attempt history.
 
 Examples:
   quicbaas orchestrator job list
+  quicbaas orchestrator job list --task 8bf2fb5f30e2f0c87223ed219d1418c7
   quicbaas orchestrator job list --output json
   quicbaas orchestrator job list --output yaml`,
 		Args: cobra.NoArgs,
 		RunE: runOrchJobList,
 	}
+	cmd.Flags().StringVar(&orchJobTaskID, "task", "", "Narrow the listing to the attempts at one task")
+	return cmd
 }
 
 // runOrchJobList executes the job list command.
@@ -1680,6 +1942,7 @@ func runOrchJobList(cmd *cobra.Command, args []string) error {
 
 	resp, err := client.ListJobs(ctx, &orchestratorSDK.ListJobsRequest{
 		TenantID: globalTenantID,
+		TaskID:   orchJobTaskID,
 	})
 	if err != nil {
 		return formatError(err)
@@ -1958,6 +2221,9 @@ func formatOrchJobStatusResponse(status *orchestratorSDK.JobStatus, format strin
 		fmt.Fprintf(w, "Completed:   %d\n", status.Completed)
 		fmt.Fprintf(w, "Failed:      %d\n", status.Failed)
 		fmt.Fprintf(w, "Description: %s\n", status.Description)
+		if status.Stage != "" {
+			fmt.Fprintf(w, "Stage:       %s\n", status.Stage)
+		}
 		if status.Error != "" {
 			fmt.Fprintf(w, "Error:       %s\n", status.Error)
 		}
@@ -2051,7 +2317,7 @@ func runOrchWorkflowList(cmd *cobra.Command, args []string) error {
 		return formatError(err)
 	}
 
-	defs := loader.ListDefinitions()
+	defs := loader.ListDefinitions(orchestration.SystemTenantID)
 	return formatWorkflowListResponse(defs, orchOutputFmt, os.Stdout)
 }
 
@@ -2083,7 +2349,7 @@ func runOrchWorkflowShow(cmd *cobra.Command, args []string) error {
 		return formatError(err)
 	}
 
-	def, err := loader.Get(name)
+	def, err := loader.Get(orchestration.SystemTenantID, name)
 	if err != nil {
 		return formatError(err)
 	}
@@ -2103,7 +2369,7 @@ func loadLocalWorkflows() (*orchestration.WorkflowLoader, error) {
 
 	workflowDir := "workflows"
 	if _, err := os.Stat(workflowDir); err == nil {
-		if err := loader.LoadFromDir(workflowDir); err != nil {
+		if err := loader.LoadFromDir(orchestration.SystemTenantID, workflowDir); err != nil {
 			return nil, err
 		}
 	}

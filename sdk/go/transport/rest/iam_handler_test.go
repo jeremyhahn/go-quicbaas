@@ -141,6 +141,9 @@ func TestIAMHandlerHappyPaths(t *testing.T) {
 		{"RoleList", iamRoleServicePrefix, "List",
 			map[string]interface{}{"tenant_id": "t1"},
 			http.MethodGet, "/api/v1/tenants/t1/roles"},
+		{"RoleReconcile", iamRoleServicePrefix, "Reconcile",
+			map[string]interface{}{"tenant_id": "t1"},
+			http.MethodPost, "/api/v1/tenants/t1/roles/reconcile"},
 
 		// Policy
 		{"PolicyGet", iamPolicyServicePrefix, "Get",

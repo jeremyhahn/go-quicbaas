@@ -2633,6 +2633,7 @@ func (m *mockSDKClientForClusterCovPlusTest) Close() error {
 }
 
 func (m *mockSDKClientForClusterCovPlusTest) Project() quicbaas.ProjectClient { return nil }
+func (m *mockSDKClientForClusterCovPlusTest) SDLC() quicbaas.SDLCClient       { return nil }
 func (m *mockSDKClientForClusterCovPlusTest) Account() quicbaas.AccountClient { return nil }
 
 func (m *mockSDKClientForClusterCovPlusTest) Orchestrator() quicbaas.OrchestratorClient {

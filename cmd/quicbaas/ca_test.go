@@ -102,8 +102,8 @@ func withFakeCAFactory(t *testing.T, fc *fakeCAClient) func() {
 		return fc, nil
 	}
 	// Ensure timeout is set so context.WithTimeout doesn't panic.
-	if timeout == 0 {
-		timeout = 5 * time.Second
+	if globalTimeout == 0 {
+		globalTimeout = 5 * time.Second
 	}
 	return func() { caClientFactory = orig }
 }
@@ -116,8 +116,8 @@ func withCAFactoryErr(t *testing.T, err error) func() {
 	caClientFactory = func() (quicbaas.CertificateClient, error) {
 		return nil, err
 	}
-	if timeout == 0 {
-		timeout = 5 * time.Second
+	if globalTimeout == 0 {
+		globalTimeout = 5 * time.Second
 	}
 	return func() { caClientFactory = orig }
 }

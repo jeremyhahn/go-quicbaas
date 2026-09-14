@@ -43,6 +43,9 @@ const (
 	EmbeddingProvider_EMBEDDING_PROVIDER_OLLAMA EmbeddingProvider = 3
 	// EMBEDDING_PROVIDER_LMSTUDIO uses local LM Studio embedding models.
 	EmbeddingProvider_EMBEDDING_PROVIDER_LMSTUDIO EmbeddingProvider = 4
+	// EMBEDDING_PROVIDER_NPU uses an Intel NPU through the OpenVINO embedding
+	// sidecar. See docs/embeddings/npu.md.
+	EmbeddingProvider_EMBEDDING_PROVIDER_NPU EmbeddingProvider = 5
 )
 
 // Enum value maps for EmbeddingProvider.
@@ -53,6 +56,7 @@ var (
 		2: "EMBEDDING_PROVIDER_OPENAI",
 		3: "EMBEDDING_PROVIDER_OLLAMA",
 		4: "EMBEDDING_PROVIDER_LMSTUDIO",
+		5: "EMBEDDING_PROVIDER_NPU",
 	}
 	EmbeddingProvider_value = map[string]int32{
 		"EMBEDDING_PROVIDER_UNSPECIFIED": 0,
@@ -60,6 +64,7 @@ var (
 		"EMBEDDING_PROVIDER_OPENAI":      2,
 		"EMBEDDING_PROVIDER_OLLAMA":      3,
 		"EMBEDDING_PROVIDER_LMSTUDIO":    4,
+		"EMBEDDING_PROVIDER_NPU":         5,
 	}
 )
 
@@ -1741,13 +1746,14 @@ const file_api_proto_embedding_proto_rawDesc = "" +
 	"\x1bEmbeddingClearCacheResponse\x12'\n" +
 	"\x0fentries_cleared\x18\x01 \x01(\x05R\x0eentriesCleared\x12D\n" +
 	"\bprovider\x18\x02 \x01(\x0e2(.quicbaas.embedding.v1.EmbeddingProviderR\bprovider\x128\n" +
-	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp*\xb5\x01\n" +
+	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp*\xd1\x01\n" +
 	"\x11EmbeddingProvider\x12\"\n" +
 	"\x1eEMBEDDING_PROVIDER_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19EMBEDDING_PROVIDER_VOYAGE\x10\x01\x12\x1d\n" +
 	"\x19EMBEDDING_PROVIDER_OPENAI\x10\x02\x12\x1d\n" +
 	"\x19EMBEDDING_PROVIDER_OLLAMA\x10\x03\x12\x1f\n" +
-	"\x1bEMBEDDING_PROVIDER_LMSTUDIO\x10\x04*\x9c\x01\n" +
+	"\x1bEMBEDDING_PROVIDER_LMSTUDIO\x10\x04\x12\x1a\n" +
+	"\x16EMBEDDING_PROVIDER_NPU\x10\x05*\x9c\x01\n" +
 	"\x12EmbeddingInputType\x12$\n" +
 	" EMBEDDING_INPUT_TYPE_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dEMBEDDING_INPUT_TYPE_DOCUMENT\x10\x01\x12\x1e\n" +

@@ -345,17 +345,49 @@ func TestWatcher_ExcludePatterns(t *testing.T) {
 	}
 }
 
-// TestWatcher_Debouncing asserts the debounce property deterministically: several
-// writes to the SAME path that reach the debouncer before a flush coalesce into a
-// SINGLE emitted event. It drives the batch cycle through test seams instead of
-// wall-clock timing (#123) — BatchInterval is set effectively infinite so the real
-// ticker never fires, each write is synchronized on its onDebounce callback so all
-// writes are applied to the debouncer before the flush, and the flush is triggered
-// explicitly via manualFlush. A mutant that drops the debouncer's per-path
-// deduplication emits one event per write and reddens the single-event assertion.
+// latestPendingSize reports the size carried by the newest pending event the
+// debouncer holds for path, and whether it holds one at all. It scans every
+// pending entry rather than indexing by path so that it keeps working when the
+// path-keyed coalescing it is used to observe is the thing under mutation.
+func latestPendingSize(d *debouncer, path string) (int64, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	var (
+		size  int64
+		found bool
+	)
+	for _, e := range d.events {
+		if e.Path == path && (!found || e.Size > size) {
+			size, found = e.Size, true
+		}
+	}
+	return size, found
+}
+
+// drainEvents removes every event already queued on the watcher's output
+// channel. It never blocks, so it reads exactly what a preceding flush put
+// there and adds no wall-clock window of its own.
+func drainEvents(w Watcher) []Event {
+	var events []Event
+	for {
+		select {
+		case e := <-w.Events():
+			events = append(events, e)
+		default:
+			return events
+		}
+	}
+}
+
 func TestWatcher_Debouncing(t *testing.T) {
 	tmpDir := t.TempDir()
 
+	// BatchInterval is set beyond any plausible runtime for this test, so the
+	// periodic flush never fires and the test alone decides when the debouncer
+	// is drained. Nothing here is asserted against elapsed time: the number of
+	// batch windows the writes happen to straddle -- the quantity the previous
+	// version of this test measured -- can no longer influence the result.
 	config := Config{
 		Paths: []string{tmpDir},
 		// Effectively infinite: the real batch ticker must never fire — the test
@@ -369,62 +401,48 @@ func TestWatcher_Debouncing(t *testing.T) {
 	w, err := New(config)
 	require.NoError(t, err)
 
-	fw := w.(*fsWatcher)
-	debounced := make(chan struct{}, 64)
-	fw.onDebounce = func() {
-		select {
-		case debounced <- struct{}{}:
-		default:
-		}
-	}
-	fw.manualFlush = make(chan struct{})
+	fw, ok := w.(*fsWatcher)
+	require.True(t, ok, "New must return *fsWatcher")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	require.NoError(t, w.Start(ctx))
-	defer func() { _ = w.Stop() }()
+	defer w.Stop()
 
 	testFile := filepath.Join(tmpDir, "test.txt")
 
-	// Write the same path several times, synchronizing on each debounce so every
-	// write's event is applied to the debouncer BEFORE the flush. Three observed
-	// debounce callbacks mean three Add calls happened; with per-path dedup the
-	// map still holds one entry (with dedup dropped it would hold three).
-	const writes = 3
-	for i := 0; i < writes; i++ {
-		require.NoError(t, os.WriteFile(testFile, []byte("content"), 0o644))
-		select {
-		case <-debounced:
-		case <-ctx.Done():
-			t.Fatalf("timed out waiting for write %d to be debounced", i)
+	// Write the same path repeatedly, each write given a distinct length and
+	// confirmed to have reached the debouncer before the next one is made.
+	// Confirming establishes the precondition the assertion below rests on:
+	// several separate file system events really were buffered for this path,
+	// so a single flushed event can only be the result of coalescing and not
+	// of the writes having gone unnoticed.
+	const writes = 5
+	for i := 1; i <= writes; i++ {
+		require.NoError(t, os.WriteFile(testFile, []byte(strings.Repeat("x", i)), 0644))
+
+		require.Eventuallyf(t, func() bool {
+			size, ok := latestPendingSize(fw.debouncer, testFile)
+			return ok && size == int64(i)
+		}, 30*time.Second, time.Millisecond, "write %d never reached the debouncer", i)
+	}
+
+	// Draining the debouncer emits one event per distinct path regardless of
+	// how many events were buffered for it.
+	fw.flushEvents()
+
+	var forTestFile []Event
+	for _, e := range drainEvents(w) {
+		if e.Path == testFile {
+			forTestFile = append(forTestFile, e)
 		}
 	}
 
-	// Flush exactly once and expect a single coalesced event for the path. The
-	// send is cancellation-aware: processBatches returns when ctx expires, so an
-	// unconditional send could block forever if ctx became done after the last
-	// debounce callback but before the flush is accepted.
-	select {
-	case fw.manualFlush <- struct{}{}:
-	case <-ctx.Done():
-		t.Fatal("timed out before the flush could be delivered")
-	}
-	select {
-	case ev := <-w.Events():
-		assert.Equal(t, testFile, ev.Path)
-	case <-ctx.Done():
-		t.Fatal("timed out waiting for the coalesced event")
-	}
-
-	// No second event: the writes coalesced. A late fsnotify event would sit
-	// unflushed in the debouncer (we flush only once), so on correct code this
-	// never fires; a no-dedup mutant delivers the extra events from the one flush.
-	select {
-	case ev := <-w.Events():
-		t.Fatalf("expected a single coalesced event, got a second: %+v", ev)
-	case <-time.After(200 * time.Millisecond):
-	}
+	require.Len(t, forTestFile, 1,
+		"%d writes to one path buffered in a single batch window must coalesce into exactly 1 event", writes)
+	assert.Equal(t, int64(writes), forTestFile[0].Size,
+		"the coalesced event must carry the newest write, not an earlier one")
 }
 
 func TestWatcher_AddPath(t *testing.T) {

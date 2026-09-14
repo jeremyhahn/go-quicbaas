@@ -37,6 +37,13 @@ func (f fakePlatformAuth) GetLockoutInfo() (int, int, int, int, error) {
 func (f fakePlatformAuth) DictionaryAttackLockoutReset([]byte) error { return nil }
 func (f fakePlatformAuth) IsProvisioned() bool                       { return f.provisioned }
 
+// IsAuthReady is xkms v0.12's replacement for IsInitialized as the question
+// production asks when deciding whether TPM2-backed PIN verification is
+// available. It mirrors provisioned here, which is what this fake's field has
+// always meant to these tests: a PlatformSRK that is usable, versus the
+// documented gap where the backend exists and the SRK does not.
+func (f fakePlatformAuth) IsAuthReady() bool { return f.provisioned }
+
 // fakeTPMProvider is a hardware-free xkmssdk.PINTPMProvider. available=false
 // models a TPM seal backend present but with no initialized PlatformSRK (the
 // documented gap), which must make pinselect fall through to software.

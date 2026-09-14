@@ -333,3 +333,116 @@ func TestParseAddress_MCPAddress(t *testing.T) {
 		t.Errorf("FullURL() should return original URL, got %q", fullURL)
 	}
 }
+
+// TestHTTPBaseURL covers every address shape an operator can supply: a bare
+// host:port (promoted to https — TLS is always required), an explicit
+// http/https URL (kept verbatim), and a Unix socket (placeholder host, scheme
+// following the TLS posture, since the dialer is overridden anyway).
+func TestHTTPBaseURL(t *testing.T) {
+	tests := []struct {
+		name          string
+		address       string
+		tlsConfigured bool
+		want          string
+	}{
+		{"bare host:port promotes to https", "127.0.0.1:18443", true, "https://127.0.0.1:18443"},
+		{"bare host:port promotes to https without a tls config", "127.0.0.1:18443", false, "https://127.0.0.1:18443"},
+		{"explicit https kept", "https://node.example.com:8443", true, "https://node.example.com:8443"},
+		{"explicit http kept", "http://node.example.com:8080", false, "http://node.example.com:8080"},
+		{"explicit https with a path keeps only the origin", "https://node.example.com:8443/base", true, "https://node.example.com:8443"},
+		{"https default port", "https://node.example.com", true, "https://node.example.com:443"},
+		{"unix socket with tls", "/var/run/quicbaas/quicbaasd.sock", true, "https://localhost"},
+		{"unix socket without tls", "/var/run/quicbaas/quicbaasd.sock", false, "http://localhost"},
+		{"unix scheme with tls", "unix:///var/run/quicbaas/quicbaasd.sock", true, "https://localhost"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HTTPBaseURL(tc.address, tc.tlsConfigured); got != tc.want {
+				t.Errorf("HTTPBaseURL(%q, %v): got %q, want %q", tc.address, tc.tlsConfigured, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHTTPBaseURL_DegenerateAddresses proves the helper answers a usable
+// string for inputs that are not addresses at all rather than panicking or
+// producing something url.Parse will later reject in a caller's hot path. An
+// empty address yields the https origin of an empty host, which fails loudly
+// at dial time — the honest place for it.
+func TestHTTPBaseURL_DegenerateAddresses(t *testing.T) {
+	tests := []struct {
+		name    string
+		address string
+		want    string
+	}{
+		{"empty", "", "https://"},
+		{"no port", "node.example.com", "https://node.example.com"},
+		// ParseAddress's own documented fallback for an unparseable URL:
+		// strip the scheme, treat the remainder as the host. The origin is
+		// reassembled from it, so the failure surfaces at dial time with the
+		// operator's own string in the message rather than being silently
+		// rewritten here.
+		{"unparseable url falls back to the literal remainder", "https://%zz", "https://%zz"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HTTPBaseURL(tc.address, true); got != tc.want {
+				t.Errorf("HTTPBaseURL(%q): got %q, want %q", tc.address, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHTTPPath proves only an explicit http(s):// address carries a path, and
+// that a trailing slash is trimmed so callers can concatenate a suffix
+// without producing a doubled separator.
+func TestHTTPPath(t *testing.T) {
+	tests := []struct {
+		name    string
+		address string
+		want    string
+	}{
+		{"bare host:port has no path", "127.0.0.1:18443", ""},
+		{"unix socket has no path", "/var/run/quicbaas/quicbaasd.sock", ""},
+		{"url without a path", "https://node.example.com:8443", ""},
+		{"url with a path", "https://node.example.com:8443/base", "/base"},
+		{"url with a trailing slash", "https://node.example.com:8443/base/", "/base"},
+		{"url with only a slash", "https://node.example.com:8443/", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HTTPPath(tc.address); got != tc.want {
+				t.Errorf("HTTPPath(%q): got %q, want %q", tc.address, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHTTPEndpoint proves the suffix is appended exactly once, whatever the
+// caller already spelled out, and that an empty suffix is the origin+path.
+func TestHTTPEndpoint(t *testing.T) {
+	tests := []struct {
+		name    string
+		address string
+		suffix  string
+		want    string
+	}{
+		{"bare host:port", "127.0.0.1:18443", "/mcp", "https://127.0.0.1:18443/mcp"},
+		{"suffix already present", "https://node.example.com:8443/mcp", "/mcp", "https://node.example.com:8443/mcp"},
+		{"suffix under a mount path", "https://node.example.com:8443/base", "/mcp", "https://node.example.com:8443/base/mcp"},
+		{"trailing slash is not doubled", "https://node.example.com:8443/base/", "/mcp", "https://node.example.com:8443/base/mcp"},
+		{"empty suffix", "127.0.0.1:18443", "", "https://127.0.0.1:18443"},
+		{"unix socket", "/var/run/quicbaas/quicbaasd.sock", "/mcp", "https://localhost/mcp"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HTTPEndpoint(tc.address, true, tc.suffix); got != tc.want {
+				t.Errorf("HTTPEndpoint(%q, true, %q): got %q, want %q", tc.address, tc.suffix, got, tc.want)
+			}
+		})
+	}
+}

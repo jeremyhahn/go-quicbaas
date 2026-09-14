@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net"
 	"runtime"
 	"strconv"
@@ -61,12 +62,14 @@ import (
 //     + nonce checks), exactly as on a qrdb node.
 //  3. initialize() blocks, polling the node's IsSealed. When an operator
 //     drives the barrier unsealed through ANY transport (passphrase unseal,
-//     Shamir share quorum, recovery keys), the loop calls node.Unseal with
-//     empty credentials to complete the node boot (BuildServices + client),
-//     tears the sealed-phase listeners down, and the normal full boot
-//     continues — building the real service graph and restarting all
-//     transports with the full surface plus the probe-driven sealed gates
-//     (so a post-boot re-seal immediately re-narrows the surface).
+//     Shamir share quorum, recovery keys), the loop tears the sealed-phase
+//     listeners down, calls node.Unseal with empty credentials to complete
+//     the node boot (BuildServices + client — whose unified listeners bind
+//     the very ports the sealed listeners held, which is why teardown comes
+//     first, #139), and the normal full boot continues — building the real
+//     service graph and restarting all transports with the full surface plus
+//     the probe-driven sealed gates (so a post-boot re-seal immediately
+//     re-narrows the surface).
 // =============================================================================
 
 // sealedWindowPollInterval is how often the sealed-window wait loop samples
@@ -239,17 +242,17 @@ func (s *Server) runSealedWindow() error {
 	// the constant-sealed gates.
 	facade, _, err := s.buildSealedWindowFacade()
 	if err != nil {
-		s.stopSealedTransports()
+		_ = s.stopSealedTransports() // abort path: the causal error wins; failures are Warn-logged inside
 		return err
 	}
 	s.sealedWindowFacade = facade
 
 	if err := s.startSealedGRPCServer(); err != nil {
-		s.stopSealedTransports()
+		_ = s.stopSealedTransports() // abort path: the causal error wins; failures are Warn-logged inside
 		return err
 	}
 	if err := s.startSealedRESTServer(); err != nil {
-		s.stopSealedTransports()
+		_ = s.stopSealedTransports() // abort path: the causal error wins; failures are Warn-logged inside
 		return err
 	}
 
@@ -257,22 +260,50 @@ func (s *Server) runSealedWindow() error {
 
 	// 3. Block until the barrier is driven unsealed through any transport.
 	if err := s.awaitUnseal(); err != nil {
-		s.stopSealedTransports()
+		_ = s.stopSealedTransports() // abort path: the causal error wins; failures are Warn-logged inside
 		return err
 	}
 
-	// 4. Complete the node boot. The barrier is already unsealed, so Unseal
-	// with empty credentials proceeds directly to the data-plane build.
-	if err := s.getQRDBNode().Unseal(context.Background(), qrdbsdk.Credentials{}); err != nil {
-		s.stopSealedTransports()
-		return &SealedWindowBootError{Stage: "complete node boot", Cause: err}
+	// The unseal and a shutdown can race: awaitUnseal returns on whichever
+	// it observes first, and a shutdown that lands just after the unseal
+	// was observed would otherwise commit this boot to the full bring-up
+	// with the operator already gone. Re-check before committing. Past this
+	// point the boot is committed: node.Unseal and the remainder of
+	// initialize() are not shutdown-aware (a deliberate bound — making the
+	// whole boot pipeline cancellable is an architectural change), so a
+	// shutdown arriving later waits for the boot to complete and then tears
+	// it down through the normal path.
+	select {
+	case <-s.shutdownChan:
+		_ = s.stopSealedTransports() // abort path: the causal error wins; failures are Warn-logged inside
+		return &SealedWindowShutdownError{}
+	default:
 	}
 
-	// 5. Tear the sealed-phase listeners down; the full boot re-creates
-	// every transport with the complete service graph and the live
-	// probe-driven sealed gates. startService rewires s.ceremonyServices
-	// from the node (same instances).
-	s.stopSealedTransports()
+	// 4. Tear the sealed-phase listeners down BEFORE completing the node
+	// boot. Completing the boot first can never work: the node's own
+	// unified-server listeners bind the same configured ports the sealed
+	// listeners still hold, so Unseal failed deterministically with
+	// "address already in use" and the daemon exited instead of booting
+	// (#139). The fail-closed property survives the reorder — between this
+	// teardown and the full boot's listeners nothing is listening at all,
+	// which is strictly narrower than the sealed allowlist surface. The
+	// operator's unseal response has already been drained by the graceful
+	// stop inside stopSealedTransports. A teardown failure aborts the boot:
+	// a sealed listener that did not provably release its port would turn
+	// the deterministic collision this reorder fixes into a racy one.
+	if err := s.stopSealedTransports(); err != nil {
+		return &SealedWindowBootError{Stage: "sealed transport teardown", Cause: err}
+	}
+
+	// 5. Complete the node boot. The barrier is already unsealed, so Unseal
+	// with empty credentials proceeds directly to the data-plane build; the
+	// full boot then re-creates every transport with the complete service
+	// graph and the live probe-driven sealed gates. startService rewires
+	// s.ceremonyServices from the node (same instances).
+	if err := s.getQRDBNode().Unseal(context.Background(), qrdbsdk.Credentials{}); err != nil {
+		return &SealedWindowBootError{Stage: "complete node boot", Cause: err}
+	}
 
 	s.logger.Info("Barrier unsealed: sealed window closed, completing full boot")
 	return nil
@@ -376,12 +407,19 @@ func (s *Server) startSealedGRPCServer() error {
 // stopSealedTransports tears down every sealed-phase listener and releases
 // the sealed-window client + facade so the full boot can re-create the
 // transports over the complete service graph. Idempotent: nil components
-// are skipped.
-func (s *Server) stopSealedTransports() {
+// are skipped. The joined error reports every error-returning component
+// that failed to release (gRPC's stop API is void by design — GracefulStop
+// is synchronous and its listeners are closed by it); a non-nil return
+// means a sealed-phase listener or resource may still be live, so a caller
+// about to rebind the configured ports must treat it as fatal rather than
+// proceed into the #139 collision.
+func (s *Server) stopSealedTransports() error {
+	var errs []error
 	if s.getRESTServer() != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		if err := s.stopRESTServer(ctx); err != nil {
 			s.logger.WithError(err).Warn("Failed to stop sealed-window REST server")
+			errs = append(errs, err)
 		}
 		cancel()
 		s.setRESTServer(nil)
@@ -395,17 +433,20 @@ func (s *Server) stopSealedTransports() {
 	if s.sealedWindowFacade != nil {
 		if err := s.sealedWindowFacade.Close(); err != nil {
 			s.logger.WithError(err).Warn("Failed to close sealed-window facade")
+			errs = append(errs, err)
 		}
 		s.sealedWindowFacade = nil
 	}
 	if s.sealedWindowClient != nil {
 		if err := s.sealedWindowClient.Close(); err != nil {
 			s.logger.WithError(err).Warn("Failed to close sealed-window client")
+			errs = append(errs, err)
 		}
 		s.sealedWindowClient = nil
 	}
 	// The full boot's startService rewires ceremonyServices from the node.
 	s.ceremonyServices = nil
+	return errors.Join(errs...)
 }
 
 // sealedListenAddress resolves the listen address for a sealed-window

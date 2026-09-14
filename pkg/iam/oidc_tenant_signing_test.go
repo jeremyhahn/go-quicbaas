@@ -257,7 +257,7 @@ func TestProvider_DedicatedAndGlobalTokensValidateViaPlatformToken(t *testing.T)
 			ExpiresAt: NewUnixTime(now.Add(time.Hour)),
 			IssuedAt:  NewUnixTime(now),
 			NotBefore: NewUnixTime(now),
-			JTI:       generateJTI(),
+			JTI:       mustGenerateJTI(t),
 			TenantID:  tenantID,
 		}
 		tok, err := provider.tokenService.GenerateAccessToken(context.Background(), claims)

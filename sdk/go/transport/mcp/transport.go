@@ -178,40 +178,15 @@ func (t *Transport) buildHTTPClient() (*http.Client, error) {
 	}, nil
 }
 
+// MCPEndpointPath is the path the Streamable HTTP MCP surface is mounted at,
+// on the quicbaas REST listener and on go-qrdb's unified server alike.
+const MCPEndpointPath = "/mcp"
+
 // buildBaseURL constructs the base URL and MCP endpoint from config.
 func (t *Transport) buildBaseURL() {
-	parsed := transport.ParseAddress(t.cfg.Address)
-
-	// For Unix sockets, use a placeholder host
-	if parsed.IsUnix() {
-		scheme := "http"
-		if t.cfg.TLSConfig != nil {
-			scheme = "https"
-		}
-		t.baseURL = scheme + "://localhost"
-		t.endpoint = t.baseURL + "/mcp"
-		return
-	}
-
-	// For HTTP/HTTPS URLs, use the parsed scheme
-	if parsed.IsHTTP() {
-		t.baseURL = parsed.Scheme + "://" + parsed.Address
-		if parsed.Path != "" {
-			// If path already ends with /mcp, use it as-is
-			if strings.HasSuffix(parsed.Path, "/mcp") {
-				t.endpoint = t.baseURL + parsed.Path
-			} else {
-				t.endpoint = t.baseURL + parsed.Path + "/mcp"
-			}
-		} else {
-			t.endpoint = t.baseURL + "/mcp"
-		}
-		return
-	}
-
-	// For plain TCP addresses, TLS is required
-	t.baseURL = "https://" + parsed.Address
-	t.endpoint = t.baseURL + "/mcp"
+	tlsConfigured := t.cfg.TLSConfig != nil
+	t.baseURL = transport.HTTPBaseURL(t.cfg.Address, tlsConfigured)
+	t.endpoint = transport.HTTPEndpoint(t.cfg.Address, tlsConfigured, MCPEndpointPath)
 }
 
 // Request sends a unary request and returns the response.
@@ -259,6 +234,32 @@ func (t *Transport) requestWithRetry(ctx context.Context, service, method string
 }
 
 // doRequest executes a single MCP request via JSON-RPC.
+// applyTenantFromContext stamps the caller's tenant onto tool arguments that
+// do not already carry one.
+//
+// THE TENANT TRAVELS IN THE CONTEXT AND THE TOOLS TAKE IT AS AN ARGUMENT.
+// Every other transport reads transport.ContextWithTenant -- gRPC puts it on
+// the proto, REST on the query -- but an MCP tool call carries only its
+// arguments, and the server's session tools reject a call with no tenant_id
+// outright. A request struct that has no tenant field therefore has to be
+// given one here, or the call cannot succeed at all.
+//
+// An argument the caller set explicitly always wins: this fills a gap, it does
+// not override an intent.
+func applyTenantFromContext(ctx context.Context, arguments map[string]interface{}) map[string]interface{} {
+	tenantID := transport.TenantFromContext(ctx)
+	if tenantID == "" {
+		return arguments
+	}
+	if arguments == nil {
+		return map[string]interface{}{"tenant_id": tenantID}
+	}
+	if _, hasTenant := arguments["tenant_id"]; !hasTenant {
+		arguments["tenant_id"] = tenantID
+	}
+	return arguments
+}
+
 func (t *Transport) doRequest(ctx context.Context, service, method string, reqBody interface{}) (interface{}, error) {
 	if t.closed.Load() {
 		return nil, errors.NewConnection("mcp.doRequest", "transport is closed")
@@ -292,6 +293,7 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	isAccount := isMCPAccountService(service)
 	isSSH := isMCPSSHService(service)
 	isProject := isMCPProjectService(service)
+	isSDLC := isMCPSDLCService(service)
 	isCertificate := isMCPCertificateService(service)
 	isMessaging := isMCPMessagingService(service)
 	isObjectStorage := isMCPObjectStorageService(service)
@@ -323,6 +325,11 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	if isProject {
 		if _, ok := projectToolName(method); !ok {
 			return nil, newProjectUnsupportedError(method)
+		}
+	}
+	if isSDLC {
+		if _, ok := sdlcToolName(method); !ok {
+			return nil, newSDLCUnsupportedError(method)
 		}
 	}
 
@@ -363,11 +370,7 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		// Inject tenant_id from context if not already present in arguments.
 		// The SDK scheduler client methods don't accept tenant as a parameter,
 		// so the caller enriches context via transport.ContextWithTenant.
-		if _, hasTenant := arguments["tenant_id"]; !hasTenant {
-			if tid := transport.TenantFromContext(ctx); tid != "" {
-				arguments["tenant_id"] = tid
-			}
-		}
+		arguments = applyTenantFromContext(ctx, arguments)
 	} else if isTimeseries {
 		// Use timeseries handler to transform SDK request to MCP arguments
 		th := newTimeseriesHandler(t)
@@ -453,11 +456,16 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		if err != nil {
 			return nil, err
 		}
-		if _, hasTenant := arguments["tenant_id"]; !hasTenant {
-			if tid := transport.TenantFromContext(ctx); tid != "" {
-				arguments["tenant_id"] = tid
-			}
-		}
+		arguments = applyTenantFromContext(ctx, arguments)
+	} else if isOrchestrator {
+		// The orchestrator's SDK request structs carry every field the tools
+		// need EXCEPT the tenant: ListSessionsRequest is {backend, status},
+		// because on the wire transports the tenant rides the context rather
+		// than the body. The server's session tools require tenant_id and
+		// refuse without it, so a plain generic conversion produced a call
+		// that could never succeed -- a filtered listing came back as a
+		// required-field error instead of a session list.
+		arguments = applyTenantFromContext(ctx, t.convertToArguments(reqBody))
 	} else {
 		// Convert request to tool arguments using generic conversion
 		arguments = t.convertToArguments(reqBody)
@@ -519,6 +527,9 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	if isProject {
 		ph := newProjectMCPHandler()
 		return ph.transformResponse(method, result)
+	}
+	if isSDLC {
+		return transformSDLCResponse(method, result)
 	}
 
 	// Transform response for Scheduler service
@@ -960,6 +971,11 @@ func ToolName(service, method string) string {
 			return toolName
 		}
 	}
+	if isMCPSDLCService(service) {
+		if toolName, ok := sdlcToolName(method); ok {
+			return toolName
+		}
+	}
 
 	// Extract service name without package prefix
 	serviceName := service
@@ -1048,12 +1064,9 @@ func ToolName(service, method string) string {
 	case "Crypto":
 		return "quicbaas_crypto_" + camelToSnake(method)
 	case "RBAC":
+		// Roles only: the RBAC client has no user verbs, and the MCP surface has
+		// no user mutation tools outside the quicbaas_iam_user_* family. See #905.
 		rbacToolMap := map[string]string{
-			"CreateUser": "qrdb_user_create",
-			"DeleteUser": "qrdb_user_delete",
-			"ListUsers":  "qrdb_user_list",
-			"GetUser":    "quicbaas_user_get",
-			"UpdateUser": "quicbaas_user_update",
 			"CreateRole": "qrdb_role_create",
 			"DeleteRole": "qrdb_role_delete",
 			"ListRoles":  "qrdb_role_list",

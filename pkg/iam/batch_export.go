@@ -458,15 +458,21 @@ func (result *BatchExportResult) ConvertToImportRequest(targetTenantID string) *
 	if len(result.Users) > 0 {
 		req.Users = make([]*UserImport, 0, len(result.Users))
 		for _, user := range result.Users {
+			// The export knows the state exactly, so it states it exactly.
+			// Reducing it to Enabled first would lose the difference between a
+			// pending account and a disabled one, and the import would have no
+			// way to get it back.
+			enabled := user.CanAuthenticate()
 			req.Users = append(req.Users, &UserImport{
 				ID:         user.ID,
 				Email:      user.Email,
-				Username:   user.Name, // Name is used as username in this context
+				Username:   user.Username,
 				Name:       user.Name,
 				Attributes: user.Attributes,
 				Groups:     user.Groups,
 				Roles:      user.Roles,
-				Enabled:    !user.Suspended && !user.Locked,
+				Lifecycle:  user.Lifecycle,
+				Enabled:    &enabled,
 			})
 		}
 	}

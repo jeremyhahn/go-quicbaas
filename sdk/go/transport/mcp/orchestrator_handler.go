@@ -55,7 +55,15 @@ var orchestratorMethodTools = map[string]string{
 
 	"RotateSessionAccount": "quicbaas_orchestrator_rotate_account",
 
-	"GetSessionHistory": "quicbaas_orchestrator_session_history",
+	"GetSessionHistory":      "quicbaas_orchestrator_session_history",
+	"GetSessionConversation": "quicbaas_orchestrator_session_conversation",
+	"GetSpendReport":         "quicbaas_orchestrator_cost",
+
+	// Task lifecycle tools are named after the noun and verb
+	// (quicbaas_orchestrator_task_block), not the RPC (BlockTask).
+	"BlockTask":   "quicbaas_orchestrator_task_block",
+	"ReadmitTask": "quicbaas_orchestrator_task_readmit",
+	"DeleteTask":  "quicbaas_orchestrator_task_delete",
 }
 
 // orchestratorMCPTransform decodes one MCP tool result into its SDK type.
@@ -71,8 +79,15 @@ var orchestratorMCPTransforms = map[string]orchestratorMCPTransform{
 
 	"RotateSessionAccount": decodeMCPRotateSessionAccount,
 
-	"ListSessions":      decodeMCPListSessions,
-	"GetSessionHistory": decodeMCPSessionHistory,
+	"ListSessions":           decodeMCPListSessions,
+	"GetSessionHistory":      decodeMCPSessionHistory,
+	"GetSessionConversation": decodeMCPSessionConversation,
+	"GetSpendReport":         decodeMCPSpendReport,
+
+	"ListRunners": decodeMCPListRunners,
+	"BlockTask":   decodeMCPBlockTask,
+	"ReadmitTask": decodeMCPReadmitTask,
+	"DeleteTask":  decodeMCPDeleteTask,
 }
 
 // transformResponse converts the raw MCP tool result to the expected SDK type
@@ -225,6 +240,48 @@ func decodeMCPRotateSessionAccount(raw []byte) (interface{}, error) {
 	return &resp, nil
 }
 
+// decodeMCPBlockTask decodes quicbaas_orchestrator_task_block output. It had
+// the same gap ReadmitTask did — registered as a tool, absent from the
+// transform table — and is fixed with it rather than left as the next report.
+func decodeMCPBlockTask(raw []byte) (interface{}, error) {
+	var resp orchestrator.BlockTaskResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.BlockTask", "failed to decode MCP block task result")
+	}
+	return &resp, nil
+}
+
+// decodeMCPReadmitTask decodes quicbaas_orchestrator_task_readmit output.
+//
+// Registered as a tool but absent from the transform table, a SUCCESSFUL
+// readmit fell through as the raw tool map and the client refused it as an
+// invalid response type — so the verb the job page's Readmit action calls was
+// unusable over MCP even though the server had already done the work. The
+// tool result mirrors the SDK response field for field, so the decode is
+// direct, exactly as DeleteTask's is.
+func decodeMCPReadmitTask(raw []byte) (interface{}, error) {
+	var resp orchestrator.ReadmitTaskResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.ReadmitTask", "failed to decode MCP readmit task result")
+	}
+	return &resp, nil
+}
+
+// decodeMCPDeleteTask decodes quicbaas_orchestrator_task_delete output. The
+// tool result mirrors the SDK response field for field, so the decode is
+// direct; without it the client would receive the raw tool map and refuse it
+// as an invalid response type.
+func decodeMCPDeleteTask(raw []byte) (interface{}, error) {
+	var resp orchestrator.DeleteTaskResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.DeleteTask", "failed to decode MCP delete task result")
+	}
+	return &resp, nil
+}
+
 // decodeMCPListSessions decodes quicbaas_orchestrator_list_sessions output.
 func decodeMCPListSessions(raw []byte) (interface{}, error) {
 	var wire orchestrator.ListSessionsWire
@@ -233,6 +290,22 @@ func decodeMCPListSessions(raw []byte) (interface{}, error) {
 			"mcp.orchestrator.ListSessions", "failed to decode MCP list sessions result")
 	}
 	return wire.Response(), nil
+}
+
+// decodeMCPListRunners converts the quicbaas_orchestrator_list_runners result
+// into *orchestrator.ListJobRunnersResponse. The tool serialises the same
+// {runners, count} envelope the REST endpoint does, so the SDK type decodes it
+// directly.
+func decodeMCPListRunners(raw []byte) (interface{}, error) {
+	var resp orchestrator.ListJobRunnersResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.ListRunners", "failed to decode MCP list runners result")
+	}
+	if resp.Runners == nil {
+		resp.Runners = []*orchestrator.JobRunnerInfo{}
+	}
+	return &resp, nil
 }
 
 // parseInferenceResponse converts the MCP tool result for
@@ -263,4 +336,38 @@ func (h *orchestratorMCPHandler) parseInferenceResponse(result interface{}) (*or
 		Model:      toolResult.Model,
 		StopReason: toolResult.StopReason,
 	}, nil
+}
+
+// decodeMCPSessionConversation decodes
+// quicbaas_orchestrator_session_conversation output.
+//
+// The tool serialises the server's own SessionHistoryPage, whose JSON field
+// names already match the SDK response type, so this is a straight decode
+// rather than the reshaping the event transcript needs. It exists as a named
+// decoder anyway because the transport's generic path would hand back a
+// map[string]interface{}: the SDK's contract is a typed response.
+func decodeMCPSessionConversation(raw []byte) (interface{}, error) {
+	var out orchestrator.GetSessionConversationResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.GetSessionConversation", "failed to decode MCP session conversation result")
+	}
+	return &out, nil
+}
+
+// decodeMCPSpendReport decodes quicbaas_orchestrator_cost output.
+//
+// The tool serialises the server's own SpendReport, whose JSON field names
+// already match the SDK response type, so this is a straight decode. It
+// exists as a named decoder because the transport's generic path would hand
+// back a map[string]interface{}, and the SDK's contract is a typed response —
+// which is also what carries cost_measured, the flag a renderer must consult
+// before showing a cost.
+func decodeMCPSpendReport(raw []byte) (interface{}, error) {
+	var out orchestrator.GetSpendReportResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.GetSpendReport", "failed to decode MCP spend report result")
+	}
+	return &out, nil
 }

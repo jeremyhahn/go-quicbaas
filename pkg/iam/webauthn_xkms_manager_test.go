@@ -33,7 +33,8 @@ func TestXKMSWebAuthnManager_FinishRegistration_NoSession(t *testing.T) {
 			RPDisplayName: "Example",
 			RPOrigins:     []string{"https://example.com"},
 		},
-		QRDB: dummyQRDBClient,
+		QRDB:                dummyQRDBClient,
+		AttestationRecorder: recorderOf(&fakeUserAuthFactorClient{}),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -50,7 +51,7 @@ func TestXKMSWebAuthnManager_FinishRegistration_NoSession(t *testing.T) {
 	// session-not-found check to fire first. ServiceFor also panics
 	// before reaching the session-cache check, so wrap in recover().
 	defer func() { _ = recover() }()
-	err = m.FinishRegistration(context.Background(), "tenant-1", "user@x.com",
+	_, err = m.FinishRegistration(context.Background(), "tenant-1", "user@x.com",
 		map[string]interface{}{})
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -111,7 +112,8 @@ func TestXKMSWebAuthnManager_FinishLogin_NoSession(t *testing.T) {
 			RPDisplayName: "Example",
 			RPOrigins:     []string{"https://example.com"},
 		},
-		QRDB: dummyQRDBClient,
+		QRDB:                dummyQRDBClient,
+		AttestationRecorder: recorderOf(&fakeUserAuthFactorClient{}),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -302,12 +304,14 @@ func TestXKMSWebAuthnManager_LoginHandoff_CarriesUserHandle(t *testing.T) {
 // stubUserResolver is a deterministic WebAuthnUserResolver for the FinishLogin
 // canonical-resolution tests: it returns a fixed user (or error) keyed by email.
 type stubUserResolver struct {
-	byEmail map[string]*User
-	err     error
-	lastReq string
+	byEmail    map[string]*User
+	err        error
+	lastReq    string
+	lastTenant string
 }
 
-func (r *stubUserResolver) GetUserByEmail(_ context.Context, email string) (*User, error) {
+func (r *stubUserResolver) GetUserByEmail(_ context.Context, tenantID, email string) (*User, error) {
+	r.lastTenant = tenantID
 	r.lastReq = email
 	if r.err != nil {
 		return nil, r.err
@@ -319,8 +323,13 @@ func (r *stubUserResolver) GetUserByEmail(_ context.Context, email string) (*Use
 // token-issuance fix: after a successful assertion, FinishLogin re-resolves the
 // authenticated user through the canonical broker store so the surfaced iam.User
 // carries the external STRING id and the qrdb-resolved ROLE set — not xkms's
-// raw-bytes webauthn handle with no roles. It also asserts the verified tenant
-// is stamped onto the resolved user.
+// raw-bytes webauthn handle with no roles.
+//
+// It also asserts that the resolution is SCOPED to the verified tenant rather
+// than stamped with it afterwards. Stamping was how a global email index was
+// made to look tenant-safe: a record belonging to another tenant would be read,
+// relabelled, and returned. A tenant-scoped lookup cannot read it in the first
+// place, so the record's own tenant is authoritative.
 func TestXKMSWebAuthnManager_ResolveAuthenticatedUser_CanonicalIdentity(t *testing.T) {
 	const tenant = "system"
 	const email = "admin@example.com"
@@ -328,7 +337,7 @@ func TestXKMSWebAuthnManager_ResolveAuthenticatedUser_CanonicalIdentity(t *testi
 		ID:       "1234567890123456789", // canonical decimal-string subject
 		Email:    email,
 		Name:     "Admin",
-		TenantID: "ignored-will-be-overwritten",
+		TenantID: tenant,
 		Roles:    []string{"admin"},
 	}
 	resolver := &stubUserResolver{byEmail: map[string]*User{email: canonical}}
@@ -341,6 +350,9 @@ func TestXKMSWebAuthnManager_ResolveAuthenticatedUser_CanonicalIdentity(t *testi
 	}
 	if resolver.lastReq != email {
 		t.Errorf("resolver queried with %q, want %q", resolver.lastReq, email)
+	}
+	if resolver.lastTenant != tenant {
+		t.Errorf("resolver queried in tenant %q, want the verified tenant %q", resolver.lastTenant, tenant)
 	}
 	if user.ID != "1234567890123456789" {
 		t.Errorf("subject id = %q, want canonical decimal string", user.ID)
@@ -355,7 +367,7 @@ func TestXKMSWebAuthnManager_ResolveAuthenticatedUser_CanonicalIdentity(t *testi
 		t.Errorf("roles = %v, want [admin]", user.Roles)
 	}
 	if user.TenantID != tenant {
-		t.Errorf("tenant = %q, want %q (verified tenant must be stamped)", user.TenantID, tenant)
+		t.Errorf("tenant = %q, want the record's own %q", user.TenantID, tenant)
 	}
 }
 

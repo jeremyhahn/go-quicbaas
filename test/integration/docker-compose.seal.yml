@@ -133,9 +133,10 @@ services:
   # this compose file against a dedicated seal-ENABLED single-node daemon
   # (passphrase strategy, auto-unsealed at boot) instead of the default lane.
   #
-  # The node reuses the shared cluster's test-node1 hostname + generated cert
-  # material (test/integration/gen-certs -> ./certs) so the helpers package
-  # defaults (endpoints, PIV admin cert, integration CA key) apply unchanged.
+  # The node reuses the shared cluster's test-node1 hostname + the fixture
+  # material the QuicBaaS CA issues (test/integration/certfixture -> ./certs) so
+  # the helpers package defaults (endpoints, PIV admin cert, fixture CA) apply
+  # unchanged.
   # Neither service depends on the floci/vault emulators — `docker
   # compose run tenantbarrier-test` starts only this pair.
 
@@ -209,9 +210,14 @@ services:
       - QUICBAAS_NODE1_URL=https://test-node1:8080
       - QUICBAAS_NODE1_GRPC=test-node1:50051
     volumes:
-      # PIV/mTLS cert bundle: admin client cert for helpers.AuthPIV and the
-      # integration CA key for helpers.AuthTenantAdmin's tenant-scoped certs.
-      - ./certs:/etc/quicbaas/certs:ro
+      # PIV/mTLS fixture bundle: the admin client cert for helpers.AuthPIV and
+      # the fixture CA itself (ca-keystore/) for helpers.AuthTenantAdmin, which
+      # issues its tenant-scoped certificate through that CA rather than signing
+      # one itself.
+      #
+      # Writable, unlike the node mount below: the CA records every certificate
+      # it signs in its certificate store.
+      - ./certs:/etc/quicbaas/certs
     working_dir: /workspace/go-quicbaas
     networks:
       - seal-test-network

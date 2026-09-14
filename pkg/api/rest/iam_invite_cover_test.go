@@ -49,7 +49,7 @@ func (s *inviteActivationService) GetIdentityStore(_ context.Context) (*iam.Iden
 
 const (
 	inviteTenant = "tenant-invite"
-	inviteUserID = "user-invite-1"
+	inviteUserID = "72"
 )
 
 // setupInviteActivationHandler wires a WebAuthnManager and an identity store
@@ -239,22 +239,25 @@ func TestGetInvite_UsedAndExpired(t *testing.T) {
 		return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 	}
 
-	// Mark the seeded invite used -> 410.
+	// Mark the seeded invite used. Spent, expired and absent all get the same
+	// opaque answer on this unauthenticated route — see respondInviteUnusable.
 	_, redeemErr := store.Redeem(context.Background(), inviteTenant, token)
 	require.NoError(t, redeemErr)
 	w := httptest.NewRecorder()
 	handler.GetInvite(w, getReq(token))
-	assert.Equal(t, http.StatusGone, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 
-	// Seed an expired invite -> 410.
+	// Seed an expired invite.
 	expiredToken, _, err := store.Create(context.Background(), inviteTenant, inviteUserID, -time.Hour)
 	require.NoError(t, err)
 	w = httptest.NewRecorder()
 	handler.GetInvite(w, getReq(expiredToken))
-	assert.Equal(t, http.StatusGone, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// ActivateFIDO2Begin rejects a used invite (410).
+// ActivateFIDO2Begin refuses a used invite with the opaque not-found answer.
+// These routes are unauthenticated, so spent and absent must be
+// indistinguishable — see respondInviteUnusable.
 func TestActivateFIDO2Begin_UsedInvite(t *testing.T) {
 	handler, token, store, cleanup := setupInviteActivationHandler(t)
 	defer cleanup()
@@ -263,25 +266,26 @@ func TestActivateFIDO2Begin_UsedInvite(t *testing.T) {
 	require.NoError(t, redeemErrtoken)
 	w := httptest.NewRecorder()
 	handler.ActivateFIDO2Begin(w, inviteTokenReq(http.MethodPost, token))
-	assert.Equal(t, http.StatusGone, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// ActivateFIDO2Finish rejects used and expired invites.
+// ActivateFIDO2Finish refuses used and expired invites with the same opaque
+// not-found answer an absent token gets.
 func TestActivateFIDO2Finish_UsedAndExpired(t *testing.T) {
 	handler, token, store, cleanup := setupInviteActivationHandler(t)
 	defer cleanup()
 
-	// Used invite -> 410.
+	// Used invite.
 	_, redeemErrtoken := store.Redeem(context.Background(), inviteTenant, token)
 	require.NoError(t, redeemErrtoken)
 	w := httptest.NewRecorder()
 	handler.ActivateFIDO2Finish(w, inviteFinishReq(t, token))
-	assert.Equal(t, http.StatusGone, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 
-	// Expired invite -> 410.
+	// Expired invite.
 	expiredToken, _, err := store.Create(context.Background(), inviteTenant, inviteUserID, -time.Hour)
 	require.NoError(t, err)
 	w = httptest.NewRecorder()
 	handler.ActivateFIDO2Finish(w, inviteFinishReq(t, expiredToken))
-	assert.Equal(t, http.StatusGone, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

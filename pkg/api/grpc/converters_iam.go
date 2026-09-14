@@ -159,15 +159,18 @@ func convertProtoToUser(pb *iampb.User) *iam.User {
 		ID:          pb.Id,
 		TenantID:    pb.TenantId,
 		Email:       pb.Email,
+		Username:    pb.Username,
 		Name:        pb.Name,
 		Roles:       pb.Roles,
 		Groups:      pb.Groups,
-		MFAVerified: pb.MfaVerified,
+		AuthMethods: pb.AuthMethods,
+		Lifecycle:   iam.Lifecycle(pb.Lifecycle),
 	}
 
-	// Convert attributes (proto uses string->string, domain uses string->interface{})
+	// Attributes are string->string on both sides now, so this is a copy rather
+	// than a conversion that could drop a value it could not represent.
 	if len(pb.Attributes) > 0 {
-		user.Attributes = make(map[string]interface{}, len(pb.Attributes))
+		user.Attributes = make(map[string]string, len(pb.Attributes))
 		for k, v := range pb.Attributes {
 			user.Attributes[k] = v
 		}
@@ -184,11 +187,6 @@ func convertProtoToUser(pb *iampb.User) *iam.User {
 		lastAuth := pb.LastAuth.AsTime()
 		user.LastAuth = &lastAuth
 	}
-	if pb.MfaTimestamp != nil {
-		mfaTime := pb.MfaTimestamp.AsTime()
-		user.MFATimestamp = &mfaTime
-	}
-
 	return user
 }
 
@@ -202,20 +200,19 @@ func convertUserToProto(u *iam.User) *iampb.User {
 		Id:          u.ID,
 		TenantId:    u.TenantID,
 		Email:       u.Email,
+		Username:    u.Username,
 		Name:        u.Name,
 		Roles:       u.Roles,
 		Groups:      u.Groups,
-		MfaVerified: u.MFAVerified, //nolint:staticcheck // SA1019: the legacy field is still mirrored across the wire and the storage adapter for older clients.
+		AuthMethods: u.AuthMethods,
+		Lifecycle:   string(u.Lifecycle),
 	}
 
 	// Convert attributes
 	if len(u.Attributes) > 0 {
 		pb.Attributes = make(map[string]string, len(u.Attributes))
 		for k, v := range u.Attributes {
-			// Convert interface{} to string
-			if str, ok := v.(string); ok {
-				pb.Attributes[k] = str
-			}
+			pb.Attributes[k] = v
 		}
 	}
 
@@ -225,10 +222,6 @@ func convertUserToProto(u *iam.User) *iampb.User {
 
 	if u.LastAuth != nil {
 		pb.LastAuth = timestamppb.New(*u.LastAuth)
-	}
-
-	if u.MFATimestamp != nil {
-		pb.MfaTimestamp = timestamppb.New(*u.MFATimestamp)
 	}
 
 	return pb
@@ -290,11 +283,12 @@ func convertProtoToRole(pb *iampb.Role) *iam.Role {
 	}
 
 	role := &iam.Role{
-		ID:          pb.Id,
-		TenantID:    pb.TenantId,
-		Name:        pb.Name,
-		Description: pb.Description,
-		Permissions: pb.Permissions,
+		ID:                 pb.Id,
+		TenantID:           pb.TenantId,
+		Name:               pb.Name,
+		Description:        pb.Description,
+		Permissions:        pb.Permissions,
+		RetiredPermissions: pb.RetiredPermissions,
 	}
 
 	if pb.CreatedAt != nil {
@@ -314,13 +308,50 @@ func convertRoleToProto(r *iam.Role) *iampb.Role {
 	}
 
 	return &iampb.Role{
-		Id:          r.ID,
-		TenantId:    r.TenantID,
-		Name:        r.Name,
-		Description: r.Description,
-		Permissions: r.Permissions,
-		CreatedAt:   timestamppb.New(r.Created),
-		UpdatedAt:   timestamppb.New(r.Updated),
+		Id:                 r.ID,
+		TenantId:           r.TenantID,
+		Name:               r.Name,
+		Description:        r.Description,
+		Permissions:        r.Permissions,
+		RetiredPermissions: r.RetiredPermissions,
+		CreatedAt:          timestamppb.New(r.Created),
+		UpdatedAt:          timestamppb.New(r.Updated),
+	}
+}
+
+// convertRoleReconcileReportToProto converts a domain reconciliation report to
+// its proto form. Only the roles that changed are carried, so an empty roles
+// slice with changed=false is the ordinary no-drift answer.
+func convertRoleReconcileReportToProto(r *iam.RoleReconcileReport) *iampb.ReconcileRolesResponse {
+	if r == nil {
+		return nil
+	}
+
+	roles := make([]*iampb.RoleReconcileResult, 0, len(r.Roles))
+	for i := range r.Roles {
+		roles = append(roles, convertRoleReconcileResultToProto(&r.Roles[i]))
+	}
+
+	return &iampb.ReconcileRolesResponse{
+		TenantId: r.TenantID,
+		Roles:    roles,
+		Changed:  r.Changed(),
+	}
+}
+
+// convertRoleReconcileResultToProto converts one domain reconciliation result
+// to its proto form.
+func convertRoleReconcileResultToProto(r *iam.RoleReconcileResult) *iampb.RoleReconcileResult {
+	if r == nil {
+		return nil
+	}
+
+	return &iampb.RoleReconcileResult{
+		RoleId:  r.RoleID,
+		Name:    r.Name,
+		Created: r.Created,
+		Added:   r.Added,
+		Removed: r.Removed,
 	}
 }
 
@@ -1123,9 +1154,7 @@ func convertUserProfileExportToProto(p *iam.UserProfileExport) *iampb.UserProfil
 	if len(p.Attributes) > 0 {
 		pb.Attributes = make(map[string]string, len(p.Attributes))
 		for k, v := range p.Attributes {
-			if str, ok := v.(string); ok {
-				pb.Attributes[k] = str
-			}
+			pb.Attributes[k] = v
 		}
 	}
 

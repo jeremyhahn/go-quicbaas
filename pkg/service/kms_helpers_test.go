@@ -77,12 +77,12 @@ func TestKMSUsageToService(t *testing.T) {
 func TestVersionStatusKey(t *testing.T) {
 	t.Run("generates correct key format", func(t *testing.T) {
 		key := versionStatusKey("my-key-123", 5)
-		assert.Equal(t, "sys:kms/version_status/my-key-123/5", string(key))
+		assert.Equal(t, "__sys:kms/version_status/my-key-123/5", string(key))
 	})
 
 	t.Run("handles version zero", func(t *testing.T) {
 		key := versionStatusKey("test-key", 0)
-		assert.Equal(t, "sys:kms/version_status/test-key/0", string(key))
+		assert.Equal(t, "__sys:kms/version_status/test-key/0", string(key))
 	})
 }
 
@@ -240,7 +240,7 @@ func TestSetVersionStatus(t *testing.T) {
 		svc.setVersionStatus("key-3", 2, KeyStatusDisabled, &disabledAt)
 
 		// Verify it was persisted
-		key := "sys:kms/version_status/key-3/2"
+		key := "__sys:kms/version_status/key-3/2"
 		data, exists := store.data[key]
 		require.True(t, exists)
 
@@ -290,7 +290,7 @@ func TestGetVersionStatus(t *testing.T) {
 		require.NoError(t, err)
 
 		store := &mockKVStoreForKMS{data: map[string][]byte{
-			"sys:kms/version_status/key-2/1": data,
+			"__sys:kms/version_status/key-2/1": data,
 		}}
 		svc := &kmsServiceImpl{kvStore: store}
 

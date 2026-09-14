@@ -208,7 +208,12 @@ func (a *LibSignalAdapter) GeneratePreKeyBundle(account SignalAccount, numOneTim
 		}
 		sig := kpk.Signature()
 		kyberMaterial = append(kyberMaterial, KyberPreKeyMaterial{
-			ID:        a.nextKyberPreKeyID,
+			ID: a.nextKyberPreKeyID,
+			// go-libsignal v0.2.0 removed the raw KeyPair accessor: the secret
+			// half is guarded now and only GuardedKeyPair hands it out.
+			// SerializedPublicKey is the intended replacement and is literally
+			// keyPair.Public.Serialize() upstream, so this is the same bytes by
+			// the supported route rather than a workaround.
 			Public:    kpk.SerializedPublicKey(),
 			Signature: sig,
 		})

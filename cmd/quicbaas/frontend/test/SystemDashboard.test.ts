@@ -9,14 +9,14 @@
  *  - Marks Daemon as 'down' when the liveness probe fails
  *  - Marks KMS as 'ok' when listKeys returns 401 (up but auth required)
  *  - Populates Agent Daemons count from agentStore
- *  - Populates Sessions count from sessionStore
+ *  - Counts only LIVE sessions on the Active Sessions tile (go-quicbaas#850)
  *  - Renders clickable stat tiles
  *  - Shows "All systems operational" banner when all services are ok
  *  - Shows named problem subsystems in degraded/down banner
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor, within } from '@testing-library/svelte';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks — must be defined before any imports that reference the mocks.
@@ -83,7 +83,7 @@ vi.mock('../src/stores/agentStore.svelte.ts', () => ({
 
 const { sessionStoreMock } = vi.hoisted(() => ({
   sessionStoreMock: {
-    sessions: [] as Array<{ session_id: string }>,
+    sessions: [] as Array<{ session_id: string; status?: string; state?: string }>,
     sessionsLoading: false,
     activeSession: null,
     events: [],
@@ -332,16 +332,66 @@ describe('SystemDashboard — resource counts', () => {
     });
   });
 
-  it('shows correct session count from sessionStore', async () => {
+  it('counts only live sessions on the Active Sessions tile', async () => {
+    // Two defects guarded at once. go-quicbaas#850: the tile said "Active
+    // Sessions" and rendered the LENGTH of a list that holds closed sessions
+    // too, so an operator with one live session and 54 closed ones was told 54.
+    // go-quicbaas#864: the replacement counted `status`, which is what the WAILS
+    // binding calls the lifecycle field — so in the browser, where the REST wire
+    // sends `state`, the tile read 0.
+    //
+    // These records carry `state` because that is what a browser session really
+    // has (pinned by sdk/typescript/test/listSessions.test.ts).
     sessionStoreMock.sessions = [
-      { session_id: 's1' },
-      { session_id: 's2' },
-      { session_id: 's3' },
+      { session_id: 's1', state: 'active' },
+      { session_id: 's2', state: 'closed' },
+      { session_id: 's3', state: 'closed' },
+      { session_id: 's4', state: 'idle' },
+      { session_id: 's5', state: 'error' },
     ];
 
     render(SystemDashboard);
+    const tile = await screen.findByTestId('stat-sessions');
     await waitFor(() => {
-      expect(screen.getByText('open sessions')).toBeInTheDocument();
+      expect(within(tile).getByText('Active Sessions')).toBeInTheDocument();
+      // active + idle. closed and error are terminal.
+      expect(within(tile).getByText('2')).toBeInTheDocument();
+      // The total is still reported — as a total.
+      expect(within(tile).getByText('5 total')).toBeInTheDocument();
+    });
+    // And never as the headline value.
+    expect(within(tile).queryByText('5')).not.toBeInTheDocument();
+  });
+
+  it('reports zero live sessions when every session is closed', async () => {
+    sessionStoreMock.sessions = [
+      { session_id: 's1', state: 'closed' },
+      { session_id: 's2', state: 'closed' },
+    ];
+
+    render(SystemDashboard);
+    const tile = await screen.findByTestId('stat-sessions');
+    await waitFor(() => {
+      expect(within(tile).getByText('0')).toBeInTheDocument();
+      expect(within(tile).getByText('2 total')).toBeInTheDocument();
+    });
+  });
+
+  it('counts live sessions on the desktop\'s record shape too', async () => {
+    // The Wails binding renames the lifecycle field to `status`. The same tile
+    // has to be right on both platforms, which is why the counter reads the
+    // value rather than naming a field (go-quicbaas#864).
+    sessionStoreMock.sessions = [
+      { session_id: 's1', status: 'active' },
+      { session_id: 's2', status: 'closed' },
+      { session_id: 's3', status: 'resumable' },
+    ];
+
+    render(SystemDashboard);
+    const tile = await screen.findByTestId('stat-sessions');
+    await waitFor(() => {
+      expect(within(tile).getByText('2')).toBeInTheDocument();
+      expect(within(tile).getByText('3 total')).toBeInTheDocument();
     });
   });
 
@@ -394,9 +444,9 @@ describe('SystemDashboard — banner states', () => {
 
     render(SystemDashboard);
     await waitFor(() => {
-      // Should name "Orchestrator" in the banner, not "one or more services"
+      // Should name "Software Factory" in the banner, not "one or more services"
       const bannerText = screen.getByRole('status').textContent ?? '';
-      expect(bannerText).toContain('Orchestrator');
+      expect(bannerText).toContain('Software Factory');
     });
   });
 
@@ -635,5 +685,204 @@ describe('SystemDashboard — #85 overview dashboard sections', () => {
       return el;
     });
     expect(btn.textContent).toContain('New Workflow');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// go-quicbaas#219 — an authorization denial is not an outage.
+//
+// On the burn-in node the operator (tenant `system`) got
+//   403 ... tenant-only permission denied to system tenant
+// from GET /api/v1/orchestrator/health, because go-qrdb tags
+// orchestrator:health ScopeTenantOnly. The dashboard folded every rejection
+// into 'down', so the tile was permanently red for a running orchestrator —
+// indistinguishable from a real outage.
+//
+// These cases are asymmetric on purpose: the same catch block is driven with a
+// denial, with a 5xx, and with a transport failure, and each must produce a
+// DIFFERENT tile. A test that only asserted the 403 case would still pass if
+// the code mapped every failure to 'not permitted' — the mirror image of the
+// bug.
+// ---------------------------------------------------------------------------
+
+/** An SDK APIError-shaped rejection: a numeric `status` off an Error. */
+function apiError(status: number, message: string): Error {
+  return Object.assign(new Error(message), { status });
+}
+
+/** What the burn-in node actually returned to the system-tenant admin. */
+function tenantOnlyDenial(): Error {
+  return apiError(
+    403,
+    'qrdb/auth/rbac: permission denied: admin cannot health on orchestrator: ' +
+      'tenant-only permission denied to system tenant',
+  );
+}
+
+describe('SystemDashboard — orchestrator probe failure classification (#219)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetSDKMock();
+    mockGetAddress.mockReturnValue('https://localhost:18080');
+
+    // Everything except the orchestrator probe is healthy, so the orchestrator
+    // tile is the only thing under test.
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/health/live')) return livenessOk();
+      if (url.includes('/health/ready')) return readinessOk();
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    });
+    mockListKeys.mockResolvedValue({ keys: [] });
+    mockListJobs.mockResolvedValue({ jobs: [], total_count: 0 });
+    mockSealStatus.mockResolvedValue({ sealed: false, version: '1.2.3' });
+
+    agentStoreMock.agents = [];
+    sessionStoreMock.sessions = [];
+    orchestratorStoreMock.jobs = [];
+    connectionStoreMock.connected = true;
+  });
+
+  it('renders a 403 denial as "not permitted", never as "down"', async () => {
+    mockHealthCheck.mockRejectedValue(tenantOnlyDenial());
+
+    render(SystemDashboard);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('not permitted').length).toBeGreaterThan(0);
+    });
+    // The whole point of the issue: no red "down" tile for a running service.
+    expect(screen.queryAllByText('down')).toHaveLength(0);
+  });
+
+  it('renders a 401 denial as "not permitted" too', async () => {
+    mockHealthCheck.mockRejectedValue(apiError(401, 'Unauthorized'));
+
+    render(SystemDashboard);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('not permitted').length).toBeGreaterThan(0);
+    });
+    expect(screen.queryAllByText('down')).toHaveLength(0);
+  });
+
+  it('marks BOTH Software Factory and Storage not permitted on a denial', async () => {
+    // Storage health is derived from the orchestrator payload, so a denial
+    // leaves it equally unobserved — it must not claim a state either.
+    mockHealthCheck.mockRejectedValue(tenantOnlyDenial());
+
+    render(SystemDashboard);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('not permitted')).toHaveLength(2);
+    });
+    expect(screen.getByText('Software Factory')).toBeInTheDocument();
+    expect(screen.getByText('Storage (PebbleDB)')).toBeInTheDocument();
+  });
+
+  it('still renders a 500 as "down"', async () => {
+    mockHealthCheck.mockRejectedValue(apiError(500, 'Internal Server Error'));
+
+    render(SystemDashboard);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('down').length).toBeGreaterThan(0);
+    });
+    expect(screen.queryAllByText('not permitted')).toHaveLength(0);
+  });
+
+  it('still renders a transport failure (no HTTP status) as "down"', async () => {
+    // fetch rejects with a TypeError carrying no status when the connection is
+    // refused or TLS fails. That IS an outage and must stay red.
+    mockHealthCheck.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    render(SystemDashboard);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('down').length).toBeGreaterThan(0);
+    });
+    expect(screen.queryAllByText('not permitted')).toHaveLength(0);
+  });
+
+  it('does not raise the "Degraded" banner for a denial', async () => {
+    mockHealthCheck.mockRejectedValue(tenantOnlyDenial());
+
+    render(SystemDashboard);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('not permitted').length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText('Degraded')).not.toBeInTheDocument();
+    // ...and the banner is not painted with the error colour.
+    const banner = document.querySelector('.alert[role="status"]');
+    expect(banner?.classList.contains('alert-error')).toBe(false);
+  });
+
+  it('raises the "Degraded" banner naming Software Factory for a 500', async () => {
+    // The control for the case above: a genuine outage still escalates.
+    mockHealthCheck.mockRejectedValue(apiError(500, 'Internal Server Error'));
+
+    render(SystemDashboard);
+
+    await waitFor(() => {
+      expect(screen.getByText('Degraded')).toBeInTheDocument();
+    });
+    const banner = document.querySelector('.alert[role="status"]');
+    expect(banner?.textContent).toContain('Software Factory');
+    expect(banner?.classList.contains('alert-error')).toBe(true);
+  });
+
+  it('withholds "All systems operational" and names the invisible subsystems', async () => {
+    // Every other probe is healthy, so the old rollup would have gone green.
+    // It must not: a subsystem behind a denial was never observed, and it
+    // could be failing. Green means "observed and healthy", not "no bad news".
+    mockHealthCheck.mockRejectedValue(tenantOnlyDenial());
+
+    render(SystemDashboard);
+
+    await waitFor(() => {
+      expect(screen.getByText('Partial visibility')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('All systems operational')).not.toBeInTheDocument();
+
+    const banner = document.querySelector('.alert[role="status"]');
+    expect(banner?.textContent).toContain('Software Factory');
+    expect(banner?.textContent).toContain('Storage (PebbleDB)');
+    // Neither green nor red: the state is genuinely unknown.
+    expect(banner?.classList.contains('alert-success')).toBe(false);
+    expect(banner?.classList.contains('alert-error')).toBe(false);
+  });
+
+  it('still goes green when nothing is hidden', async () => {
+    // The control for the case above: without a denial the banner is
+    // unchanged, so the new gate cannot be satisfied by never going green.
+    mockHealthCheck.mockResolvedValue({ timestamp: Date.now(), total_sessions: 0, healthy: 0 });
+
+    render(SystemDashboard);
+
+    await waitFor(() => {
+      expect(screen.getByText('All systems operational')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Partial visibility')).not.toBeInTheDocument();
+  });
+
+  it('treats a denial-shaped message with no status code as "down"', async () => {
+    // The classification contract is the numeric status, never the prose. An
+    // error carrying qrdb's exact denial text but no status never reached an
+    // HTTP response, so it is an outage and must stay red — a regression that
+    // string-matched the message would turn this neutral, which is the
+    // dangerous direction.
+    mockHealthCheck.mockRejectedValue(
+      new Error(
+        'qrdb/auth/rbac: permission denied: admin cannot health on orchestrator: ' +
+          'tenant-only permission denied to system tenant (403)',
+      ),
+    );
+
+    render(SystemDashboard);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('down').length).toBeGreaterThan(0);
+    });
+    expect(screen.queryAllByText('not permitted')).toHaveLength(0);
   });
 });

@@ -83,11 +83,19 @@ func (s *Server) projectQRDBIdentity(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// The identity came from qrdbsdk.IdentityFromContext — qrdb already
+		// verified it — so the projected principal is authenticated.
+		// Setting the flag matches the gRPC authz interceptor
+		// (contextWithAuthorizedSubject) and the local-token middleware,
+		// and is required by every handler that gates on
+		// subject.Authenticated (requireSubject, and the impersonation
+		// actor resolution in AdminManager.StartImpersonation — #383).
 		subject := interfaces.Subject{
-			ID:       identity.Subject,
-			Username: identity.Subject,
-			TenantID: identity.TenantID,
-			Roles:    identity.Roles,
+			ID:            identity.Subject,
+			Username:      identity.Subject,
+			TenantID:      identity.TenantID,
+			Roles:         identity.Roles,
+			Authenticated: true,
 		}
 		next.ServeHTTP(w, r.WithContext(injectPrincipal(r.Context(), subject, nil)))
 	})

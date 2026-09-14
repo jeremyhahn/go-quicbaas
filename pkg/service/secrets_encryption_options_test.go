@@ -65,7 +65,10 @@ func TestStoreSecretWithTenantID(t *testing.T) {
 		TenantID: "tenant-123",
 	}
 
-	ctx := context.Background()
+	// The caller must be the tenant it names: req.TenantID selects the DEK
+	// AND the storage namespace, and the two are the same tenant by
+	// construction (go-quicbaas#534).
+	ctx := secretsScopeCtx("tenant-123")
 	resp, err := svc.StoreSecret(ctx, req)
 
 	require.NoError(t, err)
@@ -76,9 +79,9 @@ func TestStoreSecretWithTenantID(t *testing.T) {
 	require.NotNil(t, mockMgr.lastStoreOptions)
 	assert.Equal(t, "tenant-123", mockMgr.lastStoreOptions.TenantID)
 
-	// Verify metadata includes tenant info
-	secret, ok := mockMgr.secrets["test-secret"]
-	require.True(t, ok)
+	// Verify metadata includes tenant info, under the tenant-scoped path.
+	secret, ok := mockMgr.secrets["tenant/tenant-123/test-secret"]
+	require.True(t, ok, "secret must land in the tenant namespace, not the system one")
 	assert.Equal(t, "tenant-123", secret.metadata["encryption_tenant_id"])
 }
 
@@ -158,7 +161,7 @@ func TestStoreSecretWithAllOptions(t *testing.T) {
 		Algorithm: "AES-256-GCM",
 	}
 
-	ctx := context.Background()
+	ctx := secretsScopeCtx("tenant-789")
 	resp, err := svc.StoreSecret(ctx, req)
 
 	require.NoError(t, err)
@@ -170,9 +173,9 @@ func TestStoreSecretWithAllOptions(t *testing.T) {
 	assert.Equal(t, "key-abc", mockMgr.lastStoreOptions.KeyIdentifier)
 	assert.Equal(t, "AES-256-GCM", mockMgr.lastStoreOptions.Algorithm)
 
-	// Verify all metadata was stored
-	secret, ok := mockMgr.secrets["test-secret"]
-	require.True(t, ok)
+	// Verify all metadata was stored, under the tenant-scoped path.
+	secret, ok := mockMgr.secrets["tenant/tenant-789/test-secret"]
+	require.True(t, ok, "secret must land in the tenant namespace, not the system one")
 	assert.Equal(t, "tenant-789", secret.metadata["encryption_tenant_id"])
 	assert.Equal(t, "key-abc", secret.metadata["encryption_key_id"])
 	assert.Equal(t, "AES-256-GCM", secret.metadata["encryption_algorithm"])
@@ -355,9 +358,14 @@ func TestStoreSecretRequestValidation(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Bind the caller to the tenant the request names so the case
+			// exercises validation rather than the cross-tenant refusal.
+			ctx := context.Background()
+			if tt.req != nil && tt.req.TenantID != "" {
+				ctx = secretsScopeCtx(tt.req.TenantID)
+			}
 			_, err := svc.StoreSecret(ctx, tt.req)
 			if tt.wantErr {
 				assert.Error(t, err)

@@ -408,16 +408,16 @@ func (bp *IAMBatchProcessor) processUsers(ctx context.Context, op *BatchOperatio
 			continue
 		}
 
+		// No id is set. The STORE assigns it — an id carried in an import item
+		// names a record in whatever system produced the file, and minting a
+		// UUID here would put a second identifier shape into a store whose ids
+		// are Snowflakes, which nothing downstream can resolve.
 		user := &User{
-			ID:       item.ID,
 			Email:    item.Email,
 			Name:     item.Name,
 			TenantID: op.TenantID,
 			Roles:    item.Roles,
 			Groups:   item.Groups,
-		}
-		if user.ID == "" {
-			user.ID = uuid.New().String()
 		}
 
 		if err := bp.tenantMgr.CreateUser(ctx, user); err != nil {

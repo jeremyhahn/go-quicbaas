@@ -109,6 +109,17 @@ type clientOptions struct {
 	// it; MCP continues to use mcpAuthToken / mcp credentials).
 	authToken string
 
+	// tenantID scopes the client's requests to one tenant.
+	//
+	// SOME VERBS CANNOT INFER IT. A request that carries the tenant in its path
+	// or body needs nothing here, but the WebAuthn ceremony routes are mounted
+	// per tenant (/api/v1/iam/{tenant}/webauthn/...) and the handler has only
+	// the context to read it from. Without this the REST transport refuses with
+	// "tenant is required; configure rest.WithDefaultTenant", which is what made
+	// `quicbaas auth factor add --tenant X` impossible: the flag had nowhere to
+	// go.
+	tenantID string
+
 	// secretRegistry is the unified secret resolver registry injected by
 	// WithSecretRegistry. When set, Security().SecretResolver() returns it
 	// so go-trusted-platform (and other SDK consumers) have a single
@@ -390,6 +401,19 @@ func WithMCPAuthToken(token string) Option {
 func WithAuthToken(token string) Option {
 	return func(o *clientOptions) error {
 		o.authToken = token
+		return nil
+	}
+}
+
+// WithTenant scopes the client's requests to one tenant.
+//
+// It is what a verb whose route is mounted per tenant has to read the tenant
+// from — the WebAuthn ceremony routes are /api/v1/iam/{tenant}/webauthn/... and
+// their handler sees only the context. A verb that carries the tenant in its
+// own path or body is unaffected.
+func WithTenant(tenantID string) Option {
+	return func(o *clientOptions) error {
+		o.tenantID = tenantID
 		return nil
 	}
 }

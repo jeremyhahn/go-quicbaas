@@ -91,11 +91,6 @@ func TestIAMComponents_Getters(t *testing.T) {
 		result := components.GetSessionManager()
 		assert.Nil(t, result)
 	})
-
-	t.Run("GetAuthManager_Nil", func(t *testing.T) {
-		result := components.GetAuthManager()
-		assert.Nil(t, result)
-	})
 }
 
 // ================================================================================

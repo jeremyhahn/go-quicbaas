@@ -16,27 +16,24 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 type mockIAMComponents struct {
-	tenantManager       iam.TenantManager
-	identityStore       *iam.IdentityStore
-	policyEngine        *iam.PolicyEngine
-	appManager          *iam.AppManager
-	oidcProvider        *iam.OIDCProvider
-	federationManager   iam.FederationManager
-	mfaManager          MFAManager
-	webAuthnMgr         WebAuthnManager
-	auditLogger         iam.AuditLogger
-	sessionStorage      iam.SessionStorage
-	sessionManager      iam.SessionManager
-	inviteStore         iam.InviteStore
-	pivActivator        *iam.PIVActivator
-	adminManager        *iam.AdminManager
-	gdprManager         *iam.GDPRManager
-	authManager         AuthManagerInterface
-	internalAuthManager interfaces.AuthManager
+	tenantManager     iam.TenantManager
+	identityStore     *iam.IdentityStore
+	policyEngine      *iam.PolicyEngine
+	appManager        *iam.AppManager
+	oidcProvider      *iam.OIDCProvider
+	federationManager iam.FederationManager
+	mfaManager        MFAManager
+	webAuthnMgr       WebAuthnManager
+	auditLogger       iam.AuditLogger
+	sessionStorage    iam.SessionStorage
+	sessionManager    iam.SessionManager
+	inviteStore       iam.InviteStore
+	pivActivator      *iam.PIVActivator
+	adminManager      *iam.AdminManager
+	gdprManager       *iam.GDPRManager
 }
 
 var _ IAMComponents = (*mockIAMComponents)(nil)
@@ -262,23 +259,6 @@ func TestIAMServiceAdapter_GetGDPRManager_NilComponents(t *testing.T) {
 	assert.Nil(t, gm)
 }
 
-func TestIAMServiceAdapter_GetAuthManager_WithComponents(t *testing.T) {
-	components := &mockIAMComponents{}
-	adapter := &iamServiceAdapter{components: components}
-
-	am, err := adapter.GetAuthManager(context.Background())
-	require.NoError(t, err)
-	assert.Nil(t, am)
-}
-
-func TestIAMServiceAdapter_GetAuthManager_NilComponents(t *testing.T) {
-	adapter := &iamServiceAdapter{components: nil}
-
-	am, err := adapter.GetAuthManager(context.Background())
-	require.NoError(t, err)
-	assert.Nil(t, am)
-}
-
 func TestIAMServiceAdapter_GetPIVActivator_WithComponents(t *testing.T) {
 	activator := &iam.PIVActivator{}
 	components := &mockIAMComponents{pivActivator: activator}
@@ -314,7 +294,6 @@ type mockIAMServiceProvider struct {
 	pivActivator   *iam.PIVActivator
 	adminMgr       *iam.AdminManager
 	gdprMgr        *iam.GDPRManager
-	authMgr        AuthManagerInterface
 
 	tenantMgrErr      error
 	identityStoreErr  error
@@ -332,7 +311,6 @@ type mockIAMServiceProvider struct {
 	pivActivatorErr   error
 	adminMgrErr       error
 	gdprMgrErr        error
-	authMgrErr        error
 }
 
 type mockTenantManager struct {

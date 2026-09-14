@@ -82,6 +82,8 @@ func (r *ToolRegistry) executeIAMTool(ctx context.Context, name string, args map
 		return r.executeIAMRoleDelete(ctx, args)
 	case "quicbaas_iam_role_list":
 		return r.executeIAMRoleList(ctx, args)
+	case "quicbaas_iam_role_reconcile":
+		return r.executeIAMRoleReconcile(ctx, args)
 
 	// Policy Operations
 	case "quicbaas_iam_policy_create":
@@ -142,6 +144,14 @@ func (r *ToolRegistry) executeIAMTool(ctx context.Context, name string, args map
 		return r.executeMFAVerifyBackupCode(ctx, args)
 	case "quicbaas_mfa_backup_codes_status":
 		return r.executeMFAGetBackupCodeStatus(ctx, args)
+
+	// WebAuthn credential administration
+	case "quicbaas_iam_webauthn_credentials_list":
+		return r.executeIAMWebAuthnCredentialsList(ctx, args)
+	case "quicbaas_iam_webauthn_credential_delete":
+		return r.executeIAMWebAuthnCredentialDelete(ctx, args)
+	case "quicbaas_iam_webauthn_credentials_delete_all":
+		return r.executeIAMWebAuthnCredentialsDeleteAll(ctx, args)
 
 	// PEP Operations
 	case "quicbaas_pep_check":

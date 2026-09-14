@@ -521,3 +521,58 @@ func TestContextConfig_Validate(t *testing.T) {
 		})
 	}
 }
+
+// TestEmbeddingConfigValidatesAdditionalProviders covers the extra-provider list
+// that lets a provider go-qrdb will not accept as a manager default -- "npu" --
+// be registered and used. See docs/embeddings/npu.md and go-qrdb#528.
+func TestEmbeddingConfigValidatesAdditionalProviders(t *testing.T) {
+	base := EmbeddingConfig{
+		Provider:   "ollama",
+		APIURL:     "http://127.0.0.1:11434",
+		Model:      "nomic-embed-text",
+		Dimensions: 768,
+	}
+
+	t.Run("valid additional provider", func(t *testing.T) {
+		cfg := base
+		cfg.Additional = []EmbeddingConfig{{
+			Provider:   "npu",
+			APIURL:     "http://gpu-host.internal:8077",
+			Model:      "all-MiniLM-L6-v2",
+			Dimensions: 384,
+		}}
+		assert.NoError(t, cfg.Validate())
+	})
+
+	t.Run("additional provider is validated too", func(t *testing.T) {
+		// Zero dimensions is invalid, and must be caught in the nested entry
+		// rather than accepted because the parent looked fine.
+		cfg := base
+		cfg.Additional = []EmbeddingConfig{{Provider: "npu", Dimensions: 0}}
+		assert.Error(t, cfg.Validate())
+	})
+
+	t.Run("additional provider needs a name", func(t *testing.T) {
+		cfg := base
+		cfg.Additional = []EmbeddingConfig{{Dimensions: 384}}
+		assert.Error(t, cfg.Validate())
+	})
+
+	t.Run("nesting is refused rather than ignored", func(t *testing.T) {
+		// A mis-indented config must fail loudly instead of silently dropping
+		// the provider it was meant to declare.
+		cfg := base
+		cfg.Additional = []EmbeddingConfig{{
+			Provider:   "npu",
+			Dimensions: 384,
+			Additional: []EmbeddingConfig{{Provider: "npu", Dimensions: 384}},
+		}}
+		err := cfg.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "must not themselves declare additional")
+	})
+
+	t.Run("no additional providers is valid", func(t *testing.T) {
+		assert.NoError(t, base.Validate())
+	})
+}

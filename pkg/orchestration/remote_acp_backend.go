@@ -24,10 +24,12 @@ import (
 
 	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/credentials/oauth"
 	"google.golang.org/grpc/metadata"
+	grpcstatus "google.golang.org/grpc/status"
 
 	proto "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -55,6 +57,13 @@ var (
 	// resolve to AgentKindDaemon. Only daemon-kind registrations are eligible
 	// for remote routing.
 	ErrRemoteBackendNotDaemon = errors.New("remote_acp_backend: registration is not a daemon")
+
+	// ErrRemoteBackendNoBackend is returned when construction is attempted
+	// without naming the backend the instance serves. There is no default:
+	// falling back to the registration's primary is precisely the defect this
+	// field exists to prevent (go-quicbaas#937), so an unnamed backend is a
+	// construction error rather than a silent reroute.
+	ErrRemoteBackendNoBackend = errors.New("remote_acp_backend: served backend name is required")
 
 	// ErrRemoteBackendEmptyStream is returned when the daemon closes the
 	// prompt stream without sending any response frame.
@@ -97,14 +106,67 @@ func (e *RemoteBackendRPCError) Error() string {
 // Unwrap returns the wrapped error for errors.Is / errors.As support.
 func (e *RemoteBackendRPCError) Unwrap() error { return e.Err }
 
+// RemoteBackendMismatchError indicates a request named a backend other than
+// the one this instance is bound to. It is the routing invariant stated as an
+// error: one RemoteACPBackend serves exactly one backend name on exactly one
+// daemon, and a request carrying a different name was dispatched to the wrong
+// instance. Only requests that carry their own backend name (InferRequest) can
+// be checked this way; for the rest the name is a single field read from this
+// instance, so no mismatch is representable.
+type RemoteBackendMismatchError struct {
+	// Op is the RPC that was refused.
+	Op string
+	// Bound is the backend this instance serves.
+	Bound string
+	// Requested is the backend the request named.
+	Requested string
+}
+
+// Error implements the error interface.
+func (e *RemoteBackendMismatchError) Error() string {
+	return "remote_acp_backend: " + e.Op + ": instance serves backend " + e.Bound +
+		", request named " + e.Requested
+}
+
+// newUnservedBackendError reports that a registration was asked for a backend
+// it does not serve. It reuses the fleet's own NoMatchingAgentError vocabulary
+// — the same type pkg/server's resolver raises when no daemon satisfies the
+// backend constraint — so the refusal reaches the public API as the
+// no_matching_agent it is, rather than as a new parallel class.
+func newUnservedBackendError(reg *AgentRegistration, requested string) *NoMatchingAgentError {
+	detail := "agent " + reg.ID + " (" + reg.Host + ") does not serve backend=" + requested +
+		"; it serves primary=" + reg.Backend
+	if len(reg.Capabilities) > 0 {
+		detail += " capabilities=[" + strings.Join(reg.Capabilities, ",") + "]"
+	}
+	return &NoMatchingAgentError{Constraint: "backend", Detail: detail}
+}
+
 // RemoteACPBackendDeps injects production dependencies into
 // NewRemoteACPBackend. Fields that support "nil for tests" are annotated as
 // such; production callers populate everything.
 type RemoteACPBackendDeps struct {
 	// Registration identifies the daemon to connect to. Registration.Host is
-	// expected to be a dialable "host:port" string; Registration.Backend is
-	// forwarded to the daemon in each RPC.
+	// expected to be a dialable "host:port" string.
+	//
+	// Registration.Backend is the daemon's PRIMARY backend and is NOT what
+	// travels on the wire — see Backend below.
 	Registration *AgentRegistration
+
+	// Backend is the backend name this instance serves: the name stamped on
+	// every RPC it makes. Required, and it must be one the registration
+	// actually serves (AgentServesBackend), which is the daemon's primary or
+	// any backend in its capability set.
+	//
+	// THE FIELD EXISTS BECAUSE THE PRIMARY IS THE WRONG ANSWER. A daemon
+	// registers one primary and advertises the whole set it serves; resolution
+	// picks it for any of them. Stamping the primary on the wire meant a
+	// session resolved for codex was served by claude, silently, with the
+	// session record still saying codex (go-quicbaas#937) — and an
+	// independent-reviewer gate satisfied in configuration while violated in
+	// fact. One instance serves one backend name; the pool constructs one per
+	// requested name.
+	Backend string
 
 	// TokenSource supplies OAuth2 bearer tokens for daemon RPCs. May be nil
 	// in tests that use ConnDialer to establish insecure connections.
@@ -129,9 +191,16 @@ type RemoteACPBackendDeps struct {
 // registration via the BackendDispatcher's remote resolver.
 type RemoteACPBackend struct {
 	registration *AgentRegistration
-	pool         *grpcConnPool
-	tokenSource  oauth2.TokenSource
-	logger       interfaces.Logger
+
+	// backend is the backend name this instance serves. It is the SINGLE
+	// source of the name on every RPC and on the Session that Spawn returns,
+	// which is what makes "the session's recorded backend equals the backend
+	// named on its RPCs" structurally true rather than merely checked.
+	backend string
+
+	pool        *grpcConnPool
+	tokenSource oauth2.TokenSource
+	logger      interfaces.Logger
 }
 
 // Compile-time interface checks.
@@ -153,6 +222,18 @@ func NewRemoteACPBackend(deps RemoteACPBackendDeps) (*RemoteACPBackend, error) {
 	if kind != AgentKindDaemon && kind != AgentKindEmbedded {
 		return nil, ErrRemoteBackendNotDaemon
 	}
+	served := strings.TrimSpace(deps.Backend)
+	if served == "" {
+		return nil, ErrRemoteBackendNoBackend
+	}
+	// THE REFUSAL THE OLD CODE COULD NOT EXPRESS. It never compared the
+	// requested backend against the registration, so a spawn for a backend the
+	// selected daemon does not serve produced a working session on some other
+	// backend. Comparing them at the one point that builds the routing object
+	// means no instance can exist that names a backend its daemon cannot run.
+	if !AgentServesBackend(deps.Registration, served) {
+		return nil, newUnservedBackendError(deps.Registration, served)
+	}
 
 	pool := newGRPCConnPool(grpcConnPoolConfig{
 		TLSConfig: deps.ClientTLSConfig,
@@ -162,6 +243,7 @@ func NewRemoteACPBackend(deps RemoteACPBackendDeps) (*RemoteACPBackend, error) {
 
 	return &RemoteACPBackend{
 		registration: deps.Registration,
+		backend:      served,
 		pool:         pool,
 		tokenSource:  deps.TokenSource,
 		logger:       deps.Logger,
@@ -174,6 +256,12 @@ func (b *RemoteACPBackend) Registration() *AgentRegistration {
 	return b.registration
 }
 
+// Backend returns the backend name this instance serves — the name it stamps
+// on every RPC. It is not necessarily the registration's primary backend.
+func (b *RemoteACPBackend) Backend() string {
+	return b.backend
+}
+
 // ResolvedHost returns the daemon host this backend is bound to. The
 // orchestrator captures it at Spawn time and replays it on Prompt / Status /
 // Close so every call for a session reaches the same daemon instance that
@@ -183,6 +271,16 @@ func (b *RemoteACPBackend) ResolvedHost() string {
 		return ""
 	}
 	return b.registration.Host
+}
+
+// ResolvedAgentID returns the fleet agent this backend is bound to. The
+// orchestrator captures it at Spawn time so the session's job can name the
+// agent that ran the work. Implements resolvedAgentBackend.
+func (b *RemoteACPBackend) ResolvedAgentID() string {
+	if b.registration == nil {
+		return ""
+	}
+	return b.registration.ID
 }
 
 // Close terminates a remote session by delegating to the daemon's
@@ -219,9 +317,11 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 		return nil, err
 	}
 	b.logger.Debugf("remote_acp_backend: Spawn backend=%s tenant=%s project=%s",
-		b.registration.Backend, b.registration.TenantID, req.ProjectID)
+		b.backend, b.registration.TenantID, req.ProjectID)
 	pbReq := &proto.SpawnSessionRequest{
-		Backend:        b.registration.Backend,
+		// THE BACKEND THIS INSTANCE SERVES, which is the backend the resolver
+		// was asked for — not the daemon's primary (go-quicbaas#937).
+		Backend:        b.backend,
 		ProjectId:      req.ProjectID,
 		WorkDir:        req.WorkDir,
 		Model:          req.Model,
@@ -233,6 +333,12 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 		ContainerImage: req.ContainerImage,
 		TenantId:       b.registration.TenantID,
 		Persistent:     req.Persistent,
+		// FORWARDED, because the caller's grant is the whole point of it. The
+		// SDLC module states its worker's permission mode on the spawn
+		// (go-quicbaas#218); dropping it here would leave every REMOTE worker
+		// spawned exactly the way the fault was measured, with the local path
+		// fixed and the distributed one silently not.
+		ExtraArgs: req.ExtraArgs,
 		// The pooled account is selected and materialized by the daemon that
 		// actually runs the agent — the credential lives in that daemon's own
 		// secret store, never on the wire. Only the caller's request is
@@ -243,10 +349,57 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 		AccountId:       req.AccountID,
 		AccountAuto:     req.AccountAuto,
 		AccountStrategy: req.AccountStrategy,
+		// ACCOUNTALLOW IS A RESTRICTION, WHICH IS WHY DROPPING IT IS THE
+		// DANGEROUS DIRECTION. It names the accounts one session may use and
+		// rotate through; empty means the WHOLE tenant/project/provider pool is
+		// eligible. So a request that omitted it here did not fail — it
+		// silently broadened from the caller's chosen set to everything the
+		// tenant owns, and the session could bill an account its operator had
+		// deliberately excluded. Found by review of #235, the fourth thing this
+		// boundary has quietly dropped.
+		AccountAllow: req.AccountAllow,
+		// AccountExclude is AccountAllow's other half, and it is carried for
+		// the identical reason: it is a RESTRICTION whose empty value means "no
+		// restriction". Rotation sets it to the account that has just hit a
+		// limit so the replacement can never be the same one; a boundary that
+		// forwarded the allow-list and dropped the exclusion would move a
+		// session off an account and straight back onto it.
+		AccountExclude: req.AccountExclude,
+		// JobID travels because the daemon cannot derive it, and its account
+		// resolution puts it in the delivery grant's scope so a remote
+		// session's grant records the job it served (account_lease.go).
+		JobId: req.JobID,
+
+		// THE CONTAINER AND TRUST DIMENSION (#248). Both ends were already
+		// built for these — the orchestrator populates every one of them on the
+		// SpawnRequest it dispatches (orchestrator.go, spawnReq), and the
+		// ACPBackend the daemon runs consumes every one of them when it builds
+		// the container spec — and only the wire between them was missing. So a
+		// remote session ran without the mount its operator had authorized and
+		// at whatever tier the daemon defaulted to, silently, because each of
+		// these is inert at its zero value and nothing fails when a request
+		// asks for nothing.
+		ExtraMounts:  runtimeMountsToProto(req.ExtraMounts),
+		ImageDigest:  req.ImageDigest,
+		TrustLevel:   proto.TrustLevel(req.TrustLevel),
+		TrustLabel:   req.TrustLabel,
+		ExpectedPcrs: req.ExpectedPCRs,
+
+		// THE STORAGE TIER, AND IT TRAVELS FOR THE TRUST TIER'S OWN REASON.
+		// This control plane holds the project record and resolved the tier
+		// from it; the daemon that creates the container is the only party that
+		// can apply it. Dropped, it would not fail — every field of it is inert
+		// at its zero value — it would run the remote worker's checkout on the
+		// disk its operator configured the project off, with no memory limit on
+		// the tmpfs the tier depends on.
+		Storage: runtimeStorageToProto(req.Storage),
 	}
 	resp, rpcErr := client.Spawn(b.authCtx(ctx), pbReq)
 	if rpcErr != nil {
-		return nil, &RemoteBackendRPCError{Op: "Spawn", Err: rpcErr}
+		// The daemon's configuration-fault class, when it attached one, so a
+		// dispatch that started no process is classified the same whether the
+		// resolver ran here or on another host (#235).
+		return nil, &RemoteBackendRPCError{Op: "Spawn", Err: wrapRemoteSpawnFault("Spawn", rpcErr)}
 	}
 	createdAt := time.Now().UnixNano()
 	if resp.GetTimestamp() != nil {
@@ -255,11 +408,60 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 	return &Session{
 		ID:        resp.GetSessionId(),
 		ProjectID: req.ProjectID,
-		Backend:   b.registration.Backend,
+		// THE SESSION'S RECORDED BACKEND AND THE ONE ON ITS RPCs ARE ONE FIELD.
+		// Both this and pbReq.Backend above read b.backend, so the invariant
+		// "a session's recorded backend equals the backend named on its RPCs"
+		// holds by construction and needs no runtime check; there is no second
+		// value for them to disagree about. The same field serves Prompt,
+		// Infer and ListModels.
+		Backend:   b.backend,
 		Model:     resp.GetModel(),
 		Status:    SessionStateActive,
 		WorkDir:   req.WorkDir,
 		CreatedAt: createdAt,
+
+		// THE ACCOUNT THE DAEMON RESOLVED, WHICH ONLY THE DAEMON KNOWS.
+		// Selection runs there, on a pool whose credentials never cross this
+		// wire, so the answer can only come back in the response. Without it
+		// the orchestrator recorded no AccountID on the durable session record
+		// and stamped none onto the session's turn usage, and the cost of every
+		// remotely-executed session was attributable to no account at all —
+		// #248's class in the response direction.
+		AccountID:       resp.GetAccountId(),
+		AccountStrategy: resp.GetAccountStrategy(),
+
+		// THE DELIVERY GRANT THE RELEASE WAS SERVED UNDER, for exactly the
+		// reason the account is carried and one step more urgent: this side
+		// RECORDS it on the durable session record, and the session's conclusion
+		// withdraws it.
+		//
+		// This control plane ISSUED that grant — its own materialize verb did,
+		// when it released the credential to the daemon — but it could not tell
+		// which session the grant belonged to, because the release happens
+		// inside the daemon's resolution. The daemon reports it back here
+		// (pkg/agent/account_grant.go). A grant that did not come back would be
+		// a credential on a remote host that this control plane leased and could
+		// never revoke.
+		CredentialLeaseID: resp.GetCredentialLeaseId(),
+
+		// THE CONTAINER THE DAEMON PUT THE AGENT IN (#740), for the same reason
+		// the account is carried: the daemon created it and nothing on this side
+		// can derive it. Without it the orchestrator recorded an empty
+		// ContainerID for every remotely-executed session, and the SDLC runner —
+		// which refuses to let a worker start work it could never publish,
+		// because the delivery's commit, signature and push all run inside the
+		// worker's container — refused every remote worker as "runs no
+		// container".
+		//
+		// THE ID BELONGS TO THE DAEMON'S HOST, and that is a constraint on who
+		// may act on it rather than a reason to drop it. It addresses a
+		// container under the container runtime the AGENT owns; the control
+		// plane's own runtime is a different one whenever the agent is on a
+		// different host. The session record names that host (SessionRecord
+		// HostAffinity) precisely so a command can be routed to the daemon that
+		// can run it. See go-quicbaas#743 for the exec seam that routing needs
+		// and does not yet have.
+		ContainerID: resp.GetContainerId(),
 	}, nil
 }
 
@@ -276,9 +478,9 @@ func (b *RemoteACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 	}
 
 	b.logger.Debugf("remote_acp_backend: Prompt backend=%s tenant=%s session=%s",
-		b.registration.Backend, b.registration.TenantID, req.SessionID)
+		b.backend, b.registration.TenantID, req.SessionID)
 	stream, rpcErr := client.Prompt(b.authCtx(ctx), &proto.PromptSessionRequest{
-		Backend:      b.registration.Backend,
+		Backend:      b.backend,
 		SessionId:    req.SessionID,
 		ProjectId:    req.ProjectID,
 		Prompt:       req.Prompt,
@@ -287,7 +489,12 @@ func (b *RemoteACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 		TenantId:     b.registration.TenantID,
 	})
 	if rpcErr != nil {
-		return nil, &RemoteBackendRPCError{Op: "Prompt", Err: rpcErr}
+		// The daemon's structured account of a failed turn, when it attached
+		// one, so classification downstream is the same whether the process
+		// ran here or on another host (#235). No detail means an older daemon
+		// or a failure with no structured account, and the error is wrapped
+		// exactly as it was before.
+		return nil, &RemoteBackendRPCError{Op: "Prompt", Err: wrapRemoteTurnFailure("Prompt", rpcErr)}
 	}
 
 	out := &PromptResponse{}
@@ -298,7 +505,11 @@ func (b *RemoteACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 			break
 		}
 		if recvErr != nil {
-			return nil, &RemoteBackendRPCError{Op: "Prompt", Err: recvErr}
+			// Same on the receive path: a streaming Prompt reports the turn's
+			// failure here rather than at the call, so the evidence has to be
+			// read off both or the fix works only for the half that fails
+			// early.
+			return nil, &RemoteBackendRPCError{Op: "Prompt", Err: wrapRemoteTurnFailure("Prompt", recvErr)}
 		}
 		gotFrame = true
 		if frame.GetSessionId() != "" {
@@ -349,6 +560,15 @@ func (b *RemoteACPBackend) Infer(ctx context.Context, req *InferRequest) (<-chan
 	if req.Prompt == "" {
 		return nil, &InputValidationError{Field: "prompt", Message: "cannot be empty"}
 	}
+	// Infer is the one request that carries its own backend name, so it is the
+	// one place the routing invariant can be checked rather than only stated:
+	// a request dispatched to an instance bound to a different backend is the
+	// #937 class recurring, and running it would serve the caller a different
+	// model family under the name they asked for. An empty name defers to the
+	// instance's binding — the service boundary resolved on it.
+	if req.Backend != "" && req.Backend != b.backend {
+		return nil, &RemoteBackendMismatchError{Op: "Infer", Bound: b.backend, Requested: req.Backend}
+	}
 
 	client, err := b.client(ctx)
 	if err != nil {
@@ -356,10 +576,10 @@ func (b *RemoteACPBackend) Infer(ctx context.Context, req *InferRequest) (<-chan
 	}
 
 	b.logger.Debugf("remote_acp_backend: Infer backend=%s tenant=%s model=%s",
-		b.registration.Backend, b.registration.TenantID, req.Model)
+		b.backend, b.registration.TenantID, req.Model)
 
 	pbReq := &proto.InferRequest{
-		Backend:      b.registration.Backend,
+		Backend:      b.backend,
 		Model:        req.Model,
 		Prompt:       req.Prompt,
 		SystemPrompt: req.SystemPrompt,
@@ -381,7 +601,7 @@ func (b *RemoteACPBackend) Infer(ctx context.Context, req *InferRequest) (<-chan
 			if errors.Is(recvErr, io.EOF) {
 				if !gotChunk {
 					b.logger.Warnf("remote_acp_backend: Infer stream closed with no chunks: backend=%s",
-						b.registration.Backend)
+						b.backend)
 				}
 				return
 			}
@@ -389,7 +609,7 @@ func (b *RemoteACPBackend) Infer(ctx context.Context, req *InferRequest) (<-chan
 				// Context cancellation is a normal exit path; only log real errors.
 				if ctx.Err() == nil {
 					b.logger.Warnf("remote_acp_backend: Infer stream error: backend=%s err=%v",
-						b.registration.Backend, recvErr)
+						b.backend, recvErr)
 				}
 				return
 			}
@@ -418,6 +638,16 @@ func (b *RemoteACPBackend) Infer(ctx context.Context, req *InferRequest) (<-chan
 }
 
 // Status dispatches to the daemon's AgentRuntime.Status.
+//
+// A DAEMON THAT NO LONGER HOLDS THE SESSION IS AN ANSWER, NOT A FAULT. The
+// daemon maps its own SessionNotFoundError onto codes.NotFound
+// (pkg/agent.mapRuntimeError), and wrapping that indiscriminately in
+// RemoteBackendRPCError erased the one distinction every liveness check needs:
+// the stall detector type-asserts for *SessionNotFoundError to tell "this
+// session is gone" from "this session could not be reached", and treated a
+// dead remote worker as unreadable forever (go-quicbaas#774). The code is
+// translated back into the package's own typed error here, at the seam that
+// knows it came off the wire.
 func (b *RemoteACPBackend) Status(ctx context.Context, sessionID string) (*SessionStatus, error) {
 	client, err := b.client(ctx)
 	if err != nil {
@@ -428,12 +658,15 @@ func (b *RemoteACPBackend) Status(ctx context.Context, sessionID string) (*Sessi
 		TenantId:  b.registration.TenantID,
 	})
 	if rpcErr != nil {
+		if grpcstatus.Code(rpcErr) == codes.NotFound {
+			return nil, &SessionNotFoundError{SessionID: sessionID}
+		}
 		return nil, &RemoteBackendRPCError{Op: "Status", Err: rpcErr}
 	}
 	return &SessionStatus{
 		SessionID:    resp.GetSessionId(),
 		State:        protoSessionStateToRuntime(resp.GetState()),
-		LastActivity: timestampAsUnix(resp.GetLastActivity()),
+		LastActivity: timestampAsUnixNano(resp.GetLastActivity()),
 		Uptime:       resp.GetUptimeSeconds(),
 	}, nil
 }
@@ -464,9 +697,9 @@ func (b *RemoteACPBackend) Type() string {
 func (b *RemoteACPBackend) ToolGuidance() string { return "" }
 
 // ListModels proxies the ListModels RPC to the remote daemon and returns the
-// model names available on the named backend. The backend name is taken from
-// the registration so each RemoteACPBackend instance routes to the correct
-// daemon backend.
+// model names available on the backend THIS INSTANCE SERVES. A daemon serving
+// several backends has a different model catalog per backend, so naming the
+// registration's primary here would answer for the wrong one.
 //
 // Implements orchestration.ModelLister.
 func (b *RemoteACPBackend) ListModels(ctx context.Context) ([]string, error) {
@@ -475,7 +708,7 @@ func (b *RemoteACPBackend) ListModels(ctx context.Context) ([]string, error) {
 		return nil, &RemoteBackendDialError{Host: b.registration.Host, Err: err}
 	}
 	resp, err := cl.ListModels(b.authCtx(ctx), &proto.ListModelsRequest{
-		Backend:  b.registration.Backend,
+		Backend:  b.backend,
 		TenantId: b.registration.TenantID,
 	})
 	if err != nil {
@@ -629,9 +862,50 @@ func runtimeMCPServersToProto(in []MCPServerConfig) []*proto.MCPServerConfig {
 			Name: s.Name,
 			Url:  url,
 			Env:  s.Env,
+			// The launch instruction itself, which a stdio MCP server cannot
+			// be started without. Sent verbatim rather than folded into url:
+			// the receiving side's url->command fallback exists for senders
+			// that predate these fields and must not be what a current sender
+			// relies on.
+			Command: s.Command,
+			Args:    s.Args,
 		}
 	}
 	return out
+}
+
+// runtimeMountsToProto converts orchestration container mounts to the proto
+// shape. Nil for an empty slice, so a spawn that authorized no extra mount
+// sends no repeated field rather than an empty one.
+func runtimeMountsToProto(in []ContainerMount) []*proto.ContainerMount {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]*proto.ContainerMount, len(in))
+	for i, m := range in {
+		out[i] = &proto.ContainerMount{
+			Source:         m.Source,
+			Target:         m.Target,
+			ReadOnly:       m.ReadOnly,
+			Type:           m.Type,
+			TmpfsSizeBytes: m.TmpfsSizeBytes,
+		}
+	}
+	return out
+}
+
+// runtimeStorageToProto converts a resolved workspace storage plan to the wire
+// shape. An inert plan converts to nil, so a spawn for a project with no
+// storage configuration puts no field on the wire at all.
+func runtimeStorageToProto(plan WorkspaceStoragePlan) *proto.WorkspaceStoragePlan {
+	if plan.Inert() {
+		return nil
+	}
+	return &proto.WorkspaceStoragePlan{
+		Tier:           string(plan.Tier),
+		TmpfsSizeBytes: plan.TmpfsSizeBytes,
+		MemoryBytes:    plan.MemoryBytes,
+	}
 }
 
 // protoContentBlocksToRuntime converts proto content blocks to the
@@ -664,9 +938,17 @@ func protoSessionStateToRuntime(s proto.SessionState) SessionState {
 	return ""
 }
 
-// timestampAsUnix extracts seconds-since-epoch from a proto timestamp,
+// timestampAsUnixNano extracts nanoseconds-since-epoch from a proto timestamp,
 // returning 0 for nil inputs.
-func timestampAsUnix(ts interface{ AsTime() time.Time }) int64 {
+//
+// NANOSECONDS, NOT SECONDS. Every session instant in this package — a
+// Session's CreatedAt, a SessionStatus's LastActivity, a SessionRecord's
+// pair of both — is Unix nanoseconds; see the unit contract on
+// orchestration.Session. This helper returned seconds, so a remote daemon's
+// Status answer reached a reader that decoded it with time.Unix(0, ...) as
+// an instant a second after the epoch, and the session read as idle since
+// 1970 (go-quicbaas#855).
+func timestampAsUnixNano(ts interface{ AsTime() time.Time }) int64 {
 	if ts == nil {
 		return 0
 	}
@@ -674,7 +956,7 @@ func timestampAsUnix(ts interface{ AsTime() time.Time }) int64 {
 	if t.IsZero() {
 		return 0
 	}
-	return t.Unix()
+	return t.UnixNano()
 }
 
 // =============================================================================

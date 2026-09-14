@@ -136,8 +136,7 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("impersonating a tenant user is denied by default", func(t *testing.T) {
-		_, err := manager.StartImpersonation(ctx, &StartImpersonationOptions{
-			AdminUserID:  "firstboot-admin",
+		_, err := manager.StartImpersonation(ctxWithActor("firstboot-admin"), &StartImpersonationOptions{
 			TargetUserID: "tenant-user-1",
 			TenantID:     "tenant-1",
 			Reason:       "operator overreach attempt",
@@ -148,8 +147,7 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 	})
 
 	t.Run("impersonating a verified system-tenant user still works", func(t *testing.T) {
-		session, err := manager.StartImpersonation(ctx, &StartImpersonationOptions{
-			AdminUserID:  "firstboot-admin",
+		session, err := manager.StartImpersonation(ctxWithActor("firstboot-admin"), &StartImpersonationOptions{
 			TargetUserID: "system-operator-2",
 			TenantID:     qrdbsdk.SystemTenantID,
 			Reason:       "system-scope support session",
@@ -163,8 +161,7 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 		// tenant-user-1 is not a system-tenant user, so the identity
 		// resolver cannot place it there and no session comes into
 		// existence — the unverified-principal path fails closed (#357).
-		_, err := manager.StartImpersonation(ctx, &StartImpersonationOptions{
-			AdminUserID:  "firstboot-admin",
+		_, err := manager.StartImpersonation(ctxWithActor("firstboot-admin"), &StartImpersonationOptions{
 			TargetUserID: "tenant-user-1",
 			TenantID:     qrdbsdk.SystemTenantID,
 			Reason:       "ID smuggling attempt",
@@ -183,8 +180,7 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		session, err := manager.StartImpersonation(ctx, &StartImpersonationOptions{
-			AdminUserID:  "breakglass-admin",
+		session, err := manager.StartImpersonation(ctxWithActor("breakglass-admin"), &StartImpersonationOptions{
 			TargetUserID: "tenant-user-1",
 			TenantID:     "tenant-1",
 			Reason:       "explicit audited grant",
@@ -194,8 +190,7 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 		assert.Equal(t, "tenant-1", session.TenantID)
 
 		// The same grant does not reach a tenant it does not name.
-		_, err = manager.StartImpersonation(ctx, &StartImpersonationOptions{
-			AdminUserID:  "breakglass-admin",
+		_, err = manager.StartImpersonation(ctxWithActor("breakglass-admin"), &StartImpersonationOptions{
 			TargetUserID: "tenant-user-2",
 			TenantID:     "tenant-2",
 			Reason:       "should be denied",
@@ -236,8 +231,7 @@ func TestAdminManager_StartImpersonation_ResolverErrorIsNotNotFound(t *testing.T
 	})
 	require.NoError(t, err)
 
-	_, err = manager.StartImpersonation(ctx, &StartImpersonationOptions{
-		AdminUserID:  "admin-1",
+	_, err = manager.StartImpersonation(ctxWithActor("admin-1"), &StartImpersonationOptions{
 		TargetUserID: "tenant-user-1",
 		TenantID:     "tenant-1",
 		Reason:       "resolver outage",
@@ -267,8 +261,7 @@ func TestAdminManager_StartImpersonation_ResolverRequired(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = manager.StartImpersonation(ctx, &StartImpersonationOptions{
-		AdminUserID:  "admin-1",
+	_, err = manager.StartImpersonation(ctxWithActor("admin-1"), &StartImpersonationOptions{
 		TargetUserID: "tenant-user-1",
 		TenantID:     "tenant-1",
 		Reason:       "no resolver wired",

@@ -38,7 +38,6 @@ func TestConvertToUser(t *testing.T) {
 				"username":       "alice",
 				"email":          "alice@example.com",
 				"name":           "Alice",
-				"mfa_enabled":    true,
 				"email_verified": true,
 				"roles":          []interface{}{"r1", "r2"},
 				"groups":         []interface{}{"g1"},
@@ -64,7 +63,7 @@ func TestConvertToUser(t *testing.T) {
 		if got.ID != "u1" || got.Username != "alice" || got.DisplayName != "Alice" {
 			t.Errorf("basic fields wrong: %+v", got)
 		}
-		if !got.MFAEnabled || !got.EmailVerified {
+		if !got.EmailVerified {
 			t.Error("bool fields wrong")
 		}
 		if len(got.Roles) != 2 || len(got.Groups) != 1 {

@@ -68,7 +68,8 @@ func TestSetupSignalHandlers_ClosesShutdownChanOnSignal(t *testing.T) {
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
 	require.NoError(t, err)
 
-	setupSignalHandlers(shutdown, log)
+	var once sync.Once
+	setupSignalHandlers(func() { once.Do(func() { close(shutdown) }) }, log)
 
 	// Use the test process's own pid to fire SIGTERM. The goroutine inside
 	// setupSignalHandlers calls signal.Notify on its own channel; sending
@@ -331,11 +332,12 @@ func TestKVWorkflowPersistor_LoadAllRoundTrip(t *testing.T) {
 	p := newKVWorkflowPersistor(client, 1)
 	ctx := context.Background()
 
-	require.NoError(t, p.Save(ctx, &orchestration.WorkflowDefinition{Name: "wf-load-A"}))
+	require.NoError(t, p.Save(ctx, &orchestration.WorkflowDefinition{TenantID: "acme", Name: "wf-load-A"}))
 
 	got, err := p.LoadAll(ctx)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(got), 1)
+	assert.Equal(t, "acme", got[0].TenantID, "LoadAll files every definition under the tenant its key names")
 }
 
 // =============================================================================

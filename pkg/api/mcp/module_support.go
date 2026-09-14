@@ -82,11 +82,16 @@ func ToolName(name string) string {
 // ("duplicate permission registration for <tool>").
 //
 // Two provenances confirmed by direct inspection, not assumption:
-//   - qrdb_user_*/qrdb_role_* route through service.rbacService, gated by
-//     `if r.svc.authManager == nil`, and iamComponents.GetInternalAuthManager
-//     (pkg/server/iam_init.go) ALWAYS returns nil in production ("live token
-//     operations flow through the qrdb/iam layer") -- these tools have never
-//     worked on a real deployment.
+//   - qrdb_role_* route through service.rbacService, whose role verbs reach the
+//     qrdb-backed iam.IdentityStore (pkg/service/rbac_role_store.go). They are
+//     LIVE, and they are listed here for the duplication reason above and for
+//     no other reason: qrdb serves the same role capability natively, so a
+//     composed node would register the name twice and panic. The user MUTATION
+//     trio that used to share this bullet -- qrdb_user_create/delete/list --
+//     really was dead (it was gated on an auth manager production never wired)
+//     and was deleted outright in issue #905 rather than excluded here; the
+//     qrdb_user_get* / qrdb_user_authfactor_* reads below are live passthroughs
+//     listed for duplication, like the role tools.
 //   - qrdb_credential_*/qrdb_vector_*/qrdb_ts_*/qrdb_barrier_*/
 //     qrdb_tenant_barrier_*/qrdb_ceremony_* handlers take a
 //     qrdbsdk.Service*Servicer parameter directly (e.g. executeCredentialSubmit
@@ -157,12 +162,9 @@ var qrdbNativeDuplicateTools = map[string]struct{}{
 	"qrdb_user_authfactor_relabel":       {},
 	"qrdb_user_authfactor_remove":        {},
 	"qrdb_user_authfactor_rotate":        {},
-	"qrdb_user_create":                   {},
-	"qrdb_user_delete":                   {},
 	"qrdb_user_get":                      {},
 	"qrdb_user_get_by_cert_thumbprint":   {},
 	"qrdb_user_get_by_username":          {},
-	"qrdb_user_list":                     {},
 	"qrdb_vector_batch_delete":           {},
 	"qrdb_vector_batch_upsert":           {},
 	"qrdb_vector_create_namespace":       {},

@@ -221,6 +221,7 @@ func (r *ToolRegistry) registerTools() {
 
 	// Register Project tools
 	r.registerProjectTools()
+	r.registerSDLCTools()
 
 	// Register pooled provider account tools
 	r.registerAccountTools()
@@ -624,44 +625,16 @@ func (r *ToolRegistry) registerTools() {
 		},
 	})
 
-	// RBAC Operations
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_user_create",
-		Description: "Create a new user with roles",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"username": map[string]interface{}{"type": "string"},
-				"roles":    map[string]interface{}{"type": "array"},
-			},
-			"required": []string{"username"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_user_delete",
-		Description: "Delete a user",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"username": map[string]interface{}{"type": "string"},
-			},
-			"required": []string{"username"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_user_list",
-		Description: "List all users",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"limit":  map[string]interface{}{"type": "integer"},
-				"offset": map[string]interface{}{"type": "integer"},
-			},
-		},
-	})
-
+	// RBAC Operations -- ROLES ONLY.
+	//
+	// There are deliberately no user tools here. quicbaas_iam_user_* is the one
+	// user surface (tools_iam_exec.go, backed by iam.IdentityStore, which writes
+	// through to the embedded qrdb node); read-only qrdb-native user lookups are
+	// qrdb_user_get* / qrdb_user_authfactor_* in tools_qrdb_users.go. The
+	// qrdb_user_create/delete/list trio that used to sit here routed through a
+	// local auth manager production never wired, so every call failed; issue
+	// #905 removed it. The role tools below are live: they reach the qrdb-backed
+	// IdentityStore through service.rbacService (pkg/service/rbac_role_store.go).
 	r.addTool(ToolDefinition{
 		Name:        "qrdb_role_create",
 		Description: "Create a new role with permissions",
@@ -1144,12 +1117,6 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		return r.executeLogout(ctx, args)
 
 	// RBAC Operations
-	case "qrdb_user_create":
-		return r.executeUserCreate(ctx, args)
-	case "qrdb_user_delete":
-		return r.executeUserDelete(ctx, args)
-	case "qrdb_user_list":
-		return r.executeUserList(ctx, args)
 	case "qrdb_role_create":
 		return r.executeRoleCreate(ctx, args)
 	case "qrdb_role_delete":
@@ -1283,6 +1250,11 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		// Check if it's a Project tool
 		if isProjectTool(name) {
 			return r.executeProjectTool(ctx, name, args)
+		}
+
+		// SDLC module: forge bindings and deliveries
+		if isSDLCTool(name) {
+			return r.executeSDLCTool(ctx, name, args)
 		}
 
 		// Check if it's a pooled provider account tool
@@ -2372,41 +2344,6 @@ func (r *ToolRegistry) executeLogout(ctx context.Context, args map[string]interf
 		AccessToken: getString(args, "accessToken"),
 	}
 	resp, err := r.service.Logout(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return marshalResult(resp)
-}
-
-func (r *ToolRegistry) executeUserCreate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	req := &service.AuthCreateUserRequest{
-		Username: getString(args, "username"),
-		Roles:    getStringSlice(args, "roles"),
-	}
-	resp, err := r.service.CreateUser(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return marshalResult(resp)
-}
-
-func (r *ToolRegistry) executeUserDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	req := &service.DeleteUserRequest{
-		Username: getString(args, "username"),
-	}
-	resp, err := r.service.DeleteUser(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return marshalResult(resp)
-}
-
-func (r *ToolRegistry) executeUserList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	req := &service.ListUsersRequest{
-		Limit:  getUint64(args, "limit"),
-		Offset: getUint64(args, "offset"),
-	}
-	resp, err := r.service.ListUsers(ctx, req)
 	if err != nil {
 		return nil, err
 	}

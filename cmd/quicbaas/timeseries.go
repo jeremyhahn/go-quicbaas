@@ -73,7 +73,6 @@ All commands connect to a running QuicBaaS server via gRPC.`,
 
 	// Add persistent flags for all timeseries commands
 	// Note: --address and --transport are global flags defined in main.go
-	cmd.PersistentFlags().DurationVar(&timeout, "timeout", 30*time.Second, "Request timeout")
 	cmd.PersistentFlags().StringVar(&outputFormat, "output", "table", "Output format (json, yaml, table, raw)")
 
 	// TLS flags
@@ -148,7 +147,7 @@ func runTSWriteCommand(cmd *cobra.Command, args []string) error {
 		ts = time.Now()
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &cli.WritePointRequest{
@@ -230,7 +229,7 @@ func runTSWriteBatchCommand(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &cli.WriteBatchRequest{
@@ -314,7 +313,7 @@ func runTSQueryCommand(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &cli.TSQueryRequest{
@@ -393,7 +392,7 @@ func runTSDeleteCommand(cmd *cobra.Command, args []string) error {
 		req.EndTime = &endTime
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.TSDeleteSeries(ctx, req)
@@ -428,7 +427,7 @@ func runTSGetRetentionCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &cli.TSGetRetentionPolicyRequest{
@@ -476,7 +475,7 @@ func runTSSetRetentionCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &cli.TSSetRetentionPolicyRequest{
@@ -530,7 +529,7 @@ func runTSListMetricsCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &cli.TSListMetricsRequest{

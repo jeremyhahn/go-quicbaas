@@ -1655,7 +1655,7 @@ func List(ctx context.Context) (*ListBackupsResponse, error)
 The IAMClient provides Identity and Access Management (IAM) with Attribute-Based Access Control (ABAC).
 
 ```go
-iam := client.IAM()
+iam := client.Identity().IAM()
 ```
 
 ### IAMClient Interface
@@ -1683,7 +1683,7 @@ type IAMClient interface {
 Manages multi-tenant operations.
 
 ```go
-tenant := client.IAM().Tenant()
+tenant := client.Identity().IAM().Tenant()
 ```
 
 #### Create
@@ -1736,7 +1736,7 @@ zero. Correct a counter with `UpdateQuotas`, never with tenant create.
 field on it is a grant, so there is nothing output-only to exclude.
 
 ```go
-tenant, err := client.IAM().Tenant().Create(ctx, &iam.CreateTenantRequest{
+tenant, err := client.Identity().IAM().Tenant().Create(ctx, &iam.CreateTenantRequest{
     ID:            "acme-corp",
     Name:          "Acme Corporation",
     IsolationType: iam.TenantIsolationBarrier,
@@ -1797,7 +1797,7 @@ func List(ctx context.Context, opts ...ListOption) (*ListTenantsResponse, error)
 Manages user operations and role/group assignments.
 
 ```go
-user := client.IAM().User()
+user := client.Identity().IAM().User()
 ```
 
 #### Create
@@ -1907,7 +1907,7 @@ func ListGroups(ctx context.Context, userID string) (*ListGroupsResponse, error)
 Manages group operations and membership.
 
 ```go
-group := client.IAM().Group()
+group := client.Identity().IAM().Group()
 ```
 
 #### Create
@@ -2005,7 +2005,7 @@ func RemoveRole(ctx context.Context, groupID, roleID string) error
 Manages role operations with permission bundles.
 
 ```go
-role := client.IAM().Role()
+role := client.Identity().IAM().Role()
 ```
 
 #### Create
@@ -2088,7 +2088,7 @@ func ListPermissions(ctx context.Context, roleID string) (*ListPermissionsRespon
 Manages ABAC (Attribute-Based Access Control) policies.
 
 ```go
-policy := client.IAM().Policy()
+policy := client.Identity().IAM().Policy()
 ```
 
 #### Create
@@ -2181,7 +2181,7 @@ func Test(ctx context.Context, policyID string, testCases []PolicyTestCase) (*Po
 **Example - Creating an ABAC Policy:**
 
 ```go
-policy, err := client.IAM().Policy().Create(ctx, &iam.CreatePolicyRequest{
+policy, err := client.Identity().IAM().Policy().Create(ctx, &iam.CreatePolicyRequest{
     Name:        "engineering-data-access",
     Description: "Allow engineers to read data resources",
     Effect:      "allow",
@@ -2214,7 +2214,7 @@ policy, err := client.IAM().Policy().Create(ctx, &iam.CreatePolicyRequest{
 Provides sub-5μs authorization checks for enforcing ABAC policies.
 
 ```go
-pep := client.IAM().PEP()
+pep := client.Identity().IAM().PEP()
 ```
 
 #### Check
@@ -2254,7 +2254,7 @@ func CheckBatch(ctx context.Context, requests []*CheckRequest) ([]*CheckResponse
 **Example - Authorization Check:**
 
 ```go
-resp, err := client.IAM().PEP().Check(ctx, &iam.CheckRequest{
+resp, err := client.Identity().IAM().PEP().Check(ctx, &iam.CheckRequest{
     Subject:  "user-456",
     Action:   "read",
     Resource: "data/customer-records",
@@ -2281,7 +2281,7 @@ if resp.Allowed {
 Manages OAuth2 application registration for client credentials flow.
 
 ```go
-app := client.IAM().App()
+app := client.Identity().IAM().App()
 ```
 
 #### Create
@@ -2355,7 +2355,7 @@ func RotateSecret(ctx context.Context, appID string) (*RotateSecretResponse, err
 Provides GDPR compliance features.
 
 ```go
-gdpr := client.IAM().GDPR()
+gdpr := client.Identity().IAM().GDPR()
 ```
 
 #### RecordConsent
@@ -2422,7 +2422,7 @@ func ListConsents(ctx context.Context, userID string) (*ListConsentsResponse, er
 Queries audit logs for compliance and security.
 
 ```go
-audit := client.IAM().Audit()
+audit := client.Identity().IAM().Audit()
 ```
 
 #### Query
@@ -2472,7 +2472,7 @@ func GetEntry(ctx context.Context, entryID string) (*AuditEntry, error)
 Provides delegated administration and impersonation.
 
 ```go
-admin := client.IAM().Admin()
+admin := client.Identity().IAM().Admin()
 ```
 
 #### CanManage

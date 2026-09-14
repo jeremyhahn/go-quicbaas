@@ -149,15 +149,15 @@ func (a *PIVActivator) Activate(ctx context.Context, tenantID, token string, cer
 	if err != nil {
 		return err
 	}
-	if user.State != UserStatePending {
+	if user.Lifecycle != LifecyclePending {
 		return ErrUserNotPending
 	}
 
-	// 6. Transition user to active.
-	user.State = UserStateActive
+	// 6. Transition user to active. The invite is consumed from the invite
+	// store below, which is where it lives; there is no copy on the user record
+	// to clear.
+	user.Lifecycle = LifecycleActive
 	user.SetPIVThumbprints(spkiThumbprint, legacyThumbprint)
-	user.InviteToken = ""
-	user.InviteExpiresAt = nil
 	now := time.Now().UTC()
 	user.Updated = now
 

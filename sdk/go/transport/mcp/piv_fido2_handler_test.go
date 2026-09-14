@@ -159,7 +159,7 @@ func TestFIDO2MCPHandler_TransformRequest(t *testing.T) {
 	h := newFIDO2MCPHandler()
 
 	args, err := h.transformRequest("BeginRegistration", &xkmstransport.BeginRegistrationRequest{
-		Username:    "alice@example.com",
+		Email:       "alice@example.com",
 		DisplayName: "Alice",
 	})
 	require.NoError(t, err)
@@ -168,7 +168,7 @@ func TestFIDO2MCPHandler_TransformRequest(t *testing.T) {
 
 	args, err = h.transformRequest("FinishAuthentication", &xkmstransport.FinishAuthenticationRequest{
 		SessionID:     "sess-1",
-		Username:      "alice@example.com",
+		Email:         "alice@example.com",
 		AssertionJSON: `{"id":"cred"}`,
 	})
 	require.NoError(t, err)

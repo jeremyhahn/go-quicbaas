@@ -236,14 +236,14 @@ func TestRunOllamaHealthCommand_Success(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		ollamaFullCheck = false
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runOllamaHealthCommand(cmd, []string{})
@@ -272,13 +272,13 @@ func TestRunOllamaHealthCommand_TableFormat(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
 	outputFormat = "table"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runOllamaHealthCommand(cmd, []string{})
@@ -297,13 +297,13 @@ func TestRunOllamaHealthCommand_YAMLFormat(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
 	outputFormat = "yaml"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runOllamaHealthCommand(cmd, []string{})
@@ -330,13 +330,13 @@ func TestRunOllamaHealthCommand_Unavailable(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
 	outputFormat = "table"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runOllamaHealthCommand(cmd, []string{})
@@ -373,9 +373,9 @@ func TestRunOllamaHealthCommand_ServiceError(t *testing.T) {
 	}
 
 	// Reset globals
-	oldTimeout := timeout
-	defer func() { timeout = oldTimeout }()
-	timeout = 30 * time.Second
+	oldTimeout := globalTimeout
+	defer func() { globalTimeout = oldTimeout }()
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runOllamaHealthCommand(cmd, []string{})
@@ -394,14 +394,14 @@ func TestRunOllamaModelsCommand_Success(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		ollamaNamePrefix = ""
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runOllamaModelsCommand(cmd, []string{})
@@ -420,13 +420,13 @@ func TestRunOllamaModelsCommand_TableFormat(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
 	outputFormat = "table"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runOllamaModelsCommand(cmd, []string{})
@@ -460,13 +460,13 @@ func TestRunOllamaModelInfoCommand_Success(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runOllamaModelInfoCommand(cmd, []string{"nomic-embed-text"})
@@ -485,13 +485,13 @@ func TestRunOllamaModelInfoCommand_TableFormat(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
 	outputFormat = "table"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runOllamaModelInfoCommand(cmd, []string{"nomic-embed-text"})
@@ -517,13 +517,13 @@ func TestRunOllamaModelInfoCommand_EmptyDetails(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
 	outputFormat = "table"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runOllamaModelInfoCommand(cmd, []string{"nomic-embed-text"})
@@ -557,14 +557,14 @@ func TestRunOllamaEmbedCommand_Success(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		ollamaModel = ""
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runOllamaEmbedCommand(cmd, []string{"Hello, world!"})
@@ -583,14 +583,14 @@ func TestRunOllamaEmbedCommand_WithModel(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		ollamaModel = ""
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 	ollamaModel = "nomic-embed-text"
 
 	cmd := &cobra.Command{}
@@ -610,13 +610,13 @@ func TestRunOllamaEmbedCommand_TableFormat(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 	}()
 	outputFormat = "table"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := &cobra.Command{}
 	err := runOllamaEmbedCommand(cmd, []string{"Hello, world!"})
@@ -657,15 +657,15 @@ func TestRunOllamaEmbedBatchCommand_Success(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		ollamaTexts = ""
 		ollamaModel = ""
 	}()
 	outputFormat = "json"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 	ollamaTexts = `["Hello", "World", "Test"]`
 
 	cmd := &cobra.Command{}
@@ -685,14 +685,14 @@ func TestRunOllamaEmbedBatchCommand_TableFormat(t *testing.T) {
 
 	// Reset globals
 	oldFormat := outputFormat
-	oldTimeout := timeout
+	oldTimeout := globalTimeout
 	defer func() {
 		outputFormat = oldFormat
-		timeout = oldTimeout
+		globalTimeout = oldTimeout
 		ollamaTexts = ""
 	}()
 	outputFormat = "table"
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 	ollamaTexts = `["Hello", "World"]`
 
 	cmd := &cobra.Command{}

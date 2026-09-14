@@ -59,6 +59,11 @@ type (
 	// SchedulerConfig is already taken by the deployment config type in
 	// server.go, which is a different thing entirely.
 	SchedulerEngineConfig = schedengine.SchedulerConfig
+	// AbandonedRunAttestation is the operator-supplied evidence a consumer
+	// hands RecoverAbandonedRun: what observed the run gone, and when. Its
+	// fields are std types, so a consumer constructs it through this alias
+	// without importing go-quicbaas/pkg/scheduler.
+	AbandonedRunAttestation = schedengine.AbandonedRunAttestation
 )
 
 // Scheduler engine constants.

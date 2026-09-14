@@ -133,7 +133,7 @@ func runCredentialSubmit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 	if err := client.CredentialSubmit(ctx, &qrdbtransport.CredentialSubmitRequest{
 		Name:  name,
@@ -169,7 +169,7 @@ func runCredentialList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 	resp, err := client.CredentialList(ctx, &qrdbtransport.CredentialListRequest{})
 	if err != nil {
@@ -216,7 +216,7 @@ func runCredentialRotate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 	resp, err := client.CredentialRotate(ctx, &qrdbtransport.CredentialRotateRequest{
 		Name:               name,
@@ -263,7 +263,7 @@ func runCredentialRetrieve(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 	resp, err := client.CredentialRetrieveVersion(ctx, &qrdbtransport.CredentialRetrieveVersionRequest{
 		Name:    name,
@@ -309,7 +309,7 @@ func runCredentialVersions(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 	resp, err := client.CredentialListVersions(ctx, &qrdbtransport.CredentialListVersionsRequest{Name: name})
 	if err != nil {
@@ -342,7 +342,7 @@ func runCredentialDelete(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 	if err := client.CredentialDelete(ctx, name); err != nil {
 		return formatError(err)
@@ -375,7 +375,7 @@ func runCredentialGC(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 	resp, err := client.CredentialGCExpired(ctx, &qrdbtransport.CredentialGCRequest{Name: name})
 	if err != nil {

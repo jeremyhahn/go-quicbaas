@@ -40,7 +40,7 @@ func TestControlLoop_Stateless_WorkflowLoading_SingleFile(t *testing.T) {
 	loader := orchestration.NewWorkflowLoader()
 
 	t.Run("SoftwareDev", func(t *testing.T) {
-		def, err := loader.LoadFromFile(filepath.Join(workflowDir, "software-dev.yaml"))
+		def, err := loader.LoadFromFile(orchestration.SystemTenantID, filepath.Join(workflowDir, "software-dev.yaml"))
 		require.NoError(t, err, "loading software-dev.yaml should succeed")
 		require.NotNil(t, def)
 
@@ -69,7 +69,7 @@ func TestControlLoop_Stateless_WorkflowLoading_SingleFile(t *testing.T) {
 	})
 
 	t.Run("CodeReview", func(t *testing.T) {
-		def, err := loader.LoadFromFile(filepath.Join(workflowDir, "code-review.yaml"))
+		def, err := loader.LoadFromFile(orchestration.SystemTenantID, filepath.Join(workflowDir, "code-review.yaml"))
 		require.NoError(t, err, "loading code-review.yaml should succeed")
 		require.NotNil(t, def)
 
@@ -79,7 +79,7 @@ func TestControlLoop_Stateless_WorkflowLoading_SingleFile(t *testing.T) {
 	})
 
 	t.Run("Autonomous", func(t *testing.T) {
-		def, err := loader.LoadFromFile(filepath.Join(workflowDir, "autonomous.yaml"))
+		def, err := loader.LoadFromFile(orchestration.SystemTenantID, filepath.Join(workflowDir, "autonomous.yaml"))
 		require.NoError(t, err, "loading autonomous.yaml should succeed")
 		require.NotNil(t, def)
 
@@ -96,10 +96,10 @@ func TestControlLoop_Stateless_WorkflowLoading_Directory(t *testing.T) {
 	workflowDir := findWorkflowDir(t)
 	loader := orchestration.NewWorkflowLoader()
 
-	err := loader.LoadFromDir(workflowDir)
+	err := loader.LoadFromDir(orchestration.SystemTenantID, workflowDir)
 	require.NoError(t, err, "loading workflow directory should succeed")
 
-	names := loader.List()
+	names := loader.List(orchestration.SystemTenantID)
 	require.GreaterOrEqual(t, len(names), 3,
 		"directory should contain at least 3 workflows")
 
@@ -113,7 +113,7 @@ func TestControlLoop_Stateless_WorkflowLoading_Directory(t *testing.T) {
 func TestControlLoop_Stateless_WorkflowLoading_InvalidFile(t *testing.T) {
 	loader := orchestration.NewWorkflowLoader()
 
-	_, err := loader.LoadFromFile("/nonexistent/path/workflow.yaml")
+	_, err := loader.LoadFromFile(orchestration.SystemTenantID, "/nonexistent/path/workflow.yaml")
 	require.Error(t, err, "loading a non-existent file should fail")
 }
 
@@ -123,18 +123,18 @@ func TestControlLoop_Stateless_WorkflowLoading_Get(t *testing.T) {
 	workflowDir := findWorkflowDir(t)
 	loader := orchestration.NewWorkflowLoader()
 
-	err := loader.LoadFromDir(workflowDir)
+	err := loader.LoadFromDir(orchestration.SystemTenantID, workflowDir)
 	require.NoError(t, err)
 
 	t.Run("Found", func(t *testing.T) {
-		def, err := loader.Get("software-dev")
+		def, err := loader.Get(orchestration.SystemTenantID, "software-dev")
 		require.NoError(t, err)
 		require.NotNil(t, def)
 		assert.Equal(t, "software-dev", def.Name)
 	})
 
 	t.Run("NotFound", func(t *testing.T) {
-		_, err := loader.Get("nonexistent-workflow")
+		_, err := loader.Get(orchestration.SystemTenantID, "nonexistent-workflow")
 		require.Error(t, err, "Get for unknown workflow should fail")
 	})
 }
@@ -379,11 +379,26 @@ func TestControlLoop_Stateless_JobMemory_FailedApproachIteration(t *testing.T) {
 // Validators
 // =============================================================================
 
+// statelessJob is the job a validator pipeline runs for: the operator's
+// command allowlist (the ExecutionGuard the command validator checks first),
+// a workspace, and the artifacts the policy validator reads.
+func statelessJob(t *testing.T, allowed []string, artifacts []*orchestration.TaskResult) *orchestration.JobContext {
+	t.Helper()
+	guard, err := orchestration.NewExecutionGuard(allowed)
+	require.NoError(t, err)
+	return &orchestration.JobContext{
+		JobID:     "stateless",
+		TenantID:  "stateless-tenant",
+		WorkDir:   t.TempDir(),
+		Artifacts: artifacts,
+		Guard:     guard,
+	}
+}
+
 // TestControlLoop_Stateless_Validators_Command verifies that the command
 // validator correctly interprets exit codes from shell commands.
 func TestControlLoop_Stateless_Validators_Command(t *testing.T) {
-	registry := orchestration.NewValidatorRegistry()
-	registry.Register("command", orchestration.NewCommandValidator())
+	registry := orchestration.DefaultValidatorRegistry()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -396,7 +411,7 @@ func TestControlLoop_Stateless_Validators_Command(t *testing.T) {
 			Required:  true,
 		}
 
-		results, allPassed, err := registry.RunPipeline(ctx, []orchestration.ReviewCriterion{criterion}, nil)
+		results, allPassed, err := registry.RunPipeline(ctx, statelessJob(t, []string{"true"}, nil), []orchestration.ReviewCriterion{criterion})
 		require.NoError(t, err, "pipeline with 'true' command should not error")
 		assert.True(t, allPassed, "true command should pass")
 		require.Len(t, results, 1)
@@ -411,7 +426,7 @@ func TestControlLoop_Stateless_Validators_Command(t *testing.T) {
 			Required:  true,
 		}
 
-		results, allPassed, err := registry.RunPipeline(ctx, []orchestration.ReviewCriterion{criterion}, nil)
+		results, allPassed, err := registry.RunPipeline(ctx, statelessJob(t, []string{"false"}, nil), []orchestration.ReviewCriterion{criterion})
 		require.NoError(t, err, "pipeline with 'false' command should not error on exit code")
 		assert.False(t, allPassed, "false command should fail")
 		require.Len(t, results, 1)
@@ -426,7 +441,7 @@ func TestControlLoop_Stateless_Validators_Command(t *testing.T) {
 			Required:  true,
 		}
 
-		results, allPassed, err := registry.RunPipeline(ctx, []orchestration.ReviewCriterion{criterion}, nil)
+		results, allPassed, err := registry.RunPipeline(ctx, statelessJob(t, []string{"echo all good"}, nil), []orchestration.ReviewCriterion{criterion})
 		require.NoError(t, err)
 		assert.True(t, allPassed)
 		require.Len(t, results, 1)
@@ -438,8 +453,7 @@ func TestControlLoop_Stateless_Validators_Command(t *testing.T) {
 // TestControlLoop_Stateless_Validators_Command_MissingConfig verifies that a
 // command validator with an empty config produces an execution error.
 func TestControlLoop_Stateless_Validators_Command_MissingConfig(t *testing.T) {
-	registry := orchestration.NewValidatorRegistry()
-	registry.Register("command", orchestration.NewCommandValidator())
+	registry := orchestration.DefaultValidatorRegistry()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -451,7 +465,7 @@ func TestControlLoop_Stateless_Validators_Command_MissingConfig(t *testing.T) {
 		Required:  true,
 	}
 
-	_, _, err := registry.RunPipeline(ctx, []orchestration.ReviewCriterion{criterion}, nil)
+	_, _, err := registry.RunPipeline(ctx, statelessJob(t, nil, nil), []orchestration.ReviewCriterion{criterion})
 	require.Error(t, err, "empty command config should produce an execution error")
 	assert.ErrorIs(t, err, orchestration.ErrValidatorExecution)
 }
@@ -459,8 +473,7 @@ func TestControlLoop_Stateless_Validators_Command_MissingConfig(t *testing.T) {
 // TestControlLoop_Stateless_Validators_Policy verifies that the policy
 // validator detects secret patterns in task output.
 func TestControlLoop_Stateless_Validators_Policy(t *testing.T) {
-	registry := orchestration.NewValidatorRegistry()
-	registry.Register("policy", orchestration.NewPolicyValidator())
+	registry := orchestration.DefaultValidatorRegistry()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -477,7 +490,7 @@ func TestControlLoop_Stateless_Validators_Policy(t *testing.T) {
 			{Output: "function Add(a, b int) int { return a + b }"},
 		}
 
-		results, allPassed, err := registry.RunPipeline(ctx, []orchestration.ReviewCriterion{criterion}, artifacts)
+		results, allPassed, err := registry.RunPipeline(ctx, statelessJob(t, nil, artifacts), []orchestration.ReviewCriterion{criterion})
 		require.NoError(t, err, "policy validator should not error on clean output")
 		assert.True(t, allPassed, "clean output should pass no-secrets policy")
 		require.Len(t, results, 1)
@@ -496,7 +509,7 @@ func TestControlLoop_Stateless_Validators_Policy(t *testing.T) {
 			{Output: "aws_secret_access_key = AKIAIOSFODNN7EXAMPLE"},
 		}
 
-		results, allPassed, err := registry.RunPipeline(ctx, []orchestration.ReviewCriterion{criterion}, artifacts)
+		results, allPassed, err := registry.RunPipeline(ctx, statelessJob(t, nil, artifacts), []orchestration.ReviewCriterion{criterion})
 		require.NoError(t, err, "policy validator should not error")
 		assert.False(t, allPassed, "output with AWS key should fail no-secrets policy")
 		require.Len(t, results, 1)
@@ -516,7 +529,7 @@ func TestControlLoop_Stateless_Validators_Policy(t *testing.T) {
 			{Output: "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAK..."},
 		}
 
-		results, allPassed, err := registry.RunPipeline(ctx, []orchestration.ReviewCriterion{criterion}, artifacts)
+		results, allPassed, err := registry.RunPipeline(ctx, statelessJob(t, nil, artifacts), []orchestration.ReviewCriterion{criterion})
 		require.NoError(t, err)
 		assert.False(t, allPassed, "output with private key should fail")
 		require.Len(t, results, 1)
@@ -535,7 +548,7 @@ func TestControlLoop_Stateless_Validators_Policy(t *testing.T) {
 			{Output: "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test"},
 		}
 
-		results, allPassed, err := registry.RunPipeline(ctx, []orchestration.ReviewCriterion{criterion}, artifacts)
+		results, allPassed, err := registry.RunPipeline(ctx, statelessJob(t, nil, artifacts), []orchestration.ReviewCriterion{criterion})
 		require.NoError(t, err)
 		assert.False(t, allPassed, "output with bearer token should fail")
 		require.Len(t, results, 1)
@@ -558,7 +571,7 @@ func TestControlLoop_Stateless_Validators_NotFound(t *testing.T) {
 		Required:  true,
 	}
 
-	_, _, err := registry.RunPipeline(ctx, []orchestration.ReviewCriterion{criterion}, nil)
+	_, _, err := registry.RunPipeline(ctx, statelessJob(t, nil, nil), []orchestration.ReviewCriterion{criterion})
 	require.Error(t, err, "unregistered validator should produce an error")
 	assert.ErrorIs(t, err, orchestration.ErrValidatorNotFound)
 }
@@ -571,7 +584,7 @@ func TestControlLoop_Stateless_Validators_EmptyCriteria(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	results, allPassed, err := registry.RunPipeline(ctx, nil, nil)
+	results, allPassed, err := registry.RunPipeline(ctx, statelessJob(t, nil, nil), nil)
 	require.NoError(t, err)
 	assert.True(t, allPassed, "empty criteria should pass")
 	assert.Empty(t, results)
@@ -580,8 +593,7 @@ func TestControlLoop_Stateless_Validators_EmptyCriteria(t *testing.T) {
 // TestControlLoop_Stateless_Validators_OptionalFailure verifies that an
 // optional criterion failure does not affect the overall pipeline result.
 func TestControlLoop_Stateless_Validators_OptionalFailure(t *testing.T) {
-	registry := orchestration.NewValidatorRegistry()
-	registry.Register("command", orchestration.NewCommandValidator())
+	registry := orchestration.DefaultValidatorRegistry()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -591,7 +603,7 @@ func TestControlLoop_Stateless_Validators_OptionalFailure(t *testing.T) {
 		{Name: "optional-fail", Validator: "command", Config: "false", Required: false},
 	}
 
-	results, allPassed, err := registry.RunPipeline(ctx, criteria, nil)
+	results, allPassed, err := registry.RunPipeline(ctx, statelessJob(t, []string{"true", "false"}, nil), criteria)
 	require.NoError(t, err)
 	assert.True(t, allPassed, "optional failure should not affect overall result")
 	require.Len(t, results, 2)
@@ -993,71 +1005,6 @@ func TestControlLoop_Stateless_AgentIdentity_ScopeMatching(t *testing.T) {
 			"HasAnyScope should return true if any scope matches")
 		assert.False(t, identity.HasAnyScope("nonexistent:scope", "another:missing"),
 			"HasAnyScope should return false if no scope matches")
-	})
-}
-
-// TestControlLoop_Stateless_AgentIdentity_SecurityContext verifies that the
-// AgentSecurityContext validates correctly.
-func TestControlLoop_Stateless_AgentIdentity_SecurityContext(t *testing.T) {
-	validIdentity := &orchestration.AgentIdentity{
-		AgentID:          "agent-001",
-		ServiceAccountID: "sa-001",
-		TenantID:         "tenant-001",
-		Role:             "lead",
-		Scopes:           []string{"kms:read"},
-		ClientID:         "client-001",
-	}
-
-	t.Run("ValidContext", func(t *testing.T) {
-		sc := &orchestration.AgentSecurityContext{
-			Identity:      validIdentity,
-			AccessToken:   "token-abc",
-			TokenExpiry:   time.Now().Add(time.Hour).Unix(),
-			CorrelationID: "corr-001",
-		}
-		err := sc.Validate()
-		assert.NoError(t, err, "valid security context should pass validation")
-	})
-
-	t.Run("MissingIdentity", func(t *testing.T) {
-		sc := &orchestration.AgentSecurityContext{
-			AccessToken:   "token-abc",
-			TokenExpiry:   time.Now().Add(time.Hour).Unix(),
-			CorrelationID: "corr-001",
-		}
-		err := sc.Validate()
-		require.Error(t, err)
-		assert.ErrorIs(t, err, orchestration.ErrAgentSecurityContextRequired)
-	})
-
-	t.Run("MissingAccessToken", func(t *testing.T) {
-		sc := &orchestration.AgentSecurityContext{
-			Identity:      validIdentity,
-			TokenExpiry:   time.Now().Add(time.Hour).Unix(),
-			CorrelationID: "corr-001",
-		}
-		err := sc.Validate()
-		require.Error(t, err)
-		assert.ErrorIs(t, err, orchestration.ErrAgentSecurityContextRequired)
-	})
-
-	t.Run("TokenExpiry", func(t *testing.T) {
-		futureExpiry := time.Now().Add(time.Hour).Unix()
-		pastExpiry := time.Now().Add(-time.Hour).Unix()
-
-		sc := &orchestration.AgentSecurityContext{
-			Identity:      validIdentity,
-			AccessToken:   "token-abc",
-			TokenExpiry:   futureExpiry,
-			CorrelationID: "corr-001",
-		}
-
-		assert.False(t, sc.IsTokenExpired(time.Now().Unix()),
-			"future token should not be expired")
-
-		sc.TokenExpiry = pastExpiry
-		assert.True(t, sc.IsTokenExpired(time.Now().Unix()),
-			"past token should be expired")
 	})
 }
 

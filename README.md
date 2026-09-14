@@ -225,55 +225,58 @@ for event := range watcher.Events() {
 
 ### IAM & Access Control
 
+`Identity().IAM()` is the single IAM entry point: tenants, users, groups,
+roles, ABAC policies, the policy enforcement point, OAuth2 apps, sessions,
+audit, GDPR, delegated admin and invite-based activation all hang off it.
+A user record here IS the go-qrdb user record — QuicBaaS adds OIDC on top of
+it and keeps no second user table and no second identifier space.
+
 ```go
+import "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
+
+iamc := client.Identity().IAM()
+
 // Create a tenant
-client.IAM().CreateTenant(ctx, &iam.CreateTenantRequest{
-    TenantID: "acme-corp",
-    Name:     "Acme Corporation",
-    Settings: &iam.TenantSettings{
-        MFARequired: true,
-        MaxUsers:    1000,
-    },
+tenant, err := iamc.Tenant().Create(ctx, &iam.CreateTenantRequest{
+    Name:          "acme-corp",
+    DisplayName:   "Acme Corporation",
+    Description:   "Example tenant",
+    IsolationType: iam.TenantIsolationBarrier,
 })
 
-// Create a user
-client.IAM().CreateUser(ctx, &iam.CreateUserRequest{
-    TenantID: "acme-corp",
-    Username: "alice",
-    Email:    "alice@acme.com",
-    Roles:    []string{"developer"},
+// Create a user. Accounts are created `pending` and activate by enrolling a
+// hardware authenticator (WebAuthn or PIV) — there is no password.
+user, err := iamc.User().Create(ctx, tenant.ID, &iam.CreateUserRequest{
+    Username:    "alice",
+    Email:       "alice@acme.com",
+    DisplayName: "Alice",
+    AuthMethods: []string{"webauthn"},
+    Roles:       []string{"developer"},
 })
 
 // Create an ABAC policy
-client.IAM().CreatePolicy(ctx, &iam.CreatePolicyRequest{
-    TenantID: "acme-corp",
-    Policy: &iam.Policy{
-        Name:        "dev-read-staging",
-        Description: "Developers can read staging resources",
-        Effect:      iam.EffectAllow,
-        Actions:     []string{"read", "list"},
-        Resources:   []string{"staging:*"},
-        Conditions: []*iam.Condition{
-            {
-                Type:     "time",
-                Operator: "between",
-                Values:   []string{"09:00", "18:00"},
-            },
-            {
-                Type:     "network",
-                Operator: "in_cidr",
-                Values:   []string{"10.0.0.0/8"},
-            },
-        },
-    },
+policy, err := iamc.Policy().Create(ctx, tenant.ID, &iam.CreatePolicyRequest{
+    Name:        "dev-read-staging",
+    Description: "Developers can read staging resources",
+    Enabled:     true,
+    Effect:      iam.EffectAllow,
+    Targets: []iam.Target{{
+        ResourceTypes: []string{"staging"},
+        Actions:       []string{"read", "list"},
+    }},
 })
 
-// Check authorization
-decision, _ := client.IAM().Check(ctx, &iam.CheckRequest{
-    TenantID: "acme-corp",
-    Subject:  "user:alice",
+// Check authorization through the policy enforcement point
+decision, err := iamc.PEP().Check(ctx, &iam.CheckRequest{
+    TenantID: tenant.ID,
+    Subject: iam.CheckSubject{
+        ID:       user.ID,
+        TenantID: tenant.ID,
+        Type:     iam.SubjectTypeUser,
+        Roles:    []string{"developer"},
+    },
     Action:   "read",
-    Resource: "staging:config/database",
+    Resource: "staging://config/database",
 })
 fmt.Printf("Allowed: %v, Reason: %s\n", decision.Allowed, decision.Reason)
 ```
@@ -475,8 +478,9 @@ record.
 - [Cache](docs/cache/) · [Codec](docs/codec/) · [Cluster](docs/cluster/) · [Backup & restore](docs/backup-restore/)
 
 ### AI and agents
-- [Agent orchestration](docs/agent-orchestration/) — sessions, jobs, workflows, fleet, container trust
-- [Agentic projects](docs/agentic-projects/) — projects and pooled provider accounts
+- [Software Factory](docs/software-factory/) — agent sessions, jobs, workflows,
+  projects, pooled provider accounts, fleet, container trust, and the SDLC
+  module that turns a labelled forge issue into a merged pull request
 - [Vector](docs/vector/) · [RAG](docs/rag/) · [Embeddings](docs/embeddings/) · [Ollama](docs/ollama/)
 - [MCP server](docs/mcp-server/) — 459 tools, scope-filtered per principal
 

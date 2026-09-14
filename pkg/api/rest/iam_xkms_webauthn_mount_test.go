@@ -16,7 +16,6 @@
 package rest
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -25,6 +24,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
 // TestBuildXKMSWebAuthnDispatcher_RejectsMissingTenantID verifies that
@@ -36,7 +36,8 @@ func TestBuildXKMSWebAuthnDispatcher_RejectsMissingTenantID(t *testing.T) {
 			RPDisplayName: "Example",
 			RPOrigins:     []string{"https://example.com"},
 		},
-		QRDB: dummyQRDBClient(),
+		QRDB:                dummyQRDBClient(),
+		AttestationRecorder: func() qrdbsdk.AttestationRecorder { return testutil.NewMemoryUserAuthFactors() },
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -80,7 +81,8 @@ func TestBuildXKMSWebAuthnDispatcher_RoutesAfterPrefixStrip(t *testing.T) {
 			RPDisplayName: "Example",
 			RPOrigins:     []string{"https://example.com"},
 		},
-		QRDB: dummyQRDBClient(),
+		QRDB:                dummyQRDBClient(),
+		AttestationRecorder: func() qrdbsdk.AttestationRecorder { return testutil.NewMemoryUserAuthFactors() },
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -100,25 +102,6 @@ func TestBuildXKMSWebAuthnDispatcher_RoutesAfterPrefixStrip(t *testing.T) {
 	body := w.Body.String()
 	if w.Code == http.StatusBadRequest && body == "tenant_id is required\n" {
 		t.Fatalf("dispatcher rejected tenant id resolution: %s", body)
-	}
-}
-
-// TestMountXKMSWebAuthnRoutes_NoOpWhenFactoryUnavailable confirms the
-// route mount silently skips registration when no xkms-backed manager
-// is wired in (e.g. legacy quicbaas deployments).
-func TestMountXKMSWebAuthnRoutes_NoOpWhenFactoryUnavailable(t *testing.T) {
-	h := &IAMHandler{} // no server, no factory resolution path
-	router := chi.NewRouter()
-	h.MountXKMSWebAuthnRoutes(context.Background(), router) // must not panic
-
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/iam/acme/webauthn/registration/begin",
-		nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 (no routes mounted), got %d", w.Code)
 	}
 }
 

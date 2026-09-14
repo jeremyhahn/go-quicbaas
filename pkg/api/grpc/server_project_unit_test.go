@@ -499,3 +499,216 @@ func TestProjectServer_AgentRoleErrorMapping(t *testing.T) {
 func TestProjectToProto_Nil(t *testing.T) {
 	assert.Nil(t, projectToProto(nil))
 }
+
+// =============================================================================
+// DefaultWorkflow + git identity — every new field crosses the proto boundary
+// =============================================================================
+
+func TestProjectServer_ForwardsDefaultWorkflowAndGitIdentity(t *testing.T) {
+	var created *service.CreateProjectRequest
+	var updated *service.UpdateProjectRequest
+	srv := newProjectServer(t, &grpcMockProjectService{
+		createFunc: func(_ context.Context, req *service.CreateProjectRequest) (*service.CreateProjectResponse, error) {
+			created = req
+			return &service.CreateProjectResponse{Project: &orchestration.Project{
+				ID: "proj-1", TenantID: req.TenantID, Name: req.Name, DefaultWorkflow: req.DefaultWorkflow,
+				Git: orchestration.ProjectGit{
+					Author: orchestration.GitAuthor{Name: req.GitAuthorName, Email: req.GitAuthorEmail},
+					Signing: orchestration.CommitSigning{
+						Enabled:   req.GitSigningEnabled,
+						Algorithm: req.GitSigningAlgorithm,
+						Key:       orchestration.KMSKeyRef{Name: req.GitSigningKeyName, Scope: req.GitSigningKeyScope, Owner: req.GitSigningKeyOwner},
+					},
+					SSHKey: orchestration.KMSKeyRef{Name: req.GitSSHKeyName, Scope: req.GitSSHKeyScope, Owner: req.GitSSHKeyOwner},
+				},
+			}, Timestamp: time.Now()}, nil
+		},
+		updateFunc: func(_ context.Context, req *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error) {
+			updated = req
+			return &service.UpdateProjectResponse{Project: sampleProject(), Timestamp: time.Now()}, nil
+		},
+	})
+	ctx := context.Background()
+
+	resp, err := srv.CreateProject(ctx, &pb.CreateProjectRequest{
+		TenantId: "tenant-1", Name: "api",
+		DefaultWorkflow:     "sdlc",
+		GitAuthorName:       "agent-api",
+		GitAuthorEmail:      "agent-api@example.test",
+		GitSigningEnabled:   true,
+		GitSigningAlgorithm: "ECDSA-P256",
+		GitSigningKeyName:   "api-signing",
+		GitSigningKeyScope:  "tenant",
+		GitSigningKeyOwner:  "tenant-1",
+		GitSshKeyName:       "api-access",
+		GitSshKeyScope:      "service",
+		GitSshKeyOwner:      "deploy",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, created)
+	assert.Equal(t, "sdlc", created.DefaultWorkflow)
+	assert.Equal(t, "agent-api", created.GitAuthorName)
+	assert.Equal(t, "agent-api@example.test", created.GitAuthorEmail)
+	assert.True(t, created.GitSigningEnabled)
+	assert.Equal(t, "ECDSA-P256", created.GitSigningAlgorithm)
+	assert.Equal(t, "api-signing", created.GitSigningKeyName)
+	assert.Equal(t, "tenant", created.GitSigningKeyScope)
+	assert.Equal(t, "tenant-1", created.GitSigningKeyOwner)
+	assert.Equal(t, "api-access", created.GitSSHKeyName)
+	assert.Equal(t, "service", created.GitSSHKeyScope)
+	assert.Equal(t, "deploy", created.GitSSHKeyOwner)
+
+	p := resp.Project
+	assert.Equal(t, "sdlc", p.DefaultWorkflow)
+	assert.Equal(t, "agent-api", p.GitAuthorName)
+	assert.Equal(t, "agent-api@example.test", p.GitAuthorEmail)
+	assert.True(t, p.GitSigningEnabled)
+	assert.Equal(t, "ECDSA-P256", p.GitSigningAlgorithm)
+	assert.Equal(t, "api-signing", p.GitSigningKeyName)
+	assert.Equal(t, "tenant", p.GitSigningKeyScope)
+	assert.Equal(t, "tenant-1", p.GitSigningKeyOwner)
+	assert.Equal(t, "api-access", p.GitSshKeyName)
+	assert.Equal(t, "service", p.GitSshKeyScope)
+	assert.Equal(t, "deploy", p.GitSshKeyOwner)
+
+	// Update: an absent optional bool is nil; an explicit false is false.
+	_, err = srv.UpdateProject(ctx, &pb.UpdateProjectRequest{
+		TenantId: "tenant-1", ProjectId: "proj-1", DefaultWorkflow: "sdlc", GitAuthorName: "agent",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	assert.Nil(t, updated.GitSigningEnabled, "an absent git_signing_enabled must reach the service as nil")
+	assert.Equal(t, "sdlc", updated.DefaultWorkflow)
+	assert.Equal(t, "agent", updated.GitAuthorName)
+
+	off := false
+	_, err = srv.UpdateProject(ctx, &pb.UpdateProjectRequest{
+		TenantId: "tenant-1", ProjectId: "proj-1",
+		ClearDefaultWorkflow: true,
+		GitSigningEnabled:    &off,
+		GitSigningKeyName:    "k", GitSigningKeyScope: "s", GitSigningKeyOwner: "o", GitSigningAlgorithm: "ED25519",
+		GitSshKeyName: "a", GitSshKeyScope: "b", GitSshKeyOwner: "c",
+		GitAuthorEmail: "agent@example.test",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updated.GitSigningEnabled)
+	assert.False(t, *updated.GitSigningEnabled)
+	assert.True(t, updated.ClearDefaultWorkflow)
+	assert.Equal(t, "k", updated.GitSigningKeyName)
+	assert.Equal(t, "s", updated.GitSigningKeyScope)
+	assert.Equal(t, "o", updated.GitSigningKeyOwner)
+	assert.Equal(t, "ED25519", updated.GitSigningAlgorithm)
+	assert.Equal(t, "a", updated.GitSSHKeyName)
+	assert.Equal(t, "b", updated.GitSSHKeyScope)
+	assert.Equal(t, "c", updated.GitSSHKeyOwner)
+	assert.Equal(t, "agent@example.test", updated.GitAuthorEmail)
+}
+
+// =============================================================================
+// Autonomy + context repositories — both cross the proto boundary intact
+// =============================================================================
+
+// TestProjectServer_ForwardsAutonomyAndContextRepos drives create → get and
+// update → get, asserting the two fields survive both directions of the proto
+// conversion.
+func TestProjectServer_ForwardsAutonomyAndContextRepos(t *testing.T) {
+	stored := sampleProject()
+	var created *service.CreateProjectRequest
+	var updated *service.UpdateProjectRequest
+	srv := newProjectServer(t, &grpcMockProjectService{
+		createFunc: func(_ context.Context, req *service.CreateProjectRequest) (*service.CreateProjectResponse, error) {
+			created = req
+			stored.Autonomous = req.Autonomous
+			stored.ContextRepos = req.ContextRepos
+			return &service.CreateProjectResponse{Project: stored, Timestamp: time.Now()}, nil
+		},
+		updateFunc: func(_ context.Context, req *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error) {
+			updated = req
+			if req.Autonomous != nil {
+				stored.Autonomous = *req.Autonomous
+			}
+			if req.ClearContextRepos {
+				stored.ContextRepos = nil
+			} else if req.ContextRepos != nil {
+				stored.ContextRepos = req.ContextRepos
+			}
+			return &service.UpdateProjectResponse{Project: stored, Timestamp: time.Now()}, nil
+		},
+		getFunc: func(context.Context, *service.GetProjectRequest) (*service.GetProjectResponse, error) {
+			return &service.GetProjectResponse{Project: stored, Timestamp: time.Now()}, nil
+		},
+	})
+	ctx := context.Background()
+
+	createResp, err := srv.CreateProject(ctx, &pb.CreateProjectRequest{
+		TenantId: "tenant-1", Name: "api",
+		Autonomous: true,
+		ContextRepos: []*pb.ContextRepo{
+			{Name: "handbook", RepoUrl: "https://forge.example/org/handbook", Ref: "main"},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, created)
+	assert.True(t, created.Autonomous)
+	require.Len(t, created.ContextRepos, 1)
+	assert.Equal(t, orchestration.ContextRepo{
+		Name: "handbook", RepoURL: "https://forge.example/org/handbook", Ref: "main",
+	}, created.ContextRepos[0])
+	assert.True(t, createResp.Project.Autonomous)
+	require.Len(t, createResp.Project.ContextRepos, 1)
+	assert.Equal(t, "handbook", createResp.Project.ContextRepos[0].Name)
+	assert.Equal(t, "https://forge.example/org/handbook", createResp.Project.ContextRepos[0].RepoUrl)
+	assert.Equal(t, "main", createResp.Project.ContextRepos[0].Ref)
+
+	getResp, err := srv.GetProject(ctx, &pb.GetProjectRequest{TenantId: "tenant-1", ProjectId: "proj-1"})
+	require.NoError(t, err)
+	assert.True(t, getResp.Project.Autonomous)
+	require.Len(t, getResp.Project.ContextRepos, 1)
+	assert.Equal(t, "handbook", getResp.Project.ContextRepos[0].Name)
+
+	// An absent optional bool reaches the service as nil: unchanged, not off.
+	_, err = srv.UpdateProject(ctx, &pb.UpdateProjectRequest{
+		TenantId: "tenant-1", ProjectId: "proj-1", Name: "renamed",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	assert.Nil(t, updated.Autonomous, "an absent autonomous must reach the service as nil")
+	assert.Nil(t, updated.ContextRepos, "an absent context_repos must reach the service as nil")
+
+	// An explicit false turns it off, and a replacement list replaces.
+	off := false
+	updateResp, err := srv.UpdateProject(ctx, &pb.UpdateProjectRequest{
+		TenantId: "tenant-1", ProjectId: "proj-1",
+		Autonomous: &off,
+		ContextRepos: []*pb.ContextRepo{
+			{Name: "specs", RepoUrl: "https://forge.example/org/specs", Ref: "v2"},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updated.Autonomous)
+	assert.False(t, *updated.Autonomous)
+	require.Len(t, updated.ContextRepos, 1)
+	assert.Equal(t, "specs", updated.ContextRepos[0].Name)
+	assert.False(t, updateResp.Project.Autonomous)
+	require.Len(t, updateResp.Project.ContextRepos, 1)
+	assert.Equal(t, "specs", updateResp.Project.ContextRepos[0].Name)
+
+	// And a clear empties the list on the stored record.
+	clearResp, err := srv.UpdateProject(ctx, &pb.UpdateProjectRequest{
+		TenantId: "tenant-1", ProjectId: "proj-1", ClearContextRepos: true,
+	})
+	require.NoError(t, err)
+	assert.True(t, updated.ClearContextRepos)
+	assert.Empty(t, clearResp.Project.ContextRepos)
+}
+
+// TestContextRepoProtoConverters_EdgeCases pins the nil and nil-element
+// behaviour of the two converters: nil in, nil out, so an update can tell
+// "unchanged" from "empty", and a nil element is dropped rather than
+// panicking.
+func TestContextRepoProtoConverters_EdgeCases(t *testing.T) {
+	assert.Nil(t, contextReposToProto(nil))
+	assert.Nil(t, contextReposFromProto(nil))
+	assert.Empty(t, contextReposToProto([]orchestration.ContextRepo{}))
+	assert.Empty(t, contextReposFromProto([]*pb.ContextRepo{nil}))
+}

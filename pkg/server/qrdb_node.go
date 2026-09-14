@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -686,6 +687,17 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 	// piv_service.go). A nil/error return during composition answers the
 	// module's RPCs Unavailable rather than panicking (xkms's own
 	// apimodule.Module.keystore does the same nil-check).
+	// The composed go-xkms module's own WebAuthn registration ceremony must
+	// enroll the SAME qrdb fido2 login factor quicbaas's own surface enrolls,
+	// or a passkey registered through it (what `xkey auth register` drives)
+	// can never complete a login — go-quicbaas#484. Built here so a
+	// misconfiguration is a startup failure rather than a ceremony that
+	// rejects every registrant.
+	webauthnCredentialStoreDecorator, err := s.xkmsModuleWebAuthnCredentialStoreDecorator()
+	if err != nil {
+		return nil, &QRDBNodeError{Stage: "build xkms module webauthn credential store decorator", Cause: err}
+	}
+
 	xkmsModule, err := xkmssdk.NewServiceModule(
 		func() *xkmslib.XKMSService {
 			svc, getErr := xkmssdk.Get()
@@ -704,16 +716,41 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 		xkmssdk.WithServiceModuleQRDBClient(func() *qrdbsdk.Client { return s.GetQRDBNodeClient() }),
 		xkmssdk.WithServiceModuleWebAuthn(quicbaasWebAuthnConfigToXKMS(
 			s.config.IAM.WebAuthn, s.config.IAM.SelfServiceRegistration.Enabled)),
+		xkmssdk.WithServiceModuleWebAuthnCredentialStoreDecorator(webauthnCredentialStoreDecorator),
 		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
+		// The xkms module serves its OWN PIV login at /api/v1/auth/login/piv,
+		// and it cannot verify a smartcard attestation: its options carry only
+		// Enabled and TrustedIssuers, and a TrustedIssuers entry is a Subject
+		// DN string comparison, which any certificate can simply assert.
+		//
+		// Mounting it alongside the hardened quicbaas handler at
+		// /api/v1/iam/login/piv would make the attestation requirement
+		// bypassable by choosing the other URL — the control would be a
+		// suggestion. So it is mounted ONLY where the operator has explicitly
+		// accepted unattested PIV login. See pivLoginModuleEnabled.
 		xkmssdk.WithServiceModulePIVLogin(&xkmssdk.ServiceModulePIVLoginOptions{
-			Enabled:        s.config.IAM.PIVLogin.Enabled,
+			Enabled:        s.pivLoginModuleEnabled(),
 			TrustedIssuers: s.config.IAM.PIVLogin.TrustedIssuers,
 		}),
 	)
 	if err != nil {
 		return nil, &QRDBNodeError{Stage: "new xkms module", Cause: err}
 	}
-	serverOpts = append(serverOpts, qrdbsdk.WithModule(xkmsModule))
+
+	// Route precedence: the composer decides who owns /api/v1/barrier/* when
+	// both modules carry it. QuicBaaS does — its handlers reach the go-qrdb
+	// SDK BarrierClient bound to the platform shard, the SAME barrier
+	// gRPC/unix/MCP/QUIC/embedded already answer from. The xkms module's
+	// same-path handlers operate xkms's own barrier, which go-xkms itself
+	// documents as host-inert ("Barrier, custodian, ceremony, SSH, and CA
+	// surfaces are xkmsd-only and stay disabled", its pkg/api/rest/host.go
+	// NewHostServer), so mounted here they only answer "no barrier" for a
+	// barrier that exists — go-quicbaas#405.
+	hostedXKMSModule, err := apimodule.NewRouteExcludingModule(xkmsModule, apimodule.XKMSBarrierRouteExclusions)
+	if err != nil {
+		return nil, &QRDBNodeError{Stage: "compose xkms module route precedence", Cause: err}
+	}
+	serverOpts = append(serverOpts, qrdbsdk.WithModule(hostedXKMSModule))
 
 	// Host-supplied capability modules (WithModule, module_host.go) mount
 	// LAST, on the SAME node, so a downstream host such as go-trusted-platform
@@ -752,19 +789,22 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 // WebAuthnConfig shape (xkmssdk.ServiceModuleWebAuthnConfig), so ONE config
 // block drives both quicbaas's own RP layer and the composed xkms module's
 // self-built WebAuthn surface. Enabled tracks whether the quicbaas section
-// is actually configured (RPID set — IAMWebAuthnConfig.Validate requires it
-// unconditionally, there is no separate disable flag on that type), so an
-// unconfigured host leaves the xkms module's WebAuthn routes unmounted
-// exactly as WithServiceModuleWebAuthn's doc comment describes.
+// is actually configured (RPID set — there is no separate disable flag on
+// that type), so an unconfigured host leaves the xkms module's WebAuthn
+// routes unmounted exactly as WithServiceModuleWebAuthn's doc comment
+// describes. Note this reads the OPERATOR's rp_id, not the resolved one:
+// quicbaas's own relying party derives an RP ID from the issuer URL when the
+// operator supplies none (see webauthnFactoryConfigFromOperator), but the
+// composed xkms module's separate surface is mounted only on an explicit
+// opt-in.
 func quicbaasWebAuthnConfigToXKMS(c config.IAMWebAuthnConfig, allowPublicRegistration bool) *xkmssdk.ServiceModuleWebAuthnConfig {
 	return &xkmssdk.ServiceModuleWebAuthnConfig{
 		Enabled: c.RPID != "",
-		// ONE decision drives both relying parties. go-xkms v0.9.2-alpha
-		// reads an unset value as closed, so without this the module's
+		// ONE decision drives both relying parties. Without this the module's
 		// ceremony routes would refuse an unknown email on a node whose
 		// operator has switched self-service registration on, while
 		// quicbaas's own surface accepted it — the two registration lanes
-		// disagreeing.
+		// disagreeing again, which is the class of defect this PR closes.
 		AllowPublicRegistration: &allowPublicRegistration,
 		RPID:                    c.RPID,
 		RPOrigins:               c.RPOrigins,
@@ -1209,4 +1249,78 @@ func standaloneQRDBDataDir(cfg *config.Config) string {
 		return filepath.Dir(cfg.Seal.BarrierDir)
 	}
 	return ""
+}
+
+// schedulerClustering assembles the clustered scheduler's wiring, or nil on a
+// standalone boot.
+//
+// The topology signal is the EXISTING one — the same getEffectiveMode() ==
+// ServerModeCluster that already decides NewClusteredNode vs
+// NewStandaloneNode — so there is no second, drifting notion of "are we
+// clustered".
+//
+// Both handles come off the clustered node's SDK client, which is the only
+// place they exist: go-qrdb gates the transaction plane (and MVCC, lease and
+// watch) behind clustered mode under its ratified run-modes split, and
+// leadership is meaningless without a Raft group. That the claim arbiter and
+// the leader checker are available exactly when they are needed is a property
+// of qrdb's design, not a coincidence this code arranges.
+//
+// Returning a partially-filled value rather than nil on a clustered boot is
+// deliberate: the service builder turns that into a construction error, so a
+// clustered node missing part of its wiring refuses to start instead of
+// falling back to the single-node scheduler on every node.
+func (s *Server) schedulerClustering() *service.SchedulerClustering {
+	// One predicate decides what "multi-node" means, shared with config
+	// validation, so a mode added later cannot be clustered for one and
+	// standalone for the other.
+	if !config.IsClusterLikeMode(s.getEffectiveMode()) {
+		return nil
+	}
+
+	clustering := &service.SchedulerClustering{
+		NodeID: strconv.FormatUint(s.config.Raft.NodeID, 10),
+	}
+
+	if s.qrdbClient == nil {
+		return clustering
+	}
+	client, err := s.qrdbClient.ForShard(qbshards.PlatformShardID)
+	if err != nil || client == nil {
+		s.logger.WithError(err).Warn("scheduler: no shard client for clustered scheduler wiring")
+		return clustering
+	}
+
+	clustering.Leader = service.NewQRDBLeaderChecker(
+		client, qbshards.PlatformShardID, s.config.Raft.NodeID)
+	clustering.Claims = client.Transaction()
+	clustering.Marks = client.KV()
+	return clustering
+}
+
+// pivLoginModuleEnabled reports whether the xkms module's own PIV login surface
+// (/api/v1/auth/login/piv) should be mounted.
+//
+// It requires BOTH that PIV login is enabled and that the operator explicitly
+// accepted unattested PIV login. The module verifies no attestation, so on a
+// deployment that requires hardware it would be a second, weaker door to the
+// same credential — and an attacker chooses the door.
+//
+// A deployment that wants attested PIV login gets exactly one PIV path, the
+// hardened handler at /api/v1/iam/login/piv. One that has set
+// allow_unattested has said, in as many words, that it does not require the
+// proof; mounting the module surface there changes nothing about its posture.
+func (s *Server) pivLoginModuleEnabled() bool {
+	cfg := s.config.IAM.PIVLogin
+	if !cfg.Enabled {
+		return false
+	}
+	if !cfg.AllowUnattested {
+		s.logger.Warn("iam.piv_login: the xkms module PIV login surface " +
+			"(/api/v1/auth/login/piv) is NOT mounted because it cannot verify a smartcard " +
+			"attestation; PIV login is served only by the attested handler at " +
+			"/api/v1/iam/login/piv. Set iam.piv_login.allow_unattested: true to mount it anyway.")
+		return false
+	}
+	return true
 }

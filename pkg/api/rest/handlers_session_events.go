@@ -48,13 +48,6 @@ const sessionSSEHeartbeatInterval = 15 * time.Second
 // reconnect invisible in the transcript.
 const sessionSSERetryAdvice = 2 * time.Second
 
-// sessionLogAccessor is the optional interface the agent service may satisfy
-// so REST handlers can reach the underlying SessionEventLog. Declared
-// locally so this file has no dependency on the concrete implementation.
-type sessionLogAccessor interface {
-	SessionEventLog() orchestration.SessionEventLog
-}
-
 // HandleOrchestratorSessionEvents serves
 // GET /api/v1/orchestrator/sessions/{sessionID}/events — the unified REST
 // attach endpoint. Behavior is selected by query params:
@@ -110,7 +103,7 @@ func (s *Server) HandleOrchestratorSessionEvents(w http.ResponseWriter, r *http.
 	if agentSvc == nil {
 		return
 	}
-	accessor, ok := agentSvc.(sessionLogAccessor)
+	accessor, ok := agentSvc.(orchestration.SessionLogAccessor)
 	if !ok {
 		RespondJSON(w, r, http.StatusServiceUnavailable, map[string]string{
 			"error": "session event log not available",
@@ -142,6 +135,88 @@ func (s *Server) HandleOrchestratorSessionEvents(w http.ResponseWriter, r *http.
 		Interface:  "web",
 		OnWarn:     s.warnSessionStream,
 	})
+}
+
+// HandleOrchestratorSessionHistory serves
+// GET /api/v1/orchestrator/sessions/{sessionID}/history — the session's
+// CONVERSATION, paged.
+//
+// It is the events endpoint's coarser sibling and deliberately a separate
+// route rather than another mode of it. /events serves the raw log: every
+// fragment, thought, presence change and file operation, in the shape a live
+// attacher needs. /history serves what an operator opened the page to read —
+// who said what, which tools ran, what the answer cost — folded so a
+// streaming answer is one turn instead of forty. Content-negotiating the two
+// on one URL made the conversation reachable only by a client that knew to ask
+// for JSON, which is how the session page came to show nothing at all
+// (go-quicbaas#793).
+//
+// Query parameters:
+//
+//	?tenant_id=  — override the authenticated principal's tenant
+//	&limit=      — turns per page (default 100, capped at 500)
+//	&cursor=     — the next_cursor from a previous page; 0 starts at the
+//	               beginning of the RETAINED transcript
+func (s *Server) HandleOrchestratorSessionHistory(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionID")
+	if sessionID == "" {
+		RespondBadRequest(w, r, "session ID is required")
+		return
+	}
+	ctx, tenantID := resolveOrchestratorTenant(r)
+
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			RespondBadRequest(w, r, "invalid limit parameter")
+			return
+		}
+		limit = n
+	}
+	cursor := uint64(0)
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		n, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			RespondBadRequest(w, r, "invalid cursor parameter: "+err.Error())
+			return
+		}
+		cursor = n
+	}
+
+	agentSvc := s.getAgentService(w, r)
+	if agentSvc == nil {
+		return
+	}
+	accessor, ok := agentSvc.(orchestration.SessionLogAccessor)
+	if !ok {
+		RespondJSON(w, r, http.StatusServiceUnavailable, map[string]string{
+			"error": "session event log not available",
+		})
+		return
+	}
+	log := accessor.SessionEventLog()
+	if log == nil {
+		RespondJSON(w, r, http.StatusServiceUnavailable, map[string]string{
+			"error": "session event log not configured",
+		})
+		return
+	}
+
+	page, err := orchestration.ReadSessionHistory(ctx, log, &orchestration.SessionHistoryRequest{
+		TenantID:  tenantID,
+		SessionID: sessionID,
+		Cursor:    cursor,
+		Limit:     limit,
+	})
+	if err != nil {
+		RespondJSON(w, r, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if page.NextCursor > 0 {
+		w.Header().Set("X-Next-Cursor", strconv.FormatUint(page.NextCursor, 10))
+	}
+	RespondJSON(w, r, http.StatusOK, page)
 }
 
 // warnSessionStream reports a non-fatal session-stream condition (a presence

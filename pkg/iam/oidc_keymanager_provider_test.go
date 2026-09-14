@@ -74,7 +74,7 @@ func mintAccessToken(t *testing.T, p *OIDCProvider) string {
 		ExpiresAt: NewUnixTime(now.Add(time.Hour)),
 		IssuedAt:  NewUnixTime(now),
 		NotBefore: NewUnixTime(now),
-		JTI:       generateJTI(),
+		JTI:       mustGenerateJTI(t),
 		TenantID:  "tenant-1",
 	}
 	token, err := p.tokenService.GenerateAccessToken(ctx, claims)

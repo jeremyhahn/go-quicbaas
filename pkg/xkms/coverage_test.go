@@ -100,22 +100,18 @@ func TestGetSymmetricKey_SuccessWithSymmetricBackend(t *testing.T) {
 	assert.NotNil(t, key)
 }
 
-// TestImportSymmetricKey_SuccessImportExportFlow exercises the import-token
-// flow (GetImportParameters -> WrapKey -> ImportKey) inside ImportSymmetricKey.
-//
-// This is THE path, not a fallback from one. The comment here used to explain
-// the flow as what happens "because the symmetric provider does not implement
-// RawKeyImporter" — describing a branch that no backend has ever been able to
-// take. See TestNoBackendOffersRawKeyImport for the tripwire that keeps that
-// true.
-func TestImportSymmetricKey_SuccessImportExportFlow(t *testing.T) {
+// TestImportKeyMaterial_SuccessImportExportFlow exercises the full
+// ImportExportBackend fallback path (GetImportParameters -> WrapKey ->
+// ImportKey) inside ImportKeyMaterial. The symmetric provider does not
+// implement RawKeyImporter, so this path is taken.
+func TestImportKeyMaterial_SuccessImportExportFlow(t *testing.T) {
 	setupSymmetricTestXKMS(t)
 
 	material := make([]byte, 32) // 256-bit key for AES-256-GCM
 	_, err := rand.Read(material)
 	require.NoError(t, err)
 
-	err = ImportSymmetricKey(context.Background(), "software", symmetricKeyAttrs("import-sym-success"), material)
+	err = ImportKeyMaterial(context.Background(), "software", symmetricKeyAttrs("import-sym-success"), material)
 	require.NoError(t, err)
 }
 

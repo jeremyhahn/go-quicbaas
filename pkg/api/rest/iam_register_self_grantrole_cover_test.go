@@ -55,16 +55,19 @@ func TestGrantRoleIfMissing_Branches(t *testing.T) {
 		handler.grantRoleIfMissing(ctx, store, tenantID, "no-such-user", "admin")
 	})
 
-	// Register the role first: CreateUser validates role references before
-	// writing the user record (validate-before-create).
+	// Register the roles first: CreateUser validates role references before
+	// writing the user record (validate-before-create), and UpdateUser now
+	// validates them too — granting a role that names nothing used to write an
+	// unresolvable id into the account's authorization inputs.
 	_, err = store.CreateRole(ctx, tenantID, iam.CreateRoleOptions{ID: "member", Name: "member"})
+	require.NoError(t, err)
+	_, err = store.CreateRole(ctx, tenantID, iam.CreateRoleOptions{ID: "admin", Name: "admin"})
 	require.NoError(t, err)
 
 	user, err := store.CreateUser(ctx, tenantID, iam.CreateUserOptions{
 		Username: "grantee",
 		Email:    "grantee@example.com",
 		Name:     "Grantee",
-		Enabled:  true,
 		Roles:    []string{"member"},
 	})
 	require.NoError(t, err)

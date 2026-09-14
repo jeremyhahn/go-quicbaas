@@ -20,6 +20,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
@@ -30,7 +32,14 @@ import (
 // feature (see pkg/orchestration/account_types.go). It never touches
 // credential material directly: CreateAccount accepts it once, forwards it to
 // orchestration.AccountSecretStore, and every other method operates purely on
-// metadata. No AccountService method ever returns an AccountCredential.
+// metadata.
+//
+// EXACTLY ONE method returns an AccountCredential:
+// MaterializeAccountCredential, which releases one envelope to an enrolled
+// agent daemon so a pooled credential can reach the worker host that runs the
+// agent. It carries its own permission, its own refusal rules and its own
+// audit event; see account_materialize.go. Every other method still returns
+// metadata only, and the transports' structural leak guards enumerate them.
 // =============================================================================
 
 // AccountService manages the lifecycle of pooled provider accounts.
@@ -74,6 +83,17 @@ type AccountService interface {
 	// GetAccountUsage returns the cumulative token usage recorded against an
 	// account.
 	GetAccountUsage(ctx context.Context, req *GetAccountUsageRequest) (*GetAccountUsageResponse, error)
+
+	// MaterializeAccountCredential releases ONE account's credential envelope
+	// to the caller. It is the single exception to the no-credential-out rule
+	// stated above, and it exists so a pooled credential can reach the worker
+	// host that runs the agent rather than only the host that holds the pool.
+	//
+	// It refuses an account that is revoked, errored, or under a live limit
+	// hold, honours the account's project restriction, renews an oauth_refresh
+	// credential before releasing it, and records one audit event per attempt.
+	// See account_materialize.go.
+	MaterializeAccountCredential(ctx context.Context, req *MaterializeAccountCredentialRequest) (*MaterializeAccountCredentialResponse, error)
 }
 
 // =============================================================================
@@ -247,6 +267,80 @@ func (e *AccountNotFoundError) Error() string {
 	return "account not found: tenant=" + e.TenantID + " id=" + e.AccountID
 }
 
+// AccountCredentialCleanupError reports that an account's metadata settled —
+// its create was rolled back, or its record was deleted — but destroying its
+// credential envelope failed, so the envelope is orphaned in the secrets store
+// until an operator removes it. Cause is the error that triggered the cleanup
+// (nil for a delete, whose metadata removal succeeded); Cleanup is the
+// failure destroying the envelope.
+type AccountCredentialCleanupError struct {
+	TenantID  string
+	AccountID string
+	Cause     error
+	Cleanup   error
+}
+
+// Error implements the error interface.
+func (e *AccountCredentialCleanupError) Error() string {
+	msg := "account credential cleanup failed: tenant=" + e.TenantID + " id=" + e.AccountID +
+		": envelope orphaned: " + e.Cleanup.Error()
+	if e.Cause != nil {
+		msg += " (after: " + e.Cause.Error() + ")"
+	}
+	return msg
+}
+
+// Unwrap exposes both the triggering error and the cleanup failure, so a
+// transport keeps mapping the triggering error's type to its status code.
+func (e *AccountCredentialCleanupError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{e.Cleanup}
+	}
+	return []error{e.Cause, e.Cleanup}
+}
+
+// AccountRotationIncompleteError reports that a replacement credential
+// envelope was stored but the account record could not be updated to reflect
+// it (expiry, status, last-refresh). The stored envelope is the live one;
+// re-running the rotation is safe and completes the record.
+type AccountRotationIncompleteError struct {
+	TenantID  string
+	AccountID string
+	Cause     error
+}
+
+// Error implements the error interface.
+func (e *AccountRotationIncompleteError) Error() string {
+	return "account rotation incomplete: tenant=" + e.TenantID + " id=" + e.AccountID +
+		": credential stored but record not updated: " + e.Cause.Error()
+}
+
+// Unwrap returns the record update failure.
+func (e *AccountRotationIncompleteError) Unwrap() error { return e.Cause }
+
+// accountTenantContext scopes ctx to the tenant an account request names.
+//
+// The orchestration KV routes every read and write by the tenant on the
+// CONTEXT, never by the tenant segment in the key
+// (pkg/server/tenant_kvstore.go tenantFromAnyContext), and a
+// prefix-isolation tenant's records live in that tenant's own namespace
+// (go-qrdb tenant.StoreResolver). A request that names tenant T while its
+// context carries the caller's tenant — the system admin provisioning T's
+// pooled account, the shape go-quicbaas#535 measured — would otherwise write
+// T's record into the CALLER's namespace, where T's SDLC module, which
+// resolves under T's context (sdlc.runtimeContext), can never find it.
+//
+// Both keys the router honours are set: pkg/iam's, which the REST path stamps
+// and the secrets manager reads, and pkg/orchestration's, which the module's
+// spawn path stamps. Setting one and not the other is the silent failure
+// go-quicbaas#531 documented — a value nothing downstream reads. The request's
+// tenant overrides whatever the context carried: the request is the
+// authority, and a caller allowed to name another tenant was admitted by RBAC
+// before reaching this service.
+func accountTenantContext(ctx context.Context, tenantID string) context.Context {
+	return orchestration.ContextWithTenant(iam.ContextWithTenant(ctx, tenantID), tenantID)
+}
+
 // =============================================================================
 // accountServiceImpl — concrete implementation
 // =============================================================================
@@ -263,6 +357,34 @@ type accountServiceImpl struct {
 	secrets   *orchestration.AccountSecretStore
 	usage     orchestration.CostTracker              // optional: see SetUsageTracker
 	providers *orchestration.AccountProviderRegistry // never nil: see NewAccountService
+
+	// tokens renews and resolves a credential envelope for release. Optional:
+	// MaterializeAccountCredential is the only method that needs it and fails
+	// closed without it (AccountTokenManagerNotConfiguredError). See
+	// SetTokenManager.
+	tokens *orchestration.AccountTokenManager
+
+	// auditor records each credential release. Optional; nil disables the
+	// record. See SetAuditor.
+	auditor orchestration.StoreAuditor
+
+	// logger reports a non-fatal bookkeeping failure that must not fail the
+	// operation in flight but must not vanish either. Optional.
+	logger interfaces.Logger
+
+	// spend is the cap a credential release is checked against. Optional
+	// for the same reason tokens is — it is built later in bring-up than
+	// this service — and an unwired one leaves the release guarded only by
+	// the account's lifecycle state. See SetSpendAuthority.
+	spend orchestration.SpendAuthority
+
+	// leases governs the DELIVERY of a released envelope: the verb issues a
+	// grant on a first release and refuses a re-release whose grant has been
+	// revoked or has lapsed. Optional for the same reason spend is — it is
+	// built over the lease manager during bring-up — and an unwired one leaves
+	// releases unleased, which is the behaviour every deployment had before
+	// delivery grants existed. See SetAccountCredentialLeaser.
+	leases orchestration.AccountCredentialLeaser
 }
 
 // NewAccountService creates a new AccountService backed by store and
@@ -289,6 +411,14 @@ func (s *accountServiceImpl) SetUsageTracker(tracker orchestration.CostTracker) 
 	s.usage = tracker
 }
 
+// SetLogger wires the logger non-fatal bookkeeping failures are reported on.
+// A nil logger is ignored, leaving those reports discarded.
+func (s *accountServiceImpl) SetLogger(logger interfaces.Logger) {
+	if logger != nil {
+		s.logger = logger
+	}
+}
+
 // SetProviderRegistry wires the provider registry write-time credential
 // validation resolves effective OAuth defaults from. A nil registry is
 // ignored, leaving the built-in-only default in place.
@@ -304,6 +434,7 @@ func (s *accountServiceImpl) CreateAccount(ctx context.Context, req *CreateAccou
 	if err := s.validateCreate(req); err != nil {
 		return nil, err
 	}
+	ctx = accountTenantContext(ctx, req.TenantID)
 
 	account := &orchestration.Account{
 		ID:          uuid.New().String(),
@@ -330,8 +461,13 @@ func (s *accountServiceImpl) CreateAccount(ctx context.Context, req *CreateAccou
 		return nil, err
 	}
 	if err := s.store.Create(ctx, account); err != nil {
-		_ = s.secrets.Delete(ctx, req.TenantID, account.ID)
-		return nil, convertAccountStoreError(err)
+		createErr := convertAccountStoreError(err)
+		if cleanupErr := s.secrets.Delete(ctx, req.TenantID, account.ID); cleanupErr != nil {
+			return nil, &AccountCredentialCleanupError{
+				TenantID: req.TenantID, AccountID: account.ID, Cause: createErr, Cleanup: cleanupErr,
+			}
+		}
+		return nil, createErr
 	}
 
 	return &CreateAccountResponse{Account: account, Timestamp: time.Now().UTC()}, nil
@@ -345,6 +481,7 @@ func (s *accountServiceImpl) GetAccount(ctx context.Context, req *GetAccountRequ
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
+	ctx = accountTenantContext(ctx, req.TenantID)
 	account, err := s.store.Get(ctx, req.TenantID, req.AccountID)
 	if err != nil {
 		return nil, convertAccountStoreError(err)
@@ -357,6 +494,7 @@ func (s *accountServiceImpl) ListAccounts(ctx context.Context, req *ListAccounts
 	if req == nil || req.TenantID == "" {
 		return nil, &AccountInvalidError{Field: "tenant_id", Message: "tenant ID is required"}
 	}
+	ctx = accountTenantContext(ctx, req.TenantID)
 	accounts, err := s.store.ListByTenant(ctx, req.TenantID, req.Provider, req.ProjectID)
 	if err != nil {
 		return nil, convertAccountStoreError(err)
@@ -372,6 +510,7 @@ func (s *accountServiceImpl) UpdateAccount(ctx context.Context, req *UpdateAccou
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
+	ctx = accountTenantContext(ctx, req.TenantID)
 	// A mode nobody recognizes is rejected here rather than being written and
 	// silently treated as "not refreshable" by every later decision.
 	if req.RefreshPolicy != "" {
@@ -411,6 +550,7 @@ func (s *accountServiceImpl) RotateAccountCredential(ctx context.Context, req *R
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
+	ctx = accountTenantContext(ctx, req.TenantID)
 	if req.Credential == nil {
 		return nil, &AccountInvalidError{Field: "credential", Message: "credential is required"}
 	}
@@ -434,14 +574,18 @@ func (s *accountServiceImpl) RotateAccountCredential(ctx context.Context, req *R
 	// The replacement envelope's expiry supersedes the old one, including when
 	// the operator declared none: carrying the retired credential's expiry
 	// forward would describe a credential that no longer exists.
-	_ = s.store.Touch(ctx, req.TenantID, req.AccountID, orchestration.TouchAccountOptions{
+	if touchErr := s.store.Touch(ctx, req.TenantID, req.AccountID, orchestration.TouchAccountOptions{
 		MarkRefreshed:            true,
 		SetStatusValid:           true,
 		SetStatus:                orchestration.AccountStatusActive,
 		ClearLastError:           true,
 		SetCredentialExpiresAt:   req.Credential.ExpiresAt,
 		SetCredentialExpiryValid: true,
-	})
+	}); touchErr != nil {
+		return nil, &AccountRotationIncompleteError{
+			TenantID: req.TenantID, AccountID: req.AccountID, Cause: convertAccountStoreError(touchErr),
+		}
+	}
 	return &RotateAccountCredentialResponse{AccountID: req.AccountID, Timestamp: time.Now().UTC()}, nil
 }
 
@@ -453,6 +597,7 @@ func (s *accountServiceImpl) RevokeAccount(ctx context.Context, req *RevokeAccou
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
+	ctx = accountTenantContext(ctx, req.TenantID)
 	existing, err := s.store.Get(ctx, req.TenantID, req.AccountID)
 	if err != nil {
 		return nil, convertAccountStoreError(err)
@@ -474,15 +619,18 @@ func (s *accountServiceImpl) DeleteAccount(ctx context.Context, req *DeleteAccou
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
+	ctx = accountTenantContext(ctx, req.TenantID)
 	if err := s.store.Delete(ctx, req.TenantID, req.AccountID); err != nil {
 		return nil, convertAccountStoreError(err)
 	}
-	// Best-effort: the metadata record is already gone (the authoritative
-	// "does this account exist" answer), so a failure destroying the
-	// credential is surfaced as a warning-grade condition, not a rolled-back
-	// delete — reversing the metadata delete would reintroduce a TOCTOU
-	// window where AccountResolver could hand out an orphaned credential.
-	_ = s.secrets.Delete(ctx, req.TenantID, req.AccountID)
+	// The metadata record is already gone (the authoritative "does this
+	// account exist" answer), so a failure destroying the credential is
+	// reported as an orphaned envelope, not a rolled-back delete — reversing
+	// the metadata delete would reintroduce a TOCTOU window where
+	// AccountResolver could hand out an orphaned credential.
+	if cleanupErr := s.secrets.Delete(ctx, req.TenantID, req.AccountID); cleanupErr != nil {
+		return nil, &AccountCredentialCleanupError{TenantID: req.TenantID, AccountID: req.AccountID, Cleanup: cleanupErr}
+	}
 	return &DeleteAccountResponse{AccountID: req.AccountID, Deleted: true, Timestamp: time.Now().UTC()}, nil
 }
 
@@ -494,6 +642,7 @@ func (s *accountServiceImpl) SetDefaultAccount(ctx context.Context, req *SetDefa
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
+	ctx = accountTenantContext(ctx, req.TenantID)
 	if err := s.store.SetDefault(ctx, req.TenantID, req.AccountID); err != nil {
 		return nil, convertAccountStoreError(err)
 	}
@@ -509,6 +658,7 @@ func (s *accountServiceImpl) GetAccountUsage(ctx context.Context, req *GetAccoun
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
+	ctx = accountTenantContext(ctx, req.TenantID)
 	// Confirm the account exists within the tenant first so usage cannot be
 	// probed for an account ID belonging to another tenant.
 	if _, err := s.store.Get(ctx, req.TenantID, req.AccountID); err != nil {

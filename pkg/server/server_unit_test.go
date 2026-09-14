@@ -750,8 +750,7 @@ func TestFileExists(t *testing.T) {
 func TestSetupSignalHandlers(t *testing.T) {
 	t.Run("configures handlers without error", func(t *testing.T) {
 		log := mustCreateLogger()
-		shutdown := make(chan struct{})
-		setupSignalHandlers(shutdown, log)
+		setupSignalHandlers(func() {}, log)
 	})
 }
 

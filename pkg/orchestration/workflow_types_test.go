@@ -14,8 +14,13 @@
 package orchestration
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // =============================================================================
@@ -639,5 +644,124 @@ func TestWorkflowDefinition_Validate_WithNumCtx(t *testing.T) {
 	}
 	if err := wd.Validate(); err != nil {
 		t.Errorf("expected workflow with NumCtx to validate, got: %v", err)
+	}
+}
+
+// =============================================================================
+// Lifecycle seams on the workflow: Hooks and criterion Phase
+// =============================================================================
+
+// hooksTestFake is the smallest JobLifecycleHooks for registry tests.
+type hooksTestFake struct{}
+
+func (hooksTestFake) Prepare(context.Context, *JobContext) (string, error)    { return "", nil }
+func (hooksTestFake) Reviewable(context.Context, *JobContext) error           { return nil }
+func (hooksTestFake) Complete(context.Context, *JobContext) error             { return nil }
+func (hooksTestFake) Discard(context.Context, *JobContext, bool) error        { return nil }
+func (hooksTestFake) Blocked(context.Context, *JobContext, BlockReason) error { return nil }
+
+func seamsWorkflow(settings WorkflowSettings) *WorkflowDefinition {
+	return &WorkflowDefinition{
+		Name:     "seams",
+		Mode:     WorkflowModeAutonomous,
+		Agents:   []AgentRoleSpec{{Role: "worker", Backend: "claude"}},
+		Settings: settings,
+	}
+}
+
+func TestWorkflowSettings_Validate_UnknownHooksRefused(t *testing.T) {
+	t.Parallel()
+	err := seamsWorkflow(WorkflowSettings{Hooks: "nobody-registered-these"}).Validate()
+	var unknown *UnknownJobHooksError
+	if !errors.As(err, &unknown) || unknown.Name != "nobody-registered-these" {
+		t.Fatalf("got %v, want UnknownJobHooksError", err)
+	}
+	if !errors.Is(err, ErrWorkflowValidation) {
+		t.Fatal("an unknown hook set must be a workflow validation failure")
+	}
+}
+
+func TestWorkflowSettings_Validate_RegisteredHooksAccepted(t *testing.T) {
+	t.Parallel()
+	const name = "workflow-types-test-hooks"
+	registerJobHooksForTest(t, name, hooksTestFake{})
+	if err := seamsWorkflow(WorkflowSettings{Hooks: name}).Validate(); err != nil {
+		t.Fatalf("a registered hook set must validate: %v", err)
+	}
+	if err := seamsWorkflow(WorkflowSettings{}).Validate(); err != nil {
+		t.Fatalf("no hooks is valid: %v", err)
+	}
+}
+
+func TestReviewCriterion_Validate_PhaseAndKind(t *testing.T) {
+	t.Parallel()
+	good := ReviewCriterion{Name: "tests", Validator: ValidatorKindCommand, Phase: CriterionPhaseReviewing}
+	if err := good.Validate(); err != nil {
+		t.Fatalf("valid criterion refused: %v", err)
+	}
+	if good.EffectivePhase() != CriterionPhaseReviewing {
+		t.Fatalf("EffectivePhase = %q", good.EffectivePhase())
+	}
+	if (ReviewCriterion{}).EffectivePhase() != CriterionPhaseValidating {
+		t.Fatal("an unset phase must default to validating")
+	}
+
+	var wfErr *WorkflowValidationError
+	if err := (ReviewCriterion{Validator: ValidatorKindPolicy}).Validate(); !errors.As(err, &wfErr) || wfErr.Field != "review_criteria" {
+		t.Fatalf("nameless criterion: got %v, want WorkflowValidationError on review_criteria", err)
+	}
+	if err := (ReviewCriterion{Name: "x", Validator: ValidatorKindPolicy, Phase: "publishing"}).Validate(); !errors.As(err, &wfErr) {
+		t.Fatalf("unknown phase: got %v, want WorkflowValidationError", err)
+	}
+	var unknown *UnknownValidatorError
+	if err := (ReviewCriterion{Name: "x", Validator: "nope"}).Validate(); !errors.As(err, &unknown) {
+		t.Fatalf("unknown kind: got %v, want UnknownValidatorError", err)
+	}
+	if err := seamsWorkflow(WorkflowSettings{ReviewCriteria: []ReviewCriterion{{Name: "x", Validator: "nope"}}}).Validate(); !errors.As(err, &unknown) {
+		t.Fatalf("workflow with unknown kind: got %v, want UnknownValidatorError", err)
+	}
+}
+
+func TestCriteriaForPhase_SplitsByEffectivePhase(t *testing.T) {
+	t.Parallel()
+	criteria := []ReviewCriterion{
+		{Name: "a"},
+		{Name: "b", Phase: CriterionPhaseReviewing},
+		{Name: "c", Phase: CriterionPhaseValidating},
+	}
+	validating := criteriaForPhase(criteria, CriterionPhaseValidating)
+	reviewing := criteriaForPhase(criteria, CriterionPhaseReviewing)
+	if len(validating) != 2 || validating[0].Name != "a" || validating[1].Name != "c" {
+		t.Fatalf("validating = %v", validating)
+	}
+	if len(reviewing) != 1 || reviewing[0].Name != "b" {
+		t.Fatalf("reviewing = %v", reviewing)
+	}
+}
+
+// TestAgentRoleSpec_SystemPromptRoundTrips pins the role's system prompt on
+// both wire shapes: a module ships its charter here and the engine spawns
+// every session of the role with it.
+func TestAgentRoleSpec_SystemPromptRoundTrips(t *testing.T) {
+	var def WorkflowDefinition
+	if err := yaml.Unmarshal([]byte("name: w\nmode: autonomous\nagents:\n  - role: worker\n    backend: claude\n    system_prompt: |\n      be careful\n      be kind\n"), &def); err != nil {
+		t.Fatal(err)
+	}
+	if def.Agents[0].SystemPrompt != "be careful\nbe kind\n" {
+		t.Fatalf("yaml system_prompt = %q", def.Agents[0].SystemPrompt)
+	}
+	data, err := json.Marshal(def.Agents[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"system_prompt":"be careful\nbe kind\n"`) {
+		t.Fatalf("json = %s", data)
+	}
+	var back AgentRoleSpec
+	if err := json.Unmarshal(data, &back); err != nil || back.SystemPrompt != def.Agents[0].SystemPrompt {
+		t.Fatalf("json round trip: %+v %v", back, err)
+	}
+	if empty, _ := json.Marshal(AgentRoleSpec{Role: "lead"}); strings.Contains(string(empty), "system_prompt") {
+		t.Fatal("an empty prompt must be omitted")
 	}
 }

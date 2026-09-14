@@ -16,7 +16,8 @@ import (
 type mockUserStorage struct {
 	mu     sync.RWMutex
 	users  map[string]*User // key: tenantID:userID
-	emails map[string]*User // key: email (global index)
+	emails map[string]*User // key: tenantID:email
+	nextID uint64
 }
 
 func newMockUserStorage() *mockUserStorage {
@@ -30,16 +31,23 @@ func (m *mockUserStorage) CreateUser(ctx context.Context, user *User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// The store assigns the identity, exactly as MemoryStorage and the
+	// qrdb-backed storage do.
+	if user.ID == "" {
+		m.nextID++
+		user.ID = FormatUserID(m.nextID)
+	}
+
 	key := user.TenantID + ":" + user.ID
 	if _, exists := m.users[key]; exists {
 		return ErrUserAlreadyExists
 	}
-	if _, exists := m.emails[user.Email]; exists {
+	if _, exists := m.emails[user.TenantID+":"+user.Email]; exists {
 		return ErrEmailAlreadyExists
 	}
 
 	m.users[key] = user
-	m.emails[user.Email] = user
+	m.emails[user.TenantID+":"+user.Email] = user
 	return nil
 }
 
@@ -55,11 +63,24 @@ func (m *mockUserStorage) GetUser(ctx context.Context, tenantID, userID string) 
 	return user, nil
 }
 
-func (m *mockUserStorage) GetUserByEmail(ctx context.Context, email string) (*User, error) {
+// MarkUserDeleting claims the record for deletion, mirroring the real stores.
+func (m *mockUserStorage) MarkUserDeleting(ctx context.Context, tenantID, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	user, exists := m.users[tenantID+":"+userID]
+	if !exists {
+		return ErrUserNotFound
+	}
+	user.Lifecycle = LifecycleDeleting
+	return nil
+}
+
+func (m *mockUserStorage) GetUserByEmail(ctx context.Context, tenantID, email string) (*User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	user, exists := m.emails[email]
+	user, exists := m.emails[tenantID+":"+email]
 	if !exists {
 		return nil, ErrUserNotFound
 	}
@@ -79,7 +100,7 @@ func (m *mockUserStorage) UpdateUser(ctx context.Context, user *User) error {
 	oldUser := m.users[key]
 	if oldUser.Email != user.Email {
 		delete(m.emails, oldUser.Email)
-		m.emails[user.Email] = user
+		m.emails[user.TenantID+":"+user.Email] = user
 	}
 
 	m.users[key] = user
@@ -106,7 +127,11 @@ func (m *mockUserStorage) GetUserByUsername(ctx context.Context, tenantID, usern
 	defer m.mu.RUnlock()
 
 	for _, user := range m.users {
-		if user.TenantID == tenantID && user.Name == username {
+		// LoginName owns the rule, exactly as both real UserStorage
+		// implementations do. A hand-rolled copy here (this compared Name) is
+		// how a mock answers a question production answers differently and
+		// lets a test pass over a live failure.
+		if user.TenantID == tenantID && user.LoginName() == username {
 			return user, nil
 		}
 	}
@@ -174,6 +199,45 @@ func (m *mockGroupStorage) GetGroup(ctx context.Context, tenantID, groupID strin
 		return nil, ErrGroupNotFound
 	}
 	return group, nil
+}
+
+// AddGroupMember and RemoveGroupMember mirror MemoryStorage: the edit happens
+// under the fake's own lock, so it composes with a concurrent one instead of
+// overwriting it. A fake that read-modify-wrote here would let the lost-update
+// defect pass its own regression test.
+func (m *mockGroupStorage) AddGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	group, exists := m.groups[tenantID+":"+groupID]
+	if !exists {
+		return ErrGroupNotFound
+	}
+	for _, memberID := range group.Members {
+		if memberID == userID {
+			return nil
+		}
+	}
+	group.Members = append(group.Members, userID)
+	return nil
+}
+
+func (m *mockGroupStorage) RemoveGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	group, exists := m.groups[tenantID+":"+groupID]
+	if !exists {
+		return ErrGroupNotFound
+	}
+	members := make([]string, 0, len(group.Members))
+	for _, memberID := range group.Members {
+		if memberID != userID {
+			members = append(members, memberID)
+		}
+	}
+	group.Members = members
+	return nil
 }
 
 func (m *mockGroupStorage) UpdateGroup(ctx context.Context, group *Group) error {
@@ -249,6 +313,18 @@ func (m *mockRoleStorage) GetRole(ctx context.Context, tenantID, roleID string) 
 		return nil, ErrRoleNotFound
 	}
 	return role, nil
+}
+
+func (m *mockRoleStorage) GetRoleByName(ctx context.Context, tenantID, name string) (*Role, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, role := range m.roles {
+		if role.TenantID == tenantID && role.Name == name {
+			return role, nil
+		}
+	}
+	return nil, ErrRoleNotFound
 }
 
 func (m *mockRoleStorage) UpdateRole(ctx context.Context, role *Role) error {
@@ -347,7 +423,6 @@ func TestCreateUser_Success(t *testing.T) {
 	opts := CreateUserOptions{
 		Email:    "test@example.com",
 		Username: "testuser",
-		Enabled:  true,
 	}
 
 	user, err := store.CreateUser(ctx, "tenant1", opts)
@@ -400,6 +475,13 @@ func TestCreateUser_InvalidEmail(t *testing.T) {
 	}
 }
 
+// TestCreateUser_DuplicateEmail pins the SCOPE of the login key's uniqueness.
+//
+// It is tenant-scoped, which is qrdb's ruling and not an accident: the same
+// person may legitimately hold an account in two tenants, and every login path
+// supplies the tenant alongside the address. A global index would forbid that
+// while buying nothing — the login already knows which tenant it authenticated
+// into, so it was never disambiguating anything.
 func TestCreateUser_DuplicateEmail(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
@@ -409,17 +491,20 @@ func TestCreateUser_DuplicateEmail(t *testing.T) {
 		Username: "user1",
 	}
 
-	// Create first user
-	_, err := store.CreateUser(ctx, "tenant1", opts)
-	if err != nil {
+	if _, err := store.CreateUser(ctx, "tenant1", opts); err != nil {
 		t.Fatalf("First CreateUser failed: %v", err)
 	}
 
-	// Try to create second user with same email
+	// Same address, same tenant: refused.
 	opts.Username = "user2"
-	_, err = store.CreateUser(ctx, "tenant2", opts)
-	if !errors.Is(err, ErrEmailAlreadyExists) {
-		t.Errorf("Expected ErrEmailAlreadyExists, got %v", err)
+	if _, err := store.CreateUser(ctx, "tenant1", opts); !errors.Is(err, ErrEmailAlreadyExists) {
+		t.Errorf("Expected ErrEmailAlreadyExists within one tenant, got %v", err)
+	}
+
+	// Same address, different tenant: allowed.
+	opts.Username = "user3"
+	if _, err := store.CreateUser(ctx, "tenant2", opts); err != nil {
+		t.Errorf("an address must be holdable in a second tenant, got %v", err)
 	}
 }
 
@@ -491,7 +576,7 @@ func TestGetUserByEmail_Success(t *testing.T) {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
 
-	user, err := store.GetUserByEmail(ctx, email)
+	user, err := store.GetUserByEmail(ctx, "tenant1", email)
 	if err != nil {
 		t.Fatalf("GetUserByEmail failed: %v", err)
 	}
@@ -529,11 +614,12 @@ func TestUpdateUser_Success(t *testing.T) {
 	if updated.Email != newEmail {
 		t.Errorf("Expected email %s, got %s", newEmail, updated.Email)
 	}
-	if updated.Name != newUsername {
-		t.Errorf("Expected username %s, got %s", newUsername, updated.Name)
+	// The username lands on Username, not over the display name.
+	if updated.Username != newUsername {
+		t.Errorf("Expected username %s, got %s", newUsername, updated.Username)
 	}
-	if !updated.Suspended {
-		t.Error("Expected user to be suspended when enabled=false")
+	if updated.CanAuthenticate() {
+		t.Error("Expected user to be unable to authenticate when enabled=false")
 	}
 }
 
@@ -2046,7 +2132,7 @@ func TestGetUserByEmail_InvalidEmail(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := store.GetUserByEmail(ctx, tt.email)
+			_, err := store.GetUserByEmail(ctx, "tenant1", tt.email)
 			if err == nil {
 				t.Error("Expected validation error for invalid email")
 			}
@@ -2066,7 +2152,7 @@ func TestGetUserByEmail_NotFound(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	_, err := store.GetUserByEmail(ctx, "nonexistent@example.com")
+	_, err := store.GetUserByEmail(ctx, "tenant1", "nonexistent@example.com")
 	if !errors.Is(err, ErrUserNotFound) {
 		t.Errorf("Expected ErrUserNotFound, got %v", err)
 	}
@@ -2086,7 +2172,7 @@ func TestGetUserByEmail_EmailNormalization(t *testing.T) {
 	}
 
 	// Query with mixed case - should normalize and find it
-	user, err := store.GetUserByEmail(ctx, "TEST@EXAMPLE.COM")
+	user, err := store.GetUserByEmail(ctx, "tenant1", "TEST@EXAMPLE.COM")
 	if err != nil {
 		t.Fatalf("GetUserByEmail failed: %v", err)
 	}
@@ -2204,7 +2290,7 @@ func TestUpdateUser_OnlyAttributes(t *testing.T) {
 		Username: "testuser",
 	})
 
-	attrs := map[string]interface{}{"key": "value"}
+	attrs := map[string]string{"key": "value"}
 	updated, err := store.UpdateUser(ctx, "tenant1", user.ID, UpdateUserOptions{
 		Attributes: &attrs,
 	})
@@ -3517,6 +3603,24 @@ func (m *mockGroupStorageWithFailure) UpdateGroup(ctx context.Context, group *Gr
 	return m.mockGroupStorage.UpdateGroup(ctx, group)
 }
 
+// The membership edits are writes to the group record too, so failOnUpdate
+// covers them. It has to: they are where a member list is changed now, and an
+// injector that only failed the whole-record write would report "no error" for
+// the operation the tests above are about.
+func (m *mockGroupStorageWithFailure) AddGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
+	if m.failOnUpdate {
+		return &dberrors.MessageError{Message: "simulated update failure"}
+	}
+	return m.mockGroupStorage.AddGroupMember(ctx, tenantID, groupID, userID)
+}
+
+func (m *mockGroupStorageWithFailure) RemoveGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
+	if m.failOnUpdate {
+		return &dberrors.MessageError{Message: "simulated update failure"}
+	}
+	return m.mockGroupStorage.RemoveGroupMember(ctx, tenantID, groupID, userID)
+}
+
 func (m *mockGroupStorageWithFailure) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
 	if m.failOnDelete {
 		return &dberrors.MessageError{Message: "simulated delete failure"}
@@ -3694,7 +3798,7 @@ func TestCreateUser_WithRoles_UnknownRoleFailsWithoutCreate(t *testing.T) {
 	}
 
 	// Zero side effects: the user must NOT exist.
-	if _, err := store.GetUserByEmail(ctx, "phantom@example.com"); err == nil {
+	if _, err := store.GetUserByEmail(ctx, "tenant1", "phantom@example.com"); err == nil {
 		t.Error("Expected no user to be created after failed role validation")
 	}
 }
@@ -3791,7 +3895,7 @@ func TestCreateUser_WithGroups_UnknownGroupFailsWithoutCreate(t *testing.T) {
 	}
 
 	// Zero side effects: the user must NOT exist.
-	if _, err := store.GetUserByEmail(ctx, "phantomgroup@example.com"); err == nil {
+	if _, err := store.GetUserByEmail(ctx, "tenant1", "phantomgroup@example.com"); err == nil {
 		t.Error("Expected no user to be created after failed group validation")
 	}
 }
@@ -3892,6 +3996,15 @@ func (s *failOnUpdateGroupStorage) UpdateGroup(ctx context.Context, group *Group
 	return s.GroupStorage.UpdateGroup(ctx, group)
 }
 
+// AddGroupMember is where the membership write now happens, so that is where
+// the simulated failure has to be for the rollback test to exercise anything.
+func (s *failOnUpdateGroupStorage) AddGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
+	if groupID == s.failGroupID {
+		return simulatedGroupUpdateError{}
+	}
+	return s.GroupStorage.AddGroupMember(ctx, tenantID, groupID, userID)
+}
+
 // TestCreateUser_WithGroups_MemberUpdateFailureRollsBack verifies the create
 // stays atomic when registering group membership fails after the user record
 // was written: the user is deleted and already-updated groups are reverted.
@@ -3925,7 +4038,7 @@ func TestCreateUser_WithGroups_MemberUpdateFailureRollsBack(t *testing.T) {
 	}
 
 	// The user must have been rolled back.
-	if _, err := store.GetUserByEmail(ctx, "rollback@example.com"); err == nil {
+	if _, err := store.GetUserByEmail(ctx, "tenant1", "rollback@example.com"); err == nil {
 		t.Error("Expected user to be deleted after failed group registration")
 	}
 

@@ -24,13 +24,21 @@ import (
 // FileMCPPresetResolver implements orchestration.MCPPresetResolver for a
 // remotely deployed agent daemon. Unlike the server-side resolver
 // (pkg/server.AgentMCPPresetResolver), which mints a fresh ephemeral
-// certificate per spawn, this resolver mints nothing: it points the spawned
-// agent at the long-lived mTLS client certificate the deploy flow already
-// uploaded to the host (agent.crt / agent.key / server-ca.crt). That on-disk
-// identity carries OU=agents and O=<tenant>, which is exactly what the MCP
-// transport's agent-cert authorizer (pkg/api/mcp/authz_agent_cert.go) requires,
-// so no new CA dependency or per-session key material is introduced on the
-// remote side.
+// certificate per spawn AND enrolls it as a session-scoped qrdb principal, this
+// resolver mints nothing and enrolls nothing: it points the spawned agent at the
+// long-lived mTLS client certificate the deploy flow already uploaded to the
+// host (agent.crt / agent.key / server-ca.crt), so no new CA dependency or
+// per-session key material is introduced on the remote side.
+//
+// The consequence is stated rather than assumed: a session reached this way
+// authenticates as the DAEMON's identity, not its own, and therefore holds the
+// daemon's agent-runtime grant rather than the narrower agent-session floor.
+// go-qrdb resolves an mTLS principal's roles from the user record its Subject
+// CommonName names, and the certificate on that host names the daemon
+// (go-quicbaas#901). Giving a remote session its own principal needs the same
+// mint-and-enroll seam the server-side resolver runs, which needs a CA and an
+// identity store the remote host does not have; it is a control-plane-issued
+// per-session credential, not a change to this file.
 //
 // The endpoint URL is supplied out-of-band by the control plane at deploy time
 // (the `--mcp-endpoint` flag) because the MCP listener runs on a separate port

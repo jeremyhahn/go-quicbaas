@@ -711,7 +711,7 @@ Users can register **multiple authenticators** as backups. See the [WebAuthn API
 - Users can be assigned multiple roles
 - Role permissions are cumulative (union of all role permissions)
 - Created timestamp is recorded for audit purposes
-- User IDs are system-generated UUIDs
+- User IDs are assigned by the store — the go-qrdb Snowflake, rendered in decimal. A caller cannot supply one.
 
 
 ---

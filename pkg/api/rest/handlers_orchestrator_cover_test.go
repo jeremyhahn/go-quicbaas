@@ -18,6 +18,7 @@ package rest
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -339,6 +341,49 @@ func TestHandleOrchestratorListJobs(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.HandleOrchestratorListJobs(w, orchReq(http.MethodGet, "/api/v1/orchestrator/jobs", nil, nil))
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestHandleOrchestratorListJobs_NarrowsToTask is the regression for the
+// measured answer: before go-quicbaas#822 the query accepted task_id and
+// listed the whole tenant anyway, so a task page asking for its own attempts
+// was handed seven jobs belonging to two other tasks.
+func TestHandleOrchestratorListJobs_NarrowsToTask(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+	agentSvc.listJobs = []*orchestration.JobStatus{{JobID: "job-1", TaskID: "task-a"}}
+
+	w := httptest.NewRecorder()
+	server.HandleOrchestratorListJobs(w,
+		orchReq(http.MethodGet, "/api/v1/orchestrator/jobs?tenant_id=acme&task_id=task-a", nil, nil))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, agentSvc.listJobsFilter, "task_id never reached the service")
+	assert.Equal(t, "task-a", agentSvc.listJobsFilter.TaskID)
+
+	var body struct {
+		Jobs []struct {
+			JobID  string `json:"job_id"`
+			TaskID string `json:"task_id"`
+		} `json:"jobs"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body.Jobs, 1)
+	assert.Equal(t, "task-a", body.Jobs[0].TaskID)
+}
+
+// TestHandleOrchestratorListJobs_WithoutTaskNarrowsNothing is the other half:
+// no task_id must list the tenant rather than nothing.
+func TestHandleOrchestratorListJobs_WithoutTaskNarrowsNothing(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	server.HandleOrchestratorListJobs(w,
+		orchReq(http.MethodGet, "/api/v1/orchestrator/jobs?tenant_id=acme", nil, nil))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, agentSvc.listJobsFilter)
+	assert.True(t, agentSvc.listJobsFilter.Empty(), "an absent task_id must narrow nothing")
 }
 
 func TestHandleOrchestratorCancelJob(t *testing.T) {

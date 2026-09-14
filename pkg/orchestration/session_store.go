@@ -66,6 +66,18 @@ type AgentStore interface {
 	// stamps its last-activity time.
 	UpdateSessionStatus(ctx context.Context, tenantID, sessionID string, status SessionState) error
 
+	// ConcludeSession records the session's TERMINAL state together with the
+	// reason it ended, as one atomic mutation.
+	//
+	// It is separate from UpdateSessionStatus because the ending is the one
+	// transition that has to carry an attribution: a record that says only
+	// "closed" leaves an operator to infer from the timestamps whether the
+	// agent exited, an operator closed it, or the node restarted underneath
+	// it — which is exactly the inference that turned 37 stranded records into
+	// "37 active sessions". Writing the status and the reason in two calls
+	// would leave a window in which the record is closed and unattributed.
+	ConcludeSession(ctx context.Context, tenantID, sessionID string, reason SessionConclusionReason) error
+
 	// UpdateSessionActivity stamps the last-activity time of a session.
 	UpdateSessionActivity(ctx context.Context, tenantID, sessionID string) error
 }
@@ -112,6 +124,10 @@ type SessionRecord struct {
 
 	// ProjectID scopes the session to a registered project, if any.
 	ProjectID string `json:"project_id,omitempty"`
+
+	// JobID names the orchestration job the session works for, if any. It is
+	// how a session detail finds its job and a job detail finds its sessions.
+	JobID string `json:"job_id,omitempty"`
 
 	// Backend names the registered backend that owns the session.
 	Backend string `json:"backend"`
@@ -215,6 +231,22 @@ type SessionRecord struct {
 	// a guess. See CostTracker and turn_usage_recorder.go.
 	AccountHistory []AccountAssignment `json:"account_history,omitempty"`
 
+	// CredentialLeaseIDs are the DELIVERY GRANTS taken out over this session's
+	// pooled provider credential — one per hand-over, so a session that has
+	// rotated carries the grant for every account that ever served it.
+	//
+	// THEY ARE ON THE DURABLE RECORD BECAUSE THE REAPER IS. A session ends by
+	// many routes, and the one that matters most for a credential is the route
+	// where nothing is left in memory: the node died, the job failed, the
+	// daemon left the fleet. session_reconcile.go concludes such a record from
+	// the store alone, so the grants have to be readable from the store alone —
+	// a lease ID held only in the live map would be lost in exactly the case
+	// where revoking it matters most.
+	//
+	// Empty for a session that used no pooled account, and for one spawned
+	// before delivery grants existed; both conclude with nothing to withdraw.
+	CredentialLeaseIDs []string `json:"credential_lease_ids,omitempty"`
+
 	// --- Placement ---------------------------------------------------------
 
 	// HostAffinity records the daemon host a remote session landed on, so a
@@ -248,7 +280,20 @@ type SessionRecord struct {
 	// context-free agent.
 	ResumeError string `json:"resume_error,omitempty"`
 
+	// ConclusionReason names why the session ended. It is set together with
+	// Status == SessionStateClosed and is never cleared: the record is the
+	// tombstone, so the attribution has to outlive the process that made it.
+	// Empty on a session that has not ended, and on records written before
+	// conclusions were attributed.
+	ConclusionReason SessionConclusionReason `json:"conclusion_reason,omitempty"`
+
 	// CreatedAt is the spawn time in Unix nanoseconds.
+	//
+	// STAMPED BY THE STORE WHEN A CALLER SUPPLIES NONE, so no listing can
+	// report a session that exists as having been created at the epoch. A
+	// backend that reports no spawn time is the ordinary reason for that, and
+	// the write is the last moment at which the truth ("this record is being
+	// created now") is still available.
 	CreatedAt int64 `json:"created_at"`
 
 	// LastActivity is the last turn's time in Unix nanoseconds.
@@ -303,6 +348,25 @@ func (r *SessionRecord) CanRotateAccount() (bool, string) {
 	}
 }
 
+// AddCredentialLease records a delivery grant on the record, ignoring an empty
+// ID and never recording the same grant twice.
+//
+// Append-only, deliberately: a superseded grant is REVOKED, not forgotten. The
+// record has to keep naming it so a conclusion that retries — or one that runs
+// after a restart, against a record it did not write — withdraws every grant
+// the session ever held rather than only the last one.
+func (r *SessionRecord) AddCredentialLease(leaseID string) {
+	if r == nil || leaseID == "" {
+		return
+	}
+	for _, existing := range r.CredentialLeaseIDs {
+		if existing == leaseID {
+			return
+		}
+	}
+	r.CredentialLeaseIDs = append(r.CredentialLeaseIDs, leaseID)
+}
+
 // OpenAccountSegment closes the account segment currently in force at endedAt
 // and opens a new one for accountID. It is the single place AccountID and
 // AccountHistory move together, so the scalar and the history can never
@@ -348,11 +412,20 @@ func (r *SessionRecord) OpenAccountSegment(accountID, strategy, reason string, a
 //
 // A remote session is excluded because its process lives on another daemon and
 // may well still be running — that session is re-addressed, not resumed.
+//
+// AN ERRORED SESSION IS NOT RESUMABLE EITHER, and excluding it is the whole
+// point of having recorded the error. recordResumeFailure deliberately writes
+// SessionStateError and the ResumeError that explains it; treating that record
+// as resumable on the next boot rewrote the status to RESUMABLE, so the
+// operator-visible failure disappeared and the same session was offered for
+// resume again -- looping on the identical error, with nothing left on the
+// record to say why. A session that failed to come back keeps saying so until
+// somebody acts on it.
 func (r *SessionRecord) Resumable() bool {
 	if r == nil || !r.Persistent || !r.BackendLocal {
 		return false
 	}
-	return r.Status != SessionStateClosed
+	return r.Status != SessionStateClosed && r.Status != SessionStateError
 }
 
 // Clone returns a deep copy of the record. Callers hand records to the store
@@ -440,9 +513,39 @@ func sessionKeyError(err error) error {
 // therefore properties of the injected store alone — an in-memory KV makes this
 // a fast test double, and the server's qrdb-backed KV makes the very same code
 // durable, replicated and barrier-encrypted.
+// guardedSwapper is the compare-and-set capability a terminal transition needs
+// from its backing store, discovered by type assertion like guardedCreator and
+// guardedDeleter beside it (task_store.go).
+//
+// IT IS THE ONLY THING THAT MAKES A CONCLUSION SINGULAR ACROSS DAEMONS. The
+// reconciliation sweep runs on every node, so two of them — or a sweep and an
+// operator's close — can read the same open record and both decide to end it.
+// A local mutex cannot arbitrate that, and the guard inside ConcludeSession
+// only helps the caller that happens to READ after the other one WROTE. The
+// swap is what makes the read and the write one step.
+type guardedSwapper interface {
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (swapped bool, err error)
+}
+
+// maxConclusionSwapAttempts bounds the compare-and-set retry. Each loss means
+// another writer committed, and the re-read either finds the record already
+// concluded (done) or finds a non-terminal change to swap over. A handful of
+// attempts is far more than a fleet can contend on one session; the bound
+// exists so a pathological store cannot spin here for ever.
+const maxConclusionSwapAttempts = 5
+
 type sessionStore struct {
 	kv      interfaces.KVStore
 	auditor StoreAuditor
+
+	// swapper is the store's guarded-swap capability, asserted once at
+	// construction. Nil when the backing store cannot decide one — which in
+	// this tree means an in-process store (pkg/kvstore.Store is a map behind a
+	// mutex), and an in-process store is not shared with another daemon, so
+	// the record lock below IS the whole arbitration there. A store that two
+	// daemons can both reach is the tenant-routed qrdb one, and that one has
+	// the verb.
+	swapper guardedSwapper
 
 	// recordMu serializes the read-modify-write sequence on one session
 	// record so a status update and an activity stamp cannot clobber each
@@ -460,7 +563,11 @@ var _ AgentStore = (*sessionStore)(nil)
 // one. There is no second implementation to keep in sync.
 func NewAgentStore(kv interfaces.KVStore, opts ...StoreOption) AgentStore {
 	cfg := newStoreConfig(opts...)
-	return &sessionStore{kv: kv, auditor: cfg.auditor}
+	store := &sessionStore{kv: kv, auditor: cfg.auditor}
+	if swapper, ok := kv.(guardedSwapper); ok {
+		store.swapper = swapper
+	}
+	return store
 }
 
 // NewInMemoryAgentStore returns a memory-backed binding of the store returned
@@ -521,6 +628,14 @@ func (s *sessionStore) put(ctx context.Context, record *SessionRecord) error {
 	// tenant. The caller's record is left untouched.
 	stored := record.Clone()
 	stored.TenantID = normalizeStoreTenant(record.TenantID)
+	// THE SPAWN TIME IS NEVER ZERO ON A RECORD THAT EXISTS. Backends disagree
+	// about whether they report one at all, and a record written without it
+	// listed as created at the epoch for the rest of its life — the caller's
+	// own record is left untouched, so this is the stored truth rather than a
+	// mutation of the caller's value.
+	if stored.CreatedAt == 0 {
+		stored.CreatedAt = time.Now().UnixNano()
+	}
 
 	data, err := json.Marshal(stored)
 	if err != nil {
@@ -757,6 +872,162 @@ func (s *sessionStore) UpdateSessionStatus(ctx context.Context, tenantID, sessio
 	})
 	s.audit(ctx, AuditActionUpdate, tenantID, sessionID, err)
 	return err
+}
+
+// ConcludeSession records the terminal state and the reason together.
+//
+// Idempotent by construction: a record that is already closed keeps the reason
+// it ended with. A second conclusion cannot overwrite the first, so a late
+// nudge — an exit observer arriving after an operator's close — cannot
+// re-attribute a deliberate ending to a crash.
+func (s *sessionStore) ConcludeSession(
+	ctx context.Context, tenantID, sessionID string, reason SessionConclusionReason) error {
+	var err error
+	if s.swapper != nil {
+		err = s.concludeGuarded(ctx, tenantID, sessionID, reason)
+	} else {
+		// See the note on sessionStore.swapper: a store with no guarded swap is
+		// an in-process one, which no second daemon can reach, so the record
+		// lock inside mutate is the whole arbitration.
+		err = s.mutate(ctx, tenantID, sessionID, func(record *SessionRecord) {
+			if concludedRecord(record) {
+				return
+			}
+			applySessionConclusion(record, reason)
+		})
+	}
+	s.audit(ctx, AuditActionUpdate, tenantID, sessionID, err)
+	return err
+}
+
+// concludedRecord reports whether a record already carries a complete ending.
+func concludedRecord(record *SessionRecord) bool {
+	return record.Status == SessionStateClosed && record.ConclusionReason != ""
+}
+
+// applySessionConclusion writes the terminal state and its attribution together.
+func applySessionConclusion(record *SessionRecord, reason SessionConclusionReason) {
+	record.Status = SessionStateClosed
+	record.ConclusionReason = reason
+	record.LastActivity = time.Now().UnixNano()
+}
+
+// concludeGuarded commits the terminal transition with a compare-and-set, so
+// the read that decides and the write that commits are one step on the store's
+// own plane.
+//
+// THE FIRST ENDING WINS, AND ACROSS DAEMONS RATHER THAN ONLY WITHIN ONE. The
+// previous commit was a plain Put behind a process-local mutex, so two daemons
+// that both read an open record — a sweep and an operator's close, which is the
+// ordinary contention now that the sweep runs on every node — both wrote, and
+// the later one replaced the first attribution. An operator's deliberate close
+// came back reported as `job_concluded`, and the tombstone an auditor reads
+// named the wrong cause.
+//
+// A losing swap is not a failure: it means somebody else committed, so the loop
+// re-reads. Either that writer concluded the session, in which case this call
+// has nothing left to do and says so, or it wrote something else and this
+// attempt swaps over the value it actually observed.
+func (s *sessionStore) concludeGuarded(
+	ctx context.Context, tenantID, sessionID string, reason SessionConclusionReason) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.ready(); err != nil {
+		return err
+	}
+	key, err := sessionRecordKey(tenantID, sessionID)
+	if err != nil {
+		return err
+	}
+
+	for attempt := 0; attempt < maxConclusionSwapAttempts; attempt++ {
+		current, readErr := s.loadRaw(ctx, key, tenantID, sessionID)
+		if readErr != nil {
+			return readErr
+		}
+		if concludedRecord(current.record) {
+			// Somebody's ending is already on the record, complete with its
+			// attribution. Rewriting it is the exact thing this method exists
+			// to refuse.
+			return nil
+		}
+
+		next := current.record.Clone()
+		applySessionConclusion(next, reason)
+		encoded, marshalErr := json.Marshal(next)
+		if marshalErr != nil {
+			return &AgentStoreError{
+				Sentinel: ErrAgentStoreMarshal,
+				Message:  "failed to marshal session record: " + marshalErr.Error(),
+				Cause:    marshalErr,
+			}
+		}
+
+		swapped, swapErr := s.swapper.CompareAndSwap(ctx, key, current.raw, encoded)
+		if swapErr != nil {
+			return &AgentStoreError{
+				Sentinel: ErrAgentStoreUnavailable,
+				Message:  "failed to write session record: " + swapErr.Error(),
+				Cause:    swapErr,
+			}
+		}
+		if swapped {
+			return nil
+		}
+	}
+
+	return &AgentStoreError{
+		Sentinel: ErrAgentStoreUnavailable,
+		Message: "session " + sessionID + " could not be concluded: the record changed under " +
+			"every attempt to commit the ending",
+	}
+}
+
+// rawSessionRecord is a decoded record together with the exact bytes it was
+// decoded from, which is what a compare-and-set has to compare against.
+type rawSessionRecord struct {
+	record *SessionRecord
+	raw    []byte
+}
+
+// loadRaw is load, keeping the encoded form. Re-encoding the decoded record
+// would NOT do: a byte-for-byte match is what the swap is guarding on, and a
+// round trip through the struct normalises field order and drops anything a
+// newer writer added that this build does not know about.
+func (s *sessionStore) loadRaw(
+	ctx context.Context, key, tenantID, sessionID string) (*rawSessionRecord, error) {
+	data, err := s.kv.Get(ctx, key)
+	if err != nil {
+		if qerrors.IsNotFound(err) {
+			return nil, &AgentStoreError{
+				Sentinel: ErrAgentStoreNotFound,
+				Message:  "session not found: " + sessionID,
+			}
+		}
+		return nil, &AgentStoreError{
+			Sentinel: ErrAgentStoreUnavailable,
+			Message:  "failed to read session record: " + err.Error(),
+			Cause:    err,
+		}
+	}
+	if len(data) == 0 {
+		return nil, &AgentStoreError{
+			Sentinel: ErrAgentStoreNotFound,
+			Message:  "session not found: " + sessionID,
+		}
+	}
+	record, decodeErr := decodeSessionRecord(data)
+	if decodeErr != nil {
+		return nil, decodeErr
+	}
+	if record.TenantID != normalizeStoreTenant(tenantID) {
+		return nil, &AgentStoreError{
+			Sentinel: ErrAgentStoreNotFound,
+			Message:  "session not found: " + sessionID,
+		}
+	}
+	return &rawSessionRecord{record: record, raw: data}, nil
 }
 
 // UpdateSessionActivity stamps the session's activity time.

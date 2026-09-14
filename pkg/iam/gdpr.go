@@ -100,7 +100,12 @@ type GDPRManagerDependencies struct {
 	DataExportStorage DataExportStorage
 	DeletionStorage   DeletionStorage
 	UserStorage       UserStorage
-	SessionStorage    SessionStorage
+
+	// WebAuthnCredentials removes the subject's registered authenticators
+	// during an erasure. Optional: a deployment without WebAuthn has none to
+	// remove, and the erasure proceeds with CredentialsDeleted at zero.
+	WebAuthnCredentials WebAuthnCredentialReaper
+	SessionStorage      SessionStorage
 
 	// Optional audit logger
 	AuditLogger GDPRAuditLogger
@@ -635,6 +640,11 @@ func (m *GDPRManager) RequestDeletion(ctx context.Context, tenantID, userID, req
 			return nil, NewIAMError(ErrDeletionInvalid, "iam.gdpr.request_deletion", fmt.Sprintf("invalid preserve category: %s", cat), nil)
 		}
 	}
+	// Refuse a selection that cannot be carried out as asked. Caught here so
+	// the caller learns at request time, not when the erasure runs.
+	if err := m.validateDeletionCategories(deleteCategories, preserveCategories); err != nil {
+		return nil, err
+	}
 
 	// Use default grace period only if negative value is passed (sentinel for "use default")
 	// A value of 0 means immediate deletion (no grace period)
@@ -830,35 +840,118 @@ func (m *GDPRManager) GetDeletionStatus(ctx context.Context, deletionID string) 
 	return m.deps.DeletionStorage.GetDeletionRequest(ctx, deletionID)
 }
 
+// deletionCategorySelector reports, for a deletion request's category lists,
+// whether a given category is in scope for deletion. Preserve wins over
+// delete, and an empty delete list means "everything not preserved".
+//
+// It is a package-level helper rather than a closure so the conflict check
+// below and the erasure itself decide scope with the SAME code. A validation
+// that models scope differently from the execution it guards is a validation
+// that eventually stops guarding it.
+func deletionCategorySelector(deleteCategories, preserveCategories []string) func(string) bool {
+	return func(category string) bool {
+		for _, preserve := range preserveCategories {
+			if preserve == category {
+				return false
+			}
+		}
+		if len(deleteCategories) == 0 {
+			return true
+		}
+		for _, del := range deleteCategories {
+			if del == category {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// validateDeletionCategories rejects a category selection that cannot be
+// carried out as asked: erasing the profile while EXPLICITLY preserving the
+// subject's WebAuthn credentials.
+//
+// WHY THAT PARTICULAR PAIR IS A CONFLICT. The credential store is keyed by
+// (tenant, email). Deleting the profile removes the only address that names
+// those credentials, and the admin list/delete verbs resolve a user id to an
+// email — so once the profile is gone, nothing in the product can name the
+// credential that was kept, let alone remove it. What survives is not a
+// preserved credential; it is an unreachable one, and it will refuse the
+// address to whoever is issued it next (go-quicbaas#273).
+//
+// Deleting them anyway is not the answer either: PreserveCategories is a legal
+// instruction, and a preserve that the system quietly overrides is worse than
+// no preserve at all. Neither half can be honoured without breaking the other,
+// so the request is refused with an explanation instead of silently picking a
+// side.
+//
+// AN OMISSION IS NOT A PRESERVE. A request that deletes ["profile", "sessions"]
+// has not asked to retain credentials — it has not mentioned them. Deleting the
+// identity carries its authenticators with it, the way it carries the broker
+// profile, so credentials are in scope whenever the profile is (see
+// deletionCredentialsInScope). Only an explicit PreserveCategories entry states
+// an intent this can contradict, and only that is refused.
+//
+// IT IS A METHOD, NOT A PURE FUNCTION, because the conflict only exists where
+// there is a credential store to strand something in. On a deployment without
+// WebAuthn the same pair of categories is a preserve of nothing, and refusing
+// it would invent a hard failure for a request that is perfectly coherent
+// there.
+func (m *GDPRManager) validateDeletionCategories(deleteCategories, preserveCategories []string) error {
+	if m.deps.WebAuthnCredentials == nil {
+		return nil
+	}
+	shouldDelete := deletionCategorySelector(deleteCategories, preserveCategories)
+	if !shouldDelete("profile") {
+		return nil
+	}
+	for _, preserve := range preserveCategories {
+		if preserve == "credentials" {
+			return NewIAMError(ErrDeletionInvalid, "iam.gdpr.validate_categories",
+				"conflicting categories: deleting \"profile\" while preserving \"credentials\" would leave the "+
+					"subject's WebAuthn credentials stored under an email address that no longer resolves to a "+
+					"user, where no surface can list or remove them and they would block that address from "+
+					"registering again; either drop \"credentials\" from the preserve list, or preserve "+
+					"\"profile\" alongside it",
+				nil)
+		}
+	}
+	return nil
+}
+
+// deletionCredentialsInScope reports whether an erasure must remove the
+// subject's WebAuthn credentials.
+//
+// Credentials go when they are selected, and also when the profile goes: an
+// authenticator cannot outlive the identity it authenticates, and leaving one
+// behind strands it beyond any surface's reach. The case where that coupling
+// would override an explicit preserve never reaches here —
+// validateDeletionCategories refuses it as a conflicting request.
+func deletionCredentialsInScope(shouldDelete func(string) bool) bool {
+	return shouldDelete("credentials") || shouldDelete("profile")
+}
+
 // deleteUserData performs the actual data deletion.
 func (m *GDPRManager) deleteUserData(ctx context.Context, request *DataDeletionRequest) (*DeletionSummary, error) {
 	summary := &DeletionSummary{
 		AdditionalData: make(map[string]int),
 	}
 
-	// Determine what to delete (everything except preserved)
-	shouldDelete := func(category string) bool {
-		// Check preserve list
-		for _, preserve := range request.PreserveCategories {
-			if preserve == category {
-				return false
-			}
-		}
-
-		// If delete list is empty, delete all (except preserved)
-		if len(request.DeleteCategories) == 0 {
-			return true
-		}
-
-		// Check delete list
-		for _, del := range request.DeleteCategories {
-			if del == category {
-				return true
-			}
-		}
-
-		return false
+	// Re-check the category conflict here, not only at request time: a request
+	// persisted before this validation existed would otherwise reach the
+	// erasure and orphan a credential.
+	//
+	// This marks the request failed, and a failed request is TERMINAL — cancel
+	// accepts only pending rows and process rejects non-pending ones — so the
+	// remedy is to file a new deletion request with categories that agree, not
+	// to amend this one. That is still the better end: a request the operator
+	// must re-file is recoverable, and the orphaned credential is not.
+	if err := m.validateDeletionCategories(request.DeleteCategories, request.PreserveCategories); err != nil {
+		return nil, err
 	}
+
+	// Determine what to delete (everything except preserved)
+	shouldDelete := deletionCategorySelector(request.DeleteCategories, request.PreserveCategories)
 
 	// Delete sessions
 	if shouldDelete("sessions") && m.deps.SessionStorage != nil {
@@ -869,10 +962,36 @@ func (m *GDPRManager) deleteUserData(ctx context.Context, request *DataDeletionR
 		}
 	}
 
-	// NOTE: WebAuthn credential deletion is now owned by go-xkms; see
-	// the export-side note above. The CredentialsDeleted counter is
-	// retained for wire-format stability but stays at zero until the
-	// xkms-backed deletion hook lands.
+	// Delete WebAuthn credentials. This is the xkms-backed deletion hook the
+	// note here used to be waiting for.
+	//
+	// It runs BEFORE the profile is deleted and fails the erasure closed,
+	// because the credential store is keyed by (tenant, email): once the
+	// profile is gone the address is gone with it, and the credential can no
+	// longer be named — let alone by an erasure that has already reported
+	// success. A stored credential is personal data (a public key bound to
+	// this person's authenticator, with its model and transports), so leaving
+	// it behind fails the request it claims to have completed, and it would
+	// go on to block whoever is issued that address next, which is
+	// go-quicbaas#273 with a legal obligation attached.
+	//
+	// An explicit preserve of "credentials" alongside a profile deletion never
+	// reaches here — validateDeletionCategories refuses that request, at
+	// request time and again above — so this coupling can never override a
+	// stated intent to retain.
+	if deletionCredentialsInScope(shouldDelete) && m.deps.WebAuthnCredentials != nil {
+		user, err := m.deps.UserStorage.GetUser(ctx, request.TenantID, request.UserID)
+		if err != nil {
+			return nil, api.NewOperationFailedError("resolve user for credential erasure", err)
+		}
+		if user != nil && user.Email != "" {
+			deleted, dErr := m.deps.WebAuthnCredentials.DeleteCredentials(ctx, request.TenantID, user.Email)
+			if dErr != nil {
+				return nil, api.NewOperationFailedError("delete webauthn credentials", dErr)
+			}
+			summary.CredentialsDeleted = deleted
+		}
+	}
 
 	// Delete consents
 	if shouldDelete("consents") {

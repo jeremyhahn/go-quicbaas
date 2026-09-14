@@ -110,20 +110,16 @@ func (a restHomeRealmResolver) Resolve(ctx context.Context, hints iam.RealmHints
 	})
 }
 
-// tenantFromOAuthClientID extracts the tenant from an OAuth2 clientID minted in
-// the format app_<tenant>_<suffix>. Returns "" when the clientID does not match
-// that shape.
+// tenantFromOAuthClientID extracts the tenant from an OAuth2 client identifier.
+// Returns "" when the identifier does not carry a tenant.
+//
+// It delegates rather than reimplementing the grammar. The token endpoints
+// scope their STORAGE context with this value while pkg/iam resolves the record
+// with its own parser, so a second copy that drifts by one character puts the
+// read in a namespace the write never touched -- which is the shape of
+// go-quicbaas#644, and this was one of the two copies that had it.
 func tenantFromOAuthClientID(clientID string) string {
-	const prefix = "app_"
-	if !strings.HasPrefix(clientID, prefix) {
-		return ""
-	}
-	rest := clientID[len(prefix):]
-	idx := strings.LastIndex(rest, "_")
-	if idx <= 0 {
-		return ""
-	}
-	return rest[:idx]
+	return iam.TenantFromClientID(clientID)
 }
 
 // requestSNIHost returns the SNI server name (preferred) or the HTTP Host.

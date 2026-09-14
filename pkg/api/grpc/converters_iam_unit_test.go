@@ -171,7 +171,6 @@ func TestConvertTenantToProto(t *testing.T) {
 
 func TestConvertProtoToUser(t *testing.T) {
 	now := time.Now()
-	mfaTime := now.Add(-1 * time.Hour)
 	lastAuth := now.Add(-30 * time.Minute)
 
 	tests := []struct {
@@ -189,20 +188,18 @@ func TestConvertProtoToUser(t *testing.T) {
 		{
 			name: "full_user",
 			input: &iampb.User{
-				Id:          "user-1",
-				TenantId:    "tenant-1",
-				Email:       "test@example.com",
-				Name:        "Test User",
-				Roles:       []string{"admin", "user"},
-				Groups:      []string{"group-1", "group-2"},
-				MfaVerified: true,
+				Id:       "user-1",
+				TenantId: "tenant-1",
+				Email:    "test@example.com",
+				Name:     "Test User",
+				Roles:    []string{"admin", "user"},
+				Groups:   []string{"group-1", "group-2"},
 				Attributes: map[string]string{
 					"department": "engineering",
 				},
-				CreatedAt:    timestamppb.New(now),
-				UpdatedAt:    timestamppb.New(now),
-				LastAuth:     timestamppb.New(lastAuth),
-				MfaTimestamp: timestamppb.New(mfaTime),
+				CreatedAt: timestamppb.New(now),
+				UpdatedAt: timestamppb.New(now),
+				LastAuth:  timestamppb.New(lastAuth),
 			},
 			validate: func(t *testing.T, result *iam.User) {
 				require.NotNil(t, result)
@@ -212,10 +209,8 @@ func TestConvertProtoToUser(t *testing.T) {
 				assert.Equal(t, "Test User", result.Name)
 				assert.Equal(t, []string{"admin", "user"}, result.Roles)
 				assert.Equal(t, []string{"group-1", "group-2"}, result.Groups)
-				assert.True(t, result.MFAVerified)
 				assert.Equal(t, "engineering", result.Attributes["department"])
 				require.NotNil(t, result.LastAuth)
-				require.NotNil(t, result.MFATimestamp)
 			},
 		},
 		{
@@ -229,7 +224,6 @@ func TestConvertProtoToUser(t *testing.T) {
 				require.NotNil(t, result)
 				assert.Equal(t, "user-2", result.ID)
 				assert.Nil(t, result.LastAuth)
-				assert.Nil(t, result.MFATimestamp)
 			},
 		},
 	}
@@ -245,7 +239,6 @@ func TestConvertProtoToUser(t *testing.T) {
 func TestConvertUserToProto(t *testing.T) {
 	now := time.Now()
 	lastAuth := now.Add(-30 * time.Minute)
-	mfaTime := now.Add(-1 * time.Hour)
 
 	tests := []struct {
 		name     string
@@ -262,32 +255,33 @@ func TestConvertUserToProto(t *testing.T) {
 		{
 			name: "full_user",
 			input: &iam.User{
-				ID:          "user-1",
-				TenantID:    "tenant-1",
-				Email:       "test@example.com",
-				Name:        "Test User",
-				Roles:       []string{"admin"},
-				Groups:      []string{"group-1"},
-				MFAVerified: true,
-				Attributes: map[string]interface{}{
+				ID:       "user-1",
+				TenantID: "tenant-1",
+				Email:    "test@example.com",
+				Name:     "Test User",
+				Roles:    []string{"admin"},
+				Groups:   []string{"group-1"},
+				// Attributes are string-valued on both sides now, so nothing is
+				// skipped on the way across: a value the wire could not carry is
+				// refused by the type rather than dropped in the converter.
+				Attributes: map[string]string{
 					"department": "engineering",
-					"level":      123, // non-string will be skipped
+					"level":      "123",
 				},
-				Created:      now,
-				Updated:      now,
-				LastAuth:     &lastAuth,
-				MFATimestamp: &mfaTime,
+				Created:  now,
+				Updated:  now,
+				LastAuth: &lastAuth,
 			},
 			validate: func(t *testing.T, result *iampb.User) {
 				require.NotNil(t, result)
 				assert.Equal(t, "user-1", result.Id)
 				assert.Equal(t, "test@example.com", result.Email)
 				assert.Equal(t, "engineering", result.Attributes["department"])
-				// Non-string attribute should be skipped
-				_, hasLevel := result.Attributes["level"]
-				assert.False(t, hasLevel)
+				// Nothing is skipped any more: attributes are string-valued on
+				// both sides, so a value the wire cannot carry is refused by the
+				// type rather than dropped in transit.
+				assert.Equal(t, "123", result.Attributes["level"])
 				assert.NotNil(t, result.LastAuth)
-				assert.NotNil(t, result.MfaTimestamp)
 			},
 		},
 		{
@@ -302,7 +296,6 @@ func TestConvertUserToProto(t *testing.T) {
 			validate: func(t *testing.T, result *iampb.User) {
 				require.NotNil(t, result)
 				assert.Nil(t, result.LastAuth)
-				assert.Nil(t, result.MfaTimestamp)
 			},
 		},
 	}
@@ -768,9 +761,6 @@ func TestConvertPolicyToProto(t *testing.T) {
 // =============================================================================
 
 func TestConvertProtoToSubject(t *testing.T) {
-	now := time.Now()
-	mfaTime := now.Add(-1 * time.Hour)
-
 	tests := []struct {
 		name     string
 		input    *iampb.Subject
@@ -793,8 +783,6 @@ func TestConvertProtoToSubject(t *testing.T) {
 				Attributes: map[string]string{
 					"department": "engineering",
 				},
-				MfaVerified:  true,
-				MfaTimestamp: timestamppb.New(mfaTime),
 			},
 			validate: func(t *testing.T, result *iam.Subject) {
 				require.NotNil(t, result)
@@ -803,8 +791,6 @@ func TestConvertProtoToSubject(t *testing.T) {
 				assert.Equal(t, []string{"admin", "user"}, result.Roles)
 				assert.Equal(t, []string{"group-1"}, result.Groups)
 				assert.Equal(t, "engineering", result.Attributes["department"])
-				assert.True(t, result.MFAVerified)
-				require.NotNil(t, result.MFATimestamp)
 			},
 		},
 		{
@@ -817,7 +803,6 @@ func TestConvertProtoToSubject(t *testing.T) {
 				require.NotNil(t, result)
 				assert.Equal(t, "user-2", result.ID)
 				assert.Equal(t, "tenant-1", result.TenantID)
-				assert.Nil(t, result.MFATimestamp)
 			},
 		},
 	}
@@ -831,9 +816,6 @@ func TestConvertProtoToSubject(t *testing.T) {
 }
 
 func TestConvertSubjectToProto(t *testing.T) {
-	now := time.Now()
-	mfaTime := now.Add(-1 * time.Hour)
-
 	tests := []struct {
 		name     string
 		input    *iam.Subject
@@ -857,8 +839,6 @@ func TestConvertSubjectToProto(t *testing.T) {
 					"department": "engineering",
 					"level":      123, // non-string will be skipped
 				},
-				MFAVerified:  true,
-				MFATimestamp: &mfaTime,
 			},
 			validate: func(t *testing.T, result *iampb.Subject) {
 				require.NotNil(t, result)
@@ -870,8 +850,6 @@ func TestConvertSubjectToProto(t *testing.T) {
 				// Non-string should be skipped
 				_, hasLevel := result.Attributes["level"]
 				assert.False(t, hasLevel)
-				assert.True(t, result.MfaVerified)
-				assert.NotNil(t, result.MfaTimestamp)
 			},
 		},
 		{
@@ -884,7 +862,6 @@ func TestConvertSubjectToProto(t *testing.T) {
 				require.NotNil(t, result)
 				assert.Equal(t, "user-2", result.Id)
 				assert.Equal(t, "tenant-1", result.TenantId)
-				assert.Nil(t, result.MfaTimestamp)
 			},
 		},
 	}
@@ -1018,27 +995,23 @@ func TestConvertProtoToUser_Nil(t *testing.T) {
 func TestConvertProtoToUser_Full(t *testing.T) {
 	now := time.Now()
 	pb := &iampb.User{
-		Id:           "user-1",
-		TenantId:     "tenant-1",
-		Email:        "test@example.com",
-		Name:         "Test User",
-		Roles:        []string{"admin"},
-		Groups:       []string{"developers"},
-		MfaVerified:  true,
-		Attributes:   map[string]string{"key": "value"},
-		CreatedAt:    timestamppb.New(now),
-		UpdatedAt:    timestamppb.New(now),
-		LastAuth:     timestamppb.New(now),
-		MfaTimestamp: timestamppb.New(now),
+		Id:         "user-1",
+		TenantId:   "tenant-1",
+		Email:      "test@example.com",
+		Name:       "Test User",
+		Roles:      []string{"admin"},
+		Groups:     []string{"developers"},
+		Attributes: map[string]string{"key": "value"},
+		CreatedAt:  timestamppb.New(now),
+		UpdatedAt:  timestamppb.New(now),
+		LastAuth:   timestamppb.New(now),
 	}
 
 	result := convertProtoToUser(pb)
 	assert.Equal(t, "user-1", result.ID)
 	assert.Equal(t, "test@example.com", result.Email)
-	assert.True(t, result.MFAVerified)
 	assert.Equal(t, "value", result.Attributes["key"])
 	assert.NotNil(t, result.LastAuth)
-	assert.NotNil(t, result.MFATimestamp)
 }
 
 func TestConvertUserToProto_Nil(t *testing.T) {
@@ -1048,28 +1021,23 @@ func TestConvertUserToProto_Nil(t *testing.T) {
 func TestConvertUserToProto_Full(t *testing.T) {
 	now := time.Now()
 	user := &iam.User{
-		ID:           "user-1",
-		TenantID:     "tenant-1",
-		Email:        "test@example.com",
-		Name:         "Test User",
-		Roles:        []string{"admin"},
-		Groups:       []string{"devs"},
-		MFAVerified:  true,
-		Attributes:   map[string]interface{}{"key": "value", "num": 42},
-		Created:      now,
-		Updated:      now,
-		LastAuth:     &now,
-		MFATimestamp: &now,
+		ID:         "user-1",
+		TenantID:   "tenant-1",
+		Email:      "test@example.com",
+		Name:       "Test User",
+		Roles:      []string{"admin"},
+		Groups:     []string{"devs"},
+		Attributes: map[string]string{"key": "value", "num": "42"},
+		Created:    now,
+		Updated:    now,
+		LastAuth:   &now,
 	}
 
 	result := convertUserToProto(user)
 	assert.Equal(t, "user-1", result.Id)
 	assert.Equal(t, "value", result.Attributes["key"])
-	// Non-string attributes are skipped
-	_, exists := result.Attributes["num"]
-	assert.False(t, exists)
+	assert.Equal(t, "42", result.Attributes["num"])
 	assert.NotNil(t, result.LastAuth)
-	assert.NotNil(t, result.MfaTimestamp)
 }
 
 // =============================================================================
@@ -1145,6 +1113,99 @@ func TestConvertRoleToProto_Full(t *testing.T) {
 	}
 	result := convertRoleToProto(role)
 	assert.Equal(t, "role-1", result.Id)
+}
+
+// TestConvertRoleToProto_RetiredPermissions pins that the drift a role carries
+// survives the hop to the wire: retired permissions are derived on read, so a
+// converter that dropped them would hide the drift from every gRPC caller.
+func TestConvertRoleToProto_RetiredPermissions(t *testing.T) {
+	role := &iam.Role{
+		ID: "role-1", TenantID: "t1", Name: "admin",
+		Permissions:        []string{"kv:get", "kv:legacy"},
+		RetiredPermissions: []string{"kv:legacy"},
+	}
+
+	result := convertRoleToProto(role)
+
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"kv:legacy"}, result.RetiredPermissions)
+}
+
+// TestConvertRoleToProto_NoRetiredPermissions is the agreeing-with-the-build
+// case: nothing retired means nothing on the wire.
+func TestConvertRoleToProto_NoRetiredPermissions(t *testing.T) {
+	result := convertRoleToProto(&iam.Role{ID: "role-1", TenantID: "t1", Name: "admin"})
+
+	require.NotNil(t, result)
+	assert.Empty(t, result.RetiredPermissions)
+}
+
+func TestConvertProtoToRole_RetiredPermissions(t *testing.T) {
+	result := convertProtoToRole(&iampb.Role{
+		Id: "role-1", TenantId: "t1", Name: "admin",
+		Permissions:        []string{"kv:get", "kv:legacy"},
+		RetiredPermissions: []string{"kv:legacy"},
+	})
+
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"kv:legacy"}, result.RetiredPermissions)
+}
+
+func TestConvertRoleReconcileReportToProto_Full(t *testing.T) {
+	report := &iam.RoleReconcileReport{
+		TenantID: "tenant-1",
+		Roles: []iam.RoleReconcileResult{
+			{RoleID: "r-admin", Name: "admin", Added: []string{"roles:create"}},
+			{RoleID: "r-viewer", Name: "viewer", Created: true, Removed: []string{"kv:legacy"}},
+		},
+	}
+
+	result := convertRoleReconcileReportToProto(report)
+
+	require.NotNil(t, result)
+	assert.Equal(t, "tenant-1", result.TenantId)
+	assert.True(t, result.Changed)
+	require.Len(t, result.Roles, 2)
+	assert.Equal(t, "r-admin", result.Roles[0].RoleId)
+	assert.Equal(t, []string{"roles:create"}, result.Roles[0].Added)
+	assert.True(t, result.Roles[1].Created)
+	assert.Equal(t, []string{"kv:legacy"}, result.Roles[1].Removed)
+}
+
+// TestConvertRoleReconcileReportToProto_Unchanged pins that an empty report
+// converts to changed=false rather than to a nil or misleading response.
+func TestConvertRoleReconcileReportToProto_Unchanged(t *testing.T) {
+	result := convertRoleReconcileReportToProto(&iam.RoleReconcileReport{TenantID: "tenant-1"})
+
+	require.NotNil(t, result)
+	assert.Equal(t, "tenant-1", result.TenantId)
+	assert.False(t, result.Changed)
+	assert.Empty(t, result.Roles)
+}
+
+func TestConvertRoleReconcileReportToProto_Nil(t *testing.T) {
+	assert.Nil(t, convertRoleReconcileReportToProto(nil))
+}
+
+func TestConvertRoleReconcileResultToProto_Full(t *testing.T) {
+	result := convertRoleReconcileResultToProto(&iam.RoleReconcileResult{
+		RoleID:  "r-admin",
+		Name:    "admin",
+		Created: true,
+		Added:   []string{"kv:get"},
+		Removed: []string{"kv:legacy"},
+	})
+
+	require.NotNil(t, result)
+	assert.Equal(t, "r-admin", result.RoleId)
+	assert.Equal(t, "admin", result.Name)
+	assert.True(t, result.Created)
+	assert.Equal(t, []string{"kv:get"}, result.Added)
+	assert.Equal(t, []string{"kv:legacy"}, result.Removed)
+}
+
+func TestConvertRoleReconcileResultToProto_Nil(t *testing.T) {
+	assert.Nil(t, convertRoleReconcileResultToProto(nil))
 }
 
 // =============================================================================
@@ -1229,18 +1290,14 @@ func TestConvertProtoToSubject_Nil(t *testing.T) {
 }
 
 func TestConvertProtoToSubject_Full(t *testing.T) {
-	now := time.Now()
 	pb := &iampb.Subject{
 		Id: "sub-1", TenantId: "t1", Roles: []string{"admin"},
 		Groups: []string{"devs"}, MfaVerified: true,
-		Attributes:   map[string]string{"ip": "1.2.3.4"},
-		MfaTimestamp: timestamppb.New(now),
+		Attributes: map[string]string{"ip": "1.2.3.4"},
 	}
 	result := convertProtoToSubject(pb)
 	assert.Equal(t, "sub-1", result.ID)
-	assert.True(t, result.MFAVerified)
 	assert.Equal(t, "1.2.3.4", result.Attributes["ip"])
-	assert.NotNil(t, result.MFATimestamp)
 }
 
 func TestConvertSubjectToProto_Nil(t *testing.T) {
@@ -1248,12 +1305,10 @@ func TestConvertSubjectToProto_Nil(t *testing.T) {
 }
 
 func TestConvertSubjectToProto_Full(t *testing.T) {
-	now := time.Now()
 	subject := &iam.Subject{
 		ID: "sub-1", TenantID: "t1", Roles: []string{"admin"},
 		Groups: []string{"devs"}, MFAVerified: true,
-		Attributes:   map[string]interface{}{"ip": "1.2.3.4", "num": 42},
-		MFATimestamp: &now,
+		Attributes: map[string]interface{}{"ip": "1.2.3.4", "num": 42},
 	}
 	result := convertSubjectToProto(subject)
 	assert.Equal(t, "sub-1", result.Id)
@@ -1261,7 +1316,6 @@ func TestConvertSubjectToProto_Full(t *testing.T) {
 	// Non-string attribute skipped
 	_, exists := result.Attributes["num"]
 	assert.False(t, exists)
-	assert.NotNil(t, result.MfaTimestamp)
 }
 
 // =============================================================================
@@ -1808,7 +1862,7 @@ func TestConvertUserDataExportToProto_Full(t *testing.T) {
 		Profile: &iam.UserProfileExport{
 			ID: "u1", Email: "test@example.com", Name: "Test",
 			Created: now, Updated: now, LastAuth: &lastAuth,
-			Attributes: map[string]interface{}{"key": "val"},
+			Attributes: map[string]string{"key": "val"},
 		},
 		Sessions: []*iam.SessionExport{
 			{
@@ -3248,7 +3302,7 @@ func TestConvertUserDataExportToProtoComplete(t *testing.T) {
 			Created:  now.Add(-30 * 24 * time.Hour),
 			Updated:  now,
 			LastAuth: &lastAuth,
-			Attributes: map[string]interface{}{
+			Attributes: map[string]string{
 				"department": "Engineering",
 				"level":      "Senior",
 			},

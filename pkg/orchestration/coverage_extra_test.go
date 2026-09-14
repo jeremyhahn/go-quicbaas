@@ -14,8 +14,10 @@
 package orchestration
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -281,19 +283,19 @@ func TestWorkflowLoader_Register_PersistorErrorRollsBack(t *testing.T) {
 	loader.SetPersistor(persistor)
 
 	def := newValidWorkflowDef("wf")
-	if err := loader.Register(def); err == nil {
+	if err := loader.Register(SystemTenantID, def); err == nil {
 		t.Fatal("expected Register to surface the persistor error")
 	}
 
 	// Rollback: the workflow must NOT be retrievable from the in-memory cache.
-	if _, err := loader.Get("wf"); err == nil {
+	if _, err := loader.Get(SystemTenantID, "wf"); err == nil {
 		t.Fatal("workflow should have been rolled back out of the cache")
 	}
 
 	// And a subsequent Register (with a healthy persistor) must succeed,
 	// proving the name slot was freed.
 	persistor.saveErr = nil
-	if err := loader.Register(newValidWorkflowDef("wf")); err != nil {
+	if err := loader.Register(SystemTenantID, newValidWorkflowDef("wf")); err != nil {
 		t.Fatalf("re-register after rollback: %v", err)
 	}
 }
@@ -312,7 +314,7 @@ func TestNewInMemoryTaskStoreWithKV_DefaultLimit(t *testing.T) {
 		taskID   = "task-inline-limit"
 	)
 
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	store := NewInMemoryTaskStoreWithKV(kv, 0)
 	ctx := context.Background()
 	newTaskWithID(t, store, tenantID, taskID)
@@ -477,6 +479,18 @@ type faultKVStore struct {
 	scanErr   error
 	listErr   error
 	existsErr error
+
+	// putIfAbsentErr and compareAndDeleteErr fail the guarded verbs
+	// independently of the plain ones, so a test can fault the claim without
+	// faulting the delivery that follows it.
+	putIfAbsentErr      error
+	compareAndDeleteErr error
+
+	// putIfAbsentErrPrefix narrows putIfAbsentErr to one keyspace. Peer
+	// delivery takes a guarded write twice — the claim, then the delivered
+	// marker — and the two failures mean opposite things, so a test has to be
+	// able to fail exactly one of them. Empty fails every key.
+	putIfAbsentErrPrefix string
 }
 
 func newFaultKVStore() *faultKVStore {
@@ -518,6 +532,40 @@ func (s *faultKVStore) List(ctx context.Context, prefix string) ([]string, error
 		return nil, s.listErr
 	}
 	return s.memKVStore.List(ctx, prefix)
+}
+
+// PutIfAbsent and CompareAndDelete give this fixture the guarded-write
+// capability peer delivery requires. They operate on the embedded store's map
+// directly rather than through Put/Delete, so a test faulting the plain verbs
+// still gets a working claim — which is the whole point of faulting one step of
+// a sequence at a time.
+func (s *faultKVStore) PutIfAbsent(_ context.Context, key string, value []byte) (bool, error) {
+	if s.putIfAbsentErr != nil && strings.HasPrefix(key, s.putIfAbsentErrPrefix) {
+		return false, s.putIfAbsentErr
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.m[key]; exists {
+		return false, nil
+	}
+	c := make([]byte, len(value))
+	copy(c, value)
+	s.m[key] = c
+	return true, nil
+}
+
+func (s *faultKVStore) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
+	if s.compareAndDeleteErr != nil {
+		return false, s.compareAndDeleteErr
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	held, exists := s.m[key]
+	if !exists || !bytes.Equal(held, expected) {
+		return false, nil
+	}
+	delete(s.m, key)
+	return true, nil
 }
 
 func (s *faultKVStore) Exists(ctx context.Context, key string) (bool, error) {
@@ -836,14 +884,14 @@ func TestAgentRegistry_CorruptRecord(t *testing.T) {
 		{
 			name: "Heartbeat",
 			invoke: func(ctx context.Context, reg AgentRegistry) error {
-				return reg.Heartbeat(ctx, tenantID, agentID)
+				return reg.Heartbeat(ctx, tenantID, agentID, nil)
 			},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			kv := kvstore.NewMemory()
+			kv := NewMemoryTaskKV()
 			seedCorruptAgent(t, kv, tenantID, agentID)
 
 			err := tc.invoke(context.Background(), NewAgentRegistry(kv))
@@ -969,7 +1017,7 @@ func TestTaskStore_CorruptRecord(t *testing.T) {
 // decode-failure branch: one unreadable record must not hide the rest of the
 // tenant's work queue.
 func TestTaskStore_ListTasks_SkipsCorruptRecord(t *testing.T) {
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	store := NewInMemoryTaskStoreWithKV(kv, 0)
 	ctx := context.Background()
 

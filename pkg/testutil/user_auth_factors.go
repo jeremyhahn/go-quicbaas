@@ -113,6 +113,44 @@ func (m *MemoryUserAuthFactors) Add(_ context.Context, userID uint64, factor *qr
 }
 
 // indexKeysFor returns every index key a factor occupies.
+// AddAttested records what a ceremony proved the way the production service
+// does: the factor is added and the reserved attest_* keys are written by the
+// store, never by the caller. It makes the fake usable as a
+// qrdbsdk.AttestationRecorder in tests of the fido2 write-through.
+func (m *MemoryUserAuthFactors) AddAttested(ctx context.Context, userID uint64, factor *qrdbsdk.AuthFactor, attestation qrdbsdk.VerifiedAttestation) error {
+	if !attestation.Level.Valid() {
+		return &qrdbsdk.InvalidAttestationError{Level: attestation.Level}
+	}
+	if factor != nil {
+		factor.Metadata = stampAttestation(factor.Metadata, attestation)
+	}
+	return m.Add(ctx, userID, factor)
+}
+
+// RotateAttested is AddAttested's rotation counterpart.
+func (m *MemoryUserAuthFactors) RotateAttested(ctx context.Context, oldID string, newFactor *qrdbsdk.AuthFactor, attestation qrdbsdk.VerifiedAttestation) error {
+	if !attestation.Level.Valid() {
+		return &qrdbsdk.InvalidAttestationError{Level: attestation.Level}
+	}
+	if newFactor != nil {
+		newFactor.Metadata = stampAttestation(newFactor.Metadata, attestation)
+	}
+	return m.Rotate(ctx, oldID, newFactor)
+}
+
+// stampAttestation writes the reserved attestation keys the server owns.
+func stampAttestation(meta map[string]string, attestation qrdbsdk.VerifiedAttestation) map[string]string {
+	out := make(map[string]string, len(meta)+2)
+	for k, v := range meta {
+		out[k] = v
+	}
+	out[qrdbsdk.MetadataAttestLevel] = string(attestation.Level)
+	if attestation.AAGUID != "" {
+		out[qrdbsdk.MetadataAttestAAGUID] = attestation.AAGUID
+	}
+	return out
+}
+
 func (m *MemoryUserAuthFactors) indexKeysFor(factor *qrdbsdk.AuthFactor) []string {
 	keys := []string{factorIndexKey(factor.Type, factor.Credential)}
 	if len(factor.SPKICredential) > 0 {
@@ -223,89 +261,6 @@ func (m *MemoryUserAuthFactors) MarkUsed(_ context.Context, factorID string, ts 
 	used := ts
 	f.LastUsedAt = &used
 	return nil
-}
-
-// StaticQRDBUserIDs is an iam.QRDBUserIDResolver test double that maps
-// "tenantID/userID" to a fixed qrdb numeric id. It stands in for the IDMap the
-// qrdb-backed user storage owns, which is unavailable to tests that run against
-// the in-memory IAM storage.
-type StaticQRDBUserIDs struct {
-	mu sync.Mutex
-
-	// IDs maps "tenantID/brokerUserID" to the qrdb numeric user id.
-	IDs map[string]uint64
-
-	// AutoAssign makes an unknown pair receive a fresh, stable id instead of
-	// failing. It models production faithfully: every user created through the
-	// qrdb-backed storage HAS an IDMap entry, so a resolver miss is not a state
-	// the enrollment path can observe for a real user. Tests that need the
-	// resolution to fail set Err.
-	AutoAssign bool
-
-	// Err, when non-nil, is returned instead of a resolution.
-	Err error
-
-	// nextID backs AutoAssign.
-	nextID uint64
-}
-
-// NewStaticQRDBUserIDs constructs a resolver over explicitly linked
-// correlations. Unknown pairs fail.
-func NewStaticQRDBUserIDs() *StaticQRDBUserIDs {
-	return &StaticQRDBUserIDs{IDs: make(map[string]uint64)}
-}
-
-// NewAutoQRDBUserIDs constructs a resolver that assigns a fresh, stable qrdb id
-// to any pair it has not seen before.
-func NewAutoQRDBUserIDs() *StaticQRDBUserIDs {
-	return &StaticQRDBUserIDs{IDs: make(map[string]uint64), AutoAssign: true}
-}
-
-// Link records a broker-id -> qrdb-id correlation.
-func (r *StaticQRDBUserIDs) Link(tenantID, userID string, qrdbID uint64) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.IDs == nil {
-		r.IDs = make(map[string]uint64)
-	}
-	r.IDs[tenantID+"/"+userID] = qrdbID
-}
-
-// QRDBUserID resolves the correlation. An unknown pair is assigned a fresh id
-// when AutoAssign is set, and otherwise fails with QRDBUserIDNotLinkedError.
-func (r *StaticQRDBUserIDs) QRDBUserID(_ context.Context, tenantID, userID string) (uint64, error) {
-	if r.Err != nil {
-		return 0, r.Err
-	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	key := tenantID + "/" + userID
-	if id, ok := r.IDs[key]; ok {
-		return id, nil
-	}
-	if !r.AutoAssign {
-		return 0, &QRDBUserIDNotLinkedError{TenantID: tenantID, UserID: userID}
-	}
-	if r.IDs == nil {
-		r.IDs = make(map[string]uint64)
-	}
-	r.nextID++
-	r.IDs[key] = r.nextID
-	return r.nextID, nil
-}
-
-// QRDBUserIDNotLinkedError reports that no broker-id -> qrdb-id correlation was
-// registered for the requested pair.
-type QRDBUserIDNotLinkedError struct {
-	TenantID string
-	UserID   string
-}
-
-// Error implements the error interface.
-func (e *QRDBUserIDNotLinkedError) Error() string {
-	return "testutil: no qrdb user id linked for " + e.TenantID + "/" + e.UserID
 }
 
 // FactorAlreadyExistsError mirrors go-qrdb's duplicate-credential error: it

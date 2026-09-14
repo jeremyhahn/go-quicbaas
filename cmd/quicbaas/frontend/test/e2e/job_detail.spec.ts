@@ -76,7 +76,7 @@ async function gotoJobDetail(page: TestPage, jobID: string): Promise<void> {
 // Tests
 // ---------------------------------------------------------------------------
 
-test.describe('Orchestration > Jobs list and job detail', () => {
+test.describe('Software Factory > Jobs list and job detail', () => {
 
   // =========================================================================
   // Jobs list — #/jobs
@@ -90,10 +90,10 @@ test.describe('Orchestration > Jobs list and job detail', () => {
     ).toBeVisible({ timeout: 10_000 });
   });
 
-  test('2. breadcrumb shows Orchestration > Jobs', async ({ page }) => {
+  test('2. breadcrumb shows Software Factory > Jobs', async ({ page }) => {
     await gotoJobs(page);
     const bc = page.locator('.breadcrumbs');
-    await expect(bc).toContainText('Orchestration');
+    await expect(bc).toContainText('Software Factory');
     await expect(bc).toContainText('Jobs');
   });
 
@@ -257,20 +257,20 @@ test.describe('Orchestration > Jobs list and job detail', () => {
     await expect(page.getByText('No job selected')).toBeVisible({ timeout: 10_000 });
   });
 
-  test('9. breadcrumb for #/jobs/:id shows Orchestration > Jobs (link) > truncated id', async ({ page }) => {
+  test('9. breadcrumb for #/jobs/:id shows Software Factory > Jobs (link) > truncated id', async ({ page }) => {
     // Navigating to a job-detail route always renders the breadcrumb even when
     // the job is not found, because the breadcrumb is in the header shell
     // (MainApp), not inside JobDetailView.
     //
     // MainApp breadcrumb for 'job-detail':
-    //   <li class="text-base-content/40">Orchestration</li>
+    //   <li class="text-base-content/40">{FACTORY_CRUMB}</li>   (renders "Software Factory")
     //   <li><a href="#/jobs" class="text-base-content/60">Jobs</a></li>
     //   <li class="font-medium font-mono text-xs">{id.slice(0, 12)}…</li>
     const testID = 'aabbccdd-1122-3344-5566-778899aabbcc';
     await gotoJobDetail(page, testID);
 
     const bc = page.locator('.breadcrumbs');
-    await expect(bc).toContainText('Orchestration');
+    await expect(bc).toContainText('Software Factory');
     await expect(bc).toContainText('Jobs');
     // Truncated to first 12 chars.
     await expect(bc).toContainText(testID.slice(0, 12));

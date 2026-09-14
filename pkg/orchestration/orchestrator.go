@@ -27,7 +27,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // agentServiceImpl implements the AgentService interface.
@@ -55,7 +57,9 @@ type agentServiceImpl struct {
 	remoteResolver   RemoteBackendResolver // optional: routes daemon-kind registrations to RemoteACPBackend
 	sessionLog       SessionEventLog       // optional: append-only per-session event log for attach/replay
 	projectAuthz     *ProjectAuthz         // optional: enforces per-project agent role matrix
-	costTracker      CostTracker           // optional: per-tenant/account/project/job token ledger
+	costTracker      CostTracker           // optional: per-tenant/account/project/job token counters
+	ledger           ConsumptionLedger     // optional: the append-only spend authority every cap is decided from
+	lifecyclePolicy  JobLifecyclePolicy    // operator command allowlist + per-stage bounds handed to every control loop
 	projectStore     ProjectStore          // optional: durable project records for managed workspaces
 	mountPolicy      *MountPolicy          // optional: bind-mount policy; nil denies every host mount
 
@@ -63,6 +67,13 @@ type agentServiceImpl struct {
 	// without it rotation still selects a replacement, but the limit hold on
 	// the account it left is not durable. See SetAccountStore.
 	accountStore AccountStore
+
+	// accountLeases withdraws a pooled credential's DELIVERY GRANT when the
+	// session that held it ends, and when a rotation supersedes it. Optional:
+	// without it a conclusion still tears the session down, but the grant over
+	// the credential the session was handed is never revoked. See
+	// SetAccountCredentialLeaser and account_lease.go.
+	accountLeases AccountCredentialLeaser
 
 	// limitClassifier decides whether a failed turn was a provider limit.
 	// Nil selects the built-in heuristic (see NewAccountLimitClassifier).
@@ -85,6 +96,53 @@ type agentServiceImpl struct {
 	// that have not yet written their terminal event. Shutdown waits on it so
 	// a transcript never stops mid-turn.
 	turnsInFlight sync.WaitGroup
+
+	// jobsInFlight counts the job goroutines launchJob has started and that
+	// have not yet concluded. Shutdown waits on it so the stores a control
+	// loop writes to do not go away underneath it; see shutdown.go.
+	jobsInFlight sync.WaitGroup
+
+	// draining is set by Shutdown and never cleared: the service refuses to
+	// start work it has no time left to do.
+	draining atomic.Bool
+
+	// node names this daemon on every lease and job status it writes; see
+	// SetNode. Empty until the host names it.
+	node string
+
+	// jobLeases decides which node runs a job; leaseTTL is the heartbeat age
+	// past which a lease is stale. Never nil: NewAgentService installs a
+	// single-process store and a clustered host replaces it. See
+	// job_admission.go.
+	jobLeases JobLeaseStore
+	leaseTTL  time.Duration
+
+	// idleThresholds, reaper and stalls are the maintenance sweep, built
+	// once on the first Sweep from the wiring in place then.
+	idleThresholds JobIdleThresholds
+	reaper         *JobReaper
+	stalls         *JobStallDetector
+	sweepOnce      sync.Once
+	sweepErr       error
+
+	// tenants enumerates the tenants a recovery or maintenance pass must
+	// visit, because the durable store routes by the context's tenant and a
+	// pass carries none of its own. Nil on a service over a single, unrouted
+	// store. See SetTenantLister.
+	tenants TenantLister
+
+	// agentHeartbeatTimeout is how long a registered agent may stay silent
+	// before the session sweep reads its silence as absence. Zero selects
+	// DefaultAgentHeartbeatTimeout; see SetAgentHeartbeatTimeout.
+	agentHeartbeatTimeout time.Duration
+
+	// reconcileMu serializes the DURABLE-ONLY conclusion of one session — the
+	// path taken when no live record exists to arbitrate on (see
+	// session_reconcile.go). The live path has its own compare-and-swap; this
+	// is the same single-conclusion guarantee for a record whose process died
+	// with another daemon, so two sweeps, or a sweep and an operator's close,
+	// cannot both write an ending.
+	reconcileMu keyedMutex
 }
 
 // TenantPolicyProvider supplies per-tenant policy overrides that can tighten
@@ -167,9 +225,9 @@ func GpuRequiredFromContext(ctx context.Context) bool {
 	return v
 }
 
-// runningJob tracks a running control loop and its cancellation function.
+// runningJob tracks a running job and its cancellation function.
 type runningJob struct {
-	loop   *ControlLoop
+	run    *JobRun
 	cancel context.CancelFunc
 }
 
@@ -196,6 +254,14 @@ type sessionRecord struct {
 	ContainerID string
 	CreatedAt   int64
 
+	// JobID mirrors the durable record's: it is the job this session works
+	// for, and the conclusion needs it to tell that job the session has ended
+	// (session_reconcile.go). Mirrored rather than read back because the
+	// ending is on the hot path of every close and every exit, and a KV read
+	// per conclusion to recover a field the spawn already knew would be a
+	// round trip for nothing. Empty for a session no job spawned.
+	JobID string
+
 	// accountID is the pooled provider account this session's agent process
 	// authenticates as, mirrored from the durable SessionRecord so the turn
 	// path can attribute token usage to it without a KV read on every turn.
@@ -206,6 +272,17 @@ type sessionRecord struct {
 	// account ID, which is worse than charging them to either account. Access
 	// through AccountID / SetAccountID.
 	accountID atomic.Pointer[string]
+
+	// credentialLeaseIDs mirrors the durable record's delivery grants, so the
+	// LIVE conclusion path can withdraw them without a KV read on the hot path
+	// of every close and every process exit.
+	//
+	// Atomic because a rotation appends to it while a conclusion may be reading
+	// it: the slice is REPLACED rather than appended in place, so a reader that
+	// loaded the old pointer sees a coherent older set instead of a slice being
+	// grown underneath it. The absent case (nil pointer) is a session with no
+	// grants, which is the common one.
+	credentialLeaseIDs atomic.Pointer[[]string]
 
 	// Persistent mirrors the durable record: the session holds a long-running
 	// agent process carrying conversation context across turns.
@@ -219,6 +296,60 @@ type sessionRecord struct {
 	// Atomic because Status and Prompt read it concurrently while a resume
 	// flips it, and the record is shared by pointer through s.sessions.
 	resumable atomic.Bool
+
+	// conclusionMu serializes the ownership handoff between `concluded` and
+	// `conclusion`, so an owner elected by the swap is always PUBLISHED by the
+	// time any loser can observe the swap. Without it the two are separate
+	// atomics with a window between them, and a loser landing in that window
+	// sees an owner that exists but cannot be followed.
+	//
+	// The handoff is deliberately tiny: it is held only while electing,
+	// publishing or releasing an owner — never across a backend teardown or a
+	// durable write, which is why it cannot serialize the slow paths.
+	conclusionMu sync.Mutex
+
+	// concluded and persisted are the two facts a session's ending consists of,
+	// kept apart because conflating them made a failed durable write
+	// permanently unrecoverable.
+	//
+	// concluded says the TEARDOWN happened — the process was released, its
+	// provisioned material freed. It is the compare-and-swap that makes
+	// conclusion single-owner: an operator close, the supervisor's exit
+	// observer and the spawn-time reconcile contend on it and exactly one wins,
+	// and the winner is the only caller that may tear anything down.
+	//
+	// persisted says the terminal state was DURABLY RECORDED. It is a separate
+	// swap because the store write can fail after a successful teardown, and a
+	// single flag would then report the session concluded while the record
+	// still said ACTIVE — resurrecting a dead session as resumable across a
+	// restart. Every later caller that loses `concluded` retries the PERSIST
+	// (never the teardown) until this one is set. See session_conclusion.go.
+	concluded atomic.Bool
+	persisted atomic.Bool
+
+	// conclusion is what the winner of `concluded` publishes about the ending
+	// it owns: the reason, and a channel closed once its teardown ATTEMPT has
+	// finished, whether it succeeded or not.
+	//
+	// WITHOUT IT A LOSER PERSISTS BLIND. The bare CAS says somebody owns the
+	// conclusion; it says nothing about whether they have finished tearing down
+	// or whether the teardown worked. A loser that went straight to the durable
+	// write could mark the record CLOSED, emit the terminal event under its OWN
+	// reason, and evict the live record while the winner was still inside
+	// backend.Close — and if that Close then failed, the winner's release of
+	// ownership would have nothing left to retry with and a durable record
+	// falsely saying closed. Nil while no conclusion is in flight.
+	conclusion atomic.Pointer[sessionConclusion]
+
+	// logMu serializes the session's log transition — read metadata, close it,
+	// append the ending — among conclusion callers.
+	//
+	// The metadata is what gates every other writer, so the decision to close
+	// it and the ending that follows have to be one step: two callers that both
+	// read ACTIVE would both append a terminal event. A per-session critical
+	// section is the smallest thing that makes the read-decide-write atomic
+	// without widening a lock inside the log implementations.
+	logMu sync.Mutex
 
 	// HostAffinity records the daemon host the session was actually spawned
 	// on. Spawn resolves a backend via the RemoteBackendResolver (which applies
@@ -259,12 +390,69 @@ func (r *sessionRecord) SetAccountID(accountID string) {
 	r.accountID.Store(&accountID)
 }
 
+// CredentialLeaseIDs returns the delivery grants recorded on the live session.
+func (r *sessionRecord) CredentialLeaseIDs() []string {
+	if ids := r.credentialLeaseIDs.Load(); ids != nil {
+		return *ids
+	}
+	return nil
+}
+
+// SetCredentialLeaseIDs replaces the recorded delivery grants.
+func (r *sessionRecord) SetCredentialLeaseIDs(ids []string) {
+	if len(ids) == 0 {
+		r.credentialLeaseIDs.Store(nil)
+		return
+	}
+	copied := append([]string(nil), ids...)
+	r.credentialLeaseIDs.Store(&copied)
+}
+
+// AddCredentialLease records one more delivery grant, ignoring an empty ID and
+// never recording the same grant twice.
+//
+// It replaces the slice rather than appending in place so a concurrent reader
+// never observes a partially grown one.
+func (r *sessionRecord) AddCredentialLease(leaseID string) {
+	if leaseID == "" {
+		return
+	}
+	current := r.CredentialLeaseIDs()
+	for _, existing := range current {
+		if existing == leaseID {
+			return
+		}
+	}
+	next := make([]string, 0, len(current)+1)
+	next = append(next, current...)
+	next = append(next, leaseID)
+	r.credentialLeaseIDs.Store(&next)
+}
+
 // resolvedHostBackend is implemented by backends that route to a specific
 // daemon host (e.g. RemoteACPBackend). Spawn uses it to capture the host the
 // session landed on so Prompt / Status / Close can pin re-resolution to the
 // same instance. Local in-process backends do not implement it.
 type resolvedHostBackend interface {
 	ResolvedHost() string
+}
+
+// resolvedAgentBackend is implemented by backends bound to a registered fleet
+// agent. Spawn captures the agent's ID so the session — and the job that
+// spawned it — can name the daemon that actually did the work rather than
+// only the host it happened to be reachable at (go-quicbaas#796). The host is
+// a routing address and two agents may share one; the ID is the fleet's key.
+type resolvedAgentBackend interface {
+	ResolvedAgentID() string
+}
+
+// spawnAgentID returns the fleet agent a resolved backend is bound to, empty
+// for a local in-process backend that is bound to none.
+func spawnAgentID(backend AgentBackend) string {
+	if ab, ok := backend.(resolvedAgentBackend); ok {
+		return ab.ResolvedAgentID()
+	}
+	return ""
 }
 
 // localBackendPinKey is the unexported context key used to force
@@ -322,9 +510,19 @@ func NewAgentService(
 		}
 	}
 
+	// Every job this service runs is leased. The single-process store is
+	// the correct store for a service whose state lives in this process; a
+	// clustered host installs the transaction-plane store over it.
+	leases, err := NewProcessJobLeaseStore(DefaultJobLeaseTTL)
+	if err != nil {
+		return nil, err
+	}
+
 	svc := &agentServiceImpl{
-		store:  store,
-		logger: logger,
+		store:     store,
+		logger:    logger,
+		jobLeases: leases,
+		leaseTTL:  DefaultJobLeaseTTL,
 	}
 
 	for name, backend := range backends {
@@ -402,44 +600,50 @@ func (s *agentServiceImpl) SetWorkflowLoader(wl *WorkflowLoader) {
 	s.workflowLoader = wl
 }
 
-// ListWorkflows returns all registered workflow definitions sorted by name.
-func (s *agentServiceImpl) ListWorkflows(_ context.Context) ([]*WorkflowDefinition, error) {
+// ListWorkflows returns the context tenant's registered workflow definitions
+// sorted by name.
+func (s *agentServiceImpl) ListWorkflows(ctx context.Context) ([]*WorkflowDefinition, error) {
 	if s.workflowLoader == nil {
 		return []*WorkflowDefinition{}, nil
 	}
-	return s.workflowLoader.ListDefinitions(), nil
+	return s.workflowLoader.ListDefinitions(StorageTenant(ctx)), nil
 }
 
-// GetWorkflow returns a workflow definition by name.
-func (s *agentServiceImpl) GetWorkflow(_ context.Context, name string) (*WorkflowDefinition, error) {
+// GetWorkflow returns the context tenant's workflow definition by name.
+func (s *agentServiceImpl) GetWorkflow(ctx context.Context, name string) (*WorkflowDefinition, error) {
+	tenantID := StorageTenant(ctx)
 	if s.workflowLoader == nil {
-		return nil, &WorkflowNotFoundError{Name: name}
+		return nil, &WorkflowNotFoundError{TenantID: tenantID, Name: name}
 	}
-	return s.workflowLoader.Get(name)
+	return s.workflowLoader.Get(tenantID, name)
 }
 
-// RegisterWorkflow validates and registers a workflow definition.
-func (s *agentServiceImpl) RegisterWorkflow(_ context.Context, def *WorkflowDefinition) error {
+// RegisterWorkflow validates and registers a workflow definition under the
+// context tenant.
+func (s *agentServiceImpl) RegisterWorkflow(ctx context.Context, def *WorkflowDefinition) error {
 	if s.workflowLoader == nil {
 		s.workflowLoader = NewWorkflowLoader()
 	}
-	return s.workflowLoader.Register(def)
+	return s.workflowLoader.Register(StorageTenant(ctx), def)
 }
 
-// UpdateWorkflow replaces an existing workflow definition by name.
-func (s *agentServiceImpl) UpdateWorkflow(_ context.Context, def *WorkflowDefinition) error {
+// UpdateWorkflow replaces the context tenant's existing workflow definition
+// by name.
+func (s *agentServiceImpl) UpdateWorkflow(ctx context.Context, def *WorkflowDefinition) error {
+	tenantID := StorageTenant(ctx)
 	if s.workflowLoader == nil {
-		return &WorkflowNotFoundError{Name: def.Name}
+		return &WorkflowNotFoundError{TenantID: tenantID, Name: def.Name}
 	}
-	return s.workflowLoader.Update(def)
+	return s.workflowLoader.Update(tenantID, def)
 }
 
-// DeleteWorkflow removes a workflow definition by name.
-func (s *agentServiceImpl) DeleteWorkflow(_ context.Context, name string) error {
+// DeleteWorkflow removes the context tenant's workflow definition by name.
+func (s *agentServiceImpl) DeleteWorkflow(ctx context.Context, name string) error {
+	tenantID := StorageTenant(ctx)
 	if s.workflowLoader == nil {
-		return &WorkflowNotFoundError{Name: name}
+		return &WorkflowNotFoundError{TenantID: tenantID, Name: name}
 	}
-	return s.workflowLoader.Delete(name)
+	return s.workflowLoader.Delete(tenantID, name)
 }
 
 // SpawnChildJob fans out a child job from a parent job's lead agent.
@@ -516,13 +720,20 @@ func (s *agentServiceImpl) SpawnChildJob(ctx context.Context, req *SpawnChildJob
 
 	childJobID := resp.JobID
 
-	// Tag the child job with parent lineage via its persisted status.
-	// We update the KV store directly since the job has already started.
+	// Tag the child job with parent lineage. The running child records it
+	// on its run so its next snapshot carries it; the persisted record is
+	// updated too, for a child that has already written its last status.
+	spawnedAt := time.Now().UnixNano()
+	if val, ok := s.jobs.Load(tenantID + "/" + childJobID); ok {
+		if rj, ok := val.(*runningJob); ok && rj.run != nil {
+			rj.run.RecordParent(req.ParentJobID, req.CallerAgentID, spawnedAt)
+		}
+	}
 	if s.kvStore != nil {
 		if childStatus, loadErr := s.loadJobStatus(tenantID, childJobID); loadErr == nil {
 			childStatus.ParentJobID = req.ParentJobID
 			childStatus.SpawnedBy = req.CallerAgentID
-			childStatus.SpawnedAt = time.Now().UnixNano()
+			childStatus.SpawnedAt = spawnedAt
 			s.persistJobStatus(tenantID, childStatus)
 		}
 	}
@@ -536,17 +747,20 @@ func (s *agentServiceImpl) SpawnChildJob(ctx context.Context, req *SpawnChildJob
 	return &SpawnChildJobResponse{ChildJobID: childJobID}, nil
 }
 
-// appendChildJobID atomically appends childID to the parent job's ChildJobIDs.
-// It updates both the in-memory runningJob status and the KV store.
+// appendChildJobID records childID on the parent job's lineage.
+// It updates both the running job and the KV store.
+//
+// The running job's lineage is recorded on the RUN, never on the status it
+// has published: a published status is read by every status poll and by the
+// run's next snapshot, so appending to its slice in place would be a write
+// under those readers. The child reaches the record at the next snapshot.
 func (s *agentServiceImpl) appendChildJobID(ctx context.Context, tenantID, parentJobID, childJobID string) {
 	jobKey := tenantID + "/" + parentJobID
 
 	// Update in-memory running job if present.
 	if val, ok := s.jobs.Load(jobKey); ok {
-		if rj, ok := val.(*runningJob); ok {
-			if st := rj.loop.Status(); st != nil {
-				st.ChildJobIDs = append(st.ChildJobIDs, childJobID)
-			}
+		if rj, ok := val.(*runningJob); ok && rj.run != nil {
+			rj.run.AddChildJob(childJobID)
 		}
 	}
 
@@ -653,6 +867,26 @@ func (s *agentServiceImpl) CostTracker() CostTracker {
 	return s.costTracker
 }
 
+// SetConsumptionLedger installs the append-only record the spend authority
+// decides every cap from (see account_ledger.go). Without it a turn's
+// consumption is reported by the counters above and enforced by nothing: an
+// account's quota window reads empty forever and its breaker never trips.
+//
+// SEPARATE FROM SetCostTracker BECAUSE THEY ARE DIFFERENT OBLIGATIONS. The
+// counters may fail a write and cost a dashboard some accuracy; a gap here is
+// an account spending past a cap. Wiring one and not the other is a
+// deployment choice the daemon makes explicitly rather than a default that
+// hides which of the two is missing.
+func (s *agentServiceImpl) SetConsumptionLedger(ledger ConsumptionLedger) {
+	s.ledger = ledger
+}
+
+// ConsumptionLedger returns the configured spend authority's record, or nil
+// when none is wired.
+func (s *agentServiceImpl) ConsumptionLedger() ConsumptionLedger {
+	return s.ledger
+}
+
 // SetSessionEventLog installs the append-only session event log. When set,
 // session lifecycle events (spawn, prompt submission, close) are appended
 // for attacher consumption. Passing nil disables the log — useful for
@@ -683,6 +917,33 @@ func (s *agentServiceImpl) appendSessionEvent(ctx context.Context, event *Sessio
 	}
 	if err := AppendNextSessionEvent(ctx, s.sessionLog, event); err != nil {
 		s.logger.Warnf("orchestration: append session event %s seq=%d: %v", event.SessionID, event.Sequence, err)
+	}
+}
+
+// deleteSessionRecord removes a session everywhere it is durable: the store
+// record and the transcript filed beside it.
+//
+// THE TWO GO TOGETHER OR NEITHER MEANS ANYTHING. A record removed while its
+// conversation stayed readable leaves an operator able to open, page and
+// stream a session the system reports does not exist; a transcript removed
+// while the record stayed would leave a session that lists but says nothing.
+// Both callers are spawn unwind paths, where the alternative to deleting the
+// transcript is leaking one per failed spawn forever.
+//
+// Failures are reported and not returned: every caller is already unwinding a
+// failure it is about to return, and replacing that cause with a cleanup error
+// would hide why the spawn failed in the first place.
+func (s *agentServiceImpl) deleteSessionRecord(ctx context.Context, storageTenant, sessionID string) {
+	if delErr := s.store.DeleteSession(ctx, storageTenant, sessionID); delErr != nil {
+		s.logger.Warnf("session %s: the false record could not be removed either: %s",
+			sessionID, delErr.Error())
+	}
+	if s.sessionLog == nil {
+		return
+	}
+	if delErr := s.sessionLog.DeleteSession(ctx, storageTenant, sessionID); delErr != nil {
+		s.logger.Warnf("session %s: the transcript of the false record could not be removed: %s",
+			sessionID, delErr.Error())
 	}
 }
 
@@ -1003,6 +1264,30 @@ func (s *agentServiceImpl) ListProjects(ctx context.Context, req *ListProjectsRe
 	}, nil
 }
 
+// unwindSpawnedProcess releases an agent process that a spawn created and then
+// could not finish wiring up.
+//
+// A FAILED SPAWN THAT LEAVES ITS PROCESS RUNNING LEAKS IT PERMANENTLY. The
+// caller is told the spawn failed, so it will not close the session; there is
+// no live entry, so nothing in this process holds it; and reconciliation reads
+// a record with no live entry as a session with no process, so it concludes
+// the record without ever asking the backend to close. The one moment anything
+// still knows the session ID and the backend together is here.
+//
+// The close failure is logged rather than returned: the caller is already
+// being handed the failure that matters, and replacing it with a teardown
+// error would hide the cause.
+func (s *agentServiceImpl) unwindSpawnedProcess(
+	ctx context.Context, backend AgentBackend, sessionID, because string) {
+	if backend == nil || sessionID == "" {
+		return
+	}
+	if err := backend.Close(ctx, sessionID); err != nil {
+		s.logger.Warnf("orchestration: %s and its agent process could not be released: %s "+
+			"(session %s may still be running)", because, err.Error(), sessionID)
+	}
+}
+
 // SpawnSession creates a persistent agent session on a backend.
 // When req.Sandboxed is true and a container runtime is configured,
 // the session is launched inside a container. Otherwise the backend
@@ -1036,8 +1321,10 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 	//     required (spawn→local / prompt→remote divergence).
 	backendLocal := !fromRemote
 	sessionHost := ""
+	spawnedOnAgent := ""
 	if fromRemote {
 		sessionHost = sessionHostAffinity(backend, req.HostAffinity)
+		spawnedOnAgent = spawnAgentID(backend)
 	}
 
 	// Resolve model: request > project default > empty (let backend decide)
@@ -1130,6 +1417,16 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		return nil, networkErr
 	}
 
+	// The storage tier is resolved on the same pre-side-effect chokepoint, and
+	// for the same reason: a project whose record names a tier the daemon
+	// cannot honour must fail before a container exists, not after. The plan
+	// travels to whichever path builds the container — the detached spawn
+	// below, or a backend that launches its own sandbox via spawnReq.Storage.
+	effectiveStorage, storageErr := s.resolveWorkspaceStorage(ctx, req.ProjectID)
+	if storageErr != nil {
+		return nil, storageErr
+	}
+
 	// The durable record is built before the spawn so it captures the operator's
 	// request, not the request as the backend leaves it. Spawn mutates the
 	// environment in place to carry freshly minted MCP material whose
@@ -1141,7 +1438,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 
 	if effectiveMode == SandboxModeRequired && !backendHandlesContainers && s.containerRuntime != nil && s.containerRuntime.IsAvailable() {
 		containerID, spawnErr := s.spawnSandboxedSession(
-			ctx, req, workDir, model, effectiveTrust, effectiveNetwork)
+			ctx, req, workDir, model, effectiveTrust, effectiveNetwork, effectiveStorage)
 		if spawnErr != nil {
 			return nil, spawnErr
 		}
@@ -1154,6 +1451,20 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 			}
 		}
 
+		// Durable first, live second — the same ordering the backend branch
+		// uses and for the same reason: the live record is the arbitration
+		// ground, so its presence must imply that there is something to record.
+		durable.SessionID = sessionID
+		durable.ContainerID = containerID
+		durable.CreatedAt = now
+		durable.LastActivity = now
+		if storeErr := s.store.PutSession(ctx, durable); storeErr != nil {
+			return nil, &AgentServiceError{
+				Sentinel: ErrAgentServiceUnavailable,
+				Message:  "failed to persist session: " + storeErr.Error(),
+			}
+		}
+
 		s.sessions.Store(sessionID, &sessionRecord{
 			Backend:      req.Backend,
 			ProjectID:    req.ProjectID,
@@ -1161,21 +1472,20 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 			TenantID:     storageTenant,
 			ContainerID:  containerID,
 			CreatedAt:    now,
+			JobID:        req.JobID,
 			HostAffinity: sessionHost,
 			BackendLocal: backendLocal,
 			Persistent:   req.Persistent,
 		})
 
-		durable.SessionID = sessionID
-		durable.ContainerID = containerID
-		durable.CreatedAt = now
-		durable.LastActivity = now
-		if storeErr := s.store.PutSession(ctx, durable); storeErr != nil {
+		// The same race, on the branch that has no backend session to ask
+		// about: `docker run -d` returns as happily for a container that exits
+		// immediately as for one that runs. See reconcileSpawnedContainerState.
+		if _, reconcileErr := s.reconcileSpawnedContainerState(
+			ctx, tenantID, storageTenant, sessionID, containerID); reconcileErr != nil {
 			s.sessions.Delete(sessionID)
-			return nil, &AgentServiceError{
-				Sentinel: ErrAgentServiceUnavailable,
-				Message:  "failed to persist session: " + storeErr.Error(),
-			}
+			s.deleteSessionRecord(ctx, storageTenant, sessionID)
+			return nil, reconcileErr
 		}
 
 		s.logger.Debugf("spawned sandboxed session: id=%s backend=%s container=%s",
@@ -1193,6 +1503,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 			Backend:     req.Backend,
 			Model:       model,
 			ContainerID: containerID,
+			AgentID:     spawnedOnAgent,
 			Timestamp:   now,
 		}, nil
 	}
@@ -1200,7 +1511,11 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 	// Standard backend spawn path. Sandboxed is derived from the resolved
 	// effective mode for legacy backends that still consult it.
 	spawnReq := &SpawnRequest{
-		ProjectID:       req.ProjectID,
+		ProjectID: req.ProjectID,
+		// The job scopes the credential delivery grant the backend's account
+		// resolution takes out (account_lease.go), so a job's deliveries are
+		// listable and revocable as a set.
+		JobID:           req.JobID,
 		WorkDir:         workDir,
 		Model:           model,
 		MCPServers:      req.MCPServers,
@@ -1212,6 +1527,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		SandboxMode:     effectiveMode,
 		Sandboxed:       effectiveMode == SandboxModeRequired,
 		TrustLevel:      effectiveTrust,
+		Storage:         effectiveStorage,
 		ContainerImage:  req.ContainerImage,
 		AccountID:       req.AccountID,
 		AccountAuto:     req.AccountAuto,
@@ -1224,21 +1540,51 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		return nil, err
 	}
 
-	// Track the session in memory for fast lookup
+	// Track the session in memory for fast lookup.
+	//
+	// THE MODEL IS THE BACKEND'S ANSWER, NOT THE REQUEST'S. `model` here is
+	// what the caller asked for, which for every factory spawn is whatever the
+	// role config named and for some backends is nothing at all; the backend
+	// resolves the real one and reports it on session.Model. The durable record
+	// below already prefers that answer — the live record did not, so the two
+	// disagreed about the same session, and the live one is what a later prompt
+	// reads. Same guard as the durable record: a backend that reports no model
+	// leaves the requested value in place rather than blanking it.
+	sessionModel := model
+	if session.Model != "" {
+		sessionModel = session.Model
+	}
 	mem := &sessionRecord{
 		Backend:      req.Backend,
 		ProjectID:    req.ProjectID,
-		Model:        model,
+		Model:        sessionModel,
 		TenantID:     storageTenant,
+		ContainerID:  session.ContainerID,
 		CreatedAt:    session.CreatedAt,
+		JobID:        req.JobID,
 		HostAffinity: sessionHost,
 		BackendLocal: backendLocal,
 		Persistent:   req.Persistent,
 	}
 	mem.SetAccountID(session.AccountID)
-	s.sessions.Store(session.ID, mem)
+	mem.AddCredentialLease(session.CredentialLeaseID)
 
-	// Persist session metadata to the store
+	// THE DURABLE RECORD IS WRITTEN BEFORE THE LIVE ONE, and the order is the
+	// spawn-window family's own principle applied one more time: every surface
+	// a concluder can touch must exist before the process can conclude.
+	//
+	// The live record is the arbitration ground — a concluder that finds it
+	// proceeds to tear down and then to record. Installed FIRST, it opened a
+	// window in which an exit observer could win the arbitration, tear the
+	// backend down, find no durable record to close, and evict everything;
+	// PutSession then wrote ACTIVE for a session whose process was already
+	// gone, and the reconcile that exists to catch exactly that found no
+	// backend session left to ask about. The original dead-but-ACTIVE bug,
+	// reintroduced through the door built to close it.
+	//
+	// Written second, the live record's presence now implies the durable one's,
+	// so "arbitration is possible" and "there is something to record" become
+	// the same fact.
 	durable.SessionID = session.ID
 	if session.Model != "" {
 		durable.Model = session.Model
@@ -1258,31 +1604,77 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 			Strategy:  session.AccountStrategy,
 			From:      session.CreatedAt,
 		}}
+		// AND THE DELIVERY GRANT, on the record that outlives this process. A
+		// grant recorded only in memory is one a node restart loses, which is
+		// precisely the case where the credential it governs is still sitting
+		// in a container nothing is watching.
+		durable.AddCredentialLease(session.CredentialLeaseID)
 	}
+	// A backend that launched its own sandbox reports the container it put the
+	// agent in. Recording it here is what lets the engine act INSIDE that
+	// container afterwards — the delivery's commit and push run there — and
+	// what lets a resumed record still name it (orchestrator_resume.go).
+	durable.ContainerID = session.ContainerID
 	durable.CreatedAt = session.CreatedAt
 	durable.LastActivity = now
 	if err := s.store.PutSession(ctx, durable); err != nil {
-		// Roll back in-memory tracking on store failure
-		s.sessions.Delete(session.ID)
+		// Nothing to roll back in memory: the live record is installed below,
+		// deliberately after this write. The AGENT PROCESS is another matter --
+		// backend.Spawn already started one, and returning without releasing it
+		// leaks it past every reader: there is no durable record naming it and
+		// no live entry either, so neither the sweep nor an operator can ever
+		// find it to close.
+		s.unwindSpawnedProcess(ctx, backend, session.ID, "the session record could not be persisted")
 		return nil, &AgentServiceError{
 			Sentinel: ErrAgentServiceUnavailable,
 			Message:  "failed to persist session: " + err.Error(),
 		}
 	}
 
-	s.logger.Debugf("spawned session: id=%s backend=%s project=%s", session.ID, req.Backend, req.ProjectID)
-
-	s.publishEvent(ctx, tenantID, "session_spawned", map[string]string{
-		"session_id": session.ID,
-		"backend":    req.Backend,
-	})
-
 	// Register the session in the event log so attachers can list + scroll
-	// back from seq=1. Log presence is optional; no-op when log is nil.
+	// back from seq=1. A nil log is a deployment that keeps no transcript and
+	// is a no-op here; a log that is present and REFUSES is a failure, and the
+	// difference is the whole of the next two paragraphs.
+	//
+	// THIS HAPPENS BEFORE THE LIVE RECORD IS PUBLISHED, and the order is the
+	// correctness argument rather than a preference. Publishing first made the
+	// session arbitrable by an exit observer while its log had no metadata at
+	// all -- and concludeLog reads missing metadata as "no session to
+	// terminate" and reports success. A process that died in that window was
+	// therefore concluded on the strength of a log that had never heard of it:
+	// the durable record went CLOSED and the live entry was evicted, and then
+	// this registration wrote ACTIVE metadata for a session that had already
+	// ended. What an operator was left with is a transcript claiming the
+	// session is open, containing no ending, sitting behind a record that says
+	// it is closed. Registering first means an exit observer always finds a log
+	// it can actually close.
+	//
+	// It is also why the registration precedes the reconcile below.
+	// KindSessionClosed is documented as always the last event of a session,
+	// and the KV log derives its next sequence from the metadata -- so a
+	// terminal event appended BEFORE the metadata exists lands at a sequence
+	// this registration then resets, and the next append overwrites it. A
+	// dead-at-spawn session would have its ending erased by its own beginning.
 	if s.sessionLog != nil {
-		_ = s.sessionLog.PutMeta(ctx, &SessionMeta{
+		// storageTenant, not tenantID: the transcript is a durable record and
+		// is filed exactly where the session record is, so an untenanted
+		// spawn's conversation is readable by the reader that resolves the
+		// same absent tenant to "system". tenantID stays the caller's raw
+		// value above because it addresses messaging TOPICS, which are not
+		// keyspaces and must not gain a tenant the caller never asked for.
+		// go-quicbaas#793.
+		//
+		// A REFUSAL FAILS THE SPAWN, and is not discarded as it used to be.
+		// The ordering above only buys anything if the metadata is actually
+		// there: a swallowed failure publishes an arbitrable session over a
+		// log that cannot be closed, which is the exact half-conclusion this
+		// block was just reordered to prevent. Failing here leaves the durable
+		// record ACTIVE with no live entry, which is a state the reconciliation
+		// sweep already knows how to end -- a session whose daemon holds no
+		// process for it -- so the failure is recoverable rather than stranded.
+		if err := s.sessionLog.PutMeta(ctx, &SessionMeta{
 			SessionID:    session.ID,
-			TenantID:     tenantID,
+			TenantID:     storageTenant,
 			ProjectID:    req.ProjectID,
 			Backend:      req.Backend,
 			Model:        model,
@@ -1290,7 +1682,25 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 			CreatedAt:    time.Unix(0, now).UTC(),
 			CreatedBy:    sessionCreator(ctx),
 			LastActivity: time.Unix(0, now).UTC(),
-		})
+		}); err != nil {
+			// UNWOUND IN FULL, in the reverse of the order it was built. The
+			// durable record written moments ago would otherwise sit ACTIVE
+			// naming a process nothing holds, and the sweep cannot release
+			// that process for it: reconciliation treats a record with no live
+			// entry as having no process at all and skips the backend close.
+			// So the spawn releases what the spawn created.
+			s.unwindSpawnedProcess(ctx, backend, session.ID,
+				"the session could not be registered in the event log")
+			if delErr := s.store.DeleteSession(ctx, storageTenant, session.ID); delErr != nil {
+				s.logger.Warnf("orchestration: session %s failed to register in the event log and its "+
+					"record could not be removed: %s; the reconciliation sweep will conclude it",
+					session.ID, delErr.Error())
+			}
+			return nil, &AgentServiceError{
+				Sentinel: ErrAgentServiceUnavailable,
+				Message:  "failed to register session " + session.ID + " in the event log: " + err.Error(),
+			}
+		}
 		s.appendSessionEvent(ctx, &SessionEvent{
 			SessionID: session.ID,
 			TenantID:  tenantID,
@@ -1305,11 +1715,49 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		})
 	}
 
+	// Now the session is arbitrable. An exit observer arriving from here on
+	// finds both records and can conclude the session completely.
+	s.sessions.Store(session.ID, mem)
+
+	s.logger.Debugf("spawned session: id=%s backend=%s project=%s", session.ID, req.Backend, req.ProjectID)
+
+	s.publishEvent(ctx, tenantID, "session_spawned", map[string]string{
+		"session_id": session.ID,
+		"backend":    req.Backend,
+	})
+
+	// THE RECORD IS RECONCILED AGAINST THE PROCESS THE MOMENT IT EXISTS.
+	//
+	// A supervised agent subprocess can die between backend.Spawn returning and
+	// the PutSession above — a CLI that emits its init response and then exits
+	// on a bad credential does exactly that. The supervisor's exit observer
+	// fires in that window, finds no durable record to close, and does not
+	// retry; PutSession then writes the record ACTIVE, and every store-backed
+	// reader afterwards — the stall detector included — believes a dead agent is
+	// live, permanently. The backend's own in-memory Status says closed and
+	// nobody asks it.
+	//
+	// So the two halves of the window are closed by two different things and
+	// they meet here: an exit BEFORE the write is caught by this check, an exit
+	// AFTER it by the observer. Both converge on the same closed record, and
+	// running both twice is harmless. The conclusion writes the log's terminal
+	// state itself, which is why nothing above needs to guess at it.
+	if _, reconcileErr := s.reconcileSpawnedSessionState(
+		ctx, backend, tenantID, storageTenant, session.ID); reconcileErr != nil {
+		// The record is known false and could not be corrected. Unwind rather
+		// than report success over it — see reconcileSpawnedSessionState.
+		s.sessions.Delete(session.ID)
+		s.deleteSessionRecord(ctx, storageTenant, session.ID)
+		return nil, reconcileErr
+	}
+
 	return &SpawnSessionResponse{
-		SessionID: session.ID,
-		Backend:   req.Backend,
-		Model:     session.Model,
-		Timestamp: now,
+		SessionID:   session.ID,
+		Backend:     req.Backend,
+		Model:       session.Model,
+		ContainerID: session.ContainerID,
+		AgentID:     spawnedOnAgent,
+		Timestamp:   now,
 	}, nil
 }
 
@@ -1388,6 +1836,7 @@ func (s *agentServiceImpl) spawnSandboxedSession(
 	model string,
 	trustLevel TrustLevel,
 	network SandboxNetwork,
+	storage WorkspaceStoragePlan,
 ) (string, error) {
 	// Use the provided container config, or build one from request fields.
 	var spec *ContainerSpec
@@ -1436,6 +1885,17 @@ func (s *agentServiceImpl) spawnSandboxedSession(
 	// SpawnSession before any side effects; append them verbatim.
 	spec.Mounts = append(spec.Mounts, req.ExtraMounts...)
 
+	// The project's storage tier is applied LAST, once every mount the spawn
+	// carries is on the spec, because the memory budget it validates is a
+	// property of the whole container rather than of the checkout alone. An
+	// inert plan — every project's, until an operator configures one — leaves
+	// the spec byte-identical. See ApplyWorkspaceStorage, which the ACP
+	// backend's own sandbox path calls too: that is the path a software-factory
+	// worker takes, and a tier wired only here would never reach one.
+	if err := ApplyWorkspaceStorage(spec, workDir, storage); err != nil {
+		return "", err
+	}
+
 	containerID, err := s.containerRuntime.Run(ctx, spec)
 	if err != nil {
 		return "", err
@@ -1470,6 +1930,18 @@ type promptTurnPlan struct {
 
 	// request is the backend-level prompt built from the service request.
 	request *PromptRequest
+
+	// turnID is this turn's identity, minted once when the turn is planned.
+	//
+	// PLANNED, NOT RECORDED, and the difference is what makes it an
+	// idempotency key. The consumption ledger absorbs a repeated entry id as
+	// a retry rather than charging twice, which is only worth anything if the
+	// id belongs to the TURN — an id minted at the moment of recording would
+	// be new on every attempt to record, so a retried write would be a second
+	// charge. Minting it here also gives the synchronous and asynchronous
+	// paths one identity: the async ack returns this value, and the entry the
+	// ledger holds for that turn is filed under the same one.
+	turnID string
 }
 
 // planPromptTurn validates a prompt request and resolves everything the turn
@@ -1483,15 +1955,37 @@ func (s *agentServiceImpl) planPromptTurn(ctx context.Context, req *PromptSessio
 		return nil, &AgentServiceError{Sentinel: ErrPromptRequired}
 	}
 
+	// A CONCLUDED SESSION TAKES NO MORE TURNS, and the refusal happens HERE —
+	// before the backend is resolved, before a turn is planned, and above all
+	// before anything is appended to the session's event log. A prompt against
+	// an ended session used to reach the backend, fail there, and leave its
+	// attempt written after the terminal event; refusing at the top means the
+	// log's "closed is last" invariant is never even tested by this path.
+	if req.SessionID != "" && s.sessionConcluded(ctx, req.SessionID) {
+		return nil, &AgentServiceError{
+			Sentinel: ErrSessionClosed,
+			Message:  "session " + req.SessionID + " has been concluded and takes no further turns",
+		}
+	}
+
+	// The session's own record, read ONCE: both the backend and the model fall
+	// back to what the session was spawned with, and loading it twice invited
+	// the two to disagree — which is exactly what happened, because only the
+	// backend ever had a fallback at all (see the model resolution below).
+	var spawned *sessionRecord
+	if req.SessionID != "" {
+		if rec, ok := s.sessions.Load(req.SessionID); ok {
+			if sr, ok := rec.(*sessionRecord); ok {
+				spawned = sr
+			}
+		}
+	}
+
 	// Determine which backend to use: explicit request field first, then the
 	// backend recorded when the session was spawned.
 	backendName := req.Backend
-	if backendName == "" && req.SessionID != "" {
-		if rec, ok := s.sessions.Load(req.SessionID); ok {
-			if sr, ok := rec.(*sessionRecord); ok {
-				backendName = sr.Backend
-			}
-		}
+	if backendName == "" && spawned != nil {
+		backendName = spawned.Backend
 	}
 	if backendName == "" {
 		return nil, &AgentServiceError{
@@ -1512,11 +2006,36 @@ func (s *agentServiceImpl) planPromptTurn(ctx context.Context, req *PromptSessio
 		return nil, err
 	}
 
+	// The model, resolved the same way the backend just was.
+	//
+	// THE SESSION FALLBACK IS THE ONE THAT MATTERS AND IT WAS MISSING. No
+	// factory prompt names a model: the SDLC and workflow runners set Model on
+	// the SPAWN request and never on the prompt, and DefaultModel is optional
+	// and unset on the burn-in projects. So every turn planned an empty model,
+	// and the ledger — which requires one — refused every single consumption
+	// entry with "model: must not be empty", leaving account spend caps
+	// silently uncounted while the turns themselves succeeded.
+	//
+	// A session always knows its model: the backend resolves one and reports it
+	// back, so reading it here asks the session what it is actually running
+	// rather than re-deriving what somebody might have asked for.
 	model := req.Model
 	if model == "" && req.ProjectID != "" {
 		if project, ok := s.lookupProject(req.ProjectID); ok {
 			model = project.DefaultModel
 		}
+	}
+	if model == "" && spawned != nil {
+		model = spawned.Model
+	}
+
+	// The turn's identity, minted before anything runs so both entry points
+	// carry the same one. A failure here fails the turn rather than running
+	// it unidentified: a turn the ledger cannot key is a charge that cannot
+	// be deduplicated, and the caller can retry.
+	turnID, err := generateID()
+	if err != nil {
+		return nil, err
 	}
 
 	return &promptTurnPlan{
@@ -1526,6 +2045,7 @@ func (s *agentServiceImpl) planPromptTurn(ctx context.Context, req *PromptSessio
 		model:       model,
 		tenantID:    TenantFromContext(ctx),
 		operator:    sessionCreator(ctx),
+		turnID:      turnID,
 		request: &PromptRequest{
 			SessionID:     req.SessionID,
 			ProjectID:     req.ProjectID,
@@ -1535,6 +2055,31 @@ func (s *agentServiceImpl) planPromptTurn(ctx context.Context, req *PromptSessio
 			EventCallback: req.EventCallback,
 		},
 	}, nil
+}
+
+// completedTurn describes this turn to the recording path. sessionID is passed
+// in because the backend may name the session a request left blank.
+// servedModel is the model the backend reports it actually ran, which
+// overrides the planned one. Empty keeps the plan's — a failed turn has no
+// response to ask, and a backend that reports nothing has not contradicted
+// anything.
+//
+// WHY THE ANSWER WINS OVER THE REQUEST: the ledger's per-model breakdown is
+// only honest if it names what served the turn. A CLI that silently substitutes
+// a model — a quota fallback, an alias resolving to a dated snapshot — would
+// otherwise have its spend filed under a model that never ran.
+func (p *promptTurnPlan) completedTurn(sessionID, servedModel string) completedTurn {
+	model := p.model
+	if servedModel != "" {
+		model = servedModel
+	}
+	return completedTurn{
+		turnID:    p.turnID,
+		sessionID: sessionID,
+		projectID: p.request.ProjectID,
+		engine:    p.backendName,
+		model:     model,
+	}
 }
 
 // appendPromptSubmitted records the operator's prompt on the session log
@@ -1616,6 +2161,13 @@ func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPl
 
 	resp, err := plan.backend.Prompt(ctx, plan.request)
 	if err != nil {
+		// A FAILED TURN IS A LEDGER ENTRY TOO. Its tokens were spent if the
+		// backend reported any, and its OCCURRENCE is what the account's
+		// circuit breaker is derived from — a ledger holding only successes
+		// says every account is healthy, however hard it is failing. Recorded
+		// before the error is returned so the breaker sees it whether the
+		// caller retries, rotates, or gives up.
+		s.recordFailedTurn(ctx, plan.completedTurn(plan.request.SessionID, ""), failedTurnUsage(err))
 		return nil, err
 	}
 
@@ -1649,6 +2201,13 @@ func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPl
 					Text:       block.Text,
 					StopReason: resp.StopReason,
 					Model:      resp.Model,
+					// WHAT THE ANSWER COST, ON THE ANSWER ITSELF. The cost
+					// ledger already has it, but the ledger is keyed by turn
+					// and account: an operator reading a conversation would
+					// have to join two stores to answer "what did this reply
+					// cost". A non-streaming turn produces exactly one
+					// aggregate, so the count lands once. go-quicbaas#793.
+					Usage: resp.Usage,
 				},
 			})
 		}
@@ -1658,7 +2217,7 @@ func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPl
 	// account, project, and (inside a control-loop job) job/agent. This is the
 	// single point where a completed turn becomes cost data: it runs on both
 	// the synchronous and asynchronous paths because both funnel through here.
-	s.recordTurnUsage(ctx, sessionID, plan.request.ProjectID, resp.Usage)
+	s.recordTurnUsage(ctx, plan.completedTurn(sessionID, resp.Model), resp.Usage)
 
 	return &PromptSessionResponse{
 		SessionID:  resp.SessionID,
@@ -1707,10 +2266,11 @@ func (s *agentServiceImpl) PromptSessionAsync(ctx context.Context, req *PromptSe
 		}
 	}
 
-	turnID, err := generateID()
-	if err != nil {
-		return nil, err
-	}
+	// The turn's identity comes from the plan, not from a second mint here:
+	// the ack a client correlates on and the ledger entry the turn is charged
+	// to must be the same value, or a caller holding a turn id has no way to
+	// find what it cost.
+	turnID := plan.turnID
 
 	// Record the prompt and open the turn BEFORE acknowledging, so a client
 	// that attaches the instant it sees the ack cannot miss the turn's start.
@@ -1795,6 +2355,11 @@ func (s *agentServiceImpl) dispatchTurn(plan *promptTurnPlan, turnID string) {
 				StopReason: resp.StopReason,
 				Model:      resp.Model,
 				DurationMS: elapsed,
+				// The terminal event is where a STREAMING turn reports its
+				// cost: the fragments were on the log before the backend
+				// totalled anything, so this is the first moment the count
+				// exists. go-quicbaas#793.
+				Usage: resp.Usage,
 			}
 		}
 		s.appendSessionEvent(turnCtx, event)
@@ -1814,11 +2379,12 @@ func (s *agentServiceImpl) dispatchTurn(plan *promptTurnPlan, turnID string) {
 // WaitForTurns blocks until every turn accepted by PromptSessionAsync has
 // written its terminal turn_completed or turn_failed event.
 //
-// It is deliberately not wired into daemon shutdown: an agent turn runs for
-// minutes, and a shutdown that stalls that long is worse than a transcript
-// that resumes on restart. Its purpose is to give callers that genuinely need
-// a quiescent log — tests above all — a synchronization point, so nothing has
-// to poll or sleep waiting for a background turn to land.
+// It waits without a bound, which is why daemon shutdown does not call it:
+// an agent turn runs for minutes, and a stop that stalls that long is worse
+// than a transcript that resumes on restart. Shutdown waits for the same
+// turns inside its drain window instead, and gives up on what does not fit.
+// This is for callers that genuinely need a quiescent log — tests above all
+// — so nothing has to poll or sleep waiting for a background turn to land.
 func (s *agentServiceImpl) WaitForTurns() {
 	s.turnsInFlight.Wait()
 }
@@ -1912,6 +2478,28 @@ func (s *agentServiceImpl) SessionStatus(ctx context.Context, req *SessionStatus
 		return nil, &AgentServiceError{Sentinel: ErrSessionIDRequired}
 	}
 
+	// A CONCLUDED SESSION IS CLOSED, and that is decided before anything is
+	// asked of a backend. The live record survives its conclusion — it carries
+	// the compare-and-swap that makes the ending single-owner
+	// (session_conclusion.go) — so every reader of that record has to respect
+	// the decision written on it, or the retained entry becomes a new way to
+	// report a dead session as live. Asking the backend instead would report
+	// "session not found", which is a different and less useful answer than
+	// "this session was closed".
+	if mem, ok := s.liveSessionRecord(req.SessionID); ok && mem.concluded.Load() {
+		lastActivity := mem.CreatedAt
+		if record, storeErr := s.store.GetSession(ctx, mem.TenantID, req.SessionID); storeErr == nil {
+			lastActivity = record.LastActivity
+		}
+		return &SessionStatusResponse{
+			SessionID:    req.SessionID,
+			State:        SessionStateClosed,
+			LastActivity: lastActivity,
+			Uptime:       0,
+			Timestamp:    time.Now().UnixNano(),
+		}, nil
+	}
+
 	// Try in-memory sessions first (active backend connections)
 	backendName, err := s.findSessionBackend(req.SessionID)
 	if err != nil {
@@ -1981,12 +2569,47 @@ func (s *agentServiceImpl) CloseSession(ctx context.Context, req *CloseSessionRe
 		return nil, &AgentServiceError{Sentinel: ErrSessionIDRequired}
 	}
 
-	backendName, err := s.findSessionBackend(req.SessionID)
-	if err != nil {
-		return nil, err
-	}
 	tenantID := TenantFromContext(ctx)
 	storageTenant := StorageTenant(ctx)
+
+	backendName, err := s.findSessionBackend(req.SessionID)
+	if err != nil {
+		// NO LIVE ENTRY IS NOT AUTOMATICALLY NOT-FOUND. A confirmed conclusion
+		// releases the live record and leaves the durable one as the tombstone
+		// (session_conclusion.go), so the store is what says whether this
+		// session ever existed and how it ended. A closed record means the
+		// operator's request is already satisfied.
+		record, storeErr := s.store.GetSession(ctx, storageTenant, req.SessionID)
+		if storeErr != nil {
+			return nil, err
+		}
+		if record.Status == SessionStateClosed {
+			return &CloseSessionResponse{
+				SessionID: req.SessionID,
+				Timestamp: time.Now().UnixNano(),
+			}, nil
+		}
+
+		// A STALE RECORD IS CLOSEABLE, AND THIS IS THE VERB THAT CLOSES IT.
+		// The session has a durable record that says it is running and no live
+		// entry and no backend that will admit to it — a session whose process
+		// died with a previous daemon, which is exactly what an operator is
+		// looking at when they ask for it to be closed. Refusing with "not
+		// found" left the only records that NEED closing as the only ones the
+		// close verb could not touch.
+		if _, concludeErr := s.concludeAbsentSession(
+			ctx, tenantID, storageTenant, req.SessionID, ConcludedByOperator); concludeErr != nil {
+			return nil, concludeErr
+		}
+		s.publishEvent(ctx, tenantID, "session_closed", map[string]string{
+			"session_id": req.SessionID,
+			"backend":    record.Backend,
+		})
+		return &CloseSessionResponse{
+			SessionID: req.SessionID,
+			Timestamp: time.Now().UnixNano(),
+		}, nil
+	}
 
 	// Pin re-resolution to the backend instance that holds the live session.
 	ctx = s.pinSessionBackend(ctx, req.SessionID)
@@ -1996,29 +2619,28 @@ func (s *agentServiceImpl) CloseSession(ctx context.Context, req *CloseSessionRe
 		return nil, err
 	}
 
-	// A resumable session has no agent process, so there is nothing for the
-	// backend to close — asking it would fail with "session not found" and
-	// leave the durable record open forever. Closing it here is the operator
-	// declining the resume, which is a legitimate way to end the session.
-	mem, hasMem := s.liveSessionRecord(req.SessionID)
-	if !hasMem || !mem.resumable.Load() {
-		if err := backend.Close(ctx, req.SessionID); err != nil {
-			return nil, err
-		}
+	// EVERY ENDING GOES THROUGH ONE TRANSITION (session_conclusion.go). The
+	// operator's close, the supervisor's exit observer and the spawn-time
+	// reconcile contend on one compare-and-swap, and the winner does all of it:
+	// backend teardown, container stop, store, log metadata, and exactly one
+	// terminal event carrying who ended the session and why.
+	concluded, concludeErr := s.concludeSession(ctx, tenantID, storageTenant, req.SessionID, ConcludedByOperator, conclusionClaim, backend)
+	if concludeErr != nil {
+		// The agent process is still there. Reporting the session closed over a
+		// teardown that failed would be the false-liveness state inverted.
+		return nil, concludeErr
 	}
-
-	// If the session had a container, stop it.
-	if hasMem && mem.ContainerID != "" && s.containerRuntime != nil {
-		if stopErr := s.containerRuntime.Stop(ctx, mem.ContainerID); stopErr != nil {
-			s.logger.Warnf("failed to stop container for session %s: %s", req.SessionID, stopErr.Error())
-		}
-	}
-
-	s.sessions.Delete(req.SessionID)
-
-	// Update the persistent store to mark the session as closed
-	if updateErr := s.store.UpdateSessionStatus(ctx, storageTenant, req.SessionID, SessionStateClosed); updateErr != nil {
-		s.logger.Warnf("failed to update session status in store: session=%s err=%s", req.SessionID, updateErr.Error())
+	if !concluded {
+		// IDEMPOTENT SUCCESS, NOT NOT-FOUND. The operator asked for the session
+		// to be closed and it is closed — by the process exiting a moment
+		// earlier, most likely, which is the ordinary race between a close and
+		// the death it causes. Reporting a failure here would tell the truth
+		// about who performed the transition and a lie about the outcome.
+		s.logger.Debugf("session %s was already concluded when the operator closed it", req.SessionID)
+		return &CloseSessionResponse{
+			SessionID: req.SessionID,
+			Timestamp: time.Now().UnixNano(),
+		}, nil
 	}
 
 	s.logger.Debugf("closed session: id=%s backend=%s", req.SessionID, backendName)
@@ -2027,27 +2649,6 @@ func (s *agentServiceImpl) CloseSession(ctx context.Context, req *CloseSessionRe
 		"session_id": req.SessionID,
 		"backend":    backendName,
 	})
-
-	// Append the terminal SessionClosed event so attachers see the lifecycle
-	// end in their replay stream.
-	if s.sessionLog != nil {
-		now := time.Now().UTC()
-		s.appendSessionEvent(ctx, &SessionEvent{
-			SessionID: req.SessionID,
-			TenantID:  tenantID,
-			Timestamp: now,
-			Source:    "operator:" + sessionCreator(ctx),
-			Kind:      KindSessionClosed,
-			Closed: &SessionClosedPayload{
-				Reason: "operator",
-			},
-		})
-		if meta, metaErr := s.sessionLog.GetMeta(ctx, tenantID, req.SessionID); metaErr == nil {
-			meta.Status = SessionStateClosed
-			meta.LastActivity = now
-			_ = s.sessionLog.PutMeta(ctx, meta)
-		}
-	}
 
 	return &CloseSessionResponse{
 		SessionID: req.SessionID,
@@ -2066,9 +2667,24 @@ func (s *agentServiceImpl) CloseSession(ctx context.Context, req *CloseSessionRe
 func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRequest) (*ListSessionsResponse, error) {
 	requestingTenant := TenantFromContext(ctx)
 
+	// THE STATE FILTER IS RESOLVED BEFORE ANYTHING IS LISTED, so a caller that
+	// named a state this daemon does not use learns that instead of being told
+	// there are no such sessions.
+	if req.Status != "" && !req.Status.Valid() {
+		return nil, &AgentServiceError{
+			Sentinel: ErrSessionStateUnknown,
+			Message:  string(req.Status) + "; known states are " + strings.Join(SessionStates(), ", "),
+		}
+	}
+
 	// Build a set of in-memory (live) session IDs
 	liveSet := make(map[string]struct{})
 	sessions := make([]*SessionInfo, 0)
+
+	// listErr carries a durable-read failure out of the walk. sync.Map.Range
+	// cannot return one, so the walk stops by reporting false and the error is
+	// answered below.
+	var listErr error
 
 	s.sessions.Range(func(key, value interface{}) bool {
 		sessionID, ok := key.(string)
@@ -2094,7 +2710,12 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 		liveSet[sessionID] = struct{}{}
 
 		state := SessionStateActive
-		if rec.resumable.Load() {
+		switch {
+		case rec.concluded.Load():
+			// See SessionStatus: the record outlives its conclusion, so the
+			// conclusion is what it reports.
+			state = SessionStateClosed
+		case rec.resumable.Load():
 			state = SessionStateResumable
 		}
 		info := &SessionInfo{
@@ -2106,41 +2727,112 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 			CreatedAt: rec.CreatedAt,
 		}
 
-		// Enrich with store data if available
-		if record, err := s.store.GetSession(ctx, rec.TenantID, sessionID); err == nil {
+		// Enrich with store data if available.
+		//
+		// AND THE DURABLE CLOSED VERDICT WINS. The state above is an
+		// ASSUMPTION — a live map entry is reported active because nothing
+		// asked otherwise — while a record marked closed is something the
+		// daemon observed and wrote down: a process that exited, or one that
+		// was already gone when its record was persisted. Preferring the
+		// assumption would list a dead agent as active for as long as its map
+		// entry survives.
+		record, recErr := s.store.GetSession(ctx, rec.TenantID, sessionID)
+		switch {
+		case recErr == nil:
 			info.LastActivity = record.LastActivity
+			// THE DURABLE SPAWN TIME ANSWERS WHEN THE LIVE ONE CANNOT. The
+			// live entry copies whatever the backend reported at spawn, and a
+			// backend that reported none left every listing of that session
+			// showing it created at the epoch. The store stamps its own on
+			// write, so it always has one.
+			if info.CreatedAt == 0 {
+				info.CreatedAt = record.CreatedAt
+			}
+			// A STATE THE DAEMON OBSERVED BEATS ONE IT ASSUMED. Closed is
+			// such a state, and so is ERROR: recordResumeFailure writes it
+			// when a session could not be brought back, with the cause beside
+			// it. Reporting that session as ACTIVE because a live map entry
+			// exists is the same false liveness as reporting a concluded one,
+			// and it is the worse half -- an operator retrying a session the
+			// daemon already knows is broken.
+			if record.Status == SessionStateClosed || record.Status == SessionStateError {
+				info.State = record.Status
+			}
+		case errors.Is(recErr, ErrAgentStoreNotFound):
+			// A live session with no durable record yet is ordinary -- the
+			// record is written at spawn and this one may be mid-flight. The
+			// live assumption stands because nothing contradicts it.
+		default:
+			// A STORE THAT WILL NOT ANSWER IS NOT A STORE THAT SAID ACTIVE.
+			// The durable CLOSED verdict overrides the live map's assumption a
+			// few lines up, so discarding the read that carries it reports the
+			// assumption as fact: a concluded session listed as live, which is
+			// the false liveness this listing exists to remove. The walk stops
+			// and the caller is told.
+			listErr = recErr
+			return false
+		}
+
+		// FILTERED ON THE STATE THE CALLER WILL SEE, which is why this is here
+		// and not beside the backend filter above: the durable CLOSED verdict
+		// overrides the live map's assumption a few lines up, so filtering
+		// before it would answer for a state the listing does not report.
+		if req.Status != "" && info.State != req.Status {
+			return true
 		}
 
 		sessions = append(sessions, info)
 		return true
 	})
+	if listErr != nil {
+		return nil, &AgentServiceError{
+			Sentinel: ErrAgentServiceUnavailable,
+			Message:  "failed to read a session's durable record: " + listErr.Error(),
+		}
+	}
 
 	// Merge in persisted sessions not currently live. The scan is bounded to
 	// the caller's tenant subtree, so no other tenant's sessions are reachable.
+	//
+	// A FAILURE HERE FAILS THE CALL. It used to be logged and stepped over,
+	// which was merely lossy while the durable half was a supplement to the
+	// live map. It is not a supplement any more: reconciliation writes the
+	// terminal records, so the closed, error and resumable sessions exist ONLY
+	// here. Swallowing the failure answers `status=closed` with an empty 200 --
+	// "there are no closed sessions" -- when the truth is "I could not look",
+	// and an empty success is the one answer a caller cannot tell apart from a
+	// real one. Fail-closed, exactly as jobTerminalState and concludeLog do
+	// with the reads they depend on.
 	records, err := s.listStoredSessions(ctx, requestingTenant)
 	if err != nil {
-		s.logger.Warnf("failed to list sessions from store: %s", err.Error())
-	} else {
-		for _, record := range records {
-			if _, isLive := liveSet[record.SessionID]; isLive {
-				continue
-			}
-
-			// Apply backend filter
-			if req.Backend != "" && record.Backend != req.Backend {
-				continue
-			}
-
-			sessions = append(sessions, &SessionInfo{
-				SessionID:    record.SessionID,
-				ProjectID:    record.ProjectID,
-				Backend:      record.Backend,
-				Model:        record.Model,
-				State:        record.Status,
-				CreatedAt:    record.CreatedAt,
-				LastActivity: record.LastActivity,
-			})
+		return nil, &AgentServiceError{
+			Sentinel: ErrAgentServiceUnavailable,
+			Message:  "failed to list sessions from the store: " + err.Error(),
 		}
+	}
+	for _, record := range records {
+		if _, isLive := liveSet[record.SessionID]; isLive {
+			continue
+		}
+
+		// Apply backend filter
+		if req.Backend != "" && record.Backend != req.Backend {
+			continue
+		}
+
+		if req.Status != "" && record.Status != req.Status {
+			continue
+		}
+
+		sessions = append(sessions, &SessionInfo{
+			SessionID:    record.SessionID,
+			ProjectID:    record.ProjectID,
+			Backend:      record.Backend,
+			Model:        record.Model,
+			State:        record.Status,
+			CreatedAt:    record.CreatedAt,
+			LastActivity: record.LastActivity,
+		})
 	}
 
 	// Sort by creation time for deterministic output
@@ -2189,7 +2881,7 @@ func (s *agentServiceImpl) DecomposeTask(ctx context.Context, req *DecomposeTask
 			SessionID:    s.leadSessionID,
 			Prompt:       prompt,
 			Model:        req.Model,
-			SystemPrompt: "You are a project planning assistant. Respond ONLY with valid JSON.",
+			SystemPrompt: plannerSystemPrompt(),
 		})
 		if err != nil {
 			return nil, err
@@ -2224,7 +2916,7 @@ func (s *agentServiceImpl) DecomposeTask(ctx context.Context, req *DecomposeTask
 	promptReq := &PromptRequest{
 		Prompt:       prompt,
 		Model:        req.Model,
-		SystemPrompt: "You are a project planning assistant. Respond ONLY with valid JSON.",
+		SystemPrompt: plannerSystemPrompt(),
 	}
 
 	resp, err := backend.Prompt(ctx, promptReq)
@@ -2380,6 +3072,17 @@ func (s *agentServiceImpl) CreateTask(ctx context.Context, req *CreateTaskReques
 	if req.Subject == "" {
 		return nil, &AgentServiceError{Sentinel: ErrTaskSubjectRequired}
 	}
+	if err := req.Source.Validate(); err != nil {
+		return nil, err
+	}
+	// A project's NAME is not its id, and nothing downstream would say so:
+	// see ValidateProjectID and #613.
+	if err := ValidateProjectID("project_id", req.ProjectID); err != nil {
+		return nil, err
+	}
+	if err := ValidateJobRunnerName(req.Runner); err != nil {
+		return nil, err
+	}
 
 	taskID, err := GenerateTaskID()
 	if err != nil {
@@ -2389,43 +3092,42 @@ func (s *agentServiceImpl) CreateTask(ctx context.Context, req *CreateTaskReques
 		}
 	}
 
-	// Merge scheduling hints into metadata so the task scheduler and
-	// downstream consumers can read them without a schema change.
-	meta := req.Metadata
-	if req.HostAffinity != "" || req.GpuRequired || req.Backend != "" {
-		if meta == nil {
-			meta = make(map[string]string)
-		}
-		if req.HostAffinity != "" {
-			meta["host_affinity"] = req.HostAffinity
-		}
-		if req.GpuRequired {
-			meta["gpu_required"] = "true"
-		}
-		if req.Backend != "" {
-			meta["backend"] = req.Backend
-		}
+	task := &Task{
+		ID:            taskID,
+		TenantID:      req.TenantID,
+		TeamName:      req.TeamName,
+		Subject:       req.Subject,
+		Description:   req.Description,
+		AssignedTo:    req.AssignedTo,
+		Dependencies:  req.Dependencies,
+		Metadata:      req.Metadata,
+		Status:        TaskStatusPending,
+		AutoSpawn:     req.AutoSpawn,
+		ProjectID:     req.ProjectID,
+		Source:        req.Source,
+		Priority:      req.Priority,
+		AttemptBudget: req.AttemptBudget,
+		Runner:        ResolveJobRunnerName(req.Runner),
+		Routing: TaskRouting{
+			Backend:      req.Backend,
+			HostAffinity: req.HostAffinity,
+			GpuRequired:  req.GpuRequired,
+		},
 	}
 
-	task := &Task{
-		ID:           taskID,
-		TenantID:     req.TenantID,
-		TeamName:     req.TeamName,
-		Subject:      req.Subject,
-		Description:  req.Description,
-		AssignedTo:   req.AssignedTo,
-		Dependencies: req.Dependencies,
-		Metadata:     meta,
-		Status:       TaskStatusPending,
-		AutoSpawn:    req.AutoSpawn,
-		ProjectID:    req.ProjectID,
+	// A PARKED CREATION IS ONE WRITE. See CreateTaskRequest.Park: the
+	// alternative is create-then-block, whose window is exactly long enough for
+	// a sweep to start the job the park exists to prevent.
+	if err := applyCreateTaskPark(task, req.Park); err != nil {
+		return nil, err
 	}
 
 	if err := s.taskStore.CreateTask(ctx, task); err != nil {
 		return nil, err
 	}
 
-	s.logger.Debugf("created task: id=%s tenant=%s subject=%s auto_spawn=%v", taskID, req.TenantID, req.Subject, req.AutoSpawn)
+	s.logger.Debugf("created task: id=%s tenant=%s subject=%s auto_spawn=%v parked=%v",
+		taskID, req.TenantID, req.Subject, req.AutoSpawn, req.Park != nil)
 
 	s.publishEvent(ctx, req.TenantID, "task_created", map[string]string{
 		"task_id":    taskID,
@@ -2433,12 +3135,28 @@ func (s *agentServiceImpl) CreateTask(ctx context.Context, req *CreateTaskReques
 		"auto_spawn": boolStr(req.AutoSpawn),
 	})
 
+	// A PARKED TASK IS ANNOUNCED AS PARKED, through the same two surfaces an
+	// operator park goes through (see BlockTask). Without this the issue a
+	// person is watching keeps the claiming label and says nothing about why
+	// the work has not started, which is the state the surfacing hook exists to
+	// end.
+	if req.Park != nil {
+		s.publishEvent(ctx, req.TenantID, "task_blocked", map[string]string{
+			"task_id":    taskID,
+			"block_kind": string(task.BlockKind),
+			"reason":     task.BlockedReason,
+		})
+		s.surfaceTaskVerb(ctx, req.TenantID, taskID, blockKindConclusions[task.BlockKind])
+		return task, nil
+	}
+
 	// When AutoSpawn is requested, dispatch the task immediately as a one-shot job.
 	// The task is already persisted; spawn errors are returned to the caller while
 	// the task remains queryable with empty SpawnedJobID.
 	if req.AutoSpawn {
-		spawnErr := s.autoSpawnTask(ctx, req, task)
+		spawnErr := s.autoSpawnTask(ctx, task)
 		if spawnErr != nil {
+			s.recordDispatchRefusal(ctx, task, spawnErr)
 			return task, spawnErr
 		}
 	}
@@ -2446,37 +3164,187 @@ func (s *agentServiceImpl) CreateTask(ctx context.Context, req *CreateTaskReques
 	return task, nil
 }
 
+// applyCreateTaskPark stamps a requested park onto a task being created.
+//
+// IT VALIDATES THE SAME TWO THINGS BlockTask DOES, from the same authorities: a
+// kind in the closed enum and a non-empty reason. The rules are not restated —
+// TaskBlockKind.Validate owns the first — because a second copy would be the one
+// that goes stale, and the failure that follows is a task blocked with a kind
+// nothing downstream can classify.
+func applyCreateTaskPark(task *Task, park *BlockReason) error {
+	if park == nil {
+		return nil
+	}
+	if err := park.Kind.Validate(); err != nil {
+		return err
+	}
+	if park.Message == "" {
+		return &TaskStoreError{
+			Sentinel: ErrTaskStoreInvalidInput,
+			Message:  "park reason must not be empty; a park that cannot say why it happened cannot be acted on",
+		}
+	}
+	task.Status = TaskStatusBlocked
+	task.BlockKind = park.Kind
+	task.BlockedReason = park.Message
+	// The park names itself from the same closed vocabulary an attempt's
+	// conclusion does, exactly as taskStore.block does, so a reader of the
+	// record never has to tell a parked adoption from an operator hold by
+	// inference.
+	task.ConclusionReason = blockKindConclusions[park.Kind]
+	return nil
+}
+
 // autoSpawnTask dispatches a task immediately as a one-shot orchestration job.
-// It selects the best matching agent using the same filters as the control loop
-// (backend → gpu → host_affinity). If a matching agent is found, a StartJob call
-// is issued, and the task is updated with SpawnedJobID and SpawnedAt. If no
-// agent matches, the task is returned unchanged and ErrNoMatchingAgent is set.
-// The task is always persisted before this is called, so callers always get
-// a valid task back even when spawn fails.
-func (s *agentServiceImpl) autoSpawnTask(ctx context.Context, req *CreateTaskRequest, task *Task) error {
+//
+// WHAT IT TAKES TO DISPATCH DEPENDS ON THE RUNNER. The engine's lead-driven
+// "workflow" runner assigns work items to fleet agents and runs the pipeline
+// the project declared, so it needs a matching online agent (backend → gpu →
+// host_affinity) and the project's default workflow, and refuses without
+// either. A module's runner spawns its own sessions and owns its own state
+// sequence, so it needs neither.
+//
+// THE PROJECT'S CONCURRENCY QUOTA BINDS EVERY RUNNER, and it did not before
+// (go-quicbaas#898). Quotas.MaxConcurrency was enforced only inside the two
+// sweep paths — the issue poller's adoptionCapacity and the dispatcher's own
+// slot arithmetic — so a manually triggered CreateTask(AutoSpawn: true) walked
+// straight past it and a project capped at two could be handed twenty jobs by
+// a caller in a loop. The sweeps then had nothing to reclaim: the jobs were
+// already leased and running.
+//
+// The task is always persisted before this is called, so callers always get a
+// valid task back even when the dispatch is refused.
+//
+// THE TASK RECORDS THE ATTEMPT BEFORE THE ATTEMPT EXISTS. The job's identity is
+// minted here and claimed onto the task under the store's version check, and
+// only a spawner that wins that claim starts a job; see ClaimTaskSpawn in
+// task_dispatcher.go for why the other order let two spawners each charge the
+// same task an attempt (#670).
+func (s *agentServiceImpl) autoSpawnTask(ctx context.Context, task *Task) error {
+	// BEFORE THE CLAIM, because the claim charges the task an attempt. A task
+	// refused for capacity has not been attempted, and a refusal that had
+	// already spent an attempt would exhaust a budget on jobs that never ran.
+	if err := s.checkProjectConcurrency(ctx, task); err != nil {
+		return err
+	}
+
+	runnerName := ResolveJobRunnerName(task.Runner)
+
+	// The job is an attempt at the task: it carries the task's project so the
+	// workspace and role matrix resolve, the runner the task named, and the
+	// task ID and attempt ordinal so the job and the task can find each other
+	// from either side. The ordinal is the claim's to fill in below, because
+	// the claim is what decides whose attempt this is.
+	jobReq := &StartJobRequest{
+		TenantID:    task.TenantID,
+		Description: taskJobDescription(task),
+		LeadBackend: task.Routing.Backend,
+		ProjectID:   task.ProjectID,
+		Runner:      runnerName,
+		TaskID:      task.ID,
+	}
+
+	agentID := ""
+	if runnerName == JobRunnerWorkflow {
+		matched, matchErr := s.matchFleetAgentForTask(ctx, task)
+		if matchErr != nil {
+			return matchErr
+		}
+		agentID = matched
+
+		workflowName, wfErr := s.projectDefaultWorkflow(ctx, task.TenantID, task.ProjectID)
+		if wfErr != nil {
+			return wfErr
+		}
+		jobReq.WorkflowName = workflowName
+	}
+
+	jobID, idErr := generateJobID()
+	if idErr != nil {
+		return &AgentServiceError{
+			Sentinel: ErrAgentServiceUnavailable,
+			Message:  "auto-spawn: failed to generate job ID: " + idErr.Error(),
+		}
+	}
+
+	// The claim charges the attempt and refreshes task from the record the
+	// store accepted, so the caller's copy is the persisted one either way.
+	claim, claimErr := ClaimTaskSpawn(ctx, s.taskStore, task, jobID, time.Now().UnixNano())
+	if claimErr != nil {
+		return claimErr
+	}
+	if !claim.Claimed {
+		// Another spawner is already this task's open attempt. Reporting its
+		// job rather than starting a second one is the whole point: the task
+		// is dispatched, which is what the caller asked for.
+		s.logger.Infof("auto-spawn: task=%s is already dispatched as job=%s; no second attempt started",
+			task.ID, claim.JobID)
+		return nil
+	}
+	jobReq.Attempt = claim.Attempt
+
+	if _, jobErr := s.startJob(ctx, jobReq, jobID); jobErr != nil {
+		// The claim named a job that will never run, so it is given back and
+		// the attempt refunded; the next sweep may try again.
+		if releaseErr := ReleaseTaskSpawnClaim(ctx, s.taskStore, task, jobID); releaseErr != nil {
+			s.logger.Warnf("auto-spawn: task=%s job=%s: the claim could not be released: %s",
+				task.ID, jobID, releaseErr.Error())
+		}
+		return &AgentServiceError{
+			Sentinel: ErrAgentServiceUnavailable,
+			Message:  "auto-spawn: failed to start job: " + jobErr.Error(),
+		}
+	}
+
+	s.logger.Infof("auto-spawn: task=%s job=%s runner=%s dispatched to agent=%s",
+		task.ID, jobID, runnerName, agentID)
+
+	// The job's outcome reaches the task through concludeAttempt, on the
+	// goroutine that runs the job (finishJob), or through the reaper when
+	// the node running it dies. Nothing here has to outlive the caller.
+	s.publishEvent(ctx, task.TenantID, "task_auto_spawned", map[string]string{
+		"task_id": task.ID,
+		"job_id":  jobID,
+		"runner":  runnerName,
+		"agent":   agentID,
+	})
+
+	return nil
+}
+
+// taskJobDescription is the description an attempt at the task runs under.
+func taskJobDescription(task *Task) string {
+	if task.Description == "" {
+		return task.Subject
+	}
+	return task.Subject + ": " + task.Description
+}
+
+// matchFleetAgentForTask picks the online fleet agent a lead-driven attempt
+// at the task assigns work to, applying the same filters as the control loop
+// (backend → gpu → host_affinity) to the task's persisted routing hints.
+func (s *agentServiceImpl) matchFleetAgentForTask(ctx context.Context, task *Task) (string, error) {
 	if s.agentRegistry == nil {
-		return &NoMatchingAgentError{
+		return "", &NoMatchingAgentError{
 			Constraint: "agent_registry",
 			Detail:     "agent registry not configured for auto-spawn",
 		}
 	}
 
-	// Build the work item for matchAgentForTask using request routing hints.
 	item := &WorkItem{
 		ID:           task.ID,
 		Title:        task.Subject,
 		Description:  task.Description,
-		Backend:      req.Backend,
-		HostAffinity: req.HostAffinity,
+		Backend:      task.Routing.Backend,
+		HostAffinity: task.Routing.HostAffinity,
 	}
-	if req.GpuRequired {
+	if task.Routing.GpuRequired {
 		item.RequiredCapabilities = []string{"gpu"}
 	}
 
-	// List all online agents for the tenant; online = not offline/error status.
-	agents, listErr := s.agentRegistry.ListAgents(ctx, req.TenantID, &AgentFilter{})
+	agents, listErr := s.agentRegistry.ListAgents(ctx, task.TenantID, &AgentFilter{})
 	if listErr != nil {
-		return &NoMatchingAgentError{
+		return "", &NoMatchingAgentError{
 			Constraint: "agent_list",
 			Detail:     "failed to list agents: " + listErr.Error(),
 		}
@@ -2490,123 +3358,344 @@ func (s *agentServiceImpl) autoSpawnTask(ctx context.Context, req *CreateTaskReq
 		}
 	}
 
+	// Only agents the task's project admits are candidates. A dispatch hands
+	// the project's work to a fleet agent that never has to claim it, so
+	// without this the role matrix would govern the claim path and nothing
+	// else, and a denied agent would simply be given the work instead
+	// (go-quicbaas#634).
+	eligible, authzErr := s.projectEligibleAgents(ctx, task, online)
+	if authzErr != nil {
+		return "", authzErr
+	}
+
 	// Use the control loop's matching logic (backend → gpu → host_affinity).
 	// We instantiate a temporary loop purely for the matching helper.
 	cl := NewControlLoop(s, s.logger)
 	backends, _ := s.ListBackends(ctx)
 
-	agentID, _, matchErr := cl.matchAgentForTask(item, online, backends)
+	agentID, _, matchErr := cl.matchAgentForTask(item, eligible, backends)
 	if matchErr != nil {
-		return matchErr
+		return "", matchErr
 	}
 	if agentID == "" {
-		return &NoMatchingAgentError{
+		return "", &NoMatchingAgentError{
 			Constraint: "agent_selection",
 			Detail:     "no online agents satisfy backend/gpu/host_affinity constraints",
 		}
 	}
-
-	// Build the job description from the task.
-	desc := task.Subject
-	if task.Description != "" {
-		desc = task.Subject + ": " + task.Description
-	}
-
-	jobReq := &StartJobRequest{
-		TenantID:    req.TenantID,
-		Description: desc,
-		LeadBackend: req.Backend,
-	}
-	if req.GpuRequired {
-		// Embed gpu hint so the lead job targets the right backend.
-		jobReq.LeadBackend = req.Backend
-	}
-
-	jobResp, jobErr := s.StartJob(ctx, jobReq)
-	if jobErr != nil {
-		return &AgentServiceError{
-			Sentinel: ErrAgentServiceUnavailable,
-			Message:  "auto-spawn: failed to start job: " + jobErr.Error(),
-		}
-	}
-
-	// Update the task with spawned job metadata.
-	// task.Version is the version returned by CreateTask; UpdateTask expects
-	// the caller to pass the current version and handles the increment itself.
-	now := time.Now().UnixNano()
-	task.SpawnedJobID = jobResp.JobID
-	task.SpawnedAt = now
-
-	if updateErr := s.taskStore.UpdateTask(ctx, task); updateErr != nil {
-		// Non-fatal: task is valid, job is running. Log and continue.
-		s.logger.Warnf("auto-spawn: task=%s job=%s spawned but task update failed: %s",
-			task.ID, jobResp.JobID, updateErr.Error())
-		// Reset in-memory fields so the returned task matches persisted state.
-		task.SpawnedJobID = ""
-		task.SpawnedAt = 0
-	} else {
-		s.logger.Infof("auto-spawn: task=%s job=%s dispatched to agent=%s", task.ID, jobResp.JobID, agentID)
-	}
-
-	// Subscribe to job events in a background goroutine and mirror job terminal
-	// status back to the parent task when the job completes or fails.
-	go s.mirrorJobStatusToTask(req.TenantID, task.ID, jobResp.JobID) // #nosec G118 -- the work must outlive the caller; a request-scoped context would cancel it.
-
-	s.publishEvent(ctx, req.TenantID, "task_auto_spawned", map[string]string{
-		"task_id": task.ID,
-		"job_id":  jobResp.JobID,
-		"agent":   agentID,
-	})
-
-	return nil
+	return agentID, nil
 }
 
-// mirrorJobStatusToTask watches a job's event stream and updates the parent task
-// to completed or failed when the job reaches a terminal state. It is launched
-// as a goroutine by autoSpawnTask and runs until the job terminates or the
-// subscription channel is closed.
-func (s *agentServiceImpl) mirrorJobStatusToTask(tenantID, taskID, jobID string) {
-	ctx := ContextWithTenant(context.Background(), tenantID)
-
-	events, subErr := s.SubscribeJobEvents(ctx, tenantID, jobID)
-	if subErr != nil {
-		s.logger.Warnf("auto-spawn mirror: task=%s job=%s subscribe failed: %s", taskID, jobID, subErr.Error())
-		return
+// projectEligibleAgents narrows the online fleet to the agents the task's
+// project admits as workers.
+//
+// It filters rather than checking the agent the matcher happened to pick: a
+// project's role matrix normally names only its own agents, so the fleet-wide
+// matcher would often land on an agent the project never listed, and refusing
+// that pick would strand a task whose own agents were online and eligible.
+//
+// An empty result is a refusal with a reason, not a silent "no agent". A
+// project the store cannot produce surfaces ProjectUnresolvedError unchanged,
+// because a dispatcher that cannot read the rule must not dispatch; a project
+// that simply admits none of the online agents surfaces a NoMatchingAgentError
+// naming that constraint, so the task's recorded dispatch reason says the role
+// matrix refused rather than blaming routing.
+func (s *agentServiceImpl) projectEligibleAgents(ctx context.Context, task *Task, online []*AgentRegistration) ([]*AgentRegistration, error) {
+	if s.projectAuthz == nil || task.ProjectID == "" {
+		return online, nil
 	}
 
-	for ev := range events {
-		if !IsTerminalJobState(ev.State) {
+	eligible := make([]*AgentRegistration, 0, len(online))
+	var unresolved *ProjectUnresolvedError
+	for _, agent := range online {
+		if agent == nil {
 			continue
 		}
-
-		switch ev.State {
-		case JobStateCompleted:
-			if err := s.taskStore.CompleteTask(ctx, tenantID, taskID, &TaskResult{
-				Output: ev.Message,
-				Metadata: map[string]string{
-					"job_id":     jobID,
-					"job_status": string(ev.State),
-				},
-			}); err != nil {
-				s.logger.Warnf("auto-spawn mirror: task=%s job=%s complete failed: %s", taskID, jobID, err.Error())
-			} else {
-				s.logger.Debugf("auto-spawn mirror: task=%s marked completed from job=%s", taskID, jobID)
-			}
-		case JobStateFailed:
-			if err := s.taskStore.FailTask(ctx, tenantID, taskID, "job "+jobID+" failed: "+ev.Message); err != nil {
-				s.logger.Warnf("auto-spawn mirror: task=%s job=%s fail update failed: %s", taskID, jobID, err.Error())
-			} else {
-				s.logger.Debugf("auto-spawn mirror: task=%s marked failed from job=%s", taskID, jobID)
-			}
+		err := s.authorizeAgentForProject(ctx, task.TenantID, task.ProjectID, agent.ID, ProjectRoleWorker)
+		switch {
+		case err == nil:
+			eligible = append(eligible, agent)
+		case errors.As(err, &unresolved):
+			return nil, err
+		case errors.Is(err, ErrProjectAccessDenied):
+			continue
+		default:
+			return nil, err
 		}
+	}
 
-		s.publishEvent(ctx, tenantID, "task_auto_spawn_completed", map[string]string{
-			"task_id":    taskID,
-			"job_id":     jobID,
-			"job_status": string(ev.State),
-		})
+	if len(eligible) == 0 && len(online) > 0 {
+		return nil, &NoMatchingAgentError{
+			Constraint: "project_role",
+			Detail: "no online agent holds the " + string(ProjectRoleWorker) +
+				" role in project " + task.ProjectID,
+		}
+	}
+	return eligible, nil
+}
+
+// checkProjectConcurrency refuses an auto-spawn the project has no concurrency
+// slot for.
+//
+// COMPUTED AS THE DISPATCHER COMPUTES IT — the quota less the project's live
+// job leases — because this is the same question the dispatcher answers at the
+// same moment: may one more job START now. The issue poller's capacity
+// additionally subtracts the tasks already queued, and rightly so, because it
+// is deciding whether to CREATE more work; a task that already exists must not
+// be made to count against itself.
+//
+// Liveness comes from the lease store rather than from a counter, so a job
+// whose node died stops holding its slot as soon as its lease goes stale, and
+// nothing has to be decremented by the path that failed.
+//
+// THE REFUSAL IS ProjectCapacityExceededError, the same type the capacity
+// lease store raises, and not a second one meaning the same thing: it already
+// maps to the FaultProjectCapacityExceeded class, which is retryable and
+// carries a retry-at, so a task refused here gets the same treatment as a job
+// refused at lease acquisition. The two checks are not redundant — this one is
+// ADMISSION, refusing before the task is charged an attempt, and that one is
+// the floor underneath every path including the ones that never came through
+// here.
+//
+// It answers nil wherever the quota cannot be decided: no project store, an
+// unscoped task, no lease store, a project that does not exist, or a project
+// with no cap. Every one of those is a deployment in which no quota was ever
+// configured, and refusing a dispatch on the grounds that a limit could not be
+// read would stop a node that has always worked. A store that ERRORS is a
+// different thing and is returned: dispatching on a guess about a limit is how
+// the fleet was oversubscribed in the first place.
+func (s *agentServiceImpl) checkProjectConcurrency(ctx context.Context, task *Task) error {
+	if s.projectStore == nil || s.jobLeases == nil || task == nil || task.ProjectID == "" {
+		return nil
+	}
+	project, err := s.projectStore.Get(ctx, task.TenantID, task.ProjectID)
+	if err != nil {
+		var notFound *ProjectStoreNotFoundError
+		if errors.As(err, &notFound) {
+			return nil
+		}
+		return err
+	}
+	limit := project.Quotas.MaxConcurrency
+	if limit <= 0 {
+		return nil
+	}
+	// ONE CLOCK READ for both the liveness cut-off and the retry-at, so the
+	// instant a lease is judged stale from is the instant the caller is told
+	// to come back after.
+	now := time.Now().UTC()
+	inflight, err := CountLiveJobLeases(ctx, s.jobLeases, task.TenantID, task.ProjectID, now, s.leaseTTL)
+	if err != nil {
+		return err
+	}
+	if inflight < limit {
+		return nil
+	}
+	return &ProjectCapacityExceededError{
+		TenantID:  task.TenantID,
+		ProjectID: task.ProjectID,
+		Live:      inflight,
+		Limit:     limit,
+		RetryAt:   now.Add(s.leaseTTL),
+	}
+}
+
+// recordDispatchRefusal writes why a dispatch produced no job onto the task,
+// so a pending task that is waiting says what it is waiting for. It is the
+// creation-time half of that answer; the dispatcher records the standing one
+// on every sweep. Both go through SetTaskDispatchReason, which owns the
+// compare-and-swap and the rules about when a reason is stale. A refusal is
+// diagnostic: failing to record one never fails the caller.
+func (s *agentServiceImpl) recordDispatchRefusal(ctx context.Context, task *Task, reason error) {
+	if s.taskStore == nil || task == nil || reason == nil {
 		return
 	}
+	text := reason.Error()
+	changed, err := SetTaskDispatchReason(ctx, s.taskStore, task.TenantID, task.ID, text)
+	if err != nil {
+		s.logger.Warnf("dispatch: task=%s refusal not recorded: %s", task.ID, err.Error())
+		return
+	}
+	if !changed {
+		return
+	}
+	task.DispatchReason = text
+	s.logger.Warnf("dispatch: task=%s refused: %s", task.ID, text)
+}
+
+// projectDefaultWorkflow resolves the workflow a task scoped to projectID
+// should run, from the project's DefaultWorkflow. An unscoped task, a node
+// without a project store, or a project that does not exist yields "" — the
+// job then runs the workflow the request or the lead backend selects, exactly
+// as it did before projects declared a default. A store that cannot answer is
+// an error, not an empty name: dispatching an attempt on a guess about which
+// pipeline to run is worse than not dispatching it.
+func (s *agentServiceImpl) projectDefaultWorkflow(ctx context.Context, tenantID, projectID string) (string, error) {
+	if s.projectStore == nil || projectID == "" {
+		return "", nil
+	}
+	project, err := s.projectStore.Get(ctx, tenantID, projectID)
+	if err != nil {
+		var notFound *ProjectStoreNotFoundError
+		if errors.As(err, &notFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return project.DefaultWorkflow, nil
+}
+
+// spawnStateProbeTimeout bounds the post-persist liveness probe.
+//
+// SHORT, BECAUSE IT SITS ON THE SPAWN RETURN PATH. For a local backend the
+// probe is a sync.Map read and costs nothing; for a remote agent it is a gRPC
+// call that may also mint a token over HTTP, and a best-effort check must not
+// be able to hold a caller's spawn open on remote I/O. Exceeding this bound is
+// not a failure — the probe simply did not answer in time, which is the same
+// outcome as a backend that cannot answer at all.
+const spawnStateProbeTimeout = 3 * time.Second
+
+// reconcileSpawnedSessionState closes a just-persisted session record whose
+// process is already gone, and reports whether it did.
+//
+// THE TWO OUTCOMES ARE NOT THE SAME KIND OF THING, which is why this returns
+// both a verdict and an error:
+//
+//   - The probe could not answer — no backend, an unsupported Status, a remote
+//     agent that did not reply inside the bound. Nothing is known, nothing is
+//     written, and the spawn proceeds exactly as it did before this check
+//     existed. Best effort is right here: the check adds information when it
+//     can and takes nothing away when it cannot.
+//   - The probe answered CLOSED and the write failed. Now the daemon knows the
+//     record it just persisted is false, and returning success would knowingly
+//     leave the durable false-liveness state this whole path exists to remove.
+//     That is an error, and the caller unwinds the spawn on it.
+func (s *agentServiceImpl) reconcileSpawnedSessionState(
+	ctx context.Context, backend AgentBackend, tenantID, storageTenant, sessionID string) (bool, error) {
+	if backend == nil || s.store == nil || sessionID == "" {
+		return false, nil
+	}
+	// THE BOUND HOLDS FOR EVERYTHING THAT HONOURS A CONTEXT, which is every
+	// backend's Status in this tree — and it is worth naming the one segment it
+	// cannot reach. RemoteACPBackend.authCtx mints an OAuth2 token through
+	// TokenSource.Token(), which takes no context and can perform its own HTTP
+	// I/O; no caller can bound that, and it already sits on the Spawn this
+	// probe follows rather than being introduced here. Giving the token source
+	// a context is a change to every remote RPC, which is wider than this fix —
+	// filed as #193.
+	probeCtx, cancel := context.WithTimeout(ctx, spawnStateProbeTimeout)
+	defer cancel()
+
+	status, err := backend.Status(probeCtx, sessionID)
+	if err != nil || status == nil || status.State != SessionStateClosed {
+		return false, nil
+	}
+	// Through the one transition, like every other ending — so a process that
+	// died inside the spawn window releases the same resources and writes the
+	// same single attributed terminal event that any other conclusion does.
+	// The exit observer may get here first, in the microseconds between the
+	// process dying and this probe. Either way the postcondition below is
+	// checked: reconcile's whole job is to guarantee that a session known dead
+	// is not left durably ACTIVE, and skipping the check when somebody else won
+	// the transition would skip it in exactly the case where that somebody
+	// raced the durable write it depends on.
+	_, concludeErr := s.concludeSession(ctx, tenantID, storageTenant, sessionID, ConcludedByReconcile, conclusionNudge, backend)
+	if concludeErr != nil {
+		return true, concludeErr
+	}
+	record, err := s.store.GetSession(ctx, storageTenant, sessionID)
+	if err == nil && record.Status == SessionStateClosed {
+		s.logger.Warnf("session %s exited before its record was persisted; record closed", sessionID)
+		return true, nil
+	}
+
+	// "NOT CLOSED YET" IS NOT "COULD NOT BE CLOSED". The nudge above returns
+	// without waiting when another caller owns the conclusion and is still
+	// tearing the process down — which is the ordinary outcome here, since the
+	// exit observer fires in the same microseconds this probe runs. Reading the
+	// store at that instant finds ACTIVE, and treating that as failure made the
+	// caller unwind: it deleted the live entry AND the durable record, and the
+	// winner then reached finishDurable, found no record to close, and correctly
+	// treated the absence as vacuously recorded. The session did not end up
+	// listed as closed. It ended up not existing.
+	//
+	// So an owned conclusion is respected. Ownership is only held by a caller
+	// that won the swap and has not failed — a failed teardown gives the right
+	// back (concludeSession) — so this is "somebody is closing it", not "somebody
+	// might". If that winner's durable half then fails, the record stays ACTIVE
+	// with its live entry intact, which is the shape the reconciliation sweep
+	// ends. Recoverable, rather than deleted.
+	if s.sessionConclusionInFlight(sessionID) {
+		s.logger.Warnf("session %s exited before its record was persisted; its conclusion is "+
+			"already owned by another caller and will be recorded there", sessionID)
+		return true, nil
+	}
+
+	return true, &AgentServiceError{
+		Sentinel: ErrAgentServiceUnavailable,
+		Message: "session " + sessionID + " exited before its record was persisted and the record " +
+			"could not be closed",
+	}
+}
+
+// sessionConclusionInFlight reports whether some caller currently OWNS this
+// session's conclusion.
+//
+// Ownership is the concluded/conclusion pair published under conclusionMu by
+// the caller that won the swap, and it is given back when a teardown fails
+// (concludeSession), so holding it means a conclusion is genuinely running
+// rather than merely attempted. A conclusion that has completely finished
+// deletes the live entry (finishDurable), so the presence of a live entry that
+// still claims ownership is exactly "started and not yet durable".
+func (s *agentServiceImpl) sessionConclusionInFlight(sessionID string) bool {
+	mem, ok := s.liveSessionRecord(sessionID)
+	if !ok {
+		return false
+	}
+	return mem.concluded.Load() && mem.conclusion.Load() != nil
+}
+
+// reconcileSpawnedContainerState is the sandboxed-container half of the same
+// race, and it is a genuinely different probe: that branch generates its own
+// session id and starts a DETACHED container, so there is no backend session to
+// ask about and `docker run -d` returns as happily for a container that exits
+// immediately as for one that runs.
+func (s *agentServiceImpl) reconcileSpawnedContainerState(
+	ctx context.Context, tenantID, storageTenant, sessionID, containerID string) (bool, error) {
+	if s.containerRuntime == nil || s.store == nil || sessionID == "" || containerID == "" {
+		return false, nil
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, spawnStateProbeTimeout)
+	defer cancel()
+
+	running, err := s.containerRuntime.IsRunning(probeCtx, containerID)
+	switch {
+	case err == nil && running:
+		return false, nil
+	case err != nil && !errors.As(err, new(*ContainerNotFoundError)):
+		// The probe could not answer. Nothing is known; nothing is written.
+		return false, nil
+	}
+	// Either the runtime reported it stopped, or the container is GONE — which
+	// on this path means exited, not unknown: the detached sandbox spec sets
+	// AutoRemove, so `--rm` deletes a container the moment it exits and an
+	// inspect a heartbeat later finds nothing. Treating that as unanswerable
+	// would leave the fast-failing container — the exact case this probe
+	// exists for — persisted active.
+	// Checked on both paths, for the reason the backend branch states.
+	_, concludeErr := s.concludeSession(ctx, tenantID, storageTenant, sessionID, ConcludedByReconcile, conclusionNudge, nil)
+	if concludeErr != nil {
+		return true, concludeErr
+	}
+	if record, err := s.store.GetSession(ctx, storageTenant, sessionID); err != nil || record.Status != SessionStateClosed {
+		return true, &AgentServiceError{
+			Sentinel: ErrAgentServiceUnavailable,
+			Message: "container " + truncateID(containerID) + " for session " + sessionID +
+				" exited before its record was persisted and the record could not be closed",
+		}
+	}
+	s.logger.Warnf("session %s container exited before its record was persisted; record closed", sessionID)
+	return true, nil
 }
 
 // boolStr converts a bool to "true" or "false" for metadata maps.
@@ -2685,12 +3774,10 @@ func (s *agentServiceImpl) ClaimTask(ctx context.Context, tenantID, taskID, agen
 		if err != nil {
 			return err
 		}
-		if task.ProjectID != "" {
-			if authzErr := s.projectAuthz.AuthorizeAgentForTenant(
-				ctx, tenantID, task.ProjectID, agentID, ProjectRoleWorker,
-			); authzErr != nil {
-				return authzErr
-			}
+		if authzErr := s.authorizeAgentForProject(
+			ctx, tenantID, task.ProjectID, agentID, ProjectRoleWorker,
+		); authzErr != nil {
+			return authzErr
 		}
 	}
 
@@ -2704,6 +3791,109 @@ func (s *agentServiceImpl) ClaimTask(ctx context.Context, tenantID, taskID, agen
 		"task_id":  taskID,
 		"agent_id": agentID,
 	})
+
+	return nil
+}
+
+// authorizeAgentForProject refuses work done on an agent's behalf when the
+// task's project does not grant that agent at least requiredRole.
+//
+// IT IS THE ONE PLACE THE PER-PROJECT ROLE MATRIX IS CONSULTED on a task
+// write, so the paths that hand an agent a task cannot drift apart: a claim
+// asks it, and so does the dispatch that hands the work over without any
+// claim at all. An unscoped task (empty ProjectID) and a node with no project
+// authorizer wired are unchanged — there is no matrix to consult. Everything
+// else is ProjectAuthz's decision, and a project it cannot read is a refusal
+// there, never a pass.
+func (s *agentServiceImpl) authorizeAgentForProject(ctx context.Context, tenantID, projectID, agentID string, requiredRole ProjectRole) error {
+	if s.projectAuthz == nil || projectID == "" {
+		return nil
+	}
+	return s.projectAuthz.AuthorizeAgentForTenant(ctx, tenantID, projectID, agentID, requiredRole)
+}
+
+// BlockTask parks a task until a person readmits it.
+func (s *agentServiceImpl) BlockTask(ctx context.Context, tenantID, taskID string, kind TaskBlockKind, reason string) error {
+	if err := s.validateTenant(ctx); err != nil {
+		return err
+	}
+
+	if s.taskStore == nil {
+		return &AgentServiceError{Sentinel: ErrTaskStoreRequired}
+	}
+
+	if tenantID == "" {
+		return &AgentServiceError{Sentinel: ErrTenantIDRequired}
+	}
+	if taskID == "" {
+		return &AgentServiceError{Sentinel: ErrTaskIDRequired}
+	}
+
+	if err := s.taskStore.BlockTask(ctx, tenantID, taskID, kind, reason); err != nil {
+		return err
+	}
+
+	s.logger.Debugf("blocked task: id=%s tenant=%s kind=%s", taskID, tenantID, string(kind))
+
+	s.publishEvent(ctx, tenantID, "task_blocked", map[string]string{
+		"task_id":    taskID,
+		"block_kind": string(kind),
+		"reason":     reason,
+	})
+
+	s.surfaceTaskVerb(ctx, tenantID, taskID, blockKindConclusions[kind])
+
+	return nil
+}
+
+// surfaceTaskVerb announces a task the block or readmit verb just wrote.
+//
+// THE RECORD IS RE-READ rather than composed here: an observer renders the
+// task's own accounting — its attempts, its block reason, its result — and the
+// store is what holds them. A record that cannot be read is logged and the
+// announcement dropped; the verb itself has already succeeded and must not be
+// undone by a failure to talk about it.
+func (s *agentServiceImpl) surfaceTaskVerb(ctx context.Context, tenantID, taskID string, reason TaskConclusionReason) {
+	if reason == "" {
+		return
+	}
+	task, err := s.taskStore.GetTask(ctx, tenantID, taskID)
+	if err != nil {
+		s.logger.Warnf("orchestration: task %s concluded %s but could not be read back to surface it: %s",
+			taskID, reason, err.Error())
+		return
+	}
+	s.surfaceConclusion(ctx, tenantID, taskConclusionRecord{reason: reason, task: task}, "")
+}
+
+// ReadmitTask returns a blocked task to the pending queue.
+func (s *agentServiceImpl) ReadmitTask(ctx context.Context, tenantID, taskID string) error {
+	if err := s.validateTenant(ctx); err != nil {
+		return err
+	}
+
+	if s.taskStore == nil {
+		return &AgentServiceError{Sentinel: ErrTaskStoreRequired}
+	}
+
+	if tenantID == "" {
+		return &AgentServiceError{Sentinel: ErrTenantIDRequired}
+	}
+	if taskID == "" {
+		return &AgentServiceError{Sentinel: ErrTaskIDRequired}
+	}
+
+	if err := s.taskStore.ReadmitTask(ctx, tenantID, taskID); err != nil {
+		return err
+	}
+
+	s.logger.Debugf("readmitted task: id=%s tenant=%s", taskID, tenantID)
+
+	s.publishEvent(ctx, tenantID, "task_readmitted", map[string]string{
+		"task_id": taskID,
+	})
+
+	s.surfaceTaskVerb(ctx, tenantID, taskID, TaskConcludedReadmitted)
 
 	return nil
 }
@@ -2827,29 +4017,119 @@ func (s *agentServiceImpl) publishEvent(ctx context.Context, tenantID, eventType
 // Job Persistence
 // =============================================================================
 
+// jobRecordTimeout bounds ONE durable job-record operation — a single write
+// or a single read by id. It is NOT a bound on a scan: see jobRecordScope.
+const jobRecordTimeout = 5 * time.Second
+
+// =============================================================================
+// The scope every durable job-record operation runs in
+// =============================================================================
+//
+// A JOB RECORD IS ADDRESSED BY ITS KEY, NOT BY THE CALLER'S TENANT. The store
+// underneath this service routes by the tenant on the CONTEXT (see
+// pkg/server/tenant_kvstore.go): a barrier-isolated tenant's writes land in
+// its own backend, an untenanted write lands in the shared one. The job
+// record's tenant is in its KEY instead — "job:{tenant}:{id}", and a listing
+// is bounded by "job:{tenant}:" so no tenant can observe another's — and it
+// has to be, because the two readers that MUST work carry no tenant to route
+// by: the restart scan, which enumerates every node's interrupted jobs before
+// any request exists, and the reaper's death record, which is written for a
+// tenant whose barrier may by then be sealed. A subsystem whose entire
+// purpose is to record what happened cannot fail closed on a seal.
+//
+// So all four paths — the write, the read by id, the tenant listing and the
+// restart scan — are detached from the caller's tenant. Before
+// go-quicbaas#822 only three of them were: ListJobs scanned on the REQUEST
+// context, so every record a barrier tenant's jobs wrote was filed in one
+// store and looked for in another. The measured effect was a task page whose
+// attempt history was empty for every job that had left memory, while the
+// very same record answered a GET by id.
+//
+// WHAT THEY DO NOT SHARE IS A TIMEOUT, and that distinction is the whole
+// reason there are two helpers rather than one. The single-record operations
+// have always carried their own 5 s; the two SCANS have always been bounded
+// by their caller and nothing else. Putting the 5 s on the scans as well —
+// which the first cut of #822 did — recreates this PR's own symptom through
+// a different door: a deadline-less REST listing would inherit 5 s as the
+// only deadline in the chain, and a tenant with thousands of concluded
+// records, or a store whose prefix scan is simply slower than that, would
+// have its attempt history silently truncated. The scan error is logged and
+// not returned, so the caller would see a short list and no reason for it.
+
+// jobRecordScope detaches ctx's VALUES — its tenant above all — while leaving
+// the bound on the work exactly where the caller put it.
+//
+// It adds NO deadline of its own: a caller with one keeps it, and a caller
+// without one is still unbounded, which is what both scans need. Cancellation
+// is forwarded with context.AfterFunc rather than a goroutine of our own, so
+// a listing still stops when the request it serves is abandoned, and the
+// returned cancel detaches the hook as well as releasing the scope.
+func jobRecordScope(ctx context.Context) (context.Context, context.CancelFunc) {
+	scope, cancel := context.WithCancel(context.Background())
+	if deadline, ok := ctx.Deadline(); ok {
+		cancel()
+		scope, cancel = context.WithDeadline(context.Background(), deadline)
+	}
+	stop := context.AfterFunc(ctx, cancel)
+	return scope, func() {
+		stop()
+		cancel()
+	}
+}
+
+// jobRecordOp is the scope for ONE record: untenanted for the same reason
+// jobRecordScope is, and bounded by jobRecordTimeout because a single Get or
+// Put that has not answered in five seconds is a stuck store, not a large
+// one.
+//
+// It takes no context because no caller has one to give: the write happens on
+// the job goroutine after the request that started it returned, and the read
+// by id serves a lookup whose own deadline the caller never threads down.
+func jobRecordOp() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), jobRecordTimeout)
+}
+
 // persistJobStatus writes a job status to the KV store. This is best-effort:
 // if the KV write fails, the error is logged but not propagated. The in-memory
 // state remains authoritative while the control loop is running.
 func (s *agentServiceImpl) persistJobStatus(tenantID string, status *JobStatus) {
+	if err := s.storeJobStatus(tenantID, status); err != nil {
+		s.logger.Warnf("orchestration: failed to persist job status: job=%s: %s",
+			status.JobID, err.Error())
+	}
+}
+
+// storeJobStatus is persistJobStatus with the failure RETURNED rather than
+// logged, for the one caller that cannot step over it: a conclusion owes the
+// job its tidy-up before the session record may be written closed, so a job
+// store that will not answer has to leave the session retryable instead of
+// silently finishing without it. See recordSessionConclusionOnJob.
+func (s *agentServiceImpl) storeJobStatus(tenantID string, status *JobStatus) error {
 	if s.kvStore == nil {
-		return
+		return nil
 	}
 
 	key := jobPersistenceKey(tenantID, status.JobID)
 	data, err := json.Marshal(status)
 	if err != nil {
-		s.logger.Warnf("orchestration: failed to marshal job status for persistence: job=%s: %s",
-			status.JobID, err.Error())
-		return
+		return &JobPersistenceError{
+			JobID:   status.JobID,
+			Message: "failed to marshal job status for persistence",
+			Cause:   err,
+		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := jobRecordOp()
 	defer cancel()
 
 	if putErr := s.kvStore.Put(ctx, key, data); putErr != nil {
-		s.logger.Warnf("orchestration: failed to persist job status: job=%s: %s",
-			status.JobID, putErr.Error())
+		return &JobPersistenceError{
+			JobID:   status.JobID,
+			Message: "failed to write job status to the KV store",
+			Cause:   putErr,
+		}
 	}
+	return nil
 }
 
 // loadJobStatus reads a job status from the KV store by tenant and job ID.
@@ -2863,7 +4143,7 @@ func (s *agentServiceImpl) loadJobStatus(tenantID, jobID string) (*JobStatus, er
 
 	key := jobPersistenceKey(tenantID, jobID)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := jobRecordOp()
 	defer cancel()
 
 	data, err := s.kvStore.Get(ctx, key)
@@ -2887,6 +4167,30 @@ func (s *agentServiceImpl) loadJobStatus(tenantID, jobID string) (*JobStatus, er
 	return &status, nil
 }
 
+// jobStatusAbsent reports whether a loadJobStatus failure means the job record
+// is genuinely NOT THERE, as opposed to not readable.
+//
+// THE TWO ARE OPPOSITE ANSWERS AND loadJobStatus RETURNS THEM THE SAME SHAPE.
+// A job that was never persisted, or whose record has been reaped, has nothing
+// to tell and nothing to retry. A read that timed out, a store that is
+// unavailable, a body that will not unmarshal — those are answers the store
+// FAILED TO GIVE, and treating them as absence is how a caller walks past work
+// it still owes. The distinction lives here, beside the function that produces
+// the error, so a caller cannot get it wrong by unwrapping differently.
+func jobStatusAbsent(err error) bool {
+	if err == nil {
+		return false
+	}
+	var persistence *JobPersistenceError
+	if !errors.As(err, &persistence) {
+		return false
+	}
+	// Only the KV's own not-found means absent. An unmarshal failure has a
+	// non-nil Cause that is not a not-found, and a store that is unavailable
+	// reports its own error; both are read failures, not empty keyspaces.
+	return persistence.Cause != nil && qerrors.IsNotFound(persistence.Cause)
+}
+
 // recoverJobs scans the KV store for persisted jobs with non-terminal states.
 // For each found, it attempts to resume the job from a safe checkpoint state
 // using the persisted config, work items, and memory. If resumption fails,
@@ -2899,7 +4203,21 @@ func (s *agentServiceImpl) recoverJobs(ctx context.Context) error {
 	prefix := "job:"
 	var recoveredCount int
 
-	scanErr := s.kvStore.Scan(ctx, prefix, func(key string, value []byte) error {
+	// The restart scan runs in the job-record scope for the same reason
+	// every other job-record read does: it must see every tenant's
+	// interrupted jobs, and it has no tenant to route by.
+	//
+	// THE BOOT BUDGET IS THE CALLER'S, unchanged: recoverOrchestrationJobs
+	// passes a context bounded by Server.ShutdownTimeout
+	// (pkg/server/lifecycle_orchestration.go), and the scope neither
+	// shortens nor extends it. Recovery enumerates every record a node
+	// left behind, and the honest bound on that is how long the operator
+	// is willing to wait for the daemon to come up — not a constant this
+	// package picked.
+	scanCtx, cancelScan := jobRecordScope(ctx)
+	defer cancelScan()
+
+	scanErr := s.kvStore.Scan(scanCtx, prefix, func(key string, value []byte) error {
 		var status JobStatus
 		if unmarshalErr := json.Unmarshal(value, &status); unmarshalErr != nil {
 			s.logger.Warnf("orchestration: skipping corrupted job record: key=%s: %s",
@@ -2909,6 +4227,15 @@ func (s *agentServiceImpl) recoverJobs(ctx context.Context) error {
 
 		// Skip jobs that already reached a terminal state.
 		if IsTerminalJobState(status.State) {
+			return nil
+		}
+
+		// Only this node's jobs are resumed. A job another node owns is that
+		// node's to resume, and if that node is gone the reaper — not a
+		// restart here — concludes it from its stale lease.
+		if status.Node != s.node {
+			s.logger.Debugf("orchestration: job %s is owned by node %q, not resumed on %q",
+				status.JobID, status.Node, s.node)
 			return nil
 		}
 
@@ -2929,7 +4256,7 @@ func (s *agentServiceImpl) recoverJobs(ctx context.Context) error {
 				return nil
 			}
 
-			if putErr := s.kvStore.Put(ctx, key, data); putErr != nil {
+			if putErr := s.kvStore.Put(scanCtx, key, data); putErr != nil {
 				s.logger.Warnf("orchestration: failed to persist failed job status: job=%s: %s",
 					status.JobID, putErr.Error())
 			}
@@ -2960,11 +4287,11 @@ func (s *agentServiceImpl) RecoverJobs(ctx context.Context) error {
 	return s.recoverJobs(ctx)
 }
 
-// resumeJob reconstructs a ControlLoop from persisted job status and launches
-// it in a background goroutine from a safe checkpoint state. The checkpoint is
-// determined by resolveResumeState, which maps the interrupted state to the
-// nearest safe restart point. Persisted work items, config, and memory are
-// restored so the resumed job has accumulated context from prior iterations.
+// resumeJob relaunches an interrupted job from a safe checkpoint state. The
+// checkpoint is the runner's own answer for the state the job was
+// interrupted in, or the runner's first state when it has none. Persisted
+// recoverable state — work items, memory, iteration — is restored by the
+// envelope and the runner from the status.
 func (s *agentServiceImpl) resumeJob(ctx context.Context, status *JobStatus) error {
 	// Validate that we have enough persisted state to resume.
 	if status.Config == nil {
@@ -2981,9 +4308,18 @@ func (s *agentServiceImpl) resumeJob(ctx context.Context, status *JobStatus) err
 	}
 
 	config := status.Config
+	if config.Runner == "" {
+		config.Runner = ResolveJobRunnerName(status.Runner)
+	}
+	if config.WorkflowName == "" {
+		config.WorkflowName = status.WorkflowName
+	}
+	runner, ok := LookupJobRunner(config.Runner)
+	if !ok {
+		return &UnknownJobRunnerError{Name: config.Runner}
+	}
 
-	// Determine safe restart state based on what was interrupted.
-	resumeState := resolveResumeState(status.State)
+	resumeState := resumeStateFor(runner, status.State)
 
 	// If resolve returned a terminal state (e.g., escalating -> failed),
 	// persist the terminal state and return without launching a goroutine.
@@ -2996,74 +4332,9 @@ func (s *agentServiceImpl) resumeJob(ctx context.Context, status *JobStatus) err
 		return nil
 	}
 
-	// Create new ControlLoop with the same service and logger.
-	loop := NewControlLoop(s, s.logger)
-	loop.SetCostTracker(s.costTracker)
-
-	// Restore accumulated context from persisted memory.
-	if status.Memory != nil {
-		loop.jobMemory = status.Memory
-		// Rebuild dedup sets from the deserialized memory since they are
-		// not serialized (unexported map fields).
-		loop.jobMemory.RebuildDedupSets()
+	if _, err := s.launchJob(ctx, config, status.JobID, status); err != nil {
+		return err
 	}
-
-	// Restore work items if resuming past decomposition.
-	if len(status.WorkItems) > 0 {
-		loop.workItems = status.WorkItems
-	}
-
-	// Restore iteration count so limits are respected.
-	loop.iteration = status.Iteration
-
-	// Load workflow if name is set and a loader is available.
-	if status.WorkflowName != "" && s.workflowLoader != nil {
-		wf, wfErr := s.workflowLoader.Get(status.WorkflowName)
-		if wfErr != nil {
-			s.logger.Warnf("orchestration: could not reload workflow %q for resumed job %s: %s",
-				status.WorkflowName, status.JobID, wfErr.Error())
-			// Not fatal: the job can still run without a workflow definition.
-		} else {
-			loop.SetWorkflow(wf)
-		}
-	}
-
-	// Set persistence callback for durable job status storage.
-	tenantID := config.TenantID
-	loop.persistFn = func(st *JobStatus) {
-		st.TenantID = tenantID
-		s.persistJobStatus(tenantID, st)
-	}
-
-	// Set audit callback for event trail.
-	loop.auditFn = func(eventType, details string) {
-		s.publishEvent(ctx, tenantID, eventType, map[string]string{
-			"details": details,
-			"job_id":  status.JobID,
-		})
-	}
-
-	// Create a cancellable context for the background goroutine.
-	jobCtx, jobCancel := context.WithCancel(ctx)
-
-	// Store the running job keyed by tenantID/jobID.
-	jobKey := tenantID + "/" + status.JobID
-	s.jobs.Store(jobKey, &runningJob{
-		loop:   loop,
-		cancel: jobCancel,
-	})
-
-	// Launch in background goroutine.
-	go func() {
-		loopErr := loop.RunFromState(jobCtx, config, status.JobID, resumeState)
-		if loopErr != nil {
-			s.logger.Warnf("orchestration: resumed job %s completed with error: %s",
-				status.JobID, loopErr.Error())
-		}
-		jobCancel()
-		// Clean up event subscribers after resumed job completes.
-		s.cleanupJobSubscribers(tenantID, status.JobID)
-	}()
 
 	s.logger.Infof("orchestration: resumed job %s from state %s (original: %s)",
 		status.JobID, resumeState, status.State)
@@ -3187,6 +4458,42 @@ func (s *agentServiceImpl) managedWorkspaceDir(ctx context.Context, projectID st
 	return project.Workspace.Path, nil
 }
 
+// resolveWorkspaceStorage resolves the storage tier a spawn's container
+// mounts its checkout on, from the durable project record.
+//
+// THE RECORD IS THE ONLY SOURCE. A tier decides where a tenant's work lives
+// and whether it survives a restart, so it is a property of the project an
+// operator configured, never of the request that spawned the session: a caller
+// able to ask for an ephemeral workspace could discard another tenant's
+// checkout by asking.
+//
+// AN UNRESOLVABLE PROJECT RESOLVES TO NOTHING, which is the inert plan: no
+// project store wired, no ProjectID on the request, or a store that holds no
+// such record all leave the spawn launching exactly the container it always
+// did. That is the state of every caller that predates this dimension, and a
+// tier invented for them would move their work without being asked.
+//
+// A record that names a tier the daemon cannot honour is REFUSED here rather
+// than rounded to the zero value: rounding down means writing to the disk the
+// project was configured off, silently.
+func (s *agentServiceImpl) resolveWorkspaceStorage(ctx context.Context, projectID string) (WorkspaceStoragePlan, error) {
+	if s.projectStore == nil || projectID == "" {
+		return WorkspaceStoragePlan{}, nil
+	}
+	project, err := s.projectStore.Get(ctx, StorageTenant(ctx), projectID)
+	if err != nil {
+		var notFound *ProjectStoreNotFoundError
+		if errors.As(err, &notFound) {
+			return WorkspaceStoragePlan{}, nil
+		}
+		return WorkspaceStoragePlan{}, err
+	}
+	if err := project.Storage.Validate(); err != nil {
+		return WorkspaceStoragePlan{}, err
+	}
+	return project.Storage.Plan(), nil
+}
+
 // lookupProject retrieves a project by ID.
 func (s *agentServiceImpl) lookupProject(projectID string) (*RegisteredProject, bool) {
 	val, ok := s.projects.Load(projectID)
@@ -3268,70 +4575,65 @@ func generateID() (string, error) {
 // When backends are provided, the prompt includes available backends and their
 // capabilities so the AI can assign work items to appropriate backends.
 func buildDecompositionPrompt(task string, projectIDs []string, backends ...*AgentBackendInfo) string {
-	var sb strings.Builder
-	sb.WriteString("Decompose the following task into discrete work items.\n\n")
-	sb.WriteString("Task: ")
-	sb.WriteString(task)
-	sb.WriteString("\n\n")
-
+	projects := ""
 	if len(projectIDs) > 0 {
-		sb.WriteString("Target projects: ")
-		sb.WriteString(strings.Join(projectIDs, ", "))
-		sb.WriteString("\n\n")
+		projects = workflowPrompts.MustRender("decomposition_projects", prompts.Vars{
+			"project_ids": strings.Join(projectIDs, ", "),
+		}) + "\n\n"
 	}
-
+	available := ""
 	if len(backends) > 0 {
-		sb.WriteString("Available backends:\n")
+		var lines strings.Builder
 		for _, b := range backends {
-			sb.WriteString("  - ")
-			sb.WriteString(b.Name)
-			sb.WriteString(" (type: ")
-			sb.WriteString(b.Type)
-			sb.WriteString(", capabilities: ")
-			caps := make([]string, 0, 5)
-			if b.Capabilities.PersistentSessions {
-				caps = append(caps, "persistent_sessions")
-			}
-			if b.Capabilities.ToolUse {
-				caps = append(caps, "tool_use")
-			}
-			if b.Capabilities.FileAccess {
-				caps = append(caps, "file_access")
-			}
-			if b.Capabilities.Streaming {
-				caps = append(caps, "streaming")
-			}
-			if b.Capabilities.ACP {
-				caps = append(caps, "acp")
-			}
-			if len(caps) == 0 {
-				sb.WriteString("none")
-			} else {
-				sb.WriteString(strings.Join(caps, ", "))
-			}
-			sb.WriteString(")\n")
+			lines.WriteString(workflowPrompts.MustRender("decomposition_backend", prompts.Vars{
+				"name":         b.Name,
+				"type":         b.Type,
+				"capabilities": describeBackendCapabilities(b.Capabilities),
+			}))
+			lines.WriteString("\n")
 		}
-		sb.WriteString("\n")
-		sb.WriteString("Assign each work item to the most appropriate backend. ")
-		sb.WriteString("Use the \"backend\" field to specify the backend name. ")
-		sb.WriteString("Use \"required_capabilities\" to list capabilities the work item needs.\n\n")
+		available = workflowPrompts.MustRender("decomposition_backends", prompts.Vars{
+			"backend_lines": lines.String(),
+		}) + "\n\n"
 	}
+	return workflowPrompts.MustRender("decomposition_prompt", prompts.Vars{
+		"task":     task,
+		"projects": projects,
+		"backends": available,
+	})
+}
 
-	sb.WriteString(`Respond with a JSON array of work items:
-[
-  {
-    "id": "unique-id",
-    "project_id": "target-project-id",
-    "title": "Short title",
-    "description": "Detailed description",
-    "priority": 1,
-    "dependencies": ["id-of-dependency"],
-    "backend": "backend-name",
-    "required_capabilities": ["persistent_sessions"]
-  }
-]`)
+// backendCapabilityNames is what each capability is called in a prompt, in
+// the order a backend's line lists them. It is the vocabulary a planner
+// assigns work with rather than prose, so it stays in Go.
+var backendCapabilityNames = []struct {
+	name string
+	has  func(BackendCapabilities) bool
+}{
+	{"persistent_sessions", func(c BackendCapabilities) bool { return c.PersistentSessions }},
+	{"tool_use", func(c BackendCapabilities) bool { return c.ToolUse }},
+	{"file_access", func(c BackendCapabilities) bool { return c.FileAccess }},
+	{"streaming", func(c BackendCapabilities) bool { return c.Streaming }},
+	{"acp", func(c BackendCapabilities) bool { return c.ACP }},
+}
 
-	return sb.String()
+// describeBackendCapabilities lists what a backend can do, or says none.
+func describeBackendCapabilities(capabilities BackendCapabilities) string {
+	caps := make([]string, 0, len(backendCapabilityNames))
+	for _, candidate := range backendCapabilityNames {
+		if candidate.has(capabilities) {
+			caps = append(caps, candidate.name)
+		}
+	}
+	if len(caps) == 0 {
+		return "none"
+	}
+	return strings.Join(caps, ", ")
+}
+
+// plannerSystemPrompt is the planning session's standing instructions.
+func plannerSystemPrompt() string {
+	return workflowPrompts.MustRender("planner_system", nil)
 }
 
 // parseWorkItems extracts work items from a prompt response.
@@ -3468,8 +4770,25 @@ func (s *agentServiceImpl) RemoveAgent(ctx context.Context, tenantID, agentID st
 	if s.agentRegistry == nil {
 		return &AgentServiceError{Sentinel: ErrAgentRegistryRequired, Message: "agent registry not configured"}
 	}
+	// The registration is read BEFORE it is removed: the sessions pinned to an
+	// agent are found by the host names the registration carries, and once it
+	// is gone there is nothing left to match them against.
+	agent, lookupErr := s.agentRegistry.GetAgent(ctx, tenantID, agentID)
+	if lookupErr != nil {
+		agent = nil
+	}
+
 	if err := s.agentRegistry.RemoveAgent(ctx, tenantID, agentID); err != nil {
 		return err
+	}
+
+	// AN UNREGISTERED DAEMON TAKES ITS SESSIONS WITH IT. Their processes are
+	// on a host that is no longer in the fleet, so nothing here can reach,
+	// prompt or close them again; leaving the records ACTIVE would show an
+	// operator sessions on a daemon they have just removed.
+	if agent != nil {
+		s.concludeAgentSessions(ctx, tenantID, agent,
+			"agent "+agentID+" was removed from the fleet, so the daemon holding the session is gone")
 	}
 
 	s.logger.Infof("removed agent: tenant=%s agent=%s", tenantID, agentID)
@@ -3481,25 +4800,44 @@ func (s *agentServiceImpl) RemoveAgent(ctx context.Context, tenantID, agentID st
 	return nil
 }
 
-// AgentHeartbeat updates an agent's last seen timestamp.
-func (s *agentServiceImpl) AgentHeartbeat(ctx context.Context, tenantID, agentID string) error {
+// AgentHeartbeat updates an agent's last seen timestamp and reconciles its
+// record against what the daemon reports it is serving.
+//
+// observed is what the daemon said about itself on this heartbeat; nil when
+// the transport carries no served list, which reconciles nothing. See
+// AgentObservation for why an observation that reports NO served backend is
+// refused rather than applied.
+func (s *agentServiceImpl) AgentHeartbeat(ctx context.Context, tenantID, agentID string, observed *AgentObservation) error {
 	if err := s.validateTenant(ctx); err != nil {
 		return err
 	}
 	if s.agentRegistry == nil {
 		return &AgentServiceError{Sentinel: ErrAgentRegistryRequired, Message: "agent registry not configured"}
 	}
-	return s.agentRegistry.Heartbeat(ctx, tenantID, agentID)
+	return s.agentRegistry.Heartbeat(ctx, tenantID, agentID, observed)
 }
 
 // =============================================================================
 // Job Orchestration (Phase 3 - stubs for interface compliance)
 // =============================================================================
 
-// StartJob starts an autonomous orchestration control loop.
-// It creates a ControlLoop, launches it in a goroutine, and stores a reference
-// in the jobs map for status polling and cancellation.
+// StartJob starts an autonomous orchestration job. It validates the request,
+// gives the job's runner the chance to refuse the configuration, and hands
+// the rest to the envelope (job_envelope.go), which mints the job ID, takes
+// the lease and drives the run.
 func (s *agentServiceImpl) StartJob(ctx context.Context, req *StartJobRequest) (*StartJobResponse, error) {
+	return s.startJob(ctx, req, "")
+}
+
+// startJob is StartJob with the job's identity settled by the caller. An
+// empty jobID mints one in the envelope, which is what every request-driven
+// start does; a non-empty one starts the job the caller has ALREADY recorded
+// somewhere it cannot take back — the spawn claim on a task
+// (ClaimTaskSpawn), which names the job before the job exists so that two
+// spawners cannot each create one. Nothing outside this package supplies it:
+// StartJobRequest has no job-ID field, so a transport cannot dictate a job's
+// identity.
+func (s *agentServiceImpl) startJob(ctx context.Context, req *StartJobRequest, jobID string) (*StartJobResponse, error) {
 	if err := s.validateTenant(ctx); err != nil {
 		return nil, err
 	}
@@ -3522,11 +4860,14 @@ func (s *agentServiceImpl) StartJob(ctx context.Context, req *StartJobRequest) (
 		}
 	}
 
-	if req.Description == "" {
-		return nil, &AgentServiceError{
-			Sentinel: ErrTaskRequired,
-			Message:  "job description is required",
-		}
+	// A project's NAME is not its id, and past this point nothing would say
+	// so: the job's lease pins the project segment of its key at acquisition
+	// from whatever the job carried (job_run_lease.go), and a quota counting
+	// that subtree then counts a project nobody registered. This is the same
+	// check CreateTask makes, on the other way in. See ValidateProjectID,
+	// #613 and #667.
+	if err := ValidateProjectID("project_id", req.ProjectID); err != nil {
+		return nil, err
 	}
 
 	// Parse poll interval, defaulting to 5s.
@@ -3547,29 +4888,11 @@ func (s *agentServiceImpl) StartJob(ctx context.Context, req *StartJobRequest) (
 		maxIter = 10
 	}
 
-	config := &JobConfig{
-		TenantID:      tenantID,
-		Description:   req.Description,
-		LeadBackend:   req.LeadBackend,
-		LeadModel:     req.LeadModel,
-		LeadAgentID:   req.LeadAgentID,
-		ProjectID:     req.ProjectID,
-		PollInterval:  pollInterval,
-		MaxIterations: maxIter,
-		WorkflowName:  req.WorkflowName,
-	}
-
-	loop := NewControlLoop(s, s.logger)
-	// Hand the job's control loop the same ledger the turn path records into,
-	// so a workflow's cost_controls budget is checked against usage that is
-	// actually being written.
-	loop.SetCostTracker(s.costTracker)
-
-	// Load workflow from file if a workflow file path is specified.
-	// This always runs first so the workflow is registered in the loader
-	// before name-based lookup below.
+	// A workflow file is a request-level convenience: it registers the
+	// definition with the loader so the envelope's name-based resolution
+	// finds it.
 	if req.WorkflowFile != "" && s.workflowLoader != nil {
-		wf, wfErr := s.workflowLoader.LoadFromFile(req.WorkflowFile)
+		wf, wfErr := s.workflowLoader.LoadFromFile(tenantID, req.WorkflowFile)
 		if wfErr == nil {
 			if req.WorkflowName == "" {
 				req.WorkflowName = wf.Name
@@ -3580,149 +4903,56 @@ func (s *agentServiceImpl) StartJob(ctx context.Context, req *StartJobRequest) (
 		}
 	}
 
-	// Load workflow definition if a workflow name is specified.
-	switch {
-	case req.WorkflowName != "" && s.workflowLoader != nil:
-		wf, wfErr := s.workflowLoader.Get(req.WorkflowName)
-		if wfErr != nil {
-			return nil, &AgentServiceError{
-				Sentinel: ErrInvalidInput,
-				Message:  "workflow not found: " + req.WorkflowName,
-			}
-		}
-		loop.SetWorkflow(wf)
-		s.logger.Infof("orchestration: loaded workflow %q (mode=%s, agents=%d)",
-			wf.Name, wf.Mode, len(wf.Agents))
-
-		// If the request did not explicitly set lead backend/model,
-		// derive them from the workflow's "lead" agent role.
-		for i := range wf.Agents {
-			if wf.Agents[i].Role == "lead" {
-				if config.LeadBackend == "" {
-					config.LeadBackend = wf.Agents[i].Backend
-				}
-				if config.LeadModel == "" {
-					config.LeadModel = wf.Agents[i].Model
-				}
-				s.logger.Infof("orchestration: lead agent backend=%s model=%s",
-					config.LeadBackend, config.LeadModel)
-				break
-			}
-		}
-	case req.WorkflowName != "":
-		s.logger.Warnf("orchestration: workflow %q requested but no workflow loader available", req.WorkflowName)
-	case s.workflowLoader != nil && config.LeadBackend != "":
-		// Fallback: when no workflow name is provided (e.g., gRPC field not
-		// propagated), search loaded workflows for one matching the lead backend/model.
-		// Prefer workflows with more agent roles (more specific match) over
-		// simpler workflows that happen to share the same lead backend.
-		var bestMatch *WorkflowDefinition
-		var bestScore int
-		for _, wf := range s.workflowLoader.ListDefinitions() {
-			for i := range wf.Agents {
-				if wf.Agents[i].Role == "lead" &&
-					wf.Agents[i].Backend == config.LeadBackend &&
-					(config.LeadModel == "" || wf.Agents[i].Model == config.LeadModel) {
-					// Score: number of agent roles (prefer workflows with more roles)
-					score := len(wf.Agents)
-					if score > bestScore {
-						bestScore = score
-						bestMatch = wf
-					}
-					break
-				}
-			}
-		}
-		if bestMatch != nil {
-			loop.SetWorkflow(bestMatch)
-			config.WorkflowName = bestMatch.Name
-			s.logger.Infof("orchestration: auto-matched workflow %q from lead backend=%s model=%s (score=%d)",
-				bestMatch.Name, config.LeadBackend, config.LeadModel, bestScore)
-		}
+	config := &JobConfig{
+		TenantID:      tenantID,
+		Description:   req.Description,
+		LeadBackend:   req.LeadBackend,
+		LeadModel:     req.LeadModel,
+		LeadAgentID:   req.LeadAgentID,
+		ProjectID:     req.ProjectID,
+		PollInterval:  pollInterval,
+		MaxIterations: maxIter,
+		WorkflowName:  req.WorkflowName,
+		Runner:        ResolveJobRunnerName(req.Runner),
+		TaskID:        req.TaskID,
+		Attempt:       req.Attempt,
+		Params:        copyJobParams(req.Params),
 	}
 
-	// Set persistence callback for durable job status storage.
-	if s.kvStore != nil {
-		loop.persistFn = func(status *JobStatus) {
-			status.TenantID = tenantID
-			s.persistJobStatus(tenantID, status)
-		}
+	// The runner refuses a configuration it cannot drive before anything is
+	// created: a workflow job with no description has no lead prompt, and a
+	// module runner has its own requirements.
+	runner, ok := LookupJobRunner(config.Runner)
+	if !ok {
+		return nil, &UnknownJobRunnerError{Name: config.Runner}
+	}
+	if err := runner.Validate(ctx, config); err != nil {
+		return nil, err
 	}
 
-	// Create a cancellable context detached from the request context
-	// so the job survives after the caller's request completes.
-	jobCtx, cancel := context.WithCancel(context.Background())
-	jobCtx = ContextWithTenant(jobCtx, tenantID)
-
-	// jobID is set by the audit callback once the control loop assigns it.
-	// Using atomic pointer so the callback always has the latest value.
-	var jobIDRef atomic.Value
-	jobIDRef.Store("")
-
-	// Set audit callback for event trail via existing messaging/event system.
-	// The callback captures jobIDRef by reference so it always includes the
-	// current job ID, even for the earliest events fired before the ID is known.
-	loop.auditFn = func(eventType, details string) {
-		s.logger.Infof("orchestration: [%s] %s", eventType, details)
-		currentJobID, _ := jobIDRef.Load().(string)
-		s.publishEvent(jobCtx, tenantID, eventType, map[string]string{
-			"details": details,
-			"job_id":  currentJobID,
-		})
+	startedID, err := s.launchJob(ctx, config, jobID, nil)
+	if err != nil {
+		return nil, err
 	}
-
-	// Start the control loop in a background goroutine.
-	go func() {
-		loopErr := loop.Run(jobCtx, config)
-		if loopErr != nil {
-			s.logger.Warnf("orchestration: job completed with error: %s", loopErr.Error())
-		}
-		// Cancel to release resources even on normal completion.
-		cancel()
-		// Clean up event subscribers after job completes.
-		if status := loop.Status(); status != nil && status.JobID != "" {
-			s.cleanupJobSubscribers(tenantID, status.JobID)
-		}
-	}()
-
-	// Wait briefly for the job ID to be assigned by the control loop.
-	// The Run method generates the job ID synchronously before entering
-	// the state machine loop, so it is available almost immediately.
-	waitCtx, waitCancel := context.WithTimeout(ctx, 2*time.Second)
-	defer waitCancel()
-
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-
-	var jobID string
-	for jobID == "" {
-		select {
-		case <-waitCtx.Done():
-			cancel()
-			return nil, &AgentServiceError{
-				Sentinel: ErrControlLoopFailed,
-				Message:  "timed out waiting for job ID assignment",
-			}
-		case <-ticker.C:
-			status := loop.Status()
-			if status != nil && status.JobID != "" {
-				jobID = status.JobID
-				jobIDRef.Store(jobID)
-			}
-		}
-	}
-
-	// Store the running job keyed by tenantID/jobID.
-	jobKey := tenantID + "/" + jobID
-	s.jobs.Store(jobKey, &runningJob{
-		loop:   loop,
-		cancel: cancel,
-	})
 
 	return &StartJobResponse{
-		JobID:     jobID,
+		JobID:     startedID,
 		Timestamp: time.Now().UnixNano(),
 	}, nil
+}
+
+// copyJobParams takes the runner's parameters by value, so a caller that
+// keeps and later mutates the map it passed cannot change the configuration a
+// running job was validated against.
+func copyJobParams(params map[string]string) map[string]string {
+	if len(params) == 0 {
+		return nil
+	}
+	copied := make(map[string]string, len(params))
+	for key, value := range params {
+		copied[key] = value
+	}
+	return copied
 }
 
 // GetJobStatus returns the current status of a running orchestration job.
@@ -3755,7 +4985,7 @@ func (s *agentServiceImpl) GetJobStatus(ctx context.Context, tenantID, jobID str
 			}
 		}
 
-		status := job.loop.Status()
+		status := job.run.Status()
 		if status == nil {
 			return nil, &AgentServiceError{
 				Sentinel: ErrControlLoopFailed,
@@ -3763,7 +4993,7 @@ func (s *agentServiceImpl) GetJobStatus(ctx context.Context, tenantID, jobID str
 			}
 		}
 
-		return status, nil
+		return s.withTaskProvenance(ctx, tenantID, status)
 	}
 
 	// Fallback: job not in memory (finished and cleaned up), try KV store.
@@ -3773,15 +5003,20 @@ func (s *agentServiceImpl) GetJobStatus(ctx context.Context, tenantID, jobID str
 			s.logger.Warnf("orchestration: KV fallback for job %s failed: %s", jobID, kvErr.Error())
 			return nil, &JobNotFoundError{JobID: jobID}
 		}
-		return status, nil
+		return s.withTaskProvenance(ctx, tenantID, status)
 	}
 
 	return nil, &JobNotFoundError{JobID: jobID}
 }
 
-// ListJobs returns all jobs for a tenant, sorted by start time descending (most recent first).
-// It merges in-memory running jobs with persisted completed/failed jobs from the KV store.
-func (s *agentServiceImpl) ListJobs(ctx context.Context, tenantID string) ([]*JobStatus, error) {
+// ListJobs returns the tenant's jobs matching filter, sorted by start time
+// descending (most recent first). It merges the loops running here with the
+// records every concluded job left behind.
+//
+// The merge is what makes a task's attempt history readable: a job that has
+// returned is no longer in the registry, and its record is the only thing
+// left that says it ran at all.
+func (s *agentServiceImpl) ListJobs(ctx context.Context, tenantID string, filter *JobFilter) ([]*JobStatus, error) {
 	if err := s.validateTenant(ctx); err != nil {
 		return nil, err
 	}
@@ -3809,26 +5044,36 @@ func (s *agentServiceImpl) ListJobs(ctx context.Context, tenantID string) ([]*Jo
 			return true
 		}
 
-		status := job.loop.Status()
+		status := job.run.Status()
 		if status == nil {
 			return true
 		}
 
+		// Seen regardless of the filter: a running job excluded by the
+		// filter must still suppress its own stale persisted record, or a
+		// wider listing would show the job twice.
 		seen[status.JobID] = struct{}{}
-		jobs = append(jobs, status)
+		if filter.Matches(status) {
+			jobs = append(jobs, status)
+		}
 		return true
 	})
 
 	// Merge persisted jobs from KV store.
 	if s.kvStore != nil {
-		kvPrefix := "job:" + tenantID + ":"
-		scanErr := s.kvStore.Scan(ctx, kvPrefix, func(key string, value []byte) error {
+		scanCtx, cancel := jobRecordScope(ctx)
+		defer cancel()
+		kvPrefix := jobPersistencePrefix(tenantID)
+		scanErr := s.kvStore.Scan(scanCtx, kvPrefix, func(key string, value []byte) error {
 			var status JobStatus
 			if unmarshalErr := json.Unmarshal(value, &status); unmarshalErr != nil {
 				s.logger.Warnf("orchestration: failed to unmarshal persisted job %s: %s", key, unmarshalErr.Error())
 				return nil
 			}
-			if _, exists := seen[status.JobID]; !exists {
+			if _, exists := seen[status.JobID]; exists {
+				return nil
+			}
+			if filter.Matches(&status) {
 				jobs = append(jobs, &status)
 			}
 			return nil
@@ -3882,6 +5127,11 @@ func (s *agentServiceImpl) CancelJob(ctx context.Context, tenantID, jobID string
 	job.cancel()
 	s.jobs.Delete(jobKey)
 
+	// The lease is released here, synchronously, rather than left to the
+	// loop's exit: a cancelled job must not hold its work against a
+	// re-dispatch for the rest of a TTL.
+	job.run.releaseLease()
+
 	// Clean up event subscribers for the cancelled job.
 	s.cleanupJobSubscribers(tenantID, jobID)
 
@@ -3895,7 +5145,7 @@ func (s *agentServiceImpl) CancelJob(ctx context.Context, tenantID, jobID string
 			UpdatedAt: time.Now().UnixNano(),
 		}
 		// Preserve existing status fields if available.
-		if existing := job.loop.Status(); existing != nil {
+		if existing := job.run.Status(); existing != nil {
 			cancelledStatus.Iteration = existing.Iteration
 			cancelledStatus.TaskCount = existing.TaskCount
 			cancelledStatus.Completed = existing.Completed

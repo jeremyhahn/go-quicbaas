@@ -5690,7 +5690,15 @@ func TestXKMSBackend_ImportKey_EmptyMaterial_RealXKMS(t *testing.T) {
 	assert.Contains(t, err.Error(), "key material cannot be empty")
 }
 
-func TestXKMSBackend_ImportKey_AsymmetricNotSupported_RealXKMS(t *testing.T) {
+// TestXKMSBackend_ImportKey_AsymmetricRejectsUnparseableMaterial_RealXKMS
+// replaces a test that asserted asymmetric import was UNSUPPORTED.
+//
+// That limitation was self-imposed and wrong — go-xkms parses PKCS#8 in its
+// software backend — so the old assertion pinned a defect in place. The input
+// is unchanged, and it is still refused; what changed is the reason. It is now
+// refused because "material" is not a key, rather than because keys of its
+// kind could not be imported at all.
+func TestXKMSBackend_ImportKey_AsymmetricRejectsUnparseableMaterial_RealXKMS(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
@@ -5704,7 +5712,7 @@ func TestXKMSBackend_ImportKey_AsymmetricNotSupported_RealXKMS(t *testing.T) {
 	meta, err := backend.ImportKey(ctx, "rsa-import-real", []byte("material"), AlgRSA2048, nil)
 	assert.Error(t, err)
 	assert.Nil(t, meta)
-	assert.Contains(t, err.Error(), "asymmetric key import not yet supported")
+	assert.ErrorIs(t, err, dbxkms.ErrKeyMaterialNotPKCS8)
 }
 
 func TestXKMSBackend_ImportKey_NilOptions_RealXKMS(t *testing.T) {

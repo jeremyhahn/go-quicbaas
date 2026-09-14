@@ -19,6 +19,12 @@
     canonical control-plane tenant, which is the right answer for single-tenant
     and first-boot deployments.
 
+    The field is rendered on BOTH the chooser and the passkey step. It has to
+    be on the passkey step: that is where the organization is actually used,
+    and a visitor who never touched the chooser field signed in against the
+    'system' default with no way to correct it — the ceremony then came back
+    with no credentials for that account and the form wedged (#575).
+
     PIV login is tenant-agnostic (the server resolves the tenant from the cert
     thumbprint), so the field does not participate in the smartcard flow.
 
@@ -39,7 +45,7 @@
   import { KeyRound, CreditCard } from 'lucide-svelte';
   import { routeDashboard } from '../../stores/router.svelte.ts';
   import { setConnected } from '../../stores/connection.svelte.ts';
-  import { setAuthenticated } from '../../stores/auth.svelte.ts';
+  import { setAuthenticated, authStore, clearSessionEndReason } from '../../stores/auth.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { parseRequestOptions, encodeAssertionResponse } from '../../lib/webauthn.ts';
   import type { AuthTokenResponse } from '@quicbaas/sdk';
@@ -56,6 +62,36 @@
   const GENERIC_AUTH_FAILURE =
     "Sign-in failed. Check your organization and email address, then try again.";
 
+  // NO_PASSKEY_ENROLLED is shown when the server's challenge lists no
+  // credential to assert against. It names neither the organization nor the
+  // email for the same reason GENERIC_AUTH_FAILURE does not: the message must
+  // not say which half of the pair is wrong.
+  const NO_PASSKEY_ENROLLED =
+    'No passkey is enrolled for this account in this organization. ' +
+    'Check your organization and email address, then try again.';
+
+  // CEREMONY_TIMEOUT shows when the authenticator never answers. Its cause is
+  // usually a key that is not plugged in or not the one enrolled.
+  const CEREMONY_TIMEOUT =
+    'Your security key did not respond. Check that it is connected, then try again.';
+
+  // CEREMONY_TIMEOUT_MS bounds the assertion ceremony. navigator.credentials
+  // .get() has no guaranteed settle: a browser prompt the operator walks away
+  // from, or an authenticator that never receives a GetAssertion, leaves the
+  // promise pending forever, and with it the busy flag that disables the form.
+  // 60 s matches the timeout the server puts in the challenge options.
+  const CEREMONY_TIMEOUT_MS = 60_000;
+
+  // CeremonyTimeoutError marks the one exit path the WebAuthn API cannot
+  // report itself: the ceremony that never settles. It is distinct from the
+  // DOMException AbortError a browser raises when it honours the abort signal.
+  class CeremonyTimeoutError extends Error {
+    constructor() {
+      super('passkey ceremony timed out');
+      this.name = 'CeremonyTimeoutError';
+    }
+  }
+
   let mode: Mode = $state('chooser');
   let email = $state('');
   let busy = $state(false);
@@ -71,6 +107,16 @@
   let tenantID = $state(
     window.localStorage.getItem(LAST_TENANT_KEY) ?? DEFAULT_TENANT_ID,
   );
+
+  // Why the previous session ended, when it ended on its own. Empty after a
+  // deliberate sign-out and on a first visit.
+  //
+  // The operator arriving here without having asked to leave needs to know
+  // whether their session lapsed or the platform is broken; #221 gave them a
+  // silent bounce to this page every 15 minutes of an hours-long run and no way
+  // to tell the difference. It is a notice, not an error: nothing they did
+  // failed, and it must not be mistaken for a rejected sign-in attempt.
+  const sessionEndReason = $derived(authStore.endReason);
 
   // Passkey button ref for auto-focus on mount.
   let passkeyBtnEl: HTMLButtonElement | null = $state(null);
@@ -149,10 +195,39 @@
   async function startPasskeyFlow(): Promise<void> {
     mode = 'passkey';
     errorMessage = '';
+    // The operator has read the notice and is acting on it; anything that goes
+    // wrong from here is about THIS attempt, not the session that ended.
+    clearSessionEndReason();
     // Focus the email field after the mode transition settles.
     await Promise.resolve();
     (document.getElementById('login-email') as HTMLInputElement | null)?.focus();
     resetIdleTimer();
+  }
+
+  // getAssertion runs navigator.credentials.get() under a deadline.
+  //
+  // The abort signal asks the browser to close its prompt; the race is what
+  // frees the form, because an authenticator that never answers leaves the
+  // get() promise pending whether or not the signal was honoured.
+  async function getAssertion(
+    publicKey: PublicKeyCredentialRequestOptions,
+  ): Promise<Credential | null> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new CeremonyTimeoutError());
+      }, CEREMONY_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([
+        navigator.credentials.get({ publicKey, signal: controller.signal }),
+        deadline,
+      ]);
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+    }
   }
 
   async function submitPasskey(): Promise<void> {
@@ -198,7 +273,20 @@
       // envelope with base64url binary members; the helper unwraps it and
       // decodes challenge / allowCredentials into ArrayBuffers.
       const publicKey = parseRequestOptions(challenge.options);
-      const assertion = await navigator.credentials.get({ publicKey });
+
+      // A login that names an account always carries that account's enrolled
+      // credentials. An empty list means the server found nothing to assert
+      // against, and handing it to the browser asks the authenticator for a
+      // DISCOVERABLE credential instead — which a hardware key holding a
+      // non-resident credential for this RP never answers, so the ceremony
+      // hangs with no prompt and no error (#575). Stop here and say so.
+      if (publicKey.allowCredentials === undefined || publicKey.allowCredentials.length === 0) {
+        errorMessage = NO_PASSKEY_ENROLLED;
+        busy = false;
+        return;
+      }
+
+      const assertion = await getAssertion(publicKey);
 
       if (assertion === null) {
         errorMessage = 'Authentication declined or canceled. Try again with your hardware key.';
@@ -216,7 +304,9 @@
       rememberTenant(trimmedTenant);
       handleAuthSuccess(tokens);
     } catch (e) {
-      if (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError')) {
+      if (e instanceof CeremonyTimeoutError) {
+        errorMessage = CEREMONY_TIMEOUT;
+      } else if (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError')) {
         errorMessage = 'Authentication declined or canceled. Try again with your hardware key.';
       } else if (e instanceof TypeError) {
         errorMessage = "Can't reach the server right now.";
@@ -237,6 +327,7 @@
   async function startPIVFlow(): Promise<void> {
     busy = true;
     errorMessage = '';
+    clearSessionEndReason();
     try {
       const client = await getSDKClient();
       const tokens = await client.auth.loginPIV();
@@ -273,6 +364,35 @@
   }
 </script>
 
+<!-- Organization id (passkey path only; PIV resolves it from the cert).
+     Free text by design — see the component header. One definition, rendered on
+     the chooser and again on the passkey step: only one of the two branches is
+     mounted at a time, so the id stays unique. -->
+{#snippet organizationField()}
+  <div class="form-control">
+    <label class="label pb-1" for="login-tenant">
+      <span class="label-text text-sm">Organization</span>
+    </label>
+    <input
+      id="login-tenant"
+      type="text"
+      class="input input-bordered input-sm w-full"
+      bind:value={tenantID}
+      autocomplete="organization"
+      autocapitalize="none"
+      autocorrect="off"
+      spellcheck="false"
+      aria-label="Organization"
+      aria-describedby="login-tenant-help"
+      placeholder={DEFAULT_TENANT_ID}
+      oninput={resetIdleTimer}
+    />
+    <p id="login-tenant-help" class="text-xs text-base-content/40 pt-1">
+      Your organization id, provided by your administrator.
+    </p>
+  </div>
+{/snippet}
+
 <main class="flex min-h-full items-center justify-center p-4">
   <div class="card bg-base-200 w-full max-w-sm shadow-xl hover:-translate-y-0.5 transition-transform">
     <div class="card-body gap-5">
@@ -282,6 +402,13 @@
         <div class="text-2xl font-bold gradient-text">QuicBaaS</div>
         <div class="text-sm text-base-content/50 mt-1">Hardware-Backed Sign-In</div>
       </div>
+
+      <!-- Session-ended notice (distinct from a failed sign-in attempt) -->
+      {#if sessionEndReason && !errorMessage}
+        <div class="alert alert-warning py-2 px-3 text-sm" role="status">
+          <span>{sessionEndReason}</span>
+        </div>
+      {/if}
 
       <!-- Error alert -->
       {#if errorMessage}
@@ -302,30 +429,7 @@
              Chooser: tenant selector + two hardware login options
              ---------------------------------------------------------------- -->
 
-        <!-- Organization id (passkey path only; PIV resolves it from the cert).
-             Free text by design — see the component header. -->
-        <div class="form-control">
-          <label class="label pb-1" for="login-tenant">
-            <span class="label-text text-sm">Organization</span>
-          </label>
-          <input
-            id="login-tenant"
-            type="text"
-            class="input input-bordered input-sm w-full"
-            bind:value={tenantID}
-            autocomplete="organization"
-            autocapitalize="none"
-            autocorrect="off"
-            spellcheck="false"
-            aria-label="Organization"
-            aria-describedby="login-tenant-help"
-            placeholder={DEFAULT_TENANT_ID}
-            oninput={resetIdleTimer}
-          />
-          <p id="login-tenant-help" class="text-xs text-base-content/40 pt-1">
-            Your organization id, provided by your administrator.
-          </p>
-        </div>
+        {@render organizationField()}
 
         <!-- Passkey option -->
         <div class="flex flex-col gap-1">
@@ -368,10 +472,14 @@
 
       {:else if mode === 'passkey'}
         <!-- ----------------------------------------------------------------
-             Passkey: inline email + submit
-             The tenant was selected on the chooser screen.
+             Passkey: organization + email + submit.
+             The organization is repeated here (carrying whatever was typed on
+             the chooser) because this is the step that uses it — see the
+             component header.
              ---------------------------------------------------------------- -->
         <div class="flex flex-col gap-3">
+          {@render organizationField()}
+
           <label class="form-control">
             <div class="label">
               <span class="label-text text-sm">Email address</span>

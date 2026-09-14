@@ -62,7 +62,7 @@ function setHash(hash: string): void {
 
 const navItems = [
   { viewId: 'dashboard'     as const, expectedHash: '#/dashboard',     label: 'System Dashboard' },
-  { viewId: 'orchestration' as const, expectedHash: '#/orchestration', label: 'Orchestration Dashboard' },
+  { viewId: 'orchestration' as const, expectedHash: '#/orchestration', label: 'Dashboard' },
   { viewId: 'jobs'          as const, expectedHash: '#/jobs',          label: 'Jobs' },
   { viewId: 'agents'        as const, expectedHash: '#/fleet',         label: 'Agent Fleet' },
   { viewId: 'sessions'      as const, expectedHash: '#/sessions',      label: 'Sessions' },
@@ -280,7 +280,7 @@ describe('sidebar exposes three distinct disambiguated dashboard entries', () =>
   // labels avoids mounting the full component tree (which depends on
   // SDK clients, runtime polling loops, etc.) while still catching a
   // regression that re-introduces a duplicate "Dashboard" label.
-  it('OVERVIEW > Overview, ORCHESTRATION > Orchestration, CLUSTER > Cluster are present and distinct', async () => {
+  it('OVERVIEW > Overview, SOFTWARE FACTORY > Software Factory, CLUSTER > Cluster are present and distinct', async () => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
     const url = await import('node:url');
@@ -299,16 +299,16 @@ describe('sidebar exposes three distinct disambiguated dashboard entries', () =>
     // its section so the labels are unique within the sidebar. The
     // prior bug had all three labelled "Dashboard".
     expect(source).toMatch(/id:\s*'dashboard'\s*,\s*label:\s*'Overview'/);
-    expect(source).toMatch(/id:\s*'orchestration'\s*,\s*label:\s*'Orchestration'/);
+    expect(source).toMatch(/id:\s*'orchestration'\s*,\s*label:\s*'Dashboard'/);
     expect(source).toMatch(/id:\s*'cluster'\s*,\s*label:\s*'Cluster'/);
 
     // Defensive: count the literal label entries — each disambiguated
     // label must appear exactly once in the navSections block.
     const overviewCount = (source.match(/label:\s*'Overview'/g) ?? []).length;
-    const orchestrationCount = (source.match(/label:\s*'Orchestration'/g) ?? []).length;
+    const factoryCount = (source.match(/label:\s*'Dashboard'/g) ?? []).length;
     const clusterCount = (source.match(/label:\s*'Cluster'/g) ?? []).length;
     expect(overviewCount).toBe(1);
-    expect(orchestrationCount).toBe(1);
+    expect(factoryCount).toBe(1);
     expect(clusterCount).toBe(1);
   });
 
@@ -328,7 +328,7 @@ describe('sidebar exposes three distinct disambiguated dashboard entries', () =>
     const source = await fs.readFile(mainAppPath, 'utf8');
 
     // The breadcrumb for the dashboard route must include "Overview" as
-    // a parent crumb so the surface mirrors the "Orchestration > Dashboard"
+    // a parent crumb so the surface mirrors the "Software Factory > Dashboard"
     // and "Cluster > Dashboard" patterns used by the other two dashboards.
     const dashboardBlock = source.match(
       /routerStore\.name === 'dashboard'[\s\S]*?else if/,

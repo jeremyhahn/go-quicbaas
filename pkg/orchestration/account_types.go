@@ -298,6 +298,13 @@ type Account struct {
 	// sweeper is needed to return an account to the pool.
 	AvailableAt time.Time `json:"available_at,omitempty"`
 
+	// Spend is what this account may spend and how many failures take it out
+	// of service. The zero value meters nothing, which is the honest state
+	// for an account nobody has configured a limit for; see
+	// AccountSpendPolicy and account_spend_authority.go for where a metered
+	// account is actually refused.
+	Spend AccountSpendPolicy `json:"spend,omitempty"`
+
 	// LastError carries the message of the most recent failed refresh, when
 	// Status is AccountStatusError. Cleared on the next successful refresh.
 	// It is redacted (see redactAccountCredential) before it is stored, so a

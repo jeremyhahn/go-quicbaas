@@ -30,7 +30,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/authzfake"
@@ -38,15 +37,16 @@ import (
 
 // testAuthzContext provides shared test infrastructure for authorization tests.
 type testAuthzContext struct {
-	t           *testing.T
-	ctx         context.Context
-	cancel      context.CancelFunc
-	logger      *logger.Logger
-	authManager *auth.InMemoryAuthManager
+	t      *testing.T
+	ctx    context.Context
+	cancel context.CancelFunc
+	logger *logger.Logger
 }
 
-// newTestAuthzContext creates a new test context with the token-issuing auth
-// manager. The authorization decision is supplied per scenario via authzfake.
+// newTestAuthzContext creates a new test context. The authorization decision is
+// supplied per scenario via authzfake; nothing here mints a token, because the
+// bearer is minted by iam.OIDCProvider in a running server and the in-process
+// token manager this used to build was deleted in issue #905.
 func newTestAuthzContext(t *testing.T) *testAuthzContext {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
@@ -57,24 +57,11 @@ func newTestAuthzContext(t *testing.T) *testAuthzContext {
 	})
 	require.NoError(t, err)
 
-	authCfg := &auth.AuthConfig{
-		Enabled:         true,
-		JWTSigningKeyID: "test-jwt-signing-key",
-		TokenTTL:        1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-		MaxTokens:       100,
-	}
-	configureTestJWTSigning(t, authCfg)
-
-	authManager, err := auth.NewInMemoryAuthManager(authCfg, log)
-	require.NoError(t, err)
-
 	return &testAuthzContext{
-		t:           t,
-		ctx:         ctx,
-		cancel:      cancel,
-		logger:      log,
-		authManager: authManager,
+		t:      t,
+		ctx:    ctx,
+		cancel: cancel,
+		logger: log,
 	}
 }
 

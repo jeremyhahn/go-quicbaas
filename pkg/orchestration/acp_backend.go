@@ -20,11 +20,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,7 +91,42 @@ type ACPBackendConfig struct {
 	// "claude --print --input-format stream-json --output-format stream-json
 	// --verbose" subprocess. Multiple prompts reuse the same process, and
 	// the agent maintains full conversation context across turns.
+	//
+	// SUPERSEDED BY Transport, and still honoured. It can only distinguish
+	// stream-json from JSON-RPC, so it cannot describe a CLI that speaks
+	// neither — see ACPTransport.
 	CLIMode bool `json:"cli_mode"`
+
+	// Transport selects how turns are carried. Empty means JSON-RPC, which is
+	// what every config predating this field already got. See ACPTransport for
+	// why this is a selector rather than a second backend type.
+	Transport ACPTransport `json:"transport,omitempty"`
+
+	// ExecArgs is the argv prefix for one ACPTransportExec turn — the
+	// subcommand and the flags that do not vary per turn, e.g.
+	// {"exec", "--json", "--skip-git-repo-check"} for codex.
+	//
+	// IT MUST SELECT A NON-INTERACTIVE MODE. A CLI invoked with no subcommand
+	// generally opens its interactive interface, reads nothing it understands
+	// on a piped stdin, and exits — which arrives as a transport failure and
+	// reads as a broken protocol rather than a missing argument. That was
+	// exactly the codex reviewer defect measured 2026-09-13.
+	ExecArgs []string `json:"exec_args,omitempty"`
+
+	// ExecModelFlag is the flag that names the model on an exec turn, e.g.
+	// "--model". Empty leaves the model to the CLI's own configuration.
+	ExecModelFlag string `json:"exec_model_flag,omitempty"`
+
+	// ExecStdinArg is the positional argument telling the CLI to read the
+	// prompt from stdin, e.g. "-". Empty appends nothing.
+	ExecStdinArg string `json:"exec_stdin_arg,omitempty"`
+
+	// CredentialDir describes where a FILE-based pooled credential lives.
+	//
+	// This was hardcoded to OpenCode's ".config/opencode" on the JSON-RPC
+	// container path. It is data now because it is the second thing a new CLI
+	// needs and the first thing a reader assumes is already generic.
+	CredentialDir CredentialDirSpec `json:"credential_dir,omitempty"`
 
 	// NativeSessionResume selects the agent CLI's own session store as the
 	// resume mechanism for persistent CLI-mode sessions.
@@ -125,6 +162,14 @@ type ACPBackendConfig struct {
 	// unmodified (harmless — it carries no URL). Not serialized: it is a
 	// runtime wiring dependency, not configuration state.
 	MCPPresetResolver MCPPresetResolver `json:"-"`
+
+	// ProcessExitObserver, when non-nil, is told when a supervised persistent
+	// CLI subprocess terminates — however it terminated, and whether or not
+	// anything was waiting for it at the time. The service layer wires it to
+	// mark the persisted session record closed, so a session whose agent died
+	// while the item was parked stops reading as addressable. Not serialized:
+	// a runtime wiring dependency, like MCPPresetResolver above.
+	ProcessExitObserver ProcessExitObserver `json:"-"`
 }
 
 // TransportFactory creates a StdioTransport. This is used for dependency
@@ -148,9 +193,14 @@ type ACPBackend struct {
 	sessions         sync.Map // map[string]*acpSession
 	transportFactory TransportFactory
 	processFactory   ProcessFactory
-	containerRuntime ContainerRuntime  // optional: for sandboxed agent execution
-	logger           interfaces.Logger // optional: session-registry diagnostics
-	accountResolver  AccountResolver   // optional: pooled provider account selection (see account_resolver.go)
+	containerRuntime ContainerRuntime        // optional: for sandboxed agent execution
+	logger           interfaces.Logger       // optional: session-registry diagnostics
+	accountResolver  AccountResolver         // optional: pooled provider account selection (see account_resolver.go)
+	accountLeases    AccountCredentialLeaser // optional: withdraws a delivery grant a failed spawn already took out
+
+	// sandboxOwner is the daemon every sandbox container this backend
+	// launches is stamped as belonging to. See SetSandboxOwner.
+	sandboxOwner string
 
 	// sandboxNetworkWarning makes the host-network / invalid-network advisory
 	// fire once per backend instead of once per spawn. See sandboxNetwork.
@@ -162,6 +212,20 @@ func (b *ACPBackend) SetContainerRuntime(rt ContainerRuntime) {
 	b.containerRuntime = rt
 }
 
+// SetSandboxOwner names the daemon every sandbox container this backend
+// launches belongs to. The name is stamped on the container as
+// ContainerOwnerLabel, which is what lets that daemon recognise — and only
+// that daemon remove — the containers a previous run of it left behind
+// (container_sweep.go, go-quicbaas#750).
+//
+// Unset leaves the label off, and an unlabelled container is one no sweep will
+// ever claim. That is the safe direction: a container nobody sweeps is an
+// operator's problem, a container the wrong process sweeps is a running
+// worker killed under someone else.
+func (b *ACPBackend) SetSandboxOwner(owner string) {
+	b.sandboxOwner = strings.TrimSpace(owner)
+}
+
 // SetAccountResolver wires the pooled provider account resolver used when a
 // SpawnRequest sets AccountID or AccountAuto. Leaving this unset (the
 // default) preserves the pre-account-pool behavior exactly: any spawn that
@@ -170,6 +234,36 @@ func (b *ACPBackend) SetContainerRuntime(rt ContainerRuntime) {
 // falling back to the host's shared identity.
 func (b *ACPBackend) SetAccountResolver(r AccountResolver) {
 	b.accountResolver = r
+}
+
+// SetAccountCredentialLeaser wires the authority that withdraws a credential
+// delivery grant (see account_lease.go).
+//
+// The backend needs it for exactly ONE case: a spawn whose account resolution
+// SUCCEEDED and whose dispatch then failed. No Session is returned, so nothing
+// downstream ever learns the lease ID, and a grant that reached no session
+// record is one the reaper can never find. Every other withdrawal — the
+// ordinary ending, a rotation superseding a grant, a sweep after a restart — is
+// the orchestrator's, driven off the durable record.
+func (b *ACPBackend) SetAccountCredentialLeaser(l AccountCredentialLeaser) {
+	b.accountLeases = l
+}
+
+// releaseAccountLease withdraws a delivery grant this backend took out and
+// could not hand on.
+//
+// Best effort BY CONSTRUCTION, not by choice: the spawn has already failed and
+// the caller is returning that failure, so there is nothing to report a
+// revocation error to. It is not silently lost either — the grant's TTL bounds
+// it, and the reaper turns it into a tombstone.
+func (b *ACPBackend) releaseAccountLease(ctx context.Context, leaseID string) {
+	if b.accountLeases == nil || leaseID == "" {
+		return
+	}
+	if err := b.accountLeases.Revoke(ctx, leaseID); err != nil && b.logger != nil {
+		b.logger.Warnf("acp: failed to revoke credential delivery lease %s after a failed spawn: %s",
+			leaseID, err.Error())
+	}
 }
 
 // SetLogger installs an optional logger used to emit session-registry
@@ -197,7 +291,9 @@ func (b *ACPBackend) storeSession(sess *acpSession) {
 // only in diagnostic logs.
 func (b *ACPBackend) sessionMode(sess *acpSession) string {
 	switch {
-	case sess.cmd != nil:
+	case sess.streamJSON() && sess.containerID != "":
+		return "cli-container"
+	case sess.streamJSON():
 		return "cli-persistent"
 	case sess.transport != nil:
 		return "jsonrpc"
@@ -228,6 +324,11 @@ func (b *ACPBackend) logLookupMiss(op, lookupKey string) {
 type acpSession struct {
 	id string
 
+	// tenantID owns this session, captured from the spawning context. It is
+	// what lets the process supervisor name the tenant whose session record an
+	// exit belongs to, on a goroutine that has no request context.
+	tenantID string
+
 	// agentID is the identifier the AGENT knows this session by, which is not
 	// always the identifier QuicBaaS registers it under. A resumed JSON-RPC
 	// session keeps the operator's original ID in the registry while the fresh
@@ -253,6 +354,19 @@ type acpSession struct {
 	createdAt    int64
 	lastActivity atomic.Int64
 	closed       atomic.Bool
+
+	// reaper waits for cmd exactly once, however many callers race to it — the
+	// supervisor, Close, and the mid-flight subprocess-gone path all reach the
+	// process through it, because cmd.Wait is not safe to call concurrently.
+	// Nil for sessions that own no persistent subprocess. See reapProcess.
+	reaper *procReaper
+
+	// exit is what the supervised subprocess terminated with, stored by the
+	// supervisor on the far side of that single Wait and nil while the process
+	// is still running. It is what makes "the agent is gone" a fact this
+	// daemon OBSERVED rather than one it infers from an unpopulated
+	// cmd.ProcessState. See acp_process_supervisor.go.
+	exit atomic.Pointer[ProcessExit]
 
 	// cleanup, when non-nil, releases per-session resources provisioned at
 	// spawn (currently the ephemeral QuicBaaS MCP agent-cert directory; the
@@ -281,6 +395,19 @@ type acpSession struct {
 	// certificate the running agent is still presenting.
 	accountCleanup func()
 
+	// containerID names the container this session's agent runs in, for a
+	// sandboxed session the BACKEND launched. It is what lets the engine run
+	// a command in that container afterwards (ExecSession) — the delivery's
+	// commit and push happen there, not on the daemon. Empty for every
+	// session that runs as a host process. Immutable after Spawn, so it needs
+	// no lock.
+	containerID string
+
+	// containerImage is what that container was launched from. Carried purely
+	// so a session that stops answering names the image an operator has to go
+	// look at; nothing decides anything on it. Immutable after Spawn.
+	containerImage string
+
 	// envFileCleanup removes the private 0600 --env-file the container runtime
 	// reads this session's environment from (InteractiveProcess.Cleanup). It is
 	// a THIRD, independent slot for the same reason accountCleanup is separate
@@ -288,6 +415,19 @@ type acpSession struct {
 	// must survive an account rotation (which rewrites credential material) and
 	// must not be released by a cert-directory teardown. Guarded by mu.
 	envFileCleanup func()
+}
+
+// streamJSON reports whether this session speaks the agent CLI's stream-json
+// protocol over a persistent stdio pair.
+//
+// THE PIPES ARE THE DISCRIMINATOR, NOT THE *exec.Cmd. Until spawnContainerCLI
+// existed, "persistent CLI session" and "this daemon owns a subprocess" were the
+// same thing, and every dispatch site asked `sess.cmd != nil`. A containerized
+// CLI session speaks exactly the same protocol with no host process at all — the
+// `docker run -i` process belongs to the container runtime — so a cmd-based test
+// would route it to the one-shot path and it would answer no prompt at all.
+func (s *acpSession) streamJSON() bool {
+	return s.stdin != nil && s.stdout != nil
 }
 
 // promptSessionID returns the identifier to address the agent with on the ACP
@@ -313,6 +453,16 @@ type streamJSONMessage struct {
 	IsError   bool                 `json:"is_error,omitempty"`
 	Result    string               `json:"result,omitempty"`
 	Message   *streamJSONAssistant `json:"message,omitempty"`
+
+	// TerminalReason and NumTurns are the CLI's own structured account of why
+	// its query loop stopped, carried onto the error when a turn fails so the
+	// SDLC module can tell a failed attempt at the work from a CLI that never
+	// reached the model. See TurnFailureEvidence.
+	//
+	// `subtype` is deliberately NOT used for this: it reports "success" on a
+	// failing result (measured, Claude Code 2.1.251).
+	TerminalReason string `json:"terminal_reason,omitempty"`
+	NumTurns       int    `json:"num_turns,omitempty"`
 
 	// Usage is the turn-level token accounting carried on the terminal
 	// "result" message. It is the authoritative figure for the turn: the CLI
@@ -385,15 +535,139 @@ func NewACPBackend(config ACPBackendConfig) *ACPBackend {
 	}
 }
 
+// agentEnvScrubbed are the environment variables an agent subprocess must not
+// inherit from whoever started this daemon, matched as exact names or as
+// prefixes.
+//
+// THE DAEMON'S ENVIRONMENT IS NOT THE AGENT'S. A quicbaasd started from an
+// interactive Claude Code session carries that session's identity — CLAUDECODE,
+// CLAUDE_CODE_SESSION_ID, a messaging socket, and a CLAUDE_CONFIG_DIR pointing
+// at one operator's personal settings — and every agent it spawns inherits the
+// lot, becoming a nested child of a conversation it has nothing to do with.
+// That is not a cosmetic leak: go-quicbaas#218 measured a worker whose ability
+// to write a file was decided entirely by which shell had started the daemon,
+// silently, with the failure attributed to the work.
+//
+// Removed rather than overridden because there is no value to override with:
+// "no session" is the absence of the variable, not a different string.
+//
+// WHAT IS DELIBERATELY NOT HERE is the other half of the rule, and it is the
+// half that decides whether the scrub is safe: the line runs between a variable
+// that DESCRIBES A SESSION and one that CONFIGURES THIS DAEMON. The first kind
+// is somebody's shell leaking into a worker. The second kind is the operator's
+// deployment, and taking it away does not isolate the worker, it misconfigures
+// it — a daemon deployed against Bedrock whose worker loses CLAUDE_CODE_USE_BEDROCK
+// does not fall back to a safe default, it talks to the wrong provider or fails
+// to authenticate, which is a worse failure than the one being fixed and a far
+// quieter one.
+//
+// So HOME and PATH stay (the CLI needs both to find its own installation), and
+// so does every name in keep, each of which the CLAUDE_CODE_ prefix would
+// otherwise catch:
+//
+//   - CLAUDE_CODE_OAUTH_TOKEN — the provider CREDENTIAL, named as Claude Code's
+//     access-token variable by account_provider_registry.go. A pooled account
+//     supplies it per spawn and wins over anything inherited; an operator
+//     running without the account pool exported it on the daemon on purpose.
+//   - CLAUDE_CODE_USE_BEDROCK / CLAUDE_CODE_USE_VERTEX and their
+//     CLAUDE_CODE_SKIP_*_AUTH companions — provider SELECTION and the auth mode
+//     that goes with it. These describe where this deployment's models come
+//     from, which no worker is entitled to decide for itself.
+//
+// The prefix is kept rather than replaced by an exhaustive denylist because the
+// session-identity variables are the ones that GROW: a new CLAUDE_CODE_<session
+// thing> appears with each Claude Code release and would silently start leaking
+// through a list nobody remembered to extend. Provider configuration is small,
+// documented and stable, so it is the half that can be enumerated.
+var agentEnvScrubbed = struct {
+	names    []string
+	prefixes []string
+	keep     []string
+}{
+	names:    []string{"CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_CONFIG_DIR", "CLAUDE_PLUGIN_DATA"},
+	prefixes: []string{"CLAUDE_CODE_", "CODEX_COMPANION_"},
+	keep: []string{
+		"CLAUDE_CODE_OAUTH_TOKEN",
+		"CLAUDE_CODE_USE_BEDROCK",
+		"CLAUDE_CODE_USE_VERTEX",
+		"CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+		"CLAUDE_CODE_SKIP_VERTEX_AUTH",
+	},
+}
+
+// scrubAgentEnv returns environ with the inherited agent-session variables
+// removed, preserving the order of everything else.
+//
+// The caller appends the spawn request's own variables afterwards, so an SDLC module
+// that wants a value for one of these names supplies it explicitly and exec's
+// last-wins duplicate handling gives it the child. What no caller can do is
+// leave one of them at whatever the operator's shell happened to hold.
+func scrubAgentEnv(environ []string) []string {
+	kept := make([]string, 0, len(environ))
+	for _, entry := range environ {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			// Not a NAME=VALUE pair at all. Kept verbatim: this function
+			// removes what it recognises and is not a validator of the
+			// environment it was handed.
+			kept = append(kept, entry)
+			continue
+		}
+		if scrubbedAgentEnvName(name) {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept
+}
+
+// scrubbedAgentEnvName reports whether a variable name is one of the inherited
+// agent-session variables.
+func scrubbedAgentEnvName(name string) bool {
+	// The exemption is checked first, so a name on the keep list survives a
+	// prefix that would otherwise claim it.
+	if slices.Contains(agentEnvScrubbed.keep, name) {
+		return false
+	}
+	if slices.Contains(agentEnvScrubbed.names, name) {
+		return true
+	}
+	for _, prefix := range agentEnvScrubbed.prefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// agentProcessEnv is the complete environment an agent subprocess runs in: this
+// daemon's, scrubbed of the variables that describe whoever started it, with
+// the request's own variables appended.
+//
+// APPENDED LAST because exec resolves duplicate names to the last occurrence,
+// so a caller that supplies a value for a name the scrub removed gets it, and a
+// caller that supplies nothing gets its absence rather than an operator's.
+//
+// One function for every path that execs an agent — the CLI process factory,
+// the JSON-RPC stdio transport, the codex one-shot — because the contract is
+// about the daemon's environment, not about which transport happens to carry
+// the session, and a path that quietly kept its own merge would be the one
+// exception nobody remembers to check.
+func agentProcessEnv(env []string) []string {
+	return append(scrubAgentEnv(os.Environ()), env...)
+}
+
 // defaultProcessFactory creates an *exec.Cmd for the stream-json CLI mode.
 func defaultProcessFactory(ctx context.Context, command string, args []string, workDir string, env []string) (*exec.Cmd, error) {
 	cmd := exec.CommandContext(ctx, command, args...)
 	if workDir != "" {
 		cmd.Dir = workDir
 	}
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
+	// ALWAYS SET, EVEN WITH NOTHING TO ADD, because the request's own
+	// variables can only ADD to the inherited environment and the fault this
+	// fixes is a variable that must be TAKEN AWAY. Leaving cmd.Env nil hands
+	// the child os.Environ() verbatim; see scrubAgentEnv.
+	cmd.Env = agentProcessEnv(env)
 	cmd.Stderr = io.Discard
 	// Ensure the process and its children are interrupted on context cancellation.
 	cmd.Cancel = func() error {
@@ -422,19 +696,35 @@ func (b *ACPBackend) processExitedError(cmd *exec.Cmd, stderr *stderrTail) *Stre
 	}
 }
 
-// subprocessGoneError handles a persistent stream-json session whose subprocess
-// has died mid-flight (write broken pipe or scanner EOF). It reaps the process
-// so the exit code is known, marks the session closed so its state reflects the
-// failure, and returns an actionable StreamJSONProcessExitedError. It is invoked
-// while holding sess.mu, so the reap/close transition is serialised.
-func (b *ACPBackend) subprocessGoneError(sess *acpSession) *StreamJSONProcessExitedError {
+// agentGoneError handles a persistent stream-json session whose agent has died
+// mid-flight (write broken pipe or scanner EOF). It ends the process, marks the
+// session closed so its state reflects the failure, and returns an actionable
+// typed error. It is invoked while holding sess.mu, so the reap/close
+// transition is serialised.
+//
+// The error differs by where the agent was running, because what is KNOWABLE
+// differs. A host subprocess was reaped by this daemon, so its exit code and
+// stderr tail are reported. A containerized agent's process belongs to the
+// container runtime and there is nothing here to Wait on, so the container is
+// reported instead of a fabricated exit code — see ContainerStreamClosedError.
+func (b *ACPBackend) agentGoneError(sess *acpSession) error {
 	if sess.procCancel != nil {
 		sess.procCancel()
 	}
-	if sess.cmd != nil {
-		_ = sess.cmd.Wait()
-	}
+	// The wait error is deliberately dropped HERE and nowhere else: the exit
+	// code it would restate is read from ProcessState by processExitedError
+	// below, which is the more useful of the two reports. The supervisor keeps
+	// the full answer on the recorded exit. A containerized session owns no
+	// reaper at all, so this is a no-op for it.
+	_ = sess.reapProcess()
 	sess.closed.Store(true)
+	if sess.containerID != "" {
+		return &ContainerStreamClosedError{
+			ContainerID: sess.containerID,
+			Image:       sess.containerImage,
+			Operation:   "prompt",
+		}
+	}
 	return b.processExitedError(sess.cmd, sess.stderr)
 }
 
@@ -503,8 +793,14 @@ func (b *ACPBackend) provisionAndSpawn(
 		if mcpCleanup != nil {
 			mcpCleanup()
 		}
-		if account != nil && account.cleanup != nil {
-			account.cleanup()
+		if account != nil {
+			if account.cleanup != nil {
+				account.cleanup()
+			}
+			// The material is gone; the GRANT over it must go too, or the
+			// pool would carry a live delivery lease for a session that never
+			// existed.
+			b.releaseAccountLease(ctx, account.LeaseID)
 		}
 		return nil, err
 	}
@@ -512,6 +808,7 @@ func (b *ACPBackend) provisionAndSpawn(
 	if account != nil {
 		sess.AccountID = account.AccountID
 		sess.AccountStrategy = account.Strategy
+		sess.CredentialLeaseID = account.LeaseID
 		b.attachAccount(sess.ID, account)
 	}
 	return sess, nil
@@ -550,42 +847,221 @@ func (b *ACPBackend) attachAccount(sessionID string, account *resolvedSpawnAccou
 }
 
 // dispatchSpawn routes a validated, MCP-resolved spawn request to the correct
-// spawn path based on the request and backend config.
+// spawn path.
+//
+// THE SANDBOX MODE IS RESOLVED FIRST, before anything else about the request
+// or the backend is consulted. Until 2026-09 it was resolved last: the two
+// CLI-mode branches below returned before the switch was ever reached, so a
+// CLI-mode backend under `--sandbox-policy required` exec'd the agent straight
+// onto the daemon host — with the tenant's provider credential in its
+// environment — and handed back a session with no container. The operator
+// asked for isolation, the resolver agreed, and the backend silently dropped
+// it (#741, live-proven in #742). A sandbox that is not applied must be a
+// refusal, never a downgrade, so Required now has exactly one shape: a
+// container, or an error.
 func (b *ACPBackend) dispatchSpawn(ctx context.Context, req *SpawnRequest) (*Session, error) {
-	// CLI mode (stream-json) is used when the backend supports it AND the
-	// request explicitly asks for a persistent session.
-	if b.config.CLIMode && req.Persistent {
-		return b.spawnCLI(ctx, req, spawnPlan{})
-	}
-
-	// One-shot CLI mode: store session config without starting a subprocess.
-	// Each prompt spawns a fresh process with no conversation context.
-	if b.config.CLIMode && !req.Persistent {
-		return b.spawnOneShotCLI(req)
-	}
-
-	// Sandbox-first policy routing. The orchestrator layer resolves
-	// SandboxModeDefault before dispatching, so at this point the mode is
-	// either Required (container) or None (raw exec). Legacy Sandboxed=true
-	// callers are mapped via EffectiveSandboxMode().
+	// Legacy Sandboxed=true callers are mapped onto a mode by
+	// EffectiveSandboxMode(); the orchestrator layer has already resolved
+	// SandboxModeDefault against policy before dispatching.
 	switch req.EffectiveSandboxMode() {
 	case SandboxModeRequired:
 		if b.containerRuntime == nil {
 			return nil, &SandboxModeViolationError{
 				Requested: SandboxModeRequired,
 				Policy:    SandboxPolicyRequired,
-				Reason:    "backend has no container runtime configured",
+				Reason:    sandboxReasonNoRuntime,
 			}
 		}
+		if b.config.isStreamJSON() {
+			// The agent's stream-json protocol, spoken to the command of a
+			// container instead of to a child of the daemon.
+			return b.spawnContainerCLI(ctx, req, spawnPlan{})
+		}
+		if b.config.isExec() {
+			// No process to hold the session open, so the CONTAINER is the
+			// session and each turn execs into it. See ACPTransportExec.
+			return b.spawnContainerExec(ctx, req)
+		}
 		return b.spawnContainerJSONRPC(ctx, req, spawnPlan{})
+
 	case SandboxModeNone, SandboxModeDefault:
+		// CLI mode (stream-json) is used when the backend supports it AND the
+		// request explicitly asks for a persistent session.
+		if b.config.isStreamJSON() && req.Persistent {
+			return b.spawnCLI(ctx, req, spawnPlan{})
+		}
+		// One-shot CLI mode: store session config without starting a
+		// subprocess. Each prompt spawns a fresh process with no conversation
+		// context. The exec transport is one-shot by nature, so unsandboxed it
+		// takes the same path — the session is a record, and each turn is its
+		// own process.
+		if b.config.isStreamJSON() || b.config.isExec() {
+			return b.spawnOneShotCLI(req)
+		}
 		return b.spawnJSONRPC(ctx, req)
+
 	default:
 		return nil, &InputValidationError{
 			Field:   "sandbox_mode",
 			Message: "unknown mode value",
 		}
 	}
+}
+
+// containerWorkDir is where a sandboxed session's workspace is mounted and
+// where the agent runs. It is the path the sdlc runner's checkout, verification
+// and publish steps all address inside the worker container.
+const containerWorkDir = "/workspace"
+
+// containerAgentHome is HOME for a sandboxed agent. It is a path every uid can
+// write, which matters because the container runs as the DAEMON's uid — an
+// arbitrary number as far as the image is concerned — and both agents need a
+// writable home for their own state (OpenCode's lock files and database,
+// Claude Code's per-run configuration).
+const containerAgentHome = "/tmp"
+
+// sandboxSpec builds the ContainerSpec a sandboxed session runs in, given the
+// command the container is to execute.
+//
+// EVERYTHING THAT MAKES A SANDBOX A SANDBOX IS DECIDED HERE, ONCE: the network,
+// the user, the workspace mount, the mount-policy-authorized extra mounts, the
+// trust dimension, the labels. Both sandboxed spawn paths — the ACP JSON-RPC
+// one and the CLI one — go through it, so a change to the isolation cannot
+// reach one protocol and miss the other. That is not hypothetical tidiness:
+// the CLI path had NO sandbox at all until #741, and a second hand-built spec
+// is exactly how it would silently acquire a weaker one.
+//
+// It mutates req.Env to carry HOME, because req.Env is what the session records
+// as its environment and a rotation reseeds the next spawn from that record.
+//
+// It returns an error when the project's resolved storage tier cannot be
+// applied — an unknown tier, or a memory limit too small to hold the tmpfs
+// workspace and the build that runs in it. That is a refusal BEFORE the
+// container exists, which is the only place it is cheap: the same
+// misconfiguration observed at runtime is an OOM kill partway through an
+// attempt.
+func (b *ACPBackend) sandboxSpec(req *SpawnRequest, image string, command []string) (*ContainerSpec, error) {
+	// THE SESSION RUNS AS THE DAEMON'S OWN UID, AND THAT IS NOT A RESTRICTION
+	// ON WHAT IT MAY DO. Inside the container the agent has passwordless sudo
+	// (deployments/agents/software-factory-worker/Dockerfile), so it installs
+	// packages and runs anything it needs to; the container is the boundary,
+	// and its tool grant is WorkerFullControlFlag. What the uid buys is two
+	// properties root would cost:
+	//
+	//   - EVERY FILE THE AGENT WRITES IS OWNED BY THE DAEMON. A workspace on
+	//     the persistent tier is a host bind mount, and a root-owned tree left
+	//     behind there is a tree the daemon cannot clean up or re-clone into.
+	//     The ephemeral tier moves the checkout onto a tmpfs and narrows this,
+	//     but the tier is per project and the remaining mounts — the workspace
+	//     spec directory and the signing agent's socket — are read-only, so no
+	//     bind mount can receive an agent's write at all.
+	//   - CLAUDE CODE STILL ACCEPTS ITS GRANT. The CLI refuses
+	//     --dangerously-skip-permissions when its uid is 0, so a container run
+	//     as root to make package installation work would have taken the tool
+	//     grant away again — the exact failure #927 exists to fix.
+	//
+	// The uid must exist in the image's /etc/passwd, and that is not cosmetic:
+	// git invokes ssh-keygen for every gpg.format=ssh signature, ssh-keygen
+	// calls getpwuid, and without an entry it exits "No user exists for uid"
+	// and EVERY signed commit fails. The image asserts this at build time.
+	if req.Env == nil {
+		req.Env = make(map[string]string, 1)
+	}
+	req.Env["HOME"] = containerAgentHome
+
+	// The owner label is part of the SPEC rather than something the runtime
+	// adds at launch, because ContainerConfigDigest measures spec.Labels: a
+	// label injected below the measurement would make the launched container
+	// disagree with the configuration that was attested.
+	labels := map[string]string{
+		"quicbaas.agent":   b.Type(),
+		"quicbaas.session": "pending",
+	}
+	if b.sandboxOwner != "" {
+		labels[ContainerOwnerLabel] = b.sandboxOwner
+	}
+
+	spec := &ContainerSpec{
+		Image:      image,
+		Command:    command,
+		Entrypoint: []string{}, // Clear entrypoint, use command directly
+		Env:        req.Env,
+		WorkDir:    containerWorkDir,
+		AutoRemove: true,
+		Network:    b.sandboxNetwork().String(),
+		User:       fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
+		Labels:     labels,
+
+		// Trust dimension (container_trust.go / trust_policy.go). Every
+		// field is inert at its zero value, so a spawn that does not ask
+		// for trusted computing builds the same spec it always did.
+		ImageDigest:  req.ImageDigest,
+		TrustLevel:   req.TrustLevel,
+		TrustLabel:   req.TrustLabel,
+		ExpectedPCRs: req.ExpectedPCRs,
+	}
+
+	// Mount workspace if specified.
+	if req.WorkDir != "" && req.WorkDir != WorkDirCurrent {
+		spec.Mounts = []ContainerMount{{
+			Source: req.WorkDir,
+			Target: containerWorkDir,
+		}}
+	}
+
+	// Extra mounts were authorized against the orchestrator's mount policy
+	// before the backend ever saw this request; append them verbatim.
+	spec.Mounts = append(spec.Mounts, req.ExtraMounts...)
+
+	// WHICH DIRECTORY IS DATA, NOT A NAME IN THE BACKEND. It was OpenCode's
+	// ".config/opencode" hardcoded here, which read as generic and was not:
+	// codex's credential is also a file, in ".codex", found through CODEX_HOME,
+	// and a second CLI with a file credential had nowhere to say so. See
+	// ACPBackendConfig.CredentialDir. A CLI whose credential is an environment
+	// variable (ProviderDescriptor.AccessTokenEnvKey) leaves the spec empty and
+	// mounts nothing, exactly as before.
+	if cred := b.config.CredentialDir; cred.configured() {
+		if req.AccountHomeDir != "" {
+			configDir := filepath.Join(req.AccountHomeDir, cred.Rel)
+			if _, statErr := os.Stat(configDir); statErr == nil {
+				spec.Mounts = append(spec.Mounts, ContainerMount{
+					Source:   configDir,
+					Target:   cred.Target,
+					ReadOnly: !cred.Writable,
+				})
+			}
+		} else if home, _ := os.UserHomeDir(); home != "" {
+			configDir := filepath.Join(home, cred.Rel)
+			if _, statErr := os.Stat(configDir); statErr == nil {
+				spec.Mounts = append(spec.Mounts, ContainerMount{
+					Source:   configDir,
+					Target:   cred.Target,
+					ReadOnly: !cred.Writable,
+				})
+			}
+		}
+		// A CLI that locates its credential by variable is told where it went.
+		// codex reads CODEX_HOME and would otherwise look in $HOME/.codex,
+		// which on this spawn is the container's own empty /tmp.
+		if cred.HomeEnv != "" {
+			if req.Env == nil {
+				req.Env = make(map[string]string, 1)
+			}
+			req.Env[cred.HomeEnv] = cred.Target
+			spec.Env = req.Env
+		}
+	}
+
+	// The project's storage tier is applied LAST, over the assembled spec.
+	// THIS IS THE PATH A SOFTWARE-FACTORY WORKER TAKES: the orchestrator's own
+	// spawnSandboxedSession is skipped for an ACP backend that holds a
+	// container runtime, so a tier wired only there would never reach one. The
+	// two paths share ApplyWorkspaceStorage precisely so they cannot diverge.
+	if err := ApplyWorkspaceStorage(spec, containerWorkDir, req.Storage); err != nil {
+		return nil, err
+	}
+
+	return spec, nil
 }
 
 // spawnContainerJSONRPC starts an agent in a container using RunInteractive
@@ -598,55 +1074,14 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 
 	// Build command for the container. Use the binary name (not the host path)
 	// since the container has the agent installed at a different location.
-	binaryName := filepath.Base(b.config.Command)
-	command := []string{binaryName}
+	command := []string{filepath.Base(b.config.Command)}
 	command = append(command, b.config.Args...)
 	command = append(command, req.ExtraArgs...)
 
-	// Build container spec. Run as the host user so files written to the
-	// bind-mounted workspace have the correct ownership. Set HOME to /tmp
-	// so OpenCode can write its internal state without permission issues.
-	currentUser := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
-	if req.Env == nil {
-		req.Env = make(map[string]string)
+	spec, specErr := b.sandboxSpec(req, image, command)
+	if specErr != nil {
+		return nil, specErr
 	}
-	req.Env["HOME"] = "/tmp"
-
-	// Build container spec
-	spec := &ContainerSpec{
-		Image:      image,
-		Command:    command,
-		Entrypoint: []string{}, // Clear entrypoint, use command directly
-		Env:        req.Env,
-		WorkDir:    "/workspace",
-		AutoRemove: true,
-		Network:    b.sandboxNetwork().String(),
-		User:       currentUser,
-		Labels: map[string]string{
-			"quicbaas.agent":   b.Type(),
-			"quicbaas.session": "pending",
-		},
-
-		// Trust dimension (container_trust.go / trust_policy.go). Every
-		// field is inert at its zero value, so a spawn that does not ask
-		// for trusted computing builds the same spec it always did.
-		ImageDigest:  req.ImageDigest,
-		TrustLevel:   req.TrustLevel,
-		TrustLabel:   req.TrustLabel,
-		ExpectedPCRs: req.ExpectedPCRs,
-	}
-
-	// Mount workspace if specified
-	if req.WorkDir != "" && req.WorkDir != WorkDirCurrent {
-		spec.Mounts = []ContainerMount{{
-			Source: req.WorkDir,
-			Target: "/workspace",
-		}}
-	}
-
-	// Extra mounts were authorized against the orchestrator's mount policy
-	// before the backend ever saw this request; append them verbatim.
-	spec.Mounts = append(spec.Mounts, req.ExtraMounts...)
 
 	// Mount the OpenCode config directory so the container has provider
 	// configuration and npm packages for custom providers like Ollama.
@@ -659,25 +1094,7 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 	// other's credentials (or the operator's own, unrelated, real config).
 	// Absent an account selection, fall back to the pre-existing behavior
 	// unchanged.
-	if req.AccountHomeDir != "" {
-		configDir := req.AccountHomeDir + "/.config/opencode"
-		if _, statErr := os.Stat(configDir); statErr == nil {
-			spec.Mounts = append(spec.Mounts, ContainerMount{
-				Source:   configDir,
-				Target:   "/home/agent/.config/opencode",
-				ReadOnly: true,
-			})
-		}
-	} else if home, _ := os.UserHomeDir(); home != "" {
-		configDir := home + "/.config/opencode"
-		if _, statErr := os.Stat(configDir); statErr == nil {
-			spec.Mounts = append(spec.Mounts, ContainerMount{
-				Source:   configDir,
-				Target:   "/home/agent/.config/opencode",
-				ReadOnly: true,
-			})
-		}
-	}
+	//
 
 	// Decouple the container lifetime from the spawning request, exactly as the
 	// persistent CLI path does (see spawnCLI). RunInteractive binds the
@@ -729,7 +1146,7 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 	}
 	if resp.Error != nil {
 		teardown()
-		return nil, &ProtocolError{Message: resp.Error.Message}
+		return nil, &PeerRPCError{Code: resp.Error.Code, Message: resp.Error.Message}
 	}
 
 	// Resolve model
@@ -756,7 +1173,7 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 	}
 	if resp.Error != nil {
 		teardown()
-		return nil, &ProtocolError{Message: resp.Error.Message}
+		return nil, &PeerRPCError{Code: resp.Error.Code, Message: resp.Error.Message}
 	}
 
 	// Parse session result
@@ -788,16 +1205,18 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 
 	now := time.Now().UnixNano()
 	sess := &acpSession{
-		id:           sessionID,
-		agentID:      agentSessionID,
-		transport:    transport,
-		procCancel:   procCancel,
-		model:        model,
-		workDir:      req.WorkDir,
-		projectID:    req.ProjectID,
-		env:          req.Env,
-		systemPrompt: req.SystemPrompt,
-		createdAt:    now,
+		id:             sessionID,
+		agentID:        agentSessionID,
+		transport:      transport,
+		procCancel:     procCancel,
+		model:          model,
+		workDir:        req.WorkDir,
+		projectID:      req.ProjectID,
+		env:            req.Env,
+		systemPrompt:   req.SystemPrompt,
+		createdAt:      now,
+		containerID:    proc.ContainerID,
+		containerImage: image,
 
 		// The container process outlives this call, so the env file it reads
 		// from is released by Close — not here.
@@ -824,10 +1243,11 @@ func (b *ACPBackend) spawnContainerJSONRPC(ctx context.Context, req *SpawnReques
 	}
 
 	return &Session{
-		ID:        sessionID,
-		Backend:   b.Type(),
-		Model:     model,
-		CreatedAt: now,
+		ID:          sessionID,
+		Backend:     b.Type(),
+		Model:       model,
+		CreatedAt:   now,
+		ContainerID: proc.ContainerID,
 	}, nil
 }
 
@@ -891,7 +1311,9 @@ type spawnPlan struct {
 // defaultHandshakeContent is the throwaway first message that makes the agent
 // CLI emit its stream-json init record. The protocol only produces it after
 // receiving input, so a spawn always pays for one round trip.
-const defaultHandshakeContent = "Initialize session. Respond with OK."
+func defaultHandshakeContent() string {
+	return workflowPrompts.MustRender("handshake", nil)
+}
 
 // handshakeContent returns the message that opens the subprocess: the replay
 // priming text for a replay resume, otherwise the throwaway handshake. A
@@ -901,7 +1323,7 @@ func (p spawnPlan) handshakeContent() string {
 	if p.priming != "" {
 		return p.priming
 	}
-	return defaultHandshakeContent
+	return defaultHandshakeContent()
 }
 
 // encodeStreamJSONUserMessage renders one newline-terminated stream-json user
@@ -943,40 +1365,23 @@ func applySessionPersistenceFlag(args []string, nativeResume bool) []string {
 	return out
 }
 
-// spawnCLI starts a persistent Claude Code subprocess using the stream-json
-// protocol. It reads the init message from stdout to obtain the session ID,
-// then stores the process and its pipes in the session for subsequent prompts.
+// spawnCLI starts a persistent Claude Code subprocess ON THE DAEMON HOST using
+// the stream-json protocol. It reads the init message from stdout to obtain the
+// session ID, then stores the process and its pipes in the session for
+// subsequent prompts.
+//
+// UNSANDBOXED BY CONSTRUCTION. This path runs the agent as a child of the
+// daemon, so dispatchSpawn reaches it only for a request whose effective
+// sandbox mode is None or Default; a Required request goes to
+// spawnContainerCLI, and one that cannot be containerized is refused (#741).
 //
 // The plan selects between a plain spawn and a resume; see spawnPlan.
 func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest, plan spawnPlan) (*Session, error) {
-	args := make([]string, len(b.config.Args))
-	copy(args, b.config.Args)
-
-	// Append extra args from the spawn request (e.g., --dangerously-skip-permissions).
-	args = append(args, req.ExtraArgs...)
-
-	args = applySessionPersistenceFlag(args, b.config.NativeSessionResume)
-
-	// A native resume hands the conversation back to the agent's own session
-	// store; nothing is re-sent by us.
-	if plan.resumeID != "" {
-		args = append(args, "--resume", plan.resumeID)
-	}
-
-	if b.config.TeamMode {
-		args = append(args, "--team")
-	}
-	if req.SystemPrompt != "" {
-		args = append(args, "--system-prompt", req.SystemPrompt)
-	}
-
 	model := req.Model
 	if model == "" {
 		model = b.config.DefaultModel
 	}
-	if model != "" {
-		args = append(args, "--model", model)
-	}
+	args := b.cliArgs(req, plan, model)
 
 	var env []string
 	for k, v := range req.Env {
@@ -1024,19 +1429,14 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest, plan spawn
 		return nil, &SpawnError{Command: b.config.Command, Cause: err}
 	}
 
-	scanner := bufio.NewScanner(stdoutPipe)
-	scanner.Buffer(make([]byte, streamJSONScannerBufferSize), streamJSONScannerBufferSize)
-
-	// Claude Code's stream-json mode emits the init message only after
-	// receiving the first user input. Send a handshake message to trigger it.
-
-	// reap waits for the subprocess exactly once, no matter how many goroutines
-	// race to it (the init/drain reader on EOF, or teardown on a spawn failure).
-	// cmd.Wait is not safe to call concurrently, so it is guarded by a Once.
-	var waitOnce sync.Once
-	reap := func() {
-		waitOnce.Do(func() { _ = cmd.Wait() })
-	}
+	// The reaper waits for the subprocess exactly once, no matter how many
+	// goroutines race to it (the init/drain reader on EOF, teardown on a spawn
+	// failure, and — once the session exists — its supervisor, Close, and the
+	// mid-flight subprocess-gone path). cmd.Wait is not safe to call
+	// concurrently, so every one of them goes through this value; it is carried
+	// onto the session below so the spawn's half and the session's half of the
+	// process's life share one Once rather than each holding their own.
+	reaper := &procReaper{cmd: cmd}
 
 	// teardown aborts a partially-spawned persistent subprocess: it closes
 	// stdin, cancels the process context (which SIGINTs the process through the
@@ -1045,124 +1445,40 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest, plan spawn
 	teardown := func() {
 		_ = stdinPipe.Close()
 		procCancel()
-		reap()
+		// A teardown reaps to avoid a zombie; the spawn is already failing and
+		// is about to return the reason it failed, which a wait error would
+		// only displace.
+		_ = reaper.reap()
 	}
 
-	handshake, handshakeErr := encodeStreamJSONUserMessage(plan.handshakeContent())
-	if handshakeErr != nil {
-		teardown()
-		return nil, &SpawnError{Command: b.config.Command, Cause: handshakeErr}
-	}
-	if _, writeErr := stdinPipe.Write(handshake); writeErr != nil {
-		teardown()
-		return nil, &SpawnError{Command: b.config.Command, Cause: writeErr}
-	}
-
-	// Read the init message to obtain session_id and model.
-	// Claude Code can take 30+ seconds to initialize (gopls, plugins, etc.),
-	// so we read with a timeout to avoid blocking indefinitely.
-	type initResult struct {
-		msg streamJSONMessage
-		err error
-	}
-	initCh := make(chan initResult, 1)
-	go func() {
-		for scanner.Scan() {
-			var msg streamJSONMessage
-			if jsonErr := json.Unmarshal(scanner.Bytes(), &msg); jsonErr != nil {
-				continue
-			}
-			if msg.Type == "system" && msg.Subtype == "init" {
-				initCh <- initResult{msg: msg}
-				return
-			}
-		}
-		// Scanner exhausted before the init message: the subprocess exited
-		// during startup. Reap it so its exit code is known, then build an
-		// actionable error carrying the exit code and stderr tail.
-		scanErr := scanner.Err()
-		if scanErr == nil {
-			reap()
-			scanErr = b.processExitedError(cmd, stderr)
-		}
-		initCh <- initResult{err: scanErr}
-	}()
-
-	// Wait for init message with 5-minute timeout (Claude Code startup can be slow).
-	initTimeout := 5 * time.Minute
-	var initMsg streamJSONMessage
-	select {
-	case <-ctx.Done():
-		teardown()
-		return nil, &SpawnError{Command: b.config.Command, Cause: ctx.Err()}
-	case <-time.After(initTimeout):
-		teardown()
-		return nil, &SpawnError{Command: b.config.Command, Cause: &StreamJSONError{
-			Command: b.config.Command,
-			Result:  "timed out waiting for init message after " + initTimeout.String(),
-		}}
-	case result := <-initCh:
-		if result.err != nil {
-			teardown()
-			return nil, &SpawnError{Command: b.config.Command, Cause: result.err}
-		}
-		initMsg = result.msg
+	open, openErr := b.openStreamJSON(ctx, &streamJSONProc{
+		stdin:  stdinPipe,
+		stdout: stdoutPipe,
+		gone: func() error {
+			// Reap so the exit code is known, then build an actionable error
+			// carrying that code and the stderr tail. Same as teardown: the
+			// report processExitedError builds is the answer, not the wait
+			// error it would displace.
+			_ = reaper.reap()
+			return b.processExitedError(cmd, stderr)
+		},
+	}, plan, model, teardown)
+	if openErr != nil {
+		return nil, openErr
 	}
 
-	sessionID := initMsg.SessionID
-	if sessionID == "" {
-		var genErr error
-		sessionID, genErr = generateSessionID()
-		if genErr != nil {
-			teardown()
-			return nil, &SpawnError{Command: b.config.Command, Cause: genErr}
-		}
-	}
-	// A resumed session keeps the identifier the operator already holds, so
-	// the agent's own reported session ID never leaks into the registry.
-	if plan.registerID != "" {
-		sessionID = plan.registerID
-	}
-
-	if initMsg.Model != "" {
-		model = initMsg.Model
-	}
-
-	// Drain the handshake response (assistant + result messages) so the
-	// scanner is positioned for the first real prompt's response.
-	drainCh := make(chan struct{}, 1)
-	go func() {
-		for scanner.Scan() {
-			var msg streamJSONMessage
-			if jsonErr := json.Unmarshal(scanner.Bytes(), &msg); jsonErr != nil {
-				continue
-			}
-			if msg.Type == "result" {
-				break
-			}
-		}
-		drainCh <- struct{}{}
-	}()
-	select {
-	case <-drainCh:
-		// Handshake response consumed
-	case <-time.After(2 * time.Minute):
-		// Handshake timed out, but session is still usable
-	case <-ctx.Done():
-		teardown()
-		return nil, &SpawnError{Command: b.config.Command, Cause: ctx.Err()}
-	}
-
-	now := time.Now().Unix()
+	now := time.Now().UnixNano()
 	sess := &acpSession{
-		id:           sessionID,
+		id:           open.sessionID,
+		tenantID:     StorageTenant(ctx),
 		cmd:          cmd,
+		reaper:       reaper,
 		procCancel:   procCancel,
 		stderr:       stderr,
 		stdin:        stdinPipe,
-		stdout:       scanner,
+		stdout:       open.scanner,
 		projectID:    req.ProjectID,
-		model:        model,
+		model:        open.model,
 		workDir:      req.WorkDir,
 		env:          req.Env,
 		systemPrompt: req.SystemPrompt,
@@ -1173,16 +1489,23 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest, plan spawn
 
 	b.storeSession(sess)
 
+	// THE PROCESS GETS AN OWNER THAT OUTLIVES ITS SPAWNER, and it gets one the
+	// moment the session is addressable. Before this, the only thing waiting on
+	// the agent was whichever caller happened to fail next; a session parked on
+	// a question had nobody, and a process that died there stayed a zombie the
+	// daemon reported as active (#187). See acp_process_supervisor.go.
+	b.superviseProcess(sess)
+
 	pid := 0
 	if cmd.Process != nil {
 		pid = cmd.Process.Pid
 	}
 
 	return &Session{
-		ID:        sessionID,
+		ID:        open.sessionID,
 		ProjectID: req.ProjectID,
 		Backend:   b.Type(),
-		Model:     model,
+		Model:     open.model,
 		Status:    SessionStateActive,
 		PID:       pid,
 		WorkDir:   req.WorkDir,
@@ -1256,7 +1579,7 @@ func (b *ACPBackend) spawnJSONRPC(ctx context.Context, req *SpawnRequest) (*Sess
 
 	if resp.Error != nil {
 		_ = transport.Close()
-		return nil, &ProtocolError{Message: resp.Error.Message}
+		return nil, &PeerRPCError{Code: resp.Error.Code, Message: resp.Error.Message}
 	}
 
 	model := req.Model
@@ -1281,7 +1604,7 @@ func (b *ACPBackend) spawnJSONRPC(ctx context.Context, req *SpawnRequest) (*Sess
 
 	if resp.Error != nil {
 		_ = transport.Close()
-		return nil, &ProtocolError{Message: resp.Error.Message}
+		return nil, &PeerRPCError{Code: resp.Error.Code, Message: resp.Error.Message}
 	}
 
 	resultBytes, err := json.Marshal(resp.Result)
@@ -1296,7 +1619,7 @@ func (b *ACPBackend) spawnJSONRPC(ctx context.Context, req *SpawnRequest) (*Sess
 		return nil, &ProtocolError{Message: "failed to parse session result", Cause: err}
 	}
 
-	now := time.Now().Unix()
+	now := time.Now().UnixNano()
 	sess := &acpSession{
 		id:        sessionResult.SessionID,
 		transport: transport,
@@ -1346,10 +1669,11 @@ func (b *ACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*PromptRes
 	if !ok {
 		return nil, &SessionNotFoundError{SessionID: req.SessionID}
 	}
-	sess.lastActivity.Store(time.Now().Unix())
+	sess.lastActivity.Store(time.Now().UnixNano())
 
-	// CLI stream-json mode: send via persistent subprocess
-	if sess.cmd != nil {
+	// CLI stream-json mode: send over the agent's persistent stdio, whether it
+	// is a host subprocess or a container.
+	if sess.streamJSON() {
 		return b.promptStreamJSON(ctx, sess, req)
 	}
 
@@ -1359,8 +1683,16 @@ func (b *ACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*PromptRes
 	}
 
 	// One-shot CLI mode: no persistent subprocess, spawn fresh process per prompt
-	if b.config.CLIMode {
+	if b.config.isStreamJSON() {
 		return b.promptOneShotCLI(ctx, sess, req)
+	}
+
+	// Exec transport: one command per turn, into this session's container when
+	// it has one, otherwise a fresh host process. Checked AFTER the persistent
+	// transports so a session that somehow holds both is driven by the live
+	// one rather than by its configuration.
+	if b.config.isExec() {
+		return b.promptExec(ctx, sess, req)
 	}
 
 	return nil, &SessionNotFoundError{SessionID: req.SessionID}
@@ -1397,7 +1729,7 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 		// subprocess is gone. Surface why it exited — its code and stderr tail —
 		// instead of the opaque pipe error, and mark the session closed so the
 		// UI shows a real failure reason and follow-ups fail fast.
-		return nil, &PromptError{SessionID: sess.id, Cause: b.subprocessGoneError(sess)}
+		return nil, &PromptError{SessionID: sess.id, Cause: b.agentGoneError(sess)}
 	}
 
 	// Read response lines until we get a "result" type message.
@@ -1433,7 +1765,7 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 			// subprocess exit code and stderr tail rather than a bare scan error.
 			scanErr := sess.stdout.Err()
 			if scanErr == nil {
-				scanErr = b.subprocessGoneError(sess)
+				scanErr = b.agentGoneError(sess)
 			}
 			resultCh <- scanResult{msg: nil, err: scanErr}
 		}()
@@ -1475,9 +1807,19 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 
 			case "result":
 				if sr.msg.IsError {
+					// The evidence is taken from the RESULT message's own
+					// aggregate rather than from assistantUsage: the question
+					// it answers is whether the CLI ever reached the model at
+					// all, and a nil aggregate must stay distinguishable from
+					// a zero one (see TurnFailureEvidence.PreFirstTurn).
 					return nil, &PromptError{SessionID: sess.id, Cause: &StreamJSONError{
 						Command: b.config.Command,
 						Result:  sr.msg.Result,
+						TurnFailureEvidence: TurnFailureEvidence{
+							TerminalReason: sr.msg.TerminalReason,
+							NumTurns:       sr.msg.NumTurns,
+							Usage:          sr.msg.Usage,
+						},
 					}}
 				}
 				// Use accumulated content blocks, or fall back to the result text.
@@ -1572,9 +1914,68 @@ func (b *ACPBackend) promptOneShotCLI(ctx context.Context, sess *acpSession, req
 		Result  string      `json:"result"`
 		IsError bool        `json:"is_error"`
 		Usage   *TokenUsage `json:"usage"`
+
+		// Same structured account the persistent path reads; see
+		// streamJSONMessage and TurnFailureEvidence. `--print
+		// --output-format json` emits the identical result object.
+		TerminalReason string `json:"terminal_reason"`
+		NumTurns       int    `json:"num_turns"`
 	}
+	// A RUN THAT WROTE NOTHING DID NOT TAKE A TURN (#241).
+	//
+	// This is checked before the parse because an empty buffer fails
+	// json.Unmarshal ("unexpected end of JSON input") and used to fall through
+	// to the raw-text fallback below, which produced a completed turn whose one
+	// content block held the empty string — BYTE-FOR-BYTE what a CLI that
+	// reported {"result":""} produces. So "the CLI produced nothing" and "the
+	// CLI produced an empty result" were the same PromptResponse, and no caller
+	// could tell a dead process from an empty answer.
+	//
+	// The distinction is the one this package already draws for token counts:
+	// an ABSENCE is not a measurement of zero. A result object saying the
+	// answer was empty is a claim the CLI made; a silent exit is the absence of
+	// any claim, and reporting it as a completed turn is the fail-open.
+	//
+	// This is NOT the open question in #241. That question is what to do with
+	// stdout the SDLC module asked to be JSON and could not parse — text, a
+	// truncated object — and all three options it lists concern CONTENT. None
+	// of them makes no content at all a successful turn, and there is no
+	// backend for which a silent exit is a working answer: ParseFinishReport
+	// already rejects such a turn downstream, so this only moves the diagnosis
+	// to the CLI that produced nothing instead of naming the finish schema.
+	if len(bytes.TrimSpace(stdout.Bytes())) == 0 {
+		return nil, &PromptError{SessionID: sess.id, Cause: &OneShotExecutionError{
+			Command: b.config.Command,
+			Stderr:  stderr.String(),
+			Cause:   ErrOneShotNoOutput,
+		}}
+	}
+
 	if jsonErr := json.Unmarshal(stdout.Bytes(), &result); jsonErr != nil {
-		// Not JSON — treat raw stdout as text response
+		// Not JSON — treat raw stdout as text response.
+		//
+		// THE FALLBACK IS KEPT AND IS NO LONGER SILENT. Whether the one-shot
+		// path may accept unparseable stdout as a turn at all is the behaviour
+		// question #241 reserves for the owner — a backend whose CLI does not
+		// honour --output-format json works today BECAUSE of this branch, and
+		// closing it would fail those spawns. What is fixed here is that taking
+		// the branch left no trace: a result truncated by a killed process, or
+		// one carrying a number outside int64, arrived as an ordinary
+		// end_turn whose "answer" was the broken bytes, and nothing anywhere
+		// said the SDLC module had given up parsing.
+		//
+		// THE BYTES ARE COUNTED, NOT LOGGED. Stdout is model output produced in
+		// a process holding credential material in its environment, and this
+		// package does not render such buffers into log lines — see
+		// StreamJSONProcessExitedError.Stderr, which carries the whole argument
+		// on its own field. (OneShotExecutionError.Stderr states the same rule
+		// but forwards to that one for the reasoning; citing the forwarder is
+		// how a rule gets diluted the next time somebody follows the pointer.)
+		if b.logger != nil {
+			b.logger.Warnf(
+				"acp_backend: one-shot result was not parseable JSON; accepted as raw text: command=%s session=%s stdout_bytes=%d err=%s",
+				b.config.Command, sess.id, stdout.Len(), jsonErr.Error())
+		}
 		resp := &PromptResponse{
 			SessionID:  sess.id,
 			Content:    []ContentBlock{{Type: "text", Text: stdout.String()}},
@@ -1589,6 +1990,11 @@ func (b *ACPBackend) promptOneShotCLI(ctx context.Context, sess *acpSession, req
 		return nil, &PromptError{SessionID: sess.id, Cause: &OneShotExecutionError{
 			Command: b.config.Command,
 			Stderr:  result.Result,
+			TurnFailureEvidence: TurnFailureEvidence{
+				TerminalReason: result.TerminalReason,
+				NumTurns:       result.NumTurns,
+				Usage:          result.Usage,
+			},
 		}}
 	}
 
@@ -1615,6 +2021,14 @@ func (b *ACPBackend) promptOneShotCLI(ctx context.Context, sess *acpSession, req
 // A turn that reported no counts at all yields nil, never a zero-valued
 // TokenUsage: "not measured" and "measured as zero" must stay distinguishable
 // so recordTurnUsage does not write a meaningless ledger entry.
+//
+// THE Empty TESTS HERE ARE SOUND ONLY BECAUSE NEGATIVES CANNOT REACH THEM.
+// Both arguments were decoded through TokenUsage.UnmarshalJSON, which clamps
+// each dimension, so no dimension can cancel another and sum a measured turn to
+// zero — which is how a real turn used to be discarded here as unmeasured
+// (#242). Nothing in this function detects that on its own; it relies on the
+// decode boundary, and a future caller that builds a TokenUsage by hand from
+// untrusted numbers must call normalize first.
 func collectStreamJSONUsage(result, accumulated *TokenUsage) *TokenUsage {
 	if !result.Empty() {
 		return result
@@ -1684,7 +2098,7 @@ func (b *ACPBackend) promptJSONRPC(ctx context.Context, sess *acpSession, req *P
 	}
 
 	if resp.Error != nil {
-		return nil, &PromptError{SessionID: req.SessionID, Cause: &ProtocolError{Message: resp.Error.Message}}
+		return nil, &PromptError{SessionID: req.SessionID, Cause: &PeerRPCError{Code: resp.Error.Code, Message: resp.Error.Message}}
 	}
 
 	// Build response from accumulated notification content.
@@ -1767,30 +2181,77 @@ func (b *ACPBackend) Status(ctx context.Context, sessionID string) (*SessionStat
 	if !ok {
 		return nil, &SessionNotFoundError{SessionID: sessionID}
 	}
-	now := time.Now().Unix()
+	// SECONDS OUT, NANOSECONDS IN. createdAt is Unix nanoseconds like every
+	// other session instant; Uptime is a duration in SECONDS, which is what
+	// the proto field `uptime_seconds` carries and what the REST handler
+	// multiplies by time.Second. Subtracting the two directly — a seconds
+	// clock less a nanosecond instant — is a negative number the width of
+	// the epoch.
+	uptime := time.Duration(time.Now().UnixNano() - sess.createdAt)
 
-	// Determine session state based on mode.
-	state := SessionStateIdle
-	switch {
-	case sess.closed.Load():
-		state = SessionStateClosed
-	case sess.cmd != nil:
-		// CLI stream-json mode: check if the subprocess is still running.
-		if sess.cmd.ProcessState != nil && sess.cmd.ProcessState.Exited() {
-			state = SessionStateClosed
-		} else {
-			state = SessionStateActive
-		}
-	case sess.transport != nil && sess.transport.closed.Load():
-		state = SessionStateClosed
+	state, err := b.sessionState(ctx, sess)
+	if err != nil {
+		return nil, err
 	}
 
 	return &SessionStatus{
 		SessionID:    sessionID,
 		State:        state,
 		LastActivity: sess.lastActivity.Load(),
-		Uptime:       now - sess.createdAt,
+		Uptime:       int64(uptime.Seconds()),
 	}, nil
+}
+
+// sessionState decides what one live session record is worth reporting as.
+//
+// It answers an ERROR rather than a state when the session's liveness cannot
+// be established, because every consumer of this answer — the stall detector
+// above all — treats "not live" as grounds to end work, and a guess in that
+// direction ends work that is still running.
+func (b *ACPBackend) sessionState(ctx context.Context, sess *acpSession) (SessionState, error) {
+	// The session's own record outranks anything the host can be asked. A
+	// concluded session is closed, and a supervisor that observed the process
+	// terminate has the authoritative answer already. This is the branch that
+	// makes a killed agent report as closed: cmd.ProcessState is populated
+	// only by Wait, so a process that died with nobody waiting on it reported
+	// ACTIVE for as long as its zombie survived (#187).
+	if sess.closed.Load() || sess.exited() != nil {
+		return SessionStateClosed, nil
+	}
+
+	// A CONTAINERIZED SESSION IS ALIVE ONLY WHILE ITS CONTAINER IS, and the
+	// container is the one thing here nothing else observes. There is no
+	// *exec.Cmd for the supervisor to Wait on — `docker run -i --rm` belongs
+	// to the container runtime (acp_backend_container_cli.go) — and the death
+	// of the container reaches this daemon as EOF on a stdio nobody is reading
+	// between prompts. So a worker container that died mid-execute went on
+	// being reported ACTIVE indefinitely, holding its job's lease and its
+	// project's only slot (go-quicbaas#774). The runtime is asked instead.
+	if sess.containerID != "" && b.containerRuntime != nil {
+		running, err := b.containerRuntime.IsRunning(ctx, sess.containerID)
+		if err != nil {
+			// A container the runtime no longer knows is gone: `--rm` removed
+			// it when it exited. That is an answer, not a failure to get one.
+			var missing *ContainerNotFoundError
+			if errors.As(err, &missing) {
+				return SessionStateClosed, nil
+			}
+			return "", err
+		}
+		if !running {
+			return SessionStateClosed, nil
+		}
+	}
+
+	switch {
+	case sess.streamJSON():
+		// CLI stream-json mode: the agent is running until the supervisor says
+		// otherwise (host subprocess) or until its container stops.
+		return SessionStateActive, nil
+	case sess.transport != nil && sess.transport.closed.Load():
+		return SessionStateClosed, nil
+	}
+	return SessionStateIdle, nil
 }
 
 // Close terminates an ACP session. For CLI stream-json sessions, it closes stdin
@@ -1837,14 +2298,39 @@ func (b *ACPBackend) Close(ctx context.Context, sessionID string) error {
 	// process context fires the factory's Cancel hook (SIGINT) on the detached
 	// process-lifetime context — the only place this persistent process is ever
 	// torn down. cmd.WaitDelay (set at creation) bounds the reap.
-	if sess.cmd != nil {
+	if sess.streamJSON() {
 		_ = sess.stdin.Close()
 		if sess.procCancel != nil {
 			sess.procCancel()
-		} else if sess.cmd.Process != nil {
+		} else if sess.cmd != nil && sess.cmd.Process != nil {
 			_ = sess.cmd.Process.Signal(os.Interrupt)
 		}
-		_ = sess.cmd.Wait()
+		// Through the shared reaper, never cmd.Wait directly: the session's
+		// supervisor is already parked in that Wait, and a second one would be
+		// the concurrent call os/exec forbids. This blocks until the supervisor's
+		// wait returns, which is what Close wants — the process is reaped before
+		// Close reports it closed. The wait error is not Close's answer: Close
+		// succeeded if the process is gone, however it went, and how it went is
+		// on the recorded exit for whoever asks.
+		_ = sess.reapProcess()
+		return nil
+	}
+
+	// Exec transport: the SESSION IS THE CONTAINER, so closing the session is
+	// removing it. There is no transport and no subprocess to fall through to,
+	// and spawnContainerExec deliberately turns AutoRemove off so the lifetime
+	// is owned here rather than by whatever kills the keep-alive first — a
+	// container removed from under Close is a container Close cannot report on.
+	// Without this branch an exec session reaches the "nothing to close" return
+	// below and leaks a running container per review.
+	if sess.containerID != "" && b.containerRuntime != nil && b.config.isExec() {
+		// Stop first so the keep-alive gets a chance to exit cleanly, then
+		// remove — Remove force-removes a container still running, so a Stop
+		// that fails is not fatal to the removal.
+		_ = b.containerRuntime.Stop(ctx, sess.containerID)
+		if err := b.containerRuntime.Remove(ctx, sess.containerID); err != nil {
+			return &ContainerStopError{ContainerID: sess.containerID, Cause: err}
+		}
 		return nil
 	}
 
@@ -1906,38 +2392,53 @@ func (b *ACPBackend) ToolGuidance() string {
 // acpModelCatalog maps the command basename to the curated list of supported
 // model identifiers. The catalog is authoritative for in-process ACP backends;
 // remote daemon registrations may extend it via their own Capabilities reply.
+//
+// THIS CATALOG TRACKS software/conventions/model-usage.md IN THE COMPANY REPO,
+// which is the source of truth for which models may be used at all. Two rules
+// from it bind every entry below, and both are the reason this list is shorter
+// than it was:
+//
+//   - ONLY THE LATEST VERSION OF EACH TIER. No configuration anywhere may pin
+//     an older model, so the 4.5 family is gone rather than kept as a
+//     compatibility courtesy. An entry that still resolves is exactly how a
+//     downgrade happens quietly.
+//   - THE FLOOR IS OPUS 5 for substantive work, with Sonnet 5 reserved for
+//     trivial mechanical tasks. Haiku is prohibited outright, so listing it
+//     here — advertising it as selectable — is the configuration equivalent of
+//     permitting it.
+//
+// A stale entry here is not cosmetic: this list is what a caller picks from,
+// so a name that no longer exists surfaces as a provider error nobody
+// attributes to configuration, and a name that DOES still exist silently runs
+// work below the floor.
+//
+// Removed rather than guessed: opencode's google/* entries named Gemini 2.5,
+// and nothing in model-usage.md establishes a current Gemini version to
+// replace them with. Inventing a version string would recreate precisely the
+// staleness this change exists to remove. If those models are wanted, the
+// version belongs in model-usage.md first and here second.
 var acpModelCatalog = map[string][]string{
 	"claude": {
 		"claude-fable-5",
 		"claude-opus-5",
 		"claude-sonnet-5",
-		"claude-haiku-4-5-20251001",
-		"claude-opus-4-5",
-		"claude-sonnet-4-5",
-		"claude-haiku-4-5",
 	},
 	"claude-code": {
 		"claude-fable-5",
 		"claude-opus-5",
 		"claude-sonnet-5",
-		"claude-haiku-4-5-20251001",
-		"claude-opus-4-5",
-		"claude-sonnet-4-5",
-		"claude-haiku-4-5",
 	},
+	// Codex runs the latest GPT model. Verified 2026-08-21 against the live
+	// pin point model-usage.md names, ~/.codex/config.toml, rather than taken
+	// from the document alone.
 	"codex": {
-		"codex-mini-latest",
-		"o4-mini",
-		"o3",
+		"gpt-5.5",
 	},
 	"opencode": {
-		"anthropic/claude-opus-4-5",
-		"anthropic/claude-sonnet-4-5",
-		"anthropic/claude-haiku-4-5",
-		"openai/o4-mini",
-		"openai/o3",
-		"google/gemini-2.5-pro",
-		"google/gemini-2.5-flash",
+		"anthropic/claude-fable-5",
+		"anthropic/claude-opus-5",
+		"anthropic/claude-sonnet-5",
+		"openai/gpt-5.5",
 	},
 }
 

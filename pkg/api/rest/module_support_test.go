@@ -166,6 +166,7 @@ func TestBindRoute_ProjectsUpstreamQRDBIdentity(t *testing.T) {
 	var gotRoles []string
 	var gotSubjectOK bool
 	var gotTenant string
+	var gotAuthenticated bool
 	spec := RouteSpec{Method: "GET", Pattern: "/api/v1/kms/keys", Auth: RouteAuthPermission, Resource: "keys", Action: "get",
 		Handler: func(*Server) http.HandlerFunc {
 			return func(w http.ResponseWriter, r *http.Request) {
@@ -174,6 +175,7 @@ func TestBindRoute_ProjectsUpstreamQRDBIdentity(t *testing.T) {
 				subject, ok := auth.SubjectFromContext(r.Context())
 				gotSubjectOK = ok
 				gotTenant = subject.TenantID
+				gotAuthenticated = subject.Authenticated
 				w.WriteHeader(http.StatusOK)
 			}
 		},
@@ -204,6 +206,14 @@ func TestBindRoute_ProjectsUpstreamQRDBIdentity(t *testing.T) {
 	}
 	if gotTenant != "tenant-a" {
 		t.Errorf("subject tenant = %q, want %q", gotTenant, "tenant-a")
+	}
+	// The projected subject must be marked Authenticated: a verified qrdb
+	// identity is authenticated, and handlers that gate on the flag
+	// (requireSubject, and impersonation actor resolution in
+	// AdminManager.StartImpersonation — go-quicbaas#383) fail closed
+	// without it.
+	if !gotAuthenticated {
+		t.Error("projected subject must be Authenticated for a verified qrdb identity")
 	}
 }
 

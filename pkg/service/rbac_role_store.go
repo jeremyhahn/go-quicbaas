@@ -61,27 +61,35 @@ func (r *rbacService) roleStore(ctx context.Context, op string) (*iam.IdentitySt
 	return is, tenantID, nil
 }
 
-// findRoleIDByName resolves a role name to its identifier within a tenant.
-// It returns a typed NotFoundError when no role with that name exists.
+// findRoleIDByName resolves a role name to its identifier within a tenant,
+// through the store's by-name LOOKUP. It returns a typed NotFoundError when no
+// role with that name exists, and an internal error when the store could not be
+// asked — two conditions callers must tell apart.
+//
+// It used to list the tenant's roles and scan the page. That was wrong against
+// the store the server actually configures: `ListOptions{Limit: 0}` becomes
+// qrdb's `PageSize: 0`, which qrdb reads as its DEFAULT page of 100 rather than
+// "all rows", so every role past the first hundred was invisible here — a
+// revocation that could not run, a deletion that 404'd on a role that exists,
+// and a duplicate-name check that passed for a name already taken
+// (go-quicbaas#694, the same defect as #541 but on the live RBAC path).
 func findRoleIDByName(ctx context.Context, is *iam.IdentityStore, tenantID, name, op string) (string, error) {
-	roles, err := is.ListRoles(ctx, tenantID, iam.ListOptions{})
+	role, err := is.GetRoleByName(ctx, tenantID, name)
 	if err != nil {
+		if iam.IsRoleNotFound(err) {
+			return "", &errors.QBError{
+				Code: errors.ErrNotFound,
+				Op:   op,
+				Err:  &api.NotFoundError{Resource: "role", ID: name},
+			}
+		}
 		return "", &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   op,
 			Err:  err,
 		}
 	}
-	for _, role := range roles {
-		if role.Name == name {
-			return role.ID, nil
-		}
-	}
-	return "", &errors.QBError{
-		Code: errors.ErrNotFound,
-		Op:   op,
-		Err:  &api.NotFoundError{Resource: "role", ID: name},
-	}
+	return role.ID, nil
 }
 
 // resolveUserAndRole resolves the request user (by username) and role (by name)
@@ -183,12 +191,21 @@ func (r *rbacService) CreateRole(ctx context.Context, req *AuthCreateRoleRequest
 	}
 
 	// Reject duplicate role names within the tenant.
-	if _, err := findRoleIDByName(ctx, is, tenantID, req.RoleName, op); err == nil {
+	//
+	// The three outcomes are distinct and all three matter: the name resolves
+	// (refuse the duplicate), the tenant holds no such role (proceed), or the
+	// store could not be asked (refuse the create). Only the middle case may
+	// continue — admitting a create because the lookup FAILED would let a store
+	// outage produce the duplicate this check exists to prevent.
+	switch _, err := findRoleIDByName(ctx, is, tenantID, req.RoleName, op); {
+	case err == nil:
 		return nil, &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   op,
 			Err:  &api.InvalidInputError{Message: "role already exists: " + req.RoleName},
 		}
+	case !errors.IsNotFound(err):
+		return nil, err
 	}
 
 	role, err := is.CreateRole(ctx, tenantID, iam.CreateRoleOptions{

@@ -229,29 +229,6 @@ func TestDisableKeyVersion_ZeroVersion(t *testing.T) {
 // checkAuth Tests
 // =============================================================================
 
-func TestQuicBaaS_CheckAuth_AuthDisabled(t *testing.T) {
-	db := &quicBaaS{
-		config: &ServiceConfig{
-			EnableAuth: false,
-		},
-	}
-
-	err := db.checkAuth(context.Background(), "read")
-	require.NoError(t, err)
-}
-
-func TestQuicBaaS_CheckAuth_AuthEnabled_NoToken(t *testing.T) {
-	db := &quicBaaS{
-		config: &ServiceConfig{
-			EnableAuth: true,
-		},
-	}
-
-	err := db.checkAuth(context.Background(), "write")
-	require.Error(t, err)
-	// Should fail because no token in context
-}
-
 // =============================================================================
 // Delegation Success Path Tests
 // These test the case where the KMS/Crypto service IS available

@@ -34,11 +34,11 @@ import (
 func seedPendingUser(t *testing.T, storage *iam.MemoryStorage, tenantID, userID, email string) {
 	t.Helper()
 	err := storage.CreateUser(context.Background(), &iam.User{
-		ID:       userID,
-		TenantID: tenantID,
-		Email:    email,
-		Name:     "Pending User",
-		State:    iam.UserStatePending,
+		ID:        userID,
+		TenantID:  tenantID,
+		Email:     email,
+		Name:      "Pending User",
+		Lifecycle: iam.LifecyclePending,
 	})
 	require.NoError(t, err)
 }
@@ -51,7 +51,7 @@ func TestApproveUser_Success(t *testing.T) {
 	defer cleanup()
 
 	const tenantID = "acme"
-	const userID = "pending-1"
+	const userID = "75"
 	seedPendingUser(t, memStorage, tenantID, userID, "pending-1@example.com")
 
 	req := httptest.NewRequest(http.MethodPost,
@@ -77,7 +77,7 @@ func TestRejectUser_Success(t *testing.T) {
 	defer cleanup()
 
 	const tenantID = "acme"
-	const userID = "pending-2"
+	const userID = "76"
 	seedPendingUser(t, memStorage, tenantID, userID, "pending-2@example.com")
 
 	body := strings.NewReader(`{"reason":"spam signup"}`)

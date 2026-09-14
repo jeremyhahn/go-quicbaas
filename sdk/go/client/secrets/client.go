@@ -107,8 +107,11 @@ type EnsureSecretRequest struct {
 	// "numeric", "raw". Required.
 	Encoding string
 
-	// TenantID optionally overrides the context tenant for this
-	// call. Empty means "use context tenant".
+	// TenantID names the tenant that owns the secret. It must be the
+	// caller's own tenant — the server refuses a request that names
+	// any other, including the system tenant naming a tenant — and it
+	// selects both the storage namespace and the tenant-keyed DEK.
+	// Empty means "my own tenant" and is the usual value.
 	TenantID string
 }
 

@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"sync"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -92,12 +93,6 @@ type XKMSWebAuthnManager struct {
 	// can verify the assertion against the SAME user the ceremony began
 	// for (the user-identified flow), not a discoverable nil user.
 	loginSessions sync.Map // map[string]loginHandoff
-
-	// aaguidAllowlist is the optional FIDO2 AAGUID enforcement gate.
-	// Stored as an atomic-loaded value so SetAAGUIDAllowlist races
-	// safely with concurrent ceremonies. Nil disables enforcement
-	// entirely (xkms accepts any authenticator).
-	aaguidAllowlist atomicAllowlist
 }
 
 // loginHandoff is the per-ceremony record stashed at BeginLogin time and
@@ -109,30 +104,6 @@ type loginHandoff struct {
 	userHandle []byte
 }
 
-// atomicAllowlist holds an *AAGUIDAllowlist behind a sync.RWMutex.
-// We avoid sync/atomic on a typed pointer because it makes the code
-// portable across pre-generic releases without resorting to unsafe.
-type atomicAllowlist struct {
-	mu        sync.RWMutex
-	allowlist *AAGUIDAllowlist
-}
-
-// SetAAGUIDAllowlist swaps in a new allowlist. Pass nil to disable
-// AAGUID enforcement.
-func (m *XKMSWebAuthnManager) SetAAGUIDAllowlist(allowlist *AAGUIDAllowlist) {
-	m.aaguidAllowlist.mu.Lock()
-	m.aaguidAllowlist.allowlist = allowlist
-	m.aaguidAllowlist.mu.Unlock()
-}
-
-// allowlist returns the current AAGUID allowlist, or nil when none is
-// configured.
-func (m *XKMSWebAuthnManager) allowlist() *AAGUIDAllowlist {
-	m.aaguidAllowlist.mu.RLock()
-	defer m.aaguidAllowlist.mu.RUnlock()
-	return m.aaguidAllowlist.allowlist
-}
-
 // WebAuthnUserResolver is the narrow seam FinishLogin uses to resolve the
 // canonical broker iam.User after a successful assertion. It is satisfied by
 // iam.UserStorage (GetUserByEmail), so the production wiring hands the same
@@ -140,9 +111,9 @@ func (m *XKMSWebAuthnManager) allowlist() *AAGUIDAllowlist {
 // the interface to a single method avoids the manager taking a dependency on
 // the full UserStorage surface.
 type WebAuthnUserResolver interface {
-	// GetUserByEmail returns the canonical user for the given email, carrying
-	// the external string ID and the qrdb-resolved role set.
-	GetUserByEmail(ctx context.Context, email string) (*User, error)
+	// GetUserByEmail returns the canonical user for the given email within a
+	// tenant, carrying the qrdb Snowflake id and the qrdb-resolved role set.
+	GetUserByEmail(ctx context.Context, tenantID, email string) (*User, error)
 }
 
 // SetUserResolver wires the canonical user resolver used by FinishLogin to map
@@ -199,34 +170,83 @@ func (m *XKMSWebAuthnManager) BeginRegistration(ctx context.Context, tenantID, u
 
 // FinishRegistration completes the registration ceremony by resolving
 // the stashed xkms session id and forwarding the parsed credential.
-func (m *XKMSWebAuthnManager) FinishRegistration(ctx context.Context, tenantID, userID string, credential map[string]interface{}) error {
+//
+// It returns what the assurance gate PROVED about the authenticator, so a
+// caller that mints a session for the credential it just enrolled can describe
+// it accurately. The result is unforgeable — only verifiers in this package
+// produce one — so handing it to a handler is safe in a way handing it a
+// string never was.
+//
+// A nil result with a nil error means the ceremony completed but nothing about
+// the authenticator's storage was established: the caller must then not claim
+// hardware.
+func (m *XKMSWebAuthnManager) FinishRegistration(ctx context.Context, tenantID, userID string, credential map[string]interface{}) (*AttestationResult, error) {
 	svc, err := m.factory.ServiceFor(ctx, tenantID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	v, ok := m.regSessions.Load(m.regKey(tenantID, userID))
 	if !ok {
-		return &WebAuthnFactoryConfigError{Field: "registration session not found"}
+		return nil, &WebAuthnFactoryConfigError{Field: "registration session not found"}
 	}
 	sessionID, ok := v.(string)
 	if !ok {
-		return &WebAuthnFactoryConfigError{Field: "registration session not found"}
+		return nil, &WebAuthnFactoryConfigError{Field: "registration session not found"}
 	}
 	parsed, err := parseCredentialCreationMap(credential)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if allowlist := m.allowlist(); allowlist != nil {
-		aaguid := parsed.Response.AttestationObject.AuthData.AttData.AAGUID
-		if aErr := allowlist.Check(aaguid); aErr != nil {
-			return aErr
-		}
-	}
+	// The attestation assurance gate — AAGUID allowlist included — runs inside
+	// the credential store's write-through (webauthn_factor_writethrough.go),
+	// not here.
+	//
+	// It used to run here, on parsed.Response.AttestationObject.AuthData, and
+	// that placement was the defect rather than the fix: at this point the
+	// attestation statement has NOT been verified, so the AAGUID is a value the
+	// browser supplied and nothing more. A ceremony with no attestation reports
+	// an empty AAGUID, which the allowlist could not test, so the gate passed
+	// exactly the authenticators it existed to refuse. Moving it behind
+	// go-webauthn's verification also puts it on the live registration route,
+	// which dispatches into xkms directly and never reaches this method.
+	//
+	// What DOES belong here is the attestation trust path: the x5c chain lives
+	// in the attestation object, which the credential store never sees. The
+	// result rides the context to the gate. A failure is not fatal here —
+	// enrollment policy is the gate's decision — so the reason is logged and
+	// the context simply carries no verified chain.
+	ctx = m.verifyAttestationChain(ctx, tenantID, userID, parsed)
+	ctx, recorder := contextWithAttestationRecorder(ctx)
 	if _, _, err := svc.FinishRegistration(ctx, sessionID, parsed); err != nil {
-		return err
+		return nil, err
 	}
 	m.regSessions.Delete(m.regKey(tenantID, userID))
-	return nil
+	return recorder.get(), nil
+}
+
+// verifyAttestationChain verifies the registration's attestation trust path and
+// returns a context carrying the result.
+//
+// A verification failure yields the original context — no verified chain — and
+// a log line, rather than an error. The refusal belongs to the assurance gate,
+// which knows whether THIS registrant must prove hardware; failing here would
+// apply the administrator's rule to every tenant user.
+func (m *XKMSWebAuthnManager) verifyAttestationChain(
+	ctx context.Context,
+	tenantID, userID string,
+	parsed *protocol.ParsedCredentialCreationData,
+) context.Context {
+	verified, err := m.factory.VerifyAttestationChain(ctx, parsed)
+	if err != nil {
+		slog.Default().Debug("webauthn registration: attestation trust path not verified",
+			"tenant_id", tenantID,
+			"user_id", userID,
+			"error", err)
+	}
+	// VerifyAttestationChain CLEARS any proof on the context when it fails, so
+	// the returned context is the right one on both paths. Returning the
+	// incoming ctx on failure would preserve a planted or stale chain.
+	return verified
 }
 
 // BeginLogin starts a WebAuthn assertion ceremony for the user
@@ -329,16 +349,17 @@ func (m *XKMSWebAuthnManager) resolveAuthenticatedUser(ctx context.Context, tena
 	if m.userResolver == nil {
 		return nil, &WebAuthnUserResolverError{Reason: "canonical user resolver is not configured"}
 	}
-	user, err := m.userResolver.GetUserByEmail(ctx, email)
+	user, err := m.userResolver.GetUserByEmail(ctx, tenantID, email)
 	if err != nil {
 		return nil, err
 	}
 	if user == nil {
 		return nil, &WebAuthnUserResolverError{Reason: "canonical user resolver returned nil user"}
 	}
-	// The login is tenant-scoped; the assertion was verified within tenantID,
-	// so stamp it onto the resolved user (the email index is global).
-	user.TenantID = tenantID
+	// The resolved record already belongs to tenantID: the lookup was scoped to
+	// it. Stamping the tenant on afterwards was how a global index was made to
+	// look tenant-safe, and it would have masked a cross-tenant hit rather than
+	// refusing it.
 	return user, nil
 }
 

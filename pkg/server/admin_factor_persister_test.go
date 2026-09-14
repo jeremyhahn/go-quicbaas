@@ -15,8 +15,17 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
@@ -90,7 +99,79 @@ func TestPersistAdminFactor_FIDO2WithoutCredentialIDFails(t *testing.T) {
 
 // TestPersistAdminFactor_PIVUsesThePublicKeyBlob verifies PIV persists the
 // enrolled certificate/public-key blob, which qrdb hashes into the lookup key.
-func TestPersistAdminFactor_PIVUsesThePublicKeyBlob(t *testing.T) {
+func TestPersistAdminFactor_PIVStoresTheKeysLoginActuallyPresents(t *testing.T) {
+	cert, certPEM := mintAdminFactorCert(t)
+	svc := &recordingFactorServicer{}
+	p := newAdminFactorPersister(svc, 7, nil)
+	enrollmentMeta := map[string]string{"slot": "9a"}
+
+	err := p.PersistAdminFactor(context.Background(), qrdbsdk.FactorPIV,
+		&qrdbsdk.AuthFactorEnrollment{
+			FactorName: "piv",
+			PublicKey:  certPEM,
+			Metadata:   enrollmentMeta,
+		})
+	require.NoError(t, err)
+	require.Len(t, svc.added, 1)
+	stored := svc.added[0]
+
+	// The DER digest: the prover's alternate lookup key AND the value go-xkms's
+	// verifier re-derives and compares against Credential.
+	derDigest := sha256.Sum256(cert.Raw)
+	assert.Equal(t, derDigest[:], stored.Credential,
+		"the credential is not the DER digest, so login cannot resolve or verify this factor")
+
+	// The specific regression: the PEM digest is what was stored before, and it
+	// can never equal what any login presents.
+	pemDigest := sha256.Sum256(certPEM)
+	assert.NotEqual(t, pemDigest[:], stored.Credential,
+		"the credential is a digest of the PEM encoding — the #380 defect")
+
+	// The SPKI digest: the prover's PRIMARY key, and the one that survives a
+	// certificate reissued over the same keypair.
+	spkiDigest := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	assert.Equal(t, spkiDigest[:], stored.SPKICredential,
+		"no renewal-stable key was stored, so a reissued certificate loses the login")
+
+	// The certificate itself: without it the verifier fails with
+	// MissingChallengeFieldError even once the lookup resolves.
+	require.Contains(t, stored.Metadata, "cert_pem",
+		"the verifier decodes the certificate from metadata; without it verification cannot run")
+	block, _ := pem.Decode([]byte(stored.Metadata["cert_pem"]))
+	require.NotNil(t, block, "cert_pem is not decodable PEM")
+	assert.Equal(t, cert.Raw, block.Bytes, "cert_pem is a different certificate")
+
+	// The ceremony's own metadata survives, and the label still names the slot.
+	assert.Equal(t, "9a", stored.Metadata["slot"])
+	assert.Contains(t, stored.Label, "9a")
+
+	// The enrollment record is the ceremony's, not the persister's to edit.
+	assert.NotContains(t, enrollmentMeta, "cert_pem",
+		"the persister mutated the caller's enrollment metadata in place")
+}
+
+// TestPersistAdminFactor_PIVAcceptsBareDER covers key material handed over as
+// DER rather than PEM. The field is typed as opaque bytes, so refusing DER
+// would make the persister depend on an encoding chosen in another module.
+func TestPersistAdminFactor_PIVAcceptsBareDER(t *testing.T) {
+	cert, _ := mintAdminFactorCert(t)
+	svc := &recordingFactorServicer{}
+	p := newAdminFactorPersister(svc, 7, nil)
+
+	err := p.PersistAdminFactor(context.Background(), qrdbsdk.FactorPIV,
+		&qrdbsdk.AuthFactorEnrollment{FactorName: "piv", PublicKey: cert.Raw})
+	require.NoError(t, err)
+	require.Len(t, svc.added, 1)
+
+	derDigest := sha256.Sum256(cert.Raw)
+	assert.Equal(t, derDigest[:], svc.added[0].Credential)
+}
+
+// TestPersistAdminFactor_PIVRejectsNonCertificateMaterial keeps the failure
+// loud. Key material that is not a certificate yields no login key at all, and
+// storing something derived from it anyway is how the original defect looked
+// like success.
+func TestPersistAdminFactor_PIVRejectsNonCertificateMaterial(t *testing.T) {
 	svc := &recordingFactorServicer{}
 	p := newAdminFactorPersister(svc, 7, nil)
 
@@ -98,13 +179,32 @@ func TestPersistAdminFactor_PIVUsesThePublicKeyBlob(t *testing.T) {
 		&qrdbsdk.AuthFactorEnrollment{
 			FactorName: "piv",
 			PublicKey:  []byte("-----BEGIN CERTIFICATE-----"),
-			Metadata:   map[string]string{"slot": "9a"},
 		})
-	require.NoError(t, err)
 
-	require.Len(t, svc.added, 1)
-	assert.Equal(t, []byte("-----BEGIN CERTIFICATE-----"), svc.added[0].Credential)
-	assert.Contains(t, svc.added[0].Label, "9a")
+	require.Error(t, err, "unparseable key material was accepted and a factor persisted")
+	var credErr *AdminFactorCredentialError
+	require.ErrorAs(t, err, &credErr)
+	assert.Empty(t, svc.added, "a factor was stored despite the failure")
+}
+
+// mintAdminFactorCert returns a real self-signed certificate and its PEM
+// encoding — the shape go-xkms's PIV factor hands the persister.
+func mintAdminFactorCert(t *testing.T) (*x509.Certificate, []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(20260904),
+		Subject:      pkix.Name{CommonName: "admin"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
 // TestPersistAdminFactor_PIVWithoutKeyMaterialFails verifies the error path for

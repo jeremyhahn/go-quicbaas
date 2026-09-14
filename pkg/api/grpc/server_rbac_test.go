@@ -28,280 +28,12 @@ import (
 )
 
 // =============================================================================
-// CreateUser Tests
-// =============================================================================
-
-func TestServer_CreateUser(t *testing.T) {
-	tests := []struct {
-		name        string
-		request     *pb.CreateUserRequest
-		mockSetup   func(m *mock.Mock)
-		expectError bool
-		errorCode   codes.Code
-		validate    func(t *testing.T, resp *pb.CreateUserResponse)
-	}{
-		{
-			name: "successful_create_user",
-			request: &pb.CreateUserRequest{
-				Username: "newuser",
-				Roles:    []string{"reader", "writer"},
-			},
-			mockSetup: func(m *mock.Mock) {
-				m.On("CreateUser", mock.Anything, mock.MatchedBy(func(req *service.AuthCreateUserRequest) bool {
-					return req.Username == "newuser" && len(req.Roles) == 2
-				})).Return(&service.AuthCreateUserResponse{
-					UserID:    "user-abc-123",
-					Timestamp: 1700000000,
-				}, nil).Once()
-			},
-			expectError: false,
-			validate: func(t *testing.T, resp *pb.CreateUserResponse) {
-				assert.Equal(t, "user-abc-123", resp.UserId)
-				assert.Equal(t, "newuser", resp.Username)
-				assert.Equal(t, int64(1700000000), resp.Created)
-			},
-		},
-		{
-			name:        "nil_request",
-			request:     nil,
-			mockSetup:   func(m *mock.Mock) {},
-			expectError: true,
-			errorCode:   codes.InvalidArgument,
-		},
-		{
-			name: "empty_username",
-			request: &pb.CreateUserRequest{
-				Username: "",
-			},
-			mockSetup:   func(m *mock.Mock) {},
-			expectError: true,
-			errorCode:   codes.InvalidArgument,
-		},
-		{
-			name: "service_error",
-			request: &pb.CreateUserRequest{
-				Username: "existing",
-			},
-			mockSetup: func(m *mock.Mock) {
-				m.On("CreateUser", mock.Anything, mock.Anything).
-					Return(nil, assert.AnError).Once()
-			},
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			srv, mockSvc := createTestServerWithMockService(t)
-			tt.mockSetup(&mockSvc.Mock)
-
-			resp, err := srv.CreateUser(context.Background(), tt.request)
-			if tt.expectError {
-				require.Error(t, err)
-				if tt.errorCode != 0 {
-					assert.Equal(t, tt.errorCode, status.Code(err))
-				}
-			} else {
-				require.NoError(t, err)
-				require.NotNil(t, resp)
-				if tt.validate != nil {
-					tt.validate(t, resp)
-				}
-			}
-			mockSvc.AssertExpectations(t)
-		})
-	}
-}
-
-// =============================================================================
-// DeleteUser Tests
-// =============================================================================
-
-func TestServer_DeleteUser(t *testing.T) {
-	tests := []struct {
-		name        string
-		request     *pb.DeleteUserRequest
-		mockSetup   func(m *mock.Mock)
-		expectError bool
-		errorCode   codes.Code
-		validate    func(t *testing.T, resp *pb.DeleteUserResponse)
-	}{
-		{
-			name: "successful_delete_user",
-			request: &pb.DeleteUserRequest{
-				UserId: "user-abc-123",
-			},
-			mockSetup: func(m *mock.Mock) {
-				m.On("DeleteUser", mock.Anything, mock.MatchedBy(func(req *service.AuthDeleteUserRequest) bool {
-					return req.Username == "user-abc-123"
-				})).Return(&service.AuthDeleteUserResponse{
-					Success: true,
-					Message: "user deleted",
-				}, nil).Once()
-			},
-			expectError: false,
-			validate: func(t *testing.T, resp *pb.DeleteUserResponse) {
-				assert.True(t, resp.Success)
-			},
-		},
-		{
-			name:        "nil_request",
-			request:     nil,
-			mockSetup:   func(m *mock.Mock) {},
-			expectError: true,
-			errorCode:   codes.InvalidArgument,
-		},
-		{
-			name: "empty_user_id",
-			request: &pb.DeleteUserRequest{
-				UserId: "",
-			},
-			mockSetup:   func(m *mock.Mock) {},
-			expectError: true,
-			errorCode:   codes.InvalidArgument,
-		},
-		{
-			name: "service_error",
-			request: &pb.DeleteUserRequest{
-				UserId: "nonexistent",
-			},
-			mockSetup: func(m *mock.Mock) {
-				m.On("DeleteUser", mock.Anything, mock.Anything).
-					Return(nil, assert.AnError).Once()
-			},
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			srv, mockSvc := createTestServerWithMockService(t)
-			tt.mockSetup(&mockSvc.Mock)
-
-			resp, err := srv.DeleteUser(context.Background(), tt.request)
-			if tt.expectError {
-				require.Error(t, err)
-				if tt.errorCode != 0 {
-					assert.Equal(t, tt.errorCode, status.Code(err))
-				}
-			} else {
-				require.NoError(t, err)
-				require.NotNil(t, resp)
-				if tt.validate != nil {
-					tt.validate(t, resp)
-				}
-			}
-			mockSvc.AssertExpectations(t)
-		})
-	}
-}
-
-// =============================================================================
-// ListUsers Tests
-// =============================================================================
-
-func TestServer_ListUsers(t *testing.T) {
-	tests := []struct {
-		name        string
-		request     *pb.ListUsersRequest
-		mockSetup   func(m *mock.Mock)
-		expectError bool
-		errorCode   codes.Code
-		validate    func(t *testing.T, resp *pb.ListUsersResponse)
-	}{
-		{
-			name:    "successful_list_users",
-			request: &pb.ListUsersRequest{},
-			mockSetup: func(m *mock.Mock) {
-				m.On("ListUsers", mock.Anything, mock.Anything).Return(&service.AuthListUsersResponse{
-					Users: []*service.UserInfo{
-						{
-							UserID:      "user-1",
-							Username:    "admin",
-							Roles:       []string{"admin"},
-							CreatedAt:   1700000000,
-							LastLoginAt: 1700001000,
-						},
-						{
-							UserID:      "user-2",
-							Username:    "reader",
-							Roles:       []string{"reader"},
-							CreatedAt:   1700000100,
-							LastLoginAt: 0,
-						},
-					},
-					TotalCount: 2,
-				}, nil).Once()
-			},
-			expectError: false,
-			validate: func(t *testing.T, resp *pb.ListUsersResponse) {
-				require.Len(t, resp.Users, 2)
-				assert.Equal(t, "user-1", resp.Users[0].UserId)
-				assert.Equal(t, "admin", resp.Users[0].Username)
-				assert.Equal(t, []string{"admin"}, resp.Users[0].Roles)
-				assert.Equal(t, int64(1700000000), resp.Users[0].Created)
-				assert.Equal(t, int64(1700001000), resp.Users[0].LastAuth)
-				assert.Equal(t, "user-2", resp.Users[1].UserId)
-				assert.Equal(t, "reader", resp.Users[1].Username)
-			},
-		},
-		{
-			name:    "empty_user_list",
-			request: &pb.ListUsersRequest{},
-			mockSetup: func(m *mock.Mock) {
-				m.On("ListUsers", mock.Anything, mock.Anything).Return(&service.AuthListUsersResponse{
-					Users:      nil,
-					TotalCount: 0,
-				}, nil).Once()
-			},
-			expectError: false,
-			validate: func(t *testing.T, resp *pb.ListUsersResponse) {
-				assert.Empty(t, resp.Users)
-			},
-		},
-		{
-			name:        "nil_request",
-			request:     nil,
-			mockSetup:   func(m *mock.Mock) {},
-			expectError: true,
-			errorCode:   codes.InvalidArgument,
-		},
-		{
-			name:    "service_error",
-			request: &pb.ListUsersRequest{},
-			mockSetup: func(m *mock.Mock) {
-				m.On("ListUsers", mock.Anything, mock.Anything).
-					Return(nil, assert.AnError).Once()
-			},
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			srv, mockSvc := createTestServerWithMockService(t)
-			tt.mockSetup(&mockSvc.Mock)
-
-			resp, err := srv.ListUsers(context.Background(), tt.request)
-			if tt.expectError {
-				require.Error(t, err)
-				if tt.errorCode != 0 {
-					assert.Equal(t, tt.errorCode, status.Code(err))
-				}
-			} else {
-				require.NoError(t, err)
-				require.NotNil(t, resp)
-				if tt.validate != nil {
-					tt.validate(t, resp)
-				}
-			}
-			mockSvc.AssertExpectations(t)
-		})
-	}
-}
-
-// =============================================================================
-// CreateRole Tests
+// Role Tests
+//
+// There are no user tests: the QuicBaaS gRPC service no longer implements
+// CreateUser/DeleteUser/ListUsers (they answer codes.Unimplemented from the
+// embedded pb.UnimplementedQuicBaaSServer). Users are served by
+// quicbaas.iam.v1.IAMService. See issue #905.
 // =============================================================================
 
 func TestServer_CreateRole(t *testing.T) {
@@ -922,4 +654,86 @@ func TestPermissionRoundTrip(t *testing.T) {
 		assert.Equal(t, orig.Resource, roundTripped[i].Resource)
 		assert.Equal(t, orig.Actions, roundTripped[i].Actions)
 	}
+}
+
+// =============================================================================
+// User RPCs answer Unimplemented, and nothing reaches the service layer
+// =============================================================================
+
+// TestServer_UserRPCsAreUnimplemented pins the wire answer for the three user
+// RPCs the QuicBaaS gRPC service still DECLARES in api/proto/quicbaas.proto but
+// no longer implements. They used to route to a service-layer auth manager that
+// production never wired, so a caller got an opaque "authentication manager not
+// configured" failure; now they get codes.Unimplemented, which is the truthful
+// answer for a capability served elsewhere (quicbaas.iam.v1.IAMService).
+//
+// The test also asserts the service layer is NEVER touched: MockQuicBaaS is left
+// with no expectations, so any call into it fails the mock. That is the guard
+// against someone re-adding a handler on top of the deleted user model rather
+// than on the IAM surface (issue #905).
+func TestServer_UserRPCsAreUnimplemented(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(*Server) error
+	}{
+		{
+			name: "CreateUser",
+			call: func(s *Server) error {
+				_, err := s.CreateUser(context.Background(), &pb.CreateUserRequest{Username: "alice"})
+				return err
+			},
+		},
+		{
+			name: "DeleteUser",
+			call: func(s *Server) error {
+				_, err := s.DeleteUser(context.Background(), &pb.DeleteUserRequest{UserId: "user-1"})
+				return err
+			},
+		},
+		{
+			name: "ListUsers",
+			call: func(s *Server) error {
+				_, err := s.ListUsers(context.Background(), &pb.ListUsersRequest{})
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, mockSvc := createTestServerWithMockService(t)
+
+			err := tt.call(srv)
+			require.Error(t, err)
+			assert.Equal(t, codes.Unimplemented, status.Code(err),
+				"%s must answer Unimplemented, not a configuration failure", tt.name)
+
+			// No service-layer call was made: an unexpected call on a mock with
+			// no expectations is a failure, and AssertExpectations confirms none
+			// were set up and consumed.
+			mockSvc.AssertExpectations(t)
+		})
+	}
+}
+
+// TestServer_UserRPCsAreUnimplementedOnNilRequest covers the bad-input side of
+// the same three RPCs. A nil request must not change the answer: the capability
+// is absent, so argument validation never gets a chance to run and the caller
+// still learns Unimplemented rather than InvalidArgument.
+func TestServer_UserRPCsAreUnimplementedOnNilRequest(t *testing.T) {
+	srv, mockSvc := createTestServerWithMockService(t)
+
+	_, err := srv.CreateUser(context.Background(), nil)
+	require.Error(t, err)
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
+
+	_, err = srv.DeleteUser(context.Background(), nil)
+	require.Error(t, err)
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
+
+	_, err = srv.ListUsers(context.Background(), nil)
+	require.Error(t, err)
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
+
+	mockSvc.AssertExpectations(t)
 }

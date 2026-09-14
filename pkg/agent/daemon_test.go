@@ -297,14 +297,25 @@ func TestDaemon_Start_TransitionsThroughStates(t *testing.T) {
 	}
 }
 
+// TestDaemon_Start_EnrollFailurePreventsStart pins the TERMINAL half of
+// the enrollment contract: a failure the daemon cannot classify as a
+// transient network condition aborts startup on the first attempt, so a
+// misconfigured agent lands in a failed unit instead of waiting forever.
+// The transient half — retry with backoff — is pinned separately in
+// daemon_enroll_retry_test.go.
 func TestDaemon_Start_EnrollFailurePreventsStart(t *testing.T) {
 	t.Parallel()
 	cfg := newTestConfig(t)
+	// An hour-long backoff makes an accidental retry show up as a hung
+	// test rather than as a pass.
+	cfg.EnrollRetryBase = time.Hour
+	cfg.EnrollRetryMax = time.Hour
 	enrollErr := errors.New("boom")
 	server := &fakeSpawnServer{}
+	enroller := &fakeEnroller{err: enrollErr}
 	deps := DaemonDeps{
 		Runtime:     newTestRuntime(t),
-		Enroller:    &fakeEnroller{err: enrollErr},
+		Enroller:    enroller,
 		SpawnServer: server,
 		Logger:      &testLogger{t: t},
 	}
@@ -312,8 +323,15 @@ func TestDaemon_Start_EnrollFailurePreventsStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDaemon: %v", err)
 	}
-	if err := d.Start(context.Background()); !errors.Is(err, enrollErr) {
-		t.Fatalf("Start err: got %v, want wraps %v", err, enrollErr)
+	startErr := startWithin(t, d, context.Background(), 10*time.Second)
+	if !errors.Is(startErr, enrollErr) {
+		t.Fatalf("Start err: got %v, want wraps %v", startErr, enrollErr)
+	}
+	if !errors.Is(startErr, ErrEnrollmentTerminal) {
+		t.Errorf("Start err must be reported as terminal, got %v", startErr)
+	}
+	if got := enroller.calls.Load(); got != 1 {
+		t.Errorf("enroll calls: got %d, want 1 (an unclassified failure is not retried)", got)
 	}
 	if got := d.State(); got != "failed" {
 		t.Errorf("state: got %q, want %q", got, "failed")

@@ -277,16 +277,16 @@ func TestFilterAgentsByCapability(t *testing.T) {
 func TestAgentExposesBackend(t *testing.T) {
 	// Primary backend match.
 	primary := &AgentRegistration{ID: "a1", Backend: "claude"}
-	if !agentExposesBackend(primary, "claude") {
+	if !AgentServesBackend(primary, "claude") {
 		t.Fatal("expected primary backend match")
 	}
 	// Capability match.
 	viaCap := &AgentRegistration{ID: "a2", Backend: "claude", Capabilities: []string{"ollama"}}
-	if !agentExposesBackend(viaCap, "ollama") {
+	if !AgentServesBackend(viaCap, "ollama") {
 		t.Fatal("expected capability backend match")
 	}
 	// No match.
-	if agentExposesBackend(viaCap, "codex") {
+	if AgentServesBackend(viaCap, "codex") {
 		t.Fatal("expected no match for codex")
 	}
 }

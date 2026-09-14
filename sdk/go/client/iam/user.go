@@ -94,6 +94,11 @@ type CreateUserRequest struct {
 	// Valid values: "webauthn", "piv". Defaults to ["webauthn"] when empty.
 	AuthMethods []string `json:"auth_methods,omitempty"`
 
+	// Lifecycle is the state to create the account in: pending, active or
+	// disabled. Suspended and locked describe something that HAPPENS to an
+	// account and cannot be asserted at creation. Empty defaults to pending.
+	Lifecycle string `json:"lifecycle,omitempty"`
+
 	// InviteExpiryHours is the number of hours until the invite token expires.
 	// Valid range: 1–168. Defaults to 24 when zero.
 	InviteExpiryHours int `json:"invite_expiry_hours,omitempty"`
@@ -120,7 +125,20 @@ type UpdateUserRequest struct {
 	DisplayName string `json:"display_name,omitempty"`
 
 	// AuthMethods replaces the user's allowed authentication methods.
-	AuthMethods []string `json:"auth_methods,omitempty"`
+	//
+	// It is a POINTER so an explicit empty list — which the domain defines as
+	// "no restriction" — is distinguishable from a request that does not mention
+	// the field. With a plain slice the two were the same value, so an account
+	// restricted to ["piv"] could never be un-restricted: the clear was accepted
+	// and dropped.
+	AuthMethods *[]string `json:"auth_methods,omitempty"`
+
+	// Lifecycle, when non-empty, transitions the account: pending, active,
+	// suspended, locked or disabled. `deleting` belongs to the deletion
+	// workflow, which claims it as part of a cascade; asserting it here would
+	// strand the account in a terminal state with the credentials and
+	// memberships that cascade removes still live, so it is refused.
+	Lifecycle string `json:"lifecycle,omitempty"`
 
 	// Metadata contains additional user metadata.
 	Metadata map[string]string `json:"metadata,omitempty"`
@@ -284,11 +302,20 @@ func convertToUser(resp interface{}) (*User, bool) {
 		// Fall back to "name" for compatibility with REST API
 		user.DisplayName = v
 	}
-	if v, ok := respMap["mfa_enabled"].(bool); ok {
-		user.MFAEnabled = v
-	}
 	if v, ok := respMap["email_verified"].(bool); ok {
 		user.EmailVerified = v
+	}
+	if v, ok := respMap["lifecycle"].(string); ok {
+		user.Lifecycle = v
+	}
+	if raw, ok := respMap["auth_methods"].([]interface{}); ok {
+		methods := make([]string, 0, len(raw))
+		for _, m := range raw {
+			if str, ok := m.(string); ok {
+				methods = append(methods, str)
+			}
+		}
+		user.AuthMethods = methods
 	}
 
 	// Handle roles slice.

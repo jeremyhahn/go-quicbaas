@@ -79,6 +79,21 @@ func convertToRole(resp interface{}) (*Role, bool) {
 		}
 	}
 
+	// Handle retired permissions slice. Dropping it here would hide the drift
+	// column on every REST/gRPC listing while the embedded transport shows it.
+	if retiredRaw, ok := respMap["retired_permissions"]; ok {
+		switch retired := retiredRaw.(type) {
+		case []string:
+			role.RetiredPermissions = retired
+		case []interface{}:
+			for _, p := range retired {
+				if s, ok := p.(string); ok {
+					role.RetiredPermissions = append(role.RetiredPermissions, s)
+				}
+			}
+		}
+	}
+
 	// Handle metadata map.
 	if metaRaw, ok := respMap["metadata"]; ok {
 		switch meta := metaRaw.(type) {
@@ -117,6 +132,115 @@ func convertToRole(resp interface{}) (*Role, bool) {
 	return role, true
 }
 
+// convertToReconcileResponse converts a response to a ReconcileRolesResponse.
+// It handles both *ReconcileRolesResponse pointers and map[string]interface{}
+// (from REST/gRPC transports).
+func convertToReconcileResponse(resp interface{}) (*ReconcileRolesResponse, bool) {
+	if resp == nil {
+		return nil, false
+	}
+
+	// If already a *ReconcileRolesResponse, return it directly.
+	if reconcileResp, ok := resp.(*ReconcileRolesResponse); ok {
+		return reconcileResp, true
+	}
+
+	respMap, ok := resp.(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+
+	result := &ReconcileRolesResponse{}
+
+	if v, ok := respMap["tenant_id"].(string); ok {
+		result.TenantID = v
+	}
+	if v, ok := respMap["changed"].(bool); ok {
+		result.Changed = v
+	}
+
+	if rolesRaw, ok := respMap["roles"]; ok {
+		switch roles := rolesRaw.(type) {
+		case []interface{}:
+			for _, r := range roles {
+				if item, ok := convertToReconcileResult(r); ok {
+					result.Roles = append(result.Roles, *item)
+				}
+			}
+		case []*RoleReconcileResult:
+			for _, r := range roles {
+				if r != nil {
+					result.Roles = append(result.Roles, *r)
+				}
+			}
+		case []RoleReconcileResult:
+			result.Roles = roles
+		}
+	}
+
+	// A transport that omits "changed" still reports drift accurately: a
+	// non-empty role list means reconciliation wrote something.
+	if !result.Changed && len(result.Roles) > 0 {
+		result.Changed = true
+	}
+
+	return result, true
+}
+
+// convertToReconcileResult converts one entry of a reconcile report.
+func convertToReconcileResult(resp interface{}) (*RoleReconcileResult, bool) {
+	if resp == nil {
+		return nil, false
+	}
+
+	if item, ok := resp.(*RoleReconcileResult); ok {
+		return item, true
+	}
+	if item, ok := resp.(RoleReconcileResult); ok {
+		return &item, true
+	}
+
+	respMap, ok := resp.(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+
+	item := &RoleReconcileResult{}
+
+	if v, ok := respMap["role_id"].(string); ok {
+		item.RoleID = v
+	}
+	if v, ok := respMap["name"].(string); ok {
+		item.Name = v
+	}
+	if v, ok := respMap["created"].(bool); ok {
+		item.Created = v
+	}
+
+	item.Added = convertToStringSlice(respMap["added"])
+	item.Removed = convertToStringSlice(respMap["removed"])
+
+	return item, true
+}
+
+// convertToStringSlice normalizes a JSON string array from any transport.
+func convertToStringSlice(raw interface{}) []string {
+	switch values := raw.(type) {
+	case []string:
+		return values
+	case []interface{}:
+		out := make([]string, 0, len(values))
+		for _, v := range values {
+			if s, ok := v.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 const (
 	roleServiceName = "quicbaas.IAM.Role"
 )
@@ -137,6 +261,14 @@ type RoleClient interface {
 
 	// List lists roles in a tenant with optional filtering.
 	List(ctx context.Context, tenantID string, req *ListRolesRequest) (*ListRolesResponse, error)
+
+	// Reconcile converges the tenant's built-in roles onto the server build's
+	// definitions: permissions the build now grants are added, permissions it
+	// no longer grants are removed, and custom roles are left alone. It is
+	// idempotent — a tenant that already agrees with the build reports no
+	// changed roles. This is the only path that can re-permission a built-in
+	// role, because the server refuses an ordinary update on a system role.
+	Reconcile(ctx context.Context, tenantID string) (*ReconcileRolesResponse, error)
 }
 
 // CreateRoleRequest is a request to create a role.
@@ -203,6 +335,40 @@ type ListRolesResponse struct {
 	Pagination PaginationInfo `json:"pagination"`
 }
 
+// RoleReconcileResult records what reconciling one built-in role changed.
+// Only roles that changed are reported.
+type RoleReconcileResult struct {
+	// RoleID is the reconciled role's identifier.
+	RoleID string `json:"role_id"`
+
+	// Name is the built-in role's name.
+	Name string `json:"name"`
+
+	// Created is true when the built-in was absent and was seeded; Added then
+	// carries its whole permission set.
+	Created bool `json:"created,omitempty"`
+
+	// Added lists the permissions the build grants that the stored role did
+	// not carry.
+	Added []string `json:"added,omitempty"`
+
+	// Removed lists the permissions the stored role carried that the build no
+	// longer grants.
+	Removed []string `json:"removed,omitempty"`
+}
+
+// ReconcileRolesResponse is the response from reconciling built-in roles.
+type ReconcileRolesResponse struct {
+	// TenantID is the reconciled tenant.
+	TenantID string `json:"tenant_id"`
+
+	// Roles carries one entry per built-in role that changed.
+	Roles []RoleReconcileResult `json:"roles,omitempty"`
+
+	// Changed reports whether reconciliation altered anything.
+	Changed bool `json:"changed"`
+}
+
 // Internal request/response types for transport.
 
 type createRoleRequestInternal struct {
@@ -227,6 +393,10 @@ type deleteRoleRequest struct {
 }
 
 type deleteRoleResponse struct{}
+
+type reconcileRolesRequest struct {
+	TenantID string `json:"tenant_id"`
+}
 
 type listRolesRequestInternal struct {
 	TenantID string            `json:"tenant_id"`
@@ -471,6 +641,38 @@ func (c *roleClient) List(ctx context.Context, tenantID string, req *ListRolesRe
 	}
 	if v, ok := respMap["total"].(float64); ok {
 		result.Pagination.TotalCount = int(v)
+	}
+
+	return result, nil
+}
+
+// Reconcile converges the tenant's built-in roles onto the server build's
+// definitions. It is idempotent, and it is the only path that can
+// re-permission a built-in role because the server refuses an ordinary update
+// on a system role.
+func (c *roleClient) Reconcile(ctx context.Context, tenantID string) (*ReconcileRolesResponse, error) {
+	if tenantID == "" {
+		return nil, errors.NewInvalidInput("iam.role.Reconcile", "tenant ID is required")
+	}
+
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("iam.role.Reconcile", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, roleServiceName, "Reconcile", &reconcileRolesRequest{
+		TenantID: tenantID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("iam.role.Reconcile", "nil response from server")
+	}
+
+	result, ok := convertToReconcileResponse(resp)
+	if !ok {
+		return nil, errors.NewInternal("iam.role.Reconcile", "invalid response type")
 	}
 
 	return result, nil

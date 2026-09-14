@@ -19,7 +19,6 @@ import (
 	stderrors "errors"
 	"math/big"
 	"sort"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -32,7 +31,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -223,22 +221,6 @@ type unavailableMockKMSManager struct {
 
 func (m *unavailableMockKMSManager) IsAvailable(ctx context.Context) bool {
 	return false
-}
-
-type failingDSCredStorage struct {
-	mockDSStorage
-	failOnCred bool
-}
-
-func (f *failingDSCredStorage) Set(key, value []byte) error {
-	if f.failOnCred && strings.HasPrefix(string(key), CredentialPrefix) {
-		return &dberrors.QBError{
-			Code: dberrors.ErrInternal,
-			Op:   "failingDSCredStorage.Set",
-			Err:  stderrors.New("credential storage write failure"),
-		}
-	}
-	return f.mockDSStorage.Set(key, value)
 }
 
 func TestOperationsService_MigrateData_NilRequest(t *testing.T) {
@@ -687,78 +669,6 @@ type covNonCacheMgr struct{}
 
 func (m *covNonCacheMgr) Clear() {}
 
-type boost81MockAuthManager struct {
-	revokeTokenErr      error
-	refreshTokenResult  interface{}
-	refreshTokenErr     error
-	validateTokenResult interface{}
-	validateTokenErr    error
-}
-
-func (m *boost81MockAuthManager) IssueTokenForUser(ctx context.Context, user interfaces.UserInfo) (interface{}, error) {
-	return nil, nil
-}
-
-func (m *boost81MockAuthManager) Authorize(ctx context.Context, token, resource, action string) error {
-	return nil
-}
-
-func (m *boost81MockAuthManager) RevokeToken(ctx context.Context, token string) error {
-	return m.revokeTokenErr
-}
-
-func (m *boost81MockAuthManager) RefreshToken(ctx context.Context, refreshToken string) (interface{}, error) {
-	if m.refreshTokenErr != nil {
-		return nil, m.refreshTokenErr
-	}
-	return m.refreshTokenResult, nil
-}
-
-func (m *boost81MockAuthManager) ValidateToken(ctx context.Context, token string) (interface{}, error) {
-	if m.validateTokenErr != nil {
-		return nil, m.validateTokenErr
-	}
-	return m.validateTokenResult, nil
-}
-
-func (m *boost81MockAuthManager) CreateUser(username string, roles []string) (interface{}, error) {
-	return nil, nil
-}
-
-func (m *boost81MockAuthManager) DeleteUser(username string) error {
-	return nil
-}
-
-func (m *boost81MockAuthManager) ListUsers() (interface{}, error) {
-	return nil, nil
-}
-
-func (m *boost81MockAuthManager) CreateRole(roleName string, permissions []string) (interface{}, error) {
-	return nil, nil
-}
-
-func (m *boost81MockAuthManager) DeleteRole(roleName string) error {
-	return nil
-}
-
-func (m *boost81MockAuthManager) ListRoles() (interface{}, error) {
-	return nil, nil
-}
-
-func (m *boost81MockAuthManager) AssignRole(username, roleName string) error {
-	return nil
-}
-
-func (m *boost81MockAuthManager) RevokeRole(username, roleName string) error {
-	return nil
-}
-
-func (m *boost81MockAuthManager) GetUserStore() interfaces.UserStore {
-	return nil
-}
-
-var _ interfaces.AuthManager = (*boost81MockAuthManager)(nil)
-
 type boost81RaftNode struct{}
 
 func (m *boost81RaftNode) ID() string { return "boost81-node" }
@@ -885,22 +795,6 @@ func TestServiceBuilder_WithTimeSeriesStorage(t *testing.T) {
 
 	// Verify we can still use the builder
 	assert.NotNil(t, builder)
-}
-
-type failingDSStorage struct {
-	mockDSStorage
-	failOnSet bool
-}
-
-func (m *failingDSStorage) Set(key, value []byte) error {
-	if m.failOnSet {
-		return stderrors.New("mock storage write error")
-	}
-	if m.data == nil {
-		m.data = make(map[string][]byte)
-	}
-	m.data[string(key)] = value
-	return nil
 }
 
 func TestClusterService_RebalanceCluster_NilRaftNode(t *testing.T) {
@@ -1123,37 +1017,6 @@ func (u *svcBoostUser) GetCreated() time.Time { return u.created }
 
 func (u *svcBoostUser) GetLastAuth() time.Time { return u.lastAuth }
 
-type svcBoostUserStore struct {
-	users            []interfaces.UserInfo
-	getUserByName    func(username string) interfaces.UserInfo
-	assignRoleErr    error
-	revokeRoleErr    error
-	assignRoleCalled bool
-	revokeRoleCalled bool
-}
-
-func (m *svcBoostUserStore) GetByUsername(username string) interfaces.UserInfo {
-	if m.getUserByName != nil {
-		return m.getUserByName(username)
-	}
-	for _, u := range m.users {
-		if u.GetUsername() == username {
-			return u
-		}
-	}
-	return nil
-}
-
-func (m *svcBoostUserStore) GetByID(id string) interfaces.UserInfo { return nil }
-
-func (m *svcBoostUserStore) AddUser(user interfaces.UserInfo) {}
-
-func (m *svcBoostUserStore) UpdateUser(user interfaces.UserInfo) {}
-
-type svcBoostAuthManager struct {
-	userStoreReturn interfaces.UserStore
-}
-
 type svcBoostRaftNode struct {
 	syncReadFn     func(ctx context.Context, shardID uint64, query interface{}) (interface{}, error)
 	syncReadErr    error
@@ -1298,7 +1161,7 @@ func TestTimeSeriesMethods_TSQuery(t *testing.T) {
 
 func TestAuthServiceImpl_Login_NilManager(t *testing.T) {
 	// Password-based login is removed. Login() always returns ErrNotImplemented.
-	svc := &quicBaaS{authManager: nil}
+	svc := &quicBaaS{}
 	authSvc := &authService{svc: svc}
 
 	_, err := authSvc.Login(context.Background(), &LoginRequest{
@@ -1309,7 +1172,7 @@ func TestAuthServiceImpl_Login_NilManager(t *testing.T) {
 }
 
 func TestAuthServiceImpl_Logout_NilManager(t *testing.T) {
-	svc := &quicBaaS{authManager: nil}
+	svc := &quicBaaS{}
 	authSvc := &authService{svc: svc}
 
 	_, err := authSvc.Logout(context.Background(), &LogoutRequest{
@@ -1321,7 +1184,7 @@ func TestAuthServiceImpl_Logout_NilManager(t *testing.T) {
 }
 
 func TestAuthServiceImpl_RefreshToken_NilManager(t *testing.T) {
-	svc := &quicBaaS{authManager: nil}
+	svc := &quicBaaS{}
 	authSvc := &authService{svc: svc}
 
 	_, err := authSvc.RefreshToken(context.Background(), &RefreshTokenRequest{
@@ -1333,7 +1196,7 @@ func TestAuthServiceImpl_RefreshToken_NilManager(t *testing.T) {
 }
 
 func TestAuthServiceImpl_ValidateToken_NilManager(t *testing.T) {
-	svc := &quicBaaS{authManager: nil}
+	svc := &quicBaaS{}
 	authSvc := &authService{svc: svc}
 
 	_, err := authSvc.ValidateToken(context.Background(), &ValidateTokenRequest{
@@ -1344,79 +1207,8 @@ func TestAuthServiceImpl_ValidateToken_NilManager(t *testing.T) {
 	assert.Contains(t, err.Error(), "authentication")
 }
 
-func TestAuthServiceImpl_Logout_RevokeError(t *testing.T) {
-	authMgr := &mockAuthManager{
-		revokeTokenFn: func(ctx context.Context, token string) error {
-			return assert.AnError
-		},
-	}
-
-	ctx := context.Background()
-	err := authMgr.RevokeToken(ctx, "token")
-	assert.Error(t, err)
-}
-
-func TestAuthServiceImpl_RefreshToken_Error(t *testing.T) {
-	authMgr := &mockAuthManager{
-		refreshTokenFn: func(ctx context.Context, refreshToken string) (*auth.Token, error) {
-			return nil, assert.AnError
-		},
-	}
-
-	ctx := context.Background()
-	_, err := authMgr.RefreshToken(ctx, "old_token")
-	assert.Error(t, err)
-}
-
-func TestAuthServiceImpl_ValidateToken_Error(t *testing.T) {
-	authMgr := &mockAuthManager{
-		validateTokenFn: func(ctx context.Context, token string) (*auth.TokenValidationResult, error) {
-			return nil, assert.AnError
-		},
-	}
-
-	ctx := context.Background()
-	_, err := authMgr.ValidateToken(ctx, "token")
-	assert.Error(t, err)
-}
-
-func TestRBACServiceImpl_CreateUser_NilManager(t *testing.T) {
-	svc := &quicBaaS{authManager: nil}
-	rbacSvc := &rbacService{svc: svc}
-
-	_, err := rbacSvc.CreateUser(context.Background(), &CreateUserRequest{
-		Username: "testuser",
-		Roles:    []string{"admin"},
-	})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication")
-}
-
-func TestRBACServiceImpl_DeleteUser_NilManager(t *testing.T) {
-	svc := &quicBaaS{authManager: nil}
-	rbacSvc := &rbacService{svc: svc}
-
-	_, err := rbacSvc.DeleteUser(context.Background(), &DeleteUserRequest{
-		Username: "testuser",
-	})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication")
-}
-
-func TestRBACServiceImpl_ListUsers_NilManager(t *testing.T) {
-	svc := &quicBaaS{authManager: nil}
-	rbacSvc := &rbacService{svc: svc}
-
-	_, err := rbacSvc.ListUsers(context.Background(), &ListUsersRequest{})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication")
-}
-
 func TestRBACServiceImpl_AssignRole_NilManager(t *testing.T) {
-	svc := &quicBaaS{authManager: nil}
+	svc := &quicBaaS{}
 	rbacSvc := &rbacService{svc: svc}
 
 	_, err := rbacSvc.AssignRole(context.Background(), &AssignRoleRequest{
@@ -1429,7 +1221,7 @@ func TestRBACServiceImpl_AssignRole_NilManager(t *testing.T) {
 }
 
 func TestRBACServiceImpl_RevokeRole_NilManager(t *testing.T) {
-	svc := &quicBaaS{authManager: nil}
+	svc := &quicBaaS{}
 	rbacSvc := &rbacService{svc: svc}
 
 	_, err := rbacSvc.RevokeRole(context.Background(), &RevokeRoleRequest{
@@ -1962,11 +1754,8 @@ func TestClusterServiceImpl_ClusterStatus_MultipleShards(t *testing.T) {
 // (AssignRole with no IAM provider is covered by
 // TestRBACServiceImpl_AssignRole_NotConfigured.)
 func TestRBACServiceImpl_AssignRole_InvalidInput(t *testing.T) {
-	mockAuth := &mockAuthManager{}
-
 	svc := &quicBaaS{
-		authManager: mockAuth,
-		logger:      testLoggerCoverage(t),
+		logger: testLoggerCoverage(t),
 	}
 
 	rbacSvc := &rbacService{svc: svc}
@@ -2016,8 +1805,7 @@ func TestRBACServiceImpl_AssignRole_NotConfigured(t *testing.T) {
 
 func TestRBACServiceImpl_RevokeRole_NoAuthManager(t *testing.T) {
 	svc := &quicBaaS{
-		authManager: nil,
-		logger:      testLoggerCoverage(t),
+		logger: testLoggerCoverage(t),
 	}
 
 	rbacSvc := &rbacService{svc: svc}
@@ -2032,11 +1820,8 @@ func TestRBACServiceImpl_RevokeRole_NoAuthManager(t *testing.T) {
 }
 
 func TestRBACServiceImpl_RevokeRole_InvalidInput(t *testing.T) {
-	mockAuth := &mockAuthManager{}
-
 	svc := &quicBaaS{
-		authManager: mockAuth,
-		logger:      testLoggerCoverage(t),
+		logger: testLoggerCoverage(t),
 	}
 
 	rbacSvc := &rbacService{svc: svc}
@@ -2083,59 +1868,6 @@ func TestOperationsServiceImpl_GetMigrationProgress_Success(t *testing.T) {
 	assert.Equal(t, "running", resp.Status)
 	assert.Equal(t, uint64(50), resp.ItemsMigrated)
 	assert.Equal(t, uint64(100), resp.TotalItems)
-}
-
-// ListUsers Tests (57.9% -> 75%).
-func TestRBACServiceImpl_ListUsers_NoAuthManager(t *testing.T) {
-	svc := &quicBaaS{
-		authManager: nil,
-		logger:      testLoggerCoverage(t),
-	}
-
-	rbacSvc := &rbacService{svc: svc}
-
-	req := &ListUsersRequest{
-		Limit:  10,
-		Offset: 0,
-	}
-
-	_, err := rbacSvc.ListUsers(context.Background(), req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication manager service not configured")
-}
-
-func TestRBACServiceImpl_ListUsers_NoUserStore(t *testing.T) {
-	mockAuth := &mockAuthManager{
-		userStoreReturn: nil,
-	}
-
-	svc := &quicBaaS{
-		authManager: mockAuth,
-		logger:      testLoggerCoverage(t),
-	}
-
-	rbacSvc := &rbacService{svc: svc}
-
-	req := &ListUsersRequest{
-		Limit:  10,
-		Offset: 0,
-	}
-
-	_, err := rbacSvc.ListUsers(context.Background(), req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "user store service not configured")
-}
-
-// ListRoles Tests (65.4% -> 80%).
-// checkAuth Tests (66.7% -> 100%).
-func TestServiceImpl_CheckAuth_Disabled(t *testing.T) {
-	svc := &quicBaaS{
-		config: &ServiceConfig{EnableAuth: false},
-		logger: testLoggerCoverage(t),
-	}
-
-	err := svc.checkAuth(context.Background(), "read")
-	assert.NoError(t, err)
 }
 
 // Delegation Methods Tests - Coverage for wrapper methods.
@@ -2206,36 +1938,6 @@ func TestAuthService_ValidateToken_NoAuthManager(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "authentication service not configured")
-}
-
-func TestRBACService_CreateUser_NoAuthManager(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &CreateUserRequest{
-		Username: "newuser",
-	}
-
-	resp, err := svc.CreateUser(context.Background(), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "authentication manager service not configured")
-}
-
-func TestRBACService_CreateUser_MissingUsername(t *testing.T) {
-	mockAuth := &mockAuthManager{}
-	svc := createTestService(t, withAuthManager(mockAuth))
-	defer svc.Close()
-
-	req := &CreateUserRequest{
-		Username: "",
-	}
-
-	resp, err := svc.CreateUser(context.Background(), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "username is required")
 }
 
 func TestClusterService_AddNode_NilRequest(t *testing.T) {
@@ -2738,34 +2440,6 @@ func TestServiceImpl_ScanIndex_Delegation(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestServiceImpl_DeleteUser_Delegation(t *testing.T) {
-	svc := &quicBaaS{
-		rbacService: &rbacService{
-			svc: &quicBaaS{},
-		},
-	}
-
-	req := &DeleteUserRequest{}
-
-	// This will likely fail but we're testing delegation
-	_, err := svc.DeleteUser(context.Background(), req)
-	assert.Error(t, err)
-}
-
-func TestServiceImpl_ListUsers_Delegation(t *testing.T) {
-	svc := &quicBaaS{
-		rbacService: &rbacService{
-			svc: &quicBaaS{},
-		},
-	}
-
-	req := &ListUsersRequest{}
-
-	// This will likely fail but we're testing delegation
-	_, err := svc.ListUsers(context.Background(), req)
-	assert.Error(t, err)
-}
-
 func TestServiceImpl_CreateAuthRole_Delegation(t *testing.T) {
 	svc := &quicBaaS{
 		rbacService: &rbacService{
@@ -2981,20 +2655,6 @@ func TestValidateAggregateRequest_Coverage(t *testing.T) {
 		EndTime:   now,
 	})
 	assert.Error(t, err)
-}
-
-type mockUser2 struct {
-	id       string
-	username string
-}
-
-type mockUserStore2 struct {
-	users []interfaces.UserInfo
-}
-
-type errorReturningStorage struct {
-	setError bool
-	getError bool
 }
 
 func TestEmbeddingService_validateGenerateEmbeddingRequest_NilRequest(t *testing.T) {

@@ -47,6 +47,8 @@ func withServeGlobals(t *testing.T) {
 		ServerCAFile  string
 		Heartbeat     time.Duration
 		Shutdown      time.Duration
+		EnrollBase    time.Duration
+		EnrollMax     time.Duration
 	}{
 		ServerAddr:    serveServerAddr,
 		TenantID:      serveTenantID,
@@ -63,6 +65,8 @@ func withServeGlobals(t *testing.T) {
 		ServerCAFile:  serveServerCAFile,
 		Heartbeat:     serveHeartbeatEvery,
 		Shutdown:      serveShutdownGrace,
+		EnrollBase:    serveEnrollRetry,
+		EnrollMax:     serveEnrollRetryMax,
 	}
 	t.Cleanup(func() {
 		serveServerAddr = origs.ServerAddr
@@ -80,6 +84,8 @@ func withServeGlobals(t *testing.T) {
 		serveServerCAFile = origs.ServerCAFile
 		serveHeartbeatEvery = origs.Heartbeat
 		serveShutdownGrace = origs.Shutdown
+		serveEnrollRetry = origs.EnrollBase
+		serveEnrollRetryMax = origs.EnrollMax
 	})
 	// Reset to safe defaults so tests don't inherit residue from prior runs.
 	serveServerAddr = ""
@@ -97,6 +103,8 @@ func withServeGlobals(t *testing.T) {
 	serveServerCAFile = ""
 	serveHeartbeatEvery = time.Second
 	serveShutdownGrace = time.Second
+	serveEnrollRetry = time.Second
+	serveEnrollRetryMax = time.Minute
 }
 
 // =============================================================================
@@ -238,4 +246,43 @@ func TestBuildAgentHTTPClient_BadCABundle(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no PEM certificates parsed")
+}
+
+// TestBuildServeConfig_EnrollRetryWindow asserts the enrollment backoff
+// flags reach the daemon config. Without them an operator could not tune
+// how long an agent waits for a server that boots after it.
+func TestBuildServeConfig_EnrollRetryWindow(t *testing.T) {
+	withServeGlobals(t)
+	serveServerAddr = "https://x:8443"
+	serveTenantID = "t1"
+	serveEnrollRetry = 250 * time.Millisecond
+	serveEnrollRetryMax = 90 * time.Second
+
+	cfg, err := buildServeConfig()
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, 250*time.Millisecond, cfg.EnrollRetryBase)
+	assert.Equal(t, 90*time.Second, cfg.EnrollRetryMax)
+	assert.Equal(t, 250*time.Millisecond, cfg.EffectiveEnrollRetryBase())
+	assert.Equal(t, 90*time.Second, cfg.EffectiveEnrollRetryMax())
+}
+
+// TestAgentServeCommand_EnrollRetryFlagDefaults pins the shipped defaults:
+// a one-second first wait so a server that starts moments later is joined
+// promptly, capped at a minute so a long outage costs one journal line per
+// minute rather than thousands.
+func TestAgentServeCommand_EnrollRetryFlagDefaults(t *testing.T) {
+	withServeGlobals(t)
+	cmd := newAgentServeCommand()
+	for _, tc := range []struct {
+		flag string
+		want string
+	}{
+		{"enroll-retry-base", "1s"},
+		{"enroll-retry-max", "1m0s"},
+	} {
+		f := cmd.Flags().Lookup(tc.flag)
+		require.NotNil(t, f, "flag --%s must be registered", tc.flag)
+		assert.Equal(t, tc.want, f.DefValue, "--%s default", tc.flag)
+	}
 }

@@ -22,14 +22,30 @@
  *   • Holding the active session selection.
  *   • Streaming live session events via subscribeSession.
  *   • Paginating historical events via getSessionHistory.
+ *   • Paging the session's CONVERSATION via getSessionConversation.
  *
  * The events array is bounded to MAX_EVENTS entries. When it overflows the
  * oldest events are dropped from the top.
+ *
+ * Events and conversation are two views of one transcript, not alternatives.
+ * The event log is every fragment, thought, presence change and file
+ * operation in the order the server recorded them — what a live attacher
+ * needs. The conversation is the same transcript folded into turns: who said
+ * what, when, which tools ran. An operator opening a session came to read the
+ * second one, so the store loads both and the page leads with the
+ * conversation (go-quicbaas#834).
  */
 
-import type { SessionStatusResponse, SessionEventEnvelope } from '@quicbaas/sdk';
+import type {
+  SessionStatusResponse,
+  SessionEventEnvelope,
+  SessionTurn,
+  GetSessionConversationResponse,
+} from '@quicbaas/sdk';
+import { APIError } from '@quicbaas/sdk';
 import { getSDKClient } from './sdkClient.ts';
-import { orchestratorStore } from './orchestrator.svelte.ts';
+import { orchestratorStore, tenantScope } from './orchestrator.svelte.ts';
+import { authStore, onSessionScopeChange } from './auth.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -37,6 +53,25 @@ import { orchestratorStore } from './orchestrator.svelte.ts';
 
 const MAX_EVENTS = 5_000;
 const HISTORY_PAGE_SIZE = 100;
+
+/** Turns requested per conversation page. The server caps a page at 500. */
+const CONVERSATION_PAGE_SIZE = 100;
+
+/**
+ * Conversation pages fetched in one go, by the initial load and by each press
+ * of "load more". The endpoint only pages FORWARD from the start of the
+ * retained transcript, so reading to the end of a very long session means
+ * walking every page; this bounds one walk at a thousand turns and hands the
+ * rest to the operator as an explicit control rather than a silent stall.
+ */
+const CONVERSATION_AUTO_PAGES = 10;
+
+/**
+ * Turns retained in memory. Past this the OLDEST are dropped, which is the
+ * opposite end from MAX_EVENTS' bound because a conversation is read newest-
+ * last: the turns worth keeping are the ones nearest the end.
+ */
+const MAX_TURNS = 2_000;
 
 // ---------------------------------------------------------------------------
 // Parsed event payload
@@ -61,7 +96,7 @@ export type EventKind =
 /**
  * TurnStatus is the operator-facing activity state for the active session,
  * derived entirely from real signals already present in the transcript and
- * the live subscription — never from a fabricated timer:
+ * the live subscription — never from an invented timer:
  *
  *   - 'idle'         no turn is outstanding; the agent is waiting on input.
  *   - 'pending'      a prompt was submitted (optimistically or confirmed) but
@@ -162,10 +197,86 @@ let historyExhausted = $state(false);
 // from EventStream's own pagination spinner — so the UI can tell "we haven't
 // looked yet" apart from "we looked, and there's genuinely nothing here".
 let historyLoading = $state(false);
+// The reason the last history fetch failed, or '' when it did not.
+//
+// IT USED TO BE SWALLOWED, AND THAT IS WHY #793 LOOKED LIKE AN EMPTY SESSION.
+// A page that cannot be read and a session that said nothing rendered
+// identically — the same blank timeline — so an operator had no way to tell a
+// transcript that was missing from one that was merely unreachable, and the
+// underlying fault went unnoticed for as long as it did.
+let historyError = $state('');
 let connectionStatus: ConnectionStatus = $state('connected');
+
+/**
+ * ConversationErrorKind classifies why a conversation page could not be read,
+ * so the page can say something true about it instead of printing a transport
+ * message at an operator.
+ *
+ *   - ''            nothing failed.
+ *   - 'forbidden'   the principal may not read this session's transcript
+ *                   (401/403) — a tenant they are not scoped to, or an
+ *                   expired grant.
+ *   - 'unavailable' the daemon has no session event log wired, or the node
+ *                   is not serving one yet (503). Transient by nature.
+ *   - 'other'       anything else, including a network failure.
+ */
+export type ConversationErrorKind = '' | 'forbidden' | 'unavailable' | 'other';
+
+// The session's conversation: the event log folded into turns. Empty until
+// the first page lands, and gated on the same scope key as everything else
+// here — a transcript is the last thing that should survive a tenant switch.
+let conversation: SessionTurn[] = $state([]);
+// True only while the initial conversation load for a freshly-opened session
+// is in flight, exactly as historyLoading is. "Load more" runs without it, so
+// pressing it replaces neither the loaded turns nor the page with a spinner.
+let conversationLoading = $state(false);
+let conversationError = $state('');
+let conversationErrorKind: ConversationErrorKind = $state('');
+// True when the server reported a next_cursor we have not followed, i.e. the
+// transcript continues past what is loaded.
+let conversationHasMore = $state(false);
+// The lowest sequence the server still holds. Above 1 means retention has
+// dropped earlier turns, and the first turn on screen is not the first turn
+// of the session.
+let conversationOldestSequence = $state(0);
+
+/**
+ * Session and tenant the cached session list belongs to; '' before anything is
+ * fetched. Separate cache from orchestratorStore's, so it needs the same
+ * protection: without it the sessions an operator was looking at stay on screen
+ * for whoever signs in next (go-quicbaas#309).
+ *
+ * activeSession and its event stream are gated on the same key. An open session
+ * belongs to the tenant it was opened in, and a conversation transcript is the
+ * last thing that should survive into someone else's session.
+ */
+let scope = $state('');
+
+/** Stable empty arrays for out-of-scope reads — see orchestrator.svelte.ts. */
+const NO_SESSIONS: SessionStatusResponse[] = [];
+const NO_EVENTS: ParsedSessionEvent[] = [];
+const NO_TURNS: SessionTurn[] = [];
+
+/** Whether the cached sessions still belong to the session and tenant in effect. */
+function inScope(): boolean {
+  return scope === tenantScope();
+}
 
 // Private: cursor for history pagination (oldest sequence fetched so far).
 let _historyFromSeq = $state(0);
+// Private: the next_cursor the last conversation page reported; 0 at the end
+// of the transcript.
+let _conversationCursor = 0;
+// Private: tail-refresh serialisation. A burst of turn-boundary events must
+// not put a burst of overlapping reads on the wire, and the last one must
+// still happen — so a refresh arriving while one runs sets the pending flag
+// and the running one loops again. No lock, no timer.
+let _conversationRefreshing = false;
+let _conversationRefreshPending = false;
+// Private: a forward walk is on the wire. Two overlapping walks from the
+// same cursor would append the same turns twice, and the turn list is keyed
+// by sequence — a duplicate key is a render error, not a cosmetic one.
+let _conversationPaging = false;
 // Private: in-flight subscription AbortController.
 let _subscribeAC: AbortController | null = null;
 // Private: monotonically-decreasing sentinel sequence for optimistic prompt
@@ -179,12 +290,19 @@ let _optimisticSeq = -1;
 // ---------------------------------------------------------------------------
 
 export const sessionStore = {
-  get sessions() { return sessions; },
+  get sessions() { return inScope() ? sessions : NO_SESSIONS; },
   get sessionsLoading() { return sessionsLoading; },
-  get activeSession() { return activeSession; },
-  get events() { return events; },
+  get activeSession() { return inScope() ? activeSession : null; },
+  get events() { return inScope() ? events : NO_EVENTS; },
   get historyExhausted() { return historyExhausted; },
   get historyLoading() { return historyLoading; },
+  get historyError() { return inScope() ? historyError : ''; },
+  get conversation() { return inScope() ? conversation : NO_TURNS; },
+  get conversationLoading() { return conversationLoading; },
+  get conversationError() { return inScope() ? conversationError : ''; },
+  get conversationErrorKind(): ConversationErrorKind { return inScope() ? conversationErrorKind : ''; },
+  get conversationHasMore() { return inScope() ? conversationHasMore : false; },
+  get conversationOldestSequence() { return inScope() ? conversationOldestSequence : 0; },
   get connectionStatus() { return connectionStatus; },
   get turnStatus() { return computeTurnStatus(); },
 };
@@ -194,11 +312,52 @@ export const sessionStore = {
 // ---------------------------------------------------------------------------
 
 /** Refresh the session list from the server. */
+/**
+ * Release everything belonging to a session or tenant no longer in effect.
+ *
+ * The getters already HIDE it on the next read, which is what keeps it off the
+ * screen with no window at all. This is what actually lets it go — including
+ * the live event subscription, which would otherwise keep streaming a departed
+ * tenant's conversation against whatever bearer is current now.
+ */
+function releaseDepartedScope(): void {
+  if (scope === tenantScope()) return;
+  // No `scope === ''` early return. An empty scope means nothing is CACHED, not
+  // that nothing is running: a live subscription started just before a sign-out
+  // would otherwise keep streaming with no cache to give it away.
+  closeSubscription();
+  scope = '';
+  sessions = [];
+  activeSession = null;
+  events = [];
+  historyExhausted = false;
+  historyLoading = false;
+  historyError = '';
+  connectionStatus = 'connected';
+  _historyFromSeq = 0;
+  resetConversation();
+}
+
+onSessionScopeChange(() => {
+  releaseDepartedScope();
+  // Same reason as agentStore: the session list belongs to the scope, so a
+  // switch must refill it rather than blank it until the auxiliary poll.
+  if (authStore.status === 'authenticated') void refreshSessions();
+});
+
 export async function refreshSessions(): Promise<void> {
+  releaseDepartedScope();
+  // Both pinned before any await, so the request and the decision to keep its
+  // answer describe the same session and tenant.
+  const asked = tenantScope();
+  const tenantID = orchestratorStore.activeTenantID;
   sessionsLoading = true;
   try {
     const client = await getSDKClient();
-    const resp = await client.orchestrator.listSessions({ tenantID: orchestratorStore.activeTenantID });
+    const resp = await client.orchestrator.listSessions({ tenantID });
+    // A late answer for a session that has been replaced is discarded rather
+    // than committed under whoever is signed in now.
+    if (asked !== tenantScope()) return;
     const raw = resp.sessions ?? [];
     const seen = new Set<string>();
     sessions = raw.filter((s) => {
@@ -206,6 +365,7 @@ export async function refreshSessions(): Promise<void> {
       seen.add(s.session_id);
       return true;
     });
+    scope = asked;
   } catch {
     // Silently ignore transient errors; the next poll will retry.
   } finally {
@@ -223,21 +383,48 @@ export async function openSession(session: SessionStatusResponse): Promise<void>
   closeSubscription();
 
   activeSession = session;
+  // Tag the scope here too: a session can be opened before any list refresh has
+  // run, and an untagged activeSession would be gated out as if it belonged to
+  // someone else.
+  scope = tenantScope();
   events = [];
   historyExhausted = false;
+  historyError = '';
   connectionStatus = 'connected';
   _historyFromSeq = 1;
+  resetConversation();
 
   // Load the first history page before starting the live tail. historyLoading
   // is scoped to this initial fetch only — EventStream's own isLoadingHistory
   // covers the later scroll-triggered pagination case — so the UI can show a
   // "loading history" state that is visually distinct from "no history at
   // all" (see EventStream's empty-state gating).
+  const asked = scope;
+
+  // The conversation and the event log are independent reads of the same
+  // transcript, so they go out together rather than one behind the other —
+  // the page's primary content does not wait on the log it summarises.
+  conversationLoading = true;
+  const conversationLoad = pageConversationFrom(session, 0, CONVERSATION_AUTO_PAGES)
+    .finally(() => {
+      if (asked === tenantScope() && activeSession?.session_id === session.session_id) {
+        conversationLoading = false;
+      }
+    });
+
   historyLoading = true;
   try {
     await loadMoreHistory();
   } finally {
-    historyLoading = false;
+    if (asked === tenantScope()) historyLoading = false;
+  }
+  await conversationLoad;
+
+  // The session may have ended while history was loading. Starting a live
+  // stream now would resurrect a transcript that releaseDepartedScope has
+  // already cleared, and tail it against whatever bearer is current.
+  if (asked !== tenantScope() || activeSession?.session_id !== session.session_id) {
+    return;
   }
 
   // Start live subscription from wherever history ended.
@@ -252,8 +439,25 @@ export function closeActiveSession(): void {
   events = [];
   historyExhausted = false;
   historyLoading = false;
+  historyError = '';
   connectionStatus = 'connected';
   _historyFromSeq = 0;
+  resetConversation();
+}
+
+/** Drop every trace of the loaded conversation, cursors included. */
+function resetConversation(): void {
+  conversation = [];
+  conversationLoading = false;
+  conversationError = '';
+  conversationErrorKind = '';
+  conversationHasMore = false;
+  conversationOldestSequence = 0;
+  _conversationCursor = 0;
+  // The in-flight refresh cannot be cancelled, but it checks the scope before
+  // committing anything, so clearing the pending flag is enough to stop the
+  // loop from starting another read for a session nobody is looking at.
+  _conversationRefreshPending = false;
 }
 
 /**
@@ -285,14 +489,22 @@ export async function requestCloseSession(sessionId: string): Promise<void> {
 export async function loadMoreHistory(): Promise<void> {
   if (historyExhausted || activeSession === null) return;
 
+  // Pinned before the awaits: a page fetched for one session must not be
+  // prepended onto another's transcript, or onto one that has been released.
+  const asked = scope;
+  const forSession = activeSession.session_id;
+
   try {
     const client = await getSDKClient();
     const resp = await client.orchestrator.getSessionHistory({
-      session_id: activeSession.session_id,
+      session_id: forSession,
       from_sequence: _historyFromSeq,
       limit: HISTORY_PAGE_SIZE,
     });
 
+    if (asked !== tenantScope() || activeSession?.session_id !== forSession) return;
+
+    historyError = '';
     if (resp.events.length === 0) {
       // No events returned — we are at the beginning of the session log.
       historyExhausted = true;
@@ -311,9 +523,177 @@ export async function loadMoreHistory(): Promise<void> {
       // Advance cursor to the sequence after the last one we fetched.
       _historyFromSeq = resp.next_seq;
     }
-  } catch {
-    // Silently ignore.
+  } catch (err: unknown) {
+    // REPORTED, NOT SWALLOWED. A transcript that cannot be fetched must not
+    // render as a session that said nothing (go-quicbaas#793). The pagination
+    // cursor is left where it was so a retry resumes rather than skips.
+    if (asked !== tenantScope() || activeSession?.session_id !== forSession) return;
+    historyError = err instanceof Error ? err.message : String(err);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Conversation
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the next slice of the conversation the operator has not seen.
+ *
+ * Only meaningful while conversationHasMore is true — the transcript runs
+ * past what is loaded. Exposed so the page can offer the walk as a control
+ * instead of pretending a thousand turns is the whole of a longer session.
+ * The caller owns its own busy state; this does not raise
+ * conversationLoading, which belongs to the initial load alone.
+ */
+export async function loadMoreConversation(): Promise<void> {
+  if (!conversationHasMore || activeSession === null || _conversationPaging) return;
+  await pageConversationFrom(activeSession, _conversationCursor, CONVERSATION_AUTO_PAGES);
+}
+
+/**
+ * Re-read the end of the conversation after the live event tail reported a
+ * turn boundary.
+ *
+ * A conversation page is a FOLD of events, so a turn already on screen is not
+ * final while its answer is still streaming: re-reading from that turn's own
+ * sequence returns it complete, followed by whatever has happened since. That
+ * is why the refresh starts at the last turn we hold rather than at the
+ * cursor past it.
+ *
+ * It is a no-op when the transcript already runs past what is loaded — a new
+ * turn is then beyond the loaded window anyway, and the operator reaches it
+ * with loadMoreConversation.
+ */
+async function refreshConversationTail(): Promise<void> {
+  if (activeSession === null || conversationHasMore) return;
+
+  if (_conversationRefreshing) {
+    // One read is already on the wire and will not have seen this event.
+    // Ask it to go round again rather than racing a second read against it.
+    _conversationRefreshPending = true;
+    return;
+  }
+
+  _conversationRefreshing = true;
+  try {
+    do {
+      _conversationRefreshPending = false;
+      const session = activeSession;
+      if (session === null) return;
+      const last = conversation[conversation.length - 1];
+      await pageConversationFrom(session, last?.sequence ?? 0, CONVERSATION_AUTO_PAGES);
+    } while (_conversationRefreshPending);
+  } finally {
+    _conversationRefreshing = false;
+  }
+}
+
+/**
+ * Walk conversation pages forward from startCursor, committing what comes
+ * back and stopping at the end of the transcript or after maxPages.
+ *
+ * The first page REPLACES every loaded turn at or after startCursor and later
+ * pages append, which is what lets one function serve all three callers: the
+ * initial load starts at 0 and so replaces everything, "load more" starts at
+ * the cursor past the last loaded turn and so replaces nothing, and the tail
+ * refresh starts at the last loaded turn and so re-states exactly that turn.
+ * Committing the replacement together with the first page's answer is also
+ * what keeps a refresh from blanking the last turn for a frame.
+ */
+async function pageConversationFrom(
+  session: SessionStatusResponse,
+  startCursor: number,
+  maxPages: number,
+): Promise<void> {
+  // Pinned before the awaits, for the same reason loadMoreHistory pins them:
+  // a page fetched for one session must never land on another's transcript.
+  const asked = scope;
+  const forSession = session.session_id;
+
+  let cursor = startCursor;
+  let replaced = false;
+
+  _conversationPaging = true;
+  try {
+    for (let page = 0; page < maxPages; page++) {
+      let resp: GetSessionConversationResponse;
+      try {
+        resp = await fetchConversationPage(session, cursor);
+      } catch (err: unknown) {
+        // REPORTED, NOT SWALLOWED — the whole point of go-quicbaas#793 and
+        // of this change. A conversation that cannot be read must not render
+        // as a session that said nothing. The cursor is left where it was so
+        // a retry resumes rather than skips.
+        if (stale(asked, forSession)) return;
+        conversationError = err instanceof Error ? err.message : String(err);
+        conversationErrorKind = classifyConversationError(err);
+        return;
+      }
+      if (stale(asked, forSession)) return;
+
+      conversationError = '';
+      conversationErrorKind = '';
+      conversationOldestSequence = resp.oldest_sequence ?? 0;
+
+      const turns = resp.turns ?? [];
+      if (!replaced) {
+        conversation = [...conversation.filter((t) => t.sequence < startCursor), ...turns]
+          .slice(-MAX_TURNS);
+        replaced = true;
+      } else if (turns.length > 0) {
+        conversation = [...conversation, ...turns].slice(-MAX_TURNS);
+      }
+
+      cursor = resp.next_cursor ?? 0;
+      _conversationCursor = cursor;
+      conversationHasMore = cursor > 0;
+      if (cursor === 0) return;
+    }
+  } finally {
+    _conversationPaging = false;
+  }
+}
+
+/**
+ * Read one conversation page.
+ *
+ * The tenant is named explicitly, from the same source refreshSessions read
+ * to find this session in the first place: an operator viewing a tenant
+ * other than their own default must get that tenant's transcript, not an
+ * empty page from their own. The server falls back to the authenticated
+ * principal's tenant when the parameter is absent, so an unset active tenant
+ * is left off rather than sent empty.
+ */
+async function fetchConversationPage(
+  session: SessionStatusResponse,
+  cursor: number,
+): Promise<GetSessionConversationResponse> {
+  const client = await getSDKClient();
+  const tenantID = orchestratorStore.activeTenantID;
+  return client.orchestrator.getSessionConversation({
+    session_id: session.session_id,
+    ...(tenantID ? { tenant_id: tenantID } : {}),
+    cursor,
+    limit: CONVERSATION_PAGE_SIZE,
+  });
+}
+
+/** Map a failed read onto the reason the page will show. */
+function classifyConversationError(err: unknown): ConversationErrorKind {
+  if (err instanceof APIError) {
+    if (err.status === 401 || err.status === 403) return 'forbidden';
+    if (err.status === 503) return 'unavailable';
+  }
+  return 'other';
+}
+
+/**
+ * Whether an answer pinned to `asked`/`forSession` still describes what is on
+ * screen. Both halves matter: the tenant can change under a signed-in
+ * operator, and the session can change without it.
+ */
+function stale(asked: string, forSession: string): boolean {
+  return asked !== tenantScope() || activeSession?.session_id !== forSession;
 }
 
 // ---------------------------------------------------------------------------
@@ -398,7 +778,34 @@ function appendEvent(ev: ParsedSessionEvent): void {
   }
 
   events = [...events, ev].slice(-MAX_EVENTS);
+
+  // A turn boundary just went past on the live tail, so the folded view of
+  // this transcript is now behind the raw one. Re-read its end. Optimistic
+  // placeholders (sequence <= 0) are skipped: the server has not recorded
+  // them yet, so there is nothing new to fold.
+  if (ev.sequence > 0 && CONVERSATION_BOUNDARY_KINDS.has(ev.kind)) {
+    void refreshConversationTail();
+  }
 }
+
+/**
+ * Event kinds that open or close a conversation turn, and so change what a
+ * conversation page would return. A Set rather than a chain of comparisons:
+ * this runs on every event the live tail delivers.
+ *
+ * assistant_chunk is deliberately absent. A streamed answer is dozens of
+ * them and exactly one turn, so refreshing on each would put dozens of reads
+ * on the wire to watch one turn grow; turn_completed/turn_failed close it,
+ * and the event log tab carries the answer live in the meantime.
+ */
+const CONVERSATION_BOUNDARY_KINDS: ReadonlySet<EventKind> = new Set<EventKind>([
+  'prompt',
+  'turn_completed',
+  'turn_failed',
+  'system',
+  'closed',
+  'resumed',
+]);
 
 /**
  * Derive the current TurnStatus from the transcript and connection health.

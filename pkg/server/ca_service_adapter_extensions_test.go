@@ -41,6 +41,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/xkmsca"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -55,68 +56,7 @@ import (
 // touches the host filesystem and no goroutines outlive the test.
 func newRealSoftwareCA(t *testing.T) xkmssdk.TrustedCA {
 	t.Helper()
-
-	keyStorage := xkmssdk.NewStorageMemory()
-	certStorage := xkmssdk.NewStorageMemory()
-
-	pkcs8Backend, err := xkmssdk.NewPKCS8Backend(&xkmssdk.PKCS8BackendConfig{
-		KeyStorage:         keyStorage,
-		AllowPlaintextKeys: true,
-	})
-	require.NoError(t, err)
-
-	backend, err := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{
-		Backend:     pkcs8Backend,
-		CertStorage: certStorage,
-	})
-	require.NoError(t, err)
-
-	certStore, err := xkmssdk.NewCertStore(&xkmssdk.CertStoreConfig{
-		CertStorage: xkmssdk.NewStorageCertAdapter(certStorage),
-	})
-	require.NoError(t, err)
-
-	keyConfig := &xkmssdk.KeyConfig{
-		KeyAlgorithm:       xkmssdk.AlgorithmECDSA,
-		KeyType:            xkmssdk.KeyTypeStringCA,
-		Hash:               xkmssdk.HashSHA256,
-		SignatureAlgorithm: xkmssdk.SigECDSAWithSHA256,
-		StoreType:          xkmssdk.StoreSoftware,
-		ECCConfig:          &xkmssdk.KeyECCConfig{Curve: xkmssdk.CurveP256},
-	}
-
-	identity := xkmssdk.TrustedCAIdentity{
-		Subject: xkmssdk.TrustedCASubject{
-			CommonName:   "QuicBaaS Extensions Test Root CA",
-			Organization: "Automate The Things",
-		},
-		Valid:        5,
-		Keys:         []*xkmssdk.KeyConfig{keyConfig},
-		KeystoreType: xkmssdk.StoreSoftware,
-		IsRoot:       true,
-	}
-
-	keyAttrs, err := identity.ToKeyAttributes()
-	require.NoError(t, err)
-
-	ca, err := xkmssdk.NewTrustedCA(&xkmssdk.TrustedCAParams{
-		Config: &xkmssdk.TrustedCAConfig{
-			Identity:                identity.Subject.CommonName,
-			Subject:                 &identity.Subject,
-			ValidityDays:            identity.GetValidityDays(),
-			IsRootCA:                true,
-			MaxPathLength:           1,
-			StoreType:               xkmssdk.StoreSoftware,
-			DefaultCertValidityDays: 365,
-		},
-		KeyAttributes: keyAttrs,
-		KeyStore:      backend,
-		CertStore:     certStore,
-	})
-	require.NoError(t, err)
-	require.NoError(t, ca.Init(context.Background()))
-
-	return ca
+	return xkmsca.New(t, "QuicBaaS Extensions Test Root CA")
 }
 
 // newRealAdapter wraps a real software CA in the adapter under test.

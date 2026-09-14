@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -43,6 +44,16 @@ func newAgentRegistrarAdapter(registry orchestration.AgentRegistry) *agentRegist
 	return &agentRegistrarAdapter{registry: registry}
 }
 
+// NewAgentRegistrar returns the fleet registrar the mTLS register handler is
+// wired with, over the supplied registry.
+//
+// Exported so an end-to-end scenario drives the REGISTRAR THIS SERVER USES
+// rather than a copy of it. A test that forks this translation cannot fail
+// when the translation is wrong, which is exactly what it exists to catch.
+func NewAgentRegistrar(registry orchestration.AgentRegistry) iam.AgentRegistrar {
+	return newAgentRegistrarAdapter(registry)
+}
+
 // RegisterAgent translates the flat iam.AgentRegistrarRequest into a proper
 // orchestration.AgentRegistration and publishes it to the fleet registry.
 //
@@ -51,6 +62,21 @@ func newAgentRegistrarAdapter(registry orchestration.AgentRegistry) *agentRegist
 // all backends. This matches how container-script agents are recorded and
 // lets ListAgents(filter.Backend="ollama") find daemons that serve multiple
 // backend kinds.
+//
+// A DAEMON THAT IS ALREADY IN THE REGISTRY IS REFRESHED, NOT REFUSED. A daemon
+// re-registers on every restart, on certificate renewal and whenever its
+// cached credentials are discarded, and the registration it sends is the
+// current truth about it. The guarded create answers "agent already exists"
+// for all of them, and this used to be the end of it: the handler logged the
+// refusal and the record kept the values of the FIRST registration forever --
+// the address a dispatcher dialled, the backends it matched on, the OAuth2
+// client an operator revoked through (go-quicbaas#646). The second call
+// converges the record instead, under the record's own principal.
+//
+// The create is attempted FIRST rather than probing for the record and
+// choosing: of N nodes registering one agent ID exactly one create succeeds,
+// and the losers all take the refresh path, which is the same outcome by a
+// route that never has to decide a race itself.
 func (a *agentRegistrarAdapter) RegisterAgent(ctx context.Context, req *iam.AgentRegistrarRequest) error {
 	if a.registry == nil {
 		return nil // No-op when the central is running without orchestration
@@ -76,5 +102,17 @@ func (a *agentRegistrarAdapter) RegisterAgent(ctx context.Context, req *iam.Agen
 		RegisteredAt: now,
 		Metadata:     req.Metadata,
 	}
-	return a.registry.RegisterAgent(ctx, reg)
+
+	err := a.registry.RegisterAgent(ctx, reg)
+	var exists *orchestration.AgentAlreadyExistsError
+	if !errors.As(err, &exists) {
+		return err
+	}
+
+	// The record the create lost to may be removed by an operator between the
+	// two calls, in which case the refresh reports not-found. That is
+	// reported, not retried: a removal is a deliberate act and a registrar
+	// that raced it back into existence would undo it. The daemon's next
+	// enrollment registers cleanly.
+	return a.registry.RefreshAgent(ctx, reg)
 }

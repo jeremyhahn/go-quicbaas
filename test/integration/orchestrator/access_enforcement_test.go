@@ -207,3 +207,137 @@ func TestProjectAccessEnforcement_LegacyAllowAll(t *testing.T) {
 	err = testService.Agent().ClaimTask(ctx, tenantID, task.ID, agentID)
 	require.NoError(t, err, "legacy project (empty role map) should allow any agent")
 }
+
+// TestProjectAccessEnforcement_OnDispatch pins the same boundary on the write
+// that hands an agent a task without any claim at all.
+//
+// A CLAIM IS THE AGENT ASKING; A DISPATCH IS THE ENGINE TELLING. Auto-spawn at
+// creation time and the dispatcher's later sweep share one dispatch path
+// (SpawnTask → autoSpawnTask), and that path assigns the task to a fleet agent
+// it picked itself. If only the claim consulted the project's role matrix, a
+// denied agent would simply be handed the work instead of being refused when
+// it asked for it — so both entry points are asserted here.
+func TestProjectAccessEnforcement_OnDispatch(t *testing.T) {
+	tenantID := "tenant-pad-" + uniqueSuffix()
+	ctx := tenantCtx(tenantID)
+	plainCtx := context.Background()
+
+	createResp, err := testService.Project().CreateProject(plainCtx, &service.CreateProjectRequest{
+		TenantID: tenantID,
+		Name:     "proj-pad-" + uniqueSuffix(),
+		AgentRoles: map[string]orchestration.ProjectRole{
+			"placeholder-keeps-map-non-empty": orchestration.ProjectRoleObserver,
+		},
+	})
+	require.NoError(t, err, "create project")
+	projectID := createResp.Project.ID
+
+	agent := registerOnlineAgent(t, ctx, tenantID, "agent-pad-"+uniqueSuffix(), "ollama", nil)
+
+	grant := func(t *testing.T, role orchestration.ProjectRole) {
+		t.Helper()
+		_, gerr := testService.Project().GrantAgentRole(plainCtx, &service.GrantAgentRoleRequest{
+			TenantID:  tenantID,
+			ProjectID: projectID,
+			AgentID:   agent.ID,
+			Role:      role,
+		})
+		require.NoError(t, gerr, "grant %s", role)
+	}
+
+	// The dispatcher reaches the same service through TaskSpawner; asserting
+	// it here is what pins the sweep path rather than only creation time.
+	spawner, ok := testService.Agent().(orchestration.TaskSpawner)
+	require.True(t, ok, "the orchestration AgentService must satisfy TaskSpawner")
+
+	newScopedTask := func(t *testing.T) *orchestration.Task {
+		t.Helper()
+		task, terr := testService.Agent().CreateTask(ctx, &orchestration.CreateTaskRequest{
+			TenantID:  tenantID,
+			Subject:   "dispatch-task-" + uniqueSuffix(),
+			ProjectID: projectID,
+			Backend:   "ollama",
+		})
+		require.NoError(t, terr, "create task")
+		return task
+	}
+
+	t.Run("WorkerIsDispatched", func(t *testing.T) {
+		grant(t, orchestration.ProjectRoleWorker)
+
+		task, terr := testService.Agent().CreateTask(ctx, &orchestration.CreateTaskRequest{
+			TenantID:  tenantID,
+			Subject:   "dispatch-worker-" + uniqueSuffix(),
+			ProjectID: projectID,
+			Backend:   "ollama",
+			AutoSpawn: true,
+		})
+		require.NoError(t, terr, "a worker the project granted must be dispatched")
+		assert.NotEmpty(t, task.SpawnedJobID, "a dispatched task carries its job")
+	})
+
+	t.Run("DeniedIsNotDispatchedOnCreate", func(t *testing.T) {
+		grant(t, orchestration.ProjectRoleDenied)
+
+		task, terr := testService.Agent().CreateTask(ctx, &orchestration.CreateTaskRequest{
+			TenantID:  tenantID,
+			Subject:   "dispatch-denied-" + uniqueSuffix(),
+			ProjectID: projectID,
+			Backend:   "ollama",
+			AutoSpawn: true,
+		})
+		require.Error(t, terr, "a denied agent must not be handed the project's work")
+		require.NotNil(t, task, "the task is persisted even when the dispatch is refused")
+		assert.Empty(t, task.SpawnedJobID, "a refused dispatch starts no job")
+
+		var noMatch *orchestration.NoMatchingAgentError
+		require.True(t, errors.As(terr, &noMatch),
+			"expected *orchestration.NoMatchingAgentError, got %T: %v", terr, terr)
+		assert.Equal(t, "project_role", noMatch.Constraint,
+			"the refusal must name the role matrix, not routing")
+	})
+
+	t.Run("DeniedIsNotDispatchedByTheDispatcher", func(t *testing.T) {
+		grant(t, orchestration.ProjectRoleDenied)
+
+		task := newScopedTask(t)
+		jobID, serr := spawner.SpawnTask(ctx, task)
+		require.Error(t, serr, "the dispatcher must refuse a denied agent too")
+		assert.Empty(t, jobID)
+
+		var noMatch *orchestration.NoMatchingAgentError
+		require.True(t, errors.As(serr, &noMatch),
+			"expected *orchestration.NoMatchingAgentError, got %T: %v", serr, serr)
+		assert.Equal(t, "project_role", noMatch.Constraint)
+	})
+
+	t.Run("ObserverIsNotDispatched", func(t *testing.T) {
+		grant(t, orchestration.ProjectRoleObserver)
+
+		task := newScopedTask(t)
+		_, serr := spawner.SpawnTask(ctx, task)
+		require.Error(t, serr, "an observer cannot claim, so it must not be dispatched either")
+
+		var noMatch *orchestration.NoMatchingAgentError
+		require.True(t, errors.As(serr, &noMatch),
+			"expected *orchestration.NoMatchingAgentError, got %T: %v", serr, serr)
+		assert.Equal(t, "project_role", noMatch.Constraint)
+	})
+
+	t.Run("UnresolvableProjectIsNotDispatched", func(t *testing.T) {
+		grant(t, orchestration.ProjectRoleWorker)
+
+		task, terr := testService.Agent().CreateTask(ctx, &orchestration.CreateTaskRequest{
+			TenantID:  tenantID,
+			Subject:   "dispatch-unresolved-" + uniqueSuffix(),
+			ProjectID: "no-such-project-" + uniqueSuffix(),
+			Backend:   "ollama",
+		})
+		require.NoError(t, terr, "create task")
+
+		_, serr := spawner.SpawnTask(ctx, task)
+		require.Error(t, serr, "a project the store cannot produce must not be dispatched")
+		assert.True(t, errors.Is(serr, orchestration.ErrProjectUnresolved),
+			"expected ErrProjectUnresolved, got %T: %v", serr, serr)
+	})
+}

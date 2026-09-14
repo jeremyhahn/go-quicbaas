@@ -82,7 +82,6 @@ a running QuicBaaS server via gRPC.`,
 	}
 
 	// Add persistent flags for all ollama commands
-	cmd.PersistentFlags().DurationVar(&timeout, "timeout", 30*time.Second, "Request timeout")
 	cmd.PersistentFlags().StringVar(&outputFormat, "output", "table", "Output format (json, yaml, table)")
 
 	// TLS flags
@@ -143,7 +142,7 @@ func runOllamaHealthCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.OllamaHealthRequest{
@@ -201,7 +200,7 @@ func runOllamaModelsCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.OllamaListModelsRequest{
@@ -255,7 +254,7 @@ func runOllamaModelInfoCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.OllamaGetModelInfoRequest{
@@ -315,7 +314,7 @@ func runOllamaEmbedCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	var resp *pb.OllamaEmbedResponse
@@ -393,7 +392,7 @@ func runOllamaEmbedBatchCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	req := &pb.OllamaEmbedBatchRequest{
@@ -639,7 +638,7 @@ func createOllamaGRPCClient() (*grpc.Client, error) {
 	// Build client options
 	opts := []grpc.ClientOption{
 		grpc.WithLogger(log),
-		grpc.WithTimeout(timeout),
+		grpc.WithTimeout(globalTimeout),
 		grpc.WithRetry(maxRetries, retryBackoff),
 		grpc.WithMaxRetryBackoff(5 * time.Second),
 	}

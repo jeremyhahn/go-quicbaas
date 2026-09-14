@@ -20,10 +20,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-auth/pkg/otp"
+	authsecret "github.com/jeremyhahn/go-auth/pkg/secret"
 )
 
 // MFAManager handles MFA operations.
@@ -125,11 +127,16 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to cancel existing enrollments", err)
 	}
 
-	// Generate the shared secret into protected memory, and render the base32
-	// form only where it is genuinely required: the provisioning URI the user
-	// scans, and the enrollment record that has to survive until they confirm
-	// the code. Destroy releases the protected copy as soon as both exist, so
-	// the unwipeable string is the only one that outlives this call.
+	// Generate the shared secret into protected memory. The key never has a
+	// plaintext form on the heap, and it is the enclave — not the base32
+	// string — that the authenticator below derives codes from.
+	//
+	// The base32 form is still rendered, because enrollment cannot happen
+	// without it: the user has to scan or type it, and it has to survive in
+	// the enrollment record until they confirm a code. That string cannot be
+	// wiped; it is the one unprotected copy this call leaves behind, and it is
+	// inherent to enrolling a shared secret rather than an artifact of how the
+	// code is derived.
 	protectedSecret, err := otp.GenerateProtectedSecret()
 	if err != nil {
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to generate secret", err)
@@ -158,7 +165,7 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 
 	otpConfig := otp.Config{
 		Type:        otp.TypeTOTP,
-		Secret:      secret,
+		SecretKey:   protectedSecret,
 		Issuer:      m.config.Issuer,
 		AccountName: accountName,
 		Digits:      uint(m.config.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
@@ -247,9 +254,21 @@ func (m *DefaultMFAManager) CompleteEnrollment(ctx context.Context, enrollmentID
 		return err
 	}
 
+	// The enrollment record holds the shared secret as a base32 string, which
+	// no code here can wipe. Decode it into protected memory for the
+	// verification itself so the key is decrypted only for the moment a code
+	// is derived, instead of being handed to a dependency that decodes a fresh
+	// plaintext copy on every call. See protectedSharedSecret for what this
+	// does and does not close.
+	enrollmentKey, err := protectedSharedSecret("iam.mfa.enroll.complete", enrollment.Secret)
+	if err != nil {
+		return err
+	}
+	defer enrollmentKey.Destroy()
+
 	otpConfig := otp.Config{
 		Type:      otp.TypeTOTP,
-		Secret:    enrollment.Secret,
+		SecretKey: enrollmentKey,
 		Digits:    uint(provisioned.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
 		Period:    uint(provisioned.Period), // #nosec G115 -- Period is bounded config value (typically 30)
 		Algorithm: algorithm,
@@ -298,20 +317,10 @@ func (m *DefaultMFAManager) CompleteEnrollment(ctx context.Context, enrollmentID
 		return err
 	}
 
-	// Update user MFA status
-	if m.userStorage != nil {
-		user, err := m.userStorage.GetUser(ctx, enrollment.TenantID, enrollment.UserID)
-		if err == nil && user != nil {
-			now := time.Now()
-			user.MFAEnabled = true
-			user.MFAMethod = MFAMethodTOTP
-			user.MFAEnrolledAt = &now
-			user.Updated = now
-			if updateErr := m.userStorage.UpdateUser(ctx, user); updateErr != nil {
-				return NewIAMError(ErrMFAInvalid, "iam.mfa.enroll.complete", "failed to update user MFA status", updateErr)
-			}
-		}
-	}
+	// The verified secret above IS the enrollment. There is deliberately no
+	// second write mirroring it onto the user record: GetMFAStatus and
+	// IsMFARequired both answer from this store, so a copy on the identity
+	// record was read by nothing and could only ever disagree with it.
 
 	// Delete enrollment
 	if delErr := m.storage.DeleteEnrollment(ctx, enrollmentID); delErr != nil {
@@ -414,6 +423,40 @@ func (m *DefaultMFAManager) VerifyChallenge(ctx context.Context, challengeID, co
 
 	// Verify code
 	if err := m.VerifyCode(ctx, challenge.UserID, challenge.TenantID, code); err != nil {
+		// ONLY A WRONG CODE IS AN AUTHENTICATION ATTEMPT. VerifyCode reports
+		// two different things through one error: that the code the user typed
+		// does not match, and that the enrollment cannot be used at all -- a
+		// stored secret that is not decodable, an algorithm the policy refuses,
+		// storage that will not answer. Collapsing the second into the first
+		// costs three things: the operator sees a corrupt enrollment as a bad
+		// login, the user loses an attempt they did not spend, and -- because
+		// the backup-code fallback below would run first -- a valid backup code
+		// returns SUCCESS while the primary secret stays quietly corrupt, which
+		// is the state nobody ever discovers.
+		//
+		// A wrong code must still consume an attempt: that is the brute-force
+		// defence. So this is a classification, not a blanket `return err`. The
+		// So this names ONE condition, and deliberately not a general "anything
+		// that is not a wrong code". The broad form would also swallow
+		// ErrMFANotEnrolled and the algorithm-policy refusal, both of which
+		// have established behaviour below that is not what this finding is
+		// about; redefining those under cover of a security fix is the same
+		// mistake in the other direction.
+		//
+		// A corrupt stored secret is the one case that must not reach the
+		// backup-code fallback. Recovering through it would return success and
+		// leave the corruption in place, unreported and undiscoverable -- the
+		// hiding this exists to stop. The cost is explicit: a user whose stored
+		// secret is corrupt cannot log in with a backup code either, and needs
+		// an operator to repair or reset the enrollment. That is the intended
+		// trade for a data-integrity fault, and it is why this is narrow: an
+		// algorithm the policy now refuses is an administrative change, not
+		// corruption, and backup codes remain its sanctioned recovery path.
+		var malformed *MFASecretMalformedError
+		if errors.As(err, &malformed) {
+			return nil, err
+		}
+
 		// Check if it's a backup code
 		if backupErr := m.VerifyBackupCode(ctx, challenge.UserID, challenge.TenantID, code); backupErr == nil {
 			// Backup code was valid
@@ -437,7 +480,10 @@ func (m *DefaultMFAManager) VerifyChallenge(ctx context.Context, challengeID, co
 
 		// A refusal to use the enrollment's algorithm is not a failed
 		// authentication attempt: surface it so the caller sees that the user
-		// has to re-enroll, and do not consume one of their attempts.
+		// has to re-enroll, and do not consume one of their attempts. It sits
+		// AFTER the backup-code fallback above, which is what lets a user whose
+		// algorithm a policy change has disallowed still recover with a backup
+		// code instead of being locked out.
 		if isMFAAlgorithmPolicyError(err) {
 			return nil, err
 		}
@@ -504,9 +550,20 @@ func (m *DefaultMFAManager) VerifyCode(ctx context.Context, userID, tenantID, co
 		return err
 	}
 
+	// The stored secret arrives from the barrier as a base32 string, which no
+	// code here can wipe. Decode it into protected memory for the
+	// verification itself so the key is decrypted only for the moment a code
+	// is derived. See protectedSharedSecret for what this does and does not
+	// close.
+	verifyKey, err := protectedSharedSecret("iam.mfa.verify", secret.Secret)
+	if err != nil {
+		return err
+	}
+	defer verifyKey.Destroy()
+
 	otpConfig := otp.Config{
 		Type:      otp.TypeTOTP,
-		Secret:    secret.Secret,
+		SecretKey: verifyKey,
 		Digits:    uint(secret.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
 		Period:    uint(secret.Period), // #nosec G115 -- Period is bounded config value (typically 30)
 		Algorithm: algorithm,
@@ -541,7 +598,10 @@ func (m *DefaultMFAManager) DisableMFA(ctx context.Context, userID, tenantID str
 		return NewIAMError(ErrMFAInvalid, "iam.mfa.disable", "tenant ID is required", nil)
 	}
 
-	// Delete secret
+	// Delete secret.
+	//
+	// coded-sentinel-ok: the CLASS is the intent. Disabling MFA is idempotent,
+	// and any not-found from the delete means there was nothing to delete.
 	if err := m.storage.DeleteSecret(ctx, userID, tenantID); err != nil && !errors.Is(err, ErrMFANotEnrolled) {
 		return err
 	}
@@ -561,19 +621,8 @@ func (m *DefaultMFAManager) DisableMFA(ctx context.Context, userID, tenantID str
 		return NewIAMError(ErrMFAInvalid, "iam.mfa.disable", "failed to delete backup codes", err)
 	}
 
-	// Update user MFA status
-	if m.userStorage != nil {
-		user, err := m.userStorage.GetUser(ctx, tenantID, userID)
-		if err == nil && user != nil {
-			user.MFAEnabled = false
-			user.MFAMethod = ""
-			user.MFAEnrolledAt = nil
-			user.Updated = time.Now()
-			if updateErr := m.userStorage.UpdateUser(ctx, user); updateErr != nil {
-				return NewIAMError(ErrMFAInvalid, "iam.mfa.disable", "failed to update user MFA status", updateErr)
-			}
-		}
-	}
+	// Deleting the secret, challenges and backup codes above IS disabling MFA;
+	// see CompleteEnrollment for why no copy is mirrored onto the user record.
 
 	return nil
 }
@@ -758,6 +807,95 @@ func (m *DefaultMFAManager) GetBackupCodeStatus(ctx context.Context, userID, ten
 		GeneratedAt:   backupSet.Created,
 		RegeneratedAt: backupSet.Regenerated,
 	}, nil
+}
+
+// protectedSharedSecret decodes a stored base32 TOTP shared secret into
+// protected memory, tagging a failure with the operation that asked for it.
+//
+// MFASecretMalformedError is returned when a stored shared secret cannot be a
+// key at all, as opposed to a code failing to match. It is the enrollment that
+// is broken, not the authentication attempt, and the two are kept apart so a
+// corrupt stored value is never reported as a bad login.
+type MFASecretMalformedError struct {
+	// Reason describes what is wrong with the stored value. It never contains
+	// the secret itself.
+	Reason string
+
+	// Cause is the underlying decode failure, when there is one. It is
+	// preserved so callers can still match on the decoder's own sentinels.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *MFASecretMalformedError) Error() string {
+	if e.Cause != nil {
+		return "stored MFA shared secret is malformed: " + e.Reason + ": " + e.Cause.Error()
+	}
+	return "stored MFA shared secret is malformed: " + e.Reason
+}
+
+// Unwrap returns the underlying decode failure, so wrapping this around the
+// decoder's error does not hide it from errors.Is.
+func (e *MFASecretMalformedError) Unwrap() error { return e.Cause }
+
+// It closes the last segment of the secret's path: the derivation itself. With
+// the returned key in otp.Config.SecretKey the shared secret is sealed in a
+// memguard enclave and decrypted only for the moment a code is derived,
+// instead of being passed to github.com/pquerna/otp as a string that it
+// decodes into a fresh plaintext key on every Generate and Authenticate.
+//
+// It does not make the whole path protected, and must not be read as if it
+// did. base32Secret is a Go string that arrived from the MFA store — read as
+// plaintext JSON bytes and unmarshalled into MFASecret.Secret or
+// MFAEnrollment.Secret — and a string cannot be wiped. Both of those copies
+// stay resident until the collector reclaims them, so this narrows an existing
+// exposure rather than removing it. Closing them means the store handing back
+// protected memory instead of a string, which is a change to the storage
+// interface and to the KV read below it.
+//
+// The caller borrows the key: destroy it when the authenticator built from it
+// is done.
+func protectedSharedSecret(op, base32Secret string) (*authsecret.Secret, error) {
+	// REFUSE AN INCOMPLETE TERMINAL GROUP BEFORE DECODING, because the decode
+	// reports nothing. otp.NewProtectedSecret uses Go's unpadded base32
+	// decoder, which accepts a final group of 1, 3 or 6 characters by
+	// discarding the bits that do not complete a byte: base32 packs 5 bits per
+	// character, so those groups hold 5, 15 or 30 bits and contribute no whole
+	// byte. "<secret>A" therefore decodes to exactly the bytes of "<secret>",
+	// with no error -- measured, byte identical -- so two different persisted
+	// values would derive the same TOTP and both would authenticate.
+	//
+	// That is a corrupt stored value, not a recoverable encoding, so it is
+	// refused rather than normalised: silently accepting the prefix would let
+	// a secret nobody enrolled verify against a code for one that was. The
+	// other remainders (2, 4, 5, 7) do carry complete bytes and are left alone.
+	//
+	// Normalisation matches otp.NewProtectedSecret's own trimBase32 -- trim
+	// surrounding whitespace, then trailing '=' padding -- so this measures
+	// the same string the decoder will. Case does not affect length. The
+	// original value is still what gets passed on, so nothing changes for a
+	// well-formed secret.
+	switch len(strings.TrimRight(strings.TrimSpace(base32Secret), "=")) % 8 {
+	case 1, 3, 6:
+		return nil, NewIAMError(ErrMFAInvalid, op,
+			"shared secret ends in an incomplete base32 group, so it is not a whole number of bytes",
+			&MFASecretMalformedError{Reason: "incomplete terminal base32 group"})
+	}
+
+	// EVERY way a stored secret can fail to become a key is the same kind of
+	// fault, so they all carry the same type. The length check above is only
+	// the case the decoder does not report; an empty value, a character
+	// outside the base32 alphabet and anything else NewProtectedSecret refuses
+	// are equally "this enrollment is unusable", and VerifyChallenge has to be
+	// able to tell all of them from a user typing the wrong code. Typing only
+	// the length case would have left the commoner corruptions falling through
+	// to the backup-code fallback -- the exact hole this type exists to close.
+	key, err := otp.NewProtectedSecret(base32Secret)
+	if err != nil {
+		return nil, NewIAMError(ErrMFAInvalid, op, "failed to load shared secret into protected memory",
+			&MFASecretMalformedError{Reason: "not decodable as base32", Cause: err})
+	}
+	return key, nil
 }
 
 // generateBackupCode generates a random 8-character alphanumeric backup code.

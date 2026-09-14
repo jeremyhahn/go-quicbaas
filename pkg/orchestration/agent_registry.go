@@ -21,7 +21,6 @@ import (
 
 	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
-	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 )
 
 // =============================================================================
@@ -73,10 +72,19 @@ type agentRegistry struct {
 	kv      interfaces.KVStore
 	auditor StoreAuditor
 
-	// locks serializes read-modify-write sequences per agent key. KVStore has
-	// no compare-and-swap primitive, so register/update/remove/heartbeat read
-	// the current record and write its successor under this lock. Writers to
-	// different agents never contend.
+	// creator is kv's guarded-create capability, asserted once at construction.
+	// Nil when the backing store cannot decide a contested create, in which
+	// case RegisterAgent refuses rather than probing and hoping.
+	creator guardedCreator
+
+	// locks serializes read-modify-write sequences per agent key. interfaces.KVStore
+	// carries no guarded-swap verb, so update/remove/heartbeat read the current
+	// record and write its successor under this lock. Writers to different
+	// agents never contend.
+	//
+	// IT DOES NOT MAKE REGISTRATION EXCLUSIVE, and must never be relied on for
+	// that: a mutex is process-local, so two nodes each hold their own. The
+	// registration below is decided by the store instead.
 	locks keyedMutex
 }
 
@@ -86,7 +94,13 @@ var _ AgentRegistry = (*agentRegistry)(nil)
 // NewAgentRegistry returns an AgentRegistry backed by kv.
 func NewAgentRegistry(kv interfaces.KVStore, opts ...StoreOption) AgentRegistry {
 	cfg := newStoreConfig(opts...)
-	return &agentRegistry{kv: kv, auditor: cfg.auditor}
+	registry := &agentRegistry{kv: kv, auditor: cfg.auditor}
+	// Asserted once: the capability is a static property of the injected store,
+	// so probing it per registration would ask the same question forever.
+	if creator, ok := kv.(guardedCreator); ok {
+		registry.creator = creator
+	}
+	return registry
 }
 
 // NewInMemoryAgentRegistry returns a registry bound to qrdb's in-memory storage
@@ -94,7 +108,11 @@ func NewAgentRegistry(kv interfaces.KVStore, opts ...StoreOption) AgentRegistry 
 // not a second implementation — so behaviour is identical to a durable
 // deployment in every respect except that the records vanish with the process.
 func NewInMemoryAgentRegistry() AgentRegistry {
-	return NewAgentRegistry(kvstore.NewMemory())
+	// go-qrdb's memory KVStore rather than kvstore.NewMemory(): registration is
+	// a guarded create, and that adapter wraps a raw storage engine with no
+	// conditional write to delegate to. Its atomicity is a mutex rather than
+	// consensus, which is honest and sufficient for one process.
+	return NewAgentRegistry(NewMemoryTaskKV())
 }
 
 // =============================================================================
@@ -125,6 +143,38 @@ func agentPrefix(tenantID string) (string, error) {
 // AgentRegistry
 // =============================================================================
 
+// agentTenantContext binds tenantID to ctx when the context names no tenant.
+//
+// The store underneath this registry routes every read and write by the tenant
+// bound to the CONTEXT, never by the tenant segment in the key (pkg/server
+// tenantRoutingKVStore -> go-qrdb tenant.StoreResolver), and a barrier-isolated
+// tenant's records live in that tenant's own store. A record therefore has to
+// be addressed under its OWN tenant on both sides, or the write and the read
+// pick different namespaces.
+//
+// That divergence is go-quicbaas#663: POST /api/v1/agents/register is a public
+// route -- the mTLS handshake IS the authentication -- so it carries no
+// identity and its context named no tenant, while every read of the fleet
+// registry is made under the tenant the request names. The registration landed
+// in the system namespace and every tenant-scoped read looked in the tenant's,
+// so "agent already exists" and "agent registry: not found" were both true of
+// the same agent at the same time, and no heartbeat could ever succeed. The
+// same shape was fixed for OAuth2 applications in #644, for pooled accounts in
+// #535 and for projects in #634.
+//
+// A context that already names a tenant is left exactly as it is. Which tenant
+// a caller may act as is an admission decision made above this layer, and this
+// helper must never be the thing that redirects a write into a tenant the
+// caller was not admitted to. go-qrdb folds the empty tenant onto the system
+// tenant (tenant.IdentityNamespace), so a system-tenant record -- the embedded
+// agent's -- occupies the namespace an unscoped write always used.
+func agentTenantContext(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" || TenantFromContext(ctx) != "" {
+		return ctx
+	}
+	return ContextWithTenant(ctx, tenantID)
+}
+
 // RegisterAgent registers a new agent in the fleet registry. The agent's
 // registration timestamps, initial version and default status are stamped onto
 // the supplied record. Returns AgentAlreadyExistsError if the agent ID is
@@ -144,6 +194,8 @@ func (r *agentRegistry) RegisterAgent(ctx context.Context, agent *AgentRegistrat
 			Message:  "agent must not be nil",
 		}
 	}
+
+	ctx = agentTenantContext(ctx, agent.TenantID)
 
 	key, err := agentKey(agent.TenantID, agent.ID)
 	if err != nil {
@@ -165,24 +217,36 @@ func (r *agentRegistry) RegisterAgent(ctx context.Context, agent *AgentRegistrat
 		return err
 	}
 
+	// REGISTRATION MUST NEVER OVERWRITE AN EXISTING RECORD, and the store is
+	// what enforces that. It was previously an Exists probe followed by an
+	// unconditional Put, held under the key lock — which is one atomic step in
+	// this process and nothing at all across a fleet, because a mutex on one
+	// node is invisible to another. Two nodes registering one agent ID could
+	// both find the key empty, and the loser's write landed on top of the
+	// winner's, replacing a live registration with a fresh one.
+	//
+	// The guarded create is decided inside go-qrdb's state machine, so of N
+	// nodes registering one ID exactly one succeeds and the rest are told the
+	// agent already exists.
+	if r.creator == nil {
+		r.audit(ctx, agent.TenantID, agent.ID, AuditActionCreate, false)
+		return &AgentRegistryError{
+			Sentinel: ErrAgentRegistryRequired,
+			Message:  "registration needs a store that can decide a create; this one cannot guard one",
+		}
+	}
+
 	unlock := r.locks.lock(key)
 	defer unlock()
 
-	// Registration must never overwrite an existing record, so presence is
-	// checked under the key lock rather than by a blind Put.
-	exists, err := r.kv.Exists(ctx, key)
+	stored, err := r.creator.PutIfAbsent(ctx, key, data)
 	if err != nil {
 		r.audit(ctx, agent.TenantID, agent.ID, AuditActionCreate, false)
 		return err
 	}
-	if exists {
+	if !stored {
 		r.audit(ctx, agent.TenantID, agent.ID, AuditActionCreate, false)
 		return &AgentAlreadyExistsError{AgentID: agent.ID}
-	}
-
-	if err := r.kv.Put(ctx, key, data); err != nil {
-		r.audit(ctx, agent.TenantID, agent.ID, AuditActionCreate, false)
-		return err
 	}
 
 	r.audit(ctx, agent.TenantID, agent.ID, AuditActionCreate, true)
@@ -197,6 +261,8 @@ func (r *agentRegistry) GetAgent(ctx context.Context, tenantID, agentID string) 
 	if err := r.checkStore(); err != nil {
 		return nil, err
 	}
+
+	ctx = agentTenantContext(ctx, tenantID)
 
 	key, err := agentKey(tenantID, agentID)
 	if err != nil {
@@ -221,6 +287,8 @@ func (r *agentRegistry) ListAgents(ctx context.Context, tenantID string, filter 
 	if err := r.checkStore(); err != nil {
 		return nil, err
 	}
+
+	ctx = agentTenantContext(ctx, tenantID)
 
 	prefix, err := agentPrefix(tenantID)
 	if err != nil {
@@ -276,6 +344,8 @@ func (r *agentRegistry) UpdateAgent(ctx context.Context, agent *AgentRegistratio
 			Message:  "agent must not be nil",
 		}
 	}
+
+	ctx = agentTenantContext(ctx, agent.TenantID)
 	// Update reports an unusable agent ID before an unusable tenant ID, which
 	// is the order this method has always validated in.
 	if err := validateKeySegment("agent_id", agent.ID); err != nil {
@@ -324,6 +394,130 @@ func (r *agentRegistry) UpdateAgent(ctx context.Context, agent *AgentRegistratio
 	return nil
 }
 
+// RefreshAgent converges an EXISTING record onto what a daemon registering
+// again reports now, and is the second half of the registration contract:
+// RegisterAgent creates and never overwrites, this one updates and never
+// creates.
+//
+// A daemon re-registers on every restart, on certificate renewal and whenever
+// its cached credentials are discarded, and each of those registrations
+// carries the current truth about it -- the address a dispatcher must dial,
+// the backends its runtime constructed, the OAuth2 clients an operator
+// revokes through. Before this, all of it was thrown away: the guarded create
+// answered "agent already exists", the register handler logged the refusal,
+// and the record kept the values of the FIRST registration forever. A daemon
+// that moved, changed port, or was upgraded from the pre-#681 transport
+// vocabulary was dispatched to an address it had left or matched on backend
+// names it did not serve (go-quicbaas#646).
+//
+// Refreshing is bounded to the record's OWNER. The agent ID is a sanitised
+// derivation of the certificate CommonName, so distinct subjects can address
+// one ID; a registration whose principal is not the one the record names is
+// refused rather than applied, and nothing is written. A record naming no
+// principal at all -- an operator-created registration -- is owned by no
+// certificate and is equally untouchable.
+//
+// It converges what the registration reports and preserves what it does not:
+// the record's identity (ID, TenantID) and its history (RegisteredAt) are
+// kept, so an operator's view of when a daemon joined the fleet survives
+// every re-enrollment.
+func (r *agentRegistry) RefreshAgent(ctx context.Context, agent *AgentRegistration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := r.checkStore(); err != nil {
+		return err
+	}
+	if agent == nil {
+		// A nil record carries no tenant, so the failure cannot be attributed
+		// to a tenant's audit trail.
+		return &AgentRegistryError{
+			Sentinel: ErrAgentRegistryInvalidInput,
+			Message:  "agent must not be nil",
+		}
+	}
+
+	ctx = agentTenantContext(ctx, agent.TenantID)
+
+	key, err := agentKey(agent.TenantID, agent.ID)
+	if err != nil {
+		r.audit(ctx, agent.TenantID, agent.ID, AuditActionReregister, false)
+		return err
+	}
+
+	unlock := r.locks.lock(key)
+	defer unlock()
+
+	current, err := r.loadAgent(ctx, key, agent.TenantID, agent.ID)
+	if err != nil {
+		r.audit(ctx, agent.TenantID, agent.ID, AuditActionReregister, false)
+		return err
+	}
+
+	if err := assertAgentPrincipal(current, agent); err != nil {
+		r.audit(ctx, agent.TenantID, agent.ID, AuditActionReregister, false)
+		return err
+	}
+
+	// An agent an operator DISABLED is never resurrected by a registration --
+	// the same rule #674 established for the identity enrollment. Disabling is
+	// how a fleet member is taken out of service, and a daemon that keeps
+	// restarting must not be able to undo it by re-enrolling.
+	if current.Status == AgentStatusDisabled || current.DisabledAt != 0 {
+		r.audit(ctx, agent.TenantID, agent.ID, AuditActionReregister, false)
+		return &AgentDisabledError{TenantID: agent.TenantID, AgentID: agent.ID}
+	}
+
+	refreshed := *current
+	refreshed.Name = agent.Name
+	refreshed.Host = agent.Host
+	refreshed.Backend = agent.Backend
+	refreshed.Capabilities = agent.Capabilities
+	refreshed.AgentType = agent.AgentType
+	refreshed.Kind = agent.Kind
+	refreshed.Metadata = agent.Metadata
+	// Wholesale, not merged: a merge keeps a key nothing writes any more
+	// forever, which is the staleness this method exists to end.
+	refreshed.Status = AgentStatusRegistered
+	refreshed.LastSeen = time.Now().UnixNano()
+	refreshed.Version = current.Version + 1
+
+	data, err := marshalAgent(&refreshed, "failed to marshal refreshed agent")
+	if err != nil {
+		r.audit(ctx, agent.TenantID, agent.ID, AuditActionReregister, false)
+		return err
+	}
+
+	if err := r.kv.Put(ctx, key, data); err != nil {
+		r.audit(ctx, agent.TenantID, agent.ID, AuditActionReregister, false)
+		return err
+	}
+
+	// The caller's record is left describing what was actually stored, so a
+	// registration that reported nothing about a preserved column does not
+	// hand its caller back a zero for it.
+	*agent = refreshed
+
+	r.audit(ctx, agent.TenantID, agent.ID, AuditActionReregister, true)
+	return nil
+}
+
+// assertAgentPrincipal reports whether the registration presented may rewrite
+// the record current. Both must name a principal and it must be the same one.
+func assertAgentPrincipal(current, presented *AgentRegistration) error {
+	recorded := AgentPrincipal(current)
+	offered := AgentPrincipal(presented)
+	if recorded != "" && recorded == offered {
+		return nil
+	}
+	return &AgentPrincipalMismatchError{
+		TenantID:  current.TenantID,
+		AgentID:   current.ID,
+		Recorded:  recorded,
+		Presented: offered,
+	}
+}
+
 // RemoveAgent removes an agent from the registry.
 func (r *agentRegistry) RemoveAgent(ctx context.Context, tenantID, agentID string) error {
 	if err := ctx.Err(); err != nil {
@@ -332,6 +526,8 @@ func (r *agentRegistry) RemoveAgent(ctx context.Context, tenantID, agentID strin
 	if err := r.checkStore(); err != nil {
 		return err
 	}
+
+	ctx = agentTenantContext(ctx, tenantID)
 
 	key, err := agentKey(tenantID, agentID)
 	if err != nil {
@@ -358,19 +554,41 @@ func (r *agentRegistry) RemoveAgent(ctx context.Context, tenantID, agentID strin
 	return nil
 }
 
-// Heartbeat updates the last-seen timestamp for an agent and transitions the
-// agent status to running if it is currently registered or idle.
+// Heartbeat updates the last-seen timestamp for an agent, transitions the
+// agent status to running if it is currently registered or idle, and
+// reconciles the record's backend axis against what the daemon reports it is
+// serving.
+//
+// RECONCILIATION IS WHY THE OBSERVATION IS CARRIED. A registration is a claim
+// made once; the served list on a heartbeat is the running truth, and the two
+// diverge whenever a daemon restarts with a different backend set or is
+// upgraded in place from an older vocabulary. Without this the record was
+// written at enrollment and never corrected, so dispatch matched on names the
+// daemon no longer served and missed ones it did (go-quicbaas#699).
+//
+// A nil observation reconciles nothing: the gRPC and MCP heartbeat verbs
+// carry no served list, and a caller that reports nothing must not be read as
+// reporting emptiness. An observation whose list MATCHES the record changes
+// no backend column and emits no audit event -- only the liveness columns
+// every heartbeat writes.
 //
 // Heartbeats are high-frequency liveness telemetry rather than a state change
-// an operator would review, so they are deliberately not audited. The path is
-// one locked read plus one write — never a scan.
-func (r *agentRegistry) Heartbeat(ctx context.Context, tenantID, agentID string) error {
+// an operator would review, so the liveness write is deliberately not
+// audited; a reconciliation is, because it rewrites what the fleet is
+// dispatchable for. The path is one locked read plus one write -- never a
+// scan.
+func (r *agentRegistry) Heartbeat(ctx context.Context, tenantID, agentID string, observed *AgentObservation) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := r.checkStore(); err != nil {
 		return err
 	}
+	if err := observed.Validate(); err != nil {
+		return err
+	}
+
+	ctx = agentTenantContext(ctx, tenantID)
 
 	key, err := agentKey(tenantID, agentID)
 	if err != nil {
@@ -390,13 +608,105 @@ func (r *agentRegistry) Heartbeat(ctx context.Context, tenantID, agentID string)
 		agent.Status = AgentStatusRunning
 	}
 	agent.Version++
+	reconciled := reconcileAgentBackends(agent, observed)
+	if reconcileAgentCapacity(agent, observed) {
+		reconciled = true
+	}
 
 	data, err := marshalAgent(agent, "failed to marshal heartbeat agent")
 	if err != nil {
 		return err
 	}
 
-	return r.kv.Put(ctx, key, data)
+	if err := r.kv.Put(ctx, key, data); err != nil {
+		if reconciled {
+			r.audit(ctx, tenantID, agentID, AuditActionUpdate, false)
+		}
+		return err
+	}
+
+	if reconciled {
+		r.audit(ctx, tenantID, agentID, AuditActionUpdate, true)
+	}
+	return nil
+}
+
+// reconcileAgentBackends rewrites agent's backend axis to the set observed
+// reports, reporting whether anything changed.
+//
+// The axis is the primary Backend plus the backend names in Capabilities. Host
+// TRAITS in Capabilities -- "gpu" -- are preserved verbatim, because the
+// served list a daemon heartbeats is Runtime.Backends() and carries backends
+// only; taking it wholesale would un-advertise a GPU on the first heartbeat.
+//
+// The primary is the first served name. pkg/agent sorts the served set, so the
+// primary a record settles on is stable across restarts rather than a function
+// of map iteration order.
+func reconcileAgentBackends(agent *AgentRegistration, observed *AgentObservation) bool {
+	if agent == nil || observed == nil {
+		return false
+	}
+
+	traits := make([]string, 0, len(agent.Capabilities))
+	for _, capability := range agent.Capabilities {
+		if _, isTrait := agentCapabilityTraits[capability]; isTrait {
+			traits = append(traits, capability)
+		}
+	}
+
+	capabilities := make([]string, 0, len(observed.Backends)+len(traits))
+	capabilities = append(capabilities, observed.Backends...)
+	capabilities = append(capabilities, traits...)
+
+	primary := observed.Backends[0]
+	if agent.Backend == primary && sameStringSlice(agent.Capabilities, capabilities) {
+		return false
+	}
+
+	agent.Backend = primary
+	agent.Capabilities = capabilities
+	return true
+}
+
+// reconcileAgentCapacity rewrites the slot count the fleet sum reads from a
+// record, reporting whether it changed.
+//
+// AN UNREPORTED COUNT LEAVES THE RECORD ALONE. Zero means "the daemon said
+// nothing about its capacity" -- an older build, or one whose operator set no
+// limit -- and taking it as an instruction would drop a host out of the fleet
+// sum on its first heartbeat from that build. The count a record already
+// carries stays until a daemon reports a different one, which is the same
+// asymmetry the backend axis has for a nil observation.
+//
+// AN OPERATOR LOWERS A HOST'S CAPACITY BY REPORTING THE LOWER NUMBER, not by
+// reporting none: draining a host is reported as the daemon leaving (its
+// heartbeat stops, and fleetAgentAlive stops counting it), which is a different
+// fact from a host that is up and can serve fewer jobs.
+func reconcileAgentCapacity(agent *AgentRegistration, observed *AgentObservation) bool {
+	if agent == nil || observed == nil || observed.MaxConcurrentJobs <= 0 {
+		return false
+	}
+	if agent.MaxConcurrentJobs == observed.MaxConcurrentJobs {
+		return false
+	}
+	agent.MaxConcurrentJobs = observed.MaxConcurrentJobs
+	return true
+}
+
+// sameStringSlice reports whether two slices carry the same values in the same
+// order. Order matters here: the fleet listing renders Capabilities as the
+// operator sees it, so a reordering is a change worth writing once and then
+// never again.
+func sameStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // DeleteTenantAgents deletes ALL agents for a tenant (cascade delete). Deleting
@@ -408,6 +718,8 @@ func (r *agentRegistry) DeleteTenantAgents(ctx context.Context, tenantID string)
 	if err := r.checkStore(); err != nil {
 		return err
 	}
+
+	ctx = agentTenantContext(ctx, tenantID)
 
 	prefix, err := agentPrefix(tenantID)
 	if err != nil {
@@ -524,13 +836,45 @@ func matchesAgentFilter(agent *AgentRegistration, filter *AgentFilter) bool {
 	if filter.AgentType != "" && agent.AgentType != filter.AgentType {
 		return false
 	}
-	if filter.Backend != "" && agent.Backend != filter.Backend {
+	if filter.Backend != "" && !AgentServesBackend(agent, filter.Backend) {
 		return false
 	}
 	if filter.Model != "" && agent.Model != filter.Model {
 		return false
 	}
 	return true
+}
+
+// AgentServesBackend reports whether the agent can run the named backend,
+// as its primary Backend or as one of its Capabilities.
+//
+// ONE DAEMON SERVES SEVERAL BACKENDS FROM ONE RECORD. A daemon started with
+// --backends acp serves claude, codex and opencode; the registrar records the
+// first as the primary Backend and the whole list in Capabilities. Matching
+// only the primary made a backend filter answer for one of the three and hide
+// the daemon from the other two — which is how the remote backend resolver,
+// whose candidate list comes from ListAgents(&AgentFilter{Backend: name}),
+// found no daemon for a task routed on "codex" and dispatched it in-process
+// instead (go-quicbaas#681).
+//
+// This is membership, not a redefinition of Backend: the primary keeps its
+// meaning.
+//
+// Exported because it is THE answer to "can this agent run this backend", and
+// it had three copies — this filter, findAgentByBackend in control_loop.go,
+// and pickDaemon in pkg/server/lifecycle_remote_resolver.go. Three copies of a
+// vocabulary is how a vocabulary drifts, and only one of the three was
+// consulted on the path that broke. There is now one.
+func AgentServesBackend(agent *AgentRegistration, backend string) bool {
+	if agent.Backend == backend {
+		return true
+	}
+	for _, capability := range agent.Capabilities {
+		if capability == backend {
+			return true
+		}
+	}
+	return false
 }
 
 // audit records one store mutation. Reads and heartbeats never call it.

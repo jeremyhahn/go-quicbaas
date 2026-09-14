@@ -190,7 +190,7 @@ func TestSubmitTaskArtifacts_InvalidKindRejected(t *testing.T) {
 func TestSubmitTaskArtifacts_LargeInlinePromotedToKV(t *testing.T) {
 	t.Parallel()
 
-	kv := newMemKVStore()
+	kv := NewMemoryTaskKV()
 	// Set an artificially low inline limit of 10 bytes to trigger promotion.
 	store := NewInMemoryTaskStoreWithKV(kv, 10)
 	newTaskWithID(t, store, "ten", "task-kv-1")

@@ -1,0 +1,1 @@
+These checks failed for reasons that are NOT this change's — the engine has classified them and is handling them without you. Do not try to fix them, and do not change the code because of them: ${checks}.

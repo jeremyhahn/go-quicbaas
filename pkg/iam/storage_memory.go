@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -37,8 +38,13 @@ type MemoryStorage struct {
 
 	// User storage
 	users                map[string]*User // key: tenantID:userID
-	usersByEmail         map[string]*User // key: email
+	usersByEmail         map[string]*User // key: tenantID + ":" + email
 	usersByPIVThumbprint map[string]*User // key: piv_thumbprint
+
+	// nextUserID mints the user identity. The STORE assigns it, exactly as the
+	// qrdb-backed storage does: a caller cannot supply one, so there is no
+	// second identifier space for anything to reconcile against.
+	nextUserID atomic.Uint64
 
 	// Group storage
 	groups map[string]*Group // key: tenantID:groupID
@@ -172,7 +178,7 @@ func (m *MemoryStorage) DeleteTenant(ctx context.Context, id string) error {
 		if len(key) > len(prefix) && key[:len(prefix)] == prefix {
 			delete(m.users, key)
 			if user.Email != "" {
-				delete(m.usersByEmail, user.Email)
+				delete(m.usersByEmail, makeKey(user.TenantID, user.Email))
 			}
 		}
 	}
@@ -388,19 +394,69 @@ func (m *MemoryStorage) CreateUser(ctx context.Context, user *User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Mint the identity when the record does not carry one. A record that
+	// already has an id is being restored (an import, a test fixture standing in
+	// for existing data), so its id is kept — and the allocator is advanced past
+	// it, or a later mint would hand out an id the store already holds and the
+	// create would fail with ErrAlreadyExists for no reason the caller can see.
+	if user.ID == "" {
+		user.ID = FormatUserID(m.nextUserID.Add(1))
+	} else {
+		// A supplied id is only ever a RESTORE of an id this store already
+		// minted, so it must be a canonical qrdb Snowflake. Storing a malformed
+		// one would create an account that every canonical identity operation
+		// afterwards — QRDBID, factor binding, the session join — refuses,
+		// which is worse than refusing the create: the caller is told it
+		// succeeded and the record is unusable.
+		seeded, err := ParseUserID(user.ID)
+		if err != nil {
+			return err
+		}
+		// Advance the allocator past a restored id, or a later mint would hand
+		// out an id the store already holds and the create would fail with
+		// ErrAlreadyExists for no reason the caller can see.
+		for {
+			current := m.nextUserID.Load()
+			if current >= seeded || m.nextUserID.CompareAndSwap(current, seeded) {
+				break
+			}
+		}
+	}
+
 	key := makeKey(user.TenantID, user.ID)
 	if _, exists := m.users[key]; exists {
 		return &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "iam.user.create"}
 	}
 
-	if _, exists := m.usersByEmail[user.Email]; exists {
-		return ErrEmailAlreadyExists
+	if user.Email != "" {
+		if _, exists := m.usersByEmail[makeKey(user.TenantID, user.Email)]; exists {
+			return ErrEmailAlreadyExists
+		}
+	}
+
+	// The handle is tenant-unique here because it is tenant-unique in the
+	// qrdb-backed store, which answers a duplicate with UsernameExistsError.
+	// A store that accepted one would let every test over it pass while
+	// production refused the same write — and, worse, GetUserByUsername scans
+	// and returns the FIRST match, so two accounts sharing a handle make that
+	// lookup resolve to whichever the map iteration reached first.
+	if err := m.usernameTaken(user.TenantID, user.Username, user.ID); err != nil {
+		return err
 	}
 
 	// Create a copy
 	u := *user
 	m.users[key] = &u
-	m.usersByEmail[user.Email] = &u
+	// A record with no email holds NO entry in the login-key index, matching
+	// the qrdb-backed store: qrdb creates such a record with
+	// WithoutEmailLoginKey ("mTLS- or PIV-only identities that authenticate by
+	// certificate") and it cannot be resolved by GetUserByEmail. Indexing the
+	// empty string instead made every tenant hold at most ONE certificate
+	// identity, because the second collided with the first on an address
+	// neither of them has.
+	if user.Email != "" {
+		m.usersByEmail[makeKey(user.TenantID, user.Email)] = &u
+	}
 	for _, tp := range u.PIVThumbprints() {
 		m.usersByPIVThumbprint[tp] = &u
 	}
@@ -415,7 +471,13 @@ func (m *MemoryStorage) GetUser(ctx context.Context, tenantID, userID string) (*
 	key := makeKey(tenantID, userID)
 	user, exists := m.users[key]
 	if !exists {
-		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.user.get"}
+		// The SENTINEL, not a bare not-found code. Callers that mean "this user
+		// is absent" match it with IsUserNotFound, which reads the sentinel's
+		// typed inner error; a bare QBError{ErrNotFound} carries no such
+		// identity and would be read as an unrelated store failure. The
+		// qrdb-backed store already answers with this value, and
+		// GetUserByUsername below always did (go-quicbaas#434).
+		return nil, ErrUserNotFound
 	}
 
 	// Return a copy
@@ -423,13 +485,17 @@ func (m *MemoryStorage) GetUser(ctx context.Context, tenantID, userID string) (*
 	return &u, nil
 }
 
-func (m *MemoryStorage) GetUserByEmail(ctx context.Context, email string) (*User, error) {
+// GetUserByEmail resolves a user by their canonical login key within a tenant.
+// The index is tenant-scoped, matching qrdb's: the same address may belong to a
+// different person in a different tenant, and a global index would hand the
+// wrong record to whichever tenant asked second.
+func (m *MemoryStorage) GetUserByEmail(ctx context.Context, tenantID, email string) (*User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	user, exists := m.usersByEmail[email]
+	user, exists := m.usersByEmail[makeKey(tenantID, email)]
 	if !exists {
-		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.user.get"}
+		return nil, ErrUserNotFound
 	}
 
 	// Return a copy
@@ -444,11 +510,37 @@ func (m *MemoryStorage) GetUserByPIVThumbprint(ctx context.Context, thumbprint s
 
 	user, exists := m.usersByPIVThumbprint[thumbprint]
 	if !exists {
-		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.user.getbypivthumbprint"}
+		return nil, ErrUserNotFound
 	}
 
 	u := *user
 	return &u, nil
+}
+
+// usernameTaken reports ErrAlreadyExists when another user in the tenant already
+// holds this handle. An empty handle claims nothing: a record without one is not
+// addressable by username at all, so it cannot collide.
+//
+// It SCANS rather than consulting an index, deliberately. The comment on
+// GetUserByUsername justifies scanning for lookups because an index "could
+// drift on update/delete" — that argument is about maintaining a second
+// structure, and it applies here too: a uniqueness check on write costs exactly
+// what the read already costs and maintains nothing that can drift. The volume
+// this store is built for (tests, embedded callers without a KVStore) makes the
+// scan the cheaper correctness guarantee, not merely the simpler one.
+//
+// The caller holds m.mu, which is what makes the check and the write that
+// follows it one operation rather than two racing ones.
+func (m *MemoryStorage) usernameTaken(tenantID, username, selfID string) error {
+	if username == "" {
+		return nil
+	}
+	for _, existing := range m.users {
+		if existing.TenantID == tenantID && existing.Username == username && existing.ID != selfID {
+			return ErrAlreadyExists
+		}
+	}
+	return nil
 }
 
 // GetUserByUsername retrieves a user by tenant-scoped username (the login Name).
@@ -460,7 +552,11 @@ func (m *MemoryStorage) GetUserByUsername(ctx context.Context, tenantID, usernam
 	defer m.mu.RUnlock()
 
 	for _, user := range m.users {
-		if user.TenantID == tenantID && user.Name == username {
+		// LoginName, not Name: the handle is its own field and the qrdb-backed
+		// store keys its username index by that. Matching on Name here would
+		// answer a question production answers differently, and every test over
+		// this store would pass while the real one failed.
+		if user.TenantID == tenantID && user.LoginName() == username {
 			u := *user
 			return &u, nil
 		}
@@ -478,19 +574,56 @@ func (m *MemoryStorage) UpdateUser(ctx context.Context, user *User) error {
 		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.user.update"}
 	}
 
-	// Check if email changed and new email is already taken
-	if oldUser.Email != user.Email {
-		if _, exists := m.usersByEmail[user.Email]; exists {
-			return ErrEmailAlreadyExists
+	// Enforce the SAME transition table qrdb does. Without this the in-memory
+	// store silently accepts moves the real one refuses — disabled -> suspended,
+	// say — and every test over it passes while production rejects the write.
+	// A record already terminal accepts only a re-assertion of that state.
+	if user.Lifecycle != "" && user.Lifecycle != oldUser.Lifecycle {
+		from := oldUser.Lifecycle
+		if from == "" {
+			from = LifecycleActive
 		}
-		delete(m.usersByEmail, oldUser.Email)
+		if !from.CanTransitionTo(user.Lifecycle) {
+			return &dberrors.QBError{
+				Code: dberrors.ErrInvalidInput,
+				Op:   "iam.user.update",
+				Err: &IAMMessageError{Message: "illegal lifecycle transition " +
+					string(from) + " -> " + string(user.Lifecycle)},
+			}
+		}
+	}
+
+	// Check if email changed and new email is already taken. An email-less
+	// record holds no index entry (see CreateUser), so neither side of the
+	// change touches the index when the address is empty.
+	if oldUser.Email != user.Email {
+		if user.Email != "" {
+			if _, exists := m.usersByEmail[makeKey(user.TenantID, user.Email)]; exists {
+				return ErrEmailAlreadyExists
+			}
+		}
+		if oldUser.Email != "" {
+			delete(m.usersByEmail, makeKey(oldUser.TenantID, oldUser.Email))
+		}
+	}
+
+	// A handle change is held to the same tenant-unique rule as a create.
+	// Checked only on a CHANGE, so re-writing a record does not collide with
+	// itself — and passing the record's own id to the check makes that true
+	// even when a caller writes the same handle back deliberately.
+	if oldUser.Username != user.Username {
+		if err := m.usernameTaken(user.TenantID, user.Username, user.ID); err != nil {
+			return err
+		}
 	}
 
 	// Create a copy
 	u := *user
 	u.Updated = time.Now()
 	m.users[key] = &u
-	m.usersByEmail[user.Email] = &u
+	if user.Email != "" {
+		m.usersByEmail[makeKey(user.TenantID, user.Email)] = &u
+	}
 
 	// Maintain the PIV thumbprint index. Drop every old binding key then
 	// (re)write every current one so additions, removals, and pointer refreshes
@@ -505,6 +638,20 @@ func (m *MemoryStorage) UpdateUser(ctx context.Context, user *User) error {
 	return nil
 }
 
+// MarkUserDeleting claims the record for deletion. Marking an already-marked
+// record is a no-op, which is what makes a retried deletion resumable.
+func (m *MemoryStorage) MarkUserDeleting(ctx context.Context, tenantID, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	user, exists := m.users[makeKey(tenantID, userID)]
+	if !exists {
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.user.mark_deleting"}
+	}
+	user.Lifecycle = LifecycleDeleting
+	return nil
+}
+
 func (m *MemoryStorage) DeleteUser(ctx context.Context, tenantID, userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -516,7 +663,7 @@ func (m *MemoryStorage) DeleteUser(ctx context.Context, tenantID, userID string)
 	}
 
 	delete(m.users, key)
-	delete(m.usersByEmail, user.Email)
+	delete(m.usersByEmail, makeKey(user.TenantID, user.Email))
 	for _, tp := range user.PIVThumbprints() {
 		delete(m.usersByPIVThumbprint, tp)
 	}
@@ -600,6 +747,48 @@ func (m *MemoryStorage) UpdateGroup(ctx context.Context, group *Group) error {
 	return nil
 }
 
+// AddGroupMember adds userID to the group's member list under the store's own
+// lock, so the read and the write cannot be interleaved by another membership
+// change. Adding an existing member is a no-op.
+func (m *MemoryStorage) AddGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	group, exists := m.groups[makeKey(tenantID, groupID)]
+	if !exists {
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.group.member.add"}
+	}
+	for _, memberID := range group.Members {
+		if memberID == userID {
+			return nil
+		}
+	}
+	group.Members = append(group.Members, userID)
+	group.Updated = time.Now().UTC()
+	return nil
+}
+
+// RemoveGroupMember removes userID from the group's member list under the
+// store's own lock. Removing a user that is not a member is a no-op.
+func (m *MemoryStorage) RemoveGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	group, exists := m.groups[makeKey(tenantID, groupID)]
+	if !exists {
+		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.group.member.remove"}
+	}
+	members := make([]string, 0, len(group.Members))
+	for _, memberID := range group.Members {
+		if memberID != userID {
+			members = append(members, memberID)
+		}
+	}
+	group.Members = members
+	group.Updated = time.Now().UTC()
+	return nil
+}
+
 func (m *MemoryStorage) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -641,6 +830,14 @@ func (m *MemoryStorage) ListGroups(ctx context.Context, tenantID string, opts Li
 
 // RoleStorage implementation
 
+// CreateRole stores a role, rejecting a duplicate ID or a duplicate NAME
+// within the tenant.
+//
+// The name check matches the canonical store: qrdb's role store is name-unique
+// per tenant and answers a collision with RoleNameExistsError, which is what
+// callers key their idempotency off. A double that enforced only the ID would
+// let a test create two roles named "admin" in one tenant — a state production
+// cannot reach — and would silently skip the callers' name-collision handling.
 func (m *MemoryStorage) CreateRole(ctx context.Context, role *Role) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -648,6 +845,11 @@ func (m *MemoryStorage) CreateRole(ctx context.Context, role *Role) error {
 	key := makeKey(role.TenantID, role.ID)
 	if _, exists := m.roles[key]; exists {
 		return &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "iam.role.create"}
+	}
+	for _, existing := range m.roles {
+		if existing.TenantID == role.TenantID && existing.Name == role.Name {
+			return &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "iam.role.create"}
+		}
 	}
 
 	// Create a copy
@@ -664,12 +866,44 @@ func (m *MemoryStorage) GetRole(ctx context.Context, tenantID, roleID string) (*
 	key := makeKey(tenantID, roleID)
 	role, exists := m.roles[key]
 	if !exists {
-		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.role.get"}
+		// The SENTINEL, for the reason GetUser states: IsRoleNotFound reads the
+		// typed inner error, which a bare not-found code does not carry.
+		return nil, ErrRoleNotFound
 	}
 
 	// Return a copy
 	r := *role
 	return &r, nil
+}
+
+// GetRoleByName retrieves a role by its tenant-scoped name.
+//
+// The in-memory store SCANS its role map, for the reason GetUserByUsername
+// gives for users: the volume this store is built for (tests and embedded
+// callers without a KVStore) is small, so a scan is preferable to maintaining a
+// second structure that can drift on update and delete. CreateRole already
+// scans the same map to enforce name uniqueness, so the read costs what the
+// write already costs.
+func (m *MemoryStorage) GetRoleByName(ctx context.Context, tenantID, name string) (*Role, error) {
+	if name == "" {
+		// A role without a name is not addressable by name, so an empty query
+		// must not match one. Same rule the KVStore-backed store's index
+		// encodes by writing no entry for an empty name.
+		return nil, ErrRoleNotFound
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, role := range m.roles {
+		if role.TenantID == tenantID && role.Name == name {
+			r := *role
+			return &r, nil
+		}
+	}
+	// The SENTINEL, matching GetRole: IsRoleNotFound reads the typed inner
+	// error, which a bare not-found code does not carry.
+	return nil, ErrRoleNotFound
 }
 
 func (m *MemoryStorage) UpdateRole(ctx context.Context, role *Role) error {

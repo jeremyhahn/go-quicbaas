@@ -18,7 +18,6 @@ package rest
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -51,15 +50,58 @@ import (
 // closing the last hole in the unified audit plane (P5.3). MINUS 3 for the
 // P3.3 de-collision: refresh/logout/validate/login-piv (4) dropped from
 // apiAuthPublicRouteSpecs (a composed node's xkms module now owns those
-// /api/v1/auth/* paths as part of its own session-login plane), PLUS 1 for
-// login-piv's new IAM-namespaced home (POST /api/v1/iam/login/piv,
-// iamManagedRouteSpecs) -- net -3. The rag build tag contributes
+// /api/v1/auth/* paths as part of its own session-login plane), PLUS 4 for
+// all four verbs relocated into the IAM namespace rather than dropped --
+// login-piv (POST /api/v1/iam/login/piv), refresh (POST /api/v1/iam/refresh,
+// go-quicbaas#221: quicbaas still owns the login ceremony, so it must own the
+// renewal of the credential that ceremony issues), and validate + logout
+// (POST /api/v1/iam/{validate,logout}, go-quicbaas#256: the SPA calls both
+// verbs literally, so leaving them on xkms's plane made the daemon reject the
+// bearer it had just minted) -- net 0. The rag build tag contributes
 // ragRouteSpecs() on top. NOTE: this count is Routes(), the full table
 // (legacy listener + module surface); ModuleRoutes() (routes.go), which
 // additionally excludes /api/v1/barrier/* (14) and /api/v1/init/* (9) from
 // the module-only surface, is 23 SMALLER and has its own guard
-// (TestModuleRoutes_ExcludesBarrierAndInit below).
-const baseRouteTableSize = 599
+// (TestModuleRoutes_ExcludesBarrierAndInit below). PLUS 3 for the SDLC
+// module's binding surface (/api/v1/sdlc/projects/{projectID}/binding,
+// handlers_sdlc.go, go-quicbaas#569): read, bind, unbind. PLUS 3 for the
+// WebAuthn credential administration surface
+// (/api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials,
+// iam_webauthn_credentials.go, go-quicbaas#273): list, delete-one, delete-all.
+// PLUS 1 for PUT /api/v1/secrets/* (go-quicbaas#280): the secret-status verb
+// the REST client had always called and no route served, and which gRPC and MCP
+// both expose — enable/disable hardcode one status each and cannot reach
+// `deleted`. PLUS 1 for the SDLC delivery read
+// (/api/v1/sdlc/tasks/{taskID}/delivery, handlers_sdlc.go, go-quicbaas#569):
+// what a task's attempt published, so the pull request is reachable from
+// the task without a module client.
+// PLUS 2 for the orchestration task lifecycle verbs
+// (POST /api/v1/orchestrator/tasks/{taskID}/block and /readmit,
+// handlers_orchestrator.go, go-quicbaas#552): a task parked until a person
+// answers, and the person's answer. PLUS 1 for built-in role reconciliation
+// (POST /api/v1/tenants/{tenant_id}/roles/reconcile, iam_roles.go,
+// go-quicbaas#573): the only write that may re-permission a built-in role,
+// since qrdb refuses an ordinary update on a system one.
+// PLUS 1 for the task delete verb
+// (DELETE /api/v1/orchestrator/tasks/{taskID}, handlers_orchestrator.go,
+// go-quicbaas#612): the store verb that had no route, and with it the only
+// way to release a task's source reservation so its issue can be adopted
+// again.
+// PLUS 1 for the pooled-account credential release
+// (POST /api/v1/agent-accounts/{id}/materialize, handlers_account.go,
+// go-quicbaas#734): the one account route whose response body is secret
+// material, and the only way a pooled credential reaches the worker host that
+// runs the agent it belongs to.
+// PLUS 1 for the consumption ledger
+// (GET /api/v1/orchestrator/cost, handlers_orchestrator.go,
+// go-quicbaas#794): what the fleet has spent, read from the ledger the
+// engine already writes.
+// PLUS 2 for project onboarding
+// (POST /api/v1/sdlc/projects/{projectID}/onboarding and
+// GET /api/v1/sdlc/projects/{projectID}/conformance, handlers_sdlc.go,
+// go-quicbaas#877): repair and report, deliberately two routes under two
+// permissions so no GET can rewrite a repository's configuration.
+const baseRouteTableSize = 622
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder
@@ -149,12 +191,16 @@ func TestRoutes_PublicRoutes(t *testing.T) {
 		// Invite activation + WebAuthn login ceremony (GroupIAM, PEP-derived
 		// via preAuthRouteTemplates). login/piv (P3.3) is quicbaas's own
 		// OIDC-session PIV login, moved here from /api/v1/auth/login/piv to
-		// clear the collision with xkms's module.
+		// clear the collision with xkms's module; refresh is the same move
+		// for the same reason (go-quicbaas#221) -- the opaque refresh token
+		// in the body is the credential, and no valid bearer exists at
+		// renewal time by definition.
 		"GET /api/v1/iam/{tenant_id}/invites/{token}":                        {},
 		"POST /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/begin":  {},
 		"POST /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/finish": {},
 		"POST /api/v1/iam/{tenant_id}/invites/{token}/activate/piv":          {},
 		"POST /api/v1/iam/login/piv":                                         {},
+		"POST /api/v1/iam/refresh":                                           {},
 		"POST /api/v1/iam/{tenant_id}/webauthn/login/begin":                  {},
 		"POST /api/v1/iam/{tenant_id}/webauthn/login/finish":                 {},
 
@@ -177,6 +223,17 @@ func TestRoutes_PublicRoutes(t *testing.T) {
 		"POST /acme/revoke-cert":         {},
 		"POST /acme/key-change":          {},
 		"GET /acme/ca-bundle":            {},
+
+		// Forge webhook ingress. PUBLIC AT THE PEP LAYER BY NECESSITY: a
+		// forge holds no platform identity and can present none, so an
+		// identity gate would refuse every legitimate delivery rather than
+		// secure anything. Its authentication is the HMAC signature over the
+		// body, verified fail-closed in the handler — a project with no
+		// configured secret refuses, and unknown-project, missing-secret and
+		// bad-signature are deliberately indistinguishable to the caller.
+		// Listed here so that being public is a decision on this allowlist
+		// rather than a property acquired by adding a route.
+		"POST /api/v1/sdlc/webhook/{projectID}": {},
 
 		// Docs (GroupDocs) + embedded UI (GroupUIMount): unwrapped on the
 		// legacy listener.
@@ -216,6 +273,16 @@ func TestRoutes_SessionRoutes(t *testing.T) {
 		// identity-gated posture as its "performance" sibling above (see
 		// routes_iam.go metricsScrapeRouteSpecs).
 		"GET /api/v1/metrics/": {},
+		// Token-lifecycle verbs relocated into the IAM namespace
+		// (go-quicbaas#256, routes_iam.go iamManagedRouteSpecs). Both act ON
+		// a bearer that already exists, so the identity gate belongs in the
+		// middleware and no RBAC permission applies: validating or revoking
+		// YOUR OWN session is not a privileged action, and the handler reads
+		// the subject from the token, not from a path parameter. Being
+		// non-public is also what attaches the module's AuthenticateHTTP
+		// fallback, the seam that validates a quicbaas-minted bearer at all.
+		"POST /api/v1/iam/validate": {},
+		"POST /api/v1/iam/logout":   {},
 	}
 	got := map[string]struct{}{}
 	for _, spec := range Routes() {
@@ -269,9 +336,15 @@ func formatRoutePermissionLine(spec RouteSpec) string {
 // testdata/route_permissions.golden. This is the frozen counterpart to the
 // live PEP mapper: it does not call authz_pep_mapping.go at all, so it keeps
 // passing even after the mapper is deleted at cutover, and any route added,
-// renamed, or re-permissioned without regenerating
-// routes_permissions_generated.go (`go generate ./pkg/api/rest`) and
-// updating the golden file fails here.
+// renamed, or re-permissioned without updating routes_permissions_generated.go
+// and this golden file fails here.
+//
+// BOTH UPDATES ARE BY HAND. `go generate ./pkg/api/rest` was the procedure
+// while scripts/genroutepermissions existed; that generator was deleted with
+// the PEP mapper it derived from at the authz cutover, and the instruction
+// outlived the tool. It is corrected here because it sent at least one author
+// to a command that no longer exists, at the moment they were adding a route
+// to a security-relevant table.
 func TestRoutes_FrozenPermissionsGolden(t *testing.T) {
 	var got []string
 	for _, spec := range Routes() {
@@ -279,15 +352,13 @@ func TestRoutes_FrozenPermissionsGolden(t *testing.T) {
 	}
 	sort.Strings(got)
 
-	raw, err := os.ReadFile("testdata/route_permissions.golden")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
-	sort.Strings(want)
+	// Base plus whatever the build's feature tags contribute; see
+	// readGoldenLines (routes_golden_test.go) for why this is not one file.
+	want := readGoldenLines(t, "route_permissions")
 
 	if len(got) != len(want) {
-		t.Errorf("route permission surface size: got %d, want %d (regenerate testdata/route_permissions.golden)",
+		t.Errorf("route permission surface size: got %d, want %d (update testdata/route_permissions.golden by hand — "+
+			"and if the route is behind a feature tag, its testdata/route_permissions_<tag>.golden fragment instead)",
 			len(got), len(want))
 	}
 	wantSet := make(map[string]struct{}, len(want))
@@ -310,26 +381,37 @@ func TestRoutes_FrozenPermissionsGolden(t *testing.T) {
 	}
 }
 
-// TestModuleRoutes_ExcludesBarrierAndInit proves ModuleRoutes() (the table
+// TestModuleRoutes_ExcludesInitOnly proves ModuleRoutes() (the table
 // pkg/apimodule module_http.go's RegisterHTTP consumes) drops every
-// /api/v1/barrier/* and /api/v1/init/* entry that Routes() carries, while
-// leaving every other route untouched. P3.3: on a composed node the qrdb
-// node's own native barrier/init planes (or the xkms ServiceModule) already
-// own that surface, so quicbaas's own module registrations for it would
-// either collide at module-construction time or shadow the node's real
-// state with quicbaas's own pre-unseal, node-less handlers.
-func TestModuleRoutes_ExcludesBarrierAndInit(t *testing.T) {
+// /api/v1/init/* entry that Routes() carries, KEEPS every /api/v1/barrier/*
+// entry, and leaves every other route untouched.
+//
+// go-quicbaas#405: barrier used to be excluded too, on the premise that the
+// legacy in-process listener kept serving it. That listener no longer binds
+// (lifecycle_rest.go startRESTServer: REST network serving runs exclusively
+// on the unified server), so the exclusion left the canonical barrier
+// surface to the co-hosted xkms module, whose host-inert barrier handler
+// answered `503 rest: barrier not configured` on a node whose barrier was
+// configured and unsealed. The composer now drops the xkms module's barrier
+// registrations instead (pkg/apimodule route_precedence.go).
+func TestModuleRoutes_ExcludesInitOnly(t *testing.T) {
 	all := Routes()
 	module := ModuleRoutes()
 
-	var excludedFromAll int
+	var excludedFromAll, barrierInAll int
 	for _, spec := range all {
-		if strings.HasPrefix(spec.Pattern, "/api/v1/barrier/") || strings.HasPrefix(spec.Pattern, "/api/v1/init/") {
+		if strings.HasPrefix(spec.Pattern, "/api/v1/init/") {
 			excludedFromAll++
+		}
+		if strings.HasPrefix(spec.Pattern, "/api/v1/barrier/") {
+			barrierInAll++
 		}
 	}
 	if excludedFromAll == 0 {
-		t.Fatal("sanity: Routes() must still carry /api/v1/barrier|init/* routes")
+		t.Fatal("sanity: Routes() must still carry /api/v1/init/* routes")
+	}
+	if barrierInAll == 0 {
+		t.Fatal("sanity: Routes() must still carry /api/v1/barrier/* routes")
 	}
 	if got, want := len(all)-len(module), excludedFromAll; got != want {
 		t.Errorf("ModuleRoutes() size delta: got %d fewer than Routes(), want %d", got, want)
@@ -341,13 +423,37 @@ func TestModuleRoutes_ExcludesBarrierAndInit(t *testing.T) {
 	}
 	for _, spec := range all {
 		key := spec.Method + " " + spec.Pattern
-		excluded := strings.HasPrefix(spec.Pattern, "/api/v1/barrier/") || strings.HasPrefix(spec.Pattern, "/api/v1/init/")
+		excluded := strings.HasPrefix(spec.Pattern, "/api/v1/init/")
 		_, present := moduleSet[key]
 		if excluded && present {
-			t.Errorf("ModuleRoutes() must NOT carry %s (barrier/init are module-excluded)", key)
+			t.Errorf("ModuleRoutes() must NOT carry %s (init is module-excluded)", key)
 		}
 		if !excluded && !present {
 			t.Errorf("ModuleRoutes() dropped non-excluded route %s", key)
+		}
+	}
+
+	// The go-quicbaas#405 acceptance, stated positively: the module surface
+	// -- the ONLY REST surface a composed node binds -- carries the whole
+	// canonical barrier verb set.
+	for _, want := range []string{
+		"GET /api/v1/barrier/status",
+		"POST /api/v1/barrier/unseal",
+		"POST /api/v1/barrier/seal",
+		"POST /api/v1/barrier/rekey",
+		"POST /api/v1/barrier/recovery/generate",
+		"POST /api/v1/barrier/recovery/recover",
+		"GET /api/v1/barrier/recovery/status",
+		"DELETE /api/v1/barrier/recovery",
+		"POST /api/v1/barrier/root-token",
+		"POST /api/v1/barrier/initialize",
+		"POST /api/v1/barrier/shamir/initialize",
+		"POST /api/v1/barrier/shamir/unseal-share",
+		"POST /api/v1/barrier/shamir/unseal-shares",
+		"POST /api/v1/barrier/enable-encryption",
+	} {
+		if _, ok := moduleSet[want]; !ok {
+			t.Errorf("ModuleRoutes() must carry %s (go-quicbaas#405)", want)
 		}
 	}
 }

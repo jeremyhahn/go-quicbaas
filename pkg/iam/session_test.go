@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -2055,12 +2056,15 @@ func TestBackendStorage_ListRolesFinal(t *testing.T) {
 	err := storage.CreateTenant(ctx, tenant)
 	require.NoError(t, err)
 
-	// Create roles
+	// Create roles. Each carries its OWN name: role names are unique within a
+	// tenant in every store (the canonical qrdb one refuses a collision with
+	// RoleNameExistsError), so three roles sharing one name is a state
+	// production cannot reach.
 	for i := 0; i < 3; i++ {
 		role := &Role{
 			ID:       "role-final-" + uuid.New().String()[:8],
 			TenantID: tenantID,
-			Name:     "Test Role",
+			Name:     "Test Role " + strconv.Itoa(i),
 			Created:  time.Now(),
 			Updated:  time.Now(),
 		}

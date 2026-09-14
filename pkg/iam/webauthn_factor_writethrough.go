@@ -24,14 +24,13 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
-	// go-xkms's WebAuthn store interfaces (CredentialStore, UserStore,
-	// Credential) and the canonical handle<->qrdb-user-id codec
-	// (UserIDFromHandle) are NOT re-exported by go-xkms/sdk/go — see
-	// go-xkms/sdk/go/webauthn.go, which aliases only the service, config,
-	// user and HTTP handler types. The write-through decorator must
-	// implement the exact CredentialStore interface xkms's
-	// WebAuthnServiceParams accepts, so this is a justified direct package
-	// import (type/interface dependency only, no behavior is copied).
+	// go-xkms/sdk/go aliases CredentialStore and Credential
+	// (WebAuthnCredentialStore / WebAuthnCredential), but NOT UserStore, the
+	// ErrCredentialNotFound sentinel, or the canonical
+	// handle<->qrdb-user-id codec (UserIDFromHandle) — see
+	// go-xkms/sdk/go/webauthn.go. Those three are what keep this direct
+	// package import: it is a type/interface dependency only, and no
+	// behavior is copied.
 	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
@@ -88,6 +87,17 @@ import (
 // treated as success. Credential ids are authenticator-generated and
 // unforgeable without the private key, so a duplicate is always the same
 // authenticator re-running the ceremony.
+//
+// REMOVAL IS THE SAME INVARIANT, RUN BACKWARDS
+//
+// "A persisted WebAuthn credential implies a login-resolvable qrdb factor" is
+// violated just as badly from the other end: a credential deleted through the
+// inner store alone leaves a fido2 factor that resolves at login and then fails
+// hardware verification, and shows up in `auth factor list` pointing at a
+// passkey that no longer exists. Delete and DeleteByUserID therefore revoke the
+// matching factor as well, so the pair stays consistent whichever direction the
+// mutation runs.
+
 // =============================================================================
 
 // webAuthnFactorCreatedBy is the qrdb factor provenance string recorded for
@@ -141,9 +151,72 @@ func (e *WebAuthnFactorEnrollError) Unwrap() error {
 	return e.Cause
 }
 
+// WebAuthnCredentialSnapshotError reports that a registration could not
+// establish whether the credential already existed, because the pre-write
+// lookup failed for a reason other than a genuine not-found.
+//
+// It is deliberately NOT a WebAuthnFactorEnrollError: that type states an
+// enrollment was attempted and its Compensated=false means a pre-existing
+// credential was knowingly left in place. On this path no enrollment was
+// attempted and existence is precisely what is unknown — reporting it as an
+// enrollment failure would tell the caller two things that are both false.
+type WebAuthnCredentialSnapshotError struct {
+	// CredentialID is the base64url credential id whose prior existence
+	// could not be established.
+	CredentialID string
+
+	// Cause is the underlying lookup failure.
+	Cause error
+}
+
+// Error implements error.
+func (e *WebAuthnCredentialSnapshotError) Error() string {
+	if e == nil {
+		return "iam.webauthn.credential: could not determine whether the credential already existed"
+	}
+	msg := "iam.webauthn.credential: could not determine whether the credential already existed, " +
+		"so the registration was not attempted"
+	if e.CredentialID != "" {
+		msg += " (credential " + e.CredentialID + ")"
+	}
+	if e.Cause != nil {
+		return msg + ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns the underlying cause for errors.Is / errors.As.
+func (e *WebAuthnCredentialSnapshotError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
 // WebAuthnFactorStoreConfigError reports a missing dependency for the
 // registration write-through. It is returned at service-construction time so
 // a misconfiguration surfaces at startup rather than mid-ceremony.
+// AttestationRecorderResolver yields qrdb's trusted-server AttestationRecorder
+// for the node this write-through runs on, or nil while the node is not up.
+// The server obtains it by type assertion on the node's auth-factor servicer;
+// no transport or client can produce one, by qrdb's design (go-qrdb#342).
+type AttestationRecorderResolver func() qrdbsdk.AttestationRecorder
+
+// WebAuthnAttestationRecorderUnavailableError reports that a registration
+// ceremony completed but the node's AttestationRecorder could not be resolved,
+// so what the ceremony proved could not be recorded. The enrollment fails
+// closed: a factor written without its proof would be indistinguishable from
+// one that proved nothing.
+type WebAuthnAttestationRecorderUnavailableError struct {
+	TenantID string
+}
+
+// Error implements error.
+func (e *WebAuthnAttestationRecorderUnavailableError) Error() string {
+	return "iam.webauthn: attestation recorder unavailable for tenant " + e.TenantID +
+		": the node's auth-factor servicer is not up or does not record attestation"
+}
+
 type WebAuthnFactorStoreConfigError struct {
 	Field string
 }
@@ -156,13 +229,50 @@ func (e *WebAuthnFactorStoreConfigError) Error() string {
 	return "iam.webauthn.factor: missing or invalid field: " + e.Field
 }
 
+// WebAuthnFactorRevokeError reports that a WebAuthn credential could not be
+// deleted because its matching qrdb login factor could not be revoked. The
+// deletion fails closed with this error rather than stripping the credential
+// and leaving a factor that resolves at login to a passkey that no longer
+// exists.
+type WebAuthnFactorRevokeError struct {
+	// CredentialID is the base64url WebAuthn credential id whose factor
+	// could not be revoked.
+	CredentialID string
+
+	// Cause is the underlying revocation failure.
+	Cause error
+}
+
+// Error implements error.
+func (e *WebAuthnFactorRevokeError) Error() string {
+	if e == nil {
+		return "iam.webauthn.factor: revocation failed"
+	}
+	msg := "iam.webauthn.factor: failed to revoke the login factor for the credential being deleted"
+	if e.CredentialID != "" {
+		msg += " (credential " + e.CredentialID + ")"
+	}
+	if e.Cause != nil {
+		return msg + ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns the underlying cause for errors.Is / errors.As.
+func (e *WebAuthnFactorRevokeError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
 // webAuthnFactorWriteThrough decorates an xkms CredentialStore so a completed
 // registration ceremony also enrolls the authenticator in qrdb's UserAuthFactor
 // store — the store the unified login ceremony resolves against.
 //
-// The inner store is EMBEDDED, so every read/mutate method
-// (GetByUserID, GetByCredentialID, Update, Delete, DeleteByUserID) is promoted
-// unchanged; only Save is overridden.
+// The inner store is EMBEDDED, so the methods that need no bookkeeping
+// (GetByUserID, GetByCredentialID, Update) are promoted unchanged; Save,
+// Delete and DeleteByUserID are overridden.
 type webAuthnFactorWriteThrough struct {
 	xkmswebauthn.CredentialStore
 
@@ -174,10 +284,24 @@ type webAuthnFactorWriteThrough struct {
 	// go-qrdb's LoginResolver reads through LookupByCredentialKey.
 	factors qrdbtransport.UserAuthFactorClient
 
+	// attestations resolves qrdb's trusted-server AttestationRecorder — the
+	// ONLY path that records what a ceremony proved. It is resolved lazily
+	// because the node servicer it is asserted from exists only once the
+	// embedded node is up; a resolver that yields nil at enrollment time
+	// fails the enrollment closed rather than persisting an unattested factor
+	// for a ceremony that proved hardware.
+	attestations AttestationRecorderResolver
+
 	// tenantID scopes the relying party this store belongs to. It is
 	// recorded in the factor metadata; the factor itself binds to the qrdb
 	// uint64 user id, which is already tenant-unique.
 	tenantID string
+
+	// gate decides whether a completed ceremony proved enough about the
+	// authenticator to be persisted at all, and reports what it proved so the
+	// enrolled factor can record it. A nil gate is maximally strict rather
+	// than absent — see WebAuthnAttestationGate.
+	gate *WebAuthnAttestationGate
 
 	logger *slog.Logger
 }
@@ -189,11 +313,17 @@ var _ xkmswebauthn.CredentialStore = (*webAuthnFactorWriteThrough)(nil)
 // newWebAuthnFactorWriteThrough wraps inner so registrations write through to
 // the qrdb auth-factor store. Every dependency is required: a nil factor client
 // would silently reproduce the split-store bug this decorator exists to close.
+//
+// gate may be nil: the zero-value gate semantics (hardware required, no
+// allowlist, no admin resolver) are the safe ones, so a caller that forgets to
+// pass a policy gets the strict one rather than none.
 func newWebAuthnFactorWriteThrough(
 	inner xkmswebauthn.CredentialStore,
 	users xkmswebauthn.UserStore,
 	factors qrdbtransport.UserAuthFactorClient,
+	attestations AttestationRecorderResolver,
 	tenantID string,
+	gate *WebAuthnAttestationGate,
 	logger *slog.Logger,
 ) (*webAuthnFactorWriteThrough, error) {
 	if inner == nil {
@@ -205,6 +335,9 @@ func newWebAuthnFactorWriteThrough(
 	if factors == nil {
 		return nil, &WebAuthnFactorStoreConfigError{Field: "UserAuthFactorClient"}
 	}
+	if attestations == nil {
+		return nil, &WebAuthnFactorStoreConfigError{Field: "AttestationRecorder"}
+	}
 	if tenantID == "" {
 		return nil, &WebAuthnFactorStoreConfigError{Field: "tenantID"}
 	}
@@ -215,7 +348,9 @@ func newWebAuthnFactorWriteThrough(
 		CredentialStore: inner,
 		users:           users,
 		factors:         factors,
+		attestations:    attestations,
 		tenantID:        tenantID,
+		gate:            gate,
 		logger:          logger,
 	}, nil
 }
@@ -243,16 +378,51 @@ func (s *webAuthnFactorWriteThrough) Save(ctx context.Context, cred *xkmswebauth
 		return &WebAuthnFactorEnrollError{CredentialID: lookupKey, Cause: err}
 	}
 
+	// The assurance gate runs BEFORE the credential is written, so a refused
+	// authenticator leaves no residue at all: no credential in the xkms store,
+	// no factor in qrdb, nothing for an operator to clean up. Refusing after
+	// the Save would need the same compensation dance the factor-enrollment
+	// failure below performs, and would briefly persist exactly the credential
+	// the policy exists to keep out.
+	attestation, gateErr := s.evaluateAttestation(ctx, cred)
+	if gateErr != nil {
+		s.logger.Warn("webauthn registration: refused by the attestation assurance gate",
+			"tenant_id", s.tenantID,
+			"credential_id", lookupKey,
+			"attestation_type", cred.AttestationType,
+			"aaguid", hex.EncodeToString(cred.Authenticator.AAGUID),
+			"error", gateErr)
+		return gateErr
+	}
+	// Hand the proven result back to the ceremony entry point, so a caller that
+	// mints a session for the credential it just enrolled (self-service
+	// registration) can describe it accurately instead of falling back to
+	// "unattested" for a credential that just cleared the hardware bar.
+	recordAttestation(ctx, attestation)
+
 	// Snapshot before writing: only a credential WE created may be rolled
 	// back if the factor enrollment fails.
+	//
+	// A LOOKUP THAT FAILS IS NOT A LOOKUP THAT FOUND NOTHING. Absence has to be
+	// a positive answer — the store's own not-found — never an inference from
+	// an error. Reading "any error means it wasn't there" would let a momentary
+	// unreadable store turn the compensation below into a delete of a
+	// pre-existing, working credential, destroying a passkey during nothing
+	// worse than a failed re-registration. So any other read failure returns
+	// here, BEFORE the Save: refusing to enter a state whose compensation
+	// cannot be reasoned about costs the caller a retry, and getting it wrong
+	// costs them their authenticator.
 	_, getErr := s.GetByCredentialID(ctx, cred.ID)
 	credentialExisted := getErr == nil
+	if getErr != nil && !errors.Is(getErr, xkmswebauthn.ErrCredentialNotFound) {
+		return &WebAuthnCredentialSnapshotError{CredentialID: lookupKey, Cause: getErr}
+	}
 
 	if saveErr := s.CredentialStore.Save(ctx, cred); saveErr != nil {
 		return saveErr
 	}
 
-	enrollErr := s.enrollFactor(ctx, userID, lookupKey, cred)
+	enrollErr := s.enrollFactor(ctx, userID, lookupKey, cred, attestation)
 	if enrollErr == nil {
 		return nil
 	}
@@ -264,7 +434,10 @@ func (s *webAuthnFactorWriteThrough) Save(ctx context.Context, cred *xkmswebauth
 
 	compensated := false
 	if !credentialExisted {
-		if delErr := s.Delete(ctx, cred.ID); delErr != nil {
+		// The INNER delete: the enrollment we are compensating for is the
+		// thing that failed, so there is no factor to revoke, and routing
+		// through the decorator's Delete would only go looking for one.
+		if delErr := s.CredentialStore.Delete(ctx, cred.ID); delErr != nil {
 			s.logger.Error("webauthn registration: failed to roll back the credential after a factor-enrollment failure",
 				"tenant_id", s.tenantID,
 				"credential_id", lookupKey,
@@ -280,6 +453,118 @@ func (s *webAuthnFactorWriteThrough) Save(ctx context.Context, cred *xkmswebauth
 	}
 }
 
+// Delete removes the credential and revokes the fido2 login factor enrolled
+// alongside it, so the pair the ceremony created is torn down together.
+//
+// The credential is read BEFORE the delete because the factor is keyed by the
+// credential's owning user, which only the stored record knows. The ordering is
+// revoke-then-delete: a factor without its credential fails hardware
+// verification at login (a dangling entry an operator must chase), while a
+// credential whose factor is already gone simply cannot log in — the strictly
+// safer of the two intermediate states if the process dies between the steps.
+func (s *webAuthnFactorWriteThrough) Delete(ctx context.Context, credID []byte) error {
+	cred, err := s.GetByCredentialID(ctx, credID)
+	if err != nil {
+		if errors.Is(err, xkmswebauthn.ErrCredentialNotFound) {
+			// Nothing stored, so nothing to revoke. Delegate so the inner
+			// store's own typed not-found is what the caller sees.
+			return s.CredentialStore.Delete(ctx, credID)
+		}
+		// A store that cannot be read cannot tell us which factor to revoke.
+		// Deleting anyway would strip the credential and strand the factor —
+		// exactly the split this method exists to prevent — so fail closed.
+		return &WebAuthnFactorRevokeError{
+			CredentialID: webAuthnCredentialLookupKey(credID),
+			Cause:        err,
+		}
+	}
+	if rErr := s.revokeFactor(ctx, cred); rErr != nil {
+		return rErr
+	}
+	return s.CredentialStore.Delete(ctx, credID)
+}
+
+// DeleteByUserID removes every credential for a user, revoking each one's
+// fido2 login factor. It walks the set through Delete rather than delegating to
+// the inner store's bulk removal so no credential is stripped without its
+// factor.
+//
+// The inner bulk removal runs only when the walk found nothing to delete. Each
+// Delete already detaches its credential from the user's index, so after a full
+// walk the index is gone and a trailing bulk delete would be operating on keys
+// that no longer exist — on a store that reports a missing key as an error,
+// that would turn a completely successful teardown into a failure. Running it
+// on the empty case still clears a stale index left pointing at credentials
+// some earlier partial delete already removed.
+func (s *webAuthnFactorWriteThrough) DeleteByUserID(ctx context.Context, userID []byte) error {
+	creds, err := s.GetByUserID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	deleted := 0
+	for _, cred := range creds {
+		if cred == nil {
+			continue
+		}
+		if dErr := s.Delete(ctx, cred.ID); dErr != nil {
+			if errors.Is(dErr, xkmswebauthn.ErrCredentialNotFound) {
+				continue
+			}
+			return dErr
+		}
+		deleted++
+	}
+	if deleted > 0 {
+		return nil
+	}
+	return s.CredentialStore.DeleteByUserID(ctx, userID)
+}
+
+// revokeFactor soft-deletes the qrdb fido2 factor enrolled for cred. A factor
+// that was never enrolled (a credential written before the write-through, or by
+// a store that bypassed it) is not an error: the postcondition "no factor
+// resolves to this credential" already holds.
+//
+// Force is set because the guard it bypasses — refusing to remove a user's last
+// active factor — protects a user from locking themselves out, and here the
+// credential that factor points at is being deleted regardless. Leaving the
+// factor behind would not keep the user logged in; it would only leave a factor
+// resolving at login to a passkey that no longer exists.
+func (s *webAuthnFactorWriteThrough) revokeFactor(ctx context.Context, cred *xkmswebauthn.Credential) error {
+	lookupKey := webAuthnCredentialLookupKey(cred.ID)
+	userID, err := xkmswebauthn.UserIDFromHandle(cred.UserID)
+	if err != nil {
+		return &WebAuthnFactorRevokeError{CredentialID: lookupKey, Cause: err}
+	}
+	list, err := s.factors.ListAuthFactors(ctx, &qrdbtransport.AuthFactorListRequest{UserID: userID})
+	if err != nil {
+		return &WebAuthnFactorRevokeError{CredentialID: lookupKey, Cause: err}
+	}
+	if list == nil {
+		// No factor listing means no factor to revoke; a transport that
+		// answers (nil, nil) must not panic the deletion.
+		return nil
+	}
+	for _, factor := range list.Factors {
+		if factor.Type != string(qrdbtransport.FactorTypeFIDO2) {
+			continue
+		}
+		if string(factor.Credential) != lookupKey {
+			continue
+		}
+		if factor.RevokedAt != nil {
+			continue
+		}
+		if _, rErr := s.factors.RemoveAuthFactor(ctx, &qrdbtransport.AuthFactorRemoveRequest{
+			FactorID: factor.ID,
+			Force:    true,
+		}); rErr != nil {
+			return &WebAuthnFactorRevokeError{CredentialID: lookupKey, Cause: rErr}
+		}
+	}
+	return nil
+}
+
 // enrollFactor writes the fido2 auth factor the login resolver reads. The
 // Credential bytes are the base64url credential id — byte-identical to the
 // lookup key the login proof reduces to (cmd/quicbaas proveCanonicalFIDO2 and
@@ -289,16 +574,60 @@ func (s *webAuthnFactorWriteThrough) enrollFactor(
 	userID uint64,
 	lookupKey string,
 	cred *xkmswebauthn.Credential,
+	attestation *AttestationResult,
 ) error {
-	_, err := s.factors.AddAuthFactor(ctx, &qrdbtransport.AuthFactorAddRequest{
+	recorder := s.attestations()
+	if recorder == nil {
+		return &WebAuthnAttestationRecorderUnavailableError{TenantID: s.tenantID}
+	}
+	var aaguidHex string
+	if len(cred.Authenticator.AAGUID) > 0 {
+		aaguidHex = hex.EncodeToString(cred.Authenticator.AAGUID)
+	}
+	// The proven level and model travel as a VerifiedAttestation, which only
+	// this in-process path can produce; the server writes them under its
+	// reserved attest_* keys. They are deliberately NOT in Metadata: a caller
+	// that put them there would be refused, and this path is not a caller.
+	return recorder.AddAttested(ctx, userID, &qrdbsdk.AuthFactor{
 		UserID:     userID,
-		Type:       string(qrdbtransport.FactorTypeFIDO2),
+		Type:       qrdbsdk.AuthFactorFIDO2,
 		Label:      s.factorLabel(ctx, cred.UserID),
 		Credential: []byte(lookupKey),
 		Metadata:   s.factorMetadata(cred),
 		CreatedBy:  webAuthnFactorCreatedBy,
-	})
-	return err
+	}, VerifiedAttestationFor(attestation, aaguidHex))
+}
+
+// evaluateAttestation runs the assurance gate for the registrant this
+// credential belongs to.
+//
+// The registrant's email is resolved through the xkms user store the ceremony
+// itself keys on, so the gate asks about the SAME account the credential is
+// about to be bound to. A failed resolution is passed to the gate as an empty
+// email, which the admin resolver cannot resolve, which the gate reads as
+// administrative — the fail-safe direction.
+func (s *webAuthnFactorWriteThrough) evaluateAttestation(
+	ctx context.Context,
+	cred *xkmswebauthn.Credential,
+) (*AttestationResult, error) {
+	return s.gate.Evaluate(
+		ctx,
+		s.tenantID,
+		s.registrantEmail(ctx, cred.UserID),
+		cred.AttestationType,
+		cred.Authenticator.AAGUID,
+	)
+}
+
+// registrantEmail resolves the registrant's email from the WebAuthn user
+// handle. It returns the empty string when the account cannot be read; see
+// evaluateAttestation for why that is safe.
+func (s *webAuthnFactorWriteThrough) registrantEmail(ctx context.Context, handle []byte) string {
+	user, err := s.users.GetByID(ctx, handle)
+	if err != nil || user == nil {
+		return ""
+	}
+	return user.Email()
 }
 
 // factorLabel resolves a human-readable label for the enrolled factor from the
@@ -319,13 +648,27 @@ func (s *webAuthnFactorWriteThrough) factorLabel(ctx context.Context, handle []b
 
 // factorMetadata projects the non-secret authenticator context onto the factor
 // record: the relying-party tenant, the AAGUID (authenticator model), the
-// attestation format, and the reported transports. It never carries key
-// material — the credential public key stays in the xkms credential store.
-func (s *webAuthnFactorWriteThrough) factorMetadata(cred *xkmswebauthn.Credential) map[string]string {
+// attestation format, the reported transports, and the PROVEN attestation
+// level. It never carries key material — the credential public key stays in the
+// xkms credential store.
+//
+// attest_level is the field that makes a stored credential self-describing.
+// Before it, a factor row said "fido2" and nothing more, so login could not
+// tell a YubiKey from a virtual authenticator and had to assume. It is written
+// on every enrollment, including permissive ones, precisely so the permissive
+// case is visible rather than indistinguishable.
+func (s *webAuthnFactorWriteThrough) factorMetadata(
+	cred *xkmswebauthn.Credential,
+) map[string]string {
 	meta := map[string]string{"tenant_id": s.tenantID}
-	if len(cred.Authenticator.AAGUID) > 0 {
-		meta["aaguid"] = hex.EncodeToString(cred.Authenticator.AAGUID)
-	}
+	// The proven attestation level and the attested model are NOT here: they
+	// live under qrdb's reserved attest_* keys, which only the server writes
+	// (AttestationRecorder, fed from enrollFactor). The model used to be
+	// written as the generic "aaguid", which no guard reserved — so a caller
+	// could Add or Rotate a factor carrying an "aaguid" of their choosing and
+	// produce a field indistinguishable from one a ceremony actually proved.
+	// Attested facts belong in one namespace under one rule, and that rule is
+	// now qrdb's.
 	if cred.AttestationType != "" {
 		meta["attestation_type"] = cred.AttestationType
 	}

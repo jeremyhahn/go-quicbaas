@@ -109,7 +109,32 @@ var validBudgetActions = map[string]struct{}{
 
 // WorkflowDefinition describes a complete orchestration workflow including
 // agent roles, capabilities, and operational settings.
+//
+// A DELIVERY PIPELINE IS A WORKFLOW, not a type of its own. The pipeline a
+// module runs work through — prepare a directory, let a worker change it,
+// verify the change, publish it for judgement, accept or send it back, clean
+// up — is expressed entirely with what a workflow already has:
+//
+//   - Settings.Isolation — the per-job mode of WorkspaceIsolation, so each
+//     job works in its own directory.
+//   - A worker AgentRoleSpec with the persistent_sessions capability — the
+//     agent that makes the change, spawned into the directory Prepare returns.
+//   - Settings.ReviewCriteria — what is verified (validating phase) and
+//     what judges the published work (reviewing phase), each by a
+//     registered validator kind.
+//   - Settings.MaxIterations — how many review rounds a job may take before
+//     the engine escalates and parks the task.
+//   - Settings.Hooks — the registered JobLifecycleHooks set that acts at the
+//     five lifecycle moments (job_hooks.go).
+//
+// The engine runs every such workflow the same way; what happens inside a
+// hook or a validator is the module's business.
 type WorkflowDefinition struct {
+	// TenantID is the tenant that owns this workflow. Workflows are
+	// tenant-scoped: two tenants may register the same name without
+	// colliding. The loader stamps it from the tenant a verb is called with.
+	TenantID string `yaml:"tenant_id,omitempty" json:"tenant_id,omitempty"`
+
 	Name        string           `yaml:"name" json:"name"`
 	Description string           `yaml:"description" json:"description"`
 	Mode        WorkflowMode     `yaml:"mode" json:"mode"`
@@ -206,6 +231,11 @@ type AgentRoleSpec struct {
 	// include the context suffix (e.g., "ollama/llama3.3:70b-32k").
 	// This field is informational for documentation and validation.
 	NumCtx int `yaml:"num_ctx,omitempty" json:"num_ctx,omitempty"`
+
+	// SystemPrompt is the standing instruction set every session of this
+	// role is spawned with. A module ships its charter here; empty leaves
+	// the backend's own default in force.
+	SystemPrompt string `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
 }
 
 // =============================================================================
@@ -243,6 +273,11 @@ type WorkflowSettings struct {
 	// agents in the workflow (e.g., 32768). Individual agent specs can
 	// override this value with their own NumCtx setting.
 	NumCtx int `yaml:"num_ctx,omitempty" json:"num_ctx,omitempty"`
+
+	// Hooks names the registered JobLifecycleHooks set every job of this
+	// workflow runs at its five lifecycle moments (see job_hooks.go). Empty
+	// runs none; a name nothing registered is refused at validation.
+	Hooks string `yaml:"hooks,omitempty" json:"hooks,omitempty"`
 }
 
 // ApplyDefaults fills in zero-value fields with production-safe defaults.
@@ -289,7 +324,9 @@ func (ws *WorkflowSettings) ApplyDefaults() {
 	}
 }
 
-// Validate checks all settings fields for validity.
+// Validate checks all settings fields for validity, including that every
+// review criterion names a registered validator kind and a known phase and
+// that Hooks, when set, names a registered hook set.
 func (ws *WorkflowSettings) Validate() error {
 	if err := ValidateTopology(ws.Topology); err != nil {
 		return err
@@ -303,7 +340,12 @@ func (ws *WorkflowSettings) Validate() error {
 	if err := ValidateBudgetAction(ws.CostControls.BudgetAction); err != nil {
 		return err
 	}
-	return nil
+	for i := range ws.ReviewCriteria {
+		if err := ws.ReviewCriteria[i].Validate(); err != nil {
+			return err
+		}
+	}
+	return ValidateJobHooksName(ws.Hooks)
 }
 
 // =============================================================================
@@ -368,13 +410,82 @@ type RecoverySettings struct {
 // Review Criterion
 // =============================================================================
 
-// ReviewCriterion defines a single validation check applied during the
-// review phase of a workflow execution.
+// CriterionPhase names the control-loop state a review criterion is judged
+// in.
+type CriterionPhase string
+
+const (
+	// CriterionPhaseValidating judges the work before it is published: the
+	// default, and where verification commands belong.
+	CriterionPhaseValidating CriterionPhase = "validating"
+
+	// CriterionPhaseReviewing judges the work after the Reviewable hook has
+	// published it. When a workflow has any reviewing-phase criteria they
+	// ARE the review: their verdict decides approval, and the engine's own
+	// agent review does not run.
+	CriterionPhaseReviewing CriterionPhase = "reviewing"
+)
+
+// validCriterionPhases is the set of valid phases for O(1) validation.
+var validCriterionPhases = map[CriterionPhase]struct{}{
+	CriterionPhaseValidating: {},
+	CriterionPhaseReviewing:  {},
+}
+
+// ReviewCriterion defines a single check a job must satisfy. Validator names
+// a registered validator kind — the engine's built-ins are agent, command
+// and policy, and a module registers its own with RegisterValidator — and
+// Phase says whether the check runs before the work is published
+// (validating, the default) or on the published work (reviewing).
 type ReviewCriterion struct {
-	Name      string `yaml:"name" json:"name"`
-	Validator string `yaml:"validator" json:"validator"` // "agent", "command", "policy"
-	Config    string `yaml:"config" json:"config"`
-	Required  bool   `yaml:"required" json:"required"`
+	Name      string         `yaml:"name" json:"name"`
+	Validator string         `yaml:"validator" json:"validator"`
+	Config    string         `yaml:"config" json:"config"`
+	Required  bool           `yaml:"required" json:"required"`
+	Phase     CriterionPhase `yaml:"phase,omitempty" json:"phase,omitempty"`
+}
+
+// EffectivePhase returns the phase the criterion runs in, defaulting an
+// unset phase to validating.
+func (c ReviewCriterion) EffectivePhase() CriterionPhase {
+	if c.Phase == "" {
+		return CriterionPhaseValidating
+	}
+	return c.Phase
+}
+
+// Validate checks that the criterion names a registered validator kind and a
+// known phase.
+func (c ReviewCriterion) Validate() error {
+	if c.Name == "" {
+		return &WorkflowValidationError{
+			Field:   "review_criteria",
+			Message: "criterion name is required",
+		}
+	}
+	if err := ValidateValidatorKind(c.Validator); err != nil {
+		return err
+	}
+	if c.Phase != "" {
+		if _, ok := validCriterionPhases[c.Phase]; !ok {
+			return &WorkflowValidationError{
+				Field:   "review_criteria",
+				Message: "invalid phase for criterion " + c.Name + ": " + string(c.Phase),
+			}
+		}
+	}
+	return nil
+}
+
+// criteriaForPhase returns the criteria that run in phase, in order.
+func criteriaForPhase(criteria []ReviewCriterion, phase CriterionPhase) []ReviewCriterion {
+	out := make([]ReviewCriterion, 0, len(criteria))
+	for _, c := range criteria {
+		if c.EffectivePhase() == phase {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // =============================================================================

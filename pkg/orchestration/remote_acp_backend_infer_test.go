@@ -84,6 +84,7 @@ func newInferBackend(t *testing.T, dialer func(ctx context.Context, target strin
 	}
 	b, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: reg,
+		Backend:      "ollama",
 		ConnDialer:   dialer,
 		Logger:       &agentTestLogger{},
 	})

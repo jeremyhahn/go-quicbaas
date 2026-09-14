@@ -111,6 +111,7 @@ func (m *mockClient) Close() error {
 }
 
 func (m *mockClient) Project() quicbaas.ProjectClient { return nil }
+func (m *mockClient) SDLC() quicbaas.SDLCClient       { return nil }
 func (m *mockClient) Account() quicbaas.AccountClient { return nil }
 
 func (m *mockClient) Orchestrator() quicbaas.OrchestratorClient { return nil }
@@ -233,13 +234,18 @@ func TestBuildSDKClientOptions_ZeroTimeout(t *testing.T) {
 	savedAddress := address
 	savedTLSCA := tlsCA
 	savedDataDir := dataDir
+	savedTenant := globalTenantID
 	defer func() {
 		transport = savedTransport
 		globalTimeout = savedTimeout
 		address = savedAddress
 		tlsCA = savedTLSCA
 		dataDir = savedDataDir
+		globalTenantID = savedTenant
 	}()
+	// The tenant is scoped separately and has its own test below; clearing it
+	// keeps this one measuring what it names — the timeout and transport.
+	globalTenantID = ""
 
 	transport = "grpc"
 	globalTimeout = 0
@@ -757,4 +763,38 @@ func TestMemoryStorageReaderAdapter_NewIterator_ClosedStorage(t *testing.T) {
 	if !ok {
 		assert.False(t, ok)
 	}
+}
+
+// TestBuildSDKClientOptions_TenantScopesTheClient proves --tenant reaches the
+// SDK.
+//
+// THE FLAG WAS PARSED AND THEN HAD NOWHERE TO GO. Before WithTenant was wired,
+// `auth factor add --tenant X` failed with "tenant is required; configure
+// rest.WithDefaultTenant" — the CLI accepted the flag, the transport never saw
+// it, and the error named an SDK option the operator had no way to set. An
+// option count is the only observable here: quicbaas.Option is an opaque
+// functional option, so the assertion is that a tenant contributes one and an
+// empty tenant contributes none.
+func TestBuildSDKClientOptions_TenantScopesTheClient(t *testing.T) {
+	savedTransport, savedTimeout, savedTenant := transport, globalTimeout, globalTenantID
+	savedAddress, savedTLSCA, savedDataDir := address, tlsCA, dataDir
+	defer func() {
+		transport, globalTimeout, globalTenantID = savedTransport, savedTimeout, savedTenant
+		address, tlsCA, dataDir = savedAddress, savedTLSCA, savedDataDir
+	}()
+	transport = "grpc"
+	globalTimeout = 0
+	address = "localhost:9090"
+	tlsCA = ""
+	dataDir = t.TempDir()
+
+	globalTenantID = "automatethethings"
+	withTenant, err := buildSDKClientOptions()
+	require.NoError(t, err)
+	assert.Len(t, withTenant, 1, "a named tenant must contribute exactly one option")
+
+	globalTenantID = ""
+	withoutTenant, err := buildSDKClientOptions()
+	require.NoError(t, err)
+	assert.Empty(t, withoutTenant, "an empty tenant must contribute no option")
 }

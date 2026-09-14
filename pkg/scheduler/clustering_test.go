@@ -20,6 +20,18 @@ import (
 	"testing"
 )
 
+// mustCluster builds a clustered engine for the dispatch-gate tests, which
+// exercise shouldExecute and never touch storage. NewWithClustering refuses a
+// store that cannot claim, so these tests supply one that can.
+func mustCluster(t *testing.T, config *SchedulerConfig, nodeID string, leader LeaderChecker) *SchedulerEngine {
+	t.Helper()
+	s, err := NewWithClustering(config, newMockJobStorage(), nodeID, leader)
+	if err != nil {
+		t.Fatalf("NewWithClustering: %v", err)
+	}
+	return s
+}
+
 // fakeLeader is a programmable LeaderChecker for unit tests.
 type fakeLeader struct {
 	isLeader bool
@@ -46,7 +58,7 @@ func TestNew_DefaultsToSingleNode(t *testing.T) {
 
 func TestNewWithClustering_StoresFields(t *testing.T) {
 	leader := &fakeLeader{}
-	s := NewWithClustering(nil, nil, "node-A", leader)
+	s := mustCluster(t, nil, "node-A", leader)
 	if s.nodeID != "node-A" {
 		t.Errorf("nodeID = %q, want node-A", s.nodeID)
 	}
@@ -72,14 +84,14 @@ func TestShouldExecute_SingleNodeMode_AlwaysTrue(t *testing.T) {
 }
 
 func TestShouldExecute_NodeIDOnly_AffineMatch(t *testing.T) {
-	s := NewWithClustering(nil, nil, "node-A", nil)
+	s := mustCluster(t, nil, "node-A", nil)
 	if !s.shouldExecute(&Job{NodeAffinity: "node-A"}) {
 		t.Error("matching affinity should execute when leader is nil")
 	}
 }
 
 func TestShouldExecute_NodeIDOnly_AffineMismatch(t *testing.T) {
-	s := NewWithClustering(nil, nil, "node-A", nil)
+	s := mustCluster(t, nil, "node-A", nil)
 	if s.shouldExecute(&Job{NodeAffinity: "node-B"}) {
 		t.Error("mismatched affinity should not execute")
 	}
@@ -89,7 +101,7 @@ func TestShouldExecute_NodeIDOnly_ClusterWideAlwaysFires(t *testing.T) {
 	// Without a LeaderChecker, cluster-wide jobs always fire even
 	// when nodeID is set. This preserves "no leader gate => single
 	// node owns all cluster-wide work" semantics.
-	s := NewWithClustering(nil, nil, "node-A", nil)
+	s := mustCluster(t, nil, "node-A", nil)
 	if !s.shouldExecute(&Job{NodeAffinity: ""}) {
 		t.Error("cluster-wide job with nil leader should execute")
 	}
@@ -97,7 +109,7 @@ func TestShouldExecute_NodeIDOnly_ClusterWideAlwaysFires(t *testing.T) {
 
 func TestShouldExecute_LeaderOnly_ClusterWideOnLeader(t *testing.T) {
 	leader := &fakeLeader{isLeader: true}
-	s := NewWithClustering(nil, nil, "", leader)
+	s := mustCluster(t, nil, "", leader)
 	if !s.shouldExecute(&Job{NodeAffinity: ""}) {
 		t.Error("cluster-wide job on leader should execute")
 	}
@@ -108,7 +120,7 @@ func TestShouldExecute_LeaderOnly_ClusterWideOnLeader(t *testing.T) {
 
 func TestShouldExecute_LeaderOnly_ClusterWideSkipsFollower(t *testing.T) {
 	leader := &fakeLeader{isLeader: false}
-	s := NewWithClustering(nil, nil, "", leader)
+	s := mustCluster(t, nil, "", leader)
 	if s.shouldExecute(&Job{NodeAffinity: ""}) {
 		t.Error("cluster-wide job on follower should not execute")
 	}
@@ -120,7 +132,7 @@ func TestShouldExecute_LeaderOnly_AffineIgnoresLeadership(t *testing.T) {
 	// with no nodeID is treated like a cluster-wide job that needs
 	// leadership.
 	leader := &fakeLeader{isLeader: false}
-	s := NewWithClustering(nil, nil, "", leader)
+	s := mustCluster(t, nil, "", leader)
 	if s.shouldExecute(&Job{NodeAffinity: "node-A"}) {
 		t.Error("affine job without nodeID should fall through to leader gate")
 	}
@@ -130,7 +142,7 @@ func TestShouldExecute_FullClustering_AffineMatchOnFollower(t *testing.T) {
 	// Affine job on its owner node — even if the node is a follower,
 	// it must execute because only this node can do the work.
 	leader := &fakeLeader{isLeader: false}
-	s := NewWithClustering(nil, nil, "node-A", leader)
+	s := mustCluster(t, nil, "node-A", leader)
 	if !s.shouldExecute(&Job{NodeAffinity: "node-A"}) {
 		t.Error("affine job on owner (follower) must execute")
 	}
@@ -144,7 +156,7 @@ func TestShouldExecute_FullClustering_AffineMismatchOnLeader(t *testing.T) {
 	// Affine job for node-B, currently running on node-A which is
 	// the leader. node-A skips because it's not the owner.
 	leader := &fakeLeader{isLeader: true}
-	s := NewWithClustering(nil, nil, "node-A", leader)
+	s := mustCluster(t, nil, "node-A", leader)
 	if s.shouldExecute(&Job{NodeAffinity: "node-B"}) {
 		t.Error("non-owner leader should not execute affine job")
 	}
@@ -152,7 +164,7 @@ func TestShouldExecute_FullClustering_AffineMismatchOnLeader(t *testing.T) {
 
 func TestShouldExecute_FullClustering_ClusterWideOnLeader(t *testing.T) {
 	leader := &fakeLeader{isLeader: true}
-	s := NewWithClustering(nil, nil, "node-A", leader)
+	s := mustCluster(t, nil, "node-A", leader)
 	if !s.shouldExecute(&Job{NodeAffinity: ""}) {
 		t.Error("cluster-wide job on leader should execute")
 	}
@@ -160,7 +172,7 @@ func TestShouldExecute_FullClustering_ClusterWideOnLeader(t *testing.T) {
 
 func TestShouldExecute_FullClustering_ClusterWideOnFollower(t *testing.T) {
 	leader := &fakeLeader{isLeader: false}
-	s := NewWithClustering(nil, nil, "node-A", leader)
+	s := mustCluster(t, nil, "node-A", leader)
 	if s.shouldExecute(&Job{NodeAffinity: ""}) {
 		t.Error("cluster-wide job on follower should not execute")
 	}
@@ -168,7 +180,7 @@ func TestShouldExecute_FullClustering_ClusterWideOnFollower(t *testing.T) {
 
 func TestShouldExecute_LeaderCheckErrorTreatedAsFollower(t *testing.T) {
 	leader := &fakeLeader{err: errors.New("raft transport flap")}
-	s := NewWithClustering(nil, nil, "node-A", leader)
+	s := mustCluster(t, nil, "node-A", leader)
 	if s.shouldExecute(&Job{NodeAffinity: ""}) {
 		t.Error("leader-check error should suppress execution")
 	}

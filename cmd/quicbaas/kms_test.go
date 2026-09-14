@@ -16,9 +16,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"os"
 	"testing"
@@ -26,6 +32,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -761,6 +768,13 @@ func TestRunKMSKeyImportCommand(t *testing.T) {
 	require.NoError(t, err)
 	tmpFile.Close()
 
+	// An armoured private key, so the table covers the ASYMMETRIC branch too.
+	// Without a case here that branch was unreachable from this test, which is
+	// how a nil cmd survived in the harness: nothing ever dereferenced it.
+	armouredKey, _ := opensshEd25519(t)
+	armouredFile := t.TempDir() + "/agent-signing-key"
+	require.NoError(t, os.WriteFile(armouredFile, armouredKey, 0o600))
+
 	tests := []struct {
 		name          string
 		setupMock     func() *MockKMSClient
@@ -908,10 +922,42 @@ func TestRunKMSKeyImportCommand(t *testing.T) {
 			expectError:   true,
 			expectedError: "invalid key material",
 		},
+		{
+			name: "armoured private key takes the asymmetric path",
+			setupMock: func() *MockKMSClient {
+				return &MockKMSClient{
+					KMSImportKeyFunc: func(_ context.Context, req *service.ImportKeyRequest) (*service.ImportKeyResponse, error) {
+						// The key, re-encoded — not the armour that carried it.
+						assert.Equal(t, x509.Ed25519, req.KeyAttributes.KeyAlgorithm)
+						assert.Equal(t, []service.KeyUsage{service.KeyUsageSign}, req.Usage)
+						_, parseErr := x509.ParsePKCS8PrivateKey(req.KeyMaterial)
+						assert.NoError(t, parseErr, "material sent was not PKCS#8 DER")
+						return &service.ImportKeyResponse{
+							Key: &service.KeyHandle{KeyID: "agent-signing", Version: 1},
+						}, nil
+					},
+				}
+			},
+			setupFlags: func() {
+				kmsMaterial = armouredFile
+			},
+			args:         []string{"agent-signing"},
+			outputFormat: "json",
+			expectError:  false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Build the command BEFORE setting flags, for two reasons.
+			//
+			// The armoured-material branch reads cmd.Flags(), so a nil cmd
+			// nil-panics the moment a case supplies a private key — the cases
+			// below avoid it only because their material is raw. And StringVar
+			// writes each flag's default through to its global at registration,
+			// so constructing afterwards would blank what setupFlags assigned.
+			cmd := newKMSKeyImportCommand()
+
 			// Setup flags
 			tt.setupFlags()
 			kmsOutputFmt = tt.outputFormat
@@ -937,7 +983,7 @@ func TestRunKMSKeyImportCommand(t *testing.T) {
 			}
 
 			// Execute command
-			err := runKMSKeyImportCommand(nil, tt.args)
+			err := runKMSKeyImportCommand(cmd, tt.args)
 
 			// Verify
 			if tt.expectError {
@@ -5185,4 +5231,273 @@ func TestRunKMSDecryptCommand_WithAAD(t *testing.T) {
 
 	err := runKMSDecryptCommand(cmd, []string{"test-key"})
 	require.NoError(t, err)
+}
+
+// =============================================================================
+// Asymmetric key material on the symmetric import path
+// =============================================================================
+
+// TestDetectEncodedKeyMaterial_NamesTheTrapItCloses is the regression for an
+// import that SUCCEEDED WRONGLY.
+//
+// `kms key import` stores KeyMaterial as raw bytes under a symmetric
+// algorithm. Handed an OpenSSH private key it did not fail — it stored the
+// PEM TEXT as if it were an AES key. The import reported success, the key
+// listed normally, and it could never sign. That is the dangerous version of
+// a missing capability: it only surfaces at the first signature, or never.
+func TestDetectEncodedKeyMaterial_NamesTheTrapItCloses(t *testing.T) {
+	cases := map[string]struct {
+		material string
+		want     string
+	}{
+		"openssh private key": {
+			"-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNz\n-----END OPENSSH PRIVATE KEY-----",
+			"an OpenSSH private key",
+		},
+		"pem private key": {
+			"-----BEGIN EC PRIVATE KEY-----\nMHcCAQ==\n-----END EC PRIVATE KEY-----",
+			"a PEM private key",
+		},
+		"pem public key": {
+			"-----BEGIN PUBLIC KEY-----\nMFkw\n-----END PUBLIC KEY-----",
+			"a PEM public key",
+		},
+		"openssh public key": {
+			"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 agent@host",
+			"an OpenSSH public key",
+		},
+		// Leading whitespace must not defeat it: a key pasted into a file
+		// commonly carries a newline.
+		"armour after whitespace": {
+			"\n  -----BEGIN OPENSSH PRIVATE KEY-----\nx\n",
+			"an OpenSSH private key",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := detectEncodedKeyMaterial([]byte(tc.material)); got != tc.want {
+				t.Errorf("detect = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDetectEncodedKeyMaterial_PassesRawSymmetricBytes proves the guard cannot
+// block the import it exists to protect.
+//
+// Detection is on the PEM/OpenSSH armour rather than entropy or length,
+// because a symmetric key's raw bytes can legitimately be anything at all —
+// including bytes that happen to be printable.
+func TestDetectEncodedKeyMaterial_PassesRawSymmetricBytes(t *testing.T) {
+	cases := map[string][]byte{
+		"32 random-looking bytes": []byte("\x9f\x1a\x00\xffPQRSTUVWXYZ012345\x7f\x80\x01\x02\x03\x04\x05\x06\x07"),
+		"printable aes key":       []byte("0123456789abcdef0123456789abcdef"),
+		"empty":                   {},
+		"text mentioning a key":   []byte("this material is not a PRIVATE KEY----- header"),
+	}
+	for name, material := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := detectEncodedKeyMaterial(material); got != "" {
+				t.Errorf("raw symmetric material was refused as %q", got)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Asymmetric import: derive, cross-check, and prove the key can sign
+// =============================================================================
+
+// opensshEd25519 returns a fresh ed25519 key in OpenSSH private-key form.
+func opensshEd25519(t *testing.T) ([]byte, ed25519.PrivateKey) {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generating a key: %v", err)
+	}
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatalf("marshalling to OpenSSH: %v", err)
+	}
+	return pem.EncodeToMemory(block), priv
+}
+
+// TestDeriveKeyAlgorithm_ReadsTheKeyNotTheFlag covers the derivation across the
+// encodings a caller actually has.
+func TestDeriveKeyAlgorithm_ReadsTheKeyNotTheFlag(t *testing.T) {
+	openssh, _ := opensshEd25519(t)
+	if _, got, err := parsePrivateKeyMaterial(openssh); err != nil || got != x509.Ed25519 {
+		t.Errorf("openssh ed25519 -> (%v, %v), want Ed25519", got, err)
+	}
+
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating an ecdsa key: %v", err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(ecKey)
+	if err != nil {
+		t.Fatalf("marshalling pkcs8: %v", err)
+	}
+	pkcs8 := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	if _, got, err := parsePrivateKeyMaterial(pkcs8); err != nil || got != x509.ECDSA {
+		t.Errorf("pkcs8 ecdsa -> (%v, %v), want ECDSA", got, err)
+	}
+
+	if _, _, err := parsePrivateKeyMaterial([]byte("not a key at all")); err == nil {
+		t.Error("unparseable material was accepted as a key")
+	}
+}
+
+// TestImportedEd25519KeyActuallySigns is the regression the ruling asked for,
+// and it asserts by SIGNING rather than by import success.
+//
+// Import success is exactly what lied before: the old path stored the PEM TEXT
+// as an AES key, reported success, listed the key normally, and produced
+// something that could never sign. So the assertion here is a real signature
+// over real bytes, verified against the public half — the only evidence that
+// distinguishes a key from a blob that was called one.
+func TestImportedEd25519KeyActuallySigns(t *testing.T) {
+	material, original := opensshEd25519(t)
+
+	_, algorithm, err := parsePrivateKeyMaterial(material)
+	if err != nil {
+		t.Fatalf("deriving the algorithm: %v", err)
+	}
+	if algorithm != x509.Ed25519 {
+		t.Fatalf("algorithm = %v, want Ed25519", algorithm)
+	}
+
+	// Recover the key the way the import path does, then USE it.
+	parsed, err := ssh.ParseRawPrivateKey(material)
+	if err != nil {
+		t.Fatalf("parsing the key the import path parses: %v", err)
+	}
+	priv, ok := parsed.(*ed25519.PrivateKey)
+	if !ok {
+		t.Fatalf("parsed key is %T, not an ed25519 private key", parsed)
+	}
+
+	message := []byte("the SDLC module signs its own commits")
+	signature := ed25519.Sign(*priv, message)
+	if !ed25519.Verify(original.Public().(ed25519.PublicKey), message, signature) {
+		t.Fatal("the imported key produced a signature that does not verify; it is a blob, not a key")
+	}
+
+	// And the shape the OLD path would have stored — the PEM text as raw
+	// symmetric material — is now unreachable: routing is on the material.
+	if detectEncodedKeyMaterial(material) == "" {
+		t.Error("armoured material is no longer detected; the old trap is reachable again")
+	}
+}
+
+// TestAlgorithmMatches_RefusesAContradictionNotANotation pins the cross-check.
+//
+// A caller who says --algorithm RSA while handing over an ed25519 key believes
+// they are importing something else, and storing the key under a false
+// description would make every later operation reason from that description.
+// Notation differences (ECDSA vs ECDSA-P256) are not contradictions.
+func TestAlgorithmMatches_RefusesAContradictionNotANotation(t *testing.T) {
+	_, ed, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generating: %v", err)
+	}
+	p256, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating: %v", err)
+	}
+	p384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating: %v", err)
+	}
+
+	if !algorithmMatches("ED25519", &ed, x509.Ed25519) || !algorithmMatches("ed25519", &ed, x509.Ed25519) {
+		t.Error("ed25519 spelled either way must match an ed25519 key")
+	}
+	if algorithmMatches("RSA", &ed, x509.Ed25519) {
+		t.Error("RSA was accepted for an ed25519 key; a false description would be stored")
+	}
+	if algorithmMatches("AES-256-GCM", &ed, x509.Ed25519) {
+		t.Error("a symmetric algorithm matched an asymmetric key")
+	}
+
+	// A bare family name stays notation: the caller named no curve, so there
+	// is nothing to contradict.
+	if !algorithmMatches("ECDSA", p384, x509.ECDSA) {
+		t.Error("a bare family name must still match any ECDSA key")
+	}
+	if !algorithmMatches("ECDSA-P256", p256, x509.ECDSA) {
+		t.Error("the matching curve must be accepted")
+	}
+
+	// A NAMED CURVE IS A CLAIM, and a wrong one is a contradiction. This was
+	// previously accepted as mere notation, which let a P-384 key be stored
+	// describing itself as P-256.
+	if algorithmMatches("ECDSA-P256", p384, x509.ECDSA) {
+		t.Error("a P-384 key was accepted as P-256; the curve is part of the key's identity")
+	}
+	if algorithmMatches("ECDSA-P384", p256, x509.ECDSA) {
+		t.Error("a P-256 key was accepted as P-384")
+	}
+}
+
+// TestImportSendsThePKCS8KeyNotTheArmour asserts what the command actually puts
+// on the wire, which is the one thing a mocked client CAN prove.
+//
+// Deriving the algorithm correctly and then shipping the original OpenSSH text
+// would look right at every layer a CLI test can see, and still fail at the
+// store: the KMS keeps PKCS#8 DER and refuses anything else. So this decodes
+// the material the command sent and checks it is the SAME KEY the file held —
+// not merely that some bytes were sent, and not that the import returned nil,
+// which is exactly what lied in the original defect.
+func TestImportSendsThePKCS8KeyNotTheArmour(t *testing.T) {
+	origFactory := kmsClientFactory
+	defer func() {
+		kmsClientFactory = origFactory
+		kmsMaterial = ""
+		kmsAlgorithm = ""
+		kmsDescription = ""
+		kmsOutputFmt = ""
+	}()
+
+	armour, original := opensshEd25519(t)
+
+	path := t.TempDir() + "/agent-signing-key"
+	require.NoError(t, os.WriteFile(path, armour, 0o600))
+
+	var sent *service.ImportKeyRequest
+	kmsClientFactory = func() (KMSClient, error) {
+		return &MockKMSClient{
+			KMSImportKeyFunc: func(_ context.Context, req *service.ImportKeyRequest) (*service.ImportKeyResponse, error) {
+				sent = req
+				return &service.ImportKeyResponse{
+					Key: &service.KeyHandle{KeyID: "agent-commit-signing", Version: 1},
+				}, nil
+			},
+		}, nil
+	}
+
+	// Build the command FIRST: its StringVar registration writes through to
+	// kmsMaterial, so constructing it after assigning would blank the flag.
+	cmd := newKMSKeyImportCommand()
+
+	kmsMaterial = path
+	kmsOutputFmt = "json"
+
+	require.NoError(t, runKMSKeyImportCommand(cmd, []string{"agent-commit-signing"}))
+	require.NotNil(t, sent, "the command never called the KMS")
+
+	parsed, err := x509.ParsePKCS8PrivateKey(sent.KeyMaterial)
+	require.NoError(t, err,
+		"the command sent material that is not PKCS#8 DER; the store refuses it, "+
+			"so a correct derivation would still produce a failed import")
+
+	imported, ok := parsed.(ed25519.PrivateKey)
+	require.True(t, ok, "sent an %T where the file held an Ed25519 key", parsed)
+	require.True(t, imported.Equal(original),
+		"the command sent a DIFFERENT key than the file held")
+
+	require.Equal(t, x509.Ed25519, sent.KeyAttributes.KeyAlgorithm,
+		"the key must be described by what it is")
+	require.Equal(t, []service.KeyUsage{service.KeyUsageSign}, sent.Usage,
+		"a signing key imported as encrypt/decrypt cannot be used for what it is for")
 }

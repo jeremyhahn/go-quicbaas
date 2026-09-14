@@ -16,6 +16,7 @@ package orchestration
 import (
 	"context"
 	"io"
+	"strconv"
 	"strings"
 )
 
@@ -48,6 +49,13 @@ type ContainerRuntime interface {
 	// container's entrypoint process. Returns an InteractiveProcess that owns
 	// the pipes and container lifecycle.
 	RunInteractive(ctx context.Context, spec *ContainerSpec) (*InteractiveProcess, error)
+
+	// Exec runs one command inside a container that is already running and
+	// returns what it did. A non-zero exit status is reported on the result,
+	// not raised as an error; an error means the command could not be run.
+	// See container_exec.go — it is the engine's own publish path, and no
+	// transport exposes it.
+	Exec(ctx context.Context, containerID string, spec *ExecSpec) (*ExecResult, error)
 
 	// Stop stops a running container.
 	Stop(ctx context.Context, containerID string) error
@@ -116,6 +124,15 @@ type ContainerSpec struct {
 	Network    string            `json:"network,omitempty"`     // host, bridge, or custom
 	GPUEnabled bool              `json:"gpu_enabled,omitempty"` // --gpus all
 	User       string            `json:"user,omitempty"`        // --user uid:gid
+
+	// MemoryBytes is the container's memory cgroup limit in bytes (--memory).
+	// Zero leaves the runtime's own default, which is usually unbounded. A
+	// tmpfs mount (ContainerMount.TmpfsSizeBytes) is backed by this same
+	// memory cgroup, so a spec that sizes a tmpfs workspace without also
+	// bounding this field can be OOM-killed by its own scratch space —
+	// see ValidateTmpfsBudget, which a caller invokes explicitly once it
+	// knows its own build/test memory headroom.
+	MemoryBytes int64 `json:"memory_bytes,omitempty"`
 
 	// --- Privilege dimension (measured; see ContainerConfigDigest) ---
 	//
@@ -203,6 +220,14 @@ type ContainerMount struct {
 	// filesystem cannot then be substituted for a tmpfs — or the reverse —
 	// without changing ContainerConfigDigest.
 	Type string `json:"type,omitempty"`
+
+	// TmpfsSizeBytes bounds a MountTypeTmpfs mount's size in bytes
+	// (rendered as "tmpfs-size=<bytes>" in the docker/podman --mount CSV
+	// form). Zero leaves the mount unbounded, up to the container's whole
+	// memory cgroup — see ContainerSpec.MemoryBytes and
+	// ValidateTmpfsBudget. Meaningless, and rejected by Validate, on any
+	// mount kind other than tmpfs.
+	TmpfsSizeBytes int64 `json:"tmpfs_size_bytes,omitempty"`
 }
 
 // Mount kinds accepted by ContainerMount.Type. They are the docker/podman
@@ -233,6 +258,9 @@ func (s *ContainerSpec) Validate() error {
 	if s.Image == "" {
 		return &InputValidationError{Field: "image", Message: "cannot be empty"}
 	}
+	if s.MemoryBytes < 0 {
+		return &InputValidationError{Field: "memory_bytes", Message: "cannot be negative"}
+	}
 	// The environment reaches the runtime through a line-oriented --env-file,
 	// so an entry that cannot be represented there is rejected here — before
 	// any file is written and before the launch is measured.
@@ -247,6 +275,15 @@ func (s *ContainerSpec) Validate() error {
 			}
 		}
 	}
+	// A tmpfs mount is memory, not disk, so a spec may be individually valid
+	// in every field and still describe a container that cannot run: see
+	// ValidateMemoryBudget. It is checked HERE rather than by the caller that
+	// sized the tmpfs, because Validate is what every launch path already
+	// calls (ExecContainerRuntime.Run and RunInteractive both do), and a check
+	// a caller could forget is a check the fleet does not have.
+	if err := ValidateMemoryBudget(s); err != nil {
+		return err
+	}
 	return s.validateTrust()
 }
 
@@ -258,6 +295,15 @@ func (m *ContainerMount) Validate() error {
 				Field:   "type",
 				Message: "must be one of: " + MountTypeBind + ", " + MountTypeVolume + ", " + MountTypeTmpfs,
 			}
+		}
+	}
+	if m.TmpfsSizeBytes < 0 {
+		return &InputValidationError{Field: "tmpfs_size_bytes", Message: "cannot be negative"}
+	}
+	if m.TmpfsSizeBytes > 0 && m.Type != MountTypeTmpfs {
+		return &InputValidationError{
+			Field:   "tmpfs_size_bytes",
+			Message: "may only be set on a " + MountTypeTmpfs + " mount",
 		}
 	}
 	// A tmpfs is materialized by the kernel and has no host source. Requiring
@@ -294,7 +340,7 @@ func (m *ContainerMount) Format() string {
 // MountSpec renders the mount in docker/podman --mount CSV form, which is the
 // only form that can express the mount kind.
 func (m *ContainerMount) MountSpec() string {
-	fields := make([]string, 0, 4)
+	fields := make([]string, 0, 5)
 	fields = append(fields, "type="+m.Type)
 	if m.Source != "" {
 		fields = append(fields, "source="+m.Source)
@@ -302,6 +348,9 @@ func (m *ContainerMount) MountSpec() string {
 	fields = append(fields, "destination="+m.Target)
 	if m.ReadOnly {
 		fields = append(fields, "readonly")
+	}
+	if m.TmpfsSizeBytes > 0 {
+		fields = append(fields, "tmpfs-size="+strconv.FormatInt(m.TmpfsSizeBytes, 10))
 	}
 	return strings.Join(fields, ",")
 }

@@ -41,36 +41,27 @@ iam:
     # Auto-create tenants on first request
     auto_create: false
 
-  # Authentication settings
+  # WebAuthn / FIDO2 relying party. This is the ONE WebAuthn block; see
+  # "Enrollment assurance" below for the full reference. QuicBaaS is
+  # passwordless — there is no password fallback.
+  webauthn:
+    rp_id: "example.com"
+    rp_display_name: "Example Corp"
+    rp_origins:
+      - "https://example.com"
+      - "https://app.example.com"
+    user_verification: preferred
+    attestation_preference: direct
+    attestation_roots_file: "/etc/quicbaasd/fido-attestation-roots.pem"
+    assurance: hardware
+
+  # PIV smartcard login. See "PIV smartcard attestation" below.
+  piv_login:
+    enabled: false
+    ca_file: "/etc/quicbaasd/piv-ca.pem"
+    attestation_ca_file: "/etc/quicbaasd/yubico-piv-attestation-ca.pem"
+
   auth:
-    # Local identity store
-    local:
-      enabled: true
-
-      # WebAuthn/FIDO2 passwordless auth
-      webauthn:
-        enabled: true
-        rp_id: "example.com"
-        rp_name: "Example Corp"
-        rp_origins:
-          - "https://example.com"
-          - "https://app.example.com"
-
-        # Attestation preference: none, indirect, direct
-        attestation: none
-
-        # User verification: required, preferred, discouraged
-        user_verification: preferred
-
-      # Password auth (optional fallback)
-      password:
-        enabled: false
-        min_length: 12
-        require_uppercase: true
-        require_number: true
-        require_special: true
-        bcrypt_cost: 12
-
     # External OIDC providers (social login)
     providers:
       google:
@@ -1673,7 +1664,7 @@ drives.
 - **Multi-Credential**: Users can register multiple authenticators
 - **Credential Management**: Rename, list, and delete credentials
 - **Sign Count Tracking**: Clone detection for hardware keys
-- **Attestation Options**: None, indirect, or direct attestation
+- **Attestation Options**: None, indirect, direct, or enterprise attestation
 
 ### Quick Start
 
@@ -1691,21 +1682,312 @@ iam:
       - "https://app.example.com"
     timeout: "60s"
     user_verification: "preferred"        # required | preferred | discouraged
-    attestation_preference: "none"        # none | indirect | direct
+    attestation_preference: "direct"      # none | indirect | direct | enterprise
+    attestation_roots_file: "/etc/quicbaasd/fido-attestation-roots.pem"
+    assurance: "hardware"                 # hardware (default) | any
     resident_key_requirement: "preferred" # discouraged | preferred | required
     authenticator_attachment: ""          # platform | cross-platform | "" (any)
     debug: false
   aaguid:
-    mode: "log_only"                      # log_only | enforce
+    mode: "enforce"                       # enforce (default) | log_only
     allowlist_file: "/etc/quicbaasd/aaguid.json"
 ```
 
-The `iam.webauthn.*` keys are validated at daemon startup
-(`config.IAMWebAuthnConfig.Validate`). Production deployments must
-provide an explicit `rp_id`, `rp_display_name`, and at least one
-`rp_origin`; the dev defaults (`localhost`, `QuicBaaS`,
-`https://localhost`) are applied only when the operator omits the
-field entirely.
+#### Enrollment assurance — what a credential must prove
+
+`iam.webauthn.assurance` is the minimum attestation level a **non-administrative**
+registration must prove.
+
+| Value | Meaning |
+|-------|---------|
+| `hardware` (default, and the value an empty setting selects) | The attestation statement must chain to a manufacturer batch-attestation key (`basic_full`, `attca` or `anonca`), and the reported AAGUID must be in the `iam.aaguid` allowlist. |
+| `any` | Any authenticator is accepted, including one conveying no attestation. The level that was actually proven is still recorded on the stored factor, so the credential is visibly software-backed. |
+| `insecure-allow-software-administrators` | As `any`, and additionally drops the administrator bar. **Automated test environments only.** |
+
+**`any` never applies to an administrative account.** An account holding `Admin`
+or `SO` is always required to prove hardware, so loosening the tenant policy
+cannot loosen the control that guards the platform. A registrant the server
+cannot identify — including one whose account does not exist yet, which is the
+case during self-service registration — is held to the administrator bar.
+
+`insecure-allow-software-administrators` is the one policy that lets a software
+authenticator become an administrator credential. It exists because our own
+integration suite drives go-xkms's headless CTAP2 software adapter (which emits
+`fmt: "none"`) and the browser E2E probes drive a CDP virtual authenticator, and
+both enroll administrators. Under any other policy every such probe is refused —
+correctly, because a software authenticator is not hardware. If a probe starts
+failing after this change, that is the control working; do not weaken the policy
+to make it pass.
+
+It cannot be reached by accident: it is not the zero value, an unrecognised
+value is refused rather than defaulted, and there is no shorter alias — the only
+spelling that selects it is the one that says what it does. A node running it
+logs a `SECURITY:` warning on every boot, and the credentials it admits still
+record the level they actually proved, so nothing is ever *represented* as
+hardware that is not.
+
+**Conveyance is raised automatically.** Any deployment where a registration
+might have to prove hardware — which includes `assurance: any`, because
+administrators are held to hardware under it — has `attestation_preference`
+raised to `direct` at service-construction time. With the default `none`
+conveyance the browser strips the attestation statement before the relying party
+sees it, the authenticator reports no AAGUID, and a hardware requirement could
+only ever refuse — which is what made the AAGUID allowlist vacuous even when an
+operator configured it strictly. An operator who configured `enterprise` keeps
+it; nothing is ever lowered.
+
+#### The attestation trust path — why an attestation *type* is not enough
+
+`iam.webauthn.attestation_roots_file` is a PEM bundle of FIDO attestation ROOT
+certificates: the manufacturer roots that sign authenticator batch attestation
+certificates. **It is required for hardware enrollment.**
+
+go-webauthn reports `Credential.AttestationType` as `basic_full` after running
+the packed format's verification procedure — but that procedure checks only that
+the statement is internally consistent. The library says so in its own source:
+
+```go
+// Step 2.4 If successful, return attestation type Basic and attestation trust path x5c.
+// We don't handle trust paths yet but we're done.
+```
+
+and `VerifyAttestation` returns before any metadata validation whenever no MDS
+provider is supplied, which is every ceremony this platform runs.
+
+So `basic_full` means *somebody signed this with a certificate*, not *a
+manufacturer signed this*. An attacker generates their own attestation
+certificate, puts an allowlisted AAGUID in both its `id-fido-gen-ce-aaguid`
+extension and the authenticator data, signs the statement with it, and satisfies
+the attestation type **and** the AAGUID allowlist using material they chose.
+
+Hardware therefore additionally requires an x5c chain that builds a path to a
+configured root, with the certificate's AAGUID extension bound to the
+authenticator data. The chain lives in the attestation object, which the
+credential store never sees, so it is verified at the three surfaces that can
+finish a registration — `XKMSWebAuthnManager.FinishRegistration`, the
+tenant-scoped route that dispatches into xkms, and the multi-protocol
+`FIDO2Service` — and the result travels to the gate on the request context. **A
+path that does not verify cannot produce a hardware credential**, because the
+gate's default answer is "not proven".
+
+With no roots configured, hardware enrollment is refused with a message naming
+the setting, and the node logs a warning at startup.
+
+#### AAGUID enforcement — an absent gate denies
+
+`iam.aaguid.mode` defaults to `enforce`. Only the explicit `log_only` opt-out
+yields a permissive gate; every other value, including empty and a typo, is
+strict.
+
+An **unconfigured** deployment gets a strict, empty allowlist — not "no
+allowlist". A missing gate refuses with a message naming
+`iam.aaguid.allowlist_file`, rather than admitting every authenticator on the
+planet. Likewise, an `allowlist_file` that cannot be read or parsed is a fatal
+startup error: an operator who configured an allowlist and got a node enforcing
+nothing is precisely the failure this refuses.
+
+`allowlist_file` accepts two shapes:
+
+```jsonc
+// a curated array
+[{"aaguid": "cb69481e8ff7403993ec0a2729a154a8", "name": "YubiKey 5 Series"}]
+
+// or a decoded FIDO Metadata Service v3 document
+{"legalHeader": "...", "no": 76, "entries": [ { "aaguid": "...", ... } ]}
+```
+
+From an MDS3 document exactly three fields are read: `entries[].aaguid`,
+`entries[].metadataStatement.description`, and the certification history in
+`entries[].statusReports`. Everything else in the blob is ignored, and ignoring
+it changes no decision — the allowlist answers only "is this authenticator
+*model* admitted?", while attestation trust paths are verified separately
+against `attestation_roots_file`.
+
+The status history is read because the blob contains authenticators the
+Alliance has withdrawn. Entries whose history includes `REVOKED`,
+`ATTESTATION_KEY_COMPROMISE`, `USER_KEY_REMOTE_COMPROMISE`,
+`USER_KEY_PHYSICAL_COMPROMISE` or `USER_VERIFICATION_BYPASS` are **skipped**, so
+importing a blob wholesale cannot allowlist a compromised model.
+`NOT_FIDO_CERTIFIED` is not disqualifying — it means uncertified, not
+compromised. Entries with no AAGUID (the U2F and UAF models) are skipped.
+
+The signed JWS is not verified here: this reads a file the operator placed on
+the node's disk, so the trust boundary is the filesystem, exactly as it is for
+`ca_file` and `attestation_roots_file`.
+
+#### PIV smartcard attestation
+
+```yaml
+iam:
+  piv_login:
+    enabled: true
+    ca_file: "/etc/quicbaasd/piv-ca.pem"
+    attestation_ca_file: "/etc/quicbaasd/yubico-piv-attestation-ca.pem"
+    attestation_intermediates_file: ""   # optional vendor sub-CA bundle
+    allow_unattested: false              # explicit downgrade; default false
+```
+
+A PIV card proves that a slot's private key was generated on-card by signing a
+per-slot attestation certificate with a factory-provisioned attestation key
+(slot F9 on a YubiKey), whose own certificate chains to the vendor's PIV
+attestation root:
+
+```
+slot attestation certificate  ->  device F9 intermediate  ->  vendor root
+```
+
+Only the last link is a trust anchor an operator configures; the rest travels
+with the card and is supplied as chain material at login. Material presented by
+the party being verified is **never** promoted to a trust anchor.
+
+**The login certificate is never its own evidence.** A slot certificate is
+normally issued by the *organisation's* CA from a CSR, while the attestation
+certificate is a separate artifact (`ykman piv keys attest <slot>`). Accepting
+the login certificate when it happens to chain to the attestation anchor looks
+like it accommodates the simpler deployment, but the anchor is operator
+configuration: point `attestation_ca_file` at the CA that also issues ordinary
+client certificates and every software-held key chains to it. Nothing about a
+certificate's *path* distinguishes a key generated on a card from one generated
+with `openssl`.
+
+Nor is "some other certificate" enough. Under that same reused CA a holder
+submits their CSR twice and gets two certificates for one key — distinct,
+chaining, about the right key, and still saying nothing about where the key
+lives. A negative rule ("not the login certificate") is defeated by producing
+another one.
+
+The rule is therefore a **positive** one. A certificate presented alongside the
+login credential establishes hardware only when all of the following hold:
+
+1. it is **not** the login certificate;
+2. its SubjectPublicKeyInfo is byte-identical to the login certificate's, so it
+   speaks about the key that is actually authenticating (without this binding a
+   genuine attestation borrowed from any other YubiKey would launder a software
+   key);
+3. it carries a **PIV slot attestation profile** marker — an extension from
+   Yubico's attestation arc `1.3.6.1.4.1.41482.3` (firmware version, device
+   serial, PIN/touch policy, form factor), which an ordinary client-auth
+   certificate has no reason to carry;
+
+and then it chains to a configured attestation anchor. Only the *presence* of
+the profile extension is read, never its values: deciding storage does not
+require decoding a firmware version, and decoding it would make this a vendor
+attestation parser, which belongs in go-xkms with the rest of the hardware
+layer.
+
+A deployment whose cards cannot produce a slot attestation is not silently
+downgraded — it is refused, and the operator chooses honestly with
+`allow_unattested`.
+
+`trusted_issuers` is a Subject-DN **name** comparison and is not evidence of
+anything — any certificate can assert any issuer name. Hardware is established
+by `attestation_ca_file` alone.
+
+With no `attestation_ca_file` configured, PIV login is **refused**. Setting
+`allow_unattested: true` lets the login proceed, but the issued token records
+`attest_level: software` and does **not** carry the hardware-attested ACR, so a
+policy requiring hardware still refuses it. The downgrade is explicit and
+visible, never silent.
+
+`allow_unattested` covers the deployment that *decided* not to verify. It does
+**not** rescue a deployment that meant to and got the configuration wrong: an
+`attestation_ca_file` that is named but cannot be read or parsed is refused
+either way, because silently downgrading there would turn a typo into a
+fleet-wide loss of hardware assurance.
+
+**There is one PIV login path, not two.** go-xkms's composed module serves its
+own PIV login at `/api/v1/auth/login/piv`, and it cannot verify a smartcard
+attestation — its options carry only `Enabled` and `TrustedIssuers`, and a
+`TrustedIssuers` entry is a DN string any certificate can assert. Mounting it
+beside the hardened handler would make the attestation requirement bypassable by
+choosing the other URL, so it is mounted **only** when `allow_unattested` is
+set. The module-side fix is filed as go-xkms#200. A deployment that requires attested PIV gets exactly one PIV path,
+`/api/v1/iam/login/piv`; a node that declines to mount the module surface says
+so at startup.
+
+#### Attestation claims are derived, never asserted
+
+`attest_level` and `attest_aaguid` are computed from verified evidence inside
+`pkg/iam` and cannot be supplied by a handler. `HardwareTokenOptions.Attestation`
+carries an `*iam.AttestationResult` whose fields are unexported, so the only way
+to obtain one reporting `hardware` is to have run a verifier that checked a
+certificate chain. `IssueHardwareTokens` refuses `ACRHardwareAttested` unless
+the attestation actually proves hardware.
+
+The same rule applies one layer down, on **every** surface that writes an auth
+factor without running a ceremony: the SDK's `Add` and `Rotate`, and the qrdb
+auth-factor servicer proxy that backs the gRPC `UserAuthFactorService` and the
+MCP `qrdb_user_authfactor_*` tools. Each **refuses** a caller-supplied
+`attest_level` or `attest_aaguid` rather than writing it, and stamps every
+factor it creates as `attest_level: none`. The rule itself is one function —
+`iam.ValidateAuthFactorMetadata` — so the next transport cannot quietly reopen
+the hole. A factor row can only claim hardware if the enrollment ceremony put it
+there.
+
+#### Known residual exposure: qrdb node-owned auth-factor listeners
+
+The controls above cover every QuicBaaS-owned write path to the auth-factor
+store. They do **not** cover go-qrdb's own REST/gRPC/MCP auth-factor handlers,
+which QuicBaaS enables on the embedded node when `NetworkServing()` is true
+(`pkg/server/qrdb_node.go`). Those handlers belong to go-qrdb, construct the
+node's own user-factor service, and pass caller-supplied metadata straight into
+`Add`/`Rotate` — so a caller authorized on those listeners can still write
+`attest_level=hardware` without any ceremony.
+
+Fixing it belongs upstream: filed as go-qrdb#234 rather than worked around here. Until it lands, treat authorization for `user_authfactors:add` on
+the node-owned listeners as equivalent to the ability to mint an administrator
+credential, and do not expose those listeners to callers you would not trust
+with one.
+
+The trust-path proof travels on the request context, and
+`ContextWithAttestationChain` is deliberately **not exported**: an exported
+setter would let an embedded, in-process caller stamp a chain of its own
+choosing and have the gate treat it as this server's verification. The only way
+to place the value is to run the verification. Every entry point also *clears*
+any pre-existing proof on each early exit and on failure
+(`iam.ClearAttestationChain`) — otherwise a caller could skip verification by
+sending an unparseable attestation and keep a planted proof.
+
+The `iam.webauthn.*` keys are validated in two places, because there are two
+different values to check.
+
+`config.IAMWebAuthnConfig.Validate` runs in the boot-time configuration gate
+(`config.Validate`, called by `cmd/quicbaasd` before the server starts) and
+checks the **operator's input for shape only**. Every relying-party identity
+field is optional there: `rp_id`, `rp_display_name` and `rp_origins` may all be
+omitted, and a node that omits them derives its relying party from the
+canonical issuer URL (see the derivation note in
+[architecture.md](architecture.md#configuration)). What this gate refuses is a
+supplied value that can never work — an `rp_id` the relying party itself would
+refuse at construction (`protocol.ValidateRPID`: a bare host with no scheme,
+port or path, and a dotted domain rather than a bare single label, with
+`localhost` and IP literals explicitly allowed), an entry in `rp_origins` that
+is not a usable origin, or a `timeout` that is not a positive Go duration.
+
+The strictness bar is deliberately the embedded relying party's own behaviour,
+never a stricter idea of a well-formed value, because a validator stricter than
+the thing it guards refuses configurations that work. Concretely: an `rp_id`
+that is an IP literal is **accepted** (browsers reject it, but
+`protocol.ValidateRPID` does not, and an explicit `rp_id` is the documented
+escape hatch for a node whose issuer host is an IP address); and in
+`rp_origins`, a URL entry carrying a path, query or fragment is accepted
+because the origin comparison ignores them, while any entry that is not an
+`http`/`https` URL is accepted because the relying party matches it verbatim —
+that is how Android native-application origins work.
+
+`config.IAMWebAuthnConfig.ValidateResolved` runs on the WebAuthn init path
+(`webauthnFactoryConfigFromOperator`) against the **resolved** configuration,
+after derivation has filled in whatever the operator omitted. That is the value
+the relying party is actually built from, so an RP ID, a display name and at
+least one origin are genuinely required there. When derivation cannot supply a
+missing half — an IP-literal issuer host with only one of `rp_id` /
+`rp_origins` configured — startup fails closed rather than mounting a relying
+party that rejects every ceremony.
+
+Production deployments should still pin `rp_id`, `rp_display_name` and
+`rp_origins` explicitly: derivation follows `server.host` and the REST port, so
+a deployment behind a proxy or a different public hostname must state its own
+relying-party identity.
 
 #### Go SDK Usage
 
@@ -1739,11 +2021,35 @@ if err != nil {
     return err
 }
 
-// Optionally apply an AAGUID allowlist. The manager intercepts
-// FinishRegistration and rejects credentials whose AAGUID is not
-// permitted (in strict mode).
-manager.SetAAGUIDAllowlist(allowlist)
 ```
+
+The enrollment assurance policy and the AAGUID allowlist are handed to the
+**factory**, not to the manager:
+
+```go
+factory, err := iam.NewWebAuthnServiceFactory(iam.WebAuthnFactoryParams{
+    Config:          webauthnConfig,
+    QRDB:            qrdbClient,
+    Assurance:        assurance,       // iam.ParseWebAuthnAssurance(cfg.Assurance)
+    AAGUIDAllowlist:  aaguidAllowlist, // never nil: an absent gate denies
+    Admins:           iam.NewWebAuthnAdminResolver(userStorage),
+    AttestationRoots: attestationRoots, // nil refuses hardware, never trusts blindly
+})
+```
+
+They are applied inside the per-tenant credential store's write-through
+(`webauthn_factor_writethrough.go`), which is the single point every completed
+registration converges on — xkms's `Service.FinishRegistration` persists through
+`CredentialStore.Save` whichever entry point drove the ceremony.
+
+This placement is load-bearing. The check previously lived on
+`XKMSWebAuthnManager.FinishRegistration`, and the **live** registration route
+(`POST /api/v1/iam/{tenant_id}/webauthn/registration/finish`, served by
+`moduleWebAuthnHandler`) dispatches straight into xkms and never calls that
+method — so the allowlist was absent from the primary enrollment path while
+appearing, from the manager's code, to be enforced. It also ran *before* the
+ceremony verified the attestation statement, where the AAGUID is a value the
+browser supplied rather than one the authenticator proved.
 
 ### REST API Flow
 
@@ -1971,12 +2277,73 @@ server-side and mints the bearer + rotating refresh token.
 
 #### Credential Management
 
-The legacy per-user credential CRUD endpoints
-(`/api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials`)
-were deleted with the legacy mount. Enrolled WebAuthn credentials are
-managed as qrdb user auth factors via
-`Security().Auth().Factors()` (list / remove / rotate / relabel) and
-the `quicbaas auth factor` CLI.
+Two surfaces administer a stored authenticator, for two different questions.
+
+**As a login factor** — list / remove / rotate / relabel the qrdb user auth
+factor a passkey resolves through: `Security().Auth().Factors()` and the
+`quicbaas auth factor` CLI.
+
+**As a stored credential** — see and remove what the WebAuthn credential
+store actually holds for a user, which is what an operator needs when a
+credential outlives the account it was registered for and its email becomes
+permanently unregistrable (the authenticator refuses the ceremony because
+the credential is listed in `excludeCredentials`):
+
+| Verb | Route |
+| --- | --- |
+| List | `GET /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/` |
+| Delete one | `DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/{credential_id}` |
+| Delete all | `DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials/` |
+
+The same three verbs are served over gRPC, MCP and the Unix socket, and are
+exposed by the CLI as `quicbaas iam webauthn list` and
+`quicbaas iam webauthn delete --credential <id> | --all`. Every transport
+resolves through
+`service.WebAuthnCredentialService`, which owns the one part that must not
+vary per transport: translating the IAM user id the caller was authorized
+against into the `(tenant, email)` pair the credential store is addressed by.
+
+**Addressing is not ownership.** These verbs take an email because the
+ceremony does, but xkms's qrdb-backed store files a credential under the qrdb
+**user id** — `__xkms:webauthn/users/<id>/credentials`, with the blob under the
+credential id and the qrdb fido2 login factor under the same `uint64`. Email
+appears in none of those keys: the lookup enters the qrdb user record through
+the email index and takes that record's id.
+
+The consequence is that **renaming a user keeps their passkeys**. qrdb moves
+the email index with the record, so the new address resolves the same
+credentials and the old address resolves to nothing — there is no orphan for
+the rename to leave behind. `IdentityStore.UpdateUser` used to revoke them on
+every email change on the opposite belief (true of xkms's standalone
+email-keyed store, never of the adapter this product wires), which cost a
+burn-in user their only passkey and returned `200`; that revocation is gone,
+and an email change now logs the credential tally on both sides of the write —
+`webauthn credentials carried to the new address` at INFO, or a discrepancy at
+ERROR (go-quicbaas#582). A credential still outlives a **deleted** user, which
+is what the `DeleteUser` cascade and these operator verbs are for.
+
+`{credential_id}` is the **complete, unpadded base64url** id the list verb
+publishes — the same value the browser reports as `rawId`. Every character of
+that alphabet is URL-unreserved, so the id is passed verbatim in the path and
+is never percent-encoded.
+
+Pass the whole id. A base64url id has no fixed length, so a fragment of one
+whose length is a multiple of four decodes cleanly into bytes that match
+nothing; the server detects that case and answers `400` naming the full id
+(`WebAuthnCredentialTruncatedIDError`) rather than a `404` that would read
+like "already deleted". The three id outcomes are:
+
+| Supplied id | REST | gRPC | Meaning |
+| --- | --- | --- | --- |
+| Not base64url | `400` | `InvalidArgument` | typo — `WebAuthnCredentialIDError` |
+| A prefix of a registered id | `400` | `InvalidArgument` | truncated — `WebAuthnCredentialTruncatedIDError`, names the full id |
+| Well-formed, owned by nobody | `404` | `NotFound` | `WebAuthnCredentialNotFoundError` |
+
+Deleting one credential verifies it belongs to the named user before removing
+anything. That check is load-bearing rather than defensive: the credential
+blobs live in a single namespace keyed by credential id alone, so a delete
+dispatched straight to the store would let a caller authorized over one user
+destroy any passkey in the deployment by naming its id.
 
 ### Frontend Integration
 
@@ -2234,6 +2601,7 @@ if response.Authenticator.SignCount <= storedCredential.SignCount {
 | `none` | Basic | Consumer applications, passkeys |
 | `indirect` | Moderate | Enterprise with some verification |
 | `direct` | High | High-security environments |
+| `enterprise` | Highest | Managed fleets whose authenticators are permitted to return a uniquely identifying attestation |
 
 #### User Verification
 
@@ -2266,10 +2634,125 @@ if response.Authenticator.SignCount <= storedCredential.SignCount {
 }
 ```
 
+### Diagnosing a rejected login
+
+Every rejection of `POST /api/v1/auth/login/{begin,finish}` returns the same
+`401 unauthorized / "authentication failed"`, whatever went wrong. That is
+deliberate: a differentiated error would let an unauthenticated caller probe
+which tenants and which accounts exist. The consequence is that **the client
+response carries no diagnostic information at all** and the server-side record
+is the only account of what happened.
+
+#### The rejection record
+
+`service.LoginService` reports every refused ceremony — both halves, every
+transport — to a `LoginCeremonyAuditor`. The server wires one at the same
+point it builds the login facade, so a login-capable node can never be in a
+state where a ceremony is refused and nothing records why.
+
+Two records are written per rejection:
+
+1. **A structured `WARN` log, always**, at `msg="login ceremony rejected"`:
+
+   ```json
+   {
+     "level": "WARN", "msg": "login ceremony rejected",
+     "stage": "finish", "factor_type": "fido2",
+     "session_id": "6892026b-...", "tenant_id": "", "subject": "",
+     "factor_id": "",
+     "lookup_key_sha256": "54c2a720bc2566df...", "lookup_key_len": 43,
+     "method_metadata_keys": ["credential_id", "session_id"],
+     "reason": "transport: factor not found: "
+   }
+   ```
+
+2. **An AU-2/AU-3 authentication event** with `outcome=failure` under action
+   `iam.login.begin` / `iam.login.finish` — the same action names the success
+   path records, so one audit query returns both outcomes.
+
+Reading the fields:
+
+| Field | What it tells you |
+|---|---|
+| `reason` | The typed server-side error, verbatim. This is the diagnosis. |
+| `factor_id` | Non-empty **only** when the factor resolved and the proof was refused. Empty means the credential resolved to no enrolled factor. |
+| `lookup_key_sha256` / `lookup_key_len` | The presented lookup key, reduced. A length of 43 is the base64url credential-id string; 32 would be the raw credential bytes, i.e. a client encoding bug. |
+| `method_metadata_keys` | The key names the client sent. A missing required key is a contract mismatch. |
+| `subject` | The caller's hint on `begin`; on `finish` it is known only when the proof already passed. |
+
+Never recorded: the signature, the assertion, or any method-metadata **value**.
+
+**Tenant limitation.** qrdb's `FinishLoginRequest` carries no tenant id, so a
+`finish` rejection before the principal resolves has no tenant to file an audit
+event under. The auditor does not invent one — it skips the audit event and the
+`WARN` log, which carries every field, is the record.
+
+#### The FIDO2 proof wire contract
+
+Three fields, and all three producers emit exactly this shape — the TypeScript
+SDK (`sdk/typescript/src/rest.ts` `webAuthnFinishLogin`), the Go CLI
+(`cmd/quicbaas` `proveCanonicalFIDO2`), and any other client:
+
+| Field | Value |
+|---|---|
+| `lookup_key` | The **base64url credential-id string**, as bytes (so standard-base64 on the JSON wire). Byte-identical to what enrollment stores as the factor's `Credential`. Not the decoded credential bytes. |
+| `signature` | The `navigator.credentials.get()` assertion **document** — the JSON go-webauthn's `ParseCredentialRequestResponseBytes` accepts. The verifier reads the assertion here when `method_metadata["assertion"]` is absent. |
+| `method_metadata` | `session_id` = the **relying-party** session id from `begin`'s `challenge_metadata` (not the ceremony `session_id`), and `credential_id` = the same base64url string, unencoded. |
+
+The contract is pinned on both sides:
+`sdk/typescript/test/webauthn_login.test.ts` and
+`pkg/api/rest/iam_login_ceremony_webauthn_contract_test.go`, the latter parsing
+the forwarded proof with the same go-webauthn call the verifier makes.
+
+#### Where the verification key comes from
+
+**The public key an assertion is verified against always comes from the stored
+enrollment, never from the request.** The path is
+`tenantWebAuthnVerifier.VerifyTenant` → xkms `WebAuthnFactorVerifier.Verify` →
+`webauthn.Service.FinishLogin` → go-webauthn `ValidateLogin`, which matches the
+assertion's credential id against the credentials the user store returns and
+verifies with the key recorded at registration.
+
+A `cose_public_key` entry in `method_metadata` has **no effect in either
+direction** — an assertion signed by an unenrolled key is refused with or
+without it, and a bogus one does not disturb a legitimate login. This is
+enforced by differential tests in
+`pkg/iam/webauthn_login_key_provenance_test.go`, tied to the live verifier by
+`pkg/server/login_factor_verifier_fido2_provenance_test.go`.
+
+(The `cose_public_key` metadata key belongs to a **different** verifier —
+go-xkms `pkg/factor/fido2`, the custodian factor plugin registered through
+qrdb's `FactorRegistry`. That plugin is not on the interactive login path;
+`WithLoginFactorVerifier` is.)
+
+#### Known cause: a credential enrolled without a login factor
+
+`reason: "transport: factor not found"` on a `finish` whose `begin` returned the
+credential in `allowCredentials` means the WebAuthn credential exists but the
+qrdb `fido2` auth factor the login resolver indexes does not.
+
+That happens when the credential was registered through the **xkms module's**
+SDK ceremony (`POST /api/v1/webauthn/sdk/registration/{begin,finish}`, which
+`xkey auth register` drives) rather than a quicbaas surface. The xkms module
+builds its own relying-party service over the same qrdb-backed credential store
+but without quicbaas's write-through decorator
+(`pkg/iam/webauthn_factor_writethrough.go`), so the credential is persisted and
+the login factor is not. `xkey auth login` still succeeds, because it validates
+against the credential store directly and never consults qrdb's factor index.
+
+Registrations through `POST /api/v1/auth/register/{begin,finish}` and
+`/api/v1/iam/{tenant_id}/webauthn/registration/*` go through the decorator and
+enroll the factor.
+
 ### Best Practices
 
 1. **Always Use HTTPS**: WebAuthn requires secure contexts
-2. **Match Origins**: RP origins must match exactly (including port for development)
+2. **Match Origins**: a URL origin is compared by scheme and host only —
+   case-insensitively, with the default scheme port normalised, and path, query
+   and fragment ignored — so a non-default port MUST be listed (it is part of
+   the host), while a trailing slash is harmless. An entry that is not an
+   `http`/`https` URL is matched verbatim, which is how native-application
+   origins work.
 3. **Handle Errors Gracefully**: Show user-friendly messages
 4. **Provide Fallback**: Offer alternative authentication methods
 5. **Encourage Multiple Credentials**: Users should register backup authenticators
@@ -2739,75 +3222,42 @@ Rotation generates a fresh ES256 key in the xkms backend and demotes the previou
 
 Dedicated tenants can opt in to their own signing key via tenant OIDC settings. `TenantSigningKeyResolver` (`pkg/iam/oidc_tenant_signing.go`) maps each tenant to its key manager, and the aggregated JWKS publishes the global key plus every tenant key. Per-tenant IAM data (users, policies, sessions, WebAuthn credentials, OIDC settings) is barrier-isolated via the tenant-routed KV store.
 
-#### Internal Auth Manager (pkg/auth)
+#### There Is No Internal Auth Manager
 
-The internal `pkg/auth` manager (embedded and test paths) is asymmetric-only as well: ES256 by default, with the keystore-backed signer supplied via `SetAsymmetricSigning` when `JWTSigningKeyID` is set. HMAC tokens fail validation unconditionally.
+`pkg/auth` holds the request-scoped Subject plumbing and nothing else. It has no
+user type, no user store, and no token manager: identity is qrdb's, reached
+through `iam.IdentityStore`, and session tokens are minted and validated by
+`iam.OIDCProvider`. The `InMemoryAuthManager` / `PersistentAuthManager` pair
+that used to live there defined a second `User` struct and `UserStore` — a
+second identifier space — was never wired in a running daemon, and was deleted
+in go-quicbaas#905 together with the `__quicbaas:users:` / `__quicbaas:roles:`
+/ `__quicbaas:tokens:` key schema it owned.
 
 ### Direct JWT Authentication
 
-For API clients that need to validate or use JWT tokens directly:
+An API client validates a session bearer through the provider that minted it:
 
 ```go
-import "github.com/jeremyhahn/go-quicbaas/pkg/auth"
-
-// Create storage backend
-storage := memory.New(logger)
-
-// Asymmetric signing via KMS (recommended for production)
-authConfig := &auth.AuthConfig{
-    Enabled:             true,
-    JWTSigningKeyID:     "my-jwt-key",
-    JWTSigningAlgorithm: "ES256",
-    TokenTTL:            1 * time.Hour,
-    RefreshTokenTTL:     7 * 24 * time.Hour,
-}
-
-authManager, err := auth.NewUnifiedAuthManager(authConfig, storage, logger)
-
-// Validate a token and extract claims
-token := "eyJhbGciOiJSUzI1NiIs..." // Token from WebAuthn, OAuth2, etc.
-claims, err := authManager.ValidateToken(ctx, token)
+claims, err := oidcProvider.ValidateAccessToken(ctx, accessToken)
 if err != nil {
-    log.Fatal(err)
+    return err
 }
-
-// Inspect claims
-log.Printf("User: %s", claims.Subject)
-log.Printf("Auth Method: %v", claims.AMR) // ["webauthn","hwk"] or ["mtls","hwk"]
-log.Printf("Attestation: %s", claims.AttestationMethod)
+log.Printf("User: %s", claims.Subject)   // a qrdb user ID
+log.Printf("Roles: %v", claims.Roles)
 ```
 
-**Note:** User creation with passwords is deprecated. Users are created in `pending` status and must activate by enrolling a hardware authenticator. See [User Flow](architecture.md#user-flow-invite--activate--login).
+Through the service layer the same three session verbs are
+`QuicBaaS.ValidateToken`, `RefreshToken` and `Logout`
+(`pkg/service/quicbaas.go`'s `authService`), each routed to the OIDC provider.
+Over the SDK they are `Security().Auth()`; over MCP, `quicbaas_logout` and the
+`quicbaas_iam_session_*` tools.
 
-### Storage Modes
+Signing is asymmetric only: ES256 by default, key material in the xkms
+keystore. HMAC tokens fail validation unconditionally.
 
-| Storage Backend | Auth Mode | Persistence | Cluster-Safe |
-|----------------|-----------|-------------|--------------|
-| memory.MemoryStorage | In-memory | No | No |
-| pebble.Storage | Persistent | Yes | Yes |
-| Embedded | Persistent | Yes | Yes |
-| Cluster | Persistent | Yes | Yes |
-
-### Internal Key Schema
-
-All authentication data uses reserved `__quicbaas:` prefix.
-
-#### User Keys
-```
-__quicbaas:users:{userID}                 -> User JSON
-__quicbaas:users:byname:{username}        -> userID lookup
-```
-
-#### Role Keys
-```
-__quicbaas:roles:{roleName}               -> Role JSON
-```
-
-#### Token Keys
-```
-__quicbaas:tokens:refresh:{userID}:{hash} -> Expiry timestamp
-__quicbaas:tokens:revoked:{hash}          -> Revocation timestamp
-```
+**Note:** There is no password login. `authService.Login` always fails. Users
+are created in `pending` status and activate by enrolling a hardware
+authenticator — see [User Flow](architecture.md#user-flow-invite--activate--login).
 
 ### Built-in Roles
 
@@ -2819,38 +3269,27 @@ __quicbaas:tokens:revoked:{hash}          -> Revocation timestamp
 
 ### Usage (Passwordless)
 
-#### Create Users (Pending Activation)
+#### Create a User (Pending Activation)
 
 ```go
-user, err := authManager.CreateUser("alice@example.com", "", []string{"readwrite"})
-// User is created in pending status, no password
-// User must activate by enrolling a WebAuthn credential
+// IdentityStore writes through to the embedded qrdb node; the record it returns
+// carries qrdb's Snowflake ID. There is no password parameter.
+user, err := identityStore.CreateUser(ctx, tenantID, iam.CreateUserOptions{
+    Email: "alice@example.com",
+    Roles: []string{"readwrite"},
+})
+// The user is pending until a WebAuthn credential or PIV certificate is enrolled.
 ```
 
-#### Obtain Token After User Enrolls Authenticator
+Over the SDK this is `Identity().IAM().User().Create`; over MCP,
+`quicbaas_iam_user_create`; over REST, `POST /api/v1/iam/users`.
 
-Tokens are issued after the user completes WebAuthn/smartcard authentication:
+#### Obtain a Token After the User Enrolls an Authenticator
 
-```go
-// Via OAuth2 client credentials (service account)
-token, err := authManager.ClientCredentials(ctx, clientID)
-// token.AccessToken (1 hour TTL, bound to mTLS cert via cnf.x5t#S256)
-// token.RefreshToken (7 days TTL)
+Tokens are issued once the user completes a WebAuthn / PIV / mTLS login
+ceremony, or through an OAuth2 grant — both by `iam.OIDCProvider`. The access
+token is bound to the caller's mTLS certificate via `cnf.x5t#S256`.
 
-// Or use a token obtained from browser WebAuthn login
-```
-
-#### Authorize
-
-```go
-err := authManager.Authorize(ctx, token.AccessToken, "keys", "write")
-```
-
-#### Refresh Tokens
-
-```go
-newToken, err := authManager.RefreshToken(ctx, token.RefreshToken)
-```
 
 #### Custom Roles
 
@@ -2865,6 +3304,114 @@ err := roleStorage.CreateRole(ctx, &iam.Role{
     Permissions: []string{"keys:read", "metrics:read"},
 })
 ```
+
+#### Resolving a Role by Name
+
+`RoleStorage.GetRoleByName(ctx, tenantID, name)` is the single supported way to
+answer "which role is named N in tenant T". It is a LOOKUP, and callers must not
+answer the question with a listing:
+
+```go
+role, err := identityStore.GetRoleByName(ctx, "acme", "admin")
+if iam.IsRoleNotFound(err) {
+    // the tenant holds no role of that name
+}
+```
+
+The reason is that `ListOptions{Limit: 0}` does NOT mean "all rows" on every
+store. `QRDBRoleStorage` maps it to qrdb's `PageSize: 0`, which qrdb treats as
+its default page of 100 — so a list-and-filter over a tenant holding more than
+100 roles could fail to find a role that exists (go-quicbaas#541).
+
+Each store answers it without scanning a page:
+
+| Store | Mechanism |
+| --- | --- |
+| `QRDBRoleStorage` | delegates to qrdb's own name index (`RoleClient.GetRoleByName`) |
+| `BackendStorage` | a tenant-scoped KV index, `__iam:tenant:<id>:idx:rolename:<name>` -> role ID |
+| `MemoryStorage` | scans its role map (the double's volume is small; nothing to drift) |
+
+The index segment deliberately sits outside the record prefix
+(`:idx:rolename:`, not under `:role:`) so `ListRoles`, which scans
+`__iam:tenant:<id>:role:`, never sweeps up an index entry. `BackendStorage`
+keeps the index consistent on create, on a rename through `UpdateRole` (new
+entry written, old one dropped), on delete, and on the tenant cascade — and it
+refuses a create or rename onto a name the tenant already holds, because an
+index maps one name to one role and both sibling stores enforce the same
+uniqueness.
+
+An absent role is reported as the `ErrRoleNotFound` sentinel; a store failure is
+NOT. The distinction is load-bearing at the consumer: qrdb's
+`ResolveSystemRoleID` falls back to a DERIVED identifier on not-found, so an
+outage reported as an absence would bind a grant to an identifier the tenant may
+not use.
+
+#### First-Boot Role Resolution
+
+`qrdbadapter.RoleAdapter` implements qrdb's `role.NameResolver` on top of that
+lookup and is wired into first boot as
+`FirstBootDependencies.RoleResolver` (`pkg/server/iam_init.go`,
+`firstBootDependencies`).
+
+First boot is idempotent, so a second run over an already-seeded system tenant
+finds the built-in roles present rather than creating them, and must then bind
+the platform admin's grant to the identifier those roles are ACTUALLY persisted
+under. A cluster seeded before system role IDs moved off UUIDv5/SHA-1 keeps the
+legacy identifiers forever, so a derived identifier would name no role and the
+grant would silently confer nothing. With nothing able to resolve them, qrdb
+refuses to guess and fails with `UnresolvableSystemRoleError`.
+
+The adapter translates the broker's `ErrRoleNotFound` into qrdb's own
+`*role.RoleNotFoundError`, because `ResolveSystemRoleID` matches that exact type
+with `errors.As` to take the derived-identifier path and treats every other
+error as a failure to resolve.
+
+#### Built-in Role Reconciliation
+
+A tenant's built-in roles are copied from the build's definitions when the
+tenant is created, and qrdb refuses every later write to a system role
+(`SystemRoleImmutableError`, surfaced here as `iam.ErrSystemRoleImmutable`). So
+when a build renames or adds a permission, a pre-existing tenant keeps the old
+grant and no privilege level can repair it by hand. Reconciliation is the
+exemption qrdb makes for the one caller whose target is not arbitrary — it IS
+`BuiltInRoles()`.
+
+```go
+// pkg/iam: the capability is a narrow interface, not part of RoleStorage.
+// Built-in definitions are qrdb's, so only the qrdb-backed storage can honour
+// the contract; anything else is refused with ErrRoleReconcileUnsupported
+// rather than reconciled against a set quicbaas invented.
+type BuiltInRoleReconciler interface {
+    ReconcileBuiltInRoles(ctx context.Context, tenantID string) (*RoleReconcileReport, error)
+}
+
+report, err := identityStore.ReconcileBuiltInRoles(ctx, "acme")
+// report.Changed() is false on a converged tenant, and nothing was written.
+```
+
+Two ordering facts govern the wiring:
+
+- **qrdb resolves the built-in definitions through the process-global
+  permission registry at CALL time.** `Server.reconcileTenantBuiltInRoles`
+  (`pkg/server/role_reconcile.go`) therefore runs at the tail of IAM
+  initialization, after both of this process's registration sites —
+  `pkg/permission.Register()` from `NewServer`, and the module's
+  `registerRoleGrants()` from `apimodule.NewModule` during embedded-node
+  construction. Reconciling earlier would converge every tenant onto a
+  definition missing the module's own verbs and report success.
+- **Idempotency is a store-level guarantee, not best-effort.** A converged
+  tenant performs zero writes, which is what makes a per-tenant sweep on every
+  daemon start safe. One log line is emitted per tenant per CHANGED role;
+  an unchanged fleet is silent.
+
+The sweep covers every tenant the broker lists plus the system tenant, which
+the broker's listing does not carry — the same composition `abac_sync.go`
+performs for the policy sweep. The control plane's own built-in roles drift for
+exactly the same reason a data-plane tenant's do.
+
+`Role.RetiredPermissions` is the read-side half: qrdb derives it from the live
+registry on every role read and never stores it, so an operator sees the
+disagreement in an ordinary listing before running the repair.
 
 ### Permission Model
 

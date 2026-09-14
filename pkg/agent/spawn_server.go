@@ -289,11 +289,70 @@ func (s *GRPCSpawnServer) Spawn(ctx context.Context, req *proto.SpawnSessionRequ
 		Sandboxed:      req.GetSandboxed(),
 		ContainerImage: req.GetContainerImage(),
 		Persistent:     req.GetPersistent(),
+		// The control plane's own argv for the agent program — today the
+		// permission grant an SDLC worker is spawned with (go-quicbaas#218).
+		// Honoured verbatim: this daemon runs the process, and a grant it
+		// dropped would be a grant nobody could observe was missing.
+		ExtraArgs: req.GetExtraArgs(),
+
+		// THE POOLED ACCOUNT SELECTION, AND IT MUST BE FORWARDED FOR THE SAME
+		// REASON THE ARGV IS (go-quicbaas#235). The caller states which
+		// credential the agent runs on; this daemon is the only party that can
+		// resolve it, because the credential lives in this daemon's own secret
+		// store and never crosses the wire. Dropping the request here — which
+		// is what happened until #235 — does not fail: the backend's
+		// resolveAccount is only consulted when AccountID or AccountAuto is
+		// set, so the process starts with whatever ambient identity the daemon
+		// happens to have, and nothing anywhere says the caller's choice was
+		// discarded. That is the exact silent shape #218 and #235 were both
+		// measured as, with the local path fixed and the distributed one not.
+		AccountID:       req.GetAccountId(),
+		AccountAuto:     req.GetAccountAuto(),
+		AccountStrategy: req.GetAccountStrategy(),
+		AccountAllow:    req.GetAccountAllow(),
+		// The exclusion travels with the allow-list, and honouring only one of
+		// them would put a rotating session back on the account it was rotated
+		// off. See the client-side note in remote_acp_backend.go.
+		AccountExclude: req.GetAccountExclude(),
+		// The job the spawn works for. It is not a dispatch input on this side
+		// either: it scopes the credential delivery grant this daemon's account
+		// resolution reports, so a remote session's grant records the job it
+		// served.
+		JobID: req.GetJobId(),
+
+		// THE CONTAINER AND TRUST DIMENSION (#248). This daemon is the party
+		// that creates the container, so it is the only one that can apply any
+		// of these — and it was already built to: ACPBackend reads all four
+		// trust fields when it assembles the container spec, and
+		// Runtime.authorizeMounts re-authorizes every extra mount against THIS
+		// host's MountPolicy before a path is bound. Until the wire carried
+		// them, that authorization ran on a slice that was always empty and the
+		// resolved trust tier never arrived, so a remote session ran untrusted
+		// no matter what the control plane's policy had decided.
+		ExtraMounts:  protoMountsToRuntime(req.GetExtraMounts()),
+		ImageDigest:  req.GetImageDigest(),
+		TrustLevel:   orchestration.TrustLevel(req.GetTrustLevel()),
+		TrustLabel:   req.GetTrustLabel(),
+		ExpectedPCRs: req.GetExpectedPcrs(),
+
+		// THE STORAGE TIER THE CONTROL PLANE RESOLVED FROM THE PROJECT RECORD,
+		// which this daemon does not hold. It is applied where every other
+		// sandbox decision is applied — ACPBackend.sandboxSpec, through
+		// ApplyWorkspaceStorage — and an under-provisioned memory budget is
+		// refused there rather than becoming an OOM kill mid-attempt.
+		Storage: protoStorageToRuntime(req.GetStorage()),
 	}
 
 	session, err := s.runtime.Spawn(ctx, identity.TenantID, nil, req.GetBackend(), spawnReq)
 	if err != nil {
-		mapped := mapRuntimeError(err)
+		// A CONFIGURATION FAULT TRAVELS AS SUCH (#235). The pooled account is
+		// resolved before the process is started, so "no account for this
+		// tenant" means nothing was created and the SDLC module must park the item
+		// rather than charge it. That decision is made from the resolver's
+		// TYPED error, which does not survive a gRPC status — so the class is
+		// attached here and mapped back to the same sentinel on the other
+		// side. A failure that is not one of those classes is untouched.
+		mapped := orchestration.AttachSpawnFaultEvidence(mapRuntimeError(err), err)
 		s.auditRPC(ctx, "spawn", identity.TenantID, identity.AgentID, "", mapped)
 		observeRPC("spawn", mapped, begin)
 		return nil, mapped
@@ -306,6 +365,44 @@ func (s *GRPCSpawnServer) Spawn(ctx context.Context, req *proto.SpawnSessionRequ
 		Backend:   req.GetBackend(),
 		Model:     session.Model,
 		Timestamp: timestamppb.New(time.Unix(0, session.CreatedAt)),
+
+		// THE CONTAINER THIS DAEMON PUT THE AGENT IN (#740). The container is
+		// created here — by this daemon's runtime, from this daemon's image map
+		// — so this response is the only place its identity can come from. The
+		// control plane records it on the session and refuses to publish a
+		// delivery from a session that has none (pkg/sdlc/runner.go: the commit,
+		// the signature and the push all run INSIDE the worker's container),
+		// which is what a spawn that reported no container was measured as: a
+		// remote worker refused for "runs no container" while its container was
+		// running on this host.
+		//
+		// It is the id as THIS host's container runtime knows it, and it means
+		// nothing to a runtime that is not this one. A caller that acts on it
+		// must be acting through this daemon — see the note on Session
+		// ContainerID in RemoteACPBackend.Spawn.
+		//
+		// Empty is a real answer, not a missing one: a session the daemon runs
+		// as a host process has no container, and inventing an id for it would
+		// send a tenant's work into a sandbox nobody chose.
+		ContainerId: session.ContainerID,
+
+		// WHICH ACCOUNT THIS SESSION IS BILLING TO. Resolution happened here,
+		// against a pool this daemon owns; the control plane cannot recompute
+		// it and has no other way to learn it. Reporting it is what lets the
+		// durable session record — and every turn's usage row — name an account
+		// for a session that ran remotely. The credential itself does not
+		// travel and never has; only the identifier and the strategy that chose
+		// it do.
+		AccountId:       session.AccountID,
+		AccountStrategy: session.AccountStrategy,
+
+		// AND THE GRANT THE DELIVERY WAS MADE UNDER. The control plane issued
+		// it when it released the credential to this daemon, but only this side
+		// knows which SESSION that release served, so this response is the only
+		// place the pairing can come from (account_grant.go). The control plane
+		// records it and its session conclusion withdraws it — which is what
+		// makes a remote session's provider credential revocable at all.
+		CredentialLeaseId: session.CredentialLeaseID,
 	}, nil
 }
 
@@ -345,7 +442,15 @@ func (s *GRPCSpawnServer) Prompt(req *proto.PromptSessionRequest, stream grpc.Se
 
 	resp, err := s.runtime.Prompt(ctx, req.GetBackend(), promptReq)
 	if err != nil {
-		mapped := mapRuntimeError(err)
+		// THE CLI'S OWN ACCOUNT OF THE FAILURE TRAVELS WITH IT (#235). This
+		// daemon ran the process and is the only party that saw its result
+		// object; mapping the failure to a bare status here is what left a
+		// remote worker burning an attempt on a pre-model failure that a local
+		// one has refunded since #235. Attached as a status detail, best
+		// effort — a detail that cannot be carried leaves the error untouched.
+		// See orchestration/turn_failure_wire.go for what is deliberately NOT
+		// put on the wire.
+		mapped := orchestration.AttachTurnFailureEvidence(mapRuntimeError(err), err)
 		s.auditRPC(ctx, "prompt", identity.TenantID, identity.AgentID, req.GetSessionId(), mapped)
 		observeRPC("prompt", mapped, begin)
 		return mapped
@@ -413,7 +518,7 @@ func (s *GRPCSpawnServer) Status(ctx context.Context, req *proto.SessionStatusRe
 	return &proto.SessionStatusResponse{
 		SessionId:     last.SessionID,
 		State:         runtimeSessionStateToProto(last.State),
-		LastActivity:  timestamppb.New(time.Unix(last.LastActivity, 0)),
+		LastActivity:  timestamppb.New(time.Unix(0, last.LastActivity)),
 		UptimeSeconds: last.Uptime,
 		Timestamp:     timestamppb.Now(),
 	}, nil
@@ -522,7 +627,13 @@ func (s *GRPCSpawnServer) Infer(req *proto.InferRequest, stream grpc.ServerStrea
 			observeRPC("infer", mapped, begin)
 			return mapped
 		}
-		mapped := mapRuntimeError(err)
+		// Attached here too, though no backend Infer can reach today produces
+		// this evidence: Runtime.Infer refuses every PersistentSessions
+		// backend and ACPBackend is the only producer. That is TRUE BY TWO
+		// FACTS A PAGE APART, and this boundary has already dropped three
+		// things that were each fine until they were not. The call is a no-op
+		// when there is no evidence, so the insurance is free.
+		mapped := orchestration.AttachTurnFailureEvidence(mapRuntimeError(err), err)
 		s.auditRPC(ctx, "infer", identity.TenantID, identity.AgentID, "", mapped)
 		observeRPC("infer", mapped, begin)
 		return mapped
@@ -730,15 +841,56 @@ func protoMCPServersToRuntime(in []*proto.MCPServerConfig) []orchestration.MCPSe
 	}
 	out := make([]orchestration.MCPServerConfig, len(in))
 	for i, s := range in {
+		command := s.GetCommand()
+		if command == "" {
+			// Command mirrors URL for senders that predate the command field
+			// and encoded the endpoint there. Only when the sender said
+			// nothing: a sender that set command meant that command.
+			command = s.GetUrl()
+		}
 		out[i] = orchestration.MCPServerConfig{
-			Name: s.GetName(),
-			URL:  s.GetUrl(),
-			Env:  s.GetEnv(),
-			// Command mirrors URL for callers that still read the legacy field.
-			Command: s.GetUrl(),
+			Name:    s.GetName(),
+			URL:     s.GetUrl(),
+			Env:     s.GetEnv(),
+			Command: command,
+			Args:    s.GetArgs(),
 		}
 	}
 	return out
+}
+
+// protoMountsToRuntime converts proto container mounts to the orchestration
+// shape. Nil for an empty repeated field, so "no extra mounts" stays
+// indistinguishable from a caller that predates the field.
+func protoMountsToRuntime(in []*proto.ContainerMount) []orchestration.ContainerMount {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]orchestration.ContainerMount, len(in))
+	for i, m := range in {
+		out[i] = orchestration.ContainerMount{
+			Source:         m.GetSource(),
+			Target:         m.GetTarget(),
+			ReadOnly:       m.GetReadOnly(),
+			Type:           m.GetType(),
+			TmpfsSizeBytes: m.GetTmpfsSizeBytes(),
+		}
+	}
+	return out
+}
+
+// protoStorageToRuntime converts the wire storage plan to the orchestration
+// shape. A message the control plane left off the wire is the inert plan, which
+// is what every project with no storage configuration resolves to.
+func protoStorageToRuntime(in *proto.WorkspaceStoragePlan) orchestration.WorkspaceStoragePlan {
+	if in == nil {
+		return orchestration.WorkspaceStoragePlan{}
+	}
+	return orchestration.WorkspaceStoragePlan{
+		Tier:           orchestration.WorkspaceTier(in.GetTier()),
+		TmpfsSizeBytes: in.GetTmpfsSizeBytes(),
+		MemoryBytes:    in.GetMemoryBytes(),
+	}
 }
 
 // isGracefulServerClosed returns true if err came from a graceful server

@@ -1867,7 +1867,10 @@ func (r *ToolRegistry) handleXKMSFIDO2BeginRegistration(ctx context.Context, arg
 	}
 
 	resp, err := fido2Svc.BeginRegistration(ctx, fido2TenantFromArgs(ctx, args), &transport.BeginRegistrationRequest{
-		Username:    username,
+		// The MCP tool argument is still spelled "username"; xkms v0.12
+		// renamed the field to Email and resolves the account with GetByEmail,
+		// so the value has to BE the email either way.
+		Email:       username,
 		DisplayName: getString(args, "display_name"),
 	})
 	if err != nil {
@@ -1920,7 +1923,7 @@ func (r *ToolRegistry) handleXKMSFIDO2BeginAuthentication(ctx context.Context, a
 	}
 
 	resp, err := fido2Svc.BeginAuthentication(ctx, fido2TenantFromArgs(ctx, args), &transport.BeginAuthenticationRequest{
-		Username: username,
+		Email: username,
 	})
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "fido2.beginAuthentication", Cause: err}
@@ -1954,7 +1957,7 @@ func (r *ToolRegistry) handleXKMSFIDO2FinishAuthentication(ctx context.Context, 
 
 	resp, err := fido2Svc.FinishAuthentication(ctx, fido2TenantFromArgs(ctx, args), &transport.FinishAuthenticationRequest{
 		SessionID:     sessionID,
-		Username:      username,
+		Email:         username,
 		AssertionJSON: assertionJSON,
 	})
 	if err != nil {

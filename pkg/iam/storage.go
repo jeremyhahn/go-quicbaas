@@ -15,7 +15,7 @@ package iam
 
 import (
 	"context"
-	"time"
+	"log/slog"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
@@ -75,13 +75,27 @@ type TenantStorage interface {
 // UserStorage defines the interface for user persistence operations.
 type UserStorage interface {
 	// CreateUser stores a new user.
+	//
+	// The STORE assigns the identity: an implementation MUST mint a user id
+	// onto a record that arrives without one, and the caller reads it back off
+	// the record afterwards. A caller cannot supply an id, which is what keeps
+	// there from being a second identifier space for anything to reconcile
+	// against — the defect the uuid<->uint64 IDMap existed to paper over.
 	CreateUser(ctx context.Context, user *User) error
 
 	// GetUser retrieves a user by ID.
 	GetUser(ctx context.Context, tenantID, userID string) (*User, error)
 
-	// GetUserByEmail retrieves a user by email (global lookup).
-	GetUserByEmail(ctx context.Context, email string) (*User, error)
+	// GetUserByEmail retrieves a user by their canonical login key within a
+	// tenant.
+	//
+	// The tenant is EXPLICIT because qrdb's email index is tenant-scoped: the
+	// same person may legitimately hold an account in two tenants, and every
+	// login path already knows which one it authenticated into. The global
+	// signature this replaced is what forced a broker-owned email side-index
+	// to exist alongside qrdb's, and a verified login could miss that copy
+	// while the record it named was present all along.
+	GetUserByEmail(ctx context.Context, tenantID, email string) (*User, error)
 
 	// GetUserByPIVThumbprint retrieves a user by one of their registered
 	// PIV-attested cert-binding lookup thumbprints (hex SHA-256 of the cert
@@ -98,6 +112,18 @@ type UserStorage interface {
 	// UpdateUser updates an existing user.
 	UpdateUser(ctx context.Context, user *User) error
 
+	// MarkUserDeleting transitions a user to LifecycleDeleting — the terminal
+	// state a deletion claims the record with before it begins removing what
+	// the record owns.
+	//
+	// It is separate from UpdateUser, and lifecycle-ONLY, for a reason the store
+	// enforces: once a record is terminal it refuses any update that would
+	// CHANGE it, permitting only a re-assertion of the state it already holds.
+	// A full-record write therefore cannot mark a record twice, so a retried
+	// deletion would fail on exactly the path that exists to make deletion
+	// resumable. Marking an already-marked record is a no-op, not an error.
+	MarkUserDeleting(ctx context.Context, tenantID, userID string) error
+
 	// DeleteUser removes a user.
 	DeleteUser(ctx context.Context, tenantID, userID string) error
 
@@ -113,8 +139,37 @@ type GroupStorage interface {
 	// GetGroup retrieves a group by ID.
 	GetGroup(ctx context.Context, tenantID, groupID string) (*Group, error)
 
-	// UpdateGroup updates an existing group.
+	// UpdateGroup updates an existing group. It REPLACES the whole record,
+	// including the member list, so it expresses "the membership is now
+	// exactly this" — an operation a caller sometimes means, and never the
+	// right one for adding or removing a single member. Use AddGroupMember /
+	// RemoveGroupMember for that.
 	UpdateGroup(ctx context.Context, group *Group) error
+
+	// AddGroupMember adds userID to the group's member list ATOMICALLY with
+	// respect to other membership changes, and reports no error when the user
+	// is already a member.
+	//
+	// It exists because read-append-write is a lost update, and the losing
+	// write is silent. Two concurrent CreateUser calls naming one group each
+	// read the same member list, each append their own user, and the second
+	// write erases the first: both users hold the group in User.Groups while
+	// only one appears in Group.Members, and nothing reports it. Membership is
+	// an authorization input, so the half of the pair that vanished is a grant
+	// the system believes it made.
+	//
+	// Idempotence is part of the contract, not a convenience: a failed create
+	// compensates by removing the member it added, and a retry must be able to
+	// add it again without an "already a member" error deciding the retry
+	// failed.
+	AddGroupMember(ctx context.Context, tenantID, groupID, userID string) error
+
+	// RemoveGroupMember removes userID from the group's member list, atomically
+	// against concurrent membership changes, and reports no error when the user
+	// is not a member. Same reasoning as AddGroupMember in both respects: a
+	// removal built from read-filter-write loses a concurrent addition, and a
+	// compensating removal has to be safe to repeat.
+	RemoveGroupMember(ctx context.Context, tenantID, groupID, userID string) error
 
 	// DeleteGroup removes a group.
 	DeleteGroup(ctx context.Context, tenantID, groupID string) error
@@ -131,6 +186,23 @@ type RoleStorage interface {
 	// GetRole retrieves a role by ID.
 	GetRole(ctx context.Context, tenantID, roleID string) (*Role, error)
 
+	// GetRoleByName retrieves a role by its tenant-scoped name. Role names are
+	// unique within a tenant in every store here, so the answer is one record
+	// or none: ErrRoleNotFound when the tenant holds no role of that name.
+	//
+	// It is a LOOKUP, not a filtered listing. The distinction is the point of
+	// the method: callers used to answer "which role is named N in tenant T" by
+	// listing roles and scanning the page, which the qrdb-backed store caps at
+	// its default page size — so a tenant holding more roles than one page
+	// could fail to resolve a role that exists. The qrdb store answers this
+	// from its own name index, the KVStore-backed store from a tenant-scoped
+	// name index it maintains, and the in-memory double by scanning its map.
+	//
+	// This is the surface qrdb's role.NameResolver needs (wired into first-boot
+	// as FirstBootDependencies.RoleResolver), so a grant binds to the
+	// identifier a role is actually persisted under.
+	GetRoleByName(ctx context.Context, tenantID, name string) (*Role, error)
+
 	// UpdateRole updates an existing role.
 	UpdateRole(ctx context.Context, role *Role) error
 
@@ -139,6 +211,26 @@ type RoleStorage interface {
 
 	// ListRoles retrieves roles with pagination and filtering.
 	ListRoles(ctx context.Context, tenantID string, opts ListOptions) ([]*Role, error)
+}
+
+// BuiltInRoleReconciler converges a tenant's stored built-in roles onto the
+// definitions the running build carries: permissions the build now grants are
+// added, permissions it no longer grants are removed, and custom roles are
+// left alone.
+//
+// It is deliberately separate from RoleStorage. Built-in role definitions are
+// go-qrdb's, not this package's, so only a role storage that speaks to qrdb
+// can honour the contract; a storage that cannot reach those definitions must
+// refuse rather than reconcile a tenant against a set it invented. A caller
+// probes for this interface and reports ErrRoleReconcileUnsupported when the
+// configured storage does not implement it.
+//
+// Implementations MUST be idempotent: a tenant that already agrees with the
+// build reports no changed roles and performs no writes.
+type BuiltInRoleReconciler interface {
+	// ReconcileBuiltInRoles converges tenantID's built-in roles and reports
+	// only the roles that changed.
+	ReconcileBuiltInRoles(ctx context.Context, tenantID string) (*RoleReconcileReport, error)
 }
 
 // AppStorage defines the interface for OAuth2 application persistence.
@@ -316,6 +408,10 @@ type IdentityStoreOptions struct {
 
 	// Tenants is the tenant manager
 	Tenants TenantManager
+
+	// Logger records what an update did to a user's enrolled WebAuthn
+	// credentials. Optional; the process default is used when nil.
+	Logger *slog.Logger
 }
 
 // CreateUserOptions contains options for creating a user.
@@ -333,14 +429,32 @@ type CreateUserOptions struct {
 	Name string
 
 	// Attributes contains custom attributes
-	Attributes map[string]interface{}
+	Attributes map[string]string
 
-	// Enabled indicates if the user is enabled
-	Enabled bool
+	// Enabled indicates whether the user may authenticate. Nil means enabled,
+	// which is why it is a pointer: a plain bool cannot tell "the caller wants
+	// this user disabled" from "the caller said nothing", and the zero value
+	// of the wrong one of those suspends every user created without an
+	// explicit flag. UpdateUserOptions.Enabled is a pointer for the same
+	// reason; this one used to be a plain bool and was therefore ignored.
+	Enabled *bool
 
 	// AuthMethods lists the allowed authentication methods (e.g. "webauthn", "piv").
 	// Defaults to ["webauthn"] when empty.
 	AuthMethods []string
+
+	// Lifecycle is the state the user starts in. Empty defaults to
+	// LifecyclePending — a user that exists but has not activated.
+	//
+	// Callers that are not creating an invite-pending account should say so
+	// rather than inherit the default: first-boot's admin is cert-enrolled,
+	// and a federated user has already been authenticated by their IdP.
+	// Neither is awaiting an invite, and a record that claims otherwise
+	// misdescribes the account to everything that reads it.
+	//
+	// qrdb accepts only pending, active or disabled at creation: suspended and
+	// locked are things that HAPPEN to an account, not states one is born in.
+	Lifecycle Lifecycle
 
 	// Roles is the list of role IDs to assign to the new user.
 	Roles []string
@@ -349,10 +463,6 @@ type CreateUserOptions struct {
 	// reference is validated before the user record is written, and each
 	// group's member list is updated to include the new user.
 	Groups []string
-
-	// InviteExpiry is the duration until the invite token expires.
-	// Defaults to 24 hours when zero.
-	InviteExpiry time.Duration
 }
 
 // UpdateUserOptions contains options for updating a user.
@@ -367,7 +477,7 @@ type UpdateUserOptions struct {
 	Name *string
 
 	// Attributes contains custom attributes
-	Attributes *map[string]interface{}
+	Attributes *map[string]string
 
 	// Enabled indicates if the user is enabled
 	Enabled *bool
@@ -378,8 +488,10 @@ type UpdateUserOptions struct {
 	// Groups is the list of group IDs the user belongs to
 	Groups *[]string
 
-	// State, when non-empty, overrides the user lifecycle state.
-	State *UserState
+	// Lifecycle, when non-empty, transitions the account to that state. The
+	// move is checked against qrdb's transition table, so an illegal one is
+	// refused by the store rather than written.
+	Lifecycle *Lifecycle
 
 	// AuthMethods, when non-nil, replaces the allowed authentication methods.
 	AuthMethods *[]string
@@ -404,12 +516,6 @@ type UpdateUserOptions struct {
 	// other kinds are preserved. This is the identifier the admin-mTLS
 	// first-boot enrollment binds and that qrdb resolves natively.
 	SPKICertThumbprint *string
-
-	// InviteToken, when non-nil, sets or clears the pending invite token.
-	InviteToken *string
-
-	// InviteExpiresAt, when non-nil, sets or clears the invite expiry timestamp.
-	InviteExpiresAt **time.Time
 }
 
 // CreateGroupOptions contains options for creating a group.

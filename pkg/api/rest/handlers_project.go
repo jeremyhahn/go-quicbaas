@@ -52,6 +52,28 @@ type CreateProjectRESTRequest struct {
 	GPUMinutes       int64                                `json:"gpu_minutes,omitempty"`
 	MaxConcurrency   int                                  `json:"max_concurrency,omitempty"`
 	Metadata         map[string]string                    `json:"metadata,omitempty"`
+
+	// DefaultWorkflow names the tenant-scoped workflow a Task auto-spawns
+	// into; it must be registered in the tenant.
+	DefaultWorkflow string `json:"default_workflow,omitempty"`
+
+	// Autonomous turns autonomous development on for the new project.
+	Autonomous bool `json:"autonomous,omitempty"`
+
+	// ContextRepos are cloned by the worker beside the project checkout.
+	ContextRepos []orchestration.ContextRepo `json:"context_repos,omitempty"`
+
+	// Commit identity, signing policy and access key of the git workspace.
+	GitAuthorName       string `json:"git_author_name,omitempty"`
+	GitAuthorEmail      string `json:"git_author_email,omitempty"`
+	GitSigningEnabled   bool   `json:"git_signing_enabled,omitempty"`
+	GitSigningAlgorithm string `json:"git_signing_algorithm,omitempty"`
+	GitSigningKeyName   string `json:"git_signing_key_name,omitempty"`
+	GitSigningKeyScope  string `json:"git_signing_key_scope,omitempty"`
+	GitSigningKeyOwner  string `json:"git_signing_key_owner,omitempty"`
+	GitSSHKeyName       string `json:"git_ssh_key_name,omitempty"`
+	GitSSHKeyScope      string `json:"git_ssh_key_scope,omitempty"`
+	GitSSHKeyOwner      string `json:"git_ssh_key_owner,omitempty"`
 }
 
 // UpdateProjectRESTRequest is the JSON body for PUT /api/v1/projects/{id}.
@@ -67,10 +89,41 @@ type UpdateProjectRESTRequest struct {
 	GitDefaultBranch string                               `json:"git_default_branch,omitempty"`
 	GitCurrentSHA    string                               `json:"git_current_sha,omitempty"`
 	AgentRoles       map[string]orchestration.ProjectRole `json:"agent_roles,omitempty"`
-	TokenBudget      int64                                `json:"token_budget,omitempty"`
-	GPUMinutes       int64                                `json:"gpu_minutes,omitempty"`
-	MaxConcurrency   int                                  `json:"max_concurrency,omitempty"`
 	Metadata         map[string]string                    `json:"metadata,omitempty"`
+
+	// The quotas are POINTERS so zero is expressible: zero means UNLIMITED
+	// on ProjectQuotas, so treating it as "no value" made lifting a cap
+	// impossible — the save succeeded and the old cap stayed. Absent leaves
+	// the stored value alone, the same rule GitSigningEnabled uses.
+	TokenBudget    *int64 `json:"token_budget,omitempty"`
+	GPUMinutes     *int64 `json:"gpu_minutes,omitempty"`
+	MaxConcurrency *int   `json:"max_concurrency,omitempty"`
+
+	// DefaultWorkflow sets the auto-spawn workflow when non-empty;
+	// ClearDefaultWorkflow removes it.
+	DefaultWorkflow      string `json:"default_workflow,omitempty"`
+	ClearDefaultWorkflow bool   `json:"clear_default_workflow,omitempty"`
+
+	// Autonomous is a pointer so "unchanged" and "off" are distinct.
+	Autonomous *bool `json:"autonomous,omitempty"`
+
+	// ContextRepos replaces the whole list when non-nil; ClearContextRepos
+	// empties it.
+	ContextRepos      []orchestration.ContextRepo `json:"context_repos,omitempty"`
+	ClearContextRepos bool                        `json:"clear_context_repos,omitempty"`
+
+	// Commit identity, signing policy and access key of the git workspace.
+	// GitSigningEnabled is a pointer so "unchanged" and "off" are distinct.
+	GitAuthorName       string `json:"git_author_name,omitempty"`
+	GitAuthorEmail      string `json:"git_author_email,omitempty"`
+	GitSigningEnabled   *bool  `json:"git_signing_enabled,omitempty"`
+	GitSigningAlgorithm string `json:"git_signing_algorithm,omitempty"`
+	GitSigningKeyName   string `json:"git_signing_key_name,omitempty"`
+	GitSigningKeyScope  string `json:"git_signing_key_scope,omitempty"`
+	GitSigningKeyOwner  string `json:"git_signing_key_owner,omitempty"`
+	GitSSHKeyName       string `json:"git_ssh_key_name,omitempty"`
+	GitSSHKeyScope      string `json:"git_ssh_key_scope,omitempty"`
+	GitSSHKeyOwner      string `json:"git_ssh_key_owner,omitempty"`
 }
 
 // ProjectRESTResponse mirrors orchestration.Project for JSON serialization.
@@ -93,6 +146,27 @@ type ProjectRESTResponse struct {
 	Metadata         map[string]string                    `json:"metadata,omitempty"`
 	CreatedAt        time.Time                            `json:"created_at"`
 	UpdatedAt        time.Time                            `json:"updated_at"`
+
+	// DefaultWorkflow is the tenant-scoped auto-spawn workflow, if any.
+	DefaultWorkflow string `json:"default_workflow,omitempty"`
+
+	// Autonomous reports whether autonomous development is on.
+	Autonomous bool `json:"autonomous,omitempty"`
+
+	// ContextRepos are cloned by the worker beside the project checkout.
+	ContextRepos []orchestration.ContextRepo `json:"context_repos,omitempty"`
+
+	// Commit identity, signing policy and access key of the git workspace.
+	GitAuthorName       string `json:"git_author_name,omitempty"`
+	GitAuthorEmail      string `json:"git_author_email,omitempty"`
+	GitSigningEnabled   bool   `json:"git_signing_enabled,omitempty"`
+	GitSigningAlgorithm string `json:"git_signing_algorithm,omitempty"`
+	GitSigningKeyName   string `json:"git_signing_key_name,omitempty"`
+	GitSigningKeyScope  string `json:"git_signing_key_scope,omitempty"`
+	GitSigningKeyOwner  string `json:"git_signing_key_owner,omitempty"`
+	GitSSHKeyName       string `json:"git_ssh_key_name,omitempty"`
+	GitSSHKeyScope      string `json:"git_ssh_key_scope,omitempty"`
+	GitSSHKeyOwner      string `json:"git_ssh_key_owner,omitempty"`
 }
 
 // CreateProjectRESTResponse is returned on successful project creation.
@@ -182,6 +256,20 @@ func (s *Server) HandleCreateProject(w http.ResponseWriter, r *http.Request) {
 		GPUMinutes:       req.GPUMinutes,
 		MaxConcurrency:   req.MaxConcurrency,
 		Metadata:         req.Metadata,
+
+		DefaultWorkflow:     req.DefaultWorkflow,
+		Autonomous:          req.Autonomous,
+		ContextRepos:        req.ContextRepos,
+		GitAuthorName:       req.GitAuthorName,
+		GitAuthorEmail:      req.GitAuthorEmail,
+		GitSigningEnabled:   req.GitSigningEnabled,
+		GitSigningAlgorithm: req.GitSigningAlgorithm,
+		GitSigningKeyName:   req.GitSigningKeyName,
+		GitSigningKeyScope:  req.GitSigningKeyScope,
+		GitSigningKeyOwner:  req.GitSigningKeyOwner,
+		GitSSHKeyName:       req.GitSSHKeyName,
+		GitSSHKeyScope:      req.GitSSHKeyScope,
+		GitSSHKeyOwner:      req.GitSSHKeyOwner,
 	})
 	if err != nil {
 		handleProjectError(w, r, err)
@@ -284,6 +372,22 @@ func (s *Server) HandleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		GPUMinutes:       req.GPUMinutes,
 		MaxConcurrency:   req.MaxConcurrency,
 		Metadata:         req.Metadata,
+
+		DefaultWorkflow:      req.DefaultWorkflow,
+		ClearDefaultWorkflow: req.ClearDefaultWorkflow,
+		Autonomous:           req.Autonomous,
+		ContextRepos:         req.ContextRepos,
+		ClearContextRepos:    req.ClearContextRepos,
+		GitAuthorName:        req.GitAuthorName,
+		GitAuthorEmail:       req.GitAuthorEmail,
+		GitSigningEnabled:    req.GitSigningEnabled,
+		GitSigningAlgorithm:  req.GitSigningAlgorithm,
+		GitSigningKeyName:    req.GitSigningKeyName,
+		GitSigningKeyScope:   req.GitSigningKeyScope,
+		GitSigningKeyOwner:   req.GitSigningKeyOwner,
+		GitSSHKeyName:        req.GitSSHKeyName,
+		GitSSHKeyScope:       req.GitSSHKeyScope,
+		GitSSHKeyOwner:       req.GitSSHKeyOwner,
 	})
 	if err != nil {
 		handleProjectError(w, r, err)
@@ -397,6 +501,20 @@ func projectToREST(p *orchestration.Project) *ProjectRESTResponse {
 		Metadata:         p.Metadata,
 		CreatedAt:        p.CreatedAt,
 		UpdatedAt:        p.UpdatedAt,
+
+		DefaultWorkflow:     p.DefaultWorkflow,
+		Autonomous:          p.Autonomous,
+		ContextRepos:        p.ContextRepos,
+		GitAuthorName:       p.Git.Author.Name,
+		GitAuthorEmail:      p.Git.Author.Email,
+		GitSigningEnabled:   p.Git.Signing.Enabled,
+		GitSigningAlgorithm: p.Git.Signing.Algorithm,
+		GitSigningKeyName:   p.Git.Signing.Key.Name,
+		GitSigningKeyScope:  p.Git.Signing.Key.Scope,
+		GitSigningKeyOwner:  p.Git.Signing.Key.Owner,
+		GitSSHKeyName:       p.Git.SSHKey.Name,
+		GitSSHKeyScope:      p.Git.SSHKey.Scope,
+		GitSSHKeyOwner:      p.Git.SSHKey.Owner,
 	}
 	if p.Permissions.AgentRoles != nil {
 		resp.AgentRoles = p.Permissions.AgentRoles
@@ -548,6 +666,7 @@ func handleProjectError(w http.ResponseWriter, r *http.Request, err error) {
 	var alreadyExists *service.ProjectAlreadyExistsError
 	var invalid *service.ProjectInvalidError
 	var accessDenied *service.ProjectAccessDeniedError
+	var unresolved *service.ProjectUnresolvedError
 	var roleInvalid *service.ProjectRoleInvalidError
 
 	switch {
@@ -558,6 +677,10 @@ func handleProjectError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.As(err, &invalid):
 		RespondError(w, r, http.StatusBadRequest, err)
 	case errors.As(err, &accessDenied):
+		RespondError(w, r, http.StatusForbidden, err)
+	case errors.As(err, &unresolved):
+		// A refusal, not a server fault: the authorizer could not read the
+		// project, so it could not read the rule, so it refuses.
 		RespondError(w, r, http.StatusForbidden, err)
 	case errors.As(err, &roleInvalid):
 		RespondError(w, r, http.StatusBadRequest, err)

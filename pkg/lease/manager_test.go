@@ -15,652 +15,899 @@ package lease
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"encoding/json"
-
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
-	"github.com/jeremyhahn/go-quicbaas/pkg/storage"
 )
 
-func setupLeaseManager(t *testing.T) (*Manager, func()) {
-	// Create logger
-	log, err := logger.New(logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
+// testLogger returns the interfaces.Logger every manager under test writes to.
+func testLogger(t *testing.T) interfaces.Logger {
+	t.Helper()
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	require.NoError(t, err)
+	return logger.NewAdapter(log)
+}
+
+// newTestManager builds a manager over a real qrdb memory engine.
+func newTestManager(t *testing.T) *Manager {
+	t.Helper()
+	return newTestManagerOn(t, kvstore.NewMemory(), 0)
+}
+
+// newTestManagerOn builds a manager over store with an explicit tombstone
+// retention (zero selects the default).
+func newTestManagerOn(t *testing.T, store interfaces.KVStore, retention time.Duration) *Manager {
+	t.Helper()
+	mgr, err := NewManager(&ManagerConfig{
+		Store:              store,
+		Logger:             testLogger(t),
+		TombstoneRetention: retention,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, mgr.Close()) })
+	return mgr
+}
+
+// =============================================================================
+// Construction
+// =============================================================================
+
+func TestNewManager_Defaults(t *testing.T) {
+	mgr, err := NewManager(&ManagerConfig{Store: kvstore.NewMemory(), Logger: testLogger(t)})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, mgr.Close()) }()
+
+	assert.Equal(t, DefaultExpirationCheckInterval, mgr.checkInterval)
+	assert.Equal(t, DefaultTombstoneRetention, mgr.tombstoneRetention)
+}
+
+func TestNewManager_HonoursExplicitIntervals(t *testing.T) {
+	mgr, err := NewManager(&ManagerConfig{
+		Store:                   kvstore.NewMemory(),
+		Logger:                  testLogger(t),
+		ExpirationCheckInterval: 3 * time.Second,
+		TombstoneRetention:      90 * time.Minute,
+	})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, mgr.Close()) }()
+
+	assert.Equal(t, 3*time.Second, mgr.checkInterval)
+	assert.Equal(t, 90*time.Minute, mgr.tombstoneRetention)
+}
+
+func TestNewManager_InvalidInput(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *ManagerConfig
+	}{
+		{name: "nil config", config: nil},
+		{name: "nil store", config: &ManagerConfig{Logger: testLogger(t)}},
+		{name: "nil logger", config: &ManagerConfig{Store: kvstore.NewMemory()}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, err := NewManager(tc.config)
+			require.Error(t, err)
+			assert.Nil(t, mgr)
+			assert.True(t, dberrors.IsInvalidInput(err), "want invalid-input classification, got %v", err)
+		})
+	}
+}
+
+// =============================================================================
+// CreateLease
+// =============================================================================
+
+func TestCreateLease(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	lease, err := mgr.CreateLease(ctx, "credentials/db/reader", 10*time.Minute, nil)
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, lease.LeaseID)
+	assert.Equal(t, "credentials/db/reader", lease.SecretPath)
+	assert.Equal(t, 10*time.Minute, lease.TTL)
+	assert.True(t, lease.IsValid())
+	assert.True(t, lease.Renewable, "default options are renewable")
+	assert.Nil(t, lease.RevokedAt)
+	assert.WithinDuration(t, time.Now().Add(10*time.Minute), lease.ExpiresAt, 5*time.Second)
+
+	// The lease is durable, not merely returned.
+	stored, err := mgr.GetLease(ctx, lease.LeaseID)
+	require.NoError(t, err)
+	assert.Equal(t, lease.LeaseID, stored.LeaseID)
+}
+
+func TestCreateLease_CarriesOptions(t *testing.T) {
+	mgr := newTestManager(t)
+
+	lease, err := mgr.CreateLease(context.Background(), "p", time.Minute, &LeaseOptions{
+		Renewable:   false,
+		MaxRenewals: 2,
+		Metadata:    map[string]string{"account_id": "acct-1"},
 	})
 	require.NoError(t, err)
 
-	// Create mock storage
-	store := newMockStorage()
+	assert.False(t, lease.Renewable)
+	assert.Equal(t, 2, lease.MaxRenewals)
+	assert.Equal(t, "acct-1", lease.Metadata["account_id"])
+}
 
-	// Create lease manager with logger adapter
-	config := &ManagerConfig{
-		Store:                   store,
-		Logger:                  logger.NewAdapter(log),
-		ExpirationCheckInterval: 100 * time.Millisecond,
+func TestCreateLease_BadInput(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name string
+		path string
+		ttl  time.Duration
+	}{
+		{name: "empty path", path: "", ttl: time.Minute},
+		{name: "ttl below minimum", path: "p", ttl: MinLeaseTTL - time.Nanosecond},
+		{name: "ttl above maximum", path: "p", ttl: MaxLeaseTTL + time.Second},
+		{name: "negative ttl", path: "p", ttl: -time.Minute},
 	}
 
-	mgr, err := NewManager(config)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			lease, err := mgr.CreateLease(ctx, tc.path, tc.ttl, nil)
+			require.Error(t, err)
+			assert.Nil(t, lease)
+			assert.True(t, dberrors.IsInvalidInput(err), "want invalid-input, got %v", err)
+		})
+	}
+}
+
+func TestCreateLease_StoreFault(t *testing.T) {
+	store := newFaultKV()
+	store.putErr = &dberrors.MessageError{Message: "kv unavailable"}
+	mgr := newTestManagerOn(t, store, 0)
+
+	lease, err := mgr.CreateLease(context.Background(), "p", time.Minute, nil)
+	require.Error(t, err)
+	assert.Nil(t, lease)
+
+	var storeErr *LeaseStoreError
+	require.ErrorAs(t, err, &storeErr)
+	assert.Equal(t, "put", storeErr.Operation)
+}
+
+func TestCreateLease_CancelledContext(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	lease, err := mgr.CreateLease(ctx, "p", time.Minute, nil)
+	require.Error(t, err)
+	assert.Nil(t, lease)
+}
+
+// =============================================================================
+// GetLease / Validate — the observability verb and the enforcement verb
+// =============================================================================
+
+func TestGetLease(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	created, err := mgr.CreateLease(ctx, "p", time.Minute, nil)
 	require.NoError(t, err)
 
-	cleanup := func() {
-		mgr.Close()
-		store.Close()
-	}
-
-	return mgr, cleanup
+	got, err := mgr.GetLease(ctx, created.LeaseID)
+	require.NoError(t, err)
+	assert.Equal(t, created.SecretPath, got.SecretPath)
+	assert.Equal(t, created.TTL, got.TTL)
 }
 
-func TestLeaseManager_CreateLease(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
+func TestGetLease_BadInput(t *testing.T) {
+	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	t.Run("successful creation", func(t *testing.T) {
-		lease, err := mgr.CreateLease(ctx, "test/path", 5*time.Minute, nil)
-		require.NoError(t, err)
-		assert.NotEmpty(t, lease.LeaseID)
-		assert.Equal(t, "test/path", lease.SecretPath)
-		assert.True(t, lease.IsValid())
-		assert.True(t, lease.Renewable)
-		assert.Equal(t, 5*time.Minute, lease.TTL)
-	})
-
-	t.Run("with custom options", func(t *testing.T) {
-		opts := &LeaseOptions{
-			Renewable:   false,
-			MaxRenewals: 5,
-			Metadata: map[string]string{
-				"role": "test-role",
-			},
-		}
-
-		lease, err := mgr.CreateLease(ctx, "test/path2", 10*time.Minute, opts)
-		require.NoError(t, err)
-		assert.False(t, lease.Renewable)
-		assert.Equal(t, 5, lease.MaxRenewals)
-		assert.Equal(t, "test-role", lease.Metadata["role"])
-	})
-
-	t.Run("empty path error", func(t *testing.T) {
-		_, err := mgr.CreateLease(ctx, "", 5*time.Minute, nil)
-		assert.Error(t, err)
-	})
-
-	t.Run("TTL too short error", func(t *testing.T) {
-		_, err := mgr.CreateLease(ctx, "test/path", 500*time.Millisecond, nil)
-		assert.Error(t, err)
-	})
-
-	t.Run("TTL too long error", func(t *testing.T) {
-		_, err := mgr.CreateLease(ctx, "test/path", 400*24*time.Hour, nil)
-		assert.Error(t, err)
-	})
-}
-
-func TestLeaseManager_GetLease(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	t.Run("get existing lease", func(t *testing.T) {
-		// Create lease
-		created, err := mgr.CreateLease(ctx, "test/path", 5*time.Minute, nil)
-		require.NoError(t, err)
-
-		// Get lease
-		retrieved, err := mgr.GetLease(ctx, created.LeaseID)
-		require.NoError(t, err)
-		assert.Equal(t, created.LeaseID, retrieved.LeaseID)
-		assert.Equal(t, created.SecretPath, retrieved.SecretPath)
-	})
-
-	t.Run("get non-existent lease", func(t *testing.T) {
-		_, err := mgr.GetLease(ctx, "lease_nonexistent")
-		assert.Error(t, err)
-	})
-
-	t.Run("empty lease ID error", func(t *testing.T) {
+	t.Run("empty id", func(t *testing.T) {
 		_, err := mgr.GetLease(ctx, "")
-		assert.Error(t, err)
+		require.Error(t, err)
+		assert.True(t, dberrors.IsInvalidInput(err))
+	})
+
+	t.Run("unknown id", func(t *testing.T) {
+		_, err := mgr.GetLease(ctx, "lease_does_not_exist")
+		require.Error(t, err)
+		assert.True(t, IsLeaseNotFound(err), "want not-found, got %v", err)
+	})
+
+	t.Run("undecodable record", func(t *testing.T) {
+		store := kvstore.NewMemory()
+		require.NoError(t, store.Put(ctx, leaseKey("lease_bad"), []byte("{not json")))
+		corrupt := newTestManagerOn(t, store, 0)
+
+		_, err := corrupt.GetLease(ctx, "lease_bad")
+		require.Error(t, err)
+		var corruptErr *LeaseCorruptError
+		assert.ErrorAs(t, err, &corruptErr)
 	})
 }
 
-func TestLeaseManager_RenewLease(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
+func TestValidate_ActiveLease(t *testing.T) {
+	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	t.Run("successful renewal", func(t *testing.T) {
-		// Create renewable lease
-		opts := &LeaseOptions{
-			Renewable:   true,
-			MaxRenewals: 3,
-		}
-		lease, err := mgr.CreateLease(ctx, "test/path", 5*time.Minute, opts)
-		require.NoError(t, err)
+	created, err := mgr.CreateLease(ctx, "p", time.Minute, nil)
+	require.NoError(t, err)
 
-		originalExpiry := lease.ExpiresAt
-
-		// Wait a bit
-		time.Sleep(100 * time.Millisecond)
-
-		// Renew lease
-		renewed, err := mgr.RenewLease(ctx, lease.LeaseID, 5*time.Minute)
-		require.NoError(t, err)
-		assert.Equal(t, 1, renewed.RenewCount)
-		assert.True(t, renewed.ExpiresAt.After(originalExpiry))
-	})
-
-	t.Run("renewal with default TTL", func(t *testing.T) {
-		lease, err := mgr.CreateLease(ctx, "test/path2", 10*time.Minute, nil)
-		require.NoError(t, err)
-
-		// Renew with 0 increment (should use original TTL)
-		renewed, err := mgr.RenewLease(ctx, lease.LeaseID, 0)
-		require.NoError(t, err)
-		assert.Equal(t, 1, renewed.RenewCount)
-	})
-
-	t.Run("cannot renew non-renewable lease", func(t *testing.T) {
-		opts := &LeaseOptions{
-			Renewable: false,
-		}
-		lease, err := mgr.CreateLease(ctx, "test/path3", 5*time.Minute, opts)
-		require.NoError(t, err)
-
-		_, err = mgr.RenewLease(ctx, lease.LeaseID, 5*time.Minute)
-		assert.Error(t, err)
-	})
-
-	t.Run("cannot exceed max renewals", func(t *testing.T) {
-		opts := &LeaseOptions{
-			Renewable:   true,
-			MaxRenewals: 2,
-		}
-		lease, err := mgr.CreateLease(ctx, "test/path4", 5*time.Minute, opts)
-		require.NoError(t, err)
-
-		// First renewal
-		_, err = mgr.RenewLease(ctx, lease.LeaseID, 5*time.Minute)
-		require.NoError(t, err)
-
-		// Second renewal
-		_, err = mgr.RenewLease(ctx, lease.LeaseID, 5*time.Minute)
-		require.NoError(t, err)
-
-		// Third renewal should fail
-		_, err = mgr.RenewLease(ctx, lease.LeaseID, 5*time.Minute)
-		assert.Error(t, err)
-	})
+	valid, err := mgr.Validate(ctx, created.LeaseID)
+	require.NoError(t, err)
+	assert.Equal(t, created.LeaseID, valid.LeaseID)
 }
 
-func TestLeaseManager_RevokeLease(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
+// TestValidate_RefusesRevoked is the load-bearing assertion of the whole
+// package: once revoked, the grant is refused SERVER-SIDE, from the store,
+// with a reason — not merely reported as absent and not left to a sweep.
+func TestValidate_RefusesRevoked(t *testing.T) {
+	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	t.Run("successful revocation", func(t *testing.T) {
-		lease, err := mgr.CreateLease(ctx, "test/path", 5*time.Minute, nil)
-		require.NoError(t, err)
+	created, err := mgr.CreateLease(ctx, "p", time.Hour, nil)
+	require.NoError(t, err)
+	require.NoError(t, mgr.RevokeLease(ctx, created.LeaseID))
 
-		err = mgr.RevokeLease(ctx, lease.LeaseID)
-		require.NoError(t, err)
+	_, err = mgr.Validate(ctx, created.LeaseID)
+	require.Error(t, err)
+	assert.True(t, IsLeaseRevoked(err), "want revoked refusal, got %v", err)
 
-		// Verify lease is gone
-		_, err = mgr.GetLease(ctx, lease.LeaseID)
-		assert.Error(t, err)
-	})
+	var revoked *LeaseRevokedError
+	require.ErrorAs(t, err, &revoked)
+	assert.Equal(t, created.LeaseID, revoked.LeaseID)
+	assert.False(t, revoked.RevokedAt.IsZero(), "the refusal names when the grant was taken away")
 
-	t.Run("revoke non-existent lease", func(t *testing.T) {
-		// RevokeLease is idempotent - revoking non-existent lease should succeed
-		err := mgr.RevokeLease(ctx, "lease_nonexistent")
-		assert.NoError(t, err)
-	})
+	// The tombstone is still readable for audit, and says revoked.
+	tombstone, err := mgr.GetLease(ctx, created.LeaseID)
+	require.NoError(t, err)
+	assert.Equal(t, LeaseStateRevoked, tombstone.State())
+	assert.False(t, tombstone.IsValid())
 }
 
-func TestLeaseManager_RevokePrefix(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
+// TestValidate_RefusesExpiredWithoutSweep proves the TTL is a RULE: the grant
+// is refused the instant it lapses, with no expiration pass having run.
+func TestValidate_RefusesExpiredWithoutSweep(t *testing.T) {
+	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	t.Run("revoke by prefix", func(t *testing.T) {
-		// Create multiple leases
-		_, err := mgr.CreateLease(ctx, "app1/db/creds", 5*time.Minute, nil)
-		require.NoError(t, err)
-		_, err = mgr.CreateLease(ctx, "app1/db/creds", 5*time.Minute, nil)
-		require.NoError(t, err)
-		_, err = mgr.CreateLease(ctx, "app2/db/creds", 5*time.Minute, nil)
-		require.NoError(t, err)
+	expired := &Lease{
+		LeaseID:    "lease_expired",
+		SecretPath: "p",
+		IssuedAt:   time.Now().Add(-2 * time.Hour),
+		ExpiresAt:  time.Now().Add(-time.Hour),
+		TTL:        time.Hour,
+		Renewable:  true,
+	}
+	require.NoError(t, mgr.storeLease(ctx, "test", expired))
 
-		// Revoke app1 leases
-		count, err := mgr.RevokePrefix(ctx, "app1/")
-		require.NoError(t, err)
-		assert.Equal(t, 2, count)
+	_, err := mgr.Validate(ctx, expired.LeaseID)
+	require.Error(t, err)
+	assert.True(t, IsLeaseExpired(err), "want expired refusal, got %v", err)
 
-		// Verify app2 lease still exists
-		leases, err := mgr.ListLeases(ctx, "app2/")
-		require.NoError(t, err)
-		assert.Equal(t, 1, len(leases))
-	})
+	var expiredErr *LeaseExpiredError
+	require.ErrorAs(t, err, &expiredErr)
+	assert.Equal(t, expired.ExpiresAt.Unix(), expiredErr.ExpiredAt.Unix())
 }
 
-func TestLeaseManager_ListLeases(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
+func TestValidate_BadInput(t *testing.T) {
+	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	t.Run("list all leases", func(t *testing.T) {
-		// Create leases
-		_, err := mgr.CreateLease(ctx, "app1/path", 5*time.Minute, nil)
-		require.NoError(t, err)
-		_, err = mgr.CreateLease(ctx, "app2/path", 5*time.Minute, nil)
-		require.NoError(t, err)
-
-		leases, err := mgr.ListLeases(ctx, "")
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(leases), 2)
+	t.Run("empty id", func(t *testing.T) {
+		_, err := mgr.Validate(ctx, "")
+		require.Error(t, err)
+		assert.True(t, dberrors.IsInvalidInput(err))
 	})
 
-	t.Run("list with prefix filter", func(t *testing.T) {
-		leases, err := mgr.ListLeases(ctx, "app1/")
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(leases), 1)
-		for _, lease := range leases {
-			assert.Contains(t, lease.SecretPath, "app1/")
-		}
-	})
-}
-
-func TestLeaseManager_ExpirationLoop(t *testing.T) {
-	t.Run("automatic expiration", func(t *testing.T) {
-		mgr, cleanup := setupLeaseManager(t)
-		defer cleanup()
-
-		ctx := context.Background()
-
-		// Start expiration loop
-		err := mgr.StartExpirationLoop(context.Background())
-		require.NoError(t, err)
-
-		// Create a lease with minimum TTL (1 second)
-		lease, err := mgr.CreateLease(ctx, "test/expire", 1*time.Second, nil)
-		require.NoError(t, err)
-
-		// Wait for the lease to expire (1 second)
-		time.Sleep(1100 * time.Millisecond)
-
-		// Manually trigger expiration check since the loop may not run in time
-		// This verifies the expiration mechanism works correctly
-		mgr.checkExpiredLeases()
-
-		// Verify lease was revoked
-		_, leaseErr := mgr.GetLease(ctx, lease.LeaseID)
-		assert.Error(t, leaseErr, "lease should be revoked after expiration")
+	t.Run("unknown id", func(t *testing.T) {
+		_, err := mgr.Validate(ctx, "lease_nope")
+		require.Error(t, err)
+		assert.True(t, IsLeaseNotFound(err))
 	})
 
-	t.Run("cannot start twice", func(t *testing.T) {
-		mgr, cleanup := setupLeaseManager(t)
-		defer cleanup()
+	t.Run("cancelled context", func(t *testing.T) {
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err := mgr.Validate(cancelled, "lease_anything")
+		require.Error(t, err)
+	})
 
-		// First start should succeed
-		err := mgr.StartExpirationLoop(context.Background())
-		require.NoError(t, err)
+	t.Run("store fault is not a refusal", func(t *testing.T) {
+		store := newFaultKV()
+		store.getErr = &dberrors.MessageError{Message: "kv unavailable"}
+		faulted := newTestManagerOn(t, store, 0)
 
-		// Second start should fail
-		err = mgr.StartExpirationLoop(context.Background())
-		assert.Error(t, err)
+		_, err := faulted.Validate(ctx, "lease_anything")
+		require.Error(t, err)
+		assert.False(t, IsLeaseNotFound(err), "an outage must not be reported as an absence")
+		var storeErr *LeaseStoreError
+		assert.ErrorAs(t, err, &storeErr)
 	})
 }
 
-func TestLease_State(t *testing.T) {
-	now := time.Now()
+// =============================================================================
+// RenewLease
+// =============================================================================
 
-	t.Run("active lease", func(t *testing.T) {
-		lease := &Lease{
-			IssuedAt:  now,
-			ExpiresAt: now.Add(5 * time.Minute),
-		}
-		assert.Equal(t, LeaseStateActive, lease.State())
-		assert.True(t, lease.IsValid())
+func TestRenewLease(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	created, err := mgr.CreateLease(ctx, "p", time.Minute, nil)
+	require.NoError(t, err)
+
+	renewed, err := mgr.RenewLease(ctx, created.LeaseID, 10*time.Minute)
+	require.NoError(t, err)
+	assert.Equal(t, 1, renewed.RenewCount)
+	assert.True(t, renewed.ExpiresAt.After(created.ExpiresAt))
+
+	// Persisted, not just returned.
+	stored, err := mgr.GetLease(ctx, created.LeaseID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, stored.RenewCount)
+}
+
+func TestRenewLease_ZeroIncrementUsesOriginalTTL(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	created, err := mgr.CreateLease(ctx, "p", 30*time.Minute, nil)
+	require.NoError(t, err)
+
+	renewed, err := mgr.RenewLease(ctx, created.LeaseID, 0)
+	require.NoError(t, err)
+	assert.WithinDuration(t, time.Now().Add(30*time.Minute), renewed.ExpiresAt, 5*time.Second)
+}
+
+func TestRenewLease_BadInput(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	t.Run("empty id", func(t *testing.T) {
+		_, err := mgr.RenewLease(ctx, "", time.Minute)
+		require.Error(t, err)
+		assert.True(t, dberrors.IsInvalidInput(err))
 	})
 
-	t.Run("expired lease", func(t *testing.T) {
-		lease := &Lease{
-			IssuedAt:  now.Add(-10 * time.Minute),
-			ExpiresAt: now.Add(-5 * time.Minute),
-		}
-		assert.Equal(t, LeaseStateExpired, lease.State())
-		assert.False(t, lease.IsValid())
+	t.Run("unknown id", func(t *testing.T) {
+		_, err := mgr.RenewLease(ctx, "lease_nope", time.Minute)
+		require.Error(t, err)
+		assert.True(t, IsLeaseNotFound(err))
 	})
 
 	t.Run("revoked lease", func(t *testing.T) {
-		revoked := now
-		lease := &Lease{
-			IssuedAt:  now,
-			ExpiresAt: now.Add(5 * time.Minute),
-			RevokedAt: &revoked,
-		}
-		assert.Equal(t, LeaseStateRevoked, lease.State())
-		assert.False(t, lease.IsValid())
-	})
-}
+		created, err := mgr.CreateLease(ctx, "p", time.Hour, nil)
+		require.NoError(t, err)
+		require.NoError(t, mgr.RevokeLease(ctx, created.LeaseID))
 
-func TestLease_RemainingTTL(t *testing.T) {
-	now := time.Now()
-
-	t.Run("active lease", func(t *testing.T) {
-		lease := &Lease{
-			ExpiresAt: now.Add(5 * time.Minute),
-		}
-		remaining := lease.RemainingTTL()
-		assert.Greater(t, remaining, 4*time.Minute)
-		assert.LessOrEqual(t, remaining, 5*time.Minute)
+		_, err = mgr.RenewLease(ctx, created.LeaseID, time.Minute)
+		require.Error(t, err)
+		assert.True(t, IsLeaseRevoked(err), "want revoked refusal, got %v", err)
 	})
 
 	t.Run("expired lease", func(t *testing.T) {
-		lease := &Lease{
-			ExpiresAt: now.Add(-5 * time.Minute),
+		expired := &Lease{
+			LeaseID:   "lease_renew_expired",
+			ExpiresAt: time.Now().Add(-time.Minute),
+			TTL:       time.Minute,
+			Renewable: true,
 		}
-		remaining := lease.RemainingTTL()
-		assert.Equal(t, time.Duration(0), remaining)
+		require.NoError(t, mgr.storeLease(ctx, "test", expired))
+
+		_, err := mgr.RenewLease(ctx, expired.LeaseID, time.Minute)
+		require.Error(t, err)
+		assert.True(t, IsLeaseExpired(err), "want expired refusal, got %v", err)
+	})
+
+	t.Run("non-renewable lease", func(t *testing.T) {
+		created, err := mgr.CreateLease(ctx, "p", time.Hour, &LeaseOptions{Renewable: false})
+		require.NoError(t, err)
+
+		_, err = mgr.RenewLease(ctx, created.LeaseID, time.Minute)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot be renewed")
+	})
+
+	t.Run("renewal budget exhausted", func(t *testing.T) {
+		created, err := mgr.CreateLease(ctx, "p", time.Hour, &LeaseOptions{Renewable: true, MaxRenewals: 1})
+		require.NoError(t, err)
+
+		_, err = mgr.RenewLease(ctx, created.LeaseID, time.Hour)
+		require.NoError(t, err)
+
+		_, err = mgr.RenewLease(ctx, created.LeaseID, time.Hour)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot be renewed")
+	})
+
+	t.Run("cancelled context", func(t *testing.T) {
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err := mgr.RenewLease(cancelled, "lease_anything", time.Minute)
+		require.Error(t, err)
 	})
 }
 
-// Additional tests for edge cases and increased coverage
+func TestRenewLease_StoreFault(t *testing.T) {
+	store := newFaultKV()
+	mgr := newTestManagerOn(t, store, 0)
+	ctx := context.Background()
 
-func TestNewManager_ValidationErrors(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
+	created, err := mgr.CreateLease(ctx, "p", time.Hour, nil)
 	require.NoError(t, err)
 
-	t.Run("nil config", func(t *testing.T) {
-		_, err := NewManager(nil)
-		assert.Error(t, err)
-	})
+	store.putErr = &dberrors.MessageError{Message: "kv unavailable"}
+	_, err = mgr.RenewLease(ctx, created.LeaseID, time.Hour)
+	require.Error(t, err)
 
-	t.Run("nil store", func(t *testing.T) {
-		config := &ManagerConfig{
-			Logger: logger.NewAdapter(log),
-		}
-		_, err := NewManager(config)
-		assert.Error(t, err)
-	})
-
-	t.Run("nil logger", func(t *testing.T) {
-		store := newMockStorage()
-		defer store.Close()
-
-		config := &ManagerConfig{
-			Store: store,
-		}
-		_, err := NewManager(config)
-		assert.Error(t, err)
-	})
+	var storeErr *LeaseStoreError
+	require.ErrorAs(t, err, &storeErr)
+	assert.Equal(t, "put", storeErr.Operation)
 }
 
-func TestLeaseManager_ContextCancellation(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
+// =============================================================================
+// RevokeLease
+// =============================================================================
 
-	t.Run("create with cancelled context", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		_, err := mgr.CreateLease(ctx, "test/path", 5*time.Minute, nil)
-		assert.Error(t, err)
-	})
-
-	t.Run("renew with cancelled context", func(t *testing.T) {
-		// Create lease first
-		lease, err := mgr.CreateLease(context.Background(), "test/path", 5*time.Minute, nil)
-		require.NoError(t, err)
-
-		// Try to renew with cancelled context
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		_, err = mgr.RenewLease(ctx, lease.LeaseID, 5*time.Minute)
-		assert.Error(t, err)
-	})
-
-	t.Run("get with cancelled context", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		_, err := mgr.GetLease(ctx, "lease_test")
-		assert.Error(t, err)
-	})
-
-	t.Run("revoke with cancelled context", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		err := mgr.RevokeLease(ctx, "lease_test")
-		assert.Error(t, err)
-	})
-
-	t.Run("revoke prefix with cancelled context", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		_, err := mgr.RevokePrefix(ctx, "test/")
-		assert.Error(t, err)
-	})
-
-	t.Run("list with cancelled context", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		_, err := mgr.ListLeases(ctx, "")
-		assert.Error(t, err)
-	})
-}
-
-func TestLeaseManager_ClosedManager(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	cleanup() // Close the manager immediately
-
+func TestRevokeLease_IsIdempotentAndKeepsTheFirstTime(t *testing.T) {
+	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	t.Run("create on closed manager", func(t *testing.T) {
-		_, err := mgr.CreateLease(ctx, "test/path", 5*time.Minute, nil)
-		assert.Error(t, err)
+	created, err := mgr.CreateLease(ctx, "p", time.Hour, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, mgr.RevokeLease(ctx, created.LeaseID))
+	first, err := mgr.GetLease(ctx, created.LeaseID)
+	require.NoError(t, err)
+	require.NotNil(t, first.RevokedAt)
+
+	// A retrying conclusion must converge, not fail — and must not rewrite the
+	// revocation time, which is the audit fact.
+	require.NoError(t, mgr.RevokeLease(ctx, created.LeaseID))
+	second, err := mgr.GetLease(ctx, created.LeaseID)
+	require.NoError(t, err)
+	require.NotNil(t, second.RevokedAt)
+	assert.Equal(t, first.RevokedAt.UnixNano(), second.RevokedAt.UnixNano())
+}
+
+func TestRevokeLease_AbsentLeaseIsNotAFailure(t *testing.T) {
+	mgr := newTestManager(t)
+
+	// A tombstone purged between two conclusion attempts must not make the
+	// second attempt report a failed revocation.
+	assert.NoError(t, mgr.RevokeLease(context.Background(), "lease_already_purged"))
+}
+
+func TestRevokeLease_BadInput(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	t.Run("empty id", func(t *testing.T) {
+		err := mgr.RevokeLease(ctx, "")
+		require.Error(t, err)
+		assert.True(t, dberrors.IsInvalidInput(err))
 	})
 
-	t.Run("renew on closed manager", func(t *testing.T) {
-		_, err := mgr.RenewLease(ctx, "lease_test", 5*time.Minute)
-		assert.Error(t, err)
+	t.Run("cancelled context", func(t *testing.T) {
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		assert.Error(t, mgr.RevokeLease(cancelled, "lease_anything"))
 	})
 
-	t.Run("get on closed manager", func(t *testing.T) {
-		_, err := mgr.GetLease(ctx, "lease_test")
-		assert.Error(t, err)
-	})
+	t.Run("store fault surfaces", func(t *testing.T) {
+		store := newFaultKV()
+		faulted := newTestManagerOn(t, store, 0)
+		created, err := faulted.CreateLease(ctx, "p", time.Hour, nil)
+		require.NoError(t, err)
 
-	t.Run("revoke on closed manager", func(t *testing.T) {
-		err := mgr.RevokeLease(ctx, "lease_test")
-		assert.Error(t, err)
-	})
-
-	t.Run("revoke prefix on closed manager", func(t *testing.T) {
-		_, err := mgr.RevokePrefix(ctx, "test/")
-		assert.Error(t, err)
-	})
-
-	t.Run("list on closed manager", func(t *testing.T) {
-		_, err := mgr.ListLeases(ctx, "")
-		assert.Error(t, err)
-	})
-
-	t.Run("start expiration loop on closed manager", func(t *testing.T) {
-		err := mgr.StartExpirationLoop(ctx)
-		assert.Error(t, err)
+		store.putErr = &dberrors.MessageError{Message: "kv unavailable"}
+		err = faulted.RevokeLease(ctx, created.LeaseID)
+		require.Error(t, err)
+		var storeErr *LeaseStoreError
+		assert.ErrorAs(t, err, &storeErr)
 	})
 }
 
-func TestLeaseManager_RenewLeaseEdgeCases(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
+// =============================================================================
+// RevokePrefix
+// =============================================================================
 
+func TestRevokePrefix(t *testing.T) {
+	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	t.Run("empty lease ID", func(t *testing.T) {
-		_, err := mgr.RenewLease(ctx, "", 5*time.Minute)
-		assert.Error(t, err)
-	})
+	keep, err := mgr.CreateLease(ctx, "other/path", time.Hour, nil)
+	require.NoError(t, err)
+	for i := 0; i < 3; i++ {
+		_, err := mgr.CreateLease(ctx, "credentials/db/"+strconv.Itoa(i), time.Hour, nil)
+		require.NoError(t, err)
+	}
 
-	t.Run("non-existent lease", func(t *testing.T) {
-		_, err := mgr.RenewLease(ctx, "lease_nonexistent", 5*time.Minute)
-		assert.Error(t, err)
-	})
+	count, err := mgr.RevokePrefix(ctx, "credentials/db/")
+	require.NoError(t, err)
+	assert.Equal(t, 3, count)
+
+	// The unmatched lease is untouched.
+	_, err = mgr.Validate(ctx, keep.LeaseID)
+	assert.NoError(t, err)
+
+	// A second pass has nothing left to revoke: tombstones are skipped.
+	count, err = mgr.RevokePrefix(ctx, "credentials/db/")
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
 }
 
-func TestLeaseManager_RevokePrefixEdgeCases(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
+func TestRevokePrefix_BadInput(t *testing.T) {
+	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	t.Run("revoke with empty prefix", func(t *testing.T) {
-		// Create some leases
-		_, err := mgr.CreateLease(ctx, "test/path1", 5*time.Minute, nil)
-		require.NoError(t, err)
-		_, err = mgr.CreateLease(ctx, "test/path2", 5*time.Minute, nil)
-		require.NoError(t, err)
-
-		// Revoke all leases (empty prefix)
-		count, err := mgr.RevokePrefix(ctx, "")
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, count, 2)
-	})
-
-	t.Run("revoke non-matching prefix", func(t *testing.T) {
-		count, err := mgr.RevokePrefix(ctx, "nonexistent/prefix/")
+	t.Run("no matches", func(t *testing.T) {
+		count, err := mgr.RevokePrefix(ctx, "nothing/here/")
 		require.NoError(t, err)
 		assert.Equal(t, 0, count)
 	})
+
+	t.Run("cancelled context", func(t *testing.T) {
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err := mgr.RevokePrefix(cancelled, "credentials/")
+		require.Error(t, err)
+	})
+
+	t.Run("scan fault", func(t *testing.T) {
+		store := newFaultKV()
+		store.scanErr = &dberrors.MessageError{Message: "kv unavailable"}
+		faulted := newTestManagerOn(t, store, 0)
+
+		_, err := faulted.RevokePrefix(ctx, "credentials/")
+		require.Error(t, err)
+		var storeErr *LeaseStoreError
+		assert.ErrorAs(t, err, &storeErr)
+	})
 }
 
-func TestLeaseManager_ListLeasesEdgeCases(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
+// =============================================================================
+// ListLeases
+// =============================================================================
 
+func TestListLeases(t *testing.T) {
+	mgr := newTestManager(t)
 	ctx := context.Background()
 
-	t.Run("list with no matching leases", func(t *testing.T) {
-		leases, err := mgr.ListLeases(ctx, "nonexistent/prefix/")
-		require.NoError(t, err)
-		assert.Equal(t, 0, len(leases))
+	_, err := mgr.CreateLease(ctx, "credentials/db/one", time.Hour, nil)
+	require.NoError(t, err)
+	_, err = mgr.CreateLease(ctx, "credentials/db/two", time.Hour, nil)
+	require.NoError(t, err)
+	_, err = mgr.CreateLease(ctx, "accounts/anthropic/seat", time.Hour, nil)
+	require.NoError(t, err)
+
+	all, err := mgr.ListLeases(ctx, "")
+	require.NoError(t, err)
+	assert.Len(t, all, 3)
+
+	scoped, err := mgr.ListLeases(ctx, "credentials/db/")
+	require.NoError(t, err)
+	assert.Len(t, scoped, 2)
+
+	none, err := mgr.ListLeases(ctx, "nope/")
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}
+
+func TestListLeases_SkipsUndecodableRecords(t *testing.T) {
+	ctx := context.Background()
+	store := kvstore.NewMemory()
+	mgr := newTestManagerOn(t, store, 0)
+
+	good, err := mgr.CreateLease(ctx, "p", time.Hour, nil)
+	require.NoError(t, err)
+	require.NoError(t, store.Put(ctx, leaseKey("lease_corrupt"), []byte("{oops")))
+
+	// One bad record must not hide the rest of the listing.
+	leases, err := mgr.ListLeases(ctx, "")
+	require.NoError(t, err)
+	require.Len(t, leases, 1)
+	assert.Equal(t, good.LeaseID, leases[0].LeaseID)
+}
+
+func TestListLeases_BadInput(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("scan fault", func(t *testing.T) {
+		store := newFaultKV()
+		store.scanErr = &dberrors.MessageError{Message: "kv unavailable"}
+		mgr := newTestManagerOn(t, store, 0)
+
+		_, err := mgr.ListLeases(ctx, "")
+		require.Error(t, err)
+		var storeErr *LeaseStoreError
+		assert.ErrorAs(t, err, &storeErr)
 	})
 
-	t.Run("list empty database", func(t *testing.T) {
-		// Use a fresh manager
-		log, err := logger.New(logger.LogConfig{
-			Level:  "info",
-			Format: "json",
-			Output: "stdout",
-		})
-		require.NoError(t, err)
-
-		store := newMockStorage()
-		defer store.Close()
-
-		config := &ManagerConfig{
-			Store:  store,
-			Logger: logger.NewAdapter(log),
-		}
-
-		mgr2, err := NewManager(config)
-		require.NoError(t, err)
-		defer mgr2.Close()
-
-		leases, err := mgr2.ListLeases(ctx, "")
-		require.NoError(t, err)
-		assert.Equal(t, 0, len(leases))
+	t.Run("cancelled context", func(t *testing.T) {
+		mgr := newTestManager(t)
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err := mgr.ListLeases(cancelled, "")
+		require.Error(t, err)
 	})
 }
 
-func TestLease_CanRenewEdgeCases(t *testing.T) {
+// =============================================================================
+// ReapExpired — expiry ENFORCED, tombstones bounded
+// =============================================================================
+
+func TestReapExpired_RevokesLapsedLeases(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	live, err := mgr.CreateLease(ctx, "live", time.Hour, nil)
+	require.NoError(t, err)
+	lapsed := &Lease{LeaseID: "lease_lapsed", SecretPath: "lapsed", ExpiresAt: time.Now().Add(-time.Second), TTL: time.Second}
+	require.NoError(t, mgr.storeLease(ctx, "test", lapsed))
+
+	revoked, purged, err := mgr.ReapExpired(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, revoked)
+	assert.Equal(t, 0, purged)
+
+	_, err = mgr.Validate(ctx, lapsed.LeaseID)
+	assert.True(t, IsLeaseRevoked(err), "an expired lease is revoked by the sweep, got %v", err)
+
+	_, err = mgr.Validate(ctx, live.LeaseID)
+	assert.NoError(t, err, "a live lease survives the sweep")
+}
+
+func TestReapExpired_PurgesTombstonesPastRetention(t *testing.T) {
+	ctx := context.Background()
+	mgr := newTestManagerOn(t, kvstore.NewMemory(), time.Hour)
+
+	fresh, err := mgr.CreateLease(ctx, "fresh", time.Hour, nil)
+	require.NoError(t, err)
+	require.NoError(t, mgr.RevokeLease(ctx, fresh.LeaseID))
+
+	old := time.Now().Add(-2 * time.Hour)
+	stale := &Lease{LeaseID: "lease_stale", SecretPath: "stale", ExpiresAt: old, TTL: time.Minute, RevokedAt: &old}
+	require.NoError(t, mgr.storeLease(ctx, "test", stale))
+
+	revoked, purged, err := mgr.ReapExpired(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, revoked)
+	assert.Equal(t, 1, purged)
+
+	_, err = mgr.GetLease(ctx, stale.LeaseID)
+	assert.True(t, IsLeaseNotFound(err), "an aged-out tombstone is gone, got %v", err)
+
+	_, err = mgr.GetLease(ctx, fresh.LeaseID)
+	assert.NoError(t, err, "a tombstone inside the retention window is kept for audit")
+}
+
+func TestReapExpired_BadInput(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("scan fault", func(t *testing.T) {
+		store := newFaultKV()
+		store.scanErr = &dberrors.MessageError{Message: "kv unavailable"}
+		mgr := newTestManagerOn(t, store, 0)
+
+		_, _, err := mgr.ReapExpired(ctx)
+		require.Error(t, err)
+	})
+
+	t.Run("closed manager", func(t *testing.T) {
+		mgr, err := NewManager(&ManagerConfig{Store: kvstore.NewMemory(), Logger: testLogger(t)})
+		require.NoError(t, err)
+		require.NoError(t, mgr.Close())
+
+		_, _, err = mgr.ReapExpired(ctx)
+		require.Error(t, err)
+	})
+}
+
+// TestStartExpirationLoop_ReapsWithoutSleeping drives the loop on a fast tick
+// and waits on a CONDITION (the lease becoming refused), never on a clock.
+func TestStartExpirationLoop_ReapsWithoutSleeping(t *testing.T) {
+	ctx := context.Background()
+	store := kvstore.NewMemory()
+	mgr, err := NewManager(&ManagerConfig{
+		Store:                   store,
+		Logger:                  testLogger(t),
+		ExpirationCheckInterval: time.Millisecond,
+	})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, mgr.Close()) }()
+
+	lapsed := &Lease{LeaseID: "lease_loop", SecretPath: "loop", ExpiresAt: time.Now().Add(-time.Second), TTL: time.Second}
+	require.NoError(t, mgr.storeLease(ctx, "test", lapsed))
+
+	require.NoError(t, mgr.StartExpirationLoop(ctx))
+
+	require.Eventually(t, func() bool {
+		_, err := mgr.Validate(ctx, lapsed.LeaseID)
+		return IsLeaseRevoked(err)
+	}, 5*time.Second, time.Millisecond, "the loop must revoke an expired lease")
+}
+
+func TestStartExpirationLoop_BadInput(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("already running", func(t *testing.T) {
+		mgr := newTestManager(t)
+		require.NoError(t, mgr.StartExpirationLoop(ctx))
+		err := mgr.StartExpirationLoop(ctx)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "already running")
+	})
+
+	t.Run("closed manager", func(t *testing.T) {
+		mgr, err := NewManager(&ManagerConfig{Store: kvstore.NewMemory(), Logger: testLogger(t)})
+		require.NoError(t, err)
+		require.NoError(t, mgr.Close())
+
+		require.Error(t, mgr.StartExpirationLoop(ctx))
+	})
+}
+
+// =============================================================================
+// Lifecycle
+// =============================================================================
+
+func TestClose_IsIdempotentAndRefusesEveryVerb(t *testing.T) {
+	ctx := context.Background()
+	mgr, err := NewManager(&ManagerConfig{Store: kvstore.NewMemory(), Logger: testLogger(t)})
+	require.NoError(t, err)
+
+	require.NoError(t, mgr.Close())
+	require.NoError(t, mgr.Close(), "Close is idempotent")
+
+	_, err = mgr.CreateLease(ctx, "p", time.Minute, nil)
+	assert.Error(t, err)
+	_, err = mgr.GetLease(ctx, "lease_x")
+	assert.Error(t, err)
+	_, err = mgr.Validate(ctx, "lease_x")
+	assert.Error(t, err)
+	_, err = mgr.RenewLease(ctx, "lease_x", time.Minute)
+	assert.Error(t, err)
+	assert.Error(t, mgr.RevokeLease(ctx, "lease_x"))
+	_, err = mgr.RevokePrefix(ctx, "p")
+	assert.Error(t, err)
+	_, err = mgr.ListLeases(ctx, "")
+	assert.Error(t, err)
+}
+
+func TestClose_StopsTheExpirationLoop(t *testing.T) {
+	ctx := context.Background()
+	mgr, err := NewManager(&ManagerConfig{
+		Store:                   kvstore.NewMemory(),
+		Logger:                  testLogger(t),
+		ExpirationCheckInterval: time.Millisecond,
+	})
+	require.NoError(t, err)
+	require.NoError(t, mgr.StartExpirationLoop(ctx))
+	require.NoError(t, mgr.Close())
+
+	// The loop's own context is cancelled, so a subsequent pass cannot run.
+	require.Error(t, mgr.StartExpirationLoop(ctx))
+}
+
+func TestConcurrentOperations(t *testing.T) {
+	mgr := newTestManager(t)
+	ctx := context.Background()
+
+	const workers = 16
+	ids := make([]string, workers)
+	var wg sync.WaitGroup
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			lease, err := mgr.CreateLease(ctx, "concurrent/"+strconv.Itoa(i), time.Hour, nil)
+			if err == nil {
+				ids[i] = lease.LeaseID
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	for _, id := range ids {
+		require.NotEmpty(t, id)
+	}
+
+	for _, id := range ids {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			_ = mgr.RevokeLease(ctx, id)
+		}(id)
+	}
+	wg.Wait()
+
+	for _, id := range ids {
+		_, err := mgr.Validate(ctx, id)
+		assert.True(t, IsLeaseRevoked(err), "every concurrently revoked lease is refused")
+	}
+}
+
+// =============================================================================
+// Lease value semantics
+// =============================================================================
+
+func TestLease_State(t *testing.T) {
 	now := time.Now()
+	revoked := now.Add(-time.Minute)
 
-	t.Run("expired lease cannot renew", func(t *testing.T) {
-		lease := &Lease{
-			Renewable: true,
-			IssuedAt:  now.Add(-10 * time.Minute),
-			ExpiresAt: now.Add(-5 * time.Minute),
-		}
-		assert.False(t, lease.CanRenew())
-	})
+	tests := []struct {
+		name  string
+		lease *Lease
+		want  LeaseState
+	}{
+		{name: "active", lease: &Lease{ExpiresAt: now.Add(time.Hour)}, want: LeaseStateActive},
+		{name: "expired", lease: &Lease{ExpiresAt: now.Add(-time.Hour)}, want: LeaseStateExpired},
+		{name: "revoked beats expired", lease: &Lease{ExpiresAt: now.Add(-time.Hour), RevokedAt: &revoked}, want: LeaseStateRevoked},
+		{name: "revoked beats active", lease: &Lease{ExpiresAt: now.Add(time.Hour), RevokedAt: &revoked}, want: LeaseStateRevoked},
+	}
 
-	t.Run("revoked lease cannot renew", func(t *testing.T) {
-		revoked := now
-		lease := &Lease{
-			Renewable: true,
-			IssuedAt:  now,
-			ExpiresAt: now.Add(5 * time.Minute),
-			RevokedAt: &revoked,
-		}
-		assert.False(t, lease.CanRenew())
-	})
-
-	t.Run("max renewals reached", func(t *testing.T) {
-		lease := &Lease{
-			Renewable:   true,
-			IssuedAt:    now,
-			ExpiresAt:   now.Add(5 * time.Minute),
-			MaxRenewals: 5,
-			RenewCount:  5,
-		}
-		assert.False(t, lease.CanRenew())
-	})
-
-	t.Run("unlimited renewals", func(t *testing.T) {
-		lease := &Lease{
-			Renewable:   true,
-			IssuedAt:    now,
-			ExpiresAt:   now.Add(5 * time.Minute),
-			MaxRenewals: 0, // unlimited
-			RenewCount:  100,
-		}
-		assert.True(t, lease.CanRenew())
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.lease.State())
+			assert.Equal(t, tc.want == LeaseStateActive, tc.lease.IsValid())
+		})
+	}
 }
 
 func TestLeaseState_String(t *testing.T) {
-	t.Run("active state string", func(t *testing.T) {
-		assert.Equal(t, "active", LeaseStateActive.String())
-	})
+	assert.Equal(t, "active", LeaseStateActive.String())
+	assert.Equal(t, "expired", LeaseStateExpired.String())
+	assert.Equal(t, "revoked", LeaseStateRevoked.String())
+	assert.Equal(t, "unknown", LeaseState(99).String())
+}
 
-	t.Run("expired state string", func(t *testing.T) {
-		assert.Equal(t, "expired", LeaseStateExpired.String())
-	})
+func TestLease_CanRenew(t *testing.T) {
+	now := time.Now()
+	revoked := now
 
-	t.Run("revoked state string", func(t *testing.T) {
-		assert.Equal(t, "revoked", LeaseStateRevoked.String())
-	})
+	tests := []struct {
+		name  string
+		lease *Lease
+		want  bool
+	}{
+		{name: "renewable and active", lease: &Lease{Renewable: true, ExpiresAt: now.Add(time.Hour)}, want: true},
+		{name: "not renewable", lease: &Lease{Renewable: false, ExpiresAt: now.Add(time.Hour)}, want: false},
+		{name: "expired", lease: &Lease{Renewable: true, ExpiresAt: now.Add(-time.Hour)}, want: false},
+		{name: "revoked", lease: &Lease{Renewable: true, ExpiresAt: now.Add(time.Hour), RevokedAt: &revoked}, want: false},
+		{name: "budget exhausted", lease: &Lease{Renewable: true, ExpiresAt: now.Add(time.Hour), MaxRenewals: 2, RenewCount: 2}, want: false},
+		{name: "budget remaining", lease: &Lease{Renewable: true, ExpiresAt: now.Add(time.Hour), MaxRenewals: 2, RenewCount: 1}, want: true},
+		{name: "unlimited renewals", lease: &Lease{Renewable: true, ExpiresAt: now.Add(time.Hour), MaxRenewals: 0, RenewCount: 99}, want: true},
+	}
 
-	t.Run("unknown state string", func(t *testing.T) {
-		var unknownState LeaseState = 999
-		assert.Equal(t, "unknown", unknownState.String())
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.lease.CanRenew())
+		})
+	}
+}
+
+func TestLease_RemainingTTL(t *testing.T) {
+	future := &Lease{ExpiresAt: time.Now().Add(time.Hour)}
+	assert.Greater(t, future.RemainingTTL(), 50*time.Minute)
+
+	past := &Lease{ExpiresAt: time.Now().Add(-time.Hour)}
+	assert.Equal(t, time.Duration(0), past.RemainingTTL())
 }
 
 func TestDefaultLeaseOptions(t *testing.T) {
@@ -668,1030 +915,188 @@ func TestDefaultLeaseOptions(t *testing.T) {
 	assert.True(t, opts.Renewable)
 	assert.Equal(t, 0, opts.MaxRenewals)
 	assert.NotNil(t, opts.Metadata)
-	assert.Equal(t, 0, len(opts.Metadata))
 }
 
-func TestLeaseManager_RevokeLeaseTwice(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
+func TestLease_JSONRoundTrip(t *testing.T) {
+	revoked := time.Now().UTC().Truncate(time.Second)
+	original := &Lease{
+		LeaseID:     "lease_json",
+		SecretPath:  "credentials/db/reader",
+		IssuedAt:    revoked.Add(-time.Hour),
+		ExpiresAt:   revoked.Add(time.Hour),
+		TTL:         2 * time.Hour,
+		RenewCount:  3,
+		MaxRenewals: 10,
+		Renewable:   true,
+		RevokedAt:   &revoked,
+		Metadata:    map[string]string{"account_id": "acct-1"},
+	}
 
-	ctx := context.Background()
-
-	lease, err := mgr.CreateLease(ctx, "test/path", 5*time.Minute, nil)
+	data, err := json.Marshal(original)
 	require.NoError(t, err)
 
-	// First revoke
-	err = mgr.RevokeLease(ctx, lease.LeaseID)
-	require.NoError(t, err)
+	var decoded Lease
+	require.NoError(t, json.Unmarshal(data, &decoded))
 
-	// Second revoke (should be idempotent)
-	err = mgr.RevokeLease(ctx, lease.LeaseID)
-	assert.NoError(t, err)
+	assert.Equal(t, original.LeaseID, decoded.LeaseID)
+	assert.Equal(t, original.SecretPath, decoded.SecretPath)
+	assert.Equal(t, original.TTL, decoded.TTL)
+	assert.Equal(t, original.RenewCount, decoded.RenewCount)
+	require.NotNil(t, decoded.RevokedAt)
+	assert.Equal(t, revoked.Unix(), decoded.RevokedAt.Unix())
+	assert.Equal(t, "acct-1", decoded.Metadata["account_id"])
 }
 
-func TestLeaseManager_RevokeLeaseEmptyID(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	err := mgr.RevokeLease(ctx, "")
-	assert.Error(t, err)
-}
-
-func TestLeaseManager_ConcurrentOperations(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	t.Run("concurrent creates", func(t *testing.T) {
-		done := make(chan bool, 10)
-		for i := 0; i < 10; i++ {
-			go func(idx int) {
-				_, err := mgr.CreateLease(ctx, "concurrent/test", 5*time.Minute, nil)
-				assert.NoError(t, err)
-				done <- true
-			}(i)
-		}
-
-		for i := 0; i < 10; i++ {
-			<-done
-		}
-	})
-
-	t.Run("concurrent renewals", func(t *testing.T) {
-		lease, err := mgr.CreateLease(ctx, "test/renew", 10*time.Minute, nil)
-		require.NoError(t, err)
-
-		done := make(chan bool, 5)
-		for i := 0; i < 5; i++ {
-			go func() {
-				_, _ = mgr.RenewLease(ctx, lease.LeaseID, 5*time.Minute)
-				done <- true
-			}()
-		}
-
-		for i := 0; i < 5; i++ {
-			<-done
-		}
-	})
-
-	t.Run("concurrent revokes", func(t *testing.T) {
-		lease, err := mgr.CreateLease(ctx, "test/revoke", 5*time.Minute, nil)
-		require.NoError(t, err)
-
-		done := make(chan bool, 5)
-		for i := 0; i < 5; i++ {
-			go func() {
-				_ = mgr.RevokeLease(ctx, lease.LeaseID)
-				done <- true
-			}()
-		}
-
-		for i := 0; i < 5; i++ {
-			<-done
-		}
-	})
-}
-
-func TestLeaseManager_CheckExpiredLeases(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	t.Run("check expired leases manually", func(t *testing.T) {
-		// Create an expired lease manually by manipulating the data
-		lease := &Lease{
-			LeaseID:    "lease_expired_test",
-			SecretPath: "test/expired",
-			IssuedAt:   time.Now().Add(-10 * time.Minute),
-			ExpiresAt:  time.Now().Add(-5 * time.Minute),
-			TTL:        5 * time.Minute,
-			Renewable:  true,
-		}
-
-		// Store it directly
-		err := mgr.storeLease(lease)
-		require.NoError(t, err)
-
-		// Manually trigger expiration check
-		mgr.checkExpiredLeases()
-
-		// Verify the lease was revoked
-		_, err = mgr.GetLease(ctx, lease.LeaseID)
-		assert.Error(t, err)
-	})
-}
-
-// NOTE: Timing-sensitive expiration loop tests are covered by
-// TestLeaseManager_ExpirationLoop and TestLeaseManager_CheckExpiredLeases
-
-func TestLeaseManager_MultipleClose(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-
-	// First close
-	cleanup()
-
-	// Second close (should be idempotent via closeOnce)
-	err := mgr.Close()
-	assert.NoError(t, err)
-}
-
-func TestLeaseManager_BoundaryTTLValues(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	t.Run("minimum TTL", func(t *testing.T) {
-		lease, err := mgr.CreateLease(ctx, "test/min-ttl", MinLeaseTTL, nil)
-		require.NoError(t, err)
-		assert.Equal(t, MinLeaseTTL, lease.TTL)
-	})
-
-	t.Run("maximum TTL", func(t *testing.T) {
-		lease, err := mgr.CreateLease(ctx, "test/max-ttl", MaxLeaseTTL, nil)
-		require.NoError(t, err)
-		assert.Equal(t, MaxLeaseTTL, lease.TTL)
-	})
-
-	t.Run("just below minimum", func(t *testing.T) {
-		_, err := mgr.CreateLease(ctx, "test/below-min", MinLeaseTTL-1, nil)
-		assert.Error(t, err)
-	})
-
-	t.Run("just above maximum", func(t *testing.T) {
-		_, err := mgr.CreateLease(ctx, "test/above-max", MaxLeaseTTL+1, nil)
-		assert.Error(t, err)
-	})
-}
-
-func TestLeaseManager_StorageErrors(t *testing.T) {
-	t.Run("invalid lease data in storage", func(t *testing.T) {
-		log, err := logger.New(logger.LogConfig{
-			Level:  "info",
-			Format: "json",
-			Output: "stdout",
-		})
-		require.NoError(t, err)
-
-		store := newMockStorage()
-		defer store.Close()
-
-		// Store invalid JSON
-		invalidData := []byte("this is not valid json")
-		err = store.Set([]byte("/_leases/lease_invalid"), invalidData)
-		require.NoError(t, err)
-
-		config := &ManagerConfig{
-			Store:  store,
-			Logger: logger.NewAdapter(log),
-		}
-
-		mgr, err := NewManager(config)
-		require.NoError(t, err)
-		defer mgr.Close()
-
-		// List should skip invalid lease
-		leases, err := mgr.ListLeases(context.Background(), "")
-		require.NoError(t, err)
-		// Should not include the invalid lease
-		for _, l := range leases {
-			assert.NotEqual(t, "lease_invalid", l.LeaseID)
-		}
-	})
-}
-
-func TestLeaseManager_ExpirationLoopWithMultipleLeases(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	t.Run("multiple expired leases", func(t *testing.T) {
-		// Create multiple expired leases
-		for i := 0; i < 5; i++ {
-			lease := &Lease{
-				LeaseID:    fmt.Sprintf("lease_expired_%d", i),
-				SecretPath: fmt.Sprintf("test/expired/%d", i),
-				IssuedAt:   time.Now().Add(-10 * time.Minute),
-				ExpiresAt:  time.Now().Add(-5 * time.Minute),
-				TTL:        5 * time.Minute,
-				Renewable:  true,
-			}
-			err := mgr.storeLease(lease)
-			require.NoError(t, err)
-		}
-
-		// Manually trigger expiration check
-		mgr.checkExpiredLeases()
-
-		// Verify all leases were revoked
-		for i := 0; i < 5; i++ {
-			_, err := mgr.GetLease(ctx, fmt.Sprintf("lease_expired_%d", i))
-			assert.Error(t, err)
-		}
-	})
-}
-
-// =============================================================================
-// Consolidated from manager_additional_test.go
-// =============================================================================
-
-// TestMockIterator_AdditionalMethods tests uncovered iterator methods
-func TestMockIterator_AdditionalMethods(t *testing.T) {
-	store := newMockStorage()
-	defer store.Close()
-
-	// Add test data
-	store.Set([]byte("key1"), []byte("value1"))
-	store.Set([]byte("key2"), []byte("value2"))
-	store.Set([]byte("key3"), []byte("value3"))
-
-	t.Run("SeekToFirst", func(t *testing.T) {
-		iter := store.NewIterator(nil)
-		defer iter.Close()
-
-		ok := iter.SeekToFirst()
-		assert.True(t, ok)
-		assert.Equal(t, []byte("key1"), iter.Key())
-		assert.Equal(t, []byte("value1"), iter.Value())
-	})
-
-	t.Run("SeekToLast", func(t *testing.T) {
-		iter := store.NewIterator(nil)
-		defer iter.Close()
-
-		ok := iter.SeekToLast()
-		assert.True(t, ok)
-		assert.Equal(t, []byte("key3"), iter.Key())
-		assert.Equal(t, []byte("value3"), iter.Value())
-	})
-
-	t.Run("Seek", func(t *testing.T) {
-		iter := store.NewIterator(nil)
-		defer iter.Close()
-
-		// Seek to existing key
-		ok := iter.Seek([]byte("key2"))
-		assert.True(t, ok)
-		assert.Equal(t, []byte("key2"), iter.Key())
-		assert.Equal(t, []byte("value2"), iter.Value())
-
-		// Seek to non-existing key (should go to next)
-		ok = iter.Seek([]byte("key1.5"))
-		assert.True(t, ok)
-		assert.Equal(t, []byte("key2"), iter.Key())
-
-		// Seek past all keys
-		ok = iter.Seek([]byte("key9"))
-		assert.False(t, ok)
-	})
-
-	t.Run("Prev", func(t *testing.T) {
-		iter := store.NewIterator(nil)
-		defer iter.Close()
-
-		// Move to last
-		iter.SeekToLast()
-		assert.Equal(t, []byte("key3"), iter.Key())
-
-		// Go back
-		ok := iter.Prev()
-		assert.True(t, ok)
-		assert.Equal(t, []byte("key2"), iter.Key())
-
-		// Go back again
-		ok = iter.Prev()
-		assert.True(t, ok)
-		assert.Equal(t, []byte("key1"), iter.Key())
-
-		// Can't go back further
-		ok = iter.Prev()
-		assert.False(t, ok)
-	})
-
-	t.Run("Key on invalid iterator", func(t *testing.T) {
-		iter := store.NewIterator(nil)
-		defer iter.Close()
-
-		// Before first position
-		key := iter.Key()
-		assert.Nil(t, key)
-	})
-
-	t.Run("Value on invalid iterator", func(t *testing.T) {
-		iter := store.NewIterator(nil)
-		defer iter.Close()
-
-		// Before first position
-		value := iter.Value()
-		assert.Nil(t, value)
-	})
-
-	t.Run("Error always returns nil", func(t *testing.T) {
-		iter := store.NewIterator(nil)
-		defer iter.Close()
-
-		err := iter.Error()
-		assert.NoError(t, err)
-	})
-
-	t.Run("SeekToFirst on empty store", func(t *testing.T) {
-		emptyStore := newMockStorage()
-		defer emptyStore.Close()
-
-		iter := emptyStore.NewIterator(nil)
-		defer iter.Close()
-
-		ok := iter.SeekToFirst()
-		assert.False(t, ok)
-	})
-
-	t.Run("SeekToLast on empty store", func(t *testing.T) {
-		emptyStore := newMockStorage()
-		defer emptyStore.Close()
-
-		iter := emptyStore.NewIterator(nil)
-		defer iter.Close()
-
-		ok := iter.SeekToLast()
-		assert.False(t, ok)
-	})
-}
-
-// TestMockBatch_Operations tests batch operations
-func TestMockBatch_Operations(t *testing.T) {
-	store := newMockStorage()
-	defer store.Close()
-
-	t.Run("batch set and commit", func(t *testing.T) {
-		batch := store.Batch()
-		defer batch.Close()
-
-		err := batch.Set([]byte("batch_key1"), []byte("batch_value1"))
-		assert.NoError(t, err)
-
-		err = batch.Set([]byte("batch_key2"), []byte("batch_value2"))
-		assert.NoError(t, err)
-
-		// Values shouldn't be in store yet
-		_, err = store.Get([]byte("batch_key1"))
-		assert.Error(t, err)
-
-		// Commit batch
-		err = batch.Commit()
-		assert.NoError(t, err)
-
-		// Values should now be in store
-		val, err := store.Get([]byte("batch_key1"))
-		assert.NoError(t, err)
-		assert.Equal(t, []byte("batch_value1"), val)
-
-		val, err = store.Get([]byte("batch_key2"))
-		assert.NoError(t, err)
-		assert.Equal(t, []byte("batch_value2"), val)
-	})
-
-	t.Run("batch delete and commit", func(t *testing.T) {
-		// Add a key first
-		store.Set([]byte("delete_key"), []byte("delete_value"))
-
-		batch := store.Batch()
-		defer batch.Close()
-
-		err := batch.Delete([]byte("delete_key"))
-		assert.NoError(t, err)
-
-		// Key should still exist before commit
-		_, err = store.Get([]byte("delete_key"))
-		assert.NoError(t, err)
-
-		// Commit batch
-		err = batch.Commit()
-		assert.NoError(t, err)
-
-		// Key should now be deleted
-		_, err = store.Get([]byte("delete_key"))
-		assert.Error(t, err)
-	})
-
-	t.Run("batch rollback", func(t *testing.T) {
-		batch := store.Batch()
-		defer batch.Close()
-
-		err := batch.Set([]byte("rollback_key"), []byte("rollback_value"))
-		assert.NoError(t, err)
-
-		// Rollback
-		err = batch.Rollback()
-		assert.NoError(t, err)
-
-		// Value should not be in store
-		_, err = store.Get([]byte("rollback_key"))
-		assert.Error(t, err)
-	})
-
-	t.Run("batch close without commit", func(t *testing.T) {
-		batch := store.Batch()
-
-		err := batch.Set([]byte("close_key"), []byte("close_value"))
-		assert.NoError(t, err)
-
-		// Close without commit (should rollback)
-		err = batch.Close()
-		assert.NoError(t, err)
-
-		// Value should not be in store
-		_, err = store.Get([]byte("close_key"))
-		assert.Error(t, err)
-	})
-
-	t.Run("multiple commits", func(t *testing.T) {
-		batch := store.Batch()
-		defer batch.Close()
-
-		err := batch.Set([]byte("multi_key"), []byte("multi_value"))
-		assert.NoError(t, err)
-
-		err = batch.Commit()
-		assert.NoError(t, err)
-
-		// Second commit should work (ops cleared)
-		err = batch.Commit()
-		assert.NoError(t, err)
-	})
-}
-
-// TestMockStorage_Snapshot tests snapshot functionality
-func TestMockStorage_Snapshot(t *testing.T) {
-	store := newMockStorage()
-	defer store.Close()
-
-	snapshot, err := store.Snapshot()
-	assert.NoError(t, err)
-	assert.Nil(t, snapshot) // Mock implementation returns nil
-}
-
-// TestStoreLease_Errors tests error paths in storeLease
-func TestStoreLease_Errors(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
-	t.Run("store lease successfully", func(t *testing.T) {
-		lease := &Lease{
-			LeaseID:    "test_lease",
-			SecretPath: "test/path",
-			IssuedAt:   time.Now(),
-			ExpiresAt:  time.Now().Add(5 * time.Minute),
-			TTL:        5 * time.Minute,
-			Renewable:  true,
-		}
-
-		err := mgr.storeLease(lease)
-		assert.NoError(t, err)
-
-		// Verify it can be loaded
-		loaded, err := mgr.loadLease("test_lease")
-		assert.NoError(t, err)
-		assert.Equal(t, lease.LeaseID, loaded.LeaseID)
-	})
-}
-
-// TestLoadLease_Errors tests error paths in loadLease
-func TestLoadLease_Errors(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
-	t.Run("load non-existent lease", func(t *testing.T) {
-		_, err := mgr.loadLease("nonexistent_lease")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to get lease")
-	})
-
-	t.Run("load corrupted lease data", func(t *testing.T) {
-		// Directly store invalid JSON
-		key := []byte(LeasePrefix + "corrupted_lease")
-		err := mgr.store.Set(key, []byte("invalid json data"))
-		require.NoError(t, err)
-
-		_, err = mgr.loadLease("corrupted_lease")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to unmarshal lease")
-	})
-}
-
-// TestGenerateLeaseID tests lease ID generation
 func TestGenerateLeaseID(t *testing.T) {
-	t.Run("successful ID generation", func(t *testing.T) {
+	seen := make(map[string]struct{}, 64)
+	for i := 0; i < 64; i++ {
 		id, err := generateLeaseID()
-		assert.NoError(t, err)
-		assert.NotEmpty(t, id)
+		require.NoError(t, err)
 		assert.Contains(t, id, "lease_")
-		// Should be lease_ + 32 hex characters (16 bytes * 2)
 		assert.Len(t, id, len("lease_")+32)
-	})
-
-	t.Run("unique IDs", func(t *testing.T) {
-		ids := make(map[string]bool)
-		for i := 0; i < 100; i++ {
-			id, err := generateLeaseID()
-			assert.NoError(t, err)
-			assert.False(t, ids[id], "duplicate ID generated")
-			ids[id] = true
-		}
-	})
-}
-
-// TestCheckExpiredLeases_Scenarios tests various expiration scenarios
-func TestCheckExpiredLeases_Scenarios(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	t.Run("mixed active and expired leases", func(t *testing.T) {
-		// Create active leases
-		_, err := mgr.CreateLease(ctx, "active/lease1", 10*time.Minute, nil)
-		require.NoError(t, err)
-		_, err = mgr.CreateLease(ctx, "active/lease2", 10*time.Minute, nil)
-		require.NoError(t, err)
-
-		// Create expired leases
-		expiredLease1 := &Lease{
-			LeaseID:    "lease_expired_1",
-			SecretPath: "expired/lease1",
-			IssuedAt:   time.Now().Add(-10 * time.Minute),
-			ExpiresAt:  time.Now().Add(-5 * time.Minute),
-			TTL:        5 * time.Minute,
-			Renewable:  true,
-		}
-		err = mgr.storeLease(expiredLease1)
-		require.NoError(t, err)
-
-		expiredLease2 := &Lease{
-			LeaseID:    "lease_expired_2",
-			SecretPath: "expired/lease2",
-			IssuedAt:   time.Now().Add(-10 * time.Minute),
-			ExpiresAt:  time.Now().Add(-5 * time.Minute),
-			TTL:        5 * time.Minute,
-			Renewable:  true,
-		}
-		err = mgr.storeLease(expiredLease2)
-		require.NoError(t, err)
-
-		// Check expired leases
-		mgr.checkExpiredLeases()
-
-		// Verify expired leases were removed
-		_, err = mgr.GetLease(ctx, "lease_expired_1")
-		assert.Error(t, err)
-		_, err = mgr.GetLease(ctx, "lease_expired_2")
-		assert.Error(t, err)
-
-		// Verify active leases still exist
-		leases, err := mgr.ListLeases(ctx, "active/")
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(leases), 2)
-	})
-
-	t.Run("revoked leases are not expired", func(t *testing.T) {
-		now := time.Now()
-		revokedLease := &Lease{
-			LeaseID:    "lease_revoked",
-			SecretPath: "revoked/lease",
-			IssuedAt:   now.Add(-10 * time.Minute),
-			ExpiresAt:  now.Add(-5 * time.Minute),
-			TTL:        5 * time.Minute,
-			Renewable:  true,
-			RevokedAt:  &now,
-		}
-		err := mgr.storeLease(revokedLease)
-		require.NoError(t, err)
-
-		// Revoked leases have RevokedAt set, so State() returns LeaseStateRevoked
-		// not LeaseStateExpired, so checkExpiredLeases won't touch them
-		mgr.checkExpiredLeases()
-
-		// Lease should still exist (wasn't removed by expiration check)
-		retrieved, err := mgr.GetLease(ctx, "lease_revoked")
-		require.NoError(t, err)
-		assert.Equal(t, LeaseStateRevoked, retrieved.State())
-	})
-}
-
-// TestExpirationLoop_EdgeCases tests expiration loop edge cases
-func TestExpirationLoop_EdgeCases(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	store := newMockStorage()
-	defer store.Close()
-
-	config := &ManagerConfig{
-		Store:                   store,
-		Logger:                  logger.NewAdapter(log),
-		ExpirationCheckInterval: 50 * time.Millisecond,
+		_, dup := seen[id]
+		require.False(t, dup, "lease IDs must be unique")
+		seen[id] = struct{}{}
 	}
-
-	mgr, err := NewManager(config)
-	require.NoError(t, err)
-	defer mgr.Close()
-
-	t.Run("expiration loop stops on context cancel", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-
-		err := mgr.StartExpirationLoop(ctx)
-		require.NoError(t, err)
-
-		// Cancel context after a short time
-		time.Sleep(100 * time.Millisecond)
-		cancel()
-
-		// Wait for loop to stop
-		time.Sleep(100 * time.Millisecond)
-
-		// Loop should have stopped gracefully
-		// No good way to verify this other than ensuring no panic/deadlock
-	})
-
-	t.Run("expiration loop handles corrupted lease data", func(t *testing.T) {
-		// Store invalid lease data
-		key := []byte(LeasePrefix + "invalid_lease")
-		err := store.Set(key, []byte("not valid json"))
-		require.NoError(t, err)
-
-		// Run expiration check - should log warning and continue
-		mgr.checkExpiredLeases()
-
-		// Shouldn't crash or panic
-		leases, err := mgr.ListLeases(context.Background(), "")
-		require.NoError(t, err)
-		// Invalid lease should be skipped
-		for _, l := range leases {
-			assert.NotEqual(t, "invalid_lease", l.LeaseID)
-		}
-	})
 }
 
-// TestRevokePrefix_ErrorHandling tests error handling in RevokePrefix
-func TestRevokePrefix_ErrorHandling(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
+// =============================================================================
+// Error vocabulary
+// =============================================================================
 
+func TestLeaseErrors_Messages(t *testing.T) {
+	at := time.Date(2026, 9, 12, 14, 2, 0, 0, time.UTC)
+
+	assert.Contains(t, (&LeaseNotFoundError{LeaseID: "lease_a"}).Error(), "lease_a")
+	assert.Contains(t, (&LeaseRevokedError{LeaseID: "lease_b", RevokedAt: at}).Error(), "2026-09-12T14:02:00Z")
+	assert.Contains(t, (&LeaseExpiredError{LeaseID: "lease_c", ExpiredAt: at}).Error(), "lease_c")
+
+	cause := &dberrors.MessageError{Message: "boom"}
+	corrupt := &LeaseCorruptError{LeaseID: "lease_d", Cause: cause}
+	assert.Contains(t, corrupt.Error(), "boom")
+	assert.Equal(t, cause, corrupt.Unwrap())
+
+	storeErr := &LeaseStoreError{Operation: "put", LeaseID: "lease_e", Cause: cause}
+	assert.Contains(t, storeErr.Error(), "put")
+	assert.Contains(t, storeErr.Error(), "lease_e")
+	assert.Equal(t, cause, storeErr.Unwrap())
+
+	anonymous := &LeaseStoreError{Operation: "scan", Cause: cause}
+	assert.NotContains(t, anonymous.Error(), " for ")
+}
+
+func TestLeaseErrors_Classifiers(t *testing.T) {
+	at := time.Now()
+
+	assert.True(t, IsLeaseNotFound(NewLeaseNotFoundError("op", "lease_a")))
+	assert.True(t, IsLeaseRevoked(NewLeaseRevokedError("op", "lease_b", at)))
+	assert.True(t, IsLeaseExpired(NewLeaseExpiredError("op", "lease_c", at)))
+
+	// Each classifier answers only for its own fact.
+	assert.False(t, IsLeaseRevoked(NewLeaseNotFoundError("op", "lease_a")))
+	assert.False(t, IsLeaseExpired(NewLeaseRevokedError("op", "lease_b", at)))
+	assert.False(t, IsLeaseNotFound(NewLeaseExpiredError("op", "lease_c", at)))
+
+	// And none of them claims a nil or unrelated error.
+	assert.False(t, IsLeaseNotFound(nil))
+	assert.False(t, IsLeaseRevoked(&dberrors.MessageError{Message: "unrelated"}))
+	assert.False(t, IsLeaseExpired(&dberrors.MessageError{Message: "unrelated"}))
+}
+
+func TestLeaseErrors_CarryTransportCodes(t *testing.T) {
+	assert.True(t, dberrors.IsNotFound(NewLeaseNotFoundError("op", "lease_a")))
+
+	revoked := NewLeaseRevokedError("op", "lease_b", time.Now())
+	assert.Equal(t, dberrors.ErrNotAllowed, revoked.Code)
+
+	expired := NewLeaseExpiredError("op", "lease_c", time.Now())
+	assert.Equal(t, dberrors.ErrNotAllowed, expired.Code)
+
+	corrupt := NewLeaseCorruptError("op", "lease_d", &dberrors.MessageError{Message: "boom"})
+	assert.Equal(t, dberrors.ErrInternal, corrupt.Code)
+
+	storeErr := NewLeaseStoreError("op", "put", "lease_e", &dberrors.MessageError{Message: "boom"})
+	assert.Equal(t, dberrors.ErrInternal, storeErr.Code)
+}
+
+// =============================================================================
+// Store faults on the paths a sweep and a prefix revocation take
+// =============================================================================
+
+func TestReapExpired_PurgeFaultDoesNotStopThePass(t *testing.T) {
 	ctx := context.Background()
+	store := newFaultKV()
+	mgr := newTestManagerOn(t, store, time.Hour)
 
-	t.Run("partial revoke failures", func(t *testing.T) {
-		// Create leases
-		lease1, err := mgr.CreateLease(ctx, "partial/lease1", 5*time.Minute, nil)
-		require.NoError(t, err)
-		lease2, err := mgr.CreateLease(ctx, "partial/lease2", 5*time.Minute, nil)
-		require.NoError(t, err)
-
-		// Manually delete one lease from storage to simulate error
-		key := []byte(LeasePrefix + lease1.LeaseID)
-		err = mgr.store.Delete(key)
-		require.NoError(t, err)
-
-		// RevokePrefix should continue despite one failure
-		count, err := mgr.RevokePrefix(ctx, "partial/")
-		require.NoError(t, err)
-		// Only the second lease should be successfully revoked
-		assert.Equal(t, 1, count)
-
-		// Verify second lease was revoked
-		_, err = mgr.GetLease(ctx, lease2.LeaseID)
-		assert.Error(t, err)
-	})
-}
-
-// errorStorage is a mock storage that returns errors for testing
-type errorStorage struct {
-	*mockStorage
-	getError    error
-	setError    error
-	deleteError error
-}
-
-func (e *errorStorage) Get(key []byte) ([]byte, error) {
-	if e.getError != nil {
-		return nil, e.getError
+	// Two aged-out tombstones; deletes are armed to fail, so neither is purged
+	// and the pass still reports cleanly rather than aborting.
+	old := time.Now().Add(-2 * time.Hour)
+	for _, id := range []string{"lease_stale_a", "lease_stale_b"} {
+		require.NoError(t, mgr.storeLease(ctx, "test", &Lease{
+			LeaseID: id, SecretPath: "p", ExpiresAt: old, TTL: time.Minute, RevokedAt: &old,
+		}))
 	}
-	return e.mockStorage.Get(key)
-}
+	store.deleteErr = &dberrors.MessageError{Message: "kv unavailable"}
 
-func (e *errorStorage) Set(key, value []byte) error {
-	if e.setError != nil {
-		return e.setError
-	}
-	return e.mockStorage.Set(key, value)
-}
+	revoked, purged, err := mgr.ReapExpired(ctx)
+	require.NoError(t, err, "a purge fault is bookkeeping, not an outage of the pass")
+	assert.Equal(t, 0, revoked)
+	assert.Equal(t, 0, purged)
 
-func (e *errorStorage) Delete(key []byte) error {
-	if e.deleteError != nil {
-		return e.deleteError
-	}
-	return e.mockStorage.Delete(key)
-}
-
-// TestCreateLease_StorageErrors tests storage error handling
-func TestCreateLease_StorageErrors(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
+	// The tombstones are still there, so a later pass retries the purge.
+	leases, err := mgr.ListLeases(ctx, "")
 	require.NoError(t, err)
-
-	t.Run("storage set error", func(t *testing.T) {
-		errStore := &errorStorage{
-			mockStorage: newMockStorage(),
-			setError:    &dberrors.MessageError{Message: "storage write failed"},
-		}
-		defer errStore.Close()
-
-		config := &ManagerConfig{
-			Store:  errStore,
-			Logger: logger.NewAdapter(log),
-		}
-
-		mgr, err := NewManager(config)
-		require.NoError(t, err)
-		defer mgr.Close()
-
-		ctx := context.Background()
-		_, err = mgr.CreateLease(ctx, "test/path", 5*time.Minute, nil)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to store lease")
-	})
+	assert.Len(t, leases, 2)
 }
 
-// TestRevokeLease_StorageErrors tests revoke with storage errors
-func TestRevokeLease_StorageErrors(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	t.Run("storage delete error", func(t *testing.T) {
-		errStore := &errorStorage{
-			mockStorage: newMockStorage(),
-			deleteError: &dberrors.MessageError{Message: "storage delete failed"},
-		}
-		defer errStore.Close()
-
-		config := &ManagerConfig{
-			Store:  errStore,
-			Logger: logger.NewAdapter(log),
-		}
-
-		mgr, err := NewManager(config)
-		require.NoError(t, err)
-		defer mgr.Close()
-
-		ctx := context.Background()
-		err = mgr.RevokeLease(ctx, "test_lease")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to delete lease")
-	})
-}
-
-// TestRenewLease_StorageErrors tests renew with storage errors
-func TestRenewLease_StorageErrors(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	store := newMockStorage()
-	defer store.Close()
-
-	config := &ManagerConfig{
-		Store:  store,
-		Logger: logger.NewAdapter(log),
-	}
-
-	mgr, err := NewManager(config)
-	require.NoError(t, err)
-	defer mgr.Close()
-
+func TestReapExpired_RevokeFaultDoesNotStopThePass(t *testing.T) {
 	ctx := context.Background()
+	store := newFaultKV()
+	mgr := newTestManagerOn(t, store, 0)
 
-	t.Run("update lease storage error", func(t *testing.T) {
-		// Create a lease
-		lease, err := mgr.CreateLease(ctx, "test/path", 5*time.Minute, nil)
-		require.NoError(t, err)
+	require.NoError(t, mgr.storeLease(ctx, "test", &Lease{
+		LeaseID: "lease_lapsed_a", SecretPath: "p", ExpiresAt: time.Now().Add(-time.Minute), TTL: time.Minute,
+	}))
+	require.NoError(t, mgr.storeLease(ctx, "test", &Lease{
+		LeaseID: "lease_lapsed_b", SecretPath: "p", ExpiresAt: time.Now().Add(-time.Minute), TTL: time.Minute,
+	}))
+	store.putErr = &dberrors.MessageError{Message: "kv unavailable"}
 
-		// Replace store with error store
-		errStore := &errorStorage{
-			mockStorage: store,
-			setError:    &dberrors.MessageError{Message: "storage write failed"},
-		}
-		mgr.store = errStore
-
-		// Try to renew - should fail
-		_, err = mgr.RenewLease(ctx, lease.LeaseID, 5*time.Minute)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to update lease")
-	})
+	revoked, _, err := mgr.ReapExpired(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, revoked, "a tombstone that could not be written is not a revocation")
 }
 
-// TestLeaseWithMetadata tests lease metadata handling
-func TestLeaseWithMetadata(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
+func TestRevokePrefix_ReportsOnlyWhatItWithdrew(t *testing.T) {
 	ctx := context.Background()
+	store := newFaultKV()
+	mgr := newTestManagerOn(t, store, 0)
 
-	t.Run("lease with complex metadata", func(t *testing.T) {
-		opts := &LeaseOptions{
-			Renewable:   true,
-			MaxRenewals: 10,
-			Metadata: map[string]string{
-				"user_id":     "user123",
-				"role":        "admin",
-				"environment": "production",
-				"service":     "api-gateway",
-			},
-		}
-
-		lease, err := mgr.CreateLease(ctx, "api/credentials", 30*time.Minute, opts)
+	for i := 0; i < 2; i++ {
+		_, err := mgr.CreateLease(ctx, "credentials/db/"+strconv.Itoa(i), time.Hour, nil)
 		require.NoError(t, err)
+	}
+	store.putErr = &dberrors.MessageError{Message: "kv unavailable"}
 
-		// Verify metadata is preserved
-		assert.Equal(t, "user123", lease.Metadata["user_id"])
-		assert.Equal(t, "admin", lease.Metadata["role"])
-		assert.Equal(t, "production", lease.Metadata["environment"])
-		assert.Equal(t, "api-gateway", lease.Metadata["service"])
-
-		// Reload and verify persistence
-		retrieved, err := mgr.GetLease(ctx, lease.LeaseID)
-		require.NoError(t, err)
-		assert.Equal(t, opts.Metadata, retrieved.Metadata)
-	})
-
-	t.Run("lease with nil metadata", func(t *testing.T) {
-		opts := &LeaseOptions{
-			Renewable:   true,
-			MaxRenewals: 5,
-			Metadata:    nil, // Explicitly nil
-		}
-
-		lease, err := mgr.CreateLease(ctx, "api/credentials2", 30*time.Minute, opts)
-		require.NoError(t, err)
-
-		// Metadata can be nil
-		assert.Nil(t, lease.Metadata)
-	})
+	count, err := mgr.RevokePrefix(ctx, "credentials/db/")
+	require.NoError(t, err, "a prefix revocation reports what it managed, it does not abort")
+	assert.Equal(t, 0, count)
 }
 
-// TestLeaseJSONSerialization tests JSON marshaling/unmarshaling
-func TestLeaseJSONSerialization(t *testing.T) {
-	now := time.Now()
-	revokedTime := now.Add(-1 * time.Hour)
-
-	t.Run("marshal and unmarshal complete lease", func(t *testing.T) {
-		original := &Lease{
-			LeaseID:     "lease_test_123",
-			SecretPath:  "database/creds/myapp",
-			IssuedAt:    now,
-			ExpiresAt:   now.Add(24 * time.Hour),
-			TTL:         24 * time.Hour,
-			RenewCount:  3,
-			MaxRenewals: 10,
-			Renewable:   true,
-			RevokedAt:   &revokedTime,
-			Metadata: map[string]string{
-				"role": "readonly",
-			},
-		}
-
-		// Marshal to JSON
-		data, err := json.Marshal(original)
-		require.NoError(t, err)
-
-		// Unmarshal back
-		restored := &Lease{}
-		err = json.Unmarshal(data, restored)
-		require.NoError(t, err)
-
-		// Verify all fields
-		assert.Equal(t, original.LeaseID, restored.LeaseID)
-		assert.Equal(t, original.SecretPath, restored.SecretPath)
-		assert.Equal(t, original.RenewCount, restored.RenewCount)
-		assert.Equal(t, original.MaxRenewals, restored.MaxRenewals)
-		assert.Equal(t, original.Renewable, restored.Renewable)
-		assert.NotNil(t, restored.RevokedAt)
-		assert.Equal(t, original.Metadata, restored.Metadata)
-	})
-
-	t.Run("marshal lease without revocation", func(t *testing.T) {
-		original := &Lease{
-			LeaseID:     "lease_test_456",
-			SecretPath:  "secret/data/myapp",
-			IssuedAt:    now,
-			ExpiresAt:   now.Add(1 * time.Hour),
-			TTL:         1 * time.Hour,
-			RenewCount:  0,
-			MaxRenewals: 0,
-			Renewable:   true,
-			RevokedAt:   nil,
-			Metadata:    map[string]string{},
-		}
-
-		// Marshal to JSON
-		data, err := json.Marshal(original)
-		require.NoError(t, err)
-
-		// Unmarshal back
-		restored := &Lease{}
-		err = json.Unmarshal(data, restored)
-		require.NoError(t, err)
-
-		// Verify RevokedAt is nil
-		assert.Nil(t, restored.RevokedAt)
-	})
-}
-
-// TestIteratorBoundaries tests iterator edge cases
-func TestIteratorBoundaries(t *testing.T) {
-	store := newMockStorage()
-	defer store.Close()
-
-	t.Run("iterator on empty range", func(t *testing.T) {
-		// Add some data
-		store.Set([]byte("a"), []byte("1"))
-		store.Set([]byte("c"), []byte("3"))
-
-		// Create iterator with range that excludes all keys
-		iter := store.NewIterator(&storage.IteratorOptions{
-			LowerBound: []byte("d"),
-			UpperBound: []byte("z"),
-		})
-		defer iter.Close()
-
-		ok := iter.Next()
-		assert.False(t, ok)
-	})
-
-	t.Run("iterator with nil bounds", func(t *testing.T) {
-		store.Set([]byte("x"), []byte("24"))
-		store.Set([]byte("y"), []byte("25"))
-
-		iter := store.NewIterator(nil)
-		defer iter.Close()
-
-		count := 0
-		for iter.Next() {
-			count++
-		}
-		assert.Greater(t, count, 0)
-	})
-}
-
-// TestManagerMetrics tests that metrics are updated correctly
-func TestManagerMetrics(t *testing.T) {
-	mgr, cleanup := setupLeaseManager(t)
-	defer cleanup()
-
+func TestRevoke_StoreFaultIsNotAnAbsence(t *testing.T) {
 	ctx := context.Background()
+	store := newFaultKV()
+	mgr := newTestManagerOn(t, store, 0)
 
-	// Note: We can't easily verify Prometheus metrics values in unit tests
-	// but we can verify the operations don't panic and metrics exist
+	created, err := mgr.CreateLease(ctx, "p", time.Hour, nil)
+	require.NoError(t, err)
 
-	t.Run("metrics initialized", func(t *testing.T) {
-		assert.NotNil(t, mgr.metrics)
-		assert.NotNil(t, mgr.metrics.leasesCreated)
-		assert.NotNil(t, mgr.metrics.leasesRenewed)
-		assert.NotNil(t, mgr.metrics.leasesRevoked)
-		assert.NotNil(t, mgr.metrics.leasesExpired)
-		assert.NotNil(t, mgr.metrics.activeLeasesCount)
-		assert.NotNil(t, mgr.metrics.leaseOpDuration)
-	})
-
-	t.Run("operations update metrics", func(t *testing.T) {
-		// Create lease
-		lease, err := mgr.CreateLease(ctx, "metrics/test", 5*time.Minute, nil)
-		require.NoError(t, err)
-
-		// Renew lease
-		_, err = mgr.RenewLease(ctx, lease.LeaseID, 5*time.Minute)
-		require.NoError(t, err)
-
-		// Revoke lease
-		err = mgr.RevokeLease(ctx, lease.LeaseID)
-		require.NoError(t, err)
-
-		// Operations should have updated metrics (no panic)
-	})
+	// A read that FAILED must not be mistaken for "the grant is already gone":
+	// that would report a successful revocation for a grant still live.
+	store.getErr = &dberrors.MessageError{Message: "kv unavailable"}
+	err = mgr.RevokeLease(ctx, created.LeaseID)
+	require.Error(t, err)
+	var storeErr *LeaseStoreError
+	require.ErrorAs(t, err, &storeErr)
+	assert.Equal(t, "get", storeErr.Operation)
 }

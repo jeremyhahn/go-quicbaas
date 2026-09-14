@@ -71,6 +71,44 @@ each other and the difference matters when reading a deployment's access logs.
 | `POST /api/v1/barrier/recovery/recover` | `HandleBarrierRecoveryRecover` |
 | `DELETE /api/v1/barrier/recovery` | `HandleBarrierRecoveryDelete` |
 
+#### Who owns the mount on a composed node
+
+`server.rest` no longer binds a listener of its own: `startRESTServer`
+(`pkg/server/lifecycle_rest.go`) builds a non-listening `*rest.Server` and the
+embedded go-qrdb node's unified server is the only REST listener. quicbaas's
+routes reach it through the ServiceModule seam (`pkg/apimodule/module_http.go`
+`RegisterHTTP`, fed by `rest.ModuleRoutes()`).
+
+Two modules are mounted on that one server — quicbaas's and go-xkms's — and
+both route tables carry `/api/v1/barrier/*`. go-qrdb's registrar gives a path
+to the FIRST claimant and logs the loser at debug level, so precedence is
+silent unless the composer states it. It is stated in
+`pkg/apimodule/route_precedence.go`: the xkms module is wrapped in
+`NewRouteExcludingModule(..., XKMSBarrierRouteExclusions)` before
+`qrdbsdk.WithModule`, so quicbaas owns the canonical barrier mount.
+
+That is not a preference. The barrier is go-qrdb's, and quicbaas's handlers
+delegate to the go-qrdb SDK `BarrierClient` bound to the platform shard — the
+same facade gRPC, unix, MCP, QUIC and embedded answer from. go-xkms's same-path
+handlers operate xkms's OWN barrier, which its `pkg/api/rest/host.go`
+`NewHostServer` documents as "xkmsd-only and stay disabled" on a host
+composition. Left mounted, they answered
+`503 {"error":"rest: barrier not configured"}` on a node whose barrier was
+configured and unsealed (go-quicbaas#405) — a wrong answer, not a refusal.
+
+`/api/v1/init/*` remains module-excluded: the xkms module carries its own
+ceremony routes there and which module owns the composed node's init plane is
+an open decision.
+
+#### Timestamp rendering
+
+Every barrier timestamp renders as RFC3339**Nano** (`barrierTimeFormat` in
+`pkg/api/{rest,grpc,mcp}`), matching go-qrdb's `qrdb.v1` gRPC barrier surface
+that the unix and gRPC transports reach. Rendering at second precision made
+one barrier report `2026-08-25T04:40:05Z` over REST and
+`2026-08-25T04:40:05.727835519Z` over unix — the same instant, but not the
+byte-comparable answer an operator diffing two transports needs.
+
 ### `/api/v1/seal` — the older seal surface, still mounted
 
 | Route | Handler |

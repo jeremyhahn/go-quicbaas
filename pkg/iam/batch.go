@@ -200,10 +200,32 @@ type UserImport struct {
 	Email      string
 	Username   string
 	Name       string
-	Attributes map[string]interface{}
+	Attributes map[string]string
 	Groups     []string
 	Roles      []string
-	Enabled    bool
+
+	// Lifecycle is the account state the import asserts. Empty means the import
+	// says nothing, leaving a new user in the default pending.
+	//
+	// It carries what Enabled cannot. Enabled is a single bool over six states,
+	// so an export of a PENDING account and an export of a DISABLED one both
+	// reduce to false, and re-importing either produced a disabled account — a
+	// round trip that quietly turned "waiting for its owner to activate" into
+	// "an administrator turned this off". Enabled remains for importers that
+	// genuinely know only that much.
+	Lifecycle Lifecycle
+
+	// Enabled states whether the imported user may authenticate. Nil means
+	// the import says nothing, which leaves a new user enabled and an
+	// existing user's current state untouched.
+	//
+	// It is a pointer for the same reason CreateUserOptions.Enabled is: a
+	// plain bool cannot tell "this import says disabled" from "this import
+	// does not mention it", and the zero value of the wrong one of those is
+	// the destructive one. As a plain bool it took the false path on every
+	// record that omitted the field, so re-importing an existing user without
+	// mentioning Enabled SUSPENDED them.
+	Enabled *bool
 }
 
 // GroupImport represents group data for batch import.

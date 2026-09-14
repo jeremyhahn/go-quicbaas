@@ -38,8 +38,9 @@ func newTestWebAuthnFactory(t *testing.T, settings TenantWebAuthnSettingsProvide
 			RPDisplayName: "Example",
 			RPOrigins:     []string{"https://example.com"},
 		},
-		QRDB:     dummyQRDBClient,
-		Settings: settings,
+		QRDB:                dummyQRDBClient,
+		AttestationRecorder: recorderOf(&fakeUserAuthFactorClient{}),
+		Settings:            settings,
 	})
 	if err != nil {
 		t.Fatalf("NewWebAuthnServiceFactory: %v", err)

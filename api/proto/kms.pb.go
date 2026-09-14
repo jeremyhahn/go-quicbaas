@@ -11177,22 +11177,22 @@ const file_api_proto_kms_proto_rawDesc = "" +
 	"\fSetKeySafety\x12$.quicbaas.kms.v1.SetKeySafetyRequest\x1a%.quicbaas.kms.v1.SetKeySafetyResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12r\n" +
 	"\x0eClearKeySafety\x12&.quicbaas.kms.v1.ClearKeySafetyRequest\x1a'.quicbaas.kms.v1.ClearKeySafetyResponse\"\x0f\xc2\xf3\x18\vkeys:rotate\x12f\n" +
 	"\vSafetyCheck\x12#.quicbaas.kms.v1.SafetyCheckRequest\x1a$.quicbaas.kms.v1.SafetyCheckResponse\"\f\xc2\xf3\x18\bkeys:get\x12i\n" +
-	"\fSafetyReport\x12$.quicbaas.kms.v1.SafetyReportRequest\x1a%.quicbaas.kms.v1.SafetyReportResponse\"\f\xc2\xf3\x18\bkeys:get2\xe3\r\n" +
-	"\x11SecretsManagement\x12o\n" +
-	"\vStoreSecret\x12#.quicbaas.kms.v1.StoreSecretRequest\x1a$.quicbaas.kms.v1.StoreSecretResponse\"\x15\xc2\xf3\x18\x11credentials:store\x12l\n" +
-	"\tGetSecret\x12!.quicbaas.kms.v1.GetSecretRequest\x1a\".quicbaas.kms.v1.GetSecretResponse\"\x18\xc2\xf3\x18\x14credentials:retrieve\x12n\n" +
-	"\vListSecrets\x12#.quicbaas.kms.v1.ListSecretsRequest\x1a$.quicbaas.kms.v1.ListSecretsResponse\"\x14\xc2\xf3\x18\x10credentials:list\x12s\n" +
-	"\fDeleteSecret\x12$.quicbaas.kms.v1.DeleteSecretRequest\x1a%.quicbaas.kms.v1.DeleteSecretResponse\"\x16\xc2\xf3\x18\x12credentials:delete\x12\x89\x01\n" +
-	"\x10GetSecretVersion\x12(.quicbaas.kms.v1.GetSecretVersionRequest\x1a).quicbaas.kms.v1.GetSecretVersionResponse\" \xc2\xf3\x18\x1ccredentials:retrieve_version\x12\x8c\x01\n" +
-	"\x12ListSecretVersions\x12*.quicbaas.kms.v1.ListSecretVersionsRequest\x1a+.quicbaas.kms.v1.ListSecretVersionsResponse\"\x1d\xc2\xf3\x18\x19credentials:list_versions\x12y\n" +
-	"\x0eRollbackSecret\x12&.quicbaas.kms.v1.RollbackSecretRequest\x1a'.quicbaas.kms.v1.RollbackSecretResponse\"\x16\xc2\xf3\x18\x12credentials:submit\x12s\n" +
-	"\fRotateSecret\x12$.quicbaas.kms.v1.RotateSecretRequest\x1a%.quicbaas.kms.v1.RotateSecretResponse\"\x16\xc2\xf3\x18\x12credentials:rotate\x12\x85\x01\n" +
-	"\x12UpdateSecretStatus\x12*.quicbaas.kms.v1.UpdateSecretStatusRequest\x1a+.quicbaas.kms.v1.UpdateSecretStatusResponse\"\x16\xc2\xf3\x18\x12credentials:submit\x12\x84\x01\n" +
-	"\x11SetRotationPolicy\x12).quicbaas.kms.v1.SetRotationPolicyRequest\x1a*.quicbaas.kms.v1.SetRotationPolicyResponse\"\x18\xc2\xf3\x18\x14credentials:strategy\x12\x80\x01\n" +
-	"\x11GetRotationPolicy\x12).quicbaas.kms.v1.GetRotationPolicyRequest\x1a*.quicbaas.kms.v1.GetRotationPolicyResponse\"\x14\xc2\xf3\x18\x10credentials:list\x12\x83\x01\n" +
-	"\x12GetSecretsByPrefix\x12*.quicbaas.kms.v1.GetSecretsByPrefixRequest\x1a+.quicbaas.kms.v1.GetSecretsByPrefixResponse\"\x14\xc2\xf3\x18\x10credentials:list\x12s\n" +
-	"\x14WatchSecretsByPrefix\x12$.quicbaas.kms.v1.WatchSecretsRequest\x1a\x1d.quicbaas.kms.v1.SecretChange\"\x14\xc2\xf3\x18\x10credentials:list0\x01\x12r\n" +
-	"\fEnsureSecret\x12$.quicbaas.kms.v1.EnsureSecretRequest\x1a%.quicbaas.kms.v1.EnsureSecretResponse\"\x15\xc2\xf3\x18\x11credentials:store2\xd8\n" +
+	"\fSafetyReport\x12$.quicbaas.kms.v1.SafetyReportRequest\x1a%.quicbaas.kms.v1.SafetyReportResponse\"\f\xc2\xf3\x18\bkeys:get2\x87\r\n" +
+	"\x11SecretsManagement\x12k\n" +
+	"\vStoreSecret\x12#.quicbaas.kms.v1.StoreSecretRequest\x1a$.quicbaas.kms.v1.StoreSecretResponse\"\x11\xc2\xf3\x18\rsecrets:write\x12d\n" +
+	"\tGetSecret\x12!.quicbaas.kms.v1.GetSecretRequest\x1a\".quicbaas.kms.v1.GetSecretResponse\"\x10\xc2\xf3\x18\fsecrets:read\x12j\n" +
+	"\vListSecrets\x12#.quicbaas.kms.v1.ListSecretsRequest\x1a$.quicbaas.kms.v1.ListSecretsResponse\"\x10\xc2\xf3\x18\fsecrets:list\x12o\n" +
+	"\fDeleteSecret\x12$.quicbaas.kms.v1.DeleteSecretRequest\x1a%.quicbaas.kms.v1.DeleteSecretResponse\"\x12\xc2\xf3\x18\x0esecrets:delete\x12y\n" +
+	"\x10GetSecretVersion\x12(.quicbaas.kms.v1.GetSecretVersionRequest\x1a).quicbaas.kms.v1.GetSecretVersionResponse\"\x10\xc2\xf3\x18\fsecrets:read\x12\x7f\n" +
+	"\x12ListSecretVersions\x12*.quicbaas.kms.v1.ListSecretVersionsRequest\x1a+.quicbaas.kms.v1.ListSecretVersionsResponse\"\x10\xc2\xf3\x18\fsecrets:read\x12t\n" +
+	"\x0eRollbackSecret\x12&.quicbaas.kms.v1.RollbackSecretRequest\x1a'.quicbaas.kms.v1.RollbackSecretResponse\"\x11\xc2\xf3\x18\rsecrets:write\x12n\n" +
+	"\fRotateSecret\x12$.quicbaas.kms.v1.RotateSecretRequest\x1a%.quicbaas.kms.v1.RotateSecretResponse\"\x11\xc2\xf3\x18\rsecrets:write\x12\x80\x01\n" +
+	"\x12UpdateSecretStatus\x12*.quicbaas.kms.v1.UpdateSecretStatusRequest\x1a+.quicbaas.kms.v1.UpdateSecretStatusResponse\"\x11\xc2\xf3\x18\rsecrets:write\x12}\n" +
+	"\x11SetRotationPolicy\x12).quicbaas.kms.v1.SetRotationPolicyRequest\x1a*.quicbaas.kms.v1.SetRotationPolicyResponse\"\x11\xc2\xf3\x18\rsecrets:write\x12|\n" +
+	"\x11GetRotationPolicy\x12).quicbaas.kms.v1.GetRotationPolicyRequest\x1a*.quicbaas.kms.v1.GetRotationPolicyResponse\"\x10\xc2\xf3\x18\fsecrets:read\x12\x7f\n" +
+	"\x12GetSecretsByPrefix\x12*.quicbaas.kms.v1.GetSecretsByPrefixRequest\x1a+.quicbaas.kms.v1.GetSecretsByPrefixResponse\"\x10\xc2\xf3\x18\fsecrets:read\x12o\n" +
+	"\x14WatchSecretsByPrefix\x12$.quicbaas.kms.v1.WatchSecretsRequest\x1a\x1d.quicbaas.kms.v1.SecretChange\"\x10\xc2\xf3\x18\fsecrets:read0\x01\x12n\n" +
+	"\fEnsureSecret\x12$.quicbaas.kms.v1.EnsureSecretRequest\x1a%.quicbaas.kms.v1.EnsureSecretResponse\"\x11\xc2\xf3\x18\rsecrets:write2\xd8\n" +
 	"\n" +
 	"\x06Crypto\x12j\n" +
 	"\aEncrypt\x12%.quicbaas.kms.v1.CryptoEncryptRequest\x1a&.quicbaas.kms.v1.CryptoEncryptResponse\"\x10\xc2\xf3\x18\fkeys:encrypt\x12j\n" +

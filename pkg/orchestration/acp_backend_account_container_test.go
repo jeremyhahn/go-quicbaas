@@ -62,7 +62,14 @@ func (r *specCapturingContainerRuntime) RunInteractive(ctx context.Context, spec
 func (r *specCapturingContainerRuntime) Run(context.Context, *ContainerSpec) (string, error) {
 	return "test-ctr", nil
 }
-func (r *specCapturingContainerRuntime) Stop(context.Context, string) error   { return nil }
+func (r *specCapturingContainerRuntime) Stop(context.Context, string) error { return nil }
+
+// Exec satisfies the runtime seam. Nothing in this test runs a command
+// inside a container; a call would be a test asserting behaviour it never
+// arranged, so it refuses rather than answering.
+func (r *specCapturingContainerRuntime) Exec(context.Context, string, *ExecSpec) (*ExecResult, error) {
+	return nil, &ContainerExecError{ContainerID: "fake", Cause: errNoExecInThisTest}
+}
 func (r *specCapturingContainerRuntime) Remove(context.Context, string) error { return nil }
 func (r *specCapturingContainerRuntime) Logs(context.Context, string) (io.ReadCloser, error) {
 	return nil, nil
@@ -89,7 +96,11 @@ func mountTarget(spec *ContainerSpec, target string) (string, bool) {
 // path.
 func TestACPBackend_SpawnContainer_FileBasedAccount_MountsIsolatedDir(t *testing.T) {
 	runtime := &specCapturingContainerRuntime{t: t}
-	backend := NewACPBackend(ACPBackendConfig{Command: "opencode"})
+	backend := NewACPBackend(ACPBackendConfig{Command: "opencode",
+		// Where OpenCode's file credential lives. It used to be hardcoded
+		// inside the backend; it is configuration now, so a test that
+		// asserts the mount has to state it (see CredentialDirSpec).
+		CredentialDir: CredentialDirSpec{Rel: ".config/opencode", Target: "/home/agent/.config/opencode"}})
 	backend.SetContainerRuntime(runtime)
 
 	store := NewInMemoryAccountStore()

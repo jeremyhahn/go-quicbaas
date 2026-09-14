@@ -4,6 +4,7 @@ import type { EmbeddingsClient } from './embedding_sdk.js';
 import type { MessagingClient } from './messaging_sdk.js';
 import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
+import type { SdlcClient } from './sdlc.js';
 import type { CAClient, IssueCertificateRequest, IssueCertificateResponse, SignCSRRequest, SignCSRResponse, RevokeCertificateResponse, VerifyCertificateResponse, GetCACertificateResponse, CAInfoResponse, CABundleResponse, ListCertificatesRequest, ListCertificatesResponse, GenerateCRLResponse, IsRevokedResponse } from './ca.js';
 import type { TrustClient, CrossSignedRootPoolResponse, AutoImportAIARequest, AutoImportAIAResponse, PublishDANERequest, PublishDANEResponse } from './trust.js';
 import type { CryptoClient, CryptoEncryptRequest, CryptoEncryptResponse, CryptoDecryptRequest, CryptoDecryptResponse, CryptoRewrapRequest, CryptoRewrapResponse, CryptoSignRequest, CryptoSignResponse, CryptoVerifyRequest, CryptoVerifyResponse, CryptoHashRequest, CryptoHashResponse, CryptoRandomResponse, CryptoDataKeyRequest, CryptoDataKeyResponse } from './crypto.js';
@@ -178,6 +179,7 @@ export declare class RestClient implements Client {
     readonly messaging: MessagingClient;
     readonly scheduler: SchedulerClient;
     readonly projects: ProjectsClient;
+    readonly sdlc: SdlcClient;
     readonly accounts: AccountsClient;
     readonly iam: IAMClient;
     readonly kms: KMSClient;

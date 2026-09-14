@@ -34,7 +34,22 @@
  *   the staleness check. Used by Refresh buttons.
  */
 
+import type {
+  Artifact,
+  JobAttemptRecord,
+  JobDelivery,
+  JobStageRecord,
+  JobVerificationResult,
+  TaskBlockKind,
+  TaskConclusionReason,
+  TaskSource,
+} from '@quicbaas/sdk';
 import { getSDKClient } from './sdkClient.ts';
+import {
+  announceSessionScopeChange,
+  authStore,
+  onSessionScopeChange,
+} from './auth.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Domain Types (mirror go-quicbaas/pkg/orchestration)
@@ -56,7 +71,7 @@ export type JobState =
   | 'failed';
 
 export type AgentStatus = 'registered' | 'running' | 'idle' | 'offline' | 'error';
-export type TaskStatus = 'pending' | 'claimed' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
+export type TaskStatus = 'pending' | 'claimed' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'blocked';
 export type SessionState = string;
 
 export interface JobAuditEvent {
@@ -93,6 +108,10 @@ export interface JobConfig {
   project_id?: string;
   max_iterations?: number;
   workflow_name?: string;
+  /** task_id is the Task this job was spawned for; absent for lead-driven jobs. */
+  task_id?: string;
+  /** attempt is the 1-based attempt number of task_id this job represents. */
+  attempt?: number;
 }
 
 export interface JobStatus {
@@ -112,6 +131,42 @@ export interface JobStatus {
   config?: JobConfig;
   memory?: JobMemory;
   workflow_name?: string;
+  /** task_id is the Task this job is an attempt at; absent for lead-driven jobs. */
+  task_id?: string;
+  /** attempt is the 1-based ordinal of this job among the task's attempts. */
+  attempt?: number;
+  /** lead_session_id is the lead agent's session; absent until it is spawned. */
+  lead_session_id?: string;
+  /** session_ids lists every session the job has spawned and not yet closed. */
+  session_ids?: string[];
+  /** failure_class classifies a failed job's cause: the environment or the work. */
+  failure_class?: string;
+  /** stage is the last lifecycle moment the job passed through. */
+  stage?: string;
+  /** runner names the JobRunner that drove the job's states; absent means the "workflow" runner. */
+  runner?: string;
+  /** node names the daemon that ran the job's control loop. */
+  node?: string;
+
+  // Provenance — mirrors pkg/orchestration/job_provenance.go. The nested
+  // shapes come from the SDK: one declaration, not a second copy that drifts.
+
+  /** agent_id is the fleet agent the work was dispatched to. */
+  agent_id?: string;
+  /** stages is every lifecycle moment the job entered, in order. */
+  stages?: JobStageRecord[];
+  /** attempts is every attempt at the job's task, oldest first. */
+  attempts?: JobAttemptRecord[];
+  /** attempt_budget is the number of charged attempts the task allows. */
+  attempt_budget?: number;
+  /** terminal_reason is the typed reason the task stopped. */
+  terminal_reason?: TaskConclusionReason;
+  /** readmit_allowed says whether a person may return the task to the queue. */
+  readmit_allowed?: boolean;
+  /** delivery is the git side of the attempt. */
+  delivery?: JobDelivery | null;
+  /** verification is the last validator pipeline's results. */
+  verification?: JobVerificationResult[];
 }
 
 export interface JobEvent {
@@ -150,6 +205,8 @@ export interface SessionInfo {
   state: SessionState;
   created_at: number;
   last_activity: number;
+  /** job_id names the orchestration job this session works for, if any. */
+  job_id?: string;
 }
 
 export interface TaskResult {
@@ -174,6 +231,26 @@ export interface Task {
   created_at: number;
   updated_at: number;
   claimed_at?: number;
+  completed_at?: number;
+  auto_spawn?: boolean;
+  spawned_job_id?: string;
+  spawned_at?: number;
+  // Generic Task model (stage 1a): provenance, attempt accounting, and the
+  // parked-on-a-person state. Absent on the wire until the server carries
+  // them; every view renders an absent field as an em-dash.
+  project_id?: string;
+  output_artifacts?: Artifact[];
+  input_artifacts?: Artifact[];
+  source?: TaskSource;
+  priority?: number;
+  attempts?: number;
+  attempt_budget?: number;
+  environment_faults?: number;
+  consecutive_environment_faults?: number;
+  retry_not_before?: number;
+  blocked_reason?: string;
+  block_kind?: TaskBlockKind;
+  status_changed_at?: number;
 }
 
 export interface BackendCapabilities {
@@ -228,6 +305,20 @@ let jobs: JobStatus[] = $state([]);
 let selectedJob: JobStatus | null = $state(null);
 let jobsLoading = $state(false);
 
+// ONE TASK'S ATTEMPT HISTORY, read from the server rather than sieved out of
+// the tenant-wide list.
+//
+// The tenant list is the recent jobs an operator browses; a task page needs
+// EVERY attempt at ONE task, including the ones that concluded days ago and
+// left memory. Filtering the tenant list for them is the mistake
+// go-quicbaas#822 measured on the burn-in node: a task with three charged
+// attempts rendered "JOBS (0)", because none of its three jobs was among the
+// seven the list happened to hold. The server applies the narrowing now, so
+// the page asks for what it needs.
+let taskJobs: JobStatus[] = $state([]);
+let taskJobsTaskID = $state('');
+let taskJobsLoading = $state(false);
+
 let agents: AgentRegistration[] = $state([]);
 let agentsLoading = $state(false);
 
@@ -236,16 +327,162 @@ let sessionsLoading = $state(false);
 
 let tasks: Task[] = $state([]);
 let tasksLoading = $state(false);
+// The last task fetch failure, kept so the Tasks views can say why the list
+// is empty (a 403 names the missing permission) instead of showing nothing.
+// Cleared by the next successful fetch and by every scope change.
+let tasksError: unknown = $state(null);
 
 let backends: AgentBackendInfo[] = $state([]);
 let health: HealthCheckReport | null = $state(null);
 let events: JobEvent[] = $state([]);
-// 'system' is qrdb's canonical control-plane tenant (qrdbsdk.SystemTenantID),
-// always provisioned at first-boot. The legacy 'default' tenant was permanently
-// retired by qrdb's tenant-isolation refactor, so defaulting to it made every
-// tenant-scoped fetch (agents, jobs, sessions, tasks) return an empty list until
-// the user manually switched tenants.
-let activeTenantID = $state('system');
+/**
+ * qrdb's canonical control-plane tenant (qrdbsdk.SystemTenantID), always
+ * provisioned at first boot. It is the LAST RESORT only — the tenant to address
+ * when there is no session to read one from (Wails desktop, where auth is
+ * OS-level and no bearer exists, and the pre-login window in the browser).
+ */
+export const SYSTEM_TENANT_ID = 'system';
+
+/**
+ * Tenant the operator explicitly selected in the header switcher, and the
+ * session identity that selection was made under.
+ *
+ * The pair is what scopes an override to one session. An override is a
+ * deliberate act by someone permitted to see other tenants; it is NOT a stored
+ * preference, and it must not outlive the session it was made in. When a
+ * different session takes over, the recorded identity stops matching and the
+ * override lapses on its own — no logout hook to forget, and no chance of a
+ * stale selection sending the next operator's queries at a tenant they cannot
+ * see.
+ *
+ * The identity is the principal's `uid` AND their tenant, not the tenant alone.
+ * Two people can share a tenant: a system admin who selects `burnin`, signs out,
+ * and hands the tab to a second system admin would otherwise pass their
+ * selection along, because the tenant claim alone cannot tell the two apart.
+ */
+let tenantOverride = $state('');
+let tenantOverrideBase = $state('');
+
+/** Identity an override belongs to: this principal, in this tenant. */
+function sessionIdentity(): string {
+  return authStore.sessionKey;
+}
+
+/**
+ * Who the cached data belongs to: the session that asked for it, and the tenant
+ * it was asked about.
+ *
+ * Both halves are needed. The tenant alone cannot separate two principals who
+ * share one, and the session alone cannot separate the tenants a system admin
+ * switches between. Everything below — the cached arrays, the freshness
+ * timestamps, and every in-flight request — is tagged with this and is only
+ * valid while it still matches.
+ */
+function currentScope(): string {
+  return `${sessionIdentity()}\u0000${currentTenantID()}`;
+}
+
+/**
+ * The scope key anything tenant-scoped should be tagged with.
+ *
+ * Exported because the two sibling stores (agentStore, sessionStore) keep their
+ * own SDK-typed caches of the same data and read their tenant from here. They
+ * need the SAME key, not a second definition of it: a store that computed its
+ * own notion of "whose data is this" would drift from this one, and the whole
+ * point is that every cache in the app agrees on when it has gone stale.
+ */
+export function tenantScope(): string {
+  return currentScope();
+}
+
+/**
+ * Scope the cached arrays and freshness timestamps currently belong to.
+ *
+ * Empty at startup: nothing has been fetched, so nothing is in scope, and the
+ * getters correctly report empty rather than claiming the initial [] belongs to
+ * whoever signs in first.
+ */
+let _dataScope = $state('');
+
+/** Whether the cached data still belongs to the session and tenant in effect. */
+function _inScope(): boolean {
+  return _dataScope === currentScope();
+}
+
+// Any scope change — a session beginning or ending, or the operator switching
+// tenant — releases everything tenant-scoped immediately rather than leaving it
+// to the next load, and then asks for the replacement. The scope key already
+// makes the old data UNREACHABLE; this is what makes "signing out clears
+// protected data" and "switching tenant shows the new tenant" things the code
+// does.
+//
+// The refetch is skipped when there is no session to fetch for: a sign-out would
+// otherwise fire four requests nobody is waiting for, against a credential that
+// has just been thrown away.
+onSessionScopeChange(() => {
+  _enforceScope();
+  if (authStore.status === 'authenticated') void refresh();
+});
+
+/**
+ * Stable empty arrays handed out when the cache is out of scope.
+ *
+ * Module constants rather than fresh `[]` literals: a getter that allocated a
+ * new array on every read would change identity on every read, and any $derived
+ * or $effect comparing it would re-run forever.
+ */
+const NO_JOBS: JobStatus[] = [];
+const NO_AGENTS: AgentRegistration[] = [];
+const NO_SESSIONS: SessionInfo[] = [];
+const NO_TASKS: Task[] = [];
+const NO_EVENTS: JobEvent[] = [];
+
+/**
+ * Drop everything belonging to a session or tenant that is no longer in effect.
+ *
+ * Called before every load, so the corrective fetch after a change is never
+ * suppressed by the previous scope's freshness timestamps: tenant A loads jobs,
+ * signs out, tenant B signs in, and B's first load must go to the network rather
+ * than being told the 15-second-old data is fresh.
+ *
+ * The getters gate on scope independently, so B never RENDERS A's rows even in
+ * the window before this runs. This is what releases them.
+ */
+function _enforceScope(): void {
+  const scope = currentScope();
+  if (scope === _dataScope) return;
+  _dataScope = scope;
+  jobs = [];
+  selectedJob = null;
+  taskJobs = [];
+  taskJobsTaskID = '';
+  agents = [];
+  sessions = [];
+  tasks = [];
+  tasksError = null;
+  events = [];
+  _jobsFetchedAt = 0;
+  _agentsFetchedAt = 0;
+  _sessionsFetchedAt = 0;
+  _tasksFetchedAt = 0;
+}
+
+/**
+ * The tenant every orchestrator query is scoped to.
+ *
+ * The session's `tenant_id` claim is the source of truth, re-derived from the
+ * bearer on every load rather than remembered (go-quicbaas#309: this was pinned
+ * to the literal 'system', so an operator authenticated into any other tenant
+ * queried a tenant they are not in and got 403s and empty Agent Fleet, Sessions,
+ * Tasks, Workflows and Jobs views).
+ */
+function currentTenantID(): string {
+  const claim = authStore.tenantID;
+  if (tenantOverride !== '' && tenantOverrideBase === sessionIdentity()) {
+    return tenantOverride;
+  }
+  return claim !== '' ? claim : SYSTEM_TENANT_ID;
+}
 
 // Per-resource timestamps of the last successful fetch (ms since epoch).
 // 0 means never fetched.
@@ -265,19 +502,32 @@ let _tabVisible = true;
 // ---------------------------------------------------------------------------
 
 export const orchestratorStore = {
-  get jobs() { return jobs; },
-  get selectedJob() { return selectedJob; },
+  // Every tenant-scoped getter reports empty the instant the cache stops
+  // belonging to the session and tenant in effect. That is what stops a new
+  // operator's shell from rendering the previous one's jobs, agents, sessions
+  // and tasks in the window before the corrective fetch lands — the check is on
+  // the READ, so there is no window at all.
+  //
+  // backends and health are node-level, not tenant-scoped, and are not gated.
+  get jobs() { return _inScope() ? jobs : NO_JOBS; },
+  get selectedJob() { return _inScope() ? selectedJob : null; },
   get jobsLoading() { return jobsLoading; },
-  get agents() { return agents; },
+  /** The attempts at the task named by taskJobsTaskID, newest first. */
+  get taskJobs() { return _inScope() ? taskJobs : NO_JOBS; },
+  /** The task taskJobs belongs to; '' when none has been read. */
+  get taskJobsTaskID() { return _inScope() ? taskJobsTaskID : ''; },
+  get taskJobsLoading() { return taskJobsLoading; },
+  get agents() { return _inScope() ? agents : NO_AGENTS; },
   get agentsLoading() { return agentsLoading; },
-  get sessions() { return sessions; },
+  get sessions() { return _inScope() ? sessions : NO_SESSIONS; },
   get sessionsLoading() { return sessionsLoading; },
-  get tasks() { return tasks; },
+  get tasks() { return _inScope() ? tasks : NO_TASKS; },
   get tasksLoading() { return tasksLoading; },
+  get tasksError() { return _inScope() ? tasksError : null; },
   get backends() { return backends; },
   get health() { return health; },
-  get events() { return events; },
-  get activeTenantID() { return activeTenantID; },
+  get events() { return _inScope() ? events : NO_EVENTS; },
+  get activeTenantID() { return currentTenantID(); },
 };
 
 // ---------------------------------------------------------------------------
@@ -304,8 +554,30 @@ function dedupeBy<T>(arr: T[], keyFn: (item: T) => string): T[] {
 export function setJobs(j: JobStatus[] | null | undefined): void {
   jobs = Array.isArray(j) ? dedupeBy(j, (x) => x.job_id) : [];
   _jobsFetchedAt = Date.now();
+  // The job records carry their own audit trail, and it is the only history the
+  // event log can have: the live stream only delivers what happens while the
+  // page is open. Seeding here — the one place job records enter the store —
+  // means every reader of `events` is populated on first paint.
+  seedEventsFromJobs(jobs);
 }
-export function selectJob(j: JobStatus | null): void { selectedJob = j; }
+/**
+ * _selectedJobRequest is the job the selection is currently FOR.
+ *
+ * Scope alone is not enough to reject a late answer. Two job detail pages in
+ * one tenant share a scope, and the route effect fires a read on every
+ * `#/jobs/:id`, so a slow `GetJobStatus(job-a)` can land after the operator
+ * has already navigated to job-b and overwrite the selection with job A's
+ * terminal reason, delivery, verification and readmit state — under job B's
+ * URL, with job B's Cancel and Readmit buttons. Every read and every direct
+ * selection claims this, and an answer whose claim has been superseded is
+ * dropped.
+ */
+let _selectedJobRequest = '';
+
+export function selectJob(j: JobStatus | null): void {
+  _selectedJobRequest = j?.job_id ?? '';
+  selectedJob = j;
+}
 export function setAgents(a: AgentRegistration[] | null | undefined): void {
   agents = Array.isArray(a) ? dedupeBy(a, (x) => x.id) : [];
   _agentsFetchedAt = Date.now();
@@ -325,19 +597,198 @@ export function setHealth(h: HealthCheckReport): void {
   health = h;
   _healthFetchedAt = Date.now();
 }
-export function setActiveTenant(id: string): void { activeTenantID = id; }
+/**
+ * Point the orchestrator views at `id` for the remainder of THIS session.
+ *
+ * Only reachable from the header switcher, whose options the server decides
+ * (see MainApp): a principal who cannot enumerate tenants is offered only their
+ * own. Passing the session's own tenant clears the override rather than pinning
+ * it, so returning to your own tenant leaves nothing behind to expire.
+ */
+export function setActiveTenant(id: string): void {
+  if (id === '' || id === authStore.tenantID) {
+    tenantOverride = '';
+    tenantOverrideBase = '';
+  } else {
+    tenantOverride = id;
+    tenantOverrideBase = sessionIdentity();
+  }
+  // Switching tenant changes the scope every cached collection is keyed on, in
+  // this store and in the sibling stores that hold their own. Announcing it on
+  // the shared bus is what lets the switcher stay one line: each store releases
+  // and refetches itself, and a store added later is served by registering
+  // rather than by someone remembering to extend a list here.
+  announceSessionScopeChange();
+}
 export function setJobsLoading(v: boolean): void { jobsLoading = v; }
 export function setAgentsLoading(v: boolean): void { agentsLoading = v; }
 export function setSessionsLoading(v: boolean): void { sessionsLoading = v; }
 export function setTasksLoading(v: boolean): void { tasksLoading = v; }
 
+/**
+ * eventKey identifies one event in the log — the same shape EventLog keys its
+ * `{#each}` on. Two events sharing a key are one entry to the Svelte
+ * reconciler, so every writer into `events` owes the log uniqueness under this
+ * key or the render dies with each_key_duplicate; having one definition of it
+ * here is what lets both writers check.
+ */
+function eventKey(e: JobEvent): string {
+  return `${e.timestamp}:${e.job_id}:${e.type}:${e.iteration}`;
+}
+
 export function appendEvent(e: JobEvent): void {
-  const key = `${e.timestamp}:${e.job_id}:${e.type}:${e.iteration}`;
+  // An event that only announces a state carries no `type` of its own. The
+  // log renders `type` as the event's label and the dedupe key reads it, so
+  // the fallback is applied once here rather than at every reader — an
+  // untyped event used to show as a blank chip and collide with every other
+  // untyped event of the same instant.
+  const event: JobEvent = e.type ? e : { ...e, type: e.state };
+  const key = eventKey(event);
   // Guard against duplicate events (e.g. SSE stream reconnect replay).
-  if (events.some((ev) => `${ev.timestamp}:${ev.job_id}:${ev.type}:${ev.iteration}` === key)) {
+  if (events.some((ev) => eventKey(ev) === key)) {
     return;
   }
-  events = [...events.slice(-(MAX_EVENTS - 1)), e];
+  events = [...events.slice(-(MAX_EVENTS - 1)), event];
+}
+
+/**
+ * auditContentKey identifies an audit line by WHAT IT SAYS rather than by when
+ * it was recorded: the job it belongs to, the type it announced, and its detail.
+ *
+ * The two paths an audit line reaches the UI by disagree about its timestamp.
+ * The persisted line carries the instant `JobRun.Audit` recorded it; the live
+ * fan-out of the same line (AuditFn -> publishEvent, pkg/orchestration/
+ * job_envelope.go) stamps `time.Now()` again when it pushes to subscribers. So
+ * the render key cannot recognise a seeded line as the one already streamed —
+ * the two differ by microseconds — and seeding would double every event the
+ * page had already watched arrive. Content identity is what the two paths do
+ * agree on.
+ */
+function auditContentKey(e: JobEvent): string {
+  return `${e.job_id}\u0000${e.type}\u0000${e.message}`;
+}
+
+/**
+ * seedEventsFromJobs fills the event log from the audit trail the job records
+ * already carry.
+ *
+ * Without this the log held only what the SSE stream delivered while the page
+ * happened to be open, so a dashboard opened after the work ran said "No events
+ * yet" about a job with a full history behind it (go-quicbaas#850).
+ *
+ * Seeded lines go BEFORE the live ones and the overflow is taken off the front,
+ * so a job with a long trail can never evict an event that arrived live: the
+ * seed is history, the stream is the present, and when only one of them fits it
+ * is the present that must survive.
+ *
+ * Private on purpose: setJobs is the one door job records come through, so
+ * there is nowhere else a seed could be needed, and no way to seed the log from
+ * records the store is not holding.
+ */
+function seedEventsFromJobs(list: readonly JobStatus[]): void {
+  const seeded: JobEvent[] = [];
+  for (const job of list) {
+    if (!job.job_id || !Array.isArray(job.events)) continue;
+    for (const line of job.events) {
+      if (typeof line?.type !== 'string' || line.type === '') continue;
+      if (typeof line.timestamp !== 'number' || !Number.isFinite(line.timestamp)) continue;
+      seeded.push({
+        job_id: job.job_id,
+        type: line.type,
+        // An audit line announces a moment, not a state. The log renders the
+        // state badge only when there is one, so the empty state is the honest
+        // value rather than a guess at the job's state when the line was cut.
+        state: '' as JobState,
+        message: line.details ?? '',
+        iteration: 0,
+        timestamp: line.timestamp,
+      });
+    }
+  }
+  if (seeded.length === 0) return;
+
+  // Two guards, because they catch different things: content identity rejects a
+  // line already delivered by the stream (and a re-seed on the next poll), and
+  // the render key rejects a pair that would collide in the reconciler.
+  const byContent = new Set(events.map(auditContentKey));
+  const byRenderKey = new Set(events.map(eventKey));
+  const fresh: JobEvent[] = [];
+  for (const event of seeded) {
+    const content = auditContentKey(event);
+    const render = eventKey(event);
+    if (byContent.has(content) || byRenderKey.has(render)) continue;
+    byContent.add(content);
+    byRenderKey.add(render);
+    fresh.push(event);
+  }
+  if (fresh.length === 0) return;
+
+  fresh.sort((a, b) => a.timestamp - b.timestamp);
+  events = [...fresh, ...events].slice(-MAX_EVENTS);
+}
+
+/**
+ * jobEventPatch is what an event says about the job's own record: its state,
+ * how far it has iterated, and the lifecycle moment it is in (carried in the
+ * event metadata, since a stage is not a state). Returns null when the event
+ * says nothing about any of the three, so a caller can skip the write.
+ */
+function jobEventPatch(e: JobEvent): Partial<JobStatus> | null {
+  const patch: Partial<JobStatus> = {};
+  // The wire is untyped, and an event that only announces a stage carries no
+  // state at all. `JobState` has no empty member, so the emptiness check is
+  // made on the string before it is read back as a state.
+  const state: string = e.state ?? '';
+  if (state !== '') patch.state = state as JobState;
+  if (typeof e.iteration === 'number' && Number.isFinite(e.iteration)) patch.iteration = e.iteration;
+  const stage = e.metadata?.['stage'];
+  if (typeof stage === 'string' && stage !== '') patch.stage = stage;
+  return Object.keys(patch).length === 0 ? null : patch;
+}
+
+/**
+ * applyJobEvent patches the job the event belongs to so the views move with
+ * the stream instead of waiting up to 30 s for the next poll. It updates the
+ * row in the list AND the selected job, which are distinct objects once a
+ * poll has replaced the list under an open detail view.
+ *
+ * It never creates a job: an event for a job this tenant's list does not hold
+ * is recorded in the event log and changes nothing else.
+ */
+export function applyJobEvent(e: JobEvent): void {
+  if (typeof e?.job_id !== 'string' || e.job_id === '') return;
+  const patch = jobEventPatch(e);
+  if (patch === null) return;
+
+  const idx = jobs.findIndex((j) => j.job_id === e.job_id);
+  if (idx !== -1) {
+    const patched = { ...jobs[idx], ...patch } as JobStatus;
+    jobs = [...jobs.slice(0, idx), patched, ...jobs.slice(idx + 1)];
+  }
+  if (selectedJob !== null && selectedJob.job_id === e.job_id) {
+    // THE PATCH IS STATE, AND THE OUTCOME IS NOT STATE. jobEventPatch carries
+    // the state, the iteration and the stage; the delivery, the review
+    // rounds, the typed terminal reason, the readmit permission, the attempt
+    // history and the verification exist only on GetJobStatus (see
+    // loadSelectedJob). So an operator WATCHING an sdlc job finish saw it go
+    // `failed` with every one of those panels still empty, and the stream was
+    // released at the same moment — nothing would have filled them in until
+    // the page was navigated again. The transition into a terminal state is
+    // exactly when the provenance becomes final, so it is re-read there.
+    const wasRunning = !isTerminalJobState(selectedJob.state);
+    selectedJob = { ...selectedJob, ...patch };
+    if (wasRunning && isTerminalJobState(selectedJob.state)) {
+      void loadSelectedJob(selectedJob.job_id);
+    }
+  }
+}
+
+/**
+ * isTerminalJobState says the job has stopped for good: nothing more will be
+ * emitted for it, so pollers, filters and event streams can let it go.
+ */
+export function isTerminalJobState(state: JobState): boolean {
+  return state === 'completed' || state === 'failed';
 }
 
 export function clearEvents(): void { events = []; }
@@ -347,10 +798,17 @@ export function clearEvents(): void { events = []; }
 // ---------------------------------------------------------------------------
 
 async function _fetchJobs(): Promise<void> {
+  // Pin BOTH the tenant asked about and the scope it is asked for, before any
+  // await. Reading the tenant after the await would send the request for
+  // whoever is signed in by then while the guard still judged it against the
+  // scope at entry — the URL and the verdict have to describe the same request.
+  const scope = currentScope();
+  const tenantID = currentTenantID();
   jobsLoading = true;
   try {
     const client = await getSDKClient();
-    const result = await client.orchestrator.listJobs(activeTenantID);
+    const result = await client.orchestrator.listJobs(tenantID);
+    if (scope !== currentScope()) return;
     setJobs(result);
   } catch {
     // Silently ignore transient errors; the next poll will retry.
@@ -360,10 +818,13 @@ async function _fetchJobs(): Promise<void> {
 }
 
 async function _fetchAgents(): Promise<void> {
+  const scope = currentScope();
+  const tenantID = currentTenantID();
   agentsLoading = true;
   try {
     const client = await getSDKClient();
-    const resp = await client.orchestrator.listAgents({ tenant_id: activeTenantID });
+    const resp = await client.orchestrator.listAgents({ tenant_id: tenantID });
+    if (scope !== currentScope()) return;
     setAgents(resp.agents ?? []);
   } catch {
     // Silently ignore.
@@ -373,10 +834,13 @@ async function _fetchAgents(): Promise<void> {
 }
 
 async function _fetchSessions(): Promise<void> {
+  const scope = currentScope();
+  const tenantID = currentTenantID();
   sessionsLoading = true;
   try {
     const client = await getSDKClient();
-    const resp = await client.orchestrator.listSessions({ tenantID: activeTenantID });
+    const resp = await client.orchestrator.listSessions({ tenantID });
+    if (scope !== currentScope()) return;
     setSessions(resp.sessions ?? []);
   } catch {
     // Silently ignore.
@@ -386,13 +850,17 @@ async function _fetchSessions(): Promise<void> {
 }
 
 async function _fetchTasks(): Promise<void> {
+  const scope = currentScope();
+  const tenantID = currentTenantID();
   tasksLoading = true;
   try {
     const client = await getSDKClient();
-    const result = await client.orchestrator.listTasks(activeTenantID);
+    const result = await client.orchestrator.listTasks(tenantID);
+    if (scope !== currentScope()) return;
     setTasks(result);
-  } catch {
-    // Silently ignore.
+    tasksError = null;
+  } catch (err: unknown) {
+    if (scope === currentScope()) tasksError = err;
   } finally {
     tasksLoading = false;
   }
@@ -417,26 +885,118 @@ async function _fetchHealth(): Promise<void> {
  * Returns immediately if the cache is fresh.
  */
 export async function loadJobs(): Promise<void> {
+  _enforceScope();
   if (Date.now() - _jobsFetchedAt < STALE_AFTER_MS) return;
   await _fetchJobs();
 }
 
+/**
+ * loadSelectedJob reads ONE job through `GetJobStatus` and makes it the
+ * selection.
+ *
+ * THE LIST IS NOT ENOUGH, and this is not an optimisation. `ListJobs` returns
+ * the raw persisted statuses (pkg/orchestration/orchestrator.go); only
+ * `GetJobStatus` lays the task's provenance over them — the attempt history,
+ * the attempt budget, the typed terminal reason, whether the task may be
+ * readmitted, and the delivery with its pull request and review rounds. A
+ * detail page populated from the list therefore renders every one of those
+ * panels empty, which is the whole feature missing (go-quicbaas#796).
+ *
+ * The list record is still used as an immediate placeholder by the caller, so
+ * the page paints at once and fills in when this returns.
+ *
+ * A read that fails leaves whatever is already selected in place: the list
+ * record without provenance is worse than the enriched one and better than a
+ * blank page.
+ */
+export async function loadSelectedJob(jobID: string): Promise<void> {
+  if (jobID === '') return;
+  const scope = currentScope();
+  const tenantID = currentTenantID();
+  _selectedJobRequest = jobID;
+  try {
+    const client = await getSDKClient();
+    const job = await client.orchestrator.getJobStatus(tenantID, jobID);
+    // The operator may have switched tenant, or moved to ANOTHER JOB, during
+    // the round trip. A late answer must not select a job for a scope that is
+    // no longer the one asking, nor for a page the operator has already left:
+    // both would put one job's record under another job's URL and controls.
+    if (scope !== currentScope() || _selectedJobRequest !== jobID) return;
+    if (job !== null && job !== undefined && job.job_id === jobID) {
+      // The SDK types the optional members as `T | null`; the store's own
+      // copy types them as `T | undefined`. Normalising here is narrower —
+      // and more honest — than casting the whole record through `unknown`.
+      selectedJob = {
+        ...job,
+        config: job.config ?? undefined,
+        // The store keeps its own looser copy of the job record, and its
+        // JobMemory is an open bag where the SDK's is the concrete four-field
+        // shape. TypeScript will not assign an interface into an
+        // index-signature type, so the one member that differs is converted
+        // here rather than casting the whole record through `unknown` — the
+        // same adoption `setJobs` performs for the list.
+        memory: (job.memory ?? undefined) as JobMemory | undefined,
+      };
+    }
+  } catch {
+    // Leave the placeholder selection alone; the next route visit retries.
+  }
+}
+
 /** loadAgents fetches agents only when cached data is stale. */
 export async function loadAgents(): Promise<void> {
+  _enforceScope();
   if (Date.now() - _agentsFetchedAt < STALE_AFTER_MS) return;
   await _fetchAgents();
 }
 
 /** loadSessions fetches sessions only when cached data is stale. */
 export async function loadSessions(): Promise<void> {
+  _enforceScope();
   if (Date.now() - _sessionsFetchedAt < STALE_AFTER_MS) return;
   await _fetchSessions();
 }
 
 /** loadTasks fetches tasks only when cached data is stale. */
 export async function loadTasks(): Promise<void> {
+  _enforceScope();
   if (Date.now() - _tasksFetchedAt < STALE_AFTER_MS) return;
   await _fetchTasks();
+}
+
+/**
+ * loadTaskJobs reads every job that ran one task — the task's attempt
+ * history — and makes it the task-scoped selection.
+ *
+ * UNCONDITIONAL, no staleness window: the caller is a task page that has just
+ * been opened or reloaded, and each call is for a different task. A window
+ * keyed on time rather than on the task asked for would answer the second
+ * task with the first one's attempts.
+ *
+ * A read that fails leaves the previous answer in place and records the task
+ * anyway, so the page reports "no records could be read" rather than
+ * asserting the task never dispatched.
+ */
+export async function loadTaskJobs(taskID: string): Promise<void> {
+  if (taskID === '') return;
+  _enforceScope();
+  const scope = currentScope();
+  const tenantID = currentTenantID();
+  taskJobsLoading = true;
+  try {
+    const client = await getSDKClient();
+    const result = await client.orchestrator.listJobs(tenantID, taskID);
+    // The operator may have navigated to another task during the round trip;
+    // a late answer must not become the attempt history of the task now open.
+    if (scope !== currentScope()) return;
+    taskJobs = Array.isArray(result) ? dedupeBy(result, (x) => x.job_id) : [];
+    taskJobsTaskID = taskID;
+  } catch {
+    taskJobs = [];
+    taskJobsTaskID = taskID;
+  } finally {
+    taskJobsLoading = false;
+  }
 }
 
 /** loadHealth fetches the health report only when cached data is stale. */
@@ -454,6 +1014,7 @@ export async function loadHealth(): Promise<void> {
  * or all resources when called without arguments. Used by Refresh buttons.
  */
 export async function refresh(resource?: OrchestratorResource): Promise<void> {
+  _enforceScope();
   switch (resource) {
     case 'jobs':     return _fetchJobs();
     case 'agents':   return _fetchAgents();
@@ -556,11 +1117,20 @@ export function stopOrchestratorPolling(): void {
  */
 export function resetOrchestratorStore(): void {
   stopOrchestratorPolling();
+  tenantOverride = '';
+  tenantOverrideBase = '';
+  // Back to "nothing here belongs to anyone", the startup state. Leaving the
+  // old scope behind would let the next session's first read match a cache that
+  // has just been emptied, which is harmless today but only by luck.
+  _dataScope = '';
   jobs = [];
   selectedJob = null;
+  taskJobs = [];
+  taskJobsTaskID = '';
   agents = [];
   sessions = [];
   tasks = [];
+  tasksError = null;
   backends = [];
   health = null;
   events = [];

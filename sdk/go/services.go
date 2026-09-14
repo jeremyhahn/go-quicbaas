@@ -338,7 +338,7 @@ type identityService struct {
 	c *client
 }
 
-func (s *identityService) IAM() IAMClient { return s.c.IAM() }
+func (s *identityService) IAM() IAMClient { return s.c.iam() }
 
 // searchService delegates SearchService methods to the underlying client.
 type searchService struct {

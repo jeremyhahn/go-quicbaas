@@ -49,8 +49,8 @@ func TestAppKey_TenantScopedByClientID(t *testing.T) {
 	assert.Equal(t, "tenant-b", gotB.TenantID)
 
 	// The clientID parser extracts the tenant.
-	assert.Equal(t, "tenant-a", tenantFromClientID("app_tenant-a_abc123"))
-	assert.Equal(t, "", tenantFromClientID("not-an-app-id"))
+	assert.Equal(t, "tenant-a", TenantFromClientID("app_tenant-a_abc123"))
+	assert.Equal(t, "", TenantFromClientID("not-an-app-id"))
 }
 
 // Scenario (e): OAuth token validation derives the tenant from the JWT

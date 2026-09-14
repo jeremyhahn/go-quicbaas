@@ -38,18 +38,36 @@
  *   • single-flight — concurrent 401s share one renewal (refreshAccessToken
  *     owns that lock), so a page that fires ten parallel requests performs one
  *     refresh, not ten.
- *   • replay at most once — a retried request that 401s again is returned
- *     as-is. The session is over; the route guard takes the user to /login.
- *   • the refresh call itself is never intercepted (no recursion).
+ *   • replay at most once, and a replay that 401s ENDS the session. A bearer
+ *     minted seconds ago and refused by the very next call is not a stale
+ *     token, so renewing again cannot help: clear the credentials once and
+ *     record why. That terminal state is what bounds the loop, and the bound
+ *     is structural rather than a retry counter — once the credentials are
+ *     gone isRenewable() is false for every subsequent request, so no further
+ *     renewal is even attempted. The end is scoped to the session it was
+ *     decided for (endSessionIfCurrent), because two awaits separate the
+ *     verdict from acting on it. Before any of this, refresh→200→validate→401
+ *     repeated at request rate with no backoff and no end (go-quicbaas#256:
+ *     >1000 requests in about a minute, every view empty, the operator bounced
+ *     to login with a stale banner).
+ *   • the refresh call itself is never intercepted (no recursion). The path is
+ *     imported from the auth store rather than restated here: when the renewal
+ *     endpoint moved (go-quicbaas#221) a second copy of the literal would have
+ *     silently stopped matching, and the interceptor would recurse on the very
+ *     request that ends the recursion.
  *   • unauthenticated requests (no Authorization header and no stored session)
  *     are passed straight through: a 401 from a public endpoint is a real
  *     answer, not a stale-token symptom.
  */
 
-import { refreshAccessToken, readAuthToken, readRefreshToken } from './auth.svelte.ts';
-
-/** Path of the renewal endpoint, which must never be intercepted. */
-const REFRESH_PATH = '/api/v1/auth/refresh';
+import {
+  REFRESH_PATH,
+  endSessionIfCurrent,
+  refreshAccessToken,
+  readAuthToken,
+  readRefreshToken,
+  sessionGeneration,
+} from './auth.svelte.ts';
 
 /** Prefix identifying API requests that carry a session bearer. */
 const API_PREFIX = '/api/';
@@ -121,13 +139,36 @@ export function installAuthFetch(): void {
     const resp = await original(input, init);
     if (resp.status !== 401 || !isRenewable(input, init)) return resp;
 
+    // Snapshot BEFORE the renewal: everything below is a verdict about the
+    // session as it stands now, and two awaits separate it from acting on that
+    // verdict.
+    const snapshot = sessionGeneration();
+
     // Single-flight: concurrent 401s all await the same renewal.
     const token = await refreshAccessToken();
     if (!token) return resp;
 
     // A Request input carries its own (now stale) Authorization header, so
     // rebuild it from the URL to guarantee the replay uses the new bearer.
-    return original(requestURL(input), withBearer(init, token));
+    const replay = await original(requestURL(input), withBearer(init, token));
+    if (replay.status !== 401) return replay;
+
+    // Terminal state. The server minted this bearer moments ago and refused
+    // it on the very next call, so the credential is not what is wrong and a
+    // further renewal would only repeat the exchange. End the session with the
+    // reason attached.
+    //
+    // Scoped to the session this chain started in. A burst of concurrent 401s
+    // shares one renewal and arrives here together, so the first to land ends
+    // the session and the generation bump makes the rest no-ops; and a chain
+    // whose replay resolves only after the user has signed in again cannot
+    // clear the new session out from under them.
+    endSessionIfCurrent(
+      snapshot,
+      'Your session was renewed but the server rejected the new credentials. ' +
+        'Please sign in again.',
+    );
+    return replay;
   };
 
   _installed = true;

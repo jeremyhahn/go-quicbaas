@@ -388,130 +388,6 @@ func TestCovP7_StartTimeSeries_WithNilStorage(t *testing.T) {
 
 // TestCovP7_StartVector_NilStorage covers lifecycle_vector.go L77-103
 // (startVector when vectorStorage is nil and vector is enabled).
-// =============================================================================
-// Shared test helpers for full-tags coverage tests.
-// These are used by coverage_fulltags_phase2_test.go and coverage_push_91_phase*_test.go.
-// =============================================================================
-
-// saveAndRestoreSeams snapshots all seam injection variables and restores
-// them via t.Cleanup, preventing inter-test pollution.
-func saveAndRestoreSeams(t *testing.T) {
-	t.Helper()
-
-	seamMu.Lock()
-
-	// Base seams from lifecycle.go
-	origListenFunc := listenFunc
-	origNewGRPCAPI := newGRPCAPI
-	origGrpcStopTimeout := grpcStopTimeout
-	origGrpcGracefulStop := grpcGracefulStop
-	origGrpcForceStop := grpcForceStop
-	origNewSecretsMgr := newSecretsMgr
-	origNewCatalogStore := newCatalogStore
-	origNewCatalogMgr := newCatalogMgr
-	origNewBackendMgr := newBackendMgr
-	origNewReplicationWorkerFn := newReplicationWorkerFn
-	origNewArchiveWorkerFn := newArchiveWorkerFn
-	origNewVerifyWorkerFn := newVerifyWorkerFn
-	origNewRetentionWorkerFn := newRetentionWorkerFn
-	origCloseBackupMgrFn := closeBackupMgrFn
-	origNewKMSKeyStorage := newKMSKeyStorage
-	origBuildKMSServiceBackendFn := buildKMSServiceBackendFn
-	origInitXKMS := initXKMS
-	origRegisterXKMSBackendFn := registerXKMSBackendFn
-	origNewKMSBackendFactory := newKMSBackendFactory
-	origNewKMSServiceFn := newKMSServiceFn
-	origNewCacheManagerFn := newCacheManagerFn
-	origInitSealManagerFn := initSealManagerFn
-	origNewWatchBridgeFn := newWatchBridgeFn
-	origInitIAMComponentsFn := initIAMComponentsFn
-	origNewKMSDEKProviderFn := newKMSDEKProviderFn
-	origNewEncryptionManagerFn := newEncryptionManagerFn
-	origNewReencryptWorkerSeamFn := newReencryptWorkerSeamFn
-	origValidateRoutingFn := validateRoutingFn
-	origInitFromXKMSFn := initFromXKMSFn
-	origWorkerMgrRegisterFn := workerMgrRegisterFn
-	origWorkerMgrStartAllFn := workerMgrStartAllFn
-	origPushServiceStartFn := pushServiceStartFn
-	origWatchBridgeStartFn := watchBridgeStartFn
-	origNewCAFn := newCAFn
-	origNewSealManagerFn := newSealManagerFn
-	origInitializeCAFn := initializeCAFn
-
-	// REST seams from lifecycle_rest.go
-	origNewREST := newREST
-	origRESTShutdownFn := restShutdownFn
-
-	// MCP seams from lifecycle_mcp.go
-	origNewMCP := newMCP
-
-	seamMu.Unlock()
-
-	t.Cleanup(func() {
-		seamMu.Lock()
-		defer seamMu.Unlock()
-
-		// Restore base seams
-		listenFunc = origListenFunc
-		newGRPCAPI = origNewGRPCAPI
-		grpcStopTimeout = origGrpcStopTimeout
-		grpcGracefulStop = origGrpcGracefulStop
-		grpcForceStop = origGrpcForceStop
-		newSecretsMgr = origNewSecretsMgr
-		newCatalogStore = origNewCatalogStore
-		newCatalogMgr = origNewCatalogMgr
-		newBackendMgr = origNewBackendMgr
-		newReplicationWorkerFn = origNewReplicationWorkerFn
-		newArchiveWorkerFn = origNewArchiveWorkerFn
-		newVerifyWorkerFn = origNewVerifyWorkerFn
-		newRetentionWorkerFn = origNewRetentionWorkerFn
-		closeBackupMgrFn = origCloseBackupMgrFn
-		newKMSKeyStorage = origNewKMSKeyStorage
-		buildKMSServiceBackendFn = origBuildKMSServiceBackendFn
-		initXKMS = origInitXKMS
-		registerXKMSBackendFn = origRegisterXKMSBackendFn
-		newKMSBackendFactory = origNewKMSBackendFactory
-		newKMSServiceFn = origNewKMSServiceFn
-		newCacheManagerFn = origNewCacheManagerFn
-		initSealManagerFn = origInitSealManagerFn
-		newWatchBridgeFn = origNewWatchBridgeFn
-		initIAMComponentsFn = origInitIAMComponentsFn
-		newKMSDEKProviderFn = origNewKMSDEKProviderFn
-		newEncryptionManagerFn = origNewEncryptionManagerFn
-		newReencryptWorkerSeamFn = origNewReencryptWorkerSeamFn
-		validateRoutingFn = origValidateRoutingFn
-		initFromXKMSFn = origInitFromXKMSFn
-		workerMgrRegisterFn = origWorkerMgrRegisterFn
-		workerMgrStartAllFn = origWorkerMgrStartAllFn
-		pushServiceStartFn = origPushServiceStartFn
-		watchBridgeStartFn = origWatchBridgeStartFn
-		newCAFn = origNewCAFn
-		newSealManagerFn = origNewSealManagerFn
-		initializeCAFn = origInitializeCAFn
-
-		// Restore REST seams
-		newREST = origNewREST
-		restShutdownFn = origRESTShutdownFn
-
-		// Restore MCP seams
-		newMCP = origNewMCP
-	})
-}
-
-// createFTServerWithService creates a test server with a mock QuicBaaS
-// service assigned, suitable for tests that need a fully wired server
-// without running the full initialization lifecycle.
-func createFTServerWithService(t *testing.T) *Server {
-	t.Helper()
-	cfg := createTestConfig(t)
-	t.Cleanup(func() { cleanupTestData(t, cfg) })
-
-	srv, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	srv.quicBaaSService = testutil.NewMockQuicBaaS()
-	return srv
-}
 
 // =============================================================================
 // Phase 9: Push from 88.3% to 91%+
@@ -1232,9 +1108,16 @@ func TestP15_Initialize_StartCatalogManagerError(t *testing.T) {
 	t.Logf("initialize error (expected): %v", err)
 }
 
-// TestP15_Initialize_IAMComponentsWarnPath covers lifecycle.go L1197-1199
-// (initIAMComponents returns error, which is non-fatal and just logs a warning).
-func TestP15_Initialize_IAMComponentsWarnPath(t *testing.T) {
+// TestP15_Initialize_IAMComponentsFailureAbortsBoot drives a real initialize()
+// with the IAM seam failing, and asserts the boot ABORTS.
+//
+// It asserted the opposite until #170: "initialize succeeds because IAM error
+// is non-fatal". That was true of the code and wrong as a contract — every IAM
+// accessor returns (nil, nil) when no provider was set, so the server came up
+// serving with authentication and tenancy absent and nothing downstream could
+// tell. A test written around a defect keeps the suite green while the
+// behaviour it pins is the bug.
+func TestP15_Initialize_IAMComponentsFailureAbortsBoot(t *testing.T) {
 	saveAndRestoreSeams(t)
 	cfg := createFTConfig(t)
 	cfg.Server.Mode = config.ServerModeStandalone
@@ -1252,9 +1135,10 @@ func TestP15_Initialize_IAMComponentsWarnPath(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	// initialize succeeds because IAM error is non-fatal (logged as warning at L1199)
 	err = srv.initialize()
-	assert.NoError(t, err)
+	require.Error(t, err, "an IAM initialization failure must abort the boot")
+	assert.Contains(t, err.Error(), "injected IAM initialization error",
+		"the original cause must reach the caller rather than a generic startup error")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

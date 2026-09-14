@@ -32,6 +32,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/sshfake"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/sshfixture"
 )
 
 // newSSHTestServer builds an SSHServer backed by an in-memory SSH store.
@@ -108,9 +109,11 @@ func TestSSHServer_SignDigest(t *testing.T) {
 func TestSSHServer_KnownHostsAndAuthorized(t *testing.T) {
 	srv := newSSHTestServer(sshfake.NewClient())
 	ctx := context.Background()
+	host := sshfixture.Host(t)
 
 	_, err := srv.AddSSHKnownHost(ctx, &pb.SSHAddKnownHostRequest{
-		Scope: "user", Owner: "alice", Host: "git.example.com", Fingerprint: "SHA256:abc",
+		Scope: "user", Owner: "alice", Host: "git.example.com",
+		Fingerprint: host.Fingerprint,
 	})
 	require.NoError(t, err)
 
@@ -118,6 +121,8 @@ func TestSSHServer_KnownHostsAndAuthorized(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, pins.GetPins(), 1)
 	assert.Equal(t, "git.example.com", pins.GetPins()[0].GetHost())
+	assert.Equal(t, host.Fingerprint, pins.GetPins()[0].GetFingerprint(),
+		"the pin must round-trip as the fingerprint of the key that was pinned")
 
 	_, err = srv.RemoveSSHKnownHost(ctx, &pb.SSHRemoveKnownHostRequest{
 		Scope: "user", Owner: "alice", Host: "git.example.com",

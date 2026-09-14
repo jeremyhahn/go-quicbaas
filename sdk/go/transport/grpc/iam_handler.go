@@ -40,6 +40,7 @@ const (
 	iamMFAServicePrefix        = "quicbaas.IAM.MFA"
 	iamFederationServicePrefix = "quicbaas.IAM.Federation"
 	iamIdentityServicePrefix   = "quicbaas.IAM.Identity"
+	iamWebAuthnServicePrefix   = "quicbaas.IAM.WebAuthn"
 
 	// Proto service name.
 	iamProtoServiceName     = "quicbaas.iam.v1.IAMService"
@@ -93,6 +94,8 @@ func (h *iamHandler) handleRequest(ctx context.Context, service, method string, 
 		return h.handleMFARequest(ctx, method, req)
 	case strings.HasPrefix(service, iamFederationServicePrefix):
 		return h.handleFederationRequest(ctx, method, req)
+	case strings.HasPrefix(service, iamWebAuthnServicePrefix):
+		return h.handleWebAuthnRequest(ctx, method, req)
 	case strings.HasPrefix(service, iamIdentityServicePrefix):
 		return h.handleIdentityRequest(ctx, method, req)
 	default:
@@ -193,6 +196,8 @@ func (h *iamHandler) handleRoleRequest(ctx context.Context, method string, req i
 		return h.handleDeleteRole(ctx, client, req)
 	case "List":
 		return h.handleListRoles(ctx, client, req)
+	case "Reconcile":
+		return h.handleReconcileRoles(ctx, client, req)
 	default:
 		return nil, errors.NewUnimplemented("iamHandler.handleRoleRequest",
 			"unsupported method: "+method)

@@ -56,6 +56,7 @@ type Transport struct {
 	backupHandler       *backupHandler
 	orchestratorHandler *orchestratorHandler
 	projectHandler      *projectRESTHandler
+	sdlcHandler         *sdlcRESTHandler
 	accountHandler      *accountRESTHandler
 	sshHandler          *sshRESTHandler
 	certificateHandler  *certificateRESTHandler
@@ -142,6 +143,9 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 	// Initialize Project handler
 	t.projectHandler = newProjectRESTHandler(t)
 
+	// Initialize SDLC project registration handler
+	t.sdlcHandler = newSDLCRESTHandler(t)
+
 	// Initialize pooled provider account handler
 	t.accountHandler = newAccountRESTHandler(t)
 	t.sshHandler = newSSHRESTHandler(t)
@@ -216,29 +220,8 @@ func (t *Transport) buildHTTPClient() (*http.Client, error) {
 // buildBaseURL constructs the base URL from config.
 // It sets both t.baseURL and t.basePath for HTTP URL addresses that include a path.
 func (t *Transport) buildBaseURL() {
-	parsed := transport.ParseAddress(t.cfg.Address)
-
-	// For Unix sockets, use a placeholder host
-	if parsed.IsUnix() {
-		scheme := "http"
-		if t.cfg.TLSConfig != nil {
-			scheme = "https"
-		}
-		t.baseURL = scheme + "://localhost"
-		t.basePath = ""
-		return
-	}
-
-	// For HTTP/HTTPS URLs, use the parsed scheme and preserve the path
-	if parsed.IsHTTP() {
-		t.baseURL = parsed.Scheme + "://" + parsed.Address
-		t.basePath = parsed.Path
-		return
-	}
-
-	// For plain TCP addresses, TLS is required
-	t.baseURL = "https://" + parsed.Address
-	t.basePath = ""
+	t.baseURL = transport.HTTPBaseURL(t.cfg.Address, t.cfg.TLSConfig != nil)
+	t.basePath = transport.HTTPPath(t.cfg.Address)
 }
 
 // Request sends a unary request and returns the response.
@@ -291,6 +274,11 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 	// Route Project requests through the Project handler.
 	if isProjectService(service) {
 		return t.projectHandler.handleRequest(ctx, method, req)
+	}
+
+	// Route SDLC project registration through its handler.
+	if isSDLCService(service) {
+		return t.sdlcHandler.handleRequest(ctx, method, req)
 	}
 
 	// Route SSH requests through the SSH handler. The routes it targets are
@@ -1047,19 +1035,8 @@ func (t *Transport) mapTimeseriesMethod(method string) (string, string) {
 // mapRBACMethod maps RBAC service methods to REST endpoints.
 func (t *Transport) mapRBACMethod(method string) (string, string) {
 	switch method {
-	// User operations
-	case "CreateUser":
-		return "/api/v1/rbac/users", http.MethodPost
-	case "GetUser":
-		return "/api/v1/rbac/users/{username}", http.MethodGet
-	case "UpdateUser":
-		return "/api/v1/rbac/users/{username}", http.MethodPut
-	case "DeleteUser":
-		return "/api/v1/rbac/users/{username}", http.MethodDelete
-	case "ListUsers":
-		return "/api/v1/rbac/users", http.MethodGet
-
-	// Role operations
+	// Role operations. There are no user routes: users are administered over
+	// /api/v1/iam, the single user surface. See #905.
 	case "CreateRole":
 		return "/api/v1/rbac/roles", http.MethodPost
 	case "GetRole":

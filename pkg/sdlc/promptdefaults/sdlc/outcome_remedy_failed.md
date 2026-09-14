@@ -1,0 +1,1 @@
+**This task is over and cannot be readmitted.** A failed task is terminal in the engine's own transition table, so raising the budget will not restart it. To have the work attempted again, fix what the evidence above names and hand the issue over again by re-applying the trigger label: the spent task no longer reserves the issue, so the next sweep adopts a fresh one.

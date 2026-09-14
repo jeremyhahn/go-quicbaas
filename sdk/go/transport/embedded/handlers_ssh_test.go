@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/sshfake"
 	sshclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/test/sshfixture"
 )
 
 // sshMockService overrides SSHClient on the package's base mock so the SSH
@@ -121,15 +122,20 @@ func TestEmbeddedSSHHandlers_KnownHostsAndAuthorized(t *testing.T) {
 	fake := sshfake.NewClient()
 	svc := newSSHTestService(fake)
 	ctx := context.Background()
+	host := sshfixture.Host(t)
 
 	_, err := handleSSHAddKnownHost(ctx, svc, &sshclient.AddKnownHostRequest{
-		Scope: "user", Owner: "alice", Host: "git.example.com", Fingerprint: "SHA256:abc",
+		Scope: "user", Owner: "alice", Host: "git.example.com",
+		Fingerprint: host.Fingerprint,
 	})
 	require.NoError(t, err)
 
 	resp, err := handleSSHListKnownHosts(ctx, svc, &sshclient.ListKnownHostsRequest{Scope: "user", Owner: "alice"})
 	require.NoError(t, err)
-	require.Len(t, resp.(*sshclient.ListKnownHostsResponse).Items, 1)
+	pins := resp.(*sshclient.ListKnownHostsResponse).Items
+	require.Len(t, pins, 1)
+	assert.Equal(t, host.Fingerprint, pins[0].Fingerprint,
+		"the pin must come back as the fingerprint of the key that was pinned")
 
 	_, err = handleSSHRemoveKnownHost(ctx, svc, &sshclient.RemoveKnownHostRequest{
 		Scope: "user", Owner: "alice", Host: "git.example.com",

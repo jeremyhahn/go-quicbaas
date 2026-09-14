@@ -16,6 +16,7 @@ import type { EmbeddingsClient } from './embedding_sdk.js';
 import type { MessagingClient } from './messaging_sdk.js';
 import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
+import type { SdlcClient } from './sdlc.js';
 import type { AccountsClient } from './accounts.js';
 import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
@@ -25,6 +26,7 @@ import type { DynamicSecretsClient } from './dynamicsecrets.js';
 
 import type {
   AgentBackendInfo,
+  JobRunnerInfo,
   AuthTokenResponse,
   DeployAgentResult,
   DeployAgentSpec,
@@ -69,6 +71,10 @@ import type {
   GetAgentRequest,
   GetSecretResponse,
   GetSessionHistoryRequest,
+  GetSessionConversationRequest,
+  GetSessionConversationResponse,
+  GetSpendReportRequest,
+  GetSpendReportResponse,
   GetSessionHistoryResponse,
   GetWorkflowResponse,
   HealthCheckReport,
@@ -96,6 +102,7 @@ import type {
   ListWorkflowsResponse,
   PromptSessionRequest,
   PromptSessionResponse,
+  ReconcileRolesResponse,
   RegisterAgentRequest,
   RegisterAgentResponse,
   RemoveAgentRequest,
@@ -160,6 +167,8 @@ import type {
   SpawnSessionResponse,
   ClaimTaskRequest,
   CompleteTaskRequest,
+  DeleteTaskRequest,
+  DeleteTaskResponse,
   StartJobRequest,
   StartJobResponse,
   StoreSecretRequest,
@@ -194,8 +203,10 @@ export interface ConnectionClient {
 // OrchestratorClient provides all orchestration operations.
 // Implementations must delegate to the appropriate transport.
 export interface OrchestratorClient {
-  // listJobs returns all jobs for a tenant, sorted by start time descending.
-  listJobs(tenantID: string): Promise<JobStatus[]>;
+  // listJobs returns the tenant's jobs, sorted by start time descending.
+  // taskID narrows the listing to the attempts at one task — the task's
+  // attempt history, concluded jobs included. Omit it to list every job.
+  listJobs(tenantID: string, taskID?: string): Promise<JobStatus[]>;
 
   // getJobStatus returns the current status of a specific job.
   getJobStatus(tenantID: string, jobID: string): Promise<JobStatus>;
@@ -223,6 +234,11 @@ export interface OrchestratorClient {
 
   // listBackends returns all registered agent backends.
   listBackends(): Promise<AgentBackendInfo[]>;
+
+  // listRunners returns every registered job runner and the states it
+  // declares, so a consumer renders a job's progress from the runner that
+  // drove it instead of keeping its own copy of the engine's states.
+  listRunners(): Promise<JobRunnerInfo[]>;
 
   // listBackendModels returns model names available on the named backend as
   // seen from the specified agent. For Ollama this enumerates locally-pulled
@@ -258,6 +274,22 @@ export interface OrchestratorClient {
   // getSessionHistory fetches a page of historical session events.
   // Used by attach commands and scrollback pagers to browse a session transcript.
   getSessionHistory(req: GetSessionHistoryRequest): Promise<GetSessionHistoryResponse>;
+
+  // getSessionConversation fetches a page of a session's CONVERSATION: who
+  // said what, which tools ran, and what each answer cost. Coarser than
+  // getSessionHistory, which pages the raw event log — a streaming answer is
+  // many events and exactly one turn here, and a page boundary always falls
+  // between turns.
+  getSessionConversation(req: GetSessionConversationRequest): Promise<GetSessionConversationResponse>;
+
+  // getSpendReport returns one scope of the CONSUMPTION LEDGER: the tokens
+  // spent under it, the drill-down to the level below, and the allowance
+  // status of every pooled account that paid.
+  //
+  // ONE VERB FOR EVERY LEVEL, because the ledger's attribution chain is a
+  // path — tenant/project/task/job/session/round — and a project's spend and
+  // a job's spend are the same prefix scan at two depths.
+  getSpendReport(req: GetSpendReportRequest): Promise<GetSpendReportResponse>;
 
   // subscribeSession returns an async iterable of session events.
   // When req.fromSequence > 0, the stream begins with a historical replay
@@ -296,6 +328,16 @@ export interface OrchestratorClient {
   // completeTask marks a task as completed with an optional result.
   // Maps to POST /api/v1/orchestrator/tasks/:taskID/complete
   completeTask(req: CompleteTaskRequest): Promise<void>;
+
+  // readmitTask returns a parked task to the pending queue for another
+  // attempt. Refused for a task that concluded terminally.
+  // Maps to POST /api/v1/orchestrator/tasks/:taskID/readmit
+  readmitTask(tenantID: string, taskID: string): Promise<void>;
+
+  // deleteTask removes a task, its artifacts, its claim mark and its source
+  // reservation. Refused while a job holds a live lease on the task.
+  // Maps to DELETE /api/v1/orchestrator/tasks/:taskID
+  deleteTask(req: DeleteTaskRequest): Promise<DeleteTaskResponse>;
 
   // decomposeTask asks the orchestrator to decompose a task into sub-tasks.
   // Maps to POST /api/v1/orchestrator/tasks/:taskID/decompose
@@ -384,8 +426,19 @@ export interface SelfRegisterFinishResponse {
 // AuthClient provides authentication operations.
 export interface AuthClient {
   // authValidate validates the current session or a provided bearer token.
-  // POSTs to /api/v1/auth/validate. Resolves to true when authenticated,
-  // false on 400/401, and throws on network or server errors.
+  // POSTs to /api/v1/iam/validate — quicbaas's own session plane, not
+  // /api/v1/auth/validate, which a composed node's xkms module owns
+  // (go-quicbaas#256). On the session-backed transports it resolves true ONLY
+  // when the server affirms the session with a boolean `valid: true`; false on
+  // 400/401 or an explicit `valid: false`. It throws on network or server
+  // errors, and on a 2xx whose body cannot be read as that answer — this is an
+  // authentication boundary, so an uninterpretable response is never treated
+  // as a yes.
+  //
+  // The Wails desktop transport is the deliberate exception: it runs embedded
+  // with no session to validate, so it returns true unconditionally (wails.ts
+  // WailsAuthClient). Callers that need a server-confirmed session must use
+  // the REST transport.
   authValidate(token?: string): Promise<boolean>;
 
   // authLogin authenticates with username+password, returning a session
@@ -406,7 +459,7 @@ export interface AuthClient {
   // webAuthnFinishLogin submits the signed WebAuthn assertion for the
   // challenge returned by webAuthnBeginLogin and returns a token bundle on
   // success (bearer + rotating refresh credential, renewable via
-  // /api/v1/auth/refresh).
+  // /api/v1/iam/refresh).
   // Maps to POST /api/v1/auth/login/finish (type=fido2).
   webAuthnFinishLogin(
     challenge: WebAuthnLoginChallenge,
@@ -434,7 +487,9 @@ export interface AuthClient {
 
   // logout invalidates the current bearer token on the server and clears any
   // client-side session material the SDK is responsible for. Maps to
-  // POST /api/v1/auth/logout. Idempotent: succeeds even if the token was
+  // POST /api/v1/iam/logout — quicbaas's own session plane, so the bearer is
+  // redeemed against the store that minted it (go-quicbaas#256).
+  // Idempotent: succeeds even if the token was
   // already revoked or expired so the UI can rely on it as a clean reset.
   logout(token?: string): Promise<void>;
 }
@@ -706,6 +761,13 @@ export interface IAMClient {
   // Maps to DELETE /api/v1/tenants/{tenantID}/roles/{roleID}
   deleteRole(tenantID: string, roleID: string): Promise<void>;
 
+  // reconcileRoles converges a tenant's built-in roles onto the role
+  // definitions the running server build carries: it adds the permissions the
+  // build now grants, removes the ones it no longer defines, and leaves custom
+  // roles untouched. Idempotent.
+  // Maps to POST /api/v1/tenants/{tenantID}/roles/reconcile
+  reconcileRoles(tenantID: string): Promise<ReconcileRolesResponse>;
+
   // listPolicies returns all ABAC policies within a tenant.
   // Maps to GET /api/v1/tenants/{tenantID}/policies
   listPolicies(tenantID: string): Promise<ListPoliciesResponse>;
@@ -724,20 +786,20 @@ export interface IAMClient {
 
   // getInvite returns publicly visible metadata for a pending invite.
   // Unauthenticated — use to populate the activation UI.
-  // Maps to GET /api/v1/iam/invites/{token}
-  getInvite(token: string): Promise<import('./types.js').InviteMetadata>;
+  // Maps to GET /api/v1/iam/{tenant_id}/invites/{token}
+  getInvite(tenantID: string, token: string): Promise<import('./types.js').InviteMetadata>;
 
   // activateFIDO2Begin starts a WebAuthn credential creation ceremony.
-  // Maps to POST /api/v1/iam/invites/{token}/activate/fido2/begin
-  activateFIDO2Begin(token: string): Promise<Record<string, unknown>>;
+  // Maps to POST /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/begin
+  activateFIDO2Begin(tenantID: string, token: string): Promise<Record<string, unknown>>;
 
   // activateFIDO2Finish completes the WebAuthn registration.
-  // Maps to POST /api/v1/iam/invites/{token}/activate/fido2/finish
-  activateFIDO2Finish(token: string, credential: Record<string, unknown>): Promise<import('./types.js').ActivationResponse>;
+  // Maps to POST /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/finish
+  activateFIDO2Finish(tenantID: string, token: string, credential: Record<string, unknown>): Promise<import('./types.js').ActivationResponse>;
 
   // activatePIV activates the user with a PIV X.509 certificate PEM block.
-  // Maps to POST /api/v1/iam/invites/{token}/activate/piv
-  activatePIV(token: string, certPEM: string): Promise<import('./types.js').ActivationResponse>;
+  // Maps to POST /api/v1/iam/{tenant_id}/invites/{token}/activate/piv
+  activatePIV(tenantID: string, token: string, certPEM: string): Promise<import('./types.js').ActivationResponse>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1157,6 +1219,11 @@ export interface Client {
   readonly messaging: MessagingClient;
   readonly scheduler: SchedulerClient;
   readonly projects: ProjectsClient;
+  /**
+   * sdlc is the SDLC module of the Software Factory: a project's forge
+   * binding and a task's delivery.
+   */
+  readonly sdlc: SdlcClient;
   /**
    * accounts manages the pooled provider account pool (Anthropic/Claude,
    * OpenAI/Codex, OpenCode) an agent session can be spawned against.

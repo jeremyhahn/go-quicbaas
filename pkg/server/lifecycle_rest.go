@@ -150,6 +150,7 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 		RequestTimeout:    25 * time.Second,
 		RateLimit:         0, // No rate limiting by default
 		ExposeShardHeader: s.config.Server.ExposeShardHeader,
+		TrustedProxies:    s.config.Server.TrustedProxies,
 		NodeID:            s.config.Raft.NodeID,
 		// TLS configuration
 		TLSEnabled:    s.config.Security.TLSEnabled,
@@ -160,14 +161,25 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 		TLSConfig:     clonedTLSConfig,
 		// PIV login configuration: thread operator config into REST handler.
 		PIVClientCert: restapi.PIVClientCertConfig{
-			Enabled:          s.config.IAM.PIVLogin.Enabled,
-			TrustedRootsFile: s.config.IAM.PIVLogin.CAFile,
-			TrustedIssuers:   s.config.IAM.PIVLogin.TrustedIssuers,
+			Enabled:                      s.config.IAM.PIVLogin.Enabled,
+			TrustedRootsFile:             s.config.IAM.PIVLogin.CAFile,
+			TrustedIssuers:               s.config.IAM.PIVLogin.TrustedIssuers,
+			AttestationCAFile:            s.config.IAM.PIVLogin.AttestationCAFile,
+			AttestationIntermediatesFile: s.config.IAM.PIVLogin.AttestationIntermediatesFile,
+			AllowUnattested:              s.config.IAM.PIVLogin.AllowUnattested,
 		},
 		// SPIFFE trust domain for login tenant derivation (and pinning).
 		SPIFFETrustDomain: s.config.IAM.SPIFFETrustDomain,
 		// RFC 7591 Dynamic Client Registration policy (disabled by default).
 		IAMDynamicClientRegistration: s.config.IAM.DynamicClientRegistration,
+		// Self-service tenant registration policy (disabled by default).
+		//
+		// Omitting this left the handlers reading a zero-value config, so
+		// /api/v1/auth/register/{begin,finish} answered self_registration_disabled
+		// no matter what the operator set — the setting existed, validated, and
+		// did nothing. A policy that cannot be turned on is worse than one that
+		// is absent: the operator believes registration is open.
+		IAMSelfServiceRegistration: s.config.IAM.SelfServiceRegistration,
 		// RFC 9728 protected-resource metadata policy (disabled by default),
 		MCPAuthorization: s.config.Server.MCP.Authorization,
 	}
@@ -263,6 +275,13 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 	// barrier/hsm and non-cluster deployments.
 	if delivery := s.ClusterSecretDeliveryService(); delivery != nil {
 		restServer.SetClusterSecretHandler(delivery.Handler())
+	}
+
+	// Mount the forge webhook ingress when the SDLC module is running. Nil when
+	// it is disabled, and the route stays registered either way so a delivery
+	// gets a retryable 503 rather than a 404 a forge would give up on.
+	if h := s.SDLCWebhookHandler(); h != nil {
+		restServer.SetSDLCWebhookHandler(h)
 	}
 
 	// The credential management service and the qrdb user + user

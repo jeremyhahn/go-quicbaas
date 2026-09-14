@@ -40,17 +40,26 @@ func (h *iamHandler) handleCreateUser(ctx context.Context, client iampb.IAMServi
 	roles, _ := getStringSlice(requestData, "roles")
 	groups, _ := getStringSlice(requestData, "groups")
 	metadata, _ := getStringMap(requestData, "metadata")
+	authMethods, _ := getStringSlice(requestData, "auth_methods")
+	lifecycle, _ := getString(requestData, "lifecycle")
 
 	pbReq := &iampb.CreateUserRequest{
-		TenantId:   tenantID,
-		Email:      email,
-		Name:       displayName,
-		Roles:      roles,
-		Groups:     groups,
-		Attributes: metadata,
+		TenantId:    tenantID,
+		Email:       email,
+		Username:    username,
+		Name:        displayName,
+		Roles:       roles,
+		Groups:      groups,
+		Attributes:  metadata,
+		AuthMethods: authMethods,
+		Lifecycle:   lifecycle,
 	}
 
-	// Use username as name if display name not provided.
+	// Use the handle as the display name when none was given. The handle
+	// itself now travels in its own field; folding it into Name and sending
+	// nothing else is what used to discard it, so a create of ("alice",
+	// "Alice Smith") stored the display name as the handle and could not be
+	// found as "alice".
 	if pbReq.Name == "" {
 		pbReq.Name = username
 	}
@@ -98,19 +107,32 @@ func (h *iamHandler) handleUpdateUser(ctx context.Context, client iampb.IAMServi
 	requestData, _ := getMap(reqMap, "request")
 
 	email, _ := getString(requestData, "email")
+	username, _ := getString(requestData, "username")
 	displayName, _ := getString(requestData, "display_name")
 	roles, _ := getStringSlice(requestData, "roles")
 	groups, _ := getStringSlice(requestData, "groups")
 	metadata, _ := getStringMap(requestData, "metadata")
+	lifecycle, _ := getString(requestData, "lifecycle")
 
 	pbReq := &iampb.UpdateUserRequest{
 		TenantId:   tenantID,
 		UserId:     userID,
 		Email:      email,
+		Username:   username,
 		Name:       displayName,
 		Roles:      roles,
 		Groups:     groups,
 		Attributes: metadata,
+		Lifecycle:  lifecycle,
+	}
+	// The wrapper is sent only when the caller supplied the field, so an
+	// explicit empty list reaches the server as a clear rather than as silence.
+	if raw, present := requestData["auth_methods"]; present && raw != nil {
+		values, _ := getStringSlice(requestData, "auth_methods")
+		if values == nil {
+			values = []string{}
+		}
+		pbReq.AuthMethods = &iampb.AuthMethodsUpdate{Values: values}
 	}
 
 	resp, err := client.UpdateUser(ctx, pbReq)
@@ -831,6 +853,27 @@ func (h *iamHandler) handleListRoles(ctx context.Context, client iampb.IAMServic
 	}, nil
 }
 
+// handleReconcileRoles handles ReconcileRoles requests.
+func (h *iamHandler) handleReconcileRoles(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleReconcileRoles", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+
+	pbReq := &iampb.ReconcileRolesRequest{
+		TenantId: tenantID,
+	}
+
+	resp, err := client.ReconcileRoles(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, "handleReconcileRoles")
+	}
+
+	return convertProtoReconcileRolesToSDK(resp), nil
+}
+
 // Conversion helpers.
 
 // convertProtoUserToSDK converts a protobuf User to SDK User.
@@ -843,11 +886,12 @@ func convertProtoUserToSDK(u *iampb.User) *iam.User {
 		ID:          u.Id,
 		TenantID:    u.TenantId,
 		Email:       u.Email,
-		Username:    u.Name,
+		Username:    u.Username,
 		DisplayName: u.Name,
-		MFAEnabled:  u.MfaVerified,
 		Roles:       u.Roles,
 		Groups:      u.Groups,
+		AuthMethods: u.AuthMethods,
+		Lifecycle:   u.Lifecycle,
 	}
 
 	if len(u.Attributes) > 0 {
@@ -926,11 +970,12 @@ func convertProtoRoleToSDK(r *iampb.Role) *iam.Role {
 	}
 
 	resp := &iam.Role{
-		ID:          r.Id,
-		TenantID:    r.TenantId,
-		Name:        r.Name,
-		Description: r.Description,
-		Permissions: r.Permissions,
+		ID:                 r.Id,
+		TenantID:           r.TenantId,
+		Name:               r.Name,
+		Description:        r.Description,
+		Permissions:        r.Permissions,
+		RetiredPermissions: r.RetiredPermissions,
 	}
 
 	if r.CreatedAt != nil {
@@ -941,6 +986,35 @@ func convertProtoRoleToSDK(r *iampb.Role) *iam.Role {
 	}
 
 	return resp
+}
+
+// convertProtoReconcileRolesToSDK converts a protobuf ReconcileRolesResponse
+// to its SDK form. Only the roles that changed are carried, so an empty roles
+// slice with Changed false is the ordinary no-drift answer.
+func convertProtoReconcileRolesToSDK(r *iampb.ReconcileRolesResponse) *iam.ReconcileRolesResponse {
+	if r == nil {
+		return nil
+	}
+
+	roles := make([]iam.RoleReconcileResult, 0, len(r.Roles))
+	for _, result := range r.Roles {
+		if result == nil {
+			continue
+		}
+		roles = append(roles, iam.RoleReconcileResult{
+			RoleID:  result.RoleId,
+			Name:    result.Name,
+			Created: result.Created,
+			Added:   result.Added,
+			Removed: result.Removed,
+		})
+	}
+
+	return &iam.ReconcileRolesResponse{
+		TenantID: r.TenantId,
+		Roles:    roles,
+		Changed:  r.Changed,
+	}
 }
 
 // protoTimestamp converts a time.Time to protobuf Timestamp.

@@ -1,4 +1,11 @@
-//go:build !integration && raft && local
+//go:build !integration && raft && local && rag
+
+// The `rag` term is load-bearing, not decorative. These tests assert the
+// RAG-COMPILED contract — stopRAG nulls out s.ragSystem, and Shutdown
+// traverses that branch — while lifecycle_rag_noop.go's stub deliberately
+// returns nil and touches nothing. Without the term the file compiled against
+// the stub and asserted behaviour the stub does not promise. No pass compiled
+// that combination until `make test-standard` existed (#299).
 
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC

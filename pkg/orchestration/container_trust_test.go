@@ -660,3 +660,84 @@ func TestTrustErrorsUnwrap(t *testing.T) {
 		})
 	}
 }
+
+// TestContainerConfigDigest_MeasuresResourceLimits proves a configuration
+// cannot have its memory limit lifted, or its tmpfs workspace resized, and
+// still measure as the configuration an operator approved.
+//
+// IT IS THE SAME ARGUMENT AS PRIVILEGE. An unbounded tmpfs can consume the
+// host's memory; a limit removed from a measured spec is a denial-of-service
+// dimension, and a digest that ignored it would certify the safe container
+// while the dangerous one ran.
+func TestContainerConfigDigest_MeasuresResourceLimits(t *testing.T) {
+	const gib = 1024 * 1024 * 1024
+	configurations := map[string]*ContainerSpec{
+		"Unbounded": {Image: "alpine", ImageDigest: testDigest},
+		"Bounded": {
+			Image: "alpine", ImageDigest: testDigest,
+			MemoryBytes: 4 * gib,
+		},
+		"BoundedDifferently": {
+			Image: "alpine", ImageDigest: testDigest,
+			MemoryBytes: 8 * gib,
+		},
+		"UnsizedTmpfs": {
+			Image: "alpine", ImageDigest: testDigest,
+			MemoryBytes: 4 * gib,
+			Mounts:      []ContainerMount{{Target: "/workspace", Type: MountTypeTmpfs}},
+		},
+		"SizedTmpfs": {
+			Image: "alpine", ImageDigest: testDigest,
+			MemoryBytes: 4 * gib,
+			Mounts: []ContainerMount{
+				{Target: "/workspace", Type: MountTypeTmpfs, TmpfsSizeBytes: gib},
+			},
+		},
+		"SizedTmpfsResized": {
+			Image: "alpine", ImageDigest: testDigest,
+			MemoryBytes: 4 * gib,
+			Mounts: []ContainerMount{
+				{Target: "/workspace", Type: MountTypeTmpfs, TmpfsSizeBytes: 2 * gib},
+			},
+		},
+	}
+
+	seen := make(map[string]string, len(configurations))
+	for name, spec := range configurations {
+		digest, err := ContainerConfigDigest(spec)
+		if err != nil {
+			t.Fatalf("ContainerConfigDigest(%s): %v", name, err)
+		}
+		if other, collided := seen[digest]; collided {
+			t.Fatalf("%s and %s measure identically (%s)", name, other, digest)
+		}
+		seen[digest] = name
+	}
+}
+
+// TestContainerConfigDigest_ResourceLimitsAreStableAcrossMeasurements is the
+// twin: the same limits measure the same way every time, so a redeploy of an
+// approved configuration is not mistaken for a new workload.
+func TestContainerConfigDigest_ResourceLimitsAreStableAcrossMeasurements(t *testing.T) {
+	spec := &ContainerSpec{
+		Image:       "alpine",
+		ImageDigest: testDigest,
+		MemoryBytes: 6 * 1024 * 1024 * 1024,
+		Mounts: []ContainerMount{
+			{Target: "/workspace", Type: MountTypeTmpfs, TmpfsSizeBytes: 4 * 1024 * 1024 * 1024},
+		},
+	}
+	first, err := ContainerConfigDigest(spec)
+	if err != nil {
+		t.Fatalf("ContainerConfigDigest: %v", err)
+	}
+	for i := 0; i < 8; i++ {
+		again, err := ContainerConfigDigest(spec)
+		if err != nil {
+			t.Fatalf("ContainerConfigDigest: %v", err)
+		}
+		if again != first {
+			t.Fatalf("measurement %d = %s, want %s", i, again, first)
+		}
+	}
+}

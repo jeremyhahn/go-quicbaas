@@ -119,6 +119,7 @@ func (m *mockRAGSDKClient) Close() error {
 }
 
 func (m *mockRAGSDKClient) Project() quicbaas.ProjectClient { return nil }
+func (m *mockRAGSDKClient) SDLC() quicbaas.SDLCClient       { return nil }
 func (m *mockRAGSDKClient) Account() quicbaas.AccountClient { return nil }
 
 func (m *mockRAGSDKClient) Orchestrator() quicbaas.OrchestratorClient { return nil }
@@ -126,7 +127,7 @@ func (m *mockRAGSDKClient) Orchestrator() quicbaas.OrchestratorClient { return n
 // saveAndRestoreRAGState saves and returns a function to restore RAG-related global state.
 func saveAndRestoreRAGState(t *testing.T) func() {
 	savedFactory := sdkClientFactory
-	savedTimeout := timeout
+	savedTimeout := globalTimeout
 	savedOutputFormat := outputFormat
 	savedNamespace := ragNamespace
 	savedTopK := ragTopK
@@ -140,7 +141,7 @@ func saveAndRestoreRAGState(t *testing.T) func() {
 
 	return func() {
 		sdkClientFactory = savedFactory
-		timeout = savedTimeout
+		globalTimeout = savedTimeout
 		outputFormat = savedOutputFormat
 		ragNamespace = savedNamespace
 		ragTopK = savedTopK
@@ -255,7 +256,7 @@ func TestRunRAGQueryCommand_Success(t *testing.T) {
 		return &mockRAGSDKClient{ragClient: mockRAG}, nil
 	}
 
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 	outputFormat = "json"
 
 	// Create command first (this resets flag variables to defaults)
@@ -286,7 +287,7 @@ func TestRunRAGQueryCommand_EmptyQuery(t *testing.T) {
 		return &mockRAGSDKClient{}, nil
 	}
 
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := newRAGQueryCommand()
 	ragNamespace = "test-namespace"
@@ -342,7 +343,7 @@ func TestRunRAGContextCommand_Success(t *testing.T) {
 		return &mockRAGSDKClient{ragClient: mockRAG}, nil
 	}
 
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 	outputFormat = "json"
 
 	// Create command first (this resets flag variables to defaults)
@@ -381,7 +382,7 @@ func TestRunRAGContextCommand_InvalidJSON(t *testing.T) {
 		return &mockRAGSDKClient{}, nil
 	}
 
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := newRAGContextCommand()
 	ragResultsFile = tmpFile.Name()
@@ -410,7 +411,7 @@ func TestRunRAGContextCommand_EmptyResults(t *testing.T) {
 		return &mockRAGSDKClient{}, nil
 	}
 
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := newRAGContextCommand()
 	ragResultsFile = tmpFile.Name()
@@ -429,7 +430,7 @@ func TestRunRAGContextCommand_FileNotFound(t *testing.T) {
 		return &mockRAGSDKClient{}, nil
 	}
 
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := newRAGContextCommand()
 	ragResultsFile = "/nonexistent/path/results.json"
@@ -537,7 +538,7 @@ func TestRunRAGQueryCommand_ClientError(t *testing.T) {
 		return nil, assert.AnError
 	}
 
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := newRAGQueryCommand()
 	ragNamespace = "test-namespace"
@@ -566,7 +567,7 @@ func TestRunRAGContextCommand_ClientError(t *testing.T) {
 		return nil, assert.AnError
 	}
 
-	timeout = 30 * time.Second
+	globalTimeout = 30 * time.Second
 
 	cmd := newRAGContextCommand()
 	ragResultsFile = tmpFile.Name()

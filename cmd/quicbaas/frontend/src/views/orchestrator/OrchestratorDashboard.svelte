@@ -13,6 +13,7 @@
     GridComponent,
   } from 'echarts/components';
   import { orchestratorStore } from '../../stores/orchestrator.svelte.ts';
+  import { countLiveSessions } from '../../lib/sessions.ts';
   import StatCard from '../../components/core/StatCard.svelte';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import EventLog from '../../components/orchestrator/EventLog.svelte';
@@ -39,6 +40,19 @@
     (Array.isArray(orchestratorStore.tasks) ? orchestratorStore.tasks : [])
       .filter((t) => t.status === 'pending').length
   );
+
+  // The session list holds closed sessions as well — the Sessions view shows
+  // them — so a card that says "active" counts the live ones and reports the
+  // total beside it, the same way Active Jobs and Pending Tasks do.
+  //
+  // countLiveSessions reads the lifecycle state itself: the REST wire calls it
+  // `state` and the Wails binding calls it `status`, so naming one here made
+  // the tile read 0 on the other platform (go-quicbaas#864).
+  const allSessions = $derived(
+    Array.isArray(orchestratorStore.sessions) ? orchestratorStore.sessions : []
+  );
+
+  const liveSessionCount = $derived(countLiveSessions(allSessions));
 
   const recentEvents = $derived(
     (Array.isArray(orchestratorStore.events) ? orchestratorStore.events : []).slice(-10)
@@ -142,7 +156,7 @@
 </script>
 
 <div class="p-6 space-y-6">
-  <PageHeader title="Orchestration Dashboard" subtitle="Real-time overview of jobs, agents, and tasks" icon={LayoutDashboard} />
+  <PageHeader title="Dashboard" subtitle="Jobs, agents, sessions and tasks at a glance" icon={LayoutDashboard} />
 
   <!-- Stat cards -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -160,10 +174,11 @@
       icon={Bot}
     />
     <StatCard
-      label="Sessions"
-      value={(Array.isArray(orchestratorStore.sessions) ? orchestratorStore.sessions : []).length}
-      description="active sessions"
+      label="Active Sessions"
+      value={liveSessionCount}
+      description="{allSessions.length} total"
       icon={Terminal}
+      variant={liveSessionCount > 0 ? 'primary' : 'default'}
     />
     <StatCard
       label="Pending Tasks"

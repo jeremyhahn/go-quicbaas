@@ -1580,9 +1580,25 @@ func TestCryptoService_Encrypt_ContextCanceled(t *testing.T) {
 
 func TestCryptoService_Sign_ContextTimeout(t *testing.T) {
 	cryptoMgr := newMockCryptoManager()
+	// Wait for the deadline to actually fire; do NOT sleep past it. ctx.Err()
+	// is not derived from the clock -- it is a field set by the goroutine
+	// context.WithTimeout schedules for the deadline, and Err() only reads it.
+	// A mock that sleeps 100ms on a 10ms deadline therefore races that
+	// goroutine rather than waiting for it, and when the sleeper is scheduled
+	// first it reads a nil error and the whole Sign call succeeds (go#493:
+	// measured at 4/600 on a loaded single-P runtime, 1/1500 on an idle one).
+	// Done() is the ordering the context contract does guarantee: err is
+	// assigned before the channel closes, under the same mutex Err() takes.
 	cryptoMgr.signFn = func(ctx context.Context, keyID string, input []byte, hashAlgorithm string, preHashed bool) ([]byte, error) {
-		time.Sleep(100 * time.Millisecond)
-		return nil, ctx.Err()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(30 * time.Second):
+			// Only reachable if Sign stopped propagating the caller's
+			// context. Fail loudly instead of returning a generic error that
+			// would satisfy the assertion below for the wrong reason.
+			return nil, errors.New("caller context was not propagated to the crypto manager")
+		}
 	}
 	kmsMgr := newMockKMSManager()
 	logger := newMockLogger()
@@ -1598,7 +1614,10 @@ func TestCryptoService_Sign_ContextTimeout(t *testing.T) {
 
 	resp, err := svc.Sign(ctx, req)
 
-	require.Error(t, err)
+	// ErrorIs, not Error: the expiry must be what surfaced. A bare Error()
+	// also passes on the not-propagated branch above, which is the failure
+	// this test exists to catch.
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Nil(t, resp)
 }
 

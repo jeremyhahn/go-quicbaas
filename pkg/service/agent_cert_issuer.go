@@ -27,6 +27,10 @@ import (
 	"fmt"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
+
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -88,6 +92,23 @@ type AgentCertificateRequest struct {
 	// ExtraDNSNames are appended to the default DNS SAN list (hostname).
 	// Useful when the daemon is reachable under multiple names.
 	ExtraDNSNames []string
+
+	// SPIFFETrustDomain is the operator-configured SPIFFE trust domain
+	// (config iam.spiffe_trust_domain). When set, the issued certificate
+	// carries the tenant-scoped SPIFFE URI SAN
+	// spiffe://<trust-domain>/tenant/<TenantID>/svc/<CommonName>.
+	//
+	// That SAN is not decoration: go-qrdb derives an mTLS identity's TENANT
+	// from it and falls back to the first Subject OU when it is absent
+	// (go-qrdb pkg/auth MTLSAuthenticator.TenantFromCert). Every agent
+	// certificate carries OU=agents, so a certificate issued without the SAN
+	// authenticates into a phantom tenant literally named "agents" -- no
+	// enrollment in the real tenant can ever authorize it. A caller that needs
+	// the issued identity to hold authority MUST set this.
+	//
+	// Empty omits the SAN, which is correct only for a certificate used purely
+	// as a TLS credential and never as an authorization principal.
+	SPIFFETrustDomain string
 }
 
 // Validate checks that the request carries the minimum required fields.
@@ -212,7 +233,27 @@ func (i *XKMSAgentCertIssuer) IssueAgentCertificate(ctx context.Context, req *Ag
 		dns = append(dns, trimmed)
 	}
 
-	certRequest := &xkmssdk.TrustedCACertificateRequest{
+	// The agent's key pair is the AGENT's credential, not platform key material,
+	// so it is created at the point of custody and the CA only ever sees the CSR
+	// -- go-xkms's own rule for this shape of issuance (pkg/init
+	// firstboot_adapter.go GenerateAdminCert), and the only shape that can work:
+	// TrustedCA.IssueCertificate keeps the key it generates inside the keystore
+	// as a non-exportable opaque handle and returns IssuedCertificate
+	// .PrivateKeyPEM as nil on every backend. This issuer previously called it
+	// and then required that field, so it failed on every invocation against a
+	// real CA -- silently, because its only caller logs and continues
+	// (go-quicbaas#910).
+	//
+	// Every crypto step is go-xkms's: the key comes from the single audited
+	// generator in pkg/xkms (go-xkms FIPS RNG), the CSR from go-xkms
+	// CreateCSRWithKey, the signature from the go-xkms CA, and the key encoding
+	// from go-xkms EncodePrivateKeyPEM.
+	signer, keyAlgorithm, err := dbxkms.GenerateRequesterKey(dbxkms.KeyAlgorithmECDSAP256)
+	if err != nil {
+		return nil, &AgentCertIssueError{Op: "generate agent keypair", Cause: err}
+	}
+
+	csrPEM, err := xkmssdk.CreateCSRWithKey(&xkmssdk.TrustedCACertificateRequest{
 		Subject: xkmssdk.TrustedCASubject{
 			CommonName:         cn,
 			Organization:       org,
@@ -221,46 +262,63 @@ func (i *XKMSAgentCertIssuer) IssueAgentCertificate(ctx context.Context, req *Ag
 		SANS: &xkmssdk.TrustedCASubjectAlternativeNames{
 			DNS: dns,
 		},
-		Valid:       validity,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}, signer)
+	if err != nil {
+		return nil, &AgentCertIssueError{Op: "build agent csr", Cause: err}
 	}
 
-	issued, err := i.ca.IssueCertificate(ctx, certRequest)
+	// ExtKeyUsage is set explicitly rather than by naming a profile so the issued
+	// certificate carries exactly clientAuth, which is what the control plane's
+	// register handler requires of an agent identity.
+	//
+	// Bind the certificate to its tenant with a SPIFFE URI SAN when the operator
+	// has declared a trust domain. The CA owns the single synthesis site
+	// (go-xkms pkg/ca signCSR -> spiffe.BuildURI); we only forward the inputs,
+	// so this path and every other CSR-sign path cannot drift.
+	//
+	// The workload kind is "svc": an agent is a machine identity, which is
+	// exactly what go-qrdb's spiffe.KindService names. Nothing in the stack keys
+	// off the kind -- TenantFromCert accepts either -- so the choice is about
+	// what the SAN SAYS to whoever reads it.
+	signOpts := &xkmssdk.TrustedCASignOptions{
+		ValidityDays: validity,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	if trustDomain := strings.TrimSpace(req.SPIFFETrustDomain); trustDomain != "" {
+		signOpts.SPIFFETrustDomain = trustDomain
+		signOpts.TenantID = req.TenantID
+		signOpts.SPIFFEKind = qrdbsdk.SpiffeKindService
+		signOpts.SPIFFEName = cn
+	}
+
+	cert, err := i.ca.SignCSR(ctx, csrPEM, signOpts)
 	if err != nil {
 		return nil, &AgentCertIssueError{Op: "issue agent certificate", Cause: err}
 	}
-	if issued == nil {
+	if cert == nil {
 		return nil, &AgentCertIssueError{Op: "issue agent certificate", Cause: errors.New("ca returned nil certificate")}
 	}
-	if len(issued.CertificatePEM) == 0 {
-		return nil, &AgentCertIssueError{Op: "issue agent certificate", Cause: errors.New("ca returned empty certificate PEM")}
-	}
-	if len(issued.PrivateKeyPEM) == 0 {
-		return nil, &AgentCertIssueError{Op: "issue agent certificate", Cause: errors.New("ca did not return exportable private key")}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+
+	keyPEM, err := xkmssdk.EncodePrivateKeyPEM(signer, keyAlgorithm, nil)
+	if err != nil {
+		return nil, &AgentCertIssueError{Op: "encode agent private key", Cause: err}
 	}
 
-	// Copy the PEM into a mlocked buffer immediately; NewBufferFromBytes
-	// wipes the source slice so the raw key never lingers on the heap.
-	keyCopy := make([]byte, len(issued.PrivateKeyPEM))
-	copy(keyCopy, issued.PrivateKeyPEM)
-	keyBuf, err := secure.NewBufferFromBytes(keyCopy)
+	// Move the PEM into an mlocked buffer immediately; NewBufferFromBytes wipes
+	// the source slice so the raw key never lingers on the heap.
+	keyBuf, err := secure.NewBufferFromBytes(keyPEM)
 	if err != nil {
 		return nil, &AgentCertIssueError{Op: "secure private key", Cause: err}
 	}
 
-	// Wipe the CA-returned slice as well. We no longer need it — the
-	// caller reads the bytes via keyBuf.Bytes().
-	for j := range issued.PrivateKeyPEM {
-		issued.PrivateKeyPEM[j] = 0
-	}
-
-	// Assemble the CA bundle the daemon must trust. The CA's CABundle()
-	// returns the full chain (root + intermediates); fall back to the
-	// per-cert CACertificatePEM when the CA cannot produce a bundle (e.g.
-	// single-identity test CAs).
+	// Assemble the CA bundle the daemon must trust. The CA's CABundle() returns
+	// the full chain (root + intermediates); fall back to the CA's own
+	// certificate when it cannot produce a bundle (e.g. single-identity test
+	// CAs).
 	caPEM, bundleErr := i.ca.CABundle()
 	if bundleErr != nil || len(caPEM) == 0 {
-		caPEM = issued.CACertificatePEM
+		caPEM = i.caCertificatePEM()
 	}
 	if len(caPEM) == 0 {
 		keyBuf.Destroy()
@@ -268,11 +326,21 @@ func (i *XKMSAgentCertIssuer) IssueAgentCertificate(ctx context.Context, req *Ag
 	}
 
 	return &IssuedAgentCertificate{
-		CertPEM:    append([]byte(nil), issued.CertificatePEM...),
+		CertPEM:    certPEM,
 		PrivateKey: keyBuf,
 		CAPEM:      append([]byte(nil), caPEM...),
-		ParsedCert: issued.Certificate,
+		ParsedCert: cert,
 	}, nil
+}
+
+// caCertificatePEM returns the CA's own certificate PEM, or nil when the CA
+// cannot produce one. Used only as the CABundle fallback.
+func (i *XKMSAgentCertIssuer) caCertificatePEM() []byte {
+	caCert, err := i.ca.CACertificate()
+	if err != nil || caCert == nil {
+		return nil
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})
 }
 
 // =============================================================================
@@ -305,9 +373,29 @@ func NewSDKAgentCertIssuer(ca xkmstransport.CAService) (*SDKAgentCertIssuer, err
 	return &SDKAgentCertIssuer{ca: ca}, nil
 }
 
-// IssueAgentCertificate implements AgentCertIssuer.IssueAgentCertificate
-// by delegating to the SDK CA service. The CA SANs are encoded using the
-// prefixed-string shape the go-xkms CAService expects ("DNS:host").
+// IssueAgentCertificate implements AgentCertIssuer.IssueAgentCertificate by
+// creating the agent's key pair at the point of custody and asking the CA
+// service to sign a CSR for it.
+//
+// It does NOT call CAService.IssueCertificate, and it must not: that route
+// generates inside the go-xkms keystore, where the key is a non-exportable
+// opaque handle, so its response carries no private key on any backend or
+// transport and an agent cannot be enrolled from it. This issuer used to call it
+// and then require IssueCertificateResponse.PrivateKeyPEM, which no served
+// implementation populates -- the same defect go-quicbaas#910 fixed in
+// XKMSAgentCertIssuer, on the same interface.
+//
+// Every cryptographic step is go-xkms's: the key comes from the single audited
+// generator in pkg/xkms, the CSR from go-xkms CreateCSRWithKey, the signature
+// from the remote go-xkms CA, and the key encoding from go-xkms
+// EncodePrivateKeyPEM. The private key never crosses the network.
+//
+// req.SPIFFETrustDomain is NOT forwarded here and must not be: the transport's
+// SignCSRRequest carries no trust-domain field, because on this path the SERVER
+// owns it. The CA service adapter folds its own operator-configured trust domain
+// into the signing options for the request's TenantID (pkg/server
+// caServiceAdapter.signOptionsWithSPIFFE), so a client cannot name the trust
+// domain its certificate is bound under.
 func (i *SDKAgentCertIssuer) IssueAgentCertificate(ctx context.Context, req *AgentCertificateRequest) (*IssuedAgentCertificate, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
@@ -323,34 +411,58 @@ func (i *SDKAgentCertIssuer) IssueAgentCertificate(ctx context.Context, req *Age
 		org = req.TenantID
 	}
 
+	// The OU is load-bearing, not decorative: the control plane's agent
+	// register handler accepts DefaultAgentCertOU and nothing else. The
+	// IssueCertificate path this issuer used to take could not carry it at all
+	// -- xkmstransport.IssueCertificateRequest has no OU field -- so a
+	// certificate obtained that way was unusable even when it was issued.
+	ou := strings.TrimSpace(req.Subject.OrganizationalUnit)
+	if ou == "" {
+		ou = DefaultAgentCertOU
+	}
+
 	validity := req.ValidityDays
 	if validity <= 0 {
 		validity = DefaultAgentCertValidityDays
 	}
 
-	// Build prefixed SAN list. The embedded-profile CA maps unprefixed
-	// entries to DNS, but being explicit keeps the behaviour portable
-	// across transports.
-	sans := make([]string, 0, 1+len(req.ExtraDNSNames))
-	sans = append(sans, "DNS:"+req.Hostname)
+	// The SANs go in the CSR, which is where the CA reads them from on this
+	// path; there is no prefixed-string list to build.
+	dns := make([]string, 0, 1+len(req.ExtraDNSNames))
+	dns = append(dns, req.Hostname)
 	for _, extra := range req.ExtraDNSNames {
 		trimmed := strings.TrimSpace(extra)
 		if trimmed == "" || trimmed == req.Hostname {
 			continue
 		}
-		sans = append(sans, "DNS:"+trimmed)
+		dns = append(dns, trimmed)
 	}
 
-	issueReq := &xkmstransport.IssueCertificateRequest{
+	signer, keyAlgorithm, err := dbxkms.GenerateRequesterKey(dbxkms.KeyAlgorithmECDSAP256)
+	if err != nil {
+		return nil, &AgentCertIssueError{Op: "generate agent keypair", Cause: err}
+	}
+
+	csrPEM, err := xkmssdk.CreateCSRWithKey(&xkmssdk.TrustedCACertificateRequest{
+		Subject: xkmssdk.TrustedCASubject{
+			CommonName:         cn,
+			Organization:       org,
+			OrganizationalUnit: ou,
+		},
+		SANS: &xkmssdk.TrustedCASubjectAlternativeNames{
+			DNS: dns,
+		},
+	}, signer)
+	if err != nil {
+		return nil, &AgentCertIssueError{Op: "build agent csr", Cause: err}
+	}
+
+	resp, err := i.ca.SignCSR(ctx, &xkmstransport.SignCSRRequest{
+		CSRPEM:       csrPEM,
 		Profile:      "client",
-		CommonName:   cn,
-		Organization: org,
-		SANs:         sans,
 		ValidityDays: validity,
 		TenantID:     req.TenantID,
-	}
-
-	resp, err := i.ca.IssueCertificate(ctx, issueReq)
+	})
 	if err != nil {
 		return nil, &AgentCertIssueError{Op: "issue agent certificate", Cause: err}
 	}
@@ -360,21 +472,17 @@ func (i *SDKAgentCertIssuer) IssueAgentCertificate(ctx context.Context, req *Age
 	if len(resp.CertificatePEM) == 0 {
 		return nil, &AgentCertIssueError{Op: "issue agent certificate", Cause: errors.New("ca returned empty certificate PEM")}
 	}
-	if len(resp.PrivateKeyPEM) == 0 {
-		return nil, &AgentCertIssueError{Op: "issue agent certificate", Cause: errors.New("ca did not return exportable private key")}
+
+	keyPEM, err := xkmssdk.EncodePrivateKeyPEM(signer, keyAlgorithm, nil)
+	if err != nil {
+		return nil, &AgentCertIssueError{Op: "encode agent private key", Cause: err}
 	}
 
-	// Secure the private key in an mlocked buffer immediately.
-	keyCopy := make([]byte, len(resp.PrivateKeyPEM))
-	copy(keyCopy, resp.PrivateKeyPEM)
-	keyBuf, err := secure.NewBufferFromBytes(keyCopy)
+	// Move the PEM into an mlocked buffer immediately; NewBufferFromBytes wipes
+	// the source slice so the raw key never lingers on the heap.
+	keyBuf, err := secure.NewBufferFromBytes(keyPEM)
 	if err != nil {
 		return nil, &AgentCertIssueError{Op: "secure private key", Cause: err}
-	}
-	// Wipe the response key slice so plaintext key material is not
-	// reachable from the heap.
-	for j := range resp.PrivateKeyPEM {
-		resp.PrivateKeyPEM[j] = 0
 	}
 
 	// Resolve the CA trust bundle. Prefer the dedicated GetCABundle call

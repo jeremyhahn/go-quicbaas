@@ -72,8 +72,25 @@ type Client interface {
 	// CompleteTask marks a task as completed.
 	CompleteTask(ctx context.Context, req *CompleteTaskRequest) (*CompleteTaskResponse, error)
 
+	// BlockTask parks a task until a person readmits it.
+	BlockTask(ctx context.Context, req *BlockTaskRequest) (*BlockTaskResponse, error)
+
+	// ReadmitTask returns a blocked task to the pending queue.
+	ReadmitTask(ctx context.Context, req *ReadmitTaskRequest) (*ReadmitTaskResponse, error)
+
+	// DeleteTask removes a task and releases its source reservation, so the
+	// task's source can be adopted again. Refused while a job holds a live
+	// lease on the task.
+	DeleteTask(ctx context.Context, req *DeleteTaskRequest) (*DeleteTaskResponse, error)
+
 	// ListBackends returns all available backends.
 	ListBackends(ctx context.Context) (*ListBackendsResponse, error)
+
+	// ListRunners returns every registered job runner and the states it
+	// declares, in registry order. It is what a consumer reads instead of
+	// keeping its own copy of the engine's job states — the job detail
+	// stepper above all.
+	ListRunners(ctx context.Context) (*ListJobRunnersResponse, error)
 
 	// ListBackendModels returns the model names available on the named backend
 	// as seen from the specified agent. AgentID is used as a host affinity hint
@@ -126,6 +143,22 @@ type Client interface {
 	// by the CLI `orchestrator attach` command and the web UI's scrollback
 	// pager to page backward through an in-progress session's transcript.
 	GetSessionHistory(ctx context.Context, req *GetSessionHistoryRequest) (*GetSessionHistoryResponse, error)
+
+	// GetSessionConversation fetches a page of a session's CONVERSATION: who
+	// said what, which tools ran, and what each answer cost. It is the
+	// coarser sibling of GetSessionHistory, which pages the raw event log —
+	// a streaming answer is many events and exactly one turn here, and a
+	// page boundary always falls between turns.
+	GetSessionConversation(ctx context.Context, req *GetSessionConversationRequest) (*GetSessionConversationResponse, error)
+
+	// GetSpendReport returns one scope of the CONSUMPTION LEDGER: the tokens
+	// spent under it, the drill-down to the level below, and the allowance
+	// status of every pooled account that paid.
+	//
+	// ONE VERB FOR EVERY LEVEL, because the ledger's attribution chain is a
+	// path — tenant/project/task/job/session/round — and a project's spend
+	// and a job's spend are the same prefix scan at two depths.
+	GetSpendReport(ctx context.Context, req *GetSpendReportRequest) (*GetSpendReportResponse, error)
 
 	// SubscribeSessionEvents returns a live stream of session events. When
 	// req.FromSequence > 0 the stream begins with a historical replay
@@ -193,6 +226,261 @@ type GetSessionHistoryResponse struct {
 	NextSeq uint64                  `json:"next_seq,omitempty"` // 0 when end-of-history
 }
 
+// SessionTurnRole names who produced a turn: "user", "assistant" or "system".
+type SessionTurnRole string
+
+// The roles a SessionTurn can carry.
+const (
+	// SessionTurnRoleUser is a prompt submitted by an operator.
+	SessionTurnRoleUser SessionTurnRole = "user"
+	// SessionTurnRoleAssistant is the agent's answer, coalesced from however
+	// many fragments the backend streamed.
+	SessionTurnRoleAssistant SessionTurnRole = "assistant"
+	// SessionTurnRoleSystem is the orchestrator narrating something that
+	// happened to the conversation.
+	SessionTurnRoleSystem SessionTurnRole = "system"
+)
+
+// SessionTokenUsage is a turn's token accounting as the backend reported it.
+type SessionTokenUsage struct {
+	InputTokens              int64 `json:"input_tokens,omitempty"`
+	OutputTokens             int64 `json:"output_tokens,omitempty"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens,omitempty"`
+}
+
+// SessionToolUse summarises one tool call inside an assistant turn. The
+// arguments and the output stay on the event stream: a history page indexes
+// the work rather than carrying it.
+type SessionToolUse struct {
+	InvocationID string `json:"invocation_id,omitempty"`
+	Name         string `json:"name"`
+	IsError      bool   `json:"is_error,omitempty"`
+	ResultBytes  int64  `json:"result_bytes,omitempty"`
+}
+
+// SessionTurn is one record in a session's conversation.
+type SessionTurn struct {
+	// Sequence is the log sequence of the turn's first event, and the cursor
+	// that addresses it.
+	Sequence  uint64          `json:"sequence"`
+	SessionID string          `json:"session_id"`
+	TenantID  string          `json:"tenant_id,omitempty"`
+	Role      SessionTurnRole `json:"role"`
+	Timestamp time.Time       `json:"timestamp"`
+	Text      string          `json:"text"`
+	// TruncatedBytes is how much text the server's storage cap removed.
+	// Non-zero means Text is not the whole of what was said.
+	TruncatedBytes int64              `json:"truncated_bytes,omitempty"`
+	Model          string             `json:"model,omitempty"`
+	StopReason     string             `json:"stop_reason,omitempty"`
+	Tools          []SessionToolUse   `json:"tools,omitempty"`
+	Usage          *SessionTokenUsage `json:"usage,omitempty"`
+}
+
+// GetSessionConversationRequest pages through a session's conversation.
+type GetSessionConversationRequest struct {
+	TenantID  string `json:"tenant_id,omitempty"`
+	SessionID string `json:"session_id"`
+	// Cursor is a previous page's NextCursor. 0 starts at the beginning of
+	// the RETAINED conversation, which retention may have moved forward.
+	Cursor uint64 `json:"cursor,omitempty"`
+	// Limit is the maximum turns to return. 0 selects the server default
+	// (100); the server caps it at 500.
+	Limit int `json:"limit,omitempty"`
+}
+
+// GetSessionConversationResponse carries one page of a session's conversation.
+type GetSessionConversationResponse struct {
+	SessionID string         `json:"session_id"`
+	TenantID  string         `json:"tenant_id,omitempty"`
+	Turns     []*SessionTurn `json:"turns"`
+	// NextCursor is the Cursor for the following page, 0 at the end.
+	NextCursor uint64 `json:"next_cursor,omitempty"`
+	// OldestSequence is the lowest sequence the server still holds. Above 1
+	// means retention has dropped earlier turns.
+	OldestSequence uint64 `json:"oldest_sequence,omitempty"`
+}
+
+// =============================================================================
+// Spend reporting — the consumption ledger's read side
+// =============================================================================
+
+// SpendUnattributed addresses the subtree of entries that have NO value at a
+// chain level — a job that belongs to no task, a turn charged to no project.
+//
+// Supply it as a scope level to open the row a report marks Unattributed. It
+// is unambiguous because the server refuses it as an entity id at the write:
+// no real project, task, job or session can bear this identifier.
+// Mirrors orchestration.SpendUnattributed.
+const SpendUnattributed = "-"
+
+// SpendLevel names one level of the ledger's attribution chain.
+// Mirrors orchestration.SpendLevel.
+type SpendLevel string
+
+// The chain's levels, outermost first.
+const (
+	SpendLevelTenant  SpendLevel = "tenant"
+	SpendLevelProject SpendLevel = "project"
+	SpendLevelTask    SpendLevel = "task"
+	SpendLevelJob     SpendLevel = "job"
+	SpendLevelSession SpendLevel = "session"
+	SpendLevelRound   SpendLevel = "round"
+)
+
+// SpendPolicyStatus is what the server could establish about one account's
+// allowance. Mirrors orchestration.SpendPolicyStatus.
+type SpendPolicyStatus string
+
+// The three answers. THEY ARE DIFFERENT FACTS and a caller must not collapse
+// them: "none" says the account was read and meters nothing, "unknown" says
+// nothing could read it.
+const (
+	// SpendPolicyUnknown means the deployment wires no account store, or the
+	// record is gone. Render it as unknown, never as unmetered.
+	SpendPolicyUnknown SpendPolicyStatus = "unknown"
+	// SpendPolicyNone means the account carries no cap. This is the honest
+	// "no spend policy" — not a budget of zero.
+	SpendPolicyNone SpendPolicyStatus = "none"
+	// SpendPolicyMetered means the account carries a quota window, a breaker
+	// rule, or both.
+	SpendPolicyMetered SpendPolicyStatus = "metered"
+)
+
+// SpendWindowStatus is one sliding quota window and what has been drawn
+// against it. Mirrors orchestration.SpendWindowStatus.
+type SpendWindowStatus struct {
+	Name string `json:"name"`
+	// Size is the window's length in NANOSECONDS, matching Go's
+	// time.Duration JSON encoding on the server.
+	Size            int64 `json:"size"`
+	MaxTokens       int64 `json:"max_tokens"`
+	UsedTokens      int64 `json:"used_tokens"`
+	RemainingTokens int64 `json:"remaining_tokens"`
+	Exhausted       bool  `json:"exhausted"`
+	// FreesAt is when the window's oldest entry ages out. NIL when the
+	// window holds nothing, because there is nothing to age out.
+	//
+	// A POINTER BECAUSE `omitempty` DOES NOT OMIT A ZERO time.Time, and this
+	// type is RE-MARSHALLED: the Wails desktop binding hands it straight back
+	// to the frontend, so a zero instant would reach a renderer as
+	// "0001-01-01T00:00:00Z" and draw as January of year 1.
+	FreesAt *time.Time `json:"frees_at,omitempty"`
+}
+
+// SpendBreakerVerdict is an account's derived circuit-breaker state and the
+// evidence it was derived from. Mirrors orchestration.BreakerVerdict.
+type SpendBreakerVerdict struct {
+	// State is "closed", "open" or "half_open".
+	State     string `json:"state"`
+	Failures  int    `json:"failures"`
+	Successes int    `json:"successes"`
+
+	// Each instant is nil when it never happened, rather than the epoch. See
+	// SpendWindowStatus.FreesAt for why these are pointers.
+	LastFailureAt *time.Time `json:"last_failure_at,omitempty"`
+	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
+
+	// OpenUntil is when an open breaker becomes half-open; nil otherwise.
+	OpenUntil *time.Time `json:"open_until,omitempty"`
+}
+
+// SpendAccount is one pooled account's contribution to a scope, and the
+// allowance it draws against. Mirrors orchestration.SpendAccount.
+type SpendAccount struct {
+	AccountID   string `json:"account_id"`
+	DisplayName string `json:"display_name,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+	TotalTokens int64  `json:"total_tokens"`
+
+	PolicyStatus SpendPolicyStatus   `json:"policy_status"`
+	Windows      []SpendWindowStatus `json:"windows,omitempty"`
+	// Breaker is nil when the account carries no breaker rule, which is not
+	// the same as a closed breaker.
+	Breaker *SpendBreakerVerdict `json:"breaker,omitempty"`
+}
+
+// SpendModel is one engine/model pair's share of a scope's tokens.
+// Mirrors orchestration.SpendModel.
+type SpendModel struct {
+	Engine      string `json:"engine"`
+	Model       string `json:"model"`
+	TotalTokens int64  `json:"total_tokens"`
+}
+
+// SpendChild is one drill-down row: the next chain level below the scope.
+// Mirrors orchestration.SpendChild.
+type SpendChild struct {
+	// ID is the child's identifier, empty when Unattributed.
+	ID    string     `json:"id,omitempty"`
+	Level SpendLevel `json:"level"`
+	// Unattributed marks the subtree the ledger files under its no-value
+	// sentinel — a job with no task. Real spend with no parent at this
+	// level, to be labelled rather than shown as an entity named "-".
+	Unattributed bool  `json:"unattributed,omitempty"`
+	TotalTokens  int64 `json:"total_tokens"`
+}
+
+// GetSpendReportRequest addresses one scope of the attribution chain.
+//
+// The levels are a PATH: each may be set only if every level above it is. A
+// scope that skips one is refused by the server rather than answered by a
+// scan of the tenant's whole history.
+type GetSpendReportRequest struct {
+	TenantID  string `json:"tenant_id,omitempty"`
+	ProjectID string `json:"project_id,omitempty"`
+	TaskID    string `json:"task_id,omitempty"`
+	JobID     string `json:"job_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	// Round selects one round below the session, applied only when RoundSet
+	// is true so round 0 — a real level — is distinguishable from "every
+	// round".
+	Round    int  `json:"round,omitempty"`
+	RoundSet bool `json:"round_set,omitempty"`
+}
+
+// GetSpendReportResponse is one scope's consumption and its drill-down.
+type GetSpendReportResponse struct {
+	Level     SpendLevel `json:"level"`
+	TenantID  string     `json:"tenant_id"`
+	ProjectID string     `json:"project_id,omitempty"`
+	TaskID    string     `json:"task_id,omitempty"`
+	JobID     string     `json:"job_id,omitempty"`
+	SessionID string     `json:"session_id,omitempty"`
+	Round     int        `json:"round,omitempty"`
+
+	Entries      int   `json:"entries"`
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+	TotalTokens  int64 `json:"total_tokens"`
+
+	// CostMicros is the summed charge in millionths of a currency unit, and
+	// CostMeasured says whether ANY of it was priced.
+	//
+	// CONSULT CostMeasured BEFORE RENDERING CostMicros. Nothing in the server
+	// prices a turn yet, so today the flag is false and the figure is
+	// UNMEASURED — not free. A renderer shows a dash. See go-quicbaas#791.
+	CostMicros   int64 `json:"cost_micros"`
+	CostMeasured bool  `json:"cost_measured"`
+
+	Successes int `json:"successes"`
+	Failures  int `json:"failures"`
+
+	// FirstAt and LastAt bound the entries summed; both nil when Entries is
+	// zero. Pointers for the reason SpendWindowStatus.FreesAt is one.
+	FirstAt *time.Time `json:"first_at,omitempty"`
+	LastAt  *time.Time `json:"last_at,omitempty"`
+
+	Accounts []SpendAccount `json:"accounts,omitempty"`
+	Models   []SpendModel   `json:"models,omitempty"`
+
+	// ChildLevel names the level Children are at, empty at the deepest level
+	// where there is nothing below to attribute to.
+	ChildLevel SpendLevel   `json:"child_level,omitempty"`
+	Children   []SpendChild `json:"children,omitempty"`
+}
+
 // SubscribeSessionEventsRequest opens a live stream over an existing
 // session's event log.
 type SubscribeSessionEventsRequest struct {
@@ -248,6 +536,22 @@ type SpawnSessionRequest struct {
 	// to the operator-level orchestration.host_affinity.mode default when
 	// false.
 	HostAffinityStrict bool `json:"host_affinity_strict,omitempty"`
+
+	// Persistent asks for a durable multi-turn session: the backend registers
+	// it so Prompt, Status, Close and resume all address the SAME agent
+	// process, and its record survives a daemon restart. A non-persistent
+	// session runs one-shot-per-prompt, is never resumable, and is concluded
+	// rather than restored at boot.
+	//
+	// A POINTER BECAUSE ABSENT AND FALSE ARE DIFFERENT ANSWERS. Unset means
+	// "the deployment's default", which resolves to persistent -- the
+	// behaviour REST callers have always had, since the REST handler defaults
+	// an omitted field to true. A plain bool would make every caller that did
+	// not think about it ask for one-shot, which is the defect this field
+	// exists to close: gRPC, Unix and embedded callers were silently getting
+	// one-shot sessions while REST and MCP callers got durable ones, so a
+	// follow-up prompt reached a process that was never registered.
+	Persistent *bool `json:"persistent,omitempty"`
 
 	// MCPServers preconfigures MCP servers for the spawned agent (e.g. the
 	// QuicBaaS MCP endpoint, giving the agent cert-authenticated access to
@@ -475,6 +779,86 @@ type Task struct {
 
 	// SpawnedAt is a nanosecond Unix timestamp of when the job was dispatched.
 	SpawnedAt int64 `json:"spawned_at,omitempty"`
+
+	// ProjectID scopes the task to a registered project.
+	ProjectID string `json:"project_id,omitempty"`
+
+	// OutputArtifacts are the typed artifacts the task has produced.
+	OutputArtifacts []*TaskArtifact `json:"output_artifacts,omitempty"`
+
+	// Source records where the task came from. Nil means no recorded origin.
+	Source *TaskSource `json:"source,omitempty"`
+
+	// Priority orders the task for dispatch; higher is dispatched first.
+	Priority int `json:"priority,omitempty"`
+
+	// Attempts counts the jobs dispatched for the task so far.
+	Attempts int `json:"attempts,omitempty"`
+
+	// AttemptBudget bounds Attempts; zero means the engine default.
+	AttemptBudget int `json:"attempt_budget,omitempty"`
+
+	// EnvironmentFaults counts attempts that ended because of the
+	// environment rather than the work.
+	EnvironmentFaults int `json:"environment_faults,omitempty"`
+
+	// QuestionAttempts counts attempts that ended with the agent asking a
+	// person rather than judging the work. Refunded against the budget like
+	// EnvironmentFaults, but reported separately: one means the factory is
+	// broken, the other means the worker did the right thing and is waiting.
+	QuestionAttempts int `json:"question_attempts,omitempty"`
+
+	// ConsecutiveEnvironmentFaults counts environment faults since the last
+	// attempt that got past the environment.
+	ConsecutiveEnvironmentFaults int `json:"consecutive_environment_faults,omitempty"`
+
+	// RetryNotBefore is a nanosecond Unix instant before which the task must
+	// not be dispatched again; zero means now.
+	RetryNotBefore int64 `json:"retry_not_before,omitempty"`
+
+	// BlockedReason says why the task is blocked.
+	BlockedReason string `json:"blocked_reason,omitempty"`
+
+	// BlockKind classifies a block: needs_info, blocked or escalated.
+	BlockKind string `json:"block_kind,omitempty"`
+
+	// StatusChangedAt is the nanosecond Unix instant of the last status
+	// transition.
+	StatusChangedAt int64 `json:"status_changed_at,omitempty"`
+
+	// Runner names the JobRunner that drives an attempt at the task; empty
+	// means the engine's lead-driven "workflow" runner.
+	Runner string `json:"runner,omitempty"`
+
+	// Routing are the placement hints a dispatch reads, kept on the record
+	// so a requeue dispatches under the same constraints.
+	Routing TaskRouting `json:"routing,omitzero"`
+
+	// DispatchReason says why the last dispatch produced no job. A
+	// successful dispatch clears it.
+	DispatchReason string `json:"dispatch_reason,omitempty"`
+}
+
+// TaskRouting are the placement hints a dispatch reads when it decides where
+// an attempt at a task runs. The zero value constrains nothing.
+type TaskRouting struct {
+	// Backend restricts the attempt to agents running this backend.
+	Backend string `json:"backend,omitempty"`
+
+	// HostAffinity pins the attempt to an agent by Name or Host.
+	HostAffinity string `json:"host_affinity,omitempty"`
+
+	// GpuRequired restricts the attempt to agents advertising "gpu".
+	GpuRequired bool `json:"gpu_required,omitempty"`
+}
+
+// TaskSource records where a task came from. Kind is scheduler, operator,
+// job, or a kind a registered task source declared; (Kind, Ref) is unique
+// within a tenant and project.
+type TaskSource struct {
+	Kind string `json:"kind"`
+	Ref  string `json:"ref"`
+	URL  string `json:"url,omitempty"`
 }
 
 // CreateTaskRequest is a request to create a new task.
@@ -505,6 +889,25 @@ type CreateTaskRequest struct {
 	// GpuRequired restricts auto-spawn dispatch to agents that advertise
 	// "gpu" in their capabilities. Ignored when AutoSpawn is false.
 	GpuRequired bool `json:"gpu_required,omitempty"`
+
+	// HostAffinity pins the task to an agent by Name or Host. Empty means
+	// any agent.
+	HostAffinity string `json:"host_affinity,omitempty"`
+
+	// Source records where the task came from. The server refuses a second
+	// task for the same (Kind, Ref) within the tenant and project.
+	Source *TaskSource `json:"source,omitempty"`
+
+	// Priority orders the task for dispatch; higher is dispatched first.
+	Priority int `json:"priority,omitempty"`
+
+	// AttemptBudget bounds the jobs dispatched for the task.
+	AttemptBudget int `json:"attempt_budget,omitempty"`
+
+	// Runner names the JobRunner that drives attempts at the task. Empty
+	// resolves to the engine's own "workflow" runner; a name nothing
+	// registered is refused.
+	Runner string `json:"runner,omitempty"`
 }
 
 // GetTaskRequest is a request to get a task by ID.
@@ -519,6 +922,13 @@ type ListTasksRequest struct {
 	Status     string `json:"status,omitempty"`
 	TeamName   string `json:"team_name,omitempty"`
 	AssignedTo string `json:"assigned_to,omitempty"`
+
+	// ProjectID restricts the listing to one project.
+	ProjectID string `json:"project_id,omitempty"`
+
+	// Statuses restricts the listing to tasks in any of these statuses. It
+	// composes with Status: both must hold when both are set.
+	Statuses []string `json:"statuses,omitempty"`
 }
 
 // ListTasksResponse is the response from listing tasks.
@@ -554,6 +964,49 @@ type CompleteTaskResponse struct {
 	Completed bool   `json:"completed"`
 }
 
+// BlockTaskRequest parks a task until a person readmits it.
+type BlockTaskRequest struct {
+	TenantID string `json:"tenant_id"`
+	TaskID   string `json:"task_id"`
+
+	// Kind is why the task is parked: needs_info, blocked or escalated.
+	Kind string `json:"kind"`
+
+	// Reason is surfaced to the person the task waits for.
+	Reason string `json:"reason"`
+}
+
+// BlockTaskResponse is the response from blocking a task.
+type BlockTaskResponse struct {
+	TaskID  string `json:"task_id"`
+	Kind    string `json:"kind,omitempty"`
+	Blocked bool   `json:"blocked"`
+}
+
+// ReadmitTaskRequest returns a blocked task to the pending queue.
+type ReadmitTaskRequest struct {
+	TenantID string `json:"tenant_id"`
+	TaskID   string `json:"task_id"`
+}
+
+// ReadmitTaskResponse is the response from readmitting a task.
+type ReadmitTaskResponse struct {
+	TaskID     string `json:"task_id"`
+	Readmitted bool   `json:"readmitted"`
+}
+
+// DeleteTaskRequest removes a task and releases its source reservation.
+type DeleteTaskRequest struct {
+	TenantID string `json:"tenant_id"`
+	TaskID   string `json:"task_id"`
+}
+
+// DeleteTaskResponse is the response from deleting a task.
+type DeleteTaskResponse struct {
+	TaskID  string `json:"task_id"`
+	Deleted bool   `json:"deleted"`
+}
+
 // Backend management types
 
 // BackendInfo represents information about an available backend.
@@ -568,6 +1021,38 @@ type BackendInfo struct {
 type ListBackendsResponse struct {
 	Backends []*BackendInfo `json:"backends"`
 	Count    int            `json:"count"`
+}
+
+// Job runner types
+
+// JobStateSpec is one state a runner drives a job through. It mirrors
+// orchestration.JobStateSpec minus IdleThreshold, which is the stall
+// detector's tuning and is not part of the wire surface.
+type JobStateSpec struct {
+	// State is the state as it appears on JobStatus.
+	State string `json:"state"`
+
+	// Label is how the state is named to a person.
+	Label string `json:"label"`
+
+	// SessionBacked says an agent session is doing the work in this state.
+	SessionBacked bool `json:"session_backed"`
+}
+
+// JobRunnerInfo is one registered runner and the ordered, non-terminal
+// states it declares.
+type JobRunnerInfo struct {
+	// Name is what JobConfig.Runner selects the runner by.
+	Name string `json:"name"`
+
+	// States are the runner's states in the order it drives them.
+	States []JobStateSpec `json:"states"`
+}
+
+// ListJobRunnersResponse is the response from listing job runners.
+type ListJobRunnersResponse struct {
+	Runners []*JobRunnerInfo `json:"runners"`
+	Count   int              `json:"count"`
 }
 
 // ListBackendModelsRequest is a request to list the models available on a
@@ -814,6 +1299,10 @@ type WorkflowSettings struct {
 	VectorDB      bool   `json:"vector_db,omitempty"`
 	Verbosity     string `json:"verbosity,omitempty"`
 	GlobalNumCtx  int    `json:"global_num_ctx,omitempty"`
+
+	// Hooks names the registered lifecycle hook set every job of the
+	// workflow runs; empty runs none.
+	Hooks string `json:"hooks,omitempty"`
 }
 
 // WorkflowDefinition describes a complete orchestration workflow including
@@ -865,6 +1354,7 @@ type DeleteWorkflowRequest struct {
 // Internal request types for parameterless methods.
 type healthRequest struct{}
 type listBackendsRequest struct{}
+type listRunnersRequest struct{}
 
 // client implements the Client interface.
 type client struct {
@@ -1151,6 +1641,87 @@ func (c *client) ClaimTask(ctx context.Context, req *ClaimTaskRequest) (*ClaimTa
 	return result, nil
 }
 
+// BlockTask parks a task until a person readmits it.
+func (c *client) BlockTask(ctx context.Context, req *BlockTaskRequest) (*BlockTaskResponse, error) {
+	if err := validateBlockTaskRequest(req); err != nil {
+		return nil, err
+	}
+
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.BlockTask", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "BlockTask", req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("orchestrator.BlockTask", "nil response from server")
+	}
+
+	result, ok := resp.(*BlockTaskResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.BlockTask", "invalid response type")
+	}
+
+	return result, nil
+}
+
+// ReadmitTask returns a blocked task to the pending queue.
+func (c *client) ReadmitTask(ctx context.Context, req *ReadmitTaskRequest) (*ReadmitTaskResponse, error) {
+	if err := validateReadmitTaskRequest(req); err != nil {
+		return nil, err
+	}
+
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.ReadmitTask", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "ReadmitTask", req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("orchestrator.ReadmitTask", "nil response from server")
+	}
+
+	result, ok := resp.(*ReadmitTaskResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.ReadmitTask", "invalid response type")
+	}
+
+	return result, nil
+}
+
+// DeleteTask removes a task and releases its source reservation.
+func (c *client) DeleteTask(ctx context.Context, req *DeleteTaskRequest) (*DeleteTaskResponse, error) {
+	if err := validateDeleteTaskRequest(req); err != nil {
+		return nil, err
+	}
+
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.DeleteTask", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "DeleteTask", req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return nil, errors.NewInternal("orchestrator.DeleteTask", "nil response from server")
+	}
+
+	result, ok := resp.(*DeleteTaskResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.DeleteTask", "invalid response type")
+	}
+
+	return result, nil
+}
+
 // CompleteTask marks a task as completed.
 func (c *client) CompleteTask(ctx context.Context, req *CompleteTaskRequest) (*CompleteTaskResponse, error) {
 	if err := validateCompleteTaskRequest(req); err != nil {
@@ -1196,6 +1767,29 @@ func (c *client) ListBackends(ctx context.Context) (*ListBackendsResponse, error
 	result, ok := resp.(*ListBackendsResponse)
 	if !ok {
 		return nil, errors.NewInternal("orchestrator.ListBackends", "invalid response type")
+	}
+
+	return result, nil
+}
+
+// ListRunners returns every registered job runner and the states it declares.
+func (c *client) ListRunners(ctx context.Context) (*ListJobRunnersResponse, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.ListRunners", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "ListRunners", &listRunnersRequest{})
+	if err != nil {
+		return nil, err
+	}
+
+	if resp == nil {
+		return &ListJobRunnersResponse{Runners: []*JobRunnerInfo{}, Count: 0}, nil
+	}
+
+	result, ok := resp.(*ListJobRunnersResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.ListRunners", "invalid response type")
 	}
 
 	return result, nil
@@ -1821,6 +2415,51 @@ func validateClaimTaskRequest(req *ClaimTaskRequest) error {
 	return nil
 }
 
+func validateBlockTaskRequest(req *BlockTaskRequest) error {
+	if req == nil {
+		return errors.NewInvalidInput("orchestrator.BlockTask", "request is required")
+	}
+	if req.TenantID == "" {
+		return errors.NewInvalidInput("orchestrator.BlockTask", "tenant ID is required")
+	}
+	if req.TaskID == "" {
+		return errors.NewInvalidInput("orchestrator.BlockTask", "task ID is required")
+	}
+	if req.Kind == "" {
+		return errors.NewInvalidInput("orchestrator.BlockTask", "kind is required")
+	}
+	if req.Reason == "" {
+		return errors.NewInvalidInput("orchestrator.BlockTask", "reason is required")
+	}
+	return nil
+}
+
+func validateReadmitTaskRequest(req *ReadmitTaskRequest) error {
+	if req == nil {
+		return errors.NewInvalidInput("orchestrator.ReadmitTask", "request is required")
+	}
+	if req.TenantID == "" {
+		return errors.NewInvalidInput("orchestrator.ReadmitTask", "tenant ID is required")
+	}
+	if req.TaskID == "" {
+		return errors.NewInvalidInput("orchestrator.ReadmitTask", "task ID is required")
+	}
+	return nil
+}
+
+func validateDeleteTaskRequest(req *DeleteTaskRequest) error {
+	if req == nil {
+		return errors.NewInvalidInput("orchestrator.DeleteTask", "request is required")
+	}
+	if req.TenantID == "" {
+		return errors.NewInvalidInput("orchestrator.DeleteTask", "tenant ID is required")
+	}
+	if req.TaskID == "" {
+		return errors.NewInvalidInput("orchestrator.DeleteTask", "task ID is required")
+	}
+	return nil
+}
+
 func validateCompleteTaskRequest(req *CompleteTaskRequest) error {
 	if req == nil {
 		return errors.NewInvalidInput("orchestrator.CompleteTask", "request is required")
@@ -1998,7 +2637,8 @@ func (c *client) GetJobStatus(ctx context.Context, req *GetJobStatusRequest) (*J
 	return result, nil
 }
 
-// ListJobs returns all jobs for a tenant.
+// ListJobs returns the tenant's jobs, narrowed to the attempts at one task
+// when the request names one.
 func (c *client) ListJobs(ctx context.Context, req *ListJobsRequest) (*ListJobsResponse, error) {
 	if err := validateListJobsRequest(req); err != nil {
 		return nil, err
@@ -2221,6 +2861,46 @@ func (s *jobEventSubscription) receiveLoop(ctx context.Context) {
 // Session Event Subscription + History (Phase 4)
 // =============================================================================
 
+// GetSpendReport implements Client.GetSpendReport. One-shot scoped read of the
+// consumption ledger; every transport carries it.
+func (c *client) GetSpendReport(ctx context.Context, req *GetSpendReportRequest) (*GetSpendReportResponse, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.GetSpendReport", "context is required")
+	}
+	if req == nil {
+		return nil, errors.NewInvalidInput("orchestrator.GetSpendReport", "request is required")
+	}
+	resp, err := c.transport.Request(ctx, serviceName, "GetSpendReport", req)
+	if err != nil {
+		return nil, err
+	}
+	out, ok := resp.(*GetSpendReportResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.GetSpendReport", "invalid response type")
+	}
+	return out, nil
+}
+
+// GetSessionConversation implements Client.GetSessionConversation. One-shot
+// paged read; every transport carries it.
+func (c *client) GetSessionConversation(ctx context.Context, req *GetSessionConversationRequest) (*GetSessionConversationResponse, error) {
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.GetSessionConversation", "context is required")
+	}
+	if req == nil || req.SessionID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.GetSessionConversation", "session_id is required")
+	}
+	resp, err := c.transport.Request(ctx, serviceName, "GetSessionConversation", req)
+	if err != nil {
+		return nil, err
+	}
+	out, ok := resp.(*GetSessionConversationResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.GetSessionConversation", "invalid response type")
+	}
+	return out, nil
+}
+
 // GetSessionHistory implements Client.GetSessionHistory. One-shot REST/gRPC
 // call for a page of historical session events.
 func (c *client) GetSessionHistory(ctx context.Context, req *GetSessionHistoryRequest) (*GetSessionHistoryResponse, error) {
@@ -2391,6 +3071,16 @@ type StartJobRequest struct {
 	PollInterval  string `json:"poll_interval,omitempty"`
 	WorkflowName  string `json:"workflow_name,omitempty"`
 	WorkflowFile  string `json:"workflow_file,omitempty"`
+
+	// Runner names the JobRunner that drives the job's states. Empty selects
+	// the engine's own "workflow" runner: a lead agent decomposing the
+	// description into a DAG of work items.
+	Runner string `json:"runner,omitempty"`
+
+	// TaskID binds the job to the task it is an attempt at; Attempt is the
+	// 1-based ordinal of that attempt.
+	TaskID  string `json:"task_id,omitempty"`
+	Attempt int    `json:"attempt,omitempty"`
 }
 
 // StartJobResponse contains the result of starting an orchestration job.
@@ -2418,6 +3108,118 @@ type JobStatus struct {
 	UpdatedAt   int64           `json:"updated_at"`
 	Error       string          `json:"error,omitempty"`
 	Events      []JobAuditEvent `json:"events,omitempty"`
+
+	// TaskID and Attempt bind the job to the task it is an attempt at.
+	TaskID  string `json:"task_id,omitempty"`
+	Attempt int    `json:"attempt,omitempty"`
+
+	// Node names the daemon running the job's control loop.
+	Node string `json:"node,omitempty"`
+
+	// HeartbeatAt is the nanosecond Unix instant the loop last proved alive.
+	HeartbeatAt int64 `json:"heartbeat_at,omitempty"`
+
+	// FailureClass classifies a failed job's cause.
+	FailureClass string `json:"failure_class,omitempty"`
+
+	// LeadSessionID is the lead agent's session; SessionIDs lists every
+	// session the job holds, lead first.
+	LeadSessionID string   `json:"lead_session_id,omitempty"`
+	SessionIDs    []string `json:"session_ids,omitempty"`
+
+	// Stage is the last lifecycle moment the job passed through (prepare,
+	// reviewable, complete, discard, blocked); empty when the workflow
+	// runs no hooks.
+	Stage string `json:"stage,omitempty"`
+
+	// Runner names the JobRunner that drove the job's states.
+	Runner string `json:"runner,omitempty"`
+
+	// --- Provenance: who ran the attempt, and what it left behind ---------
+	//
+	// Mirrors pkg/orchestration/job_provenance.go. AgentID and Stages are
+	// recorded by the run; the rest are the task's facts, which the server
+	// lays over the status when GetJobStatus reads it. A job read from
+	// ListJobs carries none of them.
+
+	// AgentID is the FLEET agent the work was dispatched to, which is not
+	// Node: that is the daemon whose control loop drove the job.
+	AgentID string `json:"agent_id,omitempty"`
+
+	// Stages is every lifecycle moment the job entered, in order.
+	Stages []JobStageRecord `json:"stages,omitempty"`
+
+	// Attempts is every attempt at the job's task, oldest first, with the
+	// one this status belongs to marked Current.
+	Attempts []JobAttemptRecord `json:"attempts,omitempty"`
+
+	// AttemptBudget is the number of charged attempts the task allows.
+	AttemptBudget int `json:"attempt_budget,omitempty"`
+
+	// TerminalReason is the typed reason the task stopped, from the closed
+	// vocabulary in pkg/orchestration/task_conclusion.go.
+	TerminalReason string `json:"terminal_reason,omitempty"`
+
+	// ReadmitAllowed says whether a person may return the task to the queue.
+	ReadmitAllowed bool `json:"readmit_allowed,omitempty"`
+
+	// Delivery is the git side of THIS ATTEMPT — branch, head, pull request
+	// and review rounds — read off the artifacts the runner published.
+	Delivery *JobDelivery `json:"delivery,omitempty"`
+
+	// Verification is the last validator pipeline's results.
+	Verification []JobVerificationResult `json:"verification,omitempty"`
+}
+
+// JobStageRecord is one lifecycle moment the job entered.
+type JobStageRecord struct {
+	Stage string `json:"stage"`
+
+	// EnteredAt is the Unix-nanosecond instant the moment was entered.
+	EnteredAt int64 `json:"entered_at"`
+}
+
+// JobAttemptRecord is one attempt at the job's task.
+type JobAttemptRecord struct {
+	Attempt int    `json:"attempt"`
+	JobID   string `json:"job_id"`
+
+	// Current marks the attempt the status being read belongs to.
+	Current bool `json:"current,omitempty"`
+}
+
+// JobReviewRound is one reviewer's verdict on one head of the job's branch.
+type JobReviewRound struct {
+	Round    int    `json:"round"`
+	Reviewer string `json:"reviewer"`
+
+	// Verdict is the reviewing module's own vocabulary: approve,
+	// request_changes, error.
+	Verdict string `json:"verdict"`
+
+	HeadSHA  string `json:"head_sha,omitempty"`
+	Findings string `json:"findings,omitempty"`
+
+	// SubmittedAt is an RFC 3339 instant.
+	SubmittedAt string `json:"submitted_at,omitempty"`
+}
+
+// JobDelivery is the git side of one attempt at the job's task.
+type JobDelivery struct {
+	Branch            string           `json:"branch,omitempty"`
+	HeadSHA           string           `json:"head_sha,omitempty"`
+	PullRequestNumber int              `json:"pull_request_number,omitempty"`
+	PullRequestURL    string           `json:"pull_request_url,omitempty"`
+	PullRequestState  string           `json:"pull_request_state,omitempty"`
+	Reviews           []JobReviewRound `json:"reviews,omitempty"`
+}
+
+// JobVerificationResult is one verification command's outcome.
+type JobVerificationResult struct {
+	Name    string `json:"name"`
+	Passed  bool   `json:"passed"`
+	Message string `json:"message,omitempty"`
+	Details string `json:"details,omitempty"`
 }
 
 // JobAuditEvent records a single event in the job's complete audit trail.
@@ -2439,9 +3241,13 @@ type CancelJobResponse struct {
 	Cancelled bool   `json:"cancelled"`
 }
 
-// ListJobsRequest is a request to list all jobs for a tenant.
+// ListJobsRequest is a request to list a tenant's jobs.
 type ListJobsRequest struct {
 	TenantID string `json:"tenant_id"`
+
+	// TaskID narrows the listing to the attempts at one task. Empty lists
+	// every job the tenant owns.
+	TaskID string `json:"task_id,omitempty"`
 }
 
 // ListJobsResponse contains the list of jobs for a tenant.
@@ -2462,6 +3268,8 @@ type JobSummary struct {
 	UpdatedAt   int64  `json:"updated_at"`
 	Error       string `json:"error,omitempty"`
 	EventCount  int    `json:"event_count"`
+	TaskID      string `json:"task_id,omitempty"`
+	Attempt     int    `json:"attempt,omitempty"`
 }
 
 // SubscribeJobEventsRequest is a request to subscribe to real-time job events.
@@ -2551,16 +3359,53 @@ type EnableAgentResponse struct {
 
 // TaskArtifact represents a typed output artifact produced by a task.
 type TaskArtifact struct {
+	// Kind classifies where the content lives: "inline", "file", "commit",
+	// "kv_key" or "url". It decides which of Content and Ref is meaningful.
+	Kind string `json:"kind,omitempty"`
+
 	// Name is the unique artifact name within the task.
 	Name string `json:"name"`
-	// ContentType is the MIME type of the artifact (e.g., "text/plain").
-	ContentType string `json:"content_type,omitempty"`
-	// Data is the inline artifact payload for small artifacts.
-	Data []byte `json:"data,omitempty"`
-	// Ref is the KV store reference for large artifacts (mutually exclusive with Data).
-	Ref string `json:"ref,omitempty"`
+
+	// MIMEType describes the content type (e.g. "text/plain").
+	MIMEType string `json:"mime_type,omitempty"`
+
 	// Size is the total byte length of the artifact.
 	Size int64 `json:"size,omitempty"`
+
+	// Content holds inline bytes when Kind is "inline".
+	Content []byte `json:"content,omitempty"`
+
+	// Ref locates the artifact for every non-inline kind.
+	Ref *TaskArtifactRef `json:"ref,omitempty"`
+
+	// Metadata holds the key-value pairs the producer attached. The SDLC
+	// module puts the issue, the comment id and the outcome here, which is
+	// what makes a task's history readable without fetching each artifact.
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+// TaskArtifactRef locates a non-inline artifact.
+//
+// IT IS AN OBJECT ON THE WIRE, AND WAS DECLARED HERE AS A STRING. Every
+// transport but the embedded one serves the orchestration Artifact verbatim,
+// so decoding a task that carried any artifact failed outright with
+// "cannot unmarshal object into Go struct field TaskArtifact.output_artifacts.ref
+// of type string" — and since the SDLC module writes an outcome_comment
+// artifact on every issue it touches, that was every task that had ever run.
+// `quicbaas orchestrator task get` could not read a single real task.
+type TaskArtifactRef struct {
+	// AgentID routes fetch requests for file-kind artifacts.
+	AgentID string `json:"agent_id,omitempty"`
+
+	// Path is the filesystem path, KV key, or full URL depending on Kind.
+	Path string `json:"path,omitempty"`
+
+	// SHA is the content hash for file/kv_key kinds, or the git commit SHA
+	// for commit-kind artifacts.
+	SHA string `json:"sha,omitempty"`
+
+	// Branch is the git branch for commit-kind artifacts.
+	Branch string `json:"branch,omitempty"`
 }
 
 // SubmitTaskArtifactsRequest stores typed artifacts for a task.

@@ -78,9 +78,6 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Auth/FinishLogin": handleFinishLogin,
 
 	// RBAC operations
-	"quicbaas.RBAC/CreateUser": handleCreateUser,
-	"quicbaas.RBAC/DeleteUser": handleDeleteUser,
-	"quicbaas.RBAC/ListUsers":  handleListUsers,
 	"quicbaas.RBAC/CreateRole": handleCreateAuthRole,
 	"quicbaas.RBAC/DeleteRole": handleDeleteAuthRole,
 	"quicbaas.RBAC/ListRoles":  handleListAuthRoles,
@@ -294,15 +291,18 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Account/Revoke":           handleAccountRevoke,
 	"quicbaas.Account/SetDefault":       handleAccountSetDefault,
 	"quicbaas.Account/Usage":            handleAccountUsage,
+	"quicbaas.Account/Materialize":      handleAccountMaterialize,
 
 	// Orchestrator — session operations
-	"quicbaas.Orchestrator/Inference":            handleOrchestratorInference,
-	"quicbaas.Orchestrator/SpawnSession":         handleOrchestratorSpawnSession,
-	"quicbaas.Orchestrator/PromptSession":        handleOrchestratorPromptSession,
-	"quicbaas.Orchestrator/SessionStatus":        handleOrchestratorSessionStatus,
-	"quicbaas.Orchestrator/CloseSession":         handleOrchestratorCloseSession,
-	"quicbaas.Orchestrator/RotateSessionAccount": handleOrchestratorRotateSessionAccount,
-	"quicbaas.Orchestrator/ListSessions":         handleOrchestratorListSessions,
+	"quicbaas.Orchestrator/Inference":              handleOrchestratorInference,
+	"quicbaas.Orchestrator/SpawnSession":           handleOrchestratorSpawnSession,
+	"quicbaas.Orchestrator/PromptSession":          handleOrchestratorPromptSession,
+	"quicbaas.Orchestrator/SessionStatus":          handleOrchestratorSessionStatus,
+	"quicbaas.Orchestrator/CloseSession":           handleOrchestratorCloseSession,
+	"quicbaas.Orchestrator/RotateSessionAccount":   handleOrchestratorRotateSessionAccount,
+	"quicbaas.Orchestrator/ListSessions":           handleOrchestratorListSessions,
+	"quicbaas.Orchestrator/GetSessionConversation": handleOrchestratorGetSessionConversation,
+	"quicbaas.Orchestrator/GetSpendReport":         handleOrchestratorGetSpendReport,
 
 	// Orchestrator — task operations
 	"quicbaas.Orchestrator/CreateTask":   handleOrchestratorCreateTask,
@@ -310,6 +310,9 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Orchestrator/ListTasks":    handleOrchestratorListTasks,
 	"quicbaas.Orchestrator/ClaimTask":    handleOrchestratorClaimTask,
 	"quicbaas.Orchestrator/CompleteTask": handleOrchestratorCompleteTask,
+	"quicbaas.Orchestrator/BlockTask":    handleOrchestratorBlockTask,
+	"quicbaas.Orchestrator/ReadmitTask":  handleOrchestratorReadmitTask,
+	"quicbaas.Orchestrator/DeleteTask":   handleOrchestratorDeleteTask,
 
 	// Orchestrator — task artifact operations
 	"quicbaas.Orchestrator/SubmitTaskArtifacts": handleOrchestratorSubmitTaskArtifacts,
@@ -337,6 +340,7 @@ var unaryHandlers = map[string]handlerFunc{
 	// Orchestrator — utility operations
 	"quicbaas.Orchestrator/Health":            handleOrchestratorHealth,
 	"quicbaas.Orchestrator/ListBackends":      handleOrchestratorListBackends,
+	"quicbaas.Orchestrator/ListRunners":       handleOrchestratorListRunners,
 	"quicbaas.Orchestrator/ListBackendModels": handleOrchestratorListBackendModels,
 	"quicbaas.Orchestrator/DecomposeTask":     handleOrchestratorDecomposeTask,
 
@@ -349,6 +353,15 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Project/List":            handleProjectList,
 	"quicbaas.Project/GrantAgentRole":  handleProjectGrantAgentRole,
 	"quicbaas.Project/RevokeAgentRole": handleProjectRevokeAgentRole,
+
+	// SDLC module: forge bindings and deliveries
+	"quicbaas.SDLC/Bind":        handleSDLCBind,
+	"quicbaas.SDLC/Unbind":      handleSDLCUnbind,
+	"quicbaas.SDLC/Binding":     handleSDLCBinding,
+	"quicbaas.SDLC/Delivery":    handleSDLCDelivery,
+	"quicbaas.SDLC/ListForges":  handleSDLCForges,
+	"quicbaas.SDLC/Onboard":     handleSDLCOnboard,
+	"quicbaas.SDLC/Conformance": handleSDLCConformance,
 
 	// ObjectStorage operations
 	"quicbaas.ObjectStorage/PutObject":          handleObjPutObject,

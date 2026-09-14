@@ -16,14 +16,15 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
-	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 )
 
 // =============================================================================
@@ -75,7 +76,17 @@ type failingAgentKV struct {
 
 // newFailingAgentKV returns a memory-backed store whose fault verb always errors.
 func newFailingAgentKV(fault agentKVFault) *failingAgentKV {
-	return &failingAgentKV{KVStore: kvstore.NewMemory(), fault: fault}
+	return &failingAgentKV{KVStore: NewMemoryTaskKV(), fault: fault}
+}
+
+// PutIfAbsent forwards the guarded create, honouring the injected write
+// failure. Embedding interfaces.KVStore does not carry this verb — see
+// forwardPutIfAbsent — so without this method every registration is refused.
+func (f *failingAgentKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if f.fault == agentFaultPut {
+		return false, errAgentKVDown
+	}
+	return forwardPutIfAbsent(ctx, f.KVStore, key, value)
 }
 
 func (f *failingAgentKV) Get(ctx context.Context, key string) ([]byte, error) {
@@ -143,7 +154,7 @@ func TestNewInMemoryAgentRegistry(t *testing.T) {
 func TestNewAgentRegistry_InjectedStore(t *testing.T) {
 	t.Parallel()
 
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	registry := NewAgentRegistry(kv)
 	require.NotNil(t, registry)
 
@@ -179,7 +190,7 @@ func TestNewAgentRegistry_NilStore(t *testing.T) {
 			return registry.UpdateAgent(ctx, &AgentRegistration{ID: "a", TenantID: "t"})
 		},
 		"remove":       func() error { return registry.RemoveAgent(ctx, "t", "a") },
-		"heartbeat":    func() error { return registry.Heartbeat(ctx, "t", "a") },
+		"heartbeat":    func() error { return registry.Heartbeat(ctx, "t", "a", nil) },
 		"deleteTenant": func() error { return registry.DeleteTenantAgents(ctx, "t") },
 	}
 
@@ -205,7 +216,7 @@ func TestNewAgentRegistry_NilStore(t *testing.T) {
 func TestAgentRegistry_RestartDurability(t *testing.T) {
 	t.Parallel()
 
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	first := NewAgentRegistry(kv)
 	ctx := context.Background()
 
@@ -397,9 +408,11 @@ func TestRegisterAgent_StoreFailure(t *testing.T) {
 
 	ctx := context.Background()
 
+	// No "exists" case, and its absence is the point: the guarded create issues
+	// ONE operation, so there is no probe left to fail independently of the
+	// write. The put fault covers the whole registration path.
 	tests := map[string]agentKVFault{
-		"exists": agentFaultExists,
-		"put":    agentFaultPut,
+		"put": agentFaultPut,
 	}
 
 	for name, fault := range tests {
@@ -505,7 +518,7 @@ func TestGetAgent_EmptyAgentID(t *testing.T) {
 func TestGetAgent_CorruptRecord(t *testing.T) {
 	t.Parallel()
 
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	registry := NewAgentRegistry(kv)
 	ctx := context.Background()
 
@@ -665,7 +678,7 @@ func TestListAgents_EmptyTenantID(t *testing.T) {
 func TestListAgents_SkipsCorruptRecords(t *testing.T) {
 	t.Parallel()
 
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	registry := NewAgentRegistry(kv)
 	ctx := context.Background()
 
@@ -909,7 +922,7 @@ func TestHeartbeat_Success(t *testing.T) {
 	initialLastSeen := before.LastSeen
 
 	// Heartbeat
-	err = registry.Heartbeat(ctx, "tenant-a", "agent-hb")
+	err = registry.Heartbeat(ctx, "tenant-a", "agent-hb", nil)
 	require.NoError(t, err)
 
 	// Verify status changed to running and last_seen updated
@@ -954,7 +967,7 @@ func TestHeartbeat_StatusTransitions(t *testing.T) {
 				Status:    tc.start,
 			}))
 
-			require.NoError(t, registry.Heartbeat(ctx, "tenant-a", "hb"))
+			require.NoError(t, registry.Heartbeat(ctx, "tenant-a", "hb", nil))
 
 			got, err := registry.GetAgent(ctx, "tenant-a", "hb")
 			require.NoError(t, err)
@@ -969,7 +982,7 @@ func TestHeartbeat_NotFound(t *testing.T) {
 	registry := NewInMemoryAgentRegistry()
 	ctx := context.Background()
 
-	err := registry.Heartbeat(ctx, "tenant-a", "nonexistent")
+	err := registry.Heartbeat(ctx, "tenant-a", "nonexistent", nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrAgentRegistryNotFound),
 		"expected ErrAgentRegistryNotFound, got: %v", err)
@@ -981,7 +994,7 @@ func TestHeartbeat_EmptyTenantID(t *testing.T) {
 	registry := NewInMemoryAgentRegistry()
 	ctx := context.Background()
 
-	err := registry.Heartbeat(ctx, "", "agent-1")
+	err := registry.Heartbeat(ctx, "", "agent-1", nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrAgentRegistryInvalidInput),
 		"expected ErrAgentRegistryInvalidInput, got: %v", err)
@@ -993,7 +1006,7 @@ func TestHeartbeat_EmptyAgentID(t *testing.T) {
 	registry := NewInMemoryAgentRegistry()
 	ctx := context.Background()
 
-	err := registry.Heartbeat(ctx, "tenant-a", "")
+	err := registry.Heartbeat(ctx, "tenant-a", "", nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrAgentRegistryInvalidInput),
 		"expected ErrAgentRegistryInvalidInput, got: %v", err)
@@ -1009,7 +1022,7 @@ func TestHeartbeat_StoreFailure(t *testing.T) {
 	seedAgent(t, healthy, "tenant-a", "agent-hb")
 
 	registry := NewAgentRegistry(kv)
-	err := registry.Heartbeat(ctx, "tenant-a", "agent-hb")
+	err := registry.Heartbeat(ctx, "tenant-a", "agent-hb", nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errAgentKVDown)
 }
@@ -1138,7 +1151,7 @@ func TestAgentRegistry_TenantIsolation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			kv := kvstore.NewMemory()
+			kv := NewMemoryTaskKV()
 			registry := NewAgentRegistry(kv)
 			ctx := context.Background()
 
@@ -1171,7 +1184,7 @@ func TestAgentRegistry_TenantIsolation(t *testing.T) {
 			})
 
 			t.Run("heartbeat across tenants", func(t *testing.T) {
-				err := registry.Heartbeat(ctx, pair.tenantA, "agent-b")
+				err := registry.Heartbeat(ctx, pair.tenantA, "agent-b", nil)
 				require.Error(t, err)
 				assert.ErrorIs(t, err, ErrAgentRegistryNotFound)
 			})
@@ -1207,7 +1220,7 @@ func TestAgentRegistry_TenantIsolation(t *testing.T) {
 func TestAgentRegistry_ForeignRecordAtTenantKey(t *testing.T) {
 	t.Parallel()
 
-	kv := kvstore.NewMemory()
+	kv := NewMemoryTaskKV()
 	registry := NewAgentRegistry(kv)
 	ctx := context.Background()
 
@@ -1225,7 +1238,7 @@ func TestAgentRegistry_ForeignRecordAtTenantKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, listed, "a foreign record must never appear in a tenant listing")
 
-	assert.ErrorIs(t, registry.Heartbeat(ctx, "tenant-a", "foreign"), ErrAgentRegistryNotFound)
+	assert.ErrorIs(t, registry.Heartbeat(ctx, "tenant-a", "foreign", nil), ErrAgentRegistryNotFound)
 	assert.ErrorIs(t, registry.RemoveAgent(ctx, "tenant-a", "foreign"), ErrAgentRegistryNotFound)
 }
 
@@ -1270,7 +1283,7 @@ func TestAgentRegistry_RejectsInvalidKeySegments(t *testing.T) {
 					return registry.UpdateAgent(ctx, &AgentRegistration{ID: tc.agentID, TenantID: tc.tenantID})
 				},
 				"remove":    func() error { return registry.RemoveAgent(ctx, tc.tenantID, tc.agentID) },
-				"heartbeat": func() error { return registry.Heartbeat(ctx, tc.tenantID, tc.agentID) },
+				"heartbeat": func() error { return registry.Heartbeat(ctx, tc.tenantID, tc.agentID, nil) },
 			}
 
 			for verb, call := range calls {
@@ -1311,7 +1324,7 @@ func TestAgentRegistry_AuditsMutations(t *testing.T) {
 	t.Parallel()
 
 	auditor := &agentAuditRecorder{}
-	registry := NewAgentRegistry(kvstore.NewMemory(), WithStoreAuditor(auditor))
+	registry := NewAgentRegistry(NewMemoryTaskKV(), WithStoreAuditor(auditor))
 	ctx := context.Background()
 
 	agent := &AgentRegistration{
@@ -1342,7 +1355,7 @@ func TestAgentRegistry_DoesNotAuditReadsOrHeartbeats(t *testing.T) {
 	t.Parallel()
 
 	auditor := &agentAuditRecorder{}
-	registry := NewAgentRegistry(kvstore.NewMemory(), WithStoreAuditor(auditor))
+	registry := NewAgentRegistry(NewMemoryTaskKV(), WithStoreAuditor(auditor))
 	ctx := context.Background()
 
 	seedAgent(t, registry, "tenant-a", "agent-quiet")
@@ -1352,7 +1365,7 @@ func TestAgentRegistry_DoesNotAuditReadsOrHeartbeats(t *testing.T) {
 	require.NoError(t, err)
 	_, err = registry.ListAgents(ctx, "tenant-a", nil)
 	require.NoError(t, err)
-	require.NoError(t, registry.Heartbeat(ctx, "tenant-a", "agent-quiet"))
+	require.NoError(t, registry.Heartbeat(ctx, "tenant-a", "agent-quiet", nil))
 
 	assert.Len(t, auditor.snapshot(), 1,
 		"reads and heartbeats must not append to the audit trail")
@@ -1362,7 +1375,7 @@ func TestAgentRegistry_AuditsCascadeDeletePerAgent(t *testing.T) {
 	t.Parallel()
 
 	auditor := &agentAuditRecorder{}
-	registry := NewAgentRegistry(kvstore.NewMemory(), WithStoreAuditor(auditor))
+	registry := NewAgentRegistry(NewMemoryTaskKV(), WithStoreAuditor(auditor))
 	ctx := context.Background()
 
 	seedAgent(t, registry, "tenant-a", "cascade-1")
@@ -1431,7 +1444,7 @@ func TestAgentRegistry_AuditsFailedMutations(t *testing.T) {
 			t.Parallel()
 
 			auditor := &agentAuditRecorder{}
-			registry := NewAgentRegistry(kvstore.NewMemory(), WithStoreAuditor(auditor))
+			registry := NewAgentRegistry(NewMemoryTaskKV(), WithStoreAuditor(auditor))
 			seedAgent(t, registry, "tenant-a", "dup")
 
 			require.Error(t, tc.mutate(registry))
@@ -1560,7 +1573,7 @@ func TestConcurrentHeartbeat(t *testing.T) {
 	for range beats {
 		go func() {
 			defer wg.Done()
-			if err := registry.Heartbeat(ctx, "tenant-a", "agent-hot"); err != nil {
+			if err := registry.Heartbeat(ctx, "tenant-a", "agent-hot", nil); err != nil {
 				errs <- err
 			}
 		}()
@@ -1633,7 +1646,7 @@ func TestAgentRegistry_CancelledContext(t *testing.T) {
 			return registry.UpdateAgent(ctx, &AgentRegistration{ID: "a", TenantID: "tenant-a"})
 		},
 		"remove":       func() error { return registry.RemoveAgent(ctx, "tenant-a", "a") },
-		"heartbeat":    func() error { return registry.Heartbeat(ctx, "tenant-a", "a") },
+		"heartbeat":    func() error { return registry.Heartbeat(ctx, "tenant-a", "a", nil) },
 		"deleteTenant": func() error { return registry.DeleteTenantAgents(ctx, "tenant-a") },
 	}
 
@@ -1645,5 +1658,147 @@ func TestAgentRegistry_CancelledContext(t *testing.T) {
 			require.Error(t, err)
 			assert.ErrorIs(t, err, context.Canceled)
 		})
+	}
+}
+
+// =============================================================================
+// Multi-node registration exclusivity
+// =============================================================================
+
+// registerBarrierKV gathers every contender at the point it is about to write
+// the agent record, releasing them only once all have arrived.
+//
+// Same dual-route rule as the create-race harness, and for the same reason: the
+// broken registry arrives via Exists and the fixed one via PutIfAbsent, so
+// gathering at whichever verb a node uses is what lets one test judge both. A
+// harness hooked only to Exists would hold nothing once the probe was gone and
+// would pass vacuously against the fix.
+type registerBarrierKV struct {
+	interfaces.KVStore
+
+	key   string
+	nodes int
+
+	mu      sync.Mutex
+	arrived int
+	gate    chan struct{}
+}
+
+func newRegisterBarrierKV(inner interfaces.KVStore, key string, nodes int) *registerBarrierKV {
+	return &registerBarrierKV{KVStore: inner, key: key, nodes: nodes, gate: make(chan struct{})}
+}
+
+func (k *registerBarrierKV) arrive() {
+	k.mu.Lock()
+	k.arrived++
+	// Equality rather than >=, so a later arrival cannot close a closed gate.
+	if k.arrived == k.nodes {
+		close(k.gate)
+	}
+	k.mu.Unlock()
+
+	select {
+	case <-k.gate:
+	case <-time.After(barrierWait):
+	}
+}
+
+// Exists serves the probe and then gathers — the broken registry's route.
+func (k *registerBarrierKV) Exists(ctx context.Context, key string) (bool, error) {
+	exists, err := k.KVStore.Exists(ctx, key)
+	if key == k.key {
+		k.arrive()
+	}
+	return exists, err
+}
+
+// PutIfAbsent gathers and then writes — the fixed registry's route.
+func (k *registerBarrierKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if key == k.key {
+		k.arrive()
+	}
+	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
+}
+
+// TestRegisterAgent_NineNodesRegisteringOneAgentProduceOneRecord proves
+// registration is decided by the store rather than by a process-local lock.
+//
+// The damage this prevents is not a duplicate row. A losing write was
+// UNCONDITIONAL, so it replaced a LIVE registration with a fresh one — resetting
+// Status, RegisteredAt and LastSeen, and re-pointing Host at the loser's node.
+// Dispatch then reads an agent record describing a worker that is not the one
+// running, which is the same class of erasure the task create had.
+func TestRegisterAgent_NineNodesRegisteringOneAgentProduceOneRecord(t *testing.T) {
+	const nodes = 9
+
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+	key, err := agentKey("tenant-a", "agent-contested")
+	if err != nil {
+		t.Fatalf("agentKey: %v", err)
+	}
+	barrier := newRegisterBarrierKV(shared, key, nodes)
+
+	var (
+		wg       sync.WaitGroup
+		start    = make(chan struct{})
+		verdicts = make([]error, nodes)
+	)
+	for i := 0; i < nodes; i++ {
+		wg.Add(1)
+		go func(node int) {
+			defer wg.Done()
+			// One registry per node, as separate processes would have: they
+			// agree only because the store decides, not because they share a
+			// lock.
+			registry := NewAgentRegistry(barrier)
+			<-start
+			verdicts[node] = registry.RegisterAgent(ctx, &AgentRegistration{
+				ID:        "agent-contested",
+				TenantID:  "tenant-a",
+				Name:      "worker",
+				Host:      "host-" + strconv.Itoa(node),
+				AgentType: "claude-code",
+			})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	winner := -1
+	for node, err := range verdicts {
+		if err == nil {
+			if winner >= 0 {
+				t.Fatalf("two nodes registered one agent ID: host-%d and host-%d both succeeded",
+					winner, node)
+			}
+			winner = node
+		}
+	}
+	if winner < 0 {
+		t.Fatalf("no node registered the agent; verdicts: %v", verdicts)
+	}
+
+	for node, err := range verdicts {
+		if node == winner {
+			continue
+		}
+		var exists *AgentAlreadyExistsError
+		if !errors.As(err, &exists) {
+			t.Fatalf("node %d lost the race but got %T: %v, want *AgentAlreadyExistsError",
+				node, err, err)
+		}
+	}
+
+	// The surviving record must be the winner's. A record naming a loser means
+	// a late write replaced a live registration — the damage, as distinct from
+	// the error.
+	registry := NewAgentRegistry(shared)
+	stored, err := registry.GetAgent(ctx, "tenant-a", "agent-contested")
+	if err != nil {
+		t.Fatalf("GetAgent: %v", err)
+	}
+	if want := "host-" + strconv.Itoa(winner); stored.Host != want {
+		t.Errorf("the surviving registration names %q, but %q won it", stored.Host, want)
 	}
 }

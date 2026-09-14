@@ -92,9 +92,14 @@ func (m *strictMockRegistry) ListAgents(_ context.Context, _ string, filter *orc
 func (m *strictMockRegistry) UpdateAgent(context.Context, *orchestration.AgentRegistration) error {
 	return nil
 }
+func (m *strictMockRegistry) RefreshAgent(context.Context, *orchestration.AgentRegistration) error {
+	return nil
+}
 func (m *strictMockRegistry) RemoveAgent(context.Context, string, string) error { return nil }
-func (m *strictMockRegistry) Heartbeat(context.Context, string, string) error   { return nil }
-func (m *strictMockRegistry) DeleteTenantAgents(context.Context, string) error  { return nil }
+func (m *strictMockRegistry) Heartbeat(context.Context, string, string, *orchestration.AgentObservation) error {
+	return nil
+}
+func (m *strictMockRegistry) DeleteTenantAgents(context.Context, string) error { return nil }
 
 // newStrictTestPool builds a remoteBackendPool wired to a mock registry,
 // the supplied operator default, and a no-op logger. It does NOT install a
@@ -105,7 +110,7 @@ func newStrictTestPool(operatorMode string, agents ...*orchestration.AgentRegist
 		registry:        &strictMockRegistry{agents: agents},
 		hostAffinityCfg: config.SchedulerHostAffinityConfig{Mode: operatorMode},
 		logger:          strictNoopLogger{},
-		entries:         map[string]*pooledBackend{},
+		entries:         map[string]*pooledDaemon{},
 	}
 }
 
@@ -314,12 +319,12 @@ func TestBackendFor_EmbeddedDialer_SkipsTokenSource(t *testing.T) {
 		registry:        &strictMockRegistry{agents: []*orchestration.AgentRegistration{embedded}},
 		embeddedDialers: registry,
 		logger:          strictNoopLogger{},
-		entries:         map[string]*pooledBackend{},
+		entries:         map[string]*pooledDaemon{},
 		// centralCred and tokenURL intentionally nil: embedded path must not touch them.
 	}
 
 	ctx := orchestration.ContextWithTenant(context.Background(), "default")
-	backend, ok := pool.backendFor(ctx, embedded)
+	backend, ok := pool.backendFor(ctx, embedded, "ollama")
 
 	if !ok {
 		t.Fatal("backendFor must return (backend, true) for embedded agent with registered dialer")
@@ -351,12 +356,12 @@ func TestBackendFor_RemoteDaemon_UsesTokenSource(t *testing.T) {
 		centralCred: &OrchestratorDaemonClient{ClientID: "test-id", ClientSecret: "test-secret"},
 		tokenURL:    "https://127.0.0.1:19999/oauth2/token", // unreachable — construction only
 		logger:      strictNoopLogger{},
-		entries:     map[string]*pooledBackend{},
+		entries:     map[string]*pooledDaemon{},
 		// No embeddedDialers: this is the remote path.
 	}
 
 	ctx := orchestration.ContextWithTenant(context.Background(), "default")
-	backend, ok := pool.backendFor(ctx, remote)
+	backend, ok := pool.backendFor(ctx, remote, "ollama")
 
 	// The pool constructs a backend without dialing. Token source is created
 	// lazily (no network call happens until the first RPC). The test just

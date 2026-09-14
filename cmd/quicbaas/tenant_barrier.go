@@ -187,7 +187,7 @@ func runTenantBarrierStatusCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.TenantBarrierStatus(ctx, &qrdbtransport.TenantBarrierStatusRequest{
@@ -215,14 +215,17 @@ injected, so a tenant may be protected by a passphrase, a Shamir quorum,
 or hardware (TPM / PKCS#11 / cloud KMS) independently of how the SYSTEM
 barrier is sealed.
 
+` + passphraseInputHelp + `
+
 Examples:
-  quicbaas tenant barrier init --tenant acme --strategy passphrase --passphrase "$PP"
+  printf '%s' "$PP" | quicbaas tenant barrier init --tenant acme \
+      --strategy passphrase --passphrase-stdin
   quicbaas tenant barrier init --tenant acme --strategy shamir --threshold 2 --shares 3`,
 		RunE: runTenantBarrierInitCommand,
 	}
 	cmd.Flags().StringVar(&tenantBarrierStrategy, "strategy", "",
 		"Seal strategy: passphrase | shamir | pkcs11 | tpm2 | awskms | gcpkms | azurekv | vault")
-	cmd.Flags().StringVar(&tenantBarrierSecret, "passphrase", "",
+	addPassphraseFlags(cmd, &tenantBarrierSecret,
 		"Passphrase (required for --strategy=passphrase)")
 	cmd.Flags().IntVar(&tenantBarrierThreshold, "threshold", 0,
 		"Shamir M-of-N threshold (required for --strategy=shamir)")
@@ -240,12 +243,18 @@ func runTenantBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 		return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.init",
 			"--strategy is required")
 	}
+	secret, err := resolvePassphrase(cmd, "tenant.barrier.init", tenantBarrierSecret)
+	if err != nil {
+		return formatError(err)
+	}
+	defer secret.Destroy()
+	secret = passphraseForStrategy(cmd, tenantBarrierStrategy, secret)
 	// Validate locally what the server would reject anyway. Initializing a
 	// barrier is not idempotent from the tenant's point of view, so a clean
 	// local failure is preferable to a half-understood server error.
-	if isPassphraseStrategyName(tenantBarrierStrategy) && tenantBarrierSecret == "" {
+	if isPassphraseStrategyName(tenantBarrierStrategy) && secret.Size() == 0 {
 		return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.init",
-			"--passphrase is required when --strategy=passphrase")
+			"--passphrase is required when --strategy=passphrase"+passphraseSourcesHint)
 	}
 	if tenantBarrierStrategy == "shamir" {
 		if tenantBarrierThreshold < 2 {
@@ -263,13 +272,13 @@ func runTenantBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	resp, err := client.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{
 		TenantID:   tenantBarrierTenantID,
 		Strategy:   tenantBarrierStrategy,
-		Passphrase: tenantBarrierSecret,
+		Passphrase: passphraseString(secret),
 		Threshold:  tenantBarrierThreshold,
 		Shares:     tenantBarrierShares,
 	})
@@ -293,11 +302,13 @@ func newTenantBarrierUnsealCommand() *cobra.Command {
 For a Shamir-sealed tenant barrier use 'unseal-share' instead: a quorum
 must each submit their own share.
 
+` + passphraseInputHelp + `
+
 Example:
-  quicbaas tenant barrier unseal --tenant acme --passphrase "$PP"`,
+  printf '%s' "$PP" | quicbaas tenant barrier unseal --tenant acme --passphrase-stdin`,
 		RunE: runTenantBarrierUnsealCommand,
 	}
-	cmd.Flags().StringVar(&tenantBarrierSecret, "passphrase", "",
+	addPassphraseFlags(cmd, &tenantBarrierSecret,
 		"Passphrase protecting the tenant barrier (required)")
 	return cmd
 }
@@ -307,9 +318,15 @@ func runTenantBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 	if err := requireTenantID("tenant.barrier.unseal"); err != nil {
 		return err
 	}
-	if tenantBarrierSecret == "" {
+	secret, err := resolvePassphrase(cmd, "tenant.barrier.unseal", tenantBarrierSecret)
+	if err != nil {
+		return formatError(err)
+	}
+	defer secret.Destroy()
+	if secret.Size() == 0 {
 		return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.unseal",
-			"--passphrase is required (use 'unseal-share' for a Shamir barrier)")
+			"--passphrase is required (use 'unseal-share' for a Shamir barrier)"+
+				passphraseSourcesHint)
 	}
 
 	client, err := tenantBarrierClientFactory()
@@ -317,12 +334,30 @@ func runTenantBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
+	// Key is []byte, so the protected slice crosses directly: the passphrase
+	// never becomes a Go string AND is never copied into unprotected heap
+	// memory. This is the one transport field that can be handled with no
+	// residue at all.
+	//
+	// It is safe because no transport retains the request past the call.
+	// Traced through all six for go-qrdb/sdk/go@v0.10.0-alpha: rest, quic
+	// and mcp marshal into a new buffer before the wire call; grpc and unix
+	// hand a pb message to a UNARY RPC whose proto marshal completes inside
+	// SendMsg (and neither transport sets a retry policy, so nothing is
+	// buffered for replay); embedded forwards the slice in-process and it
+	// terminates in an explicit make+copy in go-quicraft's software seal
+	// strategy. No goroutine on any path outlives the call.
+	//
+	// The deferred Destroy above therefore runs strictly after the request
+	// is done with the memory. Note this is an invariant of a module this
+	// repo does not own — if a transport ever becomes asynchronous or gains
+	// a replay buffer, this must go back to a wiped copy.
 	if err := client.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
 		TenantID: tenantBarrierTenantID,
-		Key:      []byte(tenantBarrierSecret),
+		Key:      secret.Bytes(),
 	}); err != nil {
 		return formatError(err)
 	}
@@ -366,7 +401,7 @@ func runTenantBarrierUnsealShareCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	progress, err := client.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
@@ -421,7 +456,7 @@ func runTenantBarrierSealCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	if err := client.TenantBarrierSeal(ctx, &qrdbtransport.TenantBarrierSealRequest{
@@ -470,7 +505,7 @@ func runTenantBarrierOfficerListCommand(cmd *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	officers, err := client.TenantBarrierOfficerList(ctx, tenantBarrierTenantID)
@@ -490,7 +525,7 @@ func runTenantBarrierOfficerStatusCommand(cmd *cobra.Command, _ []string) error 
 		return formatError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	officers, err := client.TenantBarrierOfficerClaimStatus(ctx, tenantBarrierTenantID)

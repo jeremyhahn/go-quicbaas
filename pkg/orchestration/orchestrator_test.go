@@ -1342,22 +1342,34 @@ func TestAgentService_LoadPersistedSessions(t *testing.T) {
 		Status:     SessionStateClosed,
 		CreatedAt:  500,
 	}
+	// BackendLocal IS THE LOCALITY OF THE PROCESS, and both of these are local
+	// sessions: the restart killed the process each one names, which is what
+	// their expectations below are about. A spawn writes `backendLocal :=
+	// !fromRemote` (orchestrator.go), so a local session ALWAYS carries true
+	// and only a session dispatched to another daemon carries false — a
+	// fixture that omits it describes a record the spawn path cannot produce,
+	// and since go-quicbaas#792 the restoration reads it to decide whether
+	// this node's restart says anything about the process at all. See
+	// TestLoadPersistedSessions_ARemoteSessionWhoseDaemonIsRegisteredSurvives
+	// for the other side.
 	noBackendRecord := &SessionRecord{
-		SessionID:  "orphan-session-1",
-		TenantID:   "tenant-a",
-		ProjectID:  "proj-3",
-		Backend:    "nonexistent",
-		Persistent: true,
-		Status:     SessionStateActive,
-		CreatedAt:  800,
+		SessionID:    "orphan-session-1",
+		TenantID:     "tenant-a",
+		ProjectID:    "proj-3",
+		Backend:      "nonexistent",
+		Persistent:   true,
+		BackendLocal: true,
+		Status:       SessionStateActive,
+		CreatedAt:    800,
 	}
 	oneShotRecord := &SessionRecord{
-		SessionID: "oneshot-session-1",
-		TenantID:  "tenant-a",
-		ProjectID: "proj-4",
-		Backend:   "mock",
-		Status:    SessionStateActive,
-		CreatedAt: 900,
+		SessionID:    "oneshot-session-1",
+		TenantID:     "tenant-a",
+		ProjectID:    "proj-4",
+		Backend:      "mock",
+		BackendLocal: true,
+		Status:       SessionStateActive,
+		CreatedAt:    900,
 	}
 
 	for _, r := range []*SessionRecord{persistentRecord, closedRecord, noBackendRecord, oneShotRecord} {
@@ -1704,7 +1716,7 @@ func TestSubscribeJobEvents_ReceivesEvents(t *testing.T) {
 
 	// Store a fake running job so SubscribeJobEvents can find it.
 	impl.jobs.Store(jobKey, &runningJob{
-		loop:   NewControlLoop(impl, &agentTestLogger{}),
+		run:    newJobRun(JobRunConfig{Config: &JobConfig{}, Agents: impl, Logger: &agentTestLogger{}}),
 		cancel: func() {},
 	})
 
@@ -1794,7 +1806,7 @@ func TestSubscribeJobEvents_ContextCancellation(t *testing.T) {
 	jobKey := tenantID + "/" + jobID
 
 	impl.jobs.Store(jobKey, &runningJob{
-		loop:   NewControlLoop(impl, &agentTestLogger{}),
+		run:    newJobRun(JobRunConfig{Config: &JobConfig{}, Agents: impl, Logger: &agentTestLogger{}}),
 		cancel: func() {},
 	})
 
@@ -1838,7 +1850,7 @@ func TestSubscribeJobEvents_SlowSubscriber(t *testing.T) {
 	jobKey := tenantID + "/" + jobID
 
 	impl.jobs.Store(jobKey, &runningJob{
-		loop:   NewControlLoop(impl, &agentTestLogger{}),
+		run:    newJobRun(JobRunConfig{Config: &JobConfig{}, Agents: impl, Logger: &agentTestLogger{}}),
 		cancel: func() {},
 	})
 
@@ -1940,7 +1952,7 @@ func TestSubscribeJobEvents_CleanupOnJobComplete(t *testing.T) {
 	jobKey := tenantID + "/" + jobID
 
 	impl.jobs.Store(jobKey, &runningJob{
-		loop:   NewControlLoop(impl, &agentTestLogger{}),
+		run:    newJobRun(JobRunConfig{Config: &JobConfig{}, Agents: impl, Logger: &agentTestLogger{}}),
 		cancel: func() {},
 	})
 
@@ -1987,7 +1999,7 @@ func TestSubscribeJobEvents_MultipleSubscribers(t *testing.T) {
 	jobKey := tenantID + "/" + jobID
 
 	impl.jobs.Store(jobKey, &runningJob{
-		loop:   NewControlLoop(impl, &agentTestLogger{}),
+		run:    newJobRun(JobRunConfig{Config: &JobConfig{}, Agents: impl, Logger: &agentTestLogger{}}),
 		cancel: func() {},
 	})
 

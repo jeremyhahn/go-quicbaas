@@ -1,0 +1,16 @@
+### This task is blocked
+
+**Outcome:** `blocked` — the task waits on an external condition, so nothing will retry it on its own.
+
+> continuous integration is red
+
+**Unblocks when:** the forge's checks on commit abc123 must go green
+**Cleared by:** the Software Factory's own sweep, once the condition above holds
+**Attempt:** 1 of 3
+**Task:** `task-1`
+**Attempt history:** `job-1`
+**Labels:** `task:ready` → `factory:blocked`
+
+**To resume:** nothing here. The Software Factory checks this condition on every sweep and returns the task to the queue itself once it holds.
+
+<!-- quicbaas-sdlc:blocked task=task-1 attempt=2 kind=blocked -->

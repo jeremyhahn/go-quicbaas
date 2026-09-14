@@ -344,7 +344,7 @@ func runIAMProviderCreate(cmd *cobra.Command, op string) error {
 	defer iamClient.Close()
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Create provider
@@ -437,7 +437,7 @@ func runIAMProviderGetCommand(cmd *cobra.Command, args []string) error {
 	defer iamClient.Close()
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Get provider
@@ -552,7 +552,7 @@ func runIAMProviderUpdateCommand(cmd *cobra.Command, args []string) error {
 	defer iamClient.Close()
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Build update options
@@ -663,7 +663,7 @@ func runIAMProviderDeleteCommand(cmd *cobra.Command, args []string) error {
 	defer iamClient.Close()
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Delete provider
@@ -710,7 +710,7 @@ func runIAMProviderListCommand(cmd *cobra.Command, args []string) error {
 	defer iamClient.Close()
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// List providers
@@ -834,7 +834,7 @@ func runIAMIdentityLinkCommand(cmd *cobra.Command, args []string) error {
 	defer iamClient.Close()
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Link identity
@@ -937,7 +937,7 @@ func runIAMIdentityUnlinkCommand(cmd *cobra.Command, args []string) error {
 	defer iamClient.Close()
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Unlink identity
@@ -988,7 +988,7 @@ func runIAMIdentityListCommand(cmd *cobra.Command, args []string) error {
 	defer iamClient.Close()
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// List identities

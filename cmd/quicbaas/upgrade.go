@@ -34,7 +34,6 @@ import (
 var (
 	// Upgrade flags.
 	upgradeServerAddress  string
-	upgradeTimeout        time.Duration
 	upgradeMaxUnavailable int
 	upgradeWaitTime       time.Duration
 	upgradeHealthTimeout  time.Duration
@@ -84,7 +83,7 @@ func addUpgradeTLSFlags(cmd *cobra.Command) {
 // createUpgradeGRPCClient creates a gRPC client for upgrade operations with TLS.
 func createUpgradeGRPCClient(serverAddr string) (*grpc.Client, error) {
 	opts := []grpc.ClientOption{
-		grpc.WithTimeout(upgradeTimeout),
+		grpc.WithTimeout(globalTimeout),
 	}
 
 	switch {
@@ -190,7 +189,6 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&upgradeServerAddress, "server", "", "QuicBaaS server address (defaults to global --address)")
-	cmd.Flags().DurationVar(&upgradeTimeout, "timeout", 30*time.Second, "Request timeout")
 	cmd.Flags().Uint64Var(&upgradeNodeID, "node-id", 0, "Specific node ID to upgrade (0 = all nodes)")
 	cmd.Flags().IntVar(&upgradeMaxUnavailable, "max-unavailable", 1, "Max nodes down simultaneously")
 	cmd.Flags().DurationVar(&upgradeWaitTime, "wait-time", 30*time.Second, "Wait time between node upgrades")
@@ -225,7 +223,7 @@ func runUpgradeStart(cmd *cobra.Command, args []string) error {
 	// global TLS flags and break the SDK gRPC dial).
 	reconcileUpgradeSDKConfig()
 
-	ctx, cancel := context.WithTimeout(context.Background(), upgradeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Route through the SDK Operations client so the upgrade verb works
@@ -360,7 +358,6 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&upgradeServerAddress, "server", "", "QuicBaaS server address (defaults to global --address)")
-	cmd.Flags().DurationVar(&upgradeTimeout, "timeout", 30*time.Second, "Request timeout")
 	cmd.Flags().StringVar(&upgradeOperationID, "operation", "", "Operation ID to query (empty = current upgrade)")
 	cmd.Flags().StringVar(&upgradeOutputFormat, "output", "table", "Output format (json, table)")
 	addUpgradeTLSFlags(cmd)
@@ -374,7 +371,7 @@ func runUpgradeStatus(cmd *cobra.Command, args []string) error {
 	// configuration before the singleton SDK client is built.
 	reconcileUpgradeSDKConfig()
 
-	ctx, cancel := context.WithTimeout(context.Background(), upgradeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
 	// Route through the SDK Operations client for multi-transport support.

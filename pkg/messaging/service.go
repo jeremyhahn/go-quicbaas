@@ -248,30 +248,62 @@ func (ps *PushService) Stop(ctx context.Context) error {
 		deadline = time.Now().Add(5 * time.Second)
 	}
 
-	for ps.hub.IsRunning() {
+	// THE CONTEXT BOUNDS THE WAIT, NOT THE TEARDOWN (#697). This arm used to
+	// return ctx.Err() from the middle of Stop, skipping both the subscription
+	// sweep below and the flag it clears — so a shutdown with a deadline, which
+	// is the normal way a daemon stops, left the service permanently marked
+	// running with its hub already told to stop: Subscribe, Publish and
+	// CreateChannel all still admitted, nothing behind them, and Start
+	// refusing to restart out of the state because the flag was set. A bailout
+	// in the middle of a teardown that had work left is not a faster stop, it
+	// is a stop that did not happen; the deadline is reported to the caller
+	// AFTER the teardown rather than instead of it.
+	//
+	// THE FLAG STILL FALLS LAST, which is the part #352 constrains. GetChannel
+	// and ListChannels read ps.running to tell "the service was started" from
+	// "the hub can answer", and they are entitled to a service that reports
+	// running for as long as it is taking itself apart — clearing it early
+	// would answer a concurrent query with service-not-running while the sweep
+	// was still releasing clients, which is a different wrong answer rather
+	// than a fix.
+	var waitErr error
+	for ps.hub.IsRunning() && waitErr == nil {
 		if time.Now().After(deadline) {
 			ps.logger.Warn("timeout waiting for hub to stop")
 			break
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			waitErr = ctx.Err()
 		case <-time.After(10 * time.Millisecond):
 			// Continue waiting
 		}
 	}
 
-	// Clean up subscriptions
+	// Clean up subscriptions, RELEASING each client rather than merely closing
+	// it (#673). The hub is normally gone by now and its cleanup has already
+	// emptied the registry, but BOTH exits from the wait above — the deadline
+	// and the cancelled context — leave a hub that may still be running, and
+	// that is precisely the hub that would go on counting these clients
+	// forever. Where the loop has already left, the release is refused by the
+	// hub's admission and the client is closed anyway (#696); where it has
+	// not, the unregister is queued and handled. The sweep does not need to
+	// know which.
 	ps.subscriptions.Range(func(key, value interface{}) bool {
-		entry, ok := value.(*subscriptionEntry)
-		if ok && entry.client != nil {
-			entry.client.Close()
+		if entry, ok := value.(*subscriptionEntry); ok {
+			ps.releaseClient(entry.client)
 		}
 		ps.subscriptions.Delete(key)
 		return true
 	})
 
 	ps.running.Store(false)
+
+	if waitErr != nil {
+		ps.logger.WithError(waitErr).Warn("push service stopped before its hub's loop had left")
+		return waitErr
+	}
+
 	ps.logger.Info("push service stopped")
 
 	return nil
@@ -352,13 +384,16 @@ func (ps *PushService) DeleteChannel(ctx context.Context, name string) error {
 	// Remove from cache
 	ps.channels.Delete(name)
 
-	// Remove all subscriptions for this channel
+	// Remove all subscriptions for this channel. The hub's own DeleteChannel
+	// drops the channel and every subscription to it, but it deliberately
+	// leaves the clients registered — a hub client may hold subscriptions to
+	// several channels. Here each client belongs to exactly one subscription
+	// on the deleted channel, so the subscription's end is the client's end,
+	// and the hub has to be told (#673).
 	ps.subscriptions.Range(func(key, value interface{}) bool {
 		entry, ok := value.(*subscriptionEntry)
 		if ok && entry.subscription.Channel == name {
-			if entry.client != nil {
-				entry.client.Close()
-			}
+			ps.releaseClient(entry.client)
 			ps.subscriptions.Delete(key)
 		}
 		return true
@@ -370,6 +405,13 @@ func (ps *PushService) DeleteChannel(ctx context.Context, name string) error {
 }
 
 // GetChannel returns channel information by name.
+//
+// AN UNAVAILABLE HUB IS AN ERROR, NOT A MISS (#352). ps.running says the
+// service was started, not that the hub's loop is still there — a cancelled
+// parent context ends the loop and leaves the flag set, and PushService.Stop
+// holds it set while it waits for the loop to leave. Answering such a query
+// from the metadata cache, or as channel-not-found, hands the caller a
+// definite answer the hub never gave.
 func (ps *PushService) GetChannel(ctx context.Context, name string) (*Channel, error) {
 	if !ps.running.Load() {
 		return nil, NewServiceNotRunningError("push.GetChannel", "get channel")
@@ -379,11 +421,15 @@ func (ps *PushService) GetChannel(ctx context.Context, name string) (*Channel, e
 		return nil, err
 	}
 
+	hubChannel, found, err := ps.hub.getChannelE(name)
+	if err != nil {
+		return nil, err
+	}
+
 	// Check cache first.
 	if cached, ok := ps.channels.Load(name); ok {
 		channel, _ := cached.(*Channel)
 		// Update dynamic counts from hub.
-		hubChannel, found := ps.hub.GetChannel(name)
 		if found {
 			channel.Subscribers = int64(hubChannel.SubscriberCount())
 			channel.MessagesPublished = hubChannel.MessagesPublished()
@@ -391,8 +437,6 @@ func (ps *PushService) GetChannel(ctx context.Context, name string) (*Channel, e
 		return channel, nil
 	}
 
-	// Check hub
-	hubChannel, found := ps.hub.GetChannel(name)
 	if !found {
 		return nil, NewChannelNotFoundError("push.GetChannel", name)
 	}
@@ -416,12 +460,20 @@ func (ps *PushService) GetChannel(ctx context.Context, name string) (*Channel, e
 }
 
 // ListChannels returns all notification channels.
+//
+// AN UNAVAILABLE HUB IS AN ERROR, NOT AN EMPTY LIST (#352). This call used to
+// answer a stopped or overloaded hub with ([], nil), which a caller reads as
+// "there are no channels" — the one answer it must not be given, because it is
+// indistinguishable from a healthy hub that is genuinely empty.
 func (ps *PushService) ListChannels(ctx context.Context) ([]*Channel, error) {
 	if !ps.running.Load() {
 		return nil, NewServiceNotRunningError("push.ListChannels", "list channels")
 	}
 
-	hubChannels := ps.hub.ListChannels()
+	hubChannels, err := ps.hub.listChannelsE()
+	if err != nil {
+		return nil, err
+	}
 	channels := make([]*Channel, 0, len(hubChannels))
 
 	for _, hubChannel := range hubChannels {
@@ -474,11 +526,13 @@ func (ps *PushService) Subscribe(ctx context.Context, channel string, opts ...Su
 	}
 	client := NewClient(clientID, options.bufferSize)
 
-	// Register client with hub
-	ps.hub.RegisterClient(client)
-
-	// Subscribe client to channel
-	if err := ps.hub.SubscribeToChannel(client, channel); err != nil {
+	// REGISTER AND SUBSCRIBE AS ONE ORDERED REQUEST (#339). The two-call form
+	// queued the registration on one channel and the subscription on another,
+	// and the hub's single select drains both in random order — so a subscribe
+	// handled before its own registration was answered "client not registered",
+	// with nothing wrong in the request. Measured at 45 of 50 concurrent
+	// subscribes failing before this changed.
+	if err := ps.hub.RegisterAndSubscribe(client, channel); err != nil {
 		ps.hub.UnregisterClient(client)
 		return nil, err
 	}
@@ -532,9 +586,7 @@ func (ps *PushService) Unsubscribe(ctx context.Context, subscriptionID string) e
 		ps.logger.WithError(err).WithField("subscription_id", subscriptionID).Warn("error unsubscribing from channel")
 	}
 
-	// Unregister client
-	ps.hub.UnregisterClient(entry.client)
-	entry.client.Close()
+	ps.releaseClient(entry.client)
 
 	ps.logger.WithFields(map[string]interface{}{
 		"subscription_id": subscriptionID,
@@ -542,6 +594,32 @@ func (ps *PushService) Unsubscribe(ctx context.Context, subscriptionID string) e
 	}).Debug("subscription removed")
 
 	return nil
+}
+
+// releaseClient ends a subscription's client: the hub stops tracking it and it
+// is closed. It is the ONLY way this service disposes of a client.
+//
+// ONE DEFINITION, BECAUSE HALF THE SEQUENCE IS WORSE THAN NONE (#673). Stop
+// and DeleteChannel used to call Close directly and stop there, so the hub
+// went on holding a client it could never deliver to: ClientCount overstated
+// the live clients for the life of the hub, every all-clients broadcast kept
+// iterating them, and a long-lived service that created and deleted channels
+// accumulated closed clients it never released. Unsubscribe had the full
+// sequence; the other two were a copy of it that had lost the first line.
+//
+// THE UNREGISTER COMES FIRST AND THE CLOSE IS NOT REDUNDANT. UnregisterClient
+// is a non-blocking hand-off that is dropped if the queue is full or the loop
+// has already left, so it cannot be the thing that guarantees the client is
+// closed; the Close after it is unconditional and idempotent, and the hub
+// closes the client again when it does handle the unregister. Closing here
+// does not weaken the rule #588 pinned — that rule requires the close to
+// precede the uncount, and a close that happens earlier still precedes it.
+func (ps *PushService) releaseClient(client *Client) {
+	if client == nil {
+		return
+	}
+	ps.hub.UnregisterClient(client)
+	client.Close()
 }
 
 // Publish publishes a message to a channel.
@@ -554,8 +632,14 @@ func (ps *PushService) Publish(ctx context.Context, channel string, payload inte
 		return nil, err
 	}
 
-	// Verify the channel exists before publishing
-	_, found := ps.hub.GetChannel(channel)
+	// Verify the channel exists before publishing. A hub that could not answer
+	// is reported as such rather than deferred to the cache: the cache records
+	// what this service created, not what the hub still holds, so continuing on
+	// it publishes into a hub that already refused to be asked (#352).
+	_, found, err := ps.hub.getChannelE(channel)
+	if err != nil {
+		return nil, err
+	}
 	if !found {
 		if _, cached := ps.channels.Load(channel); !cached {
 			return nil, NewChannelNotFoundError("push.Publish", channel)

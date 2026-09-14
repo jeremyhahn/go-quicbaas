@@ -60,8 +60,9 @@ services:
       # Server config: fixture-cert TLS identity + cert-bound bootstrap admin
       # + RFC 7591 DCR enablement (keys the env surface cannot express).
       - ./quicbaas.yaml:/etc/quicbaas/quicbaas.yaml:ro
-      # Shared integration cert fixtures (gen-certs): serving cert valid for
-      # localhost, client CA, and the bootstrap admin client cert bundle.
+      # Shared integration cert fixtures, issued by QuicBaaS's own CA
+      # (test/integration/certfixture): serving cert valid for localhost, the
+      # trust anchor, and the bootstrap admin client cert bundle.
       - ../../../../test/integration/certs:/etc/quicbaas/certs:ro
     networks:
       - sdk-test-network

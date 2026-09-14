@@ -79,4 +79,68 @@ describe('RestOrchestratorClient.listSessions', () => {
     // fetch must never have been called when tenantID is absent.
     expect(fetchMock).not.toHaveBeenCalled();
   });
+  // ---------------------------------------------------------------------------
+  // What the transport actually returns (go-quicbaas#864)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * THE SHAPE, PINNED. `ListSessionsResponse.sessions` is typed
+   * `SessionStatusResponse[]`, which names the lifecycle field `status` and the
+   * activity instant `last_active`. This client does no translation, and the
+   * service writes `orchestration.SessionInfo` verbatim — `state` and
+   * `last_activity`. So the declared type is not what a caller receives.
+   *
+   * Two consumers believed the type instead of the wire and counted `status` over
+   * records that had none, and their "Active Sessions" tiles read 0 while live
+   * sessions were running (go-quicbaas#864).
+   *
+   * #856 HAS NOW LANDED (PR #859, merge bca1a46d), so the rename exists at this
+   * seam and this test asserts the new truth: a caller gets `status` and
+   * `last_active`, and the wire's own names are gone by the time it sees them.
+   *
+   * The previous revision of this test pinned the opposite and was written to
+   * FAIL when #856 landed — which is exactly what it did. That failure was the
+   * signal, not a regression; it is recorded here rather than silently flipped
+   * so the next reader knows the rename is deliberate and where it happens.
+   */
+  it('normalises the service\'s field names — `status`, not `state`', async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockOK({
+        sessions: [
+          {
+            session_id: 'sess-1',
+            project_id: 'proj-1',
+            backend: 'claude-code',
+            model: 'sonnet',
+            state: 'active',
+            created_at: 1_700_000_000_000_000_000,
+            last_activity: 1_700_000_000_500_000_000,
+          },
+        ],
+        count: 1,
+      }),
+    );
+
+    const resp = await client.orchestrator.listSessions({ tenantID: 'acme' });
+
+    expect(resp.sessions).toHaveLength(1);
+    const session = resp.sessions[0] as unknown as Record<string, unknown>;
+    // The DECLARED names are what a caller gets, because the SDK renames at
+    // this seam now.
+    expect(session['status']).toBe('active');
+    expect(session['last_active']).toBe(1_700_000_000_500_000_000);
+    // The wire's own names do not survive the mapping.
+    expect(session['state']).toBeUndefined();
+    expect(session['last_activity']).toBeUndefined();
+  });
+
+  it('normalises a missing count to the number of sessions returned', async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockOK({ sessions: [{ session_id: 'a', state: 'active' }, { session_id: 'b', state: 'closed' }] }),
+    );
+
+    const resp = await client.orchestrator.listSessions({ tenantID: 'acme' });
+
+    expect(resp.count).toBe(2);
+  });
 });

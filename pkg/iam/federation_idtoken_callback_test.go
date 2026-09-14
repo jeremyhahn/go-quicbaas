@@ -229,7 +229,7 @@ func TestHandleCallback_ForgedIDTokenRejected(t *testing.T) {
 	}
 
 	// No user must have been provisioned.
-	if _, uerr := h.identityStore.GetUserByEmail(h.ctx, "attacker@evil.com"); uerr == nil {
+	if _, uerr := h.identityStore.GetUserByEmail(h.ctx, h.provider.TenantID, "attacker@evil.com"); uerr == nil {
 		t.Fatal("forged login must not provision a user")
 	}
 }
@@ -294,7 +294,7 @@ func TestHandleCallback_FailClosedNoGroupMatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected fail-closed denial when no group matches")
 	}
-	if _, uerr := h.identityStore.GetUserByEmail(h.ctx, "alice@acme.com"); uerr == nil {
+	if _, uerr := h.identityStore.GetUserByEmail(h.ctx, h.provider.TenantID, "alice@acme.com"); uerr == nil {
 		t.Fatal("denied login must not provision a user")
 	}
 }

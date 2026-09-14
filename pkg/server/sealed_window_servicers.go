@@ -92,6 +92,12 @@ func (p *sealedKVServicerProxy) PutIfAbsent(ctx context.Context, key string, val
 	return svc.PutIfAbsent(ctx, key, value)
 }
 
+// CompareAndDelete resolves the live servicer and forwards the guarded delete.
+//
+// It fails closed for the same reason PutIfAbsent does, and the reason matters
+// more here: a sealed window answering "not deleted" would be read by a caller
+// as "the value changed under me" — a lost claim it would then stop trying to
+// release. Refusing outright keeps the claim's owner able to retry.
 func (p *sealedKVServicerProxy) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
 	svc, err := p.resolve()
 	if err != nil {
@@ -100,6 +106,13 @@ func (p *sealedKVServicerProxy) CompareAndDelete(ctx context.Context, key string
 	return svc.CompareAndDelete(ctx, key, expected)
 }
 
+// CompareAndSwap resolves the live servicer and forwards the guarded edit.
+//
+// It fails closed for the same reason CompareAndDelete does. A swap is not a
+// create — an absent key stays absent — so the only two honest answers are "I
+// replaced it" and "the stored value was not what you expected". A sealed
+// window can say neither truthfully, and answering "not swapped" would tell a
+// caller its expected value is stale when in fact nothing was read at all.
 func (p *sealedKVServicerProxy) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
 	svc, err := p.resolve()
 	if err != nil {

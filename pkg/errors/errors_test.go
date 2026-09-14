@@ -300,10 +300,19 @@ func TestIs(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "wrapped error preserves original code",
+			// Wrap RECLASSIFIES: the result reports the caller's code, and the
+			// inner classification stays reachable only through Unwrap
+			// (go-qrdb#187, owner-ruled 2026-09-02).
+			name: "wrapped error reports the caller's code",
 			err:  Wrap(notFoundError, ErrStorage, "outer"),
-			code: ErrNotFound, // Wrapping preserves original error code
+			code: ErrStorage,
 			want: true,
+		},
+		{
+			name: "wrapped error no longer reports the inner code",
+			err:  Wrap(notFoundError, ErrStorage, "outer"),
+			code: ErrNotFound,
+			want: false,
 		},
 		{
 			name: "nil error",
@@ -1382,14 +1391,31 @@ func TestWrap_PreservesContext(t *testing.T) {
 	assert.Equal(t, 123, val)
 }
 
-func TestWrap_PreservesRetry(t *testing.T) {
-	originalErr := New(ErrNotFound, "inner", "not found")
-	originalErr.WithRetry(true)
+// TestWrap_RetryFollowsTheCallerCode pins the go-qrdb#187 contract: Retry is
+// derived from the code the wrap applies, never inherited from the inner
+// error. A retryable inner wrapped as non-retryable (a cancellation, a
+// storage fault) must come back non-retryable, and a non-retryable inner
+// wrapped as a timeout must come back retryable.
+func TestWrap_RetryFollowsTheCallerCode(t *testing.T) {
+	retryableInner := New(ErrTimeout, "inner", "timed out")
+	require.True(t, IsRetryable(retryableInner))
 
-	wrappedErr := Wrap(originalErr, ErrStorage, "outer")
-	require.Error(t, wrappedErr)
+	reclassified := Wrap(retryableInner, ErrStorage, "outer")
+	require.Error(t, reclassified)
+	assert.False(t, IsRetryable(reclassified), "a retryable inner must not leak retry through a non-retryable wrap")
+	assert.True(t, Is(reclassified, ErrStorage))
 
-	assert.True(t, IsRetryable(wrappedErr))
+	plainInner := New(ErrNotFound, "inner", "not found")
+	require.False(t, IsRetryable(plainInner))
+
+	promoted := Wrap(plainInner, ErrUnavailable, "outer")
+	require.Error(t, promoted)
+	assert.True(t, IsRetryable(promoted), "retry follows the wrap's code")
+
+	// The inner error is still in the chain for errors.As / sentinel matching.
+	var inner *QBError
+	require.True(t, errors.As(errors.Unwrap(promoted), &inner))
+	assert.Equal(t, ErrNotFound, inner.Code)
 }
 
 func TestQBError_IsWithNilUnderlying(t *testing.T) {

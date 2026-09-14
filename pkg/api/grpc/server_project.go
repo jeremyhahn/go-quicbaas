@@ -76,6 +76,20 @@ func (s *ProjectServer) CreateProject(ctx context.Context, req *pb.CreateProject
 		GPUMinutes:       req.GpuMinutes,
 		MaxConcurrency:   int(req.MaxConcurrency),
 		Metadata:         req.Metadata,
+
+		DefaultWorkflow:     req.DefaultWorkflow,
+		Autonomous:          req.Autonomous,
+		ContextRepos:        contextReposFromProto(req.ContextRepos),
+		GitAuthorName:       req.GitAuthorName,
+		GitAuthorEmail:      req.GitAuthorEmail,
+		GitSigningEnabled:   req.GitSigningEnabled,
+		GitSigningAlgorithm: req.GitSigningAlgorithm,
+		GitSigningKeyName:   req.GitSigningKeyName,
+		GitSigningKeyScope:  req.GitSigningKeyScope,
+		GitSigningKeyOwner:  req.GitSigningKeyOwner,
+		GitSSHKeyName:       req.GitSshKeyName,
+		GitSSHKeyScope:      req.GitSshKeyScope,
+		GitSSHKeyOwner:      req.GitSshKeyOwner,
 	})
 	if err != nil {
 		return nil, convertProjectError(err)
@@ -172,8 +186,24 @@ func (s *ProjectServer) UpdateProject(ctx context.Context, req *pb.UpdateProject
 		AgentRoles:       agentRoles,
 		TokenBudget:      req.TokenBudget,
 		GPUMinutes:       req.GpuMinutes,
-		MaxConcurrency:   int(req.MaxConcurrency),
+		MaxConcurrency:   intPtrFromInt32(req.MaxConcurrency),
 		Metadata:         req.Metadata,
+
+		DefaultWorkflow:      req.DefaultWorkflow,
+		ClearDefaultWorkflow: req.ClearDefaultWorkflow,
+		Autonomous:           req.Autonomous,
+		ContextRepos:         contextReposFromProto(req.ContextRepos),
+		ClearContextRepos:    req.ClearContextRepos,
+		GitAuthorName:        req.GitAuthorName,
+		GitAuthorEmail:       req.GitAuthorEmail,
+		GitSigningEnabled:    req.GitSigningEnabled,
+		GitSigningAlgorithm:  req.GitSigningAlgorithm,
+		GitSigningKeyName:    req.GitSigningKeyName,
+		GitSigningKeyScope:   req.GitSigningKeyScope,
+		GitSigningKeyOwner:   req.GitSigningKeyOwner,
+		GitSSHKeyName:        req.GitSshKeyName,
+		GitSSHKeyScope:       req.GitSshKeyScope,
+		GitSSHKeyOwner:       req.GitSshKeyOwner,
 	})
 	if err != nil {
 		return nil, convertProjectError(err)
@@ -337,6 +367,20 @@ func projectToProto(p *orchestration.Project) *pb.Project {
 		Metadata:         p.Metadata,
 		CreatedAtUnix:    p.CreatedAt.Unix(),
 		UpdatedAtUnix:    p.UpdatedAt.Unix(),
+
+		DefaultWorkflow:     p.DefaultWorkflow,
+		Autonomous:          p.Autonomous,
+		ContextRepos:        contextReposToProto(p.ContextRepos),
+		GitAuthorName:       p.Git.Author.Name,
+		GitAuthorEmail:      p.Git.Author.Email,
+		GitSigningEnabled:   p.Git.Signing.Enabled,
+		GitSigningAlgorithm: p.Git.Signing.Algorithm,
+		GitSigningKeyName:   p.Git.Signing.Key.Name,
+		GitSigningKeyScope:  p.Git.Signing.Key.Scope,
+		GitSigningKeyOwner:  p.Git.Signing.Key.Owner,
+		GitSshKeyName:       p.Git.SSHKey.Name,
+		GitSshKeyScope:      p.Git.SSHKey.Scope,
+		GitSshKeyOwner:      p.Git.SSHKey.Owner,
 	}
 	if p.Permissions.AgentRoles != nil {
 		pb.AgentRoles = make(map[string]string, len(p.Permissions.AgentRoles))
@@ -345,6 +389,35 @@ func projectToProto(p *orchestration.Project) *pb.Project {
 		}
 	}
 	return pb
+}
+
+// contextReposToProto converts the domain context repository list to proto.
+// A nil list stays nil so an empty project carries no repeated field.
+func contextReposToProto(repos []orchestration.ContextRepo) []*pb.ContextRepo {
+	if repos == nil {
+		return nil
+	}
+	out := make([]*pb.ContextRepo, 0, len(repos))
+	for _, repo := range repos {
+		out = append(out, &pb.ContextRepo{Name: repo.Name, RepoUrl: repo.RepoURL, Ref: repo.Ref})
+	}
+	return out
+}
+
+// contextReposFromProto converts the proto context repository list to the
+// domain type, preserving nil so an update can tell "unset" from "empty".
+func contextReposFromProto(repos []*pb.ContextRepo) []orchestration.ContextRepo {
+	if repos == nil {
+		return nil
+	}
+	out := make([]orchestration.ContextRepo, 0, len(repos))
+	for _, repo := range repos {
+		if repo == nil {
+			continue
+		}
+		out = append(out, orchestration.ContextRepo{Name: repo.Name, RepoURL: repo.RepoUrl, Ref: repo.Ref})
+	}
+	return out
 }
 
 // convertProjectError maps service-layer project errors to gRPC status codes.
@@ -367,3 +440,15 @@ func convertProjectError(err error) error {
 
 // Compile-time interface satisfaction check.
 var _ pb.ProjectServiceServer = (*ProjectServer)(nil)
+
+// intPtrFromInt32 narrows an optional proto int32 to the optional int the
+// project record keeps, preserving absence. A quota of zero means UNLIMITED,
+// so absent and zero are different instructions and must stay different all
+// the way to the service.
+func intPtrFromInt32(v *int32) *int {
+	if v == nil {
+		return nil
+	}
+	n := int(*v)
+	return &n
+}

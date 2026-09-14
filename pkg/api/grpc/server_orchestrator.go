@@ -23,7 +23,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -72,6 +75,13 @@ func (s *OrchestratorServer) SpawnSession(ctx context.Context, req *pb.SpawnSess
 		ContainerConfig:    protoContainerSpecToService(req.ContainerConfig),
 		HostAffinity:       req.HostAffinity,
 		HostAffinityStrict: req.HostAffinityStrict,
+		// extra_args is DELIBERATELY NOT MAPPED HERE. The field carries argv
+		// for the agent program, and this is the surface an external client
+		// reaches: forwarding it would let a caller add any flag the CLI takes
+		// — including the permission grants the SDLC module exists to decide. It is
+		// carried on the internal control-plane-to-daemon spawn instead
+		// (pkg/agent/spawn_server.go), where the sender is the SDLC module itself.
+
 		// Without this the gRPC transport silently spawns a one-shot session:
 		// the backend runs a fresh process per prompt, the agent keeps no
 		// conversation context, and the session is not a resume candidate
@@ -104,7 +114,7 @@ func (s *OrchestratorServer) SpawnSession(ctx context.Context, req *pb.SpawnSess
 		Backend:     resp.Backend,
 		Model:       resp.Model,
 		ContainerId: resp.ContainerID,
-		Timestamp:   timestamppb.New(time.Unix(resp.Timestamp, 0)),
+		Timestamp:   unixNanoTimestamp(resp.Timestamp),
 	}, nil
 }
 
@@ -150,7 +160,7 @@ func (s *OrchestratorServer) PromptSession(ctx context.Context, req *pb.PromptSe
 			Status:    ack.Status,
 			Sequence:  ack.Sequence,
 			Model:     ack.Model,
-			Timestamp: timestamppb.New(time.Unix(0, ack.Timestamp)),
+			Timestamp: unixNanoTimestamp(ack.Timestamp),
 		}, nil
 	}
 
@@ -164,7 +174,7 @@ func (s *OrchestratorServer) PromptSession(ctx context.Context, req *pb.PromptSe
 		Content:    serviceContentBlocksToProto(resp.Content),
 		Model:      resp.Model,
 		StopReason: resp.StopReason,
-		Timestamp:  timestamppb.New(time.Unix(resp.Timestamp, 0)),
+		Timestamp:  unixNanoTimestamp(resp.Timestamp),
 	}, nil
 }
 
@@ -190,9 +200,9 @@ func (s *OrchestratorServer) SessionStatus(ctx context.Context, req *pb.SessionS
 	return &pb.SessionStatusResponse{
 		SessionId:     resp.SessionID,
 		State:         serviceSessionStateToProto(resp.State),
-		LastActivity:  timestamppb.New(time.Unix(resp.LastActivity, 0)),
+		LastActivity:  unixNanoTimestamp(resp.LastActivity),
 		UptimeSeconds: resp.Uptime,
-		Timestamp:     timestamppb.New(time.Unix(resp.Timestamp, 0)),
+		Timestamp:     unixNanoTimestamp(resp.Timestamp),
 	}, nil
 }
 
@@ -217,7 +227,7 @@ func (s *OrchestratorServer) CloseSession(ctx context.Context, req *pb.CloseSess
 
 	return &pb.CloseSessionResponse{
 		SessionId: resp.SessionID,
-		Timestamp: timestamppb.New(time.Unix(resp.Timestamp, 0)),
+		Timestamp: unixNanoTimestamp(resp.Timestamp),
 	}, nil
 }
 
@@ -274,14 +284,36 @@ func timeFromUnixSeconds(sec int64) time.Time {
 	return time.Unix(sec, 0).UTC()
 }
 
+// resolveOrchestratorTenant derives the tenant a listing is scoped to, in the
+// same order REST's resolveOrchestratorTenant uses: the explicit field, then
+// the authenticated caller's own tenant, then the canonical system tenant.
+//
+// AN EMPTY TENANT IS NOT A NEUTRAL VALUE HERE. AgentService.ListSessions reads
+// it as the embedded single-tenant case and answers with ListAllSessions --
+// EVERY tenant's sessions. Passing the proto field straight through therefore
+// turned an omitted tenant_id on a REMOTE gRPC call into a cross-tenant
+// enumeration, while the identical omission over REST resolved to the caller's
+// own tenant. The embedded transport still reaches the service directly and
+// keeps that mode; what must not have it is a caller on a wire.
+func resolveOrchestratorTenant(ctx context.Context, explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if subject, ok := auth.SubjectFromContext(ctx); ok && subject.TenantID != "" {
+		return subject.TenantID
+	}
+	return qrdbsdk.SystemTenantID
+}
+
 // ListSessions returns all active sessions.
 func (s *OrchestratorServer) ListSessions(ctx context.Context, req *pb.ListSessionsRequest) (*pb.ListSessionsResponse, error) {
 	s.logger.Debug("Processing ListSessions request")
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx := orchestration.ContextWithTenant(ctx, resolveOrchestratorTenant(ctx, req.GetTenantId()))
 
 	svcReq := &orchestration.ListSessionsRequest{
 		Backend: req.Backend,
+		Status:  orchestration.SessionState(req.GetStatus()),
 	}
 
 	resp, err := s.agentSvc.ListSessions(tenantCtx, svcReq)
@@ -296,7 +328,7 @@ func (s *OrchestratorServer) ListSessions(ctx context.Context, req *pb.ListSessi
 
 	return &pb.ListSessionsResponse{
 		Sessions:  sessions,
-		Timestamp: timestamppb.New(time.Unix(resp.Timestamp, 0)),
+		Timestamp: unixNanoTimestamp(resp.Timestamp),
 	}, nil
 }
 
@@ -315,17 +347,22 @@ func (s *OrchestratorServer) CreateTask(ctx context.Context, req *pb.CreateTaskR
 	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
 
 	svcReq := &orchestration.CreateTaskRequest{
-		TenantID:     req.TenantId,
-		TeamName:     req.TeamName,
-		Subject:      req.Subject,
-		Description:  req.Description,
-		AssignedTo:   req.AssignedTo,
-		Dependencies: req.Dependencies,
-		Metadata:     req.Metadata,
-		ProjectID:    req.GetProjectId(),
-		AutoSpawn:    req.GetAutoSpawn(),
-		Backend:      req.GetBackend(),
-		GpuRequired:  req.GetGpuRequired(),
+		TenantID:      req.TenantId,
+		TeamName:      req.TeamName,
+		Subject:       req.Subject,
+		Description:   req.Description,
+		AssignedTo:    req.AssignedTo,
+		Dependencies:  req.Dependencies,
+		Metadata:      req.Metadata,
+		ProjectID:     req.GetProjectId(),
+		AutoSpawn:     req.GetAutoSpawn(),
+		Backend:       req.GetBackend(),
+		GpuRequired:   req.GetGpuRequired(),
+		HostAffinity:  req.GetHostAffinity(),
+		Source:        protoTaskSourceToService(req.GetSource()),
+		Priority:      int(req.GetPriority()),
+		AttemptBudget: int(req.GetAttemptBudget()),
+		Runner:        req.GetRunner(),
 	}
 
 	task, err := s.agentSvc.CreateTask(tenantCtx, svcReq)
@@ -374,6 +411,8 @@ func (s *OrchestratorServer) ListTasks(ctx context.Context, req *pb.ListTasksReq
 			AssignedTo: req.Filter.AssignedTo,
 			CreatedBy:  req.Filter.CreatedBy,
 			Limit:      int(req.Filter.Limit),
+			ProjectID:  req.Filter.GetProjectId(),
+			Statuses:   protoTaskStatusesToService(req.Filter.GetStatuses()),
 		}
 	}
 
@@ -416,6 +455,75 @@ func (s *OrchestratorServer) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq
 		TaskId:    req.TaskId,
 		AgentId:   req.AgentId,
 		Claimed:   true,
+		Timestamp: timestamppb.Now(),
+	}, nil
+}
+
+// BlockTask parks a task until a person readmits it.
+func (s *OrchestratorServer) BlockTask(ctx context.Context, req *pb.BlockTaskRequest) (*pb.BlockTaskResponse, error) {
+	s.logger.WithField("task_id", req.GetTaskId()).Debug("Processing BlockTask request")
+
+	if req.GetTaskId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "task_id is required")
+	}
+	if req.GetKind() == "" {
+		return nil, status.Error(codes.InvalidArgument, "kind is required")
+	}
+	if req.GetReason() == "" {
+		return nil, status.Error(codes.InvalidArgument, "reason is required")
+	}
+
+	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+
+	if err := s.agentSvc.BlockTask(tenantCtx, req.GetTenantId(), req.GetTaskId(), orchestration.TaskBlockKind(req.GetKind()), req.GetReason()); err != nil {
+		return nil, convertOrchestratorError(err)
+	}
+
+	return &pb.BlockTaskResponse{
+		TaskId:    req.GetTaskId(),
+		Blocked:   true,
+		Timestamp: timestamppb.Now(),
+	}, nil
+}
+
+// ReadmitTask returns a blocked task to the pending queue.
+func (s *OrchestratorServer) ReadmitTask(ctx context.Context, req *pb.ReadmitTaskRequest) (*pb.ReadmitTaskResponse, error) {
+	s.logger.WithField("task_id", req.GetTaskId()).Debug("Processing ReadmitTask request")
+
+	if req.GetTaskId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "task_id is required")
+	}
+
+	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+
+	if err := s.agentSvc.ReadmitTask(tenantCtx, req.GetTenantId(), req.GetTaskId()); err != nil {
+		return nil, convertOrchestratorError(err)
+	}
+
+	return &pb.ReadmitTaskResponse{
+		TaskId:     req.GetTaskId(),
+		Readmitted: true,
+		Timestamp:  timestamppb.Now(),
+	}, nil
+}
+
+// DeleteTask removes a task and releases its source reservation.
+func (s *OrchestratorServer) DeleteTask(ctx context.Context, req *pb.DeleteTaskRequest) (*pb.DeleteTaskResponse, error) {
+	s.logger.WithField("task_id", req.GetTaskId()).Debug("Processing DeleteTask request")
+
+	if req.GetTaskId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "task_id is required")
+	}
+
+	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+
+	if err := s.agentSvc.DeleteTask(tenantCtx, req.GetTenantId(), req.GetTaskId()); err != nil {
+		return nil, convertOrchestratorError(err)
+	}
+
+	return &pb.DeleteTaskResponse{
+		TaskId:    req.GetTaskId(),
+		Deleted:   true,
 		Timestamp: timestamppb.Now(),
 	}, nil
 }
@@ -487,7 +595,7 @@ func (s *OrchestratorServer) DecomposeTask(ctx context.Context, req *pb.Decompos
 
 	return &pb.DecomposeTaskResponse{
 		WorkItems: pbWorkItems,
-		Timestamp: timestamppb.New(time.Unix(resp.Timestamp, 0)),
+		Timestamp: unixNanoTimestamp(resp.Timestamp),
 	}, nil
 }
 
@@ -516,6 +624,9 @@ func (s *OrchestratorServer) StartJob(ctx context.Context, req *pb.OrchestratorS
 		PollInterval:  req.PollInterval,
 		WorkflowName:  req.GetWorkflowName(),
 		WorkflowFile:  req.GetWorkflowFile(),
+		Runner:        req.GetRunner(),
+		TaskID:        req.GetTaskId(),
+		Attempt:       int(req.GetAttempt()),
 	}
 
 	resp, err := s.agentSvc.StartJob(tenantCtx, svcReq)
@@ -525,7 +636,7 @@ func (s *OrchestratorServer) StartJob(ctx context.Context, req *pb.OrchestratorS
 
 	return &pb.OrchestratorStartJobResponse{
 		JobId:     resp.JobID,
-		Timestamp: timestamppb.New(time.Unix(resp.Timestamp, 0)),
+		Timestamp: unixNanoTimestamp(resp.Timestamp),
 	}, nil
 }
 
@@ -570,7 +681,106 @@ func (s *OrchestratorServer) GetJobStatus(ctx context.Context, req *pb.Orchestra
 		Error:       jobStatus.Error,
 		Timestamp:   timestamppb.Now(),
 		Events:      pbEvents,
+
+		// The task binding and the loop's liveness fields are int64 and
+		// strings on the wire, so they widen from the domain's int without
+		// narrowing.
+		TaskId:        jobStatus.TaskID,
+		Attempt:       int64(jobStatus.Attempt),
+		Node:          jobStatus.Node,
+		HeartbeatAt:   jobStatus.HeartbeatAt,
+		FailureClass:  jobStatus.FailureClass,
+		LeadSessionId: jobStatus.LeadSessionID,
+		SessionIds:    jobStatus.SessionIDs,
+		Stage:         jobStatus.Stage,
+		Runner:        jobStatus.Runner,
+
+		// Provenance: the same facts the REST job shape carries, so a
+		// consumer on this transport reads the run without a second call.
+		AgentId:        jobStatus.AgentID,
+		Stages:         jobStagesToProto(jobStatus.Stages),
+		Attempts:       jobAttemptsToProto(jobStatus.Attempts),
+		AttemptBudget:  int32(jobStatus.AttemptBudget), //nolint:gosec // G115: bounded count
+		TerminalReason: string(jobStatus.TerminalReason),
+		ReadmitAllowed: jobStatus.ReadmitAllowed,
+		Delivery:       jobDeliveryToProto(jobStatus.Delivery),
+		Verification:   jobVerificationToProto(jobStatus.Verification),
 	}, nil
+}
+
+// jobVerificationToProto maps the last validator pipeline's results.
+func jobVerificationToProto(results []orchestration.ValidationResult) []*pb.OrchestratorJobVerification {
+	if len(results) == 0 {
+		return nil
+	}
+	out := make([]*pb.OrchestratorJobVerification, len(results))
+	for i, result := range results {
+		out[i] = &pb.OrchestratorJobVerification{
+			Name:    result.Name,
+			Passed:  result.Passed,
+			Message: result.Message,
+			Details: result.Details,
+		}
+	}
+	return out
+}
+
+// jobStagesToProto maps the lifecycle moments a job entered.
+func jobStagesToProto(stages []orchestration.JobStageRecord) []*pb.OrchestratorJobStage {
+	if len(stages) == 0 {
+		return nil
+	}
+	out := make([]*pb.OrchestratorJobStage, len(stages))
+	for i, stage := range stages {
+		out[i] = &pb.OrchestratorJobStage{
+			Stage:     string(stage.Stage),
+			EnteredAt: stage.EnteredAt,
+		}
+	}
+	return out
+}
+
+// jobAttemptsToProto maps the attempts at the job's task.
+func jobAttemptsToProto(attempts []orchestration.JobAttemptRecord) []*pb.OrchestratorJobAttempt {
+	if len(attempts) == 0 {
+		return nil
+	}
+	out := make([]*pb.OrchestratorJobAttempt, len(attempts))
+	for i, attempt := range attempts {
+		out[i] = &pb.OrchestratorJobAttempt{
+			Attempt: int32(attempt.Attempt), //nolint:gosec // G115: bounded count
+			JobId:   attempt.JobID,
+			Current: attempt.Current,
+		}
+	}
+	return out
+}
+
+// jobDeliveryToProto maps the git side of the attempt, nil for a runner that
+// published none.
+func jobDeliveryToProto(delivery *orchestration.JobDelivery) *pb.OrchestratorJobDelivery {
+	if delivery == nil {
+		return nil
+	}
+	reviews := make([]*pb.OrchestratorJobReviewRound, len(delivery.Reviews))
+	for i, review := range delivery.Reviews {
+		reviews[i] = &pb.OrchestratorJobReviewRound{
+			Round:       int32(review.Round), //nolint:gosec // G115: bounded count
+			Reviewer:    review.Reviewer,
+			Verdict:     review.Verdict,
+			HeadSha:     review.HeadSHA,
+			Findings:    review.Findings,
+			SubmittedAt: review.SubmittedAt,
+		}
+	}
+	return &pb.OrchestratorJobDelivery{
+		Branch:            delivery.Branch,
+		HeadSha:           delivery.HeadSHA,
+		PullRequestNumber: int32(delivery.PullRequestNumber), //nolint:gosec // G115: bounded count
+		PullRequestUrl:    delivery.PullRequestURL,
+		PullRequestState:  delivery.PullRequestState,
+		Reviews:           reviews,
+	}
 }
 
 // CancelJob cancels a running orchestration job.
@@ -594,13 +804,14 @@ func (s *OrchestratorServer) CancelJob(ctx context.Context, req *pb.Orchestrator
 	}, nil
 }
 
-// ListJobs returns all jobs for a tenant.
+// ListJobs returns the tenant's jobs, narrowed to one task when the request
+// names one.
 func (s *OrchestratorServer) ListJobs(ctx context.Context, req *pb.OrchestratorListJobsRequest) (*pb.OrchestratorListJobsResponse, error) {
 	s.logger.Debug("Processing ListJobs request")
 
 	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
 
-	jobs, err := s.agentSvc.ListJobs(tenantCtx, req.GetTenantId())
+	jobs, err := s.agentSvc.ListJobs(tenantCtx, req.GetTenantId(), &orchestration.JobFilter{TaskID: req.GetTaskId()})
 	if err != nil {
 		return nil, convertOrchestratorError(err)
 	}
@@ -622,9 +833,23 @@ func (s *OrchestratorServer) ListJobs(ctx context.Context, req *pb.OrchestratorL
 		}
 	}
 
+	bindJobSummaries(pbJobs, jobs)
 	return &pb.OrchestratorListJobsResponse{
 		Jobs: pbJobs,
 	}, nil
+}
+
+// bindJobSummaries copies each job's task binding onto its summary. The
+// attempt ordinal is int64 on the wire, so it widens from the domain's int
+// without narrowing.
+func bindJobSummaries(summaries []*pb.OrchestratorJobSummary, jobs []*orchestration.JobStatus) {
+	for i, j := range jobs {
+		if i >= len(summaries) || summaries[i] == nil {
+			return
+		}
+		summaries[i].TaskId = j.TaskID
+		summaries[i].Attempt = int64(j.Attempt)
+	}
 }
 
 // =============================================================================
@@ -693,6 +918,47 @@ func (s *OrchestratorServer) ListBackends(ctx context.Context, req *pb.Orchestra
 	return &pb.OrchestratorListBackendsResponse{
 		Backends:  pbBackends,
 		Timestamp: timestamppb.Now(),
+	}, nil
+}
+
+// =============================================================================
+// Runner Registry Operations
+// =============================================================================
+
+// ListRunners returns every registered JobRunner and the ordered, non-terminal
+// states it declares.
+//
+// REGISTRY data, not tenant data: the runners a daemon can drive are the same
+// for every caller, so no tenant is derived here — exactly as the REST route
+// GET /api/v1/orchestrator/runners behaves. It is still gated on the
+// orchestrator service being present, because a node that runs no orchestrator
+// drives no jobs, and answering "these are the runners" there would describe a
+// capability the node does not have.
+func (s *OrchestratorServer) ListRunners(_ context.Context, _ *pb.OrchestratorListRunnersRequest) (*pb.OrchestratorListRunnersResponse, error) {
+	s.logger.Debug("Processing ListRunners request")
+
+	if s.agentSvc == nil {
+		return nil, status.Error(codes.Unavailable, "orchestrator service not available")
+	}
+
+	registered := orchestration.JobRunners()
+	runners := make([]*pb.OrchestratorJobRunner, 0, len(registered))
+	for _, runner := range registered {
+		specs := runner.States()
+		states := make([]*pb.OrchestratorJobStateSpec, 0, len(specs))
+		for _, spec := range specs {
+			states = append(states, &pb.OrchestratorJobStateSpec{
+				State:         string(spec.State),
+				Label:         spec.Label,
+				SessionBacked: spec.SessionBacked,
+			})
+		}
+		runners = append(runners, &pb.OrchestratorJobRunner{Name: runner.Name(), States: states})
+	}
+
+	return &pb.OrchestratorListRunnersResponse{
+		Runners: runners,
+		Count:   int32(len(runners)),
 	}, nil
 }
 
@@ -835,7 +1101,10 @@ func (s *OrchestratorServer) AgentHeartbeat(ctx context.Context, req *pb.AgentHe
 
 	tenantCtx := orchestration.ContextWithTenant(ctx, req.TenantId)
 
-	if err := s.agentSvc.AgentHeartbeat(tenantCtx, req.TenantId, req.AgentId); err != nil {
+	// The gRPC heartbeat request carries no served-backend list, so it
+	// observes nothing and reconciles nothing. Only the REST verb the daemon
+	// itself calls reports what its runtime is serving.
+	if err := s.agentSvc.AgentHeartbeat(tenantCtx, req.TenantId, req.AgentId, nil); err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 
@@ -898,8 +1167,41 @@ func protoTaskStatusToService(ts pb.TaskStatus) orchestration.TaskStatus {
 		return orchestration.TaskStatusFailed
 	case pb.TaskStatus_TASK_STATUS_CANCELLED:
 		return orchestration.TaskStatusCancelled
+	case pb.TaskStatus_TASK_STATUS_BLOCKED:
+		return orchestration.TaskStatusBlocked
 	default:
 		return ""
+	}
+}
+
+// protoTaskStatusesToService converts a list of proto TaskStatus values,
+// dropping unspecified entries so an empty filter stays empty.
+func protoTaskStatusesToService(statuses []pb.TaskStatus) []orchestration.TaskStatus {
+	if len(statuses) == 0 {
+		return nil
+	}
+	out := make([]orchestration.TaskStatus, 0, len(statuses))
+	for _, ts := range statuses {
+		if converted := protoTaskStatusToService(ts); converted != "" {
+			out = append(out, converted)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// protoTaskSourceToService converts a proto TaskSource; nil stays nil so a
+// task created without provenance records none.
+func protoTaskSourceToService(src *pb.TaskSource) *orchestration.TaskSourceRef {
+	if src == nil {
+		return nil
+	}
+	return &orchestration.TaskSourceRef{
+		Kind: orchestration.TaskSourceKind(src.GetKind()),
+		Ref:  src.GetRef(),
+		URL:  src.GetUrl(),
 	}
 }
 
@@ -958,6 +1260,8 @@ func serviceTaskStatusToProto(ts orchestration.TaskStatus) pb.TaskStatus {
 		return pb.TaskStatus_TASK_STATUS_FAILED
 	case orchestration.TaskStatusCancelled:
 		return pb.TaskStatus_TASK_STATUS_CANCELLED
+	case orchestration.TaskStatusBlocked:
+		return pb.TaskStatus_TASK_STATUS_BLOCKED
 	default:
 		return pb.TaskStatus_TASK_STATUS_UNSPECIFIED
 	}
@@ -1007,9 +1311,25 @@ func serviceSessionInfoToProto(info *orchestration.SessionInfo) *pb.SessionInfo 
 		Backend:      info.Backend,
 		Model:        info.Model,
 		State:        serviceSessionStateToProto(info.State),
-		CreatedAt:    timestamppb.New(time.Unix(info.CreatedAt, 0)),
-		LastActivity: timestamppb.New(time.Unix(info.LastActivity, 0)),
+		CreatedAt:    unixNanoTimestamp(info.CreatedAt),
+		LastActivity: unixNanoTimestamp(info.LastActivity),
 	}
+}
+
+// unixNanoTimestamp renders a Unix-NANOSECOND instant as a protobuf
+// timestamp.
+//
+// THE UNIT IS THE WHOLE POINT. A session's times are nanoseconds, and reading
+// them as seconds put the instant some fifty billion years out — far outside
+// the range a protobuf timestamp can carry, so what reached the operator was
+// not a wrong date but no date at all. An unset instant stays unset rather
+// than becoming the epoch, because "this session has never been active" and
+// "this session was active on 1 January 1970" are different claims.
+func unixNanoTimestamp(nanos int64) *timestamppb.Timestamp {
+	if nanos <= 0 {
+		return nil
+	}
+	return timestamppb.New(time.Unix(0, nanos).UTC())
 }
 
 // serviceTaskToProto converts a domain Task to proto Task.
@@ -1030,8 +1350,8 @@ func serviceTaskToProto(task *orchestration.Task) *pb.Task {
 		Dependencies: task.Dependencies,
 		Blocks:       task.Blocks,
 		Metadata:     task.Metadata,
-		CreatedAt:    timestamppb.New(time.Unix(task.CreatedAt, 0)),
-		UpdatedAt:    timestamppb.New(time.Unix(task.UpdatedAt, 0)),
+		CreatedAt:    unixNanoTimestamp(task.CreatedAt),
+		UpdatedAt:    unixNanoTimestamp(task.UpdatedAt),
 		Version:      task.Version,
 	}
 
@@ -1044,11 +1364,11 @@ func serviceTaskToProto(task *orchestration.Task) *pb.Task {
 	}
 
 	if task.ClaimedAt != 0 {
-		pbTask.ClaimedAt = timestamppb.New(time.Unix(task.ClaimedAt, 0))
+		pbTask.ClaimedAt = unixNanoTimestamp(task.ClaimedAt)
 	}
 
 	if task.CompletedAt != 0 {
-		pbTask.CompletedAt = timestamppb.New(time.Unix(task.CompletedAt, 0))
+		pbTask.CompletedAt = unixNanoTimestamp(task.CompletedAt)
 	}
 
 	if task.AutoSpawn {
@@ -1058,8 +1378,34 @@ func serviceTaskToProto(task *orchestration.Task) *pb.Task {
 		pbTask.SpawnedJobId = task.SpawnedJobID
 	}
 	if task.SpawnedAt != 0 {
-		pbTask.SpawnedAt = timestamppb.New(time.Unix(0, task.SpawnedAt))
+		pbTask.SpawnedAt = unixNanoTimestamp(task.SpawnedAt)
 	}
+
+	pbTask.ProjectId = task.ProjectID
+	if task.Source != nil {
+		pbTask.Source = &pb.TaskSource{
+			Kind: string(task.Source.Kind),
+			Ref:  task.Source.Ref,
+			Url:  task.Source.URL,
+		}
+	}
+	pbTask.Priority = int64(task.Priority)
+	pbTask.Attempts = int64(task.Attempts)
+	pbTask.AttemptBudget = int64(task.AttemptBudget)
+	pbTask.EnvironmentFaults = int64(task.EnvironmentFaults)
+	pbTask.QuestionAttempts = int64(task.QuestionAttempts)
+	pbTask.ConsecutiveEnvironmentFaults = int64(task.ConsecutiveEnvironmentFaults)
+	pbTask.RetryNotBefore = task.RetryNotBefore
+	pbTask.BlockedReason = task.BlockedReason
+	pbTask.BlockKind = string(task.BlockKind)
+	pbTask.StatusChangedAt = task.StatusChangedAt
+	pbTask.Runner = task.Runner
+	pbTask.Routing = &pb.TaskRouting{
+		Backend:      task.Routing.Backend,
+		HostAffinity: task.Routing.HostAffinity,
+		GpuRequired:  task.Routing.GpuRequired,
+	}
+	pbTask.DispatchReason = task.DispatchReason
 
 	return pbTask
 }
@@ -1104,7 +1450,7 @@ func serviceHealthReportToProto(report *orchestration.HealthCheckReport) *pb.Hea
 	}
 
 	return &pb.HealthCheckReport{
-		Timestamp:     timestamppb.New(time.Unix(report.Timestamp, 0)),
+		Timestamp:     unixNanoTimestamp(report.Timestamp),
 		TotalSessions: int32(report.TotalSessions), //nolint:gosec // G115: bounded count
 		Healthy:       int32(report.Healthy),       //nolint:gosec // G115: bounded count
 		Unhealthy:     int32(report.Unhealthy),     //nolint:gosec // G115: bounded count
@@ -1129,8 +1475,8 @@ func serviceAgentRegistrationToProto(agent *orchestration.AgentRegistration) *pb
 		Capabilities: agent.Capabilities,
 		ContainerId:  agent.ContainerID,
 		WorkDir:      agent.WorkDir,
-		LastSeen:     timestamppb.New(time.Unix(agent.LastSeen, 0)),
-		RegisteredAt: timestamppb.New(time.Unix(agent.RegisteredAt, 0)),
+		LastSeen:     unixNanoTimestamp(agent.LastSeen),
+		RegisteredAt: unixNanoTimestamp(agent.RegisteredAt),
 		Version:      agent.Version,
 		Metadata:     agent.Metadata,
 	}
@@ -1186,6 +1532,14 @@ func convertOrchestratorError(err error) error {
 		return status.Error(codes.FailedPrecondition, taskAlreadyClaimedErr.Error())
 	}
 
+	// A task a running job holds a live lease on: the caller named a real
+	// task and only the attempt in flight stands in the way, so this is a
+	// precondition that will clear on its own, not an argument fault.
+	var taskLeasedErr *orchestration.TaskLeasedError
+	if stderrors.As(err, &taskLeasedErr) {
+		return status.Error(codes.FailedPrecondition, taskLeasedErr.Error())
+	}
+
 	var taskVersionConflictErr *orchestration.TaskVersionConflictError
 	if stderrors.As(err, &taskVersionConflictErr) {
 		return status.Error(codes.Aborted, taskVersionConflictErr.Error())
@@ -1231,6 +1585,16 @@ func convertOrchestratorError(err error) error {
 	var rotationUnsupportedErr *orchestration.SessionRotationUnsupportedError
 	if stderrors.As(err, &rotationUnsupportedErr) {
 		return status.Error(codes.Unimplemented, rotationUnsupportedErr.Error())
+	}
+
+	// A LISTING FILTER THAT NAMED A STATE THIS DAEMON DOES NOT USE IS THE
+	// CALLER'S MISTAKE. It arrives wrapped in an AgentServiceError, so it has
+	// to be answered BEFORE the branch below, which would otherwise classify a
+	// misspelled `status` as Internal — telling an operator their own typo was
+	// a server fault, and telling a client to retry something that will never
+	// succeed. The message already names the states that do exist.
+	if stderrors.Is(err, orchestration.ErrSessionStateUnknown) {
+		return status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	var agentSvcErr *orchestration.AgentServiceError

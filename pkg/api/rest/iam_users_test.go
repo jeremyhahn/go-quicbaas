@@ -509,13 +509,13 @@ func TestIAMAssignRole_CorrectBodySucceeds(t *testing.T) {
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "t1", Name: "Tenant 1"})
-	_ = memStorage.CreateUser(ctx, &iam.User{ID: "u1", TenantID: "t1", Email: "user@example.com", Name: "User"})
+	_ = memStorage.CreateUser(ctx, &iam.User{ID: "1", TenantID: "t1", Email: "user@example.com", Name: "User"})
 	_ = memStorage.CreateRole(ctx, &iam.Role{ID: "editor", TenantID: "t1", Name: "Editor"})
 
 	body := `{"role_id":"editor"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/users/u1/roles", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/users/1/roles", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
+	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "1"})
 	w := httptest.NewRecorder()
 
 	handler.AssignRole(w, req)

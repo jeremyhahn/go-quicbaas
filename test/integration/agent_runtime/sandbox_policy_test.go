@@ -53,6 +53,12 @@ func TestIntegration_SandboxPolicy(t *testing.T) {
 		tenantOverride *orchestration.SandboxPolicy
 		hasContainerRT bool
 
+		// wantBootRefusal is true when the daemon cannot even be built:
+		// a required policy on a host with no container runtime satisfies
+		// nothing, so agent.NewRuntime refuses it at boot rather than
+		// leaving it to fail one dispatched spawn at a time
+		// (go-quicbaas#732).
+		wantBootRefusal bool
 		// wantErr is true when a SandboxModeViolationError is expected.
 		wantErr bool
 		// wantMode is the resolved mode expected on success.
@@ -160,7 +166,7 @@ func TestIntegration_SandboxPolicy(t *testing.T) {
 			name:         "required/default/no-override/no-rt",
 			daemonPolicy: policyRequired, requestMode: orchestration.SandboxModeDefault,
 			tenantOverride: nil, hasContainerRT: false,
-			wantErr: true, // required policy + no runtime → violation
+			wantBootRefusal: true, // required policy + no runtime → refuse at boot
 		},
 		{
 			name:         "required/required/no-override/has-rt",
@@ -178,7 +184,7 @@ func TestIntegration_SandboxPolicy(t *testing.T) {
 			name:         "required/none/no-override/no-rt",
 			daemonPolicy: policyRequired, requestMode: orchestration.SandboxModeNone,
 			tenantOverride: nil, hasContainerRT: false,
-			wantErr: true,
+			wantBootRefusal: true,
 		},
 		// tenant override relaxes to Preferred
 		{
@@ -210,6 +216,12 @@ func TestIntegration_SandboxPolicy(t *testing.T) {
 				ImageMap:         map[string]string{"acp": "ghcr.io/test/acp:latest"},
 				Logger:           &testLogger{t: t},
 			})
+			if tc.wantBootRefusal {
+				require.ErrorIs(t, err, agent.ErrRuntimeSandboxRequiredNoRuntime,
+					"a daemon that must sandbox and cannot must be refused at boot")
+				require.Nil(t, runtime)
+				return
+			}
 			require.NoError(t, err)
 
 			spawnReq := req(tc.requestMode)

@@ -515,6 +515,38 @@ type MFAStatus struct {
 	BackupCodesRemaining int        `json:"backup_codes_remaining"`
 }
 
+// WebAuthnCredential is one of a user's registered WebAuthn authenticators as
+// the credential administration surface reports it. It mirrors
+// iam.WebAuthnCredentialSummary on the wire and, like it, carries no key
+// material — only the credential's identity and the non-secret authenticator
+// context an operator needs to recognise a key.
+type WebAuthnCredential struct {
+	// ID is the base64url WebAuthn credential id, and the handle the
+	// delete verb takes.
+	ID string `json:"id"`
+
+	// AAGUID is the hex-encoded authenticator model identifier.
+	AAGUID string `json:"aaguid,omitempty"`
+
+	// AttestationType is the attestation statement format.
+	AttestationType string `json:"attestation_type,omitempty"`
+
+	// Transports are the authenticator-reported transports.
+	Transports []string `json:"transports,omitempty"`
+
+	// SignCount is the signature counter as of the last assertion.
+	SignCount uint32 `json:"sign_count"`
+
+	// BackupEligible reports whether the credential may be backed up.
+	BackupEligible bool `json:"backup_eligible"`
+
+	// BackupState reports whether the credential is currently backed up.
+	BackupState bool `json:"backup_state"`
+
+	// CloneWarning reports the FIDO cloned-authenticator signal.
+	CloneWarning bool `json:"clone_warning"`
+}
+
 // MFAEnrollment represents the result of beginning MFA enrollment.
 type MFAEnrollment struct {
 	EnrollmentID    string    `json:"enrollment_id"`

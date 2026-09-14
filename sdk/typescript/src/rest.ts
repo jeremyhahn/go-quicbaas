@@ -96,6 +96,7 @@ import type {
   RevokeAgentRoleRequest,
   RevokeAgentRoleResponse,
 } from './projects.js';
+import type { SdlcClient, ProjectBinding, Delivery, OnboardingReport, ConformanceReport } from './sdlc.js';
 import type {
   CAClient,
   IssueCertificateRequest,
@@ -191,6 +192,7 @@ import type {
 } from './accounts.js';
 import type {
   AgentBackendInfo,
+  JobRunnerInfo,
   AuthTokenResponse,
   CreateKeyRequest,
   CreateKeyResponse,
@@ -212,6 +214,8 @@ import type {
   CloseSessionResponse,
   ClaimTaskRequest,
   CompleteTaskRequest,
+  DeleteTaskRequest,
+  DeleteTaskResponse,
   CreateTaskRequest,
   CreateTaskResponse,
   CreateWorkflowRequest,
@@ -221,6 +225,10 @@ import type {
   GetAgentRequest,
   GetSecretResponse,
   GetSessionHistoryRequest,
+  GetSessionConversationRequest,
+  GetSessionConversationResponse,
+  GetSpendReportRequest,
+  GetSpendReportResponse,
   GetSessionHistoryResponse,
   GetWorkflowResponse,
   HealthCheckReport,
@@ -244,11 +252,13 @@ import type {
   ListSecretsResponse,
   ListSessionsRequest,
   ListSessionsResponse,
+  SessionStatusResponse,
   ListTenantsResponse,
   ListUsersResponse,
   ListWorkflowsResponse,
   PromptSessionRequest,
   PromptSessionResponse,
+  ReconcileRolesResponse,
   RegisterAgentRequest,
   RegisterAgentResponse,
   RemoveAgentRequest,
@@ -258,6 +268,7 @@ import type {
   EnableAgentResponse,
   RekeyRequest,
   RekeyResponse,
+  RoleReconcileResult,
   RotateKeyResponse,
   RotateRootKeyResponse,
   RotateSecretResponse,
@@ -431,6 +442,63 @@ class RestConnectionClient implements ConnectionClient {
   }
 }
 
+// =============================================================================
+// The session shape the server writes, and the one the SDK promises
+// =============================================================================
+//
+// THESE ARE NOT THE SAME SHAPE, and the SDK owes the translation. The service
+// writes `orchestration.SessionInfo` verbatim (pkg/api/rest/handlers_orchestrator.go
+// serves it with RespondJSON), which names the lifecycle field `state` and the
+// activity instant `last_activity`. Every SDK — this one included — exposes
+// them as `status` and `last_active`; the Go client does the rename in
+// SessionStatusWire.Response() (sdk/go/client/orchestrator/session_wire.go)
+// and the Wails binding does it in OrchestratorBinding.ListSessions.
+//
+// This client did not, and returned the raw body under a type that claimed
+// otherwise. So `session.last_active` was `undefined` for every one of the
+// tenant's sessions and the Last Active column rendered an em-dash forever —
+// while the identical Svelte component, driven through Wails, rendered it
+// correctly. A type that lies is worse than a missing one: nothing could
+// detect the drift, because the compiler had been told the field was there
+// (go-quicbaas#855).
+
+// SessionWire is the session object as the REST service writes it.
+interface SessionWire {
+  session_id: string;
+  project_id?: string;
+  backend?: string;
+  model?: string;
+  /** The lifecycle state; the SDK exposes it as `status`. */
+  state?: string;
+  /** Unix nanoseconds. */
+  created_at?: number;
+  /** Unix nanoseconds; the SDK exposes it as `last_active`. */
+  last_activity?: number;
+  container_id?: string;
+  job_id?: string;
+}
+
+// sessionFromWire renames the two fields the service and the SDK disagree
+// about. It mirrors SessionStatusWire.Response() in the Go client, field for
+// field, so the two SDKs hand a caller the same object for the same session.
+//
+// A field the service does not send stays ABSENT rather than becoming an
+// empty string or a zero instant: "the server did not say" and "the server
+// said nothing was there" are different answers, and the views render them
+// differently.
+function sessionFromWire(wire: SessionWire): SessionStatusResponse {
+  const session: SessionStatusResponse = {
+    session_id: wire.session_id,
+    backend: wire.backend ?? '',
+    status: wire.state ?? '',
+    created_at: wire.created_at ?? 0,
+    last_active: wire.last_activity ?? 0,
+  };
+  if (wire.container_id !== undefined) session.container_id = wire.container_id;
+  if (wire.job_id !== undefined) session.job_id = wire.job_id;
+  return session;
+}
+
 // RestOrchestratorClient implements OrchestratorClient using the QuicBaaS REST API.
 // All endpoints are under /api/v1/orchestrator and accept/return JSON.
 // Error responses are surfaced as APIError with the HTTP status code.
@@ -483,11 +551,12 @@ class RestOrchestratorClient implements OrchestratorClient {
   }
 
   // listJobs maps to GET /api/v1/orchestrator/jobs?tenant_id=<tenantID>
+  // with an optional &task_id=<taskID>, which the SERVER applies.
   // Server returns {jobs: JobStatus[] | null}; unwrap to bare array.
-  async listJobs(tenantID: string): Promise<JobStatus[]> {
-    const raw = await this.fetchJSON<{ jobs?: JobStatus[] | null } | JobStatus[]>(
-      `/jobs?tenant_id=${encodeURIComponent(tenantID)}`,
-    );
+  async listJobs(tenantID: string, taskID?: string): Promise<JobStatus[]> {
+    let path = `/jobs?tenant_id=${encodeURIComponent(tenantID)}`;
+    if (taskID) path += `&task_id=${encodeURIComponent(taskID)}`;
+    const raw = await this.fetchJSON<{ jobs?: JobStatus[] | null } | JobStatus[]>(path);
     if (Array.isArray(raw)) return raw;
     return (raw as { jobs?: JobStatus[] | null }).jobs ?? [];
   }
@@ -543,12 +612,13 @@ class RestOrchestratorClient implements OrchestratorClient {
     params.set('tenant_id', req.tenantID);
     if (req.backend) params.set('backend', req.backend);
     if (req.status) params.set('status', req.status);
-    const raw = await this.fetchJSON<{ sessions?: ListSessionsResponse['sessions']; count?: number }>(
+    const raw = await this.fetchJSON<{ sessions?: SessionWire[]; count?: number }>(
       `/sessions?${params.toString()}`,
     );
+    const sessions = (raw.sessions ?? []).map(sessionFromWire);
     return {
-      sessions: raw.sessions ?? [],
-      count: raw.count ?? (raw.sessions ?? []).length,
+      sessions,
+      count: raw.count ?? sessions.length,
     };
   }
 
@@ -580,6 +650,17 @@ class RestOrchestratorClient implements OrchestratorClient {
       return resp;
     }
     return resp.backends ?? [];
+  }
+
+  // listRunners maps to GET /api/v1/orchestrator/runners
+  // The REST endpoint returns {"runners": [...]}; unwrap to match the Go SDK
+  // contract, which exposes a bare slice.
+  async listRunners(): Promise<JobRunnerInfo[]> {
+    const resp = await this.fetchJSON<{ runners?: JobRunnerInfo[] } | JobRunnerInfo[]>('/runners');
+    if (Array.isArray(resp)) {
+      return resp;
+    }
+    return resp.runners ?? [];
   }
 
   // listBackendModels maps to
@@ -748,6 +829,22 @@ class RestOrchestratorClient implements OrchestratorClient {
     );
   }
 
+  // readmitTask maps to POST /api/v1/orchestrator/tasks/:taskID/readmit
+  async readmitTask(tenantID: string, taskID: string): Promise<void> {
+    await this.fetchJSON<void>(
+      `/tasks/${encodeURIComponent(taskID)}/readmit?tenant_id=${encodeURIComponent(tenantID)}`,
+      { method: 'POST' },
+    );
+  }
+
+  // deleteTask maps to DELETE /api/v1/orchestrator/tasks/:taskID
+  async deleteTask(req: DeleteTaskRequest): Promise<DeleteTaskResponse> {
+    return this.fetchJSON<DeleteTaskResponse>(
+      `/tasks/${encodeURIComponent(req.task_id)}?tenant_id=${encodeURIComponent(req.tenant_id)}`,
+      { method: 'DELETE' },
+    );
+  }
+
   // decomposeTask maps to POST /api/v1/orchestrator/tasks/:taskID/decompose
   async decomposeTask(req: DecomposeTaskRequest): Promise<DecomposeTaskResponse> {
     return this.fetchJSON<DecomposeTaskResponse>(
@@ -808,6 +905,45 @@ class RestOrchestratorClient implements OrchestratorClient {
     return this.fetchJSON<GetSessionHistoryResponse>(
       `/sessions/${encodeURIComponent(req.session_id)}/events?${params.toString()}`,
     );
+  }
+
+  // getSessionConversation maps to
+  // GET /api/v1/orchestrator/sessions/:sessionID/history, the paged
+  // conversation view.
+  //
+  // The route says "history" and the method says "conversation" because the
+  // SDK already has a getSessionHistory that pages the raw EVENT log: the
+  // path names the resource an operator reaches for, the method names the
+  // shape it returns.
+  async getSessionConversation(req: GetSessionConversationRequest): Promise<GetSessionConversationResponse> {
+    const params = new URLSearchParams();
+    if (req.tenant_id) params.set('tenant_id', req.tenant_id);
+    if (req.cursor && req.cursor > 0) params.set('cursor', String(req.cursor));
+    if (req.limit && req.limit > 0) params.set('limit', String(req.limit));
+    const query = params.toString();
+    return this.fetchJSON<GetSessionConversationResponse>(
+      `/sessions/${encodeURIComponent(req.session_id)}/history${query ? `?${query}` : ''}`,
+    );
+  }
+
+  // getSpendReport maps to GET /api/v1/orchestrator/cost.
+  //
+  // ONE ROUTE, SCOPED BY QUERY, because the ledger's attribution chain is a
+  // PATH: a project's spend and a job's spend are the same prefix scan at two
+  // depths, and four routes over one scan would be four places for the
+  // drill-down's arithmetic to stop agreeing with itself.
+  async getSpendReport(req: GetSpendReportRequest): Promise<GetSpendReportResponse> {
+    const params = new URLSearchParams();
+    if (req.tenant_id) params.set('tenant_id', req.tenant_id);
+    if (req.project_id) params.set('project_id', req.project_id);
+    if (req.task_id) params.set('task_id', req.task_id);
+    if (req.job_id) params.set('job_id', req.job_id);
+    if (req.session_id) params.set('session_id', req.session_id);
+    // Presence, not value: round 0 is a real level, so an unset round_set
+    // must leave the parameter off entirely rather than send '0'.
+    if (req.round_set) params.set('round', String(req.round ?? 0));
+    const query = params.toString();
+    return this.fetchJSON<GetSpendReportResponse>(`/cost${query ? `?${query}` : ''}`);
   }
 
   // subscribeSession opens a Server-Sent Events stream for a session.
@@ -1358,15 +1494,41 @@ class RestAuthClient implements AuthClient {
     this.baseUrl = baseUrl.replace(/\/$/, '');
   }
 
-  // authValidate POSTs to /api/v1/auth/validate with a bearer token. When no
-  // token is supplied, skip the network call entirely and return false — the
-  // server requires the Authorization header and 400s without it, which is
-  // not an error condition, it's just "unauthenticated". Returns true on 2xx,
-  // false on 400/401 (missing or invalid token), throws on other errors.
+  // authValidate POSTs to the session-validate verb with a bearer token. When
+  // no token is supplied, skip the network call entirely and return false —
+  // the server requires the Authorization header and 400s without it, which is
+  // not an error condition, it's just "unauthenticated". Returns false on
+  // 400/401 (missing or invalid token); throws APIError on any other non-2xx
+  // and on a 2xx whose body does not affirmatively answer the question.
+  //
+  // NOT /api/v1/auth/validate. On a composed node the xkms module owns the
+  // /api/v1/auth/* session plane and registers GET (not POST) at that path, so
+  // this POST matched no route at all — and go-qrdb's auth middleware wraps the
+  // whole router, so an unregistered method+pattern has no module auth fallback
+  // and fell through to mTLS, answering 401 "qrdb/auth: no_peer_cert" for a
+  // bearer the daemon had just minted (go-quicbaas#256). quicbaas's own verb is
+  // IAM-namespaced to clear that collision, the same move that put renewal at
+  // /api/v1/iam/refresh (#221) and PIV login at /api/v1/iam/login/piv.
+  //
+  // A 2xx is NOT on its own a valid session: ValidateToken answers 200 with
+  // {"valid":false} when the service rejects the token (pkg/api/rest/
+  // iam_login.go), so reading only the status code would report a dead session
+  // as live.
+  //
+  // Only `valid === true` — the literal boolean — authenticates. This is an
+  // authentication boundary, so it fails CLOSED: every other shape is a
+  // protocol violation and throws rather than resolving either way. The
+  // tempting `body.valid !== false` reads almost the same and is not: it
+  // authenticates `{}`, `{"valid":"false"}` (the string, which is truthy),
+  // `{"valid":null}`, and a JSON `null` body, and pairing it with a catch that
+  // returns true also authenticates an empty 204, an HTML error page from an
+  // intermediary, and any truncated response. Each of those is something OTHER
+  // than the server affirming this session, and none of them should be
+  // indistinguishable from a "yes".
   async authValidate(token?: string): Promise<boolean> {
     if (!token) return false;
 
-    const resp = await fetch(`${this.baseUrl}/api/v1/auth/validate`, {
+    const resp = await fetch(`${this.baseUrl}/api/v1/iam/validate`, {
       method: 'POST',
       credentials: 'include',
       headers: {
@@ -1388,7 +1550,41 @@ class RestAuthClient implements AuthClient {
       throw new APIError(resp.status, message);
     }
 
-    return true;
+    let body: unknown;
+    try {
+      body = await resp.json();
+    } catch {
+      throw new APIError(
+        resp.status,
+        'session validation returned an unreadable body; expected JSON with a boolean "valid"',
+      );
+    }
+
+    if (typeof body !== 'object' || body === null) {
+      throw new APIError(
+        resp.status,
+        'session validation returned a non-object body; expected JSON with a boolean "valid"',
+      );
+    }
+
+    // Own property only. Plain destructuring would walk the prototype chain,
+    // so a page that had suffered prototype pollution (Object.prototype.valid
+    // = true) would turn a 200 {} into an authenticated session — the response
+    // affirming nothing while the client reads a "yes" off the environment.
+    if (!Object.prototype.hasOwnProperty.call(body, 'valid')) {
+      throw new APIError(
+        resp.status,
+        'session validation response has no own "valid" field',
+      );
+    }
+    const { valid } = body as { valid?: unknown };
+    if (typeof valid !== 'boolean') {
+      throw new APIError(
+        resp.status,
+        'session validation response has no boolean "valid" field',
+      );
+    }
+    return valid;
   }
 
   async authLogin(credentials: { username: string; password: string }): Promise<void> {
@@ -1462,7 +1658,7 @@ class RestAuthClient implements AuthClient {
 
   // webAuthnFinishLogin submits the WebAuthn assertion for an in-flight
   // challenge and returns tokens (ceremony bearer + rotating refresh
-  // credential, renewable via /api/v1/auth/refresh).
+  // credential, renewable via /api/v1/iam/refresh).
   // Maps to POST /api/v1/auth/login/finish (type=fido2). The proof wire
   // mirrors the Go CLI's proveCanonicalFIDO2: the lookup key is the raw
   // bytes of the base64url credential id, the signature carries the
@@ -1544,8 +1740,14 @@ class RestAuthClient implements AuthClient {
     return resp.json() as Promise<AuthTokenResponse>;
   }
 
-  // logout POSTs to /api/v1/auth/logout to revoke the active session token on
-  // the server. Caller must clear localStorage tokens after this resolves;
+  // logout POSTs to the session-revoke verb to revoke the active session token
+  // on the server. IAM-namespaced for the same reason authValidate is: xkms's
+  // module owns POST /api/v1/auth/logout on a composed node and redeems against
+  // its OWN token store, so a quicbaas-minted session sent there was never
+  // actually revoked (go-quicbaas#256). Because this method swallows every
+  // failure, that miss was silent — sign-out looked clean and the bearer stayed
+  // live until its TTL. Caller must clear localStorage tokens after this
+  // resolves;
   // the SDK doesn't own that storage. Idempotent — server-side errors and
   // missing tokens are swallowed so the UI can use this as a clean-state
   // primitive without branching on the network outcome.
@@ -1556,7 +1758,7 @@ class RestAuthClient implements AuthClient {
     };
     if (token) headers.Authorization = `Bearer ${token}`;
     try {
-      await fetch(`${this.baseUrl}/api/v1/auth/logout`, {
+      await fetch(`${this.baseUrl}/api/v1/iam/logout`, {
         method: 'POST',
         credentials: 'include',
         headers,
@@ -2011,9 +2213,12 @@ class RestProjectsClient implements ProjectsClient {
 
   private async fetchJSON<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.config.token) {
-      headers['Authorization'] = `Bearer ${this.config.token}`;
-    }
+    // resolveToken, not the raw config value: the SPA supplies a token FACTORY
+    // so every request re-reads the live access token. Interpolating the config
+    // value directly stringified the function itself into the header, and the
+    // 401 it earned drove the auth store into a session-ending renewal.
+    const tok = await resolveToken(this.config.token);
+    if (tok) headers['Authorization'] = `Bearer ${tok}`;
     const resp = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       headers: { ...headers, ...(init.headers as Record<string, string> ?? {}) },
@@ -2039,10 +2244,16 @@ class RestProjectsClient implements ProjectsClient {
     return this.fetchJSON<GetProjectResponse>(`/api/v1/projects/${encodeURIComponent(projectId)}?${query}`);
   }
 
-  // updateProject maps to PUT /api/v1/projects/:projectId
+  // updateProject maps to PUT /api/v1/projects/:projectId?tenant_id=...
+  //
+  // The tenant goes in the QUERY, not only in the body: the handler derives
+  // the tenant and refuses before it reads the body at all
+  // (pkg/api/rest/handlers_project.go). Without it every save from the SPA's
+  // edit dialog came back 400 — the project edit flow was simply broken.
   async updateProject(req: UpdateProjectRequest): Promise<UpdateProjectResponse> {
+    const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
     return this.fetchJSON<UpdateProjectResponse>(
-      `/api/v1/projects/${encodeURIComponent(req.project_id)}`,
+      `/api/v1/projects/${encodeURIComponent(req.project_id)}?${query}`,
       { method: 'PUT', body: JSON.stringify(req) },
     );
   }
@@ -2081,6 +2292,95 @@ class RestProjectsClient implements ProjectsClient {
   }
 }
 
+// RestSdlcClient implements SdlcClient over the SDLC module's REST endpoints:
+// a project's forge binding and a task's delivery.
+class RestSdlcClient implements SdlcClient {
+  private readonly baseUrl: string;
+  private readonly config: ClientConfig;
+
+  constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.config = config;
+  }
+
+  private async fetchJSON<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    // resolveToken, not the raw config value: the SPA supplies a token FACTORY
+    // so every request re-reads the live access token. Interpolating the config
+    // value directly stringified the function itself into the header, and the
+    // 401 it earned drove the auth store into a session-ending renewal.
+    const tok = await resolveToken(this.config.token);
+    if (tok) headers['Authorization'] = `Bearer ${tok}`;
+    const resp = await fetch(`${this.baseUrl}${path}`, {
+      ...init,
+      headers: { ...headers, ...(init.headers as Record<string, string> ?? {}) },
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => resp.statusText);
+      throw new APIError(resp.status, text);
+    }
+    return parseResponseBody<T>(resp);
+  }
+
+  private bindingPath(tenantId: string, projectId: string): string {
+    const query = new URLSearchParams({ tenant_id: tenantId }).toString();
+    return `/api/v1/sdlc/projects/${encodeURIComponent(projectId)}/binding?${query}`;
+  }
+
+  // forges maps to GET /api/v1/sdlc/forges
+  // The endpoint returns {"forges": [...]}; unwrap to a bare slice.
+  async forges(): Promise<string[]> {
+    const resp = await this.fetchJSON<{ forges?: string[] } | string[]>('/api/v1/sdlc/forges');
+    if (Array.isArray(resp)) {
+      return resp;
+    }
+    return resp.forges ?? [];
+  }
+
+  // bind maps to PUT /api/v1/sdlc/projects/:projectId/binding?tenant_id=...
+  async bind(tenantId: string, projectId: string, binding: ProjectBinding): Promise<ProjectBinding> {
+    return this.fetchJSON<ProjectBinding>(this.bindingPath(tenantId, projectId), {
+      method: 'PUT',
+      body: JSON.stringify({ ...binding, project_id: binding.project_id || projectId }),
+    });
+  }
+
+  // unbind maps to DELETE /api/v1/sdlc/projects/:projectId/binding?tenant_id=...
+  async unbind(tenantId: string, projectId: string): Promise<void> {
+    await this.fetchJSON<void>(this.bindingPath(tenantId, projectId), { method: 'DELETE' });
+  }
+
+  // binding maps to GET /api/v1/sdlc/projects/:projectId/binding?tenant_id=...
+  async binding(tenantId: string, projectId: string): Promise<ProjectBinding> {
+    return this.fetchJSON<ProjectBinding>(this.bindingPath(tenantId, projectId));
+  }
+
+  // delivery maps to GET /api/v1/sdlc/tasks/:taskId/delivery?tenant_id=...
+  async delivery(tenantId: string, taskId: string): Promise<Delivery> {
+    const query = new URLSearchParams({ tenant_id: tenantId }).toString();
+    return this.fetchJSON<Delivery>(`/api/v1/sdlc/tasks/${encodeURIComponent(taskId)}/delivery?${query}`);
+  }
+
+  // onboard maps to POST /api/v1/sdlc/projects/:projectId/onboarding
+  // A POST, because it writes to the forge. The read is a different route so
+  // that asking what state a repository is in cannot change it.
+  async onboard(tenantId: string, projectId: string): Promise<OnboardingReport> {
+    const query = new URLSearchParams({ tenant_id: tenantId }).toString();
+    return this.fetchJSON<OnboardingReport>(
+      `/api/v1/sdlc/projects/${encodeURIComponent(projectId)}/onboarding?${query}`,
+      { method: 'POST' },
+    );
+  }
+
+  // conformance maps to GET /api/v1/sdlc/projects/:projectId/conformance
+  async conformance(tenantId: string, projectId: string): Promise<ConformanceReport> {
+    const query = new URLSearchParams({ tenant_id: tenantId }).toString();
+    return this.fetchJSON<ConformanceReport>(
+      `/api/v1/sdlc/projects/${encodeURIComponent(projectId)}/conformance?${query}`,
+    );
+  }
+}
+
 // RestAccountsClient implements AccountsClient over the QuicBaaS REST pooled
 // provider account endpoints. All account routes live under
 // /api/v1/agent-accounts. See handlers_account.go for the server-side shapes
@@ -2097,9 +2397,12 @@ class RestAccountsClient implements AccountsClient {
 
   private async fetchJSON<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.config.token) {
-      headers['Authorization'] = `Bearer ${this.config.token}`;
-    }
+    // resolveToken, not the raw config value: the SPA supplies a token FACTORY
+    // so every request re-reads the live access token. Interpolating the config
+    // value directly stringified the function itself into the header, and the
+    // 401 it earned drove the auth store into a session-ending renewal.
+    const tok = await resolveToken(this.config.token);
+    if (tok) headers['Authorization'] = `Bearer ${tok}`;
     const resp = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       headers: { ...headers, ...(init.headers as Record<string, string> ?? {}) },
@@ -2385,6 +2688,17 @@ class RestIAMClient implements IAMClient {
     return { roles, count: raw.count ?? roles.length };
   }
 
+  async reconcileRoles(tenantID: string): Promise<ReconcileRolesResponse> {
+    // Server returns {tenant_id, roles:[...], changed} — roles is omitted when
+    // nothing drifted; normalize it to an array so callers can iterate freely.
+    const raw = await this.fetchJSON<{ tenant_id?: string; roles?: RoleReconcileResult[]; changed?: boolean }>(
+      `/api/v1/tenants/${encodeURIComponent(tenantID)}/roles/reconcile`,
+      { method: 'POST' },
+    );
+    const roles = raw.roles ?? [];
+    return { tenant_id: raw.tenant_id ?? tenantID, roles, changed: raw.changed ?? roles.length > 0 };
+  }
+
   async createRole(tenantID: string, req: import('./interfaces.js').CreateRoleRequest): Promise<IAMRole> {
     return this.fetchJSON<IAMRole>(
       `/api/v1/tenants/${encodeURIComponent(tenantID)}/roles`,
@@ -2436,30 +2750,37 @@ class RestIAMClient implements IAMClient {
     );
   }
 
-  async getInvite(token: string): Promise<import('./types.js').InviteMetadata> {
+  // THE TENANT IS A PATH SEGMENT, and it is not optional. Invitations live in
+  // their tenant's own store, so a token issued for one tenant is simply absent
+  // from another — isolation is structural rather than a check that could be
+  // forgotten. These methods called tenant-less paths that the server never
+  // registered, so every one of them 404'd; on a server whose authenticator
+  // answers before routing resolves, that surfaced as an auth error and the
+  // browser invite flow had never worked at all.
+  async getInvite(tenantID: string, token: string): Promise<import('./types.js').InviteMetadata> {
     return this.fetchJSON<import('./types.js').InviteMetadata>(
-      `/api/v1/iam/invites/${encodeURIComponent(token)}`,
+      `/api/v1/iam/${encodeURIComponent(tenantID)}/invites/${encodeURIComponent(token)}`,
       { method: 'GET' },
     );
   }
 
-  async activateFIDO2Begin(token: string): Promise<Record<string, unknown>> {
+  async activateFIDO2Begin(tenantID: string, token: string): Promise<Record<string, unknown>> {
     return this.fetchJSON<Record<string, unknown>>(
-      `/api/v1/iam/invites/${encodeURIComponent(token)}/activate/fido2/begin`,
+      `/api/v1/iam/${encodeURIComponent(tenantID)}/invites/${encodeURIComponent(token)}/activate/fido2/begin`,
       { method: 'POST' },
     );
   }
 
-  async activateFIDO2Finish(token: string, credential: Record<string, unknown>): Promise<import('./types.js').ActivationResponse> {
+  async activateFIDO2Finish(tenantID: string, token: string, credential: Record<string, unknown>): Promise<import('./types.js').ActivationResponse> {
     return this.fetchJSON<import('./types.js').ActivationResponse>(
-      `/api/v1/iam/invites/${encodeURIComponent(token)}/activate/fido2/finish`,
+      `/api/v1/iam/${encodeURIComponent(tenantID)}/invites/${encodeURIComponent(token)}/activate/fido2/finish`,
       { method: 'POST', body: JSON.stringify({ credential }) },
     );
   }
 
-  async activatePIV(token: string, certPEM: string): Promise<import('./types.js').ActivationResponse> {
+  async activatePIV(tenantID: string, token: string, certPEM: string): Promise<import('./types.js').ActivationResponse> {
     return this.fetchJSON<import('./types.js').ActivationResponse>(
-      `/api/v1/iam/invites/${encodeURIComponent(token)}/activate/piv`,
+      `/api/v1/iam/${encodeURIComponent(tenantID)}/invites/${encodeURIComponent(token)}/activate/piv`,
       { method: 'POST', body: JSON.stringify({ cert_pem: certPEM }) },
     );
   }
@@ -4305,6 +4626,7 @@ export class RestClient implements Client {
   readonly messaging: MessagingClient;
   readonly scheduler: SchedulerClient;
   readonly projects: ProjectsClient;
+  readonly sdlc: SdlcClient;
   readonly accounts: AccountsClient;
   readonly iam: IAMClient;
   readonly kms: KMSClient;
@@ -4345,6 +4667,7 @@ export class RestClient implements Client {
     this.messaging = new RestMessagingClient(baseUrl, config);
     this.scheduler = new RestSchedulerClient(baseUrl, config);
     this.projects = new RestProjectsClient(baseUrl, config);
+    this.sdlc = new RestSdlcClient(baseUrl, config);
     this.accounts = new RestAccountsClient(baseUrl, config);
     this.iam = new RestIAMClient(baseUrl, config);
     this.kms = new RestKMSClient(baseUrl, config);

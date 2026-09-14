@@ -38,6 +38,19 @@ var (
 	// ErrContainerEnvFile indicates the private env file that carries a
 	// container's environment could not be written.
 	ErrContainerEnvFile = errors.New("container: env file failed")
+
+	// ErrContainerExec indicates a command could not be run inside a
+	// running container. It never means the command RAN and failed — that
+	// is an exit status on ExecResult.
+	ErrContainerExec = errors.New("container: exec failed")
+
+	// ErrContainerStreamClosed indicates a containerized agent stopped
+	// answering on its stdio before the exchange in flight completed.
+	ErrContainerStreamClosed = errors.New("container: agent stream closed")
+
+	// ErrContainerSweep indicates the startup sweep of the containers a
+	// previous run left behind could not be completed.
+	ErrContainerSweep = errors.New("container: orphan sweep failed")
 )
 
 // ContainerRuntimeNotAvailableError indicates no docker or podman binary was found.
@@ -195,4 +208,131 @@ func (e *ContainerEnvFileError) Unwrap() []error {
 		return []error{ErrContainerEnvFile, e.Cause}
 	}
 	return []error{ErrContainerEnvFile}
+}
+
+// ContainerExecError indicates a command could not be run inside a running
+// container: the runtime refused, the container was unreachable, or the
+// context ended before the command answered.
+//
+// A command that ran and exited non-zero is NOT this error — its status is
+// on ExecResult, because a non-zero exit is frequently the answer a caller
+// asked for.
+type ContainerExecError struct {
+	ContainerID string
+	Cause       error
+}
+
+// Error implements the error interface. The command's own output is never
+// rendered here; it stays on ExecResult.Stderr for a caller with somewhere
+// safe to put it.
+func (e *ContainerExecError) Error() string {
+	msg := ErrContainerExec.Error() + ": " + truncateID(e.ContainerID)
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns both the sentinel and cause for errors.Is/As support.
+func (e *ContainerExecError) Unwrap() []error {
+	if e.Cause != nil {
+		return []error{ErrContainerExec, e.Cause}
+	}
+	return []error{ErrContainerExec}
+}
+
+// ContainerStreamClosedError reports that a containerized agent's stdout ended
+// before the exchange the caller was waiting for completed — the container is
+// gone, or its command never started.
+//
+// IT CARRIES NO EXIT CODE, deliberately. The `docker run -i` process belongs to
+// the container runtime, not to this backend, so unlike the host subprocess
+// path (StreamJSONProcessExitedError) there is no ProcessState here to read one
+// from. Reporting a zero would be a guess, and "the agent exited successfully"
+// is the single most misleading guess available. What IS known is the
+// container, the image, and the exchange that was in flight, and that is what
+// an operator needs to go read `docker logs` for the rest.
+type ContainerStreamClosedError struct {
+	// ContainerID is the container whose stdio ended.
+	ContainerID string
+
+	// Image is what that container was running.
+	Image string
+
+	// Operation names the exchange in flight ("handshake", "prompt").
+	Operation string
+}
+
+// Error implements the error interface.
+func (e *ContainerStreamClosedError) Error() string {
+	msg := ErrContainerStreamClosed.Error() + ": " + e.Image
+	if e.ContainerID != "" {
+		msg += " (" + truncateID(e.ContainerID) + ")"
+	}
+	if e.Operation != "" {
+		msg += ": " + e.Operation
+	}
+	return msg
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *ContainerStreamClosedError) Unwrap() error { return ErrContainerStreamClosed }
+
+// ContainerSweepRefusedError reports a sweep that was declined before it
+// enumerated anything.
+//
+// It is a refusal rather than a no-op because the only way to sweep without an
+// owner would be to sweep every container on the host, and a startup that
+// cannot say which containers are its own must say so rather than guess.
+type ContainerSweepRefusedError struct {
+	// Reason says what the sweep would not do and why.
+	Reason string
+}
+
+// Error implements the error interface.
+func (e *ContainerSweepRefusedError) Error() string {
+	return ErrContainerSweep.Error() + ": refused: " + e.Reason
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *ContainerSweepRefusedError) Unwrap() error { return ErrContainerSweep }
+
+// ContainerSweepError reports a sweep that started and could not finish: the
+// runtime would not enumerate the owner's containers, or an identified orphan
+// would not be removed.
+//
+// A sweep that half-ran is reported rather than swallowed, for the reason
+// go-quicbaas#676 gives for the signing-socket sweep: an orphan that survives
+// its sweep accumulates without bound, and a startup that logged nothing about
+// it would leave an operator with no way to know.
+type ContainerSweepError struct {
+	// Owner is the label value the sweep was claiming containers by.
+	Owner string
+
+	// ContainerID is the orphan that refused to be removed, empty when the
+	// enumeration itself failed.
+	ContainerID string
+
+	// Cause is the runtime's own refusal.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *ContainerSweepError) Error() string {
+	msg := ErrContainerSweep.Error() + ": owner " + e.Owner
+	if e.ContainerID != "" {
+		msg += ": container " + truncateID(e.ContainerID)
+	}
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns both the sentinel and cause for errors.Is/As support.
+func (e *ContainerSweepError) Unwrap() []error {
+	if e.Cause != nil {
+		return []error{ErrContainerSweep, e.Cause}
+	}
+	return []error{ErrContainerSweep}
 }

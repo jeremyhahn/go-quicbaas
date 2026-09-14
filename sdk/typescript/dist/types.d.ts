@@ -40,6 +40,10 @@ export interface JobConfig {
     poll_interval: number;
     max_iterations: number;
     workflow_name: string;
+    /** task_id names the task this job is an attempt at; empty for a job started directly. */
+    task_id?: string;
+    /** attempt is the 1-based ordinal of this job among the task's attempts. */
+    attempt?: number;
 }
 export interface JobStatus {
     job_id: string;
@@ -58,7 +62,87 @@ export interface JobStatus {
     config: JobConfig | null;
     memory: JobMemory | null;
     workflow_name: string;
+    /** task_id and attempt bind the job to the task it is an attempt at. */
+    task_id?: string;
+    attempt?: number;
+    /** lead_session_id is the lead agent's session; absent until it is spawned. */
+    lead_session_id?: string;
+    /** session_ids lists every session the job has spawned and not yet closed. */
+    session_ids?: string[];
+    /** failure_class classifies a failed job's cause: the environment or the work. */
+    failure_class?: string;
+    /** stage is the last lifecycle moment the job passed through (prepare, reviewable, complete, discard, blocked). */
+    stage?: string;
+    /** runner names the JobRunner that drove the job's states; absent means the "workflow" runner. */
+    runner?: string;
+    /** node names the daemon running the job's control loop. */
+    node?: string;
+    /** heartbeat_at is the nanosecond Unix instant the loop last proved alive. */
+    heartbeat_at?: number;
+    /** agent_id is the fleet agent the work was dispatched to; absent when it ran in-process. */
+    agent_id?: string;
+    /** stages is every lifecycle moment the job entered, in order. */
+    stages?: JobStageRecord[];
+    /** attempts is every attempt at the job's task, oldest first. */
+    attempts?: JobAttemptRecord[];
+    /** attempt_budget is the number of charged attempts the task allows. */
+    attempt_budget?: number;
+    /** terminal_reason is the typed reason the task stopped. */
+    terminal_reason?: TaskConclusionReason;
+    /** readmit_allowed says whether a person may return the task to the queue. */
+    readmit_allowed?: boolean;
+    /** delivery is the git side of the attempt: branch, head, pull request, reviews. */
+    delivery?: JobDelivery | null;
+    /** verification is the last validator pipeline's results: the build, the tests. */
+    verification?: JobVerificationResult[];
 }
+/** JobVerificationResult is one verification command's outcome. */
+export interface JobVerificationResult {
+    name: string;
+    passed: boolean;
+    message?: string;
+    details?: string;
+}
+/** JobStageRecord is one lifecycle moment the job entered. */
+export interface JobStageRecord {
+    stage: string;
+    /** entered_at is the Unix-nanosecond instant the moment was entered. */
+    entered_at: number;
+}
+/** JobAttemptRecord is one attempt at the job's task. */
+export interface JobAttemptRecord {
+    attempt: number;
+    job_id: string;
+    /** current marks the attempt the status being read belongs to. */
+    current?: boolean;
+}
+/**
+ * TaskConclusionReason is the closed vocabulary naming why a task stopped.
+ * Mirrors pkg/orchestration/task_conclusion.go; a reason added there and not
+ * here is a compile error at every render site rather than a blank badge.
+ */
+export type TaskConclusionReason = 'completed' | 'budget_exhausted' | 'abandoned' | 'fault_bounded' | 'fault_held' | 'parked_needs_info' | 'parked_blocked' | 'parked_escalated' | 'readmitted';
+/** JobReviewRound is one reviewer's verdict on one head of the job's branch. */
+export interface JobReviewRound {
+    round: number;
+    reviewer: string;
+    /** verdict is the reviewing module's own vocabulary: approve, request_changes, error. */
+    verdict: string;
+    head_sha?: string;
+    findings?: string;
+    /** submitted_at is an RFC 3339 instant. */
+    submitted_at?: string;
+}
+/** JobDelivery is the git side of the job's attempt. */
+export interface JobDelivery {
+    branch?: string;
+    head_sha?: string;
+    pull_request_number?: number;
+    pull_request_url?: string;
+    pull_request_state?: string;
+    reviews?: JobReviewRound[];
+}
+export type JobEventType = 'state_change';
 export interface JobEvent {
     job_id: string;
     type: string;
@@ -78,6 +162,8 @@ export interface StartJobRequest {
     max_iterations: number;
     poll_interval?: string;
     workflow_file?: string;
+    /** runner names the JobRunner that drives the job's states; omit for the "workflow" runner. */
+    runner?: string;
 }
 export interface StartJobResponse {
     job_id: string;
@@ -89,6 +175,7 @@ export interface GetJobStatusRequest {
 }
 export interface ListJobsRequest {
     tenant_id: string;
+    task_id?: string;
 }
 export interface ListJobsResponse {
     jobs: JobStatus[];
@@ -110,6 +197,10 @@ export interface ListTasksRequest {
     status?: string;
     team_name?: string;
     assigned_to?: string;
+    /** project_id restricts the listing to one project. */
+    project_id?: string;
+    /** statuses restricts the listing to tasks in any of these statuses; composes with status. */
+    statuses?: TaskStatus[];
 }
 export interface ListTasksResponse {
     tasks: Task[];
@@ -163,11 +254,35 @@ export interface SessionInfo {
     created_at: number;
     last_activity: number;
 }
-export type TaskStatus = 'pending' | 'claimed' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
+export type TaskStatus = 'pending' | 'claimed' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'blocked';
 export interface TaskResult {
     output: string;
     files: string[];
     metadata: Record<string, string>;
+}
+export type TaskSourceKind = 'scheduler' | 'operator' | 'job' | (string & {});
+export interface TaskSource {
+    kind: TaskSourceKind;
+    ref: string;
+    url?: string;
+}
+export type TaskBlockKind = 'needs_info' | 'blocked' | 'escalated';
+export type ArtifactKind = 'inline' | 'file' | 'commit' | 'kv_key' | 'url';
+export interface ArtifactRef {
+    agent_id?: string;
+    path?: string;
+    sha?: string;
+    branch?: string;
+}
+export interface Artifact {
+    kind: ArtifactKind | string;
+    name: string;
+    mime_type?: string;
+    size?: number;
+    /** content carries inline bytes, base64-encoded on the wire. */
+    content?: string;
+    ref?: ArtifactRef;
+    metadata?: Record<string, string>;
 }
 export interface Task {
     id: string;
@@ -193,6 +308,46 @@ export interface Task {
     spawned_job_id?: string;
     /** spawned_at is a nanosecond Unix timestamp of when the job was dispatched. */
     spawned_at?: number;
+    /** project_id scopes the task to a Project; empty for unscoped tasks. */
+    project_id?: string;
+    /** output_artifacts are what the task produced (pull requests, commits, files). */
+    output_artifacts?: Artifact[];
+    /** input_artifacts are what the task was given to work from. */
+    input_artifacts?: Artifact[];
+    /** source records where the task came from; absent for hand-created tasks. */
+    source?: TaskSource;
+    /** priority orders dispatch; higher runs first. */
+    priority?: number;
+    /** attempts counts every job dispatched for this task, refunded or not. */
+    attempts?: number;
+    /** attempt_budget is the number of charged attempts allowed before the task blocks. */
+    attempt_budget?: number;
+    /** environment_faults counts attempts refunded because the environment, not the work, failed. */
+    environment_faults?: number;
+    /** consecutive_environment_faults is the current run of refunded attempts. */
+    consecutive_environment_faults?: number;
+    /** retry_not_before is a nanosecond Unix timestamp before which the task is not redispatched; 0 when not deferred. */
+    retry_not_before?: number;
+    /** blocked_reason says, in words, what a person must resolve. */
+    blocked_reason?: string;
+    /** block_kind classifies the block; absent when the task is not blocked. */
+    block_kind?: TaskBlockKind;
+    /** status_changed_at is a nanosecond Unix timestamp of the last status transition. */
+    status_changed_at?: number;
+    /** runner names the JobRunner that drives an attempt; absent means the lead-driven 'workflow' runner. */
+    runner?: string;
+    /** routing are the placement hints a dispatch reads, kept so a requeue keeps them. */
+    routing?: TaskRouting;
+    /** dispatch_reason says why the last dispatch produced no job; cleared when one does. */
+    dispatch_reason?: string;
+}
+export interface TaskRouting {
+    /** backend restricts the attempt to agents running this backend. */
+    backend?: string;
+    /** host_affinity pins the attempt to an agent by name or host. */
+    host_affinity?: string;
+    /** gpu_required restricts the attempt to agents advertising "gpu". */
+    gpu_required?: boolean;
 }
 export type BackendKind = 'agent' | 'model_server' | 'api_inference';
 export interface BackendCapabilities {
@@ -209,6 +364,20 @@ export interface AgentBackendInfo {
     type: string;
     capabilities: BackendCapabilities;
     default_model: string;
+}
+export interface JobStateSpec {
+    /** state is the state itself, as it appears on JobStatus.state. */
+    state: JobState;
+    /** label is how a consumer names the state to a person. */
+    label: string;
+    /** session_backed says an agent session is doing the work in this state. */
+    session_backed: boolean;
+}
+export interface JobRunnerInfo {
+    /** name is what JobStatus.runner names the runner by. */
+    name: string;
+    /** states are the runner's non-terminal states in order. */
+    states: JobStateSpec[];
 }
 export interface SessionHealthResult {
     session_id: string;
@@ -306,7 +475,10 @@ export interface ReviewCriterion {
     validator: string;
     config: string;
     required: boolean;
+    /** phase is the control-loop state the criterion is judged in: validating (default) or reviewing. */
+    phase?: CriterionPhase;
 }
+export type CriterionPhase = 'validating' | 'reviewing';
 export interface WorkflowSettings {
     max_iterations: number;
     max_parallelism: number;
@@ -323,6 +495,8 @@ export interface WorkflowSettings {
     recovery: RecoverySettings;
     verbosity: string;
     num_ctx: number;
+    /** hooks names the registered lifecycle hook set every job of the workflow runs; empty runs none. */
+    hooks?: string;
 }
 export interface WorkflowDefinition {
     name: string;
@@ -354,6 +528,117 @@ export interface GetSessionHistoryRequest {
 export interface GetSessionHistoryResponse {
     events: SessionEventEnvelope[];
     next_seq: number;
+}
+export type SpendLevel = 'tenant' | 'project' | 'task' | 'job' | 'session' | 'round';
+export declare const SPEND_UNATTRIBUTED = "-";
+export type SpendPolicyStatus = 'unknown' | 'none' | 'metered';
+export interface SpendWindowStatus {
+    name: string;
+    size: number;
+    max_tokens: number;
+    used_tokens: number;
+    remaining_tokens: number;
+    exhausted: boolean;
+    frees_at?: string;
+}
+export interface SpendBreakerVerdict {
+    state: 'closed' | 'open' | 'half_open';
+    failures: number;
+    successes: number;
+    last_failure_at?: string;
+    last_success_at?: string;
+    open_until?: string;
+}
+export interface SpendAccount {
+    account_id: string;
+    display_name?: string;
+    provider?: string;
+    total_tokens: number;
+    policy_status: SpendPolicyStatus;
+    windows?: SpendWindowStatus[];
+    breaker?: SpendBreakerVerdict;
+}
+export interface SpendModel {
+    engine: string;
+    model: string;
+    total_tokens: number;
+}
+export interface SpendChild {
+    id?: string;
+    level: SpendLevel;
+    unattributed?: boolean;
+    total_tokens: number;
+}
+export interface GetSpendReportRequest {
+    tenant_id?: string;
+    project_id?: string;
+    task_id?: string;
+    job_id?: string;
+    session_id?: string;
+    round?: number;
+    round_set?: boolean;
+}
+export interface GetSpendReportResponse {
+    level: SpendLevel;
+    tenant_id: string;
+    project_id?: string;
+    task_id?: string;
+    job_id?: string;
+    session_id?: string;
+    round?: number;
+    entries: number;
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    cost_micros: number;
+    cost_measured: boolean;
+    successes: number;
+    failures: number;
+    first_at?: string;
+    last_at?: string;
+    accounts?: SpendAccount[];
+    models?: SpendModel[];
+    child_level?: SpendLevel;
+    children?: SpendChild[];
+}
+export type SessionTurnRole = 'user' | 'assistant' | 'system';
+export interface SessionTokenUsage {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+}
+export interface SessionToolUse {
+    invocation_id?: string;
+    name: string;
+    is_error?: boolean;
+    result_bytes?: number;
+}
+export interface SessionTurn {
+    sequence: number;
+    session_id: string;
+    tenant_id?: string;
+    role: SessionTurnRole;
+    timestamp: string;
+    text: string;
+    truncated_bytes?: number;
+    model?: string;
+    stop_reason?: string;
+    tools?: SessionToolUse[];
+    usage?: SessionTokenUsage;
+}
+export interface GetSessionConversationRequest {
+    tenant_id?: string;
+    session_id: string;
+    cursor?: number;
+    limit?: number;
+}
+export interface GetSessionConversationResponse {
+    session_id: string;
+    tenant_id?: string;
+    turns: SessionTurn[];
+    next_cursor?: number;
+    oldest_sequence?: number;
 }
 export interface SubscribeSessionEventsRequest {
     tenant_id?: string;
@@ -439,6 +724,8 @@ export interface SessionStatusResponse {
     container_id?: string;
     created_at: number;
     last_active: number;
+    /** job_id names the orchestration job this session works for, if any. */
+    job_id?: string;
 }
 export interface ListSessionsResponse {
     sessions: SessionStatusResponse[];
@@ -487,6 +774,7 @@ export interface CreateTaskRequest {
     gpu_required?: boolean;
     auto_spawn?: boolean;
     backend?: string;
+    runner?: string;
 }
 export interface ListBackendModelsResponse {
     backend: string;
@@ -507,6 +795,24 @@ export interface ClaimTaskRequest {
     tenant_id: string;
     task_id: string;
     agent_id: string;
+}
+export interface BlockTaskRequest {
+    tenant_id: string;
+    task_id: string;
+    kind: TaskBlockKind;
+    reason: string;
+}
+export interface ReadmitTaskRequest {
+    tenant_id: string;
+    task_id: string;
+}
+export interface DeleteTaskRequest {
+    tenant_id: string;
+    task_id: string;
+}
+export interface DeleteTaskResponse {
+    task_id: string;
+    deleted: boolean;
 }
 export interface CompleteTaskRequest {
     tenant_id: string;
@@ -799,6 +1105,13 @@ export interface InviteMetadata {
 export interface ActivationResponse {
     user_id: string;
     message: string;
+    /**
+     * Non-fatal irregularity behind an otherwise successful activation —
+     * currently, an activation write that reported an error on a user the server
+     * then found active. The ceremony succeeded and the invite was consumed, so
+     * this is not a failure, but it should be surfaced rather than dropped.
+     */
+    warning?: string;
 }
 export interface IAMTenant {
     id: string;
@@ -824,12 +1137,25 @@ export interface IAMRole {
     name: string;
     description: string;
     permissions: string[];
+    retired_permissions?: string[];
     created_at: string;
     updated_at: string;
 }
 export interface ListRolesResponse {
     roles: IAMRole[];
     count: number;
+}
+export interface RoleReconcileResult {
+    role_id: string;
+    name: string;
+    created?: boolean;
+    added?: string[];
+    removed?: string[];
+}
+export interface ReconcileRolesResponse {
+    tenant_id: string;
+    roles?: RoleReconcileResult[];
+    changed: boolean;
 }
 export interface IAMPolicy {
     name: string;

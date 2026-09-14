@@ -485,41 +485,84 @@ ACME cert issuance is **not** idempotent in that sense: each call
 consumes ACME rate-limit budget and generates a fresh keypair.
 Leader-gating prevents the waste.
 
-### Leader churn edge case
+### Leader churn, and why the gate is not enough
 
-A brief window exists where two nodes each think they're leader
-(raft transition). In that window, both could fire the same
-cluster-wide job. Consequences:
+The leader gate decides who *may* fire. It does not decide who
+*does*, and the difference is the whole reason the firing claim
+exists.
 
-- Two ACME orders, wasted rate-limit budget
-- Two concurrent handler invocations — which then race on storage
-  writes; raft serializes but application state may diverge
+During a raft transition a brief window exists where two nodes each
+believe they lead: the deposed leader has not yet learned otherwise
+while its successor is already elected. Both answer `IsLeader()`
+truthfully-as-they-see-it for the same tick, both pass the gate, and
+both dispatch the same job. The engine's per-job stripe mutex cannot
+help — the two nodes are different processes on different hosts.
 
-Current implementation **does not CAS-claim jobs**. The leader
-gate alone is relied upon. Acceptable for the current handler set
-because:
+**Every due job is therefore also arbitrated by a firing claim.**
 
-1. Leader transitions are rare
-2. Transition windows are measured in low seconds
-3. Worst-case impact is a duplicate handler run that wastes budget
-   but does not corrupt state (handlers are still tolerant by
-   original design)
+### The firing claim
 
-If a future handler class surfaces as intolerant, the fix is to add
-`UpdateJobIfStatus` CAS claim semantics — the groundwork is
-preserved in `docs/scheduler-clustering.md#future-hardening`.
+Each job carries one **monotonic high-water mark** at
+`__sys:scheduler/claims/{scope}/{jobID}` — where `{scope}` is `sys:` or
+`t:{tenantID}:`, the same discriminator job keys carry, because job IDs are
+unique only within a scope, holding the latest firing any node
+has claimed. Claiming firing *T* is one of:
 
-### Future hardening
-
-| Option | Effect | Scope |
+| State | Guard | Outcome |
 |---|---|---|
-| CAS claim on UpdateJob | Only one node ever transitions `Pending → Running` | ~30 lines on storage + engine |
-| Lease-based claim with TTL | Crash-tolerant CAS | Larger storage API change |
-| Job hash → shard routing | Deterministic node selection | Cluster coordination change |
+| No mark yet | `CompareCreateRevision == 0` | created ⇒ won |
+| Mark below *T* | `CompareValue` on the bytes just read | advanced ⇒ won |
+| Mark at or past *T* | none — no proposal is made | lost |
 
-None are wired today. The node-affinity path plus leader-gate
-combination covers the current handler set + the BMC cert renewal
-pattern.
+Each write is a single `ExecuteTransaction` — one raft proposal whose
+compare and write are evaluated together inside the state machine — so
+arbitration is atomic by construction and independent of seal and
+barrier configuration. The claim's identity is the job's own `NextRun`,
+read from the replicated job record rather than from any local clock,
+so contending nodes derive byte-identical identities.
+
+A failed compare is a **loss, never a retry**: the loser's re-read
+would only show the mark now at or past that firing.
+
+Three properties worth stating because they were each chosen against
+an alternative that looks reasonable:
+
+- **A mark per job, not a record per firing.** Per-firing records must
+  be pruned or grow forever, and pruning un-decides a decided firing:
+  a contender that read *T* and then stalled finds *T*'s key gone,
+  wins it again, and runs it twice. The mark makes a stale contender
+  lose by comparison instead of by key presence, and bounds growth at
+  one record per job — so there is nothing to prune.
+- **`CompareValue` is safe here only because the mark is monotonic.**
+  A value once written can never recur, so it cannot return to bytes a
+  stale reader still holds. Break the monotonicity and this guard must
+  become a revision compare.
+- **`__sys:`, not `sys:`.** go-qrdb excludes that namespace from
+  user-facing List/Scan and from MVCC restore, so arbitration state is
+  not enumerable by a tenant prefix sweep. It is a discovery guard, not
+  a confidentiality boundary and not a write ACL.
+
+The one cost, and it is real: the mark only moves forward, so a job
+whose `NextRun` is ever moved *below* its mark becomes unclaimable.
+That errs toward a miss rather than a duplicate. `TriggerJob` bypasses
+the claim and is the operator's recovery; `StrandedFirings()` counts
+the occurrences.
+
+### Construction is fail-closed
+
+A **clustered** boot builds `NewWithClustering` over a
+`ClusteredStorage`, and refuses to start without both the leader
+checker and the claim arbiter. Neither is useful alone: without the
+checker every node fires every cluster-wide job on every tick; without
+the arbiter two nodes fire it during churn. They travel as one value,
+so the incomplete combination cannot be constructed.
+
+A **standalone** boot builds neither, and is unchanged. That is a
+different topology, not a disabled safeguard: one scheduler has no
+peer to race.
+
+Leadership is queried live per check, never cached — a cached bool is
+how a deposed leader goes on believing it leads.
 
 ### Wire-protocol exposure
 

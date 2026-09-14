@@ -38,7 +38,7 @@ class GrpcWebConnectionClient {
 }
 class GrpcWebOrchestratorClient {
     // All methods delegate to notImpl until the gRPC-Web library is wired in.
-    async listJobs(_tenantID) { return notImpl('listJobs'); }
+    async listJobs(_tenantID, _taskID) { return notImpl('listJobs'); }
     async getJobStatus(_tenantID, _jobID) { return notImpl('getJobStatus'); }
     async startJob(_req) { return notImpl('startJob'); }
     async cancelJob(_tenantID, _jobID) { return notImpl('cancelJob'); }
@@ -48,6 +48,7 @@ class GrpcWebOrchestratorClient {
     async listTasks(_tenantID) { return notImpl('listTasks'); }
     async getTask(_tenantID, _taskID) { return notImpl('getTask'); }
     async listBackends() { return notImpl('listBackends'); }
+    async listRunners() { return notImpl('listRunners'); }
     async listBackendModels(_agentID, _backendName) { return notImpl('listBackendModels'); }
     async healthCheck() { return notImpl('healthCheck'); }
     subscribeJobEvents(_tenantID, _jobID, _onEvent) { return notImpl('subscribeJobEvents'); }
@@ -56,6 +57,8 @@ class GrpcWebOrchestratorClient {
     async closeSession(_req) { return notImpl('closeSession'); }
     async rotateSessionAccount(_req) { return notImpl('rotateSessionAccount'); }
     async getSessionHistory(_req) { return notImpl('getSessionHistory'); }
+    async getSessionConversation(_req) { return notImpl('getSessionConversation'); }
+    async getSpendReport(_req) { return notImpl('getSpendReport'); }
     // eslint-disable-next-line @typescript-eslint/require-await
     async *subscribeSession(_req) { return notImpl('subscribeSession'); }
     async deployAgent(_spec) { throw new DeployNotSupportedError('grpc-web'); }
@@ -70,6 +73,8 @@ class GrpcWebOrchestratorClient {
     async createTask(_req) { return notImpl('createTask'); }
     async claimTask(_req) { return notImpl('claimTask'); }
     async completeTask(_req) { return notImpl('completeTask'); }
+    async readmitTask(_tenantID, _taskID) { return notImpl('readmitTask'); }
+    async deleteTask(_req) { return notImpl('deleteTask'); }
     async decomposeTask(_req) { return notImpl('decomposeTask'); }
     async registerAgent(_req) { return notImpl('registerAgent'); }
     async removeAgent(_req) { return notImpl('removeAgent'); }
@@ -154,6 +159,7 @@ export class GrpcWebClient {
     scheduler = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     projects = null;
+    sdlc = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     accounts = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -196,7 +202,7 @@ export class GrpcWebClient {
         this.bootstrap = new GrpcWebBootstrapClient();
     }
     async logout(_token) {
-        // Non-REST transports don't manage bearer tokens via /api/v1/auth/logout.
+        // Non-REST transports don't manage bearer tokens via the REST logout verb.
         // The caller is responsible for clearing local credentials; this is a no-op
         // so the unified AuthClient surface compiles across every transport.
     }

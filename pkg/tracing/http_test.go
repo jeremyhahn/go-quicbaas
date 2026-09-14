@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/clientip"
 )
 
 func TestHTTPMiddleware(t *testing.T) {
@@ -227,6 +229,17 @@ func TestTracedResponseWriter_ImplicitHeader(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+// TestGetClientIP covers what this package records as http.client_ip.
+//
+// It no longer resolves the address itself. It had a second, independent copy
+// of the REST middleware's resolver with the same defect -- X-Forwarded-For
+// honoured from any peer -- so the same request could be traced as one address
+// and rate-limited as another (go-quicbaas#156). The trust decision now belongs
+// to pkg/util/clientip, made once by ClientIPMiddleware; this package reads it
+// or falls back to the transport peer.
+//
+// So the header cases below expect the PEER: a span attribute must not be
+// forgeable by the caller it describes.
 func TestGetClientIP(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -235,28 +248,28 @@ func TestGetClientIP(t *testing.T) {
 		wantIP     string
 	}{
 		{
-			name: "X-Forwarded-For with single IP",
+			name: "X-Forwarded-For is not believed here",
 			headers: map[string]string{
 				"X-Forwarded-For": "192.168.1.100",
 			},
 			remoteAddr: "10.0.0.1:12345",
-			wantIP:     "192.168.1.100",
+			wantIP:     "10.0.0.1",
 		},
 		{
-			name: "X-Forwarded-For with multiple IPs",
+			name: "X-Forwarded-For chain is not believed here",
 			headers: map[string]string{
 				"X-Forwarded-For": "192.168.1.100, 10.0.0.1, 172.16.0.1",
 			},
 			remoteAddr: "10.0.0.1:12345",
-			wantIP:     "192.168.1.100",
+			wantIP:     "10.0.0.1",
 		},
 		{
-			name: "X-Real-IP",
+			name: "X-Real-IP is not believed here",
 			headers: map[string]string{
 				"X-Real-IP": "192.168.1.100",
 			},
 			remoteAddr: "10.0.0.1:12345",
-			wantIP:     "192.168.1.100",
+			wantIP:     "10.0.0.1",
 		},
 		{
 			name:       "RemoteAddr only",
@@ -281,10 +294,24 @@ func TestGetClientIP(t *testing.T) {
 				req.Header.Set(key, value)
 			}
 
-			ip := getClientIP(req)
-			assert.Equal(t, tt.wantIP, ip)
+			assert.Equal(t, tt.wantIP, clientip.FromRequest(req))
 		})
 	}
+}
+
+// TestGetClientIP_UsesTheResolvedAddress pins the other half: when the REST
+// middleware has already decided -- because the peer is a configured trusted
+// proxy -- the span records THAT, not the peer. Without this, collapsing the
+// two implementations would have silently downgraded every proxied deployment's
+// traces to the load balancer's address.
+func TestGetClientIP_UsesTheResolvedAddress(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.1:12345"
+	req.Header.Set("X-Forwarded-For", "192.168.1.100")
+
+	req = req.WithContext(clientip.NewContext(req.Context(), "192.168.1.100"))
+
+	assert.Equal(t, "192.168.1.100", clientip.FromRequest(req))
 }
 
 func TestHTTPMiddleware_ContextPropagation(t *testing.T) {

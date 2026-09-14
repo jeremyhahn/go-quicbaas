@@ -15,15 +15,80 @@ package server
 
 import (
 	"context"
+	"errors"
 	"os"
+	"strconv"
+	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/ollama"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
+
+// ErrNoClaimArbiter reports a clustered boot whose task-claim arbitration
+// could not be wired.
+//
+// It is fatal rather than degradable, for the reason schedulerClustering gives
+// about the scheduler: a clustered node that quietly settled for process-local
+// arbitration would decide claims with a lock the other nodes cannot see, and
+// every node would award itself the same task. Refusing to start is the only
+// safe answer, because the failure is invisible at runtime — every node reports
+// success while doing the same work.
+var ErrNoClaimArbiter = errors.New("orchestration: clustered mode requires the transaction plane to arbitrate task claims")
+
+// ErrNoJobLeaseStore reports a clustered boot whose job leases would have no
+// transaction plane to be decided on. Fatal for the reason ErrNoClaimArbiter
+// is: a fleet whose leases were decided in one process would admit one job
+// per node.
+var ErrNoJobLeaseStore = errors.New("orchestration: clustered mode requires the transaction plane to decide job leases")
+
+// taskClaimArbiter builds the arbiter that decides which node claims a task.
+//
+// The choice is made from the DEPLOYMENT MODE, not from whichever handles
+// happen to be present, and that distinction is the whole point. The mode is
+// what says whether a second node can exist; the handles only say what this
+// process managed to wire. Choosing from the handles would mean a clustered
+// node with a wiring fault silently arbitrating in-process, which is the defect
+// this whole change removes.
+//
+// Both branches are correct for their domain rather than one being a fallback
+// for the other:
+//
+//   - Single-node modes have exactly one process, so the task store's own
+//     per-key mutex has already serialized every contender that can exist. The
+//     process arbiter is the complete answer there, not a degraded one. It is
+//     also the ONLY answer available: go-qrdb gates the transaction plane
+//     behind clustered mode under its run-modes split, so there is no
+//     transaction to arbitrate with on a standalone boot.
+//   - Cluster-like modes must reach the transaction plane, and a failure to do
+//     so is fatal.
+//
+// The predicate is the same config.IsClusterLikeMode the scheduler's clustering
+// uses, shared rather than restated so a mode added later cannot be clustered
+// for one subsystem and standalone for the other.
+func (s *Server) taskClaimArbiter() (orchestration.TaskClaimArbiter, error) {
+	if !config.IsClusterLikeMode(s.getEffectiveMode()) {
+		return orchestration.NewProcessClaimArbiter(), nil
+	}
+
+	if s.qrdbClient == nil {
+		return nil, ErrNoClaimArbiter
+	}
+	client, err := s.qrdbClient.ForShard(qbshards.PlatformShardID)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return nil, ErrNoClaimArbiter
+	}
+	return orchestration.NewTransactionClaimArbiter(client.Transaction(), client.KV())
+}
 
 // startOrchestration initializes the agent orchestration service and attaches
 // it to the QuicBaaS facade. The orchestration service provides multi-agent
@@ -41,12 +106,21 @@ func (s *Server) startOrchestration() error {
 		orchKV = kvstore.NewMemory()
 		s.logger.Warn("No qrdb storage attached; orchestration state is in-memory and will not survive a restart")
 	}
+	// The audit sink every orchestration store — and every credential delivery
+	// grant — is recorded on. Named rather than inlined because the delivery
+	// leaser takes it directly as well as through the option list.
+	storeAuditor := newOrchestrationStoreAuditor(s.auditLoggerForStores)
 	orchStoreOpts := []orchestration.StoreOption{
-		orchestration.WithStoreAuditor(newOrchestrationStoreAuditor(s.auditLoggerForStores)),
+		orchestration.WithStoreAuditor(storeAuditor),
 	}
 
 	store := orchestration.NewAgentStore(orchKV, orchStoreOpts...)
 	backends := make(map[string]orchestration.AgentBackend)
+
+	// The observer the supervised-process exits are reported through. Bound to
+	// the agent service below, once that service exists — see
+	// deferredSessionExitRecorder.
+	exitRecorder := &deferredSessionExitRecorder{logger: s.logger}
 
 	// Register Ollama backend if the Ollama service is available.
 	if s.ollamaService != nil {
@@ -81,6 +155,7 @@ func (s *Server) startOrchestration() error {
 		TeamMode:            s.config.Orchestration.ClaudeTeamMode,
 		CLIMode:             true,
 		NativeSessionResume: s.config.Orchestration.ClaudeNativeSessionResume,
+		ProcessExitObserver: s.recordAgentProcessExit(exitRecorder),
 	})
 	s.logger.Info("Claude backend registered for orchestration")
 
@@ -110,6 +185,13 @@ func (s *Server) startOrchestration() error {
 		Command:      opencodePath,
 		Args:         []string{"acp", "--port", "0"},
 		DefaultModel: "ollama/llama3",
+		// OpenCode's credential is a file. This was hardcoded inside the
+		// backend's sandbox spec; it is stated by the construction now so the
+		// backend holds no CLI's name. Same paths, same read-only mount.
+		CredentialDir: orchestration.CredentialDirSpec{
+			Rel:    ".config/opencode",
+			Target: "/home/agent/.config/opencode",
+		},
 	})
 	s.logger.Infof("OpenCode backend registered for orchestration (command: %s)", opencodePath)
 
@@ -119,6 +201,14 @@ func (s *Server) startOrchestration() error {
 	if err != nil {
 		s.logger.Warnf("Agent orchestration service initialization failed: %v", err)
 		return nil // Non-fatal: orchestration is optional
+	}
+
+	// Close the loop: an observed process exit now reaches the service that
+	// owns every surface the session's state lives on.
+	if recorder, ok := agentSvc.(sessionExitRecorder); ok {
+		exitRecorder.set(recorder)
+	} else {
+		s.logger.Warn("Agent service does not record session exits; a crashed agent will be reported but not closed")
 	}
 
 	// Wire task store, tenant guard, agent registry, container runtime,
@@ -139,10 +229,37 @@ func (s *Server) startOrchestration() error {
 		SetTrustPolicy(policy orchestration.TrustPolicy)
 		SetTranscriptReplayBudget(budget int)
 		SetCostTracker(tracker orchestration.CostTracker)
+		SetConsumptionLedger(ledger orchestration.ConsumptionLedger)
 		SetAccountStore(store orchestration.AccountStore)
+		SetAccountCredentialLeaser(leases orchestration.AccountCredentialLeaser)
+		SetJobLifecyclePolicy(policy orchestration.JobLifecyclePolicy)
+		SetNode(node string)
+		SetJobLeaseStore(store orchestration.JobLeaseStore, ttl time.Duration)
+		SetIdleThresholds(thresholds orchestration.JobIdleThresholds)
+		SetAgentHeartbeatTimeout(timeout time.Duration)
+		SetTenantLister(tenants orchestration.TenantLister)
 	})
 	if ok {
-		wirer.SetTaskStore(orchestration.NewTaskStore(orchKV, orchStoreOpts...))
+		// The operator's part of every job's lifecycle: the command allowlist
+		// the command validator enforces and the bound on each lifecycle
+		// moment. Built from daemon configuration — never tenant-writable —
+		// and handed to every control loop through the service. An allowlist
+		// the guard refuses is fatal: a node that silently ran with no
+		// allowlist would refuse every command, and one that silently ran
+		// with a malformed one might not.
+		lifecyclePolicy, policyErr := s.jobLifecyclePolicy()
+		if policyErr != nil {
+			return policyErr
+		}
+		wirer.SetJobLifecyclePolicy(lifecyclePolicy)
+
+		claimArbiter, arbiterErr := s.taskClaimArbiter()
+		if arbiterErr != nil {
+			return arbiterErr
+		}
+		taskStore := orchestration.NewTaskStore(orchKV, claimArbiter, orchStoreOpts...)
+		s.orchTaskStore = taskStore
+		wirer.SetTaskStore(taskStore)
 		wirer.SetTenantGuard(orchestration.NewTenantGuard(logAdapter))
 
 		// Wire project-level authorization so ClaimTask enforces the
@@ -169,10 +286,20 @@ func (s *Server) startOrchestration() error {
 		// mounts are validated against the projects root + operator allowlist
 		// (deny-by-default; an unwired policy denies everything).
 		projectsRoot := s.config.Orchestration.EffectiveProjectsRoot(s.config.Storage.DataDir)
+		socketsRoot, socketsErr := s.socketsRoot()
+		if socketsErr != nil {
+			return socketsErr
+		}
 		wirer.SetProjectStore(projectStore)
+		// The daemon's own sockets root is admitted BY CONSTRUCTION, not by
+		// an allowlist entry: the sdlc runner binds each attempt's signing
+		// socket there because a unix socket address does not fit under a
+		// managed workspace, and the grant is only the socket itself, read
+		// only (see MountPolicy.SocketsRoot).
 		wirer.SetMountPolicy(&orchestration.MountPolicy{
 			ProjectsRoot: projectsRoot,
 			AllowedRoots: s.config.Orchestration.Sandbox.AllowedMountRoots,
+			SocketsRoot:  socketsRoot,
 		})
 
 		// Trust axis (orchestration.trust_policy): the integrity floor every
@@ -226,7 +353,7 @@ func (s *Server) startOrchestration() error {
 			} else {
 				persistor := newKVWorkflowPersistor(kvClient, 1)
 				wl.SetPersistor(persistor)
-				if n, rerr := wl.Rehydrate(context.Background()); rerr != nil {
+				if n, rerr := wl.RehydrateAll(context.Background()); rerr != nil {
 					s.logger.WithFields(map[string]interface{}{
 						"error": rerr.Error(),
 					}).Warn("Failed to rehydrate workflow definitions from KV; starting empty")
@@ -238,6 +365,18 @@ func (s *Server) startOrchestration() error {
 		wirer.SetWorkflowLoader(wl)
 		s.logger.Info("Workflow loader attached to orchestration service")
 
+		// The project service verifies a Project.DefaultWorkflow against the
+		// same tenant-scoped registry, so a project can never name a workflow
+		// its tenant does not have.
+		if s.quicBaaSService != nil {
+			if resolverWirer, resolverOK := s.quicBaaSService.Project().(interface {
+				SetWorkflowResolver(service.WorkflowResolver)
+			}); resolverOK {
+				resolverWirer.SetWorkflowResolver(wl)
+				s.logger.Info("Workflow registry attached to project service for default-workflow validation")
+			}
+		}
+
 		// Wire KV store for durable job persistence. Binds to the same
 		// tenant-routed durable store as tasks/projects/agents (see orchKV
 		// below) so job records and, in particular, the session event log
@@ -248,16 +387,69 @@ func (s *Server) startOrchestration() error {
 		wirer.SetKVStore(jobKVStore)
 		s.logger.Info("KV store attached to orchestration service for job persistence")
 
-		// Recover interrupted jobs from previous server lifecycle.
-		type jobRecoverer interface {
-			RecoverJobs(ctx context.Context) error
+		// Durable job admission: this node's name, a lease store for the
+		// deployment's consistency domain wrapped in the project capacity
+		// check, and the stall detector's bounds. Wired BEFORE recovery so a
+		// resumed job takes its lease under this node's name. An unknown
+		// idle-threshold state is FATAL rather than dropped: a bound the
+		// operator set and the engine ignored is the failure the detector
+		// exists to remove.
+		node := s.nodeName()
+		leaseTTL := s.config.Orchestration.EffectiveReapLeaseTTL()
+		leaseStore, leaseErr := s.jobLeaseStore(leaseTTL)
+		if leaseErr != nil {
+			return leaseErr
 		}
-		if recoverer, recoverOK := agentSvc.(jobRecoverer); recoverOK {
-			recoverCtx, recoverCancel := context.WithTimeout(context.Background(), s.config.Server.ShutdownTimeout)
-			defer recoverCancel()
-			if recoverErr := recoverer.RecoverJobs(recoverCtx); recoverErr != nil {
-				s.logger.Warnf("Job recovery from KV store failed: %v", recoverErr)
-			}
+		admitted, admitErr := orchestration.NewProjectCapacityJobLeaseStore(leaseStore, projectStore, leaseTTL)
+		if admitErr != nil {
+			return admitErr
+		}
+		// THE FLEET AXIS, ENFORCED AT THE ONE POINT EVERY JOB PASSES THROUGH.
+		// The admission plan divides the fleet fairly once per sweep; this
+		// catches what no sweep sees — a job started directly, an auto-spawned
+		// task, a second node planning from its own reading — and it reads the
+		// SAME capacity the plan reads, so the two agree by construction.
+		s.orchFleetCapacity = s.orchestrationFleetCapacity()
+		admitted, admitErr = orchestration.NewFleetCapacityJobLeaseStore(admitted, s.orchFleetCapacity, leaseTTL)
+		if admitErr != nil {
+			return admitErr
+		}
+		// THE BACKEND AXIS, for a model server several projects share. A
+		// project quota bounds one project and the fleet quota bounds worker
+		// slots; neither can say "this GPU serves two things at once", which
+		// is the only limit a locally hosted model has. Reviews make it acute:
+		// they are off the project budget by construction, so one project's
+		// five green pull requests all get a review in the same pass.
+		admitted, admitErr = orchestration.NewBackendCapacityJobLeaseStore(
+			admitted, s.config.Orchestration.BackendConcurrency, leaseTTL)
+		if admitErr != nil {
+			return admitErr
+		}
+		idle, idleErr := orchestration.JobIdleThresholdsFrom(s.config.Orchestration.IdleThresholds)
+		if idleErr != nil {
+			return idleErr
+		}
+		s.orchJobLeaseStore = admitted
+		s.orchLeaseTTL = leaseTTL
+		wirer.SetNode(node)
+		wirer.SetJobLeaseStore(admitted, leaseTTL)
+		wirer.SetIdleThresholds(idle)
+		// The age past which a registered agent's silence counts as absence.
+		// It was configurable and unread until the session sweep needed it:
+		// a session pinned to a daemon nothing has heard from is unreachable,
+		// and the operator's own timeout is what says how long "nothing" is.
+		wirer.SetAgentHeartbeatTimeout(s.config.Orchestration.HeartbeatTimeout)
+		s.logger.Infof("Job admission attached to orchestration service (node=%s lease_ttl=%s)", node, leaseTTL)
+
+		// Interrupted jobs are recovered by recoverOrchestrationJobs, once
+		// every module has registered its hooks; see Server.Start.
+
+		// The maintenance sweep: the reaper concludes jobs whose node died,
+		// the stall detector ends jobs nothing is working. Both run on the
+		// heartbeat cadence, a third of the lease TTL, so a dead node is
+		// noticed within one TTL of its last heartbeat.
+		if sweeper, sweepOK := agentSvc.(jobSweeper); sweepOK {
+			s.startOrchestrationSweeps(sweeper, leaseTTL/3)
 		}
 
 		// Wire container runtime if Docker/Podman is available.
@@ -289,7 +481,31 @@ func (s *Server) startOrchestration() error {
 		// reads it back to balance a pool of provider accounts.
 		costTracker := orchestration.NewCostTracker(orchKV, logAdapter)
 		wirer.SetCostTracker(costTracker)
-		s.logger.Info("Token cost ledger attached to orchestration service (durable KV-backed, tenant-namespaced)")
+		s.logger.Info("Token cost counters attached to orchestration service (durable KV-backed, tenant-namespaced)")
+
+		// The CONSUMPTION LEDGER, on the same store and for a different job.
+		// The counters above report; this one DECIDES — it is the append-only
+		// record the spend authority reads before any pooled credential is
+		// released, and the record an account's circuit breaker is derived
+		// from. Both are fed from the single turn-recording site
+		// (agentServiceImpl.recordTurnUsage), so a turn is either in both or
+		// in neither and the dashboard can never contradict the cap.
+		//
+		// Guarded writes are what make it an authority rather than a tally:
+		// the ledger refuses to record at all on a store that cannot decide a
+		// contested create, so an unenforceable cap fails loudly here rather
+		// than silently admitting everything at spawn time.
+		consumption := orchestration.NewConsumptionLedger(orchKV)
+		wirer.SetConsumptionLedger(consumption)
+
+		// The gate itself. It names this node as the holder of a breaker's
+		// single half-open trial, so two daemons over one store cannot both
+		// believe they are the one retrying a failing account.
+		spendAuthority, spendErr := orchestration.NewSpendAuthority(consumption, orchKV, node)
+		if spendErr != nil {
+			return spendErr
+		}
+		s.logger.Info("Consumption ledger and spend authority attached (per-account quota windows and circuit breaker enforced at credential release)")
 
 		// Bind the account service's usage reporting to the SAME ledger the
 		// turn path writes to. Without this, AccountService.GetAccountUsage
@@ -301,6 +517,19 @@ func (s *Server) startOrchestration() error {
 			}); usageOK {
 				usageWirer.SetUsageTracker(costTracker)
 				s.logger.Info("Account usage reporting bound to the orchestration cost ledger")
+			}
+			// The REMOTE half of the cap. MaterializeAccountCredential hands
+			// a live paid credential to a host the central does not run, so
+			// an unmetered release there is the most expensive one in the
+			// system: the worker caches the envelope and spends against it
+			// without asking again. It is checked by the SAME authority the
+			// in-process spawn is checked by, so the two cannot disagree
+			// about whether an account is over its cap.
+			if spendWirer, spendOK := s.quicBaaSService.Account().(interface {
+				SetSpendAuthority(orchestration.SpendAuthority)
+			}); spendOK {
+				spendWirer.SetSpendAuthority(spendAuthority)
+				s.logger.Info("Pooled credential release bound to the spend authority")
 			}
 		}
 
@@ -344,6 +573,35 @@ func (s *Server) startOrchestration() error {
 				orchestration.NewOAuth2TokenRefresher(orchestration.OAuth2RefresherConfig{}))
 			s.logger.Infof("OAuth2 token refresher registered for pooled account providers: %v", refreshedProviders)
 
+			// EVERY HAND-OVER OF A POOLED CREDENTIAL IS LEASED, and both
+			// hand-over paths lease through the SAME authority: the in-process
+			// resolver below, and the remote materialize verb wired a few lines
+			// on. That is what makes one revocation cover both.
+			//
+			// It composes the lease manager startDynamicSecrets built, rather
+			// than making one of its own, so an account delivery grant is the
+			// same kind of object as every other lease in the platform —
+			// durable in the embedded qrdb node, visible to
+			// Security().DynamicSecrets().ListLeases, revocable with
+			// RevokeLease.
+			//
+			// A node with no lease manager (no qrdb client, i.e. the sealed
+			// window) wires none, and releases are unleased exactly as they
+			// were before grants existed. The alternative — refusing every
+			// pooled spawn — would take a capability away from a deployment
+			// that has no way to get it back.
+			var accountLeases orchestration.AccountCredentialLeaser
+			if leaseManager := s.LeaseManager(); leaseManager != nil {
+				accountLeases = orchestration.NewAccountCredentialLeaser(
+					leaseManager,
+					s.config.Orchestration.AccountDeliveryTTL,
+					storeAuditor,
+				)
+				s.logger.Info("Pooled provider credential deliveries are leased (revoked on session conclusion)")
+			} else {
+				s.logger.Warn("No lease manager available; pooled provider credential deliveries are NOT leased")
+			}
+
 			// The account write path validates against the SAME registry, so an
 			// oauth2 account with no resolvable token endpoint is rejected by
 			// CreateAccount/RotateAccountCredential instead of at spawn.
@@ -353,12 +611,40 @@ func (s *Server) startOrchestration() error {
 				}); providerOK {
 					providerWirer.SetProviderRegistry(accountProviders)
 				}
+				// The credential-release verb resolves through the SAME token
+				// manager an in-process spawn does, so an oauth_refresh account
+				// is renewed on the central that owns its refresh token before
+				// the envelope is handed to a worker host. Without this wiring
+				// the verb fails closed and a remote pooled spawn is refused —
+				// which is the whole of go-quicbaas#734's server half.
+				if tokenWirer, tokenOK := s.quicBaaSService.Account().(interface {
+					SetTokenManager(*orchestration.AccountTokenManager)
+				}); tokenOK {
+					tokenWirer.SetTokenManager(accountTokens)
+				}
+				// The REMOTE half of the delivery grant. This is the
+				// enforcement point: a daemon refreshing a copy under a grant
+				// the session's conclusion has revoked is refused here, from
+				// the lease store, whatever it believes about its own state.
+				if leaseWirer, leaseOK := s.quicBaaSService.Account().(interface {
+					SetAccountCredentialLeaser(orchestration.AccountCredentialLeaser)
+				}); leaseOK {
+					leaseWirer.SetAccountCredentialLeaser(accountLeases)
+				}
 			}
 
 			accountStrategies := orchestration.NewAccountStrategyRegistry(costTracker)
 			accountResolver := orchestration.NewAccountResolver(
 				accountStore, accountTokens, accountStrategies,
-				append(orchStoreOpts, orchestration.WithStoreLogger(logAdapter))...)
+				append(orchStoreOpts,
+					orchestration.WithStoreLogger(logAdapter),
+					// The LOCAL half of the cap: an in-process spawn asks
+					// the same authority the remote release does.
+					orchestration.WithSpendAuthority(spendAuthority),
+					// The LOCAL half of the delivery grant, for the same
+					// reason: one authority, both paths.
+					orchestration.WithAccountDeliveryGrantor(accountLeases),
+				)...)
 
 			// Give the orchestrator the SAME metadata store the resolver reads
 			// from, so a turn that fails on a provider rate/usage limit can put
@@ -369,10 +655,45 @@ func (s *Server) startOrchestration() error {
 			// rediscovers the same limit for itself.
 			wirer.SetAccountStore(accountStore)
 
-			for _, name := range []string{"claude", "opencode"} {
+			// ADMISSION'S THIRD INPUT, from the same two authorities the spawn
+			// path uses: the account store for lifecycle and cooldown state,
+			// and the ledger-backed quota authority for the subscription's
+			// sliding usage windows. Asking here means a project whose whole
+			// pool is spent DEFERS instead of spawning an agent whose first
+			// turn the provider will refuse.
+			//
+			// Built from the same handles rather than from a copy of the rules:
+			// see pkg/orchestration/admission_headroom.go.
+			poolHeadroom, headroomErr := orchestration.NewAccountPoolHeadroom(
+				accountStore, orchestration.NewQuotaAuthority(consumption))
+			if headroomErr != nil {
+				return headroomErr
+			}
+			s.orchPoolHeadroom = poolHeadroom
+			s.logger.Info("Admission bound to pooled provider usage headroom (subscription usage windows and cooldowns, never a price)")
+
+			// THE REAPER BECOMES A SECURITY CONTROL. Session conclusion — an
+			// operator's close, a job's ending, a node restart's sweep, an
+			// agent leaving the fleet — now also withdraws the grants the
+			// session's credential was delivered under.
+			wirer.SetAccountCredentialLeaser(accountLeases)
+
+			// "claude-code" is an alias for the same program and is absent from
+			// the registrations above, so naming it here is a no-op today — the
+			// lookup simply misses. It is named anyway because the SDLC module
+			// demands a pooled account for it (orchestration.WorkerSpawnAccountAuto,
+			// go-quicbaas#235), and the two lists disagreeing in THIS direction
+			// is the expensive one: a backend the module pools and the server
+			// does not fails every worker spawn closed, with no configuration
+			// an operator could change to fix it.
+			for _, name := range []string{"claude", "claude-code", "opencode"} {
 				if b, ok := backends[name]; ok {
 					if acpBackend, ok := b.(*orchestration.ACPBackend); ok {
 						acpBackend.SetAccountResolver(accountResolver)
+						// Only for the spawn that resolved an account and then
+						// failed to dispatch: no Session exists to carry the
+						// grant, so the backend withdraws it itself.
+						acpBackend.SetAccountCredentialLeaser(accountLeases)
 					}
 				}
 			}
@@ -392,6 +713,16 @@ func (s *Server) startOrchestration() error {
 		// StorageBarrier.
 		sessionLog, logErr := orchestration.NewKVSessionEventLog(orchestration.KVSessionEventLogConfig{
 			KVStore: jobKVStore,
+			// A transcript is append-only, so the bound is what stops one
+			// long-running session growing a keyspace nobody reads and nothing
+			// reclaims. The zero config keeps DefaultSessionRetentionTurns.
+			Retention: orchestration.SessionRetention{
+				MaxTurns:  s.config.Orchestration.SessionHistory.MaxTurnsPerSession,
+				PerTenant: s.config.Orchestration.SessionHistory.PerTenantMaxTurns,
+			},
+			OnRetentionError: func(err error) {
+				s.logger.Warnf("Session transcript prune failed: %v", err)
+			},
 		})
 		if logErr != nil {
 			s.logger.Warnf("Session event log disabled: %v", logErr)
@@ -410,6 +741,19 @@ func (s *Server) startOrchestration() error {
 		// boot, so a restart does not fork a subprocess for every session
 		// anyone ever spawned. Must run after the session event log is wired —
 		// the replayed transcript is read from it.
+		// THE TENANTS A RECOVERY OR MAINTENANCE PASS MUST NAME. orchKV routes
+		// every read to the tenant on the context, and both the boot-time
+		// restoration below and the periodic session sweep run on contexts
+		// that carry none — so without this they see the system tenant's
+		// session records and nothing else, and every tenant's session is
+		// left neither restored nor reconciled (#792). Wired BEFORE the
+		// restoration, which is the first pass that needs it.
+		if s.iamComponents != nil && s.iamComponents.GetTenantManager() != nil {
+			wirer.SetTenantLister(&iamTenantLister{tenants: s.iamComponents.GetTenantManager()})
+		} else {
+			s.logger.Info("Session recovery limited to the system tenant: no tenant manager to enumerate tenants")
+		}
+
 		type sessionLoader interface {
 			LoadPersistedSessions(ctx context.Context) error
 		}
@@ -459,6 +803,315 @@ func (s *Server) startOrchestration() error {
 		s.logger.Info("Agent orchestration service attached to QuicBaaS facade")
 	}
 
+	// Sweep every registered task source against every autonomous project,
+	// creating auto-spawning tasks for new work, and dispatch the tasks
+	// that are waiting. Runs only when there is a project store to read and
+	// a task store to write.
+	if ok {
+		s.startTaskSourcePoller(agentSvc)
+		if spawner, spawnerOK := agentSvc.(orchestration.TaskSpawner); spawnerOK {
+			s.startTaskDispatcher(spawner)
+		} else {
+			s.logger.Info("Task dispatcher not started: the agent service cannot spawn a task")
+		}
+	}
+
 	s.logger.Info("Agent orchestration service started")
 	return nil
+}
+
+// nodeName names this daemon on the leases it takes and the jobs it runs.
+//
+// Diagnostic AND decisive: recoverJobs resumes only the jobs this name owns,
+// and the reaper leaves alone every lease this name's loops still hold. Stable
+// across restarts by construction — the Raft node ID first, the hostname
+// otherwise — because a name that changed on restart would orphan every job
+// the previous process was running.
+func (s *Server) nodeName() string {
+	if s.config != nil && s.config.Raft.NodeID != 0 {
+		return "quicbaasd-node-" + strconv.FormatUint(s.config.Raft.NodeID, 10)
+	}
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return "quicbaasd-" + host
+	}
+	return "quicbaasd"
+}
+
+// socketsRoot is the one place the daemon resolves its per-session agent
+// socket root, for the three things that need the same answer: the sdlc
+// runner that binds under it, and the two mount policies that admit exactly
+// that root.
+//
+// It is a method rather than three copies of the derivation because the root
+// is PER-DAEMON (go-quicbaas#687) — derived from this daemon's data directory
+// so two instances of one user do not share one — and three call sites that
+// each spelled the derivation could each spell a different one.
+//
+// Note this is NOT nodeName's answer: that name is deliberately stable across
+// restarts and is shared by every standalone daemon on a host (raft.node_id
+// defaults to 1), which is the opposite of what distinguishes two instances.
+func (s *Server) socketsRoot() (string, error) {
+	if s.config == nil {
+		return "", nil
+	}
+	return s.config.Orchestration.EffectiveSocketsRoot(s.config.Storage.DataDir)
+}
+
+// jobRecoverer is the engine's restart path for interrupted jobs.
+type jobRecoverer interface {
+	RecoverJobs(ctx context.Context) error
+}
+
+// recoverOrchestrationJobs resumes the jobs this node owned when it last
+// stopped. It runs after every module has registered into the engine's
+// seams, NOT inside startOrchestration: a resumed job runs its workflow's
+// lifecycle hooks at once, and a hook whose module has not started yet
+// answers "not running on this node" — which failed every job a restarted
+// standalone node tried to resume (measured by the daemon e2e
+// TestSoftwareFactory_KilledWorkerIsResumedOnRestart).
+func (s *Server) recoverOrchestrationJobs() {
+	if s.quicBaaSService == nil {
+		return
+	}
+	recoverer, ok := s.quicBaaSService.Agent().(jobRecoverer)
+	if !ok {
+		return
+	}
+	recoverCtx, recoverCancel := context.WithTimeout(context.Background(), s.config.Server.ShutdownTimeout)
+	defer recoverCancel()
+	if err := recoverer.RecoverJobs(recoverCtx); err != nil {
+		s.logger.Warnf("Job recovery from KV store failed: %v", err)
+	}
+}
+
+// jobLeaseStore selects the lease store for the deployment's consistency
+// domain, by the same predicate taskClaimArbiter uses and for the same reason:
+// a mode added later cannot be clustered for claims and standalone for leases.
+func (s *Server) jobLeaseStore(ttl time.Duration) (orchestration.JobLeaseStore, error) {
+	if !config.IsClusterLikeMode(s.getEffectiveMode()) {
+		return orchestration.NewProcessJobLeaseStore(ttl)
+	}
+	if s.qrdbClient == nil {
+		return nil, ErrNoJobLeaseStore
+	}
+	client, err := s.qrdbClient.ForShard(qbshards.PlatformShardID)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return nil, ErrNoJobLeaseStore
+	}
+	return orchestration.NewTransactionJobLeaseStore(client.Transaction(), client.KV(), ttl)
+}
+
+// jobSweeper runs one maintenance pass: the reaper over the fleet's leases
+// and the stall detector over this node's loops.
+type jobSweeper interface {
+	Sweep(ctx context.Context) (orchestration.JobSweepReport, error)
+}
+
+// orchestrationSweeps is the running sweep goroutine and the means to stop
+// it.
+type orchestrationSweeps struct {
+	stop context.CancelFunc
+	done chan struct{}
+}
+
+// startOrchestrationSweeps runs the sweeper on a ticker until shutdown.
+func (s *Server) startOrchestrationSweeps(sweeper jobSweeper, interval time.Duration) {
+	if interval <= 0 {
+		interval = orchestration.DefaultJobLeaseTTL / 3
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	sweeps := &orchestrationSweeps{stop: stop, done: make(chan struct{})}
+	s.orchSweeps = sweeps
+	go func() {
+		defer close(sweeps.done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				report, err := sweeper.Sweep(ctx)
+				if err != nil {
+					if ctx.Err() == nil {
+						s.logger.WithError(err).Warn("orchestration: job sweep failed")
+					}
+					continue
+				}
+				s.logJobSweep(report)
+			}
+		}
+	}()
+	s.logger.Infof("Job reaper and stall detector started (sweep=%s)", interval)
+}
+
+// stopOrchestrationSweeps stops the sweep and waits for it.
+func (s *Server) stopOrchestrationSweeps() {
+	if s.orchSweeps == nil {
+		return
+	}
+	s.orchSweeps.stop()
+	<-s.orchSweeps.done
+	s.orchSweeps = nil
+}
+
+// jobDrainer is the orchestration service's shutdown drain: the seam the
+// daemon stops running control loops through. The service satisfies it; the
+// interface is here so shutdown does not depend on the whole facade.
+type jobDrainer interface {
+	Shutdown(ctx context.Context) error
+}
+
+// drainOrchestrationJobs gives the orchestration service's running control
+// loops a bounded window to conclude BEFORE the stores they write to are
+// closed.
+//
+// Without it, shutdown closed storage under running job goroutines, and a
+// loop still writing met a closed store — which the engine reports by
+// panicking, taking the daemon with it. The window is bounded because an
+// agent turn runs for minutes: a loop that does not fit keeps its
+// non-terminal record and is resumed by RecoverJobs on the next start,
+// exactly as it is when the daemon is killed today.
+func (s *Server) drainOrchestrationJobs() {
+	if s.quicBaaSService == nil {
+		return
+	}
+	agentSvc := s.quicBaaSService.Agent()
+	if agentSvc == nil {
+		return
+	}
+	drainer, ok := agentSvc.(jobDrainer)
+	if !ok {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), orchestration.DefaultShutdownDrainTimeout)
+	defer cancel()
+
+	s.logger.Info("Draining running orchestration jobs...")
+	if err := drainer.Shutdown(ctx); err != nil {
+		s.logger.WithError(err).Warn("orchestration: running work did not drain before shutdown; it resumes on the next start")
+		return
+	}
+	s.logger.Info("Orchestration jobs drained")
+}
+
+// logJobSweep records what a pass concluded. Healthy jobs are silent; a
+// reaped or orphaned lease and a stalled job rise to WARN because each is a
+// job that ended without its loop saying so.
+func (s *Server) logJobSweep(report orchestration.JobSweepReport) {
+	for _, f := range report.Reap.Findings {
+		switch f.Verdict {
+		case orchestration.JobReapReaped, orchestration.JobReapOrphaned:
+			s.logger.Warnf("orchestration: reaper %s job=%s tenant=%s task=%s node=%s: %s",
+				f.Verdict, f.JobID, f.TenantID, f.TaskID, f.Node, f.Evidence)
+		case orchestration.JobReapRunLive:
+			s.logger.Infof("orchestration: reaper %s job=%s: %s", f.Verdict, f.JobID, f.Evidence)
+		}
+	}
+	for _, f := range report.Stall.Findings {
+		switch f.Verdict {
+		case orchestration.JobStallStalled:
+			s.logger.Warnf("orchestration: stall detector ended job=%s tenant=%s task=%s state=%s: %s",
+				f.JobID, f.TenantID, f.TaskID, f.State, f.Evidence)
+		default:
+			s.logger.Infof("orchestration: stall detector %s job=%s state=%s: %s",
+				f.Verdict, f.JobID, f.State, f.Evidence)
+		}
+	}
+}
+
+// agentExitRecordTimeout bounds the session-record write an observed process
+// exit triggers. Short: it is one key write against the local store, and the
+// only thing waiting on it is a goroutine whose process is already gone.
+const agentExitRecordTimeout = 15 * time.Second
+
+// recordAgentProcessExit builds the observer the ACP backend calls when a
+// supervised agent subprocess terminates.
+//
+// TWO RECORDS, AND BOTH ARE NEEDED. The log line is what an operator watching
+// a run sees; the session-record update is what every later reader sees — the
+// stall detector asking whether a session is live, the session manager deciding
+// whether a parked item can be resumed into its own transcript. Before the
+// supervisor existed there was neither: a process that died while its work item
+// was parked left a record still claiming to be addressable, and the first
+// evidence was a prompt to a dead pipe.
+//
+// The status write runs on a context of its own, detached from any request,
+// because the exit arrives on the supervisor's goroutine long after whichever
+// call spawned the session returned — AND BOUNDED, because that goroutine has
+// no deadline of its own: an unbounded write against a wedged store would leak
+// one supervisor goroutine per dead session, permanently. Its failure is logged
+// and not retried: the process is gone either way, and the truth an operator
+// needs is already in the line above it.
+func (s *Server) recordAgentProcessExit(recorder sessionExitRecorder) orchestration.ProcessExitObserver {
+	if recorder == nil {
+		return nil
+	}
+	return func(exit orchestration.ProcessExit) {
+		if s.logger != nil {
+			s.logger.Warnf("orchestration: agent process exited: %s", exit.String())
+		}
+		if exit.TenantID == "" || exit.SessionID == "" {
+			return
+		}
+		ctx, cancel := context.WithTimeout(
+			orchestration.ContextWithTenant(context.Background(), exit.TenantID),
+			agentExitRecordTimeout)
+		defer cancel()
+		recorder.RecordSessionExit(ctx, exit.TenantID, exit.SessionID, "agent process exited")
+	}
+}
+
+// sessionExitRecorder is the service-level lifecycle operation an observed
+// process exit is routed through.
+//
+// A narrow interface rather than the concrete service, for the reason every
+// other port here is one: this file needs exactly one method, and naming it
+// keeps the wiring honest about how much of the service it reaches into.
+type sessionExitRecorder interface {
+	// RecordSessionExit closes every surface a session's state lives on —
+	// the store record, the session-log metadata, and the terminal event.
+	RecordSessionExit(ctx context.Context, tenantID, sessionID, reason string)
+}
+
+// deferredSessionExitRecorder bridges a construction order that cannot be
+// reversed: the backends are built BEFORE the agent service, and the observer
+// they carry has to reach the service that does not exist yet.
+//
+// LATE-BOUND RATHER THAN RE-ORDERED, because the service takes the backends as
+// a constructor argument — the cycle is real, not an accident of layout. The
+// window in which the target is unset closes microseconds after boot, long
+// before any session can be spawned, and an exit arriving inside it is dropped
+// with a line saying so rather than panicking on a nil.
+type deferredSessionExitRecorder struct {
+	mu     sync.Mutex
+	target sessionExitRecorder
+	logger interface{ Warnf(string, ...any) }
+}
+
+// set binds the recorder once the service exists.
+func (d *deferredSessionExitRecorder) set(target sessionExitRecorder) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.target = target
+}
+
+// RecordSessionExit implements sessionExitRecorder.
+func (d *deferredSessionExitRecorder) RecordSessionExit(ctx context.Context, tenantID, sessionID, reason string) {
+	d.mu.Lock()
+	target := d.target
+	d.mu.Unlock()
+	if target == nil {
+		if d.logger != nil {
+			d.logger.Warnf(
+				"orchestration: session %s exited before the agent service was wired; its state was not closed",
+				sessionID)
+		}
+		return
+	}
+	target.RecordSessionExit(ctx, tenantID, sessionID, reason)
 }

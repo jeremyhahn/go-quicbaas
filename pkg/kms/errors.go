@@ -76,7 +76,4 @@ var (
 
 	// ErrKeyBytesPositive indicates keyBytes must be positive.
 	ErrKeyBytesPositive = errors.New("keyBytes must be positive")
-
-	// ErrAsymmetricImportUnsupported indicates asymmetric key import is not yet supported.
-	ErrAsymmetricImportUnsupported = errors.New("asymmetric key import not yet supported")
 )

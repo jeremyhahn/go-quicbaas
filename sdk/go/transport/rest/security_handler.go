@@ -153,13 +153,13 @@ func (h *securityRESTHandler) fido2BeginRegistration(ctx context.Context, req in
 	if err != nil {
 		return nil, err
 	}
-	if r.Username == "" {
+	if r.Email == "" {
 		return nil, errors.NewInvalidInput("rest.security.FIDO2.BeginRegistration",
-			"username is required")
+			"email is required")
 	}
 
 	body, err := json.Marshal(webauthnhttp.BeginRegistrationRequest{
-		Email:       r.Username,
+		Email:       r.Email,
 		DisplayName: r.DisplayName,
 	})
 	if err != nil {
@@ -226,12 +226,12 @@ func (h *securityRESTHandler) fido2BeginAuthentication(ctx context.Context, req 
 	if err != nil {
 		return nil, err
 	}
-	if r.Username == "" {
+	if r.Email == "" {
 		return nil, errors.NewInvalidInput("rest.security.FIDO2.BeginAuthentication",
-			"username is required")
+			"email is required")
 	}
 
-	body, err := json.Marshal(webauthnhttp.BeginLoginRequest{Email: r.Username})
+	body, err := json.Marshal(webauthnhttp.BeginLoginRequest{Email: r.Email})
 	if err != nil {
 		return nil, errors.Wrap(err, errors.CodeInvalidInput,
 			"rest.security.FIDO2.BeginAuthentication", "failed to encode request")
@@ -280,9 +280,12 @@ func (h *securityRESTHandler) fido2FinishAuthentication(ctx context.Context, req
 	}
 
 	return &xkmstransport.FinishAuthenticationResponse{
-		Success:  true,
-		Token:    auth.Token,
-		Username: r.Username,
+		Success: true,
+		Token:   auth.Token,
+		// The RESPONSE still carries Username; only the request's field was
+		// renamed in xkms v0.12. Echoing the login key the caller supplied is
+		// what it has always meant.
+		Username: r.Email,
 	}, nil
 }
 

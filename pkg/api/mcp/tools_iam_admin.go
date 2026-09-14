@@ -294,14 +294,10 @@ func (r *ToolRegistry) registerAdminTools() {
 	// Impersonation Tools
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_iam_impersonation_start",
-		Description: "Start an impersonation session to act as another user",
+		Description: "Start an impersonation session to act as another user. The acting admin is the authenticated caller and is never named in the request (go-quicbaas#383).",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"admin_user_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Admin user ID performing the impersonation",
-				},
 				"target_user_id": map[string]interface{}{
 					"type":        "string",
 					"description": "User ID to impersonate",
@@ -322,7 +318,7 @@ func (r *ToolRegistry) registerAdminTools() {
 					"maximum":     480,
 				},
 			},
-			"required": []string{"admin_user_id", "target_user_id", "tenant_id", "reason"},
+			"required": []string{"target_user_id", "tenant_id", "reason"},
 		},
 	})
 
@@ -646,8 +642,10 @@ func (r *ToolRegistry) executeIAMImpersonationStart(ctx context.Context, args ma
 		durationMinutes = 60
 	}
 
+	// No admin_user_id from args: the acting admin is the authenticated
+	// caller, resolved by the manager from the verified principal in
+	// context (go-quicbaas#383).
 	opts := &iam.StartImpersonationOptions{
-		AdminUserID:  getString(args, "admin_user_id"),
 		TargetUserID: getString(args, "target_user_id"),
 		TenantID:     getString(args, "tenant_id"),
 		Reason:       getString(args, "reason"),

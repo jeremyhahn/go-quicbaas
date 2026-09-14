@@ -56,15 +56,19 @@ func (b *deleteFaultBackend) PutIfAbsent(ctx context.Context, key string, data [
 	return b.inner.PutIfAbsent(ctx, key, data)
 }
 
-func (b *deleteFaultBackend) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
-	return b.inner.CompareAndDelete(ctx, key, expected)
-}
-
 func (b *deleteFaultBackend) Delete(ctx context.Context, key string) error {
 	if b.deleteErr != nil {
 		return b.deleteErr
 	}
 	return b.inner.Delete(ctx, key)
+}
+
+// CompareAndDelete forwards the guarded delete. The fault this double injects is
+// on the unguarded Delete, so the guarded form must reach the real backend
+// rather than inherit the fault and make an unrelated test look like a
+// compare-and-delete failure.
+func (b *deleteFaultBackend) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return b.inner.CompareAndDelete(ctx, key, expected)
 }
 
 func (b *deleteFaultBackend) List(ctx context.Context, prefix string) ([]string, error) {

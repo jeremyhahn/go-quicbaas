@@ -312,6 +312,21 @@ func initConfig() {
 	// Bind environment variables to config keys.
 	bindEnvVars()
 
+	// REMOVED sdlc: KEYS REFUSE THE BOOT HERE TOO.
+	//
+	// pkg/config's Loader refuses them and the documentation says a
+	// configuration carrying one fails to load — but this daemon does not use
+	// that loader, it unmarshals the global viper directly, so the promise was
+	// being kept by the library path and broken by the production one. An
+	// operator who renamed nothing would boot a node that silently ignored the
+	// setting while believing it was enforced, which is worse than a refusal:
+	// the whole point of the removed-key list is that it is pre-v1 and the key
+	// is renamed BY HAND.
+	if err := config.RefuseRemovedSDLCKeys(viper.GetViper()); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid configuration: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Unmarshal config into struct.
 	if err := viper.Unmarshal(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to unmarshal configuration: %v\n", err)
@@ -353,6 +368,14 @@ func initConfig() {
 
 // bindEnvVars binds environment variables to config keys.
 func bindEnvVars() {
+	// The retry behind a parked task's delivery to its forge issue. Bound
+	// from pkg/config's own list rather than spelled out here: two viper
+	// instances load this daemon, and a key bound in one and not the other
+	// is a setting the operator sets and never gets.
+	config.BindSDLCEnv(viper.GetViper())
+	config.BindSDLCSurfacingEnv(viper.GetViper())
+	config.BindSDLCLabelReconcileEnv(viper.GetViper())
+
 	// Server configuration - nested protocol configs.
 	_ = viper.BindEnv("server.host")
 	_ = viper.BindEnv("server.mode")

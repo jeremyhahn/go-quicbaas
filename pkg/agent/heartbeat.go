@@ -264,6 +264,28 @@ func (s *HTTPHeartbeatSender) buildEndpoint(agentID string) (string, error) {
 	return base.String(), nil
 }
 
+// heartbeatRequestBody renders one heartbeat's JSON payload.
+//
+// SEPARATE FROM THE POST so the wire shape can be asserted without a listener.
+// Every field the control plane reconciles a registration against travels here,
+// and a field the daemon holds but never sends is a fact the fleet does not
+// have: max_concurrent_jobs is summed into the fleet's worker-slot capacity
+// (orchestration.AgentRegistration.MaxConcurrentJobs), so it is the one most
+// easily lost to a body that drifted from the struct.
+func heartbeatRequestBody(status HeartbeatStatus) string {
+	return fmt.Sprintf(
+		`{"active_sessions":%d,"sandbox_policy":%q,"backends":%s,"has_container_runtime":%t,`+
+			`"max_concurrent_jobs":%d,"sequence":%d,"bind_addr":%q}`,
+		status.ActiveSessions,
+		status.SandboxPolicy.String(),
+		marshalStringSlice(status.Backends),
+		status.HasContainerRT,
+		status.MaxConcurrentJobs,
+		status.SequenceNumber,
+		status.BindAddr,
+	)
+}
+
 // post issues one heartbeat POST. Returns errHeartbeatUnauthorized for 401,
 // *HeartbeatSendError for any other error. 2xx is nil. 5xx and network errors
 // are wrapped as send errors so the caller can apply its own retry policy
@@ -274,16 +296,8 @@ func (s *HTTPHeartbeatSender) post(ctx context.Context, endpoint string, status 
 		return &HeartbeatSendError{Op: "acquire token", Cause: err}
 	}
 
-	body := fmt.Sprintf(
-		`{"active_sessions":%d,"sandbox_policy":%q,"backends":%s,"has_container_runtime":%t,"sequence":%d,"bind_addr":%q}`,
-		status.ActiveSessions,
-		status.SandboxPolicy.String(),
-		marshalStringSlice(status.Backends),
-		status.HasContainerRT,
-		status.SequenceNumber,
-		status.BindAddr,
-	)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint,
+		strings.NewReader(heartbeatRequestBody(status)))
 	if err != nil {
 		return &HeartbeatSendError{Op: "build request", Cause: err}
 	}

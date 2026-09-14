@@ -20,11 +20,11 @@ socket. Seven binding objects are constructed at
 | Binding | Fronts | Documented in |
 |---|---|---|
 | `ConnectionBinding` | server address, transport, TLS material | [`../multiprotocol-api/`](../multiprotocol-api/api.md) |
-| `OrchestratorBinding` | orchestration operations | [`../agent-orchestration/`](../agent-orchestration/api.md) |
-| `SessionBinding` | session event history and subscriptions | [`../agent-orchestration/`](../agent-orchestration/api.md) |
-| `AgentBinding` | agent registry queries | [`../agent-orchestration/`](../agent-orchestration/api.md) |
+| `OrchestratorBinding` | orchestration operations | [`../software-factory/`](../software-factory/api.md) |
+| `SessionBinding` | session event history and subscriptions | [`../software-factory/`](../software-factory/api.md) |
+| `AgentBinding` | agent registry queries | [`../software-factory/`](../software-factory/api.md) |
 | `EmbeddedServerBinding` | in-process server control | [`../composition/`](../composition/api.md) |
-| `AgentDeployBinding` | remote agent deployment | [`../agent-orchestration/`](../agent-orchestration/api.md) |
+| `AgentDeployBinding` | remote agent deployment | [`../software-factory/`](../software-factory/api.md) |
 | `SSHKeysBinding` | server-held SSH keys | [`../ssh/`](../ssh/api.md) |
 
 These are **not a public API**. They are not versioned, not stable, and not

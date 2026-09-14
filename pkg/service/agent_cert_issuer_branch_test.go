@@ -14,12 +14,11 @@
 package service
 
 import (
-	"context"
 	"encoding/pem"
 	"errors"
 	"testing"
 
-	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/xkmsca"
 )
 
 // TestAgentCertificateRequest_Validate_Branches exercises every branch of
@@ -74,7 +73,9 @@ func TestParseLeafCertPEM_Branches(t *testing.T) {
 	})
 
 	t.Run("valid certificate", func(t *testing.T) {
-		certPEM, _, _ := newTestCertPEMs(t)
+		// A real CA-issued leaf rather than a hand-rolled self-signed one: the
+		// function under test parses what the CA actually emits.
+		certPEM := issueLeafPEM(t, xkmsca.NewCAService(t, "QuicBaaS Parse Leaf CA"))
 		cert, err := parseLeafCertPEM(certPEM)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -85,108 +86,20 @@ func TestParseLeafCertPEM_Branches(t *testing.T) {
 	})
 }
 
-// TestSDKAgentCertIssuer_NilResponse exercises the resp == nil branch where
-// the CA returns neither an error nor a response.
-func TestSDKAgentCertIssuer_NilResponse(t *testing.T) {
-	issuer, _ := NewSDKAgentCertIssuer(&stubCAService{issueResp: nil})
-	_, err := issuer.IssueAgentCertificate(context.Background(), &AgentCertificateRequest{
-		TenantID: "t", Hostname: "h",
+// TestUnexpectedPEMTypeError_Message covers the typed error's message, which is
+// what an operator reads when a CA returns the wrong PEM block.
+func TestUnexpectedPEMTypeError_Message(t *testing.T) {
+	t.Run("names the offending type", func(t *testing.T) {
+		err := &UnexpectedPEMTypeError{PEMType: "EC PRIVATE KEY"}
+		if got := err.Error(); got != `unexpected PEM type "EC PRIVATE KEY"` {
+			t.Fatalf("Error() = %q", got)
+		}
 	})
-	var issErr *AgentCertIssueError
-	if !errors.As(err, &issErr) {
-		t.Fatalf("expected AgentCertIssueError, got %v", err)
-	}
-}
 
-// TestSDKAgentCertIssuer_EmptyPrivateKey exercises the branch that rejects a
-// response carrying a certificate but no exportable private key.
-func TestSDKAgentCertIssuer_EmptyPrivateKey(t *testing.T) {
-	certPEM, _, _ := newTestCertPEMs(t)
-	stub := &stubCAService{
-		issueResp: &xkmstransport.IssueCertificateResponse{
-			CertificatePEM: certPEM,
-		},
-	}
-	issuer, _ := NewSDKAgentCertIssuer(stub)
-	_, err := issuer.IssueAgentCertificate(context.Background(), &AgentCertificateRequest{
-		TenantID: "t", Hostname: "h",
+	t.Run("survives an empty type", func(t *testing.T) {
+		err := &UnexpectedPEMTypeError{}
+		if got := err.Error(); got != `unexpected PEM type ""` {
+			t.Fatalf("Error() = %q", got)
+		}
 	})
-	if err == nil {
-		t.Fatal("expected error for missing private key")
-	}
-}
-
-// TestSDKAgentCertIssuer_EmptyBundleAndChain forces both the GetCABundle
-// failure and an empty ChainPEM fallback so the final "ca bundle is empty"
-// branch is exercised (with the secure buffer destroyed on that path).
-func TestSDKAgentCertIssuer_EmptyBundleAndChain(t *testing.T) {
-	certPEM, keyPEM, _ := newTestCertPEMs(t)
-	stub := &stubCAService{
-		issueResp: &xkmstransport.IssueCertificateResponse{
-			CertificatePEM: certPEM,
-			PrivateKeyPEM:  keyPEM,
-			// ChainPEM intentionally empty.
-		},
-		bundleErr: errors.New("no bundle"),
-	}
-	issuer, _ := NewSDKAgentCertIssuer(stub)
-	_, err := issuer.IssueAgentCertificate(context.Background(), &AgentCertificateRequest{
-		TenantID: "t", Hostname: "h",
-	})
-	var issErr *AgentCertIssueError
-	if !errors.As(err, &issErr) || issErr.Op != "resolve ca bundle" {
-		t.Fatalf("expected resolve ca bundle error, got %v", err)
-	}
-}
-
-// TestSDKAgentCertIssuer_ParseError forces parseLeafCertPEM to fail on the
-// issued certificate so the parse-error branch (and buffer destroy) runs.
-func TestSDKAgentCertIssuer_ParseError(t *testing.T) {
-	_, keyPEM, bundlePEM := newTestCertPEMs(t)
-	// Hand back a non-certificate PEM as the "certificate" so parsing fails
-	// after the key has already been secured.
-	badCert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not-a-cert")})
-	stub := &stubCAService{
-		issueResp: &xkmstransport.IssueCertificateResponse{
-			CertificatePEM: badCert,
-			PrivateKeyPEM:  keyPEM,
-			ChainPEM:       bundlePEM,
-		},
-		bundle: bundlePEM,
-	}
-	issuer, _ := NewSDKAgentCertIssuer(stub)
-	_, err := issuer.IssueAgentCertificate(context.Background(), &AgentCertificateRequest{
-		TenantID: "t", Hostname: "h",
-	})
-	var issErr *AgentCertIssueError
-	if !errors.As(err, &issErr) || issErr.Op != "parse issued certificate" {
-		t.Fatalf("expected parse issued certificate error, got %v", err)
-	}
-}
-
-// TestSDKAgentCertIssuer_ExtraDNSNames covers the SAN-building loop including
-// the skip cases (empty / duplicate-of-hostname) and a real extra name.
-func TestSDKAgentCertIssuer_ExtraDNSNames(t *testing.T) {
-	certPEM, keyPEM, bundlePEM := newTestCertPEMs(t)
-	stub := &stubCAService{
-		issueResp: &xkmstransport.IssueCertificateResponse{
-			CertificatePEM: certPEM,
-			PrivateKeyPEM:  keyPEM,
-			ChainPEM:       bundlePEM,
-		},
-		bundle: bundlePEM,
-	}
-	issuer, _ := NewSDKAgentCertIssuer(stub)
-	result, err := issuer.IssueAgentCertificate(context.Background(), &AgentCertificateRequest{
-		TenantID:      "t",
-		Hostname:      "h",
-		ExtraDNSNames: []string{"alias.lan", "", "h"},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer result.PrivateKey.Destroy()
-	if len(result.CertPEM) == 0 {
-		t.Fatal("expected cert pem")
-	}
 }

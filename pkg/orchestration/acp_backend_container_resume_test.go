@@ -71,7 +71,14 @@ func (r *multiSpecContainerRuntime) RunInteractive(ctx context.Context, spec *Co
 func (r *multiSpecContainerRuntime) Run(context.Context, *ContainerSpec) (string, error) {
 	return "test-ctr", nil
 }
-func (r *multiSpecContainerRuntime) Stop(context.Context, string) error   { return nil }
+func (r *multiSpecContainerRuntime) Stop(context.Context, string) error { return nil }
+
+// Exec satisfies the runtime seam. Nothing in this test runs a command
+// inside a container; a call would be a test asserting behaviour it never
+// arranged, so it refuses rather than answering.
+func (r *multiSpecContainerRuntime) Exec(context.Context, string, *ExecSpec) (*ExecResult, error) {
+	return nil, &ContainerExecError{ContainerID: "fake", Cause: errNoExecInThisTest}
+}
 func (r *multiSpecContainerRuntime) Remove(context.Context, string) error { return nil }
 func (r *multiSpecContainerRuntime) Logs(context.Context, string) (io.ReadCloser, error) {
 	return nil, nil
@@ -87,7 +94,11 @@ func (r *multiSpecContainerRuntime) Pull(context.Context, string) error { return
 func newSandboxedAccountBackend(t *testing.T) (*ACPBackend, *multiSpecContainerRuntime) {
 	t.Helper()
 	runtime := &multiSpecContainerRuntime{t: t}
-	backend := NewACPBackend(ACPBackendConfig{Command: "opencode"})
+	backend := NewACPBackend(ACPBackendConfig{Command: "opencode",
+		// Where OpenCode's file credential lives. It used to be hardcoded
+		// inside the backend; it is configuration now, so a test that
+		// asserts the mount has to state it (see CredentialDirSpec).
+		CredentialDir: CredentialDirSpec{Rel: ".config/opencode", Target: "/home/agent/.config/opencode"}})
 	backend.SetContainerRuntime(runtime)
 
 	store := NewInMemoryAccountStore()
@@ -284,7 +295,11 @@ func TestACPBackend_Resume_RejectsANonPersistentSession(t *testing.T) {
 }
 
 func TestACPBackend_Resume_SandboxedWithoutARuntimeIsRefused(t *testing.T) {
-	backend := NewACPBackend(ACPBackendConfig{Command: "opencode"})
+	backend := NewACPBackend(ACPBackendConfig{Command: "opencode",
+		// Where OpenCode's file credential lives. It used to be hardcoded
+		// inside the backend; it is configuration now, so a test that
+		// asserts the mount has to state it (see CredentialDirSpec).
+		CredentialDir: CredentialDirSpec{Rel: ".config/opencode", Target: "/home/agent/.config/opencode"}})
 
 	_, err := backend.Resume(context.Background(), &ResumeRequest{
 		SessionID: "s1",

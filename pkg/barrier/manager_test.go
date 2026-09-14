@@ -82,7 +82,11 @@ var _ qrdbsdk.CeremonyDistributor = (*captureDistributor)(nil)
 type captureDistributor struct {
 	mu       sync.Mutex
 	splitter qrdbsdk.ShareSplitter
-	shares   [][]byte
+	// shares are captured as the bytes a custodian would present. The splitter
+	// hands back protected shares whose values live in locked memory, and locked
+	// memory is a finite kernel resource, so the value is copied out and the
+	// share destroyed here rather than held for the life of the test.
+	shares [][]byte
 }
 
 // newCaptureDistributor returns a captureDistributor backed by the real
@@ -101,15 +105,15 @@ func (c *captureDistributor) SealAndDistribute(_ context.Context, secret []byte,
 	if err != nil {
 		return 0, err
 	}
-	values := make([][]byte, len(shares))
-	for i, share := range shares {
-		values[i] = append([]byte(nil), share.Value()...)
-		share.Destroy()
+	captured := make([][]byte, 0, len(shares))
+	for _, s := range shares {
+		captured = append(captured, append([]byte(nil), s.Value()...))
+		s.Destroy()
 	}
 	c.mu.Lock()
-	c.shares = values
+	c.shares = captured
 	c.mu.Unlock()
-	return len(values), nil
+	return len(captured), nil
 }
 
 // RekeyAndDistribute destroys the prior round's shares and records fresh

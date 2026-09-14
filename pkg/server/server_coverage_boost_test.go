@@ -1,4 +1,13 @@
-//go:build !integration && raft && local
+//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag
+
+// The constraint matches lifecycle_fulltags_test.go, which defines the
+// saveAndRestoreSeams helper this file calls. It previously claimed only
+// `raft && local` — weaker than the helper it depends on — so any build with
+// raft and local but without the AI/transport features failed to COMPILE the
+// package's tests. Nothing noticed, because no test pass compiled such a
+// combination until `make test-standard` existed (#299). Widening it here
+// changes no pass's contents: with the old constraint this file still only
+// ever compiled under the maximal pass, which supplies all of these anyway.
 
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC

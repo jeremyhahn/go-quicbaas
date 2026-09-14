@@ -30,6 +30,17 @@ vendor/
 *~
 .DS_Store
 
+# Local agent-tooling state. None of this is source and all of it leaks the
+# machine it was produced on: the NFS-mount symlink at the repo root, a
+# per-machine Claude permission allowlist, FUSE orphans the mount leaves
+# behind, and opencode's SQLite sidecar files. All seven were tracked until
+# go-quicbaas#944; nothing here may return.
+/go-quicbaas
+SESSION_RESUME.md
+.claude/settings.local.json
+.claude/.fuse_hidden*
+.opencode/*.db*
+
 # Data directories
 /data/
 *.db
@@ -114,6 +125,10 @@ LOCK
 # Dockerized e2e artifacts
 /test/e2e/.docker-results/
 
+# Playwright run state and artifacts. .last-run.json records the status of the
+# LAST run, so every `playwright test` rewrites it — a result, not source.
+test-results/
+
 # compiled binaries and node_modules never enter the module tree
 /quicbaas
 /quicbaasd
@@ -135,3 +150,16 @@ gomodauth*
 # shipped without it (unbuildable with -tags rest) for exactly this
 # reason — same failure mode as the v0.1.1-alpha gitignored *.pb.go.
 !pkg/api/rest/routes_permissions_generated.go
+
+# Python sidecar artifacts (sidecar/npu-embedding)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.coverage.*
+*.egg-info/
+
+# Build output of the integration cert-fixture tooling. A 5 MB unstripped ELF
+# binary was tracked at the repository root from 47f0b37b until go-quicbaas#943;
+# an unverifiable executable in a public repository is a supply-chain smell.
+/gen-certs

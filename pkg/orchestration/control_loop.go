@@ -18,12 +18,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"sort"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // defaultPollInterval is the default interval for polling task completion.
@@ -60,37 +60,29 @@ type indexedWorkItem struct {
 //	                           |
 //	                      escalating -> failed
 type ControlLoop struct {
-	agentService        AgentService
-	logger              interfaces.Logger
-	status              atomic.Value // *JobStatus
-	events              chan JobEvent
-	handlers            map[JobState]stateHandler
-	workItems           []*WorkItem
-	taskIDs             []string
-	leadSessionID       string
-	reviewerSessionID   string // optional persistent session for the dedicated reviewer role
-	reviewerBackend     string // backend name for the reviewer session, captured from workflow
-	reviewerModel       string // model name for the reviewer session
-	config              *JobConfig
-	jobID               string
-	iteration           int
-	workflow            *WorkflowDefinition
-	workerSessions      map[string]string         // role -> sessionID
-	agentIdentities     map[string]*AgentIdentity // role -> identity
-	executionPlan       *ExecutionPlan
-	currentWave         int
-	jobMemory           *JobMemory
-	validatorRegistry   *ValidatorRegistry
-	validationResults   []ValidationResult
-	reviewResponse      *ReviewResponse
-	correlationID       string
-	persistFn           func(status *JobStatus)
-	auditFn             func(eventType, details string)
-	peerMessaging       PeerMessagingService // nil if topology is hub_and_spoke
-	fileLocking         FileLockService      // nil if not configured
-	costTracker         CostTracker          // nil if no budget set
-	auditMu             sync.Mutex
-	auditEvents         []JobAuditEvent
+	// job is the envelope this loop drives: the identity, the lease, the
+	// status, the events, the audit trail, the hooks and the sessions all
+	// live there (job_run.go). The loop owns only the lead-driven shape.
+	job *JobRun
+
+	handlers          map[JobState]stateHandler
+	workItems         []*WorkItem
+	taskIDs           []string
+	leadSessionID     string
+	reviewerSessionID string // optional persistent session for the dedicated reviewer role
+	reviewerBackend   string // backend name for the reviewer session, captured from workflow
+	reviewerModel     string // model name for the reviewer session
+	workflow          *WorkflowDefinition
+	workerSessions    map[string]string         // role -> sessionID
+	agentIdentities   map[string]*AgentIdentity // role -> identity
+	executionPlan     *ExecutionPlan
+	currentWave       int
+	validationResults []ValidationResult
+	reviewResponse    *ReviewResponse
+	correlationID     string
+
+	peerMessaging       PeerMessagingService                        // nil if topology is hub_and_spoke
+	fileLocking         FileLockService                             // nil if not configured
 	reindexFn           func(context.Context) error                 // nil if indexing not configured
 	peerDeliverFn       func(context.Context, string, *PeerMessage) // nil if no delivery configured
 	peerDeliveryCancels []func()                                    // cancel functions for peer delivery goroutines
@@ -101,6 +93,8 @@ type ControlLoop struct {
 	// fail with NoMatchingAgentError; when false the loop falls back to any
 	// eligible agent. Wired via SetHostAffinityStrictDefault.
 	hostAffinityStrictDefault bool
+
+	reviewResults []ValidationResult
 }
 
 // SetHostAffinityStrictDefault sets the operator-level enforcement default
@@ -111,15 +105,16 @@ func (cl *ControlLoop) SetHostAffinityStrictDefault(strict bool) {
 	cl.hostAffinityStrictDefault = strict
 }
 
-// NewControlLoop creates a new ControlLoop with the given agent service and logger.
+// NewControlLoop creates a new ControlLoop with the given agent service and
+// logger. The loop is built over a standalone JobRun: a loop the envelope
+// launches is handed the real run in RunJob, and one built directly — by a
+// test, or by a caller driving the state machine itself — drives this one.
 func NewControlLoop(svc AgentService, logger interfaces.Logger) *ControlLoop {
 	cl := &ControlLoop{
-		agentService:    svc,
-		logger:          logger,
-		events:          make(chan JobEvent, defaultEventBufferSize),
 		workerSessions:  make(map[string]string),
 		agentIdentities: make(map[string]*AgentIdentity),
 	}
+	cl.adopt(newJobRun(JobRunConfig{Agents: svc, Logger: logger}))
 	cl.handlers = map[JobState]stateHandler{
 		JobStateInitializing: cl.handleInitialize,
 		JobStateDecomposing:  cl.handleDecompose,
@@ -136,101 +131,104 @@ func NewControlLoop(svc AgentService, logger interfaces.Logger) *ControlLoop {
 	return cl
 }
 
+// adopt binds the loop to the run it drives and installs the loop's
+// contribution to every status snapshot.
+func (cl *ControlLoop) adopt(run *JobRun) {
+	cl.job = run
+	run.Decorate(cl.decorateStatus)
+}
+
+// decorateStatus adds the lead-driven job's recoverable state to every
+// snapshot the envelope writes, so a persisted status carries enough context
+// to resume the loop after a restart.
+func (cl *ControlLoop) decorateStatus(status *JobStatus) {
+	status.TaskCount = len(cl.taskIDs)
+	status.WorkItems = cl.workItems
+	status.LeadSessionID = cl.leadSessionID
+	status.SessionIDs = cl.sessionIDs()
+	if name := cl.workflowName(); name != "" {
+		status.WorkflowName = name
+	}
+}
+
 // SetWorkflow sets the workflow definition for this control loop.
-// Must be called before Run if a workflow is desired.
+// Must be called before RunJob if a workflow is desired.
 func (cl *ControlLoop) SetWorkflow(wf *WorkflowDefinition) {
 	cl.workflow = wf
+	cl.job.Workflow = wf
 }
 
-// Run executes the control loop state machine for the given job configuration.
-// It blocks until the job completes, fails, or the context is cancelled.
-// This always starts from the initializing state. For resumption from a
-// specific state, use RunFromState.
-func (cl *ControlLoop) Run(ctx context.Context, config *JobConfig) error {
-	jobID, err := generateJobID()
-	if err != nil {
-		return &ControlLoopError{
-			Sentinel: ErrControlLoopFailed,
-			Message:  "failed to generate job ID: " + err.Error(),
-		}
+// RunJob drives the lead-driven state machine over the run the envelope
+// handed it. The envelope owns the lease, the heartbeat, the terminal status
+// and the discard; this is the dispatch loop and only that.
+func (cl *ControlLoop) RunJob(ctx context.Context, job *JobRun) error {
+	cl.adopt(job)
+	if job.Workflow != nil {
+		cl.workflow = job.Workflow
 	}
-	return cl.RunFromState(ctx, config, jobID, JobStateInitializing)
-}
+	cl.restore(job.Resumed)
 
-// RunFromState executes the control loop state machine starting from the
-// specified state. This is used for job resumption after server restart,
-// where the job ID is already known and the start state is determined by
-// resolveResumeState based on the interrupted state.
-func (cl *ControlLoop) RunFromState(ctx context.Context, config *JobConfig, jobID string, startState JobState) error {
-	// Ensure tenant ID is in the context for downstream service calls.
-	if config.TenantID != "" && TenantFromContext(ctx) == "" {
-		ctx = ContextWithTenant(ctx, config.TenantID)
-	}
-	cl.config = config
-	cl.jobID = jobID
-	if cl.iteration == 0 {
-		cl.iteration = 0
-	}
-
-	if config.PollInterval == 0 {
-		cl.config.PollInterval = defaultPollInterval
-	}
-
-	cl.updateStatus(startState)
-	cl.emitEvent(startState, "job started: "+config.Description)
-
-	// State machine dispatch loop.
-	state := startState
-	for state != JobStateCompleted && state != JobStateFailed {
+	state := job.StartState
+	for !IsTerminalJobState(state) {
 		handler, ok := cl.handlers[state]
 		if !ok {
-			cl.updateStatus(JobStateFailed)
-			return &ControlLoopError{
+			err := &ControlLoopError{
 				Sentinel: ErrControlLoopFailed,
 				Message:  "unknown state: " + string(state),
 			}
+			cl.job.Fail("", err)
+			return err
 		}
 
-		var err error
-		var nextState JobState
-		nextState, err = handler(ctx)
+		nextState, err := handler(ctx)
 		if err != nil {
-			cl.updateStatus(JobStateFailed)
-			cl.emitEvent(JobStateFailed, "error in state "+string(state)+": "+err.Error())
+			err = cl.job.terminalError(err)
+			cl.job.Emit(JobStateFailed, "error in state "+string(state)+": "+err.Error())
+			cl.job.Fail("", err)
 			cl.cleanupAllSessions(ctx)
 			return err
 		}
 
 		state = nextState
-		cl.updateStatus(state)
+		// SetState is the choke point: it persists the snapshot, announces
+		// the change and runs the lifecycle moment the state owns, so the
+		// moment runs before the state does.
+		if hookErr := cl.job.SetState(ctx, state); hookErr != nil {
+			return cl.failFromHook(ctx, hookErr)
+		}
 	}
 
 	if state == JobStateFailed {
+		// The handler that returned failed has already written the status
+		// and said why; the envelope must not overwrite either.
 		return &ControlLoopError{
 			Sentinel: ErrControlLoopFailed,
 			Message:  "job failed",
 		}
 	}
-
 	return nil
+}
+
+// restore reinstates the loop's own recoverable state from the status a
+// resumed job continues. The envelope restored the memory and the iteration;
+// the work items are the loop's.
+func (cl *ControlLoop) restore(status *JobStatus) {
+	if status == nil {
+		return
+	}
+	if len(status.WorkItems) > 0 {
+		cl.workItems = status.WorkItems
+	}
 }
 
 // Status returns the current job status.
 func (cl *ControlLoop) Status() *JobStatus {
-	val := cl.status.Load()
-	if val == nil {
-		return nil
-	}
-	status, ok := val.(*JobStatus)
-	if !ok {
-		return nil
-	}
-	return status
+	return cl.job.Status()
 }
 
 // Events returns a read-only channel of job events.
 func (cl *ControlLoop) Events() <-chan JobEvent {
-	return cl.events
+	return cl.job.Events()
 }
 
 // =============================================================================
@@ -238,7 +236,7 @@ func (cl *ControlLoop) Events() <-chan JobEvent {
 // =============================================================================
 
 // handleInitialize bootstraps the job: generates correlation ID, initializes
-// job memory, sets up the validator registry, and loads the workflow if configured.
+// job memory, and spawns the lead and reviewer sessions if configured.
 func (cl *ControlLoop) handleInitialize(ctx context.Context) (JobState, error) {
 	if err := ctx.Err(); err != nil {
 		return JobStateFailed, err
@@ -255,22 +253,14 @@ func (cl *ControlLoop) handleInitialize(ctx context.Context) (JobState, error) {
 	cl.correlationID = corrID
 
 	// Initialize job memory for accumulated context across iterations.
-	cl.jobMemory = NewJobMemory()
-
-	// Initialize validator registry with built-in validators.
-	cl.validatorRegistry = NewValidatorRegistry()
-	cl.validatorRegistry.Register("command", NewCommandValidator())
-	cl.validatorRegistry.Register("policy", NewPolicyValidator())
-	cl.validatorRegistry.Register("agent", NewAgentValidator(
-		cl.agentService,
-		cl.config.LeadBackend,
-		cl.config.LeadModel,
-	))
+	// Review criteria are judged through the engine's validator registry
+	// (validators.go), which a module extends by kind.
+	cl.job.memory = NewJobMemory()
 
 	// Spawn a lead session if the backend supports persistent sessions.
 	leadSessionErr := cl.trySpawnLeadSession(ctx)
 	if leadSessionErr != nil {
-		cl.logger.Warnf("control loop: failed to spawn lead session, using stateless mode: %s", leadSessionErr.Error())
+		cl.job.Logger.Warnf("control loop: failed to spawn lead session, using stateless mode: %s", leadSessionErr.Error())
 	}
 
 	// Spawn a dedicated reviewer session if the workflow defines a reviewer
@@ -279,11 +269,11 @@ func (cl *ControlLoop) handleInitialize(ctx context.Context) (JobState, error) {
 	// reviewer is the one judging requirements and emitting NewWorkItems.
 	reviewerSessionErr := cl.trySpawnReviewerSession(ctx)
 	if reviewerSessionErr != nil {
-		cl.logger.Warnf("control loop: failed to spawn reviewer session, falling back to lead-as-reviewer: %s", reviewerSessionErr.Error())
+		cl.job.Logger.Warnf("control loop: failed to spawn reviewer session, falling back to lead-as-reviewer: %s", reviewerSessionErr.Error())
 	}
 
 	cl.emitEvent(JobStateDecomposing, "initialization complete, correlation_id="+cl.correlationID)
-	cl.audit("orchestration:job_started", "job_id="+cl.jobID+" correlation_id="+cl.correlationID)
+	cl.audit("orchestration:job_started", "job_id="+cl.job.JobID+" correlation_id="+cl.correlationID)
 
 	return JobStateDecomposing, nil
 }
@@ -297,14 +287,14 @@ func (cl *ControlLoop) handleDecompose(ctx context.Context) (JobState, error) {
 	}
 
 	var projectIDs []string
-	if cl.config.ProjectID != "" {
-		projectIDs = []string{cl.config.ProjectID}
+	if cl.job.Config.ProjectID != "" {
+		projectIDs = []string{cl.job.Config.ProjectID}
 	}
 
 	// Build enhanced task description with accumulated context.
-	taskDescription := cl.config.Description
-	if cl.jobMemory != nil && !cl.jobMemory.IsEmpty() {
-		taskDescription = taskDescription + "\n\n" + cl.jobMemory.Serialize()
+	taskDescription := cl.job.Config.Description
+	if cl.job.memory != nil && !cl.job.memory.IsEmpty() {
+		taskDescription = taskDescription + "\n\n" + cl.job.memory.Serialize()
 	}
 
 	// Append backend capabilities context from workflow if available.
@@ -312,11 +302,11 @@ func (cl *ControlLoop) handleDecompose(ctx context.Context) (JobState, error) {
 		taskDescription = taskDescription + "\n\n" + buildCapabilitiesContext(cl.workflow)
 	}
 
-	cl.audit("lead:decompose_start", "backend="+cl.config.LeadBackend+" model="+cl.config.LeadModel)
+	cl.audit("lead:decompose_start", "backend="+cl.job.Config.LeadBackend+" model="+cl.job.Config.LeadModel)
 
-	resp, err := cl.agentService.DecomposeTask(ctx, &DecomposeTaskRequest{
-		Backend:    cl.config.LeadBackend,
-		Model:      cl.config.LeadModel,
+	resp, err := cl.job.Agents.DecomposeTask(ctx, &DecomposeTaskRequest{
+		Backend:    cl.job.Config.LeadBackend,
+		Model:      cl.job.Config.LeadModel,
 		Task:       taskDescription,
 		ProjectIDs: projectIDs,
 	})
@@ -332,20 +322,45 @@ func (cl *ControlLoop) handleDecompose(ctx context.Context) (JobState, error) {
 
 	if len(resp.WorkItems) == 0 {
 		return JobStateFailed, &EmptyDecompositionError{
-			Description: cl.config.Description,
+			Description: cl.job.Config.Description,
 		}
 	}
 
-	cl.workItems = resp.WorkItems
+	cl.workItems = cl.scopeWorkItems(resp.WorkItems)
 
 	// Extract constraints from the decomposition response and record them
 	// in job memory so subsequent iterations are aware of discovered limits.
 	cl.extractConstraints(resp.WorkItems)
 
 	cl.emitEvent(JobStateScheduling, "decomposed into "+itoa(len(resp.WorkItems))+" work items")
-	cl.audit("orchestration:decomposed", "work_items="+itoa(len(resp.WorkItems))+" iteration="+itoa(cl.iteration))
+	cl.audit("orchestration:decomposed", "work_items="+itoa(len(resp.WorkItems))+" iteration="+itoa(cl.job.iteration))
 
 	return JobStateScheduling, nil
+}
+
+// scopeWorkItems binds every decomposed item to the project the JOB runs
+// under.
+//
+// A work item is a lead or reviewer agent's free-form answer: the project
+// reaches it only as decomposition context (DecomposeTaskRequest.ProjectIDs),
+// so whatever comes back is unscoped, or scoped to whatever the model echoed.
+// WorkItem.ProjectID existed and no production path ever set it (#613), which
+// meant the task each item became was created unscoped — invisible to the
+// project's listing and uncounted by its concurrency quota.
+//
+// THE JOB'S PROJECT OVERWRITES WHATEVER THE ITEM CARRIES, including a project
+// the agent named itself: an agent must not be able to move work into another
+// tenant's project by mentioning it. A job with no project leaves its items
+// unscoped, because an unscoped job is a real state and inventing a project
+// for it would key and lease work under one that does not exist.
+func (cl *ControlLoop) scopeWorkItems(items []*WorkItem) []*WorkItem {
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		item.ProjectID = cl.job.Config.ProjectID
+	}
+	return items
 }
 
 // handleSchedule builds a DAG execution plan from work items and computes
@@ -380,18 +395,22 @@ func (cl *ControlLoop) handleSchedule(ctx context.Context) (JobState, error) {
 // handleAssign auto-spawns worker sessions and creates tasks for each work item
 // in the current execution wave. It branches on WorkflowMode to control which
 // agents may be spawned and populates agent identities for security tracking.
+//
+// A job that is an attempt at a Task (JobConfig.TaskID) is no different
+// here: it creates a Task per work item like any lead-driven job. The Task
+// it is an attempt at is the accounting subject, not the unit of work.
 func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 	if err := ctx.Err(); err != nil {
 		return JobStateFailed, err
 	}
 
 	// Get backends for capability matching.
-	backends, err := cl.agentService.ListBackends(ctx)
+	backends, err := cl.job.Agents.ListBackends(ctx)
 	if err != nil {
 		return JobStateFailed, err
 	}
 
-	agents, err := cl.agentService.ListAgents(ctx, cl.config.TenantID, nil)
+	agents, err := cl.job.Agents.ListAgents(ctx, cl.job.Config.TenantID, nil)
 	if err != nil {
 		return JobStateFailed, err
 	}
@@ -448,7 +467,8 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 				spawnReq := &SpawnSessionRequest{
 					Backend:     backendName,
 					Model:       cl.resolveModelForRole(role),
-					ProjectID:   cl.config.ProjectID,
+					ProjectID:   cl.job.Config.ProjectID,
+					JobID:       cl.job.JobID,
 					MCPServers:  mcpServers,
 					Persistent:  cl.roleHasCapability(role, "persistent_sessions"),
 					GpuRequired: workItemRequiresGPU(item),
@@ -456,9 +476,8 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 
 				// Apply sandbox configuration from workflow agent spec.
 				if agentSpec != nil {
-					if agentSpec.WorkspacePath != "" {
-						spawnReq.WorkDir = agentSpec.WorkspacePath
-					}
+					spawnReq.WorkDir = cl.spawnWorkDir(agentSpec)
+					spawnReq.SystemPrompt = agentSpec.SystemPrompt
 					if agentSpec.SkipPermissions {
 						spawnReq.ExtraArgs = append(spawnReq.ExtraArgs, "--dangerously-skip-permissions")
 					}
@@ -484,16 +503,18 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 						item.HostAffinity = agentSpec.HostAffinity
 					}
 				}
-
+				if spawnReq.WorkDir == "" {
+					spawnReq.WorkDir = cl.job.workDir
+				}
 				persistStr := "false"
 				if spawnReq.Persistent {
 					persistStr = "true"
 				}
 				cl.audit("worker:session_spawn", "role="+role+" backend="+backendName+" persistent="+persistStr)
-				spawnResp, spawnErr := cl.agentService.SpawnSession(ctx, spawnReq)
+				spawnResp, spawnErr := cl.job.Spawn(ctx, spawnReq)
 				if spawnErr != nil {
 					cl.audit("worker:session_spawn_failed", "role="+role+" backend="+backendName+" error="+spawnErr.Error())
-					cl.logger.Warnf("control loop: failed to spawn worker session for role=%s backend=%s: %s",
+					cl.job.Logger.Warnf("control loop: failed to spawn worker session for role=%s backend=%s: %s",
 						role, backendName, spawnErr.Error())
 				} else {
 					cl.workerSessions[sessionKey] = spawnResp.SessionID
@@ -506,8 +527,8 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 		if _, exists := cl.agentIdentities[role]; !exists {
 			scopes := cl.resolveScopes(role)
 			identity := &AgentIdentity{
-				AgentID:  "agent-" + role + "-" + cl.jobID,
-				TenantID: cl.config.TenantID,
+				AgentID:  "agent-" + role + "-" + cl.job.JobID,
+				TenantID: cl.job.Config.TenantID,
 				Role:     role,
 				Scopes:   scopes,
 			}
@@ -526,8 +547,9 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 			}
 		}
 
-		task, createErr := cl.agentService.CreateTask(ctx, &CreateTaskRequest{
-			TenantID:    cl.config.TenantID,
+		task, createErr := cl.job.Agents.CreateTask(ctx, &CreateTaskRequest{
+			TenantID:    cl.job.Config.TenantID,
+			ProjectID:   item.ProjectID,
 			Subject:     item.Title,
 			Description: item.Description,
 			AssignedTo:  agentID,
@@ -537,8 +559,8 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 		}
 
 		// Claim the task so the state machine allows completion (pending -> claimed).
-		if claimErr := cl.agentService.ClaimTask(ctx, cl.config.TenantID, task.ID, agentID); claimErr != nil {
-			cl.logger.Warnf("control loop: failed to claim task %s for agent %s: %s",
+		if claimErr := cl.job.Agents.ClaimTask(ctx, cl.job.Config.TenantID, task.ID, agentID); claimErr != nil {
+			cl.job.Logger.Warnf("control loop: failed to claim task %s for agent %s: %s",
 				task.ID, agentID, claimErr.Error())
 		}
 
@@ -617,7 +639,7 @@ func (cl *ControlLoop) handleExecute(ctx context.Context) (JobState, error) {
 					cl.audit("worker:prompt_start", "role="+promptRole+" task="+iw.item.Title+" backend="+iw.item.Backend+" session="+sessionID)
 
 					agentSpec := cl.resolveAgentSpec(iw.item.RequiredRole)
-					workspacePath := ""
+					workspacePath := cl.job.workDir
 					if agentSpec != nil && agentSpec.WorkspacePath != "" {
 						// For sandboxed agents, use /workspace (container mount point)
 						// instead of the host path.
@@ -627,10 +649,10 @@ func (cl *ControlLoop) handleExecute(ctx context.Context) (JobState, error) {
 							workspacePath = agentSpec.WorkspacePath
 						}
 					}
-					toolGuidance := cl.agentService.BackendToolGuidance(iw.item.Backend)
+					toolGuidance := cl.job.Agents.BackendToolGuidance(iw.item.Backend)
 					workerPrompt := buildWorkerPrompt(iw.item, workspacePath, toolGuidance)
 					turnCtx := WithTurnAttribution(ctx, cl.turnAttribution(promptRole))
-					resp, promptErr := cl.agentService.PromptSession(turnCtx, &PromptSessionRequest{
+					resp, promptErr := cl.job.Agents.PromptSession(turnCtx, &PromptSessionRequest{
 						SessionID: sessionID,
 						Prompt:    workerPrompt,
 						EventCallback: func(ev *SessionEvent) {
@@ -662,25 +684,31 @@ func (cl *ControlLoop) handleExecute(ctx context.Context) (JobState, error) {
 			case r := <-results:
 				if r.err != nil {
 					// Record failure in job memory.
-					cl.jobMemory.AddFailure(
+					cl.job.memory.AddFailure(
 						waveItems[r.index].Title,
 						waveItems[r.index].Description,
 						r.err.Error(),
-						cl.iteration,
+						cl.job.iteration,
 					)
-					cl.logger.Warnf("control loop: worker prompt failed for task %s: %s",
+					cl.job.Logger.Warnf("control loop: worker prompt failed for task %s: %s",
 						cl.taskIDs[r.index], r.err.Error())
 				} else {
 					// Record success in job memory.
-					cl.jobMemory.AddSuccess(waveItems[r.index].Title + ": " + waveItems[r.index].Description)
+					cl.job.memory.AddSuccess(waveItems[r.index].Title + ": " + waveItems[r.index].Description)
 
 					// Complete the task with the response.
-					completeErr := cl.agentService.CompleteTask(ctx, cl.config.TenantID, cl.taskIDs[r.index], &TaskResult{
-						Output: r.output,
-					})
-					if completeErr != nil {
-						cl.logger.Warnf("control loop: failed to complete task %s: %s",
-							cl.taskIDs[r.index], completeErr.Error())
+					cl.recordItemResult(ctx, r.index, r.output)
+
+					// A worker that answered is a worker that may have
+					// changed the checkout, and on an ephemeral workspace
+					// that work only exists until the container goes. The
+					// push runs HERE, in the collector, rather than in the
+					// per-session goroutines: publication is serialized per
+					// job, exactly as a person pushing would be. A run with
+					// no pusher installed — which is every lead-driven job
+					// today — does nothing at all.
+					if pushErr := cl.job.PushTurn(ctx); pushErr != nil {
+						return JobStateFailed, pushErr
 					}
 				}
 				directHandled[r.index] = struct{}{}
@@ -697,6 +725,7 @@ func (cl *ControlLoop) handleExecute(ctx context.Context) (JobState, error) {
 			return JobStateFailed, nil
 		}
 		if budgetState.Status == BudgetExceeded && budgetState.Action == BudgetActionPause {
+			cl.job.Escalate("budget exceeded")
 			cl.emitEvent(JobStateEscalating, "budget exceeded, pausing execution")
 			return JobStateEscalating, nil
 		}
@@ -708,7 +737,7 @@ func (cl *ControlLoop) handleExecute(ctx context.Context) (JobState, error) {
 	}
 
 	// Poll for remaining task completion (stateless backends).
-	ticker := time.NewTicker(cl.config.PollInterval)
+	ticker := time.NewTicker(cl.job.Config.PollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -742,26 +771,27 @@ func (cl *ControlLoop) advanceOrValidate() (JobState, error) {
 	return JobStateValidating, nil
 }
 
-// handleValidate runs the pluggable validator pipeline against completed task
-// outputs if review criteria are configured in the workflow settings.
+// handleValidate runs the validating-phase review criteria against the
+// completed work, each through the validator registered for its kind.
 func (cl *ControlLoop) handleValidate(ctx context.Context) (JobState, error) {
 	if err := ctx.Err(); err != nil {
 		return JobStateFailed, err
 	}
 
 	// Collect task results for validation.
-	artifacts := cl.collectTaskResults(ctx)
+	job := cl.jobContext()
+	job.Artifacts = cl.collectTaskResults(ctx)
 
 	// Run validator pipeline if review criteria exist.
 	var criteria []ReviewCriterion
 	if cl.workflow != nil {
-		criteria = cl.workflow.Settings.ReviewCriteria
+		criteria = criteriaForPhase(cl.workflow.Settings.ReviewCriteria, CriterionPhaseValidating)
 	}
 
-	if len(criteria) > 0 && cl.validatorRegistry != nil {
-		results, allPassed, pipelineErr := cl.validatorRegistry.RunPipeline(ctx, criteria, artifacts)
+	if len(criteria) > 0 {
+		results, allPassed, pipelineErr := cl.validators().RunPipeline(ctx, job, criteria)
 		if pipelineErr != nil {
-			cl.logger.Warnf("control loop: validator pipeline error: %s", pipelineErr.Error())
+			cl.job.Logger.Warnf("control loop: validator pipeline error: %s", pipelineErr.Error())
 		}
 		cl.validationResults = results
 
@@ -780,36 +810,47 @@ func (cl *ControlLoop) handleValidate(ctx context.Context) (JobState, error) {
 	// Trigger re-indexing after validation if configured.
 	if cl.workflow != nil && cl.reindexFn != nil {
 		if reindexErr := HookTriggerReindex(ctx, cl.reindexFn, cl.workflow.Settings.VectorDB.Triggers); reindexErr != nil {
-			cl.logger.Warnf("control loop: reindex trigger failed: %s", reindexErr.Error())
+			cl.job.Logger.Warnf("control loop: reindex trigger failed: %s", reindexErr.Error())
 		}
 	}
 
 	return JobStateReviewing, nil
 }
 
-// handleReview builds a review prompt from task results and validation outcomes,
-// sends it to the lead agent, and parses the structured response. The communication
-// policy is consulted to determine blocking behavior for completion signals.
+// handleReview judges the work. When the workflow has reviewing-phase
+// criteria they are the review: each is dispatched by kind through the
+// validator registry and their verdict decides approval. Otherwise the
+// engine's own agent review runs — a review prompt built from task results
+// and validation outcomes, sent to the reviewer or lead session, its
+// structured response parsed. The communication policy is consulted to
+// determine blocking behavior for completion signals.
 func (cl *ControlLoop) handleReview(ctx context.Context) (JobState, error) {
 	if err := ctx.Err(); err != nil {
 		return JobStateFailed, err
 	}
 
+	if cl.workflow != nil {
+		if criteria := criteriaForPhase(cl.workflow.Settings.ReviewCriteria, CriterionPhaseReviewing); len(criteria) > 0 {
+			review, reviewErr := cl.reviewByCriteria(ctx, criteria)
+			if reviewErr != nil {
+				return JobStateFailed, reviewErr
+			}
+			return cl.concludeReview(review), nil
+		}
+	}
+
 	// Consult communication policy to determine blocking behavior for review.
 	// Worker completion signals use blocking policy so the lead waits for results.
 	policy, _ := GetPolicy("worker", "complete")
-	cl.logger.Debugf("control loop: review phase using %s policy for worker completion", string(policy))
+	cl.job.Logger.Debugf("control loop: review phase using %s policy for worker completion", string(policy))
 
-	// Fetch all tasks for building the review prompt.
-	tasks, err := cl.agentService.ListTasks(ctx, cl.config.TenantID, nil)
+	// Fetch the tasks the review prompt describes.
+	jobTasks, err := cl.reviewTasks(ctx)
 	if err != nil {
 		return JobStateFailed, err
 	}
 
-	// Filter to only tasks belonging to this job.
-	jobTasks := cl.filterJobTasks(tasks)
-
-	reviewPrompt := buildReviewPrompt(cl.config.Description, jobTasks)
+	reviewPrompt := buildReviewPrompt(cl.job.Config.Description, jobTasks)
 
 	// Append validation results to the review prompt if available.
 	if len(cl.validationResults) > 0 {
@@ -824,16 +865,33 @@ func (cl *ControlLoop) handleReview(ctx context.Context) (JobState, error) {
 	reviewerSessionID := cl.reviewerSessionID
 	reviewerBackend := cl.reviewerBackend
 	reviewerModel := cl.reviewerModel
-	systemPrompt := "You are a quality reviewer evaluating whether ALL requirements in the original job description have been met. " +
-		"Respond ONLY with a single JSON object: {\"approved\":bool, \"feedback\":string, \"new_work_items\":[{\"title\":string,\"description\":string}]}. " +
-		"Set approved=true only when every requirement is verified to be working; otherwise set approved=false and list concrete new_work_items the coder should perform to reach correctness. " +
-		"Do not wrap the JSON in prose or code fences."
+	systemPrompt := reviewerSystemPrompt()
+
+	// CLAUDE REVIEWS NOTHING. Owner ruling 2026-09-13: a review runs on codex
+	// or on the local qwen model, and on nothing else.
+	//
+	// The check is here, on the RESOLVED backend, because that is the one place
+	// all three routes below meet. Each of them could reach a Claude Code
+	// session by a different road — a workflow that names claude for its
+	// reviewer role, or either of the lead fallbacks, which take the lead's
+	// backend when no reviewer is configured — and a rule enforced at the
+	// configuration sites would be a rule with three holes in it.
+	//
+	// It refuses rather than substituting a different backend. Silently moving
+	// a review to another model would produce a verdict the operator did not
+	// ask for and cannot see; the job stops and says what to configure.
+	if backend := cl.resolvedReviewBackend(); claudeCodeBackends[backend] {
+		return JobStateFailed, &ReviewBackendRefusedError{
+			JobID:   cl.job.JobID,
+			Backend: backend,
+		}
+	}
 
 	var responseText string
 	switch {
 	case reviewerSessionID != "":
 		cl.audit("reviewer:review_prompt", "session="+reviewerSessionID)
-		resp, promptErr := cl.agentService.PromptSession(WithTurnAttribution(ctx, cl.turnAttribution("reviewer")), &PromptSessionRequest{
+		resp, promptErr := cl.job.Agents.PromptSession(WithTurnAttribution(ctx, cl.turnAttribution("reviewer")), &PromptSessionRequest{
 			SessionID:    reviewerSessionID,
 			Prompt:       reviewPrompt,
 			SystemPrompt: systemPrompt,
@@ -843,7 +901,7 @@ func (cl *ControlLoop) handleReview(ctx context.Context) (JobState, error) {
 		}
 		responseText = extractPromptSessionText(resp)
 	case cl.leadSessionID != "":
-		resp, promptErr := cl.agentService.PromptSession(WithTurnAttribution(ctx, cl.turnAttribution("lead")), &PromptSessionRequest{
+		resp, promptErr := cl.job.Agents.PromptSession(WithTurnAttribution(ctx, cl.turnAttribution("lead")), &PromptSessionRequest{
 			SessionID:    cl.leadSessionID,
 			Prompt:       reviewPrompt,
 			SystemPrompt: systemPrompt,
@@ -855,13 +913,13 @@ func (cl *ControlLoop) handleReview(ctx context.Context) (JobState, error) {
 	default:
 		backend := reviewerBackend
 		if backend == "" {
-			backend = cl.config.LeadBackend
+			backend = cl.job.Config.LeadBackend
 		}
 		model := reviewerModel
 		if model == "" {
-			model = cl.config.LeadModel
+			model = cl.job.Config.LeadModel
 		}
-		resp, promptErr := cl.agentService.DecomposeTask(ctx, &DecomposeTaskRequest{
+		resp, promptErr := cl.job.Agents.DecomposeTask(ctx, &DecomposeTaskRequest{
 			Backend: backend,
 			Model:   model,
 			Task:    reviewPrompt,
@@ -877,22 +935,30 @@ func (cl *ControlLoop) handleReview(ctx context.Context) (JobState, error) {
 		return JobStateFailed, parseErr
 	}
 
+	return cl.concludeReview(review), nil
+}
+
+// concludeReview records the verdict and picks the next state: completing on
+// approval, re-delegating otherwise. A lead-driven job takes the reviewer's
+// new work items as the next decomposition's starting point.
+func (cl *ControlLoop) concludeReview(review *ReviewResponse) JobState {
 	cl.reviewResponse = review
 
 	if review.Approved {
 		cl.emitEvent(JobStateCompleting, "review approved: "+review.Feedback)
 		cl.audit("orchestration:review_decision", "approved=true feedback="+review.Feedback)
-		return JobStateCompleting, nil
+		return JobStateCompleting
 	}
 
-	// Not approved: store new work items for re-delegation.
+	// Not approved: store new work items for re-delegation. They are the
+	// reviewer's free-form answer and are scoped exactly as the lead's are.
 	if len(review.NewWorkItems) > 0 {
-		cl.workItems = review.NewWorkItems
+		cl.workItems = cl.scopeWorkItems(review.NewWorkItems)
 	}
 	cl.emitEvent(JobStateRedelegating, "review rejected: "+review.Feedback)
 	cl.audit("orchestration:review_decision", "approved=false feedback="+review.Feedback)
 
-	return JobStateRedelegating, nil
+	return JobStateRedelegating
 }
 
 // handleComplete finalizes the job results and emits a completion event.
@@ -902,7 +968,7 @@ func (cl *ControlLoop) handleComplete(ctx context.Context) (JobState, error) {
 	}
 
 	cl.emitEvent(JobStateCleanup, "job completing, starting cleanup")
-	cl.audit("orchestration:job_completing", "job_id="+cl.jobID+" iteration="+itoa(cl.iteration))
+	cl.audit("orchestration:job_completing", "job_id="+cl.job.JobID+" iteration="+itoa(cl.job.iteration))
 
 	return JobStateCleanup, nil
 }
@@ -920,8 +986,8 @@ func (cl *ControlLoop) handleCleanup(ctx context.Context) (JobState, error) {
 	cl.cleanupAllSessions(ctx)
 
 	// Job completion summary.
-	summary := "job_id=" + cl.jobID +
-		" iterations=" + itoa(cl.iteration) +
+	summary := "job_id=" + cl.job.JobID +
+		" iterations=" + itoa(cl.job.iteration) +
 		" work_items=" + itoa(len(cl.workItems))
 	if status := cl.Status(); status != nil {
 		summary += " tasks=" + itoa(status.TaskCount) +
@@ -931,39 +997,41 @@ func (cl *ControlLoop) handleCleanup(ctx context.Context) (JobState, error) {
 	cl.audit("orchestration:job_summary", summary)
 
 	cl.emitEvent(JobStateCompleted, "job completed successfully")
-	cl.audit("orchestration:job_completed", "job_id="+cl.jobID)
+	cl.audit("orchestration:job_completed", "job_id="+cl.job.JobID)
 
 	return JobStateCompleted, nil
 }
 
 // handleRedelegate adds review feedback to job memory, records failed items,
-// checks the iteration limit, and transitions back to scheduling.
+// checks the iteration limit, and starts the next round: the job
+// re-decomposes with the accumulated memory in the prompt.
 func (cl *ControlLoop) handleRedelegate(ctx context.Context) (JobState, error) {
 	if err := ctx.Err(); err != nil {
 		return JobStateFailed, err
 	}
 
-	cl.iteration++
+	cl.job.iteration++
 
 	// Add review feedback to job memory.
 	if cl.reviewResponse != nil && cl.reviewResponse.Feedback != "" {
-		cl.jobMemory.AddFeedback(cl.reviewResponse.Feedback)
+		cl.job.memory.AddFeedback(cl.reviewResponse.Feedback)
 	}
 
 	// Record failed items in job memory.
 	if cl.reviewResponse != nil && len(cl.reviewResponse.NewWorkItems) > 0 {
 		for _, item := range cl.reviewResponse.NewWorkItems {
-			cl.jobMemory.AddFailure(item.Title, item.Description, "rejected in review", cl.iteration)
+			cl.job.memory.AddFailure(item.Title, item.Description, "rejected in review", cl.job.iteration)
 		}
 	}
 
 	// Check iteration limit.
-	maxIterations := cl.config.MaxIterations
+	maxIterations := cl.job.Config.MaxIterations
 	if cl.workflow != nil && cl.workflow.Settings.MaxIterations > 0 {
 		maxIterations = cl.workflow.Settings.MaxIterations
 	}
-	if maxIterations > 0 && cl.iteration >= maxIterations {
-		cl.emitEvent(JobStateEscalating, "max iterations exceeded: "+itoa(cl.iteration))
+	if maxIterations > 0 && cl.job.iteration >= maxIterations {
+		cl.job.Escalate("max iterations exceeded: " + itoa(cl.job.iteration))
+		cl.emitEvent(JobStateEscalating, cl.job.EscalationReason())
 		return JobStateEscalating, nil
 	}
 
@@ -974,24 +1042,28 @@ func (cl *ControlLoop) handleRedelegate(ctx context.Context) (JobState, error) {
 	cl.executionPlan = nil
 	cl.currentWave = 0
 
-	cl.emitEvent(JobStateDecomposing, "re-delegating iteration "+itoa(cl.iteration))
-	cl.audit("orchestration:redelegate", "iteration="+itoa(cl.iteration))
+	cl.emitEvent(JobStateDecomposing, "re-delegating iteration "+itoa(cl.job.iteration))
+	cl.audit("orchestration:redelegate", "iteration="+itoa(cl.job.iteration))
 
 	return JobStateDecomposing, nil
 }
 
 // handleEscalate emits an escalation event with full context and transitions to failed.
 func (cl *ControlLoop) handleEscalate(ctx context.Context) (JobState, error) {
-	cl.emitEvent(JobStateFailed, "job escalated: max iterations exceeded after "+itoa(cl.iteration)+" iterations")
-	cl.audit("orchestration:job_escalated", "iterations="+itoa(cl.iteration)+" reason=max_iterations_exceeded")
+	reason := cl.job.EscalationReason()
+	if reason == "" {
+		reason = "max iterations exceeded"
+	}
+	cl.emitEvent(JobStateFailed, "job escalated: "+reason+" after "+itoa(cl.job.iteration)+" iterations")
+	cl.audit("orchestration:job_escalated", "iterations="+itoa(cl.job.iteration)+" reason="+reason)
 
 	// Clean up before failing.
 	cl.cleanupAllSessions(ctx)
 
 	return JobStateFailed, &EscalationError{
-		JobID:      cl.jobID,
-		Iterations: cl.iteration,
-		Reason:     "max iterations exceeded",
+		JobID:      cl.job.JobID,
+		Iterations: cl.job.iteration,
+		Reason:     reason,
 	}
 }
 
@@ -1007,16 +1079,8 @@ func (cl *ControlLoop) cleanupAllSessions(ctx context.Context) {
 	}
 	cl.peerDeliveryCancels = nil
 
-	for key, sessionID := range cl.workerSessions {
-		if sessionID == "" {
-			continue
-		}
-		_, err := cl.agentService.CloseSession(ctx, &CloseSessionRequest{
-			SessionID: sessionID,
-		})
-		if err != nil {
-			cl.logger.Warnf("control loop: failed to close worker session %s: %s", key, err.Error())
-		}
+	for _, sessionID := range cl.workerSessions {
+		cl.job.Close(ctx, sessionID)
 	}
 	cl.workerSessions = make(map[string]string)
 
@@ -1050,7 +1114,7 @@ func (cl *ControlLoop) resolveBackendForMode(item *WorkItem, backends []*AgentBa
 				return cl.workflow.Agents[i].Backend
 			}
 		}
-		return cl.config.LeadBackend
+		return cl.job.Config.LeadBackend
 
 	case WorkflowModeAutonomous:
 		// Autonomous mode: allow dynamic backend from work item specification.
@@ -1061,7 +1125,7 @@ func (cl *ControlLoop) resolveBackendForMode(item *WorkItem, backends []*AgentBa
 					return item.Backend
 				}
 			}
-			cl.logger.Warnf("control loop: autonomous mode requested backend %q not found, falling back", item.Backend)
+			cl.job.Logger.Warnf("control loop: autonomous mode requested backend %q not found, falling back", item.Backend)
 		}
 		return cl.resolveBackendForItem(item)
 
@@ -1102,7 +1166,7 @@ func (cl *ControlLoop) synthesizeWorkflowAgents() []*AgentRegistration {
 
 			agents = append(agents, &AgentRegistration{
 				ID:           agentID,
-				TenantID:     cl.config.TenantID,
+				TenantID:     cl.job.Config.TenantID,
 				Name:         spec.Role,
 				Backend:      spec.Backend,
 				Model:        spec.Model,
@@ -1157,10 +1221,14 @@ func (cl *ControlLoop) turnAttribution(role string) TurnAttribution {
 	if role == "" {
 		role = "worker"
 	}
-	if identity, ok := cl.agentIdentities[role]; ok && identity != nil && identity.AgentID != "" {
-		return TurnAttribution{JobID: cl.jobID, AgentID: identity.AgentID}
+	taskID := ""
+	if cl.job.Config != nil {
+		taskID = cl.job.Config.TaskID
 	}
-	return TurnAttribution{JobID: cl.jobID, AgentID: "agent-" + role + "-" + cl.jobID}
+	if identity, ok := cl.agentIdentities[role]; ok && identity != nil && identity.AgentID != "" {
+		return TurnAttribution{JobID: cl.job.JobID, TaskID: taskID, AgentID: identity.AgentID}
+	}
+	return TurnAttribution{JobID: cl.job.JobID, TaskID: taskID, AgentID: "agent-" + role + "-" + cl.job.JobID}
 }
 
 // resolveWorkerSession returns the persistent session ID for a work item,
@@ -1196,7 +1264,19 @@ func (cl *ControlLoop) resolveBackendForItem(item *WorkItem) string {
 		}
 	}
 
-	return cl.config.LeadBackend
+	return cl.job.Config.LeadBackend
+}
+
+// spawnWorkDir is the directory a session is spawned into: the one Prepare
+// returned when the workflow has hooks, else the agent spec's workspace.
+func (cl *ControlLoop) spawnWorkDir(spec *AgentRoleSpec) string {
+	if cl.job.workDir != "" {
+		return cl.job.workDir
+	}
+	if spec != nil {
+		return spec.WorkspacePath
+	}
+	return ""
 }
 
 // resolveModelForRole determines the model to use for a given role.
@@ -1222,7 +1302,7 @@ func (cl *ControlLoop) resolveModelForRole(role string) string {
 			}
 		}
 	}
-	return cl.config.LeadModel
+	return cl.job.Config.LeadModel
 }
 
 // resolveScopes returns the MCP scopes for a given role from the workflow definition.
@@ -1269,7 +1349,7 @@ func (cl *ControlLoop) backendSupportsSessions(backendName string, backends []*A
 // in job memory. Items with description containing "constraint:" prefix lines
 // have those constraints extracted.
 func (cl *ControlLoop) extractConstraints(items []*WorkItem) {
-	if cl.jobMemory == nil {
+	if cl.job.memory == nil {
 		return
 	}
 	for _, item := range items {
@@ -1279,7 +1359,7 @@ func (cl *ControlLoop) extractConstraints(items []*WorkItem) {
 			if strings.HasPrefix(strings.ToLower(trimmed), "constraint:") {
 				constraint := strings.TrimSpace(trimmed[len("constraint:"):])
 				if constraint != "" {
-					cl.jobMemory.AddConstraint(constraint)
+					cl.job.memory.AddConstraint(constraint)
 				}
 			}
 		}
@@ -1288,9 +1368,9 @@ func (cl *ControlLoop) extractConstraints(items []*WorkItem) {
 
 // collectTaskResults fetches all tasks for this job and extracts their results.
 func (cl *ControlLoop) collectTaskResults(ctx context.Context) []*TaskResult {
-	tasks, err := cl.agentService.ListTasks(ctx, cl.config.TenantID, nil)
+	tasks, err := cl.job.Agents.ListTasks(ctx, cl.job.Config.TenantID, nil)
 	if err != nil {
-		cl.logger.Warnf("control loop: failed to list tasks for validation: %s", err.Error())
+		cl.job.Logger.Warnf("control loop: failed to list tasks for validation: %s", err.Error())
 		return nil
 	}
 
@@ -1306,7 +1386,7 @@ func (cl *ControlLoop) collectTaskResults(ctx context.Context) []*TaskResult {
 
 // pollTaskCompletion checks whether all tasks have reached a terminal state.
 func (cl *ControlLoop) pollTaskCompletion(ctx context.Context) (bool, error) {
-	tasks, err := cl.agentService.ListTasks(ctx, cl.config.TenantID, nil)
+	tasks, err := cl.job.Agents.ListTasks(ctx, cl.job.Config.TenantID, nil)
 	if err != nil {
 		return false, err
 	}
@@ -1335,7 +1415,7 @@ func (cl *ControlLoop) pollTaskCompletion(ctx context.Context) (bool, error) {
 
 	done := (completed + failed) >= total
 	if done {
-		cl.logger.Debugf("control loop: tasks done: completed=%d failed=%d total=%d", completed, failed, total)
+		cl.job.Logger.Debugf("control loop: tasks done: completed=%d failed=%d total=%d", completed, failed, total)
 	}
 
 	return done, nil
@@ -1493,7 +1573,7 @@ func (cl *ControlLoop) findAgentByBackend(
 ) (agentID string, backendName string) {
 	var fallback *AgentRegistration
 	for _, agent := range agents {
-		if !agentExposesBackend(agent, backend) {
+		if !AgentServesBackend(agent, backend) {
 			continue
 		}
 		if agent.Status == AgentStatusIdle {
@@ -1507,20 +1587,6 @@ func (cl *ControlLoop) findAgentByBackend(
 		return fallback.ID, backend
 	}
 	return "", ""
-}
-
-// agentExposesBackend reports whether the agent advertises the requested
-// backend either as its primary Backend or as one of its Capabilities.
-func agentExposesBackend(agent *AgentRegistration, backend string) bool {
-	if agent.Backend == backend {
-		return true
-	}
-	for _, cap := range agent.Capabilities {
-		if cap == backend {
-			return true
-		}
-	}
-	return false
 }
 
 // findAgentWithPersistentSessions finds an agent whose backend supports persistent sessions.
@@ -1592,16 +1658,15 @@ func (cl *ControlLoop) trySpawnLeadSession(ctx context.Context) error {
 	agentSpec := cl.resolveAgentSpec("lead")
 
 	req := &SpawnSessionRequest{
-		Backend:    cl.config.LeadBackend,
-		Model:      cl.config.LeadModel,
+		Backend:    cl.job.Config.LeadBackend,
+		Model:      cl.job.Config.LeadModel,
+		JobID:      cl.job.JobID,
 		Persistent: true,
 	}
 
 	// Apply sandbox config from the workflow agent spec.
+	req.WorkDir = cl.spawnWorkDir(agentSpec)
 	if agentSpec != nil {
-		if agentSpec.WorkspacePath != "" {
-			req.WorkDir = agentSpec.WorkspacePath
-		}
 		if agentSpec.SkipPermissions {
 			req.ExtraArgs = append(req.ExtraArgs, "--dangerously-skip-permissions")
 		}
@@ -1615,9 +1680,9 @@ func (cl *ControlLoop) trySpawnLeadSession(ctx context.Context) error {
 		}
 	}
 
-	cl.audit("lead:session_spawn", "backend="+cl.config.LeadBackend+" model="+cl.config.LeadModel)
+	cl.audit("lead:session_spawn", "backend="+cl.job.Config.LeadBackend+" model="+cl.job.Config.LeadModel)
 
-	resp, spawnErr := cl.agentService.SpawnSession(ctx, req)
+	resp, spawnErr := cl.job.Spawn(ctx, req)
 	if spawnErr != nil {
 		cl.audit("lead:session_spawn_failed", "error="+spawnErr.Error())
 		return spawnErr
@@ -1633,12 +1698,7 @@ func (cl *ControlLoop) closeLeadSession(ctx context.Context) {
 	if cl.leadSessionID == "" {
 		return
 	}
-	_, err := cl.agentService.CloseSession(ctx, &CloseSessionRequest{
-		SessionID: cl.leadSessionID,
-	})
-	if err != nil {
-		cl.logger.Warnf("control loop: failed to close lead session: %s", err.Error())
-	}
+	cl.job.Close(ctx, cl.leadSessionID)
 	cl.leadSessionID = ""
 }
 
@@ -1665,12 +1725,11 @@ func (cl *ControlLoop) trySpawnReviewerSession(ctx context.Context) error {
 	req := &SpawnSessionRequest{
 		Backend:    agentSpec.Backend,
 		Model:      agentSpec.Model,
+		JobID:      cl.job.JobID,
 		Persistent: true,
 	}
 
-	if agentSpec.WorkspacePath != "" {
-		req.WorkDir = agentSpec.WorkspacePath
-	}
+	req.WorkDir = cl.spawnWorkDir(agentSpec)
 	if agentSpec.SkipPermissions {
 		req.ExtraArgs = append(req.ExtraArgs, "--dangerously-skip-permissions")
 	}
@@ -1685,7 +1744,7 @@ func (cl *ControlLoop) trySpawnReviewerSession(ctx context.Context) error {
 
 	cl.audit("reviewer:session_spawn", "backend="+agentSpec.Backend+" model="+agentSpec.Model)
 
-	resp, spawnErr := cl.agentService.SpawnSession(ctx, req)
+	resp, spawnErr := cl.job.Spawn(ctx, req)
 	if spawnErr != nil {
 		cl.audit("reviewer:session_spawn_failed", "error="+spawnErr.Error())
 		return spawnErr
@@ -1701,82 +1760,58 @@ func (cl *ControlLoop) closeReviewerSession(ctx context.Context) {
 	if cl.reviewerSessionID == "" {
 		return
 	}
-	_, err := cl.agentService.CloseSession(ctx, &CloseSessionRequest{
-		SessionID: cl.reviewerSessionID,
-	})
-	if err != nil {
-		cl.logger.Warnf("control loop: failed to close reviewer session: %s", err.Error())
-	}
+	cl.job.Close(ctx, cl.reviewerSessionID)
 	cl.reviewerSessionID = ""
 }
 
-// emitEvent sends a job event to the events channel.
-// Events are dropped if the channel buffer is full.
+// emitEvent announces a transition of the loop's state on the run's event
+// stream.
 func (cl *ControlLoop) emitEvent(state JobState, message string) {
-	event := JobEvent{
-		JobID:     cl.jobID,
-		State:     state,
-		Message:   message,
-		Iteration: cl.iteration,
-		Timestamp: time.Now().UnixNano(),
-	}
-	select {
-	case cl.events <- event:
-	default:
-		cl.logger.Warnf("control loop: event channel full, dropping event: %s", message)
-	}
+	cl.job.Emit(state, message)
 }
 
-// updateStatus atomically updates the current job status.
-// Recoverable state (work items, config, memory, workflow name) is included
-// so that persisted status contains enough context to resume after restart.
+// updateStatus writes the loop's status snapshot for state through the run,
+// which decorates it with the loop's recoverable state and persists it.
+// The state machine itself moves through JobRun.SetState; this is the write
+// without the lifecycle moment, for the places that record a status the loop
+// is not entering.
 func (cl *ControlLoop) updateStatus(state JobState) {
-	status := &JobStatus{
-		JobID:        cl.jobID,
-		State:        state,
-		Iteration:    cl.iteration,
-		TaskCount:    len(cl.taskIDs),
-		Description:  cl.config.Description,
-		StartedAt:    cl.statusStartedAt(),
-		UpdatedAt:    time.Now().UnixNano(),
-		Events:       cl.auditEventsCopy(),
-		WorkItems:    cl.workItems,
-		Config:       cl.config,
-		Memory:       cl.jobMemory,
-		WorkflowName: cl.workflowName(),
-	}
-	cl.status.Store(status)
-
-	// Persist to durable storage if configured (best-effort).
-	if cl.persistFn != nil {
-		cl.persistFn(status)
-	}
+	cl.job.snapshot(state)
 }
 
-// statusStartedAt returns the started timestamp from the current status,
-// or the current time if no status exists yet.
-func (cl *ControlLoop) statusStartedAt() int64 {
-	current := cl.Status()
-	if current != nil {
-		return current.StartedAt
+// sessionIDs lists every session the loop currently holds — the lead, the
+// reviewer and each worker role — in a stable order: lead first, reviewer
+// second, then workers by role name. Roles are sorted so two status snapshots
+// of the same sessions serialize identically.
+func (cl *ControlLoop) sessionIDs() []string {
+	ids := make([]string, 0, 2+len(cl.workerSessions))
+	if cl.leadSessionID != "" {
+		ids = append(ids, cl.leadSessionID)
 	}
-	return time.Now().UnixNano()
+	if cl.reviewerSessionID != "" {
+		ids = append(ids, cl.reviewerSessionID)
+	}
+	roles := make([]string, 0, len(cl.workerSessions))
+	for role := range cl.workerSessions {
+		roles = append(roles, role)
+	}
+	sort.Strings(roles)
+	for _, role := range roles {
+		if id := cl.workerSessions[role]; id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return ids
 }
 
 // audit records an event in the complete audit trail and calls the audit
 // function if configured. Events are always captured regardless of whether
 // an audit callback is set.
 func (cl *ControlLoop) audit(eventType, details string) {
-	cl.auditMu.Lock()
-	cl.auditEvents = append(cl.auditEvents, JobAuditEvent{
-		Timestamp: time.Now().UnixNano(),
-		Type:      eventType,
-		Details:   details,
-	})
-	cl.auditMu.Unlock()
-	if cl.auditFn != nil {
-		cl.auditFn(eventType, details)
-	}
+	cl.job.Audit(eventType, details)
 }
 
 // sessionEventSummaryMax caps the audit-trail rendering of a session event's
@@ -1823,24 +1858,14 @@ func sessionEventSummary(ev *SessionEvent) string {
 	return detail
 }
 
-// auditEventsCopy returns a snapshot of the audit trail under the audit mutex.
-// The returned slice is safe to read without holding the lock.
-func (cl *ControlLoop) auditEventsCopy() []JobAuditEvent {
-	cl.auditMu.Lock()
-	cp := make([]JobAuditEvent, len(cl.auditEvents))
-	copy(cp, cl.auditEvents)
-	cl.auditMu.Unlock()
-	return cp
-}
-
 // workflowName returns the workflow name if a workflow is set, or the
 // config's WorkflowName field as a fallback. Returns empty if neither is set.
 func (cl *ControlLoop) workflowName() string {
 	if cl.workflow != nil && cl.workflow.Name != "" {
 		return cl.workflow.Name
 	}
-	if cl.config != nil {
-		return cl.config.WorkflowName
+	if cl.job.Config != nil {
+		return cl.job.Config.WorkflowName
 	}
 	return ""
 }
@@ -1882,70 +1907,70 @@ func resolveResumeState(interrupted JobState) JobState {
 // Prompt Builders
 // =============================================================================
 
-// buildReviewPrompt constructs a review prompt containing all task results.
+// buildReviewPrompt assembles the review prompt from the workflow set: the
+// job's goal, then one block per task.
 func buildReviewPrompt(description string, tasks []*Task) string {
-	var sb strings.Builder
-	sb.WriteString("The following tasks were completed for: ")
-	sb.WriteString(description)
-	sb.WriteString("\n\n")
-
+	var tasksText strings.Builder
 	for i, task := range tasks {
-		sb.WriteString("Task ")
-		sb.WriteString(itoa(i + 1))
-		sb.WriteString(": ")
-		sb.WriteString(task.Subject)
-		sb.WriteString("\nStatus: ")
-		sb.WriteString(string(task.Status))
-		sb.WriteString("\n")
+		tasksText.WriteString(workflowPrompts.MustRender("reviewer_prompt_task", prompts.Vars{
+			"index":   itoa(i + 1),
+			"subject": task.Subject,
+			"status":  string(task.Status),
+		}))
+		tasksText.WriteString("\n")
 		if task.Result != nil && task.Result.Output != "" {
-			sb.WriteString("Result: ")
-			sb.WriteString(task.Result.Output)
-			sb.WriteString("\n")
+			tasksText.WriteString(workflowPrompts.MustRender("reviewer_prompt_result", prompts.Vars{
+				"output": task.Result.Output,
+			}))
+			tasksText.WriteString("\n")
 		}
-		sb.WriteString("\n")
+		tasksText.WriteString("\n")
 	}
-
-	sb.WriteString("Do the results meet the original requirements?\n")
-	sb.WriteString("Respond with JSON: {\"approved\": true/false, \"feedback\": \"...\", \"new_work_items\": [...]}")
-
-	return sb.String()
+	return workflowPrompts.MustRender("reviewer_prompt", prompts.Vars{
+		"description": description,
+		"tasks":       tasksText.String(),
+	})
 }
 
-// buildWorkerPrompt constructs a prompt for a worker session from a work item.
-// The prompt explicitly instructs the agent to use its tools (Write, Bash, Edit)
-// to create actual files rather than just describing code in text responses.
-// The workspacePath tells the agent where to write files (absolute path).
+// reviewerSystemPrompt is the reviewer session's standing instructions.
+func reviewerSystemPrompt() string {
+	return workflowPrompts.MustRender("reviewer_system", nil)
+}
+
+// buildWorkerPrompt assembles the instruction one work item is handed to a
+// worker session. The clauses that appear only sometimes — the workspace, the
+// description, the project, the backend's tool guidance — are prompts of
+// their own, spliced in where they belong and empty where they do not.
 func buildWorkerPrompt(item *WorkItem, workspacePath, toolGuidance string) string {
-	var sb strings.Builder
-	sb.WriteString("Execute the following task by using your tools to create and modify files.\n\n")
-	sb.WriteString("IMPORTANT: Do NOT just describe code in your response. Use the Write tool to create files, ")
-	sb.WriteString("the Bash tool to run commands, and the Edit tool to modify existing files. ")
-	sb.WriteString("Actually create the files on disk.\n\n")
+	workspace := ""
 	if workspacePath != "" {
-		sb.WriteString("Workspace directory: ")
-		sb.WriteString(workspacePath)
-		sb.WriteString("\nAll files MUST be written using absolute paths under this directory.\n\n")
+		workspace = workflowPrompts.MustRender("worker_workspace", prompts.Vars{
+			"workspace_path": workspacePath,
+		}) + "\n\n"
 	}
-	sb.WriteString("Title: ")
-	sb.WriteString(item.Title)
-	sb.WriteString("\n")
+	description := ""
 	if item.Description != "" {
-		sb.WriteString("Description: ")
-		sb.WriteString(item.Description)
-		sb.WriteString("\n")
+		description = workflowPrompts.MustRender("worker_description", prompts.Vars{
+			"description": item.Description,
+		}) + "\n"
 	}
+	project := ""
 	if item.ProjectID != "" {
-		sb.WriteString("Project: ")
-		sb.WriteString(item.ProjectID)
-		sb.WriteString("\n")
+		project = workflowPrompts.MustRender("worker_project", prompts.Vars{
+			"project_id": item.ProjectID,
+		}) + "\n"
 	}
-	sb.WriteString("\nCreate all necessary files using the Write tool. Run any setup commands using the Bash tool. ")
-	sb.WriteString("Verify your work compiles/runs by using the Bash tool.")
+	guidance := ""
 	if toolGuidance != "" {
-		sb.WriteString("\n\n")
-		sb.WriteString(toolGuidance)
+		guidance = "\n\n" + toolGuidance
 	}
-	return sb.String()
+	return workflowPrompts.MustRender("worker_prompt", prompts.Vars{
+		"workspace":     workspace,
+		"title":         item.Title,
+		"description":   description,
+		"project":       project,
+		"tool_guidance": guidance,
+	})
 }
 
 // buildCapabilitiesContext constructs a context string describing available
@@ -1956,16 +1981,18 @@ func buildCapabilitiesContext(wf *WorkflowDefinition) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("## Available Agent Capabilities\n")
+	sb.WriteString(workflowPrompts.MustRender("capabilities_context", nil))
+	sb.WriteString("\n")
 	for _, agent := range wf.Agents {
-		sb.WriteString("- Role: ")
-		sb.WriteString(agent.Role)
-		sb.WriteString(", Backend: ")
-		sb.WriteString(agent.Backend)
+		capabilities := ""
 		if len(agent.Capabilities) > 0 {
-			sb.WriteString(", Capabilities: ")
-			sb.WriteString(strings.Join(agent.Capabilities, ", "))
+			capabilities = ", Capabilities: " + strings.Join(agent.Capabilities, ", ")
 		}
+		sb.WriteString(workflowPrompts.MustRender("capabilities_agent", prompts.Vars{
+			"role":         agent.Role,
+			"backend":      agent.Backend,
+			"capabilities": capabilities,
+		}))
 		sb.WriteString("\n")
 	}
 	return sb.String()
@@ -1974,24 +2001,27 @@ func buildCapabilitiesContext(wf *WorkflowDefinition) string {
 // buildValidationSummary constructs a summary of validation results for the review prompt.
 func buildValidationSummary(results []ValidationResult) string {
 	var sb strings.Builder
-	sb.WriteString("## Validation Results\n")
+	sb.WriteString(workflowPrompts.MustRender("validation_summary", nil))
+	sb.WriteString("\n")
 	for _, r := range results {
-		sb.WriteString("- ")
-		sb.WriteString(r.Name)
-		sb.WriteString(": ")
-		if r.Passed {
-			sb.WriteString("PASSED")
-		} else {
-			sb.WriteString("FAILED")
-		}
+		message := ""
 		if r.Message != "" {
-			sb.WriteString(" - ")
-			sb.WriteString(r.Message)
+			message = " - " + r.Message
 		}
+		sb.WriteString(workflowPrompts.MustRender("validation_summary_row", prompts.Vars{
+			"name":    r.Name,
+			"verdict": validationVerdicts[r.Passed],
+			"message": message,
+		}))
 		sb.WriteString("\n")
 	}
 	return sb.String()
 }
+
+// validationVerdicts is the word each verdict is written with. It is
+// vocabulary the summary's reader matches on, not prose, so it stays here
+// rather than becoming an editable prompt.
+var validationVerdicts = map[bool]string{true: "PASSED", false: "FAILED"}
 
 // =============================================================================
 // Response Parsing Helpers

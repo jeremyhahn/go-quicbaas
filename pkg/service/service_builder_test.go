@@ -159,18 +159,6 @@ func TestServiceBuilder_Build_InvalidTypes(t *testing.T) {
 			wantErrMsg: "cache manager must be interfaces.CacheManager",
 		},
 		{
-			name: "invalid auth manager type",
-			setupFn: func() *serviceBuilder {
-				return &serviceBuilder{
-					raftNode:    &mockRaftNode{},
-					authManager: "invalid type", // Wrong type
-					config:      &ServiceConfig{NodeID: 1},
-					logger:      createTestLogger(t),
-				}
-			},
-			wantErrMsg: "auth manager must be interfaces.AuthManager",
-		},
-		{
 			name: "invalid backup manager type",
 			setupFn: func() *serviceBuilder {
 				return &serviceBuilder{
@@ -341,7 +329,6 @@ func TestServiceBuilder_Build_MinimalConfig(t *testing.T) {
 	// Verify optional components can be nil
 	assert.Nil(t, impl.storage)
 	assert.Nil(t, impl.cacheManager)
-	assert.Nil(t, impl.authManager)
 	assert.Nil(t, impl.backupMgr)
 	assert.Nil(t, impl.logger)
 

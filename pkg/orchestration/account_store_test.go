@@ -234,3 +234,159 @@ func TestAccountStore_Touch_UpdatesBookkeeping(t *testing.T) {
 		t.Fatalf("Touch(recover) result = %+v, want status=active last_error=\"\"", got)
 	}
 }
+
+// scopeDefaultPointer reads a scope's default pointer directly, bypassing the
+// derivation an Account read would do — the assertions below are about the
+// pointer itself, and reading it through Account.Default would only report
+// what some account happens to derive from it.
+func scopeDefaultPointer(t *testing.T, store AccountStore, tenantID string, provider AccountProvider, projectID string) string {
+	t.Helper()
+	s, ok := store.(*accountStore)
+	if !ok {
+		t.Fatalf("store is %T, want *accountStore", store)
+	}
+	defaultKey, err := accountDefaultKey(tenantID, provider, projectID)
+	if err != nil {
+		t.Fatalf("accountDefaultKey() error = %v", err)
+	}
+	holderID, err := s.currentDefaultID(context.Background(), defaultKey)
+	if err != nil {
+		t.Fatalf("currentDefaultID() error = %v", err)
+	}
+	return holderID
+}
+
+// TestAccountStore_FailedCreateReleasesTheScopeItClaimed is the regression test
+// for #249: a create that wins a vacant scope's election and then fails to
+// write its record must leave the scope as it found it — vacant.
+//
+// THE FAILURE IS DURABLE, NOT TRANSIENT, which is why it is worth a test of its
+// own. electDefaultLocked only heals a pointer whose holder has NO record
+// (defaultHolderMissing), and this pointer names an account whose record exists
+// in a DIFFERENT scope — a state the store deliberately refuses to heal,
+// because it cannot distinguish it from a move in flight. So nothing the store
+// does later recovers the scope; every subsequent create there reports
+// Default=false and selection finds no default at all.
+func TestAccountStore_FailedCreateReleasesTheScopeItClaimed(t *testing.T) {
+	ctx := context.Background()
+
+	// The duplicate ID is the lever: it fails the RECORD write while leaving
+	// the election — which is keyed by scope, not by account ID — free to win.
+	const dupID = "acct-x"
+
+	t.Run("a lost create does not hold the scope", func(t *testing.T) {
+		store := NewInMemoryAccountStore()
+
+		claude := newTestAccount("tenant-a", dupID, AccountProviderClaude)
+		if err := store.Create(ctx, claude); err != nil {
+			t.Fatalf("Create(claude) error = %v", err)
+		}
+
+		// Same ID, different provider: the codex scope is vacant, so the
+		// election wins, and the record write then fails on the taken ID.
+		codex := newTestAccount("tenant-a", dupID, AccountProviderCodex)
+		err := store.Create(ctx, codex)
+		if err == nil {
+			t.Fatal("Create(codex) succeeded; the duplicate ID must fail the record write")
+		}
+		var invalid *AccountInvalidError
+		if !errors.As(err, &invalid) {
+			t.Fatalf("Create(codex) error = %v (%T), want *AccountInvalidError", err, err)
+		}
+
+		if holder := scopeDefaultPointer(t, store, "tenant-a", AccountProviderCodex, ""); holder != "" {
+			t.Fatalf("codex scope default pointer = %q after a FAILED create, want it released", holder)
+		}
+	})
+
+	t.Run("the next create still gets the scope", func(t *testing.T) {
+		store := NewInMemoryAccountStore()
+
+		if err := store.Create(ctx, newTestAccount("tenant-a", dupID, AccountProviderClaude)); err != nil {
+			t.Fatalf("Create(claude) error = %v", err)
+		}
+		if err := store.Create(ctx, newTestAccount("tenant-a", dupID, AccountProviderCodex)); err == nil {
+			t.Fatal("Create(codex) succeeded; the duplicate ID must fail the record write")
+		}
+
+		// The consequence a caller actually sees: the only account in the scope
+		// must be its default.
+		good := newTestAccount("tenant-a", "acct-good", AccountProviderCodex)
+		if err := store.Create(ctx, good); err != nil {
+			t.Fatalf("Create(good) error = %v", err)
+		}
+		if !good.Default {
+			t.Errorf("Create(good).Default = false; the only account in the scope must be its default")
+		}
+
+		reread, err := store.Get(ctx, "tenant-a", "acct-good")
+		if err != nil {
+			t.Fatalf("Get(acct-good) error = %v", err)
+		}
+		if !reread.Default {
+			t.Errorf("Get(acct-good).Default = false; a re-read must agree that it owns the scope")
+		}
+		if holder := scopeDefaultPointer(t, store, "tenant-a", AccountProviderCodex, ""); holder != "acct-good" {
+			t.Errorf("codex scope default pointer = %q, want acct-good", holder)
+		}
+	})
+
+	// The two subtests above fail on !stored, the path the issue reproduced. This
+	// one fails on a STORE ERROR from the same write, because the release is a
+	// defer covering every exit and that claim is only worth as much as a second
+	// exit proves.
+	t.Run("a store error on the record write releases too", func(t *testing.T) {
+		kv := newProjectFailingKV(NewMemoryTaskKV(), projectVerbPut, accountKeyspace)
+		store := NewAccountStore(kv)
+
+		account := newTestAccount("tenant-a", "acct-doomed", AccountProviderCodex)
+		if err := store.Create(ctx, account); err == nil {
+			t.Fatal("Create() succeeded; the injected record-write failure must fail it")
+		}
+
+		if holder := scopeDefaultPointer(t, store, "tenant-a", AccountProviderCodex, ""); holder != "" {
+			t.Fatalf("codex scope default pointer = %q after a failed record write, want it released", holder)
+		}
+	})
+
+	// A release that cannot run must not swallow the reason the create failed.
+	t.Run("a failed release is reported alongside the original error", func(t *testing.T) {
+		kv := newProjectFailingKV(NewMemoryTaskKV(), projectVerbDelete, accountDefaultKeyspace)
+		store := NewAccountStore(kv)
+
+		if err := store.Create(ctx, newTestAccount("tenant-a", dupID, AccountProviderClaude)); err != nil {
+			t.Fatalf("Create(claude) error = %v", err)
+		}
+		err := store.Create(ctx, newTestAccount("tenant-a", dupID, AccountProviderCodex))
+		if err == nil {
+			t.Fatal("Create(codex) succeeded; the duplicate ID must fail the record write")
+		}
+
+		var invalid *AccountInvalidError
+		if !errors.As(err, &invalid) {
+			t.Errorf("errors.As(*AccountInvalidError) = false for %v; the caller must still see why its create failed", err)
+		}
+		var storeErr *AccountStoreError
+		if !errors.As(err, &storeErr) {
+			t.Errorf("errors.As(*AccountStoreError) = false for %v; a release that could not run must be reported", err)
+		}
+	})
+
+	t.Run("a create that LOST the election releases nothing", func(t *testing.T) {
+		store := NewInMemoryAccountStore()
+
+		if err := store.Create(ctx, newTestAccount("tenant-a", "acct-first", AccountProviderClaude)); err != nil {
+			t.Fatalf("Create(first) error = %v", err)
+		}
+		// Same scope as acct-first, and an ID already taken in it: the election
+		// LOSES (the scope is held), and the record write fails. The release
+		// must not touch a pointer this call never claimed.
+		if err := store.Create(ctx, newTestAccount("tenant-a", "acct-first", AccountProviderClaude)); err == nil {
+			t.Fatal("Create(duplicate) succeeded; the duplicate ID must fail the record write")
+		}
+
+		if holder := scopeDefaultPointer(t, store, "tenant-a", AccountProviderClaude, ""); holder != "acct-first" {
+			t.Fatalf("claude scope default pointer = %q, want acct-first; a losing create must not release the holder's pointer", holder)
+		}
+	})
+}

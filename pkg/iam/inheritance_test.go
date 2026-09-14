@@ -453,7 +453,7 @@ func TestEffectiveUserGroups(t *testing.T) {
 
 	// Create user in backend group
 	user := &User{
-		ID:       "user1",
+		ID:       "11",
 		Email:    "user1@test.com",
 		Name:     "User 1",
 		TenantID: tenantID,
@@ -464,7 +464,7 @@ func TestEffectiveUserGroups(t *testing.T) {
 	require.NoError(t, storage.CreateUser(ctx, user))
 
 	// Get effective groups
-	groups, err := manager.GetEffectiveUserGroups(ctx, tenantID, "user1")
+	groups, err := manager.GetEffectiveUserGroups(ctx, tenantID, "11")
 	assert.NoError(t, err)
 
 	// User should be in all three groups
@@ -503,7 +503,7 @@ func TestEffectiveUserPermissions(t *testing.T) {
 
 	// Create user with editor role
 	user := &User{
-		ID:       "user1",
+		ID:       "11",
 		Email:    "user1@test.com",
 		Name:     "User 1",
 		TenantID: tenantID,
@@ -514,7 +514,7 @@ func TestEffectiveUserPermissions(t *testing.T) {
 	require.NoError(t, storage.CreateUser(ctx, user))
 
 	// Get effective permissions
-	effective, err := manager.GetEffectiveUserPermissions(ctx, tenantID, "user1")
+	effective, err := manager.GetEffectiveUserPermissions(ctx, tenantID, "11")
 	assert.NoError(t, err)
 
 	// User should have both read and write permissions
@@ -1279,8 +1279,8 @@ func TestMemoryStorage_DeleteTenant_WithCascade(t *testing.T) {
 	}
 
 	// Create users with emails
-	user1 := &User{ID: "user-1", TenantID: tenantID, Email: "user1@test.com", Name: "User 1"}
-	user2 := &User{ID: "user-2", TenantID: tenantID, Email: "user2@test.com", Name: "User 2"}
+	user1 := &User{ID: "21", TenantID: tenantID, Email: "user1@test.com", Name: "User 1"}
+	user2 := &User{ID: "22", TenantID: tenantID, Email: "user2@test.com", Name: "User 2"}
 	if err := storage.CreateUser(ctx, user1); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
@@ -1318,7 +1318,7 @@ func TestMemoryStorage_DeleteTenant_WithCascade(t *testing.T) {
 	}
 
 	// Verify cascade deletion
-	_, err = storage.GetUser(ctx, tenantID, "user-1")
+	_, err = storage.GetUser(ctx, tenantID, "21")
 	if err == nil {
 		t.Error("user should be deleted after tenant deletion")
 	}

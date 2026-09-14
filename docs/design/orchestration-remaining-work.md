@@ -34,3 +34,18 @@ These failures exist independently of the orchestrator work:
 - `TestIAMAdminImpersonateList/rest` - same
 - `TestSchedulerJobLifecycle` - scheduler job lifecycle bug
 - `TestSchedulerJobHistory` - scheduler history bug
+
+## Related designs
+
+- [prompt-sets.md](prompt-sets.md) — the approved design for making the
+  Software Factory's prompts editable, versioned, per-tenant and per-project
+  data instead of Go constants, and for consolidating the feature into one
+  docs folder (`docs/software-factory/`, shipped) and one package tree
+  (`pkg/orchestration/{sdlc,agent,prompts}`, pending). It supersedes nothing
+  here; it is the next slice of the same area.
+
+## Related design
+
+The autonomous control loop — what already exists (two cross-project sweepers, priority,
+per-project quota, head pinning, webhook ingress, session park/resume) and the nine things
+that do not — is specified in [autonomous-control-loop.md](autonomous-control-loop.md).

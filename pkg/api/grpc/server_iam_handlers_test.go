@@ -197,6 +197,14 @@ func (m *mockIAMService) RevokeRole(ctx context.Context, tenantID, userID, role 
 	return m.Called(ctx, tenantID, userID, role).Error(0)
 }
 
+func (m *mockIAMService) ReconcileBuiltInRoles(ctx context.Context, tenantID string) (*iam.RoleReconcileReport, error) {
+	args := m.Called(ctx, tenantID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*iam.RoleReconcileReport), args.Error(1)
+}
+
 func (m *mockIAMService) RegisterApp(ctx context.Context, app *iam.Application) (*iam.Application, error) {
 	args := m.Called(ctx, app)
 	if args.Get(0) == nil {
@@ -1137,6 +1145,70 @@ func TestIAMServer_RevokeRole_MissingFields(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestIAMServer_ReconcileRoles_Success(t *testing.T) {
+	srv, svc := newTestIAMServer(t)
+
+	svc.On("ReconcileBuiltInRoles", mock.Anything, "t1").
+		Return(&iam.RoleReconcileReport{
+			TenantID: "t1",
+			Roles: []iam.RoleReconcileResult{
+				{RoleID: "r-admin", Name: "admin", Added: []string{"roles:reconcile"}},
+				{RoleID: "r-operator", Name: "operator", Created: true, Added: []string{"kv:get"}, Removed: []string{"kv:legacy"}},
+			},
+		}, nil)
+
+	resp, err := srv.ReconcileRoles(context.Background(), &iampb.ReconcileRolesRequest{TenantId: "t1"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "t1", resp.TenantId)
+	assert.True(t, resp.Changed)
+	require.Len(t, resp.Roles, 2)
+	assert.Equal(t, "admin", resp.Roles[0].Name)
+	assert.Equal(t, []string{"roles:reconcile"}, resp.Roles[0].Added)
+	assert.True(t, resp.Roles[1].Created)
+	assert.Equal(t, []string{"kv:legacy"}, resp.Roles[1].Removed)
+	svc.AssertExpectations(t)
+}
+
+// TestIAMServer_ReconcileRoles_NoDrift pins the idempotent answer: a tenant
+// already agreeing with the build reports no roles and changed=false, which is
+// a success, not an error.
+func TestIAMServer_ReconcileRoles_NoDrift(t *testing.T) {
+	srv, svc := newTestIAMServer(t)
+
+	svc.On("ReconcileBuiltInRoles", mock.Anything, "t1").
+		Return(&iam.RoleReconcileReport{TenantID: "t1"}, nil)
+
+	resp, err := srv.ReconcileRoles(context.Background(), &iampb.ReconcileRolesRequest{TenantId: "t1"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "t1", resp.TenantId)
+	assert.False(t, resp.Changed)
+	assert.Empty(t, resp.Roles)
+	svc.AssertExpectations(t)
+}
+
+func TestIAMServer_ReconcileRoles_MissingTenantID(t *testing.T) {
+	srv, _ := newTestIAMServer(t)
+
+	_, err := srv.ReconcileRoles(context.Background(), &iampb.ReconcileRolesRequest{})
+
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestIAMServer_ReconcileRoles_ServiceError(t *testing.T) {
+	srv, svc := newTestIAMServer(t)
+
+	svc.On("ReconcileBuiltInRoles", mock.Anything, "t1").
+		Return(nil, stderrors.New("role storage cannot reconcile built-ins"))
+
+	_, err := srv.ReconcileRoles(context.Background(), &iampb.ReconcileRolesRequest{TenantId: "t1"})
+
+	require.Error(t, err)
+	svc.AssertExpectations(t)
+}
+
 // =============================================================================
 // Application Operations
 // =============================================================================
@@ -1684,8 +1756,10 @@ func TestIAMServer_StartImpersonation_Success(t *testing.T) {
 	svc.On("StartImpersonation", mock.Anything, mock.AnythingOfType("*iam.StartImpersonationOptions")).
 		Return(&iam.ImpersonationSession{ID: "s1", AdminUserID: "admin1", TargetUserID: "u1"}, nil)
 
+	// The request carries no admin_user_id — the actor is the
+	// authenticated caller, resolved server-side (go-quicbaas#383).
 	resp, err := srv.StartImpersonation(context.Background(), &iampb.StartImpersonationRequest{
-		AdminUserId: "admin1", TargetUserId: "u1", TenantId: "t1", Reason: "support",
+		TargetUserId: "u1", TenantId: "t1", Reason: "support",
 	})
 
 	require.NoError(t, err)
@@ -1697,23 +1771,21 @@ func TestIAMServer_StartImpersonation_MissingFields(t *testing.T) {
 	srv, _ := newTestIAMServer(t)
 	ctx := context.Background()
 
+	// Missing target_user_id.
 	_, err := srv.StartImpersonation(ctx, &iampb.StartImpersonationRequest{
-		TargetUserId: "u1", TenantId: "t1", Reason: "x",
+		TenantId: "t1", Reason: "x",
 	})
 	require.Error(t, err)
 
+	// Missing tenant_id.
 	_, err = srv.StartImpersonation(ctx, &iampb.StartImpersonationRequest{
-		AdminUserId: "a", TenantId: "t1", Reason: "x",
+		TargetUserId: "u1", Reason: "x",
 	})
 	require.Error(t, err)
 
+	// Missing reason.
 	_, err = srv.StartImpersonation(ctx, &iampb.StartImpersonationRequest{
-		AdminUserId: "a", TargetUserId: "u1", Reason: "x",
-	})
-	require.Error(t, err)
-
-	_, err = srv.StartImpersonation(ctx, &iampb.StartImpersonationRequest{
-		AdminUserId: "a", TargetUserId: "u1", TenantId: "t1",
+		TargetUserId: "u1", TenantId: "t1",
 	})
 	require.Error(t, err)
 }

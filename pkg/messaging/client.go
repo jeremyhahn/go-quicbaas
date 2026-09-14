@@ -485,9 +485,16 @@ func (c *WebSocketClient) Subscribe(channel string) error {
 	c.channels[channel] = true
 	c.mu.Unlock()
 
-	// Register with hub if available
+	// Register with hub if available.
+	//
+	// RegisterAndSubscribe rather than SubscribeToChannel for the same reason
+	// PushService.Subscribe uses it (#339): Start queues this client's
+	// registration asynchronously, so a subscribe issued before the hub has
+	// drained it is answered "client not registered". The window here is wide
+	// — Start and a user's subscribe are usually far apart — which is why this
+	// never bit, not why it was safe.
 	if c.hub != nil && c.hubClient != nil {
-		if err := c.hub.SubscribeToChannel(c.hubClient, channel); err != nil {
+		if err := c.hub.RegisterAndSubscribe(c.hubClient, channel); err != nil {
 			c.logger.WithError(err).WithField("channel", channel).Debug("error subscribing to channel")
 			// Don't return error - local subscription succeeded
 		}

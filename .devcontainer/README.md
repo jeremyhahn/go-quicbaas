@@ -246,7 +246,7 @@ Development mode has security features disabled for convenience:
 - No FIPS mode
 - Local authentication only
 
-For production configuration, see `/home/jhahn/sources/go-quicbaas/.quicbaas.example.yaml`.
+For production configuration, see `.quicbaas.example.yaml` in the repository root.
 
 ## Additional Resources
 

@@ -15,11 +15,7 @@ package server
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -64,11 +60,6 @@ type iamComponents struct {
 	sessionManager    iam.SessionManager
 	inviteStore       iam.InviteStore
 	pivActivator      *iam.PIVActivator
-
-	// qrdbUserIDs correlates the broker's external string user id with qrdb's
-	// numeric user id. Certificate factor enrollment binds to the numeric id
-	// because that is the id go-qrdb's LoginResolver resolves principals from.
-	qrdbUserIDs iam.QRDBUserIDResolver
 
 	// certLoginFactors enrolls the mtls auth factor that makes an admin
 	// certificate binding resolvable by the unified login ceremony. Without it
@@ -178,15 +169,6 @@ func (c *iamComponents) GetSessionManager() iam.SessionManager {
 	return c.sessionManager
 }
 
-// GetAuthManager returns the authentication manager for password-based login.
-// Returns nil if password authentication is not configured.
-func (c *iamComponents) GetAuthManager() service.AuthManagerInterface {
-	// The in-memory auth manager is never wired into iamComponents; live token
-	// operations flow through the qrdb/iam layer. Returns nil so callers fall
-	// back to that path.
-	return nil
-}
-
 // GetInviteStore returns the invite token store.
 func (c *iamComponents) GetInviteStore() iam.InviteStore {
 	return c.inviteStore
@@ -197,13 +179,6 @@ func (c *iamComponents) GetInviteStore() iam.InviteStore {
 // CA file).
 func (c *iamComponents) GetPIVActivator() *iam.PIVActivator {
 	return c.pivActivator
-}
-
-// GetInternalAuthManager returns the interfaces.AuthManager for internal service
-// use. The in-memory auth manager is never wired into iamComponents (live token
-// operations flow through the qrdb/iam layer), so this returns nil.
-func (c *iamComponents) GetInternalAuthManager() interfaces.AuthManager {
-	return nil
 }
 
 // initializeIAMComponents creates and initializes all IAM components.
@@ -285,6 +260,10 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// Create the persistent IAM storage. The store satisfies TenantStorage,
 	// UserStorage, GroupStorage, RoleStorage, PolicyStorage, AppStorage, and
 	// TokenStorage so every IAM mutation survives daemon restarts.
+	// The logger is wired so a pre-KDF client secret announces itself: the
+	// refusal is collapsed into an opaque invalid_client before it reaches the
+	// caller, so without this an upgrade over legacy records would look like a
+	// broken token endpoint rather than a rotation the operator has to perform.
 	backendStorage := newIAMBackendStorage(iamKV, s.logger)
 
 	// Create tenant manager backed by the persistent IAM storage
@@ -335,16 +314,14 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	}
 	qrdbUserStorage := qrdbadapter.NewQRDBUserStorage(
 		newPlatformUserServicerResolver(s),
-		iam.NewBackendBrokerProfileStore(iamKV),
-		qrdbadapter.NewBackendIDMap(iamKV),
 		iamKV,
 	)
 	var userStorage iam.UserStorage = qrdbUserStorage
 
 	// Wire the routed user store into the tenant manager (built above, before
 	// userStorage existed) so DeleteTenant deprovisions the tenant's users
-	// through the qrdb-backed store — purging broker profile + IDMap +
-	// email/legacy-PIV index records the legacy BackendStorage cascade misses.
+	// through the qrdb-backed store — purging the qrdb records and the
+	// legacy-PIV index entries the legacy BackendStorage cascade misses.
 	tenantManager.SetUserStorage(userStorage)
 
 	// Create identity store with storage backends
@@ -353,7 +330,15 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		GroupStorage: backendStorage,
 		RoleStorage:  roleStorage,
 		Tenants:      tenantManager,
+		Logger:       slog.Default(),
 	})
+
+	// Seed every new tenant's built-in roles through the SAME adapter
+	// qrdbfirstboot.Initialize seeds the system tenant's roles through, so a
+	// tenant created at runtime carries the identical role set — same names,
+	// same deterministic IDs, same live permission projection. Without this a
+	// fresh tenant has zero roles and cannot hold a user at all (#269).
+	tenantManager.SetRoleSeeder(qrdbadapter.WrapRole(identityStore))
 
 	// Create policy cache and engine
 	policyCache := iam.NewPolicyCache(&iam.CacheConfig{
@@ -504,17 +489,82 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 			if derErr != nil && s.config.IAM.WebAuthn.RPID == "" && len(s.config.IAM.WebAuthn.RPOrigins) == 0 {
 				return nil, &IAMComponentInitError{Component: "WebAuthn relying-party defaults", Cause: derErr}
 			}
+			// Resolve operator config against those defaults and validate the
+			// RESULT. Fail closed on the same terms as the derivation error
+			// above: a relying party missing an RP ID or an origin accepts no
+			// ceremony, and a node that boots with one presents a WebAuthn
+			// surface that silently rejects every registration.
+			// The relying party may create an account for an unknown email
+			// only when the operator has switched self-service registration
+			// on: that is the surface that registers one
+			// (iam_register_self.go). go-xkms v0.9.2-alpha closed this by
+			// default, so it has to be mapped rather than left to the
+			// library's default.
+			resolvedWebAuthn, resolveErr := webauthnFactoryConfigFromOperator(
+				s.config.IAM.WebAuthn, issuerRPID, issuerRPOrigin,
+				s.config.IAM.SelfServiceRegistration.Enabled)
+			if resolveErr != nil {
+				return nil, &IAMComponentInitError{Component: "WebAuthn relying-party configuration", Cause: resolveErr}
+			}
+			// Resolve the enrollment assurance policy and the AAGUID gate
+			// BEFORE constructing the factory: both are applied inside the
+			// per-tenant credential store, so a factory built without them
+			// would serve ceremonies under the zero-value (strictest) policy
+			// and refuse everything rather than enforce what the operator
+			// configured. An unparseable assurance value is fatal — a typo
+			// must not silently select a policy.
+			assurance, assuranceErr := iam.ParseWebAuthnAssurance(s.config.IAM.WebAuthn.Assurance)
+			if assuranceErr != nil {
+				return nil, &IAMComponentInitError{Component: "WebAuthn enrollment assurance", Cause: assuranceErr}
+			}
+			// A failure to BUILD the allowlist is fatal too. It used to be
+			// logged as "enforcement disabled", which turned an unreadable
+			// allowlist file into a deployment that accepted every
+			// authenticator — the operator's strictest setting failing open.
+			aaguidAllowlist, aaguidErr := buildAAGUIDAllowlist(s.config.IAM.AAGUID)
+			if aaguidErr != nil {
+				return nil, &IAMComponentInitError{Component: "FIDO2 AAGUID allowlist", Cause: aaguidErr}
+			}
+			// The manufacturer attestation roots. An empty path is legal and
+			// yields no trust store, which REFUSES hardware enrollment at
+			// ceremony time with a message naming the setting — a configured
+			// path that cannot be read or parsed is fatal, for the same reason
+			// an unreadable allowlist is: an operator who configured trust
+			// anchors and got a node that verifies nothing is the failure.
+			attestationRoots, rootsErr := iam.NewWebAuthnAttestationRootsFromFile(
+				s.config.IAM.WebAuthn.AttestationRootsFile)
+			if rootsErr != nil {
+				return nil, &IAMComponentInitError{Component: "WebAuthn attestation roots", Cause: rootsErr}
+			}
+			s.logger.Infof("iam.webauthn: enrollment assurance=%s, aaguid policy=%s (entries=%d), attestation roots=%d",
+				assurance, aaguidAllowlist.Policy(), aaguidAllowlist.Len(), attestationRoots.Count())
+			if !attestationRoots.Configured() && !assurance.AllowsSoftwareAdministrators() {
+				s.logger.Warn("iam.webauthn: no attestation roots are configured " +
+					"(iam.webauthn.attestation_roots_file), so no authenticator can prove it is hardware " +
+					"and administrative enrollment will be refused. Configure the vendor attestation roots " +
+					"this deployment trusts.")
+			}
+			if assurance.AllowsSoftwareAdministrators() {
+				// Announced at WARN, unconditionally, on every boot. A
+				// deployment running this policy has chosen to let a software
+				// authenticator become an administrator credential; that choice
+				// must be visible in the log of the node it applies to, not
+				// only in the configuration file somebody wrote once.
+				s.logger.Warn("iam.webauthn: SECURITY: assurance is insecure-allow-software-administrators — " +
+					"a software or virtual authenticator can be enrolled as an ADMINISTRATOR credential. " +
+					"This setting is for automated test environments only; set iam.webauthn.assurance to " +
+					"\"hardware\" for any deployment holding real administrators.")
+			}
+
 			factoryParams := iam.WebAuthnFactoryParams{
-				// Whether a ceremony may CREATE an account for an unknown
-				// email is the operator's self-service registration
-				// decision: that is the surface that registers one
-				// (iam_register_self.go). go-xkms v0.9.2-alpha closed this
-				// by default, so it has to be mapped rather than left to
-				// the library's default.
-				Config: webauthnFactoryConfigFromOperator(s.config.IAM.WebAuthn, issuerRPID, issuerRPOrigin,
-					s.config.IAM.SelfServiceRegistration.Enabled),
-				QRDB:     platformQRDB,
-				Settings: iam.NewTenantManagerWebAuthnSettings(tenantManager),
+				Config:              resolvedWebAuthn,
+				QRDB:                platformQRDB,
+				AttestationRecorder: s.qrdbAttestationRecorder,
+				Settings:            iam.NewTenantManagerWebAuthnSettings(tenantManager),
+				Assurance:           assurance,
+				AAGUIDAllowlist:     aaguidAllowlist,
+				Admins:              iam.NewWebAuthnAdminResolver(userStorage),
+				AttestationRoots:    attestationRoots,
 			}
 			factory, fErr := iam.NewWebAuthnServiceFactory(factoryParams)
 			if fErr != nil {
@@ -533,13 +583,17 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 					// instead of mapping xkms's webauthn handle straight to a
 					// half-populated iam.User with a raw-bytes subject and no roles.
 					webauthnMgr.SetUserResolver(userStorage)
-					if aaguidAllowlist, aaguidErr := buildAAGUIDAllowlist(s.config.IAM.AAGUID); aaguidErr != nil {
-						s.logger.WithError(aaguidErr).Warn("iam.aaguid: failed to build AAGUID allowlist; enforcement disabled")
-					} else if aaguidAllowlist != nil {
-						webauthnMgr.SetAAGUIDAllowlist(aaguidAllowlist)
-						s.logger.Infof("iam.aaguid: allowlist loaded (mode=%s, entries=%d)",
-							s.config.IAM.AAGUID.Mode, aaguidAllowlist.Len())
-					}
+					// Cascade user deletion into the WebAuthn credential
+					// store. The store is keyed by (tenant, email), so a
+					// credential left behind by a deleted user is inherited
+					// by the next account created under the same email and
+					// blocks its registration ceremony permanently.
+					identityStore.SetWebAuthnCredentialReaper(webauthnMgr)
+					// Tenant teardown deprovisions users through the user
+					// store directly, not through IdentityStore.DeleteUser,
+					// so it needs the same revocation wired separately or
+					// the tenant's credentials outlive the tenant.
+					tenantManager.SetWebAuthnCredentialReaper(webauthnMgr)
 				}
 			}
 		}
@@ -563,6 +617,16 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	}
 
 	// Create GDPR manager
+	// A typed nil would satisfy the interface and then panic on first use, so
+	// the reaper is promoted to the interface ONLY when a manager was actually
+	// built. Erasure on a node without WebAuthn then finds a nil dependency and
+	// skips the category, which is the honest answer for a node that has no
+	// credentials to erase.
+	var webauthnReaper iam.WebAuthnCredentialReaper
+	if webauthnMgr != nil {
+		webauthnReaper = webauthnMgr
+	}
+
 	gdprManager, err := iam.NewGDPRManager(iam.GDPRManagerDependencies{
 		ConsentStorage:    iam.NewBackendConsentStorage(iamKV, tenantManager),
 		DataExportStorage: iam.NewBackendDataExportStorage(iamKV, tenantManager),
@@ -575,6 +639,10 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		SessionStorage: sessionStorage,
 		GroupStorage:   backendStorage,
 		RoleStorage:    roleStorage,
+		// An erasure that leaves the subject's authenticators behind has not
+		// erased them: a stored credential is personal data, and it would go on
+		// to block the next account issued that address (go-quicbaas#273).
+		WebAuthnCredentials: webauthnReaper,
 	})
 	if err != nil {
 		return nil, &IAMComponentInitError{Component: "GDPR manager", Cause: err}
@@ -702,7 +770,6 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		sessionManager:    sessionManager,
 		inviteStore:       inviteStore,
 		pivActivator:      pivActivator,
-		qrdbUserIDs:       qrdbUserStorage,
 		certLoginFactors:  certLoginFactors,
 	}
 
@@ -732,6 +799,23 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// fresh first-boot is required before admin authorization resolves.
 	if err := reconcileAdminRole(context.Background(), identityStore); err != nil {
 		s.logger.WithError(err).Warn("Canonical admin role not reconciled; admin authorization may be unavailable until first-boot completes")
+	}
+
+	// Converge every tenant's built-in roles onto THIS build's definitions.
+	// This is the last step of IAM initialization, and deliberately so: qrdb
+	// resolves the built-in definitions through the permission registry at call
+	// time, and both of this process's registration sites — pkg/permission's
+	// Register() from NewServer, and the module's registerRoleGrants() from
+	// apimodule.NewModule during embedded-node construction — have already run
+	// by the time startService reaches here. Running earlier would converge
+	// every tenant onto a definition missing the module's own verbs and report
+	// success (go-quicbaas#573).
+	//
+	// Non-fatal, like the admin-role reconciliation above: a tenant left on a
+	// stale grant is a degraded authorization surface an operator can repair
+	// with the reconcile verb, not a reason to refuse the boot.
+	if err := s.reconcileTenantBuiltInRoles(context.Background(), identityStore, tenantManager); err != nil {
+		s.logger.WithError(err).Warn("Built-in tenant roles not reconciled; tenants seeded before a permission change keep their stale grants until POST /api/v1/tenants/{tenant_id}/roles/reconcile is run")
 	}
 
 	s.logger.Info("IAM components initialized successfully")
@@ -799,7 +883,7 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 		return nil
 	}
 
-	deps, users, adminKeyPEM, err := s.firstBootDependencies(c)
+	deps, users, err := s.firstBootDependencies(c)
 	if err != nil {
 		return err
 	}
@@ -835,7 +919,7 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	user := users.CreatedUser()
 	if user == nil {
 		adminEmail := "admin@" + adminTenantID + ".qrdb.local"
-		user, err = c.identityStore.GetUserByEmail(ctx, adminEmail)
+		user, err = c.identityStore.GetUserByEmail(ctx, adminTenantID, adminEmail)
 		if err != nil {
 			return &FirstBootBootstrapError{Op: "lookup bootstrap admin user", Cause: err}
 		}
@@ -894,7 +978,7 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	}
 
 	// Persist the issued bundle for the operator and tell them where it is.
-	banner, err := s.writeAdminBundle(result, adminKeyPEM)
+	banner, err := s.writeAdminBundle(result)
 	if err != nil {
 		return err
 	}
@@ -908,40 +992,53 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 
 // firstBootDependencies assembles the seam set handed to qrdb's first-boot,
 // including the admin-mTLS seams the enrollment depends on. It returns the
-// dependency set, the user adapter (which doubles as the CertBinder and
-// remembers the admin record it creates), and — for the
-// generate-and-distribute path — the admin private key that must be
-// distributed alongside the issued certificate.
+// dependency set and the user adapter (which doubles as the CertBinder and
+// remembers the admin record it creates).
 //
-// Both enrollment paths run through the CSR-sign seam, and deliberately so:
+// Which enrollment path qrdb takes is decided by what this function puts in
+// deps, and quicbaas generates nothing on either one:
 //
-//	Path B (auth.bootstrap_admin_csr_path set): the admin's own CSR is signed,
-//	  so their private key never reaches this host and no key is returned.
-//	Path A (no CSR configured): this function generates the admin keypair and
-//	  its CSR here, signs it through the same seam, and returns the key so the
-//	  caller can write it out for the operator to collect. Routing Path A
-//	  through the CA's generate-and-issue call instead would strand the admin:
-//	  the xkms CA keeps the generated key in its own keystore and returns only
-//	  the certificate, leaving the operator with a credential they cannot use.
+//	Path B (auth.bootstrap_admin_csr_path set): deps.AdminCSRPEM carries the
+//	  admin's own CSR, qrdb signs it through deps.Signer, and the admin's
+//	  private key never reaches this host.
+//	Path A (no CSR configured): deps.AdminCSRPEM stays empty, so qrdb calls
+//	  deps.CA.GenerateAdminCert — go-xkms's own generate-and-distribute
+//	  implementation (pkg/init/firstboot_adapter.go). go-xkms creates the admin
+//	  keypair, signs the CSR with the same CA, and returns both, which qrdb
+//	  surfaces as FirstBootResult.AdminKeyPEM for the caller to write out.
 //
-// deps.CA is still populated so the seam is complete for any future caller
-// that supplies no CSR at all.
+// Path A used to be forked here: quicbaas generated the admin keypair and CSR
+// itself and fed them in as Path B. That was a Layer Ownership violation with
+// no upside — the code it duplicated is go-xkms's, reached through a seam this
+// function already populates (go-quicbaas#910).
 //
 // The CA seams are populated from the server's xkms CA, which initializeCA
 // brings up before IAM init. When no CA is available (TLS disabled and no
 // external CA supplied) the cert seams stay nil and qrdb's first-boot creates
 // the tenant/roles/admin without issuing a certificate — the admin then
 // enrolls through the PIV path or a later ceremony.
-func (s *Server) firstBootDependencies(c *iamComponents) (*qrdbsdk.FirstBootDependencies, *qrdbadapter.UserAdapter, []byte, error) {
+func (s *Server) firstBootDependencies(c *iamComponents) (*qrdbsdk.FirstBootDependencies, *qrdbadapter.UserAdapter, error) {
 	users := qrdbadapter.WrapUser(c.identityStore)
 	roles := qrdbadapter.WrapRole(c.identityStore)
 	deps := &qrdbsdk.FirstBootDependencies{
 		Tenants: qrdbadapter.WrapTenant(c.tenantManager),
 		Roles:   roles,
-		// The same adapter resolves a built-in role by name so a re-run
-		// against an already-seeded store binds the admin grant to the
-		// persisted role ID instead of refusing (go-qrdb firstboot
-		// UnresolvableSystemRoleError).
+		// The same adapter answers "which role is named N in tenant T".
+		//
+		// First-boot needs it on the RE-RUN path: it is idempotent, so a second
+		// run over an already-seeded system tenant finds the built-in roles
+		// present rather than creating them, and it must then bind the admin's
+		// grant to the identifier those roles are ACTUALLY persisted under. A
+		// cluster seeded before system role IDs moved off UUIDv5 keeps the
+		// legacy identifiers forever, so a derived identifier would name no
+		// role and the grant would silently confer nothing. With nothing able
+		// to resolve them, first-boot refuses to guess and fails with
+		// UnresolvableSystemRoleError instead.
+		//
+		// Wired explicitly rather than left to qrdb's fallback (which would
+		// pick the Roles surface up on its own now that it implements the
+		// interface): the dependency this bootstrap has on a name lookup
+		// should be visible here, not inferred from a type assertion.
 		RoleResolver: roles,
 		Users:        users,
 		Binder:       users,
@@ -955,7 +1052,7 @@ func (s *Server) firstBootDependencies(c *iamComponents) (*qrdbsdk.FirstBootDepe
 	ca := s.ceremonyCAAdapter()
 	if ca == nil {
 		s.logger.Warn("First-boot: no certificate authority available — the platform admin will be created WITHOUT an mTLS certificate")
-		return deps, users, nil, nil
+		return deps, users, nil
 	}
 	deps.CA = ca
 	deps.Signer = ca
@@ -990,7 +1087,7 @@ func (s *Server) firstBootDependencies(c *iamComponents) (*qrdbsdk.FirstBootDepe
 	// 3) and embedded/library consumers that never invoke the CLI. The CLI adds
 	// an earlier fail-fast so the operator learns before any side effect.
 	if s.config.IAM.SPIFFETrustDomain == "" {
-		return nil, nil, nil, &FirstBootBootstrapError{
+		return nil, nil, &FirstBootBootstrapError{
 			Op:    "issue admin certificate",
 			Cause: ErrNoSPIFFETrustDomain,
 		}
@@ -999,48 +1096,19 @@ func (s *Server) firstBootDependencies(c *iamComponents) (*qrdbsdk.FirstBootDepe
 	if path := s.config.Auth.BootstrapAdminCSRPath; path != "" {
 		csrPEM, err := os.ReadFile(path) //nolint:gosec // path comes from operator config
 		if err != nil {
-			return nil, nil, nil, &FirstBootBootstrapError{Op: "read admin CSR " + path, Cause: err}
+			return nil, nil, &FirstBootBootstrapError{Op: "read admin CSR " + path, Cause: err}
 		}
 		if len(csrPEM) == 0 {
-			return nil, nil, nil, &FirstBootBootstrapError{Op: "read admin CSR " + path, Cause: ErrEmptyAdminCSR}
+			return nil, nil, &FirstBootBootstrapError{Op: "read admin CSR " + path, Cause: ErrEmptyAdminCSR}
 		}
 		deps.AdminCSRPEM = csrPEM
-		return deps, users, nil, nil
+		return deps, users, nil
 	}
 
-	csrPEM, keyPEM, err := generateAdminCSR()
-	if err != nil {
-		return nil, nil, nil, &FirstBootBootstrapError{Op: "generate admin keypair and CSR", Cause: err}
-	}
-	deps.AdminCSRPEM = csrPEM
-	return deps, users, keyPEM, nil
-}
-
-// adminCertSubjectCN is the common name first-boot puts on the platform admin
-// certificate. It matches the username qrdb's first-boot creates.
-const adminCertSubjectCN = "admin"
-
-// generateAdminCSR creates the platform admin's P-256 keypair and a CSR for it,
-// returning both PEM-encoded. Used by the generate-and-distribute enrollment
-// path; the key is handed to the operator and never retained by the server.
-func generateAdminCSR() (csrPEM, keyPEM []byte, err error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, err
-	}
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		Subject: pkix.Name{CommonName: adminCertSubjectCN},
-	}, key)
-	if err != nil {
-		return nil, nil, err
-	}
-	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		return nil, nil, err
-	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER}),
-		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
-		nil
+	// No operator CSR: leave deps.AdminCSRPEM empty so qrdb selects Path A and
+	// go-xkms's CAAdapter.GenerateAdminCert creates the keypair. The key comes
+	// back on FirstBootResult.AdminKeyPEM.
+	return deps, users, nil
 }
 
 // ErrNoSPIFFETrustDomain reports that first-boot was asked to issue the admin
@@ -1106,7 +1174,7 @@ type adminEnrollmentBanner struct {
 // <data-dir>/admin so the operator can collect it. It returns the banner
 // describing what was written; when no certificate was issued the banner is
 // empty and nothing is written.
-func (s *Server) writeAdminBundle(result *qrdbsdk.FirstBootResult, adminKeyPEM []byte) (adminEnrollmentBanner, error) {
+func (s *Server) writeAdminBundle(result *qrdbsdk.FirstBootResult) (adminEnrollmentBanner, error) {
 	var banner adminEnrollmentBanner
 	if result == nil || len(result.AdminCertPEM) == 0 {
 		return banner, nil
@@ -1137,11 +1205,12 @@ func (s *Server) writeAdminBundle(result *qrdbsdk.FirstBootResult, adminKeyPEM [
 	}
 	banner.CertPath = certPath
 
-	// adminKeyPEM is nil for the CSR-sign path — the admin kept their key and
-	// there is nothing here to distribute.
-	if len(adminKeyPEM) > 0 {
+	// AdminKeyPEM is nil for the CSR-sign path (Path B) and for an adopted
+	// certificate (Path C) — the admin kept their key and there is nothing here
+	// to distribute. On Path A it holds the keypair go-xkms generated.
+	if len(result.AdminKeyPEM) > 0 {
 		keyPath := filepath.Join(dir, adminKeyFileName)
-		if err := os.WriteFile(keyPath, adminKeyPEM, 0o600); err != nil {
+		if err := os.WriteFile(keyPath, result.AdminKeyPEM, 0o600); err != nil {
 			return banner, &FirstBootBootstrapError{Op: "write " + keyPath, Cause: err}
 		}
 		banner.KeyPath = keyPath
@@ -1260,9 +1329,9 @@ func bindAdminPIVCert(ctx context.Context, c *iamComponents, tenantID, userID, p
 		qrdbsdk.ComputeSPKIThumbprint(cert),
 		xkmssdk.PIVThumbprintSHA256(cert),
 	}
-	active := iam.UserStateActive
+	active := iam.LifecycleActive
 	if _, err := c.identityStore.UpdateUser(ctx, tenantID, userID, iam.UpdateUserOptions{
-		State:              &active,
+		Lifecycle:          &active,
 		PIVCertThumbprints: &thumbprints,
 	}); err != nil {
 		return &PIVBootstrapError{Op: "update bootstrap admin with PIV thumbprint", Path: path, Cause: err}
@@ -1321,10 +1390,7 @@ func enrollAdminCertLoginFactor(
 	if c == nil || c.certLoginFactors == nil {
 		return &AdminCertFactorUnavailableError{Component: "certificate login factor enroller"}
 	}
-	if c.qrdbUserIDs == nil {
-		return &AdminCertFactorUnavailableError{Component: "qrdb user id resolver"}
-	}
-	qrdbUserID, err := c.qrdbUserIDs.QRDBUserID(ctx, tenantID, userID)
+	qrdbUserID, err := iam.ParseUserID(userID)
 	if err != nil {
 		return err
 	}
@@ -1465,6 +1531,7 @@ type iamComponentsGetter interface {
 	GetGDPRManager(ctx context.Context) (*iam.GDPRManager, error)
 	GetFederationManager(ctx context.Context) (iam.FederationManager, error)
 	GetMFAManager(ctx context.Context) (service.MFAManager, error)
+	GetWebAuthnManager(ctx context.Context) (service.WebAuthnManager, error)
 	GetAuditLogger(ctx context.Context) (iam.AuditLogger, error)
 	GetSessionStorage(ctx context.Context) (iam.SessionStorage, error)
 }
@@ -1516,6 +1583,14 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 
 	// Create IAM gRPC service adapter and register
 	iamAdapter := grpcapi.NewIAMServiceAdapter(tenantMgr, identityStore, policyEngine, appManager, adminManager, gdprManager)
+	// WebAuthn credential administration over gRPC (and the Unix socket that
+	// delegates to it). The service is built from the components already
+	// resolved here so gRPC runs the SAME user-id-to-email translation REST,
+	// the embedded transport and MCP do; a nil WebAuthn manager makes the
+	// verbs report unavailable rather than misresolve.
+	webauthnMgr, _ := getter.GetWebAuthnManager(ctx)
+	iamAdapter.SetWebAuthnCredentials(
+		service.NewWebAuthnCredentialServiceFor(identityStore, webauthnMgr))
 	iamServer := grpcapi.NewIAMServer(iamAdapter, s.logger)
 	iampb.RegisterIAMServiceServer(grpcServer, iamServer)
 	s.logger.Info("Registered IAM gRPC service")
@@ -1594,9 +1669,25 @@ const OrchestratorDaemonClientAppName = "quicbaas-orchestrator-daemon-client"
 func (s *Server) ensureOrchestratorDaemonClient(ctx context.Context, appManager *iam.AppManager) (*OrchestratorDaemonClient, error) {
 	path := filepath.Join(s.config.Storage.DataDir, "orchestrator_daemon_client.json")
 
+	// The dispatch client's grant: the three service-surface scopes a remote
+	// daemon's gRPC spawn server checks on every inbound RPC. It is a grant,
+	// not a label — the token the central presents carries exactly what this
+	// application record holds (go-quicbaas#653) — and it is the whole of the
+	// central's authority AS A CLIENT of its own fleet. It confers nothing on
+	// the control plane, where the central acts under its own identity.
+	scopes := iam.DefaultAgentRuntimeScopes()
+
 	// Fast path: credentials already cached on disk. Trust the cache — on a
-	// corrupted file we re-bootstrap which is cheap.
+	// corrupted file we re-bootstrap which is cheap. The cache short-circuits
+	// creation, so converge the grant here too: an application registered by a
+	// build that had no grants would otherwise keep its cached secret forever
+	// and never acquire one, leaving the fleet undispatchable after upgrade.
 	if existing, err := readOrchestratorDaemonClient(path); err == nil && existing != nil {
+		if appManager != nil {
+			if _, grantErr := appManager.GrantScopes(ctx, existing.TenantID, existing.ClientID, scopes); grantErr != nil {
+				return nil, &ServerCauseError{Message: "ensureOrchestratorDaemonClient: converge grant", Cause: grantErr}
+			}
+		}
 		return existing, nil
 	}
 
@@ -1608,12 +1699,12 @@ func (s *Server) ensureOrchestratorDaemonClient(ctx context.Context, appManager 
 	// flow works without explicit tenant management; other tenants are
 	// created on first dispatch.
 	systemTenant := qrdbsdk.SystemTenantID
-	scopes := iam.DefaultAgentRuntimeScopes()
 	app, err := appManager.RegisterApp(ctx, systemTenant, iam.RegisterAppOptions{
 		Name:           OrchestratorDaemonClientAppName,
 		GrantTypes:     []string{iam.GrantTypeClientCredentials},
 		ResponseTypes:  []string{},
 		ResourcePrefix: "orchestrator",
+		Scopes:         scopes,
 	})
 	if err != nil {
 		// If the app already exists from a prior run but the cache file is
@@ -1695,7 +1786,12 @@ func reconcileAdminRole(ctx context.Context, identityStore *iam.IdentityStore) e
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, iam.ErrRoleNotFound) {
+	// IsRoleNotFound, not errors.Is: errors.Is compares the QBError CODE, so
+	// every not-found the role lookup could raise -- an absent tenant, a store
+	// answering 404 -- was reported as the canonical admin role being missing,
+	// which is the mistake the comment below this one forbids
+	// (go-quicbaas#434).
+	if iam.IsRoleNotFound(err) {
 		// qrdb's first-boot is the sole creator of the admin role under its
 		// deterministic id; a not-found here means the canonical admin role is
 		// genuinely absent (first-boot skipped or storage wiped).

@@ -198,6 +198,26 @@ func (m *testFileLockLeaseManager) RevokeLease(_ context.Context, leaseID string
 	return nil
 }
 
+func (m *testFileLockLeaseManager) Validate(_ context.Context, leaseID string) (*lease.Lease, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	l, ok := m.leases[leaseID]
+	if !ok {
+		return nil, lease.NewLeaseNotFoundError("testFileLockLeaseManager.Validate", leaseID)
+	}
+	if l.RevokedAt != nil {
+		return nil, lease.NewLeaseRevokedError("testFileLockLeaseManager.Validate", leaseID, *l.RevokedAt)
+	}
+	if l.State() == lease.LeaseStateExpired {
+		return nil, lease.NewLeaseExpiredError("testFileLockLeaseManager.Validate", leaseID, l.ExpiresAt)
+	}
+	return copyLease(l), nil
+}
+
+func (m *testFileLockLeaseManager) ReapExpired(_ context.Context) (int, int, error) {
+	return 0, 0, nil
+}
+
 func (m *testFileLockLeaseManager) RevokePrefix(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }

@@ -15,6 +15,7 @@ package orchestration
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -55,11 +56,19 @@ func TestContainerRuntimeNotAvailableError(t *testing.T) {
 
 func TestContainerStartError(t *testing.T) {
 	t.Run("ErrorWithCause", func(t *testing.T) {
-		cause := &CommandError{Output: "exit code 125"}
+		// INVERTED (review 1330): the cause's captured output must NOT be
+		// rendered. A container prints whatever it prints, and this string
+		// reaches every %v — including, since #198, a forge issue comment.
+		cause := &CommandError{Command: "docker", Op: "run", Output: "exit code 125"}
 		err := &ContainerStartError{Image: "nginx:latest", Cause: cause}
-		want := "container: start failed: nginx:latest: exit code 125"
-		if got := err.Error(); got != want {
-			t.Errorf("Error() = %q, want %q", got, want)
+		got := err.Error()
+		if strings.Contains(got, "exit code 125") {
+			t.Errorf("Error() = %q; the captured output must not be rendered", got)
+		}
+		for _, want := range []string{"nginx:latest", "docker run", "13 bytes of output withheld"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("Error() = %q, want it to name %q", got, want)
+			}
 		}
 	})
 
@@ -94,11 +103,15 @@ func TestContainerStartError(t *testing.T) {
 
 func TestContainerStopError(t *testing.T) {
 	t.Run("ErrorWithCause", func(t *testing.T) {
-		cause := &CommandError{Output: "timeout"}
+		// INVERTED (review 1330). See TestContainerStartError.
+		cause := &CommandError{Command: "docker", Op: "stop", Output: "timeout"}
 		err := &ContainerStopError{ContainerID: "abc123", Cause: cause}
-		want := "container: stop failed: abc123: timeout"
-		if got := err.Error(); got != want {
-			t.Errorf("Error() = %q, want %q", got, want)
+		got := err.Error()
+		if strings.Contains(got, "timeout") {
+			t.Errorf("Error() = %q; the captured output must not be rendered", got)
+		}
+		if !strings.Contains(got, "abc123") || !strings.Contains(got, "7 bytes of output withheld") {
+			t.Errorf("Error() = %q, want the container and the withheld size", got)
 		}
 	})
 
@@ -163,11 +176,15 @@ func TestContainerNotFoundError(t *testing.T) {
 
 func TestContainerImagePullError(t *testing.T) {
 	t.Run("ErrorWithCause", func(t *testing.T) {
-		cause := &CommandError{Output: "manifest unknown"}
+		// INVERTED (review 1330). See TestContainerStartError.
+		cause := &CommandError{Command: "docker", Op: "pull", Output: "manifest unknown"}
 		err := &ContainerImagePullError{Image: "private/image:v1", Cause: cause}
-		want := "container: image pull failed: private/image:v1: manifest unknown"
-		if got := err.Error(); got != want {
-			t.Errorf("Error() = %q, want %q", got, want)
+		got := err.Error()
+		if strings.Contains(got, "manifest unknown") {
+			t.Errorf("Error() = %q; the captured output must not be rendered", got)
+		}
+		if !strings.Contains(got, "private/image:v1") || !strings.Contains(got, "16 bytes of output withheld") {
+			t.Errorf("Error() = %q, want the image and the withheld size", got)
 		}
 	})
 
@@ -197,15 +214,19 @@ func TestContainerImagePullError(t *testing.T) {
 
 func TestContainerInteractiveStartError(t *testing.T) {
 	t.Run("ErrorWithOperationAndCause", func(t *testing.T) {
-		cause := &CommandError{Output: "pipe broken"}
+		// INVERTED (review 1330). See TestContainerStartError.
+		cause := &CommandError{Command: "docker", Op: "run", Output: "pipe broken"}
 		err := &ContainerInteractiveStartError{
 			Image:     "quicbaas-agent:latest",
 			Operation: "stdin-pipe",
 			Cause:     cause,
 		}
-		want := "container: interactive start failed: quicbaas-agent:latest: stdin-pipe: pipe broken"
-		if got := err.Error(); got != want {
-			t.Errorf("Error() = %q, want %q", got, want)
+		got := err.Error()
+		if strings.Contains(got, "pipe broken") {
+			t.Errorf("Error() = %q; the captured output must not be rendered", got)
+		}
+		if !strings.Contains(got, "stdin-pipe") || !strings.Contains(got, "11 bytes of output withheld") {
+			t.Errorf("Error() = %q, want the operation and the withheld size", got)
 		}
 	})
 

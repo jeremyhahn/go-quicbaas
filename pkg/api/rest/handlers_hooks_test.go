@@ -164,6 +164,14 @@ func (m *mockTaskStore) FailTask(ctx context.Context, tenantID, taskID, reason s
 	return nil
 }
 
+func (m *mockTaskStore) BlockTask(ctx context.Context, tenantID, taskID string, kind orchestration.TaskBlockKind, reason string) error {
+	return nil
+}
+
+func (m *mockTaskStore) ReadmitTask(ctx context.Context, tenantID, taskID string) error {
+	return nil
+}
+
 func (m *mockTaskStore) DeleteTenantTasks(ctx context.Context, tenantID string) error {
 	if m.deleteTenantFunc != nil {
 		return m.deleteTenantFunc(ctx, tenantID)

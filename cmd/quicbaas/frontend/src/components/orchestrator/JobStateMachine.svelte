@@ -1,44 +1,55 @@
 <!--
-  JobStateMachine renders a horizontal stepper showing the 13 job states
-  grouped into phases. The current state pulses; completed states have
-  check icons; future states are dimmed.
+  JobStateMachine renders a horizontal stepper of the states the job's RUNNER
+  declares, plus the two terminal states every job ends in.
+
+  The engine has more than one shape of job — a lead-driven workflow, an
+  issue-driven delivery — and each runner owns its own state sequence. The
+  steps therefore come from the runner named by the job's `runner` field
+  (absent means the engine's own "workflow" runner), read from
+  GET /api/v1/orchestrator/runners, rather than from a copy of the engine's
+  states kept here.
+
+  The current state pulses; passed states are marked done; future states are
+  dimmed.
 -->
 <script lang="ts">
+  import type { JobRunnerInfo } from '@quicbaas/sdk';
   import type { JobState } from '../../stores/orchestrator.svelte.ts';
 
-  let { state }: { state: JobState } = $props();
+  let {
+    state,
+    runner = '',
+    runners = [],
+  }: { state: JobState; runner?: string; runners?: JobRunnerInfo[] } = $props();
 
   interface StepDef {
-    id: JobState;
+    id: string;
     label: string;
-    phase: string;
-    phaseColor: string;
   }
 
-  const steps: StepDef[] = [
-    { id: 'initializing',   label: 'Init',       phase: 'Prepare',  phaseColor: 'text-info' },
-    { id: 'decomposing',    label: 'Decompose',  phase: 'Prepare',  phaseColor: 'text-info' },
-    { id: 'scheduling',     label: 'Schedule',   phase: 'Prepare',  phaseColor: 'text-info' },
-    { id: 'assigning',      label: 'Assign',     phase: 'Execute',  phaseColor: 'text-primary' },
-    { id: 'executing',      label: 'Execute',    phase: 'Execute',  phaseColor: 'text-primary' },
-    { id: 'validating',     label: 'Validate',   phase: 'Verify',   phaseColor: 'text-accent' },
-    { id: 'reviewing',      label: 'Review',     phase: 'Verify',   phaseColor: 'text-accent' },
-    { id: 're-delegating',  label: 'Re-delegate',phase: 'Recover',  phaseColor: 'text-warning' },
-    { id: 'escalating',     label: 'Escalate',   phase: 'Recover',  phaseColor: 'text-warning' },
-    { id: 'completing',     label: 'Complete',   phase: 'Finish',   phaseColor: 'text-teal-400' },
-    { id: 'cleanup',        label: 'Cleanup',    phase: 'Finish',   phaseColor: 'text-teal-400' },
-    { id: 'completed',      label: 'Done',       phase: 'Terminal', phaseColor: 'text-success' },
-    { id: 'failed',         label: 'Failed',     phase: 'Terminal', phaseColor: 'text-error' },
+  /** DEFAULT_RUNNER is the runner a job that names none was driven by. */
+  const DEFAULT_RUNNER = 'workflow';
+
+  /** TERMINAL_STEPS end every job, whatever runner drove it. */
+  const TERMINAL_STEPS: StepDef[] = [
+    { id: 'completed', label: 'Done' },
+    { id: 'failed', label: 'Failed' },
   ];
 
-  const stateOrder = steps.map((s) => s.id);
+  const steps = $derived.by((): StepDef[] => {
+    const name = runner === '' ? DEFAULT_RUNNER : runner;
+    const declared = runners.find((r) => r.name === name);
+    const declaredSteps = (declared?.states ?? []).map((spec) => ({
+      id: spec.state,
+      label: spec.label || spec.state,
+    }));
+    return [...declaredSteps, ...TERMINAL_STEPS];
+  });
 
-  function currentIndex(): number {
-    return stateOrder.indexOf(state);
-  }
+  const stateOrder = $derived(steps.map((s) => s.id));
 
   function stepStatus(step: StepDef): 'active' | 'done' | 'future' {
-    const ci = currentIndex();
+    const ci = stateOrder.indexOf(state);
     const si = stateOrder.indexOf(step.id);
     if (si === ci) return 'active';
     if (si < ci) return 'done';
@@ -47,8 +58,14 @@
 </script>
 
 <div class="overflow-x-auto">
+  {#if steps.length === TERMINAL_STEPS.length}
+    <p class="text-xs text-base-content/40">
+      No runner named "{runner === '' ? DEFAULT_RUNNER : runner}" is registered on this node, so its
+      state sequence is unknown.
+    </p>
+  {/if}
   <ul class="steps steps-horizontal w-full text-xs">
-    {#each steps as step}
+    {#each steps as step (step.id)}
       {@const status = stepStatus(step)}
       <li
         class="step"

@@ -282,10 +282,10 @@
             <option value={p.id}>{p.name}</option>
           {/each}
         </select>
-        {#if selectedProject?.workspace?.path}
+        {#if selectedProject?.workspace_path}
           <div class="label">
             <span class="label-text-alt text-base-content/50">
-              Session runs in {selectedProject.workspace.path}
+              Session runs in {selectedProject.workspace_path}
             </span>
           </div>
         {/if}

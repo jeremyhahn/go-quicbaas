@@ -41,6 +41,63 @@ type InviteMetadataResponse struct {
 type ActivationResponse struct {
 	UserID  string `json:"user_id"`
 	Message string `json:"message"`
+
+	// Warning records a non-fatal irregularity behind an otherwise successful
+	// activation — currently, an activation write that reported an error on a
+	// user that reconciliation then found active. The ceremony succeeded and
+	// the invite was consumed, so this is not a failure, but it is the kind of
+	// thing an operator should see rather than have swallowed.
+	Warning string `json:"warning,omitempty"`
+}
+
+// respondInviteUnusable renders the single opaque answer every unusable
+// invite gets: absent, spent, or expired are indistinguishable to the caller.
+//
+// These routes are public (see the mount in iam.go — an invitee has no session
+// yet), and qrdb states the rule for that audience: a handler serving
+// unauthenticated callers MUST collapse not-found, expired and already-redeemed
+// into one response, because telling a stranger a token exists but is spent
+// confirms a real user was invited — the enumeration an opaque token exists to
+// prevent. Distinguishing them would turn the activation URL into an oracle for
+// anyone guessing tokens.
+//
+// The activation UI does not need the distinction: it already renders "this
+// invite link may have expired or already been used" for any load failure.
+func respondInviteUnusable(w http.ResponseWriter, r *http.Request) {
+	RespondIAMError(w, r, http.StatusNotFound,
+		NewIAMAPIError(ErrNotFound, "invite link is not valid"))
+}
+
+// respondInviteLookupError renders a failed invite lookup and reports whether
+// it handled one. It returns false only when err is nil, so callers read as
+// `if h.respondInviteLookupError(w, r, err) { return }`.
+//
+// The canonical store reports a spent or expired token as an ERROR rather than
+// returning a record to inspect (qrdb's Lookup runs checkUsable and refuses),
+// so this — not the callers' record.Used branch — is where those land. They
+// used to fall through to handleServiceError, which renders iam.ErrInviteUsed
+// by its QBError code, Forbidden: the activation UI showed "access denied:
+// invite has already been used", sending the invitee to look for a permissions
+// problem they do not have.
+//
+// Anything else is a real failure (storage, sealed tenant) and keeps its own
+// status; collapsing those into the opaque answer would report an outage as a
+// bad link. That distinction is why this asks IsInviteUnusable rather than
+// errors.Is against the three sentinels: errors.Is compares the QBError CODE,
+// so every forbidden and every not-found reaching here -- a sealed tenant, a
+// suspended one, a store that answered 404 -- was collapsed into "bad link",
+// which is exactly the outage-as-bad-link report this comment forbids
+// (go-quicbaas#434).
+func (h *IAMHandler) respondInviteLookupError(w http.ResponseWriter, r *http.Request, err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case iam.IsInviteUnusable(err):
+		respondInviteUnusable(w, r)
+	default:
+		h.server.handleServiceError(w, r, err)
+	}
+	return true
 }
 
 // GetInvite handles GET /api/v1/iam/{tenant_id}/invites/{token}.
@@ -73,25 +130,15 @@ func (h *IAMHandler) GetInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	record, err := inviteStore.Lookup(ctx, tenantID, token)
-	if err != nil {
-		if errors.Is(err, iam.ErrInviteNotFound) {
-			RespondIAMError(w, r, http.StatusNotFound,
-				NewIAMAPIError(ErrNotFound, "invite not found"))
-			return
-		}
-		h.server.handleServiceError(w, r, err)
+	if h.respondInviteLookupError(w, r, err) {
 		return
 	}
 
-	if record.Used {
-		RespondIAMError(w, r, http.StatusGone,
-			NewIAMAPIError("invite_used", "invite has already been used"))
-		return
-	}
-
-	if time.Now().After(record.ExpiresAt) {
-		RespondIAMError(w, r, http.StatusGone,
-			NewIAMAPIError("invite_expired", "invite has expired"))
+	// A store that returns a spent or expired record instead of refusing gets
+	// the same opaque answer as one that refuses, so the two shapes are
+	// indistinguishable from outside.
+	if record.Used || time.Now().After(record.ExpiresAt) {
+		respondInviteUnusable(w, r)
 		return
 	}
 
@@ -146,25 +193,15 @@ func (h *IAMHandler) ActivateFIDO2Begin(w http.ResponseWriter, r *http.Request) 
 	}
 
 	record, err := inviteStore.Lookup(ctx, tenantID, token)
-	if err != nil {
-		if errors.Is(err, iam.ErrInviteNotFound) {
-			RespondIAMError(w, r, http.StatusNotFound,
-				NewIAMAPIError(ErrNotFound, "invite not found"))
-			return
-		}
-		h.server.handleServiceError(w, r, err)
+	if h.respondInviteLookupError(w, r, err) {
 		return
 	}
 
-	if record.Used {
-		RespondIAMError(w, r, http.StatusGone,
-			NewIAMAPIError("invite_used", "invite has already been used"))
-		return
-	}
-
-	if time.Now().After(record.ExpiresAt) {
-		RespondIAMError(w, r, http.StatusGone,
-			NewIAMAPIError("invite_expired", "invite has expired"))
+	// A store that returns a spent or expired record instead of refusing gets
+	// the same opaque answer as one that refuses, so the two shapes are
+	// indistinguishable from outside.
+	if record.Used || time.Now().After(record.ExpiresAt) {
+		respondInviteUnusable(w, r)
 		return
 	}
 
@@ -233,25 +270,15 @@ func (h *IAMHandler) ActivateFIDO2Finish(w http.ResponseWriter, r *http.Request)
 	}
 
 	record, err := inviteStore.Lookup(ctx, tenantID, token)
-	if err != nil {
-		if errors.Is(err, iam.ErrInviteNotFound) {
-			RespondIAMError(w, r, http.StatusNotFound,
-				NewIAMAPIError(ErrNotFound, "invite not found"))
-			return
-		}
-		h.server.handleServiceError(w, r, err)
+	if h.respondInviteLookupError(w, r, err) {
 		return
 	}
 
-	if record.Used {
-		RespondIAMError(w, r, http.StatusGone,
-			NewIAMAPIError("invite_used", "invite has already been used"))
-		return
-	}
-
-	if time.Now().After(record.ExpiresAt) {
-		RespondIAMError(w, r, http.StatusGone,
-			NewIAMAPIError("invite_expired", "invite has expired"))
+	// A store that returns a spent or expired record instead of refusing gets
+	// the same opaque answer as one that refuses, so the two shapes are
+	// indistinguishable from outside.
+	if record.Used || time.Now().After(record.ExpiresAt) {
+		respondInviteUnusable(w, r)
 		return
 	}
 
@@ -298,25 +325,70 @@ func (h *IAMHandler) ActivateFIDO2Finish(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := mgr.FinishRegistration(ctx, record.TenantID, email, req.Credential); err != nil {
+	// The proven attestation is not used here: invite activation does not mint
+	// a session, it transitions the account to active and the operator logs in
+	// afterwards. The gate has already refused the ceremony if this account's
+	// policy required hardware.
+	if _, err := mgr.FinishRegistration(ctx, record.TenantID, email, req.Credential); err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
 	}
 
-	// Transition user to active and clear invite.
+	// Transition the user to active and clear the invite. This step is FATAL
+	// on failure, and it runs strictly before the invite is consumed, so a
+	// one-time token is never spent on an account that stayed `pending`.
+	// PIVActivator.Activate already orders its writes this way.
+	//
+	// Failing here does NOT make the ceremony repeatable: xkms persisted the
+	// credential inside FinishRegistration above and deleted the registration
+	// session, and a later begin excludes credentials the user already holds,
+	// so the same authenticator cannot re-register. What it preserves is the
+	// invite, which keeps the account activatable at all — by a different
+	// authenticator, or by an admin. Spending the token here instead would
+	// leave nothing to recover with.
 	store, storeErr := h.getIdentityStore(ctx)
-	if storeErr == nil && store != nil {
-		activeState := iam.UserStateActive
-		emptyToken := ""
-		var nilTime *time.Time
-		_, _ = store.UpdateUser(ctx, record.TenantID, record.UserID, iam.UpdateUserOptions{
-			State:           &activeState,
-			InviteToken:     &emptyToken,
-			InviteExpiresAt: &nilTime,
-		})
+	if storeErr != nil {
+		h.server.handleServiceError(w, r, storeErr)
+		return
+	}
+	if store == nil {
+		RespondIAMError(w, r, http.StatusInternalServerError,
+			NewIAMAPIError(ErrInternalError, "identity store not initialized"))
+		return
 	}
 
-	// Consume the invite. MarkUsed failure on a one-time token is
+	// Activating is a lifecycle transition and nothing else. The invite itself
+	// lives in the invite store and is consumed there; there is no longer a copy
+	// on the user record to clear alongside it.
+	activeState := iam.LifecycleActive
+	var activationWarning string
+	if _, err := store.UpdateUser(ctx, record.TenantID, record.UserID, iam.UpdateUserOptions{
+		Lifecycle: &activeState,
+	}); err != nil {
+		h.logAuditEvent(ctx, record.TenantID, iam.AuditEventUserManagement,
+			iam.AuditCategorySecurity, "invite.activate", iam.AuditOutcomeFailure,
+			&iam.AuditResource{Type: "user", ID: record.UserID},
+			map[string]interface{}{"error": err.Error()})
+
+		// An error here does not prove the write did not land: a commit whose
+		// response was lost reports failure on a user that IS now active.
+		// Refusing unconditionally on that outcome is its own defect — it would
+		// leave a live one-time token on an activated account, redeemable by
+		// whoever else holds the link.
+		//
+		// So reconcile before deciding: re-read the user and let the persisted
+		// state settle it. Active means the activation happened and the invite
+		// must still be spent; anything else (including a failed re-read) keeps
+		// the fail-closed refusal, which leaves the invite intact and the
+		// account recoverable.
+		if !h.userIsActive(ctx, store, record.TenantID, record.UserID) {
+			h.server.handleServiceError(w, r, err)
+			return
+		}
+		activationWarning = "activation write reported an error but the account is active; the invite was consumed"
+	}
+
+	// Consume the invite. Redeem failure on a one-time token is
 	// security-relevant: if we cannot record the token as spent it remains
 	// redeemable, so we must NOT report success. The credential is already
 	// registered and the user is active, so the operator's authenticator works;
@@ -334,7 +406,20 @@ func (h *IAMHandler) ActivateFIDO2Finish(w http.ResponseWriter, r *http.Request)
 	RespondJSON(w, r, http.StatusOK, &ActivationResponse{
 		UserID:  record.UserID,
 		Message: "activation successful",
+		Warning: activationWarning,
 	})
+}
+
+// userIsActive reports whether the user is persisted in the active state. It
+// answers the reconciliation question after an ambiguous activation write, so a
+// read failure is deliberately NOT distinguished from "not active": both mean
+// the activation is unconfirmed, and the caller must then keep the invite.
+func (h *IAMHandler) userIsActive(ctx context.Context, store *iam.IdentityStore, tenantID, userID string) bool {
+	user, err := store.GetUser(ctx, tenantID, userID)
+	if err != nil || user == nil {
+		return false
+	}
+	return user.Lifecycle == iam.LifecycleActive
 }
 
 // ActivatePIV handles POST /api/v1/iam/{tenant_id}/invites/{token}/activate/piv.
@@ -401,19 +486,26 @@ func (h *IAMHandler) ActivatePIV(w http.ResponseWriter, r *http.Request) {
 
 	if err := activator.Activate(ctx, tenantID, token, []byte(req.CertPEM)); err != nil {
 		switch {
-		case errors.Is(err, iam.ErrInviteNotFound):
-			RespondIAMError(w, r, http.StatusNotFound,
-				NewIAMAPIError(ErrNotFound, "invite not found"))
-		case errors.Is(err, iam.ErrInviteExpired):
-			RespondIAMError(w, r, http.StatusGone,
-				NewIAMAPIError("invite_expired", "invite has expired"))
-		case errors.Is(err, iam.ErrInviteUsed):
-			RespondIAMError(w, r, http.StatusGone,
-				NewIAMAPIError("invite_used", "invite has already been used"))
-		case errors.Is(err, iam.ErrUserNotPending):
+		// Absent, expired and spent collapse to one opaque answer here for
+		// exactly the reason they do on the FIDO2 routes. PIV is if anything
+		// the more exposed of the two: PIVActivator resolves the invite BEFORE
+		// it parses or verifies the certificate, so an unauthenticated caller
+		// posting arbitrary non-empty cert_pem could probe tokens and read the
+		// distinct statuses as an existence oracle.
+		//
+		// Each case names ITS condition rather than the condition's error code.
+		// errors.Is compared codes here (QBError is go-qrdb's QRDBError, whose
+		// Is looks at Code alone), and ErrPIVCertRejected carries Forbidden --
+		// the same code as ErrInviteExpired and ErrInviteUsed. The first case
+		// therefore matched a rejected certificate and the 422 below it could
+		// never run: every failed chain verification was reported to the caller
+		// as an unusable invite (go-quicbaas#434).
+		case iam.IsInviteUnusable(err):
+			respondInviteUnusable(w, r)
+		case iam.IsUserNotPending(err):
 			RespondIAMError(w, r, http.StatusConflict,
 				NewIAMAPIError(ErrConflict, "user is not in pending state"))
-		case errors.Is(err, iam.ErrPIVCertRejected):
+		case iam.IsPIVCertRejected(err):
 			RespondIAMError(w, r, http.StatusUnprocessableEntity,
 				NewIAMAPIError("piv_cert_rejected", "PIV certificate chain verification failed"))
 		default:

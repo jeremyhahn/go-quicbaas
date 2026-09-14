@@ -100,7 +100,7 @@ func TestFIDO2Handler_BeginRegistration_RoundTrip(t *testing.T) {
 
 	ctx := transport.ContextWithTenant(context.Background(), "tenant-a")
 	resp, err := handler.handleRequest(ctx, "quicbaas.FIDO2", "BeginRegistration",
-		&xkmstransport.BeginRegistrationRequest{Username: "alice@example.com", DisplayName: "Alice"})
+		&xkmstransport.BeginRegistrationRequest{Email: "alice@example.com", DisplayName: "Alice"})
 	if err != nil {
 		t.Fatalf("BeginRegistration: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestFIDO2Handler_BeginAuthentication_RoundTrip(t *testing.T) {
 	handler := newFIDO2Handler(conn)
 
 	resp, err := handler.handleRequest(context.Background(), "quicbaas.FIDO2", "BeginAuthentication",
-		&xkmstransport.BeginAuthenticationRequest{Username: "alice@example.com"})
+		&xkmstransport.BeginAuthenticationRequest{Email: "alice@example.com"})
 	if err != nil {
 		t.Fatalf("BeginAuthentication: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestFIDO2Handler_FinishAuthentication_RoundTrip(t *testing.T) {
 	handler := newFIDO2Handler(conn)
 
 	resp, err := handler.handleRequest(context.Background(), "quicbaas.FIDO2", "FinishAuthentication",
-		&xkmstransport.FinishAuthenticationRequest{SessionID: "sess-auth", Username: "alice@example.com", AssertionJSON: `{"id":"cred-1"}`})
+		&xkmstransport.FinishAuthenticationRequest{SessionID: "sess-auth", Email: "alice@example.com", AssertionJSON: `{"id":"cred-1"}`})
 	if err != nil {
 		t.Fatalf("FinishAuthentication: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestFIDO2Handler_ServerError(t *testing.T) {
 	handler := newFIDO2Handler(conn)
 
 	_, err := handler.handleRequest(context.Background(), "quicbaas.FIDO2", "BeginRegistration",
-		&xkmstransport.BeginRegistrationRequest{Username: "alice@example.com"})
+		&xkmstransport.BeginRegistrationRequest{Email: "alice@example.com"})
 	if err == nil {
 		t.Fatal("expected server error to propagate")
 	}

@@ -1,0 +1,30 @@
+2026-09-12T17:50:32.6625633Z === RUN   TestSession_Subscriptions/empty_subscriptions
+2026-09-12T17:50:32.6625709Z === RUN   TestSession_Subscriptions/duplicate_subscribe
+2026-09-12T17:50:32.6625777Z === RUN   TestSession_Subscriptions/concurrent_subscription_access
+2026-09-12T17:50:32.6625847Z --- PASS: TestSession_Subscriptions (0.00s)
+2026-09-12T17:50:32.6625912Z     --- PASS: TestSession_Subscriptions/subscribe_and_check (0.00s)
+2026-09-12T17:50:32.6625990Z     --- PASS: TestSession_Subscriptions/unsubscribe (0.00s)
+2026-09-12T17:50:32.6626059Z     --- PASS: TestSession_Subscriptions/unsubscribe_nonexistent_channel (0.00s)
+2026-09-12T17:50:32.6626136Z     --- PASS: TestSession_Subscriptions/get_subscriptions (0.00s)
+2026-09-12T17:50:32.6626213Z     --- PASS: TestSession_Subscriptions/get_subscriptions_returns_copy (0.00s)
+2026-09-12T17:50:32.6626285Z     --- PASS: TestSession_Subscriptions/empty_subscriptions (0.00s)
+2026-09-12T17:50:32.6626351Z     --- PASS: TestSession_Subscriptions/duplicate_subscribe (0.00s)
+2026-09-12T17:50:32.6626422Z     --- PASS: TestSession_Subscriptions/concurrent_subscription_access (0.00s)
+2026-09-12T17:50:32.6626502Z === RUN   TestDefaultServerConfig
+2026-09-12T17:50:32.6626570Z --- PASS: TestDefaultServerConfig (0.00s)
+2026-09-12T17:50:32.6626637Z === RUN   TestNoopAuthenticator
+2026-09-12T17:50:32.6626703Z === RUN   TestNoopAuthenticator/empty_token
+2026-09-12T17:50:32.6626773Z === RUN   TestNoopAuthenticator/valid_looking_token
+2026-09-12T17:50:32.6626845Z === RUN   TestNoopAuthenticator/any_string
+2026-09-12T17:50:32.6626911Z --- PASS: TestNoopAuthenticator (0.00s)
+2026-09-12T17:50:32.6626991Z     --- PASS: TestNoopAuthenticator/empty_token (0.00s)
+2026-09-12T17:50:32.6627062Z     --- PASS: TestNoopAuthenticator/valid_looking_token (0.00s)
+2026-09-12T17:50:32.6627131Z     --- PASS: TestNoopAuthenticator/any_string (0.00s)
+2026-09-12T17:50:32.6627201Z === RUN   TestNoopAuthenticator_WithCancelledContext
+2026-09-12T17:50:32.6627269Z --- PASS: TestNoopAuthenticator_WithCancelledContext (0.00s)
+2026-09-12T17:50:32.6627340Z === RUN   TestMessageType
+2026-09-12T17:50:32.6627403Z --- PASS: TestMessageType (0.00s)
+2026-09-12T17:50:32.6627483Z === RUN   TestSession_ConcurrentCloseDetection
+2026-09-12T17:50:32.6627556Z --- PASS: TestSession_ConcurrentCloseDetection (0.00s)
+2026-09-12T17:50:32.6627629Z PASS
+2026-09-12T17:50:32.6627694Z ok  	github.com/jeremyhahn/go-quicbaas/pkg/api/websocket	35.451s

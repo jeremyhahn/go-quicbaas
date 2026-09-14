@@ -1618,6 +1618,61 @@ func (s *Server) startBackupManager() error {
 }
 
 // stopBackupManager shuts down the backup manager.
+// attachIAMComponents builds the IAM subsystem and hands it to the service
+// facade, and is the one place that decides what an IAM failure means.
+//
+// A FAILURE ABORTS STARTUP. It used to be downgraded to a warning and the boot
+// continued, which is the fail-open this closes (#170): every IAM accessor on
+// the service facade returns (nil, nil) when no provider was set — not an
+// error — so a caller checking `err != nil` sees success and a nil store. The
+// server then serves with authentication and tenancy absent, and nothing on the
+// request path can tell that from a deployment that has no IAM by design.
+//
+// Refusing to start is available BECAUSE those two cases are already
+// distinguishable at this seam, and it is worth being explicit about why:
+//
+//	(nil, nil) — IAM does not apply to this deployment. initializeIAMComponents
+//	             returns it when there is no qrdb client (BaaS client mode,
+//	             storage skipped). Supported, and still supported: it does not
+//	             travel through the error branch.
+//	(nil, err) — IAM was configured and could not be built. The operator asked
+//	             for authentication and tenancy and does not have them.
+//
+// So failing closed on the error cannot break the IAM-less deployment, which is
+// the thing that would have made this the wrong call.
+//
+// Refusing to START rather than starting with IAM-dependent surfaces returning
+// 503: the damage is not confined to IAM endpoints. Authentication and tenancy
+// are what everything else is served THROUGH, so a partial boot would keep
+// serving the rest of the surface in exactly the unauthenticated state the
+// issue reports. A process that exits says so once, loudly, at the moment the
+// operator can act on it; a process that serves says nothing.
+//
+// The sealed-boot path does not reach here in a failing state: the
+// sealed-window phase (server.go initialize) blocks until the barrier is
+// unsealed and tears its listeners down before the full boot proceeds, so a
+// sealed node reaches startService already unsealed.
+func (s *Server) attachIAMComponents(svc service.QuicBaaS) error {
+	iamComponents, err := initIAMComponentsFn(s)
+	if err != nil {
+		return api.NewOperationFailedError("initialize IAM components", err)
+	}
+	if iamComponents == nil {
+		s.logger.Info("IAM components not configured for this deployment; IAM surfaces are unavailable")
+		return nil
+	}
+
+	s.iamComponents = iamComponents
+	svc.SetIAMProvider(iamComponents)
+	s.logger.Info("IAM components attached to service")
+
+	// Bind the OIDC provider to the late-bound login session issuer that was
+	// injected into the qrdb node before IAM init. This activates OIDC bearer
+	// issuance for the node's in-process login ceremony.
+	s.bindLoginCeremonyProvider(iamComponents)
+	return nil
+}
+
 func (s *Server) stopBackupManager() error {
 	if s.backupManager == nil {
 		return nil
@@ -1726,11 +1781,10 @@ func (s *Server) startService() error {
 		s.logger.Info("CryptoManager attached to service")
 	}
 
-	// Add Secrets manager if initialized
-	if s.secretsManager != nil {
-		builder = builder.WithSecretsManager(s.secretsManager)
-		s.logger.Info("Secrets manager attached to service")
-	}
+	// The secrets manager is attached AFTER the qrdb client is established
+	// (below), so the facade captures the persistent KV-backed manager and
+	// not the boot-window in-memory one — see the upgrade before
+	// WithKVStoreProvider.
 
 	// Add Object Storage dependencies if catalog manager is initialized
 	if s.catalogManager != nil && s.backendManager != nil {
@@ -1926,11 +1980,38 @@ func (s *Server) startService() error {
 	// s.qrdbNode is always set (both standalone and clustered modes build a
 	// real qrdb node). The node-backed ShardedClient is the only code path.
 
+	// Upgrade the secrets manager to the persistent KV backend NOW — after
+	// the qrdb client exists, BEFORE the facade captures the manager
+	// (issue #138). The facade snapshot is what REST, gRPC and the SDLC
+	// module all serve; an upgrade after the facade is built reaches none of
+	// them, leaving every client-stored secret in a manager that dies with
+	// the process while the module's webhook resolution answers not_found.
+	if s.qrdbClient != nil {
+		if err := s.startSecrets(); err != nil {
+			return err
+		}
+	}
+	if s.secretsManager != nil {
+		builder = builder.WithSecretsManager(s.secretsManager)
+		s.logger.Info("Secrets manager attached to service")
+	}
+
 	// Add KVStore provider for Scheduler and other services
 	builder = builder.WithKVStoreProvider(func(shardID uint64) interface{} {
 		return s.GetKVStore(shardID)
 	})
 	s.logger.Info("KVStore provider attached to service builder")
+
+	// On a clustered boot the scheduler must be the clustered one: leader-gated
+	// and claim-arbitrated. Supplying nothing here is what a standalone boot
+	// does, and the service builder reads that as "single node". A clustered
+	// boot that cannot supply the whole set fails construction there rather
+	// than silently running the single-node engine on every node (docs/18 V4).
+	if clustering := s.schedulerClustering(); clustering != nil {
+		builder = builder.WithSchedulerClustering(clustering)
+		s.logger.Info("Clustered scheduler wiring attached to service builder",
+			"node_id", clustering.NodeID)
+	}
 
 	// Back the project store and agent registry with the tenant-routed store
 	// so they persist across restarts and a barrier-isolated tenant's records
@@ -2038,7 +2119,13 @@ func (s *Server) startService() error {
 	if node := s.getQRDBNode(); node != nil {
 		if nodeClient := node.Client(); nodeClient != nil {
 			if lc := nodeClient.Login(); lc != nil {
-				svc.SetLoginService(service.NewLoginService(lc))
+				login := service.NewLoginService(lc)
+				// Wire the rejection sink in the SAME statement that builds
+				// the facade. A login-capable deployment must never be able
+				// to reach a state where a ceremony can be refused and
+				// nothing anywhere records why (go-quicbaas#484).
+				login.SetCeremonyAuditor(newLoginCeremonyAuditorFor(s.logger, svc))
+				svc.SetLoginService(login)
 				s.logger.Info("unified login ceremony facade wired from qrdb node")
 			}
 		}
@@ -2069,6 +2156,16 @@ func (s *Server) startService() error {
 			// call (mirrors xkmsd's own nil-check at server.go:672-677).
 			if factors := client.UserAuthFactors(); factors != nil {
 				xkmsService.SetUserAuthFactorClient(factors)
+				// The same client lets a WebAuthn login REPLAY the attestation
+				// its factor recorded at enrollment onto the session it issues
+				// (#394). Before this the evidence was written at enrollment and
+				// read nowhere, so only the registering session carried it.
+				// The field is qrdb's SessionIssuer interface; the setter is
+				// ours, so the concrete type is asserted exactly as
+				// bindLoginCeremonyProvider asserts it for SetProvider.
+				if issuer, ok := s.loginSessionIssuer.(*oidcSessionIssuer); ok && issuer != nil {
+					issuer.SetAuthFactorClient(factors)
+				}
 			}
 			s.logger.Info("embedded qrdb node's user/role/user-auth-factor clients wired into xkms service")
 		}
@@ -2084,19 +2181,8 @@ func (s *Server) startService() error {
 		}
 	}
 
-	// Initialize IAM components and pass to service
-	iamComponents, err := initIAMComponentsFn(s)
-	if err != nil {
-		s.logger.WithError(err).Warn("Failed to initialize IAM components, IAM features will be unavailable")
-	} else if iamComponents != nil {
-		s.iamComponents = iamComponents
-		svc.SetIAMProvider(iamComponents)
-		s.logger.Info("IAM components attached to service")
-
-		// Bind the OIDC provider to the late-bound login session issuer that
-		// was injected into the qrdb node before IAM init. This activates
-		// OIDC bearer issuance for the node's in-process login ceremony.
-		s.bindLoginCeremonyProvider(iamComponents)
+	if err := s.attachIAMComponents(svc); err != nil {
+		return err
 	}
 
 	// Tenant barrier lifecycle is owned by the qrdb node's TenantServicer.
@@ -2343,6 +2429,13 @@ func (s *Server) startGRPCServer() error {
 		pb.RegisterProjectServiceServer(grpcServer, projectServer)
 		s.logger.Info("Registered Project gRPC service")
 	}
+
+	// Register the SDLC module's service. Always registered: the server
+	// resolves the binding service per call through the facade, so a node
+	// with the module disabled answers Unavailable rather than Unimplemented,
+	// and the Unix transport, which delegates to gRPC verbatim, carries it.
+	pb.RegisterSDLCServiceServer(grpcServer, grpcapi.NewSDLCServer(s.quicBaaSService, s.logger))
+	s.logger.Info("Registered SDLC gRPC service")
 
 	// Register Account service (pooled provider accounts). Always present:
 	// the service container constructs it unconditionally, and its

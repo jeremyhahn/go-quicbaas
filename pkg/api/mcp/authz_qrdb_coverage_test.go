@@ -16,7 +16,9 @@
 package mcp
 
 import (
+	"os"
 	"sort"
+	"strings"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -181,6 +183,105 @@ func TestMCPPermissions_EveryMappingIsRegistered(t *testing.T) {
 	for prefix, m := range qrdbToolPrefixMapping {
 		check(prefix+"*", m)
 	}
+}
+
+// TestMCPPermissions_EveryMappedToolIsRegistered is the reverse of
+// TestMCPPermissions_EveryToolMappedOrPublic: every NAME in qrdbToolExactMapping
+// must belong to a tool that something registers.
+//
+// This is the invariant whose absence let issue #905's dead surface survive. A
+// permission entry for a tool nobody registers is invisible in both directions —
+// the forward guard iterates registered tools and never sees it, and a reader of
+// the table cannot tell a live mapping from a name that was renamed, never
+// implemented, or deleted years ago. Fourteen such entries were found when the
+// guard was written: eight for the quicbaas_user_* / quicbaas_role_* families
+// that were never registered as tools, and six KV aliases (quicbaas_get,
+// quicbaas_put, quicbaas_set, quicbaas_scan, quicbaas_list, quicbaas_delete)
+// that named no tool and no dispatch case.
+//
+// "Registers" has to be measured across BUILD CONFIGURATIONS, not just this one.
+// authz_qrdb.go carries no build tag, so it declares permissions for tools whose
+// registration IS tagged — quicbaas_rag_* exists only under `rag`, and in the
+// `make test-lean` pass (transports on, rag off) the compiled registry does not
+// contain it. Judging deadness from the compiled registry alone therefore calls
+// every feature-gated tool dead in the pass that disables its feature, which is
+// how the first version of this test went red on test-lean while passing the
+// maximal pass.
+//
+// So a name is accepted when EITHER the compiled registry has it (covers names
+// built at runtime from a prefix) OR the literal appears in some non-test source
+// file of this package other than the mapping tables themselves (covers names
+// whose registration sits behind a build tag this pass turned off). A name that
+// satisfies neither appears NOWHERE but the permission table: nothing registers
+// it and nothing dispatches it, in any configuration.
+//
+// There is deliberately no allowlist. Prefix mappings are exempt by
+// construction: a prefix matches a family, not a name, and the forward guard
+// already proves every registered tool a prefix serves resolves through it.
+func TestMCPPermissions_EveryMappedToolIsRegistered(t *testing.T) {
+	t.Parallel()
+
+	registered := make(map[string]struct{})
+	for _, name := range registeredToolNames(t) {
+		registered[name] = struct{}{}
+	}
+	require.NotEmpty(t, registered, "no MCP tools registered")
+
+	sources := packageSourcesExcludingMappingTables(t)
+
+	for tool := range qrdbToolExactMapping {
+		if _, ok := registered[tool]; ok {
+			continue
+		}
+		literal := `"` + tool + `"`
+		found := false
+		for file, body := range sources {
+			if strings.Contains(body, literal) {
+				found = true
+				t.Logf("tool %q is not registered in this build configuration but is "+
+					"named in %s, so its registration is build-tagged", tool, file)
+				break
+			}
+		}
+		assert.Truef(t, found,
+			"qrdbToolExactMapping has an entry for %q, but no registry registers a tool "+
+				"by that name and the name appears in no source file of this package "+
+				"outside the mapping tables. The entry is dead in every build "+
+				"configuration: it grants nothing and documents nothing. Register the "+
+				"tool or delete the entry.", tool)
+	}
+}
+
+// packageSourcesExcludingMappingTables reads every non-test Go source file of
+// this package EXCEPT the permission-mapping tables, so that an entry cannot
+// vouch for itself. Build tags are ignored on purpose: the point is to see the
+// registrations this build configuration excluded.
+func packageSourcesExcludingMappingTables(t *testing.T) map[string]string {
+	t.Helper()
+
+	selfReferential := map[string]struct{}{
+		"authz_qrdb.go":          {},
+		"authz_qrdb_unmapped.go": {},
+	}
+
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err)
+
+	sources := make(map[string]string)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		if _, skip := selfReferential[name]; skip {
+			continue
+		}
+		body, err := os.ReadFile(name)
+		require.NoErrorf(t, err, "reading %s", name)
+		sources[name] = string(body)
+	}
+	require.NotEmpty(t, sources, "no package sources found")
+	return sources
 }
 
 // TestMCPPermissions_CertificateToolsMatchGRPC pins the six base certificate

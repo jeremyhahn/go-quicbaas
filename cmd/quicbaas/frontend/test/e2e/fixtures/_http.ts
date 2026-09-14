@@ -62,19 +62,27 @@ export function authHeader(): Record<string, string> {
 }
 
 // refreshAdminToken exchanges the refresh token for a fresh access token via
-// the public /api/v1/auth/refresh endpoint. Returns true on success.
+// the public renewal endpoint. Returns true on success.
+//
+// /api/v1/iam/refresh, not /api/v1/auth/refresh: on a composed node the latter
+// is the xkms module's, redeeming from a different store than the ceremony that
+// minted this token (go-quicbaas#221, pkg/api/rest/routes_iam.go).
 async function refreshAdminToken(): Promise<boolean> {
   loadAdminTokens();
   if (!_refreshToken) return false;
-  const resp = await fetch(`${serverBase()}/api/v1/auth/refresh`, {
+  const resp = await fetch(`${serverBase()}/api/v1/iam/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ refresh_token: _refreshToken }),
   });
   if (!resp.ok) return false;
-  const body = (await resp.json()) as { access_token?: string };
+  const body = (await resp.json()) as { access_token?: string; refresh_token?: string };
   if (!body.access_token) return false;
   _accessToken = body.access_token;
+  // The server ROTATES on every redemption, so the token we just presented is
+  // revoked. Without this the SECOND refresh in a worker replays a dead
+  // credential and trips the stolen-token detection.
+  if (body.refresh_token) _refreshToken = body.refresh_token;
   return true;
 }
 

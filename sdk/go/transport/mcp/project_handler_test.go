@@ -292,3 +292,165 @@ func TestProjectMCPUnsupportedMethodError(t *testing.T) {
 		t.Errorf("op = %q, want mcp.project.GetByName", qb.Op)
 	}
 }
+
+// TestProjectMCPTransformResponse_CarriesGitIdentity: the MCP tool result is
+// the service's project record, whose nested git metadata must land on the
+// SDK's nested shape unchanged.
+func TestProjectMCPTransformResponse_CarriesGitIdentity(t *testing.T) {
+	h := newProjectMCPHandler()
+	result := map[string]interface{}{
+		"project": map[string]interface{}{
+			"id": "p1", "tenant_id": "t1", "name": "api",
+			"default_workflow": "sdlc",
+			"git": map[string]interface{}{
+				"repo_url": "ssh://git@forge.example.test/acme/api.git",
+				"author":   map[string]interface{}{"name": "agent-api", "email": "agent-api@example.test"},
+				"signing": map[string]interface{}{
+					"enabled": true, "algorithm": "ECDSA-P256",
+					"key": map[string]interface{}{"name": "api-signing", "scope": "tenant", "owner": "t1"},
+				},
+				"ssh_key": map[string]interface{}{"name": "api-access", "scope": "service", "owner": "deploy"},
+			},
+		},
+	}
+	out, err := h.transformResponse("Get", result)
+	if err != nil {
+		t.Fatalf("transformResponse: %v", err)
+	}
+	info, ok := out.(*project.ProjectInfo)
+	if !ok {
+		t.Fatalf("wrong type %T", out)
+	}
+	want := project.ProjectGit{
+		RepoURL: "ssh://git@forge.example.test/acme/api.git",
+		Author:  project.GitAuthor{Name: "agent-api", Email: "agent-api@example.test"},
+		Signing: project.CommitSigning{
+			Enabled: true, Algorithm: "ECDSA-P256",
+			Key: project.KMSKeyRef{Name: "api-signing", Scope: "tenant", Owner: "t1"},
+		},
+		SSHKey: project.KMSKeyRef{Name: "api-access", Scope: "service", Owner: "deploy"},
+	}
+	if info.DefaultWorkflow != "sdlc" || info.Git != want {
+		t.Errorf("git identity lost in the MCP transform:\n got %+v\nwant %+v", info.Git, want)
+	}
+}
+
+// =============================================================================
+// Autonomy + context repositories over MCP
+// =============================================================================
+
+// TestProjectMCPArgumentsCarryAutonomyAndContextRepos asserts the tool
+// arguments the transport derives from the SDK request match the names the
+// server's project tools declare. A renamed key would be silently ignored.
+func TestProjectMCPArgumentsCarryAutonomyAndContextRepos(t *testing.T) {
+	tr := &Transport{}
+
+	createArgs := tr.convertToArguments(&project.CreateProjectRequest{
+		TenantID: "t1", Name: "api",
+		Autonomous: true,
+		ContextRepos: []project.ContextRepo{
+			{Name: "handbook", RepoURL: "https://forge.example/org/handbook", Ref: "main"},
+		},
+	})
+	if createArgs["autonomous"] != true {
+		t.Errorf("create autonomous = %v, want true", createArgs["autonomous"])
+	}
+	repos, ok := createArgs["context_repos"].([]interface{})
+	if !ok || len(repos) != 1 {
+		t.Fatalf("create context_repos = %#v, want one element", createArgs["context_repos"])
+	}
+	repo, ok := repos[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("context_repos[0] = %#v, want an object", repos[0])
+	}
+	for key, want := range map[string]string{
+		"name":     "handbook",
+		"repo_url": "https://forge.example/org/handbook",
+		"ref":      "main",
+	} {
+		if repo[key] != want {
+			t.Errorf("context_repos[0][%q] = %v, want %q", key, repo[key], want)
+		}
+	}
+
+	// An unset switch must not appear at all, so the tool reads it as
+	// "unchanged" rather than "off".
+	unchanged := tr.convertToArguments(&project.UpdateProjectRequest{TenantID: "t1", ProjectID: "p1"})
+	if _, present := unchanged["autonomous"]; present {
+		t.Error("an unset autonomous appeared in the tool arguments")
+	}
+	if _, present := unchanged["context_repos"]; present {
+		t.Error("an unset context_repos appeared in the tool arguments")
+	}
+
+	off := false
+	updateArgs := tr.convertToArguments(&project.UpdateProjectRequest{
+		TenantID: "t1", ProjectID: "p1", Autonomous: &off, ClearContextRepos: true,
+	})
+	if updateArgs["autonomous"] != false {
+		t.Errorf("update autonomous = %v, want false", updateArgs["autonomous"])
+	}
+	if updateArgs["clear_context_repos"] != true {
+		t.Errorf("update clear_context_repos = %v, want true", updateArgs["clear_context_repos"])
+	}
+}
+
+// TestProjectMCPTransformResponse_CarriesAutonomyAndContextRepos drives the
+// real server envelopes for create → get and update → get through the
+// transform, asserting both fields reach the SDK type.
+func TestProjectMCPTransformResponse_CarriesAutonomyAndContextRepos(t *testing.T) {
+	h := newProjectMCPHandler()
+
+	stored := sampleProject()
+	stored.Autonomous = true
+	stored.ContextRepos = []orchestration.ContextRepo{
+		{Name: "handbook", RepoURL: "https://forge.example/org/handbook", Ref: "main"},
+	}
+
+	decode := func(method string, envelope interface{}) *project.ProjectInfo {
+		t.Helper()
+		out, err := h.transformResponse(method, toolResult(t, envelope))
+		if err != nil {
+			t.Fatalf("transformResponse(%s): %v", method, err)
+		}
+		info, ok := out.(*project.ProjectInfo)
+		if !ok {
+			t.Fatalf("transformResponse(%s) returned %T", method, out)
+		}
+		return info
+	}
+
+	created := decode("Create", &service.CreateProjectResponse{Project: stored, Timestamp: time.Now()})
+	if !created.Autonomous {
+		t.Error("Autonomous lost in the create transform")
+	}
+	if len(created.ContextRepos) != 1 || created.ContextRepos[0] !=
+		(project.ContextRepo{Name: "handbook", RepoURL: "https://forge.example/org/handbook", Ref: "main"}) {
+		t.Fatalf("ContextRepos lost in the create transform: %+v", created.ContextRepos)
+	}
+
+	got := decode("Get", &service.GetProjectResponse{Project: stored, Timestamp: time.Now()})
+	if !got.Autonomous || len(got.ContextRepos) != 1 {
+		t.Fatalf("create did not survive a get: %+v", got)
+	}
+
+	// The update the tool applied: autonomy off, one different repository.
+	stored.Autonomous = false
+	stored.ContextRepos = []orchestration.ContextRepo{
+		{Name: "specs", RepoURL: "https://forge.example/org/specs", Ref: "v2"},
+	}
+	updated := decode("Update", &service.UpdateProjectResponse{Project: stored, Timestamp: time.Now()})
+	if updated.Autonomous {
+		t.Error("Autonomous is still on after an update that turned it off")
+	}
+	if len(updated.ContextRepos) != 1 || updated.ContextRepos[0].Name != "specs" {
+		t.Fatalf("ContextRepos = %+v, want exactly the specs repo", updated.ContextRepos)
+	}
+
+	// And a cleared list comes back empty rather than stale.
+	stored.ContextRepos = nil
+	cleared := decode("Get", &service.GetProjectResponse{Project: stored, Timestamp: time.Now()})
+	if len(cleared.ContextRepos) != 0 {
+		t.Fatalf("ContextRepos = %+v after clear, want none", cleared.ContextRepos)
+	}
+}

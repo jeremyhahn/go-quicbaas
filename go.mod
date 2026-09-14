@@ -18,15 +18,15 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-msgpack/v2 v2.1.5
 	github.com/hashicorp/vault/api v1.23.0
-	github.com/jeremyhahn/go-auth v0.1.2-alpha
+	github.com/jeremyhahn/go-auth v0.2.0-alpha
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-libsignal v0.2.0-alpha
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha
-	github.com/jeremyhahn/go-qrdb v0.16.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.16.0-alpha
-	github.com/jeremyhahn/go-quicbaas/sdk/go v0.7.0-alpha
-	github.com/jeremyhahn/go-xkms v0.9.4-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.9.4-alpha
+	github.com/jeremyhahn/go-qrdb v0.16.3-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.16.3-alpha
+	github.com/jeremyhahn/go-quicbaas/sdk/go v0.8.0-alpha
+	github.com/jeremyhahn/go-xkms v0.12.0-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.12.0-alpha
 	github.com/klauspost/compress v1.18.4
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
@@ -99,7 +99,7 @@ require (
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.9.0-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.9.4-alpha // indirect
+	github.com/jeremyhahn/go-xkms/xkey v0.11.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
@@ -249,7 +249,7 @@ require (
 	github.com/pkg/sftp v1.13.9
 	github.com/planetscale/vtprotobuf v0.6.1-0.20250313105119-ba97887b0a25 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/pquerna/otp v1.5.0 // indirect
+	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.68.0 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
@@ -258,7 +258,7 @@ require (
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
-	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/spf13/pflag v1.0.10
 	github.com/spiffe/go-spiffe/v2 v2.8.1 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect

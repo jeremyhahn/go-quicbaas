@@ -457,3 +457,119 @@ func assertNoCredentialKeys(t *testing.T, encoded []byte) {
 		}
 	}
 }
+
+// =============================================================================
+// Materialize — the one verb whose response carries secret material
+// =============================================================================
+
+// TestClient_Materialize_DispatchesAndDecodes covers the happy path: the verb
+// reaches the transport under its own method name and hands back the released
+// envelope unchanged.
+func TestClient_Materialize_DispatchesAndDecodes(t *testing.T) {
+	tr := &mockTransport{response: &MaterializedCredential{
+		AccountID: "acct-1",
+		Provider:  ProviderClaude,
+		Credential: &ReleasedCredential{
+			AccessToken:       "RELEASED",
+			AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN",
+		},
+	}}
+	c := NewClient(tr)
+
+	out, err := c.Materialize(context.Background(), &MaterializeCredentialRequest{
+		TenantID: "tenant-1", AccountID: "acct-1", ProjectID: "project-x",
+	})
+	if err != nil {
+		t.Fatalf("Materialize() error = %v", err)
+	}
+	if tr.method != "Materialize" {
+		t.Errorf("dispatched method %q, want Materialize", tr.method)
+	}
+	if out.Credential == nil || out.Credential.AccessTokenEnvKey != "CLAUDE_CODE_OAUTH_TOKEN" {
+		t.Error("released envelope lost the material a spawn needs")
+	}
+	sent, ok := tr.request.(*MaterializeCredentialRequest)
+	if !ok {
+		t.Fatalf("transport received %T, want *MaterializeCredentialRequest", tr.request)
+	}
+	if sent.ProjectID != "project-x" {
+		t.Errorf("transport received project %q, want project-x", sent.ProjectID)
+	}
+}
+
+// TestClient_Materialize_RejectsBadInput covers the validation path for each
+// way a caller can under-specify the request, plus the two protocol faults a
+// server can produce.
+func TestClient_Materialize_RejectsBadInput(t *testing.T) {
+	cases := []struct {
+		name     string
+		ctx      context.Context
+		req      *MaterializeCredentialRequest
+		response interface{}
+	}{
+		{name: "nil context", ctx: nil, req: &MaterializeCredentialRequest{TenantID: "t", AccountID: "a"}},
+		{name: "nil request", ctx: context.Background(), req: nil},
+		{name: "no tenant", ctx: context.Background(), req: &MaterializeCredentialRequest{AccountID: "a"}},
+		{name: "no account", ctx: context.Background(), req: &MaterializeCredentialRequest{TenantID: "t"}},
+		{
+			name: "server returned nothing",
+			ctx:  context.Background(),
+			req:  &MaterializeCredentialRequest{TenantID: "t", AccountID: "a"},
+		},
+		{
+			name:     "server returned the wrong shape",
+			ctx:      context.Background(),
+			req:      &MaterializeCredentialRequest{TenantID: "t", AccountID: "a"},
+			response: sampleInfo(),
+		},
+		{
+			name:     "server released no envelope",
+			ctx:      context.Background(),
+			req:      &MaterializeCredentialRequest{TenantID: "t", AccountID: "a"},
+			response: &MaterializedCredential{AccountID: "acct-1"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewClient(&mockTransport{response: tc.response})
+			//nolint:staticcheck // SA1012: passing a nil context is the case under test.
+			if _, err := c.Materialize(tc.ctx, tc.req); err == nil {
+				t.Fatal("expected an error")
+			}
+		})
+	}
+}
+
+// TestMaterializedCredential_SerializesNoRefreshGrant is the leak guard for the
+// release shape: a daemon receives the short-lived half of a credential and
+// nothing that would let it renew on its own.
+func TestMaterializedCredential_SerializesNoRefreshGrant(t *testing.T) {
+	encoded, err := json.Marshal(&MaterializedCredential{
+		AccountID: "acct-1",
+		Credential: &ReleasedCredential{
+			AccessToken:       "RELEASED",
+			AccessTokenEnvKey: "K",
+			Scopes:            []string{"a"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, forbidden := range []string{"refresh_token", "token_endpoint", "client_id"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Errorf("released shape carries %q", forbidden)
+		}
+	}
+}
+
+// TestReleasedCredentialIsNotTheRequestCredential proves the release shape is a
+// DISTINCT type from the request-only Credential, which is what keeps
+// TestResponseTypesHaveNoCredentialField meaning what it says.
+func TestReleasedCredentialIsNotTheRequestCredential(t *testing.T) {
+	if reflect.TypeOf(ReleasedCredential{}) == reflect.TypeOf(Credential{}) {
+		t.Fatal("the release shape is an alias of the request-only credential shape")
+	}
+	if reachesType(reflect.TypeOf(MaterializedCredential{}), reflect.TypeOf(Credential{}), make(map[reflect.Type]bool)) {
+		t.Fatal("the release response reaches the request-only credential shape")
+	}
+}
