@@ -304,6 +304,11 @@ func (r *Runner) Run(ctx context.Context, job *orchestration.JobRun) error {
 // runnerRun is the state one attempt accumulates. It lives for exactly one
 // Run: everything durable is on the Delivery and the Task.
 type runnerRun struct {
+	// roundRequested records that a review round asked for new work, so
+	// resumeReview does not send the job back to a review of the head the
+	// gate just rejected. See nextRound.
+	roundRequested bool
+
 	runner *Runner
 	job    *orchestration.JobRun
 
@@ -500,11 +505,80 @@ func (s *runnerRun) initialize(ctx context.Context) (orchestration.JobState, err
 	if err := s.loadDelivery(ctx); err != nil {
 		return "", err
 	}
+	// AN ATTEMPT THAT ALREADY HAS A PULL REQUEST RESUMES IT RATHER THAN
+	// WORKING AGAIN. See resumeReview for what this fixes.
+	if state, err := s.resumeReview(ctx); state != "" || err != nil {
+		return state, err
+	}
 	if state, err := s.prepareWorkspace(ctx); state != "" || err != nil {
 		return state, err
 	}
 	s.job.Emit(orchestration.JobStateExecuting, "worker session "+s.sessionID+" on branch "+s.delivery.Branch)
 	return orchestration.JobStateExecuting, nil
+}
+
+// resumeReview sends an attempt whose task ALREADY has an open pull request
+// straight to the review state, skipping the worker. It answers "" when there
+// is nothing to resume and the attempt should do the work.
+//
+// WHAT IT FIXES, MEASURED ON THE BURN-IN FLEET 2026-09-14. A delivery is keyed
+// by TASK, so it outlives the attempt that created it — but every attempt used
+// to run the worker regardless. When an attempt ended for a reason that is not
+// the work's fault (an environment fault, a lost lease, a restart) AFTER its
+// pull request was opened, the next attempt was handed a workspace with the
+// previous attempt's own branch checked out. The worker read the tree, found
+// the change already present, and reported `satisfied` — exactly what its
+// contract says that means. The conclusion seam then completed the task as
+// `already_satisfied` on the premise that "the work was already present, so
+// there is nothing to merge", which is true of a stale issue and false here:
+// the pull request that attempt opened was still open, and completing the task
+// left it with nobody to merge it, ever.
+//
+// Three of the fleet's nine open pull requests were stranded that way
+// (go-truststrap#44 -> PR #66, go-truststrap#51 -> PR #65, go-luks2#92 ->
+// PR #197), two of them carrying review verdicts nobody would ever act on and
+// one of them APPROVED and gate-cleared.
+//
+// THE FORGE IS ASKED, NOT THE RECORD. The delivery says what was true when it
+// was written; a pull request merged or closed by a person since then must not
+// send this attempt into a review of something that already landed. This is
+// the same reason Hooks.Complete re-reads before merging.
+//
+// A CLOSED-BUT-UNMERGED PULL REQUEST FALLS THROUGH TO THE WORKER, deliberately:
+// somebody rejected that delivery, so the work genuinely is outstanding and
+// re-doing it is right.
+func (s *runnerRun) resumeReview(ctx context.Context) (orchestration.JobState, error) {
+	// A REQUESTED ROUND OUTRANKS THE RESUME. The gate rejected the head this
+	// pull request carries, so reviewing it again would judge the identical
+	// tree and reject it identically.
+	if s.roundRequested {
+		return "", nil
+	}
+	if s.delivery == nil || !s.delivery.RequiresPullRequest || !s.delivery.PullRequest.Opened() {
+		return "", nil
+	}
+	// A HEAD IS REQUIRED, AND WITHOUT IT THIS MUST NOT FIRE. publishForReview
+	// sends an attempt that reaches Reviewing with no session and no HeadSHA
+	// BACK to Initializing so the work is done — and Initializing is where
+	// this runs, so firing on an empty head would bounce the job between the
+	// two states for as long as its budget lasts.
+	if strings.TrimSpace(s.delivery.HeadSHA) == "" {
+		return "", nil
+	}
+	pr, err := s.attempt.forge.GetPullRequest(ctx, s.attempt.repo, s.delivery.PullRequest.Number)
+	if err != nil {
+		return "", err
+	}
+	// ForgePullRequest.State is the forge's own string ("open"/"closed"), not
+	// the delivery's typed PullRequestState; forge_review.go compares it the
+	// same way.
+	if pr == nil || pr.Merged || pr.State == "closed" {
+		return "", nil
+	}
+	s.job.Emit(orchestration.JobStateReviewing,
+		"resuming the pull request this task already opened (#"+strconv.Itoa(pr.Number)+
+			"); the worker is not re-run because the delivery exists")
+	return orchestration.JobStateReviewing, nil
 }
 
 // prepareWorkspace gets the worker a checkout and PROVES it before the run
@@ -1506,6 +1580,15 @@ func (s *runnerRun) nextRound(ctx context.Context, reason string) (orchestration
 		// one park helper now and every park goes through it.
 		return s.park(orchestration.TaskBlockKindEscalated, parked, ""), nil
 	}
+	// A ROUND HAS ASKED FOR NEW WORK, and resumeReview must not undo that.
+	// Executing needs a container a resumed run does not hold, so it returns
+	// through Initializing to get one — and Initializing is where resumeReview
+	// lives. Without this flag it would see the pull request still open, send
+	// the job straight back to Reviewing without running the worker, and the
+	// gate would reject the same unchanged head until the round budget was
+	// spent: a review that never converges because nobody ever changed
+	// anything.
+	s.roundRequested = true
 	s.job.Emit(orchestration.JobStateExecuting, reason+": round "+strconv.Itoa(round)+" of "+strconv.Itoa(max))
 	return orchestration.JobStateExecuting, nil
 }
