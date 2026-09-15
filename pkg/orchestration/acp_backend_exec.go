@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -171,6 +172,15 @@ func (b *ACPBackend) promptExec(ctx context.Context, sess *acpSession, req *Prom
 		if detail == "" {
 			detail = strings.TrimSpace(stdout)
 		}
+		// DIAGNOSTIC: the evidence is withheld from Error() on purpose (it can
+		// carry credential material), which leaves an operator reading only a
+		// byte count. Logged at WARN behind the optional logger so a failing
+		// CLI can actually be diagnosed on a running node; truncated, because
+		// the point is the first error line, not the transcript.
+		if b.logger != nil {
+			b.logger.Warnf("acp: %s produced no turn text; exit=%d evidence[:2000]=%s",
+				b.config.Command, exitCode, truncateForLog(detail, 2000))
+		}
 		return nil, &PromptError{SessionID: sess.id, Cause: &OneShotExecutionError{
 			Command: b.config.Command,
 			Stderr:  detail,
@@ -308,3 +318,12 @@ func (e *ExecEventStreamError) Error() string {
 }
 
 func (e *ExecEventStreamError) Unwrap() error { return e.Cause }
+
+// truncateForLog bounds a diagnostic string so one failing CLI cannot fill the
+// log with a whole transcript.
+func truncateForLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…(" + strconv.Itoa(len(s)-max) + " more bytes)"
+}

@@ -470,6 +470,18 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 			})
 		}
 	}
+	// EVERY ACP BACKEND GETS THE DAEMON'S LOGGER. ACPBackend.SetLogger is how
+	// the backend reports what a CLI did when a turn fails — most importantly
+	// the evidence withheld from the error string, which is otherwise a byte
+	// count an operator cannot act on. Nothing called it here, so those
+	// diagnostics were dead on every agent daemon: a reviewer whose CLI
+	// produced no turn logged "(9882 bytes of stderr withheld)" and nothing
+	// else, on every attempt, for as long as the fault lasted.
+	for _, backend := range backends {
+		if acp, ok := backend.(*orchestration.ACPBackend); ok {
+			acp.SetLogger(logger)
+		}
+	}
 	if len(backends) == 0 {
 		return nil, &MessageError{Message: fmt.Sprintf("no backends constructed from %v", cfg.EffectiveBackends())}
 	}

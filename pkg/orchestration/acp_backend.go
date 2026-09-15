@@ -1021,23 +1021,46 @@ func (b *ACPBackend) sandboxSpec(req *SpawnRequest, image string, command []stri
 	// variable (ProviderDescriptor.AccessTokenEnvKey) leaves the spec empty and
 	// mounts nothing, exactly as before.
 	if cred := b.config.CredentialDir; cred.configured() {
+		source := ""
 		if req.AccountHomeDir != "" {
-			configDir := filepath.Join(req.AccountHomeDir, cred.Rel)
-			if _, statErr := os.Stat(configDir); statErr == nil {
-				spec.Mounts = append(spec.Mounts, ContainerMount{
-					Source:   configDir,
-					Target:   cred.Target,
-					ReadOnly: !cred.Writable,
-				})
-			}
+			source = filepath.Join(req.AccountHomeDir, cred.Rel)
 		} else if home, _ := os.UserHomeDir(); home != "" {
-			configDir := filepath.Join(home, cred.Rel)
-			if _, statErr := os.Stat(configDir); statErr == nil {
+			source = filepath.Join(home, cred.Rel)
+		}
+		mounted := false
+		if source != "" {
+			if _, statErr := os.Stat(source); statErr == nil {
 				spec.Mounts = append(spec.Mounts, ContainerMount{
-					Source:   configDir,
+					Source:   source,
 					Target:   cred.Target,
 					ReadOnly: !cred.Writable,
 				})
+				mounted = true
+			}
+		}
+		// A CONFIGURED CREDENTIAL THAT DID NOT MOUNT IS A REFUSAL, NOT A
+		// WARNING. This used to set HomeEnv unconditionally, so a backend whose
+		// credential directory was absent — a pooled account whose files were
+		// stored under the wrong relative path, a materialization that wrote
+		// nothing — still told the CLI where to look, and pointed it at a path
+		// nothing had mounted. codex answered
+		//
+		//	CODEX_HOME points to "/home/agent/.codex", but that path does not
+		//	exist
+		//
+		// on stderr, produced no turn, and the runner reported only
+		// "(9882 bytes of stderr withheld)". Every review on the burn-in fleet
+		// failed that way for hours, on every attempt, while the account read
+		// `active` and the credential resolved: the spawn had everything it
+		// needed except the one mount, and said so nowhere.
+		//
+		// Failing here costs the same attempt and names the cause.
+		if !mounted {
+			return nil, &CredentialDirMissingError{
+				Backend: b.config.Command,
+				Source:  source,
+				Target:  cred.Target,
+				Rel:     cred.Rel,
 			}
 		}
 		// A CLI that locates its credential by variable is told where it went.

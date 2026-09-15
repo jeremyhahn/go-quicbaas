@@ -1081,3 +1081,40 @@ func (e *ServiceShuttingDownError) Error() string {
 
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *ServiceShuttingDownError) Unwrap() error { return ErrServiceShuttingDown }
+
+// CredentialDirMissingError reports a backend whose file-based credential
+// directory was configured but did not exist to mount.
+//
+// IT IS AN ERROR RATHER THAN A DEGRADED SPAWN because the CLI is told where
+// the credential went through its own environment variable, and a variable
+// pointing at an unmounted path sends it looking in an empty container
+// directory. The CLI then fails with something about its own configuration,
+// far from the cause, and the spawn reports only the byte count of evidence it
+// withheld. Naming the directory here costs the same attempt and says what to
+// repair.
+type CredentialDirMissingError struct {
+	// Backend is the CLI the credential belongs to.
+	Backend string
+
+	// Source is the host path that was expected to hold it; empty when no
+	// account home was resolved and the process has no home directory either.
+	Source string
+
+	// Target is where the mount would have landed in the container.
+	Target string
+
+	// Rel is the credential directory's path relative to the account home,
+	// which is what a pooled account's stored files must be keyed under.
+	Rel string
+}
+
+// Error implements the error interface.
+func (e *CredentialDirMissingError) Error() string {
+	source := e.Source
+	if source == "" {
+		source = "(no account home and no user home)"
+	}
+	return "orchestration: " + e.Backend + " credential directory not found: " +
+		source + " does not exist, so " + e.Target + " would be empty; " +
+		"a pooled account's files must be keyed under " + e.Rel + "/"
+}

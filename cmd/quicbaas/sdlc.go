@@ -408,6 +408,7 @@ func formatSDLCBinding(binding *sdlcSDK.ProjectBinding, format string, w io.Writ
 		fmt.Fprintf(tw, "Verification:\t%s\n", orDash(strings.Join(binding.Verification, "; ")))
 		fmt.Fprintf(tw, "Review:\t%d approval(s), independent=%v, green-checks=%v\n",
 			binding.Review.RequiredApprovals, binding.Review.RequireIndependentReviewer, binding.Review.RequireGreenChecks)
+		fmt.Fprintf(tw, "Triage:\t%s\n", triageLabel(binding.Triage, binding.Worker))
 		fmt.Fprintf(tw, "Reviewer:\t%s\n", reviewerLabel(binding.Reviewer))
 		fmt.Fprintf(tw, "Review rounds:\t%s\n", reviewRoundsLabel(binding.MaxReviewRounds))
 		fmt.Fprintf(tw, "Discovery:\t%s\n", discoveryLabel(binding.Discovery))
@@ -511,6 +512,16 @@ func workerLabel(worker sdlcSDK.WorkerConfig) string {
 
 // reviewRoundsLabel names the configured bound, saying so when the binding
 // leaves it to the module's default.
+// triageLabel renders the triage row, saying plainly when it falls back to the
+// worker — a project paying a code-writing model to read issues should be able
+// to see that it is.
+func triageLabel(triage, worker sdlcSDK.WorkerConfig) string {
+	if strings.TrimSpace(triage.Backend) == "" {
+		return workerLabel(worker) + " (falls back to the worker)"
+	}
+	return workerLabel(triage)
+}
+
 // reviewerLabel renders the reviewer row of the binding table.
 //
 // AN UNCONFIGURED REVIEWER IS NAMED, NOT LEFT BLANK. A project with no

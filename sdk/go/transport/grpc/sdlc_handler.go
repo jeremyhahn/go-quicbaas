@@ -201,6 +201,7 @@ func sdlcBindingToProto(b *sdlc.ProjectBinding) *pb.ProjectBinding {
 			StatusContext: b.Reviewer.StatusContext,
 		},
 		Discovery:       b.Discovery,
+		Triage:          &pb.WorkerConfig{Backend: b.Triage.Backend, Model: b.Triage.Model, Image: b.Triage.Image},
 		Strategy:        b.Strategy,
 		Worker:          &pb.WorkerConfig{Backend: b.Worker.Backend, Model: b.Worker.Model, Image: b.Worker.Image},
 		Verification:    append([]string(nil), b.Verification...),
@@ -254,6 +255,9 @@ func sdlcBindingFromProto(p *pb.ProjectBinding) *sdlc.ProjectBinding {
 		}
 	}
 	b.Discovery = p.Discovery
+	if p.Triage != nil {
+		b.Triage = sdlc.WorkerConfig{Backend: p.Triage.Backend, Model: p.Triage.Model, Image: p.Triage.Image}
+	}
 	if p.Ranking != nil {
 		b.Ranking = sdlc.RankingPolicy{
 			DefaultPriority: int(p.Ranking.DefaultPriority), AnalyzerName: p.Ranking.AnalyzerName, DeclaredDependents: p.Ranking.DeclaredDependents,

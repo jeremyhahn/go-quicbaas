@@ -629,15 +629,21 @@ func (s *triageRun) spawnRequest(ctx context.Context, mount string) (*orchestrat
 			Message: "triage reads the repository at its default branch and the project names none",
 		}
 	}
+	// TRIAGE RUNS ON ITS OWN AGENT WHEN THE BINDING NAMES ONE. It reads and
+	// judges; it writes no code. See ProjectBinding.Triage.
+	agent := s.binding.Triage
+	if strings.TrimSpace(agent.Backend) == "" {
+		agent = s.binding.Worker
+	}
 	req := &orchestration.SpawnSessionRequest{
-		Backend:      s.binding.Worker.Backend,
-		Model:        s.binding.Worker.Model,
+		Backend:      agent.Backend,
+		Model:        agent.Model,
 		ProjectID:    project.ID,
 		SystemPrompt: charter,
 		WorkDir:      mount,
 		Persistent:   true,
 	}
-	if image := strings.TrimSpace(s.binding.Worker.Image); image != "" {
+	if image := strings.TrimSpace(agent.Image); image != "" {
 		req.ContainerImage = image
 		req.SandboxMode = orchestration.SandboxModeRequired
 	}

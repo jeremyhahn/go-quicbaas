@@ -170,6 +170,11 @@ type ProjectBinding struct {
 	// "both" (default), "poll" or "webhook".
 	Discovery string `json:"discovery,omitempty" yaml:"discovery,omitempty"`
 
+	// Triage is the agent that triages this project's open issues. Empty
+	// falls back to Worker. Triage reads and judges and writes no code, so a
+	// project can point it at a cheaper or locally hosted model.
+	Triage WorkerConfig `json:"triage,omitempty" yaml:"triage,omitempty"`
+
 	// MaxReviewRounds bounds the review rounds; zero takes the default.
 	MaxReviewRounds int `json:"max_review_rounds,omitempty" yaml:"max_review_rounds,omitempty"`
 

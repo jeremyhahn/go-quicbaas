@@ -365,6 +365,15 @@ type ProjectBinding struct {
 	// Ranking is this project's contribution to task ordering.
 	Ranking RankingPolicy `json:"ranking"`
 
+	// Triage names the agent that triages this project's open issues.
+	//
+	// EMPTY FALLS BACK TO Worker, which is what every project did before this
+	// existed. Triage is a READING task — it decides whether an issue is
+	// already satisfied, duplicated or moot — and nothing it does writes code,
+	// so a project can point it at a cheaper or locally hosted model without
+	// changing who writes the code. Owner direction 2026-09-15.
+	Triage WorkerConfig `json:"triage,omitempty"`
+
 	// Discovery selects how this project learns that something happened on
 	// its forge: `poll`, `webhook` or `both`. Empty takes DiscoveryBoth —
 	// see DiscoveryMode for why that is the default.

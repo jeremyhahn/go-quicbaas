@@ -161,6 +161,10 @@ message ProjectBinding {
     // discovery selects which discovery paths this project runs
     // ("both" | "poll" | "webhook"); empty takes the default.
     string discovery             = 13;
+    // triage names the agent that triages this project's open issues; empty
+    // falls back to worker. Triage reads and judges and writes no code, so it
+    // can run on a cheaper or locally hosted model.
+    WorkerConfig triage          = 14;
 }
 
 // PullRequest is the pull request an attempt opened.

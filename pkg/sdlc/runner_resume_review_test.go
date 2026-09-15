@@ -15,6 +15,7 @@ package sdlc
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -307,5 +308,34 @@ func TestAdoptBranchPullRequest_LeavesAnUnrelatedBranchAlone(t *testing.T) {
 	}
 	if rig.forge.listOpenPRs != before {
 		t.Fatal("a delivery with no branch must not list the forge at all")
+	}
+}
+
+// TestTriageAgent_FallsBackToTheWorker pins the fallback that keeps every
+// existing binding working, and the override that lets triage run elsewhere.
+//
+// TRIAGE READS AND JUDGES; IT WRITES NO CODE. Running it on the same model that
+// writes the code is a cost with no benefit, so a binding may name its own
+// triage agent. An empty one falls back to the worker, which is what every
+// project did before the field existed.
+func TestTriageAgent_FallsBackToTheWorker(t *testing.T) {
+	worker := WorkerConfig{Backend: "claude", Model: "claude-opus-5", Image: "worker:1"}
+
+	binding := &ProjectBinding{Worker: worker}
+	agent := binding.Triage
+	if strings.TrimSpace(agent.Backend) == "" {
+		agent = binding.Worker
+	}
+	if agent != worker {
+		t.Fatalf("an unset triage agent must fall back to the worker, got %+v", agent)
+	}
+
+	binding.Triage = WorkerConfig{Backend: "qwen", Model: "qwen3:1.7b", Image: "worker:1"}
+	agent = binding.Triage
+	if strings.TrimSpace(agent.Backend) == "" {
+		agent = binding.Worker
+	}
+	if agent.Backend != "qwen" || agent.Model != "qwen3:1.7b" {
+		t.Fatalf("a named triage agent must be used verbatim, got %+v", agent)
 	}
 }

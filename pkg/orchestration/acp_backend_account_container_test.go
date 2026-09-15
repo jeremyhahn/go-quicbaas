@@ -15,6 +15,7 @@ package orchestration
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -147,5 +148,64 @@ func TestACPBackend_SpawnContainer_FileBasedAccount_MountsIsolatedDir(t *testing
 	}
 	if string(content) != `{"anthropic":{"apiKey":"acct-1-key"}}` {
 		t.Fatalf("mounted auth.json content = %s, want acct-1's own credential", content)
+	}
+}
+
+// TestACPBackend_SpawnContainer_RefusesWhenTheCredentialDirDidNotMount is the
+// regression test for a spawn that had everything it needed except the mount,
+// and said so nowhere.
+//
+// A POOLED ACCOUNT'S FILES MUST BE KEYED UNDER CredentialDirSpec.Rel —
+// materializeAccountFiles writes each relative path verbatim under the account
+// home, and the backend mounts <home>/<Rel>. Files stored at the root instead
+// produce a home directory with no <Rel> in it, so nothing mounts.
+//
+// The backend used to set the CLI's HomeEnv anyway, pointing it at a container
+// path nothing had mounted. Measured on the burn-in fleet 2026-09-15: codex
+// answered `CODEX_HOME points to "/home/agent/.codex", but that path does not
+// exist`, produced no turn, and the runner reported only "(9882 bytes of
+// stderr withheld)". Every review failed that way for hours while the account
+// read `active` and the credential resolved.
+func TestACPBackend_SpawnContainer_RefusesWhenTheCredentialDirDidNotMount(t *testing.T) {
+	runtime := &specCapturingContainerRuntime{t: t}
+	backend := NewACPBackend(ACPBackendConfig{Command: "codex",
+		CredentialDir: CredentialDirSpec{Rel: ".codex", Target: "/home/agent/.codex", HomeEnv: "CODEX_HOME"}})
+	backend.SetContainerRuntime(runtime)
+
+	store := NewInMemoryAccountStore()
+	secretStore := newTestAccountSecretStore(t)
+	ctx := ContextWithTenant(context.Background(), "system")
+
+	account := &Account{ID: "acct-2", TenantID: "system", Provider: AccountProviderCodex}
+	if err := store.Create(ctx, account); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	// Keyed at the ROOT rather than under ".codex/" — the mistake this refuses.
+	if err := secretStore.Put(ctx, "system", "acct-2", &AccountCredential{
+		Files: map[string][]byte{"auth.json": []byte(`{"tokens":{}}`)},
+	}); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	backend.SetAccountResolver(NewAccountResolver(store, NewAccountTokenManager(secretStore, store, 60*time.Second), NewAccountStrategyRegistry(nil)))
+
+	spawnCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, err := backend.Spawn(spawnCtx, &SpawnRequest{
+		WorkDir:        "/tmp",
+		AccountID:      "acct-2",
+		SandboxMode:    SandboxModeRequired,
+		ContainerImage: "worker:test",
+	})
+	if err == nil {
+		t.Fatal("a spawn whose credential directory did not mount must be refused, not started with an env var pointing at nothing")
+	}
+	var missing *CredentialDirMissingError
+	if !errors.As(err, &missing) {
+		t.Fatalf("want CredentialDirMissingError, got %T: %v", err, err)
+	}
+	// The refusal has to say what to repair: the relative path the files
+	// should have been keyed under.
+	if !strings.Contains(missing.Error(), ".codex") {
+		t.Fatalf("the refusal must name the credential directory: %s", missing.Error())
 	}
 }

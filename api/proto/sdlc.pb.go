@@ -550,7 +550,11 @@ type ProjectBinding struct {
 	Reviewer *ReviewerConfig `protobuf:"bytes,12,opt,name=reviewer,proto3" json:"reviewer,omitempty"`
 	// discovery selects which discovery paths this project runs
 	// ("both" | "poll" | "webhook"); empty takes the default.
-	Discovery     string `protobuf:"bytes,13,opt,name=discovery,proto3" json:"discovery,omitempty"`
+	Discovery string `protobuf:"bytes,13,opt,name=discovery,proto3" json:"discovery,omitempty"`
+	// triage names the agent that triages this project's open issues; empty
+	// falls back to worker. Triage reads and judges and writes no code, so it
+	// can run on a cheaper or locally hosted model.
+	Triage        *WorkerConfig `protobuf:"bytes,14,opt,name=triage,proto3" json:"triage,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -674,6 +678,13 @@ func (x *ProjectBinding) GetDiscovery() string {
 		return x.Discovery
 	}
 	return ""
+}
+
+func (x *ProjectBinding) GetTriage() *WorkerConfig {
+	if x != nil {
+		return x.Triage
+	}
+	return nil
 }
 
 // PullRequest is the pull request an attempt opened.
@@ -2287,7 +2298,7 @@ const file_api_proto_sdlc_proto_rawDesc = "" +
 	"\flabel_colors\x18\x06 \x03(\v23.quicbaas.sdlc.v1.OnboardingConfig.LabelColorsEntryR\vlabelColors\x1a>\n" +
 	"\x10LabelColorsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xeb\x04\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa3\x05\n" +
 	"\x0eProjectBinding\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x123\n" +
@@ -2305,7 +2316,8 @@ const file_api_proto_sdlc_proto_rawDesc = "" +
 	"onboarding\x18\v \x01(\v2\".quicbaas.sdlc.v1.OnboardingConfigR\n" +
 	"onboarding\x12<\n" +
 	"\breviewer\x18\f \x01(\v2 .quicbaas.sdlc.v1.ReviewerConfigR\breviewer\x12\x1c\n" +
-	"\tdiscovery\x18\r \x01(\tR\tdiscovery\"w\n" +
+	"\tdiscovery\x18\r \x01(\tR\tdiscovery\x126\n" +
+	"\x06triage\x18\x0e \x01(\v2\x1e.quicbaas.sdlc.v1.WorkerConfigR\x06triage\"w\n" +
 	"\vPullRequest\x12\x16\n" +
 	"\x06number\x18\x01 \x01(\x05R\x06number\x12\x10\n" +
 	"\x03url\x18\x02 \x01(\tR\x03url\x12\x14\n" +
@@ -2499,38 +2511,39 @@ var file_api_proto_sdlc_proto_depIdxs = []int32{
 	4,  // 6: quicbaas.sdlc.v1.ProjectBinding.ranking:type_name -> quicbaas.sdlc.v1.RankingPolicy
 	5,  // 7: quicbaas.sdlc.v1.ProjectBinding.onboarding:type_name -> quicbaas.sdlc.v1.OnboardingConfig
 	2,  // 8: quicbaas.sdlc.v1.ProjectBinding.reviewer:type_name -> quicbaas.sdlc.v1.ReviewerConfig
-	7,  // 9: quicbaas.sdlc.v1.Delivery.pull_request:type_name -> quicbaas.sdlc.v1.PullRequest
-	8,  // 10: quicbaas.sdlc.v1.Delivery.reviews:type_name -> quicbaas.sdlc.v1.ReviewRecord
-	9,  // 11: quicbaas.sdlc.v1.Delivery.checks:type_name -> quicbaas.sdlc.v1.CheckRecord
-	10, // 12: quicbaas.sdlc.v1.Delivery.superseded_runs:type_name -> quicbaas.sdlc.v1.SupersessionRecord
-	6,  // 13: quicbaas.sdlc.v1.BindProjectRequest.binding:type_name -> quicbaas.sdlc.v1.ProjectBinding
-	6,  // 14: quicbaas.sdlc.v1.BindProjectResponse.binding:type_name -> quicbaas.sdlc.v1.ProjectBinding
-	6,  // 15: quicbaas.sdlc.v1.GetBindingResponse.binding:type_name -> quicbaas.sdlc.v1.ProjectBinding
-	11, // 16: quicbaas.sdlc.v1.GetDeliveryResponse.delivery:type_name -> quicbaas.sdlc.v1.Delivery
-	26, // 17: quicbaas.sdlc.v1.OnboardResponse.report:type_name -> quicbaas.sdlc.v1.OnboardingReport
-	29, // 18: quicbaas.sdlc.v1.GetConformanceResponse.report:type_name -> quicbaas.sdlc.v1.ConformanceReport
-	29, // 19: quicbaas.sdlc.v1.OnboardingReport.conformance:type_name -> quicbaas.sdlc.v1.ConformanceReport
-	28, // 20: quicbaas.sdlc.v1.ConformanceReport.checks:type_name -> quicbaas.sdlc.v1.ConformanceCheckResult
-	27, // 21: quicbaas.sdlc.v1.ConformanceReport.findings:type_name -> quicbaas.sdlc.v1.ConformanceFinding
-	12, // 22: quicbaas.sdlc.v1.SDLCService.BindProject:input_type -> quicbaas.sdlc.v1.BindProjectRequest
-	14, // 23: quicbaas.sdlc.v1.SDLCService.UnbindProject:input_type -> quicbaas.sdlc.v1.UnbindProjectRequest
-	16, // 24: quicbaas.sdlc.v1.SDLCService.GetBinding:input_type -> quicbaas.sdlc.v1.GetBindingRequest
-	18, // 25: quicbaas.sdlc.v1.SDLCService.GetDelivery:input_type -> quicbaas.sdlc.v1.GetDeliveryRequest
-	20, // 26: quicbaas.sdlc.v1.SDLCService.ListForges:input_type -> quicbaas.sdlc.v1.ListForgesRequest
-	22, // 27: quicbaas.sdlc.v1.SDLCService.Onboard:input_type -> quicbaas.sdlc.v1.OnboardRequest
-	24, // 28: quicbaas.sdlc.v1.SDLCService.GetConformance:input_type -> quicbaas.sdlc.v1.GetConformanceRequest
-	13, // 29: quicbaas.sdlc.v1.SDLCService.BindProject:output_type -> quicbaas.sdlc.v1.BindProjectResponse
-	15, // 30: quicbaas.sdlc.v1.SDLCService.UnbindProject:output_type -> quicbaas.sdlc.v1.UnbindProjectResponse
-	17, // 31: quicbaas.sdlc.v1.SDLCService.GetBinding:output_type -> quicbaas.sdlc.v1.GetBindingResponse
-	19, // 32: quicbaas.sdlc.v1.SDLCService.GetDelivery:output_type -> quicbaas.sdlc.v1.GetDeliveryResponse
-	21, // 33: quicbaas.sdlc.v1.SDLCService.ListForges:output_type -> quicbaas.sdlc.v1.ListForgesResponse
-	23, // 34: quicbaas.sdlc.v1.SDLCService.Onboard:output_type -> quicbaas.sdlc.v1.OnboardResponse
-	25, // 35: quicbaas.sdlc.v1.SDLCService.GetConformance:output_type -> quicbaas.sdlc.v1.GetConformanceResponse
-	29, // [29:36] is the sub-list for method output_type
-	22, // [22:29] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	3,  // 9: quicbaas.sdlc.v1.ProjectBinding.triage:type_name -> quicbaas.sdlc.v1.WorkerConfig
+	7,  // 10: quicbaas.sdlc.v1.Delivery.pull_request:type_name -> quicbaas.sdlc.v1.PullRequest
+	8,  // 11: quicbaas.sdlc.v1.Delivery.reviews:type_name -> quicbaas.sdlc.v1.ReviewRecord
+	9,  // 12: quicbaas.sdlc.v1.Delivery.checks:type_name -> quicbaas.sdlc.v1.CheckRecord
+	10, // 13: quicbaas.sdlc.v1.Delivery.superseded_runs:type_name -> quicbaas.sdlc.v1.SupersessionRecord
+	6,  // 14: quicbaas.sdlc.v1.BindProjectRequest.binding:type_name -> quicbaas.sdlc.v1.ProjectBinding
+	6,  // 15: quicbaas.sdlc.v1.BindProjectResponse.binding:type_name -> quicbaas.sdlc.v1.ProjectBinding
+	6,  // 16: quicbaas.sdlc.v1.GetBindingResponse.binding:type_name -> quicbaas.sdlc.v1.ProjectBinding
+	11, // 17: quicbaas.sdlc.v1.GetDeliveryResponse.delivery:type_name -> quicbaas.sdlc.v1.Delivery
+	26, // 18: quicbaas.sdlc.v1.OnboardResponse.report:type_name -> quicbaas.sdlc.v1.OnboardingReport
+	29, // 19: quicbaas.sdlc.v1.GetConformanceResponse.report:type_name -> quicbaas.sdlc.v1.ConformanceReport
+	29, // 20: quicbaas.sdlc.v1.OnboardingReport.conformance:type_name -> quicbaas.sdlc.v1.ConformanceReport
+	28, // 21: quicbaas.sdlc.v1.ConformanceReport.checks:type_name -> quicbaas.sdlc.v1.ConformanceCheckResult
+	27, // 22: quicbaas.sdlc.v1.ConformanceReport.findings:type_name -> quicbaas.sdlc.v1.ConformanceFinding
+	12, // 23: quicbaas.sdlc.v1.SDLCService.BindProject:input_type -> quicbaas.sdlc.v1.BindProjectRequest
+	14, // 24: quicbaas.sdlc.v1.SDLCService.UnbindProject:input_type -> quicbaas.sdlc.v1.UnbindProjectRequest
+	16, // 25: quicbaas.sdlc.v1.SDLCService.GetBinding:input_type -> quicbaas.sdlc.v1.GetBindingRequest
+	18, // 26: quicbaas.sdlc.v1.SDLCService.GetDelivery:input_type -> quicbaas.sdlc.v1.GetDeliveryRequest
+	20, // 27: quicbaas.sdlc.v1.SDLCService.ListForges:input_type -> quicbaas.sdlc.v1.ListForgesRequest
+	22, // 28: quicbaas.sdlc.v1.SDLCService.Onboard:input_type -> quicbaas.sdlc.v1.OnboardRequest
+	24, // 29: quicbaas.sdlc.v1.SDLCService.GetConformance:input_type -> quicbaas.sdlc.v1.GetConformanceRequest
+	13, // 30: quicbaas.sdlc.v1.SDLCService.BindProject:output_type -> quicbaas.sdlc.v1.BindProjectResponse
+	15, // 31: quicbaas.sdlc.v1.SDLCService.UnbindProject:output_type -> quicbaas.sdlc.v1.UnbindProjectResponse
+	17, // 32: quicbaas.sdlc.v1.SDLCService.GetBinding:output_type -> quicbaas.sdlc.v1.GetBindingResponse
+	19, // 33: quicbaas.sdlc.v1.SDLCService.GetDelivery:output_type -> quicbaas.sdlc.v1.GetDeliveryResponse
+	21, // 34: quicbaas.sdlc.v1.SDLCService.ListForges:output_type -> quicbaas.sdlc.v1.ListForgesResponse
+	23, // 35: quicbaas.sdlc.v1.SDLCService.Onboard:output_type -> quicbaas.sdlc.v1.OnboardResponse
+	25, // 36: quicbaas.sdlc.v1.SDLCService.GetConformance:output_type -> quicbaas.sdlc.v1.GetConformanceResponse
+	30, // [30:37] is the sub-list for method output_type
+	23, // [23:30] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_sdlc_proto_init() }
