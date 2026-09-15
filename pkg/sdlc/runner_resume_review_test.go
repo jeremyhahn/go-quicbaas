@@ -189,3 +189,123 @@ func TestResumeReview_ARequestedRoundOutranksTheResume(t *testing.T) {
 		t.Fatalf("state = %q, want empty — the gate rejected this head, so reviewing it again judges the identical tree", state)
 	}
 }
+
+// TestAdoptBranchPullRequest_BindsAReAdoptedIssueToItsOpenPullRequest covers
+// the second half of the orphan class.
+//
+// A DELIVERY IS KEYED BY TASK AND A TASK IS TERMINAL, so an issue whose first
+// task ended is adopted again as a NEW task with a FRESH delivery that knows
+// nothing of the pull request the old one opened. The branch name is planned
+// from the ISSUE, so it is the same name; the remote branch still carries the
+// old commits; and the new attempt cuts its branch from the base instead.
+//
+// Measured on go-truststrap#51 (2026-09-15): every push was refused with
+// "! [rejected] (non-fast-forward)", and each refusal was charged to the WORK,
+// so the task spent its whole budget failing at something the work had nothing
+// to do with. Re-labelling an orphaned issue was not merely useless but
+// harmful.
+func TestAdoptBranchPullRequest_BindsAReAdoptedIssueToItsOpenPullRequest(t *testing.T) {
+	rig := newRunnerRig(t)
+	ctx := context.Background()
+
+	const branch = "issue/51-the-branch-the-old-task-opened"
+	rig.forge.mu.Lock()
+	rig.forge.prs[65] = &ForgePullRequest{
+		Number: 65, State: "open", HeadRef: branch, HeadSHA: "437558de8a85",
+		Title: "the old task's pull request", BaseRef: "main",
+	}
+	rig.forge.mu.Unlock()
+
+	// A FRESH delivery: same branch, no pull request, nothing published.
+	delivery := &Delivery{
+		TaskID: testTask, ProjectID: testProject, Branch: branch, Base: "main", Attempt: 1,
+		RequiresPullRequest: true,
+	}
+	if err := rig.store.PutDelivery(ctx, testTenant, delivery); err != nil {
+		t.Fatalf("PutDelivery: %v", err)
+	}
+
+	run := &runnerRun{
+		job: orchestration.NewJobRun(orchestration.JobRunConfig{
+			JobID:  "job-1",
+			Config: &orchestration.JobConfig{TenantID: testTenant, ProjectID: testProject, TaskID: testTask, Attempt: 1},
+		}),
+		runner:   rig.runner,
+		delivery: delivery,
+		attempt:  &attempt{task: testTaskRecord(51), issue: 51, forge: rig.forge, repo: RepoRef{Owner: "o", Repo: "r"}},
+	}
+
+	adopted, err := run.adoptBranchPullRequest(ctx)
+	if err != nil {
+		t.Fatalf("adoptBranchPullRequest: %v", err)
+	}
+	if !adopted {
+		t.Fatal("an open pull request on this delivery's branch must be adopted, not raced with a rival branch")
+	}
+	if run.delivery.PullRequest.Number != 65 {
+		t.Fatalf("delivery pull request = %+v, want #65", run.delivery.PullRequest)
+	}
+	// THE HEAD MUST COME FROM THE FORGE: this attempt published nothing, and
+	// resumeReview refuses to resume without a head.
+	if run.delivery.HeadSHA != "437558de8a85" {
+		t.Fatalf("delivery head = %q, want the forge's", run.delivery.HeadSHA)
+	}
+
+	// THE BINDING IS DURABLE. A binding only this attempt could see would be
+	// lost when the attempt ended — the same shape as the orphan it repairs.
+	stored, err := rig.store.GetDelivery(ctx, testTenant, testTask)
+	if err != nil {
+		t.Fatalf("GetDelivery: %v", err)
+	}
+	if stored.PullRequest.Number != 65 || stored.HeadSHA != "437558de8a85" {
+		t.Fatalf("the binding did not reach the store: %+v", stored.PullRequest)
+	}
+}
+
+// TestAdoptBranchPullRequest_LeavesAnUnrelatedBranchAlone keeps a task from
+// hijacking somebody else's pull request.
+func TestAdoptBranchPullRequest_LeavesAnUnrelatedBranchAlone(t *testing.T) {
+	rig := newRunnerRig(t)
+	ctx := context.Background()
+
+	rig.forge.mu.Lock()
+	rig.forge.prs[65] = &ForgePullRequest{Number: 65, State: "open", HeadRef: "issue/99-someone-elses", HeadSHA: "aaa"}
+	rig.forge.prs[70] = &ForgePullRequest{Number: 70, State: "closed", HeadRef: "issue/51-mine", HeadSHA: "bbb"}
+	rig.forge.prs[71] = &ForgePullRequest{Number: 71, State: "closed", Merged: true, HeadRef: "issue/51-mine", HeadSHA: "ccc"}
+	rig.forge.mu.Unlock()
+
+	delivery := &Delivery{
+		TaskID: testTask, ProjectID: testProject, Branch: "issue/51-mine", Base: "main", Attempt: 1,
+		RequiresPullRequest: true,
+	}
+	if err := rig.store.PutDelivery(ctx, testTenant, delivery); err != nil {
+		t.Fatalf("PutDelivery: %v", err)
+	}
+	run := &runnerRun{
+		job: orchestration.NewJobRun(orchestration.JobRunConfig{
+			JobID:  "job-1",
+			Config: &orchestration.JobConfig{TenantID: testTenant, ProjectID: testProject, TaskID: testTask, Attempt: 1},
+		}),
+		runner:   rig.runner,
+		delivery: delivery,
+		attempt:  &attempt{task: testTaskRecord(51), issue: 51, forge: rig.forge, repo: RepoRef{Owner: "o", Repo: "r"}},
+	}
+
+	adopted, err := run.adoptBranchPullRequest(ctx)
+	if err != nil {
+		t.Fatalf("adoptBranchPullRequest: %v", err)
+	}
+	if adopted {
+		t.Fatalf("adopted something it should not have: %+v", run.delivery.PullRequest)
+	}
+
+	// And a delivery with no branch planned yet asks the forge nothing.
+	run.delivery.Branch = ""
+	before := rig.forge.listOpenPRs
+	if adopted, err := run.adoptBranchPullRequest(ctx); err != nil || adopted {
+		t.Fatalf("a delivery with no branch must adopt nothing: adopted=%v err=%v", adopted, err)
+	}
+	if rig.forge.listOpenPRs != before {
+		t.Fatal("a delivery with no branch must not list the forge at all")
+	}
+}

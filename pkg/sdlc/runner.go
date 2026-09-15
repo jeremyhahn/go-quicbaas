@@ -517,6 +517,65 @@ func (s *runnerRun) initialize(ctx context.Context) (orchestration.JobState, err
 	return orchestration.JobStateExecuting, nil
 }
 
+// adoptBranchPullRequest binds a delivery that holds no pull request to one
+// already open on the branch this delivery plans to use, reporting whether it
+// found one.
+//
+// THE CASE IT EXISTS FOR IS A RE-ADOPTED ISSUE. A delivery is keyed by task and
+// a task is terminal, so an issue whose first task ended — completed, failed,
+// abandoned — is adopted again as a NEW task with a FRESH delivery that knows
+// nothing of the pull request the old one opened. The branch name is planned
+// from the ISSUE, so it is the same name; the remote branch still carries the
+// old commits; and the new attempt cuts its branch from the base instead.
+//
+// Measured on go-truststrap#51 (2026-09-15), which is what this prevents: the
+// fresh task did the work, and every push was refused —
+//
+//	! [rejected] issue/51-… (non-fast-forward)
+//	Updates were rejected because the tip of your current branch is behind
+//
+// — and each refusal was charged to the WORK, so the task spent its whole
+// budget failing at something the work had nothing to do with. Re-labelling an
+// orphaned issue was therefore not merely useless but harmful.
+//
+// BINDING IS A DELIVERY WRITE, not a field set on this run, because the merge,
+// the gate and the outcome comment all read the delivery — a binding only this
+// attempt could see would be lost the moment the attempt ended, which is the
+// same shape of bug as the orphan it repairs.
+func (s *runnerRun) adoptBranchPullRequest(ctx context.Context) (bool, error) {
+	branch := strings.TrimSpace(s.delivery.Branch)
+	if branch == "" {
+		return false, nil
+	}
+	open, err := s.attempt.forge.ListOpenPullRequests(ctx, s.attempt.repo)
+	if err != nil {
+		return false, err
+	}
+	for i := range open {
+		pr := open[i]
+		if pr.Merged || !strings.EqualFold(strings.TrimSpace(pr.HeadRef), branch) {
+			continue
+		}
+		if err := s.runner.hooks.updateDelivery(ctx, s.job.Context(), s.delivery, func(d *Delivery) {
+			d.PullRequest = DeliveryPullRequest{
+				Number: pr.Number, URL: pr.URL, State: PullRequestOpen,
+				Title: pr.Title, Base: pr.BaseRef,
+			}
+			// THE HEAD COMES FROM THE FORGE. This attempt published nothing,
+			// so the delivery's own HeadSHA is empty — and resumeReview
+			// refuses to resume without one, for good reason.
+			d.HeadSHA = pr.HeadSHA
+		}); err != nil {
+			return false, err
+		}
+		s.job.Emit(orchestration.JobStateInitializing,
+			"adopted the pull request already open on "+branch+" (#"+strconv.Itoa(pr.Number)+
+				"); this task did not open it, and cutting a rival branch could not be pushed")
+		return true, nil
+	}
+	return false, nil
+}
+
 // resumeReview sends an attempt whose task ALREADY has an open pull request
 // straight to the review state, skipping the worker. It answers "" when there
 // is nothing to resume and the attempt should do the work.
@@ -554,8 +613,18 @@ func (s *runnerRun) resumeReview(ctx context.Context) (orchestration.JobState, e
 	if s.roundRequested {
 		return "", nil
 	}
-	if s.delivery == nil || !s.delivery.RequiresPullRequest || !s.delivery.PullRequest.Opened() {
+	if s.delivery == nil || !s.delivery.RequiresPullRequest {
 		return "", nil
+	}
+	// A TASK THAT HOLDS NO PULL REQUEST MAY STILL BE ABOUT ONE. See
+	// adoptBranchPullRequest: an issue re-adopted after its first task ended
+	// gets a FRESH delivery, and cutting a rival branch over the one the old
+	// pull request is still open on cannot even be pushed.
+	if !s.delivery.PullRequest.Opened() {
+		adopted, err := s.adoptBranchPullRequest(ctx)
+		if err != nil || !adopted {
+			return "", err
+		}
 	}
 	// A HEAD IS REQUIRED, AND WITHOUT IT THIS MUST NOT FIRE. publishForReview
 	// sends an attempt that reaches Reviewing with no session and no HeadSHA
