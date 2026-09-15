@@ -170,6 +170,17 @@ type Config struct {
 	// the network, and had no way to say so.
 	OllamaBaseURL string `json:"ollama_base_url,omitempty" yaml:"ollama_base_url,omitempty"`
 
+	// OpenVINOBaseURL is the OpenVINO Model Server this daemon's `openvino`
+	// backend talks to, WITHOUT the /v3 suffix. Empty leaves the backend
+	// unregistered — there is no sensible default, because the server is a
+	// deployment's own and pointing at a guess would register a backend that
+	// fails on first use.
+	OpenVINOBaseURL string `json:"openvino_base_url,omitempty" yaml:"openvino_base_url,omitempty"`
+
+	// OpenVINOModel is the model that server serves, e.g.
+	// "Qwen3-8B-int4-cw-ov" exported for an NPU.
+	OpenVINOModel string `json:"openvino_model,omitempty" yaml:"openvino_model,omitempty"`
+
 	// AllowedMountRoots is the operator's allowlist of absolute host
 	// directories a spawn request may bind-mount into a sandbox container on
 	// this daemon. It is the daemon-side counterpart of the control plane's

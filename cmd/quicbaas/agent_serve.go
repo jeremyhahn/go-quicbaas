@@ -51,6 +51,8 @@ var (
 	serveSandboxPolicy  string
 	serveSandboxNetwork string
 	serveOllamaBaseURL  string
+	serveOpenVINOURL    string
+	serveOpenVINOModel  string
 	serveAllowedMounts  []string
 	serveContainerRT    string
 	serveImageMapCSV    string
@@ -104,6 +106,8 @@ Examples:
 	cmd.Flags().StringVar(&serveSandboxNetwork, "sandbox-network", "", "Container network for sandboxed sessions: bridge (default) | none | host | <network name>. \"host\" removes network isolation and exposes this host's loopback services to the agent.")
 	cmd.Flags().StringVar(&serveContainerRT, "container-runtime", "auto", "OCI runtime: docker | podman | auto | none")
 	cmd.Flags().StringVar(&serveOllamaBaseURL, "ollama-url", "", "Base URL of the ollama server this daemon's local-model backends use, without /v1 (default http://127.0.0.1:11434). Point it at the GPU host to run the \"qwen\" reviewer backend against a remotely served model.")
+	cmd.Flags().StringVar(&serveOpenVINOURL, "openvino-url", "", "OpenVINO Model Server base URL, without /v3 (e.g. http://gpu-host:9000). Registers the \"openvino\" backend; empty leaves it unregistered.")
+	cmd.Flags().StringVar(&serveOpenVINOModel, "openvino-model", "", "Model the OpenVINO server serves, e.g. qwen3-8b.")
 	cmd.Flags().StringVar(&serveImageMapCSV, "image-map", "", "Comma-separated backend=image mappings (e.g., claude-code=quicbaas/claude-code:v1)")
 	cmd.Flags().StringVar(&serveImageRegistry, "image-registry", "", "Registry prefix applied to unqualified image references")
 	cmd.Flags().BoolVar(&serveAutoPull, "auto-pull", false, "Pull missing container images at startup")
@@ -443,6 +447,24 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 				SandboxNetwork:    sandboxNetwork,
 				MCPPresetResolver: mcpResolver,
 			})
+			// A MODEL THIS FLEET SERVES ITSELF. Registered only when the
+			// deployment names a server: there is no default endpoint, and a
+			// backend registered against a guess fails on first use rather
+			// than at startup where an operator would see it.
+			//
+			// It is NOT another provider config on the ACP exec backend, and
+			// that was tried first. OVMS answers "Only function tools are
+			// supported" to codex, which advertises its shell and patch tools
+			// as custom types with no switch to change them — so the vendor
+			// CLI cannot drive an OVMS-served model at any endpoint.
+			if base := strings.TrimSpace(cfg.OpenVINOBaseURL); base != "" {
+				ov := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
+					BaseURL:      base,
+					DefaultModel: cfg.OpenVINOModel,
+				})
+				ov.SetLogger(logger)
+				backends["openvino"] = ov
+			}
 			backends["opencode"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
 				Command:           "opencode",
 				Args:              []string{"acp"},
@@ -681,6 +703,8 @@ func buildServeConfig() (*agent.Config, error) {
 		SandboxPolicy:     policy,
 		SandboxNetwork:    serveSandboxNetwork,
 		OllamaBaseURL:     serveOllamaBaseURL,
+		OpenVINOBaseURL:   serveOpenVINOURL,
+		OpenVINOModel:     serveOpenVINOModel,
 		AllowedMountRoots: serveAllowedMounts,
 		ContainerRuntime:  agent.ContainerRuntimeSelector(serveContainerRT),
 		ImageMap:          imageMap,
