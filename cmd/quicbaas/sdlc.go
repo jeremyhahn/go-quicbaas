@@ -409,7 +409,7 @@ func formatSDLCBinding(binding *sdlcSDK.ProjectBinding, format string, w io.Writ
 		fmt.Fprintf(tw, "Review:\t%d approval(s), independent=%v, green-checks=%v\n",
 			binding.Review.RequiredApprovals, binding.Review.RequireIndependentReviewer, binding.Review.RequireGreenChecks)
 		fmt.Fprintf(tw, "Triage:\t%s\n", triageLabel(binding.Triage, binding.Worker))
-		fmt.Fprintf(tw, "Triage may close:\t%s\n", boolWord(binding.TriageMayClose))
+		fmt.Fprintf(tw, "Triage may close:\t%s\n", yesNo(binding.TriageMayClose))
 		fmt.Fprintf(tw, "Reviewer:\t%s\n", reviewerLabel(binding.Reviewer))
 		fmt.Fprintf(tw, "Review rounds:\t%s\n", reviewRoundsLabel(binding.MaxReviewRounds))
 		fmt.Fprintf(tw, "Discovery:\t%s\n", discoveryLabel(binding.Discovery))
@@ -513,6 +513,17 @@ func workerLabel(worker sdlcSDK.WorkerConfig) string {
 
 // reviewRoundsLabel names the configured bound, saying so when the binding
 // leaves it to the module's default.
+// yesNo renders a plain boolean. It is not boolWord, which answers
+// "configured"/"not configured" — right for a webhook that either exists or
+// does not, and wrong for a permission, where "configured" reads as "somebody
+// set this field" rather than "this project may close issues".
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
+}
+
 // triageLabel renders the triage row, saying plainly when it falls back to the
 // worker — a project paying a code-writing model to read issues should be able
 // to see that it is.

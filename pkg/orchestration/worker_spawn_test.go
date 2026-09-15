@@ -15,8 +15,6 @@ package orchestration
 
 import (
 	"slices"
-	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -305,57 +303,5 @@ func TestHasPermissionGrant(t *testing.T) {
 				t.Fatalf("hasPermissionGrant(%v) = %v, want %v", tc.args, got, tc.want)
 			}
 		})
-	}
-}
-
-// TestQwenProviderConfigArgs_PointsCodexAtALocalModel pins the argv that makes
-// the local reviewer work, every element of which was verified against the
-// burn-in GPU host rather than read off documentation.
-func TestQwenProviderConfigArgs_PointsCodexAtALocalModel(t *testing.T) {
-	args := QwenProviderConfigArgs("http://gpu.invalid:11434")
-	joined := strings.Join(args, " ")
-
-	// wire_api MUST be "responses": codex 0.154.0 refuses `wire_api = "chat"`
-	// outright ("no longer supported"), which is the whole reason this points
-	// at /v1/responses rather than /v1/chat/completions.
-	if !strings.Contains(joined, `wire_api="responses"`) {
-		t.Fatalf("wire_api must be responses; codex refuses chat: %s", joined)
-	}
-	// The /v1 suffix is appended here so a caller configures a HOST.
-	if !strings.Contains(joined, `base_url="http://gpu.invalid:11434/v1"`) {
-		t.Fatalf("base_url must carry the /v1 suffix: %s", joined)
-	}
-	// Credential-free is the point: a local model has no token to mint.
-	if !strings.Contains(joined, "requires_openai_auth=false") {
-		t.Fatalf("a local model must not demand OpenAI auth: %s", joined)
-	}
-	if !strings.Contains(joined, "model_provider="+strconv.Quote(QwenProviderName)) {
-		t.Fatalf("the provider must be selected, not merely defined: %s", joined)
-	}
-	// Every -c flag must be followed by its value.
-	for i := 0; i < len(args); i += 2 {
-		if args[i] != "-c" {
-			t.Fatalf("argv %d = %q, want -c (flags and values must pair)", i, args[i])
-		}
-		if i+1 >= len(args) {
-			t.Fatal("trailing -c with no value")
-		}
-	}
-}
-
-// TestQwenProviderConfigArgs_TrimsAndRefusesEmpty covers the input shapes an
-// operator actually types. An empty endpoint yields NO argv rather than a
-// malformed provider, so the backend falls back to codex's own default instead
-// of pointing at "/v1".
-func TestQwenProviderConfigArgs_TrimsAndRefusesEmpty(t *testing.T) {
-	if got := QwenProviderConfigArgs("  "); got != nil {
-		t.Fatalf("a blank endpoint must produce no argv, got %v", got)
-	}
-	if got := QwenProviderConfigArgs(""); got != nil {
-		t.Fatalf("an empty endpoint must produce no argv, got %v", got)
-	}
-	trailing := strings.Join(QwenProviderConfigArgs("http://gpu.invalid:11434/"), " ")
-	if !strings.Contains(trailing, `base_url="http://gpu.invalid:11434/v1"`) {
-		t.Fatalf("a trailing slash must not double up: %s", trailing)
 	}
 }

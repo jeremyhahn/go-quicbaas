@@ -105,7 +105,7 @@ Examples:
 	cmd.Flags().StringVar(&serveSandboxPolicy, "sandbox-policy", "required", "Sandbox policy: required | preferred | opt-in")
 	cmd.Flags().StringVar(&serveSandboxNetwork, "sandbox-network", "", "Container network for sandboxed sessions: bridge (default) | none | host | <network name>. \"host\" removes network isolation and exposes this host's loopback services to the agent.")
 	cmd.Flags().StringVar(&serveContainerRT, "container-runtime", "auto", "OCI runtime: docker | podman | auto | none")
-	cmd.Flags().StringVar(&serveOllamaBaseURL, "ollama-url", "", "Base URL of the ollama server this daemon's local-model backends use, without /v1 (default http://127.0.0.1:11434). Point it at the GPU host to run the \"qwen\" reviewer backend against a remotely served model.")
+	cmd.Flags().StringVar(&serveOllamaBaseURL, "ollama-url", "", "Base URL of the ollama server the \"ollama\" backend uses, without /v1 (default http://127.0.0.1:11434).")
 	cmd.Flags().StringVar(&serveOpenVINOURL, "openvino-url", "", "OpenVINO Model Server base URL, without /v3 (e.g. http://gpu-host:9000). Registers the \"openvino\" backend; empty leaves it unregistered.")
 	cmd.Flags().StringVar(&serveOpenVINOModel, "openvino-model", "", "Model the OpenVINO server serves, e.g. qwen3-8b.")
 	cmd.Flags().StringVar(&serveImageMapCSV, "image-map", "", "Comma-separated backend=image mappings (e.g., claude-code=quicbaas/claude-code:v1)")
@@ -405,66 +405,6 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 				SandboxNetwork:    sandboxNetwork,
 				MCPPresetResolver: mcpResolver,
 			})
-			// THE LOCAL REVIEWER. Owner direction 2026-09-14: a peer review may
-			// run on the qwen model served from the GPU host, as an
-			// alternative to codex rather than a replacement for it.
-			//
-			// IT IS THE CODEX BINARY DRIVING A DIFFERENT PROVIDER, and reusing
-			// it is what makes this small. codex exec already mounts the
-			// checkout, already runs tools in the sandbox, and already emits
-			// the JSONL the review runner parses — none of which the Ollama
-			// backend can do (Capabilities().ToolUse is false; it is a model
-			// server, not an agent), and a reviewer that cannot read the tree
-			// cannot review the change.
-			//
-			// CONFIGURED ENTIRELY ON ARGV, so this backend needs no config
-			// file and — unlike codex-on-OpenAI — NO CREDENTIAL AT ALL: the
-			// model is local, requires_openai_auth is false, and there is no
-			// token to mint, mount or rotate. Verified against the burn-in GPU
-			// host: `codex exec --json -c model_providers.<name>.*` completed a
-			// turn on review-q4_K_M and returned the exact requested token.
-			//
-			// wire_api MUST be "responses". codex 0.154.0 removed support for
-			// "chat" ("`wire_api = \"chat\"` is no longer supported"), and
-			// this ollama build serves a genuine /v1/responses.
-			//
-			// The backend is NAMED "qwen" because that name is what the
-			// independence rule classifies on: the served models are tagged
-			// review-bf16 / review-q8 / review-q4_K_M, which carry no "qwen"
-			// for a prefix rule to find. See sdlc.backendFamilies.
-			backends["qwen"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
-				Command:   "codex",
-				Transport: orchestration.ACPTransportExec,
-				ExecArgs: append(append([]string{
-					"exec", "--json",
-					"--sandbox", "danger-full-access",
-					"--skip-git-repo-check",
-				}, orchestration.QwenProviderConfigArgs(cfg.EffectiveOllamaBaseURL())...),
-					orchestration.SerenaCodexConfigArgs()...),
-				ExecModelFlag:     "--model",
-				ExecStdinArg:      "-",
-				DefaultModel:      "",
-				SandboxNetwork:    sandboxNetwork,
-				MCPPresetResolver: mcpResolver,
-			})
-			// A MODEL THIS FLEET SERVES ITSELF. Registered only when the
-			// deployment names a server: there is no default endpoint, and a
-			// backend registered against a guess fails on first use rather
-			// than at startup where an operator would see it.
-			//
-			// It is NOT another provider config on the ACP exec backend, and
-			// that was tried first. OVMS answers "Only function tools are
-			// supported" to codex, which advertises its shell and patch tools
-			// as custom types with no switch to change them — so the vendor
-			// CLI cannot drive an OVMS-served model at any endpoint.
-			if base := strings.TrimSpace(cfg.OpenVINOBaseURL); base != "" {
-				ov := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
-					BaseURL:      base,
-					DefaultModel: cfg.OpenVINOModel,
-				})
-				ov.SetLogger(logger)
-				backends["openvino"] = ov
-			}
 			backends["opencode"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
 				Command:           "opencode",
 				Args:              []string{"acp"},

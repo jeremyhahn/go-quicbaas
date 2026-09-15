@@ -164,3 +164,35 @@ func (s *backendCapacityJobLeaseStore) admit(ctx context.Context, lease *JobLeas
 	}
 	return nil
 }
+
+// LiveJobsForBackend implements ProfileLoadReader over the SAME count the cap
+// enforces.
+//
+// PLACEMENT AND ADMISSION MUST AGREE ABOUT "BUSY". If a placer counted
+// differently — its own gauge, a heartbeat, a sampled metric — it would admit
+// work the cap then refuses, and the operator would see a pool that selected a
+// profile and a lease that rejected it, with no single number to check. There
+// is one definition of live, and this is it.
+func (s *backendCapacityJobLeaseStore) LiveJobsForBackend(ctx context.Context, tenantID, backend string) (int, error) {
+	name := strings.ToLower(strings.TrimSpace(backend))
+	if name == "" {
+		return 0, nil
+	}
+	leases, err := s.List(ctx, tenantID, "")
+	if err != nil {
+		return 0, err
+	}
+	now := s.now()
+	live := 0
+	for _, held := range leases {
+		if !strings.EqualFold(strings.TrimSpace(held.Backend), name) {
+			continue
+		}
+		if held.Live(now, s.ttl) {
+			live++
+		}
+	}
+	return live, nil
+}
+
+var _ ProfileLoadReader = (*backendCapacityJobLeaseStore)(nil)

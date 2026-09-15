@@ -13,11 +13,7 @@
 
 package orchestration
 
-import (
-	"encoding/json"
-	"strconv"
-	"strings"
-)
+import "encoding/json"
 
 // =============================================================================
 // The worker's execution environment
@@ -184,46 +180,6 @@ func SerenaCodexConfigArgs() []string {
 	return []string{
 		"-c", `mcp_servers.serena.command="` + serenaCommand + `"`,
 		"-c", "mcp_servers.serena.args=" + string(args),
-	}
-}
-
-// QwenProviderName is the codex model-provider the local-model reviewer runs
-// under. It names the provider entry, not the host, so the same argv works
-// whichever machine serves the model.
-const QwenProviderName = "quicbaas_local"
-
-// QwenProviderConfigArgs is the `-c` overrides that point the codex binary at a
-// locally served OpenAI-compatible model instead of OpenAI.
-//
-// baseURL is the server root WITHOUT /v1; the suffix is appended here so a
-// caller configures a host rather than remembering an API layout.
-//
-// WHY THE CODEX BINARY DRIVES A QWEN. The reviewer reads the change in a real
-// checkout, which needs tool use inside the sandbox; the Ollama backend cannot
-// do that (Capabilities().ToolUse is false — it is a model server, not an
-// agent), while codex exec already mounts the tree, runs tools and emits the
-// JSONL the review runner parses. Pointing it at another provider is a
-// configuration, so the local reviewer costs no new transport.
-//
-// WIRE_API MUST BE "responses". codex 0.154.0 refuses `wire_api = "chat"`
-// outright ("no longer supported"), and the ollama build serving these models
-// answers a genuine /v1/responses.
-//
-// requires_openai_auth=false is what makes this credential-free: the model is
-// local, so there is no token to mint, mount, rotate or leak — the one way
-// this reviewer is simpler than codex-on-OpenAI rather than merely different.
-func QwenProviderConfigArgs(baseURL string) []string {
-	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if base == "" {
-		return nil
-	}
-	provider := "model_providers." + QwenProviderName
-	return []string{
-		"-c", "model_provider=" + strconv.Quote(QwenProviderName),
-		"-c", provider + ".name=" + strconv.Quote("QuicBaaS local model"),
-		"-c", provider + ".base_url=" + strconv.Quote(base+"/v1"),
-		"-c", provider + ".wire_api=" + strconv.Quote("responses"),
-		"-c", provider + ".requires_openai_auth=false",
 	}
 }
 
