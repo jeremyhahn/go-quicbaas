@@ -165,6 +165,9 @@ message ProjectBinding {
     // falls back to worker. Triage reads and judges and writes no code, so it
     // can run on a cheaper or locally hosted model.
     WorkerConfig triage          = 14;
+    // triage_may_close lets triage close an issue it found is already done.
+    // Off by default: closing carries weight a label does not.
+    bool triage_may_close        = 15;
 }
 
 // PullRequest is the pull request an attempt opened.

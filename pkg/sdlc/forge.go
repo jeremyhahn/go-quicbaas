@@ -587,6 +587,19 @@ type ForgeBackend interface {
 	// CommentOnIssue posts a comment and returns it as stored.
 	CommentOnIssue(ctx context.Context, repo RepoRef, number int, body string) (*ForgeComment, error)
 
+	// CloseIssue closes an issue, verified by read-back.
+	//
+	// IT IS SEPARATE FROM EVERY OTHER ISSUE VERB AND IT IS GATED. Labels are
+	// reversible and carry no social weight; closing somebody's issue does,
+	// and the triage charter forbade proposing it for exactly that reason. The
+	// verb exists so a project that WANTS its stale reports closed can have
+	// them closed — see ProjectBinding.TriageMayClose — and a project that
+	// does not keeps today's behaviour, which is a comment and nothing else.
+	//
+	// Closing an already-closed issue is not an error: a pass that crashed
+	// between the comment and the close must be able to finish.
+	CloseIssue(ctx context.Context, repo RepoRef, number int) error
+
 	// ListIssueComments returns an issue's whole discussion, oldest first.
 	//
 	// THE DISCUSSION IS PART OF THE CONTRACT, not decoration on it. An answer

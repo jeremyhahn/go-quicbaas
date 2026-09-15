@@ -188,13 +188,15 @@ type fakeForge struct {
 	forgeType ForgeType
 	caps      ForgeCapabilities
 
-	issues   map[int]*ForgeIssue
-	comments map[int][]ForgeComment
-	prs      map[int]*ForgePullRequest
-	reviews  map[int][]ForgeReview
-	checks   map[string][]ForgeCheckRun
-	logs     map[string]string
-	tags     map[string]*ForgeTag
+	issues        map[int]*ForgeIssue
+	comments      map[int][]ForgeComment
+	prs           map[int]*ForgePullRequest
+	closed        []int
+	closeIssueErr error
+	reviews       map[int][]ForgeReview
+	checks        map[string][]ForgeCheckRun
+	logs          map[string]string
+	tags          map[string]*ForgeTag
 
 	// The onboarding surface, modelled rather than stubbed: labels and
 	// webhooks are state a test mutates and reads back, so idempotency is
@@ -627,6 +629,21 @@ func (f *fakeForge) CreatePullRequest(_ context.Context, _ RepoRef, spec PullReq
 		f.onCreatePullRequest(pr)
 	}
 	return pr, nil
+}
+
+// CloseIssue closes an issue in the fake, recording it so a test can assert
+// that triage closed exactly what it said it would.
+func (f *fakeForge) CloseIssue(_ context.Context, _ RepoRef, number int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closeIssueErr != nil {
+		return f.closeIssueErr
+	}
+	f.closed = append(f.closed, number)
+	if issue, ok := f.issues[number]; ok {
+		issue.State = "closed"
+	}
+	return nil
 }
 
 func (f *fakeForge) GetPullRequest(_ context.Context, _ RepoRef, number int) (*ForgePullRequest, error) {

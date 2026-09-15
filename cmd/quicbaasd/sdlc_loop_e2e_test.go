@@ -82,18 +82,19 @@ var registerLoopForgeOnce sync.Once
 // e2eForge is the scripted forge behind the module: issues, one pull request
 // per branch, an approval and a green check the test grants.
 type e2eForge struct {
-	mu       sync.Mutex
-	repoDir  string // the bare repository the forge fronts; a pull request's head is what it holds
-	issues   map[int]*sdlc.ForgeIssue
-	comments map[int][]sdlc.ForgeComment
-	prs      map[int]*sdlc.ForgePullRequest
-	approved map[int]string // pr number -> head approved by "codex"
-	refused  map[int]string // pr number -> head "codex" asked changes on
-	green    map[string]bool
-	nextPR   int
-	labels   map[int][]string
-	merged   map[int]bool
-	statuses []string
+	closedIssues []int
+	mu           sync.Mutex
+	repoDir      string // the bare repository the forge fronts; a pull request's head is what it holds
+	issues       map[int]*sdlc.ForgeIssue
+	comments     map[int][]sdlc.ForgeComment
+	prs          map[int]*sdlc.ForgePullRequest
+	approved     map[int]string // pr number -> head approved by "codex"
+	refused      map[int]string // pr number -> head "codex" asked changes on
+	green        map[string]bool
+	nextPR       int
+	labels       map[int][]string
+	merged       map[int]bool
+	statuses     []string
 
 	// The repository-level onboarding surface: the label vocabulary and the
 	// webhooks binding a project provisions. Modelled rather than stubbed so
@@ -180,6 +181,15 @@ func (f *e2eForge) GetIssue(_ context.Context, _ sdlc.RepoRef, number int) (*sdl
 	copied := *issue
 	copied.Labels = append([]string(nil), issue.Labels...)
 	return &copied, nil
+}
+
+// CloseIssue records a close so the loop test can assert triage closed what it
+// said it would.
+func (f *e2eForge) CloseIssue(_ context.Context, _ sdlc.RepoRef, number int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closedIssues = append(f.closedIssues, number)
+	return nil
 }
 
 func (f *e2eForge) CommentOnIssue(_ context.Context, _ sdlc.RepoRef, number int, body string) (*sdlc.ForgeComment, error) {

@@ -887,6 +887,34 @@ func (g *GiteaBackend) CommentOnIssue(ctx context.Context, repo RepoRef, number 
 	return comment, nil
 }
 
+// CloseIssue closes an issue, verified by read-back.
+func (g *GiteaBackend) CloseIssue(ctx context.Context, repo RepoRef, number int) error {
+	var raw giteaIssue
+	if err := g.do(ctx, giteaRequest{
+		method:    http.MethodPatch,
+		path:      repoPath(repo) + "/issues/" + strconv.Itoa(number),
+		body:      map[string]string{"state": "closed"},
+		out:       &raw,
+		operation: "CloseIssue",
+	}); err != nil {
+		return err
+	}
+	// READ-BACK, like every other write in this adapter. A forge that accepts
+	// the PATCH and leaves the issue open is the failure a caller most needs
+	// told about, because the comment it just posted says the issue is being
+	// closed.
+	if !strings.EqualFold(strings.TrimSpace(raw.State), "closed") {
+		return &ForgeWriteNotAppliedError{
+			Type:      ForgeGitea,
+			Operation: "CloseIssue",
+			Subject:   fmt.Sprintf("%s#%d", repo, number),
+			Want:      "closed",
+			Got:       raw.State,
+		}
+	}
+	return nil
+}
+
 // ListIssueComments returns an issue's discussion, oldest first.
 //
 // Gitea returns comments in creation order, which is the order the port

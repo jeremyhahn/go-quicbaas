@@ -374,6 +374,23 @@ type ProjectBinding struct {
 	// changing who writes the code. Owner direction 2026-09-15.
 	Triage WorkerConfig `json:"triage,omitempty"`
 
+	// TriageMayClose lets triage CLOSE an issue it found is already done or
+	// otherwise not work, rather than commenting and leaving it.
+	//
+	// OFF BY DEFAULT, AND THE DEFAULT IS THE CAREFUL ONE. A label is
+	// reversible and carries no social weight; closing somebody's issue does,
+	// which is why the charter forbade proposing it. Turning this on is a
+	// project saying "my stale reports should be closed, and I accept an agent
+	// deciding which those are" — so it is per project rather than fleet-wide,
+	// and the charter tells the agent which world it is in rather than letting
+	// it guess.
+	//
+	// It reaches ONLY the already-done case. A duplicate keeps its comment and
+	// its reference, needs-info keeps its label, and an issue needing a
+	// person's decision is still left for that person: those are not stale
+	// reports and closing them would lose the thing that makes them useful.
+	TriageMayClose bool `json:"triage_may_close,omitempty"`
+
 	// Discovery selects how this project learns that something happened on
 	// its forge: `poll`, `webhook` or `both`. Empty takes DiscoveryBoth —
 	// see DiscoveryMode for why that is the default.

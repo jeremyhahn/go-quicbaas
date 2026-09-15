@@ -46,9 +46,25 @@ func TestTriageCharter_IsEditableTextCarryingTheContract(t *testing.T) {
 			t.Fatalf("the charter must state %q, or the runner cannot read a reply", want)
 		}
 	}
-	// The instruction the design turns on: triage never closes an issue.
-	if !strings.Contains(charter, "Never propose closing the issue") {
-		t.Fatal("the charter must forbid closing an issue")
+	// THE CLOSE IS GATED, NOT FORBIDDEN (owner decision 2026-09-15). The
+	// charter used to say "Never propose closing the issue" outright; it now
+	// makes closing conditional on the project enabling it, because a project
+	// that wants its stale reports closed should be able to say so. What must
+	// NOT be lost is the default and the reason for it — an agent reading this
+	// with no other context has to come away knowing it may not ask by
+	// default, and why closing is weightier than labelling.
+	if !strings.Contains(charter, "unless you are told closing is") {
+		t.Fatal("the charter must state that closing is off unless the project enabled it")
+	}
+	if !strings.Contains(charter, "carries no social weight") {
+		t.Fatal("the charter must keep the reason closing is treated differently from labelling")
+	}
+	// The marker the runner parses, and the one reason it may carry.
+	if !strings.Contains(charter, TriageCloseMarker) {
+		t.Fatalf("the charter must state %q, or an agent cannot ask for a close", TriageCloseMarker)
+	}
+	if !strings.Contains(charter, TriageCloseReasonAlreadyDone) {
+		t.Fatalf("the charter must state %q, the only reason that closes", TriageCloseReasonAlreadyDone)
 	}
 }
 

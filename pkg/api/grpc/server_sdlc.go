@@ -284,6 +284,7 @@ func bindingFromProto(p *pb.ProjectBinding) *sdlc.ProjectBinding {
 		}
 	}
 	b.Discovery = sdlc.DiscoveryMode(p.Discovery)
+	b.TriageMayClose = p.TriageMayClose
 	if p.Triage != nil {
 		b.Triage = sdlc.WorkerConfig{Backend: p.Triage.Backend, Model: p.Triage.Model, Image: p.Triage.Image}
 	}
@@ -329,6 +330,7 @@ func bindingToProto(b *sdlc.ProjectBinding) *pb.ProjectBinding {
 			StatusContext: b.Reviewer.StatusContext,
 		},
 		Discovery:       string(b.Discovery),
+		TriageMayClose:  b.TriageMayClose,
 		Triage:          &pb.WorkerConfig{Backend: b.Triage.Backend, Model: b.Triage.Model, Image: b.Triage.Image},
 		Strategy:        b.Strategy,
 		Worker:          &pb.WorkerConfig{Backend: b.Worker.Backend, Model: b.Worker.Model, Image: b.Worker.Image},

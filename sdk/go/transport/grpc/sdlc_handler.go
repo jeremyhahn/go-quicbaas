@@ -201,6 +201,7 @@ func sdlcBindingToProto(b *sdlc.ProjectBinding) *pb.ProjectBinding {
 			StatusContext: b.Reviewer.StatusContext,
 		},
 		Discovery:       b.Discovery,
+		TriageMayClose:  b.TriageMayClose,
 		Triage:          &pb.WorkerConfig{Backend: b.Triage.Backend, Model: b.Triage.Model, Image: b.Triage.Image},
 		Strategy:        b.Strategy,
 		Worker:          &pb.WorkerConfig{Backend: b.Worker.Backend, Model: b.Worker.Model, Image: b.Worker.Image},
@@ -255,6 +256,7 @@ func sdlcBindingFromProto(p *pb.ProjectBinding) *sdlc.ProjectBinding {
 		}
 	}
 	b.Discovery = p.Discovery
+	b.TriageMayClose = p.TriageMayClose
 	if p.Triage != nil {
 		b.Triage = sdlc.WorkerConfig{Backend: p.Triage.Backend, Model: p.Triage.Model, Image: p.Triage.Image}
 	}

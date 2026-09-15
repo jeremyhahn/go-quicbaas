@@ -366,3 +366,37 @@ func TestTriageErrors_AreTypedAndUnwrap(t *testing.T) {
 		})
 	}
 }
+
+// TestParseTriageDeclaration_CloseMarker pins the marker that asks for a close.
+//
+// IT IS THE ONE IRREVERSIBLE THING TRIAGE CAN ASK FOR, so the parser must be
+// strict: only the exact reason counts, and a verdict carrying no marker never
+// closes however the binding is configured.
+func TestParseTriageDeclaration_CloseMarker(t *testing.T) {
+	asks := ParseTriageDeclaration("evidence\n\nSDLC-TRIAGE-CLOSE: already-done\nSDLC-TRIAGE: not-actionable")
+	if !asks.ClosesAsAlreadyDone {
+		t.Fatal("the close marker was not read")
+	}
+	if asks.Code != TriageCodeNotActionable {
+		t.Fatalf("the verdict must still be not-actionable, got %q", asks.Code)
+	}
+
+	// Decorated the way a model writes it.
+	if d := ParseTriageDeclaration("> **SDLC-TRIAGE-CLOSE:** `already-done`\nSDLC-TRIAGE: not-actionable"); !d.ClosesAsAlreadyDone {
+		t.Fatal("a decorated marker must still be read")
+	}
+
+	// A REASON NOBODY DEFINED DOES NOT CLOSE. A model inventing its own
+	// justification must not be able to close an issue with it.
+	for _, invented := range []string{"out-of-scope", "wontfix", "stale", "", "yes"} {
+		d := ParseTriageDeclaration("SDLC-TRIAGE-CLOSE: " + invented + "\nSDLC-TRIAGE: not-actionable")
+		if d.ClosesAsAlreadyDone {
+			t.Fatalf("reason %q must not close", invented)
+		}
+	}
+
+	// No marker at all.
+	if d := ParseTriageDeclaration("SDLC-TRIAGE: not-actionable"); d.ClosesAsAlreadyDone {
+		t.Fatal("a bare not-actionable must never close")
+	}
+}

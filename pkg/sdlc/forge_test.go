@@ -67,6 +67,8 @@ func (s *stubForge) CreatePullRequest(context.Context, RepoRef, PullRequestSpec)
 func (s *stubForge) ListOpenPullRequests(context.Context, RepoRef) ([]ForgePullRequest, error) {
 	return nil, nil
 }
+func (s *stubForge) CloseIssue(context.Context, RepoRef, int) error { return nil }
+
 func (s *stubForge) GetPullRequest(context.Context, RepoRef, int) (*ForgePullRequest, error) {
 	return nil, nil
 }

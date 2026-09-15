@@ -48,6 +48,23 @@ const TriageDeclarationMarker = "SDLC-TRIAGE:"
 // absent without making the verdict unparseable.
 const TriageDuplicateMarker = "SDLC-TRIAGE-DUPLICATE:"
 
+// TriageCloseMarker is how a not-actionable verdict says the issue is a STALE
+// REPORT — the work is already on the default branch — rather than something a
+// person still has to decide.
+//
+// IT IS A SECOND MARKER RATHER THAN A FIFTH VERDICT CODE because the verdict
+// is unchanged: no worker is spawned either way, and every deployment that
+// does not turn closing on behaves exactly as before. What the marker adds is
+// WHICH KIND of not-actionable it was, which is the only thing that decides
+// whether the issue may be closed. A not-actionable carrying no marker is
+// never closed, whatever the binding allows.
+const TriageCloseMarker = "SDLC-TRIAGE-CLOSE:"
+
+// TriageCloseReasonAlreadyDone is the one value TriageCloseMarker may carry.
+// Anything else reads as absent, so a model inventing a reason cannot close an
+// issue by inventing one.
+const TriageCloseReasonAlreadyDone = "already-done"
+
 // The verdict codes an agent may declare. A CLOSED SET — a code outside it
 // is refused rather than passed through.
 const (
@@ -132,6 +149,11 @@ type TriageDeclaration struct {
 	// Declared says the agent declared a verdict at all.
 	Declared bool `json:"declared,omitempty"`
 
+	// ClosesAsAlreadyDone is a not-actionable verdict that declared the work
+	// is already on the default branch. It is advisory: the binding decides
+	// whether it is acted on (ProjectBinding.TriageMayClose).
+	ClosesAsAlreadyDone bool `json:"closes_as_already_done,omitempty"`
+
 	// DuplicateOf is the issue a duplicate verdict points at, zero when the
 	// agent named none or named one that does not read as a positive issue
 	// number.
@@ -159,6 +181,10 @@ type TriageVerdict struct {
 
 	// Comments says the disposition writes a comment.
 	Comments bool
+
+	// ClosesAsAlreadyDone is carried through so the runner can decide,
+	// against the binding, whether to close. See TriageCloseMarker.
+	ClosesAsAlreadyDone bool
 
 	// DuplicateOf is carried through from the declaration so the comment can
 	// name the issue without re-parsing the reply.
@@ -243,8 +269,11 @@ func ParseTriageDeclaration(reply string) TriageDeclaration {
 			decl.Declared = true
 		case decl.DuplicateOf == 0 && strings.HasPrefix(line, TriageDuplicateMarker):
 			decl.DuplicateOf = parseTriageIssueRef(triageMarkerValue(line, TriageDuplicateMarker))
+		case !decl.ClosesAsAlreadyDone && strings.HasPrefix(line, TriageCloseMarker):
+			decl.ClosesAsAlreadyDone = strings.EqualFold(
+				triageMarkerValue(line, TriageCloseMarker), TriageCloseReasonAlreadyDone)
 		}
-		if decl.Declared && decl.DuplicateOf != 0 {
+		if decl.Declared && decl.DuplicateOf != 0 && decl.ClosesAsAlreadyDone {
 			break
 		}
 	}
@@ -293,6 +322,7 @@ func parseTriageIssueRef(value string) int {
 func ClassifyTriage(decl TriageDeclaration) TriageVerdict {
 	verdict := triageVerdicts[classifyTriageOutcome(decl)]
 	verdict.DuplicateOf = decl.DuplicateOf
+	verdict.ClosesAsAlreadyDone = decl.ClosesAsAlreadyDone
 	return verdict
 }
 

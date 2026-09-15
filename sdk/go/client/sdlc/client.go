@@ -170,6 +170,10 @@ type ProjectBinding struct {
 	// "both" (default), "poll" or "webhook".
 	Discovery string `json:"discovery,omitempty" yaml:"discovery,omitempty"`
 
+	// TriageMayClose lets triage close an issue it found is already done.
+	// Off by default: closing carries weight a label does not.
+	TriageMayClose bool `json:"triage_may_close,omitempty" yaml:"triage_may_close,omitempty"`
+
 	// Triage is the agent that triages this project's open issues. Empty
 	// falls back to Worker. Triage reads and judges and writes no code, so a
 	// project can point it at a cheaper or locally hosted model.

@@ -409,6 +409,7 @@ func formatSDLCBinding(binding *sdlcSDK.ProjectBinding, format string, w io.Writ
 		fmt.Fprintf(tw, "Review:\t%d approval(s), independent=%v, green-checks=%v\n",
 			binding.Review.RequiredApprovals, binding.Review.RequireIndependentReviewer, binding.Review.RequireGreenChecks)
 		fmt.Fprintf(tw, "Triage:\t%s\n", triageLabel(binding.Triage, binding.Worker))
+		fmt.Fprintf(tw, "Triage may close:\t%s\n", boolWord(binding.TriageMayClose))
 		fmt.Fprintf(tw, "Reviewer:\t%s\n", reviewerLabel(binding.Reviewer))
 		fmt.Fprintf(tw, "Review rounds:\t%s\n", reviewRoundsLabel(binding.MaxReviewRounds))
 		fmt.Fprintf(tw, "Discovery:\t%s\n", discoveryLabel(binding.Discovery))

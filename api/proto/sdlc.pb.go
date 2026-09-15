@@ -554,9 +554,12 @@ type ProjectBinding struct {
 	// triage names the agent that triages this project's open issues; empty
 	// falls back to worker. Triage reads and judges and writes no code, so it
 	// can run on a cheaper or locally hosted model.
-	Triage        *WorkerConfig `protobuf:"bytes,14,opt,name=triage,proto3" json:"triage,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Triage *WorkerConfig `protobuf:"bytes,14,opt,name=triage,proto3" json:"triage,omitempty"`
+	// triage_may_close lets triage close an issue it found is already done.
+	// Off by default: closing carries weight a label does not.
+	TriageMayClose bool `protobuf:"varint,15,opt,name=triage_may_close,json=triageMayClose,proto3" json:"triage_may_close,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ProjectBinding) Reset() {
@@ -685,6 +688,13 @@ func (x *ProjectBinding) GetTriage() *WorkerConfig {
 		return x.Triage
 	}
 	return nil
+}
+
+func (x *ProjectBinding) GetTriageMayClose() bool {
+	if x != nil {
+		return x.TriageMayClose
+	}
+	return false
 }
 
 // PullRequest is the pull request an attempt opened.
@@ -2298,7 +2308,7 @@ const file_api_proto_sdlc_proto_rawDesc = "" +
 	"\flabel_colors\x18\x06 \x03(\v23.quicbaas.sdlc.v1.OnboardingConfig.LabelColorsEntryR\vlabelColors\x1a>\n" +
 	"\x10LabelColorsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa3\x05\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xcd\x05\n" +
 	"\x0eProjectBinding\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x123\n" +
@@ -2317,7 +2327,8 @@ const file_api_proto_sdlc_proto_rawDesc = "" +
 	"onboarding\x12<\n" +
 	"\breviewer\x18\f \x01(\v2 .quicbaas.sdlc.v1.ReviewerConfigR\breviewer\x12\x1c\n" +
 	"\tdiscovery\x18\r \x01(\tR\tdiscovery\x126\n" +
-	"\x06triage\x18\x0e \x01(\v2\x1e.quicbaas.sdlc.v1.WorkerConfigR\x06triage\"w\n" +
+	"\x06triage\x18\x0e \x01(\v2\x1e.quicbaas.sdlc.v1.WorkerConfigR\x06triage\x12(\n" +
+	"\x10triage_may_close\x18\x0f \x01(\bR\x0etriageMayClose\"w\n" +
 	"\vPullRequest\x12\x16\n" +
 	"\x06number\x18\x01 \x01(\x05R\x06number\x12\x10\n" +
 	"\x03url\x18\x02 \x01(\tR\x03url\x12\x14\n" +

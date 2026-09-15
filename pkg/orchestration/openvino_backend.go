@@ -74,6 +74,16 @@ type OpenVINOBackendConfig struct {
 	// small model is likelier to do it than a large one.
 	MaxToolRounds int
 
+	// Thinking lets a reasoning model emit its <think> block.
+	//
+	// OFF BY DEFAULT, AND THE MEASUREMENTS ARE WHY. Qwen3-8B on an NPU,
+	// 2026-09-15, same triage question both ways: thinking off answered
+	// correctly in 6-8 seconds; thinking on spent 37-99 seconds and was cut
+	// off mid-reasoning having produced no answer at all. A turn that never
+	// reaches a verdict is worse than a slow one, and triage runs on a
+	// schedule rather than a deadline.
+	Thinking bool
+
 	// RequestTimeout bounds a single completion. Zero takes the default.
 	RequestTimeout time.Duration
 
@@ -288,6 +298,10 @@ type ovRequest struct {
 	Tools     []ovTool    `json:"tools,omitempty"`
 	MaxTokens int         `json:"max_tokens,omitempty"`
 	Stream    bool        `json:"stream"`
+
+	// ChatTemplateKwargs reaches the model's chat template. For a reasoning
+	// model it carries enable_thinking; see OpenVINOBackendConfig.Thinking.
+	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
 }
 
 // ovTool is a FUNCTION tool and nothing else. OVMS answers
@@ -386,7 +400,10 @@ func (b *OpenVINOBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prom
 				SessionID: req.SessionID, Model: model, Rounds: b.config.MaxToolRounds,
 			}
 		}
-		resp, err := b.complete(ctx, ovRequest{Model: model, Messages: messages, Tools: tools, Stream: false})
+		resp, err := b.complete(ctx, ovRequest{
+			Model: model, Messages: messages, Tools: tools, Stream: false,
+			ChatTemplateKwargs: map[string]any{"enable_thinking": b.config.Thinking},
+		})
 		if err != nil {
 			return nil, err
 		}

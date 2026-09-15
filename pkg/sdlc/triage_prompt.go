@@ -92,6 +92,14 @@ type TriagePromptSpec struct {
 	// an issue to itself.
 	OpenIssues []ForgeIssue
 
+	// MayClose tells the agent this project has enabled closing, so the
+	// charter's close marker is available to it.
+	//
+	// IT IS TOLD RATHER THAN LEFT TO INFER. The charter forbids asking for a
+	// close by default; an agent that guessed the project had opted in would
+	// be guessing about the one action that is not reversible.
+	MayClose bool
+
 	// Verification is the binding's verification commands, so the agent can
 	// judge whether they apply to this issue at all.
 	Verification []string
@@ -135,6 +143,21 @@ func TriagePrompt(spec TriagePromptSpec) (string, error) {
 
 	b.WriteString("\n## This project's verification commands\n\n")
 	writeTriageVerification(&b, spec.Verification)
+
+	// STATED EVERY TURN, IN BOTH DIRECTIONS. Saying nothing when closing is
+	// off would leave the agent to infer the default from the charter alone,
+	// and the one action that cannot be undone is not a good place for
+	// inference.
+	b.WriteString("\n## Closing\n\n")
+	if spec.MayClose {
+		b.WriteString("Closing IS enabled for this project. If — and only if — you find " +
+			"the work is already present on the default branch and you can cite the file " +
+			"and line, you may add the `SDLC-TRIAGE-CLOSE: already-done` line described in " +
+			"your charter. For every other not-actionable reason, leave it off.\n")
+	} else {
+		b.WriteString("Closing is NOT enabled for this project. Do not ask for the issue to " +
+			"be closed; say what you found and leave it open for a person.\n")
+	}
 
 	return b.String(), nil
 }

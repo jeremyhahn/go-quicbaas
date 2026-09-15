@@ -1367,3 +1367,87 @@ func TestTriageRunner_ARefusedCredentialCostsNoContainer(t *testing.T) {
 		t.Fatalf("commands run in a container = %v, want none", execs)
 	}
 }
+
+// triageRunFor builds a bare triageRun over a forge and binding, enough to
+// exercise the verdict-application paths directly.
+func triageRunFor(forge ForgeBackend, binding *ProjectBinding) *triageRun {
+	return &triageRun{forge: forge, binding: binding, repo: binding.Repo()}
+}
+
+// TestApplyNotActionable_ClosesOnlyWhenBothConditionsHold is the gate on the
+// one irreversible thing triage can do.
+//
+// BOTH SIDES ARE REQUIRED, and each guards a different mistake. Without the
+// binding check, turning the feature on anywhere would let an agent close
+// issues in a project that never asked. Without the verdict check, a project
+// that opted in would have every not-actionable closed — including the ones
+// that are out of scope or waiting on a person, which are exactly the ones a
+// person still needs to see open.
+func TestApplyNotActionable_ClosesOnlyWhenBothConditionsHold(t *testing.T) {
+	cases := []struct {
+		name      string
+		mayClose  bool
+		declared  bool
+		wantClose bool
+	}{
+		{"binding allows, verdict asks", true, true, true},
+		{"binding allows, verdict silent", true, false, false},
+		{"binding forbids, verdict asks", false, true, false},
+		{"neither", false, false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			forge := newFakeForge()
+			binding := testBinding()
+			binding.TriageMayClose = c.mayClose
+			issue := ForgeIssue{Number: 42, Title: "stale report"}
+			forge.issues[42] = &issue
+
+			run := triageRunFor(forge, binding)
+			verdict := TriageVerdict{
+				Outcome: TriageOutcomeNotActionable, Comments: true,
+				Headline:            "No worker will be spawned for this issue.",
+				ClosesAsAlreadyDone: c.declared,
+			}
+			if err := run.applyNotActionable(context.Background(), issue, verdict, "the work is on main at foo.go:12"); err != nil {
+				t.Fatalf("applyNotActionable: %v", err)
+			}
+
+			closed := len(forge.closed) == 1 && forge.closed[0] == 42
+			if closed != c.wantClose {
+				t.Fatalf("closed=%v, want %v (may_close=%v declared=%v)", closed, c.wantClose, c.mayClose, c.declared)
+			}
+			// THE EVIDENCE IS POSTED EITHER WAY. A closed issue whose comment
+			// never landed tells a person nothing about why.
+			if len(forge.comments[42]) != 1 {
+				t.Fatalf("the evidence comment must be posted in every case, got %d", len(forge.comments[42]))
+			}
+		})
+	}
+}
+
+// TestApplyNotActionable_AFailedCloseIsReported keeps a refused close from
+// passing as a completed triage: the comment says the issue is being closed,
+// so a close that did not happen must surface.
+func TestApplyNotActionable_AFailedCloseIsReported(t *testing.T) {
+	forge := newFakeForge()
+	forge.closeIssueErr = errors.New("forge refused")
+	binding := testBinding()
+	binding.TriageMayClose = true
+	issue := ForgeIssue{Number: 7}
+	forge.issues[7] = &issue
+
+	run := triageRunFor(forge, binding)
+	err := run.applyNotActionable(context.Background(), issue,
+		TriageVerdict{
+			Outcome: TriageOutcomeNotActionable, Comments: true,
+			Headline: "No worker will be spawned for this issue.", ClosesAsAlreadyDone: true,
+		}, "evidence")
+	var verdictErr *TriageVerdictError
+	if !errors.As(err, &verdictErr) {
+		t.Fatalf("want TriageVerdictError, got %T: %v", err, err)
+	}
+	if verdictErr.Issue != 7 {
+		t.Fatalf("the refusal must name the issue, got %d", verdictErr.Issue)
+	}
+}

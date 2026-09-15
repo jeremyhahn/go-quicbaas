@@ -726,6 +726,7 @@ func (s *triageRun) judgeIssue(ctx context.Context, issue ForgeIssue) error {
 		Comments:     s.discussions[issue.Number],
 		OpenIssues:   s.open,
 		Verification: s.binding.Verification,
+		MayClose:     s.binding.TriageMayClose,
 	})
 	if err != nil {
 		return err
@@ -822,11 +823,33 @@ func (s *triageRun) applyNeedsInfo(ctx context.Context, issue ForgeIssue, verdic
 	return nil
 }
 
-// applyNotActionable writes the evidence and leaves the issue alone. No
-// label, and — structurally, because the forge interface has no such verb —
-// no close.
+// applyNotActionable writes the evidence, and closes the issue when BOTH the
+// verdict said the work is already done and the binding allows it.
+//
+// NO LABEL EITHER WAY. Not-actionable is not a state a worker waits on, and a
+// label that means "a person should look" is what the needs-info path is for.
+//
+// BOTH CONDITIONS ARE REQUIRED. A not-actionable that named no reason is never
+// closed however permissive the binding, and a binding that has not opted in
+// never closes however confident the agent — so turning the toggle on cannot
+// retroactively close the issues an earlier pass judged, and an agent that
+// invents the marker cannot close anything in a project that did not ask for
+// it.
 func (s *triageRun) applyNotActionable(ctx context.Context, issue ForgeIssue, verdict TriageVerdict, reply string) error {
-	return s.comment(ctx, issue, verdict, reply)
+	if err := s.comment(ctx, issue, verdict, reply); err != nil {
+		return err
+	}
+	// THE COMMENT GOES FIRST, AND THAT ORDER IS THE RECOVERABLE ONE. A pass
+	// that crashes between the two leaves an open issue carrying the evidence
+	// — which the next pass can act on — where closing first would leave a
+	// closed issue saying nothing about why.
+	if !verdict.ClosesAsAlreadyDone || !s.binding.TriageMayClose {
+		return nil
+	}
+	if err := s.forge.CloseIssue(ctx, s.repo, issue.Number); err != nil {
+		return &TriageVerdictError{Issue: issue.Number, Reason: "the issue could not be closed", Cause: err}
+	}
+	return nil
 }
 
 // comment posts the verdict a person reads, tagged so a later pass can find
