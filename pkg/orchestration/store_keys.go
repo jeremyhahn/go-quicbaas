@@ -81,6 +81,14 @@ const (
 	// accountDefaultKeyspace holds the tenant+provider(+project) -> accountID
 	// default-selection pointer.
 	accountDefaultKeyspace = "orch/accountdefault/"
+
+	// agentProfileKeyspace holds AgentProfile records — one runnable
+	// combination of runtime, model and provider endpoint.
+	agentProfileKeyspace = "orch/agentprofile/"
+
+	// agentPoolKeyspace holds AgentPool records — an ordered preference list
+	// of profile names.
+	agentPoolKeyspace = "orch/agentpool/"
 )
 
 // =============================================================================
@@ -269,6 +277,12 @@ const (
 
 	// AuditResourceAccount identifies an Account record.
 	AuditResourceAccount = "orchestration_account"
+
+	// AuditResourceAgentProfile identifies an AgentProfile record.
+	AuditResourceAgentProfile = "orchestration_agent_profile"
+
+	// AuditResourceAgentPool identifies an AgentPool record.
+	AuditResourceAgentPool = "orchestration_agent_pool"
 )
 
 // StoreAuditEvent describes a single mutation of a durable orchestration
