@@ -181,6 +181,19 @@ type Config struct {
 	// "Qwen3-8B-int4-cw-ov" exported for an NPU.
 	OpenVINOModel string `json:"openvino_model,omitempty" yaml:"openvino_model,omitempty"`
 
+	// OpenVINOContextTokens is how much prompt that server accepts. Zero
+	// declares nothing and the backend learns the ceiling from the first
+	// refusal; declaring it is what turns the first oversized prompt from a
+	// wasted round trip into an immediate, named refusal.
+	//
+	// ON AN NPU THIS IS A MEMORY DECISION, NOT ONLY A CORRECTNESS ONE. The
+	// plugin compiles a STATIC shape, so the server reserves for the declared
+	// maximum whether or not anything uses it. Measured on one host with an
+	// 8B int4 model: 8192 tokens reserved 14.2 GiB and loaded in 45 seconds;
+	// 32768 reserved 63.7 GiB, took seven minutes, and drove the machine into
+	// swap. Size it for the work, not for the model's maximum.
+	OpenVINOContextTokens int `json:"openvino_context_tokens,omitempty" yaml:"openvino_context_tokens,omitempty"`
+
 	// AllowedMountRoots is the operator's allowlist of absolute host
 	// directories a spawn request may bind-mount into a sandbox container on
 	// this daemon. It is the daemon-side counterpart of the control plane's

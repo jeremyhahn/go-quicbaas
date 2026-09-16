@@ -53,6 +53,7 @@ var (
 	serveOllamaBaseURL  string
 	serveOpenVINOURL    string
 	serveOpenVINOModel  string
+	serveOpenVINOCtx    int
 	serveAllowedMounts  []string
 	serveContainerRT    string
 	serveImageMapCSV    string
@@ -108,6 +109,7 @@ Examples:
 	cmd.Flags().StringVar(&serveOllamaBaseURL, "ollama-url", "", "Base URL of the ollama server the \"ollama\" backend uses, without /v1 (default http://127.0.0.1:11434).")
 	cmd.Flags().StringVar(&serveOpenVINOURL, "openvino-url", "", "OpenVINO Model Server base URL, without /v3 (e.g. http://gpu-host:9000). Registers the \"openvino\" backend; empty leaves it unregistered.")
 	cmd.Flags().StringVar(&serveOpenVINOModel, "openvino-model", "", "Model the OpenVINO server serves, e.g. qwen3-8b.")
+	cmd.Flags().IntVar(&serveOpenVINOCtx, "openvino-context-tokens", 0, "How much prompt that server accepts. Zero learns the ceiling from the first refusal. On an NPU the server reserves a static shape for this many tokens, so it is a memory decision too.")
 	cmd.Flags().StringVar(&serveImageMapCSV, "image-map", "", "Comma-separated backend=image mappings (e.g., claude-code=quicbaas/claude-code:v1)")
 	cmd.Flags().StringVar(&serveImageRegistry, "image-registry", "", "Registry prefix applied to unqualified image references")
 	cmd.Flags().BoolVar(&serveAutoPull, "auto-pull", false, "Pull missing container images at startup")
@@ -436,8 +438,9 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 			// CLI cannot drive an OVMS-served model at any endpoint.
 			if base := strings.TrimSpace(cfg.OpenVINOBaseURL); base != "" {
 				ov := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
-					BaseURL:      base,
-					DefaultModel: cfg.OpenVINOModel,
+					BaseURL:       base,
+					DefaultModel:  cfg.OpenVINOModel,
+					ContextTokens: cfg.OpenVINOContextTokens,
 				})
 				ov.SetLogger(logger)
 				backends["openvino"] = ov
@@ -673,29 +676,30 @@ func buildServeConfig() (*agent.Config, error) {
 	}
 
 	cfg := &agent.Config{
-		ServerAddr:        serveServerAddr,
-		TenantID:          serveTenantID,
-		BindAddr:          serveBindAddr,
-		Backends:          backends,
-		SandboxPolicy:     policy,
-		SandboxNetwork:    serveSandboxNetwork,
-		OllamaBaseURL:     serveOllamaBaseURL,
-		OpenVINOBaseURL:   serveOpenVINOURL,
-		OpenVINOModel:     serveOpenVINOModel,
-		AllowedMountRoots: serveAllowedMounts,
-		ContainerRuntime:  agent.ContainerRuntimeSelector(serveContainerRT),
-		ImageMap:          imageMap,
-		ImageRegistry:     serveImageRegistry,
-		AutoPull:          serveAutoPull,
-		WorkDir:           serveWorkDir,
-		AgentCertFile:     serveAgentCertFile,
-		AgentKeyFile:      serveAgentKeyFile,
-		ServerCAFile:      serveServerCAFile,
-		HeartbeatInterval: serveHeartbeatEvery,
-		ShutdownGrace:     serveShutdownGrace,
-		EnrollRetryBase:   serveEnrollRetry,
-		EnrollRetryMax:    serveEnrollRetryMax,
-		MCPEndpoint:       serveMCPEndpoint,
+		ServerAddr:            serveServerAddr,
+		TenantID:              serveTenantID,
+		BindAddr:              serveBindAddr,
+		Backends:              backends,
+		SandboxPolicy:         policy,
+		SandboxNetwork:        serveSandboxNetwork,
+		OllamaBaseURL:         serveOllamaBaseURL,
+		OpenVINOBaseURL:       serveOpenVINOURL,
+		OpenVINOModel:         serveOpenVINOModel,
+		OpenVINOContextTokens: serveOpenVINOCtx,
+		AllowedMountRoots:     serveAllowedMounts,
+		ContainerRuntime:      agent.ContainerRuntimeSelector(serveContainerRT),
+		ImageMap:              imageMap,
+		ImageRegistry:         serveImageRegistry,
+		AutoPull:              serveAutoPull,
+		WorkDir:               serveWorkDir,
+		AgentCertFile:         serveAgentCertFile,
+		AgentKeyFile:          serveAgentKeyFile,
+		ServerCAFile:          serveServerCAFile,
+		HeartbeatInterval:     serveHeartbeatEvery,
+		ShutdownGrace:         serveShutdownGrace,
+		EnrollRetryBase:       serveEnrollRetry,
+		EnrollRetryMax:        serveEnrollRetryMax,
+		MCPEndpoint:           serveMCPEndpoint,
 	}
 	return cfg, nil
 }

@@ -99,3 +99,27 @@ func TestBuildAgentRuntime_OpenVINOBackendReceivesTheContainerRuntime(t *testing
 		t.Fatal("the openvino backend was left without a container runtime; every sandboxed spawn would be refused")
 	}
 }
+
+// TestBuildAgentRuntime_OpenVINOContextDeclarationReachesTheBackend: the
+// declaration is the only rung of the context ladder that can be right BEFORE
+// the first request, so a flag that stops at the config teaches the backend
+// nothing and the first oversized prompt is still a wasted round trip.
+func TestBuildAgentRuntime_OpenVINOContextDeclarationReachesTheBackend(t *testing.T) {
+	t.Parallel()
+
+	ov := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
+		BaseURL:       "http://gpu-host.invalid:9000",
+		DefaultModel:  "qwen3-8b",
+		ContextTokens: 8192,
+	})
+	if got := ov.ContextBound(); got != 8192 {
+		t.Fatalf("ContextBound() = %d, want the declared 8192", got)
+	}
+	// And an undeclared backend stays unbounded until something refuses it.
+	bare := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
+		BaseURL: "http://gpu-host.invalid:9000", DefaultModel: "qwen3-8b",
+	})
+	if got := bare.ContextBound(); got != 0 {
+		t.Fatalf("ContextBound() = %d, want 0 when nothing is declared or learned", got)
+	}
+}

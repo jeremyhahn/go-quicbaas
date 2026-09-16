@@ -17,14 +17,33 @@
 #   - `NPUW_LLM_MAX_PROMPT_LEN` alone in plugin_config: loads, recompiles for
 #     several minutes, and the limit does NOT move. It is a real NPU plugin
 #     property and it is not the one this pipeline reads.
-#   - `MAX_PROMPT_LEN` in plugin_config: works. Measured 20,009 prompt tokens
-#     accepted where 1,109 previously failed.
+#   - `MAX_PROMPT_LEN` in plugin_config: works. Measured at 32768, 20,009
+#     prompt tokens accepted where 1,109 previously failed; at the 8192 set
+#     below, 7,509 accepted.
 # Both are set below; the NPUW_ pair is harmless and documents the mapping.
 #
-# COST: the NPU compiles a STATIC shape for MAX_PROMPT_LEN, so raising it makes
-# model load slower (~7 minutes here, against seconds at 1024) and costs
-# memory. 32768 is the model's native context; size it against the inference
-# host's free memory (measured fine on a 93G host with ~61G free).
+# COST: THE NPU RESERVES FOR THE MAXIMUM, USED OR NOT. The plugin compiles a
+# STATIC shape, so this is a memory decision as much as a correctness one.
+# Measured on one host with this 8B int4 model:
+#
+#     MAX_PROMPT_LEN      reserved      load time
+#         1024             ~2 GiB        seconds
+#         8192            14.2 GiB       45 seconds
+#        8192            63.7 GiB       ~7 minutes
+#
+# That is roughly 1.8 GiB per 1k tokens, and it is reserved at load whether or
+# not a prompt ever uses it. 8192 drove a 93 GiB host into swap and made the
+# desktop unresponsive; the value below is sized for the WORK (a triage charter
+# is ~1,400 tokens, and a charter plus an issue and its discussion has measured
+# under 8k) rather than for the model's 40,960-token maximum.
+#
+# An iGPU is NOT automatically the cheaper answer: integrated graphics have no
+# dedicated VRAM and draw on the same system memory. What differs is that the
+# GPU plugin sizes a KV cache dynamically (`cache_size`) instead of compiling a
+# static shape, so memory tracks use. It needs the Intel GPU compute runtime in
+# the image, which the Dockerfile beside this file does not install -- with the
+# render node passed through but no runtime, OpenVINO still reports only
+# "CPU, NPU" and a GPU graph fails at load.
 
 # File created with: OpenVINO Model Server 2026.3.1.3a28d490b
 # OVMS_GRAPH_QUEUE_MAX_SIZE: AUTO
@@ -48,7 +67,7 @@
         [type.googleapis.com / mediapipe.LLMCalculatorOptions]: {
             device: "NPU",
               max_num_seqs:1,
-            plugin_config: "{\"MAX_PROMPT_LEN\": 32768, \"MIN_RESPONSE_LEN\": 1024, \"NPUW_LLM_MAX_PROMPT_LEN\": 32768, \"NPUW_LLM_MIN_RESPONSE_LEN\": 1024}",
+            plugin_config: "{\"MAX_PROMPT_LEN\": 8192, \"MIN_RESPONSE_LEN\": 512, \"NPUW_LLM_MAX_PROMPT_LEN\": 8192, \"NPUW_LLM_MIN_RESPONSE_LEN\": 512}",
             models_path: "./",
             enable_prefix_caching: false,
             cache_size: 0,
