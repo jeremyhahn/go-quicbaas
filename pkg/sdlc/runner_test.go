@@ -2779,3 +2779,66 @@ func TestResumeReview_ARefusedHeadDoesNotResumeIntoReview(t *testing.T) {
 		t.Fatalf("state = %q, want the run to fall through and spawn a worker for the refused head", state)
 	}
 }
+
+// TestRoundFindings_AReadmittedTaskIsHandedTheRecordedRefusal is the second
+// half of the orphaned pull request.
+//
+// Spawning the worker is not enough: a readmitted task has a fresh job, so
+// iteration and memory are both empty and the worker used to receive the bare
+// issue contract. It would read a branch that already holds the work, answer
+// "the branch already carries the complete implementation", and be charged a
+// failure for producing no changes — with the reviewer's objection delivered
+// to nobody. Measured on go-truststrap task 61e3aa53 / PR #66.
+func TestRoundFindings_AReadmittedTaskIsHandedTheRecordedRefusal(t *testing.T) {
+	rig := newRunnerRig(t)
+	run := &runnerRun{
+		job: rig.job(t, "true"),
+		delivery: &Delivery{
+			RequiresPullRequest: true,
+			HeadSHA:             "e3fc67d8",
+			PullRequest:         DeliveryPullRequest{Number: 66, State: PullRequestOpen},
+			Reviews: []ReviewRecord{{
+				Reviewer: "codex", Verdict: VerdictRequestChanges, HeadSHA: "e3fc67d8", Round: 0,
+				Findings:    "Make cancellation effective before removing connection shutdown",
+				SubmittedAt: time.Date(2026, 9, 13, 20, 43, 36, 0, time.UTC),
+			}},
+		},
+	}
+	findings := run.roundFindings()
+	if findings == "" {
+		t.Fatal("a readmitted task was handed no findings; the worker would receive the bare issue contract")
+	}
+	if !strings.Contains(findings, "Make cancellation effective") {
+		t.Fatalf("the reviewer's objection did not reach the prompt:\n%s", findings)
+	}
+	// A fresh job numbers its first iteration zero, and "round 0" reads to the
+	// worker as a first attempt rather than as an answer to a review.
+	if !strings.Contains(findings, "1") {
+		t.Fatalf("the round was not numbered from the refusal:\n%s", findings)
+	}
+}
+
+// TestRoundFindings_AnApprovedHeadAddsNothing keeps the durable source from
+// firing when there is no objection in force: the worker would be handed an
+// answered review as if it were outstanding.
+func TestRoundFindings_AnApprovedHeadAddsNothing(t *testing.T) {
+	rig := newRunnerRig(t)
+	base := time.Date(2026, 9, 13, 20, 0, 0, 0, time.UTC)
+	run := &runnerRun{
+		job: rig.job(t, "true"),
+		delivery: &Delivery{
+			RequiresPullRequest: true,
+			HeadSHA:             "e3fc67d8",
+			PullRequest:         DeliveryPullRequest{Number: 66, State: PullRequestOpen},
+			Reviews: []ReviewRecord{
+				{Reviewer: "codex", Verdict: VerdictRequestChanges, HeadSHA: "e3fc67d8",
+					Findings: "an objection since answered", SubmittedAt: base},
+				{Reviewer: "codex", Verdict: VerdictApprove, HeadSHA: "e3fc67d8",
+					SubmittedAt: base.Add(time.Hour)},
+			},
+		},
+	}
+	if findings := run.roundFindings(); findings != "" {
+		t.Fatalf("an approved head produced round findings:\n%s", findings)
+	}
+}

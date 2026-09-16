@@ -1395,14 +1395,26 @@ func (s *runnerRun) park(kind orchestration.TaskBlockKind, reason, faultClass st
 	return orchestration.JobStateEscalating
 }
 
-// roundFindings renders what the last round said: the job's memory, which is
-// what survives a resume, or the feedback this run recorded when memory holds
-// nothing. It is empty on the first round.
+// roundFindings renders what the last round said, from the first of three
+// sources that holds anything: the job's memory, which is what survives a
+// resume; the feedback this run recorded; and the refusal the DELIVERY records
+// against the head the pull request still carries.
+//
+// THE THIRD SOURCE IS THE ONE A READMITTED TASK HAS. Its job is fresh -- no
+// iteration, no memory -- so both live sources are empty and the worker used
+// to be handed the bare issue contract. It would then read a branch that
+// already holds the work, correctly answer "the branch already carries the
+// complete implementation", and be charged a failure for producing no changes,
+// while the reviewer's actual objection was never delivered to anybody.
+// Measured on go-truststrap task 61e3aa53 / PR #66, 2026-09-16.
+//
+// The round number comes from the refusal for the same reason: a fresh job
+// numbers its first iteration zero, and a round rendered as "round 0" reads to
+// the worker as the first attempt rather than as an answer to a review.
+//
+// It is empty on the first round, when there is genuinely nothing said yet.
 func (s *runnerRun) roundFindings() string {
 	round := s.job.Iteration()
-	if round <= 0 {
-		return ""
-	}
 	body := ""
 	if memory := s.job.Memory(); memory != nil {
 		body = strings.TrimSpace(memory.Serialize())
@@ -1411,6 +1423,14 @@ func (s *runnerRun) roundFindings() string {
 		body = strings.TrimSpace(s.feedback)
 	}
 	if body == "" {
+		if refusal := s.delivery.HeadRefusal(); refusal != nil {
+			body = strings.TrimSpace(refusal.Findings)
+			if round <= 0 {
+				round = refusal.Round + 1
+			}
+		}
+	}
+	if round <= 0 || body == "" {
 		return ""
 	}
 	return sdlcPrompts.MustRender("round_findings", prompts.Vars{

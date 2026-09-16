@@ -387,9 +387,28 @@ func (d *Delivery) ReviewRecorded(candidate ReviewRecord) bool {
 // kept the sha; the last word is the one in force. Reviews that bind to an
 // earlier head say nothing about this one and are ignored, which is the rule
 // AppliesTo exists to state.
-func (d *Delivery) HeadRefused() bool {
+func (d *Delivery) HeadRefused() bool { return d.HeadRefusal() != nil }
+
+// HeadRefusal returns the refusal in force on the delivery's current head, or
+// nil when the head is not refused.
+//
+// IT CARRIES THE FINDINGS, which is the half that makes the resume useful. A
+// readmitted task has a fresh job: no iteration and no memory, so the runner's
+// two live sources of round findings are both empty and the worker is handed
+// the bare issue contract. It then reads a branch that already holds the work,
+// correctly answers "the branch already carries the complete implementation",
+// and the attempt is charged as a failure -- with the reviewer's actual
+// objection never delivered to anyone. Measured on go-truststrap task
+// 61e3aa53 / PR #66, 2026-09-16.
+//
+// NEWEST WINS RATHER THAN ANY. A head can carry a refusal and then an approval
+// from a second reviewer, or a re-review after a force-push that kept the sha;
+// the last word is the one in force. Reviews that bind to an earlier head say
+// nothing about this one and are ignored, which is the rule AppliesTo exists
+// to state.
+func (d *Delivery) HeadRefusal() *ReviewRecord {
 	if d == nil || strings.TrimSpace(d.HeadSHA) == "" {
-		return false
+		return nil
 	}
 	var newest *ReviewRecord
 	for i := range d.Reviews {
@@ -401,7 +420,10 @@ func (d *Delivery) HeadRefused() bool {
 			newest = review
 		}
 	}
-	return newest != nil && newest.Verdict == VerdictRequestChanges
+	if newest == nil || newest.Verdict != VerdictRequestChanges {
+		return nil
+	}
+	return newest
 }
 
 // Validate checks the delivery names its task and attempt.
