@@ -366,3 +366,34 @@ func TestOpenVINOBackend_TheSpawnEnvironmentReachesTheContainer(t *testing.T) {
 		t.Fatalf("spec.Env = %v, want the spawn's environment carried through", spec.Env)
 	}
 }
+
+// TestOpenVINOBackend_TheChatPathIsConfigurable is what lets one backend drive
+// any OpenAI-compatible server.
+//
+// This backend is not about one vendor: it is an OpenAI-compatible HTTP client
+// that runs its tool calls INSIDE a container, which is the shape a role that
+// must read a repository needs — a plain model-server backend has no container
+// and cannot be given a workspace at all. OVMS serves /v3/chat/completions;
+// ollama, llama-server and vLLM serve /v1. Hardcoding either ties the
+// capability to a vendor for no reason.
+func TestOpenVINOBackend_TheChatPathIsConfigurable(t *testing.T) {
+	cases := []struct {
+		name string
+		base string
+		path string
+		want string
+	}{
+		{"the OVMS default", "http://ovms:9000", "", "http://ovms:9000" + DefaultOVMSChatPath},
+		{"an ollama endpoint", "http://gpu:11434", "/v1/chat/completions", "http://gpu:11434/v1/chat/completions"},
+		{"a path missing its slash", "http://gpu:11434", "v1/chat/completions", "http://gpu:11434/v1/chat/completions"},
+		{"a base with a trailing slash", "http://gpu:11434/", "/v1/chat/completions", "http://gpu:11434/v1/chat/completions"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b := NewOpenVINOBackend(OpenVINOBackendConfig{BaseURL: c.base, ChatPath: c.path, DefaultModel: "m"})
+			if got := b.chatURL(); got != c.want {
+				t.Fatalf("chatURL() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}

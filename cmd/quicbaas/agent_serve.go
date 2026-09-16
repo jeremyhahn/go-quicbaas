@@ -44,30 +44,32 @@ import (
 // changing this flag surface.
 
 var (
-	serveServerAddr     string
-	serveTenantID       string
-	serveBindAddr       string
-	serveBackendsCSV    string
-	serveSandboxPolicy  string
-	serveSandboxNetwork string
-	serveOllamaBaseURL  string
-	serveOpenVINOURL    string
-	serveOpenVINOModel  string
-	serveOpenVINOCtx    int
-	serveAllowedMounts  []string
-	serveContainerRT    string
-	serveImageMapCSV    string
-	serveImageRegistry  string
-	serveAutoPull       bool
-	serveWorkDir        string
-	serveAgentCertFile  string
-	serveAgentKeyFile   string
-	serveServerCAFile   string
-	serveHeartbeatEvery time.Duration
-	serveShutdownGrace  time.Duration
-	serveMCPEndpoint    string
-	serveEnrollRetry    time.Duration
-	serveEnrollRetryMax time.Duration
+	serveServerAddr       string
+	serveTenantID         string
+	serveBindAddr         string
+	serveBackendsCSV      string
+	serveSandboxPolicy    string
+	serveSandboxNetwork   string
+	serveOllamaBaseURL    string
+	serveOpenVINOURL      string
+	serveOpenVINOModel    string
+	serveOpenVINOCtx      int
+	serveOllamaAgentModel string
+	serveOllamaAgentCtx   int
+	serveAllowedMounts    []string
+	serveContainerRT      string
+	serveImageMapCSV      string
+	serveImageRegistry    string
+	serveAutoPull         bool
+	serveWorkDir          string
+	serveAgentCertFile    string
+	serveAgentKeyFile     string
+	serveServerCAFile     string
+	serveHeartbeatEvery   time.Duration
+	serveShutdownGrace    time.Duration
+	serveMCPEndpoint      string
+	serveEnrollRetry      time.Duration
+	serveEnrollRetryMax   time.Duration
 )
 
 // newAgentServeCommand builds the `quicbaas agent serve` subcommand.
@@ -109,6 +111,8 @@ Examples:
 	cmd.Flags().StringVar(&serveOllamaBaseURL, "ollama-url", "", "Base URL of the ollama server the \"ollama\" backend uses, without /v1 (default http://127.0.0.1:11434).")
 	cmd.Flags().StringVar(&serveOpenVINOURL, "openvino-url", "", "OpenVINO Model Server base URL, without /v3 (e.g. http://gpu-host:9000). Registers the \"openvino\" backend; empty leaves it unregistered.")
 	cmd.Flags().StringVar(&serveOpenVINOModel, "openvino-model", "", "Model the OpenVINO server serves, e.g. qwen3-8b.")
+	cmd.Flags().StringVar(&serveOllamaAgentModel, "ollama-agent-model", "", "Model the \"ollama-agent\" backend uses: the container-and-tools agent loop against the ollama endpoint, for roles that must read a repository. Empty leaves the backend registered with no default model.")
+	cmd.Flags().IntVar(&serveOllamaAgentCtx, "ollama-agent-context-tokens", 0, "How much prompt that ollama model accepts. Zero learns the ceiling from the first refusal.")
 	cmd.Flags().IntVar(&serveOpenVINOCtx, "openvino-context-tokens", 0, "How much prompt that server accepts. Zero learns the ceiling from the first refusal. On an NPU the server reserves a static shape for this many tokens, so it is a memory decision too.")
 	cmd.Flags().StringVar(&serveImageMapCSV, "image-map", "", "Comma-separated backend=image mappings (e.g., claude-code=quicbaas/claude-code:v1)")
 	cmd.Flags().StringVar(&serveImageRegistry, "image-registry", "", "Registry prefix applied to unqualified image references")
@@ -445,6 +449,28 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 				ov.SetLogger(logger)
 				backends["openvino"] = ov
 			}
+			// THE SAME BACKEND AGAINST AN OLLAMA ENDPOINT, REGISTERED AS
+			// "ollama-agent". The plain "ollama" backend is a model server: no
+			// container, no tools, file_access false. Triage must READ THE
+			// REPOSITORY, so it cannot use that one -- measured as
+			// "PermissionDenied: mount not allowed (extra_mounts)" when triage
+			// was pointed at it, which is the mount policy correctly refusing a
+			// workspace to a backend that has nowhere to put it.
+			//
+			// What this backend actually is: an OpenAI-compatible HTTP client
+			// that runs its tool calls inside a container. ollama serves that
+			// API at /v1/chat/completions, so the only difference from the OVMS
+			// registration above is the route and the endpoint.
+			if base := strings.TrimSpace(cfg.EffectiveOllamaBaseURL()); base != "" {
+				agentic := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
+					BaseURL:       base,
+					ChatPath:      "/v1/chat/completions",
+					DefaultModel:  cfg.OllamaAgentModel,
+					ContextTokens: cfg.OllamaAgentContextTokens,
+				})
+				agentic.SetLogger(logger)
+				backends["ollama-agent"] = agentic
+			}
 			backends["opencode"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
 				Command:           "opencode",
 				Args:              []string{"acp"},
@@ -676,30 +702,32 @@ func buildServeConfig() (*agent.Config, error) {
 	}
 
 	cfg := &agent.Config{
-		ServerAddr:            serveServerAddr,
-		TenantID:              serveTenantID,
-		BindAddr:              serveBindAddr,
-		Backends:              backends,
-		SandboxPolicy:         policy,
-		SandboxNetwork:        serveSandboxNetwork,
-		OllamaBaseURL:         serveOllamaBaseURL,
-		OpenVINOBaseURL:       serveOpenVINOURL,
-		OpenVINOModel:         serveOpenVINOModel,
-		OpenVINOContextTokens: serveOpenVINOCtx,
-		AllowedMountRoots:     serveAllowedMounts,
-		ContainerRuntime:      agent.ContainerRuntimeSelector(serveContainerRT),
-		ImageMap:              imageMap,
-		ImageRegistry:         serveImageRegistry,
-		AutoPull:              serveAutoPull,
-		WorkDir:               serveWorkDir,
-		AgentCertFile:         serveAgentCertFile,
-		AgentKeyFile:          serveAgentKeyFile,
-		ServerCAFile:          serveServerCAFile,
-		HeartbeatInterval:     serveHeartbeatEvery,
-		ShutdownGrace:         serveShutdownGrace,
-		EnrollRetryBase:       serveEnrollRetry,
-		EnrollRetryMax:        serveEnrollRetryMax,
-		MCPEndpoint:           serveMCPEndpoint,
+		ServerAddr:               serveServerAddr,
+		TenantID:                 serveTenantID,
+		BindAddr:                 serveBindAddr,
+		Backends:                 backends,
+		SandboxPolicy:            policy,
+		SandboxNetwork:           serveSandboxNetwork,
+		OllamaBaseURL:            serveOllamaBaseURL,
+		OpenVINOBaseURL:          serveOpenVINOURL,
+		OpenVINOModel:            serveOpenVINOModel,
+		OpenVINOContextTokens:    serveOpenVINOCtx,
+		OllamaAgentModel:         serveOllamaAgentModel,
+		OllamaAgentContextTokens: serveOllamaAgentCtx,
+		AllowedMountRoots:        serveAllowedMounts,
+		ContainerRuntime:         agent.ContainerRuntimeSelector(serveContainerRT),
+		ImageMap:                 imageMap,
+		ImageRegistry:            serveImageRegistry,
+		AutoPull:                 serveAutoPull,
+		WorkDir:                  serveWorkDir,
+		AgentCertFile:            serveAgentCertFile,
+		AgentKeyFile:             serveAgentKeyFile,
+		ServerCAFile:             serveServerCAFile,
+		HeartbeatInterval:        serveHeartbeatEvery,
+		ShutdownGrace:            serveShutdownGrace,
+		EnrollRetryBase:          serveEnrollRetry,
+		EnrollRetryMax:           serveEnrollRetryMax,
+		MCPEndpoint:              serveMCPEndpoint,
 	}
 	return cfg, nil
 }

@@ -85,6 +85,18 @@ type OpenVINOBackendConfig struct {
 	// schedule rather than a deadline.
 	Thinking bool
 
+	// ChatPath is the completions route on this endpoint. Empty takes
+	// DefaultOVMSChatPath.
+	//
+	// IT IS CONFIGURABLE BECAUSE THIS BACKEND IS NOT ABOUT ONE SERVER. What it
+	// actually is: an OpenAI-compatible HTTP client that runs its tool calls
+	// inside a container -- which is the shape triage needs, because triage
+	// must READ THE REPOSITORY, and a plain model-server backend (no container,
+	// no tools) cannot. OVMS serves /v3/chat/completions; ollama, llama-server
+	// and vLLM serve /v1/chat/completions. Hardcoding either one ties a
+	// capability to a vendor for no reason.
+	ChatPath string
+
 	// ContextTokens is what the operator says this endpoint's model accepts.
 	// Zero declares nothing, and the limit is then learned from refusals. See
 	// context_limit.go for why this is a declaration rather than a probe.
@@ -153,6 +165,22 @@ func NewOpenVINOBackend(config OpenVINOBackendConfig) *OpenVINOBackend {
 		sessions:     map[string]*openVINOSession{},
 		contextLimit: NewContextLimit(config.ContextTokens),
 	}
+}
+
+// DefaultOVMSChatPath is the completions route OpenVINO Model Server serves.
+// Every other OpenAI-compatible server in common use serves /v1 instead.
+const DefaultOVMSChatPath = "/v3/chat/completions"
+
+// chatURL is the endpoint one completion is posted to.
+func (b *OpenVINOBackend) chatURL() string {
+	path := strings.TrimSpace(b.config.ChatPath)
+	if path == "" {
+		path = DefaultOVMSChatPath
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return strings.TrimRight(b.config.BaseURL, "/") + path
 }
 
 // SetContainerRuntime installs the runtime tool calls execute in.
@@ -541,10 +569,10 @@ func (b *OpenVINOBackend) complete(ctx context.Context, body ovRequest) (*ovResp
 			Model:     body.Model,
 			Estimated: estimate,
 			Bound:     b.contextLimit.Bound(),
-			URL:       strings.TrimRight(b.config.BaseURL, "/") + "/v3/chat/completions",
+			URL:       b.chatURL(),
 		}
 	}
-	url := strings.TrimRight(b.config.BaseURL, "/") + "/v3/chat/completions"
+	url := b.chatURL()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
