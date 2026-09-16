@@ -2671,3 +2671,111 @@ func TestRunner_AForgeCredentialTheSpawnDoesNotHoldIsParkedNotCharged(t *testing
 		}
 	}
 }
+
+// TestDeliveryHeadRefused_IsTheDurableFormOfARequestedRound covers the three
+// answers the resume depends on: a refusal at the current head, a refusal that
+// binds to an older head, and a later approval that overrides an earlier
+// refusal at the same head.
+func TestDeliveryHeadRefused_IsTheDurableFormOfARequestedRound(t *testing.T) {
+	base := time.Date(2026, 9, 13, 19, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name    string
+		head    string
+		reviews []ReviewRecord
+		want    bool
+	}{
+		{
+			name:    "no reviews at all",
+			head:    "aaa",
+			reviews: nil,
+			want:    false,
+		},
+		{
+			name: "the current head is refused",
+			head: "aaa",
+			reviews: []ReviewRecord{
+				{Verdict: VerdictRequestChanges, HeadSHA: "aaa", SubmittedAt: base},
+			},
+			want: true,
+		},
+		{
+			name: "the refusal binds to an earlier head",
+			head: "bbb",
+			reviews: []ReviewRecord{
+				{Verdict: VerdictRequestChanges, HeadSHA: "aaa", SubmittedAt: base},
+			},
+			want: false,
+		},
+		{
+			name: "a later approval at the same head overrides the refusal",
+			head: "aaa",
+			reviews: []ReviewRecord{
+				{Verdict: VerdictRequestChanges, HeadSHA: "aaa", SubmittedAt: base},
+				{Verdict: VerdictApprove, HeadSHA: "aaa", SubmittedAt: base.Add(time.Hour)},
+			},
+			want: false,
+		},
+		{
+			name: "an earlier approval does not rescue a later refusal",
+			head: "aaa",
+			reviews: []ReviewRecord{
+				{Verdict: VerdictApprove, HeadSHA: "aaa", SubmittedAt: base},
+				{Verdict: VerdictRequestChanges, HeadSHA: "aaa", SubmittedAt: base.Add(time.Hour)},
+			},
+			want: true,
+		},
+		{
+			name: "no head means nothing to bind a verdict to",
+			head: "",
+			reviews: []ReviewRecord{
+				{Verdict: VerdictRequestChanges, HeadSHA: "aaa", SubmittedAt: base},
+			},
+			want: false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			delivery := &Delivery{HeadSHA: c.head, Reviews: c.reviews}
+			if got := delivery.HeadRefused(); got != c.want {
+				t.Fatalf("HeadRefused() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestResumeReview_ARefusedHeadDoesNotResumeIntoReview is the orphaned pull
+// request, and the case roundRequested cannot cover.
+//
+// roundRequested is one JOB's memory of a rejected head. A task readmitted
+// after its job ended arrives with the flag clear and a pull request whose
+// CURRENT head a reviewer already refused. Resuming into reviewing then asks
+// for the identical verdict on the identical tree with no worker running to
+// address it, which surfaces as "there is no worker session to prompt", one
+// attempt at a time, until the budget is gone -- leaving the pull request
+// open, refused and unattended. Measured on go-truststrap PRs #64, #65 and
+// #66; reproduced 2026-09-16 by readmitting task 61e3aa53, which spent three
+// attempts in 91 seconds.
+//
+// An empty state and no error is "do not resume", which sends the run on to
+// spawn the worker that addresses the findings.
+func TestResumeReview_ARefusedHeadDoesNotResumeIntoReview(t *testing.T) {
+	refused := &runnerRun{delivery: &Delivery{
+		RequiresPullRequest: true,
+		HeadSHA:             "e3fc67d8",
+		PullRequest:         DeliveryPullRequest{Number: 66, State: PullRequestOpen},
+		Reviews: []ReviewRecord{{
+			Reviewer: "codex", Verdict: VerdictRequestChanges, HeadSHA: "e3fc67d8",
+			SubmittedAt: time.Date(2026, 9, 13, 20, 43, 36, 0, time.UTC),
+		}},
+	}}
+	// The forge is deliberately nil: reaching it would mean the refusal did
+	// not short-circuit, and the nil would surface as a panic rather than as a
+	// quietly wrong resume.
+	state, err := refused.resumeReview(context.Background())
+	if err != nil {
+		t.Fatalf("resumeReview: %v", err)
+	}
+	if state != "" {
+		t.Fatalf("state = %q, want the run to fall through and spawn a worker for the refused head", state)
+	}
+}

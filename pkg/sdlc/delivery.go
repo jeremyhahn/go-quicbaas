@@ -15,6 +15,7 @@ package sdlc
 
 import (
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -365,6 +366,42 @@ func (d *Delivery) ReviewRecorded(candidate ReviewRecord) bool {
 		}
 	}
 	return false
+}
+
+// HeadRefused reports whether the newest review binding to the delivery's
+// current head refused it.
+//
+// IT IS THE DURABLE FORM OF "a round was requested". The runner's own
+// roundRequested flag lives for one job; this fact lives on the delivery, and
+// the two answer the same question across a restart, a readmission or a job
+// that ended before the worker addressed the findings.
+//
+// A REFUSED HEAD IS NOT REVIEWABLE. Reviewing it again judges the identical
+// tree and returns the identical verdict, so a resume that treats it as
+// reviewable spends a reviewer per attempt until the budget is gone and the
+// pull request is left open, refused, with no worker ever sent to fix it.
+// Measured on go-truststrap PRs #64, #65 and #66.
+//
+// NEWEST WINS RATHER THAN ANY. A head can carry a refusal and then an
+// approval from a second reviewer, or a re-review after a force-push that
+// kept the sha; the last word is the one in force. Reviews that bind to an
+// earlier head say nothing about this one and are ignored, which is the rule
+// AppliesTo exists to state.
+func (d *Delivery) HeadRefused() bool {
+	if d == nil || strings.TrimSpace(d.HeadSHA) == "" {
+		return false
+	}
+	var newest *ReviewRecord
+	for i := range d.Reviews {
+		review := &d.Reviews[i]
+		if !review.AppliesTo(d.HeadSHA) {
+			continue
+		}
+		if newest == nil || review.SubmittedAt.After(newest.SubmittedAt) {
+			newest = review
+		}
+	}
+	return newest != nil && newest.Verdict == VerdictRequestChanges
 }
 
 // Validate checks the delivery names its task and attempt.

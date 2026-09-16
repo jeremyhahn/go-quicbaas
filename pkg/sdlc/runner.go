@@ -616,6 +616,22 @@ func (s *runnerRun) resumeReview(ctx context.Context) (orchestration.JobState, e
 	if s.delivery == nil || !s.delivery.RequiresPullRequest {
 		return "", nil
 	}
+	// AND SO DOES A REFUSAL THE DELIVERY ALREADY RECORDS. roundRequested is
+	// this JOB's memory of a rejected head and dies with it; the delivery is
+	// the durable one. A task readmitted after its job ended -- or restarted,
+	// or resumed on another node -- arrives here with the flag clear and a
+	// pull request whose current head a reviewer has already refused, and
+	// resuming into Reviewing then asks for the identical verdict on the
+	// identical tree while no worker is running to address it. The refusal
+	// surfaces as "there is no worker session to prompt", one attempt at a
+	// time, until the budget is gone.
+	//
+	// Measured on go-truststrap 2026-09-16: task 61e3aa53 readmitted, three
+	// attempts spent in 91 seconds, PR #66 left open carrying an unaddressed
+	// request_changes at its current head. #64 and #65 are the same shape.
+	if s.delivery.HeadRefused() {
+		return "", nil
+	}
 	// A TASK THAT HOLDS NO PULL REQUEST MAY STILL BE ABOUT ONE. See
 	// adoptBranchPullRequest: an issue re-adopted after its first task ended
 	// gets a FRESH delivery, and cutting a rival branch over the one the old
