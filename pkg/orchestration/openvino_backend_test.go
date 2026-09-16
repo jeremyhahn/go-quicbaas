@@ -237,3 +237,60 @@ func TestStripThinking_KeepsTheAnswer(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenVINOBackend_SpawnReportsItsContainer is the regression that took the
+// NPU off the fleet a second time.
+//
+// The container is created by THIS process's runtime, so the spawn response is
+// the only place its identity can come from, and the control plane refuses a
+// session that reports none — triage with "session ... is not containerized",
+// a delivery with "runs no container". An empty field is therefore
+// indistinguishable from having run no container at all, while one sits
+// running on the host. Measured 2026-09-16: every openvino triage job created
+// its container, reported no id, and was refused one second later.
+func TestOpenVINOBackend_SpawnReportsItsContainer(t *testing.T) {
+	runtime := &mockContainerRuntime{available: true, runID: "ctr-abc123"}
+	backend := NewOpenVINOBackend(OpenVINOBackendConfig{
+		BaseURL:      "http://gpu-host.invalid:9000",
+		DefaultModel: "qwen3-8b",
+	})
+	backend.SetContainerRuntime(runtime)
+
+	session, err := backend.Spawn(context.Background(), &SpawnRequest{
+		Model:          "qwen3-8b",
+		SandboxMode:    SandboxModeRequired,
+		ContainerImage: "worker:test",
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if session.ContainerID != "ctr-abc123" {
+		t.Fatalf("session.ContainerID = %q, want the container the backend just started", session.ContainerID)
+	}
+	if len(runtime.runCalls) != 1 {
+		t.Fatalf("container runs = %d, want exactly one", len(runtime.runCalls))
+	}
+}
+
+// TestOpenVINOBackend_AnUnsandboxedSpawnReportsNoContainer keeps empty a REAL
+// answer: a session that genuinely runs no container must not claim one, or
+// the control plane would publish a delivery from a host process.
+func TestOpenVINOBackend_AnUnsandboxedSpawnReportsNoContainer(t *testing.T) {
+	runtime := &mockContainerRuntime{available: true, runID: "ctr-abc123"}
+	backend := NewOpenVINOBackend(OpenVINOBackendConfig{
+		BaseURL:      "http://gpu-host.invalid:9000",
+		DefaultModel: "qwen3-8b",
+	})
+	backend.SetContainerRuntime(runtime)
+
+	session, err := backend.Spawn(context.Background(), &SpawnRequest{Model: "qwen3-8b"})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if session.ContainerID != "" {
+		t.Fatalf("session.ContainerID = %q, want empty for a session with no container", session.ContainerID)
+	}
+	if len(runtime.runCalls) != 0 {
+		t.Fatalf("container runs = %d, want none for an unsandboxed spawn", len(runtime.runCalls))
+	}
+}

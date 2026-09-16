@@ -240,7 +240,24 @@ func (b *OpenVINOBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessio
 	b.mu.Lock()
 	b.sessions[sess.id] = sess
 	b.mu.Unlock()
-	return &Session{ID: sess.id, Backend: b.Type(), Model: model, Status: SessionStateActive}, nil
+	// THE CONTAINER MUST TRAVEL WITH THE SESSION. It is created here, by this
+	// process's runtime, so this response is the only place its identity can
+	// come from -- and the control plane refuses a session that reports none:
+	// triage with "session ... is not containerized", a delivery with "runs no
+	// container". Leaving the field empty is therefore indistinguishable from
+	// having run no container at all, while a container sits running on the
+	// host. Measured 2026-09-16: every openvino triage job spawned its
+	// container, reported no id, and was refused one second later.
+	//
+	// Empty stays a real answer for an UNSANDBOXED session, which genuinely
+	// has none.
+	return &Session{
+		ID:          sess.id,
+		Backend:     b.Type(),
+		Model:       model,
+		Status:      SessionStateActive,
+		ContainerID: sess.containerID,
+	}, nil
 }
 
 // Status implements AgentBackend.
